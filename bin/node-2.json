@@ -1,0 +1,12 @@
+{
+    "network": "regtest",
+    "seeds": [
+        "tcp://127.0.0.1"
+    ],
+    "p2p": {
+        "node_address": "127.0.0.2"
+    },
+    "storage": {
+        "directory": "./node2"
+    }
+}

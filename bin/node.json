@@ -1,0 +1,59 @@
+{
+    "network": "regtest",
+    "vectorstate": "./vectorstate.bsk",
+    "seeds": [],
+    "p2p": {
+        "node_address": "0.0.0.0",
+        "node_timeout": 10000,
+        "node_time_offset": 30000,
+        "tls_trusted_peers": 0,
+        "tls_validity_days": 0,
+        "cursor_size": 2048,
+        "max_inbound_connections": 32,
+        "max_outbound_connections": 8,
+        "proposer": true,
+        "server": true
+    },
+    "rpc": {
+        "node_address": "0.0.0.0",
+        "admin_username": null,
+        "admin_password": null,
+        "user_username": null,
+        "user_password": null,
+        "cursor_size": 512,
+        "page_size": 64,
+        "server": true
+    },
+    "storage": {
+        "directory": "./",
+        "optimization": "speed",
+        "checkpoint_size": 14400,
+        "location_cache_size": 500000,
+        "partition_size": 68719476736
+    },
+    "oracle": {
+        "block_replay_multiplier": 4,
+        "relaying_timeout": 30000,
+        "relaying_retry_timeout": 300,
+        "cache_short_size": 16384,
+        "cache_extended_size": 65536,
+        "fee_estimation_seconds": 600,
+        "withdrawal_time": 300000,
+        "observer": false,
+        "supervisor": {
+            "retry_timeout": 30000,
+            "polling_frequency": 70000,
+            "block_confirmations": 0,
+            "log_transactions": true,
+            "log_blocks": true,
+            "log_queue": true,
+            "log_broadcasts": true
+        },
+        "observers": {
+            "BTC": {
+                "peers": ["http://admin:pass@127.0.0.1:8332"],
+                "observer": { "delay": 0, "tip": null }
+            }
+        }
+    }
+}

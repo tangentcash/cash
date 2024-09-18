@@ -1,0 +1,14 @@
+{
+  "name": "tangent",
+  "version": "1.0.0",
+  "dependencies": [
+    "sqlite3",
+    "secp256k1",
+    "gmp",
+    "protobuf",
+    "libsodium",
+    "openssl",
+    "zlib"
+  ],
+  "builtin-baseline": "d54715d44702b0d06563e8a56d13627743e9db5a"
+}
