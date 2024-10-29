@@ -750,9 +750,10 @@ public:
 	static int Consensus(int argc, char* argv[])
 	{
 		Vitex::Runtime Scope;
-		VI_PANIC(argc > 1, "at least one argument is required");
-		uint32_t Index = *FromString<uint32_t>(argv[1]);
-		Protocol Params = Protocol(Stringify::Text("./node-%i.json", Index));
+		String Config = argc > 1 ? argv[1] : TAN_CONFIG_PATH;
+		String Number = Config.substr(Config.find('-') + 1);
+		Protocol Params = Protocol(Config);
+		uint32_t Index = FromString<uint32_t>(Number.substr(0, Number.find_first_not_of("0123456789"))).Or(1);
 
 		Ledger::Wallet Wallet = Ledger::Wallet::FromSeed(Stringify::Text("00000%i", Index - 1));
 		Ledger::Edge Node;
@@ -773,7 +774,7 @@ public:
 	static int BlockchainFullCoverage(int argc, char* argv[])
 	{
 		Vitex::Runtime Scope;
-		Protocol Params;
+		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
 
 		auto* Term = Console::Get();
 		Term->Show();
@@ -807,7 +808,7 @@ public:
 	static int BlockchainPartialCoverage(int argc, char* argv[])
 	{
 		Vitex::Runtime Scope;
-		Protocol Params;
+		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
 
 		auto* Term = Console::Get();
 		Term->Show();
@@ -833,7 +834,7 @@ public:
 	static int BlockchainLowEntropyThroughput(int argc, char* argv[])
 	{
 		Vitex::Runtime Scope;
-		Protocol Params;
+		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
 
 		auto* Term = Console::Get();
 		Term->Show();
@@ -919,7 +920,7 @@ public:
 	static int BlockchainHighEntropyThroughput(int argc, char* argv[])
 	{
 		Vitex::Runtime Scope;
-		Protocol Params;
+		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
 
 		auto* Term = Console::Get();
 		Term->Show();
@@ -1012,7 +1013,7 @@ public:
 	static int BlockchainAbnormalEntropyThroughput(int argc, char* argv[])
 	{
 		Vitex::Runtime Scope;
-		Protocol Params;
+		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
 
 		auto* Term = Console::Get();
 		Term->Show();
@@ -1121,7 +1122,7 @@ public:
 	static int Explorer(int argc, char* argv[])
 	{
 		Vitex::Runtime Scope;
-		Protocol Params;
+		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
 
 		auto* Term = Console::Get();
 		Term->Show();
@@ -1599,7 +1600,7 @@ public:
 	static int Verify(int argc, char* argv[])
 	{
 		Vitex::Runtime Scope;
-		Protocol Params;
+		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
 
 		auto* Term = Console::Get();
 		Term->Show();
@@ -1678,7 +1679,7 @@ public:
 	static int Wesolowski(int argc, char* argv[])
 	{
 		Vitex::Runtime Scope;
-		Protocol Params;
+		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
 
 		auto* Term = Console::Get();
 		Term->Show();
@@ -1697,7 +1698,7 @@ public:
 	static int WesolowskiCalibration(int argc, char* argv[])
 	{
 		Vitex::Runtime Scope;
-		Protocol Params;
+		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
 
 		auto* Term = Console::Get();
 		Term->Show();
@@ -1719,7 +1720,7 @@ public:
 	static int GasEstimation(int argc, char* argv[])
 	{
 		Vitex::Runtime Scope;
-		Protocol Params;
+		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
 
 		auto* Term = Console::Get();
 		Term->Show();
@@ -1754,7 +1755,7 @@ public:
 	static int Wallet(int argc, char* argv[])
 	{
 		Vitex::Runtime Scope;
-		Protocol Params;
+		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
 
 		auto* Term = Console::Get();
 		Term->Show();
@@ -1773,7 +1774,7 @@ public:
 	static int Transaction(int argc, char* argv[])
 	{
 		Vitex::Runtime Scope;
-		Protocol Params;
+		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
 
 		auto* Term = Console::Get();
 		Term->Show();
@@ -1800,7 +1801,7 @@ public:
 	static int MerkleTree(int argc, char* argv[])
 	{
 		Vitex::Runtime Scope;
-		Protocol Params;
+		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
 
 		auto* Term = Console::Get();
 		Term->Show();
@@ -1855,7 +1856,7 @@ public:
 	static int OracleWallets(int argc, char* argv[])
 	{
 		Vitex::Runtime Scope;
-		Protocol Params;
+		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
 
 		auto* Term = Console::Get();
 		Term->Show();
@@ -1878,7 +1879,7 @@ public:
 	static int OracleOperations(int argc, char* argv[])
 	{
 		Vitex::Runtime Scope;
-		Protocol Params;
+		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
 
 		auto* Term = Console::Get();
 		Term->Show();
@@ -1962,7 +1963,7 @@ public:
 	static int SharedWallet(int argc, char* argv[])
 	{
 		Vitex::Runtime Scope;
-		Protocol Params;
+		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
 
 		auto* Term = Console::Get();
 		Term->Show();
@@ -2018,7 +2019,7 @@ public:
 	static int WalletMessaging(int argc, char* argv[])
 	{
 		Vitex::Runtime Scope;
-		Protocol Params;
+		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
 
 		auto* Term = Console::Get();
 		Term->Show();
@@ -2070,7 +2071,7 @@ public:
 	static int IntegerSerialization(int argc, char* argv[])
 	{
 		Vitex::Runtime Scope;
-		Protocol Params;
+		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
 
 		auto* Term = Console::Get();
 		Term->Show();
@@ -2099,7 +2100,7 @@ public:
 	static int IntegerConversion(int argc, char* argv[])
 	{
 		Vitex::Runtime Scope;
-		Protocol Params;
+		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
 
 		auto* Term = Console::Get();
 		Term->Show();

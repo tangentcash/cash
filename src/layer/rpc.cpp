@@ -208,7 +208,7 @@ namespace Tangent
 			Bind(AccessLevel::User, "utility", "decodeaddress", 1, 1, "(string address) const", "decode address", std::bind(&ServerNode::UtilityDecodeAddress, this, std::placeholders::_1));
 			Bind(AccessLevel::User, "utility", "decodemessage", 1, 1, "(string message) const", "decode message", std::bind(&ServerNode::UtilityDecodeMessage, this, std::placeholders::_1));
 			Bind(AccessLevel::User, "utility", "help", 0, 0, "() const", "get reference of all methods", std::bind(&ServerNode::UtilityHelp, this, std::placeholders::_1));
-			Bind(AccessLevel::Admin, "chainstate", "prune", 2, 2, "(string type = 'statetrie' | 'blocktrie' | 'transactiontrie', uint64 number) const", "prune chainstate data using pruning level", std::bind(&ServerNode::ChainstatePrune, this, std::placeholders::_1));
+			Bind(AccessLevel::Admin, "chainstate", "prune", 2, 2, "(string types = 'statetrie' | 'blocktrie' | 'transactiontrie', uint64 number) const", "prune chainstate data using pruning level (types is '|' separated list)", std::bind(&ServerNode::ChainstatePrune, this, std::placeholders::_1));
 			Bind(AccessLevel::Admin, "chainstate", "verify", 2, 3, "(uint64 number, uint64 count, bool? validate) const", "verify chain and possibly re-execute each block", std::bind(&ServerNode::ChainstateVerify, this, std::placeholders::_1));
 			Bind(AccessLevel::Admin, "chainstate", "tracecall", 4, 32, "(string asset, string from_address, string to_address, string function, ...) const", "trace execution of mutable/immutable function of program assigned to to_address", std::bind(&ServerNode::ChainstateTraceCall, this, std::placeholders::_1));
 			Bind(AccessLevel::User, "chainstate", "immutablecall", 4, 32, "(string asset, string from_address, string to_address, string function, ...) const", "execute of immutable function of program assigned to to_address", std::bind(&ServerNode::ChainstateImmutableCall, this, std::placeholders::_1));
@@ -542,20 +542,23 @@ namespace Tangent
 		}
 		Promise<ServerResponse> ServerNode::ChainstatePrune(Format::Variables&& Args)
 		{
-			Storages::Pruning Prune = (Storages::Pruning)255;
-			auto Type = Args[0].AsString();
-			if (Type == "statetrie")
-				Prune = Storages::Pruning::Statetrie;
-			else if (Type == "blocktrie")
-				Prune = Storages::Pruning::Blocktrie;
-			else if (Type == "transactiontrie")
-				Prune = Storages::Pruning::Transactiontrie;
-			else if (Prune == (Storages::Pruning)255)
+			uint32_t Types = 0;
+			for (auto& Subtype : Stringify::Split(Args[0].AsString(), '|'))
+			{
+				if (Subtype == "blocktrie")
+					Types |= (uint32_t)Storages::Pruning::Blocktrie;
+				else if (Subtype == "transactiontrie")
+					Types |= (uint32_t)Storages::Pruning::Transactiontrie;
+				else if (Subtype == "statetrie")
+					Types |= (uint32_t)Storages::Pruning::Statetrie;
+			}
+			
+			if (Types == 0)
 				return ServerResponse().Error(ErrorCodes::NotFound, "invalid type");
 
 			uint64_t Number = Args[1].AsUint64();
 			auto Chain = Storages::Chainstate(__func__);
-			auto Status = Chain.Prune(Prune, Number);
+			auto Status = Chain.Prune(Types, Number);
 			if (!Status)
 				return ServerResponse().Error(ErrorCodes::NotFound, Status.Error().Info);
 

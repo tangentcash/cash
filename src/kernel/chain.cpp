@@ -3,39 +3,57 @@
 #ifdef TAN_VALIDATOR
 #include "oracle.h"
 #include "../policy/storages.h"
+#ifdef TAN_ROCKSDB
+#include "rocksdb/db.h"
+#include "rocksdb/table.h"
+#endif
 #endif
 extern "C"
 {
 #include "../utils/tiny-bitcoin/ecc.h"
 }
-#define DB_EXTENSION ".db"
 #define KEY_FRONT 32
 #define KEY_BACK 32
 #define KEY_SIZE 2048
 
 namespace Tangent
 {
-	static std::string_view StorageConfiguration(StorageOptimization Type)
+#ifdef TAN_ROCKSDB
+	static rocksdb::Options BlobStorageConfiguration(uint64_t BlobCacheSize)
+	{
+		rocksdb::BlockBasedTableOptions TableOptions;
+		TableOptions.block_cache = rocksdb::NewLRUCache(BlobCacheSize);
+
+		rocksdb::Options Options;
+		Options.create_if_missing = true;
+		Options.table_factory.reset(rocksdb::NewBlockBasedTableFactory(TableOptions));
+
+		return Options;
+	}
+#endif
+	static String IndexStorageConfiguration(StorageOptimization Type, uint64_t IndexPageSize, int64_t IndexCacheSize)
 	{
 		switch (Type)
 		{
 			case Tangent::StorageOptimization::Speed:
-				return
+				return Stringify::Text(
 					"PRAGMA journal_mode = WAL;"
 					"PRAGMA synchronous = off;"
 					"PRAGMA temp_store = memory;"
 					"PRAGMA mmap_size = 68719476736;"
-					"PRAGMA page_size = 32768;";
+					"PRAGMA page_size = %" PRIu64 ";"
+					"PRAGMA cache_size = %" PRIi64 ";", IndexPageSize, IndexCacheSize);
 			case Tangent::StorageOptimization::Safety:
 			default:
-				return
+				return Stringify::Text(
 					"PRAGMA journal_mode = WAL;"
 					"PRAGMA synchronous = normal;"
 					"PRAGMA temp_store = file;"
 					"PRAGMA mmap_size = 68719476736;"
-					"PRAGMA page_size = 32768;";
+					"PRAGMA page_size = %" PRIu64 ";"
+					"PRAGMA cache_size = %" PRIi64 ";", IndexPageSize, IndexCacheSize);
 		}
-	}	
+	}
 
 	LayerException::LayerException() : std::exception()
 	{
@@ -48,18 +66,42 @@ namespace Tangent
 		return Info.c_str();
 	}
 
-	UPtr<LDB::Connection> Repository::Use(size_t Epoch, const std::string_view& Location, std::function<void(LDB::Connection*)>&& Initializer)
+	rocksdb::DB* Repository::LoadBlob(const std::string_view& Location)
+	{
+#ifdef TAN_ROCKSDB
+		UMutex<std::mutex> Unique(Mutex);
+		if (TargetPath.empty())
+			Resolve(Protocol::Now().User.Network, Protocol::Now().User.Storage.Directory);
+
+		String Address = Stringify::Text("%s%.*sdb", TargetPath.c_str(), (int)Location.size(), Location.data());
+		auto It = Blobs.find(Address);
+		if (It != Blobs.end() && It->second)
+			return It->second.get();
+		
+		rocksdb::DB* Result = nullptr;
+		auto Status = rocksdb::DB::Open(BlobStorageConfiguration(Protocol::Now().User.Storage.BlobCacheSize), std::string(Address.begin(), Address.end()), &Result);
+		if (!Status.ok())
+		{
+			VI_ERR("[blobdb] wal append error: %s (location: %s)", Status.ToString().c_str(), Address.c_str());
+			return nullptr;
+		}
+
+		VI_DEBUG("[blobdb] wal append on %s (handle: 0x%" PRIXPTR ")", Address.c_str(), (uintptr_t)Result);
+		Blobs[Address] = std::unique_ptr<rocksdb::DB>(Result);
+		return Result;
+#else
+		return nullptr;
+#endif
+	}
+	UPtr<LDB::Connection> Repository::LoadIndex(const std::string_view& Location, std::function<void(LDB::Connection*)>&& Initializer)
 	{
 		UMutex<std::mutex> Unique(Mutex);
 		if (TargetPath.empty())
-			Restore(Resolve(Protocol::Now().User.Network, Protocol::Now().User.Storage.Directory));
-
-		if (Epoch == (size_t)-1)
-			Epoch = Epoches[String(Location)] + 1;
+			Resolve(Protocol::Now().User.Network, Protocol::Now().User.Storage.Directory);
 
 		UPtr<LDB::Connection> Result;
-		String Address = AddressOf(Epoch, Location);
-		auto& Queue = Queues[Address];
+		String Address = Stringify::Text("file:///%s%.*s.db", TargetPath.c_str(), (int)Location.size(), Location.data());
+		auto& Queue = Indices[Address];
 		if (!Queue.empty())
 		{
 			Result = std::move(Queue.front());
@@ -68,37 +110,53 @@ namespace Tangent
 		}
 
 		Result = new LDB::Connection();
-		if (!Result->Connect(Address))
+		auto Status = Result->Connect(Address);
+		if (!Status)
+		{
+			VI_ERR("[indexdb] wal append error: %s (location: %s)", Status.Error().what(), Address.c_str());
 			return Result;
-		else if (!Result->Query(StorageConfiguration(Protocol::Now().User.Storage.Optimization)))
+		}
+		else if (!Result->Query(IndexStorageConfiguration(Protocol::Now().User.Storage.Optimization, Protocol::Now().User.Storage.IndexPageSize, Protocol::Now().User.Storage.IndexCacheSize)))
 			return Result;
 		else if (Initializer)
 			Initializer(*Result);
 
-		VI_DEBUG("[db] wal append on %s (handle: 0x%" PRIXPTR ")", Address.c_str(), (uintptr_t)*Result);
-		auto& HighestEpoch = Epoches[String(Location)];
-		if (HighestEpoch < Epoch)
-			HighestEpoch = Epoch;
+		VI_DEBUG("[indexdb] wal append on %s (handle: 0x%" PRIXPTR ")", Address.c_str(), (uintptr_t)*Result);
 		return Result;
 	}
-	void Repository::Free(UPtr<LDB::Connection>&& Value)
+	void Repository::UnloadIndex(UPtr<LDB::Connection>&& Value)
 	{
 		VI_ASSERT(Value, "connection should be set");
 		UMutex<std::mutex> Unique(Mutex);
-		auto& Queue = Queues[Value->GetAddress()];
+		auto& Queue = Indices[Value->GetAddress()];
 		Queue.push(std::move(Value));
 	}
 	void Repository::Reset()
 	{
 		UMutex<std::mutex> Unique(Mutex);
-		Queues.clear();
-		Epoches.clear();
+		Blobs.clear();
+		Indices.clear();
 		TargetPath.clear();
 	}
 	void Repository::Checkpoint()
 	{
 		UMutex<std::mutex> Unique(Mutex);
-		for (auto& Queue : Queues)
+		for (auto& Handle : Blobs)
+		{
+			if (!Handle.second)
+				continue;
+
+			rocksdb::FlushOptions Options;
+			Options.allow_write_stall = true;
+			Options.wait = true;
+
+			auto Status = Handle.second->Flush(Options);
+			if (Status.ok())
+				VI_DEBUG("[blobdb] wal checkpoint on %s", Handle.first.c_str());
+			else
+				VI_ERR("[blobdb] wal checkpoint error on: %s (location: %s)", Status.ToString().c_str(), Handle.first.c_str());
+		}
+		for (auto& Queue : Indices)
 		{
 			if (Queue.second.empty())
 				continue;
@@ -106,39 +164,7 @@ namespace Tangent
 			auto& Handle = Queue.second.front();
 			auto States = Handle->WalCheckpoint(LDB::CheckpointMode::Truncate);
 			for (auto& State : States)
-				VI_DEBUG("[db] wal checkpoint on %s (db: %s, fc: %i, fs: %i, stat: %i)", Queue.first.c_str(), State.Database.empty() ? "all" : State.Database.c_str(), State.FramesCount, State.FramesSize, State.Status);
-		}
-	}
-	void Repository::Restore(const std::string_view& Path)
-	{
-		Vector<std::pair<String, FileEntry>> Files;
-		if (!OS::Directory::Scan(Path, Files))
-			return;
-
-		for (auto& File : Files)
-		{
-			if (File.second.IsDirectory)
-			{
-				Restore(String(Path) + File.first + VI_SPLITTER);
-				continue;
-			}
-			else if (!Stringify::EndsWith(File.first, DB_EXTENSION))
-				continue;
-			
-			auto Notation = Stringify::Split(std::string_view(File.first).substr(0, File.first.size() - (sizeof(DB_EXTENSION) - 1)), '.');
-			if (Notation.size() != 2 || Notation.back().front() != 'e')
-				continue;
-
-			auto Epoch = FromString<size_t>(std::string_view(Notation.back()).substr(1));
-			if (!Epoch)
-				continue;
-
-			String Location = String(Path) + Notation.front();
-			Stringify::Replace(Location, TargetPath, String());
-
-			auto& HighestEpoch = Epoches[Location];
-			if (HighestEpoch < *Epoch)
-				HighestEpoch = *Epoch;
+				VI_DEBUG("[indexdb] wal checkpoint on %s (db: %s, fc: %i, fs: %i, stat: %i)", Queue.first.c_str(), State.Database.empty() ? "all" : State.Database.c_str(), State.FramesCount, State.FramesSize, State.Status);
 		}
 	}
 	const String& Repository::Resolve(NetworkType Type, const std::string_view& Path)
@@ -182,26 +208,6 @@ namespace Tangent
 	const String Repository::Location() const
 	{
 		return TargetPath;
-	}
-	String Repository::AddressOf(size_t Epoch, const std::string_view& Location) const
-	{
-		return "file:///" + PathOf(Epoch, Location);
-	}
-	String Repository::PathOf(size_t Epoch, const std::string_view& Location) const
-	{
-		String Partition = PartitionOf(Epoch, Location);
-		return Stringify::Text("%s%s" DB_EXTENSION, TargetPath.c_str(), Partition.c_str());
-	}
-	String Repository::PartitionOf(size_t Epoch, const std::string_view& Location) const
-	{
-		VI_ASSERT(!Location.empty() && Location.front() != '/' && Location.front() != '\\' && Location.back() != '/' && Location.back() != '\\', "location should be valid");
-		return Stringify::Text("%.*s%" PRIu64, (int)Location.size(), Location.data(), (uint64_t)Epoch);
-	}
-	size_t Repository::EpochOf(const std::string_view& Location)
-	{
-		UMutex<std::mutex> Unique(Mutex);
-		auto It = Epoches.find(KeyLookupCast(Location));
-		return It == Epoches.end() ? 0 : It->second;
 	}
 
 	String Vectorstate::New()
@@ -452,9 +458,29 @@ namespace Tangent
 			if (Value != nullptr && Value->Value.Is(VarType::Integer))
 				User.Storage.ScriptCacheSize = Value->Value.GetInteger();
 
-			Value = Config->Fetch("storage.partition_size");
+			Value = Config->Fetch("storage.blob_cache_size");
 			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.Storage.PartitionSize = Value->Value.GetInteger();
+				User.Storage.BlobCacheSize = Value->Value.GetInteger();
+
+			Value = Config->Fetch("storage.index_page_size");
+			if (Value != nullptr && Value->Value.Is(VarType::Integer))
+				User.Storage.IndexPageSize = Value->Value.GetInteger();
+
+			Value = Config->Fetch("storage.index_cache_size");
+			if (Value != nullptr && Value->Value.Is(VarType::Integer))
+				User.Storage.IndexCacheSize = Value->Value.GetInteger();
+
+			Value = Config->Fetch("storage.transaction_to_account_index");
+			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
+				User.Storage.TransactionToAccountIndex = Value->Value.GetBoolean();
+
+			Value = Config->Fetch("storage.transaction_to_rollup_index");
+			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
+				User.Storage.TransactionToRollupIndex = Value->Value.GetBoolean();
+
+			Value = Config->Fetch("storage.full_block_history");
+			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
+				User.Storage.FullBlockHistory = Value->Value.GetBoolean();
 
 			Value = Config->Fetch("oracle.block_replay_multiplier");
 			if (Value != nullptr && Value->Value.Is(VarType::Integer))

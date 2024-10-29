@@ -28,9 +28,9 @@ namespace Tangent
 
 		enum class Pruning
 		{
-			Statetrie,
-			Blocktrie,
-			Transactiontrie
+			Blocktrie = 1 << 0,
+			Transactiontrie = 1 << 1,
+			Statetrie = 1 << 2
 		};
 
 		class LocationCache : public Singleton<LocationCache>
@@ -75,6 +75,9 @@ namespace Tangent
 		struct Chainstate : Ledger::PermanentStorage
 		{
 		private:
+			LDB::Connection* Blockdata;
+			LDB::Connection* Txdata;
+			LDB::Connection* Statedata;
 			std::string_view Label;
 			bool Borrows;
 
@@ -83,7 +86,7 @@ namespace Tangent
 			virtual ~Chainstate() noexcept override;
 			ExpectsLR<void> Revert(uint64_t BlockNumber);
 			ExpectsLR<void> Dispatch(const Vector<uint256_t>& TransactionHashes);
-			ExpectsLR<void> Prune(Pruning Type, uint64_t BlockNumber);
+			ExpectsLR<void> Prune(uint32_t Types, uint64_t BlockNumber);
 			ExpectsLR<void> Checkpoint(const Ledger::Block& Value);
 			ExpectsLR<uint64_t> GetCheckpointBlockNumber();
 			ExpectsLR<uint64_t> GetLatestBlockNumber();
@@ -130,7 +133,7 @@ namespace Tangent
 			ExpectsLR<uint64_t> ResolveOwnerLocation(const Algorithm::Pubkeyhash Owner);
 
 		protected:
-			bool Verify() override;
+			bool Verify(LDB::Connection* Storage, const std::string_view& Name) override;
 		};
 
 		struct Mempoolstate : Ledger::MutableStorage

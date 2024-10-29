@@ -15,7 +15,7 @@ namespace Tangent
 		struct MutableStorage
 		{
 		private:
-			size_t Queries = 0;
+			std::atomic<uint64_t> Queries = 0;
 
 		protected:
 			UPtr<LDB::Connection> Storage;
@@ -48,12 +48,15 @@ namespace Tangent
 
 		struct PermanentStorage
 		{
+		public:
+			typedef UnorderedMap<LDB::Connection*, LDB::SessionId> MultiSessionId;
+
 		private:
-			size_t Queries = 0;
+			std::atomic<uint64_t> Queries = 0;
 
 		protected:
-			UPtr<LDB::Connection> HottestStorage;
-			String PartitionLocation;
+			UnorderedMap<String, UPtr<LDB::Connection>> Index;
+			rocksdb::DB* Blob = nullptr;
 
 		public:
 			PermanentStorage() = default;
@@ -67,27 +70,25 @@ namespace Tangent
 			size_t GetQueries() const;
 
 		public:
-			virtual LDB::ExpectsDB<LDB::SessionId> TxBegin(const std::string_view& Label, const std::string_view& Operation, LDB::Isolation Type);
-			virtual LDB::ExpectsDB<void> TxCommit(const std::string_view& Label, const std::string_view& Operation, LDB::SessionId Session);
-			virtual LDB::ExpectsDB<void> TxRollback(const std::string_view& Label, const std::string_view& Operation, LDB::SessionId Session);
+			virtual LDB::ExpectsDB<MultiSessionId> MultiTxBegin(const std::string_view& Label, const std::string_view& Operation, LDB::Isolation Type);
+			virtual LDB::ExpectsDB<void> MultiTxCommit(const std::string_view& Label, const std::string_view& Operation, const MultiSessionId& Session);
+			virtual LDB::ExpectsDB<void> MultiTxRollback(const std::string_view& Label, const std::string_view& Operation, const MultiSessionId& Session);
 
 		protected:
-			virtual LDB::ExpectsDB<LDB::Cursor> Query(const std::string_view& Label, const std::string_view& Operation, const std::string_view& Command, size_t QueryOps = 0, LDB::SessionId Session = nullptr);
-			virtual LDB::ExpectsDB<LDB::Cursor> PreparedQuery(const std::string_view& Label, const std::string_view& Operation, LDB::TStatement* Statement);
-			virtual LDB::ExpectsDB<LDB::Cursor> EmplaceQuery(const std::string_view& Label, const std::string_view& Operation, const std::string_view& Command, SchemaList* Map, size_t QueryOps = 0, LDB::SessionId Session = nullptr);
-			virtual LDB::ExpectsDB<LDB::Cursor> ArchiveQuery(const std::string_view& Label, const std::string_view& Operation, const std::string_view& Command, size_t QueryOps = 0);
-			virtual LDB::ExpectsDB<LDB::Cursor> ArchivePreparedQuery(const std::string_view& Label, const std::string_view& Operation, LDB::TStatement* Statement);
-			virtual LDB::ExpectsDB<LDB::Cursor> ArchiveEmplaceQuery(const std::string_view& Label, const std::string_view& Operation, const std::string_view& Command, SchemaList* Map, size_t QueryOps = 0);
-			virtual LDB::ExpectsDB<LDB::Cursor> ArchiveQueryRecursive(const std::string_view& Label, const std::string_view& Operation, const std::string_view& Command, size_t QueryOps = 0);
-			virtual LDB::ExpectsDB<LDB::Cursor> ArchiveEmplaceQueryRecursive(const std::string_view& Label, const std::string_view& Operation, const std::string_view& Command, SchemaList* Map, size_t QueryOps = 0);
+			virtual LDB::ExpectsDB<LDB::SessionId> TxBegin(LDB::Connection* Storage, const std::string_view& Label, const std::string_view& Operation, LDB::Isolation Type);
+			virtual LDB::ExpectsDB<void> TxCommit(LDB::Connection* Storage, const std::string_view& Label, const std::string_view& Operation, LDB::SessionId Session);
+			virtual LDB::ExpectsDB<void> TxRollback(LDB::Connection* Storage, const std::string_view& Label, const std::string_view& Operation, LDB::SessionId Session);
+			virtual LDB::ExpectsDB<LDB::Cursor> Query(LDB::Connection* Storage, const std::string_view& Label, const std::string_view& Operation, const std::string_view& Command, size_t QueryOps = 0, LDB::SessionId Session = nullptr);
+			virtual LDB::ExpectsDB<LDB::Cursor> EmplaceQuery(LDB::Connection* Storage, const std::string_view& Label, const std::string_view& Operation, const std::string_view& Command, SchemaList* Map, size_t QueryOps = 0, LDB::SessionId Session = nullptr);
+			virtual LDB::ExpectsDB<LDB::Cursor> PreparedQuery(LDB::Connection* Storage, const std::string_view& Label, const std::string_view& Operation, LDB::TStatement* Statement);
+			virtual LDB::ExpectsDB<String> Load(const std::string_view& Label, const std::string_view& Operation, const std::string_view& Key);
+			virtual LDB::ExpectsDB<void> Store(const std::string_view& Label, const std::string_view& Operation, const std::string_view& Key, const std::string_view& Value);
 			virtual String ErrorOf(LDB::ExpectsDB<LDB::SessionId>& Cursor);
 			virtual String ErrorOf(LDB::ExpectsDB<void>& Cursor);
 			virtual String ErrorOf(LDB::ExpectsDB<LDB::Cursor>& Cursor);
-			virtual void StorageOf(const std::string_view& Location);
-			virtual bool Verify() = 0;
-
-		private:
-			UPtr<LDB::Connection> UseStorageOf(size_t Epoch);
+			virtual void IndexStorageOf(const std::string_view& Location, const std::string_view& Name);
+			virtual void BlobStorageOf(const std::string_view& Location);
+			virtual bool Verify(LDB::Connection* Storage, const std::string_view& Name) = 0;
 		};
 	}
 }

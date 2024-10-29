@@ -16,6 +16,11 @@ using namespace Vitex::Layer;
 using namespace Vitex::Network;
 using namespace Vitex::Scripting;
 
+namespace rocksdb
+{
+    class DB;
+}
+
 namespace Tangent
 {
     template <typename K, typename Comparator = typename std::set<K>::key_compare>
@@ -63,32 +68,20 @@ namespace Tangent
     {
         friend class Protocol;
 
-    public:
-        enum
-        {
-            NEW_EPOCH = (size_t) - 1
-        };
-
     private:
-        UnorderedMap<String, SingleQueue<UPtr<LDB::Connection>>> Queues;
-        UnorderedMap<String, size_t> Epoches;
+        UnorderedMap<String, SingleQueue<UPtr<LDB::Connection>>> Indices;
+        UnorderedMap<String, std::unique_ptr<rocksdb::DB>> Blobs;
         std::mutex Mutex;
         String TargetPath;
 
     public:
-        UPtr<LDB::Connection> Use(size_t Epoch, const std::string_view& Location, std::function<void(LDB::Connection*)>&& Initializer);
-        void Free(UPtr<LDB::Connection>&& Connection);
+        rocksdb::DB* LoadBlob(const std::string_view& Location);
+        UPtr<LDB::Connection> LoadIndex(const std::string_view& Location, std::function<void(LDB::Connection*)>&& Initializer);
+        void UnloadIndex(UPtr<LDB::Connection>&& Connection);
         void Reset();
         void Checkpoint();
-        String AddressOf(size_t Epoch, const std::string_view& Location) const;
-        String PathOf(size_t Epoch, const std::string_view& Location) const;
-        String PartitionOf(size_t Epoch, const std::string_view& Location) const;
-        size_t EpochOf(const std::string_view& Location);
         const String& Resolve(NetworkType Type, const std::string_view& Path);
         const String Location() const;
-
-    private:
-        void Restore(const std::string_view& Path);
     };
 
     class Timepoint
@@ -156,10 +149,15 @@ namespace Tangent
             {
                 String Directory = "./";
                 StorageOptimization Optimization = StorageOptimization::Speed;
-                uint64_t CheckpointSize = 14400;
+                uint64_t CheckpointSize = 0;
                 uint64_t LocationCacheSize = 500000;
                 uint64_t ScriptCacheSize = 8192;
-                uint64_t PartitionSize = 68719476736llu;
+                uint64_t BlobCacheSize = 134217728;
+                uint64_t IndexPageSize = 65536;
+                int64_t IndexCacheSize = -2000;
+                bool TransactionToAccountIndex = true;
+                bool TransactionToRollupIndex = true;
+                bool FullBlockHistory = true;
             } Storage;
             struct
             {

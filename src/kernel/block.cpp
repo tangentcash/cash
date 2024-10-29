@@ -861,7 +861,7 @@ namespace Tangent
 		{
 #ifdef TAN_VALIDATOR
 			auto Chain = Storages::Chainstate(__func__);
-			auto ChainSession = Chain.TxBegin("chainwork", "apply", LDB::Isolation::Default);
+			auto ChainSession = Chain.MultiTxBegin("chainwork", "apply", LDB::Isolation::Default);
 			if (!ChainSession)
 				return LayerException(std::move(ChainSession.Error().message()));
 
@@ -877,7 +877,7 @@ namespace Tangent
 				auto MempoolSession = Mempool.TxBegin("mempoolwork", "apply", LDB::Isolation::Default);
 				if (!MempoolSession)
 				{
-					Chain.TxRollback("chainwork", "apply", *ChainSession);
+					Chain.MultiTxRollback("chainwork", "apply", *ChainSession);
 					return LayerException(std::move(MempoolSession.Error().message()));
 				}
 
@@ -912,7 +912,7 @@ namespace Tangent
 				auto Status = Chain.Revert(NextNumber - 1);
 				if (!Status)
 				{
-					Chain.TxRollback("chainwork", "apply", *ChainSession);
+					Chain.MultiTxRollback("chainwork", "apply", *ChainSession);
 					Mempool.TxRollback("mempoolwork", "apply", *MempoolSession);
 					return Status.Error();
 				}
@@ -920,12 +920,12 @@ namespace Tangent
 				Status = Chain.Checkpoint(*this);
 				if (!Status)
 				{
-					Chain.TxRollback("chainwork", "apply", *ChainSession);
+					Chain.MultiTxRollback("chainwork", "apply", *ChainSession);
 					Mempool.TxRollback("mempoolwork", "apply", *MempoolSession);
 					return Status.Error();
 				}
 
-				auto Result = Chain.TxCommit("chainwork", "apply", *ChainSession);
+				auto Result = Chain.MultiTxCommit("chainwork", "apply", *ChainSession);
 				if (!Result)
 				{
 					Mempool.TxRollback("mempoolwork", "apply", *MempoolSession);
@@ -941,11 +941,11 @@ namespace Tangent
 				auto Status = Chain.Checkpoint(*this);
 				if (!Status)
 				{
-					Chain.TxRollback("chainwork", "apply", *ChainSession);
+					Chain.MultiTxRollback("chainwork", "apply", *ChainSession);
 					return Status.Error();
 				}
 
-				auto Result = Chain.TxCommit("chainwork", "apply", *ChainSession);
+				auto Result = Chain.MultiTxCommit("chainwork", "apply", *ChainSession);
 				if (!Result)
 					return LayerException(std::move(Result.Error().message()));
 

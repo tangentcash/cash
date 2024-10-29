@@ -94,6 +94,23 @@ namespace Vitex
 			else
 				std::for_each(Begin, End, Callback);
 		}
+		template <typename Function1, typename Function2>
+		static void ParallelTuple(Function1 Callback1, Function2 Callback2)
+		{
+			size_t Threads = std::max<size_t>(1, Layer::Parallel::GetThreads());
+			if (Schedule::IsAvailable() && Threads > 1)
+			{
+				Core::Promise<void> Task1 = Cotask<void>(Callback1, false);
+				Core::Promise<void> Task2 = Cotask<void>(Callback2, false);
+				Task1.Wait();
+				Task2.Wait();
+			}
+			else
+			{
+				Callback1();
+				Callback2();
+			}
+		}
 	}
 }
 #endif

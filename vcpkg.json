@@ -2,11 +2,12 @@
   "name": "tangent",
   "version": "1.0.0",
   "dependencies": [
-    "sqlite3",
     "secp256k1",
     "gmp",
     "protobuf",
     "libsodium",
+    "rocksdb",
+    "sqlite3",
     "openssl",
     "zlib"
   ],

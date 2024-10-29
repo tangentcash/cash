@@ -41,17 +41,51 @@ namespace Tangent
 			const Ledger::State* Context;
 		};
 
-		static void FinalizeChecksum(Messages::Generic& Message, const LDB::Column& Column)
+		static void FinalizeChecksum(Messages::Generic& Message, const Variant& Column)
 		{
-			auto Hash = Column.Get().GetBlob();
-			if (Hash.size() == sizeof(uint256_t))
-				Algorithm::Encoding::EncodeUint256((uint8_t*)Hash.data(), Message.Checksum);
+			if (Column.Size() == sizeof(uint256_t))
+				Algorithm::Encoding::EncodeUint256(Column.GetBinary(), Message.Checksum);
 		}
-		static void FinalizeChecksum(Messages::Authentic& Message, const LDB::Column& Column)
+		static void FinalizeChecksum(Messages::Authentic& Message, const Variant& Column)
 		{
-			auto Hash = Column.Get().GetBlob();
-			if (Hash.size() == sizeof(uint256_t))
-				Algorithm::Encoding::EncodeUint256((uint8_t*)Hash.data(), Message.Checksum);
+			if (Column.Size() == sizeof(uint256_t))
+				Algorithm::Encoding::EncodeUint256(Column.GetBinary(), Message.Checksum);
+		}
+		static String GetBlockLabel(const uint8_t Hash[32])
+		{
+			String Label;
+			Label.resize(33);
+			Label.front() = 'b';
+			memcpy(Label.data() + 1, Hash, sizeof(uint8_t) * 32);
+			return Label;
+		}
+		static String GetTransactionLabel(const uint8_t Hash[32])
+		{
+			String Label;
+			Label.resize(33);
+			Label.front() = 't';
+			memcpy(Label.data() + 1, Hash, sizeof(uint8_t) * 32);
+			return Label;
+		}
+		static String GetReceiptLabel(const uint8_t Hash[32])
+		{
+			String Label;
+			Label.resize(33);
+			Label.front() = 'r';
+			memcpy(Label.data() + 1, Hash, sizeof(uint8_t) * 32);
+			return Label;
+		}
+		static String GetStateLabel(const std::string_view& Address, const std::string_view& Stride, uint64_t Number)
+		{
+			String Label;
+			Label.reserve(Address.size() + Stride.size() + sizeof(uint64_t) * 2 + 1);
+			Label.append(1, 's');
+			Label.append(Address);
+			Label.append(Stride);
+
+			uint64_t Numeric = OS::CPU::ToEndianness(OS::CPU::Endian::Little, Number);
+			Label.append(std::string_view((char*)&Numeric, sizeof(Numeric)));
+			return Label;
 		}
 
 		void LocationCache::ClearLocations()
@@ -196,20 +230,43 @@ namespace Tangent
 		{
 			if (LatestChainstate != nullptr)
 			{
-				HottestStorage = *LatestChainstate->HottestStorage;
-				Borrows = !!HottestStorage;
+				Borrows = !!LatestChainstate->Blob;
+				Blob = LatestChainstate->Blob;
+				for (auto& Storage : LatestChainstate->Index)
+				{
+					Index[Storage.first] = *Storage.second;
+					if (!Storage.second)
+						Borrows = false;
+				}
 			}
 			if (!Borrows)
 			{
-				StorageOf("chainstate");
-				if (HottestStorage)
+				IndexStorageOf("chainindex", "blockdata");
+				IndexStorageOf("chainindex", "txdata");
+				IndexStorageOf("chainindex", "statedata");
+				BlobStorageOf("chainblob");
+
+				bool Acquired = !!Blob;
+				for (auto& Storage : Index)
+				{
+					if (!Storage.second)
+						Acquired = false;
+				}
+				if (Acquired)
 					LatestChainstate = this;
 			}
+
+			Blockdata = *Index["blockdata"];
+			Txdata = *Index["txdata"];
+			Statedata = *Index["statedata"];
 		}
 		Chainstate::~Chainstate() noexcept
 		{
 			if (Borrows)
-				HottestStorage.Reset();
+			{
+				for (auto& Storage : Index)
+					Storage.second.Reset();
+			}
 			if (LatestChainstate == this)
 				LatestChainstate = nullptr;
 		}
@@ -222,26 +279,38 @@ namespace Tangent
 			SchemaList Map;
 			Map.push_back(Var::Set::Integer(BlockNumber));
 			Map.push_back(Var::Set::Integer(BlockNumber));
-			Map.push_back(Var::Set::Integer(BlockNumber));
-			Map.push_back(Var::Set::Integer(BlockNumber));
-			Map.push_back(Var::Set::Integer(BlockNumber));
-			Map.push_back(Var::Set::Integer(BlockNumber));
+
+			auto Cursor = EmplaceQuery(Blockdata, Label, __func__,
+				"DELETE FROM checkpoints WHERE block_number > ?;"
+				"DELETE FROM blocks WHERE block_number > ?", &Map);
+			if (!Cursor || Cursor->Error())
+				return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
+
+			Map.clear();
 			Map.push_back(Var::Set::Integer(BlockNumber));
 			Map.push_back(Var::Set::Integer(BlockNumber));
 			Map.push_back(Var::Set::Integer(BlockNumber));
 			Map.push_back(Var::Set::Integer(BlockNumber));
 
-			auto Cursor = ArchiveEmplaceQueryRecursive(Label, __func__,
-				"DELETE FROM checkpoints WHERE block_number > ?;"
+			Cursor = EmplaceQuery(Txdata, Label, __func__,
 				"DELETE FROM parties WHERE block_number > ?;"
 				"DELETE FROM owners WHERE block_number > ?;"
 				"DELETE FROM aliases WHERE block_number > ?;"
-				"DELETE FROM transactions WHERE block_number > ?;"
+				"DELETE FROM transactions WHERE block_number > ?;", &Map);
+			if (!Cursor || Cursor->Error())
+				return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
+
+			Map.clear();
+			Map.push_back(Var::Set::Integer(BlockNumber));
+			Map.push_back(Var::Set::Integer(BlockNumber));
+			Map.push_back(Var::Set::Integer(BlockNumber));
+			Map.push_back(Var::Set::Integer(BlockNumber));
+
+			Cursor = EmplaceQuery(Statedata, Label, __func__,
 				"DELETE FROM statetries WHERE block_number > ?;"
-				"INSERT OR REPLACE INTO states (address_number, stride_number, block_number, weight, message) SELECT address_number, stride_number, MAX(block_number), weight, message FROM statetries WHERE block_number <= ? GROUP BY address_number, stride_number;"
+				"INSERT OR REPLACE INTO states (address_number, stride_number, block_number, weight) SELECT address_number, stride_number, MAX(block_number), weight FROM statetries WHERE block_number <= ? GROUP BY address_number, stride_number;"
 				"DELETE FROM addresses WHERE block_number > ?;"
-				"DELETE FROM strides WHERE block_number > ?;"
-				"DELETE FROM blocks WHERE block_number > ?", &Map);
+				"DELETE FROM strides WHERE block_number > ?;", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
 
@@ -265,43 +334,122 @@ namespace Tangent
 			SchemaList Map;
 			Map.push_back(Var::Set::String(*LDB::Utils::InlineArray(std::move(Hashes))));
 
-			auto Cursor = ArchiveEmplaceQuery(Label, __func__, "UPDATE transactions SET dispatch_queue = NULL WHERE transaction_hash IN ($?)", &Map);
+			auto Cursor = EmplaceQuery(Txdata, Label, __func__, "UPDATE transactions SET dispatch_queue = NULL WHERE transaction_hash IN ($?)", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
 
 			return Expectation::Met;
 		}
-		ExpectsLR<void> Chainstate::Prune(Pruning Type, uint64_t BlockNumber)
+		ExpectsLR<void> Chainstate::Prune(uint32_t Types, uint64_t BlockNumber)
 		{
-			auto LatestCheckpoint = GetCheckpointBlockNumber().Or(0);
-			if (BlockNumber <= LatestCheckpoint)
-				return Expectation::Met;
+			size_t Offset = 0, Count = 512;
+			if (Types & (uint32_t)Pruning::Blocktrie)
+			{
+				SchemaList Map;
+				Map.push_back(Var::Set::Integer(BlockNumber));
+				Map.push_back(Var::Set::Integer(Count));
+				Map.push_back(Var::Set::Integer(Offset = 0));
+
+				while (true)
+				{
+					Map.back()->Value = Var::Integer(Offset);
+
+					auto Cursor = EmplaceQuery(Blockdata, Label, __func__, "SELECT block_hash FROM blocks WHERE block_number < ? LIMIT ? OFFSET ?", &Map);
+					if (!Cursor || Cursor->Error())
+						return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
+
+					for (auto Row : Cursor->First())
+					{
+						auto BlockHash = Row["block_hash"].Get();
+						Store(Label, __func__, GetBlockLabel(BlockHash.GetBinary()), std::string_view());
+					}
+
+					size_t Results = Cursor->First().Size();
+					Offset += Results;
+					if (Results < Count)
+						break;
+				}
+
+				auto Cursor = EmplaceQuery(Blockdata, Label, __func__, "DELETE FROM blocks WHERE block_number < ?; VACUUM", &Map);
+				if (!Cursor || Cursor->Error())
+					return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
+			}
+			if (Types & (uint32_t)Pruning::Transactiontrie)
+			{
+				SchemaList Map;
+				Map.push_back(Var::Set::Integer(BlockNumber));
+				Map.push_back(Var::Set::Integer(Count));
+				Map.push_back(Var::Set::Integer(Offset = 0));
+
+				while (true)
+				{
+					Map.back()->Value = Var::Integer(Offset);
+
+					auto Cursor = EmplaceQuery(Txdata, Label, __func__, "SELECT transaction_hash, receipt_hash FROM transactions WHERE block_number < ? LIMIT ? OFFSET ?", &Map);
+					if (!Cursor || Cursor->Error())
+						return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
+
+					for (auto Row : Cursor->First())
+					{
+						auto TransactionHash = Row["transaction_hash"].Get();
+						auto ReceiptHash = Row["receipt_hash"].Get();
+						Store(Label, __func__, GetTransactionLabel(TransactionHash.GetBinary()), std::string_view());
+						Store(Label, __func__, GetReceiptLabel(ReceiptHash.GetBinary()), std::string_view());
+					}
+
+					size_t Results = Cursor->First().Size();
+					Offset += Results;
+					if (Results < Count)
+						break;
+				}
+
+				auto Cursor = EmplaceQuery(Txdata, Label, __func__, "DELETE FROM transactions WHERE block_number < ?; VACUUM", &Map);
+				if (!Cursor || Cursor->Error())
+					return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
+			}
+			if (Types & (uint32_t)Pruning::Statetrie)
+			{
+				SchemaList Map;
+				Map.push_back(Var::Set::Integer(BlockNumber));
+				Map.push_back(Var::Set::Integer(Count));
+				Map.push_back(Var::Set::Integer(Offset = 0));
+
+				while (true)
+				{
+					Map.back()->Value = Var::Integer(Offset);
+
+					auto Cursor = EmplaceQuery(Statedata, Label, __func__,
+						"SELECT"
+						" (SELECT address_hash FROM addresses WHERE addresses.address_number = statetries.address_number) AS address,"
+						" (SELECT stride_hash FROM strides WHERE strides.stride_number = statetries.stride_number) AS stride,"
+						" block_number "
+						"FROM statetries WHERE block_number < ? LIMIT ? OFFSET ?", &Map);
+					if (!Cursor || Cursor->Error())
+						return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
+
+					for (auto Row : Cursor->First())
+					{
+						String Address = Row["address"].Get().GetBlob();
+						String Stride = Row["stride"].Get().GetBlob();
+						uint64_t Number = Row["block_number"].Get().GetInteger();
+						Store(Label, __func__, GetStateLabel(Address, Stride, Number), std::string_view());
+					}
+
+					size_t Results = Cursor->First().Size();
+					Offset += Results;
+					if (Results < Count)
+						break;
+				}
+
+				auto Cursor = EmplaceQuery(Statedata, Label, __func__, "DELETE FROM statetries WHERE block_number < ?; VACUUM", &Map);
+				if (!Cursor || Cursor->Error())
+					return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
+			}
 
 			SchemaList Map;
 			Map.push_back(Var::Set::Integer(BlockNumber));
 
-			String Query = "INSERT OR IGNORE INTO checkpoints (block_number) VALUES (?);";
-			switch (Type)
-			{
-				case Tangent::Storages::Pruning::Statetrie:
-					Map.push_back(Var::Set::Integer(BlockNumber));
-					Query += "DELETE FROM statetries WHERE block_number < ?; VACUUM";
-					break;
-				case Tangent::Storages::Pruning::Blocktrie:
-					Map.push_back(Var::Set::Integer(BlockNumber));
-					Query += "UPDATE blocks SET message = '' WHERE block_number < ?; VACUUM";
-					break;
-				case Tangent::Storages::Pruning::Transactiontrie:
-					Map.push_back(Var::Set::Integer(BlockNumber));
-					Map.push_back(Var::Set::Integer(BlockNumber));
-					Map.push_back(Var::Set::Integer(BlockNumber));
-					Query += "UPDATE transactions SET message = '' WHERE block_number < ?; VACUUM";
-					break;
-				default:
-					return ExpectsLR<void>(LayerException("invalid prune type"));
-			}
-
-			auto Cursor = ArchiveEmplaceQueryRecursive(Label, __func__, Query, &Map);
+			auto Cursor = EmplaceQuery(Blockdata, Label, __func__, "INSERT OR IGNORE INTO checkpoints (block_number) VALUES (?);", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
 
@@ -316,33 +464,44 @@ namespace Tangent
 			uint8_t Hash[32];
 			Algorithm::Encoding::DecodeUint256(Value.AsHash(), Hash);
 
+			auto Status = Store(Label, __func__, GetBlockLabel(Hash), BlockHeaderMessage.Data);
+			if (!Status)
+				return ExpectsLR<void>(LayerException(ErrorOf(Status)));
+
 			SchemaList Map;
 			Map.push_back(Var::Set::Integer(Value.Number));
 			Map.push_back(Var::Set::Binary(Hash, sizeof(Hash)));
-			Map.push_back(Var::Set::Binary(BlockHeaderMessage.Data));
 
 			auto* Cache = LocationCache::Get();
-			auto Cursor = EmplaceQuery(Label, __func__, "INSERT INTO blocks (block_number, block_hash, message) VALUES (?, ?, ?); SELECT MAX(transaction_number) AS counter FROM transactions", &Map);
-			if (!Cursor || Cursor->Error() || Cursor->Size() != 2)
+			bool TransactionToAccountIndex = Protocol::Now().User.Storage.TransactionToAccountIndex;
+			bool TransactionToRollupIndex = Protocol::Now().User.Storage.TransactionToRollupIndex;
+			auto Cursor = EmplaceQuery(Blockdata, Label, __func__, "INSERT INTO blocks (block_number, block_hash) VALUES (?, ?)", &Map);
+			if (!Cursor || Cursor->Error())
 				return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
 
-			auto CommitTransactionData = HottestStorage->PrepareStatement("INSERT INTO transactionviews (transaction_number, transaction_owner_hash, transaction_hash, receipt_hash, dispatch_queue, block_number, block_nonce, transaction_message, receipt_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", nullptr);
+			Cursor = EmplaceQuery(Txdata, Label, __func__, "SELECT MAX(transaction_number) AS counter FROM transactions", &Map);
+			if (!Cursor || Cursor->ErrorOrEmpty())
+				return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
+
+			auto CommitTransactionData = Txdata->PrepareStatement(TransactionToAccountIndex ?
+				"INSERT INTO transactionviews (transaction_number, transaction_owner_hash, transaction_hash, receipt_hash, dispatch_queue, block_number, block_nonce) VALUES (?, ?, ?, ?, ?, ?, ?)" :
+				"INSERT INTO transactions (transaction_number, transaction_hash, receipt_hash, dispatch_queue, block_number, block_nonce) VALUES (?, ?, ?, ?, ?, ?)", nullptr);
 			if (!CommitTransactionData)
 				return ExpectsLR<void>(LayerException(std::move(CommitTransactionData.Error().message())));
 
-			auto CommitTransactionParty = HottestStorage->PrepareStatement("INSERT INTO partyviews (transaction_number, transaction_owner_hash, block_number) VALUES (?, ?, ?)", nullptr);
+			auto CommitTransactionParty = Txdata->PrepareStatement("INSERT INTO partyviews (transaction_number, transaction_owner_hash, block_number) VALUES (?, ?, ?)", nullptr);
 			if (!CommitTransactionParty)
 				return ExpectsLR<void>(LayerException(std::move(CommitTransactionParty.Error().message())));
 
-			auto CommitTransactionAlias = HottestStorage->PrepareStatement("INSERT INTO aliases (transaction_number, transaction_hash, block_number) VALUES (?, ?, ?)", nullptr);
+			auto CommitTransactionAlias = Txdata->PrepareStatement("INSERT INTO aliases (transaction_number, transaction_hash, block_number) VALUES (?, ?, ?)", nullptr);
 			if (!CommitTransactionAlias)
 				return ExpectsLR<void>(LayerException(std::move(CommitTransactionAlias.Error().message())));
 
-			auto CommitStateData = HottestStorage->PrepareStatement("INSERT INTO stateviews (address_hash, stride_hash, block_number, weight, message) VALUES (?, ?, ?, ?, ?)", nullptr);
+			auto CommitStateData = Statedata->PrepareStatement("INSERT INTO stateviews (address_hash, stride_hash, block_number, weight) VALUES (?, ?, ?, ?)", nullptr);
 			if (!CommitStateData)
 				return ExpectsLR<void>(LayerException(std::move(CommitStateData.Error().message())));
 
-			uint64_t TransactionCounter = Cursor->At(1).Front()["counter"].Get().GetInteger();
+			uint64_t TransactionCounter = (*Cursor)["counter"].Get().GetInteger();
 			Vector<TransactionBlob> Transactions;
 			Transactions.resize(Value.Transactions.size());
 			for (size_t i = 0; i < Transactions.size(); i++)
@@ -361,75 +520,38 @@ namespace Tangent
 				Algorithm::Encoding::DecodeUint256(Item.Context->Receipt.TransactionHash, Item.TransactionHash);
 				Algorithm::Encoding::DecodeUint256(Item.Context->Receipt.AsHash(), Item.ReceiptHash);
 				memcpy(Item.Owner, Item.Context->Receipt.From, sizeof(Item.Owner));
-
-				OrderedSet<String> Output;
-				Item.Context->Transaction->RecoverAlt(Item.Context->Receipt, Output);
-				Item.Parties.reserve(Item.Parties.size() + Output.size());
-
-				OrderedSet<uint256_t> Aliases;
-				Item.Context->Transaction->RecoverAlt(Item.Context->Receipt, Aliases);
-				Item.Parties.reserve(Aliases.size());
-
-				TransactionPartyBlob Party;
-				for (auto& Owner : Output)
+				if (TransactionToAccountIndex)
 				{
-					memcpy(Party.Owner, Owner.data(), std::min(Owner.size(), sizeof(Algorithm::Pubkeyhash)));
-					Item.Parties.push_back(Party);
+					OrderedSet<String> Output;
+					Item.Context->Transaction->RecoverAlt(Item.Context->Receipt, Output);
+					Item.Parties.reserve(Item.Parties.size() + Output.size());
+
+					TransactionPartyBlob Party;
+					for (auto& Owner : Output)
+					{
+						memcpy(Party.Owner, Owner.data(), std::min(Owner.size(), sizeof(Algorithm::Pubkeyhash)));
+						Item.Parties.push_back(Party);
+					}
 				}
-
-				TransactionAliasBlob Alias;
-				for (auto& Hash : Aliases)
+				if (TransactionToRollupIndex)
 				{
-					Algorithm::Encoding::DecodeUint256(Hash, Alias.TransactionHash);
-					Item.Aliases.push_back(Alias);
+					OrderedSet<uint256_t> Aliases;
+					Item.Context->Transaction->RecoverAlt(Item.Context->Receipt, Aliases);
+					Item.Aliases.reserve(Aliases.size());
+
+					TransactionAliasBlob Alias;
+					for (auto& Hash : Aliases)
+					{
+						Algorithm::Encoding::DecodeUint256(Hash, Alias.TransactionHash);
+						Item.Aliases.push_back(Alias);
+					}
 				}
 			});
 
 			for (auto& Data : Transactions)
 			{
-				auto* Statement = *CommitTransactionData;
-				HottestStorage->BindInt64(Statement, 0, Data.TransactionNumber);
-				HottestStorage->BindBlob(Statement, 1, std::string_view((char*)Data.Owner, sizeof(Data.Owner)));
-				HottestStorage->BindBlob(Statement, 2, std::string_view((char*)Data.TransactionHash, sizeof(Data.TransactionHash)));
-				HottestStorage->BindBlob(Statement, 3, std::string_view((char*)Data.ReceiptHash, sizeof(Data.ReceiptHash)));
-				if (Data.DispatchNumber > 0)
-					HottestStorage->BindInt64(Statement, 4, Value.Number + (Data.DispatchNumber - 1));
-				else
-					HottestStorage->BindNull(Statement, 4);
-				HottestStorage->BindInt64(Statement, 5, Value.Number);
-				HottestStorage->BindInt64(Statement, 6, Data.BlockNonce);
-				HottestStorage->BindBlob(Statement, 7, Data.TransactionMessage.Data);
-				HottestStorage->BindBlob(Statement, 8, Data.ReceiptMessage.Data);
-
-				Cursor = PreparedQuery(Label, __func__, Statement);
-				if (!Cursor || Cursor->Error())
-					return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
-
-				Statement = *CommitTransactionParty;
 				for (auto& Party : Data.Parties)
-				{
-					HottestStorage->BindInt64(Statement, 0, Data.TransactionNumber);
-					HottestStorage->BindBlob(Statement, 1, std::string_view((char*)Party.Owner, sizeof(Party.Owner)));
-					HottestStorage->BindInt64(Statement, 2, Value.Number);
-
-					Cursor = PreparedQuery(Label, __func__, Statement);
-					if (!Cursor || Cursor->Error())
-						return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
-
 					Cache->ClearLocation(Optional::None, Optional::None, String((char*)Party.Owner, sizeof(Party.Owner)));
-				}
-
-				Statement = *CommitTransactionAlias;
-				for (auto& Alias : Data.Aliases)
-				{
-					HottestStorage->BindInt64(Statement, 0, Data.TransactionNumber);
-					HottestStorage->BindBlob(Statement, 1, std::string_view((char*)Alias.TransactionHash, sizeof(Alias.TransactionHash)));
-					HottestStorage->BindInt64(Statement, 2, Value.Number);
-
-					Cursor = PreparedQuery(Label, __func__, Statement);
-					if (!Cursor || Cursor->Error())
-						return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
-				}
 			}
 
 			auto& StateTree = Value.States.At(Ledger::WorkCommitment::Finalized);
@@ -450,20 +572,119 @@ namespace Tangent
 			});
 
 			for (auto& Item : States)
-			{
-				auto* Statement = *CommitStateData;
-				HottestStorage->BindBlob(Statement, 0, Item.Address);
-				HottestStorage->BindBlob(Statement, 1, Item.Stride);
-				HottestStorage->BindInt64(Statement, 2, Value.Number);
-				HottestStorage->BindInt64(Statement, 3, Item.Weight);
-				HottestStorage->BindBlob(Statement, 4, Item.Message.Data);
-
-				Cursor = PreparedQuery(Label, __func__, Statement);
-				if (!Cursor || Cursor->Error())
-					return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
-
 				Cache->ClearLocation(Item.Address, Item.Stride, Optional::None);
-			}
+
+			ExpectsLR<void> TxdataStatus = Expectation::Met;
+			ExpectsLR<void> StatedataStatus = Expectation::Met;
+			ParallelTuple([this, &Transactions, &CommitTransactionData, &CommitTransactionParty, &CommitTransactionAlias, &TxdataStatus, &TransactionToAccountIndex, &TransactionToRollupIndex, &Value]() -> void
+			{
+				LDB::ExpectsDB<void> Status = Expectation::Met;
+				LDB::ExpectsDB<LDB::Cursor> Cursor = LDB::DatabaseException(String());
+				for (auto& Data : Transactions)
+				{
+					auto* Statement = *CommitTransactionData;
+					size_t Index = 0;
+					Txdata->BindInt64(Statement, Index++, Data.TransactionNumber);
+					if (TransactionToAccountIndex)
+						Txdata->BindBlob(Statement, Index++, std::string_view((char*)Data.Owner, sizeof(Data.Owner)));
+					Txdata->BindBlob(Statement, Index++, std::string_view((char*)Data.TransactionHash, sizeof(Data.TransactionHash)));
+					Txdata->BindBlob(Statement, Index++, std::string_view((char*)Data.ReceiptHash, sizeof(Data.ReceiptHash)));
+					if (Data.DispatchNumber > 0)
+						Txdata->BindInt64(Statement, Index++, Value.Number + (Data.DispatchNumber - 1));
+					else
+						Txdata->BindNull(Statement, Index++);
+					Txdata->BindInt64(Statement, Index++, Value.Number);
+					Txdata->BindInt64(Statement, Index++, Data.BlockNonce);
+
+					Status = Store(Label, __func__, GetTransactionLabel(Data.TransactionHash), Data.TransactionMessage.Data);
+					if (!Status)
+					{
+						TxdataStatus = LayerException(ErrorOf(Status));
+						return;
+					}
+
+					Status = Store(Label, __func__, GetReceiptLabel(Data.ReceiptHash), Data.ReceiptMessage.Data);
+					if (!Status)
+					{
+						TxdataStatus = LayerException(ErrorOf(Status));
+						return;
+					}
+
+					Cursor = PreparedQuery(Txdata, Label, __func__, Statement);
+					if (!Cursor || Cursor->Error())
+					{
+						TxdataStatus = LayerException(ErrorOf(Cursor));
+						return;
+					}
+
+					if (TransactionToAccountIndex)
+					{
+						Statement = *CommitTransactionParty;
+						for (auto& Party : Data.Parties)
+						{
+							Txdata->BindInt64(Statement, 0, Data.TransactionNumber);
+							Txdata->BindBlob(Statement, 1, std::string_view((char*)Party.Owner, sizeof(Party.Owner)));
+							Txdata->BindInt64(Statement, 2, Value.Number);
+
+							Cursor = PreparedQuery(Txdata, Label, __func__, Statement);
+							if (!Cursor || Cursor->Error())
+							{
+								TxdataStatus = LayerException(ErrorOf(Cursor));
+								return;
+							}
+						}
+					}
+
+					if (TransactionToRollupIndex)
+					{
+						Statement = *CommitTransactionAlias;
+						for (auto& Alias : Data.Aliases)
+						{
+							Txdata->BindInt64(Statement, 0, Data.TransactionNumber);
+							Txdata->BindBlob(Statement, 1, std::string_view((char*)Alias.TransactionHash, sizeof(Alias.TransactionHash)));
+							Txdata->BindInt64(Statement, 2, Value.Number);
+
+							Cursor = PreparedQuery(Txdata, Label, __func__, Statement);
+							if (!Cursor || Cursor->Error())
+							{
+								TxdataStatus = LayerException(ErrorOf(Cursor));
+								return;
+							}
+						}
+					}
+				}
+			}, [this, &States, &CommitStateData, &StatedataStatus, &Value]() -> void
+			{
+				LDB::ExpectsDB<void> Status = Expectation::Met;
+				LDB::ExpectsDB<LDB::Cursor> Cursor = LDB::DatabaseException(String());
+				for (auto& Item : States)
+				{
+					auto* Statement = *CommitStateData;
+					Statedata->BindBlob(Statement, 0, Item.Address);
+					Statedata->BindBlob(Statement, 1, Item.Stride);
+					Statedata->BindInt64(Statement, 2, Value.Number);
+					Statedata->BindInt64(Statement, 3, Item.Weight);
+
+					Status = Store(Label, __func__, GetStateLabel(Item.Address, Item.Stride, Value.Number), Item.Message.Data);
+					if (!Status)
+					{
+						StatedataStatus = LayerException(ErrorOf(Status));
+						return;
+					}
+
+					Cursor = PreparedQuery(Statedata, Label, __func__, Statement);
+					if (!Cursor || Cursor->Error())
+					{
+						StatedataStatus = LayerException(ErrorOf(Cursor));
+						return;
+					}
+				}
+			});
+
+			if (!TxdataStatus)
+				return TxdataStatus;
+			else if (!StatedataStatus)
+				return StatedataStatus;
 
 			auto CheckpointSize = Protocol::Now().User.Storage.CheckpointSize;
 			if (!CheckpointSize)
@@ -473,15 +694,11 @@ namespace Tangent
 			if (CheckpointNumber < Value.Number)
 				return Expectation::Met;
 
-			Map[0]->Value = Var::Integer(Value.Number);
-			Map[1]->Value = Var::Integer(Value.Number);
-			Cursor = ArchiveEmplaceQueryRecursive(Label, __func__,
-				"DELETE FROM statetries WHERE block_number < ?;"
-				"INSERT OR IGNORE INTO checkpoints (block_number) VALUES (?)", &Map);
-			if (!Cursor || Cursor->Error())
-				return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
+			auto LatestCheckpoint = GetCheckpointBlockNumber().Or(0);
+			if (Value.Number <= LatestCheckpoint)
+				return Expectation::Met;
 
-			return Expectation::Met;
+			return Prune(Protocol::Now().User.Storage.FullBlockHistory ? (uint32_t)Pruning::Statetrie : (uint32_t)Pruning::Blocktrie | (uint32_t)Pruning::Transactiontrie | (uint32_t)Pruning::Statetrie, Value.Number);
 		}
 		ExpectsLR<size_t> Chainstate::ResolveBlockTransactions(Ledger::Block& Value, size_t Offset, size_t Count)
 		{
@@ -490,7 +707,7 @@ namespace Tangent
 			Map.push_back(Var::Set::Integer(Count));
 			Map.push_back(Var::Set::Integer(Offset));
 
-			auto Cursor = ArchiveEmplaceQuery(Label, __func__, "SELECT transaction_hash, transaction_message, receipt_hash, receipt_message FROM transactions WHERE block_number = ? ORDER BY block_nonce LIMIT ? OFFSET ?", &Map);
+			auto Cursor = EmplaceQuery(Txdata, Label, __func__, "SELECT transaction_hash, receipt_hash FROM transactions WHERE block_number = ? ORDER BY block_nonce LIMIT ? OFFSET ?", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<size_t>(LayerException(ErrorOf(Cursor)));
 
@@ -500,16 +717,18 @@ namespace Tangent
 			for (size_t i = 0; i < Size; i++)
 			{
 				auto Row = Response[i];
-				Format::Stream TransactionMessage = Format::Stream(Row["transaction_message"].Get().GetBlob());
+				auto TransactionHash = Row["transaction_hash"].Get();
+				Format::Stream TransactionMessage = Format::Stream(Load(Label, __func__, GetTransactionLabel(TransactionHash.GetBinary())).Or(String()));
 				UPtr<Ledger::Transaction> NextTransaction = Transactions::Resolver::New(Messages::Authentic::ResolveType(TransactionMessage).Or(0));
 				if (NextTransaction && NextTransaction->Load(TransactionMessage))
 				{
+					auto ReceiptHash = Row["receipt_hash"].Get();
+					Format::Stream ReceiptMessage = Format::Stream(Load(Label, __func__, GetReceiptLabel(ReceiptHash.GetBinary())).Or(String()));
 					Ledger::Receipt NextReceipt;
-					Format::Stream ReceiptMessage = Format::Stream(Row["receipt_message"].Get().GetBlob());
 					if (NextReceipt.Load(ReceiptMessage))
 					{
-						FinalizeChecksum(**NextTransaction, Row["transaction_hash"]);
-						FinalizeChecksum(NextReceipt, Row["receipt_hash"]);
+						FinalizeChecksum(**NextTransaction, TransactionHash);
+						FinalizeChecksum(NextReceipt, ReceiptHash);
 						Value.Transactions.emplace_back(std::move(NextTransaction), std::move(NextReceipt));
 					}
 				}
@@ -523,7 +742,7 @@ namespace Tangent
 			Map.push_back(Var::Set::Integer(Count));
 			Map.push_back(Var::Set::Integer(Offset));
 
-			auto Cursor = ArchiveEmplaceQuery(Label, __func__, "SELECT message FROM statetries WHERE block_number = ? ORDER BY rowid LIMIT ? OFFSET ?", &Map);
+			auto Cursor = EmplaceQuery(Statedata, Label, __func__, "SELECT (SELECT address_hash FROM addresses WHERE addresses.address_number = statetries.address_number) AS address, (SELECT stride_hash FROM strides WHERE strides.stride_number = statetries.stride_number) AS stride FROM statetries WHERE block_number = ? ORDER BY rowid LIMIT ? OFFSET ?", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<size_t>(LayerException(ErrorOf(Cursor)));
 
@@ -532,7 +751,7 @@ namespace Tangent
 			for (size_t i = 0; i < Size; i++)
 			{
 				auto Row = Response[i];
-				Format::Stream Message = Format::Stream(Row["message"].Get().GetBlob());
+				Format::Stream Message = Format::Stream(Load(Label, __func__, GetStateLabel(Row["address"].Get().GetBlob(), Row["stride"].Get().GetBlob(), Value.Number)).Or(String()));
 				UPtr<Ledger::State> NextState = States::Resolver::New(Messages::Generic::ResolveType(Message).Or(0));
 				if (NextState && NextState->Load(Message))
 					Value.States.MoveInto(std::move(NextState));
@@ -561,12 +780,12 @@ namespace Tangent
 			uint64_t AddressNumber = AddressNumberCache.Or(0);
 			if (Address && !AddressNumberCache)
 			{
-				auto FindAddress = HottestStorage->PrepareStatement("SELECT address_number FROM addresses WHERE address_hash = ?", nullptr);
+				auto FindAddress = Statedata->PrepareStatement("SELECT address_number FROM addresses WHERE address_hash = ?", nullptr);
 				if (!FindAddress)
 					return ExpectsLR<std::pair<uint64_t, uint64_t>>(LayerException(std::move(FindAddress.Error().message())));
 
-				HottestStorage->BindBlob(*FindAddress, 0, *Address);
-				auto Cursor = ArchivePreparedQuery(Label, __func__, *FindAddress);
+				Statedata->BindBlob(*FindAddress, 0, *Address);
+				auto Cursor = PreparedQuery(Statedata, Label, __func__, *FindAddress);
 				if (!Cursor || Cursor->Error())
 					return ExpectsLR<std::pair<uint64_t, uint64_t>>(LayerException(ErrorOf(Cursor)));
 
@@ -576,12 +795,12 @@ namespace Tangent
 			uint64_t StrideNumber = StrideNumberCache.Or(0);
 			if (Stride && !StrideNumberCache)
 			{
-				auto FindStride = HottestStorage->PrepareStatement("SELECT stride_number FROM strides WHERE stride_hash = ?", nullptr);
+				auto FindStride = Statedata->PrepareStatement("SELECT stride_number FROM strides WHERE stride_hash = ?", nullptr);
 				if (!FindStride)
 					return ExpectsLR<std::pair<uint64_t, uint64_t>>(LayerException(std::move(FindStride.Error().message())));
 
-				HottestStorage->BindBlob(*FindStride, 0, *Stride);
-				auto Cursor = ArchivePreparedQuery(Label, __func__, *FindStride);
+				Statedata->BindBlob(*FindStride, 0, *Stride);
+				auto Cursor = PreparedQuery(Statedata, Label, __func__, *FindStride);
 				if (!Cursor || Cursor->Error())
 					return ExpectsLR<std::pair<uint64_t, uint64_t>>(LayerException(ErrorOf(Cursor)));
 
@@ -616,12 +835,12 @@ namespace Tangent
 				return OwnerNumberCache.Or(0);
 			}
 
-			auto FindOwner = HottestStorage->PrepareStatement("SELECT owner_number FROM owners WHERE owner_hash = ?", nullptr);
+			auto FindOwner = Txdata->PrepareStatement("SELECT owner_number FROM owners WHERE owner_hash = ?", nullptr);
 			if (!FindOwner)
 				return ExpectsLR<uint64_t>(LayerException(std::move(FindOwner.Error().message())));
 
-			HottestStorage->BindBlob(*FindOwner, 0, std::string_view((char*)Owner, sizeof(Algorithm::Pubkeyhash)));
-			auto Cursor = ArchivePreparedQuery(Label, __func__, *FindOwner);
+			Txdata->BindBlob(*FindOwner, 0, std::string_view((char*)Owner, sizeof(Algorithm::Pubkeyhash)));
+			auto Cursor = PreparedQuery(Txdata, Label, __func__, *FindOwner);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<uint64_t>(LayerException(ErrorOf(Cursor)));
 
@@ -634,7 +853,7 @@ namespace Tangent
 		}
 		ExpectsLR<uint64_t> Chainstate::GetCheckpointBlockNumber()
 		{
-			auto Cursor = ArchiveQuery(Label, __func__, "SELECT MAX(block_number) AS block_number FROM checkpoints");
+			auto Cursor = Query(Blockdata, Label, __func__, "SELECT MAX(block_number) AS block_number FROM checkpoints");
 			if (!Cursor || Cursor->ErrorOrEmpty())
 				return ExpectsLR<uint64_t>(LayerException(ErrorOf(Cursor)));
 
@@ -642,7 +861,7 @@ namespace Tangent
 		}
 		ExpectsLR<uint64_t> Chainstate::GetLatestBlockNumber()
 		{
-			auto Cursor = ArchiveQuery(Label, __func__, "SELECT block_number FROM blocks ORDER BY block_number DESC LIMIT 1");
+			auto Cursor = Query(Blockdata, Label, __func__, "SELECT block_number FROM blocks ORDER BY block_number DESC LIMIT 1");
 			if (!Cursor || Cursor->ErrorOrEmpty())
 				return ExpectsLR<uint64_t>(LayerException(ErrorOf(Cursor)));
 
@@ -657,7 +876,7 @@ namespace Tangent
 			SchemaList Map;
 			Map.push_back(Var::Set::Binary(Hash, sizeof(Hash)));
 
-			auto Cursor = ArchiveEmplaceQuery(Label, __func__, "SELECT block_number FROM blocks WHERE block_hash = ?", &Map);
+			auto Cursor = EmplaceQuery(Blockdata, Label, __func__, "SELECT block_number FROM blocks WHERE block_hash = ?", &Map);
 			if (!Cursor || Cursor->ErrorOrEmpty())
 				return ExpectsLR<uint64_t>(LayerException(ErrorOf(Cursor)));
 
@@ -668,7 +887,7 @@ namespace Tangent
 			SchemaList Map;
 			Map.push_back(Var::Set::Integer(BlockNumber));
 
-			auto Cursor = ArchiveEmplaceQuery(Label, __func__, "SELECT block_hash FROM blocks WHERE block_number = ?", &Map);
+			auto Cursor = EmplaceQuery(Blockdata, Label, __func__, "SELECT block_hash FROM blocks WHERE block_number = ?", &Map);
 			if (!Cursor || Cursor->ErrorOrEmpty())
 				return ExpectsLR<uint256_t>(LayerException(ErrorOf(Cursor)));
 
@@ -695,7 +914,7 @@ namespace Tangent
 				Map.push_back(Var::Set::Integer(Count));
 				Map.push_back(Var::Set::Integer(Offset));
 
-				auto Cursor = ArchiveEmplaceQuery(Label, __func__, "SELECT transaction_message FROM transactions WHERE block_number = ? ORDER BY block_nonce LIMIT ? OFFSET ?", &Map);
+				auto Cursor = EmplaceQuery(Txdata, Label, __func__, "SELECT transaction_hash FROM transactions WHERE block_number = ? ORDER BY block_nonce LIMIT ? OFFSET ?", &Map);
 				if (!Cursor || Cursor->Error())
 					return ExpectsLR<Decimal>(LayerException(ErrorOf(Cursor)));
 
@@ -704,11 +923,11 @@ namespace Tangent
 				for (size_t i = 0; i < Size; i++)
 				{
 					auto Row = Response[i];
-					Format::Stream Message = Format::Stream(Row["transaction_message"].Get().GetBlob());
+					auto TransactionHash = Row["transaction_hash"].Get();
+					Format::Stream Message = Format::Stream(Load(Label, __func__, GetTransactionLabel(TransactionHash.GetBinary())).Or(String()));
 					UPtr<Ledger::Transaction> Value = Transactions::Resolver::New(Messages::Authentic::ResolveType(Message).Or(0));
 					if (Value && Value->Load(Message) && Value->Asset == Asset)
 						GasPrices.push_back(Value->GasPrice);
-
 				}
 				if (Size < Count)
 					break;
@@ -738,12 +957,13 @@ namespace Tangent
 			SchemaList Map;
 			Map.push_back(Var::Set::Integer(BlockNumber));
 
-			auto Cursor = ArchiveEmplaceQuery(Label, __func__, "SELECT block_hash, message FROM blocks WHERE block_number = ?", &Map);
+			auto Cursor = EmplaceQuery(Blockdata, Label, __func__, "SELECT block_hash FROM blocks WHERE block_number = ?", &Map);
 			if (!Cursor || Cursor->ErrorOrEmpty())
 				return ExpectsLR<Ledger::Block>(LayerException(ErrorOf(Cursor)));
 
 			Ledger::BlockHeader Header;
-			Format::Stream Message = Format::Stream((*Cursor)["message"].Get().GetBlob());
+			auto BlockHash = (*Cursor)["block_hash"].Get();
+			Format::Stream Message = Format::Stream(Load(Label, __func__, GetBlockLabel(BlockHash.GetBinary())).Or(String()));
 			if (!Header.Load(Message))
 				return ExpectsLR<Ledger::Block>(LayerException("block header deserialization error"));
 
@@ -772,7 +992,7 @@ namespace Tangent
 					break;
 			}
 
-			FinalizeChecksum(Header, (*Cursor)["block_hash"]);
+			FinalizeChecksum(Header, BlockHash);
 			return Result;
 		}
 		ExpectsLR<Ledger::Block> Chainstate::GetBlockByHash(const uint256_t& BlockHash, size_t LoadRate)
@@ -780,15 +1000,8 @@ namespace Tangent
 			uint8_t Hash[32];
 			Algorithm::Encoding::DecodeUint256(BlockHash, Hash);
 
-			SchemaList Map;
-			Map.push_back(Var::Set::Binary(Hash, sizeof(Hash)));
-
-			auto Cursor = ArchiveEmplaceQuery(Label, __func__, "SELECT block_hash, message FROM blocks WHERE block_hash = ?", &Map);
-			if (!Cursor || Cursor->ErrorOrEmpty())
-				return ExpectsLR<Ledger::Block>(LayerException(ErrorOf(Cursor)));
-
 			Ledger::BlockHeader Header;
-			Format::Stream Message = Format::Stream((*Cursor)["message"].Get().GetBlob());
+			Format::Stream Message = Format::Stream(Load(Label, __func__, GetBlockLabel(Hash)).Or(String()));
 			if (!Header.Load(Message))
 				return ExpectsLR<Ledger::Block>(LayerException("block header deserialization error"));
 
@@ -817,17 +1030,18 @@ namespace Tangent
 					break;
 			}
 
-			FinalizeChecksum(Header, (*Cursor)["block_hash"]);
+			FinalizeChecksum(Header, Var::Binary(Hash, sizeof(Hash)));
 			return Result;
 		}
 		ExpectsLR<Ledger::Block> Chainstate::GetLatestBlock(size_t LoadRate)
 		{
-			auto Cursor = ArchiveQuery(Label, __func__, "SELECT block_hash, message FROM blocks ORDER BY block_number DESC LIMIT 1");
+			auto Cursor = Query(Blockdata, Label, __func__, "SELECT block_hash FROM blocks ORDER BY block_number DESC LIMIT 1");
 			if (!Cursor || Cursor->ErrorOrEmpty())
 				return ExpectsLR<Ledger::Block>(LayerException(ErrorOf(Cursor)));
 
 			Ledger::BlockHeader Header;
-			Format::Stream Message = Format::Stream((*Cursor)["message"].Get().GetBlob());
+			auto BlockHash = (*Cursor)["block_hash"].Get();
+			Format::Stream Message = Format::Stream(Load(Label, __func__, GetBlockLabel(BlockHash.GetBinary())).Or(String()));
 			if (!Header.Load(Message))
 				return ExpectsLR<Ledger::Block>(LayerException("block header deserialization error"));
 
@@ -856,7 +1070,7 @@ namespace Tangent
 					break;
 			}
 
-			FinalizeChecksum(Header, (*Cursor)["block_hash"]);
+			FinalizeChecksum(Header, BlockHash);
 			return Result;
 		}
 		ExpectsLR<Ledger::BlockHeader> Chainstate::GetBlockHeaderByNumber(uint64_t BlockNumber)
@@ -864,51 +1078,46 @@ namespace Tangent
 			SchemaList Map;
 			Map.push_back(Var::Set::Integer(BlockNumber));
 
-			auto Cursor = ArchiveEmplaceQuery(Label, __func__, "SELECT block_hash, message FROM blocks WHERE block_number = ?", &Map);
+			auto Cursor = EmplaceQuery(Blockdata, Label, __func__, "SELECT block_hash FROM blocks WHERE block_number = ?", &Map);
 			if (!Cursor || Cursor->ErrorOrEmpty())
 				return ExpectsLR<Ledger::BlockHeader>(LayerException(ErrorOf(Cursor)));
 
-			Ledger::BlockHeader Value;
-			Format::Stream Message = Format::Stream((*Cursor)["message"].Get().GetBlob());
-			if (!Value.Load(Message))
+			Ledger::BlockHeader Header;
+			auto BlockHash = (*Cursor)["block_hash"].Get();
+			Format::Stream Message = Format::Stream(Load(Label, __func__, GetBlockLabel(BlockHash.GetBinary())).Or(String()));
+			if (!Header.Load(Message))
 				return ExpectsLR<Ledger::BlockHeader>(LayerException("block header deserialization error"));
 
-			FinalizeChecksum(Value, (*Cursor)["block_hash"]);
-			return Value;
+			FinalizeChecksum(Header, BlockHash);
+			return Header;
 		}
 		ExpectsLR<Ledger::BlockHeader> Chainstate::GetBlockHeaderByHash(const uint256_t& BlockHash)
 		{
 			uint8_t Hash[32];
 			Algorithm::Encoding::DecodeUint256(BlockHash, Hash);
 
-			SchemaList Map;
-			Map.push_back(Var::Set::Binary(Hash, sizeof(Hash)));
-
-			auto Cursor = ArchiveEmplaceQuery(Label, __func__, "SELECT block_hash, message FROM blocks WHERE block_hash = ?", &Map);
-			if (!Cursor || Cursor->ErrorOrEmpty())
-				return ExpectsLR<Ledger::BlockHeader>(LayerException(ErrorOf(Cursor)));
-
-			Ledger::BlockHeader Value;
-			Format::Stream Message = Format::Stream((*Cursor)["message"].Get().GetBlob());
-			if (!Value.Load(Message))
+			Ledger::BlockHeader Header;
+			Format::Stream Message = Format::Stream(Load(Label, __func__, GetBlockLabel(Hash)).Or(String()));
+			if (!Header.Load(Message))
 				return ExpectsLR<Ledger::BlockHeader>(LayerException("block header deserialization error"));
 
-			FinalizeChecksum(Value, (*Cursor)["block_hash"]);
-			return Value;
+			FinalizeChecksum(Header, Var::Binary(Hash, sizeof(Hash)));
+			return Header;
 		}
 		ExpectsLR<Ledger::BlockHeader> Chainstate::GetLatestBlockHeader()
 		{
-			auto Cursor = ArchiveQuery(Label, __func__, "SELECT block_hash, message FROM blocks ORDER BY block_number DESC LIMIT 1");
+			auto Cursor = Query(Blockdata, Label, __func__, "SELECT block_hash FROM blocks ORDER BY block_number DESC LIMIT 1");
 			if (!Cursor || Cursor->ErrorOrEmpty())
 				return ExpectsLR<Ledger::BlockHeader>(LayerException(ErrorOf(Cursor)));
 
-			Ledger::BlockHeader Value;
-			Format::Stream Message = Format::Stream((*Cursor)["message"].Get().GetBlob());
-			if (!Value.Load(Message))
+			Ledger::BlockHeader Header;
+			auto BlockHash = (*Cursor)["block_hash"].Get();
+			Format::Stream Message = Format::Stream(Load(Label, __func__, GetBlockLabel(BlockHash.GetBinary())).Or(String()));
+			if (!Header.Load(Message))
 				return ExpectsLR<Ledger::BlockHeader>(LayerException("block header deserialization error"));
 
-			FinalizeChecksum(Value, (*Cursor)["block_hash"]);
-			return Value;
+			FinalizeChecksum(Header, BlockHash);
+			return Header;
 		}
 		ExpectsLR<Ledger::BlockProof> Chainstate::GetBlockProofByNumber(uint64_t BlockNumber)
 		{
@@ -922,45 +1131,41 @@ namespace Tangent
 			SchemaList Map;
 			Map.push_back(Var::Set::Integer(BlockNumber));
 
-			auto Cursor = ArchiveEmplaceQuery(Label, __func__,
-				"SELECT transaction_hash, receipt_hash FROM transactions WHERE block_number = ? ORDER BY block_nonce;"
-				"SELECT message FROM statetries WHERE block_number = ? ORDER BY rowid", &Map);
+			auto Cursor = EmplaceQuery(Txdata, Label, __func__, "SELECT transaction_hash, receipt_hash FROM transactions WHERE block_number = ? ORDER BY block_nonce;", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<Ledger::BlockProof>(LayerException(ErrorOf(Cursor)));
 
-			if (Cursor->Size() > 0)
+			size_t Size = Cursor->First().Size();
+			Value.Transactions.reserve(Size);
+			Value.Receipts.reserve(Size);
+			for (auto Row : Cursor->First())
 			{
-				size_t Size = Cursor->At(0).Size();
-				Value.Transactions.reserve(Size);
-				Value.Receipts.reserve(Size);
-				for (auto Row : Cursor->At(0))
+				auto TransactionHash = Row["transaction_hash"].Get().GetBlob();
+				if (TransactionHash.size() == sizeof(uint256_t))
 				{
-					auto TransactionHash = Row["transaction_hash"].Get().GetBlob();
-					if (TransactionHash.size() == sizeof(uint256_t))
-					{
-						uint256_t Hash;
-						Algorithm::Encoding::EncodeUint256((uint8_t*)TransactionHash.data(), Hash);
-						Value.Transactions.push_back(Hash);
-					}
+					uint256_t Hash;
+					Algorithm::Encoding::EncodeUint256((uint8_t*)TransactionHash.data(), Hash);
+					Value.Transactions.push_back(Hash);
+				}
 
-					auto ReceiptHash = Row["receipt_hash"].Get().GetBlob();
-					if (ReceiptHash.size() == sizeof(uint256_t))
-					{
-						uint256_t Hash;
-						Algorithm::Encoding::EncodeUint256((uint8_t*)ReceiptHash.data(), Hash);
-						Value.Receipts.push_back(Hash);
-					}
+				auto ReceiptHash = Row["receipt_hash"].Get().GetBlob();
+				if (ReceiptHash.size() == sizeof(uint256_t))
+				{
+					uint256_t Hash;
+					Algorithm::Encoding::EncodeUint256((uint8_t*)ReceiptHash.data(), Hash);
+					Value.Receipts.push_back(Hash);
 				}
 			}
 
-			if (Cursor->Size() > 1)
+			Cursor = EmplaceQuery(Statedata, Label, __func__, "SELECT address, stride FROM statetries WHERE block_number = ? ORDER BY rowid", &Map);
+			if (!Cursor || Cursor->Error())
+				return ExpectsLR<Ledger::BlockProof>(LayerException(ErrorOf(Cursor)));
+
+			Value.States.reserve(Cursor->First().Size());
+			for (auto Row : Cursor->First())
 			{
-				Value.States.reserve(Cursor->At(1).Size());
-				for (auto Row : Cursor->At(1))
-				{
-					auto Message = Format::Stream(Row["message"].Get().GetBlob());
-					Value.States.push_back(Message.Hash());
-				}
+				auto Message = Format::Stream(Load(Label, __func__, GetStateLabel(Row["address"].Get().GetBlob(), Row["stride"].Get().GetBlob(), BlockNumber)).Or(String()));
+				Value.States.push_back(Message.Hash());
 			}
 
 			return Value;
@@ -981,7 +1186,7 @@ namespace Tangent
 			SchemaList Map;
 			Map.push_back(Var::Set::Integer(BlockNumber));
 
-			auto Cursor = ArchiveEmplaceQuery(Label, __func__, "SELECT transaction_hash FROM transactions WHERE block_number = ? ORDER BY block_nonce", &Map);
+			auto Cursor = EmplaceQuery(Txdata, Label, __func__, "SELECT transaction_hash FROM transactions WHERE block_number = ? ORDER BY block_nonce", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<Vector<uint256_t>>(LayerException(ErrorOf(Cursor)));
 
@@ -1012,7 +1217,7 @@ namespace Tangent
 			SchemaList Map;
 			Map.push_back(Var::Set::Integer(BlockNumber));
 
-			auto Cursor = ArchiveEmplaceQuery(Label, __func__, "SELECT message FROM statetries WHERE block_number = ? ORDER BY rowid", &Map);
+			auto Cursor = EmplaceQuery(Statedata, Label, __func__, "SELECT address, stride FROM statetries WHERE block_number = ? ORDER BY rowid", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<Vector<uint256_t>>(LayerException(ErrorOf(Cursor)));
 
@@ -1022,7 +1227,11 @@ namespace Tangent
 				size_t Size = Response.Size();
 				Result.reserve(Result.size() + Size);
 				for (size_t i = 0; i < Size; i++)
-					Result.push_back(Format::Stream(Response[i]["message"].Get().GetBlob()).Hash());
+				{
+					auto Row = Response[i];
+					auto Message = Format::Stream(Load(Label, __func__, GetStateLabel(Row["address"].Get().GetBlob(), Row["stride"].Get().GetBlob(), BlockNumber)).Or(String()));
+					Result.push_back(Message.Hash());
+				}
 			}
 
 			std::sort(Result.begin(), Result.end());
@@ -1037,7 +1246,7 @@ namespace Tangent
 			Map.push_back(Var::Set::Integer(BlockNumber));
 			Map.push_back(Var::Set::Integer(BlockNumber + Count));
 
-			auto Cursor = ArchiveEmplaceQueryRecursive(Label, __func__, "SELECT block_hash FROM blocks WHERE block_number BETWEEN ? AND ? ORDER BY block_number DESC", &Map);
+			auto Cursor = EmplaceQuery(Blockdata, Label, __func__, "SELECT block_hash FROM blocks WHERE block_number BETWEEN ? AND ? ORDER BY block_number DESC", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<Vector<uint256_t>>(LayerException(ErrorOf(Cursor)));
 
@@ -1069,7 +1278,7 @@ namespace Tangent
 			Map.push_back(Var::Set::Integer(BlockNumber));
 			Map.push_back(Var::Set::Integer(BlockNumber + Count));
 
-			auto Cursor = ArchiveEmplaceQueryRecursive(Label, __func__, "SELECT message FROM blocks WHERE block_number BETWEEN ? AND ? ORDER BY block_number DESC", &Map);
+			auto Cursor = EmplaceQuery(Blockdata, Label, __func__, "SELECT block_hash FROM blocks WHERE block_number BETWEEN ? AND ? ORDER BY block_number DESC", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<Vector<Ledger::BlockHeader>>(LayerException(ErrorOf(Cursor)));
 
@@ -1081,7 +1290,8 @@ namespace Tangent
 				for (size_t i = 0; i < Size; i++)
 				{
 					Ledger::BlockHeader Value;
-					Format::Stream Message = Format::Stream(Response[i]["message"].Get().GetBlob());
+					auto BlockHash = Response[i]["block_hash"].Get();
+					Format::Stream Message = Format::Stream(Load(Label, __func__, GetBlockLabel(BlockHash.GetBinary())).Or(String()));
 					if (Value.Load(Message))
 						Result.push_back(std::move(Value));
 				}
@@ -1096,7 +1306,7 @@ namespace Tangent
 			Map.push_back(Var::Set::Integer(Count));
 			Map.push_back(Var::Set::Integer(Offset));
 
-			auto Cursor = ArchiveEmplaceQuery(Label, __func__, "SELECT message FROM statetries WHERE block_number = ? ORDER BY rowid LIMIT ? OFFSET ?", &Map);
+			auto Cursor = EmplaceQuery(Statedata, Label, __func__, "SELECT address, stride FROM statetries WHERE block_number = ? ORDER BY rowid LIMIT ? OFFSET ?", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<Ledger::StateWork>(LayerException(ErrorOf(Cursor)));
 
@@ -1106,7 +1316,7 @@ namespace Tangent
 			for (size_t i = 0; i < Size; i++)
 			{
 				auto Row = Response[i];
-				Format::Stream Message = Format::Stream(Row["message"].Get().GetBlob());
+				auto Message = Format::Stream(Load(Label, __func__, GetStateLabel(Row["address"].Get().GetBlob(), Row["stride"].Get().GetBlob(), BlockNumber)).Or(String()));
 				UPtr<Ledger::State> NextState = States::Resolver::New(Messages::Generic::ResolveType(Message).Or(0));
 				if (NextState && NextState->Load(Message))
 					(*Result)[NextState->AsAddress() + NextState->AsStride()] = std::move(NextState);
@@ -1121,7 +1331,7 @@ namespace Tangent
 			Map.push_back(Var::Set::Integer(Count));
 			Map.push_back(Var::Set::Integer(Offset));
 
-			auto Cursor = EmplaceQuery(Label, __func__, "SELECT transaction_hash, transaction_message FROM transactions WHERE block_number = ? ORDER BY block_nonce LIMIT ? OFFSET ?", &Map);
+			auto Cursor = EmplaceQuery(Txdata, Label, __func__, "SELECT transaction_hash FROM transactions WHERE block_number = ? ORDER BY block_nonce LIMIT ? OFFSET ?", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<Vector<UPtr<Ledger::Transaction>>>(LayerException(ErrorOf(Cursor)));
 
@@ -1133,11 +1343,12 @@ namespace Tangent
 			for (size_t i = 0; i < Size; i++)
 			{
 				auto Row = Response[i];
-				Format::Stream Message = Format::Stream(Row["transaction_message"].Get().GetBlob());
+				auto TransactionHash = Row["transaction_hash"].Get();
+				Format::Stream Message = Format::Stream(Load(Label, __func__, GetTransactionLabel(TransactionHash.GetBinary())).Or(String()));
 				UPtr<Ledger::Transaction> Value = Transactions::Resolver::New(Messages::Authentic::ResolveType(Message).Or(0));
 				if (Value && Value->Load(Message))
 				{
-					FinalizeChecksum(**Value, Row["transaction_hash"]);
+					FinalizeChecksum(**Value, TransactionHash);
 					Values.emplace_back(std::move(Value));
 				}
 			}
@@ -1156,8 +1367,8 @@ namespace Tangent
 			Map.push_back(Var::Set::Integer(Count));
 			Map.push_back(Var::Set::Integer(Offset));
 
-			auto Cursor = EmplaceQuery(Label, __func__,
-				"SELECT transaction_hash, transaction_message FROM parties"
+			auto Cursor = EmplaceQuery(Txdata, Label, __func__,
+				"SELECT transaction_hash FROM parties"
 				" INNER JOIN transactions ON transactions.transaction_number = parties.transaction_number "
 				"WHERE parties.transaction_owner_number = ? AND parties.block_number <= ? ORDER BY parties.transaction_number LIMIT ? OFFSET ?", &Map);
 			if (!Cursor || Cursor->Error())
@@ -1171,11 +1382,12 @@ namespace Tangent
 			for (size_t i = 0; i < Size; i++)
 			{
 				auto Row = Response[i];
-				Format::Stream Message = Format::Stream(Row["transaction_message"].Get().GetBlob());
+				auto TransactionHash = Row["transaction_hash"].Get();
+				Format::Stream Message = Format::Stream(Load(Label, __func__, GetTransactionLabel(TransactionHash.GetBinary())).Or(String()));
 				UPtr<Ledger::Transaction> Value = Transactions::Resolver::New(Messages::Authentic::ResolveType(Message).Or(0));
 				if (Value && Value->Load(Message))
 				{
-					FinalizeChecksum(**Value, Row["transaction_hash"]);
+					FinalizeChecksum(**Value, TransactionHash);
 					Values.emplace_back(std::move(Value));
 				}
 			}
@@ -1189,7 +1401,7 @@ namespace Tangent
 			Map.push_back(Var::Set::Integer(Count));
 			Map.push_back(Var::Set::Integer(Offset));
 
-			auto Cursor = EmplaceQuery(Label, __func__, "SELECT transaction_hash, transaction_message, receipt_hash, receipt_message FROM transactions WHERE block_number = ? ORDER BY block_nonce LIMIT ? OFFSET ?", &Map);
+			auto Cursor = EmplaceQuery(Txdata, Label, __func__, "SELECT transaction_hash, receipt_hash FROM transactions WHERE block_number = ? ORDER BY block_nonce LIMIT ? OFFSET ?", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<Vector<Ledger::BlockTransaction>>(LayerException(ErrorOf(Cursor)));
 
@@ -1201,14 +1413,16 @@ namespace Tangent
 			for (size_t i = 0; i < Size; i++)
 			{
 				auto Row = Response[i];
-				Format::Stream TransactionMessage = Format::Stream(Row["transaction_message"].Get().GetBlob());
-				Format::Stream ReceiptMessage = Format::Stream(Row["receipt_message"].Get().GetBlob());
+				auto TransactionHash = Row["transaction_hash"].Get();
+				auto ReceiptHash = Row["receipt_hash"].Get();
+				Format::Stream TransactionMessage = Format::Stream(Load(Label, __func__, GetTransactionLabel(TransactionHash.GetBinary())).Or(String()));
+				Format::Stream ReceiptMessage = Format::Stream(Load(Label, __func__, GetReceiptLabel(ReceiptHash.GetBinary())).Or(String()));
 				Ledger::BlockTransaction Value;
 				Value.Transaction = Transactions::Resolver::New(Messages::Authentic::ResolveType(TransactionMessage).Or(0));
 				if (Value.Transaction && Value.Transaction->Load(TransactionMessage) && Value.Receipt.Load(ReceiptMessage))
 				{
-					FinalizeChecksum(**Value.Transaction, Row["transaction_hash"]);
-					FinalizeChecksum(Value.Receipt, Row["receipt_hash"]);
+					FinalizeChecksum(**Value.Transaction, TransactionHash);
+					FinalizeChecksum(Value.Receipt, ReceiptHash);
 					Values.emplace_back(std::move(Value));
 				}
 			}
@@ -1227,8 +1441,8 @@ namespace Tangent
 			Map.push_back(Var::Set::Integer(Count));
 			Map.push_back(Var::Set::Integer(Offset));
 
-			auto Cursor = EmplaceQuery(Label, __func__,
-				"SELECT transaction_hash, transaction_message, receipt_hash, receipt_message FROM parties"
+			auto Cursor = EmplaceQuery(Txdata, Label, __func__,
+				"SELECT transaction_hash, receipt_hash FROM parties"
 				" INNER JOIN transactions ON transactions.transaction_number = parties.transaction_number "
 				"WHERE parties.transaction_owner_number = ? AND parties.block_number <= ? ORDER BY parties.transaction_number LIMIT ? OFFSET ?", &Map);
 			if (!Cursor || Cursor->Error())
@@ -1242,14 +1456,16 @@ namespace Tangent
 			for (size_t i = 0; i < Size; i++)
 			{
 				auto Row = Response[i];
-				Format::Stream TransactionMessage = Format::Stream(Row["transaction_message"].Get().GetBlob());
-				Format::Stream ReceiptMessage = Format::Stream(Row["receipt_message"].Get().GetBlob());
+				auto TransactionHash = Row["transaction_hash"].Get();
+				auto ReceiptHash = Row["receipt_hash"].Get();
+				Format::Stream TransactionMessage = Format::Stream(Load(Label, __func__, GetTransactionLabel(TransactionHash.GetBinary())).Or(String()));
+				Format::Stream ReceiptMessage = Format::Stream(Load(Label, __func__, GetReceiptLabel(ReceiptHash.GetBinary())).Or(String()));
 				Ledger::BlockTransaction Value;
 				Value.Transaction = Transactions::Resolver::New(Messages::Authentic::ResolveType(TransactionMessage).Or(0));
 				if (Value.Transaction && Value.Transaction->Load(TransactionMessage) && Value.Receipt.Load(ReceiptMessage))
 				{
-					FinalizeChecksum(**Value.Transaction, Row["transaction_hash"]);
-					FinalizeChecksum(Value.Receipt, Row["receipt_hash"]);
+					FinalizeChecksum(**Value.Transaction, TransactionHash);
+					FinalizeChecksum(Value.Receipt, ReceiptHash);
 					Values.emplace_back(std::move(Value));
 				}
 			}
@@ -1263,7 +1479,7 @@ namespace Tangent
 			Map.push_back(Var::Set::Integer(Count));
 			Map.push_back(Var::Set::Integer(Offset));
 
-			auto Cursor = EmplaceQuery(Label, __func__, "SELECT receipt_hash, receipt_message FROM transactions WHERE block_number = ? ORDER BY block_nonce LIMIT ? OFFSET ?", &Map);
+			auto Cursor = EmplaceQuery(Txdata, Label, __func__, "SELECT receipt_hash FROM transactions WHERE block_number = ? ORDER BY block_nonce LIMIT ? OFFSET ?", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<Vector<Ledger::Receipt>>(LayerException(ErrorOf(Cursor)));
 
@@ -1276,10 +1492,11 @@ namespace Tangent
 			{
 				auto Row = Response[i];
 				Ledger::Receipt Value;
-				Format::Stream Message = Format::Stream(Row["receipt_message"].Get().GetBlob());
+				auto ReceiptHash = Row["receipt_hash"].Get();
+				Format::Stream Message = Format::Stream(Load(Label, __func__, GetReceiptLabel(ReceiptHash.GetBinary())).Or(String()));
 				if (Value.Load(Message))
 				{
-					FinalizeChecksum(Value, Row["receipt_hash"]);
+					FinalizeChecksum(Value, ReceiptHash);
 					Values.emplace_back(std::move(Value));
 				}
 			}
@@ -1293,7 +1510,7 @@ namespace Tangent
 			Map.push_back(Var::Set::Integer(Count));
 			Map.push_back(Var::Set::Integer(Offset));
 
-			auto Cursor = EmplaceQuery(Label, __func__, "SELECT transaction_hash, transaction_message, receipt_hash, receipt_message FROM transactions WHERE dispatch_queue IS NOT NULL AND dispatch_queue <= ? ORDER BY block_nonce LIMIT ? OFFSET ?", &Map);
+			auto Cursor = EmplaceQuery(Txdata, Label, __func__, "SELECT transaction_hash, receipt_hash FROM transactions WHERE dispatch_queue IS NOT NULL AND dispatch_queue <= ? ORDER BY block_nonce LIMIT ? OFFSET ?", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<Vector<Ledger::BlockTransaction>>(LayerException(ErrorOf(Cursor)));
 
@@ -1305,14 +1522,16 @@ namespace Tangent
 			for (size_t i = 0; i < Size; i++)
 			{
 				auto Row = Response[i];
-				Format::Stream TransactionMessage = Format::Stream(Row["transaction_message"].Get().GetBlob());
-				Format::Stream ReceiptMessage = Format::Stream(Row["receipt_message"].Get().GetBlob());
+				auto TransactionHash = Row["transaction_hash"].Get();
+				auto ReceiptHash = Row["receipt_hash"].Get();
+				Format::Stream TransactionMessage = Format::Stream(Load(Label, __func__, GetTransactionLabel(TransactionHash.GetBinary())).Or(String()));
+				Format::Stream ReceiptMessage = Format::Stream(Load(Label, __func__, GetReceiptLabel(ReceiptHash.GetBinary())).Or(String()));
 				Ledger::BlockTransaction Value;
 				Value.Transaction = Transactions::Resolver::New(Messages::Authentic::ResolveType(TransactionMessage).Or(0));
 				if (Value.Transaction && Value.Transaction->Load(TransactionMessage) && Value.Receipt.Load(ReceiptMessage))
 				{
-					FinalizeChecksum(**Value.Transaction, Row["transaction_hash"]);
-					FinalizeChecksum(Value.Receipt, Row["receipt_hash"]);
+					FinalizeChecksum(**Value.Transaction, TransactionHash);
+					FinalizeChecksum(Value.Receipt, ReceiptHash);
 					Values.emplace_back(std::move(Value));
 				}
 			}
@@ -1328,16 +1547,17 @@ namespace Tangent
 			Map.push_back(Var::Set::Binary(Hash, sizeof(Hash)));
 			Map.push_back(Var::Set::Binary(Hash, sizeof(Hash)));
 
-			auto Cursor = ArchiveEmplaceQuery(Label, __func__, "SELECT transaction_hash, transaction_message FROM transactions WHERE transaction_hash = ? OR transaction_number IN (SELECT transaction_number FROM aliases WHERE aliases.transaction_hash = ?)", &Map);
+			auto Cursor = EmplaceQuery(Txdata, Label, __func__, "SELECT transaction_hash FROM transactions WHERE transaction_hash = ? OR transaction_number IN (SELECT transaction_number FROM aliases WHERE aliases.transaction_hash = ?)", &Map);
 			if (!Cursor || Cursor->ErrorOrEmpty())
 				return ExpectsLR<UPtr<Ledger::Transaction>>(LayerException(ErrorOf(Cursor)));
 
-			Format::Stream Message = Format::Stream((*Cursor)["transaction_message"].Get().GetBlob());
+			auto ParentTransactionHash = (*Cursor)["transaction_hash"].Get();
+			Format::Stream Message = Format::Stream(Load(Label, __func__, GetTransactionLabel(ParentTransactionHash.GetBinary())).Or(String()));
 			UPtr<Ledger::Transaction> Value = Transactions::Resolver::New(Messages::Authentic::ResolveType(Message).Or(0));
 			if (!Value || !Value->Load(Message))
 				return ExpectsLR<UPtr<Ledger::Transaction>>(LayerException("transaction deserialization error"));
 
-			FinalizeChecksum(**Value, (*Cursor)["transaction_hash"]);
+			FinalizeChecksum(**Value, ParentTransactionHash);
 			return Value;
 		}
 		ExpectsLR<UPtr<Ledger::Transaction>> Chainstate::GetTransactionByReceiptHash(const uint256_t& ReceiptHash)
@@ -1348,16 +1568,17 @@ namespace Tangent
 			SchemaList Map;
 			Map.push_back(Var::Set::Binary(Hash, sizeof(Hash)));
 
-			auto Cursor = ArchiveEmplaceQuery(Label, __func__, "SELECT transaction_hash, transaction_message FROM transactions WHERE receipt_hash = ?", &Map);
+			auto Cursor = EmplaceQuery(Txdata, Label, __func__, "SELECT transaction_hash FROM transactions WHERE receipt_hash = ?", &Map);
 			if (!Cursor || Cursor->ErrorOrEmpty())
 				return ExpectsLR<UPtr<Ledger::Transaction>>(LayerException(ErrorOf(Cursor)));
 
-			Format::Stream Message = Format::Stream((*Cursor)["transaction_message"].Get().GetBlob());
+			auto TransactionHash = (*Cursor)["transaction_hash"].Get();
+			Format::Stream Message = Format::Stream(Load(Label, __func__, GetTransactionLabel(TransactionHash.GetBinary())).Or(String()));
 			UPtr<Ledger::Transaction> Value = Transactions::Resolver::New(Messages::Authentic::ResolveType(Message).Or(0));
 			if (!Value || !Value->Load(Message))
 				return ExpectsLR<UPtr<Ledger::Transaction>>(LayerException("transaction deserialization error"));
 
-			FinalizeChecksum(**Value, (*Cursor)["transaction_hash"]);
+			FinalizeChecksum(**Value, TransactionHash);
 			return Value;
 		}
 		ExpectsLR<Ledger::BlockTransaction> Chainstate::GetBlockTransactionByHash(const uint256_t& TransactionHash)
@@ -1369,19 +1590,21 @@ namespace Tangent
 			Map.push_back(Var::Set::Binary(Hash, sizeof(Hash)));
 			Map.push_back(Var::Set::Binary(Hash, sizeof(Hash)));
 
-			auto Cursor = ArchiveEmplaceQuery(Label, __func__, "SELECT transaction_hash, transaction_message, receipt_hash, receipt_message FROM transactions WHERE transaction_hash = ? OR transaction_number IN (SELECT transaction_number FROM aliases WHERE aliases.transaction_hash = ?)", &Map);
+			auto Cursor = EmplaceQuery(Txdata, Label, __func__, "SELECT transaction_hash, receipt_hash FROM transactions WHERE transaction_hash = ? OR transaction_number IN (SELECT transaction_number FROM aliases WHERE aliases.transaction_hash = ?)", &Map);
 			if (!Cursor || Cursor->ErrorOrEmpty())
 				return ExpectsLR<Ledger::BlockTransaction>(LayerException(ErrorOf(Cursor)));
 
-			Format::Stream TransactionMessage = Format::Stream((*Cursor)["transaction_message"].Get().GetBlob());
-			Format::Stream ReceiptMessage = Format::Stream((*Cursor)["receipt_message"].Get().GetBlob());
+			auto ParentTransactionHash = (*Cursor)["transaction_hash"].Get();
+			auto ReceiptHash = (*Cursor)["receipt_hash"].Get();
+			Format::Stream TransactionMessage = Format::Stream(Load(Label, __func__, GetTransactionLabel(ParentTransactionHash.GetBinary())).Or(String()));
+			Format::Stream ReceiptMessage = Format::Stream(Load(Label, __func__, GetReceiptLabel(ReceiptHash.GetBinary())).Or(String()));
 			Ledger::BlockTransaction Value;
 			Value.Transaction = Transactions::Resolver::New(Messages::Authentic::ResolveType(TransactionMessage).Or(0));
 			if (!Value.Transaction || !Value.Transaction->Load(TransactionMessage) || !Value.Receipt.Load(ReceiptMessage))
 				return ExpectsLR<Ledger::BlockTransaction>(LayerException("block transaction deserialization error"));
 
-			FinalizeChecksum(**Value.Transaction, (*Cursor)["transaction_hash"]);
-			FinalizeChecksum(Value.Receipt, (*Cursor)["receipt_hash"]);
+			FinalizeChecksum(**Value.Transaction, ParentTransactionHash);
+			FinalizeChecksum(Value.Receipt, ReceiptHash);
 			return Value;
 		}
 		ExpectsLR<Ledger::BlockTransaction> Chainstate::GetBlockTransactionByReceiptHash(const uint256_t& ReceiptHash)
@@ -1392,19 +1615,21 @@ namespace Tangent
 			SchemaList Map;
 			Map.push_back(Var::Set::Binary(Hash, sizeof(Hash)));
 
-			auto Cursor = ArchiveEmplaceQuery(Label, __func__, "SELECT transaction_hash, transaction_message, receipt_hash, receipt_message FROM transactions WHERE receipt_hash = ?", &Map);
+			auto Cursor = EmplaceQuery(Txdata, Label, __func__, "SELECT transaction_hash, receipt_hash FROM transactions WHERE receipt_hash = ?", &Map);
 			if (!Cursor || Cursor->ErrorOrEmpty())
 				return ExpectsLR<Ledger::BlockTransaction>(LayerException(ErrorOf(Cursor)));
 
-			Format::Stream TransactionMessage = Format::Stream((*Cursor)["transaction_message"].Get().GetBlob());
-			Format::Stream ReceiptMessage = Format::Stream((*Cursor)["receipt_message"].Get().GetBlob());
+			auto TransactionHash = (*Cursor)["transaction_hash"].Get();
+			auto ParentReceiptHash = (*Cursor)["receipt_hash"].Get();
+			Format::Stream TransactionMessage = Format::Stream(Load(Label, __func__, GetTransactionLabel(TransactionHash.GetBinary())).Or(String()));
+			Format::Stream ReceiptMessage = Format::Stream(Load(Label, __func__, GetReceiptLabel(ParentReceiptHash.GetBinary())).Or(String()));
 			Ledger::BlockTransaction Value;
 			Value.Transaction = Transactions::Resolver::New(Messages::Authentic::ResolveType(TransactionMessage).Or(0));
 			if (!Value.Transaction || !Value.Transaction->Load(TransactionMessage) || !Value.Receipt.Load(ReceiptMessage))
 				return ExpectsLR<Ledger::BlockTransaction>(LayerException("block transaction deserialization error"));
 
-			FinalizeChecksum(**Value.Transaction, (*Cursor)["transaction_hash"]);
-			FinalizeChecksum(Value.Receipt, (*Cursor)["receipt_hash"]);
+			FinalizeChecksum(**Value.Transaction, TransactionHash);
+			FinalizeChecksum(Value.Receipt, ParentReceiptHash);
 			return Value;
 		}
 		ExpectsLR<Ledger::Receipt> Chainstate::GetReceiptByHash(const uint256_t& ReceiptHash)
@@ -1412,19 +1637,12 @@ namespace Tangent
 			uint8_t Hash[32];
 			Algorithm::Encoding::DecodeUint256(ReceiptHash, Hash);
 
-			SchemaList Map;
-			Map.push_back(Var::Set::Binary(Hash, sizeof(Hash)));
-
-			auto Cursor = ArchiveEmplaceQuery(Label, __func__, "SELECT receipt_hash, receipt_message FROM transactions WHERE receipt_hash = ?", &Map);
-			if (!Cursor || Cursor->ErrorOrEmpty())
-				return ExpectsLR<Ledger::Receipt>(LayerException(ErrorOf(Cursor)));
-
 			Ledger::Receipt Value;
-			Format::Stream Message = Format::Stream((*Cursor)["receipt_message"].Get().GetBlob());
+			Format::Stream Message = Format::Stream(Load(Label, __func__, GetReceiptLabel(Hash)).Or(String()));
 			if (!Value.Load(Message))
 				return ExpectsLR<Ledger::Receipt>(LayerException("receipt deserialization error"));
 
-			FinalizeChecksum(Value, (*Cursor)["receipt_hash"]);
+			FinalizeChecksum(Value, Var::Binary(Hash, sizeof(Hash)));
 			return Value;
 		}
 		ExpectsLR<Ledger::Receipt> Chainstate::GetReceiptByTransactionHash(const uint256_t& TransactionHash)
@@ -1435,16 +1653,17 @@ namespace Tangent
 			SchemaList Map;
 			Map.push_back(Var::Set::Binary(Hash, sizeof(Hash)));
 
-			auto Cursor = ArchiveEmplaceQuery(Label, __func__, "SELECT receipt_hash, receipt_message FROM transactions WHERE transaction_hash = ?", &Map);
+			auto Cursor = EmplaceQuery(Txdata, Label, __func__, "SELECT receipt_hash FROM transactions WHERE transaction_hash = ?", &Map);
 			if (!Cursor || Cursor->ErrorOrEmpty())
 				return ExpectsLR<Ledger::Receipt>(LayerException(ErrorOf(Cursor)));
 
 			Ledger::Receipt Value;
-			Format::Stream Message = Format::Stream((*Cursor)["receipt_message"].Get().GetBlob());
+			auto ReceiptHash = (*Cursor)["receipt_hash"].Get();
+			Format::Stream Message = Format::Stream(Load(Label, __func__, GetReceiptLabel(ReceiptHash.GetBinary())).Or(String()));
 			if (!Value.Load(Message))
 				return ExpectsLR<Ledger::Receipt>(LayerException("receipt deserialization error"));
 
-			FinalizeChecksum(Value, (*Cursor)["receipt_hash"]);
+			FinalizeChecksum(Value, ReceiptHash);
 			return Value;
 		}
 		ExpectsLR<UPtr<Ledger::State>> Chainstate::GetStateByComposition(const Ledger::BlockMutation* Delta, const std::string_view& Address, const std::string_view& Stride, uint64_t BlockNumber)
@@ -1470,16 +1689,18 @@ namespace Tangent
 			if (!Location)
 				return Location.Error();
 
-			auto FindState = HottestStorage->PrepareStatement(!BlockNumber ? "SELECT message FROM states WHERE address_number = ? AND stride_number = ?" : "SELECT message FROM statetries WHERE address_number = ? AND stride_number = ? AND block_number < ? ORDER BY block_number DESC LIMIT 1", nullptr);
+			auto FindState = Statedata->PrepareStatement(!BlockNumber ?
+				"SELECT block_number FROM states WHERE address_number = ? AND stride_number = ?" :
+				"SELECT block_number FROM statetries WHERE address_number = ? AND stride_number = ? AND block_number < ? ORDER BY block_number DESC LIMIT 1", nullptr);
 			if (!FindState)
 				return ExpectsLR<UPtr<Ledger::State>>(LayerException(std::move(FindState.Error().message())));
 
-			HottestStorage->BindInt64(*FindState, 0, Location->first);
-			HottestStorage->BindInt64(*FindState, 1, Location->second);
+			Statedata->BindInt64(*FindState, 0, Location->first);
+			Statedata->BindInt64(*FindState, 1, Location->second);
 			if (BlockNumber > 0)
-				HottestStorage->BindInt64(*FindState, 2, BlockNumber);
+				Statedata->BindInt64(*FindState, 2, BlockNumber);
 
-			auto Cursor = ArchivePreparedQuery(Label, __func__, *FindState);
+			auto Cursor = PreparedQuery(Statedata, Label, __func__, *FindState);
 			if (!Cursor || Cursor->Empty())
 			{
 				if (Delta != nullptr && Delta->Incoming != nullptr)
@@ -1493,7 +1714,7 @@ namespace Tangent
 				return ExpectsLR<UPtr<Ledger::State>>(LayerException("state not found"));
 			}
 
-			Format::Stream Message = Format::Stream((*Cursor)["message"].Get().GetBlob());
+			Format::Stream Message = Format::Stream(Load(Label, __func__, GetStateLabel(Address, Stride, (*Cursor)["block_number"].Get().GetInteger())).Or(String()));
 			UPtr<Ledger::State> Value = States::Resolver::New(Messages::Generic::ResolveType(Message).Or(0));
 			if (!Value || !Value->Load(Message))
 			{
@@ -1518,13 +1739,15 @@ namespace Tangent
 				Map.push_back(Var::Set::Integer(BlockNumber));
 			Map.push_back(Var::Set::Integer(Offset));
 
-			auto Cursor = ArchiveEmplaceQuery(Label, __func__, !BlockNumber ? "SELECT message FROM states WHERE address_number = ? ORDER BY stride_number LIMIT 1 OFFSET ?" : "SELECT message, MAX(block_number) FROM statetries WHERE address_number = ? AND block_number < ? GROUP BY stride_number ORDER BY stride_number LIMIT 1 OFFSET ?", &Map);
+			auto Cursor = EmplaceQuery(Statedata, Label, __func__, !BlockNumber ?
+				"SELECT (SELECT stride_hash FROM strides WHERE strides.stride_number = states.stride_number) AS stride, block_number FROM states WHERE address_number = ? ORDER BY stride_number LIMIT 1 OFFSET ?" :
+				"SELECT (SELECT stride_hash FROM strides WHERE strides.stride_number = statetries.stride_number) AS stride, MAX(block_number) AS block_number FROM statetries WHERE address_number = ? AND block_number < ? GROUP BY stride_number ORDER BY stride_number LIMIT 1 OFFSET ?", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<UPtr<Ledger::State>>(LayerException(ErrorOf(Cursor)));
 			else if (Cursor->Empty())
 				return ExpectsLR<UPtr<Ledger::State>>(LayerException("state not found"));
 
-			Format::Stream Message = Format::Stream((*Cursor)["message"].Get().GetBlob());
+			Format::Stream Message = Format::Stream(Load(Label, __func__, GetStateLabel(Address, (*Cursor)["stride"].Get().GetBlob(), (*Cursor)["block_number"].Get().GetInteger())).Or(String()));
 			UPtr<Ledger::State> Value = States::Resolver::New(Messages::Generic::ResolveType(Message).Or(0));
 			if (!Value || !Value->Load(Message))
 			{
@@ -1549,13 +1772,15 @@ namespace Tangent
 				Map.push_back(Var::Set::Integer(BlockNumber));
 			Map.push_back(Var::Set::Integer(Offset));
 
-			auto Cursor = ArchiveEmplaceQuery(Label, __func__, !BlockNumber ? "SELECT message FROM states WHERE stride_number = ? ORDER BY address_number LIMIT 1 OFFSET ?" : "SELECT message, MAX(block_number) FROM statetries WHERE stride_number = ? AND block_number < ? GROUP BY address_number ORDER BY address_number LIMIT 1 OFFSET ?", &Map);
+			auto Cursor = EmplaceQuery(Statedata, Label, __func__, !BlockNumber ?
+				"SELECT (SELECT address_hash FROM addresses WHERE addresses.address_number = states.address_number) AS address, block_number FROM states WHERE stride_number = ? ORDER BY address_number LIMIT 1 OFFSET ?" :
+				"SELECT (SELECT address_hash FROM addresses WHERE addresses.address_number = statetries.address_number) AS address, MAX(block_number) AS block_number FROM statetries WHERE stride_number = ? AND block_number < ? GROUP BY address_number ORDER BY address_number LIMIT 1 OFFSET ?", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<UPtr<Ledger::State>>(LayerException(ErrorOf(Cursor)));
 			else if (Cursor->Empty())
 				return ExpectsLR<UPtr<Ledger::State>>(LayerException("state not found"));
 
-			Format::Stream Message = Format::Stream((*Cursor)["message"].Get().GetBlob());
+			Format::Stream Message = Format::Stream(Load(Label, __func__, GetStateLabel((*Cursor)["address"].Get().GetBlob(), Stride, (*Cursor)["block_number"].Get().GetInteger())).Or(String()));
 			UPtr<Ledger::State> Value = States::Resolver::New(Messages::Generic::ResolveType(Message).Or(0));
 			if (!Value || !Value->Load(Message))
 			{
@@ -1581,7 +1806,9 @@ namespace Tangent
 			Map.push_back(Var::Set::Integer(Count));
 			Map.push_back(Var::Set::Integer(Offset));
 
-			auto Cursor = ArchiveEmplaceQuery(Label, __func__, !BlockNumber ? "SELECT message FROM states WHERE address_number = ? ORDER BY stride_number LIMIT ? OFFSET ?" : "SELECT message, MAX(block_number) FROM statetries WHERE address_number = ? AND block_number < ? GROUP BY stride_number ORDER BY stride_number LIMIT ? OFFSET ?", &Map);
+			auto Cursor = EmplaceQuery(Statedata, Label, __func__, !BlockNumber ?
+				"SELECT (SELECT stride_hash FROM strides WHERE strides.stride_number = states.stride_number) AS stride, block_number FROM states WHERE address_number = ? ORDER BY stride_number LIMIT ? OFFSET ?" :
+				"SELECT (SELECT stride_hash FROM strides WHERE strides.stride_number = statetries.stride_number) AS stride, MAX(block_number) AS block_number FROM statetries WHERE address_number = ? AND block_number < ? GROUP BY stride_number ORDER BY stride_number LIMIT ? OFFSET ?", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<Vector<UPtr<Ledger::State>>>(LayerException(ErrorOf(Cursor)));
 
@@ -1591,7 +1818,7 @@ namespace Tangent
 			for (size_t i = 0; i < Size; i++)
 			{
 				auto Row = Response[i];
-				Format::Stream Message = Format::Stream(Row["message"].Get().GetBlob());
+				Format::Stream Message = Format::Stream(Load(Label, __func__, GetStateLabel(Address, Row["stride"].Get().GetBlob(), Row["block_number"].Get().GetInteger())).Or(String()));
 				UPtr<Ledger::State> NextState = States::Resolver::New(Messages::Generic::ResolveType(Message).Or(0));
 				if (!NextState || !NextState->Load(Message))
 				{
@@ -1622,7 +1849,9 @@ namespace Tangent
 			Map.push_back(Var::Set::Integer(Count));
 			Map.push_back(Var::Set::Integer(Offset));
 
-			auto Cursor = ArchiveEmplaceQuery(Label, __func__, !BlockNumber ? "SELECT message FROM states WHERE stride_number = ? AND weight $? ? ORDER BY weight $? LIMIT ? OFFSET ?" : "SELECT message, MAX(block_number) FROM statetries WHERE stride_number = ? AND block_number < ? AND weight $? ? GROUP BY address_number ORDER BY weight $? LIMIT ? OFFSET ?", &Map);
+			auto Cursor = EmplaceQuery(Statedata, Label, __func__, !BlockNumber ?
+				"SELECT (SELECT address_hash FROM addresses WHERE addresses.address_number = states.address_number) AS address, block_number FROM states WHERE stride_number = ? AND weight $? ? ORDER BY weight $? LIMIT ? OFFSET ?" :
+				"SELECT (SELECT address_hash FROM addresses WHERE addresses.address_number = statetries.address_number) AS address, MAX(block_number) AS block_number FROM statetries WHERE stride_number = ? AND block_number < ? AND weight $? ? GROUP BY address_number ORDER BY weight $? LIMIT ? OFFSET ?", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<Vector<UPtr<Ledger::State>>>(LayerException(ErrorOf(Cursor)));
 
@@ -1632,7 +1861,7 @@ namespace Tangent
 			for (size_t i = 0; i < Size; i++)
 			{
 				auto Row = Response[i];
-				Format::Stream Message = Format::Stream(Row["message"].Get().GetBlob());
+				Format::Stream Message = Format::Stream(Load(Label, __func__, GetStateLabel(Row["address"].Get().GetBlob(), Stride, Row["block_number"].Get().GetInteger())).Or(String()));
 				UPtr<Ledger::State> NextState = States::Resolver::New(Messages::Generic::ResolveType(Message).Or(0));
 				if (!NextState || !NextState->Load(Message))
 				{
@@ -1660,167 +1889,170 @@ namespace Tangent
 			Map.push_back(Var::Set::String(Weight.AsCondition()));
 			Map.push_back(Var::Set::Integer(Weight.Value));
 
-			auto Cursor = ArchiveEmplaceQuery(Label, __func__, !BlockNumber ? "SELECT COUNT(1) AS state_count FROM states WHERE stride_number = ? AND weight $? ?" : "SELECT COUNT(1) AS state_count FROM (SELECT MAX(block_number) FROM statetries WHERE stride_number = ? AND block_number < ? AND weight $? ? GROUP BY address_number)", &Map);
+			auto Cursor = EmplaceQuery(Statedata, Label, __func__, !BlockNumber ? "SELECT COUNT(1) AS state_count FROM states WHERE stride_number = ? AND weight $? ?" : "SELECT COUNT(1) AS state_count FROM (SELECT MAX(block_number) FROM statetries WHERE stride_number = ? AND block_number < ? AND weight $? ? GROUP BY address_number)", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<size_t>(LayerException(ErrorOf(Cursor)));
 
 			size_t Count = (*Cursor)["state_count"].Get().GetInteger();
 			return ExpectsLR<size_t>(Count);
 		}
-		bool Chainstate::Verify()
+		bool Chainstate::Verify(LDB::Connection* Storage, const std::string_view& Name)
 		{
-			String Command = VI_STRINGIFY((
-				CREATE TABLE IF NOT EXISTS blocks
-				(
-					block_number BIGINT NOT NULL,
-					block_hash BINARY(32) NOT NULL,
-					message BINARY NOT NULL,
-					PRIMARY KEY (block_hash)
-				);
-				CREATE UNIQUE INDEX IF NOT EXISTS blocks_block_number ON blocks (block_number);
-				CREATE TABLE IF NOT EXISTS checkpoints
-				(
-					block_number BIGINT NOT NULL,
-					PRIMARY KEY (block_number)
-				);
-				CREATE TABLE IF NOT EXISTS addresses
-				(
-					address_number BIGINT NOT NULL,
-					address_hash BINARY NOT NULL,
-					block_number BIGINT REFERENCES blocks (block_number),
-					PRIMARY KEY (address_number)
-				);
-				CREATE UNIQUE INDEX IF NOT EXISTS addresses_address_hash ON addresses (address_hash);
-				CREATE INDEX IF NOT EXISTS addresses_block_number ON addresses (block_number);
-				CREATE TABLE IF NOT EXISTS strides
-				(
-					stride_number BIGINT NOT NULL,
-					stride_hash BINARY NOT NULL,
-					block_number BIGINT REFERENCES blocks (block_number),
-					PRIMARY KEY (stride_number)
-				);
-				CREATE UNIQUE INDEX IF NOT EXISTS strides_stride_hash ON strides (stride_hash);
-				CREATE INDEX IF NOT EXISTS strides_block_number ON strides (block_number);
-				CREATE TABLE IF NOT EXISTS owners
-				(
-					owner_number BIGINT NOT NULL,
-					owner_hash BINARY(20) NOT NULL,
-					block_number BIGINT REFERENCES blocks (block_number),
-					PRIMARY KEY (owner_number)
-				);
-				CREATE UNIQUE INDEX IF NOT EXISTS owners_owner_hash ON owners (owner_hash);
-				CREATE INDEX IF NOT EXISTS owners_block_number ON owners (block_number);
-				CREATE TABLE IF NOT EXISTS parties
-				(
-					transaction_number BIGINT REFERENCES transactions (transaction_number),
-					transaction_owner_number BIGINT REFERENCES owners (owner_number),
-					block_number BIGINT REFERENCES blocks (block_number),
-					PRIMARY KEY (transaction_owner_number, block_number, transaction_number)
-				);
-				CREATE INDEX IF NOT EXISTS parties_block_number ON parties (block_number);
-				CREATE VIEW IF NOT EXISTS partyviews
-				(
-					transaction_number,
-					transaction_owner_hash,
-					block_number
-				) AS SELECT NULL, NULL, NULL WHERE FALSE;
-				CREATE TRIGGER IF NOT EXISTS partyviews_push INSTEAD OF INSERT ON partyviews FOR EACH ROW BEGIN
-					INSERT OR IGNORE INTO owners (owner_number, owner_hash, block_number)
-					SELECT (SELECT COALESCE(MAX(owner_number), 0) + 1 FROM owners), NEW.transaction_owner_hash, NEW.block_number;
-					INSERT OR IGNORE INTO parties (transaction_number, transaction_owner_number, block_number)
-					SELECT NEW.transaction_number, owner_number, block_number FROM owners WHERE owner_hash = NEW.transaction_owner_hash;
-				END;
-				CREATE TABLE IF NOT EXISTS aliases
-				(
-					transaction_number BIGINT REFERENCES transactions (transaction_number),
-					transaction_hash BINARY(32) NOT NULL,
-					block_number BIGINT REFERENCES blocks (block_number),
-					PRIMARY KEY (transaction_hash, transaction_number)
-				);
-				CREATE INDEX IF NOT EXISTS aliases_block_number ON aliases (block_number);
-				CREATE TABLE IF NOT EXISTS transactions
-				(
-					transaction_number BIGINT NOT NULL,
-					transaction_hash BINARY(32) NOT NULL,
-					receipt_hash BINARY(32) NOT NULL,
-					dispatch_queue BIGINT DEFAULT NULL,
-					block_number BIGINT REFERENCES blocks (block_number),
-					block_nonce BIGINT NOT NULL,
-					transaction_message BINARY NOT NULL,
-					receipt_message BINARY NOT NULL,
-					PRIMARY KEY (transaction_hash)
-				);
-				CREATE UNIQUE INDEX IF NOT EXISTS transactions_transaction_number ON transactions (transaction_number);
-				CREATE INDEX IF NOT EXISTS transactions_receipt_hash ON transactions (receipt_hash);
-				CREATE INDEX IF NOT EXISTS transactions_dispatch_queue_block_nonce ON transactions (dispatch_queue, block_nonce);
-				CREATE INDEX IF NOT EXISTS transactions_block_number_block_nonce ON transactions (block_number, block_nonce);
-				CREATE VIEW IF NOT EXISTS transactionviews
-				(
-					transaction_number,
-					transaction_owner_hash,
-					transaction_hash,
-					receipt_hash,
-					dispatch_queue,
-					block_number,
-					block_nonce,
-					transaction_message,
-					receipt_message
-				) AS SELECT NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL WHERE FALSE;
-				CREATE TRIGGER IF NOT EXISTS transactionviews_push INSTEAD OF INSERT ON transactionviews FOR EACH ROW BEGIN
-					INSERT INTO transactions (transaction_number, transaction_hash, receipt_hash, dispatch_queue, block_number, block_nonce, transaction_message, receipt_message)
-					SELECT NEW.transaction_number, NEW.transaction_hash, NEW.receipt_hash, NEW.dispatch_queue, NEW.block_number, NEW.block_nonce, NEW.transaction_message, NEW.receipt_message;
-					INSERT OR IGNORE INTO owners (owner_number, owner_hash, block_number)
-					SELECT (SELECT COALESCE(MAX(owner_number), 0) + 1 FROM owners), NEW.transaction_owner_hash, NEW.block_number;
-					INSERT OR IGNORE INTO parties (transaction_number, transaction_owner_number, block_number)
-					SELECT NEW.transaction_number, owner_number, block_number FROM owners WHERE owner_hash = NEW.transaction_owner_hash;
-				END;
-				CREATE TABLE IF NOT EXISTS states
-				(
-					address_number BIGINT REFERENCES addresses (address_number),
-					stride_number BIGINT REFERENCES strides (stride_number),
-					block_number BIGINT REFERENCES blocks (block_number),
-					weight BIGINT NOT NULL,
-					message BINARY NOT NULL,
-					PRIMARY KEY (address_number, stride_number)
-				);
-				CREATE INDEX IF NOT EXISTS states_stride_number_address_number ON states (stride_number, address_number);
-				CREATE INDEX IF NOT EXISTS states_stride_number_weight ON states (stride_number, weight);
-				CREATE INDEX IF NOT EXISTS states_block_number ON states (block_number);
-				CREATE TABLE IF NOT EXISTS statetries
-				(
-					address_number BIGINT REFERENCES addresses (address_number),
-					stride_number BIGINT REFERENCES strides (stride_number),
-					block_number BIGINT REFERENCES blocks (block_number),
-					weight BIGINT NOT NULL,
-					message BINARY NOT NULL,
-					PRIMARY KEY (address_number, stride_number, block_number)
-				);
-				CREATE INDEX IF NOT EXISTS statetries_stride_number_block_number_address_number ON statetries (stride_number, block_number, address_number);
-				CREATE INDEX IF NOT EXISTS statetries_block_number ON statetries (block_number);
-				CREATE VIEW IF NOT EXISTS stateviews
-				(
-					address_hash,
-					stride_hash,
-					block_number,
-					weight,
-					message
-				) AS SELECT NULL, NULL, NULL, NULL, NULL WHERE FALSE;
-				CREATE TRIGGER IF NOT EXISTS stateviews_push INSTEAD OF INSERT ON stateviews FOR EACH ROW BEGIN
-					INSERT OR IGNORE INTO strides (stride_number, stride_hash, block_number)
-					SELECT (SELECT COALESCE(MAX(stride_number), 0) + 1 FROM strides), NEW.stride_hash, NEW.block_number;
-					INSERT OR IGNORE INTO addresses (address_number, address_hash, block_number)
-					SELECT (SELECT COALESCE(MAX(address_number), 0) + 1 FROM addresses), NEW.address_hash, NEW.block_number;
-					INSERT OR REPLACE INTO states (address_number, stride_number, block_number, weight, message)
-					SELECT (SELECT address_number FROM addresses WHERE addresses.address_hash = NEW.address_hash), (SELECT stride_number FROM strides WHERE strides.stride_hash = NEW.stride_hash), NEW.block_number, NEW.weight, NEW.message;
-					INSERT OR REPLACE INTO statetries (address_number, stride_number, block_number, weight, message)
-					SELECT (SELECT address_number FROM addresses WHERE addresses.address_hash = NEW.address_hash), (SELECT stride_number FROM strides WHERE strides.stride_hash = NEW.stride_hash), NEW.block_number, NEW.weight, NEW.message;
-				END;));
+			String Command;
+			if (Name == "blockdata")
+			{
+				Command = VI_STRINGIFY((
+					CREATE TABLE IF NOT EXISTS blocks
+					(
+						block_number BIGINT NOT NULL,
+						block_hash BINARY(32) NOT NULL,
+						PRIMARY KEY (block_hash)
+					);
+					CREATE UNIQUE INDEX IF NOT EXISTS blocks_block_number ON blocks (block_number);
+					CREATE TABLE IF NOT EXISTS checkpoints
+					(
+						block_number BIGINT NOT NULL,
+						PRIMARY KEY (block_number)
+					);));
+			}
+			else if (Name == "txdata")
+			{
+				Command = VI_STRINGIFY((
+					CREATE TABLE IF NOT EXISTS owners
+					(
+						owner_number BIGINT NOT NULL,
+						owner_hash BINARY(20) NOT NULL,
+						block_number BIGINT NOT NULL,
+						PRIMARY KEY (owner_number)
+					);
+					CREATE UNIQUE INDEX IF NOT EXISTS owners_owner_hash ON owners (owner_hash);
+					CREATE INDEX IF NOT EXISTS owners_block_number ON owners (block_number);
+					CREATE TABLE IF NOT EXISTS parties
+					(
+						transaction_number BIGINT REFERENCES transactions (transaction_number),
+						transaction_owner_number BIGINT REFERENCES owners (owner_number),
+						block_number BIGINT NOT NULL,
+						PRIMARY KEY (transaction_owner_number, block_number, transaction_number)
+					);
+					CREATE INDEX IF NOT EXISTS parties_block_number ON parties (block_number);
+					CREATE VIEW IF NOT EXISTS partyviews
+					(
+						transaction_number,
+						transaction_owner_hash,
+						block_number
+					) AS SELECT NULL, NULL, NULL WHERE FALSE;
+					CREATE TRIGGER IF NOT EXISTS partyviews_push INSTEAD OF INSERT ON partyviews FOR EACH ROW BEGIN
+						INSERT OR IGNORE INTO owners (owner_number, owner_hash, block_number)
+						SELECT (SELECT COALESCE(MAX(owner_number), 0) + 1 FROM owners), NEW.transaction_owner_hash, NEW.block_number;
+						INSERT OR IGNORE INTO parties (transaction_number, transaction_owner_number, block_number)
+						SELECT NEW.transaction_number, owner_number, block_number FROM owners WHERE owner_hash = NEW.transaction_owner_hash;
+					END;
+					CREATE TABLE IF NOT EXISTS aliases
+					(
+						transaction_number BIGINT REFERENCES transactions (transaction_number),
+						transaction_hash BINARY(32) NOT NULL,
+						block_number BIGINT NOT NULL,
+						PRIMARY KEY (transaction_hash, transaction_number)
+					);
+					CREATE INDEX IF NOT EXISTS aliases_block_number ON aliases (block_number);
+					CREATE TABLE IF NOT EXISTS transactions
+					(
+						transaction_number BIGINT NOT NULL,
+						transaction_hash BINARY(32) NOT NULL,
+						receipt_hash BINARY(32) NOT NULL,
+						dispatch_queue BIGINT DEFAULT NULL,
+						block_number BIGINT NOT NULL,
+						block_nonce BIGINT NOT NULL,
+						PRIMARY KEY (transaction_hash)
+					);
+					CREATE UNIQUE INDEX IF NOT EXISTS transactions_transaction_number ON transactions (transaction_number);
+					CREATE INDEX IF NOT EXISTS transactions_receipt_hash ON transactions (receipt_hash);
+					CREATE INDEX IF NOT EXISTS transactions_dispatch_queue_block_nonce ON transactions (dispatch_queue, block_nonce) WHERE dispatch_queue IS NOT NULL;
+					CREATE INDEX IF NOT EXISTS transactions_block_number_block_nonce ON transactions (block_number, block_nonce);
+					CREATE VIEW IF NOT EXISTS transactionviews
+					(
+						transaction_number,
+						transaction_owner_hash,
+						transaction_hash,
+						receipt_hash,
+						dispatch_queue,
+						block_number,
+						block_nonce
+					) AS SELECT NULL, NULL, NULL, NULL, NULL, NULL, NULL WHERE FALSE;
+					CREATE TRIGGER IF NOT EXISTS transactionviews_push INSTEAD OF INSERT ON transactionviews FOR EACH ROW BEGIN
+						INSERT INTO transactions (transaction_number, transaction_hash, receipt_hash, dispatch_queue, block_number, block_nonce)
+						SELECT NEW.transaction_number, NEW.transaction_hash, NEW.receipt_hash, NEW.dispatch_queue, NEW.block_number, NEW.block_nonce;
+						INSERT OR IGNORE INTO owners (owner_number, owner_hash, block_number)
+						SELECT (SELECT COALESCE(MAX(owner_number), 0) + 1 FROM owners), NEW.transaction_owner_hash, NEW.block_number;
+						INSERT OR IGNORE INTO parties (transaction_number, transaction_owner_number, block_number)
+						SELECT NEW.transaction_number, owner_number, block_number FROM owners WHERE owner_hash = NEW.transaction_owner_hash;
+					END;));
+			}
+			else if (Name == "statedata")
+			{
+				Command = VI_STRINGIFY((
+					CREATE TABLE IF NOT EXISTS addresses
+					(
+						address_number BIGINT NOT NULL,
+						address_hash BINARY NOT NULL,
+						block_number BIGINT NOT NULL,
+						PRIMARY KEY (address_number)
+					);
+					CREATE UNIQUE INDEX IF NOT EXISTS addresses_address_hash ON addresses (address_hash);
+					CREATE INDEX IF NOT EXISTS addresses_block_number ON addresses (block_number);
+					CREATE TABLE IF NOT EXISTS strides
+					(
+						stride_number BIGINT NOT NULL,
+						stride_hash BINARY NOT NULL,
+						block_number BIGINT NOT NULL,
+						PRIMARY KEY (stride_number)
+					);
+					CREATE UNIQUE INDEX IF NOT EXISTS strides_stride_hash ON strides (stride_hash);
+					CREATE INDEX IF NOT EXISTS strides_block_number ON strides (block_number);
+					CREATE TABLE IF NOT EXISTS states
+					(
+						address_number BIGINT REFERENCES addresses (address_number),
+						stride_number BIGINT REFERENCES strides (stride_number),
+						block_number BIGINT NOT NULL,
+						weight BIGINT NOT NULL,
+						PRIMARY KEY (address_number, stride_number)
+					);
+					CREATE INDEX IF NOT EXISTS states_stride_number_address_number ON states (stride_number, address_number);
+					CREATE INDEX IF NOT EXISTS states_stride_number_weight ON states (stride_number, weight);
+					CREATE INDEX IF NOT EXISTS states_block_number ON states (block_number);
+					CREATE TABLE IF NOT EXISTS statetries
+					(
+						address_number BIGINT REFERENCES addresses (address_number),
+						stride_number BIGINT REFERENCES strides (stride_number),
+						block_number BIGINT NOT NULL,
+						weight BIGINT NOT NULL,
+						PRIMARY KEY (address_number, stride_number, block_number)
+					);
+					CREATE INDEX IF NOT EXISTS statetries_stride_number_block_number_address_number ON statetries (stride_number, block_number, address_number);
+					CREATE INDEX IF NOT EXISTS statetries_block_number ON statetries (block_number);
+					CREATE VIEW IF NOT EXISTS stateviews
+					(
+						address_hash,
+						stride_hash,
+						block_number,
+						weight
+					) AS SELECT NULL, NULL, NULL, NULL WHERE FALSE;
+					CREATE TRIGGER IF NOT EXISTS stateviews_push INSTEAD OF INSERT ON stateviews FOR EACH ROW BEGIN
+						INSERT OR IGNORE INTO strides (stride_number, stride_hash, block_number)
+						SELECT (SELECT COALESCE(MAX(stride_number), 0) + 1 FROM strides), NEW.stride_hash, NEW.block_number;
+						INSERT OR IGNORE INTO addresses (address_number, address_hash, block_number)
+						SELECT (SELECT COALESCE(MAX(address_number), 0) + 1 FROM addresses), NEW.address_hash, NEW.block_number;
+						INSERT OR REPLACE INTO states (address_number, stride_number, block_number, weight)
+						SELECT (SELECT address_number FROM addresses WHERE addresses.address_hash = NEW.address_hash), (SELECT stride_number FROM strides WHERE strides.stride_hash = NEW.stride_hash), NEW.block_number, NEW.weight;
+						INSERT OR REPLACE INTO statetries (address_number, stride_number, block_number, weight)
+						SELECT (SELECT address_number FROM addresses WHERE addresses.address_hash = NEW.address_hash), (SELECT stride_number FROM strides WHERE strides.stride_hash = NEW.stride_hash), NEW.block_number, NEW.weight;
+					END;));
+			}
 
 			Command.front() = ' ';
 			Command.back() = ' ';
 			Stringify::Trim(Command);
-
-			auto Cursor = Query(Label, __func__, Command);
+			auto Cursor = Query(Storage, Label, __func__, Command);
 			return (Cursor && !Cursor->Error());
 		}
 
@@ -2238,7 +2470,7 @@ namespace Tangent
 			if (!Value || !Value->Load(Message))
 				return ExpectsLR<UPtr<Ledger::Transaction>>(LayerException("transaction deserialization error"));
 
-			FinalizeChecksum(**Value, (*Cursor)["hash"]);
+			FinalizeChecksum(**Value, (*Cursor)["hash"].Get());
 			return Value;
 		}
 		ExpectsLR<Vector<UPtr<Ledger::Transaction>>> Mempoolstate::GetTransactions(size_t Offset, size_t Count)
@@ -2263,7 +2495,7 @@ namespace Tangent
 				UPtr<Ledger::Transaction> Value = Transactions::Resolver::New(Messages::Authentic::ResolveType(Message).Or(0));
 				if (Value && Value->Load(Message))
 				{
-					FinalizeChecksum(**Value, Row["hash"]);
+					FinalizeChecksum(**Value, Row["hash"].Get());
 					Values.emplace_back(std::move(Value));
 				}
 			}
@@ -2296,7 +2528,7 @@ namespace Tangent
 				UPtr<Ledger::Transaction> Value = Transactions::Resolver::New(Messages::Authentic::ResolveType(Message).Or(0));
 				if (Value && Value->Load(Message))
 				{
-					FinalizeChecksum(**Value, Row["hash"]);
+					FinalizeChecksum(**Value, Row["hash"].Get());
 					Values.emplace_back(std::move(Value));
 				}
 			}

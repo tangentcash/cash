@@ -785,6 +785,7 @@ namespace Tangent
 				return BalanceRequirement;
 
 			auto Contribution = Context->GetAccountContribution(Proposer);
+			auto& ss = *Contribution;
 			if (!Contribution || Contribution->Custody < Value)
 				return LayerException("proposer's " + Algorithm::Asset::HandleOf(Asset) + " balance is insufficient to cover withdrawal value (value: " + Value.ToString() + ")");
 
