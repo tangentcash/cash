@@ -1,10 +1,10 @@
-#include "kernel/block.h"
-#include "kernel/wallet.h"
-#include "kernel/script.h"
-#include "policy/transactions.h"
-#include "policy/storages.h"
-#include "layer/rpc.h"
-#include "layer/p2p.h"
+#include "tangent/kernel/block.h"
+#include "tangent/kernel/wallet.h"
+#include "tangent/kernel/script.h"
+#include "tangent/policy/transactions.h"
+#include "tangent/policy/storages.h"
+#include "tangent/layer/rpc.h"
+#include "tangent/layer/p2p.h"
 #include <sstream>
 
 using namespace Tangent;

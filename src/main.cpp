@@ -1,5 +1,5 @@
-#include "layer/p2p.h"
-#include "layer/rpc.h"
+#include "tangent/layer/p2p.h"
+#include "tangent/layer/rpc.h"
 
 using namespace Tangent;
 
