@@ -2,6 +2,8 @@
 #define TAN_KERNEL_SCRIPT_H
 #include "block.h"
 
+using namespace Vitex::Scripting;
+
 namespace Tangent
 {
 	namespace Ledger

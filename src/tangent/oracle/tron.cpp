@@ -1,13 +1,13 @@
 #include "tron.h"
-#include "../utils/tiny-bitcoin/chainparams.h"
-#include "../utils/tiny-bitcoin/ecc_key.h"
-#include "../utils/tiny-bitcoin/base58.h"
-#include "../utils/tiny-bitcoin/utils.h"
-#include "../utils/protobuf/TronInternal.pb.h"
+#include "../../utils/tiny-bitcoin/chainparams.h"
+#include "../../utils/tiny-bitcoin/ecc_key.h"
+#include "../../utils/tiny-bitcoin/base58.h"
+#include "../../utils/tiny-bitcoin/utils.h"
+#include "../../utils/protobuf/TronInternal.pb.h"
 extern "C"
 {
-#include "../utils/trezor-crypto/secp256k1.h"
-#include "../utils/trezor-crypto/ecdsa.h"
+#include "../../utils/trezor-crypto/secp256k1.h"
+#include "../../utils/trezor-crypto/ecdsa.h"
 }
 #include <secp256k1_recovery.h>
 

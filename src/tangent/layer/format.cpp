@@ -1,11 +1,5 @@
 #include "format.h"
 #include "../kernel/algorithm.h"
-extern "C"
-{
-#include "../utils/trezor-crypto/blake256.h"
-#include "../utils/trezor-crypto/ripemd160.h"
-#include "../utils/trezor-crypto/sha3.h"
-}
 
 namespace Tangent
 {
@@ -64,10 +58,6 @@ namespace Tangent
 		{
 			Value.Boolean = NewValue;
 		}
-		Variable::Variable(Schema* NewValue) noexcept : Variable(Viewable::Variative)
-		{
-			Value.Pointer = (char*)NewValue;
-		}
 		Variable::Variable(Viewable NewType) noexcept : Type(NewType), Length(0)
 		{
 			Value.Pointer = nullptr;
@@ -103,8 +93,6 @@ namespace Tangent
 					return ((Decimal*)Value.Pointer)->ToString();
 				case Viewable::UintMin:
 					return Value.Integer.ToString();
-				case Viewable::Variative:
-					return Value.Pointer ? Schema::ToJSON((Schema*)Value.Pointer) : "null";
 				case Viewable::True:
 				case Viewable::False:
 					return Value.Boolean ? "true" : "false";
@@ -123,8 +111,6 @@ namespace Tangent
 					return ((Decimal*)Value.Pointer)->ToString();
 				case Viewable::UintMin:
 					return Value.Integer.ToString();
-				case Viewable::Variative:
-					return Value.Pointer ? Schema::ToJSON((Schema*)Value.Pointer) : String();
 				case Viewable::True:
 				case Viewable::False:
 					return Value.Boolean ? "1" : "0";
@@ -143,8 +129,6 @@ namespace Tangent
 					return *(Decimal*)Value.Pointer;
 				case Viewable::UintMin:
 					return Decimal(Value.Integer.ToString());
-				case Viewable::Variative:
-					return Value.Pointer ? ((Schema*)Value.Pointer)->Value.GetDecimal() : Decimal::NaN();
 				case Viewable::True:
 				case Viewable::False:
 					return Decimal(Value.Boolean ? 1 : 0);
@@ -153,7 +137,7 @@ namespace Tangent
 					return Decimal::NaN();
 			}
 		}
-		UPtr<Schema> Variable::AsVariative() const
+		UPtr<Schema> Variable::AsSchema() const
 		{
 			switch (Type)
 			{
@@ -169,13 +153,6 @@ namespace Tangent
 					return Var::Set::Decimal(*(Decimal*)Value.Pointer);
 				case Viewable::UintMin:
 					return Algorithm::Encoding::SerializeUint256(Value.Integer);
-				case Viewable::Variative:
-				{
-					auto* Result = (Schema*)Value.Pointer;
-					if (Result != nullptr)
-						Result->AddRef();
-					return Result;
-				}
 				case Viewable::True:
 				case Viewable::False:
 					return Var::Set::Boolean(Value.Boolean);
@@ -204,8 +181,6 @@ namespace Tangent
 					return ((Decimal*)Value.Pointer)->ToUInt8();
 				case Viewable::UintMin:
 					return (uint8_t)Value.Integer;
-				case Viewable::Variative:
-					return Value.Pointer ? (uint8_t)((Schema*)Value.Pointer)->Value.GetInteger() : 0;
 				case Viewable::True:
 				case Viewable::False:
 					return Value.Boolean ? 1 : 0;
@@ -224,8 +199,6 @@ namespace Tangent
 					return ((Decimal*)Value.Pointer)->ToUInt16();
 				case Viewable::UintMin:
 					return (uint16_t)Value.Integer;
-				case Viewable::Variative:
-					return Value.Pointer ? (uint16_t)((Schema*)Value.Pointer)->Value.GetInteger() : 0;
 				case Viewable::True:
 				case Viewable::False:
 					return Value.Boolean ? 1 : 0;
@@ -244,8 +217,6 @@ namespace Tangent
 					return ((Decimal*)Value.Pointer)->ToUInt32();
 				case Viewable::UintMin:
 					return (uint32_t)Value.Integer;
-				case Viewable::Variative:
-					return Value.Pointer ? (uint32_t)((Schema*)Value.Pointer)->Value.GetInteger() : 0;
 				case Viewable::True:
 				case Viewable::False:
 					return Value.Boolean ? 1 : 0;
@@ -264,8 +235,6 @@ namespace Tangent
 					return ((Decimal*)Value.Pointer)->ToUInt64();
 				case Viewable::UintMin:
 					return (uint64_t)Value.Integer;
-				case Viewable::Variative:
-					return Value.Pointer ? (uint64_t)((Schema*)Value.Pointer)->Value.GetInteger() : 0;
 				case Viewable::True:
 				case Viewable::False:
 					return Value.Boolean ? 1 : 0;
@@ -284,8 +253,6 @@ namespace Tangent
 					return uint128_t(((Decimal*)Value.Pointer)->ToString());
 				case Viewable::UintMin:
 					return uint128_t(Value.Integer);
-				case Viewable::Variative:
-					return Value.Pointer ? (uint128_t)((Schema*)Value.Pointer)->Value.GetInteger() : uint128_t(0);
 				case Viewable::True:
 				case Viewable::False:
 					return uint128_t(Value.Boolean ? 1 : 0);
@@ -304,8 +271,6 @@ namespace Tangent
 					return uint256_t(((Decimal*)Value.Pointer)->ToString());
 				case Viewable::UintMin:
 					return Value.Integer;
-				case Viewable::Variative:
-					return Value.Pointer ? (uint256_t)((Schema*)Value.Pointer)->Value.GetInteger() : uint256_t(0);
 				case Viewable::True:
 				case Viewable::False:
 					return uint256_t(Value.Boolean ? 1 : 0);
@@ -324,8 +289,6 @@ namespace Tangent
 					return ((Decimal*)Value.Pointer)->ToFloat();
 				case Viewable::UintMin:
 					return (float)(uint64_t)Value.Integer;
-				case Viewable::Variative:
-					return Value.Pointer ? (float)((Schema*)Value.Pointer)->Value.GetNumber() : 0.0f;
 				case Viewable::True:
 				case Viewable::False:
 					return Value.Boolean ? 1.0f : 0.0f;
@@ -344,8 +307,6 @@ namespace Tangent
 					return ((Decimal*)Value.Pointer)->ToDouble();
 				case Viewable::UintMin:
 					return (double)(uint64_t)Value.Integer;
-				case Viewable::Variative:
-					return Value.Pointer ? (double)((Schema*)Value.Pointer)->Value.GetNumber() : 0.0;
 				case Viewable::True:
 				case Viewable::False:
 					return Value.Boolean ? 1.0 : 0.0;
@@ -364,8 +325,6 @@ namespace Tangent
 					return !((Decimal*)Value.Pointer)->IsZeroOrNaN();
 				case Viewable::UintMin:
 					return Value.Integer > 0;
-				case Viewable::Variative:
-					return Value.Pointer ? ((Schema*)Value.Pointer)->Value.GetBoolean() : false;
 				case Viewable::True:
 				case Viewable::False:
 					return Value.Boolean;
@@ -399,16 +358,6 @@ namespace Tangent
 			switch (Type)
 			{
 				case Viewable::UintMin:
-					return true;
-				default:
-					return false;
-			}
-		}
-		bool Variable::IsVariative() const
-		{
-			switch (Type)
-			{
-				case Viewable::Variative:
 					return true;
 				default:
 					return false;
@@ -456,11 +405,6 @@ namespace Tangent
 				case Viewable::True:
 				case Viewable::False:
 					return AsBoolean() == Other.AsBoolean();
-				case Viewable::Variative:
-					if (!Value.Pointer || !Other.Value.Pointer)
-						return Value.Pointer == Other.Value.Pointer;
-
-					return ((Schema*)Value.Pointer)->Value == ((Schema*)Other.Value.Pointer)->Value;
 				case Viewable::Invalid:
 					return true;
 				default:
@@ -486,12 +430,6 @@ namespace Tangent
 				{
 					Decimal* From = (Decimal*)Other.Value.Pointer;
 					Value.Pointer = (char*)Memory::New<Decimal>(*From);
-					break;
-				}
-				case Viewable::Variative:
-				{
-					Schema* From = (Schema*)Other.Value.Pointer;
-					Value.Pointer = From ? (char*)From->Copy() : nullptr;
 					break;
 				}
 				case Viewable::UintMin:
@@ -521,7 +459,6 @@ namespace Tangent
 					Other.Value.Pointer = nullptr;
 					break;
 				case Viewable::DecimalZero:
-				case Viewable::Variative:
 					Value.Pointer = Other.Value.Pointer;
 					Other.Value.Pointer = nullptr;
 					break;
@@ -559,16 +496,6 @@ namespace Tangent
 						break;
 
 					Decimal* Buffer = (Decimal*)Value.Pointer;
-					Memory::Delete(Buffer);
-					Value.Pointer = nullptr;
-					break;
-				}
-				case Viewable::Variative:
-				{
-					if (!Value.Pointer)
-						break;
-
-					Schema* Buffer = (Schema*)Value.Pointer;
 					Memory::Delete(Buffer);
 					Value.Pointer = nullptr;
 					break;
@@ -653,15 +580,6 @@ namespace Tangent
 						Result->emplace_back(Value);
 						break;
 					}
-					case Viewable::Variative:
-					{
-						Schema* Value;
-						if (!Stream.ReadVariative(Type, &Value))
-							return false;
-
-						Result->emplace_back(Value);
-						break;
-					}
 					default:
 					{
 						if (Util::IsString(Type))
@@ -718,12 +636,6 @@ namespace Tangent
 					case Viewable::False:
 						Result->WriteBoolean(Item.AsBoolean());
 						break;
-					case Viewable::Variative:
-					{
-						auto Value = Item.AsVariative();
-						Result->WriteVariative(*Value);
-						break;
-					}
 					default:
 						return false;
 				}
@@ -763,7 +675,7 @@ namespace Tangent
 		{
 			Schema* Data = Var::Set::Array();
 			for (auto& Item : Value)
-				Data->Push(Item.AsVariative().Reset());
+				Data->Push(Item.AsSchema().Reset());
 			return Data;
 		}
 	}

@@ -2936,8 +2936,9 @@ namespace Tangent
 		}
 		ExpectsLR<void> Sidechainstate::SetProperty(const std::string_view& Key, UPtr<Schema>&& Value)
 		{
+			auto Buffer = Schema::ToJSONB(*Value);
 			Format::Stream Message;
-			Message.WriteVariative(*Value);
+			Message.WriteString(std::string_view(Buffer.begin(), Buffer.end()));
 
 			SchemaList Map;
 			Map.push_back(Var::Set::String(Algorithm::Asset::BlockchainOf(Asset) + ":" + String(Key)));
@@ -2967,17 +2968,22 @@ namespace Tangent
 			if (!Cursor || Cursor->ErrorOrEmpty())
 				return ExpectsLR<Schema*>(LayerException(ErrorOf(Cursor)));
 
-			Schema* Value = nullptr;
+			String Buffer;
 			Format::Stream Message = Format::Stream::Decompress((*Cursor)["message"].Get().GetString());
-			if (!Message.ReadVariative(Message.ReadType(), &Value))
+			if (!Message.ReadString(Message.ReadType(), &Buffer))
 				return ExpectsLR<Schema*>(LayerException("state value deserialization error"));
+			
+			auto Value = Schema::FromJSONB(Buffer);
+			if (!Value)
+				return ExpectsLR<Schema*>(LayerException(std::move(Value.Error().message())));
 
-			return Value;
+			return *Value;
 		}
 		ExpectsLR<void> Sidechainstate::SetCache(Oracle::CachePolicy Policy, const std::string_view& Key, UPtr<Schema>&& Value)
 		{
+			auto Buffer = Schema::ToJSONB(*Value);
 			Format::Stream Message;
-			Message.WriteVariative(*Value);
+			Message.WriteString(std::string_view(Buffer.begin(), Buffer.end()));
 
 			SchemaList Map;
 			Map.push_back(Var::Set::Binary(Format::Util::IsHexEncoding(Key) ? Codec::HexDecode(Key) : String(Key)));
@@ -3007,12 +3013,16 @@ namespace Tangent
 			if (!Cursor || Cursor->ErrorOrEmpty())
 				return ExpectsLR<Schema*>(LayerException(ErrorOf(Cursor)));
 
-			Schema* Value = nullptr;
+			String Buffer;
 			Format::Stream Message = Format::Stream::Decompress((*Cursor)["message"].Get().GetString());
-			if (!Message.ReadVariative(Message.ReadType(), &Value))
+			if (!Message.ReadString(Message.ReadType(), &Buffer))
 				return ExpectsLR<Schema*>(LayerException("cache value deserialization error"));
 
-			return Value;
+			auto Value = Schema::FromJSONB(Buffer);
+			if (!Value)
+				return ExpectsLR<Schema*>(LayerException(std::move(Value.Error().message())));
+
+			return *Value;
 		}
 		ExpectsLR<void> Sidechainstate::SetAddressIndex(const std::string_view& Address, const Oracle::IndexAddress& Value)
 		{

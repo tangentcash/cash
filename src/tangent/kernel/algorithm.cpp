@@ -3,15 +3,14 @@ extern "C"
 {
 #include <secp256k1.h>
 #include <sodium.h>
-#include "../utils/tiny-bitcoin/ecc.h"
-#include "../utils/trezor-crypto/segwit_addr.h"
-#include "../utils/trezor-crypto/ecdsa.h"
-#include "../utils/trezor-crypto/blake2b.h"
-#include "../utils/trezor-crypto/ed25519.h"
-#include "../utils/trezor-crypto/blake256.h"
-#include "../utils/trezor-crypto/ripemd160.h"
-#include "../utils/trezor-crypto/sha3.h"
-#include "../utils/trezor-crypto/bip39.h"
+#include "../../utils/tiny-bitcoin/ecc.h"
+#include "../../utils/trezor-crypto/segwit_addr.h"
+#include "../../utils/trezor-crypto/ecdsa.h"
+#include "../../utils/trezor-crypto/blake2b.h"
+#include "../../utils/trezor-crypto/ed25519.h"
+#include "../../utils/trezor-crypto/ripemd160.h"
+#include "../../utils/trezor-crypto/sha3.h"
+#include "../../utils/trezor-crypto/bip39.h"
 }
 
 namespace Tangent
@@ -44,33 +43,33 @@ namespace Tangent
 
 			return 1;
 		}
-		static int SegwitAddressEncode(char* Output, const char* Hrp, int32_t Version, const uint8_t* Program, size_t ProgramSize)
+		static int SegwitAddressEncode(char* Output, const char* Prefix, int32_t Version, const uint8_t* Program, size_t ProgramSize)
 		{
-			uint8_t data[65] = { 0 };
-			size_t datalen = 0;
+			uint8_t Data[65] = { 0 };
+			size_t DataSize = 0;
 			if (Version == 0 && ProgramSize != 20 && ProgramSize != 32)
 				return 0;
 			else if (ProgramSize < 2 || ProgramSize > 40)
 				return 0;
 
-			data[0] = Version;
-			SegwitBitsTweak(data + 1, &datalen, 5, Program, ProgramSize, 8, 1);
-			++datalen;
+			Data[0] = Version;
+			SegwitBitsTweak(Data + 1, &DataSize, 5, Program, ProgramSize, 8, 1);
+			++DataSize;
 
-			return bech32_encode(Output, Hrp, data, datalen, BECH32_ENCODING_BECH32M);
+			return bech32_encode(Output, Prefix, Data, DataSize, BECH32_ENCODING_BECH32M);
 		}
-		static int SegwitAddressDecode(int* Version, uint8_t* Program, size_t* ProgramSize, const char* hrp, const char* addr)
+		static int SegwitAddressDecode(int* Version, uint8_t* Program, size_t* ProgramSize, const char* Prefix, const char* Address)
 		{
 			char Hrp[84] = { 0 };
 			uint8_t Data[84] = { 0 };
 			size_t DataSize = 0;
-			if (bech32_decode(Hrp, Data, &DataSize, addr) != BECH32_ENCODING_BECH32M)
+			if (bech32_decode(Hrp, Data, &DataSize, Address) != BECH32_ENCODING_BECH32M)
 				return 0;
 
 			if (DataSize == 0 || DataSize > 65)
 				return 0;
 
-			if (strncmp(hrp, Hrp, 84) != 0)
+			if (strncmp(Prefix, Hrp, 84) != 0)
 				return 0;
 
 			*ProgramSize = 0;
@@ -87,10 +86,10 @@ namespace Tangent
 			return 1;
 		}
 
-		String Signing::Mnemonicgen(uint8_t Strength)
+		String Signing::Mnemonicgen(uint16_t Strength)
 		{
 			char Buffer[256] = { 0 };
-			mnemonic_generate((int)Strength + 1, Buffer, (int)sizeof(Buffer));
+			mnemonic_generate((int)Strength, Buffer, (int)sizeof(Buffer));
 			return String(Buffer, strnlen(Buffer, sizeof(Buffer)));
 		}
 		void Signing::Keygen(Seckey PrivateKey)
@@ -145,7 +144,7 @@ namespace Tangent
 				return false;
 
 			uint8_t RecoveryId = (uint8_t)BaseRecoveryId;
-			memcpy(Signature + SignatureSize, &RecoveryId, sizeof(RecoveryId));
+			memcpy(Signature + SignatureSize - 1, &RecoveryId, sizeof(RecoveryId));
 			return true;
 		}
 		bool Signing::Verify(const uint256_t& Hash, const Pubkey PublicKey, const Sighash Signature)
@@ -185,12 +184,10 @@ namespace Tangent
 		}
 		bool Signing::DerivePrivateKey(const std::string_view& Mnemonic, Seckey PrivateKey)
 		{
-			uint8_t Seed[33] = { 0 };
+			uint8_t Seed[64] = { 0 };
 			String Data = String(Mnemonic);
-			if (!mnemonic_to_bits(Data.c_str(), Seed))
-				return false;
-
-			DerivePrivateKey(std::string_view((char*)Seed, sizeof(Seed) - 1), PrivateKey, 1);
+			mnemonic_to_seed(Data.c_str(), "", Seed, nullptr);
+			DerivePrivateKey(std::string_view((char*)Seed, sizeof(Seed)), PrivateKey, 1);
 			return true;
 		}
 		void Signing::DerivePrivateKey(const std::string_view& Seed, Seckey PrivateKey, size_t Iterations)
@@ -651,7 +648,7 @@ namespace Tangent
 		}
 		void Hashing::Hash256(const uint8_t* Buffer, size_t Size, uint8_t OutBuffer[32])
 		{
-			blake256(Buffer, Size, OutBuffer);
+			blake2b(Buffer, (uint32_t)Size, OutBuffer, sizeof(uint256_t));
 		}
 		String Hashing::Hash256(const uint8_t* Buffer, size_t Size)
 		{
@@ -716,7 +713,7 @@ namespace Tangent
 				Stringify::ToUpper(Handle);
 				if (!ContractAddress.empty())
 				{
-					auto Hash = Codec::Base64URLEncode(*Crypto::HashRaw(Digests::SHA1(), ContractAddress));
+					auto Hash = Codec::Base64URLEncode(*Crypto::HashRaw(Digests::SHA1(), Format::Util::IsHexEncoding(ContractAddress) ? Codec::HexDecode(ContractAddress) : String(ContractAddress)));
 					Handle.append(1, ':').append(Hash.substr(0, 32 - Handle.size()));
 				}
 			}

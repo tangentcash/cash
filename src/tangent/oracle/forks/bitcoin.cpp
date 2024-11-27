@@ -1,6 +1,6 @@
 #include "bitcoin.h"
-#include "../../utils/tiny-bitcoin/chainparams.h"
-#include "../../utils/tiny-bitcoin/script.h"
+#include "../../../utils/tiny-bitcoin/chainparams.h"
+#include "../../../utils/tiny-bitcoin/script.h"
 
 namespace Tangent
 {

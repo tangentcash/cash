@@ -10,7 +10,7 @@
 #endif
 extern "C"
 {
-#include "../utils/tiny-bitcoin/ecc.h"
+#include "../../utils/tiny-bitcoin/ecc.h"
 }
 #define KEY_FRONT 32
 #define KEY_BACK 32

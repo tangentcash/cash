@@ -27,21 +27,13 @@ namespace Tangent
 		Stream::Stream(String&& NewData) : Data(std::move(NewData)), Checksum(0), Seek(0)
 		{
 		}
-		size_t Stream::ReadCompact(void* Value, uint8_t Size)
+		size_t Stream::Read(void* Value, uint32_t Size)
 		{
-			return ReadExtended(Value, (uint32_t)Size);
-		}
-		size_t Stream::ReadExtended(void* Value, uint32_t Size)
-		{
-			if (!Size || !Value)
-				return 0;
-
-			if (Size + Seek > Data.size())
+			if (!Value || !Size || Size + Seek > Data.size())
 				return 0;
 
 			memcpy(Value, Data.data() + Seek, (size_t)Size);
 			Seek += Size;
-
 			return Size;
 		}
 		Viewable Stream::ReadType()
@@ -52,7 +44,7 @@ namespace Tangent
 		bool Stream::ReadType(Viewable* Value)
 		{
 			VI_ASSERT(Value != nullptr, "value should be set");
-			return ReadCompact(Value, sizeof(uint8_t)) == sizeof(uint8_t);
+			return Read(Value, sizeof(uint8_t)) == sizeof(uint8_t);
 		}
 		bool Stream::ReadString(Viewable Type, String* Value)
 		{
@@ -61,7 +53,7 @@ namespace Tangent
 			{
 				char Buffer[256];
 				uint8_t Size = Util::GetStringSize(Type);
-				if (ReadCompact(Buffer, Size) != Size)
+				if (Read(Buffer, Size) != Size)
 					return false;
 
 				if (Util::IsString16(Type))
@@ -79,7 +71,7 @@ namespace Tangent
 
 			Vector<char> Data;
 			Data.resize((size_t)Size);
-			if (ReadExtended((void*)Data.data(), Size) != Size)
+			if (Read((void*)Data.data(), Size) != Size)
 				return false;
 
 			switch (Type)
@@ -93,24 +85,6 @@ namespace Tangent
 				default:
 					return false;
 			}
-		}
-		bool Stream::ReadVariative(Viewable Type, Schema** Value)
-		{
-			VI_ASSERT(Value != nullptr, "value should be set");
-			if (Type != Viewable::Variative)
-				return false;
-
-			String RawBuffer;
-			if (!ReadString(ReadType(), &RawBuffer))
-				return false;
-
-			Vector<char> Buffer(RawBuffer.begin(), RawBuffer.end());
-			auto Data = Schema::FromJSONB(Buffer);
-			if (!Data)
-				return false;
-
-			*Value = *Data;
-			return true;
 		}
 		bool Stream::ReadDecimal(Viewable Type, Decimal* Value)
 		{
@@ -211,7 +185,7 @@ namespace Tangent
 
 			uint64_t Array[4] = { 0 };
 			uint8_t Size = Util::GetIntegerSize(Type);
-			if (ReadCompact(Array, Size) != Size)
+			if (Read(Array, Size) != Size)
 				return false;
 
 			auto& Bits0 = Value->Low().Low();
@@ -249,11 +223,7 @@ namespace Tangent
 			Seek = (Offset <= Data.size() ? Offset : Data.size());
 			return *this;
 		}
-		void Stream::WriteCompact(const void* Value, uint8_t Size)
-		{
-			WriteExtended(Value, (uint32_t)Size);
-		}
-		void Stream::WriteExtended(const void* Value, uint32_t Size)
+		void Stream::Write(const void* Value, uint32_t Size)
 		{
 			if (Size > 0 && Value != nullptr)
 			{
@@ -272,33 +242,32 @@ namespace Tangent
 				{
 					uint8_t Type = (uint8_t)Util::GetStringType(Source, true);
 					uint32_t Size = std::min<uint32_t>(Protocol::Now().Message.MaxMessageSize, (uint32_t)Source.size());
-					WriteCompact(&Type, sizeof(uint8_t));
+					Write(&Type, sizeof(uint8_t));
 					WriteInteger(Size);
-					WriteExtended(Source.data(), Size);
+					Write(Source.data(), Size);
 				}
 				else
 				{
-					String Source = Codec::HexDecode(Value);
 					uint8_t Type = (uint8_t)Util::GetStringType(Source, true);
 					uint8_t Size = Util::GetStringSize((Viewable)Type);
-					WriteCompact(&Type, sizeof(uint8_t));
-					WriteCompact(Source.data(), Size);
+					Write(&Type, sizeof(uint8_t));
+					Write(Source.data(), Size);
 				}
 			}
 			else if (Value.size() > Util::GetMaxStringSize())
 			{
 				uint32_t Size = std::min<uint32_t>(Protocol::Now().Message.MaxMessageSize, (uint32_t)Value.size());
 				uint8_t Type = (uint8_t)Util::GetStringType(Value, false);
-				WriteCompact(&Type, sizeof(uint8_t));
+				Write(&Type, sizeof(uint8_t));
 				WriteInteger(Size);
-				WriteExtended(Value.data(), Size);
+				Write(Value.data(), Size);
 			}
 			else
 			{
 				uint8_t Type = (uint8_t)Util::GetStringType(Value, false);
 				uint8_t Size = Util::GetStringSize((Viewable)Type);
-				WriteCompact(&Type, sizeof(uint8_t));
-				WriteCompact(Value.data(), Size);
+				Write(&Type, sizeof(uint8_t));
+				Write(Value.data(), Size);
 			}
 			return *this;
 		}
@@ -307,13 +276,13 @@ namespace Tangent
 			if (Value.IsNaN())
 			{
 				uint8_t Type = (uint8_t)Viewable::DecimalNaN;
-				WriteCompact(&Type, sizeof(uint8_t));
+				Write(&Type, sizeof(uint8_t));
 				return *this;
 			}
 			else if (Value.IsZero())
 			{
 				uint8_t Type = (uint8_t)Viewable::DecimalZero;
-				WriteCompact(&Type, sizeof(uint8_t));
+				Write(&Type, sizeof(uint8_t));
 				return *this;
 			}
 
@@ -324,7 +293,7 @@ namespace Tangent
 			std::reverse(Numeric.begin() + Decimals, Numeric.end());
 
 			auto Left = std::string_view(Numeric).substr(Decimals);
-			WriteCompact(&Type, sizeof(uint8_t));
+			Write(&Type, sizeof(uint8_t));
 			WriteInteger(ContextualParseUint256(Left));
 			if (Decimals > 0)
 			{
@@ -333,24 +302,11 @@ namespace Tangent
 			}
 			return *this;
 		}
-		Stream& Stream::WriteVariative(Schema* Value)
-		{
-			uint8_t Type = (uint8_t)Viewable::Variative;
-			WriteCompact(&Type, sizeof(uint8_t));
-			if (Value != nullptr)
-			{
-				auto Buffer = Schema::ToJSONB(Value);
-				WriteString(std::string_view(Buffer.data(), Buffer.size()));
-			}
-			else
-				WriteString(std::string_view());
-			return *this;
-		}
 		Stream& Stream::WriteInteger(const uint256_t& Value)
 		{
 			uint8_t Type = (uint8_t)Util::GetIntegerType(Value);
 			uint8_t Size = Util::GetIntegerSize((Viewable)Type);
-			WriteCompact(&Type, sizeof(uint8_t));
+			Write(&Type, sizeof(uint8_t));
 
 			uint64_t Array[4];
 			if (Size > sizeof(uint64_t) * 0)
@@ -367,13 +323,13 @@ namespace Tangent
 					}
 				}
 			}
-			WriteCompact(Array, Size);
+			Write(Array, Size);
 			return *this;
 		}
 		Stream& Stream::WriteBoolean(bool Value)
 		{
 			uint8_t Type = (uint8_t)(Value ? Viewable::True : Viewable::False);
-			WriteCompact(&Type, sizeof(uint8_t));
+			Write(&Type, sizeof(uint8_t));
 			return *this;
 		}
 		Stream& Stream::WriteTypeless(const uint256_t& Value)
@@ -394,17 +350,17 @@ namespace Tangent
 					}
 				}
 			}
-			WriteCompact(Array, Size);
+			Write(Array, Size);
 			return *this;
 		}
 		Stream& Stream::WriteTypeless(const char* Data, uint8_t Size)
 		{
-			WriteCompact(Data, Size);
+			Write(Data, Size);
 			return *this;
 		}
 		Stream& Stream::WriteTypeless(const char* Data, uint32_t Size)
 		{
-			WriteExtended(Data, Size);
+			Write(Data, Size);
 			return *this;
 		}
 		bool Stream::IsEof() const
@@ -422,10 +378,8 @@ namespace Tangent
 		}
 		uint256_t Stream::Hash(bool Renew) const
 		{
-			if (!Renew && Checksum != 0)
-				return Checksum;
-
-			((Stream*)this)->Checksum = Algorithm::Hashing::Hash256i(Data);
+			if (Renew || Checksum == 0)
+				((Stream*)this)->Checksum = Algorithm::Hashing::Hash256i(Data);
 			return Checksum;
 		}
 		Stream Stream::Decompress(const std::string_view& Data)

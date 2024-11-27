@@ -136,7 +136,7 @@ namespace Tangent
 
 			if (Type == States::WitnessAddress::AsInstanceTypename())
 			{
-				auto Data = Value.AsVariative();
+				auto Data = Value.AsSchema();
 				if (!Data)
 					return LayerException("invalid value, expected { asset: string, address: string, derivation_index: uint64 }");
 

@@ -1,12 +1,12 @@
 #include "solana.h"
-#include "../utils/tiny-bitcoin/bip32.h"
-#include "../utils/tiny-bitcoin/tool.h"
-#include "../utils/tiny-bitcoin/utils.h"
-#include "../utils/tiny-bitcoin/ecc.h"
+#include "../../utils/tiny-bitcoin/bip32.h"
+#include "../../utils/tiny-bitcoin/tool.h"
+#include "../../utils/tiny-bitcoin/utils.h"
+#include "../../utils/tiny-bitcoin/ecc.h"
 extern "C"
 {
-#include "../utils/trezor-crypto/ed25519.h"
-#include "../utils/trezor-crypto/base58.h"
+#include "../../utils/trezor-crypto/ed25519.h"
+#include "../../utils/trezor-crypto/base58.h"
 }
 #include <sodium.h>
 

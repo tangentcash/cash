@@ -7,7 +7,7 @@ namespace Tangent
 	namespace Algorithm
 	{
 		using AssetId = uint256_t;
-		using Sighash = uint8_t[66];
+		using Sighash = uint8_t[65];
 		using Seckey = uint8_t[32];
 		using Pubkey = uint8_t[33];
 		using Pubkeyhash = uint8_t[20];
@@ -15,7 +15,7 @@ namespace Tangent
 		class Signing
 		{
 		public:
-			static String Mnemonicgen(uint8_t Strength = 255);
+			static String Mnemonicgen(uint16_t Strength = 256);
 			static void Keygen(Seckey PrivateKey);
 			static bool Recover(const uint256_t& Hash, Pubkey PublicKey, const Sighash Signature);
 			static bool RecoverHash(const uint256_t& Hash, Pubkeyhash PublicKeyHash, const Sighash Signature);

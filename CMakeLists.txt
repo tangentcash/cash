@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.6)
+cmake_minimum_required(VERSION 3.10)
 
 set(TAN_PRODUCTION OFF CACHE BOOL "+")
 if (TAN_PRODUCTION)
@@ -46,11 +46,11 @@ endforeach()
 set(TAN_VALIDATOR ON CACHE BOOL "Enable necessary modules for validator daemon support")
 set(TAN_TEST ON CACHE BOOL "Enable validator tests")
 if (NOT TAN_VALIDATOR)
-    list(FILTER SOURCE EXCLUDE REGEX "src/kernel/storage")
-    list(FILTER SOURCE EXCLUDE REGEX "src/layer/p2p")
-    list(FILTER SOURCE EXCLUDE REGEX "src/layer/rpc")
-    list(FILTER SOURCE EXCLUDE REGEX "src/policy/storages")
-    list(FILTER SOURCE EXCLUDE REGEX "src/oracle")
+    list(FILTER SOURCE EXCLUDE REGEX "src/tangent/kernel/storage")
+    list(FILTER SOURCE EXCLUDE REGEX "src/tangent/layer/p2p")
+    list(FILTER SOURCE EXCLUDE REGEX "src/tangent/layer/rpc")
+    list(FILTER SOURCE EXCLUDE REGEX "src/tangent/policy/storages")
+    list(FILTER SOURCE EXCLUDE REGEX "src/tangent/oracle")
     list(FILTER SOURCE EXCLUDE REGEX "src/utils/nlohmann-json")
     list(FILTER SOURCE EXCLUDE REGEX "src/utils/protobuf")
     list(FILTER SOURCE EXCLUDE REGEX "src/utils/tiny-bitcoincash")
@@ -90,8 +90,8 @@ if (TAN_VALIDATOR)
         $<$<COMPILE_LANGUAGE:CXX>:${VI_DIRECTORY}/src/vitex/bindings.h>
         $<$<COMPILE_LANGUAGE:CXX>:${VI_DIRECTORY}/src/vitex/compute.h>
         $<$<COMPILE_LANGUAGE:CXX>:${VI_DIRECTORY}/src/vitex/layer/processors.h>
-        $<$<COMPILE_LANGUAGE:CXX>:${CMAKE_CURRENT_LIST_DIR}/src/kernel/chain.h>
-        $<$<COMPILE_LANGUAGE:CXX>:${CMAKE_CURRENT_LIST_DIR}/src/kernel/oracle.h>)
+        $<$<COMPILE_LANGUAGE:CXX>:${CMAKE_CURRENT_LIST_DIR}/src/tangent/kernel/chain.h>
+        $<$<COMPILE_LANGUAGE:CXX>:${CMAKE_CURRENT_LIST_DIR}/src/tangent/kernel/oracle.h>)
 endif()
 
 add_subdirectory(${VI_DIRECTORY} vitex)

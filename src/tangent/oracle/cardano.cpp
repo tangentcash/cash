@@ -1,10 +1,10 @@
 #include "cardano.h"
-#include "../utils/tiny-cardano/include/cardanoplusplus.h"
-#include "../utils/tiny-cardano/include/cardanoplusplus/hash/bech32.hpp"
+#include "../../utils/tiny-cardano/include/cardanoplusplus.h"
+#include "../../utils/tiny-cardano/include/cardanoplusplus/hash/bech32.hpp"
 extern "C"
 {
-#include "../utils/trezor-crypto/ed25519.h"
-#include "../utils/trezor-crypto/sha2.h"
+#include "../../utils/trezor-crypto/ed25519.h"
+#include "../../utils/trezor-crypto/sha2.h"
 }
 
 namespace Tangent

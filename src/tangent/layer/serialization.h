@@ -10,7 +10,6 @@ namespace Tangent
 
 		enum class Viewable : uint8_t
 		{
-			Variative,
 			DecimalNaN,
 			DecimalZero,
 			DecimalNeg1,
@@ -49,7 +48,6 @@ namespace Tangent
 			Stream& WriteDecimal(const Decimal& Value);
 			Stream& WriteInteger(const uint256_t& Value);
 			Stream& WriteBoolean(bool Value);
-			Stream& WriteVariative(Schema* Value);
 			Stream& WriteTypeless(const uint256_t& Value);
 			Stream& WriteTypeless(const char* Data, uint8_t Size);
 			Stream& WriteTypeless(const char* Data, uint32_t Size);
@@ -57,7 +55,6 @@ namespace Tangent
 			bool ReadType(Viewable* Value);
 			bool ReadString(Viewable Type, String* Value);
 			bool ReadDecimal(Viewable Type, Decimal* Value);
-			bool ReadVariative(Viewable Type, Schema** Value);
 			bool ReadInteger(Viewable Type, uint8_t* Value);
 			bool ReadInteger(Viewable Type, uint16_t* Value);
 			bool ReadInteger(Viewable Type, uint32_t* Value);
@@ -71,10 +68,8 @@ namespace Tangent
 			uint256_t Hash(bool Renew = false) const;
 
 		private:
-			void WriteCompact(const void* Value, uint8_t Size);
-			void WriteExtended(const void* Value, uint32_t Size);
-			size_t ReadCompact(void* Value, uint8_t Size);
-			size_t ReadExtended(void* Value, uint32_t Size);
+			void Write(const void* Value, uint32_t Size);
+			size_t Read(void* Value, uint32_t Size);
 
 		public:
 			static Stream Decompress(const std::string_view& Data);

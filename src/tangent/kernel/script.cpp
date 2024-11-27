@@ -2,8 +2,8 @@
 #include <sstream>
 extern "C"
 {
-#include "../utils/trezor-crypto/sha2.h"
-#include "../utils/trezor-crypto/sha3.h"
+#include "../../utils/trezor-crypto/sha2.h"
+#include "../../utils/trezor-crypto/sha3.h"
 }
 #include "../policy/transactions.h"
 #ifdef TAN_VALIDATOR
@@ -110,7 +110,7 @@ namespace Tangent
 
 			return String((char*)PublicKey, sizeof(PublicKey));
 		}
-		static String Blake256(const std::string_view& Data)
+		static String Blake2b256(const std::string_view& Data)
 		{
 			return Algorithm::Hashing::Hash256((uint8_t*)Data.data(), Data.size());
 		}
@@ -665,7 +665,7 @@ namespace Tangent
 			VM->SetFunction("string ripemd160(const string_view&in)", &RipeMD160);
 			VM->SetFunction("string erecover160(const string_view&in, const string_view&in)", &ERecover160);
 			VM->SetFunction("string erecover256(const string_view&in, const string_view&in)", &ERecover256);
-			VM->SetFunction("string blake256(const string_view&in)", &Blake256);
+			VM->SetFunction("string blake2b256(const string_view&in)", &Blake2b256);
 			VM->SetFunction("string keccak256(const string_view&in)", &Keccak256);
 			VM->SetFunction("string keccak512(const string_view&in)", &Keccak512);
 			VM->SetFunction("string sha256(const string_view&in)", &Sha256);
@@ -1093,24 +1093,13 @@ namespace Tangent
 						{
 							void* Address = nullptr;
 							auto& Value = Args[Index];
-							if (!Value.IsVariative())
+							Format::Stream Stream;
+							Format::VariablesUtil::SerializeFlatInto({ Value }, &Stream);
+							auto Status = ScriptMarshalling::Load(Stream, (void*)&Address, TypeId | (int)Vitex::Scripting::TypeId::OBJHANDLE);
+							if (!Status)
 							{
-								Format::Stream Stream;
-								Format::VariablesUtil::SerializeFlatInto({ Value }, &Stream);
-								auto Status = ScriptMarshalling::Load(Stream, (void*)&Address, TypeId | (int)Vitex::Scripting::TypeId::OBJHANDLE);
-								if (!Status)
-								{
-									Stream = Format::Stream::Decode(Value.AsString());
-									Status = ScriptMarshalling::Load(Stream, (void*)&Address, TypeId | (int)Vitex::Scripting::TypeId::OBJHANDLE);
-									if (!Status)
-										return LayerException(Stringify::Text("illegal call to function \"%s\": argument #%i not bound to program (%s)", Entrypoint.GetDecl().data(), i, Status.Error().what()));
-								}
-
-							}
-							else
-							{
-								auto Stream = Value.AsVariative();
-								auto Status = Stream ? ScriptMarshalling::Load(*Stream, (void*)&Address, TypeId | (int)Vitex::Scripting::TypeId::OBJHANDLE) : ExpectsLR<void>(LayerException("load failed for empty value"));
+								Stream = Format::Stream::Decode(Value.AsString());
+								Status = ScriptMarshalling::Load(Stream, (void*)&Address, TypeId | (int)Vitex::Scripting::TypeId::OBJHANDLE);
 								if (!Status)
 									return LayerException(Stringify::Text("illegal call to function \"%s\": argument #%i not bound to program (%s)", Entrypoint.GetDecl().data(), i, Status.Error().what()));
 							}

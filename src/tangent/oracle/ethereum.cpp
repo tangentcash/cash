@@ -1,16 +1,16 @@
 #include "ethereum.h"
-#include "../utils/tiny-bitcoin/bip32.h"
-#include "../utils/tiny-bitcoin/tool.h"
-#include "../utils/tiny-bitcoin/utils.h"
-#include "../utils/tiny-bitcoin/ecc.h"
-#include "../utils/tiny-ethereum/ecdsa.h"
-#include "../utils/tiny-ethereum/rlp.h"
-#include "../utils/tiny-ethereum/keccak256.h"
-#include "../utils/tiny-ethereum/abi.h"
+#include "../../utils/tiny-bitcoin/bip32.h"
+#include "../../utils/tiny-bitcoin/tool.h"
+#include "../../utils/tiny-bitcoin/utils.h"
+#include "../../utils/tiny-bitcoin/ecc.h"
+#include "../../utils/tiny-ethereum/ecdsa.h"
+#include "../../utils/tiny-ethereum/rlp.h"
+#include "../../utils/tiny-ethereum/keccak256.h"
+#include "../../utils/tiny-ethereum/abi.h"
 #include <secp256k1_recovery.h>
 extern "C"
 {
-#include "../utils/trezor-crypto/sha3.h"
+#include "../../utils/trezor-crypto/sha3.h"
 }
 
 namespace Tangent

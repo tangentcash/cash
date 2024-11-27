@@ -1,17 +1,17 @@
 #include "bitcoin.h"
-#include "../utils/tiny-bitcoincash/cashaddr.h"
-#include "../utils/tiny-bitcoin/tool.h"
-#include "../utils/tiny-bitcoin/chainparams.h"
-#include "../utils/tiny-bitcoin/ecc.h"
-#include "../utils/tiny-bitcoin/bip32.h"
-#include "../utils/tiny-bitcoin/base58.h"
-#include "../utils/tiny-bitcoin/ripemd160.h"
-#include "../utils/tiny-bitcoin/utils.h"
-#include "../utils/tiny-bitcoin/serialize.h"
+#include "../../utils/tiny-bitcoincash/cashaddr.h"
+#include "../../utils/tiny-bitcoin/tool.h"
+#include "../../utils/tiny-bitcoin/chainparams.h"
+#include "../../utils/tiny-bitcoin/ecc.h"
+#include "../../utils/tiny-bitcoin/bip32.h"
+#include "../../utils/tiny-bitcoin/base58.h"
+#include "../../utils/tiny-bitcoin/ripemd160.h"
+#include "../../utils/tiny-bitcoin/utils.h"
+#include "../../utils/tiny-bitcoin/serialize.h"
 #undef min
 extern "C"
 {
-#include "../utils/trezor-crypto/segwit_addr.h"
+#include "../../utils/trezor-crypto/segwit_addr.h"
 }
 
 namespace Tangent

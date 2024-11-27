@@ -1751,6 +1751,64 @@ public:
 		Term->ReadChar();
 		return 0;
 	}
+	/* Generic cryptography (validation measurement) */
+	static int Cryptography(int argc, char* argv[])
+	{
+		Vitex::Runtime Scope;
+		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
+
+		String Mnemonic = "chimney clerk liberty defense gesture risk disorder switch raven chapter document admit win swing forward please clerk vague online coil material tone sibling intact";
+		Algorithm::Seckey PrivateKey;
+		Algorithm::Pubkey PublicKey;
+		Algorithm::Pubkeyhash PublicKeyHash;
+		Algorithm::Signing::DerivePrivateKey(Mnemonic, PrivateKey);
+		Algorithm::Signing::DerivePublicKey(PrivateKey, PublicKey);
+		Algorithm::Signing::DerivePublicKeyHash(PublicKey, PublicKeyHash);
+
+		String EncodedPrivateKey, EncodedPublicKey, EncodedPublicKeyHash;
+		Algorithm::Signing::EncodePrivateKey(PrivateKey, EncodedPrivateKey);
+		Algorithm::Signing::EncodePublicKey(PublicKey, EncodedPublicKey);
+		Algorithm::Signing::EncodeAddress(PublicKeyHash, EncodedPublicKeyHash);
+
+		String Message = "Hello, World!";
+		uint256_t MessageHash = Algorithm::Hashing::Hash256i(Message);
+		String EncodedMessageHash = Algorithm::Encoding::Encode0xHex256(MessageHash);
+		Algorithm::Sighash MessageSignature;
+		Algorithm::Pubkey RecoverPublicKey;
+		Algorithm::Pubkeyhash RecoverPublicKeyHash;
+		bool Verifies = Algorithm::Signing::Sign(MessageHash, PrivateKey, MessageSignature) && Algorithm::Signing::Verify(MessageHash, PublicKey, MessageSignature);
+		bool RecoversPublicKey = Algorithm::Signing::Recover(MessageHash, RecoverPublicKey, MessageSignature);
+		bool RecoversPublicKeyHash = Algorithm::Signing::RecoverHash(MessageHash, RecoverPublicKeyHash, MessageSignature);
+		String EncodedMessageSignature = Format::Util::Encode0xHex(std::string_view((char*)MessageSignature, sizeof(MessageSignature)));
+		String EncodedRecoverPublicKey, EncodedRecoverPublicKeyHash;
+		Algorithm::Signing::EncodePublicKey(RecoverPublicKey, EncodedRecoverPublicKey);
+		Algorithm::Signing::EncodeAddress(RecoverPublicKeyHash, EncodedRecoverPublicKeyHash);
+
+		auto* Term = Console::Get();
+		Term->Show();
+
+		auto Info = UPtr<Schema>(Var::Set::Object());
+		Info->Set("mnemonic", Var::String(Mnemonic));
+		Info->Set("mnemonic_test", Var::String(Algorithm::Signing::VerifyMnemonic(Mnemonic) ? "passed" : "failed"));
+		Info->Set("private_key", Var::String(EncodedPrivateKey));
+		Info->Set("private_key_test", Var::String(Algorithm::Signing::VerifyPrivateKey(PrivateKey) ? "passed" : "failed"));
+		Info->Set("public_key", Var::String(EncodedPublicKey));
+		Info->Set("public_key_test", Var::String(Algorithm::Signing::VerifyPublicKey(PublicKey) ? "passed" : "failed"));
+		Info->Set("address", Var::String(EncodedPublicKeyHash));
+		Info->Set("address_test", Var::String(Algorithm::Signing::VerifyAddress(EncodedPublicKeyHash) ? "passed" : "failed"));
+		Info->Set("message", Var::String(Message));
+		Info->Set("message_hash", Var::String(EncodedMessageHash));
+		Info->Set("signature", Var::String(EncodedMessageSignature));
+		Info->Set("signature_test", Var::String(Verifies ? "passed" : "failed"));
+		Info->Set("recover_public_key", Var::String(EncodedRecoverPublicKey));
+		Info->Set("recover_public_key_test", Var::String(RecoversPublicKey && EncodedRecoverPublicKey == EncodedPublicKey ? "passed" : "failed"));
+		Info->Set("recover_address", Var::String(EncodedRecoverPublicKeyHash));
+		Info->Set("recover_address_test", Var::String(RecoversPublicKeyHash && EncodedRecoverPublicKeyHash == EncodedPublicKeyHash ? "passed" : "failed"));
+
+		Term->jWriteLine(*Info);
+		Term->ReadChar();
+		return 0;
+	}
 	/* Wallet cryptography (validation measurement) */
 	static int Wallet(int argc, char* argv[])
 	{
@@ -1782,16 +1840,22 @@ public:
 		auto Wallet = Ledger::Wallet::FromSeed();
 		Vector<UPtr<Ledger::Transaction>> Transactions;
 		TestTransactions::TestTransfers(Transactions, Ledger::Wallet::FromSeed(), 1, Wallet, 1);
-		Transactions::Transfer& Tx = *(Transactions::Transfer*)*Transactions.front();
-		Algorithm::Pubkeyhash RecoverPublicKeyHash = { 0 };
+		auto& Tx = *(Transactions::Transfer*)*Transactions.back();
 		auto TxBlob = Tx.AsMessage().Data;
 		auto TxBody = Format::Stream(TxBlob);
 		auto TxCopy = UPtr<Ledger::Transaction>(Transactions::Resolver::New(Messages::Authentic::ResolveType(TxBody).Or(0)));
 		auto TxInfo = Tx.AsSchema();
+		Algorithm::Pubkeyhash RecoverPublicKeyHash = { 0 };
 		TxInfo->Set("recovery_test", Var::String(Tx.Recover(RecoverPublicKeyHash) && !memcmp(Wallet.PublicKeyHash, RecoverPublicKeyHash, sizeof(RecoverPublicKeyHash)) ? "passed" : "failed"));
 		TxInfo->Set("verification_test", Var::String(Tx.Verify(Wallet.PublicKey) ? "passed" : "failed"));
 		TxInfo->Set("serialization_test", Var::String(TxCopy && TxCopy->Load(TxBody) && TxCopy->AsMessage().Data == TxBlob ? "passed" : "failed"));
 		TxInfo->Set("raw_data_test", Var::String(Format::Util::Encode0xHex(TxBlob)));
+
+		auto Stream = Tx.AsMessage();
+		Format::Variables Vars;
+		Format::VariablesUtil::DeserializeFlatFrom(Stream, &Vars);
+		TxInfo->Set("var_data_test", Format::VariablesUtil::Serialize(Vars));
+		TxInfo->Set("asset_test", Algorithm::Asset::Serialize(Algorithm::Asset::IdOf("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7")));
 
 		Term->jWriteLine(*TxInfo);
 		Term->ReadChar();
@@ -2151,5 +2215,5 @@ public:
 
 int main(int argc, char* argv[])
 {
-	return TestCases::BlockchainFullCoverage(argc, argv);
+	return TestCases::Verify(argc, argv);
 }

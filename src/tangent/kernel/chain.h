@@ -14,7 +14,6 @@ using namespace Vitex::Core;
 using namespace Vitex::Compute;
 using namespace Vitex::Layer;
 using namespace Vitex::Network;
-using namespace Vitex::Scripting;
 
 namespace rocksdb
 {

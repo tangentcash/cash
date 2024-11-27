@@ -36,14 +36,13 @@ namespace Tangent
 			explicit Variable(const uint128_t& Value) noexcept;
 			explicit Variable(const uint256_t& Value) noexcept;
 			explicit Variable(bool Value) noexcept;
-			explicit Variable(Schema* Value) noexcept;
 			Variable(const Variable& Other) noexcept;
 			Variable(Variable&& Other) noexcept;
 			~Variable() noexcept;
 			String AsConstant() const;
 			String AsBlob() const;
 			Decimal AsDecimal() const;
-			UPtr<Schema> AsVariative() const;
+			UPtr<Schema> AsSchema() const;
 			std::string_view AsString() const;
 			uint8_t AsUint8() const;
 			uint16_t AsUint16() const;
@@ -57,7 +56,6 @@ namespace Tangent
 			bool IsString() const;
 			bool IsDecimal() const;
 			bool IsInteger() const;
-			bool IsVariative() const;
 			Viewable TypeOf() const;
 			Variable& operator= (const Variable& Other) noexcept;
 			Variable& operator= (Variable&& Other) noexcept;

@@ -1,5 +1,5 @@
 #include "ethereum.h"
-#include "../../utils/tiny-bitcoin/chainparams.h"
+#include "../../../utils/tiny-bitcoin/chainparams.h"
 
 namespace Tangent
 {
