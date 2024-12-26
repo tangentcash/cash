@@ -224,7 +224,8 @@ namespace Tangent
         public:
             static Distribution Random(const Parameters& Alg, const Format::Stream& Seed);
             static Parameters Calibrate(uint64_t Confidence);
-            static Parameters Adjust(const Parameters& PrevAlg, uint64_t PrevPriority, uint64_t PrevTime, uint64_t TargetIndex);
+            static Parameters Adjust(const Parameters& PrevAlg, uint64_t PrevTime, uint64_t TargetIndex);
+            static Parameters Bump(const Parameters& Alg, double Bump);
             static String Evaluate(const Parameters& Alg, const std::string_view& Message);
             static bool Verify(const Parameters& Alg, const std::string_view& Message, const String& Sig);
             static int8_t Compare(const String& Sig1, const String& Sig2);

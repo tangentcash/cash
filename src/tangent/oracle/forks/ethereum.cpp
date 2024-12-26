@@ -47,26 +47,6 @@ namespace Tangent
 				}
 			}
 
-			String BinanceSmartChain::GetDerivation(uint64_t AddressIndex) const
-			{
-				return Stringify::Text(Protocol::Now().Is(NetworkType::Mainnet) ? "m/44'/714'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, AddressIndex);
-			}
-			const btc_chainparams_* BinanceSmartChain::GetChain()
-			{
-				switch (Protocol::Now().User.Network)
-				{
-					case NetworkType::Regtest:
-						return &bsc_chainparams_regtest;
-					case NetworkType::Testnet:
-						return &bsc_chainparams_test;
-					case NetworkType::Mainnet:
-						return &bsc_chainparams_main;
-					default:
-						VI_PANIC(false, "invalid network type");
-						return nullptr;
-				}
-			}
-
 			String Celo::GetDerivation(uint64_t AddressIndex) const
 			{
 				return Stringify::Text(Protocol::Now().Is(NetworkType::Mainnet) ? "m/44'/52752'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, AddressIndex);
@@ -167,46 +147,6 @@ namespace Tangent
 				}
 			}
 
-			String Heco::GetDerivation(uint64_t AddressIndex) const
-			{
-				return Stringify::Text(Protocol::Now().Is(NetworkType::Mainnet) ? "m/44'/60'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, AddressIndex);
-			}
-			const btc_chainparams_* Heco::GetChain()
-			{
-				switch (Protocol::Now().User.Network)
-				{
-					case NetworkType::Regtest:
-						return &heco_chainparams_regtest;
-					case NetworkType::Testnet:
-						return &heco_chainparams_test;
-					case NetworkType::Mainnet:
-						return &heco_chainparams_main;
-					default:
-						VI_PANIC(false, "invalid network type");
-						return nullptr;
-				}
-			}
-
-			String Kcc::GetDerivation(uint64_t AddressIndex) const
-			{
-				return Stringify::Text(Protocol::Now().Is(NetworkType::Mainnet) ? "m/44'/60'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, AddressIndex);
-			}
-			const btc_chainparams_* Kcc::GetChain()
-			{
-				switch (Protocol::Now().User.Network)
-				{
-					case NetworkType::Regtest:
-						return &kcc_chainparams_regtest;
-					case NetworkType::Testnet:
-						return &kcc_chainparams_test;
-					case NetworkType::Mainnet:
-						return &kcc_chainparams_main;
-					default:
-						VI_PANIC(false, "invalid network type");
-						return nullptr;
-				}
-			}
-
 			String Moonbeam::GetDerivation(uint64_t AddressIndex) const
 			{
 				return Stringify::Text(Protocol::Now().Is(NetworkType::Mainnet) ? "m/44'/60'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, AddressIndex);
@@ -276,11 +216,35 @@ namespace Tangent
 				switch (Protocol::Now().User.Network)
 				{
 					case NetworkType::Regtest:
-						return &rsk_chainparams_regtest;
+						return &rif_chainparams_regtest;
 					case NetworkType::Testnet:
-						return &rsk_chainparams_test;
+						return &rif_chainparams_test;
 					case NetworkType::Mainnet:
-						return &rsk_chainparams_main;
+						return &rif_chainparams_main;
+					default:
+						VI_PANIC(false, "invalid network type");
+						return nullptr;
+				}
+			}
+
+			BinanceSmartChain::BinanceSmartChain() noexcept : Ethereum()
+			{
+				Netdata.SupportsTokenTransfer = "bep20";
+			}
+			String BinanceSmartChain::GetDerivation(uint64_t AddressIndex) const
+			{
+				return Stringify::Text(Protocol::Now().Is(NetworkType::Mainnet) ? "m/44'/714'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, AddressIndex);
+			}
+			const btc_chainparams_* BinanceSmartChain::GetChain()
+			{
+				switch (Protocol::Now().User.Network)
+				{
+					case NetworkType::Regtest:
+						return &bsc_chainparams_regtest;
+					case NetworkType::Testnet:
+						return &bsc_chainparams_test;
+					case NetworkType::Mainnet:
+						return &bsc_chainparams_main;
 					default:
 						VI_PANIC(false, "invalid network type");
 						return nullptr;

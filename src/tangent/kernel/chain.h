@@ -25,14 +25,6 @@ namespace Tangent
     template <typename K, typename Comparator = typename std::set<K>::key_compare>
     using OrderedSet = std::set<K, Comparator, typename AllocationType<typename std::set<K>::value_type>::type>;
 
-    enum
-    {
-        MAJOR_VERSION = 1,
-        MINOR_VERSION = 0,
-        PATCH_VERSION = 0,
-        VERSION = (MAJOR_VERSION) * 100000000 + (MINOR_VERSION) * 1000000 + (PATCH_VERSION) * 1000
-    };
-
     enum class NetworkType
     {
         Regtest,
@@ -91,7 +83,7 @@ namespace Tangent
         std::mutex Mutex;
 
     public:
-        String Adjust(const String& Source, int64_t MillisecondsDelta);
+        String Adjust(const SocketAddress& Source, int64_t MillisecondsDelta);
         uint64_t Now() const;
         uint64_t NowCPU() const;
     };
@@ -120,35 +112,50 @@ namespace Tangent
         {
             struct
             {
-                String NodeAddress = "0.0.0.0";
-                const uint16_t NodePort = 3288;
-                uint64_t NodeTimeout = 10000;
-                uint64_t NodeTimeOffset = 300000;
-                uint64_t TlsTrustedPeers = 0;
-                uint64_t TlsValidityDays = 0;
+                String Address = "0.0.0.0";
+                uint16_t Port = 18418;
+                uint64_t TimeOffset = 300000;
                 uint64_t CursorSize = 2048;
                 uint32_t MaxInboundConnections = 32;
                 uint32_t MaxOutboundConnections = 8;
+                double BestBlockConsensus = 0.25;
                 bool Proposer = true;
                 bool Server = true;
+                bool Logging = true;
             } P2P;
             struct
             {
-                String NodeAddress = "0.0.0.0";
-                const uint16_t NodePort = 8823;
+                String Address = "0.0.0.0";
+                uint16_t Port = 18420;
+                uint64_t CursorSize = 512;
+                bool Server = false;
+                bool Logging = true;
+            } NDS;
+            struct
+            {
+                String Address = "0.0.0.0";
+                uint16_t Port = 18419;
                 String AdminUsername;
                 String AdminPassword;
                 String UserUsername;
                 String UserPassword;
                 uint64_t CursorSize = 512;
                 uint64_t PageSize = 64;
+                bool WebSockets = true;
                 bool Server = false;
+                bool Logging = true;
             } RPC;
+            struct
+            {
+                uint64_t Timeout = 10000;
+                uint64_t TlsTrustedPeers = 100;
+            } TCP;
             struct
             {
                 String Directory = "./";
                 StorageOptimization Optimization = StorageOptimization::Speed;
-                uint64_t CheckpointSize = 0;
+                uint64_t TransactionTimeout = 86400;
+                uint64_t CheckpointSize = 64;
                 uint64_t LocationCacheSize = 500000;
                 uint64_t ScriptCacheSize = 8192;
                 uint64_t BlobCacheSize = 134217728;
@@ -157,6 +164,7 @@ namespace Tangent
                 bool TransactionToAccountIndex = true;
                 bool TransactionToRollupIndex = true;
                 bool FullBlockHistory = true;
+                bool Logging = true;
             } Storage;
             struct
             {
@@ -168,25 +176,30 @@ namespace Tangent
                 uint64_t FeeEstimationSeconds = 600;
                 uint64_t WithdrawalTime = 300000;
                 bool Observer = false;
+                bool Logging = true;
             } Oracle;
             UnorderedSet<String> Seeds;
+            UnorderedSet<String> Seeders;
             NetworkType Network = NetworkType::Mainnet;
             String Vectorstate = TAN_VECTORSTATE_PATH;
+            double FlushThreadsRatio = 0.25;
+            double CompactionThreadsRatio = 0.25;
+            double ComputationThreadsRatio = 0.00;
         } User;
         struct ProtocolMessagingConfig
         {
-            uint32_t MaxDataVersion = 0x10;
-            uint32_t MinDataVersion = 0x10;
-            uint32_t PacketVersion = 0x73d308e9;
+            uint32_t ProtocolVersion = 0x10;
+            uint32_t PacketMagic = 0x73d308e9;
             uint32_t MaxMessageSize = 0xffffff;
             uint32_t MaxBodySize = 1024 * 1024 * 32;
             uint32_t Precision = 18;
         } Message;
         struct ProtocolAccountConfig
         {
+            String SignedMessageMagic = "Tangent Signed Message:\n";
             String PrivateKeyPrefix = "prv";
             String PublicKeyPrefix = "pub";
-            String AddressPrefix = "tan";
+            String AddressPrefix = "tc";
             String SealingPrivateKeyPrefix = "sprv";
             String SealingPublicKeyPrefix = "spub";
             uint64_t RootAddressIndex = 0;
@@ -198,15 +211,22 @@ namespace Tangent
         } Account;
         struct ProtocolPolicyConfig
         {
-            uint64_t ConsensusCommitteeLimit = 24;
-            uint64_t ConsensusPriorityLimit = 6;
-            uint64_t ConsensusProofTime = 6000;
+            uint64_t ConsensusCommitteeMajors = 20;
+            uint64_t ConsensusCommitteeMinors = 4;
+            uint64_t ConsensusCommitteeAggregators = 64;
+            uint64_t ConsensusProofTime = 10000;
             uint64_t ConsensusAdjustmentTime = 3600000;
             uint64_t ConsensusPenaltyPointTime = 600000;
+            uint64_t ConsensusRecoveryProofs = 12;
             uint64_t TransactionThroughput = 410;
+            uint64_t ParallelDelegationLimit = 1;
+            uint64_t ParallelConsensusLimit = 128;
+            uint64_t ParallelAggregationLimit = 256;
+            double ConsensusAggregationThreshold = 0.66;
+            double ConsensusRecoveryBump = 36.0;
+            double GenesisSlotTimeBump = 0.2;
             double MaxConsensusDifficultyIncrease = 0.25;
             double MaxConsensusDifficultyDecrease = 0.75;
-            double CumulativeConsensusRequired = 0.75;
             double AccountGasWorkRequired = 1000.0;
             double AccountContributionRequired = 1.0;
             double AccountRewardMaxIncrease = 0.05;

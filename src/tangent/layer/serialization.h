@@ -84,6 +84,8 @@ namespace Tangent
 			static String Assign0xHex(const std::string_view& Data);
 			static String Clear0xHex(const std::string_view& Data, bool Uppercase = false);
 			static bool IsHexEncoding(const std::string_view& Data);
+			static bool IsBase64Encoding(const std::string_view& Data);
+			static bool IsBase64URLEncoding(const std::string_view& Data);
 			static bool IsInteger(Viewable Type);
 			static bool IsString(Viewable Type);
 			static bool IsString10(Viewable Type);

@@ -1,6 +1,6 @@
-#ifndef TAN_KERNEL_STORAGE_H
-#define TAN_KERNEL_STORAGE_H
-#include "chain.h"
+#ifndef TAN_STORAGE_ENGINE_H
+#define TAN_STORAGE_ENGINE_H
+#include "../kernel/chain.h"
 
 namespace Tangent
 {

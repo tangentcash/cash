@@ -50,6 +50,9 @@ bool const bech32_encode(char const *const hrp, uint8_t const *const data, uint1
 
 ///  bech32_decode { (char)bech32_code } = (uint8_t)data[data_len] ; data_len puede ser nullprt, data_len <= 57 bytes
 bool const bech32_decode(char const *const bech32_code,uint8_t *const data_out,uint16_t *const data_out_len) noexcept;
+
+///  bech32_decode { (char)bech32_code } = (uint8_t)data[data_len] ; data_len puede ser nullprt
+bool const bech32_decode_extended(char const* const bech32_code, uint8_t* const data_out, uint16_t* const data_out_len, uint16_t max_size) noexcept;
 }
 }
 

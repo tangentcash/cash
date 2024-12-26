@@ -24,6 +24,9 @@ namespace Tangent
 			if (GasPrice.IsNaN() || GasPrice.IsNegative())
 				return LayerException("invalid gas price");
 
+			if (GasPrice.IsZero() && Conservative)
+				return LayerException("invalid gas price");
+
 			if (IsSignatureNull())
 				return LayerException("invalid signature");
 
@@ -106,7 +109,10 @@ namespace Tangent
 		}
 		void Transaction::SetOptimalGas(const Decimal& Price)
 		{
-			SetGas(Price, Ledger::TransactionContext::CalculateTxGas(this).Or(GetGasEstimate()));
+			auto OptimalGas = Ledger::TransactionContext::CalculateTxGas(this);
+			if (!OptimalGas)
+				OptimalGas = GetGasEstimate();
+			SetGas(Price, *OptimalGas);
 		}
 		void Transaction::SetEstimateGas(const Decimal& Price)
 		{
@@ -121,24 +127,34 @@ namespace Tangent
 		{
 			Asset = Algorithm::Asset::IdOf(Blockchain, Token, ContractAddress);
 		}
+		bool Transaction::IsConsensus() const
+		{
+			auto Level = GetType();
+			return Level == TransactionLevel::Consensus || Level == TransactionLevel::Aggregation;
+		}
 		TransactionLevel Transaction::GetType() const
 		{
-			return TransactionLevel::OwnerAccount;
+			return TransactionLevel::Functional;
 		}
 		UPtr<Schema> Transaction::AsSchema() const
 		{
-			std::string_view Signer;
+			std::string_view Category;
 			switch (GetType())
 			{
-				case TransactionLevel::ProposerAccount:
-					Signer = "proposer_account";
+				case TransactionLevel::Functional:
+					Category = "functional";
 					break;
-				case TransactionLevel::CumulativeAccount:
-					Signer = "cumulative_account";
+				case TransactionLevel::Delegation:
+					Category = "delegation";
 					break;
-				case TransactionLevel::OwnerAccount:
+				case TransactionLevel::Consensus:
+					Category = "consensus";
+					break;
+				case TransactionLevel::Aggregation:
+					Category = "aggregation";
+					break;
 				default:
-					Signer = "owner_account";
+					Category = "unknown";
 					break;
 			}
 
@@ -146,7 +162,7 @@ namespace Tangent
 			Data->Set("hash", Var::String(Algorithm::Encoding::Encode0xHex256(AsHash())));
 			Data->Set("signature", Var::String(Format::Util::Encode0xHex(std::string_view((char*)Signature, sizeof(Signature)))));
 			Data->Set("type", Var::String(AsTypename()));
-			Data->Set("signer", Var::String(Signer));
+			Data->Set("category", Var::String(Category));
 			Data->Set("asset", Algorithm::Asset::Serialize(Asset));
 			Data->Set("sequence", Var::Integer(Sequence));
 			Data->Set("gas_price", Var::Decimal(GasPrice));
@@ -158,7 +174,16 @@ namespace Tangent
 			return 0;
 		}
 
-		ExpectsLR<void> EventTransaction::Validate(const TransactionContext* Context) const
+		ExpectsLR<void> DelegationTransaction::Validate(const TransactionContext* Context) const
+		{
+			return Context->VerifyAccountSequence();
+		}
+		TransactionLevel DelegationTransaction::GetType() const
+		{
+			return TransactionLevel::Delegation;
+		}
+
+		ExpectsLR<void> ConsensusTransaction::Validate(const TransactionContext* Context) const
 		{
 			auto SequenceRequirement = Context->VerifyAccountSequence();
 			if (!SequenceRequirement)
@@ -166,12 +191,12 @@ namespace Tangent
 
 			return Context->VerifyAccountWork();
 		}
-		TransactionLevel EventTransaction::GetType() const
+		TransactionLevel ConsensusTransaction::GetType() const
 		{
-			return TransactionLevel::ProposerAccount;
+			return TransactionLevel::Consensus;
 		}
 
-		ExpectsLR<void> CumulativeEventTransaction::Prevalidate() const
+		ExpectsLR<void> AggregationTransaction::Prevalidate() const
 		{
 			if (Conservative)
 				return LayerException("cumulative transaction cannot be conservative");
@@ -204,7 +229,7 @@ namespace Tangent
 
 			return Ledger::Transaction::Prevalidate();
 		}
-		ExpectsLR<void> CumulativeEventTransaction::Validate(const TransactionContext* Context) const
+		ExpectsLR<void> AggregationTransaction::Validate(const TransactionContext* Context) const
 		{
 			auto SequenceRequirement = Context->VerifyAccountSequence();
 			if (!SequenceRequirement)
@@ -232,7 +257,7 @@ namespace Tangent
 
 			return Context->VerifyAccountWork();
 		}
-		bool CumulativeEventTransaction::StorePayload(Format::Stream* Stream) const
+		bool AggregationTransaction::StorePayload(Format::Stream* Stream) const
 		{
 			VI_ASSERT(Stream != nullptr, "stream should be set");
 			if (!Ledger::Transaction::StorePayload(Stream))
@@ -254,7 +279,7 @@ namespace Tangent
 			}
 			return true;
 		}
-		bool CumulativeEventTransaction::LoadPayload(Format::Stream& Stream)
+		bool AggregationTransaction::LoadPayload(Format::Stream& Stream)
 		{
 			if (!Ledger::Transaction::LoadPayload(Stream))
 				return false;
@@ -294,7 +319,7 @@ namespace Tangent
 
 			return true;
 		}
-		bool CumulativeEventTransaction::Sign(const Algorithm::Seckey PrivateKey)
+		bool AggregationTransaction::Sign(const Algorithm::Seckey PrivateKey)
 		{
 			Format::Stream Message;
 			Message.WriteInteger(InputHash);
@@ -306,12 +331,12 @@ namespace Tangent
 
 			return Attestate(PrivateKey);
 		}
-		bool CumulativeEventTransaction::Sign(const Algorithm::Seckey PrivateKey, uint64_t NewSequence)
+		bool AggregationTransaction::Sign(const Algorithm::Seckey PrivateKey, uint64_t NewSequence)
 		{
 			Sequence = NewSequence;
 			return Sign(PrivateKey);
 		}
-		bool CumulativeEventTransaction::Sign(const Algorithm::Seckey PrivateKey, uint64_t NewSequence, const Decimal& Price)
+		bool AggregationTransaction::Sign(const Algorithm::Seckey PrivateKey, uint64_t NewSequence, const Decimal& Price)
 		{
 			SetEstimateGas(Price);
 			if (!Sign(PrivateKey, NewSequence))
@@ -325,7 +350,7 @@ namespace Tangent
 			GasLimit = *OptimalGas;
 			return Sign(PrivateKey);
 		}
-		bool CumulativeEventTransaction::Verify(const Algorithm::Pubkey PublicKey) const
+		bool AggregationTransaction::Verify(const Algorithm::Pubkey PublicKey) const
 		{
 			Format::Stream Message;
 			Message.WriteInteger(InputHash);
@@ -350,7 +375,7 @@ namespace Tangent
 
 			return false;
 		}
-		bool CumulativeEventTransaction::Verify(const Algorithm::Pubkey PublicKey, const uint256_t& OutputHash, size_t Index) const
+		bool AggregationTransaction::Verify(const Algorithm::Pubkey PublicKey, const uint256_t& OutputHash, size_t Index) const
 		{
 			auto Branch = OutputHashes.find(OutputHash);
 			if (Branch == OutputHashes.end())
@@ -372,7 +397,7 @@ namespace Tangent
 			Message.WriteInteger(OutputHash);
 			return Algorithm::Signing::Verify(Message.Hash(), PublicKey, (uint8_t*)Signature->data());
 		}
-		bool CumulativeEventTransaction::Recover(Algorithm::Pubkeyhash PublicKeyHash) const
+		bool AggregationTransaction::Recover(Algorithm::Pubkeyhash PublicKeyHash) const
 		{
 			Format::Stream Message;
 			Message.WriteInteger(InputHash);
@@ -398,7 +423,7 @@ namespace Tangent
 
 			return false;
 		}
-		bool CumulativeEventTransaction::Recover(Algorithm::Pubkeyhash PublicKeyHash, const uint256_t& OutputHash, size_t Index) const
+		bool AggregationTransaction::Recover(Algorithm::Pubkeyhash PublicKeyHash, const uint256_t& OutputHash, size_t Index) const
 		{
 			auto Branch = OutputHashes.find(OutputHash);
 			if (Branch == OutputHashes.end())
@@ -420,7 +445,7 @@ namespace Tangent
 			Message.WriteInteger(OutputHash);
 			return Algorithm::Signing::RecoverHash(Message.Hash(), PublicKeyHash, (uint8_t*)Signature->data());
 		}
-		bool CumulativeEventTransaction::Attestate(const Algorithm::Seckey PrivateKey)
+		bool AggregationTransaction::Attestate(const Algorithm::Seckey PrivateKey)
 		{
 			if (OutputHashes.size() > 1)
 				return false;
@@ -438,7 +463,7 @@ namespace Tangent
 			GenesisBranch->second.Attestations.insert(String((char*)CumulativeSignature, sizeof(CumulativeSignature)));
 			return true;
 		}
-		bool CumulativeEventTransaction::Merge(const CumulativeEventTransaction& Other)
+		bool AggregationTransaction::Merge(const TransactionContext* Context, const AggregationTransaction& Other)
 		{
 			if (Asset > 0 && Other.Asset != Asset)
 				return false;
@@ -451,8 +476,8 @@ namespace Tangent
 
 			UnorderedSet<String> Proposers;
 			auto Branches = std::move(OutputHashes);
-			auto* BranchA = GetCumulativeBranch();
-			auto* BranchB = Other.GetCumulativeBranch();
+			auto* BranchA = GetCumulativeBranch(Context);
+			auto* BranchB = Other.GetCumulativeBranch(Context);
 			size_t BranchLengthA = (BranchA ? BranchA->Attestations.size() : 0);
 			size_t BranchLengthB = (BranchB ? BranchB->Attestations.size() : 0);
 			if (BranchLengthA < BranchLengthB)
@@ -496,11 +521,9 @@ namespace Tangent
 				}
 			}
 
-		
-
 			return true;
 		}
-		bool CumulativeEventTransaction::IsSignatureNull() const
+		bool AggregationTransaction::IsSignatureNull() const
 		{
 			Algorithm::Sighash Null = { 0 };
 			for (auto& Branch : OutputHashes)
@@ -513,7 +536,7 @@ namespace Tangent
 			}
 			return memcmp(Signature, Null, sizeof(Null)) == 0;
 		}
-		bool CumulativeEventTransaction::IsConsensusReached() const
+		bool AggregationTransaction::IsConsensusReached() const
 		{
 			if (OutputHashes.size() != 1)
 				return false;
@@ -524,17 +547,16 @@ namespace Tangent
 
 			return GenesisBranch->second.Message.Hash() == GenesisBranch->first;
 		}
-		void CumulativeEventTransaction::SetOptimalGas(const Decimal& Price)
+		void AggregationTransaction::SetOptimalGas(const Decimal& Price)
 		{
 			auto OptimalGas = Ledger::TransactionContext::CalculateTxGas(this);
 			if (OptimalGas)
 			{
 				Format::Stream Message;
 				auto Blob = String(sizeof(Algorithm::Sighash), '0');
-				auto* Branch = GetCumulativeBranch();
-				size_t Size = (size_t)(Protocol::Now().Policy.CumulativeConsensusRequired * (double)Protocol::Now().Policy.ConsensusCommitteeLimit);
+				size_t Size = (size_t)Protocol::Now().Policy.ConsensusCommitteeAggregators;
 				Message.WriteInteger((uint16_t)OutputHashes.size());
-				Message.WriteString(Branch ? Branch->Message.Data : std::string_view());
+				Message.WriteString(String(sizeof(Oracle::IncomingTransaction) * 10, '0'));
 				Message.WriteInteger((uint16_t)Size);
 				for (size_t i = 0; i < Size; i++)
 					Message.WriteString(Blob);
@@ -544,7 +566,7 @@ namespace Tangent
 			else
 				SetGas(Price, GetGasEstimate());
 		}
-		void CumulativeEventTransaction::SetConsensus(const uint256_t& OutputHash)
+		void AggregationTransaction::SetConsensus(const uint256_t& OutputHash)
 		{
 			auto It = OutputHashes.find(OutputHash);
 			if (It == OutputHashes.end())
@@ -554,23 +576,25 @@ namespace Tangent
 			OutputHashes.clear();
 			OutputHashes[OutputHash] = std::move(Value);
 		}
-		void CumulativeEventTransaction::SetSignature(const Algorithm::Sighash NewValue)
+		void AggregationTransaction::SetSignature(const Algorithm::Sighash NewValue)
 		{
 			VI_ASSERT(NewValue != nullptr, "new value should be set");
 			memcpy(Signature, NewValue, sizeof(Algorithm::Sighash));
 		}
-		void CumulativeEventTransaction::SetStatement(const uint256_t& NewInputHash, const Format::Stream& OutputMessage)
+		void AggregationTransaction::SetStatement(const uint256_t& NewInputHash, const Format::Stream& OutputMessage)
 		{
 			OutputHashes.clear();
 			OutputHashes[OutputMessage.Hash()].Message = OutputMessage;
 			InputHash = NewInputHash;
 		}
-		const CumulativeEventTransaction::CumulativeBranch* CumulativeEventTransaction::GetCumulativeBranch() const
+		const AggregationTransaction::CumulativeBranch* AggregationTransaction::GetCumulativeBranch(const TransactionContext* Context) const
 		{
+			if (!Context)
+				return OutputHashes.size() == 1 ? &OutputHashes.begin()->second : nullptr;
+
 			uint256_t BestBranchWork = 0;
 			const CumulativeBranch* BestBranch = nullptr;
 			auto& Policy = Protocol::Now().Policy;
-			auto Context = TransactionContext();
 			for (auto& Branch : OutputHashes)
 			{
 				Format::Stream CumulativeMessage;
@@ -586,7 +610,7 @@ namespace Tangent
 					if (Signature.size() != sizeof(Algorithm::Sighash) || !Algorithm::Signing::RecoverHash(CumulativeMessageHash, Proposer, (uint8_t*)Signature.data()))
 						continue;
 
-					auto Work = Context.GetAccountWork(Proposer);
+					auto Work = Context->GetAccountWork(Proposer);
 					BranchWork += std::min(Work ? Work->GetGasUse() : 0, WorkLimit);
 				}
 
@@ -598,18 +622,18 @@ namespace Tangent
 			}
 			return BestBranch;
 		}
-		uint256_t CumulativeEventTransaction::GetCumulativeHash() const
+		uint256_t AggregationTransaction::GetCumulativeHash() const
 		{
 			Format::Stream Message;
 			Message.WriteInteger(Asset);
 			Message.WriteInteger(InputHash);
 			return Message.Hash();
 		}
-		TransactionLevel CumulativeEventTransaction::GetType() const
+		TransactionLevel AggregationTransaction::GetType() const
 		{
-			return TransactionLevel::CumulativeAccount;
+			return TransactionLevel::Aggregation;
 		}
-		UPtr<Schema> CumulativeEventTransaction::AsSchema() const
+		UPtr<Schema> AggregationTransaction::AsSchema() const
 		{
 			Schema* Data = Ledger::Transaction::AsSchema().Reset();
 			Data->Set("input_hash", Var::String(Algorithm::Encoding::Encode0xHex256(InputHash)));
@@ -714,6 +738,25 @@ namespace Tangent
 			}
 			return nullptr;
 		}
+		Option<String> Receipt::GetErrorMessages() const
+		{
+			String Messages;
+			size_t Offset = 0;
+			while (true)
+			{
+				auto* Event = FindEvent(0, Offset++);
+				if (Event && !Event->empty())
+					Messages.append(Event->front().AsBlob()).push_back('\n');
+				else if (!Event)
+					break;
+			}
+
+			if (Messages.empty())
+				return Optional::None;
+
+			Messages.pop_back();
+			return Messages;
+		}
 		UPtr<Schema> Receipt::AsSchema() const
 		{
 			Schema* Data = Var::Set::Object();
@@ -786,17 +829,70 @@ namespace Tangent
 
 			return true;
 		}
-		UPtr<Schema> State::AsSchema() const
+
+		Uniform::Uniform(uint64_t NewBlockNumber, uint64_t NewBlockNonce) : State(NewBlockNumber, NewBlockNonce)
+		{
+		}
+		Uniform::Uniform(const BlockHeader* NewBlockHeader) : State(NewBlockHeader)
+		{
+		}
+		UPtr<Schema> Uniform::AsSchema() const
 		{
 			Schema* Data = Var::Set::Object();
 			Data->Set("hash", Var::String(Algorithm::Encoding::Encode0xHex256(AsHash())));
 			Data->Set("type", Var::String(AsTypename()));
-			Data->Set("address", Var::String(Format::Util::Encode0xHex(AsAddress())));
-			Data->Set("stride", Var::String(Format::Util::Encode0xHex(AsStride())));
-			Data->Set("weight", Var::Integer(AsWeight()));
+			Data->Set("index", Var::String(Format::Util::Encode0xHex(AsIndex())));
 			Data->Set("block_number", Algorithm::Encoding::SerializeUint256(BlockNumber));
 			Data->Set("block_nonce", Algorithm::Encoding::SerializeUint256(BlockNonce));
 			return Data;
+		}
+		StateLevel Uniform::AsLevel() const
+		{
+			return StateLevel::Uniform;
+		}
+		String Uniform::AsComposite() const
+		{
+			return AsInstanceComposite(AsIndex());
+		}
+		String Uniform::AsInstanceComposite(const std::string_view& Index)
+		{
+			auto Composite = String(1 + Index.size(), 1);
+			memcpy(Composite.data() + 1, Index.data(), Index.size());
+			return Composite;
+		}
+
+		Multiform::Multiform(uint64_t NewBlockNumber, uint64_t NewBlockNonce) : State(NewBlockNumber, NewBlockNonce)
+		{
+		}
+		Multiform::Multiform(const BlockHeader* NewBlockHeader) : State(NewBlockHeader)
+		{
+		}
+		UPtr<Schema> Multiform::AsSchema() const
+		{
+			Schema* Data = Var::Set::Object();
+			Data->Set("hash", Var::String(Algorithm::Encoding::Encode0xHex256(AsHash())));
+			Data->Set("type", Var::String(AsTypename()));
+			Data->Set("column", Var::String(Format::Util::Encode0xHex(AsColumn())));
+			Data->Set("row", Var::String(Format::Util::Encode0xHex(AsRow())));
+			Data->Set("factor", Var::Integer(AsFactor()));
+			Data->Set("block_number", Algorithm::Encoding::SerializeUint256(BlockNumber));
+			Data->Set("block_nonce", Algorithm::Encoding::SerializeUint256(BlockNonce));
+			return Data;
+		}
+		StateLevel Multiform::AsLevel() const
+		{
+			return StateLevel::Multiform;
+		}
+		String Multiform::AsComposite() const
+		{
+			return AsInstanceComposite(AsColumn(), AsRow());
+		}
+		String Multiform::AsInstanceComposite(const std::string_view& Column, const std::string_view& Row)
+		{
+			auto Composite = String(1 + Column.size() + Row.size(), 2);
+			memcpy(Composite.data() + 1, Column.data(), Column.size());
+			memcpy(Composite.data() + 1 + Column.size(), Row.data(), Row.size());
+			return Composite;
 		}
 
 		uint256_t GasUtil::GetGasWork(const uint128_t& Difficulty, const uint256_t& GasUse, const uint256_t& GasLimit)

@@ -16,10 +16,12 @@ namespace Tangent
 	public:
 		SystemControl(const std::string_view& Label) noexcept;
 		Promise<void> Shutdown() noexcept;
-		bool IntervalIfNone(const String& Name, uint64_t Ms, TaskCallback&& Callback) noexcept;
-		bool TimeoutIfNone(const String& Name, uint64_t Ms, TaskCallback&& Callback) noexcept;
-		bool UpsertTimeout(const String& Name, uint64_t Ms, TaskCallback&& Callback) noexcept;
-		bool ClearTimeout(const String& Name, bool ClearScheduled = false) noexcept;
+		bool LockTimeout(const std::string_view& Name);
+		bool UnlockTimeout(const std::string_view& Name);
+		bool IntervalIfNone(const std::string_view& Name, uint64_t Ms, TaskCallback&& Callback) noexcept;
+		bool TimeoutIfNone(const std::string_view& Name, uint64_t Ms, TaskCallback&& Callback) noexcept;
+		bool UpsertTimeout(const std::string_view& Name, uint64_t Ms, TaskCallback&& Callback) noexcept;
+		bool ClearTimeout(const std::string_view& Name, bool ClearScheduled = false) noexcept;
 		bool ActivateAndEnqueue() noexcept;
 		bool Deactivate() noexcept;
 		bool EnqueueIfNone() noexcept;

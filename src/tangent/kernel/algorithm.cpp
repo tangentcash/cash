@@ -1,4 +1,5 @@
 #include "algorithm.h"
+#include "oracle.h"
 extern "C"
 {
 #include <secp256k1.h>
@@ -86,11 +87,68 @@ namespace Tangent
 			return 1;
 		}
 
+		Endpoint::Endpoint(const std::string_view& URI) : Scheme(URI), Secure(false)
+		{
+			if (Scheme.Hostname.empty())
+				return;
+
+			SocketAddress PrimaryCandidate = SocketAddress(Scheme.Hostname, Scheme.Port > 0 ? Scheme.Port : Protocol::Now().User.P2P.Port);
+			if (!PrimaryCandidate.IsValid())
+			{
+				auto SecondaryCandidate = DNS::Get()->Lookup(Scheme.Hostname, ToString(Scheme.Port > 0 ? Scheme.Port : Protocol::Now().User.P2P.Port), DNSType::Listen);
+				if (!SecondaryCandidate)
+					return;
+
+				auto IpAddress = SecondaryCandidate->GetIpAddress();
+				if (!IpAddress)
+					return;
+
+				Scheme.Hostname = std::move(*IpAddress);
+			}
+
+			if (Scheme.Protocol == "tcp" || Scheme.Protocol == "tcps")
+				Address = SocketAddress(Scheme.Hostname, Scheme.Port > 0 ? Scheme.Port : Protocol::Now().User.P2P.Port);
+			else if (Scheme.Protocol == "http" || Scheme.Protocol == "https")
+				Address = SocketAddress(Scheme.Hostname, Scheme.Port > 0 ? Scheme.Port : Protocol::Now().User.NDS.Port);
+			else if (Scheme.Protocol == "rpc" || Scheme.Protocol == "rpcs")
+				Address = SocketAddress(Scheme.Hostname, Scheme.Port > 0 ? Scheme.Port : Protocol::Now().User.RPC.Port);
+			Secure = Address.IsValid() && Scheme.Protocol.back() == 's';
+		}
+		bool Endpoint::IsValid() const
+		{
+			return Address.IsValid() && !Scheme.Hostname.empty() && !Scheme.Protocol.empty() && (Scheme.Protocol == "tcp" || Scheme.Protocol == "tcps" || Scheme.Protocol == "http" || Scheme.Protocol == "https" || Scheme.Protocol == "rpc" || Scheme.Protocol == "rpcs");
+		}
+		String Endpoint::ToURI(const SocketAddress& Address, const std::string_view& Protocol)
+		{
+			String URI = String(Protocol);
+			URI.append("://");
+			URI.append(Address.GetIpAddress().Or("[bad_address]"));
+
+			auto IpPort = Address.GetIpPort();
+			if (IpPort)
+				URI.append(":").append(ToString(*IpPort));
+
+			return URI;
+		}
+
 		String Signing::Mnemonicgen(uint16_t Strength)
 		{
 			char Buffer[256] = { 0 };
 			mnemonic_generate((int)Strength, Buffer, (int)sizeof(Buffer));
 			return String(Buffer, strnlen(Buffer, sizeof(Buffer)));
+		}
+		uint256_t Signing::MessageHash(const std::string_view& InsecureMessage)
+		{
+			String Size(1, (char)InsecureMessage.size());
+			if (InsecureMessage.size() > 253)
+			{
+				uint16_t Size16 = OS::CPU::ToEndianness(OS::CPU::Endian::Little, (uint16_t)InsecureMessage.size());
+				Size.append((char*)&Size16, sizeof(Size16));
+			}
+
+			const String& Header = Protocol::Now().Account.SignedMessageMagic;
+			String Payload = Stringify::Text("%c%s%.*s%.*s", (char)Header.size(), Header.c_str(), (int)Size.size(), Size.c_str(), (int)InsecureMessage.size(), InsecureMessage.data());
+			return Hashing::Hash256i(Payload);
 		}
 		void Signing::Keygen(Seckey PrivateKey)
 		{
@@ -763,6 +821,9 @@ namespace Tangent
 
 			auto Blockchain = BlockchainOf(Value);
 			if (Stringify::IsEmptyOrWhitespace(Blockchain))
+				return false;
+
+			if (!Oracle::Datamaster::IsInitialized() || !Oracle::Datamaster::HasChain(Value))
 				return false;
 
 			auto Token = TokenOf(Value);

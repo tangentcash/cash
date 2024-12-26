@@ -75,13 +75,12 @@ static uint8_t * const convert_bits(uint8_t const * const data, uint16_t const *
 }
 
 ///Decode cardano addr
-static bool const decode_bits( uint8_t const * const data, uint16_t const data_len, uint16_t const fromBits, uint16_t const toBits, uint8_t * const bits_out ,uint16_t * const bits_out_len ) noexcept {
+static bool const decode_bits( uint8_t const * const data, uint16_t const data_len, uint16_t const fromBits, uint16_t const toBits, uint8_t * const bits_out ,uint16_t * const bits_out_len, uint16_t max_size ) noexcept {
     uint16_t blen = 0;
     uint16_t acc = 0;
     uint16_t bits = 0;
     uint16_t maxv = (1 << toBits) - 1;
     uint16_t maxacc = (1 << (fromBits + toBits - 1)) - 1;
-    uint16_t max_size = 57;
 
     if(bits_out_len != nullptr){
         if (max_size < *bits_out_len - 1)
@@ -355,7 +354,48 @@ bool const bech32_decode(char const * const bech32_code, uint8_t * const data_ou
         return false;
     }
 
-    if(!decode_bits(c_bit, (c_bit_len - 6), 5, 8, data_out, data_out_len)){
+    if(!decode_bits(c_bit, (c_bit_len - 6), 5, 8, data_out, data_out_len, 57)){
+        sodium_memzero(c_bit, c_bit_len);
+        return false;
+    }
+
+    sodium_memzero(c_bit, c_bit_len);
+    return true;
+
+}
+
+bool const bech32_decode_extended(char const * const bech32_code, uint8_t * const data_out,uint16_t * const data_out_len, uint16_t max_size) noexcept {
+    uint16_t bech32_code_lenght = 0;
+    uint16_t pos_separator = 0;
+    uint8_t hrp_len = 0;
+
+    if(!IsValidStringBench32(bech32_code, &pos_separator, &bech32_code_lenght)){
+        return false;
+    }
+
+    char hrp[16];
+    std::strncpy ( hrp, bech32_code, pos_separator);
+    hrp[pos_separator] = '\0';
+
+    if(!IsValidHrp(hrp, &hrp_len)){
+        return false;
+    }
+
+    uint16_t c_bit_len = bech32_code_lenght-(pos_separator+1);
+    uint8_t c_bit[2048];
+    sodium_memzero(c_bit, c_bit_len);
+
+    for (uint16_t i = 0; i < c_bit_len; i++)
+    {
+        c_bit[i] = B32Chars_decode[ static_cast<uint8_t>( bech32_code[ (pos_separator + 1) + i] ) ];
+    }
+
+    if (!bech32_verify_checksum(hrp, &hrp_len, c_bit, c_bit_len)){
+        sodium_memzero(c_bit, c_bit_len);
+        return false;
+    }
+
+    if(!decode_bits(c_bit, (c_bit_len - 6), 5, 8, data_out, data_out_len, max_size)){
         sodium_memzero(c_bit, c_bit_len);
         return false;
     }

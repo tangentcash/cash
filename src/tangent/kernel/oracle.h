@@ -151,32 +151,6 @@ namespace Tangent
 			bool IsValid() const;
 		};
 
-		struct VerifiableMessage : Messages::Generic
-		{
-			enum class Status : uint64_t
-			{
-				Reservation,
-				Permanent,
-			} Type;
-			Algorithm::AssetId Asset = 0;
-			Algorithm::Pubkeyhash Owner = { 0 };
-			Algorithm::Pubkeyhash Proposer = { 0 };
-			AddressMap Addresses;
-			Option<uint64_t> AddressIndex = Optional::None;
-			String VerifyingKey;
-
-			VerifiableMessage();
-			VerifiableMessage(Status NewType, const Algorithm::AssetId& NewAsset, const Algorithm::Pubkeyhash NewOwner, const Algorithm::Pubkeyhash NewProposer, AddressMap&& NewAddresses, Option<uint64_t>&& NewAddressIndex, const std::string_view& NewVerifyingKey);
-			bool StorePayload(Format::Stream* Stream) const override;
-			bool LoadPayload(Format::Stream& Stream) override;
-			bool IsValid() const;
-			UPtr<Schema> AsSchema() const override;
-			uint32_t AsType() const override;
-			std::string_view AsTypename() const override;
-			static uint32_t AsInstanceType();
-			static std::string_view AsInstanceTypename();
-		};
-
 		struct IncomingTransaction : Messages::Generic
 		{
 			Vector<Transferer> To;
@@ -303,10 +277,6 @@ namespace Tangent
 		{
 			UnorderedMap<String, ChainSupervisorOptions> Specifics;
 			uint64_t RetryWaitingTimeMs = 30000;
-			bool ShowTransactions = true;
-			bool ShowBlocks = true;
-			bool ShowQueue = true;
-			bool ShowBroadcasts = true;
 
 			ChainSupervisorOptions& AddSpecificOptions(const std::string_view& Blockchain);
 		};
@@ -390,6 +360,17 @@ namespace Tangent
 			typedef std::function<void(Nodemaster*)> InteractionCallback;
 
 		public:
+			struct Chainparams
+			{
+				Algorithm::Composition::Type Composition;
+				RoutingPolicy Routing;
+				uint64_t SyncLatency;
+				Decimal Divisibility;
+				String SupportsTokenTransfer;
+				bool SupportsBulkTransfer;
+			};
+
+		public:
 			InteractionCallback Interact;
 
 		public:
@@ -409,23 +390,19 @@ namespace Tangent
 			virtual Promise<ExpectsLR<OutgoingTransaction>> NewTransaction(const Algorithm::AssetId& Asset, const DynamicWallet& Wallet, const Vector<Transferer>& To, const BaseFee& Fee) = 0;
 			virtual ExpectsLR<MasterWallet> NewMasterWallet(const std::string_view& Seed) = 0;
 			virtual ExpectsLR<DerivedSigningWallet> NewSigningWallet(const Algorithm::AssetId& Asset, const MasterWallet& Wallet, uint64_t AddressIndex) = 0;
-			virtual ExpectsLR<DerivedSigningWallet> NewSigningWallet(const Algorithm::AssetId& Asset, const std::string_view& RawSigningKey) { return LayerException(); };
-			virtual ExpectsLR<DerivedVerifyingWallet> NewVerifyingWallet(const Algorithm::AssetId& Asset, const std::string_view& RawVerifyingKey) { return LayerException(); };
-			virtual ExpectsLR<String> NewAddress(const Algorithm::AssetId& Asset, const std::string_view& RawVerifyingKey) { return LayerException(); };
+			virtual ExpectsLR<DerivedSigningWallet> NewSigningWallet(const Algorithm::AssetId& Asset, const std::string_view& SigningKey) { return LayerException(); };
+			virtual ExpectsLR<DerivedVerifyingWallet> NewVerifyingWallet(const Algorithm::AssetId& Asset, const std::string_view& VerifyingKey) { return LayerException(); };
+			virtual ExpectsLR<String> NewAddress(const Algorithm::AssetId& Asset, const std::string_view& VerifyingKey) { return LayerException(); };
 			virtual ExpectsLR<String> NewPublicKeyHash(const std::string_view& Address) { return LayerException(); };
-			virtual ExpectsLR<String> SignMessage(const Messages::Generic& Message, const DerivedSigningWallet& Wallet) = 0;
-			virtual ExpectsLR<bool> VerifyMessage(const Messages::Generic& Message, const std::string_view& Address, const std::string_view& VerifyingKey, const std::string_view& Signature) = 0;
+			virtual ExpectsLR<String> SignMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const PrivateKey& SigningKey) = 0;
+			virtual ExpectsLR<void> VerifyMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const std::string_view& VerifyingKey, const std::string_view& Signature) = 0;
 			virtual ExpectsLR<OrderedMap<String, uint64_t>> FindCheckpointAddresses(const Algorithm::AssetId& Asset, const UnorderedSet<String>& Addresses);
 			virtual ExpectsLR<Vector<String>> GetCheckpointAddresses(const Algorithm::AssetId& Asset);
 			virtual ExpectsLR<void> VerifyNodeCompatibility(Nodemaster* Node);
 			virtual String GetDerivation(uint64_t AddressIndex) const = 0;
 			virtual String GetChecksumHash(const std::string_view& Value) const;
-			virtual Decimal GetDivisibility() const = 0;
-			virtual Algorithm::Composition::Type GetCompositionPolicy() const = 0;
-			virtual RoutingPolicy GetRoutingPolicy() const = 0;
-			virtual uint64_t GetBlockLatency() const = 0;
 			virtual uint256_t ToBaselineValue(const Decimal& Value) const;
-			virtual bool HasBulkTransactions() const = 0;
+			virtual const Chainparams& GetChainparams() const = 0;
 		};
 
 		class ChainmasterUTXO : public Chainmaster
@@ -525,21 +502,22 @@ namespace Tangent
 			static ExpectsLR<MasterWallet> NewMasterWallet(const Algorithm::AssetId& Asset, const std::string_view& Seed);
 			static ExpectsLR<MasterWallet> NewMasterWallet(const Algorithm::AssetId& Asset, const Algorithm::Seckey PrivateKey);
 			static ExpectsLR<DerivedSigningWallet> NewSigningWallet(const Algorithm::AssetId& Asset, const MasterWallet& Wallet, Option<uint64_t>&& AddressIndex = Optional::None);
-			static ExpectsLR<DerivedSigningWallet> NewSigningWallet(const Algorithm::AssetId& Asset, const std::string_view& RawSigningKey);
-			static ExpectsLR<DerivedVerifyingWallet> NewVerifyingWallet(const Algorithm::AssetId& Asset, const std::string_view& RawVerifyingKey);
+			static ExpectsLR<DerivedSigningWallet> NewSigningWallet(const Algorithm::AssetId& Asset, const std::string_view& SigningKey);
+			static ExpectsLR<DerivedVerifyingWallet> NewVerifyingWallet(const Algorithm::AssetId& Asset, const std::string_view& VerifyingKey);
 			static ExpectsLR<String> NewPublicKeyHash(const Algorithm::AssetId& Asset, const std::string_view& Address);
-			static ExpectsLR<String> SignMessage(const Algorithm::AssetId& Asset, const Messages::Generic& Message, const DerivedSigningWallet& Wallet);
-			static ExpectsLR<bool> VerifyMessage(const Algorithm::AssetId& Asset, const Messages::Generic& Message, const std::string_view& Address, const std::string_view& VerifyingKey, const std::string_view& Signature);
-			static ExpectsLR<bool> VerifyMessage(const Algorithm::AssetId& Asset, const VerifiableMessage& Message, const std::string_view& Signature);
+			static ExpectsLR<String> SignMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const PrivateKey& SigningKey);
+			static ExpectsLR<void> VerifyMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const std::string_view& VerifyingKey, const std::string_view& Signature);
 			static ExpectsLR<void> EnableCheckpointHeight(const Algorithm::AssetId& Asset, uint64_t BlockHeight);
 			static ExpectsLR<void> EnableWalletAddress(const Algorithm::AssetId& Asset, const std::string_view& Binding, const std::string_view& Address, uint64_t AddressIndex);
 			static ExpectsLR<void> EnableContractAddress(const Algorithm::AssetId& Asset, const std::string_view& ContractAddress);
 			static ExpectsLR<uint64_t> GetLatestKnownBlockHeight(const Algorithm::AssetId& Asset);
 			static Option<String> GetContractAddress(const Algorithm::AssetId& Asset);
-			static Vector<Algorithm::AssetId> GetAssets();
+			static UnorderedMap<Algorithm::AssetId, Chainmaster::Chainparams> GetChains();
+			static Vector<Algorithm::AssetId> GetAssets(bool ObservingOnly = false);
 			static Vector<UPtr<Nodemaster>>* GetNodes(const Algorithm::AssetId& Asset);
 			static Nodemaster* GetNode(const Algorithm::AssetId& Asset);
 			static Chainmaster* GetChain(const Algorithm::AssetId& Asset);
+			static const Chainmaster::Chainparams* GetChainparams(const Algorithm::AssetId& Asset);
 			static Schema* GetOptions(const Algorithm::AssetId& Asset);
 			static Schema* AddOptions(const Algorithm::AssetId& Asset, UPtr<Schema>&& Value);
 			static Nodemaster* AddNode(const Algorithm::AssetId& Asset, const std::string_view& URL, double Throttling);
@@ -573,9 +551,7 @@ namespace Tangent
 			static void Open(Schema* Config, bool Observe);
 			static void Close();
 			static UnorderedMap<String, Oracle::MasterWallet> GetWallets(const Algorithm::Seckey PrivateKey);
-			static UnorderedMap<String, InvocationCallback> GetChains();
-			static OrderedSet<Algorithm::AssetId> GetOracles();
-			static Algorithm::AssetId GetRandomAsset();
+			static UnorderedMap<String, InvocationCallback> GetRegistrations();
 		};
 	}
 }

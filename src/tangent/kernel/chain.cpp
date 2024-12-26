@@ -2,7 +2,7 @@
 #include "script.h"
 #ifdef TAN_VALIDATOR
 #include "oracle.h"
-#include "../policy/storages.h"
+#include "../storage/chainstate.h"
 #ifdef TAN_ROCKSDB
 #include "rocksdb/db.h"
 #include "rocksdb/table.h"
@@ -82,11 +82,15 @@ namespace Tangent
 		auto Status = rocksdb::DB::Open(BlobStorageConfiguration(Protocol::Now().User.Storage.BlobCacheSize), std::string(Address.begin(), Address.end()), &Result);
 		if (!Status.ok())
 		{
-			VI_ERR("[blobdb] wal append error: %s (location: %s)", Status.ToString().c_str(), Address.c_str());
+			if (Protocol::Now().User.Storage.Logging)
+				VI_ERR("[blobdb] wal append error: %s (location: %s)", Status.ToString().c_str(), Address.c_str());
+
 			return nullptr;
 		}
 
-		VI_DEBUG("[blobdb] wal append on %s (handle: 0x%" PRIXPTR ")", Address.c_str(), (uintptr_t)Result);
+		if (Protocol::Now().User.Storage.Logging)
+			VI_DEBUG("[blobdb] wal append on %s (handle: 0x%" PRIXPTR ")", Address.c_str(), (uintptr_t)Result);
+
 		Blobs[Address] = std::unique_ptr<rocksdb::DB>(Result);
 		return Result;
 #else
@@ -113,7 +117,9 @@ namespace Tangent
 		auto Status = Result->Connect(Address);
 		if (!Status)
 		{
-			VI_ERR("[indexdb] wal append error: %s (location: %s)", Status.Error().what(), Address.c_str());
+			if (Protocol::Now().User.Storage.Logging)
+				VI_ERR("[indexdb] wal append error: %s (location: %s)", Status.Error().what(), Address.c_str());
+			
 			return Result;
 		}
 		else if (!Result->Query(IndexStorageConfiguration(Protocol::Now().User.Storage.Optimization, Protocol::Now().User.Storage.IndexPageSize, Protocol::Now().User.Storage.IndexCacheSize)))
@@ -121,7 +127,9 @@ namespace Tangent
 		else if (Initializer)
 			Initializer(*Result);
 
-		VI_DEBUG("[indexdb] wal append on %s (handle: 0x%" PRIXPTR ")", Address.c_str(), (uintptr_t)*Result);
+		if (Protocol::Now().User.Storage.Logging)
+			VI_DEBUG("[indexdb] wal append on %s (handle: 0x%" PRIXPTR ")", Address.c_str(), (uintptr_t)*Result);
+		
 		return Result;
 	}
 	void Repository::UnloadIndex(UPtr<LDB::Connection>&& Value)
@@ -151,10 +159,13 @@ namespace Tangent
 			Options.wait = true;
 
 			auto Status = Handle.second->Flush(Options);
-			if (Status.ok())
-				VI_DEBUG("[blobdb] wal checkpoint on %s", Handle.first.c_str());
-			else
-				VI_ERR("[blobdb] wal checkpoint error on: %s (location: %s)", Status.ToString().c_str(), Handle.first.c_str());
+			if (Protocol::Now().User.Storage.Logging)
+			{
+				if (Status.ok())
+					VI_DEBUG("[blobdb] wal checkpoint on %s", Handle.first.c_str());
+				else
+					VI_ERR("[blobdb] wal checkpoint error on: %s (location: %s)", Status.ToString().c_str(), Handle.first.c_str());
+			}
 		}
 		for (auto& Queue : Indices)
 		{
@@ -163,8 +174,11 @@ namespace Tangent
 
 			auto& Handle = Queue.second.front();
 			auto States = Handle->WalCheckpoint(LDB::CheckpointMode::Truncate);
-			for (auto& State : States)
-				VI_DEBUG("[indexdb] wal checkpoint on %s (db: %s, fc: %i, fs: %i, stat: %i)", Queue.first.c_str(), State.Database.empty() ? "all" : State.Database.c_str(), State.FramesCount, State.FramesSize, State.Status);
+			if (Protocol::Now().User.Storage.Logging)
+			{
+				for (auto& State : States)
+					VI_DEBUG("[indexdb] wal checkpoint on %s (db: %s, fc: %i, fs: %i, stat: %i)", Queue.first.c_str(), State.Database.empty() ? "all" : State.Database.c_str(), State.FramesCount, State.FramesSize, State.Status);
+			}
 		}
 	}
 	const String& Repository::Resolve(NetworkType Type, const std::string_view& Path)
@@ -264,8 +278,9 @@ namespace Tangent
 		return PrivateKey(*Result);
 	}
 
-	String Timepoint::Adjust(const String& Source, int64_t MillisecondsDelta)
+	String Timepoint::Adjust(const SocketAddress& Address, int64_t MillisecondsDelta)
 	{
+		String Source = Address.GetIpAddress().Or("[bad_address]") + ":" + ToString(Address.GetIpPort().Or(0));
 		UMutex<std::mutex> Unique(Mutex);
 		size_t Sources = Offsets.size();
 		if (MillisecondsDelta != 0)
@@ -299,14 +314,14 @@ namespace Tangent
 		
 		bool IsSevereDesync = false;
 		auto& MedianTime = TimeOffsets[TimeOffsets.size() / 2];
-		if (MedianTime.second > (int64_t)Peer.NodeTimeOffset)
+		if (MedianTime.second > (int64_t)Peer.TimeOffset)
 		{
-			MedianTime.second = (int64_t)Peer.NodeTimeOffset;
+			MedianTime.second = (int64_t)Peer.TimeOffset;
 			IsSevereDesync = true;
 		}
-		else if (MedianTime.second < -(int64_t)Peer.NodeTimeOffset)
+		else if (MedianTime.second < -(int64_t)Peer.TimeOffset)
 		{
-			MedianTime.second = -(int64_t)Peer.NodeTimeOffset;
+			MedianTime.second = -(int64_t)Peer.TimeOffset;
 			IsSevereDesync = true;
 		}
 
@@ -360,29 +375,39 @@ namespace Tangent
 				}
 			}
 
-			Value = Config->Fetch("p2p.node_address");
+			Value = Config->Get("seeders");
+			if (Value != nullptr && Value->Value.GetType() == VarType::Array)
+			{
+				for (auto& Seed : Value->GetChilds())
+				{
+					if (Seed->Value.Is(VarType::String))
+						User.Seeders.insert(Seed->Value.GetBlob());
+				}
+			}
+
+			Value = Config->Fetch("flush_threads_ratio");
+			if (Value != nullptr && Value->Value.Is(VarType::Number))
+				User.FlushThreadsRatio = Value->Value.GetNumber();
+
+			Value = Config->Fetch("compaction_threads_ratio");
+			if (Value != nullptr && Value->Value.Is(VarType::Number))
+				User.CompactionThreadsRatio = Value->Value.GetNumber();
+
+			Value = Config->Fetch("computation_threads_ratio");
+			if (Value != nullptr && Value->Value.Is(VarType::Number))
+				User.ComputationThreadsRatio = Value->Value.GetNumber();
+
+			Value = Config->Fetch("p2p.address");
 			if (Value != nullptr && Value->Value.Is(VarType::String))
-				User.P2P.NodeAddress = Value->Value.GetBlob();
+				User.P2P.Address = Value->Value.GetBlob();
 
-			Value = Config->Fetch("p2p.node_timeout");
+			Value = Config->Fetch("p2p.port");
 			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.P2P.NodeTimeout = Value->Value.GetInteger();
+				User.P2P.Port = Value->Value.GetInteger();
 
-			Value = Config->Fetch("p2p.node_time_offset");
+			Value = Config->Fetch("p2p.time_offset");
 			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.P2P.NodeTimeOffset = Value->Value.GetInteger();
-
-			Value = Config->Fetch("p2p.tls_trusted_peers");
-			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.P2P.TlsTrustedPeers = Value->Value.GetInteger();
-
-			Value = Config->Fetch("p2p.tls_validity_days");
-			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.P2P.TlsValidityDays = Value->Value.GetInteger();
-
-			Value = Config->Fetch("p2p.cursor_size");
-			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.P2P.CursorSize = Value->Value.GetInteger();
+				User.P2P.TimeOffset = Value->Value.GetInteger();
 
 			Value = Config->Fetch("p2p.max_inbound_connections");
 			if (Value != nullptr && Value->Value.Is(VarType::Integer))
@@ -391,6 +416,14 @@ namespace Tangent
 			Value = Config->Fetch("p2p.max_outbound_connections");
 			if (Value != nullptr && Value->Value.Is(VarType::Integer))
 				User.P2P.MaxOutboundConnections = Value->Value.GetInteger();
+			
+			Value = Config->Fetch("p2p.cursor_size");
+			if (Value != nullptr && Value->Value.Is(VarType::Integer))
+				User.P2P.CursorSize = Value->Value.GetInteger();
+
+			Value = Config->Fetch("p2p.best_block_consensus");
+			if (Value != nullptr && Value->Value.Is(VarType::Number))
+				User.P2P.BestBlockConsensus = std::min(1.0, Value->Value.GetNumber());
 
 			Value = Config->Fetch("p2p.proposer");
 			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
@@ -400,9 +433,17 @@ namespace Tangent
 			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
 				User.P2P.Server = Value->Value.GetBoolean();
 
-			Value = Config->Fetch("rpc.node_address");
+			Value = Config->Fetch("p2p.logging");
+			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
+				User.P2P.Logging = Value->Value.GetBoolean();
+
+			Value = Config->Fetch("rpc.address");
 			if (Value != nullptr && Value->Value.Is(VarType::String))
-				User.RPC.NodeAddress = Value->Value.GetBlob();
+				User.RPC.Address = Value->Value.GetBlob();
+
+			Value = Config->Fetch("rpc.port");
+			if (Value != nullptr && Value->Value.Is(VarType::Integer))
+				User.RPC.Port = Value->Value.GetInteger();
 
 			Value = Config->Fetch("rpc.admin_username");
 			if (Value != nullptr && Value->Value.Is(VarType::String))
@@ -420,17 +461,53 @@ namespace Tangent
 			if (Value != nullptr && Value->Value.Is(VarType::String))
 				User.RPC.UserPassword = Value->Value.GetBlob();
 
-			Value = Config->Fetch("p2p.cursor_size");
+			Value = Config->Fetch("rpc.cursor_size");
 			if (Value != nullptr && Value->Value.Is(VarType::Integer))
 				User.RPC.CursorSize = Value->Value.GetInteger();
 
-			Value = Config->Fetch("p2p.page_size");
+			Value = Config->Fetch("rpc.page_size");
 			if (Value != nullptr && Value->Value.Is(VarType::Integer))
 				User.RPC.PageSize = Value->Value.GetInteger();
+
+			Value = Config->Fetch("rpc.websockets");
+			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
+				User.RPC.WebSockets = Value->Value.GetBoolean();
 
 			Value = Config->Fetch("rpc.server");
 			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
 				User.RPC.Server = Value->Value.GetBoolean();
+
+			Value = Config->Fetch("rpc.logging");
+			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
+				User.RPC.Logging = Value->Value.GetBoolean();
+
+			Value = Config->Fetch("nds.address");
+			if (Value != nullptr && Value->Value.Is(VarType::String))
+				User.NDS.Address = Value->Value.GetBlob();
+
+			Value = Config->Fetch("nds.port");
+			if (Value != nullptr && Value->Value.Is(VarType::Integer))
+				User.NDS.Port = Value->Value.GetInteger();
+
+			Value = Config->Fetch("nds.cursor_size");
+			if (Value != nullptr && Value->Value.Is(VarType::Integer))
+				User.NDS.CursorSize = Value->Value.GetInteger();
+
+			Value = Config->Fetch("nds.server");
+			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
+				User.NDS.Server = Value->Value.GetBoolean();
+
+			Value = Config->Fetch("nds.logging");
+			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
+				User.NDS.Logging = Value->Value.GetBoolean();
+
+			Value = Config->Fetch("tcp.tls_trusted_peers");
+			if (Value != nullptr && Value->Value.Is(VarType::Integer))
+				User.TCP.TlsTrustedPeers = Value->Value.GetInteger();
+
+			Value = Config->Fetch("tcp.timeout");
+			if (Value != nullptr && Value->Value.Is(VarType::Integer))
+				User.TCP.Timeout = Value->Value.GetInteger();
 
 			Value = Config->Fetch("storage.directory");
 			if (Value != nullptr && Value->Value.Is(VarType::String))
@@ -482,6 +559,10 @@ namespace Tangent
 			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
 				User.Storage.FullBlockHistory = Value->Value.GetBoolean();
 
+			Value = Config->Fetch("storage.logging");
+			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
+				User.Storage.Logging = Value->Value.GetBoolean();
+
 			Value = Config->Fetch("oracle.block_replay_multiplier");
 			if (Value != nullptr && Value->Value.Is(VarType::Integer))
 				User.Oracle.BlockReplayMultiplier = Value->Value.GetInteger();
@@ -513,8 +594,14 @@ namespace Tangent
 			Value = Config->Fetch("oracle.observer");
 			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
 				User.Oracle.Observer = Value->Value.GetBoolean();
+
+			Value = Config->Fetch("oracle.logging");
+			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
+				User.Oracle.Logging = Value->Value.GetBoolean();
 		}
-		if (Config)
+
+		Instance = this;
+		if (Config && Protocol::Now().User.Storage.Logging)
 			VI_DEBUG("[chain] open handle: %s", Path.c_str());
 
 		auto VectorstateBase = Database.Resolve(User.Network, User.Storage.Directory) + User.Vectorstate;
@@ -533,12 +620,10 @@ namespace Tangent
 		switch (User.Network)
 		{
 			case Tangent::NetworkType::Regtest:
-				Message.PacketVersion = 0xe249c307;
-				Message.MinDataVersion = 0x1;
-				Message.MaxDataVersion = 0x1;
+				Message.PacketMagic = 0xe249c307;
 				Account.PrivateKeyPrefix = "prvrt";
 				Account.PublicKeyPrefix = "pubrt";
-				Account.AddressPrefix = "tanrt";
+				Account.AddressPrefix = "tcrt";
 				Account.SealingPrivateKeyPrefix = "sprvrt";
 				Account.SealingPublicKeyPrefix = "spubrt";
 				Account.PrivateKeyVersion = 0xD;
@@ -551,12 +636,10 @@ namespace Tangent
 				User.Oracle.WithdrawalTime = Policy.ConsensusProofTime;
 				break;
 			case Tangent::NetworkType::Testnet:
-				Message.PacketVersion = 0xf815c95c;
-				Message.MinDataVersion = 0x2;
-				Message.MaxDataVersion = 0x2;
+				Message.PacketMagic = 0xf815c95c;
 				Account.PrivateKeyPrefix = "prvt";
 				Account.PublicKeyPrefix = "pubt";
-				Account.AddressPrefix = "tant";
+				Account.AddressPrefix = "tct";
 				Account.SealingPrivateKeyPrefix = "sprvt";
 				Account.SealingPublicKeyPrefix = "spubt";
 				Account.PrivateKeyVersion = 0xE;
@@ -570,7 +653,6 @@ namespace Tangent
 				break;
 		}
 
-		Instance = this;
 		btc_ecc_start();
 		Console::Get()->Attach();
 		ErrorHandling::SetFlag(LogOption::Active, true);
@@ -585,10 +667,12 @@ namespace Tangent
 	{
 		Database.Checkpoint();
 #ifdef TAN_VALIDATOR
-		if (!Path.empty())
+		if (!Path.empty() && Protocol::Now().User.Storage.Logging)
 			VI_DEBUG("[chain] close handle: %s", Path.c_str());
 		Oracle::Bridge::Close();
-		Storages::LocationCache::CleanupInstance();
+		Storages::AccountCache::CleanupInstance();
+		Storages::UniformCache::CleanupInstance();
+		Storages::MultiformCache::CleanupInstance();
 #endif
 		Ledger::ScriptHost::CleanupInstance();
 		btc_ecc_stop();

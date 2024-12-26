@@ -1,10 +1,11 @@
 #include "messages.h"
+#include "../policy/typenames.h"
 
 namespace Tangent
 {
 	namespace Messages
 	{
-		Generic::Generic() : Checksum(0), Version(Protocol::Now().Message.MaxDataVersion)
+		Generic::Generic() : Checksum(0), Version(Protocol::Now().Message.ProtocolVersion)
 		{
 		}
 		bool Generic::Store(Format::Stream* Stream) const
@@ -58,14 +59,6 @@ namespace Tangent
 				return Optional::None;
 			}
 
-			auto& Message = Protocol::Now().Message;
-			if (Version < Message.MinDataVersion || Version > Message.MaxDataVersion)
-			{
-				if (!OutVersion)
-					Stream.Seek = Seek;
-				return Optional::None;
-			}
-
 			uint32_t Type;
 			if (!Stream.ReadInteger(Stream.ReadType(), &Type))
 				return Optional::None;
@@ -77,7 +70,7 @@ namespace Tangent
 			return Type;
 		}
 
-		Authentic::Authentic() : Checksum(0), Version(Protocol::Now().Message.MaxDataVersion)
+		Authentic::Authentic() : Checksum(0), Version(Protocol::Now().Message.ProtocolVersion)
 		{
 		}
 		bool Authentic::Store(Format::Stream* Stream) const
@@ -165,14 +158,6 @@ namespace Tangent
 		{
 			uint32_t Version; size_t Seek = Stream.Seek;
 			if (!Stream.ReadInteger(Stream.ReadType(), &Version))
-			{
-				if (!OutVersion)
-					Stream.Seek = Seek;
-				return Optional::None;
-			}
-
-			auto& Message = Protocol::Now().Message;
-			if (Version < Message.MinDataVersion || Version > Message.MaxDataVersion)
 			{
 				if (!OutVersion)
 					Stream.Seek = Seek;

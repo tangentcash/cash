@@ -259,6 +259,15 @@ namespace Tangent
 				return "eth_sendRawTransaction";
 			}
 
+			Ethereum::Ethereum() noexcept : Chainmaster()
+			{
+				Netdata.Composition = Algorithm::Composition::Type::SECP256K1;
+				Netdata.Routing = RoutingPolicy::Account;
+				Netdata.SyncLatency = 15;
+				Netdata.Divisibility = Decimal("1000000000000000000").Truncate(Protocol::Now().Message.Precision);
+				Netdata.SupportsTokenTransfer = "erc20";
+				Netdata.SupportsBulkTransfer = false;
+			}
 			Promise<ExpectsLR<Schema*>> Ethereum::GetTransactionReceipt(const Algorithm::AssetId& Asset, const std::string_view& TransactionId)
 			{
 				SchemaList Map;
@@ -470,7 +479,7 @@ namespace Tangent
 				String To = Implementation->EncodeEthAddress(TransactionData->GetVar("to").GetBlob());
 				Decimal GasPrice = Implementation->ToEth(Implementation->HexToUint256(TransactionData->GetVar("gasPrice").GetBlob()), Implementation->GetDivisibilityGwei());
 				Decimal GasLimit = Implementation->ToEth(Implementation->HexToUint256(GetRawGasLimit(TransactionData)), Implementation->GetDivisibilityGwei());
-				Decimal BaseValue = Implementation->ToEth(Implementation->HexToUint256(TransactionData->GetVar("value").GetBlob()), Implementation->GetDivisibility());;
+				Decimal BaseValue = Implementation->ToEth(Implementation->HexToUint256(TransactionData->GetVar("value").GetBlob()), Implementation->Netdata.Divisibility);;
 				Decimal FeeValue = GasPrice * GasLimit;
 
 				IncomingTransaction CoinTx;
@@ -516,7 +525,7 @@ namespace Tangent
 							if (!Datamaster::EnableContractAddress(TokenAsset, ContractAddress))
 								continue;
 
-							Decimal Divisibility = Coawait(GetContractDivisibility(Asset, Implementation, ContractAddress)).Or(Implementation->GetDivisibility());
+							Decimal Divisibility = Coawait(GetContractDivisibility(Asset, Implementation, ContractAddress)).Or(Implementation->Netdata.Divisibility);
 							Decimal TokenValue = Implementation->ToEth(Implementation->HexToUint256(Invocation->GetVar("data").GetBlob()), Divisibility);
 							if (Topics->Size() == 3)
 							{
@@ -605,7 +614,7 @@ namespace Tangent
 				Params->Set("from", Var::String(Implementation->DecodeNonEthAddress(FromWallet->Addresses.begin()->second)));
 
 				auto ContractAddress = Datamaster::GetContractAddress(Asset);
-				Decimal Divisibility = Implementation->GetDivisibility();
+				Decimal Divisibility = Implementation->Netdata.Divisibility;
 				if (ContractAddress)
 				{
 					auto ContractDivisibility = Coawait(GetContractDivisibility(Asset, Implementation, *ContractAddress));
@@ -675,7 +684,7 @@ namespace Tangent
 				}
 
 				auto ContractAddress = Datamaster::GetContractAddress(Asset);
-				Decimal Divisibility = Implementation->GetDivisibility();
+				Decimal Divisibility = Implementation->Netdata.Divisibility;
 				if (ContractAddress)
 				{
 					auto ContractDivisibility = Coawait(GetContractDivisibility(Asset, Implementation, *ContractAddress));
@@ -751,7 +760,7 @@ namespace Tangent
 				Transaction.GasPrice = FromEth(Fee.Price, GetDivisibilityGwei());
 				Transaction.GasLimit = FromEth(Fee.Limit, GetDivisibilityGwei());
 
-				Decimal Divisibility = GetDivisibility();
+				Decimal Divisibility = Netdata.Divisibility;
 				if (ContractAddress)
 				{
 					auto ContractDivisibility = Coawait(GetContractDivisibility(Asset, this, *ContractAddress));
@@ -821,11 +830,20 @@ namespace Tangent
 					Derived->AddressIndex = AddressIndex;
 				return Derived;
 			}
-			ExpectsLR<DerivedSigningWallet> Ethereum::NewSigningWallet(const Algorithm::AssetId& Asset, const std::string_view& RawPrivateKey)
+			ExpectsLR<DerivedSigningWallet> Ethereum::NewSigningWallet(const Algorithm::AssetId& Asset, const std::string_view& SigningKey)
 			{
 				btc_key PrivateKey;
 				btc_privkey_init(&PrivateKey);
-				memcpy(PrivateKey.privkey, RawPrivateKey.data(), std::min(RawPrivateKey.size(), sizeof(PrivateKey.privkey)));
+				if (SigningKey.size() != sizeof(PrivateKey.privkey))
+				{
+					auto Key = Format::Util::Decode0xHex(SigningKey);
+					if (Key.size() != sizeof(PrivateKey.privkey))
+						return LayerException("not a valid hex private key");
+
+					memcpy(PrivateKey.privkey, Key.data(), sizeof(PrivateKey.privkey));
+				}
+				else
+					memcpy(PrivateKey.privkey, SigningKey.data(), sizeof(PrivateKey.privkey));
 
 				char PublicKeyData[128]; size_t PublicKeyDataSize = BTC_ECKEY_UNCOMPRESSED_LENGTH;
 				btc_ecc_get_pubkey(PrivateKey.privkey, (uint8_t*)PublicKeyData, &PublicKeyDataSize, false);
@@ -837,10 +855,15 @@ namespace Tangent
 				return ExpectsLR<DerivedSigningWallet>(DerivedSigningWallet(std::move(*Derived), 
 					::PrivateKey(GenerateUncheckedAddress(std::string_view((char*)PrivateKey.privkey, sizeof(PrivateKey.privkey))))));
 			}
-			ExpectsLR<DerivedVerifyingWallet> Ethereum::NewVerifyingWallet(const Algorithm::AssetId& Asset, const std::string_view& RawPublicKey)
+			ExpectsLR<DerivedVerifyingWallet> Ethereum::NewVerifyingWallet(const Algorithm::AssetId& Asset, const std::string_view& VerifyingKey)
 			{
+				String RawPublicKey = String(VerifyingKey);
 				if (RawPublicKey.size() != BTC_ECKEY_UNCOMPRESSED_LENGTH - 1 && RawPublicKey.size() != BTC_ECKEY_UNCOMPRESSED_LENGTH && RawPublicKey.size() != BTC_ECKEY_COMPRESSED_LENGTH)
-					return LayerException("invalid public key size");
+				{
+					RawPublicKey = Format::Util::Decode0xHex(RawPublicKey);
+					if (RawPublicKey.size() != BTC_ECKEY_UNCOMPRESSED_LENGTH - 1 && RawPublicKey.size() != BTC_ECKEY_UNCOMPRESSED_LENGTH && RawPublicKey.size() != BTC_ECKEY_COMPRESSED_LENGTH)
+						return LayerException("invalid public key size");
+				}
 
 				uint8_t PublicKey[BTC_ECKEY_UNCOMPRESSED_LENGTH] = { 0 };
 				if (RawPublicKey.size() != BTC_ECKEY_UNCOMPRESSED_LENGTH - 1)
@@ -877,14 +900,18 @@ namespace Tangent
 
 				return Data;
 			}
-			ExpectsLR<String> Ethereum::SignMessage(const Messages::Generic& Message, const DerivedSigningWallet& Wallet)
+			ExpectsLR<String> Ethereum::SignMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const PrivateKey& SigningKey)
 			{
-				uint256 Hash;
-				GenerateMessageHash(Message.AsMessage().Data, Hash);
+				auto SigningWallet = NewSigningWallet(Asset, SigningKey.ExposeToHeap());
+				if (!SigningWallet)
+					return SigningWallet.Error();
 
 				uint8_t RawPrivateKey[256];
-				auto PrivateKey = Wallet.SigningKey.Expose<2048>();
+				auto PrivateKey = SigningWallet->SigningKey.Expose<2048>();
 				GeneratePrivateKeyDataFromPrivateKey(PrivateKey.Key, PrivateKey.Size, RawPrivateKey);
+
+				uint256 Hash;
+				GenerateMessageHash(Message, Hash);
 
 				eth_ecdsa_signature RawSignature;
 				if (eth_ecdsa_sign(&RawSignature, RawPrivateKey, Hash) != 1)
@@ -896,56 +923,63 @@ namespace Tangent
 				Signature[64] = RawSignature.recid;
 				return String((char*)Signature, sizeof(Signature));
 			}
-			ExpectsLR<bool> Ethereum::VerifyMessage(const Messages::Generic& Message, const std::string_view& Address, const std::string_view& PublicKey, const std::string_view& Signature)
+			ExpectsLR<void> Ethereum::VerifyMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const std::string_view& VerifyingKey, const std::string_view& Signature)
 			{
 				if (Signature.size() < 64)
 					return LayerException("signature not valid");
 
-				uint256 Hash;
-				GenerateMessageHash(Message.AsMessage().Data, Hash);
+				auto VerifyingWallet = NewVerifyingWallet(Asset, VerifyingKey);
+				if (!VerifyingWallet)
+					return VerifyingWallet.Error();
 
 				secp256k1_context* Context = secp256k1_context_create(SECP256K1_CONTEXT_VERIFY);
 				if (!Context)
 					return LayerException("context not valid");
 
-				bool CompactRetry = false;
-				String RawSignature = String(Signature);
-			Retry:
-				for (int i = 0; i < 4; i++)
+				uint256 Hash;
+				GenerateMessageHash(Message, Hash);
+				for (auto& Item : VerifyingWallet->Addresses)
 				{
-					secp256k1_ecdsa_recoverable_signature EcdsaSignature;
-					secp256k1_ecdsa_recoverable_signature_parse_compact(Context, &EcdsaSignature, (uint8_t*)RawSignature.data(), i);
-
-					secp256k1_pubkey PubKey;
-					if (secp256k1_ecdsa_recover(Context, &PubKey, &EcdsaSignature, Hash) != 1)
-						continue;
-
-					char SerializedPubKey[65]; size_t SerializedPubKeySize = sizeof(SerializedPubKey);
-					if (secp256k1_ec_pubkey_serialize(Context, (uint8_t*)SerializedPubKey, &SerializedPubKeySize, &PubKey, SECP256K1_EC_UNCOMPRESSED) != 1)
-						continue;
-
-					char ActualPublicKeyHash1[20], ActualPublicKeyHash2[20];
-					GeneratePublicKeyHashFromPublicKey((uint8_t*)SerializedPubKey, ActualPublicKeyHash1);
-					GeneratePublicKeyHashFromPublicKey((uint8_t*)SerializedPubKey + 1, ActualPublicKeyHash2);
-					String ActualAddress1 = GeneratePkhAddress(ActualPublicKeyHash1);
-					String ActualAddress2 = GeneratePkhAddress(ActualPublicKeyHash2);
+					const auto& Address = Item.second;
 					String TargetAddress = GenerateChecksumAddress(DecodeNonEthAddress(Address));
-					if (ActualAddress1 == TargetAddress || ActualAddress2 == TargetAddress)
+					String RawSignature = String(Signature);
+					bool CompactRetry = false;
+				Retry:
+					for (int i = 0; i < 4; i++)
 					{
-						secp256k1_context_destroy(Context);
-						return true;
+						secp256k1_ecdsa_recoverable_signature EcdsaSignature;
+						secp256k1_ecdsa_recoverable_signature_parse_compact(Context, &EcdsaSignature, (uint8_t*)RawSignature.data(), i);
+
+						secp256k1_pubkey PubKey;
+						if (secp256k1_ecdsa_recover(Context, &PubKey, &EcdsaSignature, Hash) != 1)
+							continue;
+
+						char SerializedPubKey[65]; size_t SerializedPubKeySize = sizeof(SerializedPubKey);
+						if (secp256k1_ec_pubkey_serialize(Context, (uint8_t*)SerializedPubKey, &SerializedPubKeySize, &PubKey, SECP256K1_EC_UNCOMPRESSED) != 1)
+							continue;
+
+						char ActualPublicKeyHash1[20], ActualPublicKeyHash2[20];
+						GeneratePublicKeyHashFromPublicKey((uint8_t*)SerializedPubKey, ActualPublicKeyHash1);
+						GeneratePublicKeyHashFromPublicKey((uint8_t*)SerializedPubKey + 1, ActualPublicKeyHash2);
+						String ActualAddress1 = GeneratePkhAddress(ActualPublicKeyHash1);
+						String ActualAddress2 = GeneratePkhAddress(ActualPublicKeyHash2);
+						if (ActualAddress1 == TargetAddress || ActualAddress2 == TargetAddress)
+						{
+							secp256k1_context_destroy(Context);
+							return Expectation::Met;
+						}
+					}
+
+					if (!CompactRetry && RawSignature.size() == 64)
+					{
+						RawSignature[32] &= 0x7f;
+						CompactRetry = true;
+						goto Retry;
 					}
 				}
 
-				if (!CompactRetry && RawSignature.size() == 64)
-				{
-					RawSignature[32] &= 0x7f;
-					CompactRetry = true;
-					goto Retry;
-				}
-
 				secp256k1_context_destroy(Context);
-				return false;
+				return LayerException("signature verification failed with used public key");
 			}
 			String Ethereum::GetChecksumHash(const std::string_view& Value) const
 			{
@@ -956,25 +990,9 @@ namespace Tangent
 			{
 				return Stringify::Text(Protocol::Now().Is(NetworkType::Mainnet) ? "m/44'/60'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, AddressIndex);
 			}
-			Decimal Ethereum::GetDivisibility() const
+			const Ethereum::Chainparams& Ethereum::GetChainparams() const
 			{
-				return Decimal("1000000000000000000");
-			}
-			Algorithm::Composition::Type Ethereum::GetCompositionPolicy() const
-			{
-				return Algorithm::Composition::Type::SECP256K1;
-			}
-			RoutingPolicy Ethereum::GetRoutingPolicy() const
-			{
-				return RoutingPolicy::Account;
-			}
-			uint64_t Ethereum::GetBlockLatency() const
-			{
-				return 15;
-			}
-			bool Ethereum::HasBulkTransactions() const
-			{
-				return false;
+				return Netdata;
 			}
 			bool Ethereum::IsTokenTransfer(const std::string_view& FunctionSignature)
 			{
@@ -1022,12 +1040,12 @@ namespace Tangent
 				int OutSize = 20;
 				utils_hex_to_bin(PrivateKey, OutPrivateKeyHash, (int)PrivateKeySize, &OutSize);
 			}
-			void Ethereum::GenerateMessageHash(const String& Input, uint8_t Output[32])
+			void Ethereum::GenerateMessageHash(const std::string_view& Input, uint8_t Output[32])
 			{
 				String Header = GetMessageMagic();
-				String Payload = Stringify::Text("%c%s%i%s",
+				String Payload = Stringify::Text("%c%s%i%.*s",
 					(char)Header.size(), Header.c_str(),
-					(int)Input.size(), Input.c_str());
+					(int)Input.size(), (int)Input.size(), Input.data());
 				keccak_256((uint8_t*)Payload.data(), Payload.size(), Output);
 			}
 			String Ethereum::GetMessageMagic()

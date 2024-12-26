@@ -7,7 +7,7 @@ extern "C"
 }
 #include "../policy/transactions.h"
 #ifdef TAN_VALIDATOR
-#include "../policy/storages.h"
+#include "../storage/chainstate.h"
 #endif
 #define SCRIPT_CLASS_ADDRESS "address"
 #define SCRIPT_CLASS_PROGRAM "program"

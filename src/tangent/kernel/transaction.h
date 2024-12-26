@@ -12,11 +12,25 @@ namespace Tangent
 		struct TransactionContext;
 		struct Receipt;
 
+		enum class WorkStatus : int8_t
+		{
+			Online = 1,
+			Standby = 0,
+			Offline = -1
+		};
+
+		enum class StateLevel
+		{
+			Uniform,
+			Multiform
+		};
+
 		enum class TransactionLevel
 		{
-			OwnerAccount,
-			ProposerAccount,
-			CumulativeAccount
+			Functional,
+			Delegation,
+			Consensus,
+			Aggregation
 		};
 
 		struct Transaction : Messages::Authentic
@@ -44,6 +58,7 @@ namespace Tangent
 			virtual void SetEstimateGas(const Decimal& Price);
 			virtual void SetGas(const Decimal& Price, const uint256_t& Limit);
 			virtual void SetAsset(const std::string_view& Blockchain, const std::string_view& Token = std::string_view(), const std::string_view& ContractAddress = std::string_view());
+			virtual bool IsConsensus() const;
 			virtual TransactionLevel GetType() const;
 			virtual UPtr<Schema> AsSchema() const override;
 			virtual uint32_t AsType() const = 0;
@@ -52,13 +67,19 @@ namespace Tangent
 			virtual uint64_t GetDispatchOffset() const;
 		};
 
-		struct EventTransaction : Transaction
+		struct DelegationTransaction : Transaction
 		{
 			virtual ExpectsLR<void> Validate(const TransactionContext* Context) const override;
 			TransactionLevel GetType() const override;
 		};
 
-		struct CumulativeEventTransaction : Transaction
+		struct ConsensusTransaction : Transaction
+		{
+			virtual ExpectsLR<void> Validate(const TransactionContext* Context) const override;
+			TransactionLevel GetType() const override;
+		};
+
+		struct AggregationTransaction : Transaction
 		{
 			struct CumulativeBranch
 			{
@@ -81,14 +102,14 @@ namespace Tangent
 			virtual bool Recover(Algorithm::Pubkeyhash PublicKeyHash) const override;
 			virtual bool Recover(Algorithm::Pubkeyhash PublicKeyHash, const uint256_t& OutputHash, size_t Index) const;
 			virtual bool Attestate(const Algorithm::Seckey PrivateKey);
-			virtual bool Merge(const CumulativeEventTransaction& Other);
+			virtual bool Merge(const TransactionContext* Context, const AggregationTransaction& Other);
 			virtual bool IsSignatureNull() const override;
 			virtual bool IsConsensusReached() const;
 			virtual void SetOptimalGas(const Decimal& Price) override;
 			virtual void SetConsensus(const uint256_t& OutputHash);
 			virtual void SetSignature(const Algorithm::Sighash NewValue) override;
 			virtual void SetStatement(const uint256_t& NewInputHash, const Format::Stream& OutputMessage);
-			virtual const CumulativeBranch* GetCumulativeBranch() const;
+			virtual const CumulativeBranch* GetCumulativeBranch(const TransactionContext* Context) const;
 			virtual uint256_t GetCumulativeHash() const;
 			virtual UPtr<Schema> AsSchema() const override;
 			TransactionLevel GetType() const override;
@@ -112,6 +133,7 @@ namespace Tangent
 			bool IsFromNull() const;
 			void EmitEvent(uint32_t Type, Format::Variables&& Values);
 			const Format::Variables* FindEvent(uint32_t Type, size_t Offset = 0) const;
+			Option<String> GetErrorMessages() const;
 			UPtr<Schema> AsSchema() const override;
 			uint32_t AsType() const override;
 			std::string_view AsTypename() const override;
@@ -136,17 +158,41 @@ namespace Tangent
 
 			State(uint64_t NewBlockNumber, uint64_t NewBlockNonce);
 			State(const BlockHeader* NewBlockHeader);
+			virtual ~State() = default;
 			virtual ExpectsLR<void> Transition(const TransactionContext* Context, const State* PrevState) = 0;
 			virtual bool Store(Format::Stream* Stream) const;
 			virtual bool Load(Format::Stream& Stream);
 			virtual bool StorePayload(Format::Stream* Stream) const override = 0;
 			virtual bool LoadPayload(Format::Stream& Stream) override = 0;
-			virtual UPtr<Schema> AsSchema() const override;
+			virtual StateLevel AsLevel() const = 0;
+			virtual String AsComposite() const = 0;
+			virtual UPtr<Schema> AsSchema() const = 0;
 			virtual uint32_t AsType() const = 0;
 			virtual std::string_view AsTypename() const = 0;
-			virtual int64_t AsWeight() const = 0;
-			virtual String AsAddress() const = 0;
-			virtual String AsStride() const = 0;
+		};
+
+		struct Uniform : State
+		{
+			Uniform(uint64_t NewBlockNumber, uint64_t NewBlockNonce);
+			Uniform(const BlockHeader* NewBlockHeader);
+			virtual UPtr<Schema> AsSchema() const override;
+			virtual StateLevel AsLevel() const override;
+			virtual String AsComposite() const override;
+			virtual String AsIndex() const = 0;
+			static String AsInstanceComposite(const std::string_view& Index);
+		};
+		
+		struct Multiform : State
+		{
+			Multiform(uint64_t NewBlockNumber, uint64_t NewBlockNonce);
+			Multiform(const BlockHeader* NewBlockHeader);
+			virtual UPtr<Schema> AsSchema() const override;
+			virtual StateLevel AsLevel() const override;
+			virtual String AsComposite() const override;
+			virtual String AsColumn() const = 0;
+			virtual String AsRow() const = 0;
+			virtual int64_t AsFactor() const = 0;
+			static String AsInstanceComposite(const std::string_view& Column, const std::string_view& Row);
 		};
 
 		class GasUtil

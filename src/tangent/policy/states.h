@@ -6,7 +6,7 @@ namespace Tangent
 {
 	namespace States
 	{
-		struct AccountSequence final : Ledger::State
+		struct AccountSequence final : Ledger::Uniform
 		{
 			Algorithm::Pubkeyhash Owner = { 0 };
 			uint64_t Sequence = 0;
@@ -20,22 +20,19 @@ namespace Tangent
 			UPtr<Schema> AsSchema() const override;
 			uint32_t AsType() const override;
 			std::string_view AsTypename() const override;
-			int64_t AsWeight() const override;
-			String AsAddress() const override;
-			String AsStride() const override;
+			String AsIndex() const override;
 			static uint32_t AsInstanceType();
 			static std::string_view AsInstanceTypename();
-			static String AsInstanceAddress(const Algorithm::Pubkeyhash Owner);
-			static String AsInstanceStride();
+			static String AsInstanceIndex(const Algorithm::Pubkeyhash Owner);
 		};
 
-		struct AccountWork final : Ledger::State
+		struct AccountWork final : Ledger::Multiform
 		{
 			Algorithm::Pubkeyhash Owner = { 0 };
 			uint256_t GasInput = 0;
 			uint256_t GasOutput = 0;
 			uint64_t Penalty = 0;
-			int8_t Status = -1;
+			Ledger::WorkStatus Status = Ledger::WorkStatus::Standby;
 
 			AccountWork(const Algorithm::Pubkeyhash NewOwner, uint64_t NewBlockNumber, uint64_t NewBlockNonce);
 			AccountWork(const Algorithm::Pubkeyhash NewOwner, const Ledger::BlockHeader* NewBlockHeader);
@@ -46,22 +43,48 @@ namespace Tangent
 			bool IsOnline() const;
 			bool IsOwnerNull() const;
 			uint256_t GetGasUse() const;
+			uint64_t GetClosestProposalBlockNumber() const;
 			UPtr<Schema> AsSchema() const override;
 			uint32_t AsType() const override;
 			std::string_view AsTypename() const override;
-			int64_t AsWeight() const override;
-			String AsAddress() const override;
-			String AsStride() const override;
+			int64_t AsFactor() const override;
+			String AsColumn() const override;
+			String AsRow() const override;
 			static uint32_t AsInstanceType();
 			static std::string_view AsInstanceTypename();
-			static String AsInstanceAddress(const Algorithm::Pubkeyhash Owner);
-			static String AsInstanceStride();
+			static String AsInstanceColumn(const Algorithm::Pubkeyhash Owner);
+			static String AsInstanceRow();
 			static uint256_t GetGasWorkRequired(const Ledger::BlockHeader* BlockHeader, const uint256_t& GasUse);
 			static uint256_t GetAdjustedGasPaid(const uint256_t& GasUse, const uint256_t& GasPaid);
 			static uint256_t GetAdjustedGasOutput(const uint256_t& GasUse, const uint256_t& GasPaid);
 		};
 
-		struct AccountProgram final : Ledger::State
+		struct AccountObserver final : Ledger::Multiform
+		{
+			Algorithm::Pubkeyhash Owner = { 0 };
+			Algorithm::AssetId Asset = 0;
+			Ledger::WorkStatus Status = Ledger::WorkStatus::Standby;
+
+			AccountObserver(const Algorithm::Pubkeyhash NewOwner, uint64_t NewBlockNumber, uint64_t NewBlockNonce);
+			AccountObserver(const Algorithm::Pubkeyhash NewOwner, const Ledger::BlockHeader* NewBlockHeader);
+			ExpectsLR<void> Transition(const Ledger::TransactionContext* Context, const Ledger::State* PrevState) override;
+			bool StorePayload(Format::Stream* Stream) const override;
+			bool LoadPayload(Format::Stream& Stream) override;
+			bool IsOnline() const;
+			bool IsOwnerNull() const;
+			UPtr<Schema> AsSchema() const override;
+			uint32_t AsType() const override;
+			std::string_view AsTypename() const override;
+			int64_t AsFactor() const override;
+			String AsColumn() const override;
+			String AsRow() const override;
+			static uint32_t AsInstanceType();
+			static std::string_view AsInstanceTypename();
+			static String AsInstanceColumn(const Algorithm::Pubkeyhash Owner);
+			static String AsInstanceRow(const Algorithm::AssetId& Asset);
+		};
+
+		struct AccountProgram final : Ledger::Uniform
 		{
 			Algorithm::Pubkeyhash Owner = { 0 };
 			String Hashcode;
@@ -75,16 +98,13 @@ namespace Tangent
 			UPtr<Schema> AsSchema() const override;
 			uint32_t AsType() const override;
 			std::string_view AsTypename() const override;
-			int64_t AsWeight() const override;
-			String AsAddress() const override;
-			String AsStride() const override;
+			String AsIndex() const override;
 			static uint32_t AsInstanceType();
 			static std::string_view AsInstanceTypename();
-			static String AsInstanceAddress(const Algorithm::Pubkeyhash Owner);
-			static String AsInstanceStride();
+			static String AsInstanceIndex(const Algorithm::Pubkeyhash Owner);
 		};
 
-		struct AccountStorage final : Ledger::State
+		struct AccountStorage final : Ledger::Uniform
 		{
 			Algorithm::Pubkeyhash Owner = { 0 };
 			String Location;
@@ -99,16 +119,13 @@ namespace Tangent
 			UPtr<Schema> AsSchema() const override;
 			uint32_t AsType() const override;
 			std::string_view AsTypename() const override;
-			int64_t AsWeight() const override;
-			String AsAddress() const override;
-			String AsStride() const override;
+			String AsIndex() const override;
 			static uint32_t AsInstanceType();
 			static std::string_view AsInstanceTypename();
-			static String AsInstanceAddress(const Algorithm::Pubkeyhash Owner);
-			static String AsInstanceStride(const std::string_view& Location);
+			static String AsInstanceIndex(const Algorithm::Pubkeyhash Owner, const std::string_view& Location);
 		};
 
-		struct AccountReward final : Ledger::State
+		struct AccountReward final : Ledger::Multiform
 		{
 			Algorithm::Pubkeyhash Owner = { 0 };
 			Algorithm::AssetId Asset = 0;
@@ -130,16 +147,16 @@ namespace Tangent
 			UPtr<Schema> AsSchema() const override;
 			uint32_t AsType() const override;
 			std::string_view AsTypename() const override;
-			int64_t AsWeight() const override;
-			String AsAddress() const override;
-			String AsStride() const override;
+			int64_t AsFactor() const override;
+			String AsColumn() const override;
+			String AsRow() const override;
 			static uint32_t AsInstanceType();
 			static std::string_view AsInstanceTypename();
-			static String AsInstanceAddress(const Algorithm::Pubkeyhash Owner);
-			static String AsInstanceStride(const Algorithm::AssetId& Asset);
+			static String AsInstanceColumn(const Algorithm::Pubkeyhash Owner);
+			static String AsInstanceRow(const Algorithm::AssetId& Asset);
 		};
 
-		struct AccountDerivation final : Ledger::State
+		struct AccountDerivation final : Ledger::Uniform
 		{
 			Algorithm::Pubkeyhash Owner = { 0 };
 			Algorithm::AssetId Asset = 0;
@@ -154,16 +171,13 @@ namespace Tangent
 			UPtr<Schema> AsSchema() const override;
 			uint32_t AsType() const override;
 			std::string_view AsTypename() const override;
-			int64_t AsWeight() const override;
-			String AsAddress() const override;
-			String AsStride() const override;
+			String AsIndex() const override;
 			static uint32_t AsInstanceType();
 			static std::string_view AsInstanceTypename();
-			static String AsInstanceAddress(const Algorithm::Pubkeyhash Owner);
-			static String AsInstanceStride(const Algorithm::AssetId& Asset);
+			static String AsInstanceIndex(const Algorithm::Pubkeyhash Owner, const Algorithm::AssetId& Asset);
 		};
 
-		struct AccountBalance final : Ledger::State
+		struct AccountBalance final : Ledger::Multiform
 		{
 			Algorithm::Pubkeyhash Owner = { 0 };
 			Algorithm::AssetId Asset = 0;
@@ -180,16 +194,16 @@ namespace Tangent
 			UPtr<Schema> AsSchema() const override;
 			uint32_t AsType() const override;
 			std::string_view AsTypename() const override;
-			int64_t AsWeight() const override;
-			String AsAddress() const override;
-			String AsStride() const override;
+			int64_t AsFactor() const override;
+			String AsColumn() const override;
+			String AsRow() const override;
 			static uint32_t AsInstanceType();
 			static std::string_view AsInstanceTypename();
-			static String AsInstanceAddress(const Algorithm::Pubkeyhash Owner);
-			static String AsInstanceStride(const Algorithm::AssetId& Asset);
+			static String AsInstanceColumn(const Algorithm::Pubkeyhash Owner);
+			static String AsInstanceRow(const Algorithm::AssetId& Asset);
 		};
 
-		struct AccountContribution final : Ledger::State
+		struct AccountContribution final : Ledger::Multiform
 		{
 			Algorithm::Pubkeyhash Owner = { 0 };
 			Algorithm::AssetId Asset = 0;
@@ -213,16 +227,16 @@ namespace Tangent
 			UPtr<Schema> AsSchema() const override;
 			uint32_t AsType() const override;
 			std::string_view AsTypename() const override;
-			int64_t AsWeight() const override;
-			String AsAddress() const override;
-			String AsStride() const override;
+			int64_t AsFactor() const override;
+			String AsColumn() const override;
+			String AsRow() const override;
 			static uint32_t AsInstanceType();
 			static std::string_view AsInstanceTypename();
-			static String AsInstanceAddress(const Algorithm::Pubkeyhash Owner);
-			static String AsInstanceStride(const Algorithm::AssetId& Asset);
+			static String AsInstanceColumn(const Algorithm::Pubkeyhash Owner);
+			static String AsInstanceRow(const Algorithm::AssetId& Asset);
 		};
 
-		struct WitnessProgram final : Ledger::State
+		struct WitnessProgram final : Ledger::Uniform
 		{
 			String Hashcode;
 			String Storage;
@@ -235,17 +249,14 @@ namespace Tangent
 			UPtr<Schema> AsSchema() const override;
 			uint32_t AsType() const override;
 			std::string_view AsTypename() const override;
-			int64_t AsWeight() const override;
-			String AsAddress() const override;
-			String AsStride() const override;
+			String AsIndex() const override;
 			ExpectsLR<String> AsCode() const;
 			static uint32_t AsInstanceType();
 			static std::string_view AsInstanceTypename();
-			static String AsInstanceAddress(const std::string_view& ProgramHashcode);
-			static String AsInstanceStride();
+			static String AsInstanceIndex(const std::string_view& ProgramHashcode);
 		};
 
-		struct WitnessEvent final : Ledger::State
+		struct WitnessEvent final : Ledger::Uniform
 		{
 			uint256_t ParentTransactionHash;
 			uint256_t ChildTransactionHash;
@@ -258,16 +269,13 @@ namespace Tangent
 			UPtr<Schema> AsSchema() const override;
 			uint32_t AsType() const override;
 			std::string_view AsTypename() const override;
-			int64_t AsWeight() const override;
-			String AsAddress() const override;
-			String AsStride() const override;
+			String AsIndex() const override;
 			static uint32_t AsInstanceType();
 			static std::string_view AsInstanceTypename();
-			static String AsInstanceAddress(const uint256_t& TransactionHash);
-			static String AsInstanceStride();
+			static String AsInstanceIndex(const uint256_t& TransactionHash);
 		};
 
-		struct WitnessAddress final : Ledger::State
+		struct WitnessAddress final : Ledger::Multiform
 		{
 			enum class Class : uint8_t
 			{
@@ -298,16 +306,16 @@ namespace Tangent
 			UPtr<Schema> AsSchema() const override;
 			uint32_t AsType() const override;
 			std::string_view AsTypename() const override;
-			int64_t AsWeight() const override;
-			String AsAddress() const override;
-			String AsStride() const override;
+			int64_t AsFactor() const override;
+			String AsColumn() const override;
+			String AsRow() const override;
 			static uint32_t AsInstanceType();
 			static std::string_view AsInstanceTypename();
-			static String AsInstanceAddress(const Algorithm::Pubkeyhash Owner);
-			static String AsInstanceStride(const Algorithm::AssetId& Asset, const std::string_view& Address, uint64_t AddressIndex);
+			static String AsInstanceColumn(const Algorithm::Pubkeyhash Owner);
+			static String AsInstanceRow(const Algorithm::AssetId& Asset, const std::string_view& Address, uint64_t AddressIndex);
 		};
 
-		struct WitnessTransaction final : Ledger::State
+		struct WitnessTransaction final : Ledger::Uniform
 		{
 			Algorithm::AssetId Asset = 0;
 			String TransactionId;
@@ -320,13 +328,10 @@ namespace Tangent
 			UPtr<Schema> AsSchema() const override;
 			uint32_t AsType() const override;
 			std::string_view AsTypename() const override;
-			int64_t AsWeight() const override;
-			String AsAddress() const override;
-			String AsStride() const override;
+			String AsIndex() const override;
 			static uint32_t AsInstanceType();
 			static std::string_view AsInstanceTypename();
-			static String AsInstanceAddress(const Algorithm::AssetId& Asset);
-			static String AsInstanceStride(const std::string_view& TransactionId);
+			static String AsInstanceIndex(const Algorithm::AssetId& Asset, const std::string_view& TransactionId);
 		};
 
 		class Resolver
@@ -334,6 +339,7 @@ namespace Tangent
 		public:
 			static Ledger::State* New(uint32_t Hash);
 			static Ledger::State* Copy(const Ledger::State* Base);
+			static UnorderedSet<uint32_t> GetHashes();
 		};
 	}
 }

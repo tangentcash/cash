@@ -490,8 +490,8 @@ const btc_chainparams op_chainparams_regtest = {
 	0x0488ADE4
 };
 
-/* rootstock */
-const btc_chainparams rsk_chainparams_main = {
+/* rootstock infrastructure framework */
+const btc_chainparams rif_chainparams_main = {
 	"0x",
 	"",
 	0x0000,
@@ -500,7 +500,7 @@ const btc_chainparams rsk_chainparams_main = {
 	0x0488B21E,
 	0x0488ADE4
 };
-const btc_chainparams rsk_chainparams_test = {
+const btc_chainparams rif_chainparams_test = {
 	"0x",
 	"",
 	0x6f00,
@@ -509,65 +509,7 @@ const btc_chainparams rsk_chainparams_test = {
 	0x0488B21E,
 	0x0488ADE4
 };
-const btc_chainparams rsk_chainparams_regtest = {
-	"0x",
-	"",
-	0x6f00,
-	0xc400,
-	0xEF,
-	0x0488B21E,
-	0x0488ADE4
-};
-
-/* heco */
-const btc_chainparams heco_chainparams_main = {
-	"0x",
-	"",
-	0x0000,
-	0x0500,
-	0x80,
-	0x0488B21E,
-	0x0488ADE4
-};
-const btc_chainparams heco_chainparams_test = {
-	"0x",
-	"",
-	0x6f00,
-	0xc400,
-	0xEF,
-	0x0488B21E,
-	0x0488ADE4
-};
-const btc_chainparams heco_chainparams_regtest = {
-	"0x",
-	"",
-	0x6f00,
-	0xc400,
-	0xEF,
-	0x0488B21E,
-	0x0488ADE4
-};
-
-/* kcc */
-const btc_chainparams kcc_chainparams_main = {
-	"0x",
-	"",
-	0x0000,
-	0x0500,
-	0x80,
-	0x0488B21E,
-	0x0488ADE4
-};
-const btc_chainparams kcc_chainparams_test = {
-	"0x",
-	"",
-	0x6f00,
-	0xc400,
-	0xEF,
-	0x0488B21E,
-	0x0488ADE4
-};
-const btc_chainparams kcc_chainparams_regtest = {
+const btc_chainparams rif_chainparams_regtest = {
 	"0x",
 	"",
 	0x6f00,
@@ -751,64 +693,6 @@ const btc_chainparams matic_chainparams_regtest = {
 	0x0488ADE4
 };
 
-/* binance smart chain */
-const btc_chainparams bsc_chainparams_main = {
-	"0x",
-	"",
-	0x0000,
-	0x0500,
-	0x80,
-	0x0488B21E,
-	0x0488ADE4
-};
-const btc_chainparams bsc_chainparams_test = {
-	"0x",
-	"",
-	0x6f00,
-	0xc400,
-	0xEF,
-	0x0488B21E,
-	0x0488ADE4
-};
-const btc_chainparams bsc_chainparams_regtest = {
-	"0x",
-	"",
-	0x6f00,
-	0xc400,
-	0xEF,
-	0x0488B21E,
-	0x0488ADE4
-};
-
-/* build-and-build beacon chain */
-const btc_chainparams bnb_chainparams_main = {
-	"bnb",
-	"",
-	0x0000,
-	0x0500,
-	0x80,
-	0x0488B21E,
-	0x0488ADE4
-};
-const btc_chainparams bnb_chainparams_test = {
-	"tbnb",
-	"",
-	0x0000,
-	0xc400,
-	0xEF,
-	0x043587CF,
-	0x04358394
-};
-const btc_chainparams bnb_chainparams_regtest = {
-	"tbnb",
-	"",
-	0x0000,
-	0xc400,
-	0xEF,
-	0x043587CF,
-	0x04358394
-};
-
 /* ripple xrp */
 const btc_chainparams xrp_chainparams_main = {
 	"",
@@ -867,7 +751,6 @@ const btc_chainparams xlm_chainparams_regtest = {
 	0x04358394
 };
 
-
 /* solana */
 const btc_chainparams sol_chainparams_main = {
 	"",
@@ -895,4 +778,33 @@ const btc_chainparams sol_chainparams_regtest = {
 	0xEF,
 	0x043587CF,
 	0x04358394
+};
+
+/* binance smart chain */
+const btc_chainparams bsc_chainparams_main = {
+	"0x",
+	"",
+	0x0000,
+	0x0500,
+	0x80,
+	0x0488B21E,
+	0x0488ADE4
+};
+const btc_chainparams bsc_chainparams_test = {
+	"0x",
+	"",
+	0x6f00,
+	0xc400,
+	0xEF,
+	0x0488B21E,
+	0x0488ADE4
+};
+const btc_chainparams bsc_chainparams_regtest = {
+	"0x",
+	"",
+	0x6f00,
+	0xc400,
+	0xEF,
+	0x0488B21E,
+	0x0488ADE4
 };

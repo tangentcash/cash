@@ -287,7 +287,7 @@ namespace Tangent
 			}
 
 			String Numeric = Value.Numeric();
-			uint16_t Decimals = Value.Decimals();
+			uint16_t Decimals = Value.DecimalPlaces();
 			int8_t Position = Value.Position();
 			uint8_t Type = (uint8_t)(Decimals > 0 ? (Position < 0 ? Viewable::DecimalNeg2 : Viewable::DecimalPos2) : (Position < 0 ? Viewable::DecimalNeg1 : Viewable::DecimalPos1));
 			std::reverse(Numeric.begin() + Decimals, Numeric.end());
@@ -419,6 +419,22 @@ namespace Tangent
 
 			auto Text = (Data.size() < 2 || Data[0] != '0' || Data[1] != 'x' ? Data : Data.substr(2));
 			return Text.find_first_not_of(Alphabet) == std::string::npos;
+		}
+		bool Util::IsBase64Encoding(const std::string_view& Data)
+		{
+			static std::string_view Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+			if (Data.empty())
+				return false;
+
+			return Data.find_first_not_of(Alphabet) == std::string::npos;
+		}
+		bool Util::IsBase64URLEncoding(const std::string_view& Data)
+		{
+			static std::string_view Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+			if (Data.empty())
+				return false;
+
+			return Data.find_first_not_of(Alphabet) == std::string::npos;
 		}
 		bool Util::IsInteger(Viewable Type)
 		{

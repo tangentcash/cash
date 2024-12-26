@@ -1,7 +1,7 @@
 #include "oracle.h"
 #include "../policy/typenames.h"
 #ifdef TAN_VALIDATOR
-#include "../policy/storages.h"
+#include "../storage/sidechainstate.h"
 #include "../oracle/bitcoin.h"
 #include "../oracle/forks/bitcoin.h"
 #include "../oracle/cardano.h"
@@ -382,136 +382,6 @@ namespace Tangent
 			return (Parent && Parent->IsValid()) || (VerifyingChild && VerifyingChild->IsValid()) || (SigningChild && SigningChild->IsValid());
 		}
 
-		VerifiableMessage::VerifiableMessage() : Asset(0), AddressIndex(0)
-		{
-		}
-		VerifiableMessage::VerifiableMessage(Status NewType, const Algorithm::AssetId& NewAsset, const Algorithm::Pubkeyhash NewOwner, const Algorithm::Pubkeyhash NewProposer, AddressMap&& NewAddresses, Option<uint64_t>&& NewAddressIndex, const std::string_view& NewVerifyingKey) : Type(NewType), Asset(NewAsset), Addresses(std::move(NewAddresses)), VerifyingKey(std::move(NewVerifyingKey)), AddressIndex(NewAddressIndex)
-		{
-			memcpy(Owner, NewOwner, sizeof(Owner));
-			memcpy(Proposer, NewProposer, sizeof(Proposer));
-		}
-		bool VerifiableMessage::StorePayload(Format::Stream* Stream) const
-		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Algorithm::Pubkeyhash Null = { 0 };
-			Stream->WriteInteger(Asset);
-			Stream->WriteInteger((uint8_t)Type);
-			Stream->WriteBoolean(!!AddressIndex);
-			if (AddressIndex)
-				Stream->WriteInteger(*AddressIndex);
-			Stream->WriteInteger((uint8_t)Addresses.size());
-			for (auto& Address : Addresses)
-			{
-				Stream->WriteInteger(Address.first);
-				Stream->WriteString(Address.second);
-			}
-			Stream->WriteString(VerifyingKey);
-			Stream->WriteString(std::string_view((char*)Owner, memcmp(Owner, Null, sizeof(Null)) == 0 ? 0 : sizeof(Owner)));
-			Stream->WriteString(std::string_view((char*)Proposer, memcmp(Proposer, Null, sizeof(Null)) == 0 ? 0 : sizeof(Proposer)));
-			return true;
-		}
-		bool VerifiableMessage::LoadPayload(Format::Stream& Stream)
-		{
-			if (!Stream.ReadInteger(Stream.ReadType(), &Asset))
-				return false;
-
-			if (!Stream.ReadInteger(Stream.ReadType(), (uint8_t*)&Type))
-				return false;
-
-			bool HasAddressIndex;
-			if (!Stream.ReadBoolean(Stream.ReadType(), &HasAddressIndex))
-				return false;
-
-			AddressIndex = HasAddressIndex ? Option<uint64_t>(0) : Option<uint64_t>(Optional::None);
-			if (AddressIndex && !Stream.ReadInteger(Stream.ReadType(), AddressIndex.Address()))
-				return false;
-
-			uint8_t AddressesSize;
-			if (!Stream.ReadInteger(Stream.ReadType(), &AddressesSize))
-				return false;
-
-			Addresses.clear();
-			for (uint8_t i = 0; i < AddressesSize; i++)
-			{
-				uint8_t Version;
-				if (!Stream.ReadInteger(Stream.ReadType(), &Version))
-					return false;
-
-				String Address;
-				if (!Stream.ReadString(Stream.ReadType(), &Address))
-					return false;
-
-				Addresses[Version] = std::move(Address);
-			}
-
-			if (!Stream.ReadString(Stream.ReadType(), &VerifyingKey))
-				return false;
-
-			String OwnerAssembly;
-			if (!Stream.ReadString(Stream.ReadType(), &OwnerAssembly) || !Algorithm::Encoding::DecodeUintBlob(OwnerAssembly, Owner, sizeof(Owner)))
-				return false;
-
-			String ProposerAssembly;
-			if (!Stream.ReadString(Stream.ReadType(), &ProposerAssembly) || !Algorithm::Encoding::DecodeUintBlob(ProposerAssembly, Proposer, sizeof(Proposer)))
-				return false;
-
-			return true;
-		}
-		bool VerifiableMessage::IsValid() const
-		{
-			if (!Algorithm::Asset::IsValid(Asset) || Addresses.empty())
-				return false;
-
-			for (auto& Address : Addresses)
-			{
-				if (Address.second.empty())
-					return false;
-			}
-
-			Algorithm::Pubkeyhash Null = { 0 };
-			if (memcmp(Owner, Null, sizeof(Null)) == 0)
-				return false;
-
-			switch (Type)
-			{
-				case Status::Reservation:
-				case Status::Permanent:
-					return true;
-				default:
-					return false;
-			}
-		}
-		UPtr<Schema> VerifiableMessage::AsSchema() const
-		{
-			Schema* Data = Var::Set::Object();
-			Data->Set("asset", Algorithm::Asset::Serialize(Asset));
-			Data->Set("owner", Algorithm::Signing::SerializeAddress(Owner));
-			Data->Set("proposer", Algorithm::Signing::SerializeAddress(Proposer));
-			auto* AddressesData = Data->Set("addresses", Var::Set::Array());
-			for (auto& Address : Addresses)
-				AddressesData->Push(Var::String(Address.second));
-			Data->Set("address_index", AddressIndex ? Algorithm::Encoding::SerializeUint256(*AddressIndex) : Var::Set::Null());
-			Data->Set("verifying_key", Var::String(VerifyingKey));
-			return Data;
-		}
-		uint32_t VerifiableMessage::AsType() const
-		{
-			return AsInstanceType();
-		}
-		std::string_view VerifiableMessage::AsTypename() const
-		{
-			return AsInstanceTypename();
-		}
-		uint32_t VerifiableMessage::AsInstanceType()
-		{
-			static uint32_t Hash = Types::TypeOf(AsInstanceTypename());
-			return Hash;
-		}
-		std::string_view VerifiableMessage::AsInstanceTypename()
-		{
-			return "oracle_verifiable_message";
-		}
-
 		IncomingTransaction::IncomingTransaction() : Asset(0), BlockId(0)
 		{
 		}
@@ -669,7 +539,7 @@ namespace Tangent
 			if (!Chain)
 				return false;
 
-			return BlockId >= Chain->GetBlockLatency();
+			return BlockId >= Chain->GetChainparams().SyncLatency;
 		}
 		bool IncomingTransaction::IsApproved() const
 		{
@@ -679,9 +549,9 @@ namespace Tangent
 
 			auto LatestBlockId = Datamaster::GetLatestKnownBlockHeight(Asset).Or(0);
 			if (LatestBlockId < BlockId)
-				return BlockId >= Chain->GetBlockLatency();
+				return BlockId >= Chain->GetChainparams().SyncLatency;
 
-			return LatestBlockId - BlockId >= Chain->GetBlockLatency();
+			return LatestBlockId - BlockId >= Chain->GetChainparams().SyncLatency;
 		}
 		UPtr<Schema> IncomingTransaction::AsSchema() const
 		{
@@ -1300,7 +1170,7 @@ namespace Tangent
 
 			HTTP::FetchFrame Setup;
 			Setup.MaxSize = 16 * 1024 * 1024;
-			Setup.VerifyPeers = (uint32_t)Protocol::Now().User.P2P.TlsTrustedPeers;
+			Setup.VerifyPeers = (uint32_t)Protocol::Now().User.TCP.TlsTrustedPeers;
 			Setup.Timeout = Protocol::Now().User.Oracle.RelayingTimeout;
 
 			uint64_t RetryResponses = 0;
@@ -1646,7 +1516,7 @@ namespace Tangent
 		}
 		uint256_t Chainmaster::ToBaselineValue(const Decimal& Value) const
 		{
-			Decimal Baseline = Value * GetDivisibility();
+			Decimal Baseline = Value * GetChainparams().Divisibility;
 			return uint256_t(Baseline.Truncate(0).ToString());
 		}
 
@@ -1954,20 +1824,23 @@ namespace Tangent
 			}
 			else if (Listener->CooldownId != INVALID_TASK_ID)
 			{
-				VI_INFO("[oracle] %s scan re-initialize: OK", Algorithm::Asset::HandleOf(Listener->Asset).c_str());
+				if (Protocol::Now().User.Oracle.Logging)
+					VI_INFO("[oracle] %s scan re-initialize: OK", Algorithm::Asset::HandleOf(Listener->Asset).c_str());
 				Listener->CooldownId = INVALID_TASK_ID;
 			}
 			else if (Listener->IsDryRun)
 			{
-				VI_INFO("[oracle] %s scan initialize: OK", Algorithm::Asset::HandleOf(Listener->Asset).c_str());
+				if (Protocol::Now().User.Oracle.Logging)
+					VI_INFO("[oracle] %s scan initialize: OK", Algorithm::Asset::HandleOf(Listener->Asset).c_str());
 				Listener->IsDryRun = false;
 			}
 			else if (Listener->Options.WillWaitForTransactions())
 			{
-				VI_INFO("[oracle] %s scan complete: awaiting new data for at least %is (waiting time = %is)",
-					Algorithm::Asset::HandleOf(Listener->Asset).c_str(),
-					(int)(Listener->Options.PollingFrequencyMs / 1000),
-					(int)(Listener->Options.State.LatestTimeAwaited / 1000));
+				if (Protocol::Now().User.Oracle.Logging)
+					VI_INFO("[oracle] %s scan complete: awaiting new data for at least %is (waiting time = %is)",
+						Algorithm::Asset::HandleOf(Listener->Asset).c_str(),
+						(int)(Listener->Options.PollingFrequencyMs / 1000),
+						(int)(Listener->Options.State.LatestTimeAwaited / 1000));
 				Listener->Options.State.LatestTimeAwaited = 0;
 			}
 
@@ -1978,13 +1851,17 @@ namespace Tangent
 				{
 					if (Info.Error().Info == "retry")
 					{
-						VI_INFO("[oracle] %s scan cancellation: OK", Algorithm::Asset::HandleOf(Listener->Asset).c_str());
+						if (Protocol::Now().User.Oracle.Logging)
+							VI_INFO("[oracle] %s scan cancellation: OK", Algorithm::Asset::HandleOf(Listener->Asset).c_str());
+
 						CallTransactionListener(Listener);
 						ControlSys.Dequeue();
 						CoreturnVoid;
 					}
 
-					VI_ERR("[oracle] %s scan cooldown { %s }", Algorithm::Asset::HandleOf(Listener->Asset).c_str(), Info.Error().what());
+					if (Protocol::Now().User.Oracle.Logging)
+						VI_ERR("[oracle] %s scan cooldown { %s }", Algorithm::Asset::HandleOf(Listener->Asset).c_str(), Info.Error().what());
+
 					UMutex<std::recursive_mutex> Unique(ControlSys.Sync);
 					if (ControlSys.IsActive() && !Listener->Options.IsCancelled(Listener->Asset))
 						Listener->CooldownId = Schedule::Get()->SetTimeout(Settings->RetryWaitingTimeMs, [Listener]() { CallTransactionListener(Listener); });
@@ -1995,13 +1872,14 @@ namespace Tangent
 				}
 				else if (Info->Transactions.empty())
 				{
-					if (Settings->ShowBlocks && !Info->BlockHash.empty())
+					if (!Info->BlockHash.empty())
 					{
-						VI_INFO("[oracle] %s scan block: %s (height = %i, percentage = %.2f%%)",
-							Algorithm::Asset::HandleOf(Listener->Asset).c_str(),
-							Info->BlockHash.c_str(),
-							(int)Info->BlockHeight,
-							Listener->Options.GetCheckpointPercentage());
+						if (Protocol::Now().User.Oracle.Logging)
+							VI_INFO("[oracle] %s scan block: %s (height = %i, percentage = %.2f%%)",
+								Algorithm::Asset::HandleOf(Listener->Asset).c_str(),
+								Info->BlockHash.c_str(),
+								(int)Info->BlockHeight,
+								Listener->Options.GetCheckpointPercentage());
 					}
 
 					for (auto& Item : *Callbacks)
@@ -2011,8 +1889,7 @@ namespace Tangent
 					ControlSys.Dequeue();
 					CoreturnVoid;
 				}
-				else if (Settings->ShowBlocks)
-				{
+				else if (Protocol::Now().User.Oracle.Logging)
 					VI_INFO("[oracle] %s in %s: %s (height = %i, percentage = %.2f%%, transactions = %i)",
 						Algorithm::Asset::HandleOf(Listener->Asset).c_str(),
 						"block",
@@ -2020,9 +1897,8 @@ namespace Tangent
 						(int)Info->BlockHeight,
 						Listener->Options.GetCheckpointPercentage(),
 						(int)Info->Transactions.size());
-				}
 
-				if (Settings->ShowTransactions)
+				if (Protocol::Now().User.Oracle.Logging)
 				{
 					for (auto& Tx : Info->Transactions)
 					{
@@ -2032,7 +1908,8 @@ namespace Tangent
 							Algorithm::Asset::HandleOf(Listener->Asset).c_str(),
 							Tx.TransactionId.c_str(), Tx.IsApproved() ? "confirmation" : "pending",
 							Tx.Fee.ToString().c_str(), Algorithm::Asset::HandleOf(Tx.Asset).c_str());
-						if (!Tx.IsApproved() || (Chain && !Chain->GetBlockLatency()))
+
+						if (!Tx.IsApproved() || (Chain && !Chain->GetChainparams().SyncLatency))
 						{
 							for (auto& Item : Tx.From)
 							{
@@ -2047,8 +1924,10 @@ namespace Tangent
 									Item.AddressIndex ? " (index: " : "", Item.AddressIndex ? ToString(*Item.AddressIndex).c_str() : "", Item.AddressIndex ? ", status: unspent)" : "");
 							}
 						}
+
 						if (TransferLogs.back() == '\n')
 							TransferLogs.erase(TransferLogs.end() - 1);
+
 						VI_INFO("[oracle] %s", TransferLogs.c_str());
 					}
 				}
@@ -2070,16 +1949,18 @@ namespace Tangent
 			UMutex<std::recursive_mutex> Unique(ControlSys.Sync);
 			if (State->IsBusy && FromParams != nullptr)
 			{
-				if (Settings->ShowQueue)
+				if (Protocol::Now().User.Oracle.Logging)
 					VI_INFO("[oracle] %s tx queue: push 0x%p (position = %i)", State->Blockchain.c_str(), FromParams, (int)State->Transactions);
+
 				++State->Transactions;
 				ControlSys.Dequeue();
 				return;
 			}
 			else if (State->Queue.empty())
 			{
-				if (Settings->ShowQueue)
+				if (Protocol::Now().User.Oracle.Logging)
 					VI_INFO("[oracle] %s tx queue: finish (dispatches = %i)", State->Blockchain.c_str(), (int)State->Transactions);
+
 				State->Transactions = 0;
 				State->IsBusy = false;
 				ControlSys.Dequeue();
@@ -2092,7 +1973,7 @@ namespace Tangent
 			State->IsBusy = true;
 			State->Queue.pop();
 
-			if (Settings->ShowQueue)
+			if (Protocol::Now().User.Oracle.Logging)
 				VI_INFO("[oracle] %s tx queue: dispatch 0x%p (position = %i)", State->Blockchain.c_str(), Params, (int)(State->Transactions - State->Queue.size() - 1));
 
 			Coasync<void>([State, Params]() -> Promise<void>
@@ -2100,31 +1981,33 @@ namespace Tangent
 				auto SignedTransaction = Coawait(Datamaster::NewTransaction(Params->Asset, Params->Wallet, Params->To, std::move(Params->Fee)));
 				if (!SignedTransaction)
 				{
-					VI_ERR("[oracle] %s tx queue: sign error { %s }", State->Blockchain.c_str(), SignedTransaction.Error().what());
+					if (Protocol::Now().User.Oracle.Logging)
+						VI_ERR("[oracle] %s tx queue: sign error { %s }", State->Blockchain.c_str(), SignedTransaction.Error().what());
+
 					FinalizeTransaction(State, Params, std::move(SignedTransaction));
 					ControlSys.Dequeue();
 					CoreturnVoid;
 				}
 
-				if (Settings->ShowBroadcasts)
-				{
+				if (Protocol::Now().User.Oracle.Logging)
 					VI_INFO(
 						"[oracle] %s tx queue: sign %s OK\n"
 						"  data: %s",
 						State->Blockchain.c_str(),
 						SignedTransaction->Transaction.TransactionId.c_str(),
 						SignedTransaction->Data.c_str());
-				}
 
 				auto Status = Coawait(Datamaster::BroadcastTransaction(Params->Asset, Params->ExternalId, *SignedTransaction));
 				if (!Status)
 				{
-					VI_ERR("[oracle] %s tx queue: submit error { %s }", State->Blockchain.c_str(), Status.Error().what());
+					if (Protocol::Now().User.Oracle.Logging)
+						VI_ERR("[oracle] %s tx queue: submit error { %s }", State->Blockchain.c_str(), Status.Error().what());
+
 					FinalizeTransaction(State, Params, Status.Error());
 					ControlSys.Dequeue();
 					CoreturnVoid;
 				}
-				else if (Settings->ShowBroadcasts)
+				else if (Protocol::Now().User.Oracle.Logging)
 					VI_INFO("[oracle] %s tx queue: submit %s OK", State->Blockchain.c_str(), SignedTransaction->Transaction.TransactionId.c_str());
 
 				FinalizeTransaction(State, Params, std::move(SignedTransaction));
@@ -2134,7 +2017,7 @@ namespace Tangent
 		}
 		void Paymaster::FinalizeTransaction(TransactionQueueState* State, UPtr<TransactionParams>&& Params, ExpectsLR<OutgoingTransaction>&& Transaction)
 		{
-			if (Settings->ShowQueue)
+			if (Protocol::Now().User.Oracle.Logging)
 				VI_INFO("[oracle] %s tx queue: finalize 0x%p (position = %i)", State->Blockchain.c_str(), *Params, (int)(State->Transactions - State->Queue.size() - 1));
 
 			Params->Future.Set(std::move(Transaction));
@@ -2332,7 +2215,7 @@ namespace Tangent
 			if (!Implementation)
 				Coreturn ExpectsLR<OutgoingTransaction>(LayerException("chain not found"));
 
-			if (!Implementation->HasBulkTransactions() && To.size() > 1)
+			if (!Implementation->GetChainparams().SupportsBulkTransfer && To.size() > 1)
 				Coreturn ExpectsLR<OutgoingTransaction>(LayerException("only one receiver allowed"));
 
 			BaseFee ActualFee = BaseFee(Decimal::NaN(), Decimal::NaN());
@@ -2461,7 +2344,7 @@ namespace Tangent
 				TransactionIds.insert(Algorithm::Asset::HandleOf(NewTransaction.Asset) + ":" + NewTransaction.TransactionId);
 			}
 #ifdef TAN_VALIDATOR
-			auto Approvals = Sidechain.ApproveTransactions(Logs.BlockHeight, Implementation->GetBlockLatency());
+			auto Approvals = Sidechain.ApproveTransactions(Logs.BlockHeight, Implementation->GetChainparams().SyncLatency);
 			if (Approvals && !Approvals->empty())
 			{
 				Logs.Transactions.reserve(Logs.Transactions.size() + Approvals->size());
@@ -2501,7 +2384,7 @@ namespace Tangent
 			if (!Implementation)
 				Coreturn ExpectsLR<BaseFee>(LayerException("chain not found"));
 
-			if (!Implementation->HasBulkTransactions() && To.size() > 1)
+			if (!Implementation->GetChainparams().SupportsBulkTransfer && To.size() > 1)
 				Coreturn ExpectsLR<BaseFee>(LayerException("only one receiver allowed"));
 
 			int64_t Time = time(nullptr);
@@ -2618,7 +2501,7 @@ namespace Tangent
 #endif
 			return Result;
 		}
-		ExpectsLR<DerivedSigningWallet> Datamaster::NewSigningWallet(const Algorithm::AssetId& Asset, const std::string_view& RawSigningKeyKey)
+		ExpectsLR<DerivedSigningWallet> Datamaster::NewSigningWallet(const Algorithm::AssetId& Asset, const std::string_view& SigningKeyKey)
 		{
 			if (!IsInitialized())
 				return ExpectsLR<DerivedSigningWallet>(LayerException("oracle not found"));
@@ -2626,16 +2509,16 @@ namespace Tangent
 			if (!Algorithm::Asset::IsValid(Asset))
 				return ExpectsLR<DerivedSigningWallet>(LayerException("asset not found"));
 
-			if (RawSigningKeyKey.empty())
+			if (SigningKeyKey.empty())
 				return ExpectsLR<DerivedSigningWallet>(LayerException("key not found"));
 
 			auto* Implementation = GetChain(Asset);
 			if (!Implementation)
 				return ExpectsLR<DerivedSigningWallet>(LayerException("chain not found"));
 
-			return Implementation->NewSigningWallet(Asset, RawSigningKeyKey);
+			return Implementation->NewSigningWallet(Asset, SigningKeyKey);
 		}
-		ExpectsLR<DerivedVerifyingWallet> Datamaster::NewVerifyingWallet(const Algorithm::AssetId& Asset, const std::string_view& RawVerifyingKey)
+		ExpectsLR<DerivedVerifyingWallet> Datamaster::NewVerifyingWallet(const Algorithm::AssetId& Asset, const std::string_view& VerifyingKey)
 		{
 			if (!IsInitialized())
 				return ExpectsLR<DerivedVerifyingWallet>(LayerException("oracle not found"));
@@ -2643,14 +2526,14 @@ namespace Tangent
 			if (!Algorithm::Asset::IsValid(Asset))
 				return ExpectsLR<DerivedVerifyingWallet>(LayerException("asset not found"));
 
-			if (RawVerifyingKey.empty())
+			if (VerifyingKey.empty())
 				return ExpectsLR<DerivedVerifyingWallet>(LayerException("key not found"));
 
 			auto* Implementation = GetChain(Asset);
 			if (!Implementation)
 				return ExpectsLR<DerivedVerifyingWallet>(LayerException("chain not found"));
 
-			return Implementation->NewVerifyingWallet(Asset, RawVerifyingKey);
+			return Implementation->NewVerifyingWallet(Asset, VerifyingKey);
 		}
 		ExpectsLR<String> Datamaster::NewPublicKeyHash(const Algorithm::AssetId& Asset, const std::string_view& Address)
 		{
@@ -2672,7 +2555,7 @@ namespace Tangent
 
 			return Implementation->NewPublicKeyHash(Address);
 		}
-		ExpectsLR<String> Datamaster::SignMessage(const Algorithm::AssetId& Asset, const Messages::Generic& Message, const DerivedSigningWallet& Wallet)
+		ExpectsLR<String> Datamaster::SignMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const PrivateKey& SigningKey)
 		{
 			if (!IsInitialized())
 				return ExpectsLR<String>(LayerException("oracle not found"));
@@ -2684,32 +2567,65 @@ namespace Tangent
 			if (!Implementation)
 				return ExpectsLR<String>(LayerException("chain not found"));
 
-			return Implementation->SignMessage(Message, Wallet);
+			return Implementation->SignMessage(Asset, Message, SigningKey);
 		}
-		ExpectsLR<bool> Datamaster::VerifyMessage(const Algorithm::AssetId& Asset, const Messages::Generic& Message, const std::string_view& Address, const std::string_view& VerifyingKey, const std::string_view& SeedingKey)
+		ExpectsLR<void> Datamaster::VerifyMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const std::string_view& VerifyingKey, const std::string_view& Signature)
 		{
 			if (!IsInitialized())
-				return ExpectsLR<bool>(LayerException("oracle not found"));
+				return ExpectsLR<void>(LayerException("oracle not found"));
 
 			if (!Algorithm::Asset::IsValid(Asset))
-				return ExpectsLR<bool>(LayerException("asset not found"));
+				return ExpectsLR<void>(LayerException("asset not found"));
 
 			auto* Implementation = GetChain(Asset);
 			if (!Implementation)
-				return ExpectsLR<bool>(LayerException("chain not found"));
+				return ExpectsLR<void>(LayerException("chain not found"));
 
-			return Implementation->VerifyMessage(Message, Address, VerifyingKey, SeedingKey);
-		}
-		ExpectsLR<bool> Datamaster::VerifyMessage(const Algorithm::AssetId& Asset, const VerifiableMessage& Message, const std::string_view& SeedingKey)
-		{
-			ExpectsLR<bool> Status = ExpectsLR<bool>(false);
-			for (auto& Address : Message.Addresses)
+			bool IsMessageHex = Format::Util::IsHexEncoding(Message);
+			String MessageData1 = IsMessageHex ? Format::Util::Decode0xHex(Message) : String(Message);
+			String MessageData2 = IsMessageHex ? String(Message) : Format::Util::Encode0xHex(Message);
+
+			if (Format::Util::IsHexEncoding(Signature))
 			{
-				Status = VerifyMessage(Asset, Message, Address.second, Message.VerifyingKey, SeedingKey);
-				if (Status && *Status)
-					break;
+				String SignatureData = Format::Util::Decode0xHex(Signature);
+				auto Status = Implementation->VerifyMessage(Asset, MessageData1, VerifyingKey, SignatureData);
+				if (Status)
+					return Status;
+
+				Status = Implementation->VerifyMessage(Asset, MessageData2, VerifyingKey, SignatureData);
+				if (Status)
+					return Status;
 			}
-			return Status;
+			
+			if (Format::Util::IsBase64Encoding(Signature))
+			{
+				String SignatureData = Codec::Base64Decode(Signature);
+				auto Status = Implementation->VerifyMessage(Asset, MessageData1, VerifyingKey, SignatureData);
+				if (Status)
+					return Status;
+
+				Status = Implementation->VerifyMessage(Asset, MessageData2, VerifyingKey, SignatureData);
+				if (Status)
+					return Status;
+			}
+			
+			if (Format::Util::IsBase64URLEncoding(Signature))
+			{
+				String SignatureData = Codec::Base64URLDecode(Signature);
+				auto Status = Implementation->VerifyMessage(Asset, MessageData1, VerifyingKey, SignatureData);
+				if (Status)
+					return Status;
+
+				Status = Implementation->VerifyMessage(Asset, MessageData2, VerifyingKey, SignatureData);
+				if (Status)
+					return Status;
+			}
+
+			auto Status = Implementation->VerifyMessage(Asset, MessageData1, VerifyingKey, Signature);
+			if (Status)
+				return Status;
+
+			return Implementation->VerifyMessage(Asset, MessageData2, VerifyingKey, Signature);
 		}
 		ExpectsLR<void> Datamaster::EnableCheckpointHeight(const Algorithm::AssetId& Asset, uint64_t BlockHeight)
 		{
@@ -2773,9 +2689,9 @@ namespace Tangent
 			if (!BlockHeight || !*BlockHeight)
 				return Expectation::Met;
 
-			uint64_t BlockLatency = Implementation->GetBlockLatency() * Protocol::Now().User.Oracle.BlockReplayMultiplier;
-			if (BlockLatency > 0)
-				Oracle::Datamaster::EnableCheckpointHeight(Asset, BlockLatency >= *BlockHeight ? 1 : *BlockHeight - BlockLatency);
+			uint64_t Latency = Implementation->GetChainparams().SyncLatency * Protocol::Now().User.Oracle.BlockReplayMultiplier;
+			if (Latency > 0)
+				Oracle::Datamaster::EnableCheckpointHeight(Asset, Latency >= *BlockHeight ? 1 : *BlockHeight - Latency);
 
 			return Expectation::Met;
 #else
@@ -2949,14 +2865,33 @@ namespace Tangent
 			Instance = std::move(Value);
 			return *Instance;
 		}
-		Vector<Algorithm::AssetId> Datamaster::GetAssets()
+		UnorderedMap<Algorithm::AssetId, Chainmaster::Chainparams> Datamaster::GetChains()
+		{
+			VI_PANIC(IsInitialized(), "blockchain service is not initialized");
+			UMutex<std::recursive_mutex> Unique(Mutex);
+			UnorderedMap<Algorithm::AssetId, Chainmaster::Chainparams> Result;
+			Result.reserve(Chains->size());
+			for (auto& Next : *Chains)
+				Result[Algorithm::Asset::IdOf(Next.first)] = Next.second->GetChainparams();
+			return Result;
+		}
+		Vector<Algorithm::AssetId> Datamaster::GetAssets(bool ObservingOnly)
 		{
 			VI_PANIC(IsInitialized(), "blockchain service is not initialized");
 			UMutex<std::recursive_mutex> Unique(Mutex);
 			Vector<Algorithm::AssetId> Currencies;
-			Currencies.reserve(Chains->size());
-			for (auto& Next : *Chains)
-				Currencies.push_back(Algorithm::Asset::IdOf(Next.first));
+			if (ObservingOnly)
+			{
+				Currencies.reserve(Nodes->size());
+				for (auto& Node : *Nodes)
+					Currencies.push_back(Algorithm::Asset::IdOf(Node.first));
+			}
+			else
+			{
+				Currencies.reserve(Chains->size());
+				for (auto& Next : *Chains)
+					Currencies.push_back(Algorithm::Asset::IdOf(Next.first));
+			}
 			return Currencies;
 		}
 		Vector<UPtr<Nodemaster>>* Datamaster::GetNodes(const Algorithm::AssetId& Asset)
@@ -2990,6 +2925,19 @@ namespace Tangent
 			auto It = Chains->find(Algorithm::Asset::BlockchainOf(Asset));
 			if (It != Chains->end())
 				return *It->second;
+
+			return nullptr;
+		}
+		const Chainmaster::Chainparams* Datamaster::GetChainparams(const Algorithm::AssetId& Asset)
+		{
+			VI_PANIC(IsInitialized(), "blockchain service is not initialized");
+			UMutex<std::recursive_mutex> Unique(Mutex);
+			auto It = Chains->find(Algorithm::Asset::BlockchainOf(Asset));
+			if (It != Chains->end())
+			{
+				auto& Params = It->second->GetChainparams();
+				return &Params;
+			}
 
 			return nullptr;
 		}
@@ -3032,7 +2980,7 @@ namespace Tangent
 			if (!Datamaster::IsInitialized())
 				Datamaster::Initialize();
 
-			auto Chains = GetChains();
+			auto Chains = GetRegistrations();
 			for (auto& Chain : Chains)
 				Chain.second(Chain.first);
 
@@ -3050,22 +2998,6 @@ namespace Tangent
 				auto* BlockConfirmations = Config->Fetch("oracle.supervisor.block_confirmations");
 				if (BlockConfirmations != nullptr && BlockConfirmations->Value.Is(VarType::Integer))
 					Options.MinBlockConfirmations = BlockConfirmations->Value.GetInteger();
-
-				auto* LogTransactions = Config->Fetch("oracle.supervisor.log_transactions");
-				if (LogTransactions != nullptr && LogTransactions->Value.Is(VarType::Boolean))
-					Options.ShowTransactions = LogTransactions->Value.GetBoolean();
-
-				auto* LogBlocks = Config->Fetch("oracle.supervisor.log_blocks");
-				if (LogBlocks != nullptr && LogBlocks->Value.Is(VarType::Boolean))
-					Options.ShowBlocks = LogBlocks->Value.GetBoolean();
-
-				auto* LogQueue = Config->Fetch("oracle.supervisor.log_queue");
-				if (LogQueue != nullptr && LogQueue->Value.Is(VarType::Boolean))
-					Options.ShowQueue = LogQueue->Value.GetBoolean();
-
-				auto* LogBroadcasts = Config->Fetch("oracle.supervisor.log_broadcasts");
-				if (LogBroadcasts != nullptr && LogBroadcasts->Value.Is(VarType::Boolean))
-					Options.ShowBroadcasts = LogBroadcasts->Value.GetBoolean();
 
 				auto* Oracles = Config->Fetch("oracle.observers");
 				if (Oracles != nullptr)
@@ -3089,10 +3021,10 @@ namespace Tangent
 							{
 								if (Oracle::Datamaster::AddNode(Asset, Source.first, Source.second))
 								{
-									if (Observe)
+									if (Observe && Protocol::Now().User.Oracle.Logging)
 										VI_INFO("[oracle] OK add %s node on %.*s (%.2f rps limit)", Algorithm::Asset::HandleOf(Asset).c_str(), (int)Source.first.size(), Source.first.data(), Source.second);
 								}
-								else
+								else if (Protocol::Now().User.Oracle.Logging)
 									VI_ERR("[oracle] failed to add %s node on %.*s (%.2f rps limit)", Algorithm::Asset::HandleOf(Asset).c_str(), (int)Source.first.size(), Source.first.data(), Source.second);
 							}
 						}
@@ -3133,16 +3065,15 @@ namespace Tangent
 				Datamaster::Initialize();
 
 			UnorderedMap<String, MasterWallet> Wallets;
-			auto Chains = GetChains();
-			for (auto& Chain : Chains)
+			for (auto& Chain : Datamaster::GetAssets())
 			{
-				auto Wallet = Datamaster::NewMasterWallet(Algorithm::Asset::IdOf(Chain.first), PrivateKey);
+				auto Wallet = Datamaster::NewMasterWallet(Chain, PrivateKey);
 				if (Wallet)
-					Wallets[Chain.first] = std::move(*Wallet);
+					Wallets[Algorithm::Asset::HandleOf(Chain)] = std::move(*Wallet);
 			}
 			return Wallets;
 		}
-		UnorderedMap<String, Bridge::InvocationCallback> Bridge::GetChains()
+		UnorderedMap<String, Bridge::InvocationCallback> Bridge::GetRegistrations()
 		{
 #ifdef TAN_VALIDATOR
 #define CHAIN(X) Chain<Chains::X>()
@@ -3156,8 +3087,8 @@ namespace Tangent
 				{ "BTC", CHAIN(Bitcoin) },
 				{ "BCH", CHAIN(BitcoinCash) },
 				{ "BTG", CHAIN(BitcoinGold) },
-				{ "BSV", CHAIN(BitcoinSV) },
 				{ "BSC", CHAIN(BinanceSmartChain) },
+				{ "BSV", CHAIN(BitcoinSV) },
 				{ "ADA", CHAIN(Cardano) },
 				{ "CELO", CHAIN(Celo) },
 				{ "DASH", CHAIN(Dash) },
@@ -3168,15 +3099,13 @@ namespace Tangent
 				{ "FTM", CHAIN(Fantom) },
 				{ "FUSE", CHAIN(Fuse) },
 				{ "ONE", CHAIN(Harmony) },
-				{ "HT", CHAIN(Heco) },
-				{ "KCS", CHAIN(Kcc) },
 				{ "LTC", CHAIN(Litecoin) },
 				{ "GLMR", CHAIN(Moonbeam) },
 				{ "OP", CHAIN(Optimism) },
 				{ "MATIC", CHAIN(Polygon) },
 				{ "XRP", CHAIN(Ripple) },
 				{ "XEC", CHAIN(ECash) },
-				{ "RSK", CHAIN(Rootstock) },
+				{ "RIF", CHAIN(Rootstock) },
 				{ "SOL", CHAIN(Solana) },
 				{ "XLM", CHAIN(Stellar) },
 				{ "TRX", CHAIN(Tron) },
@@ -3184,26 +3113,6 @@ namespace Tangent
 			};
 #undef CHAIN
 			return Entries;
-		}
-		OrderedSet<Algorithm::AssetId> Bridge::GetOracles()
-		{
-			OrderedSet<Algorithm::AssetId> Assets;
-			if (!Datamaster::IsInitialized())
-				return Assets;
-
-			for (auto& Candidate : Datamaster::GetAssets())
-				Assets.insert(Algorithm::Asset::BaseIdOf(Candidate));
-
-			return Assets;
-		}
-		Algorithm::AssetId Bridge::GetRandomAsset()
-		{
-			auto Chains = Oracle::Bridge::GetChains();
-			auto Index = Math64u::Random(0, Chains.size());
-			auto Chain = Chains.begin();
-			for (size_t i = 0; i < Index; i++)
-				++Chain;
-			return Algorithm::Asset::IdOf(Chain->first);
 		}
 	}
 }

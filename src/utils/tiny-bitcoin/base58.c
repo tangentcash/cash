@@ -34,7 +34,7 @@ static const HasherType BTC_HASHER = HASHER_SHA2D;
 
 int btc_base58_decode(void* bin, size_t* binszp, const char* b58)
 {
-    return b58tobin(bin, binszp, b58);
+    return b58tobin(bin, binszp, b58, (int)strlen(b58));
 }
 
 int btc_b58check(const void* bin, size_t binsz, const char* base58str)

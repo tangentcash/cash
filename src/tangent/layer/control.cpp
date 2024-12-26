@@ -1,5 +1,6 @@
 #include "control.h"
 #include <iostream>
+#define LOCKED_TASK_ID std::numeric_limits<uint64_t>::max()
 
 namespace Tangent
 {
@@ -36,76 +37,123 @@ namespace Tangent
 		VI_DEBUG("[sysctl] OK shutdown %.*s service (wait = %" PRIu64 " ms)", (int)ServiceName.size(), ServiceName.data(), TimeEnd - TimeStart);
 		CoreturnVoid;
 	}
-	bool SystemControl::IntervalIfNone(const String& Name, uint64_t Ms, TaskCallback&& Callback) noexcept
+	bool SystemControl::LockTimeout(const std::string_view& Name)
 	{
 		UMutex<std::recursive_mutex> Unique(Sync);
 		if (!Active)
 		{
-			VI_DEBUG("[sysctl] cancel %s interval on %.*s service: shutdown", Name.c_str(), (int)ServiceName.size(), ServiceName.data());
+			VI_DEBUG("[sysctl] cancel %.*s lock on %.*s service: shutdown", (int)Name.size(), Name.data(), (int)ServiceName.size(), ServiceName.data());
 			return false;
 		}
 
 		VI_ASSERT(Timers != nullptr, "timers should be initialized");
-		if (Timers->find(Name) == Timers->end())
-			VI_DEBUG("[sysctl] OK spawn %s task on %.*s service (mode = interval, delay = %" PRIu64 " ms)", Name.c_str(), (int)ServiceName.size(), ServiceName.data(), Ms);
+		if (Timers->find(KeyLookupCast(Name)) == Timers->end())
+			VI_DEBUG("[sysctl] OK spawn %.*s locked task on %.*s service (mode = lock-timeout)", (int)Name.size(), Name.data(), (int)ServiceName.size(), ServiceName.data());
 
-		auto& Timer = (*Timers)[Name];
+		auto& Timer = (*Timers)[String(Name)];
 		if (Timer != INVALID_TASK_ID)
+		{
+			VI_DEBUG("[sysctl] cancel %.*s lock on %.*s service: in use", (int)Name.size(), Name.data(), (int)ServiceName.size(), ServiceName.data());
+			return false;
+		}
+
+		Timer = LOCKED_TASK_ID;
+		return true;
+	}
+	bool SystemControl::UnlockTimeout(const std::string_view& Name)
+	{
+		UMutex<std::recursive_mutex> Unique(Sync);
+		if (!Active)
+		{
+			VI_DEBUG("[sysctl] cancel %.*s unlock on %.*s service: shutdown", (int)Name.size(), Name.data(), (int)ServiceName.size(), ServiceName.data());
+			return false;
+		}
+
+		VI_ASSERT(Timers != nullptr, "timers should be initialized");
+		if (Timers->find(KeyLookupCast(Name)) == Timers->end())
+		{
+			VI_DEBUG("[sysctl] cancel %.*s unlock on %.*s service: not locked", (int)Name.size(), Name.data(), (int)ServiceName.size(), ServiceName.data());
+			return false;
+		}
+
+		auto& Timer = (*Timers)[String(Name)];
+		if (Timer == LOCKED_TASK_ID)
+			Timer = INVALID_TASK_ID;
+		return true;
+	}
+	bool SystemControl::IntervalIfNone(const std::string_view& Name, uint64_t Ms, TaskCallback&& Callback) noexcept
+	{
+		UMutex<std::recursive_mutex> Unique(Sync);
+		if (!Active)
+		{
+			VI_DEBUG("[sysctl] cancel %.*s interval on %.*s service: shutdown", (int)Name.size(), Name.data(), (int)ServiceName.size(), ServiceName.data());
+			return false;
+		}
+
+		VI_ASSERT(Timers != nullptr, "timers should be initialized");
+		if (Timers->find(KeyLookupCast(Name)) == Timers->end())
+			VI_DEBUG("[sysctl] OK spawn %.*s task on %.*s service (mode = interval, delay = %" PRIu64 " ms)", (int)Name.size(), Name.data(), (int)ServiceName.size(), ServiceName.data(), Ms);
+
+		auto& Timer = (*Timers)[String(Name)];
+		if (Timer != INVALID_TASK_ID || Timer == LOCKED_TASK_ID)
 			return false;
 
 		Timer = Schedule::Get()->SetInterval(Ms, std::move(Callback));
 		if (Timer != INVALID_TASK_ID)
 			return true;
 
-		VI_DEBUG("[sysctl] cancel %s interval on %.*s service: inactive", Name.c_str(), (int)ServiceName.size(), ServiceName.data());
+		VI_DEBUG("[sysctl] cancel %.*s interval on %.*s service: inactive", (int)Name.size(), Name.data(), (int)ServiceName.size(), ServiceName.data());
 		return false;
 	}
-	bool SystemControl::TimeoutIfNone(const String& Name, uint64_t Ms, TaskCallback&& Callback) noexcept
+	bool SystemControl::TimeoutIfNone(const std::string_view& Name, uint64_t Ms, TaskCallback&& Callback) noexcept
 	{
 		UMutex<std::recursive_mutex> Unique(Sync);
 		if (!Active)
 		{
-			VI_DEBUG("[sysctl] cancel %s timeout on %.*s service: shutdown", Name.c_str(), (int)ServiceName.size(), ServiceName.data());
+			VI_DEBUG("[sysctl] cancel %.*s timeout on %.*s service: shutdown", (int)Name.size(), Name.data(), (int)ServiceName.size(), ServiceName.data());
 			return false;
 		}
 
 		VI_ASSERT(Timers != nullptr, "timers should be initialized");
-		if (Timers->find(Name) == Timers->end())
-			VI_DEBUG("[sysctl] OK spawn %s task on %.*s service (mode = timeout, delay = %" PRIu64 " ms)", Name.c_str(), (int)ServiceName.size(), ServiceName.data(), Ms);
+		if (Timers->find(KeyLookupCast(Name)) == Timers->end())
+			VI_DEBUG("[sysctl] OK spawn %.*s task on %.*s service (mode = timeout, delay = %" PRIu64 " ms)", (int)Name.size(), Name.data(), (int)ServiceName.size(), ServiceName.data(), Ms);
 
-		auto& Timer = (*Timers)[Name];
-		if (Timer != INVALID_TASK_ID)
+		auto& Timer = (*Timers)[String(Name)];
+		if (Timer != INVALID_TASK_ID || Timer == LOCKED_TASK_ID)
 			return false;
 
 		Timer = Schedule::Get()->SetTimeout(Ms, std::move(Callback));
 		if (Timer != INVALID_TASK_ID)
 			return true;
 
-		VI_DEBUG("[sysctl] cancel %s timeout on %.*s service: inactive", Name.c_str(), (int)ServiceName.size(), ServiceName.data());
+		VI_DEBUG("[sysctl] cancel %.*s timeout on %.*s service: inactive", (int)Name.size(), Name.data(), (int)ServiceName.size(), ServiceName.data());
 		return false;
 	}
-	bool SystemControl::UpsertTimeout(const String& Name, uint64_t Ms, TaskCallback&& Callback) noexcept
+	bool SystemControl::UpsertTimeout(const std::string_view& Name, uint64_t Ms, TaskCallback&& Callback) noexcept
 	{
 		UMutex<std::recursive_mutex> Unique(Sync);
 		if (!Active)
 		{
-			VI_DEBUG("[sysctl] cancel %s timeout on %.*s service: shutdown", Name.c_str(), (int)ServiceName.size(), ServiceName.data());
+			VI_DEBUG("[sysctl] cancel %.*s timeout on %.*s service: shutdown", (int)Name.size(), Name.data(), (int)ServiceName.size(), ServiceName.data());
 			return false;
 		}
 
 		VI_ASSERT(Timers != nullptr, "timers should be initialized");
-		if (Timers->find(Name) == Timers->end())
-			VI_DEBUG("[sysctl] OK spawn %s task on %.*s service (mode = upsert-timeout, delay = %" PRIu64 " ms)", Name.c_str(), (int)ServiceName.size(), ServiceName.data(), Ms);
+		if (Timers->find(KeyLookupCast(Name)) == Timers->end())
+			VI_DEBUG("[sysctl] OK spawn %.*s task on %.*s service (mode = upsert-timeout, delay = %" PRIu64 " ms)", (int)Name.size(), Name.data(), (int)ServiceName.size(), ServiceName.data(), Ms);
 
-		auto& Timer = (*Timers)[Name];
+		auto& Timer = (*Timers)[String(Name)];
+		if (Timer == LOCKED_TASK_ID)
+			return false;
+
 		Timer = Schedule::Get()->SetTimeout(Ms, std::move(Callback));
 		if (Timer != INVALID_TASK_ID)
 			return true;
 
-		VI_DEBUG("[sysctl] cancel %s timeout on %.*s service: inactive", Name.c_str(), (int)ServiceName.size(), ServiceName.data());
+		VI_DEBUG("[sysctl] cancel %.*s timeout on %.*s service: inactive", (int)Name.size(), Name.data(), (int)ServiceName.size(), ServiceName.data());
 		return false;
 	}
-	bool SystemControl::ClearTimeout(const String& Name, bool ClearScheduled) noexcept
+	bool SystemControl::ClearTimeout(const std::string_view& Name, bool ClearScheduled) noexcept
 	{
 		UMutex<std::recursive_mutex> Unique(Sync);
 		if (!Active)
@@ -113,7 +161,7 @@ namespace Tangent
 
 		VI_ASSERT(Timers != nullptr, "timers should be initialized");
 		auto It = Timers->find(Name);
-		if (It != Timers->end() && It->second != INVALID_TASK_ID)
+		if (It != Timers->end() && It->second != INVALID_TASK_ID && It->second != LOCKED_TASK_ID)
 		{
 			if (ClearScheduled)
 				Schedule::Get()->ClearTimeout(It->second);
@@ -237,6 +285,18 @@ namespace Tangent
 	{
 		Schedule::Desc Policy;
 		Policy.Ping = [this]() { return ExitCode == 0xFFFFFFFF; };
+		if (Protocol::Now().User.ComputationThreadsRatio > 0.0)
+		{
+			auto Threads = OS::CPU::GetQuantityInfo().Logical;
+#ifndef VI_CXX20
+			Policy.Threads[((size_t)Difficulty::Async)] = (size_t)std::max(std::ceil(Threads * 0.20), 1.0);
+#else
+			Policy.Threads[((size_t)Difficulty::Async)] = 1;
+#endif
+			Policy.Threads[((size_t)Difficulty::Sync)] = (size_t)std::max(std::ceil(Threads * Protocol::Now().User.ComputationThreadsRatio), 1.0);
+			Policy.Threads[((size_t)Difficulty::Timeout)] = 1;
+		}
+
 		VI_INFO("[srvctl] service launch requested (services: %i)", (int)Services.size());
 		for (auto& Service : Services)
 			Service.Startup();

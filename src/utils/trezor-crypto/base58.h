@@ -42,10 +42,11 @@ int base58_decode_check(const char *str, HasherType hasher_type, uint8_t *data,
                         int datalen);
 
 // Private
-bool b58tobin(void *bin, size_t *binszp, const char *b58);
+bool b58tobin(void *bin, size_t *binszp, const char *b58, size_t b58size);
 int b58check(const void *bin, size_t binsz, HasherType hasher_type,
              const char *base58str);
 bool b58enc(char *b58, size_t *b58sz, const void *data, size_t binsz);
+bool b58dec(void* bin, size_t* binszp, const char* b58, size_t b58size);
 
 #if USE_GRAPHENE
 int base58gph_encode_check(const uint8_t *data, int datalen, char *str,

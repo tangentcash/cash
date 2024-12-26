@@ -122,20 +122,10 @@ extern const btc_chainparams op_chainparams_main;
 extern const btc_chainparams op_chainparams_test;
 extern const btc_chainparams op_chainparams_regtest;
 
-/* rootstock */
-extern const btc_chainparams rsk_chainparams_main;
-extern const btc_chainparams rsk_chainparams_test;
-extern const btc_chainparams rsk_chainparams_regtest;
-
-/* heco */
-extern const btc_chainparams heco_chainparams_main;
-extern const btc_chainparams heco_chainparams_test;
-extern const btc_chainparams heco_chainparams_regtest;
-
-/* kcc */
-extern const btc_chainparams kcc_chainparams_main;
-extern const btc_chainparams kcc_chainparams_test;
-extern const btc_chainparams kcc_chainparams_regtest;
+/* rootstock infrastructure framework */
+extern const btc_chainparams rif_chainparams_main;
+extern const btc_chainparams rif_chainparams_test;
+extern const btc_chainparams rif_chainparams_regtest;
 
 /* avalanche */
 extern const btc_chainparams avax_chainparams_main;
@@ -167,16 +157,6 @@ extern const btc_chainparams matic_chainparams_main;
 extern const btc_chainparams matic_chainparams_test;
 extern const btc_chainparams matic_chainparams_regtest;
 
-/* binance smart chain */
-extern const btc_chainparams bsc_chainparams_main;
-extern const btc_chainparams bsc_chainparams_test;
-extern const btc_chainparams bsc_chainparams_regtest;
-
-/* build-and-build beacon chain */
-extern const btc_chainparams bnb_chainparams_main;
-extern const btc_chainparams bnb_chainparams_test;
-extern const btc_chainparams bnb_chainparams_regtest;
-
 /* ripple xrp */
 extern const btc_chainparams xrp_chainparams_main;
 extern const btc_chainparams xrp_chainparams_test;
@@ -191,6 +171,11 @@ extern const btc_chainparams xlm_chainparams_regtest;
 extern const btc_chainparams sol_chainparams_main;
 extern const btc_chainparams sol_chainparams_test;
 extern const btc_chainparams sol_chainparams_regtest;
+
+/* binance smart chain */
+extern const btc_chainparams bsc_chainparams_main;
+extern const btc_chainparams bsc_chainparams_test;
+extern const btc_chainparams bsc_chainparams_regtest;
 
 LIBBTC_END_DECL
 

@@ -1,4 +1,4 @@
-#include "storage.h"
+#include "engine.h"
 #ifdef TAN_ROCKSDB
 #include "rocksdb/db.h"
 #endif
@@ -36,7 +36,7 @@ namespace Tangent
 			auto Cursor = Storage->TxBegin(Type);
 #ifdef _DEBUG
 			String Error = ErrorOf(Cursor);
-			if (!Error.empty())
+			if (!Error.empty() && Protocol::Now().User.Storage.Logging)
 				VI_ERR("[indexdb] operation %.*s::%.*s error (transaction begin): %s", (int)Label.size(), Label.data(), (int)Operation.size(), Operation.data(), Error.c_str());
 #endif
 			++Queries; ++ThreadQueries;
@@ -48,7 +48,7 @@ namespace Tangent
 			auto Cursor = Storage->TxCommit(Session);
 #ifdef _DEBUG
 			String Error = ErrorOf(Cursor);
-			if (!Error.empty())
+			if (!Error.empty() && Protocol::Now().User.Storage.Logging)
 				VI_ERR("[indexdb] operation %.*s::%.*s error (transaction commit): %s", (int)Label.size(), Label.data(), (int)Operation.size(), Operation.data(), Error.c_str());
 #endif
 			++Queries; ++ThreadQueries;
@@ -60,7 +60,7 @@ namespace Tangent
 			auto Cursor = Storage->TxRollback(Session);
 #ifdef _DEBUG
 			String Error = ErrorOf(Cursor);
-			if (!Error.empty())
+			if (!Error.empty() && Protocol::Now().User.Storage.Logging)
 				VI_ERR("[indexdb] operation %.*s::%.*s error (transaction rollback): %s", (int)Label.size(), Label.data(), (int)Operation.size(), Operation.data(), Error.c_str());
 #endif
 			++Queries; ++ThreadQueries;
@@ -72,7 +72,7 @@ namespace Tangent
 			auto Cursor = Storage->Query(Command, QueryOps, Session);
 #ifdef _DEBUG
 			String Error = ErrorOf(Cursor);
-			if (!Error.empty())
+			if (!Error.empty() && Protocol::Now().User.Storage.Logging)
 				VI_ERR("[indexdb] operation %.*s::%.*s failed: %s", (int)Label.size(), Label.data(), (int)Operation.size(), Operation.data(), Error.c_str());
 #endif
 			++Queries; ++ThreadQueries;
@@ -84,7 +84,7 @@ namespace Tangent
 			auto Cursor = Storage->EmplaceQuery(Command, Map, QueryOps, Session);
 #ifdef _DEBUG
 			String Error = ErrorOf(Cursor);
-			if (!Error.empty())
+			if (!Error.empty() && Protocol::Now().User.Storage.Logging)
 				VI_ERR("[indexdb] operation %.*s::%.*s failed: %s", (int)Label.size(), Label.data(), (int)Operation.size(), Operation.data(), Error.c_str());
 #endif
 			++Queries; ++ThreadQueries;
@@ -164,49 +164,68 @@ namespace Tangent
 			MultiSessionId Session;
 			Session.reserve(Index.size());
 			for (auto& Storage : Index)
+				Session[*Storage.second] = nullptr;
+
+			std::mutex Mutex;
+			LDB::ExpectsDB<void> Status = Expectation::Met;
+			Parallel::WailAll(ParallelForEachNode(Index.begin(), Index.end(), Index.size(), [&](std::pair<const String, UPtr<LDB::Connection>>& Storage)
 			{
 				auto Result = TxBegin(*Storage.second, Label, Operation, Type);
 				if (!Result)
 				{
-					for (auto& Substorage : Session)
-						TxRollback(Substorage.first, Label, Operation, Substorage.second);
-
-					return Result.Error();
-				}
-				Session[*Storage.second] = *Result;
-			}
-			return Session;
-		}
-		LDB::ExpectsDB<void> PermanentStorage::MultiTxCommit(const std::string_view& Label, const std::string_view& Operation, const MultiSessionId& Session)
-		{
-			LDB::ExpectsDB<void> Status = Expectation::Met;
-			for (auto& Storage : Session)
-			{
-				auto Result = TxCommit(Storage.first, Label, Operation, Storage.second);
-				if (!Result)
-				{
+					UMutex<std::mutex> Unique(Mutex);
 					if (!Status)
 						Status = LDB::DatabaseException(Status.Error().message() + ", " + Result.Error().message());
 					else
-						Status = Result;
+						Status = std::move(Result.Error());
 				}
+				else
+					Session[*Storage.second] = *Result;
+			}));
+			if (Status)
+				return Session;
+
+			for (auto& Substorage : Session)
+			{
+				if (Substorage.second != nullptr)
+					TxRollback(Substorage.first, Label, Operation, Substorage.second);
 			}
+			return Status.Error();
+		}
+		LDB::ExpectsDB<void> PermanentStorage::MultiTxCommit(const std::string_view& Label, const std::string_view& Operation, const MultiSessionId& Session)
+		{
+			std::mutex Mutex;
+			LDB::ExpectsDB<void> Status = Expectation::Met;
+			Parallel::WailAll(ParallelForEachNode(Session.begin(), Session.end(), Session.size(), [&](const std::pair<LDB::Connection* const, LDB::SessionId>& Storage)
+			{
+				auto Result = TxCommit(Storage.first, Label, Operation, Storage.second);
+				if (Result)
+					return;
+
+				UMutex<std::mutex> Unique(Mutex);
+				if (!Status)
+					Status = LDB::DatabaseException(Status.Error().message() + ", " + Result.Error().message());
+				else
+					Status = std::move(Result.Error());
+			}));
 			return Status;
 		}
 		LDB::ExpectsDB<void> PermanentStorage::MultiTxRollback(const std::string_view& Label, const std::string_view& Operation, const MultiSessionId& Session)
 		{
+			std::mutex Mutex;
 			LDB::ExpectsDB<void> Status = Expectation::Met;
-			for (auto& Storage : Session)
+			Parallel::WailAll(ParallelForEachNode(Session.begin(), Session.end(), Session.size(), [&](const std::pair<LDB::Connection* const, LDB::SessionId>& Storage)
 			{
 				auto Result = TxRollback(Storage.first, Label, Operation, Storage.second);
-				if (!Result)
-				{
-					if (!Status)
-						Status = LDB::DatabaseException(Status.Error().message() + ", " + Result.Error().message());
-					else
-						Status = Result;
-				}
-			}
+				if (Result)
+					return;
+
+				UMutex<std::mutex> Unique(Mutex);
+				if (!Status)
+					Status = LDB::DatabaseException(Status.Error().message() + ", " + Result.Error().message());
+				else
+					Status = std::move(Result.Error());
+			}));
 			return Status;
 		}
 		LDB::ExpectsDB<LDB::SessionId> PermanentStorage::TxBegin(LDB::Connection* Storage, const std::string_view& Label, const std::string_view& Operation, LDB::Isolation Type)
@@ -215,7 +234,7 @@ namespace Tangent
 			auto Cursor = Storage->TxBegin(Type);
 #ifdef _DEBUG
 			String Error = ErrorOf(Cursor);
-			if (!Error.empty())
+			if (!Error.empty() && Protocol::Now().User.Storage.Logging)
 				VI_ERR("[indexdb] operation %.*s::%.*s error (transaction begin): %s", (int)Label.size(), Label.data(), (int)Operation.size(), Operation.data(), Error.c_str());
 #endif
 			++Queries; ++ThreadQueries;
@@ -227,7 +246,7 @@ namespace Tangent
 			auto Cursor = Storage->TxCommit(Session);
 #ifdef _DEBUG
 			String Error = ErrorOf(Cursor);
-			if (!Error.empty())
+			if (!Error.empty() && Protocol::Now().User.Storage.Logging)
 				VI_ERR("[indexdb] operation %.*s::%.*s error (transaction commit): %s", (int)Label.size(), Label.data(), (int)Operation.size(), Operation.data(), Error.c_str());
 #endif
 			++Queries; ++ThreadQueries;
@@ -239,7 +258,7 @@ namespace Tangent
 			auto Cursor = Storage->TxRollback(Session);
 #ifdef _DEBUG
 			String Error = ErrorOf(Cursor);
-			if (!Error.empty())
+			if (!Error.empty() && Protocol::Now().User.Storage.Logging)
 				VI_ERR("[indexdb] operation %.*s::%.*s error (transaction rollback): %s", (int)Label.size(), Label.data(), (int)Operation.size(), Operation.data(), Error.c_str());
 #endif
 			++Queries; ++ThreadQueries;
@@ -251,7 +270,7 @@ namespace Tangent
 			auto Cursor = Storage->Query(Command, QueryOps, Session);
 #ifdef _DEBUG
 			String Error = ErrorOf(Cursor);
-			if (!Error.empty())
+			if (!Error.empty() && Protocol::Now().User.Storage.Logging)
 				VI_ERR("[indexdb] operation %.*s::%.*s failed: %s", (int)Label.size(), Label.data(), (int)Operation.size(), Operation.data(), Error.c_str());
 #endif
 			++Queries; ++ThreadQueries;
@@ -263,7 +282,7 @@ namespace Tangent
 			auto Cursor = Storage->EmplaceQuery(Command, Map, QueryOps, Session);
 #ifdef _DEBUG
 			String Error = ErrorOf(Cursor);
-			if (!Error.empty())
+			if (!Error.empty() && Protocol::Now().User.Storage.Logging)
 				VI_ERR("[indexdb] operation %.*s::%.*s failed: %s", (int)Label.size(), Label.data(), (int)Operation.size(), Operation.data(), Error.c_str());
 #endif
 			++Queries; ++ThreadQueries;
@@ -275,7 +294,7 @@ namespace Tangent
 			auto Cursor = Storage->PreparedQuery(Statement);
 #ifdef _DEBUG
 			String Error = ErrorOf(Cursor);
-			if (!Error.empty())
+			if (!Error.empty() && Protocol::Now().User.Storage.Logging)
 				VI_ERR("[indexdb] operation %.*s::%.*s failed: %s", (int)Label.size(), Label.data(), (int)Operation.size(), Operation.data(), Error.c_str());
 #endif
 			++Queries; ++ThreadQueries;
@@ -291,7 +310,7 @@ namespace Tangent
 			if (!Status.ok())
 			{
 				auto Message = Status.ToString();
-				if (!Status.IsNotFound())
+				if (!Status.IsNotFound() && Protocol::Now().User.Storage.Logging)
 					VI_ERR("[blobdb] operation %.*s::%.*s failed: %s", (int)Label.size(), Label.data(), (int)Operation.size(), Operation.data(), Message.c_str());
 				return LDB::ExpectsDB<String>(LDB::DatabaseException(String(Message.begin(), Message.end())));
 			}
@@ -311,7 +330,7 @@ namespace Tangent
 			if (!Status.ok())
 			{
 				auto Message = Status.ToString();
-				if (!Status.IsNotFound())
+				if (!Status.IsNotFound() && Protocol::Now().User.Storage.Logging)
 					VI_ERR("[blobdb] operation %.*s::%.*s failed: %s", (int)Label.size(), Label.data(), (int)Operation.size(), Operation.data(), Message.c_str());
 				return LDB::DatabaseException(String(Message.begin(), Message.end()));
 			}
@@ -372,6 +391,13 @@ namespace Tangent
 		{
 			Blob = Protocol::Change().Database.LoadBlob(Path);
 			VI_PANIC(Blob, "blob storage connection error (path = %.*s)", (int)Path.size(), Path.data());
+
+			auto Threads = OS::CPU::GetQuantityInfo().Physical;
+			auto Options = Blob->GetOptions();
+			if (Protocol::Now().User.CompactionThreadsRatio > 0.0)
+				Options.env->SetBackgroundThreads((int)std::max(std::ceil(Threads * Protocol::Now().User.CompactionThreadsRatio), 1.0), rocksdb::Env::Priority::LOW);
+			if (Protocol::Now().User.FlushThreadsRatio > 0.0)
+				Options.env->SetBackgroundThreads((int)std::max(std::ceil(Threads * Protocol::Now().User.FlushThreadsRatio), 1.0), rocksdb::Env::Priority::HIGH);
 		}
 		PermanentStorage::operator bool() const
 		{

@@ -12,10 +12,22 @@ namespace Tangent
 		using Pubkey = uint8_t[33];
 		using Pubkeyhash = uint8_t[20];
 
+		struct Endpoint
+		{
+			Location Scheme;
+			SocketAddress Address;
+			bool Secure;
+
+			Endpoint(const std::string_view& URI);
+			bool IsValid() const;
+			static String ToURI(const SocketAddress& Address, const std::string_view& Protocol = "tcp");
+		};
+
 		class Signing
 		{
 		public:
 			static String Mnemonicgen(uint16_t Strength = 256);
+			static uint256_t MessageHash(const std::string_view& InsecureMessage);
 			static void Keygen(Seckey PrivateKey);
 			static bool Recover(const uint256_t& Hash, Pubkey PublicKey, const Sighash Signature);
 			static bool RecoverHash(const uint256_t& Hash, Pubkeyhash PublicKeyHash, const Sighash Signature);

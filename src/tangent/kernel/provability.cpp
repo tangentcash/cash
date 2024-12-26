@@ -282,12 +282,12 @@ namespace Tangent
                     goto Retry;
                 }
 
-                Alg = Adjust(Alg, 0, DeltaTime, AdjustmentInterval());
+                Alg = Adjust(Alg, DeltaTime, AdjustmentInterval());
                 TargetNonce = Confidence;
             }
             return Alg;
         }
-        WesolowskiVDF::Parameters WesolowskiVDF::Adjust(const Parameters& PrevAlg, uint64_t PrevPriority, uint64_t PrevTime, uint64_t TargetIndex)
+        WesolowskiVDF::Parameters WesolowskiVDF::Adjust(const Parameters& PrevAlg, uint64_t PrevTime, uint64_t TargetIndex)
         {
             if (TargetIndex <= 1)
                 return DefaultAlg;
@@ -297,8 +297,6 @@ namespace Tangent
             LeaveAsIs:
                 return (PrevAlg.Difficulty() < DefaultAlg.Difficulty() ? DefaultAlg : PrevAlg);
             }
-            else if (PrevPriority != 0)
-                return PrevAlg;
 
             auto& Policy = Protocol::Now().Policy;
             PrevTime = std::max(Policy.ConsensusProofTime / 4, std::min(Policy.ConsensusProofTime * 4, PrevTime));
@@ -314,7 +312,26 @@ namespace Tangent
             else if (Adjustment < Policy.MaxConsensusDifficultyDecrease)
                 Adjustment = Policy.MaxConsensusDifficultyDecrease;
 
-            NewAlg.Pow = abs((int64_t)NewAlg.Pow + (Decimal(NewAlg.Pow) * Adjustment).ToInt64());
+            uint64_t PowOffset = (Decimal(NewAlg.Pow) * Adjustment).ToUInt64();
+            if (NewAlg.Pow + PowOffset < NewAlg.Pow)
+                NewAlg.Pow = std::numeric_limits<uint64_t>::max();
+            else
+                NewAlg.Pow += PowOffset;
+
+            if (NewAlg.Pow < DefaultAlg.Pow)
+                NewAlg.Pow = DefaultAlg.Pow;
+
+            return (NewAlg.Difficulty() < DefaultAlg.Difficulty() ? DefaultAlg : NewAlg);
+        }
+        WesolowskiVDF::Parameters WesolowskiVDF::Bump(const Parameters& Alg, double Bump)
+        {
+            Parameters NewAlg = Alg;
+            uint64_t NewPow = (Decimal(NewAlg.Pow) * Decimal(Bump)).ToUInt64();
+            if (NewPow < NewAlg.Pow)
+                NewAlg.Pow = std::numeric_limits<uint64_t>::max();
+            else
+                NewAlg.Pow = NewPow;
+
             if (NewAlg.Pow < DefaultAlg.Pow)
                 NewAlg.Pow = DefaultAlg.Pow;
 

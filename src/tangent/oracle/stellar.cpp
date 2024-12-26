@@ -195,6 +195,13 @@ namespace Tangent
 			{
 				if (NewConfig != nullptr)
 					Config = *NewConfig;
+
+				Netdata.Composition = Algorithm::Composition::Type::ED25519;
+				Netdata.Routing = RoutingPolicy::Memo;
+				Netdata.SyncLatency = 1;
+				Netdata.Divisibility = Decimal(10000000).Truncate(Protocol::Now().Message.Precision);
+				Netdata.SupportsTokenTransfer = "sac";
+				Netdata.SupportsBulkTransfer = true;
 			}
 			Promise<ExpectsLR<Stellar::AssetInfo>> Stellar::GetAssetInfo(const Algorithm::AssetId& Asset, const std::string_view& Address, const std::string_view& Code)
 			{
@@ -657,8 +664,16 @@ namespace Tangent
 					Derived->AddressIndex = AddressIndex;
 				return Derived;
 			}
-			ExpectsLR<DerivedSigningWallet> Stellar::NewSigningWallet(const Algorithm::AssetId& Asset, const std::string_view& RawPrivateKey)
+			ExpectsLR<DerivedSigningWallet> Stellar::NewSigningWallet(const Algorithm::AssetId& Asset, const std::string_view& SigningKey)
 			{
+				uint8_t TestPrivateKey[64];
+				size_t TestPrivateKeySize = 32;
+				String RawPrivateKey = String(SigningKey);
+				if (DecodePrivateKey(SigningKey, TestPrivateKey))
+					RawPrivateKey = String((char*)TestPrivateKey, sizeof(TestPrivateKey));
+				else if (DecodeKey(GetParams().Ed25519SecretSeed, SigningKey, TestPrivateKey, &TestPrivateKeySize) && TestPrivateKeySize == 32)
+					RawPrivateKey = String((char*)TestPrivateKey, TestPrivateKeySize);
+
 				if (RawPrivateKey.size() != 32 && RawPrivateKey.size() != 64)
 					return LayerException("invalid private key size");
 
@@ -684,10 +699,17 @@ namespace Tangent
 					DerivedPrivateKey.append(1, ':').append(SecretKey);
 				return ExpectsLR<DerivedSigningWallet>(DerivedSigningWallet(std::move(*Derived), ::PrivateKey(DerivedPrivateKey)));
 			}
-			ExpectsLR<DerivedVerifyingWallet> Stellar::NewVerifyingWallet(const Algorithm::AssetId& Asset, const std::string_view& RawPublicKey)
+			ExpectsLR<DerivedVerifyingWallet> Stellar::NewVerifyingWallet(const Algorithm::AssetId& Asset, const std::string_view& VerifyingKey)
 			{
-				if (RawPublicKey.size() < 32)
-					return LayerException("invalid public key size");
+				String RawPublicKey = String(VerifyingKey);
+				if (RawPublicKey.size() != 32)
+				{
+					uint8_t PublicKey[32]; size_t PublicKeySize = sizeof(PublicKey);
+					if (!DecodeKey(GetParams().Ed25519PublicKey, RawPublicKey, PublicKey, &PublicKeySize) || PublicKeySize != sizeof(PublicKey))
+						return LayerException("invalid public key");
+
+					RawPublicKey = String((char*)PublicKey, sizeof(PublicKey));
+				}
 
 				String PublicKey = EncodeKey(GetParams().Ed25519PublicKey, (uint8_t*)RawPublicKey.data(), RawPublicKey.size());
 				return ExpectsLR<DerivedVerifyingWallet>(DerivedVerifyingWallet({ { (uint8_t)1, PublicKey } }, Optional::None, ::PrivateKey(PublicKey)));
@@ -700,53 +722,48 @@ namespace Tangent
 
 				return String((char*)Data, sizeof(Data));
 			}
-			ExpectsLR<String> Stellar::SignMessage(const Messages::Generic& Message, const DerivedSigningWallet& Wallet)
+			ExpectsLR<String> Stellar::SignMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const PrivateKey& SigningKey)
 			{
+				auto SigningWallet = NewSigningWallet(Asset, SigningKey.ExposeToHeap());
+				if (!SigningWallet)
+					return SigningWallet.Error();
+
 				uint8_t DerivedPrivateKey[64];
-				if (!DecodePrivateKey(Wallet.SigningKey.ExposeToHeap(), DerivedPrivateKey))
+				auto Private = SigningWallet->SigningKey.Expose<2048>();
+				if (!DecodePrivateKey(Private.Key, DerivedPrivateKey))
 					return LayerException("private key invalid");
 
-				auto MessageBlob = Message.AsMessage();
 				ed25519_signature Signature;
-				ed25519_sign_ext((uint8_t*)MessageBlob.Data.data(), MessageBlob.Data.size(), DerivedPrivateKey, DerivedPrivateKey + 32, Signature);
+				ed25519_sign_ext((uint8_t*)Message.data(), Message.size(), DerivedPrivateKey, DerivedPrivateKey + 32, Signature);
 				return String((char*)Signature, sizeof(Signature));
 			}
-			ExpectsLR<bool> Stellar::VerifyMessage(const Messages::Generic& Message, const std::string_view& Address, const std::string_view& PublicKey, const std::string_view& Signature)
+			ExpectsLR<void> Stellar::VerifyMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const std::string_view& VerifyingKey, const std::string_view& Signature)
 			{
 				if (Signature.size() < 64)
 					return LayerException("signature invalid");
 
+				auto VerifyingWallet = NewVerifyingWallet(Asset, VerifyingKey);
+				if (!VerifyingWallet)
+					return VerifyingWallet.Error();
+
 				auto& Params = GetParams();
+				auto Public = VerifyingWallet->VerifyingKey.Expose<2048>();
 				uint8_t DerivedPublicKey[256]; size_t DerivedPublicKeySize = sizeof(DerivedPublicKey);
-				if (!DecodeKey(Params.Ed25519PublicKey, PublicKey, DerivedPublicKey, &DerivedPublicKeySize))
+				if (!DecodeKey(Params.Ed25519PublicKey, Public.Key, DerivedPublicKey, &DerivedPublicKeySize))
 					return LayerException("public key invalid");
 
-				auto MessageBlob = Message.AsMessage();
-				return crypto_sign_verify_detached((uint8_t*)Signature.data(), (uint8_t*)MessageBlob.Data.data(), MessageBlob.Data.size(), DerivedPublicKey) == 0;
+				if (crypto_sign_verify_detached((uint8_t*)Signature.data(), (uint8_t*)Message.data(), Message.size(), DerivedPublicKey) != 0)
+					return LayerException("signature verification failed with used public key");
+
+				return Expectation::Met;
 			}
 			String Stellar::GetDerivation(uint64_t AddressIndex) const
 			{
 				return Stringify::Text(Protocol::Now().Is(NetworkType::Mainnet) ? "m/44'/148'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, AddressIndex);
 			}
-			Decimal Stellar::GetDivisibility() const
+			const Stellar::Chainparams& Stellar::GetChainparams() const
 			{
-				return 10000000;
-			}
-			Algorithm::Composition::Type Stellar::GetCompositionPolicy() const
-			{
-				return Algorithm::Composition::Type::ED25519;
-			}
-			RoutingPolicy Stellar::GetRoutingPolicy() const
-			{
-				return RoutingPolicy::Memo;
-			}
-			uint64_t Stellar::GetBlockLatency() const
-			{
-				return 1;
-			}
-			bool Stellar::HasBulkTransactions() const
-			{
-				return true;
+				return Netdata;
 			}
 			String Stellar::GetNetworkPassphrase()
 			{
@@ -765,11 +782,11 @@ namespace Tangent
 			}
 			Decimal Stellar::FromStroop(const uint256_t& Value)
 			{
-				return Decimal(Value.ToString()) / GetDivisibility().Truncate(Protocol::Now().Message.Precision);
+				return Decimal(Value.ToString()) / Netdata.Divisibility;
 			}
 			uint256_t Stellar::ToStroop(const Decimal& Value)
 			{
-				return uint256_t((Value * GetDivisibility()).Truncate(0).ToString());
+				return uint256_t((Value * Netdata.Divisibility).Truncate(0).ToString());
 			}
 			uint64_t Stellar::GetBaseStroopFee()
 			{

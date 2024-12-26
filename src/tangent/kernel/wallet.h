@@ -53,13 +53,34 @@ namespace Tangent
 			static Wallet FromPublicKeyHash(const Algorithm::Pubkeyhash Key);
 		};
 
-		struct Edge final : Messages::Generic
+		struct Validator final : Messages::Generic
 		{
-			String Address;
-			uint64_t Requests = 0;
-			uint64_t Errors = 0;
-			uint64_t Timestamp = 0;
-			uint64_t Latency = (uint64_t)std::numeric_limits<int64_t>::max();
+			struct
+			{
+				uint64_t Latency = (uint64_t)std::numeric_limits<int64_t>::max();
+				uint64_t Timestamp = 0;
+				uint64_t Calls = 0;
+				uint64_t Errors = 0;
+			} Availability;
+
+			struct
+			{
+				uint16_t P2P = 0;
+				uint16_t NDS = 0;
+				uint16_t RPC = 0;
+			} Ports;
+
+			struct
+			{
+				bool Consensus = false;
+				bool Discovery = false;
+				bool Interface = false;
+				bool Proposer = false;
+				bool Public = false;
+				bool Streaming = false;
+			} Services;
+
+			SocketAddress Address;
 
 			bool StorePayload(Format::Stream* Stream) const override;
 			bool LoadPayload(Format::Stream& Stream) override;

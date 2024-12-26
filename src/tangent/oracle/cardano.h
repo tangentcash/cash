@@ -28,8 +28,11 @@ namespace Tangent
 					size_t TotalSize = 0;
 				} TxAnalytics;
 
+			protected:
+				Chainparams Netdata;
+
 			public:
-				Cardano() noexcept = default;
+				Cardano() noexcept;
 				virtual ~Cardano() noexcept = default;
 				virtual Promise<ExpectsLR<void>> BroadcastTransaction(const Algorithm::AssetId& Asset, const OutgoingTransaction& TxData) override;
 				virtual Promise<ExpectsLR<uint64_t>> GetLatestBlockHeight(const Algorithm::AssetId& Asset) override;
@@ -42,22 +45,18 @@ namespace Tangent
 				virtual Promise<ExpectsLR<OutgoingTransaction>> NewTransaction(const Algorithm::AssetId& Asset, const DynamicWallet& Wallet, const Vector<Transferer>& To, const BaseFee& Fee) override;
 				virtual ExpectsLR<MasterWallet> NewMasterWallet(const std::string_view& Seed) override;
 				virtual ExpectsLR<DerivedSigningWallet> NewSigningWallet(const Algorithm::AssetId& Asset, const MasterWallet& Wallet, uint64_t AddressIndex) override;
-				virtual ExpectsLR<DerivedSigningWallet> NewSigningWallet(const Algorithm::AssetId& Asset, const std::string_view& RawPrivateKey) override;
-				virtual ExpectsLR<DerivedVerifyingWallet> NewVerifyingWallet(const Algorithm::AssetId& Asset, const std::string_view& RawPublicKey) override;
+				virtual ExpectsLR<DerivedSigningWallet> NewSigningWallet(const Algorithm::AssetId& Asset, const std::string_view& SigningKey) override;
+				virtual ExpectsLR<DerivedVerifyingWallet> NewVerifyingWallet(const Algorithm::AssetId& Asset, const std::string_view& VerifyingKey) override;
 				virtual ExpectsLR<String> NewPublicKeyHash(const std::string_view& Address) override;
-				virtual ExpectsLR<String> SignMessage(const Messages::Generic& Message, const DerivedSigningWallet& Wallet) override;
-				virtual ExpectsLR<bool> VerifyMessage(const Messages::Generic& Message, const std::string_view& Address, const std::string_view& PublicKey, const std::string_view& Signature) override;
+				virtual ExpectsLR<String> SignMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const PrivateKey& SigningKey) override;
+				virtual ExpectsLR<void> VerifyMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const std::string_view& VerifyingKey, const std::string_view& Signature) override;
 				virtual ExpectsLR<void> VerifyNodeCompatibility(Nodemaster* Node) override;
 				virtual String GetDerivation(uint64_t AddressIndex) const override;
-				virtual Decimal GetDivisibility() const override;
-				virtual Algorithm::Composition::Type GetCompositionPolicy() const override;
-				virtual RoutingPolicy GetRoutingPolicy() const override;
-				virtual uint64_t GetBlockLatency() const override;
-				virtual bool HasBulkTransactions() const override;
+				virtual const Chainparams& GetChainparams() const override;
 
 			public:
-				virtual bool DecodePrivateKey(const std::string_view& Data, uint8_t PrivateKey[96]);
-				virtual bool DecodePublicKey(const std::string_view& Data, uint8_t PublicKey[64]);
+				virtual bool DecodePrivateKey(const std::string_view& Data, uint8_t PrivateKey[96], size_t* PrivateKeySize);
+				virtual bool DecodePublicKey(const std::string_view& Data, uint8_t PublicKey[64], size_t* PublicKeySize);
 				virtual Decimal GetMinValuePerOutput();
 				virtual uint256_t ToLovelace(const Decimal& Value);
 				virtual uint64_t GetMinProtocolFeeA();

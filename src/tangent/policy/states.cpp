@@ -8,12 +8,12 @@ namespace Tangent
 {
 	namespace States
 	{
-		AccountSequence::AccountSequence(const Algorithm::Pubkeyhash NewOwner, uint64_t NewBlockNumber, uint64_t NewBlockNonce) : Ledger::State(NewBlockNumber, NewBlockNonce), Sequence(0)
+		AccountSequence::AccountSequence(const Algorithm::Pubkeyhash NewOwner, uint64_t NewBlockNumber, uint64_t NewBlockNonce) : Ledger::Uniform(NewBlockNumber, NewBlockNonce), Sequence(0)
 		{
 			if (NewOwner)
 				memcpy(Owner, NewOwner, sizeof(Owner));
 		}
-		AccountSequence::AccountSequence(const Algorithm::Pubkeyhash NewOwner, const Ledger::BlockHeader* NewBlockHeader) : Ledger::State(NewBlockHeader), Sequence(0)
+		AccountSequence::AccountSequence(const Algorithm::Pubkeyhash NewOwner, const Ledger::BlockHeader* NewBlockHeader) : Ledger::Uniform(NewBlockHeader), Sequence(0)
 		{
 			if (NewOwner)
 				memcpy(Owner, NewOwner, sizeof(Owner));
@@ -64,7 +64,7 @@ namespace Tangent
 		}
 		UPtr<Schema> AccountSequence::AsSchema() const
 		{
-			Schema* Data = Ledger::State::AsSchema().Reset();
+			Schema* Data = Ledger::Uniform::AsSchema().Reset();
 			Data->Set("owner", Algorithm::Signing::SerializeAddress(Owner));
 			Data->Set("sequence", Algorithm::Encoding::SerializeUint256(Sequence));
 			return Data;
@@ -77,17 +77,9 @@ namespace Tangent
 		{
 			return AsInstanceTypename();
 		}
-		int64_t AccountSequence::AsWeight() const
+		String AccountSequence::AsIndex() const
 		{
-			return Sequence > (uint64_t)std::numeric_limits<int64_t>::max() ? std::numeric_limits<int64_t>::max() : Sequence;
-		}
-		String AccountSequence::AsAddress() const
-		{
-			return AsInstanceAddress(Owner);
-		}
-		String AccountSequence::AsStride() const
-		{
-			return AsInstanceStride();
+			return AsInstanceIndex(Owner);
 		}
 		uint32_t AccountSequence::AsInstanceType()
 		{
@@ -98,26 +90,20 @@ namespace Tangent
 		{
 			return "account_sequence";
 		}
-		String AccountSequence::AsInstanceAddress(const Algorithm::Pubkeyhash Owner)
+		String AccountSequence::AsInstanceIndex(const Algorithm::Pubkeyhash Owner)
 		{
 			Format::Stream Stream;
 			Stream.WriteTypeless(AsInstanceType());
 			Stream.WriteTypeless((char*)Owner, (uint8_t)sizeof(Algorithm::Pubkeyhash));
 			return std::move(Stream.Data);
 		}
-		String AccountSequence::AsInstanceStride()
-		{
-			Format::Stream Stream;
-			Stream.WriteTypeless(AsInstanceType());
-			return std::move(Stream.Data);
-		}
 
-		AccountWork::AccountWork(const Algorithm::Pubkeyhash NewOwner, uint64_t NewBlockNumber, uint64_t NewBlockNonce) : Ledger::State(NewBlockNumber, NewBlockNonce), GasInput(0), GasOutput(0), Penalty(0)
+		AccountWork::AccountWork(const Algorithm::Pubkeyhash NewOwner, uint64_t NewBlockNumber, uint64_t NewBlockNonce) : Ledger::Multiform(NewBlockNumber, NewBlockNonce), GasInput(0), GasOutput(0), Penalty(0)
 		{
 			if (NewOwner)
 				memcpy(Owner, NewOwner, sizeof(Owner));
 		}
-		AccountWork::AccountWork(const Algorithm::Pubkeyhash NewOwner, const Ledger::BlockHeader* NewBlockHeader) : Ledger::State(NewBlockHeader), GasInput(0), GasOutput(0), Penalty(0)
+		AccountWork::AccountWork(const Algorithm::Pubkeyhash NewOwner, const Ledger::BlockHeader* NewBlockHeader) : Ledger::Multiform(NewBlockHeader), GasInput(0), GasOutput(0), Penalty(0)
 		{
 			if (NewOwner)
 				memcpy(Owner, NewOwner, sizeof(Owner));
@@ -134,11 +120,11 @@ namespace Tangent
 				uint256_t GasOutputChange = GasOutput + Prev->GasOutput;
 				GasInput = (GasInputChange >= GasInput ? GasInputChange : uint256_t::Max());
 				GasOutput = (GasOutputChange >= GasOutput ? GasOutputChange : uint256_t::Max());
-				if (Status == 0)
+				if (Status == Ledger::WorkStatus::Standby)
 					Status = Prev->Status;
 			}
 			
-			if (Status == 0)
+			if (Status == Ledger::WorkStatus::Standby)
 				return LayerException("invalid status");
 
 			if (GasOutput > GasInput)
@@ -186,7 +172,7 @@ namespace Tangent
 		}
 		bool AccountWork::IsOnline() const
 		{
-			return BlockNumber > Penalty && Status > 0;
+			return BlockNumber > Penalty && Status == Ledger::WorkStatus::Online;
 		}
 		bool AccountWork::IsOwnerNull() const
 		{
@@ -197,16 +183,20 @@ namespace Tangent
 		{
 			return GasInput - GasOutput;
 		}
+		uint64_t AccountWork::GetClosestProposalBlockNumber() const
+		{
+			return std::max(BlockNumber + 1, Penalty);
+		}
 		UPtr<Schema> AccountWork::AsSchema() const
 		{
-			Schema* Data = Ledger::State::AsSchema().Reset();
+			Schema* Data = Ledger::Multiform::AsSchema().Reset();
 			Data->Set("owner", Algorithm::Signing::SerializeAddress(Owner));
 			Data->Set("gas_input", Algorithm::Encoding::SerializeUint256(GasInput));
 			Data->Set("gas_output", Algorithm::Encoding::SerializeUint256(GasOutput));
 			Data->Set("gas_use", Algorithm::Encoding::SerializeUint256(GetGasUse()));
 			Data->Set("penalty", Algorithm::Encoding::SerializeUint256(Penalty));
 			Data->Set("online", Var::Boolean(IsOnline()));
-			Data->Set("status", Var::Integer(Status));
+			Data->Set("status", Var::Integer((int64_t)Status));
 			return Data;
 		}
 		uint32_t AccountWork::AsType() const
@@ -217,7 +207,7 @@ namespace Tangent
 		{
 			return AsInstanceTypename();
 		}
-		int64_t AccountWork::AsWeight() const
+		int64_t AccountWork::AsFactor() const
 		{
 			if (!IsOnline())
 				return -1;
@@ -225,13 +215,13 @@ namespace Tangent
 			auto GasUse = GetGasUse() / 100;
 			return GasUse > std::numeric_limits<int64_t>::max() ? std::numeric_limits<int64_t>::max() : (int64_t)(uint64_t)GasUse;
 		}
-		String AccountWork::AsAddress() const
+		String AccountWork::AsColumn() const
 		{
-			return AsInstanceAddress(Owner);
+			return AsInstanceColumn(Owner);
 		}
-		String AccountWork::AsStride() const
+		String AccountWork::AsRow() const
 		{
-			return AsInstanceStride();
+			return AsInstanceRow();
 		}
 		uint32_t AccountWork::AsInstanceType()
 		{
@@ -242,14 +232,14 @@ namespace Tangent
 		{
 			return "account_work";
 		}
-		String AccountWork::AsInstanceAddress(const Algorithm::Pubkeyhash Owner)
+		String AccountWork::AsInstanceColumn(const Algorithm::Pubkeyhash Owner)
 		{
 			Format::Stream Stream;
 			Stream.WriteTypeless(AsInstanceType());
 			Stream.WriteTypeless((char*)Owner, (uint8_t)sizeof(Algorithm::Pubkeyhash));
 			return std::move(Stream.Data);
 		}
-		String AccountWork::AsInstanceStride()
+		String AccountWork::AsInstanceRow()
 		{
 			Format::Stream Stream;
 			Stream.WriteTypeless(AsInstanceType());
@@ -277,12 +267,122 @@ namespace Tangent
 			return GasPaid < GasUse ? GasUse - GasPaid : 0;
 		}
 
-		AccountProgram::AccountProgram(const Algorithm::Pubkeyhash NewOwner, uint64_t NewBlockNumber, uint64_t NewBlockNonce) : Ledger::State(NewBlockNumber, NewBlockNonce)
+		AccountObserver::AccountObserver(const Algorithm::Pubkeyhash NewOwner, uint64_t NewBlockNumber, uint64_t NewBlockNonce) : Ledger::Multiform(NewBlockNumber, NewBlockNonce)
 		{
 			if (NewOwner)
 				memcpy(Owner, NewOwner, sizeof(Owner));
 		}
-		AccountProgram::AccountProgram(const Algorithm::Pubkeyhash NewOwner, const Ledger::BlockHeader* NewBlockHeader) : Ledger::State(NewBlockHeader)
+		AccountObserver::AccountObserver(const Algorithm::Pubkeyhash NewOwner, const Ledger::BlockHeader* NewBlockHeader) : Ledger::Multiform(NewBlockHeader)
+		{
+			if (NewOwner)
+				memcpy(Owner, NewOwner, sizeof(Owner));
+		}
+		ExpectsLR<void> AccountObserver::Transition(const Ledger::TransactionContext* Context, const Ledger::State* PrevState)
+		{
+			if (IsOwnerNull())
+				return LayerException("invalid state owner");
+
+			auto* Prev = (AccountObserver*)PrevState;
+			if (Prev != nullptr && Status == Ledger::WorkStatus::Standby)
+				Status = Prev->Status;
+			else if (!Prev && !(Algorithm::Asset::IsValid(Asset) && Algorithm::Asset::TokenOf(Asset).empty()))
+				return LayerException("invalid asset");		
+			
+			if (Status == Ledger::WorkStatus::Standby)
+				return LayerException("invalid status");
+
+			return Expectation::Met;
+		}
+		bool AccountObserver::StorePayload(Format::Stream* Stream) const
+		{
+			VI_ASSERT(Stream != nullptr, "stream should be set");
+			Algorithm::Pubkeyhash Null = { 0 };
+			Stream->WriteString(std::string_view((char*)Owner, memcmp(Owner, Null, sizeof(Null)) == 0 ? 0 : sizeof(Owner)));
+			Stream->WriteInteger(Asset);
+			Stream->WriteInteger((uint8_t)Status);
+			return true;
+		}
+		bool AccountObserver::LoadPayload(Format::Stream& Stream)
+		{
+			String OwnerAssembly;
+			if (!Stream.ReadString(Stream.ReadType(), &OwnerAssembly) || !Algorithm::Encoding::DecodeUintBlob(OwnerAssembly, Owner, sizeof(Owner)))
+				return false;
+
+			if (!Stream.ReadInteger(Stream.ReadType(), &Asset))
+				return false;
+
+			if (!Stream.ReadInteger(Stream.ReadType(), (uint8_t*)&Status))
+				return false;
+
+			return true;
+		}
+		bool AccountObserver::IsOnline() const
+		{
+			return Status == Ledger::WorkStatus::Online;
+		}
+		bool AccountObserver::IsOwnerNull() const
+		{
+			Algorithm::Pubkeyhash Null = { 0 };
+			return !memcmp(Owner, Null, sizeof(Null));
+		}
+		UPtr<Schema> AccountObserver::AsSchema() const
+		{
+			Schema* Data = Ledger::Multiform::AsSchema().Reset();
+			Data->Set("owner", Algorithm::Signing::SerializeAddress(Owner));
+			Data->Set("online", Var::Boolean(IsOnline()));
+			Data->Set("status", Var::Integer((int64_t)Status));
+			return Data;
+		}
+		uint32_t AccountObserver::AsType() const
+		{
+			return AsInstanceType();
+		}
+		std::string_view AccountObserver::AsTypename() const
+		{
+			return AsInstanceTypename();
+		}
+		int64_t AccountObserver::AsFactor() const
+		{
+			return (int64_t)Status;
+		}
+		String AccountObserver::AsColumn() const
+		{
+			return AsInstanceColumn(Owner);
+		}
+		String AccountObserver::AsRow() const
+		{
+			return AsInstanceRow(Asset);
+		}
+		uint32_t AccountObserver::AsInstanceType()
+		{
+			static uint32_t Hash = Types::TypeOf(AsInstanceTypename());
+			return Hash;
+		}
+		std::string_view AccountObserver::AsInstanceTypename()
+		{
+			return "account_observer";
+		}
+		String AccountObserver::AsInstanceColumn(const Algorithm::Pubkeyhash Owner)
+		{
+			Format::Stream Stream;
+			Stream.WriteTypeless(AsInstanceType());
+			Stream.WriteTypeless((char*)Owner, (uint8_t)sizeof(Algorithm::Pubkeyhash));
+			return std::move(Stream.Data);
+		}
+		String AccountObserver::AsInstanceRow(const Algorithm::AssetId& Asset)
+		{
+			Format::Stream Stream;
+			Stream.WriteTypeless(AsInstanceType());
+			Stream.WriteTypeless(Asset);
+			return std::move(Stream.Data);
+		}
+
+		AccountProgram::AccountProgram(const Algorithm::Pubkeyhash NewOwner, uint64_t NewBlockNumber, uint64_t NewBlockNonce) : Ledger::Uniform(NewBlockNumber, NewBlockNonce)
+		{
+			if (NewOwner)
+				memcpy(Owner, NewOwner, sizeof(Owner));
+		}
+		AccountProgram::AccountProgram(const Algorithm::Pubkeyhash NewOwner, const Ledger::BlockHeader* NewBlockHeader) : Ledger::Uniform(NewBlockHeader)
 		{
 			if (NewOwner)
 				memcpy(Owner, NewOwner, sizeof(Owner));
@@ -320,7 +420,7 @@ namespace Tangent
 		}
 		UPtr<Schema> AccountProgram::AsSchema() const
 		{
-			Schema* Data = Ledger::State::AsSchema().Reset();
+			Schema* Data = Ledger::Uniform::AsSchema().Reset();
 			Data->Set("owner", Algorithm::Signing::SerializeAddress(Owner));
 			Data->Set("hashcode", Var::String(Format::Util::Encode0xHex(Hashcode)));
 			return Data;
@@ -333,17 +433,9 @@ namespace Tangent
 		{
 			return AsInstanceTypename();
 		}
-		int64_t AccountProgram::AsWeight() const
+		String AccountProgram::AsIndex() const
 		{
-			return Hashcode.empty() ? 1 : 0;
-		}
-		String AccountProgram::AsAddress() const
-		{
-			return AsInstanceAddress(Owner);
-		}
-		String AccountProgram::AsStride() const
-		{
-			return AsInstanceStride();
+			return AsInstanceIndex(Owner);
 		}
 		uint32_t AccountProgram::AsInstanceType()
 		{
@@ -354,26 +446,20 @@ namespace Tangent
 		{
 			return "account_program";
 		}
-		String AccountProgram::AsInstanceAddress(const Algorithm::Pubkeyhash Owner)
+		String AccountProgram::AsInstanceIndex(const Algorithm::Pubkeyhash Owner)
 		{
 			Format::Stream Stream;
 			Stream.WriteTypeless(AsInstanceType());
 			Stream.WriteTypeless((char*)Owner, (uint8_t)sizeof(Algorithm::Pubkeyhash));
 			return std::move(Stream.Data);
 		}
-		String AccountProgram::AsInstanceStride()
-		{
-			Format::Stream Stream;
-			Stream.WriteTypeless(AsInstanceType());
-			return std::move(Stream.Data);
-		}
 
-		AccountStorage::AccountStorage(const Algorithm::Pubkeyhash NewOwner, uint64_t NewBlockNumber, uint64_t NewBlockNonce) : Ledger::State(NewBlockNumber, NewBlockNonce)
+		AccountStorage::AccountStorage(const Algorithm::Pubkeyhash NewOwner, uint64_t NewBlockNumber, uint64_t NewBlockNonce) : Ledger::Uniform(NewBlockNumber, NewBlockNonce)
 		{
 			if (NewOwner)
 				memcpy(Owner, NewOwner, sizeof(Owner));
 		}
-		AccountStorage::AccountStorage(const Algorithm::Pubkeyhash NewOwner, const Ledger::BlockHeader* NewBlockHeader) : Ledger::State(NewBlockHeader)
+		AccountStorage::AccountStorage(const Algorithm::Pubkeyhash NewOwner, const Ledger::BlockHeader* NewBlockHeader) : Ledger::Uniform(NewBlockHeader)
 		{
 			if (NewOwner)
 				memcpy(Owner, NewOwner, sizeof(Owner));
@@ -418,7 +504,7 @@ namespace Tangent
 		}
 		UPtr<Schema> AccountStorage::AsSchema() const
 		{
-			Schema* Data = Ledger::State::AsSchema().Reset();
+			Schema* Data = Ledger::Uniform::AsSchema().Reset();
 			Data->Set("owner", Algorithm::Signing::SerializeAddress(Owner));
 			Data->Set("location", Var::String(Format::Util::Encode0xHex(Location)));
 			Data->Set("storage", Var::String(Format::Util::Encode0xHex(Storage)));
@@ -432,17 +518,9 @@ namespace Tangent
 		{
 			return AsInstanceTypename();
 		}
-		int64_t AccountStorage::AsWeight() const
+		String AccountStorage::AsIndex() const
 		{
-			return 0;
-		}
-		String AccountStorage::AsAddress() const
-		{
-			return AsInstanceAddress(Owner);
-		}
-		String AccountStorage::AsStride() const
-		{
-			return AsInstanceStride(Location);
+			return AsInstanceIndex(Owner, Location);
 		}
 		uint32_t AccountStorage::AsInstanceType()
 		{
@@ -453,28 +531,22 @@ namespace Tangent
 		{
 			return "account_storage";
 		}
-		String AccountStorage::AsInstanceAddress(const Algorithm::Pubkeyhash Owner)
-		{
-			Format::Stream Stream;
-			Stream.WriteTypeless(AsInstanceType());
-			Stream.WriteTypeless((char*)Owner, (uint8_t)sizeof(Algorithm::Pubkeyhash));
-			return std::move(Stream.Data);
-		}
-		String AccountStorage::AsInstanceStride(const std::string_view& Location)
+		String AccountStorage::AsInstanceIndex(const Algorithm::Pubkeyhash Owner, const std::string_view& Location)
 		{
 			auto Data = Format::Util::IsHexEncoding(Location) ? Codec::HexDecode(Location) : String(Location);
 			Format::Stream Stream;
 			Stream.WriteTypeless(AsInstanceType());
+			Stream.WriteTypeless((char*)Owner, (uint8_t)sizeof(Algorithm::Pubkeyhash));
 			Stream.WriteTypeless((char*)Data.data(), (uint8_t)Data.size());
 			return std::move(Stream.Data);
 		}
 
-		AccountReward::AccountReward(const Algorithm::Pubkeyhash NewOwner, uint64_t NewBlockNumber, uint64_t NewBlockNonce) : Ledger::State(NewBlockNumber, NewBlockNonce)
+		AccountReward::AccountReward(const Algorithm::Pubkeyhash NewOwner, uint64_t NewBlockNumber, uint64_t NewBlockNonce) : Ledger::Multiform(NewBlockNumber, NewBlockNonce)
 		{
 			if (NewOwner)
 				memcpy(Owner, NewOwner, sizeof(Owner));
 		}
-		AccountReward::AccountReward(const Algorithm::Pubkeyhash NewOwner, const Ledger::BlockHeader* NewBlockHeader) : Ledger::State(NewBlockHeader)
+		AccountReward::AccountReward(const Algorithm::Pubkeyhash NewOwner, const Ledger::BlockHeader* NewBlockHeader) : Ledger::Multiform(NewBlockHeader)
 		{
 			if (NewOwner)
 				memcpy(Owner, NewOwner, sizeof(Owner));
@@ -584,7 +656,7 @@ namespace Tangent
 		}
 		UPtr<Schema> AccountReward::AsSchema() const
 		{
-			Schema* Data = Ledger::State::AsSchema().Reset();
+			Schema* Data = Ledger::Multiform::AsSchema().Reset();
 			Data->Set("owner", Algorithm::Signing::SerializeAddress(Owner));
 			Data->Set("asset", Algorithm::Asset::Serialize(Asset));
 			Data->Set("incoming_absolute_fee", Var::Decimal(IncomingAbsoluteFee));
@@ -601,7 +673,7 @@ namespace Tangent
 		{
 			return AsInstanceTypename();
 		}
-		int64_t AccountReward::AsWeight() const
+		int64_t AccountReward::AsFactor() const
 		{
 			Decimal AbsoluteFee = IncomingAbsoluteFee + OutgoingAbsoluteFee;
 			Decimal RelativeFee = IncomingRelativeFee + OutgoingRelativeFee + 1.0;
@@ -609,13 +681,13 @@ namespace Tangent
 			AbsoluteFee *= Protocol::Now().Policy.WeightMultiplier;
 			return std::numeric_limits<int64_t>::max() - AbsoluteFee.ToInt64();
 		}
-		String AccountReward::AsAddress() const
+		String AccountReward::AsColumn() const
 		{
-			return AsInstanceAddress(Owner);
+			return AsInstanceColumn(Owner);
 		}
-		String AccountReward::AsStride() const
+		String AccountReward::AsRow() const
 		{
-			return AsInstanceStride(Asset);
+			return AsInstanceRow(Asset);
 		}
 		uint32_t AccountReward::AsInstanceType()
 		{
@@ -626,14 +698,14 @@ namespace Tangent
 		{
 			return "account_reward";
 		}
-		String AccountReward::AsInstanceAddress(const Algorithm::Pubkeyhash Owner)
+		String AccountReward::AsInstanceColumn(const Algorithm::Pubkeyhash Owner)
 		{
 			Format::Stream Stream;
 			Stream.WriteTypeless(AsInstanceType());
 			Stream.WriteTypeless((char*)Owner, (uint8_t)sizeof(Algorithm::Pubkeyhash));
 			return std::move(Stream.Data);
 		}
-		String AccountReward::AsInstanceStride(const Algorithm::AssetId& Asset)
+		String AccountReward::AsInstanceRow(const Algorithm::AssetId& Asset)
 		{
 			Format::Stream Stream;
 			Stream.WriteTypeless(AsInstanceType());
@@ -641,12 +713,12 @@ namespace Tangent
 			return std::move(Stream.Data);
 		}
 
-		AccountDerivation::AccountDerivation(const Algorithm::Pubkeyhash NewOwner, uint64_t NewBlockNumber, uint64_t NewBlockNonce) : Ledger::State(NewBlockNumber, NewBlockNonce), Asset(0), MaxAddressIndex(0)
+		AccountDerivation::AccountDerivation(const Algorithm::Pubkeyhash NewOwner, uint64_t NewBlockNumber, uint64_t NewBlockNonce) : Ledger::Uniform(NewBlockNumber, NewBlockNonce), Asset(0), MaxAddressIndex(0)
 		{
 			if (NewOwner)
 				memcpy(Owner, NewOwner, sizeof(Owner));
 		}
-		AccountDerivation::AccountDerivation(const Algorithm::Pubkeyhash NewOwner, const Ledger::BlockHeader* NewBlockHeader) : Ledger::State(NewBlockHeader), Asset(0), MaxAddressIndex(0)
+		AccountDerivation::AccountDerivation(const Algorithm::Pubkeyhash NewOwner, const Ledger::BlockHeader* NewBlockHeader) : Ledger::Uniform(NewBlockHeader), Asset(0), MaxAddressIndex(0)
 		{
 			if (NewOwner)
 				memcpy(Owner, NewOwner, sizeof(Owner));
@@ -694,7 +766,7 @@ namespace Tangent
 		}
 		UPtr<Schema> AccountDerivation::AsSchema() const
 		{
-			Schema* Data = Ledger::State::AsSchema().Reset();
+			Schema* Data = Ledger::Uniform::AsSchema().Reset();
 			Data->Set("owner", Algorithm::Signing::SerializeAddress(Owner));
 			Data->Set("asset", Algorithm::Asset::Serialize(Asset));
 			Data->Set("max_address_index", Algorithm::Encoding::SerializeUint256(MaxAddressIndex));
@@ -708,17 +780,9 @@ namespace Tangent
 		{
 			return AsInstanceTypename();
 		}
-		int64_t AccountDerivation::AsWeight() const
+		String AccountDerivation::AsIndex() const
 		{
-			return 0;
-		}
-		String AccountDerivation::AsAddress() const
-		{
-			return AsInstanceAddress(Owner);
-		}
-		String AccountDerivation::AsStride() const
-		{
-			return AsInstanceStride(Asset);
+			return AsInstanceIndex(Owner, Asset);
 		}
 		uint32_t AccountDerivation::AsInstanceType()
 		{
@@ -729,27 +793,21 @@ namespace Tangent
 		{
 			return "account_derivation";
 		}
-		String AccountDerivation::AsInstanceAddress(const Algorithm::Pubkeyhash Owner)
+		String AccountDerivation::AsInstanceIndex(const Algorithm::Pubkeyhash Owner, const Algorithm::AssetId& Asset)
 		{
 			Format::Stream Stream;
 			Stream.WriteTypeless(AsInstanceType());
 			Stream.WriteTypeless((char*)Owner, (uint8_t)sizeof(Algorithm::Pubkeyhash));
-			return std::move(Stream.Data);
-		}
-		String AccountDerivation::AsInstanceStride(const Algorithm::AssetId& Asset)
-		{
-			Format::Stream Stream;
-			Stream.WriteTypeless(AsInstanceType());
 			Stream.WriteTypeless(Asset);
 			return std::move(Stream.Data);
 		}
 
-		AccountBalance::AccountBalance(const Algorithm::Pubkeyhash NewOwner, uint64_t NewBlockNumber, uint64_t NewBlockNonce) : Ledger::State(NewBlockNumber, NewBlockNonce), Asset(0)
+		AccountBalance::AccountBalance(const Algorithm::Pubkeyhash NewOwner, uint64_t NewBlockNumber, uint64_t NewBlockNonce) : Ledger::Multiform(NewBlockNumber, NewBlockNonce), Asset(0)
 		{
 			if (NewOwner)
 				memcpy(Owner, NewOwner, sizeof(Owner));
 		}
-		AccountBalance::AccountBalance(const Algorithm::Pubkeyhash NewOwner, const Ledger::BlockHeader* NewBlockHeader) : Ledger::State(NewBlockHeader), Asset(0)
+		AccountBalance::AccountBalance(const Algorithm::Pubkeyhash NewOwner, const Ledger::BlockHeader* NewBlockHeader) : Ledger::Multiform(NewBlockHeader), Asset(0)
 		{
 			if (NewOwner)
 				memcpy(Owner, NewOwner, sizeof(Owner));
@@ -824,7 +882,7 @@ namespace Tangent
 		}
 		UPtr<Schema> AccountBalance::AsSchema() const
 		{
-			Schema* Data = Ledger::State::AsSchema().Reset();
+			Schema* Data = Ledger::Multiform::AsSchema().Reset();
 			Data->Set("owner", Algorithm::Signing::SerializeAddress(Owner));
 			Data->Set("asset", Algorithm::Asset::Serialize(Asset));
 			Data->Set("supply", Var::Decimal(Supply));
@@ -840,19 +898,19 @@ namespace Tangent
 		{
 			return AsInstanceTypename();
 		}
-		int64_t AccountBalance::AsWeight() const
+		int64_t AccountBalance::AsFactor() const
 		{
 			auto Balance = GetBalance();
 			Balance *= Protocol::Now().Policy.WeightMultiplier;
 			return Balance.ToUInt64();
 		}
-		String AccountBalance::AsAddress() const
+		String AccountBalance::AsColumn() const
 		{
-			return AsInstanceAddress(Owner);
+			return AsInstanceColumn(Owner);
 		}
-		String AccountBalance::AsStride() const
+		String AccountBalance::AsRow() const
 		{
-			return AsInstanceStride(Asset);
+			return AsInstanceRow(Asset);
 		}
 		uint32_t AccountBalance::AsInstanceType()
 		{
@@ -863,14 +921,14 @@ namespace Tangent
 		{
 			return "account_balance";
 		}
-		String AccountBalance::AsInstanceAddress(const Algorithm::Pubkeyhash Owner)
+		String AccountBalance::AsInstanceColumn(const Algorithm::Pubkeyhash Owner)
 		{
 			Format::Stream Stream;
 			Stream.WriteTypeless(AsInstanceType());
 			Stream.WriteTypeless((char*)Owner, (uint8_t)sizeof(Algorithm::Pubkeyhash));
 			return std::move(Stream.Data);
 		}
-		String AccountBalance::AsInstanceStride(const Algorithm::AssetId& Asset)
+		String AccountBalance::AsInstanceRow(const Algorithm::AssetId& Asset)
 		{
 			Format::Stream Stream;
 			Stream.WriteTypeless(AsInstanceType());
@@ -878,12 +936,12 @@ namespace Tangent
 			return std::move(Stream.Data);
 		}
 
-		AccountContribution::AccountContribution(const Algorithm::Pubkeyhash NewOwner, uint64_t NewBlockNumber, uint64_t NewBlockNonce) : Ledger::State(NewBlockNumber, NewBlockNonce), Asset(0)
+		AccountContribution::AccountContribution(const Algorithm::Pubkeyhash NewOwner, uint64_t NewBlockNumber, uint64_t NewBlockNonce) : Ledger::Multiform(NewBlockNumber, NewBlockNonce), Asset(0)
 		{
 			if (NewOwner)
 				memcpy(Owner, NewOwner, sizeof(Owner));
 		}
-		AccountContribution::AccountContribution(const Algorithm::Pubkeyhash NewOwner, const Ledger::BlockHeader* NewBlockHeader) : Ledger::State(NewBlockHeader), Asset(0)
+		AccountContribution::AccountContribution(const Algorithm::Pubkeyhash NewOwner, const Ledger::BlockHeader* NewBlockHeader) : Ledger::Multiform(NewBlockHeader), Asset(0)
 		{
 			if (NewOwner)
 				memcpy(Owner, NewOwner, sizeof(Owner));
@@ -1063,10 +1121,10 @@ namespace Tangent
 			auto Reservation = GetReservation();
 			auto Contribution = GetContribution();
 			auto Coverage = GetCoverage();
-			Schema* Data = Ledger::State::AsSchema().Reset();
+			Schema* Data = Ledger::Multiform::AsSchema().Reset();
 			Data->Set("owner", Algorithm::Signing::SerializeAddress(Owner));
 			Data->Set("asset", Algorithm::Asset::Serialize(Asset));
-			Data->Set("threshold", Threshold ? Var::Number(*Threshold) : Var::Null());
+			Data->Set("threshold", Threshold ? Var::Number(*Threshold) : Var::Decimal(Protocol::Now().Policy.AccountContributionRequired));
 			Data->Set("custody", Custody.IsNaN() ? Var::Null() : Var::Decimal(Custody));
 			Data->Set("reservation", Reservation.IsNaN() ? Var::Null() : Var::Decimal(Reservation));
 			Data->Set("contribution", Contribution.IsNaN() ? Var::Null() : Var::Decimal(Contribution));
@@ -1106,18 +1164,18 @@ namespace Tangent
 		{
 			return AsInstanceTypename();
 		}
-		int64_t AccountContribution::AsWeight() const
+		int64_t AccountContribution::AsFactor() const
 		{
 			Decimal Coverage = GetCoverage() * Protocol::Now().Policy.WeightMultiplier;
 			return Coverage.ToInt64();
 		}
-		String AccountContribution::AsAddress() const
+		String AccountContribution::AsColumn() const
 		{
-			return AsInstanceAddress(Owner);
+			return AsInstanceColumn(Owner);
 		}
-		String AccountContribution::AsStride() const
+		String AccountContribution::AsRow() const
 		{
-			return AsInstanceStride(Asset);
+			return AsInstanceRow(Asset);
 		}
 		uint32_t AccountContribution::AsInstanceType()
 		{
@@ -1128,14 +1186,14 @@ namespace Tangent
 		{
 			return "account_contribution";
 		}
-		String AccountContribution::AsInstanceAddress(const Algorithm::Pubkeyhash Owner)
+		String AccountContribution::AsInstanceColumn(const Algorithm::Pubkeyhash Owner)
 		{
 			Format::Stream Stream;
 			Stream.WriteTypeless(AsInstanceType());
 			Stream.WriteTypeless((char*)Owner, (uint8_t)sizeof(Algorithm::Pubkeyhash));
 			return std::move(Stream.Data);
 		}
-		String AccountContribution::AsInstanceStride(const Algorithm::AssetId& Asset)
+		String AccountContribution::AsInstanceRow(const Algorithm::AssetId& Asset)
 		{
 			Format::Stream Stream;
 			Stream.WriteTypeless(AsInstanceType());
@@ -1143,10 +1201,10 @@ namespace Tangent
 			return std::move(Stream.Data);
 		}
 
-		WitnessProgram::WitnessProgram(uint64_t NewBlockNumber, uint64_t NewBlockNonce) : Ledger::State(NewBlockNumber, NewBlockNonce)
+		WitnessProgram::WitnessProgram(uint64_t NewBlockNumber, uint64_t NewBlockNonce) : Ledger::Uniform(NewBlockNumber, NewBlockNonce)
 		{
 		}
-		WitnessProgram::WitnessProgram(const Ledger::BlockHeader* NewBlockHeader) : Ledger::State(NewBlockHeader)
+		WitnessProgram::WitnessProgram(const Ledger::BlockHeader* NewBlockHeader) : Ledger::Uniform(NewBlockHeader)
 		{
 		}
 		ExpectsLR<void> WitnessProgram::Transition(const Ledger::TransactionContext* Context, const Ledger::State* PrevState)
@@ -1183,7 +1241,7 @@ namespace Tangent
 		}
 		UPtr<Schema> WitnessProgram::AsSchema() const
 		{
-			Schema* Data = Ledger::State::AsSchema().Reset();
+			Schema* Data = Ledger::Uniform::AsSchema().Reset();
 			Data->Set("hashcode", Var::String(Format::Util::Encode0xHex(Hashcode)));
 			Data->Set("storage", Var::String(Format::Util::Encode0xHex(Storage)));
 			return Data;
@@ -1196,17 +1254,9 @@ namespace Tangent
 		{
 			return AsInstanceTypename();
 		}
-		int64_t WitnessProgram::AsWeight() const
+		String WitnessProgram::AsIndex() const
 		{
-			return 0;
-		}
-		String WitnessProgram::AsAddress() const
-		{
-			return AsInstanceAddress(Hashcode);
-		}
-		String WitnessProgram::AsStride() const
-		{
-			return AsInstanceStride();
+			return AsInstanceIndex(Hashcode);
 		}
 		ExpectsLR<String> WitnessProgram::AsCode() const
 		{
@@ -1221,7 +1271,7 @@ namespace Tangent
 		{
 			return "witness_program";
 		}
-		String WitnessProgram::AsInstanceAddress(const std::string_view& Hashcode)
+		String WitnessProgram::AsInstanceIndex(const std::string_view& Hashcode)
 		{
 			auto Data = Format::Util::IsHexEncoding(Hashcode) ? Codec::HexDecode(Hashcode) : String(Hashcode);
 			Format::Stream Stream;
@@ -1229,17 +1279,11 @@ namespace Tangent
 			Stream.WriteTypeless(Data.data(), (uint8_t)Data.size());
 			return std::move(Stream.Data);
 		}
-		String WitnessProgram::AsInstanceStride()
-		{
-			Format::Stream Stream;
-			Stream.WriteTypeless(AsInstanceType());
-			return std::move(Stream.Data);
-		}
 
-		WitnessEvent::WitnessEvent(uint64_t NewBlockNumber, uint64_t NewBlockNonce) : Ledger::State(NewBlockNumber, NewBlockNonce)
+		WitnessEvent::WitnessEvent(uint64_t NewBlockNumber, uint64_t NewBlockNonce) : Ledger::Uniform(NewBlockNumber, NewBlockNonce)
 		{
 		}
-		WitnessEvent::WitnessEvent(const Ledger::BlockHeader* NewBlockHeader) : Ledger::State(NewBlockHeader)
+		WitnessEvent::WitnessEvent(const Ledger::BlockHeader* NewBlockHeader) : Ledger::Uniform(NewBlockHeader)
 		{
 		}
 		ExpectsLR<void> WitnessEvent::Transition(const Ledger::TransactionContext* Context, const Ledger::State* PrevState)
@@ -1274,7 +1318,7 @@ namespace Tangent
 		}
 		UPtr<Schema> WitnessEvent::AsSchema() const
 		{
-			Schema* Data = Ledger::State::AsSchema().Reset();
+			Schema* Data = Ledger::Uniform::AsSchema().Reset();
 			Data->Set("parent_transaction_hash", Var::String(Algorithm::Encoding::Encode0xHex256(ParentTransactionHash)));
 			Data->Set("child_transaction_hash", Var::String(Algorithm::Encoding::Encode0xHex256(ChildTransactionHash)));
 			return Data;
@@ -1287,17 +1331,9 @@ namespace Tangent
 		{
 			return AsInstanceTypename();
 		}
-		int64_t WitnessEvent::AsWeight() const
+		String WitnessEvent::AsIndex() const
 		{
-			return 0;
-		}
-		String WitnessEvent::AsAddress() const
-		{
-			return AsInstanceAddress(ParentTransactionHash);
-		}
-		String WitnessEvent::AsStride() const
-		{
-			return AsInstanceStride();
+			return AsInstanceIndex(ParentTransactionHash);
 		}
 		uint32_t WitnessEvent::AsInstanceType()
 		{
@@ -1308,26 +1344,20 @@ namespace Tangent
 		{
 			return "witness_event";
 		}
-		String WitnessEvent::AsInstanceAddress(const uint256_t& TransactionHash)
+		String WitnessEvent::AsInstanceIndex(const uint256_t& TransactionHash)
 		{
 			Format::Stream Stream;
 			Stream.WriteTypeless(AsInstanceType());
 			Stream.WriteTypeless(TransactionHash);
 			return std::move(Stream.Data);
 		}
-		String WitnessEvent::AsInstanceStride()
-		{
-			Format::Stream Stream;
-			Stream.WriteTypeless(AsInstanceType());
-			return std::move(Stream.Data);
-		}
 
-		WitnessAddress::WitnessAddress(const Algorithm::Pubkeyhash NewOwner, uint64_t NewBlockNumber, uint64_t NewBlockNonce) : Ledger::State(NewBlockNumber, NewBlockNonce), AddressIndex(0)
+		WitnessAddress::WitnessAddress(const Algorithm::Pubkeyhash NewOwner, uint64_t NewBlockNumber, uint64_t NewBlockNonce) : Ledger::Multiform(NewBlockNumber, NewBlockNonce), AddressIndex(0)
 		{
 			if (NewOwner)
 				memcpy(Owner, NewOwner, sizeof(Owner));
 		}
-		WitnessAddress::WitnessAddress(const Algorithm::Pubkeyhash NewOwner, const Ledger::BlockHeader* NewBlockHeader) : Ledger::State(NewBlockHeader), AddressIndex(0)
+		WitnessAddress::WitnessAddress(const Algorithm::Pubkeyhash NewOwner, const Ledger::BlockHeader* NewBlockHeader) : Ledger::Multiform(NewBlockHeader), AddressIndex(0)
 		{
 			if (NewOwner)
 				memcpy(Owner, NewOwner, sizeof(Owner));
@@ -1443,7 +1473,7 @@ namespace Tangent
 		}
 		UPtr<Schema> WitnessAddress::AsSchema() const
 		{
-			Schema* Data = Ledger::State::AsSchema().Reset();
+			Schema* Data = Ledger::Multiform::AsSchema().Reset();
 			Data->Set("owner", Algorithm::Signing::SerializeAddress(Owner));
 			Data->Set("proposer", Algorithm::Signing::SerializeAddress(Proposer));
 			Data->Set("asset", Algorithm::Asset::Serialize(Asset));
@@ -1479,17 +1509,18 @@ namespace Tangent
 		{
 			return AsInstanceTypename();
 		}
-		int64_t WitnessAddress::AsWeight() const
+		int64_t WitnessAddress::AsFactor() const
 		{
 			return Purpose;
 		}
-		String WitnessAddress::AsAddress() const
+		String WitnessAddress::AsColumn() const
 		{
-			return AsInstanceAddress(Owner);
+			return AsInstanceColumn(Owner);
 		}
-		String WitnessAddress::AsStride() const
+		String WitnessAddress::AsRow() const
 		{
-			return AsInstanceStride(Asset, Addresses.empty() ? std::string_view() : Addresses.begin()->second, AddressIndex);
+			auto* Chain = Oracle::Datamaster::GetChainparams(Asset);
+			return AsInstanceRow(Asset, Addresses.empty() ? std::string_view() : Addresses.begin()->second, Chain && Chain->Routing == Oracle::RoutingPolicy::Memo ? AddressIndex : Protocol::Now().Account.RootAddressIndex);
 		}
 		uint32_t WitnessAddress::AsInstanceType()
 		{
@@ -1500,14 +1531,14 @@ namespace Tangent
 		{
 			return "witness_address";
 		}
-		String WitnessAddress::AsInstanceAddress(const Algorithm::Pubkeyhash Owner)
+		String WitnessAddress::AsInstanceColumn(const Algorithm::Pubkeyhash Owner)
 		{
 			Format::Stream Stream;
 			Stream.WriteTypeless(AsInstanceType());
 			Stream.WriteTypeless((char*)Owner, (uint8_t)sizeof(Algorithm::Pubkeyhash));
 			return std::move(Stream.Data);
 		}
-		String WitnessAddress::AsInstanceStride(const Algorithm::AssetId& Asset, const std::string_view& Address, uint64_t MaxAddressIndex)
+		String WitnessAddress::AsInstanceRow(const Algorithm::AssetId& Asset, const std::string_view& Address, uint64_t MaxAddressIndex)
 		{
 			auto Location = Oracle::Datamaster::NewPublicKeyHash(Asset, Address).Or(String(Address));
 			Format::Stream Stream;
@@ -1518,10 +1549,10 @@ namespace Tangent
 			return std::move(Stream.Data);
 		}
 
-		WitnessTransaction::WitnessTransaction(uint64_t NewBlockNumber, uint64_t NewBlockNonce) : Ledger::State(NewBlockNumber, NewBlockNonce)
+		WitnessTransaction::WitnessTransaction(uint64_t NewBlockNumber, uint64_t NewBlockNonce) : Ledger::Uniform(NewBlockNumber, NewBlockNonce)
 		{
 		}
-		WitnessTransaction::WitnessTransaction(const Ledger::BlockHeader* NewBlockHeader) : Ledger::State(NewBlockHeader)
+		WitnessTransaction::WitnessTransaction(const Ledger::BlockHeader* NewBlockHeader) : Ledger::Uniform(NewBlockHeader)
 		{
 		}
 		ExpectsLR<void> WitnessTransaction::Transition(const Ledger::TransactionContext* Context, const Ledger::State* PrevState)
@@ -1554,7 +1585,7 @@ namespace Tangent
 		}
 		UPtr<Schema> WitnessTransaction::AsSchema() const
 		{
-			Schema* Data = Ledger::State::AsSchema().Reset();
+			Schema* Data = Ledger::Uniform::AsSchema().Reset();
 			Data->Set("asset", Algorithm::Asset::Serialize(Asset));
 			Data->Set("transaction_id", Var::String(TransactionId));
 			return Data;
@@ -1567,17 +1598,9 @@ namespace Tangent
 		{
 			return AsInstanceTypename();
 		}
-		int64_t WitnessTransaction::AsWeight() const
+		String WitnessTransaction::AsIndex() const
 		{
-			return 0;
-		}
-		String WitnessTransaction::AsAddress() const
-		{
-			return AsInstanceAddress(Asset);
-		}
-		String WitnessTransaction::AsStride() const
-		{
-			return AsInstanceStride(TransactionId);
+			return AsInstanceIndex(Asset, TransactionId);
 		}
 		uint32_t WitnessTransaction::AsInstanceType()
 		{
@@ -1588,18 +1611,12 @@ namespace Tangent
 		{
 			return "witness_transaction";
 		}
-		String WitnessTransaction::AsInstanceAddress(const Algorithm::AssetId& Asset)
-		{
-			Format::Stream Stream;
-			Stream.WriteTypeless(AsInstanceType());
-			Stream.WriteTypeless(Asset);
-			return std::move(Stream.Data);
-		}
-		String WitnessTransaction::AsInstanceStride(const std::string_view& TransactionId)
+		String WitnessTransaction::AsInstanceIndex(const Algorithm::AssetId& Asset, const std::string_view& TransactionId)
 		{
 			auto Id = Format::Util::IsHexEncoding(TransactionId) ? Codec::HexDecode(TransactionId) : String(TransactionId);
 			Format::Stream Stream;
 			Stream.WriteTypeless(AsInstanceType());
+			Stream.WriteTypeless(Asset);
 			Stream.WriteTypeless(Id.data(), (uint8_t)Id.size());
 			return std::move(Stream.Data);
 		}
@@ -1610,6 +1627,8 @@ namespace Tangent
 				return Memory::New<AccountSequence>(nullptr, nullptr);
 			else if (Hash == AccountWork::AsInstanceType())
 				return Memory::New<AccountWork>(nullptr, nullptr);
+			else if (Hash == AccountObserver::AsInstanceType())
+				return Memory::New<AccountObserver>(nullptr, nullptr);
 			else if (Hash == AccountProgram::AsInstanceType())
 				return Memory::New<AccountProgram>(nullptr, nullptr);
 			else if (Hash == AccountStorage::AsInstanceType())
@@ -1639,6 +1658,8 @@ namespace Tangent
 				return Memory::New<AccountSequence>(*(const AccountSequence*)Base);
 			else if (Hash == AccountWork::AsInstanceType())
 				return Memory::New<AccountWork>(*(const AccountWork*)Base);
+			else if (Hash == AccountObserver::AsInstanceType())
+				return Memory::New<AccountObserver>(*(const AccountObserver*)Base);
 			else if (Hash == AccountProgram::AsInstanceType())
 				return Memory::New<AccountProgram>(*(const AccountProgram*)Base);
 			else if (Hash == AccountStorage::AsInstanceType())
@@ -1660,6 +1681,24 @@ namespace Tangent
 			else if (Hash == WitnessTransaction::AsInstanceType())
 				return Memory::New<WitnessTransaction>(*(const WitnessTransaction*)Base);
 			return nullptr;
+		}
+		UnorderedSet<uint32_t> Resolver::GetHashes()
+		{
+			UnorderedSet<uint32_t> Hashes;
+			Hashes.insert(AccountSequence::AsInstanceType());
+			Hashes.insert(AccountWork::AsInstanceType());
+			Hashes.insert(AccountObserver::AsInstanceType());
+			Hashes.insert(AccountProgram::AsInstanceType());
+			Hashes.insert(AccountStorage::AsInstanceType());
+			Hashes.insert(AccountReward::AsInstanceType());
+			Hashes.insert(AccountDerivation::AsInstanceType());
+			Hashes.insert(AccountBalance::AsInstanceType());
+			Hashes.insert(AccountContribution::AsInstanceType());
+			Hashes.insert(WitnessProgram::AsInstanceType());
+			Hashes.insert(WitnessEvent::AsInstanceType());
+			Hashes.insert(WitnessAddress::AsInstanceType());
+			Hashes.insert(WitnessTransaction::AsInstanceType());
+			return Hashes;
 		}
 	}
 }

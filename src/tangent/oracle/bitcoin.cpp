@@ -151,6 +151,12 @@ namespace Tangent
 			Bitcoin::Bitcoin() noexcept : ChainmasterUTXO()
 			{
 				btc_ecc_start();
+				Netdata.Composition = Algorithm::Composition::Type::SECP256K1;
+				Netdata.Routing = RoutingPolicy::UTXO;
+				Netdata.SyncLatency = 2;
+				Netdata.Divisibility = Decimal(100000000).Truncate(Protocol::Now().Message.Precision);
+				Netdata.SupportsTokenTransfer.clear();
+				Netdata.SupportsBulkTransfer = true;
 			}
 			Bitcoin::~Bitcoin()
 			{
@@ -400,13 +406,12 @@ namespace Tangent
 				if (!BlockStats)
 					Coreturn ExpectsLR<BaseFee>(std::move(BlockStats.Error()));
 
-				Decimal Divisibility = Implementation->GetDivisibility().Truncate(Protocol::Now().Message.Precision);
 				Decimal FeeRate = BlockStats->GetVar("avgfeerate").GetDecimal();
 				size_t TxSize = (size_t)BlockStats->GetVar("avgtxsize").GetInteger();
 
 				const size_t ExpectedMaxTxSize = 1000;
 				TxSize = std::min<size_t>(ExpectedMaxTxSize, (size_t)(std::ceil((double)TxSize / 100.0) * 100.0));
-				Coreturn ExpectsLR<BaseFee>(BaseFee(FeeRate / Divisibility, Decimal(TxSize)));
+				Coreturn ExpectsLR<BaseFee>(BaseFee(FeeRate / Netdata.Divisibility, Decimal(TxSize)));
 			}
 			Promise<ExpectsLR<CoinUTXO>> Bitcoin::GetTransactionOutput(const Algorithm::AssetId& Asset, const std::string_view& TransactionId, uint32_t Index)
 			{
@@ -624,11 +629,18 @@ namespace Tangent
 					Derived->AddressIndex = AddressIndex;
 				return Derived;
 			}
-			ExpectsLR<DerivedSigningWallet> Bitcoin::NewSigningWallet(const Algorithm::AssetId& Asset, const std::string_view& RawPrivateKey)
+			ExpectsLR<DerivedSigningWallet> Bitcoin::NewSigningWallet(const Algorithm::AssetId& Asset, const std::string_view& SigningKey)
 			{
 				btc_key PrivateKey;
 				btc_privkey_init(&PrivateKey);
-				memcpy(PrivateKey.privkey, RawPrivateKey.data(), std::min(RawPrivateKey.size(), sizeof(PrivateKey.privkey)));
+				if (SigningKey.size() != sizeof(PrivateKey.privkey))
+				{
+					String Key = String(SigningKey);
+					if (!btc_privkey_decode_wif(Key.c_str(), GetChain(), &PrivateKey))
+						return LayerException("not a valid wif private key");
+				}
+				else
+					memcpy(PrivateKey.privkey, SigningKey.data(), sizeof(PrivateKey.privkey));
 
 				btc_pubkey PublicKey;
 				btc_pubkey_from_key(&PrivateKey, &PublicKey);
@@ -642,7 +654,7 @@ namespace Tangent
 				btc_privkey_encode_wif(&PrivateKey, Chain, DerivedPrivateKey, &DerivedPrivateKeySize);
 				return ExpectsLR<DerivedSigningWallet>(DerivedSigningWallet(std::move(*Derived), ::PrivateKey(DerivedPrivateKey)));
 			}
-			ExpectsLR<DerivedVerifyingWallet> Bitcoin::NewVerifyingWallet(const Algorithm::AssetId& Asset, const std::string_view& RawPublicKey)
+			ExpectsLR<DerivedVerifyingWallet> Bitcoin::NewVerifyingWallet(const Algorithm::AssetId& Asset, const std::string_view& VerifyingKey)
 			{
 				auto* Chain = GetChain();
 				auto* Options = Datamaster::GetOptions(Asset);
@@ -671,7 +683,16 @@ namespace Tangent
 				AddressMap Addresses;
 				btc_pubkey PublicKey;
 				btc_pubkey_init(&PublicKey);
-				memcpy(PublicKey.pubkey, RawPublicKey.data(), std::min(RawPublicKey.size(), sizeof(PublicKey)));
+				if (VerifyingKey.size() != BTC_ECKEY_COMPRESSED_LENGTH && VerifyingKey.size() != BTC_ECKEY_UNCOMPRESSED_LENGTH)
+				{
+					auto Key = Format::Util::Decode0xHex(VerifyingKey);
+					if (Key.size() != BTC_ECKEY_COMPRESSED_LENGTH && Key.size() != BTC_ECKEY_UNCOMPRESSED_LENGTH)
+						return LayerException("not a valid hex public key");
+
+					memcpy(PublicKey.pubkey, Key.data(), std::min(Key.size(), sizeof(PublicKey.pubkey)));
+				}
+				else
+					memcpy(PublicKey.pubkey, VerifyingKey.data(), std::min(VerifyingKey.size(), sizeof(PublicKey.pubkey)));
 				PublicKey.compressed = btc_pubkey_get_length(PublicKey.pubkey[0]) == BTC_ECKEY_COMPRESSED_LENGTH;
 
 				char DerivedAddress[128];
@@ -686,16 +707,16 @@ namespace Tangent
 					if ((Types & (size_t)AddressFormat::Pay2PublicKeyHash || Types & (size_t)AddressFormat::Pay2CashaddrPublicKeyHash) && btc_pubkey_getaddr_p2pkh(&PublicKey, Chain, DerivedAddress))
 						Addresses[(uint8_t)Addresses.size() + 1] = DerivedAddress;
 
-					if ((Types & (size_t)AddressFormat::Pay2WitnessScriptHash) && btc_pubkey_getaddr_p2wsh_p2pkh(&PublicKey, Chain, DerivedAddress))
-						Addresses[(uint8_t)Addresses.size() + 1] = DerivedAddress;
-
-					if ((Types & (size_t)AddressFormat::Pay2WitnessPublicKeyHash) && btc_pubkey_getaddr_p2wpkh(&PublicKey, Chain, DerivedAddress))
-						Addresses[(uint8_t)Addresses.size() + 1] = DerivedAddress;
-
 					if (false && (Types & (size_t)AddressFormat::Pay2Tapscript) && btc_pubkey_getaddr_p2tr_p2pk(&PublicKey, Chain, DerivedAddress))
 						Addresses[(uint8_t)Addresses.size() + 1] = DerivedAddress;
 
 					if ((Types & (size_t)AddressFormat::Pay2Taproot) && btc_pubkey_getaddr_p2tr(&PublicKey, Chain, DerivedAddress))
+						Addresses[(uint8_t)Addresses.size() + 1] = DerivedAddress;
+
+					if ((Types & (size_t)AddressFormat::Pay2WitnessScriptHash) && btc_pubkey_getaddr_p2wsh_p2pkh(&PublicKey, Chain, DerivedAddress))
+						Addresses[(uint8_t)Addresses.size() + 1] = DerivedAddress;
+
+					if ((Types & (size_t)AddressFormat::Pay2WitnessPublicKeyHash) && btc_pubkey_getaddr_p2wpkh(&PublicKey, Chain, DerivedAddress))
 						Addresses[(uint8_t)Addresses.size() + 1] = DerivedAddress;
 				}
 				else
@@ -725,15 +746,19 @@ namespace Tangent
 
 				return String((char*)Data, DataSize);
 			}
-			ExpectsLR<String> Bitcoin::SignMessage(const Messages::Generic& Message, const DerivedSigningWallet& Wallet)
+			ExpectsLR<String> Bitcoin::SignMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const PrivateKey& SigningKey)
 			{
+				auto SigningWallet = NewSigningWallet(Asset, SigningKey.ExposeToHeap());
+				if (!SigningWallet)
+					return SigningWallet.Error();
+
 				btc_key PrivateKey;
-				auto Private = Wallet.SigningKey.Expose<2048>();
+				auto Private = SigningWallet->SigningKey.Expose<2048>();
 				if (btc_privkey_decode_wif(Private.Key, GetChain(), &PrivateKey) != 1)
 					return LayerException("private key not valid");
 
 				uint256 Hash;
-				GenerateMessageHash(Message.AsMessage().Data, Hash);
+				GenerateMessageHash(Message, Hash);
 
 				uint8_t RawSignature[64]; size_t RawSignatureSize = sizeof(RawSignature); int RecoveryId = 0;
 				if (btc_key_sign_hash_compact_recoverable(&PrivateKey, Hash, RawSignature, &RawSignatureSize, &RecoveryId) != 1)
@@ -744,76 +769,68 @@ namespace Tangent
 				Signature[0] = RecoveryId;
 				return String((char*)Signature, sizeof(Signature));
 			}
-			ExpectsLR<bool> Bitcoin::VerifyMessage(const Messages::Generic& Message, const std::string_view& Address, const std::string_view& PublicKey, const std::string_view& Signature)
+			ExpectsLR<void> Bitcoin::VerifyMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const std::string_view& VerifyingKey, const std::string_view& Signature)
 			{
 				if (Signature.size() < 65)
 					return LayerException("signature not valid");
 
-				uint8_t TargetProgram[256];
-				size_t TargetProgramSize = sizeof(TargetProgram);
-				if (ParseAddress(Address, TargetProgram, &TargetProgramSize) == AddressFormat::Unknown)
-					return LayerException("address not valid");
+				auto VerifyingWallet = NewVerifyingWallet(Asset, VerifyingKey);
+				if (!VerifyingWallet)
+					return VerifyingWallet.Error();
 
 				uint256 Hash;
-				GenerateMessageHash(Message.AsMessage().Data, Hash);
-				for (int i = 0; i < 4; i++)
+				GenerateMessageHash(Message, Hash);
+				for (auto& Item : VerifyingWallet->Addresses)
 				{
-					btc_pubkey PublicKey;
-					if (btc_key_sign_recover_pubkey((uint8_t*)Signature.data() + 1, Hash, i, &PublicKey) != 1)
+					const auto& Address = Item.second;
+					uint8_t TargetProgram[256];
+					size_t TargetProgramSize = sizeof(TargetProgram);
+					if (ParseAddress(Address, TargetProgram, &TargetProgramSize) == AddressFormat::Unknown)
 						continue;
 
-					if (!memcmp(PublicKey.pubkey, TargetProgram, std::min(TargetProgramSize, sizeof(PublicKey.pubkey))))
-						return true;
+					for (int i = 0; i < 4; i++)
+					{
+						btc_pubkey PublicKey;
+						if (btc_key_sign_recover_pubkey((uint8_t*)Signature.data() + 1, Hash, i, &PublicKey) != 1)
+							continue;
 
-					uint160 ActualProgram;
-					btc_pubkey_get_hash160(&PublicKey, ActualProgram);
-					if (memcmp(TargetProgram, ActualProgram, std::min(TargetProgramSize, sizeof(ActualProgram))) == 0)
-						return true;
+						if (!memcmp(PublicKey.pubkey, TargetProgram, std::min(TargetProgramSize, sizeof(PublicKey.pubkey))))
+							return Expectation::Met;
 
-					char SignerAddress[256];
-					if (btc_pubkey_getaddr_p2sh_p2wpkh(&PublicKey, GetChain(), SignerAddress) && Address == SignerAddress)
-						return true;
-					else if (btc_pubkey_getaddr_p2pkh(&PublicKey, GetChain(), SignerAddress) && Address == SignerAddress)
-						return true;
-					else if (btc_pubkey_getaddr_p2wsh_p2pkh(&PublicKey, GetChain(), SignerAddress) && Address == SignerAddress)
-						return true;
-					else if (btc_pubkey_getaddr_p2wpkh(&PublicKey, GetChain(), SignerAddress) && Address == SignerAddress)
-						return true;
-					else if (false && btc_pubkey_getaddr_p2tr_p2pk(&PublicKey, GetChain(), SignerAddress) && Address == SignerAddress)
-						return true;
-					else if (btc_pubkey_getaddr_p2tr(&PublicKey, GetChain(), SignerAddress) && Address == SignerAddress)
-						return true;
-					else if (BitcoinCashPublicKeyGetAddressP2SH(&PublicKey, GetChain(), SignerAddress, sizeof(SignerAddress)) && Address == SignerAddress)
-						return true;
-					else if (BitcoinCashPublicKeyGetAddressP2PKH(&PublicKey, GetChain(), SignerAddress, sizeof(SignerAddress)) && Address == SignerAddress)
-						return true;
+						uint160 ActualProgram;
+						btc_pubkey_get_hash160(&PublicKey, ActualProgram);
+						if (memcmp(TargetProgram, ActualProgram, std::min(TargetProgramSize, sizeof(ActualProgram))) == 0)
+							return Expectation::Met;
+
+						char SignerAddress[256];
+						if (btc_pubkey_getaddr_p2sh_p2wpkh(&PublicKey, GetChain(), SignerAddress) && Address == SignerAddress)
+							return Expectation::Met;
+						else if (btc_pubkey_getaddr_p2pkh(&PublicKey, GetChain(), SignerAddress) && Address == SignerAddress)
+							return Expectation::Met;
+						else if (btc_pubkey_getaddr_p2wsh_p2pkh(&PublicKey, GetChain(), SignerAddress) && Address == SignerAddress)
+							return Expectation::Met;
+						else if (btc_pubkey_getaddr_p2wpkh(&PublicKey, GetChain(), SignerAddress) && Address == SignerAddress)
+							return Expectation::Met;
+						else if (btc_pubkey_getaddr_p2tr_p2pk(&PublicKey, GetChain(), SignerAddress) && Address == SignerAddress)
+							return Expectation::Met;
+						else if (btc_pubkey_getaddr_p2tr(&PublicKey, GetChain(), SignerAddress) && Address == SignerAddress)
+							return Expectation::Met;
+						else if (BitcoinCashPublicKeyGetAddressP2SH(&PublicKey, GetChain(), SignerAddress, sizeof(SignerAddress)) && Address == SignerAddress)
+							return Expectation::Met;
+						else if (BitcoinCashPublicKeyGetAddressP2PKH(&PublicKey, GetChain(), SignerAddress, sizeof(SignerAddress)) && Address == SignerAddress)
+							return Expectation::Met;
+					}
 				}
 
-				return false;
+				return LayerException("signature verification failed with used public key");
 			}
 			String Bitcoin::GetDerivation(uint64_t AddressIndex) const
 			{
 				return Stringify::Text(Protocol::Now().Is(NetworkType::Mainnet) ? "m/44'/0'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, AddressIndex);
 			}
-			Decimal Bitcoin::GetDivisibility() const
+			const Bitcoin::Chainparams& Bitcoin::GetChainparams() const
 			{
-				return 100000000;
-			}
-			Algorithm::Composition::Type Bitcoin::GetCompositionPolicy() const
-			{
-				return Algorithm::Composition::Type::SECP256K1;
-			}
-			RoutingPolicy Bitcoin::GetRoutingPolicy() const
-			{
-				return RoutingPolicy::UTXO;
-			}
-			uint64_t Bitcoin::GetBlockLatency() const
-			{
-				return 2;
-			}
-			bool Bitcoin::HasBulkTransactions() const
-			{
-				return true;
+				return Netdata;
 			}
 			Promise<ExpectsLR<BaseFee>> Bitcoin::CalculateTransactionFeeFromFeeEstimate(const Algorithm::AssetId& Asset, const DynamicWallet& Wallet, const Vector<Transferer>& To, const BaseFee& Estimate, const std::string_view& ChangeAddress)
 			{
@@ -1182,7 +1199,7 @@ namespace Tangent
 			{
 				return "Bitcoin Signed Message:\n";
 			}
-			void Bitcoin::GenerateMessageHash(const String& Input, uint8_t Output[32])
+			void Bitcoin::GenerateMessageHash(const std::string_view& Input, uint8_t Output[32])
 			{
 				String Size(1, (char)Input.size());
 				if (Input.size() > 253)
@@ -1192,7 +1209,7 @@ namespace Tangent
 				}
 
 				String Header = GetMessageMagic();
-				String Payload = Stringify::Text("%c%s%.*s%s", (char)Header.size(), Header.c_str(), (int)Size.size(), Size.c_str(), Input.c_str());
+				String Payload = Stringify::Text("%c%s%.*s%.*s", (char)Header.size(), Header.c_str(), (int)Size.size(), Size.c_str(), (int)Input.size(), Input.data());
 				btc_hash((uint8_t*)Payload.data(), Payload.size(), Output);
 			}
 			const btc_chainparams_* Bitcoin::GetChain()

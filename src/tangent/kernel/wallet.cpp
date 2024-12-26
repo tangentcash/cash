@@ -1,8 +1,9 @@
 #include "wallet.h"
 #include "../policy/typenames.h"
 #ifdef TAN_VALIDATOR
-#include "../policy/storages.h"
-#include "../layer/p2p.h"
+#include "../storage/mempoolstate.h"
+#include "../storage/chainstate.h"
+#include "../service/p2p.h"
 #endif
 
 namespace Tangent
@@ -238,7 +239,7 @@ namespace Tangent
 #ifdef TAN_VALIDATOR
 			auto Mempool = Storages::Mempoolstate(__func__);
 			auto Chain = Storages::Chainstate(__func__);
-			auto State = Chain.GetStateByComposition(nullptr, States::AccountSequence::AsInstanceAddress(PublicKeyHash), States::AccountSequence::AsInstanceStride(), 0);
+			auto State = Chain.GetUniformByIndex(nullptr, States::AccountSequence::AsInstanceIndex(PublicKeyHash), 0);
 			uint64_t PendingSequence = Mempool.GetHighestTransactionSequence(PublicKeyHash).Or(1);
 			uint64_t FinalizedSequence = (State ? ((States::AccountSequence*)**State)->Sequence : 1);
 			return std::max(FinalizedSequence, PendingSequence);
@@ -314,80 +315,137 @@ namespace Tangent
 			return Result;
 		}
 
-		bool Edge::StorePayload(Format::Stream* Stream) const
+		bool Validator::StorePayload(Format::Stream* Stream) const
 		{
 			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Stream->WriteString(Address);
-			Stream->WriteInteger(Requests);
-			Stream->WriteInteger(Errors);
-			Stream->WriteInteger(Timestamp);
-			Stream->WriteInteger(Latency);
+			Stream->WriteString(Address.GetIpAddress().Or("[bad_address]"));
+			Stream->WriteInteger(Address.GetIpPort().Or(0));
+			Stream->WriteInteger(Availability.Latency);
+			Stream->WriteInteger(Availability.Timestamp);
+			Stream->WriteInteger(Availability.Calls);
+			Stream->WriteInteger(Availability.Errors);
+			Stream->WriteInteger(Ports.P2P);
+			Stream->WriteInteger(Ports.NDS);
+			Stream->WriteInteger(Ports.RPC);
+			Stream->WriteBoolean(Services.Consensus);
+			Stream->WriteBoolean(Services.Discovery);
+			Stream->WriteBoolean(Services.Interface);
+			Stream->WriteBoolean(Services.Proposer);
+			Stream->WriteBoolean(Services.Public);
+			Stream->WriteBoolean(Services.Streaming);
 			return true;
 		}
-		bool Edge::LoadPayload(Format::Stream& Stream)
+		bool Validator::LoadPayload(Format::Stream& Stream)
 		{
-			if (!Stream.ReadString(Stream.ReadType(), &Address))
+			String IpAddress;
+			if (!Stream.ReadString(Stream.ReadType(), &IpAddress))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &Requests))
+			uint16_t IpPort;
+			if (!Stream.ReadInteger(Stream.ReadType(), &IpPort))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &Errors))
+			if (!Stream.ReadInteger(Stream.ReadType(), &Availability.Latency))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &Timestamp))
+			if (!Stream.ReadInteger(Stream.ReadType(), &Availability.Timestamp))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &Latency))
+			if (!Stream.ReadInteger(Stream.ReadType(), &Availability.Calls))
 				return false;
 
-			return true;
+			if (!Stream.ReadInteger(Stream.ReadType(), &Availability.Errors))
+				return false;
+
+			if (!Stream.ReadInteger(Stream.ReadType(), &Ports.P2P))
+				return false;
+
+			if (!Stream.ReadInteger(Stream.ReadType(), &Ports.NDS))
+				return false;
+
+			if (!Stream.ReadInteger(Stream.ReadType(), &Ports.RPC))
+				return false;
+
+			if (!Stream.ReadBoolean(Stream.ReadType(), &Services.Consensus))
+				return false;
+
+			if (!Stream.ReadBoolean(Stream.ReadType(), &Services.Discovery))
+				return false;
+
+			if (!Stream.ReadBoolean(Stream.ReadType(), &Services.Interface))
+				return false;
+
+			if (!Stream.ReadBoolean(Stream.ReadType(), &Services.Proposer))
+				return false;
+
+			if (!Stream.ReadBoolean(Stream.ReadType(), &Services.Public))
+				return false;
+
+			if (!Stream.ReadBoolean(Stream.ReadType(), &Services.Streaming))
+				return false;
+
+			Address = SocketAddress(IpAddress, IpPort);
+			return Address.IsValid();
 		}
-		bool Edge::IsValid() const
+		bool Validator::IsValid() const
 		{
-			if (Address.empty())
+			if (!Address.IsValid())
 				return false;
 #ifdef TAN_VALIDATOR
-			return !P2P::Routing::IsAddressReserved(SocketAddress(Address, Protocol::Now().User.P2P.NodePort));
+			return !P2P::Routing::IsAddressReserved(Address);
 #else
 			return true;
 #endif
 		}
-		uint64_t Edge::GetPreference() const
+		uint64_t Validator::GetPreference() const
 		{
-			double Messages = (double)Requests;
-			double Confidence = Messages > 0.0 ? Mathd::Exp((double)(Requests < Errors ? 0 : Requests - Errors) / Messages) : 0.0;
-			double Uncertainty = Messages > 0.0 ? Mathd::Exp((double)Errors / Messages) : 0.0;
-			double Preference = Latency > 0.0 ? 1000.0 / (double)Latency : 1000.0;
+			double Messages = (double)Availability.Calls;
+			double Confidence = Messages > 0.0 ? Mathd::Exp((double)(Availability.Calls < Availability.Errors ? 0 : Availability.Calls - Availability.Errors) / Messages) : 0.0;
+			double Uncertainty = Messages > 0.0 ? Mathd::Exp((double)Availability.Errors / Messages) : 0.0;
+			double Preference = Availability.Latency > 0.0 ? 1000.0 / (double)Availability.Latency : 1000.0;
 			double Score = (Confidence - Uncertainty) * Preference + Preference * 0.1;
 			return (uint64_t)(1000.0 * Score);
 		}
-		UPtr<Schema> Edge::AsSchema() const
+		UPtr<Schema> Validator::AsSchema() const
 		{
 			Schema* Data = Var::Set::Object();
-			Data->Set("address", Var::String(Address));
-			Data->Set("requests", Algorithm::Encoding::SerializeUint256(Requests));
-			Data->Set("errors", Algorithm::Encoding::SerializeUint256(Errors));
-			Data->Set("timestamp", Algorithm::Encoding::SerializeUint256(Timestamp));
-			Data->Set("latency", Algorithm::Encoding::SerializeUint256(Latency));
+			Data->Set("address", Var::String(Address.GetIpAddress().Or("[bad_address]") + ":" + ToString(Address.GetIpPort().Or(0))));
+
+			auto* AvailabilityData = Data->Set("availability");
+			AvailabilityData->Set("latency", Algorithm::Encoding::SerializeUint256(Availability.Latency));
+			AvailabilityData->Set("timestamp", Algorithm::Encoding::SerializeUint256(Availability.Timestamp));
+			AvailabilityData->Set("calls", Algorithm::Encoding::SerializeUint256(Availability.Calls));
+			AvailabilityData->Set("errors", Algorithm::Encoding::SerializeUint256(Availability.Errors));
+
+			auto* PortsData = Data->Set("ports");
+			PortsData->Set("p2p", Var::Integer(Ports.P2P));
+			PortsData->Set("nds", Var::Integer(Ports.NDS));
+			PortsData->Set("rpc", Var::Integer(Ports.RPC));
+
+			auto* ServicesData = Data->Set("services");
+			ServicesData->Set("consensus", Var::Boolean(Services.Consensus));
+			ServicesData->Set("discovery", Var::Boolean(Services.Discovery));
+			ServicesData->Set("interface", Var::Boolean(Services.Interface));
+			ServicesData->Set("proposer", Var::Boolean(Services.Proposer));
+			ServicesData->Set("public", Var::Boolean(Services.Public));
 			return Data;
 		}
-		uint32_t Edge::AsType() const
+		uint32_t Validator::AsType() const
 		{
 			return AsInstanceType();
 		}
-		std::string_view Edge::AsTypename() const
+		std::string_view Validator::AsTypename() const
 		{
 			return AsInstanceTypename();
 		}
-		uint32_t Edge::AsInstanceType()
+		uint32_t Validator::AsInstanceType()
 		{
 			static uint32_t Hash = Types::TypeOf(AsInstanceTypename());
 			return Hash;
 		}
-		std::string_view Edge::AsInstanceTypename()
+		std::string_view Validator::AsInstanceTypename()
 		{
-			return "edge";
+			return "validator";
 		}
 	}
 }

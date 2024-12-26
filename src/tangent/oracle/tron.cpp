@@ -26,6 +26,15 @@ namespace Tangent
 				return "/wallet/getblock";
 			}
 
+			Tron::Tron() noexcept : Ethereum()
+			{
+				Netdata.Composition = Algorithm::Composition::Type::SECP256K1;
+				Netdata.Routing = RoutingPolicy::Account;
+				Netdata.SyncLatency = 15;
+				Netdata.Divisibility = Decimal(1000000).Truncate(Protocol::Now().Message.Precision);
+				Netdata.SupportsTokenTransfer = "trc20";
+				Netdata.SupportsBulkTransfer = false;
+			}
 			Promise<ExpectsLR<Tron::TrxTxBlockHeaderInfo>> Tron::GetBlockHeaderForTx(const Algorithm::AssetId& Asset)
 			{
 				Schema* Args = Var::Set::Object();
@@ -78,7 +87,7 @@ namespace Tangent
 			}
 			Promise<ExpectsLR<Decimal>> Tron::CalculateBalance(const Algorithm::AssetId& Asset, const DynamicWallet& Wallet, Option<String>&& Address)
 			{
-				auto* Implementation = (Chains::Ethereum*)Datamaster::GetChain(Asset);
+				auto* Implementation = (Chains::Tron*)Datamaster::GetChain(Asset);
 				if (!Address)
 				{
 					ExpectsLR<DerivedVerifyingWallet> FromWallet = LayerException("signing wallet not found");
@@ -101,7 +110,7 @@ namespace Tangent
 				}
 
 				auto ContractAddress = Datamaster::GetContractAddress(Asset);
-				Decimal Divisibility = Implementation->GetDivisibility();
+				Decimal Divisibility = Implementation->Netdata.Divisibility;
 				if (ContractAddress)
 				{
 					auto ContractDivisibility = Coawait(GetContractDivisibility(Asset, Implementation, *ContractAddress));
@@ -171,7 +180,7 @@ namespace Tangent
 				if (!BlockHeader)
 					Coreturn ExpectsLR<OutgoingTransaction>(std::move(BlockHeader.Error()));
 
-				Decimal Divisibility = GetDivisibility();
+				Decimal Divisibility = Netdata.Divisibility;
 				if (ContractAddress)
 				{
 					auto ContractDivisibility = Coawait(GetContractDivisibility(Asset, this, *ContractAddress));
@@ -298,10 +307,6 @@ namespace Tangent
 			String Tron::GetDerivation(uint64_t AddressIndex) const
 			{
 				return Stringify::Text(Protocol::Now().Is(NetworkType::Mainnet) ? "m/44'/195'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, AddressIndex);
-			}
-			Decimal Tron::GetDivisibility() const
-			{
-				return Decimal("1000000");
 			}
 			String Tron::GetMessageMagic()
 			{

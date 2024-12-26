@@ -21,13 +21,6 @@ namespace Tangent
 			Opcode = 1
 		};
 
-		enum class WorkStatus : int8_t
-		{
-			Online = 1,
-			Standby = 0,
-			Offline = -1
-		};
-
 		enum class WorkCommitment
 		{
 			Pending,
@@ -65,10 +58,12 @@ namespace Tangent
 			BlockWork(BlockWork&&) noexcept = default;
 			BlockWork& operator= (const BlockWork& Other);
 			BlockWork& operator= (BlockWork&&) noexcept = default;
-			Option<UPtr<Ledger::State>> Resolve(const std::string_view& Address, const std::string_view& Stride) const;
-			void ClearInto(const std::string_view& Address, const std::string_view& Stride);
-			void CopyInto(State* Value);
-			void MoveInto(UPtr<State>&& Value);
+			Option<UPtr<State>> FindUniform(const std::string_view& Index) const;
+			Option<UPtr<State>> FindMultiform(const std::string_view& Column, const std::string_view& Row) const;
+			void ClearUniform(const std::string_view& Index);
+			void ClearMultiform(const std::string_view& Column, const std::string_view& Row);
+			void CopyAny(State* Value);
+			void MoveAny(UPtr<State>&& Value);
 			const StateWork& At(WorkCommitment Level) const;
 			StateWork& Clear();
 			StateWork& Rollback();
@@ -101,6 +96,14 @@ namespace Tangent
 			BlockDispatch& operator=(BlockDispatch&&) noexcept = default;
 			ExpectsLR<void> Checkpoint() const;
 		};
+		
+		struct BlockCheckpoint
+		{
+			uint64_t NewTipBlockNumber = 0;
+			uint64_t OldTipBlockNumber = 0;
+			uint64_t Resurrections = 0;
+			bool IsFork = false;
+		};
 
 		struct BlockHeader : Messages::Authentic
 		{
@@ -117,6 +120,7 @@ namespace Tangent
 			uint256_t SlotGasUse = 0;
 			uint256_t SlotGasTarget = 0;
 			uint256_t SlotDuration = 0;
+			uint8_t Recovery = 0;
 			uint64_t Time = 0;
 			uint64_t Priority = 0;
 			uint64_t Number = 0;
@@ -174,10 +178,10 @@ namespace Tangent
 			virtual ~Block() override = default;
 			Block& operator=(const Block&) = default;
 			Block& operator=(Block&&) = default;
-			ExpectsLR<void> Evaluate(const BlockHeader* ParentBlock, EvaluationContext* Environment);
+			ExpectsLR<void> Evaluate(const BlockHeader* ParentBlock, EvaluationContext* Environment, String* Errors);
 			ExpectsLR<void> Validate(const BlockHeader* ParentBlock) const;
 			ExpectsLR<void> Verify(const BlockHeader* ParentBlock) const override;
-			ExpectsLR<void> Checkpoint() const;
+			ExpectsLR<BlockCheckpoint> Checkpoint() const;
 			bool StorePayload(Format::Stream* Stream) const override;
 			bool LoadPayload(Format::Stream& Stream) override;
 			bool StoreHeaderPayload(Format::Stream* Stream) const;
@@ -261,11 +265,13 @@ namespace Tangent
 			ExpectsLR<void> VerifyTransferBalance(const Decimal& Value) const;
 			ExpectsLR<void> VerifyTransferBalance(const Algorithm::AssetId& Asset, const Decimal& Value) const;
 			ExpectsLR<Provability::WesolowskiVDF::Distribution> CalculateRandom(const uint256_t& Seed);
-			ExpectsLR<Vector<States::AccountWork>> CalculateProposalCommittee(size_t Count);
-			ExpectsLR<States::AccountWork> CalculateSharingWitness(bool WorkRequired);
+			ExpectsLR<size_t> CalculateAggregationCommitteeSize(const Algorithm::AssetId& Asset);
+			ExpectsLR<Vector<States::AccountWork>> CalculateProposalCommittee(size_t Majors, size_t Minors, size_t* Proposers);
+			ExpectsLR<States::AccountWork> CalculateSharingWitness(const OrderedSet<String>& Owners, bool WorkRequired);
 			ExpectsLR<States::AccountSequence> ApplyAccountSequence();
 			ExpectsLR<States::AccountSequence> ApplyAccountSequence(const Algorithm::Pubkeyhash Owner, uint64_t Sequence);
 			ExpectsLR<States::AccountWork> ApplyAccountWork(const Algorithm::Pubkeyhash Owner, WorkStatus Status, uint64_t Penalty, const uint256_t& GasInput, const uint256_t& GasOutput);
+			ExpectsLR<States::AccountObserver> ApplyAccountObserver(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner, WorkStatus Status);
 			ExpectsLR<States::AccountProgram> ApplyAccountProgram(const std::string_view& ProgramHashcode);
 			ExpectsLR<States::AccountProgram> ApplyAccountProgram(const Algorithm::Pubkeyhash Owner, const std::string_view& ProgramHashcode);
 			ExpectsLR<States::AccountStorage> ApplyAccountStorage(const std::string_view& Location, const std::string_view& Storage);
@@ -292,6 +298,8 @@ namespace Tangent
 			ExpectsLR<States::AccountBalance> ApplyFunding(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash From, const Algorithm::Pubkeyhash To, const Decimal& Value);
 			ExpectsLR<States::AccountSequence> GetAccountSequence(const Algorithm::Pubkeyhash Owner) const;
 			ExpectsLR<States::AccountWork> GetAccountWork(const Algorithm::Pubkeyhash Owner) const;
+			ExpectsLR<States::AccountObserver> GetAccountObserver(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner) const;
+			ExpectsLR<Vector<States::AccountObserver>> GetAccountObservers(const Algorithm::Pubkeyhash Owner, size_t Offset, size_t Count) const;
 			ExpectsLR<States::AccountProgram> GetAccountProgram(const Algorithm::Pubkeyhash Owner) const;
 			ExpectsLR<States::AccountStorage> GetAccountStorage(const Algorithm::Pubkeyhash Owner, const std::string_view& Location) const;
 			ExpectsLR<States::AccountReward> GetAccountReward(const Algorithm::Pubkeyhash Owner) const;
@@ -359,7 +367,7 @@ namespace Tangent
 				TransactionContext Context;
 				uint256_t CumulativeGas = 0;
 				BlockWork Cache;
-				bool Proposal = false;
+				bool Tip = false;
 			} Validation;
 			struct ProposerContext
 			{
@@ -367,14 +375,15 @@ namespace Tangent
 				Algorithm::Seckey PrivateKey = { 0 };
 			} Proposer;
 			Option<BlockHeader> Tip = Optional::None;
-			Vector<States::AccountWork> Queue;
+			OrderedMap<Algorithm::AssetId, size_t> Aggregators;
+			Vector<States::AccountWork> Proposers;
 			Vector<TransactionInfo> Incoming;
 			Vector<uint256_t> Outgoing;
 			size_t Precomputed = 0;
 
 			Option<uint64_t> Priority(const Algorithm::Pubkeyhash PublicKeyHash, const Algorithm::Seckey PrivateKey, Option<BlockHeader*>&& ParentBlock = Optional::None);
 			size_t Apply(Vector<UPtr<Transaction>>&& Candidates);
-			ExpectsLR<Block> Evaluate();
+			ExpectsLR<Block> Evaluate(String* Errors);
 			ExpectsLR<void> Solve(Block& Candidate);
 			ExpectsLR<void> Verify(const Block& Candidate);
 			ExpectsLR<void> Cleanup();

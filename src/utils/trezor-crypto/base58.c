@@ -49,7 +49,7 @@ const b58_almostmaxint_t b58_almostmaxint_mask =
 // Decodes a null-terminated Base58 string `b58` to binary and writes the result
 // at the end of the buffer `bin` of size `*binszp`. On success `*binszp` is set
 // to the number of valid bytes at the end of the buffer.
-bool b58tobin(void *bin, size_t *binszp, const char *b58) {
+bool b58tobin(void *bin, size_t *binszp, const char *b58, size_t b58size) {
   size_t binsz = *binszp;
 
   if (binsz == 0) {
@@ -69,7 +69,7 @@ bool b58tobin(void *bin, size_t *binszp, const char *b58) {
       bytesleft ? (b58_almostmaxint_mask << (bytesleft * 8)) : 0;
   unsigned zerocount = 0;
 
-  size_t b58sz = strlen(b58);
+  size_t b58sz = (size_t)b58size;
 
   memzero(outi, sizeof(outi));
 
@@ -185,6 +185,18 @@ bool b58enc(char *b58, size_t *b58sz, const void *data, size_t binsz) {
   return true;
 }
 
+bool b58dec(void* bin, size_t* binszp, const char* b58, size_t b58size) {
+  uint8_t d[VAL_SMALL_SIZE];
+  memset(d, 0, sizeof(d));
+  size_t res = *binszp;
+  if (b58tobin(d, &res, b58, b58size) != true) {
+    return false;
+  }
+  uint8_t *nd = d + *binszp - res;
+  memcpy(bin, nd, res);
+  return true;
+}
+
 int base58_encode_check(const uint8_t *data, int datalen,
                         HasherType hasher_type, char *str, int strsize) {
   if (datalen > 128) {
@@ -209,7 +221,7 @@ int base58_decode_check(const char *str, HasherType hasher_type, uint8_t *data,
   uint8_t d[VAL_SMALL_SIZE + 4];
   memset(d, 0, sizeof(d));
   size_t res = datalen + 4;
-  if (b58tobin(d, &res, str) != true) {
+  if (b58tobin(d, &res, str, strlen(str)) != true) {
     return 0;
   }
   uint8_t *nd = d + datalen + 4 - res;
@@ -261,7 +273,7 @@ int base58gph_decode_check(const char *str, uint8_t *data, int datalen) {
   uint8_t d[VAL_SMALL_SIZE + 4];
   memset(d, 0, sizeof(d));
   size_t res = datalen + 4;
-  if (b58tobin(d, &res, str) != true) {
+  if (b58tobin(d, &res, str, strlen(str)) != true) {
     return 0;
   }
   uint8_t *nd = d + datalen + 4 - res;

@@ -63,6 +63,15 @@ namespace Tangent
 				return "sendTransaction";
 			}
 
+			Solana::Solana() noexcept : Chainmaster()
+			{
+				Netdata.Composition = Algorithm::Composition::Type::ED25519;
+				Netdata.Routing = RoutingPolicy::Account;
+				Netdata.SyncLatency = 31;
+				Netdata.Divisibility = Decimal(1000000000).Truncate(Protocol::Now().Message.Precision);
+				Netdata.SupportsTokenTransfer = "spl";
+				Netdata.SupportsBulkTransfer = false;
+			}
 			Promise<ExpectsLR<void>> Solana::BroadcastTransaction(const Algorithm::AssetId& Asset, const OutgoingTransaction& TxData)
 			{
 				SchemaList Map;
@@ -166,9 +175,8 @@ namespace Tangent
 
 				Vector<IncomingTransaction> Transactions;
 				UnorderedMap<String, UnorderedMap<String, Decimal>> Balances;
-				auto Divisibility = GetDivisibility().Truncate(Protocol::Now().Message.Precision);
 				auto Signature = TransactionData->FetchVar("transaction.signatures.0").GetBlob();
-				auto FeeValue = TransactionData->FetchVar("meta.fee").GetDecimal() / Divisibility;
+				auto FeeValue = TransactionData->FetchVar("meta.fee").GetDecimal() / Netdata.Divisibility;
 				for (auto& Instruction : Instructions->GetChilds())
 				{
 					auto* Info = Instruction->Fetch("parsed.info");
@@ -180,7 +188,7 @@ namespace Tangent
 					{
 						auto From = Info->GetVar("source").GetBlob();
 						auto To = Info->GetVar("destination").GetBlob();
-						auto Value = FeeValue + Info->GetVar("lamports").GetDecimal() / Divisibility;
+						auto Value = FeeValue + Info->GetVar("lamports").GetDecimal() / Netdata.Divisibility;
 						if (!Addresses.count(From) && !Addresses.count(To))
 							continue;
 
@@ -193,7 +201,7 @@ namespace Tangent
 					{
 						auto From = Info->GetVar("source").GetBlob();
 						auto To = Info->GetVar("newAccount").GetBlob();
-						auto Value = FeeValue + Info->GetVar("lamports").GetDecimal() / Divisibility;
+						auto Value = FeeValue + Info->GetVar("lamports").GetDecimal() / Netdata.Divisibility;
 						if (!Addresses.count(From) && !Addresses.count(To))
 							continue;
 
@@ -206,7 +214,7 @@ namespace Tangent
 					{
 						auto From = Info->GetVar("nonceAccount").GetBlob();
 						auto To = Info->GetVar("destination").GetBlob();
-						auto Value = FeeValue + Info->GetVar("lamports").GetDecimal() / Divisibility;
+						auto Value = FeeValue + Info->GetVar("lamports").GetDecimal() / Netdata.Divisibility;
 						if (!Addresses.count(From) && !Addresses.count(To))
 							continue;
 
@@ -219,7 +227,7 @@ namespace Tangent
 					{
 						auto From = Info->GetVar("stakeAccount").GetBlob();
 						auto To = Info->GetVar("destination").GetBlob();
-						auto Value = FeeValue + Info->GetVar("lamports").GetDecimal() / Divisibility;
+						auto Value = FeeValue + Info->GetVar("lamports").GetDecimal() / Netdata.Divisibility;
 						if (!Addresses.count(From) && !Addresses.count(To))
 							continue;
 
@@ -232,7 +240,7 @@ namespace Tangent
 					{
 						auto From = Info->GetVar("stakeAccount").GetBlob();
 						auto To = Info->GetVar("newSplitAccount").GetBlob();
-						auto Value = FeeValue + Info->GetVar("lamports").GetDecimal() / Divisibility;
+						auto Value = FeeValue + Info->GetVar("lamports").GetDecimal() / Netdata.Divisibility;
 						if (!Addresses.count(From) && !Addresses.count(To))
 							continue;
 
@@ -378,7 +386,7 @@ namespace Tangent
 				Decimal Fee = 5000;
 				if (!Algorithm::Asset::TokenOf(Asset).empty())
 					Fee += Fee * 2;
-				Fee /= GetDivisibility().Truncate(Protocol::Now().Message.Precision);
+				Fee /= Netdata.Divisibility;
 				Coreturn ExpectsLR<BaseFee>(BaseFee(Fee, 1));
 			}
 			Promise<ExpectsLR<Decimal>> Solana::CalculateBalance(const Algorithm::AssetId& Asset, const DynamicWallet& Wallet, Option<String>&& Address)
@@ -440,7 +448,6 @@ namespace Tangent
 				Option<TokenAccount> ToToken = Optional::None;
 				Decimal TotalValue = Subject.Value;
 				Decimal FeeValue = Fee.GetFee();
-				Decimal Divisibility = GetDivisibility();
 				if (ContractAddress)
 				{
 					auto FromTokenBalance = Coawait(GetTokenBalance(Asset, *ContractAddress, FromWallet->Addresses.begin()->second));
@@ -462,28 +469,29 @@ namespace Tangent
 					Coreturn ExpectsLR<OutgoingTransaction>(LayerException(Stringify::Text("insufficient funds: %s < %s", NativeBalance->ToString().c_str(), TotalValue.ToString().c_str())));
 
 				uint8_t FromTokenBuffer[32]; size_t FromTokenBufferSize = sizeof(FromTokenBuffer);
-				if (FromToken && !b58tobin(FromTokenBuffer, &FromTokenBufferSize, FromToken->Account.c_str()))
+				if (FromToken && !b58dec(FromTokenBuffer, &FromTokenBufferSize, FromToken->Account.c_str(), FromToken->Account.size()))
 					Coreturn ExpectsLR<OutgoingTransaction>(LayerException("invalid sender token account"));
 
 				uint8_t FromBuffer[32]; size_t FromBufferSize = sizeof(FromBuffer);
-				if (!b58tobin(FromBuffer, &FromBufferSize, FromWallet->Addresses.begin()->second.c_str()))
+				if (!b58dec(FromBuffer, &FromBufferSize, FromWallet->Addresses.begin()->second.c_str(), FromWallet->Addresses.begin()->second.size()))
 					Coreturn ExpectsLR<OutgoingTransaction>(LayerException("invalid sender account"));
 
 				uint8_t ToBuffer[32]; size_t ToBufferSize = sizeof(ToBuffer);
-				if (ToToken && !b58tobin(ToBuffer, &ToBufferSize, ToToken->Account.c_str()))
+				if (ToToken && !b58dec(ToBuffer, &ToBufferSize, ToToken->Account.c_str(), ToToken->Account.size()))
 					Coreturn ExpectsLR<OutgoingTransaction>(LayerException("invalid receiver token account"));
-				else if (!b58tobin(ToBuffer, &ToBufferSize, Subject.Address.c_str()))
+				else if (!b58dec(ToBuffer, &ToBufferSize, Subject.Address.c_str(), Subject.Address.size()))
 					Coreturn ExpectsLR<OutgoingTransaction>(LayerException("invalid receiver account"));
 
 				uint8_t ProgramId[32]; size_t ProgramIdSize = sizeof(ProgramId);
-				if (!b58tobin(ProgramId, &ProgramIdSize, FromToken ? FromToken->ProgramId.c_str() : "11111111111111111111111111111111"))
+				String SystemProgramId = FromToken ? FromToken->ProgramId.c_str() : "11111111111111111111111111111111";
+				if (!b58dec(ProgramId, &ProgramIdSize, SystemProgramId.c_str(), SystemProgramId.size()))
 					Coreturn ExpectsLR<OutgoingTransaction>(LayerException("invalid system program id"));
 
 				uint8_t BlockHash[32]; size_t BlockHashSize = sizeof(BlockHash);
-				if (!b58tobin(BlockHash, &BlockHashSize, RecentBlockHash->c_str()))
+				if (!b58dec(BlockHash, &BlockHashSize, RecentBlockHash->c_str(), RecentBlockHash->size()))
 					Coreturn ExpectsLR<OutgoingTransaction>(LayerException("invalid recent block hash"));
 
-				uint64_t Value = (Subject.Value * (FromToken ? FromToken->Divisibility : Divisibility)).ToUInt64();
+				uint64_t Value = (Subject.Value * (FromToken ? FromToken->Divisibility : Netdata.Divisibility)).ToUInt64();
 				uint8_t Prefix = 1 << 7;
 				uint8_t Signatures = 1;
 				uint8_t AccountKeys = ContractAddress ? 4 : 3;
@@ -539,7 +547,7 @@ namespace Tangent
 					Coreturn ExpectsLR<OutgoingTransaction>(LayerException("invalid private key"));
 
 				uint8_t PublicKey[32]; size_t PublicKeySize = sizeof(PublicKey);
-				if (!b58tobin(PublicKey, &PublicKeySize, FromWallet->VerifyingKey.ExposeToHeap().c_str()))
+				if (!b58dec(PublicKey, &PublicKeySize, FromWallet->VerifyingKey.ExposeToHeap().c_str(), FromWallet->VerifyingKey.Size()))
 					Coreturn ExpectsLR<OutgoingTransaction>(LayerException("invalid public key"));
 
 				ed25519_signature Signature;
@@ -639,8 +647,7 @@ namespace Tangent
 				if (Value.IsNaN())
 					Coreturn ExpectsLR<Decimal>(LayerException("invalid account"));
 
-				Decimal Divisibility = GetDivisibility();
-				Value /= Divisibility.Truncate(Protocol::Now().Message.Precision);
+				Value /= Netdata.Divisibility;
 				Coreturn ExpectsLR<Decimal>(std::move(Value));
 			}
 			Promise<ExpectsLR<String>> Solana::GetRecentBlockHash(const Algorithm::AssetId& Asset)
@@ -691,8 +698,14 @@ namespace Tangent
 					Derived->AddressIndex = AddressIndex;
 				return Derived;
 			}
-			ExpectsLR<DerivedSigningWallet> Solana::NewSigningWallet(const Algorithm::AssetId& Asset, const std::string_view& RawPrivateKey)
+			ExpectsLR<DerivedSigningWallet> Solana::NewSigningWallet(const Algorithm::AssetId& Asset, const std::string_view& SigningKey)
 			{
+				uint8_t TestPrivateKey[64]; String RawPrivateKey = String(SigningKey);
+				if (DecodePrivateKey(SigningKey, TestPrivateKey))
+					RawPrivateKey = String((char*)TestPrivateKey, sizeof(TestPrivateKey));
+				else if (DecodeSecretOrPublicKey(SigningKey, TestPrivateKey))
+					RawPrivateKey = String((char*)TestPrivateKey, 32);
+
 				if (RawPrivateKey.size() != 32 && RawPrivateKey.size() != 64)
 					return LayerException("invalid private key size");
 
@@ -727,13 +740,24 @@ namespace Tangent
 					DerivedPrivateKey.append(1, ':').append(SecretKey);
 				return ExpectsLR<DerivedSigningWallet>(DerivedSigningWallet(std::move(*Derived), ::PrivateKey(DerivedPrivateKey)));
 			}
-			ExpectsLR<DerivedVerifyingWallet> Solana::NewVerifyingWallet(const Algorithm::AssetId& Asset, const std::string_view& RawPublicKey)
+			ExpectsLR<DerivedVerifyingWallet> Solana::NewVerifyingWallet(const Algorithm::AssetId& Asset, const std::string_view& VerifyingKey)
 			{
-				if (RawPublicKey.size() < 32)
-					return LayerException("invalid public key size");
+				String RawPublicKey = String(VerifyingKey);
+				if (RawPublicKey.size() != 32)
+				{
+					uint8_t PublicKey[32];
+					if (!DecodeSecretOrPublicKey(RawPublicKey, PublicKey))
+						return LayerException("invalid public key size");
+
+					RawPublicKey = String((char*)PublicKey, sizeof(PublicKey));
+				}
 
 				char EncodedPublicKey[256]; size_t EncodedPublicKeySize = sizeof(EncodedPublicKey);
 				if (!b58enc(EncodedPublicKey, &EncodedPublicKeySize, RawPublicKey.data(), RawPublicKey.size()))
+					return LayerException("invalid public key");
+
+				uint8_t DerivedPublicKey[256]; size_t DerivedPublicKeySize = sizeof(DerivedPublicKey);
+				if (!b58dec(DerivedPublicKey, &DerivedPublicKeySize, EncodedPublicKey, EncodedPublicKeySize - 1))
 					return LayerException("invalid public key");
 
 				return ExpectsLR<DerivedVerifyingWallet>(DerivedVerifyingWallet({ { (uint8_t)1, String(EncodedPublicKey, EncodedPublicKeySize - 1) } }, Optional::None, ::PrivateKey(std::string_view(EncodedPublicKey, EncodedPublicKeySize - 1))));
@@ -741,66 +765,71 @@ namespace Tangent
 			ExpectsLR<String> Solana::NewPublicKeyHash(const std::string_view& Address)
 			{
 				uint8_t Data[256]; size_t DataSize = sizeof(Data);
-				if (!b58tobin(Data, &DataSize, String(Address).c_str()))
+				if (!b58dec(Data, &DataSize, Address.data(), Address.size()))
 					return LayerException("invalid address");
 
 				return String((char*)Data, sizeof(Data));
 			}
-			ExpectsLR<String> Solana::SignMessage(const Messages::Generic& Message, const DerivedSigningWallet& Wallet)
+			ExpectsLR<String> Solana::SignMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const PrivateKey& SigningKey)
 			{
+				auto SigningWallet = NewSigningWallet(Asset, SigningKey.ExposeToHeap());
+				if (!SigningWallet)
+					return SigningWallet.Error();
+
 				uint8_t DerivedPrivateKey[64];
-				if (!DecodePrivateKey(Wallet.SigningKey.ExposeToHeap(), DerivedPrivateKey))
+				auto Private = SigningWallet->SigningKey.Expose<2048>();
+				if (!DecodePrivateKey(Private.Key, DerivedPrivateKey))
 					return LayerException("private key invalid");
 
-				auto MessageBlob = Message.AsMessage();
 				ed25519_signature Signature;
-				ed25519_sign_ext((uint8_t*)MessageBlob.Data.data(), MessageBlob.Data.size(), DerivedPrivateKey, DerivedPrivateKey + 32, Signature);
+				ed25519_sign_ext((uint8_t*)Message.data(), Message.size(), DerivedPrivateKey, DerivedPrivateKey + 32, Signature);
 				return String((char*)Signature, sizeof(Signature));
 			}
-			ExpectsLR<bool> Solana::VerifyMessage(const Messages::Generic& Message, const std::string_view& Address, const std::string_view& PublicKey, const std::string_view& Signature)
+			ExpectsLR<void> Solana::VerifyMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const std::string_view& VerifyingKey, const std::string_view& Signature)
 			{
+				VI_ASSERT(Stringify::IsCString(VerifyingKey), "verifying key must be c-string");
 				if (Signature.size() < 64)
 					return LayerException("signature invalid");
 
+				auto VerifyingWallet = NewVerifyingWallet(Asset, VerifyingKey);
+				if (!VerifyingWallet)
+					return VerifyingWallet.Error();
+
+				auto Public = VerifyingWallet->VerifyingKey.Expose<2048>();
 				uint8_t DerivedPublicKey[256]; size_t DerivedPublicKeySize = sizeof(DerivedPublicKey);
-				if (!b58tobin(DerivedPublicKey, &DerivedPublicKeySize, PublicKey.data()))
+				if (!b58dec(DerivedPublicKey, &DerivedPublicKeySize, Public.Key, (int)Public.Size))
 					return LayerException("invalid public key");
 
-				auto MessageBlob = Message.AsMessage();
-				return crypto_sign_verify_detached((uint8_t*)Signature.data(), (uint8_t*)MessageBlob.Data.data(), MessageBlob.Data.size(), DerivedPublicKey) == 0;
+				if (crypto_sign_verify_detached((uint8_t*)Signature.data(), (uint8_t*)Message.data(), Message.size(), DerivedPublicKey) != 0)
+					return LayerException("signature verification failed with used public key");
+
+				return Expectation::Met;
 			}
 			String Solana::GetDerivation(uint64_t AddressIndex) const
 			{
 				return Stringify::Text(Protocol::Now().Is(NetworkType::Mainnet) ? "m/44'/501'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, AddressIndex);
 			}
-			Decimal Solana::GetDivisibility() const
+			const Solana::Chainparams& Solana::GetChainparams() const
 			{
-				return 1000000000;
-			}
-			Algorithm::Composition::Type Solana::GetCompositionPolicy() const
-			{
-				return Algorithm::Composition::Type::ED25519;
-			}
-			RoutingPolicy Solana::GetRoutingPolicy() const
-			{
-				return RoutingPolicy::Account;
-			}
-			uint64_t Solana::GetBlockLatency() const
-			{
-				return 31;
-			}
-			bool Solana::HasBulkTransactions() const
-			{
-				return false;
+				return Netdata;
 			}
 			bool Solana::DecodePrivateKey(const std::string_view& Data, uint8_t PrivateKey[64])
 			{
 				auto Slice = String(Data.substr(0, Data.find(':')));
 				uint8_t Key[64]; size_t KeySize = sizeof(Key);
-				if (!b58tobin(Key, &KeySize, Slice.c_str()) || KeySize < 64)
+				if (!b58dec(Key, &KeySize, Slice.c_str(), Slice.size()) || KeySize < 64)
 					return false;
 
 				memcpy(PrivateKey, Key, 64);
+				return true;
+			}
+			bool Solana::DecodeSecretOrPublicKey(const std::string_view& Data, uint8_t SecretKey[32])
+			{
+				uint8_t Key[32]; size_t KeySize = sizeof(Key);
+				if (!b58dec(Key, &KeySize, Data.data(), Data.size()) || KeySize < 32)
+					return false;
+
+				memcpy(SecretKey, Key, 32);
 				return true;
 			}
 			const btc_chainparams_* Solana::GetChain()

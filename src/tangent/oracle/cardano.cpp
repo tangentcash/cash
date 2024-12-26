@@ -30,6 +30,15 @@ namespace Tangent
 				return "submitTransaction";
 			}
 
+			Cardano::Cardano() noexcept : ChainmasterUTXO()
+			{
+				Netdata.Composition = Algorithm::Composition::Type::ED25519;
+				Netdata.Routing = RoutingPolicy::UTXO;
+				Netdata.SyncLatency = 12;
+				Netdata.Divisibility = Decimal(1000000).Truncate(Protocol::Now().Message.Precision);
+				Netdata.SupportsTokenTransfer = "native";
+				Netdata.SupportsBulkTransfer = true;
+			}
 			Promise<ExpectsLR<void>> Cardano::BroadcastTransaction(const Algorithm::AssetId& Asset, const OutgoingTransaction& TxData)
 			{
 				Schema* Transaction = Var::Set::Object();
@@ -127,7 +136,7 @@ namespace Tangent
 			}
 			Promise<ExpectsLR<Vector<IncomingTransaction>>> Cardano::GetAuthenticTransactions(const Algorithm::AssetId& Asset, uint64_t BlockHeight, const std::string_view& BlockHash, Schema* TransactionData)
 			{
-				auto* BaseImplementation = Datamaster::GetChain(Asset);
+				auto* BaseImplementation = (Cardano*)Datamaster::GetChain(Asset);
 				if (!BaseImplementation)
 					Coreturn ExpectsLR<Vector<IncomingTransaction>>(LayerException("chain not found"));
 
@@ -163,7 +172,6 @@ namespace Tangent
 
 				Decimal OutputValue = 0.0;
 				Decimal InputValue = 0.0;
-				Decimal BaseDivisibility = BaseImplementation->GetDivisibility().Truncate(Protocol::Now().Message.Precision);
 				for (auto& TxOperation : OperationsData->GetChilds())
 				{
 					String Status = TxOperation->GetVar("status").GetBlob();
@@ -176,7 +184,7 @@ namespace Tangent
 					String Symbol = TxOperation->FetchVar("amount.currency.symbol").GetBlob();
 					String Address = TxOperation->FetchVar("account.address").GetBlob();
 					String Type = TxOperation->GetVar("type").GetBlob();
-					Decimal Value = Math0::Abs(TxOperation->FetchVar("amount.value").GetDecimal()) / BaseDivisibility;
+					Decimal Value = Math0::Abs(TxOperation->FetchVar("amount.value").GetDecimal()) / BaseImplementation->Netdata.Divisibility;
 					if (Type == "output")
 					{
 						auto TargetAddress = Discovery->find(Address);
@@ -279,9 +287,8 @@ namespace Tangent
 						TxAnalytics.TotalSize = Bottom;
 				}
 
-				Decimal Divisibility = BaseImplementation->GetDivisibility().Truncate(Protocol::Now().Message.Precision);
-				Decimal FeeRateA = Decimal(BaseImplementation->GetMinProtocolFeeA()) / Divisibility;
-				Decimal FeeRateB = Decimal(BaseImplementation->GetMinProtocolFeeB()) / Divisibility;
+				Decimal FeeRateA = Decimal(BaseImplementation->GetMinProtocolFeeA()) / BaseImplementation->Netdata.Divisibility;
+				Decimal FeeRateB = Decimal(BaseImplementation->GetMinProtocolFeeB()) / BaseImplementation->Netdata.Divisibility;
 				size_t TxSize = (size_t)((double)TxAnalytics.TotalSize / (double)TxAnalytics.Transactions);
 
 				const uint64_t ExpectedMaxTxSize = 1000;
@@ -420,7 +427,7 @@ namespace Tangent
 
 						auto Private = SigningWallet->SigningKey.Expose<2048>();
 						uint8_t RawPrivateKey[XSK_LENGTH];
-						if (!DecodePrivateKey(Private.Key, RawPrivateKey))
+						if (!DecodePrivateKey(Private.Key, RawPrivateKey, nullptr))
 							throw std::invalid_argument("could not get a valid private key for address " + Copy<std::string>(Input.Address));
 
 						Builder.addExtendedSigningKey(RawPrivateKey);
@@ -434,9 +441,8 @@ namespace Tangent
 					auto& RawTxData = Builder.Build();
 					if (!ActualFee)
 					{
-						Decimal Divisibility = GetDivisibility().Truncate(Protocol::Now().Message.Precision);
 						Decimal LovelaceFee = Builder.getFeeTransacion_PostBuild(0);
-						ActualFee = BaseFee(LovelaceFee / Divisibility, 1.0);
+						ActualFee = BaseFee(LovelaceFee / Netdata.Divisibility, 1.0);
 						FeeValue = ActualFee->GetFee();
 						goto RetryWithActualFee;
 					}
@@ -499,7 +505,7 @@ namespace Tangent
 				{
 					auto Private = Wallet.SigningKey.Expose<2048>();
 					uint8_t MasterKey[MASTERSECRETKEY_LENGTH]; uint16_t MasterKeySize = (uint16_t)sizeof(MasterKey);
-					if (!::Cardano::Hash::bech32_decode(Private.Key, MasterKey, &MasterKeySize))
+					if (!::Cardano::Hash::bech32_decode_extended(Private.Key, MasterKey, &MasterKeySize, sizeof(MasterKey)))
 						throw std::invalid_argument("could not get a valid master key");
 
 					uint8_t RawDerivedPrivateKey[XSK_LENGTH];
@@ -520,11 +526,18 @@ namespace Tangent
 					return ExpectsLR<DerivedSigningWallet>(LayerException("private key invalid"));
 				}
 			}
-			ExpectsLR<DerivedSigningWallet> Cardano::NewSigningWallet(const Algorithm::AssetId& Asset, const std::string_view& RawPrivateKey)
+			ExpectsLR<DerivedSigningWallet> Cardano::NewSigningWallet(const Algorithm::AssetId& Asset, const std::string_view& SigningKey)
 			{
 				const auto Network = (Protocol::Now().Is(NetworkType::Mainnet) ? ::Cardano::Network::Mainnet : ::Cardano::Network::Testnet);
-				if (RawPrivateKey.size() != 64 && RawPrivateKey.size() != XSK_LENGTH)
-					return LayerException("invalid private key length");
+				String RawPrivateKey = String(SigningKey);
+				if (RawPrivateKey.size() != 32 && RawPrivateKey.size() != 64 && RawPrivateKey.size() != XSK_LENGTH)
+				{
+					uint8_t Xsk[XSK_LENGTH]; size_t XskSize = 0;
+					if (!DecodePrivateKey(RawPrivateKey, Xsk, &XskSize))
+						return LayerException("invalid private key");
+
+					RawPrivateKey = String((char*)Xsk, XskSize);
+				}
 
 				try
 				{
@@ -565,11 +578,18 @@ namespace Tangent
 					return ExpectsLR<DerivedSigningWallet>(LayerException("private key invalid"));
 				}
 			}
-			ExpectsLR<DerivedVerifyingWallet> Cardano::NewVerifyingWallet(const Algorithm::AssetId& Asset, const std::string_view& RawPublicKey)
+			ExpectsLR<DerivedVerifyingWallet> Cardano::NewVerifyingWallet(const Algorithm::AssetId& Asset, const std::string_view& VerifyingKey)
 			{
 				const auto Network = (Protocol::Now().Is(NetworkType::Mainnet) ? ::Cardano::Network::Mainnet : ::Cardano::Network::Testnet);
+				String RawPublicKey = String(VerifyingKey);
 				if (RawPublicKey.size() != 32 && RawPublicKey.size() != XVK_LENGTH)
-					return LayerException("invalid public key length");
+				{
+					uint8_t Xvk[XSK_LENGTH]; size_t XvkSize = 0;
+					if (!DecodePublicKey(RawPublicKey, Xvk, &XvkSize))
+						return LayerException("invalid public key");
+
+					RawPublicKey = String((char*)Xvk, XvkSize);
+				}
 
 				try
 				{
@@ -621,19 +641,19 @@ namespace Tangent
 
 				return String((char*)Data, DataSize);
 			}
-			ExpectsLR<String> Cardano::SignMessage(const Messages::Generic& Message, const DerivedSigningWallet& Wallet)
+			ExpectsLR<String> Cardano::SignMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const PrivateKey& SigningKey)
 			{
-				auto PrivateKey = Wallet.SigningKey.Expose<2048>();
-				if (!PrivateKey.Size)
-					return ExpectsLR<String>(LayerException("input private key invalid"));
+				auto SigningWallet = NewSigningWallet(Asset, SigningKey.ExposeToHeap());
+				if (!SigningWallet)
+					return SigningWallet.Error();
 
 				uint8_t RawPrivateKey[XSK_LENGTH];
-				if (!DecodePrivateKey(PrivateKey.Key, RawPrivateKey))
+				auto Private = SigningWallet->SigningKey.Expose<2048>();
+				if (!DecodePrivateKey(Private.Key, RawPrivateKey, nullptr))
 					return ExpectsLR<String>(LayerException("input private key invalid"));
 
 				uint8_t Hash[32];
-				auto MessageBlob = Message.AsMessage();
-				crypto_generichash_blake2b(Hash, sizeof(Hash), (uint8_t*)MessageBlob.Data.data(), MessageBlob.Data.size(), nullptr, 0);
+				crypto_generichash_blake2b(Hash, sizeof(Hash), (uint8_t*)Message.data(), Message.size(), nullptr, 0);
 
 				uint8_t Signature[64];
 				if (!::Cardano::signature(RawPrivateKey, Hash, sizeof(Hash), Signature))
@@ -641,20 +661,26 @@ namespace Tangent
 
 				return String((char*)Signature, sizeof(Signature));
 			}
-			ExpectsLR<bool> Cardano::VerifyMessage(const Messages::Generic& Message, const std::string_view& Address, const std::string_view& PublicKey, const std::string_view& Signature)
+			ExpectsLR<void> Cardano::VerifyMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const std::string_view& VerifyingKey, const std::string_view& Signature)
 			{
 				if (Signature.size() < 64)
-					return ExpectsLR<bool>(LayerException("signature invalid"));
+					return LayerException("signature invalid");
+
+				auto VerifyingWallet = NewVerifyingWallet(Asset, VerifyingKey);
+				if (!VerifyingWallet)
+					return VerifyingWallet.Error();
 
 				uint8_t RawPublicKey[XVK_LENGTH];
-				if (!DecodePublicKey(PublicKey, RawPublicKey))
-					return ExpectsLR<bool>(LayerException("input public key invalid"));
+				auto Public = VerifyingWallet->VerifyingKey.Expose<2048>();
+				if (!DecodePublicKey(Public.Key, RawPublicKey, nullptr))
+					return LayerException("input public key invalid");
 
 				uint8_t Hash[32];
-				auto MessageBlob = Message.AsMessage();
-				crypto_generichash_blake2b(Hash, sizeof(Hash), (uint8_t*)MessageBlob.Data.data(), MessageBlob.Data.size(), nullptr, 0);
+				crypto_generichash_blake2b(Hash, sizeof(Hash), (uint8_t*)Message.data(), Message.size(), nullptr, 0);
+				if (!::Cardano::verify(RawPublicKey, Hash, sizeof(Hash), (uint8_t*)Signature.data()))
+					return LayerException("signature verification failed with used public key");
 
-				return ::Cardano::verify(RawPublicKey, Hash, sizeof(Hash), (uint8_t*)Signature.data());
+				return Expectation::Met;
 			}
 			ExpectsLR<void> Cardano::VerifyNodeCompatibility(Nodemaster* Node)
 			{
@@ -670,40 +696,33 @@ namespace Tangent
 			{
 				return Stringify::Text(Protocol::Now().Is(NetworkType::Mainnet) ? "m/1852'/1815'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, AddressIndex);
 			}
-			Decimal Cardano::GetDivisibility() const
+			const Cardano::Chainparams& Cardano::GetChainparams() const
 			{
-				return 1000000;
+				return Netdata;
 			}
-			Algorithm::Composition::Type Cardano::GetCompositionPolicy() const
-			{
-				return Algorithm::Composition::Type::ED25519;
-			}
-			RoutingPolicy Cardano::GetRoutingPolicy() const
-			{
-				return RoutingPolicy::UTXO;
-			}
-			uint64_t Cardano::GetBlockLatency() const
-			{
-				return 12;
-			}
-			bool Cardano::HasBulkTransactions() const
-			{
-				return true;
-			}
-			bool Cardano::DecodePrivateKey(const std::string_view& Data, uint8_t PrivateKey[96])
+			bool Cardano::DecodePrivateKey(const std::string_view& Data, uint8_t PrivateKey[96], size_t* PrivateKeySize)
 			{
 				uint8_t DerivedPrivateKey[XSK_LENGTH]; uint16_t DerivedPrivateKeySize = sizeof(DerivedPrivateKey);
-				if (!::Cardano::Hash::bech32_decode(Data.data(), DerivedPrivateKey, &DerivedPrivateKeySize))
+				if (!::Cardano::Hash::bech32_decode_extended(Data.data(), DerivedPrivateKey, &DerivedPrivateKeySize, sizeof(DerivedPrivateKey)))
 					return false;
+
+				if (PrivateKeySize != nullptr)
+					*PrivateKeySize = (size_t)DerivedPrivateKeySize;
 
 				memset(PrivateKey, 0, sizeof(DerivedPrivateKey));
 				memcpy(PrivateKey, DerivedPrivateKey, DerivedPrivateKeySize);
 				return DerivedPrivateKeySize == sizeof(DerivedPrivateKey) || DerivedPrivateKeySize == 64;
 			}
-			bool Cardano::DecodePublicKey(const std::string_view& Data, uint8_t PublicKey[64])
+			bool Cardano::DecodePublicKey(const std::string_view& Data, uint8_t PublicKey[64], size_t* PublicKeySize)
 			{
-				uint16_t PublicKeySize = 64;
-				return ::Cardano::Hash::bech32_decode(Data.data(), PublicKey, &PublicKeySize);
+				uint16_t DerivedPublicKeySize = 64;
+				if (!::Cardano::Hash::bech32_decode_extended(Data.data(), PublicKey, &DerivedPublicKeySize, XVK_LENGTH))
+					return false;
+
+				if (PublicKeySize != nullptr)
+					*PublicKeySize = (size_t)DerivedPublicKeySize;
+
+				return DerivedPublicKeySize == XVK_LENGTH || DerivedPublicKeySize == 32;
 			}
 			Decimal Cardano::GetMinValuePerOutput()
 			{
@@ -711,7 +730,7 @@ namespace Tangent
 			}
 			uint256_t Cardano::ToLovelace(const Decimal& Value)
 			{
-				return uint256_t((Value * GetDivisibility()).Truncate(0).ToString());
+				return uint256_t((Value * Netdata.Divisibility).Truncate(0).ToString());
 			}
 			uint64_t Cardano::GetMinProtocolFeeA()
 			{

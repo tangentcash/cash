@@ -26,15 +26,6 @@ namespace Tangent
                 virtual const btc_chainparams_* GetChain() override;
             };
 
-            class BinanceSmartChain : public Ethereum
-            {
-            public:
-                BinanceSmartChain() noexcept = default;
-                virtual ~BinanceSmartChain() override = default;
-                virtual String GetDerivation(uint64_t AddressIndex) const override;
-                virtual const btc_chainparams_* GetChain() override;
-            };
-
             class Celo : public Ethereum
             {
             public:
@@ -80,24 +71,6 @@ namespace Tangent
                 virtual const btc_chainparams_* GetChain() override;
             };
 
-            class Heco : public Ethereum
-            {
-            public:
-                Heco() noexcept = default;
-                virtual ~Heco() override = default;
-                virtual String GetDerivation(uint64_t AddressIndex) const override;
-                virtual const btc_chainparams_* GetChain() override;
-            };
-
-            class Kcc : public Ethereum
-            {
-            public:
-                Kcc() noexcept = default;
-                virtual ~Kcc() override = default;
-                virtual String GetDerivation(uint64_t AddressIndex) const override;
-                virtual const btc_chainparams_* GetChain() override;
-            };
-
             class Moonbeam : public Ethereum
             {
             public:
@@ -130,6 +103,15 @@ namespace Tangent
             public:
                 Rootstock() noexcept = default;
                 virtual ~Rootstock() override = default;
+                virtual String GetDerivation(uint64_t AddressIndex) const override;
+                virtual const btc_chainparams_* GetChain() override;
+            };
+
+            class BinanceSmartChain : public Ethereum
+            {
+            public:
+                BinanceSmartChain() noexcept;
+                virtual ~BinanceSmartChain() override = default;
                 virtual String GetDerivation(uint64_t AddressIndex) const override;
                 virtual const btc_chainparams_* GetChain() override;
             };

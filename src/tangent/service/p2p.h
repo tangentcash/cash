@@ -33,7 +33,7 @@ namespace Tangent
 		struct Procedure
 		{
 			Format::Variables Args;
-			uint32_t Version = 0;
+			uint32_t Magic = 0;
 			uint32_t Method = 0;
 			uint32_t Size = 0;
 			uint32_t Checksum = 0;
@@ -139,7 +139,7 @@ namespace Tangent
 			struct
 			{
 				Ledger::Wallet Wallet;
-				Ledger::Edge Node;
+				Ledger::Validator Node;
 			} Validator;
 
 			struct
@@ -154,6 +154,19 @@ namespace Tangent
 				size_t Offset = 0;
 			} Discovery;
 
+			struct
+			{
+				std::function<void(const uint256_t&, const Ledger::Block&, const Ledger::BlockCheckpoint&)> AcceptBlock;
+				std::function<void(const uint256_t&, const Ledger::Transaction*, const Algorithm::Pubkeyhash)> AcceptTransaction;
+			} Events;
+
+		private:
+			struct
+			{
+				Option<uint64_t> BlockNumber = Optional::None;
+				bool Dirty = false;
+			} Mempool;
+
 		private:
 			UnorderedMap<uint32_t, void*> InMethods;
 			UnorderedMap<void*, uint32_t> OutMethods;
@@ -162,12 +175,10 @@ namespace Tangent
 			SingleQueue<URef<RelayProcedure>> Messages;
 			uint32_t MethodAddress;
 			SystemControl ControlSys;
-			bool MempoolDirty = false;
 
 		public:
 			Ledger::EvaluationContext Environment;
 			UnorderedMap<uint256_t, Ledger::BlockHeader> Forks;
-			SingleQueue<SocketAddress> Seeds;
 
 		public:
 			ServerNode() noexcept;
@@ -178,13 +189,14 @@ namespace Tangent
 			void ClearPendingTip();
 			void AcceptForkTip(const uint256_t& ForkTip, const uint256_t& CandidateHash, Ledger::BlockHeader&& ForkTipBlock);
 			void AcceptPendingTip();
+			bool ClearMempool(bool Wait);
 			bool AcceptMempool();
 			bool AcceptDispatchpool(const Ledger::BlockHeader& Tip);
 			bool AcceptBlock(Relay* From, Ledger::Block&& CandidateBlock, const uint256_t& ForkTip);
-			bool AcceptTransaction(Relay* From, UPtr<Ledger::Transaction>&& CandidateTx);
-			bool AcceptProposer();
 			bool Accept(Option<SocketAddress>&& Address = Optional::None);
-			bool BroacastTransaction(Relay* From, UPtr<Ledger::Transaction>&& CandidateTx);
+			ExpectsLR<void> ProposeTransaction(Relay* From, UPtr<Ledger::Transaction>&& CandidateTx, uint64_t AccountSequence, const std::string_view& Purpose);
+			ExpectsLR<void> AcceptTransaction(Relay* From, UPtr<Ledger::Transaction>&& CandidateTx, bool DeepValidation = false);
+			ExpectsLR<void> BroacastTransaction(Relay* From, UPtr<Ledger::Transaction>&& CandidateTx, const Algorithm::Pubkeyhash Owner);
 			Relay* Find(const SocketAddress& Address);
 			size_t SizeOf(NodeType Type);
 			bool IsActive();
@@ -220,10 +232,11 @@ namespace Tangent
 
 		private:
 			ExpectsSystem<void> OnUnlisten() override;
-			ExpectsLR<void> ApplyValidator(Storages::Mempoolstate& Mempool, Ledger::Edge& Node, Option<Ledger::Wallet>&& Wallet);
+			ExpectsLR<void> ApplyValidator(Storages::Mempoolstate& Mempool, Ledger::Validator& Node, Option<Ledger::Wallet>&& Wallet);
 			Relay* FindNodeByInstance(void* Instance);
 			int32_t ConnectOutboundNode(const SocketAddress& Address);
 			bool AcceptBlockCandidate(const Ledger::Block& CandidateBlock, const uint256_t& CandidateHash, const uint256_t& ForkTip);
+			bool AcceptProposalTransaction(const Ledger::Block& CheckpointBlock, const Ledger::BlockTransaction& Transaction);
 			bool ReceiveOutboundNode(Option<SocketAddress>&& ErrorAddress);
 			bool PushNextProcedure(Relay* State);
 			void BindFunction(ReceiveFunction Function);
@@ -240,7 +253,8 @@ namespace Tangent
 			void OnRequestOpen(InboundNode* Base) override;
 
 		private:
-			Promise<Option<SocketAddress>> Discover(Option<SocketAddress>&& ErrorAddress);
+			Promise<Option<SocketAddress>> Discover(Option<SocketAddress>&& ErrorAddress, bool TryRediscovering);
+			Promise<Option<SocketAddress>> Rediscover();
 			Promise<void> Connect(UPtr<Relay>&& From);
 			Promise<void> Disconnect(UPtr<Relay>&& From);
 			Promise<void> ProposeTransactionLogs(const Oracle::ChainSupervisorOptions& Options, Oracle::TransactionLogs&& Logs);

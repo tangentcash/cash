@@ -28,7 +28,7 @@ namespace Tangent
 				};
 
 			public:
-				Tron() noexcept = default;
+				Tron() noexcept;
 				virtual ~Tron() override = default;
 				virtual Promise<ExpectsLR<void>> BroadcastTransaction(const Algorithm::AssetId& Asset, const OutgoingTransaction& TxData) override;
 				virtual Promise<ExpectsLR<Decimal>> CalculateBalance(const Algorithm::AssetId& Asset, const DynamicWallet& Seed, Option<String>&& Address) override;
@@ -37,7 +37,6 @@ namespace Tangent
 				virtual ExpectsLR<void> VerifyNodeCompatibility(Nodemaster* Node) override;
 				virtual String GetMessageMagic() override;
 				virtual String GetDerivation(uint64_t AddressIndex) const override;
-				virtual Decimal GetDivisibility() const override;
 				virtual const btc_chainparams_* GetChain() override;
 
 			public:

@@ -92,8 +92,11 @@ namespace Tangent
 					uint8_t GetLogs = 0;
 				} Legacy;
 
+			protected:
+				Chainparams Netdata;
+
 			public:
-				Ethereum() noexcept = default;
+				Ethereum() noexcept;
 				virtual ~Ethereum() override = default;
 				virtual Promise<ExpectsLR<void>> BroadcastTransaction(const Algorithm::AssetId& Asset, const OutgoingTransaction& TxData) override;
 				virtual Promise<ExpectsLR<uint64_t>> GetLatestBlockHeight(const Algorithm::AssetId& Asset) override;
@@ -105,18 +108,14 @@ namespace Tangent
 				virtual Promise<ExpectsLR<OutgoingTransaction>> NewTransaction(const Algorithm::AssetId& Asset, const DynamicWallet& Wallet, const Vector<Transferer>& To, const BaseFee& Fee) override;
 				virtual ExpectsLR<MasterWallet> NewMasterWallet(const std::string_view& Seed) override;
 				virtual ExpectsLR<DerivedSigningWallet> NewSigningWallet(const Algorithm::AssetId& Asset, const MasterWallet& Wallet, uint64_t AddressIndex) override;
-				virtual ExpectsLR<DerivedSigningWallet> NewSigningWallet(const Algorithm::AssetId& Asset, const std::string_view& RawPrivateKey) override;
-				virtual ExpectsLR<DerivedVerifyingWallet> NewVerifyingWallet(const Algorithm::AssetId& Asset, const std::string_view& RawPublicKey) override;
+				virtual ExpectsLR<DerivedSigningWallet> NewSigningWallet(const Algorithm::AssetId& Asset, const std::string_view& SigningKey) override;
+				virtual ExpectsLR<DerivedVerifyingWallet> NewVerifyingWallet(const Algorithm::AssetId& Asset, const std::string_view& VerifyingKey) override;
 				virtual ExpectsLR<String> NewPublicKeyHash(const std::string_view& Address) override;
-				virtual ExpectsLR<String> SignMessage(const Messages::Generic& Message, const DerivedSigningWallet& Wallet) override;
-				virtual ExpectsLR<bool> VerifyMessage(const Messages::Generic& Message, const std::string_view& Address, const std::string_view& PublicKey, const std::string_view& Signature) override;
+				virtual ExpectsLR<String> SignMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const PrivateKey& SigningKey) override;
+				virtual ExpectsLR<void> VerifyMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const std::string_view& VerifyingKey, const std::string_view& Signature) override;
 				virtual String GetChecksumHash(const std::string_view& Value) const override;
 				virtual String GetDerivation(uint64_t AddressIndex) const override;
-				virtual Decimal GetDivisibility() const override;
-				virtual Algorithm::Composition::Type GetCompositionPolicy() const override;
-				virtual RoutingPolicy GetRoutingPolicy() const override;
-				virtual uint64_t GetBlockLatency() const override;
-				virtual bool HasBulkTransactions() const override;
+				virtual const Chainparams& GetChainparams() const override;
 
 			public:
 				virtual Promise<ExpectsLR<Schema*>> GetTransactionReceipt(const Algorithm::AssetId& Asset, const std::string_view& TxId);
@@ -128,7 +127,7 @@ namespace Tangent
 				virtual bool IsTokenTransfer(const std::string_view& FunctionSignature);
 				virtual void GeneratePublicKeyHashFromPublicKey(const uint8_t PublicKey[64], char OutPublicKeyHash[20]);
 				virtual void GeneratePrivateKeyDataFromPrivateKey(const char* PrivateKey, size_t PrivateKeySize, uint8_t OutPrivateKeyHash[20]);
-				virtual void GenerateMessageHash(const String& Input, uint8_t Output[32]);
+				virtual void GenerateMessageHash(const std::string_view& Input, uint8_t Output[32]);
 				virtual String GetMessageMagic();
 				virtual String GeneratePkhAddress(const char* PublicKeyHash20);
 				virtual String GenerateUncheckedAddress(const std::string_view& Data);
