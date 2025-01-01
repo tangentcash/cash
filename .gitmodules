@@ -1,3 +1,0 @@
-[submodule "deps/vitex"]
-	path = deps/vitex
-	url = https://github.com/romanpunia/vitex
