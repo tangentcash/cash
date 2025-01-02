@@ -61,8 +61,8 @@ namespace Tangent
 			virtual bool IsConsensus() const;
 			virtual TransactionLevel GetType() const;
 			virtual UPtr<Schema> AsSchema() const override;
-			virtual uint32_t AsType() const = 0;
-			virtual std::string_view AsTypename() const = 0;
+			virtual uint32_t AsType() const override = 0;
+			virtual std::string_view AsTypename() const override = 0;
 			virtual uint256_t GetGasEstimate() const = 0;
 			virtual uint64_t GetDispatchOffset() const;
 		};
@@ -160,15 +160,15 @@ namespace Tangent
 			State(const BlockHeader* NewBlockHeader);
 			virtual ~State() = default;
 			virtual ExpectsLR<void> Transition(const TransactionContext* Context, const State* PrevState) = 0;
-			virtual bool Store(Format::Stream* Stream) const;
-			virtual bool Load(Format::Stream& Stream);
+			virtual bool Store(Format::Stream* Stream) const override;
+			virtual bool Load(Format::Stream& Stream) override;
 			virtual bool StorePayload(Format::Stream* Stream) const override = 0;
 			virtual bool LoadPayload(Format::Stream& Stream) override = 0;
 			virtual StateLevel AsLevel() const = 0;
 			virtual String AsComposite() const = 0;
-			virtual UPtr<Schema> AsSchema() const = 0;
-			virtual uint32_t AsType() const = 0;
-			virtual std::string_view AsTypename() const = 0;
+			virtual UPtr<Schema> AsSchema() const override = 0;
+			virtual uint32_t AsType() const override = 0;
+			virtual std::string_view AsTypename() const override = 0;
 		};
 
 		struct Uniform : State

@@ -858,7 +858,7 @@ namespace Tangent
 				if (IntermediateSize != 21)
 					return false;
 
-				memcpy(PublicKeyHash, Intermediate + 1, IntermediateSize);
+				memcpy(PublicKeyHash, Intermediate + 1, IntermediateSize - 1);
 				return true;
 			}
 			const btc_chainparams_* Ripple::GetChain()

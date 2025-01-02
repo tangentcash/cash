@@ -1332,7 +1332,7 @@ namespace Tangent
 		uint256_t ScriptProgram::AccountWorkOf(const ScriptAddress& Target) const
 		{
 			auto Data = Context->GetAccountWork(Target.Hash);
-			return Data ? Data->GetGasUse() : 0;
+			return Data ? Data->GetGasUse() : uint256_t(0);
 		}
 		String ScriptProgram::AccountProgramOf(const ScriptAddress& Target) const
 		{
@@ -1371,7 +1371,7 @@ namespace Tangent
 		uint256_t ScriptProgram::WitnessEventOf(const uint256_t& TransactionHash) const
 		{
 			auto Data = Context->GetWitnessEvent(TransactionHash);
-			return Data ? Data->ChildTransactionHash : 0;
+			return Data ? Data->ChildTransactionHash : uint256_t(0);
 		}
 		ScriptAddress ScriptProgram::WitnessAddressOf(const Algorithm::AssetId& Asset, const std::string_view& Address, uint64_t AddressIndex, size_t Offset) const
 		{
@@ -1574,7 +1574,7 @@ namespace Tangent
 		UPtr<Schema> ScriptProgramTrace::AsSchema() const
 		{
 			Schema* Data = Var::Set::Object();
-			Data->Set("block_hash", Var::String(Algorithm::Encoding::Encode0xHex256(Block.Number > 0 ? Block.AsHash() : 0)));
+			Data->Set("block_hash", Var::String(Algorithm::Encoding::Encode0xHex256(Block.Number > 0 ? Block.AsHash() : uint256_t(0))));
 			Data->Set("transaction_hash", Var::String(Algorithm::Encoding::Encode0xHex256(Context->Receipt.TransactionHash)));
 			Data->Set("from", Algorithm::Signing::SerializeAddress(((ScriptProgramTrace*)this)->From().Hash));
 			Data->Set("to", Algorithm::Signing::SerializeAddress(((ScriptProgramTrace*)this)->To().Hash));

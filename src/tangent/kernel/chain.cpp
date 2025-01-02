@@ -411,11 +411,11 @@ namespace Tangent
 
 			Value = Config->Fetch("p2p.max_inbound_connections");
 			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.P2P.MaxInboundConnections = Value->Value.GetInteger();
+				User.P2P.MaxInboundConnections = (uint32_t)Value->Value.GetInteger();
 
 			Value = Config->Fetch("p2p.max_outbound_connections");
 			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.P2P.MaxOutboundConnections = Value->Value.GetInteger();
+				User.P2P.MaxOutboundConnections = (uint32_t)Value->Value.GetInteger();
 			
 			Value = Config->Fetch("p2p.cursor_size");
 			if (Value != nullptr && Value->Value.Is(VarType::Integer))
@@ -577,11 +577,11 @@ namespace Tangent
 
 			Value = Config->Fetch("oracle.cache_short_size");
 			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.Oracle.CacheShortSize = Value->Value.GetInteger();
+				User.Oracle.CacheShortSize = (uint32_t)Value->Value.GetInteger();
 
 			Value = Config->Fetch("oracle.cache_extended_size");
 			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.Oracle.CacheExtendedSize = Value->Value.GetInteger();
+				User.Oracle.CacheExtendedSize = (uint32_t)Value->Value.GetInteger();
 
 			Value = Config->Fetch("oracle.fee_estimation_seconds");
 			if (Value != nullptr && Value->Value.Is(VarType::Integer))

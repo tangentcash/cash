@@ -611,7 +611,7 @@ namespace Tangent
 						continue;
 
 					auto Work = Context->GetAccountWork(Proposer);
-					BranchWork += std::min(Work ? Work->GetGasUse() : 0, WorkLimit);
+					BranchWork += std::min(Work ? Work->GetGasUse() : uint256_t(0), WorkLimit);
 				}
 
 				if (BranchWork > BestBranchWork)

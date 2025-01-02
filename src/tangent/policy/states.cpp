@@ -249,22 +249,22 @@ namespace Tangent
 		{
 			auto& Config = Protocol::Now();
 			auto TotalGasLimit = Ledger::BlockHeader::GetGasLimit();
-			auto Requirement = BlockHeader ? BlockHeader->GetSlotGasTarget() : 0;
+			auto Requirement = BlockHeader ? BlockHeader->GetSlotGasTarget() : uint256_t(0);
 			auto Utility = (BlockHeader ? TotalGasLimit.ToDecimal() / BlockHeader->GetSlotGasUse().ToDecimal() : 1);
 			if (Utility.IsNaN())
 				Utility = Decimal::Zero();
 
 			auto Multiplier = Requirement.ToDecimal() * Utility * Config.Policy.AccountGasWorkRequired;
 			Requirement = uint256_t(Multiplier.Truncate(0).ToString(), 10);
-			return Requirement > GasUse ? Requirement - GasUse : 0;
+			return Requirement > GasUse ? Requirement - GasUse : uint256_t(0);
 		}
 		uint256_t AccountWork::GetAdjustedGasPaid(const uint256_t& GasUse, const uint256_t& GasPaid)
 		{
-			return GasPaid > GasUse ? GasPaid - GasUse : 0;
+			return GasPaid > GasUse ? GasPaid - GasUse : uint256_t(0);
 		}
 		uint256_t AccountWork::GetAdjustedGasOutput(const uint256_t& GasUse, const uint256_t& GasPaid)
 		{
-			return GasPaid < GasUse ? GasUse - GasPaid : 0;
+			return GasPaid < GasUse ? GasUse - GasPaid : uint256_t(0);
 		}
 
 		AccountObserver::AccountObserver(const Algorithm::Pubkeyhash NewOwner, uint64_t NewBlockNumber, uint64_t NewBlockNonce) : Ledger::Multiform(NewBlockNumber, NewBlockNonce)

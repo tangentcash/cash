@@ -822,12 +822,12 @@ namespace Tangent
 			if (!Stream.ReadDecimal(Stream.ReadType(), &UTXO.Value))
 				return false;
 
-			size_t Size;
+			uint32_t Size;
 			if (!Stream.ReadInteger(Stream.ReadType(), &Size))
 				return false;
 
 			UTXO.Tokens.reserve(Size);
-			for (size_t i = 0; i < Size; i++)
+			for (uint32_t i = 0; i < Size; i++)
 			{
 				TokenUTXO Token;
 				if (!Stream.ReadString(Stream.ReadType(), &Token.ContractAddress))

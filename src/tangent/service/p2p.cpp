@@ -1031,7 +1031,7 @@ namespace Tangent
 		void ServerNode::CallFunction(Relay* State, ReceiveFunction Function, Format::Variables&& Args)
 		{
 			VI_ASSERT(State != nullptr, "state should be set");
-			auto It = OutMethods.find(Function);
+			auto It = OutMethods.find((void*)Function);
 			if (It == OutMethods.end())
 				return;
 
@@ -1043,7 +1043,7 @@ namespace Tangent
 		}
 		void ServerNode::MulticallFunction(Relay* State, ReceiveFunction Function, Format::Variables&& Args)
 		{
-			auto It = OutMethods.find(Function);
+			auto It = OutMethods.find((void*)Function);
 			if (It == OutMethods.end())
 				return;
 
@@ -1870,7 +1870,7 @@ namespace Tangent
 				{
 					Mempool.BlockNumber = Optional::None;
 					if (Protocol::Now().User.P2P.Logging)
-						VI_ERR("[p2p] on transaction %s %.*s error: %s", Algorithm::Encoding::Encode0xHex256(Transaction.Transaction->AsHash()).c_str(), (int)Purpose.size(), Purpose.data(), Transaction.Receipt.GetErrorMessages().Or(String("execution error")));	
+						VI_ERR("[p2p] on transaction %s %.*s error: %s", Algorithm::Encoding::Encode0xHex256(Transaction.Transaction->AsHash()).c_str(), (int)Purpose.size(), Purpose.data(), Transaction.Receipt.GetErrorMessages().Or(String("execution error")).c_str());
 				}
 			}
 			else if (Protocol::Now().User.P2P.Logging)
@@ -1879,7 +1879,7 @@ namespace Tangent
 				if (Transaction.Receipt.Successful)
 					VI_INFO("[p2p] on transaction %s %.*s finalized", Algorithm::Encoding::Encode0xHex256(Transaction.Transaction->AsHash()).c_str(), (int)Purpose.size(), Purpose.data());
 				else
-					VI_ERR("[p2p] on transaction %s %.*s error: %s", Algorithm::Encoding::Encode0xHex256(Transaction.Transaction->AsHash()).c_str(), (int)Purpose.size(), Purpose.data(), Transaction.Receipt.GetErrorMessages().Or(String("execution error")));
+					VI_ERR("[p2p] on transaction %s %.*s error: %s", Algorithm::Encoding::Encode0xHex256(Transaction.Transaction->AsHash()).c_str(), (int)Purpose.size(), Purpose.data(), Transaction.Receipt.GetErrorMessages().Or(String("execution error")).c_str());
 			}
 			return true;
 		}

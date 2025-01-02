@@ -964,7 +964,7 @@ public:
 			Vector<UPtr<Ledger::Transaction>> Transactions;
 			Transactions.reserve(Protocol::Now().Policy.TransactionThroughput * Protocol::Now().Policy.ConsensusProofTime / 1000);
 			uint256_t GasUse = 0, GasLimit = Ledger::Block::GetGasLimit();
-			size_t Count = TxCount > 0 ? (size_t)(Seed % 40 + 1) : std::numeric_limits<size_t>::max();
+            size_t Count = TxCount > 0 ? (size_t)(uint64_t)(Seed % 40 + 1) : std::numeric_limits<size_t>::max();
 			Seed = Algorithm::Hashing::Hash256i(Seed.ToString());
 			for (size_t j = 0; j < Count; j++)
 			{
@@ -1061,7 +1061,7 @@ public:
 			Vector<UPtr<Ledger::Transaction>> Transactions;
 			Transactions.reserve(Protocol::Now().Policy.TransactionThroughput * Protocol::Now().Policy.ConsensusProofTime / 1000);
 			uint256_t GasUse = 0, GasLimit = Ledger::Block::GetGasLimit();
-			size_t Count = TxCount > 0 ? (size_t)(Seed % 40 + 1) : std::numeric_limits<size_t>::max();
+			size_t Count = TxCount > 0 ? (size_t)(uint64_t)(Seed % 40 + 1) : std::numeric_limits<size_t>::max();
 			Seed = Algorithm::Hashing::Hash256i(Seed.ToString());
 			for (size_t j = 0; j < Count; j++)
 			{
@@ -1135,7 +1135,7 @@ public:
 
 		const size_t BlockCount = 1536;
 		auto Chain = Storages::Chainstate(__func__);
-		size_t AccountsCount = (Ledger::Block::GetGasLimit() / Transactions::Transfer().GetGasEstimate());
+        size_t AccountsCount = (size_t)(uint64_t)(Ledger::Block::GetGasLimit() / Transactions::Transfer().GetGasEstimate());
 		Vector<std::pair<Ledger::Wallet, uint64_t>> Accounts;
 		Accounts.reserve(AccountsCount);
 		for (size_t i = 0; i < AccountsCount; i++)
@@ -1440,7 +1440,7 @@ public:
 				if (!Algorithm::Signing::DecodeAddress(Args[1], Owner))
 					goto NotValid;
 
-				auto Page = uint256_t(Args.size() > 2 ? Args[2] : "0", 10);
+				auto Page = (uint64_t)uint256_t(Args.size() > 2 ? Args[2] : "0", 10);
 				auto Response = Chain.GetBlockTransactionsByOwner(std::numeric_limits<int64_t>::max(), Owner, 1, 512 * Page, 512);
 				if (!Response)
 					goto NotFound;
@@ -1460,7 +1460,7 @@ public:
 				if (!Algorithm::Signing::DecodeAddress(Args[1], Owner))
 					goto NotValid;
 
-				auto Page = uint256_t(Args.size() > 2 ? Args[2] : "0", 10);
+				auto Page = (uint64_t)uint256_t(Args.size() > 2 ? Args[2] : "0", 10);
 				auto Response = Chain.GetTransactionsByOwner(std::numeric_limits<int64_t>::max(), Owner, 1, 512 * Page, 512);
 				if (!Response)
 					goto NotFound;
@@ -2311,5 +2311,5 @@ public:
 
 int main(int argc, char* argv[])
 {
-	return TestCases::Consensus(argc, argv);
+    return TestCases::Explorer(argc, argv);
 }

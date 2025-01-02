@@ -55,7 +55,7 @@ namespace Tangent
 				UpdateCoins(Asset, TxData);
 				Coreturn ExpectsLR<void>(Expectation::Met);
 			}
-			Promise<ExpectsLR<size_t>> Cardano::GetLatestBlockHeight(const Algorithm::AssetId& Asset)
+			Promise<ExpectsLR<uint64_t>> Cardano::GetLatestBlockHeight(const Algorithm::AssetId& Asset)
 			{
 				Schema* Args = Var::Set::Object();
 				Schema* NetworkQuery = Args->Set("network_identifier", Var::Object());
@@ -64,11 +64,11 @@ namespace Tangent
 
 				auto Netstat = Coawait(ExecuteREST(Asset, "POST", NdCall::NetworkStatus(), Args, CachePolicy::Lazy));
 				if (!Netstat)
-					Coreturn ExpectsLR<size_t>(Netstat.Error());
+					Coreturn ExpectsLR<uint64_t>(Netstat.Error());
 
 				uint64_t BlockHeight = Netstat->FetchVar("current_block_identifier.index").GetInteger();
 				Memory::Release(*Netstat);
-				Coreturn ExpectsLR<size_t>(BlockHeight);
+				Coreturn ExpectsLR<uint64_t>(BlockHeight);
 			}
 			Promise<ExpectsLR<Schema*>> Cardano::GetBlockTransactions(const Algorithm::AssetId& Asset, uint64_t BlockHeight, String* BlockHash)
 			{
@@ -309,7 +309,7 @@ namespace Tangent
 				if (!BlockData)
 					Coreturn ExpectsLR<uint64_t>(BlockData.Error());
 
-				uint64_t BlockSlot = BlockData->FetchVar("metadata.slotNo").GetInteger();
+                uint64_t BlockSlot = BlockData->FetchVar("metadata.slotNo").GetInteger();
 				Memory::Release(*BlockData);
 				Coreturn ExpectsLR<uint64_t>(BlockSlot);
 			}

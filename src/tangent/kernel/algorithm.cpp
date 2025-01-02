@@ -311,7 +311,7 @@ namespace Tangent
 			Codec::RotateBuffer((uint8_t*)Shuffletext.data(), Shuffletext.size(), Y.High().Low(), 1);
 			Codec::RotateBuffer((uint8_t*)Shuffletext.data(), Shuffletext.size(), Y.High().High(), 1);
 
-			size_t PaddingX = X % 64, PaddingY = Y % 64;
+            size_t PaddingX = (size_t)(uint64_t)(X % 64), PaddingY = (size_t)(uint64_t)(Y % 64);
 			Shuffletext.append(Crypto::HashRaw(Digests::SHA512(), Shuffletext)->substr(0, PaddingX));
 			Shuffletext.append(Crypto::HashRaw(Digests::SHA512(), Shuffletext)->substr(0, PaddingY));
 			Shuffletext.append(Hash);
@@ -344,7 +344,7 @@ namespace Tangent
 			Encoding::EncodeUint256((uint8_t*)Hash.data() + 32, Y);
 			Shuffletext.resize(Shuffletext.size() - Hash.size());
 
-			size_t Padding = X % 64 + Y % 64;
+			size_t Padding = (size_t)(uint64_t)(X % 64 + Y % 64);
 			if (Padding > Shuffletext.size())
 				return Optional::None;
 
@@ -872,7 +872,12 @@ namespace Tangent
 						Crypto::FillRandomBytes(PrivateKey1, sizeof(CSeckey));
 
 					secp256k1_pubkey Point1;
-					secp256k1_ec_pubkey_create(Context, &Point1, PrivateKey1);
+					if (secp256k1_ec_pubkey_create(Context, &Point1, PrivateKey1) != 1)
+                    {
+                        secp256k1_context_destroy(Context);
+                        return LayerException("bad private key 1");
+                    }
+                    
 					secp256k1_context_destroy(Context);
 					memcpy(PublicKey1, Point1.data, sizeof(Point1.data));
 					return Expectation::Met;
@@ -921,7 +926,9 @@ namespace Tangent
 
 					uint8_t Z[crypto_sign_PUBLICKEYBYTES];
 					crypto_core_ed25519_add(Z, Point1, X);
-					crypto_scalarmult_ed25519(Point1, PrivateKey2, Z);
+					if (crypto_scalarmult_ed25519(Point1, PrivateKey2, Z) != 0)
+                        return LayerException("bad private key 2");
+                    
 					crypto_core_ed25519_add(Z, Point1, Y);
 					memcpy(PublicKey, Z, sizeof(Z));
 					if (PublicKeySize != nullptr)
@@ -938,7 +945,11 @@ namespace Tangent
 					memcpy(Point1.data, PublicKey1, sizeof(Point1));
 
 					secp256k1_pubkey Point2;
-					secp256k1_ec_pubkey_create(Context, &Point2, PrivateKey2);
+					if (secp256k1_ec_pubkey_create(Context, &Point2, PrivateKey2) != 1)
+                    {
+                        secp256k1_context_destroy(Context);
+                        return LayerException("bad private key 2");
+                    }
 					memcpy(PublicKey2, Point2.data, sizeof(Point2.data));
 
 					Seckey X, Y;
@@ -967,9 +978,24 @@ namespace Tangent
 					}
 
 					size_t KeySize = sizeof(Pubkey);
-					secp256k1_ec_pubkey_tweak_add(Context, &Point1, X);
-					secp256k1_ec_pubkey_tweak_mul(Context, &Point1, PrivateKey2);
-					secp256k1_ec_pubkey_tweak_add(Context, &Point1, Y);
+					if (secp256k1_ec_pubkey_tweak_add(Context, &Point1, X) != 1)
+                    {
+                        secp256k1_context_destroy(Context);
+                        return LayerException("bad private key 2");
+                    }
+                    
+                    if (secp256k1_ec_pubkey_tweak_mul(Context, &Point1, PrivateKey2) != 1)
+                    {
+                        secp256k1_context_destroy(Context);
+                        return LayerException("bad private key 2");
+                    }
+                    
+                    if (secp256k1_ec_pubkey_tweak_add(Context, &Point1, Y) != 1)
+                    {
+                        secp256k1_context_destroy(Context);
+                        return LayerException("bad private key 2");
+                    }
+                    
 					secp256k1_ec_pubkey_serialize(Context, PublicKey, &KeySize, &Point1, SECP256K1_EC_COMPRESSED);
 					secp256k1_context_destroy(Context);
 					if (PublicKeySize != nullptr)
@@ -1031,8 +1057,17 @@ namespace Tangent
 				{
 					secp256k1_context* Context = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
 					secp256k1_pubkey Point1, Point2;
-					secp256k1_ec_pubkey_create(Context, &Point1, Secret1);
-					secp256k1_ec_pubkey_create(Context, &Point2, Secret2);
+					if (secp256k1_ec_pubkey_create(Context, &Point1, Secret1) != 1)
+                    {
+                        secp256k1_context_destroy(Context);
+                        return LayerException("bad secret key 1");
+                    }
+                    
+					if (secp256k1_ec_pubkey_create(Context, &Point2, Secret2) != 1)
+                    {
+                        secp256k1_context_destroy(Context);
+                        return LayerException("bad secret key 2");
+                    }
 
 					Seckey X, Y;
 					SHA256_CTX Hash = { 0 };
@@ -1060,9 +1095,24 @@ namespace Tangent
 					}
 
 					memcpy(PrivateKey, Secret1, sizeof(Seckey));
-					secp256k1_ec_seckey_tweak_add(Context, PrivateKey, X);
-					secp256k1_ec_seckey_tweak_mul(Context, PrivateKey, Secret2);
-					secp256k1_ec_seckey_tweak_add(Context, PrivateKey, Y);
+                    if (secp256k1_ec_seckey_tweak_add(Context, PrivateKey, X) != 1)
+                    {
+                        secp256k1_context_destroy(Context);
+                        return LayerException("bad secret key 2");
+                    }
+                    
+                    if (secp256k1_ec_seckey_tweak_mul(Context, PrivateKey, Secret2) != 1)
+                    {
+                        secp256k1_context_destroy(Context);
+                        return LayerException("bad secret key 2");
+                    }
+                    
+                    if (secp256k1_ec_seckey_tweak_add(Context, PrivateKey, Y) != 1)
+                    {
+                        secp256k1_context_destroy(Context);
+                        return LayerException("bad secret key 2");
+                    }
+                    
 					secp256k1_context_destroy(Context);
 					if (PrivateKeySize)
 						*PrivateKeySize = 32;
