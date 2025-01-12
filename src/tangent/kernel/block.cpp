@@ -1607,8 +1607,8 @@ namespace Tangent
 #ifdef TAN_VALIDATOR
 			auto Nonce = GetValidationNonce();
 			auto Chain = Storages::Chainstate(__func__);
-			auto Query = Storages::FactorQuery::Equal((int64_t)Ledger::WorkStatus::Online, 1);
-			return Chain.GetMultiformsCountByRow(States::AccountObserver::AsInstanceRow(Asset), Query, Nonce);
+			auto Filter = Storages::FactorFilter::Equal((int64_t)Ledger::WorkStatus::Online, 1);
+			return Chain.GetMultiformsCountByRowFilter(States::AccountObserver::AsInstanceRow(Asset), Filter, Nonce);
 #else
 			return LayerException("chainstate data not available");
 #endif
@@ -1622,8 +1622,8 @@ namespace Tangent
 
 			auto Nonce = GetValidationNonce();
 			auto Chain = Storages::Chainstate(__func__);
-			auto Query = Storages::FactorQuery::GreaterEqual(0, -1);
-			auto TotalSize = Chain.GetMultiformsCountByRow(States::AccountWork::AsInstanceRow(), Query, Nonce).Or(0);
+			auto Filter = Storages::FactorFilter::GreaterEqual(0, -1);
+			auto TotalSize = Chain.GetMultiformsCountByRowFilter(States::AccountWork::AsInstanceRow(), Filter, Nonce).Or(0);
 			if (Proposers != nullptr)
 				*Proposers = TotalSize;
 
@@ -1631,13 +1631,13 @@ namespace Tangent
 				return LayerException("committee threshold not met");
 
 			size_t MajorsSize = std::min(TotalSize, Majors);
-			auto MajorComittee = Chain.GetMultiformsByRow(&Delta, States::AccountWork::AsInstanceRow(), Query, Nonce, 0, MajorsSize);
+			auto MajorComittee = Chain.GetMultiformsByRowFilter(&Delta, States::AccountWork::AsInstanceRow(), Filter, Nonce, 0, MajorsSize);
 			if (!MajorComittee)
 				return LayerException("committee threshold not met");
 
 			size_t MinorsSize = std::min(TotalSize - MajorComittee->size(), Minors);
 			size_t MinorsOffset = (MinorsSize > 0 ? (size_t)(uint64_t)(Random->Derive() % MinorsSize) : 0) + MajorComittee->size();
-			auto MinorCommittee = MinorsSize > 0 ? Chain.GetMultiformsByRow(&Delta, States::AccountWork::AsInstanceRow(), Query, Nonce, MinorsSize, MinorsSize) : ExpectsLR<Vector<UPtr<Ledger::State>>>(Vector<UPtr<Ledger::State>>());
+			auto MinorCommittee = MinorsSize > 0 ? Chain.GetMultiformsByRowFilter(&Delta, States::AccountWork::AsInstanceRow(), Filter, Nonce, MinorsSize, MinorsSize) : ExpectsLR<Vector<UPtr<Ledger::State>>>(Vector<UPtr<Ledger::State>>());
 			if (!MinorCommittee)
 				return LayerException("committee threshold not met");
 
@@ -1692,8 +1692,8 @@ namespace Tangent
 
 			auto Nonce = GetValidationNonce();
 			auto Chain = Storages::Chainstate(__func__);
-			auto Query = Storages::FactorQuery::GreaterEqual(0, -1);
-			uint64_t CurrentCommitteeSize = (uint64_t)Chain.GetMultiformsCountByRow(States::AccountWork::AsInstanceRow(), Query, Nonce).Or(0);
+			auto Filter = Storages::FactorFilter::GreaterEqual(0, -1);
+			uint64_t CurrentCommitteeSize = (uint64_t)Chain.GetMultiformsCountByRowFilter(States::AccountWork::AsInstanceRow(), Filter, Nonce).Or(0);
 			UnorderedSet<size_t> Indices;
 
 			while (Indices.size() < CurrentCommitteeSize)
@@ -1701,7 +1701,7 @@ namespace Tangent
 				size_t Index = (size_t)(uint64_t)(Random->Derive() % CurrentCommitteeSize);
 				if (Indices.find(Index) == Indices.end())
 				{
-					auto Tree = Chain.GetMultiformsByRow(&Delta, States::AccountWork::AsInstanceRow(), Query, Nonce, Index, 1);
+					auto Tree = Chain.GetMultiformsByRowFilter(&Delta, States::AccountWork::AsInstanceRow(), Filter, Nonce, Index, 1);
 					auto* Work = (States::AccountWork*)*Tree->front();
 					if (Owners.find(String((char*)Work->Owner, sizeof(Work->Owner))) == Owners.end() && ((!WorkRequired || VerifyAccountWork(Work->Owner))))
 						return *Work;
@@ -2346,6 +2346,31 @@ namespace Tangent
 			return LayerException("chainstate data not available");
 #endif
 		}
+		ExpectsLR<Vector<States::WitnessAddress>> TransactionContext::GetWitnessAddressesByPurpose(const Algorithm::Pubkeyhash Owner, States::WitnessAddress::Class Purpose, size_t Offset, size_t Count) const
+		{
+#ifdef TAN_VALIDATOR
+			auto Chain = Storages::Chainstate(__func__);
+			auto Filter = Storages::FactorFilter::Equal((int64_t)Purpose, 1);
+			auto States = Chain.GetMultiformsByColumnFilter(&Delta, States::WitnessAddress::AsInstanceColumn(Owner), Filter, GetValidationNonce(), Offset, Count);
+			if (!States)
+				return States.Error();
+
+			if (!States->empty())
+			{
+				auto Status = ((TransactionContext*)this)->Load(*States->front(), Chain.QueryUsed());
+				if (!Status)
+					return Status.Error();
+			}
+
+			Vector<States::WitnessAddress> Addresses;
+			Addresses.reserve(States->size());
+			for (auto& State : *States)
+				Addresses.emplace_back(std::move(*(States::WitnessAddress*)*State));
+			return Addresses;
+#else
+			return LayerException("chainstate data not available");
+#endif
+		}
 		ExpectsLR<States::WitnessAddress> TransactionContext::GetWitnessAddress(const Algorithm::Pubkeyhash Owner, const std::string_view& Address, uint64_t AddressIndex) const
 		{
 			return GetWitnessAddress(Transaction ? Transaction->Asset : uint256_t(0), Owner, Address, AddressIndex);
@@ -2729,23 +2754,11 @@ namespace Tangent
 				if (Item.Candidate->GetType() == TransactionLevel::Aggregation)
 				{
 					auto* Aggregation = ((AggregationTransaction*)*Item.Candidate);
-					auto* Branch = Aggregation->GetCumulativeBranch(&Validation.Context);
-					if (Branch != nullptr && !Branch->Attestations.empty())
-					{
-						auto It = Aggregators.find(Aggregation->Asset);
-						if (It == Aggregators.end())
-						{
-							Aggregators[Aggregation->Asset] = Validation.Context.CalculateAggregationCommitteeSize(Aggregation->Asset).Or(0);
-							It = Aggregators.find(Aggregation->Asset);
-						}
+					auto Consensus = Aggregation->CalculateCumulativeConsensus(&Aggregators, &Validation.Context);
+					if (!Consensus || !Consensus->Reached)
+						continue;
 
-						size_t Committee = Protocol::Now().Policy.ConsensusCommitteeAggregators;
-						double Threshold = It->second > 0 ? ((double)Branch->Attestations.size() / (double)std::min(It->second, Committee)) : 0.0;
-						if (Threshold < Protocol::Now().Policy.ConsensusAggregationThreshold)
-							continue;
-
-						Aggregation->SetConsensus(Branch->Message.Hash());
-					}
+					Aggregation->SetConsensus(Consensus->Branch->Message.Hash());
 				}
 
 				Validation.CumulativeGas = NewCumulativeGas;

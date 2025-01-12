@@ -622,6 +622,35 @@ namespace Tangent
 			}
 			return BestBranch;
 		}
+		Option<AggregationTransaction::CumulativeConsensus> AggregationTransaction::CalculateCumulativeConsensus(OrderedMap<Algorithm::AssetId, size_t>* Aggregators, TransactionContext* Context) const
+		{
+			if (!Context)
+				return Optional::None;
+
+			auto* Branch = GetCumulativeBranch(Context);
+			if (!Branch || Branch->Attestations.empty())
+				return Optional::None;
+			
+			size_t Committee = 0;
+			if (Aggregators != nullptr)
+			{
+				auto It = Aggregators->find(Asset);
+				if (It == Aggregators->end())
+					(*Aggregators)[Asset] = Committee = Context->CalculateAggregationCommitteeSize(Asset).Or(0);
+				else
+					Committee = It->second;
+			}
+			else
+				Committee = Context->CalculateAggregationCommitteeSize(Asset).Or(0);
+
+			CumulativeConsensus Consensus;
+			Consensus.Branch = Branch;
+			Consensus.Committee = std::min(Committee, Protocol::Now().Policy.ConsensusCommitteeAggregators);
+			Consensus.Threshold = Protocol::Now().Policy.ConsensusAggregationThreshold;
+			Consensus.Progress = Consensus.Committee > 0 ? ((double)Branch->Attestations.size() / (double)Consensus.Committee) : 0.0;
+			Consensus.Reached = Consensus.Progress >= Consensus.Threshold;
+			return Consensus;
+		}
 		uint256_t AggregationTransaction::GetCumulativeHash() const
 		{
 			Format::Stream Message;

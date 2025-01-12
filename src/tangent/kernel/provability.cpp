@@ -504,5 +504,27 @@ namespace Tangent
             return DefaultAlg;
         }
         WesolowskiVDF::Parameters WesolowskiVDF::DefaultAlg;
+
+        uint256_t NakamotoPOW::Evaluate(const uint256_t& Nonce, const std::string_view& Message)
+        {
+            Format::Stream Stream;
+            Serialize(Stream, Nonce, Message);
+            return Stream.Hash();
+        }
+        bool NakamotoPOW::Verify(const uint256_t& Nonce, const std::string_view& Message, const uint256_t& Target, const uint256_t& Solution)
+        {
+            if (Solution > Target)
+                return false;
+            else if (Nonce == uint256_t::Max())
+                return false;
+
+            return Solution == Evaluate(Nonce, Message);
+        }
+        void NakamotoPOW::Serialize(Format::Stream& Stream, const uint256_t& Nonce, const std::string_view& Message)
+        {
+            Stream.Clear();
+            Stream.WriteTypeless(Message);
+            Stream.WriteTypeless(Nonce);
+        }
     }
 }

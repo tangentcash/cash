@@ -211,6 +211,7 @@ namespace Tangent
         } Account;
         struct ProtocolPolicyConfig
         {
+            uint256_t DelegationTarget = uint256_t(1) << uint256_t(240);
             uint64_t ConsensusCommitteeMajors = 20;
             uint64_t ConsensusCommitteeMinors = 4;
             uint64_t ConsensusCommitteeAggregators = 64;

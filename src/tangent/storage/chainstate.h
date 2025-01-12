@@ -81,7 +81,7 @@ namespace Tangent
 			Option<uint64_t> GetBlockLocation(uint64_t ColumnLocation, uint64_t RowLocation);
 		};
 
-		struct FactorQuery
+		struct FactorFilter
 		{
 			PositionCondition Condition = PositionCondition::Equal;
 			int64_t Value = 0;
@@ -89,13 +89,13 @@ namespace Tangent
 
 			std::string_view AsCondition() const;
 			std::string_view AsOrder() const;
-			static FactorQuery From(const std::string_view& Query, int64_t Value, int8_t Order);
-			static FactorQuery Greater(int64_t Value, int8_t Order) { return { PositionCondition::Greater, Value, Order }; }
-			static FactorQuery GreaterEqual(int64_t Value, int8_t Order) { return { PositionCondition::GreaterEqual, Value, Order }; }
-			static FactorQuery Equal(int64_t Value, int8_t Order) { return { PositionCondition::Equal, Value, Order }; }
-			static FactorQuery NotEqual(int64_t Value, int8_t Order) { return { PositionCondition::NotEqual, Value, Order }; }
-			static FactorQuery Less(int64_t Value, int8_t Order) { return { PositionCondition::Less, Value, Order }; }
-			static FactorQuery LessEqual(int64_t Value, int8_t Order) { return { PositionCondition::LessEqual, Value, Order }; }
+			static FactorFilter From(const std::string_view& Query, int64_t Value, int8_t Order);
+			static FactorFilter Greater(int64_t Value, int8_t Order) { return { PositionCondition::Greater, Value, Order }; }
+			static FactorFilter GreaterEqual(int64_t Value, int8_t Order) { return { PositionCondition::GreaterEqual, Value, Order }; }
+			static FactorFilter Equal(int64_t Value, int8_t Order) { return { PositionCondition::Equal, Value, Order }; }
+			static FactorFilter NotEqual(int64_t Value, int8_t Order) { return { PositionCondition::NotEqual, Value, Order }; }
+			static FactorFilter Less(int64_t Value, int8_t Order) { return { PositionCondition::Less, Value, Order }; }
+			static FactorFilter LessEqual(int64_t Value, int8_t Order) { return { PositionCondition::LessEqual, Value, Order }; }
 		};
 
 		struct Chainstate : Ledger::PermanentStorage
@@ -165,8 +165,13 @@ namespace Tangent
 			ExpectsLR<UPtr<Ledger::State>> GetMultiformByColumn(const Ledger::BlockMutation* Delta, const std::string_view& Column, uint64_t BlockNumber, size_t Offset);
 			ExpectsLR<UPtr<Ledger::State>> GetMultiformByRow(const Ledger::BlockMutation* Delta, const std::string_view& Row, uint64_t BlockNumber, size_t Offset);
 			ExpectsLR<Vector<UPtr<Ledger::State>>> GetMultiformsByColumn(const Ledger::BlockMutation* Delta, const std::string_view& Column, uint64_t BlockNumber, size_t Offset, size_t Count);
-			ExpectsLR<Vector<UPtr<Ledger::State>>> GetMultiformsByRow(const Ledger::BlockMutation* Delta, const std::string_view& Row, const FactorQuery& Query, uint64_t BlockNumber, size_t Offset, size_t Count);
-			ExpectsLR<size_t> GetMultiformsCountByRow(const std::string_view& Row, const FactorQuery& Query, uint64_t BlockNumber);
+			ExpectsLR<Vector<UPtr<Ledger::State>>> GetMultiformsByColumnFilter(const Ledger::BlockMutation* Delta, const std::string_view& Column, const FactorFilter& Filter, uint64_t BlockNumber, size_t Offset, size_t Count);
+			ExpectsLR<Vector<UPtr<Ledger::State>>> GetMultiformsByRow(const Ledger::BlockMutation* Delta, const std::string_view& Row, uint64_t BlockNumber, size_t Offset, size_t Count);
+			ExpectsLR<Vector<UPtr<Ledger::State>>> GetMultiformsByRowFilter(const Ledger::BlockMutation* Delta, const std::string_view& Row, const FactorFilter& Filter, uint64_t BlockNumber, size_t Offset, size_t Count);
+			ExpectsLR<size_t> GetMultiformsCountByColumn(const std::string_view& Row, uint64_t BlockNumber);
+			ExpectsLR<size_t> GetMultiformsCountByColumnFilter(const std::string_view& Row, const FactorFilter& Filter, uint64_t BlockNumber);
+			ExpectsLR<size_t> GetMultiformsCountByRow(const std::string_view& Row, uint64_t BlockNumber);
+			ExpectsLR<size_t> GetMultiformsCountByRowFilter(const std::string_view& Row, const FactorFilter& Filter, uint64_t BlockNumber);
 
 		private:
 			ExpectsLR<size_t> ResolveBlockTransactions(Ledger::Block& Value, size_t Offset, size_t Count);

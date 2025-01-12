@@ -680,17 +680,17 @@ namespace Tangent
 		ExpectsLR<void> Withdrawal::Validate(const Ledger::TransactionContext* Context) const
 		{
 			Decimal Value = 0.0;
+			auto BaseAsset = Algorithm::Asset::BaseIdOf(Asset);
 			for (auto& Item : To)
 			{
-				auto Collision = Context->GetWitnessAddress(Algorithm::Asset::BaseIdOf(Asset), Item.first, Protocol::Now().Account.RootAddressIndex, 0);
-				if (!Collision || memcmp(Collision->Owner, Context->Receipt.From, sizeof(Collision->Owner)) != 0)
+				auto Collision = Context->GetWitnessAddress(BaseAsset, Item.first, Protocol::Now().Account.RootAddressIndex, 0);
+				if (Collision && memcmp(Collision->Owner, Context->Receipt.From, sizeof(Collision->Owner)) != 0)
 					return LayerException("invalid to address (not owned by sender)");
 
 				Value += Item.second;
 			}
 
 			bool Charges = memcmp(Context->Receipt.From, Proposer, sizeof(Algorithm::Pubkeyhash)) != 0;
-			auto BaseAsset = Algorithm::Asset::BaseIdOf(Asset);
 			auto BaseReward = Charges ? Context->GetAccountReward(BaseAsset, Proposer) : ExpectsLR<States::AccountReward>(LayerException());
 			if (BaseReward && BaseAsset != Asset)
 			{
@@ -717,8 +717,18 @@ namespace Tangent
 		}
 		ExpectsLR<void> Withdrawal::Execute(Ledger::TransactionContext* Context) const
 		{
-			bool Charges = memcmp(Context->Receipt.From, Proposer, sizeof(Algorithm::Pubkeyhash)) != 0;
+			uint64_t AddressIndex = Protocol::Now().Account.RootAddressIndex;
 			auto BaseAsset = Algorithm::Asset::BaseIdOf(Asset);
+			for (auto& Item : To)
+			{
+				auto Collision = Context->GetWitnessAddress(BaseAsset, Item.first, Protocol::Now().Account.RootAddressIndex, 0);
+				if (!Collision)
+					Collision = Context->ApplyWitnessAddress(Context->Receipt.From, nullptr, { { (uint8_t)0, String(Item.first) } }, AddressIndex, States::WitnessAddress::Class::Router);
+				if (!Collision)
+					return Collision.Error();
+			}
+
+			bool Charges = memcmp(Context->Receipt.From, Proposer, sizeof(Algorithm::Pubkeyhash)) != 0;
 			auto BaseReward = Charges ? Context->GetAccountReward(BaseAsset, Proposer) : ExpectsLR<States::AccountReward>(LayerException());
 			auto BaseFee = (BaseReward ? BaseReward->OutgoingAbsoluteFee : Decimal::Zero());
 			if (BaseAsset != Asset && BaseFee.IsPositive())
@@ -973,32 +983,40 @@ namespace Tangent
 		}
 		ExpectsLR<void> Rollup::Execute(Ledger::TransactionContext* Context) const
 		{
-			Vector<Ledger::Transaction*> Queue;
+			Vector<std::pair<Ledger::Transaction*, uint16_t>> Queue;
 			for (auto& Group : Transactions)
 			{
+				uint16_t Index = 0;
 				Queue.reserve(Queue.size() + Group.second.size());
 				for (auto& Transaction : Group.second)
-					Queue.push_back(*Transaction);
+					Queue.push_back(std::make_pair(*Transaction, Index++));
 			}
 
 			uint256_t AbsoluteGasLimit = Context->Block->GasLimit;
 			uint256_t AbsoluteGasUse = Context->Block->GasUse;
 			uint256_t RelativeGasUse = Context->Receipt.RelativeGasUse;
-			std::sort(Queue.begin(), Queue.end(), [](const Ledger::Transaction* A, const Ledger::Transaction* B)
+			std::sort(Queue.begin(), Queue.end(), [](const std::pair<Ledger::Transaction*, uint16_t>& A, const std::pair<Ledger::Transaction*, uint16_t>& B)
 			{
-				return A->Sequence < B->Sequence;
+				return A.first->Sequence < B.first->Sequence;
 			});
 
 			Algorithm::Pubkeyhash Null = { 0 };
-			for (auto& Transaction : Queue)
+			for (auto& [Transaction, Index] : Queue)
 			{
-				Algorithm::Pubkeyhash Owner; auto* Mutable = (Ledger::Transaction*)Transaction;
-				if (!Algorithm::Signing::RecoverHash(Transaction->AsPayload().Hash(), Owner, Transaction->Signature) || !memcmp(Owner, Null, sizeof(Null)))
+				Format::Stream Message;
+				Message.WriteInteger(Rollup::AsInstanceType());
+				Message.WriteInteger(Asset);
+				Message.WriteInteger(Index);
+				if (!Transaction->StorePayload(&Message))
+					return LayerException("sub-transaction " + Algorithm::Encoding::Encode0xHex256(Transaction->AsHash()) + " prevalidation failed: invalid payload");
+
+				Algorithm::Pubkeyhash Owner;
+				if (!Algorithm::Signing::RecoverHash(Message.Hash(), Owner, Transaction->Signature) || !memcmp(Owner, Null, sizeof(Null)))
 					return LayerException("sub-transaction " + Algorithm::Encoding::Encode0xHex256(Transaction->AsHash()) + " prevalidation failed: invalid signature");
 
-				Mutable->GasPrice = Decimal::Zero();
+				Transaction->GasPrice = Decimal::Zero();
 				auto Validation = Ledger::TransactionContext::ValidateTx((Ledger::Block*)Context->Block, Context->Environment, Transaction, Transaction->AsHash(), Owner, *Context->Delta.Incoming);
-				Mutable->GasPrice = Decimal::NaN();
+				Transaction->GasPrice = Decimal::NaN();
 				if (!Validation)
 					return LayerException("sub-transaction " + Algorithm::Encoding::Encode0xHex256(Transaction->AsHash()) + " validation failed: " + Validation.Error().Info);
 
@@ -1108,7 +1126,7 @@ namespace Tangent
 					if (!Next->LoadBody(Stream))
 						return false;
 
-					Setup(**Next);
+					SetupChild(**Next, Asset);
 					memcpy(Next->Signature, SignatureAssembly.data(), SignatureAssembly.size());
 					Group.push_back(std::move(Next));
 				}
@@ -1144,7 +1162,7 @@ namespace Tangent
 			}
 			return true;
 		}
-		bool Rollup::Apply(const Ledger::Transaction& Transaction)
+		bool Rollup::Merge(const Ledger::Transaction& Transaction)
 		{
 			auto* Next = Resolver::Copy(&Transaction);
 			if (!Next)
@@ -1153,30 +1171,16 @@ namespace Tangent
 			Transactions[Next->Asset].push_back(Next);
 			return true;
 		}
-		bool Rollup::Apply(Ledger::Transaction& Transaction, const Algorithm::Seckey PrivateKey)
+		bool Rollup::Merge(Ledger::Transaction& Transaction, const Algorithm::Seckey PrivateKey)
 		{
-			Setup(Transaction);
-			if (!Transaction.Sign(PrivateKey))
-				return false;
-
-			return Apply(Transaction);
+			auto It = Transactions.find(Transaction.Asset ? Transaction.Asset : Asset);
+			uint16_t Index = It != Transactions.end() ? It->second.size() : 0;
+			return SignChild(Transaction, PrivateKey, Asset, Index) && Merge(Transaction);
 		}
-		bool Rollup::Apply(Ledger::Transaction& Transaction, const Algorithm::Seckey PrivateKey, uint64_t Sequence)
+		bool Rollup::Merge(Ledger::Transaction& Transaction, const Algorithm::Seckey PrivateKey, uint64_t Sequence)
 		{
-			Setup(Transaction);
-			if (!Transaction.Sign(PrivateKey, Sequence))
-				return false;
-
-			return Apply(Transaction);
-		}
-		void Rollup::Setup(Ledger::Transaction& Transaction) const
-		{
-			if (!Transaction.Asset)
-				Transaction.Asset = Asset;
-			Transaction.Conservative = false;
-			Transaction.GasPrice = Decimal::NaN();
-			if (!Transaction.GasLimit)
-				Transaction.GasLimit = Transaction.GetGasEstimate();
+			Transaction.Sequence = Sequence;
+			return Merge(Transaction, PrivateKey);
 		}
 		ExpectsLR<Ledger::BlockTransaction> Rollup::ResolveBlockTransaction(const Ledger::Receipt& Receipt, const uint256_t& TransactionHash) const
 		{
@@ -1322,6 +1326,28 @@ namespace Tangent
 		std::string_view Rollup::AsInstanceTypename()
 		{
 			return "rollup";
+		}
+		void Rollup::SetupChild(Ledger::Transaction& Transaction, const Algorithm::AssetId& Asset)
+		{
+			if (!Transaction.Asset)
+				Transaction.Asset = Asset;
+			Transaction.Conservative = false;
+			Transaction.GasPrice = Decimal::NaN();
+			if (!Transaction.GasLimit)
+				Transaction.GasLimit = Transaction.GetGasEstimate();
+		}
+		bool Rollup::SignChild(Ledger::Transaction& Transaction, const Algorithm::Seckey PrivateKey, const Algorithm::AssetId& Asset, uint16_t Index)
+		{
+			Format::Stream Message;
+			Message.WriteInteger(Rollup::AsInstanceType());
+			Message.WriteInteger(Asset);
+			Message.WriteInteger(Index);
+			SetupChild(Transaction, Asset);
+
+			if (!Transaction.StorePayload(&Message))
+				return false;
+			
+			return Algorithm::Signing::Sign(Message.Hash(), PrivateKey, Transaction.Signature);
 		}
 
 		ExpectsLR<void> Commitment::Prevalidate() const
@@ -2596,6 +2622,7 @@ namespace Tangent
 		UPtr<Schema> CustodianAccount::AsSchema() const
 		{
 			Schema* Data = Ledger::ConsensusTransaction::AsSchema().Reset();
+			Data->Set("delegation_account_hash", DelegationAccountHash > 0 ? Var::String(Algorithm::Encoding::Encode0xHex256(DelegationAccountHash)) : Var::Null());
 			Data->Set("owner", Algorithm::Signing::SerializeAddress(Owner));
 			Data->Set("pubkey_index", Var::Integer(PubkeyIndex));
 			Data->Set("pubkey", Var::String(Pubkey));

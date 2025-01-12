@@ -313,6 +313,7 @@ namespace Tangent
 			ExpectsLR<States::WitnessProgram> GetWitnessProgram(const std::string_view& ProgramHashcode) const;
 			ExpectsLR<States::WitnessEvent> GetWitnessEvent(const uint256_t& ParentTransactionHash) const;
 			ExpectsLR<Vector<States::WitnessAddress>> GetWitnessAddresses(const Algorithm::Pubkeyhash Owner, size_t Offset, size_t Count) const;
+			ExpectsLR<Vector<States::WitnessAddress>> GetWitnessAddressesByPurpose(const Algorithm::Pubkeyhash Owner, States::WitnessAddress::Class Purpose, size_t Offset, size_t Count) const;
 			ExpectsLR<States::WitnessAddress> GetWitnessAddress(const Algorithm::Pubkeyhash Owner, const std::string_view& Address, uint64_t AddressIndex) const;
 			ExpectsLR<States::WitnessAddress> GetWitnessAddress(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner, const std::string_view& Address, uint64_t AddressIndex) const;
 			ExpectsLR<States::WitnessAddress> GetWitnessAddress(const std::string_view& Address, uint64_t AddressIndex, size_t Offset) const;

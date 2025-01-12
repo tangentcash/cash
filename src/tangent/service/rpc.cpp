@@ -304,7 +304,7 @@ namespace Tangent
 			Bind(0 | AccessType::R, "chainstate", "getaccountsequence", 1, 1, "string address", "uint64", "get account sequence by address", std::bind(&ServerNode::ChainstateGetAccountSequence, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(0 | AccessType::R, "chainstate", "getaccountwork", 1, 1, "string address", "multiform", "get account work by address", std::bind(&ServerNode::ChainstateGetAccountWork, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(0 | AccessType::R, "chainstate", "getbestaccountworkers", 3, 3, "uint64 commitment, uint64 offset, uint64 count", "multiform[]", "get best block proposers (zero commitment = offline proposers, non-zero commitment = online proposers threshold)", std::bind(&ServerNode::ChainstateGetBestAccountWorkers, this, std::placeholders::_1, std::placeholders::_2));
-			Bind(0 | AccessType::R, "chainstate", "getaccountobserver", 1, 1, "string asset, string address", "multiform", "get account observer by address and asset", std::bind(&ServerNode::ChainstateGetAccountObserver, this, std::placeholders::_1, std::placeholders::_2));
+			Bind(0 | AccessType::R, "chainstate", "getaccountobserver", 2, 2, "string asset, string address", "multiform", "get account observer by address and asset", std::bind(&ServerNode::ChainstateGetAccountObserver, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(0 | AccessType::R, "chainstate", "getbestaccountobservers", 3, 3, "string asset, uint64 commitment, uint64 offset, uint64 count", "multiform[]", "get best account observers (zero commitment = offline observers, non-zero commitment = online observers threshold)", std::bind(&ServerNode::ChainstateGetBestAccountObservers, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(0 | AccessType::R, "chainstate", "getaccountprogram", 1, 1, "string address", "uniform", "get account program hashcode by address", std::bind(&ServerNode::ChainstateGetAccountProgram, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(0 | AccessType::R, "chainstate", "getaccountstorage", 2, 2, "string address, string location", "uniform", "get account storage by address and location", std::bind(&ServerNode::ChainstateGetAccountStorage, this, std::placeholders::_1, std::placeholders::_2));
@@ -323,6 +323,7 @@ namespace Tangent
 			Bind(0 | AccessType::R, "chainstate", "getwitnessevent", 1, 1, "uint256 transaction_hash", "uniform", "get witness event by transaction hash", std::bind(&ServerNode::ChainstateGetWitnessEvent, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(0 | AccessType::R, "chainstate", "getwitnessaddress", 3, 4, "string address, string asset, string wallet_address, uint64? derivation_index", "multiform", "get witness address by owner address, asset, wallet address and derivation index", std::bind(&ServerNode::ChainstateGetWitnessAddress, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(0 | AccessType::R, "chainstate", "getwitnessaddresses", 3, 3, "string address, uint64 offset, uint64 count", "multiform[]", "get witness addresses by owner address", std::bind(&ServerNode::ChainstateGetWitnessAddresses, this, std::placeholders::_1, std::placeholders::_2));
+			Bind(0 | AccessType::R, "chainstate", "getwitnessaddressesbypurpose", 4, 4, "string address, string purpose = 'witness' | 'router' | 'custodian' | 'contribution', uint64 offset, uint64 count", "multiform[]", "get witness addresses by owner address", std::bind(&ServerNode::ChainstateGetWitnessAddressesByPurpose, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(0 | AccessType::R, "chainstate", "getwitnesstransaction", 2, 2, "string asset, string transaction_id", "uniform", "get witness transaction by asset and transaction id", std::bind(&ServerNode::ChainstateGetWitnessTransaction, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(0 | AccessType::R, "mempoolstate", "getclosestnode", 0, 1, "uint64? offset", "validator", "get closest node info", std::bind(&ServerNode::MempoolstateGetClosestNode, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(0 | AccessType::R, "mempoolstate", "getclosestnodecount", 0, 0, "", "uint64", "get closest node count", std::bind(&ServerNode::MempoolstateGetClosestNodeCounter, this, std::placeholders::_1, std::placeholders::_2));
@@ -338,6 +339,7 @@ namespace Tangent
 			Bind(0 | AccessType::R, "mempoolstate", "getmempooltransactions", 2, 3, "uint64 offset, uint64 count, uint8? unrolling", "uint256[] | txn[]", "get mempool transactions", std::bind(&ServerNode::MempoolstateGetTransactions, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(0 | AccessType::R, "mempoolstate", "getmempooltransactionsbyowner", 3, 5, "const string address, uint64 offset, uint64 count, uint8? direction = 1, uint8? unrolling", "uint256[] | txn[]", "get mempool transactions by signing address", std::bind(&ServerNode::MempoolstateGetTransactionsByOwner, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(0 | AccessType::R, "mempoolstate", "getcumulativemempooltransactions", 3, 4, "uint256 hash, uint64 offset, uint64 count, uint8? unrolling", "uint256[] | txn[]", "get cumulative mempool transactions", std::bind(&ServerNode::MempoolstateGetCumulativeEventTransactions, this, std::placeholders::_1, std::placeholders::_2));
+			Bind(0 | AccessType::R, "mempoolstate", "getcumulativemempoolconsensus", 1, 1, "uint256 hash", "{ branch: uint256, threshold: double, progress: double, committee: uint64, reached: boolean }", "get cumulative mempool transaction consensus state", std::bind(&ServerNode::MempoolstateGetCumulativeConsensus, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(0 | AccessType::R, "validatorstate", "getnode", 1, 1, "string uri_address", "validator", "get a node by ip address", std::bind(&ServerNode::ValidatorstateGetNode, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(0 | AccessType::R, "validatorstate", "getblockchains", 0, 0, "", "oracle::asset", "get supported blockchains", std::bind(&ServerNode::ValidatorstateGetBlockchains, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(0 | AccessType::R, "validatorstate", "status", 0, 0, "", "validator::status", "get validator status", std::bind(&ServerNode::ValidatorstateStatus, this, std::placeholders::_1, std::placeholders::_2));
@@ -1747,9 +1749,9 @@ namespace Tangent
 			if (!Count || Count > Protocol::Now().User.RPC.PageSize)
 				return ServerResponse().Error(ErrorCodes::BadParams, "count not valid");
 
-			auto Factor = Storages::FactorQuery::From(Args[2].AsString(), Args[3].AsDecimal().ToInt64(), Args[4].AsDecimal().ToInt8());
+			auto Filter = Storages::FactorFilter::From(Args[2].AsString(), Args[3].AsDecimal().ToInt64(), Args[4].AsDecimal().ToInt8());
 			auto Chain = Storages::Chainstate(__func__);
-			auto List = Chain.GetMultiformsByRow(nullptr, *Row, Factor, 0, Offset, Count);
+			auto List = Chain.GetMultiformsByRowFilter(nullptr, *Row, Filter, 0, Offset, Count);
 			if (!List)
 				return ServerResponse().Error(ErrorCodes::NotFound, "multiform not found");
 
@@ -1764,9 +1766,9 @@ namespace Tangent
 			if (!Row)
 				return ServerResponse().Error(ErrorCodes::BadParams, "row not valid: " + Row.Error().Info);
 
-			auto Factor = Storages::FactorQuery::From(Args[2].AsString(), Args[3].AsDecimal().ToInt64(), 0);
+			auto Filter = Storages::FactorFilter::From(Args[2].AsString(), Args[3].AsDecimal().ToInt64(), 0);
 			auto Chain = Storages::Chainstate(__func__);
-			auto Count = Chain.GetMultiformsCountByRow(*Row, Factor, 0);
+			auto Count = Chain.GetMultiformsCountByRowFilter(*Row, Filter, 0);
 			if (!Count)
 				return ServerResponse().Error(ErrorCodes::NotFound, "count not found");
 
@@ -1800,9 +1802,9 @@ namespace Tangent
 			if (!Count || Count > Protocol::Now().User.RPC.PageSize)
 				return ServerResponse().Error(ErrorCodes::BadParams, "count not valid");
 
-			auto Factor = Commitment > 0 ? Storages::FactorQuery::GreaterEqual(Commitment - 1, -1) : Storages::FactorQuery::Equal(-1, -1);
+			auto Filter = Commitment > 0 ? Storages::FactorFilter::GreaterEqual(Commitment - 1, -1) : Storages::FactorFilter::Equal(-1, -1);
 			auto Chain = Storages::Chainstate(__func__);
-			auto List = Chain.GetMultiformsByRow(nullptr, States::AccountWork::AsInstanceRow(), Factor, 0, Offset, Count);
+			auto List = Chain.GetMultiformsByRowFilter(nullptr, States::AccountWork::AsInstanceRow(), Filter, 0, Offset, Count);
 			if (!List)
 				return ServerResponse().Error(ErrorCodes::NotFound, "data not found");
 
@@ -1830,9 +1832,9 @@ namespace Tangent
 			if (!Count || Count > Protocol::Now().User.RPC.PageSize)
 				return ServerResponse().Error(ErrorCodes::BadParams, "count not valid");
 
-			auto Factor = Commitment > 0 ? Storages::FactorQuery::Equal((int64_t)Ledger::WorkStatus::Online, -1) : Storages::FactorQuery::LessEqual((int64_t)Ledger::WorkStatus::Standby, -1);
+			auto Filter = Commitment > 0 ? Storages::FactorFilter::Equal((int64_t)Ledger::WorkStatus::Online, -1) : Storages::FactorFilter::LessEqual((int64_t)Ledger::WorkStatus::Standby, -1);
 			auto Chain = Storages::Chainstate(__func__);
-			auto List = Chain.GetMultiformsByRow(nullptr, States::AccountObserver::AsInstanceRow(Asset), Factor, 0, Offset, Count);
+			auto List = Chain.GetMultiformsByRowFilter(nullptr, States::AccountObserver::AsInstanceRow(Asset), Filter, 0, Offset, Count);
 			if (!List)
 				return ServerResponse().Error(ErrorCodes::NotFound, "data not found");
 
@@ -1899,9 +1901,9 @@ namespace Tangent
 			if (!Count || Count > Protocol::Now().User.RPC.PageSize)
 				return ServerResponse().Error(ErrorCodes::BadParams, "count not valid");
 
-			auto Factor = Storages::FactorQuery::GreaterEqual(0, -1);
+			auto Filter = Storages::FactorFilter::GreaterEqual(0, -1);
 			auto Chain = Storages::Chainstate(__func__);
-			auto List = Chain.GetMultiformsByRow(nullptr, States::AccountReward::AsInstanceRow(Asset), Factor, 0, Offset, Count);
+			auto List = Chain.GetMultiformsByRowFilter(nullptr, States::AccountReward::AsInstanceRow(Asset), Filter, 0, Offset, Count);
 			if (!List)
 				return ServerResponse().Error(ErrorCodes::NotFound, "data not found");
 
@@ -1917,9 +1919,9 @@ namespace Tangent
 			if (!Count || Count > Protocol::Now().User.RPC.PageSize)
 				return ServerResponse().Error(ErrorCodes::BadParams, "count not valid");
 
-			auto Factor = Storages::FactorQuery::GreaterEqual(0, -1);
+			auto Filter = Storages::FactorFilter::GreaterEqual(0, -1);
 			auto Chain = Storages::Chainstate(__func__);
-			auto List = Chain.GetMultiformsByRow(nullptr, States::AccountReward::AsInstanceRow(Asset), Factor, 0, Offset, Count);
+			auto List = Chain.GetMultiformsByRowFilter(nullptr, States::AccountReward::AsInstanceRow(Asset), Filter, 0, Offset, Count);
 			if (!List)
 				return ServerResponse().Error(ErrorCodes::NotFound, "data not found");
 
@@ -2016,9 +2018,9 @@ namespace Tangent
 			if (!Count || Count > Protocol::Now().User.RPC.PageSize)
 				return ServerResponse().Error(ErrorCodes::BadParams, "count not valid");
 
-			auto Factor = Storages::FactorQuery::GreaterEqual(0, -1);
+			auto Filter = Storages::FactorFilter::GreaterEqual(0, -1);
 			auto Chain = Storages::Chainstate(__func__);
-			auto List = Chain.GetMultiformsByRow(nullptr, States::AccountContribution::AsInstanceRow(Asset), Factor, 0, Offset, Count);
+			auto List = Chain.GetMultiformsByRowFilter(nullptr, States::AccountContribution::AsInstanceRow(Asset), Filter, 0, Offset, Count);
 			if (!List)
 				return ServerResponse().Error(ErrorCodes::NotFound, "data not found");
 
@@ -2034,9 +2036,9 @@ namespace Tangent
 			if (!Count || Count > Protocol::Now().User.RPC.PageSize)
 				return ServerResponse().Error(ErrorCodes::BadParams, "count not valid");
 
-			auto Factor = Storages::FactorQuery::GreaterEqual(0, -1);
+			auto Filter = Storages::FactorFilter::GreaterEqual(0, -1);
 			auto Chain = Storages::Chainstate(__func__);
-			auto List = Chain.GetMultiformsByRow(nullptr, States::AccountContribution::AsInstanceRow(Asset), Factor, 0, Offset, Count);
+			auto List = Chain.GetMultiformsByRowFilter(nullptr, States::AccountContribution::AsInstanceRow(Asset), Filter, 0, Offset, Count);
 			if (!List)
 				return ServerResponse().Error(ErrorCodes::NotFound, "data not found");
 
@@ -2093,6 +2095,40 @@ namespace Tangent
 
 			auto Chain = Storages::Chainstate(__func__);
 			auto List = Chain.GetMultiformsByColumn(nullptr, States::WitnessAddress::AsInstanceColumn(Owner), 0, Offset, Count);
+			if (!List)
+				return ServerResponse().Error(ErrorCodes::NotFound, "data not found");
+
+			UPtr<Schema> Data = Var::Set::Array();
+			for (auto& Item : *List)
+				Data->Push(Item->AsSchema().Reset());
+			return ServerResponse().Success(std::move(Data));
+		}
+		ServerResponse ServerNode::ChainstateGetWitnessAddressesByPurpose(HTTP::Connection* Base, Format::Variables&& Args)
+		{
+			Algorithm::Pubkeyhash Owner;
+			if (!Algorithm::Signing::DecodeAddress(Args[0].AsString(), Owner))
+				return ServerResponse().Error(ErrorCodes::BadParams, "account address not valid");
+
+			int64_t Purpose = std::numeric_limits<int64_t>::max();
+			String Type = Args[1].AsBlob();
+			if (Type == "witness")
+				Purpose = (int64_t)States::WitnessAddress::Class::Witness;
+			else if (Type == "router")
+				Purpose = (int64_t)States::WitnessAddress::Class::Router;
+			else if (Type == "custodian")
+				Purpose = (int64_t)States::WitnessAddress::Class::Custodian;
+			else if (Type == "contribution")
+				Purpose = (int64_t)States::WitnessAddress::Class::Contribution;
+			if (Purpose == std::numeric_limits<int64_t>::max())
+				return ServerResponse().Error(ErrorCodes::BadParams, "address purpose not valid");
+
+			uint64_t Offset = Args[2].AsUint64(), Count = Args[3].AsUint64();
+			if (!Count || Count > Protocol::Now().User.RPC.PageSize)
+				return ServerResponse().Error(ErrorCodes::BadParams, "count not valid");
+
+			auto Chain = Storages::Chainstate(__func__);
+			auto Filter = Storages::FactorFilter::Equal((int64_t)Purpose, 1);
+			auto List = Chain.GetMultiformsByColumnFilter(nullptr, States::WitnessAddress::AsInstanceColumn(Owner), Filter, 0, Offset, Count);
 			if (!List)
 				return ServerResponse().Error(ErrorCodes::NotFound, "data not found");
 
@@ -2429,6 +2465,32 @@ namespace Tangent
 					Data->Push(Item->AsSchema().Reset());
 				return ServerResponse().Success(std::move(Data));
 			}
+		}
+		ServerResponse ServerNode::MempoolstateGetCumulativeConsensus(HTTP::Connection* Base, Format::Variables&& Args)
+		{
+			uint256_t Hash = Args[0].AsUint256();
+			auto Mempool = Storages::Mempoolstate(__func__);
+			auto Reference = Mempool.GetTransactionByHash(Hash);
+			if (!Reference)
+				return ServerResponse().Error(ErrorCodes::NotFound, "transaction not found");
+
+			auto& Transaction = *Reference;
+			if (Transaction->GetType() != Ledger::TransactionLevel::Aggregation)
+				return ServerResponse().Error(ErrorCodes::NotFound, "transaction consensus is not applicable");
+
+			auto Context = Ledger::TransactionContext();
+			auto* Aggregation = (Ledger::AggregationTransaction*)*Transaction;
+			auto Consensus = Aggregation->CalculateCumulativeConsensus(nullptr, &Context);
+			if (!Consensus)
+				return ServerResponse().Error(ErrorCodes::NotFound, "transaction consensus is not computable");
+
+			auto Result = Var::Set::Object();
+			Result->Set("branch", Var::String(Algorithm::Encoding::Encode0xHex256(Consensus->Branch->Message.Hash())));
+			Result->Set("threshold", Var::Number(Consensus->Threshold));
+			Result->Set("progress", Var::Number(Consensus->Progress));
+			Result->Set("committee", Var::Integer(Consensus->Committee));
+			Result->Set("reached", Var::Boolean(Consensus->Reached));
+			return ServerResponse().Success(Result);
 		}
 		ServerResponse ServerNode::ValidatorstatePrune(HTTP::Connection* Base, Format::Variables&& Args)
 		{

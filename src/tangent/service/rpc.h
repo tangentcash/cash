@@ -176,6 +176,7 @@ namespace Tangent
 			ServerResponse ChainstateGetWitnessEvent(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse ChainstateGetWitnessAddress(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse ChainstateGetWitnessAddresses(HTTP::Connection* Base, Format::Variables&& Args);
+			ServerResponse ChainstateGetWitnessAddressesByPurpose(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse ChainstateGetWitnessTransaction(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse MempoolstateAddNode(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse MempoolstateClearNode(HTTP::Connection* Base, Format::Variables&& Args);
@@ -195,6 +196,7 @@ namespace Tangent
 			ServerResponse MempoolstateGetTransactions(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse MempoolstateGetTransactionsByOwner(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse MempoolstateGetCumulativeEventTransactions(HTTP::Connection* Base, Format::Variables&& Args);
+			ServerResponse MempoolstateGetCumulativeConsensus(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse ValidatorstatePrune(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse ValidatorstateVerify(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse ValidatorstateAcceptNode(HTTP::Connection* Base, Format::Variables&& Args);

@@ -155,10 +155,9 @@ namespace Tangent
 			bool LoadBody(Format::Stream& Stream) override;
 			bool RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
 			bool RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<uint256_t>& Aliases) const override;
-			bool Apply(const Ledger::Transaction& Transaction);
-			bool Apply(Ledger::Transaction& Transaction, const Algorithm::Seckey PrivateKey);
-			bool Apply(Ledger::Transaction& Transaction, const Algorithm::Seckey PrivateKey, uint64_t Sequence);
-			void Setup(Ledger::Transaction& Transaction) const;
+			bool Merge(const Ledger::Transaction& Transaction);
+			bool Merge(Ledger::Transaction& Transaction, const Algorithm::Seckey PrivateKey);
+			bool Merge(Ledger::Transaction& Transaction, const Algorithm::Seckey PrivateKey, uint64_t Sequence);
 			ExpectsLR<Ledger::BlockTransaction> ResolveBlockTransaction(const Ledger::Receipt& Receipt, const uint256_t& TransactionHash) const;
 			const Ledger::Transaction* ResolveTransaction(const uint256_t& TransactionHash) const;
 			UPtr<Schema> AsSchema() const override;
@@ -168,6 +167,8 @@ namespace Tangent
 			uint64_t GetDispatchOffset() const override;
 			static uint32_t AsInstanceType();
 			static std::string_view AsInstanceTypename();
+			static void SetupChild(Ledger::Transaction& Transaction, const Algorithm::AssetId& Asset);
+			static bool SignChild(Ledger::Transaction& Transaction, const Algorithm::Seckey PrivateKey, const Algorithm::AssetId& Asset, uint16_t Index);
 		};
 
 		struct Commitment final : Ledger::Transaction

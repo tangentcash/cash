@@ -507,16 +507,16 @@ namespace Tangent
 			switch (Type)
 			{
 				case Tangent::Ledger::TransactionLevel::Functional:
-					Result.Congested = true;
+					Result.Congested = false;
 					break;
 				case Tangent::Ledger::TransactionLevel::Delegation:
-					Result.Congested = Result.Count >= Protocol::Now().Policy.ParallelDelegationLimit;
+					Result.Congested = Protocol::Now().Policy.ParallelDelegationLimit > 0 && Result.Count >= Protocol::Now().Policy.ParallelDelegationLimit;
 					break;
 				case Tangent::Ledger::TransactionLevel::Consensus:
-					Result.Congested = Result.Count >= Protocol::Now().Policy.ParallelConsensusLimit;
+					Result.Congested = Protocol::Now().Policy.ParallelConsensusLimit > 0 && Result.Count >= Protocol::Now().Policy.ParallelConsensusLimit;
 					break;
 				case Tangent::Ledger::TransactionLevel::Aggregation:
-					Result.Congested = Result.Count >= Protocol::Now().Policy.ParallelAggregationLimit;
+					Result.Congested = Protocol::Now().Policy.ParallelAggregationLimit > 0 && Result.Count >= Protocol::Now().Policy.ParallelAggregationLimit;
 					break;
 				default:
 					Result.Congested = true;

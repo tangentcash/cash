@@ -87,6 +87,15 @@ namespace Tangent
 				Format::Stream Message;
 			};
 
+			struct CumulativeConsensus
+			{
+				const CumulativeBranch* Branch = nullptr;
+				double Threshold = 0.0;
+				double Progress = 0.0;
+				size_t Committee = 0;
+				bool Reached = false;
+			};
+
 			OrderedMap<uint256_t, CumulativeBranch> OutputHashes;
 			uint256_t InputHash = 0;
 
@@ -110,6 +119,7 @@ namespace Tangent
 			virtual void SetSignature(const Algorithm::Sighash NewValue) override;
 			virtual void SetStatement(const uint256_t& NewInputHash, const Format::Stream& OutputMessage);
 			virtual const CumulativeBranch* GetCumulativeBranch(const TransactionContext* Context) const;
+			virtual Option<CumulativeConsensus> CalculateCumulativeConsensus(OrderedMap<Algorithm::AssetId, size_t>* Aggregators, TransactionContext* Context) const;
 			virtual uint256_t GetCumulativeHash() const;
 			virtual UPtr<Schema> AsSchema() const override;
 			TransactionLevel GetType() const override;

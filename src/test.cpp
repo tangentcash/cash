@@ -191,6 +191,23 @@ public:
 		VI_PANIC(CommitmentUser2->Sign(User2.PrivateKey, User2Sequence++), "commitment not signed");
 		Transactions.push_back(CommitmentUser2);
 	}
+	static void TestCommitmentAnti(Vector<UPtr<Ledger::Transaction>>& Transactions, const Ledger::Wallet& User1, uint64_t User1Sequence, const Ledger::Wallet& User2, uint64_t User2Sequence)
+	{
+		auto* CommitmentUser1 = Memory::New<Transactions::Commitment>();
+		CommitmentUser1->SetAsset("BTC");
+		CommitmentUser1->SetEstimateGas(Decimal::Zero());
+		CommitmentUser1->SetOffline(Algorithm::Asset::IdOf("ETH"));
+		CommitmentUser1->SetOffline(Algorithm::Asset::IdOf("XRP"));
+		CommitmentUser1->SetOffline(Algorithm::Asset::IdOf("BTC"));
+
+		auto Context = Ledger::TransactionContext();
+		auto User1Work = Context.GetAccountWork(User1.PublicKeyHash);
+		if (!User1Work || User1Work->IsOnline())
+			CommitmentUser1->SetOffline();
+
+		VI_PANIC(CommitmentUser1->Sign(User1.PrivateKey, User1Sequence++), "commitment not signed");
+		Transactions.push_back(CommitmentUser1);
+	}
 	static void TestAllocations(Vector<UPtr<Ledger::Transaction>>& Transactions, const Ledger::Wallet& User1, uint64_t User1Sequence, const Ledger::Wallet& User2, uint64_t User2Sequence)
 	{
 		auto* ContributionAllocationEthereum1 = Memory::New<Transactions::ContributionAllocation>();
@@ -224,12 +241,12 @@ public:
 	static void TestContributions(Vector<UPtr<Ledger::Transaction>>& Transactions, const Ledger::Wallet& User1, uint64_t User1Sequence, const Ledger::Wallet& User2, uint64_t User2Sequence)
 	{
 		auto Context = Ledger::TransactionContext();
-		auto Addresses1 = *Context.GetWitnessAddresses(User1.PublicKeyHash, 0, 128);
-		auto Addresses2 = *Context.GetWitnessAddresses(User2.PublicKeyHash, 0, 128);
-		auto AddressEthereum1 = std::find_if(Addresses1.begin(), Addresses1.end(), [](States::WitnessAddress& Item) { return Item.IsContributionAddress() && Item.Asset == Algorithm::Asset::IdOf("ETH"); });
-		auto AddressEthereum2 = std::find_if(Addresses2.begin(), Addresses2.end(), [](States::WitnessAddress& Item) { return Item.IsContributionAddress() && Item.Asset == Algorithm::Asset::IdOf("ETH"); });
-		auto AddressRipple = std::find_if(Addresses2.begin(), Addresses2.end(), [](States::WitnessAddress& Item) { return Item.IsContributionAddress() && Item.Asset == Algorithm::Asset::IdOf("XRP"); });
-		auto AddressBitcoin = std::find_if(Addresses2.begin(), Addresses2.end(), [](States::WitnessAddress& Item) { return Item.IsContributionAddress() && Item.Asset == Algorithm::Asset::IdOf("BTC"); });
+		auto Addresses1 = *Context.GetWitnessAddressesByPurpose(User1.PublicKeyHash, States::WitnessAddress::Class::Contribution, 0, 128);
+		auto Addresses2 = *Context.GetWitnessAddressesByPurpose(User2.PublicKeyHash, States::WitnessAddress::Class::Contribution, 0, 128);
+		auto AddressEthereum1 = std::find_if(Addresses1.begin(), Addresses1.end(), [](States::WitnessAddress& Item) { return Item.Asset == Algorithm::Asset::IdOf("ETH"); });
+		auto AddressEthereum2 = std::find_if(Addresses2.begin(), Addresses2.end(), [](States::WitnessAddress& Item) { return Item.Asset == Algorithm::Asset::IdOf("ETH"); });
+		auto AddressRipple = std::find_if(Addresses2.begin(), Addresses2.end(), [](States::WitnessAddress& Item) { return Item.Asset == Algorithm::Asset::IdOf("XRP"); });
+		auto AddressBitcoin = std::find_if(Addresses2.begin(), Addresses2.end(), [](States::WitnessAddress& Item) { return Item.Asset == Algorithm::Asset::IdOf("BTC"); });
 		VI_PANIC(AddressEthereum1 != Addresses1.end(), "ethereum custodian address not found");
 		VI_PANIC(AddressEthereum2 != Addresses2.end(), "ethereum custodian address not found");
 		VI_PANIC(AddressRipple != Addresses2.end(), "ripple custodian address not found");
@@ -305,11 +322,11 @@ public:
 	static void TestClaims(Vector<UPtr<Ledger::Transaction>>& Transactions, const Ledger::Wallet& User1, uint64_t User1Sequence, const Ledger::Wallet& User2, uint64_t User2Sequence)
 	{
 		auto Context = Ledger::TransactionContext();
-		auto ProposerAddresses = *Context.GetWitnessAddresses(User2.PublicKeyHash, 0, 128);
-		auto OwnerAddresses = *Context.GetWitnessAddresses(User1.PublicKeyHash, 0, 128);
-		auto AddressEthereum = std::find_if(ProposerAddresses.begin(), ProposerAddresses.end(), [](States::WitnessAddress& Item) { return Item.IsCustodianAddress() && Item.Asset == Algorithm::Asset::IdOf("ETH"); });
-		auto AddressRipple = std::find_if(OwnerAddresses.begin(), OwnerAddresses.end(), [](States::WitnessAddress& Item) { return Item.IsCustodianAddress() && Item.Asset == Algorithm::Asset::IdOf("XRP"); });
-		auto AddressBitcoin = std::find_if(OwnerAddresses.begin(), OwnerAddresses.end(), [](States::WitnessAddress& Item) { return Item.IsCustodianAddress() && Item.Asset == Algorithm::Asset::IdOf("BTC"); });
+		auto ProposerAddresses = *Context.GetWitnessAddressesByPurpose(User2.PublicKeyHash, States::WitnessAddress::Class::Custodian, 0, 128);
+		auto OwnerAddresses = *Context.GetWitnessAddressesByPurpose(User1.PublicKeyHash, States::WitnessAddress::Class::Custodian, 0, 128);
+		auto AddressEthereum = std::find_if(ProposerAddresses.begin(), ProposerAddresses.end(), [](States::WitnessAddress& Item) { return Item.Asset == Algorithm::Asset::IdOf("ETH"); });
+		auto AddressRipple = std::find_if(OwnerAddresses.begin(), OwnerAddresses.end(), [](States::WitnessAddress& Item) { return Item.Asset == Algorithm::Asset::IdOf("XRP"); });
+		auto AddressBitcoin = std::find_if(OwnerAddresses.begin(), OwnerAddresses.end(), [](States::WitnessAddress& Item) { return Item.Asset == Algorithm::Asset::IdOf("BTC"); });
 		VI_PANIC(AddressEthereum != ProposerAddresses.end(), "ethereum custodian address not found");
 		VI_PANIC(AddressRipple != OwnerAddresses.end(), "ripple custodian address not found");
 		VI_PANIC(AddressBitcoin != OwnerAddresses.end(), "bitcoin custodian address not found");
@@ -393,45 +410,45 @@ public:
 
 		auto TransferEthereum1 = Transactions::Transfer();
 		TransferEthereum1.SetTo(User2.PublicKeyHash, 0.1);
-		VI_PANIC(MultiAssetRollup->Apply(TransferEthereum1, User1.PrivateKey, User1Sequence++), "transfer not signed");
+		VI_PANIC(MultiAssetRollup->Merge(TransferEthereum1, User1.PrivateKey, User1Sequence++), "transfer not signed");
 
 		auto TransferEthereum2 = Transactions::Transfer();
 		TransferEthereum2.SetTo(User2.PublicKeyHash, 0.2);
-		VI_PANIC(MultiAssetRollup->Apply(TransferEthereum2, User1.PrivateKey, User1Sequence++), "transfer not signed");
+		VI_PANIC(MultiAssetRollup->Merge(TransferEthereum2, User1.PrivateKey, User1Sequence++), "transfer not signed");
 
 		auto TransferEthereum3 = Transactions::Transfer();
 		TransferEthereum3.SetTo(User1.PublicKeyHash, 0.2);
-		VI_PANIC(MultiAssetRollup->Apply(TransferEthereum3, User2.PrivateKey, User2Sequence++), "transfer not signed");
+		VI_PANIC(MultiAssetRollup->Merge(TransferEthereum3, User2.PrivateKey, User2Sequence++), "transfer not signed");
 
 		auto TransferRipple1 = Transactions::Transfer();
 		TransferRipple1.SetAsset("XRP");
 		TransferRipple1.SetTo(User2.PublicKeyHash, 1);
-		VI_PANIC(MultiAssetRollup->Apply(TransferRipple1, User1.PrivateKey, User1Sequence++), "transfer not signed");
+		VI_PANIC(MultiAssetRollup->Merge(TransferRipple1, User1.PrivateKey, User1Sequence++), "transfer not signed");
 
 		auto TransferRipple2 = Transactions::Transfer();
 		TransferRipple2.SetAsset("XRP");
 		TransferRipple2.SetTo(User2.PublicKeyHash, 2);
-		VI_PANIC(MultiAssetRollup->Apply(TransferRipple2, User1.PrivateKey, User1Sequence++), "transfer not signed");
+		VI_PANIC(MultiAssetRollup->Merge(TransferRipple2, User1.PrivateKey, User1Sequence++), "transfer not signed");
 
 		auto TransferRipple3 = Transactions::Transfer();
 		TransferRipple3.SetAsset("XRP");
 		TransferRipple3.SetTo(User1.PublicKeyHash, 2);
-		VI_PANIC(MultiAssetRollup->Apply(TransferRipple3, User2.PrivateKey, User2Sequence++), "transfer not signed");
+		VI_PANIC(MultiAssetRollup->Merge(TransferRipple3, User2.PrivateKey, User2Sequence++), "transfer not signed");
 
 		auto TransferBitcoin1 = Transactions::Transfer();
 		TransferBitcoin1.SetAsset("BTC");
 		TransferBitcoin1.SetTo(User2.PublicKeyHash, 0.001);
-		VI_PANIC(MultiAssetRollup->Apply(TransferBitcoin1, User1.PrivateKey, User1Sequence++), "transfer not signed");
+		VI_PANIC(MultiAssetRollup->Merge(TransferBitcoin1, User1.PrivateKey, User1Sequence++), "transfer not signed");
 
 		auto TransferBitcoin2 = Transactions::Transfer();
 		TransferBitcoin2.SetAsset("BTC");
 		TransferBitcoin2.SetTo(User2.PublicKeyHash, 0.002);
-		VI_PANIC(MultiAssetRollup->Apply(TransferBitcoin2, User1.PrivateKey, User1Sequence++), "transfer not signed");
+		VI_PANIC(MultiAssetRollup->Merge(TransferBitcoin2, User1.PrivateKey, User1Sequence++), "transfer not signed");
 
 		auto TransferBitcoin3 = Transactions::Transfer();
 		TransferBitcoin3.SetAsset("BTC");
 		TransferBitcoin3.SetTo(User1.PublicKeyHash, 0.002);
-		VI_PANIC(MultiAssetRollup->Apply(TransferBitcoin3, User2.PrivateKey, User2Sequence++), "transfer not signed");
+		VI_PANIC(MultiAssetRollup->Merge(TransferBitcoin3, User2.PrivateKey, User2Sequence++), "transfer not signed");
 
 		MultiAssetRollup->SetEstimateGas(std::string_view("0.00000001"));
 		VI_PANIC(MultiAssetRollup->Sign(User1.PrivateKey, User1Sequence++), "rollup not signed");
@@ -905,6 +922,7 @@ public:
 		TestTransactions::ProposeBlockUserTuple(&TestTransactions::TestTransfers, User1, User2);
 		TestTransactions::ProposeBlockUserOne(std::bind(&TestTransactions::TestTransferToWallet, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, Algorithm::Asset::IdOf("BTC"), "tcrt1x3yw986ceqfjn9hujsp33mj6r5829z8m72quntl", 0.1), User1, User2);
 		TestTransactions::ProposeBlockUserTuple(&TestTransactions::TestRollups, User1, User2);
+		TestTransactions::ProposeBlockUserTuple(&TestTransactions::TestCommitmentAnti, User1, User1);
 		Term->ReadChar();
 		return 0;
 	}
@@ -1788,7 +1806,8 @@ public:
 		auto Signature = Provability::WesolowskiVDF::Evaluate(Alg, Message);
 		bool Proven = Provability::WesolowskiVDF::Verify(Alg, Message, Signature);
 
-		Term->fWriteLine("time taken: %.2f ms (%s)", Term->GetCapturedTime(), Proven ? "passed" : "failed");
+		Term->fWriteLine("solution: %s", Signature.c_str());
+		Term->fWriteLine("time: %.2f ms (%s)", Term->GetCapturedTime(), Proven ? "passed" : "failed");
 		Term->ReadChar();
 		return 0;
 	}
@@ -1811,6 +1830,37 @@ public:
 			"  difficulty: %s",
 			Alg.Length, Alg.Bits, Alg.Pow,
 			Alg.Difficulty().ToString().c_str());
+		Term->ReadChar();
+		return 0;
+	}
+	/* Prove and verify Nakamoto POW (validation measurement) */
+	static int Nakamoto(int argc, char* argv[])
+	{
+		Vitex::Runtime Scope;
+		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
+
+		auto* Term = Console::Get();
+		Term->Show();
+		Term->CaptureTime();
+
+		auto Message = "Hello, World!";
+		uint256_t Target = uint256_t(1) << uint256_t(240);
+		uint256_t Nonce = 0;
+		while (true)
+		{
+			auto Solution = Provability::NakamotoPOW::Evaluate(Nonce, Message);
+			bool Proven = Provability::NakamotoPOW::Verify(Nonce, Message, Target, Solution);
+			if (!Proven)
+			{
+				++Nonce;
+				continue;
+			}
+
+			Term->fWriteLine("solution: %s (nonce: %s)", Algorithm::Encoding::Encode0xHex256(Solution).c_str(), Nonce.ToString().c_str());
+			Term->fWriteLine("time: %.2f ms (%s)", Term->GetCapturedTime(), Proven ? "passed" : "failed");
+			break;
+		}
+
 		Term->ReadChar();
 		return 0;
 	}
@@ -2311,5 +2361,5 @@ public:
 
 int main(int argc, char* argv[])
 {
-    return TestCases::Explorer(argc, argv);
+    return TestCases::Consensus(argc, argv);
 }

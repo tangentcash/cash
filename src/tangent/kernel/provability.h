@@ -235,6 +235,14 @@ namespace Tangent
             static void SetDefault(const Parameters& Alg);
             static const Parameters& GetDefault();
         };
+
+        class NakamotoPOW
+        {
+        public:
+            static uint256_t Evaluate(const uint256_t& Nonce, const std::string_view& Message);
+            static bool Verify(const uint256_t& Nonce, const std::string_view& Message, const uint256_t& Target, const uint256_t& Solution);
+            static void Serialize(Format::Stream& Stream, const uint256_t& Nonce, const std::string_view& Message);
+        };
 	}
 }
 #endif

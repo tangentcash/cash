@@ -298,7 +298,7 @@ namespace Tangent
 			return It->second;
 		}
 
-		std::string_view FactorQuery::AsCondition() const
+		std::string_view FactorFilter::AsCondition() const
 		{
 			switch (Condition)
 			{
@@ -317,11 +317,11 @@ namespace Tangent
 					return "=";
 			}
 		}
-		std::string_view FactorQuery::AsOrder() const
+		std::string_view FactorFilter::AsOrder() const
 		{
 			return Order <= 0 ? "DESC" : "ASC";
 		}
-		FactorQuery FactorQuery::From(const std::string_view& Query, int64_t Value, int8_t Order)
+		FactorFilter FactorFilter::From(const std::string_view& Query, int64_t Value, int8_t Order)
 		{
 			if (Query == "gt" || Query == ">")
 				return Greater(Value, Order);
@@ -2295,8 +2295,8 @@ namespace Tangent
 			size_t Size = Response.Size();
 			for (size_t i = 0; i < Size; i++)
 			{
-				auto Row = Response[i];
-				Format::Stream Message = Format::Stream(Load(Label, __func__, GetMultiformLabel(Column, Row["row_hash"].Get().GetBlob(), Row["block_number"].Get().GetInteger())).Or(String()));
+				auto Next = Response[i];
+				Format::Stream Message = Format::Stream(Load(Label, __func__, GetMultiformLabel(Column, Next["row_hash"].Get().GetBlob(), Next["block_number"].Get().GetInteger())).Or(String()));
 				UPtr<Ledger::State> NextState = States::Resolver::New(Messages::Generic::ResolveType(Message).Or(0));
 				if (!NextState || !NextState->Load(Message))
 				{
@@ -2311,7 +2311,90 @@ namespace Tangent
 
 			return Values;
 		}
-		ExpectsLR<Vector<UPtr<Ledger::State>>> Chainstate::GetMultiformsByRow(const Ledger::BlockMutation* Delta, const std::string_view& Row, const FactorQuery& Query, uint64_t BlockNumber, size_t Offset, size_t Count)
+		ExpectsLR<Vector<UPtr<Ledger::State>>> Chainstate::GetMultiformsByColumnFilter(const Ledger::BlockMutation* Delta, const std::string_view& Column, const FactorFilter& Filter, uint64_t BlockNumber, size_t Offset, size_t Count)
+		{
+			auto Location = ResolveMultiformLocation(Column, Optional::None, false);
+			if (!Location)
+				return Location.Error();
+
+			SchemaList Map;
+			Map.push_back(Var::Set::Integer(Location->Column.Or(0)));
+			if (BlockNumber > 0)
+				Map.push_back(Var::Set::Integer(BlockNumber));
+			Map.push_back(Var::Set::String(Filter.AsCondition()));
+			Map.push_back(Var::Set::Integer(Filter.Value));
+			Map.push_back(Var::Set::String(Filter.AsOrder()));
+			Map.push_back(Var::Set::Integer(Count));
+			Map.push_back(Var::Set::Integer(Offset));
+
+			auto Cursor = EmplaceQuery(Multiformdata, Label, __func__, !BlockNumber ?
+				"SELECT (SELECT row_hash FROM rows WHERE rows.row_number = multiforms.row_number) AS row_hash, block_number FROM multiforms WHERE column_number = ? AND factor $? ? ORDER BY factor $?, column_number ASC LIMIT ? OFFSET ?" :
+				"SELECT (SELECT row_hash FROM rows WHERE rows.row_number = multiformtries.row_number) AS row_hash, MAX(block_number) AS block_number FROM multiformtries WHERE column_number = ? AND block_number < ? AND factor $? ? GROUP BY row_number ORDER BY factor $?, column_number ASC LIMIT ? OFFSET ?", &Map);
+			if (!Cursor || Cursor->Error())
+				return ExpectsLR<Vector<UPtr<Ledger::State>>>(LayerException(ErrorOf(Cursor)));
+
+			Vector<UPtr<Ledger::State>> Values;
+			auto& Response = Cursor->First();
+			size_t Size = Response.Size();
+			for (size_t i = 0; i < Size; i++)
+			{
+				auto Next = Response[i];
+				Format::Stream Message = Format::Stream(Load(Label, __func__, GetMultiformLabel(Column, Next["row_hash"].Get().GetBlob(), Next["block_number"].Get().GetInteger())).Or(String()));
+				UPtr<Ledger::State> NextState = States::Resolver::New(Messages::Generic::ResolveType(Message).Or(0));
+				if (!NextState || !NextState->Load(Message))
+				{
+					if (NextState && Delta != nullptr && Delta->Incoming != nullptr)
+						((Ledger::BlockMutation*)Delta)->Incoming->ClearMultiform(Column, ((Ledger::Multiform*)*NextState)->AsRow());
+					continue;
+				}
+				else if (Delta != nullptr && Delta->Incoming != nullptr)
+					((Ledger::BlockMutation*)Delta)->Incoming->CopyAny(*NextState);
+				Values.push_back(std::move(NextState));
+			}
+
+			return Values;
+		}
+		ExpectsLR<Vector<UPtr<Ledger::State>>> Chainstate::GetMultiformsByRow(const Ledger::BlockMutation* Delta, const std::string_view& Row, uint64_t BlockNumber, size_t Offset, size_t Count)
+		{
+			auto Location = ResolveMultiformLocation(Optional::None, Row, false);
+			if (!Location)
+				return Location.Error();
+
+			SchemaList Map;
+			Map.push_back(Var::Set::Integer(Location->Column.Or(0)));
+			if (BlockNumber > 0)
+				Map.push_back(Var::Set::Integer(BlockNumber));
+			Map.push_back(Var::Set::Integer(Count));
+			Map.push_back(Var::Set::Integer(Offset));
+
+			auto Cursor = EmplaceQuery(Multiformdata, Label, __func__, !BlockNumber ?
+				"SELECT (SELECT column_hash FROM columns WHERE columns.column_number = multiforms.column_number) AS column_hash, block_number FROM multiforms WHERE row_number = ? ORDER BY column_number LIMIT ? OFFSET ?" :
+				"SELECT (SELECT column_hash FROM columns WHERE columns.column_number = multiformtries.column_number) AS column_hash, MAX(block_number) AS block_number FROM multiformtries WHERE row_number = ? AND block_number < ? GROUP BY column_number ORDER BY column_number LIMIT ? OFFSET ?", &Map);
+			if (!Cursor || Cursor->Error())
+				return ExpectsLR<Vector<UPtr<Ledger::State>>>(LayerException(ErrorOf(Cursor)));
+
+			Vector<UPtr<Ledger::State>> Values;
+			auto& Response = Cursor->First();
+			size_t Size = Response.Size();
+			for (size_t i = 0; i < Size; i++)
+			{
+				auto Next = Response[i];
+				Format::Stream Message = Format::Stream(Load(Label, __func__, GetMultiformLabel(Next["column_hash"].Get().GetBlob(), Row, Next["block_number"].Get().GetInteger())).Or(String()));
+				UPtr<Ledger::State> NextState = States::Resolver::New(Messages::Generic::ResolveType(Message).Or(0));
+				if (!NextState || !NextState->Load(Message))
+				{
+					if (NextState && Delta != nullptr && Delta->Incoming != nullptr)
+						((Ledger::BlockMutation*)Delta)->Incoming->ClearMultiform(((Ledger::Multiform*)*NextState)->AsColumn(), Row);
+					continue;
+				}
+				else if (Delta != nullptr && Delta->Incoming != nullptr)
+					((Ledger::BlockMutation*)Delta)->Incoming->CopyAny(*NextState);
+				Values.push_back(std::move(NextState));
+			}
+
+			return Values;
+		}
+		ExpectsLR<Vector<UPtr<Ledger::State>>> Chainstate::GetMultiformsByRowFilter(const Ledger::BlockMutation* Delta, const std::string_view& Row, const FactorFilter& Filter, uint64_t BlockNumber, size_t Offset, size_t Count)
 		{
 			auto Location = ResolveMultiformLocation(Optional::None, Row, false);
 			if (!Location)
@@ -2321,9 +2404,9 @@ namespace Tangent
 			Map.push_back(Var::Set::Integer(Location->Row.Or(0)));
 			if (BlockNumber > 0)
 				Map.push_back(Var::Set::Integer(BlockNumber));
-			Map.push_back(Var::Set::String(Query.AsCondition()));
-			Map.push_back(Var::Set::Integer(Query.Value));
-			Map.push_back(Var::Set::String(Query.AsOrder()));
+			Map.push_back(Var::Set::String(Filter.AsCondition()));
+			Map.push_back(Var::Set::Integer(Filter.Value));
+			Map.push_back(Var::Set::String(Filter.AsOrder()));
 			Map.push_back(Var::Set::Integer(Count));
 			Map.push_back(Var::Set::Integer(Offset));
 
@@ -2354,7 +2437,45 @@ namespace Tangent
 
 			return Values;
 		}
-		ExpectsLR<size_t> Chainstate::GetMultiformsCountByRow(const std::string_view& Row, const FactorQuery& Query, uint64_t BlockNumber)
+		ExpectsLR<size_t> Chainstate::GetMultiformsCountByColumn(const std::string_view& Column, uint64_t BlockNumber)
+		{
+			auto Location = ResolveMultiformLocation(Column, Optional::None, false);
+			if (!Location)
+				return Location.Error();
+
+			SchemaList Map;
+			Map.push_back(Var::Set::Integer(Location->Column.Or(0)));
+			if (BlockNumber > 0)
+				Map.push_back(Var::Set::Integer(BlockNumber));
+
+			auto Cursor = EmplaceQuery(Multiformdata, Label, __func__, !BlockNumber ? "SELECT COUNT(1) AS multiform_count FROM multiforms WHERE column_number = ?" : "SELECT COUNT(1) AS multiform_count FROM (SELECT MAX(block_number) FROM multiformtries WHERE column_number = ? AND block_number < ? GROUP BY row_number)", &Map);
+			if (!Cursor || Cursor->Error())
+				return ExpectsLR<size_t>(LayerException(ErrorOf(Cursor)));
+
+			size_t Count = (*Cursor)["multiform_count"].Get().GetInteger();
+			return ExpectsLR<size_t>(Count);
+		}
+		ExpectsLR<size_t> Chainstate::GetMultiformsCountByColumnFilter(const std::string_view& Column, const FactorFilter& Filter, uint64_t BlockNumber)
+		{
+			auto Location = ResolveMultiformLocation(Column, Optional::None, false);
+			if (!Location)
+				return Location.Error();
+
+			SchemaList Map;
+			Map.push_back(Var::Set::Integer(Location->Column.Or(0)));
+			if (BlockNumber > 0)
+				Map.push_back(Var::Set::Integer(BlockNumber));
+			Map.push_back(Var::Set::String(Filter.AsCondition()));
+			Map.push_back(Var::Set::Integer(Filter.Value));
+
+			auto Cursor = EmplaceQuery(Multiformdata, Label, __func__, !BlockNumber ? "SELECT COUNT(1) AS multiform_count FROM multiforms WHERE column_number = ? AND factor $? ?" : "SELECT COUNT(1) AS multiform_count FROM (SELECT MAX(block_number) FROM multiformtries WHERE column_number = ? AND block_number < ? AND factor $? ? GROUP BY row_number)", &Map);
+			if (!Cursor || Cursor->Error())
+				return ExpectsLR<size_t>(LayerException(ErrorOf(Cursor)));
+
+			size_t Count = (*Cursor)["multiform_count"].Get().GetInteger();
+			return ExpectsLR<size_t>(Count);
+		}
+		ExpectsLR<size_t> Chainstate::GetMultiformsCountByRow(const std::string_view& Row, uint64_t BlockNumber)
 		{
 			auto Location = ResolveMultiformLocation(Optional::None, Row, false);
 			if (!Location)
@@ -2364,8 +2485,26 @@ namespace Tangent
 			Map.push_back(Var::Set::Integer(Location->Row.Or(0)));
 			if (BlockNumber > 0)
 				Map.push_back(Var::Set::Integer(BlockNumber));
-			Map.push_back(Var::Set::String(Query.AsCondition()));
-			Map.push_back(Var::Set::Integer(Query.Value));
+
+			auto Cursor = EmplaceQuery(Multiformdata, Label, __func__, !BlockNumber ? "SELECT COUNT(1) AS multiform_count FROM multiforms WHERE row_number = ?" : "SELECT COUNT(1) AS multiform_count FROM (SELECT MAX(block_number) FROM multiformtries WHERE row_number = ? AND block_number < ? GROUP BY column_number)", &Map);
+			if (!Cursor || Cursor->Error())
+				return ExpectsLR<size_t>(LayerException(ErrorOf(Cursor)));
+
+			size_t Count = (*Cursor)["multiform_count"].Get().GetInteger();
+			return ExpectsLR<size_t>(Count);
+		}
+		ExpectsLR<size_t> Chainstate::GetMultiformsCountByRowFilter(const std::string_view& Row, const FactorFilter& Filter, uint64_t BlockNumber)
+		{
+			auto Location = ResolveMultiformLocation(Optional::None, Row, false);
+			if (!Location)
+				return Location.Error();
+
+			SchemaList Map;
+			Map.push_back(Var::Set::Integer(Location->Row.Or(0)));
+			if (BlockNumber > 0)
+				Map.push_back(Var::Set::Integer(BlockNumber));
+			Map.push_back(Var::Set::String(Filter.AsCondition()));
+			Map.push_back(Var::Set::Integer(Filter.Value));
 
 			auto Cursor = EmplaceQuery(Multiformdata, Label, __func__, !BlockNumber ? "SELECT COUNT(1) AS multiform_count FROM multiforms WHERE row_number = ? AND factor $? ?" : "SELECT COUNT(1) AS multiform_count FROM (SELECT MAX(block_number) FROM multiformtries WHERE row_number = ? AND block_number < ? AND factor $? ? GROUP BY column_number)", &Map);
 			if (!Cursor || Cursor->Error())
