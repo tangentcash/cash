@@ -119,7 +119,7 @@ namespace Tangent
                 uint32_t MaxInboundConnections = 32;
                 uint32_t MaxOutboundConnections = 8;
                 double BestBlockConsensus = 0.25;
-                bool Proposer = true;
+                bool Proposer = false;
                 bool Server = true;
                 bool Logging = true;
             } P2P;
@@ -141,7 +141,7 @@ namespace Tangent
                 String UserPassword;
                 uint64_t CursorSize = 512;
                 uint64_t PageSize = 64;
-                bool WebSockets = true;
+                bool WebSockets = false;
                 bool Server = false;
                 bool Logging = true;
             } RPC;
@@ -211,10 +211,9 @@ namespace Tangent
         } Account;
         struct ProtocolPolicyConfig
         {
-            uint256_t DelegationTarget = uint256_t(1) << uint256_t(240);
             uint64_t ConsensusCommitteeMajors = 20;
             uint64_t ConsensusCommitteeMinors = 4;
-            uint64_t ConsensusCommitteeAggregators = 64;
+            uint64_t ConsensusCommitteeAggregators = 32;
             uint64_t ConsensusProofTime = 10000;
             uint64_t ConsensusAdjustmentTime = 3600000;
             uint64_t ConsensusPenaltyPointTime = 600000;

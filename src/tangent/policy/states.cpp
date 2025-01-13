@@ -98,12 +98,12 @@ namespace Tangent
 			return std::move(Stream.Data);
 		}
 
-		AccountWork::AccountWork(const Algorithm::Pubkeyhash NewOwner, uint64_t NewBlockNumber, uint64_t NewBlockNonce) : Ledger::Multiform(NewBlockNumber, NewBlockNonce), GasInput(0), GasOutput(0), Penalty(0)
+		AccountWork::AccountWork(const Algorithm::Pubkeyhash NewOwner, uint64_t NewBlockNumber, uint64_t NewBlockNonce) : Ledger::Multiform(NewBlockNumber, NewBlockNonce)
 		{
 			if (NewOwner)
 				memcpy(Owner, NewOwner, sizeof(Owner));
 		}
-		AccountWork::AccountWork(const Algorithm::Pubkeyhash NewOwner, const Ledger::BlockHeader* NewBlockHeader) : Ledger::Multiform(NewBlockHeader), GasInput(0), GasOutput(0), Penalty(0)
+		AccountWork::AccountWork(const Algorithm::Pubkeyhash NewOwner, const Ledger::BlockHeader* NewBlockHeader) : Ledger::Multiform(NewBlockHeader)
 		{
 			if (NewOwner)
 				memcpy(Owner, NewOwner, sizeof(Owner));
@@ -122,6 +122,8 @@ namespace Tangent
 				GasOutput = (GasOutputChange >= GasOutput ? GasOutputChange : uint256_t::Max());
 				if (Status == Ledger::WorkStatus::Standby)
 					Status = Prev->Status;
+				if (Penalty < Prev->Penalty)
+					Penalty = Prev->Penalty;
 			}
 			
 			if (Status == Ledger::WorkStatus::Standby)
@@ -210,7 +212,7 @@ namespace Tangent
 		int64_t AccountWork::AsFactor() const
 		{
 			if (!IsOnline())
-				return -1;
+				return (int64_t)Ledger::WorkStatus::Offline;
 
 			auto GasUse = GetGasUse() / 100;
 			return GasUse > std::numeric_limits<int64_t>::max() ? std::numeric_limits<int64_t>::max() : (int64_t)(uint64_t)GasUse;
@@ -283,8 +285,11 @@ namespace Tangent
 				return LayerException("invalid state owner");
 
 			auto* Prev = (AccountObserver*)PrevState;
-			if (Prev != nullptr && Status == Ledger::WorkStatus::Standby)
-				Status = Prev->Status;
+			if (Prev != nullptr)
+			{
+				if (Status == Ledger::WorkStatus::Standby)
+					Status = Prev->Status;
+			}
 			else if (!Prev && !(Algorithm::Asset::IsValid(Asset) && Algorithm::Asset::TokenOf(Asset).empty()))
 				return LayerException("invalid asset");		
 			
