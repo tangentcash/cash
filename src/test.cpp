@@ -922,7 +922,7 @@ public:
 		TestTransactions::ProposeBlockUserTuple(&TestTransactions::TestTransfers, User1, User2);
 		TestTransactions::ProposeBlockUserOne(std::bind(&TestTransactions::TestTransferToWallet, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, Algorithm::Asset::IdOf("BTC"), "tcrt1x3yw986ceqfjn9hujsp33mj6r5829z8m72quntl", 0.1), User1, User2);
 		TestTransactions::ProposeBlockUserTuple(&TestTransactions::TestRollups, User1, User2);
-		TestTransactions::ProposeBlockUserTuple(&TestTransactions::TestCommitmentAnti, User1, User1);
+		TestTransactions::ProposeBlockUserTuple(&TestTransactions::TestCommitmentAnti, User1, User2);
 		Term->ReadChar();
 		return 0;
 	}
@@ -1620,9 +1620,11 @@ public:
 					for (auto& Item : BlockInfo->Get("states")->GetChilds())
 						Item->Set("merkle_test", Var::String(Proof.HasState(Algorithm::Encoding::Decode0xHex256(Item->GetVar("hash").GetBlob())) ? "passed" : "failed"));
 
-					auto Verification = Next->Verify(ParentBlock.Address());
+					auto Validity = Next->VerifyValidity(ParentBlock.Address());
+					auto Integrity = Next->VerifyIntegrity(ParentBlock.Address());
 					auto Validation = Validate ? Next->Validate(ParentBlock.Address()) : ExpectsLR<void>(Expectation::Met);
-					BlockInfo->Set("wesolowski_test", Var::String(Verification ? "passed" : Verification.Error().what()));
+					BlockInfo->Set("validity_test", Var::String(Validity ? "passed" : Validity.Error().what()));
+					BlockInfo->Set("integrity_test", Var::String(Integrity ? "passed" : Integrity.Error().what()));
 					BlockInfo->Set("validation_test", Var::String(Validate ? (Validation ? "passed" : Validation.Error().what()) : "unchecked"));
 					BlockInfo->Set("merkle_test", Proof.AsSchema().Reset());
 					Target->Push(BlockInfo.Reset());

@@ -338,7 +338,7 @@ namespace Tangent
 			return ExpectsPromiseLR<BlockDispatch>(LayerException("chainstate data not available"));
 #endif
 		}
-		ExpectsLR<void> BlockHeader::Verify(const BlockHeader* ParentBlock) const
+		ExpectsLR<void> BlockHeader::VerifyValidity(const BlockHeader* ParentBlock) const
 		{
 			if (!Number || (!ParentHash && Number > 1) || (Number == 1 && ParentHash > 0))
 				return LayerException("invalid number");
@@ -799,8 +799,8 @@ namespace Tangent
 			{
 				bool Winner = (i == Priority);
 				auto& Participant = Environment->Proposers[i];
-				auto Work = Winner ? Environment->Validation.Context.ApplyAccountWork(Participant.Owner, WorkStatus::Online, 0, GasUse, 0) : Environment->Validation.Context.ApplyAccountWork(Participant.Owner, WorkStatus::Offline, 1, 0, GasPenalty);
-				if (Winner && !Work)
+				auto Work = Winner ? Environment->Validation.Context.ApplyAccountWork(Participant.Owner, Participant.Status != WorkStatus::Online ? WorkStatus::Online : WorkStatus::Standby, 0, GasUse, 0) : Environment->Validation.Context.ApplyAccountWork(Participant.Owner, WorkStatus::Offline, 1, 0, GasPenalty);
+				if (!Work)
 					return Work.Error();
 			}
 
@@ -808,7 +808,7 @@ namespace Tangent
 			Recalculate(ParentBlock);
 			return Expectation::Met;
 		}
-		ExpectsLR<void> Block::Validate(const BlockHeader* ParentBlock) const
+		ExpectsLR<void> Block::Validate(const BlockHeader* ParentBlock)
 		{
 			if (ParentBlock && (ParentBlock->Number != Number - 1 || ParentBlock->AsHash() != ParentHash))
 				return LayerException("invalid parent block");
@@ -837,13 +837,11 @@ namespace Tangent
 			Environment.Incoming.reserve(Transactions.size());
 			for (auto& Transaction : Transactions)
 			{
-				Environment.Incoming.emplace_back();
-				auto& Info = Environment.Incoming.back();
-				Info.Candidate = Transactions::Resolver::Copy(*Transaction.Transaction);
+				auto& Info = Environment.Include(Transactions::Resolver::Copy(*Transaction.Transaction));
 				Childs[Transaction.Receipt.TransactionHash] = std::make_pair(&Transaction, (const EvaluationContext::TransactionInfo*)&Info);
 			}
 
-			auto Evaluation = Environment.Evaluate(nullptr);
+			auto Evaluation = Environment.Evaluate();
 			if (!Evaluation)
 				return Evaluation.Error();
 
@@ -867,19 +865,24 @@ namespace Tangent
 			Result.Wesolowski = Wesolowski;
 			Result.Time = Time;
 			Result.Recalculate(ParentBlock);
+			if (States.At(WorkCommitment::Finalized).empty())
+				States = Result.States;
+
 			if (Result.AsMessage().Data != AsMessage().Data)
 				return LayerException("invalid block evaluation");
 
-			return Result.Verify(ParentBlock);
-		}
-		ExpectsLR<void> Block::Verify(const BlockHeader* ParentBlock) const
-		{
-			if (Transactions.empty() || TransactionsCount != (uint32_t)Transactions.size() || StatesCount != (uint32_t)States.At(WorkCommitment::Finalized).size() || States.At(WorkCommitment::Finalized).empty())
-				return LayerException("invalid transactions/receipts/states count");
+			auto Validity = Result.VerifyValidity(ParentBlock);
+			if (!Validity)
+				return Validity.Error();
 
-			auto Verification = BlockHeader::Verify(ParentBlock);
-			if (!Verification)
-				return Verification;
+			return Result.VerifyIntegrity(ParentBlock);
+		}
+		ExpectsLR<void> Block::VerifyIntegrity(const BlockHeader* ParentBlock) const
+		{
+			if (Transactions.empty() || TransactionsCount != (uint32_t)Transactions.size())
+				return LayerException("invalid transactions count");
+			else if (!StatesCount || StatesCount != (uint32_t)States.At(WorkCommitment::Finalized).size())
+				return LayerException("invalid states count");
 
 			if (!ParentBlock && Number > 1)
 				return Expectation::Met;
@@ -904,7 +907,7 @@ namespace Tangent
 
 			return Expectation::Met;
 		}
-		ExpectsLR<BlockCheckpoint> Block::Checkpoint() const
+		ExpectsLR<BlockCheckpoint> Block::Checkpoint(bool KeepRevertedTransactions) const
 		{
 #ifdef TAN_VALIDATOR
 			auto Chain = Storages::Chainstate(__func__);
@@ -923,80 +926,103 @@ namespace Tangent
 			Mutation.IsFork = Mutation.OldTipBlockNumber > 0 && Mutation.OldTipBlockNumber >= Mutation.NewTipBlockNumber;
 			if (Mutation.IsFork)
 			{
-				auto Mempool = Storages::Mempoolstate(__func__);
-				auto MempoolSession = Mempool.TxBegin("mempoolwork", "apply", LDB::Isolation::Default);
-				if (!MempoolSession)
+				if (KeepRevertedTransactions)
 				{
-					Chain.MultiTxRollback("chainwork", "apply", *ChainSession);
-					return LayerException(std::move(MempoolSession.Error().message()));
-				}
-
-				uint64_t RevertNumber = Mutation.OldTipBlockNumber;
-				while (RevertNumber >= Mutation.NewTipBlockNumber)
-				{
-					size_t Offset = 0, Count = 512;
-					while (true)
+					auto Mempool = Storages::Mempoolstate(__func__);
+					auto MempoolSession = Mempool.TxBegin("mempoolwork", "apply", LDB::Isolation::Default);
+					if (!MempoolSession)
 					{
-						auto Transactions = Chain.GetTransactionsByNumber(RevertNumber, Offset, Count);
-						if (!Transactions || Transactions->empty())
-							break;
-
-						for (auto& Item : *Transactions)
-						{
-							if (FinalizedTransactions.find(Item->AsHash()) == FinalizedTransactions.end())
-							{
-								auto Status = Mempool.AddTransaction(**Item);
-								Status.Report("transaction resurrection failed");
-								Mutation.Resurrections += Status ? 1 : 0;
-							}
-						}
-
-						Offset += Transactions->size();
-						if (Transactions->size() < Count)
-							break;
+						Chain.MultiTxRollback("chainwork", "apply");
+						return LayerException(std::move(MempoolSession.Error().message()));
 					}
-					--RevertNumber;
+
+					uint64_t RevertNumber = Mutation.OldTipBlockNumber;
+					while (RevertNumber >= Mutation.NewTipBlockNumber)
+					{
+						size_t Offset = 0, Count = 512;
+						while (true)
+						{
+							auto Transactions = Chain.GetTransactionsByNumber(RevertNumber, Offset, Count);
+							if (!Transactions || Transactions->empty())
+								break;
+
+							for (auto& Item : *Transactions)
+							{
+								if (FinalizedTransactions.find(Item->AsHash()) == FinalizedTransactions.end())
+								{
+									auto Status = Mempool.AddTransaction(**Item, true);
+									Status.Report("transaction resurrection failed");
+									Mutation.Resurrections += Status ? 1 : 0;
+								}
+							}
+
+							Offset += Transactions->size();
+							if (Transactions->size() < Count)
+								break;
+						}
+						--RevertNumber;
+					}
+
+					if (Protocol::Now().User.Storage.Logging)
+						VI_INFO("[checkpoint] revert chain to block %s (height: %" PRIu64 ", resurrections: %" PRIu64 ")", Algorithm::Encoding::Encode0xHex256(AsHash()).c_str(), Mutation.NewTipBlockNumber, (uint64_t)Mutation.Resurrections);
+
+					auto Status = Chain.Revert(Mutation.NewTipBlockNumber - 1);
+					if (!Status)
+					{
+						Chain.MultiTxRollback("chainwork", "apply");
+						Mempool.TxRollback("mempoolwork", "apply");
+						return Status.Error();
+					}
+
+					Status = Chain.Checkpoint(*this);
+					if (!Status)
+					{
+						Chain.MultiTxRollback("chainwork", "apply");
+						Mempool.TxRollback("mempoolwork", "apply");
+						return Status.Error();
+					}
+
+					auto Result = Chain.MultiTxCommit("chainwork", "apply");
+					if (!Result)
+					{
+						Mempool.TxRollback("mempoolwork", "apply");
+						return LayerException(std::move(Result.Error().message()));
+					}
+
+					Mempool.RemoveTransactions(FinalizedTransactions).Report("mempool cleanup failed");
+					Mempool.TxCommit("mempoolwork", "apply").Report("mempool commit failed");
 				}
-
-				if (Protocol::Now().User.Storage.Logging)
-					VI_INFO("[checkpoint] revert chain to block %s (height: %" PRIu64 ", resurrections: %" PRIu64 ")", Algorithm::Encoding::Encode0xHex256(AsHash()).c_str(), Mutation.NewTipBlockNumber, (uint64_t)Mutation.Resurrections);
-
-				auto Status = Chain.Revert(Mutation.NewTipBlockNumber - 1);
-				if (!Status)
+				else
 				{
-					Chain.MultiTxRollback("chainwork", "apply", *ChainSession);
-					Mempool.TxRollback("mempoolwork", "apply", *MempoolSession);
-					return Status.Error();
-				}
+					auto Status = Chain.Revert(Mutation.NewTipBlockNumber - 1);
+					if (!Status)
+					{
+						Chain.MultiTxRollback("chainwork", "apply");
+						return Status.Error();
+					}
 
-				Status = Chain.Checkpoint(*this);
-				if (!Status)
-				{
-					Chain.MultiTxRollback("chainwork", "apply", *ChainSession);
-					Mempool.TxRollback("mempoolwork", "apply", *MempoolSession);
-					return Status.Error();
-				}
+					Status = Chain.Checkpoint(*this);
+					if (!Status)
+					{
+						Chain.MultiTxRollback("chainwork", "apply");
+						return Status.Error();
+					}
 
-				auto Result = Chain.MultiTxCommit("chainwork", "apply", *ChainSession);
-				if (!Result)
-				{
-					Mempool.TxRollback("mempoolwork", "apply", *MempoolSession);
-					return LayerException(std::move(Result.Error().message()));
+					auto Result = Chain.MultiTxCommit("chainwork", "apply");
+					if (!Result)
+						return LayerException(std::move(Result.Error().message()));
 				}
-
-				Mempool.RemoveTransactions(FinalizedTransactions).Report("mempool cleanup failed");
-				Mempool.TxCommit("mempoolwork", "apply", *MempoolSession).Report("mempool commit failed");
 			}
 			else
 			{
 				auto Status = Chain.Checkpoint(*this);
 				if (!Status)
 				{
-					Chain.MultiTxRollback("chainwork", "apply", *ChainSession);
+					Chain.MultiTxRollback("chainwork", "apply");
 					return Status.Error();
 				}
 
-				auto Result = Chain.MultiTxCommit("chainwork", "apply", *ChainSession);
+				auto Result = Chain.MultiTxCommit("chainwork", "apply");
 				if (!Result)
 					return LayerException(std::move(Result.Error().message()));
 
@@ -2767,16 +2793,19 @@ namespace Tangent
 			}
 			return Candidates.size();
 		}
+		EvaluationContext::TransactionInfo& EvaluationContext::Include(UPtr<Transaction>&& Candidate)
+		{
+			Incoming.emplace_back();
+			auto& Info = Incoming.back();
+			Info.Candidate = std::move(Candidate);
+			return Info;
+		}
 		ExpectsLR<Block> EvaluationContext::Evaluate(String* Errors)
 		{
 			Ledger::Block Candidate;
-			Validation.Context = TransactionContext(&Candidate);
-			Validation.Context.Environment = this;
-			if (Precomputed != Incoming.size())
-			{
-				Precomputed = Incoming.size();
-				Precompute(Incoming);
-			}
+			auto Status = Precompute(Candidate);
+			if (!Status)
+				return Status.Error();
 
 			auto Chain = Storages::Chainstate(__func__);
 			auto Evaluation = Candidate.Evaluate(Tip.Address(), this, Errors);
@@ -2798,7 +2827,22 @@ namespace Tangent
 		}
 		ExpectsLR<void> EvaluationContext::Verify(const Block& Candidate)
 		{
-			return Candidate.Verify(Tip.Address());
+			auto Validity = Candidate.VerifyValidity(Tip.Address());
+			if (!Validity)
+				return Validity;
+
+			return Candidate.VerifyIntegrity(Tip.Address());
+		}
+		ExpectsLR<void> EvaluationContext::Precompute(Block& Candidate)
+		{
+			Validation.Context = TransactionContext(&Candidate);
+			Validation.Context.Environment = this;
+			if (Precomputed != Incoming.size())
+			{
+				Precomputed = Incoming.size();
+				Precompute(Incoming);
+			}
+			return Expectation::Met;
 		}
 		ExpectsLR<void> EvaluationContext::Cleanup()
 		{

@@ -53,7 +53,7 @@ namespace Tangent
 			ExpectsLR<size_t> GetValidatorsCount();
 			ExpectsLR<Decimal> GetGasPrice(const Algorithm::AssetId& Asset, double PriorityPercentile);
 			ExpectsLR<Decimal> GetAssetPrice(const Algorithm::AssetId& PriceOf, const Algorithm::AssetId& RelativeTo, double PriorityPercentile = 0.5);
-			ExpectsLR<void> AddTransaction(Ledger::Transaction& Value);
+			ExpectsLR<void> AddTransaction(Ledger::Transaction& Value, bool BypassCongestion = false);
 			ExpectsLR<void> RemoveTransactions(const Vector<uint256_t>& TransactionHashes);
 			ExpectsLR<void> RemoveTransactions(const UnorderedSet<uint256_t>& TransactionHashes);
 			ExpectsLR<void> ExpireTransactions();
@@ -71,7 +71,7 @@ namespace Tangent
 			static double FeePercentile(FeePriority Priority);
 
 		protected:
-			bool Verify() override;
+			bool ReconstructStorage() override;
 		};
 	}
 }

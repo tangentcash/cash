@@ -1,6 +1,11 @@
 #include "chainstate.h"
 #include "../policy/transactions.h"
 #include "../policy/states.h"
+#define BLOB_BLOCK 'b'
+#define BLOB_TRANSACTION 't'
+#define BLOB_RECEIPT 'r'
+#define BLOB_UNIFORM 'u'
+#define BLOB_MULTIFORM 'm'
 #undef NULL
 
 namespace Tangent
@@ -60,7 +65,7 @@ namespace Tangent
 		{
 			String Label;
 			Label.resize(33);
-			Label.front() = 'b';
+			Label.front() = BLOB_BLOCK;
 			memcpy(Label.data() + 1, Hash, sizeof(uint8_t) * 32);
 			return Label;
 		}
@@ -68,7 +73,7 @@ namespace Tangent
 		{
 			String Label;
 			Label.resize(33);
-			Label.front() = 't';
+			Label.front() = BLOB_TRANSACTION;
 			memcpy(Label.data() + 1, Hash, sizeof(uint8_t) * 32);
 			return Label;
 		}
@@ -76,7 +81,7 @@ namespace Tangent
 		{
 			String Label;
 			Label.resize(33);
-			Label.front() = 'r';
+			Label.front() = BLOB_RECEIPT;
 			memcpy(Label.data() + 1, Hash, sizeof(uint8_t) * 32);
 			return Label;
 		}
@@ -84,7 +89,7 @@ namespace Tangent
 		{
 			String Label;
 			Label.resize(1 + Index.size());
-			Label.front() = 'u';
+			Label.front() = BLOB_UNIFORM;
 			memcpy(Label.data() + 1, Index.data(), Index.size());
 
 			uint64_t Numeric = OS::CPU::ToEndianness(OS::CPU::Endian::Little, Number);
@@ -95,7 +100,7 @@ namespace Tangent
 		{
 			String Label;
 			Label.resize(1 + Column.size() + Row.size());
-			Label.front() = 'u';
+			Label.front() = BLOB_MULTIFORM;
 			memcpy(Label.data() + 1, Column.data(), Column.size());
 			memcpy(Label.data() + 1 + Column.size(), Row.data(), Row.size());
 
@@ -339,55 +344,41 @@ namespace Tangent
 		}
 
 		static thread_local Chainstate* LatestChainstate = nullptr;
-		Chainstate::Chainstate(const std::string_view& NewLabel) noexcept : Label(NewLabel), Borrows(false)
+		Chainstate::Chainstate(const std::string_view& NewLabel) noexcept : Label(NewLabel), Borrows(LatestChainstate != nullptr)
 		{
-			if (LatestChainstate != nullptr)
-			{
-				Borrows = !!LatestChainstate->Blob;
-				Blob = LatestChainstate->Blob;
-				for (auto& Storage : LatestChainstate->Index)
-				{
-					Index[Storage.first] = *Storage.second;
-					if (!Storage.second)
-						Borrows = false;
-				}
-			}
 			if (!Borrows)
 			{
-				IndexStorageOf("chainindex", "uniformdata");
-				IndexStorageOf("chainindex", "multiformdata");
-				IndexStorageOf("chainindex", "blockdata");
-				IndexStorageOf("chainindex", "accountdata");
-				IndexStorageOf("chainindex", "txdata");
-				IndexStorageOf("chainindex", "partydata");
-				IndexStorageOf("chainindex", "aliasdata");
 				BlobStorageOf("chainblob");
-
-				bool Acquired = !!Blob;
-				for (auto& Storage : Index)
-				{
-					if (!Storage.second)
-						Acquired = false;
-				}
-				if (Acquired)
-					LatestChainstate = this;
+				Blockdata = IndexStorageOf("chainindex", "blockdata");
+				Accountdata = IndexStorageOf("chainindex", "accountdata");
+				Txdata = IndexStorageOf("chainindex", "txdata");
+				Partydata = IndexStorageOf("chainindex", "partydata");
+				Aliasdata = IndexStorageOf("chainindex", "aliasdata");
+				Uniformdata = IndexStorageOf("chainindex", "uniformdata");
+				Multiformdata = IndexStorageOf("chainindex", "multiformdata");
+				LatestChainstate = this;
 			}
-
-			Blockdata = *Index["blockdata"];
-			Accountdata = *Index["accountdata"];
-			Txdata = *Index["txdata"];
-			Partydata = *Index["partydata"];
-			Aliasdata = *Index["aliasdata"];
-			Uniformdata = *Index["uniformdata"];
-			Multiformdata = *Index["multiformdata"];
+			else
+			{
+				Blob = LatestChainstate->Blob;
+				Blockdata = *LatestChainstate->Blockdata;
+				Accountdata = *LatestChainstate->Accountdata;
+				Txdata = *LatestChainstate->Txdata;
+				Partydata = *LatestChainstate->Partydata;
+				Aliasdata = *LatestChainstate->Aliasdata;
+				Uniformdata = *LatestChainstate->Uniformdata;
+				Multiformdata = *LatestChainstate->Multiformdata;
+			}
 		}
 		Chainstate::~Chainstate() noexcept
 		{
-			if (Borrows)
-			{
-				for (auto& Storage : Index)
-					Storage.second.Reset();
-			}
+			UnloadIndexOf(std::move(Blockdata), Borrows);
+			UnloadIndexOf(std::move(Accountdata), Borrows);
+			UnloadIndexOf(std::move(Txdata), Borrows);
+			UnloadIndexOf(std::move(Partydata), Borrows);
+			UnloadIndexOf(std::move(Aliasdata), Borrows);
+			UnloadIndexOf(std::move(Uniformdata), Borrows);
+			UnloadIndexOf(std::move(Multiformdata), Borrows);
 			if (LatestChainstate == this)
 				LatestChainstate = nullptr;
 		}
@@ -401,42 +392,58 @@ namespace Tangent
 			Map.push_back(Var::Set::Integer(BlockNumber));
 			Map.push_back(Var::Set::Integer(BlockNumber));
 
-			auto Cursor = EmplaceQuery(Blockdata, Label, __func__,
-				"DELETE FROM checkpoints WHERE block_number > ?;"
-				"DELETE FROM blocks WHERE block_number > ?", &Map);
+			auto Cursor = EmplaceQuery(*Blockdata, Label, __func__,
+				"DELETE FROM blocks WHERE block_number > ? RETURNING block_hash;"
+				"DELETE FROM checkpoints WHERE block_number > ?;", &Map);
+			if (!Cursor || Cursor->Error())
+				return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
+
+			auto Response = Cursor->First();
+			Parallel::WailAll(ParallelForEachNode(Response.begin(), Response.end(), Response.Size(), [&](LDB::Row Row)
+			{
+				auto BlockHash = Row["block_hash"].Get();
+				Store(Label, __func__, GetBlockLabel(BlockHash.GetBinary()), std::string_view());
+			}));
+
+			Map.clear();
+			Map.push_back(Var::Set::Integer(BlockNumber));
+
+			Cursor = EmplaceQuery(*Txdata, Label, __func__, "DELETE FROM transactions WHERE block_number > ? RETURNING transaction_hash", &Map);
+			if (!Cursor || Cursor->Error())
+				return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
+
+			Response = Cursor->First();
+			Parallel::WailAll(ParallelForEachNode(Response.begin(), Response.end(), Response.Size(), [&](LDB::Row Row)
+			{
+				auto TransactionHash = Row["transaction_hash"].Get();
+				Store(Label, __func__, GetTransactionLabel(TransactionHash.GetBinary()), std::string_view());
+				Store(Label, __func__, GetReceiptLabel(TransactionHash.GetBinary()), std::string_view());
+			}));
+
+			Map.clear();
+			Map.push_back(Var::Set::Integer(BlockNumber));
+
+			Cursor = EmplaceQuery(*Accountdata, Label, __func__, "DELETE FROM accounts WHERE block_number > ?", &Map);
+			if (!Cursor || Cursor->Error())
+				return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
+
+			Cursor = EmplaceQuery(*Partydata, Label, __func__, "DELETE FROM parties WHERE block_number > ?", &Map);
+			if (!Cursor || Cursor->Error())
+				return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
+
+			Cursor = EmplaceQuery(*Aliasdata, Label, __func__, "DELETE FROM aliases WHERE block_number > ?", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
 
 			Map.clear();
 			Map.push_back(Var::Set::Integer(BlockNumber));
-
-			Cursor = EmplaceQuery(Accountdata, Label, __func__, "DELETE FROM accounts WHERE block_number > ?", &Map);
-			if (!Cursor || Cursor->Error())
-				return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
-
-			Cursor = EmplaceQuery(Txdata, Label, __func__, "DELETE FROM transactions WHERE block_number > ?", &Map);
-			if (!Cursor || Cursor->Error())
-				return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
-
-			Cursor = EmplaceQuery(Partydata, Label, __func__, "DELETE FROM parties WHERE block_number > ?", &Map);
-			if (!Cursor || Cursor->Error())
-				return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
-
-			Cursor = EmplaceQuery(Aliasdata, Label, __func__, "DELETE FROM aliases WHERE block_number > ?", &Map);
-			if (!Cursor || Cursor->Error())
-				return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
-
-			Map.clear();
-			Map.push_back(Var::Set::Integer(BlockNumber));
-			Map.push_back(Var::Set::Integer(BlockNumber));
 			Map.push_back(Var::Set::Integer(BlockNumber));
 			Map.push_back(Var::Set::Integer(BlockNumber));
 
-			Cursor = EmplaceQuery(Uniformdata, Label, __func__,
+			Cursor = EmplaceQuery(*Uniformdata, Label, __func__,
 				"DELETE FROM uniformtries WHERE block_number > ?;"
 				"INSERT OR REPLACE INTO uniforms (index_number, block_number) SELECT index_number, MAX(block_number) FROM uniformtries WHERE block_number <= ? GROUP BY index_number;"
-				"DELETE FROM indices WHERE block_number > ?;"
-				"DELETE FROM strides WHERE block_number > ?;", &Map);
+				"DELETE FROM indices WHERE block_number > ?;", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
 
@@ -446,7 +453,7 @@ namespace Tangent
 			Map.push_back(Var::Set::Integer(BlockNumber));
 			Map.push_back(Var::Set::Integer(BlockNumber));
 
-			Cursor = EmplaceQuery(Multiformdata, Label, __func__,
+			Cursor = EmplaceQuery(*Multiformdata, Label, __func__,
 				"DELETE FROM multiformtries WHERE block_number > ?;"
 				"INSERT OR REPLACE INTO multiforms (column_number, row_number, factor, block_number) SELECT column_number, row_number, factor, MAX(block_number) FROM multiformtries WHERE block_number <= ? GROUP BY column_number, row_number;"
 				"DELETE FROM columns WHERE block_number > ?;"
@@ -475,7 +482,7 @@ namespace Tangent
 			SchemaList Map;
 			Map.push_back(Var::Set::String(*LDB::Utils::InlineArray(std::move(Hashes))));
 
-			auto Cursor = EmplaceQuery(Txdata, Label, __func__, "UPDATE transactions SET dispatch_queue = NULL WHERE transaction_hash IN ($?)", &Map);
+			auto Cursor = EmplaceQuery(*Txdata, Label, __func__, "UPDATE transactions SET dispatch_queue = NULL WHERE transaction_hash IN ($?)", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
 
@@ -496,7 +503,7 @@ namespace Tangent
 				{
 					Map.back()->Value = Var::Integer(Offset);
 
-					auto Cursor = EmplaceQuery(Blockdata, Label, __func__, "SELECT block_hash FROM blocks WHERE block_number < ? LIMIT ? OFFSET ?", &Map);
+					auto Cursor = EmplaceQuery(*Blockdata, Label, __func__, "SELECT block_hash FROM blocks WHERE block_number < ? LIMIT ? OFFSET ?", &Map);
 					if (!Cursor || Cursor->Error())
 						return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
 
@@ -514,7 +521,7 @@ namespace Tangent
 						break;
 				}
 
-				auto Cursor = EmplaceQuery(Blockdata, Label, __func__, "DELETE FROM blocks WHERE block_number < ?", &Map);
+				auto Cursor = EmplaceQuery(*Blockdata, Label, __func__, "DELETE FROM blocks WHERE block_number < ?", &Map);
 				if (!Cursor || Cursor->Error())
 					return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
 			}
@@ -532,7 +539,7 @@ namespace Tangent
 				{
 					Map.back()->Value = Var::Integer(Offset);
 
-					auto Cursor = EmplaceQuery(Txdata, Label, __func__, "SELECT transaction_hash FROM transactions WHERE block_number < ? LIMIT ? OFFSET ?", &Map);
+					auto Cursor = EmplaceQuery(*Txdata, Label, __func__, "SELECT transaction_hash FROM transactions WHERE block_number < ? LIMIT ? OFFSET ?", &Map);
 					if (!Cursor || Cursor->Error())
 						return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
 
@@ -551,7 +558,7 @@ namespace Tangent
 						break;
 				}
 
-				auto Cursor = EmplaceQuery(Txdata, Label, __func__, "DELETE FROM transactions WHERE block_number < ?", &Map);
+				auto Cursor = EmplaceQuery(*Txdata, Label, __func__, "DELETE FROM transactions WHERE block_number < ?", &Map);
 				if (!Cursor || Cursor->Error())
 					return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
 			}
@@ -569,7 +576,7 @@ namespace Tangent
 				{
 					Map.back()->Value = Var::Integer(Offset);
 
-					auto Cursor = EmplaceQuery(Uniformdata, Label, __func__,
+					auto Cursor = EmplaceQuery(*Uniformdata, Label, __func__,
 						"SELECT"
 						" (COALESCE((SELECT TRUE FROM uniforms WHERE uniforms.index_number = uniformtries.index_number AND uniforms.block_number = uniformtries.block_number), FALSE)) AS latest,"
 						" (SELECT index_hash FROM indices WHERE indices.index_number = uniformtries.index_number) AS index_hash,"
@@ -601,7 +608,7 @@ namespace Tangent
 						break;
 				}
 
-				auto Cursor = EmplaceQuery(Uniformdata, Label, __func__, "DELETE FROM uniformtries WHERE block_number < ?", &Map);
+				auto Cursor = EmplaceQuery(*Uniformdata, Label, __func__, "DELETE FROM uniformtries WHERE block_number < ?", &Map);
 				if (!Cursor || Cursor->Error())
 					return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
 
@@ -610,7 +617,7 @@ namespace Tangent
 				{
 					Map.back()->Value = Var::Integer(Offset);
 
-					auto Cursor = EmplaceQuery(Multiformdata, Label, __func__,
+					auto Cursor = EmplaceQuery(*Multiformdata, Label, __func__,
 						"SELECT"
 						" (COALESCE((SELECT TRUE FROM multiforms WHERE multiforms.column_number = multiformtries.column_number AND multiforms.row_number = multiformtries.row_number AND multiforms.block_number = multiformtries.block_number), FALSE)) AS latest,"
 						" (SELECT column_hash FROM columns WHERE columns.column_number = multiformtries.column_number) AS column_hash,"
@@ -644,7 +651,7 @@ namespace Tangent
 						break;
 				}
 
-				Cursor = EmplaceQuery(Multiformdata, Label, __func__, "DELETE FROM multiformtries WHERE block_number < ?", &Map);
+				Cursor = EmplaceQuery(*Multiformdata, Label, __func__, "DELETE FROM multiformtries WHERE block_number < ?", &Map);
 				if (!Cursor || Cursor->Error())
 					return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
 			}
@@ -652,7 +659,7 @@ namespace Tangent
 			SchemaList Map;
 			Map.push_back(Var::Set::Integer(BlockNumber));
 
-			auto Cursor = EmplaceQuery(Blockdata, Label, __func__, "INSERT OR IGNORE INTO checkpoints (block_number) VALUES (?)", &Map);
+			auto Cursor = EmplaceQuery(*Blockdata, Label, __func__, "INSERT OR IGNORE INTO checkpoints (block_number) VALUES (?)", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
 
@@ -678,13 +685,11 @@ namespace Tangent
 			Map.push_back(Var::Set::Integer(Value.Number));
 			Map.push_back(Var::Set::Binary(Hash, sizeof(Hash)));
 
-			bool TransactionToAccountIndex = Protocol::Now().User.Storage.TransactionToAccountIndex;
-			bool TransactionToRollupIndex = Protocol::Now().User.Storage.TransactionToRollupIndex;
-			auto Cursor = EmplaceQuery(Blockdata, Label, __func__, "INSERT INTO blocks (block_number, block_hash) VALUES (?, ?)", &Map);
+			auto Cursor = EmplaceQuery(*Blockdata, Label, __func__, "INSERT INTO blocks (block_number, block_hash) VALUES (?, ?)", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
 
-			Cursor = EmplaceQuery(Txdata, Label, __func__, "SELECT MAX(transaction_number) AS counter FROM transactions", &Map);
+			Cursor = EmplaceQuery(*Txdata, Label, __func__, "SELECT MAX(transaction_number) AS counter FROM transactions", &Map);
 			if (!Cursor || Cursor->ErrorOrEmpty())
 				return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
 
@@ -761,8 +766,8 @@ namespace Tangent
 				}
 			}
 
-			uint64_t TransactionNonce = (*Cursor)["counter"].Get().GetInteger();
 			Vector<TransactionBlob> Transactions;
+			uint64_t TransactionNonce = (*Cursor)["counter"].Get().GetInteger();
 			Transactions.resize(Value.Transactions.size());
 			for (size_t i = 0; i < Transactions.size(); i++)
 			{
@@ -772,6 +777,8 @@ namespace Tangent
 				Blob.Context = &Value.Transactions[i];
 			}
 
+			bool TransactionToAccountIndex = Protocol::Now().User.Storage.TransactionToAccountIndex;
+			bool TransactionToRollupIndex = Protocol::Now().User.Storage.TransactionToRollupIndex;
 			auto Queue1 = ParallelForEach(Transactions.begin(), Transactions.end(), [&](TransactionBlob& Item)
 			{
 				Item.ReceiptMessage.Data.reserve(1024);
@@ -849,27 +856,6 @@ namespace Tangent
 			Vector<Promise<ExpectsLR<void>>> Queue4;
 			Queue4.emplace_back(Cotask<ExpectsLR<void>>([&]() -> ExpectsLR<void>
 			{
-				auto* Statement = *CommitTransactionData;
-				LDB::ExpectsDB<LDB::Cursor> Cursor = LDB::DatabaseException(String());
-				for (auto& Data : Transactions)
-				{
-					Txdata->BindInt64(Statement, 0, Data.TransactionNumber);
-					Txdata->BindBlob(Statement, 1, std::string_view((char*)Data.TransactionHash, sizeof(Data.TransactionHash)));
-					if (Data.DispatchNumber > 0)
-						Txdata->BindInt64(Statement, 2, Value.Number + (Data.DispatchNumber - 1));
-					else
-						Txdata->BindNull(Statement, 2);
-					Txdata->BindInt64(Statement, 3, Value.Number);
-					Txdata->BindInt64(Statement, 4, Data.BlockNonce);
-
-					Cursor = PreparedQuery(Txdata, Label, __func__, Statement);
-					if (!Cursor || Cursor->Error())
-						return LayerException(ErrorOf(Cursor));
-				}
-				return Expectation::Met;
-			}, false));
-			Queue4.emplace_back(Cotask<ExpectsLR<void>>([&]() -> ExpectsLR<void>
-			{
 				LDB::ExpectsDB<LDB::Cursor> Cursor = LDB::DatabaseException(String());
 				for (auto& Item : Uniforms)
 				{
@@ -877,7 +863,7 @@ namespace Tangent
 					Uniformdata->BindBlob(Statement, 0, Item.Index);
 					Uniformdata->BindInt64(Statement, 1, Value.Number);
 
-					Cursor = PreparedQuery(Uniformdata, Label, __func__, Statement);
+					Cursor = PreparedQuery(*Uniformdata, Label, __func__, Statement);
 					if (!Cursor || Cursor->ErrorOrEmpty())
 						return LayerException(Cursor->Empty() ? "uniform index not linked" : ErrorOf(Cursor));
 
@@ -886,7 +872,7 @@ namespace Tangent
 					Uniformdata->BindInt64(Statement, 0, IndexNumber);
 					Uniformdata->BindInt64(Statement, 1, Value.Number);
 
-					Cursor = PreparedQuery(Uniformdata, Label, __func__, Statement);
+					Cursor = PreparedQuery(*Uniformdata, Label, __func__, Statement);
 					if (!Cursor || Cursor->Error())
 						return LayerException(ErrorOf(Cursor));
 
@@ -894,7 +880,7 @@ namespace Tangent
 					Uniformdata->BindInt64(Statement, 0, IndexNumber);
 					Uniformdata->BindInt64(Statement, 1, Value.Number);
 
-					Cursor = PreparedQuery(Uniformdata, Label, __func__, Statement);
+					Cursor = PreparedQuery(*Uniformdata, Label, __func__, Statement);
 					if (!Cursor || Cursor->Error())
 						return LayerException(ErrorOf(Cursor));
 				}
@@ -909,7 +895,7 @@ namespace Tangent
 					Multiformdata->BindBlob(Multiformment, 0, Item.Column);
 					Multiformdata->BindInt64(Multiformment, 1, Value.Number);
 
-					Cursor = PreparedQuery(Multiformdata, Label, __func__, Multiformment);
+					Cursor = PreparedQuery(*Multiformdata, Label, __func__, Multiformment);
 					if (!Cursor || Cursor->ErrorOrEmpty())
 						return LayerException(Cursor->Empty() ? "multiform column not linked" : ErrorOf(Cursor));
 
@@ -918,7 +904,7 @@ namespace Tangent
 					Multiformdata->BindInt64(Multiformment, 1, Value.Number);
 
 					uint64_t ColumnNumber = Cursor->First().Front().GetColumn(0).Get().GetInteger();
-					Cursor = PreparedQuery(Multiformdata, Label, __func__, Multiformment);
+					Cursor = PreparedQuery(*Multiformdata, Label, __func__, Multiformment);
 					if (!Cursor || Cursor->ErrorOrEmpty())
 						return LayerException(Cursor->Empty() ? "multiform row not linked" : ErrorOf(Cursor));
 
@@ -929,7 +915,7 @@ namespace Tangent
 					Multiformdata->BindInt64(Multiformment, 2, Value.Number);
 					Multiformdata->BindInt64(Multiformment, 3, Item.Factor);
 
-					Cursor = PreparedQuery(Multiformdata, Label, __func__, Multiformment);
+					Cursor = PreparedQuery(*Multiformdata, Label, __func__, Multiformment);
 					if (!Cursor || Cursor->Error())
 						return LayerException(ErrorOf(Cursor));
 
@@ -939,24 +925,9 @@ namespace Tangent
 					Multiformdata->BindInt64(Multiformment, 2, Value.Number);
 					Multiformdata->BindInt64(Multiformment, 3, Item.Factor);
 
-					Cursor = PreparedQuery(Multiformdata, Label, __func__, Multiformment);
+					Cursor = PreparedQuery(*Multiformdata, Label, __func__, Multiformment);
 					if (!Cursor || Cursor->Error())
 						return LayerException(ErrorOf(Cursor));
-				}
-				return Expectation::Met;
-			}, false));
-			Queue4.emplace_back(Cotask<ExpectsLR<void>>([&]() -> ExpectsLR<void>
-			{
-				LDB::ExpectsDB<void> Status = Expectation::Met;
-				for (auto& Data : Transactions)
-				{
-					Status = Store(Label, __func__, GetTransactionLabel(Data.TransactionHash), Data.TransactionMessage.Data);
-					if (!Status)
-						return LayerException(ErrorOf(Status));
-
-					Status = Store(Label, __func__, GetReceiptLabel(Data.TransactionHash), Data.ReceiptMessage.Data);
-					if (!Status)
-						return LayerException(ErrorOf(Status));
 				}
 				return Expectation::Met;
 			}, false));
@@ -982,6 +953,42 @@ namespace Tangent
 				}
 				return Expectation::Met;
 			}, false));
+			Queue4.emplace_back(Cotask<ExpectsLR<void>>([&]() -> ExpectsLR<void>
+			{
+				auto* Statement = *CommitTransactionData;
+				LDB::ExpectsDB<LDB::Cursor> Cursor = LDB::DatabaseException(String());
+				for (auto& Data : Transactions)
+				{
+					Txdata->BindInt64(Statement, 0, Data.TransactionNumber);
+					Txdata->BindBlob(Statement, 1, std::string_view((char*)Data.TransactionHash, sizeof(Data.TransactionHash)));
+					if (Data.DispatchNumber > 0)
+						Txdata->BindInt64(Statement, 2, Value.Number + (Data.DispatchNumber - 1));
+					else
+						Txdata->BindNull(Statement, 2);
+					Txdata->BindInt64(Statement, 3, Value.Number);
+					Txdata->BindInt64(Statement, 4, Data.BlockNonce);
+
+					Cursor = PreparedQuery(*Txdata, Label, __func__, Statement);
+					if (!Cursor || Cursor->Error())
+						return LayerException(ErrorOf(Cursor));
+				}
+				return Expectation::Met;
+			}, false));
+			Queue4.emplace_back(Cotask<ExpectsLR<void>>([&]() -> ExpectsLR<void>
+			{
+				LDB::ExpectsDB<void> Status = Expectation::Met;
+				for (auto& Data : Transactions)
+				{
+					Status = Store(Label, __func__, GetTransactionLabel(Data.TransactionHash), Data.TransactionMessage.Data);
+					if (!Status)
+						return LayerException(ErrorOf(Status));
+
+					Status = Store(Label, __func__, GetReceiptLabel(Data.TransactionHash), Data.ReceiptMessage.Data);
+					if (!Status)
+						return LayerException(ErrorOf(Status));
+				}
+				return Expectation::Met;
+			}, false));
 			if (TransactionToAccountIndex)
 			{
 				Queue4.emplace_back(Cotask<ExpectsLR<void>>([&]() -> ExpectsLR<void>
@@ -995,7 +1002,7 @@ namespace Tangent
 							Accountdata->BindBlob(Statement, 0, std::string_view((char*)Party.Owner, sizeof(Party.Owner)));
 							Accountdata->BindInt64(Statement, 1, Value.Number);
 
-							Cursor = PreparedQuery(Accountdata, Label, __func__, Statement);
+							Cursor = PreparedQuery(*Accountdata, Label, __func__, Statement);
 							if (!Cursor || Cursor->ErrorOrEmpty())
 								return LayerException(Cursor->Empty() ? "account not linked" : ErrorOf(Cursor));
 
@@ -1005,7 +1012,7 @@ namespace Tangent
 							Partydata->BindInt64(Statement, 1, AccountNumber);
 							Partydata->BindInt64(Statement, 2, Value.Number);
 
-							Cursor = PreparedQuery(Partydata, Label, __func__, Statement);
+							Cursor = PreparedQuery(*Partydata, Label, __func__, Statement);
 							if (!Cursor || Cursor->Error())
 								return LayerException(ErrorOf(Cursor));
 						}
@@ -1027,7 +1034,7 @@ namespace Tangent
 							Aliasdata->BindBlob(Statement, 1, std::string_view((char*)Alias.TransactionHash, sizeof(Alias.TransactionHash)));
 							Aliasdata->BindInt64(Statement, 2, Value.Number);
 
-							Cursor = PreparedQuery(Aliasdata, Label, __func__, Statement);
+							Cursor = PreparedQuery(*Aliasdata, Label, __func__, Statement);
 							if (!Cursor || Cursor->Error())
 								return LayerException(ErrorOf(Cursor));
 						}
@@ -1056,14 +1063,14 @@ namespace Tangent
 
 			return Prune(Protocol::Now().User.Storage.FullBlockHistory ? (uint32_t)Pruning::Statetrie : (uint32_t)Pruning::Blocktrie | (uint32_t)Pruning::Transactiontrie | (uint32_t)Pruning::Statetrie, Value.Number);
 		}
-		ExpectsLR<size_t> Chainstate::ResolveBlockTransactions(Ledger::Block& Value, size_t Offset, size_t Count)
+		ExpectsLR<size_t> Chainstate::ResolveBlockTransactions(Ledger::Block& Value, bool Fully, size_t Offset, size_t Count)
 		{
 			SchemaList Map;
 			Map.push_back(Var::Set::Integer(Value.Number));
 			Map.push_back(Var::Set::Integer(Count));
 			Map.push_back(Var::Set::Integer(Offset));
 
-			auto Cursor = EmplaceQuery(Txdata, Label, __func__, "SELECT transaction_hash FROM transactions WHERE block_number = ? ORDER BY block_nonce LIMIT ? OFFSET ?", &Map);
+			auto Cursor = EmplaceQuery(*Txdata, Label, __func__, "SELECT transaction_hash FROM transactions WHERE block_number = ? ORDER BY block_nonce LIMIT ? OFFSET ?", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<size_t>(LayerException(ErrorOf(Cursor)));
 
@@ -1078,9 +1085,17 @@ namespace Tangent
 				UPtr<Ledger::Transaction> NextTransaction = Transactions::Resolver::New(Messages::Authentic::ResolveType(TransactionMessage).Or(0));
 				if (NextTransaction && NextTransaction->Load(TransactionMessage))
 				{
-					Format::Stream ReceiptMessage = Format::Stream(Load(Label, __func__, GetReceiptLabel(TransactionHash.GetBinary())).Or(String()));
 					Ledger::Receipt NextReceipt;
-					if (NextReceipt.Load(ReceiptMessage))
+					if (Fully)
+					{
+						Format::Stream ReceiptMessage = Format::Stream(Load(Label, __func__, GetReceiptLabel(TransactionHash.GetBinary())).Or(String()));
+						if (NextReceipt.Load(ReceiptMessage))
+						{
+							FinalizeChecksum(**NextTransaction, TransactionHash);
+							Value.Transactions.emplace_back(std::move(NextTransaction), std::move(NextReceipt));
+						}
+					}
+					else
 					{
 						FinalizeChecksum(**NextTransaction, TransactionHash);
 						Value.Transactions.emplace_back(std::move(NextTransaction), std::move(NextReceipt));
@@ -1096,11 +1111,11 @@ namespace Tangent
 			Map.push_back(Var::Set::Integer(Count));
 			Map.push_back(Var::Set::Integer(Offset));
 
-			auto Cursor1 = EmplaceQuery(Uniformdata, Label, __func__, "SELECT (SELECT index_hash FROM indices WHERE indices.index_number = uniformtries.index_number) AS index_hash FROM uniformtries WHERE block_number = ? LIMIT ? OFFSET ?", &Map);
+			auto Cursor1 = EmplaceQuery(*Uniformdata, Label, __func__, "SELECT (SELECT index_hash FROM indices WHERE indices.index_number = uniformtries.index_number) AS index_hash FROM uniformtries WHERE block_number = ? LIMIT ? OFFSET ?", &Map);
 			if (!Cursor1 || Cursor1->Error())
 				return ExpectsLR<size_t>(LayerException(ErrorOf(Cursor1)));
 
-			auto Cursor2 = EmplaceQuery(Multiformdata, Label, __func__, "SELECT (SELECT column_hash FROM columns WHERE columns.column_number = multiformtries.column_number) AS column_hash, (SELECT row_hash FROM rows WHERE rows.row_number = multiformtries.row_number) AS row_hash FROM multiformtries WHERE block_number = ? LIMIT ? OFFSET ?", &Map);
+			auto Cursor2 = EmplaceQuery(*Multiformdata, Label, __func__, "SELECT (SELECT column_hash FROM columns WHERE columns.column_number = multiformtries.column_number) AS column_hash, (SELECT row_hash FROM rows WHERE rows.row_number = multiformtries.row_number) AS row_hash FROM multiformtries WHERE block_number = ? LIMIT ? OFFSET ?", &Map);
 			if (!Cursor2 || Cursor2->Error())
 				return ExpectsLR<size_t>(LayerException(ErrorOf(Cursor2)));
 
@@ -1149,7 +1164,7 @@ namespace Tangent
 					return ExpectsLR<UniformLocation>(LayerException(std::move(FindIndex.Error().message())));
 
 				Uniformdata->BindBlob(*FindIndex, 0, Index);
-				auto Cursor = PreparedQuery(Uniformdata, Label, __func__, *FindIndex);
+				auto Cursor = PreparedQuery(*Uniformdata, Label, __func__, *FindIndex);
 				if (!Cursor || Cursor->Error())
 					return ExpectsLR<UniformLocation>(LayerException(ErrorOf(Cursor)));
 
@@ -1177,7 +1192,7 @@ namespace Tangent
 					return ExpectsLR<MultiformLocation>(LayerException(std::move(FindColumn.Error().message())));
 
 				Multiformdata->BindBlob(*FindColumn, 0, *Column);
-				auto Cursor = PreparedQuery(Multiformdata, Label, __func__, *FindColumn);
+				auto Cursor = PreparedQuery(*Multiformdata, Label, __func__, *FindColumn);
 				if (!Cursor || Cursor->Error())
 					return ExpectsLR<MultiformLocation>(LayerException(ErrorOf(Cursor)));
 
@@ -1192,7 +1207,7 @@ namespace Tangent
 					return ExpectsLR<MultiformLocation>(LayerException(std::move(FindRow.Error().message())));
 
 				Multiformdata->BindBlob(*FindRow, 0, *Row);
-				auto Cursor = PreparedQuery(Multiformdata, Label, __func__, *FindRow);
+				auto Cursor = PreparedQuery(*Multiformdata, Label, __func__, *FindRow);
 				if (!Cursor || Cursor->Error())
 					return ExpectsLR<MultiformLocation>(LayerException(ErrorOf(Cursor)));
 
@@ -1246,7 +1261,7 @@ namespace Tangent
 				return ExpectsLR<uint64_t>(LayerException(std::move(FindAccount.Error().message())));
 
 			Accountdata->BindBlob(*FindAccount, 0, std::string_view((char*)Account, sizeof(Algorithm::Pubkeyhash)));
-			auto Cursor = PreparedQuery(Accountdata, Label, __func__, *FindAccount);
+			auto Cursor = PreparedQuery(*Accountdata, Label, __func__, *FindAccount);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<uint64_t>(LayerException(ErrorOf(Cursor)));
 
@@ -1259,7 +1274,7 @@ namespace Tangent
 		}
 		ExpectsLR<uint64_t> Chainstate::GetCheckpointBlockNumber()
 		{
-			auto Cursor = Query(Blockdata, Label, __func__, "SELECT MAX(block_number) AS block_number FROM checkpoints");
+			auto Cursor = Query(*Blockdata, Label, __func__, "SELECT MAX(block_number) AS block_number FROM checkpoints");
 			if (!Cursor || Cursor->ErrorOrEmpty())
 				return ExpectsLR<uint64_t>(LayerException(ErrorOf(Cursor)));
 
@@ -1267,7 +1282,7 @@ namespace Tangent
 		}
 		ExpectsLR<uint64_t> Chainstate::GetLatestBlockNumber()
 		{
-			auto Cursor = Query(Blockdata, Label, __func__, "SELECT block_number FROM blocks ORDER BY block_number DESC LIMIT 1");
+			auto Cursor = Query(*Blockdata, Label, __func__, "SELECT block_number FROM blocks ORDER BY block_number DESC LIMIT 1");
 			if (!Cursor || Cursor->ErrorOrEmpty())
 				return ExpectsLR<uint64_t>(LayerException(ErrorOf(Cursor)));
 
@@ -1282,7 +1297,7 @@ namespace Tangent
 			SchemaList Map;
 			Map.push_back(Var::Set::Binary(Hash, sizeof(Hash)));
 
-			auto Cursor = EmplaceQuery(Blockdata, Label, __func__, "SELECT block_number FROM blocks WHERE block_hash = ?", &Map);
+			auto Cursor = EmplaceQuery(*Blockdata, Label, __func__, "SELECT block_number FROM blocks WHERE block_hash = ?", &Map);
 			if (!Cursor || Cursor->ErrorOrEmpty())
 				return ExpectsLR<uint64_t>(LayerException(ErrorOf(Cursor)));
 
@@ -1293,7 +1308,7 @@ namespace Tangent
 			SchemaList Map;
 			Map.push_back(Var::Set::Integer(BlockNumber));
 
-			auto Cursor = EmplaceQuery(Blockdata, Label, __func__, "SELECT block_hash FROM blocks WHERE block_number = ?", &Map);
+			auto Cursor = EmplaceQuery(*Blockdata, Label, __func__, "SELECT block_hash FROM blocks WHERE block_number = ?", &Map);
 			if (!Cursor || Cursor->ErrorOrEmpty())
 				return ExpectsLR<uint256_t>(LayerException(ErrorOf(Cursor)));
 
@@ -1312,7 +1327,7 @@ namespace Tangent
 
 			Vector<Decimal> GasPrices;
 			size_t Offset = 0;
-			size_t Count = 512;
+			size_t Count = LOAD_RATE;
 			while (true)
 			{
 				SchemaList Map;
@@ -1320,7 +1335,7 @@ namespace Tangent
 				Map.push_back(Var::Set::Integer(Count));
 				Map.push_back(Var::Set::Integer(Offset));
 
-				auto Cursor = EmplaceQuery(Txdata, Label, __func__, "SELECT transaction_hash FROM transactions WHERE block_number = ? ORDER BY block_nonce LIMIT ? OFFSET ?", &Map);
+				auto Cursor = EmplaceQuery(*Txdata, Label, __func__, "SELECT transaction_hash FROM transactions WHERE block_number = ? ORDER BY block_nonce LIMIT ? OFFSET ?", &Map);
 				if (!Cursor || Cursor->Error())
 					return ExpectsLR<Decimal>(LayerException(ErrorOf(Cursor)));
 
@@ -1358,12 +1373,12 @@ namespace Tangent
 
 			return *B / A->Truncate(Protocol::Now().Message.Precision);
 		}
-		ExpectsLR<Ledger::Block> Chainstate::GetBlockByNumber(uint64_t BlockNumber, size_t LoadRate)
+		ExpectsLR<Ledger::Block> Chainstate::GetBlockByNumber(uint64_t BlockNumber, size_t Chunk, uint32_t Details)
 		{
 			SchemaList Map;
 			Map.push_back(Var::Set::Integer(BlockNumber));
 
-			auto Cursor = EmplaceQuery(Blockdata, Label, __func__, "SELECT block_hash FROM blocks WHERE block_number = ?", &Map);
+			auto Cursor = EmplaceQuery(*Blockdata, Label, __func__, "SELECT block_hash FROM blocks WHERE block_number = ?", &Map);
 			if (!Cursor || Cursor->ErrorOrEmpty())
 				return ExpectsLR<Ledger::Block>(LayerException(ErrorOf(Cursor)));
 
@@ -1375,33 +1390,33 @@ namespace Tangent
 
 			Ledger::Block Result = Ledger::Block(Header);
 			size_t Offset = 0;
-			while (LoadRate > 0)
+			while ((Details & (uint32_t)BlockDetails::Transactions || Details & (uint32_t)BlockDetails::BlockTransactions) && Chunk > 0)
 			{
-				auto Size = ResolveBlockTransactions(Result, Offset, LoadRate);
+				auto Size = ResolveBlockTransactions(Result, Details & (uint32_t)BlockDetails::BlockTransactions, Offset, Chunk);
 				if (!Size)
 					return Size.Error();
 
 				Offset += *Size;
-				if (*Size < LoadRate)
+				if (*Size < Chunk)
 					break;
 			}
 
 			Offset = 0;
-			while (LoadRate > 0)
+			while (Details & (uint32_t)BlockDetails::States && Chunk > 0)
 			{
-				auto Size = ResolveBlockStatetrie(Result, Offset, LoadRate);
+				auto Size = ResolveBlockStatetrie(Result, Offset, Chunk);
 				if (!Size)
 					return Size.Error();
 
 				Offset += *Size;
-				if (*Size < LoadRate)
+				if (*Size < Chunk)
 					break;
 			}
 
 			FinalizeChecksum(Header, BlockHash);
 			return Result;
 		}
-		ExpectsLR<Ledger::Block> Chainstate::GetBlockByHash(const uint256_t& BlockHash, size_t LoadRate)
+		ExpectsLR<Ledger::Block> Chainstate::GetBlockByHash(const uint256_t& BlockHash, size_t Chunk, uint32_t Details)
 		{
 			uint8_t Hash[32];
 			Algorithm::Encoding::DecodeUint256(BlockHash, Hash);
@@ -1413,35 +1428,35 @@ namespace Tangent
 
 			Ledger::Block Result = Ledger::Block(Header);
 			size_t Offset = 0;
-			while (LoadRate > 0)
+			while ((Details & (uint32_t)BlockDetails::Transactions || Details & (uint32_t)BlockDetails::BlockTransactions) && Chunk > 0)
 			{
-				auto Size = ResolveBlockTransactions(Result, Offset, LoadRate);
+				auto Size = ResolveBlockTransactions(Result, Details & (uint32_t)BlockDetails::BlockTransactions, Offset, Chunk);
 				if (!Size)
 					return Size.Error();
 
 				Offset += *Size;
-				if (*Size < LoadRate)
+				if (*Size < Chunk)
 					break;
 			}
 
 			Offset = 0;
-			while (LoadRate > 0)
+			while (Details & (uint32_t)BlockDetails::States && Chunk > 0)
 			{
-				auto Size = ResolveBlockStatetrie(Result, Offset, LoadRate);
+				auto Size = ResolveBlockStatetrie(Result, Offset, Chunk);
 				if (!Size)
 					return Size.Error();
 
 				Offset += *Size;
-				if (*Size < LoadRate)
+				if (*Size < Chunk)
 					break;
 			}
 
 			FinalizeChecksum(Header, Var::Binary(Hash, sizeof(Hash)));
 			return Result;
 		}
-		ExpectsLR<Ledger::Block> Chainstate::GetLatestBlock(size_t LoadRate)
+		ExpectsLR<Ledger::Block> Chainstate::GetLatestBlock(size_t Chunk, uint32_t Details)
 		{
-			auto Cursor = Query(Blockdata, Label, __func__, "SELECT block_hash FROM blocks ORDER BY block_number DESC LIMIT 1");
+			auto Cursor = Query(*Blockdata, Label, __func__, "SELECT block_hash FROM blocks ORDER BY block_number DESC LIMIT 1");
 			if (!Cursor || Cursor->ErrorOrEmpty())
 				return ExpectsLR<Ledger::Block>(LayerException(ErrorOf(Cursor)));
 
@@ -1453,26 +1468,26 @@ namespace Tangent
 
 			Ledger::Block Result = Ledger::Block(Header);
 			size_t Offset = 0;
-			while (LoadRate > 0)
+			while ((Details & (uint32_t)BlockDetails::Transactions || Details & (uint32_t)BlockDetails::BlockTransactions) && Chunk > 0)
 			{
-				auto Size = ResolveBlockTransactions(Result, Offset, LoadRate);
+				auto Size = ResolveBlockTransactions(Result, Details & (uint32_t)BlockDetails::BlockTransactions, Offset, Chunk);
 				if (!Size)
 					return Size.Error();
 
 				Offset += *Size;
-				if (*Size < LoadRate)
+				if (*Size < Chunk)
 					break;
 			}
 
 			Offset = 0;
-			while (LoadRate > 0)
+			while (Details & (uint32_t)BlockDetails::States && Chunk > 0)
 			{
-				auto Size = ResolveBlockStatetrie(Result, Offset, LoadRate);
+				auto Size = ResolveBlockStatetrie(Result, Offset, Chunk);
 				if (!Size)
 					return Size.Error();
 
 				Offset += *Size;
-				if (*Size < LoadRate)
+				if (*Size < Chunk)
 					break;
 			}
 
@@ -1484,7 +1499,7 @@ namespace Tangent
 			SchemaList Map;
 			Map.push_back(Var::Set::Integer(BlockNumber));
 
-			auto Cursor = EmplaceQuery(Blockdata, Label, __func__, "SELECT block_hash FROM blocks WHERE block_number = ?", &Map);
+			auto Cursor = EmplaceQuery(*Blockdata, Label, __func__, "SELECT block_hash FROM blocks WHERE block_number = ?", &Map);
 			if (!Cursor || Cursor->ErrorOrEmpty())
 				return ExpectsLR<Ledger::BlockHeader>(LayerException(ErrorOf(Cursor)));
 
@@ -1512,7 +1527,7 @@ namespace Tangent
 		}
 		ExpectsLR<Ledger::BlockHeader> Chainstate::GetLatestBlockHeader()
 		{
-			auto Cursor = Query(Blockdata, Label, __func__, "SELECT block_hash FROM blocks ORDER BY block_number DESC LIMIT 1");
+			auto Cursor = Query(*Blockdata, Label, __func__, "SELECT block_hash FROM blocks ORDER BY block_number DESC LIMIT 1");
 			if (!Cursor || Cursor->ErrorOrEmpty())
 				return ExpectsLR<Ledger::BlockHeader>(LayerException(ErrorOf(Cursor)));
 
@@ -1537,7 +1552,7 @@ namespace Tangent
 			SchemaList Map;
 			Map.push_back(Var::Set::Integer(BlockNumber));
 
-			auto Cursor = EmplaceQuery(Txdata, Label, __func__, "SELECT transaction_hash FROM transactions WHERE block_number = ? ORDER BY block_nonce;", &Map);
+			auto Cursor = EmplaceQuery(*Txdata, Label, __func__, "SELECT transaction_hash FROM transactions WHERE block_number = ? ORDER BY block_nonce;", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<Ledger::BlockProof>(LayerException(ErrorOf(Cursor)));
 
@@ -1558,11 +1573,11 @@ namespace Tangent
 				Value.Receipts.push_back(ReceiptMessage.Hash());
 			}
 
-			auto Cursor1 = EmplaceQuery(Uniformdata, Label, __func__, "SELECT (SELECT index_hash FROM indices WHERE indices.index_number = uniformtries.index_number) AS index_hash FROM uniformtries WHERE block_number = ?", &Map);
+			auto Cursor1 = EmplaceQuery(*Uniformdata, Label, __func__, "SELECT (SELECT index_hash FROM indices WHERE indices.index_number = uniformtries.index_number) AS index_hash FROM uniformtries WHERE block_number = ?", &Map);
 			if (!Cursor1 || Cursor1->Error())
 				return ExpectsLR<Ledger::BlockProof>(LayerException(ErrorOf(Cursor1)));
 
-			auto Cursor2 = EmplaceQuery(Multiformdata, Label, __func__, "SELECT (SELECT column_hash FROM columns WHERE columns.column_number = multiformtries.column_number) AS column_hash, (SELECT row_hash FROM rows WHERE rows.row_number = multiformtries.row_number) AS row_hash FROM multiformtries WHERE block_number = ?", &Map);
+			auto Cursor2 = EmplaceQuery(*Multiformdata, Label, __func__, "SELECT (SELECT column_hash FROM columns WHERE columns.column_number = multiformtries.column_number) AS column_hash, (SELECT row_hash FROM rows WHERE rows.row_number = multiformtries.row_number) AS row_hash FROM multiformtries WHERE block_number = ?", &Map);
 			if (!Cursor2 || Cursor2->Error())
 				return ExpectsLR<Ledger::BlockProof>(LayerException(ErrorOf(Cursor2)));
 
@@ -1595,7 +1610,7 @@ namespace Tangent
 			SchemaList Map;
 			Map.push_back(Var::Set::Integer(BlockNumber));
 
-			auto Cursor = EmplaceQuery(Txdata, Label, __func__, "SELECT transaction_hash FROM transactions WHERE block_number = ? ORDER BY block_nonce", &Map);
+			auto Cursor = EmplaceQuery(*Txdata, Label, __func__, "SELECT transaction_hash FROM transactions WHERE block_number = ? ORDER BY block_nonce", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<Vector<uint256_t>>(LayerException(ErrorOf(Cursor)));
 
@@ -1626,11 +1641,11 @@ namespace Tangent
 			SchemaList Map;
 			Map.push_back(Var::Set::Integer(BlockNumber));
 
-			auto Cursor1 = EmplaceQuery(Uniformdata, Label, __func__, "SELECT (SELECT index_hash FROM indices WHERE indices.index_number = uniformtries.index_number) AS index_hash FROM uniformtries WHERE block_number = ?", &Map);
+			auto Cursor1 = EmplaceQuery(*Uniformdata, Label, __func__, "SELECT (SELECT index_hash FROM indices WHERE indices.index_number = uniformtries.index_number) AS index_hash FROM uniformtries WHERE block_number = ?", &Map);
 			if (!Cursor1 || Cursor1->Error())
 				return ExpectsLR<Vector<uint256_t>>(LayerException(ErrorOf(Cursor1)));
 
-			auto Cursor2 = EmplaceQuery(Multiformdata, Label, __func__, "SELECT (SELECT column_hash FROM columns WHERE columns.column_number = multiformtries.column_number) AS column_hash, (SELECT row_hash FROM rows WHERE rows.row_number = multiformtries.row_number) AS row_hash FROM multiformtries WHERE block_number = ?", &Map);
+			auto Cursor2 = EmplaceQuery(*Multiformdata, Label, __func__, "SELECT (SELECT column_hash FROM columns WHERE columns.column_number = multiformtries.column_number) AS column_hash, (SELECT row_hash FROM rows WHERE rows.row_number = multiformtries.row_number) AS row_hash FROM multiformtries WHERE block_number = ?", &Map);
 			if (!Cursor2 || Cursor2->Error())
 				return ExpectsLR<Vector<uint256_t>>(LayerException(ErrorOf(Cursor2)));
 
@@ -1670,7 +1685,7 @@ namespace Tangent
 			Map.push_back(Var::Set::Integer(BlockNumber));
 			Map.push_back(Var::Set::Integer(BlockNumber + Count));
 
-			auto Cursor = EmplaceQuery(Blockdata, Label, __func__, "SELECT block_hash FROM blocks WHERE block_number BETWEEN ? AND ? ORDER BY block_number DESC", &Map);
+			auto Cursor = EmplaceQuery(*Blockdata, Label, __func__, "SELECT block_hash FROM blocks WHERE block_number BETWEEN ? AND ? ORDER BY block_number DESC", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<Vector<uint256_t>>(LayerException(ErrorOf(Cursor)));
 
@@ -1702,7 +1717,7 @@ namespace Tangent
 			Map.push_back(Var::Set::Integer(BlockNumber));
 			Map.push_back(Var::Set::Integer(BlockNumber + Count));
 
-			auto Cursor = EmplaceQuery(Blockdata, Label, __func__, "SELECT block_hash FROM blocks WHERE block_number BETWEEN ? AND ? ORDER BY block_number DESC", &Map);
+			auto Cursor = EmplaceQuery(*Blockdata, Label, __func__, "SELECT block_hash FROM blocks WHERE block_number BETWEEN ? AND ? ORDER BY block_number DESC", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<Vector<Ledger::BlockHeader>>(LayerException(ErrorOf(Cursor)));
 
@@ -1730,11 +1745,11 @@ namespace Tangent
 			Map.push_back(Var::Set::Integer(Count));
 			Map.push_back(Var::Set::Integer(Offset));
 
-			auto Cursor1 = EmplaceQuery(Uniformdata, Label, __func__, "SELECT (SELECT index_hash FROM indices WHERE indices.index_number = uniformtries.index_number) AS index_hash FROM uniformtries WHERE block_number = ? LIMIT ? OFFSET ?", &Map);
+			auto Cursor1 = EmplaceQuery(*Uniformdata, Label, __func__, "SELECT (SELECT index_hash FROM indices WHERE indices.index_number = uniformtries.index_number) AS index_hash FROM uniformtries WHERE block_number = ? LIMIT ? OFFSET ?", &Map);
 			if (!Cursor1 || Cursor1->Error())
 				return ExpectsLR<Ledger::StateWork>(LayerException(ErrorOf(Cursor1)));
 
-			auto Cursor2 = EmplaceQuery(Multiformdata, Label, __func__, "SELECT (SELECT column_hash FROM columns WHERE columns.column_number = multiformtries.column_number) AS column_hash, (SELECT row_hash FROM rows WHERE rows.row_number = multiformtries.row_number) AS row_hash FROM multiformtries WHERE block_number = ? LIMIT ? OFFSET ?", &Map);
+			auto Cursor2 = EmplaceQuery(*Multiformdata, Label, __func__, "SELECT (SELECT column_hash FROM columns WHERE columns.column_number = multiformtries.column_number) AS column_hash, (SELECT row_hash FROM rows WHERE rows.row_number = multiformtries.row_number) AS row_hash FROM multiformtries WHERE block_number = ? LIMIT ? OFFSET ?", &Map);
 			if (!Cursor2 || Cursor2->Error())
 				return ExpectsLR<Ledger::StateWork>(LayerException(ErrorOf(Cursor2)));
 
@@ -1774,7 +1789,7 @@ namespace Tangent
 			Map.push_back(Var::Set::Integer(Count));
 			Map.push_back(Var::Set::Integer(Offset));
 
-			auto Cursor = EmplaceQuery(Txdata, Label, __func__, "SELECT transaction_hash FROM transactions WHERE block_number = ? ORDER BY block_nonce LIMIT ? OFFSET ?", &Map);
+			auto Cursor = EmplaceQuery(*Txdata, Label, __func__, "SELECT transaction_hash FROM transactions WHERE block_number = ? ORDER BY block_nonce LIMIT ? OFFSET ?", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<Vector<UPtr<Ledger::Transaction>>>(LayerException(ErrorOf(Cursor)));
 
@@ -1810,7 +1825,7 @@ namespace Tangent
 			Map.push_back(Var::Set::Integer(Count));
 			Map.push_back(Var::Set::Integer(Offset));
 
-			auto Cursor = EmplaceQuery(Partydata, Label, __func__, "SELECT transaction_number FROM parties WHERE transaction_account_number = ? AND block_number <= ? ORDER BY transaction_number LIMIT ? OFFSET ?", &Map);
+			auto Cursor = EmplaceQuery(*Partydata, Label, __func__, "SELECT transaction_number FROM parties WHERE transaction_account_number = ? AND block_number <= ? ORDER BY transaction_number LIMIT ? OFFSET ?", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<Vector<UPtr<Ledger::Transaction>>>(LayerException(ErrorOf(Cursor)));
 			else if (Cursor->Empty())
@@ -1823,7 +1838,7 @@ namespace Tangent
 			DynamicQuery.append(") ORDER BY transaction_number ");
 			DynamicQuery.append(Direction < 0 ? "DESC" : "ASC");
 
-			Cursor = Query(Txdata, Label, __func__, DynamicQuery);
+			Cursor = Query(*Txdata, Label, __func__, DynamicQuery);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<Vector<UPtr<Ledger::Transaction>>>(LayerException(ErrorOf(Cursor)));
 
@@ -1854,7 +1869,7 @@ namespace Tangent
 			Map.push_back(Var::Set::Integer(Count));
 			Map.push_back(Var::Set::Integer(Offset));
 
-			auto Cursor = EmplaceQuery(Txdata, Label, __func__, "SELECT transaction_hash FROM transactions WHERE block_number = ? ORDER BY block_nonce LIMIT ? OFFSET ?", &Map);
+			auto Cursor = EmplaceQuery(*Txdata, Label, __func__, "SELECT transaction_hash FROM transactions WHERE block_number = ? ORDER BY block_nonce LIMIT ? OFFSET ?", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<Vector<Ledger::BlockTransaction>>(LayerException(ErrorOf(Cursor)));
 
@@ -1892,7 +1907,7 @@ namespace Tangent
 			Map.push_back(Var::Set::Integer(Count));
 			Map.push_back(Var::Set::Integer(Offset));
 
-			auto Cursor = EmplaceQuery(Partydata, Label, __func__, "SELECT transaction_number FROM parties WHERE transaction_account_number = ? AND block_number <= ? LIMIT ? OFFSET ?", &Map);
+			auto Cursor = EmplaceQuery(*Partydata, Label, __func__, "SELECT transaction_number FROM parties WHERE transaction_account_number = ? AND block_number <= ? LIMIT ? OFFSET ?", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<Vector<Ledger::BlockTransaction>>(LayerException(ErrorOf(Cursor)));
 			else if (Cursor->Empty())
@@ -1905,7 +1920,7 @@ namespace Tangent
 			DynamicQuery.append(") ORDER BY transaction_number ");
 			DynamicQuery.append(Direction < 0 ? "DESC" : "ASC");
 
-			Cursor = Query(Txdata, Label, __func__, DynamicQuery);
+			Cursor = Query(*Txdata, Label, __func__, DynamicQuery);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<Vector<Ledger::BlockTransaction>>(LayerException(ErrorOf(Cursor)));
 
@@ -1938,7 +1953,7 @@ namespace Tangent
 			Map.push_back(Var::Set::Integer(Count));
 			Map.push_back(Var::Set::Integer(Offset));
 
-			auto Cursor = EmplaceQuery(Txdata, Label, __func__, "SELECT transaction_hash FROM transactions WHERE block_number = ? ORDER BY block_nonce LIMIT ? OFFSET ?", &Map);
+			auto Cursor = EmplaceQuery(*Txdata, Label, __func__, "SELECT transaction_hash FROM transactions WHERE block_number = ? ORDER BY block_nonce LIMIT ? OFFSET ?", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<Vector<Ledger::Receipt>>(LayerException(ErrorOf(Cursor)));
 
@@ -1966,7 +1981,7 @@ namespace Tangent
 			Map.push_back(Var::Set::Integer(Count));
 			Map.push_back(Var::Set::Integer(Offset));
 
-			auto Cursor = EmplaceQuery(Txdata, Label, __func__, "SELECT transaction_hash FROM transactions WHERE dispatch_queue IS NOT NULL AND dispatch_queue <= ? ORDER BY block_nonce LIMIT ? OFFSET ?", &Map);
+			auto Cursor = EmplaceQuery(*Txdata, Label, __func__, "SELECT transaction_hash FROM transactions WHERE dispatch_queue IS NOT NULL AND dispatch_queue <= ? ORDER BY block_nonce LIMIT ? OFFSET ?", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<Vector<Ledger::BlockTransaction>>(LayerException(ErrorOf(Cursor)));
 
@@ -2000,7 +2015,7 @@ namespace Tangent
 			SchemaList Map;
 			Map.push_back(Var::Set::Binary(Hash, sizeof(Hash)));
 
-			auto Cursor = EmplaceQuery(Aliasdata, Label, __func__, "SELECT transaction_number FROM aliases WHERE transaction_hash = ?", &Map);
+			auto Cursor = EmplaceQuery(*Aliasdata, Label, __func__, "SELECT transaction_number FROM aliases WHERE transaction_hash = ?", &Map);
 			String DynamicQuery = "SELECT transaction_hash FROM transactions WHERE transaction_hash = ?";
 			if (Cursor && !Cursor->ErrorOrEmpty())
 			{
@@ -2011,7 +2026,7 @@ namespace Tangent
 				DynamicQuery.push_back(')');
 			}
 
-			Cursor = EmplaceQuery(Txdata, Label, __func__, DynamicQuery, &Map);
+			Cursor = EmplaceQuery(*Txdata, Label, __func__, DynamicQuery, &Map);
 			if (!Cursor || Cursor->ErrorOrEmpty())
 				return ExpectsLR<UPtr<Ledger::Transaction>>(LayerException(ErrorOf(Cursor)));
 
@@ -2032,7 +2047,7 @@ namespace Tangent
 			SchemaList Map;
 			Map.push_back(Var::Set::Binary(Hash, sizeof(Hash)));
 
-			auto Cursor = EmplaceQuery(Aliasdata, Label, __func__, "SELECT transaction_number FROM aliases WHERE transaction_hash = ?", &Map);
+			auto Cursor = EmplaceQuery(*Aliasdata, Label, __func__, "SELECT transaction_number FROM aliases WHERE transaction_hash = ?", &Map);
 			String DynamicQuery = "SELECT transaction_hash FROM transactions WHERE transaction_hash = ?";
 			if (Cursor && !Cursor->ErrorOrEmpty())
 			{
@@ -2043,7 +2058,7 @@ namespace Tangent
 				DynamicQuery.push_back(')');
 			}
 
-			Cursor = EmplaceQuery(Txdata, Label, __func__, DynamicQuery, &Map);
+			Cursor = EmplaceQuery(*Txdata, Label, __func__, DynamicQuery, &Map);
 			if (!Cursor || Cursor->ErrorOrEmpty())
 				return ExpectsLR<Ledger::BlockTransaction>(LayerException(ErrorOf(Cursor)));
 
@@ -2105,7 +2120,7 @@ namespace Tangent
 				if (BlockNumber > 0)
 					Uniformdata->BindInt64(*FindState, 1, BlockNumber);
 
-				auto Cursor = PreparedQuery(Uniformdata, Label, __func__, *FindState);
+				auto Cursor = PreparedQuery(*Uniformdata, Label, __func__, *FindState);
 				if (!Cursor || Cursor->Empty())
 				{
 					if (Delta != nullptr && Delta->Incoming != nullptr)
@@ -2173,7 +2188,7 @@ namespace Tangent
 				if (BlockNumber > 0)
 					Multiformdata->BindInt64(*FindState, 2, BlockNumber);
 
-				auto Cursor = PreparedQuery(Multiformdata, Label, __func__, *FindState);
+				auto Cursor = PreparedQuery(*Multiformdata, Label, __func__, *FindState);
 				if (!Cursor || Cursor->Empty())
 				{
 					if (Delta != nullptr && Delta->Incoming != nullptr)
@@ -2217,7 +2232,7 @@ namespace Tangent
 				Map.push_back(Var::Set::Integer(BlockNumber));
 			Map.push_back(Var::Set::Integer(Offset));
 
-			auto Cursor = EmplaceQuery(Multiformdata, Label, __func__, !BlockNumber ?
+			auto Cursor = EmplaceQuery(*Multiformdata, Label, __func__, !BlockNumber ?
 				"SELECT (SELECT row_hash FROM rows WHERE rows.row_number = multiforms.row_number) AS row_hash, block_number FROM multiforms WHERE column_number = ? ORDER BY row_number LIMIT 1 OFFSET ?" :
 				"SELECT (SELECT row_hash FROM rows WHERE rows.row_number = multiformtries.row_number) AS row_hash, MAX(block_number) AS block_number FROM multiformtries WHERE column_number = ? AND block_number < ? GROUP BY row_number ORDER BY row_number LIMIT 1 OFFSET ?", &Map);
 			if (!Cursor || Cursor->Error())
@@ -2250,7 +2265,7 @@ namespace Tangent
 				Map.push_back(Var::Set::Integer(BlockNumber));
 			Map.push_back(Var::Set::Integer(Offset));
 
-			auto Cursor = EmplaceQuery(Multiformdata, Label, __func__, !BlockNumber ?
+			auto Cursor = EmplaceQuery(*Multiformdata, Label, __func__, !BlockNumber ?
 				"SELECT (SELECT column_hash FROM columns WHERE columns.column_number = multiforms.column_number) AS column_hash, block_number FROM multiforms WHERE row_number = ? ORDER BY column_number LIMIT 1 OFFSET ?" :
 				"SELECT (SELECT column_hash FROM columns WHERE columns.column_number = multiformtries.column_number) AS column_hash, MAX(block_number) AS block_number FROM multiformtries WHERE row_number = ? AND block_number < ? GROUP BY column_number ORDER BY column_number LIMIT 1 OFFSET ?", &Map);
 			if (!Cursor || Cursor->Error())
@@ -2284,7 +2299,7 @@ namespace Tangent
 			Map.push_back(Var::Set::Integer(Count));
 			Map.push_back(Var::Set::Integer(Offset));
 
-			auto Cursor = EmplaceQuery(Multiformdata, Label, __func__, !BlockNumber ?
+			auto Cursor = EmplaceQuery(*Multiformdata, Label, __func__, !BlockNumber ?
 				"SELECT (SELECT row_hash FROM rows WHERE rows.row_number = multiforms.row_number) AS row_hash, block_number FROM multiforms WHERE column_number = ? ORDER BY row_number LIMIT ? OFFSET ?" :
 				"SELECT (SELECT row_hash FROM rows WHERE rows.row_number = multiformtries.row_number) AS row_hash, MAX(block_number) AS block_number FROM multiformtries WHERE column_number = ? AND block_number < ? GROUP BY row_number ORDER BY row_number LIMIT ? OFFSET ?", &Map);
 			if (!Cursor || Cursor->Error())
@@ -2327,9 +2342,9 @@ namespace Tangent
 			Map.push_back(Var::Set::Integer(Count));
 			Map.push_back(Var::Set::Integer(Offset));
 
-			auto Cursor = EmplaceQuery(Multiformdata, Label, __func__, !BlockNumber ?
+			auto Cursor = EmplaceQuery(*Multiformdata, Label, __func__, !BlockNumber ?
 				"SELECT (SELECT row_hash FROM rows WHERE rows.row_number = multiforms.row_number) AS row_hash, block_number FROM multiforms WHERE column_number = ? AND factor $? ? ORDER BY factor $?, column_number ASC LIMIT ? OFFSET ?" :
-				"SELECT (SELECT row_hash FROM rows WHERE rows.row_number = multiformtries.row_number) AS row_hash, MAX(block_number) AS block_number FROM multiformtries WHERE column_number = ? AND block_number < ? AND factor $? ? GROUP BY row_number ORDER BY factor $?, column_number ASC LIMIT ? OFFSET ?", &Map);
+				"SELECT (SELECT row_hash FROM rows WHERE rows.row_number = queryforms.row_number) AS row_hash, block_number FROM (SELECT column_number, row_number, factor, MAX(block_number) AS block_number FROM multiformtries WHERE column_number = ? AND block_number < ? GROUP BY row_number) AS queryforms WHERE factor $? ? ORDER BY factor $?, column_number ASC LIMIT ? OFFSET ?", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<Vector<UPtr<Ledger::State>>>(LayerException(ErrorOf(Cursor)));
 
@@ -2367,7 +2382,7 @@ namespace Tangent
 			Map.push_back(Var::Set::Integer(Count));
 			Map.push_back(Var::Set::Integer(Offset));
 
-			auto Cursor = EmplaceQuery(Multiformdata, Label, __func__, !BlockNumber ?
+			auto Cursor = EmplaceQuery(*Multiformdata, Label, __func__, !BlockNumber ?
 				"SELECT (SELECT column_hash FROM columns WHERE columns.column_number = multiforms.column_number) AS column_hash, block_number FROM multiforms WHERE row_number = ? ORDER BY column_number LIMIT ? OFFSET ?" :
 				"SELECT (SELECT column_hash FROM columns WHERE columns.column_number = multiformtries.column_number) AS column_hash, MAX(block_number) AS block_number FROM multiformtries WHERE row_number = ? AND block_number < ? GROUP BY column_number ORDER BY column_number LIMIT ? OFFSET ?", &Map);
 			if (!Cursor || Cursor->Error())
@@ -2410,9 +2425,9 @@ namespace Tangent
 			Map.push_back(Var::Set::Integer(Count));
 			Map.push_back(Var::Set::Integer(Offset));
 
-			auto Cursor = EmplaceQuery(Multiformdata, Label, __func__, !BlockNumber ?
+			auto Cursor = EmplaceQuery(*Multiformdata, Label, __func__, !BlockNumber ?
 				"SELECT (SELECT column_hash FROM columns WHERE columns.column_number = multiforms.column_number) AS column_hash, block_number FROM multiforms WHERE row_number = ? AND factor $? ? ORDER BY factor $?, row_number ASC LIMIT ? OFFSET ?" :
-				"SELECT (SELECT column_hash FROM columns WHERE columns.column_number = multiformtries.column_number) AS column_hash, MAX(block_number) AS block_number FROM multiformtries WHERE row_number = ? AND block_number < ? AND factor $? ? GROUP BY column_number ORDER BY factor $?, row_number ASC LIMIT ? OFFSET ?", &Map);
+				"SELECT (SELECT column_hash FROM columns WHERE columns.column_number = queryforms.column_number) AS column_hash, block_number FROM (SELECT column_number, row_number, factor, MAX(block_number) AS block_number FROM multiformtries WHERE row_number = ? AND block_number < ? GROUP BY column_number) AS queryforms WHERE factor $? ? ORDER BY factor $?, row_number ASC LIMIT ? OFFSET ?", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<Vector<UPtr<Ledger::State>>>(LayerException(ErrorOf(Cursor)));
 
@@ -2448,7 +2463,7 @@ namespace Tangent
 			if (BlockNumber > 0)
 				Map.push_back(Var::Set::Integer(BlockNumber));
 
-			auto Cursor = EmplaceQuery(Multiformdata, Label, __func__, !BlockNumber ? "SELECT COUNT(1) AS multiform_count FROM multiforms WHERE column_number = ?" : "SELECT COUNT(1) AS multiform_count FROM (SELECT MAX(block_number) FROM multiformtries WHERE column_number = ? AND block_number < ? GROUP BY row_number)", &Map);
+			auto Cursor = EmplaceQuery(*Multiformdata, Label, __func__, !BlockNumber ? "SELECT COUNT(1) AS multiform_count FROM multiforms WHERE column_number = ?" : "SELECT COUNT(1) AS multiform_count FROM (SELECT MAX(block_number) FROM multiformtries WHERE column_number = ? AND block_number < ? GROUP BY row_number)", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<size_t>(LayerException(ErrorOf(Cursor)));
 
@@ -2468,7 +2483,7 @@ namespace Tangent
 			Map.push_back(Var::Set::String(Filter.AsCondition()));
 			Map.push_back(Var::Set::Integer(Filter.Value));
 
-			auto Cursor = EmplaceQuery(Multiformdata, Label, __func__, !BlockNumber ? "SELECT COUNT(1) AS multiform_count FROM multiforms WHERE column_number = ? AND factor $? ?" : "SELECT COUNT(1) AS multiform_count FROM (SELECT MAX(block_number) FROM multiformtries WHERE column_number = ? AND block_number < ? AND factor $? ? GROUP BY row_number)", &Map);
+			auto Cursor = EmplaceQuery(*Multiformdata, Label, __func__, !BlockNumber ? "SELECT COUNT(1) AS multiform_count FROM multiforms WHERE column_number = ? AND factor $? ?" : "SELECT COUNT(1) AS multiform_count FROM (SELECT factor, MAX(block_number) FROM multiformtries WHERE column_number = ? AND block_number < ? GROUP BY row_number) WHERE factor $? ?", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<size_t>(LayerException(ErrorOf(Cursor)));
 
@@ -2486,7 +2501,7 @@ namespace Tangent
 			if (BlockNumber > 0)
 				Map.push_back(Var::Set::Integer(BlockNumber));
 
-			auto Cursor = EmplaceQuery(Multiformdata, Label, __func__, !BlockNumber ? "SELECT COUNT(1) AS multiform_count FROM multiforms WHERE row_number = ?" : "SELECT COUNT(1) AS multiform_count FROM (SELECT MAX(block_number) FROM multiformtries WHERE row_number = ? AND block_number < ? GROUP BY column_number)", &Map);
+			auto Cursor = EmplaceQuery(*Multiformdata, Label, __func__, !BlockNumber ? "SELECT COUNT(1) AS multiform_count FROM multiforms WHERE row_number = ?" : "SELECT COUNT(1) AS multiform_count FROM (SELECT MAX(block_number) FROM multiformtries WHERE row_number = ? AND block_number < ? GROUP BY column_number)", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<size_t>(LayerException(ErrorOf(Cursor)));
 
@@ -2506,14 +2521,26 @@ namespace Tangent
 			Map.push_back(Var::Set::String(Filter.AsCondition()));
 			Map.push_back(Var::Set::Integer(Filter.Value));
 
-			auto Cursor = EmplaceQuery(Multiformdata, Label, __func__, !BlockNumber ? "SELECT COUNT(1) AS multiform_count FROM multiforms WHERE row_number = ? AND factor $? ?" : "SELECT COUNT(1) AS multiform_count FROM (SELECT MAX(block_number) FROM multiformtries WHERE row_number = ? AND block_number < ? AND factor $? ? GROUP BY column_number)", &Map);
+			auto Cursor = EmplaceQuery(*Multiformdata, Label, __func__, !BlockNumber ? "SELECT COUNT(1) AS multiform_count FROM multiforms WHERE row_number = ? AND factor $? ?" : "SELECT COUNT(1) AS multiform_count FROM (SELECT factor, MAX(block_number) FROM multiformtries WHERE row_number = ? AND block_number < ? GROUP BY column_number) WHERE factor $? ?", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<size_t>(LayerException(ErrorOf(Cursor)));
 
 			size_t Count = (*Cursor)["multiform_count"].Get().GetInteger();
 			return ExpectsLR<size_t>(Count);
 		}
-		bool Chainstate::Verify(LDB::Connection* Storage, const std::string_view& Name)
+		Vector<LDB::Connection*> Chainstate::GetIndexStorages()
+		{
+			Vector<LDB::Connection*> Index;
+			Index.push_back(*Blockdata);
+			Index.push_back(*Accountdata);
+			Index.push_back(*Txdata);
+			Index.push_back(*Partydata);
+			Index.push_back(*Aliasdata);
+			Index.push_back(*Uniformdata);
+			Index.push_back(*Multiformdata);
+			return Index;
+		}
+		bool Chainstate::ReconstructIndexStorage(LDB::Connection* Storage, const std::string_view& Name)
 		{
 			String Command;
 			if (Name == "blockdata")
@@ -2652,7 +2679,8 @@ namespace Tangent
 						block_number BIGINT NOT NULL,
 						PRIMARY KEY (column_number, row_number, block_number)
 					) WITHOUT ROWID;
-					CREATE INDEX IF NOT EXISTS multiformtries_row_number_block_number_column_number ON multiformtries (row_number, block_number, column_number);
+					CREATE INDEX IF NOT EXISTS multiformtries_row_number_block_number ON multiformtries (row_number, block_number);
+					CREATE INDEX IF NOT EXISTS multiformtries_column_number_block_number ON multiformtries (column_number, block_number);
 					CREATE INDEX IF NOT EXISTS multiformtries_block_number ON multiformtries (block_number);));
 			}
 

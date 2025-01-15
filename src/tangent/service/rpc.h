@@ -109,6 +109,7 @@ namespace Tangent
 			bool DispatchResponse(HTTP::Connection* Base, UPtr<Schema>&& Requests, UPtr<Schema>&& Responses, size_t Index, std::function<void(HTTP::Connection*, UPtr<Schema>&&)>&& Callback);
 			void DispatchAcceptBlock(const uint256_t& Hash, const Ledger::Block& Block, const Ledger::BlockCheckpoint& Checkpoint);
 			void DispatchAcceptTransaction(const uint256_t& Hash, const Ledger::Transaction* Transaction, const Algorithm::Pubkeyhash Owner);
+			void DispatchAcceptMessage(const std::string_view& Plaintext, int8_t Direction);
 			ServerResponse WebSocketSubscribe(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse WebSocketUnsubscribe(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse UtilityEncodeAddress(HTTP::Connection* Base, Format::Variables&& Args);
@@ -198,12 +199,16 @@ namespace Tangent
 			ServerResponse MempoolstateGetCumulativeEventTransactions(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse MempoolstateGetCumulativeConsensus(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse ValidatorstatePrune(HTTP::Connection* Base, Format::Variables&& Args);
+			ServerResponse ValidatorstateRevert(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse ValidatorstateVerify(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse ValidatorstateAcceptNode(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse ValidatorstateRejectNode(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse ValidatorstateGetNode(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse ValidatorstateGetBlockchains(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse ValidatorstateStatus(HTTP::Connection* Base, Format::Variables&& Args);
+			ServerResponse ValidatorstateProposeBlock(HTTP::Connection* Base, Format::Variables&& Args);
+			ServerResponse ValidatorstateSubmitMessage(HTTP::Connection* Base, Format::Variables&& Args);
+			ServerResponse ValidatorstateSubmitCommitmentTransaction(HTTP::Connection* Base, Format::Variables&& Args);
 		};	
 	}
 }

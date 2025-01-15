@@ -146,6 +146,7 @@ namespace Tangent
 			{
 				std::recursive_mutex Account;
 				std::recursive_mutex Block;
+				std::mutex Inventory;
 			} Sync;
 
 			struct
@@ -158,17 +159,19 @@ namespace Tangent
 			{
 				std::function<void(const uint256_t&, const Ledger::Block&, const Ledger::BlockCheckpoint&)> AcceptBlock;
 				std::function<void(const uint256_t&, const Ledger::Transaction*, const Algorithm::Pubkeyhash)> AcceptTransaction;
+				std::function<void(const std::string_view&, int8_t)> AcceptMessage;
 			} Events;
 
 		private:
 			struct
 			{
-				Option<uint64_t> BlockNumber = Optional::None;
+				Option<uint64_t> ActivationBlock = Optional::None;
 				bool Dirty = false;
 			} Mempool;
 
 		private:
-			UnorderedMap<uint32_t, void*> InMethods;
+			UnorderedMap<uint256_t, int64_t> Inventory;
+			UnorderedMap<uint32_t, std::pair<void*, bool>> InMethods;
 			UnorderedMap<void*, uint32_t> OutMethods;
 			UnorderedMap<void*, Relay*> Nodes;
 			UnorderedSet<OutboundNode*> CandidateNodes;
@@ -193,12 +196,14 @@ namespace Tangent
 			bool AcceptMempool();
 			bool AcceptDispatchpool(const Ledger::BlockHeader& Tip);
 			bool AcceptBlock(Relay* From, Ledger::Block&& CandidateBlock, const uint256_t& ForkTip);
+			bool AcceptMessage(const Algorithm::Pubkey SealingPublicKey, const std::string_view& Plaintext);
 			bool Accept(Option<SocketAddress>&& Address = Optional::None);
-			ExpectsLR<void> ProposeTransaction(Relay* From, UPtr<Ledger::Transaction>&& CandidateTx, uint64_t AccountSequence, const std::string_view& Purpose);
+			ExpectsLR<void> ProposeTransaction(Relay* From, UPtr<Ledger::Transaction>&& CandidateTx, uint64_t AccountSequence, const std::string_view& Purpose, uint256_t* OutputHash = nullptr);
 			ExpectsLR<void> AcceptTransaction(Relay* From, UPtr<Ledger::Transaction>&& CandidateTx, bool DeepValidation = false);
 			ExpectsLR<void> BroacastTransaction(Relay* From, UPtr<Ledger::Transaction>&& CandidateTx, const Algorithm::Pubkeyhash Owner);
 			Relay* Find(const SocketAddress& Address);
 			size_t SizeOf(NodeType Type);
+			size_t GetConnections();
 			bool IsActive();
 			bool IsSyncing();
 			double GetSyncProgress(const uint256_t& ForkTip, uint64_t CurrentNumber);
@@ -209,9 +214,13 @@ namespace Tangent
 			const SingleQueue<URef<RelayProcedure>>& GetMessages() const;
 
 		public:
-			void Bind(ReceiveFunction Function)
+			void BindCallable(ReceiveFunction Function)
 			{
-				BindFunction((ReceiveFunction)Function);
+				BindFunction((ReceiveFunction)Function, false);
+			}
+			void BindMulticallable(ReceiveFunction Function)
+			{
+				BindFunction((ReceiveFunction)Function, true);
 			}
 			void Call(Relay* State, ReceiveFunction Function, Format::Variable&& Argument)
 			{
@@ -239,7 +248,7 @@ namespace Tangent
 			bool AcceptProposalTransaction(const Ledger::Block& CheckpointBlock, const Ledger::BlockTransaction& Transaction);
 			bool ReceiveOutboundNode(Option<SocketAddress>&& ErrorAddress);
 			bool PushNextProcedure(Relay* State);
-			void BindFunction(ReceiveFunction Function);
+			void BindFunction(ReceiveFunction Function, bool Multicallable);
 			void CallFunction(Relay* State, ReceiveFunction Function, Format::Variables&& Args);
 			void MulticallFunction(Relay* State, ReceiveFunction Function, Format::Variables&& Args);
 			void AcceptOutboundNode(OutboundNode* Candidate, ExpectsSystem<void>&& Status);
@@ -275,6 +284,7 @@ namespace Tangent
 			static Promise<void> ProposeTransactionHash(ServerNode* Relayer, UPtr<Relay>&& From, Format::Variables&& Args);
 			static Promise<void> RequestMempool(ServerNode* Relayer, UPtr<Relay>&& From, Format::Variables&& Args);
 			static Promise<void> ProposeMempool(ServerNode* Relayer, UPtr<Relay>&& From, Format::Variables&& Args);
+			static Promise<void> ProposeMessage(ServerNode* Relayer, UPtr<Relay>&& From, Format::Variables&& Args);
 
 		private:
 			static Promise<void> ReturnAbort(ServerNode* Relayer, Relay* From, const char* Function, const std::string_view& Message);

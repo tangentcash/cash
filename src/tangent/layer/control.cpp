@@ -301,10 +301,12 @@ namespace Tangent
 		for (auto& Service : Services)
 			Service.Startup();
 
+		ErrorHandling::SetFlag(LogOption::Async, true);
 		Schedule* Queue = Schedule::Get();
 		if (!Queue->Start(Policy))
 			return -1;
 
+		ErrorHandling::SetFlag(LogOption::Async, false);
 		for (auto& Service : Services)
 			Service.Shutdown();
 

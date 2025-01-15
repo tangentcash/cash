@@ -100,7 +100,7 @@ namespace Tangent
 			if (!Count || Count > Protocol::Now().User.NDS.CursorSize)
 			{
 				if (Protocol::Now().User.NDS.Logging)
-					VI_WARN("[nds] on peer %s discovery failed: bad arguments (time: %" PRId64 " ms, args: %s)", Base->GetPeerIpAddress().Or("[bad_address]").c_str(), DateTime().Milliseconds() - Base->Info.Start, Base->Request.Query.c_str());
+					VI_WARN("[nds] peer %s discovery failed: bad arguments (time: %" PRId64 " ms, args: %s)", Base->GetPeerIpAddress().Or("[bad_address]").c_str(), DateTime().Milliseconds() - Base->Info.Start, Base->Request.Query.c_str());
 
 				return Base->Abort(400, "Bad page size. Count must not exceed %" PRIu64 " elements.", Protocol::Now().User.NDS.CursorSize);
 			}
@@ -124,13 +124,13 @@ namespace Tangent
 			if (!Seeds || Seeds->empty())
 			{
 				if (Protocol::Now().User.NDS.Logging)
-					VI_INFO("[nds] on peer %s discovery: no nodes returned (time: %" PRId64 " ms, args: %s)", Base->GetPeerIpAddress().Or("[bad_address]").c_str(), DateTime().Milliseconds() - Base->Info.Start, Base->Request.Query.c_str());
+					VI_INFO("[nds] peer %s discovery: no nodes returned (time: %" PRId64 " ms, args: %s)", Base->GetPeerIpAddress().Or("[bad_address]").c_str(), DateTime().Milliseconds() - Base->Info.Start, Base->Request.Query.c_str());
 
 				return Base->Abort(404, "No nodes found.");
 			}
 
 			if (Protocol::Now().User.NDS.Logging)
-				VI_INFO("[nds] on peer %s discovery: %i nodes returned (time: %" PRId64 " ms, args: %s)", Base->GetPeerIpAddress().Or("[bad_address]").c_str(), (int)Seeds->size(), DateTime().Milliseconds() - Base->Info.Start, Base->Request.Query.c_str());
+				VI_INFO("[nds] peer %s discovery: %i nodes returned (time: %" PRId64 " ms, args: %s)", Base->GetPeerIpAddress().Or("[bad_address]").c_str(), (int)Seeds->size(), DateTime().Milliseconds() - Base->Info.Start, Base->Request.Query.c_str());
 
 			UPtr<Schema> Data = Var::Set::Array();
 			for (auto& Seed : *Seeds)

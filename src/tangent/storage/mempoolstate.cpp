@@ -37,19 +37,15 @@ namespace Tangent
 		}
 
 		static thread_local Mempoolstate* LatestMempoolstate = nullptr;
-		Mempoolstate::Mempoolstate(const std::string_view& NewLabel) noexcept : Label(NewLabel), Borrows(false)
+		Mempoolstate::Mempoolstate(const std::string_view& NewLabel) noexcept : Label(NewLabel), Borrows(LatestMempoolstate != nullptr)
 		{
-			if (LatestMempoolstate != nullptr)
-			{
-				Storage = *LatestMempoolstate->Storage;
-				Borrows = !!Storage;
-			}
 			if (!Borrows)
 			{
 				StorageOf("mempoolstate");
-				if (Storage)
-					LatestMempoolstate = this;
+				LatestMempoolstate = this;
 			}
+			else
+				Storage = *LatestMempoolstate->Storage;
 		}
 		Mempoolstate::~Mempoolstate() noexcept
 		{
@@ -307,7 +303,7 @@ namespace Tangent
 
 			return *B / A->Truncate(Protocol::Now().Message.Precision);
 		}
-		ExpectsLR<void> Mempoolstate::AddTransaction(Ledger::Transaction& Value)
+		ExpectsLR<void> Mempoolstate::AddTransaction(Ledger::Transaction& Value, bool BypassCongestion)
 		{
 			Format::Stream Message;
 			if (!Value.Store(&Message))
@@ -341,7 +337,7 @@ namespace Tangent
 					if (!Bandwidth->Congested || Bandwidth->Sequence >= Value.Sequence)
 						break;
 
-					if (!Value.GasPrice.IsPositive())
+					if (!BypassCongestion && !Value.GasPrice.IsPositive())
 						return ExpectsLR<void>(LayerException(Stringify::Text("wait for finalization of or replace previous delegation transaction (queue: %" PRIu64 ", sequence: %" PRIu64 ")", (uint64_t)Bandwidth->Count, Bandwidth->Sequence)));
 
 					Preference = Queue();
@@ -353,7 +349,7 @@ namespace Tangent
 					if (!Bandwidth->Congested || Bandwidth->Sequence >= Value.Sequence)
 						break;
 
-					if (!Value.GasPrice.IsPositive())
+					if (!BypassCongestion && !Value.GasPrice.IsPositive())
 						return ExpectsLR<void>(LayerException(Stringify::Text("wait for finalization of or replace previous consensus transaction (queue: %" PRIu64 ", sequence: %" PRIu64 ")", (uint64_t)Bandwidth->Count, Bandwidth->Sequence)));
 
 					Preference = Queue();
@@ -394,7 +390,7 @@ namespace Tangent
 					if (!Bandwidth->Congested || Bandwidth->Sequence >= Value.Sequence)
 						break;
 
-					if (!Value.GasPrice.IsPositive())
+					if (!BypassCongestion && !Value.GasPrice.IsPositive())
 						return ExpectsLR<void>(LayerException(Stringify::Text("wait for finalization of or replace previous aggregation transaction (queue: %" PRIu64 ", sequence: %" PRIu64 ")", (uint64_t)Bandwidth->Count, Bandwidth->Sequence)));
 
 					Preference = Queue();
@@ -721,7 +717,7 @@ namespace Tangent
 					return 1.00;
 			}
 		}
-		bool Mempoolstate::Verify()
+		bool Mempoolstate::ReconstructStorage()
 		{
 			String Command = VI_STRINGIFY(
 				CREATE TABLE IF NOT EXISTS validators

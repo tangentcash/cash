@@ -43,7 +43,7 @@ namespace Tangent
 			String GetAddressLocation(const std::string_view& Address);
 			String GetTransactionLocation(const std::string_view& TransactionId);
 			String GetCoinLocation(const std::string_view& TransactionId, uint32_t Index);
-			bool Verify() override;
+			bool ReconstructStorage() override;
 
 		private:
 			static std::string_view GetCacheLocation(Oracle::CachePolicy Policy);

@@ -187,7 +187,7 @@ namespace Tangent
 		}
 		uint64_t AccountWork::GetClosestProposalBlockNumber() const
 		{
-			return std::max(BlockNumber + 1, Penalty);
+			return std::max(BlockNumber, Penalty) + 1;
 		}
 		UPtr<Schema> AccountWork::AsSchema() const
 		{

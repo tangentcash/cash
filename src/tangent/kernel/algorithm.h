@@ -37,6 +37,7 @@ namespace Tangent
 			static bool VerifyPrivateKey(const Seckey PrivateKey);
 			static bool VerifyPublicKey(const Pubkey PublicKey);
 			static bool VerifyAddress(const std::string_view& Address);
+			static bool VerifySealedMessage(const std::string_view& Ciphertext);
 			static bool DerivePrivateKey(const std::string_view& Mnemonic, Seckey PrivateKey);
 			static void DerivePrivateKey(const std::string_view& Seed, Seckey PrivateKey, size_t Iterations);
 			static void DerivePublicKey(const Seckey PrivateKey, Pubkey PublicKey);

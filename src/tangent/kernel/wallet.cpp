@@ -111,6 +111,8 @@ namespace Tangent
 			Stream->WriteString(std::string_view((char*)PrivateKey, HasPrivateKey() ? sizeof(PrivateKey) : 0));
 			Stream->WriteString(std::string_view((char*)PublicKey, HasPublicKey() ? sizeof(PublicKey) : 0));
 			Stream->WriteString(std::string_view((char*)PublicKeyHash, HasPublicKeyHash() ? sizeof(PublicKeyHash) : 0));
+			Stream->WriteString(std::string_view((char*)SealingPrivateKey, HasSealingPrivateKey() ? sizeof(SealingPrivateKey) : 0));
+			Stream->WriteString(std::string_view((char*)SealingPublicKey, HasSealingPublicKey() ? sizeof(SealingPublicKey) : 0));
 			return true;
 		}
 		bool Wallet::LoadPayload(Format::Stream& Stream)
@@ -149,6 +151,30 @@ namespace Tangent
 					return false;
 
 				memcpy(PublicKeyHash, PublicKeyHashAssembly.data(), sizeof(PublicKeyHash));
+			}
+
+			String SealingPrivateKeyAssembly; memset(SealingPrivateKey, 0, sizeof(SealingPrivateKey));
+			if (!Stream.ReadString(Stream.ReadType(), &SealingPrivateKeyAssembly))
+				return false;
+
+			if (!SealingPrivateKeyAssembly.empty())
+			{
+				if (SealingPrivateKeyAssembly.size() != sizeof(SealingPrivateKey))
+					return false;
+
+				memcpy(SealingPrivateKey, SealingPrivateKeyAssembly.data(), sizeof(SealingPrivateKey));
+			}
+
+			String SealingPublicKeyAssembly; memset(SealingPublicKey, 0, sizeof(SealingPublicKey));
+			if (!Stream.ReadString(Stream.ReadType(), &SealingPublicKeyAssembly))
+				return false;
+
+			if (!SealingPublicKeyAssembly.empty())
+			{
+				if (SealingPublicKeyAssembly.size() != sizeof(SealingPublicKey))
+					return false;
+
+				memcpy(SealingPublicKey, SealingPublicKeyAssembly.data(), sizeof(SealingPublicKey));
 			}
 
 			return true;
@@ -219,7 +245,7 @@ namespace Tangent
 		String Wallet::GetSealingPrivateKey() const
 		{
 			String Value;
-			if (!HasPrivateKey())
+			if (!HasSealingPrivateKey())
 				return Value;
 
 			Algorithm::Signing::EncodeSealingPrivateKey(SealingPrivateKey, Value);
@@ -228,7 +254,7 @@ namespace Tangent
 		String Wallet::GetSealingPublicKey() const
 		{
 			String Value;
-			if (!HasPublicKey())
+			if (!HasSealingPublicKey())
 				return Value;
 
 			Algorithm::Signing::EncodeSealingPublicKey(SealingPublicKey, Value);

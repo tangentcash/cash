@@ -4,9 +4,10 @@
 #include "../policy/transactions.h"
 #include <array>
 #define PURPOSE_CLAIM "observer claim"
-#define PURPOSE_COMMITMENT "validator registration"
+#define PURPOSE_COMMITMENT "validator commitment"
 #define PURPOSE_DISPATCH "deferred event"
 #define PURPOSE_OTHER "response"
+#define INVENTORY_CLEANUP 10000
 
 namespace Tangent
 {
@@ -380,7 +381,7 @@ namespace Tangent
 				}
 
 				if (Protocol::Now().User.P2P.Logging)
-					VI_WARN("[p2p] on peer %s:%i channel skip: host not reachable", ErrorAddress->GetIpAddress().Or("[bad_address]").c_str(), (int)ErrorAddress->GetIpPort().Or(0));
+					VI_WARN("[p2p] peer %s:%i channel skip: host not reachable", ErrorAddress->GetIpAddress().Or("[bad_address]").c_str(), (int)ErrorAddress->GetIpPort().Or(0));
 			}
 		RetryValidator:
 			auto NextValidator = Mempool.GetValidatorByPreference(Discovery.Offset);
@@ -395,7 +396,7 @@ namespace Tangent
 					goto RetryTrialAddress;
 
 				if (Protocol::Now().User.P2P.Logging)
-					VI_INFO("[p2p] on peer %s:%i channel try: mempool address", NextTrialAddress->GetIpAddress().Or(String("[bad_address]")).c_str(), (int)NextTrialAddress->GetIpPort().Or(0));
+					VI_INFO("[p2p] peer %s:%i channel try: mempool address", NextTrialAddress->GetIpAddress().Or(String("[bad_address]")).c_str(), (int)NextTrialAddress->GetIpPort().Or(0));
 				
 				return Promise<Option<SocketAddress>>(std::move(*NextTrialAddress));
 			}
@@ -414,7 +415,7 @@ namespace Tangent
 			}
 
 			if (Protocol::Now().User.P2P.Logging)
-				VI_INFO("[p2p] on peer %s:%i channel try: discovery address", NextValidator->Address.GetIpAddress().Or(String("[bad_address]")).c_str(), (int)NextValidator->Address.GetIpPort().Or(0));
+				VI_INFO("[p2p] peer %s:%i channel try: discovery address", NextValidator->Address.GetIpAddress().Or(String("[bad_address]")).c_str(), (int)NextValidator->Address.GetIpPort().Or(0));
 
 			return Promise<Option<SocketAddress>>(std::move(NextValidator->Address));
 		}
@@ -454,9 +455,9 @@ namespace Tangent
 					if (Protocol::Now().User.P2P.Logging)
 					{
 						if (Results != std::numeric_limits<size_t>::max())
-							VI_INFO("[p2p] on seeder %s %sresults found (addresses: %" PRIu64 ")", Seeder.c_str(), Results > 0 ? "" : "no ", (uint64_t)Results);
+							VI_INFO("[p2p] seeder %s %sresults found (addresses: %" PRIu64 ")", Seeder.c_str(), Results > 0 ? "" : "no ", (uint64_t)Results);
 						else
-							VI_WARN("[p2p] on seeder %s no results found: bad seeder", Seeder.c_str());
+							VI_WARN("[p2p] seeder %s no results found: bad seeder", Seeder.c_str());
 					}
 				}
 
@@ -482,7 +483,7 @@ namespace Tangent
 				Discovery.Offset = 0;
 
 			if (Protocol::Now().User.P2P.Logging)
-				VI_INFO("[p2p] on validator %s channel shutdown (%s %s)", From->PeerAddress().c_str(), NodeTypeOf(*From).data(), From->PeerService().c_str());
+				VI_INFO("[p2p] validator %s channel shutdown (%s %s)", From->PeerAddress().c_str(), NodeTypeOf(*From).data(), From->PeerService().c_str());
 
 			return ReturnOK(*From, __func__, "approve shutdown");
 		}
@@ -497,7 +498,7 @@ namespace Tangent
 				if (!Receipt.IsApproved())
 				{
 					if (Protocol::Now().User.P2P.Logging)
-						VI_INFO("[p2p] on claim %s transaction %s queued", Algorithm::Asset::HandleOf(Receipt.Asset).c_str(), Receipt.TransactionId.c_str());
+						VI_INFO("[p2p] claim %s transaction %s queued", Algorithm::Asset::HandleOf(Receipt.Asset).c_str(), Receipt.TransactionId.c_str());
 
 					continue;
 				}
@@ -506,7 +507,7 @@ namespace Tangent
 				if (Collision)
 				{
 					if (Protocol::Now().User.P2P.Logging)
-						VI_INFO("[p2p] on claim %s transaction %s approved", Algorithm::Asset::HandleOf(Receipt.Asset).c_str(), Receipt.TransactionId.c_str());
+						VI_INFO("[p2p] claim %s transaction %s approved", Algorithm::Asset::HandleOf(Receipt.Asset).c_str(), Receipt.TransactionId.c_str());
 
 					continue;
 				}
@@ -579,7 +580,7 @@ namespace Tangent
 			uint64_t VaryingPeerTime = PeerTime + (PeerValidator->Availability.Latency + LatencyTime) / 2;
 			Protocol.Time.Adjust(PeerValidator->Address, (int64_t)ServerTime - (int64_t)VaryingPeerTime);
 			if (Protocol::Now().User.P2P.Logging)
-				VI_INFO("[p2p] on validator %s channel accept (%s %s)", From->PeerAddress().c_str(), NodeTypeOf(*From).data(), From->PeerService().c_str());
+				VI_INFO("[p2p] validator %s channel accept (%s %s)", From->PeerAddress().c_str(), NodeTypeOf(*From).data(), From->PeerService().c_str());
 
 			auto Mempool = Storages::Mempoolstate(__func__);
 			auto Seeds = Mempool.GetValidatorAddresses(0, Protocol::Now().User.P2P.CursorSize);
@@ -708,7 +709,7 @@ namespace Tangent
 						return ReturnAbort(Relayer, *From, __func__, "invalid fork block header");
 				}
 
-				auto Verification = ChildHeader.Verify(ParentHeader.Number > 0 ? &ParentHeader : nullptr);
+				auto Verification = ChildHeader.VerifyValidity(ParentHeader.Number > 0 ? &ParentHeader : nullptr);
 				if (!Verification)
 					return ReturnAbort(Relayer, *From, __func__, "invalid fork block header: " + Verification.Error().Info);
 
@@ -917,6 +918,29 @@ namespace Tangent
 
 			return ReturnOK(*From, __func__, "mempool accepted");
 		}
+		Promise<void> ServerNode::ProposeMessage(ServerNode* Relayer, UPtr<Relay>&& From, Format::Variables&& Args)
+		{
+			if (Args.empty())
+				return ReturnAbort(Relayer, *From, __func__, "invalid arguments");
+
+			auto Ciphertext = Args.front().AsString();
+			if (Ciphertext.empty() || !Algorithm::Signing::VerifySealedMessage(Ciphertext))
+				return ReturnAbort(Relayer, *From, __func__, "invalid message");
+
+			auto Plaintext = Relayer->Validator.Wallet.OpenMessage(Ciphertext);
+			if (!Plaintext)
+			{
+				Relayer->Multicall(*From, &ServerNode::ProposeMessage, std::move(Args));
+				return ReturnOK(*From, __func__, "message broadcasted");
+			}
+			else if (Protocol::Now().User.P2P.Logging)
+				VI_INFO("[p2p] message to %s as plaintext:\nin>  %s", Relayer->Validator.Wallet.GetAddress().c_str(), Plaintext->c_str());
+
+			if (Relayer->Events.AcceptMessage)
+				Relayer->Events.AcceptMessage(*Plaintext, 1);
+
+			return ReturnOK(*From, __func__, "message accepted");
+		}
 		Promise<void> ServerNode::ReturnAbort(ServerNode* Relayer, Relay* From, const char* Function, const std::string_view& Message)
 		{
 			auto* PeerValidator = From->AsUser<Ledger::Validator>();
@@ -928,7 +952,7 @@ namespace Tangent
 
 			Relayer->Reject(From);
 			if (Protocol::Now().User.P2P.Logging)
-				VI_DEBUG("[p2p] on validator %s call \"%s\" abort: %.*s (%s %s)", From->PeerAddress().c_str(), Function, (int)Message.size(), Message.data(), NodeTypeOf(From).data(), From->PeerService().c_str());
+				VI_DEBUG("[p2p] validator %s call \"%s\" abort: %.*s (%s %s)", From->PeerAddress().c_str(), Function, (int)Message.size(), Message.data(), NodeTypeOf(From).data(), From->PeerService().c_str());
 			
 			return Promise<void>::Null();
 		}
@@ -942,7 +966,7 @@ namespace Tangent
 			}
 
 			if (Protocol::Now().User.P2P.Logging)
-				VI_DEBUG("[p2p] on validator %s call \"%s\" error: %.*s (%s %s)", From->PeerAddress().c_str(), Function, (int)Message.size(), Message.data(), NodeTypeOf(From).data(), From->PeerService().c_str());
+				VI_DEBUG("[p2p] validator %s call \"%s\" error: %.*s (%s %s)", From->PeerAddress().c_str(), Function, (int)Message.size(), Message.data(), NodeTypeOf(From).data(), From->PeerService().c_str());
 			
 			return Promise<void>::Null();
 		}
@@ -953,7 +977,7 @@ namespace Tangent
 				++PeerValidator->Availability.Calls;
 
 			if (Protocol::Now().User.P2P.Logging)
-				VI_DEBUG("[p2p] on validator %s call \"%s\" OK: %.*s (%s %s)", From->PeerAddress().c_str(), Function, (int)Message.size(), Message.data(), NodeTypeOf(From).data(), From->PeerService().c_str());
+				VI_DEBUG("[p2p] validator %s call \"%s\" OK: %.*s (%s %s)", From->PeerAddress().c_str(), Function, (int)Message.size(), Message.data(), NodeTypeOf(From).data(), From->PeerService().c_str());
 			
 			return Promise<void>::Null();
 		}
@@ -1021,11 +1045,11 @@ namespace Tangent
 				Discovery.Count = Mempool.GetValidatorsCount().Or(0);
 			return Status;
 		}
-		void ServerNode::BindFunction(ReceiveFunction Function)
+		void ServerNode::BindFunction(ReceiveFunction Function, bool Multicallable)
 		{
 			uint32_t MethodIndex = MethodAddress + (uint32_t)InMethods.size();
 			void* FunctionIndex = (void*)Function;
-			InMethods[MethodIndex] = FunctionIndex;
+			InMethods[MethodIndex] = std::make_pair(FunctionIndex, Multicallable);
 			OutMethods[FunctionIndex] = MethodIndex;
 		}
 		void ServerNode::CallFunction(Relay* State, ReceiveFunction Function, Format::Variables&& Args)
@@ -1051,6 +1075,7 @@ namespace Tangent
 			Next.Method = It->second;
 			Next.Args = std::move(Args);
 
+			int64_t Time = time(nullptr);
 			URef<RelayProcedure> RelayMessage = new RelayProcedure(std::move(Next));
 			UMutex<std::recursive_mutex> Unique(Exclusive);
 			for (auto& Node : Nodes)
@@ -1106,6 +1131,7 @@ namespace Tangent
 			if (!Stream)
 				return;
 
+		Retry:
 			if (State->PullIncomingMessage(nullptr, 0))
 			{
 				Procedure Message;
@@ -1116,10 +1142,27 @@ namespace Tangent
 				auto It = InMethods.find(Message.Method);
 				if (It == InMethods.end())
 					return AbortCallback(State);
-				else if (!ControlSys.Enqueue())
+
+				if (It->second.second)
+				{
+					String Body;
+					if (!Message.SerializeInto(&Body))
+						return AbortCallback(State);
+
+					uint256_t Hash = Algorithm::Hashing::Hash256i(Body);
+					UMutex<std::mutex> Unique(Sync.Inventory);
+					auto It = Inventory.find(Hash);
+					if (It != Inventory.end())
+						goto Retry;
+					else if (Inventory.size() + 1 > Protocol::Now().User.P2P.InventorySize)
+						Inventory.clear();
+					Inventory[Hash] = time(nullptr) + Protocol::Now().User.P2P.InventoryTimeout;
+				}
+
+				if (!ControlSys.Enqueue())
 					return;
 
-				auto Function = (ReceiveFunction)It->second;
+				auto Function = (ReceiveFunction)It->second.first;
 				State->AddRef();
 				return Cospawn([this, State, AbortCallback, Function, Message = std::move(Message)]() mutable
 				{
@@ -1293,6 +1336,18 @@ namespace Tangent
 			Config->SocketTimeout = (size_t)Protocol::Now().User.TCP.Timeout;
 			ControlSys.ActivateAndEnqueue();
 			ControlSys.Dequeue();
+			ControlSys.IntervalIfNone("clean_inventory", INVENTORY_CLEANUP, [this]()
+			{
+				int64_t Time = time(nullptr);
+				UMutex<std::mutex> Unique(Sync.Inventory);
+				for (auto It = Inventory.cbegin(); It != Inventory.cend();)
+				{
+					if (It->second < Time)
+						Inventory.erase(It++);
+					else
+						++It;
+				}
+			});
 
 			uint32_t MethodMagic = OS::CPU::ToEndianness(OS::CPU::Endian::Little, Protocol::Now().Message.PacketMagic);
 			uint32_t MethodRange = (uint32_t)std::numeric_limits<int32_t>::max();
@@ -1342,13 +1397,6 @@ namespace Tangent
 			auto NodeId = Codec::HexEncode(std::string_view((char*)this, sizeof(this)));
 			Oracle::Paymaster::SubmitCallback(NodeId, std::bind(&ServerNode::ProposeTransactionLogs, this, std::placeholders::_1, std::placeholders::_2));
 
-			auto Chain = Storages::Chainstate(__func__);
-			auto Tip = Chain.GetLatestBlockHeader();
-			if (Tip)
-				AcceptDispatchpool(*Tip);
-			else
-				AcceptMempool();
-
 			for (auto& Seed : Protocol::Now().User.Seeds)
 			{
 				auto Endpoint = Algorithm::Endpoint(Seed);
@@ -1362,23 +1410,29 @@ namespace Tangent
 				Mempool.ApplyTrialAddress(Endpoint.Address);
 			}
 
-			Bind(&ServerNode::ProposeHandshake);
-			Bind(&ServerNode::ApproveHandshake);
-			Bind(&ServerNode::ProposeSeeds);
-			Bind(&ServerNode::FindForkCollision);
-			Bind(&ServerNode::VerifyForkCollision);
-			Bind(&ServerNode::RequestForkBlock);
-			Bind(&ServerNode::ProposeForkBlock);
-			Bind(&ServerNode::RequestBlock);
-			Bind(&ServerNode::ProposeBlock);
-			Bind(&ServerNode::ProposeBlockHash);
-			Bind(&ServerNode::RequestTransaction);
-			Bind(&ServerNode::ProposeTransaction);
-			Bind(&ServerNode::ProposeTransactionHash);
-			Bind(&ServerNode::RequestMempool);
-			Bind(&ServerNode::ProposeMempool);
+			BindCallable(&ServerNode::ProposeHandshake);
+			BindCallable(&ServerNode::ApproveHandshake);
+			BindCallable(&ServerNode::ProposeSeeds);
+			BindCallable(&ServerNode::FindForkCollision);
+			BindCallable(&ServerNode::VerifyForkCollision);
+			BindCallable(&ServerNode::RequestForkBlock);
+			BindCallable(&ServerNode::ProposeForkBlock);
+			BindCallable(&ServerNode::RequestBlock);
+			BindCallable(&ServerNode::RequestTransaction);
+			BindCallable(&ServerNode::RequestMempool);
+			BindCallable(&ServerNode::ProposeMempool);
+			BindMulticallable(&ServerNode::ProposeBlock);
+			BindMulticallable(&ServerNode::ProposeBlockHash);
+			BindMulticallable(&ServerNode::ProposeTransaction);
+			BindMulticallable(&ServerNode::ProposeTransactionHash);
+			BindMulticallable(&ServerNode::ProposeMessage);
 			ClearMempool(false);
 			Accept();
+
+			auto Chain = Storages::Chainstate(__func__);
+			auto Tip = Chain.GetLatestBlockHeader();
+			if (Tip)
+				AcceptDispatchpool(*Tip);
 		}
 		void ServerNode::Shutdown()
 		{
@@ -1455,8 +1509,11 @@ namespace Tangent
 			return ControlSys.TimeoutIfNone("accept_mempool", 0, [this]()
 			{
 			Retry:
-				if (Mempool.BlockNumber && !*Mempool.BlockNumber)
+				if (Mempool.ActivationBlock && (!*Mempool.ActivationBlock || *Mempool.ActivationBlock <= Storages::Chainstate(__func__).GetLatestBlockNumber().Or(0)))
 				{
+					if (*Mempool.ActivationBlock != 0)
+						Mempool.ActivationBlock = 0;
+
 					auto Priority = Environment.Priority(Validator.Wallet.PublicKeyHash, Validator.Wallet.PrivateKey);
 					if (!Priority)
 					{
@@ -1488,9 +1545,9 @@ namespace Tangent
 						if (Protocol::Now().User.P2P.Logging)
 						{
 							if (Priority)
-								VI_INFO("[p2p] on mempool chain extension evaluation (txns: %" PRIu64 ", priority: %" PRIu64 ")", (uint64_t)Environment.Incoming.size(), *Priority);
+								VI_INFO("[p2p] mempool chain extension evaluation (txns: %" PRIu64 ", priority: %" PRIu64 ")", (uint64_t)Environment.Incoming.size(), *Priority);
 							else
-								VI_INFO("[p2p] on mempool chain extension evaluation (txns: %" PRIu64 ", priority: recovery)", (uint64_t)Environment.Incoming.size());
+								VI_INFO("[p2p] mempool chain extension evaluation (txns: %" PRIu64 ", priority: recovery)", (uint64_t)Environment.Incoming.size());
 						}
 
 						String Errors;
@@ -1507,81 +1564,19 @@ namespace Tangent
 						if (!Errors.empty())
 						{
 							if (Evaluation)
-								VI_WARN("[p2p] on mempool block %s acceptable evaluation error: %s", Algorithm::Encoding::Encode0xHex256(Evaluation->AsHash()).c_str(), Errors.c_str());
+								VI_WARN("[p2p] mempool block %s acceptable evaluation error: %s", Algorithm::Encoding::Encode0xHex256(Evaluation->AsHash()).c_str(), Errors.c_str());
 							else
-								VI_ERR("[p2p] on mempool block evaluation error: %s", Errors.c_str());
+								VI_ERR("[p2p] mempool block evaluation error: %s", Errors.c_str());
 						}
 					}
 					else if (IsActive())
 						Environment.Cleanup().Report("mempool cleanup failed");
 				}
-				else if (Mempool.BlockNumber && *Mempool.BlockNumber != std::numeric_limits<uint64_t>::max())
+				else if (!Mempool.ActivationBlock)
 				{
-					auto Chain = Storages::Chainstate(__func__);
-					if (*Mempool.BlockNumber <= Chain.GetLatestBlockNumber().Or(0) && Oracle::Datamaster::IsInitialized())
-						goto Register;
-				}
-				else if (!Mempool.BlockNumber && Oracle::Datamaster::IsInitialized())
-				{
-				Register:
-					auto Context = Ledger::TransactionContext();
-					auto Transaction = UPtr<Transactions::Commitment>(Memory::New<Transactions::Commitment>());
-					for (auto& Asset : Oracle::Datamaster::GetAssets(true))
-						Transaction->SetOnline(Asset);
-
-					auto Work = Context.GetAccountWork(Validator.Wallet.PublicKeyHash);
-					if (!Work || !Work->IsOnline())
-						Transaction->SetOnline();
-
-					for (auto& Observer : Context.GetAccountObservers(Validator.Wallet.PublicKeyHash, 0, 1024).Or(Vector<States::AccountObserver>()))
-					{
-						if (!Observer.IsOnline() && Transaction->Observers.find(Observer.Asset) != Transaction->Observers.end())
-							Transaction->SetOffline(Observer.Asset);
-					}
-
-					size_t Updates = Transaction->Worker != Ledger::WorkStatus::Standby ? 1 : 0;
-					for (auto& Observer : Transaction->Observers)
-						Updates += Observer.second != Ledger::WorkStatus::Standby ? 1 : 0;
-
-					Mempool.BlockNumber = Updates > 0 ? std::numeric_limits<uint64_t>::max() : 0;
-					if (!Updates)
-					{
-						if (Work && Work->Penalty > 0)
-							Mempool.BlockNumber = Work->GetClosestProposalBlockNumber();		
-						goto Retry;
-					}
-
-					UMutex<std::recursive_mutex> Unique(Sync.Account);
-					auto AccountSequence = Validator.Wallet.GetLatestSequence().Or(1);
-					Unique.Unlock();
-
-					auto Chain = Storages::Chainstate(__func__);
-					auto Balances = Chain.GetMultiformsByColumn(nullptr, States::AccountBalance::AsInstanceColumn(Validator.Wallet.PublicKeyHash), 0, 0, 64);
-					if (Balances && !Balances->empty())
-					{
-						for (auto& State : *Balances)
-						{
-							auto& Balance = *(States::AccountBalance*)*State;
-							if (Balance.GetBalance().IsPositive())
-							{
-								Transaction->Asset = Balance.Asset;
-								break;
-							}
-							else if (!Transaction->Asset)
-								Transaction->Asset = Balance.Asset;
-						}
-					}
-					else
-					{
-						auto Assets = Oracle::Datamaster::GetAssets();
-						Transaction->Asset = Assets[Math<size_t>::Random(0, Assets.size())];
-					}
-
-					if (!ProposeTransaction(nullptr, Transaction.Reset(), AccountSequence, PURPOSE_COMMITMENT))
-					{
-						if (Protocol::Now().User.P2P.Logging)
-							VI_ERR("[p2p] on mempool commitment error: failed to register this validator");
-					}
+					auto Work = Ledger::TransactionContext().GetAccountWork(Validator.Wallet.PublicKeyHash);
+					Mempool.ActivationBlock = Work ? Work->GetClosestProposalBlockNumber() - 1 : std::numeric_limits<uint64_t>::max();
+					goto Retry;
 				}
 				ControlSys.ClearTimeout("accept_mempool");
 			});
@@ -1626,11 +1621,11 @@ namespace Tangent
 		bool ServerNode::AcceptBlock(Relay* From, Ledger::Block&& CandidateBlock, const uint256_t& ForkTip)
 		{
 			uint256_t CandidateHash = CandidateBlock.AsHash();
-			auto Verification = From ? CandidateBlock.Verify(nullptr) : Environment.Verify(CandidateBlock);
+			auto Verification = From ? CandidateBlock.VerifyValidity(nullptr) : Environment.Verify(CandidateBlock);
 			if (!Verification)
 			{
 				if (Protocol::Now().User.P2P.Logging)
-					VI_WARN("[p2p] on block %s branch averted: %s", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str(), Verification.Error().what());
+					VI_WARN("[p2p] block %s branch averted: %s", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str(), Verification.Error().what());
 				return false;
 			}
 
@@ -1638,7 +1633,7 @@ namespace Tangent
 			if (Chain.GetBlockHeaderByHash(CandidateHash))
 			{
 				if (Protocol::Now().User.P2P.Logging)
-					VI_INFO("[p2p] on block %s branch confirmed", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str());
+					VI_INFO("[p2p] block %s branch confirmed", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str());
 				return true;
 			}
 
@@ -1650,7 +1645,7 @@ namespace Tangent
 				if (It == Forks.end())
 				{
 					if (Protocol::Now().User.P2P.Logging)
-						VI_WARN("[p2p] on block %s branch averted: fork reverted", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str());
+						VI_WARN("[p2p] block %s branch averted: fork reverted", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str());
 					return false;
 				}
 				ForkTipBlock = It->second;
@@ -1673,7 +1668,7 @@ namespace Tangent
 												<+> = ignore (smaller branch)
 				*/
 				if (Protocol::Now().User.P2P.Logging)
-					VI_WARN("[p2p] on block %s branch averted: not preferred %s (length: %" PRIi64 ")", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str(), BranchLength < 0 ? "branch" : "difficulty", BranchLength);
+					VI_WARN("[p2p] block %s branch averted: not preferred %s (length: %" PRIi64 ")", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str(), BranchLength < 0 ? "branch" : "difficulty", BranchLength);
 				return false;
 			}
 			else if (BranchLength == 0 && TipBlock && TipHash != CandidateHash && CandidateBlock < *TipBlock)
@@ -1684,7 +1679,7 @@ namespace Tangent
 					<+> - <+> - <+> - <+> - <+> - <+> - <+>
 				*/
 				if (Protocol::Now().User.P2P.Logging)
-					VI_WARN("[p2p] on block %s branch averted: not preferred difficulty", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str());
+					VI_WARN("[p2p] block %s branch averted: not preferred difficulty", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str());
 				return false;
 			}
 			else if (!ParentBlock && CandidateBlock.Number > 1)
@@ -1692,7 +1687,7 @@ namespace Tangent
 				if (!From)
 				{
 					if (Protocol::Now().User.P2P.Logging)
-						VI_WARN("[p2p] on block %s branch averted: not preferred candidate", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str());
+						VI_WARN("[p2p] block %s branch averted: not preferred candidate", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str());
 					return false;
 				}
 
@@ -1719,9 +1714,9 @@ namespace Tangent
 					if (Protocol::Now().User.P2P.Logging)
 					{
 						if (Forks.find(CandidateHash) != Forks.end())
-							VI_INFO("[p2p] on block %s new best branch confirmed", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str());
+							VI_INFO("[p2p] block %s new best branch confirmed", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str());
 						else
-							VI_WARN("[p2p] on block %s branch averted: not preferred orpan branch", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str());
+							VI_WARN("[p2p] block %s branch averted: not preferred orpan branch", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str());
 					}
 					return false;
 				}
@@ -1742,19 +1737,16 @@ namespace Tangent
 					Call(From, &ServerNode::FindForkCollision, { Format::Variable(CandidateHash), Format::Variable(TipBlock->Number) });
 				
 				if (Protocol::Now().User.P2P.Logging)
-					VI_INFO("[p2p] on block %s new best branch found (height: %" PRIu64 ", distance: %" PRIu64 ")", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str(), CandidateBlock.Number, std::abs((int64_t)(TipBlock ? TipBlock->Number : 0) - (int64_t)CandidateBlock.Number));
+					VI_INFO("[p2p] block %s new best branch found (height: %" PRIu64 ", distance: %" PRIu64 ")", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str(), CandidateBlock.Number, std::abs((int64_t)(TipBlock ? TipBlock->Number : 0) - (int64_t)CandidateBlock.Number));
 				return true;
 			}
 
-			if (From != nullptr)
+			auto Validation = From ? CandidateBlock.Validate(ParentBlock.Address()) : CandidateBlock.VerifyIntegrity(ParentBlock.Address());
+			if (!Verification)
 			{
-				auto Validation = CandidateBlock.Validate(ParentBlock.Address());
-				if (!Validation)
-				{
-					if (Protocol::Now().User.P2P.Logging)
-						VI_WARN("[p2p] on block %s branch averted: %s", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str(), Validation.Error().what());
-					return false;
-				}
+				if (Protocol::Now().User.P2P.Logging)
+					VI_WARN("[p2p] block %s branch averted: %s", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str(), Verification.Error().what());
+				return false;
 			}
 
 			UMutex<std::recursive_mutex> Unique(Sync.Block);
@@ -1768,13 +1760,13 @@ namespace Tangent
 					if (PendingTip.Hash == CandidateHash)
 					{
 						if (Protocol::Now().User.P2P.Logging)
-							VI_INFO("[p2p] on block %s branch confirmed", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str());
+							VI_INFO("[p2p] block %s branch confirmed", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str());
 						return true;
 					}
 					else if (CandidateBlock < *PendingTip.Block)
 					{
 						if (Protocol::Now().User.P2P.Logging)
-							VI_WARN("[p2p] on block %s branch averted: not preferred priority", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str());
+							VI_WARN("[p2p] block %s branch averted: not preferred priority", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str());
 						return false;
 					}
 				}
@@ -1821,15 +1813,15 @@ namespace Tangent
 			if (!Mutation)
 			{
 				if (Protocol::Now().User.P2P.Logging)
-					VI_WARN("[p2p] on block %s checkpoint failed: %s", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str(), Mutation.Error().what());
+					VI_WARN("[p2p] block %s checkpoint failed: %s", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str(), Mutation.Error().what());
 				return false;
 			}
 
 			if (Protocol::Now().User.P2P.Logging)
 			{
 				if (Mutation->IsFork)
-					VI_INFO("[p2p] on block %s chain rollback (deleted: %" PRIu64 " blocks, resurrected: %" PRIu64 " txns)", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str(), Math64::Abs((int64_t)Mutation->OldTipBlockNumber - (int64_t)Mutation->NewTipBlockNumber), Mutation->Resurrections);
-				VI_INFO("[p2p] on block %s chain %s (height: %" PRIu64 ", sync: %.2f%%, priority: %" PRIu64 ")", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str(), Mutation->IsFork ? "shortened" : "extended", CandidateBlock.Number, 100.0 * GetSyncProgress(ForkTip, CandidateBlock.Number), CandidateBlock.Priority);
+					VI_INFO("[p2p] block %s chain rollback (deleted: %" PRIu64 " blocks, resurrected: %" PRIu64 " txns)", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str(), Math64::Abs((int64_t)Mutation->OldTipBlockNumber - (int64_t)Mutation->NewTipBlockNumber), Mutation->Resurrections);
+				VI_INFO("[p2p] block %s chain %s (height: %" PRIu64 ", sync: %.2f%%, priority: %" PRIu64 ")", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str(), Mutation->IsFork ? "shortened" : "extended", CandidateBlock.Number, 100.0 * GetSyncProgress(ForkTip, CandidateBlock.Number), CandidateBlock.Priority);
 			}
 				
 			if (Events.AcceptBlock)
@@ -1848,39 +1840,56 @@ namespace Tangent
 			if (Transaction.Transaction->AsType() == Transactions::Commitment::AsInstanceType())
 			{
 				std::string_view Purpose = PURPOSE_COMMITMENT;
+				Mempool.ActivationBlock = Optional::None;
 				if (Transaction.Receipt.Successful)
 				{
-					auto Context = Ledger::TransactionContext();
-					auto Work = Context.GetAccountWork(Validator.Wallet.PublicKeyHash);
-					if (Work && Work->Status == Ledger::WorkStatus::Online)
+					if (Protocol::Now().User.P2P.Logging)
 					{
-						Mempool.BlockNumber = Work->GetClosestProposalBlockNumber();
-						if (*Mempool.BlockNumber <= CheckpointBlock.Number)
-							AcceptMempool();
-						else
-							Mempool.BlockNumber = Optional::None;
+						auto Work = Ledger::TransactionContext().GetAccountWork(Validator.Wallet.PublicKeyHash);
+						bool Online = Work && Work->Status == Ledger::WorkStatus::Online;
+						VI_INFO("[p2p] %.*s transaction %s finalized (%s%s%s)",
+							(int)Purpose.size(), Purpose.data(), Algorithm::Encoding::Encode0xHex256(Transaction.Transaction->AsHash()).c_str(),
+							Online ? (Work->IsOnline() ? "online" : "submit again") : "offline", Online ? " after block " : "", Online ? ToString(Work->GetClosestProposalBlockNumber() - 1).c_str() : "");
 					}
-					else
-						Mempool.BlockNumber = Optional::None;
-
-					if (Protocol::Now().User.P2P.Logging)
-						VI_INFO("[p2p] on transaction %s %.*s finalized (%s)", Algorithm::Encoding::Encode0xHex256(Transaction.Transaction->AsHash()).c_str(), (int)Purpose.size(), Purpose.data(), Mempool.BlockNumber ? "ready to propose blocks" : "cannot propose blocks yet");
+					AcceptMempool();
 				}
-				else
-				{
-					Mempool.BlockNumber = Optional::None;
-					if (Protocol::Now().User.P2P.Logging)
-						VI_ERR("[p2p] on transaction %s %.*s error: %s", Algorithm::Encoding::Encode0xHex256(Transaction.Transaction->AsHash()).c_str(), (int)Purpose.size(), Purpose.data(), Transaction.Receipt.GetErrorMessages().Or(String("execution error")).c_str());
-				}
+				else if (Protocol::Now().User.P2P.Logging)
+					VI_ERR("[p2p] %.*s transaction %s error: %s", (int)Purpose.size(), Purpose.data(), Algorithm::Encoding::Encode0xHex256(Transaction.Transaction->AsHash()).c_str(), Transaction.Receipt.GetErrorMessages().Or(String("execution error")).c_str());
 			}
 			else if (Protocol::Now().User.P2P.Logging)
 			{
 				std::string_view Purpose = Transaction.Transaction->AsType() == Transactions::Claim::AsInstanceType() ? PURPOSE_CLAIM : PURPOSE_OTHER;
 				if (Transaction.Receipt.Successful)
-					VI_INFO("[p2p] on transaction %s %.*s finalized", Algorithm::Encoding::Encode0xHex256(Transaction.Transaction->AsHash()).c_str(), (int)Purpose.size(), Purpose.data());
+					VI_INFO("[p2p] %.*s transaction %s finalized", (int)Purpose.size(), Purpose.data(), Algorithm::Encoding::Encode0xHex256(Transaction.Transaction->AsHash()).c_str());
 				else
-					VI_ERR("[p2p] on transaction %s %.*s error: %s", Algorithm::Encoding::Encode0xHex256(Transaction.Transaction->AsHash()).c_str(), (int)Purpose.size(), Purpose.data(), Transaction.Receipt.GetErrorMessages().Or(String("execution error")).c_str());
+					VI_ERR("[p2p] %.*s transaction %s error: %s", (int)Purpose.size(), Purpose.data(), Algorithm::Encoding::Encode0xHex256(Transaction.Transaction->AsHash()).c_str(), Transaction.Receipt.GetErrorMessages().Or(String("execution error")).c_str());
 			}
+			return true;
+		}
+		bool ServerNode::AcceptMessage(const Algorithm::Pubkey SealingPublicKey, const std::string_view& Plaintext)
+		{
+			if (memcmp(SealingPublicKey, Validator.Wallet.SealingPublicKey, sizeof(Algorithm::Pubkey)) != 0)
+			{
+				auto Message = Validator.Wallet.SealMessage(Plaintext, SealingPublicKey);
+				if (!Message)
+					return false;
+
+				Multicall(nullptr, &ServerNode::ProposeMessage, { Format::Variable(*Message) });
+				if (Protocol::Now().User.P2P.Logging)
+					VI_INFO("[p2p] message from %s as plaintext:\nout>  %.*s", Validator.Wallet.GetAddress().c_str(), (int)Plaintext.size(), Plaintext.data());
+
+				if (Events.AcceptMessage)
+					Events.AcceptMessage(Plaintext, -1);
+			}
+			else
+			{
+				if (Protocol::Now().User.P2P.Logging)
+					VI_INFO("[p2p] message to %s as plaintext:\nin>  %.*s", Validator.Wallet.GetAddress().c_str(), (int)Plaintext.size(), Plaintext.data());
+
+				if (Events.AcceptMessage)
+					Events.AcceptMessage(Plaintext, 1);
+			}
+
 			return true;
 		}
 		bool ServerNode::Accept(Option<SocketAddress>&& Address)
@@ -1890,7 +1899,7 @@ namespace Tangent
 
 			return Address ? ConnectOutboundNode(*Address) : ReceiveOutboundNode(Optional::None);
 		}
-		ExpectsLR<void> ServerNode::ProposeTransaction(Relay* From, UPtr<Ledger::Transaction>&& CandidateTx, uint64_t AccountSequence, const std::string_view& Purpose)
+		ExpectsLR<void> ServerNode::ProposeTransaction(Relay* From, UPtr<Ledger::Transaction>&& CandidateTx, uint64_t AccountSequence, const std::string_view& Purpose, uint256_t* OutputHash)
 		{
 			auto Mempool = Storages::Mempoolstate(__func__);
 			auto Bandwidth = Mempool.GetBandwidthByOwner(Validator.Wallet.PublicKeyHash, CandidateTx->GetType());
@@ -1904,18 +1913,21 @@ namespace Tangent
 
 			if (CandidateTx->Sign(Validator.Wallet.PrivateKey, AccountSequence, Decimal::Zero()))
 			{
+				if (OutputHash != nullptr)
+					*OutputHash = CandidateTx->AsHash();
+
 				auto Status = AcceptTransaction(From, std::move(CandidateTx), AccountSequence);
 				if (Protocol::Now().User.P2P.Logging && !Status)
-					VI_ERR("[p2p] on transaction %s %.*s error: %s", Algorithm::Encoding::Encode0xHex256(CandidateTx->AsHash()).c_str(), (int)Purpose.size(), Purpose.data(), Status.Error().what());
+					VI_ERR("[p2p] %.*s transaction %s error: %s", (int)Purpose.size(), Purpose.data(), Algorithm::Encoding::Encode0xHex256(CandidateTx->AsHash()).c_str(), Status.Error().what());
 				else if (Protocol::Now().User.P2P.Logging)
-					VI_INFO("[p2p] on transaction %s %.*s accepted", Algorithm::Encoding::Encode0xHex256(CandidateTx->AsHash()).c_str(), (int)Purpose.size(), Purpose.data());
+					VI_INFO("[p2p] %.*s transaction %s accepted", (int)Purpose.size(), Purpose.data(), Algorithm::Encoding::Encode0xHex256(CandidateTx->AsHash()).c_str());
 				return Status;
 			}
 			else
 			{
 				auto Status = LayerException("transaction sign failed");
 				if (Protocol::Now().User.P2P.Logging)
-					VI_ERR("[p2p] on transaction %s %.*s error: %s", Algorithm::Encoding::Encode0xHex256(CandidateTx->AsHash()).c_str(), (int)Purpose.size(), Purpose.data(), Status.what());
+					VI_ERR("[p2p] %.*s transaction %s error: %s", (int)Purpose.size(), Purpose.data(), Algorithm::Encoding::Encode0xHex256(CandidateTx->AsHash()).c_str(), Status.what());
 				return Status;
 			}
 		}
@@ -1926,7 +1938,7 @@ namespace Tangent
 			if (Chain.GetTransactionByHash(CandidateHash))
 			{
 				if (Protocol::Now().User.P2P.Logging)
-					VI_INFO("[p2p] on transaction %s confirmed", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str());
+					VI_INFO("[p2p] transaction %s confirmed", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str());
 				return Expectation::Met;
 			}
 
@@ -1934,7 +1946,7 @@ namespace Tangent
 			if (!CandidateTx->Recover(Owner))
 			{
 				if (Protocol::Now().User.P2P.Logging)
-					VI_WARN("[p2p] on transaction %s prevalidation failed: invalid signature", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str());
+					VI_WARN("[p2p] transaction %s prevalidation failed: invalid signature", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str());
 				return LayerException("signature key recovery failed");
 			}
 
@@ -1943,7 +1955,7 @@ namespace Tangent
 			if (!Prevalidation)
 			{
 				if (Protocol::Now().User.P2P.Logging)
-					VI_WARN("[p2p] on transaction %s prevalidation failed: %s", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str(), Prevalidation.Error().what());
+					VI_WARN("[p2p] transaction %s prevalidation failed: %s", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str(), Prevalidation.Error().what());
 				return Prevalidation.Error();
 			}
 
@@ -1961,7 +1973,7 @@ namespace Tangent
 				if (!Validation)
 				{
 					if (Protocol::Now().User.P2P.Logging)
-						VI_WARN("[p2p] on transaction %s event skip: %s", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str(), Validation.Error().what());
+						VI_WARN("[p2p] transaction %s event skip: %s", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str(), Validation.Error().what());
 					return Validation.Error();
 				}
 			}
@@ -1976,18 +1988,18 @@ namespace Tangent
 			if (!Status)
 			{
 				if (Protocol::Now().User.P2P.Logging)
-					VI_WARN("[p2p] on transaction %s mempool rejection: %s", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str(), Status.Error().what());
+					VI_WARN("[p2p] transaction %s mempool rejection: %s", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str(), Status.Error().what());
 				return Status.Error();
 			}
 
 			if (Protocol::Now().User.P2P.Logging)
-				VI_INFO("[p2p] on transaction %s accepted", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str());
+				VI_INFO("[p2p] transaction %s accepted", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str());
 
 			if (Events.AcceptTransaction)
 				Events.AcceptTransaction(CandidateHash, *CandidateTx, Owner);
 
 			if (From != nullptr)
-				Multicall(From, &ServerNode::ProposeTransactionHash, { Format::Variable(CandidateTx->AsHash()) });
+				Multicall(From, &ServerNode::ProposeTransactionHash, { Format::Variable(CandidateHash) });
 			else
 				Multicall(From, &ServerNode::ProposeTransaction, { Format::Variable(CandidateTx->AsMessage().Data) });
 
@@ -2121,6 +2133,11 @@ namespace Tangent
 			for (auto& Node : Nodes)
 				Size += Node.second->TypeOf() == Type ? 1 : 0;
 			return Size;
+		}
+		size_t ServerNode::GetConnections()
+		{
+			UMutex<std::recursive_mutex> Unique(Exclusive);
+			return Nodes.size();
 		}
 		int32_t ServerNode::ConnectOutboundNode(const SocketAddress& Address)
 		{

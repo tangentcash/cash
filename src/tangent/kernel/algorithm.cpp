@@ -240,6 +240,10 @@ namespace Tangent
 			Pubkeyhash PublicKeyHash;
 			return DecodeAddress(Address, PublicKeyHash);
 		}
+		bool Signing::VerifySealedMessage(const std::string_view& Ciphertext)
+		{
+			return Ciphertext.size() > crypto_box_SEALBYTES;
+		}
 		bool Signing::DerivePrivateKey(const std::string_view& Mnemonic, Seckey PrivateKey)
 		{
 			uint8_t Seed[64] = { 0 };
@@ -406,7 +410,7 @@ namespace Tangent
 				return false;
 			else if (Version != (int)Account.PublicKeyVersion)
 				return false;
-			else if (DecodedSize != sizeof(uint256_t))
+			else if (DecodedSize != sizeof(Pubkey))
 				return false;
 
 			memcpy(PublicKey, Decoded, sizeof(Pubkey));
@@ -500,7 +504,7 @@ namespace Tangent
 				return false;
 			else if (Version != (int)Account.SealingPublicKeyVersion)
 				return false;
-			else if (DecodedSize != sizeof(uint256_t))
+			else if (DecodedSize != sizeof(Pubkey))
 				return false;
 
 			memcpy(SealingPublicKey, Decoded, sizeof(Pubkey));

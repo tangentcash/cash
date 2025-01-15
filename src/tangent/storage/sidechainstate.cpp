@@ -530,7 +530,7 @@ namespace Tangent
 			Message.WriteTypeless(Index);
 			return Message.Data;
 		}
-		bool Sidechainstate::Verify()
+		bool Sidechainstate::ReconstructStorage()
 		{
 			const uint32_t MaxECacheCapacity = Protocol::Now().User.Oracle.CacheExtendedSize;
 			const uint32_t MaxSCacheCapacity = Protocol::Now().User.Oracle.CacheShortSize;

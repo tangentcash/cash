@@ -2,6 +2,9 @@
 #define TAN_KERNEL_CHAIN_H
 #define TAN_CONFIG_PATH "./node.json"
 #define TAN_VECTORSTATE_PATH "./vectorstate.bsk"
+#define TAN_STATELOG_PATH "./logs/state.log"
+#define TAN_MESSAGELOG_PATH "./logs/message.log"
+#define TAN_DATALOG_PATH "./logs/data.log"
 #include <vitex/compute.h>
 #include <vitex/layer.h>
 #include <vitex/scripting.h>
@@ -108,6 +111,16 @@ namespace Tangent
         static Protocol* Instance;
 
     public:
+        struct Logger
+        {
+            std::recursive_mutex Mutex;
+            UPtr<Stream> Resource;
+            int64_t RepackTime = 0;
+
+            void Output(const std::string_view& Message);
+        };
+
+    public:
         struct UserDynamicConfig
         {
             struct
@@ -118,7 +131,8 @@ namespace Tangent
                 uint64_t CursorSize = 2048;
                 uint32_t MaxInboundConnections = 32;
                 uint32_t MaxOutboundConnections = 8;
-                double BestBlockConsensus = 0.25;
+                uint32_t InventorySize = 8192;
+                uint32_t InventoryTimeout = 300;
                 bool Proposer = false;
                 bool Server = true;
                 bool Logging = true;
@@ -141,6 +155,7 @@ namespace Tangent
                 String UserPassword;
                 uint64_t CursorSize = 512;
                 uint64_t PageSize = 64;
+                bool Messaging = true;
                 bool WebSockets = false;
                 bool Server = false;
                 bool Logging = true;
@@ -178,6 +193,14 @@ namespace Tangent
                 bool Observer = false;
                 bool Logging = true;
             } Oracle;
+            struct
+            {
+                String State = TAN_STATELOG_PATH;
+                String Message;// = TAN_MESSAGELOG_PATH;
+                String Data;// = TAN_DATALOG_PATH;
+                uint64_t ArchiveSize = 8 * 1024 * 1024;
+                uint64_t ArchiveRepackInterval = 1800;
+            } Logs;
             UnorderedSet<String> Seeds;
             UnorderedSet<String> Seeders;
             NetworkType Network = NetworkType::Mainnet;
@@ -234,6 +257,12 @@ namespace Tangent
         } Policy;
 
     private:
+        struct
+        {
+            Logger State;
+            Logger Message;
+            Logger Data;
+        } Logs;
         String Path;
 
     public:
@@ -245,8 +274,12 @@ namespace Tangent
         Protocol(const std::string_view& Path = TAN_CONFIG_PATH);
         virtual ~Protocol();
         bool Is(NetworkType Type) const;
+        Logger& StateLog();
+        Logger& MessageLog();
+        Logger& DataLog();
 
     public:
+        static bool Bound();
         static Protocol& Change();
         static const Protocol& Now();
     };

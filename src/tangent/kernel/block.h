@@ -137,7 +137,7 @@ namespace Tangent
 			virtual bool operator!=(const BlockHeader& Other) const;
 			virtual ExpectsLR<BlockDispatch> DispatchSync(const Wallet& Proposer) const;
 			virtual ExpectsPromiseLR<BlockDispatch> DispatchAsync(const Wallet& Proposer) const;
-			virtual ExpectsLR<void> Verify(const BlockHeader* ParentBlock) const;
+			virtual ExpectsLR<void> VerifyValidity(const BlockHeader* ParentBlock) const;
 			virtual bool StorePayloadWesolowski(Format::Stream* Stream) const;
 			virtual bool LoadPayloadWesolowski(Format::Stream& Stream);
 			virtual bool StorePayload(Format::Stream* Stream) const override;
@@ -178,10 +178,10 @@ namespace Tangent
 			virtual ~Block() override = default;
 			Block& operator=(const Block&) = default;
 			Block& operator=(Block&&) = default;
-			ExpectsLR<void> Evaluate(const BlockHeader* ParentBlock, EvaluationContext* Environment, String* Errors);
-			ExpectsLR<void> Validate(const BlockHeader* ParentBlock) const;
-			ExpectsLR<void> Verify(const BlockHeader* ParentBlock) const override;
-			ExpectsLR<BlockCheckpoint> Checkpoint() const;
+			ExpectsLR<void> Evaluate(const BlockHeader* ParentBlock, EvaluationContext* Environment, String* Errors = nullptr);
+			ExpectsLR<void> Validate(const BlockHeader* ParentBlock);
+			ExpectsLR<void> VerifyIntegrity(const BlockHeader* ParentBlock) const;
+			ExpectsLR<BlockCheckpoint> Checkpoint(bool KeepRevertedTransactions = true) const;
 			bool StorePayload(Format::Stream* Stream) const override;
 			bool LoadPayload(Format::Stream& Stream) override;
 			bool StoreHeaderPayload(Format::Stream* Stream) const;
@@ -384,9 +384,11 @@ namespace Tangent
 
 			Option<uint64_t> Priority(const Algorithm::Pubkeyhash PublicKeyHash, const Algorithm::Seckey PrivateKey, Option<BlockHeader*>&& ParentBlock = Optional::None);
 			size_t Apply(Vector<UPtr<Transaction>>&& Candidates);
-			ExpectsLR<Block> Evaluate(String* Errors);
+			TransactionInfo& Include(UPtr<Transaction>&& Candidate);
+			ExpectsLR<Block> Evaluate(String* Errors = nullptr);
 			ExpectsLR<void> Solve(Block& Candidate);
 			ExpectsLR<void> Verify(const Block& Candidate);
+			ExpectsLR<void> Precompute(Block& Candidate);
 			ExpectsLR<void> Cleanup();
 
 		private:

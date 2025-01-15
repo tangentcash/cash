@@ -19,6 +19,14 @@ namespace Tangent
 			return Options;
 		}
 #endif
+		static LDB::SessionId ResolveTransactionSession(LDB::Connection* Storage, UPtr<PermanentStorage::MultiSessionId>& Transaction)
+		{
+			if (!Transaction || Transaction->empty())
+				return nullptr;
+
+			auto It = Transaction->find(Storage);
+			return It != Transaction->end() ? It->second : nullptr;
+		}
 		static thread_local std::atomic<uint64_t> ThreadQueries = 0;
 		uint64_t StorageUtil::GetThreadQueries()
 		{
@@ -30,8 +38,11 @@ namespace Tangent
 			if (Storage)
 				Protocol::Change().Database.UnloadIndex(std::move(Storage));
 		}
-		LDB::ExpectsDB<LDB::SessionId> MutableStorage::TxBegin(const std::string_view& Label, const std::string_view& Operation, LDB::Isolation Type)
+		LDB::ExpectsDB<void> MutableStorage::TxBegin(const std::string_view& Label, const std::string_view& Operation, LDB::Isolation Type)
 		{
+			if (Transaction != nullptr)
+				return LDB::DatabaseException("rollback or commit current transaction");
+
 			VI_ASSERT(Storage, "storage connection not initialized (transaction begin)");
 			auto Cursor = Storage->TxBegin(Type);
 #ifdef _DEBUG
@@ -40,36 +51,45 @@ namespace Tangent
 				VI_ERR("[indexdb] operation %.*s::%.*s error (transaction begin): %s", (int)Label.size(), Label.data(), (int)Operation.size(), Operation.data(), Error.c_str());
 #endif
 			++Queries; ++ThreadQueries;
-			return Cursor;
+			Transaction = *Cursor;
+			return Expectation::Met;
 		}
-		LDB::ExpectsDB<void> MutableStorage::TxCommit(const std::string_view& Label, const std::string_view& Operation, LDB::SessionId Session)
+		LDB::ExpectsDB<void> MutableStorage::TxCommit(const std::string_view& Label, const std::string_view& Operation)
 		{
+			if (!Transaction)
+				return LDB::DatabaseException("current transaction not found");
+
 			VI_ASSERT(Storage, "storage connection not initialized (transaction commit)");
-			auto Cursor = Storage->TxCommit(Session);
+			auto Cursor = Storage->TxCommit(Transaction);
 #ifdef _DEBUG
 			String Error = ErrorOf(Cursor);
 			if (!Error.empty() && Protocol::Now().User.Storage.Logging)
 				VI_ERR("[indexdb] operation %.*s::%.*s error (transaction commit): %s", (int)Label.size(), Label.data(), (int)Operation.size(), Operation.data(), Error.c_str());
 #endif
 			++Queries; ++ThreadQueries;
+			Transaction = nullptr;
 			return Cursor;
 		}
-		LDB::ExpectsDB<void> MutableStorage::TxRollback(const std::string_view& Label, const std::string_view& Operation, LDB::SessionId Session)
+		LDB::ExpectsDB<void> MutableStorage::TxRollback(const std::string_view& Label, const std::string_view& Operation)
 		{
+			if (!Transaction)
+				return LDB::DatabaseException("current transaction not found");
+
 			VI_ASSERT(Storage, "storage connection not initialized (transaction rollback)");
-			auto Cursor = Storage->TxRollback(Session);
+			auto Cursor = Storage->TxRollback(Transaction);
 #ifdef _DEBUG
 			String Error = ErrorOf(Cursor);
 			if (!Error.empty() && Protocol::Now().User.Storage.Logging)
 				VI_ERR("[indexdb] operation %.*s::%.*s error (transaction rollback): %s", (int)Label.size(), Label.data(), (int)Operation.size(), Operation.data(), Error.c_str());
 #endif
 			++Queries; ++ThreadQueries;
+			Transaction = nullptr;
 			return Cursor;
 		}
-		LDB::ExpectsDB<LDB::Cursor> MutableStorage::Query(const std::string_view& Label, const std::string_view& Operation, const std::string_view& Command, size_t QueryOps, LDB::SessionId Session)
+		LDB::ExpectsDB<LDB::Cursor> MutableStorage::Query(const std::string_view& Label, const std::string_view& Operation, const std::string_view& Command, size_t QueryOps)
 		{
 			VI_ASSERT(Storage, "storage connection not initialized (operation: %.*s::%.*s)", (int)Label.size(), Label.data(), (int)Operation.size(), Operation.data());
-			auto Cursor = Storage->Query(Command, QueryOps, Session);
+			auto Cursor = Storage->Query(Command, QueryOps, Transaction);
 #ifdef _DEBUG
 			String Error = ErrorOf(Cursor);
 			if (!Error.empty() && Protocol::Now().User.Storage.Logging)
@@ -78,10 +98,10 @@ namespace Tangent
 			++Queries; ++ThreadQueries;
 			return Cursor;
 		}
-		LDB::ExpectsDB<LDB::Cursor> MutableStorage::EmplaceQuery(const std::string_view& Label, const std::string_view& Operation, const std::string_view& Command, SchemaList* Map, size_t QueryOps, LDB::SessionId Session)
+		LDB::ExpectsDB<LDB::Cursor> MutableStorage::EmplaceQuery(const std::string_view& Label, const std::string_view& Operation, const std::string_view& Command, SchemaList* Map, size_t QueryOps)
 		{
 			VI_ASSERT(Storage, "storage connection not initialized (operation: %.*s::%.*s)", (int)Label.size(), Label.data(), (int)Operation.size(), Operation.data());
-			auto Cursor = Storage->EmplaceQuery(Command, Map, QueryOps, Session);
+			auto Cursor = Storage->EmplaceQuery(Command, Map, QueryOps, Transaction);
 #ifdef _DEBUG
 			String Error = ErrorOf(Cursor);
 			if (!Error.empty() && Protocol::Now().User.Storage.Logging)
@@ -132,15 +152,11 @@ namespace Tangent
 			{
 				size_t LastQueries = Queries;
 				Storage = Intermediate;
-				VI_PANIC(Verify(), "storage verification error (path = %.*s)", (int)Path.size(), Path.data());
+				VI_PANIC(ReconstructStorage(), "storage verification error (path = %.*s)", (int)Path.size(), Path.data());
 				Storage.Reset();
 				Queries = LastQueries;
 			});
 			VI_PANIC(Storage, "storage connection error (path = %.*s)", (int)Path.size(), Path.data());
-		}
-		MutableStorage::operator bool() const
-		{
-			return !!Storage;
 		}
 		bool MutableStorage::QueryUsed() const
 		{
@@ -151,26 +167,22 @@ namespace Tangent
 			return Queries;
 		}
 
-		PermanentStorage::~PermanentStorage()
+		LDB::ExpectsDB<void> PermanentStorage::MultiTxBegin(const std::string_view& Label, const std::string_view& Operation, LDB::Isolation Type)
 		{
+			if (Transaction)
+				return LDB::DatabaseException("rollback or commit current transaction");
+
+			auto Index = GetIndexStorages();
+			Transaction = Memory::New<MultiSessionId>();
+			Transaction->reserve(Index.size());
 			for (auto& Storage : Index)
-			{
-				if (Storage.second)
-					Protocol::Change().Database.UnloadIndex(std::move(Storage.second));
-			}
-		}
-		LDB::ExpectsDB<PermanentStorage::MultiSessionId> PermanentStorage::MultiTxBegin(const std::string_view& Label, const std::string_view& Operation, LDB::Isolation Type)
-		{
-			MultiSessionId Session;
-			Session.reserve(Index.size());
-			for (auto& Storage : Index)
-				Session[*Storage.second] = nullptr;
+				(**Transaction)[Storage] = nullptr;
 
 			std::mutex Mutex;
 			LDB::ExpectsDB<void> Status = Expectation::Met;
-			Parallel::WailAll(ParallelForEachNode(Index.begin(), Index.end(), Index.size(), [&](std::pair<const String, UPtr<LDB::Connection>>& Storage)
+			Parallel::WailAll(ParallelForEachNode(Index.begin(), Index.end(), Index.size(), [&](LDB::Connection* Storage)
 			{
-				auto Result = TxBegin(*Storage.second, Label, Operation, Type);
+				auto Result = TxBegin(Storage, Label, Operation, Type);
 				if (!Result)
 				{
 					UMutex<std::mutex> Unique(Mutex);
@@ -180,23 +192,26 @@ namespace Tangent
 						Status = std::move(Result.Error());
 				}
 				else
-					Session[*Storage.second] = *Result;
+					(**Transaction)[Storage] = *Result;
 			}));
 			if (Status)
-				return Session;
+				return Expectation::Met;
 
-			for (auto& Substorage : Session)
+			for (auto& Substorage : **Transaction)
 			{
 				if (Substorage.second != nullptr)
 					TxRollback(Substorage.first, Label, Operation, Substorage.second);
 			}
 			return Status.Error();
 		}
-		LDB::ExpectsDB<void> PermanentStorage::MultiTxCommit(const std::string_view& Label, const std::string_view& Operation, const MultiSessionId& Session)
+		LDB::ExpectsDB<void> PermanentStorage::MultiTxCommit(const std::string_view& Label, const std::string_view& Operation)
 		{
+			if (!Transaction)
+				return LDB::DatabaseException("current transaction not found");
+
 			std::mutex Mutex;
 			LDB::ExpectsDB<void> Status = Expectation::Met;
-			Parallel::WailAll(ParallelForEachNode(Session.begin(), Session.end(), Session.size(), [&](const std::pair<LDB::Connection* const, LDB::SessionId>& Storage)
+			Parallel::WailAll(ParallelForEachNode(Transaction->begin(), Transaction->end(), Transaction->size(), [&](const std::pair<LDB::Connection* const, LDB::SessionId>& Storage)
 			{
 				auto Result = TxCommit(Storage.first, Label, Operation, Storage.second);
 				if (Result)
@@ -208,13 +223,17 @@ namespace Tangent
 				else
 					Status = std::move(Result.Error());
 			}));
+			Transaction.Destroy();
 			return Status;
 		}
-		LDB::ExpectsDB<void> PermanentStorage::MultiTxRollback(const std::string_view& Label, const std::string_view& Operation, const MultiSessionId& Session)
+		LDB::ExpectsDB<void> PermanentStorage::MultiTxRollback(const std::string_view& Label, const std::string_view& Operation)
 		{
+			if (!Transaction)
+				return LDB::DatabaseException("current transaction not found");
+
 			std::mutex Mutex;
 			LDB::ExpectsDB<void> Status = Expectation::Met;
-			Parallel::WailAll(ParallelForEachNode(Session.begin(), Session.end(), Session.size(), [&](const std::pair<LDB::Connection* const, LDB::SessionId>& Storage)
+			Parallel::WailAll(ParallelForEachNode(Transaction->begin(), Transaction->end(), Transaction->size(), [&](const std::pair<LDB::Connection* const, LDB::SessionId>& Storage)
 			{
 				auto Result = TxRollback(Storage.first, Label, Operation, Storage.second);
 				if (Result)
@@ -226,6 +245,7 @@ namespace Tangent
 				else
 					Status = std::move(Result.Error());
 			}));
+			Transaction.Destroy();
 			return Status;
 		}
 		LDB::ExpectsDB<LDB::SessionId> PermanentStorage::TxBegin(LDB::Connection* Storage, const std::string_view& Label, const std::string_view& Operation, LDB::Isolation Type)
@@ -264,10 +284,10 @@ namespace Tangent
 			++Queries; ++ThreadQueries;
 			return Cursor;
 		}
-		LDB::ExpectsDB<LDB::Cursor> PermanentStorage::Query(LDB::Connection* Storage, const std::string_view& Label, const std::string_view& Operation, const std::string_view& Command, size_t QueryOps, LDB::SessionId Session)
+		LDB::ExpectsDB<LDB::Cursor> PermanentStorage::Query(LDB::Connection* Storage, const std::string_view& Label, const std::string_view& Operation, const std::string_view& Command, size_t QueryOps)
 		{
 			VI_ASSERT(Storage, "storage connection not initialized (operation: %.*s::%.*s)", (int)Label.size(), Label.data(), (int)Operation.size(), Operation.data());
-			auto Cursor = Storage->Query(Command, QueryOps, Session);
+			auto Cursor = Storage->Query(Command, QueryOps, ResolveTransactionSession(Storage, Transaction));
 #ifdef _DEBUG
 			String Error = ErrorOf(Cursor);
 			if (!Error.empty() && Protocol::Now().User.Storage.Logging)
@@ -276,10 +296,10 @@ namespace Tangent
 			++Queries; ++ThreadQueries;
 			return Cursor;
 		}
-		LDB::ExpectsDB<LDB::Cursor> PermanentStorage::EmplaceQuery(LDB::Connection* Storage, const std::string_view& Label, const std::string_view& Operation, const std::string_view& Command, SchemaList* Map, size_t QueryOps, LDB::SessionId Session)
+		LDB::ExpectsDB<LDB::Cursor> PermanentStorage::EmplaceQuery(LDB::Connection* Storage, const std::string_view& Label, const std::string_view& Operation, const std::string_view& Command, SchemaList* Map, size_t QueryOps)
 		{
 			VI_ASSERT(Storage, "storage connection not initialized (operation: %.*s::%.*s)", (int)Label.size(), Label.data(), (int)Operation.size(), Operation.data());
-			auto Cursor = Storage->EmplaceQuery(Command, Map, QueryOps, Session);
+			auto Cursor = Storage->EmplaceQuery(Command, Map, QueryOps, ResolveTransactionSession(Storage, Transaction));
 #ifdef _DEBUG
 			String Error = ErrorOf(Cursor);
 			if (!Error.empty() && Protocol::Now().User.Storage.Logging)
@@ -291,7 +311,7 @@ namespace Tangent
 		LDB::ExpectsDB<LDB::Cursor> PermanentStorage::PreparedQuery(LDB::Connection* Storage, const std::string_view& Label, const std::string_view& Operation, LDB::TStatement* Statement)
 		{
 			VI_ASSERT(Storage, "storage connection not initialized (operation: %.*s::%.*s)", (int)Label.size(), Label.data(), (int)Operation.size(), Operation.data());
-			auto Cursor = Storage->PreparedQuery(Statement);
+			auto Cursor = Storage->PreparedQuery(Statement, ResolveTransactionSession(Storage, Transaction));
 #ifdef _DEBUG
 			String Error = ErrorOf(Cursor);
 			if (!Error.empty() && Protocol::Now().User.Storage.Logging)
@@ -340,6 +360,26 @@ namespace Tangent
 			return LDB::DatabaseException("blob db not supported");
 #endif
 		}
+		LDB::ExpectsDB<void> PermanentStorage::Clear(const std::string_view& Label, const std::string_view& Operation, const std::string_view& TableIds)
+		{
+#ifdef TAN_ROCKSDB
+			VI_ASSERT(Blob, "storage connection not initialized (operation: %.*s::%.*s)", (int)Label.size(), Label.data(), (int)Operation.size(), Operation.data());
+			auto& Read = GetBlobReadOptions();
+			auto& Write = GetBlobWriteOptions();
+			auto It = Blob->NewIterator(Read);
+			It->SeekToFirst();
+			while (It->Valid())
+			{
+				if (TableIds.find(*It->key().data()))
+					Blob->Delete(Write, It->key());
+				It->Next();
+			}
+			delete It;
+			return Expectation::Met;
+#else
+			return LDB::DatabaseException("blob db not supported");
+#endif
+		}
 		String PermanentStorage::ErrorOf(LDB::ExpectsDB<LDB::SessionId>& Cursor)
 		{
 			String Error;
@@ -376,16 +416,16 @@ namespace Tangent
 				Error = Cursor.What();
 			return Error;
 		}
-		void PermanentStorage::IndexStorageOf(const std::string_view& Path, const std::string_view& Name)
+		UPtr<LDB::Connection> PermanentStorage::IndexStorageOf(const std::string_view& Path, const std::string_view& Name)
 		{
-			auto& Storage = Index[String(Name)];
-			Storage = Protocol::Change().Database.LoadIndex(String(Path) + "." + String(Name), [this, &Path, &Name](LDB::Connection* Intermediate)
+			UPtr<LDB::Connection> Storage = Protocol::Change().Database.LoadIndex(String(Path) + "." + String(Name), [this, &Path, &Name](LDB::Connection* Intermediate)
 			{
 				size_t LastQueries = Queries;
-				VI_PANIC(Verify(Intermediate, Name), "storage verification error (path = %.*s)", (int)Path.size(), Path.data());
+				VI_PANIC(ReconstructIndexStorage(Intermediate, Name), "storage verification error (path = %.*s)", (int)Path.size(), Path.data());
 				Queries = LastQueries;
 			});
 			VI_PANIC(Storage, "index storage connection error (path = %.*s)", (int)Path.size(), Path.data());
+			return Storage;
 		}
 		void PermanentStorage::BlobStorageOf(const std::string_view& Path)
 		{
@@ -399,18 +439,12 @@ namespace Tangent
 			if (Protocol::Now().User.FlushThreadsRatio > 0.0)
 				Options.env->SetBackgroundThreads((int)std::max(std::ceil(Threads * Protocol::Now().User.FlushThreadsRatio), 1.0), rocksdb::Env::Priority::HIGH);
 		}
-		PermanentStorage::operator bool() const
+		void PermanentStorage::UnloadIndexOf(UPtr<LDB::Connection>&& Storage, bool Borrows)
 		{
-			if (!Blob)
-				return false;
-
-			for (auto& Storage : Index)
-			{
-				if (!Storage.second)
-					return false;
-			}
-
-			return true;
+			if (Borrows)
+				Storage.Reset();
+			else if (Storage)
+				Protocol::Change().Database.UnloadIndex(std::move(Storage));
 		}
 		bool PermanentStorage::QueryUsed() const
 		{

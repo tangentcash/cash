@@ -7,6 +7,11 @@ namespace Tangent
 {
 	namespace Storages
 	{
+		enum
+		{
+			LOAD_RATE = 512
+		};
+
 		enum class PositionCondition
 		{
 			Greater,
@@ -15,6 +20,13 @@ namespace Tangent
 			NotEqual,
 			Less,
 			LessEqual
+		};
+
+		enum class BlockDetails
+		{
+			Transactions = 1 << 0,
+			BlockTransactions = 1 << 1,
+			States = 1 << 2
 		};
 
 		enum class Pruning
@@ -115,13 +127,13 @@ namespace Tangent
 			};
 
 		private:
-			LDB::Connection* Blockdata;
-			LDB::Connection* Accountdata;
-			LDB::Connection* Txdata;
-			LDB::Connection* Partydata;
-			LDB::Connection* Aliasdata;
-			LDB::Connection* Uniformdata;
-			LDB::Connection* Multiformdata;
+			UPtr<LDB::Connection> Blockdata;
+			UPtr<LDB::Connection> Accountdata;
+			UPtr<LDB::Connection> Txdata;
+			UPtr<LDB::Connection> Partydata;
+			UPtr<LDB::Connection> Aliasdata;
+			UPtr<LDB::Connection> Uniformdata;
+			UPtr<LDB::Connection> Multiformdata;
 			std::string_view Label;
 			bool Borrows;
 
@@ -138,9 +150,9 @@ namespace Tangent
 			ExpectsLR<uint256_t> GetBlockHashByNumber(uint64_t BlockNumber);
 			ExpectsLR<Decimal> GetBlockGasPrice(uint64_t BlockNumber, const Algorithm::AssetId& Asset, double Percentile);
 			ExpectsLR<Decimal> GetBlockAssetPrice(uint64_t BlockNumber, const Algorithm::AssetId& PriceOf, const Algorithm::AssetId& RelativeTo, double Percentile);
-			ExpectsLR<Ledger::Block> GetBlockByNumber(uint64_t BlockNumber, size_t LoadRate = 512);
-			ExpectsLR<Ledger::Block> GetBlockByHash(const uint256_t& BlockHash, size_t LoadRate = 512);
-			ExpectsLR<Ledger::Block> GetLatestBlock(size_t LoadRate = 512);
+			ExpectsLR<Ledger::Block> GetBlockByNumber(uint64_t BlockNumber, size_t Chunk = LOAD_RATE, uint32_t Details = (uint32_t)BlockDetails::Transactions | (uint32_t)BlockDetails::BlockTransactions | (uint32_t)BlockDetails::States);
+			ExpectsLR<Ledger::Block> GetBlockByHash(const uint256_t& BlockHash, size_t Chunk = LOAD_RATE, uint32_t Details = (uint32_t)BlockDetails::Transactions | (uint32_t)BlockDetails::BlockTransactions | (uint32_t)BlockDetails::States);
+			ExpectsLR<Ledger::Block> GetLatestBlock(size_t Chunk = LOAD_RATE, uint32_t Details = (uint32_t)BlockDetails::Transactions | (uint32_t)BlockDetails::BlockTransactions | (uint32_t)BlockDetails::States);
 			ExpectsLR<Ledger::BlockHeader> GetBlockHeaderByNumber(uint64_t BlockNumber);
 			ExpectsLR<Ledger::BlockHeader> GetBlockHeaderByHash(const uint256_t& BlockHash);
 			ExpectsLR<Ledger::BlockHeader> GetLatestBlockHeader();
@@ -174,14 +186,15 @@ namespace Tangent
 			ExpectsLR<size_t> GetMultiformsCountByRowFilter(const std::string_view& Row, const FactorFilter& Filter, uint64_t BlockNumber);
 
 		private:
-			ExpectsLR<size_t> ResolveBlockTransactions(Ledger::Block& Value, size_t Offset, size_t Count);
+			ExpectsLR<size_t> ResolveBlockTransactions(Ledger::Block& Value, bool Fully, size_t Offset, size_t Count);
 			ExpectsLR<size_t> ResolveBlockStatetrie(Ledger::Block& Value, size_t Offset, size_t Count);
 			ExpectsLR<UniformLocation> ResolveUniformLocation(const std::string_view& Index, bool Latest);
 			ExpectsLR<MultiformLocation> ResolveMultiformLocation(const Option<std::string_view>& Column, const Option<std::string_view>& Row, bool Latest);
 			ExpectsLR<uint64_t> ResolveAccountLocation(const Algorithm::Pubkeyhash Account);
 
 		protected:
-			bool Verify(LDB::Connection* Storage, const std::string_view& Name) override;
+			Vector<LDB::Connection*> GetIndexStorages() override;
+			bool ReconstructIndexStorage(LDB::Connection* Storage, const std::string_view& Name) override;
 		};
 	}
 }

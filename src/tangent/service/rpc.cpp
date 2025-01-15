@@ -4,6 +4,7 @@
 #include "../storage/mempoolstate.h"
 #include "../storage/chainstate.h"
 #include "../policy/transactions.h"
+#define PURPOSE_COMMITMENT "validator commitment"
 
 namespace Tangent
 {
@@ -151,7 +152,7 @@ namespace Tangent
 				auto* Params = Request->Get("params");
 				String Method = Request->GetVar("method").GetBlob();
 				String Id = Request->GetVar("id").GetBlob();
-				VI_INFO("[rpc] on peer %s call %s: %s (params: %" PRIu64 ", time: %" PRId64 " ms)",
+				VI_INFO("[rpc] peer %s call %s: %s (params: %" PRIu64 ", time: %" PRId64 " ms)",
 					Base->GetPeerIpAddress().Or("[bad_address]").c_str(),
 					Method.empty() ? "[bad_method]" : Method.c_str(),
 					Response.ErrorMessage.empty() ? (Response.Data ? (Response.Data->Value.IsObject() ? Stringify::Text("%" PRIu64 " rows", (uint64_t)Response.Data->Size()).c_str() : "[value]") : "[null]") : Response.ErrorMessage.c_str(),
@@ -251,6 +252,7 @@ namespace Tangent
 				{
 					Validator->Events.AcceptBlock = std::bind(&ServerNode::DispatchAcceptBlock, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3);
 					Validator->Events.AcceptTransaction = std::bind(&ServerNode::DispatchAcceptTransaction, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3);
+					Validator->Events.AcceptMessage = std::bind(&ServerNode::DispatchAcceptMessage, this, std::placeholders::_1, std::placeholders::_2);
 				}
 			}
 
@@ -258,7 +260,7 @@ namespace Tangent
 				VI_INFO("[rpc] rpc node listen (location: %s:%i)", Protocol::Now().User.RPC.Address.c_str(), (int)Protocol::Now().User.RPC.Port);
 
 			Bind(0, "websocket", "subscribe", 1, 3, "string addresses, bool? blocks, bool? transactions", "uint64", "Subscribe to streams of incoming blocks and transactions optionally include blocks and transactions relevant to comma separated address list", std::bind(&ServerNode::WebSocketSubscribe, this, std::placeholders::_1, std::placeholders::_2));
-			Bind(0, "websocket", "unsubscribe", 1, 1, "", "", "Unsubscribe from all streams", std::bind(&ServerNode::WebSocketUnsubscribe, this, std::placeholders::_1, std::placeholders::_2));
+			Bind(0, "websocket", "unsubscribe", 1, 1, "", "void", "Unsubscribe from all streams", std::bind(&ServerNode::WebSocketUnsubscribe, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(0, "utility", "encodeaddress", 1, 1, "string hex_address", "string", "encode hex address", std::bind(&ServerNode::UtilityEncodeAddress, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(0, "utility", "decodeaddress", 1, 1, "string address", "string", "decode address", std::bind(&ServerNode::UtilityDecodeAddress, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(0, "utility", "decodemessage", 1, 1, "string message", "any[]", "decode message", std::bind(&ServerNode::UtilityDecodeMessage, this, std::placeholders::_1, std::placeholders::_2));
@@ -345,13 +347,17 @@ namespace Tangent
 			Bind(0 | AccessType::R, "validatorstate", "status", 0, 0, "", "validator::status", "get validator status", std::bind(&ServerNode::ValidatorstateStatus, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(AccessType::R | AccessType::A, "chainstate", "tracecall", 4, 32, "string asset, string from_address, string to_address, string function, ...", "program_trace", "trace execution of mutable / immutable function of program assigned to to_address", std::bind(&ServerNode::ChainstateTraceCall, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(AccessType::W | AccessType::R, "mempoolstate", "submittransaction", 1, 2, "string hex_message, bool? validate", "uint256", "try to accept and relay a mempool transaction from raw data and possibly validate over latest chainstate", std::bind(&ServerNode::MempoolstateSubmitTransaction, this, std::placeholders::_1, std::placeholders::_2, nullptr));
-			Bind(AccessType::W | AccessType::A, "mempoolstate", "rejecttransaction", 1, 1, "uint256 hash", "", "remove mempool transaction by hash", std::bind(&ServerNode::MempoolstateRejectTransaction, this, std::placeholders::_1, std::placeholders::_2));
-			Bind(AccessType::W | AccessType::A, "mempoolstate", "addnode", 1, 1, "string uri_address", "", "add node ip address to trial addresses", std::bind(&ServerNode::MempoolstateAddNode, this, std::placeholders::_1, std::placeholders::_2));
-			Bind(AccessType::W | AccessType::A, "mempoolstate", "clearnode", 1, 1, "string uri_address", "", "remove associated node info by ip address", std::bind(&ServerNode::MempoolstateClearNode, this, std::placeholders::_1, std::placeholders::_2));
+			Bind(AccessType::W | AccessType::A, "mempoolstate", "rejecttransaction", 1, 1, "uint256 hash", "void", "remove mempool transaction by hash", std::bind(&ServerNode::MempoolstateRejectTransaction, this, std::placeholders::_1, std::placeholders::_2));
+			Bind(AccessType::W | AccessType::A, "mempoolstate", "addnode", 1, 1, "string uri_address", "void", "add node ip address to trial addresses", std::bind(&ServerNode::MempoolstateAddNode, this, std::placeholders::_1, std::placeholders::_2));
+			Bind(AccessType::W | AccessType::A, "mempoolstate", "clearnode", 1, 1, "string uri_address", "void", "remove associated node info by ip address", std::bind(&ServerNode::MempoolstateClearNode, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(AccessType::R | AccessType::A, "validatorstate", "verify", 2, 3, "uint64 number, uint64 count, bool? validate", "uint256[]", "verify chain and possibly re-execute each block", std::bind(&ServerNode::ValidatorstateVerify, this, std::placeholders::_1, std::placeholders::_2));
-			Bind(AccessType::W | AccessType::A, "validatorstate", "prune", 2, 2, "string types = 'statetrie' | 'blocktrie' | 'transactiontrie', uint64 number", "", "prune chainstate data using pruning level (types is '|' separated list)", std::bind(&ServerNode::ValidatorstatePrune, this, std::placeholders::_1, std::placeholders::_2));
-			Bind(AccessType::W | AccessType::A, "validatorstate", "acceptnode", 0, 1, "string? uri_address", "", "try to accept and connect to a node possibly by ip address", std::bind(&ServerNode::ValidatorstateAcceptNode, this, std::placeholders::_1, std::placeholders::_2));
-			Bind(AccessType::W | AccessType::A, "validatorstate", "rejectnode", 1, 1, "string uri_address", "", "reject and disconnect from a node by ip address", std::bind(&ServerNode::ValidatorstateRejectNode, this, std::placeholders::_1, std::placeholders::_2));
+			Bind(AccessType::W | AccessType::A, "validatorstate", "prune", 2, 2, "string types = 'statetrie' | 'blocktrie' | 'transactiontrie', uint64 number", "void", "prune chainstate data using pruning level (types is '|' separated list)", std::bind(&ServerNode::ValidatorstatePrune, this, std::placeholders::_1, std::placeholders::_2));
+			Bind(AccessType::W | AccessType::A, "validatorstate", "revert", 1, 2, "uint64 number, bool? keep_reverted_transactions", "{ new_tip_block_number: uint64, old_tip_block_number: uint64, ressurections: uint64, is_fork: bool }", "revert chainstate to block number and possibly ressurrect removed transactions", std::bind(&ServerNode::ValidatorstateRevert, this, std::placeholders::_1, std::placeholders::_2));
+			Bind(AccessType::W | AccessType::A, "validatorstate", "acceptnode", 0, 1, "string? uri_address", "void", "try to accept and connect to a node possibly by ip address", std::bind(&ServerNode::ValidatorstateAcceptNode, this, std::placeholders::_1, std::placeholders::_2));
+			Bind(AccessType::W | AccessType::A, "validatorstate", "rejectnode", 1, 1, "string uri_address", "void", "reject and disconnect from a node by ip address", std::bind(&ServerNode::ValidatorstateRejectNode, this, std::placeholders::_1, std::placeholders::_2));
+			Bind(AccessType::W | AccessType::A, "validatorstate", "proposeblock", 0, 0, "", "void", "try to propose a block from mempool transactions", std::bind(&ServerNode::ValidatorstateProposeBlock, this, std::placeholders::_1, std::placeholders::_2));
+			Bind(AccessType::W | AccessType::A, "validatorstate", "submitmessage", 2, 3, "string sealing_public_key, string message, bool? chronological", "void", "send encrypted message to another node with specified sealing public key", std::bind(&ServerNode::ValidatorstateSubmitMessage, this, std::placeholders::_1, std::placeholders::_2));
+			Bind(AccessType::W | AccessType::A, "validatorstate", "submitcommitmenttransaction", 3, 4, "string asset, bool online, bool? proposer, string? observers", "uint256", "submit commitment transaction that enables/disables block proposer and/or blockchain observer(s) defined by a comma separated list of asset handles", std::bind(&ServerNode::ValidatorstateSubmitCommitmentTransaction, this, std::placeholders::_1, std::placeholders::_2));
 		}
 		void ServerNode::Shutdown()
 		{
@@ -684,6 +690,46 @@ namespace Tangent
 				auto Notification = Var::Set::Object();
 				Notification->Set("type", Var::String("transaction"));
 				Notification->Set("result", Var::String(Algorithm::Encoding::Encode0xHex256(Hash)));
+
+				auto Response = Schema::ToJSON(*ServerResponse().Notification(Notification).Transform(nullptr));
+				for (auto& WebSocket : WebSockets)
+					WebSocket->Send(Response, HTTP::WebSocketOp::Text, nullptr);
+			});
+		}
+		void ServerNode::DispatchAcceptMessage(const std::string_view& Plaintext, int8_t Direction)
+		{
+			if (!Validator)
+				return;
+
+			String Message = String(Plaintext);
+			Protocol::Change().MessageLog().Output(String(Direction > 0 ? "in>  " : "out>  ") + Message);
+			UMutex<std::mutex> Unique(Mutex);
+			if (Listeners.empty())
+				return;
+
+			String Address = String((char*)Validator->Validator.Wallet.PublicKeyHash, sizeof(Algorithm::Pubkeyhash));
+			UnorderedSet<HTTP::WebSocketFrame*> WebSockets;
+			for (auto& Listener : Listeners)
+			{
+				if (!Listener.first->WebSocket)
+					continue;
+				else if (Listener.second.Transactions || Listener.second.Addresses.find(Address) != Listener.second.Addresses.end())
+					WebSockets.insert(Listener.first->WebSocket);
+			}
+
+			Unique.Unlock();
+			if (WebSockets.empty())
+				return;
+
+			Cospawn([Message, Direction, WebSockets = std::move(WebSockets)]() mutable
+			{
+				auto* Data = Var::Set::Object();
+				Data->Set("plaintext", Var::String(Message));
+				Data->Set("direction", Var::String(Direction > 0 ? "in" : "out"));
+
+				auto Notification = Var::Set::Object();
+				Notification->Set("type", Var::String("message"));
+				Notification->Set("result", Data);
 
 				auto Response = Schema::ToJSON(*ServerResponse().Notification(Notification).Transform(nullptr));
 				for (auto& WebSocket : WebSockets)
@@ -2516,6 +2562,24 @@ namespace Tangent
 
 			return ServerResponse().Success(Var::Set::Null());
 		}
+		ServerResponse ServerNode::ValidatorstateRevert(HTTP::Connection* Base, Format::Variables&& Args)
+		{
+			auto Chain = Storages::Chainstate(__func__);
+			auto Block = Chain.GetBlockByNumber(Args[0].AsUint64());
+			if (!Block)
+				return ServerResponse().Error(ErrorCodes::NotFound, "block not found");
+
+			auto Checkpoint = Block->Checkpoint(Args.size() > 1 ? Args[1].AsBoolean() : true);
+			if (!Checkpoint)
+				return ServerResponse().Error(ErrorCodes::BadParams, Checkpoint.Error().Info);
+
+			auto* Result = Var::Set::Object();
+			Result->Set("new_tip_block_number", Var::Integer(Checkpoint->NewTipBlockNumber));
+			Result->Set("old_tip_block_number", Var::Integer(Checkpoint->OldTipBlockNumber));
+			Result->Set("ressurections", Var::Integer(Checkpoint->Resurrections));
+			Result->Set("is_fork", Var::Integer(Checkpoint->IsFork));
+			return ServerResponse().Success(Result);
+		}
 		ServerResponse ServerNode::ValidatorstateVerify(HTTP::Connection* Base, Format::Variables&& Args)
 		{
 			uint64_t Count = Args[1].AsUint64();
@@ -2549,9 +2613,13 @@ namespace Tangent
 				}
 				else
 				{
-					auto Verification = Next->Verify(ParentBlock.Address());
+					auto Verification = Next->VerifyValidity(ParentBlock.Address());
 					if (!Verification)
-						return ServerResponse().Error(ErrorCodes::NotFound, "block " + ToString(CurrentNumber) + " verification failed: " + Verification.Error().Info);
+						return ServerResponse().Error(ErrorCodes::NotFound, "block " + ToString(CurrentNumber) + " validity verification failed: " + Verification.Error().Info);
+
+					Verification = Next->VerifyIntegrity(ParentBlock.Address());
+					if (!Verification)
+						return ServerResponse().Error(ErrorCodes::NotFound, "block " + ToString(CurrentNumber) + " integrity verification failed: " + Verification.Error().Info);
 				}
 
 				Data->Push(Var::String(Algorithm::Encoding::Encode0xHex256(Next->AsHash())));
@@ -2690,6 +2758,8 @@ namespace Tangent
 				RPC->Set("cursor_size", Var::Integer(Protocol::Now().User.RPC.CursorSize));
 				RPC->Set("page_size", Var::Integer(Protocol::Now().User.RPC.PageSize));
 				RPC->Set("websockets", Var::Boolean(Protocol::Now().User.RPC.WebSockets));
+				if (Protocol::Now().User.RPC.Messaging && Validator != nullptr)
+					RPC->Set("sealing_public_key", Var::String(Validator->Validator.Wallet.GetSealingPublicKey()));
 			}
 
 			if (Protocol::Now().User.NDS.Server)
@@ -2788,6 +2858,82 @@ namespace Tangent
 			Data->Set("version", Var::String(Algorithm::Encoding::Encode0xHex128(Protocol::Now().Message.ProtocolVersion)));
 			Data->Set("checkpoint", Algorithm::Encoding::SerializeUint256(Chain.GetCheckpointBlockNumber().Or(0)));
 			return ServerResponse().Success(Data.Reset());
+		}
+		ServerResponse ServerNode::ValidatorstateProposeBlock(HTTP::Connection* Base, Format::Variables&& Args)
+		{
+			if (!Validator)
+				return ServerResponse().Error(ErrorCodes::BadRequest, "validator node disabled");
+
+			Validator->AcceptMempool();
+			return ServerResponse().Success(Var::Set::Null());
+		}
+		ServerResponse ServerNode::ValidatorstateSubmitMessage(HTTP::Connection* Base, Format::Variables&& Args)
+		{
+			if (!Validator)
+				return ServerResponse().Error(ErrorCodes::BadRequest, "validator node disabled");
+
+			String Message = Args[1].AsBlob();
+			if (Args.size() > 2 && Args[2].AsBoolean())
+				Message = "[" + DateTime::SerializeGlobal(DateTime().CurrentOffset(), DateTime::FormatIso8601Time()) + "] " + Message;
+
+			Algorithm::Pubkey SealingPublicKey;
+			if (!Algorithm::Signing::DecodeSealingPublicKey(Args[0].AsString(), SealingPublicKey))
+				return ServerResponse().Error(ErrorCodes::BadRequest, "sealing public key is not valid");
+
+			if (!Validator->AcceptMessage(SealingPublicKey, Message))
+				return ServerResponse().Error(ErrorCodes::BadRequest, "message is not accepted");
+
+			return ServerResponse().Success(Var::Set::Null());
+		}
+		ServerResponse ServerNode::ValidatorstateSubmitCommitmentTransaction(HTTP::Connection* Base, Format::Variables&& Args)
+		{
+			if (!Validator)
+				return ServerResponse().Error(ErrorCodes::BadRequest, "validator node disabled");
+
+			bool Online = Args[1].AsBoolean();
+			auto Context = Ledger::TransactionContext();
+			auto Work = Context.GetAccountWork(Validator->Validator.Wallet.PublicKeyHash);
+			auto Transaction = Memory::New<Transactions::Commitment>();
+			Transaction->Asset = Algorithm::Asset::IdOfHandle(Args[0].AsString());
+			if (Args.size() > 2 ? Args[2].AsBoolean() : false)
+			{
+				if (Online)
+				{
+					if (!Work || !Work->IsOnline())
+						Transaction->SetOnline();
+				}
+				else if (Work && Work->Status == Ledger::WorkStatus::Online)
+					Transaction->SetOffline();
+			}
+
+			if (Args.size() > 3)
+			{
+				auto Assets = Oracle::Datamaster::GetAssets();
+				auto Observers = Context.GetAccountObservers(Validator->Validator.Wallet.PublicKeyHash, 0, Assets.size()).Or(Vector<States::AccountObserver>());
+				for (auto& Observer : Stringify::Split(Args[3].AsString(), ','))
+				{
+					auto Asset = Algorithm::Asset::IdOfHandle(Stringify::Trim(Observer));
+					auto It = std::find_if(Observers.begin(), Observers.end(), [&](const States::AccountObserver& Item) { return Item.Asset == Asset; });
+					if (Online)
+					{
+						if (It == Observers.end() || !It->IsOnline())
+							Transaction->SetOnline(Asset);
+					}
+					else if (It != Observers.end() && It->IsOnline())
+						Transaction->SetOffline(Asset);
+				}
+			}
+
+			UMutex<std::recursive_mutex> Unique(Validator->Sync.Account);
+			auto AccountSequence = Validator->Validator.Wallet.GetLatestSequence().Or(1);
+			Unique.Unlock();
+
+			uint256_t CandidateHash = 0;
+			auto Status = Validator->ProposeTransaction(nullptr, Transaction, AccountSequence, PURPOSE_COMMITMENT, &CandidateHash);
+			if (!Status)
+				return ServerResponse().Error(ErrorCodes::BadParams, Status.Error().Info);
+
+			return ServerResponse().Success(Var::Set::String(Algorithm::Encoding::Encode0xHex256(CandidateHash)));
 		}
 	}
 }

@@ -340,11 +340,37 @@ namespace Tangent
 		return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 	}
 
+	void Protocol::Logger::Output(const std::string_view& Message)
+	{
+		if (!Resource || Message.empty())
+			return;
+
+		time_t Time = time(nullptr);
+		UMutex<std::recursive_mutex> Unique(Mutex);
+		Resource->Write((uint8_t*)Message.data(), Message.size());
+		if (Message.back() != '\r' && Message.back() != '\n')
+			Resource->Write((uint8_t*)"\n", 1);
+
+		if (!Protocol::Bound() || Time - RepackTime < (int64_t)Protocol::Now().User.Logs.ArchiveRepackInterval)
+			return;
+
+		auto State = OS::File::GetProperties(Resource->VirtualName());
+		size_t CurrentSize = State ? State->Size : 0;
+		RepackTime = Time;
+		if (CurrentSize <= Protocol::Now().User.Logs.ArchiveSize)
+			return;
+
+		String Path = String(Resource->VirtualName());
+		Resource = OS::File::OpenArchive(Path, Protocol::Now().User.Logs.ArchiveSize).Or(nullptr);
+	}
+
 	Protocol::Protocol(const std::string_view& ConfigPath)
 	{
 #ifdef TAN_VALIDATOR
 		auto Module = OS::Directory::GetModule();
 		Path = OS::Path::Resolve(ConfigPath, *Module, true).Or(String(ConfigPath));
+		ErrorHandling::SetFlag(LogOption::Pretty, true);
+		ErrorHandling::SetFlag(LogOption::Dated, true);
 
 		auto Config = UPtr<Schema>(Schema::FromJSON(OS::File::ReadAsString(Path).Or(String())));
 		if (Config)
@@ -397,6 +423,26 @@ namespace Tangent
 			if (Value != nullptr && Value->Value.Is(VarType::Number))
 				User.ComputationThreadsRatio = Value->Value.GetNumber();
 
+			Value = Config->Fetch("logs.state");
+			if (Value != nullptr && Value->Value.Is(VarType::String))
+				User.Logs.State = Value->Value.GetBlob();
+
+			Value = Config->Fetch("logs.message");
+			if (Value != nullptr && Value->Value.Is(VarType::String))
+				User.Logs.Message = Value->Value.GetBlob();
+
+			Value = Config->Fetch("logs.data");
+			if (Value != nullptr && Value->Value.Is(VarType::String))
+				User.Logs.Data = Value->Value.GetBlob();
+
+			Value = Config->Fetch("logs.archive_size");
+			if (Value != nullptr && Value->Value.Is(VarType::Integer))
+				User.Logs.ArchiveSize = Value->Value.GetInteger();
+
+			Value = Config->Fetch("logs.archive_repack_interval");
+			if (Value != nullptr && Value->Value.Is(VarType::Integer))
+				User.Logs.ArchiveRepackInterval = Value->Value.GetInteger();
+
 			Value = Config->Fetch("p2p.address");
 			if (Value != nullptr && Value->Value.Is(VarType::String))
 				User.P2P.Address = Value->Value.GetBlob();
@@ -416,14 +462,18 @@ namespace Tangent
 			Value = Config->Fetch("p2p.max_outbound_connections");
 			if (Value != nullptr && Value->Value.Is(VarType::Integer))
 				User.P2P.MaxOutboundConnections = (uint32_t)Value->Value.GetInteger();
-			
+
+			Value = Config->Fetch("p2p.inventory_size");
+			if (Value != nullptr && Value->Value.Is(VarType::Integer))
+				User.P2P.InventorySize = Value->Value.GetInteger();
+
+			Value = Config->Fetch("p2p.inventory_timeout");
+			if (Value != nullptr && Value->Value.Is(VarType::Integer))
+				User.P2P.InventoryTimeout = Value->Value.GetInteger();
+
 			Value = Config->Fetch("p2p.cursor_size");
 			if (Value != nullptr && Value->Value.Is(VarType::Integer))
 				User.P2P.CursorSize = Value->Value.GetInteger();
-
-			Value = Config->Fetch("p2p.best_block_consensus");
-			if (Value != nullptr && Value->Value.Is(VarType::Number))
-				User.P2P.BestBlockConsensus = std::min(1.0, Value->Value.GetNumber());
 
 			Value = Config->Fetch("p2p.proposer");
 			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
@@ -468,6 +518,10 @@ namespace Tangent
 			Value = Config->Fetch("rpc.page_size");
 			if (Value != nullptr && Value->Value.Is(VarType::Integer))
 				User.RPC.PageSize = Value->Value.GetInteger();
+
+			Value = Config->Fetch("rpc.messaging");
+			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
+				User.RPC.Messaging = Value->Value.GetBoolean();
 
 			Value = Config->Fetch("rpc.websockets");
 			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
@@ -546,7 +600,7 @@ namespace Tangent
 			Value = Config->Fetch("storage.index_cache_size");
 			if (Value != nullptr && Value->Value.Is(VarType::Integer))
 				User.Storage.IndexCacheSize = Value->Value.GetInteger();
-
+			
 			Value = Config->Fetch("storage.transaction_to_account_index");
 			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
 				User.Storage.TransactionToAccountIndex = Value->Value.GetBoolean();
@@ -600,8 +654,46 @@ namespace Tangent
 				User.Oracle.Logging = Value->Value.GetBoolean();
 		}
 
+		if (!User.Logs.State.empty())
+		{
+			auto LogBase = Database.Resolve(User.Network, User.Storage.Directory) + User.Logs.State;
+			auto LogPath = OS::Path::Resolve(OS::Path::Resolve(LogBase, *Module, true).Or(User.Logs.State)).Or(User.Logs.State);
+			Stringify::EvalEnvs(LogPath, OS::Path::GetDirectory(LogPath.c_str()), Vitex::Network::Utils::GetHostIpAddresses());
+			OS::Directory::Patch(OS::Path::GetDirectory(LogPath.c_str()));
+			if (!LogPath.empty())
+			{
+				Logs.State.Resource = OS::File::OpenArchive(LogPath, User.Logs.ArchiveSize).Or(nullptr);
+				if (Logs.State.Resource)
+					ErrorHandling::SetCallback([this](ErrorHandling::Details& Data) { Logs.State.Output(ErrorHandling::GetMessageText(Data)); });
+			}
+		}
+
+		if (!User.Logs.Message.empty())
+		{
+			auto LogBase = Database.Resolve(User.Network, User.Storage.Directory) + User.Logs.Message;
+			auto LogPath = OS::Path::Resolve(OS::Path::Resolve(LogBase, *Module, true).Or(User.Logs.Message)).Or(User.Logs.Message);
+			Stringify::EvalEnvs(LogPath, OS::Path::GetDirectory(LogPath.c_str()), Vitex::Network::Utils::GetHostIpAddresses());
+			OS::Directory::Patch(OS::Path::GetDirectory(LogPath.c_str()));
+			if (!LogPath.empty())
+				Logs.Message.Resource = OS::File::OpenArchive(LogPath, User.Logs.ArchiveSize).Or(nullptr);
+		}
+
+		if (!User.Logs.Data.empty())
+		{
+			auto LogBase = Database.Resolve(User.Network, User.Storage.Directory) + User.Logs.Data;
+			auto LogPath = OS::Path::Resolve(OS::Path::Resolve(LogBase, *Module, true).Or(User.Logs.Data)).Or(User.Logs.Data);
+			Stringify::EvalEnvs(LogPath, OS::Path::GetDirectory(LogPath.c_str()), Vitex::Network::Utils::GetHostIpAddresses());
+			OS::Directory::Patch(OS::Path::GetDirectory(LogPath.c_str()));
+			if (!LogPath.empty())
+			{
+				Logs.Data.Resource = OS::File::OpenArchive(LogPath, User.Logs.ArchiveSize).Or(nullptr);
+				if (Logs.Data.Resource)
+					LDB::Driver::Get()->SetQueryLog([this](const std::string_view& Data) { Logs.Data.Output(String(Data)); });
+			}
+		}
+
 		Instance = this;
-		if (Config && Protocol::Now().User.Storage.Logging)
+		if (Config && User.Storage.Logging)
 			VI_DEBUG("[chain] open handle: %s", Path.c_str());
 
 		auto VectorstateBase = Database.Resolve(User.Network, User.Storage.Directory) + User.Vectorstate;
@@ -667,7 +759,7 @@ namespace Tangent
 	{
 		Database.Checkpoint();
 #ifdef TAN_VALIDATOR
-		if (!Path.empty() && Protocol::Now().User.Storage.Logging)
+		if (!Path.empty() && User.Storage.Logging)
 			VI_DEBUG("[chain] close handle: %s", Path.c_str());
 		Oracle::Bridge::Close();
 		Storages::AccountCache::CleanupInstance();
@@ -675,6 +767,7 @@ namespace Tangent
 		Storages::MultiformCache::CleanupInstance();
 #endif
 		Ledger::ScriptHost::CleanupInstance();
+		ErrorHandling::SetCallback(nullptr);
 		btc_ecc_stop();
 		if (Instance == this)
 			Instance = nullptr;
@@ -682,6 +775,22 @@ namespace Tangent
 	bool Protocol::Is(NetworkType Type) const
 	{
 		return User.Network == Type;
+	}
+	Protocol::Logger& Protocol::StateLog()
+	{
+		return Logs.State;
+	}
+	Protocol::Logger& Protocol::MessageLog()
+	{
+		return Logs.Message;
+	}
+	Protocol::Logger& Protocol::DataLog()
+	{
+		return Logs.Data;
+	}
+	bool Protocol::Bound()
+	{
+		return Instance != nullptr;
 	}
 	Protocol& Protocol::Change()
 	{
