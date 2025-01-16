@@ -352,7 +352,8 @@ namespace Tangent
 			Bind(AccessType::W | AccessType::A, "mempoolstate", "clearnode", 1, 1, "string uri_address", "void", "remove associated node info by ip address", std::bind(&ServerNode::MempoolstateClearNode, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(AccessType::R | AccessType::A, "validatorstate", "verify", 2, 3, "uint64 number, uint64 count, bool? validate", "uint256[]", "verify chain and possibly re-execute each block", std::bind(&ServerNode::ValidatorstateVerify, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(AccessType::W | AccessType::A, "validatorstate", "prune", 2, 2, "string types = 'statetrie' | 'blocktrie' | 'transactiontrie', uint64 number", "void", "prune chainstate data using pruning level (types is '|' separated list)", std::bind(&ServerNode::ValidatorstatePrune, this, std::placeholders::_1, std::placeholders::_2));
-			Bind(AccessType::W | AccessType::A, "validatorstate", "revert", 1, 2, "uint64 number, bool? keep_reverted_transactions", "{ new_tip_block_number: uint64, old_tip_block_number: uint64, ressurections: uint64, is_fork: bool }", "revert chainstate to block number and possibly ressurrect removed transactions", std::bind(&ServerNode::ValidatorstateRevert, this, std::placeholders::_1, std::placeholders::_2));
+			Bind(AccessType::W | AccessType::A, "validatorstate", "revert", 1, 2, "uint64 number, bool? keep_reverted_transactions", "{ new_tip_block_number: uint64, old_tip_block_number: uint64, mempool_transactions: uint64, block_delta: int64, transaction_delta: int64, state_delta: int64, is_fork: bool }", "revert chainstate to block number and possibly send removed transactions to mempool", std::bind(&ServerNode::ValidatorstateRevert, this, std::placeholders::_1, std::placeholders::_2));
+			Bind(AccessType::W | AccessType::A, "validatorstate", "reorganize", 0, 0, "", "{ new_tip_block_number: uint64, old_tip_block_number: uint64, mempool_transactions: uint64, block_delta: int64, transaction_delta: int64, state_delta: int64, is_fork: bool }", "reorganize current chain which re-executes every saved block from genesis to tip and re-calculates the final chain state (helpful for corrupted state recovery or pruning checkpoint size change without re-downloading full block history)", std::bind(&ServerNode::ValidatorstateReorganize, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(AccessType::W | AccessType::A, "validatorstate", "acceptnode", 0, 1, "string? uri_address", "void", "try to accept and connect to a node possibly by ip address", std::bind(&ServerNode::ValidatorstateAcceptNode, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(AccessType::W | AccessType::A, "validatorstate", "rejectnode", 1, 1, "string uri_address", "void", "reject and disconnect from a node by ip address", std::bind(&ServerNode::ValidatorstateRejectNode, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(AccessType::W | AccessType::A, "validatorstate", "proposeblock", 0, 0, "", "void", "try to propose a block from mempool transactions", std::bind(&ServerNode::ValidatorstateProposeBlock, this, std::placeholders::_1, std::placeholders::_2));
@@ -2569,15 +2570,41 @@ namespace Tangent
 			if (!Block)
 				return ServerResponse().Error(ErrorCodes::NotFound, "block not found");
 
-			auto Checkpoint = Block->Checkpoint(Args.size() > 1 ? Args[1].AsBoolean() : true);
+			auto Checkpoint = Block->Checkpoint(Args.size() > 1 ? Args[1].AsBoolean() : false);
 			if (!Checkpoint)
 				return ServerResponse().Error(ErrorCodes::BadParams, Checkpoint.Error().Info);
 
 			auto* Result = Var::Set::Object();
 			Result->Set("new_tip_block_number", Var::Integer(Checkpoint->NewTipBlockNumber));
 			Result->Set("old_tip_block_number", Var::Integer(Checkpoint->OldTipBlockNumber));
-			Result->Set("ressurections", Var::Integer(Checkpoint->Resurrections));
+			Result->Set("mempool_transactions", Var::Integer(Checkpoint->MempoolTransactions));
+			Result->Set("transaction_delta", Var::Integer(Checkpoint->TransactionDelta));
+			Result->Set("block_delta", Var::Integer(Checkpoint->BlockDelta));
+			Result->Set("state_delta", Var::Integer(Checkpoint->StateDelta));
 			Result->Set("is_fork", Var::Integer(Checkpoint->IsFork));
+			return ServerResponse().Success(Result);
+		}
+		ServerResponse ServerNode::ValidatorstateReorganize(HTTP::Connection* Base, Format::Variables&& Args)
+		{
+			auto Chain = Storages::Chainstate(__func__);
+			auto Checkpoint = Ledger::BlockCheckpoint();
+			Checkpoint.OldTipBlockNumber = Chain.GetLatestBlockNumber().Or(0);
+			Checkpoint.NewTipBlockNumber = Checkpoint.OldTipBlockNumber;
+			if (!Checkpoint.NewTipBlockNumber)
+				return ServerResponse().Error(ErrorCodes::NotFound, "block tip not found");
+
+			auto Reorganization = Chain.Reorganize(&Checkpoint.BlockDelta, &Checkpoint.TransactionDelta, &Checkpoint.StateDelta);
+			if (!Reorganization)
+				return ServerResponse().Error(ErrorCodes::BadParams, Reorganization.Error().Info);
+
+			auto* Result = Var::Set::Object();
+			Result->Set("new_tip_block_number", Var::Integer(Checkpoint.NewTipBlockNumber));
+			Result->Set("old_tip_block_number", Var::Integer(Checkpoint.OldTipBlockNumber));
+			Result->Set("mempool_transactions", Var::Integer(Checkpoint.MempoolTransactions));
+			Result->Set("transaction_delta", Var::Integer(Checkpoint.TransactionDelta));
+			Result->Set("block_delta", Var::Integer(Checkpoint.BlockDelta));
+			Result->Set("state_delta", Var::Integer(Checkpoint.StateDelta));
+			Result->Set("is_fork", Var::Integer(Checkpoint.IsFork));
 			return ServerResponse().Success(Result);
 		}
 		ServerResponse ServerNode::ValidatorstateVerify(HTTP::Connection* Base, Format::Variables&& Args)
@@ -2595,14 +2622,8 @@ namespace Tangent
 			{
 				auto Next = Chain.GetBlockByNumber(CurrentNumber);
 				if (!Next)
-				{
-					if (CurrentNumber > TipNumber)
-						break;
-
 					return ServerResponse().Error(ErrorCodes::NotFound, "block " + ToString(CurrentNumber) + (CheckpointNumber >= CurrentNumber ? " verification failed: block data pruned" : " verification failed: block not found"));
-				}
-
-				if (CurrentNumber > 1 && CheckpointNumber >= CurrentNumber - 1 && !ParentBlock)
+				else if (CurrentNumber > 1 && CheckpointNumber >= CurrentNumber - 1 && !ParentBlock)
 					return ServerResponse().Error(ErrorCodes::NotFound, "block " + ToString(CurrentNumber - 1) + " verification failed: parent block data pruned");
 
 				if (Validate)
@@ -2792,7 +2813,7 @@ namespace Tangent
 			Storage->Set("checkpoint_size", Var::Integer(Protocol::Now().User.Storage.CheckpointSize));
 			Storage->Set("transaction_to_account_index", Var::Boolean(Protocol::Now().User.Storage.TransactionToAccountIndex));
 			Storage->Set("transaction_to_rollup_index", Var::Boolean(Protocol::Now().User.Storage.TransactionToRollupIndex));
-			Storage->Set("full_block_history", Var::Boolean(Protocol::Now().User.Storage.FullBlockHistory));
+			Storage->Set("full_sync_available", Var::Boolean(!Protocol::Now().User.Storage.PruneAggressively));
 
 			if (Validator->PendingTip.Hash > 0 && Validator->PendingTip.Block)
 			{

@@ -609,9 +609,9 @@ namespace Tangent
 			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
 				User.Storage.TransactionToRollupIndex = Value->Value.GetBoolean();
 
-			Value = Config->Fetch("storage.full_block_history");
+			Value = Config->Fetch("storage.prune_aggressively");
 			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
-				User.Storage.FullBlockHistory = Value->Value.GetBoolean();
+				User.Storage.PruneAggressively = Value->Value.GetBoolean();
 
 			Value = Config->Fetch("storage.logging");
 			if (Value != nullptr && Value->Value.Is(VarType::Boolean))

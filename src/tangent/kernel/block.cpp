@@ -808,7 +808,7 @@ namespace Tangent
 			Recalculate(ParentBlock);
 			return Expectation::Met;
 		}
-		ExpectsLR<void> Block::Validate(const BlockHeader* ParentBlock)
+		ExpectsLR<void> Block::Validate(const BlockHeader* ParentBlock, Block* EvaluatedBlock) const
 		{
 			if (ParentBlock && (ParentBlock->Number != Number - 1 || ParentBlock->AsHash() != ParentHash))
 				return LayerException("invalid parent block");
@@ -865,17 +865,34 @@ namespace Tangent
 			Result.Wesolowski = Wesolowski;
 			Result.Time = Time;
 			Result.Recalculate(ParentBlock);
-			if (States.At(WorkCommitment::Finalized).empty())
-				States = Result.States;
 
-			if (Result.AsMessage().Data != AsMessage().Data)
-				return LayerException("invalid block evaluation");
+			size_t CurrentStatesCount = States.At(WorkCommitment::Finalized).size() + States.At(WorkCommitment::Pending).size();
+			bool PrunedStateTrie = CurrentStatesCount != StatesCount;
+			if (PrunedStateTrie)
+			{
+				auto* Mutable = (Block*)this;
+				auto Copy = std::move(Mutable->States);
+				Mutable->States = Result.States;
+				bool Matching = Result.AsMessage().Data == AsMessage().Data;
+				Mutable->States = std::move(Copy);
+				if (!Matching)
+					return LayerException("evaluated block does not match proposed block");
+			}
+			else if (Result.AsMessage().Data != AsMessage().Data)
+				return LayerException("evaluated block does not match proposed block");
 
 			auto Validity = Result.VerifyValidity(ParentBlock);
 			if (!Validity)
-				return Validity.Error();
+				return Validity;
 
-			return Result.VerifyIntegrity(ParentBlock);
+			auto Integrity = Result.VerifyIntegrity(ParentBlock);
+			if (!Integrity)
+				return Integrity;
+			
+			if (EvaluatedBlock != nullptr)
+				*EvaluatedBlock = std::move(Result);
+
+			return Expectation::Met;
 		}
 		ExpectsLR<void> Block::VerifyIntegrity(const BlockHeader* ParentBlock) const
 		{
@@ -923,6 +940,9 @@ namespace Tangent
 			BlockCheckpoint Mutation;
 			Mutation.OldTipBlockNumber = Chain.GetLatestBlockNumber().Or(0);
 			Mutation.NewTipBlockNumber = Number;
+			Mutation.BlockDelta = 1;
+			Mutation.TransactionDelta = TransactionsCount;
+			Mutation.StateDelta = StatesCount;
 			Mutation.IsFork = Mutation.OldTipBlockNumber > 0 && Mutation.OldTipBlockNumber >= Mutation.NewTipBlockNumber;
 			if (Mutation.IsFork)
 			{
@@ -952,7 +972,7 @@ namespace Tangent
 								{
 									auto Status = Mempool.AddTransaction(**Item, true);
 									Status.Report("transaction resurrection failed");
-									Mutation.Resurrections += Status ? 1 : 0;
+									Mutation.MempoolTransactions += Status ? 1 : 0;
 								}
 							}
 
@@ -963,16 +983,16 @@ namespace Tangent
 						--RevertNumber;
 					}
 
-					if (Protocol::Now().User.Storage.Logging)
-						VI_INFO("[checkpoint] revert chain to block %s (height: %" PRIu64 ", resurrections: %" PRIu64 ")", Algorithm::Encoding::Encode0xHex256(AsHash()).c_str(), Mutation.NewTipBlockNumber, (uint64_t)Mutation.Resurrections);
-
-					auto Status = Chain.Revert(Mutation.NewTipBlockNumber - 1);
+					auto Status = Chain.Revert(Mutation.NewTipBlockNumber - 1, &Mutation.BlockDelta, &Mutation.TransactionDelta, &Mutation.StateDelta);
 					if (!Status)
 					{
 						Chain.MultiTxRollback("chainwork", "apply");
 						Mempool.TxRollback("mempoolwork", "apply");
 						return Status.Error();
 					}
+
+					if (Protocol::Now().User.Storage.Logging)
+						VI_INFO("[checkpoint] revert chain to block %s (height: %" PRIu64 ", mempool: +%" PRIu64 ", blocktrie: %" PRIi64 ", transactiontrie: %" PRIi64 ", statetrie: %" PRIi64 ")", Algorithm::Encoding::Encode0xHex256(AsHash()).c_str(), Mutation.NewTipBlockNumber, Mutation.MempoolTransactions, Mutation.BlockDelta, Mutation.TransactionDelta, Mutation.StateDelta);
 
 					Status = Chain.Checkpoint(*this);
 					if (!Status)
@@ -994,12 +1014,15 @@ namespace Tangent
 				}
 				else
 				{
-					auto Status = Chain.Revert(Mutation.NewTipBlockNumber - 1);
+					auto Status = Chain.Revert(Mutation.NewTipBlockNumber - 1, &Mutation.BlockDelta, &Mutation.TransactionDelta, &Mutation.StateDelta);
 					if (!Status)
 					{
 						Chain.MultiTxRollback("chainwork", "apply");
 						return Status.Error();
 					}
+
+					if (Protocol::Now().User.Storage.Logging)
+						VI_INFO("[checkpoint] revert chain to block %s (height: %" PRIu64 ", blocktrie: %" PRIi64 ", transactiontrie: %" PRIi64 ", statetrie: %" PRIi64 ")", Algorithm::Encoding::Encode0xHex256(AsHash()).c_str(), Mutation.NewTipBlockNumber, Mutation.BlockDelta, Mutation.TransactionDelta, Mutation.StateDelta);
 
 					Status = Chain.Checkpoint(*this);
 					if (!Status)
@@ -2483,10 +2506,11 @@ namespace Tangent
 		}
 		uint64_t TransactionContext::GetValidationNonce() const
 		{
-			if (Environment != nullptr && Environment->Validation.Tip)
-				return 0;
-			
-			return Block ? Block->Number : 0;
+			if (!Environment)
+				return Block ? Block->Number : 0;
+			else if (!Environment->Validation.Tip)
+				return Block ? Block->Number : 1;
+			return 0;
 		}
 		uint256_t TransactionContext::GetGasUse() const
 		{

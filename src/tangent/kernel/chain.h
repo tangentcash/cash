@@ -176,9 +176,9 @@ namespace Tangent
                 uint64_t BlobCacheSize = 134217728;
                 uint64_t IndexPageSize = 65536;
                 int64_t IndexCacheSize = -2000;
+                bool PruneAggressively = false;
                 bool TransactionToAccountIndex = true;
                 bool TransactionToRollupIndex = true;
-                bool FullBlockHistory = true;
                 bool Logging = true;
             } Storage;
             struct

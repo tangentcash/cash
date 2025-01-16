@@ -140,10 +140,11 @@ namespace Tangent
 		public:
 			Chainstate(const std::string_view& NewLabel) noexcept;
 			virtual ~Chainstate() noexcept override;
-			ExpectsLR<void> Revert(uint64_t BlockNumber);
+			ExpectsLR<void> Reorganize(int64_t* Blocktrie = nullptr, int64_t* Transactiontrie = nullptr, int64_t* Statetrie = nullptr);
+			ExpectsLR<void> Revert(uint64_t BlockNumber, int64_t* Blocktrie = nullptr, int64_t* Transactiontrie = nullptr, int64_t* Statetrie = nullptr);
 			ExpectsLR<void> Dispatch(const Vector<uint256_t>& TransactionHashes);
 			ExpectsLR<void> Prune(uint32_t Types, uint64_t BlockNumber);
-			ExpectsLR<void> Checkpoint(const Ledger::Block& Value);
+			ExpectsLR<void> Checkpoint(const Ledger::Block& Value, bool Reorganization = false);
 			ExpectsLR<uint64_t> GetCheckpointBlockNumber();
 			ExpectsLR<uint64_t> GetLatestBlockNumber();
 			ExpectsLR<uint64_t> GetBlockNumberByHash(const uint256_t& BlockHash);

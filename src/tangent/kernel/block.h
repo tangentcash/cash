@@ -101,7 +101,10 @@ namespace Tangent
 		{
 			uint64_t NewTipBlockNumber = 0;
 			uint64_t OldTipBlockNumber = 0;
-			uint64_t Resurrections = 0;
+			uint64_t MempoolTransactions = 0;
+			int64_t TransactionDelta = 0;
+			int64_t BlockDelta = 0;
+			int64_t StateDelta = 0;
 			bool IsFork = false;
 		};
 
@@ -179,7 +182,7 @@ namespace Tangent
 			Block& operator=(const Block&) = default;
 			Block& operator=(Block&&) = default;
 			ExpectsLR<void> Evaluate(const BlockHeader* ParentBlock, EvaluationContext* Environment, String* Errors = nullptr);
-			ExpectsLR<void> Validate(const BlockHeader* ParentBlock);
+			ExpectsLR<void> Validate(const BlockHeader* ParentBlock, Block* EvaluatedBlock = nullptr) const;
 			ExpectsLR<void> VerifyIntegrity(const BlockHeader* ParentBlock) const;
 			ExpectsLR<BlockCheckpoint> Checkpoint(bool KeepRevertedTransactions = true) const;
 			bool StorePayload(Format::Stream* Stream) const override;

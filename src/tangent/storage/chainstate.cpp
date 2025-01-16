@@ -382,12 +382,61 @@ namespace Tangent
 			if (LatestChainstate == this)
 				LatestChainstate = nullptr;
 		}
-		ExpectsLR<void> Chainstate::Revert(uint64_t BlockNumber)
+		ExpectsLR<void> Chainstate::Reorganize(int64_t* Blocktrie, int64_t* Transactiontrie, int64_t* Statetrie)
 		{
-			auto CheckpointNumber = GetCheckpointBlockNumber();
-			if (CheckpointNumber && *CheckpointNumber > BlockNumber)
-				return ExpectsLR<void>(LayerException("revert failed due to a checkpoint at block " + ToString(*CheckpointNumber)));
+			auto Cursor = Query(*Uniformdata, Label, __func__,
+				"DELETE FROM uniformtries;"
+				"DELETE FROM uniforms;"
+				"DELETE FROM indices;");
+			if (!Cursor || Cursor->Error())
+				return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
 
+			Cursor = Query(*Multiformdata, Label, __func__,
+				"DELETE FROM multiformtries;"
+				"DELETE FROM multiforms;"
+				"DELETE FROM columns;"
+				"DELETE FROM rows;");
+			if (!Cursor || Cursor->Error())
+				return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
+
+			uint64_t CurrentNumber = 1;
+			uint64_t CheckpointNumber = GetCheckpointBlockNumber().Or(0);
+			uint64_t TipNumber = GetLatestBlockNumber().Or(0);
+			auto ParentBlock = ExpectsLR<Ledger::BlockHeader>(LayerException());
+			while (CurrentNumber <= TipNumber)
+			{
+				auto CandidateBlock = GetBlockByNumber(CurrentNumber);
+				if (!CandidateBlock)
+					return LayerException("block " + ToString(CurrentNumber) + (CheckpointNumber >= CurrentNumber ? " reorganization failed: block data pruned" : " reorganization failed: block not found"));
+				else if (CurrentNumber > 1 && CheckpointNumber >= CurrentNumber - 1 && !ParentBlock)
+					return LayerException("block " + ToString(CurrentNumber - 1) + " reorganization failed: parent block data pruned");
+
+				Ledger::Block EvaluatedBlock;
+				auto Validation = CandidateBlock->Validate(ParentBlock.Address(), &EvaluatedBlock);
+				if (!Validation)
+					return LayerException("block " + ToString(CurrentNumber) + " validation failed: " + Validation.Error().Info);
+
+				auto Finalization = Checkpoint(EvaluatedBlock, true);
+				if (!Finalization)
+					return LayerException("block " + ToString(CurrentNumber) + " finalization failed: " + Finalization.Error().Info);
+
+				if (Protocol::Now().User.Storage.Logging)
+					VI_INFO("[chainstate] reorganization checkpoint at block number %" PRIu64 " (statetrie: +%i)", CurrentNumber, EvaluatedBlock.StatesCount);
+
+				ParentBlock = EvaluatedBlock;
+				++CurrentNumber;
+				if (Blocktrie != nullptr)
+					++(*Blocktrie);
+				if (Transactiontrie != nullptr)
+					*Transactiontrie += EvaluatedBlock.TransactionsCount;
+				if (Statetrie != nullptr)
+					*Statetrie += EvaluatedBlock.StatesCount;
+			}
+
+			return Expectation::Met;
+		}
+		ExpectsLR<void> Chainstate::Revert(uint64_t BlockNumber, int64_t* Blocktrie, int64_t* Transactiontrie, int64_t* Statetrie)
+		{
 			SchemaList Map;
 			Map.push_back(Var::Set::Integer(BlockNumber));
 			Map.push_back(Var::Set::Integer(BlockNumber));
@@ -404,6 +453,8 @@ namespace Tangent
 				auto BlockHash = Row["block_hash"].Get();
 				Store(Label, __func__, GetBlockLabel(BlockHash.GetBinary()), std::string_view());
 			}));
+			if (Blocktrie != nullptr)
+				*Blocktrie -= Response.Size();
 
 			Map.clear();
 			Map.push_back(Var::Set::Integer(BlockNumber));
@@ -419,6 +470,8 @@ namespace Tangent
 				Store(Label, __func__, GetTransactionLabel(TransactionHash.GetBinary()), std::string_view());
 				Store(Label, __func__, GetReceiptLabel(TransactionHash.GetBinary()), std::string_view());
 			}));
+			if (Transactiontrie != nullptr)
+				*Transactiontrie -= Response.Size();
 
 			Map.clear();
 			Map.push_back(Var::Set::Integer(BlockNumber));
@@ -464,6 +517,11 @@ namespace Tangent
 			AccountCache::Get()->ClearLocations();
 			UniformCache::Get()->ClearLocations();
 			MultiformCache::Get()->ClearLocations();
+
+			auto CheckpointNumber = GetCheckpointBlockNumber();
+			if (CheckpointNumber && *CheckpointNumber > BlockNumber)
+				return Reorganize(Blocktrie, Transactiontrie, Statetrie);
+
 			return Expectation::Met;
 		}
 		ExpectsLR<void> Chainstate::Dispatch(const Vector<uint256_t>& TransactionHashes)
@@ -668,44 +726,43 @@ namespace Tangent
 
 			return Expectation::Met;
 		}
-		ExpectsLR<void> Chainstate::Checkpoint(const Ledger::Block& Value)
+		ExpectsLR<void> Chainstate::Checkpoint(const Ledger::Block& Value, bool Reorganization)
 		{
-			Format::Stream BlockHeaderMessage;
-			if (!Value.AsHeader().Store(&BlockHeaderMessage))
-				return ExpectsLR<void>(LayerException("block header serialization error"));
+			if (!Reorganization)
+			{
+				Format::Stream BlockHeaderMessage;
+				if (!Value.AsHeader().Store(&BlockHeaderMessage))
+					return ExpectsLR<void>(LayerException("block header serialization error"));
 
-			uint8_t Hash[32];
-			Algorithm::Encoding::DecodeUint256(Value.AsHash(), Hash);
+				uint8_t Hash[32];
+				Algorithm::Encoding::DecodeUint256(Value.AsHash(), Hash);
 
-			auto Status = Store(Label, __func__, GetBlockLabel(Hash), BlockHeaderMessage.Data);
-			if (!Status)
-				return ExpectsLR<void>(LayerException(ErrorOf(Status)));
+				auto Status = Store(Label, __func__, GetBlockLabel(Hash), BlockHeaderMessage.Data);
+				if (!Status)
+					return ExpectsLR<void>(LayerException(ErrorOf(Status)));
 
-			SchemaList Map;
-			Map.push_back(Var::Set::Integer(Value.Number));
-			Map.push_back(Var::Set::Binary(Hash, sizeof(Hash)));
+				SchemaList Map;
+				Map.push_back(Var::Set::Integer(Value.Number));
+				Map.push_back(Var::Set::Binary(Hash, sizeof(Hash)));
 
-			auto Cursor = EmplaceQuery(*Blockdata, Label, __func__, "INSERT INTO blocks (block_number, block_hash) VALUES (?, ?)", &Map);
-			if (!Cursor || Cursor->Error())
-				return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
+				auto Cursor = EmplaceQuery(*Blockdata, Label, __func__, "INSERT INTO blocks (block_number, block_hash) VALUES (?, ?)", &Map);
+				if (!Cursor || Cursor->Error())
+					return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
+			}
 
-			Cursor = EmplaceQuery(*Txdata, Label, __func__, "SELECT MAX(transaction_number) AS counter FROM transactions", &Map);
-			if (!Cursor || Cursor->ErrorOrEmpty())
-				return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
-
-			auto CommitTransactionData = Txdata->PrepareStatement("INSERT INTO transactions (transaction_number, transaction_hash, dispatch_queue, block_number, block_nonce) VALUES (?, ?, ?, ?, ?)", nullptr);
+			auto CommitTransactionData = Reorganization ? LDB::ExpectsDB<LDB::TStatement*>(nullptr) : Txdata->PrepareStatement("INSERT INTO transactions (transaction_number, transaction_hash, dispatch_queue, block_number, block_nonce) VALUES (?, ?, ?, ?, ?)", nullptr);
 			if (!CommitTransactionData)
 				return ExpectsLR<void>(LayerException(std::move(CommitTransactionData.Error().message())));
 
-			auto CommitAccountData = Accountdata->PrepareStatement("INSERT OR IGNORE INTO accounts (account_number, account_hash, block_number) SELECT (SELECT COALESCE(MAX(account_number), 0) + 1 FROM accounts), ?, ? ON CONFLICT DO UPDATE SET block_number = block_number RETURNING account_number", nullptr);
+			auto CommitAccountData = Reorganization ? LDB::ExpectsDB<LDB::TStatement*>(nullptr) : Accountdata->PrepareStatement("INSERT OR IGNORE INTO accounts (account_number, account_hash, block_number) SELECT (SELECT COALESCE(MAX(account_number), 0) + 1 FROM accounts), ?, ? ON CONFLICT DO UPDATE SET block_number = block_number RETURNING account_number", nullptr);
 			if (!CommitAccountData)
 				return ExpectsLR<void>(LayerException(std::move(CommitAccountData.Error().message())));
 
-			auto CommitPartyData = Partydata->PrepareStatement("INSERT OR IGNORE INTO parties (transaction_number, transaction_account_number, block_number) VALUES (?, ?, ?)", nullptr);
+			auto CommitPartyData = Reorganization ? LDB::ExpectsDB<LDB::TStatement*>(nullptr) : Partydata->PrepareStatement("INSERT OR IGNORE INTO parties (transaction_number, transaction_account_number, block_number) VALUES (?, ?, ?)", nullptr);
 			if (!CommitPartyData)
 				return ExpectsLR<void>(LayerException(std::move(CommitPartyData.Error().message())));
 
-			auto CommitAliasData = Aliasdata->PrepareStatement("INSERT INTO aliases (transaction_number, transaction_hash, block_number) VALUES (?, ?, ?)", nullptr);
+			auto CommitAliasData = Reorganization ? LDB::ExpectsDB<LDB::TStatement*>(nullptr) : Aliasdata->PrepareStatement("INSERT INTO aliases (transaction_number, transaction_hash, block_number) VALUES (?, ?, ?)", nullptr);
 			if (!CommitAliasData)
 				return ExpectsLR<void>(LayerException(std::move(CommitAliasData.Error().message())));
 
@@ -766,56 +823,64 @@ namespace Tangent
 				}
 			}
 
+			Vector<Promise<void>> Queue1;
 			Vector<TransactionBlob> Transactions;
-			uint64_t TransactionNonce = (*Cursor)["counter"].Get().GetInteger();
-			Transactions.resize(Value.Transactions.size());
-			for (size_t i = 0; i < Transactions.size(); i++)
-			{
-				TransactionBlob& Blob = Transactions[i];
-				Blob.TransactionNumber = ++TransactionNonce;
-				Blob.BlockNonce = (uint64_t)i;
-				Blob.Context = &Value.Transactions[i];
-			}
-
 			bool TransactionToAccountIndex = Protocol::Now().User.Storage.TransactionToAccountIndex;
 			bool TransactionToRollupIndex = Protocol::Now().User.Storage.TransactionToRollupIndex;
-			auto Queue1 = ParallelForEach(Transactions.begin(), Transactions.end(), [&](TransactionBlob& Item)
+			if (!Reorganization)
 			{
-				Item.ReceiptMessage.Data.reserve(1024);
-				Item.Context->Transaction->Store(&Item.TransactionMessage);
-				Item.Context->Receipt.Store(&Item.ReceiptMessage);
-				Item.DispatchNumber = Item.Context->Transaction->GetDispatchOffset();
-				Algorithm::Encoding::DecodeUint256(Item.Context->Receipt.TransactionHash, Item.TransactionHash);
-				if (TransactionToAccountIndex)
+				auto Cursor = Query(*Txdata, Label, __func__, "SELECT MAX(transaction_number) AS counter FROM transactions");
+				if (!Cursor || Cursor->ErrorOrEmpty())
+					return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
+
+				uint64_t TransactionNonce = (*Cursor)["counter"].Get().GetInteger();
+				Transactions.resize(Value.Transactions.size());
+				for (size_t i = 0; i < Transactions.size(); i++)
 				{
-					OrderedSet<String> Output;
-					Item.Context->Transaction->RecoverAlt(Item.Context->Receipt, Output);
-					Item.Parties.reserve(Item.Parties.size() + Output.size() + 1);
-
-					TransactionPartyBlob Party;
-					memcpy(Party.Owner, Item.Context->Receipt.From, sizeof(Party.Owner));
-					Item.Parties.push_back(Party);
-
-					for (auto& Owner : Output)
+					TransactionBlob& Blob = Transactions[i];
+					Blob.TransactionNumber = ++TransactionNonce;
+					Blob.BlockNonce = (uint64_t)i;
+					Blob.Context = &Value.Transactions[i];
+				}
+				Queue1 = ParallelForEach(Transactions.begin(), Transactions.end(), [&](TransactionBlob& Item)
+				{
+					Item.ReceiptMessage.Data.reserve(1024);
+					Item.Context->Transaction->Store(&Item.TransactionMessage);
+					Item.Context->Receipt.Store(&Item.ReceiptMessage);
+					Item.DispatchNumber = Item.Context->Transaction->GetDispatchOffset();
+					Algorithm::Encoding::DecodeUint256(Item.Context->Receipt.TransactionHash, Item.TransactionHash);
+					if (TransactionToAccountIndex)
 					{
-						memcpy(Party.Owner, Owner.data(), std::min(Owner.size(), sizeof(Algorithm::Pubkeyhash)));
+						OrderedSet<String> Output;
+						Item.Context->Transaction->RecoverAlt(Item.Context->Receipt, Output);
+						Item.Parties.reserve(Item.Parties.size() + Output.size() + 1);
+
+						TransactionPartyBlob Party;
+						memcpy(Party.Owner, Item.Context->Receipt.From, sizeof(Party.Owner));
 						Item.Parties.push_back(Party);
-					}
-				}
-				if (TransactionToRollupIndex)
-				{
-					OrderedSet<uint256_t> Aliases;
-					Item.Context->Transaction->RecoverAlt(Item.Context->Receipt, Aliases);
-					Item.Aliases.reserve(Aliases.size());
 
-					TransactionAliasBlob Alias;
-					for (auto& Hash : Aliases)
-					{
-						Algorithm::Encoding::DecodeUint256(Hash, Alias.TransactionHash);
-						Item.Aliases.push_back(Alias);
+						for (auto& Owner : Output)
+						{
+							memcpy(Party.Owner, Owner.data(), std::min(Owner.size(), sizeof(Algorithm::Pubkeyhash)));
+							Item.Parties.push_back(Party);
+						}
 					}
-				}
-			});
+					if (TransactionToRollupIndex)
+					{
+						OrderedSet<uint256_t> Aliases;
+						Item.Context->Transaction->RecoverAlt(Item.Context->Receipt, Aliases);
+						Item.Aliases.reserve(Aliases.size());
+
+						TransactionAliasBlob Alias;
+						for (auto& Hash : Aliases)
+						{
+							Algorithm::Encoding::DecodeUint256(Hash, Alias.TransactionHash);
+							Item.Aliases.push_back(Alias);
+						}
+					}
+				});
+			}
+
 			auto Queue2 = ParallelForEach(Uniforms.begin(), Uniforms.end(), [&](UniformBlob& Item)
 			{
 				Item.Index = Item.Context->AsIndex();
@@ -832,11 +897,14 @@ namespace Tangent
 			Parallel::WailAll(std::move(Queue2));
 			Parallel::WailAll(std::move(Queue3));
 
-			auto* CacheA = AccountCache::Get();
-			for (auto& Data : Transactions)
+			if (!Reorganization)
 			{
-				for (auto& Party : Data.Parties)
-					CacheA->ClearAccountLocation(Party.Owner);
+				auto* CacheA = AccountCache::Get();
+				for (auto& Data : Transactions)
+				{
+					for (auto& Party : Data.Parties)
+						CacheA->ClearAccountLocation(Party.Owner);
+				}
 			}
 
 			auto* CacheU = UniformCache::Get();
@@ -953,94 +1021,97 @@ namespace Tangent
 				}
 				return Expectation::Met;
 			}, false));
-			Queue4.emplace_back(Cotask<ExpectsLR<void>>([&]() -> ExpectsLR<void>
-			{
-				auto* Statement = *CommitTransactionData;
-				LDB::ExpectsDB<LDB::Cursor> Cursor = LDB::DatabaseException(String());
-				for (auto& Data : Transactions)
-				{
-					Txdata->BindInt64(Statement, 0, Data.TransactionNumber);
-					Txdata->BindBlob(Statement, 1, std::string_view((char*)Data.TransactionHash, sizeof(Data.TransactionHash)));
-					if (Data.DispatchNumber > 0)
-						Txdata->BindInt64(Statement, 2, Value.Number + (Data.DispatchNumber - 1));
-					else
-						Txdata->BindNull(Statement, 2);
-					Txdata->BindInt64(Statement, 3, Value.Number);
-					Txdata->BindInt64(Statement, 4, Data.BlockNonce);
-
-					Cursor = PreparedQuery(*Txdata, Label, __func__, Statement);
-					if (!Cursor || Cursor->Error())
-						return LayerException(ErrorOf(Cursor));
-				}
-				return Expectation::Met;
-			}, false));
-			Queue4.emplace_back(Cotask<ExpectsLR<void>>([&]() -> ExpectsLR<void>
-			{
-				LDB::ExpectsDB<void> Status = Expectation::Met;
-				for (auto& Data : Transactions)
-				{
-					Status = Store(Label, __func__, GetTransactionLabel(Data.TransactionHash), Data.TransactionMessage.Data);
-					if (!Status)
-						return LayerException(ErrorOf(Status));
-
-					Status = Store(Label, __func__, GetReceiptLabel(Data.TransactionHash), Data.ReceiptMessage.Data);
-					if (!Status)
-						return LayerException(ErrorOf(Status));
-				}
-				return Expectation::Met;
-			}, false));
-			if (TransactionToAccountIndex)
+			if (!Reorganization)
 			{
 				Queue4.emplace_back(Cotask<ExpectsLR<void>>([&]() -> ExpectsLR<void>
 				{
+					auto* Statement = *CommitTransactionData;
 					LDB::ExpectsDB<LDB::Cursor> Cursor = LDB::DatabaseException(String());
 					for (auto& Data : Transactions)
 					{
-						for (auto& Party : Data.Parties)
-						{
-							auto* Statement = *CommitAccountData;
-							Accountdata->BindBlob(Statement, 0, std::string_view((char*)Party.Owner, sizeof(Party.Owner)));
-							Accountdata->BindInt64(Statement, 1, Value.Number);
+						Txdata->BindInt64(Statement, 0, Data.TransactionNumber);
+						Txdata->BindBlob(Statement, 1, std::string_view((char*)Data.TransactionHash, sizeof(Data.TransactionHash)));
+						if (Data.DispatchNumber > 0)
+							Txdata->BindInt64(Statement, 2, Value.Number + (Data.DispatchNumber - 1));
+						else
+							Txdata->BindNull(Statement, 2);
+						Txdata->BindInt64(Statement, 3, Value.Number);
+						Txdata->BindInt64(Statement, 4, Data.BlockNonce);
 
-							Cursor = PreparedQuery(*Accountdata, Label, __func__, Statement);
-							if (!Cursor || Cursor->ErrorOrEmpty())
-								return LayerException(Cursor->Empty() ? "account not linked" : ErrorOf(Cursor));
-
-							uint64_t AccountNumber = Cursor->First().Front().GetColumn(0).Get().GetInteger();
-							Statement = *CommitPartyData;
-							Partydata->BindInt64(Statement, 0, Data.TransactionNumber);
-							Partydata->BindInt64(Statement, 1, AccountNumber);
-							Partydata->BindInt64(Statement, 2, Value.Number);
-
-							Cursor = PreparedQuery(*Partydata, Label, __func__, Statement);
-							if (!Cursor || Cursor->Error())
-								return LayerException(ErrorOf(Cursor));
-						}
+						Cursor = PreparedQuery(*Txdata, Label, __func__, Statement);
+						if (!Cursor || Cursor->Error())
+							return LayerException(ErrorOf(Cursor));
 					}
 					return Expectation::Met;
 				}, false));
-			}
-			if (TransactionToRollupIndex)
-			{
 				Queue4.emplace_back(Cotask<ExpectsLR<void>>([&]() -> ExpectsLR<void>
 				{
-					auto* Statement = *CommitAliasData;
-					LDB::ExpectsDB<LDB::Cursor> Cursor = LDB::DatabaseException(String());
+					LDB::ExpectsDB<void> Status = Expectation::Met;
 					for (auto& Data : Transactions)
 					{
-						for (auto& Alias : Data.Aliases)
-						{
-							Aliasdata->BindInt64(Statement, 0, Data.TransactionNumber);
-							Aliasdata->BindBlob(Statement, 1, std::string_view((char*)Alias.TransactionHash, sizeof(Alias.TransactionHash)));
-							Aliasdata->BindInt64(Statement, 2, Value.Number);
+						Status = Store(Label, __func__, GetTransactionLabel(Data.TransactionHash), Data.TransactionMessage.Data);
+						if (!Status)
+							return LayerException(ErrorOf(Status));
 
-							Cursor = PreparedQuery(*Aliasdata, Label, __func__, Statement);
-							if (!Cursor || Cursor->Error())
-								return LayerException(ErrorOf(Cursor));
-						}
+						Status = Store(Label, __func__, GetReceiptLabel(Data.TransactionHash), Data.ReceiptMessage.Data);
+						if (!Status)
+							return LayerException(ErrorOf(Status));
 					}
 					return Expectation::Met;
 				}, false));
+				if (TransactionToAccountIndex)
+				{
+					Queue4.emplace_back(Cotask<ExpectsLR<void>>([&]() -> ExpectsLR<void>
+					{
+						LDB::ExpectsDB<LDB::Cursor> Cursor = LDB::DatabaseException(String());
+						for (auto& Data : Transactions)
+						{
+							for (auto& Party : Data.Parties)
+							{
+								auto* Statement = *CommitAccountData;
+								Accountdata->BindBlob(Statement, 0, std::string_view((char*)Party.Owner, sizeof(Party.Owner)));
+								Accountdata->BindInt64(Statement, 1, Value.Number);
+
+								Cursor = PreparedQuery(*Accountdata, Label, __func__, Statement);
+								if (!Cursor || Cursor->ErrorOrEmpty())
+									return LayerException(Cursor->Empty() ? "account not linked" : ErrorOf(Cursor));
+
+								uint64_t AccountNumber = Cursor->First().Front().GetColumn(0).Get().GetInteger();
+								Statement = *CommitPartyData;
+								Partydata->BindInt64(Statement, 0, Data.TransactionNumber);
+								Partydata->BindInt64(Statement, 1, AccountNumber);
+								Partydata->BindInt64(Statement, 2, Value.Number);
+
+								Cursor = PreparedQuery(*Partydata, Label, __func__, Statement);
+								if (!Cursor || Cursor->Error())
+									return LayerException(ErrorOf(Cursor));
+							}
+						}
+						return Expectation::Met;
+					}, false));
+				}
+				if (TransactionToRollupIndex)
+				{
+					Queue4.emplace_back(Cotask<ExpectsLR<void>>([&]() -> ExpectsLR<void>
+					{
+						auto* Statement = *CommitAliasData;
+						LDB::ExpectsDB<LDB::Cursor> Cursor = LDB::DatabaseException(String());
+						for (auto& Data : Transactions)
+						{
+							for (auto& Alias : Data.Aliases)
+							{
+								Aliasdata->BindInt64(Statement, 0, Data.TransactionNumber);
+								Aliasdata->BindBlob(Statement, 1, std::string_view((char*)Alias.TransactionHash, sizeof(Alias.TransactionHash)));
+								Aliasdata->BindInt64(Statement, 2, Value.Number);
+
+								Cursor = PreparedQuery(*Aliasdata, Label, __func__, Statement);
+								if (!Cursor || Cursor->Error())
+									return LayerException(ErrorOf(Cursor));
+							}
+						}
+						return Expectation::Met;
+					}, false));
+				}
 			}
 
 			for (auto& Status : Parallel::InlineWaitAll(std::move(Queue4)))
@@ -1061,7 +1132,7 @@ namespace Tangent
 			if (Value.Number <= LatestCheckpoint)
 				return Expectation::Met;
 
-			return Prune(Protocol::Now().User.Storage.FullBlockHistory ? (uint32_t)Pruning::Statetrie : (uint32_t)Pruning::Blocktrie | (uint32_t)Pruning::Transactiontrie | (uint32_t)Pruning::Statetrie, Value.Number);
+			return Prune(Protocol::Now().User.Storage.PruneAggressively ? (uint32_t)Pruning::Blocktrie | (uint32_t)Pruning::Transactiontrie | (uint32_t)Pruning::Statetrie : (uint32_t)Pruning::Statetrie, Value.Number);
 		}
 		ExpectsLR<size_t> Chainstate::ResolveBlockTransactions(Ledger::Block& Value, bool Fully, size_t Offset, size_t Count)
 		{

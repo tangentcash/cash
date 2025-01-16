@@ -1741,12 +1741,28 @@ namespace Tangent
 				return true;
 			}
 
-			auto Validation = From ? CandidateBlock.Validate(ParentBlock.Address()) : CandidateBlock.VerifyIntegrity(ParentBlock.Address());
-			if (!Verification)
+			if (From != nullptr)
 			{
-				if (Protocol::Now().User.P2P.Logging)
-					VI_WARN("[p2p] block %s branch averted: %s", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str(), Verification.Error().what());
-				return false;
+				Ledger::Block EvaluatedBlock;
+				auto Validation = CandidateBlock.Validate(ParentBlock.Address(), &EvaluatedBlock);
+				if (!Validation)
+				{
+					if (Protocol::Now().User.P2P.Logging)
+						VI_WARN("[p2p] block %s branch averted: %s", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str(), Verification.Error().what());
+					return false;
+				}
+
+				CandidateBlock = std::move(EvaluatedBlock);
+			}
+			else
+			{
+				auto Integrity = CandidateBlock.VerifyIntegrity(ParentBlock.Address());
+				if (!Integrity)
+				{
+					if (Protocol::Now().User.P2P.Logging)
+						VI_WARN("[p2p] block %s branch averted: %s", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str(), Integrity.Error().what());
+					return false;
+				}
 			}
 
 			UMutex<std::recursive_mutex> Unique(Sync.Block);
@@ -1820,7 +1836,7 @@ namespace Tangent
 			if (Protocol::Now().User.P2P.Logging)
 			{
 				if (Mutation->IsFork)
-					VI_INFO("[p2p] block %s chain rollback (deleted: %" PRIu64 " blocks, resurrected: %" PRIu64 " txns)", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str(), Math64::Abs((int64_t)Mutation->OldTipBlockNumber - (int64_t)Mutation->NewTipBlockNumber), Mutation->Resurrections);
+					VI_INFO("[p2p] block %s chain forked (height: %" PRIu64 ", mempool: %" PRIu64 ", block-delta: " PRIi64 ", transaction-delta: " PRIi64 ", state-delta: " PRIi64 ")", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str(), Mutation->OldTipBlockNumber, Mutation->MempoolTransactions, Mutation->BlockDelta, Mutation->TransactionDelta, Mutation->StateDelta);
 				VI_INFO("[p2p] block %s chain %s (height: %" PRIu64 ", sync: %.2f%%, priority: %" PRIu64 ")", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str(), Mutation->IsFork ? "shortened" : "extended", CandidateBlock.Number, 100.0 * GetSyncProgress(ForkTip, CandidateBlock.Number), CandidateBlock.Priority);
 			}
 				

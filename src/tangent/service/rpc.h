@@ -200,6 +200,7 @@ namespace Tangent
 			ServerResponse MempoolstateGetCumulativeConsensus(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse ValidatorstatePrune(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse ValidatorstateRevert(HTTP::Connection* Base, Format::Variables&& Args);
+			ServerResponse ValidatorstateReorganize(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse ValidatorstateVerify(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse ValidatorstateAcceptNode(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse ValidatorstateRejectNode(HTTP::Connection* Base, Format::Variables&& Args);
