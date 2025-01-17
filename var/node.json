@@ -2,34 +2,69 @@
     "network": "regtest",
     "vectorstate": "./vectorstate.bsk",
     "seeds": [],
+    "seeders": [],
+    "logs": {
+        "state": "./logs/state.log",
+        "message": "",
+        "data": "",
+        "archive_size": 8388608,
+        "archive_repack_interval": 1800
+    },
     "p2p": {
-        "node_address": "0.0.0.0",
-        "node_timeout": 10000,
-        "node_time_offset": 30000,
-        "tls_trusted_peers": 0,
-        "tls_validity_days": 0,
-        "cursor_size": 2048,
+        "address": "0.0.0.0",
+        "port": 18418,
+        "time_offset": 30000,
         "max_inbound_connections": 32,
         "max_outbound_connections": 8,
+        "inventory_size": 8192,
+        "inventory_timeout": 300,
+        "cursor_size": 2048,
         "proposer": true,
-        "server": true
+        "server": true,
+        "logging": true
     },
     "rpc": {
-        "node_address": "0.0.0.0",
+        "address": "0.0.0.0",
+        "port": 18419,
         "admin_username": null,
         "admin_password": null,
         "user_username": null,
         "user_password": null,
         "cursor_size": 512,
         "page_size": 64,
-        "server": true
+        "messaging": true,
+        "websockets": false,
+        "server": false,
+        "logging": true
+    },
+    "nds": {
+        "address": "0.0.0.0",
+        "port": 18420,
+        "cursor_size": 512,
+        "page_size": 64,
+        "server": false,
+        "logging": true
+    },
+    "tcp": {
+        "tls_trusted_peers": 100,
+        "timeout": 10000
     },
     "storage": {
         "directory": "./",
         "optimization": "speed",
-        "checkpoint_size": 14400,
+        "checkpoint_size": 64,
         "location_cache_size": 500000,
-        "partition_size": 68719476736
+        "script_cache_size": 8192,
+        "blob_cache_size": 134217728,
+        "index_page_size": 65536,
+        "index_cache_size": -2000,
+        "flush_threads_ratio": 0.25,
+        "compaction_threads_ratio": 0.25,
+        "computation_threads_ratio": 0.00,
+        "prune_aggressively": false,
+        "transaction_to_account_index": true,
+        "transaction_to_rollup_index": true,
+        "logging": true
     },
     "oracle": {
         "block_replay_multiplier": 4,
@@ -40,19 +75,20 @@
         "fee_estimation_seconds": 600,
         "withdrawal_time": 300000,
         "observer": false,
+        "logging": true,
         "supervisor": {
             "retry_timeout": 30000,
             "polling_frequency": 70000,
-            "block_confirmations": 0,
-            "log_transactions": true,
-            "log_blocks": true,
-            "log_queue": true,
-            "log_broadcasts": true
+            "block_confirmations": 0
         },
         "observers": {
             "BTC": {
                 "peers": ["http://admin:pass@127.0.0.1:8332"],
-                "observer": { "delay": 0, "tip": null }
+                "observer": {
+                    "delay": 0,
+                    "tip": null,
+                    "props": null
+                }
             }
         }
     }

@@ -285,7 +285,7 @@ namespace Tangent
 	{
 		Schedule::Desc Policy;
 		Policy.Ping = [this]() { return ExitCode == 0xFFFFFFFF; };
-		if (Protocol::Now().User.ComputationThreadsRatio > 0.0)
+		if (Protocol::Now().User.Storage.ComputationThreadsRatio > 0.0)
 		{
 			auto Threads = OS::CPU::GetQuantityInfo().Logical;
 #ifndef VI_CXX20
@@ -293,7 +293,7 @@ namespace Tangent
 #else
 			Policy.Threads[((size_t)Difficulty::Async)] = 1;
 #endif
-			Policy.Threads[((size_t)Difficulty::Sync)] = (size_t)std::max(std::ceil(Threads * Protocol::Now().User.ComputationThreadsRatio), 1.0);
+			Policy.Threads[((size_t)Difficulty::Sync)] = (size_t)std::max(std::ceil(Threads * Protocol::Now().User.Storage.ComputationThreadsRatio), 1.0);
 			Policy.Threads[((size_t)Difficulty::Timeout)] = 1;
 		}
 

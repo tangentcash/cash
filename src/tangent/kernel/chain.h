@@ -176,6 +176,9 @@ namespace Tangent
                 uint64_t BlobCacheSize = 134217728;
                 uint64_t IndexPageSize = 65536;
                 int64_t IndexCacheSize = -2000;
+                double FlushThreadsRatio = 0.25;
+                double CompactionThreadsRatio = 0.25;
+                double ComputationThreadsRatio = 0.00;
                 bool PruneAggressively = false;
                 bool TransactionToAccountIndex = true;
                 bool TransactionToRollupIndex = true;
@@ -205,9 +208,6 @@ namespace Tangent
             UnorderedSet<String> Seeders;
             NetworkType Network = NetworkType::Mainnet;
             String Vectorstate = TAN_VECTORSTATE_PATH;
-            double FlushThreadsRatio = 0.25;
-            double CompactionThreadsRatio = 0.25;
-            double ComputationThreadsRatio = 0.00;
         } User;
         struct ProtocolMessagingConfig
         {

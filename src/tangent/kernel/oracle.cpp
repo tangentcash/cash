@@ -3034,8 +3034,8 @@ namespace Tangent
 							}
 						}
 
-						auto* Props = Root->Get("props");
-						if (Props != nullptr)
+						auto* Props = Root->Fetch("observer.props");
+						if (Props != nullptr && Props->Value.GetType() != VarType::Null)
 						{
 							Datamaster::AddOptions(Asset, Props);
 							Props->Unlink();

@@ -407,18 +407,6 @@ namespace Tangent
 				}
 			}
 
-			Value = Config->Fetch("flush_threads_ratio");
-			if (Value != nullptr && Value->Value.Is(VarType::Number))
-				User.FlushThreadsRatio = Value->Value.GetNumber();
-
-			Value = Config->Fetch("compaction_threads_ratio");
-			if (Value != nullptr && Value->Value.Is(VarType::Number))
-				User.CompactionThreadsRatio = Value->Value.GetNumber();
-
-			Value = Config->Fetch("computation_threads_ratio");
-			if (Value != nullptr && Value->Value.Is(VarType::Number))
-				User.ComputationThreadsRatio = Value->Value.GetNumber();
-
 			Value = Config->Fetch("logs.state");
 			if (Value != nullptr && Value->Value.Is(VarType::String))
 				User.Logs.State = Value->Value.GetBlob();
@@ -596,7 +584,23 @@ namespace Tangent
 			Value = Config->Fetch("storage.index_cache_size");
 			if (Value != nullptr && Value->Value.Is(VarType::Integer))
 				User.Storage.IndexCacheSize = Value->Value.GetInteger();
-			
+
+			Value = Config->Fetch("storage.flush_threads_ratio");
+			if (Value != nullptr && Value->Value.Is(VarType::Number))
+				User.Storage.FlushThreadsRatio = Value->Value.GetNumber();
+
+			Value = Config->Fetch("storage.compaction_threads_ratio");
+			if (Value != nullptr && Value->Value.Is(VarType::Number))
+				User.Storage.CompactionThreadsRatio = Value->Value.GetNumber();
+
+			Value = Config->Fetch("storage.computation_threads_ratio");
+			if (Value != nullptr && Value->Value.Is(VarType::Number))
+				User.Storage.ComputationThreadsRatio = Value->Value.GetNumber();
+
+			Value = Config->Fetch("storage.prune_aggressively");
+			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
+				User.Storage.PruneAggressively = Value->Value.GetBoolean();
+
 			Value = Config->Fetch("storage.transaction_to_account_index");
 			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
 				User.Storage.TransactionToAccountIndex = Value->Value.GetBoolean();
@@ -604,10 +608,6 @@ namespace Tangent
 			Value = Config->Fetch("storage.transaction_to_rollup_index");
 			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
 				User.Storage.TransactionToRollupIndex = Value->Value.GetBoolean();
-
-			Value = Config->Fetch("storage.prune_aggressively");
-			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
-				User.Storage.PruneAggressively = Value->Value.GetBoolean();
 
 			Value = Config->Fetch("storage.logging");
 			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
