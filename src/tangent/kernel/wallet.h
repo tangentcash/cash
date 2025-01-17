@@ -9,36 +9,32 @@ namespace Tangent
 		struct Wallet : Messages::Generic
 		{
 			Algorithm::Seckey PrivateKey = { 0 };
+			Algorithm::Pubkey SealingKey = { 0 };
 			Algorithm::Pubkey PublicKey = { 0 };
 			Algorithm::Pubkeyhash PublicKeyHash = { 0 };
-			Algorithm::Seckey SealingPrivateKey = { 0 };
-			Algorithm::Pubkey SealingPublicKey = { 0 };
 
-			void SetPrivateKey(const Algorithm::Seckey Value);
+			bool SetPrivateKey(const Algorithm::Seckey Value);
 			void SetPublicKey(const Algorithm::Pubkey Value);
 			void SetPublicKeyHash(const Algorithm::Pubkeyhash Value);
 			bool VerifyPrivateKey() const;
+			bool VerifySealingKey() const;
 			bool VerifyPublicKey() const;
 			bool VerifyAddress() const;
-			bool VerifySealingPrivateKey() const;
-			bool VerifySealingPublicKey() const;
 			bool Verify(const Messages::Authentic& Message) const;
 			bool Recover(Messages::Authentic& Message) const;
 			bool Sign(Messages::Authentic& Message) const;
 			bool StorePayload(Format::Stream* Stream) const override;
 			bool LoadPayload(Format::Stream& Stream) override;
 			bool HasPrivateKey() const;
+			bool HasSealingKey() const;
 			bool HasPublicKey() const;
 			bool HasPublicKeyHash() const;
-			bool HasSealingPrivateKey() const;
-			bool HasSealingPublicKey() const;
-			Option<String> SealMessage(const std::string_view& Plaintext, const Algorithm::Pubkey SealingPublicKey) const;
+			Option<String> SealMessage(const std::string_view& Plaintext, const Algorithm::Pubkey ForSealingKey) const;
 			Option<String> OpenMessage(const std::string_view& Ciphertext) const;
 			String GetPrivateKey() const;
+			String GetSealingKey() const;
 			String GetPublicKey() const;
 			String GetAddress() const;
-			String GetSealingPrivateKey() const;
-			String GetSealingPublicKey() const;
 			ExpectsLR<uint64_t> GetLatestSequence() const;
 			UPtr<Schema> AsSchema() const override;
 			UPtr<Schema> AsPublicSchema() const;

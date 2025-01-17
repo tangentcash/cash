@@ -13,6 +13,10 @@
 #include "../oracle/tron.h"
 #endif
 #include <sstream>
+extern "C"
+{
+#include "../../utils/tiny-bitcoin/ecc.h"
+}
 
 namespace Tangent
 {
@@ -2977,6 +2981,7 @@ namespace Tangent
 			if (Activations++)
 				return;
 
+			btc_ecc_start();
 			if (!Datamaster::IsInitialized())
 				Datamaster::Initialize();
 
@@ -3058,6 +3063,7 @@ namespace Tangent
 
 			Paymaster::Shutdown().Wait();
 			Datamaster::Cleanup();
+			btc_ecc_stop();
 		}
 		UnorderedMap<String, MasterWallet> Bridge::GetWallets(const Algorithm::Seckey PrivateKey)
 		{

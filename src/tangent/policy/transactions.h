@@ -351,7 +351,7 @@ namespace Tangent
 
 		struct ContributionAllocation final : Ledger::Transaction
 		{
-			Algorithm::Pubkey SealingPublicKey1 = { 0 };
+			Algorithm::Pubkey SealingKey1 = { 0 };
 			Algorithm::Composition::CPubkey PublicKey1 = { 0 };
 			String EncryptedPrivateKey1For1;
 
@@ -376,7 +376,7 @@ namespace Tangent
 		struct ContributionActivation final : Ledger::ConsensusTransaction
 		{
 			Algorithm::Pubkey PublicKey = { 0 };
-			Algorithm::Pubkey SealingPublicKey2 = { 0 };
+			Algorithm::Pubkey SealingKey2 = { 0 };
 			Algorithm::Composition::CPubkey PublicKey2 = { 0 };
 			String EncryptedPrivateKey2For2;
 			uint16_t PublicKeySize = 0;

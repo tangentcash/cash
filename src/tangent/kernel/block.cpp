@@ -526,7 +526,7 @@ namespace Tangent
 			if (!BlockHeader::StorePayload(&Message))
 				return false;
 
-			return Algorithm::Signing::Sign(Message.Hash(), PrivateKey, Signature);
+			return Algorithm::Signing::SignTweaked(Message.Hash(), PrivateKey, Signature);
 		}
 		bool BlockHeader::Solve(const Algorithm::Seckey PrivateKey)
 		{
@@ -543,7 +543,7 @@ namespace Tangent
 			if (!BlockHeader::StorePayload(&Message))
 				return false;
 
-			return Algorithm::Signing::Verify(Message.Hash(), PublicKey, Signature);
+			return Algorithm::Signing::VerifyTweaked(Message.Hash(), PublicKey, Signature);
 		}
 		bool BlockHeader::Recover(Algorithm::Pubkeyhash PublicKeyHash) const
 		{
@@ -551,7 +551,7 @@ namespace Tangent
 			if (!BlockHeader::StorePayload(&Message))
 				return false;
 
-			return Algorithm::Signing::RecoverHash(Message.Hash(), PublicKeyHash, Signature);
+			return Algorithm::Signing::RecoverTweakedHash(Message.Hash(), PublicKeyHash, Signature);
 		}
 		bool BlockHeader::VerifyWesolowski() const
 		{
@@ -2534,7 +2534,7 @@ namespace Tangent
 		{
 			VI_ASSERT(NewTransaction && Owner, "transaction and owner should be set");
 			Algorithm::Pubkeyhash Null = { 0 };
-			if (!Algorithm::Signing::RecoverHash(NewTransactionHash, Owner, NewTransaction->Signature) || !memcmp(Owner, Null, sizeof(Null)))
+			if (!Algorithm::Signing::RecoverTweakedHash(NewTransactionHash, Owner, NewTransaction->Signature) || !memcmp(Owner, Null, sizeof(Null)))
 				return LayerException("invalid signature");
 
 			return NewTransaction->Prevalidate();
@@ -2543,7 +2543,7 @@ namespace Tangent
 		{
 			VI_ASSERT(NewBlock && NewEnvironment && NewTransaction, "block, utilization and transaction should be set");
 			Algorithm::Pubkeyhash Null = { 0 }, Owner;
-			if (!Algorithm::Signing::RecoverHash(NewTransaction->AsPayload().Hash(), Owner, NewTransaction->Signature) || !memcmp(Owner, Null, sizeof(Null)))
+			if (!Algorithm::Signing::RecoverTweakedHash(NewTransaction->AsPayload().Hash(), Owner, NewTransaction->Signature) || !memcmp(Owner, Null, sizeof(Null)))
 				return LayerException("invalid signature");
 
 			return ValidateTx(NewBlock, NewEnvironment, NewTransaction, NewTransactionHash, Owner, Cache);
@@ -2890,7 +2890,7 @@ namespace Tangent
 
 				Item.Size = Item.Candidate->AsMessage().Data.size();
 				if (Item.Candidate->GetType() != TransactionLevel::Aggregation)
-					Algorithm::Signing::RecoverHash(Item.Candidate->AsPayload().Hash(), Item.Owner, Item.Candidate->Signature);
+					Algorithm::Signing::RecoverTweakedHash(Item.Candidate->AsPayload().Hash(), Item.Owner, Item.Candidate->Signature);
 				else
 					Item.Candidate->Recover(Item.Owner);
 			}));

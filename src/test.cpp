@@ -1907,53 +1907,82 @@ public:
 		Vitex::Runtime Scope;
 		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
 
+		auto* Term = Console::Get();
+		Term->Show();
+
 		String Mnemonic = "chimney clerk liberty defense gesture risk disorder switch raven chapter document admit win swing forward please clerk vague online coil material tone sibling intact";
 		Algorithm::Seckey PrivateKey;
 		Algorithm::Pubkey PublicKey;
+		Algorithm::Pubkey TweakedPublicKey;
 		Algorithm::Pubkeyhash PublicKeyHash;
+		Algorithm::Pubkeyhash TweakedPublicKeyHash;
 		Algorithm::Signing::DerivePrivateKey(Mnemonic, PrivateKey);
 		Algorithm::Signing::DerivePublicKey(PrivateKey, PublicKey);
+		Algorithm::Signing::DeriveTweakedPublicKey(PublicKey, TweakedPublicKey);
 		Algorithm::Signing::DerivePublicKeyHash(PublicKey, PublicKeyHash);
+		Algorithm::Signing::DerivePublicKeyHash(TweakedPublicKey, TweakedPublicKeyHash);
 
-		String EncodedPrivateKey, EncodedPublicKey, EncodedPublicKeyHash;
+		String EncodedPrivateKey, EncodedPublicKey, EncodedTweakedPublicKey, EncodedPublicKeyHash, EncodedTweakedPublicKeyHash;
 		Algorithm::Signing::EncodePrivateKey(PrivateKey, EncodedPrivateKey);
 		Algorithm::Signing::EncodePublicKey(PublicKey, EncodedPublicKey);
+		Algorithm::Signing::EncodePublicKey(TweakedPublicKey, EncodedTweakedPublicKey);
 		Algorithm::Signing::EncodeAddress(PublicKeyHash, EncodedPublicKeyHash);
+		Algorithm::Signing::EncodeAddress(TweakedPublicKeyHash, EncodedTweakedPublicKeyHash);
 
 		String Message = "Hello, World!";
 		uint256_t MessageHash = Algorithm::Hashing::Hash256i(Message);
 		String EncodedMessageHash = Algorithm::Encoding::Encode0xHex256(MessageHash);
 		Algorithm::Sighash MessageSignature;
+		Algorithm::Sighash MessageTweakedSignature;
 		Algorithm::Pubkey RecoverPublicKey;
+		Algorithm::Pubkey RecoverTweakedPublicKey;
 		Algorithm::Pubkeyhash RecoverPublicKeyHash;
-		bool Verifies = Algorithm::Signing::Sign(MessageHash, PrivateKey, MessageSignature) && Algorithm::Signing::Verify(MessageHash, PublicKey, MessageSignature);
-		bool RecoversPublicKey = Algorithm::Signing::Recover(MessageHash, RecoverPublicKey, MessageSignature);
-		bool RecoversPublicKeyHash = Algorithm::Signing::RecoverHash(MessageHash, RecoverPublicKeyHash, MessageSignature);
+		Algorithm::Pubkeyhash RecoverTweakedPublicKeyHash;
+		bool Verifies = Algorithm::Signing::SignNormal(MessageHash, PrivateKey, MessageSignature) && Algorithm::Signing::VerifyNormal(MessageHash, PublicKey, MessageSignature);
+		bool VerifiesTweaked = Algorithm::Signing::SignTweaked(MessageHash, PrivateKey, MessageTweakedSignature) && Algorithm::Signing::VerifyTweaked(MessageHash, PublicKey, MessageTweakedSignature);
+		bool RecoversPublicKey = Algorithm::Signing::RecoverNormal(MessageHash, RecoverPublicKey, MessageSignature);
+		bool RecoversTweakedPublicKey = Algorithm::Signing::RecoverTweaked(MessageHash, RecoverTweakedPublicKey, MessageTweakedSignature);
+		bool RecoversPublicKeyHash = Algorithm::Signing::RecoverNormalHash(MessageHash, RecoverPublicKeyHash, MessageSignature);
+		bool RecoversTweakedPublicKeyHash = Algorithm::Signing::RecoverTweakedHash(MessageHash, RecoverTweakedPublicKeyHash, MessageTweakedSignature);
 		String EncodedMessageSignature = Format::Util::Encode0xHex(std::string_view((char*)MessageSignature, sizeof(MessageSignature)));
-		String EncodedRecoverPublicKey, EncodedRecoverPublicKeyHash;
+		String EncodedMessageTweakedSignature = Format::Util::Encode0xHex(std::string_view((char*)MessageTweakedSignature, sizeof(MessageTweakedSignature)));
+		String EncodedRecoverPublicKey, EncodedRecoverPublicKeyHash, EncodedRecoverTweakedPublicKey, EncodedRecoverTweakedPublicKeyHash;
 		Algorithm::Signing::EncodePublicKey(RecoverPublicKey, EncodedRecoverPublicKey);
+		Algorithm::Signing::EncodePublicKey(RecoverTweakedPublicKey, EncodedRecoverTweakedPublicKey);
 		Algorithm::Signing::EncodeAddress(RecoverPublicKeyHash, EncodedRecoverPublicKeyHash);
-
-		auto* Term = Console::Get();
-		Term->Show();
+		Algorithm::Signing::EncodeAddress(RecoverTweakedPublicKeyHash, EncodedRecoverTweakedPublicKeyHash);
 
 		auto Info = UPtr<Schema>(Var::Set::Object());
 		Info->Set("mnemonic", Var::String(Mnemonic));
 		Info->Set("mnemonic_test", Var::String(Algorithm::Signing::VerifyMnemonic(Mnemonic) ? "passed" : "failed"));
 		Info->Set("private_key", Var::String(EncodedPrivateKey));
 		Info->Set("private_key_test", Var::String(Algorithm::Signing::VerifyPrivateKey(PrivateKey) ? "passed" : "failed"));
-		Info->Set("public_key", Var::String(EncodedPublicKey));
-		Info->Set("public_key_test", Var::String(Algorithm::Signing::VerifyPublicKey(PublicKey) ? "passed" : "failed"));
-		Info->Set("address", Var::String(EncodedPublicKeyHash));
-		Info->Set("address_test", Var::String(Algorithm::Signing::VerifyAddress(EncodedPublicKeyHash) ? "passed" : "failed"));
 		Info->Set("message", Var::String(Message));
 		Info->Set("message_hash", Var::String(EncodedMessageHash));
-		Info->Set("signature", Var::String(EncodedMessageSignature));
-		Info->Set("signature_test", Var::String(Verifies ? "passed" : "failed"));
-		Info->Set("recover_public_key", Var::String(EncodedRecoverPublicKey));
-		Info->Set("recover_public_key_test", Var::String(RecoversPublicKey && EncodedRecoverPublicKey == EncodedPublicKey ? "passed" : "failed"));
-		Info->Set("recover_address", Var::String(EncodedRecoverPublicKeyHash));
-		Info->Set("recover_address_test", Var::String(RecoversPublicKeyHash && EncodedRecoverPublicKeyHash == EncodedPublicKeyHash ? "passed" : "failed"));
+
+		auto* Normal = Info->Set("signature_normal", Var::Set::Object());
+		Normal->Set("public_key", Var::String(EncodedPublicKey));
+		Normal->Set("public_key_test", Var::String(Algorithm::Signing::VerifyPublicKey(PublicKey) ? "passed" : "failed"));
+		Normal->Set("address", Var::String(EncodedPublicKeyHash));
+		Normal->Set("address_test", Var::String(Algorithm::Signing::VerifyAddress(EncodedPublicKeyHash) ? "passed" : "failed"));
+		Normal->Set("signature", Var::String(EncodedMessageSignature));
+		Normal->Set("signature_test", Var::String(Verifies ? "passed" : "failed"));
+		Normal->Set("recover_public_key", Var::String(EncodedRecoverPublicKey));
+		Normal->Set("recover_public_key_test", Var::String(RecoversPublicKey && EncodedRecoverPublicKey == EncodedPublicKey ? "passed" : "failed"));
+		Normal->Set("recover_address", Var::String(EncodedRecoverPublicKeyHash));
+		Normal->Set("recover_address_test", Var::String(RecoversPublicKeyHash && EncodedRecoverPublicKeyHash == EncodedPublicKeyHash ? "passed" : "failed"));
+
+		auto* Blinding = Info->Set("signature_blinding", Var::Set::Object());
+		Blinding->Set("public_key", Var::String(EncodedTweakedPublicKey));
+		Blinding->Set("public_key_test", Var::String(Algorithm::Signing::VerifyPublicKey(TweakedPublicKey) ? "passed" : "failed"));
+		Blinding->Set("address", Var::String(EncodedTweakedPublicKeyHash));
+		Blinding->Set("address_test", Var::String(Algorithm::Signing::VerifyAddress(EncodedTweakedPublicKeyHash) ? "passed" : "failed"));
+		Blinding->Set("signature", Var::String(EncodedMessageTweakedSignature));
+		Blinding->Set("signature_test", Var::String(Verifies ? "passed" : "failed"));
+		Blinding->Set("recover_public_key", Var::String(EncodedRecoverTweakedPublicKey));
+		Blinding->Set("recover_public_key_test", Var::String(RecoversTweakedPublicKey && EncodedRecoverTweakedPublicKey == EncodedTweakedPublicKey ? "passed" : "failed"));
+		Blinding->Set("recover_address", Var::String(EncodedRecoverTweakedPublicKeyHash));
+		Blinding->Set("recover_address_test", Var::String(RecoversTweakedPublicKeyHash && EncodedRecoverTweakedPublicKeyHash == EncodedTweakedPublicKeyHash ? "passed" : "failed"));
 
 		Term->jWriteLine(*Info);
 		Term->ReadChar();
@@ -2240,39 +2269,35 @@ public:
 		auto User2 = Ledger::Wallet::FromSeed();
 		auto MessageFromUser1 = "Hello, Alice!";
 		auto MessageFromUser2 = "Hello, Bob!";
-		auto Ciphertext1 = User1.SealMessage(MessageFromUser1, User2.SealingPublicKey);
+		auto Ciphertext1 = User1.SealMessage(MessageFromUser1, User2.SealingKey);
 		auto Plaintext1 = Ciphertext1 ? User2.OpenMessage(*Ciphertext1) : Option<String>(Optional::None);
-		auto Ciphertext2 = User2.SealMessage(MessageFromUser2, User1.SealingPublicKey);
+		auto Ciphertext2 = User2.SealMessage(MessageFromUser2, User1.SealingKey);
 		auto Plaintext2 = Ciphertext2 ? User1.OpenMessage(*Ciphertext2) : Option<String>(Optional::None);
 		Term->fWrite(
 			"user1 wallet:\n"
 			"  private key: %s\n"
 			"  public key: %s\n"
 			"  address: %s\n"
-			"  sealing private key: %s\n"
-			"  sealing public key: %s\n"
+			"  sealing key: %s\n"
 			"    ciphertext to user2 wallet: %s\n"
 			"    plaintext from user2 wallet: %s\n\n"
 			"user2 wallet:\n"
 			"  private key: %s\n"
 			"  public key: %s\n"
 			"  address: %s\n"
-			"  sealing private key: %s\n"
-			"  sealing public key: %s\n"
+			"  sealing key: %s\n"
 			"    ciphertext to user1 wallet: %s\n"
-			"    plaintext from user1 wallet: %s\n\n",
+			"    plaintext from user1 wallet: %s\n",
 			User1.GetPrivateKey().c_str(),
 			User1.GetPublicKey().c_str(),
 			User1.GetAddress().c_str(),
-			User1.GetSealingPrivateKey().c_str(),
-			User1.GetSealingPublicKey().c_str(),
+			User1.GetSealingKey().c_str(),
 			Ciphertext1 ? Codec::HexEncode(*Ciphertext1).c_str() : "** encryption error **",
 			Plaintext2 ? Plaintext2->c_str() : "** decryption error **",
 			User2.GetPrivateKey().c_str(),
 			User2.GetPublicKey().c_str(),
 			User2.GetAddress().c_str(),
-			User2.GetSealingPrivateKey().c_str(),
-			User2.GetSealingPublicKey().c_str(),
+			User2.GetSealingKey().c_str(),
 			Ciphertext2 ? Codec::HexEncode(*Ciphertext2).c_str() : "** encryption error **",
 			Plaintext1 ? Plaintext1->c_str() : "** decryption error **");
 
@@ -2359,9 +2384,134 @@ public:
 		Term->ReadChar();
 		return 0;
 	}
+	/* Post-quantum ECC DSS algorithm tweak (validation measurement) */
+	static int ECCDSSKeypairBlining(int argc, char* argv[])
+	{
+		Vitex::Runtime Scope;
+		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
+
+		auto* Term = Console::Get();
+		Term->Show();
+		Term->Clear();
+
+		uint256_t SIG_NUM = 0;
+		while (SIG_NUM + 1 <= 150)
+		{
+			String SIG_MSG = "Hello, World!";
+			++SIG_NUM;
+
+			Algorithm::Seckey SK = { 0 };
+			VI_ASSERT(Algorithm::Signing::DerivePrivateKey("000001", SK, 1), "SK calculation error");
+
+			Algorithm::Pubkey PK = { 0 };
+			VI_ASSERT(Algorithm::Signing::DerivePublicKey(SK, PK), "PK calculation error");
+
+			Algorithm::Seckey RT = { 0 };
+			Algorithm::Hashing::Hash256(PK, sizeof(PK), RT);
+
+			Algorithm::Pubkey TPK = { 0 };
+			VI_ASSERT(Algorithm::Signing::PublicKeyTweakMul(PK, RT, TPK), "TPK calculation error");
+
+			Algorithm::Pubkeyhash PKH = { 0 };
+			Algorithm::Signing::DerivePublicKeyHash(TPK, PKH);
+
+			Algorithm::Seckey SIG_NT = { 0 };
+			Algorithm::Seckey SIG_NUM_DATA = { 0 };
+			Algorithm::Encoding::DecodeUint256(SIG_NUM, SIG_NUM_DATA);
+			Algorithm::Hashing::Hash256(SIG_NUM_DATA, sizeof(SIG_NUM_DATA), SIG_NT);
+
+			uint256_t SIG_HASH = Algorithm::Hashing::Hash256i(SIG_MSG);
+			Algorithm::Seckey SIG_ST = { 0 };
+			Algorithm::Seckey SIG_HASH_SK = { 0 };
+			Algorithm::Encoding::DecodeUint256(SIG_HASH, SIG_HASH_SK);
+			VI_ASSERT(Algorithm::Signing::PrivateKeyTweakMul(SIG_HASH_SK, SIG_NT, SIG_ST), "SIG_ST calculation error");
+
+			Algorithm::Seckey SIG_SK = { 0 };
+			VI_ASSERT(Algorithm::Signing::PrivateKeyTweakMul(SK, RT, SIG_SK), "SIG_SK calculation error");
+			VI_ASSERT(Algorithm::Signing::PrivateKeyTweakAdd(SIG_SK, SIG_ST, SIG_SK), "SIG_SK calculation error");
+
+			Algorithm::Sighash SIG_DATA = { 0 };
+			VI_ASSERT(Algorithm::Signing::SignNormal(SIG_HASH, SIG_SK, SIG_DATA), "SIG_DATA calculation error");
+
+			Algorithm::Pubkey SIG_PK = { 0 };
+			VI_ASSERT(Algorithm::Signing::RecoverNormal(SIG_HASH, SIG_PK, SIG_DATA), "SIG_PK calculation error");
+
+			Algorithm::Seckey SIG_NST = { 0 };
+			VI_ASSERT(Algorithm::Signing::NegatePrivateKey(SIG_ST, SIG_NST), "SIG_NST calculation error");
+
+			Algorithm::Pubkey SIG_TPK = { 0 };
+			VI_ASSERT(Algorithm::Signing::PublicKeyTweakAdd(SIG_PK, SIG_NST, SIG_TPK), "SIG_TPK calculation error");
+
+			Algorithm::Pubkeyhash SIG_PKH = { 0 };
+			Algorithm::Signing::DerivePublicKeyHash(SIG_TPK, SIG_PKH);
+
+			String STR_SK, STR_PK, STR_TPK, STR_PKH;
+			Algorithm::Signing::EncodePrivateKey(SK, STR_SK);
+			Algorithm::Signing::EncodePublicKey(PK, STR_PK);
+			Algorithm::Signing::EncodePublicKey(TPK, STR_TPK);
+			Algorithm::Signing::EncodeAddress(PKH, STR_PKH);
+
+			String STR_SIG_SK, STR_SIG_PK, STR_SIG_TPK, STR_SIG_PKH;
+			Algorithm::Signing::EncodePrivateKey(SIG_SK, STR_SIG_SK);
+			Algorithm::Signing::EncodePublicKey(SIG_PK, STR_SIG_PK);
+			Algorithm::Signing::EncodePublicKey(SIG_TPK, STR_SIG_TPK);
+			Algorithm::Signing::EncodeAddress(SIG_PKH, STR_SIG_PKH);
+			
+			bool Valid = Algorithm::Signing::VerifyNormal(SIG_HASH, SIG_PK, SIG_DATA);
+			String STR_RT = Format::Util::Encode0xHex(std::string_view((char*)RT, sizeof(RT)));
+			String STR_SIG_NT = Format::Util::Encode0xHex(std::string_view((char*)SIG_NT, sizeof(SIG_NT)));
+			String STR_SIG_ST = Format::Util::Encode0xHex(std::string_view((char*)SIG_ST, sizeof(SIG_ST)));
+			String STR_SIG_NST = Format::Util::Encode0xHex(std::string_view((char*)SIG_NST, sizeof(SIG_NST)));
+			String STR_SIG_HASH = Algorithm::Encoding::Encode0xHex256(SIG_HASH);
+			String STR_SIG_DATA = Format::Util::Encode0xHex(std::string_view((char*)SIG_DATA, sizeof(SIG_DATA)));
+			Term->WritePosition(0, 0);
+			Term->fWriteLine(
+				"SK: %s\n"
+				"PK: %s\n"
+				"RT: %s\n"
+				"TPK: %s\n"
+				"PKH: %s\n"
+				"SIG_NUM: %s\n"
+				"SIG_MSG: %s\n"
+				"SIG_HASH: %s\n"
+				"SIG_NT: %s\n"
+				"SIG_ST: %s\n"
+				"SIG_SK: %s\n"
+				"SIG_DATA: %s\n"
+				"SIG_PK: %s\n"
+				"SIG_NST: %s\n"
+				"SIG_TPK: %s\n"
+				"SIG_PKH: %s\n"
+				"SIG_TPK == TPK: %s\n"
+				"SIG_PKH == PKH: %s\n"
+				"SIG_DATA & PK: %s\n",
+				STR_SK.c_str(),
+				STR_PK.c_str(),
+				STR_RT.c_str(),
+				STR_TPK.c_str(),
+				STR_PKH.c_str(),
+				SIG_NUM.ToString().c_str(),
+				SIG_MSG.c_str(),
+				STR_SIG_HASH.c_str(),
+				STR_SIG_NT.c_str(),
+				STR_SIG_ST.c_str(),
+				STR_SIG_SK.c_str(),
+				STR_SIG_DATA.c_str(),
+				STR_SIG_PK.c_str(),
+				STR_SIG_NST.c_str(),
+				STR_SIG_TPK.c_str(),
+				STR_SIG_PKH.c_str(),
+				STR_SIG_TPK == STR_TPK ? "TRUE " : "FALSE",
+				STR_SIG_PKH == STR_PKH ? "TRUE " : "FALSE",
+				Valid ? "VALID SIGNATURE  " : "INVALID SIGNATURE");
+			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+		}
+		Term->ReadChar();
+		return 0;
+	}
 };
 
 int main(int argc, char* argv[])
 {
-    return TestCases::Consensus(argc, argv);
+    return TestCases::BlockchainPartialCoverage(argc, argv);
 }

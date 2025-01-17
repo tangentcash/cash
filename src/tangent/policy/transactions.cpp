@@ -429,7 +429,7 @@ namespace Tangent
 			Message.WriteBoolean(Patchable);
 			Message.WriteBoolean(Segregated);
 			Message.WriteString(Calldata);
-			return Algorithm::Signing::Sign(Algorithm::Signing::MessageHash(Message.Data), PrivateKey, Location);
+			return Algorithm::Signing::SignTweaked(Algorithm::Signing::MessageHash(Message.Data), PrivateKey, Location);
 		}
 		bool Deployment::VerifyLocation(const Algorithm::Pubkey PublicKey) const
 		{
@@ -438,7 +438,7 @@ namespace Tangent
 			Message.WriteBoolean(Patchable);
 			Message.WriteBoolean(Segregated);
 			Message.WriteString(Calldata);
-			return Algorithm::Signing::Verify(Algorithm::Signing::MessageHash(Message.Data), PublicKey, Location);
+			return Algorithm::Signing::VerifyTweaked(Algorithm::Signing::MessageHash(Message.Data), PublicKey, Location);
 		}
 		bool Deployment::RecoverLocation(Algorithm::Pubkeyhash PublicKeyHash) const
 		{
@@ -447,7 +447,7 @@ namespace Tangent
 			Message.WriteBoolean(Patchable);
 			Message.WriteBoolean(Segregated);
 			Message.WriteString(Calldata);
-			return Algorithm::Signing::RecoverHash(Algorithm::Signing::MessageHash(Message.Data), PublicKeyHash, Location);
+			return Algorithm::Signing::RecoverTweakedHash(Algorithm::Signing::MessageHash(Message.Data), PublicKeyHash, Location);
 		}
 		bool Deployment::IsLocationNull() const
 		{
@@ -1011,7 +1011,7 @@ namespace Tangent
 					return LayerException("sub-transaction " + Algorithm::Encoding::Encode0xHex256(Transaction->AsHash()) + " prevalidation failed: invalid payload");
 
 				Algorithm::Pubkeyhash Owner;
-				if (!Algorithm::Signing::RecoverHash(Message.Hash(), Owner, Transaction->Signature) || !memcmp(Owner, Null, sizeof(Null)))
+				if (!Algorithm::Signing::RecoverTweakedHash(Message.Hash(), Owner, Transaction->Signature) || !memcmp(Owner, Null, sizeof(Null)))
 					return LayerException("sub-transaction " + Algorithm::Encoding::Encode0xHex256(Transaction->AsHash()) + " prevalidation failed: invalid signature");
 
 				Transaction->GasPrice = Decimal::Zero();
@@ -1347,7 +1347,7 @@ namespace Tangent
 			if (!Transaction.StorePayload(&Message))
 				return false;
 			
-			return Algorithm::Signing::Sign(Message.Hash(), PrivateKey, Transaction.Signature);
+			return Algorithm::Signing::SignTweaked(Message.Hash(), PrivateKey, Transaction.Signature);
 		}
 
 		ExpectsLR<void> Commitment::Prevalidate() const
@@ -2666,11 +2666,8 @@ namespace Tangent
 			if (!Status)
 				return Status;
 
-			Algorithm::Seckey SealingPrivateKey1;
-			if (!Algorithm::Signing::DeriveSealingKeypair(PrivateKey, SealingPrivateKey1, SealingPublicKey1))
-				return LayerException("invalid sealing keypair derivation");
-
-			EncryptedPrivateKey1For1 = Algorithm::Signing::EncryptWithSealingPublicKey(SealingPublicKey1, std::string_view((char*)PrivateKey1, sizeof(PrivateKey1))).Or(String());
+			Algorithm::Signing::DeriveSealingKey(PrivateKey, SealingKey1);
+			EncryptedPrivateKey1For1 = Algorithm::Signing::PublicEncrypt(SealingKey1, std::string_view((char*)PrivateKey1, sizeof(PrivateKey1))).Or(String());
 			if (EncryptedPrivateKey1For1.empty())
 				return LayerException("invalid sealing secret");
 
@@ -2747,15 +2744,15 @@ namespace Tangent
 			VI_ASSERT(Stream != nullptr, "stream should be set");
 			Algorithm::Pubkey PubNull = { 0 };
 			Algorithm::Composition::CPubkey CPubNull = { 0 };
-			Stream->WriteString(std::string_view((char*)SealingPublicKey1, memcmp(SealingPublicKey1, PubNull, sizeof(PubNull)) == 0 ? 0 : sizeof(SealingPublicKey1)));
+			Stream->WriteString(std::string_view((char*)SealingKey1, memcmp(SealingKey1, PubNull, sizeof(PubNull)) == 0 ? 0 : sizeof(SealingKey1)));
 			Stream->WriteString(std::string_view((char*)PublicKey1, memcmp(PublicKey1, CPubNull, sizeof(CPubNull)) == 0 ? 0 : sizeof(PublicKey1)));
 			Stream->WriteString(EncryptedPrivateKey1For1);
 			return true;
 		}
 		bool ContributionAllocation::LoadBody(Format::Stream& Stream)
 		{
-			String SealingPublicKey1Assembly;
-			if (!Stream.ReadString(Stream.ReadType(), &SealingPublicKey1Assembly) || !Algorithm::Encoding::DecodeUintBlob(SealingPublicKey1Assembly, SealingPublicKey1, sizeof(SealingPublicKey1)))
+			String SealingKey1Assembly;
+			if (!Stream.ReadString(Stream.ReadType(), &SealingKey1Assembly) || !Algorithm::Encoding::DecodeUintBlob(SealingKey1Assembly, SealingKey1, sizeof(SealingKey1)))
 				return false;
 
 			String PublicKey1Assembly;
@@ -2778,16 +2775,12 @@ namespace Tangent
 		}
 		Option<String> ContributionAllocation::GetPrivateKey1(const Algorithm::Seckey PrivateKey) const
 		{
-			Algorithm::Seckey SealingPrivateKey;
-			Algorithm::Pubkey SealingPublicKey;
-			if (!Algorithm::Signing::DeriveSealingKeypair(PrivateKey, SealingPrivateKey, SealingPublicKey))
-				return Optional::None;
-
-			return Algorithm::Signing::DecryptWithSealingPrivateKey(SealingPrivateKey, SealingPublicKey, EncryptedPrivateKey1For1);
+			return Algorithm::Signing::PrivateDecrypt(PrivateKey, EncryptedPrivateKey1For1);
 		}
 		UPtr<Schema> ContributionAllocation::AsSchema() const
 		{
 			Schema* Data = Ledger::Transaction::AsSchema().Reset();
+			Data->Set("sealing_key_1", Algorithm::Signing::SerializeSealingKey(SealingKey1));
 			Data->Set("public_key_1", Var::String(Format::Util::Encode0xHex(std::string_view((char*)PublicKey1, sizeof(PublicKey1)))));
 			Data->Set("encrypted_private_key_1_for_1", Var::String(Format::Util::Encode0xHex(EncryptedPrivateKey1For1)));
 			return Data;
@@ -2830,12 +2823,9 @@ namespace Tangent
 			if (!Status)
 				return LayerException("invalid message");
 
-			Algorithm::Seckey SealingPrivateKey2;
-			if (!Algorithm::Signing::DeriveSealingKeypair(PrivateKey, SealingPrivateKey2, SealingPublicKey2))
-				return LayerException("invalid sealing keypair derivation");
-
 			PublicKeySize = (uint16_t)PublicKeySize32;
-			EncryptedPrivateKey2For2 = Algorithm::Signing::EncryptWithSealingPublicKey(SealingPublicKey2, std::string_view((char*)PrivateKey2, sizeof(PrivateKey2))).Or(String());
+			Algorithm::Signing::DeriveSealingKey(PrivateKey, SealingKey2);
+			EncryptedPrivateKey2For2 = Algorithm::Signing::PublicEncrypt(SealingKey2, std::string_view((char*)PrivateKey2, sizeof(PrivateKey2))).Or(String());
 			if (EncryptedPrivateKey2For2.empty())
 				return LayerException("invalid sealing secret");
 
@@ -2945,7 +2935,7 @@ namespace Tangent
 			Algorithm::Composition::CPubkey CPubNull = { 0 };
 			Algorithm::Composition::CSeckey CSecNull = { 0 };
 			Stream->WriteString(std::string_view((char*)PublicKey, memcmp(PublicKey, PubNull, sizeof(PubNull)) == 0 ? 0 : sizeof(PublicKey)));
-			Stream->WriteString(std::string_view((char*)SealingPublicKey2, memcmp(SealingPublicKey2, PubNull, sizeof(PubNull)) == 0 ? 0 : sizeof(SealingPublicKey2)));
+			Stream->WriteString(std::string_view((char*)SealingKey2, memcmp(SealingKey2, PubNull, sizeof(PubNull)) == 0 ? 0 : sizeof(SealingKey2)));
 			Stream->WriteString(std::string_view((char*)PublicKey2, memcmp(PublicKey2, CPubNull, sizeof(CPubNull)) == 0 ? 0 : sizeof(PublicKey2)));
 			Stream->WriteString(EncryptedPrivateKey2For2);
 			Stream->WriteInteger(PublicKeySize);
@@ -2958,8 +2948,8 @@ namespace Tangent
 			if (!Stream.ReadString(Stream.ReadType(), &PublicKeyAssembly) || !Algorithm::Encoding::DecodeUintBlob(PublicKeyAssembly, PublicKey, sizeof(PublicKey)))
 				return false;
 
-			String SealingPublicKey2Assembly;
-			if (!Stream.ReadString(Stream.ReadType(), &SealingPublicKey2Assembly) || !Algorithm::Encoding::DecodeUintBlob(SealingPublicKey2Assembly, SealingPublicKey2, sizeof(SealingPublicKey2)))
+			String SealingKey2Assembly;
+			if (!Stream.ReadString(Stream.ReadType(), &SealingKey2Assembly) || !Algorithm::Encoding::DecodeUintBlob(SealingKey2Assembly, SealingKey2, sizeof(SealingKey2)))
 				return false;
 
 			String PublicKey2Assembly;
@@ -2993,12 +2983,7 @@ namespace Tangent
 		}
 		Option<String> ContributionActivation::GetPrivateKey2(const Algorithm::Seckey PrivateKey) const
 		{
-			Algorithm::Seckey SealingPrivateKey;
-			Algorithm::Pubkey SealingPublicKey;
-			if (!Algorithm::Signing::DeriveSealingKeypair(PrivateKey, SealingPrivateKey, SealingPublicKey))
-				return Optional::None;
-
-			return Algorithm::Signing::DecryptWithSealingPrivateKey(SealingPrivateKey, SealingPublicKey, EncryptedPrivateKey2For2);
+			return Algorithm::Signing::PrivateDecrypt(PrivateKey, EncryptedPrivateKey2For2);
 		}
 		ExpectsLR<Oracle::DerivedVerifyingWallet> ContributionActivation::GetVerifyingWallet() const
 		{
@@ -3008,6 +2993,7 @@ namespace Tangent
 		{
 			auto VerifyingWallet = GetVerifyingWallet();
 			Schema* Data = Ledger::ConsensusTransaction::AsSchema().Reset();
+			Data->Set("sealing_key_2", Algorithm::Signing::SerializeSealingKey(SealingKey2));
 			Data->Set("public_key_2", Var::String(Format::Util::Encode0xHex(std::string_view((char*)PublicKey2, sizeof(PublicKey2)))));
 			Data->Set("encrypted_private_key_2_for_2", Var::String(Format::Util::Encode0xHex(EncryptedPrivateKey2For2)));
 			Data->Set("contribution_allocation_hash", Var::String(Algorithm::Encoding::Encode0xHex256(ContributionAllocationHash)));
@@ -3213,11 +3199,9 @@ namespace Tangent
 
 		ExpectsLR<void> ContributionDeactivation::SetRevealingShare2(const uint256_t& NewContributionDeallocationHash, const Algorithm::Seckey PrivateKey)
 		{
-			Algorithm::Seckey SealingPrivateKey2;
-			Algorithm::Pubkey SealingPublicKey2;
+			Algorithm::Pubkey SealingKey2;
 			ContributionDeallocationHash = NewContributionDeallocationHash;
-			if (!Algorithm::Signing::DeriveSealingKeypair(PrivateKey, SealingPrivateKey2, SealingPublicKey2))
-				return LayerException("invalid sealing keypair derivation");
+			Algorithm::Signing::DeriveSealingKey(PrivateKey, SealingKey2);
 
 			Ledger::TransactionContext Context;
 			auto Parent = Context.GetBlockTransaction<ContributionDeallocation>(ContributionDeallocationHash);
@@ -3230,19 +3214,19 @@ namespace Tangent
 				return Initiator.Error();
 
 			auto* InitiatorTransaction = (ContributionActivation*)*Initiator->Transaction;
-			if (memcmp(SealingPublicKey2, InitiatorTransaction->SealingPublicKey2, sizeof(SealingPrivateKey2)) != 0)
+			if (memcmp(SealingKey2, InitiatorTransaction->SealingKey2, sizeof(SealingKey2)) != 0)
 				return LayerException("invalid private key");
 
 			auto Origin = Context.GetBlockTransaction<ContributionAllocation>(InitiatorTransaction->ContributionAllocationHash);
 			if (!Origin)
 				return Origin.Error();
 
-			String PrivateKey2 = Algorithm::Signing::DecryptWithSealingPrivateKey(SealingPrivateKey2, SealingPublicKey2, InitiatorTransaction->EncryptedPrivateKey2For2).Or(String());
+			String PrivateKey2 = Algorithm::Signing::PrivateDecrypt(PrivateKey, InitiatorTransaction->EncryptedPrivateKey2For2).Or(String());
 			if (PrivateKey2.empty())
 				return LayerException("invalid sealing secret");
 
 			auto* OriginTransaction = (ContributionAllocation*)*Origin->Transaction;
-			EncryptedPrivateKey2For1 = Algorithm::Signing::EncryptWithSealingPublicKey(OriginTransaction->SealingPublicKey1, PrivateKey2).Or(String());
+			EncryptedPrivateKey2For1 = Algorithm::Signing::PublicEncrypt(OriginTransaction->SealingKey1, PrivateKey2).Or(String());
 			if (EncryptedPrivateKey2For1.empty())
 				return LayerException("invalid sealing secret");
 
@@ -3322,22 +3306,12 @@ namespace Tangent
 			if (!Origin)
 				return Optional::None;
 
-			Algorithm::Seckey SealingPrivateKey;
-			Algorithm::Pubkey SealingPublicKey;
-			if (!Algorithm::Signing::DeriveSealingKeypair(PrivateKey, SealingPrivateKey, SealingPublicKey))
-				return Optional::None;
-
 			auto* OriginTransaction = (ContributionAllocation*)*Origin->Transaction;
-			return Algorithm::Signing::DecryptWithSealingPrivateKey(SealingPrivateKey, SealingPublicKey, OriginTransaction->EncryptedPrivateKey1For1);
+			return Algorithm::Signing::PrivateDecrypt(PrivateKey, OriginTransaction->EncryptedPrivateKey1For1);
 		}
 		Option<String> ContributionDeactivation::GetPrivateKey2(const Algorithm::Seckey PrivateKey) const
 		{
-			Algorithm::Seckey SealingPrivateKey;
-			Algorithm::Pubkey SealingPublicKey;
-			if (!Algorithm::Signing::DeriveSealingKeypair(PrivateKey, SealingPrivateKey, SealingPublicKey))
-				return Optional::None;
-
-			return Algorithm::Signing::DecryptWithSealingPrivateKey(SealingPrivateKey, SealingPublicKey, EncryptedPrivateKey2For1);
+			return Algorithm::Signing::PrivateDecrypt(PrivateKey, EncryptedPrivateKey2For1);
 		}
 		ExpectsLR<Oracle::DerivedSigningWallet> ContributionDeactivation::GetSigningWallet(const Algorithm::Seckey PrivateKey) const
 		{
@@ -3359,17 +3333,12 @@ namespace Tangent
 			if (!Origin)
 				return Origin.Error();
 
-			Algorithm::Seckey SealingPrivateKey1;
-			Algorithm::Pubkey SealingPublicKey1;
-			if (!Algorithm::Signing::DeriveSealingKeypair(PrivateKey, SealingPrivateKey1, SealingPublicKey1))
-				return LayerException("invalid sealing keypair derivation");
-
 			auto* OriginTransaction = (ContributionAllocation*)*Origin->Transaction;
-			auto PrivateKey1 = Algorithm::Signing::DecryptWithSealingPrivateKey(SealingPrivateKey1, SealingPublicKey1, OriginTransaction->EncryptedPrivateKey1For1);
+			auto PrivateKey1 = Algorithm::Signing::PrivateDecrypt(PrivateKey, OriginTransaction->EncryptedPrivateKey1For1);
 			if (!PrivateKey1)
 				return LayerException("invalid private key 1");
 
-			auto PrivateKey2 = Algorithm::Signing::DecryptWithSealingPrivateKey(SealingPrivateKey1, SealingPublicKey1, EncryptedPrivateKey2For1);
+			auto PrivateKey2 = Algorithm::Signing::PrivateDecrypt(PrivateKey, EncryptedPrivateKey2For1);
 			if (!PrivateKey2)
 				return LayerException("invalid private key 2");
 

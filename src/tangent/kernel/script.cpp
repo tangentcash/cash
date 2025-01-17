@@ -94,10 +94,32 @@ namespace Tangent
 				return String();
 
 			Algorithm::Pubkeyhash PublicKeyHash = { 0 }, Null = { 0 };
-			if (!Algorithm::Signing::RecoverHash(Hash, PublicKeyHash, (uint8_t*)Signature.data()) || !memcmp(PublicKeyHash, Null, sizeof(Null)))
+			if (!Algorithm::Signing::RecoverNormalHash(Hash, PublicKeyHash, (uint8_t*)Signature.data()) || !memcmp(PublicKeyHash, Null, sizeof(Null)))
 				return String();
 
 			return String((char*)PublicKeyHash, sizeof(PublicKeyHash));
+		}
+		static String ERecover160T(const uint256_t& Hash, const std::string_view& Signature)
+		{
+			if (Signature.size() != sizeof(Algorithm::Sighash))
+				return String();
+
+			Algorithm::Pubkeyhash PublicKeyHash = { 0 }, Null = { 0 };
+			if (!Algorithm::Signing::RecoverTweakedHash(Hash, PublicKeyHash, (uint8_t*)Signature.data()) || !memcmp(PublicKeyHash, Null, sizeof(Null)))
+				return String();
+
+			return String((char*)PublicKeyHash, sizeof(PublicKeyHash));
+		}
+		static String ERecover256T(const uint256_t& Hash, const std::string_view& Signature)
+		{
+			if (Signature.size() != sizeof(Algorithm::Sighash))
+				return String();
+
+			Algorithm::Pubkey PublicKey = { 0 }, Null = { 0 };
+			if (!Algorithm::Signing::RecoverTweaked(Hash, PublicKey, (uint8_t*)Signature.data()) || !memcmp(PublicKey, Null, sizeof(Null)))
+				return String();
+
+			return String((char*)PublicKey, sizeof(PublicKey));
 		}
 		static String ERecover256(const uint256_t& Hash, const std::string_view& Signature)
 		{
@@ -105,7 +127,7 @@ namespace Tangent
 				return String();
 
 			Algorithm::Pubkey PublicKey = { 0 }, Null = { 0 };
-			if (!Algorithm::Signing::Recover(Hash, PublicKey, (uint8_t*)Signature.data()) || !memcmp(PublicKey, Null, sizeof(Null)))
+			if (!Algorithm::Signing::RecoverNormal(Hash, PublicKey, (uint8_t*)Signature.data()) || !memcmp(PublicKey, Null, sizeof(Null)))
 				return String();
 
 			return String((char*)PublicKey, sizeof(PublicKey));
@@ -664,7 +686,9 @@ namespace Tangent
 			VM->SetFunction("string crc32(const string_view&in)", &Crc32);
 			VM->SetFunction("string ripemd160(const string_view&in)", &RipeMD160);
 			VM->SetFunction("string erecover160(const string_view&in, const string_view&in)", &ERecover160);
+			VM->SetFunction("string erecover160t(const string_view&in, const string_view&in)", &ERecover160T);
 			VM->SetFunction("string erecover256(const string_view&in, const string_view&in)", &ERecover256);
+			VM->SetFunction("string erecover256t(const string_view&in, const string_view&in)", &ERecover256T);
 			VM->SetFunction("string blake2b256(const string_view&in)", &Blake2b256);
 			VM->SetFunction("string keccak256(const string_view&in)", &Keccak256);
 			VM->SetFunction("string keccak512(const string_view&in)", &Keccak512);

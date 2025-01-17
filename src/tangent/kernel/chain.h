@@ -221,16 +221,14 @@ namespace Tangent
         {
             String SignedMessageMagic = "Tangent Signed Message:\n";
             String PrivateKeyPrefix = "prv";
+            String SealingKeyPrefix = "seal";
             String PublicKeyPrefix = "pub";
             String AddressPrefix = "tc";
-            String SealingPrivateKeyPrefix = "sprv";
-            String SealingPublicKeyPrefix = "spub";
             uint64_t RootAddressIndex = 0;
             uint8_t PrivateKeyVersion = 0xF;
             uint8_t PublicKeyVersion = 0xE;
+            uint8_t SealingKeyVersion = 0xC;
             uint8_t AddressVersion = 0x4;
-            uint8_t SealingPrivateKeyVersion = 0xD;
-            uint8_t SealingPublicKeyVersion = 0xC;
         } Account;
         struct ProtocolPolicyConfig
         {

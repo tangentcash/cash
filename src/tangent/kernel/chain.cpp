@@ -8,10 +8,6 @@
 #include "rocksdb/table.h"
 #endif
 #endif
-extern "C"
-{
-#include "../../utils/tiny-bitcoin/ecc.h"
-}
 #define KEY_FRONT 32
 #define KEY_BACK 32
 #define KEY_SIZE 2048
@@ -714,15 +710,13 @@ namespace Tangent
 			case Tangent::NetworkType::Regtest:
 				Message.PacketMagic = 0xe249c307;
 				Account.PrivateKeyPrefix = "prvrt";
+				Account.SealingKeyPrefix = "sealrt";
 				Account.PublicKeyPrefix = "pubrt";
 				Account.AddressPrefix = "tcrt";
-				Account.SealingPrivateKeyPrefix = "sprvrt";
-				Account.SealingPublicKeyPrefix = "spubrt";
 				Account.PrivateKeyVersion = 0xD;
 				Account.PublicKeyVersion = 0xC;
+				Account.SealingKeyVersion = 0xA;
 				Account.AddressVersion = 0x6;
-				Account.SealingPrivateKeyVersion = 0xB;
-				Account.SealingPublicKeyVersion = 0xA;
 				Policy.AccountContributionRequired = 0.0;
 				Policy.AccountGasWorkRequired = 0.0;
 				User.Oracle.WithdrawalTime = Policy.ConsensusProofTime;
@@ -730,26 +724,26 @@ namespace Tangent
 			case Tangent::NetworkType::Testnet:
 				Message.PacketMagic = 0xf815c95c;
 				Account.PrivateKeyPrefix = "prvt";
+				Account.SealingKeyPrefix = "sealt";
 				Account.PublicKeyPrefix = "pubt";
 				Account.AddressPrefix = "tct";
-				Account.SealingPrivateKeyPrefix = "sprvt";
-				Account.SealingPublicKeyPrefix = "spubt";
 				Account.PrivateKeyVersion = 0xE;
 				Account.PublicKeyVersion = 0xD;
+				Account.SealingKeyVersion = 0xB;
 				Account.AddressVersion = 0x5;
-				Account.SealingPrivateKeyVersion = 0xC;
-				Account.SealingPublicKeyVersion = 0xB;
 				break;
 			case Tangent::NetworkType::Mainnet:
+				break;
 			default:
+				VI_PANIC(false, "bad network type");
 				break;
 		}
 
-		btc_ecc_start();
 		Console::Get()->Attach();
 		ErrorHandling::SetFlag(LogOption::Active, true);
 		ErrorHandling::SetFlag(LogOption::Dated, true);
 		Uplinks::LinkInstance();
+		Algorithm::Signing::Initialize();
 #ifdef TAN_VALIDATOR
 		OS::Directory::SetWorking(Module->c_str());
 		Oracle::Bridge::Open(*Config, User.Oracle.Observer);
@@ -767,8 +761,8 @@ namespace Tangent
 		Storages::MultiformCache::CleanupInstance();
 #endif
 		Ledger::ScriptHost::CleanupInstance();
+		Algorithm::Signing::Deinitialize();
 		ErrorHandling::SetCallback(nullptr);
-		btc_ecc_stop();
 		if (Instance == this)
 			Instance = nullptr;
 	}

@@ -103,7 +103,7 @@ namespace Tangent
 			if (!StorePayload(&Message))
 				return false;
 
-			return Algorithm::Signing::Sign(Message.Hash(), PrivateKey, Signature);
+			return Algorithm::Signing::SignTweaked(Message.Hash(), PrivateKey, Signature);
 		}
 		bool Authentic::Verify(const Algorithm::Pubkey PublicKey) const
 		{
@@ -111,7 +111,7 @@ namespace Tangent
 			if (!StorePayload(&Message))
 				return false;
 
-			return Algorithm::Signing::Verify(Message.Hash(), PublicKey, Signature);
+			return Algorithm::Signing::VerifyTweaked(Message.Hash(), PublicKey, Signature);
 		}
 		bool Authentic::Recover(Algorithm::Pubkeyhash PublicKeyHash) const
 		{
@@ -119,7 +119,7 @@ namespace Tangent
 			if (!StorePayload(&Message))
 				return false;
 
-			return Algorithm::Signing::RecoverHash(Message.Hash(), PublicKeyHash, Signature);
+			return Algorithm::Signing::RecoverTweakedHash(Message.Hash(), PublicKeyHash, Signature);
 		}
 		void Authentic::SetSignature(const Algorithm::Sighash NewValue)
 		{

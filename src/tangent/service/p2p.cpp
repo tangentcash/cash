@@ -1882,11 +1882,11 @@ namespace Tangent
 			}
 			return true;
 		}
-		bool ServerNode::AcceptMessage(const Algorithm::Pubkey SealingPublicKey, const std::string_view& Plaintext)
+		bool ServerNode::AcceptMessage(const Algorithm::Pubkey SealingKey, const std::string_view& Plaintext)
 		{
-			if (memcmp(SealingPublicKey, Validator.Wallet.SealingPublicKey, sizeof(Algorithm::Pubkey)) != 0)
+			if (memcmp(SealingKey, Validator.Wallet.SealingKey, sizeof(Algorithm::Pubkey)) != 0)
 			{
-				auto Message = Validator.Wallet.SealMessage(Plaintext, SealingPublicKey);
+				auto Message = Validator.Wallet.SealMessage(Plaintext, SealingKey);
 				if (!Message)
 					return false;
 

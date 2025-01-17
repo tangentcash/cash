@@ -869,21 +869,13 @@ namespace Tangent
 				if (RawPublicKey.size() != BTC_ECKEY_UNCOMPRESSED_LENGTH - 1)
 				{
 					secp256k1_pubkey CandidatePublicKey;
-					secp256k1_context* Context = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
+					secp256k1_context* Context = Algorithm::Signing::GetContext();
 					if (secp256k1_ec_pubkey_parse(Context, &CandidatePublicKey, (uint8_t*)RawPublicKey.data(), RawPublicKey.size()) != 1)
-					{
-						secp256k1_context_destroy(Context);
 						return LayerException("invalid public key");
-					}
 
 					size_t PublicKeySize = sizeof(PublicKey);
 					if (secp256k1_ec_pubkey_serialize(Context, PublicKey, &PublicKeySize, &CandidatePublicKey, SECP256K1_EC_UNCOMPRESSED) != 1)
-					{
-						secp256k1_context_destroy(Context);
 						return LayerException("invalid public key");
-					}
-
-					secp256k1_context_destroy(Context);
 				}
 				else
 					memcpy(PublicKey + 1, RawPublicKey.data(), RawPublicKey.size());
@@ -932,7 +924,7 @@ namespace Tangent
 				if (!VerifyingWallet)
 					return VerifyingWallet.Error();
 
-				secp256k1_context* Context = secp256k1_context_create(SECP256K1_CONTEXT_VERIFY);
+				secp256k1_context* Context = Algorithm::Signing::GetContext();
 				if (!Context)
 					return LayerException("context not valid");
 
@@ -964,10 +956,7 @@ namespace Tangent
 						String ActualAddress1 = GeneratePkhAddress(ActualPublicKeyHash1);
 						String ActualAddress2 = GeneratePkhAddress(ActualPublicKeyHash2);
 						if (ActualAddress1 == TargetAddress || ActualAddress2 == TargetAddress)
-						{
-							secp256k1_context_destroy(Context);
 							return Expectation::Met;
-						}
 					}
 
 					if (!CompactRetry && RawSignature.size() == 64)
@@ -978,7 +967,6 @@ namespace Tangent
 					}
 				}
 
-				secp256k1_context_destroy(Context);
 				return LayerException("signature verification failed with used public key");
 			}
 			String Ethereum::GetChecksumHash(const std::string_view& Value) const

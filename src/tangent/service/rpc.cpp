@@ -357,7 +357,7 @@ namespace Tangent
 			Bind(AccessType::W | AccessType::A, "validatorstate", "acceptnode", 0, 1, "string? uri_address", "void", "try to accept and connect to a node possibly by ip address", std::bind(&ServerNode::ValidatorstateAcceptNode, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(AccessType::W | AccessType::A, "validatorstate", "rejectnode", 1, 1, "string uri_address", "void", "reject and disconnect from a node by ip address", std::bind(&ServerNode::ValidatorstateRejectNode, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(AccessType::W | AccessType::A, "validatorstate", "proposeblock", 0, 0, "", "void", "try to propose a block from mempool transactions", std::bind(&ServerNode::ValidatorstateProposeBlock, this, std::placeholders::_1, std::placeholders::_2));
-			Bind(AccessType::W | AccessType::A, "validatorstate", "submitmessage", 2, 3, "string sealing_public_key, string message, bool? chronological", "void", "send encrypted message to another node with specified sealing public key", std::bind(&ServerNode::ValidatorstateSubmitMessage, this, std::placeholders::_1, std::placeholders::_2));
+			Bind(AccessType::W | AccessType::A, "validatorstate", "submitmessage", 2, 3, "string sealing_key, string message, bool? chronological", "void", "send encrypted message to another node with specified sealing key", std::bind(&ServerNode::ValidatorstateSubmitMessage, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(AccessType::W | AccessType::A, "validatorstate", "submitcommitmenttransaction", 3, 4, "string asset, bool online, bool? proposer, string? observers", "uint256", "submit commitment transaction that enables/disables block proposer and/or blockchain observer(s) defined by a comma separated list of asset handles", std::bind(&ServerNode::ValidatorstateSubmitCommitmentTransaction, this, std::placeholders::_1, std::placeholders::_2));
 		}
 		void ServerNode::Shutdown()
@@ -2780,7 +2780,7 @@ namespace Tangent
 				RPC->Set("page_size", Var::Integer(Protocol::Now().User.RPC.PageSize));
 				RPC->Set("websockets", Var::Boolean(Protocol::Now().User.RPC.WebSockets));
 				if (Protocol::Now().User.RPC.Messaging && Validator != nullptr)
-					RPC->Set("sealing_public_key", Var::String(Validator->Validator.Wallet.GetSealingPublicKey()));
+					RPC->Set("sealing_key", Var::String(Validator->Validator.Wallet.GetSealingKey()));
 			}
 
 			if (Protocol::Now().User.NDS.Server)
@@ -2897,11 +2897,9 @@ namespace Tangent
 			if (Args.size() > 2 && Args[2].AsBoolean())
 				Message = "[" + DateTime::SerializeGlobal(DateTime().CurrentOffset(), DateTime::FormatIso8601Time()) + "] " + Message;
 
-			Algorithm::Pubkey SealingPublicKey;
-			if (!Algorithm::Signing::DecodeSealingPublicKey(Args[0].AsString(), SealingPublicKey))
-				return ServerResponse().Error(ErrorCodes::BadRequest, "sealing public key is not valid");
-
-			if (!Validator->AcceptMessage(SealingPublicKey, Message))
+			Algorithm::Pubkey SealingKey;
+			Algorithm::Signing::DecodeSealingKey(Args[0].AsString(), SealingKey);
+			if (!Validator->AcceptMessage(SealingKey, Message))
 				return ServerResponse().Error(ErrorCodes::BadRequest, "message is not accepted");
 
 			return ServerResponse().Success(Var::Set::Null());

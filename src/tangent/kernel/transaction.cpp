@@ -326,7 +326,7 @@ namespace Tangent
 			if (!Transaction::StorePayload(&Message))
 				return false;
 
-			if (!Algorithm::Signing::Sign(Message.Hash(), PrivateKey, Signature))
+			if (!Algorithm::Signing::SignTweaked(Message.Hash(), PrivateKey, Signature))
 				return false;
 
 			return Attestate(PrivateKey);
@@ -357,7 +357,7 @@ namespace Tangent
 			if (!Transaction::StorePayload(&Message))
 				return false;
 
-			if (!Algorithm::Signing::Verify(Message.Hash(), PublicKey, Signature))
+			if (!Algorithm::Signing::VerifyTweaked(Message.Hash(), PublicKey, Signature))
 				return false;
 
 			for (auto& Branch : OutputHashes)
@@ -395,7 +395,7 @@ namespace Tangent
 			Message.WriteInteger(Asset);
 			Message.WriteInteger(InputHash);
 			Message.WriteInteger(OutputHash);
-			return Algorithm::Signing::Verify(Message.Hash(), PublicKey, (uint8_t*)Signature->data());
+			return Algorithm::Signing::VerifyTweaked(Message.Hash(), PublicKey, (uint8_t*)Signature->data());
 		}
 		bool AggregationTransaction::Recover(Algorithm::Pubkeyhash PublicKeyHash) const
 		{
@@ -404,7 +404,7 @@ namespace Tangent
 			if (!Transaction::StorePayload(&Message))
 				return false;
 
-			if (!Algorithm::Signing::RecoverHash(Message.Hash(), PublicKeyHash, Signature))
+			if (!Algorithm::Signing::RecoverTweakedHash(Message.Hash(), PublicKeyHash, Signature))
 				return false;
 
 			for (auto& Branch : OutputHashes)
@@ -443,7 +443,7 @@ namespace Tangent
 			Message.WriteInteger(Asset);
 			Message.WriteInteger(InputHash);
 			Message.WriteInteger(OutputHash);
-			return Algorithm::Signing::RecoverHash(Message.Hash(), PublicKeyHash, (uint8_t*)Signature->data());
+			return Algorithm::Signing::RecoverTweakedHash(Message.Hash(), PublicKeyHash, (uint8_t*)Signature->data());
 		}
 		bool AggregationTransaction::Attestate(const Algorithm::Seckey PrivateKey)
 		{
@@ -457,7 +457,7 @@ namespace Tangent
 			CumulativeMessage.WriteInteger(GenesisBranch->first);
 
 			Algorithm::Sighash CumulativeSignature;
-			if (!Algorithm::Signing::Sign(CumulativeMessage.Hash(), PrivateKey, CumulativeSignature))
+			if (!Algorithm::Signing::SignTweaked(CumulativeMessage.Hash(), PrivateKey, CumulativeSignature))
 				return false;
 
 			GenesisBranch->second.Attestations.insert(String((char*)CumulativeSignature, sizeof(CumulativeSignature)));
@@ -497,7 +497,7 @@ namespace Tangent
 				for (auto& Signature : Branch.second.Attestations)
 				{
 					Algorithm::Pubkeyhash Proposer = { 0 };
-					if (Signature.size() == sizeof(Algorithm::Sighash) && Algorithm::Signing::RecoverHash(CumulativeMessageHash, Proposer, (uint8_t*)Signature.data()))
+					if (Signature.size() == sizeof(Algorithm::Sighash) && Algorithm::Signing::RecoverTweakedHash(CumulativeMessageHash, Proposer, (uint8_t*)Signature.data()))
 						Proposers.insert(String((char*)Proposer, sizeof(Proposer)));
 				}
 			}
@@ -513,7 +513,7 @@ namespace Tangent
 				for (auto& Signature : Branch.second.Attestations)
 				{
 					Algorithm::Pubkeyhash Proposer = { 0 };
-					if (Signature.size() == sizeof(Algorithm::Sighash) && Algorithm::Signing::RecoverHash(CumulativeMessageHash, Proposer, (uint8_t*)Signature.data()) && Proposers.find(String((char*)Proposer, sizeof(Proposer))) == Proposers.end())
+					if (Signature.size() == sizeof(Algorithm::Sighash) && Algorithm::Signing::RecoverTweakedHash(CumulativeMessageHash, Proposer, (uint8_t*)Signature.data()) && Proposers.find(String((char*)Proposer, sizeof(Proposer))) == Proposers.end())
 					{
 						Proposers.insert(String((char*)Proposer, sizeof(Proposer)));
 						Fork.Attestations.insert(Signature);
@@ -607,7 +607,7 @@ namespace Tangent
 				for (auto& Signature : Branch.second.Attestations)
 				{
 					Algorithm::Pubkeyhash Proposer = { 0 };
-					if (Signature.size() != sizeof(Algorithm::Sighash) || !Algorithm::Signing::RecoverHash(CumulativeMessageHash, Proposer, (uint8_t*)Signature.data()))
+					if (Signature.size() != sizeof(Algorithm::Sighash) || !Algorithm::Signing::RecoverTweakedHash(CumulativeMessageHash, Proposer, (uint8_t*)Signature.data()))
 						continue;
 
 					auto Work = Context->GetAccountWork(Proposer);

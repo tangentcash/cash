@@ -2,6 +2,8 @@
 #define TAN_KERNEL_ALGORITHM_H
 #include "../layer/format.h"
 
+typedef struct secp256k1_context_struct secp256k1_context;
+
 namespace Tangent
 {
 	namespace Algorithm
@@ -23,43 +25,67 @@ namespace Tangent
 			static String ToURI(const SocketAddress& Address, const std::string_view& Protocol = "tcp");
 		};
 
-		class Signing
+		class Segwit
 		{
 		public:
+			static int Tweak(uint8_t* Output, size_t* OutputSize, int32_t OutputBits, const uint8_t* Input, size_t InputSize, int32_t InputBits, int32_t Padding);
+			static int Encode(char* Output, const char* Prefix, int32_t Version, const uint8_t* Program, size_t ProgramSize);
+			static int Decode(int* Version, uint8_t* Program, size_t* ProgramSize, const char* Prefix, const char* Input);
+		};
+
+		class Signing
+		{
+		private:
+			static secp256k1_context* SharedContext;
+
+		public:
+			static void Initialize();
+			static void Deinitialize();
 			static String Mnemonicgen(uint16_t Strength = 256);
 			static uint256_t MessageHash(const std::string_view& InsecureMessage);
 			static void Keygen(Seckey PrivateKey);
-			static bool Recover(const uint256_t& Hash, Pubkey PublicKey, const Sighash Signature);
-			static bool RecoverHash(const uint256_t& Hash, Pubkeyhash PublicKeyHash, const Sighash Signature);
-			static bool Sign(const uint256_t& Hash, const Seckey PrivateKey, Sighash Signature);
-			static bool Verify(const uint256_t& Hash, const Pubkey PublicKey, const Sighash Signature);
+			static bool RecoverNormal(const uint256_t& Hash, Pubkey PublicKey, const Sighash Signature);
+			static bool RecoverTweaked(const uint256_t& Hash, Pubkey TweakedPublicKey, const Sighash Signature);
+			static bool RecoverNormalHash(const uint256_t& Hash, Pubkeyhash PublicKeyHash, const Sighash Signature);
+			static bool RecoverTweakedHash(const uint256_t& Hash, Pubkeyhash TweakedPublicKeyHash, const Sighash Signature);
+			static bool SignNormal(const uint256_t& Hash, const Seckey PrivateKey, Sighash Signature);
+			static bool SignTweaked(const uint256_t& Hash, const Seckey RootPrivateKey, Sighash Signature);
+			static bool VerifyNormal(const uint256_t& Hash, const Pubkey PublicKey, const Sighash Signature);
+			static bool VerifyTweaked(const uint256_t& Hash, const Pubkey TweakedPublicKey, const Sighash Signature);
 			static bool VerifyMnemonic(const std::string_view& Mnemonic);
 			static bool VerifyPrivateKey(const Seckey PrivateKey);
 			static bool VerifyPublicKey(const Pubkey PublicKey);
 			static bool VerifyAddress(const std::string_view& Address);
 			static bool VerifySealedMessage(const std::string_view& Ciphertext);
 			static bool DerivePrivateKey(const std::string_view& Mnemonic, Seckey PrivateKey);
-			static void DerivePrivateKey(const std::string_view& Seed, Seckey PrivateKey, size_t Iterations);
-			static void DerivePublicKey(const Seckey PrivateKey, Pubkey PublicKey);
+			static bool DerivePrivateKey(const std::string_view& Seed, Seckey PrivateKey, size_t Iterations);
+			static void DeriveSealingKey(const Seckey PrivateKey, Pubkey SealingKey);
+			static bool DerivePublicKey(const Seckey PrivateKey, Pubkey PublicKey);
 			static void DerivePublicKeyHash(const Pubkey PublicKey, Pubkeyhash PublicKeyHash);
-			static Option<void> DeriveSealingKeypair(const Seckey PrivateKey, Seckey SealingPrivateKey, Pubkey SealingPublicKey);
-			static Option<String> EncryptWithSealingPublicKey(const Pubkey SealingPublicKey, const std::string_view& Plaintext);
-			static Option<String> DecryptWithSealingPrivateKey(const Seckey SealingPrivateKey, const Pubkey SealingPublicKey, const std::string_view& Ciphertext);
+			static void DeriveRootTweak(const Pubkey RootPublicKey, Seckey RootTweak);
+			static bool DeriveSignatureTweak(const uint256_t& Hash, Seckey SignatureTweak);
+			static bool DeriveTweakedPublicKey(const Pubkey RootPublicKey, Pubkey TweakedPublicKey);
+			static bool NegatePrivateKey(const Seckey PrivateKey, Seckey NegatedPrivateKey);
+			static bool PrivateKeyTweakAdd(const Seckey PrivateKey, const Seckey Tweak, Seckey TweakedPrivateKey);
+			static bool PrivateKeyTweakMul(const Seckey PrivateKey, const Seckey Tweak, Seckey TweakedPrivateKey);
+			static bool NegatePublicKey(const Pubkey PublicKey, Pubkey NegatedPublicKey);
+			static bool PublicKeyTweakAdd(const Pubkey PublicKey, const Seckey Tweak, Pubkey TweakedPublicKey);
+			static bool PublicKeyTweakMul(const Pubkey PublicKey, const Seckey Tweak, Pubkey TweakedPublicKey);
+			static Option<String> PublicEncrypt(const Pubkey SealingKey, const std::string_view& Plaintext);
+			static Option<String> PrivateDecrypt(const Seckey PrivateKey, const std::string_view& Ciphertext);
 			static bool DecodePrivateKey(const std::string_view& Value, Seckey PrivateKey);
 			static bool EncodePrivateKey(const Seckey PrivateKey, String& Value);
+			static bool DecodeSealingKey(const std::string_view& Value, Pubkey SealingKey);
+			static bool EncodeSealingKey(const Pubkey SealingKey, String& Value);
 			static bool DecodePublicKey(const std::string_view& Value, Pubkey PublicKey);
 			static bool EncodePublicKey(const Pubkey PublicKey, String& Value);
 			static bool DecodeAddress(const std::string_view& Address, Pubkeyhash PublicKeyHash);
 			static bool EncodeAddress(const Pubkeyhash PublicKeyHash, String& Address);
-			static bool DecodeSealingPrivateKey(const std::string_view& Value, Seckey SealingPrivateKey);
-			static bool EncodeSealingPrivateKey(const Seckey SealingPrivateKey, String& Value);
-			static bool DecodeSealingPublicKey(const std::string_view& Value, Pubkey SealingPublicKey);
-			static bool EncodeSealingPublicKey(const Pubkey SealingPublicKey, String& Value);
 			static Schema* SerializePrivateKey(const Seckey PrivateKey);
+			static Schema* SerializeSealingKey(const Pubkey PublicKey);
 			static Schema* SerializePublicKey(const Pubkey PublicKey);
 			static Schema* SerializeAddress(const Pubkeyhash PublicKeyHash);
-			static Schema* SerializeSealingPrivateKey(const Seckey PrivateKey);
-			static Schema* SerializeSealingPublicKey(const Pubkey PublicKey);
+			static secp256k1_context* GetContext();
 		};
 
 		class Encoding
