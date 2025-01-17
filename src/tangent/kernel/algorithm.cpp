@@ -394,12 +394,21 @@ namespace Tangent
 			VI_ASSERT(RootPublicKey != nullptr, "root public key should be set");
 			VI_ASSERT(RootTweak != nullptr, "root tweak should be set");
 			Hashing::Hash256(RootPublicKey, sizeof(Pubkey), RootTweak);
+			while (!VerifyPrivateKey(RootTweak))
+				Hashing::Hash256(RootTweak, sizeof(Seckey), RootTweak);
 		}
 		bool Signing::DeriveSignatureTweak(const uint256_t& Hash, Seckey SignatureTweak)
 		{
-			Seckey InputHash, OutputHash;
+			Seckey InputHash;
 			Encoding::DecodeUint256(Hash, InputHash);
+			while (!VerifyPrivateKey(InputHash))
+				Hashing::Hash256(InputHash, sizeof(InputHash), InputHash);
+		
+			Seckey OutputHash;
 			Hashing::Hash256(InputHash, sizeof(InputHash), OutputHash);
+			while (!VerifyPrivateKey(OutputHash))
+				Hashing::Hash256(OutputHash, sizeof(OutputHash), OutputHash);
+
 			return PrivateKeyTweakMul(InputHash, OutputHash, SignatureTweak);
 		}
 		bool Signing::DeriveTweakedPublicKey(const Pubkey RootPublicKey, Pubkey TweakedPublicKey)

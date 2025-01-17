@@ -1888,7 +1888,7 @@ namespace Tangent
 		{
 			auto Location = ResolveAccountLocation(Owner);
 			if (!Location)
-				return Location.Error();
+				return ExpectsLR<Vector<UPtr<Ledger::Transaction>>>(Vector<UPtr<Ledger::Transaction>>());
 
 			SchemaList Map;
 			Map.push_back(Var::Set::Integer(*Location));
@@ -1970,7 +1970,7 @@ namespace Tangent
 		{
 			auto Location = ResolveAccountLocation(Owner);
 			if (!Location)
-				return Location.Error();
+				return ExpectsLR<Vector<Ledger::BlockTransaction>>(Vector<Ledger::BlockTransaction>());
 
 			SchemaList Map;
 			Map.push_back(Var::Set::Integer(*Location));
@@ -2361,7 +2361,7 @@ namespace Tangent
 		{
 			auto Location = ResolveMultiformLocation(Column, Optional::None, false);
 			if (!Location)
-				return Location.Error();
+				return ExpectsLR<Vector<UPtr<Ledger::State>>>(Vector<UPtr<Ledger::State>>());
 
 			SchemaList Map;
 			Map.push_back(Var::Set::Integer(Location->Column.Or(0)));
@@ -2401,7 +2401,7 @@ namespace Tangent
 		{
 			auto Location = ResolveMultiformLocation(Column, Optional::None, false);
 			if (!Location)
-				return Location.Error();
+				return ExpectsLR<Vector<UPtr<Ledger::State>>>(Vector<UPtr<Ledger::State>>());
 
 			SchemaList Map;
 			Map.push_back(Var::Set::Integer(Location->Column.Or(0)));
@@ -2444,7 +2444,7 @@ namespace Tangent
 		{
 			auto Location = ResolveMultiformLocation(Optional::None, Row, false);
 			if (!Location)
-				return Location.Error();
+				return ExpectsLR<Vector<UPtr<Ledger::State>>>(Vector<UPtr<Ledger::State>>());
 
 			SchemaList Map;
 			Map.push_back(Var::Set::Integer(Location->Column.Or(0)));
@@ -2484,7 +2484,7 @@ namespace Tangent
 		{
 			auto Location = ResolveMultiformLocation(Optional::None, Row, false);
 			if (!Location)
-				return Location.Error();
+				return ExpectsLR<Vector<UPtr<Ledger::State>>>(Vector<UPtr<Ledger::State>>());
 
 			SchemaList Map;
 			Map.push_back(Var::Set::Integer(Location->Row.Or(0)));

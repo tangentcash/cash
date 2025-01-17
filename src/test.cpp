@@ -920,7 +920,7 @@ public:
 		TestTransactions::ProposeBlockUserTuple(&TestTransactions::TestCommitments, User1, User2);
 		TestTransactions::ProposeBlockUserTuple(&TestTransactions::TestClaims, User1, User2);
 		TestTransactions::ProposeBlockUserTuple(&TestTransactions::TestTransfers, User1, User2);
-		TestTransactions::ProposeBlockUserOne(std::bind(&TestTransactions::TestTransferToWallet, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, Algorithm::Asset::IdOf("BTC"), "tcrt1x3yw986ceqfjn9hujsp33mj6r5829z8m72quntl", 0.1), User1, User2);
+		TestTransactions::ProposeBlockUserOne(std::bind(&TestTransactions::TestTransferToWallet, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, Algorithm::Asset::IdOf("BTC"), "tcrt1x60aysjugc3dk4tp3nnm8r6vh8uw6cue4kj4ks8", 0.1), User1, User2);
 		TestTransactions::ProposeBlockUserTuple(&TestTransactions::TestRollups, User1, User2);
 		TestTransactions::ProposeBlockUserTuple(&TestTransactions::TestCommitmentAnti, User1, User2);
 		Term->ReadChar();
@@ -2385,7 +2385,7 @@ public:
 		return 0;
 	}
 	/* Post-quantum ECC DSS algorithm tweak (validation measurement) */
-	static int ECCDSSKeypairBlining(int argc, char* argv[])
+	static int ECCDSSBliningSignature(int argc, char* argv[])
 	{
 		Vitex::Runtime Scope;
 		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
@@ -2513,5 +2513,5 @@ public:
 
 int main(int argc, char* argv[])
 {
-    return TestCases::BlockchainPartialCoverage(argc, argv);
+    return TestCases::Consensus(argc, argv);
 }
