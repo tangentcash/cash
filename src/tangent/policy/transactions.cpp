@@ -9,7 +9,7 @@ namespace Tangent
 	{
 		static ExpectsPromiseLR<Oracle::OutgoingTransaction> EmitTransaction(const Ledger::Wallet& Proposer, const Algorithm::AssetId& Asset, const uint256_t& TransactionHash, Vector<UPtr<Ledger::Transaction>>* Pipeline, Vector<Oracle::Transferer>&& To)
 		{
-			auto Wallet = Oracle::Datamaster::NewMasterWallet(Asset, Proposer.PrivateKey);
+			auto Wallet = Oracle::Datamaster::NewMasterWallet(Asset, Proposer.SecretKey);
 			if (!Wallet)
 				return ExpectsPromiseLR<Oracle::OutgoingTransaction>(LayerException("wallet not found"));
 
@@ -422,14 +422,14 @@ namespace Tangent
 				Parties.insert(String((char*)Owner, sizeof(Owner)));
 			return true;
 		}
-		bool Deployment::SignLocation(const Algorithm::Seckey PrivateKey)
+		bool Deployment::SignLocation(const Algorithm::Seckey SecretKey)
 		{
 			Format::Stream Message;
 			Format::VariablesUtil::SerializeMergeInto(Args, &Message);
 			Message.WriteBoolean(Patchable);
 			Message.WriteBoolean(Segregated);
 			Message.WriteString(Calldata);
-			return Algorithm::Signing::SignTweaked(Algorithm::Signing::MessageHash(Message.Data), PrivateKey, Location);
+			return Algorithm::Signing::SignTweaked(Algorithm::Signing::MessageHash(Message.Data), SecretKey, Location);
 		}
 		bool Deployment::VerifyLocation(const Algorithm::Pubkey PublicKey) const
 		{
@@ -1171,16 +1171,16 @@ namespace Tangent
 			Transactions[Next->Asset].push_back(Next);
 			return true;
 		}
-		bool Rollup::Merge(Ledger::Transaction& Transaction, const Algorithm::Seckey PrivateKey)
+		bool Rollup::Merge(Ledger::Transaction& Transaction, const Algorithm::Seckey SecretKey)
 		{
 			auto It = Transactions.find(Transaction.Asset ? Transaction.Asset : Asset);
 			uint16_t Index = It != Transactions.end() ? It->second.size() : 0;
-			return SignChild(Transaction, PrivateKey, Asset, Index) && Merge(Transaction);
+			return SignChild(Transaction, SecretKey, Asset, Index) && Merge(Transaction);
 		}
-		bool Rollup::Merge(Ledger::Transaction& Transaction, const Algorithm::Seckey PrivateKey, uint64_t Sequence)
+		bool Rollup::Merge(Ledger::Transaction& Transaction, const Algorithm::Seckey SecretKey, uint64_t Sequence)
 		{
 			Transaction.Sequence = Sequence;
-			return Merge(Transaction, PrivateKey);
+			return Merge(Transaction, SecretKey);
 		}
 		ExpectsLR<Ledger::BlockTransaction> Rollup::ResolveBlockTransaction(const Ledger::Receipt& Receipt, const uint256_t& TransactionHash) const
 		{
@@ -1336,7 +1336,7 @@ namespace Tangent
 			if (!Transaction.GasLimit)
 				Transaction.GasLimit = Transaction.GetGasEstimate();
 		}
-		bool Rollup::SignChild(Ledger::Transaction& Transaction, const Algorithm::Seckey PrivateKey, const Algorithm::AssetId& Asset, uint16_t Index)
+		bool Rollup::SignChild(Ledger::Transaction& Transaction, const Algorithm::Seckey SecretKey, const Algorithm::AssetId& Asset, uint16_t Index)
 		{
 			Format::Stream Message;
 			Message.WriteInteger(Rollup::AsInstanceType());
@@ -1347,7 +1347,7 @@ namespace Tangent
 			if (!Transaction.StorePayload(&Message))
 				return false;
 			
-			return Algorithm::Signing::SignTweaked(Message.Hash(), PrivateKey, Transaction.Signature);
+			return Algorithm::Signing::SignTweaked(Message.Hash(), SecretKey, Transaction.Signature);
 		}
 
 		ExpectsLR<void> Commitment::Prevalidate() const
@@ -2375,7 +2375,7 @@ namespace Tangent
 					return LayerException("invalid account owner");
 			}
 
-			auto Parent = Oracle::Datamaster::NewMasterWallet(Asset, Proposer.PrivateKey);
+			auto Parent = Oracle::Datamaster::NewMasterWallet(Asset, Proposer.SecretKey);
 			if (!Parent)
 				return LayerException("invalid master wallet");
 
@@ -2655,20 +2655,20 @@ namespace Tangent
 			return "custodian_account";
 		}
 
-		ExpectsLR<void> ContributionAllocation::SetShare1(const Algorithm::Seckey PrivateKey)
+		ExpectsLR<void> ContributionAllocation::SetShare1(const Algorithm::Seckey SecretKey)
 		{
 			auto* Chain = Oracle::Datamaster::GetChainparams(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
 
-			Algorithm::Composition::CSeckey PrivateKey1;
-			auto Status = Algorithm::Composition::DeriveKeypair1(Chain->Composition, PrivateKey1, PublicKey1);
+			Algorithm::Composition::CSeckey SecretKey1;
+			auto Status = Algorithm::Composition::DeriveKeypair1(Chain->Composition, SecretKey1, PublicKey1);
 			if (!Status)
 				return Status;
 
-			Algorithm::Signing::DeriveSealingKey(PrivateKey, SealingKey1);
-			EncryptedPrivateKey1For1 = Algorithm::Signing::PublicEncrypt(SealingKey1, std::string_view((char*)PrivateKey1, sizeof(PrivateKey1))).Or(String());
-			if (EncryptedPrivateKey1For1.empty())
+			Algorithm::Signing::DeriveSealingKey(SecretKey, SealingKey1);
+			EncryptedSecretKey1For1 = Algorithm::Signing::PublicEncrypt(SealingKey1, std::string_view((char*)SecretKey1, sizeof(SecretKey1))).Or(String());
+			if (EncryptedSecretKey1For1.empty())
 				return LayerException("invalid sealing secret");
 
 			return Expectation::Met;
@@ -2682,17 +2682,17 @@ namespace Tangent
 			if (!memcmp(PublicKey1, Null, sizeof(Null)))
 				return LayerException("invalid public key 1");
 
-			if (EncryptedPrivateKey1For1.empty())
-				return LayerException("invalid encrypted private key 1");
+			if (EncryptedSecretKey1For1.empty())
+				return LayerException("invalid encrypted secret key 1");
 
 			auto* Chain = Oracle::Datamaster::GetChainparams(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
 
 			Algorithm::Pubkey PublicKey;
-			Algorithm::Composition::CSeckey PrivateKey2;
+			Algorithm::Composition::CSeckey SecretKey2;
 			Algorithm::Composition::CPubkey PublicKey2;
-			auto Status = Algorithm::Composition::DeriveKeypair2(Chain->Composition, PublicKey1, PrivateKey2, PublicKey2, PublicKey, nullptr);
+			auto Status = Algorithm::Composition::DeriveKeypair2(Chain->Composition, PublicKey1, SecretKey2, PublicKey2, PublicKey, nullptr);
 			if (!Status)
 				return LayerException("invalid operation");
 
@@ -2732,7 +2732,7 @@ namespace Tangent
 			Transaction->Asset = Asset;
 			Transaction->SetWitness(Context->Receipt.TransactionHash);
 
-			auto Status = Transaction->SetShare2(Proposer.PrivateKey, PublicKey1);
+			auto Status = Transaction->SetShare2(Proposer.SecretKey, PublicKey1);
 			if (!Status)
 				return ExpectsPromiseLR<void>(Status.Error());
 
@@ -2746,7 +2746,7 @@ namespace Tangent
 			Algorithm::Composition::CPubkey CPubNull = { 0 };
 			Stream->WriteString(std::string_view((char*)SealingKey1, memcmp(SealingKey1, PubNull, sizeof(PubNull)) == 0 ? 0 : sizeof(SealingKey1)));
 			Stream->WriteString(std::string_view((char*)PublicKey1, memcmp(PublicKey1, CPubNull, sizeof(CPubNull)) == 0 ? 0 : sizeof(PublicKey1)));
-			Stream->WriteString(EncryptedPrivateKey1For1);
+			Stream->WriteString(EncryptedSecretKey1For1);
 			return true;
 		}
 		bool ContributionAllocation::LoadBody(Format::Stream& Stream)
@@ -2759,7 +2759,7 @@ namespace Tangent
 			if (!Stream.ReadString(Stream.ReadType(), &PublicKey1Assembly) || !Algorithm::Encoding::DecodeUintBlob(PublicKey1Assembly, PublicKey1, sizeof(PublicKey1)))
 				return false;
 
-			if (!Stream.ReadString(Stream.ReadType(), &EncryptedPrivateKey1For1))
+			if (!Stream.ReadString(Stream.ReadType(), &EncryptedSecretKey1For1))
 				return false;
 
 			return true;
@@ -2773,16 +2773,16 @@ namespace Tangent
 			Parties.insert(Event->front().AsBlob());
 			return true;
 		}
-		Option<String> ContributionAllocation::GetPrivateKey1(const Algorithm::Seckey PrivateKey) const
+		Option<String> ContributionAllocation::GetSecretKey1(const Algorithm::Seckey SecretKey) const
 		{
-			return Algorithm::Signing::PrivateDecrypt(PrivateKey, EncryptedPrivateKey1For1);
+			return Algorithm::Signing::PrivateDecrypt(SecretKey, EncryptedSecretKey1For1);
 		}
 		UPtr<Schema> ContributionAllocation::AsSchema() const
 		{
 			Schema* Data = Ledger::Transaction::AsSchema().Reset();
 			Data->Set("sealing_key_1", Algorithm::Signing::SerializeSealingKey(SealingKey1));
 			Data->Set("public_key_1", Var::String(Format::Util::Encode0xHex(std::string_view((char*)PublicKey1, sizeof(PublicKey1)))));
-			Data->Set("encrypted_private_key_1_for_1", Var::String(Format::Util::Encode0xHex(EncryptedPrivateKey1For1)));
+			Data->Set("encrypted_secret_key_1_for_1", Var::String(Format::Util::Encode0xHex(EncryptedSecretKey1For1)));
 			return Data;
 		}
 		uint32_t ContributionAllocation::AsType() const
@@ -2811,22 +2811,22 @@ namespace Tangent
 			return "contribution_allocation";
 		}
 
-		ExpectsLR<void> ContributionActivation::SetShare2(const Algorithm::Seckey PrivateKey, const Algorithm::Composition::CPubkey PublicKey1)
+		ExpectsLR<void> ContributionActivation::SetShare2(const Algorithm::Seckey SecretKey, const Algorithm::Composition::CPubkey PublicKey1)
 		{
 			auto* Chain = Oracle::Datamaster::GetChainparams(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
 
 			size_t PublicKeySize32 = 0;
-			Algorithm::Composition::CSeckey PrivateKey2;
-			auto Status = Algorithm::Composition::DeriveKeypair2(Chain->Composition, PublicKey1, PrivateKey2, PublicKey2, PublicKey, &PublicKeySize32);
+			Algorithm::Composition::CSeckey SecretKey2;
+			auto Status = Algorithm::Composition::DeriveKeypair2(Chain->Composition, PublicKey1, SecretKey2, PublicKey2, PublicKey, &PublicKeySize32);
 			if (!Status)
 				return LayerException("invalid message");
 
 			PublicKeySize = (uint16_t)PublicKeySize32;
-			Algorithm::Signing::DeriveSealingKey(PrivateKey, SealingKey2);
-			EncryptedPrivateKey2For2 = Algorithm::Signing::PublicEncrypt(SealingKey2, std::string_view((char*)PrivateKey2, sizeof(PrivateKey2))).Or(String());
-			if (EncryptedPrivateKey2For2.empty())
+			Algorithm::Signing::DeriveSealingKey(SecretKey, SealingKey2);
+			EncryptedSecretKey2For2 = Algorithm::Signing::PublicEncrypt(SealingKey2, std::string_view((char*)SecretKey2, sizeof(SecretKey2))).Or(String());
+			if (EncryptedSecretKey2For2.empty())
 				return LayerException("invalid sealing secret");
 
 			auto VerifyingWallet = GetVerifyingWallet();
@@ -2848,8 +2848,8 @@ namespace Tangent
 			if (!memcmp(PublicKey2, CPubNull, sizeof(CPubNull)))
 				return LayerException("invalid public key 2");
 
-			if (EncryptedPrivateKey2For2.empty())
-				return LayerException("invalid encrypted private key 2");
+			if (EncryptedSecretKey2For2.empty())
+				return LayerException("invalid encrypted secret key 2");
 
 			if (!ContributionAllocationHash)
 				return LayerException("invalid parent transaction");
@@ -2937,7 +2937,7 @@ namespace Tangent
 			Stream->WriteString(std::string_view((char*)PublicKey, memcmp(PublicKey, PubNull, sizeof(PubNull)) == 0 ? 0 : sizeof(PublicKey)));
 			Stream->WriteString(std::string_view((char*)SealingKey2, memcmp(SealingKey2, PubNull, sizeof(PubNull)) == 0 ? 0 : sizeof(SealingKey2)));
 			Stream->WriteString(std::string_view((char*)PublicKey2, memcmp(PublicKey2, CPubNull, sizeof(CPubNull)) == 0 ? 0 : sizeof(PublicKey2)));
-			Stream->WriteString(EncryptedPrivateKey2For2);
+			Stream->WriteString(EncryptedSecretKey2For2);
 			Stream->WriteInteger(PublicKeySize);
 			Stream->WriteInteger(ContributionAllocationHash);
 			return true;
@@ -2956,7 +2956,7 @@ namespace Tangent
 			if (!Stream.ReadString(Stream.ReadType(), &PublicKey2Assembly) || !Algorithm::Encoding::DecodeUintBlob(PublicKey2Assembly, PublicKey2, sizeof(PublicKey2)))
 				return false;
 
-			if (!Stream.ReadString(Stream.ReadType(), &EncryptedPrivateKey2For2))
+			if (!Stream.ReadString(Stream.ReadType(), &EncryptedSecretKey2For2))
 				return false;
 
 			if (!Stream.ReadInteger(Stream.ReadType(), &PublicKeySize))
@@ -2981,9 +2981,9 @@ namespace Tangent
 			Parties.insert(String((char*)Parent->Receipt.From, sizeof(Parent->Receipt.From)));
 			return true;
 		}
-		Option<String> ContributionActivation::GetPrivateKey2(const Algorithm::Seckey PrivateKey) const
+		Option<String> ContributionActivation::GetSecretKey2(const Algorithm::Seckey SecretKey) const
 		{
-			return Algorithm::Signing::PrivateDecrypt(PrivateKey, EncryptedPrivateKey2For2);
+			return Algorithm::Signing::PrivateDecrypt(SecretKey, EncryptedSecretKey2For2);
 		}
 		ExpectsLR<Oracle::DerivedVerifyingWallet> ContributionActivation::GetVerifyingWallet() const
 		{
@@ -2995,7 +2995,7 @@ namespace Tangent
 			Schema* Data = Ledger::ConsensusTransaction::AsSchema().Reset();
 			Data->Set("sealing_key_2", Algorithm::Signing::SerializeSealingKey(SealingKey2));
 			Data->Set("public_key_2", Var::String(Format::Util::Encode0xHex(std::string_view((char*)PublicKey2, sizeof(PublicKey2)))));
-			Data->Set("encrypted_private_key_2_for_2", Var::String(Format::Util::Encode0xHex(EncryptedPrivateKey2For2)));
+			Data->Set("encrypted_secret_key_2_for_2", Var::String(Format::Util::Encode0xHex(EncryptedSecretKey2For2)));
 			Data->Set("contribution_allocation_hash", Var::String(Algorithm::Encoding::Encode0xHex256(ContributionAllocationHash)));
 			Data->Set("contribution_wallet", VerifyingWallet ? VerifyingWallet->AsSchema().Reset() : Var::Set::Null());
 			return Data;
@@ -3131,7 +3131,7 @@ namespace Tangent
 			UPtr<Transactions::ContributionDeactivation> Transaction = Memory::New<Transactions::ContributionDeactivation>();
 			Transaction->Asset = Asset;
 
-			auto Status = Transaction->SetRevealingShare2(Context->Receipt.TransactionHash, Proposer.PrivateKey);
+			auto Status = Transaction->SetRevealingShare2(Context->Receipt.TransactionHash, Proposer.SecretKey);
 			if (!Status)
 				return ExpectsPromiseLR<void>(Status.Error());
 
@@ -3197,11 +3197,11 @@ namespace Tangent
 			return "contribution_deallocation";
 		}
 
-		ExpectsLR<void> ContributionDeactivation::SetRevealingShare2(const uint256_t& NewContributionDeallocationHash, const Algorithm::Seckey PrivateKey)
+		ExpectsLR<void> ContributionDeactivation::SetRevealingShare2(const uint256_t& NewContributionDeallocationHash, const Algorithm::Seckey SecretKey)
 		{
 			Algorithm::Pubkey SealingKey2;
 			ContributionDeallocationHash = NewContributionDeallocationHash;
-			Algorithm::Signing::DeriveSealingKey(PrivateKey, SealingKey2);
+			Algorithm::Signing::DeriveSealingKey(SecretKey, SealingKey2);
 
 			Ledger::TransactionContext Context;
 			auto Parent = Context.GetBlockTransaction<ContributionDeallocation>(ContributionDeallocationHash);
@@ -3215,19 +3215,19 @@ namespace Tangent
 
 			auto* InitiatorTransaction = (ContributionActivation*)*Initiator->Transaction;
 			if (memcmp(SealingKey2, InitiatorTransaction->SealingKey2, sizeof(SealingKey2)) != 0)
-				return LayerException("invalid private key");
+				return LayerException("invalid secret key");
 
 			auto Origin = Context.GetBlockTransaction<ContributionAllocation>(InitiatorTransaction->ContributionAllocationHash);
 			if (!Origin)
 				return Origin.Error();
 
-			String PrivateKey2 = Algorithm::Signing::PrivateDecrypt(PrivateKey, InitiatorTransaction->EncryptedPrivateKey2For2).Or(String());
-			if (PrivateKey2.empty())
+			String SecretKey2 = Algorithm::Signing::PrivateDecrypt(SecretKey, InitiatorTransaction->EncryptedSecretKey2For2).Or(String());
+			if (SecretKey2.empty())
 				return LayerException("invalid sealing secret");
 
 			auto* OriginTransaction = (ContributionAllocation*)*Origin->Transaction;
-			EncryptedPrivateKey2For1 = Algorithm::Signing::PublicEncrypt(OriginTransaction->SealingKey1, PrivateKey2).Or(String());
-			if (EncryptedPrivateKey2For1.empty())
+			EncryptedSecretKey2For1 = Algorithm::Signing::PublicEncrypt(OriginTransaction->SealingKey1, SecretKey2).Or(String());
+			if (EncryptedSecretKey2For1.empty())
 				return LayerException("invalid sealing secret");
 
 			return Expectation::Met;
@@ -3240,8 +3240,8 @@ namespace Tangent
 			if (!ContributionDeallocationHash)
 				return LayerException("invalid parent transaction");
 
-			if (EncryptedPrivateKey2For1.empty())
-				return LayerException("invalid encrypted private key 2");
+			if (EncryptedSecretKey2For1.empty())
+				return LayerException("invalid encrypted secret key 2");
 
 			return Ledger::ConsensusTransaction::Prevalidate();
 		}
@@ -3271,7 +3271,7 @@ namespace Tangent
 		{
 			VI_ASSERT(Stream != nullptr, "stream should be set");
 			Stream->WriteInteger(ContributionDeallocationHash);
-			Stream->WriteString(EncryptedPrivateKey2For1);
+			Stream->WriteString(EncryptedSecretKey2For1);
 			return true;
 		}
 		bool ContributionDeactivation::LoadBody(Format::Stream& Stream)
@@ -3279,7 +3279,7 @@ namespace Tangent
 			if (!Stream.ReadInteger(Stream.ReadType(), &ContributionDeallocationHash))
 				return false;
 
-			if (!Stream.ReadString(Stream.ReadType(), &EncryptedPrivateKey2For1))
+			if (!Stream.ReadString(Stream.ReadType(), &EncryptedSecretKey2For1))
 				return false;
 
 			return true;
@@ -3294,7 +3294,7 @@ namespace Tangent
 			Parties.insert(String((char*)Parent->Receipt.From, sizeof(Parent->Receipt.From)));
 			return true;
 		}
-		Option<String> ContributionDeactivation::GetPrivateKey1(const Algorithm::Seckey PrivateKey) const
+		Option<String> ContributionDeactivation::GetSecretKey1(const Algorithm::Seckey SecretKey) const
 		{
 			Ledger::TransactionContext Context;
 			auto Parent = Context.GetBlockTransaction<ContributionActivation>(ContributionDeallocationHash);
@@ -3307,13 +3307,13 @@ namespace Tangent
 				return Optional::None;
 
 			auto* OriginTransaction = (ContributionAllocation*)*Origin->Transaction;
-			return Algorithm::Signing::PrivateDecrypt(PrivateKey, OriginTransaction->EncryptedPrivateKey1For1);
+			return Algorithm::Signing::PrivateDecrypt(SecretKey, OriginTransaction->EncryptedSecretKey1For1);
 		}
-		Option<String> ContributionDeactivation::GetPrivateKey2(const Algorithm::Seckey PrivateKey) const
+		Option<String> ContributionDeactivation::GetSecretKey2(const Algorithm::Seckey SecretKey) const
 		{
-			return Algorithm::Signing::PrivateDecrypt(PrivateKey, EncryptedPrivateKey2For1);
+			return Algorithm::Signing::PrivateDecrypt(SecretKey, EncryptedSecretKey2For1);
 		}
-		ExpectsLR<Oracle::DerivedSigningWallet> ContributionDeactivation::GetSigningWallet(const Algorithm::Seckey PrivateKey) const
+		ExpectsLR<Oracle::DerivedSigningWallet> ContributionDeactivation::GetSigningWallet(const Algorithm::Seckey SecretKey) const
 		{
 			auto* Chain = Oracle::Datamaster::GetChainparams(Asset);
 			if (!Chain)
@@ -3334,21 +3334,21 @@ namespace Tangent
 				return Origin.Error();
 
 			auto* OriginTransaction = (ContributionAllocation*)*Origin->Transaction;
-			auto PrivateKey1 = Algorithm::Signing::PrivateDecrypt(PrivateKey, OriginTransaction->EncryptedPrivateKey1For1);
-			if (!PrivateKey1)
-				return LayerException("invalid private key 1");
+			auto SecretKey1 = Algorithm::Signing::PrivateDecrypt(SecretKey, OriginTransaction->EncryptedSecretKey1For1);
+			if (!SecretKey1)
+				return LayerException("invalid secret key 1");
 
-			auto PrivateKey2 = Algorithm::Signing::PrivateDecrypt(PrivateKey, EncryptedPrivateKey2For1);
-			if (!PrivateKey2)
-				return LayerException("invalid private key 2");
+			auto SecretKey2 = Algorithm::Signing::PrivateDecrypt(SecretKey, EncryptedSecretKey2For1);
+			if (!SecretKey2)
+				return LayerException("invalid secret key 2");
 
-			size_t SharedPrivateKeySize = 0;
-			Algorithm::Composition::CSeckey SharedPrivateKey;
-			auto Status = Algorithm::Composition::DerivePrivateKey(Chain->Composition, (uint8_t*)PrivateKey1->data(), (uint8_t*)PrivateKey2->data(), SharedPrivateKey, &SharedPrivateKeySize);
+			size_t SharedSecretKeySize = 0;
+			Algorithm::Composition::CSeckey SharedSecretKey;
+			auto Status = Algorithm::Composition::DeriveSecretKey(Chain->Composition, (uint8_t*)SecretKey1->data(), (uint8_t*)SecretKey2->data(), SharedSecretKey, &SharedSecretKeySize);
 			if (!Status)
 				return LayerException("invalid message");
 
-			auto SigningWallet = Oracle::Datamaster::NewSigningWallet(Asset, std::string_view((char*)SharedPrivateKey, SharedPrivateKeySize));
+			auto SigningWallet = Oracle::Datamaster::NewSigningWallet(Asset, std::string_view((char*)SharedSecretKey, SharedSecretKeySize));
 			if (SigningWallet && SigningWallet->VerifyingKey.ExposeToHeap() != VerifyingWallet->VerifyingKey.ExposeToHeap())
 				return LayerException("signing wallet public key does not match verifying wallet public key");
 
@@ -3358,7 +3358,7 @@ namespace Tangent
 		{
 			Schema* Data = Ledger::ConsensusTransaction::AsSchema().Reset();
 			Data->Set("contribution_deallocation_hash", Var::String(Algorithm::Encoding::Encode0xHex256(ContributionDeallocationHash)));
-			Data->Set("encrypted_private_key_2_for_1", Var::String(Format::Util::Encode0xHex(EncryptedPrivateKey2For1)));
+			Data->Set("encrypted_secret_key_2_for_1", Var::String(Format::Util::Encode0xHex(EncryptedSecretKey2For1)));
 			return Data;
 		}
 		uint32_t ContributionDeactivation::AsType() const

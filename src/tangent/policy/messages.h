@@ -38,7 +38,7 @@ namespace Tangent
 			virtual bool Load(Format::Stream& Stream);
 			virtual bool StorePayload(Format::Stream* Stream) const = 0;
 			virtual bool LoadPayload(Format::Stream& Stream) = 0;
-			virtual bool Sign(const Algorithm::Seckey PrivateKey);
+			virtual bool Sign(const Algorithm::Seckey SecretKey);
 			virtual bool Verify(const Algorithm::Pubkey PublicKey) const;
 			virtual bool Recover(Algorithm::Pubkeyhash PublicKeyHash) const;
 			virtual bool IsSignatureNull() const;

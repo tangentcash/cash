@@ -4,7 +4,7 @@
     "seeds": [],
     "seeders": [],
     "logs": {
-        "state": "./logs/state.log",
+        "state": "",
         "message": "",
         "data": "",
         "archive_size": 8388608,

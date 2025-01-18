@@ -85,19 +85,19 @@ namespace Tangent
 		{
 			return true;
 		}
-		bool Transaction::Sign(const Algorithm::Seckey PrivateKey)
+		bool Transaction::Sign(const Algorithm::Seckey SecretKey)
 		{
-			return Authentic::Sign(PrivateKey);
+			return Authentic::Sign(SecretKey);
 		}
-		bool Transaction::Sign(const Algorithm::Seckey PrivateKey, uint64_t NewSequence)
+		bool Transaction::Sign(const Algorithm::Seckey SecretKey, uint64_t NewSequence)
 		{
 			Sequence = NewSequence;
-			return Sign(PrivateKey);
+			return Sign(SecretKey);
 		}
-		bool Transaction::Sign(const Algorithm::Seckey PrivateKey, uint64_t NewSequence, const Decimal& Price)
+		bool Transaction::Sign(const Algorithm::Seckey SecretKey, uint64_t NewSequence, const Decimal& Price)
 		{
 			SetEstimateGas(Price);
-			if (!Sign(PrivateKey, NewSequence))
+			if (!Sign(SecretKey, NewSequence))
 				return false;
 
 			auto OptimalGas = Ledger::TransactionContext::CalculateTxGas(this);
@@ -105,7 +105,7 @@ namespace Tangent
 				return true;
 
 			GasLimit = *OptimalGas;
-			return Sign(PrivateKey);
+			return Sign(SecretKey);
 		}
 		void Transaction::SetOptimalGas(const Decimal& Price)
 		{
@@ -319,27 +319,27 @@ namespace Tangent
 
 			return true;
 		}
-		bool AggregationTransaction::Sign(const Algorithm::Seckey PrivateKey)
+		bool AggregationTransaction::Sign(const Algorithm::Seckey SecretKey)
 		{
 			Format::Stream Message;
 			Message.WriteInteger(InputHash);
 			if (!Transaction::StorePayload(&Message))
 				return false;
 
-			if (!Algorithm::Signing::SignTweaked(Message.Hash(), PrivateKey, Signature))
+			if (!Algorithm::Signing::SignTweaked(Message.Hash(), SecretKey, Signature))
 				return false;
 
-			return Attestate(PrivateKey);
+			return Attestate(SecretKey);
 		}
-		bool AggregationTransaction::Sign(const Algorithm::Seckey PrivateKey, uint64_t NewSequence)
+		bool AggregationTransaction::Sign(const Algorithm::Seckey SecretKey, uint64_t NewSequence)
 		{
 			Sequence = NewSequence;
-			return Sign(PrivateKey);
+			return Sign(SecretKey);
 		}
-		bool AggregationTransaction::Sign(const Algorithm::Seckey PrivateKey, uint64_t NewSequence, const Decimal& Price)
+		bool AggregationTransaction::Sign(const Algorithm::Seckey SecretKey, uint64_t NewSequence, const Decimal& Price)
 		{
 			SetEstimateGas(Price);
-			if (!Sign(PrivateKey, NewSequence))
+			if (!Sign(SecretKey, NewSequence))
 				return false;
 
 			size_t TransactionSize1 = AsMessage().Data.size();
@@ -348,7 +348,7 @@ namespace Tangent
 				return true;
 
 			GasLimit = *OptimalGas;
-			return Sign(PrivateKey);
+			return Sign(SecretKey);
 		}
 		bool AggregationTransaction::Verify(const Algorithm::Pubkey PublicKey) const
 		{
@@ -445,7 +445,7 @@ namespace Tangent
 			Message.WriteInteger(OutputHash);
 			return Algorithm::Signing::RecoverTweakedHash(Message.Hash(), PublicKeyHash, (uint8_t*)Signature->data());
 		}
-		bool AggregationTransaction::Attestate(const Algorithm::Seckey PrivateKey)
+		bool AggregationTransaction::Attestate(const Algorithm::Seckey SecretKey)
 		{
 			if (OutputHashes.size() > 1)
 				return false;
@@ -457,7 +457,7 @@ namespace Tangent
 			CumulativeMessage.WriteInteger(GenesisBranch->first);
 
 			Algorithm::Sighash CumulativeSignature;
-			if (!Algorithm::Signing::SignTweaked(CumulativeMessage.Hash(), PrivateKey, CumulativeSignature))
+			if (!Algorithm::Signing::SignTweaked(CumulativeMessage.Hash(), SecretKey, CumulativeSignature))
 				return false;
 
 			GenesisBranch->second.Attestations.insert(String((char*)CumulativeSignature, sizeof(CumulativeSignature)));

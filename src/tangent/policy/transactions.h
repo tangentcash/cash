@@ -74,7 +74,7 @@ namespace Tangent
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
 			bool RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
-			bool SignLocation(const Algorithm::Seckey PrivateKey);
+			bool SignLocation(const Algorithm::Seckey SecretKey);
 			bool VerifyLocation(const Algorithm::Pubkey PublicKey) const;
 			bool RecoverLocation(Algorithm::Pubkeyhash PublicKeyHash) const;
 			bool IsLocationNull() const;
@@ -156,8 +156,8 @@ namespace Tangent
 			bool RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
 			bool RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<uint256_t>& Aliases) const override;
 			bool Merge(const Ledger::Transaction& Transaction);
-			bool Merge(Ledger::Transaction& Transaction, const Algorithm::Seckey PrivateKey);
-			bool Merge(Ledger::Transaction& Transaction, const Algorithm::Seckey PrivateKey, uint64_t Sequence);
+			bool Merge(Ledger::Transaction& Transaction, const Algorithm::Seckey SecretKey);
+			bool Merge(Ledger::Transaction& Transaction, const Algorithm::Seckey SecretKey, uint64_t Sequence);
 			ExpectsLR<Ledger::BlockTransaction> ResolveBlockTransaction(const Ledger::Receipt& Receipt, const uint256_t& TransactionHash) const;
 			const Ledger::Transaction* ResolveTransaction(const uint256_t& TransactionHash) const;
 			UPtr<Schema> AsSchema() const override;
@@ -168,7 +168,7 @@ namespace Tangent
 			static uint32_t AsInstanceType();
 			static std::string_view AsInstanceTypename();
 			static void SetupChild(Ledger::Transaction& Transaction, const Algorithm::AssetId& Asset);
-			static bool SignChild(Ledger::Transaction& Transaction, const Algorithm::Seckey PrivateKey, const Algorithm::AssetId& Asset, uint16_t Index);
+			static bool SignChild(Ledger::Transaction& Transaction, const Algorithm::Seckey SecretKey, const Algorithm::AssetId& Asset, uint16_t Index);
 		};
 
 		struct Commitment final : Ledger::Transaction
@@ -353,9 +353,9 @@ namespace Tangent
 		{
 			Algorithm::Pubkey SealingKey1 = { 0 };
 			Algorithm::Composition::CPubkey PublicKey1 = { 0 };
-			String EncryptedPrivateKey1For1;
+			String EncryptedSecretKey1For1;
 
-			ExpectsLR<void> SetShare1(const Algorithm::Seckey PrivateKey);
+			ExpectsLR<void> SetShare1(const Algorithm::Seckey SecretKey);
 			ExpectsLR<void> Prevalidate() const override;
 			ExpectsLR<void> Validate(const Ledger::TransactionContext* Context) const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
@@ -363,7 +363,7 @@ namespace Tangent
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
 			bool RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
-			Option<String> GetPrivateKey1(const Algorithm::Seckey PrivateKey) const;
+			Option<String> GetSecretKey1(const Algorithm::Seckey SecretKey) const;
 			UPtr<Schema> AsSchema() const override;
 			uint32_t AsType() const override;
 			std::string_view AsTypename() const override;
@@ -378,11 +378,11 @@ namespace Tangent
 			Algorithm::Pubkey PublicKey = { 0 };
 			Algorithm::Pubkey SealingKey2 = { 0 };
 			Algorithm::Composition::CPubkey PublicKey2 = { 0 };
-			String EncryptedPrivateKey2For2;
+			String EncryptedSecretKey2For2;
 			uint16_t PublicKeySize = 0;
 			uint256_t ContributionAllocationHash = 0;
 
-			ExpectsLR<void> SetShare2(const Algorithm::Seckey PrivateKey, const Algorithm::Composition::CPubkey PublicKey1);
+			ExpectsLR<void> SetShare2(const Algorithm::Seckey SecretKey, const Algorithm::Composition::CPubkey PublicKey1);
 			ExpectsLR<void> Prevalidate() const override;
 			ExpectsLR<void> Validate(const Ledger::TransactionContext* Context) const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
@@ -391,7 +391,7 @@ namespace Tangent
 			bool LoadBody(Format::Stream& Stream) override;
 			bool RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
 			void SetWitness(const uint256_t& ContributionAllocationHash);
-			Option<String> GetPrivateKey2(const Algorithm::Seckey PrivateKey) const;
+			Option<String> GetSecretKey2(const Algorithm::Seckey SecretKey) const;
 			ExpectsLR<Oracle::DerivedVerifyingWallet> GetVerifyingWallet() const;
 			UPtr<Schema> AsSchema() const override;
 			uint32_t AsType() const override;
@@ -425,19 +425,19 @@ namespace Tangent
 
 		struct ContributionDeactivation final : Ledger::ConsensusTransaction
 		{
-			String EncryptedPrivateKey2For1;
+			String EncryptedSecretKey2For1;
 			uint256_t ContributionDeallocationHash = 0;
 
-			ExpectsLR<void> SetRevealingShare2(const uint256_t& ContributionDeallocationHash, const Algorithm::Seckey PrivateKey);
+			ExpectsLR<void> SetRevealingShare2(const uint256_t& ContributionDeallocationHash, const Algorithm::Seckey SecretKey);
 			ExpectsLR<void> Prevalidate() const override;
 			ExpectsLR<void> Validate(const Ledger::TransactionContext* Context) const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
 			bool RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
-			Option<String> GetPrivateKey1(const Algorithm::Seckey PrivateKey) const;
-			Option<String> GetPrivateKey2(const Algorithm::Seckey PrivateKey) const;
-			ExpectsLR<Oracle::DerivedSigningWallet> GetSigningWallet(const Algorithm::Seckey PrivateKey) const;
+			Option<String> GetSecretKey1(const Algorithm::Seckey SecretKey) const;
+			Option<String> GetSecretKey2(const Algorithm::Seckey SecretKey) const;
+			ExpectsLR<Oracle::DerivedSigningWallet> GetSigningWallet(const Algorithm::Seckey SecretKey) const;
 			UPtr<Schema> AsSchema() const override;
 			uint32_t AsType() const override;
 			std::string_view AsTypename() const override;

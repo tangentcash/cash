@@ -145,8 +145,8 @@ namespace Tangent
 			virtual bool LoadPayloadWesolowski(Format::Stream& Stream);
 			virtual bool StorePayload(Format::Stream* Stream) const override;
 			virtual bool LoadPayload(Format::Stream& Stream) override;
-			virtual bool Sign(const Algorithm::Seckey PrivateKey) override;
-			virtual bool Solve(const Algorithm::Seckey PrivateKey);
+			virtual bool Sign(const Algorithm::Seckey SecretKey) override;
+			virtual bool Solve(const Algorithm::Seckey SecretKey);
 			virtual bool Verify(const Algorithm::Pubkey PublicKey) const override;
 			virtual bool Recover(Algorithm::Pubkeyhash PublicKeyHash) const override;
 			virtual bool VerifyWesolowski() const;
@@ -376,7 +376,7 @@ namespace Tangent
 			struct ProposerContext
 			{
 				Algorithm::Pubkeyhash PublicKeyHash = { 0 };
-				Algorithm::Seckey PrivateKey = { 0 };
+				Algorithm::Seckey SecretKey = { 0 };
 			} Proposer;
 			Option<BlockHeader> Tip = Optional::None;
 			OrderedMap<Algorithm::AssetId, size_t> Aggregators;
@@ -385,7 +385,7 @@ namespace Tangent
 			Vector<uint256_t> Outgoing;
 			size_t Precomputed = 0;
 
-			Option<uint64_t> Priority(const Algorithm::Pubkeyhash PublicKeyHash, const Algorithm::Seckey PrivateKey, Option<BlockHeader*>&& ParentBlock = Optional::None);
+			Option<uint64_t> Priority(const Algorithm::Pubkeyhash PublicKeyHash, const Algorithm::Seckey SecretKey, Option<BlockHeader*>&& ParentBlock = Optional::None);
 			size_t Apply(Vector<UPtr<Transaction>>&& Candidates);
 			TransactionInfo& Include(UPtr<Transaction>&& Candidate);
 			ExpectsLR<Block> Evaluate(String* Errors = nullptr);

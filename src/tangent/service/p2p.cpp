@@ -1514,7 +1514,7 @@ namespace Tangent
 					if (*Mempool.ActivationBlock != 0)
 						Mempool.ActivationBlock = 0;
 
-					auto Priority = Environment.Priority(Validator.Wallet.PublicKeyHash, Validator.Wallet.PrivateKey);
+					auto Priority = Environment.Priority(Validator.Wallet.PublicKeyHash, Validator.Wallet.SecretKey);
 					if (!Priority)
 					{
 						auto Chain = Storages::Chainstate(__func__);
@@ -1927,7 +1927,7 @@ namespace Tangent
 			else
 				CandidateTx->SetOptimalGas(Decimal::Zero());
 
-			if (CandidateTx->Sign(Validator.Wallet.PrivateKey, AccountSequence, Decimal::Zero()))
+			if (CandidateTx->Sign(Validator.Wallet.SecretKey, AccountSequence, Decimal::Zero()))
 			{
 				if (OutputHash != nullptr)
 					*OutputHash = CandidateTx->AsHash();

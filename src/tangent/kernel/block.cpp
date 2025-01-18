@@ -520,15 +520,15 @@ namespace Tangent
 
 			return true;
 		}
-		bool BlockHeader::Sign(const Algorithm::Seckey PrivateKey)
+		bool BlockHeader::Sign(const Algorithm::Seckey SecretKey)
 		{
 			Format::Stream Message;
 			if (!BlockHeader::StorePayload(&Message))
 				return false;
 
-			return Algorithm::Signing::SignTweaked(Message.Hash(), PrivateKey, Signature);
+			return Algorithm::Signing::SignTweaked(Message.Hash(), SecretKey, Signature);
 		}
-		bool BlockHeader::Solve(const Algorithm::Seckey PrivateKey)
+		bool BlockHeader::Solve(const Algorithm::Seckey SecretKey)
 		{
 			Format::Stream Message;
 			if (!StorePayloadWesolowski(&Message))
@@ -2705,7 +2705,7 @@ namespace Tangent
 			});
 		}
 
-		Option<uint64_t> EvaluationContext::Priority(const Algorithm::Pubkeyhash PublicKeyHash, const Algorithm::Seckey PrivateKey, Option<BlockHeader*>&& ParentBlock)
+		Option<uint64_t> EvaluationContext::Priority(const Algorithm::Pubkeyhash PublicKeyHash, const Algorithm::Seckey SecretKey, Option<BlockHeader*>&& ParentBlock)
 		{
 			Validation.Tip = false;
 			if (!ParentBlock)
@@ -2725,8 +2725,8 @@ namespace Tangent
 				Tip = Optional::None;
 
 			memcpy(Proposer.PublicKeyHash, PublicKeyHash, sizeof(Algorithm::Pubkeyhash));
-			if (PrivateKey != nullptr)
-				memcpy(Proposer.PrivateKey, PrivateKey, sizeof(Algorithm::Seckey));
+			if (SecretKey != nullptr)
+				memcpy(Proposer.SecretKey, SecretKey, sizeof(Algorithm::Seckey));
 
 			Validation.Cache = BlockWork();
 			Validation.Context = Ledger::TransactionContext(Tip.Address());
@@ -2841,10 +2841,10 @@ namespace Tangent
 		}
 		ExpectsLR<void> EvaluationContext::Solve(Block& Candidate)
 		{
-			if (!Candidate.Solve(Proposer.PrivateKey))
+			if (!Candidate.Solve(Proposer.SecretKey))
 				return LayerException("block proof evaluation failed");
 
-			if (!Candidate.Sign(Proposer.PrivateKey))
+			if (!Candidate.Sign(Proposer.SecretKey))
 				return LayerException("block signature evaluation failed");
 
 			return Expectation::Met;

@@ -97,13 +97,13 @@ namespace Tangent
 
 			return true;
 		}
-		bool Authentic::Sign(const Algorithm::Seckey PrivateKey)
+		bool Authentic::Sign(const Algorithm::Seckey SecretKey)
 		{
 			Format::Stream Message;
 			if (!StorePayload(&Message))
 				return false;
 
-			return Algorithm::Signing::SignTweaked(Message.Hash(), PrivateKey, Signature);
+			return Algorithm::Signing::SignTweaked(Message.Hash(), SecretKey, Signature);
 		}
 		bool Authentic::Verify(const Algorithm::Pubkey PublicKey) const
 		{

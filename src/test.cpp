@@ -11,7 +11,7 @@
 
 using namespace Tangent;
 
-class TestTransactions
+class Blocks
 {
 public:
 	static void TestAllowances1Threshold(Vector<UPtr<Ledger::Transaction>>& Transactions, const Ledger::Wallet& User1, uint64_t User1Sequence, const Ledger::Wallet& User2, uint64_t User2Sequence)
@@ -21,21 +21,21 @@ public:
 		ContributionAllowanceEthereum->SetAsset("ETH");
 		ContributionAllowanceEthereum->SetEstimateGas(Decimal::Zero());
 		ContributionAllowanceEthereum->SetThreshold(nullptr, 1.0);
-		VI_PANIC(ContributionAllowanceEthereum->Sign(User2.PrivateKey, User2Sequence++), "contribution allowance not signed");
+		VI_PANIC(ContributionAllowanceEthereum->Sign(User2.SecretKey, User2Sequence++), "contribution allowance not signed");
 		Transactions.push_back(ContributionAllowanceEthereum);
 
 		auto* ContributionAllowanceRipple = Memory::New<Transactions::ContributionAllowance>();
 		ContributionAllowanceRipple->SetAsset("XRP");
 		ContributionAllowanceRipple->SetEstimateGas(Decimal::Zero());
 		ContributionAllowanceRipple->SetThreshold(nullptr, 1.0);
-		VI_PANIC(ContributionAllowanceRipple->Sign(User2.PrivateKey, User2Sequence++), "contribution allowance not signed");
+		VI_PANIC(ContributionAllowanceRipple->Sign(User2.SecretKey, User2Sequence++), "contribution allowance not signed");
 		Transactions.push_back(ContributionAllowanceRipple);
 
 		auto* ContributionAllowanceBitcoin = Memory::New<Transactions::ContributionAllowance>();
 		ContributionAllowanceBitcoin->SetAsset("BTC");
 		ContributionAllowanceBitcoin->SetEstimateGas(Decimal::Zero());
 		ContributionAllowanceBitcoin->SetThreshold(nullptr, 1.0);
-		VI_PANIC(ContributionAllowanceBitcoin->Sign(User2.PrivateKey, User2Sequence++), "contribution allowance not signed");
+		VI_PANIC(ContributionAllowanceBitcoin->Sign(User2.SecretKey, User2Sequence++), "contribution allowance not signed");
 		Transactions.push_back(ContributionAllowanceBitcoin);
 	}
 	static void TestAllowances0Threshold(Vector<UPtr<Ledger::Transaction>>& Transactions, const Ledger::Wallet& User1, uint64_t User1Sequence, const Ledger::Wallet& User2, uint64_t User2Sequence)
@@ -44,21 +44,21 @@ public:
 		ContributionAllowanceEthereum->SetAsset("ETH");
 		ContributionAllowanceEthereum->SetEstimateGas(Decimal::Zero());
 		ContributionAllowanceEthereum->SetThreshold(nullptr, 0.0);
-		VI_PANIC(ContributionAllowanceEthereum->Sign(User2.PrivateKey, User2Sequence++), "contribution allowance not signed");
+		VI_PANIC(ContributionAllowanceEthereum->Sign(User2.SecretKey, User2Sequence++), "contribution allowance not signed");
 		Transactions.push_back(ContributionAllowanceEthereum);
 
 		auto* ContributionAllowanceRipple = Memory::New<Transactions::ContributionAllowance>();
 		ContributionAllowanceRipple->SetAsset("XRP");
 		ContributionAllowanceRipple->SetEstimateGas(Decimal::Zero());
 		ContributionAllowanceRipple->SetThreshold(nullptr, 0.0);
-		VI_PANIC(ContributionAllowanceRipple->Sign(User2.PrivateKey, User2Sequence++), "contribution allowance not signed");
+		VI_PANIC(ContributionAllowanceRipple->Sign(User2.SecretKey, User2Sequence++), "contribution allowance not signed");
 		Transactions.push_back(ContributionAllowanceRipple);
 
 		auto* ContributionAllowanceBitcoin = Memory::New<Transactions::ContributionAllowance>();
 		ContributionAllowanceBitcoin->SetAsset("BTC");
 		ContributionAllowanceBitcoin->SetEstimateGas(Decimal::Zero());
 		ContributionAllowanceBitcoin->SetThreshold(nullptr, 0.0);
-		VI_PANIC(ContributionAllowanceBitcoin->Sign(User2.PrivateKey, User2Sequence++), "contribution allowance not signed");
+		VI_PANIC(ContributionAllowanceBitcoin->Sign(User2.SecretKey, User2Sequence++), "contribution allowance not signed");
 		Transactions.push_back(ContributionAllowanceBitcoin);
 	}
 	static void TestAdjustments(Vector<UPtr<Ledger::Transaction>>& Transactions, const Ledger::Wallet& User1, uint64_t User1Sequence, const Ledger::Wallet& User2, uint64_t User2Sequence)
@@ -68,7 +68,7 @@ public:
 		ContributionAdjustmentEthereum->SetEstimateGas(Decimal::Zero());
 		ContributionAdjustmentEthereum->SetIncomingFee(0.001, 0.0001);
 		ContributionAdjustmentEthereum->SetOutgoingFee(0.001, 0.0001);
-		VI_PANIC(ContributionAdjustmentEthereum->Sign(User2.PrivateKey, User2Sequence++), "contribution adjustment not signed");
+		VI_PANIC(ContributionAdjustmentEthereum->Sign(User2.SecretKey, User2Sequence++), "contribution adjustment not signed");
 		Transactions.push_back(ContributionAdjustmentEthereum);
 
 		auto* ContributionAdjustmentRipple = Memory::New<Transactions::ContributionAdjustment>();
@@ -76,7 +76,7 @@ public:
 		ContributionAdjustmentRipple->SetEstimateGas(Decimal::Zero());
 		ContributionAdjustmentRipple->SetIncomingFee(0.01, 0.0001);
 		ContributionAdjustmentRipple->SetOutgoingFee(0.01, 0.0001);
-		VI_PANIC(ContributionAdjustmentRipple->Sign(User2.PrivateKey, User2Sequence++), "contribution adjustment not signed");
+		VI_PANIC(ContributionAdjustmentRipple->Sign(User2.SecretKey, User2Sequence++), "contribution adjustment not signed");
 		Transactions.push_back(ContributionAdjustmentRipple);
 
 		auto* ContributionAdjustmentBitcoin = Memory::New<Transactions::ContributionAdjustment>();
@@ -84,7 +84,7 @@ public:
 		ContributionAdjustmentBitcoin->SetEstimateGas(Decimal::Zero());
 		ContributionAdjustmentBitcoin->SetIncomingFee(0.00001, 0.0001);
 		ContributionAdjustmentBitcoin->SetOutgoingFee(0.00001, 0.0001);
-		VI_PANIC(ContributionAdjustmentBitcoin->Sign(User2.PrivateKey, User2Sequence++), "contribution adjustment not signed");
+		VI_PANIC(ContributionAdjustmentBitcoin->Sign(User2.SecretKey, User2Sequence++), "contribution adjustment not signed");
 		Transactions.push_back(ContributionAdjustmentBitcoin);
 	}
 	static void TestAddressAccounts(Vector<UPtr<Ledger::Transaction>>& Transactions, const Ledger::Wallet& User1, uint64_t User1Sequence, const Ledger::Wallet& User2, uint64_t User2Sequence)
@@ -93,42 +93,42 @@ public:
 		AddressAccountEthereum1->SetAsset("ETH");
 		AddressAccountEthereum1->SetEstimateGas(Decimal::Zero());
 		AddressAccountEthereum1->SetAddress("0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5");
-		VI_PANIC(AddressAccountEthereum1->Sign(User1.PrivateKey, User1Sequence++), "account not signed");
+		VI_PANIC(AddressAccountEthereum1->Sign(User1.SecretKey, User1Sequence++), "account not signed");
 		Transactions.push_back(AddressAccountEthereum1);
 
 		auto* AddressAccountEthereum2 = Memory::New<Transactions::AddressAccount>();
 		AddressAccountEthereum2->SetAsset("ETH");
 		AddressAccountEthereum2->SetEstimateGas(Decimal::Zero());
 		AddressAccountEthereum2->SetAddress("0x89a0181659bd280836A2d33F57e3B5Dfa1a823CE");
-		VI_PANIC(AddressAccountEthereum2->Sign(User2.PrivateKey, User2Sequence++), "account not signed");
+		VI_PANIC(AddressAccountEthereum2->Sign(User2.SecretKey, User2Sequence++), "account not signed");
 		Transactions.push_back(AddressAccountEthereum2);
 
 		auto* AddressAccountRipple1 = Memory::New<Transactions::AddressAccount>();
 		AddressAccountRipple1->SetAsset("XRP");
 		AddressAccountRipple1->SetEstimateGas(Decimal::Zero());
 		AddressAccountRipple1->SetAddress("rUBqz2JiRCT3gYZBnm28y5ME7e5UpSm2ok");
-		VI_PANIC(AddressAccountRipple1->Sign(User1.PrivateKey, User1Sequence++), "account not signed");
+		VI_PANIC(AddressAccountRipple1->Sign(User1.SecretKey, User1Sequence++), "account not signed");
 		Transactions.push_back(AddressAccountRipple1);
 
 		auto* AddressAccountRipple2 = Memory::New<Transactions::AddressAccount>();
 		AddressAccountRipple2->SetAsset("XRP");
 		AddressAccountRipple2->SetEstimateGas(Decimal::Zero());
 		AddressAccountRipple2->SetAddress("rJGb4etn9GSwNHYVu7dNMbdiVgzqxaTSUG");
-		VI_PANIC(AddressAccountRipple2->Sign(User2.PrivateKey, User2Sequence++), "account not signed");
+		VI_PANIC(AddressAccountRipple2->Sign(User2.SecretKey, User2Sequence++), "account not signed");
 		Transactions.push_back(AddressAccountRipple2);
 
 		auto* AddressAccountBitcoin1 = Memory::New<Transactions::AddressAccount>();
 		AddressAccountBitcoin1->SetAsset("BTC");
 		AddressAccountBitcoin1->SetEstimateGas(Decimal::Zero());
 		AddressAccountBitcoin1->SetAddress("mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS");
-		VI_PANIC(AddressAccountBitcoin1->Sign(User1.PrivateKey, User1Sequence++), "account not signed");
+		VI_PANIC(AddressAccountBitcoin1->Sign(User1.SecretKey, User1Sequence++), "account not signed");
 		Transactions.push_back(AddressAccountBitcoin1);
 
 		auto* AddressAccountBitcoin2 = Memory::New<Transactions::AddressAccount>();
 		AddressAccountBitcoin2->SetAsset("BTC");
 		AddressAccountBitcoin2->SetEstimateGas(Decimal::Zero());
 		AddressAccountBitcoin2->SetAddress("bcrt1p2w7gkghj7arrjy4c45kh7450458hr8dv9pu9576lx08uuh4je7eqgskm9v");
-		VI_PANIC(AddressAccountBitcoin2->Sign(User2.PrivateKey, User2Sequence++), "account not signed");
+		VI_PANIC(AddressAccountBitcoin2->Sign(User2.SecretKey, User2Sequence++), "account not signed");
 		Transactions.push_back(AddressAccountBitcoin2);
 	}
 	static void TestPubkeyAccounts(Vector<UPtr<Ledger::Transaction>>& Transactions, const Ledger::Wallet& User1, uint64_t User1Sequence, const Ledger::Wallet& User2, uint64_t User2Sequence)
@@ -139,7 +139,7 @@ public:
 		PubkeyAccountEthereum->SetEstimateGas(Decimal::Zero());
 		PubkeyAccountEthereum->SetPubkey(EthereumWallet.VerifyingKey.ExposeToHeap());
 		PubkeyAccountEthereum->SignPubkey(EthereumWallet.SigningKey).Expect("pubkey account not signed");
-		VI_PANIC(PubkeyAccountEthereum->Sign(User1.PrivateKey, User1Sequence++), "account not signed");
+		VI_PANIC(PubkeyAccountEthereum->Sign(User1.SecretKey, User1Sequence++), "account not signed");
 		Transactions.push_back(PubkeyAccountEthereum);
 
 		auto RippleWallet = Oracle::Datamaster::NewSigningWallet(Algorithm::Asset::IdOf("XRP"), Oracle::Datamaster::NewMasterWallet(Algorithm::Asset::IdOf("XRP"), "000002").Expect("master wallet not derived")).Expect("signing wallet not derived");
@@ -148,7 +148,7 @@ public:
 		PubkeyAccountRipple->SetEstimateGas(Decimal::Zero());
 		PubkeyAccountRipple->SetPubkey(RippleWallet.VerifyingKey.ExposeToHeap());
 		PubkeyAccountRipple->SignPubkey(RippleWallet.SigningKey).Expect("pubkey account not signed");
-		VI_PANIC(PubkeyAccountRipple->Sign(User1.PrivateKey, User1Sequence++), "account not signed");
+		VI_PANIC(PubkeyAccountRipple->Sign(User1.SecretKey, User1Sequence++), "account not signed");
 		Transactions.push_back(PubkeyAccountRipple);
 
 		auto BitcoinWallet = Oracle::Datamaster::NewSigningWallet(Algorithm::Asset::IdOf("BTC"), Oracle::Datamaster::NewMasterWallet(Algorithm::Asset::IdOf("BTC"), "000003").Expect("master wallet not derived")).Expect("signing wallet not derived");
@@ -157,7 +157,7 @@ public:
 		PubkeyAccountBitcoin->SetEstimateGas(Decimal::Zero());
 		PubkeyAccountBitcoin->SetPubkey(BitcoinWallet.VerifyingKey.ExposeToHeap());
 		PubkeyAccountBitcoin->SignPubkey(BitcoinWallet.SigningKey).Expect("pubkey account not signed");
-		VI_PANIC(PubkeyAccountBitcoin->Sign(User1.PrivateKey, User1Sequence++), "account not signed");
+		VI_PANIC(PubkeyAccountBitcoin->Sign(User1.SecretKey, User1Sequence++), "account not signed");
 		Transactions.push_back(PubkeyAccountBitcoin);
 	}
 	static void TestCommitments(Vector<UPtr<Ledger::Transaction>>& Transactions, const Ledger::Wallet& User1, uint64_t User1Sequence, const Ledger::Wallet& User2, uint64_t User2Sequence)
@@ -174,7 +174,7 @@ public:
 		if (!User1Work || !User1Work->IsOnline())
 			CommitmentUser1->SetOnline();
 
-		VI_PANIC(CommitmentUser1->Sign(User1.PrivateKey, User1Sequence++), "commitment not signed");
+		VI_PANIC(CommitmentUser1->Sign(User1.SecretKey, User1Sequence++), "commitment not signed");
 		Transactions.push_back(CommitmentUser1);
 
 		auto* CommitmentUser2 = Memory::New<Transactions::Commitment>();
@@ -188,7 +188,7 @@ public:
 		if (!User2Work || !User2Work->IsOnline())
 			CommitmentUser2->SetOnline();
 
-		VI_PANIC(CommitmentUser2->Sign(User2.PrivateKey, User2Sequence++), "commitment not signed");
+		VI_PANIC(CommitmentUser2->Sign(User2.SecretKey, User2Sequence++), "commitment not signed");
 		Transactions.push_back(CommitmentUser2);
 	}
 	static void TestCommitmentAnti(Vector<UPtr<Ledger::Transaction>>& Transactions, const Ledger::Wallet& User1, uint64_t User1Sequence, const Ledger::Wallet& User2, uint64_t User2Sequence)
@@ -205,7 +205,7 @@ public:
 		if (!User1Work || User1Work->IsOnline())
 			CommitmentUser1->SetOffline();
 
-		VI_PANIC(CommitmentUser1->Sign(User1.PrivateKey, User1Sequence++), "commitment not signed");
+		VI_PANIC(CommitmentUser1->Sign(User1.SecretKey, User1Sequence++), "commitment not signed");
 		Transactions.push_back(CommitmentUser1);
 	}
 	static void TestAllocations(Vector<UPtr<Ledger::Transaction>>& Transactions, const Ledger::Wallet& User1, uint64_t User1Sequence, const Ledger::Wallet& User2, uint64_t User2Sequence)
@@ -213,29 +213,29 @@ public:
 		auto* ContributionAllocationEthereum1 = Memory::New<Transactions::ContributionAllocation>();
 		ContributionAllocationEthereum1->SetAsset("ETH");
 		ContributionAllocationEthereum1->SetEstimateGas(Decimal::Zero());
-		ContributionAllocationEthereum1->SetShare1(User1.PrivateKey);
-		VI_PANIC(ContributionAllocationEthereum1->Sign(User1.PrivateKey, User1Sequence++), "contribution allocation not signed");
+		ContributionAllocationEthereum1->SetShare1(User1.SecretKey);
+		VI_PANIC(ContributionAllocationEthereum1->Sign(User1.SecretKey, User1Sequence++), "contribution allocation not signed");
 		Transactions.push_back(ContributionAllocationEthereum1);
 
 		auto* ContributionAllocationEthereum2 = Memory::New<Transactions::ContributionAllocation>();
 		ContributionAllocationEthereum2->SetAsset("ETH");
 		ContributionAllocationEthereum2->SetEstimateGas(Decimal::Zero());
-		ContributionAllocationEthereum2->SetShare1(User2.PrivateKey);
-		VI_PANIC(ContributionAllocationEthereum2->Sign(User2.PrivateKey, User2Sequence++), "contribution allocation not signed");
+		ContributionAllocationEthereum2->SetShare1(User2.SecretKey);
+		VI_PANIC(ContributionAllocationEthereum2->Sign(User2.SecretKey, User2Sequence++), "contribution allocation not signed");
 		Transactions.push_back(ContributionAllocationEthereum2);
 
 		auto* ContributionAllocationRipple = Memory::New<Transactions::ContributionAllocation>();
 		ContributionAllocationRipple->SetAsset("XRP");
 		ContributionAllocationRipple->SetEstimateGas(Decimal::Zero());
-		ContributionAllocationRipple->SetShare1(User2.PrivateKey);
-		VI_PANIC(ContributionAllocationRipple->Sign(User2.PrivateKey, User2Sequence++), "contribution allocation not signed");
+		ContributionAllocationRipple->SetShare1(User2.SecretKey);
+		VI_PANIC(ContributionAllocationRipple->Sign(User2.SecretKey, User2Sequence++), "contribution allocation not signed");
 		Transactions.push_back(ContributionAllocationRipple);
 
 		auto* ContributionAllocationBitcoin = Memory::New<Transactions::ContributionAllocation>();
 		ContributionAllocationBitcoin->SetAsset("BTC");
 		ContributionAllocationBitcoin->SetEstimateGas(Decimal::Zero());
-		ContributionAllocationBitcoin->SetShare1(User2.PrivateKey);
-		VI_PANIC(ContributionAllocationBitcoin->Sign(User2.PrivateKey, User2Sequence++), "contribution allocation not signed");
+		ContributionAllocationBitcoin->SetShare1(User2.SecretKey);
+		VI_PANIC(ContributionAllocationBitcoin->Sign(User2.SecretKey, User2Sequence++), "contribution allocation not signed");
 		Transactions.push_back(ContributionAllocationBitcoin);
 	}
 	static void TestContributions(Vector<UPtr<Ledger::Transaction>>& Transactions, const Ledger::Wallet& User1, uint64_t User1Sequence, const Ledger::Wallet& User2, uint64_t User2Sequence)
@@ -259,8 +259,8 @@ public:
 			"0x3bc2c98682f1b8feaacbde8f3f56494cd778da9d042da8439fb698d41bf060ea", 0.0,
 			{ Oracle::Transferer("0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5", Optional::None, 150) },
 			{ Oracle::Transferer(AddressEthereum1->Addresses.begin()->second, AddressEthereum1->AddressIndex, 150) });
-		VI_PANIC(ClaimEthereum1->Sign(User1.PrivateKey, User1Sequence++), "claim not signed");
-		VI_PANIC(ClaimEthereum1->Attestate(User2.PrivateKey), "claim not attestated");
+		VI_PANIC(ClaimEthereum1->Sign(User1.SecretKey, User1Sequence++), "claim not signed");
+		VI_PANIC(ClaimEthereum1->Attestate(User2.SecretKey), "claim not attestated");
 		Transactions.push_back(ClaimEthereum1);
 
 		auto* ClaimEthereum2 = Memory::New<Transactions::Claim>();
@@ -270,8 +270,8 @@ public:
 			"0x7bc2c98682f1b8fea2031e8f3f56494cd778da9d042da8439fb698d41bf061ea", 0.0,
 			{ Oracle::Transferer("0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5", Optional::None, 110) },
 			{ Oracle::Transferer(AddressEthereum2->Addresses.begin()->second, AddressEthereum2->AddressIndex, 110) });
-		VI_PANIC(ClaimEthereum2->Sign(User2.PrivateKey, User2Sequence++), "claim not signed");
-		VI_PANIC(ClaimEthereum2->Attestate(User1.PrivateKey), "claim not attestated");
+		VI_PANIC(ClaimEthereum2->Sign(User2.SecretKey, User2Sequence++), "claim not signed");
+		VI_PANIC(ClaimEthereum2->Attestate(User1.SecretKey), "claim not attestated");
 		Transactions.push_back(ClaimEthereum2);
 
 		auto* ClaimRipple = Memory::New<Transactions::Claim>();
@@ -281,8 +281,8 @@ public:
 			"6618D20B801AF96DD060B34228E2594E30AFB7B33E335A8C60199B6CF8B0A69F", 0.0,
 			{ Oracle::Transferer("rUBqz2JiRCT3gYZBnm28y5ME7e5UpSm2ok", Optional::None, 1100) },
 			{ Oracle::Transferer(AddressRipple->Addresses.begin()->second, AddressRipple->AddressIndex, 1100) });
-		VI_PANIC(ClaimRipple->Sign(User2.PrivateKey, User2Sequence++), "claim not signed");
-		VI_PANIC(ClaimRipple->Attestate(User1.PrivateKey), "claim not attestated");
+		VI_PANIC(ClaimRipple->Sign(User2.SecretKey, User2Sequence++), "claim not signed");
+		VI_PANIC(ClaimRipple->Attestate(User1.SecretKey), "claim not attestated");
 		Transactions.push_back(ClaimRipple);
 
 		auto* ClaimBitcoin = Memory::New<Transactions::Claim>();
@@ -292,8 +292,8 @@ public:
 			"17638131d9af3033a5e20b753af254e1e8321b2039f16dfd222f6b1117b5c69d", 0.0,
 			{ Oracle::Transferer("mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", Optional::None, 1.1) },
 			{ Oracle::Transferer(AddressBitcoin->Addresses.begin()->second, AddressBitcoin->AddressIndex, 1.1) });
-		VI_PANIC(ClaimBitcoin->Sign(User2.PrivateKey, User2Sequence++), "claim not signed");
-		VI_PANIC(ClaimBitcoin->Attestate(User1.PrivateKey), "claim not attestated");
+		VI_PANIC(ClaimBitcoin->Sign(User2.SecretKey, User2Sequence++), "claim not signed");
+		VI_PANIC(ClaimBitcoin->Attestate(User1.SecretKey), "claim not attestated");
 		Transactions.push_back(ClaimBitcoin);
 	}
 	static void TestDelegatedCustodianAccounts(Vector<UPtr<Ledger::Transaction>>& Transactions, const Ledger::Wallet& User1, uint64_t User1Sequence, const Ledger::Wallet& User2, uint64_t User2Sequence)
@@ -302,21 +302,21 @@ public:
 		DelegationAccountEthereum->SetAsset("ETH");
 		DelegationAccountEthereum->SetEstimateGas(Decimal::Zero());
 		DelegationAccountEthereum->SetProposer(User2.PublicKeyHash);
-		VI_PANIC(DelegationAccountEthereum->Sign(User2.PrivateKey, User2Sequence++), "account not signed");
+		VI_PANIC(DelegationAccountEthereum->Sign(User2.SecretKey, User2Sequence++), "account not signed");
 		Transactions.push_back(DelegationAccountEthereum);
 
 		auto* DelegationAccountRipple = Memory::New<Transactions::DelegationAccount>();
 		DelegationAccountRipple->SetAsset("XRP");
 		DelegationAccountRipple->SetEstimateGas(Decimal::Zero());
 		DelegationAccountRipple->SetProposer(User2.PublicKeyHash);
-		VI_PANIC(DelegationAccountRipple->Sign(User1.PrivateKey, User1Sequence++), "account not signed");
+		VI_PANIC(DelegationAccountRipple->Sign(User1.SecretKey, User1Sequence++), "account not signed");
 		Transactions.push_back(DelegationAccountRipple);
 
 		auto* DelegationAccountBitcoin = Memory::New<Transactions::DelegationAccount>();
 		DelegationAccountBitcoin->SetAsset("BTC");
 		DelegationAccountBitcoin->SetEstimateGas(Decimal::Zero());
 		DelegationAccountBitcoin->SetProposer(User2.PublicKeyHash);
-		VI_PANIC(DelegationAccountBitcoin->Sign(User1.PrivateKey, User1Sequence++), "account not signed");
+		VI_PANIC(DelegationAccountBitcoin->Sign(User1.SecretKey, User1Sequence++), "account not signed");
 		Transactions.push_back(DelegationAccountBitcoin);
 	}
 	static void TestClaims(Vector<UPtr<Ledger::Transaction>>& Transactions, const Ledger::Wallet& User1, uint64_t User1Sequence, const Ledger::Wallet& User2, uint64_t User2Sequence)
@@ -338,8 +338,8 @@ public:
 			"0x2bc2c98682f1b8fea2031e8f3f56494cd778da9d042da8439fb698d41bf061ea", 0.0,
 			{ Oracle::Transferer("0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5", Optional::None, 100) },
 			{ Oracle::Transferer(AddressEthereum->Addresses.begin()->second, AddressEthereum->AddressIndex, 100) });
-		VI_PANIC(ClaimEthereum->Sign(User2.PrivateKey, User2Sequence++), "claim not signed");
-		VI_PANIC(ClaimEthereum->Attestate(User1.PrivateKey), "claim not attestated");
+		VI_PANIC(ClaimEthereum->Sign(User2.SecretKey, User2Sequence++), "claim not signed");
+		VI_PANIC(ClaimEthereum->Attestate(User1.SecretKey), "claim not attestated");
 		Transactions.push_back(ClaimEthereum);
 
 		auto* ClaimRipple = Memory::New<Transactions::Claim>();
@@ -349,8 +349,8 @@ public:
 			"2618D20B801AF96DD060B34228E2594E30AFB7B33E335A8C60199B6CF8B0A69F", 0.0,
 			{ Oracle::Transferer("rUBqz2JiRCT3gYZBnm28y5ME7e5UpSm2ok", Optional::None, 1000) },
 			{ Oracle::Transferer(AddressRipple->Addresses.begin()->second, AddressRipple->AddressIndex, 1000) });
-		VI_PANIC(ClaimRipple->Sign(User2.PrivateKey, User2Sequence++), "claim not signed");
-		VI_PANIC(ClaimRipple->Attestate(User1.PrivateKey), "claim not attestated");
+		VI_PANIC(ClaimRipple->Sign(User2.SecretKey, User2Sequence++), "claim not signed");
+		VI_PANIC(ClaimRipple->Attestate(User1.SecretKey), "claim not attestated");
 		Transactions.push_back(ClaimRipple);
 
 		auto* ClaimBitcoin = Memory::New<Transactions::Claim>();
@@ -360,8 +360,8 @@ public:
 			"57638131d9af3033a5e20b753af254e1e8321b2039f16dfd222f6b1117b5c69d", 0.0,
 			{ Oracle::Transferer("mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", Optional::None, 1.0) },
 			{ Oracle::Transferer(AddressBitcoin->Addresses.begin()->second, AddressBitcoin->AddressIndex, 1.0) });
-		VI_PANIC(ClaimBitcoin->Sign(User2.PrivateKey, User2Sequence++), "claim not signed");
-		VI_PANIC(ClaimBitcoin->Attestate(User1.PrivateKey), "claim not attestated");
+		VI_PANIC(ClaimBitcoin->Sign(User2.SecretKey, User2Sequence++), "claim not signed");
+		VI_PANIC(ClaimBitcoin->Attestate(User1.SecretKey), "claim not attestated");
 		Transactions.push_back(ClaimBitcoin);
 	}
 	static void TestTransfers(Vector<UPtr<Ledger::Transaction>>& Transactions, const Ledger::Wallet& User1, uint64_t User1Sequence, const Ledger::Wallet& User2, uint64_t User2Sequence)
@@ -374,21 +374,21 @@ public:
 		OmniTransferEthereum->SetTo(User2.PublicKeyHash, 0.4);
 		OmniTransferEthereum->SetTo(User2.PublicKeyHash, 0.5);
 		OmniTransferEthereum->SetEstimateGas(std::string_view("0.00000001"));
-		VI_PANIC(OmniTransferEthereum->Sign(User1.PrivateKey, User1Sequence++), "omnitransfer not signed");
+		VI_PANIC(OmniTransferEthereum->Sign(User1.SecretKey, User1Sequence++), "omnitransfer not signed");
 		Transactions.push_back(OmniTransferEthereum);
 
 		auto* TransferRipple = Memory::New<Transactions::Transfer>();
 		TransferRipple->SetAsset("XRP");
 		TransferRipple->SetTo(User2.PublicKeyHash, 10.0);
 		TransferRipple->SetEstimateGas(std::string_view("0.000068"));
-		VI_PANIC(TransferRipple->Sign(User1.PrivateKey, User1Sequence++), "transfer not signed");
+		VI_PANIC(TransferRipple->Sign(User1.SecretKey, User1Sequence++), "transfer not signed");
 		Transactions.push_back(TransferRipple);
 
 		auto* TransferBitcoin = Memory::New<Transactions::Transfer>();
 		TransferBitcoin->SetAsset("BTC");
 		TransferBitcoin->SetTo(User2.PublicKeyHash, 0.1);
 		TransferBitcoin->SetEstimateGas(std::string_view("0.0000000005"));
-		VI_PANIC(TransferBitcoin->Sign(User1.PrivateKey, User1Sequence++), "transfer not signed");
+		VI_PANIC(TransferBitcoin->Sign(User1.SecretKey, User1Sequence++), "transfer not signed");
 		Transactions.push_back(TransferBitcoin);
 	}
 	static void TestTransferToWallet(Vector<UPtr<Ledger::Transaction>>& Transactions, const Ledger::Wallet& User, uint64_t UserSequence, const Algorithm::AssetId& Asset, const std::string_view& Address, const Decimal& Value)
@@ -400,7 +400,7 @@ public:
 		TransferAsset->Asset = Asset;
 		TransferAsset->SetTo(PublicKeyHash, Value);
 		TransferAsset->SetEstimateGas(std::string_view("0.0000000005"));
-		VI_PANIC(TransferAsset->Sign(User.PrivateKey, UserSequence++), "transfer not signed");
+		VI_PANIC(TransferAsset->Sign(User.SecretKey, UserSequence++), "transfer not signed");
 		Transactions.push_back(TransferAsset);
 	}
 	static void TestRollups(Vector<UPtr<Ledger::Transaction>>& Transactions, const Ledger::Wallet& User1, uint64_t User1Sequence, const Ledger::Wallet& User2, uint64_t User2Sequence)
@@ -410,53 +410,53 @@ public:
 
 		auto TransferEthereum1 = Transactions::Transfer();
 		TransferEthereum1.SetTo(User2.PublicKeyHash, 0.1);
-		VI_PANIC(MultiAssetRollup->Merge(TransferEthereum1, User1.PrivateKey, User1Sequence++), "transfer not signed");
+		VI_PANIC(MultiAssetRollup->Merge(TransferEthereum1, User1.SecretKey, User1Sequence++), "transfer not signed");
 
 		auto TransferEthereum2 = Transactions::Transfer();
 		TransferEthereum2.SetTo(User2.PublicKeyHash, 0.2);
-		VI_PANIC(MultiAssetRollup->Merge(TransferEthereum2, User1.PrivateKey, User1Sequence++), "transfer not signed");
+		VI_PANIC(MultiAssetRollup->Merge(TransferEthereum2, User1.SecretKey, User1Sequence++), "transfer not signed");
 
 		auto TransferEthereum3 = Transactions::Transfer();
 		TransferEthereum3.SetTo(User1.PublicKeyHash, 0.2);
-		VI_PANIC(MultiAssetRollup->Merge(TransferEthereum3, User2.PrivateKey, User2Sequence++), "transfer not signed");
+		VI_PANIC(MultiAssetRollup->Merge(TransferEthereum3, User2.SecretKey, User2Sequence++), "transfer not signed");
 
 		auto TransferRipple1 = Transactions::Transfer();
 		TransferRipple1.SetAsset("XRP");
 		TransferRipple1.SetTo(User2.PublicKeyHash, 1);
-		VI_PANIC(MultiAssetRollup->Merge(TransferRipple1, User1.PrivateKey, User1Sequence++), "transfer not signed");
+		VI_PANIC(MultiAssetRollup->Merge(TransferRipple1, User1.SecretKey, User1Sequence++), "transfer not signed");
 
 		auto TransferRipple2 = Transactions::Transfer();
 		TransferRipple2.SetAsset("XRP");
 		TransferRipple2.SetTo(User2.PublicKeyHash, 2);
-		VI_PANIC(MultiAssetRollup->Merge(TransferRipple2, User1.PrivateKey, User1Sequence++), "transfer not signed");
+		VI_PANIC(MultiAssetRollup->Merge(TransferRipple2, User1.SecretKey, User1Sequence++), "transfer not signed");
 
 		auto TransferRipple3 = Transactions::Transfer();
 		TransferRipple3.SetAsset("XRP");
 		TransferRipple3.SetTo(User1.PublicKeyHash, 2);
-		VI_PANIC(MultiAssetRollup->Merge(TransferRipple3, User2.PrivateKey, User2Sequence++), "transfer not signed");
+		VI_PANIC(MultiAssetRollup->Merge(TransferRipple3, User2.SecretKey, User2Sequence++), "transfer not signed");
 
 		auto TransferBitcoin1 = Transactions::Transfer();
 		TransferBitcoin1.SetAsset("BTC");
 		TransferBitcoin1.SetTo(User2.PublicKeyHash, 0.001);
-		VI_PANIC(MultiAssetRollup->Merge(TransferBitcoin1, User1.PrivateKey, User1Sequence++), "transfer not signed");
+		VI_PANIC(MultiAssetRollup->Merge(TransferBitcoin1, User1.SecretKey, User1Sequence++), "transfer not signed");
 
 		auto TransferBitcoin2 = Transactions::Transfer();
 		TransferBitcoin2.SetAsset("BTC");
 		TransferBitcoin2.SetTo(User2.PublicKeyHash, 0.002);
-		VI_PANIC(MultiAssetRollup->Merge(TransferBitcoin2, User1.PrivateKey, User1Sequence++), "transfer not signed");
+		VI_PANIC(MultiAssetRollup->Merge(TransferBitcoin2, User1.SecretKey, User1Sequence++), "transfer not signed");
 
 		auto TransferBitcoin3 = Transactions::Transfer();
 		TransferBitcoin3.SetAsset("BTC");
 		TransferBitcoin3.SetTo(User1.PublicKeyHash, 0.002);
-		VI_PANIC(MultiAssetRollup->Merge(TransferBitcoin3, User2.PrivateKey, User2Sequence++), "transfer not signed");
+		VI_PANIC(MultiAssetRollup->Merge(TransferBitcoin3, User2.SecretKey, User2Sequence++), "transfer not signed");
 
 		MultiAssetRollup->SetEstimateGas(std::string_view("0.00000001"));
-		VI_PANIC(MultiAssetRollup->Sign(User1.PrivateKey, User1Sequence++), "rollup not signed");
+		VI_PANIC(MultiAssetRollup->Sign(User1.SecretKey, User1Sequence++), "rollup not signed");
 		Transactions.push_back(MultiAssetRollup);
 	}
 	static void TestDeployments(Vector<UPtr<Ledger::Transaction>>& Transactions, const Ledger::Wallet& User1, uint64_t User1Sequence, const Ledger::Wallet& User2, uint64_t User2Sequence)
 	{
-		Ledger::Wallet TokenContract = Ledger::Wallet::FromSeed(String("token") + String((char*)User1.PrivateKey, sizeof(User1.PrivateKey)));
+		Ledger::Wallet TokenContract = Ledger::Wallet::FromSeed(String("token") + String((char*)User1.SecretKey, sizeof(User1.SecretKey)));
 		std::string_view TokenProgram = VI_STRINGIFY(
 			class token_info
 			{
@@ -594,12 +594,12 @@ public:
 		auto* DeploymentEthereum1 = Memory::New<Transactions::Deployment>();
 		DeploymentEthereum1->SetAsset("ETH");
 		DeploymentEthereum1->SetCalldata(TokenProgram, { Format::Variable(1000000u) });
-		DeploymentEthereum1->SignLocation(TokenContract.PrivateKey);
+		DeploymentEthereum1->SignLocation(TokenContract.SecretKey);
 		DeploymentEthereum1->SetEstimateGas(std::string_view("0.00000001"));
-		VI_PANIC(DeploymentEthereum1->Sign(User1.PrivateKey, User1Sequence++), "deployment not signed");
+		VI_PANIC(DeploymentEthereum1->Sign(User1.SecretKey, User1Sequence++), "deployment not signed");
 		Transactions.push_back(DeploymentEthereum1);
 		
-		Ledger::Wallet BridgeContract = Ledger::Wallet::FromSeed(String("bridge") + String((char*)User1.PrivateKey, sizeof(User1.PrivateKey)));
+		Ledger::Wallet BridgeContract = Ledger::Wallet::FromSeed(String("bridge") + String((char*)User1.SecretKey, sizeof(User1.SecretKey)));
 		std::string_view BridgeProgram = VI_STRINGIFY(
 			class token_balance
 			{
@@ -617,27 +617,27 @@ public:
 		auto* DeploymentEthereum2 = Memory::New<Transactions::Deployment>();
 		DeploymentEthereum2->SetAsset("ETH");
 		DeploymentEthereum2->SetCalldata(Stringify::Text(BridgeProgram.data(), TokenContract.GetAddress().c_str()), { });
-		DeploymentEthereum2->SignLocation(BridgeContract.PrivateKey);
+		DeploymentEthereum2->SignLocation(BridgeContract.SecretKey);
 		DeploymentEthereum2->SetEstimateGas(std::string_view("0.00000001"));
-		VI_PANIC(DeploymentEthereum2->Sign(User1.PrivateKey, User1Sequence++), "deployment not signed");
+		VI_PANIC(DeploymentEthereum2->Sign(User1.SecretKey, User1Sequence++), "deployment not signed");
 		Transactions.push_back(DeploymentEthereum2);
 	}
 	static void TestInvocations(Vector<UPtr<Ledger::Transaction>>& Transactions, const Ledger::Wallet& User1, uint64_t User1Sequence, const Ledger::Wallet& User2, uint64_t User2Sequence)
 	{
-		Ledger::Wallet TokenContract = Ledger::Wallet::FromSeed(String("token") + String((char*)User1.PrivateKey, sizeof(User1.PrivateKey)));
+		Ledger::Wallet TokenContract = Ledger::Wallet::FromSeed(String("token") + String((char*)User1.SecretKey, sizeof(User1.SecretKey)));
 		auto* InvocationEthereum1 = Memory::New<Transactions::Invocation>();
 		InvocationEthereum1->SetAsset("ETH");
 		InvocationEthereum1->SetCalldata(TokenContract.PublicKeyHash, "transfer", { Format::Variable(std::string_view((char*)User2.PublicKeyHash, sizeof(User2.PublicKeyHash))), Format::Variable(250000u) });
 		InvocationEthereum1->SetEstimateGas(std::string_view("0.00000001"));
-		VI_PANIC(InvocationEthereum1->Sign(User1.PrivateKey, User1Sequence++), "invocation not signed");
+		VI_PANIC(InvocationEthereum1->Sign(User1.SecretKey, User1Sequence++), "invocation not signed");
 		Transactions.push_back(InvocationEthereum1);
 
-		Ledger::Wallet BridgeContract = Ledger::Wallet::FromSeed(String("bridge") + String((char*)User1.PrivateKey, sizeof(User1.PrivateKey)));
+		Ledger::Wallet BridgeContract = Ledger::Wallet::FromSeed(String("bridge") + String((char*)User1.SecretKey, sizeof(User1.SecretKey)));
 		auto* InvocationBitcoin = Memory::New<Transactions::Invocation>();
 		InvocationBitcoin->SetAsset("BTC");
 		InvocationBitcoin->SetCalldata(BridgeContract.PublicKeyHash, "my_balance", { });
 		InvocationBitcoin->SetEstimateGas(std::string_view("0.0000000005"));
-		VI_PANIC(InvocationBitcoin->Sign(User1.PrivateKey, User1Sequence++), "invocation not signed");
+		VI_PANIC(InvocationBitcoin->Sign(User1.SecretKey, User1Sequence++), "invocation not signed");
 		Transactions.push_back(InvocationBitcoin);
 	}
 	static void TestMigrationsStage1(Vector<UPtr<Ledger::Transaction>>& Transactions, const Ledger::Wallet& User1, uint64_t User1Sequence, const Ledger::Wallet& User2, uint64_t User2Sequence)
@@ -651,7 +651,7 @@ public:
 		CustodianAccountEthereum->SetAsset("ETH");
 		CustodianAccountEthereum->SetEstimateGas(Decimal::Zero());
 		CustodianAccountEthereum->SetWallet(User1, User1.PublicKeyHash).Expect("custodian address not deployed");
-		VI_PANIC(CustodianAccountEthereum->Sign(User1.PrivateKey, User1Sequence++), "account not signed");
+		VI_PANIC(CustodianAccountEthereum->Sign(User1.SecretKey, User1Sequence++), "account not signed");
 		Transactions.push_back(CustodianAccountEthereum);
 	}
 	static void TestMigrationsStage2(Vector<UPtr<Ledger::Transaction>>& Transactions, const Ledger::Wallet& User1, uint64_t User1Sequence, const Ledger::Wallet& User2, uint64_t User2Sequence)
@@ -665,7 +665,7 @@ public:
 		ContributionMigrationEthereum->SetAsset("ETH");
 		ContributionMigrationEthereum->SetEstimateGas(Decimal::Zero());
 		ContributionMigrationEthereum->SetProposer(User1.PublicKeyHash, Contribution->Custody);
-		VI_PANIC(ContributionMigrationEthereum->Sign(User2.PrivateKey, User2Sequence++), "contribution migration not signed");
+		VI_PANIC(ContributionMigrationEthereum->Sign(User2.SecretKey, User2Sequence++), "contribution migration not signed");
 		Transactions.push_back(ContributionMigrationEthereum);
 	}
 	static void TestWithdrawalsStage1(Vector<UPtr<Ledger::Transaction>>& Transactions, const Ledger::Wallet& User1, uint64_t User1Sequence, const Ledger::Wallet& User2, uint64_t User2Sequence)
@@ -677,7 +677,7 @@ public:
 		WithdrawalEthereum->SetEstimateGas(Decimal::Zero());
 		WithdrawalEthereum->SetTo("0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5", Context.GetAccountBalance(Algorithm::Asset::IdOf("ETH"), User1.PublicKeyHash).Expect("user balance not valid").GetBalance());
 		WithdrawalEthereum->SetProposer(User1.PublicKeyHash);
-		VI_PANIC(WithdrawalEthereum->Sign(User1.PrivateKey, User1Sequence++), "withdrawal not signed");
+		VI_PANIC(WithdrawalEthereum->Sign(User1.SecretKey, User1Sequence++), "withdrawal not signed");
 		Transactions.push_back(WithdrawalEthereum);
 		
 		auto* WithdrawalRipple = Memory::New<Transactions::Withdrawal>();
@@ -685,7 +685,7 @@ public:
 		WithdrawalRipple->SetEstimateGas(Decimal::Zero());
 		WithdrawalRipple->SetTo("rUBqz2JiRCT3gYZBnm28y5ME7e5UpSm2ok", Context.GetAccountBalance(Algorithm::Asset::IdOf("XRP"), User1.PublicKeyHash).Expect("user balance not valid").GetBalance());
 		WithdrawalRipple->SetProposer(User2.PublicKeyHash);
-		VI_PANIC(WithdrawalRipple->Sign(User1.PrivateKey, User1Sequence++), "withdrawal not signed");
+		VI_PANIC(WithdrawalRipple->Sign(User1.SecretKey, User1Sequence++), "withdrawal not signed");
 		Transactions.push_back(WithdrawalRipple);
 
 		auto* WithdrawalBitcoin = Memory::New<Transactions::Withdrawal>();
@@ -693,7 +693,7 @@ public:
 		WithdrawalBitcoin->SetEstimateGas(Decimal::Zero());
 		WithdrawalBitcoin->SetTo("mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", Context.GetAccountBalance(Algorithm::Asset::IdOf("BTC"), User1.PublicKeyHash).Expect("user balance not valid").GetBalance());
 		WithdrawalBitcoin->SetProposer(User2.PublicKeyHash);
-		VI_PANIC(WithdrawalBitcoin->Sign(User1.PrivateKey, User1Sequence++), "withdrawal not signed");
+		VI_PANIC(WithdrawalBitcoin->Sign(User1.SecretKey, User1Sequence++), "withdrawal not signed");
 		Transactions.push_back(WithdrawalBitcoin);
 	}
 	static void TestWithdrawalsStage2(Vector<UPtr<Ledger::Transaction>>& Transactions, const Ledger::Wallet& User1, uint64_t User1Sequence, const Ledger::Wallet& User2, uint64_t User2Sequence)
@@ -705,7 +705,7 @@ public:
 		WithdrawalEthereum->SetEstimateGas(Decimal::Zero());
 		WithdrawalEthereum->SetTo("0x89a0181659bd280836A2d33F57e3B5Dfa1a823CE", Context.GetAccountBalance(Algorithm::Asset::IdOf("ETH"), User2.PublicKeyHash).Expect("proposer balance not valid").GetBalance());
 		WithdrawalEthereum->SetProposer(User1.PublicKeyHash);
-		VI_PANIC(WithdrawalEthereum->Sign(User2.PrivateKey, User2Sequence++), "withdrawal not signed");
+		VI_PANIC(WithdrawalEthereum->Sign(User2.SecretKey, User2Sequence++), "withdrawal not signed");
 		Transactions.push_back(WithdrawalEthereum);
 
 		auto* WithdrawalRipple = Memory::New<Transactions::Withdrawal>();
@@ -713,7 +713,7 @@ public:
 		WithdrawalRipple->SetEstimateGas(Decimal::Zero());
 		WithdrawalRipple->SetTo("rJGb4etn9GSwNHYVu7dNMbdiVgzqxaTSUG", Context.GetAccountBalance(Algorithm::Asset::IdOf("XRP"), User2.PublicKeyHash).Expect("proposer balance not valid").GetBalance());
 		WithdrawalRipple->SetProposer(User2.PublicKeyHash);
-		VI_PANIC(WithdrawalRipple->Sign(User2.PrivateKey, User2Sequence++), "withdrawal not signed");
+		VI_PANIC(WithdrawalRipple->Sign(User2.SecretKey, User2Sequence++), "withdrawal not signed");
 		Transactions.push_back(WithdrawalRipple);
 
 		auto* WithdrawalBitcoin = Memory::New<Transactions::Withdrawal>();
@@ -721,7 +721,7 @@ public:
 		WithdrawalBitcoin->SetEstimateGas(Decimal::Zero());
 		WithdrawalBitcoin->SetTo("bcrt1p2w7gkghj7arrjy4c45kh7450458hr8dv9pu9576lx08uuh4je7eqgskm9v", Context.GetAccountBalance(Algorithm::Asset::IdOf("BTC"), User2.PublicKeyHash).Expect("proposer balance not valid").GetBalance());
 		WithdrawalBitcoin->SetProposer(User2.PublicKeyHash);
-		VI_PANIC(WithdrawalBitcoin->Sign(User2.PrivateKey, User2Sequence++), "withdrawal not signed");
+		VI_PANIC(WithdrawalBitcoin->Sign(User2.SecretKey, User2Sequence++), "withdrawal not signed");
 		Transactions.push_back(WithdrawalBitcoin);
 	}
 	static void TestDeallocations(Vector<UPtr<Ledger::Transaction>>& Transactions, const Ledger::Wallet& User1, uint64_t User1Sequence, const Ledger::Wallet& User2, uint64_t User2Sequence)
@@ -746,11 +746,11 @@ public:
 			ContributionDeallocation->SetWitness(Item.Receipt.TransactionHash);
 			if (Parties.find(String((char*)User1.PublicKeyHash, sizeof(User1.PublicKeyHash))) == Parties.end())
 			{
-				VI_PANIC(ContributionDeallocation->Sign(User2.PrivateKey, User2Sequence++), "contribution deallocation not signed");
+				VI_PANIC(ContributionDeallocation->Sign(User2.SecretKey, User2Sequence++), "contribution deallocation not signed");
 			}
 			else
 			{
-				VI_PANIC(ContributionDeallocation->Sign(User1.PrivateKey, User1Sequence++), "contribution deallocation not signed");
+				VI_PANIC(ContributionDeallocation->Sign(User1.SecretKey, User1Sequence++), "contribution deallocation not signed");
 			}
 			Transactions.push_back(ContributionDeallocation);
 		}
@@ -770,10 +770,10 @@ public:
 	static Ledger::Block ProposeBlock(Vector<UPtr<Ledger::Transaction>>&& Transactions, const Ledger::Wallet& User1, const Ledger::Wallet& User2, bool Timing = false)
 	{
 		Ledger::EvaluationContext Environment;
-		auto Priority = Environment.Priority(User2.PublicKeyHash, User2.PrivateKey);
+		auto Priority = Environment.Priority(User2.PublicKeyHash, User2.SecretKey);
 		if (!Priority || *Priority != 0)
 		{
-			Priority = Environment.Priority(User1.PublicKeyHash, User1.PrivateKey);
+			Priority = Environment.Priority(User1.PublicKeyHash, User1.SecretKey);
 			if (!Priority)
 				VI_PANIC(false, "block proposal not allowed");
 		}
@@ -802,9 +802,9 @@ public:
 			auto User1Sequence = User1.GetLatestSequence().Or(1);
 			for (auto& Transaction : User1Dispatch->Outputs)
 			{
-				VI_PANIC(Transaction->Sign(User1.PrivateKey, User1Sequence++, Decimal::Zero()), "dispatch transaction not signed");
+				VI_PANIC(Transaction->Sign(User1.SecretKey, User1Sequence++, Decimal::Zero()), "dispatch transaction not signed");
 				if (Transaction->GetType() == Ledger::TransactionLevel::Aggregation)
-					VI_PANIC(((Ledger::AggregationTransaction*)*Transaction)->Attestate(User2.PrivateKey), "dispatch transaction not attested");
+					VI_PANIC(((Ledger::AggregationTransaction*)*Transaction)->Attestate(User2.SecretKey), "dispatch transaction not attested");
 			}
 			Transactions.insert(Transactions.end(), std::make_move_iterator(User1Dispatch->Outputs.begin()), std::make_move_iterator(User1Dispatch->Outputs.end()));
 		}
@@ -815,9 +815,9 @@ public:
 			auto User2Sequence = User2.GetLatestSequence().Or(1);
 			for (auto& Transaction : User2Dispatch->Outputs)
 			{
-				VI_PANIC(Transaction->Sign(User2.PrivateKey, User2Sequence++, Decimal::Zero()), "dispatch transaction not signed");
+				VI_PANIC(Transaction->Sign(User2.SecretKey, User2Sequence++, Decimal::Zero()), "dispatch transaction not signed");
 				if (Transaction->GetType() == Ledger::TransactionLevel::Aggregation)
-					VI_PANIC(((Ledger::AggregationTransaction*)*Transaction)->Attestate(User1.PrivateKey), "dispatch transaction not attested");
+					VI_PANIC(((Ledger::AggregationTransaction*)*Transaction)->Attestate(User1.SecretKey), "dispatch transaction not attested");
 			}
 			Transactions.insert(Transactions.end(), std::make_move_iterator(User2Dispatch->Outputs.begin()), std::make_move_iterator(User2Dispatch->Outputs.end()));
 		}
@@ -833,37 +833,11 @@ public:
 	}
 };
 
-class TestCases
+class Tests
 {
 public:
-	/* P2P, NDS and RPC node */
-	static int Consensus(int argc, char* argv[])
-	{
-		Vitex::Runtime Scope;
-		String Config = argc > 1 ? argv[1] : TAN_CONFIG_PATH;
-		String Number = Config.substr(Config.find('-') + 1);
-		Protocol Params = Protocol(Config);
-		uint32_t Index = FromString<uint32_t>(Number.substr(0, Number.find_first_not_of("0123456789"))).Or(1);
-
-		Ledger::Wallet Wallet = Ledger::Wallet::FromSeed(Stringify::Text("00000%i", Index - 1));
-		Ledger::Validator Node;
-		Node.Address = SocketAddress(Params.User.P2P.Address, Params.User.P2P.Port);
-
-		auto Mempool = Storages::Mempoolstate(__func__);
-		Mempool.ApplyValidator(Node, Wallet);
-
-		UPtr<P2P::ServerNode> Consensus = new P2P::ServerNode();
-		UPtr<NDS::ServerNode> Discovery = new NDS::ServerNode();
-		UPtr<RPC::ServerNode> Interface = new RPC::ServerNode(*Consensus);
-
-		ServiceControl Control;
-		Control.Bind(Consensus->GetEntrypoint());
-		Control.Bind(Discovery->GetEntrypoint());
-		Control.Bind(Interface->GetEntrypoint());
-		return Control.Launch();
-	}
-	/* Blockchain containing all transaction types (zero balance accounts, valid regtest chain, validation measurement) */
-	static int BlockchainFullCoverage(int argc, char* argv[])
+	/* Blockchain containing all transaction types (zero balance accounts, valid regtest chain) */
+	static int FullCoverage(int argc, char* argv[])
 	{
 		Vitex::Runtime Scope;
 		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
@@ -877,29 +851,29 @@ public:
 
 		auto User1 = Ledger::Wallet::FromSeed("000001");
 		auto User2 = Ledger::Wallet::FromSeed("000000");
-		TestTransactions::ProposeBlockUserTuple(&TestTransactions::TestAllowances1Threshold, User1, User2);
-		TestTransactions::ProposeBlockUserTuple(&TestTransactions::TestAdjustments, User1, User2);
-		TestTransactions::ProposeBlockUserTuple(&TestTransactions::TestAddressAccounts, User1, User2);
-		TestTransactions::ProposeBlockUserTuple(&TestTransactions::TestPubkeyAccounts, User1, User2);
-		TestTransactions::ProposeBlockUserTuple(&TestTransactions::TestCommitments, User1, User2);
-		TestTransactions::ProposeBlockUserTuple(&TestTransactions::TestAllocations, User1, User2);
-		TestTransactions::ProposeBlockUserTuple(&TestTransactions::TestContributions, User1, User2);
-		TestTransactions::ProposeBlockUserTuple(&TestTransactions::TestDelegatedCustodianAccounts, User1, User2);
-		TestTransactions::ProposeBlockUserTuple(&TestTransactions::TestClaims, User1, User2);
-		TestTransactions::ProposeBlockUserTuple(&TestTransactions::TestTransfers, User1, User2);
-		TestTransactions::ProposeBlockUserTuple(&TestTransactions::TestRollups, User1, User2);
-		TestTransactions::ProposeBlockUserTuple(&TestTransactions::TestDeployments, User1, User2);
-		TestTransactions::ProposeBlockUserTuple(&TestTransactions::TestInvocations, User1, User2);
-		TestTransactions::ProposeBlockUserTuple(&TestTransactions::TestMigrationsStage1, User1, User2);
-		TestTransactions::ProposeBlockUserTuple(&TestTransactions::TestMigrationsStage2, User1, User2);
-		TestTransactions::ProposeBlockUserTuple(&TestTransactions::TestWithdrawalsStage1, User1, User2);
-		TestTransactions::ProposeBlockUserTuple(&TestTransactions::TestWithdrawalsStage2, User1, User2);
-		TestTransactions::ProposeBlockUserTuple(&TestTransactions::TestDeallocations, User1, User2);
+		Blocks::ProposeBlockUserTuple(&Blocks::TestAllowances1Threshold, User1, User2);
+		Blocks::ProposeBlockUserTuple(&Blocks::TestAdjustments, User1, User2);
+		Blocks::ProposeBlockUserTuple(&Blocks::TestAddressAccounts, User1, User2);
+		Blocks::ProposeBlockUserTuple(&Blocks::TestPubkeyAccounts, User1, User2);
+		Blocks::ProposeBlockUserTuple(&Blocks::TestCommitments, User1, User2);
+		Blocks::ProposeBlockUserTuple(&Blocks::TestAllocations, User1, User2);
+		Blocks::ProposeBlockUserTuple(&Blocks::TestContributions, User1, User2);
+		Blocks::ProposeBlockUserTuple(&Blocks::TestDelegatedCustodianAccounts, User1, User2);
+		Blocks::ProposeBlockUserTuple(&Blocks::TestClaims, User1, User2);
+		Blocks::ProposeBlockUserTuple(&Blocks::TestTransfers, User1, User2);
+		Blocks::ProposeBlockUserTuple(&Blocks::TestRollups, User1, User2);
+		Blocks::ProposeBlockUserTuple(&Blocks::TestDeployments, User1, User2);
+		Blocks::ProposeBlockUserTuple(&Blocks::TestInvocations, User1, User2);
+		Blocks::ProposeBlockUserTuple(&Blocks::TestMigrationsStage1, User1, User2);
+		Blocks::ProposeBlockUserTuple(&Blocks::TestMigrationsStage2, User1, User2);
+		Blocks::ProposeBlockUserTuple(&Blocks::TestWithdrawalsStage1, User1, User2);
+		Blocks::ProposeBlockUserTuple(&Blocks::TestWithdrawalsStage2, User1, User2);
+		Blocks::ProposeBlockUserTuple(&Blocks::TestDeallocations, User1, User2);
 		Term->ReadChar();
 		return 0;
 	}
-	/* Blockchain containing some transaction types (non-zero balance accounts, valid regtest chain, validation measurement) */
-	static int BlockchainPartialCoverage(int argc, char* argv[])
+	/* Blockchain containing some transaction types (non-zero balance accounts, valid regtest chain) */
+	static int PartialCoverage(int argc, char* argv[])
 	{
 		Vitex::Runtime Scope;
 		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
@@ -913,21 +887,645 @@ public:
 
 		auto User1 = Ledger::Wallet::FromSeed("000001");
 		auto User2 = Ledger::Wallet::FromSeed("000000");
-		TestTransactions::ProposeBlockUserTuple(&TestTransactions::TestAllowances0Threshold, User1, User2);
-		TestTransactions::ProposeBlockUserTuple(&TestTransactions::TestAdjustments, User1, User2);
-		TestTransactions::ProposeBlockUserTuple(&TestTransactions::TestAddressAccounts, User1, User2);
-		TestTransactions::ProposeBlockUserTuple(&TestTransactions::TestDelegatedCustodianAccounts, User1, User2);
-		TestTransactions::ProposeBlockUserTuple(&TestTransactions::TestCommitments, User1, User2);
-		TestTransactions::ProposeBlockUserTuple(&TestTransactions::TestClaims, User1, User2);
-		TestTransactions::ProposeBlockUserTuple(&TestTransactions::TestTransfers, User1, User2);
-		TestTransactions::ProposeBlockUserOne(std::bind(&TestTransactions::TestTransferToWallet, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, Algorithm::Asset::IdOf("BTC"), "tcrt1x60aysjugc3dk4tp3nnm8r6vh8uw6cue4kj4ks8", 0.1), User1, User2);
-		TestTransactions::ProposeBlockUserTuple(&TestTransactions::TestRollups, User1, User2);
-		TestTransactions::ProposeBlockUserTuple(&TestTransactions::TestCommitmentAnti, User1, User2);
+		Blocks::ProposeBlockUserTuple(&Blocks::TestAllowances0Threshold, User1, User2);
+		Blocks::ProposeBlockUserTuple(&Blocks::TestAdjustments, User1, User2);
+		Blocks::ProposeBlockUserTuple(&Blocks::TestAddressAccounts, User1, User2);
+		Blocks::ProposeBlockUserTuple(&Blocks::TestDelegatedCustodianAccounts, User1, User2);
+		Blocks::ProposeBlockUserTuple(&Blocks::TestCommitments, User1, User2);
+		Blocks::ProposeBlockUserTuple(&Blocks::TestClaims, User1, User2);
+		Blocks::ProposeBlockUserTuple(&Blocks::TestTransfers, User1, User2);
+		Blocks::ProposeBlockUserOne(std::bind(&Blocks::TestTransferToWallet, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, Algorithm::Asset::IdOf("BTC"), "tcrt1xq2lqn6589qmtcy78sxkf975jexq7jfa9rt4r3d", 0.1), User1, User2);
+		Blocks::ProposeBlockUserTuple(&Blocks::TestRollups, User1, User2);
+		Blocks::ProposeBlockUserTuple(&Blocks::TestCommitmentAnti, User1, User2);
 		Term->ReadChar();
 		return 0;
 	}
+	/* Verify current blockchain */
+	static int Verify(int argc, char* argv[])
+	{
+		Vitex::Runtime Scope;
+		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
+
+		auto* Term = Console::Get();
+		Term->Show();
+
+		auto* Queue = Schedule::Get();
+		Queue->Start(Schedule::Desc());
+
+		auto Chain = Storages::Chainstate(__func__);
+		VI_PANIC(!Chain.GetCheckpointBlockNumber().Or(0), "blockchain cannot be validated without re-executing entire blockchain");
+
+		uint64_t CurrentNumber = 1;
+		UPtr<Schema> Data = Var::Set::Array();
+		auto ParentBlock = Chain.GetBlockHeaderByNumber(CurrentNumber > 0 ? CurrentNumber - 1 : 0);
+		while (true)
+		{
+			auto Next = Chain.GetBlockByNumber(CurrentNumber++);
+			if (!Next)
+				break;
+
+			auto* Result = Data->Push(Var::Set::Object());
+			Result->Set("block_number", Algorithm::Encoding::SerializeUint256(Next->Number));
+			Result->Set("block_hash", Var::String(Algorithm::Encoding::Encode0xHex256(Next->AsHash())));
+
+			auto Validation = Next->Validate(ParentBlock.Address());
+			if (!Validation)
+			{
+				Result->Set("status", Var::String("block validation test failed"));
+				Result->Set("detail", Var::String(Validation.Error().Info));
+				goto StopVerification;
+			}
+
+			auto Proof = Next->AsProof(ParentBlock.Address());
+			for (auto& Tx : Next->Transactions)
+			{
+				if (!Proof.HasTransaction(Tx.Receipt.TransactionHash))
+				{
+					Result->Set("transaction_hash", Var::String(Algorithm::Encoding::Encode0xHex256(Tx.Receipt.TransactionHash)));
+					Result->Set("status", Var::String("transaction merkle test failed"));
+					goto StopVerification;
+				}
+				else if (!Proof.HasReceipt(Tx.Receipt.AsHash()))
+				{
+					Result->Set("transaction_hash", Var::String(Algorithm::Encoding::Encode0xHex256(Tx.Receipt.TransactionHash)));
+					Result->Set("status", Var::String("receipt merkle test failed"));
+					goto StopVerification;
+				}
+			}
+
+			size_t StateIndex = 0;
+			for (auto& State : Next->States.At(Ledger::WorkCommitment::Finalized))
+			{
+				uint256_t Hash = State.second->AsHash();
+				if (!Proof.HasState(Hash))
+				{
+					Result->Set("state_hash", Var::String(Algorithm::Encoding::Encode0xHex256(Hash)));
+					Result->Set("status", Var::String("state merkle test failed"));
+					goto StopVerification;
+				}
+			}
+
+			Result->Set("status", Var::String("passed"));
+			ParentBlock = *Next;
+			if (Data->Size() > 32)
+			{
+				Term->jWriteLine(*Data);
+				Data->Clear();
+			}
+		}
+	StopVerification:
+		Queue->Stop();
+		Term->jWriteLine(*Data);
+		Term->ReadChar();
+		return 0;
+	}
+	/* Prove and verify Nakamoto POW */
+	static int Nakamoto(int argc, char* argv[])
+	{
+		Vitex::Runtime Scope;
+		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
+
+		auto* Term = Console::Get();
+		Term->Show();
+		Term->CaptureTime();
+
+		auto Message = "Hello, World!";
+		uint256_t Target = uint256_t(1) << uint256_t(240);
+		uint256_t Nonce = 0;
+		while (true)
+		{
+			auto Solution = Provability::NakamotoPOW::Evaluate(Nonce, Message);
+			bool Proven = Provability::NakamotoPOW::Verify(Nonce, Message, Target, Solution);
+			if (!Proven)
+			{
+				++Nonce;
+				continue;
+			}
+
+			Term->fWriteLine("solution: %s (nonce: %s)", Algorithm::Encoding::Encode0xHex256(Solution).c_str(), Nonce.ToString().c_str());
+			Term->fWriteLine("time: %.2f ms (%s)", Term->GetCapturedTime(), Proven ? "passed" : "failed");
+			break;
+		}
+
+		Term->ReadChar();
+		return 0;
+	}
+	/* Prove and verify Wesolowski VDF signature */
+	static int Wesolowski(int argc, char* argv[])
+	{
+		Vitex::Runtime Scope;
+		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
+
+		auto* Term = Console::Get();
+		Term->Show();
+		Term->CaptureTime();
+
+		auto Message = "Hello, World!";
+		Provability::WesolowskiVDF::Parameters Alg; Alg.Pow *= 20;
+		auto Signature = Provability::WesolowskiVDF::Evaluate(Alg, Message);
+		bool Proven = Provability::WesolowskiVDF::Verify(Alg, Message, Signature);
+
+		Term->fWriteLine("solution: %s", Signature.c_str());
+		Term->fWriteLine("time: %.2f ms (%s)", Term->GetCapturedTime(), Proven ? "passed" : "failed");
+		Term->ReadChar();
+		return 0;
+	}
+	/* Calibrate Wesolowski VDF difficulty based on host machine */
+	static int Calibration(int argc, char* argv[])
+	{
+		Vitex::Runtime Scope;
+		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
+
+		auto* Term = Console::Get();
+		Term->Show();
+		Term->CaptureTime();
+
+		auto Alg = Provability::WesolowskiVDF::Calibrate(4);
+		Console::Get()->fWriteLine(
+			"calibration alg:\n"
+			"  length: %i\n"
+			"  bits: %i\n"
+			"  pow: %llu\n"
+			"  difficulty: %s",
+			Alg.Length, Alg.Bits, Alg.Pow,
+			Alg.Difficulty().ToString().c_str());
+		Term->ReadChar();
+		return 0;
+	}
+	/* Gas estimation */
+	static int GasEstimation(int argc, char* argv[])
+	{
+		Vitex::Runtime Scope;
+		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
+
+		auto* Term = Console::Get();
+		Term->Show();
+		Term->CaptureTime();
+
+		Algorithm::Seckey From;
+		Crypto::FillRandomBytes(From, sizeof(From));
+
+		Algorithm::Pubkeyhash To;
+		Crypto::FillRandomBytes(To, sizeof(To));
+
+		UPtr<Transactions::Transfer> Transaction = Memory::New<Transactions::Transfer>();
+		Transaction->SetAsset("BTC");
+		Transaction->SetOptimalGas(Decimal::Zero());
+		Transaction->SetTo(To, Mathd::Random());
+		Transaction->Sign(From, 1);
+
+		uint256_t EstimateGasLimit = Transaction->GetGasEstimate();
+		uint256_t OptimalGasLimit = Transaction->GasLimit;
+		uint256_t BlockGasLimit = Ledger::Block::GetGasLimit();
+		Term->fWriteLine(
+			"estimate gas limit: %s\n"
+			"optimal gas limit: %s\n"
+			"block gas limit: %s",
+			EstimateGasLimit.ToString().c_str(),
+			OptimalGasLimit.ToString().c_str(),
+			BlockGasLimit.ToString().c_str());
+		Term->ReadChar();
+		return 0;
+	}
+	/* Generic cryptography */
+	static int Cryptography(int argc, char* argv[])
+	{
+		Vitex::Runtime Scope;
+		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
+
+		auto* Term = Console::Get();
+		Term->Show();
+
+		String Mnemonic = "chimney clerk liberty defense gesture risk disorder switch raven chapter document admit win swing forward please clerk vague online coil material tone sibling intact";
+		Algorithm::Seckey SecretKey;
+		Algorithm::Pubkey PublicKey;
+		Algorithm::Pubkey TweakedPublicKey;
+		Algorithm::Pubkeyhash PublicKeyHash;
+		Algorithm::Pubkeyhash TweakedPublicKeyHash;
+		Algorithm::Signing::DeriveSecretKey(Mnemonic, SecretKey);
+		Algorithm::Signing::DerivePublicKey(SecretKey, PublicKey);
+		Algorithm::Signing::DeriveTweakedPublicKey(SecretKey, PublicKey, TweakedPublicKey);
+		Algorithm::Signing::DerivePublicKeyHash(PublicKey, PublicKeyHash);
+		Algorithm::Signing::DerivePublicKeyHash(TweakedPublicKey, TweakedPublicKeyHash);
+
+		String EncodedSecretKey, EncodedPublicKey, EncodedTweakedPublicKey, EncodedPublicKeyHash, EncodedTweakedPublicKeyHash;
+		Algorithm::Signing::EncodeSecretKey(SecretKey, EncodedSecretKey);
+		Algorithm::Signing::EncodePublicKey(PublicKey, EncodedPublicKey);
+		Algorithm::Signing::EncodePublicKey(TweakedPublicKey, EncodedTweakedPublicKey);
+		Algorithm::Signing::EncodeAddress(PublicKeyHash, EncodedPublicKeyHash);
+		Algorithm::Signing::EncodeAddress(TweakedPublicKeyHash, EncodedTweakedPublicKeyHash);
+
+		String Message = "Hello, World!";
+		uint256_t MessageHash = Algorithm::Hashing::Hash256i(Message);
+		String EncodedMessageHash = Algorithm::Encoding::Encode0xHex256(MessageHash);
+		Algorithm::Sighash MessageSignature;
+		Algorithm::Sighash MessageTweakedSignature;
+		Algorithm::Pubkey RecoverPublicKey;
+		Algorithm::Pubkey RecoverTweakedPublicKey;
+		Algorithm::Pubkeyhash RecoverPublicKeyHash;
+		Algorithm::Pubkeyhash RecoverTweakedPublicKeyHash;
+		bool Verifies = Algorithm::Signing::SignNormal(MessageHash, SecretKey, MessageSignature) && Algorithm::Signing::VerifyNormal(MessageHash, PublicKey, MessageSignature);
+		bool VerifiesTweaked = Algorithm::Signing::SignTweaked(MessageHash, SecretKey, MessageTweakedSignature) && Algorithm::Signing::VerifyTweaked(MessageHash, PublicKey, MessageTweakedSignature);
+		bool RecoversPublicKey = Algorithm::Signing::RecoverNormal(MessageHash, RecoverPublicKey, MessageSignature);
+		bool RecoversTweakedPublicKey = Algorithm::Signing::RecoverTweaked(MessageHash, RecoverTweakedPublicKey, MessageTweakedSignature);
+		bool RecoversPublicKeyHash = Algorithm::Signing::RecoverNormalHash(MessageHash, RecoverPublicKeyHash, MessageSignature);
+		bool RecoversTweakedPublicKeyHash = Algorithm::Signing::RecoverTweakedHash(MessageHash, RecoverTweakedPublicKeyHash, MessageTweakedSignature);
+		String EncodedMessageSignature = Format::Util::Encode0xHex(std::string_view((char*)MessageSignature, sizeof(MessageSignature)));
+		String EncodedMessageTweakedSignature = Format::Util::Encode0xHex(std::string_view((char*)MessageTweakedSignature, sizeof(MessageTweakedSignature)));
+		String EncodedRecoverPublicKey, EncodedRecoverPublicKeyHash, EncodedRecoverTweakedPublicKey, EncodedRecoverTweakedPublicKeyHash;
+		Algorithm::Signing::EncodePublicKey(RecoverPublicKey, EncodedRecoverPublicKey);
+		Algorithm::Signing::EncodePublicKey(RecoverTweakedPublicKey, EncodedRecoverTweakedPublicKey);
+		Algorithm::Signing::EncodeAddress(RecoverPublicKeyHash, EncodedRecoverPublicKeyHash);
+		Algorithm::Signing::EncodeAddress(RecoverTweakedPublicKeyHash, EncodedRecoverTweakedPublicKeyHash);
+
+		auto Info = UPtr<Schema>(Var::Set::Object());
+		Info->Set("mnemonic", Var::String(Mnemonic));
+		Info->Set("mnemonic_test", Var::String(Algorithm::Signing::VerifyMnemonic(Mnemonic) ? "passed" : "failed"));
+		Info->Set("secret_key", Var::String(EncodedSecretKey));
+		Info->Set("secret_key_test", Var::String(Algorithm::Signing::VerifySecretKey(SecretKey) ? "passed" : "failed"));
+		Info->Set("message", Var::String(Message));
+		Info->Set("message_hash", Var::String(EncodedMessageHash));
+
+		auto* Normal = Info->Set("signature_normal", Var::Set::Object());
+		Normal->Set("public_key", Var::String(EncodedPublicKey));
+		Normal->Set("public_key_test", Var::String(Algorithm::Signing::VerifyPublicKey(PublicKey) ? "passed" : "failed"));
+		Normal->Set("address", Var::String(EncodedPublicKeyHash));
+		Normal->Set("address_test", Var::String(Algorithm::Signing::VerifyAddress(EncodedPublicKeyHash) ? "passed" : "failed"));
+		Normal->Set("signature", Var::String(EncodedMessageSignature));
+		Normal->Set("signature_test", Var::String(Verifies ? "passed" : "failed"));
+		Normal->Set("recover_public_key", Var::String(EncodedRecoverPublicKey));
+		Normal->Set("recover_public_key_test", Var::String(RecoversPublicKey && EncodedRecoverPublicKey == EncodedPublicKey ? "passed" : "failed"));
+		Normal->Set("recover_address", Var::String(EncodedRecoverPublicKeyHash));
+		Normal->Set("recover_address_test", Var::String(RecoversPublicKeyHash && EncodedRecoverPublicKeyHash == EncodedPublicKeyHash ? "passed" : "failed"));
+
+		auto* Blinding = Info->Set("signature_blinding", Var::Set::Object());
+		Blinding->Set("public_key", Var::String(EncodedTweakedPublicKey));
+		Blinding->Set("public_key_test", Var::String(Algorithm::Signing::VerifyPublicKey(TweakedPublicKey) ? "passed" : "failed"));
+		Blinding->Set("address", Var::String(EncodedTweakedPublicKeyHash));
+		Blinding->Set("address_test", Var::String(Algorithm::Signing::VerifyAddress(EncodedTweakedPublicKeyHash) ? "passed" : "failed"));
+		Blinding->Set("signature", Var::String(EncodedMessageTweakedSignature));
+		Blinding->Set("signature_test", Var::String(Verifies ? "passed" : "failed"));
+		Blinding->Set("recover_public_key", Var::String(EncodedRecoverTweakedPublicKey));
+		Blinding->Set("recover_public_key_test", Var::String(RecoversTweakedPublicKey && EncodedRecoverTweakedPublicKey == EncodedTweakedPublicKey ? "passed" : "failed"));
+		Blinding->Set("recover_address", Var::String(EncodedRecoverTweakedPublicKeyHash));
+		Blinding->Set("recover_address_test", Var::String(RecoversTweakedPublicKeyHash && EncodedRecoverTweakedPublicKeyHash == EncodedTweakedPublicKeyHash ? "passed" : "failed"));
+
+		Term->jWriteLine(*Info);
+		Term->ReadChar();
+		return 0;
+	}
+	/* Wallet cryptography */
+	static int Wallet(int argc, char* argv[])
+	{
+		Vitex::Runtime Scope;
+		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
+
+		auto* Term = Console::Get();
+		Term->Show();
+
+		auto Wallet = Ledger::Wallet::FromSeed();
+		auto WalletInfo = Wallet.AsSchema();
+		WalletInfo->Set("secret_key_test", Var::String(Algorithm::Signing::VerifySecretKey(Wallet.SecretKey) ? "passed" : "failed"));
+		WalletInfo->Set("public_key_test", Var::String(Algorithm::Signing::VerifyPublicKey(Wallet.PublicKey) ? "passed" : "failed"));
+		WalletInfo->Set("address_test", Var::String(Algorithm::Signing::VerifyAddress(Wallet.GetAddress()) ? "passed" : "failed"));
+
+		Term->jWriteLine(*WalletInfo);
+		Term->ReadChar();
+		return 0;
+	}
+	/* Transaction cryptography */
+	static int Transaction(int argc, char* argv[])
+	{
+		Vitex::Runtime Scope;
+		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
+
+		auto* Term = Console::Get();
+		Term->Show();
+
+		auto Wallet = Ledger::Wallet::FromSeed();
+		Vector<UPtr<Ledger::Transaction>> Transactions;
+		Blocks::TestTransfers(Transactions, Ledger::Wallet::FromSeed(), 1, Wallet, 1);
+		auto& Tx = *(Transactions::Transfer*)*Transactions.back();
+		auto TxBlob = Tx.AsMessage().Data;
+		auto TxBody = Format::Stream(TxBlob);
+		auto TxCopy = UPtr<Ledger::Transaction>(Transactions::Resolver::New(Messages::Authentic::ResolveType(TxBody).Or(0)));
+		auto TxInfo = Tx.AsSchema();
+		Algorithm::Pubkeyhash RecoverPublicKeyHash = { 0 };
+		TxInfo->Set("recovery_test", Var::String(Tx.Recover(RecoverPublicKeyHash) && !memcmp(Wallet.PublicKeyHash, RecoverPublicKeyHash, sizeof(RecoverPublicKeyHash)) ? "passed" : "failed"));
+		TxInfo->Set("verification_test", Var::String(Tx.Verify(Wallet.PublicKey) ? "passed" : "failed"));
+		TxInfo->Set("serialization_test", Var::String(TxCopy && TxCopy->Load(TxBody) && TxCopy->AsMessage().Data == TxBlob ? "passed" : "failed"));
+		TxInfo->Set("raw_data_test", Var::String(Format::Util::Encode0xHex(TxBlob)));
+
+		auto Stream = Tx.AsMessage();
+		Format::Variables Vars;
+		Format::VariablesUtil::DeserializeFlatFrom(Stream, &Vars);
+		TxInfo->Set("var_data_test", Format::VariablesUtil::Serialize(Vars));
+		TxInfo->Set("asset_test", Algorithm::Asset::Serialize(Algorithm::Asset::IdOf("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7")));
+
+		Term->jWriteLine(*TxInfo);
+		Term->ReadChar();
+		return 0;
+	}
+	/* Merkle tree cryptography */
+	static int MerkleTree(int argc, char* argv[])
+	{
+		Vitex::Runtime Scope;
+		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
+
+		auto* Term = Console::Get();
+		Term->Show();
+
+		const size_t Hashes = 16;
+		uint256_t Prev = Algorithm::Hashing::Hash256i(*Crypto::RandomBytes(16));
+		uint256_t Next = Algorithm::Hashing::Hash256i(*Crypto::RandomBytes(16));
+		Provability::MerkleTree Tree = Prev;
+		for (size_t i = 0; i < Hashes; i++)
+		{
+			uint8_t Hash[32];
+			Algorithm::Encoding::DecodeUint256(Next, Hash);
+
+			Tree.Push(Next);
+			Next = Algorithm::Hashing::Hash256i(std::string_view((char*)Hash, sizeof(Hash)));
+		}
+
+		auto& Nodes = Tree.GetTree();
+		uint256_t Target = Nodes[Math64u::Random(1, Hashes + 1)];
+		Term->fWriteLine("merkle tree (nodes = %i, target = %s):", (int)Nodes.size(), Algorithm::Encoding::Encode0xHex256(Target).c_str());
+		for (size_t i = 0; i < Nodes.size(); i++)
+			Term->WriteLine("  " + Algorithm::Encoding::Encode0xHex256(Nodes[i]));
+
+		auto Path = Tree.CalculatePath(Target);
+		auto ProposedRoot = Path.CalculateRoot(Target);
+		auto ActualRoot = Tree.CalculateRoot();
+		auto& Branch = Path.GetBranch();
+		Branch.insert(Branch.begin(), Target);
+		Branch.push_back(ProposedRoot);
+
+		Term->fWriteLine("merkle tree path (index in tree = %i, nodes = %i):", (int)Path.GetIndex(), (int)Branch.size());
+		for (size_t i = 0; i < Branch.size(); i++)
+			Term->WriteLine("  " + Algorithm::Encoding::Encode0xHex256(Branch[i]));
+
+		Term->fWriteLine("merkle tree (complexity = %i, nodes = %i, verification = %s):", (int)Tree.GetComplexity(), (int)Nodes.size(), ProposedRoot == ActualRoot ? "passed" : "failed");
+		for (size_t i = 0; i < Nodes.size(); i++)
+		{
+			auto It = std::find(Branch.begin(), Branch.end(), Nodes[i]);
+			if (It != Branch.end())
+			{
+				size_t Depth = It - Branch.begin() + 1;
+				Term->WriteLine("  " + String(Depth, '>') + String(1 + Branch.size() - Depth, ' ') + Algorithm::Encoding::Encode0xHex256(Nodes[i]));
+			}
+			else
+				Term->WriteLine("  " + String(1 + Branch.size(), ' ') + Algorithm::Encoding::Encode0xHex256(Nodes[i]));
+		}
+
+		Term->ReadChar();
+		return 0;
+	}
+	/* Oracle wallets cryptography */
+	static int OracleWallets(int argc, char* argv[])
+	{
+		Vitex::Runtime Scope;
+		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
+
+		auto* Term = Console::Get();
+		Term->Show();
+
+		auto User = Ledger::Wallet::FromSeed("0000000");
+		for (auto& MasterWallet : Oracle::Bridge::GetWallets(User.SecretKey))
+		{
+			auto Asset = Algorithm::Asset::IdOf(MasterWallet.first);
+			UPtr<Schema> Wallet = Var::Set::Object();
+			Wallet->Set("asset", Algorithm::Asset::Serialize(Asset));
+			Wallet->Set("master", MasterWallet.second.AsSchema().Reset());
+			Wallet->Set("child", Oracle::Datamaster::NewSigningWallet(Asset, MasterWallet.second, 0)->AsSchema().Reset());
+			Term->jWriteLine(*Wallet);
+		}
+
+		Term->ReadChar();
+		return 0;
+	}
+	/* Oracle chain watch and withdrawals */
+	static int OracleOperations(int argc, char* argv[])
+	{
+		Vitex::Runtime Scope;
+		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
+
+		auto* Term = Console::Get();
+		Term->Show();
+		Term->WriteLine("[ start of program ]");
+
+		static bool IsActive = true;
+		OS::Process::BindSignal(Signal::SIG_INT, [](int) { IsActive = false; });
+
+		Schedule::Desc Policy;
+		Schedule* Queue = Schedule::Get();
+		Queue->Start(Policy);
+
+		auto Asset = Algorithm::Asset::IdOf("BTC");
+		auto Parent = Oracle::Datamaster::NewMasterWallet(Asset, String("123456"));
+		auto Child = Oracle::DynamicWallet(*Oracle::Datamaster::NewSigningWallet(Asset, *Parent, 0));
+		for (auto& Address : Child.SigningChild->Addresses)
+			Oracle::Datamaster::EnableWalletAddress(Asset, *Child.GetBinding(), Address.second, *Child.SigningChild->AddressIndex);
+
+		Coasync<void>([&]() -> Promise<void>
+		{
+			String Addresses;
+			for (auto& Address : Child.SigningChild->Addresses)
+				Addresses += Stringify::Text("      address v%i: %s\n", (int)Address.first, Address.second.c_str());
+
+			auto Balance = Coawait(Oracle::Datamaster::CalculateBalance(Asset, Child));
+			VI_INFO(
+				"%s parent wallet:\n"
+				"  seeding key: %s\n"
+				"  signing key: %s\n"
+				"  verifying key: %s\n"
+				"  child wallet (index: %" PRIu64 "):\n"
+				"    signing key: %s\n"
+				"    verifying key: %s\n"
+				"    addresses:\n%s"
+				"  coins value: %s %s",
+				Algorithm::Asset::HandleOf(Asset).c_str(),
+				Parent->SeedingKey.ExposeToHeap().c_str(),
+				Parent->SigningKey.ExposeToHeap().c_str(),
+				Parent->VerifyingKey.ExposeToHeap().c_str(),
+				*Child.SigningChild->AddressIndex,
+				Child.SigningChild->SigningKey.ExposeToHeap().c_str(),
+				Child.SigningChild->VerifyingKey.ExposeToHeap().c_str(),
+				Addresses.c_str(),
+				Balance ? Balance->ToString().c_str() : "?",
+				Algorithm::Asset::HandleOf(Asset).c_str());
+
+			Oracle::MultichainSupervisorOptions Options;
+			Coawait(Oracle::Paymaster::Startup(Options));
+
+			for (size_t i = 0; i < 0; i++)
+			{
+				uint256_t Hash;
+				Algorithm::Encoding::EncodeUint256((uint8_t*)Crypto::RandomBytes(32)->data(), Hash);
+				auto Transaction = Coawait(Oracle::Paymaster::SubmitTransaction(Hash, Asset, Oracle::DynamicWallet(Child),
+					{
+						Oracle::Transferer("bcrt1p5dy9ef2lngvmlx6edjgp88hemj03uszt3zlqrc252vlxp3jf27vq648qmh", Optional::None, 0.01)
+					}, Oracle::BaseFee(0.000003, 1)));
+				if (!Transaction)
+					break;
+			}
+
+			while (IsActive)
+			{
+				Promise<void> Future;
+				Queue->SetTimeout(200, [Future]() mutable { Future.Set(); });
+				Coawait(std::move(Future));
+			}
+
+			Coawait(Oracle::Paymaster::Shutdown());
+			CoreturnVoid;
+		}).Wait();
+
+		while (Queue->Dispatch());
+		Queue->Stop();
+
+		Term->WriteLine("[ end of program ]");
+		Term->ReadChar();
+		return 0;
+	}
+	/* Shared wallet cryptography */
+	static int SharedWallet(int argc, char* argv[])
+	{
+		Vitex::Runtime Scope;
+		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
+
+		auto* Term = Console::Get();
+		Term->Show();
+
+		auto Id = Algorithm::Asset::IdOf("BTC");
+		auto Alg = Algorithm::Composition::Type::SECP256K1;
+		String Message = "Hello, World!";
+		size_t PublicKeySize = 0;
+		size_t SecretKeySize = 0;
+		Algorithm::Pubkey PublicKey;
+		Algorithm::Composition::CSeckey SecretKey;
+		Algorithm::Composition::CSeckey SecretKey1, SecretKey2;
+		Algorithm::Composition::CPubkey PublicKey1, PublicKey2;
+		Algorithm::Composition::DeriveKeypair1(Alg, SecretKey1, PublicKey1);
+		Algorithm::Composition::DeriveKeypair2(Alg, PublicKey1, SecretKey2, PublicKey2, PublicKey, &PublicKeySize);
+		Algorithm::Composition::DeriveSecretKey(Alg, SecretKey1, SecretKey2, SecretKey, &SecretKeySize);
+		auto SigningWallet = Oracle::Datamaster::NewSigningWallet(Id, std::string_view((char*)SecretKey, SecretKeySize)).Expect("wallet derivation failed");
+		auto VerifyingWallet = Oracle::Datamaster::NewVerifyingWallet(Id, std::string_view((char*)PublicKey, PublicKeySize)).Expect("wallet derivation failed");
+		auto Signature = Oracle::Datamaster::SignMessage(Id, Message, SigningWallet.SigningKey);
+		auto Verification = Signature ? Oracle::Datamaster::VerifyMessage(Id, Message, SigningWallet.VerifyingKey.ExposeToHeap(), *Signature) : ExpectsLR<void>(LayerException("signature generation failed"));
+		Term->fWrite(
+			"secret key share 1        : %s\n"
+			"secret key share 2        : %s\n"
+			"secret key composition    : %s\n"
+			"public key composition     : %s\n\n"
+			"signing wallet secret key : %s\n"
+			"signing wallet public key  : %s\n"
+			"signing wallet address     : %s\n\n"
+			"veryfing wallet public key : %s\n"
+			"veryfing wallet address    : %s\n\n"
+			"signature payload          : %s%s\n"
+			"signature verification     : %s%s\n"
+			"blob payload               : %.*s\n",
+			Codec::HexEncode(std::string_view((char*)SecretKey1, sizeof(SecretKey1))).c_str(),
+			Codec::HexEncode(std::string_view((char*)SecretKey2, sizeof(SecretKey2))).c_str(),
+			Codec::HexEncode(std::string_view((char*)SecretKey, SecretKeySize)).c_str(),
+			Codec::HexEncode(std::string_view((char*)PublicKey, PublicKeySize)).c_str(),
+			SigningWallet.SigningKey.ExposeToHeap().c_str(),
+			SigningWallet.VerifyingKey.ExposeToHeap().c_str(),
+			SigningWallet.Addresses.begin()->second.c_str(),
+			VerifyingWallet.VerifyingKey.ExposeToHeap().c_str(),
+			VerifyingWallet.Addresses.begin()->second.c_str(),
+			Signature ? Codec::HexEncode(*Signature).c_str() : Signature.Error().what(), Signature ? "" : " (failed)",
+			Verification ? "success" : Verification.Error().what(), Verification ? "" : " (failed)",
+			(int)Message.size(), Message.data());
+
+		Term->ReadChar();
+		return 0;
+	}
+	/* Wallet encryption cryptography */
+	static int WalletMessaging(int argc, char* argv[])
+	{
+		Vitex::Runtime Scope;
+		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
+
+		auto* Term = Console::Get();
+		Term->Show();
+
+		auto User1 = Ledger::Wallet::FromSeed();
+		auto User2 = Ledger::Wallet::FromSeed();
+		auto MessageFromUser1 = "Hello, Alice!";
+		auto MessageFromUser2 = "Hello, Bob!";
+		auto Ciphertext1 = User1.SealMessage(MessageFromUser1, User2.SealingKey);
+		auto Plaintext1 = Ciphertext1 ? User2.OpenMessage(*Ciphertext1) : Option<String>(Optional::None);
+		auto Ciphertext2 = User2.SealMessage(MessageFromUser2, User1.SealingKey);
+		auto Plaintext2 = Ciphertext2 ? User1.OpenMessage(*Ciphertext2) : Option<String>(Optional::None);
+		Term->fWrite(
+			"user1 wallet:\n"
+			"  secret key: %s\n"
+			"  public key: %s\n"
+			"  address: %s\n"
+			"  sealing key: %s\n"
+			"    ciphertext to user2 wallet: %s\n"
+			"    plaintext from user2 wallet: %s\n\n"
+			"user2 wallet:\n"
+			"  secret key: %s\n"
+			"  public key: %s\n"
+			"  address: %s\n"
+			"  sealing key: %s\n"
+			"    ciphertext to user1 wallet: %s\n"
+			"    plaintext from user1 wallet: %s\n",
+			User1.GetSecretKey().c_str(),
+			User1.GetPublicKey().c_str(),
+			User1.GetAddress().c_str(),
+			User1.GetSealingKey().c_str(),
+			Ciphertext1 ? Codec::HexEncode(*Ciphertext1).c_str() : "** encryption error **",
+			Plaintext2 ? Plaintext2->c_str() : "** decryption error **",
+			User2.GetSecretKey().c_str(),
+			User2.GetPublicKey().c_str(),
+			User2.GetAddress().c_str(),
+			User2.GetSealingKey().c_str(),
+			Ciphertext2 ? Codec::HexEncode(*Ciphertext2).c_str() : "** encryption error **",
+			Plaintext1 ? Plaintext1->c_str() : "** decryption error **");
+
+		Term->ReadChar();
+		return 0;
+	}
+	/* 256bit integer serialization */
+	static int IntegerSerialization(int argc, char* argv[])
+	{
+		Vitex::Runtime Scope;
+		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
+
+		auto* Term = Console::Get();
+		Term->Show();
+
+		for (size_t i = 0; i < 1024 * 4; i++)
+		{
+			uint256_t Value = Algorithm::Hashing::Hash256i(*Crypto::RandomBytes(32));
+
+			uint8_t Data1[32] = { 0 }; uint256_t Value1 = 0;
+			Algorithm::Encoding::DecodeUint256(Value, Data1);
+			Algorithm::Encoding::EncodeUint256(Data1, Value1);
+
+			uint8_t Data2[32] = { 0 };
+			auto Raw = Codec::HexDecode(Value.ToString(16, 64));
+			memcpy((char*)Data2, Raw.data(), std::min(Raw.size(), sizeof(uint256_t)));
+			uint256_t Value2 = uint256_t(Codec::HexEncode(std::string_view((char*)Data2, sizeof(uint256_t))), 16);
+			VI_PANIC(memcmp(Data1, Data2, sizeof(Data2)) == 0, "uint256 decoding failed");
+			VI_PANIC(Value1 == Value2 && Value1 == Value, "uint256 encoding failed");
+		}
+
+		Term->WriteLine("uint256 test passed");
+		Term->ReadChar();
+		return 0;
+	}
+};
+
+class Benchmarks
+{
+public:
 	/* Blockchain with 1536 + 1 blocks filled with low entropy transactions (non-zero balance accounts, invalid chain - bad genesis block, performance measurement) */
-	static int BlockchainLowEntropyThroughput(int argc, char* argv[])
+	static int LowEntropyThroughput(int argc, char* argv[])
 	{
 		Vitex::Runtime Scope;
 		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
@@ -970,8 +1568,8 @@ public:
 		Genesis.States.Commit();
 		Genesis.SetParentBlock(nullptr);
 		Genesis.Recalculate(nullptr);
-		VI_PANIC(Genesis.Solve(Account.PrivateKey), "genesis block solve failed");
-		VI_PANIC(Genesis.Sign(Account.PrivateKey), "genesis block sign failed");
+		VI_PANIC(Genesis.Solve(Account.SecretKey), "genesis block solve failed");
+		VI_PANIC(Genesis.Sign(Account.SecretKey), "genesis block sign failed");
 		Genesis.Checkpoint().Expect("genesis block checkpoint failed");
 
 		uint8_t Hash[32];
@@ -982,7 +1580,7 @@ public:
 			Vector<UPtr<Ledger::Transaction>> Transactions;
 			Transactions.reserve(Protocol::Now().Policy.TransactionThroughput * Protocol::Now().Policy.ConsensusProofTime / 1000);
 			uint256_t GasUse = 0, GasLimit = Ledger::Block::GetGasLimit();
-            size_t Count = TxCount > 0 ? (size_t)(uint64_t)(Seed % 40 + 1) : std::numeric_limits<size_t>::max();
+			size_t Count = TxCount > 0 ? (size_t)(uint64_t)(Seed % 40 + 1) : std::numeric_limits<size_t>::max();
 			Seed = Algorithm::Hashing::Hash256i(Seed.ToString());
 			for (size_t j = 0; j < Count; j++)
 			{
@@ -1002,13 +1600,13 @@ public:
 				Transaction->SetAsset("BTC");
 				Transaction->SetEstimateGas(Decimal::Zero());
 				Transaction->SetTo(Receiver.PublicKeyHash, Decimal(Value).Truncate(8) / 1000000.0);
-				VI_PANIC(Transaction->Sign(Account.PrivateKey, AccountNonce++), "transfer not signed");
+				VI_PANIC(Transaction->Sign(Account.SecretKey, AccountNonce++), "transfer not signed");
 				Transactions.push_back(Transaction);
 			}
 
 			uint64_t Queries = Ledger::StorageUtil::GetThreadQueries();
 			Term->CaptureTime();
-			auto Block = TestTransactions::ProposeBlock(std::move(Transactions), Account, Account, true);
+			auto Block = Blocks::ProposeBlock(std::move(Transactions), Account, Account, true);
 			Queries = (Ledger::StorageUtil::GetThreadQueries() - Queries);
 			double Time = Term->GetCapturedTime();
 			double Tps = 1000.0 * (double)Block.TransactionsCount / Time;
@@ -1025,7 +1623,7 @@ public:
 		return 0;
 	}
 	/* Blockchain with 1536 + 1 blocks filled with high entropy transactions (non-zero balance accounts, invalid chain - bad genesis block, performance measurement) */
-	static int BlockchainHighEntropyThroughput(int argc, char* argv[])
+	static int HighEntropyThroughput(int argc, char* argv[])
 	{
 		Vitex::Runtime Scope;
 		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
@@ -1067,8 +1665,8 @@ public:
 		Genesis.States.Commit();
 		Genesis.SetParentBlock(nullptr);
 		Genesis.Recalculate(nullptr);
-		VI_PANIC(Genesis.Solve(Account.PrivateKey), "genesis block solve failed");
-		VI_PANIC(Genesis.Sign(Account.PrivateKey), "genesis block sign failed");
+		VI_PANIC(Genesis.Solve(Account.SecretKey), "genesis block solve failed");
+		VI_PANIC(Genesis.Sign(Account.SecretKey), "genesis block sign failed");
 		Genesis.Checkpoint().Expect("genesis block checkpoint failed");
 
 		uint8_t Hash[32];
@@ -1087,7 +1685,7 @@ public:
 				GasUse += Transaction->GetGasEstimate();
 				if (GasUse > GasLimit)
 					break;
-				
+
 				uint8_t PublicKeyHash[32];
 				Algorithm::Hashing::Hash256(Hash, sizeof(Hash), PublicKeyHash);
 				memcpy(Hash, PublicKeyHash, sizeof(PublicKeyHash));
@@ -1099,13 +1697,13 @@ public:
 				Transaction->SetAsset("BTC");
 				Transaction->SetEstimateGas(Decimal::Zero());
 				Transaction->SetTo(PublicKeyHash, Decimal(Value).Truncate(8) / 1000000.0);
-				VI_PANIC(Transaction->Sign(Account.PrivateKey, AccountNonce++), "transfer not signed");
+				VI_PANIC(Transaction->Sign(Account.SecretKey, AccountNonce++), "transfer not signed");
 				Transactions.push_back(Transaction);
 			}
 
 			uint64_t Queries = Ledger::StorageUtil::GetThreadQueries();
 			Term->CaptureTime();
-			auto Block = TestTransactions::ProposeBlock(std::move(Transactions), Account, Account, true);
+			auto Block = Blocks::ProposeBlock(std::move(Transactions), Account, Account, true);
 			Queries = (Ledger::StorageUtil::GetThreadQueries() - Queries);
 			double Time = Term->GetCapturedTime();
 			double Tps = 1000.0 * (double)Block.TransactionsCount / Time;
@@ -1122,7 +1720,7 @@ public:
 		return 0;
 	}
 	/* Blockchain with 1536 + 1 blocks filled with highest possible entropy transactions (non-zero balance accounts, invalid chain - bad genesis block, performance measurement) */
-	static int BlockchainAbnormalEntropyThroughput(int argc, char* argv[])
+	static int AbnormalEntropyThroughput(int argc, char* argv[])
 	{
 		Vitex::Runtime Scope;
 		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
@@ -1153,7 +1751,7 @@ public:
 
 		const size_t BlockCount = 1536;
 		auto Chain = Storages::Chainstate(__func__);
-        size_t AccountsCount = (size_t)(uint64_t)(Ledger::Block::GetGasLimit() / Transactions::Transfer().GetGasEstimate());
+		size_t AccountsCount = (size_t)(uint64_t)(Ledger::Block::GetGasLimit() / Transactions::Transfer().GetGasEstimate());
 		Vector<std::pair<Ledger::Wallet, uint64_t>> Accounts;
 		Accounts.reserve(AccountsCount);
 		for (size_t i = 0; i < AccountsCount; i++)
@@ -1175,8 +1773,8 @@ public:
 		Genesis.States.Commit();
 		Genesis.SetParentBlock(nullptr);
 		Genesis.Recalculate(nullptr);
-		VI_PANIC(Genesis.Solve(Proposer.PrivateKey), "genesis block solve failed");
-		VI_PANIC(Genesis.Sign(Proposer.PrivateKey), "genesis block sign failed");
+		VI_PANIC(Genesis.Solve(Proposer.SecretKey), "genesis block solve failed");
+		VI_PANIC(Genesis.Sign(Proposer.SecretKey), "genesis block sign failed");
 		Genesis.Checkpoint().Expect("genesis block checkpoint failed");
 
 		uint8_t Hash[32];
@@ -1209,13 +1807,13 @@ public:
 				Transaction->SetAsset("BTC");
 				Transaction->SetEstimateGas(Decimal::Zero());
 				Transaction->SetTo(PublicKeyHash, Decimal(Value).Truncate(12) / 100000000.0);
-				VI_PANIC(Transaction->Sign(Account.first.PrivateKey, Account.second++), "transfer not signed");
+				VI_PANIC(Transaction->Sign(Account.first.SecretKey, Account.second++), "transfer not signed");
 				Transactions.push_back(Transaction);
 			}
 
 			uint64_t Queries = Ledger::StorageUtil::GetThreadQueries();
 			Term->CaptureTime();
-			auto Block = TestTransactions::ProposeBlock(std::move(Transactions), Proposer, Proposer, true);
+			auto Block = Blocks::ProposeBlock(std::move(Transactions), Proposer, Proposer, true);
 			Queries = (Ledger::StorageUtil::GetThreadQueries() - Queries);
 			double Time = Term->GetCapturedTime();
 			double Tps = 1000.0 * (double)Block.TransactionsCount / Time;
@@ -1231,7 +1829,89 @@ public:
 		Term->ReadChar();
 		return 0;
 	}
-	/* Simplest blockchain explorer for debugging (validation measurement) */
+	/* 256bit => decimal conversion */
+	static int IntegerConversion(int argc, char* argv[])
+	{
+		Vitex::Runtime Scope;
+		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
+
+		auto* Term = Console::Get();
+		Term->Show();
+
+		size_t Samples = 10000; double Time = 0;
+		for (size_t i = 0; i < Samples; i++)
+		{
+			uint256_t Number;
+			Algorithm::Encoding::EncodeUint256((uint8_t*)Crypto::RandomBytes(32)->data(), Number);
+
+			Term->CaptureTime();
+			Decimal Test = Number.ToDecimal();
+			Time += Term->GetCapturedTime();
+		}
+
+		Term->fWriteLine("uint256 to 256bit decimal conversion time: %.2f ms (cps: %.2f)", Time, 1000.0 * (double)Samples / Time); Time = 0;
+		for (size_t i = 0; i < Samples; i++)
+		{
+			uint256_t Number = Math64u::Random(0, std::numeric_limits<uint64_t>::max());
+			Term->CaptureTime();
+			Decimal Test = Number.ToDecimal();
+			Time += Term->GetCapturedTime();
+		}
+
+		Term->fWriteLine("uint256 to 64bit decimal conversion time: %.2f ms (cps: %.2f)", Time, 1000.0 * (double)Samples / Time); Time = 0;
+		for (size_t i = 0; i < Samples; i++)
+		{
+			uint256_t Number = Math32u::Random(0, std::numeric_limits<uint32_t>::max());
+			Term->CaptureTime();
+			Decimal Test = Number.ToDecimal();
+			Time += Term->GetCapturedTime();
+		}
+
+		Term->fWriteLine("uint256 to 32bit decimal conversion time: %.2f ms (cps: %.2f)", Time, 1000.0 * (double)Samples / Time); Time = 0;
+		for (size_t i = 0; i < Samples; i++)
+		{
+			uint256_t Number = Math32u::Random(0, std::numeric_limits<uint16_t>::max());
+			Term->CaptureTime();
+			Decimal Test = Number.ToDecimal();
+			Time += Term->GetCapturedTime();
+		}
+
+		Term->fWriteLine("uint256 to 16bit decimal conversion time: %.2f ms (cps: %.2f)", Time, 1000.0 * (double)Samples / Time); Time = 0;
+		Term->ReadChar();
+		return 0;
+	}
+};
+
+class Apps
+{
+public:
+	/* P2P, NDS and RPC node */
+	static int Consensus(int argc, char* argv[])
+	{
+		Vitex::Runtime Scope;
+		String Config = argc > 1 ? argv[1] : TAN_CONFIG_PATH;
+		String Number = Config.substr(Config.find('-') + 1);
+		Protocol Params = Protocol(Config);
+		uint32_t Index = FromString<uint32_t>(Number.substr(0, Number.find_first_not_of("0123456789"))).Or(1);
+
+		Ledger::Wallet Wallet = Ledger::Wallet::FromSeed(Stringify::Text("00000%i", Index - 1));
+		Ledger::Validator Node;
+		Node.Address = SocketAddress(Params.User.P2P.Address, Params.User.P2P.Port);
+
+		auto Mempool = Storages::Mempoolstate(__func__);
+		Mempool.ApplyValidator(Node, Wallet);
+
+		UPtr<P2P::ServerNode> Consensus = new P2P::ServerNode();
+		UPtr<NDS::ServerNode> Discovery = new NDS::ServerNode();
+		UPtr<RPC::ServerNode> Interface = new RPC::ServerNode(*Consensus);
+
+		ServiceControl Control;
+		Control.Bind(Consensus->GetEntrypoint());
+		Control.Bind(Discovery->GetEntrypoint());
+		Control.Bind(Interface->GetEntrypoint());
+		return Control.Launch();
+	}
+	/* Simplest blockchain explorer for debugging */
 	static int Explorer(int argc, char* argv[])
 	{
 		Vitex::Runtime Scope;
@@ -1714,804 +2394,9 @@ public:
 
 		return 0;
 	}
-	/* Verify current blockchain (validation measurement) */
-	static int Verify(int argc, char* argv[])
-	{
-		Vitex::Runtime Scope;
-		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
-
-		auto* Term = Console::Get();
-		Term->Show();
-
-		auto* Queue = Schedule::Get();
-		Queue->Start(Schedule::Desc());
-
-		auto Chain = Storages::Chainstate(__func__);
-		VI_PANIC(!Chain.GetCheckpointBlockNumber().Or(0), "blockchain cannot be validated without re-executing entire blockchain");
-
-		uint64_t CurrentNumber = 1;
-		UPtr<Schema> Data = Var::Set::Array();
-		auto ParentBlock = Chain.GetBlockHeaderByNumber(CurrentNumber > 0 ? CurrentNumber - 1 : 0);
-		while (true)
-		{
-			auto Next = Chain.GetBlockByNumber(CurrentNumber++);
-			if (!Next)
-				break;
-
-			auto* Result = Data->Push(Var::Set::Object());
-			Result->Set("block_number", Algorithm::Encoding::SerializeUint256(Next->Number));
-			Result->Set("block_hash", Var::String(Algorithm::Encoding::Encode0xHex256(Next->AsHash())));
-
-			auto Validation = Next->Validate(ParentBlock.Address());
-			if (!Validation)
-			{
-				Result->Set("status", Var::String("block validation test failed"));
-				Result->Set("detail", Var::String(Validation.Error().Info));
-				goto StopVerification;
-			}
-
-			auto Proof = Next->AsProof(ParentBlock.Address());
-			for (auto& Tx : Next->Transactions)
-			{
-				if (!Proof.HasTransaction(Tx.Receipt.TransactionHash))
-				{
-					Result->Set("transaction_hash", Var::String(Algorithm::Encoding::Encode0xHex256(Tx.Receipt.TransactionHash)));
-					Result->Set("status", Var::String("transaction merkle test failed"));
-					goto StopVerification;
-				}
-				else if (!Proof.HasReceipt(Tx.Receipt.AsHash()))
-				{
-					Result->Set("transaction_hash", Var::String(Algorithm::Encoding::Encode0xHex256(Tx.Receipt.TransactionHash)));
-					Result->Set("status", Var::String("receipt merkle test failed"));
-					goto StopVerification;
-				}
-			}
-
-			size_t StateIndex = 0;
-			for (auto& State : Next->States.At(Ledger::WorkCommitment::Finalized))
-			{
-				uint256_t Hash = State.second->AsHash();
-				if (!Proof.HasState(Hash))
-				{
-					Result->Set("state_hash", Var::String(Algorithm::Encoding::Encode0xHex256(Hash)));
-					Result->Set("status", Var::String("state merkle test failed"));
-					goto StopVerification;
-				}
-			}
-
-			Result->Set("status", Var::String("passed"));
-			ParentBlock = *Next;
-			if (Data->Size() > 32)
-			{
-				Term->jWriteLine(*Data);
-				Data->Clear();
-			}
-		}
-	StopVerification:
-		Queue->Stop();
-		Term->jWriteLine(*Data);
-		Term->ReadChar();
-		return 0;
-	}
-	/* Prove and verify Wesolowski VDF signature (validation measurement) */
-	static int Wesolowski(int argc, char* argv[])
-	{
-		Vitex::Runtime Scope;
-		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
-
-		auto* Term = Console::Get();
-		Term->Show();
-		Term->CaptureTime();
-
-		auto Message = "Hello, World!";
-		Provability::WesolowskiVDF::Parameters Alg; Alg.Pow *= 20;
-		auto Signature = Provability::WesolowskiVDF::Evaluate(Alg, Message);
-		bool Proven = Provability::WesolowskiVDF::Verify(Alg, Message, Signature);
-
-		Term->fWriteLine("solution: %s", Signature.c_str());
-		Term->fWriteLine("time: %.2f ms (%s)", Term->GetCapturedTime(), Proven ? "passed" : "failed");
-		Term->ReadChar();
-		return 0;
-	}
-	/* Calibrate Wesolowski VDF difficulty based on host machine (validation measurement) */
-	static int WesolowskiCalibration(int argc, char* argv[])
-	{
-		Vitex::Runtime Scope;
-		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
-
-		auto* Term = Console::Get();
-		Term->Show();
-		Term->CaptureTime();
-
-		auto Alg = Provability::WesolowskiVDF::Calibrate(4);
-		Console::Get()->fWriteLine(
-			"calibration alg:\n"
-			"  length: %i\n"
-			"  bits: %i\n"
-			"  pow: %llu\n"
-			"  difficulty: %s",
-			Alg.Length, Alg.Bits, Alg.Pow,
-			Alg.Difficulty().ToString().c_str());
-		Term->ReadChar();
-		return 0;
-	}
-	/* Prove and verify Nakamoto POW (validation measurement) */
-	static int Nakamoto(int argc, char* argv[])
-	{
-		Vitex::Runtime Scope;
-		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
-
-		auto* Term = Console::Get();
-		Term->Show();
-		Term->CaptureTime();
-
-		auto Message = "Hello, World!";
-		uint256_t Target = uint256_t(1) << uint256_t(240);
-		uint256_t Nonce = 0;
-		while (true)
-		{
-			auto Solution = Provability::NakamotoPOW::Evaluate(Nonce, Message);
-			bool Proven = Provability::NakamotoPOW::Verify(Nonce, Message, Target, Solution);
-			if (!Proven)
-			{
-				++Nonce;
-				continue;
-			}
-
-			Term->fWriteLine("solution: %s (nonce: %s)", Algorithm::Encoding::Encode0xHex256(Solution).c_str(), Nonce.ToString().c_str());
-			Term->fWriteLine("time: %.2f ms (%s)", Term->GetCapturedTime(), Proven ? "passed" : "failed");
-			break;
-		}
-
-		Term->ReadChar();
-		return 0;
-	}
-	/* Gas estimation (validation measurement) */
-	static int GasEstimation(int argc, char* argv[])
-	{
-		Vitex::Runtime Scope;
-		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
-
-		auto* Term = Console::Get();
-		Term->Show();
-		Term->CaptureTime();
-
-		Algorithm::Seckey From;
-		Crypto::FillRandomBytes(From, sizeof(From));
-
-		Algorithm::Pubkeyhash To;
-		Crypto::FillRandomBytes(To, sizeof(To));
-
-		UPtr<Transactions::Transfer> Transaction = Memory::New<Transactions::Transfer>();
-		Transaction->SetAsset("BTC");
-		Transaction->SetOptimalGas(Decimal::Zero());
-		Transaction->SetTo(To, Mathd::Random());
-		Transaction->Sign(From, 1);
-
-		uint256_t EstimateGasLimit = Transaction->GetGasEstimate();
-		uint256_t OptimalGasLimit = Transaction->GasLimit;
-		uint256_t BlockGasLimit = Ledger::Block::GetGasLimit();
-		Term->fWriteLine(
-			"estimate gas limit: %s\n"
-			"optimal gas limit: %s\n"
-			"block gas limit: %s",
-			EstimateGasLimit.ToString().c_str(),
-			OptimalGasLimit.ToString().c_str(),
-			BlockGasLimit.ToString().c_str());
-		Term->ReadChar();
-		return 0;
-	}
-	/* Generic cryptography (validation measurement) */
-	static int Cryptography(int argc, char* argv[])
-	{
-		Vitex::Runtime Scope;
-		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
-
-		auto* Term = Console::Get();
-		Term->Show();
-
-		String Mnemonic = "chimney clerk liberty defense gesture risk disorder switch raven chapter document admit win swing forward please clerk vague online coil material tone sibling intact";
-		Algorithm::Seckey PrivateKey;
-		Algorithm::Pubkey PublicKey;
-		Algorithm::Pubkey TweakedPublicKey;
-		Algorithm::Pubkeyhash PublicKeyHash;
-		Algorithm::Pubkeyhash TweakedPublicKeyHash;
-		Algorithm::Signing::DerivePrivateKey(Mnemonic, PrivateKey);
-		Algorithm::Signing::DerivePublicKey(PrivateKey, PublicKey);
-		Algorithm::Signing::DeriveTweakedPublicKey(PublicKey, TweakedPublicKey);
-		Algorithm::Signing::DerivePublicKeyHash(PublicKey, PublicKeyHash);
-		Algorithm::Signing::DerivePublicKeyHash(TweakedPublicKey, TweakedPublicKeyHash);
-
-		String EncodedPrivateKey, EncodedPublicKey, EncodedTweakedPublicKey, EncodedPublicKeyHash, EncodedTweakedPublicKeyHash;
-		Algorithm::Signing::EncodePrivateKey(PrivateKey, EncodedPrivateKey);
-		Algorithm::Signing::EncodePublicKey(PublicKey, EncodedPublicKey);
-		Algorithm::Signing::EncodePublicKey(TweakedPublicKey, EncodedTweakedPublicKey);
-		Algorithm::Signing::EncodeAddress(PublicKeyHash, EncodedPublicKeyHash);
-		Algorithm::Signing::EncodeAddress(TweakedPublicKeyHash, EncodedTweakedPublicKeyHash);
-
-		String Message = "Hello, World!";
-		uint256_t MessageHash = Algorithm::Hashing::Hash256i(Message);
-		String EncodedMessageHash = Algorithm::Encoding::Encode0xHex256(MessageHash);
-		Algorithm::Sighash MessageSignature;
-		Algorithm::Sighash MessageTweakedSignature;
-		Algorithm::Pubkey RecoverPublicKey;
-		Algorithm::Pubkey RecoverTweakedPublicKey;
-		Algorithm::Pubkeyhash RecoverPublicKeyHash;
-		Algorithm::Pubkeyhash RecoverTweakedPublicKeyHash;
-		bool Verifies = Algorithm::Signing::SignNormal(MessageHash, PrivateKey, MessageSignature) && Algorithm::Signing::VerifyNormal(MessageHash, PublicKey, MessageSignature);
-		bool VerifiesTweaked = Algorithm::Signing::SignTweaked(MessageHash, PrivateKey, MessageTweakedSignature) && Algorithm::Signing::VerifyTweaked(MessageHash, PublicKey, MessageTweakedSignature);
-		bool RecoversPublicKey = Algorithm::Signing::RecoverNormal(MessageHash, RecoverPublicKey, MessageSignature);
-		bool RecoversTweakedPublicKey = Algorithm::Signing::RecoverTweaked(MessageHash, RecoverTweakedPublicKey, MessageTweakedSignature);
-		bool RecoversPublicKeyHash = Algorithm::Signing::RecoverNormalHash(MessageHash, RecoverPublicKeyHash, MessageSignature);
-		bool RecoversTweakedPublicKeyHash = Algorithm::Signing::RecoverTweakedHash(MessageHash, RecoverTweakedPublicKeyHash, MessageTweakedSignature);
-		String EncodedMessageSignature = Format::Util::Encode0xHex(std::string_view((char*)MessageSignature, sizeof(MessageSignature)));
-		String EncodedMessageTweakedSignature = Format::Util::Encode0xHex(std::string_view((char*)MessageTweakedSignature, sizeof(MessageTweakedSignature)));
-		String EncodedRecoverPublicKey, EncodedRecoverPublicKeyHash, EncodedRecoverTweakedPublicKey, EncodedRecoverTweakedPublicKeyHash;
-		Algorithm::Signing::EncodePublicKey(RecoverPublicKey, EncodedRecoverPublicKey);
-		Algorithm::Signing::EncodePublicKey(RecoverTweakedPublicKey, EncodedRecoverTweakedPublicKey);
-		Algorithm::Signing::EncodeAddress(RecoverPublicKeyHash, EncodedRecoverPublicKeyHash);
-		Algorithm::Signing::EncodeAddress(RecoverTweakedPublicKeyHash, EncodedRecoverTweakedPublicKeyHash);
-
-		auto Info = UPtr<Schema>(Var::Set::Object());
-		Info->Set("mnemonic", Var::String(Mnemonic));
-		Info->Set("mnemonic_test", Var::String(Algorithm::Signing::VerifyMnemonic(Mnemonic) ? "passed" : "failed"));
-		Info->Set("private_key", Var::String(EncodedPrivateKey));
-		Info->Set("private_key_test", Var::String(Algorithm::Signing::VerifyPrivateKey(PrivateKey) ? "passed" : "failed"));
-		Info->Set("message", Var::String(Message));
-		Info->Set("message_hash", Var::String(EncodedMessageHash));
-
-		auto* Normal = Info->Set("signature_normal", Var::Set::Object());
-		Normal->Set("public_key", Var::String(EncodedPublicKey));
-		Normal->Set("public_key_test", Var::String(Algorithm::Signing::VerifyPublicKey(PublicKey) ? "passed" : "failed"));
-		Normal->Set("address", Var::String(EncodedPublicKeyHash));
-		Normal->Set("address_test", Var::String(Algorithm::Signing::VerifyAddress(EncodedPublicKeyHash) ? "passed" : "failed"));
-		Normal->Set("signature", Var::String(EncodedMessageSignature));
-		Normal->Set("signature_test", Var::String(Verifies ? "passed" : "failed"));
-		Normal->Set("recover_public_key", Var::String(EncodedRecoverPublicKey));
-		Normal->Set("recover_public_key_test", Var::String(RecoversPublicKey && EncodedRecoverPublicKey == EncodedPublicKey ? "passed" : "failed"));
-		Normal->Set("recover_address", Var::String(EncodedRecoverPublicKeyHash));
-		Normal->Set("recover_address_test", Var::String(RecoversPublicKeyHash && EncodedRecoverPublicKeyHash == EncodedPublicKeyHash ? "passed" : "failed"));
-
-		auto* Blinding = Info->Set("signature_blinding", Var::Set::Object());
-		Blinding->Set("public_key", Var::String(EncodedTweakedPublicKey));
-		Blinding->Set("public_key_test", Var::String(Algorithm::Signing::VerifyPublicKey(TweakedPublicKey) ? "passed" : "failed"));
-		Blinding->Set("address", Var::String(EncodedTweakedPublicKeyHash));
-		Blinding->Set("address_test", Var::String(Algorithm::Signing::VerifyAddress(EncodedTweakedPublicKeyHash) ? "passed" : "failed"));
-		Blinding->Set("signature", Var::String(EncodedMessageTweakedSignature));
-		Blinding->Set("signature_test", Var::String(Verifies ? "passed" : "failed"));
-		Blinding->Set("recover_public_key", Var::String(EncodedRecoverTweakedPublicKey));
-		Blinding->Set("recover_public_key_test", Var::String(RecoversTweakedPublicKey && EncodedRecoverTweakedPublicKey == EncodedTweakedPublicKey ? "passed" : "failed"));
-		Blinding->Set("recover_address", Var::String(EncodedRecoverTweakedPublicKeyHash));
-		Blinding->Set("recover_address_test", Var::String(RecoversTweakedPublicKeyHash && EncodedRecoverTweakedPublicKeyHash == EncodedTweakedPublicKeyHash ? "passed" : "failed"));
-
-		Term->jWriteLine(*Info);
-		Term->ReadChar();
-		return 0;
-	}
-	/* Wallet cryptography (validation measurement) */
-	static int Wallet(int argc, char* argv[])
-	{
-		Vitex::Runtime Scope;
-		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
-
-		auto* Term = Console::Get();
-		Term->Show();
-
-		auto Wallet = Ledger::Wallet::FromSeed();
-		auto WalletInfo = Wallet.AsSchema();
-		WalletInfo->Set("private_key_test", Var::String(Algorithm::Signing::VerifyPrivateKey(Wallet.PrivateKey) ? "passed" : "failed"));
-		WalletInfo->Set("public_key_test", Var::String(Algorithm::Signing::VerifyPublicKey(Wallet.PublicKey) ? "passed" : "failed"));
-		WalletInfo->Set("address_test", Var::String(Algorithm::Signing::VerifyAddress(Wallet.GetAddress()) ? "passed" : "failed"));
-
-		Term->jWriteLine(*WalletInfo);
-		Term->ReadChar();
-		return 0;
-	}
-	/* Transaction cryptography (validation measurement) */
-	static int Transaction(int argc, char* argv[])
-	{
-		Vitex::Runtime Scope;
-		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
-
-		auto* Term = Console::Get();
-		Term->Show();
-
-		auto Wallet = Ledger::Wallet::FromSeed();
-		Vector<UPtr<Ledger::Transaction>> Transactions;
-		TestTransactions::TestTransfers(Transactions, Ledger::Wallet::FromSeed(), 1, Wallet, 1);
-		auto& Tx = *(Transactions::Transfer*)*Transactions.back();
-		auto TxBlob = Tx.AsMessage().Data;
-		auto TxBody = Format::Stream(TxBlob);
-		auto TxCopy = UPtr<Ledger::Transaction>(Transactions::Resolver::New(Messages::Authentic::ResolveType(TxBody).Or(0)));
-		auto TxInfo = Tx.AsSchema();
-		Algorithm::Pubkeyhash RecoverPublicKeyHash = { 0 };
-		TxInfo->Set("recovery_test", Var::String(Tx.Recover(RecoverPublicKeyHash) && !memcmp(Wallet.PublicKeyHash, RecoverPublicKeyHash, sizeof(RecoverPublicKeyHash)) ? "passed" : "failed"));
-		TxInfo->Set("verification_test", Var::String(Tx.Verify(Wallet.PublicKey) ? "passed" : "failed"));
-		TxInfo->Set("serialization_test", Var::String(TxCopy && TxCopy->Load(TxBody) && TxCopy->AsMessage().Data == TxBlob ? "passed" : "failed"));
-		TxInfo->Set("raw_data_test", Var::String(Format::Util::Encode0xHex(TxBlob)));
-
-		auto Stream = Tx.AsMessage();
-		Format::Variables Vars;
-		Format::VariablesUtil::DeserializeFlatFrom(Stream, &Vars);
-		TxInfo->Set("var_data_test", Format::VariablesUtil::Serialize(Vars));
-		TxInfo->Set("asset_test", Algorithm::Asset::Serialize(Algorithm::Asset::IdOf("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7")));
-
-		Term->jWriteLine(*TxInfo);
-		Term->ReadChar();
-		return 0;
-	}
-	/* Merkle tree cryptography (validation measurement) */
-	static int MerkleTree(int argc, char* argv[])
-	{
-		Vitex::Runtime Scope;
-		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
-
-		auto* Term = Console::Get();
-		Term->Show();
-
-		const size_t Hashes = 16;
-		uint256_t Prev = Algorithm::Hashing::Hash256i(*Crypto::RandomBytes(16));
-		uint256_t Next = Algorithm::Hashing::Hash256i(*Crypto::RandomBytes(16));
-		Provability::MerkleTree Tree = Prev;
-		for (size_t i = 0; i < Hashes; i++)
-		{
-			uint8_t Hash[32];
-			Algorithm::Encoding::DecodeUint256(Next, Hash);
-
-			Tree.Push(Next);
-			Next = Algorithm::Hashing::Hash256i(std::string_view((char*)Hash, sizeof(Hash)));
-		}
-
-		auto& Nodes = Tree.GetTree();
-		uint256_t Target = Nodes[Math64u::Random(1, Hashes + 1)];
-		Term->fWriteLine("merkle tree (nodes = %i, target = %s):", (int)Nodes.size(), Algorithm::Encoding::Encode0xHex256(Target).c_str());
-		for (size_t i = 0; i < Nodes.size(); i++)
-			Term->WriteLine("  " + Algorithm::Encoding::Encode0xHex256(Nodes[i]));
-
-		auto Path = Tree.CalculatePath(Target);
-		auto ProposedRoot = Path.CalculateRoot(Target);
-		auto ActualRoot = Tree.CalculateRoot();
-		auto& Branch = Path.GetBranch();
-		Branch.insert(Branch.begin(), Target);
-		Branch.push_back(ProposedRoot);
-
-		Term->fWriteLine("merkle tree path (index in tree = %i, nodes = %i):", (int)Path.GetIndex(), (int)Branch.size());
-		for (size_t i = 0; i < Branch.size(); i++)
-			Term->WriteLine("  " + Algorithm::Encoding::Encode0xHex256(Branch[i]));
-
-		Term->fWriteLine("merkle tree (complexity = %i, nodes = %i, verification = %s):", (int)Tree.GetComplexity(), (int)Nodes.size(), ProposedRoot == ActualRoot ? "passed" : "failed");
-		for (size_t i = 0; i < Nodes.size(); i++)
-		{
-			auto It = std::find(Branch.begin(), Branch.end(), Nodes[i]);
-			if (It != Branch.end())
-			{
-				size_t Depth = It - Branch.begin() + 1;
-				Term->WriteLine("  " + String(Depth, '>') + String(1 + Branch.size() - Depth, ' ') + Algorithm::Encoding::Encode0xHex256(Nodes[i]));
-			}
-			else
-				Term->WriteLine("  " + String(1 + Branch.size(), ' ') + Algorithm::Encoding::Encode0xHex256(Nodes[i]));
-		}
-
-		Term->ReadChar();
-		return 0;
-	}
-	/* Oracle wallets cryptography (validation measurement) */
-	static int OracleWallets(int argc, char* argv[])
-	{
-		Vitex::Runtime Scope;
-		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
-
-		auto* Term = Console::Get();
-		Term->Show();
-
-		auto User = Ledger::Wallet::FromSeed("0000000");
-		for (auto& MasterWallet : Oracle::Bridge::GetWallets(User.PrivateKey))
-		{
-			auto Asset = Algorithm::Asset::IdOf(MasterWallet.first);
-			UPtr<Schema> Wallet = Var::Set::Object();
-			Wallet->Set("asset", Algorithm::Asset::Serialize(Asset));
-			Wallet->Set("master", MasterWallet.second.AsSchema().Reset());
-			Wallet->Set("child", Oracle::Datamaster::NewSigningWallet(Asset, MasterWallet.second, 0)->AsSchema().Reset());
-			Term->jWriteLine(*Wallet);
-		}
-
-		Term->ReadChar();
-		return 0;
-	}
-	/* Oracle chain watch and withdrawals (validation measurement) */
-	static int OracleOperations(int argc, char* argv[])
-	{
-		Vitex::Runtime Scope;
-		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
-
-		auto* Term = Console::Get();
-		Term->Show();
-		Term->WriteLine("[ start of program ]");
-
-		static bool IsActive = true;
-		OS::Process::BindSignal(Signal::SIG_INT, [](int) { IsActive = false; });
-
-		Schedule::Desc Policy;
-		Schedule* Queue = Schedule::Get();
-		Queue->Start(Policy);
-
-		auto Asset = Algorithm::Asset::IdOf("BTC");
-		auto Parent = Oracle::Datamaster::NewMasterWallet(Asset, String("123456"));
-		auto Child = Oracle::DynamicWallet(*Oracle::Datamaster::NewSigningWallet(Asset, *Parent, 0));
-		for (auto& Address : Child.SigningChild->Addresses)
-			Oracle::Datamaster::EnableWalletAddress(Asset, *Child.GetBinding(), Address.second, *Child.SigningChild->AddressIndex);
-
-		Coasync<void>([&]() -> Promise<void>
-		{
-			String Addresses;
-			for (auto& Address : Child.SigningChild->Addresses)
-				Addresses += Stringify::Text("      address v%i: %s\n", (int)Address.first, Address.second.c_str());
-
-			auto Balance = Coawait(Oracle::Datamaster::CalculateBalance(Asset, Child));
-			VI_INFO(
-				"%s parent wallet:\n"
-				"  seeding key: %s\n"
-				"  signing key: %s\n"
-				"  verifying key: %s\n"
-				"  child wallet (index: %" PRIu64 "):\n"
-				"    signing key: %s\n"
-				"    verifying key: %s\n"
-				"    addresses:\n%s"
-				"  coins value: %s %s",
-				Algorithm::Asset::HandleOf(Asset).c_str(),
-				Parent->SeedingKey.ExposeToHeap().c_str(),
-				Parent->SigningKey.ExposeToHeap().c_str(),
-				Parent->VerifyingKey.ExposeToHeap().c_str(),
-				*Child.SigningChild->AddressIndex,
-				Child.SigningChild->SigningKey.ExposeToHeap().c_str(),
-				Child.SigningChild->VerifyingKey.ExposeToHeap().c_str(),
-				Addresses.c_str(),
-				Balance ? Balance->ToString().c_str() : "?",
-				Algorithm::Asset::HandleOf(Asset).c_str());
-
-			Oracle::MultichainSupervisorOptions Options;
-			Coawait(Oracle::Paymaster::Startup(Options));
-
-			for (size_t i = 0; i < 0; i++)
-			{
-				uint256_t Hash;
-				Algorithm::Encoding::EncodeUint256((uint8_t*)Crypto::RandomBytes(32)->data(), Hash);
-				auto Transaction = Coawait(Oracle::Paymaster::SubmitTransaction(Hash, Asset, Oracle::DynamicWallet(Child),
-				{
-					Oracle::Transferer("bcrt1p5dy9ef2lngvmlx6edjgp88hemj03uszt3zlqrc252vlxp3jf27vq648qmh", Optional::None, 0.01)
-				}, Oracle::BaseFee(0.000003, 1)));
-				if (!Transaction)
-					break;
-			}
-
-			while (IsActive)
-			{
-				Promise<void> Future;
-				Queue->SetTimeout(200, [Future]() mutable { Future.Set(); });
-				Coawait(std::move(Future));
-			}
-
-			Coawait(Oracle::Paymaster::Shutdown());
-			CoreturnVoid;
-		}).Wait();
-
-		while (Queue->Dispatch());
-		Queue->Stop();
-
-		Term->WriteLine("[ end of program ]");
-		Term->ReadChar();
-		return 0;
-	}
-	/* Shared wallet cryptography (validation measurement) */
-	static int SharedWallet(int argc, char* argv[])
-	{
-		Vitex::Runtime Scope;
-		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
-
-		auto* Term = Console::Get();
-		Term->Show();
-
-		auto Id = Algorithm::Asset::IdOf("BTC");
-		auto Alg = Algorithm::Composition::Type::SECP256K1;
-		String Message = "Hello, World!";
-		size_t PublicKeySize = 0;
-		size_t PrivateKeySize = 0;
-		Algorithm::Pubkey PublicKey;
-		Algorithm::Composition::CSeckey PrivateKey;
-		Algorithm::Composition::CSeckey PrivateKey1, PrivateKey2;
-		Algorithm::Composition::CPubkey PublicKey1, PublicKey2;
-		Algorithm::Composition::DeriveKeypair1(Alg, PrivateKey1, PublicKey1);
-		Algorithm::Composition::DeriveKeypair2(Alg, PublicKey1, PrivateKey2, PublicKey2, PublicKey, &PublicKeySize);
-		Algorithm::Composition::DerivePrivateKey(Alg, PrivateKey1, PrivateKey2, PrivateKey, &PrivateKeySize);
-		auto SigningWallet = Oracle::Datamaster::NewSigningWallet(Id, std::string_view((char*)PrivateKey, PrivateKeySize)).Expect("wallet derivation failed");
-		auto VerifyingWallet = Oracle::Datamaster::NewVerifyingWallet(Id, std::string_view((char*)PublicKey, PublicKeySize)).Expect("wallet derivation failed");
-		auto Signature = Oracle::Datamaster::SignMessage(Id, Message, SigningWallet.SigningKey);
-		auto Verification = Signature ? Oracle::Datamaster::VerifyMessage(Id, Message, SigningWallet.VerifyingKey.ExposeToHeap(), *Signature) : ExpectsLR<void>(LayerException("signature generation failed"));
-		Term->fWrite(
-			"private key share 1        : %s\n"
-			"private key share 2        : %s\n"
-			"private key composition    : %s\n"
-			"public key composition     : %s\n\n"
-			"signing wallet private key : %s\n"
-			"signing wallet public key  : %s\n"
-			"signing wallet address     : %s\n\n"
-			"veryfing wallet public key : %s\n"
-			"veryfing wallet address    : %s\n\n"
-			"signature payload          : %s%s\n"
-			"signature verification     : %s%s\n"
-			"blob payload               : %.*s\n",
-			Codec::HexEncode(std::string_view((char*)PrivateKey1, sizeof(PrivateKey1))).c_str(),
-			Codec::HexEncode(std::string_view((char*)PrivateKey2, sizeof(PrivateKey2))).c_str(),
-			Codec::HexEncode(std::string_view((char*)PrivateKey, PrivateKeySize)).c_str(),
-			Codec::HexEncode(std::string_view((char*)PublicKey, PublicKeySize)).c_str(),
-			SigningWallet.SigningKey.ExposeToHeap().c_str(),
-			SigningWallet.VerifyingKey.ExposeToHeap().c_str(),
-			SigningWallet.Addresses.begin()->second.c_str(),
-			VerifyingWallet.VerifyingKey.ExposeToHeap().c_str(),
-			VerifyingWallet.Addresses.begin()->second.c_str(),
-			Signature ? Codec::HexEncode(*Signature).c_str() : Signature.Error().what(), Signature ? "" : " (failed)",
-			Verification ? "success" : Verification.Error().what(), Verification ? "" : " (failed)",
-			(int)Message.size(), Message.data());
-
-		Term->ReadChar();
-		return 0;
-	}
-	/* Wallet encryption cryptography (validation measurement) */
-	static int WalletMessaging(int argc, char* argv[])
-	{
-		Vitex::Runtime Scope;
-		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
-
-		auto* Term = Console::Get();
-		Term->Show();
-
-		auto User1 = Ledger::Wallet::FromSeed();
-		auto User2 = Ledger::Wallet::FromSeed();
-		auto MessageFromUser1 = "Hello, Alice!";
-		auto MessageFromUser2 = "Hello, Bob!";
-		auto Ciphertext1 = User1.SealMessage(MessageFromUser1, User2.SealingKey);
-		auto Plaintext1 = Ciphertext1 ? User2.OpenMessage(*Ciphertext1) : Option<String>(Optional::None);
-		auto Ciphertext2 = User2.SealMessage(MessageFromUser2, User1.SealingKey);
-		auto Plaintext2 = Ciphertext2 ? User1.OpenMessage(*Ciphertext2) : Option<String>(Optional::None);
-		Term->fWrite(
-			"user1 wallet:\n"
-			"  private key: %s\n"
-			"  public key: %s\n"
-			"  address: %s\n"
-			"  sealing key: %s\n"
-			"    ciphertext to user2 wallet: %s\n"
-			"    plaintext from user2 wallet: %s\n\n"
-			"user2 wallet:\n"
-			"  private key: %s\n"
-			"  public key: %s\n"
-			"  address: %s\n"
-			"  sealing key: %s\n"
-			"    ciphertext to user1 wallet: %s\n"
-			"    plaintext from user1 wallet: %s\n",
-			User1.GetPrivateKey().c_str(),
-			User1.GetPublicKey().c_str(),
-			User1.GetAddress().c_str(),
-			User1.GetSealingKey().c_str(),
-			Ciphertext1 ? Codec::HexEncode(*Ciphertext1).c_str() : "** encryption error **",
-			Plaintext2 ? Plaintext2->c_str() : "** decryption error **",
-			User2.GetPrivateKey().c_str(),
-			User2.GetPublicKey().c_str(),
-			User2.GetAddress().c_str(),
-			User2.GetSealingKey().c_str(),
-			Ciphertext2 ? Codec::HexEncode(*Ciphertext2).c_str() : "** encryption error **",
-			Plaintext1 ? Plaintext1->c_str() : "** decryption error **");
-
-		Term->ReadChar();
-		return 0;
-	}
-	/* 256bit integer serialization (validation measurement) */
-	static int IntegerSerialization(int argc, char* argv[])
-	{
-		Vitex::Runtime Scope;
-		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
-
-		auto* Term = Console::Get();
-		Term->Show();
-
-		for (size_t i = 0; i < 1024 * 4; i++)
-		{
-			uint256_t Value = Algorithm::Hashing::Hash256i(*Crypto::RandomBytes(32));
-
-			uint8_t Data1[32] = { 0 }; uint256_t Value1 = 0;
-			Algorithm::Encoding::DecodeUint256(Value, Data1);
-			Algorithm::Encoding::EncodeUint256(Data1, Value1);
-
-			uint8_t Data2[32] = { 0 };
-			auto Raw = Codec::HexDecode(Value.ToString(16, 64));
-			memcpy((char*)Data2, Raw.data(), std::min(Raw.size(), sizeof(uint256_t)));	
-			uint256_t Value2 = uint256_t(Codec::HexEncode(std::string_view((char*)Data2, sizeof(uint256_t))), 16);
-			VI_PANIC(memcmp(Data1, Data2, sizeof(Data2)) == 0, "uint256 decoding failed");
-			VI_PANIC(Value1 == Value2 && Value1 == Value, "uint256 encoding failed");
-		}
-
-		Term->WriteLine("uint256 test passed");
-		Term->ReadChar();
-		return 0;
-	}
-	/* 256bit => decimal conversion (performance measurement) */
-	static int IntegerConversion(int argc, char* argv[])
-	{
-		Vitex::Runtime Scope;
-		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
-
-		auto* Term = Console::Get();
-		Term->Show();
-
-		size_t Samples = 10000; double Time = 0;
-		for (size_t i = 0; i < Samples; i++)
-		{
-			uint256_t Number;
-			Algorithm::Encoding::EncodeUint256((uint8_t*)Crypto::RandomBytes(32)->data(), Number);
-
-			Term->CaptureTime();
-			Decimal Test = Number.ToDecimal();
-			Time += Term->GetCapturedTime();
-		}
-
-		Term->fWriteLine("uint256 to 256bit decimal conversion time: %.2f ms (cps: %.2f)", Time, 1000.0 * (double)Samples / Time); Time = 0;
-		for (size_t i = 0; i < Samples; i++)
-		{
-			uint256_t Number = Math64u::Random(0, std::numeric_limits<uint64_t>::max());
-			Term->CaptureTime();
-			Decimal Test = Number.ToDecimal();
-			Time += Term->GetCapturedTime();
-		}
-
-		Term->fWriteLine("uint256 to 64bit decimal conversion time: %.2f ms (cps: %.2f)", Time, 1000.0 * (double)Samples / Time); Time = 0;
-		for (size_t i = 0; i < Samples; i++)
-		{
-			uint256_t Number = Math32u::Random(0, std::numeric_limits<uint32_t>::max());
-			Term->CaptureTime();
-			Decimal Test = Number.ToDecimal();
-			Time += Term->GetCapturedTime();
-		}
-
-		Term->fWriteLine("uint256 to 32bit decimal conversion time: %.2f ms (cps: %.2f)", Time, 1000.0 * (double)Samples / Time); Time = 0;
-		for (size_t i = 0; i < Samples; i++)
-		{
-			uint256_t Number = Math32u::Random(0, std::numeric_limits<uint16_t>::max());
-			Term->CaptureTime();
-			Decimal Test = Number.ToDecimal();
-			Time += Term->GetCapturedTime();
-		}
-
-		Term->fWriteLine("uint256 to 16bit decimal conversion time: %.2f ms (cps: %.2f)", Time, 1000.0 * (double)Samples / Time); Time = 0;
-		Term->ReadChar();
-		return 0;
-	}
-	/* Post-quantum ECC DSS algorithm tweak (validation measurement) */
-	static int ECCDSSBliningSignature(int argc, char* argv[])
-	{
-		Vitex::Runtime Scope;
-		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
-
-		auto* Term = Console::Get();
-		Term->Show();
-		Term->Clear();
-
-		uint256_t SIG_NUM = 0;
-		while (SIG_NUM + 1 <= 150)
-		{
-			String SIG_MSG = "Hello, World!";
-			++SIG_NUM;
-
-			Algorithm::Seckey SK = { 0 };
-			VI_ASSERT(Algorithm::Signing::DerivePrivateKey("000001", SK, 1), "SK calculation error");
-
-			Algorithm::Pubkey PK = { 0 };
-			VI_ASSERT(Algorithm::Signing::DerivePublicKey(SK, PK), "PK calculation error");
-
-			Algorithm::Seckey RT = { 0 };
-			Algorithm::Hashing::Hash256(PK, sizeof(PK), RT);
-
-			Algorithm::Pubkey TPK = { 0 };
-			VI_ASSERT(Algorithm::Signing::PublicKeyTweakMul(PK, RT, TPK), "TPK calculation error");
-
-			Algorithm::Pubkeyhash PKH = { 0 };
-			Algorithm::Signing::DerivePublicKeyHash(TPK, PKH);
-
-			Algorithm::Seckey SIG_NT = { 0 };
-			Algorithm::Seckey SIG_NUM_DATA = { 0 };
-			Algorithm::Encoding::DecodeUint256(SIG_NUM, SIG_NUM_DATA);
-			Algorithm::Hashing::Hash256(SIG_NUM_DATA, sizeof(SIG_NUM_DATA), SIG_NT);
-
-			uint256_t SIG_HASH = Algorithm::Hashing::Hash256i(SIG_MSG);
-			Algorithm::Seckey SIG_ST = { 0 };
-			Algorithm::Seckey SIG_HASH_SK = { 0 };
-			Algorithm::Encoding::DecodeUint256(SIG_HASH, SIG_HASH_SK);
-			VI_ASSERT(Algorithm::Signing::PrivateKeyTweakMul(SIG_HASH_SK, SIG_NT, SIG_ST), "SIG_ST calculation error");
-
-			Algorithm::Seckey SIG_SK = { 0 };
-			VI_ASSERT(Algorithm::Signing::PrivateKeyTweakMul(SK, RT, SIG_SK), "SIG_SK calculation error");
-			VI_ASSERT(Algorithm::Signing::PrivateKeyTweakAdd(SIG_SK, SIG_ST, SIG_SK), "SIG_SK calculation error");
-
-			Algorithm::Sighash SIG_DATA = { 0 };
-			VI_ASSERT(Algorithm::Signing::SignNormal(SIG_HASH, SIG_SK, SIG_DATA), "SIG_DATA calculation error");
-
-			Algorithm::Pubkey SIG_PK = { 0 };
-			VI_ASSERT(Algorithm::Signing::RecoverNormal(SIG_HASH, SIG_PK, SIG_DATA), "SIG_PK calculation error");
-
-			Algorithm::Seckey SIG_NST = { 0 };
-			VI_ASSERT(Algorithm::Signing::NegatePrivateKey(SIG_ST, SIG_NST), "SIG_NST calculation error");
-
-			Algorithm::Pubkey SIG_TPK = { 0 };
-			VI_ASSERT(Algorithm::Signing::PublicKeyTweakAdd(SIG_PK, SIG_NST, SIG_TPK), "SIG_TPK calculation error");
-
-			Algorithm::Pubkeyhash SIG_PKH = { 0 };
-			Algorithm::Signing::DerivePublicKeyHash(SIG_TPK, SIG_PKH);
-
-			String STR_SK, STR_PK, STR_TPK, STR_PKH;
-			Algorithm::Signing::EncodePrivateKey(SK, STR_SK);
-			Algorithm::Signing::EncodePublicKey(PK, STR_PK);
-			Algorithm::Signing::EncodePublicKey(TPK, STR_TPK);
-			Algorithm::Signing::EncodeAddress(PKH, STR_PKH);
-
-			String STR_SIG_SK, STR_SIG_PK, STR_SIG_TPK, STR_SIG_PKH;
-			Algorithm::Signing::EncodePrivateKey(SIG_SK, STR_SIG_SK);
-			Algorithm::Signing::EncodePublicKey(SIG_PK, STR_SIG_PK);
-			Algorithm::Signing::EncodePublicKey(SIG_TPK, STR_SIG_TPK);
-			Algorithm::Signing::EncodeAddress(SIG_PKH, STR_SIG_PKH);
-			
-			bool Valid = Algorithm::Signing::VerifyNormal(SIG_HASH, SIG_PK, SIG_DATA);
-			String STR_RT = Format::Util::Encode0xHex(std::string_view((char*)RT, sizeof(RT)));
-			String STR_SIG_NT = Format::Util::Encode0xHex(std::string_view((char*)SIG_NT, sizeof(SIG_NT)));
-			String STR_SIG_ST = Format::Util::Encode0xHex(std::string_view((char*)SIG_ST, sizeof(SIG_ST)));
-			String STR_SIG_NST = Format::Util::Encode0xHex(std::string_view((char*)SIG_NST, sizeof(SIG_NST)));
-			String STR_SIG_HASH = Algorithm::Encoding::Encode0xHex256(SIG_HASH);
-			String STR_SIG_DATA = Format::Util::Encode0xHex(std::string_view((char*)SIG_DATA, sizeof(SIG_DATA)));
-			Term->WritePosition(0, 0);
-			Term->fWriteLine(
-				"SK: %s\n"
-				"PK: %s\n"
-				"RT: %s\n"
-				"TPK: %s\n"
-				"PKH: %s\n"
-				"SIG_NUM: %s\n"
-				"SIG_MSG: %s\n"
-				"SIG_HASH: %s\n"
-				"SIG_NT: %s\n"
-				"SIG_ST: %s\n"
-				"SIG_SK: %s\n"
-				"SIG_DATA: %s\n"
-				"SIG_PK: %s\n"
-				"SIG_NST: %s\n"
-				"SIG_TPK: %s\n"
-				"SIG_PKH: %s\n"
-				"SIG_TPK == TPK: %s\n"
-				"SIG_PKH == PKH: %s\n"
-				"SIG_DATA & PK: %s\n",
-				STR_SK.c_str(),
-				STR_PK.c_str(),
-				STR_RT.c_str(),
-				STR_TPK.c_str(),
-				STR_PKH.c_str(),
-				SIG_NUM.ToString().c_str(),
-				SIG_MSG.c_str(),
-				STR_SIG_HASH.c_str(),
-				STR_SIG_NT.c_str(),
-				STR_SIG_ST.c_str(),
-				STR_SIG_SK.c_str(),
-				STR_SIG_DATA.c_str(),
-				STR_SIG_PK.c_str(),
-				STR_SIG_NST.c_str(),
-				STR_SIG_TPK.c_str(),
-				STR_SIG_PKH.c_str(),
-				STR_SIG_TPK == STR_TPK ? "TRUE " : "FALSE",
-				STR_SIG_PKH == STR_PKH ? "TRUE " : "FALSE",
-				Valid ? "VALID SIGNATURE  " : "INVALID SIGNATURE");
-			std::this_thread::sleep_for(std::chrono::milliseconds(100));
-		}
-		Term->ReadChar();
-		return 0;
-	}
 };
 
 int main(int argc, char* argv[])
 {
-    return TestCases::Consensus(argc, argv);
+    return Apps::Consensus(argc, argv);
 }

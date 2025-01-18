@@ -1,10 +1,6 @@
 #ifndef TAN_KERNEL_CHAIN_H
 #define TAN_KERNEL_CHAIN_H
 #define TAN_CONFIG_PATH "./node.json"
-#define TAN_VECTORSTATE_PATH "./vectorstate.bsk"
-#define TAN_STATELOG_PATH "./logs/state.log"
-#define TAN_MESSAGELOG_PATH "./logs/message.log"
-#define TAN_DATALOG_PATH "./logs/data.log"
 #include <vitex/compute.h>
 #include <vitex/layer.h>
 #include <vitex/scripting.h>
@@ -198,16 +194,16 @@ namespace Tangent
             } Oracle;
             struct
             {
-                String State = TAN_STATELOG_PATH;
-                String Message;// = TAN_MESSAGELOG_PATH;
-                String Data;// = TAN_DATALOG_PATH;
+                String State;
+                String Message;
+                String Data;
                 uint64_t ArchiveSize = 8 * 1024 * 1024;
                 uint64_t ArchiveRepackInterval = 1800;
             } Logs;
             UnorderedSet<String> Seeds;
             UnorderedSet<String> Seeders;
             NetworkType Network = NetworkType::Mainnet;
-            String Vectorstate = TAN_VECTORSTATE_PATH;
+            String Vectorstate = "./vectorstate.bsk";
         } User;
         struct ProtocolMessagingConfig
         {
@@ -220,12 +216,12 @@ namespace Tangent
         struct ProtocolAccountConfig
         {
             String SignedMessageMagic = "Tangent Signed Message:\n";
-            String PrivateKeyPrefix = "prv";
+            String SecretKeyPrefix = "sec";
             String SealingKeyPrefix = "seal";
             String PublicKeyPrefix = "pub";
             String AddressPrefix = "tc";
             uint64_t RootAddressIndex = 0;
-            uint8_t PrivateKeyVersion = 0xF;
+            uint8_t SecretKeyVersion = 0xF;
             uint8_t PublicKeyVersion = 0xE;
             uint8_t SealingKeyVersion = 0xC;
             uint8_t AddressVersion = 0x4;

@@ -10,23 +10,23 @@ namespace Tangent
 {
 	namespace Ledger
 	{
-		bool Wallet::SetPrivateKey(const Algorithm::Seckey Value)
+		bool Wallet::SetSecretKey(const Algorithm::Seckey Value)
 		{
-			memset(PrivateKey, 0, sizeof(PrivateKey));
+			memset(SecretKey, 0, sizeof(SecretKey));
 			memset(PublicKey, 0, sizeof(PublicKey));
 			memset(PublicKeyHash, 0, sizeof(PublicKeyHash));
 			if (Value != nullptr)
-				memcpy(PrivateKey, Value, sizeof(PrivateKey));
+				memcpy(SecretKey, Value, sizeof(SecretKey));
 
-			if (!HasPrivateKey())
+			if (!HasSecretKey())
 				return false;
 
 			Algorithm::Pubkey RootPublicKey;
-			if (!Algorithm::Signing::DerivePublicKey(PrivateKey, RootPublicKey))
+			if (!Algorithm::Signing::DerivePublicKey(SecretKey, RootPublicKey))
 				return false;
 
-			Algorithm::Signing::DeriveSealingKey(PrivateKey, SealingKey);
-			if (!Algorithm::Signing::DeriveTweakedPublicKey(RootPublicKey, PublicKey))
+			Algorithm::Signing::DeriveSealingKey(SecretKey, SealingKey);
+			if (!Algorithm::Signing::DeriveTweakedPublicKey(SecretKey, RootPublicKey, PublicKey))
 				return false;
 
 			Algorithm::Signing::DerivePublicKeyHash(PublicKey, PublicKeyHash);
@@ -34,7 +34,7 @@ namespace Tangent
 		}
 		void Wallet::SetPublicKey(const Algorithm::Pubkey Value)
 		{
-			memset(PrivateKey, 0, sizeof(PrivateKey));
+			memset(SecretKey, 0, sizeof(SecretKey));
 			memset(PublicKey, 0, sizeof(PublicKey));
 			memset(PublicKeyHash, 0, sizeof(PublicKeyHash));
 			if (Value != nullptr)
@@ -45,36 +45,36 @@ namespace Tangent
 		}
 		void Wallet::SetPublicKeyHash(const Algorithm::Pubkeyhash Value)
 		{
-			memset(PrivateKey, 0, sizeof(PrivateKey));
+			memset(SecretKey, 0, sizeof(SecretKey));
 			memset(PublicKey, 0, sizeof(PublicKey));
 			memset(PublicKeyHash, 0, sizeof(PublicKeyHash));
 			if (Value != nullptr)
 				memcpy(PublicKeyHash, Value, sizeof(PublicKeyHash));
 		}
-		bool Wallet::VerifyPrivateKey() const
+		bool Wallet::VerifySecretKey() const
 		{
-			return HasPrivateKey() && Algorithm::Signing::VerifyPrivateKey(PrivateKey);
+			return HasSecretKey() && Algorithm::Signing::VerifySecretKey(SecretKey);
 		}
 		bool Wallet::VerifySealingKey() const
 		{
-			if (!VerifyPrivateKey())
+			if (!VerifySecretKey())
 				return false;
 
 			Algorithm::Pubkey SealingKeyCandidate = { 0 };
-			Algorithm::Signing::DeriveSealingKey(PrivateKey, SealingKeyCandidate);
+			Algorithm::Signing::DeriveSealingKey(SecretKey, SealingKeyCandidate);
 			return memcmp(SealingKeyCandidate, SealingKey, sizeof(SealingKey)) == 0;
 		}
 		bool Wallet::VerifyPublicKey() const
 		{
-			if (!VerifyPrivateKey())
+			if (!VerifySecretKey())
 				return false;
 
 			Algorithm::Pubkey RootPublicKey;
-			if (!Algorithm::Signing::DerivePublicKey(PrivateKey, RootPublicKey))
+			if (!Algorithm::Signing::DerivePublicKey(SecretKey, RootPublicKey))
 				return false;
 
 			Algorithm::Pubkey Copy = { 0 };
-			if (!Algorithm::Signing::DeriveTweakedPublicKey(RootPublicKey, Copy))
+			if (!Algorithm::Signing::DeriveTweakedPublicKey(SecretKey, RootPublicKey, Copy))
 				return false;
 
 			if (memcmp(PublicKey, Copy, sizeof(Copy)) != 0)
@@ -105,12 +105,12 @@ namespace Tangent
 		}
 		bool Wallet::Sign(Messages::Authentic& Message) const
 		{
-			return HasPrivateKey() && Message.Sign(PrivateKey);
+			return HasSecretKey() && Message.Sign(SecretKey);
 		}
 		bool Wallet::StorePayload(Format::Stream* Stream) const
 		{
 			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Stream->WriteString(std::string_view((char*)PrivateKey, HasPrivateKey() ? sizeof(PrivateKey) : 0));
+			Stream->WriteString(std::string_view((char*)SecretKey, HasSecretKey() ? sizeof(SecretKey) : 0));
 			Stream->WriteString(std::string_view((char*)SealingKey, HasSealingKey() ? sizeof(SealingKey) : 0));
 			Stream->WriteString(std::string_view((char*)PublicKey, HasPublicKey() ? sizeof(PublicKey) : 0));
 			Stream->WriteString(std::string_view((char*)PublicKeyHash, HasPublicKeyHash() ? sizeof(PublicKeyHash) : 0));
@@ -118,16 +118,16 @@ namespace Tangent
 		}
 		bool Wallet::LoadPayload(Format::Stream& Stream)
 		{
-			String PrivateKeyAssembly; memset(PrivateKey, 0, sizeof(PrivateKey));
-			if (!Stream.ReadString(Stream.ReadType(), &PrivateKeyAssembly))
+			String SecretKeyAssembly; memset(SecretKey, 0, sizeof(SecretKey));
+			if (!Stream.ReadString(Stream.ReadType(), &SecretKeyAssembly))
 				return false;
 
-			if (!PrivateKeyAssembly.empty())
+			if (!SecretKeyAssembly.empty())
 			{
-				if (PrivateKeyAssembly.size() != sizeof(PrivateKey))
+				if (SecretKeyAssembly.size() != sizeof(SecretKey))
 					return false;
 
-				memcpy(PrivateKey, PrivateKeyAssembly.data(), sizeof(PrivateKey));
+				memcpy(SecretKey, SecretKeyAssembly.data(), sizeof(SecretKey));
 			}
 
 			String SealingKeyAssembly; memset(SealingKey, 0, sizeof(SealingKey));
@@ -168,10 +168,10 @@ namespace Tangent
 
 			return true;
 		}
-		bool Wallet::HasPrivateKey() const
+		bool Wallet::HasSecretKey() const
 		{
 			Algorithm::Seckey Null = { 0 };
-			return memcmp(PrivateKey, Null, sizeof(Null)) != 0;
+			return memcmp(SecretKey, Null, sizeof(Null)) != 0;
 		}
 		bool Wallet::HasSealingKey() const
 		{
@@ -194,18 +194,18 @@ namespace Tangent
 		}
 		Option<String> Wallet::OpenMessage(const std::string_view& Ciphertext) const
 		{
-			if (!HasPrivateKey())
+			if (!HasSecretKey())
 				return Optional::None;
 
-			return Algorithm::Signing::PrivateDecrypt(PrivateKey, Ciphertext);
+			return Algorithm::Signing::PrivateDecrypt(SecretKey, Ciphertext);
 		}
-		String Wallet::GetPrivateKey() const
+		String Wallet::GetSecretKey() const
 		{
 			String Value;
-			if (!HasPrivateKey())
+			if (!HasSecretKey())
 				return Value;
 
-			Algorithm::Signing::EncodePrivateKey(PrivateKey, Value);
+			Algorithm::Signing::EncodeSecretKey(SecretKey, Value);
 			return Value;
 		}
 		String Wallet::GetSealingKey() const
@@ -251,7 +251,7 @@ namespace Tangent
 		UPtr<Schema> Wallet::AsSchema() const
 		{
 			Schema* Data = Var::Set::Object();
-			Data->Set("private_key", Algorithm::Signing::SerializePrivateKey(PrivateKey));
+			Data->Set("secret_key", Algorithm::Signing::SerializeSecretKey(SecretKey));
 			Data->Set("sealing_key", Algorithm::Signing::SerializeSealingKey(SealingKey));
 			Data->Set("public_key", Algorithm::Signing::SerializePublicKey(PublicKey));
 			Data->Set("public_key_hash", Var::String(Format::Util::Encode0xHex(std::string_view((char*)PublicKeyHash, sizeof(PublicKeyHash)))));
@@ -287,23 +287,23 @@ namespace Tangent
 		Wallet Wallet::FromMnemonic(const std::string_view& Mnemonic)
 		{
 			Algorithm::Seckey Key;
-			if (!Algorithm::Signing::DerivePrivateKey(Mnemonic, Key))
+			if (!Algorithm::Signing::DeriveSecretKey(Mnemonic, Key))
 				return Wallet();
 
-			return FromPrivateKey(Key);
+			return FromSecretKey(Key);
 		}
 		Wallet Wallet::FromSeed(const std::string_view& Seed)
 		{
 			Algorithm::Seckey Key;
-			if (!Algorithm::Signing::DerivePrivateKey(Seed, Key, 1))
+			if (!Algorithm::Signing::DeriveSecretKey(Seed, Key, 1))
 				return Wallet();
 
-			return FromPrivateKey(Key);
+			return FromSecretKey(Key);
 		}
-		Wallet Wallet::FromPrivateKey(const Algorithm::Seckey Key)
+		Wallet Wallet::FromSecretKey(const Algorithm::Seckey Key)
 		{
 			Wallet Result;
-			Result.SetPrivateKey(Key);
+			Result.SetSecretKey(Key);
 			return Result;
 		}
 		Wallet Wallet::FromPublicKey(const Algorithm::Pubkey Key)

@@ -1520,7 +1520,7 @@ namespace Tangent
 			memcpy(Receipt.From, From, sizeof(Algorithm::Pubkeyhash));
 
 			memset(Environment.Proposer.PublicKeyHash, 0xFF, sizeof(Algorithm::Pubkeyhash));
-			memset(Environment.Proposer.PrivateKey, 0xFF, sizeof(Algorithm::Seckey));
+			memset(Environment.Proposer.SecretKey, 0xFF, sizeof(Algorithm::Seckey));
 			Environment.Validation.Context = TransactionContext(&Block, &Environment, Transaction, std::move(Receipt));
 		}
 		ExpectsLR<void> ScriptProgramTrace::TraceCall(const std::string_view& Function, const Format::Variables& Args, int8_t Mutable)

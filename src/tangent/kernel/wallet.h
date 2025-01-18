@@ -8,15 +8,15 @@ namespace Tangent
 	{
 		struct Wallet : Messages::Generic
 		{
-			Algorithm::Seckey PrivateKey = { 0 };
+			Algorithm::Seckey SecretKey = { 0 };
 			Algorithm::Pubkey SealingKey = { 0 };
 			Algorithm::Pubkey PublicKey = { 0 };
 			Algorithm::Pubkeyhash PublicKeyHash = { 0 };
 
-			bool SetPrivateKey(const Algorithm::Seckey Value);
+			bool SetSecretKey(const Algorithm::Seckey Value);
 			void SetPublicKey(const Algorithm::Pubkey Value);
 			void SetPublicKeyHash(const Algorithm::Pubkeyhash Value);
-			bool VerifyPrivateKey() const;
+			bool VerifySecretKey() const;
 			bool VerifySealingKey() const;
 			bool VerifyPublicKey() const;
 			bool VerifyAddress() const;
@@ -25,13 +25,13 @@ namespace Tangent
 			bool Sign(Messages::Authentic& Message) const;
 			bool StorePayload(Format::Stream* Stream) const override;
 			bool LoadPayload(Format::Stream& Stream) override;
-			bool HasPrivateKey() const;
+			bool HasSecretKey() const;
 			bool HasSealingKey() const;
 			bool HasPublicKey() const;
 			bool HasPublicKeyHash() const;
 			Option<String> SealMessage(const std::string_view& Plaintext, const Algorithm::Pubkey ForSealingKey) const;
 			Option<String> OpenMessage(const std::string_view& Ciphertext) const;
-			String GetPrivateKey() const;
+			String GetSecretKey() const;
 			String GetSealingKey() const;
 			String GetPublicKey() const;
 			String GetAddress() const;
@@ -44,7 +44,7 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 			static Wallet FromMnemonic(const std::string_view& Mnemonic);
 			static Wallet FromSeed(const std::string_view& Seed = std::string_view());
-			static Wallet FromPrivateKey(const Algorithm::Seckey Key);
+			static Wallet FromSecretKey(const Algorithm::Seckey Key);
 			static Wallet FromPublicKey(const Algorithm::Pubkey Key);
 			static Wallet FromPublicKeyHash(const Algorithm::Pubkeyhash Key);
 		};

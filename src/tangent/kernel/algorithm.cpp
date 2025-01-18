@@ -161,14 +161,14 @@ namespace Tangent
 			String Payload = Stringify::Text("%c%s%.*s%.*s", (char)Header.size(), Header.c_str(), (int)Size.size(), Size.c_str(), (int)InsecureMessage.size(), InsecureMessage.data());
 			return Hashing::Hash256i(Payload);
 		}
-		void Signing::Keygen(Seckey PrivateKey)
+		void Signing::Keygen(Seckey SecretKey)
 		{
-			VI_ASSERT(PrivateKey != nullptr, "private key should be set");
+			VI_ASSERT(SecretKey != nullptr, "secret key should be set");
 			while (true)
 			{
-				if (!Crypto::FillRandomBytes(PrivateKey, sizeof(Seckey)))
+				if (!Crypto::FillRandomBytes(SecretKey, sizeof(Seckey)))
 					break;
-				else if (VerifyPrivateKey(PrivateKey))
+				else if (VerifySecretKey(SecretKey))
 					break;
 			}
 		}
@@ -204,15 +204,15 @@ namespace Tangent
 			if (!RecoverNormal(Hash, SignaturePublicKey, Signature))
 				return false;
 
-			Seckey SignatureTweak;
-			if (!DeriveSignatureTweak(Hash, SignatureTweak))
+			Seckey TweakGamma;
+			if (!DeriveTweakGamma(Hash, TweakGamma))
 				return false;
 
-			Seckey SignatureTweakNegated;
-			if (!NegatePrivateKey(SignatureTweak, SignatureTweakNegated))
+			Seckey TweakGammaNegative;
+			if (!ScalarNegate(TweakGamma, TweakGammaNegative))
 				return false;
 
-			return PublicKeyTweakAdd(SignaturePublicKey, SignatureTweakNegated, TweakedPublicKey);
+			return PointAdd(SignaturePublicKey, TweakGammaNegative, TweakedPublicKey);
 		}
 		bool Signing::RecoverNormalHash(const uint256_t& Hash, Pubkeyhash PublicKeyHash, const Sighash Signature)
 		{
@@ -234,16 +234,16 @@ namespace Tangent
 			DerivePublicKeyHash(TweakedPublicKey, TweakedPublicKeyHash);
 			return true;
 		}
-		bool Signing::SignNormal(const uint256_t& Hash, const Seckey PrivateKey, Sighash Signature)
+		bool Signing::SignNormal(const uint256_t& Hash, const Seckey SecretKey, Sighash Signature)
 		{
-			VI_ASSERT(PrivateKey != nullptr && Signature != nullptr, "private key and signature should be set");
+			VI_ASSERT(SecretKey != nullptr && Signature != nullptr, "secret key and signature should be set");
 			uint8_t Data[32];
 			Encoding::DecodeUint256(Hash, Data);
 			memset(Signature, 0, sizeof(Sighash));
 
 			secp256k1_context* Context = GetContext();
 			secp256k1_ecdsa_recoverable_signature RecoverableSignature;
-			if (secp256k1_ecdsa_sign_recoverable(Context, &RecoverableSignature, Data, PrivateKey, secp256k1_nonce_function_rfc6979, nullptr) != 1)
+			if (secp256k1_ecdsa_sign_recoverable(Context, &RecoverableSignature, Data, SecretKey, secp256k1_nonce_function_rfc6979, nullptr) != 1)
 				return false;
 
 			int BaseRecoveryId = 0;
@@ -255,28 +255,34 @@ namespace Tangent
 			memcpy(Signature + SignatureSize - 1, &RecoveryId, sizeof(RecoveryId));
 			return true;
 		}
-		bool Signing::SignTweaked(const uint256_t& Hash, const Seckey RootPrivateKey, Sighash Signature)
+		bool Signing::SignTweaked(const uint256_t& Hash, const Seckey RootSecretKey, Sighash Signature)
 		{
-			VI_ASSERT(RootPrivateKey != nullptr && Signature != nullptr, "root private key and signature should be set");
-			Seckey SignatureTweak;
-			if (!DeriveSignatureTweak(Hash, SignatureTweak))
-				return false;
-
+			VI_ASSERT(RootSecretKey != nullptr && Signature != nullptr, "root secret key and signature should be set");
 			Pubkey RootPublicKey;
-			if (!DerivePublicKey(RootPrivateKey, RootPublicKey))
+			if (!DerivePublicKey(RootSecretKey, RootPublicKey))
 				return false;
 
-			Seckey RootTweak;
-			DeriveRootTweak(RootPublicKey, RootTweak);
-
-			Seckey SignaturePrivateKey;
-			if (!PrivateKeyTweakMul(RootPrivateKey, RootTweak, SignaturePrivateKey))
+			Seckey TweakAlpha;
+			if (!DeriveTweakAlpha(RootSecretKey, RootPublicKey, TweakAlpha))
 				return false;
 
-			if (!PrivateKeyTweakAdd(SignaturePrivateKey, SignatureTweak, SignaturePrivateKey))
+			Seckey TweakGamma;
+			if (!DeriveTweakGamma(Hash, TweakGamma))
 				return false;
 
-			return SignNormal(Hash, SignaturePrivateKey, Signature);
+			Seckey SignatureSecretKey;
+			if (!ScalarAdd(RootSecretKey, TweakAlpha, SignatureSecretKey))
+				return false;
+
+			Seckey TweakBeta;
+			DeriveTweakBeta(RootPublicKey, TweakBeta);
+			if (!ScalarMultiply(SignatureSecretKey, TweakBeta, SignatureSecretKey))
+				return false;
+
+			if (!ScalarAdd(SignatureSecretKey, TweakGamma, SignatureSecretKey))
+				return false;
+
+			return SignNormal(Hash, SignatureSecretKey, Signature);
 		}
 		bool Signing::VerifyNormal(const uint256_t& Hash, const Pubkey PublicKey, const Sighash Signature)
 		{
@@ -300,13 +306,13 @@ namespace Tangent
 		bool Signing::VerifyTweaked(const uint256_t& Hash, const Pubkey TweakedPublicKey, const Sighash Signature)
 		{
 			VI_ASSERT(TweakedPublicKey != nullptr && Signature != nullptr, "tweaked public key and signature should be set");
-			Seckey SignatureTweak;
-			if (!DeriveSignatureTweak(Hash, SignatureTweak))
+			Seckey TweakGamma;
+			if (!DeriveTweakGamma(Hash, TweakGamma))
 				return false;
 
 			Pubkey SignaturePublicKey;
 			memcpy(SignaturePublicKey, TweakedPublicKey, sizeof(Pubkey));
-			if (!PrivateKeyTweakAdd(SignaturePublicKey, SignatureTweak, SignaturePublicKey))
+			if (!PointAdd(SignaturePublicKey, TweakGamma, SignaturePublicKey))
 				return false;
 
 			return VerifyNormal(Hash, SignaturePublicKey, Signature);
@@ -316,11 +322,11 @@ namespace Tangent
 			String Data = String(Mnemonic);
 			return mnemonic_check(Data.c_str()) == 1;
 		}
-		bool Signing::VerifyPrivateKey(const Seckey PrivateKey)
+		bool Signing::VerifySecretKey(const Seckey SecretKey)
 		{
-			VI_ASSERT(PrivateKey != nullptr, "private key should be set");
+			VI_ASSERT(SecretKey != nullptr, "secret key should be set");
 			secp256k1_context* Context = GetContext();
-			return secp256k1_ec_seckey_verify(Context, PrivateKey) == 1;
+			return secp256k1_ec_seckey_verify(Context, SecretKey) == 1;
 		}
 		bool Signing::VerifyPublicKey(const Pubkey PublicKey)
 		{
@@ -338,18 +344,18 @@ namespace Tangent
 		{
 			return Ciphertext.size() > crypto_box_SEALBYTES;
 		}
-		bool Signing::DerivePrivateKey(const std::string_view& Mnemonic, Seckey PrivateKey)
+		bool Signing::DeriveSecretKey(const std::string_view& Mnemonic, Seckey SecretKey)
 		{
-			VI_ASSERT(PrivateKey != nullptr, "private key should be set");
+			VI_ASSERT(SecretKey != nullptr, "secret key should be set");
 			uint8_t Seed[64] = { 0 };
 			String Data = String(Mnemonic);
 			mnemonic_to_seed(Data.c_str(), "", Seed, nullptr);
-			DerivePrivateKey(std::string_view((char*)Seed, sizeof(Seed)), PrivateKey, 1);
+			DeriveSecretKey(std::string_view((char*)Seed, sizeof(Seed)), SecretKey, 1);
 			return true;
 		}
-		bool Signing::DerivePrivateKey(const std::string_view& Seed, Seckey PrivateKey, size_t Iterations)
+		bool Signing::DeriveSecretKey(const std::string_view& Seed, Seckey SecretKey, size_t Iterations)
 		{
-			VI_ASSERT(PrivateKey != nullptr, "private key should be set");
+			VI_ASSERT(SecretKey != nullptr, "secret key should be set");
 			VI_ASSERT(Iterations > 0, "iterations should be greater than zero");
 			String Derivation = String(Seed);
 			for (size_t i = 0; i < Iterations; i++)
@@ -357,27 +363,27 @@ namespace Tangent
 				while (true)
 				{
 					Derivation = Hashing::Hash256((uint8_t*)Derivation.data(), Derivation.size());
-					memcpy(PrivateKey, Derivation.data(), sizeof(Seckey));
-					if (VerifyPrivateKey(PrivateKey))
+					memcpy(SecretKey, Derivation.data(), sizeof(Seckey));
+					if (VerifySecretKey(SecretKey))
 						return true;
 				}
 			}
 			return false;
 		}
-		void Signing::DeriveSealingKey(const Seckey PrivateKey, Pubkey SealingKey)
+		void Signing::DeriveSealingKey(const Seckey SecretKey, Pubkey SealingKey)
 		{
-			VI_ASSERT(PrivateKey != nullptr, "private key should be set");
+			VI_ASSERT(SecretKey != nullptr, "secret key should be set");
 			VI_ASSERT(SealingKey != nullptr, "sealing key should be set");
 			memset(SealingKey, 0, sizeof(Pubkey));
-			crypto_scalarmult_curve25519_base(SealingKey, PrivateKey);
+			crypto_scalarmult_curve25519_base(SealingKey, SecretKey);
 		}
-		bool Signing::DerivePublicKey(const Seckey PrivateKey, Pubkey PublicKey)
+		bool Signing::DerivePublicKey(const Seckey SecretKey, Pubkey PublicKey)
 		{
-			VI_ASSERT(PrivateKey != nullptr && PublicKey != nullptr, "private key and public key should be set");
+			VI_ASSERT(SecretKey != nullptr && PublicKey != nullptr, "secret key and public key should be set");
 			secp256k1_pubkey DerivedPublicKey;
 			secp256k1_context* Context = GetContext();
 			memset(PublicKey, 0, sizeof(Pubkey));
-			if (secp256k1_ec_pubkey_create(Context, &DerivedPublicKey, PrivateKey) != 1)
+			if (secp256k1_ec_pubkey_create(Context, &DerivedPublicKey, SecretKey) != 1)
 				return false;
 
 			size_t PublicKeySize = sizeof(Pubkey);
@@ -389,106 +395,126 @@ namespace Tangent
 			VI_ASSERT(PublicKeyHash != nullptr, "public key hash should be set");
 			ecdsa_get_pubkeyhash(PublicKey, HASHER_SHA3K, PublicKeyHash);
 		}
-		void Signing::DeriveRootTweak(const Pubkey RootPublicKey, Seckey RootTweak)
+		void Signing::DeriveScalar(const uint8_t* Input, size_t Size, Seckey Tweak)
 		{
-			VI_ASSERT(RootPublicKey != nullptr, "root public key should be set");
-			VI_ASSERT(RootTweak != nullptr, "root tweak should be set");
-			Hashing::Hash256(RootPublicKey, sizeof(Pubkey), RootTweak);
-			while (!VerifyPrivateKey(RootTweak))
-				Hashing::Hash256(RootTweak, sizeof(Seckey), RootTweak);
+			Hashing::Hash256(Input, Size, Tweak);
+			while (!VerifySecretKey(Tweak))
+				Hashing::Hash256(Tweak, sizeof(Seckey), Tweak);
 		}
-		bool Signing::DeriveSignatureTweak(const uint256_t& Hash, Seckey SignatureTweak)
+		bool Signing::DeriveTweakAlpha(const Seckey RootSecretKey, const Pubkey RootPublicKey, Seckey TweakAlpha)
+		{
+			Pubkey TweakDerivative;
+			if (!PointMultiply(RootPublicKey, RootSecretKey, TweakDerivative))
+				return false;
+
+			DeriveScalar(TweakDerivative, sizeof(Seckey), TweakAlpha);
+			return true;
+		}
+		void Signing::DeriveTweakBeta(const Pubkey RootPublicKey, Seckey TweakBeta)
+		{
+			DeriveScalar(RootPublicKey, sizeof(Pubkey), TweakBeta);
+		}
+		bool Signing::DeriveTweakGamma(const uint256_t& Hash, Seckey TweakGamma)
 		{
 			Seckey InputHash;
 			Encoding::DecodeUint256(Hash, InputHash);
-			while (!VerifyPrivateKey(InputHash))
-				Hashing::Hash256(InputHash, sizeof(InputHash), InputHash);
-		
-			Seckey OutputHash;
-			Hashing::Hash256(InputHash, sizeof(InputHash), OutputHash);
-			while (!VerifyPrivateKey(OutputHash))
-				Hashing::Hash256(OutputHash, sizeof(OutputHash), OutputHash);
 
-			return PrivateKeyTweakMul(InputHash, OutputHash, SignatureTweak);
+			Seckey ScalarAlpha, ScalarBeta;
+			DeriveScalar(InputHash, sizeof(InputHash), ScalarAlpha);
+			DeriveScalar(ScalarAlpha, sizeof(ScalarAlpha), ScalarBeta);
+			return ScalarMultiply(ScalarAlpha, ScalarBeta, TweakGamma);
 		}
-		bool Signing::DeriveTweakedPublicKey(const Pubkey RootPublicKey, Pubkey TweakedPublicKey)
+		bool Signing::DeriveTweakedPublicKey(const Seckey RootSecretKey, const Pubkey RootPublicKey, Pubkey TweakedPublicKey)
 		{
-			Seckey RootTweak;
-			DeriveRootTweak(RootPublicKey, RootTweak);
-			return PublicKeyTweakMul(RootPublicKey, RootTweak, TweakedPublicKey);
-		}
-		bool Signing::NegatePrivateKey(const Seckey PrivateKey, Seckey NegatedPrivateKey)
-		{
-			VI_ASSERT(PrivateKey != nullptr, "private key should be set");
-			VI_ASSERT(NegatedPrivateKey != nullptr, "negated private key should be set");
-			secp256k1_context* Context = GetContext();
-			if (PrivateKey != NegatedPrivateKey)
-				memcpy(NegatedPrivateKey, PrivateKey, sizeof(Seckey));
-			return secp256k1_ec_privkey_negate(Context, NegatedPrivateKey) == 1;
-		}
-		bool Signing::PrivateKeyTweakAdd(const Seckey PrivateKey, const Seckey Tweak, Seckey TweakedPrivateKey)
-		{
-			VI_ASSERT(PrivateKey != nullptr, "private key should be set");
-			VI_ASSERT(Tweak != nullptr, "tweak should be set");
-			VI_ASSERT(TweakedPrivateKey != nullptr, "tweaked private key should be set");
-			secp256k1_context* Context = GetContext();
-			if (PrivateKey != TweakedPrivateKey)
-				memcpy(TweakedPrivateKey, PrivateKey, sizeof(Seckey));
-			return secp256k1_ec_seckey_tweak_add(Context, TweakedPrivateKey, Tweak) == 1;
-		}
-		bool Signing::PrivateKeyTweakMul(const Seckey PrivateKey, const Seckey Tweak, Seckey TweakedPrivateKey)
-		{
-			VI_ASSERT(PrivateKey != nullptr, "private key should be set");
-			VI_ASSERT(Tweak != nullptr, "tweak should be set");
-			VI_ASSERT(TweakedPrivateKey != nullptr, "tweaked private key should be set");
-			secp256k1_context* Context = GetContext();
-			if (PrivateKey != TweakedPrivateKey)
-				memcpy(TweakedPrivateKey, PrivateKey, sizeof(Seckey));
-			return secp256k1_ec_seckey_tweak_mul(Context, TweakedPrivateKey, Tweak) == 1;
-		}
-		bool Signing::NegatePublicKey(const Pubkey PublicKey, Pubkey NegatedPublicKey)
-		{
-			VI_ASSERT(PublicKey != nullptr, "public key should be set");
-			VI_ASSERT(NegatedPublicKey != nullptr, "negated public key should be set");
-			secp256k1_pubkey SerializedPublicKey;
-			secp256k1_context* Context = GetContext();
-			if (secp256k1_ec_pubkey_parse(Context, &SerializedPublicKey, PublicKey, sizeof(Pubkey)) != 1)
+			Seckey TweakAlpha;
+			if (!DeriveTweakAlpha(RootSecretKey, RootPublicKey, TweakAlpha))
 				return false;
 
-			size_t NegatedPublicKeySize = sizeof(Pubkey);
-			bool Success = secp256k1_ec_pubkey_negate(Context, &SerializedPublicKey) == 1;
-			secp256k1_ec_pubkey_serialize(Context, NegatedPublicKey, &NegatedPublicKeySize, &SerializedPublicKey, SECP256K1_EC_COMPRESSED);
-			return Success;
-		}
-		bool Signing::PublicKeyTweakAdd(const Pubkey PublicKey, const Seckey Tweak, Pubkey TweakedPublicKey)
-		{
-			VI_ASSERT(PublicKey != nullptr, "public key should be set");
-			VI_ASSERT(Tweak != nullptr, "tweak should be set");
-			VI_ASSERT(TweakedPublicKey != nullptr, "tweaked public key should be set");
-			secp256k1_pubkey SerializedPublicKey;
-			secp256k1_context* Context = GetContext();
-			if (secp256k1_ec_pubkey_parse(Context, &SerializedPublicKey, PublicKey, sizeof(Pubkey)) != 1)
+			if (!PointAdd(RootPublicKey, TweakAlpha, TweakedPublicKey))
 				return false;
 
-			size_t TweakedPublicKeySize = sizeof(Pubkey);
-			bool Success = secp256k1_ec_pubkey_tweak_add(Context, &SerializedPublicKey, Tweak) == 1;
-			secp256k1_ec_pubkey_serialize(Context, TweakedPublicKey, &TweakedPublicKeySize, &SerializedPublicKey, SECP256K1_EC_COMPRESSED);
-			return Success;
+			Seckey TweakBeta;
+			DeriveTweakBeta(RootPublicKey, TweakBeta);
+			return PointMultiply(TweakedPublicKey, TweakBeta, TweakedPublicKey);
 		}
-		bool Signing::PublicKeyTweakMul(const Pubkey PublicKey, const Seckey Tweak, Pubkey TweakedPublicKey)
+		bool Signing::ScalarNegate(const Seckey Scalar, Seckey Result)
 		{
-			VI_ASSERT(PublicKey != nullptr, "public key should be set");
-			VI_ASSERT(Tweak != nullptr, "tweak should be set");
-			VI_ASSERT(TweakedPublicKey != nullptr, "tweaked public key should be set");
-			secp256k1_pubkey SerializedPublicKey;
+			VI_ASSERT(Scalar != nullptr, "scalar should be set");
+			VI_ASSERT(Result != nullptr, "result should be set");
 			secp256k1_context* Context = GetContext();
-			if (secp256k1_ec_pubkey_parse(Context, &SerializedPublicKey, PublicKey, sizeof(Pubkey)) != 1)
+			if (Scalar != Result)
+				memcpy(Result, Scalar, sizeof(Seckey));
+			return secp256k1_ec_seckey_negate(Context, Result) == 1;
+		}
+		bool Signing::ScalarAdd(const Seckey ScalarA, const Seckey ScalarB, Seckey Result)
+		{
+			VI_ASSERT(ScalarA != nullptr, "scalar a should be set");
+			VI_ASSERT(ScalarB != nullptr, "scalar b should be set");
+			VI_ASSERT(Result != nullptr, "result should be set");
+			secp256k1_context* Context = GetContext();
+			if (ScalarA != Result)
+				memcpy(Result, ScalarA, sizeof(Seckey));
+			return secp256k1_ec_seckey_tweak_add(Context, Result, ScalarB) == 1;
+		}
+		bool Signing::ScalarMultiply(const Seckey ScalarA, const Seckey ScalarB, Seckey Result)
+		{
+			VI_ASSERT(ScalarA != nullptr, "scalar a should be set");
+			VI_ASSERT(ScalarB != nullptr, "scalar b should be set");
+			VI_ASSERT(Result != nullptr, "result should be set");
+			secp256k1_context* Context = GetContext();
+			if (ScalarA != Result)
+				memcpy(Result, ScalarA, sizeof(Seckey));
+			return secp256k1_ec_seckey_tweak_mul(Context, Result, ScalarB) == 1;
+		}
+		bool Signing::PointNegate(const Pubkey Point, Pubkey Result)
+		{
+			VI_ASSERT(Point != nullptr, "point should be set");
+			VI_ASSERT(Result != nullptr, "result should be set");
+			secp256k1_pubkey NegatedPoint;
+			secp256k1_context* Context = GetContext();
+			if (secp256k1_ec_pubkey_parse(Context, &NegatedPoint, Point, sizeof(Pubkey)) != 1)
 				return false;
 
-			size_t TweakedPublicKeySize = sizeof(Pubkey);
-			bool Success = secp256k1_ec_pubkey_tweak_mul(Context, &SerializedPublicKey, Tweak) == 1;
-			secp256k1_ec_pubkey_serialize(Context, TweakedPublicKey, &TweakedPublicKeySize, &SerializedPublicKey, SECP256K1_EC_COMPRESSED);
-			return Success;
+			if (secp256k1_ec_pubkey_negate(Context, &NegatedPoint) != 1)
+				return false;
+
+			size_t ResultSize = sizeof(Pubkey);
+			secp256k1_ec_pubkey_serialize(Context, Result, &ResultSize, &NegatedPoint, SECP256K1_EC_COMPRESSED);
+			return true;
+		}
+		bool Signing::PointAdd(const Pubkey PointA, const Seckey ScalarB, Pubkey Result)
+		{
+			VI_ASSERT(PointA != nullptr, "point a should be set");
+			VI_ASSERT(ScalarB != nullptr, "scalar b should be set");
+			VI_ASSERT(Result != nullptr, "result should be set");
+			secp256k1_pubkey Point;
+			secp256k1_context* Context = GetContext();
+			if (secp256k1_ec_pubkey_parse(Context, &Point, PointA, sizeof(Pubkey)) != 1)
+				return false;
+
+			if (secp256k1_ec_pubkey_tweak_add(Context, &Point, ScalarB) != 1)
+				return false;
+
+			size_t ResultSize = sizeof(Pubkey);
+			secp256k1_ec_pubkey_serialize(Context, Result, &ResultSize, &Point, SECP256K1_EC_COMPRESSED);
+			return true;
+		}
+		bool Signing::PointMultiply(const Pubkey PointA, const Seckey ScalarB, Pubkey Result)
+		{
+			VI_ASSERT(PointA != nullptr, "point a should be set");
+			VI_ASSERT(ScalarB != nullptr, "scalar b should be set");
+			VI_ASSERT(Result != nullptr, "result should be set");
+			secp256k1_pubkey Point;
+			secp256k1_context* Context = GetContext();
+			if (secp256k1_ec_pubkey_parse(Context, &Point, PointA, sizeof(Pubkey)) != 1)
+				return false;
+
+			if (secp256k1_ec_pubkey_tweak_mul(Context, &Point, ScalarB) != 1)
+				return false;
+
+			size_t ResultSize = sizeof(Pubkey);
+			secp256k1_ec_pubkey_serialize(Context, Result, &ResultSize, &Point, SECP256K1_EC_COMPRESSED);
+			return true;
 		}
 		Option<String> Signing::PublicEncrypt(const Pubkey SealingKey, const std::string_view& Plaintext)
 		{
@@ -524,18 +550,18 @@ namespace Tangent
 
 			return Ciphertext;
 		}
-		Option<String> Signing::PrivateDecrypt(const Seckey PrivateKey, const std::string_view& Ciphertext)
+		Option<String> Signing::PrivateDecrypt(const Seckey SecretKey, const std::string_view& Ciphertext)
 		{
-			VI_ASSERT(PrivateKey != nullptr, "sealing private key should be set");
+			VI_ASSERT(SecretKey != nullptr, "sealing secret key should be set");
 			if (Ciphertext.size() <= crypto_box_SEALBYTES)
 				return Optional::None;
 
 			Pubkey SealingKey;
-			DeriveSealingKey(PrivateKey, SealingKey);
+			DeriveSealingKey(SecretKey, SealingKey);
 
 			String Shuffletext;
 			Shuffletext.resize(Ciphertext.size() - crypto_box_SEALBYTES);
-			if (crypto_box_seal_open((uint8_t*)Shuffletext.data(), (uint8_t*)Ciphertext.data(), Ciphertext.size(), SealingKey, PrivateKey) != 0)
+			if (crypto_box_seal_open((uint8_t*)Shuffletext.data(), (uint8_t*)Ciphertext.data(), Ciphertext.size(), SealingKey, SecretKey) != 0)
 				return Optional::None;
 
 			if (Shuffletext.size() < 64)
@@ -566,30 +592,30 @@ namespace Tangent
 			Shuffletext.erase(0, 16);
 			return Shuffletext;
 		}
-		bool Signing::DecodePrivateKey(const std::string_view& Value, Seckey PrivateKey)
+		bool Signing::DecodeSecretKey(const std::string_view& Value, Seckey SecretKey)
 		{
-			VI_ASSERT(PrivateKey != nullptr && Stringify::IsCString(Value), "private key and value should be set");
+			VI_ASSERT(SecretKey != nullptr && Stringify::IsCString(Value), "secret key and value should be set");
 			auto& Account = Protocol::Now().Account;
 			uint8_t Decoded[40];
 			size_t DecodedSize = sizeof(Decoded);
 			int Version = 0;
 
-			if (Segwit::Decode(&Version, Decoded, &DecodedSize, Account.PrivateKeyPrefix.c_str(), Value.data()) != 1)
+			if (Segwit::Decode(&Version, Decoded, &DecodedSize, Account.SecretKeyPrefix.c_str(), Value.data()) != 1)
 				return false;
-			else if (Version != (int)Account.PrivateKeyVersion)
+			else if (Version != (int)Account.SecretKeyVersion)
 				return false;
 			else if (DecodedSize != sizeof(Seckey))
 				return false;
 
-			memcpy(PrivateKey, Decoded, sizeof(Seckey));
+			memcpy(SecretKey, Decoded, sizeof(Seckey));
 			return true;
 		}
-		bool Signing::EncodePrivateKey(const Seckey PrivateKey, String& Value)
+		bool Signing::EncodeSecretKey(const Seckey SecretKey, String& Value)
 		{
-			VI_ASSERT(PrivateKey != nullptr, "private key should be set");
+			VI_ASSERT(SecretKey != nullptr, "secret key should be set");
 			auto& Account = Protocol::Now().Account;
 			char Encoded[128];
-			if (Segwit::Encode(Encoded, Account.PrivateKeyPrefix.c_str(), (int)Account.PrivateKeyVersion, PrivateKey, sizeof(Seckey)) != 1)
+			if (Segwit::Encode(Encoded, Account.SecretKeyPrefix.c_str(), (int)Account.SecretKeyVersion, SecretKey, sizeof(Seckey)) != 1)
 				return false;
 
 			size_t Size = strnlen(Encoded, sizeof(Encoded));
@@ -691,14 +717,14 @@ namespace Tangent
 			memcpy(Address.data(), Encoded, Size);
 			return true;
 		}
-		Schema* Signing::SerializePrivateKey(const Seckey PrivateKey)
+		Schema* Signing::SerializeSecretKey(const Seckey SecretKey)
 		{
 			Seckey Null = { 0 };
-			if (!memcmp(PrivateKey, Null, sizeof(Null)))
+			if (!memcmp(SecretKey, Null, sizeof(Null)))
 				return Var::Set::Null();
 
 			String Data;
-			if (!EncodePrivateKey(PrivateKey, Data))
+			if (!EncodeSecretKey(SecretKey, Data))
 				return Var::Set::Null();
 
 			return Var::Set::String(Data);
@@ -1015,18 +1041,18 @@ namespace Tangent
 			return Data;
 		}
 
-		ExpectsLR<void> Composition::DeriveKeypair1(Type Alg, CSeckey PrivateKey1, CPubkey PublicKey1)
+		ExpectsLR<void> Composition::DeriveKeypair1(Type Alg, CSeckey SecretKey1, CPubkey PublicKey1)
 		{
-			VI_ASSERT(PrivateKey1 != nullptr, "private key 1 should be set");
+			VI_ASSERT(SecretKey1 != nullptr, "secret key 1 should be set");
 			VI_ASSERT(PublicKey1 != nullptr, "public key 1 should be set");
-			Crypto::FillRandomBytes(PrivateKey1, sizeof(CSeckey));
+			Crypto::FillRandomBytes(SecretKey1, sizeof(CSeckey));
 			switch (Alg)
 			{
 				case Type::ED25519:
 				{
 					ed25519_public_key Point1;
-					ConvertToED25519Curve(PrivateKey1);
-					ed25519_publickey_ext(PrivateKey1, Point1);
+					ConvertToED25519Curve(SecretKey1);
+					ed25519_publickey_ext(SecretKey1, Point1);
 					memcpy(PublicKey1, Point1, sizeof(Point1));
 					Crypto::FillRandomBytes(PublicKey1 + sizeof(Point1), sizeof(Point1));
 					return Expectation::Met;
@@ -1034,12 +1060,12 @@ namespace Tangent
 				case Type::SECP256K1:
 				{
 					secp256k1_context* Context = Signing::GetContext();
-					while (secp256k1_ec_seckey_verify(Context, PrivateKey1) != 1)
-						Crypto::FillRandomBytes(PrivateKey1, sizeof(CSeckey));
+					while (secp256k1_ec_seckey_verify(Context, SecretKey1) != 1)
+						Crypto::FillRandomBytes(SecretKey1, sizeof(CSeckey));
 
 					secp256k1_pubkey Point1;
-					if (secp256k1_ec_pubkey_create(Context, &Point1, PrivateKey1) != 1)
-                        return LayerException("bad private key 1");
+					if (secp256k1_ec_pubkey_create(Context, &Point1, SecretKey1) != 1)
+                        return LayerException("bad secret key 1");
                     
 					memcpy(PublicKey1, Point1.data, sizeof(Point1.data));
 					return Expectation::Met;
@@ -1048,13 +1074,13 @@ namespace Tangent
 					return LayerException("invalid composition algorithm");
 			}
 		}
-		ExpectsLR<void> Composition::DeriveKeypair2(Type Alg, const CPubkey PublicKey1, CSeckey PrivateKey2, CPubkey PublicKey2, Pubkey PublicKey, size_t* PublicKeySize)
+		ExpectsLR<void> Composition::DeriveKeypair2(Type Alg, const CPubkey PublicKey1, CSeckey SecretKey2, CPubkey PublicKey2, Pubkey PublicKey, size_t* PublicKeySize)
 		{
 			VI_ASSERT(PublicKey1 != nullptr, "public key 1 should be set");
-			VI_ASSERT(PrivateKey2 != nullptr, "private key 2 should be set");
+			VI_ASSERT(SecretKey2 != nullptr, "secret key 2 should be set");
 			VI_ASSERT(PublicKey2 != nullptr, "public key 2 should be set");
 			VI_ASSERT(PublicKey != nullptr, "public key should be set");
-			Crypto::FillRandomBytes(PrivateKey2, sizeof(CSeckey));
+			Crypto::FillRandomBytes(SecretKey2, sizeof(CSeckey));
 			memset(PublicKey, 0, sizeof(Pubkey));
 			switch (Alg)
 			{
@@ -1064,8 +1090,8 @@ namespace Tangent
 					memcpy(Point1, PublicKey1, sizeof(Point1));
 
 					uint8_t Point2[crypto_sign_PUBLICKEYBYTES];
-					ConvertToED25519Curve(PrivateKey2);
-					ed25519_publickey_ext(PrivateKey2, Point2);
+					ConvertToED25519Curve(SecretKey2);
+					ed25519_publickey_ext(SecretKey2, Point2);
 					memcpy(PublicKey2, Point2, sizeof(Point2));
 					Crypto::FillRandomBytes(PublicKey2 + sizeof(Point2), sizeof(Point2));
 
@@ -1088,8 +1114,8 @@ namespace Tangent
 
 					uint8_t Z[crypto_sign_PUBLICKEYBYTES];
 					crypto_core_ed25519_add(Z, Point1, X);
-					if (crypto_scalarmult_ed25519(Point1, PrivateKey2, Z) != 0)
-                        return LayerException("bad private key 2");
+					if (crypto_scalarmult_ed25519(Point1, SecretKey2, Z) != 0)
+                        return LayerException("bad secret key 2");
                     
 					crypto_core_ed25519_add(Z, Point1, Y);
 					memcpy(PublicKey, Z, sizeof(Z));
@@ -1100,15 +1126,15 @@ namespace Tangent
 				case Type::SECP256K1:
 				{
 					secp256k1_context* Context = Signing::GetContext();
-					while (secp256k1_ec_seckey_verify(Context, PrivateKey2) != 1)
-						Crypto::FillRandomBytes(PrivateKey2, sizeof(CSeckey));
+					while (secp256k1_ec_seckey_verify(Context, SecretKey2) != 1)
+						Crypto::FillRandomBytes(SecretKey2, sizeof(CSeckey));
 
 					secp256k1_pubkey Point1;
 					memcpy(Point1.data, PublicKey1, sizeof(Point1));
 
 					secp256k1_pubkey Point2;
-					if (secp256k1_ec_pubkey_create(Context, &Point2, PrivateKey2) != 1)
-                        return LayerException("bad private key 2");
+					if (secp256k1_ec_pubkey_create(Context, &Point2, SecretKey2) != 1)
+                        return LayerException("bad secret key 2");
 
 					memcpy(PublicKey2, Point2.data, sizeof(Point2.data));
 					Seckey X, Y;
@@ -1138,13 +1164,13 @@ namespace Tangent
 
 					size_t KeySize = sizeof(Pubkey);
 					if (secp256k1_ec_pubkey_tweak_add(Context, &Point1, X) != 1)
-                        return LayerException("bad private key 2");
+                        return LayerException("bad secret key 2");
                     
-                    if (secp256k1_ec_pubkey_tweak_mul(Context, &Point1, PrivateKey2) != 1)
-                        return LayerException("bad private key 2");
+                    if (secp256k1_ec_pubkey_tweak_mul(Context, &Point1, SecretKey2) != 1)
+                        return LayerException("bad secret key 2");
                     
                     if (secp256k1_ec_pubkey_tweak_add(Context, &Point1, Y) != 1)
-                        return LayerException("bad private key 2");
+                        return LayerException("bad secret key 2");
                     
 					secp256k1_ec_pubkey_serialize(Context, PublicKey, &KeySize, &Point1, SECP256K1_EC_COMPRESSED);
 					if (PublicKeySize != nullptr)
@@ -1155,12 +1181,12 @@ namespace Tangent
 					return LayerException("invalid composition algorithm");
 			}
 		}
-		ExpectsLR<void> Composition::DerivePrivateKey(Type Alg, const CSeckey Secret1, const CSeckey Secret2, CSeckey PrivateKey, size_t* PrivateKeySize)
+		ExpectsLR<void> Composition::DeriveSecretKey(Type Alg, const CSeckey Secret1, const CSeckey Secret2, CSeckey SecretKey, size_t* SecretKeySize)
 		{
-			VI_ASSERT(PrivateKey != nullptr, "private key should be set");
+			VI_ASSERT(SecretKey != nullptr, "secret key should be set");
 			VI_ASSERT(Secret1 != nullptr, "secret1 should be set");
 			VI_ASSERT(Secret2 != nullptr, "secret2 should be set");
-			memset(PrivateKey, 0, sizeof(CSeckey));
+			memset(SecretKey, 0, sizeof(CSeckey));
 			switch (Alg)
 			{
 				case Type::ED25519:
@@ -1197,9 +1223,9 @@ namespace Tangent
 					crypto_core_ed25519_scalar_mul(W, Z, Secret2);
 					crypto_core_ed25519_scalar_add(Z, W, FY);
 					memcpy(Z + 32, FZ, sizeof(FZ));
-					memcpy(PrivateKey, Z, sizeof(Z));
-					if (PrivateKeySize != nullptr)
-						*PrivateKeySize = sizeof(Z);
+					memcpy(SecretKey, Z, sizeof(Z));
+					if (SecretKeySize != nullptr)
+						*SecretKeySize = sizeof(Z);
 					return Expectation::Met;
 				}
 				case Type::SECP256K1:
@@ -1237,29 +1263,29 @@ namespace Tangent
 						sha256_Raw(Data, sizeof(Data), Y);
 					}
 
-					memcpy(PrivateKey, Secret1, sizeof(Seckey));
-                    if (secp256k1_ec_seckey_tweak_add(Context, PrivateKey, X) != 1)
+					memcpy(SecretKey, Secret1, sizeof(Seckey));
+                    if (secp256k1_ec_seckey_tweak_add(Context, SecretKey, X) != 1)
                         return LayerException("bad secret key 2");
                     
-                    if (secp256k1_ec_seckey_tweak_mul(Context, PrivateKey, Secret2) != 1)
+                    if (secp256k1_ec_seckey_tweak_mul(Context, SecretKey, Secret2) != 1)
                         return LayerException("bad secret key 2");
 
-                    if (secp256k1_ec_seckey_tweak_add(Context, PrivateKey, Y) != 1)
+                    if (secp256k1_ec_seckey_tweak_add(Context, SecretKey, Y) != 1)
                         return LayerException("bad secret key 2");
 
-					if (PrivateKeySize)
-						*PrivateKeySize = 32;
+					if (SecretKeySize)
+						*SecretKeySize = 32;
 					return Expectation::Met;
 				}
 				default:
 					return LayerException("invalid composition algorithm");
 			}
 		}
-		void Composition::ConvertToED25519Curve(uint8_t PrivateKey[64])
+		void Composition::ConvertToED25519Curve(uint8_t SecretKey[64])
 		{
-			PrivateKey[0] &= 248;
-			PrivateKey[31] &= 127;
-			PrivateKey[31] |= 64;
+			SecretKey[0] &= 248;
+			SecretKey[31] &= 127;
+			SecretKey[31] |= 64;
 		}
 	}
 }

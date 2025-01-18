@@ -709,11 +709,11 @@ namespace Tangent
 		{
 			case Tangent::NetworkType::Regtest:
 				Message.PacketMagic = 0xe249c307;
-				Account.PrivateKeyPrefix = "prvrt";
+				Account.SecretKeyPrefix = "secrt";
 				Account.SealingKeyPrefix = "sealrt";
 				Account.PublicKeyPrefix = "pubrt";
 				Account.AddressPrefix = "tcrt";
-				Account.PrivateKeyVersion = 0xD;
+				Account.SecretKeyVersion = 0xD;
 				Account.PublicKeyVersion = 0xC;
 				Account.SealingKeyVersion = 0xA;
 				Account.AddressVersion = 0x6;
@@ -723,11 +723,11 @@ namespace Tangent
 				break;
 			case Tangent::NetworkType::Testnet:
 				Message.PacketMagic = 0xf815c95c;
-				Account.PrivateKeyPrefix = "prvt";
+				Account.SecretKeyPrefix = "sect";
 				Account.SealingKeyPrefix = "sealt";
 				Account.PublicKeyPrefix = "pubt";
 				Account.AddressPrefix = "tct";
-				Account.PrivateKeyVersion = 0xE;
+				Account.SecretKeyVersion = 0xE;
 				Account.PublicKeyVersion = 0xD;
 				Account.SealingKeyVersion = 0xB;
 				Account.AddressVersion = 0x5;

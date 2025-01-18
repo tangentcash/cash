@@ -18,63 +18,70 @@
 # - root public key when must not be revealed if environment is vulnerable to Shor's algorithm (pk will be dsk - derivative of secret key)
 # - other properties are exactly the same as in any other ECC algorithms
 
-def BLINDING_TWEAK_RT(PUBLIC_KEY):
-  ROOT_TWEAK = HASH256(PUBLIC_KEY)              # Derive a root tweak by hashing the root public key
-  while not ECC::VERIFY_SECRET_KEY(ROOT_TWEAK): # If root tweak is not a valid private key then hash it again
-    ROOT_TWEAK = HASH256(ROOT_TWEAK)
-  return ROOT_TWEAK
+def BLINDING_SCALAR(INPUT):
+  SCALAR = HASH256(INPUT)                    # Derive a tweak by hashing the input
+  while not ECC::VERIFY_SECRET_KEY(SCALAR):  # If tweak is not a valid private key then hash it again
+    SCALAR = HASH256(SCALAR)
+  return SCALAR
+
+def BLINDING_TWEAK_ALPHA(SECRET_KEY, PUBLIC_KEY):
+  TWEAK_DERIVATIVE = ECC::POINT_MULTIPLY(PUBLIC_KEY, SECRET_KEY) # Calculate tweak derivative by point multiplying a root public key by a root secret key
+  TWEAK_ALPHA = BLINDING_SCALAR(TWEAK_DERIVATIVE)                # Derive a tweak alpha by blinding the tweak derivative
+  return TWEAK_ALPHA
+
+def BLINDING_TWEAK_BETA(PUBLIC_KEY):
+  TWEAK_BETA = BLINDING_SCALAR(PUBLIC_KEY) # Derive a tweak beta by hashing the root public key
+  return TWEAK_BETA
+
+def BLINDING_TWEAK_GAMMA(MESSAGE_HASH256):
+  SCALAR_ALPHA = BLINDING_SCALAR(MESSAGE_HASH256)                # Derive a scalar alpha by blinding the message hash
+  SCALAR_BETA = BLINDING_SCALAR(SCALAR_ALPHA)                    # Derive a scalar beta by blinding the scalar alpha
+  TWEAK_GAMMA = ECC::SCALAR_MULTIPLY(SCALAR_ALPHA, SCALAR_BETA)  # Derive a tweak gamma by scalar multiplying scalar alpha by scalar beta
+  return TWEAK_GAMMA
 
 def BLINDING_KEYPAIR(ENTROPY):
-  ROOT_SECRET_KEY = ECC::KEYGEN(ENTROPY)                                # Derive a root secret key from entropy
-  ROOT_PUBLIC_KEY = ECC::DERIVE(ROOT_SECRET_KEY)                        # Derive a root public key from secret key
-  ROOT_TWEAK = BLINDING_TWEAK_RT(ROOT_PUBLIC_KEY)                       # Derive a root tweak by hashing the root public key
-  TWEAKED_PUBLIC_KEY = ECC::POINT_MULTIPLY(ROOT_PUBLIC_KEY, ROOT_TWEAK) # Derive a tweaked public key from point multiplying root public key by root tweak
-  TWEAKED_PUBLIC_KEY_HASH = HASH160(TWEAKED_PUBLIC_KEY)                 # Derive a tweaked public key hash by hashing the tweaked public key
+  ROOT_SECRET_KEY = ECC::KEYGEN(ENTROPY)                                 # Derive a root secret key from entropy
+  ROOT_PUBLIC_KEY = ECC::DERIVE(ROOT_SECRET_KEY)                         # Derive a root public key from secret key
+  TWEAK_ALPHA = BLINDING_TWEAK_ALPHA(ROOT_SECRET_KEY, ROOT_PUBLIC_KEY)   # Derive a tweak alpha from root secret key
+  TWEAK_BETA = BLINDING_TWEAK_BETA(ROOT_PUBLIC_KEY)                      # Derive a tweak beta from root public key
+  TWEAK_DERIVATIVE = ECC::POINT_ADD(ROOT_PUBLIC_KEY, TWEAK_ALPHA)        # Calculate a tweak derivative by point adding root public key and tweak alpha
+  TWEAKED_PUBLIC_KEY = ECC::POINT_MULTIPLY(TWEAK_DERIVATIVE, TWEAK_BETA) # Derive a tweaked public key from point multiplying tweak derivative by tweak beta
+  TWEAKED_PUBLIC_KEY_HASH = HASH160(TWEAKED_PUBLIC_KEY)                  # Derive a tweaked public key hash by hashing the tweaked public key
   return {
     SECRET_KEY: ROOT_SECRET_KEY,
     PUBLIC_KEY: TWEAKED_PUBLIC_KEY,
     ADDRESS: TWEAKED_PUBLIC_KEY_HASH
   }
 
-def BLINDING_TWEAK_ST(MESSAGE_HASH32):
-  SIGNATURE_TWEAK_A = MESSAGE_HASH32                                           # Assign tweak A to hash of a message
-  while not ECC::VERIFY_SECRET_KEY(SIGNATURE_TWEAK_A):                         # If tweak A is not a valid private key then hash it
-    SIGNATURE_TWEAK_A = HASH256(SIGNATURE_TWEAK_A)
 
-  SIGNATURE_TWEAK_B = HASH256(SIGNATURE_TWEAK_A)                               # Assign tweak B to hash of tweak A
-  while not ECC::VERIFY_SECRET_KEY(SIGNATURE_TWEAK_B):                         # If tweak B is not a valid private key then hash it again
-    SIGNATURE_TWEAK_B = HASH256(SIGNATURE_TWEAK_B)
-
-  SIGNATURE_TWEAK = ECC::SCALAR_MULTIPLY(SIGNATURE_TWEAK_A, SIGNATURE_TWEAK_B) # Derive a signature tweak by scalar multiplying tweak A by tweak B
-  return SIGNATURE_TWEAK
-
-
-def BLINDING_SIGN(MESSAGE_HASH32, SECRET_KEY):
-  SIGNATURE_TWEAK = BLINDING_TWEAK_ST(MESSAGE_HASH32)                                                        # Derive a signature tweak from message
-  ROOT_PUBLIC_KEY = ECC::DERIVE(ROOT_SECRET_KEY)                                                             # Derive a root public key from secret key
-  ROOT_TWEAK = BLINDING_TWEAK_RT(ROOT_PUBLIC_KEY)                                                            # Derive a root tweak by hashing the root public key
-  SIGNATURE_SECRET_KEY = ECC::SCALAR_ADD(ECC::SCALAR_MULTIPLY(ROOT_SECRET_KEY, ROOT_TWEAK), SIGNATURE_TWEAK) # Derive a signature secret key by scalar adding signature tweak to scalar multiplication of root secret key by root tweak
-  (SIGNATURE, RECOVERY_ID) = ECC::SIGN(MESSAGE_HASH32, SIGNATURE_SECRET_KEY)                                 # Sign a message hash with signature secret key
+def BLINDING_SIGN(MESSAGE_HASH256, SECRET_KEY):
+  ROOT_PUBLIC_KEY = ECC::DERIVE(ROOT_SECRET_KEY)                              # Derive a root public key from secret key
+  TWEAK_ALPHA = BLINDING_TWEAK_ALPHA(ROOT_SECRET_KEY, ROOT_PUBLIC_KEY)        # Derive a tweak alpha from root secret key
+  TWEAK_BETA = BLINDING_TWEAK_BETA(ROOT_PUBLIC_KEY)                           # Derive a tweak beta from root public key
+  TWEAK_GAMMA = BLINDING_TWEAK_GAMMA(MESSAGE_HASH256)                         # Derive a tweak gamma from message
+  TWEAK_DERIVATIVE = ECC::SCALAR_ADD(ROOT_SECRET_KEY, TWEAK_ALPHA)            # Calculate a tweak derivative by scalar adding root secret key and tweak alpha
+  TWEAKED_SECRET_KEY = ECC::SCALAR_MULTIPLY(TWEAK_DERIVATIVE, TWEAK_BETA)     # Calculate a tweaked secret key by scalar multiplying tweak derivative 1 by tweak beta
+  SIGNATURE_SECRET_KEY = ECC::SCALAR_ADD(TWEAKED_SECRET_KEY, TWEAK_GAMMA)     # Derive a signature secret key by scalar adding tweaked secret key and tweak gamma
+  (SIGNATURE, RECOVERY_ID) = ECC::SIGN(MESSAGE_HASH256, SIGNATURE_SECRET_KEY) # Sign a message hash with signature secret key
   return {
     SIGNATURE: SIGNATURE,
     RECOVERY_ID: RECOVERY_ID
   }
 
-def BLINDING_VERIFY(MESSAGE_HASH32, SIGNATURE, PUBLIC_KEY):
-  SIGNATURE_TWEAK = BLINDING_TWEAK_ST(MESSAGE_HASH32)                  # Derive a signature tweak from message
-  SIGNATURE_PUBLIC_KEY = ECC::POINT_ADD(PUBLIC_KEY, SIGNATURE_TWEAK)   # Derive a signature public key from tweaked public key by point adding tweaked public key with signature tweak
-  VALID = ECC::VERIFY(MESSAGE_HASH32, SIGNATURE, SIGNATURE_PUBLIC_KEY) # Verify signature with signature public key
+def BLINDING_VERIFY(MESSAGE_HASH256, SIGNATURE, PUBLIC_KEY):
+  TWEAK_GAMMA = BLINDING_TWEAK_GAMMA(MESSAGE_HASH256)                   # Derive a tweak gamma from message
+  SIGNATURE_PUBLIC_KEY = ECC::POINT_ADD(PUBLIC_KEY, TWEAK_GAMMA)        # Derive a signature public key from tweaked public key by point adding tweaked public key with tweak gamma
+  VALID = ECC::VERIFY(MESSAGE_HASH256, SIGNATURE, SIGNATURE_PUBLIC_KEY) # Verify signature with signature public key
   return VALID
 
-def BLINDING_RECOVER(MESSAGE_HASH32, SIGNATURE, RECOVERY_ID):
-  SIGNATURE_PUBLIC_KEY = ECC::RECOVER(MESSAGE_HASH32, SIGNATURE, RECOVERY_ID)         # Recover a signature public key from signature using recovery id
-  if not ECC::VERIFY_PUBLIC_KEY(SIGNATURE_PUBLIC_KEY):                                # If recovered public key is not valid then signature is not valid
+def BLINDING_RECOVER(MESSAGE_HASH256, SIGNATURE, RECOVERY_ID):
+  SIGNATURE_PUBLIC_KEY = ECC::RECOVER(MESSAGE_HASH256, SIGNATURE, RECOVERY_ID) # Recover a signature public key from signature using recovery id
+  if not ECC::VERIFY_PUBLIC_KEY(SIGNATURE_PUBLIC_KEY):                         # If recovered public key is not valid then signature is not valid
     return None
   
-  SIGNATURE_TWEAK = BLINDING_TWEAK_ST(MESSAGE_HASH32)                                 # Derive a signature tweak from message
-  SIGNATURE_TWEAK_NEGATIVE = ECC::SCALAR_NEGATE(SIGNATURE_TWEAK)                      # Negate a signature tweak
-  TWEAKED_PUBLIC_KEY = ECC::POINT_ADD(SIGNATURE_PUBLIC_KEY, SIGNATURE_TWEAK_NEGATIVE) # Derive a tweaked public key by point adding signature public key with a negative of signature tweak
-  TWEAKED_PUBLIC_KEY_HASH = HASH160(TWEAKED_PUBLIC_KEY)                               # Derive a tweaked public key hash by hashing the tweaked public key
+  TWEAK_GAMMA = BLINDING_TWEAK_GAMMA(MESSAGE_HASH256)                          # Derive a tweak gamma from message
+  TWEAKED_PUBLIC_KEY = ECC::POINT_SUBTRACT(SIGNATURE_PUBLIC_KEY, TWEAK_GAMMA)  # Derive a tweaked public key by point adding signature public key with a negative of tweak gamma
+  TWEAKED_PUBLIC_KEY_HASH = HASH160(TWEAKED_PUBLIC_KEY)                        # Derive a tweaked public key hash by hashing the tweaked public key
   return {
     PUBLIC_KEY: TWEAKED_PUBLIC_KEY,
     ADDRESS: TWEAKED_PUBLIC_KEY_HASH
