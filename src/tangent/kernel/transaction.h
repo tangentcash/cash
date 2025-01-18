@@ -208,7 +208,7 @@ namespace Tangent
 		class GasUtil
 		{
 		public:
-			static uint256_t GetGasWork(const uint128_t& Difficulty, const uint256_t& GasUse, const uint256_t& GasLimit);
+			static uint256_t GetGasWork(const uint128_t& Difficulty, const uint256_t& GasUse, const uint256_t& GasLimit, uint64_t Priority);
 			static uint256_t GetOperationalGasEstimate(size_t Size, size_t Operations);
 			static uint256_t GetStorageGasEstimate(size_t BytesIn, size_t BytesOut);
 			template <typename T, size_t Operations>

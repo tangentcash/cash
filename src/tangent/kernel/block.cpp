@@ -350,7 +350,7 @@ namespace Tangent
 			if (!TransactionsRoot || !ReceiptsRoot || !StatesRoot)
 				return LayerException("invalid transactions/receipts/states merkle tree root");
 
-			uint256_t GasWork = GasUtil::GetGasWork(Difficulty, GasUse, GasLimit);
+			uint256_t GasWork = GasUtil::GetGasWork(Difficulty, GasUse, GasLimit, Priority);
 			if (!GasLimit || GasUse > GasLimit || AbsoluteWork < GasWork)
 				return LayerException("invalid gas work");
 
@@ -1156,7 +1156,7 @@ namespace Tangent
 			StatesRoot = Tree.CalculateRoot();
 
 			uint256_t Cumulative = GetSlotLength() > 1 ? 1 : 0;
-			AbsoluteWork = (ParentBlock ? ParentBlock->AbsoluteWork : uint256_t(0)) + GasUtil::GetGasWork(Target.Difficulty(), GasUse, GasLimit);
+			AbsoluteWork = (ParentBlock ? ParentBlock->AbsoluteWork : uint256_t(0)) + GasUtil::GetGasWork(Target.Difficulty(), GasUse, GasLimit, Priority);
 			SlotGasUse = (ParentBlock ? ParentBlock->SlotGasUse : uint256_t(0)) * Cumulative + GasUse;
 			SlotGasTarget = (ParentBlock ? ParentBlock->SlotGasTarget : uint256_t(0)) * Cumulative + (Transactions.size() > 0 ? GasUse / Transactions.size() : uint256_t(0));
 			SlotDuration = (ParentBlock ? ParentBlock->SlotDuration + ParentBlock->GetDuration() : uint256_t(0)) * Cumulative;

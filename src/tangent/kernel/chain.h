@@ -235,7 +235,7 @@ namespace Tangent
             uint64_t ConsensusAdjustmentTime = 3600000;
             uint64_t ConsensusPenaltyPointTime = 600000;
             uint64_t ConsensusRecoveryProofs = 12;
-            uint64_t TransactionThroughput = 410;
+            uint64_t TransactionThroughput = 210;
             uint64_t ParallelDelegationLimit = 1;
             uint64_t ParallelConsensusLimit = 128;
             uint64_t ParallelAggregationLimit = 256;

@@ -924,14 +924,17 @@ namespace Tangent
 			return Composite;
 		}
 
-		uint256_t GasUtil::GetGasWork(const uint128_t& Difficulty, const uint256_t& GasUse, const uint256_t& GasLimit)
+		uint256_t GasUtil::GetGasWork(const uint128_t& Difficulty, const uint256_t& GasUse, const uint256_t& GasLimit, uint64_t Priority)
 		{
 			if (!GasLimit)
 				return 0;
 
-			uint256_t Multiplier = 16;
-			uint256_t Work = (8192 * GasUse) / GasLimit;
-			return Work - (Work % Multiplier) + Multiplier;
+			auto& Policy = Protocol::Now().Policy;
+			uint256_t Alignment = 16;
+			uint256_t Committee = Policy.ConsensusCommitteeMajors + Policy.ConsensusCommitteeMinors;
+			uint256_t Multiplier = Priority >= Committee ? 0 : Math64u::Pow3(Committee - Priority);
+			uint256_t Work = (Multiplier * GasUse) / GasLimit;
+			return Work - (Work % Alignment) + Alignment;
 		}
 		uint256_t GasUtil::GetOperationalGasEstimate(size_t Bytes, size_t Operations)
 		{
