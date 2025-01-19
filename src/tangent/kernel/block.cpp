@@ -621,20 +621,12 @@ namespace Tangent
 			if (MutationsA != MutationsB)
 				return MutationsA > MutationsB ? 1 : -1;
 
-			Format::Stream MessageA;
-			if (!Store(&MessageA))
-				return -1;
+			uint256_t HashA = AsHash();
+			uint256_t HashB = Other.AsHash();
+			if (HashA == HashB)
+				return 0;
 
-			Format::Stream MessageB;
-			if (!Other.Store(&MessageB))
-				return 1;
-
-			uint256_t HashA = MessageA.Hash();
-			uint256_t HashB = MessageB.Hash();
-			if (HashA != HashB)
-				return HashA > HashB ? -1 : 1;
-
-			return MessageA.Data.compare(MessageB.Data);
+			return HashA > HashB ? -1 : 1;
 		}
 		uint256_t BlockHeader::GetSlotGasUse() const
 		{
