@@ -133,7 +133,7 @@ public:
 	}
 	static void TestPubkeyAccounts(Vector<UPtr<Ledger::Transaction>>& Transactions, const Ledger::Wallet& User1, uint64_t User1Sequence, const Ledger::Wallet& User2, uint64_t User2Sequence)
 	{
-		auto EthereumWallet = Oracle::Datamaster::NewSigningWallet(Algorithm::Asset::IdOf("ETH"), Oracle::Datamaster::NewMasterWallet(Algorithm::Asset::IdOf("ETH"), "000001").Expect("master wallet not derived")).Expect("signing wallet not derived");
+		auto EthereumWallet = Observer::Datamaster::NewSigningWallet(Algorithm::Asset::IdOf("ETH"), Observer::Datamaster::NewMasterWallet(Algorithm::Asset::IdOf("ETH"), "000001").Expect("master wallet not derived")).Expect("signing wallet not derived");
 		auto* PubkeyAccountEthereum = Memory::New<Transactions::PubkeyAccount>();
 		PubkeyAccountEthereum->SetAsset("ETH");
 		PubkeyAccountEthereum->SetEstimateGas(Decimal::Zero());
@@ -142,7 +142,7 @@ public:
 		VI_PANIC(PubkeyAccountEthereum->Sign(User1.SecretKey, User1Sequence++), "account not signed");
 		Transactions.push_back(PubkeyAccountEthereum);
 
-		auto RippleWallet = Oracle::Datamaster::NewSigningWallet(Algorithm::Asset::IdOf("XRP"), Oracle::Datamaster::NewMasterWallet(Algorithm::Asset::IdOf("XRP"), "000002").Expect("master wallet not derived")).Expect("signing wallet not derived");
+		auto RippleWallet = Observer::Datamaster::NewSigningWallet(Algorithm::Asset::IdOf("XRP"), Observer::Datamaster::NewMasterWallet(Algorithm::Asset::IdOf("XRP"), "000002").Expect("master wallet not derived")).Expect("signing wallet not derived");
 		auto* PubkeyAccountRipple = Memory::New<Transactions::PubkeyAccount>();
 		PubkeyAccountRipple->SetAsset("XRP");
 		PubkeyAccountRipple->SetEstimateGas(Decimal::Zero());
@@ -151,7 +151,7 @@ public:
 		VI_PANIC(PubkeyAccountRipple->Sign(User1.SecretKey, User1Sequence++), "account not signed");
 		Transactions.push_back(PubkeyAccountRipple);
 
-		auto BitcoinWallet = Oracle::Datamaster::NewSigningWallet(Algorithm::Asset::IdOf("BTC"), Oracle::Datamaster::NewMasterWallet(Algorithm::Asset::IdOf("BTC"), "000003").Expect("master wallet not derived")).Expect("signing wallet not derived");
+		auto BitcoinWallet = Observer::Datamaster::NewSigningWallet(Algorithm::Asset::IdOf("BTC"), Observer::Datamaster::NewMasterWallet(Algorithm::Asset::IdOf("BTC"), "000003").Expect("master wallet not derived")).Expect("signing wallet not derived");
 		auto* PubkeyAccountBitcoin = Memory::New<Transactions::PubkeyAccount>();
 		PubkeyAccountBitcoin->SetAsset("BTC");
 		PubkeyAccountBitcoin->SetEstimateGas(Decimal::Zero());
@@ -257,8 +257,8 @@ public:
 		ClaimEthereum1->SetEstimateGas(Decimal::Zero());
 		ClaimEthereum1->SetWitness(14977180,
 			"0x3bc2c98682f1b8feaacbde8f3f56494cd778da9d042da8439fb698d41bf060ea", 0.0,
-			{ Oracle::Transferer("0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5", Optional::None, 150) },
-			{ Oracle::Transferer(AddressEthereum1->Addresses.begin()->second, AddressEthereum1->AddressIndex, 150) });
+			{ Observer::Transferer("0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5", Optional::None, 150) },
+			{ Observer::Transferer(AddressEthereum1->Addresses.begin()->second, AddressEthereum1->AddressIndex, 150) });
 		VI_PANIC(ClaimEthereum1->Sign(User1.SecretKey, User1Sequence++), "claim not signed");
 		VI_PANIC(ClaimEthereum1->Attestate(User2.SecretKey), "claim not attestated");
 		Transactions.push_back(ClaimEthereum1);
@@ -268,8 +268,8 @@ public:
 		ClaimEthereum2->SetEstimateGas(Decimal::Zero());
 		ClaimEthereum2->SetWitness(14977181,
 			"0x7bc2c98682f1b8fea2031e8f3f56494cd778da9d042da8439fb698d41bf061ea", 0.0,
-			{ Oracle::Transferer("0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5", Optional::None, 110) },
-			{ Oracle::Transferer(AddressEthereum2->Addresses.begin()->second, AddressEthereum2->AddressIndex, 110) });
+			{ Observer::Transferer("0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5", Optional::None, 110) },
+			{ Observer::Transferer(AddressEthereum2->Addresses.begin()->second, AddressEthereum2->AddressIndex, 110) });
 		VI_PANIC(ClaimEthereum2->Sign(User2.SecretKey, User2Sequence++), "claim not signed");
 		VI_PANIC(ClaimEthereum2->Attestate(User1.SecretKey), "claim not attestated");
 		Transactions.push_back(ClaimEthereum2);
@@ -279,8 +279,8 @@ public:
 		ClaimRipple->SetEstimateGas(Decimal::Zero());
 		ClaimRipple->SetWitness(88546831,
 			"6618D20B801AF96DD060B34228E2594E30AFB7B33E335A8C60199B6CF8B0A69F", 0.0,
-			{ Oracle::Transferer("rUBqz2JiRCT3gYZBnm28y5ME7e5UpSm2ok", Optional::None, 1100) },
-			{ Oracle::Transferer(AddressRipple->Addresses.begin()->second, AddressRipple->AddressIndex, 1100) });
+			{ Observer::Transferer("rUBqz2JiRCT3gYZBnm28y5ME7e5UpSm2ok", Optional::None, 1100) },
+			{ Observer::Transferer(AddressRipple->Addresses.begin()->second, AddressRipple->AddressIndex, 1100) });
 		VI_PANIC(ClaimRipple->Sign(User2.SecretKey, User2Sequence++), "claim not signed");
 		VI_PANIC(ClaimRipple->Attestate(User1.SecretKey), "claim not attestated");
 		Transactions.push_back(ClaimRipple);
@@ -290,8 +290,8 @@ public:
 		ClaimBitcoin->SetEstimateGas(Decimal::Zero());
 		ClaimBitcoin->SetWitness(846983,
 			"17638131d9af3033a5e20b753af254e1e8321b2039f16dfd222f6b1117b5c69d", 0.0,
-			{ Oracle::Transferer("mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", Optional::None, 1.1) },
-			{ Oracle::Transferer(AddressBitcoin->Addresses.begin()->second, AddressBitcoin->AddressIndex, 1.1) });
+			{ Observer::Transferer("mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", Optional::None, 1.1) },
+			{ Observer::Transferer(AddressBitcoin->Addresses.begin()->second, AddressBitcoin->AddressIndex, 1.1) });
 		VI_PANIC(ClaimBitcoin->Sign(User2.SecretKey, User2Sequence++), "claim not signed");
 		VI_PANIC(ClaimBitcoin->Attestate(User1.SecretKey), "claim not attestated");
 		Transactions.push_back(ClaimBitcoin);
@@ -336,8 +336,8 @@ public:
 		ClaimEthereum->SetEstimateGas(Decimal::Zero());
 		ClaimEthereum->SetWitness(14977180,
 			"0x2bc2c98682f1b8fea2031e8f3f56494cd778da9d042da8439fb698d41bf061ea", 0.0,
-			{ Oracle::Transferer("0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5", Optional::None, 100) },
-			{ Oracle::Transferer(AddressEthereum->Addresses.begin()->second, AddressEthereum->AddressIndex, 100) });
+			{ Observer::Transferer("0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5", Optional::None, 100) },
+			{ Observer::Transferer(AddressEthereum->Addresses.begin()->second, AddressEthereum->AddressIndex, 100) });
 		VI_PANIC(ClaimEthereum->Sign(User2.SecretKey, User2Sequence++), "claim not signed");
 		VI_PANIC(ClaimEthereum->Attestate(User1.SecretKey), "claim not attestated");
 		Transactions.push_back(ClaimEthereum);
@@ -347,8 +347,8 @@ public:
 		ClaimRipple->SetEstimateGas(Decimal::Zero());
 		ClaimRipple->SetWitness(88546830,
 			"2618D20B801AF96DD060B34228E2594E30AFB7B33E335A8C60199B6CF8B0A69F", 0.0,
-			{ Oracle::Transferer("rUBqz2JiRCT3gYZBnm28y5ME7e5UpSm2ok", Optional::None, 1000) },
-			{ Oracle::Transferer(AddressRipple->Addresses.begin()->second, AddressRipple->AddressIndex, 1000) });
+			{ Observer::Transferer("rUBqz2JiRCT3gYZBnm28y5ME7e5UpSm2ok", Optional::None, 1000) },
+			{ Observer::Transferer(AddressRipple->Addresses.begin()->second, AddressRipple->AddressIndex, 1000) });
 		VI_PANIC(ClaimRipple->Sign(User2.SecretKey, User2Sequence++), "claim not signed");
 		VI_PANIC(ClaimRipple->Attestate(User1.SecretKey), "claim not attestated");
 		Transactions.push_back(ClaimRipple);
@@ -358,8 +358,8 @@ public:
 		ClaimBitcoin->SetEstimateGas(Decimal::Zero());
 		ClaimBitcoin->SetWitness(846982,
 			"57638131d9af3033a5e20b753af254e1e8321b2039f16dfd222f6b1117b5c69d", 0.0,
-			{ Oracle::Transferer("mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", Optional::None, 1.0) },
-			{ Oracle::Transferer(AddressBitcoin->Addresses.begin()->second, AddressBitcoin->AddressIndex, 1.0) });
+			{ Observer::Transferer("mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", Optional::None, 1.0) },
+			{ Observer::Transferer(AddressBitcoin->Addresses.begin()->second, AddressBitcoin->AddressIndex, 1.0) });
 		VI_PANIC(ClaimBitcoin->Sign(User2.SecretKey, User2Sequence++), "claim not signed");
 		VI_PANIC(ClaimBitcoin->Attestate(User1.SecretKey), "claim not attestated");
 		Transactions.push_back(ClaimBitcoin);
@@ -1291,13 +1291,13 @@ public:
 		Term->Show();
 
 		auto User = Ledger::Wallet::FromSeed("0000000");
-		for (auto& MasterWallet : Oracle::Bridge::GetWallets(User.SecretKey))
+		for (auto& MasterWallet : Observer::Bridge::GetWallets(User.SecretKey))
 		{
 			auto Asset = Algorithm::Asset::IdOf(MasterWallet.first);
 			UPtr<Schema> Wallet = Var::Set::Object();
 			Wallet->Set("asset", Algorithm::Asset::Serialize(Asset));
 			Wallet->Set("master", MasterWallet.second.AsSchema().Reset());
-			Wallet->Set("child", Oracle::Datamaster::NewSigningWallet(Asset, MasterWallet.second, 0)->AsSchema().Reset());
+			Wallet->Set("child", Observer::Datamaster::NewSigningWallet(Asset, MasterWallet.second, 0)->AsSchema().Reset());
 			Term->jWriteLine(*Wallet);
 		}
 
@@ -1322,10 +1322,10 @@ public:
 		Queue->Start(Policy);
 
 		auto Asset = Algorithm::Asset::IdOf("BTC");
-		auto Parent = Oracle::Datamaster::NewMasterWallet(Asset, String("123456"));
-		auto Child = Oracle::DynamicWallet(*Oracle::Datamaster::NewSigningWallet(Asset, *Parent, 0));
+		auto Parent = Observer::Datamaster::NewMasterWallet(Asset, String("123456"));
+		auto Child = Observer::DynamicWallet(*Observer::Datamaster::NewSigningWallet(Asset, *Parent, 0));
 		for (auto& Address : Child.SigningChild->Addresses)
-			Oracle::Datamaster::EnableWalletAddress(Asset, *Child.GetBinding(), Address.second, *Child.SigningChild->AddressIndex);
+			Observer::Datamaster::EnableWalletAddress(Asset, *Child.GetBinding(), Address.second, *Child.SigningChild->AddressIndex);
 
 		Coasync<void>([&]() -> Promise<void>
 		{
@@ -1333,7 +1333,7 @@ public:
 			for (auto& Address : Child.SigningChild->Addresses)
 				Addresses += Stringify::Text("      address v%i: %s\n", (int)Address.first, Address.second.c_str());
 
-			auto Balance = Coawait(Oracle::Datamaster::CalculateBalance(Asset, Child));
+			auto Balance = Coawait(Observer::Datamaster::CalculateBalance(Asset, Child));
 			VI_INFO(
 				"%s parent wallet:\n"
 				"  seeding key: %s\n"
@@ -1355,17 +1355,17 @@ public:
 				Balance ? Balance->ToString().c_str() : "?",
 				Algorithm::Asset::HandleOf(Asset).c_str());
 
-			Oracle::MultichainSupervisorOptions Options;
-			Coawait(Oracle::Paymaster::Startup(Options));
+			Observer::MultichainSupervisorOptions Options;
+			Coawait(Observer::Paymaster::Startup(Options));
 
 			for (size_t i = 0; i < 0; i++)
 			{
 				uint256_t Hash;
 				Algorithm::Encoding::EncodeUint256((uint8_t*)Crypto::RandomBytes(32)->data(), Hash);
-				auto Transaction = Coawait(Oracle::Paymaster::SubmitTransaction(Hash, Asset, Oracle::DynamicWallet(Child),
+				auto Transaction = Coawait(Observer::Paymaster::SubmitTransaction(Hash, Asset, Observer::DynamicWallet(Child),
 					{
-						Oracle::Transferer("bcrt1p5dy9ef2lngvmlx6edjgp88hemj03uszt3zlqrc252vlxp3jf27vq648qmh", Optional::None, 0.01)
-					}, Oracle::BaseFee(0.000003, 1)));
+						Observer::Transferer("bcrt1p5dy9ef2lngvmlx6edjgp88hemj03uszt3zlqrc252vlxp3jf27vq648qmh", Optional::None, 0.01)
+					}, Observer::BaseFee(0.000003, 1)));
 				if (!Transaction)
 					break;
 			}
@@ -1377,7 +1377,7 @@ public:
 				Coawait(std::move(Future));
 			}
 
-			Coawait(Oracle::Paymaster::Shutdown());
+			Coawait(Observer::Paymaster::Shutdown());
 			CoreturnVoid;
 		}).Wait();
 
@@ -1409,10 +1409,10 @@ public:
 		Algorithm::Composition::DeriveKeypair1(Alg, SecretKey1, PublicKey1);
 		Algorithm::Composition::DeriveKeypair2(Alg, PublicKey1, SecretKey2, PublicKey2, PublicKey, &PublicKeySize);
 		Algorithm::Composition::DeriveSecretKey(Alg, SecretKey1, SecretKey2, SecretKey, &SecretKeySize);
-		auto SigningWallet = Oracle::Datamaster::NewSigningWallet(Id, std::string_view((char*)SecretKey, SecretKeySize)).Expect("wallet derivation failed");
-		auto VerifyingWallet = Oracle::Datamaster::NewVerifyingWallet(Id, std::string_view((char*)PublicKey, PublicKeySize)).Expect("wallet derivation failed");
-		auto Signature = Oracle::Datamaster::SignMessage(Id, Message, SigningWallet.SigningKey);
-		auto Verification = Signature ? Oracle::Datamaster::VerifyMessage(Id, Message, SigningWallet.VerifyingKey.ExposeToHeap(), *Signature) : ExpectsLR<void>(LayerException("signature generation failed"));
+		auto SigningWallet = Observer::Datamaster::NewSigningWallet(Id, std::string_view((char*)SecretKey, SecretKeySize)).Expect("wallet derivation failed");
+		auto VerifyingWallet = Observer::Datamaster::NewVerifyingWallet(Id, std::string_view((char*)PublicKey, PublicKeySize)).Expect("wallet derivation failed");
+		auto Signature = Observer::Datamaster::SignMessage(Id, Message, SigningWallet.SigningKey);
+		auto Verification = Signature ? Observer::Datamaster::VerifyMessage(Id, Message, SigningWallet.VerifyingKey.ExposeToHeap(), *Signature) : ExpectsLR<void>(LayerException("signature generation failed"));
 		Term->fWrite(
 			"secret key share 1        : %s\n"
 			"secret key share 2        : %s\n"

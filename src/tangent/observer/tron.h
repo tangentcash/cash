@@ -1,10 +1,10 @@
-#ifndef TAN_ORACLE_TRON_H
-#define TAN_ORACLE_TRON_H
+#ifndef TAN_OBSERVER_TRON_H
+#define TAN_OBSERVER_TRON_H
 #include "ethereum.h"
 
 namespace Tangent
 {
-	namespace Oracle
+	namespace Observer
 	{
 		namespace Chains
 		{

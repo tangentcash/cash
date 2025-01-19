@@ -7,22 +7,22 @@ namespace Tangent
 {
 	namespace Transactions
 	{
-		static ExpectsPromiseLR<Oracle::OutgoingTransaction> EmitTransaction(const Ledger::Wallet& Proposer, const Algorithm::AssetId& Asset, const uint256_t& TransactionHash, Vector<UPtr<Ledger::Transaction>>* Pipeline, Vector<Oracle::Transferer>&& To)
+		static ExpectsPromiseLR<Observer::OutgoingTransaction> EmitTransaction(const Ledger::Wallet& Proposer, const Algorithm::AssetId& Asset, const uint256_t& TransactionHash, Vector<UPtr<Ledger::Transaction>>* Pipeline, Vector<Observer::Transferer>&& To)
 		{
-			auto Wallet = Oracle::Datamaster::NewMasterWallet(Asset, Proposer.SecretKey);
+			auto Wallet = Observer::Datamaster::NewMasterWallet(Asset, Proposer.SecretKey);
 			if (!Wallet)
-				return ExpectsPromiseLR<Oracle::OutgoingTransaction>(LayerException("wallet not found"));
+				return ExpectsPromiseLR<Observer::OutgoingTransaction>(LayerException("wallet not found"));
 
-			if (!Protocol::Now().Is(NetworkType::Regtest) || Oracle::Paymaster::HasSupport(Asset))
-				return Oracle::Paymaster::SubmitTransaction(TransactionHash, Asset, *Wallet, std::move(To));
+			if (!Protocol::Now().Is(NetworkType::Regtest) || Observer::Paymaster::HasSupport(Asset))
+				return Observer::Paymaster::SubmitTransaction(TransactionHash, Asset, *Wallet, std::move(To));
 
-			auto SigningWallet = Oracle::Datamaster::NewSigningWallet(Asset, *Wallet, Protocol::Now().Account.RootAddressIndex);
+			auto SigningWallet = Observer::Datamaster::NewSigningWallet(Asset, *Wallet, Protocol::Now().Account.RootAddressIndex);
 			if (!SigningWallet)
-				return ExpectsPromiseLR<Oracle::OutgoingTransaction>(LayerException("wallet not found"));
+				return ExpectsPromiseLR<Observer::OutgoingTransaction>(LayerException("wallet not found"));
 
-			Oracle::OutgoingTransaction Ephimeric;
+			Observer::OutgoingTransaction Ephimeric;
 			Ephimeric.Transaction.To = To;
-			Ephimeric.Transaction.From.push_back(Oracle::Transferer(SigningWallet->Addresses.begin()->second, Option<uint64_t>(SigningWallet->AddressIndex), Ephimeric.Transaction.GetOutputValue()));
+			Ephimeric.Transaction.From.push_back(Observer::Transferer(SigningWallet->Addresses.begin()->second, Option<uint64_t>(SigningWallet->AddressIndex), Ephimeric.Transaction.GetOutputValue()));
 			Ephimeric.Transaction.Asset = Asset;
 			Ephimeric.Transaction.TransactionId = Algorithm::Encoding::Encode0xHex256(Algorithm::Hashing::Hash256i(TransactionHash.ToString()));
 			Ephimeric.Transaction.BlockId = Algorithm::Hashing::Hash256i(Ephimeric.Transaction.TransactionId) % std::numeric_limits<uint64_t>::max();
@@ -34,7 +34,7 @@ namespace Tangent
 			Transaction->SetEstimateGas(Decimal::Zero());
 			Transaction->SetWitness(Ephimeric.Transaction);
 			Pipeline->push_back(Transaction);
-			return ExpectsPromiseLR<Oracle::OutgoingTransaction>(std::move(Ephimeric));
+			return ExpectsPromiseLR<Observer::OutgoingTransaction>(std::move(Ephimeric));
 		}
 
 		ExpectsLR<void> Transfer::Prevalidate() const
@@ -656,7 +656,7 @@ namespace Tangent
 			if (To.empty())
 				return LayerException("invalid to");
 
-			auto* Chain = Oracle::Datamaster::GetChainparams(Asset);
+			auto* Chain = Observer::Datamaster::GetChainparams(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
 
@@ -778,12 +778,12 @@ namespace Tangent
 			Transaction->Asset = Asset;
 			Pipeline->push_back(Transaction);
 
-			Vector<Oracle::Transferer> Destinations;
+			Vector<Observer::Transferer> Destinations;
 			Destinations.reserve(To.size());
 			for (auto& Item : To)
-				Destinations.push_back(Oracle::Transferer(Item.first, Optional::None, Item.second - PartitionFee));
+				Destinations.push_back(Observer::Transferer(Item.first, Optional::None, Item.second - PartitionFee));
 
-			return EmitTransaction(Proposer, Asset, Context->Receipt.TransactionHash, Pipeline, std::move(Destinations)).Then<ExpectsLR<void>>([this, Context, Pipeline, Transaction](ExpectsLR<Oracle::OutgoingTransaction>&& Result)
+			return EmitTransaction(Proposer, Asset, Context->Receipt.TransactionHash, Pipeline, std::move(Destinations)).Then<ExpectsLR<void>>([this, Context, Pipeline, Transaction](ExpectsLR<Observer::OutgoingTransaction>&& Result)
 			{
 				if (!Result || Result->Transaction.TransactionId.empty())
 					Transaction->SetFailureWitness(Result ? "transaction broadcast failed" : Result.What(), Context->Receipt.TransactionHash);
@@ -897,7 +897,7 @@ namespace Tangent
 		}
 		uint64_t Withdrawal::GetDispatchOffset() const
 		{
-			return Protocol::Now().User.Oracle.WithdrawalTime / Protocol::Now().Policy.ConsensusProofTime;
+			return Protocol::Now().User.Observer.WithdrawalTime / Protocol::Now().Policy.ConsensusProofTime;
 		}
 		uint32_t Withdrawal::AsInstanceType()
 		{
@@ -1539,7 +1539,7 @@ namespace Tangent
 		ExpectsLR<void> Claim::Execute(Ledger::TransactionContext* Context) const
 		{
 			auto BaseDerivationIndex = Protocol::Now().Account.RootAddressIndex;
-			auto* Chain = Oracle::Datamaster::GetChainparams(Asset);
+			auto* Chain = Observer::Datamaster::GetChainparams(Asset);
 			if (!Chain)
 				return LayerException("invalid chain");
 
@@ -1567,8 +1567,8 @@ namespace Tangent
 
 			switch (Chain->Routing)
 			{
-				case Tangent::Oracle::RoutingPolicy::Account:
-				case Tangent::Oracle::RoutingPolicy::Memo:
+				case Tangent::Observer::RoutingPolicy::Account:
+				case Tangent::Observer::RoutingPolicy::Memo:
 					if (Assertion->From.size() > 1)
 						return LayerException("too many inputs");
 
@@ -1581,7 +1581,7 @@ namespace Tangent
 
 			for (auto& Item : Assertion->From)
 			{
-				uint64_t AddressIndex = Item.AddressIndex && Chain->Routing == Oracle::RoutingPolicy::Memo ? *Item.AddressIndex : BaseDerivationIndex;
+				uint64_t AddressIndex = Item.AddressIndex && Chain->Routing == Observer::RoutingPolicy::Memo ? *Item.AddressIndex : BaseDerivationIndex;
 				auto Source = Context->GetWitnessAddress(Algorithm::Asset::BaseIdOf(Asset), Item.Address, AddressIndex, 0);
 				if (Source)
 				{
@@ -1605,11 +1605,11 @@ namespace Tangent
 
 			for (auto& Item : Assertion->To)
 			{
-				uint64_t AddressIndex = Item.AddressIndex && Chain->Routing == Oracle::RoutingPolicy::Memo ? *Item.AddressIndex : BaseDerivationIndex;
+				uint64_t AddressIndex = Item.AddressIndex && Chain->Routing == Observer::RoutingPolicy::Memo ? *Item.AddressIndex : BaseDerivationIndex;
 				auto Source = Context->GetWitnessAddress(Algorithm::Asset::BaseIdOf(Asset), Item.Address, AddressIndex, 0);
 				if (Source)
 				{
-					auto* Owner = (Chain->Routing == Oracle::RoutingPolicy::Account && memcmp(Router, Null, sizeof(Null)) != 0 ? Router : Source->Owner);
+					auto* Owner = (Chain->Routing == Observer::RoutingPolicy::Account && memcmp(Router, Null, sizeof(Null)) != 0 ? Router : Source->Owner);
 					if (!Source->IsRouterAddress())
 					{
 						auto& Contribution = Operations.Contributions[String((char*)Source->Proposer, sizeof(Source->Proposer))];
@@ -1736,7 +1736,7 @@ namespace Tangent
 		}
 		bool Claim::RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
 		{
-			auto* Chain = Oracle::Datamaster::GetChainparams(Asset);
+			auto* Chain = Observer::Datamaster::GetChainparams(Asset);
 			if (!Chain)
 				return false;
 
@@ -1748,33 +1748,33 @@ namespace Tangent
 			auto BaseDerivationIndex = Protocol::Now().Account.RootAddressIndex;
 			for (auto& Item : Assertion->From)
 			{
-				uint64_t AddressIndex = Item.AddressIndex && Chain->Routing == Oracle::RoutingPolicy::Memo ? *Item.AddressIndex : BaseDerivationIndex;
+				uint64_t AddressIndex = Item.AddressIndex && Chain->Routing == Observer::RoutingPolicy::Memo ? *Item.AddressIndex : BaseDerivationIndex;
 				auto Source = Context.GetWitnessAddress(Algorithm::Asset::BaseIdOf(Asset), Item.Address, AddressIndex, 0);
 				if (Source)
 					Parties.insert(String((char*)Source->Owner, sizeof(Source->Owner)));
 			}
 			for (auto& Item : Assertion->To)
 			{
-				uint64_t AddressIndex = Item.AddressIndex && Chain->Routing == Oracle::RoutingPolicy::Memo ? *Item.AddressIndex : BaseDerivationIndex;
+				uint64_t AddressIndex = Item.AddressIndex && Chain->Routing == Observer::RoutingPolicy::Memo ? *Item.AddressIndex : BaseDerivationIndex;
 				auto Source = Context.GetWitnessAddress(Algorithm::Asset::BaseIdOf(Asset), Item.Address, AddressIndex, 0);
 				if (Source)
 					Parties.insert(String((char*)Source->Owner, sizeof(Source->Owner)));
 			}
 			return true;
 		}
-		void Claim::SetWitness(uint64_t BlockHeight, const std::string_view& TransactionId, Decimal&& Fee, Vector<Oracle::Transferer>&& Senders, Vector<Oracle::Transferer>&& Receivers)
+		void Claim::SetWitness(uint64_t BlockHeight, const std::string_view& TransactionId, Decimal&& Fee, Vector<Observer::Transferer>&& Senders, Vector<Observer::Transferer>&& Receivers)
 		{
-			Oracle::IncomingTransaction Target;
+			Observer::IncomingTransaction Target;
 			Target.SetTransaction(Asset, BlockHeight, TransactionId, std::move(Fee));
 			Target.SetOperations(std::move(Senders), std::move(Receivers));
 			SetWitness(Target);
 		}
-		void Claim::SetWitness(const Oracle::IncomingTransaction& Witness)
+		void Claim::SetWitness(const Observer::IncomingTransaction& Witness)
 		{
 			Asset = Witness.Asset;
 			SetStatement(Algorithm::Hashing::Hash256i(Witness.TransactionId), Witness.AsMessage());
 		}
-		Option<Oracle::IncomingTransaction> Claim::GetAssertion(const Ledger::TransactionContext* Context) const
+		Option<Observer::IncomingTransaction> Claim::GetAssertion(const Ledger::TransactionContext* Context) const
 		{
 			auto* BestBranch = GetCumulativeBranch(Context);
 			if (!BestBranch)
@@ -1783,7 +1783,7 @@ namespace Tangent
 			auto Message = BestBranch->Message;
 			Message.Seek = 0;
 
-			Oracle::IncomingTransaction Assertion;
+			Observer::IncomingTransaction Assertion;
 			if (!Assertion.Load(Message))
 				return Optional::None;
 
@@ -2008,7 +2008,7 @@ namespace Tangent
 			if (!Algorithm::Asset::TokenOf(Asset).empty())
 				return LayerException("invalid asset");
 
-			auto* Chain = Oracle::Datamaster::GetChain(Asset);
+			auto* Chain = Observer::Datamaster::GetChain(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
 
@@ -2093,7 +2093,7 @@ namespace Tangent
 			if (!Copy->StorePayload(&Message))
 				return LayerException("serialization error");
 
-			auto Signature = Oracle::Datamaster::SignMessage(Asset, Message.Data, SigningKey);
+			auto Signature = Observer::Datamaster::SignMessage(Asset, Message.Data, SigningKey);
 			if (!Signature)
 				return Signature.Error();
 
@@ -2112,7 +2112,7 @@ namespace Tangent
 			if (!Copy->StorePayload(&Message))
 				return LayerException("serialization error");
 
-			return Oracle::Datamaster::VerifyMessage(Asset, Message.Data, Pubkey, Sighash);
+			return Observer::Datamaster::VerifyMessage(Asset, Message.Data, Pubkey, Sighash);
 		}
 		ExpectsLR<void> PubkeyAccount::Prevalidate() const
 		{
@@ -2132,7 +2132,7 @@ namespace Tangent
 			if (!Algorithm::Asset::TokenOf(Asset).empty())
 				return LayerException("invalid asset");
 
-			auto* Chain = Oracle::Datamaster::GetChain(Asset);
+			auto* Chain = Observer::Datamaster::GetChain(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
 
@@ -2148,7 +2148,7 @@ namespace Tangent
 		}
 		ExpectsLR<void> PubkeyAccount::Execute(Ledger::TransactionContext* Context) const
 		{
-			auto* Chain = Oracle::Datamaster::GetChain(Asset);
+			auto* Chain = Observer::Datamaster::GetChain(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
 
@@ -2233,7 +2233,7 @@ namespace Tangent
 			if (!Algorithm::Asset::TokenOf(Asset).empty())
 				return LayerException("invalid asset");
 
-			auto* Chain = Oracle::Datamaster::GetChainparams(Asset);
+			auto* Chain = Observer::Datamaster::GetChainparams(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
 
@@ -2253,15 +2253,15 @@ namespace Tangent
 
 			switch (Chain->Routing)
 			{
-				case Oracle::RoutingPolicy::Account:
+				case Observer::RoutingPolicy::Account:
 				{
 					if (memcmp(Context->Receipt.From, Proposer, sizeof(Proposer)) != 0)
 						return LayerException("invalid account proposer");
 
 					return Ledger::DelegationTransaction::Validate(Context);
 				}
-				case Oracle::RoutingPolicy::Memo:
-				case Oracle::RoutingPolicy::UTXO:
+				case Observer::RoutingPolicy::Memo:
+				case Observer::RoutingPolicy::UTXO:
 					return Ledger::DelegationTransaction::Validate(Context);
 				default:
 					return LayerException("invalid operation");
@@ -2359,14 +2359,14 @@ namespace Tangent
 
 		ExpectsLR<void> CustodianAccount::SetWallet(const Ledger::Wallet& Proposer, const Algorithm::Pubkeyhash NewOwner)
 		{
-			auto* Chain = Oracle::Datamaster::GetChainparams(Asset);
+			auto* Chain = Observer::Datamaster::GetChainparams(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
 
 			Ledger::TransactionContext Context;
 			auto Derivation = Context.GetAccountDerivation(Asset, Proposer.PublicKeyHash);
 			uint64_t AddressIndex = (Derivation ? Derivation->MaxAddressIndex + 1 : Protocol::Now().Account.RootAddressIndex);
-			if (Chain->Routing == Oracle::RoutingPolicy::Account)
+			if (Chain->Routing == Observer::RoutingPolicy::Account)
 			{
 				AddressIndex = Protocol::Now().Account.RootAddressIndex;
 				if (Derivation)
@@ -2375,11 +2375,11 @@ namespace Tangent
 					return LayerException("invalid account owner");
 			}
 
-			auto Parent = Oracle::Datamaster::NewMasterWallet(Asset, Proposer.SecretKey);
+			auto Parent = Observer::Datamaster::NewMasterWallet(Asset, Proposer.SecretKey);
 			if (!Parent)
 				return LayerException("invalid master wallet");
 
-			auto Child = Oracle::Datamaster::NewSigningWallet(Asset, *Parent, AddressIndex);
+			auto Child = Observer::Datamaster::NewSigningWallet(Asset, *Parent, AddressIndex);
 			if (!Child)
 				return Child.Error();
 
@@ -2399,7 +2399,7 @@ namespace Tangent
 			if (!Copy->StorePayload(&Message))
 				return LayerException("serialization error");
 
-			auto Signature = Oracle::Datamaster::SignMessage(Asset, Message.Data, SigningKey);
+			auto Signature = Observer::Datamaster::SignMessage(Asset, Message.Data, SigningKey);
 			if (!Signature)
 				return Signature.Error();
 
@@ -2418,7 +2418,7 @@ namespace Tangent
 			if (!Copy->StorePayload(&Message))
 				return LayerException("serialization error");
 
-			return Oracle::Datamaster::VerifyMessage(Asset, Message.Data, Pubkey, Sighash);
+			return Observer::Datamaster::VerifyMessage(Asset, Message.Data, Pubkey, Sighash);
 		}
 		ExpectsLR<void> CustodianAccount::Prevalidate() const
 		{
@@ -2442,7 +2442,7 @@ namespace Tangent
 			if (!Algorithm::Asset::TokenOf(Asset).empty())
 				return LayerException("invalid asset");
 
-			auto* Chain = Oracle::Datamaster::GetChain(Asset);
+			auto* Chain = Observer::Datamaster::GetChain(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
 
@@ -2454,7 +2454,7 @@ namespace Tangent
 			if (!Verification)
 				return Verification.Error();
 
-			auto* Params = Oracle::Datamaster::GetChainparams(Asset);
+			auto* Params = Observer::Datamaster::GetChainparams(Asset);
 			if (!Params)
 				return LayerException("invalid operation");
 		
@@ -2468,7 +2468,7 @@ namespace Tangent
 				if (memcmp(ParentTransaction->Proposer, Context->Receipt.From, sizeof(Context->Receipt.From)) != 0)
 					return LayerException("invalid origin");
 
-				if (Params->Routing == Oracle::RoutingPolicy::Account && memcmp(Parent->Receipt.From, Context->Receipt.From, sizeof(Context->Receipt.From)) != 0)
+				if (Params->Routing == Observer::RoutingPolicy::Account && memcmp(Parent->Receipt.From, Context->Receipt.From, sizeof(Context->Receipt.From)) != 0)
 					return LayerException("invalid account owner");
 
 				if (Context->GetWitnessEvent(DelegationAccountHash))
@@ -2485,7 +2485,7 @@ namespace Tangent
 			else if (!Honest)
 				return LayerException("contribution is not honest");
 
-			uint64_t AddressIndex = Params->Routing == Oracle::RoutingPolicy::Memo ? PubkeyIndex : Protocol::Now().Account.RootAddressIndex;
+			uint64_t AddressIndex = Params->Routing == Observer::RoutingPolicy::Memo ? PubkeyIndex : Protocol::Now().Account.RootAddressIndex;
 			for (auto& Address : VerifyingWallet->Addresses)
 			{
 				auto Collision = Context->GetWitnessAddress(Address.second, AddressIndex, 0);
@@ -2508,7 +2508,7 @@ namespace Tangent
 					return Event.Error();
 			}
 
-			auto* Chain = Oracle::Datamaster::GetChain(Asset);
+			auto* Chain = Observer::Datamaster::GetChain(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
 
@@ -2516,11 +2516,11 @@ namespace Tangent
 			if (!VerifyingWallet)
 				return VerifyingWallet.Error();
 
-			auto* Params = Oracle::Datamaster::GetChainparams(Asset);
+			auto* Params = Observer::Datamaster::GetChainparams(Asset);
 			if (!Params)
 				return LayerException("invalid operation");
 
-			uint64_t AddressIndex = Params->Routing == Oracle::RoutingPolicy::Memo ? PubkeyIndex : Protocol::Now().Account.RootAddressIndex;
+			uint64_t AddressIndex = Params->Routing == Observer::RoutingPolicy::Memo ? PubkeyIndex : Protocol::Now().Account.RootAddressIndex;
 			auto Derivation = Context->GetAccountDerivation(Context->Receipt.From);
 			if (!Derivation || Derivation->MaxAddressIndex < AddressIndex)
 			{
@@ -2537,7 +2537,7 @@ namespace Tangent
 		}
 		ExpectsPromiseLR<void> CustodianAccount::Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const
 		{
-			auto* Chain = Oracle::Datamaster::GetChain(Asset);
+			auto* Chain = Observer::Datamaster::GetChain(Asset);
 			if (!Chain)
 				return ExpectsPromiseLR<void>(LayerException("invalid operation"));
 
@@ -2545,14 +2545,14 @@ namespace Tangent
 			if (!VerifyingWallet)
 				return ExpectsPromiseLR<void>(VerifyingWallet.Error());
 
-			auto* Params = Oracle::Datamaster::GetChainparams(Asset);
+			auto* Params = Observer::Datamaster::GetChainparams(Asset);
 			if (!Params)
 				return ExpectsPromiseLR<void>(LayerException("invalid operation"));
 
-			uint64_t AddressIndex = Params->Routing == Oracle::RoutingPolicy::Memo ? PubkeyIndex : Protocol::Now().Account.RootAddressIndex;
+			uint64_t AddressIndex = Params->Routing == Observer::RoutingPolicy::Memo ? PubkeyIndex : Protocol::Now().Account.RootAddressIndex;
 			for (auto& Address : VerifyingWallet->Addresses)
 			{
-				auto Status = Oracle::Datamaster::EnableWalletAddress(Asset, std::string_view((char*)Context->Receipt.From, sizeof(Algorithm::Pubkeyhash)), Address.second, AddressIndex);
+				auto Status = Observer::Datamaster::EnableWalletAddress(Asset, std::string_view((char*)Context->Receipt.From, sizeof(Algorithm::Pubkeyhash)), Address.second, AddressIndex);
 				if (!Status)
 					return ExpectsPromiseLR<void>(Status.Error());
 			}
@@ -2657,7 +2657,7 @@ namespace Tangent
 
 		ExpectsLR<void> ContributionAllocation::SetShare1(const Algorithm::Seckey SecretKey)
 		{
-			auto* Chain = Oracle::Datamaster::GetChainparams(Asset);
+			auto* Chain = Observer::Datamaster::GetChainparams(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
 
@@ -2685,7 +2685,7 @@ namespace Tangent
 			if (EncryptedSecretKey1For1.empty())
 				return LayerException("invalid encrypted secret key 1");
 
-			auto* Chain = Oracle::Datamaster::GetChainparams(Asset);
+			auto* Chain = Observer::Datamaster::GetChainparams(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
 
@@ -2813,7 +2813,7 @@ namespace Tangent
 
 		ExpectsLR<void> ContributionActivation::SetShare2(const Algorithm::Seckey SecretKey, const Algorithm::Composition::CPubkey PublicKey1)
 		{
-			auto* Chain = Oracle::Datamaster::GetChainparams(Asset);
+			auto* Chain = Observer::Datamaster::GetChainparams(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
 
@@ -2896,7 +2896,7 @@ namespace Tangent
 			if (!VerifyingWallet)
 				return VerifyingWallet.Error();
 
-			auto* Chain = Oracle::Datamaster::GetChainparams(Asset);
+			auto* Chain = Observer::Datamaster::GetChainparams(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
 
@@ -2920,7 +2920,7 @@ namespace Tangent
 			auto AddressIndex = Protocol::Now().Account.RootAddressIndex;
 			for (auto& Address : VerifyingWallet->Addresses)
 			{
-				auto Status = Oracle::Datamaster::EnableWalletAddress(Asset, std::string_view((char*)Parent->Receipt.From, sizeof(Parent->Receipt.From)), Address.second, AddressIndex);
+				auto Status = Observer::Datamaster::EnableWalletAddress(Asset, std::string_view((char*)Parent->Receipt.From, sizeof(Parent->Receipt.From)), Address.second, AddressIndex);
 				if (!Status)
 					return ExpectsPromiseLR<void>(Status.Error());
 			}
@@ -2985,9 +2985,9 @@ namespace Tangent
 		{
 			return Algorithm::Signing::PrivateDecrypt(SecretKey, EncryptedSecretKey2For2);
 		}
-		ExpectsLR<Oracle::DerivedVerifyingWallet> ContributionActivation::GetVerifyingWallet() const
+		ExpectsLR<Observer::DerivedVerifyingWallet> ContributionActivation::GetVerifyingWallet() const
 		{
-			return Oracle::Datamaster::NewVerifyingWallet(Asset, std::string_view((char*)PublicKey, PublicKeySize));
+			return Observer::Datamaster::NewVerifyingWallet(Asset, std::string_view((char*)PublicKey, PublicKeySize));
 		}
 		UPtr<Schema> ContributionActivation::AsSchema() const
 		{
@@ -3084,7 +3084,7 @@ namespace Tangent
 			if (!Wallet)
 				return Wallet.Error();
 
-			auto* Chain = Oracle::Datamaster::GetChainparams(Asset);
+			auto* Chain = Observer::Datamaster::GetChainparams(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
 
@@ -3313,9 +3313,9 @@ namespace Tangent
 		{
 			return Algorithm::Signing::PrivateDecrypt(SecretKey, EncryptedSecretKey2For1);
 		}
-		ExpectsLR<Oracle::DerivedSigningWallet> ContributionDeactivation::GetSigningWallet(const Algorithm::Seckey SecretKey) const
+		ExpectsLR<Observer::DerivedSigningWallet> ContributionDeactivation::GetSigningWallet(const Algorithm::Seckey SecretKey) const
 		{
-			auto* Chain = Oracle::Datamaster::GetChainparams(Asset);
+			auto* Chain = Observer::Datamaster::GetChainparams(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
 
@@ -3348,7 +3348,7 @@ namespace Tangent
 			if (!Status)
 				return LayerException("invalid message");
 
-			auto SigningWallet = Oracle::Datamaster::NewSigningWallet(Asset, std::string_view((char*)SharedSecretKey, SharedSecretKeySize));
+			auto SigningWallet = Observer::Datamaster::NewSigningWallet(Asset, std::string_view((char*)SharedSecretKey, SharedSecretKeySize));
 			if (SigningWallet && SigningWallet->VerifyingKey.ExposeToHeap() != VerifyingWallet->VerifyingKey.ExposeToHeap())
 				return LayerException("signing wallet public key does not match verifying wallet public key");
 
@@ -3663,8 +3663,8 @@ namespace Tangent
 			Transaction->Asset = Asset;
 			Pipeline->push_back(Transaction);
 
-			auto Destinations = { Oracle::Transferer(Address->Addresses.begin()->second, Address->AddressIndex, Decimal(Value)) };
-			return EmitTransaction(Proposer, Asset, Context->Receipt.TransactionHash, Pipeline, std::move(Destinations)).Then<ExpectsLR<void>>([this, Context, Pipeline, Transaction](ExpectsLR<Oracle::OutgoingTransaction>&& Result)
+			auto Destinations = { Observer::Transferer(Address->Addresses.begin()->second, Address->AddressIndex, Decimal(Value)) };
+			return EmitTransaction(Proposer, Asset, Context->Receipt.TransactionHash, Pipeline, std::move(Destinations)).Then<ExpectsLR<void>>([this, Context, Pipeline, Transaction](ExpectsLR<Observer::OutgoingTransaction>&& Result)
 			{
 				if (!Result || Result->Transaction.TransactionId.empty())
 					Transaction->SetFailureWitness(Result ? "transaction broadcast failed" : Result.What(), Context->Receipt.TransactionHash);
@@ -3757,7 +3757,7 @@ namespace Tangent
 		}
 		uint64_t ContributionMigration::GetDispatchOffset() const
 		{
-			return Protocol::Now().User.Oracle.WithdrawalTime / Protocol::Now().Policy.ConsensusProofTime;
+			return Protocol::Now().User.Observer.WithdrawalTime / Protocol::Now().Policy.ConsensusProofTime;
 		}
 		uint32_t ContributionMigration::AsInstanceType()
 		{

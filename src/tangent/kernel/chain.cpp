@@ -1,7 +1,7 @@
 #include "chain.h"
 #include "script.h"
 #ifdef TAN_VALIDATOR
-#include "oracle.h"
+#include "observer.h"
 #include "../storage/chainstate.h"
 #ifdef TAN_ROCKSDB
 #include "rocksdb/db.h"
@@ -613,41 +613,41 @@ namespace Tangent
 			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
 				User.Storage.Logging = Value->Value.GetBoolean();
 
-			Value = Config->Fetch("oracle.block_replay_multiplier");
+			Value = Config->Fetch("observer.block_replay_multiplier");
 			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.Oracle.BlockReplayMultiplier = Value->Value.GetInteger();
+				User.Observer.BlockReplayMultiplier = Value->Value.GetInteger();
 
-			Value = Config->Fetch("oracle.relaying_timeout");
+			Value = Config->Fetch("observer.relaying_timeout");
 			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.Oracle.RelayingTimeout = Value->Value.GetInteger();
+				User.Observer.RelayingTimeout = Value->Value.GetInteger();
 
-			Value = Config->Fetch("oracle.relaying_retry_timeout");
+			Value = Config->Fetch("observer.relaying_retry_timeout");
 			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.Oracle.RelayingRetryTimeout = Value->Value.GetInteger();
+				User.Observer.RelayingRetryTimeout = Value->Value.GetInteger();
 
-			Value = Config->Fetch("oracle.cache_short_size");
+			Value = Config->Fetch("observer.cache_short_size");
 			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.Oracle.CacheShortSize = (uint32_t)Value->Value.GetInteger();
+				User.Observer.CacheShortSize = (uint32_t)Value->Value.GetInteger();
 
-			Value = Config->Fetch("oracle.cache_extended_size");
+			Value = Config->Fetch("observer.cache_extended_size");
 			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.Oracle.CacheExtendedSize = (uint32_t)Value->Value.GetInteger();
+				User.Observer.CacheExtendedSize = (uint32_t)Value->Value.GetInteger();
 
-			Value = Config->Fetch("oracle.fee_estimation_seconds");
+			Value = Config->Fetch("observer.fee_estimation_seconds");
 			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.Oracle.FeeEstimationSeconds = Value->Value.GetInteger();
+				User.Observer.FeeEstimationSeconds = Value->Value.GetInteger();
 
-			Value = Config->Fetch("oracle.withdrawal_time");
+			Value = Config->Fetch("observer.withdrawal_time");
 			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.Oracle.WithdrawalTime = Value->Value.GetInteger();
+				User.Observer.WithdrawalTime = Value->Value.GetInteger();
 
-			Value = Config->Fetch("oracle.observer");
+			Value = Config->Fetch("observer.server");
 			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
-				User.Oracle.Observer = Value->Value.GetBoolean();
+				User.Observer.Server = Value->Value.GetBoolean();
 
-			Value = Config->Fetch("oracle.logging");
+			Value = Config->Fetch("observer.logging");
 			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
-				User.Oracle.Logging = Value->Value.GetBoolean();
+				User.Observer.Logging = Value->Value.GetBoolean();
 		}
 
 		if (!User.Logs.State.empty())
@@ -719,7 +719,7 @@ namespace Tangent
 				Account.AddressVersion = 0x6;
 				Policy.AccountContributionRequired = 0.0;
 				Policy.AccountGasWorkRequired = 0.0;
-				User.Oracle.WithdrawalTime = Policy.ConsensusProofTime;
+				User.Observer.WithdrawalTime = Policy.ConsensusProofTime;
 				break;
 			case Tangent::NetworkType::Testnet:
 				Message.PacketMagic = 0xf815c95c;
@@ -746,7 +746,7 @@ namespace Tangent
 		Algorithm::Signing::Initialize();
 #ifdef TAN_VALIDATOR
 		OS::Directory::SetWorking(Module->c_str());
-		Oracle::Bridge::Open(*Config, User.Oracle.Observer);
+		Observer::Bridge::Open(*Config, User.Observer.Server);
 #endif
 	}
 	Protocol::~Protocol()
@@ -755,7 +755,7 @@ namespace Tangent
 #ifdef TAN_VALIDATOR
 		if (!Path.empty() && User.Storage.Logging)
 			VI_DEBUG("[chain] close handle: %s", Path.c_str());
-		Oracle::Bridge::Close();
+		Observer::Bridge::Close();
 		Storages::AccountCache::CleanupInstance();
 		Storages::UniformCache::CleanupInstance();
 		Storages::MultiformCache::CleanupInstance();

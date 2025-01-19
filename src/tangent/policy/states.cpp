@@ -2,7 +2,7 @@
 #include "typenames.h"
 #include "../kernel/block.h"
 #include "../kernel/script.h"
-#include "../kernel/oracle.h"
+#include "../kernel/observer.h"
 
 namespace Tangent
 {
@@ -334,6 +334,7 @@ namespace Tangent
 		{
 			Schema* Data = Ledger::Multiform::AsSchema().Reset();
 			Data->Set("owner", Algorithm::Signing::SerializeAddress(Owner));
+			Data->Set("asset", Algorithm::Asset::Serialize(Asset));
 			Data->Set("online", Var::Boolean(IsOnline()));
 			Data->Set("status", Var::Integer((int64_t)Status));
 			return Data;
@@ -1524,8 +1525,8 @@ namespace Tangent
 		}
 		String WitnessAddress::AsRow() const
 		{
-			auto* Chain = Oracle::Datamaster::GetChainparams(Asset);
-			return AsInstanceRow(Asset, Addresses.empty() ? std::string_view() : Addresses.begin()->second, Chain && Chain->Routing == Oracle::RoutingPolicy::Memo ? AddressIndex : Protocol::Now().Account.RootAddressIndex);
+			auto* Chain = Observer::Datamaster::GetChainparams(Asset);
+			return AsInstanceRow(Asset, Addresses.empty() ? std::string_view() : Addresses.begin()->second, Chain && Chain->Routing == Observer::RoutingPolicy::Memo ? AddressIndex : Protocol::Now().Account.RootAddressIndex);
 		}
 		uint32_t WitnessAddress::AsInstanceType()
 		{
@@ -1545,7 +1546,7 @@ namespace Tangent
 		}
 		String WitnessAddress::AsInstanceRow(const Algorithm::AssetId& Asset, const std::string_view& Address, uint64_t MaxAddressIndex)
 		{
-			auto Location = Oracle::Datamaster::NewPublicKeyHash(Asset, Address).Or(String(Address));
+			auto Location = Observer::Datamaster::NewPublicKeyHash(Asset, Address).Or(String(Address));
 			Format::Stream Stream;
 			Stream.WriteTypeless(AsInstanceType());
 			Stream.WriteTypeless(Location.data(), (uint8_t)Location.size());

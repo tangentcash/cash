@@ -1,7 +1,7 @@
 #ifndef TAN_POLICY_TRANSACTIONS_H
 #define TAN_POLICY_TRANSACTIONS_H
 #include "states.h"
-#include "../kernel/oracle.h"
+#include "../kernel/observer.h"
 
 namespace Tangent
 {
@@ -221,9 +221,9 @@ namespace Tangent
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
 			bool RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
-			void SetWitness(uint64_t BlockHeight, const std::string_view& TransactionId, Decimal&& Fee, Vector<Oracle::Transferer>&& Senders, Vector<Oracle::Transferer>&& Receivers);
-			void SetWitness(const Oracle::IncomingTransaction& Witness);
-			Option<Oracle::IncomingTransaction> GetAssertion(const Ledger::TransactionContext* Context) const;
+			void SetWitness(uint64_t BlockHeight, const std::string_view& TransactionId, Decimal&& Fee, Vector<Observer::Transferer>&& Senders, Vector<Observer::Transferer>&& Receivers);
+			void SetWitness(const Observer::IncomingTransaction& Witness);
+			Option<Observer::IncomingTransaction> GetAssertion(const Ledger::TransactionContext* Context) const;
 			UPtr<Schema> AsSchema() const override;
 			uint32_t AsType() const override;
 			std::string_view AsTypename() const override;
@@ -392,7 +392,7 @@ namespace Tangent
 			bool RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
 			void SetWitness(const uint256_t& ContributionAllocationHash);
 			Option<String> GetSecretKey2(const Algorithm::Seckey SecretKey) const;
-			ExpectsLR<Oracle::DerivedVerifyingWallet> GetVerifyingWallet() const;
+			ExpectsLR<Observer::DerivedVerifyingWallet> GetVerifyingWallet() const;
 			UPtr<Schema> AsSchema() const override;
 			uint32_t AsType() const override;
 			std::string_view AsTypename() const override;
@@ -437,7 +437,7 @@ namespace Tangent
 			bool RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
 			Option<String> GetSecretKey1(const Algorithm::Seckey SecretKey) const;
 			Option<String> GetSecretKey2(const Algorithm::Seckey SecretKey) const;
-			ExpectsLR<Oracle::DerivedSigningWallet> GetSigningWallet(const Algorithm::Seckey SecretKey) const;
+			ExpectsLR<Observer::DerivedSigningWallet> GetSigningWallet(const Algorithm::Seckey SecretKey) const;
 			UPtr<Schema> AsSchema() const override;
 			uint32_t AsType() const override;
 			std::string_view AsTypename() const override;

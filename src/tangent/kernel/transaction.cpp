@@ -556,7 +556,7 @@ namespace Tangent
 				auto Blob = String(sizeof(Algorithm::Sighash), '0');
 				size_t Size = (size_t)Protocol::Now().Policy.ConsensusCommitteeAggregators;
 				Message.WriteInteger((uint16_t)OutputHashes.size());
-				Message.WriteString(String(sizeof(Oracle::IncomingTransaction) * 10, '0'));
+				Message.WriteString(String(sizeof(Observer::IncomingTransaction) * 10, '0'));
 				Message.WriteInteger((uint16_t)Size);
 				for (size_t i = 0; i < Size; i++)
 					Message.WriteString(Blob);

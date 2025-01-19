@@ -1,6 +1,6 @@
-#ifndef TAN_ORACLE_BITCOIN_H
-#define TAN_ORACLE_BITCOIN_H
-#include "../kernel/oracle.h"
+#ifndef TAN_OBSERVER_BITCOIN_H
+#define TAN_OBSERVER_BITCOIN_H
+#include "../kernel/observer.h"
 
 struct btc_tx_;
 struct btc_chainparams_;
@@ -8,7 +8,7 @@ struct cstring;
 
 namespace Tangent
 {
-	namespace Oracle
+	namespace Observer
 	{
 		namespace Chains
 		{

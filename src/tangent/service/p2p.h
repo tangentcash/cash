@@ -2,7 +2,7 @@
 #define TAN_LAYER_P2P_H
 #include "../kernel/block.h"
 #include "../kernel/wallet.h"
-#include "../kernel/oracle.h"
+#include "../kernel/observer.h"
 
 namespace Tangent
 {
@@ -266,7 +266,7 @@ namespace Tangent
 			Promise<Option<SocketAddress>> Rediscover();
 			Promise<void> Connect(UPtr<Relay>&& From);
 			Promise<void> Disconnect(UPtr<Relay>&& From);
-			Promise<void> ProposeTransactionLogs(const Oracle::ChainSupervisorOptions& Options, Oracle::TransactionLogs&& Logs);
+			Promise<void> ProposeTransactionLogs(const Observer::ChainSupervisorOptions& Options, Observer::TransactionLogs&& Logs);
 
 		private:
 			static Promise<void> ProposeHandshake(ServerNode* Relayer, UPtr<Relay>&& From, Format::Variables&& Args);

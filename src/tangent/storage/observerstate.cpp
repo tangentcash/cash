@@ -1,16 +1,16 @@
-#include "sidechainstate.h"
+#include "observerstate.h"
 #undef NULL
 
 namespace Tangent
 {
 	namespace Storages
 	{
-		Sidechainstate::Sidechainstate(const std::string_view& NewLabel, const Algorithm::AssetId& NewAsset) noexcept : Asset(NewAsset), Label(NewLabel)
+		Observerstate::Observerstate(const std::string_view& NewLabel, const Algorithm::AssetId& NewAsset) noexcept : Asset(NewAsset), Label(NewLabel)
 		{
 			String Blockchain = Algorithm::Asset::BlockchainOf(Asset);
-			StorageOf("sidechainstate." + Stringify::ToLower(Blockchain) + "data");
+			StorageOf("observerstate." + Stringify::ToLower(Blockchain) + "data");
 		}
-		ExpectsLR<void> Sidechainstate::AddMasterWallet(const Oracle::MasterWallet& Value)
+		ExpectsLR<void> Observerstate::AddMasterWallet(const Observer::MasterWallet& Value)
 		{
 			Format::Stream Message;
 			if (!Value.Store(&Message))
@@ -34,24 +34,24 @@ namespace Tangent
 
 			return Expectation::Met;
 		}
-		ExpectsLR<Oracle::MasterWallet> Sidechainstate::GetMasterWallet()
+		ExpectsLR<Observer::MasterWallet> Observerstate::GetMasterWallet()
 		{
 			auto Cursor = Query(Label, __func__, "SELECT message FROM wallets WHERE address_index = -1 ORDER BY nonce DESC LIMIT 1");
 			if (!Cursor || Cursor->ErrorOrEmpty())
-				return ExpectsLR<Oracle::MasterWallet>(LayerException(ErrorOf(Cursor)));
+				return ExpectsLR<Observer::MasterWallet>(LayerException(ErrorOf(Cursor)));
 
 			auto Blob = Protocol::Now().Key.DecryptBlob((*Cursor)["message"].Get().GetBlob());
 			if (!Blob)
 				return Blob.Error();
 
-			Oracle::MasterWallet Value;
+			Observer::MasterWallet Value;
 			Format::Stream Message = Format::Stream(std::move(*Blob));
 			if (!Value.Load(Message))
-				return ExpectsLR<Oracle::MasterWallet>(LayerException("wallet deserialization error"));
+				return ExpectsLR<Observer::MasterWallet>(LayerException("wallet deserialization error"));
 
 			return Value;
 		}
-		ExpectsLR<Oracle::MasterWallet> Sidechainstate::GetMasterWalletByHash(const uint256_t& MasterWalletHash)
+		ExpectsLR<Observer::MasterWallet> Observerstate::GetMasterWalletByHash(const uint256_t& MasterWalletHash)
 		{
 			uint8_t Hash[32];
 			Algorithm::Encoding::DecodeUint256(MasterWalletHash, Hash);
@@ -61,20 +61,20 @@ namespace Tangent
 
 			auto Cursor = EmplaceQuery(Label, __func__, "SELECT message FROM wallets WHERE hash = ? AND address_index = -1", &Map);
 			if (!Cursor || Cursor->ErrorOrEmpty())
-				return ExpectsLR<Oracle::MasterWallet>(LayerException(ErrorOf(Cursor)));
+				return ExpectsLR<Observer::MasterWallet>(LayerException(ErrorOf(Cursor)));
 
 			auto Blob = Protocol::Now().Key.DecryptBlob((*Cursor)["message"].Get().GetBlob());
 			if (!Blob)
 				return Blob.Error();
 
-			Oracle::MasterWallet Value;
+			Observer::MasterWallet Value;
 			Format::Stream Message = Format::Stream(std::move(*Blob));
 			if (!Value.Load(Message))
-				return ExpectsLR<Oracle::MasterWallet>(LayerException("wallet deserialization error"));
+				return ExpectsLR<Observer::MasterWallet>(LayerException("wallet deserialization error"));
 
 			return Value;
 		}
-		ExpectsLR<void> Sidechainstate::AddDerivedWallet(const Oracle::MasterWallet& Parent, const Oracle::DerivedSigningWallet& Value)
+		ExpectsLR<void> Observerstate::AddDerivedWallet(const Observer::MasterWallet& Parent, const Observer::DerivedSigningWallet& Value)
 		{
 			if (!Value.IsValid())
 				return ExpectsLR<void>(LayerException("invalid wallet"));
@@ -102,7 +102,7 @@ namespace Tangent
 
 			return AddMasterWallet(Parent);
 		}
-		ExpectsLR<Oracle::DerivedSigningWallet> Sidechainstate::GetDerivedWallet(const uint256_t& MasterWalletHash, uint64_t AddressIndex)
+		ExpectsLR<Observer::DerivedSigningWallet> Observerstate::GetDerivedWallet(const uint256_t& MasterWalletHash, uint64_t AddressIndex)
 		{
 			uint8_t Hash[32];
 			Algorithm::Encoding::DecodeUint256(MasterWalletHash, Hash);
@@ -113,20 +113,20 @@ namespace Tangent
 
 			auto Cursor = EmplaceQuery(Label, __func__, "SELECT message FROM wallets WHERE hash = ? AND address_index = ?", &Map);
 			if (!Cursor || Cursor->ErrorOrEmpty())
-				return ExpectsLR<Oracle::DerivedSigningWallet>(LayerException(ErrorOf(Cursor)));
+				return ExpectsLR<Observer::DerivedSigningWallet>(LayerException(ErrorOf(Cursor)));
 
 			auto Blob = Protocol::Now().Key.DecryptBlob((*Cursor)["message"].Get().GetBlob());
 			if (!Blob)
 				return Blob.Error();
 
-			Oracle::DerivedSigningWallet Value;
+			Observer::DerivedSigningWallet Value;
 			Format::Stream Message = Format::Stream(std::move(*Blob));
 			if (!Value.Load(Message))
-				return ExpectsLR<Oracle::DerivedSigningWallet>(LayerException("wallet deserialization error"));
+				return ExpectsLR<Observer::DerivedSigningWallet>(LayerException("wallet deserialization error"));
 
 			return Value;
 		}
-		ExpectsLR<void> Sidechainstate::AddUTXO(const Oracle::IndexUTXO& Value)
+		ExpectsLR<void> Observerstate::AddUTXO(const Observer::IndexUTXO& Value)
 		{
 			Format::Stream Message;
 			if (!Value.Store(&Message))
@@ -144,7 +144,7 @@ namespace Tangent
 
 			return Expectation::Met;
 		}
-		ExpectsLR<void> Sidechainstate::RemoveUTXO(const std::string_view& TransactionId, uint32_t Index)
+		ExpectsLR<void> Observerstate::RemoveUTXO(const std::string_view& TransactionId, uint32_t Index)
 		{
 			SchemaList Map;
 			Map.push_back(Var::Set::Binary(GetCoinLocation(TransactionId, Index)));
@@ -155,39 +155,39 @@ namespace Tangent
 
 			return Expectation::Met;
 		}
-		ExpectsLR<Oracle::IndexUTXO> Sidechainstate::GetSTXO(const std::string_view& TransactionId, uint32_t Index)
+		ExpectsLR<Observer::IndexUTXO> Observerstate::GetSTXO(const std::string_view& TransactionId, uint32_t Index)
 		{
 			SchemaList Map;
 			Map.push_back(Var::Set::String(String(TransactionId) + ":" + ToString(Index)));
 
 			auto Cursor = EmplaceQuery(Label, __func__, "SELECT message FROM coins WHERE location = ?", &Map);
 			if (!Cursor || Cursor->ErrorOrEmpty())
-				return ExpectsLR<Oracle::IndexUTXO>(LayerException(ErrorOf(Cursor)));
+				return ExpectsLR<Observer::IndexUTXO>(LayerException(ErrorOf(Cursor)));
 
-			Oracle::IndexUTXO Value;
+			Observer::IndexUTXO Value;
 			Format::Stream Message = Format::Stream((*Cursor)["message"].Get().GetBlob());
 			if (!Value.Load(Message))
-				return ExpectsLR<Oracle::IndexUTXO>(LayerException("utxo deserialization error"));
+				return ExpectsLR<Observer::IndexUTXO>(LayerException("utxo deserialization error"));
 
 			return Value;
 		}
-		ExpectsLR<Oracle::IndexUTXO> Sidechainstate::GetUTXO(const std::string_view& TransactionId, uint32_t Index)
+		ExpectsLR<Observer::IndexUTXO> Observerstate::GetUTXO(const std::string_view& TransactionId, uint32_t Index)
 		{
 			SchemaList Map;
 			Map.push_back(Var::Set::Binary(GetCoinLocation(TransactionId, Index)));
 
 			auto Cursor = EmplaceQuery(Label, __func__, "SELECT message FROM coins WHERE location = ? AND spent = FALSE", &Map);
 			if (!Cursor || Cursor->ErrorOrEmpty())
-				return ExpectsLR<Oracle::IndexUTXO>(LayerException(ErrorOf(Cursor)));
+				return ExpectsLR<Observer::IndexUTXO>(LayerException(ErrorOf(Cursor)));
 
-			Oracle::IndexUTXO Value;
+			Observer::IndexUTXO Value;
 			Format::Stream Message = Format::Stream((*Cursor)["message"].Get().GetBlob());
 			if (!Value.Load(Message))
-				return ExpectsLR<Oracle::IndexUTXO>(LayerException("utxo deserialization error"));
+				return ExpectsLR<Observer::IndexUTXO>(LayerException("utxo deserialization error"));
 
 			return Value;
 		}
-		ExpectsLR<Vector<Oracle::IndexUTXO>> Sidechainstate::GetUTXOs(const std::string_view& Binding, size_t Offset, size_t Count)
+		ExpectsLR<Vector<Observer::IndexUTXO>> Observerstate::GetUTXOs(const std::string_view& Binding, size_t Offset, size_t Count)
 		{
 			SchemaList Map;
 			Map.push_back(Var::Set::Binary(Binding));
@@ -196,16 +196,16 @@ namespace Tangent
 
 			auto Cursor = EmplaceQuery(Label, __func__, "SELECT message FROM coins WHERE spent = FALSE AND binding = ? LIMIT ? OFFSET ?", &Map);
 			if (!Cursor || Cursor->Error())
-				return ExpectsLR<Vector<Oracle::IndexUTXO>>(LayerException(ErrorOf(Cursor)));
+				return ExpectsLR<Vector<Observer::IndexUTXO>>(LayerException(ErrorOf(Cursor)));
 
 			auto& Response = Cursor->First();
 			size_t Size = Response.Size();
-			Vector<Oracle::IndexUTXO> Values;
+			Vector<Observer::IndexUTXO> Values;
 			Values.reserve(Size);
 
 			for (size_t i = 0; i < Size; i++)
 			{
-				Oracle::IndexUTXO Value;
+				Observer::IndexUTXO Value;
 				Format::Stream Message = Format::Stream(Response[i]["message"].Get().GetBlob());
 				if (Value.Load(Message))
 					Values.emplace_back(std::move(Value));
@@ -213,9 +213,9 @@ namespace Tangent
 
 			return Values;
 		}
-		ExpectsLR<void> Sidechainstate::AddIncomingTransaction(const Oracle::IncomingTransaction& Value, uint64_t BlockId)
+		ExpectsLR<void> Observerstate::AddIncomingTransaction(const Observer::IncomingTransaction& Value, uint64_t BlockId)
 		{
-			auto* Chain = Oracle::Datamaster::GetChain(Value.Asset);
+			auto* Chain = Observer::Datamaster::GetChain(Value.Asset);
 			if (!Chain)
 				return ExpectsLR<void>(LayerException("invalid witness transaction asset"));
 
@@ -236,7 +236,7 @@ namespace Tangent
 
 			return Expectation::Met;
 		}
-		ExpectsLR<void> Sidechainstate::AddOutgoingTransaction(const Oracle::IncomingTransaction& Value, const uint256_t ExternalId)
+		ExpectsLR<void> Observerstate::AddOutgoingTransaction(const Observer::IncomingTransaction& Value, const uint256_t ExternalId)
 		{
 			Format::Stream Message;
 			if (!Value.Store(&Message))
@@ -258,7 +258,7 @@ namespace Tangent
 
 			return Expectation::Met;
 		}
-		ExpectsLR<Oracle::IncomingTransaction> Sidechainstate::GetTransaction(const std::string_view& TransactionId, const uint256_t& ExternalId)
+		ExpectsLR<Observer::IncomingTransaction> Observerstate::GetTransaction(const std::string_view& TransactionId, const uint256_t& ExternalId)
 		{
 			uint8_t Hash[32];
 			Algorithm::Encoding::DecodeUint256(ExternalId, Hash);
@@ -269,21 +269,21 @@ namespace Tangent
 
 			auto Cursor = EmplaceQuery(Label, __func__, "SELECT message FROM transactions WHERE location = ? OR binding = ?", &Map);
 			if (!Cursor || Cursor->ErrorOrEmpty())
-				return ExpectsLR<Oracle::IncomingTransaction>(LayerException(ErrorOf(Cursor)));
+				return ExpectsLR<Observer::IncomingTransaction>(LayerException(ErrorOf(Cursor)));
 
-			Oracle::IncomingTransaction Value;
+			Observer::IncomingTransaction Value;
 			Format::Stream Message = Format::Stream((*Cursor)["message"].Get().GetBlob());
 			if (!Value.Load(Message))
-				return ExpectsLR<Oracle::IncomingTransaction>(LayerException("witness transaction deserialization error"));
+				return ExpectsLR<Observer::IncomingTransaction>(LayerException("witness transaction deserialization error"));
 
 			return Value;
 		}
-		ExpectsLR<Vector<Oracle::IncomingTransaction>> Sidechainstate::ApproveTransactions(uint64_t BlockHeight, uint64_t BlockLatency)
+		ExpectsLR<Vector<Observer::IncomingTransaction>> Observerstate::ApproveTransactions(uint64_t BlockHeight, uint64_t BlockLatency)
 		{
 			if (!BlockHeight || !BlockLatency)
-				return ExpectsLR<Vector<Oracle::IncomingTransaction>>(LayerException("invalid block height or block latency"));
+				return ExpectsLR<Vector<Observer::IncomingTransaction>>(LayerException("invalid block height or block latency"));
 			else if (BlockHeight <= BlockLatency)
-				return ExpectsLR<Vector<Oracle::IncomingTransaction>>(Vector<Oracle::IncomingTransaction>());
+				return ExpectsLR<Vector<Observer::IncomingTransaction>>(Vector<Observer::IncomingTransaction>());
 
 			SchemaList Map;
 			Map.push_back(Var::Set::Integer(BlockHeight - BlockLatency));
@@ -291,16 +291,16 @@ namespace Tangent
 
 			auto Cursor = EmplaceQuery(Label, __func__, "SELECT message FROM transactions WHERE block_id <= ? AND approved = FALSE", &Map);
 			if (!Cursor || Cursor->Error())
-				return ExpectsLR<Vector<Oracle::IncomingTransaction>>(LayerException(ErrorOf(Cursor)));
+				return ExpectsLR<Vector<Observer::IncomingTransaction>>(LayerException(ErrorOf(Cursor)));
 
 			auto& Response = Cursor->First();
 			size_t Size = Response.Size();
-			Vector<Oracle::IncomingTransaction> Values;
+			Vector<Observer::IncomingTransaction> Values;
 			Values.reserve(Size);
 
 			for (size_t i = 0; i < Size; i++)
 			{
-				Oracle::IncomingTransaction Value;
+				Observer::IncomingTransaction Value;
 				Format::Stream Message = Format::Stream(Response[i]["message"].Get().GetBlob());
 				if (!Value.Load(Message))
 					continue;
@@ -317,9 +317,9 @@ namespace Tangent
 				}
 			}
 
-			return ExpectsLR<Vector<Oracle::IncomingTransaction>>(std::move(Values));
+			return ExpectsLR<Vector<Observer::IncomingTransaction>>(std::move(Values));
 		}
-		ExpectsLR<void> Sidechainstate::SetProperty(const std::string_view& Key, UPtr<Schema>&& Value)
+		ExpectsLR<void> Observerstate::SetProperty(const std::string_view& Key, UPtr<Schema>&& Value)
 		{
 			auto Buffer = Schema::ToJSONB(*Value);
 			Format::Stream Message;
@@ -344,7 +344,7 @@ namespace Tangent
 
 			return Expectation::Met;
 		}
-		ExpectsLR<Schema*> Sidechainstate::GetProperty(const std::string_view& Key)
+		ExpectsLR<Schema*> Observerstate::GetProperty(const std::string_view& Key)
 		{
 			SchemaList Map;
 			Map.push_back(Var::Set::String(Algorithm::Asset::BlockchainOf(Asset) + ":" + String(Key)));
@@ -364,7 +364,7 @@ namespace Tangent
 
 			return *Value;
 		}
-		ExpectsLR<void> Sidechainstate::SetCache(Oracle::CachePolicy Policy, const std::string_view& Key, UPtr<Schema>&& Value)
+		ExpectsLR<void> Observerstate::SetCache(Observer::CachePolicy Policy, const std::string_view& Key, UPtr<Schema>&& Value)
 		{
 			auto Buffer = Schema::ToJSONB(*Value);
 			Format::Stream Message;
@@ -389,7 +389,7 @@ namespace Tangent
 
 			return Expectation::Met;
 		}
-		ExpectsLR<Schema*> Sidechainstate::GetCache(Oracle::CachePolicy Policy, const std::string_view& Key)
+		ExpectsLR<Schema*> Observerstate::GetCache(Observer::CachePolicy Policy, const std::string_view& Key)
 		{
 			SchemaList Map;
 			Map.push_back(Var::Set::Binary(Format::Util::IsHexEncoding(Key) ? Codec::HexDecode(Key) : String(Key)));
@@ -409,7 +409,7 @@ namespace Tangent
 
 			return *Value;
 		}
-		ExpectsLR<void> Sidechainstate::SetAddressIndex(const std::string_view& Address, const Oracle::IndexAddress& Value)
+		ExpectsLR<void> Observerstate::SetAddressIndex(const std::string_view& Address, const Observer::IndexAddress& Value)
 		{
 			Format::Stream Message;
 			if (!Value.Store(&Message))
@@ -425,23 +425,23 @@ namespace Tangent
 
 			return Expectation::Met;
 		}
-		ExpectsLR<Oracle::IndexAddress> Sidechainstate::GetAddressIndex(const std::string_view& Address)
+		ExpectsLR<Observer::IndexAddress> Observerstate::GetAddressIndex(const std::string_view& Address)
 		{
 			SchemaList Map;
 			Map.push_back(Var::Set::Binary(GetAddressLocation(Address)));
 
 			auto Cursor = EmplaceQuery(Label, __func__, "SELECT message FROM addresses WHERE location = ?", &Map);
 			if (!Cursor || Cursor->ErrorOrEmpty())
-				return ExpectsLR<Oracle::IndexAddress>(LayerException(ErrorOf(Cursor)));
+				return ExpectsLR<Observer::IndexAddress>(LayerException(ErrorOf(Cursor)));
 
-			Oracle::IndexAddress Value;
+			Observer::IndexAddress Value;
 			Format::Stream Message = Format::Stream((*Cursor)["message"].Get().GetBlob());
 			if (!Value.Load(Message))
-				return ExpectsLR<Oracle::IndexAddress>(LayerException("address index deserialization error"));
+				return ExpectsLR<Observer::IndexAddress>(LayerException("address index deserialization error"));
 
 			return Value;
 		}
-		ExpectsLR<UnorderedMap<String, Oracle::IndexAddress>> Sidechainstate::GetAddressIndices(const UnorderedSet<String>& Addresses)
+		ExpectsLR<UnorderedMap<String, Observer::IndexAddress>> Observerstate::GetAddressIndices(const UnorderedSet<String>& Addresses)
 		{
 			UPtr<Schema> AddressList = Var::Set::Array();
 			AddressList->Reserve(Addresses.size());
@@ -451,23 +451,23 @@ namespace Tangent
 					AddressList->Push(Var::Binary(GetAddressLocation(Item)));
 			}
 			if (AddressList->Empty())
-				return ExpectsLR<UnorderedMap<String, Oracle::IndexAddress>>(LayerException("no locations"));
+				return ExpectsLR<UnorderedMap<String, Observer::IndexAddress>>(LayerException("no locations"));
 
 			SchemaList Map;
 			Map.push_back(Var::Set::String(*LDB::Utils::InlineArray(std::move(AddressList))));
 
 			auto Cursor = EmplaceQuery(Label, __func__, "SELECT message FROM addresses WHERE location IN ($?)", &Map);
 			if (!Cursor || Cursor->Error())
-				return ExpectsLR<UnorderedMap<String, Oracle::IndexAddress>>(LayerException(ErrorOf(Cursor)));
+				return ExpectsLR<UnorderedMap<String, Observer::IndexAddress>>(LayerException(ErrorOf(Cursor)));
 
 			auto& Response = Cursor->First();
 			size_t Size = Response.Size();
-			UnorderedMap<String, Oracle::IndexAddress> Values;
+			UnorderedMap<String, Observer::IndexAddress> Values;
 			Values.reserve(Size);
 
 			for (size_t i = 0; i < Size; i++)
 			{
-				Oracle::IndexAddress Value;
+				Observer::IndexAddress Value;
 				Format::Stream Message = Format::Stream(Response[i]["message"].Get().GetBlob());
 				if (Value.Load(Message))
 					Values[Value.Address] = std::move(Value);
@@ -475,7 +475,7 @@ namespace Tangent
 
 			return Values;
 		}
-		ExpectsLR<Vector<String>> Sidechainstate::GetAddressIndices()
+		ExpectsLR<Vector<String>> Observerstate::GetAddressIndices()
 		{
 			auto Cursor = Query(Label, __func__, "SELECT message FROM addresses");
 			if (!Cursor || Cursor->Error())
@@ -488,7 +488,7 @@ namespace Tangent
 
 			for (size_t i = 0; i < Size; i++)
 			{
-				Oracle::IndexAddress Value;
+				Observer::IndexAddress Value;
 				Format::Stream Message = Format::Stream(Response[i]["message"].Get().GetBlob());
 				if (Value.Load(Message))
 					Values.emplace_back(std::move(Value.Address));
@@ -496,44 +496,44 @@ namespace Tangent
 
 			return Values;
 		}
-		std::string_view Sidechainstate::GetCacheLocation(Oracle::CachePolicy Policy)
+		std::string_view Observerstate::GetCacheLocation(Observer::CachePolicy Policy)
 		{
 			switch (Policy)
 			{
-				case Oracle::CachePolicy::Persistent:
+				case Observer::CachePolicy::Persistent:
 					return "persistent_caches";
-				case Oracle::CachePolicy::Extended:
+				case Observer::CachePolicy::Extended:
 					return "extended_caches";
-				case Oracle::CachePolicy::Greedy:
-				case Oracle::CachePolicy::Lazy:
-				case Oracle::CachePolicy::Shortened:
+				case Observer::CachePolicy::Greedy:
+				case Observer::CachePolicy::Lazy:
+				case Observer::CachePolicy::Shortened:
 				default:
 					return "shortened_caches";
 			}
 		}
-		String Sidechainstate::GetAddressLocation(const std::string_view& Address)
+		String Observerstate::GetAddressLocation(const std::string_view& Address)
 		{
 			Format::Stream Message;
 			Message.WriteString(Address);
 			return Message.Data;
 		}
-		String Sidechainstate::GetTransactionLocation(const std::string_view& TransactionId)
+		String Observerstate::GetTransactionLocation(const std::string_view& TransactionId)
 		{
 			Format::Stream Message;
 			Message.WriteString(TransactionId);
 			return Message.Data;
 		}
-		String Sidechainstate::GetCoinLocation(const std::string_view& TransactionId, uint32_t Index)
+		String Observerstate::GetCoinLocation(const std::string_view& TransactionId, uint32_t Index)
 		{
 			Format::Stream Message;
 			Message.WriteString(TransactionId);
 			Message.WriteTypeless(Index);
 			return Message.Data;
 		}
-		bool Sidechainstate::ReconstructStorage()
+		bool Observerstate::ReconstructStorage()
 		{
-			const uint32_t MaxECacheCapacity = Protocol::Now().User.Oracle.CacheExtendedSize;
-			const uint32_t MaxSCacheCapacity = Protocol::Now().User.Oracle.CacheShortSize;
+			const uint32_t MaxECacheCapacity = Protocol::Now().User.Observer.CacheExtendedSize;
+			const uint32_t MaxSCacheCapacity = Protocol::Now().User.Observer.CacheShortSize;
 			String Command = VI_STRINGIFY(
 				CREATE TABLE IF NOT EXISTS wallets
 				(

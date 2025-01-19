@@ -189,9 +189,9 @@ namespace Tangent
                 uint32_t CacheExtendedSize = 65536;
                 uint64_t FeeEstimationSeconds = 600;
                 uint64_t WithdrawalTime = 300000;
-                bool Observer = false;
+                bool Server = false;
                 bool Logging = true;
-            } Oracle;
+            } Observer;
             struct
             {
                 String State;

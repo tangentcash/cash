@@ -15,7 +15,7 @@ extern "C"
 
 namespace Tangent
 {
-	namespace Oracle
+	namespace Observer
 	{
 		namespace Chains
 		{

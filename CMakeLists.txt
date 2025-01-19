@@ -46,7 +46,7 @@ endforeach()
 set(TAN_VALIDATOR ON CACHE BOOL "Enable necessary modules for validator daemon support")
 set(TAN_TEST ON CACHE BOOL "Enable validator tests")
 if (NOT TAN_VALIDATOR)
-    list(FILTER SOURCE EXCLUDE REGEX "src/tangent/oracle")
+    list(FILTER SOURCE EXCLUDE REGEX "src/tangent/observer")
     list(FILTER SOURCE EXCLUDE REGEX "src/tangent/service")
     list(FILTER SOURCE EXCLUDE REGEX "src/tangent/storage")
     list(FILTER SOURCE EXCLUDE REGEX "src/utils/nlohmann-json")
@@ -89,7 +89,7 @@ if (TAN_VALIDATOR)
         $<$<COMPILE_LANGUAGE:CXX>:${VI_DIRECTORY}/src/vitex/compute.h>
         $<$<COMPILE_LANGUAGE:CXX>:${VI_DIRECTORY}/src/vitex/layer/processors.h>
         $<$<COMPILE_LANGUAGE:CXX>:${CMAKE_CURRENT_LIST_DIR}/src/tangent/kernel/chain.h>
-        $<$<COMPILE_LANGUAGE:CXX>:${CMAKE_CURRENT_LIST_DIR}/src/tangent/kernel/oracle.h>)
+        $<$<COMPILE_LANGUAGE:CXX>:${CMAKE_CURRENT_LIST_DIR}/src/tangent/kernel/observer.h>)
 endif()
 
 add_subdirectory(${VI_DIRECTORY} vitex)

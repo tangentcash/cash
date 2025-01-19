@@ -364,7 +364,7 @@ namespace Tangent
 		ServerNode::~ServerNode() noexcept
 		{
 			auto NodeId = Codec::HexEncode(std::string_view((char*)this, sizeof(this)));
-			Oracle::Paymaster::SubmitCallback(NodeId, nullptr);
+			Observer::Paymaster::SubmitCallback(NodeId, nullptr);
 			ClearPendingTip();
 		}
 		Promise<Option<SocketAddress>> ServerNode::Discover(Option<SocketAddress>&& ErrorAddress, bool TryRediscovering)
@@ -487,7 +487,7 @@ namespace Tangent
 
 			return ReturnOK(*From, __func__, "approve shutdown");
 		}
-		Promise<void> ServerNode::ProposeTransactionLogs(const Oracle::ChainSupervisorOptions& Options, Oracle::TransactionLogs&& Logs)
+		Promise<void> ServerNode::ProposeTransactionLogs(const Observer::ChainSupervisorOptions& Options, Observer::TransactionLogs&& Logs)
 		{
 			UMutex<std::recursive_mutex> Unique(Sync.Account);
 			auto AccountSequence = Validator.Wallet.GetLatestSequence().Or(1);
@@ -1395,7 +1395,7 @@ namespace Tangent
 			ApplyValidator(Mempool, Validator.Node, Validator.Wallet).Expect("failed to save trusted validator");
 
 			auto NodeId = Codec::HexEncode(std::string_view((char*)this, sizeof(this)));
-			Oracle::Paymaster::SubmitCallback(NodeId, std::bind(&ServerNode::ProposeTransactionLogs, this, std::placeholders::_1, std::placeholders::_2));
+			Observer::Paymaster::SubmitCallback(NodeId, std::bind(&ServerNode::ProposeTransactionLogs, this, std::placeholders::_1, std::placeholders::_2));
 
 			for (auto& Seed : Protocol::Now().User.Seeds)
 			{

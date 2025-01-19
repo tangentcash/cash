@@ -1956,7 +1956,7 @@ namespace Tangent
 		}
 		ExpectsLR<States::WitnessAddress> TransactionContext::ApplyWitnessAddress(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner, const Algorithm::Pubkeyhash Proposer, const AddressMap& Addresses, uint64_t AddressIndex, States::WitnessAddress::Class Purpose)
 		{
-			auto* Chain = Oracle::Datamaster::GetChain(Asset);
+			auto* Chain = Observer::Datamaster::GetChain(Asset);
 			if (!Chain || Addresses.empty())
 				return LayerException("invalid operation");
 

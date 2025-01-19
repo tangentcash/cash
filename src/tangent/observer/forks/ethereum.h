@@ -1,10 +1,10 @@
-#ifndef TAN_ORACLE_FORKS_ETHEREUM_H
-#define TAN_ORACLE_FORKS_ETHEREUM_H
+#ifndef TAN_OBSERVER_FORKS_ETHEREUM_H
+#define TAN_OBSERVER_FORKS_ETHEREUM_H
 #include "../ethereum.h"
 
 namespace Tangent
 {
-    namespace Oracle
+    namespace Observer
     {
         namespace Chains
         {

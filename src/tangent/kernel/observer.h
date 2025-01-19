@@ -1,11 +1,11 @@
-#ifndef TAN_ORACLE_H
-#define TAN_ORACLE_H
+#ifndef TAN_OBSERVER_H
+#define TAN_OBSERVER_H
 #include "../policy/messages.h"
 #include "../layer/control.h"
 
 namespace Tangent
 {
-	namespace Oracle
+	namespace Observer
 	{
 		enum class RoutingPolicy
 		{
@@ -523,7 +523,7 @@ namespace Tangent
 			static Nodemaster* AddNode(const Algorithm::AssetId& Asset, const std::string_view& URL, double Throttling);
 			static bool HasChain(const Algorithm::AssetId& Asset);
 			static bool HasNode(const Algorithm::AssetId& Asset);
-			static bool HasOracle(const Algorithm::AssetId& Asset);
+			static bool HasObserver(const Algorithm::AssetId& Asset);
 			static bool IsInitialized();
 			static void Initialize();
 			static void Cleanup();
@@ -550,7 +550,7 @@ namespace Tangent
 		public:
 			static void Open(Schema* Config, bool Observe);
 			static void Close();
-			static UnorderedMap<String, Oracle::MasterWallet> GetWallets(const Algorithm::Seckey PrivateKey);
+			static UnorderedMap<String, MasterWallet> GetWallets(const Algorithm::Seckey PrivateKey);
 			static UnorderedMap<String, InvocationCallback> GetRegistrations();
 		};
 	}

@@ -1,74 +1,46 @@
-#ifndef TAN_ORACLE_RIPPLE_H
-#define TAN_ORACLE_RIPPLE_H
-#include "../kernel/oracle.h"
+#ifndef TAN_OBSERVER_SOLANA_H
+#define TAN_OBSERVER_SOLANA_H
+#include "../kernel/observer.h"
 
 struct btc_chainparams_;
 
 namespace Tangent
 {
-	namespace Oracle
+	namespace Observer
 	{
 		namespace Chains
 		{
-			class Ripple : public Chainmaster
+			class Solana : public Chainmaster
 			{
 			public:
-				struct TransactionBuffer
+				struct TokenAccount
 				{
-					uint16_t TransactionType = 0;
-					uint32_t Flags = 0;
-					uint32_t Sequence = 0;
-					uint32_t DestinationTag = 0;
-					uint32_t LastLedgerSequence = 0;
-					struct
-					{
-						uint64_t BaseValue = 0;
-						Decimal TokenValue = Decimal::NaN();
-						String Asset;
-						String Issuer;
-					} Amount;
-					uint64_t Fee = 0;
-					String SigningPubKey;
-					String TxnSignature;
+					String ProgramId;
 					String Account;
-					String Destination;
-				};
-
-				struct AccountInfo
-				{
 					Decimal Balance;
-					uint64_t Sequence = 0;
-				};
-
-				struct AccountTokenInfo
-				{
-					Decimal Balance;
-				};
-
-				struct LedgerSequenceInfo
-				{
-					uint64_t Index = 0;
-					uint64_t Sequence = 0;
+					Decimal Divisibility;
 				};
 
 			public:
 				class NdCall
 				{
 				public:
-					static const char* Ledger();
-					static const char* Transaction();
-					static const char* AccountInfo();
-					static const char* AccountObjects();
-					static const char* ServerInfo();
-					static const char* SubmitTransaction();
+					static String GetTokenMetadata(const std::string_view& Mint);
+					static const char* GetTokenBalance();
+					static const char* GetBalance();
+					static const char* GetBlockHash();
+					static const char* GetBlockNumber();
+					static const char* GetBlock();
+					static const char* GetTransaction();
+					static const char* SendTransaction();
 				};
 
 			protected:
 				Chainparams Netdata;
 
 			public:
-				Ripple() noexcept;
-				virtual ~Ripple() override = default;
+				Solana() noexcept;
+				virtual ~Solana() override = default;
 				virtual Promise<ExpectsLR<void>> BroadcastTransaction(const Algorithm::AssetId& Asset, const OutgoingTransaction& TxData) override;
 				virtual Promise<ExpectsLR<uint64_t>> GetLatestBlockHeight(const Algorithm::AssetId& Asset) override;
 				virtual Promise<ExpectsLR<Schema*>> GetBlockTransactions(const Algorithm::AssetId& Asset, uint64_t BlockHeight, String* BlockHash) override;
@@ -88,23 +60,12 @@ namespace Tangent
 				virtual const Chainparams& GetChainparams() const override;
 
 			public:
-				virtual Promise<ExpectsLR<AccountInfo>> GetAccountInfo(const Algorithm::AssetId& Asset, const std::string_view& Address);
-				virtual Promise<ExpectsLR<AccountTokenInfo>> GetAccountTokenInfo(const Algorithm::AssetId& Asset, const std::string_view& Address);
-				virtual Promise<ExpectsLR<LedgerSequenceInfo>> GetLedgerSequenceInfo(const Algorithm::AssetId& Asset);
-				virtual bool TxSignAndVerify(TransactionBuffer* TxData, const PrivateKey& Public, const PrivateKey& Private);
-				virtual Vector<uint8_t> TxSerialize(TransactionBuffer* TxData, bool SigningData);
-				virtual String TxHash(const Vector<uint8_t>& TxBlob);
-				virtual Decimal GetBaseFeeXRP();
-				virtual Decimal FromDrop(const uint256_t& Value);
-				virtual uint256_t ToDrop(const Decimal& Value);
-				virtual String EncodeSecretKey(uint8_t* SecretKey, size_t SecretKeySize);
-				virtual String EncodePublicKey(uint8_t* PublicKey, size_t PublicKeySize);
-				virtual String EncodePrivateKey(uint8_t* PrivateKey, size_t PrivateKeySize);
-				virtual String EncodeAndHashPublicKey(uint8_t* PublicKey, size_t PublicKeySize);
-				virtual bool DecodeSecretKey(const std::string_view& Data, uint8_t SecretKey[16]);
-				virtual bool DecodePrivateKey(const std::string_view& Data, uint8_t PrivateKey[65]);
-				virtual bool DecodePublicKey(const std::string_view& Data, uint8_t PublicKey[33]);
-				virtual bool DecodePublicKeyHash(const std::string_view& Data, uint8_t PublicKeyHash[20]);
+				virtual Promise<ExpectsLR<String>> GetTokenSymbol(const std::string_view& Mint);
+				virtual Promise<ExpectsLR<TokenAccount>> GetTokenBalance(const Algorithm::AssetId& Asset, const std::string_view& Mint, const std::string_view& Owner);
+				virtual Promise<ExpectsLR<Decimal>> GetBalance(const Algorithm::AssetId& Asset, const std::string_view& Owner);
+				virtual Promise<ExpectsLR<String>> GetRecentBlockHash(const Algorithm::AssetId& Asset);
+				virtual bool DecodePrivateKey(const std::string_view& Data, uint8_t PrivateKey[64]);
+				virtual bool DecodeSecretOrPublicKey(const std::string_view& Data, uint8_t SecretKey[32]);
 				virtual const btc_chainparams_* GetChain();
 			};
 		}

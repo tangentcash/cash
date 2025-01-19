@@ -1,10 +1,10 @@
-#ifndef TAN_ORACLE_CARDANO_H
-#define TAN_ORACLE_CARDANO_H
-#include "../kernel/oracle.h"
+#ifndef TAN_OBSERVER_CARDANO_H
+#define TAN_OBSERVER_CARDANO_H
+#include "../kernel/observer.h"
 
 namespace Tangent
 {
-	namespace Oracle
+	namespace Observer
 	{
 		namespace Chains
 		{

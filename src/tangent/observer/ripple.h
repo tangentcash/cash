@@ -1,83 +1,74 @@
-#ifndef TAN_ORACLE_STELLAR_H
-#define TAN_ORACLE_STELLAR_H
-#include "../kernel/oracle.h"
+#ifndef TAN_OBSERVER_RIPPLE_H
+#define TAN_OBSERVER_RIPPLE_H
+#include "../kernel/observer.h"
 
 struct btc_chainparams_;
 
 namespace Tangent
 {
-	namespace Oracle
+	namespace Observer
 	{
 		namespace Chains
 		{
-			class Stellar : public Chainmaster
+			class Ripple : public Chainmaster
 			{
 			public:
-				enum class AssetType : uint32_t
+				struct TransactionBuffer
 				{
-					ASSET_TYPE_NATIVE = 0,
-					ASSET_TYPE_CREDIT_ALPHANUM4 = 1,
-					ASSET_TYPE_CREDIT_ALPHANUM12 = 2
-				};
-
-			public:
-				struct ChainInfo
-				{
-					uint8_t Ed25519PublicKey = 6 << 3;
-					uint8_t Ed25519SecretSeed = 18 << 3;
-					uint8_t Med25519PublicKey = 12 << 3;
-					uint8_t PreAuthTx = 19 << 3;
-					uint8_t Sha256Hash = 23 << 3;
-				};
-
-				struct ChainConfig
-				{
-					ChainInfo Mainnet;
-					ChainInfo Testnet;
-					ChainInfo Regtest;
-				};
-
-				struct AssetInfo
-				{
-					String Type;
-					String Code;
-					String Issuer;
-				};
-
-				struct AssetBalance
-				{
-					AssetInfo Info;
-					Decimal Balance;
+					uint16_t TransactionType = 0;
+					uint32_t Flags = 0;
+					uint32_t Sequence = 0;
+					uint32_t DestinationTag = 0;
+					uint32_t LastLedgerSequence = 0;
+					struct
+					{
+						uint64_t BaseValue = 0;
+						Decimal TokenValue = Decimal::NaN();
+						String Asset;
+						String Issuer;
+					} Amount;
+					uint64_t Fee = 0;
+					String SigningPubKey;
+					String TxnSignature;
+					String Account;
+					String Destination;
 				};
 
 				struct AccountInfo
 				{
-					UnorderedMap<String, AssetBalance> Balances;
+					Decimal Balance;
 					uint64_t Sequence = 0;
 				};
 
+				struct AccountTokenInfo
+				{
+					Decimal Balance;
+				};
+
+				struct LedgerSequenceInfo
+				{
+					uint64_t Index = 0;
+					uint64_t Sequence = 0;
+				};
 
 			public:
 				class NdCall
 				{
 				public:
-					static String GetLedger(uint64_t BlockHeight);
-					static String GetLedgerOperations(uint64_t BlockHeight);
-					static String GetOperations(const std::string_view& TxId);
-					static String GetTransactions(const std::string_view& TxId);
-					static String GetAccounts(const std::string_view& Address);
-					static String GetAssets(const std::string_view& Issuer, const std::string_view& Code);
-					static const char* GetLastLedger();
+					static const char* Ledger();
+					static const char* Transaction();
+					static const char* AccountInfo();
+					static const char* AccountObjects();
+					static const char* ServerInfo();
 					static const char* SubmitTransaction();
 				};
 
 			protected:
-				ChainConfig Config;
 				Chainparams Netdata;
 
 			public:
-				Stellar(ChainConfig* Config = nullptr) noexcept;
-				virtual ~Stellar() override = default;
+				Ripple() noexcept;
+				virtual ~Ripple() override = default;
 				virtual Promise<ExpectsLR<void>> BroadcastTransaction(const Algorithm::AssetId& Asset, const OutgoingTransaction& TxData) override;
 				virtual Promise<ExpectsLR<uint64_t>> GetLatestBlockHeight(const Algorithm::AssetId& Asset) override;
 				virtual Promise<ExpectsLR<Schema*>> GetBlockTransactions(const Algorithm::AssetId& Asset, uint64_t BlockHeight, String* BlockHash) override;
@@ -97,23 +88,24 @@ namespace Tangent
 				virtual const Chainparams& GetChainparams() const override;
 
 			public:
-				virtual Promise<ExpectsLR<AssetInfo>> GetAssetInfo(const Algorithm::AssetId& Asset, const std::string_view& Address, const std::string_view& Code);
 				virtual Promise<ExpectsLR<AccountInfo>> GetAccountInfo(const Algorithm::AssetId& Asset, const std::string_view& Address);
-				virtual Promise<ExpectsLR<String>> GetTransactionMemo(const Algorithm::AssetId& Asset, const std::string_view& TxId);
-				virtual Promise<bool> IsAccountExists(const Algorithm::AssetId& Asset, const std::string_view& Address);
-				virtual String GetNetworkPassphrase();
-				virtual Decimal FromStroop(const uint256_t& Value);
-				virtual uint256_t ToStroop(const Decimal& Value);
-				virtual uint64_t GetBaseStroopFee();
-				virtual uint16_t CalculateChecksum(const uint8_t* Value, size_t Size);
-				virtual bool DecodePrivateKey(const std::string_view& Data, uint8_t PrivateKey[64]);
-				virtual bool DecodeKey(uint8_t Version, const std::string_view& Data, uint8_t* OutValue, size_t* OutSize);
-				virtual bool DecodeBase32(const std::string_view& Data, uint8_t* OutValue, size_t* OutSize);
+				virtual Promise<ExpectsLR<AccountTokenInfo>> GetAccountTokenInfo(const Algorithm::AssetId& Asset, const std::string_view& Address);
+				virtual Promise<ExpectsLR<LedgerSequenceInfo>> GetLedgerSequenceInfo(const Algorithm::AssetId& Asset);
+				virtual bool TxSignAndVerify(TransactionBuffer* TxData, const PrivateKey& Public, const PrivateKey& Private);
+				virtual Vector<uint8_t> TxSerialize(TransactionBuffer* TxData, bool SigningData);
+				virtual String TxHash(const Vector<uint8_t>& TxBlob);
+				virtual Decimal GetBaseFeeXRP();
+				virtual Decimal FromDrop(const uint256_t& Value);
+				virtual uint256_t ToDrop(const Decimal& Value);
+				virtual String EncodeSecretKey(uint8_t* SecretKey, size_t SecretKeySize);
+				virtual String EncodePublicKey(uint8_t* PublicKey, size_t PublicKeySize);
 				virtual String EncodePrivateKey(uint8_t* PrivateKey, size_t PrivateKeySize);
-				virtual String EncodeKey(uint8_t Version, const uint8_t* Value, size_t Size);
-				virtual String EncodeBase32(const uint8_t* Value, size_t Size);
+				virtual String EncodeAndHashPublicKey(uint8_t* PublicKey, size_t PublicKeySize);
+				virtual bool DecodeSecretKey(const std::string_view& Data, uint8_t SecretKey[16]);
+				virtual bool DecodePrivateKey(const std::string_view& Data, uint8_t PrivateKey[65]);
+				virtual bool DecodePublicKey(const std::string_view& Data, uint8_t PublicKey[33]);
+				virtual bool DecodePublicKeyHash(const std::string_view& Data, uint8_t PublicKeyHash[20]);
 				virtual const btc_chainparams_* GetChain();
-				virtual ChainInfo& GetParams();
 			};
 		}
 	}

@@ -307,6 +307,7 @@ namespace Tangent
 			Bind(0 | AccessType::R, "chainstate", "getaccountwork", 1, 1, "string address", "multiform", "get account work by address", std::bind(&ServerNode::ChainstateGetAccountWork, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(0 | AccessType::R, "chainstate", "getbestaccountworkers", 3, 3, "uint64 commitment, uint64 offset, uint64 count", "multiform[]", "get best block proposers (zero commitment = offline proposers, non-zero commitment = online proposers threshold)", std::bind(&ServerNode::ChainstateGetBestAccountWorkers, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(0 | AccessType::R, "chainstate", "getaccountobserver", 2, 2, "string asset, string address", "multiform", "get account observer by address and asset", std::bind(&ServerNode::ChainstateGetAccountObserver, this, std::placeholders::_1, std::placeholders::_2));
+			Bind(0 | AccessType::R, "chainstate", "getaccountobservers", 3, 3, "string address, uint64 offset, uint64 count", "multiform[]", "get account observers by address", std::bind(&ServerNode::ChainstateGetAccountObservers, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(0 | AccessType::R, "chainstate", "getbestaccountobservers", 3, 3, "string asset, uint64 commitment, uint64 offset, uint64 count", "multiform[]", "get best account observers (zero commitment = offline observers, non-zero commitment = online observers threshold)", std::bind(&ServerNode::ChainstateGetBestAccountObservers, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(0 | AccessType::R, "chainstate", "getaccountprogram", 1, 1, "string address", "uniform", "get account program hashcode by address", std::bind(&ServerNode::ChainstateGetAccountProgram, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(0 | AccessType::R, "chainstate", "getaccountstorage", 2, 2, "string address, string location", "uniform", "get account storage by address and location", std::bind(&ServerNode::ChainstateGetAccountStorage, this, std::placeholders::_1, std::placeholders::_2));
@@ -343,7 +344,7 @@ namespace Tangent
 			Bind(0 | AccessType::R, "mempoolstate", "getcumulativemempooltransactions", 3, 4, "uint256 hash, uint64 offset, uint64 count, uint8? unrolling", "uint256[] | txn[]", "get cumulative mempool transactions", std::bind(&ServerNode::MempoolstateGetCumulativeEventTransactions, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(0 | AccessType::R, "mempoolstate", "getcumulativemempoolconsensus", 1, 1, "uint256 hash", "{ branch: uint256, threshold: double, progress: double, committee: uint64, reached: boolean }", "get cumulative mempool transaction consensus state", std::bind(&ServerNode::MempoolstateGetCumulativeConsensus, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(0 | AccessType::R, "validatorstate", "getnode", 1, 1, "string uri_address", "validator", "get a node by ip address", std::bind(&ServerNode::ValidatorstateGetNode, this, std::placeholders::_1, std::placeholders::_2));
-			Bind(0 | AccessType::R, "validatorstate", "getblockchains", 0, 0, "", "oracle::asset", "get supported blockchains", std::bind(&ServerNode::ValidatorstateGetBlockchains, this, std::placeholders::_1, std::placeholders::_2));
+			Bind(0 | AccessType::R, "validatorstate", "getblockchains", 0, 0, "", "observer::asset", "get supported blockchains", std::bind(&ServerNode::ValidatorstateGetBlockchains, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(0 | AccessType::R, "validatorstate", "status", 0, 0, "", "validator::status", "get validator status", std::bind(&ServerNode::ValidatorstateStatus, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(AccessType::R | AccessType::A, "chainstate", "tracecall", 4, 32, "string asset, string from_address, string to_address, string function, ...", "program_trace", "trace execution of mutable / immutable function of program assigned to to_address", std::bind(&ServerNode::ChainstateTraceCall, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(AccessType::W | AccessType::R, "mempoolstate", "submittransaction", 1, 2, "string hex_message, bool? validate", "uint256", "try to accept and relay a mempool transaction from raw data and possibly validate over latest chainstate", std::bind(&ServerNode::MempoolstateSubmitTransaction, this, std::placeholders::_1, std::placeholders::_2, nullptr));
@@ -1871,6 +1872,26 @@ namespace Tangent
 			auto State = Chain.GetMultiformByComposition(nullptr, States::AccountObserver::AsInstanceColumn(Owner), States::AccountObserver::AsInstanceRow(Asset), 0);
 			return ServerResponse().Success(State ? (*State)->AsSchema().Reset() : Var::Set::Null());
 		}
+		ServerResponse ServerNode::ChainstateGetAccountObservers(HTTP::Connection* Base, Format::Variables&& Args)
+		{
+			Algorithm::Pubkeyhash Owner;
+			if (!Algorithm::Signing::DecodeAddress(Args[0].AsString(), Owner))
+				return ServerResponse().Error(ErrorCodes::BadParams, "account address not valid");
+
+			uint64_t Offset = Args[1].AsUint64(), Count = Args[2].AsUint64();
+			if (!Count || Count > Protocol::Now().User.RPC.PageSize)
+				return ServerResponse().Error(ErrorCodes::BadParams, "count not valid");
+
+			auto Chain = Storages::Chainstate(__func__);
+			auto List = Chain.GetMultiformsByColumn(nullptr, States::AccountObserver::AsInstanceColumn(Owner), 0, Offset, Count);
+			if (!List)
+				return ServerResponse().Error(ErrorCodes::NotFound, "data not found");
+
+			UPtr<Schema> Data = Var::Set::Array();
+			for (auto& Item : *List)
+				Data->Push(Item->AsSchema().Reset());
+			return ServerResponse().Success(std::move(Data));
+		}
 		ServerResponse ServerNode::ChainstateGetBestAccountObservers(HTTP::Connection* Base, Format::Variables&& Args)
 		{
 			auto Asset = Algorithm::Asset::IdOfHandle(Args[0].AsString());
@@ -2707,11 +2728,11 @@ namespace Tangent
 		}
 		ServerResponse ServerNode::ValidatorstateGetBlockchains(HTTP::Connection* Base, Format::Variables&& Args)
 		{
-			if (!Oracle::Datamaster::IsInitialized())
+			if (!Observer::Datamaster::IsInitialized())
 				return ServerResponse().Error(ErrorCodes::BadRequest, "validator node disabled");
 
 			UPtr<Schema> Data = Var::Set::Array();
-			for (auto& Asset : Oracle::Datamaster::GetChains())
+			for (auto& Asset : Observer::Datamaster::GetChains())
 			{
 				auto* Next = Data->Push(Algorithm::Asset::Serialize(Asset.first));
 				Next->Set("divisibility", Var::Decimal(Asset.second.Divisibility));
@@ -2730,13 +2751,13 @@ namespace Tangent
 				}
 				switch (Asset.second.Routing)
 				{
-					case Tangent::Oracle::RoutingPolicy::Account:
+					case Tangent::Observer::RoutingPolicy::Account:
 						Next->Set("routing_policy", Var::String("account"));
 						break;
-					case Tangent::Oracle::RoutingPolicy::Memo:
+					case Tangent::Observer::RoutingPolicy::Memo:
 						Next->Set("routing_policy", Var::String("memo"));
 						break;
-					case Tangent::Oracle::RoutingPolicy::UTXO:
+					case Tangent::Observer::RoutingPolicy::UTXO:
 						Next->Set("routing_policy", Var::String("utxo"));
 						break;
 					default:
@@ -2790,18 +2811,18 @@ namespace Tangent
 				NDS->Set("cursor_size", Var::Integer(Protocol::Now().User.NDS.CursorSize));
 			}
 
-			if (Protocol::Now().User.Oracle.Observer)
+			if (Protocol::Now().User.Observer.Server)
 			{
 				auto* Observer = Data->Set("oracle", Var::Set::Object());
-				Observer->Set("block_relay_multiplier", Var::Integer(Protocol::Now().User.Oracle.BlockReplayMultiplier));
-				Observer->Set("relaying_timeout", Var::Integer(Protocol::Now().User.Oracle.RelayingTimeout));
-				Observer->Set("relaying_retry_timeout", Var::Integer(Protocol::Now().User.Oracle.RelayingRetryTimeout));
-				Observer->Set("fee_estimation_seconds", Var::Integer(Protocol::Now().User.Oracle.FeeEstimationSeconds));
-				Observer->Set("withdrawal_time", Var::Integer(Protocol::Now().User.Oracle.WithdrawalTime));
-				if (Oracle::Datamaster::IsInitialized())
+				Observer->Set("block_relay_multiplier", Var::Integer(Protocol::Now().User.Observer.BlockReplayMultiplier));
+				Observer->Set("relaying_timeout", Var::Integer(Protocol::Now().User.Observer.RelayingTimeout));
+				Observer->Set("relaying_retry_timeout", Var::Integer(Protocol::Now().User.Observer.RelayingRetryTimeout));
+				Observer->Set("fee_estimation_seconds", Var::Integer(Protocol::Now().User.Observer.FeeEstimationSeconds));
+				Observer->Set("withdrawal_time", Var::Integer(Protocol::Now().User.Observer.WithdrawalTime));
+				if (Observer::Datamaster::IsInitialized())
 				{
 					auto Array = Observer->Set("nodes", Var::Set::Array());
-					for (auto& Asset : Oracle::Datamaster::GetAssets())
+					for (auto& Asset : Observer::Datamaster::GetAssets())
 						Array->Push(Algorithm::Asset::Serialize(Asset));
 				}
 			}
@@ -2927,7 +2948,7 @@ namespace Tangent
 
 			if (Args.size() > 3)
 			{
-				auto Assets = Oracle::Datamaster::GetAssets();
+				auto Assets = Observer::Datamaster::GetAssets();
 				auto Observers = Context.GetAccountObservers(Validator->Validator.Wallet.PublicKeyHash, 0, Assets.size()).Or(Vector<States::AccountObserver>());
 				for (auto& Observer : Stringify::Split(Args[3].AsString(), ','))
 				{

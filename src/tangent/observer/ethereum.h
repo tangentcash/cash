@@ -1,12 +1,12 @@
-#ifndef TAN_ORACLE_ETHEREUM_H
-#define TAN_ORACLE_ETHEREUM_H
-#include "../kernel/oracle.h"
+#ifndef TAN_OBSERVER_ETHEREUM_H
+#define TAN_OBSERVER_ETHEREUM_H
+#include "../kernel/observer.h"
 
 struct btc_chainparams_;
 
 namespace Tangent
 {
-	namespace Oracle
+	namespace Observer
 	{
 		namespace Chains
 		{

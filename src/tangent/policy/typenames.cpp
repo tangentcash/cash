@@ -49,13 +49,13 @@ namespace Tangent
 				std::string_view("receipt"),
 				std::string_view("wallet"),
 				std::string_view("validator"),
-				std::string_view("oracle_master_wallet"),
-				std::string_view("oracle_derived_verifying_wallet"),
-				std::string_view("oracle_derived_signing_wallet"),
-				std::string_view("oracle_incoming_transaction"),
-				std::string_view("oracle_outgoing_transaction"),
-				std::string_view("oracle_index_address"),
-				std::string_view("oracle_index_utxo"),
+				std::string_view("observer_master_wallet"),
+				std::string_view("observer_derived_verifying_wallet"),
+				std::string_view("observer_derived_signing_wallet"),
+				std::string_view("observer_incoming_transaction"),
+				std::string_view("observer_outgoing_transaction"),
+				std::string_view("observer_index_address"),
+				std::string_view("observer_index_utxo"),
 			}
 		};
 

@@ -1,5 +1,5 @@
 #include "algorithm.h"
-#include "oracle.h"
+#include "observer.h"
 extern "C"
 {
 #include <secp256k1.h>
@@ -1015,7 +1015,7 @@ namespace Tangent
 			if (Stringify::IsEmptyOrWhitespace(Blockchain))
 				return false;
 
-			if (!Oracle::Datamaster::IsInitialized() || !Oracle::Datamaster::HasChain(Value))
+			if (!Observer::Datamaster::IsInitialized() || !Observer::Datamaster::HasChain(Value))
 				return false;
 
 			auto Token = TokenOf(Value);

@@ -159,6 +159,7 @@ namespace Tangent
 			ServerResponse ChainstateGetAccountWork(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse ChainstateGetBestAccountWorkers(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse ChainstateGetAccountObserver(HTTP::Connection* Base, Format::Variables&& Args);
+			ServerResponse ChainstateGetAccountObservers(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse ChainstateGetBestAccountObservers(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse ChainstateGetAccountProgram(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse ChainstateGetAccountStorage(HTTP::Connection* Base, Format::Variables&& Args);
