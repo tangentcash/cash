@@ -1,23 +1,23 @@
-#include "tangent/layer/p2p.h"
-#include "tangent/layer/rpc.h"
-#include "tangent/layer/nds.h"
+#include "tangent/validator/service/nss.h"
+#include "tangent/validator/service/nds.h"
+#include "tangent/validator/service/p2p.h"
+#include "tangent/validator/service/rpc.h"
 
 using namespace Tangent;
 
-int main0()
+int main(int argc, char* argv[])
 {
 	Vitex::Runtime Scope;
-	Protocol Params;
+	Protocol Params = Protocol(argc > 1 ? argv[1] : TAN_CONFIG_PATH);
+	NDS::ServerNode Discovery;
+	P2P::ServerNode Consensus;
+	NSS::ServerNode& Synchronization = *NSS::ServerNode::Get();
+	RPC::ServerNode Interface = RPC::ServerNode(&Consensus);
+
 	ServiceControl Control;
-
-	UPtr<P2P::ServerNode> Consensus = new P2P::ServerNode();
-	Control.Bind(Consensus->GetEntrypoint());
-
-	UPtr<NDS::ServerNode> Discovery = new NDS::ServerNode();
-	Control.Bind(Discovery->GetEntrypoint());
-
-	UPtr<RPC::ServerNode> Interface = new RPC::ServerNode(*Consensus);
-	Control.Bind(Interface->GetEntrypoint());
-
+	Control.Bind(Discovery.GetEntrypoint());
+	Control.Bind(Consensus.GetEntrypoint());
+	Control.Bind(Synchronization.GetEntrypoint());
+	Control.Bind(Interface.GetEntrypoint());
 	return Control.Launch();
 }

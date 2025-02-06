@@ -39,13 +39,33 @@ namespace Tangent
 
     class LayerException : public std::exception
     {
-    public:
-        String Info;
+    private:
+        String Message;
 
     public:
         LayerException();
         LayerException(String&& Text);
         const char* what() const noexcept override;
+        String&& message() noexcept;
+    };
+
+    class RemoteException : public std::exception
+    {
+    private:
+        String Message;
+        int8_t Status;
+
+    public:
+        RemoteException(String&& Text);
+        const char* what() const noexcept override;
+        String&& message() noexcept;
+        bool retry() const noexcept;
+        bool shutdown() const noexcept;
+        static RemoteException Retry();
+        static RemoteException Shutdown();
+
+    private:
+        RemoteException(int8_t NewStatus);
     };
 
     template <typename V>
@@ -53,6 +73,12 @@ namespace Tangent
 
     template <typename V>
     using ExpectsPromiseLR = ExpectsPromise<V, LayerException>;
+
+    template <typename V>
+    using ExpectsRT = Expects<V, RemoteException>;
+
+    template <typename V>
+    using ExpectsPromiseRT = ExpectsPromise<V, RemoteException>;
 
     class Repository
     {
@@ -143,6 +169,19 @@ namespace Tangent
             } NDS;
             struct
             {
+                UPtr<Schema> Options;
+                uint64_t BlockReplayMultiplier = 4;
+                uint64_t RelayingTimeout = 30000;
+                uint64_t RelayingRetryTimeout = 300;
+                uint32_t CacheShortSize = 16384;
+                uint32_t CacheExtendedSize = 65536;
+                uint64_t FeeEstimationSeconds = 600;
+                uint64_t WithdrawalTime = 300000;
+                bool Server = false;
+                bool Logging = true;
+            } NSS;
+            struct
+            {
                 String Address = "0.0.0.0";
                 uint16_t Port = 18419;
                 String AdminUsername;
@@ -165,6 +204,7 @@ namespace Tangent
             {
                 String Directory = "./";
                 StorageOptimization Optimization = StorageOptimization::Speed;
+                uint64_t TransactionDispatchRepeatInterval = 600;
                 uint64_t TransactionTimeout = 86400;
                 uint64_t CheckpointSize = 64;
                 uint64_t LocationCacheSize = 500000;
@@ -180,18 +220,6 @@ namespace Tangent
                 bool TransactionToRollupIndex = true;
                 bool Logging = true;
             } Storage;
-            struct
-            {
-                uint64_t BlockReplayMultiplier = 4;
-                uint64_t RelayingTimeout = 30000;
-                uint64_t RelayingRetryTimeout = 300;
-                uint32_t CacheShortSize = 16384;
-                uint32_t CacheExtendedSize = 65536;
-                uint64_t FeeEstimationSeconds = 600;
-                uint64_t WithdrawalTime = 300000;
-                bool Server = false;
-                bool Logging = true;
-            } Observer;
             struct
             {
                 String State;
@@ -215,12 +243,12 @@ namespace Tangent
         } Message;
         struct ProtocolAccountConfig
         {
-            String SignedMessageMagic = "Tangent Signed Message:\n";
             String SecretKeyPrefix = "sec";
             String SealingKeyPrefix = "seal";
             String PublicKeyPrefix = "pub";
             String AddressPrefix = "tc";
             uint64_t RootAddressIndex = 0;
+            uint64_t MessageMagic = 0x6a513fb6b3b71f02;
             uint8_t SecretKeyVersion = 0xF;
             uint8_t PublicKeyVersion = 0xE;
             uint8_t SealingKeyVersion = 0xC;
@@ -228,19 +256,18 @@ namespace Tangent
         } Account;
         struct ProtocolPolicyConfig
         {
-            uint64_t ConsensusCommitteeMajors = 20;
-            uint64_t ConsensusCommitteeMinors = 4;
-            uint64_t ConsensusCommitteeAggregators = 32;
-            uint64_t ConsensusProofTime = 10000;
+            uint64_t ConsensusCommitteeSize = 6;
+            uint64_t ConsensusProofTime = 8000;
             uint64_t ConsensusAdjustmentTime = 3600000;
             uint64_t ConsensusPenaltyPointTime = 600000;
-            uint64_t ConsensusRecoveryProofs = 12;
+            uint64_t ConsensusRecoveryTime = 60000;
+            uint64_t AggregatorsCommitteeSize = 32;
             uint64_t TransactionThroughput = 210;
             uint64_t ParallelDelegationLimit = 1;
             uint64_t ParallelConsensusLimit = 128;
             uint64_t ParallelAggregationLimit = 256;
-            double ConsensusAggregationThreshold = 0.66;
             double ConsensusRecoveryBump = 36.0;
+            double AggregationThreshold = 0.66;
             double GenesisSlotTimeBump = 0.2;
             double MaxConsensusDifficultyIncrease = 0.25;
             double MaxConsensusDifficultyDecrease = 0.75;

@@ -1,15 +1,25 @@
 #include "block.h"
-#include "../policy/typenames.h"
 #include "../policy/transactions.h"
 #ifdef TAN_VALIDATOR
-#include "../storage/mempoolstate.h"
-#include "../storage/chainstate.h"
+#include "../validator/service/nss.h"
+#include "../validator/storage/mempoolstate.h"
+#include "../validator/storage/chainstate.h"
 #endif
 
 namespace Tangent
 {
 	namespace Ledger
 	{
+		static size_t ExponentialRangeDistribution(const uint256_t& Entropy, size_t Range)
+		{
+			const double Lamda = 9.0;
+			const double Exponent = std::exp(-Lamda);
+			const double Base = (double)(uint64_t)(Entropy % std::numeric_limits<uint32_t>::max()) / (double)std::numeric_limits<uint32_t>::max();
+			const double Factor = std::min(1.0, std::max(0.0, -std::log(1.0 - (1.0 - Exponent) * Base) / Lamda));
+			const size_t Index = (size_t)((uint64_t)(Factor * (double)Range) % (uint64_t)Range);
+			return Index;
+		}
+
 		BlockTransaction::BlockTransaction(UPtr<Ledger::Transaction>&& NewTransaction, Ledger::Receipt&& NewReceipt) : Transaction(std::move(NewTransaction)), Receipt(std::move(NewReceipt))
 		{
 			VI_ASSERT(Transaction, "transaction should be set");
@@ -29,7 +39,7 @@ namespace Tangent
 		bool BlockTransaction::StorePayload(Format::Stream* Stream) const
 		{
 			VI_ASSERT(Stream != nullptr, "stream should be set");
-			if (!Transaction->Store(Stream))
+			if (Transaction && !Transaction->Store(Stream))
 				return false;
 
 			if (!Receipt.StorePayload(Stream))
@@ -40,7 +50,7 @@ namespace Tangent
 		bool BlockTransaction::LoadPayload(Format::Stream& Stream)
 		{
 			Transaction = Tangent::Transactions::Resolver::New(Messages::Authentic::ResolveType(Stream).Or(0));
-			if (!Transaction->Load(Stream))
+			if (Transaction && !Transaction->Load(Stream))
 				return false;
 
 			if (!Receipt.LoadPayload(Stream))
@@ -65,7 +75,7 @@ namespace Tangent
 		}
 		uint32_t BlockTransaction::AsInstanceType()
 		{
-			static uint32_t Hash = Types::TypeOf(AsInstanceTypename());
+			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
 			return Hash;
 		}
 		std::string_view BlockTransaction::AsInstanceTypename()
@@ -241,7 +251,7 @@ namespace Tangent
 		{
 #ifdef TAN_VALIDATOR
 			auto Chain = Storages::Chainstate(__func__);
-			return Chain.Dispatch(Inputs);
+			return Chain.Dispatch(Inputs, Repeaters);
 #else
 			return LayerException("chainstate data not available");
 #endif
@@ -288,7 +298,12 @@ namespace Tangent
 				{
 					auto Execution = Ledger::TransactionContext::DispatchTx(Proposer, &Input, &Pipeline.Outputs).Get();
 					if (!Execution)
-						Pipeline.Errors[Input.Receipt.TransactionHash].append(Stringify::Text("in transaction %s dispatch reverted: %s\n", Algorithm::Encoding::Encode0xHex256(Input.Receipt.TransactionHash).c_str(), Execution.Error().what()));
+					{
+						if (!Execution.Error().retry() && !Execution.Error().shutdown())
+							Pipeline.Errors[Input.Receipt.TransactionHash].append(Stringify::Text("in transaction %s dispatch reverted: %s\n", Algorithm::Encoding::Encode0xHex256(Input.Receipt.TransactionHash).c_str(), Execution.Error().what()));
+						else
+							Pipeline.Repeaters.push_back(Input.Receipt.TransactionHash);
+					}
 					Pipeline.Inputs.push_back(Input.Receipt.TransactionHash);
 				}
 				if (Candidates->size() < Count)
@@ -344,18 +359,18 @@ namespace Tangent
 				return LayerException("invalid number");
 
 			uint128_t Difficulty = Target.Difficulty();
-			if (Wesolowski.empty() || Difficulty < Provability::WesolowskiVDF::GetDefault().Difficulty())
+			if (Wesolowski.empty() || Difficulty < Algorithm::WVDF::GetDefault().Difficulty())
 				return LayerException("invalid wesolowski target");
 
-			if (!TransactionsRoot || !ReceiptsRoot || !StatesRoot)
-				return LayerException("invalid transactions/receipts/states merkle tree root");
+			if (!TransactionRoot || !ReceiptRoot || !StateRoot)
+				return LayerException("invalid transaction/receipt/state merkle tree root");
 
 			uint256_t GasWork = GasUtil::GetGasWork(Difficulty, GasUse, GasLimit, Priority);
 			if (!GasLimit || GasUse > GasLimit || AbsoluteWork < GasWork)
 				return LayerException("invalid gas work");
 
-			if (!TransactionsCount)
-				return LayerException("invalid transactions count");
+			if (!TransactionCount)
+				return LayerException("invalid transaction count");
 
 			Algorithm::Pubkeyhash PublicKeyHash = { 0 };
 			if (!Recover(PublicKeyHash))
@@ -374,7 +389,7 @@ namespace Tangent
             if (SlotGasUse != ((ParentBlock ? ParentBlock->SlotGasUse : uint256_t(0)) * Cumulative + GasUse))
 				return LayerException("invalid slot gas use");
 
-			if (SlotGasTarget != ((ParentBlock ? ParentBlock->SlotGasTarget : uint256_t(0)) * Cumulative + (TransactionsCount > 0 ? GasUse / TransactionsCount : uint256_t(0))))
+			if (SlotGasTarget != ((ParentBlock ? ParentBlock->SlotGasTarget : uint256_t(0)) * Cumulative + (TransactionCount > 0 ? GasUse / TransactionCount : uint256_t(0))))
 				return LayerException("invalid slot gas target");
 
 			if (SlotDuration != ((ParentBlock ? ParentBlock->SlotDuration + ParentBlock->GetDuration() : uint256_t(0)) * Cumulative))
@@ -392,9 +407,9 @@ namespace Tangent
 		{
 			VI_ASSERT(Stream != nullptr, "stream should be set");
 			Stream->WriteInteger(ParentHash);
-			Stream->WriteInteger(TransactionsRoot);
-			Stream->WriteInteger(ReceiptsRoot);
-			Stream->WriteInteger(StatesRoot);
+			Stream->WriteInteger(TransactionRoot);
+			Stream->WriteInteger(ReceiptRoot);
+			Stream->WriteInteger(StateRoot);
 			Stream->WriteInteger(GasUse);
 			Stream->WriteInteger(GasLimit);
 			Stream->WriteInteger(AbsoluteWork);
@@ -408,9 +423,9 @@ namespace Tangent
 			Stream->WriteInteger(Time);
 			Stream->WriteInteger(Priority);
 			Stream->WriteInteger(Number);
-			Stream->WriteInteger(MutationsCount);
-			Stream->WriteInteger(TransactionsCount);
-			Stream->WriteInteger(StatesCount);
+			Stream->WriteInteger(MutationCount);
+			Stream->WriteInteger(TransactionCount);
+			Stream->WriteInteger(StateCount);
 			Stream->WriteInteger((uint16_t)Witnesses.size());
 			for (auto& Item : Witnesses)
 			{
@@ -424,13 +439,13 @@ namespace Tangent
 			if (!Stream.ReadInteger(Stream.ReadType(), &ParentHash))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &TransactionsRoot))
+			if (!Stream.ReadInteger(Stream.ReadType(), &TransactionRoot))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &ReceiptsRoot))
+			if (!Stream.ReadInteger(Stream.ReadType(), &ReceiptRoot))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &StatesRoot))
+			if (!Stream.ReadInteger(Stream.ReadType(), &StateRoot))
 				return false;
 
 			if (!Stream.ReadInteger(Stream.ReadType(), &GasUse))
@@ -472,13 +487,13 @@ namespace Tangent
 			if (!Stream.ReadInteger(Stream.ReadType(), &Number))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &MutationsCount))
+			if (!Stream.ReadInteger(Stream.ReadType(), &MutationCount))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &TransactionsCount))
+			if (!Stream.ReadInteger(Stream.ReadType(), &TransactionCount))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &StatesCount))
+			if (!Stream.ReadInteger(Stream.ReadType(), &StateCount))
 				return false;
 
 			uint16_t WitnessesSize;
@@ -534,7 +549,7 @@ namespace Tangent
 			if (!StorePayloadWesolowski(&Message))
 				return false;
 
-			Wesolowski = Provability::WesolowskiVDF::Evaluate(Target, Message.Data);
+			Wesolowski = Algorithm::WVDF::Evaluate(Target, Message.Data);
 			return !Wesolowski.empty();
 		}
 		bool BlockHeader::Verify(const Algorithm::Pubkey PublicKey) const
@@ -559,7 +574,7 @@ namespace Tangent
 			if (!StorePayloadWesolowski(&Message))
 				return false;
 
-			return Provability::WesolowskiVDF::Verify(Target, Message.Data, Wesolowski);
+			return Algorithm::WVDF::Verify(Target, Message.Data, Wesolowski);
 		}
 		void BlockHeader::SetParentBlock(const BlockHeader* ParentBlock)
 		{
@@ -609,15 +624,15 @@ namespace Tangent
 			if (DifficultyA != DifficultyB)
 				return DifficultyA > DifficultyB ? 1 : -1;
 
-			int8_t Security = Provability::WesolowskiVDF::Compare(Wesolowski, Other.Wesolowski);
+			int8_t Security = Algorithm::WVDF::Compare(Wesolowski, Other.Wesolowski);
 			if (Security != 0)
 				return Security;
 
 			if (GasUse != Other.GasUse)
 				return GasUse > Other.GasUse ? 1 : -1;
 
-			uint256_t MutationsA = uint256_t(TransactionsCount) * uint256_t(StatesCount);
-			uint256_t MutationsB = uint256_t(Other.TransactionsCount) * uint256_t(Other.StatesCount);
+			uint256_t MutationsA = uint256_t(TransactionCount) * uint256_t(StateCount);
+			uint256_t MutationsB = uint256_t(Other.TransactionCount) * uint256_t(Other.StateCount);
 			if (MutationsA != MutationsB)
 				return MutationsA > MutationsB ? 1 : -1;
 
@@ -642,7 +657,7 @@ namespace Tangent
 		}
 		uint64_t BlockHeader::GetSlotLength() const
 		{
-			auto Interval = Provability::WesolowskiVDF::AdjustmentInterval();
+			auto Interval = Algorithm::WVDF::AdjustmentInterval();
 			return Number < Interval ? Number : ((Number % Interval) + 1);
 		}
 		uint64_t BlockHeader::GetDuration() const
@@ -652,7 +667,7 @@ namespace Tangent
 		}
 		uint64_t BlockHeader::GetProofTime() const
 		{
-			return Provability::WesolowskiVDF::Locktime(Wesolowski);
+			return Algorithm::WVDF::Locktime(Wesolowski);
 		}
 		UPtr<Schema> BlockHeader::AsSchema() const
 		{
@@ -664,9 +679,9 @@ namespace Tangent
 			Data->Set("proposer", HasProposer ? Algorithm::Signing::SerializeAddress(Proposer) : Var::Set::Null());
 			Data->Set("hash", Var::String(Algorithm::Encoding::Encode0xHex256(AsHash())));
 			Data->Set("parent_hash", Var::String(Algorithm::Encoding::Encode0xHex256(ParentHash)));
-			Data->Set("transactions_root", Var::String(Algorithm::Encoding::Encode0xHex256(TransactionsRoot)));
-			Data->Set("receipts_root", Var::String(Algorithm::Encoding::Encode0xHex256(ReceiptsRoot)));
-			Data->Set("states_root", Var::String(Algorithm::Encoding::Encode0xHex256(StatesRoot)));
+			Data->Set("transaction_root", Var::String(Algorithm::Encoding::Encode0xHex256(TransactionRoot)));
+			Data->Set("receipt_root", Var::String(Algorithm::Encoding::Encode0xHex256(ReceiptRoot)));
+			Data->Set("state_root", Var::String(Algorithm::Encoding::Encode0xHex256(StateRoot)));
 			Data->Set("absolute_work", Algorithm::Encoding::SerializeUint256(AbsoluteWork));
 			Data->Set("difficulty", Algorithm::Encoding::SerializeUint256(Target.Difficulty()));
 			Data->Set("gas_use", Algorithm::Encoding::SerializeUint256(GasUse));
@@ -681,9 +696,9 @@ namespace Tangent
 			Data->Set("priority", Algorithm::Encoding::SerializeUint256(Priority));
 			Data->Set("number", Algorithm::Encoding::SerializeUint256(Number));
 			Data->Set("recovery", Algorithm::Encoding::SerializeUint256(Recovery));
-			Data->Set("mutations_count", Algorithm::Encoding::SerializeUint256(MutationsCount));
-			Data->Set("transactions_count", Algorithm::Encoding::SerializeUint256(TransactionsCount));
-			Data->Set("states_count", Algorithm::Encoding::SerializeUint256(StatesCount));
+			Data->Set("mutation_count", Algorithm::Encoding::SerializeUint256(MutationCount));
+			Data->Set("transaction_count", Algorithm::Encoding::SerializeUint256(TransactionCount));
+			Data->Set("state_count", Algorithm::Encoding::SerializeUint256(StateCount));
 			auto* WitnessesData = Data->Set("witnesses", Var::Set::Array());
 			for (auto& Item : Witnesses)
 			{
@@ -712,7 +727,7 @@ namespace Tangent
 		}
 		uint32_t BlockHeader::AsInstanceType()
 		{
-			static uint32_t Hash = Types::TypeOf(AsInstanceTypename());
+			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
 			return Hash;
 		}
 		std::string_view BlockHeader::AsInstanceTypename()
@@ -737,15 +752,15 @@ namespace Tangent
 			BlockHeader::SetParentBlock(ParentBlock);
 			auto Position = std::find_if(Environment->Proposers.begin(), Environment->Proposers.end(), [&Environment](const States::AccountWork& A) { return !memcmp(A.Owner, Environment->Proposer.PublicKeyHash, sizeof(Environment->Proposer.PublicKeyHash)); });
 			auto PrevDuration = ParentBlock ? ParentBlock->GetSlotDuration() : (uint64_t)((double)Protocol::Now().Policy.ConsensusProofTime * Protocol::Now().Policy.GenesisSlotTimeBump);
-			auto PrevTarget = ParentBlock ? ParentBlock->Target : Provability::WesolowskiVDF::GetDefault();
+			auto PrevTarget = ParentBlock ? ParentBlock->Target : Algorithm::WVDF::GetDefault();
 			if (ParentBlock && ParentBlock->Recovery)
-				PrevTarget = Provability::WesolowskiVDF::Bump(Target, 1.0 / Protocol::Now().Policy.ConsensusRecoveryBump);
+				PrevTarget = Algorithm::WVDF::Bump(Target, 1.0 / Protocol::Now().Policy.ConsensusRecoveryBump);
 
 			Recovery = (Position == Environment->Proposers.end() ? 1 : 0);
 			Priority = Recovery ? 0 : (uint64_t)std::distance(Environment->Proposers.begin(), Position);
-			Target = Provability::WesolowskiVDF::Adjust(PrevTarget, PrevDuration, Number);
+			Target = Algorithm::WVDF::Adjust(PrevTarget, PrevDuration, Number);
 			if (Recovery)
-				Target = Provability::WesolowskiVDF::Bump(Target, Protocol::Now().Policy.ConsensusRecoveryBump);
+				Target = Algorithm::WVDF::Bump(Target, Protocol::Now().Policy.ConsensusRecoveryBump);
 
 			BlockWork Cache;
 			for (auto& Item : Environment->Incoming)
@@ -761,7 +776,7 @@ namespace Tangent
 				}
 
 				auto& Context = *Validation;
-				auto Finalization = TransactionContext::ExecuteTx(Context, Item.Size, !Item.Candidate->Conservative);
+				auto Finalization = TransactionContext::ExecuteTx(Context, Item.Size, Item.Candidate->Conservative ? 0 : (uint8_t)TransactionContext::ExecutionFlags::OnlySuccessful);
 				if (!Finalization)
 				{
 					if (Errors != nullptr)
@@ -791,7 +806,7 @@ namespace Tangent
 			{
 				bool Winner = (i == Priority);
 				auto& Participant = Environment->Proposers[i];
-				auto Work = Winner ? Environment->Validation.Context.ApplyAccountWork(Participant.Owner, Participant.Status != WorkStatus::Online ? WorkStatus::Online : WorkStatus::Standby, 0, GasUse, 0) : Environment->Validation.Context.ApplyAccountWork(Participant.Owner, WorkStatus::Offline, 1, 0, GasPenalty);
+				auto Work = Winner ? Environment->Validation.Context.ApplyAccountWork(Participant.Owner, Participant.IsMatching(States::AccountFlags::Online) ? States::AccountFlags::AsIs : States::AccountFlags::Online, 0, GasUse, 0) : Environment->Validation.Context.ApplyAccountWork(Participant.Owner, States::AccountFlags::Offline, 1, 0, GasPenalty);
 				if (!Work)
 					return Work.Error();
 			}
@@ -816,11 +831,11 @@ namespace Tangent
 					return LayerException("invalid proposer election");
 
 				auto PrevDuration = ParentBlock ? ParentBlock->GetSlotDuration() : (uint64_t)((double)Protocol::Now().Policy.ConsensusProofTime * Protocol::Now().Policy.GenesisSlotTimeBump);
-				auto PrevTarget = ParentBlock ? ParentBlock->Target : Provability::WesolowskiVDF::GetDefault();
+				auto PrevTarget = ParentBlock ? ParentBlock->Target : Algorithm::WVDF::GetDefault();
 				if (ParentBlock && ParentBlock->Recovery)
-					PrevTarget = Provability::WesolowskiVDF::Bump(Target, 1.0 / Protocol::Now().Policy.ConsensusRecoveryBump);
+					PrevTarget = Algorithm::WVDF::Bump(Target, 1.0 / Protocol::Now().Policy.ConsensusRecoveryBump);
 
-				auto CandidateTarget = Provability::WesolowskiVDF::Bump(Provability::WesolowskiVDF::Adjust(PrevTarget, PrevDuration, Number), Protocol::Now().Policy.ConsensusRecoveryBump);
+				auto CandidateTarget = Algorithm::WVDF::Bump(Algorithm::WVDF::Adjust(PrevTarget, PrevDuration, Number), Protocol::Now().Policy.ConsensusRecoveryBump);
 				if (Target.Difficulty() != CandidateTarget.Difficulty())
 					return LayerException("invalid proposer election");
 			}
@@ -859,7 +874,7 @@ namespace Tangent
 			Result.Recalculate(ParentBlock);
 
 			size_t CurrentStatesCount = States.At(WorkCommitment::Finalized).size() + States.At(WorkCommitment::Pending).size();
-			bool PrunedStateTrie = CurrentStatesCount != StatesCount;
+			bool PrunedStateTrie = CurrentStatesCount != StateCount;
 			if (PrunedStateTrie)
 			{
 				auto* Mutable = (Block*)this;
@@ -888,30 +903,30 @@ namespace Tangent
 		}
 		ExpectsLR<void> Block::VerifyIntegrity(const BlockHeader* ParentBlock) const
 		{
-			if (Transactions.empty() || TransactionsCount != (uint32_t)Transactions.size())
+			if (Transactions.empty() || TransactionCount != (uint32_t)Transactions.size())
 				return LayerException("invalid transactions count");
-			else if (!StatesCount || StatesCount != (uint32_t)States.At(WorkCommitment::Finalized).size())
+			else if (!StateCount || StateCount != (uint32_t)States.At(WorkCommitment::Finalized).size())
 				return LayerException("invalid states count");
 
 			if (!ParentBlock && Number > 1)
 				return Expectation::Met;
 
-			Provability::MerkleTree Tree = (ParentBlock ? ParentBlock->TransactionsRoot : uint256_t(0));
+			Algorithm::MerkleTree Tree = (ParentBlock ? ParentBlock->TransactionRoot : uint256_t(0));
 			for (auto& Item : Transactions)
 				Tree.Push(Item.Receipt.TransactionHash);
-			if (Tree.CalculateRoot() != TransactionsRoot)
+			if (Tree.CalculateRoot() != TransactionRoot)
 				return LayerException("invalid transactions merkle tree root");
 
-			Tree = (ParentBlock ? ParentBlock->ReceiptsRoot : uint256_t(0));
+			Tree = (ParentBlock ? ParentBlock->ReceiptRoot : uint256_t(0));
 			for (auto& Item : Transactions)
 				Tree.Push(Item.Receipt.AsHash());
-			if (Tree.CalculateRoot() != ReceiptsRoot)
+			if (Tree.CalculateRoot() != ReceiptRoot)
 				return LayerException("invalid receipts merkle tree root");
 
-			Tree = (ParentBlock ? ParentBlock->StatesRoot : uint256_t(0));
+			Tree = (ParentBlock ? ParentBlock->StateRoot : uint256_t(0));
 			for (auto& Item : States.At(WorkCommitment::Finalized))
 				Tree.Push(Item.second->AsHash());
-			if (Tree.CalculateRoot() != StatesRoot)
+			if (Tree.CalculateRoot() != StateRoot)
 				return LayerException("invalid states merkle tree root");
 
 			return Expectation::Met;
@@ -933,8 +948,8 @@ namespace Tangent
 			Mutation.OldTipBlockNumber = Chain.GetLatestBlockNumber().Or(0);
 			Mutation.NewTipBlockNumber = Number;
 			Mutation.BlockDelta = 1;
-			Mutation.TransactionDelta = TransactionsCount;
-			Mutation.StateDelta = StatesCount;
+			Mutation.TransactionDelta = TransactionCount;
+			Mutation.StateDelta = StateCount;
 			Mutation.IsFork = Mutation.OldTipBlockNumber > 0 && Mutation.OldTipBlockNumber >= Mutation.NewTipBlockNumber;
 			if (Mutation.IsFork)
 			{
@@ -1132,28 +1147,28 @@ namespace Tangent
 			Parallel::WailAll(std::move(TaskQueue1));
 			Parallel::WailAll(std::move(TaskQueue2));
 
-			Provability::MerkleTree Tree = (ParentBlock ? ParentBlock->TransactionsRoot : uint256_t(0));
+			Algorithm::MerkleTree Tree = (ParentBlock ? ParentBlock->TransactionRoot : uint256_t(0));
 			for (auto& Item : Transactions)
 				Tree.Push(Item.Receipt.TransactionHash);
-			TransactionsRoot = Tree.CalculateRoot();
+			TransactionRoot = Tree.CalculateRoot();
 
-			Tree = (ParentBlock ? ParentBlock->ReceiptsRoot : uint256_t(0));
+			Tree = (ParentBlock ? ParentBlock->ReceiptRoot : uint256_t(0));
 			for (auto& Item : Transactions)
 				Tree.Push(Item.Receipt.AsHash());
-			ReceiptsRoot = Tree.CalculateRoot();
+			ReceiptRoot = Tree.CalculateRoot();
 
-			Tree = (ParentBlock ? ParentBlock->StatesRoot : uint256_t(0));
+			Tree = (ParentBlock ? ParentBlock->StateRoot : uint256_t(0));
 			for (auto& Item : StateTree)
 				Tree.Push(Item.second->AsHash());
-			StatesRoot = Tree.CalculateRoot();
+			StateRoot = Tree.CalculateRoot();
 
 			uint256_t Cumulative = GetSlotLength() > 1 ? 1 : 0;
 			AbsoluteWork = (ParentBlock ? ParentBlock->AbsoluteWork : uint256_t(0)) + GasUtil::GetGasWork(Target.Difficulty(), GasUse, GasLimit, Priority);
 			SlotGasUse = (ParentBlock ? ParentBlock->SlotGasUse : uint256_t(0)) * Cumulative + GasUse;
 			SlotGasTarget = (ParentBlock ? ParentBlock->SlotGasTarget : uint256_t(0)) * Cumulative + (Transactions.size() > 0 ? GasUse / Transactions.size() : uint256_t(0));
 			SlotDuration = (ParentBlock ? ParentBlock->SlotDuration + ParentBlock->GetDuration() : uint256_t(0)) * Cumulative;
-			TransactionsCount = (uint32_t)Transactions.size();
-			StatesCount = (uint32_t)StateTree.size();
+			TransactionCount = (uint32_t)Transactions.size();
+			StateCount = (uint32_t)StateTree.size();
 		}
 		void Block::InheritWork(const Block* ParentBlock)
 		{
@@ -1202,14 +1217,14 @@ namespace Tangent
 
 		BlockProof::BlockProof(const BlockHeader& FromBlock, const BlockHeader* FromParentBlock)
 		{
-			Internal.TransactionsTree = Provability::MerkleTree(FromParentBlock ? FromParentBlock->TransactionsRoot : uint256_t(0));
-			Internal.ReceiptsTree = Provability::MerkleTree(FromParentBlock ? FromParentBlock->ReceiptsRoot : uint256_t(0));
-			Internal.StatesTree = Provability::MerkleTree(FromParentBlock ? FromParentBlock->StatesRoot : uint256_t(0));
-			TransactionsRoot = FromBlock.TransactionsRoot;
-			ReceiptsRoot = FromBlock.ReceiptsRoot;
-			StatesRoot = FromBlock.StatesRoot;
+			Internal.TransactionsTree = Algorithm::MerkleTree(FromParentBlock ? FromParentBlock->TransactionRoot : uint256_t(0));
+			Internal.ReceiptsTree = Algorithm::MerkleTree(FromParentBlock ? FromParentBlock->ReceiptRoot : uint256_t(0));
+			Internal.StatesTree = Algorithm::MerkleTree(FromParentBlock ? FromParentBlock->StateRoot : uint256_t(0));
+			TransactionRoot = FromBlock.TransactionRoot;
+			ReceiptRoot = FromBlock.ReceiptRoot;
+			StateRoot = FromBlock.StateRoot;
 		}
-		Option<Provability::MerkleTree::Path> BlockProof::FindTransaction(const uint256_t& Hash)
+		Option<Algorithm::MerkleTree::Path> BlockProof::FindTransaction(const uint256_t& Hash)
 		{
 			auto Path = GetTransactionsTree().CalculatePath(Hash);
 			if (Path.Empty())
@@ -1217,7 +1232,7 @@ namespace Tangent
 
 			return Path;
 		}
-		Option<Provability::MerkleTree::Path> BlockProof::FindReceipt(const uint256_t& Hash)
+		Option<Algorithm::MerkleTree::Path> BlockProof::FindReceipt(const uint256_t& Hash)
 		{
 			auto Path = GetReceiptsTree().CalculatePath(Hash);
 			if (Path.Empty())
@@ -1225,7 +1240,7 @@ namespace Tangent
 
 			return Path;
 		}
-		Option<Provability::MerkleTree::Path> BlockProof::FindState(const uint256_t& Hash)
+		Option<Algorithm::MerkleTree::Path> BlockProof::FindState(const uint256_t& Hash)
 		{
 			auto Path = GetStatesTree().CalculatePath(Hash);
 			if (Path.Empty())
@@ -1236,17 +1251,17 @@ namespace Tangent
 		bool BlockProof::StorePayload(Format::Stream* Stream) const
 		{
 			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Stream->WriteInteger(TransactionsRoot);
+			Stream->WriteInteger(TransactionRoot);
 			Stream->WriteInteger((uint32_t)Transactions.size());
 			for (auto& Item : Transactions)
 				Stream->WriteInteger(Item);
 
-			Stream->WriteInteger(ReceiptsRoot);
+			Stream->WriteInteger(ReceiptRoot);
 			Stream->WriteInteger((uint32_t)Receipts.size());
 			for (auto& Item : Receipts)
 				Stream->WriteInteger(Item);
 
-			Stream->WriteInteger(StatesRoot);
+			Stream->WriteInteger(StateRoot);
 			Stream->WriteInteger((uint32_t)States.size());
 			for (auto& Item : States)
 				Stream->WriteInteger(Item);
@@ -1255,7 +1270,7 @@ namespace Tangent
 		}
 		bool BlockProof::LoadPayload(Format::Stream& Stream)
 		{
-			if (!Stream.ReadInteger(Stream.ReadType(), &TransactionsRoot))
+			if (!Stream.ReadInteger(Stream.ReadType(), &TransactionRoot))
 				return false;
 
 			uint32_t TransactionsSize;
@@ -1269,7 +1284,7 @@ namespace Tangent
 					return false;
 			}
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &ReceiptsRoot))
+			if (!Stream.ReadInteger(Stream.ReadType(), &ReceiptRoot))
 				return false;
 
 			uint32_t ReceiptsSize;
@@ -1283,7 +1298,7 @@ namespace Tangent
 					return false;
 			}
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &StatesRoot))
+			if (!Stream.ReadInteger(Stream.ReadType(), &StateRoot))
 				return false;
 
 			uint32_t StatesSize;
@@ -1302,19 +1317,19 @@ namespace Tangent
 		bool BlockProof::HasTransaction(const uint256_t& Hash)
 		{
 			auto Path = FindTransaction(Hash);
-			return Path && Path->CalculateRoot(Hash) == TransactionsRoot;
+			return Path && Path->CalculateRoot(Hash) == TransactionRoot;
 		}
 		bool BlockProof::HasReceipt(const uint256_t& Hash)
 		{
 			auto Path = FindReceipt(Hash);
-			return Path && Path->CalculateRoot(Hash) == ReceiptsRoot;
+			return Path && Path->CalculateRoot(Hash) == ReceiptRoot;
 		}
 		bool BlockProof::HasState(const uint256_t& Hash)
 		{
 			auto Path = FindState(Hash);
-			return Path && Path->CalculateRoot(Hash) == StatesRoot;
+			return Path && Path->CalculateRoot(Hash) == StateRoot;
 		}
-		Provability::MerkleTree& BlockProof::GetTransactionsTree()
+		Algorithm::MerkleTree& BlockProof::GetTransactionsTree()
 		{
 			if (!Internal.TransactionsTree.IsCalculated() || Internal.TransactionsTree.GetTree().size() < Transactions.size())
 			{
@@ -1323,7 +1338,7 @@ namespace Tangent
 			}
 			return Internal.TransactionsTree.Calculate();
 		}
-		Provability::MerkleTree& BlockProof::GetReceiptsTree()
+		Algorithm::MerkleTree& BlockProof::GetReceiptsTree()
 		{
 			if (!Internal.ReceiptsTree.IsCalculated() || Internal.ReceiptsTree.GetTree().size() < Receipts.size())
 			{
@@ -1332,7 +1347,7 @@ namespace Tangent
 			}
 			return Internal.ReceiptsTree.Calculate();
 		}
-		Provability::MerkleTree& BlockProof::GetStatesTree()
+		Algorithm::MerkleTree& BlockProof::GetStatesTree()
 		{
 			if (!Internal.StatesTree.IsCalculated() || Internal.StatesTree.GetTree().size() < States.size())
 			{
@@ -1347,7 +1362,7 @@ namespace Tangent
 			auto* TransactionsData = Data->Set("transactions", Var::Set::Object());
 			auto* TransactionsHashes = TransactionsData->Set("hashes", Var::Set::Array());
 			auto* TransactionsTree = TransactionsData->Set("tree", Var::Set::Array());
-			TransactionsData->Set("root", Var::String(Algorithm::Encoding::Encode0xHex256(TransactionsRoot)));
+			TransactionsData->Set("root", Var::String(Algorithm::Encoding::Encode0xHex256(TransactionRoot)));
 			if (Internal.TransactionsTree.GetTree().empty())
 			{
 				for (auto& Item : Transactions)
@@ -1361,7 +1376,7 @@ namespace Tangent
 			auto* ReceiptsData = Data->Set("receipts", Var::Set::Object());
 			auto* ReceiptsHashes = ReceiptsData->Set("hashes", Var::Set::Array());
 			auto* ReceiptsTree = ReceiptsData->Set("tree", Var::Set::Array());
-			ReceiptsData->Set("root", Var::String(Algorithm::Encoding::Encode0xHex256(ReceiptsRoot)));
+			ReceiptsData->Set("root", Var::String(Algorithm::Encoding::Encode0xHex256(ReceiptRoot)));
 			if (Internal.ReceiptsTree.GetTree().empty())
 			{
 				for (auto& Item : Receipts)
@@ -1375,7 +1390,7 @@ namespace Tangent
 			auto* StatesData = Data->Set("states", Var::Set::Object());
 			auto* StatesHashes = StatesData->Set("hashes", Var::Set::Array());
 			auto* StatesTree = StatesData->Set("tree", Var::Set::Array());
-			StatesData->Set("root", Var::String(Algorithm::Encoding::Encode0xHex256(StatesRoot)));
+			StatesData->Set("root", Var::String(Algorithm::Encoding::Encode0xHex256(StateRoot)));
 			if (Internal.StatesTree.GetTree().empty())
 			{
 				for (auto& Item : States)
@@ -1397,7 +1412,7 @@ namespace Tangent
 		}
 		uint32_t BlockProof::AsInstanceType()
 		{
-			static uint32_t Hash = Types::TypeOf(AsInstanceTypename());
+			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
 			return Hash;
 		}
 		std::string_view BlockProof::AsInstanceTypename()
@@ -1457,7 +1472,7 @@ namespace Tangent
 			if (Block != nullptr)
 			{
 				Next->BlockNumber = Block->Number;
-				Next->BlockNonce = Block->MutationsCount++;
+				Next->BlockNonce = Block->MutationCount++;
 			}
 
 			if (!Next->BlockNumber)
@@ -1563,11 +1578,11 @@ namespace Tangent
 
 			return Expectation::Met;
 		}
-		ExpectsLR<void> TransactionContext::VerifyAccountWork() const
+		ExpectsLR<void> TransactionContext::VerifyAccountWork(bool DepositoryRequirement) const
 		{
-			return VerifyAccountWork(Receipt.From);
+			return VerifyAccountWork(Receipt.From, DepositoryRequirement);
 		}
-		ExpectsLR<void> TransactionContext::VerifyAccountWork(const Algorithm::Pubkeyhash Owner) const
+		ExpectsLR<void> TransactionContext::VerifyAccountWork(const Algorithm::Pubkeyhash Owner, bool DepositoryRequirement) const
 		{
 			if (!Environment)
 				return LayerException("invalid evaluation context");
@@ -1576,11 +1591,16 @@ namespace Tangent
 			uint256_t CurrentGasWork = CurrentWork ? CurrentWork->GetGasUse() : uint256_t(0);
 			uint256_t CurrentGasRequirement = States::AccountWork::GetGasWorkRequired(Block, CurrentGasWork);
 			if (CurrentGasRequirement > 0)
-				return LayerException((memcmp(Receipt.From, Environment->Proposer.PublicKeyHash, sizeof(Receipt.From)) != 0 ? "work is insufficient (work: " : "proposer's work is insufficient (work: ") + CurrentGasWork.ToString() + ", value: " + CurrentGasRequirement.ToString() + ")");
+				return LayerException("account work is insufficient (work: " + CurrentGasWork.ToString() + ", value: " + CurrentGasRequirement.ToString() + ")");
+			else if (CurrentWork && CurrentWork->IsMatching(States::AccountFlags::Outlaw))
+				return LayerException("account is outlaw");
+			else if (!DepositoryRequirement)
+				return Expectation::Met;
 
-			auto CurrentContribution = GetAccountContribution(Owner);
-			if (CurrentContribution && !CurrentContribution->Honest)
-				return LayerException(memcmp(Receipt.From, Environment->Proposer.PublicKeyHash, sizeof(Receipt.From)) != 0 ? "contribution is not honest" : "proposer's contribution is not honest");
+			auto CurrentDepository = GetAccountDepository(Owner);
+			auto CurrentCoverage = CurrentDepository ? CurrentDepository->GetCoverage(CurrentWork ? CurrentWork->Flags : 0) : Decimal::Zero();
+			if (CurrentCoverage.IsNegative())
+				return LayerException("account depository contribution is too low (coverage: " + CurrentCoverage.ToString() + ")");
 
 			return Expectation::Met;
 		}
@@ -1625,7 +1645,7 @@ namespace Tangent
 
 			return Expectation::Met;
 		}
-		ExpectsLR<Provability::WesolowskiVDF::Distribution> TransactionContext::CalculateRandom(const uint256_t& Seed)
+		ExpectsLR<Algorithm::WVDF::Distribution> TransactionContext::CalculateRandom(const uint256_t& Seed)
 		{
 			if (!Block)
 				return LayerException("block not found");
@@ -1635,10 +1655,11 @@ namespace Tangent
 			Message.WriteTypeless(Block->Recovery);
 			Message.WriteTypeless(Block->Priority);
 			Message.WriteTypeless(Block->Target.Difficulty());
-			Message.WriteTypeless(Block->MutationsCount);
+			Message.WriteTypeless(Block->MutationCount);
+			Message.WriteTypeless(Receipt.RelativeGasUse);
 			Message.WriteTypeless(Seed);
 
-			Provability::WesolowskiVDF::Distribution Distribution;
+			Algorithm::WVDF::Distribution Distribution;
 			Distribution.Signature = Message.Data;
 			Distribution.Value = Algorithm::Hashing::Hash256i(*Crypto::HashRaw(Digests::SHA512(), Distribution.Signature));
 			return Distribution;
@@ -1648,13 +1669,13 @@ namespace Tangent
 #ifdef TAN_VALIDATOR
 			auto Nonce = GetValidationNonce();
 			auto Chain = Storages::Chainstate(__func__);
-			auto Filter = Storages::FactorFilter::Equal((int64_t)Ledger::WorkStatus::Online, 1);
+			auto Filter = Storages::FactorFilter::Equal(1, 1);
 			return Chain.GetMultiformsCountByRowFilter(States::AccountObserver::AsInstanceRow(Asset), Filter, Nonce);
 #else
 			return LayerException("chainstate data not available");
 #endif
 		}
-		ExpectsLR<Vector<States::AccountWork>> TransactionContext::CalculateProposalCommittee(size_t Majors, size_t Minors, size_t* Proposers)
+		ExpectsLR<Vector<States::AccountWork>> TransactionContext::CalculateProposalCommittee(size_t TargetSize)
 		{
 #ifdef TAN_VALIDATOR
 			auto Random = CalculateRandom(0);
@@ -1664,67 +1685,41 @@ namespace Tangent
 			auto Nonce = GetValidationNonce();
 			auto Chain = Storages::Chainstate(__func__);
 			auto Filter = Storages::FactorFilter::GreaterEqual(0, -1);
-			auto TotalSize = Chain.GetMultiformsCountByRowFilter(States::AccountWork::AsInstanceRow(), Filter, Nonce).Or(0);
-			if (Proposers != nullptr)
-				*Proposers = TotalSize;
-
-			if (!TotalSize)
-				return LayerException("committee threshold not met");
-
-			size_t MajorsSize = std::min(TotalSize, Majors);
-			auto MajorComittee = Chain.GetMultiformsByRowFilter(&Delta, States::AccountWork::AsInstanceRow(), Filter, Nonce, 0, MajorsSize);
-			if (!MajorComittee)
-				return LayerException("committee threshold not met");
-
-			size_t MinorsSize = std::min(TotalSize - MajorComittee->size(), Minors);
-			size_t MinorsOffset = (MinorsSize > 0 ? (size_t)(uint64_t)(Random->Derive() % MinorsSize) : 0) + MajorComittee->size();
-			auto MinorCommittee = MinorsSize > 0 ? Chain.GetMultiformsByRowFilter(&Delta, States::AccountWork::AsInstanceRow(), Filter, Nonce, MinorsSize, MinorsSize) : ExpectsLR<Vector<UPtr<Ledger::State>>>(Vector<UPtr<Ledger::State>>());
-			if (!MinorCommittee)
-				return LayerException("committee threshold not met");
-
-			OrderedSet<String> Composites;
-			Vector<States::AccountWork> Secondary;
-			for (auto& Proposer : *MinorCommittee)
+			auto Window = Storages::FactorIndexWindow();
+			auto Pool = Chain.GetMultiformsCountByRowFilter(States::AccountWork::AsInstanceRow(), Filter, Nonce).Or(0);
+			auto Size = std::min(TargetSize, Pool);
+			auto Indices = OrderedSet<size_t>();
+			while (Indices.size() < Size)
 			{
-				auto Composite = Proposer->AsComposite();
-				if (Composites.find(Composite) == Composites.end())
+				size_t Index = ExponentialRangeDistribution(Random->Derive(), Size);
+				if (Indices.find(Index) == Indices.end())
 				{
-					Secondary.emplace_back(std::move(*(States::AccountWork*)*Proposer));
-					Composites.insert(Composite);
-				}
-			}
-			std::sort(Secondary.begin(), Secondary.end(), [](const States::AccountWork& A, const States::AccountWork& B) { return A.GetGasUse() < B.GetGasUse(); });
-
-			OrderedSet<uint256_t> Slots;
-			Vector<std::pair<States::AccountWork, uint256_t>> Primary;
-			for (auto& Proposer : *MajorComittee)
-			{
-				auto Composite = Proposer->AsComposite();
-				if (Composites.find(Composite) == Composites.end())
-				{
-					uint256_t Slot = Random->Derive();
-					while (Slots.find(Slot) != Slots.end())
-						Slot = Random->Derive();
-					Primary.emplace_back(std::make_pair(std::move(*(States::AccountWork*)*Proposer), Slot));
-					Composites.insert(Composite);
-					Slots.insert(Slot);
+					Window.Indices.push_back(Index);
+					Indices.insert(Index);
 				}
 			}
 
-			std::sort(Primary.begin(), Primary.end(), [&](const std::pair<States::AccountWork, uint256_t>& A, const std::pair<States::AccountWork, uint256_t>& B) { return A.second < B.second; });
-			Secondary.reserve(Secondary.size() + Primary.size());
-			for (auto& Slot : Primary)
-				Secondary.emplace_back(std::move(Slot.first));
-
-			if (Secondary.empty())
+			auto Results = Chain.GetMultiformsByRowFilter(&Delta, States::AccountWork::AsInstanceRow(), Filter, Nonce, Window);
+			if (!Results || Results->empty())
 				return LayerException("committee threshold not met");
 
-			return Secondary;
+			Vector<States::AccountWork> Committee;
+			Committee.reserve(Results->size());
+			for (auto& Result : *Results)
+			{
+				auto& Work = *(States::AccountWork*)*Result;
+				Committee.emplace_back(std::move(Work));
+			}
+
+			if (Committee.size() >= TargetSize)
+				std::sort(Committee.begin(), Committee.end(), [](const States::AccountWork&A, const States::AccountWork& B) { return A.GetGasUse() > B.GetGasUse(); });
+
+			return Committee;
 #else
 			return LayerException("chainstate data not available");
 #endif
 		}
-		ExpectsLR<States::AccountWork> TransactionContext::CalculateSharingWitness(const OrderedSet<String>& Owners, bool WorkRequired)
+		ExpectsLR<Vector<States::AccountWork>> TransactionContext::CalculateSharingCommittee(OrderedSet<String>& Hashset, size_t RequiredSize)
 		{
 #ifdef TAN_VALIDATOR
 			auto Random = CalculateRandom(1);
@@ -1734,23 +1729,51 @@ namespace Tangent
 			auto Nonce = GetValidationNonce();
 			auto Chain = Storages::Chainstate(__func__);
 			auto Filter = Storages::FactorFilter::GreaterEqual(0, -1);
-			uint64_t CurrentCommitteeSize = (uint64_t)Chain.GetMultiformsCountByRowFilter(States::AccountWork::AsInstanceRow(), Filter, Nonce).Or(0);
-			UnorderedSet<size_t> Indices;
+			auto Pool = Chain.GetMultiformsCountByRowFilter(States::AccountWork::AsInstanceRow(), Filter, Nonce).Or(0);
+			if (Pool < RequiredSize)
+				return LayerException("committee threshold not met");
 
-			while (Indices.size() < CurrentCommitteeSize)
+			Vector<States::AccountWork> Committee;
+			auto Indices = OrderedSet<size_t>();
+			while (Indices.size() < Pool)
 			{
-				size_t Index = (size_t)(uint64_t)(Random->Derive() % CurrentCommitteeSize);
-				if (Indices.find(Index) == Indices.end())
+				auto Window = Storages::FactorIndexWindow();
+				auto Prefetch = std::min<size_t>(std::max<size_t>(32, RequiredSize), Pool);
+				while (Window.Indices.size() < Prefetch)
 				{
-					auto Tree = Chain.GetMultiformsByRowFilter(&Delta, States::AccountWork::AsInstanceRow(), Filter, Nonce, Index, 1);
-					auto* Work = (States::AccountWork*)*Tree->front();
-					if (Owners.find(String((char*)Work->Owner, sizeof(Work->Owner))) == Owners.end() && ((!WorkRequired || VerifyAccountWork(Work->Owner))))
-						return *Work;
-					Indices.insert(Index);
+					size_t Index = ExponentialRangeDistribution(Random->Derive(), Pool);
+					if (Indices.find(Index) == Indices.end())
+					{
+						Window.Indices.push_back(Index);
+						Indices.insert(Index);
+					}
 				}
+
+				auto Results = Chain.GetMultiformsByRowFilter(&Delta, States::AccountWork::AsInstanceRow(), Filter, Nonce, Window);
+				if (!Results || Results->empty())
+					break;
+
+				for (auto& Result : *Results)
+				{
+					auto& Work = *(States::AccountWork*)*Result;
+					auto Hash = String((char*)Work.Owner, sizeof(Work.Owner));
+					if (Hashset.find(Hash) != Hashset.end() || !VerifyAccountWork(Work.Owner))
+						continue;
+
+					Hashset.insert(std::move(Hash));
+					Committee.push_back(std::move(Work));
+					if (Committee.size() >= RequiredSize)
+						break;
+				}
+
+				if (Committee.size() >= RequiredSize)
+					break;
 			}
 
-			return LayerException("proposer not found");
+			if (Committee.size() < RequiredSize)
+				return LayerException("committee threshold not met");
+
+			return Committee;
 #else
 			return LayerException("chainstate data not available");
 #endif
@@ -1770,12 +1793,23 @@ namespace Tangent
 
 			return NewState;
 		}
-		ExpectsLR<States::AccountWork> TransactionContext::ApplyAccountWork(const Algorithm::Pubkeyhash Owner, WorkStatus Status, uint64_t Penalty, const uint256_t& GasInput, const uint256_t& GasOutput)
+		ExpectsLR<States::AccountSealing> TransactionContext::ApplyAccountSealing(const Algorithm::Pubkeyhash Owner, const Algorithm::Pubkey SealingKey)
+		{
+			States::AccountSealing NewState = States::AccountSealing(Owner, Block);
+			memcpy(NewState.SealingKey, SealingKey, sizeof(Algorithm::Pubkey));
+
+			auto Status = Store(&NewState);
+			if (!Status)
+				return Status.Error();
+
+			return NewState;
+		}
+		ExpectsLR<States::AccountWork> TransactionContext::ApplyAccountWork(const Algorithm::Pubkeyhash Owner, States::AccountFlags Flags, uint64_t Penalty, const uint256_t& GasInput, const uint256_t& GasOutput)
 		{
 			States::AccountWork NewState = States::AccountWork(Owner, Block);
 			NewState.GasInput = GasInput;
 			NewState.GasOutput = GasOutput;
-			NewState.Status = Status;
+			NewState.Flags = (uint8_t)Flags;
 			if (Penalty > 0)
 				NewState.Penalty = (Block ? Block->Number : 0) + Penalty * (Protocol::Now().Policy.ConsensusPenaltyPointTime / Protocol::Now().Policy.ConsensusProofTime);
 
@@ -1785,11 +1819,11 @@ namespace Tangent
 
 			return NewState;
 		}
-		ExpectsLR<States::AccountObserver> TransactionContext::ApplyAccountObserver(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner, WorkStatus Status)
+		ExpectsLR<States::AccountObserver> TransactionContext::ApplyAccountObserver(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner, bool Observing)
 		{
 			States::AccountObserver NewState = States::AccountObserver(Owner, Block);
 			NewState.Asset = Asset;
-			NewState.Status = Status;
+			NewState.Observing = Observing;
 
 			auto Result = Store(&NewState);
 			if (!Result)
@@ -1863,25 +1897,53 @@ namespace Tangent
 
 			return NewState;
 		}
-		ExpectsLR<States::AccountContribution> TransactionContext::ApplyAccountContribution(const Algorithm::Pubkeyhash Owner, const Decimal& Custody, ContributionMap&& Contributions, ReservationMap&& Reservations, Option<double>&& Threshold)
+		ExpectsLR<States::AccountDepository> TransactionContext::ApplyAccountDepositoryCustody(const Algorithm::Pubkeyhash Owner, const Decimal& Custody)
 		{
-			return ApplyAccountContribution(Transaction ? Transaction->Asset : uint256_t(0), Owner, Custody, std::move(Contributions), std::move(Reservations), std::move(Threshold));
+			return ApplyAccountDepositoryCustody(Transaction ? Transaction->Asset : uint256_t(0), Owner, Custody);
 		}
-		ExpectsLR<States::AccountContribution> TransactionContext::ApplyAccountContribution(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner, const Decimal& Custody, ContributionMap&& Contributions, ReservationMap&& Reservations, Option<double>&& Threshold)
+		ExpectsLR<States::AccountDepository> TransactionContext::ApplyAccountDepositoryCustody(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner, const Decimal& Custody)
 		{
-			States::AccountContribution NewState = States::AccountContribution(Owner, Block);
+			States::AccountDepository NewState = States::AccountDepository(Owner, Block);
 			NewState.Asset = Asset;
 			NewState.Custody = Custody.IsNaN() ? Decimal::Zero() : Custody;
-			NewState.Reservations = std::move(Reservations);
-			NewState.Contributions = std::move(Contributions);
-			NewState.Threshold = std::move(Threshold);
-			NewState.Honest = !Custody.IsNaN();
 
-			auto OldState = GetAccountContribution(Asset, Owner);
-			Decimal OldContribution = (OldState ? OldState->GetContribution() : Decimal::Zero());
+			auto OldState = GetAccountDepository(Asset, Owner);
 			if (OldState)
 			{
+				NewState.Contributions = std::move(OldState->Contributions);
+				NewState.Reservations = std::move(OldState->Reservations);
+				NewState.Transactions = std::move(OldState->Transactions);
 				NewState.Custody += OldState->Custody;
+			}
+
+			auto Status = Store(&NewState);
+			if (!Status)
+				return Status.Error();
+
+			Status = EmitEvent<States::AccountDepository>({ Format::Variable(Asset), Format::Variable(std::string_view((char*)Owner, sizeof(Algorithm::Pubkeyhash))), Format::Variable(Custody) });
+			if (!Status)
+				return Status.Error();
+
+			return NewState;
+		}
+		ExpectsLR<States::AccountDepository> TransactionContext::ApplyAccountDepositoryChange(const Algorithm::Pubkeyhash Owner, const Decimal& Custody, AddressValueMap&& Contributions, AccountValueMap&& Reservations)
+		{
+			return ApplyAccountDepositoryChange(Transaction ? Transaction->Asset : uint256_t(0), Owner, Custody, std::move(Contributions), std::move(Reservations));
+		}
+		ExpectsLR<States::AccountDepository> TransactionContext::ApplyAccountDepositoryChange(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner, const Decimal& Custody, AddressValueMap&& Contributions, AccountValueMap&& Reservations)
+		{
+			States::AccountDepository NewState = States::AccountDepository(Owner, Block);
+			NewState.Asset = Asset;
+			NewState.Custody = Custody.IsNaN() ? Decimal::Zero() : Custody;
+			NewState.Contributions = std::move(Contributions);
+			NewState.Reservations = std::move(Reservations);
+
+			auto OldState = GetAccountDepository(Asset, Owner);
+			if (OldState)
+			{
+				NewState.Transactions = std::move(OldState->Transactions);
+				NewState.Custody += OldState->Custody;
+
 				for (auto& Item : OldState->Reservations)
 				{
 					auto& Reservation = NewState.Reservations[Item.first];
@@ -1895,6 +1957,7 @@ namespace Tangent
 				}
 			}
 
+			Decimal OldContribution = (OldState ? OldState->GetContribution() : Decimal::Zero());
 			Decimal NewContribution = NewState.GetContribution();
 			Decimal Coverage = NewContribution - OldContribution;
 			while (Coverage.IsPositive() && !NewState.Reservations.empty())
@@ -1917,7 +1980,51 @@ namespace Tangent
 			if (!Status)
 				return Status.Error();
 
-			Status = EmitEvent<States::AccountContribution>({ Format::Variable(Asset), Format::Variable(std::string_view((char*)Owner, sizeof(Algorithm::Pubkeyhash))), Format::Variable(Custody), Format::Variable(NewState.GetCoverage()) });
+			Status = EmitEvent<States::AccountDepository>({ Format::Variable(Asset), Format::Variable(std::string_view((char*)Owner, sizeof(Algorithm::Pubkeyhash))), Format::Variable(Custody), Format::Variable(NewState.GetCoverage(0)) });
+			if (!Status)
+				return Status.Error();
+
+			return NewState;
+		}
+		ExpectsLR<States::AccountDepository> TransactionContext::ApplyAccountDepositoryTransaction(const Algorithm::Pubkeyhash Owner, const uint256_t& TransactionHash, int8_t Direction)
+		{
+			return ApplyAccountDepositoryTransaction(Transaction ? Transaction->Asset : uint256_t(0), Owner, TransactionHash, Direction);
+		}
+		ExpectsLR<States::AccountDepository> TransactionContext::ApplyAccountDepositoryTransaction(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner, const uint256_t& TransactionHash, int8_t Direction)
+		{
+			States::AccountDepository NewState = States::AccountDepository(Owner, Block);
+			NewState.Asset = Asset;
+			if (Direction > 0)
+				NewState.Transactions.insert(TransactionHash);
+
+			auto OldState = GetAccountDepository(Asset, Owner);
+			Decimal OldContribution = (OldState ? OldState->GetContribution() : Decimal::Zero());
+			if (OldState)
+			{
+				NewState.Contributions = std::move(OldState->Contributions);
+				NewState.Reservations = std::move(OldState->Reservations);
+				NewState.Custody = std::move(OldState->Custody);
+				if (Direction <= 0)
+				{
+					NewState.Transactions = std::move(OldState->Transactions);
+					auto It = NewState.Transactions.find(TransactionHash);
+					if (It == NewState.Transactions.end())
+						return LayerException("transaction hash not found");
+
+					NewState.Transactions.erase(It);
+				}
+				else
+				{
+					for (auto& Item : OldState->Transactions)
+						NewState.Transactions.insert(Item);
+				}
+			}
+
+			auto Status = Store(&NewState);
+			if (!Status)
+				return Status.Error();
+
+			Status = EmitEvent<States::AccountDepository>({ Format::Variable(Asset), Format::Variable(std::string_view((char*)Owner, sizeof(Algorithm::Pubkeyhash))), Format::Variable(TransactionHash), Format::Variable(Direction > 0) });
 			if (!Status)
 				return Status.Error();
 
@@ -1950,24 +2057,31 @@ namespace Tangent
 
 			return NewState;
 		}
-		ExpectsLR<States::WitnessAddress> TransactionContext::ApplyWitnessAddress(const Algorithm::Pubkeyhash Owner, const Algorithm::Pubkeyhash Proposer, const AddressMap& Addresses, uint64_t AddressIndex, States::WitnessAddress::Class Purpose)
+		ExpectsLR<States::WitnessAddress> TransactionContext::ApplyWitnessAddress(const Algorithm::Pubkeyhash Owner, const Algorithm::Pubkeyhash Proposer, const AddressMap& Addresses, uint64_t AddressIndex, States::AddressType Purpose)
 		{
 			return ApplyWitnessAddress(Transaction ? Transaction->Asset : uint256_t(0), Owner, Proposer, Addresses, AddressIndex, Purpose);
 		}
-		ExpectsLR<States::WitnessAddress> TransactionContext::ApplyWitnessAddress(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner, const Algorithm::Pubkeyhash Proposer, const AddressMap& Addresses, uint64_t AddressIndex, States::WitnessAddress::Class Purpose)
+		ExpectsLR<States::WitnessAddress> TransactionContext::ApplyWitnessAddress(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner, const Algorithm::Pubkeyhash Proposer, const AddressMap& Addresses, uint64_t AddressIndex, States::AddressType Purpose)
 		{
-			auto* Chain = Observer::Datamaster::GetChain(Asset);
-			if (!Chain || Addresses.empty())
+			if (Addresses.empty())
 				return LayerException("invalid operation");
-
+#ifdef TAN_VALIDATOR
+			auto* Chain = NSS::ServerNode::Get()->GetChain(Asset);
+			if (!Chain)
+				return LayerException("invalid operation");
+#endif
 			OrderedMap<String, AddressMap> Segments;
 			for (auto& Address : Addresses)
 			{
+#ifdef TAN_VALIDATOR
 				auto Hash = Chain->NewPublicKeyHash(Address.second);
 				if (Hash)
 					Segments[*Hash][Address.first] = Address.second;
 				else
 					Segments[Address.second][Address.first] = Address.second;
+#else
+				Segments[Address.second][Address.first] = Address.second;
+#endif
 			}
 
 			States::WitnessAddress NewState = States::WitnessAddress(nullptr, nullptr);
@@ -1978,7 +2092,7 @@ namespace Tangent
 				NewState.AddressIndex = AddressIndex;
 				NewState.Addresses = std::move(Segment.second);
 				NewState.Asset = Asset;
-				NewState.Purpose = (uint8_t)Purpose;
+				NewState.Purpose = Purpose;
 
 				auto Status = Store(&NewState);
 				if (!Status)
@@ -2115,6 +2229,24 @@ namespace Tangent
 				return Status.Error();
 
 			return States::AccountSequence(std::move(*(States::AccountSequence*)**State));
+#else
+			return LayerException("chainstate data not available");
+#endif
+		}
+		ExpectsLR<States::AccountSealing> TransactionContext::GetAccountSealing(const Algorithm::Pubkeyhash Owner) const
+		{
+			VI_ASSERT(Owner != nullptr, "owner should be set");
+#ifdef TAN_VALIDATOR
+			auto Chain = Storages::Chainstate(__func__);
+			auto State = Chain.GetUniformByIndex(&Delta, States::AccountSealing::AsInstanceIndex(Owner), GetValidationNonce());
+			if (!State)
+				return State.Error();
+
+			auto Status = ((TransactionContext*)this)->Load(**State, Chain.QueryUsed());
+			if (!Status)
+				return Status.Error();
+
+			return States::AccountSealing(std::move(*(States::AccountSealing*)**State));
 #else
 			return LayerException("chainstate data not available");
 #endif
@@ -2285,16 +2417,16 @@ namespace Tangent
 			return LayerException("chainstate data not available");
 #endif
 		}
-		ExpectsLR<States::AccountContribution> TransactionContext::GetAccountContribution(const Algorithm::Pubkeyhash Owner) const
+		ExpectsLR<States::AccountDepository> TransactionContext::GetAccountDepository(const Algorithm::Pubkeyhash Owner) const
 		{
-			return GetAccountContribution(Transaction ? Transaction->Asset : uint256_t(0), Owner);
+			return GetAccountDepository(Transaction ? Transaction->Asset : uint256_t(0), Owner);
 		}
-		ExpectsLR<States::AccountContribution> TransactionContext::GetAccountContribution(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner) const
+		ExpectsLR<States::AccountDepository> TransactionContext::GetAccountDepository(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner) const
 		{
 			VI_ASSERT(Owner != nullptr, "owner should be set");
 #ifdef TAN_VALIDATOR
 			auto Chain = Storages::Chainstate(__func__);
-			auto State = Chain.GetMultiformByComposition(&Delta, States::AccountContribution::AsInstanceColumn(Owner), States::AccountContribution::AsInstanceRow(Asset), GetValidationNonce());
+			auto State = Chain.GetMultiformByComposition(&Delta, States::AccountDepository::AsInstanceColumn(Owner), States::AccountDepository::AsInstanceRow(Asset), GetValidationNonce());
 			if (!State)
 				return State.Error();
 
@@ -2302,7 +2434,7 @@ namespace Tangent
 			if (!Status)
 				return Status.Error();
 
-			return States::AccountContribution(std::move(*(States::AccountContribution*)**State));
+			return States::AccountDepository(std::move(*(States::AccountDepository*)**State));
 #else
 			return LayerException("chainstate data not available");
 #endif
@@ -2387,12 +2519,12 @@ namespace Tangent
 			return LayerException("chainstate data not available");
 #endif
 		}
-		ExpectsLR<Vector<States::WitnessAddress>> TransactionContext::GetWitnessAddressesByPurpose(const Algorithm::Pubkeyhash Owner, States::WitnessAddress::Class Purpose, size_t Offset, size_t Count) const
+		ExpectsLR<Vector<States::WitnessAddress>> TransactionContext::GetWitnessAddressesByPurpose(const Algorithm::Pubkeyhash Owner, States::AddressType Purpose, size_t Offset, size_t Count) const
 		{
 #ifdef TAN_VALIDATOR
 			auto Chain = Storages::Chainstate(__func__);
 			auto Filter = Storages::FactorFilter::Equal((int64_t)Purpose, 1);
-			auto States = Chain.GetMultiformsByColumnFilter(&Delta, States::WitnessAddress::AsInstanceColumn(Owner), Filter, GetValidationNonce(), Offset, Count);
+			auto States = Chain.GetMultiformsByColumnFilter(&Delta, States::WitnessAddress::AsInstanceColumn(Owner), Filter, GetValidationNonce(), Storages::FactorRangeWindow(Offset, Count));
 			if (!States)
 				return States.Error();
 
@@ -2567,7 +2699,7 @@ namespace Tangent
 
 			return ExpectsLR<TransactionContext>(std::move(Context));
 		}
-		ExpectsLR<void> TransactionContext::ExecuteTx(TransactionContext& Context, size_t TransactionSize, bool OnlySuccessful)
+		ExpectsLR<void> TransactionContext::ExecuteTx(TransactionContext& Context, size_t TransactionSize, uint8_t Flags)
 		{
 			VI_ASSERT(Context.Block && Context.Delta.Outgoing && Context.Environment && Context.Transaction, "block, outgoing delta, utilization and transaction should be set");
 			auto Deployment = Context.BurnGas(TransactionSize * (size_t)GasCost::WriteByte);
@@ -2581,12 +2713,15 @@ namespace Tangent
 				Context.Delta.Outgoing->Rollback();
 			if (Discard)
 				Context.Receipt.Events.clear();
-			if (OnlySuccessful && !Context.Receipt.Successful)
+			if ((Flags & (uint8_t)ExecutionFlags::OnlySuccessful) && !Context.Receipt.Successful)
 				return Status;
 
-			auto Info = Context.ApplyAccountSequence();
-			if (!Info)
-				return Info.Error();
+			if (!(Flags & (uint8_t)ExecutionFlags::SkipSequencing) && Context.Transaction->GetType() != TransactionLevel::Aggregation)
+			{
+				auto Info = Context.ApplyAccountSequence();
+				if (!Info)
+					return Info.Error();
+			}
 
 			auto Work = Context.GetAccountWork(Context.Receipt.From);
 			auto GasUse = Work ? Work->GetGasUse() : uint256_t(0);
@@ -2604,7 +2739,7 @@ namespace Tangent
 				auto GasOutput = States::AccountWork::GetAdjustedGasOutput(GasUse, Context.Receipt.RelativeGasUse);
 				if (GasOutput > 0)
 				{
-					Work = Context.ApplyAccountWork(Context.Receipt.From, WorkStatus::Standby, 0, 0, GasOutput);
+					Work = Context.ApplyAccountWork(Context.Receipt.From, States::AccountFlags::AsIs, 0, 0, GasOutput);
 					if (!Work)
 						return Work.Error();
 				}
@@ -2667,7 +2802,7 @@ namespace Tangent
 
 			auto& Context = *Validation;
 			size_t TransactionSize = Transaction->AsMessage().Data.size();
-			auto Execution = TransactionContext::ExecuteTx(Context, TransactionSize, false);
+			auto Execution = TransactionContext::ExecuteTx(Context, TransactionSize, (uint8_t)TransactionContext::ExecutionFlags::SkipSequencing);
 			if (!Execution)
 			{
 				RevertTransaction();
@@ -2679,7 +2814,7 @@ namespace Tangent
 			Gas -= Gas % 1000;
 			return Gas + 1000;
 		}
-		ExpectsPromiseLR<void> TransactionContext::DispatchTx(const Wallet& Proposer, Ledger::BlockTransaction* Transaction, Vector<UPtr<Ledger::Transaction>>* Pipeline)
+		ExpectsPromiseRT<void> TransactionContext::DispatchTx(const Wallet& Proposer, Ledger::BlockTransaction* Transaction, Vector<UPtr<Ledger::Transaction>>* Pipeline)
 		{
 			VI_ASSERT(Transaction != nullptr, "transaction should be set");
 			VI_ASSERT(Pipeline != nullptr, "pipeline should be set");
@@ -2689,7 +2824,7 @@ namespace Tangent
 			auto* Context = Memory::New<Ledger::TransactionContext>();
 			Context->Transaction = *Transaction->Transaction;
 			Context->Receipt = Transaction->Receipt;
-			return Transaction->Transaction->Dispatch(Proposer, Context, Pipeline).Then<ExpectsLR<void>>([Transaction, Context, GasLimit](ExpectsLR<void>&& Result)
+			return Transaction->Transaction->Dispatch(Proposer, Context, Pipeline).Then<ExpectsRT<void>>([Transaction, Context, GasLimit](ExpectsRT<void>&& Result)
 			{
 				Transaction->Transaction->GasLimit = GasLimit;
 				Memory::Delete(Context);
@@ -2735,7 +2870,7 @@ namespace Tangent
 				++Validation.Context.Block->Number;
 
 			auto& Policy = Protocol::Now().Policy;
-			auto Committee = Validation.Context.CalculateProposalCommittee(Policy.ConsensusCommitteeMajors, Policy.ConsensusCommitteeMinors, nullptr);
+			auto Committee = Validation.Context.CalculateProposalCommittee(Policy.ConsensusCommitteeSize);
 			if (Committee)
 				Proposers = std::move(*Committee);
 
@@ -2785,14 +2920,6 @@ namespace Tangent
 				if (NewCumulativeGas > TotalGasLimit)
 					continue;
 
-				auto AccountSequence = Validation.Context.GetAccountSequence(Item.Owner);
-				uint64_t SequenceTarget = (AccountSequence ? AccountSequence->Sequence : 0);
-				uint64_t SequenceDelta = (SequenceTarget > Item.Candidate->Sequence ? SequenceTarget - Item.Candidate->Sequence : 0);
-				if (SequenceDelta > 1)
-					goto Erase;
-				else if (SequenceDelta > 0)
-					continue;
-
 				if (Item.Candidate->GetType() == TransactionLevel::Aggregation)
 				{
 					auto* Aggregation = ((AggregationTransaction*)*Item.Candidate);
@@ -2801,6 +2928,16 @@ namespace Tangent
 						continue;
 
 					Aggregation->SetConsensus(Consensus->Branch->Message.Hash());
+				}
+				else
+				{
+					auto AccountSequence = Validation.Context.GetAccountSequence(Item.Owner);
+					uint64_t SequenceTarget = (AccountSequence ? AccountSequence->Sequence : 0);
+					uint64_t SequenceDelta = (SequenceTarget > Item.Candidate->Sequence ? SequenceTarget - Item.Candidate->Sequence : 0);
+					if (SequenceDelta > 1)
+						goto Erase;
+					else if (SequenceDelta > 0)
+						continue;
 				}
 
 				Validation.CumulativeGas = NewCumulativeGas;
@@ -2822,8 +2959,9 @@ namespace Tangent
 			auto Status = Precompute(Candidate);
 			if (!Status)
 				return Status.Error();
-
+#ifdef TAN_VALIDATOR
 			auto Chain = Storages::Chainstate(__func__);
+#endif
 			auto Evaluation = Candidate.Evaluate(Tip.Address(), this, Errors);
 			Cleanup().Report("mempool cleanup failed");
 			if (!Evaluation)

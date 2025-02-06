@@ -62,7 +62,7 @@ namespace Tangent
 
 		struct ScriptProgram
 		{
-			Option<Provability::WesolowskiVDF::Distribution> Distribution;
+			Option<Algorithm::WVDF::Distribution> Distribution;
 			Ledger::TransactionContext* Context;
 
 			ScriptProgram(Ledger::TransactionContext* NewContext);
@@ -88,11 +88,15 @@ namespace Tangent
 			virtual Decimal AccountOutgoingRewardOf(const ScriptAddress& Target, const Algorithm::AssetId& Asset, const Decimal& Value) const;
 			virtual uint64_t AccountDerivationOf(const ScriptAddress& Target, const Algorithm::AssetId& Asset) const;
 			virtual Decimal AccountBalanceOf(const ScriptAddress& Target, const Algorithm::AssetId& Asset) const;
+			virtual Decimal AccountCoverageOf(const ScriptAddress& Target, const Algorithm::AssetId& Asset) const;
 			virtual Decimal AccountContributionOf(const ScriptAddress& Target, const Algorithm::AssetId& Asset) const;
+			virtual Decimal AccountReservationOf(const ScriptAddress& Target, const Algorithm::AssetId& Asset) const;
+			virtual Decimal AccountCustodyOf(const ScriptAddress& Target, const Algorithm::AssetId& Asset) const;
 			virtual bool HasWitnessProgramOf(const std::string_view& Hashcode) const;
 			virtual uint256_t WitnessEventOf(const uint256_t& TransactionHash) const;
 			virtual ScriptAddress WitnessAddressOf(const Algorithm::AssetId& Asset, const std::string_view& Address, uint64_t AddressIndex, size_t Offset) const;
 			virtual bool HasWitnessTransactionOf(const Algorithm::AssetId& Asset, const std::string_view& TransactionId) const;
+			virtual bool IsAccountHonest(const ScriptAddress& Target) const;
 			virtual uint256_t Random();
 			virtual ScriptAddress From() const;
 			virtual ScriptAddress To() const;

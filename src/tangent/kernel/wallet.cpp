@@ -1,9 +1,8 @@
 #include "wallet.h"
-#include "../policy/typenames.h"
 #ifdef TAN_VALIDATOR
-#include "../storage/mempoolstate.h"
-#include "../storage/chainstate.h"
-#include "../service/p2p.h"
+#include "../validator/storage/mempoolstate.h"
+#include "../validator/storage/chainstate.h"
+#include "../validator/service/p2p.h"
 #endif
 
 namespace Tangent
@@ -25,7 +24,8 @@ namespace Tangent
 			if (!Algorithm::Signing::DerivePublicKey(SecretKey, RootPublicKey))
 				return false;
 
-			Algorithm::Signing::DeriveSealingKey(SecretKey, SealingKey);
+			Algorithm::Seckey SealingSecretKey;
+			Algorithm::Signing::DeriveSealingKeypair(SecretKey, SealingSecretKey, SealingKey);
 			if (!Algorithm::Signing::DeriveTweakedPublicKey(SecretKey, RootPublicKey, PublicKey))
 				return false;
 
@@ -60,8 +60,9 @@ namespace Tangent
 			if (!VerifySecretKey())
 				return false;
 
+			Algorithm::Seckey SealingSecretKey;
 			Algorithm::Pubkey SealingKeyCandidate = { 0 };
-			Algorithm::Signing::DeriveSealingKey(SecretKey, SealingKeyCandidate);
+			Algorithm::Signing::DeriveSealingKeypair(SecretKey, SealingSecretKey, SealingKeyCandidate);
 			return memcmp(SealingKeyCandidate, SealingKey, sizeof(SealingKey)) == 0;
 		}
 		bool Wallet::VerifyPublicKey() const
@@ -188,9 +189,9 @@ namespace Tangent
 			Algorithm::Pubkeyhash Null = { 0 };
 			return memcmp(PublicKeyHash, Null, sizeof(Null)) != 0;
 		}
-		Option<String> Wallet::SealMessage(const std::string_view& Plaintext, const Algorithm::Pubkey ForSealingKey) const
+		Option<String> Wallet::SealMessage(const std::string_view& Plaintext, const Algorithm::Pubkey ForSealingKey, const std::string_view& Entropy) const
 		{
-			return Algorithm::Signing::PublicEncrypt(ForSealingKey, Plaintext);
+			return Algorithm::Signing::PublicEncrypt(ForSealingKey, Plaintext, Entropy);
 		}
 		Option<String> Wallet::OpenMessage(const std::string_view& Ciphertext) const
 		{
@@ -277,7 +278,7 @@ namespace Tangent
 		}
 		uint32_t Wallet::AsInstanceType()
 		{
-			static uint32_t Hash = Types::TypeOf(AsInstanceTypename());
+			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
 			return Hash;
 		}
 		std::string_view Wallet::AsInstanceTypename()
@@ -322,7 +323,7 @@ namespace Tangent
 		bool Validator::StorePayload(Format::Stream* Stream) const
 		{
 			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Stream->WriteString(Address.GetIpAddress().Or("[bad_address]"));
+			Stream->WriteString(Address.GetIpAddress().Or(String()));
 			Stream->WriteInteger(Address.GetIpPort().Or(0));
 			Stream->WriteInteger(Availability.Latency);
 			Stream->WriteInteger(Availability.Timestamp);
@@ -333,6 +334,7 @@ namespace Tangent
 			Stream->WriteInteger(Ports.RPC);
 			Stream->WriteBoolean(Services.Consensus);
 			Stream->WriteBoolean(Services.Discovery);
+			Stream->WriteBoolean(Services.Synchronization);
 			Stream->WriteBoolean(Services.Interface);
 			Stream->WriteBoolean(Services.Proposer);
 			Stream->WriteBoolean(Services.Public);
@@ -376,6 +378,9 @@ namespace Tangent
 			if (!Stream.ReadBoolean(Stream.ReadType(), &Services.Discovery))
 				return false;
 
+			if (!Stream.ReadBoolean(Stream.ReadType(), &Services.Synchronization))
+				return false;
+
 			if (!Stream.ReadBoolean(Stream.ReadType(), &Services.Interface))
 				return false;
 
@@ -389,7 +394,7 @@ namespace Tangent
 				return false;
 
 			Address = SocketAddress(IpAddress, IpPort);
-			return Address.IsValid();
+			return true;
 		}
 		bool Validator::IsValid() const
 		{
@@ -429,9 +434,11 @@ namespace Tangent
 			auto* ServicesData = Data->Set("services");
 			ServicesData->Set("consensus", Var::Boolean(Services.Consensus));
 			ServicesData->Set("discovery", Var::Boolean(Services.Discovery));
+			ServicesData->Set("synchronization", Var::Boolean(Services.Synchronization));
 			ServicesData->Set("interface", Var::Boolean(Services.Interface));
 			ServicesData->Set("proposer", Var::Boolean(Services.Proposer));
 			ServicesData->Set("public", Var::Boolean(Services.Public));
+			ServicesData->Set("streaming", Var::Boolean(Services.Streaming));
 			return Data;
 		}
 		uint32_t Validator::AsType() const
@@ -444,7 +451,7 @@ namespace Tangent
 		}
 		uint32_t Validator::AsInstanceType()
 		{
-			static uint32_t Hash = Types::TypeOf(AsInstanceTypename());
+			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
 			return Hash;
 		}
 		std::string_view Validator::AsInstanceTypename()

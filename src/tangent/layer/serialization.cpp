@@ -1,4 +1,5 @@
 #include "serialization.h"
+#include "../kernel/algorithm.h"
 
 namespace Tangent
 {
@@ -378,7 +379,7 @@ namespace Tangent
 		}
 		uint256_t Stream::Hash(bool Renew) const
 		{
-			if (Renew || Checksum == 0)
+			if (Renew || !Checksum)
 				((Stream*)this)->Checksum = Algorithm::Hashing::Hash256i(Data);
 			return Checksum;
 		}

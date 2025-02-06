@@ -29,7 +29,7 @@ namespace Tangent
 			bool HasSealingKey() const;
 			bool HasPublicKey() const;
 			bool HasPublicKeyHash() const;
-			Option<String> SealMessage(const std::string_view& Plaintext, const Algorithm::Pubkey ForSealingKey) const;
+			Option<String> SealMessage(const std::string_view& Plaintext, const Algorithm::Pubkey ForSealingKey, const std::string_view& Entropy) const;
 			Option<String> OpenMessage(const std::string_view& Ciphertext) const;
 			String GetSecretKey() const;
 			String GetSealingKey() const;
@@ -71,6 +71,7 @@ namespace Tangent
 				bool Consensus = false;
 				bool Discovery = false;
 				bool Interface = false;
+				bool Synchronization = false;
 				bool Proposer = false;
 				bool Public = false;
 				bool Streaming = false;

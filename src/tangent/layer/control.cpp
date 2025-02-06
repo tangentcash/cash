@@ -4,6 +4,50 @@
 
 namespace Tangent
 {
+	SystemEndpoint::SystemEndpoint(const std::string_view& URI) : Scheme(URI), Secure(false)
+	{
+		if (Scheme.Hostname.empty())
+			return;
+
+		SocketAddress PrimaryCandidate = SocketAddress(Scheme.Hostname, Scheme.Port > 0 ? Scheme.Port : Protocol::Now().User.P2P.Port);
+		if (!PrimaryCandidate.IsValid())
+		{
+			auto SecondaryCandidate = DNS::Get()->Lookup(Scheme.Hostname, ToString(Scheme.Port > 0 ? Scheme.Port : Protocol::Now().User.P2P.Port), DNSType::Listen);
+			if (!SecondaryCandidate)
+				return;
+
+			auto IpAddress = SecondaryCandidate->GetIpAddress();
+			if (!IpAddress)
+				return;
+
+			Scheme.Hostname = std::move(*IpAddress);
+		}
+
+		if (Scheme.Protocol == "tcp" || Scheme.Protocol == "tcps")
+			Address = SocketAddress(Scheme.Hostname, Scheme.Port > 0 ? Scheme.Port : Protocol::Now().User.P2P.Port);
+		else if (Scheme.Protocol == "http" || Scheme.Protocol == "https")
+			Address = SocketAddress(Scheme.Hostname, Scheme.Port > 0 ? Scheme.Port : Protocol::Now().User.NDS.Port);
+		else if (Scheme.Protocol == "rpc" || Scheme.Protocol == "rpcs")
+			Address = SocketAddress(Scheme.Hostname, Scheme.Port > 0 ? Scheme.Port : Protocol::Now().User.RPC.Port);
+		Secure = Address.IsValid() && Scheme.Protocol.back() == 's';
+	}
+	bool SystemEndpoint::IsValid() const
+	{
+		return Address.IsValid() && !Scheme.Hostname.empty() && !Scheme.Protocol.empty() && (Scheme.Protocol == "tcp" || Scheme.Protocol == "tcps" || Scheme.Protocol == "http" || Scheme.Protocol == "https" || Scheme.Protocol == "rpc" || Scheme.Protocol == "rpcs");
+	}
+	String SystemEndpoint::ToURI(const SocketAddress& Address, const std::string_view& Protocol)
+	{
+		String URI = String(Protocol);
+		URI.append("://");
+		URI.append(Address.GetIpAddress().Or("[bad_address]"));
+
+		auto IpPort = Address.GetIpPort();
+		if (IpPort)
+			URI.append(":").append(ToString(*IpPort));
+
+		return URI;
+	}
+
 	SystemControl::SystemControl(const std::string_view& Label) noexcept : Timers(nullptr), Tasks(0), Active(false), ServiceName(Label.empty() ? "unknown" : Label)
 	{
 	}

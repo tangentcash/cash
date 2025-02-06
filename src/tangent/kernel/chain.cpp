@@ -1,8 +1,8 @@
 #include "chain.h"
 #include "script.h"
 #ifdef TAN_VALIDATOR
-#include "observer.h"
-#include "../storage/chainstate.h"
+#include "../validator/storage/chainstate.h"
+#include "../validator/service/nss.h"
 #ifdef TAN_ROCKSDB
 #include "rocksdb/db.h"
 #include "rocksdb/table.h"
@@ -54,12 +54,55 @@ namespace Tangent
 	LayerException::LayerException() : std::exception()
 	{
 	}
-	LayerException::LayerException(String&& Text) : std::exception(), Info(std::move(Text))
+	LayerException::LayerException(String&& Text) : std::exception(), Message(std::move(Text))
 	{
 	}
 	const char* LayerException::what() const noexcept
 	{
-		return Info.c_str();
+		return Message.c_str();
+	}
+	String&& LayerException::message() noexcept
+	{
+		return std::move(Message);
+	}
+
+	RemoteException::RemoteException(int8_t NewStatus) : std::exception(), Status(NewStatus)
+	{
+	}
+	RemoteException::RemoteException(String&& Text) : std::exception(), Message(std::move(Text)), Status(0)
+	{
+	}
+	const char* RemoteException::what() const noexcept
+	{
+		if (Status > 0)
+			return "retry again later (minor failure)";
+		else if (Status < 0)
+			return "retry again later (major failure)";
+		return Message.c_str();
+	}
+	String&& RemoteException::message() noexcept
+	{
+		if (Message.empty() && Status > 0)
+			Message = "retry again later (minor failure)";
+		else if (Message.empty() && Status < 0)
+			Message = "retry again later (major failure)";
+		return std::move(Message);
+	}
+	bool RemoteException::retry() const noexcept
+	{
+		return Status > 0;
+	}
+	bool RemoteException::shutdown() const noexcept
+	{
+		return Status < 0;
+	}
+	RemoteException RemoteException::Retry()
+	{
+		return RemoteException(1);
+	}
+	RemoteException RemoteException::Shutdown()
+	{
+		return RemoteException(-1);
 	}
 
 	rocksdb::DB* Repository::LoadBlob(const std::string_view& Location)
@@ -149,7 +192,7 @@ namespace Tangent
 		{
 			if (!Handle.second)
 				continue;
-
+#ifdef TAN_VALIDATOR
 			rocksdb::FlushOptions Options;
 			Options.allow_write_stall = true;
 			Options.wait = true;
@@ -162,6 +205,7 @@ namespace Tangent
 				else
 					VI_ERR("[blobdb] wal checkpoint error on: %s (location: %s)", Status.ToString().c_str(), Handle.first.c_str());
 			}
+#endif
 		}
 		for (auto& Queue : Indices)
 		{
@@ -539,6 +583,42 @@ namespace Tangent
 			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
 				User.NDS.Logging = Value->Value.GetBoolean();
 
+			Value = Config->Fetch("nss.block_replay_multiplier");
+			if (Value != nullptr && Value->Value.Is(VarType::Integer))
+				User.NSS.BlockReplayMultiplier = Value->Value.GetInteger();
+
+			Value = Config->Fetch("nss.relaying_timeout");
+			if (Value != nullptr && Value->Value.Is(VarType::Integer))
+				User.NSS.RelayingTimeout = Value->Value.GetInteger();
+
+			Value = Config->Fetch("nss.relaying_retry_timeout");
+			if (Value != nullptr && Value->Value.Is(VarType::Integer))
+				User.NSS.RelayingRetryTimeout = Value->Value.GetInteger();
+
+			Value = Config->Fetch("nss.cache_short_size");
+			if (Value != nullptr && Value->Value.Is(VarType::Integer))
+				User.NSS.CacheShortSize = (uint32_t)Value->Value.GetInteger();
+
+			Value = Config->Fetch("nss.cache_extended_size");
+			if (Value != nullptr && Value->Value.Is(VarType::Integer))
+				User.NSS.CacheExtendedSize = (uint32_t)Value->Value.GetInteger();
+
+			Value = Config->Fetch("nss.fee_estimation_seconds");
+			if (Value != nullptr && Value->Value.Is(VarType::Integer))
+				User.NSS.FeeEstimationSeconds = Value->Value.GetInteger();
+
+			Value = Config->Fetch("nss.withdrawal_time");
+			if (Value != nullptr && Value->Value.Is(VarType::Integer))
+				User.NSS.WithdrawalTime = Value->Value.GetInteger();
+
+			Value = Config->Fetch("nss.server");
+			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
+				User.NSS.Server = Value->Value.GetBoolean();
+
+			Value = Config->Fetch("nss.logging");
+			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
+				User.NSS.Logging = Value->Value.GetBoolean();
+
 			Value = Config->Fetch("tcp.tls_trusted_peers");
 			if (Value != nullptr && Value->Value.Is(VarType::Integer))
 				User.TCP.TlsTrustedPeers = Value->Value.GetInteger();
@@ -564,6 +644,14 @@ namespace Tangent
 			Value = Config->Fetch("storage.checkpoint_size");
 			if (Value != nullptr && Value->Value.Is(VarType::Integer))
 				User.Storage.CheckpointSize = Value->Value.GetInteger();
+				
+			Value = Config->Fetch("storage.transaction_timeout");
+			if (Value != nullptr && Value->Value.Is(VarType::Integer))
+				User.Storage.TransactionTimeout = Value->Value.GetInteger();
+
+			Value = Config->Fetch("storage.transaction_dispatch_repeat_interval");
+			if (Value != nullptr && Value->Value.Is(VarType::Integer))
+				User.Storage.TransactionDispatchRepeatInterval = Value->Value.GetInteger();
 
 			Value = Config->Fetch("storage.location_cache_size");
 			if (Value != nullptr && Value->Value.Is(VarType::Integer))
@@ -613,41 +701,9 @@ namespace Tangent
 			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
 				User.Storage.Logging = Value->Value.GetBoolean();
 
-			Value = Config->Fetch("observer.block_replay_multiplier");
-			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.Observer.BlockReplayMultiplier = Value->Value.GetInteger();
-
-			Value = Config->Fetch("observer.relaying_timeout");
-			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.Observer.RelayingTimeout = Value->Value.GetInteger();
-
-			Value = Config->Fetch("observer.relaying_retry_timeout");
-			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.Observer.RelayingRetryTimeout = Value->Value.GetInteger();
-
-			Value = Config->Fetch("observer.cache_short_size");
-			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.Observer.CacheShortSize = (uint32_t)Value->Value.GetInteger();
-
-			Value = Config->Fetch("observer.cache_extended_size");
-			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.Observer.CacheExtendedSize = (uint32_t)Value->Value.GetInteger();
-
-			Value = Config->Fetch("observer.fee_estimation_seconds");
-			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.Observer.FeeEstimationSeconds = Value->Value.GetInteger();
-
-			Value = Config->Fetch("observer.withdrawal_time");
-			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.Observer.WithdrawalTime = Value->Value.GetInteger();
-
-			Value = Config->Fetch("observer.server");
-			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
-				User.Observer.Server = Value->Value.GetBoolean();
-
-			Value = Config->Fetch("observer.logging");
-			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
-				User.Observer.Logging = Value->Value.GetBoolean();
+			User.NSS.Options = Config->Get("nss");
+			if (User.NSS.Options)
+				User.NSS.Options->Unlink();
 		}
 
 		if (!User.Logs.State.empty())
@@ -719,7 +775,7 @@ namespace Tangent
 				Account.AddressVersion = 0x6;
 				Policy.AccountContributionRequired = 0.0;
 				Policy.AccountGasWorkRequired = 0.0;
-				User.Observer.WithdrawalTime = Policy.ConsensusProofTime;
+				User.NSS.WithdrawalTime = Policy.ConsensusProofTime;
 				break;
 			case Tangent::NetworkType::Testnet:
 				Message.PacketMagic = 0xf815c95c;
@@ -746,7 +802,6 @@ namespace Tangent
 		Algorithm::Signing::Initialize();
 #ifdef TAN_VALIDATOR
 		OS::Directory::SetWorking(Module->c_str());
-		Observer::Bridge::Open(*Config, User.Observer.Server);
 #endif
 	}
 	Protocol::~Protocol()
@@ -755,10 +810,10 @@ namespace Tangent
 #ifdef TAN_VALIDATOR
 		if (!Path.empty() && User.Storage.Logging)
 			VI_DEBUG("[chain] close handle: %s", Path.c_str());
-		Observer::Bridge::Close();
 		Storages::AccountCache::CleanupInstance();
 		Storages::UniformCache::CleanupInstance();
 		Storages::MultiformCache::CleanupInstance();
+		NSS::ServerNode::CleanupInstance();
 #endif
 		Ledger::ScriptHost::CleanupInstance();
 		Algorithm::Signing::Deinitialize();

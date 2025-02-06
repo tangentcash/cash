@@ -4,16 +4,25 @@
 
 namespace Tangent
 {
-	class SystemControl
+	struct SystemEndpoint
 	{
-	public:
+		Location Scheme;
+		SocketAddress Address;
+		bool Secure;
+
+		SystemEndpoint(const std::string_view& URI);
+		bool IsValid() const;
+		static String ToURI(const SocketAddress& Address, const std::string_view& Protocol = "tcp");
+	};
+
+	struct SystemControl
+	{
 		UnorderedMap<String, TaskId>* Timers;
 		std::atomic<size_t> Tasks;
 		std::atomic<bool> Active;
 		std::recursive_mutex Sync;
 		std::string_view ServiceName;
 
-	public:
 		SystemControl(const std::string_view& Label) noexcept;
 		Promise<void> Shutdown() noexcept;
 		bool LockTimeout(const std::string_view& Name);

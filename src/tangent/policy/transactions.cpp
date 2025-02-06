@@ -1,42 +1,14 @@
 #include "transactions.h"
-#include "typenames.h"
 #include "../kernel/block.h"
 #include "../kernel/script.h"
+#ifdef TAN_VALIDATOR
+#include "../validator/service/nss.h"
+#endif
 
 namespace Tangent
 {
 	namespace Transactions
 	{
-		static ExpectsPromiseLR<Observer::OutgoingTransaction> EmitTransaction(const Ledger::Wallet& Proposer, const Algorithm::AssetId& Asset, const uint256_t& TransactionHash, Vector<UPtr<Ledger::Transaction>>* Pipeline, Vector<Observer::Transferer>&& To)
-		{
-			auto Wallet = Observer::Datamaster::NewMasterWallet(Asset, Proposer.SecretKey);
-			if (!Wallet)
-				return ExpectsPromiseLR<Observer::OutgoingTransaction>(LayerException("wallet not found"));
-
-			if (!Protocol::Now().Is(NetworkType::Regtest) || Observer::Paymaster::HasSupport(Asset))
-				return Observer::Paymaster::SubmitTransaction(TransactionHash, Asset, *Wallet, std::move(To));
-
-			auto SigningWallet = Observer::Datamaster::NewSigningWallet(Asset, *Wallet, Protocol::Now().Account.RootAddressIndex);
-			if (!SigningWallet)
-				return ExpectsPromiseLR<Observer::OutgoingTransaction>(LayerException("wallet not found"));
-
-			Observer::OutgoingTransaction Ephimeric;
-			Ephimeric.Transaction.To = To;
-			Ephimeric.Transaction.From.push_back(Observer::Transferer(SigningWallet->Addresses.begin()->second, Option<uint64_t>(SigningWallet->AddressIndex), Ephimeric.Transaction.GetOutputValue()));
-			Ephimeric.Transaction.Asset = Asset;
-			Ephimeric.Transaction.TransactionId = Algorithm::Encoding::Encode0xHex256(Algorithm::Hashing::Hash256i(TransactionHash.ToString()));
-			Ephimeric.Transaction.BlockId = Algorithm::Hashing::Hash256i(Ephimeric.Transaction.TransactionId) % std::numeric_limits<uint64_t>::max();
-			Ephimeric.Transaction.Fee = Decimal::Zero();
-			Ephimeric.Data = Ephimeric.AsMessage().Encode();
-
-			auto* Transaction = Memory::New<Transactions::Claim>();
-			Transaction->Asset = Asset;
-			Transaction->SetEstimateGas(Decimal::Zero());
-			Transaction->SetWitness(Ephimeric.Transaction);
-			Pipeline->push_back(Transaction);
-			return ExpectsPromiseLR<Observer::OutgoingTransaction>(std::move(Ephimeric));
-		}
-
 		ExpectsLR<void> Transfer::Prevalidate() const
 		{
 			if (!Value.IsPositive())
@@ -82,7 +54,7 @@ namespace Tangent
 
 			return true;
 		}
-		bool Transfer::RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
+		bool Transfer::RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
 		{
 			Parties.insert(String((char*)To, sizeof(To)));
 			return true;
@@ -126,7 +98,7 @@ namespace Tangent
 		}
 		uint32_t Transfer::AsInstanceType()
 		{
-			static uint32_t Hash = Types::TypeOf(AsInstanceTypename());
+			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
 			return Hash;
 		}
 		std::string_view Transfer::AsInstanceTypename()
@@ -208,7 +180,7 @@ namespace Tangent
 
 			return true;
 		}
-		bool Omnitransfer::RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
+		bool Omnitransfer::RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
 		{
 			for (auto& Transfer : Transfers)
 				Parties.insert(String((char*)Transfer.To, sizeof(Transfer.To)));
@@ -265,7 +237,7 @@ namespace Tangent
 		}
 		uint32_t Omnitransfer::AsInstanceType()
 		{
-			static uint32_t Hash = Types::TypeOf(AsInstanceTypename());
+			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
 			return Hash;
 		}
 		std::string_view Omnitransfer::AsInstanceTypename()
@@ -415,7 +387,7 @@ namespace Tangent
 			memcpy(Location, LocationAssembly.data(), LocationAssembly.size());
 			return Format::VariablesUtil::DeserializeMergeFrom(Stream, &Args);
 		}
-		bool Deployment::RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
+		bool Deployment::RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
 		{
 			Algorithm::Pubkeyhash Owner;
 			if (RecoverLocation(Owner))
@@ -501,7 +473,7 @@ namespace Tangent
 		}
 		uint32_t Deployment::AsInstanceType()
 		{
-			static uint32_t Hash = Types::TypeOf(AsInstanceTypename());
+			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
 			return Hash;
 		}
 		std::string_view Deployment::AsInstanceTypename()
@@ -593,7 +565,7 @@ namespace Tangent
 			Args.clear();
 			return Format::VariablesUtil::DeserializeMergeFrom(Stream, &Args);
 		}
-		bool Invocation::RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
+		bool Invocation::RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
 		{
 			Parties.insert(String((char*)To, sizeof(To)));
 			return true;
@@ -643,7 +615,7 @@ namespace Tangent
 		}
 		uint32_t Invocation::AsInstanceType()
 		{
-			static uint32_t Hash = Types::TypeOf(AsInstanceTypename());
+			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
 			return Hash;
 		}
 		std::string_view Invocation::AsInstanceTypename()
@@ -655,14 +627,14 @@ namespace Tangent
 		{
 			if (To.empty())
 				return LayerException("invalid to");
-
-			auto* Chain = Observer::Datamaster::GetChainparams(Asset);
+#ifdef TAN_VALIDATOR
+			auto* Chain = NSS::ServerNode::Get()->GetChainparams(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
 
 			if (!Chain->SupportsBulkTransfer && To.size() > 1)
 				return LayerException("too many to addresses");
-
+#endif
 			UnorderedSet<String> Addresses;
 			for (auto& Item : To)
 			{
@@ -698,8 +670,8 @@ namespace Tangent
 				if (!BalanceRequirement)
 					return BalanceRequirement.Error();
 
-				auto Contribution = Context->GetAccountContribution(BaseAsset, Proposer);
-				if (!Contribution || Contribution->Custody < BaseReward->OutgoingAbsoluteFee)
+				auto Depository = Context->GetAccountDepository(BaseAsset, Proposer);
+				if (!Depository || Depository->Custody < BaseReward->OutgoingAbsoluteFee)
 					return LayerException("proposer's " + Algorithm::Asset::HandleOf(BaseAsset) + " balance is insufficient to cover withdrawal fee (value: " + BaseReward->OutgoingAbsoluteFee.ToString() + ")");
 			}
 
@@ -708,9 +680,8 @@ namespace Tangent
 			if (!BalanceRequirement)
 				return BalanceRequirement;
 
-			auto Contribution = Context->GetAccountContribution(Proposer);
-			auto& ss = *Contribution;
-			if (!Contribution || Contribution->Custody < Value)
+			auto Depository = Context->GetAccountDepository(Proposer);
+			if (!Depository || Depository->Custody < Value)
 				return LayerException("proposer's " + Algorithm::Asset::HandleOf(Asset) + " balance is insufficient to cover withdrawal value (value: " + Value.ToString() + ")");
 
 			return Ledger::Transaction::Validate(Context);
@@ -723,7 +694,7 @@ namespace Tangent
 			{
 				auto Collision = Context->GetWitnessAddress(BaseAsset, Item.first, Protocol::Now().Account.RootAddressIndex, 0);
 				if (!Collision)
-					Collision = Context->ApplyWitnessAddress(Context->Receipt.From, nullptr, { { (uint8_t)0, String(Item.first) } }, AddressIndex, States::WitnessAddress::Class::Router);
+					Collision = Context->ApplyWitnessAddress(Context->Receipt.From, nullptr, { { (uint8_t)0, String(Item.first) } }, AddressIndex, States::AddressType::Router);
 				if (!Collision)
 					return Collision.Error();
 			}
@@ -756,15 +727,19 @@ namespace Tangent
 					return TokenTransfer.Error();
 			}
 
+			auto Registration = Context->ApplyAccountDepositoryTransaction(Proposer, Context->Receipt.TransactionHash, 1);
+			if (!Registration)
+				return Registration.Error();
+
 			return Expectation::Met;
 		}
-		ExpectsPromiseLR<void> Withdrawal::Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const
+		ExpectsPromiseRT<void> Withdrawal::Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const
 		{
 			if (memcmp(Proposer.PublicKeyHash, this->Proposer, sizeof(this->Proposer)) != 0)
-				return ExpectsPromiseLR<void>(Expectation::Met);
+				return ExpectsPromiseRT<void>(Expectation::Met);
 
 			if (Context->GetWitnessEvent(Context->Receipt.TransactionHash))
-				return ExpectsPromiseLR<void>(Expectation::Met);
+				return ExpectsPromiseRT<void>(Expectation::Met);
 
 			bool Charges = memcmp(Context->Receipt.From, Proposer.PublicKeyHash, sizeof(Algorithm::Pubkeyhash)) != 0;
 			auto BaseAsset = Algorithm::Asset::BaseIdOf(Asset);
@@ -774,23 +749,36 @@ namespace Tangent
 			if (To.size() > 1)
 				PartitionFee /= Decimal(To.size()).Truncate(Protocol::Now().Message.Precision);
 
-			auto* Transaction = Memory::New<Transactions::Replay>();
+			auto* Transaction = Memory::New<OutgoingClaim>();
 			Transaction->Asset = Asset;
 			Pipeline->push_back(Transaction);
 
-			Vector<Observer::Transferer> Destinations;
+			Vector<Mediator::Transferer> Destinations;
 			Destinations.reserve(To.size());
 			for (auto& Item : To)
-				Destinations.push_back(Observer::Transferer(Item.first, Optional::None, Item.second - PartitionFee));
-
-			return EmitTransaction(Proposer, Asset, Context->Receipt.TransactionHash, Pipeline, std::move(Destinations)).Then<ExpectsLR<void>>([this, Context, Pipeline, Transaction](ExpectsLR<Observer::OutgoingTransaction>&& Result)
+				Destinations.push_back(Mediator::Transferer(Item.first, Optional::None, Item.second - PartitionFee));
+#ifdef TAN_VALIDATOR
+			auto Parent = NSS::ServerNode::Get()->NewMasterWallet(Asset, Proposer.SecretKey);
+			auto Child = Parent ? Mediator::DynamicWallet(*Parent) : Mediator::DynamicWallet();
+			return Resolver::EmitTransaction(Pipeline, std::move(Child), Asset, Context->Receipt.TransactionHash, std::move(Destinations)).Then<ExpectsRT<void>>([this, Context, Pipeline, Transaction](ExpectsRT<Mediator::OutgoingTransaction>&& Result)
 			{
 				if (!Result || Result->Transaction.TransactionId.empty())
+				{
 					Transaction->SetFailureWitness(Result ? "transaction broadcast failed" : Result.What(), Context->Receipt.TransactionHash);
+					if (!Result && (Result.Error().retry() || Result.Error().shutdown()))
+					{
+						Pipeline->pop_back();
+						Memory::Delete(Transaction);
+						return ExpectsRT<void>(Result.Error());
+					}
+				}
 				else
 					Transaction->SetSuccessWitness(Result->Transaction.TransactionId, Result->Data, Context->Receipt.TransactionHash);
-				return ExpectsLR<void>(Expectation::Met);
+				return ExpectsRT<void>(Expectation::Met);
 			});
+#else
+			return ExpectsPromiseRT<void>(RemoteException("nss data not available"));
+#endif
 		}
 		bool Withdrawal::StoreBody(Format::Stream* Stream) const
 		{
@@ -830,7 +818,7 @@ namespace Tangent
 
 			return true;
 		}
-		bool Withdrawal::RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
+		bool Withdrawal::RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
 		{
 			if (!IsProposerNull())
 				Parties.insert(String((char*)Proposer, sizeof(Proposer)));
@@ -897,11 +885,11 @@ namespace Tangent
 		}
 		uint64_t Withdrawal::GetDispatchOffset() const
 		{
-			return Protocol::Now().User.Observer.WithdrawalTime / Protocol::Now().Policy.ConsensusProofTime;
+			return Protocol::Now().User.NSS.WithdrawalTime / Protocol::Now().Policy.ConsensusProofTime;
 		}
 		uint32_t Withdrawal::AsInstanceType()
 		{
-			static uint32_t Hash = Types::TypeOf(AsInstanceTypename());
+			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
 			return Hash;
 		}
 		std::string_view Withdrawal::AsInstanceTypename()
@@ -971,7 +959,7 @@ namespace Tangent
 					auto Prevalidation = Transaction->Prevalidate();
 					Mutable->GasPrice = Decimal::NaN();
 					if (!Prevalidation)
-						return LayerException("sub-transaction " + Algorithm::Encoding::Encode0xHex256(TransactionHash) + " prevalidation failed: " + Prevalidation.Error().Info);
+						return LayerException("sub-transaction " + Algorithm::Encoding::Encode0xHex256(TransactionHash) + " prevalidation failed: " + Prevalidation.Error().message());
 				}
 			}
 
@@ -1018,16 +1006,16 @@ namespace Tangent
 				auto Validation = Ledger::TransactionContext::ValidateTx((Ledger::Block*)Context->Block, Context->Environment, Transaction, Transaction->AsHash(), Owner, *Context->Delta.Incoming);
 				Transaction->GasPrice = Decimal::NaN();
 				if (!Validation)
-					return LayerException("sub-transaction " + Algorithm::Encoding::Encode0xHex256(Transaction->AsHash()) + " validation failed: " + Validation.Error().Info);
+					return LayerException("sub-transaction " + Algorithm::Encoding::Encode0xHex256(Transaction->AsHash()) + " validation failed: " + Validation.Error().message());
 
-				auto Finalization = Ledger::TransactionContext::ExecuteTx(*Validation, Transaction->AsMessage().Data.size(), true);
+				auto Finalization = Ledger::TransactionContext::ExecuteTx(*Validation, Transaction->AsMessage().Data.size(), (uint8_t)Ledger::TransactionContext::ExecutionFlags::OnlySuccessful);
 				RelativeGasUse += Validation->Receipt.RelativeGasUse;
 				if (!Finalization)
-					return LayerException("sub-transaction " + Algorithm::Encoding::Encode0xHex256(Transaction->AsHash()) + " finalization failed: " + Finalization.Error().Info);
+					return LayerException("sub-transaction " + Algorithm::Encoding::Encode0xHex256(Transaction->AsHash()) + " finalization failed: " + Finalization.Error().message());
 
 				auto Report = Context->EmitEvent<Rollup>({ Format::Variable(Validation->Receipt.TransactionHash), Format::Variable(Validation->Receipt.RelativeGasUse), Format::Variable(Validation->Receipt.RelativeGasPaid) });
 				if (!Report)
-					return LayerException("sub-transaction " + Algorithm::Encoding::Encode0xHex256(Transaction->AsHash()) + " event merge failed: " + Report.Error().Info);
+					return LayerException("sub-transaction " + Algorithm::Encoding::Encode0xHex256(Transaction->AsHash()) + " event merge failed: " + Report.Error().message());
 
 				Context->Receipt.Events.reserve(Context->Receipt.Events.size() + Validation->Receipt.Events.size());
 				for (auto& Event : Validation->Receipt.Events)
@@ -1039,29 +1027,33 @@ namespace Tangent
 			Context->Receipt.RelativeGasUse = RelativeGasUse;
 			return Expectation::Met;
 		}
-		ExpectsPromiseLR<void> Rollup::Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const
+		ExpectsPromiseRT<void> Rollup::Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const
 		{
 			auto Requirement = GetDispatchOffset();
 			if (!Requirement)
-				return ExpectsPromiseLR<void>(Expectation::Met);
+				return ExpectsPromiseRT<void>(Expectation::Met);
 
-			return Coasync<ExpectsLR<void>>([this, Proposer, Context, Pipeline]() -> ExpectsPromiseLR<void>
+			return Coasync<ExpectsRT<void>>([this, Proposer, Context, Pipeline]() -> ExpectsPromiseRT<void>
 			{
-				LayerException CumulativeException;
+				String ErrorMessage;
 				for (auto& Group : Transactions)
 				{
 					for (auto& Transaction : Group.second)
 					{
 						auto Status = Coawait(Transaction->Dispatch(Proposer, Context, Pipeline));
-						if (!Status)
-							CumulativeException.Info += "sub-transaction " + Algorithm::Encoding::Encode0xHex256(Transaction->AsHash()) + " dispatch failed: " + Status.Error().Info + "\n";
+						if (Status)
+							continue;
+						else if (Status.Error().retry() || Status.Error().shutdown())
+							Coreturn Status;
+
+						ErrorMessage += "sub-transaction " + Algorithm::Encoding::Encode0xHex256(Transaction->AsHash()) + " dispatch failed: " + Status.Error().message() + "\n";
 					}
 				}
-				if (CumulativeException.Info.empty())
+				if (ErrorMessage.empty())
 					Coreturn Expectation::Met;
 				
-				CumulativeException.Info.pop_back();
-				Coreturn CumulativeException;
+				ErrorMessage.pop_back();
+				Coreturn RemoteException(std::move(ErrorMessage));
 			});
 		}
 		bool Rollup::StoreBody(Format::Stream* Stream) const
@@ -1133,7 +1125,7 @@ namespace Tangent
 			}
 			return true;
 		}
-		bool Rollup::RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
+		bool Rollup::RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
 		{
 			for (auto& Group : Transactions)
 			{
@@ -1143,13 +1135,13 @@ namespace Tangent
 					if (Transaction->Recover(From))
 					{
 						Parties.insert(String((char*)From, sizeof(From)));
-						Transaction->RecoverAlt(Receipt, Parties);
+						Transaction->RecoverMany(Receipt, Parties);
 					}
 				}
 			}
 			return true;
 		}
-		bool Rollup::RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<uint256_t>& Aliases) const
+		bool Rollup::RecoverAliases(const Ledger::Receipt& Receipt, OrderedSet<uint256_t>& Aliases) const
 		{
 			for (auto& Group : Transactions)
 			{
@@ -1157,7 +1149,7 @@ namespace Tangent
 				{
 					Algorithm::Pubkeyhash From = { 0 };
 					Aliases.insert(Transaction->AsHash());
-					Transaction->RecoverAlt(Receipt, Aliases);
+					Transaction->RecoverAliases(Receipt, Aliases);
 				}
 			}
 			return true;
@@ -1320,7 +1312,7 @@ namespace Tangent
 		}
 		uint32_t Rollup::AsInstanceType()
 		{
-			static uint32_t Hash = Types::TypeOf(AsInstanceTypename());
+			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
 			return Hash;
 		}
 		std::string_view Rollup::AsInstanceTypename()
@@ -1352,59 +1344,79 @@ namespace Tangent
 
 		ExpectsLR<void> Commitment::Prevalidate() const
 		{
-			if (Worker == Ledger::WorkStatus::Standby && Observers.empty())
-				return LayerException("invalid status");
-			else if (Worker != Ledger::WorkStatus::Standby && Worker != Ledger::WorkStatus::Online && Worker != Ledger::WorkStatus::Offline)
+			if (!Online && Observers.empty())
 				return LayerException("invalid status");
 
-			for (auto& Observer : Observers)
+			for (auto& Mediator : Observers)
 			{
-				if (!Algorithm::Asset::IsValid(Observer.first))
+				if (!Algorithm::Asset::IsValid(Mediator.first))
 					return LayerException("invalid oracle asset");
-
-				if (Observer.second != Ledger::WorkStatus::Online && Observer.second != Ledger::WorkStatus::Offline)
-					return LayerException("invalid oracle status");
 			}
+
+			if (!VerifySealing())
+				return LayerException("invalid sealing key");
 
 			return Ledger::Transaction::Prevalidate();
 		}
 		ExpectsLR<void> Commitment::Validate(const Ledger::TransactionContext* Context) const
 		{
-			auto Status = Context->VerifyAccountWork();
-			if (!Status)
-				return Status;
+			bool GoesOnline = Online.Or(false);
+			for (auto& Mediator : Observers)
+				GoesOnline = Mediator.second || GoesOnline;
 
-			if (Worker != Ledger::WorkStatus::Standby)
+			if (GoesOnline)
 			{
-				auto Work = Context->GetAccountWork(Context->Receipt.From);
-				if ((Work ? Work->Status : Ledger::WorkStatus::Offline) == Worker)
-				{
-					if (Worker != Ledger::WorkStatus::Online || !Work || Work->IsOnline())
-						return LayerException("work status is already set to required value");
-				}
+				auto Status = Context->VerifyAccountWork(false);
+				if (!Status)
+					return Status;
 			}
 
-			for (auto& Observer : Observers)
+			if (Online)
 			{
-				auto ObserverWork = Context->GetAccountObserver(Observer.first, Context->Receipt.From);
-				if ((ObserverWork ? ObserverWork->Status : Ledger::WorkStatus::Offline) == Observer.second)
-					return LayerException(Algorithm::Asset::BlockchainOf(Observer.first) + " observer status is already set to required value");
+				auto Work = Context->GetAccountWork(Context->Receipt.From);
+				if (*Online)
+				{
+					if ((Work ? Work->IsMatching(States::AccountFlags::Online) : false) == *Online)
+						return LayerException("work status is already set to required value");
+				}
+				else if ((Work ? !Work->IsMatching(States::AccountFlags::Offline) : true) == *Online)
+					return LayerException("work status is already set to required value");
+			}
+
+			for (auto& Mediator : Observers)
+			{
+				auto ObserverWork = Context->GetAccountObserver(Mediator.first, Context->Receipt.From);
+				if ((ObserverWork ? ObserverWork->Observing : false) == Mediator.second)
+					return LayerException(Algorithm::Asset::BlockchainOf(Mediator.first) + " observer status is already set to required value");
 			}
 
 			return Ledger::Transaction::Validate(Context);
 		}
 		ExpectsLR<void> Commitment::Execute(Ledger::TransactionContext* Context) const
 		{
-			if (Worker != Ledger::WorkStatus::Standby)
+			auto Sealing = Context->GetAccountSealing(Context->Receipt.From);
+			if (Sealing)
 			{
-				auto Work = Context->ApplyAccountWork(Context->Receipt.From, Worker, 0, 0, 0);
+				if (memcmp(Sealing->SealingKey, SealingKey, sizeof(SealingKey)) != 0)
+					return LayerException("sealing key mismatch");
+			}
+			else
+			{
+				Sealing = Context->ApplyAccountSealing(Context->Receipt.From, SealingKey);
+				if (!Sealing)
+					return Sealing.Error();
+			}
+
+			if (Online)
+			{
+				auto Work = Context->ApplyAccountWork(Context->Receipt.From, *Online ? States::AccountFlags::Online : States::AccountFlags::Offline, 0, 0, 0);
 				if (!Work)
 					return Work.Error();
 			}
 
-			for (auto& Observer : Observers)
+			for (auto& Mediator : Observers)
 			{
-				auto ObserverWork = Context->ApplyAccountObserver(Observer.first, Context->Receipt.From, Observer.second);
+				auto ObserverWork = Context->ApplyAccountObserver(Mediator.first, Context->Receipt.From, Mediator.second);
 				if (!ObserverWork)
 					return ObserverWork.Error();
 			}
@@ -1414,19 +1426,39 @@ namespace Tangent
 		bool Commitment::StoreBody(Format::Stream* Stream) const
 		{
 			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Stream->WriteInteger((uint8_t)Worker);
+			Algorithm::Pubkey PkNull = { 0 };
+			Algorithm::Sighash SigNull = { 0 };
+			Stream->WriteString(std::string_view((char*)SealingKey, memcmp(SealingKey, PkNull, sizeof(PkNull)) == 0 ? 0 : sizeof(SealingKey)));
+			Stream->WriteString(std::string_view((char*)SealingSignature, memcmp(SealingSignature, SigNull, sizeof(SigNull)) == 0 ? 0 : sizeof(SealingSignature)));
+			Stream->WriteInteger((uint8_t)(Online ? (*Online ? 1 : 0) : 2));
 			Stream->WriteInteger((uint16_t)Observers.size());
-			for (auto& Observer : Observers)
+			for (auto& Mediator : Observers)
 			{
-				Stream->WriteInteger(Observer.first);
-				Stream->WriteInteger((uint8_t)Observer.second);
+				Stream->WriteInteger(Mediator.first);
+				Stream->WriteBoolean(Mediator.second);
 			}
 			return true;
 		}
 		bool Commitment::LoadBody(Format::Stream& Stream)
 		{
-			if (!Stream.ReadInteger(Stream.ReadType(), (uint8_t*)&Worker))
+			String SealingKeyAssembly;
+			if (!Stream.ReadString(Stream.ReadType(), &SealingKeyAssembly) || !Algorithm::Encoding::DecodeUintBlob(SealingKeyAssembly, SealingKey, sizeof(SealingKey)))
 				return false;
+
+			String SealingSignatureAssembly;
+			if (!Stream.ReadString(Stream.ReadType(), &SealingSignatureAssembly) || !Algorithm::Encoding::DecodeUintBlob(SealingSignatureAssembly, SealingSignature, sizeof(SealingSignature)))
+				return false;
+
+			uint8_t Status;
+			if (!Stream.ReadInteger(Stream.ReadType(), &Status))
+				return false;
+
+			if (Status == 0)
+				Online = false;
+			else if (Status == 1)
+				Online = true;
+			else
+				Online = Optional::None;
 
 			uint16_t ObserversSize = 0;
 			if (!Stream.ReadInteger(Stream.ReadType(), &ObserversSize))
@@ -1439,46 +1471,88 @@ namespace Tangent
 				if (!Stream.ReadInteger(Stream.ReadType(), &Asset))
 					return false;
 
-				Ledger::WorkStatus Status;
-				if (!Stream.ReadInteger(Stream.ReadType(), (uint8_t*)&Status))
+				bool Observing;
+				if (!Stream.ReadBoolean(Stream.ReadType(), &Observing))
 					return false;
 
-				Observers[Asset] = Status;
+				Observers[Asset] = Observing;
 			}
 
 			return true;
 		}
-		bool Commitment::RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
+		bool Commitment::Sign(const Algorithm::Seckey SecretKey)
 		{
-			return true;
+			Algorithm::Seckey SealingSecretKey;
+			Algorithm::Signing::DeriveSealingKeypair(SecretKey, SealingSecretKey, SealingKey);
+
+			Format::Stream Message;
+			Message.WriteTypeless((char*)SealingKey, (uint32_t)sizeof(SealingKey));
+			Message.WriteTypeless(Sequence);
+			if (!Algorithm::Signing::SignSealing(Algorithm::Signing::MessageHash(Message.Data), SecretKey, SealingSignature))
+				return false;
+
+			return Authentic::Sign(SecretKey);
+		}
+		bool Commitment::Sign(const Algorithm::Seckey SecretKey, uint64_t NewSequence)
+		{
+			Sequence = NewSequence;
+			return Sign(SecretKey);
+		}
+		bool Commitment::Sign(const Algorithm::Seckey SecretKey, uint64_t NewSequence, const Decimal& Price)
+		{
+			SetEstimateGas(Price);
+			if (!Sign(SecretKey, NewSequence))
+				return false;
+
+			auto OptimalGas = Ledger::TransactionContext::CalculateTxGas(this);
+			if (!OptimalGas || GasLimit == *OptimalGas)
+				return true;
+
+			GasLimit = *OptimalGas;
+			return Sign(SecretKey);
+		}
+		bool Commitment::VerifySealing() const
+		{
+			Format::Stream Message;
+			Message.WriteTypeless((char*)SealingKey, (uint32_t)sizeof(SealingKey));
+			Message.WriteTypeless(Sequence);
+			return Algorithm::Signing::VerifySealing(Algorithm::Signing::MessageHash(Message.Data), SealingKey, SealingSignature);
 		}
 		void Commitment::SetOnline()
 		{
-			Worker = Ledger::WorkStatus::Online;
+			Online = true;
 		}
 		void Commitment::SetOnline(const Algorithm::AssetId& Asset)
 		{
-			Observers[Asset] = Ledger::WorkStatus::Online;
+			Observers[Asset] = true;
 		}
 		void Commitment::SetOffline()
 		{
-			Worker = Ledger::WorkStatus::Offline;
+			Online = false;
 		}
 		void Commitment::SetOffline(const Algorithm::AssetId& Asset)
 		{
-			Observers[Asset] = Ledger::WorkStatus::Offline;
+			Observers[Asset] = false;
+		}
+		void Commitment::SetStandby()
+		{
+			Online = Optional::None;
+		}
+		void Commitment::SetStandby(const Algorithm::AssetId& Asset)
+		{
+			Observers.erase(Asset);
 		}
 		UPtr<Schema> Commitment::AsSchema() const
 		{
 			Schema* Data = Ledger::Transaction::AsSchema().Reset();
-			Data->Set("status", Var::Integer((int64_t)Worker));
+			Data->Set("online", Var::Integer(Online ? (*Online ? 1 : 0) : -1));
 			
 			auto* ObserversData = Data->Set("observers", Var::Set::Array());
-			for (auto& Observer : Observers)
+			for (auto& Mediator : Observers)
 			{
 				auto* ObserverData = ObserversData->Push(Var::Set::Object());
-				ObserverData->Set("asset", Algorithm::Asset::Serialize(Observer.first));
-				ObserverData->Set("status", Var::Integer((int64_t)Observer.second));
+				ObserverData->Set("asset", Algorithm::Asset::Serialize(Mediator.first));
+				ObserverData->Set("online", Var::Boolean(Mediator.second));
 			}
 			return Data;
 		}
@@ -1496,7 +1570,7 @@ namespace Tangent
 		}
 		uint32_t Commitment::AsInstanceType()
 		{
-			static uint32_t Hash = Types::TypeOf(AsInstanceTypename());
+			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
 			return Hash;
 		}
 		std::string_view Commitment::AsInstanceTypename()
@@ -1504,7 +1578,7 @@ namespace Tangent
 			return "commitment";
 		}
 
-		ExpectsLR<void> Claim::Prevalidate() const
+		ExpectsLR<void> IncomingClaim::Prevalidate() const
 		{
 			auto Assertion = GetAssertion(nullptr);
 			if (!Assertion || !Assertion->IsValid())
@@ -1518,7 +1592,7 @@ namespace Tangent
 
 			return Ledger::AggregationTransaction::Prevalidate();
 		}
-		ExpectsLR<void> Claim::Validate(const Ledger::TransactionContext* Context) const
+		ExpectsLR<void> IncomingClaim::Validate(const Ledger::TransactionContext* Context) const
 		{
 			auto Assertion = GetAssertion(Context);
 			if (!Assertion)
@@ -1536,10 +1610,11 @@ namespace Tangent
 
 			return Ledger::AggregationTransaction::Validate(Context);
 		}
-		ExpectsLR<void> Claim::Execute(Ledger::TransactionContext* Context) const
+		ExpectsLR<void> IncomingClaim::Execute(Ledger::TransactionContext* Context) const
 		{
 			auto BaseDerivationIndex = Protocol::Now().Account.RootAddressIndex;
-			auto* Chain = Observer::Datamaster::GetChainparams(Asset);
+#ifdef TAN_VALIDATOR
+			auto* Chain = NSS::ServerNode::Get()->GetChainparams(Asset);
 			if (!Chain)
 				return LayerException("invalid chain");
 
@@ -1567,8 +1642,8 @@ namespace Tangent
 
 			switch (Chain->Routing)
 			{
-				case Tangent::Observer::RoutingPolicy::Account:
-				case Tangent::Observer::RoutingPolicy::Memo:
+				case Tangent::Mediator::RoutingPolicy::Account:
+				case Tangent::Mediator::RoutingPolicy::Memo:
 					if (Assertion->From.size() > 1)
 						return LayerException("too many inputs");
 
@@ -1581,7 +1656,7 @@ namespace Tangent
 
 			for (auto& Item : Assertion->From)
 			{
-				uint64_t AddressIndex = Item.AddressIndex && Chain->Routing == Observer::RoutingPolicy::Memo ? *Item.AddressIndex : BaseDerivationIndex;
+				uint64_t AddressIndex = Item.AddressIndex && Chain->Routing == Mediator::RoutingPolicy::Memo ? *Item.AddressIndex : BaseDerivationIndex;
 				auto Source = Context->GetWitnessAddress(Algorithm::Asset::BaseIdOf(Asset), Item.Address, AddressIndex, 0);
 				if (Source)
 				{
@@ -1605,11 +1680,11 @@ namespace Tangent
 
 			for (auto& Item : Assertion->To)
 			{
-				uint64_t AddressIndex = Item.AddressIndex && Chain->Routing == Observer::RoutingPolicy::Memo ? *Item.AddressIndex : BaseDerivationIndex;
+				uint64_t AddressIndex = Item.AddressIndex && Chain->Routing == Mediator::RoutingPolicy::Memo ? *Item.AddressIndex : BaseDerivationIndex;
 				auto Source = Context->GetWitnessAddress(Algorithm::Asset::BaseIdOf(Asset), Item.Address, AddressIndex, 0);
 				if (Source)
 				{
-					auto* Owner = (Chain->Routing == Observer::RoutingPolicy::Account && memcmp(Router, Null, sizeof(Null)) != 0 ? Router : Source->Owner);
+					auto* Owner = (Chain->Routing == Mediator::RoutingPolicy::Account && memcmp(Router, Null, sizeof(Null)) != 0 ? Router : Source->Owner);
 					if (!Source->IsRouterAddress())
 					{
 						auto& Contribution = Operations.Contributions[String((char*)Source->Proposer, sizeof(Source->Proposer))];
@@ -1657,15 +1732,16 @@ namespace Tangent
 					continue;
 				}
 
-				auto Info = Context->GetAccountContribution((uint8_t*)Item.first.data()).Or(States::AccountContribution((uint8_t*)Item.first.data(), Context->Block));
-				Info.Custody += Item.second.Custody;
+				auto Depository = Context->GetAccountDepository((uint8_t*)Item.first.data()).Or(States::AccountDepository((uint8_t*)Item.first.data(), Context->Block));
+				Depository.Custody += Item.second.Custody;
 				for (auto& Coverage : Item.second.Contributions)
 				{
-					auto& Merging = Info.Contributions[Coverage.first];
+					auto& Merging = Depository.Contributions[Coverage.first];
 					Merging = Merging.IsNaN() ? Coverage.second : Merging + Coverage.second;
 				}
 
-				Decimal Coverage = Info.GetCoverage();
+				auto Work = Context->GetAccountWork((uint8_t*)Item.first.data());
+				Decimal Coverage = Depository.GetCoverage(Work ? Work->Flags : 0);
 				if (!Coverage.IsNegative())
 					continue;
 
@@ -1715,9 +1791,9 @@ namespace Tangent
 
 			for (auto& Operation : Operations.Contributions)
 			{
-				auto Contribution = Context->ApplyAccountContribution((uint8_t*)Operation.first.data(), Operation.second.Custody, std::move(Operation.second.Contributions), std::move(Operation.second.Reservations));
-				if (!Contribution)
-					return Contribution.Error();
+				auto Depository = Context->ApplyAccountDepositoryChange((uint8_t*)Operation.first.data(), Operation.second.Custody, std::move(Operation.second.Contributions), std::move(Operation.second.Reservations));
+				if (!Depository)
+					return Depository.Error();
 			}
 
 			auto Witness = Context->ApplyWitnessTransaction(Assertion->TransactionId);
@@ -1725,18 +1801,22 @@ namespace Tangent
 				return Witness.Error();
 
 			return Context->EmitWitness(Assertion->BlockId);
+#else
+			return LayerException("nss data not available");
+#endif
 		}
-		bool Claim::StoreBody(Format::Stream* Stream) const
+		bool IncomingClaim::StoreBody(Format::Stream* Stream) const
 		{
 			return true;
 		}
-		bool Claim::LoadBody(Format::Stream& Stream)
+		bool IncomingClaim::LoadBody(Format::Stream& Stream)
 		{
 			return true;
 		}
-		bool Claim::RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
+		bool IncomingClaim::RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
 		{
-			auto* Chain = Observer::Datamaster::GetChainparams(Asset);
+#ifdef TAN_VALIDATOR
+			auto* Chain = NSS::ServerNode::Get()->GetChainparams(Asset);
 			if (!Chain)
 				return false;
 
@@ -1748,33 +1828,36 @@ namespace Tangent
 			auto BaseDerivationIndex = Protocol::Now().Account.RootAddressIndex;
 			for (auto& Item : Assertion->From)
 			{
-				uint64_t AddressIndex = Item.AddressIndex && Chain->Routing == Observer::RoutingPolicy::Memo ? *Item.AddressIndex : BaseDerivationIndex;
+				uint64_t AddressIndex = Item.AddressIndex && Chain->Routing == Mediator::RoutingPolicy::Memo ? *Item.AddressIndex : BaseDerivationIndex;
 				auto Source = Context.GetWitnessAddress(Algorithm::Asset::BaseIdOf(Asset), Item.Address, AddressIndex, 0);
 				if (Source)
 					Parties.insert(String((char*)Source->Owner, sizeof(Source->Owner)));
 			}
 			for (auto& Item : Assertion->To)
 			{
-				uint64_t AddressIndex = Item.AddressIndex && Chain->Routing == Observer::RoutingPolicy::Memo ? *Item.AddressIndex : BaseDerivationIndex;
+				uint64_t AddressIndex = Item.AddressIndex && Chain->Routing == Mediator::RoutingPolicy::Memo ? *Item.AddressIndex : BaseDerivationIndex;
 				auto Source = Context.GetWitnessAddress(Algorithm::Asset::BaseIdOf(Asset), Item.Address, AddressIndex, 0);
 				if (Source)
 					Parties.insert(String((char*)Source->Owner, sizeof(Source->Owner)));
 			}
 			return true;
+#else
+			return false;
+#endif
 		}
-		void Claim::SetWitness(uint64_t BlockHeight, const std::string_view& TransactionId, Decimal&& Fee, Vector<Observer::Transferer>&& Senders, Vector<Observer::Transferer>&& Receivers)
+		void IncomingClaim::SetWitness(uint64_t BlockHeight, const std::string_view& TransactionId, Decimal&& Fee, Vector<Mediator::Transferer>&& Senders, Vector<Mediator::Transferer>&& Receivers)
 		{
-			Observer::IncomingTransaction Target;
+			Mediator::IncomingTransaction Target;
 			Target.SetTransaction(Asset, BlockHeight, TransactionId, std::move(Fee));
 			Target.SetOperations(std::move(Senders), std::move(Receivers));
 			SetWitness(Target);
 		}
-		void Claim::SetWitness(const Observer::IncomingTransaction& Witness)
+		void IncomingClaim::SetWitness(const Mediator::IncomingTransaction& Witness)
 		{
 			Asset = Witness.Asset;
 			SetStatement(Algorithm::Hashing::Hash256i(Witness.TransactionId), Witness.AsMessage());
 		}
-		Option<Observer::IncomingTransaction> Claim::GetAssertion(const Ledger::TransactionContext* Context) const
+		Option<Mediator::IncomingTransaction> IncomingClaim::GetAssertion(const Ledger::TransactionContext* Context) const
 		{
 			auto* BestBranch = GetCumulativeBranch(Context);
 			if (!BestBranch)
@@ -1783,99 +1866,115 @@ namespace Tangent
 			auto Message = BestBranch->Message;
 			Message.Seek = 0;
 
-			Observer::IncomingTransaction Assertion;
+			Mediator::IncomingTransaction Assertion;
 			if (!Assertion.Load(Message))
 				return Optional::None;
 
 			return Assertion;
 		}
-		UPtr<Schema> Claim::AsSchema() const
+		UPtr<Schema> IncomingClaim::AsSchema() const
 		{
 			auto Assertion = GetAssertion(nullptr);
 			Schema* Data = Ledger::AggregationTransaction::AsSchema().Reset();
 			Data->Set("assertion", Assertion ? Assertion->AsSchema().Reset() : Var::Set::Null());
 			return Data;
 		}
-		uint32_t Claim::AsType() const
+		uint32_t IncomingClaim::AsType() const
 		{
 			return AsInstanceType();
 		}
-		std::string_view Claim::AsTypename() const
+		std::string_view IncomingClaim::AsTypename() const
 		{
 			return AsInstanceTypename();
 		}
-		uint256_t Claim::GetGasEstimate() const
+		uint256_t IncomingClaim::GetGasEstimate() const
 		{
-			return Ledger::GasUtil::GetGasEstimate<Claim, 144>();
+			return Ledger::GasUtil::GetGasEstimate<IncomingClaim, 144>();
 		}
-		uint32_t Claim::AsInstanceType()
+		uint32_t IncomingClaim::AsInstanceType()
 		{
-			static uint32_t Hash = Types::TypeOf(AsInstanceTypename());
+			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
 			return Hash;
 		}
-		std::string_view Claim::AsInstanceTypename()
+		std::string_view IncomingClaim::AsInstanceTypename()
 		{
-			return "claim";
+			return "incoming_claim";
 		}
 
-		ExpectsLR<void> Replay::Prevalidate() const
+		ExpectsLR<void> OutgoingClaim::Prevalidate() const
 		{
 			if (!TransactionHash)
 				return LayerException("transaction hash not valid");
 
 			return Ledger::ConsensusTransaction::Prevalidate();
 		}
-		ExpectsLR<void> Replay::Validate(const Ledger::TransactionContext* Context) const
+		ExpectsLR<void> OutgoingClaim::Validate(const Ledger::TransactionContext* Context) const
 		{
-			auto Parent = Context->GetBlockTransaction<Withdrawal>(TransactionHash);
-			if (!Parent)
-			{
-				Parent = Context->GetBlockTransaction<ContributionMigration>(TransactionHash);
-				if (!Parent)
-					return Parent.Error();
-
-				auto* ParentTransaction = (ContributionMigration*)*Parent->Transaction;
-				if (memcmp(ParentTransaction->Proposer, Context->Receipt.From, sizeof(Algorithm::Pubkeyhash)) == 0)
-					return LayerException("contribution migration transaction not valid");
-			}
-			else
-			{
-				auto* ParentTransaction = (Withdrawal*)*Parent->Transaction;
-				if (memcmp(ParentTransaction->Proposer, Context->Receipt.From, sizeof(Algorithm::Pubkeyhash)) != 0)
-					return LayerException("withdrawal transaction not valid");
-			}
-
 			if (Context->GetWitnessEvent(TransactionHash))
 				return LayerException("event transaction finalized");
 
-			return Ledger::ConsensusTransaction::Validate(Context);
+			auto Parent = Context->GetBlockTransactionInstance(TransactionHash);
+			if (!Parent)
+				return LayerException("parent transaction not found");
+
+			uint32_t Type = Parent->Transaction->AsType();
+			if (Type == Withdrawal::AsInstanceType())
+			{
+				auto* ParentTransaction = (Withdrawal*)*Parent->Transaction;
+				if (memcmp(ParentTransaction->Proposer, Context->Receipt.From, sizeof(Algorithm::Pubkeyhash)) != 0)
+					return LayerException("parent transaction not valid");
+
+				return Ledger::ConsensusTransaction::Validate(Context);
+			}
+			else if (Type == ContributionDeactivation::AsInstanceType())
+			{
+				auto* ParentTransaction = (ContributionDeactivation*)*Parent->Transaction;
+				auto Deactivation = Context->GetBlockTransaction<ContributionDeselection>(ParentTransaction->ContributionDeselectionHash);
+				if (!Deactivation)
+					return Deactivation.Error();
+
+				auto Deallocation = Context->GetBlockTransaction<ContributionDeallocation>(((ContributionDeselection*)*Deactivation->Transaction)->ContributionDeallocationHash);
+				if (!Deallocation)
+					return Deallocation.Error();
+
+				if (memcmp(Deallocation->Receipt.From, Context->Receipt.From, sizeof(Algorithm::Pubkeyhash)) != 0)
+					return LayerException("parent transaction not valid");
+
+				return Ledger::ConsensusTransaction::Validate(Context);
+			}
+			else if (Type == DepositoryMigration::AsInstanceType())
+			{
+				auto* ParentTransaction = (DepositoryMigration*)*Parent->Transaction;
+				if (memcmp(ParentTransaction->Proposer, Context->Receipt.From, sizeof(Algorithm::Pubkeyhash)) == 0)
+					return LayerException("depository migration transaction not valid");
+
+				return Ledger::ConsensusTransaction::Validate(Context);
+			}
+
+			return LayerException("parent transaction not valid");
 		}
-		ExpectsLR<void> Replay::Execute(Ledger::TransactionContext* Context) const
+		ExpectsLR<void> OutgoingClaim::Execute(Ledger::TransactionContext* Context) const
 		{
 			auto Event = Context->ApplyWitnessEvent(TransactionHash);
 			if (!Event)
 				return Event.Error();
 
-			if (!TransactionId.empty())
-				return Expectation::Met;
-
-			auto Parent = Context->GetBlockTransaction<Withdrawal>(TransactionHash);
+			auto Parent = Context->GetBlockTransactionInstance(TransactionHash);
 			if (!Parent)
-				return Expectation::Met;
+				return LayerException("parent transaction not found");
 
-			auto* ParentTransaction = (Withdrawal*)*Parent->Transaction;
-			if (ParentTransaction->AsType() != Withdrawal::AsInstanceType() || ParentTransaction->To.empty())
-				return LayerException("withdrawal transaction not valid");
-
-			auto Collision = Context->GetWitnessAddress(Algorithm::Asset::BaseIdOf(Asset), ParentTransaction->To.front().first, Protocol::Now().Account.RootAddressIndex, 0);
-			if (!Collision || memcmp(Collision->Owner, Context->Receipt.From, sizeof(Collision->Owner)) != 0)
-				return LayerException("invalid to address (not owned by sender)");
-
-			auto Value = ParentTransaction->GetTotalValue();
-			auto Balance = Context->GetAccountBalance(Parent->Receipt.From);
-			auto Reserve = Balance ? Balance->Reserve : Decimal::Zero();
-			if (Reserve - Value >= 0.0)
+			uint32_t Type = Parent->Transaction->AsType();
+			if (Type == Withdrawal::AsInstanceType())
 			{
+				auto* ParentTransaction = (Withdrawal*)*Parent->Transaction;
+				auto Finalization = Context->ApplyAccountDepositoryTransaction(ParentTransaction->Proposer, TransactionHash, -1);
+				if (!Finalization)
+					return Finalization.Error();
+
+				if (!TransactionId.empty())
+					return Expectation::Met;
+
+				bool Honest = true;
 				bool Charges = memcmp(Parent->Receipt.From, ParentTransaction->Proposer, sizeof(Algorithm::Pubkeyhash)) != 0;
 				auto BaseAsset = Algorithm::Asset::BaseIdOf(Asset);
 				auto BaseReward = Charges ? Context->GetAccountReward(BaseAsset, ParentTransaction->Proposer) : ExpectsLR<States::AccountReward>(LayerException());
@@ -1885,35 +1984,36 @@ namespace Tangent
 					auto BaseTransfer = Context->ApplyTransfer(BaseAsset, Parent->Receipt.From, BaseFee, Decimal::Zero());
 					if (!BaseTransfer)
 						return BaseTransfer.Error();
-
-					BaseTransfer = Context->ApplyTransfer(BaseAsset, ParentTransaction->Proposer, -BaseFee, Decimal::Zero());
-					if (!BaseTransfer)
-						return BaseTransfer.Error();
+					else if (!Context->ApplyTransfer(BaseAsset, ParentTransaction->Proposer, -BaseFee, Decimal::Zero()))
+						Honest = false;
 				}
 
+				auto Value = ParentTransaction->GetTotalValue();
 				auto TokenReward = BaseAsset == Asset || !Charges ? BaseReward : Context->GetAccountReward(Asset, ParentTransaction->Proposer);
 				auto TokenFee = (TokenReward ? TokenReward->CalculateOutgoingFee(Value) : Decimal::Zero());
 				auto TokenTransfer = Context->ApplyTransfer(Parent->Receipt.From, TokenFee, TokenFee - Value);
 				if (!TokenTransfer)
 					return TokenTransfer.Error();
+				else if (TokenFee.IsPositive() && !Context->ApplyTransfer(ParentTransaction->Proposer, -TokenFee, Decimal::Zero()))
+					Honest = false;
 
-				if (TokenFee.IsPositive())
+				if (!Honest)
 				{
-					TokenTransfer = Context->ApplyTransfer(ParentTransaction->Proposer, -TokenFee, Decimal::Zero());
-					if (!TokenTransfer)
-						return TokenTransfer.Error();
+					auto Depository = Context->ApplyAccountDepositoryCustody(ParentTransaction->Proposer, Decimal::NaN());
+					if (!Depository)
+						return Depository.Error();
 				}
-			}
-			else
-			{
-				auto Contribution = Context->ApplyAccountContribution(ParentTransaction->Proposer, Decimal::NaN(), { }, { });
-				if (!Contribution)
-					return Contribution.Error();
-			}
 
-			return Expectation::Met;
+				return Expectation::Met;
+			}
+			else if (Type == ContributionDeactivation::AsInstanceType())
+				return Expectation::Met;
+			else if (Type == DepositoryMigration::AsInstanceType())
+				return Expectation::Met;
+
+			return LayerException("parent transaction not valid");
 		}
-		bool Replay::StoreBody(Format::Stream* Stream) const
+		bool OutgoingClaim::StoreBody(Format::Stream* Stream) const
 		{
 			VI_ASSERT(Stream != nullptr, "stream should be set");
 			Stream->WriteString(TransactionId);
@@ -1922,7 +2022,7 @@ namespace Tangent
 			Stream->WriteInteger(TransactionHash);
 			return true;
 		}
-		bool Replay::LoadBody(Format::Stream& Stream)
+		bool OutgoingClaim::LoadBody(Format::Stream& Stream)
 		{
 			if (!Stream.ReadString(Stream.ReadType(), &TransactionId))
 				return false;
@@ -1938,7 +2038,7 @@ namespace Tangent
 
 			return true;
 		}
-		bool Replay::RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
+		bool OutgoingClaim::RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
 		{
 			auto Context = Ledger::TransactionContext();
 			auto Parent = Context.GetBlockTransactionInstance(TransactionHash);
@@ -1948,21 +2048,21 @@ namespace Tangent
 			Parties.insert(String((char*)Parent->Receipt.From, sizeof(Parent->Receipt.From)));
 			return true;
 		}
-		void Replay::SetSuccessWitness(const std::string_view& NewTransactionId, const std::string_view& NewTransactionData, const uint256_t& NewTransactionHash)
+		void OutgoingClaim::SetSuccessWitness(const std::string_view& NewTransactionId, const std::string_view& NewTransactionData, const uint256_t& NewTransactionHash)
 		{
 			TransactionId = NewTransactionId;
 			TransactionData = NewTransactionData;
 			TransactionMessage.clear();
 			TransactionHash = NewTransactionHash;
 		}
-		void Replay::SetFailureWitness(const std::string_view& NewTransactionMessage, const uint256_t& NewTransactionHash)
+		void OutgoingClaim::SetFailureWitness(const std::string_view& NewTransactionMessage, const uint256_t& NewTransactionHash)
 		{
 			TransactionId.clear();
 			TransactionData.clear();
 			TransactionMessage = NewTransactionMessage;
 			TransactionHash = NewTransactionHash;
 		}
-		UPtr<Schema> Replay::AsSchema() const
+		UPtr<Schema> OutgoingClaim::AsSchema() const
 		{
 			Schema* Data = Ledger::ConsensusTransaction::AsSchema().Reset();
 			Data->Set("transaction_hash", Var::String(Algorithm::Encoding::Encode0xHex256(TransactionHash)));
@@ -1971,26 +2071,26 @@ namespace Tangent
 			Data->Set("transaction_message", TransactionMessage.empty() ? Var::Null() : Var::String(TransactionMessage));
 			return Data;
 		}
-		uint32_t Replay::AsType() const
+		uint32_t OutgoingClaim::AsType() const
 		{
 			return AsInstanceType();
 		}
-		std::string_view Replay::AsTypename() const
+		std::string_view OutgoingClaim::AsTypename() const
 		{
 			return AsInstanceTypename();
 		}
-		uint256_t Replay::GetGasEstimate() const
+		uint256_t OutgoingClaim::GetGasEstimate() const
 		{
-			return Ledger::GasUtil::GetGasEstimate<Replay, 32>();
+			return Ledger::GasUtil::GetGasEstimate<OutgoingClaim, 32>();
 		}
-		uint32_t Replay::AsInstanceType()
+		uint32_t OutgoingClaim::AsInstanceType()
 		{
-			static uint32_t Hash = Types::TypeOf(AsInstanceTypename());
+			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
 			return Hash;
 		}
-		std::string_view Replay::AsInstanceTypename()
+		std::string_view OutgoingClaim::AsInstanceTypename()
 		{
-			return "replay";
+			return "outgoing_claim";
 		}
 
 		ExpectsLR<void> AddressAccount::Prevalidate() const
@@ -2007,15 +2107,15 @@ namespace Tangent
 		{
 			if (!Algorithm::Asset::TokenOf(Asset).empty())
 				return LayerException("invalid asset");
-
-			auto* Chain = Observer::Datamaster::GetChain(Asset);
+#ifdef TAN_VALIDATOR
+			auto* Chain = NSS::ServerNode::Get()->GetChain(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
 
 			auto PublicKeyHash = Chain->NewPublicKeyHash(Address);
 			if (!PublicKeyHash)
 				return PublicKeyHash.Error();
-
+#endif
 			uint64_t AddressIndex = Protocol::Now().Account.RootAddressIndex;
 			auto Collision = Context->GetWitnessAddress(Address, AddressIndex, 0);
 			if (Collision)
@@ -2026,7 +2126,7 @@ namespace Tangent
 		ExpectsLR<void> AddressAccount::Execute(Ledger::TransactionContext* Context) const
 		{
 			uint64_t AddressIndex = Protocol::Now().Account.RootAddressIndex;
-			auto Status = Context->ApplyWitnessAddress(Context->Receipt.From, nullptr, { { (uint8_t)0, String(Address) } }, AddressIndex, States::WitnessAddress::Class::Router);
+			auto Status = Context->ApplyWitnessAddress(Context->Receipt.From, nullptr, { { (uint8_t)0, String(Address) } }, AddressIndex, States::AddressType::Router);
 			if (!Status)
 				return Status.Error();
 
@@ -2043,10 +2143,6 @@ namespace Tangent
 			if (!Stream.ReadString(Stream.ReadType(), &Address))
 				return false;
 
-			return true;
-		}
-		bool AddressAccount::RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
-		{
 			return true;
 		}
 		void AddressAccount::SetAddress(const std::string_view& NewAddress)
@@ -2073,7 +2169,7 @@ namespace Tangent
 		}
 		uint32_t AddressAccount::AsInstanceType()
 		{
-			static uint32_t Hash = Types::TypeOf(AsInstanceTypename());
+			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
 			return Hash;
 		}
 		std::string_view AddressAccount::AsInstanceTypename()
@@ -2083,6 +2179,7 @@ namespace Tangent
 
 		ExpectsLR<void> PubkeyAccount::SignPubkey(const PrivateKey& SigningKey)
 		{
+#ifdef TAN_VALIDATOR
 			UPtr<PubkeyAccount> Copy = (PubkeyAccount*)Resolver::Copy(this);
 			Copy->GasPrice = Decimal::NaN();
 			Copy->GasLimit = 0;
@@ -2093,15 +2190,19 @@ namespace Tangent
 			if (!Copy->StorePayload(&Message))
 				return LayerException("serialization error");
 
-			auto Signature = Observer::Datamaster::SignMessage(Asset, Message.Data, SigningKey);
+			auto Signature = NSS::ServerNode::Get()->SignMessage(Asset, Message.Data, SigningKey);
 			if (!Signature)
 				return Signature.Error();
 
 			Sighash = std::move(*Signature);
 			return Expectation::Met;
+#else
+			return LayerException("nss data not available");
+#endif
 		}
 		ExpectsLR<void> PubkeyAccount::VerifyPubkey() const
 		{
+#ifdef TAN_VALIDATOR
 			UPtr<PubkeyAccount> Copy = (PubkeyAccount*)Resolver::Copy(this);
 			Copy->GasPrice = Decimal::NaN();
 			Copy->GasLimit = 0;
@@ -2112,7 +2213,10 @@ namespace Tangent
 			if (!Copy->StorePayload(&Message))
 				return LayerException("serialization error");
 
-			return Observer::Datamaster::VerifyMessage(Asset, Message.Data, Pubkey, Sighash);
+			return NSS::ServerNode::Get()->VerifyMessage(Asset, Message.Data, Pubkey, Sighash);
+#else
+			return LayerException("nss data not available");
+#endif
 		}
 		ExpectsLR<void> PubkeyAccount::Prevalidate() const
 		{
@@ -2131,15 +2235,15 @@ namespace Tangent
 		{
 			if (!Algorithm::Asset::TokenOf(Asset).empty())
 				return LayerException("invalid asset");
-
-			auto* Chain = Observer::Datamaster::GetChain(Asset);
+#ifdef TAN_VALIDATOR
+			auto* Chain = NSS::ServerNode::Get()->GetChain(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
 
 			auto VerifyingWallet = Chain->NewVerifyingWallet(Asset, Pubkey);
 			if (!VerifyingWallet)
 				return VerifyingWallet.Error();
-
+#endif
 			auto Verification = VerifyPubkey();
 			if (!Verification)
 				return Verification.Error();
@@ -2148,7 +2252,8 @@ namespace Tangent
 		}
 		ExpectsLR<void> PubkeyAccount::Execute(Ledger::TransactionContext* Context) const
 		{
-			auto* Chain = Observer::Datamaster::GetChain(Asset);
+#ifdef TAN_VALIDATOR
+			auto* Chain = NSS::ServerNode::Get()->GetChain(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
 
@@ -2157,11 +2262,14 @@ namespace Tangent
 				return VerifyingWallet.Error();
 
 			uint64_t AddressIndex = Protocol::Now().Account.RootAddressIndex;
-			auto Status = Context->ApplyWitnessAddress(Context->Receipt.From, nullptr, VerifyingWallet->Addresses, AddressIndex, States::WitnessAddress::Class::Router);
+			auto Status = Context->ApplyWitnessAddress(Context->Receipt.From, nullptr, VerifyingWallet->Addresses, AddressIndex, States::AddressType::Router);
 			if (!Status)
 				return Status.Error();
 
 			return Expectation::Met;
+#else
+			return LayerException("nss data not available");
+#endif
 		}
 		bool PubkeyAccount::StoreBody(Format::Stream* Stream) const
 		{
@@ -2178,10 +2286,6 @@ namespace Tangent
 			if (!Stream.ReadString(Stream.ReadType(), &Sighash))
 				return false;
 
-			return true;
-		}
-		bool PubkeyAccount::RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
-		{
 			return true;
 		}
 		void PubkeyAccount::SetPubkey(const std::string_view& VerifyingKey)
@@ -2209,7 +2313,7 @@ namespace Tangent
 		}
 		uint32_t PubkeyAccount::AsInstanceType()
 		{
-			static uint32_t Hash = Types::TypeOf(AsInstanceTypename());
+			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
 			return Hash;
 		}
 		std::string_view PubkeyAccount::AsInstanceTypename()
@@ -2232,8 +2336,8 @@ namespace Tangent
 		{
 			if (!Algorithm::Asset::TokenOf(Asset).empty())
 				return LayerException("invalid asset");
-
-			auto* Chain = Observer::Datamaster::GetChainparams(Asset);
+#ifdef TAN_VALIDATOR
+			auto* Chain = NSS::ServerNode::Get()->GetChainparams(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
 
@@ -2241,54 +2345,53 @@ namespace Tangent
 			if (!WorkRequirement)
 				return WorkRequirement.Error();
 
-			auto Contribution = Context->GetAccountContribution(Proposer);
-			Decimal Value = Contribution ? Contribution->GetContribution() : Decimal::Zero();
-			Decimal Coverage = Contribution ? Contribution->GetCoverage() : Decimal::Zero();
-			double Threshold = Contribution ? Contribution->Threshold.Or(Protocol::Now().Policy.AccountContributionRequired) : Protocol::Now().Policy.AccountContributionRequired;
-			bool Honest = Contribution ? Contribution->Honest : true;
-			if (Threshold != 0.0 && !Coverage.IsNegative() && !(Value * Threshold).IsPositive())
-				return LayerException("contribution is too low for custodian account creation");
-			else if (!Honest)
-				return LayerException("contribution is not honest");
+			auto Work = Context->GetAccountWork(Proposer);
+			auto Depository = Context->GetAccountDepository(Proposer);
+			auto Coverage = Depository ? Depository->GetCoverage(Work ? Work->Flags : 0) : Decimal::Zero();
+			if (Coverage.IsNegative())
+				return LayerException("depository contribution is too low for custodian account creation");
 
 			switch (Chain->Routing)
 			{
-				case Observer::RoutingPolicy::Account:
+				case Mediator::RoutingPolicy::Account:
 				{
 					if (memcmp(Context->Receipt.From, Proposer, sizeof(Proposer)) != 0)
 						return LayerException("invalid account proposer");
 
 					return Ledger::DelegationTransaction::Validate(Context);
 				}
-				case Observer::RoutingPolicy::Memo:
-				case Observer::RoutingPolicy::UTXO:
+				case Mediator::RoutingPolicy::Memo:
+				case Mediator::RoutingPolicy::UTXO:
 					return Ledger::DelegationTransaction::Validate(Context);
 				default:
 					return LayerException("invalid operation");
 			}
+#else
+			return LayerException("nss data not available");
+#endif
 		}
 		ExpectsLR<void> DelegationAccount::Execute(Ledger::TransactionContext* Context) const
 		{
 			return Expectation::Met;
 		}
-		ExpectsPromiseLR<void> DelegationAccount::Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const
+		ExpectsPromiseRT<void> DelegationAccount::Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const
 		{
 			if (memcmp(this->Proposer, Proposer.PublicKeyHash, sizeof(Algorithm::Pubkeyhash)) != 0)
-				return ExpectsPromiseLR<void>(Expectation::Met);
+				return ExpectsPromiseRT<void>(Expectation::Met);
 
 			if (Context->GetWitnessEvent(Context->Receipt.TransactionHash))
-				return ExpectsPromiseLR<void>(Expectation::Met);
+				return ExpectsPromiseRT<void>(Expectation::Met);
 
-			UPtr<Transactions::CustodianAccount> Transaction = Memory::New<Transactions::CustodianAccount>();
+			UPtr<CustodianAccount> Transaction = Memory::New<CustodianAccount>();
 			Transaction->Asset = Asset;
 			Transaction->SetWitness(Context->Receipt.TransactionHash);
 
-			auto Account = Transaction->SetWallet(Proposer, Context->Receipt.From);
+			auto Account = Transaction->SetWallet(Context, Proposer, Context->Receipt.From);
 			if (!Account)
-				return ExpectsPromiseLR<void>(std::move(Account));
+				return ExpectsPromiseRT<void>(RemoteException(std::move(Account.Error().message())));
 
 			Pipeline->push_back(Transaction.Reset());
-			return ExpectsPromiseLR<void>(Expectation::Met);
+			return ExpectsPromiseRT<void>(Expectation::Met);
 		}
 		bool DelegationAccount::StoreBody(Format::Stream* Stream) const
 		{
@@ -2305,7 +2408,7 @@ namespace Tangent
 
 			return true;
 		}
-		bool DelegationAccount::RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
+		bool DelegationAccount::RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
 		{
 			Parties.insert(String((char*)Proposer, sizeof(Proposer)));
 			return true;
@@ -2349,7 +2452,7 @@ namespace Tangent
 		}
 		uint32_t DelegationAccount::AsInstanceType()
 		{
-			static uint32_t Hash = Types::TypeOf(AsInstanceTypename());
+			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
 			return Hash;
 		}
 		std::string_view DelegationAccount::AsInstanceTypename()
@@ -2357,16 +2460,17 @@ namespace Tangent
 			return "delegation_account";
 		}
 
-		ExpectsLR<void> CustodianAccount::SetWallet(const Ledger::Wallet& Proposer, const Algorithm::Pubkeyhash NewOwner)
+		ExpectsLR<void> CustodianAccount::SetWallet(const Ledger::TransactionContext* Context, const Ledger::Wallet& Proposer, const Algorithm::Pubkeyhash NewOwner)
 		{
-			auto* Chain = Observer::Datamaster::GetChainparams(Asset);
+#ifdef TAN_VALIDATOR
+			auto* Server = NSS::ServerNode::Get();
+			auto* Chain = Server->GetChainparams(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
 
-			Ledger::TransactionContext Context;
-			auto Derivation = Context.GetAccountDerivation(Asset, Proposer.PublicKeyHash);
+			auto Derivation = Context->GetAccountDerivation(Asset, Proposer.PublicKeyHash);
 			uint64_t AddressIndex = (Derivation ? Derivation->MaxAddressIndex + 1 : Protocol::Now().Account.RootAddressIndex);
-			if (Chain->Routing == Observer::RoutingPolicy::Account)
+			if (Chain->Routing == Mediator::RoutingPolicy::Account)
 			{
 				AddressIndex = Protocol::Now().Account.RootAddressIndex;
 				if (Derivation)
@@ -2375,20 +2479,24 @@ namespace Tangent
 					return LayerException("invalid account owner");
 			}
 
-			auto Parent = Observer::Datamaster::NewMasterWallet(Asset, Proposer.SecretKey);
+			auto Parent = Server->NewMasterWallet(Asset, Proposer.SecretKey);
 			if (!Parent)
 				return LayerException("invalid master wallet");
 
-			auto Child = Observer::Datamaster::NewSigningWallet(Asset, *Parent, AddressIndex);
+			auto Child = Server->NewSigningWallet(Asset, *Parent, AddressIndex);
 			if (!Child)
 				return Child.Error();
 
 			SetPubkey(Child->VerifyingKey.ExposeToHeap(), AddressIndex);
 			SetOwner(NewOwner);
 			return SignPubkey(Child->SigningKey);
+#else
+			return LayerException("nss data not available");
+#endif
 		}
 		ExpectsLR<void> CustodianAccount::SignPubkey(const PrivateKey& SigningKey)
 		{
+#ifdef TAN_VALIDATOR
 			UPtr<CustodianAccount> Copy = (CustodianAccount*)Resolver::Copy(this);
 			Copy->GasPrice = Decimal::NaN();
 			Copy->GasLimit = 0;
@@ -2399,15 +2507,19 @@ namespace Tangent
 			if (!Copy->StorePayload(&Message))
 				return LayerException("serialization error");
 
-			auto Signature = Observer::Datamaster::SignMessage(Asset, Message.Data, SigningKey);
+			auto Signature = NSS::ServerNode::Get()->SignMessage(Asset, Message.Data, SigningKey);
 			if (!Signature)
 				return Signature.Error();
 
 			Sighash = std::move(*Signature);
 			return Expectation::Met;
+#else
+			return LayerException("nss data not available");
+#endif
 		}
 		ExpectsLR<void> CustodianAccount::VerifyPubkey() const
 		{
+#ifdef TAN_VALIDATOR
 			UPtr<CustodianAccount> Copy = (CustodianAccount*)Resolver::Copy(this);
 			Copy->GasPrice = Decimal::NaN();
 			Copy->GasLimit = 0;
@@ -2418,7 +2530,10 @@ namespace Tangent
 			if (!Copy->StorePayload(&Message))
 				return LayerException("serialization error");
 
-			return Observer::Datamaster::VerifyMessage(Asset, Message.Data, Pubkey, Sighash);
+			return NSS::ServerNode::Get()->VerifyMessage(Asset, Message.Data, Pubkey, Sighash);
+#else
+			return LayerException("nss data not available");
+#endif
 		}
 		ExpectsLR<void> CustodianAccount::Prevalidate() const
 		{
@@ -2442,7 +2557,11 @@ namespace Tangent
 			if (!Algorithm::Asset::TokenOf(Asset).empty())
 				return LayerException("invalid asset");
 
-			auto* Chain = Observer::Datamaster::GetChain(Asset);
+			auto Verification = VerifyPubkey();
+			if (!Verification)
+				return Verification.Error();
+#ifdef TAN_VALIDATOR
+			auto* Chain = NSS::ServerNode::Get()->GetChain(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
 
@@ -2450,42 +2569,38 @@ namespace Tangent
 			if (!VerifyingWallet)
 				return VerifyingWallet.Error();
 
-			auto Verification = VerifyPubkey();
-			if (!Verification)
-				return Verification.Error();
-
-			auto* Params = Observer::Datamaster::GetChainparams(Asset);
+			auto* Params = NSS::ServerNode::Get()->GetChainparams(Asset);
 			if (!Params)
 				return LayerException("invalid operation");
-		
+
 			if (DelegationAccountHash > 0)
 			{
-				auto Parent = Context->GetBlockTransaction<DelegationAccount>(DelegationAccountHash);
-				if (!Parent)
-					return Parent.Error();
-
-				auto* ParentTransaction = (DelegationAccount*)*Parent->Transaction;
-				if (memcmp(ParentTransaction->Proposer, Context->Receipt.From, sizeof(Context->Receipt.From)) != 0)
-					return LayerException("invalid origin");
-
-				if (Params->Routing == Observer::RoutingPolicy::Account && memcmp(Parent->Receipt.From, Context->Receipt.From, sizeof(Context->Receipt.From)) != 0)
-					return LayerException("invalid account owner");
-
 				if (Context->GetWitnessEvent(DelegationAccountHash))
 					return LayerException("event transaction finalized");
+
+				auto Delegation = Context->GetBlockTransaction<DelegationAccount>(DelegationAccountHash);
+				if (!Delegation)
+					return Delegation.Error();
+
+				auto* DelegationTransaction = (DelegationAccount*)*Delegation->Transaction;
+				if (memcmp(DelegationTransaction->Proposer, Context->Receipt.From, sizeof(Context->Receipt.From)) != 0)
+					return LayerException("invalid origin");
+
+				if (Params->Routing == Mediator::RoutingPolicy::Account && memcmp(Delegation->Receipt.From, Context->Receipt.From, sizeof(Context->Receipt.From)) != 0)
+					return LayerException("invalid account owner");
 			}
 
-			auto Contribution = Context->GetAccountContribution(Context->Receipt.From);
-			Decimal Value = Contribution ? Contribution->GetContribution() : Decimal::Zero();
-			Decimal Coverage = Contribution ? Contribution->GetCoverage() : Decimal::Zero();
-			double Threshold = Contribution ? Contribution->Threshold.Or(Protocol::Now().Policy.AccountContributionRequired) : Protocol::Now().Policy.AccountContributionRequired;
-			bool Honest = Contribution ? Contribution->Honest : true;
-			if (Threshold != 0.0 && !Coverage.IsNegative() && !(Value * Threshold).IsPositive())
-				return LayerException("contribution is too low for custodian account creation");
-			else if (!Honest)
-				return LayerException("contribution is not honest");
+			auto WorkRequirement = Context->VerifyAccountWork(Context->Receipt.From);
+			if (!WorkRequirement)
+				return WorkRequirement.Error();
 
-			uint64_t AddressIndex = Params->Routing == Observer::RoutingPolicy::Memo ? PubkeyIndex : Protocol::Now().Account.RootAddressIndex;
+			auto Work = Context->GetAccountWork(Context->Receipt.From);
+			auto Depository = Context->GetAccountDepository(Context->Receipt.From);
+			auto Coverage = Depository ? Depository->GetCoverage(Work ? Work->Flags : 0) : Decimal::Zero();
+			if (Coverage.IsNegative())
+				return LayerException("depository contribution is too low for custodian account creation");
+
+			uint64_t AddressIndex = Params->Routing == Mediator::RoutingPolicy::Memo ? PubkeyIndex : Protocol::Now().Account.RootAddressIndex;
 			for (auto& Address : VerifyingWallet->Addresses)
 			{
 				auto Collision = Context->GetWitnessAddress(Address.second, AddressIndex, 0);
@@ -2493,11 +2608,10 @@ namespace Tangent
 					return LayerException("account address " + Address.second + " taken");
 			}
 
-			auto WorkRequirement = Context->VerifyAccountWork(Context->Receipt.From);
-			if (!WorkRequirement)
-				return WorkRequirement.Error();
-
 			return Ledger::ConsensusTransaction::Validate(Context);
+#else
+			return LayerException("nss data not available");
+#endif
 		}
 		ExpectsLR<void> CustodianAccount::Execute(Ledger::TransactionContext* Context) const
 		{
@@ -2507,8 +2621,8 @@ namespace Tangent
 				if (!Event)
 					return Event.Error();
 			}
-
-			auto* Chain = Observer::Datamaster::GetChain(Asset);
+#ifdef TAN_VALIDATOR
+			auto* Chain = NSS::ServerNode::Get()->GetChain(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
 
@@ -2516,11 +2630,11 @@ namespace Tangent
 			if (!VerifyingWallet)
 				return VerifyingWallet.Error();
 
-			auto* Params = Observer::Datamaster::GetChainparams(Asset);
+			auto* Params = NSS::ServerNode::Get()->GetChainparams(Asset);
 			if (!Params)
 				return LayerException("invalid operation");
 
-			uint64_t AddressIndex = Params->Routing == Observer::RoutingPolicy::Memo ? PubkeyIndex : Protocol::Now().Account.RootAddressIndex;
+			uint64_t AddressIndex = Params->Routing == Mediator::RoutingPolicy::Memo ? PubkeyIndex : Protocol::Now().Account.RootAddressIndex;
 			auto Derivation = Context->GetAccountDerivation(Context->Receipt.From);
 			if (!Derivation || Derivation->MaxAddressIndex < AddressIndex)
 			{
@@ -2529,35 +2643,42 @@ namespace Tangent
 					return Status.Error();
 			}
 
-			auto Status = Context->ApplyWitnessAddress(Owner, Context->Receipt.From, VerifyingWallet->Addresses, AddressIndex, States::WitnessAddress::Class::Custodian);
+			auto Status = Context->ApplyWitnessAddress(Owner, Context->Receipt.From, VerifyingWallet->Addresses, AddressIndex, States::AddressType::Custodian);
 			if (!Status)
 				return Status.Error();
 
 			return Expectation::Met;
+#else
+			return LayerException("nss data not available");
+#endif
 		}
-		ExpectsPromiseLR<void> CustodianAccount::Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const
+		ExpectsPromiseRT<void> CustodianAccount::Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const
 		{
-			auto* Chain = Observer::Datamaster::GetChain(Asset);
+#ifdef TAN_VALIDATOR
+			auto* Chain = NSS::ServerNode::Get()->GetChain(Asset);
 			if (!Chain)
-				return ExpectsPromiseLR<void>(LayerException("invalid operation"));
+				return ExpectsPromiseRT<void>(RemoteException("invalid operation"));
 
 			auto VerifyingWallet = Chain->NewVerifyingWallet(Asset, Pubkey);
 			if (!VerifyingWallet)
-				return ExpectsPromiseLR<void>(VerifyingWallet.Error());
+				return ExpectsPromiseRT<void>(RemoteException(std::move(VerifyingWallet.Error().message())));
 
-			auto* Params = Observer::Datamaster::GetChainparams(Asset);
+			auto* Params = NSS::ServerNode::Get()->GetChainparams(Asset);
 			if (!Params)
-				return ExpectsPromiseLR<void>(LayerException("invalid operation"));
+				return ExpectsPromiseRT<void>(RemoteException("invalid operation"));
 
-			uint64_t AddressIndex = Params->Routing == Observer::RoutingPolicy::Memo ? PubkeyIndex : Protocol::Now().Account.RootAddressIndex;
+			uint64_t AddressIndex = Params->Routing == Mediator::RoutingPolicy::Memo ? PubkeyIndex : Protocol::Now().Account.RootAddressIndex;
 			for (auto& Address : VerifyingWallet->Addresses)
 			{
-				auto Status = Observer::Datamaster::EnableWalletAddress(Asset, std::string_view((char*)Context->Receipt.From, sizeof(Algorithm::Pubkeyhash)), Address.second, AddressIndex);
+				auto Status = NSS::ServerNode::Get()->EnableWalletAddress(Asset, std::string_view((char*)Context->Receipt.From, sizeof(Algorithm::Pubkeyhash)), Address.second, AddressIndex);
 				if (!Status)
-					return ExpectsPromiseLR<void>(Status.Error());
+					return ExpectsPromiseRT<void>(RemoteException(std::move(Status.Error().message())));
 			}
 
-			return ExpectsPromiseLR<void>(Expectation::Met);
+			return ExpectsPromiseRT<void>(Expectation::Met);
+#else
+			return ExpectsPromiseRT<void>(RemoteException("nss data not available"));
+#endif
 		}
 		bool CustodianAccount::StoreBody(Format::Stream* Stream) const
 		{
@@ -2590,7 +2711,7 @@ namespace Tangent
 
 			return true;
 		}
-		bool CustodianAccount::RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
+		bool CustodianAccount::RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
 		{
 			Parties.insert(String((char*)Owner, sizeof(Owner)));
 			return true;
@@ -2647,7 +2768,7 @@ namespace Tangent
 		}
 		uint32_t CustodianAccount::AsInstanceType()
 		{
-			static uint32_t Hash = Types::TypeOf(AsInstanceTypename());
+			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
 			return Hash;
 		}
 		std::string_view CustodianAccount::AsInstanceTypename()
@@ -2655,52 +2776,20 @@ namespace Tangent
 			return "custodian_account";
 		}
 
-		ExpectsLR<void> ContributionAllocation::SetShare1(const Algorithm::Seckey SecretKey)
-		{
-			auto* Chain = Observer::Datamaster::GetChainparams(Asset);
-			if (!Chain)
-				return LayerException("invalid operation");
-
-			Algorithm::Composition::CSeckey SecretKey1;
-			auto Status = Algorithm::Composition::DeriveKeypair1(Chain->Composition, SecretKey1, PublicKey1);
-			if (!Status)
-				return Status;
-
-			Algorithm::Signing::DeriveSealingKey(SecretKey, SealingKey1);
-			EncryptedSecretKey1For1 = Algorithm::Signing::PublicEncrypt(SealingKey1, std::string_view((char*)SecretKey1, sizeof(SecretKey1))).Or(String());
-			if (EncryptedSecretKey1For1.empty())
-				return LayerException("invalid sealing secret");
-
-			return Expectation::Met;
-		}
 		ExpectsLR<void> ContributionAllocation::Prevalidate() const
 		{
 			if (!Algorithm::Asset::TokenOf(Asset).empty())
 				return LayerException("invalid asset");
-
-			Algorithm::Composition::CPubkey Null = { 0 };
-			if (!memcmp(PublicKey1, Null, sizeof(Null)))
-				return LayerException("invalid public key 1");
-
-			if (EncryptedSecretKey1For1.empty())
-				return LayerException("invalid encrypted secret key 1");
-
-			auto* Chain = Observer::Datamaster::GetChainparams(Asset);
+#ifdef TAN_VALIDATOR
+			auto* Chain = NSS::ServerNode::Get()->GetChainparams(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
-
-			Algorithm::Pubkey PublicKey;
-			Algorithm::Composition::CSeckey SecretKey2;
-			Algorithm::Composition::CPubkey PublicKey2;
-			auto Status = Algorithm::Composition::DeriveKeypair2(Chain->Composition, PublicKey1, SecretKey2, PublicKey2, PublicKey, nullptr);
-			if (!Status)
-				return LayerException("invalid operation");
-
+#endif
 			return Ledger::Transaction::Prevalidate();
 		}
 		ExpectsLR<void> ContributionAllocation::Validate(const Ledger::TransactionContext* Context) const
 		{
-			auto Work = Context->VerifyAccountWork();
+			auto Work = Context->VerifyAccountWork(false);
 			if (!Work)
 				return Work;
 
@@ -2708,82 +2797,66 @@ namespace Tangent
 		}
 		ExpectsLR<void> ContributionAllocation::Execute(Ledger::TransactionContext* Context) const
 		{
-			auto Work = Context->CalculateSharingWitness({ String((char*)Context->Receipt.From, sizeof(Context->Receipt.From)) }, true);
-			if (!Work)
-				return Work.Error();
+			OrderedSet<String> Hashset = { String((char*)Context->Receipt.From, sizeof(Algorithm::Pubkeyhash)) };
+			auto Committee = Context->CalculateSharingCommittee(Hashset, 2);
+			if (!Committee)
+				return Committee.Error();
 
-			return Context->EmitEvent<ContributionAllocation>({ Format::Variable(std::string_view((char*)Work->Owner, sizeof(Work->Owner))) });
+			for (auto& Work : *Committee)
+			{
+				auto Event = Context->EmitEvent<ContributionAllocation>({ Format::Variable(std::string_view((char*)Work.Owner, sizeof(Work.Owner))) });
+				if (!Event)
+					return Event;
+			}
+
+			return Expectation::Met;
 		}
-		ExpectsPromiseLR<void> ContributionAllocation::Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const
+		ExpectsPromiseRT<void> ContributionAllocation::Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const
 		{
 			OrderedSet<String> Parties;
-			if (!RecoverAlt(Context->Receipt, Parties) || Parties.empty())
-				return ExpectsPromiseLR<void>(LayerException("transaction receipt does not have a proposer"));
+			if (!RecoverMany(Context->Receipt, Parties) || Parties.size() != 2)
+				return ExpectsPromiseRT<void>(RemoteException("transaction receipt does not have a proposer"));
 
 			Algorithm::Pubkeyhash Chosen = { 0 };
 			memcpy(Chosen, Parties.begin()->data(), sizeof(Chosen));
 			if (memcmp(Chosen, Proposer.PublicKeyHash, sizeof(Chosen)) != 0)
-				return ExpectsPromiseLR<void>(Expectation::Met);
+				return ExpectsPromiseRT<void>(Expectation::Met);
 
 			if (Context->GetWitnessEvent(Context->Receipt.TransactionHash))
-				return ExpectsPromiseLR<void>(Expectation::Met);
+				return ExpectsPromiseRT<void>(Expectation::Met);
 
-			UPtr<Transactions::ContributionActivation> Transaction = Memory::New<Transactions::ContributionActivation>();
+			UPtr<ContributionSelection> Transaction = Memory::New<ContributionSelection>();
 			Transaction->Asset = Asset;
-			Transaction->SetWitness(Context->Receipt.TransactionHash);
 
-			auto Status = Transaction->SetShare2(Proposer.SecretKey, PublicKey1);
+			auto Status = Transaction->SetShare1(Proposer.SecretKey, Context->Receipt.TransactionHash, Context->Receipt.From);
 			if (!Status)
-				return ExpectsPromiseLR<void>(Status.Error());
+				return ExpectsPromiseRT<void>(RemoteException(std::move(Status.Error().message())));
 
 			Pipeline->push_back(Transaction.Reset());
-			return ExpectsPromiseLR<void>(Expectation::Met);
+			return ExpectsPromiseRT<void>(Expectation::Met);
 		}
 		bool ContributionAllocation::StoreBody(Format::Stream* Stream) const
 		{
 			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Algorithm::Pubkey PubNull = { 0 };
-			Algorithm::Composition::CPubkey CPubNull = { 0 };
-			Stream->WriteString(std::string_view((char*)SealingKey1, memcmp(SealingKey1, PubNull, sizeof(PubNull)) == 0 ? 0 : sizeof(SealingKey1)));
-			Stream->WriteString(std::string_view((char*)PublicKey1, memcmp(PublicKey1, CPubNull, sizeof(CPubNull)) == 0 ? 0 : sizeof(PublicKey1)));
-			Stream->WriteString(EncryptedSecretKey1For1);
 			return true;
 		}
 		bool ContributionAllocation::LoadBody(Format::Stream& Stream)
 		{
-			String SealingKey1Assembly;
-			if (!Stream.ReadString(Stream.ReadType(), &SealingKey1Assembly) || !Algorithm::Encoding::DecodeUintBlob(SealingKey1Assembly, SealingKey1, sizeof(SealingKey1)))
-				return false;
-
-			String PublicKey1Assembly;
-			if (!Stream.ReadString(Stream.ReadType(), &PublicKey1Assembly) || !Algorithm::Encoding::DecodeUintBlob(PublicKey1Assembly, PublicKey1, sizeof(PublicKey1)))
-				return false;
-
-			if (!Stream.ReadString(Stream.ReadType(), &EncryptedSecretKey1For1))
-				return false;
-
 			return true;
 		}
-		bool ContributionAllocation::RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
+		bool ContributionAllocation::RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
 		{
-			auto* Event = Receipt.FindEvent<ContributionAllocation>();
-			if (!Event || Event->size() != 1 || Event->front().AsString().size() != sizeof(Algorithm::Pubkeyhash))
+			auto* Event1 = Receipt.FindEvent<ContributionAllocation>();
+			if (!Event1 || Event1->size() != 1 || Event1->front().AsString().size() != sizeof(Algorithm::Pubkeyhash))
 				return false;
 
-			Parties.insert(Event->front().AsBlob());
+			auto* Event2 = Receipt.FindEvent<ContributionAllocation>(1);
+			if (!Event2 || Event2->size() != 1 || Event2->front().AsString().size() != sizeof(Algorithm::Pubkeyhash))
+				return false;
+
+			Parties.insert(Event1->front().AsBlob());
+			Parties.insert(Event2->back().AsBlob());
 			return true;
-		}
-		Option<String> ContributionAllocation::GetSecretKey1(const Algorithm::Seckey SecretKey) const
-		{
-			return Algorithm::Signing::PrivateDecrypt(SecretKey, EncryptedSecretKey1For1);
-		}
-		UPtr<Schema> ContributionAllocation::AsSchema() const
-		{
-			Schema* Data = Ledger::Transaction::AsSchema().Reset();
-			Data->Set("sealing_key_1", Algorithm::Signing::SerializeSealingKey(SealingKey1));
-			Data->Set("public_key_1", Var::String(Format::Util::Encode0xHex(std::string_view((char*)PublicKey1, sizeof(PublicKey1)))));
-			Data->Set("encrypted_secret_key_1_for_1", Var::String(Format::Util::Encode0xHex(EncryptedSecretKey1For1)));
-			return Data;
 		}
 		uint32_t ContributionAllocation::AsType() const
 		{
@@ -2795,7 +2868,7 @@ namespace Tangent
 		}
 		uint256_t ContributionAllocation::GetGasEstimate() const
 		{
-			return Ledger::GasUtil::GetGasEstimate<ContributionAllocation, 36>();
+			return Ledger::GasUtil::GetGasEstimate<ContributionAllocation, 24>();
 		}
 		uint64_t ContributionAllocation::GetDispatchOffset() const
 		{
@@ -2803,7 +2876,7 @@ namespace Tangent
 		}
 		uint32_t ContributionAllocation::AsInstanceType()
 		{
-			static uint32_t Hash = Types::TypeOf(AsInstanceTypename());
+			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
 			return Hash;
 		}
 		std::string_view ContributionAllocation::AsInstanceTypename()
@@ -2811,29 +2884,200 @@ namespace Tangent
 			return "contribution_allocation";
 		}
 
-		ExpectsLR<void> ContributionActivation::SetShare2(const Algorithm::Seckey SecretKey, const Algorithm::Composition::CPubkey PublicKey1)
+		ExpectsLR<void> ContributionSelection::SetShare1(const Algorithm::Seckey SecretKey, const uint256_t& NewContributionAllocationHash, const Algorithm::Pubkeyhash NewProposer)
 		{
-			auto* Chain = Observer::Datamaster::GetChainparams(Asset);
+#ifdef TAN_VALIDATOR
+			auto* Chain = NSS::ServerNode::Get()->GetChainparams(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
 
+			Format::Stream Entropy;
+			Entropy.WriteTypeless(ContributionAllocationHash = NewContributionAllocationHash);
+			Entropy.WriteTypeless((char*)NewProposer, (uint32_t)sizeof(Algorithm::Pubkeyhash));
+			memcpy(Proposer, NewProposer, sizeof(Proposer));
+
+			Algorithm::Composition::CSeed Seed1;
+			Algorithm::Composition::CSeckey SecretKey1;
+			Algorithm::Composition::ConvertToSecretSeed(SecretKey, Entropy.Data, Seed1);
+			return Algorithm::Composition::DeriveKeypair1(Chain->Composition, Seed1, SecretKey1, PublicKey1);
+#else
+			return LayerException("nss data not available");
+#endif
+		}
+		ExpectsLR<void> ContributionSelection::Prevalidate() const
+		{
+			if (!Algorithm::Asset::TokenOf(Asset).empty())
+				return LayerException("invalid asset");
+
+			Algorithm::Composition::CPubkey Null = { 0 };
+			if (!memcmp(PublicKey1, Null, sizeof(Null)))
+				return LayerException("invalid public key 1");
+#ifdef TAN_VALIDATOR
+			auto* Chain = NSS::ServerNode::Get()->GetChainparams(Asset);
+			if (!Chain)
+				return LayerException("invalid operation");
+#endif
+			if (!ContributionAllocationHash)
+				return LayerException("invalid parent transaction");
+
+			return Ledger::Transaction::Prevalidate();
+		}
+		ExpectsLR<void> ContributionSelection::Validate(const Ledger::TransactionContext* Context) const
+		{
+			if (Context->GetWitnessEvent(ContributionAllocationHash))
+				return LayerException("event transaction finalized");
+
+			auto Allocation = Context->GetBlockTransaction<ContributionAllocation>(ContributionAllocationHash);
+			if (!Allocation)
+				return Allocation.Error();
+
+			if (memcmp(Proposer, Allocation->Receipt.From, sizeof(Proposer)) != 0)
+				return LayerException("invalid proposer");
+
+			OrderedSet<String> Parties;
+			if (!Allocation->Transaction->RecoverMany(Allocation->Receipt, Parties) || Parties.size() != 2)
+				return LayerException("transaction receipt does not have a proposer");
+
+			auto It = Parties.begin();
+			if (It->size() != sizeof(Algorithm::Pubkeyhash) || memcmp(It->data(), Context->Receipt.From, sizeof(Context->Receipt.From)) != 0)
+				return LayerException("invalid origin");
+
+			auto Work = Context->VerifyAccountWork(false);
+			if (!Work)
+				return Work;
+
+			return Ledger::Transaction::Validate(Context);
+		}
+		ExpectsLR<void> ContributionSelection::Execute(Ledger::TransactionContext* Context) const
+		{
+			auto Event = Context->ApplyWitnessEvent(ContributionAllocationHash);
+			if (!Event)
+				return Event.Error();
+
+			return Expectation::Met;
+		}
+		ExpectsPromiseRT<void> ContributionSelection::Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const
+		{
+			if (Context->GetWitnessEvent(Context->Receipt.TransactionHash))
+				return ExpectsPromiseRT<void>(Expectation::Met);
+
+			auto Allocation = Context->GetBlockTransaction<ContributionAllocation>(ContributionAllocationHash);
+			if (!Allocation)
+				return ExpectsPromiseRT<void>(RemoteException(std::move(Allocation.Error().message())));
+
+			OrderedSet<String> Parties;
+			if (!Allocation->Transaction->RecoverMany(Allocation->Receipt, Parties) || Parties.size() != 2)
+				return ExpectsPromiseRT<void>(RemoteException("transaction receipt does not have a proposer"));
+
+			Algorithm::Pubkeyhash Chosen = { 0 };
+			memcpy(Chosen, (++Parties.begin())->data(), sizeof(Chosen));
+			if (memcmp(Chosen, Proposer.PublicKeyHash, sizeof(Chosen)) != 0)
+				return ExpectsPromiseRT<void>(Expectation::Met);
+
+			UPtr<ContributionActivation> Transaction = Memory::New<ContributionActivation>();
+			Transaction->Asset = Asset;
+
+			auto Status = Transaction->SetShare2(Proposer.SecretKey, Context->Receipt.TransactionHash, Allocation->Receipt.From, PublicKey1);
+			if (!Status)
+				return ExpectsPromiseRT<void>(RemoteException(std::move(Status.Error().message())));
+
+			Pipeline->push_back(Transaction.Reset());
+			return ExpectsPromiseRT<void>(Expectation::Met);
+		}
+		bool ContributionSelection::StoreBody(Format::Stream* Stream) const
+		{
+			VI_ASSERT(Stream != nullptr, "stream should be set");
+			Algorithm::Pubkeyhash PkhNull = { 0 };
+			Algorithm::Pubkey PubNull = { 0 };
+			Algorithm::Composition::CPubkey CPubNull = { 0 };
+			Stream->WriteString(std::string_view((char*)PublicKey1, memcmp(PublicKey1, CPubNull, sizeof(CPubNull)) == 0 ? 0 : sizeof(PublicKey1)));
+			Stream->WriteString(std::string_view((char*)Proposer, memcmp(Proposer, PkhNull, sizeof(PkhNull)) == 0 ? 0 : sizeof(Proposer)));
+			Stream->WriteInteger(ContributionAllocationHash);
+			return true;
+		}
+		bool ContributionSelection::LoadBody(Format::Stream& Stream)
+		{
+			String PublicKey1Assembly;
+			if (!Stream.ReadString(Stream.ReadType(), &PublicKey1Assembly) || !Algorithm::Encoding::DecodeUintBlob(PublicKey1Assembly, PublicKey1, sizeof(PublicKey1)))
+				return false;
+
+			String ProposerAssembly;
+			if (!Stream.ReadString(Stream.ReadType(), &ProposerAssembly) || !Algorithm::Encoding::DecodeUintBlob(ProposerAssembly, Proposer, sizeof(Proposer)))
+				return false;
+
+			if (!Stream.ReadInteger(Stream.ReadType(), &ContributionAllocationHash))
+				return false;
+
+			return true;
+		}
+		bool ContributionSelection::RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
+		{
+			Parties.insert(String((char*)Proposer, sizeof(Proposer)));
+			return true;
+		}
+		UPtr<Schema> ContributionSelection::AsSchema() const
+		{
+			Schema* Data = Ledger::Transaction::AsSchema().Reset();
+			Data->Set("public_key_1", Var::String(Format::Util::Encode0xHex(std::string_view((char*)PublicKey1, sizeof(PublicKey1)))));
+			Data->Set("proposer", Algorithm::Signing::SerializeAddress(Proposer));
+			return Data;
+		}
+		uint32_t ContributionSelection::AsType() const
+		{
+			return AsInstanceType();
+		}
+		std::string_view ContributionSelection::AsTypename() const
+		{
+			return AsInstanceTypename();
+		}
+		uint256_t ContributionSelection::GetGasEstimate() const
+		{
+			return Ledger::GasUtil::GetGasEstimate<ContributionSelection, 36>();
+		}
+		uint64_t ContributionSelection::GetDispatchOffset() const
+		{
+			return 1;
+		}
+		uint32_t ContributionSelection::AsInstanceType()
+		{
+			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
+			return Hash;
+		}
+		std::string_view ContributionSelection::AsInstanceTypename()
+		{
+			return "contribution_selection";
+		}
+
+		ExpectsLR<void> ContributionActivation::SetShare2(const Algorithm::Seckey SecretKey, const uint256_t& NewContributionSelectionHash, const Algorithm::Pubkeyhash NewProposer, const Algorithm::Composition::CPubkey PublicKey1)
+		{
+#ifdef TAN_VALIDATOR
+			auto* Chain = NSS::ServerNode::Get()->GetChainparams(Asset);
+			if (!Chain)
+				return LayerException("invalid operation");
+
+			Format::Stream Entropy;
+			Entropy.WriteTypeless(ContributionSelectionHash = NewContributionSelectionHash);
+			Entropy.WriteTypeless((char*)PublicKey1, (uint32_t)sizeof(Algorithm::Composition::CPubkey));
+			Entropy.WriteTypeless((char*)NewProposer, (uint32_t)sizeof(Algorithm::Pubkeyhash));
+			memcpy(Proposer, NewProposer, sizeof(Proposer));
+
 			size_t PublicKeySize32 = 0;
+			Algorithm::Composition::CSeed Seed2;
 			Algorithm::Composition::CSeckey SecretKey2;
-			auto Status = Algorithm::Composition::DeriveKeypair2(Chain->Composition, PublicKey1, SecretKey2, PublicKey2, PublicKey, &PublicKeySize32);
+			Algorithm::Composition::ConvertToSecretSeed(SecretKey, Entropy.Data, Seed2);
+			auto Status = Algorithm::Composition::DeriveKeypair2(Chain->Composition, Seed2, PublicKey1, SecretKey2, PublicKey2, PublicKey, &PublicKeySize32);
 			if (!Status)
 				return LayerException("invalid message");
 
 			PublicKeySize = (uint16_t)PublicKeySize32;
-			Algorithm::Signing::DeriveSealingKey(SecretKey, SealingKey2);
-			EncryptedSecretKey2For2 = Algorithm::Signing::PublicEncrypt(SealingKey2, std::string_view((char*)SecretKey2, sizeof(SecretKey2))).Or(String());
-			if (EncryptedSecretKey2For2.empty())
-				return LayerException("invalid sealing secret");
-
 			auto VerifyingWallet = GetVerifyingWallet();
 			if (!VerifyingWallet)
 				return VerifyingWallet.Error();
 
 			return Expectation::Met;
+#else
+			return LayerException("nss data not available");
+#endif
 		}
 		ExpectsLR<void> ContributionActivation::Prevalidate() const
 		{
@@ -2848,25 +3092,34 @@ namespace Tangent
 			if (!memcmp(PublicKey2, CPubNull, sizeof(CPubNull)))
 				return LayerException("invalid public key 2");
 
-			if (EncryptedSecretKey2For2.empty())
-				return LayerException("invalid encrypted secret key 2");
-
-			if (!ContributionAllocationHash)
+			if (!ContributionSelectionHash)
 				return LayerException("invalid parent transaction");
 
 			return Ledger::ConsensusTransaction::Prevalidate();
 		}
 		ExpectsLR<void> ContributionActivation::Validate(const Ledger::TransactionContext* Context) const
 		{
-			auto Parent = Context->GetBlockTransaction<ContributionAllocation>(ContributionAllocationHash);
-			if (!Parent)
-				return Parent.Error();
-			
-			if (!memcmp(Parent->Receipt.From, Context->Receipt.From, sizeof(Context->Receipt.From)))
-				return LayerException("invalid origin");
-
-			if (Context->GetWitnessEvent(ContributionAllocationHash))
+			if (Context->GetWitnessEvent(ContributionSelectionHash))
 				return LayerException("event transaction finalized");
+
+			auto Selection = Context->GetBlockTransaction<ContributionSelection>(ContributionSelectionHash);
+			if (!Selection)
+				return Selection.Error();
+
+			auto Allocation = Context->GetBlockTransaction<ContributionAllocation>(((ContributionSelection*)*Selection->Transaction)->ContributionAllocationHash);
+			if (!Allocation)
+				return Allocation.Error();
+
+			if (memcmp(Proposer, Allocation->Receipt.From, sizeof(Proposer)) != 0)
+				return LayerException("invalid proposer");
+
+			OrderedSet<String> Parties;
+			if (!Allocation->Transaction->RecoverMany(Allocation->Receipt, Parties) || Parties.size() != 2)
+				return LayerException("transaction receipt does not have a proposer");
+
+			auto It = ++Parties.begin();
+			if (It->size() != sizeof(Algorithm::Pubkeyhash) || memcmp(It->data(), Context->Receipt.From, sizeof(Context->Receipt.From)) != 0)
+				return LayerException("invalid origin");
 
 			auto VerifyingWallet = GetVerifyingWallet();
 			if (!VerifyingWallet)
@@ -2884,48 +3137,60 @@ namespace Tangent
 		}
 		ExpectsLR<void> ContributionActivation::Execute(Ledger::TransactionContext* Context) const
 		{
-			auto Event = Context->ApplyWitnessEvent(ContributionAllocationHash);
+			auto Event = Context->ApplyWitnessEvent(ContributionSelectionHash);
 			if (!Event)
 				return Event.Error();
 
-			auto Parent = Context->GetBlockTransaction<ContributionAllocation>(ContributionAllocationHash);
-			if (!Parent)
-				return Parent.Error();
+			auto Selection = Context->GetBlockTransaction<ContributionSelection>(ContributionSelectionHash);
+			if (!Selection)
+				return Selection.Error();
+
+			auto Allocation = Context->GetBlockTransaction<ContributionAllocation>(((ContributionSelection*)*Selection->Transaction)->ContributionAllocationHash);
+			if (!Allocation)
+				return Allocation.Error();
 
 			auto VerifyingWallet = GetVerifyingWallet();
 			if (!VerifyingWallet)
 				return VerifyingWallet.Error();
-
-			auto* Chain = Observer::Datamaster::GetChainparams(Asset);
+#ifdef TAN_VALIDATOR
+			auto* Chain = NSS::ServerNode::Get()->GetChainparams(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
-
+#endif
 			auto AddressIndex = Protocol::Now().Account.RootAddressIndex;
-			auto Status = Context->ApplyWitnessAddress(Parent->Receipt.From, Parent->Receipt.From, VerifyingWallet->Addresses, AddressIndex, States::WitnessAddress::Class::Contribution);
+			auto Status = Context->ApplyWitnessAddress(Allocation->Receipt.From, Allocation->Receipt.From, VerifyingWallet->Addresses, AddressIndex, States::AddressType::Contribution);
 			if (!Status)
 				return Status.Error();
 
 			return Expectation::Met;
 		}
-		ExpectsPromiseLR<void> ContributionActivation::Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const
+		ExpectsPromiseRT<void> ContributionActivation::Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const
 		{
-			auto Parent = Context->GetBlockTransaction<ContributionAllocation>(ContributionAllocationHash);
-			if (!Parent)
-				return ExpectsPromiseLR<void>(Parent.Error());
+#ifdef TAN_VALIDATOR
+			auto Selection = Context->GetBlockTransaction<ContributionSelection>(ContributionSelectionHash);
+			if (!Selection)
+				return ExpectsPromiseRT<void>(RemoteException(std::move(Selection.Error().message())));
+
+			auto Allocation = Context->GetBlockTransaction<ContributionAllocation>(((ContributionSelection*)*Selection->Transaction)->ContributionAllocationHash);
+			if (!Allocation)
+				return ExpectsPromiseRT<void>(RemoteException(std::move(Allocation.Error().message())));
 
 			auto VerifyingWallet = GetVerifyingWallet();
 			if (!VerifyingWallet)
-				return ExpectsPromiseLR<void>(VerifyingWallet.Error());
+				return ExpectsPromiseRT<void>(RemoteException(std::move(VerifyingWallet.Error().message())));
 
 			auto AddressIndex = Protocol::Now().Account.RootAddressIndex;
 			for (auto& Address : VerifyingWallet->Addresses)
 			{
-				auto Status = Observer::Datamaster::EnableWalletAddress(Asset, std::string_view((char*)Parent->Receipt.From, sizeof(Parent->Receipt.From)), Address.second, AddressIndex);
+				auto Status = NSS::ServerNode::Get()->EnableWalletAddress(Asset, std::string_view((char*)Allocation->Receipt.From, sizeof(Allocation->Receipt.From)), Address.second, AddressIndex);
 				if (!Status)
-					return ExpectsPromiseLR<void>(Status.Error());
+					return ExpectsPromiseRT<void>(RemoteException(std::move(Status.Error().message())));
 			}
 
-			return ExpectsPromiseLR<void>(Expectation::Met);
+			return ExpectsPromiseRT<void>(Expectation::Met);
+#else
+			return ExpectsPromiseRT<void>(RemoteException("nss data not available"));
+#endif
 		}
 		bool ContributionActivation::StoreBody(Format::Stream* Stream) const
 		{
@@ -2935,11 +3200,10 @@ namespace Tangent
 			Algorithm::Composition::CPubkey CPubNull = { 0 };
 			Algorithm::Composition::CSeckey CSecNull = { 0 };
 			Stream->WriteString(std::string_view((char*)PublicKey, memcmp(PublicKey, PubNull, sizeof(PubNull)) == 0 ? 0 : sizeof(PublicKey)));
-			Stream->WriteString(std::string_view((char*)SealingKey2, memcmp(SealingKey2, PubNull, sizeof(PubNull)) == 0 ? 0 : sizeof(SealingKey2)));
 			Stream->WriteString(std::string_view((char*)PublicKey2, memcmp(PublicKey2, CPubNull, sizeof(CPubNull)) == 0 ? 0 : sizeof(PublicKey2)));
-			Stream->WriteString(EncryptedSecretKey2For2);
+			Stream->WriteString(std::string_view((char*)Proposer, memcmp(Proposer, PkhNull, sizeof(PkhNull)) == 0 ? 0 : sizeof(Proposer)));
 			Stream->WriteInteger(PublicKeySize);
-			Stream->WriteInteger(ContributionAllocationHash);
+			Stream->WriteInteger(ContributionSelectionHash);
 			return true;
 		}
 		bool ContributionActivation::LoadBody(Format::Stream& Stream)
@@ -2948,56 +3212,43 @@ namespace Tangent
 			if (!Stream.ReadString(Stream.ReadType(), &PublicKeyAssembly) || !Algorithm::Encoding::DecodeUintBlob(PublicKeyAssembly, PublicKey, sizeof(PublicKey)))
 				return false;
 
-			String SealingKey2Assembly;
-			if (!Stream.ReadString(Stream.ReadType(), &SealingKey2Assembly) || !Algorithm::Encoding::DecodeUintBlob(SealingKey2Assembly, SealingKey2, sizeof(SealingKey2)))
-				return false;
-
 			String PublicKey2Assembly;
 			if (!Stream.ReadString(Stream.ReadType(), &PublicKey2Assembly) || !Algorithm::Encoding::DecodeUintBlob(PublicKey2Assembly, PublicKey2, sizeof(PublicKey2)))
 				return false;
 
-			if (!Stream.ReadString(Stream.ReadType(), &EncryptedSecretKey2For2))
+			String ProposerAssembly;
+			if (!Stream.ReadString(Stream.ReadType(), &ProposerAssembly) || !Algorithm::Encoding::DecodeUintBlob(ProposerAssembly, Proposer, sizeof(Proposer)))
 				return false;
 
 			if (!Stream.ReadInteger(Stream.ReadType(), &PublicKeySize))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &ContributionAllocationHash))
+			if (!Stream.ReadInteger(Stream.ReadType(), &ContributionSelectionHash))
 				return false;
 
 			return true;
 		}
-		void ContributionActivation::SetWitness(const uint256_t& NewContributionAllocationHash)
+		bool ContributionActivation::RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
 		{
-			ContributionAllocationHash = NewContributionAllocationHash;
-		}
-		bool ContributionActivation::RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
-		{
-			auto Context = Ledger::TransactionContext();
-			auto Parent = Context.GetBlockTransaction<ContributionAllocation>(ContributionAllocationHash);
-			if (!Parent)
-				return false;
-
-			Parties.insert(String((char*)Parent->Receipt.From, sizeof(Parent->Receipt.From)));
+			Parties.insert(String((char*)Proposer, sizeof(Proposer)));
 			return true;
 		}
-		Option<String> ContributionActivation::GetSecretKey2(const Algorithm::Seckey SecretKey) const
+		ExpectsLR<Mediator::DerivedVerifyingWallet> ContributionActivation::GetVerifyingWallet() const
 		{
-			return Algorithm::Signing::PrivateDecrypt(SecretKey, EncryptedSecretKey2For2);
-		}
-		ExpectsLR<Observer::DerivedVerifyingWallet> ContributionActivation::GetVerifyingWallet() const
-		{
-			return Observer::Datamaster::NewVerifyingWallet(Asset, std::string_view((char*)PublicKey, PublicKeySize));
+#ifdef TAN_VALIDATOR
+			return NSS::ServerNode::Get()->NewVerifyingWallet(Asset, std::string_view((char*)PublicKey, PublicKeySize));
+#else
+			return LayerException("nss data not available");
+#endif
 		}
 		UPtr<Schema> ContributionActivation::AsSchema() const
 		{
 			auto VerifyingWallet = GetVerifyingWallet();
 			Schema* Data = Ledger::ConsensusTransaction::AsSchema().Reset();
-			Data->Set("sealing_key_2", Algorithm::Signing::SerializeSealingKey(SealingKey2));
+			Data->Set("contribution_selection_hash", Var::String(Algorithm::Encoding::Encode0xHex256(ContributionSelectionHash)));
 			Data->Set("public_key_2", Var::String(Format::Util::Encode0xHex(std::string_view((char*)PublicKey2, sizeof(PublicKey2)))));
-			Data->Set("encrypted_secret_key_2_for_2", Var::String(Format::Util::Encode0xHex(EncryptedSecretKey2For2)));
-			Data->Set("contribution_allocation_hash", Var::String(Algorithm::Encoding::Encode0xHex256(ContributionAllocationHash)));
-			Data->Set("contribution_wallet", VerifyingWallet ? VerifyingWallet->AsSchema().Reset() : Var::Set::Null());
+			Data->Set("proposer", Algorithm::Signing::SerializeAddress(Proposer));
+			Data->Set("verifying_wallet", VerifyingWallet ? VerifyingWallet->AsSchema().Reset() : Var::Set::Null());
 			return Data;
 		}
 		uint32_t ContributionActivation::AsType() const
@@ -3018,7 +3269,7 @@ namespace Tangent
 		}
 		uint32_t ContributionActivation::AsInstanceType()
 		{
-			static uint32_t Hash = Types::TypeOf(AsInstanceTypename());
+			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
 			return Hash;
 		}
 		std::string_view ContributionActivation::AsInstanceTypename()
@@ -3038,38 +3289,33 @@ namespace Tangent
 		}
 		ExpectsLR<void> ContributionDeallocation::Validate(const Ledger::TransactionContext* Context) const
 		{
-			auto Parent = Context->GetBlockTransaction<ContributionActivation>(ContributionActivationHash);
-			if (!Parent)
-				return Parent.Error();
+			auto Activation = Context->GetBlockTransaction<ContributionActivation>(ContributionActivationHash);
+			if (!Activation)
+				return Activation.Error();
 
-			auto* ParentTransaction = (ContributionActivation*)*Parent->Transaction;
-			auto Initiator = Context->GetBlockTransaction<ContributionAllocation>(ParentTransaction->ContributionAllocationHash);
-			if (!Initiator)
-				return Initiator.Error();
-
-			if (memcmp(Initiator->Receipt.From, Context->Receipt.From, sizeof(Parent->Receipt.From)) != 0)
+			auto* ActivationTransaction = (ContributionActivation*)*Activation->Transaction;
+			if (memcmp(ActivationTransaction->Proposer, Context->Receipt.From, sizeof(Activation->Receipt.From)) != 0)
 				return LayerException("invalid transaction owner");
 
-			auto Work = Context->VerifyAccountWork();
-			if (!Work)
-				return Work;
+			auto WorkRequirement = Context->VerifyAccountWork(false);
+			if (!WorkRequirement)
+				return WorkRequirement;
 
-			auto Contribution = Context->GetAccountContribution(Context->Receipt.From);
-			if (!Contribution)
+			auto Depository = Context->GetAccountDepository(Context->Receipt.From);
+			if (!Depository)
 				return Ledger::Transaction::Validate(Context);
-			else if (!Contribution->Honest)
-				return LayerException("contribution is not honest");
 
-			auto Wallet = ParentTransaction->GetVerifyingWallet();
+			auto Wallet = ActivationTransaction->GetVerifyingWallet();
 			if (!Wallet)
 				return Wallet.Error();
 
 			for (auto& Address : Wallet->Addresses)
-				Contribution->Contributions.erase(Address.second);
+				Depository->Contributions.erase(Address.second);
 
-			auto Coverage = Contribution->GetCoverage();
+			auto Work = Context->GetAccountWork(Context->Receipt.From);
+			auto Coverage = Depository->GetCoverage(Work ? Work->Flags : 0);
 			if (Coverage.IsNaN() || Coverage.IsNegative())
-				return LayerException("contribution change does not cover balance (contribution: " + Contribution->GetContribution().ToString() + ", custody: " + Contribution->Custody.ToString() + ")");
+				return LayerException("depository contribution change does not cover balance (contribution: " + Depository->GetContribution().ToString() + ", custody: " + Depository->Custody.ToString() + ")");
 			
 			return Ledger::Transaction::Validate(Context);
 		}
@@ -3083,60 +3329,65 @@ namespace Tangent
 			auto Wallet = ParentTransaction->GetVerifyingWallet();
 			if (!Wallet)
 				return Wallet.Error();
-
-			auto* Chain = Observer::Datamaster::GetChainparams(Asset);
+#ifdef TAN_VALIDATOR
+			auto* Chain = NSS::ServerNode::Get()->GetChainparams(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
-
+#endif
 			Algorithm::Pubkeyhash Null = { 0 };
 			auto AddressIndex = Protocol::Now().Account.RootAddressIndex;
-			auto Status = Context->ApplyWitnessAddress(Context->Receipt.From, Null, Wallet->Addresses, AddressIndex, States::WitnessAddress::Class::Witness);
+			auto Status = Context->ApplyWitnessAddress(Context->Receipt.From, Null, Wallet->Addresses, AddressIndex, States::AddressType::Witness);
 			if (!Status)
 				return Status.Error();
 
-			auto Contribution = Context->GetAccountContribution(Context->Receipt.From);
-			if (!Contribution)
+			auto Depository = Context->GetAccountDepository(Context->Receipt.From);
+			if (!Depository)
 				return Expectation::Met;
 
 			for (auto& Address : Wallet->Addresses)
 			{
-				auto Value = Contribution->GetContribution(Address.second);
+				auto Value = Depository->GetContribution(Address.second);
 				if (Value.IsPositive())
 				{
-					auto Transfer = Context->ApplyAccountContribution(Context->Receipt.From, Decimal::Zero(), { { Address.second, -Value } }, { });
+					auto Transfer = Context->ApplyAccountDepositoryChange(Context->Receipt.From, Decimal::Zero(), { { Address.second, -Value } }, { });
 					if (!Transfer)
 						return Transfer.Error();
 				}
-				Contribution->Contributions.erase(Address.second);
+				Depository->Contributions.erase(Address.second);
 			}
 
-			auto Resignation = Context->Store(Contribution.Address());
+			auto Resignation = Context->Store(Depository.Address());
 			if (!Resignation)
 				return Resignation.Error();
 
 			return Expectation::Met;
 		}
-		ExpectsPromiseLR<void> ContributionDeallocation::Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const
+		ExpectsPromiseRT<void> ContributionDeallocation::Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const
 		{
-			auto Parent = Context->GetBlockTransaction<ContributionActivation>(ContributionActivationHash);
-			if (!Parent)
-				return ExpectsPromiseLR<void>(Parent.Error());
-
-			if (memcmp(Parent->Receipt.From, Proposer.PublicKeyHash, sizeof(Parent->Receipt.From)) != 0)
-				return ExpectsPromiseLR<void>(Expectation::Met);
-
 			if (Context->GetWitnessEvent(Context->Receipt.TransactionHash))
-				return ExpectsPromiseLR<void>(Expectation::Met);
+				return ExpectsPromiseRT<void>(Expectation::Met);
 
-			UPtr<Transactions::ContributionDeactivation> Transaction = Memory::New<Transactions::ContributionDeactivation>();
+			auto Activation = Context->GetBlockTransaction<ContributionActivation>(ContributionActivationHash);
+			if (!Activation)
+				return ExpectsPromiseRT<void>(RemoteException(std::move(Activation.Error().message())));
+
+			auto* ActivationTransaction = (ContributionActivation*)*Activation->Transaction;
+			auto Selection = Context->GetBlockTransaction<ContributionSelection>(ActivationTransaction->ContributionSelectionHash);
+			if (!Selection)
+				return ExpectsPromiseRT<void>(RemoteException(std::move(Selection.Error().message())));
+
+			if (memcmp(Selection->Receipt.From, Proposer.PublicKeyHash, sizeof(Selection->Receipt.From)) != 0)
+				return ExpectsPromiseRT<void>(Expectation::Met);
+
+			UPtr<ContributionDeselection> Transaction = Memory::New<ContributionDeselection>();
 			Transaction->Asset = Asset;
 
-			auto Status = Transaction->SetRevealingShare2(Context->Receipt.TransactionHash, Proposer.SecretKey);
+			auto Status = Transaction->SetRevealingShare1(Context, Context->Receipt.TransactionHash, Proposer.SecretKey);
 			if (!Status)
-				return ExpectsPromiseLR<void>(Status.Error());
+				return ExpectsPromiseRT<void>(RemoteException(std::move(Status.Error().message())));
 
 			Pipeline->push_back(Transaction.Reset());
-			return ExpectsPromiseLR<void>(Expectation::Met);
+			return ExpectsPromiseRT<void>(Expectation::Met);
 		}
 		bool ContributionDeallocation::StoreBody(Format::Stream* Stream) const
 		{
@@ -3149,16 +3400,6 @@ namespace Tangent
 			if (!Stream.ReadInteger(Stream.ReadType(), &ContributionActivationHash))
 				return false;
 
-			return true;
-		}
-		bool ContributionDeallocation::RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
-		{
-			auto Context = Ledger::TransactionContext();
-			auto Parent = Context.GetBlockTransaction<ContributionActivation>(ContributionActivationHash);
-			if (!Parent)
-				return false;
-
-			Parties.insert(String((char*)Parent->Receipt.From, sizeof(Parent->Receipt.From)));
 			return true;
 		}
 		void ContributionDeallocation::SetWitness(const uint256_t& NewContributionActivationHash)
@@ -3189,7 +3430,7 @@ namespace Tangent
 		}
 		uint32_t ContributionDeallocation::AsInstanceType()
 		{
-			static uint32_t Hash = Types::TypeOf(AsInstanceTypename());
+			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
 			return Hash;
 		}
 		std::string_view ContributionDeallocation::AsInstanceTypename()
@@ -3197,42 +3438,57 @@ namespace Tangent
 			return "contribution_deallocation";
 		}
 
-		ExpectsLR<void> ContributionDeactivation::SetRevealingShare2(const uint256_t& NewContributionDeallocationHash, const Algorithm::Seckey SecretKey)
+		ExpectsLR<void> ContributionDeselection::SetRevealingShare1(const Ledger::TransactionContext* Context, const uint256_t& NewContributionDeallocationHash, const Algorithm::Seckey SecretKey)
 		{
-			Algorithm::Pubkey SealingKey2;
-			ContributionDeallocationHash = NewContributionDeallocationHash;
-			Algorithm::Signing::DeriveSealingKey(SecretKey, SealingKey2);
+#ifdef TAN_VALIDATOR
+			auto* Chain = NSS::ServerNode::Get()->GetChainparams(Asset);
+			if (!Chain)
+				return LayerException("invalid operation");
 
-			Ledger::TransactionContext Context;
-			auto Parent = Context.GetBlockTransaction<ContributionDeallocation>(ContributionDeallocationHash);
-			if (!Parent)
-				return Parent.Error();
+			auto Deallocation = Context->GetBlockTransaction<ContributionDeallocation>(ContributionDeallocationHash = NewContributionDeallocationHash);
+			if (!Deallocation)
+				return Deallocation.Error();
 
-			auto* ParentTransaction = (ContributionDeallocation*)*Parent->Transaction;
-			auto Initiator = Context.GetBlockTransaction<ContributionActivation>(ParentTransaction->ContributionActivationHash);
-			if (!Initiator)
-				return Initiator.Error();
+			auto Activation = Context->GetBlockTransaction<ContributionActivation>(((ContributionDeallocation*)*Deallocation->Transaction)->ContributionActivationHash);
+			if (!Activation)
+				return Activation.Error();
 
-			auto* InitiatorTransaction = (ContributionActivation*)*Initiator->Transaction;
-			if (memcmp(SealingKey2, InitiatorTransaction->SealingKey2, sizeof(SealingKey2)) != 0)
-				return LayerException("invalid secret key");
+			auto Selection = Context->GetBlockTransaction<ContributionSelection>(((ContributionActivation*)*Activation->Transaction)->ContributionSelectionHash);
+			if (!Selection)
+				return Selection.Error();
 
-			auto Origin = Context.GetBlockTransaction<ContributionAllocation>(InitiatorTransaction->ContributionAllocationHash);
-			if (!Origin)
-				return Origin.Error();
+			auto SelectionTransaction = (ContributionSelection*)*Selection->Transaction;
+			auto Sealing = Context->GetAccountSealing(SelectionTransaction->Proposer);
+			if (!Sealing)
+				return LayerException("proposer does not have account sealing");
 
-			String SecretKey2 = Algorithm::Signing::PrivateDecrypt(SecretKey, InitiatorTransaction->EncryptedSecretKey2For2).Or(String());
-			if (SecretKey2.empty())
-				return LayerException("invalid sealing secret");
+			Format::Stream Entropy;
+			Entropy.WriteTypeless(SelectionTransaction->ContributionAllocationHash);
+			Entropy.WriteTypeless((char*)SelectionTransaction->Proposer, (uint32_t)sizeof(Algorithm::Pubkeyhash));
+			memcpy(Proposer, SelectionTransaction->Proposer, sizeof(SelectionTransaction->Proposer));
 
-			auto* OriginTransaction = (ContributionAllocation*)*Origin->Transaction;
-			EncryptedSecretKey2For1 = Algorithm::Signing::PublicEncrypt(OriginTransaction->SealingKey1, SecretKey2).Or(String());
-			if (EncryptedSecretKey2For1.empty())
+			Algorithm::Composition::CSeed Seed1;
+			Algorithm::Composition::CSeckey SecretKey1;
+			Algorithm::Composition::CPubkey PublicKey1;
+			Algorithm::Composition::ConvertToSecretSeed(SecretKey, Entropy.Data, Seed1);
+			auto Status = Algorithm::Composition::DeriveKeypair1(Chain->Composition, Seed1, SecretKey1, PublicKey1);
+			if (!Status)
+				return Status;
+
+			Entropy.WriteTypeless((char*)Seed1, (uint32_t)sizeof(Seed1));
+			Entropy.WriteTypeless(Deallocation->Receipt.TransactionHash);
+			Entropy.WriteTypeless(Activation->Receipt.TransactionHash);
+			Entropy.WriteTypeless(Selection->Receipt.TransactionHash);
+			EncryptedSecretKey1 = Algorithm::Signing::PublicEncrypt(Sealing->SealingKey, std::string_view((char*)SecretKey1, sizeof(SecretKey1)), Entropy.Data).Or(String());
+			if (EncryptedSecretKey1.empty())
 				return LayerException("invalid sealing secret");
 
 			return Expectation::Met;
+#else
+			return LayerException("nss data not available");
+#endif
 		}
-		ExpectsLR<void> ContributionDeactivation::Prevalidate() const
+		ExpectsLR<void> ContributionDeselection::Prevalidate() const
 		{
 			if (!Algorithm::Asset::TokenOf(Asset).empty())
 				return LayerException("invalid asset");
@@ -3240,26 +3496,38 @@ namespace Tangent
 			if (!ContributionDeallocationHash)
 				return LayerException("invalid parent transaction");
 
-			if (EncryptedSecretKey2For1.empty())
-				return LayerException("invalid encrypted secret key 2");
+			if (EncryptedSecretKey1.empty())
+				return LayerException("invalid encrypted secret key 1");
 
 			return Ledger::ConsensusTransaction::Prevalidate();
 		}
-		ExpectsLR<void> ContributionDeactivation::Validate(const Ledger::TransactionContext* Context) const
+		ExpectsLR<void> ContributionDeselection::Validate(const Ledger::TransactionContext* Context) const
 		{
-			auto Parent = Context->GetBlockTransaction<ContributionDeallocation>(ContributionDeallocationHash);
-			if (!Parent)
-				return Parent.Error();
-
-			if (memcmp(Parent->Receipt.From, Context->Receipt.From, sizeof(Parent->Receipt.From)) == 0)
-				return LayerException("invalid transaction owner");
-
 			if (Context->GetWitnessEvent(ContributionDeallocationHash))
 				return LayerException("event transaction finalized");
 
+			auto Deallocation = Context->GetBlockTransaction<ContributionDeallocation>(ContributionDeallocationHash);
+			if (!Deallocation)
+				return Deallocation.Error();
+
+			auto Activation = Context->GetBlockTransaction<ContributionActivation>(((ContributionDeallocation*)*Deallocation->Transaction)->ContributionActivationHash);
+			if (!Activation)
+				return Activation.Error();
+
+			auto Selection = Context->GetBlockTransaction<ContributionSelection>(((ContributionActivation*)*Activation->Transaction)->ContributionSelectionHash);
+			if (!Selection)
+				return Selection.Error();
+
+			if (memcmp(Selection->Receipt.From, Context->Receipt.From, sizeof(Selection->Receipt.From)) != 0)
+				return LayerException("invalid transaction owner");
+
+			auto* SelectionTransaction = (ContributionSelection*)*Selection->Transaction;
+			if (memcmp(SelectionTransaction->Proposer, Proposer, sizeof(Proposer)) != 0)
+				return LayerException("invalid proposer");
+
 			return Ledger::ConsensusTransaction::Validate(Context);
 		}
-		ExpectsLR<void> ContributionDeactivation::Execute(Ledger::TransactionContext* Context) const
+		ExpectsLR<void> ContributionDeselection::Execute(Ledger::TransactionContext* Context) const
 		{
 			auto Event = Context->ApplyWitnessEvent(ContributionDeallocationHash);
 			if (!Event)
@@ -3267,80 +3535,290 @@ namespace Tangent
 
 			return Expectation::Met;
 		}
+		ExpectsPromiseRT<void> ContributionDeselection::Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const
+		{
+			if (Context->GetWitnessEvent(Context->Receipt.TransactionHash))
+				return ExpectsPromiseRT<void>(Expectation::Met);
+
+			auto Deallocation = Context->GetBlockTransaction<ContributionDeallocation>(ContributionDeallocationHash);
+			if (!Deallocation)
+				return ExpectsPromiseRT<void>(RemoteException(std::move(Deallocation.Error().message())));
+
+			auto Activation = Context->GetBlockTransaction<ContributionActivation>(((ContributionDeallocation*)*Deallocation->Transaction)->ContributionActivationHash);
+			if (!Activation)
+				return ExpectsPromiseRT<void>(RemoteException(std::move(Activation.Error().message())));
+
+			if (memcmp(Activation->Receipt.From, Proposer.PublicKeyHash, sizeof(Activation->Receipt.From)) != 0)
+				return ExpectsPromiseRT<void>(Expectation::Met);
+
+			UPtr<ContributionDeactivation> Transaction = Memory::New<ContributionDeactivation>();
+			Transaction->Asset = Asset;
+
+			auto Status = Transaction->SetRevealingShare2(Context, Context->Receipt.TransactionHash, Proposer.SecretKey);
+			if (!Status)
+				return ExpectsPromiseRT<void>(RemoteException(std::move(Status.Error().message())));
+
+			Pipeline->push_back(Transaction.Reset());
+			return ExpectsPromiseRT<void>(Expectation::Met);
+		}
+		bool ContributionDeselection::StoreBody(Format::Stream* Stream) const
+		{
+			VI_ASSERT(Stream != nullptr, "stream should be set");
+			Algorithm::Pubkeyhash Null = { 0 };
+			Stream->WriteString(std::string_view((char*)Proposer, memcmp(Proposer, Null, sizeof(Null)) == 0 ? 0 : sizeof(Proposer)));
+			Stream->WriteInteger(ContributionDeallocationHash);
+			Stream->WriteString(EncryptedSecretKey1);
+			return true;
+		}
+		bool ContributionDeselection::LoadBody(Format::Stream& Stream)
+		{
+			String ProposerAssembly;
+			if (!Stream.ReadString(Stream.ReadType(), &ProposerAssembly) || !Algorithm::Encoding::DecodeUintBlob(ProposerAssembly, Proposer, sizeof(Proposer)))
+				return false;
+
+			if (!Stream.ReadInteger(Stream.ReadType(), &ContributionDeallocationHash))
+				return false;
+
+			if (!Stream.ReadString(Stream.ReadType(), &EncryptedSecretKey1))
+				return false;
+
+			return true;
+		}
+		bool ContributionDeselection::RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
+		{
+			Parties.insert(String((char*)Proposer, sizeof(Proposer)));
+			return true;
+		}
+		Option<String> ContributionDeselection::GetSecretKey1(const Ledger::TransactionContext* Context, const Algorithm::Seckey SecretKey) const
+		{
+			return Algorithm::Signing::PrivateDecrypt(SecretKey, EncryptedSecretKey1);
+		}
+		UPtr<Schema> ContributionDeselection::AsSchema() const
+		{
+			Schema* Data = Ledger::ConsensusTransaction::AsSchema().Reset();
+			Data->Set("contribution_deallocation_hash", Var::String(Algorithm::Encoding::Encode0xHex256(ContributionDeallocationHash)));
+			Data->Set("encrypted_secret_key_1", Var::String(Format::Util::Encode0xHex(EncryptedSecretKey1)));
+			return Data;
+		}
+		uint32_t ContributionDeselection::AsType() const
+		{
+			return AsInstanceType();
+		}
+		std::string_view ContributionDeselection::AsTypename() const
+		{
+			return AsInstanceTypename();
+		}
+		uint256_t ContributionDeselection::GetGasEstimate() const
+		{
+			return Ledger::GasUtil::GetGasEstimate<ContributionDeselection, 52>();
+		}
+		uint64_t ContributionDeselection::GetDispatchOffset() const
+		{
+			return 1;
+		}
+		uint32_t ContributionDeselection::AsInstanceType()
+		{
+			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
+			return Hash;
+		}
+		std::string_view ContributionDeselection::AsInstanceTypename()
+		{
+			return "contribution_deselection";
+		}
+
+		ExpectsLR<void> ContributionDeactivation::SetRevealingShare2(const Ledger::TransactionContext* Context, const uint256_t& NewContributionDeselectionHash, const Algorithm::Seckey SecretKey)
+		{
+#ifdef TAN_VALIDATOR
+			auto* Chain = NSS::ServerNode::Get()->GetChainparams(Asset);
+			if (!Chain)
+				return LayerException("invalid operation");
+			
+			ContributionDeselectionHash = NewContributionDeselectionHash;
+			auto Deselection = Context->GetBlockTransaction<ContributionDeselection>(ContributionDeselectionHash);
+			if (!Deselection)
+				return Deselection.Error();
+
+			auto Deallocation = Context->GetBlockTransaction<ContributionDeallocation>(((ContributionDeselection*)*Deselection->Transaction)->ContributionDeallocationHash);
+			if (!Deallocation)
+				return Deallocation.Error();
+
+			auto Activation = Context->GetBlockTransaction<ContributionActivation>(((ContributionDeallocation*)*Deallocation->Transaction)->ContributionActivationHash);
+			if (!Activation)
+				return Activation.Error();
+
+			auto* ActivationTransaction = ((ContributionActivation*)*Activation->Transaction);
+			auto Selection = Context->GetBlockTransaction<ContributionSelection>(ActivationTransaction->ContributionSelectionHash);
+			if (!Selection)
+				return Selection.Error();
+
+			auto SelectionTransaction = (ContributionSelection*)*Selection->Transaction;
+			auto Sealing = Context->GetAccountSealing(SelectionTransaction->Proposer);
+			if (!Sealing)
+				return LayerException("proposer does not have account sealing");
+
+			Format::Stream Entropy;
+			Entropy.WriteTypeless(ActivationTransaction->ContributionSelectionHash);
+			Entropy.WriteTypeless((char*)SelectionTransaction->PublicKey1, (uint32_t)sizeof(Algorithm::Composition::CPubkey));
+			Entropy.WriteTypeless((char*)SelectionTransaction->Proposer, (uint32_t)sizeof(Algorithm::Pubkeyhash));
+			memcpy(Proposer, SelectionTransaction->Proposer, sizeof(SelectionTransaction->Proposer));
+
+			size_t SharedPublicKeySize = 0;
+			Algorithm::Pubkey SharedPublicKey;
+			Algorithm::Composition::CSeed Seed2;
+			Algorithm::Composition::CSeckey SecretKey2;
+			Algorithm::Composition::CPubkey PublicKey2;
+			Algorithm::Composition::ConvertToSecretSeed(SecretKey, Entropy.Data, Seed2);
+			auto Status = Algorithm::Composition::DeriveKeypair2(Chain->Composition, Seed2, SelectionTransaction->PublicKey1, SecretKey2, PublicKey2, SharedPublicKey, &SharedPublicKeySize);
+			if (!Status)
+				return Status;
+
+			Entropy.WriteTypeless((char*)Seed2, (uint32_t)sizeof(Seed2));
+			Entropy.WriteTypeless(Deselection->Receipt.TransactionHash);
+			Entropy.WriteTypeless(Deallocation->Receipt.TransactionHash);
+			Entropy.WriteTypeless(Activation->Receipt.TransactionHash);
+			Entropy.WriteTypeless(Selection->Receipt.TransactionHash);
+			EncryptedSecretKey2 = Algorithm::Signing::PublicEncrypt(Sealing->SealingKey, std::string_view((char*)SecretKey2, sizeof(SecretKey2)), Entropy.Data).Or(String());
+			if (EncryptedSecretKey2.empty())
+				return LayerException("invalid sealing secret");
+
+			return Expectation::Met;
+#else
+			return LayerException("nss data not available");
+#endif
+		}
+		ExpectsLR<void> ContributionDeactivation::Prevalidate() const
+		{
+			if (!Algorithm::Asset::TokenOf(Asset).empty())
+				return LayerException("invalid asset");
+
+			if (!ContributionDeselectionHash)
+				return LayerException("invalid parent transaction");
+
+			if (EncryptedSecretKey2.empty())
+				return LayerException("invalid encrypted secret key 2");
+
+			return Ledger::ConsensusTransaction::Prevalidate();
+		}
+		ExpectsLR<void> ContributionDeactivation::Validate(const Ledger::TransactionContext* Context) const
+		{
+			if (Context->GetWitnessEvent(ContributionDeselectionHash))
+				return LayerException("event transaction finalized");
+
+			auto Deselection = Context->GetBlockTransaction<ContributionDeselection>(ContributionDeselectionHash);
+			if (!Deselection)
+				return Deselection.Error();
+
+			auto Deallocation = Context->GetBlockTransaction<ContributionDeallocation>(((ContributionDeselection*)*Deselection->Transaction)->ContributionDeallocationHash);
+			if (!Deallocation)
+				return Deallocation.Error();
+
+			auto Activation = Context->GetBlockTransaction<ContributionActivation>(((ContributionDeallocation*)*Deallocation->Transaction)->ContributionActivationHash);
+			if (!Activation)
+				return Activation.Error();
+
+			if (memcmp(Activation->Receipt.From, Context->Receipt.From, sizeof(Activation->Receipt.From)) != 0)
+				return LayerException("invalid transaction owner");
+
+			auto* ActivationTransaction = (ContributionActivation*)*Activation->Transaction;
+			if (memcmp(ActivationTransaction->Proposer, Proposer, sizeof(Proposer)) != 0)
+				return LayerException("invalid proposer");
+
+			return Ledger::ConsensusTransaction::Validate(Context);
+		}
+		ExpectsLR<void> ContributionDeactivation::Execute(Ledger::TransactionContext* Context) const
+		{
+			auto Event = Context->ApplyWitnessEvent(ContributionDeselectionHash);
+			if (!Event)
+				return Event.Error();
+
+			return Expectation::Met;
+		}
+		ExpectsPromiseRT<void> ContributionDeactivation::Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const
+		{
+#ifdef TAN_VALIDATOR
+			auto Deselection = Context->GetBlockTransaction<ContributionDeselection>(ContributionDeselectionHash);
+			if (!Deselection)
+				return ExpectsPromiseRT<void>(RemoteException(std::move(Deselection.Error().message())));
+
+			auto Deallocation = Context->GetBlockTransaction<ContributionDeallocation>(((ContributionDeselection*)*Deselection->Transaction)->ContributionDeallocationHash);
+			if (!Deallocation)
+				return ExpectsPromiseRT<void>(RemoteException(std::move(Deallocation.Error().message())));
+
+			auto Activation = Context->GetBlockTransaction<ContributionActivation>(((ContributionDeallocation*)*Deallocation->Transaction)->ContributionActivationHash);
+			if (!Activation)
+				return ExpectsPromiseRT<void>(RemoteException(std::move(Activation.Error().message())));
+
+			auto VerifyingWallet = ((ContributionActivation*)*Activation->Transaction)->GetVerifyingWallet();
+			if (!VerifyingWallet)
+				return ExpectsPromiseRT<void>(RemoteException(std::move(VerifyingWallet.Error().message())));
+
+			auto AddressIndex = Protocol::Now().Account.RootAddressIndex;
+			for (auto& Address : VerifyingWallet->Addresses)
+			{
+				auto Status = NSS::ServerNode::Get()->DisableWalletAddress(Asset, Address.second);
+				if (!Status)
+					return ExpectsPromiseRT<void>(RemoteException(std::move(Status.Error().message())));
+			}
+
+			return ExpectsPromiseRT<void>(Expectation::Met);
+#else
+			return ExpectsPromiseRT<void>(RemoteException("nss data not available"));
+#endif
+		}
 		bool ContributionDeactivation::StoreBody(Format::Stream* Stream) const
 		{
 			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Stream->WriteInteger(ContributionDeallocationHash);
-			Stream->WriteString(EncryptedSecretKey2For1);
+			Algorithm::Pubkeyhash Null = { 0 };
+			Stream->WriteString(std::string_view((char*)Proposer, memcmp(Proposer, Null, sizeof(Null)) == 0 ? 0 : sizeof(Proposer)));
+			Stream->WriteInteger(ContributionDeselectionHash);
+			Stream->WriteString(EncryptedSecretKey2);
 			return true;
 		}
 		bool ContributionDeactivation::LoadBody(Format::Stream& Stream)
 		{
-			if (!Stream.ReadInteger(Stream.ReadType(), &ContributionDeallocationHash))
+			String ProposerAssembly;
+			if (!Stream.ReadString(Stream.ReadType(), &ProposerAssembly) || !Algorithm::Encoding::DecodeUintBlob(ProposerAssembly, Proposer, sizeof(Proposer)))
 				return false;
 
-			if (!Stream.ReadString(Stream.ReadType(), &EncryptedSecretKey2For1))
+			if (!Stream.ReadInteger(Stream.ReadType(), &ContributionDeselectionHash))
+				return false;
+
+			if (!Stream.ReadString(Stream.ReadType(), &EncryptedSecretKey2))
 				return false;
 
 			return true;
 		}
-		bool ContributionDeactivation::RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
+		bool ContributionDeactivation::RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
 		{
-			auto Context = Ledger::TransactionContext();
-			auto Parent = Context.GetBlockTransaction<ContributionDeallocation>(ContributionDeallocationHash);
-			if (!Parent)
-				return false;
-
-			Parties.insert(String((char*)Parent->Receipt.From, sizeof(Parent->Receipt.From)));
+			Parties.insert(String((char*)Proposer, sizeof(Proposer)));
 			return true;
 		}
-		Option<String> ContributionDeactivation::GetSecretKey1(const Algorithm::Seckey SecretKey) const
+		Option<String> ContributionDeactivation::GetSecretKey1(const Ledger::TransactionContext* Context, const Algorithm::Seckey SecretKey) const
 		{
-			Ledger::TransactionContext Context;
-			auto Parent = Context.GetBlockTransaction<ContributionActivation>(ContributionDeallocationHash);
-			if (!Parent)
+			auto Deselection = Context->GetBlockTransaction<ContributionDeselection>(ContributionDeselectionHash);
+			if (!Deselection)
 				return Optional::None;
 
-			auto* ParentTransaction = (ContributionActivation*)*Parent->Transaction;
-			auto Origin = Context.GetBlockTransaction<ContributionAllocation>(ParentTransaction->ContributionAllocationHash);
-			if (!Origin)
-				return Optional::None;
-
-			auto* OriginTransaction = (ContributionAllocation*)*Origin->Transaction;
-			return Algorithm::Signing::PrivateDecrypt(SecretKey, OriginTransaction->EncryptedSecretKey1For1);
+			return ((ContributionDeselection*)*Deselection->Transaction)->GetSecretKey1(Context, SecretKey);
 		}
 		Option<String> ContributionDeactivation::GetSecretKey2(const Algorithm::Seckey SecretKey) const
 		{
-			return Algorithm::Signing::PrivateDecrypt(SecretKey, EncryptedSecretKey2For1);
+			return Algorithm::Signing::PrivateDecrypt(SecretKey, EncryptedSecretKey2);
 		}
-		ExpectsLR<Observer::DerivedSigningWallet> ContributionDeactivation::GetSigningWallet(const Algorithm::Seckey SecretKey) const
+		ExpectsLR<Mediator::DerivedSigningWallet> ContributionDeactivation::GetSigningWallet(const Ledger::TransactionContext* Context, const Algorithm::Seckey SecretKey) const
 		{
-			auto* Chain = Observer::Datamaster::GetChainparams(Asset);
+#ifdef TAN_VALIDATOR
+			auto* Chain = NSS::ServerNode::Get()->GetChainparams(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
 
-			Ledger::TransactionContext Context;
-			auto Parent = Context.GetBlockTransaction<ContributionActivation>(ContributionDeallocationHash);
-			if (!Parent)
-				return Parent.Error();
-
-			auto* ParentTransaction = (ContributionActivation*)*Parent->Transaction;
-			auto VerifyingWallet = ParentTransaction->GetVerifyingWallet();
-			if (!VerifyingWallet)
-				return VerifyingWallet.Error();
-
-			auto Origin = Context.GetBlockTransaction<ContributionAllocation>(ParentTransaction->ContributionAllocationHash);
-			if (!Origin)
-				return Origin.Error();
-
-			auto* OriginTransaction = (ContributionAllocation*)*Origin->Transaction;
-			auto SecretKey1 = Algorithm::Signing::PrivateDecrypt(SecretKey, OriginTransaction->EncryptedSecretKey1For1);
-			if (!SecretKey1)
-				return LayerException("invalid secret key 1");
-
-			auto SecretKey2 = Algorithm::Signing::PrivateDecrypt(SecretKey, EncryptedSecretKey2For1);
+			auto SecretKey2 = GetSecretKey2(SecretKey);
 			if (!SecretKey2)
 				return LayerException("invalid secret key 2");
+
+			auto SecretKey1 = GetSecretKey1(Context, SecretKey);
+			if (!SecretKey1)
+				return LayerException("invalid secret key 1");
 
 			size_t SharedSecretKeySize = 0;
 			Algorithm::Composition::CSeckey SharedSecretKey;
@@ -3348,17 +3826,40 @@ namespace Tangent
 			if (!Status)
 				return LayerException("invalid message");
 
-			auto SigningWallet = Observer::Datamaster::NewSigningWallet(Asset, std::string_view((char*)SharedSecretKey, SharedSecretKeySize));
-			if (SigningWallet && SigningWallet->VerifyingKey.ExposeToHeap() != VerifyingWallet->VerifyingKey.ExposeToHeap())
-				return LayerException("signing wallet public key does not match verifying wallet public key");
+			return NSS::ServerNode::Get()->NewSigningWallet(Asset, std::string_view((char*)SharedSecretKey, SharedSecretKeySize));
+#else
+			return LayerException("nss data not available");
+#endif
+		}
+		ExpectsPromiseRT<Mediator::OutgoingTransaction> ContributionDeactivation::WithdrawToAddress(const Ledger::TransactionContext* Context, const Algorithm::Seckey SecretKey, const std::string_view& Address)
+		{
+#ifdef TAN_VALIDATOR
+			return Coasync<ExpectsRT<Mediator::OutgoingTransaction>>([this, Context, SecretKey, Address]() -> ExpectsPromiseRT<Mediator::OutgoingTransaction>
+			{
+				auto SigningWallet = GetSigningWallet(Context, SecretKey);
+				if (!SigningWallet)
+					Coreturn RemoteException(std::move(SigningWallet.Error().message()));
 
-			return SigningWallet;
+				auto DynamicWallet = Mediator::DynamicWallet(*SigningWallet);
+				auto RemainingBalance = Coawait(NSS::ServerNode::Get()->CalculateBalance(Asset, DynamicWallet, SigningWallet->Addresses.begin()->second));
+				if (!RemainingBalance)
+					Coreturn RemainingBalance.Error();
+				else if (!RemainingBalance->IsPositive())
+					Coreturn RemoteException("contribution wallet balance is zero");
+
+				auto Destinations = { Mediator::Transferer(Address, Optional::None, std::move(*RemainingBalance)) };
+				auto Result = Coawait(Resolver::EmitTransaction(nullptr, std::move(DynamicWallet), Asset, Context->Receipt.TransactionHash, std::move(Destinations)));
+				Coreturn std::move(Result);
+			});
+#else
+			return ExpectsPromiseRT<Mediator::OutgoingTransaction>(RemoteException("nss data not available"));
+#endif
 		}
 		UPtr<Schema> ContributionDeactivation::AsSchema() const
 		{
 			Schema* Data = Ledger::ConsensusTransaction::AsSchema().Reset();
-			Data->Set("contribution_deallocation_hash", Var::String(Algorithm::Encoding::Encode0xHex256(ContributionDeallocationHash)));
-			Data->Set("encrypted_secret_key_2_for_1", Var::String(Format::Util::Encode0xHex(EncryptedSecretKey2For1)));
+			Data->Set("contribution_deselection_hash", Var::String(Algorithm::Encoding::Encode0xHex256(ContributionDeselectionHash)));
+			Data->Set("encrypted_secret_key_2", Var::String(Format::Util::Encode0xHex(EncryptedSecretKey2)));
 			return Data;
 		}
 		uint32_t ContributionDeactivation::AsType() const
@@ -3373,9 +3874,13 @@ namespace Tangent
 		{
 			return Ledger::GasUtil::GetGasEstimate<ContributionDeactivation, 52>();
 		}
+		uint64_t ContributionDeactivation::GetDispatchOffset() const
+		{
+			return 1;
+		}
 		uint32_t ContributionDeactivation::AsInstanceType()
 		{
-			static uint32_t Hash = Types::TypeOf(AsInstanceTypename());
+			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
 			return Hash;
 		}
 		std::string_view ContributionDeactivation::AsInstanceTypename()
@@ -3383,7 +3888,7 @@ namespace Tangent
 			return "contribution_deactivation";
 		}
 
-		ExpectsLR<void> ContributionAdjustment::Prevalidate() const
+		ExpectsLR<void> DepositoryAdjustment::Prevalidate() const
 		{
 			if (IncomingAbsoluteFee.IsNaN() || IncomingAbsoluteFee.IsNegative())
 				return LayerException("invalid incoming absolute fee");
@@ -3399,15 +3904,15 @@ namespace Tangent
 
 			return Ledger::Transaction::Prevalidate();
 		}
-		ExpectsLR<void> ContributionAdjustment::Validate(const Ledger::TransactionContext* Context) const
+		ExpectsLR<void> DepositoryAdjustment::Validate(const Ledger::TransactionContext* Context) const
 		{
-			auto Work = Context->VerifyAccountWork();
+			auto Work = Context->VerifyAccountWork(false);
 			if (!Work)
 				return Work;
 
 			return Ledger::Transaction::Validate(Context);
 		}
-		ExpectsLR<void> ContributionAdjustment::Execute(Ledger::TransactionContext* Context) const
+		ExpectsLR<void> DepositoryAdjustment::Execute(Ledger::TransactionContext* Context) const
 		{
 			auto Reward = Context->ApplyAccountReward(Context->Receipt.From, IncomingAbsoluteFee, IncomingRelativeFee, OutgoingAbsoluteFee, OutgoingRelativeFee);
 			if (!Reward)
@@ -3415,7 +3920,7 @@ namespace Tangent
 
 			return Expectation::Met;
 		}
-		bool ContributionAdjustment::StoreBody(Format::Stream* Stream) const
+		bool DepositoryAdjustment::StoreBody(Format::Stream* Stream) const
 		{
 			VI_ASSERT(Stream != nullptr, "stream should be set");
 			Stream->WriteDecimal(IncomingAbsoluteFee);
@@ -3424,7 +3929,7 @@ namespace Tangent
 			Stream->WriteDecimal(OutgoingRelativeFee);
 			return true;
 		}
-		bool ContributionAdjustment::LoadBody(Format::Stream& Stream)
+		bool DepositoryAdjustment::LoadBody(Format::Stream& Stream)
 		{
 			if (!Stream.ReadDecimal(Stream.ReadType(), &IncomingAbsoluteFee))
 				return false;
@@ -3440,21 +3945,17 @@ namespace Tangent
 
 			return true;
 		}
-		bool ContributionAdjustment::RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
-		{
-			return true;
-		}
-		void ContributionAdjustment::SetIncomingFee(const Decimal& AbsoluteFee, const Decimal& RelativeFee)
+		void DepositoryAdjustment::SetIncomingFee(const Decimal& AbsoluteFee, const Decimal& RelativeFee)
 		{
 			IncomingAbsoluteFee = AbsoluteFee;
 			IncomingRelativeFee = RelativeFee;
 		}
-		void ContributionAdjustment::SetOutgoingFee(const Decimal& AbsoluteFee, const Decimal& RelativeFee)
+		void DepositoryAdjustment::SetOutgoingFee(const Decimal& AbsoluteFee, const Decimal& RelativeFee)
 		{
 			OutgoingAbsoluteFee = AbsoluteFee;
 			OutgoingRelativeFee = RelativeFee;
 		}
-		UPtr<Schema> ContributionAdjustment::AsSchema() const
+		UPtr<Schema> DepositoryAdjustment::AsSchema() const
 		{
 			Schema* Data = Ledger::Transaction::AsSchema().Reset();
 			Data->Set("incoming_absolute_fee", Var::Decimal(IncomingAbsoluteFee));
@@ -3463,179 +3964,67 @@ namespace Tangent
 			Data->Set("outgoing_relative_fee", Var::Decimal(OutgoingRelativeFee));
 			return Data;
 		}
-		uint32_t ContributionAdjustment::AsType() const
+		uint32_t DepositoryAdjustment::AsType() const
 		{
 			return AsInstanceType();
 		}
-		std::string_view ContributionAdjustment::AsTypename() const
+		std::string_view DepositoryAdjustment::AsTypename() const
 		{
 			return AsInstanceTypename();
 		}
-		uint256_t ContributionAdjustment::GetGasEstimate() const
+		uint256_t DepositoryAdjustment::GetGasEstimate() const
 		{
-			return Ledger::GasUtil::GetGasEstimate<ContributionAdjustment, 20>();
+			return Ledger::GasUtil::GetGasEstimate<DepositoryAdjustment, 20>();
 		}
-		uint32_t ContributionAdjustment::AsInstanceType()
+		uint32_t DepositoryAdjustment::AsInstanceType()
 		{
-			static uint32_t Hash = Types::TypeOf(AsInstanceTypename());
+			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
 			return Hash;
 		}
-		std::string_view ContributionAdjustment::AsInstanceTypename()
+		std::string_view DepositoryAdjustment::AsInstanceTypename()
 		{
-			return "contribution_adjustment";
+			return "depository_adjustment";
 		}
 
-		ExpectsLR<void> ContributionAllowance::Prevalidate() const
-		{
-			return Ledger::Transaction::Prevalidate();
-		}
-		ExpectsLR<void> ContributionAllowance::Validate(const Ledger::TransactionContext* Context) const
-		{
-			auto Work = Context->VerifyAccountWork();
-			if (!Work)
-				return Work;
-
-			return Ledger::Transaction::Validate(Context);
-		}
-		ExpectsLR<void> ContributionAllowance::Execute(Ledger::TransactionContext* Context) const
-		{
-			auto CurrentContribution = Context->GetAccountContribution(Context->Receipt.From);
-			auto CurrentThreshold = (CurrentContribution ? CurrentContribution->Threshold.Or(-1.0) : -1.0);
-			if (CurrentThreshold < 0.0 && Context->Block->Number > 1)
-				return LayerException("invalid contribution migration");
-			else if (CurrentThreshold < 0.0 && Threshold == Protocol::Now().Policy.AccountContributionRequired)
-				return Expectation::Met;
-
-			if (!IsToNull())
-			{
-				auto FromContribution = Context->ApplyAccountContribution(Context->Receipt.From, Decimal::Zero(), { }, { }, -1.0);
-				if (!FromContribution)
-					return FromContribution.Error();
-
-				auto ToContribution = Context->ApplyAccountContribution(To, Decimal::Zero(), { }, { }, Threshold);
-				if (!ToContribution)
-					return ToContribution.Error();
-			}
-			else
-			{
-				auto Contribution = Context->ApplyAccountContribution(Context->Receipt.From, Decimal::Zero(), { }, { }, Threshold);
-				if (!Contribution)
-					return Contribution.Error();
-			}
-
-			return Expectation::Met;
-		}
-		bool ContributionAllowance::StoreBody(Format::Stream* Stream) const
-		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Algorithm::Pubkeyhash Null = { 0 };
-			Stream->WriteString(std::string_view((char*)To, memcmp(To, Null, sizeof(Null)) == 0 ? 0 : sizeof(To)));
-			Stream->WriteDecimal(Decimal(Threshold));
-			return true;
-		}
-		bool ContributionAllowance::LoadBody(Format::Stream& Stream)
-		{
-			String ToAssembly;
-			if (!Stream.ReadString(Stream.ReadType(), &ToAssembly) || !Algorithm::Encoding::DecodeUintBlob(ToAssembly, To, sizeof(To)))
-				return false;
-
-			Decimal ThresholdValue;
-			if (!Stream.ReadDecimal(Stream.ReadType(), &ThresholdValue))
-				return false;
-
-			Threshold = ThresholdValue.ToDouble();
-			return true;
-		}
-		bool ContributionAllowance::RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
-		{
-			return true;
-		}
-		void ContributionAllowance::SetThreshold(const Algorithm::Pubkeyhash NewTo, double NewThreshold)
-		{
-			Threshold = std::max(-1.0, NewThreshold);
-			if (!NewTo)
-			{
-				Algorithm::Pubkeyhash Null = { 0 };
-				memcpy(To, Null, sizeof(Algorithm::Pubkeyhash));
-			}
-			else
-				memcpy(To, NewTo, sizeof(Algorithm::Pubkeyhash));
-		}
-		void ContributionAllowance::ClearThreshold(const Algorithm::Pubkeyhash NewTo)
-		{
-			return SetThreshold(NewTo, -1.0);
-		}
-		bool ContributionAllowance::IsToNull() const
-		{
-			Algorithm::Pubkeyhash Null = { 0 };
-			return memcmp(To, Null, sizeof(Null)) == 0;
-		}
-		UPtr<Schema> ContributionAllowance::AsSchema() const
-		{
-			Schema* Data = Ledger::Transaction::AsSchema().Reset();
-			Data->Set("to", Algorithm::Signing::SerializeAddress(To));
-			Data->Set("threshold", Var::Number(Threshold));
-			return Data;
-		}
-		uint32_t ContributionAllowance::AsType() const
-		{
-			return AsInstanceType();
-		}
-		std::string_view ContributionAllowance::AsTypename() const
-		{
-			return AsInstanceTypename();
-		}
-		uint256_t ContributionAllowance::GetGasEstimate() const
-		{
-			return Ledger::GasUtil::GetGasEstimate<ContributionAllowance, 20>();
-		}
-		uint32_t ContributionAllowance::AsInstanceType()
-		{
-			static uint32_t Hash = Types::TypeOf(AsInstanceTypename());
-			return Hash;
-		}
-		std::string_view ContributionAllowance::AsInstanceTypename()
-		{
-			return "contribution_allowance";
-		}
-
-		ExpectsLR<void> ContributionMigration::Prevalidate() const
+		ExpectsLR<void> DepositoryMigration::Prevalidate() const
 		{
 			if (IsProposerNull())
 				return LayerException("invalid proposer");
 
 			if (!Value.IsPositive())
-				return LayerException("invalid to value");
+				return LayerException("invalid value");
 
 			return Ledger::Transaction::Prevalidate();
 		}
-		ExpectsLR<void> ContributionMigration::Validate(const Ledger::TransactionContext* Context) const
+		ExpectsLR<void> DepositoryMigration::Validate(const Ledger::TransactionContext* Context) const
 		{
 			if (!memcmp(Context->Receipt.From, Proposer, sizeof(Proposer)))
 				return LayerException("self migration not allowed");
 
-			auto Work = Context->VerifyAccountWork();
-			if (!Work)
-				return Work;
+			auto WorkRequirement = Context->VerifyAccountWork(true);
+			if (!WorkRequirement)
+				return WorkRequirement;
 
-			auto Contribution = Context->GetAccountContribution(Context->Receipt.From);
-			if (!Contribution)
-				return LayerException("proposer has no contribution");
+			auto Depository = Context->GetAccountDepository(Context->Receipt.From);
+			if (!Depository)
+				return LayerException("proposer has no depository");
 
-			auto Coverage = Contribution->GetCoverage();
+			auto Work = Context->GetAccountWork(Context->Receipt.From);
+			auto Coverage = Depository->GetCoverage(Work ? Work->Flags : 0);
 			if (Coverage.IsNaN() || Coverage.IsNegative())
-				return LayerException("proposer does not cover balance (contribution: " + Contribution->GetContribution().ToString() + ", custody: " + Contribution->Custody.ToString() + ")");
-			else if (Contribution->Custody < Value)
-				return LayerException("proposer does not have enough custody (value: " + Value.ToString() + ", custody: " + Contribution->Custody.ToString() + ")");
+				return LayerException("proposer does not cover balance (contribution: " + Depository->GetContribution().ToString() + ", custody: " + Depository->Custody.ToString() + ")");
+			else if (Depository->Custody < Value)
+				return LayerException("proposer does not have enough custody (value: " + Value.ToString() + ", custody: " + Depository->Custody.ToString() + ")");
 
-			Contribution = Context->GetAccountContribution(Proposer);
-			if (!Contribution)
-				return LayerException("migration proposer has no contribution");
+			Work = Context->GetAccountWork(Proposer);
+			Depository = Context->GetAccountDepository(Proposer);
+			if (!Depository)
+				return LayerException("migration proposer has no depository");
 			
-			Contribution->Custody += Value;
-			Coverage = Contribution->GetCoverage();
+			Depository->Custody += Value;
+			Coverage = Depository->GetCoverage(Work ? Work->Flags : 0);
 			if (Coverage.IsNaN() || Coverage.IsNegative())
-				return LayerException("migration proposer does not cover balance (contribution: " + Contribution->GetContribution().ToString() + ", custody: " + Contribution->Custody.ToString() + ")");
+				return LayerException("migration proposer does not cover balance (contribution: " + Depository->GetContribution().ToString() + ", custody: " + Depository->Custody.ToString() + ")");
 
 			auto Address = GetDestination(Context);
 			if (!Address)
@@ -3643,37 +4032,50 @@ namespace Tangent
 
 			return Ledger::Transaction::Validate(Context);
 		}
-		ExpectsLR<void> ContributionMigration::Execute(Ledger::TransactionContext* Context) const
+		ExpectsLR<void> DepositoryMigration::Execute(Ledger::TransactionContext* Context) const
 		{
 			return Expectation::Met;
 		}
-		ExpectsPromiseLR<void> ContributionMigration::Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const
+		ExpectsPromiseRT<void> DepositoryMigration::Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const
 		{
 			if (memcmp(Proposer.PublicKeyHash, Context->Receipt.From, sizeof(Context->Receipt.From)) != 0)
-				return ExpectsPromiseLR<void>(Expectation::Met);
+				return ExpectsPromiseRT<void>(Expectation::Met);
 
 			if (Context->GetWitnessEvent(Context->Receipt.TransactionHash))
-				return ExpectsPromiseLR<void>(Expectation::Met);
+				return ExpectsPromiseRT<void>(Expectation::Met);
 
 			auto Address = GetDestination(Context);
 			if (!Address)
-				return ExpectsPromiseLR<void>(LayerException("migration proposer has no usable custodian address"));
-
-			auto* Transaction = Memory::New<Transactions::Replay>();
+				return ExpectsPromiseRT<void>(RemoteException("migration proposer has no usable custodian address"));
+#ifdef TAN_VALIDATOR
+			auto* Transaction = Memory::New<OutgoingClaim>();
 			Transaction->Asset = Asset;
 			Pipeline->push_back(Transaction);
 
-			auto Destinations = { Observer::Transferer(Address->Addresses.begin()->second, Address->AddressIndex, Decimal(Value)) };
-			return EmitTransaction(Proposer, Asset, Context->Receipt.TransactionHash, Pipeline, std::move(Destinations)).Then<ExpectsLR<void>>([this, Context, Pipeline, Transaction](ExpectsLR<Observer::OutgoingTransaction>&& Result)
+			auto Destinations = { Mediator::Transferer(Address->Addresses.begin()->second, Address->AddressIndex, Decimal(Value)) };
+			auto Parent = NSS::ServerNode::Get()->NewMasterWallet(Asset, Proposer.SecretKey);
+			auto Child = Parent ? Mediator::DynamicWallet(*Parent) : Mediator::DynamicWallet();
+			return Resolver::EmitTransaction(Pipeline, std::move(Child), Asset, Context->Receipt.TransactionHash, std::move(Destinations)).Then<ExpectsRT<void>>([this, Context, Pipeline, Transaction](ExpectsRT<Mediator::OutgoingTransaction>&& Result)
 			{
 				if (!Result || Result->Transaction.TransactionId.empty())
+				{
 					Transaction->SetFailureWitness(Result ? "transaction broadcast failed" : Result.What(), Context->Receipt.TransactionHash);
+					if (!Result && (Result.Error().retry() || Result.Error().shutdown()))
+					{
+						Pipeline->pop_back();
+						Memory::Delete(Transaction);
+						return ExpectsRT<void>(Result.Error());
+					}
+				}
 				else
 					Transaction->SetSuccessWitness(Result->Transaction.TransactionId, Result->Data, Context->Receipt.TransactionHash);
-				return ExpectsLR<void>(Expectation::Met);
+				return ExpectsRT<void>(Expectation::Met);
 			});
+#else
+			return ExpectsPromiseRT<void>(RemoteException("nss data not available"));
+#endif
 		}
-		bool ContributionMigration::StoreBody(Format::Stream* Stream) const
+		bool DepositoryMigration::StoreBody(Format::Stream* Stream) const
 		{
 			VI_ASSERT(Stream != nullptr, "stream should be set");
 			Algorithm::Pubkeyhash Null = { 0 };
@@ -3681,7 +4083,7 @@ namespace Tangent
 			Stream->WriteDecimal(Value);
 			return true;
 		}
-		bool ContributionMigration::LoadBody(Format::Stream& Stream)
+		bool DepositoryMigration::LoadBody(Format::Stream& Stream)
 		{
 			String ProposerAssembly;
 			if (!Stream.ReadString(Stream.ReadType(), &ProposerAssembly) || !Algorithm::Encoding::DecodeUintBlob(ProposerAssembly, Proposer, sizeof(Proposer)))
@@ -3692,13 +4094,13 @@ namespace Tangent
 
 			return true;
 		}
-		bool ContributionMigration::RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
+		bool DepositoryMigration::RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
 		{
 			if (!IsProposerNull())
 				Parties.insert(String((char*)Proposer, sizeof(Proposer)));
 			return true;
 		}
-		void ContributionMigration::SetProposer(const Algorithm::Pubkeyhash NewProposer, const Decimal& NewValue)
+		void DepositoryMigration::SetProposer(const Algorithm::Pubkeyhash NewProposer, const Decimal& NewValue)
 		{
 			Value = NewValue;
 			if (!NewProposer)
@@ -3709,12 +4111,12 @@ namespace Tangent
 			else
 				memcpy(Proposer, NewProposer, sizeof(Algorithm::Pubkeyhash));
 		}
-		bool ContributionMigration::IsProposerNull() const
+		bool DepositoryMigration::IsProposerNull() const
 		{
 			Algorithm::Pubkeyhash Null = { 0 };
 			return memcmp(Proposer, Null, sizeof(Null)) == 0;
 		}
-		ExpectsLR<States::WitnessAddress> ContributionMigration::GetDestination(const Ledger::TransactionContext* Context) const
+		ExpectsLR<States::WitnessAddress> DepositoryMigration::GetDestination(const Ledger::TransactionContext* Context) const
 		{
 			size_t Offset = 0;
 			auto Address = ExpectsLR<States::WitnessAddress>(LayerException());
@@ -3736,37 +4138,37 @@ namespace Tangent
 			}
 			return Address;
 		}
-		UPtr<Schema> ContributionMigration::AsSchema() const
+		UPtr<Schema> DepositoryMigration::AsSchema() const
 		{
 			Schema* Data = Ledger::Transaction::AsSchema().Reset();
 			Data->Set("proposer", Algorithm::Signing::SerializeAddress(Proposer));
 			Data->Set("value", Var::Decimal(Value));
 			return Data;
 		}
-		uint32_t ContributionMigration::AsType() const
+		uint32_t DepositoryMigration::AsType() const
 		{
 			return AsInstanceType();
 		}
-		std::string_view ContributionMigration::AsTypename() const
+		std::string_view DepositoryMigration::AsTypename() const
 		{
 			return AsInstanceTypename();
 		}
-		uint256_t ContributionMigration::GetGasEstimate() const
+		uint256_t DepositoryMigration::GetGasEstimate() const
 		{
-			return Ledger::GasUtil::GetGasEstimate<ContributionMigration, 64>();
+			return Ledger::GasUtil::GetGasEstimate<DepositoryMigration, 64>();
 		}
-		uint64_t ContributionMigration::GetDispatchOffset() const
+		uint64_t DepositoryMigration::GetDispatchOffset() const
 		{
-			return Protocol::Now().User.Observer.WithdrawalTime / Protocol::Now().Policy.ConsensusProofTime;
+			return Protocol::Now().User.NSS.WithdrawalTime / Protocol::Now().Policy.ConsensusProofTime;
 		}
-		uint32_t ContributionMigration::AsInstanceType()
+		uint32_t DepositoryMigration::AsInstanceType()
 		{
-			static uint32_t Hash = Types::TypeOf(AsInstanceTypename());
+			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
 			return Hash;
 		}
-		std::string_view ContributionMigration::AsInstanceTypename()
+		std::string_view DepositoryMigration::AsInstanceTypename()
 		{
-			return "contribution_migration";
+			return "depository_migration";
 		}
 
 		Ledger::Transaction* Resolver::New(uint32_t Hash)
@@ -3783,6 +4185,12 @@ namespace Tangent
 				return Memory::New<Withdrawal>();
 			else if (Hash == Rollup::AsInstanceType())
 				return Memory::New<Rollup>();
+			else if (Hash == Commitment::AsInstanceType())
+				return Memory::New<Commitment>();
+			else if (Hash == IncomingClaim::AsInstanceType())
+				return Memory::New<IncomingClaim>();
+			else if (Hash == OutgoingClaim::AsInstanceType())
+				return Memory::New<OutgoingClaim>();
 			else if (Hash == AddressAccount::AsInstanceType())
 				return Memory::New<AddressAccount>();
 			else if (Hash == PubkeyAccount::AsInstanceType())
@@ -3791,26 +4199,22 @@ namespace Tangent
 				return Memory::New<DelegationAccount>();
 			else if (Hash == CustodianAccount::AsInstanceType())
 				return Memory::New<CustodianAccount>();
-			else if (Hash == Commitment::AsInstanceType())
-				return Memory::New<Commitment>();
-			else if (Hash == Replay::AsInstanceType())
-				return Memory::New<Replay>();
 			else if (Hash == ContributionAllocation::AsInstanceType())
 				return Memory::New<ContributionAllocation>();
+			else if (Hash == ContributionSelection::AsInstanceType())
+				return Memory::New<ContributionSelection>();
 			else if (Hash == ContributionActivation::AsInstanceType())
 				return Memory::New<ContributionActivation>();
 			else if (Hash == ContributionDeallocation::AsInstanceType())
 				return Memory::New<ContributionDeallocation>();
+			else if (Hash == ContributionDeselection::AsInstanceType())
+				return Memory::New<ContributionDeselection>();
 			else if (Hash == ContributionDeactivation::AsInstanceType())
 				return Memory::New<ContributionDeactivation>();
-			else if (Hash == ContributionAdjustment::AsInstanceType())
-				return Memory::New<ContributionAdjustment>();
-			else if (Hash == ContributionAllowance::AsInstanceType())
-				return Memory::New<ContributionAllowance>();
-			else if (Hash == ContributionMigration::AsInstanceType())
-				return Memory::New<ContributionMigration>();
-			else if (Hash == Claim::AsInstanceType())
-				return Memory::New<Claim>();
+			else if (Hash == DepositoryAdjustment::AsInstanceType())
+				return Memory::New<DepositoryAdjustment>();
+			else if (Hash == DepositoryMigration::AsInstanceType())
+				return Memory::New<DepositoryMigration>();
 			return nullptr;
 		}
 		Ledger::Transaction* Resolver::Copy(const Ledger::Transaction* Base)
@@ -3828,6 +4232,12 @@ namespace Tangent
 				return Memory::New<Withdrawal>(*(const Withdrawal*)Base);
 			else if (Hash == Rollup::AsInstanceType())
 				return Memory::New<Rollup>(*(const Rollup*)Base);
+			else if (Hash == Commitment::AsInstanceType())
+				return Memory::New<Commitment>(*(const Commitment*)Base);
+			else if (Hash == IncomingClaim::AsInstanceType())
+				return Memory::New<IncomingClaim>(*(const IncomingClaim*)Base);
+			else if (Hash == OutgoingClaim::AsInstanceType())
+				return Memory::New<OutgoingClaim>(*(const OutgoingClaim*)Base);
 			else if (Hash == AddressAccount::AsInstanceType())
 				return Memory::New<AddressAccount>(*(const AddressAccount*)Base);
 			else if (Hash == PubkeyAccount::AsInstanceType())
@@ -3836,27 +4246,69 @@ namespace Tangent
 				return Memory::New<DelegationAccount>(*(const DelegationAccount*)Base);
 			else if (Hash == CustodianAccount::AsInstanceType())
 				return Memory::New<CustodianAccount>(*(const CustodianAccount*)Base);
-			else if (Hash == Commitment::AsInstanceType())
-				return Memory::New<Commitment>(*(const Commitment*)Base);
-			else if (Hash == Replay::AsInstanceType())
-				return Memory::New<Replay>(*(const Replay*)Base);
 			else if (Hash == ContributionAllocation::AsInstanceType())
 				return Memory::New<ContributionAllocation>(*(const ContributionAllocation*)Base);
+			else if (Hash == ContributionSelection::AsInstanceType())
+				return Memory::New<ContributionSelection>(*(const ContributionSelection*)Base);
 			else if (Hash == ContributionActivation::AsInstanceType())
 				return Memory::New<ContributionActivation>(*(const ContributionActivation*)Base);
 			else if (Hash == ContributionDeallocation::AsInstanceType())
 				return Memory::New<ContributionDeallocation>(*(const ContributionDeallocation*)Base);
+			else if (Hash == ContributionDeselection::AsInstanceType())
+				return Memory::New<ContributionDeselection>(*(const ContributionDeselection*)Base);
 			else if (Hash == ContributionDeactivation::AsInstanceType())
 				return Memory::New<ContributionDeactivation>(*(const ContributionDeactivation*)Base);
-			else if (Hash == ContributionAdjustment::AsInstanceType())
-				return Memory::New<ContributionAdjustment>(*(const ContributionAdjustment*)Base);
-			else if (Hash == ContributionAllowance::AsInstanceType())
-				return Memory::New<ContributionAllowance>(*(const ContributionAllowance*)Base);
-			else if (Hash == ContributionMigration::AsInstanceType())
-				return Memory::New<ContributionMigration>(*(const ContributionMigration*)Base);
-			else if (Hash == Claim::AsInstanceType())
-				return Memory::New<Claim>(*(const Claim*)Base);
+			else if (Hash == DepositoryAdjustment::AsInstanceType())
+				return Memory::New<DepositoryAdjustment>(*(const DepositoryAdjustment*)Base);
+			else if (Hash == DepositoryMigration::AsInstanceType())
+				return Memory::New<DepositoryMigration>(*(const DepositoryMigration*)Base);
 			return nullptr;
+		}
+		ExpectsPromiseRT<Mediator::OutgoingTransaction> Resolver::EmitTransaction(Vector<UPtr<Ledger::Transaction>>* Pipeline, Mediator::DynamicWallet&& Wallet, const Algorithm::AssetId& Asset, const uint256_t& TransactionHash, Vector<Mediator::Transferer>&& To)
+		{
+#ifdef TAN_VALIDATOR
+			auto* Server = NSS::ServerNode::Get();
+			if (!Protocol::Now().Is(NetworkType::Regtest) || Server->HasSupport(Asset))
+				return Server->SubmitTransaction(TransactionHash, Asset, std::move(Wallet), std::move(To));
+
+			ExpectsLR<Mediator::DerivedVerifyingWallet> VerifyingWallet = LayerException();
+			if (Wallet.Parent)
+			{
+				auto SigningWallet = Server->NewSigningWallet(Asset, *Wallet.Parent, Protocol::Now().Account.RootAddressIndex);
+				if (!SigningWallet)
+					return ExpectsPromiseRT<Mediator::OutgoingTransaction>(RemoteException("wallet not found"));
+
+				VerifyingWallet = std::move(*SigningWallet);
+			}
+			else if (Wallet.SigningChild)
+				VerifyingWallet = std::move(*Wallet.SigningChild);
+			else if (Wallet.VerifyingChild)
+				VerifyingWallet = std::move(*Wallet.VerifyingChild);
+			if (!VerifyingWallet)
+				return ExpectsPromiseRT<Mediator::OutgoingTransaction>(RemoteException("wallet not found"));
+
+			Mediator::OutgoingTransaction Ephimeric;
+			Ephimeric.Transaction.To = To;
+			Ephimeric.Transaction.From.push_back(Mediator::Transferer(VerifyingWallet->Addresses.begin()->second, Option<uint64_t>(VerifyingWallet->AddressIndex), Ephimeric.Transaction.GetOutputValue()));
+			Ephimeric.Transaction.Asset = Asset;
+			Ephimeric.Transaction.TransactionId = Algorithm::Encoding::Encode0xHex256(Algorithm::Hashing::Hash256i(TransactionHash.ToString()));
+			Ephimeric.Transaction.BlockId = Algorithm::Hashing::Hash256i(Ephimeric.Transaction.TransactionId) % std::numeric_limits<uint64_t>::max();
+			Ephimeric.Transaction.Fee = Decimal::Zero();
+			Ephimeric.Data = Ephimeric.AsMessage().Encode();
+
+			if (Pipeline != nullptr)
+			{
+				auto* Transaction = Memory::New<IncomingClaim>();
+				Transaction->Asset = Asset;
+				Transaction->SetEstimateGas(Decimal::Zero());
+				Transaction->SetWitness(Ephimeric.Transaction);
+				Pipeline->push_back(Transaction);
+			}
+
+			return ExpectsPromiseRT<Mediator::OutgoingTransaction>(std::move(Ephimeric));
+#else
+			return ExpectsPromiseRT<Mediator::OutgoingTransaction>(RemoteException("nss data not available"));
+#endif
 		}
 	}
 }

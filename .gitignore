@@ -1,5 +1,5 @@
 .idea/
 .git/
 bin/
-src/utils/protobuf/TronInternal.pb.h
-src/utils/protobuf/TronInternal.pb.cc
+src/tangent/validator/internal/libtron/*.pb.h
+src/tangent/validator/internal/libtron/*.pb.cc

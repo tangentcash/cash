@@ -1,5 +1,4 @@
 #include "messages.h"
-#include "../policy/typenames.h"
 
 namespace Tangent
 {

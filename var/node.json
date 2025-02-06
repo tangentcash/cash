@@ -45,6 +45,32 @@
         "server": false,
         "logging": true
     },
+    "nss": {
+        "block_replay_multiplier": 4,
+        "relaying_timeout": 30000,
+        "relaying_retry_timeout": 300,
+        "cache_short_size": 16384,
+        "cache_extended_size": 65536,
+        "fee_estimation_seconds": 600,
+        "withdrawal_time": 300000,
+        "server": false,
+        "logging": true,
+        "strategy": {
+            "retry_timeout": 30000,
+            "polling_frequency": 70000,
+            "block_confirmations": 0
+        },
+        "protocols": {
+            "BTC": {
+                "peers": ["http://admin:pass@127.0.0.1:8332"],
+                "server": {
+                    "delay": 0,
+                    "tip": null,
+                    "props": null
+                }
+            }
+        }
+    },
     "tcp": {
         "tls_trusted_peers": 100,
         "timeout": 10000
@@ -52,6 +78,8 @@
     "storage": {
         "directory": "./",
         "optimization": "speed",
+        "transaction_dispatch_repeat_interval": 600,
+        "transaction_timeout": 86400,
         "checkpoint_size": 64,
         "location_cache_size": 500000,
         "script_cache_size": 8192,
@@ -65,31 +93,5 @@
         "transaction_to_account_index": true,
         "transaction_to_rollup_index": true,
         "logging": true
-    },
-    "oracle": {
-        "block_replay_multiplier": 4,
-        "relaying_timeout": 30000,
-        "relaying_retry_timeout": 300,
-        "cache_short_size": 16384,
-        "cache_extended_size": 65536,
-        "fee_estimation_seconds": 600,
-        "withdrawal_time": 300000,
-        "observer": false,
-        "logging": true,
-        "supervisor": {
-            "retry_timeout": 30000,
-            "polling_frequency": 70000,
-            "block_confirmations": 0
-        },
-        "observers": {
-            "BTC": {
-                "peers": ["http://admin:pass@127.0.0.1:8332"],
-                "observer": {
-                    "delay": 0,
-                    "tip": null,
-                    "props": null
-                }
-            }
-        }
     }
 }

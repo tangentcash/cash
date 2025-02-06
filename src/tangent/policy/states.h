@@ -6,6 +6,23 @@ namespace Tangent
 {
 	namespace States
 	{
+		enum class AccountFlags : uint8_t
+		{
+			AsIs = 0,
+			Offline = 1 << 0,
+			Online = 1 << 1,
+			Founder = 1 << 2,
+			Outlaw = 1 << 3
+		};
+
+		enum class AddressType : uint8_t
+		{
+			Witness = 0,
+			Router,
+			Custodian,
+			Contribution
+		};
+
 		struct AccountSequence final : Ledger::Uniform
 		{
 			Algorithm::Pubkeyhash Owner = { 0 };
@@ -26,13 +43,34 @@ namespace Tangent
 			static String AsInstanceIndex(const Algorithm::Pubkeyhash Owner);
 		};
 
+		struct AccountSealing final : Ledger::Uniform
+		{
+			Algorithm::Pubkeyhash Owner = { 0 };
+			Algorithm::Pubkey SealingKey = { 0 };
+
+			AccountSealing(const Algorithm::Pubkeyhash NewOwner, uint64_t NewBlockNumber, uint64_t NewBlockNonce);
+			AccountSealing(const Algorithm::Pubkeyhash NewOwner, const Ledger::BlockHeader* NewBlockHeader);
+			ExpectsLR<void> Transition(const Ledger::TransactionContext* Context, const Ledger::State* PrevState) override;
+			bool StorePayload(Format::Stream* Stream) const override;
+			bool LoadPayload(Format::Stream& Stream) override;
+			bool IsOwnerNull() const;
+			bool IsSealingKeyNull() const;
+			UPtr<Schema> AsSchema() const override;
+			uint32_t AsType() const override;
+			std::string_view AsTypename() const override;
+			String AsIndex() const override;
+			static uint32_t AsInstanceType();
+			static std::string_view AsInstanceTypename();
+			static String AsInstanceIndex(const Algorithm::Pubkeyhash Owner);
+		};
+
 		struct AccountWork final : Ledger::Multiform
 		{
 			Algorithm::Pubkeyhash Owner = { 0 };
+			uint8_t Flags = 0;
+			uint64_t Penalty = 0;
 			uint256_t GasInput = 0;
 			uint256_t GasOutput = 0;
-			uint64_t Penalty = 0;
-			Ledger::WorkStatus Status = Ledger::WorkStatus::Standby;
 
 			AccountWork(const Algorithm::Pubkeyhash NewOwner, uint64_t NewBlockNumber, uint64_t NewBlockNonce);
 			AccountWork(const Algorithm::Pubkeyhash NewOwner, const Ledger::BlockHeader* NewBlockHeader);
@@ -40,6 +78,7 @@ namespace Tangent
 			bool StorePayload(Format::Stream* Stream) const override;
 			bool LoadPayload(Format::Stream& Stream) override;
 			bool IsEligible(const Ledger::BlockHeader* BlockHeader) const;
+			bool IsMatching(AccountFlags Flag) const;
 			bool IsOnline() const;
 			bool IsOwnerNull() const;
 			uint256_t GetGasUse() const;
@@ -61,16 +100,15 @@ namespace Tangent
 
 		struct AccountObserver final : Ledger::Multiform
 		{
-			Algorithm::Pubkeyhash Owner = { 0 };
 			Algorithm::AssetId Asset = 0;
-			Ledger::WorkStatus Status = Ledger::WorkStatus::Standby;
+			Algorithm::Pubkeyhash Owner = { 0 };
+			bool Observing = false;
 
 			AccountObserver(const Algorithm::Pubkeyhash NewOwner, uint64_t NewBlockNumber, uint64_t NewBlockNonce);
 			AccountObserver(const Algorithm::Pubkeyhash NewOwner, const Ledger::BlockHeader* NewBlockHeader);
 			ExpectsLR<void> Transition(const Ledger::TransactionContext* Context, const Ledger::State* PrevState) override;
 			bool StorePayload(Format::Stream* Stream) const override;
 			bool LoadPayload(Format::Stream& Stream) override;
-			bool IsOnline() const;
 			bool IsOwnerNull() const;
 			UPtr<Schema> AsSchema() const override;
 			uint32_t AsType() const override;
@@ -203,18 +241,17 @@ namespace Tangent
 			static String AsInstanceRow(const Algorithm::AssetId& Asset);
 		};
 
-		struct AccountContribution final : Ledger::Multiform
+		struct AccountDepository final : Ledger::Multiform
 		{
 			Algorithm::Pubkeyhash Owner = { 0 };
 			Algorithm::AssetId Asset = 0;
-			ContributionMap Contributions;
-			ReservationMap Reservations;
-			Option<double> Threshold = Optional::None;
+			AddressValueMap Contributions;
+			AccountValueMap Reservations;
+			OrderedSet<uint256_t> Transactions;
 			Decimal Custody = Decimal::Zero();
-			bool Honest = true;
 
-			AccountContribution(const Algorithm::Pubkeyhash NewOwner, uint64_t NewBlockNumber, uint64_t NewBlockNonce);
-			AccountContribution(const Algorithm::Pubkeyhash NewOwner, const Ledger::BlockHeader* NewBlockHeader);
+			AccountDepository(const Algorithm::Pubkeyhash NewOwner, uint64_t NewBlockNumber, uint64_t NewBlockNonce);
+			AccountDepository(const Algorithm::Pubkeyhash NewOwner, const Ledger::BlockHeader* NewBlockHeader);
 			ExpectsLR<void> Transition(const Ledger::TransactionContext* Context, const Ledger::State* PrevState) override;
 			bool StorePayload(Format::Stream* Stream) const override;
 			bool LoadPayload(Format::Stream& Stream) override;
@@ -223,7 +260,7 @@ namespace Tangent
 			Decimal GetContribution(const std::string_view& Address) const;
 			Decimal GetContribution(const OrderedSet<String>& Addresses) const;
 			Decimal GetContribution() const;
-			Decimal GetCoverage() const;
+			Decimal GetCoverage(uint8_t Flags) const;
 			UPtr<Schema> AsSchema() const override;
 			uint32_t AsType() const override;
 			std::string_view AsTypename() const override;
@@ -277,20 +314,12 @@ namespace Tangent
 
 		struct WitnessAddress final : Ledger::Multiform
 		{
-			enum class Class : uint8_t
-			{
-				Witness = 0,
-				Router,
-				Custodian,
-				Contribution
-			};
-
 			Algorithm::Pubkeyhash Owner = { 0 };
 			Algorithm::Pubkeyhash Proposer = { 0 };
 			Algorithm::AssetId Asset = 0;
+			AddressType Purpose = AddressType::Witness;
 			AddressMap Addresses;
 			uint64_t AddressIndex = 0;
-			uint8_t Purpose = 0;
 
 			WitnessAddress(const Algorithm::Pubkeyhash NewOwner, uint64_t NewBlockNumber, uint64_t NewBlockNonce);
 			WitnessAddress(const Algorithm::Pubkeyhash NewOwner, const Ledger::BlockHeader* NewBlockHeader);

@@ -1,8 +1,9 @@
 #include "states.h"
-#include "typenames.h"
 #include "../kernel/block.h"
 #include "../kernel/script.h"
-#include "../kernel/observer.h"
+#ifdef TAN_VALIDATOR
+#include "../validator/service/nss.h"
+#endif
 
 namespace Tangent
 {
@@ -83,7 +84,7 @@ namespace Tangent
 		}
 		uint32_t AccountSequence::AsInstanceType()
 		{
-			static uint32_t Hash = Types::TypeOf(AsInstanceTypename());
+			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
 			return Hash;
 		}
 		std::string_view AccountSequence::AsInstanceTypename()
@@ -91,6 +92,96 @@ namespace Tangent
 			return "account_sequence";
 		}
 		String AccountSequence::AsInstanceIndex(const Algorithm::Pubkeyhash Owner)
+		{
+			Format::Stream Stream;
+			Stream.WriteTypeless(AsInstanceType());
+			Stream.WriteTypeless((char*)Owner, (uint8_t)sizeof(Algorithm::Pubkeyhash));
+			return std::move(Stream.Data);
+		}
+
+		AccountSealing::AccountSealing(const Algorithm::Pubkeyhash NewOwner, uint64_t NewBlockNumber, uint64_t NewBlockNonce) : Ledger::Uniform(NewBlockNumber, NewBlockNonce)
+		{
+			if (NewOwner)
+				memcpy(Owner, NewOwner, sizeof(Owner));
+		}
+		AccountSealing::AccountSealing(const Algorithm::Pubkeyhash NewOwner, const Ledger::BlockHeader* NewBlockHeader) : Ledger::Uniform(NewBlockHeader)
+		{
+			if (NewOwner)
+				memcpy(Owner, NewOwner, sizeof(Owner));
+		}
+		ExpectsLR<void> AccountSealing::Transition(const Ledger::TransactionContext* Context, const Ledger::State* PrevState)
+		{
+			if (IsOwnerNull())
+				return LayerException("invalid state owner");
+			else if (IsSealingKeyNull())
+				return LayerException("invalid state sealing key");
+
+			auto* Prev = (AccountSealing*)PrevState;
+			if (Prev != nullptr)
+				return LayerException("account sealing is immutable");
+
+			return Expectation::Met;
+		}
+		bool AccountSealing::StorePayload(Format::Stream* Stream) const
+		{
+			VI_ASSERT(Stream != nullptr, "stream should be set");
+			Algorithm::Pubkeyhash Null1 = { 0 };
+			Algorithm::Pubkey Null2 = { 0 };
+			Stream->WriteString(std::string_view((char*)Owner, memcmp(Owner, Null1, sizeof(Null1)) == 0 ? 0 : sizeof(Owner)));
+			Stream->WriteString(std::string_view((char*)SealingKey, memcmp(SealingKey, Null2, sizeof(Null2)) == 0 ? 0 : sizeof(SealingKey)));
+			return true;
+		}
+		bool AccountSealing::LoadPayload(Format::Stream& Stream)
+		{
+			String OwnerAssembly;
+			if (!Stream.ReadString(Stream.ReadType(), &OwnerAssembly) || !Algorithm::Encoding::DecodeUintBlob(OwnerAssembly, Owner, sizeof(Owner)))
+				return false;
+
+			String SealingKeyAssembly;
+			if (!Stream.ReadString(Stream.ReadType(), &SealingKeyAssembly) || !Algorithm::Encoding::DecodeUintBlob(SealingKeyAssembly, SealingKey, sizeof(SealingKey)))
+				return false;
+
+			return true;
+		}
+		bool AccountSealing::IsOwnerNull() const
+		{
+			Algorithm::Pubkeyhash Null = { 0 };
+			return !memcmp(Owner, Null, sizeof(Null));
+		}
+		bool AccountSealing::IsSealingKeyNull() const
+		{
+			Algorithm::Pubkey Null = { 0 };
+			return !memcmp(SealingKey, Null, sizeof(Null));
+		}
+		UPtr<Schema> AccountSealing::AsSchema() const
+		{
+			Schema* Data = Ledger::Uniform::AsSchema().Reset();
+			Data->Set("owner", Algorithm::Signing::SerializeAddress(Owner));
+			Data->Set("sealing_key", Algorithm::Signing::SerializeSealingKey(SealingKey));
+			return Data;
+		}
+		uint32_t AccountSealing::AsType() const
+		{
+			return AsInstanceType();
+		}
+		std::string_view AccountSealing::AsTypename() const
+		{
+			return AsInstanceTypename();
+		}
+		String AccountSealing::AsIndex() const
+		{
+			return AsInstanceIndex(Owner);
+		}
+		uint32_t AccountSealing::AsInstanceType()
+		{
+			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
+			return Hash;
+		}
+		std::string_view AccountSealing::AsInstanceTypename()
+		{
+			return "account_sealing";
+		}
+		String AccountSealing::AsInstanceIndex(const Algorithm::Pubkeyhash Owner)
 		{
 			Format::Stream Stream;
 			Stream.WriteTypeless(AsInstanceType());
@@ -120,13 +211,18 @@ namespace Tangent
 				uint256_t GasOutputChange = GasOutput + Prev->GasOutput;
 				GasInput = (GasInputChange >= GasInput ? GasInputChange : uint256_t::Max());
 				GasOutput = (GasOutputChange >= GasOutput ? GasOutputChange : uint256_t::Max());
-				if (Status == Ledger::WorkStatus::Standby)
-					Status = Prev->Status;
+				if (!Flags || Prev->IsMatching(AccountFlags::Outlaw))
+					Flags = Prev->Flags;
+				else if (Prev->IsMatching(AccountFlags::Founder))
+					Flags |= (uint8_t)AccountFlags::Founder;
+				
 				if (Penalty < Prev->Penalty)
 					Penalty = Prev->Penalty;
 			}
+			else if (BlockNumber == 1)
+				Flags |= (uint8_t)AccountFlags::Founder;
 			
-			if (Status == Ledger::WorkStatus::Standby)
+			if (!Flags || (IsMatching(AccountFlags::Online) && IsMatching(AccountFlags::Offline)) || (IsMatching(AccountFlags::Online) && IsMatching(AccountFlags::Outlaw)))
 				return LayerException("invalid status");
 
 			if (GasOutput > GasInput)
@@ -145,7 +241,7 @@ namespace Tangent
 			Stream->WriteInteger(GasInput);
 			Stream->WriteInteger(GasOutput);
 			Stream->WriteInteger(Penalty);
-			Stream->WriteInteger((uint8_t)Status);
+			Stream->WriteInteger(Flags);
 			return true;
 		}
 		bool AccountWork::LoadPayload(Format::Stream& Stream)
@@ -163,7 +259,7 @@ namespace Tangent
 			if (!Stream.ReadInteger(Stream.ReadType(), &Penalty))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), (uint8_t*)&Status))
+			if (!Stream.ReadInteger(Stream.ReadType(), &Flags))
 				return false;
 
 			return true;
@@ -172,9 +268,13 @@ namespace Tangent
 		{
 			return !GetGasWorkRequired(BlockHeader, GetGasUse());
 		}
+		bool AccountWork::IsMatching(AccountFlags Flag) const
+		{
+			return Flags & (uint8_t)Flag;
+		}
 		bool AccountWork::IsOnline() const
 		{
-			return BlockNumber > Penalty && Status == Ledger::WorkStatus::Online;
+			return BlockNumber > Penalty && IsMatching(AccountFlags::Online);
 		}
 		bool AccountWork::IsOwnerNull() const
 		{
@@ -198,7 +298,16 @@ namespace Tangent
 			Data->Set("gas_use", Algorithm::Encoding::SerializeUint256(GetGasUse()));
 			Data->Set("penalty", Algorithm::Encoding::SerializeUint256(Penalty));
 			Data->Set("online", Var::Boolean(IsOnline()));
-			Data->Set("status", Var::Integer((int64_t)Status));
+
+			auto* FlagsArray = Data->Set("flags", Var::Set::Array());
+			if (IsMatching(AccountFlags::Offline))
+				FlagsArray->Push(Var::String("offline"));
+			if (IsMatching(AccountFlags::Online))
+				FlagsArray->Push(Var::String("online"));
+			if (IsMatching(AccountFlags::Founder))
+				FlagsArray->Push(Var::String("founder"));
+			if (IsMatching(AccountFlags::Outlaw))
+				FlagsArray->Push(Var::String("outlaw"));
 			return Data;
 		}
 		uint32_t AccountWork::AsType() const
@@ -212,7 +321,7 @@ namespace Tangent
 		int64_t AccountWork::AsFactor() const
 		{
 			if (!IsOnline())
-				return (int64_t)Ledger::WorkStatus::Offline;
+				return -1;
 
 			auto GasUse = GetGasUse() / 100;
 			return GasUse > std::numeric_limits<int64_t>::max() ? std::numeric_limits<int64_t>::max() : (int64_t)(uint64_t)GasUse;
@@ -227,7 +336,7 @@ namespace Tangent
 		}
 		uint32_t AccountWork::AsInstanceType()
 		{
-			static uint32_t Hash = Types::TypeOf(AsInstanceTypename());
+			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
 			return Hash;
 		}
 		std::string_view AccountWork::AsInstanceTypename()
@@ -285,16 +394,8 @@ namespace Tangent
 				return LayerException("invalid state owner");
 
 			auto* Prev = (AccountObserver*)PrevState;
-			if (Prev != nullptr)
-			{
-				if (Status == Ledger::WorkStatus::Standby)
-					Status = Prev->Status;
-			}
-			else if (!Prev && !(Algorithm::Asset::IsValid(Asset) && Algorithm::Asset::TokenOf(Asset).empty()))
-				return LayerException("invalid asset");		
-			
-			if (Status == Ledger::WorkStatus::Standby)
-				return LayerException("invalid status");
+			if (!Prev && !(Algorithm::Asset::IsValid(Asset) && Algorithm::Asset::TokenOf(Asset).empty()))
+				return LayerException("invalid asset");
 
 			return Expectation::Met;
 		}
@@ -304,7 +405,7 @@ namespace Tangent
 			Algorithm::Pubkeyhash Null = { 0 };
 			Stream->WriteString(std::string_view((char*)Owner, memcmp(Owner, Null, sizeof(Null)) == 0 ? 0 : sizeof(Owner)));
 			Stream->WriteInteger(Asset);
-			Stream->WriteInteger((uint8_t)Status);
+			Stream->WriteBoolean(Observing);
 			return true;
 		}
 		bool AccountObserver::LoadPayload(Format::Stream& Stream)
@@ -316,14 +417,10 @@ namespace Tangent
 			if (!Stream.ReadInteger(Stream.ReadType(), &Asset))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), (uint8_t*)&Status))
+			if (!Stream.ReadBoolean(Stream.ReadType(), &Observing))
 				return false;
 
 			return true;
-		}
-		bool AccountObserver::IsOnline() const
-		{
-			return Status == Ledger::WorkStatus::Online;
 		}
 		bool AccountObserver::IsOwnerNull() const
 		{
@@ -335,8 +432,7 @@ namespace Tangent
 			Schema* Data = Ledger::Multiform::AsSchema().Reset();
 			Data->Set("owner", Algorithm::Signing::SerializeAddress(Owner));
 			Data->Set("asset", Algorithm::Asset::Serialize(Asset));
-			Data->Set("online", Var::Boolean(IsOnline()));
-			Data->Set("status", Var::Integer((int64_t)Status));
+			Data->Set("observing", Var::Boolean(Observing));
 			return Data;
 		}
 		uint32_t AccountObserver::AsType() const
@@ -349,7 +445,7 @@ namespace Tangent
 		}
 		int64_t AccountObserver::AsFactor() const
 		{
-			return (int64_t)Status;
+			return Observing ? 1 : -1;
 		}
 		String AccountObserver::AsColumn() const
 		{
@@ -361,7 +457,7 @@ namespace Tangent
 		}
 		uint32_t AccountObserver::AsInstanceType()
 		{
-			static uint32_t Hash = Types::TypeOf(AsInstanceTypename());
+			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
 			return Hash;
 		}
 		std::string_view AccountObserver::AsInstanceTypename()
@@ -445,7 +541,7 @@ namespace Tangent
 		}
 		uint32_t AccountProgram::AsInstanceType()
 		{
-			static uint32_t Hash = Types::TypeOf(AsInstanceTypename());
+			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
 			return Hash;
 		}
 		std::string_view AccountProgram::AsInstanceTypename()
@@ -530,7 +626,7 @@ namespace Tangent
 		}
 		uint32_t AccountStorage::AsInstanceType()
 		{
-			static uint32_t Hash = Types::TypeOf(AsInstanceTypename());
+			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
 			return Hash;
 		}
 		std::string_view AccountStorage::AsInstanceTypename()
@@ -697,7 +793,7 @@ namespace Tangent
 		}
 		uint32_t AccountReward::AsInstanceType()
 		{
-			static uint32_t Hash = Types::TypeOf(AsInstanceTypename());
+			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
 			return Hash;
 		}
 		std::string_view AccountReward::AsInstanceTypename()
@@ -792,7 +888,7 @@ namespace Tangent
 		}
 		uint32_t AccountDerivation::AsInstanceType()
 		{
-			static uint32_t Hash = Types::TypeOf(AsInstanceTypename());
+			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
 			return Hash;
 		}
 		std::string_view AccountDerivation::AsInstanceTypename()
@@ -920,7 +1016,7 @@ namespace Tangent
 		}
 		uint32_t AccountBalance::AsInstanceType()
 		{
-			static uint32_t Hash = Types::TypeOf(AsInstanceTypename());
+			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
 			return Hash;
 		}
 		std::string_view AccountBalance::AsInstanceTypename()
@@ -942,35 +1038,24 @@ namespace Tangent
 			return std::move(Stream.Data);
 		}
 
-		AccountContribution::AccountContribution(const Algorithm::Pubkeyhash NewOwner, uint64_t NewBlockNumber, uint64_t NewBlockNonce) : Ledger::Multiform(NewBlockNumber, NewBlockNonce), Asset(0)
+		AccountDepository::AccountDepository(const Algorithm::Pubkeyhash NewOwner, uint64_t NewBlockNumber, uint64_t NewBlockNonce) : Ledger::Multiform(NewBlockNumber, NewBlockNonce), Asset(0)
 		{
 			if (NewOwner)
 				memcpy(Owner, NewOwner, sizeof(Owner));
 		}
-		AccountContribution::AccountContribution(const Algorithm::Pubkeyhash NewOwner, const Ledger::BlockHeader* NewBlockHeader) : Ledger::Multiform(NewBlockHeader), Asset(0)
+		AccountDepository::AccountDepository(const Algorithm::Pubkeyhash NewOwner, const Ledger::BlockHeader* NewBlockHeader) : Ledger::Multiform(NewBlockHeader), Asset(0)
 		{
 			if (NewOwner)
 				memcpy(Owner, NewOwner, sizeof(Owner));
 		}
-		ExpectsLR<void> AccountContribution::Transition(const Ledger::TransactionContext* Context, const Ledger::State* PrevState)
+		ExpectsLR<void> AccountDepository::Transition(const Ledger::TransactionContext* Context, const Ledger::State* PrevState)
 		{
 			if (IsOwnerNull())
 				return LayerException("invalid state owner");
 
-			auto* Prev = (AccountContribution*)PrevState;
+			auto* Prev = (AccountDepository*)PrevState;
 			if (!Prev && !Algorithm::Asset::IsValid(Asset))
 				return LayerException("invalid asset");
-
-			for (auto It = Reservations.cbegin(); It != Reservations.cend();)
-			{
-				if (It->second.IsNaN() || It->second.IsNegative())
-					return LayerException("invalid reservation");
-
-				if (It->second.IsZero())
-					Reservations.erase(It++);
-				else
-					++It;
-			}
 
 			for (auto It = Contributions.cbegin(); It != Contributions.cend();)
 			{
@@ -983,50 +1068,56 @@ namespace Tangent
 					++It;
 			}
 
+			for (auto It = Reservations.cbegin(); It != Reservations.cend();)
+			{
+				if (It->second.IsNaN() || It->second.IsNegative())
+					return LayerException("invalid reservation");
+
+				if (It->second.IsZero())
+					Reservations.erase(It++);
+				else
+					++It;
+			}
+
+			for (auto& Item : Transactions)
+			{
+				if (!Item)
+					return LayerException("invalid transaction hash");
+			}
+
 			if (Custody.IsNegative())
 				return LayerException("invalid custody value");
 
-			if (Prev != nullptr && !Prev->Honest)
-				return LayerException("account is not honest participant");
-
-			if (!Threshold)
-				Threshold = (Prev ? Prev->Threshold : Option<double>(Optional::None));
-
-			if (Threshold && *Threshold < 0.0)
-				Threshold = Optional::None;
-			
 			return Expectation::Met;
 		}
-		bool AccountContribution::StorePayload(Format::Stream* Stream) const
+		bool AccountDepository::StorePayload(Format::Stream* Stream) const
 		{
 			VI_ASSERT(Stream != nullptr, "stream should be set");
 			Algorithm::Pubkeyhash Null = { 0 };
 			Stream->WriteString(std::string_view((char*)Owner, memcmp(Owner, Null, sizeof(Null)) == 0 ? 0 : sizeof(Owner)));
-			Stream->WriteBoolean(Honest);
 			Stream->WriteInteger(Asset);
 			Stream->WriteDecimal(Custody);
-			Stream->WriteDecimal(Threshold ? Decimal(*Threshold) : Decimal::NaN());
-			Stream->WriteInteger((uint32_t)Reservations.size());
-			for (auto& Item : Reservations)
-			{
-				Stream->WriteString(Item.first);
-				Stream->WriteDecimal(Item.second);
-			}
 			Stream->WriteInteger((uint32_t)Contributions.size());
 			for (auto& Item : Contributions)
 			{
 				Stream->WriteString(Item.first);
 				Stream->WriteDecimal(Item.second);
 			}
+			Stream->WriteInteger((uint32_t)Reservations.size());
+			for (auto& Item : Reservations)
+			{
+				Stream->WriteString(Item.first);
+				Stream->WriteDecimal(Item.second);
+			}
+			Stream->WriteInteger((uint32_t)Transactions.size());
+			for (auto& Item : Transactions)
+				Stream->WriteInteger(Item);
 			return true;
 		}
-		bool AccountContribution::LoadPayload(Format::Stream& Stream)
+		bool AccountDepository::LoadPayload(Format::Stream& Stream)
 		{
 			String OwnerAssembly;
 			if (!Stream.ReadString(Stream.ReadType(), &OwnerAssembly) || !Algorithm::Encoding::DecodeUintBlob(OwnerAssembly, Owner, sizeof(Owner)))
-				return false;
-
-			if (!Stream.ReadBoolean(Stream.ReadType(), &Honest))
 				return false;
 
 			if (!Stream.ReadInteger(Stream.ReadType(), &Asset))
@@ -1034,31 +1125,6 @@ namespace Tangent
 
 			if (!Stream.ReadDecimal(Stream.ReadType(), &Custody))
 				return false;
-
-			Decimal ThresholdValue;
-			if (!Stream.ReadDecimal(Stream.ReadType(), &ThresholdValue))
-				return false;
-
-			if (!ThresholdValue.IsNaN())
-				Threshold = ThresholdValue.ToDouble();
-			else
-				Threshold = Optional::None;
-
-			uint32_t ReservationsSize;
-			if (!Stream.ReadInteger(Stream.ReadType(), &ReservationsSize))
-				return false;
-
-			Reservations.clear();
-			for (uint32_t i = 0; i < ReservationsSize; i++)
-			{
-				String Owner;
-				if (!Stream.ReadString(Stream.ReadType(), &Owner))
-					return false;
-
-				auto& Reservation = Reservations[Owner];
-				if (!Stream.ReadDecimal(Stream.ReadType(), &Reservation))
-					return false;
-			}
 
 			uint32_t ContributionsSize;
 			if (!Stream.ReadInteger(Stream.ReadType(), &ContributionsSize))
@@ -1076,66 +1142,111 @@ namespace Tangent
 					return false;
 			}
 
+			uint32_t ReservationsSize;
+			if (!Stream.ReadInteger(Stream.ReadType(), &ReservationsSize))
+				return false;
+
+			Reservations.clear();
+			for (uint32_t i = 0; i < ReservationsSize; i++)
+			{
+				String Owner;
+				if (!Stream.ReadString(Stream.ReadType(), &Owner))
+					return false;
+
+				auto& Reservation = Reservations[Owner];
+				if (!Stream.ReadDecimal(Stream.ReadType(), &Reservation))
+					return false;
+			}
+
+			uint32_t TransactionsSize;
+			if (!Stream.ReadInteger(Stream.ReadType(), &TransactionsSize))
+				return false;
+
+			Transactions.clear();
+			for (uint32_t i = 0; i < TransactionsSize; i++)
+			{
+				uint256_t TransactionHash;
+				if (!Stream.ReadInteger(Stream.ReadType(), &TransactionHash))
+					return false;
+
+				Transactions.insert(TransactionHash);
+			}
+
 			return true;
 		}
-		bool AccountContribution::IsOwnerNull() const
+		bool AccountDepository::IsOwnerNull() const
 		{
 			Algorithm::Pubkeyhash Null = { 0 };
 			return !memcmp(Owner, Null, sizeof(Null));
 		}
-		Decimal AccountContribution::GetReservation() const
+		Decimal AccountDepository::GetReservation() const
 		{
 			Decimal Value = Decimal::Zero();
 			for (auto& Item : Reservations)
 				Value += Item.second;
 			return Value;
 		}
-		Decimal AccountContribution::GetContribution(const std::string_view& Address) const
+		Decimal AccountDepository::GetContribution(const std::string_view& Address) const
 		{
 			auto Contribution = Contributions.find(String(Address));
 			return Contribution != Contributions.end() ? Contribution->second : Decimal::Zero();
 		}
-		Decimal AccountContribution::GetContribution(const OrderedSet<String>& Addresses) const
+		Decimal AccountDepository::GetContribution(const OrderedSet<String>& Addresses) const
 		{
 			Decimal Value = Decimal::Zero();
 			for (auto& Address : Addresses)
 				Value += GetContribution(Address);
 			return Value;
 		}
-		Decimal AccountContribution::GetContribution() const
+		Decimal AccountDepository::GetContribution() const
 		{
 			Decimal Value = Decimal::Zero();
 			for (auto& Item : Contributions)
 				Value += Item.second;
 			return Value;
 		}
-		Decimal AccountContribution::GetCoverage() const
+		Decimal AccountDepository::GetCoverage(uint8_t Flags) const
 		{
 			if (!Custody.IsPositive())
 				return Decimal::Zero();
 
-			auto Target = Decimal(Threshold ? *Threshold : Protocol::Now().Policy.AccountContributionRequired).Truncate(Protocol::Now().Message.Precision);
 			auto Contribution = GetContribution();
-			Contribution -= Custody * Target;
+			if (!(Flags & (uint8_t)AccountFlags::Founder))
+				Contribution -= Custody * Decimal(Protocol::Now().Policy.AccountContributionRequired).Truncate(Protocol::Now().Message.Precision);
 			if (Contribution.IsNaN())
 				Contribution = Decimal::Zero();
+			if (Flags & (uint8_t)AccountFlags::Outlaw)
+			{
+				if (Contribution.IsPositive())
+					Contribution = -Contribution;
+				else if (Contribution.IsZero())
+					Contribution = Decimal(-1);
+			}
 
 			return Contribution;
 		}
-		UPtr<Schema> AccountContribution::AsSchema() const
+		UPtr<Schema> AccountDepository::AsSchema() const
 		{
 			auto Reservation = GetReservation();
 			auto Contribution = GetContribution();
-			auto Coverage = GetCoverage();
+			auto Coverage = GetCoverage(0);
 			Schema* Data = Ledger::Multiform::AsSchema().Reset();
 			Data->Set("owner", Algorithm::Signing::SerializeAddress(Owner));
 			Data->Set("asset", Algorithm::Asset::Serialize(Asset));
-			Data->Set("threshold", Threshold ? Var::Number(*Threshold) : Var::Decimal(Protocol::Now().Policy.AccountContributionRequired));
 			Data->Set("custody", Custody.IsNaN() ? Var::Null() : Var::Decimal(Custody));
-			Data->Set("reservation", Reservation.IsNaN() ? Var::Null() : Var::Decimal(Reservation));
 			Data->Set("contribution", Contribution.IsNaN() ? Var::Null() : Var::Decimal(Contribution));
+			Data->Set("reservation", Reservation.IsNaN() ? Var::Null() : Var::Decimal(Reservation));
 			Data->Set("coverage", Coverage.IsNaN() ? Var::Null() : Var::Decimal(Coverage));
-			Data->Set("honest", Var::Boolean(Honest));
+			if (!Contributions.empty())
+			{
+				auto* ContributionsData = Data->Set("contributions", Var::Set::Array());
+				for (auto& Item : Contributions)
+				{
+					auto* ContributionData = ContributionsData->Push(Var::Set::Object());
+					ContributionData->Set("address", Var::String(Item.first));
+					ContributionData->Set("value", Var::Decimal(Item.second));
+				}
+			}
 			if (!Reservations.empty())
 			{
 				auto* ReservationsData = Data->Set("reservations", Var::Set::Array());
@@ -1150,56 +1261,52 @@ namespace Tangent
 					ReservationData->Set("value", Var::Decimal(Item.second));
 				}
 			}
-			if (!Contributions.empty())
+			if (!Transactions.empty())
 			{
-				auto* ContributionsData = Data->Set("contributions", Var::Set::Array());
-				for (auto& Item : Contributions)
-				{
-					auto* ContributionData = ContributionsData->Push(Var::Set::Object());
-					ContributionData->Set("address", Var::String(Item.first));
-					ContributionData->Set("value", Var::Decimal(Item.second));
-				}
+				auto* TransactionsData = Data->Set("transactions", Var::Set::Array());
+				for (auto& Item : Transactions)
+					TransactionsData->Push(Algorithm::Encoding::SerializeUint256(Item));
 			}
 			return Data;
 		}
-		uint32_t AccountContribution::AsType() const
+		uint32_t AccountDepository::AsType() const
 		{
 			return AsInstanceType();
 		}
-		std::string_view AccountContribution::AsTypename() const
+		std::string_view AccountDepository::AsTypename() const
 		{
 			return AsInstanceTypename();
 		}
-		int64_t AccountContribution::AsFactor() const
+		int64_t AccountDepository::AsFactor() const
 		{
-			Decimal Coverage = GetCoverage() * Protocol::Now().Policy.WeightMultiplier;
+			Decimal Coverage = GetCoverage(0) * Protocol::Now().Policy.WeightMultiplier;
 			return Coverage.ToInt64();
 		}
-		String AccountContribution::AsColumn() const
+		String AccountDepository::AsColumn() const
 		{
 			return AsInstanceColumn(Owner);
 		}
-		String AccountContribution::AsRow() const
+		String AccountDepository::AsRow() const
 		{
 			return AsInstanceRow(Asset);
 		}
-		uint32_t AccountContribution::AsInstanceType()
+		uint32_t AccountDepository::AsInstanceType()
 		{
-			static uint32_t Hash = Types::TypeOf(AsInstanceTypename());
+			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
 			return Hash;
 		}
-		std::string_view AccountContribution::AsInstanceTypename()
+		std::string_view AccountDepository::AsInstanceTypename()
 		{
-			return "account_contribution";
+			return "account_depository";
 		}
-		String AccountContribution::AsInstanceColumn(const Algorithm::Pubkeyhash Owner)
+		String AccountDepository::AsInstanceColumn(const Algorithm::Pubkeyhash Owner)
 		{
 			Format::Stream Stream;
 			Stream.WriteTypeless(AsInstanceType());
 			Stream.WriteTypeless((char*)Owner, (uint8_t)sizeof(Algorithm::Pubkeyhash));
 			return std::move(Stream.Data);
 		}
-		String AccountContribution::AsInstanceRow(const Algorithm::AssetId& Asset)
+		String AccountDepository::AsInstanceRow(const Algorithm::AssetId& Asset)
 		{
 			Format::Stream Stream;
 			Stream.WriteTypeless(AsInstanceType());
@@ -1223,7 +1330,7 @@ namespace Tangent
 
 			auto Code = AsCode();
 			if (!Code)
-				return LayerException("program storage not valid: " + Code.Error().Info);
+				return LayerException("program storage not valid: " + Code.Error().message());
 
 			Hashcode = Ledger::ScriptHost::Get()->Hashcode(*Code);
 			return Expectation::Met;
@@ -1270,7 +1377,7 @@ namespace Tangent
 		}
 		uint32_t WitnessProgram::AsInstanceType()
 		{
-			static uint32_t Hash = Types::TypeOf(AsInstanceTypename());
+			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
 			return Hash;
 		}
 		std::string_view WitnessProgram::AsInstanceTypename()
@@ -1343,7 +1450,7 @@ namespace Tangent
 		}
 		uint32_t WitnessEvent::AsInstanceType()
 		{
-			static uint32_t Hash = Types::TypeOf(AsInstanceTypename());
+			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
 			return Hash;
 		}
 		std::string_view WitnessEvent::AsInstanceTypename()
@@ -1394,7 +1501,7 @@ namespace Tangent
 			Algorithm::Pubkeyhash Null = { 0 };
 			Stream->WriteString(std::string_view((char*)Owner, memcmp(Owner, Null, sizeof(Null)) == 0 ? 0 : sizeof(Owner)));
 			Stream->WriteString(std::string_view((char*)Proposer, memcmp(Proposer, Null, sizeof(Null)) == 0 ? 0 : sizeof(Proposer)));
-			Stream->WriteInteger(Purpose);
+			Stream->WriteInteger((uint8_t)Purpose);
 			Stream->WriteInteger(Asset);
 			Stream->WriteInteger(AddressIndex);
 			Stream->WriteInteger((uint8_t)Addresses.size());
@@ -1415,7 +1522,7 @@ namespace Tangent
 			if (!Stream.ReadString(Stream.ReadType(), &ProposerAssembly) || !Algorithm::Encoding::DecodeUintBlob(ProposerAssembly, Proposer, sizeof(Proposer)))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &Purpose))
+			if (!Stream.ReadInteger(Stream.ReadType(), (uint8_t*)&Purpose))
 				return false;
 
 			if (!Stream.ReadInteger(Stream.ReadType(), &Asset))
@@ -1456,21 +1563,21 @@ namespace Tangent
 		}
 		bool WitnessAddress::IsWitnessAddress() const
 		{
-			return Purpose == (uint8_t)Class::Witness && memcmp(Proposer, Owner, sizeof(Owner)) == 0;
+			return Purpose == AddressType::Witness && memcmp(Proposer, Owner, sizeof(Owner)) == 0;
 		}
 		bool WitnessAddress::IsRouterAddress() const
 		{
 			Algorithm::Pubkeyhash Null = { 0 };
-			return Purpose == (uint8_t)Class::Router && memcmp(Proposer, Null, sizeof(Null)) == 0;
+			return Purpose == AddressType::Router && memcmp(Proposer, Null, sizeof(Null)) == 0;
 		}
 		bool WitnessAddress::IsCustodianAddress() const
 		{
 			Algorithm::Pubkeyhash Null = { 0 };
-			return Purpose == (uint8_t)Class::Custodian && memcmp(Proposer, Null, sizeof(Null)) != 0;
+			return Purpose == AddressType::Custodian && memcmp(Proposer, Null, sizeof(Null)) != 0;
 		}
 		bool WitnessAddress::IsContributionAddress() const
 		{
-			return Purpose == (uint8_t)Class::Contribution && memcmp(Proposer, Owner, sizeof(Owner)) == 0;
+			return Purpose == AddressType::Contribution && memcmp(Proposer, Owner, sizeof(Owner)) == 0;
 		}
 		bool WitnessAddress::IsOwnerNull() const
 		{
@@ -1487,18 +1594,18 @@ namespace Tangent
 			for (auto& Address : Addresses)
 				AddressesData->Push(Var::String(Address.second));
 			Data->Set("address_index", Algorithm::Encoding::SerializeUint256(AddressIndex));
-			switch ((Class)Purpose)
+			switch (Purpose)
 			{
-				case Class::Witness:
+				case AddressType::Witness:
 					Data->Set("purpose", Var::String("witness"));
 					break;
-				case Class::Router:
+				case AddressType::Router:
 					Data->Set("purpose", Var::String("router"));
 					break;
-				case Class::Custodian:
+				case AddressType::Custodian:
 					Data->Set("purpose", Var::String("custodian"));
 					break;
-				case Class::Contribution:
+				case AddressType::Contribution:
 					Data->Set("purpose", Var::String("contribution"));
 					break;
 				default:
@@ -1517,7 +1624,7 @@ namespace Tangent
 		}
 		int64_t WitnessAddress::AsFactor() const
 		{
-			return Purpose;
+			return (int64_t)Purpose;
 		}
 		String WitnessAddress::AsColumn() const
 		{
@@ -1525,12 +1632,16 @@ namespace Tangent
 		}
 		String WitnessAddress::AsRow() const
 		{
-			auto* Chain = Observer::Datamaster::GetChainparams(Asset);
-			return AsInstanceRow(Asset, Addresses.empty() ? std::string_view() : Addresses.begin()->second, Chain && Chain->Routing == Observer::RoutingPolicy::Memo ? AddressIndex : Protocol::Now().Account.RootAddressIndex);
+#ifdef TAN_VALIDATOR
+			auto* Chain = NSS::ServerNode::Get()->GetChainparams(Asset);
+			return AsInstanceRow(Asset, Addresses.empty() ? std::string_view() : Addresses.begin()->second, Chain && Chain->Routing == Mediator::RoutingPolicy::Memo ? AddressIndex : Protocol::Now().Account.RootAddressIndex);
+#else
+			return AsInstanceRow(Asset, Addresses.empty() ? std::string_view() : Addresses.begin()->second, AddressIndex);
+#endif
 		}
 		uint32_t WitnessAddress::AsInstanceType()
 		{
-			static uint32_t Hash = Types::TypeOf(AsInstanceTypename());
+			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
 			return Hash;
 		}
 		std::string_view WitnessAddress::AsInstanceTypename()
@@ -1546,7 +1657,11 @@ namespace Tangent
 		}
 		String WitnessAddress::AsInstanceRow(const Algorithm::AssetId& Asset, const std::string_view& Address, uint64_t MaxAddressIndex)
 		{
-			auto Location = Observer::Datamaster::NewPublicKeyHash(Asset, Address).Or(String(Address));
+#ifdef TAN_VALIDATOR
+			auto Location = NSS::ServerNode::Get()->NewPublicKeyHash(Asset, Address).Or(String(Address));
+#else
+			auto& Location = Address;
+#endif
 			Format::Stream Stream;
 			Stream.WriteTypeless(AsInstanceType());
 			Stream.WriteTypeless(Location.data(), (uint8_t)Location.size());
@@ -1610,7 +1725,7 @@ namespace Tangent
 		}
 		uint32_t WitnessTransaction::AsInstanceType()
 		{
-			static uint32_t Hash = Types::TypeOf(AsInstanceTypename());
+			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
 			return Hash;
 		}
 		std::string_view WitnessTransaction::AsInstanceTypename()
@@ -1631,6 +1746,8 @@ namespace Tangent
 		{
 			if (Hash == AccountSequence::AsInstanceType())
 				return Memory::New<AccountSequence>(nullptr, nullptr);
+			else if (Hash == AccountSealing::AsInstanceType())
+				return Memory::New<AccountSealing>(nullptr, nullptr);
 			else if (Hash == AccountWork::AsInstanceType())
 				return Memory::New<AccountWork>(nullptr, nullptr);
 			else if (Hash == AccountObserver::AsInstanceType())
@@ -1645,8 +1762,8 @@ namespace Tangent
 				return Memory::New<AccountDerivation>(nullptr, nullptr);
 			else if (Hash == AccountBalance::AsInstanceType())
 				return Memory::New<AccountBalance>(nullptr, nullptr);
-			else if (Hash == AccountContribution::AsInstanceType())
-				return Memory::New<AccountContribution>(nullptr, nullptr);
+			else if (Hash == AccountDepository::AsInstanceType())
+				return Memory::New<AccountDepository>(nullptr, nullptr);
 			else if (Hash == WitnessProgram::AsInstanceType())
 				return Memory::New<WitnessProgram>(nullptr);
 			else if (Hash == WitnessEvent::AsInstanceType())
@@ -1662,6 +1779,8 @@ namespace Tangent
 			uint32_t Hash = Base->AsType();
 			if (Hash == AccountSequence::AsInstanceType())
 				return Memory::New<AccountSequence>(*(const AccountSequence*)Base);
+			else if (Hash == AccountSealing::AsInstanceType())
+				return Memory::New<AccountSealing>(*(const AccountSealing*)Base);
 			else if (Hash == AccountWork::AsInstanceType())
 				return Memory::New<AccountWork>(*(const AccountWork*)Base);
 			else if (Hash == AccountObserver::AsInstanceType())
@@ -1676,8 +1795,8 @@ namespace Tangent
 				return Memory::New<AccountDerivation>(*(const AccountDerivation*)Base);
 			else if (Hash == AccountBalance::AsInstanceType())
 				return Memory::New<AccountBalance>(*(const AccountBalance*)Base);
-			else if (Hash == AccountContribution::AsInstanceType())
-				return Memory::New<AccountContribution>(*(const AccountContribution*)Base);
+			else if (Hash == AccountDepository::AsInstanceType())
+				return Memory::New<AccountDepository>(*(const AccountDepository*)Base);
 			else if (Hash == WitnessProgram::AsInstanceType())
 				return Memory::New<WitnessProgram>(*(const WitnessProgram*)Base);
 			else if (Hash == WitnessEvent::AsInstanceType())
@@ -1699,7 +1818,7 @@ namespace Tangent
 			Hashes.insert(AccountReward::AsInstanceType());
 			Hashes.insert(AccountDerivation::AsInstanceType());
 			Hashes.insert(AccountBalance::AsInstanceType());
-			Hashes.insert(AccountContribution::AsInstanceType());
+			Hashes.insert(AccountDepository::AsInstanceType());
 			Hashes.insert(WitnessProgram::AsInstanceType());
 			Hashes.insert(WitnessEvent::AsInstanceType());
 			Hashes.insert(WitnessAddress::AsInstanceType());

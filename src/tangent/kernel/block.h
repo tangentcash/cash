@@ -86,6 +86,7 @@ namespace Tangent
 		struct BlockDispatch
 		{
 			OrderedMap<uint256_t, String> Errors;
+			Vector<uint256_t> Repeaters;
 			Vector<uint256_t> Inputs;
 			Vector<UPtr<Transaction>> Outputs;
 
@@ -110,13 +111,13 @@ namespace Tangent
 
 		struct BlockHeader : Messages::Authentic
 		{
-			Provability::WesolowskiVDF::Digest Wesolowski;
-			Provability::WesolowskiVDF::Parameters Target;
+			Algorithm::WVDF::Digest Wesolowski;
+			Algorithm::WVDF::Parameters Target;
 			OrderedMap<Algorithm::AssetId, uint64_t> Witnesses;
 			uint256_t ParentHash = 0;
-			uint256_t TransactionsRoot = 0;
-			uint256_t ReceiptsRoot = 0;
-			uint256_t StatesRoot = 0;
+			uint256_t TransactionRoot = 0;
+			uint256_t ReceiptRoot = 0;
+			uint256_t StateRoot = 0;
 			uint256_t GasUse = 0;
 			uint256_t GasLimit = 0;
 			uint256_t AbsoluteWork = 0;
@@ -127,9 +128,9 @@ namespace Tangent
 			uint64_t Time = 0;
 			uint64_t Priority = 0;
 			uint64_t Number = 0;
-			uint64_t MutationsCount = 0;
-			uint32_t TransactionsCount = 0;
-			uint32_t StatesCount = 0;
+			uint64_t MutationCount = 0;
+			uint32_t TransactionCount = 0;
+			uint32_t StateCount = 0;
 
 			virtual ~BlockHeader() = default;
 			virtual bool operator<(const BlockHeader& Other) const;
@@ -204,29 +205,29 @@ namespace Tangent
 		{
 			struct InternalState
 			{
-				Provability::MerkleTree TransactionsTree;
-				Provability::MerkleTree ReceiptsTree;
-				Provability::MerkleTree StatesTree;
+				Algorithm::MerkleTree TransactionsTree;
+				Algorithm::MerkleTree ReceiptsTree;
+				Algorithm::MerkleTree StatesTree;
 			} Internal;
 			Vector<uint256_t> Transactions;
 			Vector<uint256_t> Receipts;
 			Vector<uint256_t> States;
-			uint256_t TransactionsRoot = 0;
-			uint256_t ReceiptsRoot = 0;
-			uint256_t StatesRoot = 0;
+			uint256_t TransactionRoot = 0;
+			uint256_t ReceiptRoot = 0;
+			uint256_t StateRoot = 0;
 
 			BlockProof(const BlockHeader& FromBlock, const BlockHeader* FromParentBlock);
-			Option<Provability::MerkleTree::Path> FindTransaction(const uint256_t& Hash);
-			Option<Provability::MerkleTree::Path> FindReceipt(const uint256_t& Hash);
-			Option<Provability::MerkleTree::Path> FindState(const uint256_t& Hash);
+			Option<Algorithm::MerkleTree::Path> FindTransaction(const uint256_t& Hash);
+			Option<Algorithm::MerkleTree::Path> FindReceipt(const uint256_t& Hash);
+			Option<Algorithm::MerkleTree::Path> FindState(const uint256_t& Hash);
 			bool StorePayload(Format::Stream* Stream) const override;
 			bool LoadPayload(Format::Stream& Stream) override;
 			bool HasTransaction(const uint256_t& Hash);
 			bool HasReceipt(const uint256_t& Hash);
 			bool HasState(const uint256_t& Hash);
-			Provability::MerkleTree& GetTransactionsTree();
-			Provability::MerkleTree& GetReceiptsTree();
-			Provability::MerkleTree& GetStatesTree();
+			Algorithm::MerkleTree& GetTransactionsTree();
+			Algorithm::MerkleTree& GetReceiptsTree();
+			Algorithm::MerkleTree& GetStatesTree();
 			UPtr<Schema> AsSchema() const override;
 			uint32_t AsType() const override;
 			std::string_view AsTypename() const override;
@@ -236,6 +237,13 @@ namespace Tangent
 
 		struct TransactionContext
 		{
+		public:
+			enum class ExecutionFlags : uint8_t
+			{
+				OnlySuccessful = 1 << 0,
+				SkipSequencing = 1 << 1
+			};
+
 		public:
 			OrderedMap<Algorithm::AssetId, uint64_t> Witnesses;
 			const EvaluationContext* Environment;
@@ -262,19 +270,20 @@ namespace Tangent
 			ExpectsLR<void> BurnGas();
 			ExpectsLR<void> BurnGas(const uint256_t& Value);
 			ExpectsLR<void> VerifyAccountSequence() const;
-			ExpectsLR<void> VerifyAccountWork() const;
-			ExpectsLR<void> VerifyAccountWork(const Algorithm::Pubkeyhash Owner) const;
+			ExpectsLR<void> VerifyAccountWork(bool DepositoryRequirement) const;
+			ExpectsLR<void> VerifyAccountWork(const Algorithm::Pubkeyhash Owner, bool DepositoryRequirement) const;
 			ExpectsLR<void> VerifyGasTransferBalance() const;
 			ExpectsLR<void> VerifyTransferBalance(const Decimal& Value) const;
 			ExpectsLR<void> VerifyTransferBalance(const Algorithm::AssetId& Asset, const Decimal& Value) const;
-			ExpectsLR<Provability::WesolowskiVDF::Distribution> CalculateRandom(const uint256_t& Seed);
+			ExpectsLR<Algorithm::WVDF::Distribution> CalculateRandom(const uint256_t& Seed);
 			ExpectsLR<size_t> CalculateAggregationCommitteeSize(const Algorithm::AssetId& Asset);
-			ExpectsLR<Vector<States::AccountWork>> CalculateProposalCommittee(size_t Majors, size_t Minors, size_t* Proposers);
-			ExpectsLR<States::AccountWork> CalculateSharingWitness(const OrderedSet<String>& Owners, bool WorkRequired);
+			ExpectsLR<Vector<States::AccountWork>> CalculateProposalCommittee(size_t TargetSize);
+			ExpectsLR<Vector<States::AccountWork>> CalculateSharingCommittee(OrderedSet<String>& Hashset, size_t RequiredSize);
 			ExpectsLR<States::AccountSequence> ApplyAccountSequence();
 			ExpectsLR<States::AccountSequence> ApplyAccountSequence(const Algorithm::Pubkeyhash Owner, uint64_t Sequence);
-			ExpectsLR<States::AccountWork> ApplyAccountWork(const Algorithm::Pubkeyhash Owner, WorkStatus Status, uint64_t Penalty, const uint256_t& GasInput, const uint256_t& GasOutput);
-			ExpectsLR<States::AccountObserver> ApplyAccountObserver(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner, WorkStatus Status);
+			ExpectsLR<States::AccountSealing> ApplyAccountSealing(const Algorithm::Pubkeyhash Owner, const Algorithm::Pubkey SealingKey);
+			ExpectsLR<States::AccountWork> ApplyAccountWork(const Algorithm::Pubkeyhash Owner, States::AccountFlags Flags, uint64_t Penalty, const uint256_t& GasInput, const uint256_t& GasOutput);
+			ExpectsLR<States::AccountObserver> ApplyAccountObserver(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner, bool Observing);
 			ExpectsLR<States::AccountProgram> ApplyAccountProgram(const std::string_view& ProgramHashcode);
 			ExpectsLR<States::AccountProgram> ApplyAccountProgram(const Algorithm::Pubkeyhash Owner, const std::string_view& ProgramHashcode);
 			ExpectsLR<States::AccountStorage> ApplyAccountStorage(const std::string_view& Location, const std::string_view& Storage);
@@ -283,13 +292,17 @@ namespace Tangent
 			ExpectsLR<States::AccountReward> ApplyAccountReward(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner, const Decimal& IncomingAbsoluteFee, const Decimal& IncomingRelativeFee, const Decimal& OutgoingAbsoluteFee, const Decimal& OutgoingRelativeFee);
 			ExpectsLR<States::AccountDerivation> ApplyAccountDerivation(const Algorithm::Pubkeyhash Owner, uint64_t MaxAddressIndex);
 			ExpectsLR<States::AccountDerivation> ApplyAccountDerivation(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner, uint64_t MaxAddressIndex);
-			ExpectsLR<States::AccountContribution> ApplyAccountContribution(const Algorithm::Pubkeyhash Owner, const Decimal& Custody, ContributionMap&& Contributions, ReservationMap&& Reservations, Option<double>&& Threshold = Optional::None);
-			ExpectsLR<States::AccountContribution> ApplyAccountContribution(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner, const Decimal& Custody, ContributionMap&& Contributions, ReservationMap&& Reservations, Option<double>&& Threshold = Optional::None);
+			ExpectsLR<States::AccountDepository> ApplyAccountDepositoryCustody(const Algorithm::Pubkeyhash Owner, const Decimal& Custody);
+			ExpectsLR<States::AccountDepository> ApplyAccountDepositoryCustody(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner, const Decimal& Custody);
+			ExpectsLR<States::AccountDepository> ApplyAccountDepositoryChange(const Algorithm::Pubkeyhash Owner, const Decimal& Custody, AddressValueMap&& Contributions, AccountValueMap&& Reservations);
+			ExpectsLR<States::AccountDepository> ApplyAccountDepositoryChange(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner, const Decimal& Custody, AddressValueMap&& Contributions, AccountValueMap&& Reservations);
+			ExpectsLR<States::AccountDepository> ApplyAccountDepositoryTransaction(const Algorithm::Pubkeyhash Owner, const uint256_t& TransactionHash, int8_t Direction);
+			ExpectsLR<States::AccountDepository> ApplyAccountDepositoryTransaction(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner, const uint256_t& TransactionHash, int8_t Direction);
 			ExpectsLR<States::WitnessProgram> ApplyWitnessProgram(const std::string_view& PackedProgramCode);
 			ExpectsLR<States::WitnessEvent> ApplyWitnessEvent(const uint256_t& ParentTransactionHash);
 			ExpectsLR<States::WitnessEvent> ApplyWitnessEvent(const uint256_t& ParentTransactionHash, const uint256_t& ChildTransactionHash);
-			ExpectsLR<States::WitnessAddress> ApplyWitnessAddress(const Algorithm::Pubkeyhash Owner, const Algorithm::Pubkeyhash Proposer, const AddressMap& Addresses, uint64_t AddressIndex, States::WitnessAddress::Class Purpose);
-			ExpectsLR<States::WitnessAddress> ApplyWitnessAddress(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner, const Algorithm::Pubkeyhash Proposer, const AddressMap& Addresses, uint64_t AddressIndex, States::WitnessAddress::Class Purpose);
+			ExpectsLR<States::WitnessAddress> ApplyWitnessAddress(const Algorithm::Pubkeyhash Owner, const Algorithm::Pubkeyhash Proposer, const AddressMap& Addresses, uint64_t AddressIndex, States::AddressType Purpose);
+			ExpectsLR<States::WitnessAddress> ApplyWitnessAddress(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner, const Algorithm::Pubkeyhash Proposer, const AddressMap& Addresses, uint64_t AddressIndex, States::AddressType Purpose);
 			ExpectsLR<States::WitnessTransaction> ApplyWitnessTransaction(const std::string_view& TransactionId);
 			ExpectsLR<States::WitnessTransaction> ApplyWitnessTransaction(const Algorithm::AssetId& Asset, const std::string_view& TransactionId);
 			ExpectsLR<States::AccountBalance> ApplyTransfer(const Algorithm::Pubkeyhash Owner, const Decimal& Supply, const Decimal& Reserve);
@@ -300,6 +313,7 @@ namespace Tangent
 			ExpectsLR<States::AccountBalance> ApplyFunding(const Decimal& Value);
 			ExpectsLR<States::AccountBalance> ApplyFunding(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash From, const Algorithm::Pubkeyhash To, const Decimal& Value);
 			ExpectsLR<States::AccountSequence> GetAccountSequence(const Algorithm::Pubkeyhash Owner) const;
+			ExpectsLR<States::AccountSealing> GetAccountSealing(const Algorithm::Pubkeyhash Owner) const;
 			ExpectsLR<States::AccountWork> GetAccountWork(const Algorithm::Pubkeyhash Owner) const;
 			ExpectsLR<States::AccountObserver> GetAccountObserver(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner) const;
 			ExpectsLR<Vector<States::AccountObserver>> GetAccountObservers(const Algorithm::Pubkeyhash Owner, size_t Offset, size_t Count) const;
@@ -311,12 +325,12 @@ namespace Tangent
 			ExpectsLR<States::AccountDerivation> GetAccountDerivation(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner) const;
 			ExpectsLR<States::AccountBalance> GetAccountBalance(const Algorithm::Pubkeyhash Owner) const;
 			ExpectsLR<States::AccountBalance> GetAccountBalance(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner) const;
-			ExpectsLR<States::AccountContribution> GetAccountContribution(const Algorithm::Pubkeyhash Owner) const;
-			ExpectsLR<States::AccountContribution> GetAccountContribution(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner) const;
+			ExpectsLR<States::AccountDepository> GetAccountDepository(const Algorithm::Pubkeyhash Owner) const;
+			ExpectsLR<States::AccountDepository> GetAccountDepository(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner) const;
 			ExpectsLR<States::WitnessProgram> GetWitnessProgram(const std::string_view& ProgramHashcode) const;
 			ExpectsLR<States::WitnessEvent> GetWitnessEvent(const uint256_t& ParentTransactionHash) const;
 			ExpectsLR<Vector<States::WitnessAddress>> GetWitnessAddresses(const Algorithm::Pubkeyhash Owner, size_t Offset, size_t Count) const;
-			ExpectsLR<Vector<States::WitnessAddress>> GetWitnessAddressesByPurpose(const Algorithm::Pubkeyhash Owner, States::WitnessAddress::Class Purpose, size_t Offset, size_t Count) const;
+			ExpectsLR<Vector<States::WitnessAddress>> GetWitnessAddressesByPurpose(const Algorithm::Pubkeyhash Owner, States::AddressType Purpose, size_t Offset, size_t Count) const;
 			ExpectsLR<States::WitnessAddress> GetWitnessAddress(const Algorithm::Pubkeyhash Owner, const std::string_view& Address, uint64_t AddressIndex) const;
 			ExpectsLR<States::WitnessAddress> GetWitnessAddress(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner, const std::string_view& Address, uint64_t AddressIndex) const;
 			ExpectsLR<States::WitnessAddress> GetWitnessAddress(const std::string_view& Address, uint64_t AddressIndex, size_t Offset) const;
@@ -343,7 +357,7 @@ namespace Tangent
 					return Transaction.Error();
 
 				if (Transaction->Transaction->AsType() != T::AsInstanceType())
-					return LayerException("block transaction not valid");
+					return LayerException("block transaction is not " + String(T::AsInstanceTypename()) + " transaction");
 
 				return Transaction;
 			}
@@ -352,9 +366,9 @@ namespace Tangent
 			static ExpectsLR<void> PrevalidateTx(const Ledger::Transaction* NewTransaction, const uint256_t& NewTransactionHash, Algorithm::Pubkeyhash Owner);
 			static ExpectsLR<TransactionContext> ValidateTx(Ledger::Block* NewBlock, const Ledger::EvaluationContext* NewEnvironment, const Ledger::Transaction* NewTransaction, const uint256_t& NewTransactionHash, BlockWork& Cache);
 			static ExpectsLR<TransactionContext> ValidateTx(Ledger::Block* NewBlock, const Ledger::EvaluationContext* NewEnvironment, const Ledger::Transaction* NewTransaction, const uint256_t& NewTransactionHash, const Algorithm::Pubkeyhash Owner, BlockWork& Cache);
-			static ExpectsLR<void> ExecuteTx(TransactionContext& Context, size_t TransactionSize, bool OnlySuccessful = false);
+			static ExpectsLR<void> ExecuteTx(TransactionContext& Context, size_t TransactionSize, uint8_t Flags);
 			static ExpectsLR<uint256_t> CalculateTxGas(const Ledger::Transaction* Transaction);
-			static ExpectsPromiseLR<void> DispatchTx(const Wallet& Proposer, Ledger::BlockTransaction* Transaction, Vector<UPtr<Ledger::Transaction>>* Pipeline);
+			static ExpectsPromiseRT<void> DispatchTx(const Wallet& Proposer, Ledger::BlockTransaction* Transaction, Vector<UPtr<Ledger::Transaction>>* Pipeline);
 		};
 
 		struct EvaluationContext

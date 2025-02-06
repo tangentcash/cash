@@ -1,6 +1,6 @@
 #include "transaction.h"
 #include "block.h"
-#include "../policy/typenames.h"
+#include "mediator.h"
 
 namespace Tangent
 {
@@ -24,9 +24,6 @@ namespace Tangent
 			if (GasPrice.IsNaN() || GasPrice.IsNegative())
 				return LayerException("invalid gas price");
 
-			if (GasPrice.IsZero() && Conservative)
-				return LayerException("invalid gas price");
-
 			if (IsSignatureNull())
 				return LayerException("invalid signature");
 
@@ -40,9 +37,9 @@ namespace Tangent
 
 			return Context->VerifyTransferBalance(Decimal::Zero());
 		}
-		ExpectsPromiseLR<void> Transaction::Dispatch(const Wallet& Proposer, const TransactionContext* Context, Vector<UPtr<Transaction>>* Pipeline) const
+		ExpectsPromiseRT<void> Transaction::Dispatch(const Wallet& Proposer, const TransactionContext* Context, Vector<UPtr<Transaction>>* Pipeline) const
 		{
-			return ExpectsPromiseLR<void>(Expectation::Met);
+			return ExpectsPromiseRT<void>(RemoteException("invalid operation"));
 		}
 		bool Transaction::StorePayload(Format::Stream* Stream) const
 		{
@@ -73,15 +70,11 @@ namespace Tangent
 
 			return LoadBody(Stream);
 		}
-		bool Transaction::StoreBody(Format::Stream* Stream) const
+		bool Transaction::RecoverMany(const Receipt& Receipt, OrderedSet<String>& Parties) const
 		{
 			return true;
 		}
-		bool Transaction::LoadBody(Format::Stream& Stream)
-		{
-			return true;
-		}
-		bool Transaction::RecoverAlt(const Receipt& Receipt, OrderedSet<uint256_t>& Aliases) const
+		bool Transaction::RecoverAliases(const Receipt& Receipt, OrderedSet<uint256_t>& Aliases) const
 		{
 			return true;
 		}
@@ -189,7 +182,7 @@ namespace Tangent
 			if (!SequenceRequirement)
 				return SequenceRequirement;
 
-			return Context->VerifyAccountWork();
+			return Context->VerifyAccountWork(false);
 		}
 		TransactionLevel ConsensusTransaction::GetType() const
 		{
@@ -198,8 +191,27 @@ namespace Tangent
 
 		ExpectsLR<void> AggregationTransaction::Prevalidate() const
 		{
+			if (!Algorithm::Asset::IsValid(Asset))
+				return LayerException("invalid asset");
+
+			if (Sequence != 0)
+				return LayerException("invalid sequence (neq: 0)");
+
 			if (Conservative)
-				return LayerException("cumulative transaction cannot be conservative");
+				return LayerException("transaction should not be conservative");
+
+			if (!GasLimit)
+				return LayerException("gas limit requirement not met (min: 1)");
+
+			uint256_t MaxGasLimit = Block::GetGasLimit();
+			if (GasLimit > MaxGasLimit)
+				return LayerException("gas limit requirement not met (max: " + MaxGasLimit.ToString() + ")");
+
+			if (GasPrice.IsNaN() || GasPrice.IsNegative())
+				return LayerException("invalid gas price");
+
+			if (!IsSignatureNull())
+				return LayerException("invalid signature");
 
 			if (!InputHash)
 				return LayerException("invalid input hash");
@@ -227,14 +239,10 @@ namespace Tangent
 				}
 			}
 
-			return Ledger::Transaction::Prevalidate();
+			return Expectation::Met;
 		}
 		ExpectsLR<void> AggregationTransaction::Validate(const TransactionContext* Context) const
 		{
-			auto SequenceRequirement = Context->VerifyAccountSequence();
-			if (!SequenceRequirement)
-				return SequenceRequirement;
-
 			size_t BranchIndex = 0;
 			for (auto& Branch : OutputHashes)
 			{
@@ -255,7 +263,7 @@ namespace Tangent
 				}
 			}
 
-			return Context->VerifyAccountWork();
+			return Context->VerifyAccountWork(false);
 		}
 		bool AggregationTransaction::StorePayload(Format::Stream* Stream) const
 		{
@@ -321,19 +329,13 @@ namespace Tangent
 		}
 		bool AggregationTransaction::Sign(const Algorithm::Seckey SecretKey)
 		{
-			Format::Stream Message;
-			Message.WriteInteger(InputHash);
-			if (!Transaction::StorePayload(&Message))
-				return false;
-
-			if (!Algorithm::Signing::SignTweaked(Message.Hash(), SecretKey, Signature))
-				return false;
-
+			Sequence = 0;
+			Conservative = false;
+			memset(Signature, 0, sizeof(Signature));
 			return Attestate(SecretKey);
 		}
 		bool AggregationTransaction::Sign(const Algorithm::Seckey SecretKey, uint64_t NewSequence)
 		{
-			Sequence = NewSequence;
 			return Sign(SecretKey);
 		}
 		bool AggregationTransaction::Sign(const Algorithm::Seckey SecretKey, uint64_t NewSequence, const Decimal& Price)
@@ -352,14 +354,6 @@ namespace Tangent
 		}
 		bool AggregationTransaction::Verify(const Algorithm::Pubkey PublicKey) const
 		{
-			Format::Stream Message;
-			Message.WriteInteger(InputHash);
-			if (!Transaction::StorePayload(&Message))
-				return false;
-
-			if (!Algorithm::Signing::VerifyTweaked(Message.Hash(), PublicKey, Signature))
-				return false;
-
 			for (auto& Branch : OutputHashes)
 			{
 				size_t SignatureIndex = 0;
@@ -372,7 +366,6 @@ namespace Tangent
 						return true;
 				}
 			}
-
 			return false;
 		}
 		bool AggregationTransaction::Verify(const Algorithm::Pubkey PublicKey, const uint256_t& OutputHash, size_t Index) const
@@ -399,14 +392,6 @@ namespace Tangent
 		}
 		bool AggregationTransaction::Recover(Algorithm::Pubkeyhash PublicKeyHash) const
 		{
-			Format::Stream Message;
-			Message.WriteInteger(InputHash);
-			if (!Transaction::StorePayload(&Message))
-				return false;
-
-			if (!Algorithm::Signing::RecoverTweakedHash(Message.Hash(), PublicKeyHash, Signature))
-				return false;
-
 			for (auto& Branch : OutputHashes)
 			{
 				size_t SignatureIndex = 0;
@@ -415,8 +400,7 @@ namespace Tangent
 					if (Candidate.size() != sizeof(Algorithm::Sighash))
 						return false;
 
-					Algorithm::Pubkeyhash Owner = { 0 };
-					if (Recover(Owner, Branch.first, SignatureIndex++) && !memcmp(Owner, PublicKeyHash, sizeof(Owner)))
+					if (Recover(PublicKeyHash, Branch.first, SignatureIndex++))
 						return true;
 				}
 			}
@@ -486,6 +470,11 @@ namespace Tangent
 			Asset = Other.Asset;
 			InputHash = Other.InputHash;
 			OutputHashes = std::move(Branches);
+			if (GasLimit < Other.GasLimit)
+				GasLimit = Other.GasLimit;
+			if (GasPrice < Other.GasPrice)
+				GasPrice = Other.GasPrice;
+
 			for (auto& Branch : OutputHashes)
 			{
 				Format::Stream CumulativeMessage;
@@ -501,6 +490,7 @@ namespace Tangent
 						Proposers.insert(String((char*)Proposer, sizeof(Proposer)));
 				}
 			}
+
 			for (auto& Branch : Other.OutputHashes)
 			{
 				Format::Stream CumulativeMessage;
@@ -554,9 +544,9 @@ namespace Tangent
 			{
 				Format::Stream Message;
 				auto Blob = String(sizeof(Algorithm::Sighash), '0');
-				size_t Size = (size_t)Protocol::Now().Policy.ConsensusCommitteeAggregators;
+				size_t Size = (size_t)Protocol::Now().Policy.AggregatorsCommitteeSize;
 				Message.WriteInteger((uint16_t)OutputHashes.size());
-				Message.WriteString(String(sizeof(Observer::IncomingTransaction) * 10, '0'));
+				Message.WriteString(String(sizeof(Mediator::IncomingTransaction) * 10, '0'));
 				Message.WriteInteger((uint16_t)Size);
 				for (size_t i = 0; i < Size; i++)
 					Message.WriteString(Blob);
@@ -645,8 +635,8 @@ namespace Tangent
 
 			CumulativeConsensus Consensus;
 			Consensus.Branch = Branch;
-			Consensus.Committee = std::min(Committee, Protocol::Now().Policy.ConsensusCommitteeAggregators);
-			Consensus.Threshold = Protocol::Now().Policy.ConsensusAggregationThreshold;
+			Consensus.Committee = std::min(Committee, Protocol::Now().Policy.AggregatorsCommitteeSize);
+			Consensus.Threshold = Protocol::Now().Policy.AggregationThreshold;
 			Consensus.Progress = Consensus.Committee > 0 ? ((double)Branch->Attestations.size() / (double)Consensus.Committee) : 0.0;
 			Consensus.Reached = Consensus.Progress >= Consensus.Threshold;
 			return Consensus;
@@ -818,7 +808,7 @@ namespace Tangent
 		}
 		uint32_t Receipt::AsInstanceType()
 		{
-			static uint32_t Hash = Types::TypeOf(AsInstanceTypename());
+			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
 			return Hash;
 		}
 		std::string_view Receipt::AsInstanceTypename()
@@ -829,7 +819,7 @@ namespace Tangent
 		State::State(uint64_t NewBlockNumber, uint64_t NewBlockNonce) : BlockNumber(NewBlockNumber), BlockNonce(NewBlockNonce)
 		{
 		}
-		State::State(const BlockHeader* NewBlockHeader) : BlockNumber(NewBlockHeader ? NewBlockHeader->Number : 0), BlockNonce(NewBlockHeader ? NewBlockHeader->MutationsCount : 0)
+		State::State(const BlockHeader* NewBlockHeader) : BlockNumber(NewBlockHeader ? NewBlockHeader->Number : 0), BlockNonce(NewBlockHeader ? NewBlockHeader->MutationCount : 0)
 		{
 		}
 		bool State::Store(Format::Stream* Stream) const
@@ -931,7 +921,7 @@ namespace Tangent
 
 			auto& Policy = Protocol::Now().Policy;
 			uint256_t Alignment = 16;
-			uint256_t Committee = Policy.ConsensusCommitteeMajors + Policy.ConsensusCommitteeMinors;
+			uint256_t Committee = Policy.ConsensusCommitteeSize;
 			uint256_t Multiplier = Priority >= Committee ? 0 : Math64u::Pow3(Committee - Priority);
 			uint256_t Work = (Multiplier * GasUse) / GasLimit;
 			return Work - (Work % Alignment) + Alignment;

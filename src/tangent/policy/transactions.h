@@ -1,7 +1,7 @@
 #ifndef TAN_POLICY_TRANSACTIONS_H
 #define TAN_POLICY_TRANSACTIONS_H
 #include "states.h"
-#include "../kernel/observer.h"
+#include "../kernel/mediator.h"
 
 namespace Tangent
 {
@@ -23,7 +23,7 @@ namespace Tangent
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
-			bool RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
+			bool RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
 			void SetTo(const Algorithm::Pubkeyhash NewTo, const Decimal& NewValue, const std::string_view& NewMemo = std::string_view());
 			bool IsToNull() const;
 			UPtr<Schema> AsSchema() const override;
@@ -49,7 +49,7 @@ namespace Tangent
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
-			bool RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
+			bool RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
 			void SetTo(const Algorithm::Pubkeyhash NewTo, const Decimal& NewValue, const std::string_view& NewMemo = std::string_view());
 			bool IsToNull() const;
 			UPtr<Schema> AsSchema() const override;
@@ -73,7 +73,7 @@ namespace Tangent
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
-			bool RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
+			bool RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
 			bool SignLocation(const Algorithm::Seckey SecretKey);
 			bool VerifyLocation(const Algorithm::Pubkey PublicKey) const;
 			bool RecoverLocation(Algorithm::Pubkeyhash PublicKeyHash) const;
@@ -101,7 +101,7 @@ namespace Tangent
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
-			bool RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
+			bool RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
 			void SetCalldata(const Algorithm::Pubkeyhash NewTo, const std::string_view& NewFunction, Format::Variables&& NewArgs);
 			void SetCalldata(const Algorithm::Pubkeyhash NewTo, uint32_t NewHashcode, const std::string_view& NewFunction, Format::Variables&& NewArgs);
 			bool IsToNull() const;
@@ -121,10 +121,10 @@ namespace Tangent
 			ExpectsLR<void> Prevalidate() const override;
 			ExpectsLR<void> Validate(const Ledger::TransactionContext* Context) const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
-			ExpectsPromiseLR<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
+			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
-			bool RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
+			bool RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
 			void SetTo(const std::string_view& Address, const Decimal& Value);
 			void SetProposer(const Algorithm::Pubkeyhash NewProposer);
 			bool IsProposerNull() const;
@@ -150,11 +150,11 @@ namespace Tangent
 			ExpectsLR<void> Prevalidate() const override;
 			ExpectsLR<void> Validate(const Ledger::TransactionContext* Context) const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
-			ExpectsPromiseLR<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
+			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
-			bool RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
-			bool RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<uint256_t>& Aliases) const override;
+			bool RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
+			bool RecoverAliases(const Ledger::Receipt& Receipt, OrderedSet<uint256_t>& Aliases) const override;
 			bool Merge(const Ledger::Transaction& Transaction);
 			bool Merge(Ledger::Transaction& Transaction, const Algorithm::Seckey SecretKey);
 			bool Merge(Ledger::Transaction& Transaction, const Algorithm::Seckey SecretKey, uint64_t Sequence);
@@ -173,19 +173,26 @@ namespace Tangent
 
 		struct Commitment final : Ledger::Transaction
 		{
-			OrderedMap<Algorithm::AssetId, Ledger::WorkStatus> Observers;
-			Ledger::WorkStatus Worker = Ledger::WorkStatus::Standby;
+			OrderedMap<Algorithm::AssetId, bool> Observers;
+			Algorithm::Sighash SealingSignature;
+			Algorithm::Pubkey SealingKey;
+			Option<bool> Online = Optional::None;
 
 			ExpectsLR<void> Prevalidate() const override;
 			ExpectsLR<void> Validate(const Ledger::TransactionContext* Context) const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
-			bool RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
+			bool Sign(const Algorithm::Seckey SecretKey) override;
+			bool Sign(const Algorithm::Seckey SecretKey, uint64_t NewSequence) override;
+			bool Sign(const Algorithm::Seckey SecretKey, uint64_t NewSequence, const Decimal& Price) override;
+			bool VerifySealing() const;
 			void SetOnline();
 			void SetOnline(const Algorithm::AssetId& Asset);
 			void SetOffline();
 			void SetOffline(const Algorithm::AssetId& Asset);
+			void SetStandby();
+			void SetStandby(const Algorithm::AssetId& Asset);
 			UPtr<Schema> AsSchema() const override;
 			uint32_t AsType() const override;
 			std::string_view AsTypename() const override;
@@ -194,12 +201,12 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct Claim final : Ledger::AggregationTransaction
+		struct IncomingClaim final : Ledger::AggregationTransaction
 		{
 			struct CustodyTransfer
 			{
-				ContributionMap Contributions;
-				ReservationMap Reservations;
+				AddressValueMap Contributions;
+				AccountValueMap Reservations;
 				Decimal Custody = Decimal::Zero();
 			};
 
@@ -220,10 +227,10 @@ namespace Tangent
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
-			bool RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
-			void SetWitness(uint64_t BlockHeight, const std::string_view& TransactionId, Decimal&& Fee, Vector<Observer::Transferer>&& Senders, Vector<Observer::Transferer>&& Receivers);
-			void SetWitness(const Observer::IncomingTransaction& Witness);
-			Option<Observer::IncomingTransaction> GetAssertion(const Ledger::TransactionContext* Context) const;
+			bool RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
+			void SetWitness(uint64_t BlockHeight, const std::string_view& TransactionId, Decimal&& Fee, Vector<Mediator::Transferer>&& Senders, Vector<Mediator::Transferer>&& Receivers);
+			void SetWitness(const Mediator::IncomingTransaction& Witness);
+			Option<Mediator::IncomingTransaction> GetAssertion(const Ledger::TransactionContext* Context) const;
 			UPtr<Schema> AsSchema() const override;
 			uint32_t AsType() const override;
 			std::string_view AsTypename() const override;
@@ -232,7 +239,7 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct Replay final : Ledger::ConsensusTransaction
+		struct OutgoingClaim final : Ledger::ConsensusTransaction
 		{
 			String TransactionId;
 			String TransactionData;
@@ -244,7 +251,7 @@ namespace Tangent
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
-			bool RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
+			bool RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
 			void SetSuccessWitness(const std::string_view& TransactionId, const std::string_view& TransactionData, const uint256_t& TransactionHash);
 			void SetFailureWitness(const std::string_view& TransactionMessage, const uint256_t& TransactionHash);
 			UPtr<Schema> AsSchema() const override;
@@ -264,7 +271,6 @@ namespace Tangent
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
-			bool RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
 			void SetAddress(const std::string_view& NewAddress);
 			UPtr<Schema> AsSchema() const override;
 			uint32_t AsType() const override;
@@ -286,7 +292,6 @@ namespace Tangent
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
-			bool RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
 			void SetPubkey(const std::string_view& VerifyingKey);
 			UPtr<Schema> AsSchema() const override;
 			uint32_t AsType() const override;
@@ -303,10 +308,10 @@ namespace Tangent
 			ExpectsLR<void> Prevalidate() const override;
 			ExpectsLR<void> Validate(const Ledger::TransactionContext* Context) const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
-			ExpectsPromiseLR<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
+			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
-			bool RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
+			bool RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
 			void SetProposer(const Algorithm::Pubkeyhash NewProposer);
 			bool IsProposerNull() const;
 			UPtr<Schema> AsSchema() const override;
@@ -326,16 +331,16 @@ namespace Tangent
 			String Pubkey;
 			String Sighash;
 
-			ExpectsLR<void> SetWallet(const Ledger::Wallet& Proposer, const Algorithm::Pubkeyhash NewOwner);
+			ExpectsLR<void> SetWallet(const Ledger::TransactionContext* Context, const Ledger::Wallet& Proposer, const Algorithm::Pubkeyhash NewOwner);
 			ExpectsLR<void> SignPubkey(const PrivateKey& SigningKey);
 			ExpectsLR<void> VerifyPubkey() const;
 			ExpectsLR<void> Prevalidate() const override;
 			ExpectsLR<void> Validate(const Ledger::TransactionContext* Context) const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
-			ExpectsPromiseLR<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
+			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
-			bool RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
+			bool RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
 			void SetWitness(const uint256_t& DelegationAccountHash);
 			void SetPubkey(const std::string_view& VerifyingKey, uint64_t NewPubkeyIndex);
 			void SetOwner(const Algorithm::Pubkeyhash NewOwner);
@@ -351,19 +356,35 @@ namespace Tangent
 
 		struct ContributionAllocation final : Ledger::Transaction
 		{
-			Algorithm::Pubkey SealingKey1 = { 0 };
-			Algorithm::Composition::CPubkey PublicKey1 = { 0 };
-			String EncryptedSecretKey1For1;
-
-			ExpectsLR<void> SetShare1(const Algorithm::Seckey SecretKey);
 			ExpectsLR<void> Prevalidate() const override;
 			ExpectsLR<void> Validate(const Ledger::TransactionContext* Context) const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
-			ExpectsPromiseLR<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
+			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
-			bool RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
-			Option<String> GetSecretKey1(const Algorithm::Seckey SecretKey) const;
+			bool RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
+			uint32_t AsType() const override;
+			std::string_view AsTypename() const override;
+			uint256_t GetGasEstimate() const override;
+			uint64_t GetDispatchOffset() const override;
+			static uint32_t AsInstanceType();
+			static std::string_view AsInstanceTypename();
+		};
+
+		struct ContributionSelection final : Ledger::ConsensusTransaction
+		{
+			uint256_t ContributionAllocationHash = 0;
+			Algorithm::Composition::CPubkey PublicKey1 = { 0 };
+			Algorithm::Pubkeyhash Proposer = { 0 };
+
+			ExpectsLR<void> SetShare1(const Algorithm::Seckey SecretKey, const uint256_t& NewContributionAllocationHash, const Algorithm::Pubkeyhash NewProposer);
+			ExpectsLR<void> Prevalidate() const override;
+			ExpectsLR<void> Validate(const Ledger::TransactionContext* Context) const override;
+			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
+			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
+			bool StoreBody(Format::Stream* Stream) const override;
+			bool LoadBody(Format::Stream& Stream) override;
+			bool RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
 			UPtr<Schema> AsSchema() const override;
 			uint32_t AsType() const override;
 			std::string_view AsTypename() const override;
@@ -375,24 +396,21 @@ namespace Tangent
 
 		struct ContributionActivation final : Ledger::ConsensusTransaction
 		{
-			Algorithm::Pubkey PublicKey = { 0 };
-			Algorithm::Pubkey SealingKey2 = { 0 };
+			uint256_t ContributionSelectionHash = 0;
 			Algorithm::Composition::CPubkey PublicKey2 = { 0 };
-			String EncryptedSecretKey2For2;
+			Algorithm::Pubkeyhash Proposer = { 0 };
+			Algorithm::Pubkey PublicKey = { 0 };
 			uint16_t PublicKeySize = 0;
-			uint256_t ContributionAllocationHash = 0;
 
-			ExpectsLR<void> SetShare2(const Algorithm::Seckey SecretKey, const Algorithm::Composition::CPubkey PublicKey1);
+			ExpectsLR<void> SetShare2(const Algorithm::Seckey SecretKey, const uint256_t& NewContributionSelectionHash, const Algorithm::Pubkeyhash NewProposer, const Algorithm::Composition::CPubkey PublicKey1);
 			ExpectsLR<void> Prevalidate() const override;
 			ExpectsLR<void> Validate(const Ledger::TransactionContext* Context) const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
-			ExpectsPromiseLR<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
+			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
-			bool RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
-			void SetWitness(const uint256_t& ContributionAllocationHash);
-			Option<String> GetSecretKey2(const Algorithm::Seckey SecretKey) const;
-			ExpectsLR<Observer::DerivedVerifyingWallet> GetVerifyingWallet() const;
+			bool RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
+			ExpectsLR<Mediator::DerivedVerifyingWallet> GetVerifyingWallet() const;
 			UPtr<Schema> AsSchema() const override;
 			uint32_t AsType() const override;
 			std::string_view AsTypename() const override;
@@ -409,11 +427,34 @@ namespace Tangent
 			ExpectsLR<void> Prevalidate() const override;
 			ExpectsLR<void> Validate(const Ledger::TransactionContext* Context) const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
-			ExpectsPromiseLR<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
+			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
-			bool RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
 			void SetWitness(const uint256_t& ContributionActivationHash);
+			UPtr<Schema> AsSchema() const override;
+			uint32_t AsType() const override;
+			std::string_view AsTypename() const override;
+			uint256_t GetGasEstimate() const override;
+			uint64_t GetDispatchOffset() const override;
+			static uint32_t AsInstanceType();
+			static std::string_view AsInstanceTypename();
+		};
+
+		struct ContributionDeselection final : Ledger::ConsensusTransaction
+		{
+			uint256_t ContributionDeallocationHash = 0;
+			Algorithm::Pubkeyhash Proposer = { 0 };
+			String EncryptedSecretKey1;
+
+			ExpectsLR<void> SetRevealingShare1(const Ledger::TransactionContext* Context, const uint256_t& ContributionDeallocationHash, const Algorithm::Seckey SecretKey);
+			ExpectsLR<void> Prevalidate() const override;
+			ExpectsLR<void> Validate(const Ledger::TransactionContext* Context) const override;
+			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
+			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
+			bool StoreBody(Format::Stream* Stream) const override;
+			bool LoadBody(Format::Stream& Stream) override;
+			bool RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
+			Option<String> GetSecretKey1(const Ledger::TransactionContext* Context, const Algorithm::Seckey SecretKey) const;
 			UPtr<Schema> AsSchema() const override;
 			uint32_t AsType() const override;
 			std::string_view AsTypename() const override;
@@ -425,28 +466,32 @@ namespace Tangent
 
 		struct ContributionDeactivation final : Ledger::ConsensusTransaction
 		{
-			String EncryptedSecretKey2For1;
-			uint256_t ContributionDeallocationHash = 0;
+			uint256_t ContributionDeselectionHash = 0;
+			Algorithm::Pubkeyhash Proposer = { 0 };
+			String EncryptedSecretKey2;
 
-			ExpectsLR<void> SetRevealingShare2(const uint256_t& ContributionDeallocationHash, const Algorithm::Seckey SecretKey);
+			ExpectsLR<void> SetRevealingShare2(const Ledger::TransactionContext* Context, const uint256_t& ContributionDeselectionHash, const Algorithm::Seckey SecretKey);
 			ExpectsLR<void> Prevalidate() const override;
 			ExpectsLR<void> Validate(const Ledger::TransactionContext* Context) const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
+			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
-			bool RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
-			Option<String> GetSecretKey1(const Algorithm::Seckey SecretKey) const;
+			bool RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
+			Option<String> GetSecretKey1(const Ledger::TransactionContext* Context, const Algorithm::Seckey SecretKey) const;
 			Option<String> GetSecretKey2(const Algorithm::Seckey SecretKey) const;
-			ExpectsLR<Observer::DerivedSigningWallet> GetSigningWallet(const Algorithm::Seckey SecretKey) const;
+			ExpectsLR<Mediator::DerivedSigningWallet> GetSigningWallet(const Ledger::TransactionContext* Context, const Algorithm::Seckey SecretKey) const;
+			ExpectsPromiseRT<Mediator::OutgoingTransaction> WithdrawToAddress(const Ledger::TransactionContext* Context, const Algorithm::Seckey SecretKey, const std::string_view& Address);
 			UPtr<Schema> AsSchema() const override;
 			uint32_t AsType() const override;
 			std::string_view AsTypename() const override;
 			uint256_t GetGasEstimate() const override;
+			uint64_t GetDispatchOffset() const override;
 			static uint32_t AsInstanceType();
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct ContributionAdjustment final : Ledger::Transaction
+		struct DepositoryAdjustment final : Ledger::Transaction
 		{
 			Decimal IncomingAbsoluteFee = Decimal::Zero();
 			Decimal IncomingRelativeFee = Decimal::Zero();
@@ -458,7 +503,6 @@ namespace Tangent
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
-			bool RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
 			void SetIncomingFee(const Decimal& AbsoluteFee, const Decimal& RelativeFee);
 			void SetOutgoingFee(const Decimal& AbsoluteFee, const Decimal& RelativeFee);
 			UPtr<Schema> AsSchema() const override;
@@ -469,29 +513,7 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct ContributionAllowance final : Ledger::Transaction
-		{
-			Algorithm::Pubkeyhash To = { 0 };
-			double Threshold = -1.0;
-
-			ExpectsLR<void> Prevalidate() const override;
-			ExpectsLR<void> Validate(const Ledger::TransactionContext* Context) const override;
-			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
-			bool StoreBody(Format::Stream* Stream) const override;
-			bool LoadBody(Format::Stream& Stream) override;
-			bool RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
-			void SetThreshold(const Algorithm::Pubkeyhash To, double Threshold);
-			void ClearThreshold(const Algorithm::Pubkeyhash To);
-			bool IsToNull() const;
-			UPtr<Schema> AsSchema() const override;
-			uint32_t AsType() const override;
-			std::string_view AsTypename() const override;
-			uint256_t GetGasEstimate() const override;
-			static uint32_t AsInstanceType();
-			static std::string_view AsInstanceTypename();
-		};
-
-		struct ContributionMigration final : Ledger::Transaction
+		struct DepositoryMigration final : Ledger::Transaction
 		{
 			Algorithm::Pubkeyhash Proposer = { 0 };
 			Decimal Value;
@@ -499,10 +521,10 @@ namespace Tangent
 			ExpectsLR<void> Prevalidate() const override;
 			ExpectsLR<void> Validate(const Ledger::TransactionContext* Context) const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
-			ExpectsPromiseLR<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
+			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
-			bool RecoverAlt(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
+			bool RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
 			void SetProposer(const Algorithm::Pubkeyhash NewProposer, const Decimal& NewValue);
 			bool IsProposerNull() const;
 			ExpectsLR<States::WitnessAddress> GetDestination(const Ledger::TransactionContext* Context) const;
@@ -520,6 +542,7 @@ namespace Tangent
 		public:
 			static Ledger::Transaction* New(uint32_t Hash);
 			static Ledger::Transaction* Copy(const Ledger::Transaction* Base);
+			static ExpectsPromiseRT<Mediator::OutgoingTransaction> EmitTransaction(Vector<UPtr<Ledger::Transaction>>* Pipeline, Mediator::DynamicWallet&& Wallet, const Algorithm::AssetId& Asset, const uint256_t& TransactionHash, Vector<Mediator::Transferer>&& To);
 		};
 	}
 }

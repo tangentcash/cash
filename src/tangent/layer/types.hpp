@@ -48,8 +48,8 @@ namespace Vitex
 			}
 		};
 
-		using ReservationMap = OrderedMap<String, Decimal>;
-		using ContributionMap = OrderedMap<String, Decimal, InsensitiveComparator>;
+		using AccountValueMap = OrderedMap<String, Decimal>;
+		using AddressValueMap = OrderedMap<String, Decimal, InsensitiveComparator>;
 		using AddressMap = OrderedMap<uint8_t, String, InversionComparator>;
 
 		template <typename Iterator, typename Function>

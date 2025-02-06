@@ -1,7 +1,6 @@
 #ifndef TAN_KERNEL_TRANSACTION_H
 #define TAN_KERNEL_TRANSACTION_H
 #include "wallet.h"
-#include "provability.h"
 
 namespace Tangent
 {
@@ -11,13 +10,6 @@ namespace Tangent
 		struct BlockHeader;
 		struct TransactionContext;
 		struct Receipt;
-
-		enum class WorkStatus : int8_t
-		{
-			Online = 1,
-			Standby = 0,
-			Offline = -1
-		};
 
 		enum class StateLevel
 		{
@@ -44,13 +36,13 @@ namespace Tangent
 			virtual ExpectsLR<void> Prevalidate() const;
 			virtual ExpectsLR<void> Validate(const TransactionContext* Context) const;
 			virtual ExpectsLR<void> Execute(TransactionContext* Context) const = 0;
-			virtual ExpectsPromiseLR<void> Dispatch(const Wallet& Proposer, const TransactionContext* Context, Vector<UPtr<Transaction>>* Pipeline) const;
+			virtual ExpectsPromiseRT<void> Dispatch(const Wallet& Proposer, const TransactionContext* Context, Vector<UPtr<Transaction>>* Pipeline) const;
 			virtual bool StorePayload(Format::Stream* Stream) const override;
 			virtual bool LoadPayload(Format::Stream& Stream) override;
 			virtual bool StoreBody(Format::Stream* Stream) const = 0;
 			virtual bool LoadBody(Format::Stream& Stream) = 0;
-			virtual bool RecoverAlt(const Receipt& Receipt, OrderedSet<String>& Parties) const = 0;
-			virtual bool RecoverAlt(const Receipt& Receipt, OrderedSet<uint256_t>& Aliases) const;
+			virtual bool RecoverMany(const Receipt& Receipt, OrderedSet<String>& Parties) const;
+			virtual bool RecoverAliases(const Receipt& Receipt, OrderedSet<uint256_t>& Aliases) const;
 			virtual bool Sign(const Algorithm::Seckey SecretKey) override;
 			virtual bool Sign(const Algorithm::Seckey SecretKey, uint64_t NewSequence);
 			virtual bool Sign(const Algorithm::Seckey SecretKey, uint64_t NewSequence, const Decimal& Price);

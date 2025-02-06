@@ -1,13 +1,15 @@
 #include "script.h"
+#include "chain.h"
+#include <vitex/bindings.h>
 #include <sstream>
 extern "C"
 {
-#include "../../utils/trezor-crypto/sha2.h"
-#include "../../utils/trezor-crypto/sha3.h"
+#include "../internal/sha2.h"
+#include "../internal/sha3.h"
 }
 #include "../policy/transactions.h"
 #ifdef TAN_VALIDATOR
-#include "../storage/chainstate.h"
+#include "../validator/storage/chainstate.h"
 #endif
 #define SCRIPT_CLASS_ADDRESS "address"
 #define SCRIPT_CLASS_PROGRAM "program"
@@ -640,18 +642,22 @@ namespace Tangent
 			Program->SetMethod("bool emit(const address&in, const ?&in)", &ScriptProgram::EmitByAddress);
 			Program->SetMethod("bool emit(const string_view&in, const ?&in)", &ScriptProgram::EmitByLocation);
 			Program->SetMethod("bool transfer(const address&in, const uint256&in, const decimal&in)", &ScriptProgram::Transfer);
-			Program->SetMethod("uint64 account_sequence_of(const address&in)", &ScriptProgram::AccountSequenceOf);
-			Program->SetMethod("uint256 account_work_of(const address&in)", &ScriptProgram::AccountWorkOf);
-			Program->SetMethod("string account_program_of(const address&in)", &ScriptProgram::AccountProgramOf);
-			Program->SetMethod("decimal account_incoming_reward_of(const address&in, const uint256&in, const decimal&in)", &ScriptProgram::AccountIncomingRewardOf);
-			Program->SetMethod("decimal account_outgoing_reward_of(const address&in, const uint256&in, const decimal&in)", &ScriptProgram::AccountOutgoingRewardOf);
-			Program->SetMethod("uint64 account_derivation_of(const address&in, const uint256&in)", &ScriptProgram::AccountDerivationOf);
-			Program->SetMethod("decimal account_balance_of(const address&in, const uint256&in)", &ScriptProgram::AccountBalanceOf);
-			Program->SetMethod("decimal account_contribution_of(const address&in, const uint256&in)", &ScriptProgram::AccountContributionOf);
-			Program->SetMethod("bool has_witness_program_of(const string_view&in)", &ScriptProgram::HasWitnessProgramOf);
+			Program->SetMethod("uint64 account_sequence_of(const address&in) const", &ScriptProgram::AccountSequenceOf);
+			Program->SetMethod("uint256 account_work_of(const address&in) const", &ScriptProgram::AccountWorkOf);
+			Program->SetMethod("string account_program_of(const address&in) const", &ScriptProgram::AccountProgramOf);
+			Program->SetMethod("decimal account_incoming_reward_of(const address&in, const uint256&in, const decimal&in) const", &ScriptProgram::AccountIncomingRewardOf);
+			Program->SetMethod("decimal account_outgoing_reward_of(const address&in, const uint256&in, const decimal&in) const", &ScriptProgram::AccountOutgoingRewardOf);
+			Program->SetMethod("uint64 account_derivation_of(const address&in, const uint256&in) const", &ScriptProgram::AccountDerivationOf);
+			Program->SetMethod("decimal account_balance_of(const address&in, const uint256&in) const", &ScriptProgram::AccountBalanceOf);
+			Program->SetMethod("decimal account_coverage_of(const address&in, const uint256&in) const", &ScriptProgram::AccountCoverageOf);
+			Program->SetMethod("decimal account_contribution_of(const address&in, const uint256&in) const", &ScriptProgram::AccountContributionOf);
+			Program->SetMethod("decimal account_reservation_of(const address&in, const uint256&in) const", &ScriptProgram::AccountReservationOf);
+			Program->SetMethod("decimal account_custody_of(const address&in, const uint256&in) const", &ScriptProgram::AccountCustodyOf);
+			Program->SetMethod("bool has_witness_program_of(const string_view&in) const", &ScriptProgram::HasWitnessProgramOf);
 			Program->SetMethod("uint256 witness_event_of(const uint256&in)", &ScriptProgram::WitnessEventOf);
-			Program->SetMethod("address witness_address_of(const uint256&in, const string_view&in, uint64, usize)", &ScriptProgram::WitnessAddressOf);
-			Program->SetMethod("bool has_witness_transaction_of(const uint256&in, const string_view&in)", &ScriptProgram::HasWitnessTransactionOf);
+			Program->SetMethod("address witness_address_of(const uint256&in, const string_view&in, uint64, usize) const", &ScriptProgram::WitnessAddressOf);
+			Program->SetMethod("bool has_witness_transaction_of(const uint256&in, const string_view&in) const", &ScriptProgram::HasWitnessTransactionOf);
+			Program->SetMethod("bool is_account_honest(const address&in) const", &ScriptProgram::IsAccountHonest);
 			Program->SetMethod("uint256 random()", &ScriptProgram::Random);
 			Program->SetMethod("address from() const", &ScriptProgram::From);
 			Program->SetMethod("address to() const", &ScriptProgram::To);
@@ -940,7 +946,7 @@ namespace Tangent
 							Resolver = LayerException("return value conversion error");
 					}
 					else
-						Resolver = LayerException("return value error: " + Serialization.Error().Info);
+						Resolver = LayerException("return value error: " + Serialization.Error().message());
 				}
 				else
 				{
@@ -1192,7 +1198,7 @@ namespace Tangent
 			
 			Coroutine = Coroutine ? Coroutine : ImmediateContext::Get();
 			if (Coroutine != nullptr)
-				Coroutine->SetException(Bindings::Exception::Pointer(SCRIPT_EXCEPTION_EXECUTION, Status.Error().Info).ToExceptionString(), false);
+				Coroutine->SetException(Bindings::Exception::Pointer(SCRIPT_EXCEPTION_EXECUTION, Status.Error().message()).ToExceptionString(), false);
 
 			return false;
 		}
@@ -1201,7 +1207,7 @@ namespace Tangent
 			auto Execution = Subexecute(Target, Function, InputValue, InputTypeId, OutputValue, OutputTypeId, -1);
 			if (!Execution)
 			{
-				Bindings::Exception::Throw(Bindings::Exception::Pointer(SCRIPT_EXCEPTION_EXECUTION, Execution.Error().Info));
+				Bindings::Exception::Throw(Bindings::Exception::Pointer(SCRIPT_EXCEPTION_EXECUTION, Execution.Error().message()));
 				return false;
 			}
 
@@ -1212,7 +1218,7 @@ namespace Tangent
 			auto Execution = Subexecute(Target, Function, InputValue, InputTypeId, OutputValue, OutputTypeId, 0);
 			if (!Execution)
 			{
-				Bindings::Exception::Throw(Bindings::Exception::Pointer(SCRIPT_EXCEPTION_EXECUTION, Execution.Error().Info));
+				Bindings::Exception::Throw(Bindings::Exception::Pointer(SCRIPT_EXCEPTION_EXECUTION, Execution.Error().message()));
 				return false;
 			}
 
@@ -1240,14 +1246,14 @@ namespace Tangent
 			auto Status = ScriptMarshalling::Store(&Stream, (void*)ObjectValue, ObjectTypeId);
 			if (!Status)
 			{
-				Bindings::Exception::Throw(Bindings::Exception::Pointer(SCRIPT_EXCEPTION_ARGUMENT, Status.Error().Info));
+				Bindings::Exception::Throw(Bindings::Exception::Pointer(SCRIPT_EXCEPTION_ARGUMENT, Status.Error().message()));
 				return false;
 			}
 
 			auto Data = Context->ApplyAccountStorage(To().Hash, Location, Stream.Data);
 			if (!Data)
 			{
-				Bindings::Exception::Throw(Bindings::Exception::Pointer(SCRIPT_EXCEPTION_STORAGE, Data.Error().Info));
+				Bindings::Exception::Throw(Bindings::Exception::Pointer(SCRIPT_EXCEPTION_STORAGE, Data.Error().message()));
 				return false;
 			}
 
@@ -1287,7 +1293,7 @@ namespace Tangent
 			auto Status = ScriptMarshalling::Load(Stream, ObjectValue, ObjectTypeId);
 			if (!Status)
 			{
-				Bindings::Exception::Throw(Bindings::Exception::Pointer(SCRIPT_EXCEPTION_ARGUMENT, Status.Error().Info));
+				Bindings::Exception::Throw(Bindings::Exception::Pointer(SCRIPT_EXCEPTION_ARGUMENT, Status.Error().message()));
 				return false;
 			}
 
@@ -1315,7 +1321,7 @@ namespace Tangent
 			auto Status = ScriptMarshalling::Store(&Stream, (void*)ObjectValue, ObjectTypeId);
 			if (!Status)
 			{
-				Bindings::Exception::Throw(Bindings::Exception::Pointer(SCRIPT_EXCEPTION_ARGUMENT, Status.Error().Info));
+				Bindings::Exception::Throw(Bindings::Exception::Pointer(SCRIPT_EXCEPTION_ARGUMENT, Status.Error().message()));
 				return false;
 			}
 
@@ -1331,7 +1337,7 @@ namespace Tangent
 			auto Data = Context->EmitEvent(Algorithm::Hashing::Hash32d(Typename), std::move(Returns));
 			if (!Data)
 			{
-				Bindings::Exception::Throw(Bindings::Exception::Pointer(SCRIPT_EXCEPTION_STORAGE, Data.Error().Info));
+				Bindings::Exception::Throw(Bindings::Exception::Pointer(SCRIPT_EXCEPTION_STORAGE, Data.Error().message()));
 				return false;
 			}
 
@@ -1342,7 +1348,7 @@ namespace Tangent
 			auto Status = Context->ApplyPayment(Asset, Context->Receipt.From, To.Hash, Value);
 			if (!Status)
 			{
-				Bindings::Exception::Throw(Bindings::Exception::Pointer(SCRIPT_EXCEPTION_EXECUTION, Status.Error().Info));
+				Bindings::Exception::Throw(Bindings::Exception::Pointer(SCRIPT_EXCEPTION_EXECUTION, Status.Error().message()));
 				return false;
 			}
 
@@ -1383,10 +1389,29 @@ namespace Tangent
 			auto Data = Context->GetAccountBalance(Asset, Target.Hash);
 			return Data ? Data->GetBalance() : Decimal::Zero();
 		}
+		Decimal ScriptProgram::AccountCoverageOf(const ScriptAddress& Target, const Algorithm::AssetId& Asset) const
+		{
+			auto Data = Context->GetAccountDepository(Asset, Target.Hash);
+			if (!Data)
+				return Decimal::NaN();
+
+			auto Work = Context->GetAccountWork(Target.Hash);
+			return Data->GetCoverage(Work ? Work->Flags : 0);
+		}
 		Decimal ScriptProgram::AccountContributionOf(const ScriptAddress& Target, const Algorithm::AssetId& Asset) const
 		{
-			auto Data = Context->GetAccountContribution(Asset, Target.Hash);
-			return Data && Data->Honest ? Data->GetCoverage() : Decimal::NaN();
+			auto Data = Context->GetAccountDepository(Asset, Target.Hash);
+			return Data ? Data->GetContribution() : Decimal::NaN();
+		}
+		Decimal ScriptProgram::AccountReservationOf(const ScriptAddress& Target, const Algorithm::AssetId& Asset) const
+		{
+			auto Data = Context->GetAccountDepository(Asset, Target.Hash);
+			return Data ? Data->GetReservation() : Decimal::NaN();
+		}
+		Decimal ScriptProgram::AccountCustodyOf(const ScriptAddress& Target, const Algorithm::AssetId& Asset) const
+		{
+			auto Data = Context->GetAccountDepository(Asset, Target.Hash);
+			return Data ? Data->Custody : Decimal::NaN();
 		}
 		bool ScriptProgram::HasWitnessProgramOf(const std::string_view& Hashcode) const
 		{
@@ -1406,6 +1431,11 @@ namespace Tangent
 		{
 			return !!Context->GetWitnessTransaction(Asset, TransactionId);
 		}
+		bool ScriptProgram::IsAccountHonest(const ScriptAddress& Target) const
+		{
+			auto Data = Context->GetAccountWork(Target.Hash);
+			return !Data || !Data->IsMatching(States::AccountFlags::Outlaw);
+		}
 		uint256_t ScriptProgram::Random()
 		{
 			if (!Distribution)
@@ -1413,7 +1443,7 @@ namespace Tangent
 				auto Candidate = Context->CalculateRandom(Context->GetGasUse());
 				if (!Candidate)
 				{
-					Bindings::Exception::Throw(Bindings::Exception::Pointer(SCRIPT_EXCEPTION_EXECUTION, Candidate.Error().Info));
+					Bindings::Exception::Throw(Bindings::Exception::Pointer(SCRIPT_EXCEPTION_EXECUTION, Candidate.Error().message()));
 					return 0;
 				}
 				Distribution = std::move(*Candidate);
@@ -1563,7 +1593,7 @@ namespace Tangent
 				if (!Serialization)
 				{
 					Returning.Destroy();
-					return LayerException("return value error: " + Serialization.Error().Info);
+					return LayerException("return value error: " + Serialization.Error().message());
 				}
 
 				return Expectation::Met;
