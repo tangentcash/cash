@@ -845,7 +845,6 @@ public:
 		NewSerializationComparison<Ledger::Block>(*Data);
 		NewSerializationComparison<Ledger::BlockProof>(*Data, Ledger::BlockHeader(), (Ledger::BlockHeader*)nullptr);
 		NewSerializationComparison<States::AccountSequence>(*Data, Owner, BlockNumber++, BlockNonce++);
-		NewSerializationComparison<States::AccountSealing>(*Data, Owner, BlockNumber++, BlockNonce++);
 		NewSerializationComparison<States::AccountWork>(*Data, Owner, BlockNumber++, BlockNonce++);
 		NewSerializationComparison<States::AccountObserver>(*Data, Owner, BlockNumber++, BlockNonce++);
 		NewSerializationComparison<States::AccountProgram>(*Data, Owner, BlockNumber++, BlockNonce++);
@@ -932,76 +931,46 @@ public:
 		String Mnemonic = "chimney clerk liberty defense gesture risk disorder switch raven chapter document admit win swing forward please clerk vague online coil material tone sibling intact";
 		Algorithm::Seckey SecretKey;
 		Algorithm::Pubkey PublicKey;
-		Algorithm::Pubkey TweakedPublicKey;
 		Algorithm::Pubkeyhash PublicKeyHash;
-		Algorithm::Pubkeyhash TweakedPublicKeyHash;
-		Algorithm::Signing::DeriveSecretKey(Mnemonic, SecretKey);
+		Algorithm::Signing::DeriveSecretKeyFromMnemonic(Mnemonic, SecretKey);
 		Algorithm::Signing::DerivePublicKey(SecretKey, PublicKey);
-		Algorithm::Signing::DeriveTweakedPublicKey(SecretKey, PublicKey, TweakedPublicKey);
 		Algorithm::Signing::DerivePublicKeyHash(PublicKey, PublicKeyHash);
-		Algorithm::Signing::DerivePublicKeyHash(TweakedPublicKey, TweakedPublicKeyHash);
 
-		String EncodedSecretKey, EncodedPublicKey, EncodedTweakedPublicKey, EncodedPublicKeyHash, EncodedTweakedPublicKeyHash;
+		String EncodedSecretKey, EncodedPublicKey, EncodedPublicKeyHash;
 		Algorithm::Signing::EncodeSecretKey(SecretKey, EncodedSecretKey);
 		Algorithm::Signing::EncodePublicKey(PublicKey, EncodedPublicKey);
-		Algorithm::Signing::EncodePublicKey(TweakedPublicKey, EncodedTweakedPublicKey);
 		Algorithm::Signing::EncodeAddress(PublicKeyHash, EncodedPublicKeyHash);
-		Algorithm::Signing::EncodeAddress(TweakedPublicKeyHash, EncodedTweakedPublicKeyHash);
 
 		String Message = "Hello, World!";
 		uint256_t MessageHash = Algorithm::Hashing::Hash256i(Message);
 		String EncodedMessageHash = Algorithm::Encoding::Encode0xHex256(MessageHash);
-		Algorithm::Sighash MessageSignature;
-		Algorithm::Sighash MessageTweakedSignature;
+		Algorithm::Recsighash MessageSignature;
 		Algorithm::Pubkey RecoverPublicKey;
-		Algorithm::Pubkey RecoverTweakedPublicKey;
 		Algorithm::Pubkeyhash RecoverPublicKeyHash;
-		Algorithm::Pubkeyhash RecoverTweakedPublicKeyHash;
-		bool Verifies = Algorithm::Signing::SignNormal(MessageHash, SecretKey, MessageSignature) && Algorithm::Signing::VerifyNormal(MessageHash, PublicKey, MessageSignature);
-		bool VerifiesTweaked = Algorithm::Signing::SignTweaked(MessageHash, SecretKey, MessageTweakedSignature) && Algorithm::Signing::VerifyTweaked(MessageHash, PublicKey, MessageTweakedSignature);
-		bool RecoversPublicKey = Algorithm::Signing::RecoverNormal(MessageHash, RecoverPublicKey, MessageSignature);
-		bool RecoversTweakedPublicKey = Algorithm::Signing::RecoverTweaked(MessageHash, RecoverTweakedPublicKey, MessageTweakedSignature);
-		bool RecoversPublicKeyHash = Algorithm::Signing::RecoverNormalHash(MessageHash, RecoverPublicKeyHash, MessageSignature);
-		bool RecoversTweakedPublicKeyHash = Algorithm::Signing::RecoverTweakedHash(MessageHash, RecoverTweakedPublicKeyHash, MessageTweakedSignature);
+		bool Verifies = Algorithm::Signing::Sign(MessageHash, SecretKey, MessageSignature) && Algorithm::Signing::Verify(MessageHash, PublicKey, MessageSignature);
+		bool RecoversPublicKey = Algorithm::Signing::Recover(MessageHash, RecoverPublicKey, MessageSignature);
+		bool RecoversPublicKeyHash = Algorithm::Signing::RecoverHash(MessageHash, RecoverPublicKeyHash, MessageSignature);
 		String EncodedMessageSignature = Format::Util::Encode0xHex(std::string_view((char*)MessageSignature, sizeof(MessageSignature)));
-		String EncodedMessageTweakedSignature = Format::Util::Encode0xHex(std::string_view((char*)MessageTweakedSignature, sizeof(MessageTweakedSignature)));
-		String EncodedRecoverPublicKey, EncodedRecoverPublicKeyHash, EncodedRecoverTweakedPublicKey, EncodedRecoverTweakedPublicKeyHash;
+		String EncodedRecoverPublicKey, EncodedRecoverPublicKeyHash;
 		Algorithm::Signing::EncodePublicKey(RecoverPublicKey, EncodedRecoverPublicKey);
-		Algorithm::Signing::EncodePublicKey(RecoverTweakedPublicKey, EncodedRecoverTweakedPublicKey);
 		Algorithm::Signing::EncodeAddress(RecoverPublicKeyHash, EncodedRecoverPublicKeyHash);
-		Algorithm::Signing::EncodeAddress(RecoverTweakedPublicKeyHash, EncodedRecoverTweakedPublicKeyHash);
 
 		auto Info = UPtr<Schema>(Var::Set::Object());
 		Info->Set("mnemonic", Var::String(Mnemonic));
 		Info->Set("mnemonic_test", Var::String(Algorithm::Signing::VerifyMnemonic(Mnemonic) ? "passed" : "failed"));
 		Info->Set("secret_key", Var::String(EncodedSecretKey));
-		Info->Set("secret_key_test", Var::String(Algorithm::Signing::VerifySecretKey(SecretKey) ? "passed" : "failed"));
+		Info->Set("public_key", Var::String(EncodedPublicKey));
+		Info->Set("public_key_test", Var::String(Algorithm::Signing::VerifyPublicKey(PublicKey) ? "passed" : "failed"));
+		Info->Set("address", Var::String(EncodedPublicKeyHash));
+		Info->Set("address_test", Var::String(Algorithm::Signing::VerifyAddress(EncodedPublicKeyHash) ? "passed" : "failed"));
 		Info->Set("message", Var::String(Message));
 		Info->Set("message_hash", Var::String(EncodedMessageHash));
-
-		auto* Normal = Info->Set("signature_normal", Var::Set::Object());
-		Normal->Set("public_key", Var::String(EncodedPublicKey));
-		Normal->Set("public_key_test", Var::String(Algorithm::Signing::VerifyPublicKey(PublicKey) ? "passed" : "failed"));
-		Normal->Set("address", Var::String(EncodedPublicKeyHash));
-		Normal->Set("address_test", Var::String(Algorithm::Signing::VerifyAddress(EncodedPublicKeyHash) ? "passed" : "failed"));
-		Normal->Set("signature", Var::String(EncodedMessageSignature));
-		Normal->Set("signature_test", Var::String(Verifies ? "passed" : "failed"));
-		Normal->Set("recover_public_key", Var::String(EncodedRecoverPublicKey));
-		Normal->Set("recover_public_key_test", Var::String(RecoversPublicKey && EncodedRecoverPublicKey == EncodedPublicKey ? "passed" : "failed"));
-		Normal->Set("recover_address", Var::String(EncodedRecoverPublicKeyHash));
-		Normal->Set("recover_address_test", Var::String(RecoversPublicKeyHash && EncodedRecoverPublicKeyHash == EncodedPublicKeyHash ? "passed" : "failed"));
-
-		auto* Blinding = Info->Set("signature_blinding", Var::Set::Object());
-		Blinding->Set("public_key", Var::String(EncodedTweakedPublicKey));
-		Blinding->Set("public_key_test", Var::String(Algorithm::Signing::VerifyPublicKey(TweakedPublicKey) ? "passed" : "failed"));
-		Blinding->Set("address", Var::String(EncodedTweakedPublicKeyHash));
-		Blinding->Set("address_test", Var::String(Algorithm::Signing::VerifyAddress(EncodedTweakedPublicKeyHash) ? "passed" : "failed"));
-		Blinding->Set("signature", Var::String(EncodedMessageTweakedSignature));
-		Blinding->Set("signature_test", Var::String(Verifies ? "passed" : "failed"));
-		Blinding->Set("recover_public_key", Var::String(EncodedRecoverTweakedPublicKey));
-		Blinding->Set("recover_public_key_test", Var::String(RecoversTweakedPublicKey && EncodedRecoverTweakedPublicKey == EncodedTweakedPublicKey ? "passed" : "failed"));
-		Blinding->Set("recover_address", Var::String(EncodedRecoverTweakedPublicKeyHash));
-		Blinding->Set("recover_address_test", Var::String(RecoversTweakedPublicKeyHash && EncodedRecoverTweakedPublicKeyHash == EncodedTweakedPublicKeyHash ? "passed" : "failed"));
+		Info->Set("signature", Var::String(EncodedMessageSignature));
+		Info->Set("signature_test", Var::String(Verifies ? "passed" : "failed"));
+		Info->Set("recover_public_key", Var::String(EncodedRecoverPublicKey));
+		Info->Set("recover_public_key_test", Var::String(RecoversPublicKey && EncodedRecoverPublicKey == EncodedPublicKey ? "passed" : "failed"));
+		Info->Set("recover_address", Var::String(EncodedRecoverPublicKeyHash));
+		Info->Set("recover_address_test", Var::String(RecoversPublicKeyHash && EncodedRecoverPublicKeyHash == EncodedPublicKeyHash ? "passed" : "failed"));
 
 		Term->jWriteLine(*Info);
 		VI_PANIC(Schema::ToJSON(*Info).find("failed") == std::string::npos, "cryptographic error");
@@ -1012,7 +981,6 @@ public:
 		auto* Term = Console::Get();
 		auto Wallet = Ledger::Wallet::FromSeed();
 		auto WalletInfo = Wallet.AsSchema();
-		WalletInfo->Set("secret_key_test", Var::String(Algorithm::Signing::VerifySecretKey(Wallet.SecretKey) ? "passed" : "failed"));
 		WalletInfo->Set("public_key_test", Var::String(Algorithm::Signing::VerifyPublicKey(Wallet.PublicKey) ? "passed" : "failed"));
 		WalletInfo->Set("address_test", Var::String(Algorithm::Signing::VerifyAddress(Wallet.GetAddress()) ? "passed" : "failed"));
 
@@ -1031,7 +999,7 @@ public:
 		String Message = "Hello, World!";
 		size_t PublicKeySize = 0;
 		size_t SecretKeySize = 0;
-		Algorithm::Pubkey PublicKey;
+		Algorithm::Composition::CPubkey PublicKey;
 		Algorithm::Composition::CSeckey SecretKey;
 		Algorithm::Composition::CSeed Seed1, Seed2;
 		Algorithm::Composition::CSeckey SecretKey1, SecretKey2;
@@ -1070,28 +1038,28 @@ public:
 		auto User2 = Ledger::Wallet::FromSeed();
 		auto MessageFromUser1 = "Hello, Alice!";
 		auto MessageFromUser2 = "Hello, Bob!";
-		auto MessageCheck1 = Algorithm::Signing::MessageHash("sealing key 1 is mine");
-		auto MessageCheck2 = Algorithm::Signing::MessageHash("sealing key 2 is mine");
-		auto Ciphertext1 = User1.SealMessage(MessageFromUser1, User2.SealingKey, *Crypto::RandomBytes(64));
+		auto MessageCheck1 = Algorithm::Signing::MessageHash("public key 1 is mine");
+		auto MessageCheck2 = Algorithm::Signing::MessageHash("public key 2 is mine");
+		auto Ciphertext1 = User1.SealMessage(MessageFromUser1, User2.PublicKey, *Crypto::RandomBytes(64));
 		auto Plaintext1 = Ciphertext1 ? User2.OpenMessage(*Ciphertext1) : Option<String>(Optional::None);
-		auto Ciphertext2 = User2.SealMessage(MessageFromUser2, User1.SealingKey, *Crypto::RandomBytes(64));
+		auto Ciphertext2 = User2.SealMessage(MessageFromUser2, User1.PublicKey, *Crypto::RandomBytes(64));
 		auto Plaintext2 = Ciphertext2 ? User1.OpenMessage(*Ciphertext2) : Option<String>(Optional::None);
 
-		Algorithm::Sighash Signature1, Signature2;
-		Algorithm::Signing::SignSealing(MessageCheck1, User1.SecretKey, Signature1);
-		Algorithm::Signing::SignSealing(MessageCheck2, User2.SecretKey, Signature2);
+		Algorithm::Recsighash Signature1, Signature2;
+		Algorithm::Signing::Sign(MessageCheck1, User1.SecretKey, Signature1);
+		Algorithm::Signing::Sign(MessageCheck2, User2.SecretKey, Signature2);
 
 		UPtr<Schema> Data = Var::Set::Object();
 		auto* User1WalletData = Data->Set("user1_wallet", User1.AsSchema().Reset());
 		auto* User1WalletMessageData = User1WalletData->Set("message");
 		User1WalletMessageData->Set("ciphertext_to_user2_wallet", Var::String(Ciphertext1 ? Format::Util::Encode0xHex(*Ciphertext1).c_str() : "** encryption failed **"));
 		User1WalletMessageData->Set("plaintext_from_user2_wallet", Var::String(Plaintext2 ? Plaintext2->c_str() : "** decryption failed **"));
-		User1WalletMessageData->Set("sealing_key_ownership_from_user1", Var::String(Algorithm::Signing::VerifySealing(MessageCheck1, User1.SealingKey, Signature1) ? "verification passed" : "verification failed"));
+		User1WalletMessageData->Set("public_key_ownership_from_user1", Var::String(Algorithm::Signing::Verify(MessageCheck1, User1.PublicKey, Signature1) ? "verification passed" : "verification failed"));
 		auto* User2WalletData = Data->Set("user2_wallet", User2.AsSchema().Reset());
 		auto* User2WalletMessageData = User2WalletData->Set("message");
 		User2WalletMessageData->Set("ciphertext_to_user2_wallet", Var::String(Ciphertext2 ? Format::Util::Encode0xHex(*Ciphertext2).c_str() : "** encryption failed **"));
 		User2WalletMessageData->Set("plaintext_from_user2_wallet", Var::String(Plaintext1 ? Plaintext1->c_str() : "** decryption failed **"));
-		User2WalletMessageData->Set("sealing_key_ownership_from_user2", Var::String(Algorithm::Signing::VerifySealing(MessageCheck2, User2.SealingKey, Signature2) ? "verification passed" : "verification failed"));
+		User2WalletMessageData->Set("public_key_ownership_from_user2", Var::String(Algorithm::Signing::Verify(MessageCheck2, User2.PublicKey, Signature2) ? "verification passed" : "verification failed"));
 		Term->jWriteLine(*Data);
 		VI_PANIC(Schema::ToJSON(*Data).find("failed") == std::string::npos, "cryptographic error");
 	}
@@ -1113,7 +1081,7 @@ public:
 		auto TxCopy = UPtr<Ledger::Transaction>(Transactions::Resolver::New(Messages::Authentic::ResolveType(TxBody).Or(0)));
 		auto TxInfo = Tx.AsSchema();
 		Algorithm::Pubkeyhash RecoverPublicKeyHash = { 0 };
-		TxInfo->Set("recovery_test", Var::String(Tx.Recover(RecoverPublicKeyHash) && !memcmp(Wallet.PublicKeyHash, RecoverPublicKeyHash, sizeof(RecoverPublicKeyHash)) ? "passed" : "failed"));
+		TxInfo->Set("recovery_test", Var::String(Tx.RecoverHash(RecoverPublicKeyHash) && !memcmp(Wallet.PublicKeyHash, RecoverPublicKeyHash, sizeof(RecoverPublicKeyHash)) ? "passed" : "failed"));
 		TxInfo->Set("verification_test", Var::String(Tx.Verify(Wallet.PublicKey) ? "passed" : "failed"));
 		TxInfo->Set("serialization_test", Var::String(TxCopy && TxCopy->Load(TxBody) && TxCopy->AsMessage().Data == TxBlob ? "passed" : "failed"));
 		TxInfo->Set("raw_data_test", Var::String(Format::Util::Encode0xHex(TxBlob)));
@@ -1208,25 +1176,25 @@ public:
 			{ Ledger::Wallet::FromSeed("000000"), 0 },
 			{ Ledger::Wallet::FromSeed("000002"), 0 },
 		};
-		NewBlockFromGenerator(*Data, &Generators::Adjustments, Users, "0x4ce2b9aa56c064bbeaf6f26cf50517bafc17e50e6204a6eec28d465615fcd1f7");
-		NewBlockFromGenerator(*Data, &Generators::AddressAccounts, Users, "0x19706d73084953436083c504d223d03af0361fd45546705b37aeb324010c553f");
-		NewBlockFromGenerator(*Data, &Generators::PubkeyAccounts, Users, "0x44831c0bb9febf4d734c4b0099e33efc58268b66df1cd9c3bff3ed1ccc0cda46");
-		NewBlockFromGenerator(*Data, &Generators::Commitments, Users, "0x4fe58c6b51f0e5ca04aa6f366e80b429c60ca7c2b8850a669ad6a4f8ebb575e0");
-		NewBlockFromGenerator(*Data, std::bind(&Generators::CommitmentOnline, std::placeholders::_1, std::placeholders::_2, 2), Users, "0x29f4bf42f2b59a9051d79b1b4581f966fdf7e97cc721bbe87ea79cbc0baa167f");
-		NewBlockFromGenerator(*Data, &Generators::Allocations, Users, "0xc6be3705916314c307ab2ccb7f8c01d57e19f210cf55abb999017e63d2928e49");
-		NewBlockFromGenerator(*Data, &Generators::Contributions, Users, "0xaa3e366fd7b9cbe1eb008587a3203fd4abb8d00a3b79a6aad9f47a0372aa3df3");
-		NewBlockFromGenerator(*Data, &Generators::DelegatedCustodianAccounts, Users, "0xcc236b433de86a923946ca99ccba8ffa321a8704e7d606612e537a4367648c6d");
-		NewBlockFromGenerator(*Data, &Generators::Claims, Users, "0xd9915b4b0742f3b1adf0ffbf1ae4956b393500dc60a1e3c56230ebc98db7f33d");
-		NewBlockFromGenerator(*Data, &Generators::Transfers, Users, "0x39d59cb60d1271e836e53a2e2c61dcc380e846b54b72568a583d16b2291f12ad");
-		NewBlockFromGenerator(*Data, &Generators::Rollups, Users, "0x552c05635f3001fe7059be9a14b5b155232bebd48e34b5066bc558e3f5b6a443");
-		NewBlockFromGenerator(*Data, &Generators::Deployments, Users, "0x8b250d77016fe30488e7e3914ae8125ade3e8e3b65848cc538c37d6e9ed10cf0");
-		NewBlockFromGenerator(*Data, &Generators::Invocations, Users, "0x5755e532d079ccceb3ab23f2df23b7d7eab5422683af8c0dd5cbbffd2f098c5f");
-		NewBlockFromGenerator(*Data, &Generators::MigrationsStage1, Users, "0x386577b859883f849d4d5b2e228dd0357cb6cd17925e46f58f4fa29e3059e7f8");
-		NewBlockFromGenerator(*Data, &Generators::MigrationsStage2, Users, "0x92f055c3c4b482e1383f9024872ca61e6e98b856708097b4fc1c6d1c971dcd89");
-		NewBlockFromGenerator(*Data, &Generators::WithdrawalsStage1, Users, "0xce82e0004fcaeacc8f19ae2cb564b94f1803f6f7e963a0c1a91f0bc9e589a2ed");
-		NewBlockFromGenerator(*Data, &Generators::WithdrawalsStage2, Users, "0xbf3fdcc87446fb93ed755de8badd2c11c043315a31796b516226d4647eb0e382");
-		NewBlockFromGenerator(*Data, std::bind(&Generators::CommitmentOffline, std::placeholders::_1, std::placeholders::_2, 2), Users, "0x28685563649cafa5de6fdcb8ad5eed742f1d9db39a1838e6c81ac36e871562d7");
-		NewBlockFromGenerator(*Data, &Generators::Deallocations, Users, "0x0eaf31e7538a96ad78adf77802adee80c3b5ff03092671027315dd9bbe08aef4");
+		NewBlockFromGenerator(*Data, &Generators::Adjustments, Users, "0xfd8dcf5567734dd18128f5b439487b247a2b7e58ac856e7a9423bd0ed41a7bcd");
+		NewBlockFromGenerator(*Data, &Generators::AddressAccounts, Users, "0x84fc1fee65cb2c6df0ddd042e283f23b1c7bccd6ffaa13cab98464e9afe96a06");
+		NewBlockFromGenerator(*Data, &Generators::PubkeyAccounts, Users, "0x0b91945f93f2a4f2577c8a04ee8bb1f20421e42d51084c38a9c39374a3864f42");
+		NewBlockFromGenerator(*Data, &Generators::Commitments, Users, "0xa606188157d9ce418f78e266fa9bcdfdb66eadde6eb9feb9cdda6f6cf045bcf4");
+		NewBlockFromGenerator(*Data, std::bind(&Generators::CommitmentOnline, std::placeholders::_1, std::placeholders::_2, 2), Users, "0xe565c5fa57e3f85b8a148010bc83fcc060ed8421ef6b57bfe8b3ad66e10c5c42");
+		NewBlockFromGenerator(*Data, &Generators::Allocations, Users, "0xede21c2927360f1e8f2f7e85786bbb44929162222ba25aab1485b666dec5cc83");
+		NewBlockFromGenerator(*Data, &Generators::Contributions, Users, "0xea9e19b8d73e0a6e0626cf70160ae0c5da85216ab898e23b39165715bdb4683c");
+		NewBlockFromGenerator(*Data, &Generators::DelegatedCustodianAccounts, Users, "0x771d835dec992cd33b39600450ea3c3d0b146c9b8ca64eb50d032c71998a2cb4");
+		NewBlockFromGenerator(*Data, &Generators::Claims, Users, "0xd3441099cf39627366765e8deb06ab7d9c20e6bcb1476e5f145ba789c8e641f4");
+		NewBlockFromGenerator(*Data, &Generators::Transfers, Users, "0x3e979629fa197440a37eba5f03bd233dae1095ba743dff679faf1413891b2665");
+		NewBlockFromGenerator(*Data, &Generators::Rollups, Users, "0x24db38b9b6388d31e1ae55eafe047dd2414da32d7065acd3d5f1e5c7fdbe9414");
+		NewBlockFromGenerator(*Data, &Generators::Deployments, Users, "0x103b983d98ce127986c6aa2fe30d638d60476255b7e334fb1b2c3b3401aeaebf");
+		NewBlockFromGenerator(*Data, &Generators::Invocations, Users, "0xd8764ce212b7dd2758cb11515e983e6f6bb3d3843f6eda525d430315fc357fc2");
+		NewBlockFromGenerator(*Data, &Generators::MigrationsStage1, Users, "0x812dc5f9eaab0d04c5630107a20413f429866ee7f34540601a9a4cf272fbc053");
+		NewBlockFromGenerator(*Data, &Generators::MigrationsStage2, Users, "0xa9808655be868aed1bd16ab6d4461470dc93e37638179fe865e72456d2752dbf");
+		NewBlockFromGenerator(*Data, &Generators::WithdrawalsStage1, Users, "0x65a2b2f5b4dae51c5b3113fe152b2a0874e54ea90cfc68b9a57978fcf0c2278b");
+		NewBlockFromGenerator(*Data, &Generators::WithdrawalsStage2, Users, "0x52bce2281b7d5dee3c1e5e5654a9b535b4521a92c8e242fd6bbdeb25aa2827cb");
+		NewBlockFromGenerator(*Data, std::bind(&Generators::CommitmentOffline, std::placeholders::_1, std::placeholders::_2, 2), Users, "0xdfc4acca1261a505df6451908f0071276438417c4d77b21f6bfe2d14df2ae9eb");
+		NewBlockFromGenerator(*Data, &Generators::Deallocations, Users, "0xdce32d7a64de453cbc02dbe886e2be2cdfc0090f5d6d4b1d71dbe7cdbcc5e896");
 		Term->jWriteLine(*Data);
 	}
 	/* Blockchain containing some transaction types (non-zero balance accounts, valid regtest chain) */
@@ -1245,15 +1213,15 @@ public:
 			{ Ledger::Wallet::FromSeed("000000"), 0 },
 			{ Ledger::Wallet::FromSeed("000001"), 0 }
 		};
-		NewBlockFromGenerator(*Data, &Generators::Adjustments, Users, "0x89220018c3bd51f1cd2295cc70d257dcf71bc0854467700501a4365691321095");
-		NewBlockFromGenerator(*Data, &Generators::AddressAccounts, Users, "0x6b318303f0cfefdb4199565d417d09b1124c660be62225993755d0f2d0b0f609");
-		NewBlockFromGenerator(*Data, &Generators::DelegatedCustodianAccounts, Users, "0x2111ddb230d6af1773a40e552a1ba58f97dc9592c9345d3fa9ac7d35f5e771d5");
-		NewBlockFromGenerator(*Data, &Generators::Commitments, Users, "0xcac93a45e24a1ed222ba11a828bceb3fc99966d0cb1b6ed30e24ed1866dd12dc");
-		NewBlockFromGenerator(*Data, &Generators::Claims, Users, "0x17219aa7693f8f203b1285114734e19fc211c4fb14f10ce21f8dced40fda1358");
-		NewBlockFromGenerator(*Data, &Generators::Transfers, Users, "0x6c19e25babaf58dee6dde2cb0ae5c89ccd4ecbb711d0c3a0a86d4118fa1bf332");
-		NewBlockFromGenerator(*Data, &Generators::Rollups, Users, "0x9e694c12729ae4118b6592449b424bd8639c9c931a2d3e8672b6d36848f64a16");
-		NewBlockFromGenerator(*Data, std::bind(&Generators::CommitmentOffline, std::placeholders::_1, std::placeholders::_2, 1), Users, "0x3b5fa54ecee549175621eb31361f90f6632f86631beb96cce9800bc548431db7");
-		NewBlockFromGenerator(*Data, std::bind(&Generators::TransferToWallet, std::placeholders::_1, std::placeholders::_2, 1, Algorithm::Asset::IdOf("BTC"), "tcrt1xq2lqn6589qmtcy78sxkf975jexq7jfa9rt4r3d", 0.1), Users, "0xc04c4f455563659881ab26f4f2e079d936c70cef5459c4b1f6d868b8d8a84517");
+		NewBlockFromGenerator(*Data, &Generators::Adjustments, Users, "0xaee2ad6c67cbb6f4883d0ca56a23604320f5520e3584bf6af81d9b7bbb76967b");
+		NewBlockFromGenerator(*Data, &Generators::AddressAccounts, Users, "0xded8fca5705a07e8b3ccef1af4d38757de7526e1bb482e769bab1f8d3812fd6a");
+		NewBlockFromGenerator(*Data, &Generators::DelegatedCustodianAccounts, Users, "0x8e71b4aac0827bdf7eb18c5073f8e60aae4cb67e356168bc7b1175c3cdd2a368");
+		NewBlockFromGenerator(*Data, &Generators::Commitments, Users, "0x2ca0710c170ef018a229932c57ca7dfed61235dbff2cafa5f10dd9c78adfef44");
+		NewBlockFromGenerator(*Data, &Generators::Claims, Users, "0x67204ad47600ac88cef604b859ee795c3c434ec5749794cc9f618ba450854915");
+		NewBlockFromGenerator(*Data, &Generators::Transfers, Users, "0x5f2a391ed331bd52b87e2c23ad7982e734469e105d79506a6a030daf871db5bd");
+		NewBlockFromGenerator(*Data, &Generators::Rollups, Users, "0x8e1a398780719b07c9e043b19195de36d1e2acaa090077281a0667d67d7e8e6a");
+		NewBlockFromGenerator(*Data, std::bind(&Generators::CommitmentOffline, std::placeholders::_1, std::placeholders::_2, 1), Users, "0x237c790ddbeb9bc8d99ad7da96985973d66c07092def18b588f264c4f0a9c8d7");
+		NewBlockFromGenerator(*Data, std::bind(&Generators::TransferToWallet, std::placeholders::_1, std::placeholders::_2, 1, Algorithm::Asset::IdOf("BTC"), "tcrt1xz68pv64tmsajx8z5sesjem2ws9gfu86k6d3x6f", 0.1), Users, "0x016a86b6affc79875b732f4b254f425a31c61355d533b147d810099b7f658bb2");
 		Term->jWriteLine(*Data);
 	}
 	/* Verify current blockchain */
@@ -1379,6 +1347,7 @@ public:
 
 		auto Block = NewBlockFromList(Results, std::move(Transactions), Users);
 		auto Hash = Algorithm::Encoding::Encode0xHex256(Block.StateRoot);
+		Console::Get()->WriteLine(Hash);
 		VI_PANIC(StateRootHash.empty() || StateRootHash == Hash, "block state root deviation");
 		return Block;
 	}
@@ -1400,7 +1369,7 @@ public:
 				continue;
 
 			Algorithm::Pubkeyhash User;
-			VI_PANIC(Transaction->Recover(User), "transaction not recoverable");
+			VI_PANIC(Transaction->RecoverHash(User), "transaction not recoverable");
 			for (auto& [AttestationUser, AttestationUserSequence] : Users)
 			{
 				if (memcmp(AttestationUser.PublicKeyHash, User, sizeof(User)) != 0)
@@ -1498,9 +1467,19 @@ public:
 		Control.Bind(Consensus.GetEntrypoint());
 		Control.Bind(Synchronization.GetEntrypoint());
 		Control.Bind(Interface.GetEntrypoint());
+
 		int ExitCode = Control.Launch();
 		if (OS::Process::HasDebugger())
-			Console::Get()->ReadChar();
+		{
+			auto* Term = Console::Get();
+			Term->Write("\n");
+			Term->ColorBegin(StdColor::White, StdColor::DarkGreen);
+			Term->fWrite("  CONSENSUS TEST FINISHED  ");
+			Term->ColorEnd();
+			Term->Write("\n\n");
+			Term->ReadChar();
+		}
+
 		return ExitCode;
 	}
 	/* Simplest blockchain explorer for debugging */
@@ -1985,7 +1964,15 @@ public:
 		}
 
 		if (OS::Process::HasDebugger())
+		{
+			auto* Term = Console::Get();
+			Term->Write("\n");
+			Term->ColorBegin(StdColor::White, StdColor::DarkGreen);
+			Term->fWrite("  EXPLORER TEST FINISHED  ");
+			Term->ColorEnd();
+			Term->Write("\n\n");
 			Term->ReadChar();
+		}
 
 		return 0;
 	}
@@ -2042,8 +2029,17 @@ public:
 
 		while (Queue->Dispatch());
 		Queue->Stop();
+
 		if (OS::Process::HasDebugger())
+		{
+			auto* Term = Console::Get();
+			Term->Write("\n");
+			Term->ColorBegin(StdColor::White, StdColor::DarkGreen);
+			Term->fWrite("  MEDIATOR TEST FINISHED  ");
+			Term->ColorEnd();
+			Term->Write("\n\n");
 			Term->ReadChar();
+		}
 
 		return 0;
 	}
@@ -2270,11 +2266,20 @@ public:
 
 		Queue->Stop();
 		if (OS::Process::HasDebugger())
+		{
+			auto* Term = Console::Get();
+			Term->Write("\n");
+			Term->ColorBegin(StdColor::White, StdColor::DarkGreen);
+			Term->fWrite("  BENCHMARK TEST FINISHED  ");
+			Term->ColorEnd();
+			Term->Write("\n\n");
 			Term->ReadChar();
+		}
+
 		return 0;
 	}
 	/* Test case runner for integration testing */
-	static int Test(int argc, char* argv[])
+	static int Integration(int argc, char* argv[])
 	{
 		Vitex::Runtime Scope;
 		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
@@ -2322,64 +2327,20 @@ public:
 		}
 
 		if (OS::Process::HasDebugger())
+		{
+			auto* Term = Console::Get();
+			Term->ColorBegin(StdColor::White, StdColor::DarkGreen);
+			Term->fWrite("  INTEGRATION TEST FINISHED  ");
+			Term->ColorEnd();
+			Term->Write("\n\n");
 			Term->ReadChar();
+		}
 
 		return 0;
 	}
 };
 
-int main1(int argc, char* argv[])
-{
-    return Apps::Test(argc, argv);
-}
-
 int main(int argc, char* argv[])
 {
-	Vitex::Runtime Scope;
-	Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
-
-	auto* Term = Console::Get();
-	Term->Show();
-
-	uint256_t C = Algorithm::PLS::Curve();
-	uint256_t D = Algorithm::Hashing::Hash256i("entropy");
-	uint256_t X = Algorithm::PLS::SecretKey(D);
-	auto Y = Algorithm::PLS::SecretFactors(X);
-	uint256_t Z = Algorithm::PLS::PublicKey(Y);
-	size_t Index = 0;
-	while (true)
-	{
-		uint256_t M = Algorithm::Hashing::Hash256i("message" + ToString(++Index));
-		auto SR = Algorithm::PLS::Sign(M, X, Y);
-		uint256_t RZ = Algorithm::PLS::Recover(M, SR);
-		Term->WritePosition(0, 0);
-		Term->fWriteLine(
-			"curve:\n"
-			"  C: %s\n"
-			"keypair:\n"
-			"  D: %s\n"
-			"  X: %s\n"
-			"  Z: %s\n"
-			"signature%i:\n"
-			"  M: %s\n"
-			"  S: %s\n"
-			"  R: %s\n"
-			"  Z: %s%s\n",
-			Algorithm::Encoding::Encode0xHex256(C).c_str(),
-			Algorithm::Encoding::Encode0xHex256(D).c_str(),
-			Algorithm::Encoding::Encode0xHex256(X).c_str(),
-			Algorithm::Encoding::Encode0xHex256(Z).c_str(),
-			(int)Index,
-			Algorithm::Encoding::Encode0xHex256(M).c_str(),
-			Format::Util::Encode0xHex(std::string_view((char*)SR.S, sizeof(SR.S))).c_str(),
-			Format::Util::Encode0xHex(std::string_view((char*)SR.R, sizeof(SR.R))).c_str(),
-			Algorithm::Encoding::Encode0xHex256(RZ).c_str(),
-			Z == RZ ? " (valid)  " : " (invalid)");
-		break;
-		if (Z != RZ)
-			Term->ReadChar();
-	}
-
-	Term->ReadChar();
-	return 0;
+    return Apps::Consensus(argc, argv);
 }

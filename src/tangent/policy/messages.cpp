@@ -87,7 +87,7 @@ namespace Tangent
 				return false;
 
 			String SignatureAssembly;
-			if (!Stream.ReadString(Stream.ReadType(), &SignatureAssembly) || SignatureAssembly.size() != sizeof(Algorithm::Sighash))
+			if (!Stream.ReadString(Stream.ReadType(), &SignatureAssembly) || SignatureAssembly.size() != sizeof(Algorithm::Recsighash))
 				return false;
 
 			memcpy(Signature, SignatureAssembly.data(), SignatureAssembly.size());
@@ -102,7 +102,7 @@ namespace Tangent
 			if (!StorePayload(&Message))
 				return false;
 
-			return Algorithm::Signing::SignTweaked(Message.Hash(), SecretKey, Signature);
+			return Algorithm::Signing::Sign(Message.Hash(), SecretKey, Signature);
 		}
 		bool Authentic::Verify(const Algorithm::Pubkey PublicKey) const
 		{
@@ -110,24 +110,32 @@ namespace Tangent
 			if (!StorePayload(&Message))
 				return false;
 
-			return Algorithm::Signing::VerifyTweaked(Message.Hash(), PublicKey, Signature);
+			return Algorithm::Signing::Verify(Message.Hash(), PublicKey, Signature);
 		}
-		bool Authentic::Recover(Algorithm::Pubkeyhash PublicKeyHash) const
+		bool Authentic::Recover(Algorithm::Pubkey PublicKey) const
 		{
 			Format::Stream Message;
 			if (!StorePayload(&Message))
 				return false;
 
-			return Algorithm::Signing::RecoverTweakedHash(Message.Hash(), PublicKeyHash, Signature);
+			return Algorithm::Signing::Recover(Message.Hash(), PublicKey, Signature);
 		}
-		void Authentic::SetSignature(const Algorithm::Sighash NewValue)
+		bool Authentic::RecoverHash(Algorithm::Pubkeyhash PublicKeyHash) const
+		{
+			Format::Stream Message;
+			if (!StorePayload(&Message))
+				return false;
+
+			return Algorithm::Signing::RecoverHash(Message.Hash(), PublicKeyHash, Signature);
+		}
+		void Authentic::SetSignature(const Algorithm::Recsighash NewValue)
 		{
 			VI_ASSERT(NewValue != nullptr, "new value should be set");
-			memcpy(Signature, NewValue, sizeof(Algorithm::Sighash));
+			memcpy(Signature, NewValue, sizeof(Algorithm::Recsighash));
 		}
 		bool Authentic::IsSignatureNull() const
 		{
-			Algorithm::Sighash Null = { 0 };
+			Algorithm::Recsighash Null = { 0 };
 			return memcmp(Signature, Null, sizeof(Null)) == 0;
 		}
 		uint256_t Authentic::AsHash(bool Renew) const

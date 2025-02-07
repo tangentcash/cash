@@ -357,7 +357,7 @@ namespace Tangent
 			Bind(AccessType::W | AccessType::A, "validatorstate", "reorganize", 0, 0, "", "{ new_tip_block_number: uint64, old_tip_block_number: uint64, mempool_transactions: uint64, block_delta: int64, transaction_delta: int64, state_delta: int64, is_fork: bool }", "reorganize current chain which re-executes every saved block from genesis to tip and re-calculates the final chain state (helpful for corrupted state recovery or pruning checkpoint size change without re-downloading full block history)", std::bind(&ServerNode::ValidatorstateReorganize, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(AccessType::W | AccessType::A, "validatorstate", "acceptnode", 0, 1, "string? uri_address", "void", "try to accept and connect to a node possibly by ip address", std::bind(&ServerNode::ValidatorstateAcceptNode, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(AccessType::W | AccessType::A, "validatorstate", "rejectnode", 1, 1, "string uri_address", "void", "reject and disconnect from a node by ip address", std::bind(&ServerNode::ValidatorstateRejectNode, this, std::placeholders::_1, std::placeholders::_2));
-			Bind(AccessType::W | AccessType::A, "validatorstate", "broadcastmessage", 2, 3, "string sealing_key, string message, bool? chronological", "void", "send encrypted message to another node with specified sealing key", std::bind(&ServerNode::ValidatorstateBroadcastMessage, this, std::placeholders::_1, std::placeholders::_2));
+			Bind(AccessType::W | AccessType::A, "validatorstate", "broadcastmessage", 2, 3, "string public_key, string message, bool? chronological", "void", "send encrypted message to another node with specified public key", std::bind(&ServerNode::ValidatorstateBroadcastMessage, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(AccessType::W | AccessType::A, "proposerstate", "submitblock", 0, 0, "", "void", "try to propose a block from mempool transactions", std::bind(&ServerNode::ProposerstateSubmitBlock, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(AccessType::W | AccessType::A, "proposerstate", "submitcommitmenttransaction", 3, 4, "string asset, bool online, bool? proposer, string? observers", "uint256", "submit commitment transaction that enables/disables block proposer and/or blockchain observer(s) defined by a comma separated list of asset handles", std::bind(&ServerNode::ProposerstateSubmitCommitmentTransaction, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(AccessType::W | AccessType::A, "proposerstate", "submitcontributionallocation", 1, 1, "string asset", "uint256", "request for allocation of a depository wallet", std::bind(&ServerNode::ProposerstateSubmitContributionAllocation, this, std::placeholders::_1, std::placeholders::_2));
@@ -823,7 +823,7 @@ namespace Tangent
 				return ServerResponse().Error(ErrorCodes::BadParams, "invalid message");
 
 			Algorithm::Pubkeyhash Owner = { 0 }, Null = { 0 };
-			bool Successful = CandidateTx->Recover(Owner);
+			bool Successful = CandidateTx->RecoverHash(Owner);
 			UPtr<Schema> Result = Var::Set::Object();
 			Result->Set("transaction", CandidateTx->AsSchema().Reset());
 			Result->Set("signer_address", Successful ? Algorithm::Signing::SerializeAddress(Owner) : Var::Set::Null());
@@ -2805,7 +2805,7 @@ namespace Tangent
 				RPC->Set("page_size", Var::Integer(Protocol::Now().User.RPC.PageSize));
 				RPC->Set("websockets", Var::Boolean(Protocol::Now().User.RPC.WebSockets));
 				if (Protocol::Now().User.RPC.Messaging && Validator != nullptr)
-					RPC->Set("sealing_key", Var::String(Validator->Validator.Wallet.GetSealingKey()));
+					RPC->Set("public_key", Var::String(Validator->Validator.Wallet.GetPublicKey()));
 			}
 
 			if (Protocol::Now().User.NDS.Server)
@@ -2911,9 +2911,9 @@ namespace Tangent
 			if (Args.size() > 2 && Args[2].AsBoolean())
 				Message = "[" + DateTime::SerializeGlobal(DateTime().CurrentOffset(), DateTime::FormatIso8601Time()) + "] " + Message;
 
-			Algorithm::Pubkey SealingKey;
-			Algorithm::Signing::DecodeSealingKey(Args[0].AsString(), SealingKey);
-			if (!Validator->AcceptMessage(SealingKey, Message))
+			Algorithm::Pubkey PublicKey;
+			Algorithm::Signing::DecodePublicKey(Args[0].AsString(), PublicKey);
+			if (!Validator->AcceptMessage(PublicKey, Message))
 				return ServerResponse().Error(ErrorCodes::BadRequest, "message is not accepted");
 
 			return ServerResponse().Success(Var::Set::Null());

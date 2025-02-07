@@ -99,96 +99,6 @@ namespace Tangent
 			return std::move(Stream.Data);
 		}
 
-		AccountSealing::AccountSealing(const Algorithm::Pubkeyhash NewOwner, uint64_t NewBlockNumber, uint64_t NewBlockNonce) : Ledger::Uniform(NewBlockNumber, NewBlockNonce)
-		{
-			if (NewOwner)
-				memcpy(Owner, NewOwner, sizeof(Owner));
-		}
-		AccountSealing::AccountSealing(const Algorithm::Pubkeyhash NewOwner, const Ledger::BlockHeader* NewBlockHeader) : Ledger::Uniform(NewBlockHeader)
-		{
-			if (NewOwner)
-				memcpy(Owner, NewOwner, sizeof(Owner));
-		}
-		ExpectsLR<void> AccountSealing::Transition(const Ledger::TransactionContext* Context, const Ledger::State* PrevState)
-		{
-			if (IsOwnerNull())
-				return LayerException("invalid state owner");
-			else if (IsSealingKeyNull())
-				return LayerException("invalid state sealing key");
-
-			auto* Prev = (AccountSealing*)PrevState;
-			if (Prev != nullptr)
-				return LayerException("account sealing is immutable");
-
-			return Expectation::Met;
-		}
-		bool AccountSealing::StorePayload(Format::Stream* Stream) const
-		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Algorithm::Pubkeyhash Null1 = { 0 };
-			Algorithm::Pubkey Null2 = { 0 };
-			Stream->WriteString(std::string_view((char*)Owner, memcmp(Owner, Null1, sizeof(Null1)) == 0 ? 0 : sizeof(Owner)));
-			Stream->WriteString(std::string_view((char*)SealingKey, memcmp(SealingKey, Null2, sizeof(Null2)) == 0 ? 0 : sizeof(SealingKey)));
-			return true;
-		}
-		bool AccountSealing::LoadPayload(Format::Stream& Stream)
-		{
-			String OwnerAssembly;
-			if (!Stream.ReadString(Stream.ReadType(), &OwnerAssembly) || !Algorithm::Encoding::DecodeUintBlob(OwnerAssembly, Owner, sizeof(Owner)))
-				return false;
-
-			String SealingKeyAssembly;
-			if (!Stream.ReadString(Stream.ReadType(), &SealingKeyAssembly) || !Algorithm::Encoding::DecodeUintBlob(SealingKeyAssembly, SealingKey, sizeof(SealingKey)))
-				return false;
-
-			return true;
-		}
-		bool AccountSealing::IsOwnerNull() const
-		{
-			Algorithm::Pubkeyhash Null = { 0 };
-			return !memcmp(Owner, Null, sizeof(Null));
-		}
-		bool AccountSealing::IsSealingKeyNull() const
-		{
-			Algorithm::Pubkey Null = { 0 };
-			return !memcmp(SealingKey, Null, sizeof(Null));
-		}
-		UPtr<Schema> AccountSealing::AsSchema() const
-		{
-			Schema* Data = Ledger::Uniform::AsSchema().Reset();
-			Data->Set("owner", Algorithm::Signing::SerializeAddress(Owner));
-			Data->Set("sealing_key", Algorithm::Signing::SerializeSealingKey(SealingKey));
-			return Data;
-		}
-		uint32_t AccountSealing::AsType() const
-		{
-			return AsInstanceType();
-		}
-		std::string_view AccountSealing::AsTypename() const
-		{
-			return AsInstanceTypename();
-		}
-		String AccountSealing::AsIndex() const
-		{
-			return AsInstanceIndex(Owner);
-		}
-		uint32_t AccountSealing::AsInstanceType()
-		{
-			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
-			return Hash;
-		}
-		std::string_view AccountSealing::AsInstanceTypename()
-		{
-			return "account_sealing";
-		}
-		String AccountSealing::AsInstanceIndex(const Algorithm::Pubkeyhash Owner)
-		{
-			Format::Stream Stream;
-			Stream.WriteTypeless(AsInstanceType());
-			Stream.WriteTypeless((char*)Owner, (uint8_t)sizeof(Algorithm::Pubkeyhash));
-			return std::move(Stream.Data);
-		}
-
 		AccountWork::AccountWork(const Algorithm::Pubkeyhash NewOwner, uint64_t NewBlockNumber, uint64_t NewBlockNonce) : Ledger::Multiform(NewBlockNumber, NewBlockNonce)
 		{
 			if (NewOwner)
@@ -1746,8 +1656,6 @@ namespace Tangent
 		{
 			if (Hash == AccountSequence::AsInstanceType())
 				return Memory::New<AccountSequence>(nullptr, nullptr);
-			else if (Hash == AccountSealing::AsInstanceType())
-				return Memory::New<AccountSealing>(nullptr, nullptr);
 			else if (Hash == AccountWork::AsInstanceType())
 				return Memory::New<AccountWork>(nullptr, nullptr);
 			else if (Hash == AccountObserver::AsInstanceType())
@@ -1779,8 +1687,6 @@ namespace Tangent
 			uint32_t Hash = Base->AsType();
 			if (Hash == AccountSequence::AsInstanceType())
 				return Memory::New<AccountSequence>(*(const AccountSequence*)Base);
-			else if (Hash == AccountSealing::AsInstanceType())
-				return Memory::New<AccountSealing>(*(const AccountSealing*)Base);
 			else if (Hash == AccountWork::AsInstanceType())
 				return Memory::New<AccountWork>(*(const AccountWork*)Base);
 			else if (Hash == AccountObserver::AsInstanceType())

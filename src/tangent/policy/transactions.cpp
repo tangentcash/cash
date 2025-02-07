@@ -380,7 +380,7 @@ namespace Tangent
 				return false;
 
 			String LocationAssembly;
-			if (!Stream.ReadString(Stream.ReadType(), &LocationAssembly) || LocationAssembly.size() != sizeof(Algorithm::Sighash))
+			if (!Stream.ReadString(Stream.ReadType(), &LocationAssembly) || LocationAssembly.size() != sizeof(Algorithm::Recsighash))
 				return false;
 
 			Args.clear();
@@ -401,7 +401,7 @@ namespace Tangent
 			Message.WriteBoolean(Patchable);
 			Message.WriteBoolean(Segregated);
 			Message.WriteString(Calldata);
-			return Algorithm::Signing::SignTweaked(Algorithm::Signing::MessageHash(Message.Data), SecretKey, Location);
+			return Algorithm::Signing::Sign(Algorithm::Signing::MessageHash(Message.Data), SecretKey, Location);
 		}
 		bool Deployment::VerifyLocation(const Algorithm::Pubkey PublicKey) const
 		{
@@ -410,7 +410,7 @@ namespace Tangent
 			Message.WriteBoolean(Patchable);
 			Message.WriteBoolean(Segregated);
 			Message.WriteString(Calldata);
-			return Algorithm::Signing::VerifyTweaked(Algorithm::Signing::MessageHash(Message.Data), PublicKey, Location);
+			return Algorithm::Signing::Verify(Algorithm::Signing::MessageHash(Message.Data), PublicKey, Location);
 		}
 		bool Deployment::RecoverLocation(Algorithm::Pubkeyhash PublicKeyHash) const
 		{
@@ -419,17 +419,17 @@ namespace Tangent
 			Message.WriteBoolean(Patchable);
 			Message.WriteBoolean(Segregated);
 			Message.WriteString(Calldata);
-			return Algorithm::Signing::RecoverTweakedHash(Algorithm::Signing::MessageHash(Message.Data), PublicKeyHash, Location);
+			return Algorithm::Signing::RecoverHash(Algorithm::Signing::MessageHash(Message.Data), PublicKeyHash, Location);
 		}
 		bool Deployment::IsLocationNull() const
 		{
-			Algorithm::Sighash Null = { 0 };
+			Algorithm::Recsighash Null = { 0 };
 			return memcmp(Location, Null, sizeof(Null)) == 0;
 		}
-		void Deployment::SetLocation(const Algorithm::Sighash NewValue)
+		void Deployment::SetLocation(const Algorithm::Recsighash NewValue)
 		{
 			VI_ASSERT(NewValue != nullptr, "new value should be set");
-			memcpy(Location, NewValue, sizeof(Algorithm::Sighash));
+			memcpy(Location, NewValue, sizeof(Algorithm::Recsighash));
 		}
 		void Deployment::SetCalldata(const std::string_view& NewProgram, Format::Variables&& NewArgs, bool MayPatch)
 		{
@@ -999,7 +999,7 @@ namespace Tangent
 					return LayerException("sub-transaction " + Algorithm::Encoding::Encode0xHex256(Transaction->AsHash()) + " prevalidation failed: invalid payload");
 
 				Algorithm::Pubkeyhash Owner;
-				if (!Algorithm::Signing::RecoverTweakedHash(Message.Hash(), Owner, Transaction->Signature) || !memcmp(Owner, Null, sizeof(Null)))
+				if (!Algorithm::Signing::RecoverHash(Message.Hash(), Owner, Transaction->Signature) || !memcmp(Owner, Null, sizeof(Null)))
 					return LayerException("sub-transaction " + Algorithm::Encoding::Encode0xHex256(Transaction->AsHash()) + " prevalidation failed: invalid signature");
 
 				Transaction->GasPrice = Decimal::Zero();
@@ -1111,7 +1111,7 @@ namespace Tangent
 					if (!Stream.ReadInteger(Stream.ReadType(), &Next->GasLimit))
 						return false;
 
-					if (!Stream.ReadString(Stream.ReadType(), &SignatureAssembly) || SignatureAssembly.size() != sizeof(Algorithm::Sighash))
+					if (!Stream.ReadString(Stream.ReadType(), &SignatureAssembly) || SignatureAssembly.size() != sizeof(Algorithm::Recsighash))
 						return false;
 
 					Next->Asset = GroupAsset;
@@ -1132,7 +1132,7 @@ namespace Tangent
 				for (auto& Transaction : Group.second)
 				{
 					Algorithm::Pubkeyhash From = { 0 };
-					if (Transaction->Recover(From))
+					if (Transaction->RecoverHash(From))
 					{
 						Parties.insert(String((char*)From, sizeof(From)));
 						Transaction->RecoverMany(Receipt, Parties);
@@ -1210,7 +1210,7 @@ namespace Tangent
 			Transaction.Receipt.RelativeGasUse = 0;
 			Transaction.Receipt.RelativeGasPaid = 0;
 			Transaction.Receipt.TransactionHash = Transaction.Transaction->AsHash();
-			if (!Transaction.Transaction->Recover(Transaction.Receipt.From))
+			if (!Transaction.Transaction->RecoverHash(Transaction.Receipt.From))
 				return LayerException("sub-transaction not valid");
 
 			size_t Offset = 0;
@@ -1339,7 +1339,7 @@ namespace Tangent
 			if (!Transaction.StorePayload(&Message))
 				return false;
 			
-			return Algorithm::Signing::SignTweaked(Message.Hash(), SecretKey, Transaction.Signature);
+			return Algorithm::Signing::Sign(Message.Hash(), SecretKey, Transaction.Signature);
 		}
 
 		ExpectsLR<void> Commitment::Prevalidate() const
@@ -1352,9 +1352,6 @@ namespace Tangent
 				if (!Algorithm::Asset::IsValid(Mediator.first))
 					return LayerException("invalid oracle asset");
 			}
-
-			if (!VerifySealing())
-				return LayerException("invalid sealing key");
 
 			return Ledger::Transaction::Prevalidate();
 		}
@@ -1394,19 +1391,6 @@ namespace Tangent
 		}
 		ExpectsLR<void> Commitment::Execute(Ledger::TransactionContext* Context) const
 		{
-			auto Sealing = Context->GetAccountSealing(Context->Receipt.From);
-			if (Sealing)
-			{
-				if (memcmp(Sealing->SealingKey, SealingKey, sizeof(SealingKey)) != 0)
-					return LayerException("sealing key mismatch");
-			}
-			else
-			{
-				Sealing = Context->ApplyAccountSealing(Context->Receipt.From, SealingKey);
-				if (!Sealing)
-					return Sealing.Error();
-			}
-
 			if (Online)
 			{
 				auto Work = Context->ApplyAccountWork(Context->Receipt.From, *Online ? States::AccountFlags::Online : States::AccountFlags::Offline, 0, 0, 0);
@@ -1427,9 +1411,7 @@ namespace Tangent
 		{
 			VI_ASSERT(Stream != nullptr, "stream should be set");
 			Algorithm::Pubkey PkNull = { 0 };
-			Algorithm::Sighash SigNull = { 0 };
-			Stream->WriteString(std::string_view((char*)SealingKey, memcmp(SealingKey, PkNull, sizeof(PkNull)) == 0 ? 0 : sizeof(SealingKey)));
-			Stream->WriteString(std::string_view((char*)SealingSignature, memcmp(SealingSignature, SigNull, sizeof(SigNull)) == 0 ? 0 : sizeof(SealingSignature)));
+			Algorithm::Recsighash SigNull = { 0 };
 			Stream->WriteInteger((uint8_t)(Online ? (*Online ? 1 : 0) : 2));
 			Stream->WriteInteger((uint16_t)Observers.size());
 			for (auto& Mediator : Observers)
@@ -1441,14 +1423,6 @@ namespace Tangent
 		}
 		bool Commitment::LoadBody(Format::Stream& Stream)
 		{
-			String SealingKeyAssembly;
-			if (!Stream.ReadString(Stream.ReadType(), &SealingKeyAssembly) || !Algorithm::Encoding::DecodeUintBlob(SealingKeyAssembly, SealingKey, sizeof(SealingKey)))
-				return false;
-
-			String SealingSignatureAssembly;
-			if (!Stream.ReadString(Stream.ReadType(), &SealingSignatureAssembly) || !Algorithm::Encoding::DecodeUintBlob(SealingSignatureAssembly, SealingSignature, sizeof(SealingSignature)))
-				return false;
-
 			uint8_t Status;
 			if (!Stream.ReadInteger(Stream.ReadType(), &Status))
 				return false;
@@ -1479,44 +1453,6 @@ namespace Tangent
 			}
 
 			return true;
-		}
-		bool Commitment::Sign(const Algorithm::Seckey SecretKey)
-		{
-			Algorithm::Seckey SealingSecretKey;
-			Algorithm::Signing::DeriveSealingKeypair(SecretKey, SealingSecretKey, SealingKey);
-
-			Format::Stream Message;
-			Message.WriteTypeless((char*)SealingKey, (uint32_t)sizeof(SealingKey));
-			Message.WriteTypeless(Sequence);
-			if (!Algorithm::Signing::SignSealing(Algorithm::Signing::MessageHash(Message.Data), SecretKey, SealingSignature))
-				return false;
-
-			return Authentic::Sign(SecretKey);
-		}
-		bool Commitment::Sign(const Algorithm::Seckey SecretKey, uint64_t NewSequence)
-		{
-			Sequence = NewSequence;
-			return Sign(SecretKey);
-		}
-		bool Commitment::Sign(const Algorithm::Seckey SecretKey, uint64_t NewSequence, const Decimal& Price)
-		{
-			SetEstimateGas(Price);
-			if (!Sign(SecretKey, NewSequence))
-				return false;
-
-			auto OptimalGas = Ledger::TransactionContext::CalculateTxGas(this);
-			if (!OptimalGas || GasLimit == *OptimalGas)
-				return true;
-
-			GasLimit = *OptimalGas;
-			return Sign(SecretKey);
-		}
-		bool Commitment::VerifySealing() const
-		{
-			Format::Stream Message;
-			Message.WriteTypeless((char*)SealingKey, (uint32_t)sizeof(SealingKey));
-			Message.WriteTypeless(Sequence);
-			return Algorithm::Signing::VerifySealing(Algorithm::Signing::MessageHash(Message.Data), SealingKey, SealingSignature);
 		}
 		void Commitment::SetOnline()
 		{
@@ -3018,6 +2954,7 @@ namespace Tangent
 		UPtr<Schema> ContributionSelection::AsSchema() const
 		{
 			Schema* Data = Ledger::Transaction::AsSchema().Reset();
+			Data->Set("contribution_allocation_hash", Var::String(Algorithm::Encoding::Encode0xHex256(ContributionAllocationHash)));
 			Data->Set("public_key_1", Var::String(Format::Util::Encode0xHex(std::string_view((char*)PublicKey1, sizeof(PublicKey1)))));
 			Data->Set("proposer", Algorithm::Signing::SerializeAddress(Proposer));
 			return Data;
@@ -3084,7 +3021,7 @@ namespace Tangent
 			if (!Algorithm::Asset::TokenOf(Asset).empty())
 				return LayerException("invalid asset");
 
-			Algorithm::Pubkey PubNull = { 0 };
+			Algorithm::Composition::CPubkey PubNull = { 0 };
 			if (!memcmp(PublicKey, PubNull, sizeof(PubNull)) || !PublicKeySize || PublicKeySize > sizeof(PublicKey))
 				return LayerException("invalid public key");
 
@@ -3195,21 +3132,18 @@ namespace Tangent
 		bool ContributionActivation::StoreBody(Format::Stream* Stream) const
 		{
 			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Algorithm::Pubkey PubNull = { 0 };
 			Algorithm::Pubkeyhash PkhNull = { 0 };
 			Algorithm::Composition::CPubkey CPubNull = { 0 };
-			Algorithm::Composition::CSeckey CSecNull = { 0 };
-			Stream->WriteString(std::string_view((char*)PublicKey, memcmp(PublicKey, PubNull, sizeof(PubNull)) == 0 ? 0 : sizeof(PublicKey)));
+			Stream->WriteString(std::string_view((char*)PublicKey, std::min<size_t>(sizeof(PublicKey), PublicKeySize)));
 			Stream->WriteString(std::string_view((char*)PublicKey2, memcmp(PublicKey2, CPubNull, sizeof(CPubNull)) == 0 ? 0 : sizeof(PublicKey2)));
 			Stream->WriteString(std::string_view((char*)Proposer, memcmp(Proposer, PkhNull, sizeof(PkhNull)) == 0 ? 0 : sizeof(Proposer)));
-			Stream->WriteInteger(PublicKeySize);
 			Stream->WriteInteger(ContributionSelectionHash);
 			return true;
 		}
 		bool ContributionActivation::LoadBody(Format::Stream& Stream)
 		{
 			String PublicKeyAssembly;
-			if (!Stream.ReadString(Stream.ReadType(), &PublicKeyAssembly) || !Algorithm::Encoding::DecodeUintBlob(PublicKeyAssembly, PublicKey, sizeof(PublicKey)))
+			if (!Stream.ReadString(Stream.ReadType(), &PublicKeyAssembly) || !Algorithm::Encoding::DecodeUintBlob(PublicKeyAssembly, PublicKey, std::min(PublicKeyAssembly.size(), sizeof(PublicKey))))
 				return false;
 
 			String PublicKey2Assembly;
@@ -3220,12 +3154,10 @@ namespace Tangent
 			if (!Stream.ReadString(Stream.ReadType(), &ProposerAssembly) || !Algorithm::Encoding::DecodeUintBlob(ProposerAssembly, Proposer, sizeof(Proposer)))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &PublicKeySize))
-				return false;
-
 			if (!Stream.ReadInteger(Stream.ReadType(), &ContributionSelectionHash))
 				return false;
 
+			PublicKeySize = (uint16_t)std::min(PublicKeyAssembly.size(), sizeof(PublicKey));
 			return true;
 		}
 		bool ContributionActivation::RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
@@ -3458,14 +3390,14 @@ namespace Tangent
 				return Selection.Error();
 
 			auto SelectionTransaction = (ContributionSelection*)*Selection->Transaction;
-			auto Sealing = Context->GetAccountSealing(SelectionTransaction->Proposer);
-			if (!Sealing)
-				return LayerException("proposer does not have account sealing");
-
 			Format::Stream Entropy;
 			Entropy.WriteTypeless(SelectionTransaction->ContributionAllocationHash);
 			Entropy.WriteTypeless((char*)SelectionTransaction->Proposer, (uint32_t)sizeof(Algorithm::Pubkeyhash));
 			memcpy(Proposer, SelectionTransaction->Proposer, sizeof(SelectionTransaction->Proposer));
+
+			Algorithm::Pubkey ProposerPublicKey;
+			if (!SelectionTransaction->Recover(ProposerPublicKey))
+				return LayerException("invalid proposer public key");
 
 			Algorithm::Composition::CSeed Seed1;
 			Algorithm::Composition::CSeckey SecretKey1;
@@ -3479,9 +3411,9 @@ namespace Tangent
 			Entropy.WriteTypeless(Deallocation->Receipt.TransactionHash);
 			Entropy.WriteTypeless(Activation->Receipt.TransactionHash);
 			Entropy.WriteTypeless(Selection->Receipt.TransactionHash);
-			EncryptedSecretKey1 = Algorithm::Signing::PublicEncrypt(Sealing->SealingKey, std::string_view((char*)SecretKey1, sizeof(SecretKey1)), Entropy.Data).Or(String());
+			EncryptedSecretKey1 = Algorithm::Signing::PublicEncrypt(ProposerPublicKey, std::string_view((char*)SecretKey1, sizeof(SecretKey1)), Entropy.Data).Or(String());
 			if (EncryptedSecretKey1.empty())
-				return LayerException("invalid sealing secret");
+				return LayerException("secret key encryption error");
 
 			return Expectation::Met;
 #else
@@ -3652,18 +3584,18 @@ namespace Tangent
 				return Selection.Error();
 
 			auto SelectionTransaction = (ContributionSelection*)*Selection->Transaction;
-			auto Sealing = Context->GetAccountSealing(SelectionTransaction->Proposer);
-			if (!Sealing)
-				return LayerException("proposer does not have account sealing");
-
 			Format::Stream Entropy;
 			Entropy.WriteTypeless(ActivationTransaction->ContributionSelectionHash);
 			Entropy.WriteTypeless((char*)SelectionTransaction->PublicKey1, (uint32_t)sizeof(Algorithm::Composition::CPubkey));
 			Entropy.WriteTypeless((char*)SelectionTransaction->Proposer, (uint32_t)sizeof(Algorithm::Pubkeyhash));
 			memcpy(Proposer, SelectionTransaction->Proposer, sizeof(SelectionTransaction->Proposer));
 
+			Algorithm::Pubkey ProposerPublicKey;
+			if (!SelectionTransaction->Recover(ProposerPublicKey))
+				return LayerException("invalid proposer public key");
+
 			size_t SharedPublicKeySize = 0;
-			Algorithm::Pubkey SharedPublicKey;
+			Algorithm::Composition::CPubkey SharedPublicKey;
 			Algorithm::Composition::CSeed Seed2;
 			Algorithm::Composition::CSeckey SecretKey2;
 			Algorithm::Composition::CPubkey PublicKey2;
@@ -3677,9 +3609,9 @@ namespace Tangent
 			Entropy.WriteTypeless(Deallocation->Receipt.TransactionHash);
 			Entropy.WriteTypeless(Activation->Receipt.TransactionHash);
 			Entropy.WriteTypeless(Selection->Receipt.TransactionHash);
-			EncryptedSecretKey2 = Algorithm::Signing::PublicEncrypt(Sealing->SealingKey, std::string_view((char*)SecretKey2, sizeof(SecretKey2)), Entropy.Data).Or(String());
+			EncryptedSecretKey2 = Algorithm::Signing::PublicEncrypt(ProposerPublicKey, std::string_view((char*)SecretKey2, sizeof(SecretKey2)), Entropy.Data).Or(String());
 			if (EncryptedSecretKey2.empty())
-				return LayerException("invalid sealing secret");
+				return LayerException("secret key encryption error");
 
 			return Expectation::Met;
 #else

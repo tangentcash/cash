@@ -373,7 +373,7 @@ namespace Tangent
 				return LayerException("invalid transaction count");
 
 			Algorithm::Pubkeyhash PublicKeyHash = { 0 };
-			if (!Recover(PublicKeyHash))
+			if (!RecoverHash(PublicKeyHash))
 				return LayerException("proposer proof verification failed");
 
 			if (!VerifyWesolowski())
@@ -541,7 +541,7 @@ namespace Tangent
 			if (!BlockHeader::StorePayload(&Message))
 				return false;
 
-			return Algorithm::Signing::SignTweaked(Message.Hash(), SecretKey, Signature);
+			return Algorithm::Signing::Sign(Message.Hash(), SecretKey, Signature);
 		}
 		bool BlockHeader::Solve(const Algorithm::Seckey SecretKey)
 		{
@@ -558,15 +558,23 @@ namespace Tangent
 			if (!BlockHeader::StorePayload(&Message))
 				return false;
 
-			return Algorithm::Signing::VerifyTweaked(Message.Hash(), PublicKey, Signature);
+			return Algorithm::Signing::Verify(Message.Hash(), PublicKey, Signature);
 		}
-		bool BlockHeader::Recover(Algorithm::Pubkeyhash PublicKeyHash) const
+		bool BlockHeader::Recover(Algorithm::Pubkey PublicKey) const
 		{
 			Format::Stream Message;
 			if (!BlockHeader::StorePayload(&Message))
 				return false;
 
-			return Algorithm::Signing::RecoverTweakedHash(Message.Hash(), PublicKeyHash, Signature);
+			return Algorithm::Signing::Recover(Message.Hash(), PublicKey, Signature);
+		}
+		bool BlockHeader::RecoverHash(Algorithm::Pubkeyhash PublicKeyHash) const
+		{
+			Format::Stream Message;
+			if (!BlockHeader::StorePayload(&Message))
+				return false;
+
+			return Algorithm::Signing::RecoverHash(Message.Hash(), PublicKeyHash, Signature);
 		}
 		bool BlockHeader::VerifyWesolowski() const
 		{
@@ -672,7 +680,7 @@ namespace Tangent
 		UPtr<Schema> BlockHeader::AsSchema() const
 		{
 			Algorithm::Pubkeyhash Proposer = { 0 };
-			bool HasProposer = Recover(Proposer);
+			bool HasProposer = RecoverHash(Proposer);
 			Schema* Data = Var::Set::Object();
 			Data->Set("wesolowski", Var::String(Format::Util::Encode0xHex(Wesolowski)));
 			Data->Set("signature", Var::String(Format::Util::Encode0xHex(std::string_view((char*)Signature, sizeof(Signature)))));
@@ -821,7 +829,7 @@ namespace Tangent
 				return LayerException("invalid parent block");
 
 			Algorithm::Pubkeyhash Proposer = { 0 };
-			if (!Recover(Proposer))
+			if (!RecoverHash(Proposer))
 				return LayerException("invalid proposer signature");
 
 			EvaluationContext Environment;
@@ -1793,17 +1801,6 @@ namespace Tangent
 
 			return NewState;
 		}
-		ExpectsLR<States::AccountSealing> TransactionContext::ApplyAccountSealing(const Algorithm::Pubkeyhash Owner, const Algorithm::Pubkey SealingKey)
-		{
-			States::AccountSealing NewState = States::AccountSealing(Owner, Block);
-			memcpy(NewState.SealingKey, SealingKey, sizeof(Algorithm::Pubkey));
-
-			auto Status = Store(&NewState);
-			if (!Status)
-				return Status.Error();
-
-			return NewState;
-		}
 		ExpectsLR<States::AccountWork> TransactionContext::ApplyAccountWork(const Algorithm::Pubkeyhash Owner, States::AccountFlags Flags, uint64_t Penalty, const uint256_t& GasInput, const uint256_t& GasOutput)
 		{
 			States::AccountWork NewState = States::AccountWork(Owner, Block);
@@ -2233,24 +2230,6 @@ namespace Tangent
 			return LayerException("chainstate data not available");
 #endif
 		}
-		ExpectsLR<States::AccountSealing> TransactionContext::GetAccountSealing(const Algorithm::Pubkeyhash Owner) const
-		{
-			VI_ASSERT(Owner != nullptr, "owner should be set");
-#ifdef TAN_VALIDATOR
-			auto Chain = Storages::Chainstate(__func__);
-			auto State = Chain.GetUniformByIndex(&Delta, States::AccountSealing::AsInstanceIndex(Owner), GetValidationNonce());
-			if (!State)
-				return State.Error();
-
-			auto Status = ((TransactionContext*)this)->Load(**State, Chain.QueryUsed());
-			if (!Status)
-				return Status.Error();
-
-			return States::AccountSealing(std::move(*(States::AccountSealing*)**State));
-#else
-			return LayerException("chainstate data not available");
-#endif
-		}
 		ExpectsLR<States::AccountWork> TransactionContext::GetAccountWork(const Algorithm::Pubkeyhash Owner) const
 		{
 			VI_ASSERT(Owner != nullptr, "owner should be set");
@@ -2658,7 +2637,7 @@ namespace Tangent
 		{
 			VI_ASSERT(NewTransaction && Owner, "transaction and owner should be set");
 			Algorithm::Pubkeyhash Null = { 0 };
-			if (!Algorithm::Signing::RecoverTweakedHash(NewTransactionHash, Owner, NewTransaction->Signature) || !memcmp(Owner, Null, sizeof(Null)))
+			if (!Algorithm::Signing::RecoverHash(NewTransactionHash, Owner, NewTransaction->Signature) || !memcmp(Owner, Null, sizeof(Null)))
 				return LayerException("invalid signature");
 
 			return NewTransaction->Prevalidate();
@@ -2667,7 +2646,7 @@ namespace Tangent
 		{
 			VI_ASSERT(NewBlock && NewEnvironment && NewTransaction, "block, utilization and transaction should be set");
 			Algorithm::Pubkeyhash Null = { 0 }, Owner;
-			if (!Algorithm::Signing::RecoverTweakedHash(NewTransaction->AsPayload().Hash(), Owner, NewTransaction->Signature) || !memcmp(Owner, Null, sizeof(Null)))
+			if (!Algorithm::Signing::RecoverHash(NewTransaction->AsPayload().Hash(), Owner, NewTransaction->Signature) || !memcmp(Owner, Null, sizeof(Null)))
 				return LayerException("invalid signature");
 
 			return ValidateTx(NewBlock, NewEnvironment, NewTransaction, NewTransactionHash, Owner, Cache);
@@ -2761,7 +2740,7 @@ namespace Tangent
 		{
 			VI_ASSERT(Transaction != nullptr, "transaction should be set");
 			Algorithm::Pubkeyhash Owner;
-			if (!Transaction->Recover(Owner))
+			if (!Transaction->RecoverHash(Owner))
 				return LayerException("invalid signature");
 
 			auto* Mutable = (Ledger::Transaction*)Transaction;
@@ -3020,9 +2999,9 @@ namespace Tangent
 
 				Item.Size = Item.Candidate->AsMessage().Data.size();
 				if (Item.Candidate->GetType() != TransactionLevel::Aggregation)
-					Algorithm::Signing::RecoverTweakedHash(Item.Candidate->AsPayload().Hash(), Item.Owner, Item.Candidate->Signature);
+					Algorithm::Signing::RecoverHash(Item.Candidate->AsPayload().Hash(), Item.Owner, Item.Candidate->Signature);
 				else
-					Item.Candidate->Recover(Item.Owner);
+					Item.Candidate->RecoverHash(Item.Owner);
 			}));
 		}
 	}

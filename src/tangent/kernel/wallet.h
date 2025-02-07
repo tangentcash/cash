@@ -9,7 +9,6 @@ namespace Tangent
 		struct Wallet : Messages::Generic
 		{
 			Algorithm::Seckey SecretKey = { 0 };
-			Algorithm::Pubkey SealingKey = { 0 };
 			Algorithm::Pubkey PublicKey = { 0 };
 			Algorithm::Pubkeyhash PublicKeyHash = { 0 };
 
@@ -17,22 +16,19 @@ namespace Tangent
 			void SetPublicKey(const Algorithm::Pubkey Value);
 			void SetPublicKeyHash(const Algorithm::Pubkeyhash Value);
 			bool VerifySecretKey() const;
-			bool VerifySealingKey() const;
 			bool VerifyPublicKey() const;
 			bool VerifyAddress() const;
 			bool Verify(const Messages::Authentic& Message) const;
-			bool Recover(Messages::Authentic& Message) const;
+			bool Recovers(Messages::Authentic& Message) const;
 			bool Sign(Messages::Authentic& Message) const;
 			bool StorePayload(Format::Stream* Stream) const override;
 			bool LoadPayload(Format::Stream& Stream) override;
 			bool HasSecretKey() const;
-			bool HasSealingKey() const;
 			bool HasPublicKey() const;
 			bool HasPublicKeyHash() const;
-			Option<String> SealMessage(const std::string_view& Plaintext, const Algorithm::Pubkey ForSealingKey, const std::string_view& Entropy) const;
+			Option<String> SealMessage(const std::string_view& Plaintext, const Algorithm::Pubkey ForPublicKey, const std::string_view& Entropy) const;
 			Option<String> OpenMessage(const std::string_view& Ciphertext) const;
 			String GetSecretKey() const;
-			String GetSealingKey() const;
 			String GetPublicKey() const;
 			String GetAddress() const;
 			ExpectsLR<uint64_t> GetLatestSequence() const;

@@ -766,12 +766,10 @@ namespace Tangent
 			case Tangent::NetworkType::Regtest:
 				Message.PacketMagic = 0xe249c307;
 				Account.SecretKeyPrefix = "secrt";
-				Account.SealingKeyPrefix = "sealrt";
 				Account.PublicKeyPrefix = "pubrt";
 				Account.AddressPrefix = "tcrt";
 				Account.SecretKeyVersion = 0xD;
 				Account.PublicKeyVersion = 0xC;
-				Account.SealingKeyVersion = 0xA;
 				Account.AddressVersion = 0x6;
 				Policy.AccountContributionRequired = 0.0;
 				Policy.AccountGasWorkRequired = 0.0;
@@ -780,12 +778,10 @@ namespace Tangent
 			case Tangent::NetworkType::Testnet:
 				Message.PacketMagic = 0xf815c95c;
 				Account.SecretKeyPrefix = "sect";
-				Account.SealingKeyPrefix = "sealt";
 				Account.PublicKeyPrefix = "pubt";
 				Account.AddressPrefix = "tct";
 				Account.SecretKeyVersion = 0xE;
 				Account.PublicKeyVersion = 0xD;
-				Account.SealingKeyVersion = 0xB;
 				Account.AddressVersion = 0x5;
 				break;
 			case Tangent::NetworkType::Mainnet:

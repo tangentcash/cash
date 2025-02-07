@@ -62,7 +62,7 @@ namespace Tangent
 
 		struct Deployment final : Ledger::Transaction
 		{
-			Algorithm::Sighash Location = { 0 };
+			Algorithm::Recsighash Location = { 0 };
 			Format::Variables Args;
 			String Calldata;
 			bool Patchable = false;
@@ -78,7 +78,7 @@ namespace Tangent
 			bool VerifyLocation(const Algorithm::Pubkey PublicKey) const;
 			bool RecoverLocation(Algorithm::Pubkeyhash PublicKeyHash) const;
 			bool IsLocationNull() const;
-			void SetLocation(const Algorithm::Sighash NewValue);
+			void SetLocation(const Algorithm::Recsighash NewValue);
 			void SetCalldata(const std::string_view& NewProgram, Format::Variables&& NewArgs, bool MayPatch = false);
 			void SetSegregatedCalldata(const std::string_view& NewHashcode, Format::Variables&& NewArgs, bool MayPatch = false);
 			UPtr<Schema> AsSchema() const override;
@@ -174,8 +174,6 @@ namespace Tangent
 		struct Commitment final : Ledger::Transaction
 		{
 			OrderedMap<Algorithm::AssetId, bool> Observers;
-			Algorithm::Sighash SealingSignature;
-			Algorithm::Pubkey SealingKey;
 			Option<bool> Online = Optional::None;
 
 			ExpectsLR<void> Prevalidate() const override;
@@ -183,10 +181,6 @@ namespace Tangent
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
-			bool Sign(const Algorithm::Seckey SecretKey) override;
-			bool Sign(const Algorithm::Seckey SecretKey, uint64_t NewSequence) override;
-			bool Sign(const Algorithm::Seckey SecretKey, uint64_t NewSequence, const Decimal& Price) override;
-			bool VerifySealing() const;
 			void SetOnline();
 			void SetOnline(const Algorithm::AssetId& Asset);
 			void SetOffline();
@@ -398,8 +392,8 @@ namespace Tangent
 		{
 			uint256_t ContributionSelectionHash = 0;
 			Algorithm::Composition::CPubkey PublicKey2 = { 0 };
+			Algorithm::Composition::CPubkey PublicKey = { 0 };
 			Algorithm::Pubkeyhash Proposer = { 0 };
-			Algorithm::Pubkey PublicKey = { 0 };
 			uint16_t PublicKeySize = 0;
 
 			ExpectsLR<void> SetShare2(const Algorithm::Seckey SecretKey, const uint256_t& NewContributionSelectionHash, const Algorithm::Pubkeyhash NewProposer, const Algorithm::Composition::CPubkey PublicKey1);

@@ -1896,11 +1896,11 @@ namespace Tangent
 			}
 			return true;
 		}
-		bool ServerNode::AcceptMessage(const Algorithm::Pubkey SealingKey, const std::string_view& Plaintext)
+		bool ServerNode::AcceptMessage(const Algorithm::Pubkey PublicKey, const std::string_view& Plaintext)
 		{
-			if (memcmp(SealingKey, Validator.Wallet.SealingKey, sizeof(Algorithm::Pubkey)) != 0)
+			if (memcmp(PublicKey, Validator.Wallet.PublicKey, sizeof(Algorithm::Pubkey)) != 0)
 			{
-				auto Message = Validator.Wallet.SealMessage(Plaintext, SealingKey, *Crypto::RandomBytes(64));
+				auto Message = Validator.Wallet.SealMessage(Plaintext, PublicKey, *Crypto::RandomBytes(64));
 				if (!Message)
 					return false;
 
@@ -1973,7 +1973,7 @@ namespace Tangent
 			}
 
 			Algorithm::Pubkeyhash Owner;
-			if (!CandidateTx->Recover(Owner))
+			if (!CandidateTx->RecoverHash(Owner))
 			{
 				if (Protocol::Now().User.P2P.Logging)
 					VI_WARN("[p2p] transaction %s prevalidation failed: invalid signature", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str());

@@ -312,7 +312,7 @@ namespace Tangent
 				return ExpectsLR<void>(LayerException("transaction serialization error"));
 
 			Algorithm::Pubkeyhash Owner;
-			if (!Value.Recover(Owner))
+			if (!Value.RecoverHash(Owner))
 				return ExpectsLR<void>(LayerException("transaction owner recovery error"));
 
 			uint256_t Group = 0;

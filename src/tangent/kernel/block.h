@@ -149,7 +149,8 @@ namespace Tangent
 			virtual bool Sign(const Algorithm::Seckey SecretKey) override;
 			virtual bool Solve(const Algorithm::Seckey SecretKey);
 			virtual bool Verify(const Algorithm::Pubkey PublicKey) const override;
-			virtual bool Recover(Algorithm::Pubkeyhash PublicKeyHash) const override;
+			virtual bool Recover(Algorithm::Pubkey PublicKey) const override;
+			virtual bool RecoverHash(Algorithm::Pubkeyhash PublicKeyHash) const override;
 			virtual bool VerifyWesolowski() const;
 			virtual void SetParentBlock(const BlockHeader* ParentBlock);
 			virtual void SetWitnessRequirement(const Algorithm::AssetId& Asset, uint64_t BlockNumber);
@@ -281,7 +282,6 @@ namespace Tangent
 			ExpectsLR<Vector<States::AccountWork>> CalculateSharingCommittee(OrderedSet<String>& Hashset, size_t RequiredSize);
 			ExpectsLR<States::AccountSequence> ApplyAccountSequence();
 			ExpectsLR<States::AccountSequence> ApplyAccountSequence(const Algorithm::Pubkeyhash Owner, uint64_t Sequence);
-			ExpectsLR<States::AccountSealing> ApplyAccountSealing(const Algorithm::Pubkeyhash Owner, const Algorithm::Pubkey SealingKey);
 			ExpectsLR<States::AccountWork> ApplyAccountWork(const Algorithm::Pubkeyhash Owner, States::AccountFlags Flags, uint64_t Penalty, const uint256_t& GasInput, const uint256_t& GasOutput);
 			ExpectsLR<States::AccountObserver> ApplyAccountObserver(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner, bool Observing);
 			ExpectsLR<States::AccountProgram> ApplyAccountProgram(const std::string_view& ProgramHashcode);
@@ -313,7 +313,6 @@ namespace Tangent
 			ExpectsLR<States::AccountBalance> ApplyFunding(const Decimal& Value);
 			ExpectsLR<States::AccountBalance> ApplyFunding(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash From, const Algorithm::Pubkeyhash To, const Decimal& Value);
 			ExpectsLR<States::AccountSequence> GetAccountSequence(const Algorithm::Pubkeyhash Owner) const;
-			ExpectsLR<States::AccountSealing> GetAccountSealing(const Algorithm::Pubkeyhash Owner) const;
 			ExpectsLR<States::AccountWork> GetAccountWork(const Algorithm::Pubkeyhash Owner) const;
 			ExpectsLR<States::AccountObserver> GetAccountObserver(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner) const;
 			ExpectsLR<Vector<States::AccountObserver>> GetAccountObservers(const Algorithm::Pubkeyhash Owner, size_t Offset, size_t Count) const;

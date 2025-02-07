@@ -196,7 +196,7 @@ namespace Tangent
 			bool AcceptMempool();
 			bool AcceptDispatchpool(const Ledger::BlockHeader& Tip);
 			bool AcceptBlock(Relay* From, Ledger::Block&& CandidateBlock, const uint256_t& ForkTip);
-			bool AcceptMessage(const Algorithm::Pubkey SealingKey, const std::string_view& Plaintext);
+			bool AcceptMessage(const Algorithm::Pubkey PublicKey, const std::string_view& Plaintext);
 			bool Accept(Option<SocketAddress>&& Address = Optional::None);
 			ExpectsLR<void> ProposeTransaction(Relay* From, UPtr<Ledger::Transaction>&& CandidateTx, uint64_t AccountSequence, const std::string_view& Purpose, uint256_t* OutputHash = nullptr);
 			ExpectsLR<void> AcceptTransaction(Relay* From, UPtr<Ledger::Transaction>&& CandidateTx, bool DeepValidation = false);

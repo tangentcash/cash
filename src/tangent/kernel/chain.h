@@ -244,14 +244,12 @@ namespace Tangent
         struct ProtocolAccountConfig
         {
             String SecretKeyPrefix = "sec";
-            String SealingKeyPrefix = "seal";
             String PublicKeyPrefix = "pub";
             String AddressPrefix = "tc";
             uint64_t RootAddressIndex = 0;
             uint64_t MessageMagic = 0x6a513fb6b3b71f02;
             uint8_t SecretKeyVersion = 0xF;
             uint8_t PublicKeyVersion = 0xE;
-            uint8_t SealingKeyVersion = 0xC;
             uint8_t AddressVersion = 0x4;
         } Account;
         struct ProtocolPolicyConfig

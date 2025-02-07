@@ -230,11 +230,11 @@ namespace Tangent
 				for (auto& Signature : Branch.second.Attestations)
 				{
 					++SignatureIndex;
-					if (Signature.size() != sizeof(Algorithm::Sighash))
+					if (Signature.size() != sizeof(Algorithm::Recsighash))
 						return LayerException(Stringify::Text("invalid attestation signature (branch: %i, signature: %i)", (int)BranchIndex, (int)SignatureIndex));
 
 					Algorithm::Pubkeyhash Proposer = { 0 }, Null = { 0 };
-					if (!Recover(Proposer, Branch.first, SignatureIndex - 1) || !memcmp(Proposer, Null, sizeof(Null)))
+					if (!RecoverHash(Proposer, Branch.first, SignatureIndex - 1) || !memcmp(Proposer, Null, sizeof(Null)))
 						return LayerException(Stringify::Text("invalid attestation proposer (branch: %i, signature: %i)", (int)BranchIndex, (int)SignatureIndex));
 				}
 			}
@@ -254,7 +254,7 @@ namespace Tangent
 				for (auto& Signature : Branch.second.Attestations)
 				{
 					Algorithm::Pubkeyhash Proposer = { 0 };
-					if (!Recover(Proposer, Branch.first, SignatureIndex++))
+					if (!RecoverHash(Proposer, Branch.first, SignatureIndex++))
 						return LayerException(Stringify::Text("invalid attestation proposer (branch: %i, signature: %i)", (int)BranchIndex, (int)SignatureIndex));
 
 					auto Status = Context->VerifyAccountWork(Proposer);
@@ -279,7 +279,7 @@ namespace Tangent
 				Stream->WriteInteger((uint16_t)Branch.second.Attestations.size());
 				for (auto& Signature : Branch.second.Attestations)
 				{
-					if (Signature.size() != sizeof(Algorithm::Sighash))
+					if (Signature.size() != sizeof(Algorithm::Recsighash))
 						return false;
 
 					Stream->WriteString(Signature);
@@ -314,7 +314,7 @@ namespace Tangent
 				for (uint16_t i = 0; i < SignaturesSize; i++)
 				{
 					String Signature;
-					if (!Stream.ReadString(Stream.ReadType(), &Signature) || Signature.size() != sizeof(Algorithm::Sighash))
+					if (!Stream.ReadString(Stream.ReadType(), &Signature) || Signature.size() != sizeof(Algorithm::Recsighash))
 						return false;
 
 					Signatures.insert(Signature);
@@ -359,7 +359,7 @@ namespace Tangent
 				size_t SignatureIndex = 0;
 				for (auto& Candidate : Branch.second.Attestations)
 				{
-					if (Candidate.size() != sizeof(Algorithm::Sighash))
+					if (Candidate.size() != sizeof(Algorithm::Recsighash))
 						return false;
 
 					if (Verify(PublicKey, Branch.first, SignatureIndex++))
@@ -381,33 +381,33 @@ namespace Tangent
 			for (size_t i = 0; i < Index; i++)
 				++Signature;
 
-			if (Signature->size() != sizeof(Algorithm::Sighash))
+			if (Signature->size() != sizeof(Algorithm::Recsighash))
 				return false;
 
 			Format::Stream Message;
 			Message.WriteInteger(Asset);
 			Message.WriteInteger(InputHash);
 			Message.WriteInteger(OutputHash);
-			return Algorithm::Signing::VerifyTweaked(Message.Hash(), PublicKey, (uint8_t*)Signature->data());
+			return Algorithm::Signing::Verify(Message.Hash(), PublicKey, (uint8_t*)Signature->data());
 		}
-		bool AggregationTransaction::Recover(Algorithm::Pubkeyhash PublicKeyHash) const
+		bool AggregationTransaction::Recover(Algorithm::Pubkey PublicKey) const
 		{
 			for (auto& Branch : OutputHashes)
 			{
 				size_t SignatureIndex = 0;
 				for (auto& Candidate : Branch.second.Attestations)
 				{
-					if (Candidate.size() != sizeof(Algorithm::Sighash))
+					if (Candidate.size() != sizeof(Algorithm::Recsighash))
 						return false;
 
-					if (Recover(PublicKeyHash, Branch.first, SignatureIndex++))
+					if (Recover(PublicKey, Branch.first, SignatureIndex++))
 						return true;
 				}
 			}
 
 			return false;
 		}
-		bool AggregationTransaction::Recover(Algorithm::Pubkeyhash PublicKeyHash, const uint256_t& OutputHash, size_t Index) const
+		bool AggregationTransaction::Recover(Algorithm::Pubkey PublicKey, const uint256_t& OutputHash, size_t Index) const
 		{
 			auto Branch = OutputHashes.find(OutputHash);
 			if (Branch == OutputHashes.end())
@@ -420,14 +420,53 @@ namespace Tangent
 			for (size_t i = 0; i < Index; i++)
 				++Signature;
 
-			if (Signature->size() != sizeof(Algorithm::Sighash))
+			if (Signature->size() != sizeof(Algorithm::Recsighash))
 				return false;
 
 			Format::Stream Message;
 			Message.WriteInteger(Asset);
 			Message.WriteInteger(InputHash);
 			Message.WriteInteger(OutputHash);
-			return Algorithm::Signing::RecoverTweakedHash(Message.Hash(), PublicKeyHash, (uint8_t*)Signature->data());
+			return Algorithm::Signing::Recover(Message.Hash(), PublicKey, (uint8_t*)Signature->data());
+		}
+		bool AggregationTransaction::RecoverHash(Algorithm::Pubkeyhash PublicKeyHash) const
+		{
+			for (auto& Branch : OutputHashes)
+			{
+				size_t SignatureIndex = 0;
+				for (auto& Candidate : Branch.second.Attestations)
+				{
+					if (Candidate.size() != sizeof(Algorithm::Recsighash))
+						return false;
+
+					if (RecoverHash(PublicKeyHash, Branch.first, SignatureIndex++))
+						return true;
+				}
+			}
+
+			return false;
+		}
+		bool AggregationTransaction::RecoverHash(Algorithm::Pubkeyhash PublicKeyHash, const uint256_t& OutputHash, size_t Index) const
+		{
+			auto Branch = OutputHashes.find(OutputHash);
+			if (Branch == OutputHashes.end())
+				return false;
+
+			if (Index >= Branch->second.Attestations.size())
+				return false;
+
+			auto Signature = Branch->second.Attestations.begin();
+			for (size_t i = 0; i < Index; i++)
+				++Signature;
+
+			if (Signature->size() != sizeof(Algorithm::Recsighash))
+				return false;
+
+			Format::Stream Message;
+			Message.WriteInteger(Asset);
+			Message.WriteInteger(InputHash);
+			Message.WriteInteger(OutputHash);
+			return Algorithm::Signing::RecoverHash(Message.Hash(), PublicKeyHash, (uint8_t*)Signature->data());
 		}
 		bool AggregationTransaction::Attestate(const Algorithm::Seckey SecretKey)
 		{
@@ -440,8 +479,8 @@ namespace Tangent
 			CumulativeMessage.WriteInteger(InputHash);
 			CumulativeMessage.WriteInteger(GenesisBranch->first);
 
-			Algorithm::Sighash CumulativeSignature;
-			if (!Algorithm::Signing::SignTweaked(CumulativeMessage.Hash(), SecretKey, CumulativeSignature))
+			Algorithm::Recsighash CumulativeSignature;
+			if (!Algorithm::Signing::Sign(CumulativeMessage.Hash(), SecretKey, CumulativeSignature))
 				return false;
 
 			GenesisBranch->second.Attestations.insert(String((char*)CumulativeSignature, sizeof(CumulativeSignature)));
@@ -455,7 +494,7 @@ namespace Tangent
 				return false;
 
 			Algorithm::Pubkeyhash Null = { 0 }, Owner = { 0 };
-			if (!Other.Recover(Owner) || !memcmp(Owner, Null, sizeof(Null)))
+			if (!Other.RecoverHash(Owner) || !memcmp(Owner, Null, sizeof(Null)))
 				return false;
 
 			UnorderedSet<String> Proposers;
@@ -486,7 +525,7 @@ namespace Tangent
 				for (auto& Signature : Branch.second.Attestations)
 				{
 					Algorithm::Pubkeyhash Proposer = { 0 };
-					if (Signature.size() == sizeof(Algorithm::Sighash) && Algorithm::Signing::RecoverTweakedHash(CumulativeMessageHash, Proposer, (uint8_t*)Signature.data()))
+					if (Signature.size() == sizeof(Algorithm::Recsighash) && Algorithm::Signing::RecoverHash(CumulativeMessageHash, Proposer, (uint8_t*)Signature.data()))
 						Proposers.insert(String((char*)Proposer, sizeof(Proposer)));
 				}
 			}
@@ -503,7 +542,7 @@ namespace Tangent
 				for (auto& Signature : Branch.second.Attestations)
 				{
 					Algorithm::Pubkeyhash Proposer = { 0 };
-					if (Signature.size() == sizeof(Algorithm::Sighash) && Algorithm::Signing::RecoverTweakedHash(CumulativeMessageHash, Proposer, (uint8_t*)Signature.data()) && Proposers.find(String((char*)Proposer, sizeof(Proposer))) == Proposers.end())
+					if (Signature.size() == sizeof(Algorithm::Recsighash) && Algorithm::Signing::RecoverHash(CumulativeMessageHash, Proposer, (uint8_t*)Signature.data()) && Proposers.find(String((char*)Proposer, sizeof(Proposer))) == Proposers.end())
 					{
 						Proposers.insert(String((char*)Proposer, sizeof(Proposer)));
 						Fork.Attestations.insert(Signature);
@@ -515,7 +554,7 @@ namespace Tangent
 		}
 		bool AggregationTransaction::IsSignatureNull() const
 		{
-			Algorithm::Sighash Null = { 0 };
+			Algorithm::Recsighash Null = { 0 };
 			for (auto& Branch : OutputHashes)
 			{
 				for (auto& Candidate : Branch.second.Attestations)
@@ -543,7 +582,7 @@ namespace Tangent
 			if (OptimalGas)
 			{
 				Format::Stream Message;
-				auto Blob = String(sizeof(Algorithm::Sighash), '0');
+				auto Blob = String(sizeof(Algorithm::Recsighash), '0');
 				size_t Size = (size_t)Protocol::Now().Policy.AggregatorsCommitteeSize;
 				Message.WriteInteger((uint16_t)OutputHashes.size());
 				Message.WriteString(String(sizeof(Mediator::IncomingTransaction) * 10, '0'));
@@ -566,10 +605,10 @@ namespace Tangent
 			OutputHashes.clear();
 			OutputHashes[OutputHash] = std::move(Value);
 		}
-		void AggregationTransaction::SetSignature(const Algorithm::Sighash NewValue)
+		void AggregationTransaction::SetSignature(const Algorithm::Recsighash NewValue)
 		{
 			VI_ASSERT(NewValue != nullptr, "new value should be set");
-			memcpy(Signature, NewValue, sizeof(Algorithm::Sighash));
+			memcpy(Signature, NewValue, sizeof(Algorithm::Recsighash));
 		}
 		void AggregationTransaction::SetStatement(const uint256_t& NewInputHash, const Format::Stream& OutputMessage)
 		{
@@ -597,7 +636,7 @@ namespace Tangent
 				for (auto& Signature : Branch.second.Attestations)
 				{
 					Algorithm::Pubkeyhash Proposer = { 0 };
-					if (Signature.size() != sizeof(Algorithm::Sighash) || !Algorithm::Signing::RecoverTweakedHash(CumulativeMessageHash, Proposer, (uint8_t*)Signature.data()))
+					if (Signature.size() != sizeof(Algorithm::Recsighash) || !Algorithm::Signing::RecoverHash(CumulativeMessageHash, Proposer, (uint8_t*)Signature.data()))
 						continue;
 
 					auto Work = Context->GetAccountWork(Proposer);

@@ -20,15 +20,7 @@ namespace Tangent
 			if (!HasSecretKey())
 				return false;
 
-			Algorithm::Pubkey RootPublicKey;
-			if (!Algorithm::Signing::DerivePublicKey(SecretKey, RootPublicKey))
-				return false;
-
-			Algorithm::Seckey SealingSecretKey;
-			Algorithm::Signing::DeriveSealingKeypair(SecretKey, SealingSecretKey, SealingKey);
-			if (!Algorithm::Signing::DeriveTweakedPublicKey(SecretKey, RootPublicKey, PublicKey))
-				return false;
-
+			Algorithm::Signing::DerivePublicKey(SecretKey, PublicKey);
 			Algorithm::Signing::DerivePublicKeyHash(PublicKey, PublicKeyHash);
 			return true;
 		}
@@ -53,31 +45,15 @@ namespace Tangent
 		}
 		bool Wallet::VerifySecretKey() const
 		{
-			return HasSecretKey() && Algorithm::Signing::VerifySecretKey(SecretKey);
-		}
-		bool Wallet::VerifySealingKey() const
-		{
-			if (!VerifySecretKey())
-				return false;
-
-			Algorithm::Seckey SealingSecretKey;
-			Algorithm::Pubkey SealingKeyCandidate = { 0 };
-			Algorithm::Signing::DeriveSealingKeypair(SecretKey, SealingSecretKey, SealingKeyCandidate);
-			return memcmp(SealingKeyCandidate, SealingKey, sizeof(SealingKey)) == 0;
+			return HasSecretKey();
 		}
 		bool Wallet::VerifyPublicKey() const
 		{
 			if (!VerifySecretKey())
 				return false;
 
-			Algorithm::Pubkey RootPublicKey;
-			if (!Algorithm::Signing::DerivePublicKey(SecretKey, RootPublicKey))
-				return false;
-
 			Algorithm::Pubkey Copy = { 0 };
-			if (!Algorithm::Signing::DeriveTweakedPublicKey(SecretKey, RootPublicKey, Copy))
-				return false;
-
+			Algorithm::Signing::DerivePublicKey(SecretKey, Copy);
 			if (memcmp(PublicKey, Copy, sizeof(Copy)) != 0)
 				return false;
 
@@ -99,10 +75,10 @@ namespace Tangent
 		{
 			return HasPublicKey() && Message.Verify(PublicKey);
 		}
-		bool Wallet::Recover(Messages::Authentic& Message) const
+		bool Wallet::Recovers(Messages::Authentic& Message) const
 		{
 			Algorithm::Pubkeyhash RecoverPublicKeyHash;
-			return Message.Recover(RecoverPublicKeyHash) && memcmp(RecoverPublicKeyHash, PublicKeyHash, sizeof(PublicKeyHash)) == 0;
+			return Message.RecoverHash(RecoverPublicKeyHash) && memcmp(RecoverPublicKeyHash, PublicKeyHash, sizeof(PublicKeyHash)) == 0;
 		}
 		bool Wallet::Sign(Messages::Authentic& Message) const
 		{
@@ -112,7 +88,6 @@ namespace Tangent
 		{
 			VI_ASSERT(Stream != nullptr, "stream should be set");
 			Stream->WriteString(std::string_view((char*)SecretKey, HasSecretKey() ? sizeof(SecretKey) : 0));
-			Stream->WriteString(std::string_view((char*)SealingKey, HasSealingKey() ? sizeof(SealingKey) : 0));
 			Stream->WriteString(std::string_view((char*)PublicKey, HasPublicKey() ? sizeof(PublicKey) : 0));
 			Stream->WriteString(std::string_view((char*)PublicKeyHash, HasPublicKeyHash() ? sizeof(PublicKeyHash) : 0));
 			return true;
@@ -129,18 +104,6 @@ namespace Tangent
 					return false;
 
 				memcpy(SecretKey, SecretKeyAssembly.data(), sizeof(SecretKey));
-			}
-
-			String SealingKeyAssembly; memset(SealingKey, 0, sizeof(SealingKey));
-			if (!Stream.ReadString(Stream.ReadType(), &SealingKeyAssembly))
-				return false;
-
-			if (!SealingKeyAssembly.empty())
-			{
-				if (SealingKeyAssembly.size() != sizeof(SealingKey))
-					return false;
-
-				memcpy(SealingKey, SealingKeyAssembly.data(), sizeof(SealingKey));
 			}
 
 			String PublicKeyAssembly; memset(PublicKey, 0, sizeof(PublicKey));
@@ -174,11 +137,6 @@ namespace Tangent
 			Algorithm::Seckey Null = { 0 };
 			return memcmp(SecretKey, Null, sizeof(Null)) != 0;
 		}
-		bool Wallet::HasSealingKey() const
-		{
-			Algorithm::Pubkey Null = { 0 };
-			return memcmp(SealingKey, Null, sizeof(Null)) != 0;
-		}
 		bool Wallet::HasPublicKey() const
 		{
 			Algorithm::Pubkey Null = { 0 };
@@ -189,9 +147,9 @@ namespace Tangent
 			Algorithm::Pubkeyhash Null = { 0 };
 			return memcmp(PublicKeyHash, Null, sizeof(Null)) != 0;
 		}
-		Option<String> Wallet::SealMessage(const std::string_view& Plaintext, const Algorithm::Pubkey ForSealingKey, const std::string_view& Entropy) const
+		Option<String> Wallet::SealMessage(const std::string_view& Plaintext, const Algorithm::Pubkey ForPublicKey, const std::string_view& Entropy) const
 		{
-			return Algorithm::Signing::PublicEncrypt(ForSealingKey, Plaintext, Entropy);
+			return Algorithm::Signing::PublicEncrypt(ForPublicKey, Plaintext, Entropy);
 		}
 		Option<String> Wallet::OpenMessage(const std::string_view& Ciphertext) const
 		{
@@ -207,15 +165,6 @@ namespace Tangent
 				return Value;
 
 			Algorithm::Signing::EncodeSecretKey(SecretKey, Value);
-			return Value;
-		}
-		String Wallet::GetSealingKey() const
-		{
-			String Value;
-			if (!HasSealingKey())
-				return Value;
-
-			Algorithm::Signing::EncodeSealingKey(SealingKey, Value);
 			return Value;
 		}
 		String Wallet::GetPublicKey() const
@@ -253,7 +202,6 @@ namespace Tangent
 		{
 			Schema* Data = Var::Set::Object();
 			Data->Set("secret_key", Algorithm::Signing::SerializeSecretKey(SecretKey));
-			Data->Set("sealing_key", Algorithm::Signing::SerializeSealingKey(SealingKey));
 			Data->Set("public_key", Algorithm::Signing::SerializePublicKey(PublicKey));
 			Data->Set("public_key_hash", Var::String(Format::Util::Encode0xHex(std::string_view((char*)PublicKeyHash, sizeof(PublicKeyHash)))));
 			Data->Set("address", Algorithm::Signing::SerializeAddress(PublicKeyHash));
@@ -262,7 +210,6 @@ namespace Tangent
 		UPtr<Schema> Wallet::AsPublicSchema() const
 		{
 			Schema* Data = Var::Set::Object();
-			Data->Set("sealing_key", Algorithm::Signing::SerializeSealingKey(SealingKey));
 			Data->Set("public_key", Algorithm::Signing::SerializePublicKey(PublicKey));
 			Data->Set("public_key_hash", Var::String(Format::Util::Encode0xHex(std::string_view((char*)PublicKeyHash, sizeof(PublicKeyHash)))));
 			Data->Set("address", Algorithm::Signing::SerializeAddress(PublicKeyHash));
@@ -288,17 +235,19 @@ namespace Tangent
 		Wallet Wallet::FromMnemonic(const std::string_view& Mnemonic)
 		{
 			Algorithm::Seckey Key;
-			if (!Algorithm::Signing::DeriveSecretKey(Mnemonic, Key))
-				return Wallet();
-
+			Algorithm::Signing::DeriveSecretKeyFromMnemonic(Mnemonic, Key);
 			return FromSecretKey(Key);
 		}
 		Wallet Wallet::FromSeed(const std::string_view& Seed)
 		{
 			Algorithm::Seckey Key;
-			if (!Algorithm::Signing::DeriveSecretKey(Seed, Key, 1))
-				return Wallet();
-
+			if (Seed.empty())
+			{
+				auto Entropy = *Crypto::RandomBytes(64);
+				Algorithm::Signing::DeriveSecretKey(Entropy, Key);
+			}
+			else
+				Algorithm::Signing::DeriveSecretKey(Seed, Key);
 			return FromSecretKey(Key);
 		}
 		Wallet Wallet::FromSecretKey(const Algorithm::Seckey Key)

@@ -28,7 +28,7 @@ namespace Tangent
 
 		struct Authentic
 		{
-			Algorithm::Sighash Signature = { 0 };
+			Algorithm::Recsighash Signature = { 0 };
 			uint256_t Checksum;
 			uint32_t Version;
 
@@ -40,9 +40,10 @@ namespace Tangent
 			virtual bool LoadPayload(Format::Stream& Stream) = 0;
 			virtual bool Sign(const Algorithm::Seckey SecretKey);
 			virtual bool Verify(const Algorithm::Pubkey PublicKey) const;
-			virtual bool Recover(Algorithm::Pubkeyhash PublicKeyHash) const;
+			virtual bool Recover(Algorithm::Pubkey PublicKey) const;
+			virtual bool RecoverHash(Algorithm::Pubkeyhash PublicKeyHash) const;
 			virtual bool IsSignatureNull() const;
-			virtual void SetSignature(const Algorithm::Sighash NewValue);
+			virtual void SetSignature(const Algorithm::Recsighash NewValue);
 			virtual uint256_t AsHash(bool Renew = false) const;
 			virtual uint32_t AsType() const = 0;
 			virtual std::string_view AsTypename() const = 0;

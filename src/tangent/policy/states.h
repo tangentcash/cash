@@ -43,27 +43,6 @@ namespace Tangent
 			static String AsInstanceIndex(const Algorithm::Pubkeyhash Owner);
 		};
 
-		struct AccountSealing final : Ledger::Uniform
-		{
-			Algorithm::Pubkeyhash Owner = { 0 };
-			Algorithm::Pubkey SealingKey = { 0 };
-
-			AccountSealing(const Algorithm::Pubkeyhash NewOwner, uint64_t NewBlockNumber, uint64_t NewBlockNonce);
-			AccountSealing(const Algorithm::Pubkeyhash NewOwner, const Ledger::BlockHeader* NewBlockHeader);
-			ExpectsLR<void> Transition(const Ledger::TransactionContext* Context, const Ledger::State* PrevState) override;
-			bool StorePayload(Format::Stream* Stream) const override;
-			bool LoadPayload(Format::Stream& Stream) override;
-			bool IsOwnerNull() const;
-			bool IsSealingKeyNull() const;
-			UPtr<Schema> AsSchema() const override;
-			uint32_t AsType() const override;
-			std::string_view AsTypename() const override;
-			String AsIndex() const override;
-			static uint32_t AsInstanceType();
-			static std::string_view AsInstanceTypename();
-			static String AsInstanceIndex(const Algorithm::Pubkeyhash Owner);
-		};
-
 		struct AccountWork final : Ledger::Multiform
 		{
 			Algorithm::Pubkeyhash Owner = { 0 };

@@ -1923,10 +1923,11 @@ namespace Tangent
 			SchemaList Map;
 			Map.push_back(Var::Set::Integer(*Location));
 			Map.push_back(Var::Set::Integer(BlockNumber));
+			Map.push_back(Var::Set::String(Direction < 0 ? "DESC" : "ASC"));
 			Map.push_back(Var::Set::Integer(Count));
 			Map.push_back(Var::Set::Integer(Offset));
 
-			auto Cursor = EmplaceQuery(*Partydata, Label, __func__, "SELECT transaction_number FROM parties WHERE transaction_account_number = ? AND block_number <= ? ORDER BY transaction_number LIMIT ? OFFSET ?", &Map);
+			auto Cursor = EmplaceQuery(*Partydata, Label, __func__, "SELECT transaction_number FROM parties WHERE transaction_account_number = ? AND block_number <= ? ORDER BY transaction_number $? LIMIT ? OFFSET ?", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<Vector<UPtr<Ledger::Transaction>>>(LayerException(ErrorOf(Cursor)));
 			else if (Cursor->Empty())
@@ -2005,10 +2006,11 @@ namespace Tangent
 			SchemaList Map;
 			Map.push_back(Var::Set::Integer(*Location));
 			Map.push_back(Var::Set::Integer(BlockNumber));
+			Map.push_back(Var::Set::String(Direction < 0 ? "DESC" : "ASC"));
 			Map.push_back(Var::Set::Integer(Count));
 			Map.push_back(Var::Set::Integer(Offset));
 
-			auto Cursor = EmplaceQuery(*Partydata, Label, __func__, "SELECT transaction_number FROM parties WHERE transaction_account_number = ? AND block_number <= ? LIMIT ? OFFSET ?", &Map);
+			auto Cursor = EmplaceQuery(*Partydata, Label, __func__, "SELECT transaction_number FROM parties WHERE transaction_account_number = ? AND block_number <= ? ORDER BY transaction_number $? LIMIT ? OFFSET ?", &Map);
 			if (!Cursor || Cursor->Error())
 				return ExpectsLR<Vector<Ledger::BlockTransaction>>(LayerException(ErrorOf(Cursor)));
 			else if (Cursor->Empty())

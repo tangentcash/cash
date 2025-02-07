@@ -10,9 +10,10 @@ namespace Tangent
 	namespace Algorithm
 	{
 		using AssetId = uint256_t;
-		using Sighash = uint8_t[65];
+		using Sighash = uint8_t[64];
+		using Recsighash = uint8_t[96];
 		using Seckey = uint8_t[32];
-		using Pubkey = uint8_t[33];
+		using Pubkey = uint8_t[32];
 		using Pubkeyhash = uint8_t[20];
         typedef uint256_t(*HashFunction)(const uint256_t&, const uint256_t&);
 
@@ -67,33 +68,6 @@ namespace Tangent
             static void Serialize(Format::Stream& Stream, const uint256_t& Nonce, const std::string_view& Message);
         };
 
-		class PLS
-		{
-		public:
-			struct Bithash
-			{
-				uint8_t N[20];
-			};
-
-			struct Signature
-			{
-				uint8_t S[32];
-				uint8_t R[32];
-				uint8_t V[8];
-			};
-
-		public:
-			typedef std::array<Bithash, 256> Preimage;
-
-		public:
-			static const uint256_t& Curve();
-			static uint256_t SecretKey(const uint256_t& D);
-			static Preimage SecretFactors(const uint256_t& X);
-			static uint256_t PublicKey(const Preimage& Y);
-			static Signature Sign(const uint256_t& M, const uint256_t& X, const Preimage& Y);
-			static uint256_t Recover(const uint256_t& M, const Signature& W);
-		};
-
 		class Segwit
 		{
 		public:
@@ -110,52 +84,30 @@ namespace Tangent
 		public:
 			static void Initialize();
 			static void Deinitialize();
-			static String Mnemonicgen(uint16_t Strength = 256);
 			static uint256_t MessageHash(const std::string_view& SignableMessage);
+			static String Mnemonicgen(uint16_t Strength = 256);
 			static void Keygen(Seckey SecretKey);
-			static bool RecoverNormal(const uint256_t& Hash, Pubkey PublicKey, const Sighash Signature);
-			static bool RecoverTweaked(const uint256_t& Hash, Pubkey TweakedPublicKey, const Sighash Signature);
-			static bool RecoverNormalHash(const uint256_t& Hash, Pubkeyhash PublicKeyHash, const Sighash Signature);
-			static bool RecoverTweakedHash(const uint256_t& Hash, Pubkeyhash TweakedPublicKeyHash, const Sighash Signature);
-			static bool SignNormal(const uint256_t& Hash, const Seckey SecretKey, Sighash Signature);
-			static bool SignTweaked(const uint256_t& Hash, const Seckey RootSecretKey, Sighash Signature);
-			static bool SignSealing(const uint256_t& Hash, const Seckey RootSecretKey, Sighash Signature);
-			static bool VerifyNormal(const uint256_t& Hash, const Pubkey PublicKey, const Sighash Signature);
-			static bool VerifyTweaked(const uint256_t& Hash, const Pubkey TweakedPublicKey, const Sighash Signature);
-			static bool VerifySealing(const uint256_t& Hash, const Pubkey SealingPublicKey, const Sighash Signature);
+			static bool Recover(const uint256_t& Hash, Pubkey PublicKey, const Recsighash Signature);
+			static bool RecoverHash(const uint256_t& Hash, Pubkeyhash PublicKeyHash, const Recsighash Signature);
+			static bool Sign(const uint256_t& Hash, const Seckey SecretKey, Recsighash Signature);
+			static bool Verify(const uint256_t& Hash, const Pubkey PublicKey, const Recsighash Signature);
 			static bool VerifyMnemonic(const std::string_view& Mnemonic);
-			static bool VerifySecretKey(const Seckey SecretKey);
 			static bool VerifyPublicKey(const Pubkey PublicKey);
 			static bool VerifyAddress(const std::string_view& Address);
 			static bool VerifySealedMessage(const std::string_view& Ciphertext);
-			static bool DeriveSecretKey(const std::string_view& Mnemonic, Seckey SecretKey);
-			static bool DeriveSecretKey(const std::string_view& Seed, Seckey SecretKey, size_t Iterations);
-			static void DeriveSealingKeypair(const Seckey SecretKey, Seckey SealingSecretKey, Pubkey SealingPublicKey);
-			static bool DerivePublicKey(const Seckey SecretKey, Pubkey PublicKey);
+			static void DeriveSecretKeyFromMnemonic(const std::string_view& Mnemonic, Seckey SecretKey);
+			static void DeriveSecretKey(const std::string_view& Seed, Seckey SecretKey);
+			static void DerivePublicKey(const Seckey SecretKey, Pubkey PublicKey);
 			static void DerivePublicKeyHash(const Pubkey PublicKey, Pubkeyhash PublicKeyHash);
-			static void DeriveScalar(const uint8_t* Input, size_t Size, Seckey Tweak);
-			static bool DeriveTweakAlpha(const Seckey RootSecretKey, const Pubkey RootPublicKey, Seckey TweakAlpha);
-			static void DeriveTweakBeta(const Pubkey RootPublicKey, Seckey TweakBeta);
-			static bool DeriveTweakGamma(const uint256_t& Hash, Seckey TweakGamma);
-			static bool DeriveTweakedPublicKey(const Seckey RootSecretKey, const Pubkey RootPublicKey, Pubkey TweakedPublicKey);
-			static bool ScalarNegate(const Seckey Scalar, Seckey Result);
-			static bool ScalarAdd(const Seckey ScalarA, const Seckey ScalarB, Seckey Result);
-			static bool ScalarMultiply(const Seckey ScalarA, const Seckey ScalarB, Seckey Result);
-			static bool PointNegate(const Pubkey Point, Pubkey Result);
-			static bool PointAdd(const Pubkey PointA, const Seckey ScalarB, Pubkey Result);
-			static bool PointMultiply(const Pubkey PointA, const Seckey ScalarB, Pubkey Result);
-			static Option<String> PublicEncrypt(const Pubkey SealingKey, const std::string_view& Plaintext, const std::string_view& Entropy);
+			static Option<String> PublicEncrypt(const Pubkey PublicKey, const std::string_view& Plaintext, const std::string_view& Entropy);
 			static Option<String> PrivateDecrypt(const Seckey SecretKey, const std::string_view& Ciphertext);
 			static bool DecodeSecretKey(const std::string_view& Value, Seckey SecretKey);
 			static bool EncodeSecretKey(const Seckey SecretKey, String& Value);
-			static bool DecodeSealingKey(const std::string_view& Value, Pubkey SealingKey);
-			static bool EncodeSealingKey(const Pubkey SealingKey, String& Value);
 			static bool DecodePublicKey(const std::string_view& Value, Pubkey PublicKey);
 			static bool EncodePublicKey(const Pubkey PublicKey, String& Value);
 			static bool DecodeAddress(const std::string_view& Address, Pubkeyhash PublicKeyHash);
 			static bool EncodeAddress(const Pubkeyhash PublicKeyHash, String& Address);
 			static Schema* SerializeSecretKey(const Seckey SecretKey);
-			static Schema* SerializeSealingKey(const Pubkey PublicKey);
 			static Schema* SerializePublicKey(const Pubkey PublicKey);
 			static Schema* SerializeAddress(const Pubkeyhash PublicKeyHash);
 			static secp256k1_context* GetContext();
@@ -227,7 +179,7 @@ namespace Tangent
 
 		public:
 			static ExpectsLR<void> DeriveKeypair1(Type Alg, const CSeed Seed, CSeckey SecretKey1, CPubkey PublicKey1);
-			static ExpectsLR<void> DeriveKeypair2(Type Alg, const CSeed Seed, const CPubkey PublicKey1, CSeckey SecretKey2, CPubkey PublicKey2, Pubkey PublicKey, size_t* PublicKeySize);
+			static ExpectsLR<void> DeriveKeypair2(Type Alg, const CSeed Seed, const CPubkey PublicKey1, CSeckey SecretKey2, CPubkey PublicKey2, CPubkey PublicKey, size_t* PublicKeySize);
 			static ExpectsLR<void> DeriveSecretKey(Type Alg, const CSeckey SecretKey1, const CSeckey SecretKey2, CSeckey SecretKey, size_t* SecretKeySize);
 			static void ConvertToED25519Curve(uint8_t SecretKey[64]);
 			static void ConvertToSecretSeed(const Seckey SecretKey, const std::string_view& Entropy, CSeed Seed);
