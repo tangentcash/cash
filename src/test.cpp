@@ -742,13 +742,14 @@ public:
 				auto* ContributionDeallocation = Memory::New<Transactions::ContributionDeallocation>();
 				ContributionDeallocation->Asset = Item.Transaction->Asset;
 				ContributionDeallocation->SetEstimateGas(Decimal::Zero());
-				ContributionDeallocation->SetWitness(Item.Receipt.TransactionHash);
 				if (Parties.find(String((char*)User1.PublicKeyHash, sizeof(User1.PublicKeyHash))) == Parties.end())
 				{
+					ContributionDeallocation->SetWitness(User2.SecretKey, Item.Receipt.TransactionHash);
 					VI_PANIC(ContributionDeallocation->Sign(User2.SecretKey, User2Sequence++), "depository deallocation not signed");
 				}
 				else
 				{
+					ContributionDeallocation->SetWitness(User1.SecretKey, Item.Receipt.TransactionHash);
 					VI_PANIC(ContributionDeallocation->Sign(User1.SecretKey, User1Sequence++), "depository deallocation not signed");
 				}
 				Transactions.push_back(ContributionDeallocation);
@@ -959,6 +960,7 @@ public:
 		Info->Set("mnemonic", Var::String(Mnemonic));
 		Info->Set("mnemonic_test", Var::String(Algorithm::Signing::VerifyMnemonic(Mnemonic) ? "passed" : "failed"));
 		Info->Set("secret_key", Var::String(EncodedSecretKey));
+		Info->Set("secret_key_test", Var::String(Algorithm::Signing::VerifySecretKey(SecretKey) ? "passed" : "failed"));
 		Info->Set("public_key", Var::String(EncodedPublicKey));
 		Info->Set("public_key_test", Var::String(Algorithm::Signing::VerifyPublicKey(PublicKey) ? "passed" : "failed"));
 		Info->Set("address", Var::String(EncodedPublicKeyHash));
@@ -981,6 +983,7 @@ public:
 		auto* Term = Console::Get();
 		auto Wallet = Ledger::Wallet::FromSeed();
 		auto WalletInfo = Wallet.AsSchema();
+		WalletInfo->Set("secret_key_test", Var::String(Algorithm::Signing::VerifySecretKey(Wallet.SecretKey) ? "passed" : "failed"));
 		WalletInfo->Set("public_key_test", Var::String(Algorithm::Signing::VerifyPublicKey(Wallet.PublicKey) ? "passed" : "failed"));
 		WalletInfo->Set("address_test", Var::String(Algorithm::Signing::VerifyAddress(Wallet.GetAddress()) ? "passed" : "failed"));
 
@@ -1036,30 +1039,36 @@ public:
 		auto* Term = Console::Get();
 		auto User1 = Ledger::Wallet::FromSeed();
 		auto User2 = Ledger::Wallet::FromSeed();
+		auto Nonce1 = uint256_t(110);
+		auto Nonce2 = uint256_t(220);
+
+		Algorithm::Seckey CipherSecretKey1, CipherSecretKey2;
+		Algorithm::Pubkey CipherPublicKey1, CipherPublicKey2;
+		Algorithm::Signing::DeriveCipherKeypair(User1.SecretKey, Nonce1, CipherSecretKey1, CipherPublicKey1);
+		Algorithm::Signing::DeriveCipherKeypair(User2.SecretKey, Nonce2, CipherSecretKey2, CipherPublicKey2);
+
 		auto MessageFromUser1 = "Hello, Alice!";
 		auto MessageFromUser2 = "Hello, Bob!";
-		auto MessageCheck1 = Algorithm::Signing::MessageHash("public key 1 is mine");
-		auto MessageCheck2 = Algorithm::Signing::MessageHash("public key 2 is mine");
-		auto Ciphertext1 = User1.SealMessage(MessageFromUser1, User2.PublicKey, *Crypto::RandomBytes(64));
-		auto Plaintext1 = Ciphertext1 ? User2.OpenMessage(*Ciphertext1) : Option<String>(Optional::None);
-		auto Ciphertext2 = User2.SealMessage(MessageFromUser2, User1.PublicKey, *Crypto::RandomBytes(64));
-		auto Plaintext2 = Ciphertext2 ? User1.OpenMessage(*Ciphertext2) : Option<String>(Optional::None);
-
-		Algorithm::Recsighash Signature1, Signature2;
-		Algorithm::Signing::Sign(MessageCheck1, User1.SecretKey, Signature1);
-		Algorithm::Signing::Sign(MessageCheck2, User2.SecretKey, Signature2);
+		auto Ciphertext1 = User1.SealMessage(MessageFromUser1, CipherPublicKey2, *Crypto::RandomBytes(64));
+		auto Plaintext1 = Ciphertext1 ? User2.OpenMessage(Nonce2, *Ciphertext1) : Option<String>(Optional::None);
+		auto Ciphertext2 = User2.SealMessage(MessageFromUser2, CipherPublicKey1, *Crypto::RandomBytes(64));
+		auto Plaintext2 = Ciphertext2 ? User1.OpenMessage(Nonce1, *Ciphertext2) : Option<String>(Optional::None);
 
 		UPtr<Schema> Data = Var::Set::Object();
 		auto* User1WalletData = Data->Set("user1_wallet", User1.AsSchema().Reset());
 		auto* User1WalletMessageData = User1WalletData->Set("message");
+		User1WalletMessageData->Set("cipher_nonce", Algorithm::Encoding::SerializeUint256(Nonce1));
+		User1WalletMessageData->Set("cipher_secret_key", Var::String(Format::Util::Encode0xHex(std::string_view((char*)CipherSecretKey1, sizeof(CipherSecretKey1)))));
+		User1WalletMessageData->Set("cipher_public_key", Var::String(Format::Util::Encode0xHex(std::string_view((char*)CipherPublicKey1, sizeof(CipherPublicKey1)))));
 		User1WalletMessageData->Set("ciphertext_to_user2_wallet", Var::String(Ciphertext1 ? Format::Util::Encode0xHex(*Ciphertext1).c_str() : "** encryption failed **"));
 		User1WalletMessageData->Set("plaintext_from_user2_wallet", Var::String(Plaintext2 ? Plaintext2->c_str() : "** decryption failed **"));
-		User1WalletMessageData->Set("public_key_ownership_from_user1", Var::String(Algorithm::Signing::Verify(MessageCheck1, User1.PublicKey, Signature1) ? "verification passed" : "verification failed"));
 		auto* User2WalletData = Data->Set("user2_wallet", User2.AsSchema().Reset());
 		auto* User2WalletMessageData = User2WalletData->Set("message");
+		User2WalletMessageData->Set("cipher_nonce", Algorithm::Encoding::SerializeUint256(Nonce2));
+		User2WalletMessageData->Set("cipher_secret_key", Var::String(Format::Util::Encode0xHex(std::string_view((char*)CipherSecretKey2, sizeof(CipherSecretKey2)))));
+		User2WalletMessageData->Set("cipher_public_key", Var::String(Format::Util::Encode0xHex(std::string_view((char*)CipherPublicKey2, sizeof(CipherPublicKey2)))));
 		User2WalletMessageData->Set("ciphertext_to_user2_wallet", Var::String(Ciphertext2 ? Format::Util::Encode0xHex(*Ciphertext2).c_str() : "** encryption failed **"));
 		User2WalletMessageData->Set("plaintext_from_user2_wallet", Var::String(Plaintext1 ? Plaintext1->c_str() : "** decryption failed **"));
-		User2WalletMessageData->Set("public_key_ownership_from_user2", Var::String(Algorithm::Signing::Verify(MessageCheck2, User2.PublicKey, Signature2) ? "verification passed" : "verification failed"));
 		Term->jWriteLine(*Data);
 		VI_PANIC(Schema::ToJSON(*Data).find("failed") == std::string::npos, "cryptographic error");
 	}
@@ -1176,25 +1185,25 @@ public:
 			{ Ledger::Wallet::FromSeed("000000"), 0 },
 			{ Ledger::Wallet::FromSeed("000002"), 0 },
 		};
-		NewBlockFromGenerator(*Data, &Generators::Adjustments, Users, "0xfd8dcf5567734dd18128f5b439487b247a2b7e58ac856e7a9423bd0ed41a7bcd");
-		NewBlockFromGenerator(*Data, &Generators::AddressAccounts, Users, "0x84fc1fee65cb2c6df0ddd042e283f23b1c7bccd6ffaa13cab98464e9afe96a06");
-		NewBlockFromGenerator(*Data, &Generators::PubkeyAccounts, Users, "0x0b91945f93f2a4f2577c8a04ee8bb1f20421e42d51084c38a9c39374a3864f42");
-		NewBlockFromGenerator(*Data, &Generators::Commitments, Users, "0xa606188157d9ce418f78e266fa9bcdfdb66eadde6eb9feb9cdda6f6cf045bcf4");
-		NewBlockFromGenerator(*Data, std::bind(&Generators::CommitmentOnline, std::placeholders::_1, std::placeholders::_2, 2), Users, "0xe565c5fa57e3f85b8a148010bc83fcc060ed8421ef6b57bfe8b3ad66e10c5c42");
-		NewBlockFromGenerator(*Data, &Generators::Allocations, Users, "0xede21c2927360f1e8f2f7e85786bbb44929162222ba25aab1485b666dec5cc83");
-		NewBlockFromGenerator(*Data, &Generators::Contributions, Users, "0xea9e19b8d73e0a6e0626cf70160ae0c5da85216ab898e23b39165715bdb4683c");
-		NewBlockFromGenerator(*Data, &Generators::DelegatedCustodianAccounts, Users, "0x771d835dec992cd33b39600450ea3c3d0b146c9b8ca64eb50d032c71998a2cb4");
-		NewBlockFromGenerator(*Data, &Generators::Claims, Users, "0xd3441099cf39627366765e8deb06ab7d9c20e6bcb1476e5f145ba789c8e641f4");
-		NewBlockFromGenerator(*Data, &Generators::Transfers, Users, "0x3e979629fa197440a37eba5f03bd233dae1095ba743dff679faf1413891b2665");
-		NewBlockFromGenerator(*Data, &Generators::Rollups, Users, "0x24db38b9b6388d31e1ae55eafe047dd2414da32d7065acd3d5f1e5c7fdbe9414");
-		NewBlockFromGenerator(*Data, &Generators::Deployments, Users, "0x103b983d98ce127986c6aa2fe30d638d60476255b7e334fb1b2c3b3401aeaebf");
-		NewBlockFromGenerator(*Data, &Generators::Invocations, Users, "0xd8764ce212b7dd2758cb11515e983e6f6bb3d3843f6eda525d430315fc357fc2");
-		NewBlockFromGenerator(*Data, &Generators::MigrationsStage1, Users, "0x812dc5f9eaab0d04c5630107a20413f429866ee7f34540601a9a4cf272fbc053");
-		NewBlockFromGenerator(*Data, &Generators::MigrationsStage2, Users, "0xa9808655be868aed1bd16ab6d4461470dc93e37638179fe865e72456d2752dbf");
-		NewBlockFromGenerator(*Data, &Generators::WithdrawalsStage1, Users, "0x65a2b2f5b4dae51c5b3113fe152b2a0874e54ea90cfc68b9a57978fcf0c2278b");
-		NewBlockFromGenerator(*Data, &Generators::WithdrawalsStage2, Users, "0x52bce2281b7d5dee3c1e5e5654a9b535b4521a92c8e242fd6bbdeb25aa2827cb");
-		NewBlockFromGenerator(*Data, std::bind(&Generators::CommitmentOffline, std::placeholders::_1, std::placeholders::_2, 2), Users, "0xdfc4acca1261a505df6451908f0071276438417c4d77b21f6bfe2d14df2ae9eb");
-		NewBlockFromGenerator(*Data, &Generators::Deallocations, Users, "0xdce32d7a64de453cbc02dbe886e2be2cdfc0090f5d6d4b1d71dbe7cdbcc5e896");
+		NewBlockFromGenerator(*Data, &Generators::Adjustments, Users, "0xce0253e775378a9fb135ee52490c2a146f798ab9c96ebb13bae64e584211da7e");
+		NewBlockFromGenerator(*Data, &Generators::AddressAccounts, Users, "0x4586dabd78c7d02d341a7aa05b6010bcf702e181f308a596e701831938e7eadf");
+		NewBlockFromGenerator(*Data, &Generators::PubkeyAccounts, Users, "0x34c2271f3f360fe85e9ee057ca395a155230b2775d115bcd28e78a250a323e70");
+		NewBlockFromGenerator(*Data, &Generators::Commitments, Users, "0x9fb7f0aeb6a73ceb37f6d630d4eadd190d6889a7f7ccdc92c052ed7f56b05526");
+		NewBlockFromGenerator(*Data, std::bind(&Generators::CommitmentOnline, std::placeholders::_1, std::placeholders::_2, 2), Users, "0x51531804b3ede57f54dbab9da572c7ebaea6ed912b70d4f290d9f49b6f0faf69");
+		NewBlockFromGenerator(*Data, &Generators::Allocations, Users, "0x6370b99e11fcad0e5bb735975c70cea9424dfb6c62c0b7c22363d563a6a39c6e");
+		NewBlockFromGenerator(*Data, &Generators::Contributions, Users, "0x5d05c6d9be619d918f3dc33769ad232bb02b59714bccaf07eddc1ed4bddddb1b");
+		NewBlockFromGenerator(*Data, &Generators::DelegatedCustodianAccounts, Users, "0xb17fa98296019c4cd9b0e7796fc9e2e1e60acc06e270ba786cc3cca9843bcc60");
+		NewBlockFromGenerator(*Data, &Generators::Claims, Users, "0x4f8eb12916c5da7cfe7d737556827386897f2acb4a20d17ac8fdb1ce60774970");
+		NewBlockFromGenerator(*Data, &Generators::Transfers, Users, "0xbe80af5bb766247a1d99f682dd18490b0725ba00489dd9755662362628225043");
+		NewBlockFromGenerator(*Data, &Generators::Rollups, Users, "0x69aa87edeef910824c7959b01c5712dbd5786a7b412e4ee5dbe405aafd8d4c77");
+		NewBlockFromGenerator(*Data, &Generators::Deployments, Users, "0x0546a8622acbe2ca5f54737f5c57f41a10551491dd38789d66eda2746eb737d0");
+		NewBlockFromGenerator(*Data, &Generators::Invocations, Users, "0x05a30ffc87b46755b1812a0b772264d06e56494f924ba762c5a9e3373126cd2d");
+		NewBlockFromGenerator(*Data, &Generators::MigrationsStage1, Users, "0x0550347c11f07e9f9215211535ac9c98501ef0451ad6b4b6d87893f5cafc345d");
+		NewBlockFromGenerator(*Data, &Generators::MigrationsStage2, Users, "0x51383d365f56a98edb7ba66c9427e2cfeb46d50bdd85571e58b234c234186815");
+		NewBlockFromGenerator(*Data, &Generators::WithdrawalsStage1, Users, "0x29a0e02975ccd8afe2dc6f4ba1de6e48bd4e9b48654a2ba8980d0a35751f4f22");
+		NewBlockFromGenerator(*Data, &Generators::WithdrawalsStage2, Users, "0x544259fce1737d3d9bb524a028b2f5037a3345268db692df0f312adbc527c190");
+		NewBlockFromGenerator(*Data, std::bind(&Generators::CommitmentOffline, std::placeholders::_1, std::placeholders::_2, 2), Users, "0x79d7399e6a5e4d3376d3928bfb6ebedc7f5d94e18ad6f5c2ca1b06258eca0943");
+		NewBlockFromGenerator(*Data, &Generators::Deallocations, Users, "0xc03fabdcefddbf5522e1227b59b6e4f4dbf320bddce3351ccef8a73e522f9266");
 		Term->jWriteLine(*Data);
 	}
 	/* Blockchain containing some transaction types (non-zero balance accounts, valid regtest chain) */
@@ -1213,15 +1222,15 @@ public:
 			{ Ledger::Wallet::FromSeed("000000"), 0 },
 			{ Ledger::Wallet::FromSeed("000001"), 0 }
 		};
-		NewBlockFromGenerator(*Data, &Generators::Adjustments, Users, "0xaee2ad6c67cbb6f4883d0ca56a23604320f5520e3584bf6af81d9b7bbb76967b");
-		NewBlockFromGenerator(*Data, &Generators::AddressAccounts, Users, "0xded8fca5705a07e8b3ccef1af4d38757de7526e1bb482e769bab1f8d3812fd6a");
-		NewBlockFromGenerator(*Data, &Generators::DelegatedCustodianAccounts, Users, "0x8e71b4aac0827bdf7eb18c5073f8e60aae4cb67e356168bc7b1175c3cdd2a368");
-		NewBlockFromGenerator(*Data, &Generators::Commitments, Users, "0x2ca0710c170ef018a229932c57ca7dfed61235dbff2cafa5f10dd9c78adfef44");
-		NewBlockFromGenerator(*Data, &Generators::Claims, Users, "0x67204ad47600ac88cef604b859ee795c3c434ec5749794cc9f618ba450854915");
-		NewBlockFromGenerator(*Data, &Generators::Transfers, Users, "0x5f2a391ed331bd52b87e2c23ad7982e734469e105d79506a6a030daf871db5bd");
-		NewBlockFromGenerator(*Data, &Generators::Rollups, Users, "0x8e1a398780719b07c9e043b19195de36d1e2acaa090077281a0667d67d7e8e6a");
-		NewBlockFromGenerator(*Data, std::bind(&Generators::CommitmentOffline, std::placeholders::_1, std::placeholders::_2, 1), Users, "0x237c790ddbeb9bc8d99ad7da96985973d66c07092def18b588f264c4f0a9c8d7");
-		NewBlockFromGenerator(*Data, std::bind(&Generators::TransferToWallet, std::placeholders::_1, std::placeholders::_2, 1, Algorithm::Asset::IdOf("BTC"), "tcrt1xz68pv64tmsajx8z5sesjem2ws9gfu86k6d3x6f", 0.1), Users, "0x016a86b6affc79875b732f4b254f425a31c61355d533b147d810099b7f658bb2");
+		NewBlockFromGenerator(*Data, &Generators::Adjustments, Users, "0x90086b5fece5521b9b0d6d0a3d70e52cb93f1814797ce432c243fa52c3bc805e");
+		NewBlockFromGenerator(*Data, &Generators::AddressAccounts, Users, "0x5c1f29ee2705095b4d5876837b136ce47a20719216b74fd75edaf3bbff263273");
+		NewBlockFromGenerator(*Data, &Generators::DelegatedCustodianAccounts, Users, "0x6b7889011f9261873af9a02cb1029c7d9adf6129c4abb85aa08d214bdfcb4235");
+		NewBlockFromGenerator(*Data, &Generators::Commitments, Users, "0x1dc429dc95f33155de8ea40c11573fc540b7227c86dab8d6fb9cd8b6c1f75fb4");
+		NewBlockFromGenerator(*Data, &Generators::Claims, Users, "0x3ea665a58d2f1603362f2ed049e9730858b29029e4afb0bdf57c7aadcb6e95d8");
+		NewBlockFromGenerator(*Data, &Generators::Transfers, Users, "0x055ac076751237767883c6f30ec692c0d555d884fcb3eccd8283a6fe55d52616");
+		NewBlockFromGenerator(*Data, &Generators::Rollups, Users, "0xdd67763fdec81e91c80f29e75a4c5b767f3bce5f75b6bc65d6a06739f4fc3060");
+		NewBlockFromGenerator(*Data, std::bind(&Generators::CommitmentOffline, std::placeholders::_1, std::placeholders::_2, 1), Users, "0x852649c5d6f6adff0aa5ca75d80e926fd3e3a6d04a5112171242127ccbeb1102");
+		NewBlockFromGenerator(*Data, std::bind(&Generators::TransferToWallet, std::placeholders::_1, std::placeholders::_2, 1, Algorithm::Asset::IdOf("BTC"), "tcrt1x6xnszfhl0g2fefhekcudkzzyspzql7zzz4ha4h", 0.1), Users, "0x6956432b0a565d4d018641e685ec6d3cf8ec38a948582b5ae96fd35b71d9828a");
 		Term->jWriteLine(*Data);
 	}
 	/* Verify current blockchain */

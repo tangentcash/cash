@@ -918,29 +918,6 @@ namespace Tangent
 
 			return ReturnOK(*From, __func__, "mempool accepted");
 		}
-		Promise<void> ServerNode::ProposeMessage(ServerNode* Relayer, UPtr<Relay>&& From, Format::Variables&& Args)
-		{
-			if (Args.empty())
-				return ReturnAbort(Relayer, *From, __func__, "invalid arguments");
-
-			auto Ciphertext = Args.front().AsString();
-			if (Ciphertext.empty() || !Algorithm::Signing::VerifySealedMessage(Ciphertext))
-				return ReturnAbort(Relayer, *From, __func__, "invalid message");
-
-			auto Plaintext = Relayer->Validator.Wallet.OpenMessage(Ciphertext);
-			if (!Plaintext)
-			{
-				Relayer->Multicall(*From, &ServerNode::ProposeMessage, std::move(Args));
-				return ReturnOK(*From, __func__, "message broadcasted");
-			}
-			else if (Protocol::Now().User.P2P.Logging)
-				VI_INFO("[p2p] message to %s as plaintext:\nin>  %s", Relayer->Validator.Wallet.GetAddress().c_str(), Plaintext->c_str());
-
-			if (Relayer->Events.AcceptMessage)
-				Relayer->Events.AcceptMessage(*Plaintext, 1);
-
-			return ReturnOK(*From, __func__, "message accepted");
-		}
 		Promise<void> ServerNode::ReturnAbort(ServerNode* Relayer, Relay* From, const char* Function, const std::string_view& Message)
 		{
 			auto* PeerValidator = From->AsUser<Ledger::Validator>();
@@ -1426,7 +1403,6 @@ namespace Tangent
 			BindMulticallable(&ServerNode::ProposeBlockHash);
 			BindMulticallable(&ServerNode::ProposeTransaction);
 			BindMulticallable(&ServerNode::ProposeTransactionHash);
-			BindMulticallable(&ServerNode::ProposeMessage);
 			ClearMempool(false);
 			Accept();
 
@@ -1896,32 +1872,6 @@ namespace Tangent
 			}
 			return true;
 		}
-		bool ServerNode::AcceptMessage(const Algorithm::Pubkey PublicKey, const std::string_view& Plaintext)
-		{
-			if (memcmp(PublicKey, Validator.Wallet.PublicKey, sizeof(Algorithm::Pubkey)) != 0)
-			{
-				auto Message = Validator.Wallet.SealMessage(Plaintext, PublicKey, *Crypto::RandomBytes(64));
-				if (!Message)
-					return false;
-
-				Multicall(nullptr, &ServerNode::ProposeMessage, { Format::Variable(*Message) });
-				if (Protocol::Now().User.P2P.Logging)
-					VI_INFO("[p2p] message from %s as plaintext:\nout>  %.*s", Validator.Wallet.GetAddress().c_str(), (int)Plaintext.size(), Plaintext.data());
-
-				if (Events.AcceptMessage)
-					Events.AcceptMessage(Plaintext, -1);
-			}
-			else
-			{
-				if (Protocol::Now().User.P2P.Logging)
-					VI_INFO("[p2p] message to %s as plaintext:\nin>  %.*s", Validator.Wallet.GetAddress().c_str(), (int)Plaintext.size(), Plaintext.data());
-
-				if (Events.AcceptMessage)
-					Events.AcceptMessage(Plaintext, 1);
-			}
-
-			return true;
-		}
 		bool ServerNode::Accept(Option<SocketAddress>&& Address)
 		{
 			if (Address && Routing::IsAddressReserved(*Address))
@@ -2008,9 +1958,9 @@ namespace Tangent
 				}
 			}
 
-			return BroacastTransaction(From, std::move(CandidateTx), Owner);
+			return BroadcastTransaction(From, std::move(CandidateTx), Owner);
 		}
-		ExpectsLR<void> ServerNode::BroacastTransaction(Relay* From, UPtr<Ledger::Transaction>&& CandidateTx, const Algorithm::Pubkeyhash Owner)
+		ExpectsLR<void> ServerNode::BroadcastTransaction(Relay* From, UPtr<Ledger::Transaction>&& CandidateTx, const Algorithm::Pubkeyhash Owner)
 		{
 			auto CandidateHash = CandidateTx->AsHash();
 			auto Mempool = Storages::Mempoolstate(__func__);

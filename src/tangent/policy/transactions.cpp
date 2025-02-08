@@ -1410,8 +1410,6 @@ namespace Tangent
 		bool Commitment::StoreBody(Format::Stream* Stream) const
 		{
 			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Algorithm::Pubkey PkNull = { 0 };
-			Algorithm::Recsighash SigNull = { 0 };
 			Stream->WriteInteger((uint8_t)(Online ? (*Online ? 1 : 0) : 2));
 			Stream->WriteInteger((uint16_t)Observers.size());
 			for (auto& Mediator : Observers)
@@ -3324,24 +3322,42 @@ namespace Tangent
 		bool ContributionDeallocation::StoreBody(Format::Stream* Stream) const
 		{
 			VI_ASSERT(Stream != nullptr, "stream should be set");
+			Algorithm::Pubkey Null = { 0 };
+			Stream->WriteString(std::string_view((char*)CipherPublicKey1, memcmp(CipherPublicKey1, Null, sizeof(Null)) == 0 ? 0 : sizeof(CipherPublicKey1)));
+			Stream->WriteString(std::string_view((char*)CipherPublicKey2, memcmp(CipherPublicKey2, Null, sizeof(Null)) == 0 ? 0 : sizeof(CipherPublicKey2)));
 			Stream->WriteInteger(ContributionActivationHash);
 			return true;
 		}
 		bool ContributionDeallocation::LoadBody(Format::Stream& Stream)
 		{
+			String CipherPublicKey1Assembly;
+			if (!Stream.ReadString(Stream.ReadType(), &CipherPublicKey1Assembly) || !Algorithm::Encoding::DecodeUintBlob(CipherPublicKey1Assembly, CipherPublicKey1, sizeof(CipherPublicKey1)))
+				return false;
+
+			String CipherPublicKey2Assembly;
+			if (!Stream.ReadString(Stream.ReadType(), &CipherPublicKey2Assembly) || !Algorithm::Encoding::DecodeUintBlob(CipherPublicKey2Assembly, CipherPublicKey2, sizeof(CipherPublicKey2)))
+				return false;
+
 			if (!Stream.ReadInteger(Stream.ReadType(), &ContributionActivationHash))
 				return false;
 
 			return true;
 		}
-		void ContributionDeallocation::SetWitness(const uint256_t& NewContributionActivationHash)
+		void ContributionDeallocation::SetWitness(const Algorithm::Seckey SecretKey, const uint256_t& NewContributionActivationHash)
 		{
-			ContributionActivationHash = NewContributionActivationHash;
+			uint8_t Seed[32];
+			Algorithm::Encoding::DecodeUint256(ContributionActivationHash = NewContributionActivationHash, Seed);
+
+			Algorithm::Seckey CipherSecretKey;
+			Algorithm::Signing::DeriveCipherKeypair(SecretKey, ContributionActivationHash, CipherSecretKey, CipherPublicKey1);
+			Algorithm::Signing::DeriveCipherKeypair(SecretKey, Algorithm::Hashing::Hash256i(Seed, sizeof(Seed)), CipherSecretKey, CipherPublicKey2);
 		}
 		UPtr<Schema> ContributionDeallocation::AsSchema() const
 		{
 			Schema* Data = Ledger::Transaction::AsSchema().Reset();
 			Data->Set("contribution_activation_hash", Var::String(Algorithm::Encoding::Encode0xHex256(ContributionActivationHash)));
+			Data->Set("cipher_public_key_1", Var::String(Format::Util::Encode0xHex(std::string_view((char*)CipherPublicKey1, sizeof(CipherPublicKey1)))));
+			Data->Set("cipher_public_key_2", Var::String(Format::Util::Encode0xHex(std::string_view((char*)CipherPublicKey2, sizeof(CipherPublicKey2)))));
 			return Data;
 		}
 		uint32_t ContributionDeallocation::AsType() const
@@ -3523,7 +3539,14 @@ namespace Tangent
 		}
 		Option<String> ContributionDeselection::GetSecretKey1(const Ledger::TransactionContext* Context, const Algorithm::Seckey SecretKey) const
 		{
-			return Algorithm::Signing::PrivateDecrypt(SecretKey, EncryptedSecretKey1);
+			auto Deallocation = Context->GetBlockTransaction<ContributionDeallocation>(ContributionDeallocationHash);
+			if (!Deallocation)
+				return Optional::None;
+
+			auto* DeallocationTransaction = (ContributionDeallocation*)*Deallocation->Transaction;
+			Algorithm::Seckey CipherSecretKey; Algorithm::Pubkey CipherPublicKey;
+			Algorithm::Signing::DeriveCipherKeypair(SecretKey, DeallocationTransaction->ContributionActivationHash, CipherSecretKey, CipherPublicKey);
+			return Algorithm::Signing::PrivateDecrypt(CipherSecretKey, CipherPublicKey, EncryptedSecretKey1);
 		}
 		UPtr<Schema> ContributionDeselection::AsSchema() const
 		{
@@ -3733,9 +3756,22 @@ namespace Tangent
 
 			return ((ContributionDeselection*)*Deselection->Transaction)->GetSecretKey1(Context, SecretKey);
 		}
-		Option<String> ContributionDeactivation::GetSecretKey2(const Algorithm::Seckey SecretKey) const
+		Option<String> ContributionDeactivation::GetSecretKey2(const Ledger::TransactionContext* Context, const Algorithm::Seckey SecretKey) const
 		{
-			return Algorithm::Signing::PrivateDecrypt(SecretKey, EncryptedSecretKey2);
+			auto Deselection = Context->GetBlockTransaction<ContributionDeselection>(ContributionDeselectionHash);
+			if (!Deselection)
+				return Optional::None;
+
+			auto Deallocation = Context->GetBlockTransaction<ContributionDeallocation>(((ContributionDeselection*)*Deselection->Transaction)->ContributionDeallocationHash);
+			if (!Deallocation)
+				return Optional::None;
+
+			uint8_t Seed[32];
+			auto* DeallocationTransaction = (ContributionDeallocation*)*Deallocation->Transaction;
+			Algorithm::Seckey CipherSecretKey; Algorithm::Pubkey CipherPublicKey;
+			Algorithm::Encoding::DecodeUint256(DeallocationTransaction->ContributionActivationHash, Seed);
+			Algorithm::Signing::DeriveCipherKeypair(SecretKey, Algorithm::Hashing::Hash256i(Seed, sizeof(Seed)), CipherSecretKey, CipherPublicKey);
+			return Algorithm::Signing::PrivateDecrypt(CipherSecretKey, CipherPublicKey, EncryptedSecretKey2);
 		}
 		ExpectsLR<Mediator::DerivedSigningWallet> ContributionDeactivation::GetSigningWallet(const Ledger::TransactionContext* Context, const Algorithm::Seckey SecretKey) const
 		{
@@ -3744,7 +3780,7 @@ namespace Tangent
 			if (!Chain)
 				return LayerException("invalid operation");
 
-			auto SecretKey2 = GetSecretKey2(SecretKey);
+			auto SecretKey2 = GetSecretKey2(Context, SecretKey);
 			if (!SecretKey2)
 				return LayerException("invalid secret key 2");
 

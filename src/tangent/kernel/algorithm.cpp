@@ -8,6 +8,7 @@
 extern "C"
 {
 #include <secp256k1.h>
+#include <secp256k1_recovery.h>
 #include <sodium.h>
 #include "../internal/segwit_addr.h"
 #include "../internal/ecdsa.h"
@@ -549,15 +550,38 @@ namespace Tangent
 		void Signing::Keygen(Seckey SecretKey)
 		{
 			VI_ASSERT(SecretKey != nullptr, "secret key should be set");
-			Crypto::FillRandomBytes(SecretKey, sizeof(Seckey));
+			while (true)
+			{
+				if (!Crypto::FillRandomBytes(SecretKey, sizeof(Seckey)))
+					break;
+				else if (VerifySecretKey(SecretKey))
+					break;
+			}
 		}
 		bool Signing::Recover(const uint256_t& Hash, Pubkey PublicKey, const Recsighash Signature)
 		{
 			VI_ASSERT(PublicKey != nullptr && Signature != nullptr, "public key and signature should be set");
-			memcpy(PublicKey, (char*)Signature + sizeof(Sighash), sizeof(Pubkey));
-			for (size_t i = 0; i < sizeof(Pubkey); i++)
-				PublicKey[i] ^= Signature[i] ^ Signature[i + sizeof(Sighash) / 2];
-			return Verify(Hash, PublicKey, Signature);
+			uint8_t RecoveryId = 0;
+			size_t SignatureSize = sizeof(Recsighash);
+			size_t RecoveryOffset = SignatureSize - sizeof(RecoveryId);
+			memcpy(&RecoveryId, Signature + RecoveryOffset, sizeof(RecoveryId));
+			if (RecoveryId > 4)
+				return false;
+
+			secp256k1_context* Context = GetContext();
+			secp256k1_ecdsa_recoverable_signature RecoverableSignature;
+			if (!secp256k1_ecdsa_recoverable_signature_parse_compact(Context, &RecoverableSignature, Signature, RecoveryId))
+				return false;
+
+			uint8_t Data[32];
+			Encoding::DecodeUint256(Hash, Data);
+
+			secp256k1_pubkey RecoveredPublicKey;
+			if (secp256k1_ecdsa_recover(Context, &RecoveredPublicKey, &RecoverableSignature, Data) != 1)
+				return false;
+
+			size_t PublicKeySize = sizeof(Pubkey);
+			return secp256k1_ec_pubkey_serialize(Context, PublicKey, &PublicKeySize, &RecoveredPublicKey, SECP256K1_EC_COMPRESSED) == 1;
 		}
 		bool Signing::RecoverHash(const uint256_t& Hash, Pubkeyhash PublicKeyHash, const Recsighash Signature)
 		{
@@ -572,41 +596,58 @@ namespace Tangent
 		bool Signing::Sign(const uint256_t& Hash, const Seckey SecretKey, Recsighash Signature)
 		{
 			VI_ASSERT(SecretKey != nullptr && Signature != nullptr, "secret key and signature should be set");
-			uint8_t Message[32];
-			Encoding::DecodeUint256(Hash, Message);
+			uint8_t Data[32];
+			Encoding::DecodeUint256(Hash, Data);
+			memset(Signature, 0, sizeof(Recsighash));
 
-			Pubkey PublicKey;
-			DerivePublicKey(SecretKey, PublicKey);
-
-			uint8_t ExtendedSecretKey[64];
-			memcpy(ExtendedSecretKey, SecretKey, sizeof(Seckey));
-			memcpy((char*)ExtendedSecretKey + sizeof(Seckey), PublicKey, sizeof(Seckey));
-			memcpy((char*)Signature + sizeof(Sighash), PublicKey, sizeof(PublicKey));
-			if (crypto_sign_detached(Signature, nullptr, Message, sizeof(Message), ExtendedSecretKey) != 0)
+			secp256k1_context* Context = GetContext();
+			secp256k1_ecdsa_recoverable_signature RecoverableSignature;
+			if (secp256k1_ecdsa_sign_recoverable(Context, &RecoverableSignature, Data, SecretKey, secp256k1_nonce_function_rfc6979, nullptr) != 1)
 				return false;
 
-			for (size_t i = sizeof(Sighash); i < sizeof(Recsighash); i++)
-				Signature[i] ^= Signature[i - sizeof(Sighash) / 1] ^ Signature[i - sizeof(Sighash) / 2];
+			int RecoveryId = 0;
+			if (secp256k1_ecdsa_recoverable_signature_serialize_compact(Context, Signature, &RecoveryId, &RecoverableSignature) != 1)
+				return false;
 
-			return crypto_sign_verify_detached(Signature, Message, sizeof(Message), PublicKey) == 0;
+			Signature[sizeof(Sighash)] = (uint8_t)RecoveryId;
+			return true;
 		}
 		bool Signing::Verify(const uint256_t& Hash, const Pubkey PublicKey, const Recsighash Signature)
 		{
 			VI_ASSERT(PublicKey != nullptr && Signature != nullptr, "public key and signature should be set");
-			uint8_t Message[32];
-			Encoding::DecodeUint256(Hash, Message);
-			return crypto_sign_verify_detached(Signature, Message, sizeof(Message), PublicKey) == 0;
+			secp256k1_context* Context = GetContext();
+			secp256k1_ecdsa_signature CompactSignature;
+			if (secp256k1_ecdsa_signature_parse_compact(Context, &CompactSignature, Signature) != 1)
+				return false;
+
+			secp256k1_ecdsa_signature NormalizedSignature;
+			secp256k1_ecdsa_signature_normalize(Context, &NormalizedSignature, &CompactSignature);
+
+			secp256k1_pubkey DerivedPublicKey;
+			if (secp256k1_ec_pubkey_parse(Context, &DerivedPublicKey, PublicKey, sizeof(Pubkey)) != 1)
+				return false;
+
+			uint8_t Data[32];
+			Encoding::DecodeUint256(Hash, Data);
+			return secp256k1_ecdsa_verify(Context, &NormalizedSignature, Data, &DerivedPublicKey) == 1;
 		}
 		bool Signing::VerifyMnemonic(const std::string_view& Mnemonic)
 		{
 			String Data = String(Mnemonic);
 			return mnemonic_check(Data.c_str()) == 1;
 		}
+		bool Signing::VerifySecretKey(const Seckey SecretKey)
+		{
+			VI_ASSERT(SecretKey != nullptr, "secret key should be set");
+			secp256k1_context* Context = GetContext();
+			return secp256k1_ec_seckey_verify(Context, SecretKey) == 1;
+		}
 		bool Signing::VerifyPublicKey(const Pubkey PublicKey)
 		{
 			VI_ASSERT(PublicKey != nullptr, "public key should be set");
-			uint8_t Temp[32];
-			return crypto_sign_ed25519_pk_to_curve25519(Temp, PublicKey) == 0;
+			secp256k1_pubkey DerivedPublicKey;
+			secp256k1_context* Context = GetContext();
+			return secp256k1_ec_pubkey_parse(Context, &DerivedPublicKey, PublicKey, sizeof(Pubkey)) == 1;
 		}
 		bool Signing::VerifyAddress(const std::string_view& Address)
 		{
@@ -628,14 +669,26 @@ namespace Tangent
 		void Signing::DeriveSecretKey(const std::string_view& Seed, Seckey SecretKey)
 		{
 			VI_ASSERT(SecretKey != nullptr, "secret key should be set");
-			Hashing::Hash256((uint8_t*)Seed.data(), Seed.size(), SecretKey);
+			String Derivation = String(Seed);
+			while (true)
+			{
+				Derivation = Hashing::Hash256((uint8_t*)Derivation.data(), Derivation.size());
+				memcpy(SecretKey, Derivation.data(), sizeof(Seckey));
+				if (VerifySecretKey(SecretKey))
+					break;
+			}
 		}
-		void Signing::DerivePublicKey(const Seckey SecretKey, Pubkey PublicKey)
+		bool Signing::DerivePublicKey(const Seckey SecretKey, Pubkey PublicKey)
 		{
-			VI_ASSERT(SecretKey != nullptr, "secret key should be set");
-			VI_ASSERT(PublicKey != nullptr, "public key should be set");
-			uint8_t Temp[64];
-			crypto_sign_seed_keypair(PublicKey, Temp, SecretKey);
+			VI_ASSERT(SecretKey != nullptr && PublicKey != nullptr, "secret key and public key should be set");
+			secp256k1_pubkey DerivedPublicKey;
+			secp256k1_context* Context = GetContext();
+			memset(PublicKey, 0, sizeof(Pubkey));
+			if (secp256k1_ec_pubkey_create(Context, &DerivedPublicKey, SecretKey) != 1)
+				return false;
+
+			size_t PublicKeySize = sizeof(Pubkey);
+			return secp256k1_ec_pubkey_serialize(Context, PublicKey, &PublicKeySize, &DerivedPublicKey, SECP256K1_EC_COMPRESSED) == 1;
 		}
 		void Signing::DerivePublicKeyHash(const Pubkey PublicKey, Pubkeyhash PublicKeyHash)
 		{
@@ -643,14 +696,24 @@ namespace Tangent
 			VI_ASSERT(PublicKeyHash != nullptr, "public key hash should be set");
 			Hashing::Hash160(PublicKey, sizeof(Pubkey), PublicKeyHash);
 		}
-		Option<String> Signing::PublicEncrypt(const Pubkey PublicKey, const std::string_view& Plaintext, const std::string_view& Entropy)
+		void Signing::DeriveCipherKeypair(const Seckey SecretKey, const uint256_t& Nonce, Seckey CipherSecretKey, Pubkey CipherPublicKey)
 		{
-			VI_ASSERT(PublicKey != nullptr, "key should be set");
+			VI_ASSERT(SecretKey != nullptr, "secret key should be set");
+			VI_ASSERT(CipherSecretKey != nullptr, "cipher secret key should be set");
+			VI_ASSERT(CipherPublicKey != nullptr, "cipher public key should be set");
+			Format::Stream Message;
+			Message.WriteTypeless((char*)SecretKey, (uint32_t)sizeof(Seckey));
+			Message.WriteTypeless(Nonce);
+			
+			uint8_t Seed[32];
+			Encoding::DecodeUint256(Message.Hash(), Seed);
+			memset(CipherPublicKey, 0, sizeof(Pubkey));
+			crypto_box_seed_keypair(CipherPublicKey, CipherSecretKey, Seed);
+		}
+		Option<String> Signing::PublicEncrypt(const Pubkey CipherPublicKey, const std::string_view& Plaintext, const std::string_view& Entropy)
+		{
+			VI_ASSERT(CipherPublicKey != nullptr, "cipher public key should be set");
 			if (Plaintext.empty())
-				return Optional::None;
-
-			uint8_t CipherPublicKey[32];
-			if (crypto_sign_ed25519_pk_to_curve25519(CipherPublicKey, PublicKey) != 0)
 				return Optional::None;
 
 			auto Input = Hashing::Hash512((uint8_t*)Entropy.data(), Entropy.size());
@@ -682,21 +745,11 @@ namespace Tangent
 
 			return Ciphertext;
 		}
-		Option<String> Signing::PrivateDecrypt(const Seckey SecretKey, const std::string_view& Ciphertext)
+		Option<String> Signing::PrivateDecrypt(const Seckey CipherSecretKey, const Pubkey CipherPublicKey, const std::string_view& Ciphertext)
 		{
-			VI_ASSERT(SecretKey != nullptr, "secret key should be set");
+			VI_ASSERT(CipherSecretKey != nullptr, "cipher secret key should be set");
+			VI_ASSERT(CipherPublicKey != nullptr, "cipher public key should be set");
 			if (Ciphertext.size() <= crypto_box_SEALBYTES)
-				return Optional::None;
-
-			Pubkey PublicKey;
-			DerivePublicKey(SecretKey, PublicKey);
-
-			uint8_t CipherSecretKey[32];
-			if (crypto_sign_ed25519_sk_to_curve25519(CipherSecretKey, SecretKey) != 0)
-				return Optional::None;
-
-			uint8_t CipherPublicKey[32];
-			if (crypto_sign_ed25519_pk_to_curve25519(CipherPublicKey, PublicKey) != 0)
 				return Optional::None;
 
 			String Shuffletext;
@@ -984,16 +1037,16 @@ namespace Tangent
 		}
 		uint64_t Hashing::Sha64d(const uint8_t* Buffer, size_t Size)
 		{
-			uint64_t Checksum = 0;
+			uint64_t Result = 0;
 			if (!Size)
 				return uint64_t(0);
 
 			String Hash = Hashing::Hash256(Buffer, Size);
-			if (Hash.size() < sizeof(Checksum))
+			if (Hash.size() < sizeof(Result))
 				return uint64_t(0);
 
-			memcpy(&Checksum, Hash.data(), sizeof(Checksum));
-			return Checksum;
+			memcpy(&Result, Hash.data(), sizeof(Result));
+			return OS::CPU::ToEndianness(OS::CPU::Endian::Little, Result);
 		}
 		uint64_t Hashing::Sha64d(const std::string_view& Buffer)
 		{
@@ -1006,7 +1059,7 @@ namespace Tangent
 
 			uint32_t Result;
 			memcpy(&Result, Data, sizeof(Result));
-			return Result;
+			return OS::CPU::ToEndianness(OS::CPU::Endian::Little, Result);
 		}
 		uint32_t Hashing::Hash32d(const std::string_view& Buffer)
 		{

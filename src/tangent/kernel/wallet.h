@@ -26,8 +26,8 @@ namespace Tangent
 			bool HasSecretKey() const;
 			bool HasPublicKey() const;
 			bool HasPublicKeyHash() const;
-			Option<String> SealMessage(const std::string_view& Plaintext, const Algorithm::Pubkey ForPublicKey, const std::string_view& Entropy) const;
-			Option<String> OpenMessage(const std::string_view& Ciphertext) const;
+			Option<String> SealMessage(const std::string_view& Plaintext, const Algorithm::Pubkey CipherPublicKey, const std::string_view& Entropy) const;
+			Option<String> OpenMessage(const uint256_t& Nonce, const std::string_view& Ciphertext) const;
 			String GetSecretKey() const;
 			String GetPublicKey() const;
 			String GetAddress() const;

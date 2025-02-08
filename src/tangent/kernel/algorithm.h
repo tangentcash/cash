@@ -11,9 +11,9 @@ namespace Tangent
 	{
 		using AssetId = uint256_t;
 		using Sighash = uint8_t[64];
-		using Recsighash = uint8_t[96];
+		using Recsighash = uint8_t[65];
 		using Seckey = uint8_t[32];
-		using Pubkey = uint8_t[32];
+		using Pubkey = uint8_t[33];
 		using Pubkeyhash = uint8_t[20];
         typedef uint256_t(*HashFunction)(const uint256_t&, const uint256_t&);
 
@@ -92,15 +92,17 @@ namespace Tangent
 			static bool Sign(const uint256_t& Hash, const Seckey SecretKey, Recsighash Signature);
 			static bool Verify(const uint256_t& Hash, const Pubkey PublicKey, const Recsighash Signature);
 			static bool VerifyMnemonic(const std::string_view& Mnemonic);
+			static bool VerifySecretKey(const Seckey SecretKey);
 			static bool VerifyPublicKey(const Pubkey PublicKey);
 			static bool VerifyAddress(const std::string_view& Address);
 			static bool VerifySealedMessage(const std::string_view& Ciphertext);
 			static void DeriveSecretKeyFromMnemonic(const std::string_view& Mnemonic, Seckey SecretKey);
 			static void DeriveSecretKey(const std::string_view& Seed, Seckey SecretKey);
-			static void DerivePublicKey(const Seckey SecretKey, Pubkey PublicKey);
+			static bool DerivePublicKey(const Seckey SecretKey, Pubkey PublicKey);
 			static void DerivePublicKeyHash(const Pubkey PublicKey, Pubkeyhash PublicKeyHash);
-			static Option<String> PublicEncrypt(const Pubkey PublicKey, const std::string_view& Plaintext, const std::string_view& Entropy);
-			static Option<String> PrivateDecrypt(const Seckey SecretKey, const std::string_view& Ciphertext);
+			static void DeriveCipherKeypair(const Seckey SecretKey, const uint256_t& Nonce, Seckey CipherSecretKey, Pubkey CipherPublicKey);
+			static Option<String> PublicEncrypt(const Pubkey CipherPublicKey, const std::string_view& Plaintext, const std::string_view& Entropy);
+			static Option<String> PrivateDecrypt(const Seckey CipherSecretKey, const Pubkey CipherPublicKey, const std::string_view& Ciphertext);
 			static bool DecodeSecretKey(const std::string_view& Value, Seckey SecretKey);
 			static bool EncodeSecretKey(const Seckey SecretKey, String& Value);
 			static bool DecodePublicKey(const std::string_view& Value, Pubkey PublicKey);

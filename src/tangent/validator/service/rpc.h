@@ -109,7 +109,6 @@ namespace Tangent
 			bool DispatchResponse(HTTP::Connection* Base, UPtr<Schema>&& Requests, UPtr<Schema>&& Responses, size_t Index, std::function<void(HTTP::Connection*, UPtr<Schema>&&)>&& Callback);
 			void DispatchAcceptBlock(const uint256_t& Hash, const Ledger::Block& Block, const Ledger::BlockCheckpoint& Checkpoint);
 			void DispatchAcceptTransaction(const uint256_t& Hash, const Ledger::Transaction* Transaction, const Algorithm::Pubkeyhash Owner);
-			void DispatchAcceptMessage(const std::string_view& Plaintext, int8_t Direction);
 			ServerResponse WebSocketSubscribe(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse WebSocketUnsubscribe(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse UtilityEncodeAddress(HTTP::Connection* Base, Format::Variables&& Args);
@@ -208,7 +207,6 @@ namespace Tangent
 			ServerResponse ValidatorstateGetNode(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse ValidatorstateGetBlockchains(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse ValidatorstateStatus(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ValidatorstateBroadcastMessage(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse ProposerstateSubmitBlock(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse ProposerstateSubmitCommitmentTransaction(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse ProposerstateSubmitContributionAllocation(HTTP::Connection* Base, Format::Variables&& Args);

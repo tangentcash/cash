@@ -252,7 +252,6 @@ namespace Tangent
 				{
 					Validator->Events.AcceptBlock = std::bind(&ServerNode::DispatchAcceptBlock, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3);
 					Validator->Events.AcceptTransaction = std::bind(&ServerNode::DispatchAcceptTransaction, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3);
-					Validator->Events.AcceptMessage = std::bind(&ServerNode::DispatchAcceptMessage, this, std::placeholders::_1, std::placeholders::_2);
 				}
 			}
 
@@ -357,7 +356,6 @@ namespace Tangent
 			Bind(AccessType::W | AccessType::A, "validatorstate", "reorganize", 0, 0, "", "{ new_tip_block_number: uint64, old_tip_block_number: uint64, mempool_transactions: uint64, block_delta: int64, transaction_delta: int64, state_delta: int64, is_fork: bool }", "reorganize current chain which re-executes every saved block from genesis to tip and re-calculates the final chain state (helpful for corrupted state recovery or pruning checkpoint size change without re-downloading full block history)", std::bind(&ServerNode::ValidatorstateReorganize, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(AccessType::W | AccessType::A, "validatorstate", "acceptnode", 0, 1, "string? uri_address", "void", "try to accept and connect to a node possibly by ip address", std::bind(&ServerNode::ValidatorstateAcceptNode, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(AccessType::W | AccessType::A, "validatorstate", "rejectnode", 1, 1, "string uri_address", "void", "reject and disconnect from a node by ip address", std::bind(&ServerNode::ValidatorstateRejectNode, this, std::placeholders::_1, std::placeholders::_2));
-			Bind(AccessType::W | AccessType::A, "validatorstate", "broadcastmessage", 2, 3, "string public_key, string message, bool? chronological", "void", "send encrypted message to another node with specified public key", std::bind(&ServerNode::ValidatorstateBroadcastMessage, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(AccessType::W | AccessType::A, "proposerstate", "submitblock", 0, 0, "", "void", "try to propose a block from mempool transactions", std::bind(&ServerNode::ProposerstateSubmitBlock, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(AccessType::W | AccessType::A, "proposerstate", "submitcommitmenttransaction", 3, 4, "string asset, bool online, bool? proposer, string? observers", "uint256", "submit commitment transaction that enables/disables block proposer and/or blockchain observer(s) defined by a comma separated list of asset handles", std::bind(&ServerNode::ProposerstateSubmitCommitmentTransaction, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(AccessType::W | AccessType::A, "proposerstate", "submitcontributionallocation", 1, 1, "string asset", "uint256", "request for allocation of a depository wallet", std::bind(&ServerNode::ProposerstateSubmitContributionAllocation, this, std::placeholders::_1, std::placeholders::_2));
@@ -697,46 +695,6 @@ namespace Tangent
 				auto Notification = Var::Set::Object();
 				Notification->Set("type", Var::String("transaction"));
 				Notification->Set("result", Var::String(Algorithm::Encoding::Encode0xHex256(Hash)));
-
-				auto Response = Schema::ToJSON(*ServerResponse().Notification(Notification).Transform(nullptr));
-				for (auto& WebSocket : WebSockets)
-					WebSocket->Send(Response, HTTP::WebSocketOp::Text, nullptr);
-			});
-		}
-		void ServerNode::DispatchAcceptMessage(const std::string_view& Plaintext, int8_t Direction)
-		{
-			if (!Validator)
-				return;
-
-			String Message = String(Plaintext);
-			Protocol::Change().MessageLog().Output(String(Direction > 0 ? "in>  " : "out>  ") + Message);
-			UMutex<std::mutex> Unique(Mutex);
-			if (Listeners.empty())
-				return;
-
-			String Address = String((char*)Validator->Validator.Wallet.PublicKeyHash, sizeof(Algorithm::Pubkeyhash));
-			UnorderedSet<HTTP::WebSocketFrame*> WebSockets;
-			for (auto& Listener : Listeners)
-			{
-				if (!Listener.first->WebSocket)
-					continue;
-				else if (Listener.second.Transactions || Listener.second.Addresses.find(Address) != Listener.second.Addresses.end())
-					WebSockets.insert(Listener.first->WebSocket);
-			}
-
-			Unique.Unlock();
-			if (WebSockets.empty())
-				return;
-
-			Cospawn([Message, Direction, WebSockets = std::move(WebSockets)]() mutable
-			{
-				auto* Data = Var::Set::Object();
-				Data->Set("plaintext", Var::String(Message));
-				Data->Set("direction", Var::String(Direction > 0 ? "in" : "out"));
-
-				auto Notification = Var::Set::Object();
-				Notification->Set("type", Var::String("message"));
-				Notification->Set("result", Data);
 
 				auto Response = Schema::ToJSON(*ServerResponse().Notification(Notification).Transform(nullptr));
 				for (auto& WebSocket : WebSockets)
@@ -2902,22 +2860,6 @@ namespace Tangent
 			Data->Set("checkpoint", Algorithm::Encoding::SerializeUint256(Chain.GetCheckpointBlockNumber().Or(0)));
 			return ServerResponse().Success(Data.Reset());
 		}
-		ServerResponse ServerNode::ValidatorstateBroadcastMessage(HTTP::Connection* Base, Format::Variables&& Args)
-		{
-			if (!Validator)
-				return ServerResponse().Error(ErrorCodes::BadRequest, "validator node disabled");
-
-			String Message = Args[1].AsBlob();
-			if (Args.size() > 2 && Args[2].AsBoolean())
-				Message = "[" + DateTime::SerializeGlobal(DateTime().CurrentOffset(), DateTime::FormatIso8601Time()) + "] " + Message;
-
-			Algorithm::Pubkey PublicKey;
-			Algorithm::Signing::DecodePublicKey(Args[0].AsString(), PublicKey);
-			if (!Validator->AcceptMessage(PublicKey, Message))
-				return ServerResponse().Error(ErrorCodes::BadRequest, "message is not accepted");
-
-			return ServerResponse().Success(Var::Set::Null());
-		}
 		ServerResponse ServerNode::ProposerstateSubmitBlock(HTTP::Connection* Base, Format::Variables&& Args)
 		{
 			if (!Validator)
@@ -3007,7 +2949,7 @@ namespace Tangent
 
 			auto Transaction = Memory::New<Transactions::ContributionDeallocation>();
 			Transaction->Asset = Initiator->Transaction->Asset;
-			Transaction->SetWitness(Initiator->Receipt.TransactionHash);
+			Transaction->SetWitness(Validator->Validator.Wallet.SecretKey, Initiator->Receipt.TransactionHash);
 
 			UMutex<std::recursive_mutex> Unique(Validator->Sync.Account);
 			auto AccountSequence = Validator->Validator.Wallet.GetLatestSequence().Or(1);

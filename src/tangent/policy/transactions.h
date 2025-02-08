@@ -417,6 +417,8 @@ namespace Tangent
 		struct ContributionDeallocation final : Ledger::Transaction
 		{
 			uint256_t ContributionActivationHash = 0;
+			Algorithm::Pubkey CipherPublicKey1 = { 0 };
+			Algorithm::Pubkey CipherPublicKey2 = { 0 };
 
 			ExpectsLR<void> Prevalidate() const override;
 			ExpectsLR<void> Validate(const Ledger::TransactionContext* Context) const override;
@@ -424,7 +426,7 @@ namespace Tangent
 			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
-			void SetWitness(const uint256_t& ContributionActivationHash);
+			void SetWitness(const Algorithm::Seckey SecretKey, const uint256_t& ContributionActivationHash);
 			UPtr<Schema> AsSchema() const override;
 			uint32_t AsType() const override;
 			std::string_view AsTypename() const override;
@@ -473,7 +475,7 @@ namespace Tangent
 			bool LoadBody(Format::Stream& Stream) override;
 			bool RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
 			Option<String> GetSecretKey1(const Ledger::TransactionContext* Context, const Algorithm::Seckey SecretKey) const;
-			Option<String> GetSecretKey2(const Algorithm::Seckey SecretKey) const;
+			Option<String> GetSecretKey2(const Ledger::TransactionContext* Context, const Algorithm::Seckey SecretKey) const;
 			ExpectsLR<Mediator::DerivedSigningWallet> GetSigningWallet(const Ledger::TransactionContext* Context, const Algorithm::Seckey SecretKey) const;
 			ExpectsPromiseRT<Mediator::OutgoingTransaction> WithdrawToAddress(const Ledger::TransactionContext* Context, const Algorithm::Seckey SecretKey, const std::string_view& Address);
 			UPtr<Schema> AsSchema() const override;

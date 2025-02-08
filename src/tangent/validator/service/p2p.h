@@ -159,7 +159,6 @@ namespace Tangent
 			{
 				std::function<void(const uint256_t&, const Ledger::Block&, const Ledger::BlockCheckpoint&)> AcceptBlock;
 				std::function<void(const uint256_t&, const Ledger::Transaction*, const Algorithm::Pubkeyhash)> AcceptTransaction;
-				std::function<void(const std::string_view&, int8_t)> AcceptMessage;
 			} Events;
 
 		private:
@@ -196,11 +195,10 @@ namespace Tangent
 			bool AcceptMempool();
 			bool AcceptDispatchpool(const Ledger::BlockHeader& Tip);
 			bool AcceptBlock(Relay* From, Ledger::Block&& CandidateBlock, const uint256_t& ForkTip);
-			bool AcceptMessage(const Algorithm::Pubkey PublicKey, const std::string_view& Plaintext);
 			bool Accept(Option<SocketAddress>&& Address = Optional::None);
 			ExpectsLR<void> ProposeTransaction(Relay* From, UPtr<Ledger::Transaction>&& CandidateTx, uint64_t AccountSequence, const std::string_view& Purpose, uint256_t* OutputHash = nullptr);
 			ExpectsLR<void> AcceptTransaction(Relay* From, UPtr<Ledger::Transaction>&& CandidateTx, bool DeepValidation = false);
-			ExpectsLR<void> BroacastTransaction(Relay* From, UPtr<Ledger::Transaction>&& CandidateTx, const Algorithm::Pubkeyhash Owner);
+			ExpectsLR<void> BroadcastTransaction(Relay* From, UPtr<Ledger::Transaction>&& CandidateTx, const Algorithm::Pubkeyhash Owner);
 			Relay* Find(const SocketAddress& Address);
 			size_t SizeOf(NodeType Type);
 			size_t GetConnections();
@@ -284,7 +282,6 @@ namespace Tangent
 			static Promise<void> ProposeTransactionHash(ServerNode* Relayer, UPtr<Relay>&& From, Format::Variables&& Args);
 			static Promise<void> RequestMempool(ServerNode* Relayer, UPtr<Relay>&& From, Format::Variables&& Args);
 			static Promise<void> ProposeMempool(ServerNode* Relayer, UPtr<Relay>&& From, Format::Variables&& Args);
-			static Promise<void> ProposeMessage(ServerNode* Relayer, UPtr<Relay>&& From, Format::Variables&& Args);
 
 		private:
 			static Promise<void> ReturnAbort(ServerNode* Relayer, Relay* From, const char* Function, const std::string_view& Message);
