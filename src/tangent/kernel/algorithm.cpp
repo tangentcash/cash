@@ -716,31 +716,15 @@ namespace Tangent
 			if (Plaintext.empty())
 				return Optional::None;
 
-			auto Input = Hashing::Hash512((uint8_t*)Entropy.data(), Entropy.size());
-			String Shuffletext = String(Plaintext);
-			Shuffletext.insert(0, Input.substr(16, 16));
-
-			uint256_t X, Y;
-			String Hash = *Crypto::HashRaw(Digests::SHA512(), Shuffletext);
-			Encoding::EncodeUint256((uint8_t*)Hash.data() + 00, X);
-			Encoding::EncodeUint256((uint8_t*)Hash.data() + 32, Y);
-			Codec::RotateBuffer((uint8_t*)Shuffletext.data(), Shuffletext.size(), X.Low().Low(), 1);
-			Codec::RotateBuffer((uint8_t*)Shuffletext.data(), Shuffletext.size(), X.Low().High(), 1);
-			Codec::RotateBuffer((uint8_t*)Shuffletext.data(), Shuffletext.size(), X.High().Low(), 1);
-			Codec::RotateBuffer((uint8_t*)Shuffletext.data(), Shuffletext.size(), X.High().High(), 1);
-			Codec::RotateBuffer((uint8_t*)Shuffletext.data(), Shuffletext.size(), Y.Low().Low(), 1);
-			Codec::RotateBuffer((uint8_t*)Shuffletext.data(), Shuffletext.size(), Y.Low().High(), 1);
-			Codec::RotateBuffer((uint8_t*)Shuffletext.data(), Shuffletext.size(), Y.High().Low(), 1);
-			Codec::RotateBuffer((uint8_t*)Shuffletext.data(), Shuffletext.size(), Y.High().High(), 1);
-
-			size_t PaddingX = (size_t)(uint64_t)(X % 64), PaddingY = (size_t)(uint64_t)(Y % 64);
-			Shuffletext.append(Crypto::HashRaw(Digests::SHA512(), Shuffletext)->substr(0, PaddingX));
-			Shuffletext.append(Crypto::HashRaw(Digests::SHA512(), Shuffletext)->substr(0, PaddingY));
-			Shuffletext.append(Hash);
+			String Salt = Hashing::Hash512((uint8_t*)Entropy.data(), Entropy.size());
+			String Body = Salt + String(Plaintext);
+			for (size_t i = Salt.size(); i < Body.size(); i++)
+				Body[i] ^= Salt[i % Salt.size()];
+			Body.append(Hashing::Hash256((uint8_t*)Plaintext.data(), Plaintext.size()));
 
 			String Ciphertext;
-			Ciphertext.resize(crypto_box_SEALBYTES + Shuffletext.size());
-			if (crypto_box_seal((uint8_t*)Ciphertext.data(), (uint8_t*)Shuffletext.data(), Shuffletext.size(), CipherPublicKey) != 0)
+			Ciphertext.resize(crypto_box_SEALBYTES + Body.size());
+			if (crypto_box_seal((uint8_t*)Ciphertext.data(), (uint8_t*)Body.data(), Body.size(), CipherPublicKey) != 0)
 				return Optional::None;
 
 			return Ciphertext;
@@ -752,38 +736,26 @@ namespace Tangent
 			if (Ciphertext.size() <= crypto_box_SEALBYTES)
 				return Optional::None;
 
-			String Shuffletext;
-			Shuffletext.resize(Ciphertext.size() - crypto_box_SEALBYTES);
-			if (crypto_box_seal_open((uint8_t*)Shuffletext.data(), (uint8_t*)Ciphertext.data(), Ciphertext.size(), CipherPublicKey, CipherSecretKey) != 0)
+			String Body;
+			Body.resize(Ciphertext.size() - crypto_box_SEALBYTES);
+			if (crypto_box_seal_open((uint8_t*)Body.data(), (uint8_t*)Ciphertext.data(), Ciphertext.size(), CipherPublicKey, CipherSecretKey) != 0)
 				return Optional::None;
 
-			if (Shuffletext.size() < 64)
+			if (Body.size() < 96)
 				return Optional::None;
 
-			uint256_t X, Y;
-			String Hash = Shuffletext.substr(Shuffletext.size() - 64);
-			Encoding::EncodeUint256((uint8_t*)Hash.data() + 00, X);
-			Encoding::EncodeUint256((uint8_t*)Hash.data() + 32, Y);
-			Shuffletext.resize(Shuffletext.size() - Hash.size());
+			size_t SaltBodySize = Body.size() - 32;
+			std::string_view Salt = std::string_view(Body).substr(0, 64);
+			for (size_t i = Salt.size(); i < SaltBodySize; i++)
+				Body[i] ^= Salt[i % Salt.size()];
 
-			size_t Padding = (size_t)(uint64_t)(X % 64 + Y % 64);
-			if (Padding > Shuffletext.size())
+			size_t PlaintextSize = Body.size() - 96;
+			std::string_view Checksum = std::string_view(Body).substr(SaltBodySize);
+			std::string_view Plaintext = std::string_view(Body).substr(Salt.size(), PlaintextSize);
+			if (Hashing::Hash256((uint8_t*)Plaintext.data(), Plaintext.size()) != Checksum)
 				return Optional::None;
 
-			Shuffletext.resize(Shuffletext.size() - Padding);
-			Codec::RotateBuffer((uint8_t*)Shuffletext.data(), Shuffletext.size(), Y.High().High(), -1);
-			Codec::RotateBuffer((uint8_t*)Shuffletext.data(), Shuffletext.size(), Y.High().Low(), -1);
-			Codec::RotateBuffer((uint8_t*)Shuffletext.data(), Shuffletext.size(), Y.Low().High(), -1);
-			Codec::RotateBuffer((uint8_t*)Shuffletext.data(), Shuffletext.size(), Y.Low().Low(), -1);
-			Codec::RotateBuffer((uint8_t*)Shuffletext.data(), Shuffletext.size(), X.High().High(), -1);
-			Codec::RotateBuffer((uint8_t*)Shuffletext.data(), Shuffletext.size(), X.High().Low(), -1);
-			Codec::RotateBuffer((uint8_t*)Shuffletext.data(), Shuffletext.size(), X.Low().High(), -1);
-			Codec::RotateBuffer((uint8_t*)Shuffletext.data(), Shuffletext.size(), X.Low().Low(), -1);
-			if (*Crypto::HashRaw(Digests::SHA512(), Shuffletext) != Hash)
-				return Optional::None;
-
-			Shuffletext.erase(0, 16);
-			return Shuffletext;
+			return String(Plaintext);
 		}
 		bool Signing::DecodeSecretKey(const std::string_view& Value, Seckey SecretKey)
 		{

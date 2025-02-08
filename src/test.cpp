@@ -2351,5 +2351,5 @@ public:
 
 int main(int argc, char* argv[])
 {
-    return Apps::Consensus(argc, argv);
+    return Apps::Integration(argc, argv);
 }
