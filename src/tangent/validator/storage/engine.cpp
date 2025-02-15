@@ -181,7 +181,7 @@ namespace Tangent
 
 			std::mutex Mutex;
 			LDB::ExpectsDB<void> Status = Expectation::Met;
-			Parallel::WailAll(ParallelForEachNode(Index.begin(), Index.end(), Index.size(), [&](LDB::Connection* Storage)
+			Parallel::WailAll(Parallel::ForEachSequential(Index.begin(), Index.end(), Index.size(), ELEMENTS_FEW, [&](LDB::Connection* Storage)
 			{
 				auto Result = TxBegin(Storage, Label, Operation, Type);
 				if (!Result)
@@ -212,7 +212,7 @@ namespace Tangent
 
 			std::mutex Mutex;
 			LDB::ExpectsDB<void> Status = Expectation::Met;
-			Parallel::WailAll(ParallelForEachNode(Transaction->begin(), Transaction->end(), Transaction->size(), [&](const std::pair<LDB::Connection* const, LDB::SessionId>& Storage)
+			Parallel::WailAll(Parallel::ForEachSequential(Transaction->begin(), Transaction->end(), Transaction->size(), ELEMENTS_FEW, [&](const std::pair<LDB::Connection* const, LDB::SessionId>& Storage)
 			{
 				auto Result = TxCommit(Storage.first, Label, Operation, Storage.second);
 				if (Result)
@@ -234,7 +234,7 @@ namespace Tangent
 
 			std::mutex Mutex;
 			LDB::ExpectsDB<void> Status = Expectation::Met;
-			Parallel::WailAll(ParallelForEachNode(Transaction->begin(), Transaction->end(), Transaction->size(), [&](const std::pair<LDB::Connection* const, LDB::SessionId>& Storage)
+			Parallel::WailAll(Parallel::ForEachSequential(Transaction->begin(), Transaction->end(), Transaction->size(), ELEMENTS_FEW, [&](const std::pair<LDB::Connection* const, LDB::SessionId>& Storage)
 			{
 				auto Result = TxRollback(Storage.first, Label, Operation, Storage.second);
 				if (Result)

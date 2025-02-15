@@ -331,7 +331,7 @@ namespace Tangent
 			Bind(0 | AccessType::R, "mempoolstate", "getclosestnodecount", 0, 0, "", "uint64", "get closest node count", std::bind(&ServerNode::MempoolstateGetClosestNodeCounter, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(0 | AccessType::R, "mempoolstate", "getnode", 1, 1, "string uri_address", "validator", "get associated node info by ip address", std::bind(&ServerNode::MempoolstateGetNode, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(0 | AccessType::R, "mempoolstate", "getaddresses", 2, 3, "uint64 offset, uint64 count, string? services = 'consensus' | 'discovery' | 'synchronization' | 'interface' | 'proposer' | 'public' | 'streaming'", "string[]", "get best node ip addresses with optional comma separated list of services", std::bind(&ServerNode::MempoolstateGetAddresses, this, std::placeholders::_1, std::placeholders::_2));
-			Bind(0 | AccessType::R, "mempoolstate", "getgasprice", 1, 2, "string asset, double? percentile = 0.5", "decimal", "get gas price from percentile of pending transactions", std::bind(&ServerNode::MempoolstateGetGasPrice, this, std::placeholders::_1, std::placeholders::_2));
+			Bind(0 | AccessType::R, "mempoolstate", "getgasprice", 1, 3, "string asset, double? percentile = 0.5, bool? mempool_only", "decimal", "get gas price from percentile of pending transactions", std::bind(&ServerNode::MempoolstateGetGasPrice, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(0 | AccessType::R, "mempoolstate", "getassetprice", 2, 3, "string asset_from, string asset_to, double? percentile = 0.5", "decimal", "get gas asset from percentile of pending transactions", std::bind(&ServerNode::MempoolstateGetAssetPrice, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(0 | AccessType::R, "mempoolstate", "getoptimaltransactiongas", 1, 1, "string hex_message", "uint256", "execute transaction with block gas limit and return ceil of spent gas", std::bind(&ServerNode::MempoolstateGetOptimalTransactionGas, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(0 | AccessType::R, "mempoolstate", "getestimatetransactiongas", 1, 1, "string hex_message", "uint256", "get rough estimate of required gas limit than could be considerably lower or higher than actual required gas limit", std::bind(&ServerNode::MempoolstateGetEstimateTransactionGas, this, std::placeholders::_1, std::placeholders::_2));
@@ -2276,9 +2276,10 @@ namespace Tangent
 		{
 			Algorithm::AssetId Asset = Algorithm::Asset::IdOfHandle(Args[0].AsString());
 			double Percentile = Args.size() > 1 ? Args[1].AsDouble() : 0.50;
+			bool MempoolOnly = Args.size() > 2 ? Args[2].AsBoolean() : true;
 			auto Mempool = Storages::Mempoolstate(__func__);
 			auto Price = Mempool.GetGasPrice(Asset, Percentile);
-			if (!Price)
+			if (!Price && !MempoolOnly)
 			{
 				auto Chain = Storages::Chainstate(__func__);
 				auto Number = Chain.GetLatestBlockNumber();
@@ -2289,6 +2290,8 @@ namespace Tangent
 				if (!Price)
 					return ServerResponse().Error(ErrorCodes::NotFound, "gas price not found");
 			}
+			else if (!Price)
+				return ServerResponse().Success(Var::Set::Decimal(Decimal::Zero()));
 
 			return ServerResponse().Success(Var::Set::Decimal(*Price));
 		}
@@ -2835,9 +2838,10 @@ namespace Tangent
 			for (auto& Fork : Validator->Forks)
 			{
 				Schema* Item = Forks->Push(Var::Set::Object());
-				Item->Set("hash", Var::String(Algorithm::Encoding::Encode0xHex256(Fork.first)));
-				Item->Set("number", Algorithm::Encoding::SerializeUint256(Fork.second.Number));
-				Item->Set("sync", Var::Number(Validator->GetSyncProgress(Fork.first, BlockHeader ? BlockHeader->Number : 0)));
+				Item->Set("branch_hash", Var::String(Algorithm::Encoding::Encode0xHex256(Fork.first)));
+				Item->Set("tip_hash", Algorithm::Encoding::SerializeUint256(Fork.second.AsHash()));
+				Item->Set("tip_number", Algorithm::Encoding::SerializeUint256(Fork.second.Number));
+				Item->Set("progress", Var::Number(Validator->GetSyncProgress(Fork.first, BlockHeader ? BlockHeader->Number : 0)));
 			}
 
 			switch (Protocol::Now().User.Network)
@@ -2912,7 +2916,7 @@ namespace Tangent
 			Unique.Unlock();
 
 			uint256_t CandidateHash = 0;
-			auto Status = Validator->ProposeTransaction(nullptr, Transaction, AccountSequence, P2P::Reasons::Commitment(), &CandidateHash);
+			auto Status = Validator->ProposeTransaction(nullptr, Transaction, AccountSequence, &CandidateHash);
 			if (!Status)
 				return ServerResponse().Error(ErrorCodes::BadParams, Status.Error().message());
 
@@ -2931,7 +2935,7 @@ namespace Tangent
 			Unique.Unlock();
 
 			uint256_t CandidateHash = 0;
-			auto Status = Validator->ProposeTransaction(nullptr, Transaction, AccountSequence, P2P::Reasons::Allocation(), &CandidateHash);
+			auto Status = Validator->ProposeTransaction(nullptr, Transaction, AccountSequence, &CandidateHash);
 			if (!Status)
 				return ServerResponse().Error(ErrorCodes::BadParams, Status.Error().message());
 
@@ -2956,7 +2960,7 @@ namespace Tangent
 			Unique.Unlock();
 
 			uint256_t CandidateHash = 0;
-			auto Status = Validator->ProposeTransaction(nullptr, Transaction, AccountSequence, P2P::Reasons::Deallocation(), &CandidateHash);
+			auto Status = Validator->ProposeTransaction(nullptr, Transaction, AccountSequence, &CandidateHash);
 			if (!Status)
 				return ServerResponse().Error(ErrorCodes::BadParams, Status.Error().message());
 
@@ -2998,7 +3002,7 @@ namespace Tangent
 			Unique.Unlock();
 
 			uint256_t CandidateHash = 0;
-			auto Status = Validator->ProposeTransaction(nullptr, Transaction, AccountSequence, P2P::Reasons::Adjustment(), &CandidateHash);
+			auto Status = Validator->ProposeTransaction(nullptr, Transaction, AccountSequence, &CandidateHash);
 			if (!Status)
 				return ServerResponse().Error(ErrorCodes::BadParams, Status.Error().message());
 
@@ -3022,7 +3026,7 @@ namespace Tangent
 			Unique.Unlock();
 
 			uint256_t CandidateHash = 0;
-			auto Status = Validator->ProposeTransaction(nullptr, Transaction, AccountSequence, P2P::Reasons::Migration(), &CandidateHash);
+			auto Status = Validator->ProposeTransaction(nullptr, Transaction, AccountSequence, &CandidateHash);
 			if (!Status)
 				return ServerResponse().Error(ErrorCodes::BadParams, Status.Error().message());
 

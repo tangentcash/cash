@@ -196,7 +196,7 @@ namespace Tangent
 			bool AcceptDispatchpool(const Ledger::BlockHeader& Tip);
 			bool AcceptBlock(Relay* From, Ledger::Block&& CandidateBlock, const uint256_t& ForkTip);
 			bool Accept(Option<SocketAddress>&& Address = Optional::None);
-			ExpectsLR<void> ProposeTransaction(Relay* From, UPtr<Ledger::Transaction>&& CandidateTx, uint64_t AccountSequence, const std::string_view& Purpose, uint256_t* OutputHash = nullptr);
+			ExpectsLR<void> ProposeTransaction(Relay* From, UPtr<Ledger::Transaction>&& CandidateTx, uint64_t AccountSequence, uint256_t* OutputHash = nullptr);
 			ExpectsLR<void> AcceptTransaction(Relay* From, UPtr<Ledger::Transaction>&& CandidateTx, bool DeepValidation = false);
 			ExpectsLR<void> BroadcastTransaction(Relay* From, UPtr<Ledger::Transaction>&& CandidateTx, const Algorithm::Pubkeyhash Owner);
 			Relay* Find(const SocketAddress& Address);
@@ -220,25 +220,26 @@ namespace Tangent
 			{
 				BindFunction((ReceiveFunction)Function, true);
 			}
-			void Call(Relay* State, ReceiveFunction Function, Format::Variable&& Argument)
+			bool Call(Relay* State, ReceiveFunction Function, Format::Variable&& Argument)
 			{
-				CallFunction(State, (ReceiveFunction)Function, { std::move(Argument) });
+				return CallFunction(State, (ReceiveFunction)Function, { std::move(Argument) });
 			}
-			void Multicall(Relay* State, ReceiveFunction Function, Format::Variable&& Argument)
+			size_t Multicall(Relay* State, ReceiveFunction Function, Format::Variable&& Argument)
 			{
-				MulticallFunction(State, (ReceiveFunction)Function, { std::move(Argument) });
+				return MulticallFunction(State, (ReceiveFunction)Function, { std::move(Argument) });
 			}
-			void Call(Relay* State, ReceiveFunction Function, Format::Variables&& Args)
+			bool Call(Relay* State, ReceiveFunction Function, Format::Variables&& Args)
 			{
-				CallFunction(State, (ReceiveFunction)Function, std::move(Args));
+				return CallFunction(State, (ReceiveFunction)Function, std::move(Args));
 			}
-			void Multicall(Relay* State, ReceiveFunction Function, Format::Variables&& Args)
+			size_t Multicall(Relay* State, ReceiveFunction Function, Format::Variables&& Args)
 			{
-				MulticallFunction(State, (ReceiveFunction)Function, std::move(Args));
+				return MulticallFunction(State, (ReceiveFunction)Function, std::move(Args));
 			}
 
 		private:
 			ExpectsSystem<void> OnUnlisten() override;
+			ExpectsSystem<void> OnAfterUnlisten() override;
 			ExpectsLR<void> ApplyValidator(Storages::Mempoolstate& Mempool, Ledger::Validator& Node, Option<Ledger::Wallet>&& Wallet);
 			Relay* FindNodeByInstance(void* Instance);
 			int32_t ConnectOutboundNode(const SocketAddress& Address);
@@ -247,8 +248,8 @@ namespace Tangent
 			bool ReceiveOutboundNode(Option<SocketAddress>&& ErrorAddress);
 			bool PushNextProcedure(Relay* State);
 			void BindFunction(ReceiveFunction Function, bool Multicallable);
-			void CallFunction(Relay* State, ReceiveFunction Function, Format::Variables&& Args);
-			void MulticallFunction(Relay* State, ReceiveFunction Function, Format::Variables&& Args);
+			bool CallFunction(Relay* State, ReceiveFunction Function, Format::Variables&& Args);
+			size_t MulticallFunction(Relay* State, ReceiveFunction Function, Format::Variables&& Args);
 			void AcceptOutboundNode(OutboundNode* Candidate, ExpectsSystem<void>&& Status);
 			void PullProcedure(Relay* State, const AbortCallback& AbortCallback);
 			void PushProcedure(Relay* State, const AbortCallback& AbortCallback);
@@ -260,8 +261,8 @@ namespace Tangent
 			void OnRequestOpen(InboundNode* Base) override;
 
 		private:
-			Promise<Option<SocketAddress>> Discover(Option<SocketAddress>&& ErrorAddress, bool TryRediscovering);
-			Promise<Option<SocketAddress>> Rediscover();
+			Promise<Option<SocketAddress>> ConnectNodeFromMempool(Option<SocketAddress>&& ErrorAddress, bool AllowSeeding);
+			Promise<Option<SocketAddress>> FindNodeFromSeeding();
 			Promise<void> Connect(UPtr<Relay>&& From);
 			Promise<void> Disconnect(UPtr<Relay>&& From);
 			Promise<void> ProposeTransactionLogs(const Mediator::ChainSupervisorOptions& Options, Mediator::TransactionLogs&& Logs);
@@ -269,7 +270,7 @@ namespace Tangent
 		private:
 			static Promise<void> ProposeHandshake(ServerNode* Relayer, UPtr<Relay>&& From, Format::Variables&& Args);
 			static Promise<void> ApproveHandshake(ServerNode* Relayer, UPtr<Relay>&& From, Format::Variables&& Args);
-			static Promise<void> ProposeSeeds(ServerNode* Relayer, UPtr<Relay>&& From, Format::Variables&& Args);
+			static Promise<void> ProposeNodes(ServerNode* Relayer, UPtr<Relay>&& From, Format::Variables&& Args);
 			static Promise<void> FindForkCollision(ServerNode* Relayer, UPtr<Relay>&& From, Format::Variables&& Args);
 			static Promise<void> VerifyForkCollision(ServerNode* Relayer, UPtr<Relay>&& From, Format::Variables&& Args);
 			static Promise<void> RequestForkBlock(ServerNode* Relayer, UPtr<Relay>&& From, Format::Variables&& Args);
@@ -295,19 +296,6 @@ namespace Tangent
 		{
 		public:
 			static bool IsAddressReserved(const SocketAddress& Address);
-		};
-
-		class Reasons
-		{
-		public:
-			static std::string_view Claim();
-			static std::string_view Commitment();
-			static std::string_view Allocation();
-			static std::string_view Adjustment();
-			static std::string_view Migration();
-			static std::string_view Deallocation();
-			static std::string_view Dispatch();
-			static std::string_view Other();
 		};
 	}
 }

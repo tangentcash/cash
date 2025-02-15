@@ -24,6 +24,12 @@ namespace Tangent
     template <typename K, typename Comparator = typename std::set<K>::key_compare>
     using OrderedSet = std::set<K, Comparator, typename AllocationType<typename std::set<K>::value_type>::type>;
 
+    enum 
+    {
+        ELEMENTS_FEW = 32,
+        ELEMENTS_MANY = 512
+    };
+
     enum class NetworkType
     {
         Regtest,
@@ -155,6 +161,8 @@ namespace Tangent
                 uint32_t MaxOutboundConnections = 8;
                 uint32_t InventorySize = 8192;
                 uint32_t InventoryTimeout = 300;
+                uint32_t InventoryCleanupTimeout = 10000;
+                uint32_t RediscoveryTimeout = 120000;
                 bool Proposer = false;
                 bool Server = true;
                 bool Logging = true;
@@ -228,8 +236,8 @@ namespace Tangent
                 uint64_t ArchiveSize = 8 * 1024 * 1024;
                 uint64_t ArchiveRepackInterval = 1800;
             } Logs;
+            UnorderedSet<String> Nodes;
             UnorderedSet<String> Seeds;
-            UnorderedSet<String> Seeders;
             NetworkType Network = NetworkType::Mainnet;
             String Vectorstate = "./vectorstate.bsk";
         } User;

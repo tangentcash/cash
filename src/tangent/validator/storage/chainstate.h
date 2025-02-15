@@ -7,11 +7,6 @@ namespace Tangent
 {
 	namespace Storages
 	{
-		enum
-		{
-			LOAD_RATE = 512
-		};
-
 		enum class PositionCondition
 		{
 			Greater,
@@ -188,9 +183,9 @@ namespace Tangent
 			ExpectsLR<uint256_t> GetBlockHashByNumber(uint64_t BlockNumber);
 			ExpectsLR<Decimal> GetBlockGasPrice(uint64_t BlockNumber, const Algorithm::AssetId& Asset, double Percentile);
 			ExpectsLR<Decimal> GetBlockAssetPrice(uint64_t BlockNumber, const Algorithm::AssetId& PriceOf, const Algorithm::AssetId& RelativeTo, double Percentile);
-			ExpectsLR<Ledger::Block> GetBlockByNumber(uint64_t BlockNumber, size_t Chunk = LOAD_RATE, uint32_t Details = (uint32_t)BlockDetails::Transactions | (uint32_t)BlockDetails::BlockTransactions | (uint32_t)BlockDetails::States);
-			ExpectsLR<Ledger::Block> GetBlockByHash(const uint256_t& BlockHash, size_t Chunk = LOAD_RATE, uint32_t Details = (uint32_t)BlockDetails::Transactions | (uint32_t)BlockDetails::BlockTransactions | (uint32_t)BlockDetails::States);
-			ExpectsLR<Ledger::Block> GetLatestBlock(size_t Chunk = LOAD_RATE, uint32_t Details = (uint32_t)BlockDetails::Transactions | (uint32_t)BlockDetails::BlockTransactions | (uint32_t)BlockDetails::States);
+			ExpectsLR<Ledger::Block> GetBlockByNumber(uint64_t BlockNumber, size_t Chunk = ELEMENTS_MANY, uint32_t Details = (uint32_t)BlockDetails::Transactions | (uint32_t)BlockDetails::BlockTransactions | (uint32_t)BlockDetails::States);
+			ExpectsLR<Ledger::Block> GetBlockByHash(const uint256_t& BlockHash, size_t Chunk = ELEMENTS_MANY, uint32_t Details = (uint32_t)BlockDetails::Transactions | (uint32_t)BlockDetails::BlockTransactions | (uint32_t)BlockDetails::States);
+			ExpectsLR<Ledger::Block> GetLatestBlock(size_t Chunk = ELEMENTS_MANY, uint32_t Details = (uint32_t)BlockDetails::Transactions | (uint32_t)BlockDetails::BlockTransactions | (uint32_t)BlockDetails::States);
 			ExpectsLR<Ledger::BlockHeader> GetBlockHeaderByNumber(uint64_t BlockNumber);
 			ExpectsLR<Ledger::BlockHeader> GetBlockHeaderByHash(const uint256_t& BlockHash);
 			ExpectsLR<Ledger::BlockHeader> GetLatestBlockHeader();

@@ -51,58 +51,6 @@ namespace Vitex
 		using AccountValueMap = OrderedMap<String, Decimal>;
 		using AddressValueMap = OrderedMap<String, Decimal, InsensitiveComparator>;
 		using AddressMap = OrderedMap<uint8_t, String, InversionComparator>;
-
-		template <typename Iterator, typename Function>
-		static Core::Vector<Core::Promise<void>> ParallelForEach(Iterator Begin, Iterator End, Function Callback)
-		{
-			Core::Vector<Core::Promise<void>> Tasks;
-			size_t Size = End - Begin;
-			if (!Size)
-				return Tasks;
-
-			size_t Threads = std::max<size_t>(1, Layer::Parallel::GetThreads());
-			if (Schedule::IsAvailable() && Threads > 1)
-			{
-				size_t Step = Size / Threads;
-				size_t Remains = Size % Threads;
-				Tasks.reserve(Threads);
-				while (Begin != End)
-				{
-					auto Offset = Begin;
-					Begin += Remains > 0 ? --Remains, Step + 1 : Step;
-					Tasks.emplace_back(Cotask<void>(std::bind(std::for_each<Iterator, Function>, Offset, Begin, Callback), false));
-				}
-			}
-			else
-				std::for_each(Begin, End, Callback);
-			return Tasks;
-		}
-		template <typename Iterator, typename Function>
-		static Core::Vector<Core::Promise<void>> ParallelForEachNode(Iterator Begin, Iterator End, size_t Size, Function Callback)
-		{
-			Core::Vector<Core::Promise<void>> Tasks;
-			if (!Size)
-				return Tasks;
-
-			size_t Threads = std::max<size_t>(1, Layer::Parallel::GetThreads());
-			if (Schedule::IsAvailable() && Threads > 1)
-			{
-				size_t Step = Size / Threads;
-				size_t Remains = Size % Threads;
-				Tasks.reserve(Threads);
-				while (Begin != End)
-				{
-					auto Offset = Begin;
-					size_t Count = Remains > 0 ? --Remains, Step + 1 : Step;
-					while (Count-- > 0)
-						++Begin;
-					Tasks.emplace_back(Cotask<void>(std::bind(std::for_each<Iterator, Function>, Offset, Begin, Callback), false));
-				}
-			}
-			else
-				std::for_each(Begin, End, Callback);
-			return Tasks;
-		}
 	}
 }
 #endif

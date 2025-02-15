@@ -852,6 +852,9 @@ namespace Tangent
 			Environment.Incoming.reserve(Transactions.size());
 			for (auto& Transaction : Transactions)
 			{
+				if (!Transaction.Transaction)
+					return LayerException("invalid transaction included in a block");
+
 				auto& Info = Environment.Include(Transactions::Resolver::Copy(*Transaction.Transaction));
 				Childs[Transaction.Receipt.TransactionHash] = std::make_pair(&Transaction, (const EvaluationContext::TransactionInfo*)&Info);
 			}
@@ -881,20 +884,9 @@ namespace Tangent
 			Result.Time = Time;
 			Result.Recalculate(ParentBlock);
 
-			size_t CurrentStatesCount = States.At(WorkCommitment::Finalized).size() + States.At(WorkCommitment::Pending).size();
-			bool PrunedStateTrie = CurrentStatesCount != StateCount;
-			if (PrunedStateTrie)
-			{
-				auto* Mutable = (Block*)this;
-				auto Copy = std::move(Mutable->States);
-				Mutable->States = Result.States;
-				bool Matching = Result.AsMessage().Data == AsMessage().Data;
-				Mutable->States = std::move(Copy);
-				if (!Matching)
-					return LayerException("evaluated block does not match proposed block");
-			}
-			else if (Result.AsMessage().Data != AsMessage().Data)
-				return LayerException("evaluated block does not match proposed block");
+			BlockHeader Input = *this, Output = Result;
+			if (Input.AsMessage().Data != Output.AsMessage().Data)
+				return LayerException("resulting block deviates from pre-computed block");
 
 			auto Validity = Result.VerifyValidity(ParentBlock);
 			if (!Validity)
@@ -1150,8 +1142,8 @@ namespace Tangent
 		void Block::Recalculate(const BlockHeader* ParentBlock)
 		{
 			auto& StateTree = States.At(WorkCommitment::Finalized);
-			auto TaskQueue1 = ParallelForEachNode(StateTree.begin(), StateTree.end(), StateTree.size(), [](const std::pair<const String, UPtr<Ledger::State>>& Item) { Item.second->AsHash(); });
-			auto TaskQueue2 = ParallelForEach(Transactions.begin(), Transactions.end(), [](BlockTransaction& Item) { Item.Receipt.AsHash(); });
+			auto TaskQueue1 = Parallel::ForEachSequential(StateTree.begin(), StateTree.end(), StateTree.size(), ELEMENTS_FEW, [](const std::pair<const String, UPtr<Ledger::State>>& Item) { Item.second->AsHash(); });
+			auto TaskQueue2 = Parallel::ForEach(Transactions.begin(), Transactions.end(), ELEMENTS_FEW, [](BlockTransaction& Item) { Item.Receipt.AsHash(); });
 			Parallel::WailAll(std::move(TaskQueue1));
 			Parallel::WailAll(std::move(TaskQueue2));
 
@@ -2813,22 +2805,30 @@ namespace Tangent
 
 		Option<uint64_t> EvaluationContext::Priority(const Algorithm::Pubkeyhash PublicKeyHash, const Algorithm::Seckey SecretKey, Option<BlockHeader*>&& ParentBlock)
 		{
-			Validation.Tip = false;
+#ifdef TAN_VALIDATOR
 			if (!ParentBlock)
 			{
-#ifdef TAN_VALIDATOR
 				auto Chain = Storages::Chainstate(__func__);
 				auto Latest = Chain.GetLatestBlockHeader();
 				Tip = Latest ? Option<Ledger::BlockHeader>(std::move(*Latest)) : Option<Ledger::BlockHeader>(Optional::None);
 				Validation.Tip = true;
-#else
-				return Optional::None;
-#endif
 			}
 			else if (*ParentBlock != nullptr)
+			{
+				auto Chain = Storages::Chainstate(__func__);
+				auto Latest = Chain.GetLatestBlockNumber();
 				Tip = **ParentBlock;
+				Validation.Tip = Latest.Or(Tip->Number) < (Tip->Number + 1);
+			}
 			else
-				Tip = Optional::None;
+			{
+				Tip = Option<Ledger::BlockHeader>(Optional::None);
+				Validation.Tip = true;
+			}
+#else
+			Tip = Option<Ledger::BlockHeader>(Optional::None);
+			Validation.Tip = true;
+#endif
 
 			memcpy(Proposer.PublicKeyHash, PublicKeyHash, sizeof(Algorithm::Pubkeyhash));
 			if (SecretKey != nullptr)
@@ -2991,7 +2991,7 @@ namespace Tangent
 		void EvaluationContext::Precompute(Vector<TransactionInfo>& Candidates)
 		{
 			Algorithm::Pubkeyhash Null = { 0 };
-			Parallel::WailAll(ParallelForEach(Candidates.begin(), Candidates.end(), [&Null](TransactionInfo& Item)
+			Parallel::WailAll(Parallel::ForEach(Candidates.begin(), Candidates.end(), ELEMENTS_FEW, [&Null](TransactionInfo& Item)
 			{
 				Item.Hash = Item.Candidate->AsHash();
 				if (memcmp(Item.Owner, Null, sizeof(Null)) != 0)

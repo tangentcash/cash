@@ -431,6 +431,16 @@ namespace Tangent
 			if (Value != nullptr && Value->Value.Is(VarType::String))
 				User.Vectorstate = Value->Value.GetBlob();
 
+			Value = Config->Get("nodes");
+			if (Value != nullptr && Value->Value.GetType() == VarType::Array)
+			{
+				for (auto& Seed : Value->GetChilds())
+				{
+					if (Seed->Value.Is(VarType::String))
+						User.Nodes.insert(Seed->Value.GetBlob());
+				}
+			}
+
 			Value = Config->Get("seeds");
 			if (Value != nullptr && Value->Value.GetType() == VarType::Array)
 			{
@@ -438,16 +448,6 @@ namespace Tangent
 				{
 					if (Seed->Value.Is(VarType::String))
 						User.Seeds.insert(Seed->Value.GetBlob());
-				}
-			}
-
-			Value = Config->Get("seeders");
-			if (Value != nullptr && Value->Value.GetType() == VarType::Array)
-			{
-				for (auto& Seed : Value->GetChilds())
-				{
-					if (Seed->Value.Is(VarType::String))
-						User.Seeders.insert(Seed->Value.GetBlob());
 				}
 			}
 
@@ -498,6 +498,14 @@ namespace Tangent
 			Value = Config->Fetch("p2p.inventory_timeout");
 			if (Value != nullptr && Value->Value.Is(VarType::Integer))
 				User.P2P.InventoryTimeout = Value->Value.GetInteger();
+
+			Value = Config->Fetch("p2p.inventory_cleanup_timeout");
+			if (Value != nullptr && Value->Value.Is(VarType::Integer))
+				User.P2P.InventoryCleanupTimeout = Value->Value.GetInteger();
+
+			Value = Config->Fetch("p2p.rediscovery_timeout");
+			if (Value != nullptr && Value->Value.Is(VarType::Integer))
+				User.P2P.RediscoveryTimeout = Value->Value.GetInteger();
 
 			Value = Config->Fetch("p2p.cursor_size");
 			if (Value != nullptr && Value->Value.Is(VarType::Integer))

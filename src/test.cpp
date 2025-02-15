@@ -15,10 +15,35 @@ using namespace Tangent;
 class Tests
 {
 public:
+	struct Account
+	{
+		Ledger::Wallet Wallet;
+		std::atomic<uint64_t> Sequence;
+
+		Account() = default;
+		Account(const Ledger::Wallet& NewWallet, uint64_t NewSequence) : Wallet(NewWallet), Sequence(NewSequence)
+		{
+		}
+		Account(Account&&) = default;
+		Account(const Account& Other) : Wallet(Other.Wallet), Sequence(Other.Sequence.load())
+		{
+		}
+		Account& operator= (Account&&) = default;
+		Account& operator= (const Account& Other)
+		{
+			if (&Other == this)
+				return *this;
+
+			Wallet = Other.Wallet;
+			Sequence = Other.Sequence.load();
+			return *this;
+		}
+	};
+
 	class Generators
 	{
 	public:
-		static void Adjustments(Vector<UPtr<Ledger::Transaction>>& Transactions, Vector<std::pair<Ledger::Wallet, uint64_t>>& Users)
+		static void Adjustments(Vector<UPtr<Ledger::Transaction>>& Transactions, Vector<Account>& Users)
 		{
 			auto& [User2, User2Sequence] = Users[1];
 			auto* DepositoryAdjustmentEthereum = Memory::New<Transactions::DepositoryAdjustment>();
@@ -45,7 +70,7 @@ public:
 			VI_PANIC(DepositoryAdjustmentBitcoin->Sign(User2.SecretKey, User2Sequence++), "depository adjustment not signed");
 			Transactions.push_back(DepositoryAdjustmentBitcoin);
 		}
-		static void AddressAccounts(Vector<UPtr<Ledger::Transaction>>& Transactions, Vector<std::pair<Ledger::Wallet, uint64_t>>& Users)
+		static void AddressAccounts(Vector<UPtr<Ledger::Transaction>>& Transactions, Vector<Account>& Users)
 		{
 			auto& [User1, User1Sequence] = Users[0];
 			auto& [User2, User2Sequence] = Users[1];
@@ -91,7 +116,7 @@ public:
 			VI_PANIC(AddressAccountBitcoin2->Sign(User2.SecretKey, User2Sequence++), "account not signed");
 			Transactions.push_back(AddressAccountBitcoin2);
 		}
-		static void PubkeyAccounts(Vector<UPtr<Ledger::Transaction>>& Transactions, Vector<std::pair<Ledger::Wallet, uint64_t>>& Users)
+		static void PubkeyAccounts(Vector<UPtr<Ledger::Transaction>>& Transactions, Vector<Account>& Users)
 		{
 			auto* Server = NSS::ServerNode::Get();
 			auto& [User1, User1Sequence] = Users[0];
@@ -125,7 +150,7 @@ public:
 			VI_PANIC(PubkeyAccountBitcoin->Sign(User1.SecretKey, User1Sequence++), "account not signed");
 			Transactions.push_back(PubkeyAccountBitcoin);
 		}
-		static void Commitments(Vector<UPtr<Ledger::Transaction>>& Transactions, Vector<std::pair<Ledger::Wallet, uint64_t>>& Users)
+		static void Commitments(Vector<UPtr<Ledger::Transaction>>& Transactions, Vector<Account>& Users)
 		{
 			auto& [User1, User1Sequence] = Users[0];
 			auto& [User2, User2Sequence] = Users[1];
@@ -158,7 +183,7 @@ public:
 			VI_PANIC(CommitmentUser2->Sign(User2.SecretKey, User2Sequence++), "commitment not signed");
 			Transactions.push_back(CommitmentUser2);
 		}
-		static void CommitmentOnline(Vector<UPtr<Ledger::Transaction>>& Transactions, Vector<std::pair<Ledger::Wallet, uint64_t>>& Users, size_t UserId)
+		static void CommitmentOnline(Vector<UPtr<Ledger::Transaction>>& Transactions, Vector<Account>& Users, size_t UserId)
 		{
 			auto& [User1, User1Sequence] = Users[UserId];
 			auto* CommitmentUser1 = Memory::New<Transactions::Commitment>();
@@ -176,7 +201,7 @@ public:
 			VI_PANIC(CommitmentUser1->Sign(User1.SecretKey, User1Sequence++), "commitment not signed");
 			Transactions.push_back(CommitmentUser1);
 		}
-		static void CommitmentOffline(Vector<UPtr<Ledger::Transaction>>& Transactions, Vector<std::pair<Ledger::Wallet, uint64_t>>& Users, size_t UserId)
+		static void CommitmentOffline(Vector<UPtr<Ledger::Transaction>>& Transactions, Vector<Account>& Users, size_t UserId)
 		{
 			auto& [User1, User1Sequence] = Users[UserId];
 			auto* CommitmentUser1 = Memory::New<Transactions::Commitment>();
@@ -194,7 +219,7 @@ public:
 			VI_PANIC(CommitmentUser1->Sign(User1.SecretKey, User1Sequence++), "commitment not signed");
 			Transactions.push_back(CommitmentUser1);
 		}
-		static void Allocations(Vector<UPtr<Ledger::Transaction>>& Transactions, Vector<std::pair<Ledger::Wallet, uint64_t>>& Users)
+		static void Allocations(Vector<UPtr<Ledger::Transaction>>& Transactions, Vector<Account>& Users)
 		{
 			auto& [User1, User1Sequence] = Users[0];
 			auto& [User2, User2Sequence] = Users[1];
@@ -222,7 +247,7 @@ public:
 			VI_PANIC(ContributionAllocationBitcoin->Sign(User2.SecretKey, User2Sequence++), "depository allocation not signed");
 			Transactions.push_back(ContributionAllocationBitcoin);
 		}
-		static void Contributions(Vector<UPtr<Ledger::Transaction>>& Transactions, Vector<std::pair<Ledger::Wallet, uint64_t>>& Users)
+		static void Contributions(Vector<UPtr<Ledger::Transaction>>& Transactions, Vector<Account>& Users)
 		{
 			auto& [User1, User1Sequence] = Users[0];
 			auto& [User2, User2Sequence] = Users[1];
@@ -278,7 +303,7 @@ public:
 			VI_PANIC(IncomingClaimBitcoin->Sign(User2.SecretKey, User2Sequence++), "claim not signed");
 			Transactions.push_back(IncomingClaimBitcoin);
 		}
-		static void DelegatedCustodianAccounts(Vector<UPtr<Ledger::Transaction>>& Transactions, Vector<std::pair<Ledger::Wallet, uint64_t>>& Users)
+		static void DelegatedCustodianAccounts(Vector<UPtr<Ledger::Transaction>>& Transactions, Vector<Account>& Users)
 		{
 			auto& [User1, User1Sequence] = Users[0];
 			auto& [User2, User2Sequence] = Users[1];
@@ -303,7 +328,7 @@ public:
 			VI_PANIC(DelegationAccountBitcoin->Sign(User1.SecretKey, User1Sequence++), "account not signed");
 			Transactions.push_back(DelegationAccountBitcoin);
 		}
-		static void Claims(Vector<UPtr<Ledger::Transaction>>& Transactions, Vector<std::pair<Ledger::Wallet, uint64_t>>& Users)
+		static void Claims(Vector<UPtr<Ledger::Transaction>>& Transactions, Vector<Account>& Users)
 		{
 			auto& [User1, User1Sequence] = Users[0];
 			auto& [User2, User2Sequence] = Users[1];
@@ -347,20 +372,20 @@ public:
 			VI_PANIC(IncomingClaimBitcoin->Sign(User2.SecretKey, User2Sequence++), "claim not signed");
 			Transactions.push_back(IncomingClaimBitcoin);
 		}
-		static void Transfers(Vector<UPtr<Ledger::Transaction>>& Transactions, Vector<std::pair<Ledger::Wallet, uint64_t>>& Users)
+		static void Transfers(Vector<UPtr<Ledger::Transaction>>& Transactions, Vector<Account>& Users)
 		{
 			auto& [User1, User1Sequence] = Users[0];
 			auto& [User2, User2Sequence] = Users[1];
-			auto* OmniTransferEthereum = Memory::New<Transactions::Omnitransfer>();
-			OmniTransferEthereum->SetAsset("ETH");
-			OmniTransferEthereum->SetTo(User2.PublicKeyHash, 0.1);
-			OmniTransferEthereum->SetTo(User2.PublicKeyHash, 0.2);
-			OmniTransferEthereum->SetTo(User2.PublicKeyHash, 0.3);
-			OmniTransferEthereum->SetTo(User2.PublicKeyHash, 0.4);
-			OmniTransferEthereum->SetTo(User2.PublicKeyHash, 0.5);
-			OmniTransferEthereum->SetEstimateGas(std::string_view("0.00000001"));
-			VI_PANIC(OmniTransferEthereum->Sign(User1.SecretKey, User1Sequence++), "omnitransfer not signed");
-			Transactions.push_back(OmniTransferEthereum);
+			auto* OmnitransferEthereum = Memory::New<Transactions::Omnitransfer>();
+			OmnitransferEthereum->SetAsset("ETH");
+			OmnitransferEthereum->SetTo(User2.PublicKeyHash, 0.1);
+			OmnitransferEthereum->SetTo(User2.PublicKeyHash, 0.2);
+			OmnitransferEthereum->SetTo(User2.PublicKeyHash, 0.3);
+			OmnitransferEthereum->SetTo(User2.PublicKeyHash, 0.4);
+			OmnitransferEthereum->SetTo(User2.PublicKeyHash, 0.5);
+			OmnitransferEthereum->SetEstimateGas(std::string_view("0.00000001"));
+			VI_PANIC(OmnitransferEthereum->Sign(User1.SecretKey, User1Sequence++), "omnitransfer not signed");
+			Transactions.push_back(OmnitransferEthereum);
 
 			auto* TransferRipple = Memory::New<Transactions::Transfer>();
 			TransferRipple->SetAsset("XRP");
@@ -376,7 +401,7 @@ public:
 			VI_PANIC(TransferBitcoin->Sign(User1.SecretKey, User1Sequence++), "transfer not signed");
 			Transactions.push_back(TransferBitcoin);
 		}
-		static void TransferToWallet(Vector<UPtr<Ledger::Transaction>>& Transactions, Vector<std::pair<Ledger::Wallet, uint64_t>>& Users, size_t UserId, const Algorithm::AssetId& Asset, const std::string_view& Address, const Decimal& Value)
+		static void TransferToWallet(Vector<UPtr<Ledger::Transaction>>& Transactions, Vector<Account>& Users, size_t UserId, const Algorithm::AssetId& Asset, const std::string_view& Address, const Decimal& Value)
 		{
 			auto& [User1, User1Sequence] = Users[UserId];
 			Algorithm::Pubkeyhash PublicKeyHash;
@@ -389,7 +414,7 @@ public:
 			VI_PANIC(TransferAsset->Sign(User1.SecretKey, User1Sequence++), "transfer not signed");
 			Transactions.push_back(TransferAsset);
 		}
-		static void Rollups(Vector<UPtr<Ledger::Transaction>>& Transactions, Vector<std::pair<Ledger::Wallet, uint64_t>>& Users)
+		static void Rollups(Vector<UPtr<Ledger::Transaction>>& Transactions, Vector<Account>& Users)
 		{
 			auto& [User1, User1Sequence] = Users[0];
 			auto& [User2, User2Sequence] = Users[1];
@@ -442,7 +467,7 @@ public:
 			VI_PANIC(MultiAssetRollup->Sign(User1.SecretKey, User1Sequence++), "rollup not signed");
 			Transactions.push_back(MultiAssetRollup);
 		}
-		static void Deployments(Vector<UPtr<Ledger::Transaction>>& Transactions, Vector<std::pair<Ledger::Wallet, uint64_t>>& Users)
+		static void Deployments(Vector<UPtr<Ledger::Transaction>>& Transactions, Vector<Account>& Users)
 		{
 			auto& [User1, User1Sequence] = Users[0];
 			Ledger::Wallet TokenContract = Ledger::Wallet::FromSeed(String("token") + String((char*)User1.SecretKey, sizeof(User1.SecretKey)));
@@ -611,7 +636,7 @@ public:
 			VI_PANIC(DeploymentEthereum2->Sign(User1.SecretKey, User1Sequence++), "deployment not signed");
 			Transactions.push_back(DeploymentEthereum2);
 		}
-		static void Invocations(Vector<UPtr<Ledger::Transaction>>& Transactions, Vector<std::pair<Ledger::Wallet, uint64_t>>& Users)
+		static void Invocations(Vector<UPtr<Ledger::Transaction>>& Transactions, Vector<Account>& Users)
 		{
 			auto& [User1, User1Sequence] = Users[0];
 			auto& [User2, User2Sequence] = Users[1];
@@ -631,7 +656,7 @@ public:
 			VI_PANIC(InvocationBitcoin->Sign(User1.SecretKey, User1Sequence++), "invocation not signed");
 			Transactions.push_back(InvocationBitcoin);
 		}
-		static void MigrationsStage1(Vector<UPtr<Ledger::Transaction>>& Transactions, Vector<std::pair<Ledger::Wallet, uint64_t>>& Users)
+		static void MigrationsStage1(Vector<UPtr<Ledger::Transaction>>& Transactions, Vector<Account>& Users)
 		{
 			auto& [User1, User1Sequence] = Users[0];
 			auto& [User2, User2Sequence] = Users[1];
@@ -647,7 +672,7 @@ public:
 			VI_PANIC(CustodianAccountEthereum->Sign(User1.SecretKey, User1Sequence++), "account not signed");
 			Transactions.push_back(CustodianAccountEthereum);
 		}
-		static void MigrationsStage2(Vector<UPtr<Ledger::Transaction>>& Transactions, Vector<std::pair<Ledger::Wallet, uint64_t>>& Users)
+		static void MigrationsStage2(Vector<UPtr<Ledger::Transaction>>& Transactions, Vector<Account>& Users)
 		{
 			auto& [User1, User1Sequence] = Users[0];
 			auto& [User2, User2Sequence] = Users[1];
@@ -663,7 +688,7 @@ public:
 			VI_PANIC(DepositoryMigrationEthereum->Sign(User2.SecretKey, User2Sequence++), "depository migration not signed");
 			Transactions.push_back(DepositoryMigrationEthereum);
 		}
-		static void WithdrawalsStage1(Vector<UPtr<Ledger::Transaction>>& Transactions, Vector<std::pair<Ledger::Wallet, uint64_t>>& Users)
+		static void WithdrawalsStage1(Vector<UPtr<Ledger::Transaction>>& Transactions, Vector<Account>& Users)
 		{
 			auto& [User1, User1Sequence] = Users[0];
 			auto& [User2, User2Sequence] = Users[1];
@@ -692,7 +717,7 @@ public:
 			VI_PANIC(WithdrawalBitcoin->Sign(User1.SecretKey, User1Sequence++), "withdrawal not signed");
 			Transactions.push_back(WithdrawalBitcoin);
 		}
-		static void WithdrawalsStage2(Vector<UPtr<Ledger::Transaction>>& Transactions, Vector<std::pair<Ledger::Wallet, uint64_t>>& Users)
+		static void WithdrawalsStage2(Vector<UPtr<Ledger::Transaction>>& Transactions, Vector<Account>& Users)
 		{
 			auto& [User1, User1Sequence] = Users[0];
 			auto& [User2, User2Sequence] = Users[1];
@@ -721,7 +746,7 @@ public:
 			VI_PANIC(WithdrawalBitcoin->Sign(User2.SecretKey, User2Sequence++), "withdrawal not signed");
 			Transactions.push_back(WithdrawalBitcoin);
 		}
-		static void Deallocations(Vector<UPtr<Ledger::Transaction>>& Transactions, Vector<std::pair<Ledger::Wallet, uint64_t>>& Users)
+		static void Deallocations(Vector<UPtr<Ledger::Transaction>>& Transactions, Vector<Account>& Users)
 		{
 			auto& [User1, User1Sequence] = Users[0];
 			auto& [User2, User2Sequence] = Users[1];
@@ -1078,10 +1103,10 @@ public:
 		auto* Term = Console::Get();
 		auto Wallet = Ledger::Wallet::FromSeed();
 		Vector<UPtr<Ledger::Transaction>> Transactions;
-		Vector<std::pair<Ledger::Wallet, uint64_t>> Users =
+		Vector<Account> Users =
 		{
-			{ Wallet, 1 },
-			{ Ledger::Wallet::FromSeed(), 1 }
+			Account(Wallet, 1),
+			Account(Ledger::Wallet::FromSeed(), 1)
 		};
 		Generators::Transfers(Transactions, Users);
 		auto& Tx = *(Transactions::Transfer*)*Transactions.back();
@@ -1169,7 +1194,7 @@ public:
 		Term->jWriteLine(*Data);
 	}
 	/* Blockchain containing all transaction types (zero balance accounts, valid regtest chain) */
-	static void BlockchainFullCoverage()
+	static void BlockchainFullCoverage(Vector<Account>* Userdata)
 	{
 		auto* Term = Console::Get();
 		auto& Params = Protocol::Change();
@@ -1178,12 +1203,12 @@ public:
 		OS::Directory::Remove(Path);
 		Storages::Chainstate(__func__).ClearIndexerCache();
 
-		UPtr<Schema> Data = Var::Set::Array();
-		Vector<std::pair<Ledger::Wallet, uint64_t>> Users =
+		UPtr<Schema> Data = Userdata ? nullptr : Var::Set::Array();
+		Vector<Account> Users =
 		{
-			{ Ledger::Wallet::FromSeed("000001"), 0 },
-			{ Ledger::Wallet::FromSeed("000000"), 0 },
-			{ Ledger::Wallet::FromSeed("000002"), 0 },
+			Account(Ledger::Wallet::FromSeed("000001"), 0),
+			Account(Ledger::Wallet::FromSeed("000000"), 0),
+			Account(Ledger::Wallet::FromSeed("000002"), 0)
 		};
 		NewBlockFromGenerator(*Data, &Generators::Adjustments, Users, "0xce0253e775378a9fb135ee52490c2a146f798ab9c96ebb13bae64e584211da7e");
 		NewBlockFromGenerator(*Data, &Generators::AddressAccounts, Users, "0x4586dabd78c7d02d341a7aa05b6010bcf702e181f308a596e701831938e7eadf");
@@ -1204,10 +1229,13 @@ public:
 		NewBlockFromGenerator(*Data, &Generators::WithdrawalsStage2, Users, "0x544259fce1737d3d9bb524a028b2f5037a3345268db692df0f312adbc527c190");
 		NewBlockFromGenerator(*Data, std::bind(&Generators::CommitmentOffline, std::placeholders::_1, std::placeholders::_2, 2), Users, "0x79d7399e6a5e4d3376d3928bfb6ebedc7f5d94e18ad6f5c2ca1b06258eca0943");
 		NewBlockFromGenerator(*Data, &Generators::Deallocations, Users, "0xc03fabdcefddbf5522e1227b59b6e4f4dbf320bddce3351ccef8a73e522f9266");
-		Term->jWriteLine(*Data);
+		if (Userdata != nullptr)
+			*Userdata = std::move(Users);
+		else
+			Term->jWriteLine(*Data);
 	}
 	/* Blockchain containing some transaction types (non-zero balance accounts, valid regtest chain) */
-	static void BlockchainPartialCoverage()
+	static void BlockchainPartialCoverage(Vector<Account>* Userdata)
 	{
 		auto* Term = Console::Get();
 		auto& Params = Protocol::Change();
@@ -1216,11 +1244,11 @@ public:
 		OS::Directory::Remove(Path);
 		Storages::Chainstate(__func__).ClearIndexerCache();
 
-		UPtr<Schema> Data = Var::Set::Array();
-		Vector<std::pair<Ledger::Wallet, uint64_t>> Users =
+		UPtr<Schema> Data = Userdata ? nullptr : Var::Set::Array();
+		Vector<Account> Users =
 		{
-			{ Ledger::Wallet::FromSeed("000000"), 0 },
-			{ Ledger::Wallet::FromSeed("000001"), 0 }
+			Account(Ledger::Wallet::FromSeed("000000"), 0),
+			Account(Ledger::Wallet::FromSeed("000001"), 0)
 		};
 		NewBlockFromGenerator(*Data, &Generators::Adjustments, Users, "0x90086b5fece5521b9b0d6d0a3d70e52cb93f1814797ce432c243fa52c3bc805e");
 		NewBlockFromGenerator(*Data, &Generators::AddressAccounts, Users, "0x5c1f29ee2705095b4d5876837b136ce47a20719216b74fd75edaf3bbff263273");
@@ -1230,8 +1258,11 @@ public:
 		NewBlockFromGenerator(*Data, &Generators::Transfers, Users, "0x055ac076751237767883c6f30ec692c0d555d884fcb3eccd8283a6fe55d52616");
 		NewBlockFromGenerator(*Data, &Generators::Rollups, Users, "0xdd67763fdec81e91c80f29e75a4c5b767f3bce5f75b6bc65d6a06739f4fc3060");
 		NewBlockFromGenerator(*Data, std::bind(&Generators::CommitmentOffline, std::placeholders::_1, std::placeholders::_2, 1), Users, "0x852649c5d6f6adff0aa5ca75d80e926fd3e3a6d04a5112171242127ccbeb1102");
-		NewBlockFromGenerator(*Data, std::bind(&Generators::TransferToWallet, std::placeholders::_1, std::placeholders::_2, 1, Algorithm::Asset::IdOf("BTC"), "tcrt1x6xnszfhl0g2fefhekcudkzzyspzql7zzz4ha4h", 0.1), Users, "0x6956432b0a565d4d018641e685ec6d3cf8ec38a948582b5ae96fd35b71d9828a");
-		Term->jWriteLine(*Data);
+		NewBlockFromGenerator(*Data, std::bind(&Generators::TransferToWallet, std::placeholders::_1, std::placeholders::_2, 1, Algorithm::Asset::IdOf("BTC"), "tcrt1xrzy5qh6vs7phqnrft5se2sps8wyvr4u8tphzwl", 0.1), Users, "0xa91b6795673c4a811969ad7182bcfdced437b0da3a5d0c31379ba4ace5e18f33");
+		if (Userdata != nullptr)
+			*Userdata = std::move(Users);
+		else
+			Term->jWriteLine(*Data);
 	}
 	/* Verify current blockchain */
 	static void BlockchainVerification()
@@ -1346,27 +1377,29 @@ public:
 
 		Data->Set(T::AsInstanceTypename(), Var::String(Algorithm::Encoding::Encode0xHex256(Message.Hash())));
 	}
-	static Ledger::Block NewBlockFromGenerator(Schema* Results, std::function<void(Vector<UPtr<Ledger::Transaction>>&, Vector<std::pair<Ledger::Wallet, uint64_t>>&)>&& TestCase, Vector<std::pair<Ledger::Wallet, uint64_t>>& Users, const std::string_view& StateRootHash)
+	static Ledger::Block NewBlockFromGenerator(Schema* Results, std::function<void(Vector<UPtr<Ledger::Transaction>>&, Vector<Account>&)>&& TestCase, Vector<Account>& Users, const std::string_view& StateRootHash)
 	{
 		for (auto& User : Users)
-			User.second = User.first.GetLatestSequence().Or(1);
+			User.Sequence = User.Wallet.GetLatestSequence().Or(1);
 
 		Vector<UPtr<Ledger::Transaction>> Transactions;
 		TestCase(Transactions, Users);
 
 		auto Block = NewBlockFromList(Results, std::move(Transactions), Users);
 		auto Hash = Algorithm::Encoding::Encode0xHex256(Block.StateRoot);
-		Console::Get()->WriteLine(Hash);
+		if (Results != nullptr)
+			Console::Get()->WriteLine(Hash);
+
 		VI_PANIC(StateRootHash.empty() || StateRootHash == Hash, "block state root deviation");
 		return Block;
 	}
-	static Ledger::Block NewBlockFromList(Schema* Results, Vector<UPtr<Ledger::Transaction>>&& Transactions, Vector<std::pair<Ledger::Wallet, uint64_t>>& Users, bool Timing = false)
+	static Ledger::Block NewBlockFromList(Schema* Results, Vector<UPtr<Ledger::Transaction>>&& Transactions, Vector<Account>& Users)
 	{
 		Ledger::EvaluationContext Environment;
 		uint64_t Priority = std::numeric_limits<uint64_t>::max();
 		for (auto& User : Users)
 		{
-			Priority = Environment.Priority(User.first.PublicKeyHash, User.first.SecretKey).Or(std::numeric_limits<uint64_t>::max());
+			Priority = Environment.Priority(User.Wallet.PublicKeyHash, User.Wallet.SecretKey).Or(std::numeric_limits<uint64_t>::max());
 			if (!Priority)
 				break;
 		}
@@ -1397,12 +1430,12 @@ public:
 
 		auto Proposal = std::move(Evaluation.Expect("block evaluation failed"));
 		Environment.Solve(Proposal).Expect("block solution failed");
-		if (!Timing)
+		if (Results != nullptr)
 			Environment.Verify(Proposal).Expect("block verification failed");
 
 		Transactions = Vector<UPtr<Ledger::Transaction>>();
 		Proposal.Checkpoint().Expect("block checkpoint failed");
-		if (!Timing)
+		if (Results != nullptr)
 			Results->Push(Proposal.AsSchema().Reset());
 
 		Vector<Ledger::BlockDispatch> Dispatches;
@@ -2052,31 +2085,9 @@ public:
 
 		return 0;
 	}
-	/* Blockchain with 1920 + 1 blocks filled with configurable entropy transactions (non-zero balance accounts, invalid chain - bad genesis block, entropy 0 - low entropy, entropy 1 - medium entropy, entropy 2 - high entropy) */
+	/* Blockchain derived from partial coverage test with 1920 additional blocks filled with configurable entropy transactions (non-zero balance accounts, valid regtest chain, entropy 0 - low entropy, entropy 1 - medium entropy, entropy 2 - high entropy) */
 	static int Benchmark(int argc, char* argv[], uint8_t Entropy)
 	{
-		struct Payer
-		{
-			Ledger::Wallet Wallet;
-			std::atomic<uint64_t> Sequence = 1;
-
-			Payer() = default;
-			Payer(Payer&&) = default;
-			Payer(const Payer& Other) : Wallet(Other.Wallet), Sequence(Other.Sequence.load())
-			{
-			}
-			Payer& operator= (Payer&&) = default;
-			Payer& operator= (const Payer& Other)
-			{
-				if (&Other == this)
-					return *this;
-
-				Wallet = Other.Wallet;
-				Sequence = Other.Sequence.load();
-				return *this;
-			}
-		};
-
 		Vitex::Runtime Scope;
 		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
 
@@ -2085,11 +2096,6 @@ public:
 
 		auto* Queue = Schedule::Get();
 		Queue->Start(Schedule::Desc());
-
-		auto Path = Params.Database.Location();
-		Params.Database.Reset();
-		OS::Directory::Remove(Path);
-		Storages::Chainstate(__func__).ClearIndexerCache();
 
 		if (argc > 1 && !strcmp(argv[1], "calibrate"))
 		{
@@ -2107,169 +2113,187 @@ public:
 
 		const size_t BlockCount = 1920;
 		const size_t TransactionCount = (size_t)(uint64_t)(Ledger::Block::GetGasLimit() / Transactions::Transfer().GetGasEstimate());
-		auto Chain = Storages::Chainstate(__func__);
-		auto Display = [&](const Ledger::Block& Block, uint64_t Queries)
+		const Decimal StartingAccountBalance = Decimal(500).Truncate(12);
+		auto Checkpoint = [&](Vector<UPtr<Ledger::Transaction>>&& Transactions, Vector<Tests::Account>& Users)
 		{
-			double Time = Term->GetCapturedTime();
-			double Tps = 1000.0 * (double)Block.TransactionCount / Time;
-			double Sps = 1000.0 * (double)Block.StateCount / Time;
-			double Qps = 1000.0 * (double)Queries / Time;
-			Term->fWriteLine("block %s %.2f ms (number: %i, target: %s, txns: %i, states: %i, syncs: %i, tps: %.2f, sps: %.2f, qps: %.2f)",
-				Algorithm::Encoding::Encode0xHex256(Block.AsHash()).c_str(), Time, (int)Block.Number, Block.Target.Difficulty().ToString().c_str(),
-				(int)Block.TransactionCount, (int)Block.StateCount, (int)Queries,
-				Tps, Sps, Qps);
+			static uint64_t CumulativeTransactionCount = 0, CumulativeStateCount = 0;
+			auto CumulativeQueryCount = (uint64_t)Ledger::StorageUtil::GetThreadQueries(); Term->CaptureTime();
+			auto Block = Tests::NewBlockFromList(nullptr, std::move(Transactions), Users);
+			auto Time = Term->GetCapturedTime();
+			CumulativeTransactionCount += Block.TransactionCount;
+			CumulativeStateCount += Block.StateCount;
+			Term->fWriteLine("%s = (n: %" PRIu64 ", d: %s / %.2f ms, t: %" PRIu64 " / %.2f hz, s: %" PRIu64 " / %.2f hz, q: %" PRIu64 " / %.2f hz)",
+				Algorithm::Encoding::Encode0xHex256(Block.AsHash()).c_str(), Block.Number,
+				Block.Target.Difficulty().ToString().c_str(), Time,
+				CumulativeTransactionCount, 1000.0 * (double)Block.TransactionCount / Time,
+				CumulativeStateCount, 1000.0 * (double)Block.StateCount / Time,
+				CumulativeQueryCount, 1000.0 * (double)((uint64_t)Ledger::StorageUtil::GetThreadQueries() - CumulativeQueryCount) / Time);
 		};
+
+		Vector<Tests::Account> Proposers;
+		Tests::BlockchainPartialCoverage(&Proposers);
+
+		auto& [User1, User1Sequence] = Proposers[0];
+		auto& [User2, User2Sequence] = Proposers[1];
+		auto Chain = Storages::Chainstate(__func__);
+		auto Context = Ledger::TransactionContext();
+		auto User1Addresses = *Context.GetWitnessAddressesByPurpose(User1.PublicKeyHash, States::AddressType::Custodian, 0, 128);
+		auto User1CustodianAddress = std::find_if(User1Addresses.begin(), User1Addresses.end(), [](States::WitnessAddress& Item) { return Item.Asset == Algorithm::Asset::IdOf("BTC"); });
+		VI_PANIC(User1CustodianAddress != User1Addresses.end(), "user 1 custodian address not found");
 
 		if (Entropy == 0)
 		{
-			auto Seed = Algorithm::Hashing::Hash256i("123456");
-			auto Account = Ledger::Wallet::FromSeed("000001");
-			auto Receiver = Ledger::Wallet::FromSeed("000000");
-			auto Genesis = Ledger::Block();
-			auto Balance = Memory::New<States::AccountBalance>(Account.PublicKeyHash, &Genesis);
-			Balance->Asset = Algorithm::Asset::IdOf("BTC");
-			Balance->Supply = 100;
-			Genesis.Target = Algorithm::WVDF::GetDefault();
-			Genesis.States.MoveAny(Balance);
-			Genesis.States.Commit();
-			Genesis.SetParentBlock(nullptr);
-			Genesis.Recalculate(nullptr);
-			VI_PANIC(Genesis.Solve(Account.SecretKey), "genesis block solve failed");
-			VI_PANIC(Genesis.Sign(Account.SecretKey), "genesis block sign failed");
-			Genesis.Checkpoint().Expect("genesis block checkpoint failed");
+			const Decimal OutgoingAccountBalance = StartingAccountBalance / Decimal(BlockCount * (TransactionCount + 64));
+			const Decimal IncomingQuantity = StartingAccountBalance;
+			auto* IncomingClaim = Memory::New<Transactions::IncomingClaim>();
+			IncomingClaim->SetAsset("BTC");
+			IncomingClaim->SetEstimateGas(Decimal::Zero());
+			IncomingClaim->SetWitness(883669,
+				"222fc360affb804ad2c34bba2269b36a64a86f017d05a9a60b237e8587bfc52b", 0.0,
+				{ Mediator::Transferer("mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", Optional::None, Decimal(IncomingQuantity)) },
+				{ Mediator::Transferer(User1CustodianAddress->Addresses.begin()->second, User1CustodianAddress->AddressIndex, Decimal(IncomingQuantity)) });
+			VI_PANIC(IncomingClaim->Sign(User2.SecretKey, User2Sequence++), "claim not signed");
 
-			std::atomic<uint64_t> AccountNonce = Account.GetLatestSequence().Or(1);
+			auto Genesis = Vector<UPtr<Ledger::Transaction>>();
+			Genesis.push_back(IncomingClaim);
+			Checkpoint(std::move(Genesis), Proposers);
+
+			auto Receiver = Ledger::Wallet::FromSeed("000002");
 			for (size_t i = 0; i < BlockCount; i++)
 			{
 				Vector<UPtr<Ledger::Transaction>> Transactions;
 				Transactions.resize(TransactionCount);
-				Parallel::WailAll(ParallelForEach(Transactions.begin(), Transactions.end(), [&](UPtr<Ledger::Transaction>& Item)
+				Parallel::WailAll(Parallel::ForEach(Transactions.begin(), Transactions.end(), ELEMENTS_FEW, [&](UPtr<Ledger::Transaction>& Item)
 				{
-					uint64_t Value = Crypto::Random() % 1500 + 1;
+					double Balance = (double)(std::max<uint64_t>(1000, Crypto::Random() % 10000)) / 10000.0;
 
 					auto* Transaction = Memory::New<Transactions::Transfer>();
 					Transaction->SetAsset("BTC");
 					Transaction->SetEstimateGas(Decimal::Zero());
-					Transaction->SetTo(Receiver.PublicKeyHash, Decimal(Value).Truncate(9) / 10000000.0);
-					VI_PANIC(Transaction->Sign(Account.SecretKey, AccountNonce++), "transfer not signed");
+					Transaction->SetTo(Receiver.PublicKeyHash, Decimal(OutgoingAccountBalance).Truncate(12) * Decimal(Balance));
+					VI_PANIC(Transaction->Sign(User1.SecretKey, User1Sequence++), "transfer not signed");
 					Item = Transaction;
 				}));
 				std::sort(Transactions.begin(), Transactions.end(), [](const UPtr<Ledger::Transaction>& A, const UPtr<Ledger::Transaction>& B) { return A->Sequence < B->Sequence; });
-
-				Vector<std::pair<Ledger::Wallet, uint64_t>> Users = { { Account, AccountNonce.load() } };
-				uint64_t Queries = Ledger::StorageUtil::GetThreadQueries();
-				Term->CaptureTime();
-
-				auto Block = Tests::NewBlockFromList(nullptr, std::move(Transactions), Users, true);
-				Display(Block, Ledger::StorageUtil::GetThreadQueries() - Queries);
+				Checkpoint(std::move(Transactions), Proposers);
 			}
 		}
 		else if (Entropy == 1)
 		{
-			Vector<Payer> Accounts;
-			Accounts.resize(16);
-			for (size_t i = 0; i < Accounts.size(); i++)
-				Accounts[i].Wallet = Ledger::Wallet::FromSeed(Stringify::Text("00000%i", (int)i));
+			const size_t SenderCount = 16;
+			const size_t ReceiverCount = 32;
+			const Decimal OutgoingAccountBalance = StartingAccountBalance / Decimal(BlockCount * (TransactionCount + 64) * SenderCount);
+			const Decimal IncomingQuantity = StartingAccountBalance * SenderCount;
+			auto* IncomingClaim = Memory::New<Transactions::IncomingClaim>();
+			IncomingClaim->SetAsset("BTC");
+			IncomingClaim->SetEstimateGas(Decimal::Zero());
+			IncomingClaim->SetWitness(883669,
+				"222fc360affb804ad2c34bba2269b36a64a86f017d05a9a60b237e8587bfc52b", 0.0,
+				{ Mediator::Transferer("mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", Optional::None, Decimal(IncomingQuantity)) },
+				{ Mediator::Transferer(User1CustodianAddress->Addresses.begin()->second, User1CustodianAddress->AddressIndex, Decimal(IncomingQuantity)) });
+			VI_PANIC(IncomingClaim->Sign(User2.SecretKey, User2Sequence++), "claim not signed");
 
-			Vector<String> Receivers;
-			Receivers.resize(Accounts.size() * 2);
-			for (size_t i = 0; i < Receivers.size(); i++)
-				Receivers[i] = *Crypto::RandomBytes(sizeof(Algorithm::Pubkeyhash));
+			auto Genesis = Vector<UPtr<Ledger::Transaction>>();
+			Genesis.push_back(IncomingClaim);
+			Checkpoint(std::move(Genesis), Proposers);
 
-			auto& Proposer = Accounts.front().Wallet;
-			auto Genesis = Ledger::Block();
-			for (auto& Account : Accounts)
-			{
-				auto Balance = Memory::New<States::AccountBalance>(Account.Wallet.PublicKeyHash, &Genesis);
-				Balance->Asset = Algorithm::Asset::IdOf("BTC");
-				Balance->Supply = 100;
-				Genesis.States.MoveAny(Balance);
-			}
-			Genesis.Target = Algorithm::WVDF::GetDefault();
-			Genesis.States.Commit();
-			Genesis.SetParentBlock(nullptr);
-			Genesis.Recalculate(nullptr);
-			VI_PANIC(Genesis.Solve(Proposer.SecretKey), "genesis block solve failed");
-			VI_PANIC(Genesis.Sign(Proposer.SecretKey), "genesis block sign failed");
-			Genesis.Checkpoint().Expect("genesis block checkpoint failed");
+			Vector<Tests::Account> Senders;
+			Senders.reserve(SenderCount);
+			for (size_t i = 0; i < SenderCount; i++)
+				Senders.emplace_back(Tests::Account(Ledger::Wallet::FromSeed(Stringify::Text("00001%i", (int)i)), 1));
+
+			Vector<Tests::Account> Receivers;
+			Receivers.reserve(ReceiverCount);
+			for (size_t i = 0; i < ReceiverCount; i++)
+				Receivers.emplace_back(Tests::Account(Ledger::Wallet::FromSeed(Stringify::Text("00002%i", (int)i)), 1));
+
+			auto* Omnitransfer = Memory::New<Transactions::Omnitransfer>();
+			Omnitransfer->SetAsset("BTC");
+			for (auto& Sender : Senders)
+				Omnitransfer->SetTo(Sender.Wallet.PublicKeyHash, StartingAccountBalance);
+			Omnitransfer->SetGas(Decimal::Zero(), Ledger::Block::GetGasLimit());
+			VI_PANIC(Omnitransfer->Sign(User1.SecretKey, User1Sequence++), "omnitransfer not signed");
+
+			Genesis = Vector<UPtr<Ledger::Transaction>>();
+			Genesis.push_back(Omnitransfer);
+			Checkpoint(std::move(Genesis), Proposers);
 
 			for (size_t i = 0; i < BlockCount; i++)
 			{
 				Vector<UPtr<Ledger::Transaction>> Transactions;
 				Transactions.resize(TransactionCount);
-				Parallel::WailAll(ParallelForEach(Transactions.begin(), Transactions.end(), [&](UPtr<Ledger::Transaction>& Item)
+				Parallel::WailAll(Parallel::ForEach(Transactions.begin(), Transactions.end(), ELEMENTS_FEW, [&](UPtr<Ledger::Transaction>& Item)
 				{
-					uint64_t Value = Crypto::Random() % 1500 + 1;
-					auto& Account = Accounts[Crypto::Random() % Accounts.size()];
+					double Balance = (double)(std::max<uint64_t>(1000, Crypto::Random() % 10000)) / 10000.0;
+					auto& Sender = Senders[Crypto::Random() % Senders.size()];
 					auto& Receiver = Receivers[Crypto::Random() % Receivers.size()];
 
 					auto* Transaction = Memory::New<Transactions::Transfer>();
 					Transaction->SetAsset("BTC");
 					Transaction->SetEstimateGas(Decimal::Zero());
-					Transaction->SetTo((uint8_t*)Receiver.data(), Decimal(Value).Truncate(9) / 10000000.0);
-					VI_PANIC(Transaction->Sign(Account.Wallet.SecretKey, Account.Sequence++), "transfer not signed");
+					Transaction->SetTo(Receiver.Wallet.PublicKeyHash, Decimal(OutgoingAccountBalance).Truncate(12) * Decimal(Balance));
+					VI_PANIC(Transaction->Sign(Sender.Wallet.SecretKey, Sender.Sequence++), "transfer not signed");
 					Item = Transaction;
 				}));
 				std::sort(Transactions.begin(), Transactions.end(), [](const UPtr<Ledger::Transaction>& A, const UPtr<Ledger::Transaction>& B) { return A->Sequence < B->Sequence; });
-
-				Vector<std::pair<Ledger::Wallet, uint64_t>> Users = { { Proposer, 0 } };
-				uint64_t Queries = Ledger::StorageUtil::GetThreadQueries();
-				Term->CaptureTime();
-
-				auto Block = Tests::NewBlockFromList(nullptr, std::move(Transactions), Users, true);
-				Display(Block, Ledger::StorageUtil::GetThreadQueries() - Queries);
+				Checkpoint(std::move(Transactions), Proposers);
 			}
 		}
 		else
 		{
-			Vector<Payer> Accounts;
-			Accounts.resize(TransactionCount);
-			for (size_t i = 0; i < Accounts.size(); i++)
-				Accounts[i].Wallet = Ledger::Wallet::FromSeed(Stringify::Text("00000%i", (int)i));
+			const size_t SenderCount = TransactionCount;
+			const Decimal OutgoingAccountBalance = StartingAccountBalance / Decimal(BlockCount * (TransactionCount + 64) * SenderCount);
+			const Decimal IncomingQuantity = StartingAccountBalance * SenderCount * 2;
+			auto* IncomingClaim = Memory::New<Transactions::IncomingClaim>();
+			IncomingClaim->SetAsset("BTC");
+			IncomingClaim->SetEstimateGas(Decimal::Zero());
+			IncomingClaim->SetWitness(883669,
+				"222fc360affb804ad2c34bba2269b36a64a86f017d05a9a60b237e8587bfc52b", 0.0,
+				{ Mediator::Transferer("mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", Optional::None, Decimal(IncomingQuantity)) },
+				{ Mediator::Transferer(User1CustodianAddress->Addresses.begin()->second, User1CustodianAddress->AddressIndex, Decimal(IncomingQuantity)) });
+			VI_PANIC(IncomingClaim->Sign(User2.SecretKey, User2Sequence++), "claim not signed");
 
-			auto& Proposer = Accounts.front().Wallet;
-			auto Genesis = Ledger::Block();
-			for (auto& Account : Accounts)
-			{
-				auto Balance = Memory::New<States::AccountBalance>(Account.Wallet.PublicKeyHash, &Genesis);
-				Balance->Asset = Algorithm::Asset::IdOf("BTC");
-				Balance->Supply = 100;
-				Genesis.States.MoveAny(Balance);
-			}
-			Genesis.Target = Algorithm::WVDF::GetDefault();
-			Genesis.States.Commit();
-			Genesis.SetParentBlock(nullptr);
-			Genesis.Recalculate(nullptr);
-			VI_PANIC(Genesis.Solve(Proposer.SecretKey), "genesis block solve failed");
-			VI_PANIC(Genesis.Sign(Proposer.SecretKey), "genesis block sign failed");
-			Genesis.Checkpoint().Expect("genesis block checkpoint failed");
+			auto Genesis = Vector<UPtr<Ledger::Transaction>>();
+			Genesis.push_back(IncomingClaim);
+			Checkpoint(std::move(Genesis), Proposers);
+
+			Vector<Tests::Account> Senders;
+			Senders.reserve(SenderCount);
+			for (size_t i = 0; i < SenderCount; i++)
+				Senders.emplace_back(Tests::Account({ Ledger::Wallet::FromSeed(Stringify::Text("00001%i", (int)i)), 1 }));
+
+			auto* Omnitransfer = Memory::New<Transactions::Omnitransfer>();
+			Omnitransfer->SetAsset("BTC");
+			for (auto& Sender : Senders)
+				Omnitransfer->SetTo(Sender.Wallet.PublicKeyHash, StartingAccountBalance);
+			Omnitransfer->SetGas(Decimal::Zero(), Ledger::Block::GetGasLimit());
+			VI_PANIC(Omnitransfer->Sign(User1.SecretKey, User1Sequence++), "omnitransfer not signed");
+
+			Genesis = Vector<UPtr<Ledger::Transaction>>();
+			Genesis.push_back(Omnitransfer);
+			Checkpoint(std::move(Genesis), Proposers);
 
 			for (size_t i = 0; i < BlockCount; i++)
 			{
 				Vector<UPtr<Ledger::Transaction>> Transactions;
 				Transactions.resize(TransactionCount);
-				Parallel::WailAll(ParallelForEach(Transactions.begin(), Transactions.end(), [&](UPtr<Ledger::Transaction>& Item)
+				Parallel::WailAll(Parallel::ForEach(Transactions.begin(), Transactions.end(), ELEMENTS_FEW, [&](UPtr<Ledger::Transaction>& Item)
 				{
-					uint8_t PublicKeyHash[20];
-					uint64_t Value = Crypto::Random() % 1500 + 1;
-					auto& Account = Accounts[Crypto::Random() % Accounts.size()];
-					Crypto::FillRandomBytes(PublicKeyHash, sizeof(PublicKeyHash));
+					double Balance = (double)(std::max<uint64_t>(1000, Crypto::Random() % 10000)) / 10000.0;
+					auto& Sender = Senders[Crypto::Random() % Senders.size()];
+
+					uint8_t Receiver[20];
+					Crypto::FillRandomBytes(Receiver, sizeof(Receiver));
 
 					auto* Transaction = Memory::New<Transactions::Transfer>();
 					Transaction->SetAsset("BTC");
 					Transaction->SetEstimateGas(Decimal::Zero());
-					Transaction->SetTo(PublicKeyHash, Decimal(Value).Truncate(12) / 100000000.0);
-					VI_PANIC(Transaction->Sign(Account.Wallet.SecretKey, Account.Sequence++), "transfer not signed");
+					Transaction->SetTo(Receiver, Decimal(OutgoingAccountBalance).Truncate(12) * Decimal(Balance));
+					VI_PANIC(Transaction->Sign(Sender.Wallet.SecretKey, Sender.Sequence++), "transfer not signed");
 					Item = Transaction;
 				}));
 				std::sort(Transactions.begin(), Transactions.end(), [](const UPtr<Ledger::Transaction>& A, const UPtr<Ledger::Transaction>& B) { return A->Sequence < B->Sequence; });
-
-				Vector<std::pair<Ledger::Wallet, uint64_t>> Users = { { Proposer, 0 } };
-				uint64_t Queries = Ledger::StorageUtil::GetThreadQueries();
-				Term->CaptureTime();
-
-				auto Block = Tests::NewBlockFromList(nullptr, std::move(Transactions), Users, true);
-				Display(Block, Ledger::StorageUtil::GetThreadQueries() - Queries);
+				Checkpoint(std::move(Transactions), Proposers);
 			}
 		}
 
@@ -2311,9 +2335,9 @@ public:
 			{ "cryptography / transaction", &Tests::CryptographyTransaction },
 			{ "cryptography / merkle tree", &Tests::CryptographyMerkleTree },
 			{ "cryptography / multichain", &Tests::CryptographyMultichain },
-			{ "blockchain / full coverage", &Tests::BlockchainFullCoverage },
+			{ "blockchain / full coverage", std::bind(&Tests::BlockchainFullCoverage, (Vector<Tests::Account>*)nullptr) },
 			{ "blockchain / verification", &Tests::BlockchainVerification },
-			{ "blockchain / partial coverage", &Tests::BlockchainPartialCoverage },
+			{ "blockchain / partial coverage", std::bind(&Tests::BlockchainPartialCoverage, (Vector<Tests::Account>*)nullptr) },
 			{ "blockchain / verification", &Tests::BlockchainVerification },
 			{ "blockchain / gas estimation", &Tests::BlockchainGasEstimation },
 		};
@@ -2351,5 +2375,5 @@ public:
 
 int main(int argc, char* argv[])
 {
-    return Apps::Integration(argc, argv);
+    return Apps::Consensus(argc, argv);
 }
