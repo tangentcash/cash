@@ -313,14 +313,14 @@ namespace Tangent
 			Bind(0 | AccessType::R, "chainstate", "getaccountreward", 2, 2, "string address, string asset", "multiform", "get account reward by address and asset", std::bind(&ServerNode::ChainstateGetAccountReward, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(0 | AccessType::R, "chainstate", "getaccountrewards", 3, 3, "string address, uint64 offset, uint64 count", "multiform[]", "get account rewards by address", std::bind(&ServerNode::ChainstateGetAccountRewards, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(0 | AccessType::R, "chainstate", "getbestaccountrewards", 3, 3, "string asset, uint64 offset, uint64 count", "multiform[]", "get accounts with best rewards", std::bind(&ServerNode::ChainstateGetBestAccountRewards, this, std::placeholders::_1, std::placeholders::_2));
-			Bind(0 | AccessType::R, "chainstate", "getbestaccountrewardswithdepositories", 3, 3, "string asset, uint64 offset, uint64 count", "{ depository: multiform?, reward: multiform }[]", "get accounts with best rewards with depository states", std::bind(&ServerNode::ChainstateGetBestAccountRewardsWithContributions, this, std::placeholders::_1, std::placeholders::_2));
+			Bind(0 | AccessType::R, "chainstate", "getbestaccountrewardsforselection", 3, 3, "string asset, uint64 offset, uint64 count", "{ depository: multiform?, reward: multiform }[]", "get accounts with best rewards with additional proposer info", std::bind(&ServerNode::ChainstateGetBestAccountRewardsForSelection, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(0 | AccessType::R, "chainstate", "getaccountderivation", 2, 2, "string address, string asset", "uint64", "get account derivation by address and asset", std::bind(&ServerNode::ChainstateGetAccountDerivation, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(0 | AccessType::R, "chainstate", "getaccountbalance", 2, 2, "string address, string asset", "multiform", "get account balance by address and asset", std::bind(&ServerNode::ChainstateGetAccountBalance, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(0 | AccessType::R, "chainstate", "getaccountbalances", 3, 3, "string address, uint64 offset, uint64 count", "multiform[]", "get account balances by address", std::bind(&ServerNode::ChainstateGetAccountBalances, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(0 | AccessType::R, "chainstate", "getaccountdepository", 2, 2, "string address, string asset", "multiform", "get account depository by address and asset", std::bind(&ServerNode::ChainstateGetAccountDepository, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(0 | AccessType::R, "chainstate", "getaccountdepositories", 3, 3, "string address, uint64 offset, uint64 count", "multiform[]", "get account depositories by address", std::bind(&ServerNode::ChainstateGetAccountDepositories, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(0 | AccessType::R, "chainstate", "getbestaccountdepositories", 3, 3, "string asset, uint64 offset, uint64 count", "multiform[]", "get accounts with best depository", std::bind(&ServerNode::ChainstateGetBestAccountDepositories, this, std::placeholders::_1, std::placeholders::_2));
-			Bind(0 | AccessType::R, "chainstate", "getbestaccountdepositorieswithrewards", 3, 3, "string asset, uint64 offset, uint64 count", "{ depository: multiform, reward: multiform? }[]", "get accounts with best depository with reward policies", std::bind(&ServerNode::ChainstateGetBestAccountDepositoriesWithRewards, this, std::placeholders::_1, std::placeholders::_2));
+			Bind(0 | AccessType::R, "chainstate", "getbestaccountdepositoriesforselection", 3, 3, "string asset, uint64 offset, uint64 count", "{ depository: multiform, reward: multiform? }[]", "get accounts with best depository with additional proposer info", std::bind(&ServerNode::ChainstateGetBestAccountDepositoriesForSelection, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(0 | AccessType::R, "chainstate", "getwitnessprogram", 1, 1, "string hashcode", "uniform", "get witness program by hashcode (512bit number)", std::bind(&ServerNode::ChainstateGetWitnessProgram, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(0 | AccessType::R, "chainstate", "getwitnessevent", 1, 1, "uint256 transaction_hash", "uniform", "get witness event by transaction hash", std::bind(&ServerNode::ChainstateGetWitnessEvent, this, std::placeholders::_1, std::placeholders::_2));
 			Bind(0 | AccessType::R, "chainstate", "getwitnessaddress", 3, 4, "string address, string asset, string wallet_address, uint64? derivation_index", "multiform", "get witness address by owner address, asset, wallet address and derivation index", std::bind(&ServerNode::ChainstateGetWitnessAddress, this, std::placeholders::_1, std::placeholders::_2));
@@ -1943,7 +1943,7 @@ namespace Tangent
 				Data->Push(Item->AsSchema().Reset());
 			return ServerResponse().Success(std::move(Data));
 		}
-		ServerResponse ServerNode::ChainstateGetBestAccountRewardsWithContributions(HTTP::Connection* Base, Format::Variables&& Args)
+		ServerResponse ServerNode::ChainstateGetBestAccountRewardsForSelection(HTTP::Connection* Base, Format::Variables&& Args)
 		{
 			auto Asset = Algorithm::Asset::IdOfHandle(Args[0].AsString());
 			uint64_t Offset = Args[1].AsUint64(), Count = Args[2].AsUint64();
@@ -1957,14 +1957,17 @@ namespace Tangent
 				return ServerResponse().Error(ErrorCodes::NotFound, "data not found");
 
 			auto AssetStride = States::AccountDepository::AsInstanceRow(Asset);
+			auto WorkStride = States::AccountWork::AsInstanceRow();
 			UPtr<Schema> Data = Var::Set::Array();
 			for (auto& Item : *List)
 			{
-				auto* ParentState = (States::AccountReward*)*Item;
-				auto ChildState = Chain.GetMultiformByComposition(nullptr, States::AccountDepository::AsInstanceColumn(ParentState->Owner), AssetStride, 0);
+				auto* RewardState = (States::AccountReward*)*Item;
+				auto DepositoryState = Chain.GetMultiformByComposition(nullptr, States::AccountDepository::AsInstanceColumn(RewardState->Owner), AssetStride, 0);
+				auto WorkState = Chain.GetMultiformByComposition(nullptr, States::AccountWork::AsInstanceColumn(RewardState->Owner), WorkStride, 0);
 				auto* Next = Data->Push(Var::Set::Object());
-				Next->Set("depository", ChildState ? (*ChildState)->AsSchema().Reset() : Var::Set::Null());
-				Next->Set("reward", ParentState->AsSchema().Reset());
+				Next->Set("work", WorkState ? (*WorkState)->AsSchema().Reset() : Var::Set::Null());
+				Next->Set("depository", DepositoryState ? (*DepositoryState)->AsSchema().Reset() : Var::Set::Null());
+				Next->Set("reward", RewardState->AsSchema().Reset());
 			}
 			return ServerResponse().Success(std::move(Data));
 		}
@@ -2060,7 +2063,7 @@ namespace Tangent
 				Data->Push(Item->AsSchema().Reset());
 			return ServerResponse().Success(std::move(Data));
 		}
-		ServerResponse ServerNode::ChainstateGetBestAccountDepositoriesWithRewards(HTTP::Connection* Base, Format::Variables&& Args)
+		ServerResponse ServerNode::ChainstateGetBestAccountDepositoriesForSelection(HTTP::Connection* Base, Format::Variables&& Args)
 		{
 			auto Asset = Algorithm::Asset::IdOfHandle(Args[0].AsString());
 			uint64_t Offset = Args[1].AsUint64(), Count = Args[2].AsUint64();
@@ -2074,14 +2077,17 @@ namespace Tangent
 				return ServerResponse().Error(ErrorCodes::NotFound, "data not found");
 
 			auto AssetStride = States::AccountReward::AsInstanceRow(Asset);
+			auto WorkStride = States::AccountWork::AsInstanceRow();
 			UPtr<Schema> Data = Var::Set::Array();
 			for (auto& Item : *List)
 			{
-				auto* ParentState = (States::AccountDepository*)*Item;
-				auto ChildState = Chain.GetMultiformByComposition(nullptr, States::AccountReward::AsInstanceColumn(ParentState->Owner), AssetStride, 0);
+				auto* DepositoryState = (States::AccountDepository*)*Item;
+				auto WorkState = Chain.GetMultiformByComposition(nullptr, States::AccountWork::AsInstanceColumn(DepositoryState->Owner), WorkStride, 0);
+				auto RewardState = Chain.GetMultiformByComposition(nullptr, States::AccountReward::AsInstanceColumn(DepositoryState->Owner), AssetStride, 0);
 				auto* Next = Data->Push(Var::Set::Object());
-				Next->Set("depository", ParentState->AsSchema().Reset());
-				Next->Set("reward", ChildState ? (*ChildState)->AsSchema().Reset() : Var::Set::Null());
+				Next->Set("work", WorkState ? (*WorkState)->AsSchema().Reset() : Var::Set::Null());
+				Next->Set("depository", DepositoryState->AsSchema().Reset());
+				Next->Set("reward", RewardState ? (*RewardState)->AsSchema().Reset() : Var::Set::Null());
 			}
 			return ServerResponse().Success(std::move(Data));
 		}

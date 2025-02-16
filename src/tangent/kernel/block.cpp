@@ -2822,8 +2822,10 @@ namespace Tangent
 			}
 			else
 			{
+				auto Chain = Storages::Chainstate(__func__);
+				auto Latest = Chain.GetLatestBlockNumber();
 				Tip = Option<Ledger::BlockHeader>(Optional::None);
-				Validation.Tip = true;
+				Validation.Tip = !Latest;
 			}
 #else
 			Tip = Option<Ledger::BlockHeader>(Optional::None);

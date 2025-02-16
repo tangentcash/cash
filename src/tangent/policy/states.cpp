@@ -123,9 +123,8 @@ namespace Tangent
 				GasOutput = (GasOutputChange >= GasOutput ? GasOutputChange : uint256_t::Max());
 				if (!Flags || Prev->IsMatching(AccountFlags::Outlaw))
 					Flags = Prev->Flags;
-				else if (Prev->IsMatching(AccountFlags::Founder))
-					Flags |= (uint8_t)AccountFlags::Founder;
-				
+				if (Prev->IsMatching(AccountFlags::Founder))
+					Flags |= (uint8_t)AccountFlags::Founder;		
 				if (Penalty < Prev->Penalty)
 					Penalty = Prev->Penalty;
 			}

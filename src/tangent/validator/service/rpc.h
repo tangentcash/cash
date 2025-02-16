@@ -165,14 +165,14 @@ namespace Tangent
 			ServerResponse ChainstateGetAccountReward(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse ChainstateGetAccountRewards(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse ChainstateGetBestAccountRewards(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ChainstateGetBestAccountRewardsWithContributions(HTTP::Connection* Base, Format::Variables&& Args);
+			ServerResponse ChainstateGetBestAccountRewardsForSelection(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse ChainstateGetAccountDerivation(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse ChainstateGetAccountBalance(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse ChainstateGetAccountBalances(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse ChainstateGetAccountDepository(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse ChainstateGetAccountDepositories(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse ChainstateGetBestAccountDepositories(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ChainstateGetBestAccountDepositoriesWithRewards(HTTP::Connection* Base, Format::Variables&& Args);
+			ServerResponse ChainstateGetBestAccountDepositoriesForSelection(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse ChainstateGetWitnessProgram(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse ChainstateGetWitnessEvent(HTTP::Connection* Base, Format::Variables&& Args);
 			ServerResponse ChainstateGetWitnessAddress(HTTP::Connection* Base, Format::Variables&& Args);
