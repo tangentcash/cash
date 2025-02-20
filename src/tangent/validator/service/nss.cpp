@@ -662,6 +662,28 @@ namespace Tangent
 
 			return Implementation->VerifyMessage(Asset, MessageData2, VerifyingKey, Signature);
 		}
+		ExpectsLR<void> ServerNode::EnableSigningWallet(const Algorithm::AssetId& Asset, const Mediator::MasterWallet& Wallet, const Mediator::DerivedSigningWallet& SigningWallet)
+		{
+			if (!Algorithm::Asset::IsValid(Asset))
+				return LayerException("asset not found");
+
+			if (!Wallet.IsValid())
+				return LayerException("wallet not found");
+
+			auto* Implementation = GetChain(Asset);
+			if (!Implementation)
+				return LayerException("chain not found");
+
+			if (Wallet.MaxAddressIndex < SigningWallet.AddressIndex.Or(0))
+				return LayerException("bad address index");
+
+			Storages::Mediatorstate State = Storages::Mediatorstate(__func__, Asset);
+			auto Status = State.AddDerivedWallet(Wallet, SigningWallet);
+			if (!Status)
+				return Status.Error();
+
+			return Expectation::Met;
+		}
 		ExpectsLR<void> ServerNode::EnableCheckpointHeight(const Algorithm::AssetId& Asset, uint64_t BlockHeight)
 		{
 			if (!Algorithm::Asset::IsValid(Asset))

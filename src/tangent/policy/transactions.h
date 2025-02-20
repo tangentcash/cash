@@ -18,8 +18,7 @@ namespace Tangent
 			Decimal Value;
 			String Memo;
 
-			ExpectsLR<void> Prevalidate() const override;
-			ExpectsLR<void> Validate(const Ledger::TransactionContext* Context) const override;
+			ExpectsLR<void> Validate() const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
@@ -44,8 +43,7 @@ namespace Tangent
 			};
 			Vector<Subtransfer> Transfers;
 
-			ExpectsLR<void> Prevalidate() const override;
-			ExpectsLR<void> Validate(const Ledger::TransactionContext* Context) const override;
+			ExpectsLR<void> Validate() const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
@@ -68,8 +66,7 @@ namespace Tangent
 			bool Patchable = false;
 			bool Segregated = false;
 
-			ExpectsLR<void> Prevalidate() const override;
-			ExpectsLR<void> Validate(const Ledger::TransactionContext* Context) const override;
+			ExpectsLR<void> Validate() const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
@@ -96,8 +93,7 @@ namespace Tangent
 			String Function;
 			uint32_t Hashcode = 0;
 
-			ExpectsLR<void> Prevalidate() const override;
-			ExpectsLR<void> Validate(const Ledger::TransactionContext* Context) const override;
+			ExpectsLR<void> Validate() const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
@@ -118,8 +114,7 @@ namespace Tangent
 			Vector<std::pair<String, Decimal>> To;
 			Algorithm::Pubkeyhash Proposer = { 0 };
 
-			ExpectsLR<void> Prevalidate() const override;
-			ExpectsLR<void> Validate(const Ledger::TransactionContext* Context) const override;
+			ExpectsLR<void> Validate() const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
@@ -147,8 +142,7 @@ namespace Tangent
 			Rollup(Rollup&&) noexcept = default;
 			Rollup& operator= (const Rollup& Other);
 			Rollup& operator= (Rollup&&) noexcept = default;
-			ExpectsLR<void> Prevalidate() const override;
-			ExpectsLR<void> Validate(const Ledger::TransactionContext* Context) const override;
+			ExpectsLR<void> Validate() const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
@@ -176,8 +170,7 @@ namespace Tangent
 			OrderedMap<Algorithm::AssetId, bool> Observers;
 			Option<bool> Online = Optional::None;
 
-			ExpectsLR<void> Prevalidate() const override;
-			ExpectsLR<void> Validate(const Ledger::TransactionContext* Context) const override;
+			ExpectsLR<void> Validate() const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
@@ -216,8 +209,7 @@ namespace Tangent
 				OrderedMap<String, BalanceTransfer> Transfers;
 			};
 
-			ExpectsLR<void> Prevalidate() const override;
-			ExpectsLR<void> Validate(const Ledger::TransactionContext* Context) const override;
+			ExpectsLR<void> Validate() const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
@@ -240,8 +232,7 @@ namespace Tangent
 			String TransactionMessage;
 			uint256_t TransactionHash = 0;
 
-			ExpectsLR<void> Prevalidate() const override;
-			ExpectsLR<void> Validate(const Ledger::TransactionContext* Context) const override;
+			ExpectsLR<void> Validate() const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
@@ -260,8 +251,7 @@ namespace Tangent
 		{
 			String Address;
 
-			ExpectsLR<void> Prevalidate() const override;
-			ExpectsLR<void> Validate(const Ledger::TransactionContext* Context) const override;
+			ExpectsLR<void> Validate() const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
@@ -281,8 +271,7 @@ namespace Tangent
 
 			ExpectsLR<void> SignPubkey(const PrivateKey& SigningKey);
 			ExpectsLR<void> VerifyPubkey() const;
-			ExpectsLR<void> Prevalidate() const override;
-			ExpectsLR<void> Validate(const Ledger::TransactionContext* Context) const override;
+			ExpectsLR<void> Validate() const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
@@ -299,8 +288,7 @@ namespace Tangent
 		{
 			Algorithm::Pubkeyhash Proposer = { 0 };
 
-			ExpectsLR<void> Prevalidate() const override;
-			ExpectsLR<void> Validate(const Ledger::TransactionContext* Context) const override;
+			ExpectsLR<void> Validate() const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
@@ -328,8 +316,7 @@ namespace Tangent
 			ExpectsLR<void> SetWallet(const Ledger::TransactionContext* Context, const Ledger::Wallet& Proposer, const Algorithm::Pubkeyhash NewOwner);
 			ExpectsLR<void> SignPubkey(const PrivateKey& SigningKey);
 			ExpectsLR<void> VerifyPubkey() const;
-			ExpectsLR<void> Prevalidate() const override;
-			ExpectsLR<void> Validate(const Ledger::TransactionContext* Context) const override;
+			ExpectsLR<void> Validate() const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
@@ -350,8 +337,7 @@ namespace Tangent
 
 		struct ContributionAllocation final : Ledger::Transaction
 		{
-			ExpectsLR<void> Prevalidate() const override;
-			ExpectsLR<void> Validate(const Ledger::TransactionContext* Context) const override;
+			ExpectsLR<void> Validate() const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
@@ -372,8 +358,7 @@ namespace Tangent
 			Algorithm::Pubkeyhash Proposer = { 0 };
 
 			ExpectsLR<void> SetShare1(const Algorithm::Seckey SecretKey, const uint256_t& NewContributionAllocationHash, const Algorithm::Pubkeyhash NewProposer);
-			ExpectsLR<void> Prevalidate() const override;
-			ExpectsLR<void> Validate(const Ledger::TransactionContext* Context) const override;
+			ExpectsLR<void> Validate() const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
@@ -397,8 +382,7 @@ namespace Tangent
 			uint16_t PublicKeySize = 0;
 
 			ExpectsLR<void> SetShare2(const Algorithm::Seckey SecretKey, const uint256_t& NewContributionSelectionHash, const Algorithm::Pubkeyhash NewProposer, const Algorithm::Composition::CPubkey PublicKey1);
-			ExpectsLR<void> Prevalidate() const override;
-			ExpectsLR<void> Validate(const Ledger::TransactionContext* Context) const override;
+			ExpectsLR<void> Validate() const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
@@ -420,8 +404,7 @@ namespace Tangent
 			Algorithm::Pubkey CipherPublicKey1 = { 0 };
 			Algorithm::Pubkey CipherPublicKey2 = { 0 };
 
-			ExpectsLR<void> Prevalidate() const override;
-			ExpectsLR<void> Validate(const Ledger::TransactionContext* Context) const override;
+			ExpectsLR<void> Validate() const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
@@ -443,8 +426,7 @@ namespace Tangent
 			String EncryptedSecretKey1;
 
 			ExpectsLR<void> SetRevealingShare1(const Ledger::TransactionContext* Context, const uint256_t& ContributionDeallocationHash, const Algorithm::Seckey SecretKey);
-			ExpectsLR<void> Prevalidate() const override;
-			ExpectsLR<void> Validate(const Ledger::TransactionContext* Context) const override;
+			ExpectsLR<void> Validate() const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
@@ -467,8 +449,7 @@ namespace Tangent
 			String EncryptedSecretKey2;
 
 			ExpectsLR<void> SetRevealingShare2(const Ledger::TransactionContext* Context, const uint256_t& ContributionDeselectionHash, const Algorithm::Seckey SecretKey);
-			ExpectsLR<void> Prevalidate() const override;
-			ExpectsLR<void> Validate(const Ledger::TransactionContext* Context) const override;
+			ExpectsLR<void> Validate() const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
@@ -494,8 +475,7 @@ namespace Tangent
 			Decimal OutgoingAbsoluteFee = Decimal::Zero();
 			Decimal OutgoingRelativeFee = Decimal::Zero();
 
-			ExpectsLR<void> Prevalidate() const override;
-			ExpectsLR<void> Validate(const Ledger::TransactionContext* Context) const override;
+			ExpectsLR<void> Validate() const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
@@ -514,8 +494,7 @@ namespace Tangent
 			Algorithm::Pubkeyhash Proposer = { 0 };
 			Decimal Value;
 
-			ExpectsLR<void> Prevalidate() const override;
-			ExpectsLR<void> Validate(const Ledger::TransactionContext* Context) const override;
+			ExpectsLR<void> Validate() const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
 			bool StoreBody(Format::Stream* Stream) const override;

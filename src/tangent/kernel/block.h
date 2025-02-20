@@ -362,10 +362,8 @@ namespace Tangent
 			}
 
 		public:
-			static ExpectsLR<void> PrevalidateTx(const Ledger::Transaction* NewTransaction, const uint256_t& NewTransactionHash, Algorithm::Pubkeyhash Owner);
-			static ExpectsLR<TransactionContext> ValidateTx(Ledger::Block* NewBlock, const Ledger::EvaluationContext* NewEnvironment, const Ledger::Transaction* NewTransaction, const uint256_t& NewTransactionHash, BlockWork& Cache);
-			static ExpectsLR<TransactionContext> ValidateTx(Ledger::Block* NewBlock, const Ledger::EvaluationContext* NewEnvironment, const Ledger::Transaction* NewTransaction, const uint256_t& NewTransactionHash, const Algorithm::Pubkeyhash Owner, BlockWork& Cache);
-			static ExpectsLR<void> ExecuteTx(TransactionContext& Context, size_t TransactionSize, uint8_t Flags);
+			static ExpectsLR<void> ValidateTx(const Ledger::Transaction* NewTransaction, const uint256_t& NewTransactionHash, Algorithm::Pubkeyhash Owner);
+			static ExpectsLR<TransactionContext> ExecuteTx(Ledger::Block* NewBlock, const Ledger::EvaluationContext* NewEnvironment, const Ledger::Transaction* NewTransaction, const uint256_t& NewTransactionHash, const Algorithm::Pubkeyhash Owner, BlockWork& Cache, size_t TransactionSize, uint8_t Flags);
 			static ExpectsLR<uint256_t> CalculateTxGas(const Ledger::Transaction* Transaction);
 			static ExpectsPromiseRT<void> DispatchTx(const Wallet& Proposer, Ledger::BlockTransaction* Transaction, Vector<UPtr<Ledger::Transaction>>* Pipeline);
 		};

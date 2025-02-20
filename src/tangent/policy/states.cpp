@@ -1317,7 +1317,7 @@ namespace Tangent
 				return LayerException("invalid child transaction hash");
 
 			if (PrevState != nullptr)
-				return LayerException("event already exists");
+				return LayerException("event already finalized");
 
 			return Expectation::Met;
 		}

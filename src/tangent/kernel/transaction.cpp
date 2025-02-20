@@ -6,7 +6,7 @@ namespace Tangent
 {
 	namespace Ledger
 	{
-		ExpectsLR<void> Transaction::Prevalidate() const
+		ExpectsLR<void> Transaction::Validate() const
 		{
 			if (!Algorithm::Asset::IsValid(Asset))
 				return LayerException("invalid asset");
@@ -29,7 +29,7 @@ namespace Tangent
 
 			return Expectation::Met;
 		}
-		ExpectsLR<void> Transaction::Validate(const TransactionContext* Context) const
+		ExpectsLR<void> Transaction::Execute(TransactionContext* Context) const
 		{
 			auto SequenceRequirement = Context->VerifyAccountSequence();
 			if (!SequenceRequirement)
@@ -167,7 +167,7 @@ namespace Tangent
 			return 0;
 		}
 
-		ExpectsLR<void> DelegationTransaction::Validate(const TransactionContext* Context) const
+		ExpectsLR<void> DelegationTransaction::Execute(TransactionContext* Context) const
 		{
 			return Context->VerifyAccountSequence();
 		}
@@ -176,7 +176,7 @@ namespace Tangent
 			return TransactionLevel::Delegation;
 		}
 
-		ExpectsLR<void> ConsensusTransaction::Validate(const TransactionContext* Context) const
+		ExpectsLR<void> ConsensusTransaction::Execute(TransactionContext* Context) const
 		{
 			auto SequenceRequirement = Context->VerifyAccountSequence();
 			if (!SequenceRequirement)
@@ -189,7 +189,7 @@ namespace Tangent
 			return TransactionLevel::Consensus;
 		}
 
-		ExpectsLR<void> AggregationTransaction::Prevalidate() const
+		ExpectsLR<void> AggregationTransaction::Validate() const
 		{
 			if (!Algorithm::Asset::IsValid(Asset))
 				return LayerException("invalid asset");
@@ -241,7 +241,7 @@ namespace Tangent
 
 			return Expectation::Met;
 		}
-		ExpectsLR<void> AggregationTransaction::Validate(const TransactionContext* Context) const
+		ExpectsLR<void> AggregationTransaction::Execute(TransactionContext* Context) const
 		{
 			size_t BranchIndex = 0;
 			for (auto& Branch : OutputHashes)
@@ -791,6 +791,16 @@ namespace Tangent
 		{
 			for (auto& Item : Events)
 			{
+				if (Item.first == Type && !Offset--)
+					return &Item.second;
+			}
+			return nullptr;
+		}
+		const Format::Variables* Receipt::ReverseFindEvent(uint32_t Type, size_t Offset) const
+		{
+			for (auto It = Events.rbegin(); It != Events.rend(); ++It)
+			{
+				auto& Item = *It;
 				if (Item.first == Type && !Offset--)
 					return &Item.second;
 			}

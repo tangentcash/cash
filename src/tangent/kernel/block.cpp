@@ -773,29 +773,20 @@ namespace Tangent
 			BlockWork Cache;
 			for (auto& Item : Environment->Incoming)
 			{
-				auto Validation = TransactionContext::ValidateTx(this, Environment, *Item.Candidate, Item.Hash, Item.Owner, Cache);
-				if (!Validation)
+				auto Execution = TransactionContext::ExecuteTx(this, Environment, *Item.Candidate, Item.Hash, Item.Owner, Cache, Item.Size, Item.Candidate->Conservative ? 0 : (uint8_t)TransactionContext::ExecutionFlags::OnlySuccessful);
+				if (Execution)
+				{
+					auto& Blob = Transactions.emplace_back();
+					Blob.Transaction = std::move(Item.Candidate);
+					Blob.Receipt = std::move(Execution->Receipt);
+					States.Commit();
+				}
+				else
 				{
 					if (Errors != nullptr)
-						Errors->append(Stringify::Text("\n  in transaction %s validation error: %s", Algorithm::Encoding::Encode0xHex256(Item.Hash).c_str(), Validation.Error().what()));
-				Cleanup:
+						Errors->append(Stringify::Text("\n  in transaction %s execution error: %s", Algorithm::Encoding::Encode0xHex256(Item.Hash).c_str(), Execution.Error().what()));
 					Environment->Outgoing.push_back(Item.Hash);
-					continue;
 				}
-
-				auto& Context = *Validation;
-				auto Finalization = TransactionContext::ExecuteTx(Context, Item.Size, Item.Candidate->Conservative ? 0 : (uint8_t)TransactionContext::ExecutionFlags::OnlySuccessful);
-				if (!Finalization)
-				{
-					if (Errors != nullptr)
-						Errors->append(Stringify::Text("\n  in transaction %s execution error: %s", Algorithm::Encoding::Encode0xHex256(Item.Hash).c_str(), Finalization.Error().what()));
-					goto Cleanup;
-				}
-
-				auto& Blob = Transactions.emplace_back();
-				Blob.Transaction = std::move(Item.Candidate);
-				Blob.Receipt = std::move(Context.Receipt);
-				States.Commit();
 			}
 
 			if (Transactions.empty())
@@ -2625,25 +2616,16 @@ namespace Tangent
 
 			return Transaction->GasPrice * GetGasUse().ToDecimal();
 		}
-		ExpectsLR<void> TransactionContext::PrevalidateTx(const Ledger::Transaction* NewTransaction, const uint256_t& NewTransactionHash, Algorithm::Pubkeyhash Owner)
+		ExpectsLR<void> TransactionContext::ValidateTx(const Ledger::Transaction* NewTransaction, const uint256_t& NewTransactionHash, Algorithm::Pubkeyhash Owner)
 		{
 			VI_ASSERT(NewTransaction && Owner, "transaction and owner should be set");
 			Algorithm::Pubkeyhash Null = { 0 };
 			if (!Algorithm::Signing::RecoverHash(NewTransactionHash, Owner, NewTransaction->Signature) || !memcmp(Owner, Null, sizeof(Null)))
 				return LayerException("invalid signature");
 
-			return NewTransaction->Prevalidate();
+			return NewTransaction->Validate();
 		}
-		ExpectsLR<TransactionContext> TransactionContext::ValidateTx(Ledger::Block* NewBlock, const Ledger::EvaluationContext* NewEnvironment, const Ledger::Transaction* NewTransaction, const uint256_t& NewTransactionHash, BlockWork& Cache)
-		{
-			VI_ASSERT(NewBlock && NewEnvironment && NewTransaction, "block, utilization and transaction should be set");
-			Algorithm::Pubkeyhash Null = { 0 }, Owner;
-			if (!Algorithm::Signing::RecoverHash(NewTransaction->AsPayload().Hash(), Owner, NewTransaction->Signature) || !memcmp(Owner, Null, sizeof(Null)))
-				return LayerException("invalid signature");
-
-			return ValidateTx(NewBlock, NewEnvironment, NewTransaction, NewTransactionHash, Owner, Cache);
-		}
-		ExpectsLR<TransactionContext> TransactionContext::ValidateTx(Ledger::Block* NewBlock, const Ledger::EvaluationContext* NewEnvironment, const Ledger::Transaction* NewTransaction, const uint256_t& NewTransactionHash, const Algorithm::Pubkeyhash Owner, BlockWork& Cache)
+		ExpectsLR<TransactionContext> TransactionContext::ExecuteTx(Ledger::Block* NewBlock, const Ledger::EvaluationContext* NewEnvironment, const Ledger::Transaction* NewTransaction, const uint256_t& NewTransactionHash, const Algorithm::Pubkeyhash Owner, BlockWork& Cache, size_t TransactionSize, uint8_t Flags)
 		{
 			VI_ASSERT(NewBlock && NewEnvironment && NewTransaction && Owner, "block, env, transaction and owner should be set");
 			Ledger::Receipt NewReceipt;
@@ -2653,39 +2635,26 @@ namespace Tangent
 			NewReceipt.BlockNumber = NewBlock->Number;
 			memcpy(NewReceipt.From, Owner, sizeof(NewReceipt.From));
 
-			auto Prevalidation = NewTransaction->Prevalidate();
-			if (!Prevalidation)
-				return Prevalidation.Error();
+			auto Validation = NewTransaction->Validate();
+			if (!Validation)
+				return Validation.Error();
 
 			TransactionContext Context = TransactionContext(NewBlock, NewEnvironment, NewTransaction, std::move(NewReceipt));
 			Context.Delta.Incoming = &Cache;
 
-			auto Validation = Context.Transaction->Validate(&Context);
-			if (!Validation)
-			{
-				Context.EmitEvent(0, { Format::Variable(Validation.What()) }, false);
-				if (!Context.Transaction->Conservative)
-					return Validation.Error();
-			}
-
-			return ExpectsLR<TransactionContext>(std::move(Context));
-		}
-		ExpectsLR<void> TransactionContext::ExecuteTx(TransactionContext& Context, size_t TransactionSize, uint8_t Flags)
-		{
-			VI_ASSERT(Context.Block && Context.Delta.Outgoing && Context.Environment && Context.Transaction, "block, outgoing delta, utilization and transaction should be set");
 			auto Deployment = Context.BurnGas(TransactionSize * (size_t)GasCost::WriteByte);
 			if (!Deployment)
-				return Deployment;
+				return Deployment.Error();
 
 			bool Discard = (Context.Receipt.Events.size() == 1 && Context.Receipt.Events.front().first == 0 && Context.Receipt.Events.front().second.size() == 1);
-			auto Status = Discard ? ExpectsLR<void>(LayerException(Context.Receipt.Events.front().second.front().AsBlob())) : Context.Transaction->Execute(&Context);
-			Context.Receipt.Successful = !!Status;
+			auto Execution = Discard ? ExpectsLR<void>(LayerException(Context.Receipt.Events.front().second.front().AsBlob())) : Context.Transaction->Execute(&Context);
+			Context.Receipt.Successful = !!Execution;
 			if (!Context.Receipt.Successful)
 				Context.Delta.Outgoing->Rollback();
 			if (Discard)
 				Context.Receipt.Events.clear();
 			if ((Flags & (uint8_t)ExecutionFlags::OnlySuccessful) && !Context.Receipt.Successful)
-				return Status;
+				return Execution.Error();
 
 			if (!(Flags & (uint8_t)ExecutionFlags::SkipSequencing) && Context.Transaction->GetType() != TransactionLevel::Aggregation)
 			{
@@ -2722,11 +2691,11 @@ namespace Tangent
 					Context.Block->SetWitnessRequirement(Item.first, Item.second);
 			}
 			else
-				Context.EmitEvent(0, { Format::Variable(Status.What()) }, false);
+				Context.EmitEvent(0, { Format::Variable(Execution.What()) }, false);
 
 			Context.Block->GasUse += Context.Receipt.RelativeGasUse;
 			Context.Block->GasLimit += Context.Transaction->GasLimit;
-			return Expectation::Met;
+			return ExpectsLR<TransactionContext>(std::move(Context));
 		}
 		ExpectsLR<uint256_t> TransactionContext::CalculateTxGas(const Ledger::Transaction* Transaction)
 		{
@@ -2757,23 +2726,15 @@ namespace Tangent
 			memcpy(TempEnvironment.Proposer.PublicKeyHash, PublicKeyHash, sizeof(Algorithm::Pubkeyhash));
 
 			Ledger::BlockWork Cache;
-			auto Prevalidation = Transaction->Prevalidate();
-			if (!Prevalidation)
-			{
-				RevertTransaction();
-				return Prevalidation.Error();
-			}
-
-			auto Validation = TransactionContext::ValidateTx(&TempBlock, &TempEnvironment, Transaction, Transaction->AsHash(), Owner, Cache);
+			auto Validation = Transaction->Validate();
 			if (!Validation)
 			{
 				RevertTransaction();
 				return Validation.Error();
 			}
 
-			auto& Context = *Validation;
 			size_t TransactionSize = Transaction->AsMessage().Data.size();
-			auto Execution = TransactionContext::ExecuteTx(Context, TransactionSize, (uint8_t)TransactionContext::ExecutionFlags::SkipSequencing);
+			auto Execution = TransactionContext::ExecuteTx(&TempBlock, &TempEnvironment, Transaction, Transaction->AsHash(), Owner, Cache, TransactionSize, (uint8_t)TransactionContext::ExecutionFlags::SkipSequencing);
 			if (!Execution)
 			{
 				RevertTransaction();
@@ -2781,7 +2742,7 @@ namespace Tangent
 			}
 
 			RevertTransaction();
-			auto Gas = Context.Receipt.RelativeGasUse;
+			auto Gas = Execution->Receipt.RelativeGasUse;
 			Gas -= Gas % 1000;
 			return Gas + 1000;
 		}

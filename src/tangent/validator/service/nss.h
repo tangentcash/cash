@@ -75,6 +75,7 @@ namespace Tangent
 			ExpectsLR<String> NewPublicKeyHash(const Algorithm::AssetId& Asset, const std::string_view& Address);
 			ExpectsLR<String> SignMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const PrivateKey& SigningKey);
 			ExpectsLR<void> VerifyMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const std::string_view& VerifyingKey, const std::string_view& Signature);
+			ExpectsLR<void> EnableSigningWallet(const Algorithm::AssetId& Asset, const Mediator::MasterWallet& Wallet, const Mediator::DerivedSigningWallet& SigningWallet);
 			ExpectsLR<void> EnableCheckpointHeight(const Algorithm::AssetId& Asset, uint64_t BlockHeight);
 			ExpectsLR<void> EnableContractAddress(const Algorithm::AssetId& Asset, const std::string_view& ContractAddress);
 			ExpectsLR<void> EnableWalletAddress(const Algorithm::AssetId& Asset, const std::string_view& Binding, const std::string_view& Address, uint64_t AddressIndex);

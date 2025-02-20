@@ -33,9 +33,8 @@ namespace Tangent
 			uint64_t Sequence = 0;
 			bool Conservative = false;
 
-			virtual ExpectsLR<void> Prevalidate() const;
-			virtual ExpectsLR<void> Validate(const TransactionContext* Context) const;
-			virtual ExpectsLR<void> Execute(TransactionContext* Context) const = 0;
+			virtual ExpectsLR<void> Validate() const;
+			virtual ExpectsLR<void> Execute(TransactionContext* Context) const;
 			virtual ExpectsPromiseRT<void> Dispatch(const Wallet& Proposer, const TransactionContext* Context, Vector<UPtr<Transaction>>* Pipeline) const;
 			virtual bool StorePayload(Format::Stream* Stream) const override;
 			virtual bool LoadPayload(Format::Stream& Stream) override;
@@ -61,13 +60,13 @@ namespace Tangent
 
 		struct DelegationTransaction : Transaction
 		{
-			virtual ExpectsLR<void> Validate(const TransactionContext* Context) const override;
+			virtual ExpectsLR<void> Execute(TransactionContext* Context) const override;
 			TransactionLevel GetType() const override;
 		};
 
 		struct ConsensusTransaction : Transaction
 		{
-			virtual ExpectsLR<void> Validate(const TransactionContext* Context) const override;
+			virtual ExpectsLR<void> Execute(TransactionContext* Context) const override;
 			TransactionLevel GetType() const override;
 		};
 
@@ -91,8 +90,8 @@ namespace Tangent
 			OrderedMap<uint256_t, CumulativeBranch> OutputHashes;
 			uint256_t InputHash = 0;
 
-			virtual ExpectsLR<void> Prevalidate() const override;
-			virtual ExpectsLR<void> Validate(const TransactionContext* Context) const override;
+			virtual ExpectsLR<void> Validate() const override;
+			virtual ExpectsLR<void> Execute(TransactionContext* Context) const override;
 			virtual bool StorePayload(Format::Stream* Stream) const override;
 			virtual bool LoadPayload(Format::Stream& Stream) override;
 			virtual bool Sign(const Algorithm::Seckey SecretKey) override;
@@ -137,6 +136,7 @@ namespace Tangent
 			bool IsFromNull() const;
 			void EmitEvent(uint32_t Type, Format::Variables&& Values);
 			const Format::Variables* FindEvent(uint32_t Type, size_t Offset = 0) const;
+			const Format::Variables* ReverseFindEvent(uint32_t Type, size_t Offset = 0) const;
 			Option<String> GetErrorMessages() const;
 			UPtr<Schema> AsSchema() const override;
 			uint32_t AsType() const override;
@@ -152,6 +152,11 @@ namespace Tangent
 			const Format::Variables* FindEvent(size_t Offset = 0) const
 			{
 				return FindEvent(T::AsInstanceType(), Offset);
+			}
+			template <typename T>
+			const Format::Variables* ReverseFindEvent(size_t Offset = 0) const
+			{
+				return ReverseFindEvent(T::AsInstanceType(), Offset);
 			}
 		};
 

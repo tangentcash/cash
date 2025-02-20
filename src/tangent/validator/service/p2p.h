@@ -197,7 +197,7 @@ namespace Tangent
 			bool AcceptBlock(Relay* From, Ledger::Block&& CandidateBlock, const uint256_t& ForkTip);
 			bool Accept(Option<SocketAddress>&& Address = Optional::None);
 			ExpectsLR<void> ProposeTransaction(Relay* From, UPtr<Ledger::Transaction>&& CandidateTx, uint64_t AccountSequence, uint256_t* OutputHash = nullptr);
-			ExpectsLR<void> AcceptTransaction(Relay* From, UPtr<Ledger::Transaction>&& CandidateTx, bool DeepValidation = false);
+			ExpectsLR<void> AcceptTransaction(Relay* From, UPtr<Ledger::Transaction>&& CandidateTx, bool ValidateExecution = false);
 			ExpectsLR<void> BroadcastTransaction(Relay* From, UPtr<Ledger::Transaction>&& CandidateTx, const Algorithm::Pubkeyhash Owner);
 			Relay* Find(const SocketAddress& Address);
 			size_t SizeOf(NodeType Type);

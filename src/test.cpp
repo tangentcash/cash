@@ -1212,23 +1212,23 @@ public:
 		};
 		NewBlockFromGenerator(*Data, &Generators::Commitments, Users, "0xa004030f97a9a1bacf2f1d2c8304ae7fd27e3cc262418406e27045e2c1bff232");
 		NewBlockFromGenerator(*Data, &Generators::Adjustments, Users, "0xcf86a27ab142a00ea12300fee506cac8078686f69e95deb24abc42d3bcb63dc9");
-		NewBlockFromGenerator(*Data, &Generators::AddressAccounts, Users, "0x47a7fe776be23cc56803768d0f6d33d28843a343573735e356df227c389beb15");
-		NewBlockFromGenerator(*Data, &Generators::PubkeyAccounts, Users, "0xfa3882ac083dcd337db78316477de35088a17623d225ecbc5d8d957d67193a85");
-		NewBlockFromGenerator(*Data, std::bind(&Generators::CommitmentOnline, std::placeholders::_1, std::placeholders::_2, 2), Users, "0x176061ca20a954637d0b0291cddee6709696aa8f0c99a5a4d17c49d99988a85c");
-		NewBlockFromGenerator(*Data, &Generators::Allocations, Users, "0xa749870399c7a3bba0d850f5146af46daa9d8262857bc8f52c403c6de5bb7bf1");
-		NewBlockFromGenerator(*Data, &Generators::Contributions, Users, "0xf7907bc7a000d7cd63fb9bc451b6ff5556b91fce0c0b3052ceeb0d9cc3969c1f");
-		NewBlockFromGenerator(*Data, &Generators::DelegatedCustodianAccounts, Users, "0xcc5aee0ef760f99849dfa164c41c2205e26a59b9fc72104dafb523670d4d2d25");
-		NewBlockFromGenerator(*Data, &Generators::Claims, Users, "0xa1f0588e74fa53253e4cf7e05bbcd80da576bd23b7505f7bd9e7adad125f4b03");
-		NewBlockFromGenerator(*Data, &Generators::Transfers, Users, "0xad15df3b581ea6fa7d56498c1030c71fc8b88321f5d097302e084bba98d8913e");
-		NewBlockFromGenerator(*Data, &Generators::Rollups, Users, "0x83f3d4e5fb53ae3adb6e2551eb87b413c307bca093c776d9f5ad99f0da14c60d");
-		NewBlockFromGenerator(*Data, &Generators::Deployments, Users, "0x0cf41ed09fcdfa76d50d964b512189e6ac443a24adf7430e9defb18182e8e649");
-		NewBlockFromGenerator(*Data, &Generators::Invocations, Users, "0xcc726643fc5aaa062ea10236d5743c74a8eccc3afb51520e51c5bb06a6866912");
-		NewBlockFromGenerator(*Data, &Generators::MigrationsStage1, Users, "0x0c00415852ef9023790f986eb1ab8376e7779b74e3a64ce4838fcb9682952e85");
-		NewBlockFromGenerator(*Data, &Generators::MigrationsStage2, Users, "0x0d557f1a6d34b43a9780844e21a1769684c27b90bedb07520a046ead8c0e7204");
-		NewBlockFromGenerator(*Data, &Generators::WithdrawalsStage1, Users, "0x45c78d81828ea3564fe2e9b1e6ccbe6e9f7194298936fa6997549de236badb44");
-		NewBlockFromGenerator(*Data, &Generators::WithdrawalsStage2, Users, "0x155ac02a080407434e127d3252f384f26a6371a0da66160a30b0443e97e2a1d2");
-		NewBlockFromGenerator(*Data, std::bind(&Generators::CommitmentOffline, std::placeholders::_1, std::placeholders::_2, 2), Users, "0x9685183b1c0b09adf4060a629ed929d1d16f23c8d533af733118fa7a1f1c5913");
-		NewBlockFromGenerator(*Data, &Generators::Deallocations, Users, "0x74eaa9b173e9bfd642f188e9af86cdaee9bd03def404f71d92b1974258ab6d68");
+		NewBlockFromGenerator(*Data, &Generators::AddressAccounts, Users, "0x20457dfb69c3f1ea6976beaccc4e1f51eb8c02efaed9a06e73d206792b891d43");
+		NewBlockFromGenerator(*Data, &Generators::PubkeyAccounts, Users, "0x8977d483ee3c574748d79b461a60dc3f362b2585056873fddc8a4f738961a146");
+		NewBlockFromGenerator(*Data, std::bind(&Generators::CommitmentOnline, std::placeholders::_1, std::placeholders::_2, 2), Users, "0x578f5a1f34b7eb253d3ae80faaef1c42b9bc4032de5c340552ac362233261f60");
+		NewBlockFromGenerator(*Data, &Generators::Allocations, Users, "0xaf540109f637459de2da593a369f14b55650e2011eef0bf4d6fc57131c1d688f");
+		NewBlockFromGenerator(*Data, &Generators::Contributions, Users, "0x374a5c22e95c95865e7ab77b8e8bd761e0adb643780a51a9aa65168f76607985");
+		NewBlockFromGenerator(*Data, &Generators::DelegatedCustodianAccounts, Users, "0xb6279bd5b6f967665ca5d0ca6bf8ee908e46d4ed45b537d9175367855896c202");
+		NewBlockFromGenerator(*Data, &Generators::Claims, Users, "0x9a8b816cc220b4f8926477f0407ff32088375add7b708eff008d942f22630093");
+		NewBlockFromGenerator(*Data, &Generators::Transfers, Users, "0x5f6dc5c1638c716e0d76803d1ee413c053361aa8642d7d1965ee5d0e5a5d2d88");
+		NewBlockFromGenerator(*Data, &Generators::Rollups, Users, "0x7056c97e442cbf35a004e6f87f727df6a7fbcaec5401b775070d39d6f28bd372");
+		NewBlockFromGenerator(*Data, &Generators::Deployments, Users, "0x737853c5a6351c3e0fdba068b84b577836813395131755e47334bcae4c86e289");
+		NewBlockFromGenerator(*Data, &Generators::Invocations, Users, "0x21f5198aa7075cf7ad2207f0a75207be307b99799c5e40867756b057ad7f3d65");
+		NewBlockFromGenerator(*Data, &Generators::MigrationsStage1, Users, "0x229d90661a16802ee4b60b7ce7bc227f9af8ea16c7fe58d6d18b68b10bcd2785");
+		NewBlockFromGenerator(*Data, &Generators::MigrationsStage2, Users, "0x7f63a8f2d726d2a8b785396af2ca061781565f24ae0e542aa4ca5e4d2c2d9305");
+		NewBlockFromGenerator(*Data, &Generators::WithdrawalsStage1, Users, "0x1be6be5d11774198a95426ef82959d6849b0184524c83886c090bd777254f7ba");
+		NewBlockFromGenerator(*Data, &Generators::WithdrawalsStage2, Users, "0xb3e6dfb2356b137eb4e6bae1e0f3983a793574a8f7ca7e900293be407df1889f");
+		NewBlockFromGenerator(*Data, std::bind(&Generators::CommitmentOffline, std::placeholders::_1, std::placeholders::_2, 2), Users, "0x027359f5971fdaf27284f728e22a5739d263faef78212737eadd1782ffb1b860");
+		NewBlockFromGenerator(*Data, &Generators::Deallocations, Users, "0xc7be840b690453ca96a39034b6d08a91a3d2f418b714aa08d4ab90365c7c7580");
 		if (Userdata != nullptr)
 			*Userdata = std::move(Users);
 		else
@@ -1252,13 +1252,13 @@ public:
 		};
 		NewBlockFromGenerator(*Data, &Generators::Commitments, Users, "0x80c0c8bedd1cf81dbf74b17fb3308fcd807c586546e4b9096b4f90484dec4e59");
 		NewBlockFromGenerator(*Data, &Generators::Adjustments, Users, "0x0cef756f9bd46b9c7a5601c8cf91ba95ae343ddc198850226eff42b29b874191");
-		NewBlockFromGenerator(*Data, &Generators::AddressAccounts, Users, "0xddb2c1c697d6d8c1fbff140dc5c7784d0dc4330659c88f757a336ed762c316a0");
-		NewBlockFromGenerator(*Data, &Generators::DelegatedCustodianAccounts, Users, "0x8855cf2ab9f0c755fbeb4b58201dd842a8cfd62ffc65b05fc1230cf47c2a186e");
-		NewBlockFromGenerator(*Data, &Generators::Claims, Users, "0x170d8da0912a64fd7794361c6a61af4ff5e64b2a8a0cdbda31d88253755bb2c8");
-		NewBlockFromGenerator(*Data, &Generators::Transfers, Users, "0x5fc735fd39a798942279b939a8c00cf19f57feb5334908a496e3ef66f9a0c61a");
-		NewBlockFromGenerator(*Data, &Generators::Rollups, Users, "0x84a1816aa30093303aa74e8bb3d0cf677ae36ee35f6f16901bd824ead673fe6f");
-		NewBlockFromGenerator(*Data, std::bind(&Generators::CommitmentOffline, std::placeholders::_1, std::placeholders::_2, 0), Users, "0x600982d2d91e32fb1b81a19e1db0509c66f8189ebae24abf28e24a2c0ac64a05");
-		NewBlockFromGenerator(*Data, std::bind(&Generators::TransferToWallet, std::placeholders::_1, std::placeholders::_2, 0, Algorithm::Asset::IdOf("BTC"), "tcrt1xrzy5qh6vs7phqnrft5se2sps8wyvr4u8tphzwl", 0.1), Users, "0x41c87d84cd623c648c9be656a8d550d472cbc8063bd10eb6c61c52fb3937c4f3");
+		NewBlockFromGenerator(*Data, &Generators::AddressAccounts, Users, "0x7a385502c58b86b8044ed05b798cd9b571cdeaa040011641279ef6d5b8ab9282");
+		NewBlockFromGenerator(*Data, &Generators::DelegatedCustodianAccounts, Users, "0x46dd379ee996ef952a688f0b4a0155c1f43f1a2ab94a8afe5879e217259b7d5b");
+		NewBlockFromGenerator(*Data, &Generators::Claims, Users, "0xbad64e02f1dd2732605892525d58c9a554f9e29b4d7f941bacadafbb6ee8b107");
+		NewBlockFromGenerator(*Data, &Generators::Transfers, Users, "0x172903b0aea42b99600523c9b65cd5a239ebc33512c4cf75eb1210751f019207");
+		NewBlockFromGenerator(*Data, &Generators::Rollups, Users, "0xec04cc37780fdd60b1758f51fa983077dafce77dc492ec7d0f50a88e30e9ba7f");
+		NewBlockFromGenerator(*Data, std::bind(&Generators::CommitmentOffline, std::placeholders::_1, std::placeholders::_2, 0), Users, "0x5f7b13b56c433b9df8673cc3b7e9bab08f5a5c2802440c8193d6ed29266f6af7");
+		NewBlockFromGenerator(*Data, std::bind(&Generators::TransferToWallet, std::placeholders::_1, std::placeholders::_2, 0, Algorithm::Asset::IdOf("BTC"), "tcrt1xrzy5qh6vs7phqnrft5se2sps8wyvr4u8tphzwl", 0.1), Users, "0x2bedd6f0a1edc81d29d3756025504e59956c66ec09efac698bf1e7696dd70afd");
 		if (Userdata != nullptr)
 			*Userdata = std::move(Users);
 		else
@@ -1388,7 +1388,7 @@ public:
 		auto Block = NewBlockFromList(Results, std::move(Transactions), Users);
 		auto Hash = Algorithm::Encoding::Encode0xHex256(Block.StateRoot);
 		if (Results != nullptr)
-			Console::Get()->WriteLine(Hash);
+			Console::Get()->fWriteLine("%02" PRIu64 ": %s", Block.Number, Hash.c_str());
 
 		VI_PANIC(StateRootHash.empty() || StateRootHash == Hash, "block state root deviation");
 		return Block;
@@ -2097,21 +2097,7 @@ public:
 		auto* Queue = Schedule::Get();
 		Queue->Start(Schedule::Desc());
 
-		if (argc > 1 && !strcmp(argv[1], "calibrate"))
-		{
-			auto Alg = Algorithm::WVDF::Calibrate(4);
-			Console::Get()->fWriteLine(
-				"calibration alg:\n"
-				"  length: %i\n"
-				"  bits: %i\n"
-				"  pow: %llu\n"
-				"  difficulty: %s",
-				Alg.Length, Alg.Bits, Alg.Pow,
-				Alg.Difficulty().ToString().c_str());
-			Algorithm::WVDF::SetDefault(Alg);
-		}
-
-		const size_t BlockCount = 1920;
+		const size_t BlockCount = 72960;//1920;
 		const size_t TransactionCount = (size_t)(uint64_t)(Ledger::Block::GetGasLimit() / Transactions::Transfer().GetGasEstimate());
 		const Decimal StartingAccountBalance = Decimal(500).Truncate(12);
 		auto Checkpoint = [&](Vector<UPtr<Ledger::Transaction>>&& Transactions, Vector<Tests::Account>& Users)
@@ -2122,8 +2108,8 @@ public:
 			auto Time = Term->GetCapturedTime();
 			CumulativeTransactionCount += Block.TransactionCount;
 			CumulativeStateCount += Block.StateCount;
-			Term->fWriteLine("%s = (n: %" PRIu64 ", d: %s / %.2f ms, t: %" PRIu64 " / %.2f hz, s: %" PRIu64 " / %.2f hz, q: %" PRIu64 " / %.2f hz)",
-				Algorithm::Encoding::Encode0xHex256(Block.AsHash()).c_str(), Block.Number,
+			Term->fWriteLine("%05" PRIu64 ": %s = (d: %s / %.2f ms, t: %" PRIu64 " / %.2f hz, s: %" PRIu64 " / %.2f hz, q: %" PRIu64 " / %.2f hz)",
+				Block.Number, Algorithm::Encoding::Encode0xHex256(Block.AsHash()).c_str(),
 				Block.Target.Difficulty().ToString().c_str(), Time,
 				CumulativeTransactionCount, 1000.0 * (double)Block.TransactionCount / Time,
 				CumulativeStateCount, 1000.0 * (double)Block.StateCount / Time,

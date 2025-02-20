@@ -418,7 +418,7 @@ namespace Tangent
 
 				auto Finalization = Checkpoint(EvaluatedBlock, true);
 				if (!Finalization)
-					return LayerException("block " + ToString(CurrentNumber) + " finalization failed: " + Finalization.Error().message());
+					return LayerException("block " + ToString(CurrentNumber) + " checkpoint failed: " + Finalization.Error().message());
 
 				if (Protocol::Now().User.Storage.Logging)
 					VI_INFO("[chainstate] reorganization checkpoint at block number %" PRIu64 " (statetrie: +%i)", CurrentNumber, EvaluatedBlock.StateCount);

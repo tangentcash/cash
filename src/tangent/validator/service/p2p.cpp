@@ -1910,7 +1910,7 @@ namespace Tangent
 				return Status;
 			}
 		}
-		ExpectsLR<void> ServerNode::AcceptTransaction(Relay* From, UPtr<Ledger::Transaction>&& CandidateTx, bool DeepValidation)
+		ExpectsLR<void> ServerNode::AcceptTransaction(Relay* From, UPtr<Ledger::Transaction>&& CandidateTx, bool ValidateExecution)
 		{
 			auto Purpose = CandidateTx->AsTypename();
 			auto CandidateHash = CandidateTx->AsHash();
@@ -1926,21 +1926,21 @@ namespace Tangent
 			if (!CandidateTx->RecoverHash(Owner))
 			{
 				if (Protocol::Now().User.P2P.Logging)
-					VI_WARN("[p2p] transaction %s %.*s prevalidation failed: invalid signature", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str(), (int)Purpose.size(), Purpose.data());
+					VI_WARN("[p2p] transaction %s %.*s validation failed: invalid signature", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str(), (int)Purpose.size(), Purpose.data());
 				return LayerException("signature key recovery failed");
 			}
 
-			Algorithm::Pubkeyhash PrevalidationOwner;
-			auto Prevalidation = Ledger::TransactionContext::PrevalidateTx(*CandidateTx, CandidateHash, PrevalidationOwner);
-			if (!Prevalidation)
+			Algorithm::Pubkeyhash ValidationOwner;
+			auto Validation = Ledger::TransactionContext::ValidateTx(*CandidateTx, CandidateHash, ValidationOwner);
+			if (!Validation)
 			{
 				if (Protocol::Now().User.P2P.Logging)
-					VI_WARN("[p2p] transaction %s %.*s prevalidation failed: %s", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str(), (int)Purpose.size(), Purpose.data(), Prevalidation.Error().what());
-				return Prevalidation.Error();
+					VI_WARN("[p2p] transaction %s %.*s validation failed: %s", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str(), (int)Purpose.size(), Purpose.data(), Validation.Error().what());
+				return Validation.Error();
 			}
 
 			bool Event = CandidateTx->IsConsensus() && !memcmp(Validator.Wallet.PublicKeyHash, Owner, sizeof(Owner));
-			if (Event || DeepValidation)
+			if (Event || ValidateExecution)
 			{
 				Ledger::Block TempBlock;
 				TempBlock.Number = std::numeric_limits<int64_t>::max() - 1;
@@ -1949,11 +1949,12 @@ namespace Tangent
 				memcpy(TempEnvironment.Proposer.PublicKeyHash, Validator.Wallet.PublicKeyHash, sizeof(Algorithm::Pubkeyhash));
 
 				Ledger::BlockWork Cache;
-				auto Validation = Ledger::TransactionContext::ValidateTx(&TempBlock, &TempEnvironment, *CandidateTx, CandidateHash, Cache);
+				size_t TransactionSize = CandidateTx->AsMessage().Data.size();
+				auto Validation = Ledger::TransactionContext::ExecuteTx(&TempBlock, &TempEnvironment, *CandidateTx, CandidateHash, Owner, Cache, TransactionSize, (uint8_t)Ledger::TransactionContext::ExecutionFlags::OnlySuccessful);
 				if (!Validation)
 				{
 					if (Protocol::Now().User.P2P.Logging)
-						VI_WARN("[p2p] transaction %s %.*s validation failed: %s", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str(), (int)Purpose.size(), Purpose.data(), Validation.Error().what());
+						VI_WARN("[p2p] transaction %s %.*s pre-execution failed: %s", Algorithm::Encoding::Encode0xHex256(CandidateHash).c_str(), (int)Purpose.size(), Purpose.data(), Validation.Error().what());
 					return Validation.Error();
 				}
 			}

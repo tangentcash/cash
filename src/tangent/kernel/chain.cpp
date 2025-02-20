@@ -781,6 +781,8 @@ namespace Tangent
 				Account.AddressVersion = 0x6;
 				Policy.AccountContributionRequired = 0.0;
 				Policy.AccountGasWorkRequired = 0.0;
+				Policy.ConsensusProofTime = 30;
+				Policy.TransactionThroughput = 21000;
 				User.NSS.WithdrawalTime = Policy.ConsensusProofTime;
 				break;
 			case Tangent::NetworkType::Testnet:
