@@ -1,12 +1,10 @@
 #include "chain.h"
 #include "script.h"
-#ifdef TAN_VALIDATOR
 #include "../validator/storage/chainstate.h"
 #include "../validator/service/nss.h"
 #ifdef TAN_ROCKSDB
 #include "rocksdb/db.h"
 #include "rocksdb/table.h"
-#endif
 #endif
 #define KEY_FRONT 32
 #define KEY_BACK 32
@@ -115,7 +113,7 @@ namespace Tangent
 		String Address = Stringify::Text("%s%.*sdb", TargetPath.c_str(), (int)Location.size(), Location.data());
 		auto It = Blobs.find(Address);
 		if (It != Blobs.end() && It->second)
-			return It->second.get();
+			return It->second;
 		
 		rocksdb::DB* Result = nullptr;
 		auto Status = rocksdb::DB::Open(BlobStorageConfiguration(Protocol::Now().User.Storage.BlobCacheSize), std::string(Address.begin(), Address.end()), &Result);
@@ -130,7 +128,7 @@ namespace Tangent
 		if (Protocol::Now().User.Storage.Logging)
 			VI_DEBUG("[blobdb] wal append on %s (handle: 0x%" PRIXPTR ")", Address.c_str(), (uintptr_t)Result);
 
-		Blobs[Address] = std::unique_ptr<rocksdb::DB>(Result);
+		Blobs[Address] = Result;
 		return Result;
 #else
 		return nullptr;
@@ -181,18 +179,23 @@ namespace Tangent
 	void Repository::Reset()
 	{
 		UMutex<std::mutex> Unique(Mutex);
+#ifdef TAN_ROCKSDB
+		for (auto& Handle : Blobs)
+			delete Handle.second;
+#endif
 		Blobs.clear();
 		Indices.clear();
 		TargetPath.clear();
 	}
 	void Repository::Checkpoint()
 	{
+#ifdef TAN_ROCKSDB
 		UMutex<std::mutex> Unique(Mutex);
 		for (auto& Handle : Blobs)
 		{
 			if (!Handle.second)
 				continue;
-#ifdef TAN_VALIDATOR
+
 			rocksdb::FlushOptions Options;
 			Options.allow_write_stall = true;
 			Options.wait = true;
@@ -205,8 +208,8 @@ namespace Tangent
 				else
 					VI_ERR("[blobdb] wal checkpoint error on: %s (location: %s)", Status.ToString().c_str(), Handle.first.c_str());
 			}
-#endif
 		}
+#endif
 		for (auto& Queue : Indices)
 		{
 			if (Queue.second.empty())
@@ -406,7 +409,6 @@ namespace Tangent
 
 	Protocol::Protocol(const std::string_view& ConfigPath)
 	{
-#ifdef TAN_VALIDATOR
 		auto Module = OS::Directory::GetModule();
 		Path = OS::Path::Resolve(ConfigPath, *Module, true).Or(String(ConfigPath));
 		ErrorHandling::SetFlag(LogOption::Pretty, true);
@@ -753,9 +755,6 @@ namespace Tangent
 		}
 
 		Instance = this;
-		if (Config && User.Storage.Logging)
-			VI_DEBUG("[chain] open handle: %s", Path.c_str());
-
 		auto VectorstateBase = Database.Resolve(User.Network, User.Storage.Directory) + User.Vectorstate;
 		auto VectorstatePath = OS::Path::Resolve(OS::Path::Resolve(VectorstateBase, *Module, true).Or(User.Vectorstate)).Or(User.Vectorstate);
 		auto VectorstateFile = OS::File::ReadAsString(VectorstatePath);
@@ -768,7 +767,6 @@ namespace Tangent
 		}
 		
 		Key.Use(User.Network, *VectorstateFile);
-#endif
 		switch (User.Network)
 		{
 			case Tangent::NetworkType::Regtest:
@@ -806,21 +804,15 @@ namespace Tangent
 		ErrorHandling::SetFlag(LogOption::Dated, true);
 		Uplinks::LinkInstance();
 		Algorithm::Signing::Initialize();
-#ifdef TAN_VALIDATOR
 		OS::Directory::SetWorking(Module->c_str());
-#endif
 	}
 	Protocol::~Protocol()
 	{
 		Database.Checkpoint();
-#ifdef TAN_VALIDATOR
-		if (!Path.empty() && User.Storage.Logging)
-			VI_DEBUG("[chain] close handle: %s", Path.c_str());
 		Storages::AccountCache::CleanupInstance();
 		Storages::UniformCache::CleanupInstance();
 		Storages::MultiformCache::CleanupInstance();
 		NSS::ServerNode::CleanupInstance();
-#endif
 		Ledger::ScriptHost::CleanupInstance();
 		Algorithm::Signing::Deinitialize();
 		ErrorHandling::SetCallback(nullptr);

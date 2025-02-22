@@ -23,7 +23,7 @@ namespace Tangent
 			Contribution
 		};
 
-		struct AccountSequence final : Ledger::Uniform
+		struct TAN_OUT AccountSequence final : Ledger::Uniform
 		{
 			Algorithm::Pubkeyhash Owner = { 0 };
 			uint64_t Sequence = 0;
@@ -43,7 +43,7 @@ namespace Tangent
 			static String AsInstanceIndex(const Algorithm::Pubkeyhash Owner);
 		};
 
-		struct AccountWork final : Ledger::Multiform
+		struct TAN_OUT AccountWork final : Ledger::Multiform
 		{
 			Algorithm::Pubkeyhash Owner = { 0 };
 			uint8_t Flags = 0;
@@ -77,7 +77,7 @@ namespace Tangent
 			static uint256_t GetAdjustedGasOutput(const uint256_t& GasUse, const uint256_t& GasPaid);
 		};
 
-		struct AccountObserver final : Ledger::Multiform
+		struct TAN_OUT AccountObserver final : Ledger::Multiform
 		{
 			Algorithm::AssetId Asset = 0;
 			Algorithm::Pubkeyhash Owner = { 0 };
@@ -101,7 +101,7 @@ namespace Tangent
 			static String AsInstanceRow(const Algorithm::AssetId& Asset);
 		};
 
-		struct AccountProgram final : Ledger::Uniform
+		struct TAN_OUT AccountProgram final : Ledger::Uniform
 		{
 			Algorithm::Pubkeyhash Owner = { 0 };
 			String Hashcode;
@@ -121,7 +121,7 @@ namespace Tangent
 			static String AsInstanceIndex(const Algorithm::Pubkeyhash Owner);
 		};
 
-		struct AccountStorage final : Ledger::Uniform
+		struct TAN_OUT AccountStorage final : Ledger::Uniform
 		{
 			Algorithm::Pubkeyhash Owner = { 0 };
 			String Location;
@@ -142,7 +142,7 @@ namespace Tangent
 			static String AsInstanceIndex(const Algorithm::Pubkeyhash Owner, const std::string_view& Location);
 		};
 
-		struct AccountReward final : Ledger::Multiform
+		struct TAN_OUT AccountReward final : Ledger::Multiform
 		{
 			Algorithm::Pubkeyhash Owner = { 0 };
 			Algorithm::AssetId Asset = 0;
@@ -173,7 +173,7 @@ namespace Tangent
 			static String AsInstanceRow(const Algorithm::AssetId& Asset);
 		};
 
-		struct AccountDerivation final : Ledger::Uniform
+		struct TAN_OUT AccountDerivation final : Ledger::Uniform
 		{
 			Algorithm::Pubkeyhash Owner = { 0 };
 			Algorithm::AssetId Asset = 0;
@@ -194,7 +194,7 @@ namespace Tangent
 			static String AsInstanceIndex(const Algorithm::Pubkeyhash Owner, const Algorithm::AssetId& Asset);
 		};
 
-		struct AccountBalance final : Ledger::Multiform
+		struct TAN_OUT AccountBalance final : Ledger::Multiform
 		{
 			Algorithm::Pubkeyhash Owner = { 0 };
 			Algorithm::AssetId Asset = 0;
@@ -220,7 +220,7 @@ namespace Tangent
 			static String AsInstanceRow(const Algorithm::AssetId& Asset);
 		};
 
-		struct AccountDepository final : Ledger::Multiform
+		struct TAN_OUT AccountDepository final : Ledger::Multiform
 		{
 			Algorithm::Pubkeyhash Owner = { 0 };
 			Algorithm::AssetId Asset = 0;
@@ -252,7 +252,7 @@ namespace Tangent
 			static String AsInstanceRow(const Algorithm::AssetId& Asset);
 		};
 
-		struct WitnessProgram final : Ledger::Uniform
+		struct TAN_OUT WitnessProgram final : Ledger::Uniform
 		{
 			String Hashcode;
 			String Storage;
@@ -272,7 +272,7 @@ namespace Tangent
 			static String AsInstanceIndex(const std::string_view& ProgramHashcode);
 		};
 
-		struct WitnessEvent final : Ledger::Uniform
+		struct TAN_OUT WitnessEvent final : Ledger::Uniform
 		{
 			uint256_t ParentTransactionHash;
 			uint256_t ChildTransactionHash;
@@ -291,7 +291,7 @@ namespace Tangent
 			static String AsInstanceIndex(const uint256_t& TransactionHash);
 		};
 
-		struct WitnessAddress final : Ledger::Multiform
+		struct TAN_OUT WitnessAddress final : Ledger::Multiform
 		{
 			Algorithm::Pubkeyhash Owner = { 0 };
 			Algorithm::Pubkeyhash Proposer = { 0 };
@@ -323,7 +323,7 @@ namespace Tangent
 			static String AsInstanceRow(const Algorithm::AssetId& Asset, const std::string_view& Address, uint64_t AddressIndex);
 		};
 
-		struct WitnessTransaction final : Ledger::Uniform
+		struct TAN_OUT WitnessTransaction final : Ledger::Uniform
 		{
 			Algorithm::AssetId Asset = 0;
 			String TransactionId;
@@ -342,7 +342,7 @@ namespace Tangent
 			static String AsInstanceIndex(const Algorithm::AssetId& Asset, const std::string_view& TransactionId);
 		};
 
-		class Resolver
+		class TAN_OUT Resolver
 		{
 		public:
 			static Ledger::State* New(uint32_t Hash);

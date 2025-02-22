@@ -1,7 +1,5 @@
 #include "mediator.h"
-#ifdef TAN_VALIDATOR
 #include "../validator/service/nss.h"
-#endif
 #include <sstream>
 
 namespace Tangent
@@ -525,19 +523,14 @@ namespace Tangent
 		}
 		bool IncomingTransaction::IsLatencyApproved() const
 		{
-#ifdef TAN_VALIDATOR
 			auto* Chain = NSS::ServerNode::Get()->GetChain(Asset);
 			if (!Chain)
 				return false;
 
 			return BlockId >= Chain->GetChainparams().SyncLatency;
-#else
-			return false;
-#endif
 		}
 		bool IncomingTransaction::IsApproved() const
 		{
-#ifdef TAN_VALIDATOR
 			auto* Server = NSS::ServerNode::Get();
 			auto* Chain = Server->GetChain(Asset);
 			if (!Chain)
@@ -548,9 +541,6 @@ namespace Tangent
 				return BlockId >= Chain->GetChainparams().SyncLatency;
 
 			return LatestBlockId - BlockId >= Chain->GetChainparams().SyncLatency;
-#else
-			return false;
-#endif
 		}
 		UPtr<Schema> IncomingTransaction::AsSchema() const
 		{
@@ -953,7 +943,6 @@ namespace Tangent
 		}
 		bool ChainSupervisorOptions::IsCancelled(const Algorithm::AssetId& Asset)
 		{
-#ifdef TAN_VALIDATOR
 			auto* Nodes = NSS::ServerNode::Get()->GetNodes(Asset);
 			if (!Nodes || Nodes->empty())
 				return true;
@@ -965,9 +954,6 @@ namespace Tangent
 			}
 
 			return false;
-#else
-			return true;
-#endif
 		}
 
 		ChainSupervisorOptions& MultichainSupervisorOptions::AddSpecificOptions(const std::string_view& Blockchain)
@@ -1146,7 +1132,7 @@ namespace Tangent
 
 			if (Path.empty() && Body.empty())
 				Cache = CachePolicy::Lazy;
-#ifdef TAN_VALIDATOR
+
 			auto* Server = NSS::ServerNode::Get();
 			String Message = String(Path).append(Body);
 			String Hash = Codec::HexEncode(Algorithm::Hashing::Hash256((uint8_t*)Message.data(), Message.size()));
@@ -1156,7 +1142,7 @@ namespace Tangent
 				if (Data)
 					Coreturn ExpectsRT<Schema*>(*Data);
 			}
-#endif
+
 			if (Throttling > 0.0 && Cache != CachePolicy::Greedy)
 			{
 				const int64_t Time = (int64_t)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
@@ -1184,12 +1170,7 @@ namespace Tangent
 				Setup.Content.Assign(Body);
 			}
 		Retry:
-#ifdef TAN_VALIDATOR
 			auto Response = Coawait(Server->InternalCall(TargetURL, Method, Setup));
-#else
-			auto Response = ExpectsSystem<HTTP::ResponseFrame>(HTTP::ResponseFrame());
-			Response->StatusCode = 501;
-#endif
 			if (!Response || Response->StatusCode == 408 || Response->StatusCode == 429 || Response->StatusCode == 502 || Response->StatusCode == 503 || Response->StatusCode == 504)
 			{
 				++RetryResponses;
@@ -1208,13 +1189,13 @@ namespace Tangent
 			auto Data = Response->Content.GetJSON();
 			if (!Data)
 				Coreturn ExpectsRT<Schema*>(RemoteException(GenerateErrorMessage(Response, Reporter, "null", "node's response is not JSON compliant")));
-#ifdef TAN_VALIDATOR
+
 			if (Cache != CachePolicy::Lazy && Cache != CachePolicy::Greedy && (Response->StatusCode < 400 || Response->StatusCode == 404))
 			{
 				Data->AddRef();
 				Server->StoreCache(Asset, Cache, Hash, UPtr<Schema>(Data));
 			}
-#endif
+
 			Coreturn ExpectsRT<Schema*>(*Data);
 		}
 		Promise<bool> ServerRelay::YieldForCooldown(uint64_t& RetryTimeout, uint64_t TotalTimeoutMs)
@@ -1255,15 +1236,11 @@ namespace Tangent
 		}
 		ExpectsLR<void> ServerRelay::VerifyCompatibility(const Algorithm::AssetId& Asset)
 		{
-#ifdef TAN_VALIDATOR
 			auto* Implementation = NSS::ServerNode::Get()->GetChain(Asset);
 			if (!Implementation)
 				return Expectation::Met;
 
 			return Implementation->VerifyNodeCompatibility(this);
-#else
-			return LayerException("compatibility check not supported");
-#endif
 		}
 		TaskId ServerRelay::EnqueueActivity(const Promise<bool>& Future, TaskId TimerId)
 		{
@@ -1407,7 +1384,6 @@ namespace Tangent
 		}
 		ExpectsPromiseRT<Schema*> RelayBackend::ExecuteRPC(const Algorithm::AssetId& Asset, const std::string_view& Method, SchemaList&& Args, CachePolicy Cache)
 		{
-#ifdef TAN_VALIDATOR
 			auto* Nodes = NSS::ServerNode::Get()->GetNodes(Asset);
 			if (!Nodes || Nodes->empty())
 				Coreturn ExpectsRT<Schema*>(RemoteException("node not found"));
@@ -1425,13 +1401,9 @@ namespace Tangent
 			}
 
 			Coreturn ExpectsRT<Schema*>(RemoteException("node not found"));
-#else
-			Coreturn ExpectsRT<Schema*>(RemoteException("rpc_call not supported"));
-#endif
 		}
 		ExpectsPromiseRT<Schema*> RelayBackend::ExecuteRPC3(const Algorithm::AssetId& Asset, const std::string_view& Method, SchemaArgs&& Args, CachePolicy Cache)
 		{
-#ifdef TAN_VALIDATOR
 			auto* Nodes = NSS::ServerNode::Get()->GetNodes(Asset);
 			if (!Nodes || Nodes->empty())
 				Coreturn ExpectsRT<Schema*>(RemoteException("node not found"));
@@ -1449,14 +1421,10 @@ namespace Tangent
 			}
 
 			Coreturn ExpectsRT<Schema*>(RemoteException("node not found"));
-#else
-			Coreturn ExpectsRT<Schema*>(RemoteException("rpc3_call not supported"));
-#endif
 		}
 		ExpectsPromiseRT<Schema*> RelayBackend::ExecuteREST(const Algorithm::AssetId& Asset, const std::string_view& Method, const std::string_view& Path, Schema* Args, CachePolicy Cache)
 		{
 			UPtr<Schema> Body = Args;
-#ifdef TAN_VALIDATOR
 			auto* Nodes = NSS::ServerNode::Get()->GetNodes(Asset);
 			if (!Nodes || Nodes->empty())
 				Coreturn ExpectsRT<Schema*>(RemoteException("node not found"));
@@ -1474,13 +1442,9 @@ namespace Tangent
 			}
 
 			Coreturn ExpectsRT<Schema*>(RemoteException("node not found"));
-#else
-			Coreturn ExpectsRT<Schema*>(RemoteException("rest_call not supported"));
-#endif
 		}
 		ExpectsPromiseRT<Schema*> RelayBackend::ExecuteHTTP(const Algorithm::AssetId& Asset, const std::string_view& Method, const std::string_view& Path, const std::string_view& Type, const std::string_view& Body, CachePolicy Cache)
 		{
-#ifdef TAN_VALIDATOR
 			auto* Nodes = NSS::ServerNode::Get()->GetNodes(Asset);
 			if (!Nodes || Nodes->empty())
 				Coreturn ExpectsRT<Schema*>(RemoteException("node not found"));
@@ -1498,15 +1462,12 @@ namespace Tangent
 			}
 
 			Coreturn ExpectsRT<Schema*>(RemoteException("node not found"));
-#else
-			Coreturn ExpectsRT<Schema*>(RemoteException("http_call not supported"));
-#endif
 		}
 		ExpectsLR<OrderedMap<String, uint64_t>> RelayBackend::FindCheckpointAddresses(const Algorithm::AssetId& Asset, const UnorderedSet<String>& Addresses)
 		{
 			if (Addresses.empty())
 				return ExpectsLR<OrderedMap<String, uint64_t>>(LayerException("no addresses supplied"));
-#ifdef TAN_VALIDATOR
+
 			auto* Server = NSS::ServerNode::Get();
 			auto* Implementation = Server->GetChain(Asset);
 			if (!Implementation)
@@ -1521,17 +1482,10 @@ namespace Tangent
 				Info[Item.first] = Item.second.AddressIndex.Or(Protocol::Now().Account.RootAddressIndex);
 
 			return ExpectsLR<OrderedMap<String, uint64_t>>(std::move(Info));
-#else
-			return LayerException("nss data not available");
-#endif
 		}
 		ExpectsLR<Vector<String>> RelayBackend::GetCheckpointAddresses(const Algorithm::AssetId& Asset)
 		{
-#ifdef TAN_VALIDATOR
 			return NSS::ServerNode::Get()->GetAddressIndices(Asset);
-#else
-			return LayerException("nss data not available");
-#endif
 		}
 		ExpectsLR<void> RelayBackend::VerifyNodeCompatibility(ServerRelay* Node)
 		{
@@ -1540,6 +1494,10 @@ namespace Tangent
 		String RelayBackend::GetChecksumHash(const std::string_view& Value) const
 		{
 			return String(Value);
+		}
+		uint64_t RelayBackend::GetRetirementBlockNumber() const
+		{
+			return std::numeric_limits<uint64_t>::max();
 		}
 		uint256_t RelayBackend::ToBaselineValue(const Decimal& Value) const
 		{
@@ -1553,7 +1511,6 @@ namespace Tangent
 		ExpectsPromiseRT<Decimal> RelayBackendUTXO::CalculateBalance(const Algorithm::AssetId& Asset, const DynamicWallet& Wallet, Option<String>&& Address)
 		{
 			Decimal Balance = 0.0;
-#ifdef TAN_VALIDATOR
 			auto Outputs = CalculateCoins(Asset, Wallet, Optional::None, Optional::None);
 			if (!Outputs)
 				return ExpectsPromiseRT<Decimal>(std::move(Balance));
@@ -1573,7 +1530,7 @@ namespace Tangent
 				for (auto& Output : *Outputs)
 					Balance += Output.Value;
 			}
-#endif
+
 			return ExpectsPromiseRT<Decimal>(std::move(Balance));
 		}
 		ExpectsLR<Vector<CoinUTXO>> RelayBackendUTXO::CalculateCoins(const Algorithm::AssetId& Asset, const DynamicWallet& Wallet, Option<Decimal>&& MinValue, Option<TokenUTXO>&& MinTokenValue)
@@ -1584,7 +1541,7 @@ namespace Tangent
 			auto Binding = Wallet.GetBinding();
 			if (!Binding)
 				return ExpectsLR<Vector<CoinUTXO>>(LayerException("binding not found"));
-#ifdef TAN_VALIDATOR
+
 			Vector<CoinUTXO> Values;
 			Decimal CurrentValue = 0.0, CurrentTokenValue = 0.0;
 			auto* Server = NSS::ServerNode::Get();
@@ -1615,21 +1572,14 @@ namespace Tangent
 				return ExpectsLR<Vector<CoinUTXO>>(LayerException("insufficient funds"));
 
 			return ExpectsLR<Vector<CoinUTXO>>(std::move(Values));
-#else
-			return LayerException("nss data not available");
-#endif
 		}
 		ExpectsLR<CoinUTXO> RelayBackendUTXO::GetCoins(const Algorithm::AssetId& Asset, const std::string_view& TransactionId, uint32_t Index)
 		{
-#ifdef TAN_VALIDATOR
 			auto Output = NSS::ServerNode::Get()->GetUTXO(Asset, TransactionId, Index);
 			if (!Output)
 				return ExpectsLR<CoinUTXO>(LayerException("transaction output was not found"));
 
 			return ExpectsLR<CoinUTXO>(std::move(Output->UTXO));
-#else
-			return LayerException("nss data not available");
-#endif
 		}
 		ExpectsLR<void> RelayBackendUTXO::UpdateCoins(const Algorithm::AssetId& Asset, const OutgoingTransaction& TxData)
 		{
@@ -1647,7 +1597,6 @@ namespace Tangent
 		}
 		ExpectsLR<void> RelayBackendUTXO::AddCoins(const Algorithm::AssetId& Asset, const CoinUTXO& Output)
 		{
-#ifdef TAN_VALIDATOR
 			auto* Server = NSS::ServerNode::Get();
 			auto* Implementation = Server->GetChain(Asset);
 			if (!Implementation)
@@ -1667,17 +1616,10 @@ namespace Tangent
 
 			RemoveCoins(Asset, Output.TransactionId, Output.Index);
 			return ExpectsLR<void>(std::move(Status.Error()));
-#else
-			return LayerException("nss data not available");
-#endif
 		}
 		ExpectsLR<void> RelayBackendUTXO::RemoveCoins(const Algorithm::AssetId& Asset, const std::string_view& TransactionId, uint32_t Index)
 		{
-#ifdef TAN_VALIDATOR
 			return NSS::ServerNode::Get()->RemoveUTXO(Asset, TransactionId, Index);
-#else
-			return LayerException("nss data not available");
-#endif
 		}
 		Decimal RelayBackendUTXO::GetCoinsValue(const Vector<CoinUTXO>& Values, Option<String>&& ContractAddress)
 		{

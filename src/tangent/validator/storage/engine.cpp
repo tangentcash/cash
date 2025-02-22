@@ -432,13 +432,14 @@ namespace Tangent
 		{
 			Blob = Protocol::Change().Database.LoadBlob(Path);
 			VI_PANIC(Blob, "blob storage connection error (path = %.*s)", (int)Path.size(), Path.data());
-
+#ifdef TAN_ROCKSDB
 			auto Threads = OS::CPU::GetQuantityInfo().Physical;
 			auto Options = Blob->GetOptions();
 			if (Protocol::Now().User.Storage.CompactionThreadsRatio > 0.0)
 				Options.env->SetBackgroundThreads((int)std::max(std::ceil(Threads * Protocol::Now().User.Storage.CompactionThreadsRatio), 1.0), rocksdb::Env::Priority::LOW);
 			if (Protocol::Now().User.Storage.FlushThreadsRatio > 0.0)
 				Options.env->SetBackgroundThreads((int)std::max(std::ceil(Threads * Protocol::Now().User.Storage.FlushThreadsRatio), 1.0), rocksdb::Env::Priority::HIGH);
+#endif
 		}
 		void PermanentStorage::UnloadIndexOf(UPtr<LDB::Connection>&& Storage, bool Borrows)
 		{

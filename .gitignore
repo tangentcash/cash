@@ -1,5 +1,5 @@
 .idea/
 .git/
 bin/
-src/tangent/validator/internal/libtron/*.pb.h
-src/tangent/validator/internal/libtron/*.pb.cc
+*.pb.h
+*.pb.cc

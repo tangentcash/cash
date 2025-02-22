@@ -4,7 +4,7 @@
 
 namespace Tangent
 {
-	struct SystemEndpoint
+	struct TAN_OUT SystemEndpoint
 	{
 		Location Scheme;
 		SocketAddress Address;
@@ -15,7 +15,7 @@ namespace Tangent
 		static String ToURI(const SocketAddress& Address, const std::string_view& Protocol = "tcp");
 	};
 
-	struct SystemControl
+	struct TAN_OUT SystemControl
 	{
 		UnorderedMap<String, TaskId>* Timers;
 		std::atomic<size_t> Tasks;
@@ -40,7 +40,7 @@ namespace Tangent
 		bool IsBusy() noexcept;
 	};
 
-	struct ServiceControl
+	struct TAN_OUT ServiceControl
 	{
 	public:
 		struct ServiceNode

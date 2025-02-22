@@ -26,14 +26,14 @@ namespace Tangent
 			Streaming = (1 << 6)
 		};
 
-		struct AccountBandwidth
+		struct TAN_OUT AccountBandwidth
 		{
 			uint64_t Sequence = 0;
 			size_t Count = 0;
 			bool Congested = false;
 		};
 
-		struct Mempoolstate : Ledger::MutableStorage
+		struct TAN_OUT Mempoolstate : Ledger::MutableStorage
 		{
 		private:
 			std::string_view Label;

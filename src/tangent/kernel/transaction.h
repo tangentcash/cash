@@ -25,7 +25,7 @@ namespace Tangent
 			Aggregation
 		};
 
-		struct Transaction : Messages::Authentic
+		struct TAN_OUT Transaction : Messages::Authentic
 		{
 			Algorithm::AssetId Asset = 0;
 			Decimal GasPrice;
@@ -33,7 +33,7 @@ namespace Tangent
 			uint64_t Sequence = 0;
 			bool Conservative = false;
 
-			virtual ExpectsLR<void> Validate() const;
+			virtual ExpectsLR<void> Validate(uint64_t BlockNumber) const;
 			virtual ExpectsLR<void> Execute(TransactionContext* Context) const;
 			virtual ExpectsPromiseRT<void> Dispatch(const Wallet& Proposer, const TransactionContext* Context, Vector<UPtr<Transaction>>* Pipeline) const;
 			virtual bool StorePayload(Format::Stream* Stream) const override;
@@ -58,19 +58,19 @@ namespace Tangent
 			virtual uint64_t GetDispatchOffset() const;
 		};
 
-		struct DelegationTransaction : Transaction
+		struct TAN_OUT DelegationTransaction : Transaction
 		{
 			virtual ExpectsLR<void> Execute(TransactionContext* Context) const override;
 			TransactionLevel GetType() const override;
 		};
 
-		struct ConsensusTransaction : Transaction
+		struct TAN_OUT ConsensusTransaction : Transaction
 		{
 			virtual ExpectsLR<void> Execute(TransactionContext* Context) const override;
 			TransactionLevel GetType() const override;
 		};
 
-		struct AggregationTransaction : Transaction
+		struct TAN_OUT AggregationTransaction : Transaction
 		{
 			struct CumulativeBranch
 			{
@@ -90,7 +90,7 @@ namespace Tangent
 			OrderedMap<uint256_t, CumulativeBranch> OutputHashes;
 			uint256_t InputHash = 0;
 
-			virtual ExpectsLR<void> Validate() const override;
+			virtual ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
 			virtual ExpectsLR<void> Execute(TransactionContext* Context) const override;
 			virtual bool StorePayload(Format::Stream* Stream) const override;
 			virtual bool LoadPayload(Format::Stream& Stream) override;
@@ -118,7 +118,7 @@ namespace Tangent
 			TransactionLevel GetType() const override;
 		};
 
-		struct Receipt final : Messages::Generic
+		struct TAN_OUT Receipt final : Messages::Generic
 		{
 			Vector<std::pair<uint32_t, Format::Variables>> Events;
 			Algorithm::Pubkeyhash From = { 0 };
@@ -160,7 +160,7 @@ namespace Tangent
 			}
 		};
 
-		struct State : Messages::Generic
+		struct TAN_OUT State : Messages::Generic
 		{
 			uint64_t BlockNumber = 0;
 			uint64_t BlockNonce = 0;
@@ -180,7 +180,7 @@ namespace Tangent
 			virtual std::string_view AsTypename() const override = 0;
 		};
 
-		struct Uniform : State
+		struct TAN_OUT Uniform : State
 		{
 			Uniform(uint64_t NewBlockNumber, uint64_t NewBlockNonce);
 			Uniform(const BlockHeader* NewBlockHeader);
@@ -191,7 +191,7 @@ namespace Tangent
 			static String AsInstanceComposite(const std::string_view& Index);
 		};
 		
-		struct Multiform : State
+		struct TAN_OUT Multiform : State
 		{
 			Multiform(uint64_t NewBlockNumber, uint64_t NewBlockNonce);
 			Multiform(const BlockHeader* NewBlockHeader);
@@ -204,7 +204,7 @@ namespace Tangent
 			static String AsInstanceComposite(const std::string_view& Column, const std::string_view& Row);
 		};
 
-		class GasUtil
+		class TAN_OUT GasUtil
 		{
 		public:
 			static uint256_t GetGasWork(const uint128_t& Difficulty, const uint256_t& GasUse, const uint256_t& GasLimit, uint64_t Priority);

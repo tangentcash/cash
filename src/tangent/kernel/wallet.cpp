@@ -1,9 +1,7 @@
 #include "wallet.h"
-#ifdef TAN_VALIDATOR
 #include "../validator/storage/mempoolstate.h"
 #include "../validator/storage/chainstate.h"
 #include "../validator/service/p2p.h"
-#endif
 
 namespace Tangent
 {
@@ -192,16 +190,12 @@ namespace Tangent
 		}
 		ExpectsLR<uint64_t> Wallet::GetLatestSequence() const
 		{
-#ifdef TAN_VALIDATOR
 			auto Mempool = Storages::Mempoolstate(__func__);
 			auto Chain = Storages::Chainstate(__func__);
 			auto State = Chain.GetUniformByIndex(nullptr, States::AccountSequence::AsInstanceIndex(PublicKeyHash), 0);
 			uint64_t PendingSequence = Mempool.GetHighestTransactionSequence(PublicKeyHash).Or(1);
 			uint64_t FinalizedSequence = (State ? ((States::AccountSequence*)**State)->Sequence : 1);
 			return std::max(FinalizedSequence, PendingSequence);
-#else
-			return LayerException("chainstate data not available");
-#endif
 		}
 		UPtr<Schema> Wallet::AsSchema() const
 		{
@@ -354,11 +348,8 @@ namespace Tangent
 		{
 			if (!Address.IsValid())
 				return false;
-#ifdef TAN_VALIDATOR
+
 			return !P2P::Routing::IsAddressReserved(Address);
-#else
-			return true;
-#endif
 		}
 		uint64_t Validator::GetPreference() const
 		{

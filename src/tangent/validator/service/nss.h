@@ -9,7 +9,7 @@ namespace Tangent
 		typedef std::function<bool(const std::string_view&)> InvocationCallback;
 		typedef std::function<Promise<void>(const Mediator::ChainSupervisorOptions&, Mediator::TransactionLogs&&)> TransactionCallback;
 
-		struct TransactionListener
+		struct TAN_OUT TransactionListener
 		{
 			Algorithm::AssetId Asset = 0;
 			Mediator::ChainSupervisorOptions Options;
@@ -18,7 +18,7 @@ namespace Tangent
 			bool IsDead = false;
 		};
 
-		struct TransactionParams
+		struct TAN_OUT TransactionParams
 		{
 			Vector<Mediator::Transferer> To;
 			Option<Mediator::BaseFee> Fee = Optional::None;
@@ -28,7 +28,7 @@ namespace Tangent
 			ExpectsPromiseRT<Mediator::OutgoingTransaction> Future;
 		};
 
-		struct TransactionQueueState
+		struct TAN_OUT TransactionQueueState
 		{
 			SingleQueue<TransactionParams*> Queue;
 			String Blockchain;
@@ -36,7 +36,7 @@ namespace Tangent
 			bool IsBusy = false;
 		};
 
-		class ServerNode : public Singleton<ServerNode>
+		class TAN_OUT ServerNode : public Singleton<ServerNode>
 		{
 		protected:
 			UnorderedSet<String> Connections;

@@ -1,20 +1,18 @@
 #include "transactions.h"
 #include "../kernel/block.h"
 #include "../kernel/script.h"
-#ifdef TAN_VALIDATOR
 #include "../validator/service/nss.h"
-#endif
 
 namespace Tangent
 {
 	namespace Transactions
 	{
-		ExpectsLR<void> Transfer::Validate() const
+		ExpectsLR<void> Transfer::Validate(uint64_t BlockNumber) const
 		{
 			if (!Value.IsPositive())
 				return LayerException("invalid value");
 
-			return Ledger::Transaction::Validate();
+			return Ledger::Transaction::Validate(BlockNumber);
 		}
 		ExpectsLR<void> Transfer::Execute(Ledger::TransactionContext* Context) const
 		{
@@ -105,7 +103,7 @@ namespace Tangent
 			return "transfer";
 		}
 
-		ExpectsLR<void> Omnitransfer::Validate() const
+		ExpectsLR<void> Omnitransfer::Validate(uint64_t BlockNumber) const
 		{
 			if (Transfers.empty())
 				return LayerException("no transfers");
@@ -116,7 +114,7 @@ namespace Tangent
 					return LayerException("invalid value");
 			}
 
-			return Ledger::Transaction::Validate();
+			return Ledger::Transaction::Validate(BlockNumber);
 		}
 		ExpectsLR<void> Omnitransfer::Execute(Ledger::TransactionContext* Context) const
 		{
@@ -241,14 +239,14 @@ namespace Tangent
 			return "omnitransfer";
 		}
 
-		ExpectsLR<void> Deployment::Validate() const
+		ExpectsLR<void> Deployment::Validate(uint64_t BlockNumber) const
 		{
 			if (IsLocationNull())
 				return LayerException("invalid location");
 			else if (Segregated && Calldata.size() != 64)
 				return LayerException("invalid hashcode");
 
-			return Ledger::Transaction::Validate();
+			return Ledger::Transaction::Validate(BlockNumber);
 		}
 		ExpectsLR<void> Deployment::Execute(Ledger::TransactionContext* Context) const
 		{
@@ -473,12 +471,12 @@ namespace Tangent
 			return "deployment";
 		}
 
-		ExpectsLR<void> Invocation::Validate() const
+		ExpectsLR<void> Invocation::Validate(uint64_t BlockNumber) const
 		{
 			if (Function.empty())
 				return LayerException("invalid function invocation");
 
-			return Ledger::Transaction::Validate();
+			return Ledger::Transaction::Validate(BlockNumber);
 		}
 		ExpectsLR<void> Invocation::Execute(Ledger::TransactionContext* Context) const
 		{
@@ -611,18 +609,18 @@ namespace Tangent
 			return "invocation";
 		}
 
-		ExpectsLR<void> Withdrawal::Validate() const
+		ExpectsLR<void> Withdrawal::Validate(uint64_t BlockNumber) const
 		{
 			if (To.empty())
 				return LayerException("invalid to");
-#ifdef TAN_VALIDATOR
+
 			auto* Chain = NSS::ServerNode::Get()->GetChainparams(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
 
 			if (!Chain->SupportsBulkTransfer && To.size() > 1)
 				return LayerException("too many to addresses");
-#endif
+
 			UnorderedSet<String> Addresses;
 			for (auto& Item : To)
 			{
@@ -635,7 +633,7 @@ namespace Tangent
 				Addresses.insert(Item.first);
 			}
 
-			return Ledger::Transaction::Validate();
+			return Ledger::Transaction::Validate(BlockNumber);
 		}
 		ExpectsLR<void> Withdrawal::Execute(Ledger::TransactionContext* Context) const
 		{
@@ -733,7 +731,7 @@ namespace Tangent
 			Destinations.reserve(To.size());
 			for (auto& Item : To)
 				Destinations.push_back(Mediator::Transferer(Item.first, Optional::None, Item.second - PartitionFee));
-#ifdef TAN_VALIDATOR
+
 			auto Parent = NSS::ServerNode::Get()->NewMasterWallet(Asset, Proposer.SecretKey);
 			auto Child = Parent ? Mediator::DynamicWallet(*Parent) : Mediator::DynamicWallet();
 			return Resolver::EmitTransaction(Pipeline, std::move(Child), Asset, Context->Receipt.TransactionHash, std::move(Destinations)).Then<ExpectsRT<void>>([this, Context, Pipeline, Transaction](ExpectsRT<Mediator::OutgoingTransaction>&& Result)
@@ -752,9 +750,6 @@ namespace Tangent
 					Transaction->SetSuccessWitness(Result->Transaction.TransactionId, Result->Data, Context->Receipt.TransactionHash);
 				return ExpectsRT<void>(Expectation::Met);
 			});
-#else
-			return ExpectsPromiseRT<void>(RemoteException("nss data not available"));
-#endif
 		}
 		bool Withdrawal::StoreBody(Format::Stream* Stream) const
 		{
@@ -911,7 +906,7 @@ namespace Tangent
 			}
 			return *this;
 		}
-		ExpectsLR<void> Rollup::Validate() const
+		ExpectsLR<void> Rollup::Validate(uint64_t BlockNumber) const
 		{
 			if (Transactions.empty())
 				return LayerException("invalid transactions");
@@ -932,14 +927,14 @@ namespace Tangent
 
 					uint256_t TransactionHash = Transaction->AsHash();
 					Mutable->GasPrice = Decimal::Zero();
-					auto Validation = Transaction->Validate();
+					auto Validation = Transaction->Validate(BlockNumber);
 					Mutable->GasPrice = Decimal::NaN();
 					if (!Validation)
 						return LayerException("sub-transaction " + Algorithm::Encoding::Encode0xHex256(TransactionHash) + " validation failed: " + Validation.Error().message());
 				}
 			}
 
-			return Ledger::Transaction::Validate();
+			return Ledger::Transaction::Validate(BlockNumber);
 		}
 		ExpectsLR<void> Rollup::Execute(Ledger::TransactionContext* Context) const
 		{
@@ -1314,18 +1309,19 @@ namespace Tangent
 			return Algorithm::Signing::Sign(Message.Hash(), SecretKey, Transaction.Signature);
 		}
 
-		ExpectsLR<void> Commitment::Validate() const
+		ExpectsLR<void> Commitment::Validate(uint64_t BlockNumber) const
 		{
 			if (!Online && Observers.empty())
 				return LayerException("invalid status");
 
 			for (auto& Mediator : Observers)
 			{
-				if (!Algorithm::Asset::IsValid(Mediator.first))
-					return LayerException("invalid oracle asset");
+				uint64_t ExpiryNumber = Algorithm::Asset::ExpiryOf(Mediator.first);
+				if (!ExpiryNumber || BlockNumber > ExpiryNumber)
+					return LayerException("invalid observer asset");
 			}
 
-			return Ledger::Transaction::Validate();
+			return Ledger::Transaction::Validate(BlockNumber);
 		}
 		ExpectsLR<void> Commitment::Execute(Ledger::TransactionContext* Context) const
 		{
@@ -1465,7 +1461,7 @@ namespace Tangent
 			return "commitment";
 		}
 
-		ExpectsLR<void> IncomingClaim::Validate() const
+		ExpectsLR<void> IncomingClaim::Validate(uint64_t BlockNumber) const
 		{
 			auto Assertion = GetAssertion(nullptr);
 			if (!Assertion || !Assertion->IsValid())
@@ -1477,7 +1473,7 @@ namespace Tangent
 			if (!Assertion->IsLatencyApproved())
 				return LayerException("invalid assertion status");
 
-			return Ledger::AggregationTransaction::Validate();
+			return Ledger::AggregationTransaction::Validate(BlockNumber);
 		}
 		ExpectsLR<void> IncomingClaim::Execute(Ledger::TransactionContext* Context) const
 		{
@@ -1500,7 +1496,7 @@ namespace Tangent
 				return LayerException("assertion " + Assertion->TransactionId + " finalized");
 
 			auto BaseDerivationIndex = Protocol::Now().Account.RootAddressIndex;
-#ifdef TAN_VALIDATOR
+
 			auto* Chain = NSS::ServerNode::Get()->GetChainparams(Asset);
 			if (!Chain)
 				return LayerException("invalid chain");
@@ -1684,9 +1680,6 @@ namespace Tangent
 				return Witness.Error();
 
 			return Context->EmitWitness(Assertion->BlockId);
-#else
-			return LayerException("nss data not available");
-#endif
 		}
 		bool IncomingClaim::StoreBody(Format::Stream* Stream) const
 		{
@@ -1698,7 +1691,6 @@ namespace Tangent
 		}
 		bool IncomingClaim::RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
 		{
-#ifdef TAN_VALIDATOR
 			auto* Chain = NSS::ServerNode::Get()->GetChainparams(Asset);
 			if (!Chain)
 				return false;
@@ -1724,9 +1716,6 @@ namespace Tangent
 					Parties.insert(String((char*)Source->Owner, sizeof(Source->Owner)));
 			}
 			return true;
-#else
-			return false;
-#endif
 		}
 		void IncomingClaim::SetWitness(uint64_t BlockHeight, const std::string_view& TransactionId, Decimal&& Fee, Vector<Mediator::Transferer>&& Senders, Vector<Mediator::Transferer>&& Receivers)
 		{
@@ -1784,12 +1773,12 @@ namespace Tangent
 			return "incoming_claim";
 		}
 
-		ExpectsLR<void> OutgoingClaim::Validate() const
+		ExpectsLR<void> OutgoingClaim::Validate(uint64_t BlockNumber) const
 		{
 			if (!TransactionHash)
 				return LayerException("transaction hash not valid");
 
-			return Ledger::ConsensusTransaction::Validate();
+			return Ledger::ConsensusTransaction::Validate(BlockNumber);
 		}
 		ExpectsLR<void> OutgoingClaim::Execute(Ledger::TransactionContext* Context) const
 		{
@@ -1958,7 +1947,7 @@ namespace Tangent
 			return "outgoing_claim";
 		}
 
-		ExpectsLR<void> AddressAccount::Validate() const
+		ExpectsLR<void> AddressAccount::Validate(uint64_t BlockNumber) const
 		{
 			if (!Algorithm::Asset::TokenOf(Asset).empty())
 				return LayerException("invalid asset");
@@ -1976,7 +1965,7 @@ namespace Tangent
 
 			if (!Algorithm::Asset::TokenOf(Asset).empty())
 				return LayerException("invalid asset");
-#ifdef TAN_VALIDATOR
+
 			auto* Chain = NSS::ServerNode::Get()->GetChain(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
@@ -1984,7 +1973,7 @@ namespace Tangent
 			auto PublicKeyHash = Chain->NewPublicKeyHash(Address);
 			if (!PublicKeyHash)
 				return PublicKeyHash.Error();
-#endif
+
 			uint64_t AddressIndex = Protocol::Now().Account.RootAddressIndex;
 			auto Collision = Context->GetWitnessAddress(Address, AddressIndex, 0);
 			if (Collision)
@@ -2043,7 +2032,6 @@ namespace Tangent
 
 		ExpectsLR<void> PubkeyAccount::SignPubkey(const PrivateKey& SigningKey)
 		{
-#ifdef TAN_VALIDATOR
 			UPtr<PubkeyAccount> Copy = (PubkeyAccount*)Resolver::Copy(this);
 			Copy->GasPrice = Decimal::NaN();
 			Copy->GasLimit = 0;
@@ -2060,13 +2048,9 @@ namespace Tangent
 
 			Sighash = std::move(*Signature);
 			return Expectation::Met;
-#else
-			return LayerException("nss data not available");
-#endif
 		}
 		ExpectsLR<void> PubkeyAccount::VerifyPubkey() const
 		{
-#ifdef TAN_VALIDATOR
 			UPtr<PubkeyAccount> Copy = (PubkeyAccount*)Resolver::Copy(this);
 			Copy->GasPrice = Decimal::NaN();
 			Copy->GasLimit = 0;
@@ -2078,11 +2062,8 @@ namespace Tangent
 				return LayerException("serialization error");
 
 			return NSS::ServerNode::Get()->VerifyMessage(Asset, Message.Data, Pubkey, Sighash);
-#else
-			return LayerException("nss data not available");
-#endif
 		}
-		ExpectsLR<void> PubkeyAccount::Validate() const
+		ExpectsLR<void> PubkeyAccount::Validate(uint64_t BlockNumber) const
 		{
 			if (!Algorithm::Asset::TokenOf(Asset).empty())
 				return LayerException("invalid asset");
@@ -2093,7 +2074,7 @@ namespace Tangent
 			if (Sighash.empty())
 				return LayerException("invalid public key signature");
 
-			return Ledger::DelegationTransaction::Validate();
+			return Ledger::DelegationTransaction::Validate(BlockNumber);
 		}
 		ExpectsLR<void> PubkeyAccount::Execute(Ledger::TransactionContext* Context) const
 		{
@@ -2107,7 +2088,7 @@ namespace Tangent
 			auto Verification = VerifyPubkey();
 			if (!Verification)
 				return Verification.Error();
-#ifdef TAN_VALIDATOR
+
 			auto* Chain = NSS::ServerNode::Get()->GetChain(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
@@ -2122,9 +2103,6 @@ namespace Tangent
 				return Status.Error();
 
 			return Expectation::Met;
-#else
-			return LayerException("nss data not available");
-#endif
 		}
 		bool PubkeyAccount::StoreBody(Format::Stream* Stream) const
 		{
@@ -2176,7 +2154,7 @@ namespace Tangent
 			return "pubkey_account";
 		}
 
-		ExpectsLR<void> DelegationAccount::Validate() const
+		ExpectsLR<void> DelegationAccount::Validate(uint64_t BlockNumber) const
 		{
 			if (!Algorithm::Asset::TokenOf(Asset).empty())
 				return LayerException("invalid asset");
@@ -2185,7 +2163,7 @@ namespace Tangent
 			if (memcmp(Proposer, Null, sizeof(Null)) == 0)
 				return LayerException("invalid account proposer");
 
-			return Ledger::DelegationTransaction::Validate();
+			return Ledger::DelegationTransaction::Validate(BlockNumber);
 		}
 		ExpectsLR<void> DelegationAccount::Execute(Ledger::TransactionContext* Context) const
 		{
@@ -2195,7 +2173,7 @@ namespace Tangent
 
 			if (!Algorithm::Asset::TokenOf(Asset).empty())
 				return LayerException("invalid asset");
-#ifdef TAN_VALIDATOR
+
 			auto* Chain = NSS::ServerNode::Get()->GetChainparams(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
@@ -2225,9 +2203,6 @@ namespace Tangent
 				default:
 					return LayerException("invalid operation");
 			}
-#else
-			return LayerException("nss data not available");
-#endif
 		}
 		ExpectsPromiseRT<void> DelegationAccount::Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const
 		{
@@ -2317,7 +2292,6 @@ namespace Tangent
 
 		ExpectsLR<void> CustodianAccount::SetWallet(const Ledger::TransactionContext* Context, const Ledger::Wallet& Proposer, const Algorithm::Pubkeyhash NewOwner)
 		{
-#ifdef TAN_VALIDATOR
 			auto* Server = NSS::ServerNode::Get();
 			auto* Chain = Server->GetChainparams(Asset);
 			if (!Chain)
@@ -2345,13 +2319,9 @@ namespace Tangent
 			SetPubkey(Child->VerifyingKey.ExposeToHeap(), AddressIndex);
 			SetOwner(NewOwner);
 			return SignPubkey(Child->SigningKey);
-#else
-			return LayerException("nss data not available");
-#endif
 		}
 		ExpectsLR<void> CustodianAccount::SignPubkey(const PrivateKey& SigningKey)
 		{
-#ifdef TAN_VALIDATOR
 			UPtr<CustodianAccount> Copy = (CustodianAccount*)Resolver::Copy(this);
 			Copy->GasPrice = Decimal::NaN();
 			Copy->GasLimit = 0;
@@ -2368,13 +2338,9 @@ namespace Tangent
 
 			Sighash = std::move(*Signature);
 			return Expectation::Met;
-#else
-			return LayerException("nss data not available");
-#endif
 		}
 		ExpectsLR<void> CustodianAccount::VerifyPubkey() const
 		{
-#ifdef TAN_VALIDATOR
 			UPtr<CustodianAccount> Copy = (CustodianAccount*)Resolver::Copy(this);
 			Copy->GasPrice = Decimal::NaN();
 			Copy->GasLimit = 0;
@@ -2386,11 +2352,8 @@ namespace Tangent
 				return LayerException("serialization error");
 
 			return NSS::ServerNode::Get()->VerifyMessage(Asset, Message.Data, Pubkey, Sighash);
-#else
-			return LayerException("nss data not available");
-#endif
 		}
-		ExpectsLR<void> CustodianAccount::Validate() const
+		ExpectsLR<void> CustodianAccount::Validate(uint64_t BlockNumber) const
 		{
 			if (!Algorithm::Asset::TokenOf(Asset).empty())
 				return LayerException("invalid asset");
@@ -2405,7 +2368,7 @@ namespace Tangent
 			if (!memcmp(Owner, Null, sizeof(Null)))
 				return LayerException("invalid owner");
 
-			return Ledger::ConsensusTransaction::Validate();
+			return Ledger::ConsensusTransaction::Validate(BlockNumber);
 		}
 		ExpectsLR<void> CustodianAccount::Execute(Ledger::TransactionContext* Context) const
 		{
@@ -2419,7 +2382,7 @@ namespace Tangent
 			auto Verification = VerifyPubkey();
 			if (!Verification)
 				return Verification.Error();
-#ifdef TAN_VALIDATOR
+
 			auto* Chain = NSS::ServerNode::Get()->GetChain(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
@@ -2481,13 +2444,9 @@ namespace Tangent
 				return Status.Error();
 
 			return Expectation::Met;
-#else
-			return LayerException("nss data not available");
-#endif
 		}
 		ExpectsPromiseRT<void> CustodianAccount::Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const
 		{
-#ifdef TAN_VALIDATOR
 			auto* Chain = NSS::ServerNode::Get()->GetChain(Asset);
 			if (!Chain)
 				return ExpectsPromiseRT<void>(RemoteException("invalid operation"));
@@ -2509,9 +2468,6 @@ namespace Tangent
 			}
 
 			return ExpectsPromiseRT<void>(Expectation::Met);
-#else
-			return ExpectsPromiseRT<void>(RemoteException("nss data not available"));
-#endif
 		}
 		bool CustodianAccount::StoreBody(Format::Stream* Stream) const
 		{
@@ -2609,16 +2565,16 @@ namespace Tangent
 			return "custodian_account";
 		}
 
-		ExpectsLR<void> ContributionAllocation::Validate() const
+		ExpectsLR<void> ContributionAllocation::Validate(uint64_t BlockNumber) const
 		{
 			if (!Algorithm::Asset::TokenOf(Asset).empty())
 				return LayerException("invalid asset");
-#ifdef TAN_VALIDATOR
+
 			auto* Chain = NSS::ServerNode::Get()->GetChainparams(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
-#endif
-			return Ledger::Transaction::Validate();
+
+			return Ledger::Transaction::Validate(BlockNumber);
 		}
 		ExpectsLR<void> ContributionAllocation::Execute(Ledger::TransactionContext* Context) const
 		{
@@ -2719,7 +2675,6 @@ namespace Tangent
 
 		ExpectsLR<void> ContributionSelection::SetShare1(const Algorithm::Seckey SecretKey, const uint256_t& NewContributionAllocationHash, const Algorithm::Pubkeyhash NewProposer)
 		{
-#ifdef TAN_VALIDATOR
 			auto* Chain = NSS::ServerNode::Get()->GetChainparams(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
@@ -2733,11 +2688,8 @@ namespace Tangent
 			Algorithm::Composition::CSeckey SecretKey1;
 			Algorithm::Composition::ConvertToSecretSeed(SecretKey, Entropy.Data, Seed1);
 			return Algorithm::Composition::DeriveKeypair1(Chain->Composition, Seed1, SecretKey1, PublicKey1);
-#else
-			return LayerException("nss data not available");
-#endif
 		}
-		ExpectsLR<void> ContributionSelection::Validate() const
+		ExpectsLR<void> ContributionSelection::Validate(uint64_t BlockNumber) const
 		{
 			if (!Algorithm::Asset::TokenOf(Asset).empty())
 				return LayerException("invalid asset");
@@ -2745,15 +2697,15 @@ namespace Tangent
 			Algorithm::Composition::CPubkey Null = { 0 };
 			if (!memcmp(PublicKey1, Null, sizeof(Null)))
 				return LayerException("invalid public key 1");
-#ifdef TAN_VALIDATOR
+
 			auto* Chain = NSS::ServerNode::Get()->GetChainparams(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
-#endif
+
 			if (!ContributionAllocationHash)
 				return LayerException("invalid parent transaction");
 
-			return Ledger::Transaction::Validate();
+			return Ledger::Transaction::Validate(BlockNumber);
 		}
 		ExpectsLR<void> ContributionSelection::Execute(Ledger::TransactionContext* Context) const
 		{
@@ -2883,7 +2835,6 @@ namespace Tangent
 
 		ExpectsLR<void> ContributionActivation::SetShare2(const Algorithm::Seckey SecretKey, const uint256_t& NewContributionSelectionHash, const Algorithm::Pubkeyhash NewProposer, const Algorithm::Composition::CPubkey PublicKey1)
 		{
-#ifdef TAN_VALIDATOR
 			auto* Chain = NSS::ServerNode::Get()->GetChainparams(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
@@ -2908,11 +2859,8 @@ namespace Tangent
 				return VerifyingWallet.Error();
 
 			return Expectation::Met;
-#else
-			return LayerException("nss data not available");
-#endif
 		}
-		ExpectsLR<void> ContributionActivation::Validate() const
+		ExpectsLR<void> ContributionActivation::Validate(uint64_t BlockNumber) const
 		{
 			if (!Algorithm::Asset::TokenOf(Asset).empty())
 				return LayerException("invalid asset");
@@ -2928,7 +2876,7 @@ namespace Tangent
 			if (!ContributionSelectionHash)
 				return LayerException("invalid parent transaction");
 
-			return Ledger::ConsensusTransaction::Validate();
+			return Ledger::ConsensusTransaction::Validate(BlockNumber);
 		}
 		ExpectsLR<void> ContributionActivation::Execute(Ledger::TransactionContext* Context) const
 		{
@@ -2981,7 +2929,6 @@ namespace Tangent
 		}
 		ExpectsPromiseRT<void> ContributionActivation::Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const
 		{
-#ifdef TAN_VALIDATOR
 			auto Selection = Context->GetBlockTransaction<ContributionSelection>(ContributionSelectionHash);
 			if (!Selection)
 				return ExpectsPromiseRT<void>(RemoteException(std::move(Selection.Error().message())));
@@ -3003,9 +2950,6 @@ namespace Tangent
 			}
 
 			return ExpectsPromiseRT<void>(Expectation::Met);
-#else
-			return ExpectsPromiseRT<void>(RemoteException("nss data not available"));
-#endif
 		}
 		bool ContributionActivation::StoreBody(Format::Stream* Stream) const
 		{
@@ -3045,11 +2989,7 @@ namespace Tangent
 		}
 		ExpectsLR<Mediator::DerivedVerifyingWallet> ContributionActivation::GetVerifyingWallet() const
 		{
-#ifdef TAN_VALIDATOR
 			return NSS::ServerNode::Get()->NewVerifyingWallet(Asset, std::string_view((char*)PublicKey, PublicKeySize));
-#else
-			return LayerException("nss data not available");
-#endif
 		}
 		UPtr<Schema> ContributionActivation::AsSchema() const
 		{
@@ -3087,7 +3027,7 @@ namespace Tangent
 			return "contribution_activation";
 		}
 
-		ExpectsLR<void> ContributionDeallocation::Validate() const
+		ExpectsLR<void> ContributionDeallocation::Validate(uint64_t BlockNumber) const
 		{
 			if (!Algorithm::Asset::TokenOf(Asset).empty())
 				return LayerException("invalid asset");
@@ -3095,7 +3035,7 @@ namespace Tangent
 			if (!ContributionActivationHash)
 				return LayerException("invalid parent transaction");
 
-			return Ledger::Transaction::Validate();
+			return Ledger::Transaction::Validate(BlockNumber);
 		}
 		ExpectsLR<void> ContributionDeallocation::Execute(Ledger::TransactionContext* Context) const
 		{
@@ -3196,13 +3136,11 @@ namespace Tangent
 				return Application.Error();
 
 			auto Derivation = Context->GetAccountDerivation(Asset, Context->Receipt.From);
-#ifdef TAN_VALIDATOR
 			auto* Chain = NSS::ServerNode::Get()->GetChainparams(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
 
 			AddressIndex = (Derivation && Chain->Routing != Mediator::RoutingPolicy::Memo ? Derivation->MaxAddressIndex + 1 : Protocol::Now().Account.RootAddressIndex);
-#endif
 			Status = Context->ApplyWitnessAddress(ActivationTransaction->Proposer, Context->Receipt.From, Wallet->Addresses, AddressIndex, States::AddressType::Custodian);
 			if (!Status)
 				return Status.Error();
@@ -3312,7 +3250,6 @@ namespace Tangent
 
 		ExpectsLR<void> ContributionDeselection::SetRevealingShare1(const Ledger::TransactionContext* Context, const uint256_t& NewContributionDeallocationHash, const Algorithm::Seckey SecretKey)
 		{
-#ifdef TAN_VALIDATOR
 			auto* Chain = NSS::ServerNode::Get()->GetChainparams(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
@@ -3356,11 +3293,8 @@ namespace Tangent
 				return LayerException("secret key encryption error");
 
 			return Expectation::Met;
-#else
-			return LayerException("nss data not available");
-#endif
 		}
-		ExpectsLR<void> ContributionDeselection::Validate() const
+		ExpectsLR<void> ContributionDeselection::Validate(uint64_t BlockNumber) const
 		{
 			if (!Algorithm::Asset::TokenOf(Asset).empty())
 				return LayerException("invalid asset");
@@ -3371,7 +3305,7 @@ namespace Tangent
 			if (EncryptedSecretKey1.empty())
 				return LayerException("invalid encrypted secret key 1");
 
-			return Ledger::ConsensusTransaction::Validate();
+			return Ledger::ConsensusTransaction::Validate(BlockNumber);
 		}
 		ExpectsLR<void> ContributionDeselection::Execute(Ledger::TransactionContext* Context) const
 		{
@@ -3507,7 +3441,6 @@ namespace Tangent
 
 		ExpectsLR<void> ContributionDeactivation::SetRevealingShare2(const Ledger::TransactionContext* Context, const uint256_t& NewContributionDeselectionHash, const Algorithm::Seckey SecretKey)
 		{
-#ifdef TAN_VALIDATOR
 			auto* Chain = NSS::ServerNode::Get()->GetChainparams(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
@@ -3561,11 +3494,8 @@ namespace Tangent
 				return LayerException("secret key encryption error");
 
 			return Expectation::Met;
-#else
-			return LayerException("nss data not available");
-#endif
 		}
-		ExpectsLR<void> ContributionDeactivation::Validate() const
+		ExpectsLR<void> ContributionDeactivation::Validate(uint64_t BlockNumber) const
 		{
 			if (!Algorithm::Asset::TokenOf(Asset).empty())
 				return LayerException("invalid asset");
@@ -3576,7 +3506,7 @@ namespace Tangent
 			if (EncryptedSecretKey2.empty())
 				return LayerException("invalid encrypted secret key 2");
 
-			return Ledger::ConsensusTransaction::Validate();
+			return Ledger::ConsensusTransaction::Validate(BlockNumber);
 		}
 		ExpectsLR<void> ContributionDeactivation::Execute(Ledger::TransactionContext* Context) const
 		{
@@ -3614,7 +3544,6 @@ namespace Tangent
 		}
 		ExpectsPromiseRT<void> ContributionDeactivation::Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const
 		{
-#ifdef TAN_VALIDATOR
 			auto Deselection = Context->GetBlockTransaction<ContributionDeselection>(ContributionDeselectionHash);
 			if (!Deselection)
 				return ExpectsPromiseRT<void>(RemoteException(std::move(Deselection.Error().message())));
@@ -3678,9 +3607,6 @@ namespace Tangent
 			}
 
 			return ExpectsPromiseRT<void>(Expectation::Met);
-#else
-			return ExpectsPromiseRT<void>(RemoteException("nss data not available"));
-#endif
 		}
 		bool ContributionDeactivation::StoreBody(Format::Stream* Stream) const
 		{
@@ -3737,7 +3663,6 @@ namespace Tangent
 		}
 		ExpectsLR<Mediator::DerivedSigningWallet> ContributionDeactivation::GetSigningWallet(const Ledger::TransactionContext* Context, const Algorithm::Seckey SecretKey) const
 		{
-#ifdef TAN_VALIDATOR
 			auto* Chain = NSS::ServerNode::Get()->GetChainparams(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
@@ -3757,13 +3682,9 @@ namespace Tangent
 				return LayerException("invalid message");
 
 			return NSS::ServerNode::Get()->NewSigningWallet(Asset, std::string_view((char*)SharedSecretKey, SharedSecretKeySize));
-#else
-			return LayerException("nss data not available");
-#endif
 		}
 		ExpectsPromiseRT<Mediator::OutgoingTransaction> ContributionDeactivation::WithdrawToAddress(const Ledger::TransactionContext* Context, const Algorithm::Seckey SecretKey, const std::string_view& Address)
 		{
-#ifdef TAN_VALIDATOR
 			return Coasync<ExpectsRT<Mediator::OutgoingTransaction>>([this, Context, SecretKey, Address]() -> ExpectsPromiseRT<Mediator::OutgoingTransaction>
 			{
 				auto SigningWallet = GetSigningWallet(Context, SecretKey);
@@ -3781,9 +3702,6 @@ namespace Tangent
 				auto Result = Coawait(Resolver::EmitTransaction(nullptr, std::move(DynamicWallet), Asset, Context->Receipt.TransactionHash, std::move(Destinations)));
 				Coreturn std::move(Result);
 			});
-#else
-			return ExpectsPromiseRT<Mediator::OutgoingTransaction>(RemoteException("nss data not available"));
-#endif
 		}
 		UPtr<Schema> ContributionDeactivation::AsSchema() const
 		{
@@ -3818,7 +3736,7 @@ namespace Tangent
 			return "contribution_deactivation";
 		}
 
-		ExpectsLR<void> DepositoryAdjustment::Validate() const
+		ExpectsLR<void> DepositoryAdjustment::Validate(uint64_t BlockNumber) const
 		{
 			if (IncomingAbsoluteFee.IsNaN() || IncomingAbsoluteFee.IsNegative())
 				return LayerException("invalid incoming absolute fee");
@@ -3832,7 +3750,7 @@ namespace Tangent
 			if (OutgoingRelativeFee.IsNaN() || OutgoingRelativeFee.IsNegative() || OutgoingRelativeFee > 1.0)
 				return LayerException("invalid outgoing relative fee");
 
-			return Ledger::Transaction::Validate();
+			return Ledger::Transaction::Validate(BlockNumber);
 		}
 		ExpectsLR<void> DepositoryAdjustment::Execute(Ledger::TransactionContext* Context) const
 		{
@@ -3916,7 +3834,7 @@ namespace Tangent
 			return "depository_adjustment";
 		}
 
-		ExpectsLR<void> DepositoryMigration::Validate() const
+		ExpectsLR<void> DepositoryMigration::Validate(uint64_t BlockNumber) const
 		{
 			if (IsProposerNull())
 				return LayerException("invalid proposer");
@@ -3924,7 +3842,7 @@ namespace Tangent
 			if (!Value.IsPositive())
 				return LayerException("invalid value");
 
-			return Ledger::Transaction::Validate();
+			return Ledger::Transaction::Validate(BlockNumber);
 		}
 		ExpectsLR<void> DepositoryMigration::Execute(Ledger::TransactionContext* Context) const
 		{
@@ -3977,7 +3895,7 @@ namespace Tangent
 			auto Address = GetDestination(Context);
 			if (!Address)
 				return ExpectsPromiseRT<void>(RemoteException("migration proposer has no usable custodian address"));
-#ifdef TAN_VALIDATOR
+
 			auto* Transaction = Memory::New<OutgoingClaim>();
 			Transaction->Asset = Asset;
 			Pipeline->push_back(Transaction);
@@ -4001,9 +3919,6 @@ namespace Tangent
 					Transaction->SetSuccessWitness(Result->Transaction.TransactionId, Result->Data, Context->Receipt.TransactionHash);
 				return ExpectsRT<void>(Expectation::Met);
 			});
-#else
-			return ExpectsPromiseRT<void>(RemoteException("nss data not available"));
-#endif
 		}
 		bool DepositoryMigration::StoreBody(Format::Stream* Stream) const
 		{
@@ -4196,7 +4111,6 @@ namespace Tangent
 		}
 		ExpectsPromiseRT<Mediator::OutgoingTransaction> Resolver::EmitTransaction(Vector<UPtr<Ledger::Transaction>>* Pipeline, Mediator::DynamicWallet&& Wallet, const Algorithm::AssetId& Asset, const uint256_t& TransactionHash, Vector<Mediator::Transferer>&& To)
 		{
-#ifdef TAN_VALIDATOR
 			auto* Server = NSS::ServerNode::Get();
 			if (!Protocol::Now().Is(NetworkType::Regtest) || Server->HasSupport(Asset))
 				return Server->SubmitTransaction(TransactionHash, Asset, std::move(Wallet), std::move(To));
@@ -4236,9 +4150,6 @@ namespace Tangent
 			}
 
 			return ExpectsPromiseRT<Mediator::OutgoingTransaction>(std::move(Ephimeric));
-#else
-			return ExpectsPromiseRT<Mediator::OutgoingTransaction>(RemoteException("nss data not available"));
-#endif
 		}
 	}
 }

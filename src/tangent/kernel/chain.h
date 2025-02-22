@@ -1,5 +1,10 @@
 #ifndef TAN_KERNEL_CHAIN_H
 #define TAN_KERNEL_CHAIN_H
+#ifndef TAN_EXPORT
+#define TAN_OUT __declspec(dllimport)
+#else
+#define TAN_OUT __declspec(dllexport)
+#endif
 #define TAN_CONFIG_PATH "./node.json"
 #include <vitex/compute.h>
 #include <vitex/layer.h>
@@ -49,10 +54,10 @@ namespace Tangent
         String Message;
 
     public:
-        LayerException();
-        LayerException(String&& Text);
-        const char* what() const noexcept override;
-        String&& message() noexcept;
+        TAN_OUT LayerException();
+        TAN_OUT LayerException(String&& Text);
+        TAN_OUT const char* what() const noexcept override;
+        TAN_OUT String&& message() noexcept;
     };
 
     class RemoteException : public std::exception
@@ -62,16 +67,16 @@ namespace Tangent
         int8_t Status;
 
     public:
-        RemoteException(String&& Text);
-        const char* what() const noexcept override;
-        String&& message() noexcept;
-        bool retry() const noexcept;
-        bool shutdown() const noexcept;
-        static RemoteException Retry();
-        static RemoteException Shutdown();
+        TAN_OUT RemoteException(String&& Text);
+        TAN_OUT const char* what() const noexcept override;
+        TAN_OUT String&& message() noexcept;
+        TAN_OUT bool retry() const noexcept;
+        TAN_OUT bool shutdown() const noexcept;
+        TAN_OUT static RemoteException Retry();
+        TAN_OUT static RemoteException Shutdown();
 
     private:
-        RemoteException(int8_t NewStatus);
+        TAN_OUT RemoteException(int8_t NewStatus);
     };
 
     template <typename V>
@@ -86,13 +91,13 @@ namespace Tangent
     template <typename V>
     using ExpectsPromiseRT = ExpectsPromise<V, RemoteException>;
 
-    class Repository
+    class TAN_OUT Repository
     {
         friend class Protocol;
 
     private:
         UnorderedMap<String, SingleQueue<UPtr<LDB::Connection>>> Indices;
-        UnorderedMap<String, std::unique_ptr<rocksdb::DB>> Blobs;
+        UnorderedMap<String, rocksdb::DB*> Blobs;
         std::mutex Mutex;
         String TargetPath;
 
@@ -106,7 +111,7 @@ namespace Tangent
         const String Location() const;
     };
 
-    class Timepoint
+    class TAN_OUT Timepoint
     {
     private:
         UnorderedMap<String, int64_t> Offsets;
@@ -119,7 +124,7 @@ namespace Tangent
         uint64_t NowCPU() const;
     };
 
-    class Vectorstate
+    class TAN_OUT Vectorstate
     {
     private:
         PrivateKey Key;
@@ -133,7 +138,7 @@ namespace Tangent
         ExpectsLR<PrivateKey> DecryptKey(const std::string_view& Data) const;
     };
 
-    class Protocol : public Reference<Protocol>
+    class TAN_OUT Protocol : public Reference<Protocol>
     {
     private:
         static Protocol* Instance;

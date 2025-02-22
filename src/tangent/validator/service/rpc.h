@@ -42,7 +42,7 @@ namespace Tangent
 			return static_cast<uint32_t>(A);
 		}
 
-		struct ServerResponse
+		struct TAN_OUT ServerResponse
 		{
 			UPtr<Schema> Data;
 			String ErrorMessage;
@@ -54,7 +54,7 @@ namespace Tangent
 			UPtr<Schema> Transform(Schema* Request);
 		};
 
-		struct ServerRequest
+		struct TAN_OUT ServerRequest
 		{
 			uint32_t AccessTypes = 0;
 			size_t MinParams = 0;
@@ -66,7 +66,7 @@ namespace Tangent
 			String Returns;
 		};
 
-		class ServerNode : public Reference<ServerNode>
+		class TAN_OUT ServerNode : public Reference<ServerNode>
 		{
 		private:
 			struct WsListener

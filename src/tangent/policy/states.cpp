@@ -1,9 +1,7 @@
 #include "states.h"
 #include "../kernel/block.h"
 #include "../kernel/script.h"
-#ifdef TAN_VALIDATOR
 #include "../validator/service/nss.h"
-#endif
 
 namespace Tangent
 {
@@ -1541,12 +1539,8 @@ namespace Tangent
 		}
 		String WitnessAddress::AsRow() const
 		{
-#ifdef TAN_VALIDATOR
 			auto* Chain = NSS::ServerNode::Get()->GetChainparams(Asset);
 			return AsInstanceRow(Asset, Addresses.empty() ? std::string_view() : Addresses.begin()->second, Chain && Chain->Routing == Mediator::RoutingPolicy::Memo ? AddressIndex : Protocol::Now().Account.RootAddressIndex);
-#else
-			return AsInstanceRow(Asset, Addresses.empty() ? std::string_view() : Addresses.begin()->second, AddressIndex);
-#endif
 		}
 		uint32_t WitnessAddress::AsInstanceType()
 		{
@@ -1566,11 +1560,7 @@ namespace Tangent
 		}
 		String WitnessAddress::AsInstanceRow(const Algorithm::AssetId& Asset, const std::string_view& Address, uint64_t MaxAddressIndex)
 		{
-#ifdef TAN_VALIDATOR
 			auto Location = NSS::ServerNode::Get()->NewPublicKeyHash(Asset, Address).Or(String(Address));
-#else
-			auto& Location = Address;
-#endif
 			Format::Stream Stream;
 			Stream.WriteTypeless(AsInstanceType());
 			Stream.WriteTypeless(Location.data(), (uint8_t)Location.size());

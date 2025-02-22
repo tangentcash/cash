@@ -6,10 +6,13 @@ namespace Tangent
 {
 	namespace Ledger
 	{
-		ExpectsLR<void> Transaction::Validate() const
+		ExpectsLR<void> Transaction::Validate(uint64_t BlockNumber) const
 		{
-			if (!Algorithm::Asset::IsValid(Asset))
+			uint64_t ExpiryNumber = Algorithm::Asset::ExpiryOf(Asset);
+			if (!ExpiryNumber)
 				return LayerException("invalid asset");
+			else if (BlockNumber > ExpiryNumber)
+				return LayerException("asset is no longer supported");
 
 			if (!Sequence || Sequence >= std::numeric_limits<uint64_t>::max() - 1)
 				return LayerException("invalid sequence");
@@ -189,10 +192,13 @@ namespace Tangent
 			return TransactionLevel::Consensus;
 		}
 
-		ExpectsLR<void> AggregationTransaction::Validate() const
+		ExpectsLR<void> AggregationTransaction::Validate(uint64_t BlockNumber) const
 		{
-			if (!Algorithm::Asset::IsValid(Asset))
+			uint64_t ExpiryNumber = Algorithm::Asset::ExpiryOf(Asset);
+			if (!ExpiryNumber)
 				return LayerException("invalid asset");
+			else if (BlockNumber > ExpiryNumber)
+				return LayerException("asset is no longer supported");
 
 			if (Sequence != 0)
 				return LayerException("invalid sequence (neq: 0)");

@@ -1347,9 +1347,8 @@ public:
 
 		UPtr<Transactions::Transfer> Transaction = Memory::New<Transactions::Transfer>();
 		Transaction->SetAsset("BTC");
-		Transaction->SetOptimalGas(Decimal::Zero());
 		Transaction->SetTo(To, Mathd::Random());
-		Transaction->Sign(From, 1);
+		Transaction->Sign(From, 1, Decimal::Zero());
 
 		uint256_t EstimateGasLimit = Transaction->GetGasEstimate();
 		uint256_t OptimalGasLimit = Transaction->GasLimit;
@@ -2361,5 +2360,5 @@ public:
 
 int main(int argc, char* argv[])
 {
-    return Apps::Consensus(argc, argv);
+    return Apps::Integration(argc, argv);
 }

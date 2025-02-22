@@ -28,7 +28,7 @@ namespace Tangent
 			__Count__
 		};
 
-		struct BlockTransaction final : Messages::Generic
+		struct TAN_OUT BlockTransaction final : Messages::Generic
 		{
 			UPtr<Ledger::Transaction> Transaction;
 			Ledger::Receipt Receipt;
@@ -48,7 +48,7 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct BlockWork
+		struct TAN_OUT BlockWork
 		{
 			StateWork Map[(size_t)WorkCommitment::__Count__];
 			const BlockWork* ParentWork = nullptr;
@@ -70,7 +70,7 @@ namespace Tangent
 			StateWork& Commit();
 		};
 
-		struct BlockMutation
+		struct TAN_OUT BlockMutation
 		{
 			BlockWork Cache;
 			BlockWork* Outgoing;
@@ -83,7 +83,7 @@ namespace Tangent
 			BlockMutation& operator=(BlockMutation&& Other) noexcept;
 		};
 
-		struct BlockDispatch
+		struct TAN_OUT BlockDispatch
 		{
 			OrderedMap<uint256_t, String> Errors;
 			Vector<uint256_t> Repeaters;
@@ -98,7 +98,7 @@ namespace Tangent
 			ExpectsLR<void> Checkpoint() const;
 		};
 		
-		struct BlockCheckpoint
+		struct TAN_OUT BlockCheckpoint
 		{
 			uint64_t NewTipBlockNumber = 0;
 			uint64_t OldTipBlockNumber = 0;
@@ -109,7 +109,7 @@ namespace Tangent
 			bool IsFork = false;
 		};
 
-		struct BlockHeader : Messages::Authentic
+		struct TAN_OUT BlockHeader : Messages::Authentic
 		{
 			Algorithm::WVDF::Digest Wesolowski;
 			Algorithm::WVDF::Parameters Target;
@@ -171,7 +171,7 @@ namespace Tangent
 			static uint256_t GetGasLimit();
 		};
 
-		struct Block final : BlockHeader
+		struct TAN_OUT Block final : BlockHeader
 		{
 			Vector<BlockTransaction> Transactions;
 			BlockWork States;
@@ -202,7 +202,7 @@ namespace Tangent
 			uint256_t AsHash(bool Renew = false) const override;
 		};
 
-		struct BlockProof final : Messages::Generic
+		struct TAN_OUT BlockProof final : Messages::Generic
 		{
 			struct InternalState
 			{
@@ -236,7 +236,7 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct TransactionContext
+		struct TAN_OUT TransactionContext
 		{
 		public:
 			enum class ExecutionFlags : uint8_t
@@ -368,7 +368,7 @@ namespace Tangent
 			static ExpectsPromiseRT<void> DispatchTx(const Wallet& Proposer, Ledger::BlockTransaction* Transaction, Vector<UPtr<Ledger::Transaction>>* Pipeline);
 		};
 
-		struct EvaluationContext
+		struct TAN_OUT EvaluationContext
 		{
 			struct TransactionInfo
 			{
@@ -376,6 +376,12 @@ namespace Tangent
 				Algorithm::Pubkeyhash Owner = { 0 };
 				UPtr<Transaction> Candidate;
 				size_t Size = 0;
+
+				TransactionInfo() = default;
+				TransactionInfo(const TransactionInfo& Other);
+				TransactionInfo(TransactionInfo&&) noexcept = default;
+				TransactionInfo& operator= (const TransactionInfo& Other);
+				TransactionInfo& operator= (TransactionInfo&&) noexcept = default;
 			};
 			struct ValidationInfo
 			{

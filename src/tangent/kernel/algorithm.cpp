@@ -1,10 +1,6 @@
 #include "algorithm.h"
-#ifdef TAN_VALIDATOR
 #include "../validator/service/nss.h"
-#endif
-#ifdef TAN_GMP
 #include <gmp.h>
-#endif
 extern "C"
 {
 #include <secp256k1.h>
@@ -22,7 +18,6 @@ namespace Tangent
 {
 	namespace Algorithm
 	{
-#ifdef TAN_GMP
 		struct Gmp
 		{
 			static void Free(void* Data, size_t Size)
@@ -161,7 +156,7 @@ namespace Tangent
 				return Result;
 			}
 		};
-#endif
+
 		uint128_t WVDF::Parameters::Difficulty() const
 		{
 			return uint128_t(Length) * uint128_t(Bits) + uint128_t(Pow);
@@ -265,7 +260,6 @@ namespace Tangent
 		}
 		String WVDF::Evaluate(const Parameters& Alg, const std::string_view& Message)
 		{
-#ifdef TAN_GMP
 			uint8_t MData[64];
 			Hashing::Hash512((uint8_t*)Message.data(), Message.size(), MData);
 
@@ -311,13 +305,9 @@ namespace Tangent
 
 			Signature.T = Protocol::Now().Time.Now();
 			return Signature.Serialize();
-#else
-			return String();
-#endif
 		}
 		bool WVDF::Verify(const Parameters& Alg, const std::string_view& Message, const std::string_view& Sig)
 		{
-#ifdef TAN_GMP
 			auto Signature = GmpSignature::Deserialize(Sig);
 			if (!Signature)
 				return false;
@@ -363,13 +353,9 @@ namespace Tangent
 			int Diff = mpz_cmp(Y, Signature->Y);
 			mpz_clear(Y);
 			return Diff == 0;
-#else
-			return false;
-#endif
 		}
 		int8_t WVDF::Compare(const std::string_view& Sig1, const std::string_view& Sig2)
 		{
-#ifdef TAN_GMP
 			auto Signature1 = GmpSignature::Deserialize(Sig1);
 			auto Signature2 = GmpSignature::Deserialize(Sig2);
 			if (!Signature1 || !Signature2)
@@ -397,19 +383,14 @@ namespace Tangent
 				return -1;
 
 			return 0;
-#else
-			return -2;
-#endif
 		}
 		uint64_t WVDF::Locktime(const std::string_view& Sig)
 		{
-#ifdef TAN_GMP
 			auto Signature = GmpSignature::Deserialize(Sig);
 			if (!Signature)
 				return 0;
 
 			return Signature->T;
-#endif
 		}
 		uint64_t WVDF::AdjustmentInterval()
 		{
@@ -1165,16 +1146,39 @@ namespace Tangent
 			auto Blockchain = BlockchainOf(Value);
 			if (Stringify::IsEmptyOrWhitespace(Blockchain))
 				return false;
-#ifdef TAN_VALIDATOR
+
 			if (!NSS::ServerNode::Get()->HasChain(Value))
 				return false;
-#endif
+
 			auto Token = TokenOf(Value);
 			if (Stringify::IsEmptyOrWhitespace(Token))
 				return true;
 
 			auto Checksum = ChecksumOf(Value);
 			return !Stringify::IsEmptyOrWhitespace(Checksum);
+		}
+		uint64_t Asset::ExpiryOf(const AssetId& Value)
+		{
+			if (!Value)
+				return 0;
+
+			auto Blockchain = BlockchainOf(Value);
+			if (Stringify::IsEmptyOrWhitespace(Blockchain))
+				return 0;
+
+			auto* Chain = NSS::ServerNode::Get()->GetChain(Value);
+			if (!Chain)
+				return 0;
+
+			auto Token = TokenOf(Value);
+			if (Stringify::IsEmptyOrWhitespace(Token))
+				return Chain->GetRetirementBlockNumber();
+
+			auto Checksum = ChecksumOf(Value);
+			if (Stringify::IsEmptyOrWhitespace(Checksum))
+				return 0;
+
+			return Chain->GetRetirementBlockNumber();
 		}
 		Schema* Asset::Serialize(const AssetId& Value)
 		{

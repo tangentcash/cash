@@ -12,13 +12,13 @@ namespace Tangent
 
 	namespace Transactions
 	{
-		struct Transfer final : Ledger::Transaction
+		struct TAN_OUT Transfer final : Ledger::Transaction
 		{
 			Algorithm::Pubkeyhash To = { 0 };
 			Decimal Value;
 			String Memo;
 
-			ExpectsLR<void> Validate() const override;
+			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
@@ -33,7 +33,7 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct Omnitransfer final : Ledger::Transaction
+		struct TAN_OUT Omnitransfer final : Ledger::Transaction
 		{
 			struct Subtransfer
 			{
@@ -43,7 +43,7 @@ namespace Tangent
 			};
 			Vector<Subtransfer> Transfers;
 
-			ExpectsLR<void> Validate() const override;
+			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
@@ -58,7 +58,7 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct Deployment final : Ledger::Transaction
+		struct TAN_OUT Deployment final : Ledger::Transaction
 		{
 			Algorithm::Recsighash Location = { 0 };
 			Format::Variables Args;
@@ -66,7 +66,7 @@ namespace Tangent
 			bool Patchable = false;
 			bool Segregated = false;
 
-			ExpectsLR<void> Validate() const override;
+			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
@@ -86,14 +86,14 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct Invocation final : Ledger::Transaction
+		struct TAN_OUT Invocation final : Ledger::Transaction
 		{
 			Algorithm::Pubkeyhash To = { 0 };
 			Format::Variables Args;
 			String Function;
 			uint32_t Hashcode = 0;
 
-			ExpectsLR<void> Validate() const override;
+			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
@@ -109,12 +109,12 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct Withdrawal final : Ledger::Transaction
+		struct TAN_OUT Withdrawal final : Ledger::Transaction
 		{
 			Vector<std::pair<String, Decimal>> To;
 			Algorithm::Pubkeyhash Proposer = { 0 };
 
-			ExpectsLR<void> Validate() const override;
+			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
@@ -133,7 +133,7 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct Rollup final : Ledger::Transaction
+		struct TAN_OUT Rollup final : Ledger::Transaction
 		{
 			OrderedMap<Algorithm::AssetId, Vector<UPtr<Ledger::Transaction>>> Transactions;
 
@@ -142,7 +142,7 @@ namespace Tangent
 			Rollup(Rollup&&) noexcept = default;
 			Rollup& operator= (const Rollup& Other);
 			Rollup& operator= (Rollup&&) noexcept = default;
-			ExpectsLR<void> Validate() const override;
+			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
@@ -165,12 +165,12 @@ namespace Tangent
 			static bool SignChild(Ledger::Transaction& Transaction, const Algorithm::Seckey SecretKey, const Algorithm::AssetId& Asset, uint16_t Index);
 		};
 
-		struct Commitment final : Ledger::Transaction
+		struct TAN_OUT Commitment final : Ledger::Transaction
 		{
 			OrderedMap<Algorithm::AssetId, bool> Observers;
 			Option<bool> Online = Optional::None;
 
-			ExpectsLR<void> Validate() const override;
+			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
@@ -188,7 +188,7 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct IncomingClaim final : Ledger::AggregationTransaction
+		struct TAN_OUT IncomingClaim final : Ledger::AggregationTransaction
 		{
 			struct CustodyTransfer
 			{
@@ -209,7 +209,7 @@ namespace Tangent
 				OrderedMap<String, BalanceTransfer> Transfers;
 			};
 
-			ExpectsLR<void> Validate() const override;
+			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
@@ -225,14 +225,14 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct OutgoingClaim final : Ledger::ConsensusTransaction
+		struct TAN_OUT OutgoingClaim final : Ledger::ConsensusTransaction
 		{
 			String TransactionId;
 			String TransactionData;
 			String TransactionMessage;
 			uint256_t TransactionHash = 0;
 
-			ExpectsLR<void> Validate() const override;
+			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
@@ -247,11 +247,11 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct AddressAccount final : Ledger::DelegationTransaction
+		struct TAN_OUT AddressAccount final : Ledger::DelegationTransaction
 		{
 			String Address;
 
-			ExpectsLR<void> Validate() const override;
+			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
@@ -264,14 +264,14 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct PubkeyAccount final : Ledger::DelegationTransaction
+		struct TAN_OUT PubkeyAccount final : Ledger::DelegationTransaction
 		{
 			String Pubkey;
 			String Sighash;
 
 			ExpectsLR<void> SignPubkey(const PrivateKey& SigningKey);
 			ExpectsLR<void> VerifyPubkey() const;
-			ExpectsLR<void> Validate() const override;
+			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
@@ -284,11 +284,11 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct DelegationAccount final : Ledger::DelegationTransaction
+		struct TAN_OUT DelegationAccount final : Ledger::DelegationTransaction
 		{
 			Algorithm::Pubkeyhash Proposer = { 0 };
 
-			ExpectsLR<void> Validate() const override;
+			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
@@ -305,7 +305,7 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct CustodianAccount final : Ledger::ConsensusTransaction
+		struct TAN_OUT CustodianAccount final : Ledger::ConsensusTransaction
 		{
 			uint256_t DelegationAccountHash = 0;
 			Algorithm::Pubkeyhash Owner = { 0 };
@@ -316,7 +316,7 @@ namespace Tangent
 			ExpectsLR<void> SetWallet(const Ledger::TransactionContext* Context, const Ledger::Wallet& Proposer, const Algorithm::Pubkeyhash NewOwner);
 			ExpectsLR<void> SignPubkey(const PrivateKey& SigningKey);
 			ExpectsLR<void> VerifyPubkey() const;
-			ExpectsLR<void> Validate() const override;
+			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
@@ -335,9 +335,9 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct ContributionAllocation final : Ledger::Transaction
+		struct TAN_OUT ContributionAllocation final : Ledger::Transaction
 		{
-			ExpectsLR<void> Validate() const override;
+			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
@@ -351,14 +351,14 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct ContributionSelection final : Ledger::ConsensusTransaction
+		struct TAN_OUT ContributionSelection final : Ledger::ConsensusTransaction
 		{
 			uint256_t ContributionAllocationHash = 0;
 			Algorithm::Composition::CPubkey PublicKey1 = { 0 };
 			Algorithm::Pubkeyhash Proposer = { 0 };
 
 			ExpectsLR<void> SetShare1(const Algorithm::Seckey SecretKey, const uint256_t& NewContributionAllocationHash, const Algorithm::Pubkeyhash NewProposer);
-			ExpectsLR<void> Validate() const override;
+			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
@@ -373,7 +373,7 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct ContributionActivation final : Ledger::ConsensusTransaction
+		struct TAN_OUT ContributionActivation final : Ledger::ConsensusTransaction
 		{
 			uint256_t ContributionSelectionHash = 0;
 			Algorithm::Composition::CPubkey PublicKey2 = { 0 };
@@ -382,7 +382,7 @@ namespace Tangent
 			uint16_t PublicKeySize = 0;
 
 			ExpectsLR<void> SetShare2(const Algorithm::Seckey SecretKey, const uint256_t& NewContributionSelectionHash, const Algorithm::Pubkeyhash NewProposer, const Algorithm::Composition::CPubkey PublicKey1);
-			ExpectsLR<void> Validate() const override;
+			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
@@ -398,13 +398,13 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct ContributionDeallocation final : Ledger::Transaction
+		struct TAN_OUT ContributionDeallocation final : Ledger::Transaction
 		{
 			uint256_t ContributionActivationHash = 0;
 			Algorithm::Pubkey CipherPublicKey1 = { 0 };
 			Algorithm::Pubkey CipherPublicKey2 = { 0 };
 
-			ExpectsLR<void> Validate() const override;
+			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
@@ -419,14 +419,14 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct ContributionDeselection final : Ledger::ConsensusTransaction
+		struct TAN_OUT ContributionDeselection final : Ledger::ConsensusTransaction
 		{
 			uint256_t ContributionDeallocationHash = 0;
 			Algorithm::Pubkeyhash Proposer = { 0 };
 			String EncryptedSecretKey1;
 
 			ExpectsLR<void> SetRevealingShare1(const Ledger::TransactionContext* Context, const uint256_t& ContributionDeallocationHash, const Algorithm::Seckey SecretKey);
-			ExpectsLR<void> Validate() const override;
+			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
@@ -442,14 +442,14 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct ContributionDeactivation final : Ledger::ConsensusTransaction
+		struct TAN_OUT ContributionDeactivation final : Ledger::ConsensusTransaction
 		{
 			uint256_t ContributionDeselectionHash = 0;
 			Algorithm::Pubkeyhash Proposer = { 0 };
 			String EncryptedSecretKey2;
 
 			ExpectsLR<void> SetRevealingShare2(const Ledger::TransactionContext* Context, const uint256_t& ContributionDeselectionHash, const Algorithm::Seckey SecretKey);
-			ExpectsLR<void> Validate() const override;
+			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
@@ -468,14 +468,14 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct DepositoryAdjustment final : Ledger::Transaction
+		struct TAN_OUT DepositoryAdjustment final : Ledger::Transaction
 		{
 			Decimal IncomingAbsoluteFee = Decimal::Zero();
 			Decimal IncomingRelativeFee = Decimal::Zero();
 			Decimal OutgoingAbsoluteFee = Decimal::Zero();
 			Decimal OutgoingRelativeFee = Decimal::Zero();
 
-			ExpectsLR<void> Validate() const override;
+			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
 			bool LoadBody(Format::Stream& Stream) override;
@@ -489,12 +489,12 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct DepositoryMigration final : Ledger::Transaction
+		struct TAN_OUT DepositoryMigration final : Ledger::Transaction
 		{
 			Algorithm::Pubkeyhash Proposer = { 0 };
 			Decimal Value;
 
-			ExpectsLR<void> Validate() const override;
+			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
 			bool StoreBody(Format::Stream* Stream) const override;
@@ -512,7 +512,7 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		class Resolver
+		class TAN_OUT Resolver
 		{
 		public:
 			static Ledger::Transaction* New(uint32_t Hash);

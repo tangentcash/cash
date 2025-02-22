@@ -33,30 +33,39 @@ foreach(ITEM IN ITEMS ${SOURCE})
     source_group("${ITEM_GROUP}" FILES "${ITEM}")
 endforeach()
 
+set(TAN_LIBRARY OFF CACHE BOOL "Enable validator tests")
 set(TAN_TEST OFF CACHE BOOL "Enable validator tests")
-if (TAN_TEST)
-    list(FILTER SOURCE EXCLUDE REGEX "src/main")
+if (NOT TAN_LIBRARY)
+    if (TAN_TEST)
+        list(FILTER SOURCE EXCLUDE REGEX "src/main")
+    else()
+        list(FILTER SOURCE EXCLUDE REGEX "src/test")
+    endif()
+    add_executable(tangent ${SOURCE})
+    set_target_properties(tangent PROPERTIES
+        OUTPUT_NAME "tangentd"
+        CXX_STANDARD ${VI_CXX}
+        CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS OFF
+        VERSION ${PROJECT_VERSION}
+        SOVERSION ${PROJECT_VERSION})
+    if (MSVC)
+        set(CMAKE_EXE_LINKER_FLAGS "/ENTRY:mainCRTStartup /SUBSYSTEM:CONSOLE")
+    endif()
 else()
-    list(FILTER SOURCE EXCLUDE REGEX "src/test")
+    list(FILTER SOURCE EXCLUDE REGEX "src/(main|test)")
+    add_library(tangent SHARED ${SOURCE})
+    set_target_properties(tangent PROPERTIES
+            CXX_STANDARD ${VI_CXX}
+            CXX_STANDARD_REQUIRED ON
+            CXX_EXTENSIONS OFF
+            VERSION ${PROJECT_VERSION}
+            SOVERSION ${PROJECT_VERSION})
 endif()
 
-add_executable(tangent ${SOURCE})
-set_target_properties(tangent PROPERTIES
-    OUTPUT_NAME "tangentd"
-    CXX_STANDARD ${VI_CXX}
-    CXX_STANDARD_REQUIRED ON
-    CXX_EXTENSIONS OFF
-    VERSION ${PROJECT_VERSION}
-    SOVERSION ${PROJECT_VERSION})
-target_compile_definitions(tangent PUBLIC -DTAN_VALIDATOR)
-target_precompile_headers(tangent PRIVATE
-    $<$<COMPILE_LANGUAGE:CXX>:${VI_DIRECTORY}/src/vitex/bindings.h>
-    $<$<COMPILE_LANGUAGE:CXX>:${VI_DIRECTORY}/src/vitex/compute.h>
-    $<$<COMPILE_LANGUAGE:CXX>:${VI_DIRECTORY}/src/vitex/layer/processors.h>
-    $<$<COMPILE_LANGUAGE:CXX>:${CMAKE_CURRENT_LIST_DIR}/src/tangent/kernel/chain.h>
-    $<$<COMPILE_LANGUAGE:CXX>:${CMAKE_CURRENT_LIST_DIR}/src/tangent/kernel/mediator.h>)
+target_compile_definitions(tangent PRIVATE -DTAN_EXPORT)
+target_precompile_headers(tangent PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${CMAKE_CURRENT_LIST_DIR}/src/tangent/kernel/chain.h>)
 if (MSVC)
-    set(CMAKE_EXE_LINKER_FLAGS "/ENTRY:mainCRTStartup /SUBSYSTEM:CONSOLE")
     target_compile_definitions(tangent PRIVATE -D_CRT_SECURE_NO_WARNINGS)
     target_compile_options(tangent PRIVATE
         $<$<COMPILE_LANGUAGE:CXX>:/wd4146>

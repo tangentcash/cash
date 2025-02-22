@@ -1,5 +1,7 @@
 #include "script.h"
 #include "chain.h"
+#include "../policy/transactions.h"
+#include "../validator/storage/chainstate.h"
 #include <vitex/bindings.h>
 #include <sstream>
 extern "C"
@@ -7,10 +9,6 @@ extern "C"
 #include "../internal/sha2.h"
 #include "../internal/sha3.h"
 }
-#include "../policy/transactions.h"
-#ifdef TAN_VALIDATOR
-#include "../validator/storage/chainstate.h"
-#endif
 #define SCRIPT_CLASS_ADDRESS "address"
 #define SCRIPT_CLASS_PROGRAM "program"
 #define SCRIPT_CLASS_STRINGVIEW "string_view"
@@ -1512,12 +1510,12 @@ namespace Tangent
 		ScriptProgramTrace::ScriptProgramTrace(Ledger::Transaction* Transaction, const Algorithm::Pubkeyhash From, bool Tracing) : ScriptProgram(&Environment.Validation.Context), Debugging(Tracing)
 		{
 			VI_ASSERT(Transaction != nullptr && From != nullptr, "transaction and from should be set");
-#ifdef TAN_VALIDATOR
+
 			auto Chain = Storages::Chainstate(__func__);
 			auto Tip = Chain.GetLatestBlockHeader();
 			if (Tip)
 				Environment.Tip = std::move(*Tip);
-#endif
+
 			Ledger::Receipt Receipt;
 			Block.SetParentBlock(Environment.Tip.Address());
 			Receipt.TransactionHash = Transaction->AsHash();

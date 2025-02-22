@@ -1,10 +1,8 @@
 #include "block.h"
 #include "../policy/transactions.h"
-#ifdef TAN_VALIDATOR
 #include "../validator/service/nss.h"
 #include "../validator/storage/mempoolstate.h"
 #include "../validator/storage/chainstate.h"
-#endif
 
 namespace Tangent
 {
@@ -249,12 +247,8 @@ namespace Tangent
 		}
 		ExpectsLR<void> BlockDispatch::Checkpoint() const
 		{
-#ifdef TAN_VALIDATOR
 			auto Chain = Storages::Chainstate(__func__);
 			return Chain.Dispatch(Inputs, Repeaters);
-#else
-			return LayerException("chainstate data not available");
-#endif
 		}
 
 		bool BlockHeader::operator<(const BlockHeader& Other) const
@@ -283,7 +277,6 @@ namespace Tangent
 		}
 		ExpectsLR<BlockDispatch> BlockHeader::DispatchSync(const Wallet& Proposer) const
 		{
-#ifdef TAN_VALIDATOR
 			size_t Offset = 0, Count = 512;
 			BlockDispatch Pipeline;
 			while (true)
@@ -314,13 +307,9 @@ namespace Tangent
 				Item.second.pop_back();
 
 			return Pipeline;
-#else
-			return LayerException("chainstate data not available");
-#endif
 		}
 		ExpectsPromiseLR<BlockDispatch> BlockHeader::DispatchAsync(const Wallet& Proposer) const
 		{
-#ifdef TAN_VALIDATOR
 			return Coasync<ExpectsLR<BlockDispatch>>([this, Proposer]() -> ExpectsPromiseLR<BlockDispatch>
 			{
 				size_t Offset = 0, Count = 512;
@@ -349,9 +338,6 @@ namespace Tangent
 
 				Coreturn Pipeline;
 			});
-#else
-			return ExpectsPromiseLR<BlockDispatch>(LayerException("chainstate data not available"));
-#endif
 		}
 		ExpectsLR<void> BlockHeader::VerifyValidity(const BlockHeader* ParentBlock) const
 		{
@@ -397,7 +383,8 @@ namespace Tangent
 
 			for (auto& Witness : Witnesses)
 			{
-				if (!Algorithm::Asset::IsValid(Witness.first))
+				uint64_t ExpiryNumber = Algorithm::Asset::ExpiryOf(Witness.first);
+				if (!ExpiryNumber || Number > ExpiryNumber)
 					return LayerException("invalid witness " + Algorithm::Asset::HandleOf(Witness.first));
 			}
 
@@ -924,7 +911,6 @@ namespace Tangent
 		}
 		ExpectsLR<BlockCheckpoint> Block::Checkpoint(bool KeepRevertedTransactions) const
 		{
-#ifdef TAN_VALIDATOR
 			auto Chain = Storages::Chainstate(__func__);
 			auto ChainSession = Chain.MultiTxBegin("chainwork", "apply", LDB::Isolation::Default);
 			if (!ChainSession)
@@ -1051,9 +1037,6 @@ namespace Tangent
 				Mempool.RemoveTransactions(FinalizedTransactions).Report("mempool cleanup failed");
 			}
 			return Mutation;
-#else
-			return LayerException("chainstate and mempool are not available");
-#endif
 		}
 		bool Block::StorePayload(Format::Stream* Stream) const
 		{
@@ -1459,7 +1442,7 @@ namespace Tangent
 		{
 			if (!Next)
 				return LayerException("invalid state");
-#ifdef TAN_VALIDATOR
+
 			if (Block != nullptr)
 			{
 				Next->BlockNumber = Block->Number;
@@ -1505,9 +1488,6 @@ namespace Tangent
 
 			Delta.Outgoing->CopyAny(Next);
 			return Expectation::Met;
-#else
-			return LayerException("chainstate data not available");
-#endif
 		}
 		ExpectsLR<void> TransactionContext::EmitWitness(uint64_t BlockNumber)
 		{
@@ -1657,18 +1637,13 @@ namespace Tangent
 		}
 		ExpectsLR<size_t> TransactionContext::CalculateAggregationCommitteeSize(const Algorithm::AssetId& Asset)
 		{
-#ifdef TAN_VALIDATOR
 			auto Nonce = GetValidationNonce();
 			auto Chain = Storages::Chainstate(__func__);
 			auto Filter = Storages::FactorFilter::Equal(1, 1);
 			return Chain.GetMultiformsCountByRowFilter(States::AccountObserver::AsInstanceRow(Asset), Filter, Nonce);
-#else
-			return LayerException("chainstate data not available");
-#endif
 		}
 		ExpectsLR<Vector<States::AccountWork>> TransactionContext::CalculateProposalCommittee(size_t TargetSize)
 		{
-#ifdef TAN_VALIDATOR
 			auto Random = CalculateRandom(0);
 			if (!Random)
 				return Random.Error();
@@ -1706,13 +1681,9 @@ namespace Tangent
 				std::sort(Committee.begin(), Committee.end(), [](const States::AccountWork&A, const States::AccountWork& B) { return A.GetGasUse() > B.GetGasUse(); });
 
 			return Committee;
-#else
-			return LayerException("chainstate data not available");
-#endif
 		}
 		ExpectsLR<Vector<States::AccountWork>> TransactionContext::CalculateSharingCommittee(OrderedSet<String>& Hashset, size_t RequiredSize)
 		{
-#ifdef TAN_VALIDATOR
 			auto Random = CalculateRandom(1);
 			if (!Random)
 				return Random.Error();
@@ -1765,9 +1736,6 @@ namespace Tangent
 				return LayerException("committee threshold not met");
 
 			return Committee;
-#else
-			return LayerException("chainstate data not available");
-#endif
 		}
 		ExpectsLR<States::AccountSequence> TransactionContext::ApplyAccountSequence()
 		{
@@ -2045,23 +2013,19 @@ namespace Tangent
 		{
 			if (Addresses.empty())
 				return LayerException("invalid operation");
-#ifdef TAN_VALIDATOR
+
 			auto* Chain = NSS::ServerNode::Get()->GetChain(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
-#endif
+
 			OrderedMap<String, AddressMap> Segments;
 			for (auto& Address : Addresses)
 			{
-#ifdef TAN_VALIDATOR
 				auto Hash = Chain->NewPublicKeyHash(Address.second);
 				if (Hash)
 					Segments[*Hash][Address.first] = Address.second;
 				else
 					Segments[Address.second][Address.first] = Address.second;
-#else
-				Segments[Address.second][Address.first] = Address.second;
-#endif
 			}
 
 			States::WitnessAddress NewState = States::WitnessAddress(nullptr, nullptr);
@@ -2198,7 +2162,6 @@ namespace Tangent
 		ExpectsLR<States::AccountSequence> TransactionContext::GetAccountSequence(const Algorithm::Pubkeyhash Owner) const
 		{
 			VI_ASSERT(Owner != nullptr, "owner should be set");
-#ifdef TAN_VALIDATOR
 			auto Chain = Storages::Chainstate(__func__);
 			auto State = Chain.GetUniformByIndex(&Delta, States::AccountSequence::AsInstanceIndex(Owner), GetValidationNonce());
 			if (!State)
@@ -2209,14 +2172,10 @@ namespace Tangent
 				return Status.Error();
 
 			return States::AccountSequence(std::move(*(States::AccountSequence*)**State));
-#else
-			return LayerException("chainstate data not available");
-#endif
 		}
 		ExpectsLR<States::AccountWork> TransactionContext::GetAccountWork(const Algorithm::Pubkeyhash Owner) const
 		{
 			VI_ASSERT(Owner != nullptr, "owner should be set");
-#ifdef TAN_VALIDATOR
 			Algorithm::Pubkeyhash Null = { 0 };
 			auto Chain = Storages::Chainstate(__func__);
 			auto State = Chain.GetMultiformByComposition(&Delta, States::AccountWork::AsInstanceColumn(Owner), States::AccountWork::AsInstanceRow(), GetValidationNonce());
@@ -2240,14 +2199,10 @@ namespace Tangent
 			}
 
 			return States::AccountWork(std::move(*(States::AccountWork*)**State));
-#else
-			return LayerException("chainstate data not available");
-#endif
 		}
 		ExpectsLR<States::AccountObserver> TransactionContext::GetAccountObserver(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner) const
 		{
 			VI_ASSERT(Owner != nullptr, "owner should be set");
-#ifdef TAN_VALIDATOR
 			Algorithm::Pubkeyhash Null = { 0 };
 			auto Chain = Storages::Chainstate(__func__);
 			auto State = Chain.GetMultiformByComposition(&Delta, States::AccountObserver::AsInstanceColumn(Owner), States::AccountObserver::AsInstanceRow(Asset), GetValidationNonce());
@@ -2271,13 +2226,9 @@ namespace Tangent
 			}
 
 			return States::AccountObserver(std::move(*(States::AccountObserver*)**State));
-#else
-			return LayerException("chainstate data not available");
-#endif
 		}
 		ExpectsLR<Vector<States::AccountObserver>> TransactionContext::GetAccountObservers(const Algorithm::Pubkeyhash Owner, size_t Offset, size_t Count) const
 		{
-#ifdef TAN_VALIDATOR
 			auto Chain = Storages::Chainstate(__func__);
 			auto States = Chain.GetMultiformsByColumn(&Delta, States::AccountObserver::AsInstanceColumn(Owner), GetValidationNonce(), Offset, Count);
 			if (!States)
@@ -2295,14 +2246,10 @@ namespace Tangent
 			for (auto& State : *States)
 				Addresses.emplace_back(std::move(*(States::AccountObserver*)*State));
 			return Addresses;
-#else
-			return LayerException("chainstate data not available");
-#endif
 		}
 		ExpectsLR<States::AccountProgram> TransactionContext::GetAccountProgram(const Algorithm::Pubkeyhash Owner) const
 		{
 			VI_ASSERT(Owner != nullptr, "owner should be set");
-#ifdef TAN_VALIDATOR
 			auto Chain = Storages::Chainstate(__func__);
 			auto State = Chain.GetUniformByIndex(&Delta, States::AccountProgram::AsInstanceIndex(Owner), GetValidationNonce());
 			if (!State)
@@ -2313,14 +2260,10 @@ namespace Tangent
 				return Status.Error();
 
 			return States::AccountProgram(std::move(*(States::AccountProgram*)**State));
-#else
-			return LayerException("chainstate data not available");
-#endif
 		}
 		ExpectsLR<States::AccountStorage> TransactionContext::GetAccountStorage(const Algorithm::Pubkeyhash Owner, const std::string_view& Location) const
 		{
 			VI_ASSERT(Owner != nullptr, "owner should be set");
-#ifdef TAN_VALIDATOR
 			auto Chain = Storages::Chainstate(__func__);
 			auto State = Chain.GetUniformByIndex(&Delta, States::AccountStorage::AsInstanceIndex(Owner, Location), GetValidationNonce());
 			if (!State)
@@ -2331,9 +2274,6 @@ namespace Tangent
 				return Status.Error();
 
 			return States::AccountStorage(std::move(*(States::AccountStorage*)**State));
-#else
-			return LayerException("chainstate data not available");
-#endif
 		}
 		ExpectsLR<States::AccountReward> TransactionContext::GetAccountReward(const Algorithm::Pubkeyhash Owner) const
 		{
@@ -2342,7 +2282,6 @@ namespace Tangent
 		ExpectsLR<States::AccountReward> TransactionContext::GetAccountReward(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner) const
 		{
 			VI_ASSERT(Owner != nullptr, "owner should be set");
-#ifdef TAN_VALIDATOR
 			auto Chain = Storages::Chainstate(__func__);
 			auto State = Chain.GetMultiformByComposition(&Delta, States::AccountReward::AsInstanceColumn(Owner), States::AccountReward::AsInstanceRow(Asset), GetValidationNonce());
 			if (!State)
@@ -2353,9 +2292,6 @@ namespace Tangent
 				return Status.Error();
 
 			return States::AccountReward(std::move(*(States::AccountReward*)**State));
-#else
-			return LayerException("chainstate data not available");
-#endif
 		}
 		ExpectsLR<States::AccountBalance> TransactionContext::GetAccountBalance(const Algorithm::Pubkeyhash Owner) const
 		{
@@ -2364,7 +2300,6 @@ namespace Tangent
 		ExpectsLR<States::AccountBalance> TransactionContext::GetAccountBalance(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner) const
 		{
 			VI_ASSERT(Owner != nullptr, "owner should be set");
-#ifdef TAN_VALIDATOR
 			auto Chain = Storages::Chainstate(__func__);
 			auto State = Chain.GetMultiformByComposition(&Delta, States::AccountBalance::AsInstanceColumn(Owner), States::AccountBalance::AsInstanceRow(Asset), GetValidationNonce());
 			if (!State)
@@ -2375,9 +2310,6 @@ namespace Tangent
 				return Status.Error();
 
 			return States::AccountBalance(std::move(*(States::AccountBalance*)**State));
-#else
-			return LayerException("chainstate data not available");
-#endif
 		}
 		ExpectsLR<States::AccountDepository> TransactionContext::GetAccountDepository(const Algorithm::Pubkeyhash Owner) const
 		{
@@ -2386,7 +2318,6 @@ namespace Tangent
 		ExpectsLR<States::AccountDepository> TransactionContext::GetAccountDepository(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner) const
 		{
 			VI_ASSERT(Owner != nullptr, "owner should be set");
-#ifdef TAN_VALIDATOR
 			auto Chain = Storages::Chainstate(__func__);
 			auto State = Chain.GetMultiformByComposition(&Delta, States::AccountDepository::AsInstanceColumn(Owner), States::AccountDepository::AsInstanceRow(Asset), GetValidationNonce());
 			if (!State)
@@ -2397,9 +2328,6 @@ namespace Tangent
 				return Status.Error();
 
 			return States::AccountDepository(std::move(*(States::AccountDepository*)**State));
-#else
-			return LayerException("chainstate data not available");
-#endif
 		}
 		ExpectsLR<States::AccountDerivation> TransactionContext::GetAccountDerivation(const Algorithm::Pubkeyhash Owner) const
 		{
@@ -2408,7 +2336,6 @@ namespace Tangent
 		ExpectsLR<States::AccountDerivation> TransactionContext::GetAccountDerivation(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner) const
 		{
 			VI_ASSERT(Owner != nullptr, "owner should be set");
-#ifdef TAN_VALIDATOR
 			auto Chain = Storages::Chainstate(__func__);
 			auto State = Chain.GetUniformByIndex(&Delta, States::AccountDerivation::AsInstanceIndex(Owner, Asset), GetValidationNonce());
 			if (!State)
@@ -2419,13 +2346,9 @@ namespace Tangent
 				return Status.Error();
 
 			return States::AccountDerivation(std::move(*(States::AccountDerivation*)**State));
-#else
-			return LayerException("chainstate data not available");
-#endif
 		}
 		ExpectsLR<States::WitnessProgram> TransactionContext::GetWitnessProgram(const std::string_view& ProgramHashcode) const
 		{
-#ifdef TAN_VALIDATOR
 			auto Chain = Storages::Chainstate(__func__);
 			auto State = Chain.GetUniformByIndex(&Delta, States::WitnessProgram::AsInstanceIndex(ProgramHashcode), GetValidationNonce());
 			if (!State)
@@ -2436,13 +2359,9 @@ namespace Tangent
 				return Status.Error();
 
 			return States::WitnessProgram(std::move(*(States::WitnessProgram*)**State));
-#else
-			return LayerException("chainstate data not available");
-#endif
 		}
 		ExpectsLR<States::WitnessEvent> TransactionContext::GetWitnessEvent(const uint256_t& ParentTransactionHash) const
 		{
-#ifdef TAN_VALIDATOR
 			auto Chain = Storages::Chainstate(__func__);
 			auto State = Chain.GetUniformByIndex(&Delta, States::WitnessEvent::AsInstanceIndex(ParentTransactionHash), GetValidationNonce());
 			if (!State)
@@ -2453,13 +2372,9 @@ namespace Tangent
 				return Status.Error();
 
 			return States::WitnessEvent(std::move(*(States::WitnessEvent*)**State));
-#else
-			return LayerException("chainstate data not available");
-#endif
 		}
 		ExpectsLR<Vector<States::WitnessAddress>> TransactionContext::GetWitnessAddresses(const Algorithm::Pubkeyhash Owner, size_t Offset, size_t Count) const
 		{
-#ifdef TAN_VALIDATOR
 			auto Chain = Storages::Chainstate(__func__);
 			auto States = Chain.GetMultiformsByColumn(&Delta, States::WitnessAddress::AsInstanceColumn(Owner), GetValidationNonce(), Offset, Count);
 			if (!States)
@@ -2477,13 +2392,9 @@ namespace Tangent
 			for (auto& State : *States)
 				Addresses.emplace_back(std::move(*(States::WitnessAddress*)*State));
 			return Addresses;
-#else
-			return LayerException("chainstate data not available");
-#endif
 		}
 		ExpectsLR<Vector<States::WitnessAddress>> TransactionContext::GetWitnessAddressesByPurpose(const Algorithm::Pubkeyhash Owner, States::AddressType Purpose, size_t Offset, size_t Count) const
 		{
-#ifdef TAN_VALIDATOR
 			auto Chain = Storages::Chainstate(__func__);
 			auto Filter = Storages::FactorFilter::Equal((int64_t)Purpose, 1);
 			auto States = Chain.GetMultiformsByColumnFilter(&Delta, States::WitnessAddress::AsInstanceColumn(Owner), Filter, GetValidationNonce(), Storages::FactorRangeWindow(Offset, Count));
@@ -2502,9 +2413,6 @@ namespace Tangent
 			for (auto& State : *States)
 				Addresses.emplace_back(std::move(*(States::WitnessAddress*)*State));
 			return Addresses;
-#else
-			return LayerException("chainstate data not available");
-#endif
 		}
 		ExpectsLR<States::WitnessAddress> TransactionContext::GetWitnessAddress(const Algorithm::Pubkeyhash Owner, const std::string_view& Address, uint64_t AddressIndex) const
 		{
@@ -2512,7 +2420,6 @@ namespace Tangent
 		}
 		ExpectsLR<States::WitnessAddress> TransactionContext::GetWitnessAddress(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner, const std::string_view& Address, uint64_t AddressIndex) const
 		{
-#ifdef TAN_VALIDATOR
 			auto Chain = Storages::Chainstate(__func__);
 			auto State = Chain.GetMultiformByComposition(&Delta, States::WitnessAddress::AsInstanceColumn(Owner), States::WitnessAddress::AsInstanceRow(Asset, Address, AddressIndex), GetValidationNonce());
 			if (!State)
@@ -2523,9 +2430,6 @@ namespace Tangent
 				return Status.Error();
 
 			return States::WitnessAddress(std::move(*(States::WitnessAddress*)**State));
-#else
-			return LayerException("chainstate data not available");
-#endif
 		}
 		ExpectsLR<States::WitnessAddress> TransactionContext::GetWitnessAddress(const std::string_view& Address, uint64_t AddressIndex, size_t Offset) const
 		{
@@ -2533,7 +2437,6 @@ namespace Tangent
 		}
 		ExpectsLR<States::WitnessAddress> TransactionContext::GetWitnessAddress(const Algorithm::AssetId& Asset, const std::string_view& Address, uint64_t AddressIndex, size_t Offset) const
 		{
-#ifdef TAN_VALIDATOR
 			auto Chain = Storages::Chainstate(__func__);
 			auto State = Chain.GetMultiformByRow(&Delta, States::WitnessAddress::AsInstanceRow(Asset, Address, AddressIndex), GetValidationNonce(), Offset);
 			if (!State)
@@ -2544,9 +2447,6 @@ namespace Tangent
 				return Status.Error();
 
 			return States::WitnessAddress(std::move(*(States::WitnessAddress*)**State));
-#else
-			return LayerException("chainstate data not available");
-#endif
 		}
 		ExpectsLR<States::WitnessTransaction> TransactionContext::GetWitnessTransaction(const std::string_view& TransactionId) const
 		{
@@ -2554,7 +2454,6 @@ namespace Tangent
 		}
 		ExpectsLR<States::WitnessTransaction> TransactionContext::GetWitnessTransaction(const Algorithm::AssetId& Asset, const std::string_view& TransactionId) const
 		{
-#ifdef TAN_VALIDATOR
 			auto Chain = Storages::Chainstate(__func__);
 			auto State = Chain.GetUniformByIndex(&Delta, States::WitnessTransaction::AsInstanceIndex(Asset, TransactionId), GetValidationNonce());
 			if (!State)
@@ -2565,15 +2464,12 @@ namespace Tangent
 				return Status.Error();
 
 			return States::WitnessTransaction(std::move(*(States::WitnessTransaction*)**State));
-#else
-			return LayerException("chainstate data not available");
-#endif
 		}
 		ExpectsLR<Ledger::BlockTransaction> TransactionContext::GetBlockTransactionInstance(const uint256_t& TransactionHash) const
 		{
 			if (!TransactionHash)
 				return LayerException("block transaction not found");
-#ifdef TAN_VALIDATOR
+
 			auto Chain = Storages::Chainstate(__func__);
 			auto Candidate = Chain.GetBlockTransactionByHash(TransactionHash);
 			if (!Candidate || !Candidate->Transaction || !Candidate->Receipt.Successful)
@@ -2586,9 +2482,6 @@ namespace Tangent
 				Candidate = ((Transactions::Rollup*)*Candidate->Transaction)->ResolveBlockTransaction(Candidate->Receipt, TransactionHash);
 
 			return Candidate;
-#else
-			return LayerException("chainstate data not available");
-#endif
 		}
 		uint64_t TransactionContext::GetValidationNonce() const
 		{
@@ -2623,7 +2516,8 @@ namespace Tangent
 			if (!Algorithm::Signing::RecoverHash(NewTransactionHash, Owner, NewTransaction->Signature) || !memcmp(Owner, Null, sizeof(Null)))
 				return LayerException("invalid signature");
 
-			return NewTransaction->Validate();
+			auto Chain = Storages::Chainstate(__func__);
+			return NewTransaction->Validate(Chain.GetLatestBlockNumber().Or(1));
 		}
 		ExpectsLR<TransactionContext> TransactionContext::ExecuteTx(Ledger::Block* NewBlock, const Ledger::EvaluationContext* NewEnvironment, const Ledger::Transaction* NewTransaction, const uint256_t& NewTransactionHash, const Algorithm::Pubkeyhash Owner, BlockWork& Cache, size_t TransactionSize, uint8_t Flags)
 		{
@@ -2635,7 +2529,7 @@ namespace Tangent
 			NewReceipt.BlockNumber = NewBlock->Number;
 			memcpy(NewReceipt.From, Owner, sizeof(NewReceipt.From));
 
-			auto Validation = NewTransaction->Validate();
+			auto Validation = NewTransaction->Validate(NewReceipt.BlockNumber);
 			if (!Validation)
 				return Validation.Error();
 
@@ -2726,7 +2620,7 @@ namespace Tangent
 			memcpy(TempEnvironment.Proposer.PublicKeyHash, PublicKeyHash, sizeof(Algorithm::Pubkeyhash));
 
 			Ledger::BlockWork Cache;
-			auto Validation = Transaction->Validate();
+			auto Validation = Transaction->Validate(TempBlock.Number);
 			if (!Validation)
 			{
 				RevertTransaction();
@@ -2764,9 +2658,27 @@ namespace Tangent
 			});
 		}
 
+		EvaluationContext::TransactionInfo::TransactionInfo(const TransactionInfo& Other) : Hash(Other.Hash), Size(Other.Size)
+		{
+			auto* Mutable = (TransactionInfo*)&Other;
+			Candidate = Mutable->Candidate.Reset();
+			memcpy(Owner, Other.Owner, sizeof(Other.Owner));
+		}
+		EvaluationContext::TransactionInfo& EvaluationContext::TransactionInfo::operator= (const TransactionInfo& Other)
+		{
+			if (this == &Other)
+				return *this;
+
+			auto* Mutable = (TransactionInfo*)&Other;
+			Hash = Other.Hash;
+			Size = Other.Size;
+			Candidate = Mutable->Candidate.Reset();
+			memcpy(Owner, Other.Owner, sizeof(Other.Owner));
+			return *this;
+		}
+
 		Option<uint64_t> EvaluationContext::Priority(const Algorithm::Pubkeyhash PublicKeyHash, const Algorithm::Seckey SecretKey, Option<BlockHeader*>&& ParentBlock)
 		{
-#ifdef TAN_VALIDATOR
 			if (!ParentBlock)
 			{
 				auto Chain = Storages::Chainstate(__func__);
@@ -2788,10 +2700,6 @@ namespace Tangent
 				Tip = Option<Ledger::BlockHeader>(Optional::None);
 				Validation.Tip = !Latest;
 			}
-#else
-			Tip = Option<Ledger::BlockHeader>(Optional::None);
-			Validation.Tip = true;
-#endif
 
 			memcpy(Proposer.PublicKeyHash, PublicKeyHash, sizeof(Algorithm::Pubkeyhash));
 			if (SecretKey != nullptr)
@@ -2838,11 +2746,11 @@ namespace Tangent
 		{
 			Vector<TransactionInfo> Subqueue;
 			Subqueue.reserve(Candidates.size());
+			Incoming.reserve(Incoming.size() + Candidates.size());
 			for (auto& Candidate : Candidates)
 			{
-				TransactionInfo Info;
+				auto& Info = Subqueue.emplace_back();
 				Info.Candidate = std::move(Candidate);
-				Subqueue.emplace_back(std::move(Info));
 			}
 
 			auto TotalGasLimit = BlockHeader::GetGasLimit();
@@ -2860,7 +2768,7 @@ namespace Tangent
 
 				uint256_t NewCumulativeGas = Validation.CumulativeGas + Item.Candidate->GasLimit;
 				if (NewCumulativeGas > TotalGasLimit)
-					continue;
+					break;
 
 				if (Item.Candidate->GetType() == TransactionLevel::Aggregation)
 				{
@@ -2890,8 +2798,7 @@ namespace Tangent
 		}
 		EvaluationContext::TransactionInfo& EvaluationContext::Include(UPtr<Transaction>&& Candidate)
 		{
-			Incoming.emplace_back();
-			auto& Info = Incoming.back();
+			auto& Info = Incoming.emplace_back();
 			Info.Candidate = std::move(Candidate);
 			return Info;
 		}
@@ -2901,9 +2808,8 @@ namespace Tangent
 			auto Status = Precompute(Candidate);
 			if (!Status)
 				return Status.Error();
-#ifdef TAN_VALIDATOR
+
 			auto Chain = Storages::Chainstate(__func__);
-#endif
 			auto Evaluation = Candidate.Evaluate(Tip.Address(), this, Errors);
 			Cleanup().Report("mempool cleanup failed");
 			if (!Evaluation)
@@ -2944,12 +2850,9 @@ namespace Tangent
 		{
 			if (Outgoing.empty())
 				return Expectation::Met;
-#ifdef TAN_VALIDATOR
+
 			auto Mempool = Storages::Mempoolstate(__func__);
 			return Mempool.RemoveTransactions(Outgoing);
-#else
-			return LayerException("mempoolstate data not available");
-#endif
 		}
 		void EvaluationContext::Precompute(Vector<TransactionInfo>& Candidates)
 		{

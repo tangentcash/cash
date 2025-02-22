@@ -6,7 +6,7 @@ namespace Tangent
 {
 	namespace Messages
 	{
-		struct Generic
+		struct TAN_OUT Generic
 		{
 			uint256_t Checksum;
 			uint32_t Version;
@@ -26,7 +26,7 @@ namespace Tangent
 			static Option<uint32_t> ResolveType(Format::Stream& Stream, uint32_t* Version = nullptr);
 		};
 
-		struct Authentic
+		struct TAN_OUT Authentic
 		{
 			Algorithm::Recsighash Signature = { 0 };
 			uint256_t Checksum;

@@ -27,7 +27,7 @@ namespace Tangent
 
 		class RelayBackend;
 
-		struct TokenUTXO
+		struct TAN_OUT TokenUTXO
 		{
 			String ContractAddress;
 			String Symbol;
@@ -41,7 +41,7 @@ namespace Tangent
 			bool IsCoinValid() const;
 		};
 
-		struct CoinUTXO
+		struct TAN_OUT CoinUTXO
 		{
 			Vector<TokenUTXO> Tokens;
 			Option<uint64_t> AddressIndex = Optional::None;
@@ -57,7 +57,7 @@ namespace Tangent
 			bool IsValid() const;
 		};
 
-		struct Transferer
+		struct TAN_OUT Transferer
 		{
 			Option<uint64_t> AddressIndex = Optional::None;
 			String Address;
@@ -68,7 +68,7 @@ namespace Tangent
 			bool IsValid() const;
 		};
 
-		struct MasterWallet : Messages::Generic
+		struct TAN_OUT MasterWallet : Messages::Generic
 		{
 			PrivateKey SeedingKey;
 			PrivateKey SigningKey;
@@ -92,7 +92,7 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct DerivedVerifyingWallet : Messages::Generic
+		struct TAN_OUT DerivedVerifyingWallet : Messages::Generic
 		{
 			AddressMap Addresses;
 			Option<uint64_t> AddressIndex = Optional::None;
@@ -114,7 +114,7 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct DerivedSigningWallet : DerivedVerifyingWallet
+		struct TAN_OUT DerivedSigningWallet : DerivedVerifyingWallet
 		{
 			PrivateKey SigningKey;
 
@@ -134,7 +134,7 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct DynamicWallet
+		struct TAN_OUT DynamicWallet
 		{
 			Option<MasterWallet> Parent;
 			Option<DerivedVerifyingWallet> VerifyingChild;
@@ -152,7 +152,7 @@ namespace Tangent
 			bool IsValid() const;
 		};
 
-		struct IncomingTransaction : Messages::Generic
+		struct TAN_OUT IncomingTransaction : Messages::Generic
 		{
 			Vector<Transferer> To;
 			Vector<Transferer> From;
@@ -178,7 +178,7 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct OutgoingTransaction : Messages::Generic
+		struct TAN_OUT OutgoingTransaction : Messages::Generic
 		{
 			Option<Vector<CoinUTXO>> Inputs;
 			Option<Vector<CoinUTXO>> Outputs;
@@ -197,14 +197,14 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct TransactionLogs
+		struct TAN_OUT TransactionLogs
 		{
 			Vector<IncomingTransaction> Transactions;
 			uint64_t BlockHeight = (uint64_t)-1;
 			String BlockHash;
 		};
 
-		struct IndexAddress : Messages::Generic
+		struct TAN_OUT IndexAddress : Messages::Generic
 		{
 			Option<uint64_t> AddressIndex = Optional::None;
 			String Address;
@@ -219,7 +219,7 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct IndexUTXO : Messages::Generic
+		struct TAN_OUT IndexUTXO : Messages::Generic
 		{
 			CoinUTXO UTXO;
 			String Binding;
@@ -233,7 +233,7 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct BaseFee
+		struct TAN_OUT BaseFee
 		{
 			Decimal Price;
 			Decimal Limit;
@@ -244,13 +244,13 @@ namespace Tangent
 			bool IsValid() const;
 		};
 
-		struct SupervisorOptions
+		struct TAN_OUT SupervisorOptions
 		{
 			uint64_t PollingFrequencyMs = 70000;
 			uint64_t MinBlockConfirmations = 0;
 		};
 
-		struct ChainSupervisorOptions : SupervisorOptions
+		struct TAN_OUT ChainSupervisorOptions : SupervisorOptions
 		{
 			struct
 			{
@@ -274,7 +274,7 @@ namespace Tangent
 			bool IsCancelled(const Algorithm::AssetId& Asset);
 		};
 
-		struct MultichainSupervisorOptions : SupervisorOptions
+		struct TAN_OUT MultichainSupervisorOptions : SupervisorOptions
 		{
 			UnorderedMap<String, ChainSupervisorOptions> Specifics;
 			uint64_t RetryWaitingTimeMs = 30000;
@@ -282,14 +282,14 @@ namespace Tangent
 			ChainSupervisorOptions& AddSpecificOptions(const std::string_view& Blockchain);
 		};
 
-		struct FeeSupervisorOptions
+		struct TAN_OUT FeeSupervisorOptions
 		{
 			uint64_t BlockHeightOffset = 1;
 			uint64_t MaxBlocks = 10;
 			uint64_t MaxTransactions = 32;
 		};
 
-		class ServerRelay : public Reference<ServerRelay>
+		class TAN_OUT ServerRelay : public Reference<ServerRelay>
 		{
 		public:
 			enum class TransmitType
@@ -353,7 +353,7 @@ namespace Tangent
 			static String GenerateErrorMessage(const ExpectsSystem<HTTP::ResponseFrame>& Response, const ErrorReporter& Reporter, const std::string_view& ErrorCode, const std::string_view& ErrorMessage);
 		};
 
-		class RelayBackend : public Reference<RelayBackend>
+		class TAN_OUT RelayBackend : public Reference<RelayBackend>
 		{
 			friend class Datamaster;
 
@@ -402,11 +402,12 @@ namespace Tangent
 			virtual ExpectsLR<void> VerifyNodeCompatibility(ServerRelay* Node);
 			virtual String GetDerivation(uint64_t AddressIndex) const = 0;
 			virtual String GetChecksumHash(const std::string_view& Value) const;
+			virtual uint64_t GetRetirementBlockNumber() const;
 			virtual uint256_t ToBaselineValue(const Decimal& Value) const;
 			virtual const Chainparams& GetChainparams() const = 0;
 		};
 
-		class RelayBackendUTXO : public RelayBackend
+		class TAN_OUT RelayBackendUTXO : public RelayBackend
 		{
 		public:
 			RelayBackendUTXO() noexcept;
