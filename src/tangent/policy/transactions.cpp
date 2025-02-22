@@ -1317,7 +1317,7 @@ namespace Tangent
 			for (auto& Mediator : Observers)
 			{
 				uint64_t ExpiryNumber = Algorithm::Asset::ExpiryOf(Mediator.first);
-				if (!ExpiryNumber || BlockNumber > ExpiryNumber)
+				if (!ExpiryNumber || (BlockNumber > ExpiryNumber && Mediator.second))
 					return LayerException("invalid observer asset");
 			}
 
