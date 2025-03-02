@@ -8,7 +8,7 @@ namespace Tangent
 	{
 		typedef Vector<struct Variable> Variables;
 
-		struct TAN_OUT Variable
+		struct Variable
 		{
 		private:
 			union Tag
@@ -73,7 +73,7 @@ namespace Tangent
 			static size_t GetMaxSmallStringSize();
 		};
 
-		class TAN_OUT VariablesUtil
+		class VariablesUtil
 		{
 		public:
 			static bool IsAsciiEncoding(const std::string_view& Data);

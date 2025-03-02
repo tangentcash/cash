@@ -7,6 +7,11 @@ namespace Tangent
 {
 	namespace Mediator
 	{
+		enum
+		{
+			KEY_LIMIT = 1024
+		};
+
 		enum class RoutingPolicy
 		{
 			Account,
@@ -27,7 +32,7 @@ namespace Tangent
 
 		class RelayBackend;
 
-		struct TAN_OUT TokenUTXO
+		struct TokenUTXO
 		{
 			String ContractAddress;
 			String Symbol;
@@ -41,7 +46,7 @@ namespace Tangent
 			bool IsCoinValid() const;
 		};
 
-		struct TAN_OUT CoinUTXO
+		struct CoinUTXO
 		{
 			Vector<TokenUTXO> Tokens;
 			Option<uint64_t> AddressIndex = Optional::None;
@@ -57,7 +62,7 @@ namespace Tangent
 			bool IsValid() const;
 		};
 
-		struct TAN_OUT Transferer
+		struct Transferer
 		{
 			Option<uint64_t> AddressIndex = Optional::None;
 			String Address;
@@ -68,15 +73,15 @@ namespace Tangent
 			bool IsValid() const;
 		};
 
-		struct TAN_OUT MasterWallet : Messages::Generic
+		struct MasterWallet : Messages::Generic
 		{
 			PrivateKey SeedingKey;
 			PrivateKey SigningKey;
-			PrivateKey VerifyingKey;
+			String VerifyingKey;
 			uint64_t MaxAddressIndex = 0;
 
 			MasterWallet() = default;
-			MasterWallet(PrivateKey&& NewSeedingKey, PrivateKey&& NewVerifyingKey, PrivateKey&& NewSigningKey);
+			MasterWallet(PrivateKey&& NewSeedingKey, PrivateKey&& NewSigningKey, String&& NewVerifyingKey);
 			MasterWallet(const MasterWallet&) = default;
 			MasterWallet(MasterWallet&&) = default;
 			MasterWallet& operator=(const MasterWallet&) = default;
@@ -92,14 +97,14 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct TAN_OUT DerivedVerifyingWallet : Messages::Generic
+		struct DerivedVerifyingWallet : Messages::Generic
 		{
 			AddressMap Addresses;
 			Option<uint64_t> AddressIndex = Optional::None;
-			PrivateKey VerifyingKey;
+			String VerifyingKey;
 
 			DerivedVerifyingWallet() = default;
-			DerivedVerifyingWallet(AddressMap&& NewAddresses, Option<uint64_t>&& NewAddressIndex, PrivateKey&& NewVerifyingKey);
+			DerivedVerifyingWallet(AddressMap&& NewAddresses, Option<uint64_t>&& NewAddressIndex, String&& NewVerifyingKey);
 			DerivedVerifyingWallet(const DerivedVerifyingWallet&) = default;
 			DerivedVerifyingWallet(DerivedVerifyingWallet&&) = default;
 			DerivedVerifyingWallet& operator=(const DerivedVerifyingWallet&) = default;
@@ -114,7 +119,7 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct TAN_OUT DerivedSigningWallet : DerivedVerifyingWallet
+		struct DerivedSigningWallet : DerivedVerifyingWallet
 		{
 			PrivateKey SigningKey;
 
@@ -134,7 +139,7 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct TAN_OUT DynamicWallet
+		struct DynamicWallet
 		{
 			Option<MasterWallet> Parent;
 			Option<DerivedVerifyingWallet> VerifyingChild;
@@ -152,7 +157,7 @@ namespace Tangent
 			bool IsValid() const;
 		};
 
-		struct TAN_OUT IncomingTransaction : Messages::Generic
+		struct IncomingTransaction : Messages::Generic
 		{
 			Vector<Transferer> To;
 			Vector<Transferer> From;
@@ -178,7 +183,7 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct TAN_OUT OutgoingTransaction : Messages::Generic
+		struct OutgoingTransaction : Messages::Generic
 		{
 			Option<Vector<CoinUTXO>> Inputs;
 			Option<Vector<CoinUTXO>> Outputs;
@@ -197,14 +202,14 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct TAN_OUT TransactionLogs
+		struct TransactionLogs
 		{
 			Vector<IncomingTransaction> Transactions;
 			uint64_t BlockHeight = (uint64_t)-1;
 			String BlockHash;
 		};
 
-		struct TAN_OUT IndexAddress : Messages::Generic
+		struct IndexAddress : Messages::Generic
 		{
 			Option<uint64_t> AddressIndex = Optional::None;
 			String Address;
@@ -219,7 +224,7 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct TAN_OUT IndexUTXO : Messages::Generic
+		struct IndexUTXO : Messages::Generic
 		{
 			CoinUTXO UTXO;
 			String Binding;
@@ -233,7 +238,7 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct TAN_OUT BaseFee
+		struct BaseFee
 		{
 			Decimal Price;
 			Decimal Limit;
@@ -244,13 +249,13 @@ namespace Tangent
 			bool IsValid() const;
 		};
 
-		struct TAN_OUT SupervisorOptions
+		struct SupervisorOptions
 		{
 			uint64_t PollingFrequencyMs = 70000;
 			uint64_t MinBlockConfirmations = 0;
 		};
 
-		struct TAN_OUT ChainSupervisorOptions : SupervisorOptions
+		struct ChainSupervisorOptions : SupervisorOptions
 		{
 			struct
 			{
@@ -274,7 +279,7 @@ namespace Tangent
 			bool IsCancelled(const Algorithm::AssetId& Asset);
 		};
 
-		struct TAN_OUT MultichainSupervisorOptions : SupervisorOptions
+		struct MultichainSupervisorOptions : SupervisorOptions
 		{
 			UnorderedMap<String, ChainSupervisorOptions> Specifics;
 			uint64_t RetryWaitingTimeMs = 30000;
@@ -282,14 +287,14 @@ namespace Tangent
 			ChainSupervisorOptions& AddSpecificOptions(const std::string_view& Blockchain);
 		};
 
-		struct TAN_OUT FeeSupervisorOptions
+		struct FeeSupervisorOptions
 		{
 			uint64_t BlockHeightOffset = 1;
 			uint64_t MaxBlocks = 10;
 			uint64_t MaxTransactions = 32;
 		};
 
-		class TAN_OUT ServerRelay : public Reference<ServerRelay>
+		class ServerRelay : public Reference<ServerRelay>
 		{
 		public:
 			enum class TransmitType
@@ -330,8 +335,8 @@ namespace Tangent
 		public:
 			ServerRelay(const std::string_view& NodeURL, double NodeThrottling) noexcept;
 			~ServerRelay() noexcept;
-			ExpectsPromiseRT<Schema*> ExecuteRPC(const Algorithm::AssetId& Asset, ErrorReporter& Reporter, const std::string_view& Method, const SchemaList& Args, CachePolicy Cache);
-			ExpectsPromiseRT<Schema*> ExecuteRPC3(const Algorithm::AssetId& Asset, ErrorReporter& Reporter, const std::string_view& Method, const SchemaArgs& Args, CachePolicy Cache);
+			ExpectsPromiseRT<Schema*> ExecuteRPC(const Algorithm::AssetId& Asset, ErrorReporter& Reporter, const std::string_view& Method, const SchemaList& Args, CachePolicy Cache, const std::string_view& Path);
+			ExpectsPromiseRT<Schema*> ExecuteRPC3(const Algorithm::AssetId& Asset, ErrorReporter& Reporter, const std::string_view& Method, const SchemaArgs& Args, CachePolicy Cache, const std::string_view& Path);
 			ExpectsPromiseRT<Schema*> ExecuteREST(const Algorithm::AssetId& Asset, ErrorReporter& Reporter, const std::string_view& Method, const std::string_view& Path, Schema* Args, CachePolicy Cache);
 			ExpectsPromiseRT<Schema*> ExecuteHTTP(const Algorithm::AssetId& Asset, ErrorReporter& Reporter, const std::string_view& Method, const std::string_view& Path, const std::string_view& Type, const std::string_view& Body, CachePolicy Cache);
 			Promise<bool> YieldForCooldown(uint64_t& RetryTimeout, uint64_t TotalTimeoutMs);
@@ -353,7 +358,7 @@ namespace Tangent
 			static String GenerateErrorMessage(const ExpectsSystem<HTTP::ResponseFrame>& Response, const ErrorReporter& Reporter, const std::string_view& ErrorCode, const std::string_view& ErrorMessage);
 		};
 
-		class TAN_OUT RelayBackend : public Reference<RelayBackend>
+		class RelayBackend : public Reference<RelayBackend>
 		{
 			friend class Datamaster;
 
@@ -384,17 +389,16 @@ namespace Tangent
 			virtual ExpectsPromiseRT<Vector<IncomingTransaction>> GetAuthenticTransactions(const Algorithm::AssetId& Asset, uint64_t BlockHeight, const std::string_view& BlockHash, Schema* TransactionData) = 0;
 			virtual ExpectsPromiseRT<BaseFee> EstimateFee(const Algorithm::AssetId& Asset, const DynamicWallet& Wallet, const Vector<Transferer>& To, const FeeSupervisorOptions& Options) = 0;
 			virtual ExpectsPromiseRT<Decimal> CalculateBalance(const Algorithm::AssetId& Asset, const DynamicWallet& Wallet, Option<String>&& Address) = 0;
-			virtual ExpectsPromiseRT<Schema*> ExecuteRPC(const Algorithm::AssetId& Asset, const std::string_view& Method, SchemaList&& Args, CachePolicy Cache);
-			virtual ExpectsPromiseRT<Schema*> ExecuteRPC3(const Algorithm::AssetId& Asset, const std::string_view& Method, SchemaArgs&& Args, CachePolicy Cache);
+			virtual ExpectsPromiseRT<Schema*> ExecuteRPC(const Algorithm::AssetId& Asset, const std::string_view& Method, SchemaList&& Args, CachePolicy Cache, const std::string_view& Path = std::string_view());
+			virtual ExpectsPromiseRT<Schema*> ExecuteRPC3(const Algorithm::AssetId& Asset, const std::string_view& Method, SchemaArgs&& Args, CachePolicy Cache, const std::string_view& Path = std::string_view());
 			virtual ExpectsPromiseRT<Schema*> ExecuteREST(const Algorithm::AssetId& Asset, const std::string_view& Method, const std::string_view& Path, Schema* Args, CachePolicy Cache);
 			virtual ExpectsPromiseRT<Schema*> ExecuteHTTP(const Algorithm::AssetId& Asset, const std::string_view& Method, const std::string_view& Path, const std::string_view& Type, const std::string_view& Body, CachePolicy Cache);
 			virtual ExpectsPromiseRT<OutgoingTransaction> NewTransaction(const Algorithm::AssetId& Asset, const DynamicWallet& Wallet, const Vector<Transferer>& To, const BaseFee& Fee) = 0;
 			virtual ExpectsLR<MasterWallet> NewMasterWallet(const std::string_view& Seed) = 0;
 			virtual ExpectsLR<DerivedSigningWallet> NewSigningWallet(const Algorithm::AssetId& Asset, const MasterWallet& Wallet, uint64_t AddressIndex) = 0;
-			virtual ExpectsLR<DerivedSigningWallet> NewSigningWallet(const Algorithm::AssetId& Asset, const std::string_view& SigningKey) { return LayerException(); };
-			virtual ExpectsLR<DerivedVerifyingWallet> NewVerifyingWallet(const Algorithm::AssetId& Asset, const std::string_view& VerifyingKey) { return LayerException(); };
-			virtual ExpectsLR<String> NewAddress(const Algorithm::AssetId& Asset, const std::string_view& VerifyingKey) { return LayerException(); };
-			virtual ExpectsLR<String> NewPublicKeyHash(const std::string_view& Address) { return LayerException(); };
+			virtual ExpectsLR<DerivedSigningWallet> NewSigningWallet(const Algorithm::AssetId& Asset, const PrivateKey& SigningKey) = 0;
+			virtual ExpectsLR<DerivedVerifyingWallet> NewVerifyingWallet(const Algorithm::AssetId& Asset, const std::string_view& VerifyingKey) = 0;
+			virtual ExpectsLR<String> NewPublicKeyHash(const std::string_view& Address) = 0;
 			virtual ExpectsLR<String> SignMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const PrivateKey& SigningKey) = 0;
 			virtual ExpectsLR<void> VerifyMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const std::string_view& VerifyingKey, const std::string_view& Signature) = 0;
 			virtual ExpectsLR<OrderedMap<String, uint64_t>> FindCheckpointAddresses(const Algorithm::AssetId& Asset, const UnorderedSet<String>& Addresses);
@@ -402,12 +406,12 @@ namespace Tangent
 			virtual ExpectsLR<void> VerifyNodeCompatibility(ServerRelay* Node);
 			virtual String GetDerivation(uint64_t AddressIndex) const = 0;
 			virtual String GetChecksumHash(const std::string_view& Value) const;
-			virtual uint64_t GetRetirementBlockNumber() const;
 			virtual uint256_t ToBaselineValue(const Decimal& Value) const;
+			virtual uint64_t GetRetirementBlockNumber() const;
 			virtual const Chainparams& GetChainparams() const = 0;
 		};
 
-		class TAN_OUT RelayBackendUTXO : public RelayBackend
+		class RelayBackendUTXO : public RelayBackend
 		{
 		public:
 			RelayBackendUTXO() noexcept;

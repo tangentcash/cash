@@ -1196,138 +1196,72 @@ namespace Tangent
 			return Data;
 		}
 
-		ExpectsLR<void> Composition::DeriveKeypair1(Type Alg, const CSeed Seed, CSeckey SecretKey1, CPubkey PublicKey1)
+		ExpectsLR<void> Composition::DeriveKeypair(Type Alg, const CSeed Seed, CSeckey SecretKey, CPubkey PublicKey)
 		{
-			VI_ASSERT(SecretKey1 != nullptr, "secret key 1 should be set");
-			VI_ASSERT(PublicKey1 != nullptr, "public key 1 should be set");
-			Hashing::Hash512(Seed, sizeof(CSeed), SecretKey1);
+			VI_ASSERT(SecretKey != nullptr, "secret key should be set");
+			VI_ASSERT(PublicKey != nullptr, "public key should be set");
+			Hashing::Hash512(Seed, sizeof(CSeed), SecretKey);
+			memset(PublicKey, 0, sizeof(CPubkey));
 			switch (Alg)
 			{
 				case Type::ED25519:
 				{
-					ed25519_public_key Point1;
-					ConvertToED25519Curve(SecretKey1);
-					ed25519_publickey_ext(SecretKey1, Point1);
-					memcpy(PublicKey1, Point1, sizeof(Point1));
-					Hashing::Hash256(SecretKey1, sizeof(CSeckey), PublicKey1 + sizeof(Point1));
+					ConvertToSecretKeyEd25519(SecretKey);
+					ed25519_publickey_ext(SecretKey, PublicKey);
+					Hashing::Hash256(PublicKey, sizeof(CPubkey) / 2, PublicKey + sizeof(CPubkey) / 2);
 					return Expectation::Met;
 				}
 				case Type::SECP256K1:
 				{
 					secp256k1_context* Context = Signing::GetContext();
-					while (secp256k1_ec_seckey_verify(Context, SecretKey1) != 1)
-						Hashing::Hash512(SecretKey1, sizeof(CSeckey), SecretKey1);
+					secp256k1_pubkey ExtendedPublicKey;
+					while (secp256k1_ec_seckey_verify(Context, SecretKey) != 1 || secp256k1_ec_pubkey_create(Context, &ExtendedPublicKey, SecretKey) != 1)
+						Hashing::Hash512(SecretKey, sizeof(CSeckey), SecretKey);
 
-					secp256k1_pubkey Point1;
-					if (secp256k1_ec_pubkey_create(Context, &Point1, SecretKey1) != 1)
-						return LayerException("bad secret key 1");
-
-					memcpy(PublicKey1, Point1.data, sizeof(Point1.data));
+					memcpy(PublicKey, ExtendedPublicKey.data, sizeof(ExtendedPublicKey.data));
 					return Expectation::Met;
 				}
 				default:
 					return LayerException("invalid composition algorithm");
 			}
 		}
-		ExpectsLR<void> Composition::DeriveKeypair2(Type Alg, const CSeed Seed, const CPubkey PublicKey1, CSeckey SecretKey2, CPubkey PublicKey2, CPubkey PublicKey, size_t* PublicKeySize)
+		ExpectsLR<void> Composition::DerivePublicKey(Type Alg, const CPubkey PublicKey1, const CSeckey SecretKey2, CPubkey PublicKey, size_t* PublicKeySize)
 		{
 			VI_ASSERT(PublicKey1 != nullptr, "public key 1 should be set");
 			VI_ASSERT(SecretKey2 != nullptr, "secret key 2 should be set");
-			VI_ASSERT(PublicKey2 != nullptr, "public key 2 should be set");
 			VI_ASSERT(PublicKey != nullptr, "public key should be set");
-			Hashing::Hash512(Seed, sizeof(CSeed), SecretKey2);
 			memset(PublicKey, 0, sizeof(CPubkey));
 			switch (Alg)
 			{
 				case Type::ED25519:
 				{
-					uint8_t Point1[crypto_sign_PUBLICKEYBYTES];
-					memcpy(Point1, PublicKey1, sizeof(Point1));
+					uint8_t FX[crypto_sign_PUBLICKEYBYTES];
+					memcpy(FX, PublicKey1, sizeof(FX));
 
-					uint8_t Point2[crypto_sign_PUBLICKEYBYTES];
-					ConvertToED25519Curve(SecretKey2);
-					ed25519_publickey_ext(SecretKey2, Point2);
-					memcpy(PublicKey2, Point2, sizeof(Point2));
-					Hashing::Hash256(SecretKey2, sizeof(CSeckey), PublicKey2 + sizeof(Point2));
+					uint8_t Y[crypto_core_ed25519_SCALARBYTES];
+					memcpy(Y, SecretKey2, sizeof(Y));
 
-					Seckey FX, FY;
-					SHA256_CTX Hash = { 0 };
-					sha256_Init(&Hash);
-					sha256_Update(&Hash, (uint8_t*)Point1 + 00, sizeof(Point1) / 2);
-					sha256_Update(&Hash, (uint8_t*)Point2 + 00, sizeof(Point2) / 2);
-					sha256_Final(&Hash, FX);
-					sha256_Init(&Hash);
-					sha256_Update(&Hash, (uint8_t*)Point1 + 16, sizeof(Point1) / 2);
-					sha256_Update(&Hash, (uint8_t*)Point2 + 16, sizeof(Point2) / 2);
-					sha256_Final(&Hash, FY);
+					if (crypto_scalarmult_ed25519(FX, Y, FX) != 0)
+						return LayerException("bad parameters");
 
-					uint8_t X[crypto_sign_PUBLICKEYBYTES], Y[crypto_sign_PUBLICKEYBYTES];
-					ConvertToED25519Curve(FX);
-					ed25519_publickey_ext(FX, X);
-					ConvertToED25519Curve(FY);
-					ed25519_publickey_ext(FY, Y);
-
-					uint8_t Z[crypto_sign_PUBLICKEYBYTES];
-					crypto_core_ed25519_add(Z, Point1, X);
-					if (crypto_scalarmult_ed25519(Point1, SecretKey2, Z) != 0)
-						return LayerException("bad secret key 2");
-
-					crypto_core_ed25519_add(Z, Point1, Y);
-					memcpy(PublicKey, Z, sizeof(Z));
+					memcpy(PublicKey, FX, sizeof(FX));
 					if (PublicKeySize != nullptr)
-						*PublicKeySize = sizeof(Z);
+						*PublicKeySize = sizeof(FX);
 					return Expectation::Met;
 				}
 				case Type::SECP256K1:
 				{
 					secp256k1_context* Context = Signing::GetContext();
-					while (secp256k1_ec_seckey_verify(Context, SecretKey2) != 1)
-						Hashing::Hash512(SecretKey2, sizeof(CSeckey), SecretKey2);
+					secp256k1_pubkey FX;
+					memcpy(FX.data, PublicKey1, sizeof(FX));
 
-					secp256k1_pubkey Point1;
-					memcpy(Point1.data, PublicKey1, sizeof(Point1));
-
-					secp256k1_pubkey Point2;
-					if (secp256k1_ec_pubkey_create(Context, &Point2, SecretKey2) != 1)
+					uint8_t Y[32];
+					memcpy(Y, SecretKey2, sizeof(Y));
+					if (secp256k1_ec_pubkey_tweak_mul(Context, &FX, Y) != 1)
 						return LayerException("bad secret key 2");
 
-					memcpy(PublicKey2, Point2.data, sizeof(Point2.data));
-					Seckey X, Y;
-					SHA256_CTX Hash = { 0 };
-					sha256_Init(&Hash);
-					sha256_Update(&Hash, (uint8_t*)Point1.data + 00, sizeof(Point1.data) / 2);
-					sha256_Update(&Hash, (uint8_t*)Point2.data + 00, sizeof(Point2.data) / 2);
-					sha256_Final(&Hash, X);
-					sha256_Init(&Hash);
-					sha256_Update(&Hash, (uint8_t*)Point1.data + 32, sizeof(Point1.data) / 2);
-					sha256_Update(&Hash, (uint8_t*)Point2.data + 32, sizeof(Point2.data) / 2);
-					sha256_Final(&Hash, Y);
-
-					while (secp256k1_ec_seckey_verify(Context, X) != 1)
-					{
-						Seckey Data;
-						memcpy(Data, X, sizeof(X));
-						sha256_Raw(Data, sizeof(Data), X);
-					}
-
-					while (secp256k1_ec_seckey_verify(Context, Y) != 1)
-					{
-						Seckey Data;
-						memcpy(Data, Y, sizeof(Y));
-						sha256_Raw(Data, sizeof(Data), Y);
-					}
-
-					size_t KeySize = sizeof(CPubkey);
-					if (secp256k1_ec_pubkey_tweak_add(Context, &Point1, X) != 1)
-						return LayerException("bad secret key 2");
-
-					if (secp256k1_ec_pubkey_tweak_mul(Context, &Point1, SecretKey2) != 1)
-						return LayerException("bad secret key 2");
-
-					if (secp256k1_ec_pubkey_tweak_add(Context, &Point1, Y) != 1)
-						return LayerException("bad secret key 2");
-
-					secp256k1_ec_pubkey_serialize(Context, PublicKey, &KeySize, &Point1, SECP256K1_EC_COMPRESSED);
+					size_t KeySize = sizeof(FX);
+					secp256k1_ec_pubkey_serialize(Context, PublicKey, &KeySize, &FX, SECP256K1_EC_COMPRESSED);
 					if (PublicKeySize != nullptr)
 						*PublicKeySize = KeySize;
 					return Expectation::Met;
@@ -1336,111 +1270,66 @@ namespace Tangent
 					return LayerException("invalid composition algorithm");
 			}
 		}
-		ExpectsLR<void> Composition::DeriveSecretKey(Type Alg, const CSeckey Secret1, const CSeckey Secret2, CSeckey SecretKey, size_t* SecretKeySize)
+		ExpectsLR<void> Composition::DeriveSecretKey(Type Alg, const CSeckey SecretKey1, const CSeckey SecretKey2, CSeckey SecretKey, size_t* SecretKeySize)
 		{
 			VI_ASSERT(SecretKey != nullptr, "secret key should be set");
-			VI_ASSERT(Secret1 != nullptr, "secret1 should be set");
-			VI_ASSERT(Secret2 != nullptr, "secret2 should be set");
+			VI_ASSERT(SecretKey1 != nullptr, "secret1 should be set");
+			VI_ASSERT(SecretKey2 != nullptr, "secret2 should be set");
 			memset(SecretKey, 0, sizeof(CSeckey));
 			switch (Alg)
 			{
 				case Type::ED25519:
 				{
-					uint8_t Point1[crypto_sign_PUBLICKEYBYTES];
-					ed25519_publickey_ext(Secret1, Point1);
+					uint8_t X[crypto_core_ed25519_SCALARBYTES], Y[crypto_core_ed25519_SCALARBYTES];
+					memcpy(X, SecretKey1, sizeof(X));
+					memcpy(Y, SecretKey2, sizeof(Y));
 
-					uint8_t Point2[crypto_sign_PUBLICKEYBYTES];
-					ed25519_publickey_ext(Secret2, Point2);
-
-					Seckey FX, FY, FZ;
-					SHA256_CTX Hash = { 0 };
-					sha256_Init(&Hash);
-					sha256_Update(&Hash, (uint8_t*)Point1 + 00, sizeof(Point1) / 2);
-					sha256_Update(&Hash, (uint8_t*)Point2 + 00, sizeof(Point2) / 2);
-					sha256_Final(&Hash, FX);
-					sha256_Init(&Hash);
-					sha256_Update(&Hash, (uint8_t*)Point1 + 16, sizeof(Point1) / 2);
-					sha256_Update(&Hash, (uint8_t*)Point2 + 16, sizeof(Point2) / 2);
-					sha256_Final(&Hash, FY);
-					sha256_Init(&Hash);
-					sha256_Update(&Hash, (uint8_t*)Point1, sizeof(Point1));
-					sha256_Update(&Hash, (uint8_t*)Point2, sizeof(Point2));
-					sha256_Final(&Hash, FZ);
-
-					uint8_t X[crypto_sign_PUBLICKEYBYTES], Y[crypto_sign_PUBLICKEYBYTES];
-					ConvertToED25519Curve(FX);
-					ed25519_publickey_ext(FX, X);
-					ConvertToED25519Curve(FY);
-					ed25519_publickey_ext(FY, Y);
-
-					uint8_t Z[crypto_sign_SECRETKEYBYTES], W[crypto_sign_SECRETKEYBYTES];
-					crypto_core_ed25519_scalar_add(Z, Secret1, FX);
-					crypto_core_ed25519_scalar_mul(W, Z, Secret2);
-					crypto_core_ed25519_scalar_add(Z, W, FY);
-					memcpy(Z + 32, FZ, sizeof(FZ));
-					memcpy(SecretKey, Z, sizeof(Z));
+					CSeckey R;
+					crypto_core_ed25519_scalar_mul(R, X, Y);
+					sha256_Raw(R, sizeof(R) / 2, R + sizeof(R) / 2);
+					memcpy(SecretKey, R, sizeof(R));
 					if (SecretKeySize != nullptr)
-						*SecretKeySize = sizeof(Z);
+						*SecretKeySize = sizeof(R);
+
 					return Expectation::Met;
 				}
 				case Type::SECP256K1:
 				{
 					secp256k1_context* Context = Signing::GetContext();
-					secp256k1_pubkey Point1, Point2;
-					if (secp256k1_ec_pubkey_create(Context, &Point1, Secret1) != 1)
-						return LayerException("bad secret key 1");
+					uint8_t X[32], Y[32];
+					memcpy(X, SecretKey1, sizeof(X));
+					memcpy(Y, SecretKey2, sizeof(Y));
+					if (secp256k1_ec_seckey_tweak_mul(Context, X, Y) != 1)
+						return LayerException("bad parameters");
 
-					if (secp256k1_ec_pubkey_create(Context, &Point2, Secret2) != 1)
-						return LayerException("bad secret key 2");
-
-					Seckey X, Y;
-					SHA256_CTX Hash = { 0 };
-					sha256_Init(&Hash);
-					sha256_Update(&Hash, (uint8_t*)Point1.data + 00, sizeof(Point1.data) / 2);
-					sha256_Update(&Hash, (uint8_t*)Point2.data + 00, sizeof(Point2.data) / 2);
-					sha256_Final(&Hash, X);
-					sha256_Init(&Hash);
-					sha256_Update(&Hash, (uint8_t*)Point1.data + 32, sizeof(Point1.data) / 2);
-					sha256_Update(&Hash, (uint8_t*)Point2.data + 32, sizeof(Point2.data) / 2);
-					sha256_Final(&Hash, Y);
-
-					while (secp256k1_ec_seckey_verify(Context, X) != 1)
-					{
-						Seckey Data;
-						memcpy(Data, X, sizeof(X));
-						sha256_Raw(Data, sizeof(Data), X);
-					}
-
-					while (secp256k1_ec_seckey_verify(Context, Y) != 1)
-					{
-						Seckey Data;
-						memcpy(Data, Y, sizeof(Y));
-						sha256_Raw(Data, sizeof(Data), Y);
-					}
-
-					memcpy(SecretKey, Secret1, sizeof(Seckey));
-					if (secp256k1_ec_seckey_tweak_add(Context, SecretKey, X) != 1)
-						return LayerException("bad secret key 2");
-
-					if (secp256k1_ec_seckey_tweak_mul(Context, SecretKey, Secret2) != 1)
-						return LayerException("bad secret key 2");
-
-					if (secp256k1_ec_seckey_tweak_add(Context, SecretKey, Y) != 1)
-						return LayerException("bad secret key 2");
-
+					memcpy(SecretKey, X, sizeof(X));
 					if (SecretKeySize)
-						*SecretKeySize = 32;
+						*SecretKeySize = sizeof(X);
 					return Expectation::Met;
 				}
 				default:
 					return LayerException("invalid composition algorithm");
 			}
 		}
-		void Composition::ConvertToED25519Curve(uint8_t SecretKey[64])
+		void Composition::ConvertToCompositeHash(const uint8_t* A, size_t ASize, const uint8_t* B, size_t BSize, uint8_t C[32])
+		{
+			SHA256_CTX Context;
+			sha256_Init(&Context);
+			sha256_Update(&Context, A, ASize);
+			sha256_Update(&Context, B, BSize);
+			sha256_Final(&Context, C);
+		}
+		void Composition::ConvertToSecretKeyEd25519(uint8_t SecretKey[32])
 		{
 			SecretKey[0] &= 248;
 			SecretKey[31] &= 127;
 			SecretKey[31] |= 64;
+		}
+		void Composition::ConvertToScalarEd25519(uint8_t SecretKey[32])
+		{
+			uint8_t Point[64] = { 0 };
+			memcpy(Point, SecretKey, 32);
+			crypto_core_ed25519_scalar_reduce(SecretKey, Point);
 		}
 		void Composition::ConvertToSecretSeed(const Seckey SecretKey, const std::string_view& Entropy, CSeed Seed)
 		{

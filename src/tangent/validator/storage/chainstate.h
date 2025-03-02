@@ -31,7 +31,7 @@ namespace Tangent
 			Statetrie = 1 << 2
 		};
 
-		class TAN_OUT AccountCache : public Singleton<AccountCache>
+		class AccountCache : public Singleton<AccountCache>
 		{
 		private:
 			UnorderedMap<String, uint64_t> Accounts;
@@ -46,7 +46,7 @@ namespace Tangent
 			Option<uint64_t> GetAccountLocation(const std::string_view& Account);
 		};
 
-		class TAN_OUT UniformCache : public Singleton<UniformCache>
+		class UniformCache : public Singleton<UniformCache>
 		{
 		private:
 			UnorderedMap<String, uint64_t> Indices;
@@ -65,7 +65,7 @@ namespace Tangent
 			Option<uint64_t> GetBlockLocation(uint64_t Location);
 		};
 
-		class TAN_OUT MultiformCache : public Singleton<MultiformCache>
+		class MultiformCache : public Singleton<MultiformCache>
 		{
 		private:
 			UnorderedMap<String, uint64_t> Columns;
@@ -88,7 +88,7 @@ namespace Tangent
 			Option<uint64_t> GetBlockLocation(uint64_t ColumnLocation, uint64_t RowLocation);
 		};
 
-		struct TAN_OUT FactorFilter
+		struct FactorFilter
 		{
 			PositionCondition Condition = PositionCondition::Equal;
 			int64_t Value = 0;
@@ -105,12 +105,12 @@ namespace Tangent
 			static FactorFilter LessEqual(int64_t Value, int8_t Order) { return { PositionCondition::LessEqual, Value, Order }; }
 		};
 
-		struct TAN_OUT FactorWindow
+		struct FactorWindow
 		{
 			virtual uint8_t Type() const = 0;
 		};
 
-		struct TAN_OUT FactorRangeWindow final : FactorWindow
+		struct FactorRangeWindow final : FactorWindow
 		{
 			size_t Offset;
 			size_t Count;
@@ -128,7 +128,7 @@ namespace Tangent
 			}
 		};
 
-		struct TAN_OUT FactorIndexWindow final : FactorWindow
+		struct FactorIndexWindow final : FactorWindow
 		{
 			Vector<size_t> Indices;
 
@@ -142,7 +142,7 @@ namespace Tangent
 			}
 		};
 
-		struct TAN_OUT Chainstate : Ledger::PermanentStorage
+		struct Chainstate : Ledger::PermanentStorage
 		{
 		private:
 			struct UniformLocation

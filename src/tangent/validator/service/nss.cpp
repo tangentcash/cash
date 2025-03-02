@@ -9,6 +9,7 @@
 #include "../backend/solana.h"
 #include "../backend/stellar.h"
 #include "../backend/tron.h"
+#include "../backend/monero.h"
 extern "C"
 {
 #include "../internal/libbitcoin/ecc.h"
@@ -551,19 +552,19 @@ namespace Tangent
 
 			return Result;
 		}
-		ExpectsLR<Mediator::DerivedSigningWallet> ServerNode::NewSigningWallet(const Algorithm::AssetId& Asset, const std::string_view& SigningKeyKey)
+		ExpectsLR<Mediator::DerivedSigningWallet> ServerNode::NewSigningWallet(const Algorithm::AssetId& Asset, const PrivateKey& SigningKey)
 		{
 			if (!Algorithm::Asset::IsValid(Asset))
 				return ExpectsLR<Mediator::DerivedSigningWallet>(LayerException("asset not found"));
 
-			if (SigningKeyKey.empty())
+			if (SigningKey.Empty())
 				return ExpectsLR<Mediator::DerivedSigningWallet>(LayerException("key not found"));
 
 			auto* Implementation = GetChain(Asset);
 			if (!Implementation)
 				return ExpectsLR<Mediator::DerivedSigningWallet>(LayerException("chain not found"));
 
-			return Implementation->NewSigningWallet(Asset, SigningKeyKey);
+			return Implementation->NewSigningWallet(Asset, SigningKey);
 		}
 		ExpectsLR<Mediator::DerivedVerifyingWallet> ServerNode::NewVerifyingWallet(const Algorithm::AssetId& Asset, const std::string_view& VerifyingKey)
 		{
@@ -586,9 +587,6 @@ namespace Tangent
 
 			if (Address.empty())
 				return ExpectsLR<String>(LayerException("address not found"));
-
-			if (Format::Util::IsHexEncoding(Address))
-				return ExpectsLR<String>(Codec::HexDecode(Address));
 
 			auto* Implementation = GetChain(Asset);
 			if (!Implementation)
@@ -619,43 +617,6 @@ namespace Tangent
 			bool IsMessageHex = Format::Util::IsHexEncoding(Message);
 			String MessageData1 = IsMessageHex ? Format::Util::Decode0xHex(Message) : String(Message);
 			String MessageData2 = IsMessageHex ? String(Message) : Format::Util::Encode0xHex(Message);
-
-			if (Format::Util::IsHexEncoding(Signature))
-			{
-				String SignatureData = Format::Util::Decode0xHex(Signature);
-				auto Status = Implementation->VerifyMessage(Asset, MessageData1, VerifyingKey, SignatureData);
-				if (Status)
-					return Status;
-
-				Status = Implementation->VerifyMessage(Asset, MessageData2, VerifyingKey, SignatureData);
-				if (Status)
-					return Status;
-			}
-
-			if (Format::Util::IsBase64Encoding(Signature))
-			{
-				String SignatureData = Codec::Base64Decode(Signature);
-				auto Status = Implementation->VerifyMessage(Asset, MessageData1, VerifyingKey, SignatureData);
-				if (Status)
-					return Status;
-
-				Status = Implementation->VerifyMessage(Asset, MessageData2, VerifyingKey, SignatureData);
-				if (Status)
-					return Status;
-			}
-
-			if (Format::Util::IsBase64URLEncoding(Signature))
-			{
-				String SignatureData = Codec::Base64URLDecode(Signature);
-				auto Status = Implementation->VerifyMessage(Asset, MessageData1, VerifyingKey, SignatureData);
-				if (Status)
-					return Status;
-
-				Status = Implementation->VerifyMessage(Asset, MessageData2, VerifyingKey, SignatureData);
-				if (Status)
-					return Status;
-			}
-
 			auto Status = Implementation->VerifyMessage(Asset, MessageData1, VerifyingKey, Signature);
 			if (Status)
 				return Status;
@@ -939,6 +900,7 @@ namespace Tangent
 				{ "XLM", Chain<Mediator::Backends::Stellar>(this) },
 				{ "TRX", Chain<Mediator::Backends::Tron>(this) },
 				{ "ZEC", Chain<Mediator::Backends::ZCash>(this) },
+				{ "XMR", Chain<Mediator::Backends::Monero>(this) },
 			};
 			return Registrations;
 		}

@@ -556,8 +556,8 @@ namespace Tangent
 					if (!SigningWallet)
 						Coreturn ExpectsRT<OutgoingTransaction>(RemoteException("address " + Input.Address + " cannot be used to sign the transaction (wallet not valid)"));
 
-					auto Private = SigningWallet->SigningKey.Expose<2048>();
-					auto Status = AddTransactionInput(Builder, Input, Context, Private.Key);
+					auto Private = SigningWallet->SigningKey.Expose<KEY_LIMIT>();
+					auto Status = AddTransactionInput(Builder, Input, Context, Private.View.data());
 					if (Status)
 					{
 						btc_tx_free(Builder);
@@ -604,16 +604,15 @@ namespace Tangent
 				char PublicKey[256];
 				btc_hdnode_serialize_public(&RootNode, Chain, PublicKey, (int)sizeof(PublicKey));
 
-				String HexSeed = Codec::HexEncode(Seed);
-				return ExpectsLR<MasterWallet>(MasterWallet(::PrivateKey(std::move(HexSeed)), ::PrivateKey(PublicKey), ::PrivateKey(PrivateKey)));
+				return ExpectsLR<MasterWallet>(MasterWallet(::PrivateKey(Codec::HexEncode(Seed)), ::PrivateKey(PrivateKey), PublicKey));
 			}
 			ExpectsLR<DerivedSigningWallet> Bitcoin::NewSigningWallet(const Algorithm::AssetId& Asset, const MasterWallet& Wallet, uint64_t AddressIndex)
 			{
 				auto* Chain = GetChain();
 				char MasterPrivateKey[256];
 				{
-					auto Private = Wallet.SigningKey.Expose<2048>();
-					if (!hd_derive(Chain, Private.Key, GetDerivation(AddressIndex).c_str(), MasterPrivateKey, sizeof(MasterPrivateKey)))
+					auto Private = Wallet.SigningKey.Expose<KEY_LIMIT>();
+					if (!hd_derive(Chain, Private.View.data(), GetDerivation(AddressIndex).c_str(), MasterPrivateKey, sizeof(MasterPrivateKey)))
 						return ExpectsLR<DerivedSigningWallet>(LayerException("invalid private key"));
 				}
 
@@ -621,23 +620,23 @@ namespace Tangent
 				if (!btc_hdnode_deserialize(MasterPrivateKey, Chain, &Node))
 					return LayerException("input address derivation invalid");
 
-				auto Derived = NewSigningWallet(Asset, std::string_view((char*)Node.private_key, sizeof(Node.private_key)));
+				auto Derived = NewSigningWallet(Asset, PrivateKey(std::string_view((char*)Node.private_key, sizeof(Node.private_key))));
 				if (Derived)
 					Derived->AddressIndex = AddressIndex;
 				return Derived;
 			}
-			ExpectsLR<DerivedSigningWallet> Bitcoin::NewSigningWallet(const Algorithm::AssetId& Asset, const std::string_view& SigningKey)
+			ExpectsLR<DerivedSigningWallet> Bitcoin::NewSigningWallet(const Algorithm::AssetId& Asset, const PrivateKey& SigningKey)
 			{
 				btc_key PrivateKey;
 				btc_privkey_init(&PrivateKey);
-				if (SigningKey.size() != sizeof(PrivateKey.privkey))
+				if (SigningKey.Size() != sizeof(PrivateKey.privkey))
 				{
-					String Key = String(SigningKey);
-					if (!btc_privkey_decode_wif(Key.c_str(), GetChain(), &PrivateKey))
+					auto Data = SigningKey.Expose<KEY_LIMIT>();
+					if (!btc_privkey_decode_wif(Data.View.data(), GetChain(), &PrivateKey))
 						return LayerException("not a valid wif private key");
 				}
 				else
-					memcpy(PrivateKey.privkey, SigningKey.data(), sizeof(PrivateKey.privkey));
+					memcpy(PrivateKey.privkey, SigningKey.Expose<KEY_LIMIT>().Buffer, sizeof(PrivateKey.privkey));
 
 				btc_pubkey PublicKey;
 				btc_pubkey_from_key(&PrivateKey, &PublicKey);
@@ -733,7 +732,7 @@ namespace Tangent
 
 				char DerivedPublicKey[256]; size_t DerivedPublicKeySize = sizeof(DerivedPublicKey);
 				btc_pubkey_get_hex(&PublicKey, DerivedPublicKey, &DerivedPublicKeySize);
-				return ExpectsLR<DerivedVerifyingWallet>(DerivedVerifyingWallet(std::move(Addresses), Optional::None, ::PrivateKey(DerivedPublicKey)));
+				return ExpectsLR<DerivedVerifyingWallet>(DerivedVerifyingWallet(std::move(Addresses), Optional::None, DerivedPublicKey));
 			}
 			ExpectsLR<String> Bitcoin::NewPublicKeyHash(const std::string_view& Address)
 			{
@@ -745,13 +744,13 @@ namespace Tangent
 			}
 			ExpectsLR<String> Bitcoin::SignMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const PrivateKey& SigningKey)
 			{
-				auto SigningWallet = NewSigningWallet(Asset, SigningKey.ExposeToHeap());
+				auto SigningWallet = NewSigningWallet(Asset, SigningKey);
 				if (!SigningWallet)
 					return SigningWallet.Error();
 
 				btc_key PrivateKey;
-				auto Private = SigningWallet->SigningKey.Expose<2048>();
-				if (btc_privkey_decode_wif(Private.Key, GetChain(), &PrivateKey) != 1)
+				auto Private = SigningWallet->SigningKey.Expose<KEY_LIMIT>();
+				if (btc_privkey_decode_wif(Private.View.data(), GetChain(), &PrivateKey) != 1)
 					return LayerException("private key not valid");
 
 				uint256 Hash;
@@ -764,11 +763,12 @@ namespace Tangent
 				uint8_t Signature[65];
 				memcpy(Signature + 1, RawSignature, sizeof(RawSignature));
 				Signature[0] = RecoveryId;
-				return String((char*)Signature, sizeof(Signature));
+				return Codec::Base64Encode(std::string_view((char*)Signature, sizeof(Signature)));
 			}
 			ExpectsLR<void> Bitcoin::VerifyMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const std::string_view& VerifyingKey, const std::string_view& Signature)
 			{
-				if (Signature.size() < 65)
+				String SignatureData = Signature.size() == 64 || Signature.size() == 65 ? String(Signature) : Codec::Base64Decode(Signature);
+				if (SignatureData.size() != 64 && SignatureData.size() != 65)
 					return LayerException("signature not valid");
 
 				auto VerifyingWallet = NewVerifyingWallet(Asset, VerifyingKey);
@@ -788,7 +788,7 @@ namespace Tangent
 					for (int i = 0; i < 4; i++)
 					{
 						btc_pubkey PublicKey;
-						if (btc_key_sign_recover_pubkey((uint8_t*)Signature.data() + 1, Hash, i, &PublicKey) != 1)
+						if (btc_key_sign_recover_pubkey((uint8_t*)(SignatureData.size() == 65 ? SignatureData.data() + 1 : SignatureData.data()), Hash, i, &PublicKey) != 1)
 							continue;
 
 						if (!memcmp(PublicKey.pubkey, TargetProgram, std::min(TargetProgramSize, sizeof(PublicKey.pubkey))))

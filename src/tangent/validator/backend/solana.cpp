@@ -548,7 +548,7 @@ namespace Tangent
 					Coreturn ExpectsRT<OutgoingTransaction>(RemoteException("invalid private key"));
 
 				uint8_t PublicKey[32]; size_t PublicKeySize = sizeof(PublicKey);
-				if (!b58dec(PublicKey, &PublicKeySize, FromWallet->VerifyingKey.ExposeToHeap().c_str(), FromWallet->VerifyingKey.Size()))
+				if (!b58dec(PublicKey, &PublicKeySize, FromWallet->VerifyingKey.c_str(), FromWallet->VerifyingKey.size()))
 					Coreturn ExpectsRT<OutgoingTransaction>(RemoteException("invalid public key"));
 
 				ed25519_signature Signature;
@@ -677,16 +677,15 @@ namespace Tangent
 				char PublicKey[256];
 				btc_hdnode_serialize_public(&RootNode, Chain, PublicKey, (int)sizeof(PublicKey));
 
-				String HexSeed = Codec::HexEncode(Seed);
-				return ExpectsLR<MasterWallet>(MasterWallet(::PrivateKey(std::move(HexSeed)), ::PrivateKey(PublicKey), ::PrivateKey(PrivateKey)));
+				return ExpectsLR<MasterWallet>(MasterWallet(::PrivateKey(Codec::HexEncode(Seed)), ::PrivateKey(PrivateKey), PublicKey));
 			}
 			ExpectsLR<DerivedSigningWallet> Solana::NewSigningWallet(const Algorithm::AssetId& Asset, const MasterWallet& Wallet, uint64_t AddressIndex)
 			{
 				auto* Chain = GetChain();
 				char MasterPrivateKey[256];
 				{
-					auto Private = Wallet.SigningKey.Expose<2048>();
-					if (!hd_derive(Chain, Private.Key, GetDerivation(Protocol::Now().Account.RootAddressIndex).c_str(), MasterPrivateKey, sizeof(MasterPrivateKey)))
+					auto Private = Wallet.SigningKey.Expose<KEY_LIMIT>();
+					if (!hd_derive(Chain, Private.View.data(), GetDerivation(Protocol::Now().Account.RootAddressIndex).c_str(), MasterPrivateKey, sizeof(MasterPrivateKey)))
 						return ExpectsLR<DerivedSigningWallet>(LayerException("invalid private key"));
 				}
 
@@ -694,36 +693,47 @@ namespace Tangent
 				if (!btc_hdnode_deserialize(MasterPrivateKey, Chain, &Node))
 					return ExpectsLR<DerivedSigningWallet>(LayerException("invalid private key"));
 
-				auto Derived = NewSigningWallet(Asset, std::string_view((char*)Node.private_key, sizeof(Node.private_key)));
+				auto Derived = NewSigningWallet(Asset, PrivateKey(std::string_view((char*)Node.private_key, sizeof(Node.private_key))));
 				if (Derived)
 					Derived->AddressIndex = AddressIndex;
 				return Derived;
 			}
-			ExpectsLR<DerivedSigningWallet> Solana::NewSigningWallet(const Algorithm::AssetId& Asset, const std::string_view& SigningKey)
+			ExpectsLR<DerivedSigningWallet> Solana::NewSigningWallet(const Algorithm::AssetId& Asset, const PrivateKey& SigningKey)
 			{
-				uint8_t TestPrivateKey[64]; String RawPrivateKey = String(SigningKey);
-				if (DecodePrivateKey(SigningKey, TestPrivateKey))
-					RawPrivateKey = String((char*)TestPrivateKey, sizeof(TestPrivateKey));
-				else if (DecodeSecretOrPublicKey(SigningKey, TestPrivateKey))
-					RawPrivateKey = String((char*)TestPrivateKey, 32);
+				uint8_t RawPrivateKey[64]; size_t RawPrivateKeySize = 0;
+				if (SigningKey.Size() != 32 && SigningKey.Size() != 64)
+				{
+					auto Data = SigningKey.Expose<KEY_LIMIT>();
+					if (!DecodePrivateKey(Data.View, RawPrivateKey))
+					{
+						if (!DecodeSecretOrPublicKey(Data.View, RawPrivateKey))
+							return LayerException("bad private key");
 
-				if (RawPrivateKey.size() != 32 && RawPrivateKey.size() != 64)
-					return LayerException("invalid private key size");
+						RawPrivateKeySize = 32;
+					}
+					else
+						RawPrivateKeySize = 64;
+				}
+				else
+				{
+					RawPrivateKeySize = SigningKey.Size();
+					SigningKey.ExposeToStack((char*)RawPrivateKey, RawPrivateKeySize);
+				}
 
 				uint8_t PrivateKey[64]; String SecretKey;
-				if (RawPrivateKey.size() == 32)
+				if (RawPrivateKeySize == 32)
 				{
-					sha512_Raw((uint8_t*)RawPrivateKey.data(), RawPrivateKey.size(), PrivateKey);
-					Algorithm::Composition::ConvertToED25519Curve(PrivateKey);
+					sha512_Raw(RawPrivateKey, RawPrivateKeySize, PrivateKey);
+					Algorithm::Composition::ConvertToSecretKeyEd25519(PrivateKey);
 
 					char EncodedSecretKey[256]; size_t EncodedSecretKeySize = sizeof(EncodedSecretKey);
-					if (!b58enc(EncodedSecretKey, &EncodedSecretKeySize, RawPrivateKey.data(), RawPrivateKey.size()))
+					if (!b58enc(EncodedSecretKey, &EncodedSecretKeySize, RawPrivateKey, RawPrivateKeySize))
 						return LayerException("invalid private key");
 
 					SecretKey.assign(EncodedSecretKey, EncodedSecretKeySize - 1);
 				}
-				else if (RawPrivateKey.size() == 64)
-					memcpy(PrivateKey, RawPrivateKey.data(), RawPrivateKey.size());
+				else if (RawPrivateKeySize == 64)
+					memcpy(PrivateKey, RawPrivateKey, RawPrivateKeySize);
 
 				uint8_t PublicKey[32];
 				ed25519_publickey_ext(PrivateKey, PublicKey);
@@ -761,7 +771,7 @@ namespace Tangent
 				if (!b58dec(DerivedPublicKey, &DerivedPublicKeySize, EncodedPublicKey, EncodedPublicKeySize - 1))
 					return LayerException("invalid public key");
 
-				return ExpectsLR<DerivedVerifyingWallet>(DerivedVerifyingWallet({ { (uint8_t)1, String(EncodedPublicKey, EncodedPublicKeySize - 1) } }, Optional::None, ::PrivateKey(std::string_view(EncodedPublicKey, EncodedPublicKeySize - 1))));
+				return ExpectsLR<DerivedVerifyingWallet>(DerivedVerifyingWallet({ { (uint8_t)1, String(EncodedPublicKey, EncodedPublicKeySize - 1) } }, Optional::None, String(EncodedPublicKey, EncodedPublicKeySize - 1)));
 			}
 			ExpectsLR<String> Solana::NewPublicKeyHash(const std::string_view& Address)
 			{
@@ -773,35 +783,35 @@ namespace Tangent
 			}
 			ExpectsLR<String> Solana::SignMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const PrivateKey& SigningKey)
 			{
-				auto SigningWallet = NewSigningWallet(Asset, SigningKey.ExposeToHeap());
+				auto SigningWallet = NewSigningWallet(Asset, SigningKey);
 				if (!SigningWallet)
 					return SigningWallet.Error();
 
 				uint8_t DerivedPrivateKey[64];
-				auto Private = SigningWallet->SigningKey.Expose<2048>();
-				if (!DecodePrivateKey(Private.Key, DerivedPrivateKey))
+				auto Private = SigningWallet->SigningKey.Expose<KEY_LIMIT>();
+				if (!DecodePrivateKey(Private.View, DerivedPrivateKey))
 					return LayerException("private key invalid");
 
 				ed25519_signature Signature;
 				ed25519_sign_ext((uint8_t*)Message.data(), Message.size(), DerivedPrivateKey, DerivedPrivateKey + 32, Signature);
-				return String((char*)Signature, sizeof(Signature));
+				return Codec::Base64Encode(std::string_view((char*)Signature, sizeof(Signature)));
 			}
 			ExpectsLR<void> Solana::VerifyMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const std::string_view& VerifyingKey, const std::string_view& Signature)
 			{
 				VI_ASSERT(Stringify::IsCString(VerifyingKey), "verifying key must be c-string");
-				if (Signature.size() < 64)
-					return LayerException("signature invalid");
+				String SignatureData = Signature.size() == 64 ? String(Signature) : Codec::Base64Decode(Signature);
+				if (SignatureData.size() != 64)
+					return LayerException("signature not valid");
 
 				auto VerifyingWallet = NewVerifyingWallet(Asset, VerifyingKey);
 				if (!VerifyingWallet)
 					return VerifyingWallet.Error();
 
-				auto Public = VerifyingWallet->VerifyingKey.Expose<2048>();
 				uint8_t DerivedPublicKey[256]; size_t DerivedPublicKeySize = sizeof(DerivedPublicKey);
-				if (!b58dec(DerivedPublicKey, &DerivedPublicKeySize, Public.Key, (int)Public.Size))
+				if (!b58dec(DerivedPublicKey, &DerivedPublicKeySize, VerifyingWallet->VerifyingKey.data(), (int)VerifyingWallet->VerifyingKey.size()))
 					return LayerException("invalid public key");
 
-				if (crypto_sign_verify_detached((uint8_t*)Signature.data(), (uint8_t*)Message.data(), Message.size(), DerivedPublicKey) != 0)
+				if (crypto_sign_verify_detached((uint8_t*)SignatureData.data(), (uint8_t*)Message.data(), Message.size(), DerivedPublicKey) != 0)
 					return LayerException("signature verification failed with used public key");
 
 				return Expectation::Met;

@@ -480,7 +480,7 @@ namespace Tangent
 
 				auto& Params = GetParams();
 				uint8_t DerivedPublicKey[256]; size_t DerivedPublicKeySize = sizeof(DerivedPublicKey);
-				if (!DecodeKey(Params.Ed25519PublicKey, FromWallet->VerifyingKey.ExposeToHeap(), DerivedPublicKey, &DerivedPublicKeySize))
+				if (!DecodeKey(Params.Ed25519PublicKey, FromWallet->VerifyingKey, DerivedPublicKey, &DerivedPublicKeySize))
 					Coreturn ExpectsRT<OutgoingTransaction>(RemoteException("input private key invalid"));
 
 				String Memo;
@@ -654,16 +654,15 @@ namespace Tangent
 				char PublicKey[256];
 				btc_hdnode_serialize_public(&RootNode, Chain, PublicKey, (int)sizeof(PublicKey));
 
-				String HexSeed = Codec::HexEncode(Seed);
-				return ExpectsLR<MasterWallet>(MasterWallet(::PrivateKey(std::move(HexSeed)), ::PrivateKey(PublicKey), ::PrivateKey(PrivateKey)));
+				return ExpectsLR<MasterWallet>(MasterWallet(::PrivateKey(Codec::HexEncode(Seed)), ::PrivateKey(PrivateKey), PublicKey));
 			}
 			ExpectsLR<DerivedSigningWallet> Stellar::NewSigningWallet(const Algorithm::AssetId& Asset, const MasterWallet& Wallet, uint64_t AddressIndex)
 			{
 				auto* Chain = GetChain();
 				char DerivedPrivateKey[256];
 				{
-					auto Private = Wallet.SigningKey.Expose<2048>();
-					if (!hd_derive(Chain, Private.Key, GetDerivation(Protocol::Now().Account.RootAddressIndex).c_str(), DerivedPrivateKey, sizeof(DerivedPrivateKey)))
+					auto Private = Wallet.SigningKey.Expose<KEY_LIMIT>();
+					if (!hd_derive(Chain, Private.View.data(), GetDerivation(Protocol::Now().Account.RootAddressIndex).c_str(), DerivedPrivateKey, sizeof(DerivedPrivateKey)))
 						return ExpectsLR<DerivedSigningWallet>(LayerException("input private key invalid"));
 				}
 
@@ -671,33 +670,40 @@ namespace Tangent
 				if (!btc_hdnode_deserialize(DerivedPrivateKey, Chain, &Node))
 					return ExpectsLR<DerivedSigningWallet>(LayerException("input private key invalid"));
 
-				auto Derived = NewSigningWallet(Asset, std::string_view((char*)Node.private_key, sizeof(Node.private_key)));
+				auto Derived = NewSigningWallet(Asset, PrivateKey(std::string_view((char*)Node.private_key, sizeof(Node.private_key))));
 				if (Derived)
 					Derived->AddressIndex = AddressIndex;
 				return Derived;
 			}
-			ExpectsLR<DerivedSigningWallet> Stellar::NewSigningWallet(const Algorithm::AssetId& Asset, const std::string_view& SigningKey)
+			ExpectsLR<DerivedSigningWallet> Stellar::NewSigningWallet(const Algorithm::AssetId& Asset, const PrivateKey& SigningKey)
 			{
-				uint8_t TestPrivateKey[64];
-				size_t TestPrivateKeySize = 32;
-				String RawPrivateKey = String(SigningKey);
-				if (DecodePrivateKey(SigningKey, TestPrivateKey))
-					RawPrivateKey = String((char*)TestPrivateKey, sizeof(TestPrivateKey));
-				else if (DecodeKey(GetParams().Ed25519SecretSeed, SigningKey, TestPrivateKey, &TestPrivateKeySize) && TestPrivateKeySize == 32)
-					RawPrivateKey = String((char*)TestPrivateKey, TestPrivateKeySize);
-
-				if (RawPrivateKey.size() != 32 && RawPrivateKey.size() != 64)
-					return LayerException("invalid private key size");
+				uint8_t RawPrivateKey[64]; size_t RawPrivateKeySize = 0;
+				if (SigningKey.Size() != 32 && SigningKey.Size() != 64)
+				{
+					auto Data = SigningKey.Expose<KEY_LIMIT>();
+					if (!DecodePrivateKey(Data.View, RawPrivateKey))
+					{
+						if (!DecodeKey(GetParams().Ed25519SecretSeed, Data.View, RawPrivateKey, &RawPrivateKeySize) || RawPrivateKeySize != 32)
+							return LayerException("bad private key");
+					}
+					else
+						RawPrivateKeySize = 64;
+				}
+				else
+				{
+					RawPrivateKeySize = SigningKey.Size();
+					SigningKey.ExposeToStack((char*)RawPrivateKey, RawPrivateKeySize);
+				}
 
 				uint8_t PrivateKey[64]; String SecretKey;
-				if (RawPrivateKey.size() == 32)
+				if (RawPrivateKeySize == 32)
 				{
-					sha512_Raw((uint8_t*)RawPrivateKey.data(), RawPrivateKey.size(), PrivateKey);
-					Algorithm::Composition::ConvertToED25519Curve(PrivateKey);
-					SecretKey = EncodeKey(GetParams().Ed25519SecretSeed, (uint8_t*)RawPrivateKey.data(), RawPrivateKey.size());
+					sha512_Raw(RawPrivateKey, RawPrivateKeySize, PrivateKey);
+					Algorithm::Composition::ConvertToSecretKeyEd25519(PrivateKey);
+					SecretKey = EncodeKey(GetParams().Ed25519SecretSeed, RawPrivateKey, RawPrivateKeySize);
 				}
-				else if (RawPrivateKey.size() == 64)
-					memcpy(PrivateKey, RawPrivateKey.data(), RawPrivateKey.size());
+				else if (RawPrivateKeySize == 64)
+					memcpy(PrivateKey, RawPrivateKey, RawPrivateKeySize);
 
 				uint8_t PublicKey[32];
 				ed25519_publickey_ext(PrivateKey, PublicKey);
@@ -724,7 +730,7 @@ namespace Tangent
 				}
 
 				String PublicKey = EncodeKey(GetParams().Ed25519PublicKey, (uint8_t*)RawPublicKey.data(), RawPublicKey.size());
-				return ExpectsLR<DerivedVerifyingWallet>(DerivedVerifyingWallet({ { (uint8_t)1, PublicKey } }, Optional::None, ::PrivateKey(PublicKey)));
+				return ExpectsLR<DerivedVerifyingWallet>(DerivedVerifyingWallet({ { (uint8_t)1, PublicKey } }, Optional::None, std::move(PublicKey)));
 			}
 			ExpectsLR<String> Stellar::NewPublicKeyHash(const std::string_view& Address)
 			{
@@ -736,35 +742,35 @@ namespace Tangent
 			}
 			ExpectsLR<String> Stellar::SignMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const PrivateKey& SigningKey)
 			{
-				auto SigningWallet = NewSigningWallet(Asset, SigningKey.ExposeToHeap());
+				auto SigningWallet = NewSigningWallet(Asset, SigningKey);
 				if (!SigningWallet)
 					return SigningWallet.Error();
 
 				uint8_t DerivedPrivateKey[64];
-				auto Private = SigningWallet->SigningKey.Expose<2048>();
-				if (!DecodePrivateKey(Private.Key, DerivedPrivateKey))
+				auto Private = SigningWallet->SigningKey.Expose<KEY_LIMIT>();
+				if (!DecodePrivateKey(Private.View, DerivedPrivateKey))
 					return LayerException("private key invalid");
 
 				ed25519_signature Signature;
 				ed25519_sign_ext((uint8_t*)Message.data(), Message.size(), DerivedPrivateKey, DerivedPrivateKey + 32, Signature);
-				return String((char*)Signature, sizeof(Signature));
+				return Codec::Base64Encode(std::string_view((char*)Signature, sizeof(Signature)));
 			}
 			ExpectsLR<void> Stellar::VerifyMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const std::string_view& VerifyingKey, const std::string_view& Signature)
 			{
-				if (Signature.size() < 64)
-					return LayerException("signature invalid");
+				String SignatureData = Signature.size() == 64 ? String(Signature) : Codec::Base64Decode(Signature);
+				if (SignatureData.size() != 64)
+					return LayerException("signature not valid");
 
 				auto VerifyingWallet = NewVerifyingWallet(Asset, VerifyingKey);
 				if (!VerifyingWallet)
 					return VerifyingWallet.Error();
 
 				auto& Params = GetParams();
-				auto Public = VerifyingWallet->VerifyingKey.Expose<2048>();
 				uint8_t DerivedPublicKey[256]; size_t DerivedPublicKeySize = sizeof(DerivedPublicKey);
-				if (!DecodeKey(Params.Ed25519PublicKey, Public.Key, DerivedPublicKey, &DerivedPublicKeySize))
+				if (!DecodeKey(Params.Ed25519PublicKey, VerifyingWallet->VerifyingKey, DerivedPublicKey, &DerivedPublicKeySize))
 					return LayerException("public key invalid");
 
-				if (crypto_sign_verify_detached((uint8_t*)Signature.data(), (uint8_t*)Message.data(), Message.size(), DerivedPublicKey) != 0)
+				if (crypto_sign_verify_detached((uint8_t*)SignatureData.data(), (uint8_t*)Message.data(), Message.size(), DerivedPublicKey) != 0)
 					return LayerException("signature verification failed with used public key");
 
 				return Expectation::Met;

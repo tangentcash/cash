@@ -782,8 +782,8 @@ namespace Tangent
 				}
 
 				uint8_t RawPrivateKey[256];
-				auto PrivateKey = FromWallet->SigningKey.Expose<2048>();
-				GeneratePrivateKeyDataFromPrivateKey(PrivateKey.Key, PrivateKey.Size, RawPrivateKey);
+				auto PrivateKey = FromWallet->SigningKey.Expose<KEY_LIMIT>();
+				GeneratePrivateKeyDataFromPrivateKey(PrivateKey.View.data(), PrivateKey.View.size(), RawPrivateKey);
 
 				EvmSignedTransaction Info = Transaction.SerializeAndSign(RawPrivateKey);
 				if (Info.Signature.R.empty() || Info.Signature.S.empty())
@@ -809,16 +809,15 @@ namespace Tangent
 				char PublicKey[256];
 				btc_hdnode_serialize_public(&RootNode, Chain, PublicKey, (int)sizeof(PublicKey));
 
-				String HexSeed = Codec::HexEncode(Seed);
-				return ExpectsLR<MasterWallet>(MasterWallet(::PrivateKey(std::move(HexSeed)), ::PrivateKey(PublicKey), ::PrivateKey(PrivateKey)));
+				return ExpectsLR<MasterWallet>(MasterWallet(::PrivateKey(std::move(Codec::HexEncode(Seed))), ::PrivateKey(PrivateKey), PublicKey));
 			}
 			ExpectsLR<DerivedSigningWallet> Ethereum::NewSigningWallet(const Algorithm::AssetId& Asset, const MasterWallet& Wallet, uint64_t AddressIndex)
 			{
 				auto* Chain = GetChain();
 				char MasterPrivateKey[256];
 				{
-					auto Private = Wallet.SigningKey.Expose<2048>();
-					if (!hd_derive(Chain, Private.Key, GetDerivation(Protocol::Now().Account.RootAddressIndex).c_str(), MasterPrivateKey, sizeof(MasterPrivateKey)))
+					auto Private = Wallet.SigningKey.Expose<KEY_LIMIT>();
+					if (!hd_derive(Chain, Private.View.data(), GetDerivation(Protocol::Now().Account.RootAddressIndex).c_str(), MasterPrivateKey, sizeof(MasterPrivateKey)))
 						return ExpectsLR<DerivedSigningWallet>(LayerException("invalid private key"));
 				}
 
@@ -826,25 +825,25 @@ namespace Tangent
 				if (!btc_hdnode_deserialize(MasterPrivateKey, Chain, &Node))
 					return ExpectsLR<DerivedSigningWallet>(LayerException("invalid private key"));
 
-				auto Derived = NewSigningWallet(Asset, std::string_view((char*)Node.private_key, sizeof(Node.private_key)));
+				auto Derived = NewSigningWallet(Asset, PrivateKey(std::string_view((char*)Node.private_key, sizeof(Node.private_key))));
 				if (Derived)
 					Derived->AddressIndex = AddressIndex;
 				return Derived;
 			}
-			ExpectsLR<DerivedSigningWallet> Ethereum::NewSigningWallet(const Algorithm::AssetId& Asset, const std::string_view& SigningKey)
+			ExpectsLR<DerivedSigningWallet> Ethereum::NewSigningWallet(const Algorithm::AssetId& Asset, const PrivateKey& SigningKey)
 			{
 				btc_key PrivateKey;
 				btc_privkey_init(&PrivateKey);
-				if (SigningKey.size() != sizeof(PrivateKey.privkey))
+				if (SigningKey.Size() != sizeof(PrivateKey.privkey))
 				{
-					auto Key = Format::Util::Decode0xHex(SigningKey);
+					auto Key = Format::Util::Decode0xHex(SigningKey.Expose<KEY_LIMIT>().View);
 					if (Key.size() != sizeof(PrivateKey.privkey))
 						return LayerException("not a valid hex private key");
 
 					memcpy(PrivateKey.privkey, Key.data(), sizeof(PrivateKey.privkey));
 				}
 				else
-					memcpy(PrivateKey.privkey, SigningKey.data(), sizeof(PrivateKey.privkey));
+					memcpy(PrivateKey.privkey, SigningKey.Expose<KEY_LIMIT>().Buffer, sizeof(PrivateKey.privkey));
 
 				char PublicKeyData[128]; size_t PublicKeyDataSize = BTC_ECKEY_UNCOMPRESSED_LENGTH;
 				btc_ecc_get_pubkey(PrivateKey.privkey, (uint8_t*)PublicKeyData, &PublicKeyDataSize, false);
@@ -883,7 +882,7 @@ namespace Tangent
 
 				char PublicKeyHash[20];
 				GeneratePublicKeyHashFromPublicKey(PublicKey + 1, PublicKeyHash);
-				return ExpectsLR<DerivedVerifyingWallet>(DerivedVerifyingWallet({ { (uint8_t)1, EncodeEthAddress(GeneratePkhAddress(PublicKeyHash)) } }, Optional::None, ::PrivateKey(GenerateUncheckedAddress(std::string_view((char*)PublicKey + 1, sizeof(PublicKey) - 1)))));
+				return ExpectsLR<DerivedVerifyingWallet>(DerivedVerifyingWallet({ { (uint8_t)1, EncodeEthAddress(GeneratePkhAddress(PublicKeyHash)) } }, Optional::None, GenerateUncheckedAddress(std::string_view((char*)PublicKey + 1, sizeof(PublicKey) - 1))));
 			}
 			ExpectsLR<String> Ethereum::NewPublicKeyHash(const std::string_view& Address)
 			{
@@ -895,13 +894,13 @@ namespace Tangent
 			}
 			ExpectsLR<String> Ethereum::SignMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const PrivateKey& SigningKey)
 			{
-				auto SigningWallet = NewSigningWallet(Asset, SigningKey.ExposeToHeap());
+				auto SigningWallet = NewSigningWallet(Asset, SigningKey);
 				if (!SigningWallet)
 					return SigningWallet.Error();
 
 				uint8_t RawPrivateKey[256];
-				auto PrivateKey = SigningWallet->SigningKey.Expose<2048>();
-				GeneratePrivateKeyDataFromPrivateKey(PrivateKey.Key, PrivateKey.Size, RawPrivateKey);
+				auto PrivateKey = SigningWallet->SigningKey.Expose<KEY_LIMIT>();
+				GeneratePrivateKeyDataFromPrivateKey(PrivateKey.View.data(), PrivateKey.View.size(), RawPrivateKey);
 
 				uint256 Hash;
 				GenerateMessageHash(Message, Hash);
@@ -910,15 +909,16 @@ namespace Tangent
 				if (eth_ecdsa_sign(&RawSignature, RawPrivateKey, Hash) != 1)
 					return LayerException("private key not valid");
 
-				uint8_t Signature[65];
+				uint8_t Signature[65] = { 0 };
 				memcpy(Signature + 00, RawSignature.r, sizeof(RawSignature.r));
 				memcpy(Signature + 32, RawSignature.s, sizeof(RawSignature.s));
 				Signature[64] = RawSignature.recid;
-				return String((char*)Signature, sizeof(Signature));
+				return Format::Util::Encode0xHex(std::string_view((char*)Signature, sizeof(Signature)));
 			}
 			ExpectsLR<void> Ethereum::VerifyMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const std::string_view& VerifyingKey, const std::string_view& Signature)
 			{
-				if (Signature.size() < 64)
+				String SignatureData = Signature.size() == 65 ? String(Signature) : Codec::HexDecode(Signature);
+				if (SignatureData.size() != 65)
 					return LayerException("signature not valid");
 
 				auto VerifyingWallet = NewVerifyingWallet(Asset, VerifyingKey);
@@ -935,9 +935,7 @@ namespace Tangent
 				{
 					const auto& Address = Item.second;
 					String TargetAddress = GenerateChecksumAddress(DecodeNonEthAddress(Address));
-					String RawSignature = String(Signature);
-					bool CompactRetry = false;
-				Retry:
+					String RawSignature = SignatureData;
 					for (int i = 0; i < 4; i++)
 					{
 						secp256k1_ecdsa_recoverable_signature EcdsaSignature;
@@ -958,13 +956,6 @@ namespace Tangent
 						String ActualAddress2 = GeneratePkhAddress(ActualPublicKeyHash2);
 						if (ActualAddress1 == TargetAddress || ActualAddress2 == TargetAddress)
 							return Expectation::Met;
-					}
-
-					if (!CompactRetry && RawSignature.size() == 64)
-					{
-						RawSignature[32] &= 0x7f;
-						CompactRetry = true;
-						goto Retry;
 					}
 				}
 

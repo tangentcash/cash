@@ -9,7 +9,7 @@ namespace Tangent
 		typedef std::function<bool(const std::string_view&)> InvocationCallback;
 		typedef std::function<Promise<void>(const Mediator::ChainSupervisorOptions&, Mediator::TransactionLogs&&)> TransactionCallback;
 
-		struct TAN_OUT TransactionListener
+		struct TransactionListener
 		{
 			Algorithm::AssetId Asset = 0;
 			Mediator::ChainSupervisorOptions Options;
@@ -18,7 +18,7 @@ namespace Tangent
 			bool IsDead = false;
 		};
 
-		struct TAN_OUT TransactionParams
+		struct TransactionParams
 		{
 			Vector<Mediator::Transferer> To;
 			Option<Mediator::BaseFee> Fee = Optional::None;
@@ -28,7 +28,7 @@ namespace Tangent
 			ExpectsPromiseRT<Mediator::OutgoingTransaction> Future;
 		};
 
-		struct TAN_OUT TransactionQueueState
+		struct TransactionQueueState
 		{
 			SingleQueue<TransactionParams*> Queue;
 			String Blockchain;
@@ -36,7 +36,7 @@ namespace Tangent
 			bool IsBusy = false;
 		};
 
-		class TAN_OUT ServerNode : public Singleton<ServerNode>
+		class ServerNode : public Singleton<ServerNode>
 		{
 		protected:
 			UnorderedSet<String> Connections;
@@ -70,7 +70,7 @@ namespace Tangent
 			ExpectsLR<Mediator::MasterWallet> NewMasterWallet(const Algorithm::AssetId& Asset, const std::string_view& Seed);
 			ExpectsLR<Mediator::MasterWallet> NewMasterWallet(const Algorithm::AssetId& Asset, const Algorithm::Seckey PrivateKey);
 			ExpectsLR<Mediator::DerivedSigningWallet> NewSigningWallet(const Algorithm::AssetId& Asset, const Mediator::MasterWallet& Wallet, Option<uint64_t>&& AddressIndex = Optional::None);
-			ExpectsLR<Mediator::DerivedSigningWallet> NewSigningWallet(const Algorithm::AssetId& Asset, const std::string_view& SigningKey);
+			ExpectsLR<Mediator::DerivedSigningWallet> NewSigningWallet(const Algorithm::AssetId& Asset, const PrivateKey& SigningKey);
 			ExpectsLR<Mediator::DerivedVerifyingWallet> NewVerifyingWallet(const Algorithm::AssetId& Asset, const std::string_view& VerifyingKey);
 			ExpectsLR<String> NewPublicKeyHash(const Algorithm::AssetId& Asset, const std::string_view& Address);
 			ExpectsLR<String> SignMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const PrivateKey& SigningKey);

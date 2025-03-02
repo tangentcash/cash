@@ -30,7 +30,7 @@ namespace Tangent
 			Outbound
 		};
 
-		struct TAN_OUT Procedure
+		struct Procedure
 		{
 			Format::Variables Args;
 			uint32_t Magic = 0;
@@ -43,7 +43,7 @@ namespace Tangent
 			bool DeserializeFromStream(String& Message, const uint8_t* Buffer, size_t Size);
 		};
 
-		class TAN_OUT RelayProcedure : public Reference<RelayProcedure>
+		class RelayProcedure : public Reference<RelayProcedure>
 		{
 		public:
 			Procedure Data;
@@ -53,7 +53,7 @@ namespace Tangent
 			~RelayProcedure() = default;
 		};
 
-		class TAN_OUT Relay : public Reference<Relay>
+		class Relay : public Reference<Relay>
 		{
 		private:
 			struct
@@ -111,7 +111,7 @@ namespace Tangent
 			}
 		};
 
-		class TAN_OUT OutboundNode final : public SocketClient
+		class OutboundNode final : public SocketClient
 		{
 			friend ServerNode;
 
@@ -123,7 +123,7 @@ namespace Tangent
 			void ConfigureStream() override;
 		};
 
-		class TAN_OUT ServerNode final : public SocketServer
+		class ServerNode final : public SocketServer
 		{
 		public:
 			using ReceiveFunction = Promise<void>(*)(ServerNode*, UPtr<Relay>&&, Format::Variables&&);
@@ -292,7 +292,7 @@ namespace Tangent
 
 		};
 
-		class TAN_OUT Routing
+		class Routing
 		{
 		public:
 			static bool IsAddressReserved(const SocketAddress& Address);

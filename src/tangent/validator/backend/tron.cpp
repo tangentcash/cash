@@ -4,9 +4,7 @@
 #include "../internal/libbitcoin/ecc_key.h"
 #include "../internal/libbitcoin/base58.h"
 #include "../internal/libbitcoin/utils.h"
-#ifdef TAN_PROTOBUF
 #include "../internal/libtron/TronInternal.pb.h"
-#endif
 extern "C"
 {
 #include "../../internal/secp256k1.h"
@@ -192,13 +190,13 @@ namespace Tangent
 				}
 
 				uint8_t RawPrivateKey[256];
-				auto PrivateKey = FromWallet->SigningKey.Expose<2048>();
-				GeneratePrivateKeyDataFromPrivateKey(PrivateKey.Key, PrivateKey.Size, RawPrivateKey);
+				auto PrivateKey = FromWallet->SigningKey.Expose<KEY_LIMIT>();
+				GeneratePrivateKeyDataFromPrivateKey(PrivateKey.View.data(), PrivateKey.View.size(), RawPrivateKey);
 
 				uint8_t RawPublicKey[256];
-				auto PublicKey = Codec::HexDecode(FromWallet->VerifyingKey.ExposeToHeap());
+				auto PublicKey = Codec::HexDecode(FromWallet->VerifyingKey);
 				memcpy(RawPublicKey, PublicKey.data(), std::min(sizeof(RawPrivateKey), PublicKey.size()));
-#ifdef TAN_PROTOBUF
+
 				protocol::Transaction Transaction;
 				protocol::Transaction_raw* RawData = Transaction.mutable_raw_data();
 				RawData->set_ref_block_bytes(Copy<std::string>(Codec::HexDecode(BlockHeader->RefBlockBytes)));
@@ -302,9 +300,6 @@ namespace Tangent
 				Tx.SetTransaction(Asset, 0, TransactionId, std::move(FeeValue));
 				Tx.SetOperations({ Transferer(FromWallet->Addresses.begin()->second, Option<uint64_t>(FromWallet->AddressIndex), Decimal(Subject.Value)) }, Vector<Transferer>(To));
 				Coreturn ExpectsRT<OutgoingTransaction>(OutgoingTransaction(std::move(Tx), std::move(TransactionData)));
-#else
-				Coreturn ExpectsRT<OutgoingTransaction>(RemoteException("tron transaction serialization is not supported"));
-#endif
 			}
 			ExpectsLR<String> Tron::NewPublicKeyHash(const std::string_view& Address)
 			{

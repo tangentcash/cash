@@ -79,7 +79,7 @@ namespace Tangent
 				virtual ExpectsPromiseRT<OutgoingTransaction> NewTransaction(const Algorithm::AssetId& Asset, const DynamicWallet& Wallet, const Vector<Transferer>& To, const BaseFee& Fee) override;
 				virtual ExpectsLR<MasterWallet> NewMasterWallet(const std::string_view& Seed) override;
 				virtual ExpectsLR<DerivedSigningWallet> NewSigningWallet(const Algorithm::AssetId& Asset, const MasterWallet& Wallet, uint64_t AddressIndex) override;
-				virtual ExpectsLR<DerivedSigningWallet> NewSigningWallet(const Algorithm::AssetId& Asset, const std::string_view& SigningKey) override;
+				virtual ExpectsLR<DerivedSigningWallet> NewSigningWallet(const Algorithm::AssetId& Asset, const PrivateKey& SigningKey) override;
 				virtual ExpectsLR<DerivedVerifyingWallet> NewVerifyingWallet(const Algorithm::AssetId& Asset, const std::string_view& VerifyingKey) override;
 				virtual ExpectsLR<String> NewPublicKeyHash(const std::string_view& Address) override;
 				virtual ExpectsLR<String> SignMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const PrivateKey& SigningKey) override;
@@ -91,7 +91,7 @@ namespace Tangent
 				virtual ExpectsPromiseRT<AccountInfo> GetAccountInfo(const Algorithm::AssetId& Asset, const std::string_view& Address);
 				virtual ExpectsPromiseRT<AccountTokenInfo> GetAccountTokenInfo(const Algorithm::AssetId& Asset, const std::string_view& Address);
 				virtual ExpectsPromiseRT<LedgerSequenceInfo> GetLedgerSequenceInfo(const Algorithm::AssetId& Asset);
-				virtual bool TxSignAndVerify(TransactionBuffer* TxData, const PrivateKey& Public, const PrivateKey& Private);
+				virtual bool TxSignAndVerify(TransactionBuffer* TxData, const std::string_view& Public, const PrivateKey& Private);
 				virtual Vector<uint8_t> TxSerialize(TransactionBuffer* TxData, bool SigningData);
 				virtual String TxHash(const Vector<uint8_t>& TxBlob);
 				virtual Decimal GetBaseFeeXRP();

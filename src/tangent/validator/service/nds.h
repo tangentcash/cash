@@ -7,7 +7,7 @@ namespace Tangent
 {
 	namespace NDS
 	{
-		class TAN_OUT ServerNode : public Reference<ServerNode>
+		class ServerNode : public Reference<ServerNode>
 		{
 		protected:
 			SystemControl ControlSys;

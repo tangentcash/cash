@@ -8,7 +8,7 @@ using namespace Tangent;
 int main(int argc, char* argv[])
 {
 	Vitex::Runtime Scope;
-	Protocol Params = Protocol(argc > 1 ? argv[1] : TAN_CONFIG_PATH);
+	Protocol Params = Protocol(argc, argv);
 	NDS::ServerNode Discovery;
 	P2P::ServerNode Consensus;
 	NSS::ServerNode& Synchronization = *NSS::ServerNode::Get();

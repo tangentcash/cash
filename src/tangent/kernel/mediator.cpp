@@ -11,10 +11,9 @@ namespace Tangent
 			if (!Value.Size())
 				return true;
 
-			auto Data = Value.Expose<2048>();
-			for (size_t i = 0; i < Data.Size; i++)
+			auto Data = Value.Expose<KEY_LIMIT>();
+			for (char V : Data.View)
 			{
-				char V = Data.Key[i];
 				if (V != ' ' && V != '\t' && V != '\r' && V != '\n')
 					return false;
 			}
@@ -101,19 +100,16 @@ namespace Tangent
 			return !Stringify::IsEmptyOrWhitespace(Address) && (Value.IsZero() || Value.IsPositive());
 		}
 
-		MasterWallet::MasterWallet(PrivateKey&& NewSeedingKey, PrivateKey&& NewVerifyingKey, PrivateKey&& NewSigningKey) : SeedingKey(std::move(NewSeedingKey)), VerifyingKey(std::move(NewVerifyingKey)), SigningKey(std::move(NewSigningKey))
+		MasterWallet::MasterWallet(PrivateKey&& NewSeedingKey, PrivateKey&& NewSigningKey, String&& NewVerifyingKey) : SeedingKey(std::move(NewSeedingKey)), SigningKey(std::move(NewSigningKey)), VerifyingKey(std::move(NewVerifyingKey))
 		{
 		}
 		bool MasterWallet::StorePayload(Format::Stream* Stream) const
 		{
 			VI_ASSERT(Stream != nullptr, "stream should be set");
-			auto RawSeedingKey = SeedingKey.Expose<2048>();
-			auto RawVerifyingKey = VerifyingKey.Expose<2048>();
-			auto RawSigningKey = SigningKey.Expose<2048>();
 			Stream->WriteInteger(MaxAddressIndex);
-			Stream->WriteString(std::string_view(RawSeedingKey.Key, RawSeedingKey.Size));
-			Stream->WriteString(std::string_view(RawVerifyingKey.Key, RawVerifyingKey.Size));
-			Stream->WriteString(std::string_view(RawSigningKey.Key, RawSigningKey.Size));
+			Stream->WriteString(SeedingKey.Expose<KEY_LIMIT>().View);
+			Stream->WriteString(SigningKey.Expose<KEY_LIMIT>().View);
+			Stream->WriteString(VerifyingKey);
 			return true;
 		}
 		bool MasterWallet::LoadPayload(Format::Stream& Stream)
@@ -121,33 +117,31 @@ namespace Tangent
 			if (!Stream.ReadInteger(Stream.ReadType(), &MaxAddressIndex))
 				return false;
 
-			String RawSignature;
-			if (!Stream.ReadString(Stream.ReadType(), &RawSignature))
+			String SeedingKeyData;
+			if (!Stream.ReadString(Stream.ReadType(), &SeedingKeyData))
 				return false;
 
-			String RawVerifyingKey;
-			if (!Stream.ReadString(Stream.ReadType(), &RawVerifyingKey))
+			String SigningKeyData;
+			if (!Stream.ReadString(Stream.ReadType(), &SigningKeyData))
 				return false;
 
-			String RawSigningKey;
-			if (!Stream.ReadString(Stream.ReadType(), &RawSigningKey))
+			if (!Stream.ReadString(Stream.ReadType(), &VerifyingKey))
 				return false;
 
-			SeedingKey = PrivateKey(RawSignature);
-			VerifyingKey = PrivateKey(RawVerifyingKey);
-			SigningKey = PrivateKey(RawSigningKey);
+			SeedingKey = PrivateKey(SeedingKeyData);
+			SigningKey = PrivateKey(SigningKeyData);
 			return true;
 		}
 		bool MasterWallet::IsValid() const
 		{
-			return !IsPrivateKeyEmptyOrWhitespace(SeedingKey) && !IsPrivateKeyEmptyOrWhitespace(VerifyingKey) && !IsPrivateKeyEmptyOrWhitespace(SigningKey);
+			return !IsPrivateKeyEmptyOrWhitespace(SeedingKey) && !IsPrivateKeyEmptyOrWhitespace(SigningKey) && !Stringify::IsEmptyOrWhitespace(VerifyingKey);
 		}
 		UPtr<Schema> MasterWallet::AsSchema() const
 		{
 			Schema* Data = Var::Set::Object();
 			Data->Set("seeding_key", Var::String(SeedingKey.ExposeToHeap()));
-			Data->Set("verifying_key", Var::String(VerifyingKey.ExposeToHeap()));
 			Data->Set("signing_key", Var::String(SigningKey.ExposeToHeap()));
+			Data->Set("verifying_key", Var::String(VerifyingKey));
 			Data->Set("max_address_index", Algorithm::Encoding::SerializeUint256(MaxAddressIndex));
 			return Data;
 		}
@@ -156,9 +150,8 @@ namespace Tangent
 			if (!Renew && Checksum != 0)
 				return Checksum;
 
-			auto RawSigningKey = SigningKey.Expose<2048>();
 			Format::Stream Message;
-			Message.WriteString(*Crypto::HashHex(Digests::SHA512(), std::string_view(RawSigningKey.Key, RawSigningKey.Size)));
+			Message.WriteString(*Crypto::HashHex(Digests::SHA512(), SigningKey.Expose<KEY_LIMIT>().View));
 			((MasterWallet*)this)->Checksum = Message.Hash();
 			return Checksum;
 		}
@@ -180,13 +173,12 @@ namespace Tangent
 			return "observer_master_wallet";
 		}
 
-		DerivedVerifyingWallet::DerivedVerifyingWallet(AddressMap&& NewAddresses, Option<uint64_t>&& NewAddressIndex, PrivateKey&& NewVerifyingKey) : Addresses(std::move(NewAddresses)), VerifyingKey(std::move(NewVerifyingKey)), AddressIndex(NewAddressIndex)
+		DerivedVerifyingWallet::DerivedVerifyingWallet(AddressMap&& NewAddresses, Option<uint64_t>&& NewAddressIndex, String&& NewVerifyingKey) : Addresses(std::move(NewAddresses)), AddressIndex(std::move(NewAddressIndex)), VerifyingKey(std::move(NewVerifyingKey))
 		{
 		}
 		bool DerivedVerifyingWallet::StorePayload(Format::Stream* Stream) const
 		{
 			VI_ASSERT(Stream != nullptr, "stream should be set");
-			auto RawVerifyingKey = VerifyingKey.Expose<2048>();
 			Stream->WriteBoolean(!!AddressIndex);
 			if (AddressIndex)
 				Stream->WriteInteger(*AddressIndex);
@@ -196,7 +188,7 @@ namespace Tangent
 				Stream->WriteInteger(Address.first);
 				Stream->WriteString(Address.second);
 			}
-			Stream->WriteString(std::string_view(RawVerifyingKey.Key, RawVerifyingKey.Size));
+			Stream->WriteString(VerifyingKey);
 			return true;
 		}
 		bool DerivedVerifyingWallet::LoadPayload(Format::Stream& Stream)
@@ -227,11 +219,9 @@ namespace Tangent
 				Addresses[Version] = std::move(Address);
 			}
 
-			String RawVerifyingKey;
-			if (!Stream.ReadString(Stream.ReadType(), &RawVerifyingKey))
+			if (!Stream.ReadString(Stream.ReadType(), &VerifyingKey))
 				return false;
 
-			VerifyingKey = PrivateKey(RawVerifyingKey);
 			return true;
 		}
 		bool DerivedVerifyingWallet::IsValid() const
@@ -239,7 +229,7 @@ namespace Tangent
 			if (Addresses.empty())
 				return false;
 
-			if (IsPrivateKeyEmptyOrWhitespace(VerifyingKey))
+			if (Stringify::IsEmptyOrWhitespace(VerifyingKey))
 				return false;
 
 			for (auto& Address : Addresses)
@@ -257,7 +247,7 @@ namespace Tangent
 			for (auto& Address : Addresses)
 				AddressesData->Push(Var::String(Address.second));
 			Data->Set("address_index", AddressIndex ? Algorithm::Encoding::SerializeUint256(*AddressIndex) : Var::Set::Null());
-			Data->Set("verifying_key", Var::String(VerifyingKey.ExposeToHeap()));
+			Data->Set("verifying_key", Var::String(VerifyingKey));
 			return Data;
 		}
 		uint32_t DerivedVerifyingWallet::AsType() const
@@ -287,8 +277,7 @@ namespace Tangent
 			if (!DerivedVerifyingWallet::StorePayload(Stream))
 				return false;
 
-			auto RawSigningKey = SigningKey.Expose<2048>();
-			Stream->WriteString(std::string_view(RawSigningKey.Key, RawSigningKey.Size));
+			Stream->WriteString(SigningKey.Expose<KEY_LIMIT>().View);
 			return true;
 		}
 		bool DerivedSigningWallet::LoadPayload(Format::Stream& Stream)
@@ -351,19 +340,17 @@ namespace Tangent
 		}
 		Option<String> DynamicWallet::GetBinding() const
 		{
-			const PrivateKey* VerifyingKey = nullptr;
+			const String* VerifyingKey = nullptr;
 			if (Parent)
 				VerifyingKey = &Parent->VerifyingKey;
 			else if (VerifyingChild)
 				VerifyingKey = &VerifyingChild->VerifyingKey;
 			else if (SigningChild)
 				VerifyingKey = &SigningChild->VerifyingKey;
-
 			if (!VerifyingKey)
 				return Optional::None;
 
-			auto Data = VerifyingKey->Expose<2048>();
-			return Algorithm::Hashing::Hash256((uint8_t*)Data.Key, Data.Size);
+			return Algorithm::Hashing::Hash256((uint8_t*)VerifyingKey->data(), VerifyingKey->size());
 		}
 		bool DynamicWallet::IsValid() const
 		{
@@ -1016,7 +1003,7 @@ namespace Tangent
 		{
 			CancelActivities();
 		}
-		ExpectsPromiseRT<Schema*> ServerRelay::ExecuteRPC(const Algorithm::AssetId& Asset, ErrorReporter& Reporter, const std::string_view& Method, const SchemaList& Args, CachePolicy Cache)
+		ExpectsPromiseRT<Schema*> ServerRelay::ExecuteRPC(const Algorithm::AssetId& Asset, ErrorReporter& Reporter, const std::string_view& Method, const SchemaList& Args, CachePolicy Cache, const std::string_view& Path)
 		{
 			if (Reporter.Type == TransmitType::Any)
 				Reporter.Type = TransmitType::JSONRPC;
@@ -1034,7 +1021,7 @@ namespace Tangent
 			Setup->Set("method", Var::String(Method));
 			Setup->Set("params", Params);
 
-			auto ResponseStatus = Coawait(ExecuteREST(Asset, Reporter, "POST", String(), *Setup, Cache));
+			auto ResponseStatus = Coawait(ExecuteREST(Asset, Reporter, "POST", Path, *Setup, Cache));
 			if (!ResponseStatus)
 				Coreturn ExpectsRT<Schema*>(std::move(ResponseStatus.Error()));
 
@@ -1062,7 +1049,7 @@ namespace Tangent
 			Result->Unlink();
 			Coreturn ExpectsRT<Schema*>(Result);
 		}
-		ExpectsPromiseRT<Schema*> ServerRelay::ExecuteRPC3(const Algorithm::AssetId& Asset, ErrorReporter& Reporter, const std::string_view& Method, const SchemaArgs& Args, CachePolicy Cache)
+		ExpectsPromiseRT<Schema*> ServerRelay::ExecuteRPC3(const Algorithm::AssetId& Asset, ErrorReporter& Reporter, const std::string_view& Method, const SchemaArgs& Args, CachePolicy Cache, const std::string_view& Path)
 		{
 			if (Reporter.Type == TransmitType::Any)
 				Reporter.Type = TransmitType::JSONRPC;
@@ -1080,7 +1067,7 @@ namespace Tangent
 			Setup->Set("method", Var::String(Method));
 			Setup->Set("params", Params);
 
-			auto ResponseStatus = Coawait(ExecuteREST(Asset, Reporter, "POST", String(), *Setup, Cache));
+			auto ResponseStatus = Coawait(ExecuteREST(Asset, Reporter, "POST", Path, *Setup, Cache));
 			if (!ResponseStatus)
 				Coreturn ExpectsRT<Schema*>(std::move(ResponseStatus.Error()));
 
@@ -1382,7 +1369,7 @@ namespace Tangent
 		RelayBackend::~RelayBackend() noexcept
 		{
 		}
-		ExpectsPromiseRT<Schema*> RelayBackend::ExecuteRPC(const Algorithm::AssetId& Asset, const std::string_view& Method, SchemaList&& Args, CachePolicy Cache)
+		ExpectsPromiseRT<Schema*> RelayBackend::ExecuteRPC(const Algorithm::AssetId& Asset, const std::string_view& Method, SchemaList&& Args, CachePolicy Cache, const std::string_view& Path)
 		{
 			auto* Nodes = NSS::ServerNode::Get()->GetNodes(Asset);
 			if (!Nodes || Nodes->empty())
@@ -1394,7 +1381,7 @@ namespace Tangent
 				ServerRelay::ErrorReporter Reporter;
 				Index = (Index + 1) % Nodes->size();
 				auto* Node = *Nodes->at(Index);
-				auto Result = Coawait(Node->ExecuteRPC(Asset, Reporter, Method, Args, Cache));
+				auto Result = Coawait(Node->ExecuteRPC(Asset, Reporter, Method, Args, Cache, Path));
 				if (Interact) Interact(Node);
 				if (Result || !Result.Error().retry())
 					Coreturn Result;
@@ -1402,7 +1389,7 @@ namespace Tangent
 
 			Coreturn ExpectsRT<Schema*>(RemoteException("node not found"));
 		}
-		ExpectsPromiseRT<Schema*> RelayBackend::ExecuteRPC3(const Algorithm::AssetId& Asset, const std::string_view& Method, SchemaArgs&& Args, CachePolicy Cache)
+		ExpectsPromiseRT<Schema*> RelayBackend::ExecuteRPC3(const Algorithm::AssetId& Asset, const std::string_view& Method, SchemaArgs&& Args, CachePolicy Cache, const std::string_view& Path)
 		{
 			auto* Nodes = NSS::ServerNode::Get()->GetNodes(Asset);
 			if (!Nodes || Nodes->empty())
@@ -1414,7 +1401,7 @@ namespace Tangent
 				ServerRelay::ErrorReporter Reporter;
 				Index = (Index + 1) % Nodes->size();
 				auto* Node = *Nodes->at(Index);
-				auto Result = Coawait(Node->ExecuteRPC3(Asset, Reporter, Method, Args, Cache));
+				auto Result = Coawait(Node->ExecuteRPC3(Asset, Reporter, Method, Args, Cache, Path));
 				if (Interact) Interact(Node);
 				if (Result || !Result.Error().retry())
 					Coreturn Result;
@@ -1495,14 +1482,14 @@ namespace Tangent
 		{
 			return String(Value);
 		}
-		uint64_t RelayBackend::GetRetirementBlockNumber() const
-		{
-			return std::numeric_limits<uint64_t>::max();
-		}
 		uint256_t RelayBackend::ToBaselineValue(const Decimal& Value) const
 		{
 			Decimal Baseline = Value * GetChainparams().Divisibility;
 			return uint256_t(Baseline.Truncate(0).ToString());
+		}
+		uint64_t RelayBackend::GetRetirementBlockNumber() const
+		{
+			return std::numeric_limits<uint64_t>::max();
 		}
 
 		RelayBackendUTXO::RelayBackendUTXO() noexcept : RelayBackend()

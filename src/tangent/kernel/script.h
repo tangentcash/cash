@@ -8,7 +8,7 @@ namespace Tangent
 {
 	namespace Ledger
 	{
-		class TAN_OUT ScriptMarshalling
+		class ScriptMarshalling
 		{
 		public:
 			static ExpectsLR<void> Store(Format::Stream* Stream, void* Value, int ValueTypeId);
@@ -17,7 +17,7 @@ namespace Tangent
 			static ExpectsLR<void> Load(Schema* Stream, void* Value, int ValueTypeId);
 		};
 
-		class TAN_OUT ScriptHost : public Singleton<ScriptHost>
+		class ScriptHost : public Singleton<ScriptHost>
 		{
 		private:
 			UnorderedMap<String, asIScriptModule*> Modules;
@@ -38,7 +38,7 @@ namespace Tangent
 			VirtualMachine* GetVM();
 		};
 
-		struct TAN_OUT ScriptFrame
+		struct ScriptFrame
 		{
 			Function Call = nullptr;
 			size_t ByteCodeSize = 0;
@@ -46,7 +46,7 @@ namespace Tangent
 			uint32_t Pointer = 0;
 		};
 
-		struct TAN_OUT ScriptAddress
+		struct ScriptAddress
 		{
 			Algorithm::Pubkeyhash Hash = { 0 };
 
@@ -60,7 +60,7 @@ namespace Tangent
 			static bool Equals(const ScriptAddress& A, const ScriptAddress& B);
 		};
 
-		struct TAN_OUT ScriptProgram
+		struct ScriptProgram
 		{
 			Option<Algorithm::WVDF::Distribution> Distribution;
 			Ledger::TransactionContext* Context;
@@ -124,7 +124,7 @@ namespace Tangent
 			virtual void LoadCoroutine(ImmediateContext* Coroutine, Vector<ScriptFrame>& Frames);
 		};
 
-		struct TAN_OUT ScriptProgramTrace : ScriptProgram
+		struct ScriptProgramTrace : ScriptProgram
 		{
 			UPtr<Schema> Returning;
 			Vector<String> Instructions;

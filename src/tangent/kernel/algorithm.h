@@ -17,7 +17,7 @@ namespace Tangent
 		using Pubkeyhash = uint8_t[20];
         typedef uint256_t(*HashFunction)(const uint256_t&, const uint256_t&);
 
-        class TAN_OUT WVDF
+        class WVDF
         {
         public:
             typedef String Digest;
@@ -60,7 +60,7 @@ namespace Tangent
             static const Parameters& GetDefault();
         };
 
-        class TAN_OUT NPOW
+        class NPOW
         {
         public:
             static uint256_t Evaluate(const uint256_t& Nonce, const std::string_view& Message);
@@ -68,7 +68,7 @@ namespace Tangent
             static void Serialize(Format::Stream& Stream, const uint256_t& Nonce, const std::string_view& Message);
         };
 
-		class TAN_OUT Segwit
+		class Segwit
 		{
 		public:
 			static int Tweak(uint8_t* Output, size_t* OutputSize, int32_t OutputBits, const uint8_t* Input, size_t InputSize, int32_t InputBits, int32_t Padding);
@@ -76,7 +76,7 @@ namespace Tangent
 			static int Decode(int* Version, uint8_t* Program, size_t* ProgramSize, const char* Prefix, const char* Input);
 		};
 
-		class TAN_OUT Signing
+		class Signing
 		{
 		private:
 			static secp256k1_context* SharedContext;
@@ -115,7 +115,7 @@ namespace Tangent
 			static secp256k1_context* GetContext();
 		};
 
-		class TAN_OUT Encoding
+		class Encoding
 		{
 		public:
 			static bool DecodeUintBlob(const String& Value, uint8_t* Data, size_t DataSize);
@@ -131,7 +131,7 @@ namespace Tangent
 			static Schema* SerializeUint256(const uint256_t& Data);
 		};
 
-		class TAN_OUT Hashing
+		class Hashing
 		{
 		public:
             static uint256_t Sha256ci(const uint256_t& A, const uint256_t& B);
@@ -149,7 +149,7 @@ namespace Tangent
 			static uint256_t Hash256i(const std::string_view& Data);
 		};
 
-		class TAN_OUT Asset
+		class Asset
 		{
 		public:
 			static AssetId IdOfHandle(const std::string_view& Handle);
@@ -166,7 +166,7 @@ namespace Tangent
 			static Schema* Serialize(const AssetId& Value);
 		};
 
-		class TAN_OUT Composition
+		class Composition
 		{
 		public:
 			using CSeed = uint8_t[64];
@@ -181,14 +181,16 @@ namespace Tangent
 			};
 
 		public:
-			static ExpectsLR<void> DeriveKeypair1(Type Alg, const CSeed Seed, CSeckey SecretKey1, CPubkey PublicKey1);
-			static ExpectsLR<void> DeriveKeypair2(Type Alg, const CSeed Seed, const CPubkey PublicKey1, CSeckey SecretKey2, CPubkey PublicKey2, CPubkey PublicKey, size_t* PublicKeySize);
+			static ExpectsLR<void> DeriveKeypair(Type Alg, const CSeed Seed, CSeckey SecretKey, CPubkey PublicKey);
+			static ExpectsLR<void> DerivePublicKey(Type Alg, const CPubkey PublicKey1, const CSeckey SecretKey2, CPubkey PublicKey, size_t* PublicKeySize);
 			static ExpectsLR<void> DeriveSecretKey(Type Alg, const CSeckey SecretKey1, const CSeckey SecretKey2, CSeckey SecretKey, size_t* SecretKeySize);
-			static void ConvertToED25519Curve(uint8_t SecretKey[64]);
+			static void ConvertToCompositeHash(const uint8_t* A, size_t ASize, const uint8_t* B, size_t BSize, uint8_t C[32]);
+			static void ConvertToSecretKeyEd25519(uint8_t SecretKey[32]);
+			static void ConvertToScalarEd25519(uint8_t SecretKey[32]);
 			static void ConvertToSecretSeed(const Seckey SecretKey, const std::string_view& Entropy, CSeed Seed);
 		};
 
-        struct TAN_OUT MerkleTree
+        struct MerkleTree
         {
         public:
             struct Path

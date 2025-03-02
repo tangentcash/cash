@@ -528,7 +528,7 @@ namespace Tangent
 				else
 					Buffer.Amount.BaseValue = (uint64_t)ToDrop(Subject.Value);
 				Buffer.Fee = (uint64_t)ToDrop(FeeValue);
-				Buffer.SigningPubKey = FromWallet->VerifyingKey.ExposeToHeap();
+				Buffer.SigningPubKey = FromWallet->VerifyingKey;
 				Buffer.Account = FromWallet->Addresses.begin()->first;
 				Buffer.Destination = Subject.Address;
 				if (!TxSignAndVerify(&Buffer, FromWallet->VerifyingKey, FromWallet->SigningKey))
@@ -558,16 +558,15 @@ namespace Tangent
 				char PublicKey[256];
 				btc_hdnode_serialize_public(&RootNode, Chain, PublicKey, (int)sizeof(PublicKey));
 
-				String HexSeed = Codec::HexEncode(Seed);
-				return ExpectsLR<MasterWallet>(MasterWallet(::PrivateKey(std::move(HexSeed)), ::PrivateKey(PublicKey), ::PrivateKey(PrivateKey)));
+				return ExpectsLR<MasterWallet>(MasterWallet(::PrivateKey(Codec::HexEncode(Seed)), ::PrivateKey(PrivateKey), PublicKey));
 			}
 			ExpectsLR<DerivedSigningWallet> Ripple::NewSigningWallet(const Algorithm::AssetId& Asset, const MasterWallet& Wallet, uint64_t AddressIndex)
 			{
 				auto* Chain = GetChain();
 				char DerivedSeedKey[256];
 				{
-					auto Private = Wallet.SigningKey.Expose<2048>();
-					if (!hd_derive(Chain, Private.Key, GetDerivation(Protocol::Now().Account.RootAddressIndex).c_str(), DerivedSeedKey, sizeof(DerivedSeedKey)))
+					auto Private = Wallet.SigningKey.Expose<KEY_LIMIT>();
+					if (!hd_derive(Chain, Private.View.data(), GetDerivation(Protocol::Now().Account.RootAddressIndex).c_str(), DerivedSeedKey, sizeof(DerivedSeedKey)))
 						return ExpectsLR<DerivedSigningWallet>(LayerException("private key invalid"));
 				}
 
@@ -575,46 +574,57 @@ namespace Tangent
 				if (!btc_hdnode_deserialize(DerivedSeedKey, Chain, &Node))
 					return ExpectsLR<DerivedSigningWallet>(LayerException("private key invalid"));
 
-				auto Derived = NewSigningWallet(Asset, std::string_view((char*)Node.private_key, sizeof(Node.private_key)));
+				auto Derived = NewSigningWallet(Asset, PrivateKey(std::string_view((char*)Node.private_key, sizeof(Node.private_key))));
 				if (Derived)
 					Derived->AddressIndex = AddressIndex;
 				return Derived;
 			}
-			ExpectsLR<DerivedSigningWallet> Ripple::NewSigningWallet(const Algorithm::AssetId& Asset, const std::string_view& SigningKey)
+			ExpectsLR<DerivedSigningWallet> Ripple::NewSigningWallet(const Algorithm::AssetId& Asset, const PrivateKey& SigningKey)
 			{
-				uint8_t TestPrivateKey[65]; String RawPrivateKey = String(SigningKey);
-				if (DecodePrivateKey(SigningKey, TestPrivateKey))
-					RawPrivateKey = String((char*)TestPrivateKey, sizeof(TestPrivateKey));
-				else if (DecodeSecretKey(SigningKey, TestPrivateKey))
-					RawPrivateKey = String((char*)TestPrivateKey, 16);
+				uint8_t RawPrivateKey[65]; size_t RawPrivateKeySize = 0;
+				if (SigningKey.Size() != 16 && SigningKey.Size() != 32 && SigningKey.Size() != 33 && SigningKey.Size() != 64 && SigningKey.Size() != 65)
+				{
+					auto Data = SigningKey.Expose<KEY_LIMIT>();
+					if (!DecodePrivateKey(Data.View, RawPrivateKey))
+					{
+						if (!DecodeSecretKey(Data.View, RawPrivateKey))
+							return LayerException("bad private key");
 
-				if (RawPrivateKey.size() != 16 && RawPrivateKey.size() != 32 && RawPrivateKey.size() != 33 && RawPrivateKey.size() != 64 && RawPrivateKey.size() != 65)
-					return LayerException("private key invalid");
+						RawPrivateKeySize = 16;
+					}
+					else
+						RawPrivateKeySize = 65;
+				}
+				else
+				{
+					RawPrivateKeySize = SigningKey.Size();
+					SigningKey.ExposeToStack((char*)RawPrivateKey, RawPrivateKeySize);
+				}
 
 				uint8_t PrivateKey[65]; String SecretKey;
-				if (RawPrivateKey.size() == 16)
+				if (RawPrivateKeySize == 16)
 				{
-					SecretKey = EncodeSecretKey((uint8_t*)RawPrivateKey.data(), RawPrivateKey.size());
+					SecretKey = EncodeSecretKey(RawPrivateKey, RawPrivateKeySize);
 					uint8_t IntermediatePrivateKey[65];
-					sha512_Raw((uint8_t*)RawPrivateKey.data(), RawPrivateKey.size(), IntermediatePrivateKey);
+					sha512_Raw(RawPrivateKey, RawPrivateKeySize, IntermediatePrivateKey);
 					sha512_Raw(IntermediatePrivateKey, sizeof(IntermediatePrivateKey) / 2, PrivateKey + 1);
-					Algorithm::Composition::ConvertToED25519Curve(PrivateKey + 1);
-					SecretKey = EncodeSecretKey((uint8_t*)RawPrivateKey.data(), RawPrivateKey.size());
+					Algorithm::Composition::ConvertToSecretKeyEd25519(PrivateKey + 1);
+					SecretKey = EncodeSecretKey(RawPrivateKey, RawPrivateKeySize);
 				}
-				else if (RawPrivateKey.size() == 32 || RawPrivateKey.size() == 33)
+				else if (RawPrivateKeySize == 32 || RawPrivateKeySize == 33)
 				{
-					size_t Offset = RawPrivateKey.size() == 33 ? 1 : 0;
+					size_t Offset = RawPrivateKeySize == 33 ? 1 : 0;
 					uint8_t IntermediatePrivateKey[65];
-					auto RawSecretKey = *Crypto::HashRaw(Digests::Shake128(), RawPrivateKey);
+					auto RawSecretKey = *Crypto::HashRaw(Digests::Shake128(), std::string_view((char*)RawPrivateKey, RawPrivateKeySize));
 					sha512_Raw((uint8_t*)RawSecretKey.data() + Offset, RawSecretKey.size() - Offset, IntermediatePrivateKey);
 					sha512_Raw(IntermediatePrivateKey, sizeof(IntermediatePrivateKey) / 2, PrivateKey + 1);
-					Algorithm::Composition::ConvertToED25519Curve(PrivateKey + 1);
+					Algorithm::Composition::ConvertToSecretKeyEd25519(PrivateKey + 1);
 					SecretKey = EncodeSecretKey((uint8_t*)RawSecretKey.data(), RawSecretKey.size());
 				}
-				else if (RawPrivateKey.size() == 64 || RawPrivateKey.size() == 65)
+				else if (RawPrivateKeySize == 64 || RawPrivateKeySize == 65)
 				{
-					size_t Offset = RawPrivateKey.size() == 65 ? 1 : 0;
-					memcpy(PrivateKey + 1, RawPrivateKey.data() + Offset, RawPrivateKey.size() - Offset);
+					size_t Offset = RawPrivateKeySize == 65 ? 1 : 0;
+					memcpy(PrivateKey + 1, RawPrivateKey + Offset, RawPrivateKeySize - Offset);
 				}
 				PrivateKey[0] = 0xED;
 
@@ -649,7 +659,7 @@ namespace Tangent
 
 				String DerivedPublicKey = EncodePublicKey(PublicKey, sizeof(PublicKey));
 				String DerivedAddress = EncodeAndHashPublicKey(PublicKey, sizeof(PublicKey));
-				return ExpectsLR<DerivedVerifyingWallet>(DerivedVerifyingWallet({ { (uint8_t)1, DerivedAddress } }, Optional::None, ::PrivateKey(DerivedPublicKey)));
+				return ExpectsLR<DerivedVerifyingWallet>(DerivedVerifyingWallet({ { (uint8_t)1, DerivedAddress } }, Optional::None, std::move(DerivedPublicKey)));
 			}
 			ExpectsLR<String> Ripple::NewPublicKeyHash(const std::string_view& Address)
 			{
@@ -661,34 +671,34 @@ namespace Tangent
 			}
 			ExpectsLR<String> Ripple::SignMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const PrivateKey& SigningKey)
 			{
-				auto SigningWallet = NewSigningWallet(Asset, SigningKey.ExposeToHeap());
+				auto SigningWallet = NewSigningWallet(Asset, SigningKey);
 				if (!SigningWallet)
 					return SigningWallet.Error();
 
 				uint8_t PrivateKey[65];
-				auto Private = SigningWallet->SigningKey.Expose<2048>();
-				if (!DecodePrivateKey(Private.Key, PrivateKey))
+				auto Private = SigningWallet->SigningKey.Expose<KEY_LIMIT>();
+				if (!DecodePrivateKey(Private.View.data(), PrivateKey))
 					return LayerException("private key invalid");
 
 				ed25519_signature Signature;
 				ed25519_sign_ext((uint8_t*)Message.data(), Message.size(), PrivateKey + 1, PrivateKey + 33, Signature);
-				return String((char*)Signature, sizeof(Signature));
+				return Codec::Base64Encode(std::string_view((char*)Signature, sizeof(Signature)));
 			}
 			ExpectsLR<void> Ripple::VerifyMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const std::string_view& VerifyingKey, const std::string_view& Signature)
 			{
-				if (Signature.size() < 64)
-					return LayerException("signature invalid");
+				String SignatureData = Signature.size() == 64 ? String(Signature) : Codec::Base64Decode(Signature);
+				if (SignatureData.size() != 64)
+					return LayerException("signature not valid");
 
 				auto VerifyingWallet = NewVerifyingWallet(Asset, VerifyingKey);
 				if (!VerifyingWallet)
 					return VerifyingWallet.Error();
 
 				uint8_t RawPublicKey[33];
-				auto Public = VerifyingWallet->VerifyingKey.Expose<2048>();
-				if (!DecodePublicKey(Public.Key, RawPublicKey))
+				if (!DecodePublicKey(VerifyingWallet->VerifyingKey, RawPublicKey))
 					return LayerException("public key invalid");
 
-				if (crypto_sign_ed25519_verify_detached((uint8_t*)Signature.data(), (uint8_t*)Message.data(), Message.size(), RawPublicKey + 1) != 0)
+				if (crypto_sign_ed25519_verify_detached((uint8_t*)SignatureData.data(), (uint8_t*)Message.data(), Message.size(), RawPublicKey + 1) != 0)
 					return LayerException("signature verification failed with used public key");
 				
 				return Expectation::Met;
@@ -701,14 +711,14 @@ namespace Tangent
 			{
 				return Netdata;
 			}
-			bool Ripple::TxSignAndVerify(TransactionBuffer* TxData, const PrivateKey& Public, const PrivateKey& Private)
+			bool Ripple::TxSignAndVerify(TransactionBuffer* TxData, const std::string_view& Public, const PrivateKey& Private)
 			{
 				uint8_t PrivateKey[65];
 				if (!DecodePrivateKey(Private.ExposeToHeap(), PrivateKey))
 					return false;
 
 				uint8_t PublicKey[33];
-				if (!DecodePublicKey(Public.ExposeToHeap(), PublicKey))
+				if (!DecodePublicKey(Public, PublicKey))
 					return false;
 
 				Vector<uint8_t> TxBlob = TxSerialize(TxData, true);

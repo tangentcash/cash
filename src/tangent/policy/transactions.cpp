@@ -22,7 +22,7 @@ namespace Tangent
 			else if (memcmp(Context->Receipt.From, To, sizeof(Algorithm::Pubkeyhash)) == 0)
 				return LayerException("invalid receiver");
 
-			auto Payment = Context->ApplyPayment(To, Value);
+			auto Payment = Context->ApplyPayment(Asset, Context->Receipt.From, To, Value);
 			if (!Payment)
 				return Payment.Error();
 
@@ -127,7 +127,7 @@ namespace Tangent
 				if (memcmp(Context->Receipt.From, Transfer.To, sizeof(Algorithm::Pubkeyhash)) == 0)
 					return LayerException("invalid receiver");
 
-				auto Payment = Context->ApplyPayment(Transfer.To, Transfer.Value);
+				auto Payment = Context->ApplyPayment(Asset, Context->Receipt.From, Transfer.To, Transfer.Value);
 				if (!Payment)
 					return Payment.Error();
 			}
@@ -658,11 +658,11 @@ namespace Tangent
 			}
 
 			auto TokenReward = BaseAsset == Asset || !Charges ? BaseReward : Context->GetAccountReward(Asset, Proposer);
-			auto BalanceRequirement = Context->VerifyTransferBalance(std::max(Value, TokenReward ? TokenReward->CalculateOutgoingFee(Value) : Decimal::Zero()));
+			auto BalanceRequirement = Context->VerifyTransferBalance(Asset, std::max(Value, TokenReward ? TokenReward->CalculateOutgoingFee(Value) : Decimal::Zero()));
 			if (!BalanceRequirement)
 				return BalanceRequirement;
 
-			auto Depository = Context->GetAccountDepository(Proposer);
+			auto Depository = Context->GetAccountDepository(Asset, Proposer);
 			if (!Depository || Depository->Custody < Value)
 				return LayerException("proposer's " + Algorithm::Asset::HandleOf(Asset) + " balance is insufficient to cover withdrawal value (value: " + Value.ToString() + ")");
 
@@ -673,7 +673,7 @@ namespace Tangent
 				if (Collision && memcmp(Collision->Owner, Context->Receipt.From, sizeof(Collision->Owner)) != 0)
 					return LayerException("invalid to address (not owned by sender)");
 				else if (!Collision)
-					Collision = Context->ApplyWitnessAddress(Context->Receipt.From, nullptr, { { (uint8_t)0, String(Item.first) } }, AddressIndex, States::AddressType::Router);
+					Collision = Context->ApplyWitnessAddress(Asset, Context->Receipt.From, nullptr, { { (uint8_t)0, String(Item.first) } }, AddressIndex, States::AddressType::Router);
 				if (!Collision)
 					return Collision.Error();
 			}
@@ -690,18 +690,18 @@ namespace Tangent
 			}
 
 			auto TokenFee = (TokenReward ? TokenReward->CalculateOutgoingFee(Value) : Decimal::Zero());
-			auto TokenTransfer = Context->ApplyTransfer(Context->Receipt.From, -TokenFee, Value - TokenFee);
+			auto TokenTransfer = Context->ApplyTransfer(Asset, Context->Receipt.From, -TokenFee, Value - TokenFee);
 			if (!TokenTransfer)
 				return TokenTransfer.Error();
 
 			if (TokenFee.IsPositive())
 			{
-				TokenTransfer = Context->ApplyTransfer(Proposer, TokenFee, Decimal::Zero());
+				TokenTransfer = Context->ApplyTransfer(Asset, Proposer, TokenFee, Decimal::Zero());
 				if (!TokenTransfer)
 					return TokenTransfer.Error();
 			}
 
-			auto Registration = Context->ApplyAccountDepositoryTransaction(Proposer, Context->Receipt.TransactionHash, 1);
+			auto Registration = Context->ApplyAccountDepositoryTransaction(Asset, Proposer, Context->Receipt.TransactionHash, 1);
 			if (!Registration)
 				return Registration.Error();
 
@@ -1335,7 +1335,7 @@ namespace Tangent
 
 			if (GoesOnline)
 			{
-				auto Status = Context->VerifyAccountWork(false);
+				auto Status = Context->VerifyAccountWork(Context->Receipt.From);
 				if (!Status)
 					return Status;
 			}
@@ -1491,12 +1491,11 @@ namespace Tangent
 			if (!Assertion->IsLatencyApproved())
 				return LayerException("invalid assertion status");
 
-			auto Collision = Context->GetWitnessTransaction(Assertion->TransactionId);
+			auto Collision = Context->GetWitnessTransaction(Asset, Assertion->TransactionId);
 			if (Collision)
 				return LayerException("assertion " + Assertion->TransactionId + " finalized");
 
 			auto BaseDerivationIndex = Protocol::Now().Account.RootAddressIndex;
-
 			auto* Chain = NSS::ServerNode::Get()->GetChainparams(Asset);
 			if (!Chain)
 				return LayerException("invalid chain");
@@ -1611,7 +1610,7 @@ namespace Tangent
 					continue;
 				}
 
-				auto Depository = Context->GetAccountDepository((uint8_t*)Item.first.data()).Or(States::AccountDepository((uint8_t*)Item.first.data(), Context->Block));
+				auto Depository = Context->GetAccountDepository(Asset, (uint8_t*)Item.first.data()).Or(States::AccountDepository((uint8_t*)Item.first.data(), Context->Block));
 				Depository.Custody += Item.second.Custody;
 				for (auto& Coverage : Item.second.Contributions)
 				{
@@ -1652,7 +1651,7 @@ namespace Tangent
 				auto ReserveDelta = Operation.second.Reserve.IsNaN() ? Decimal::Zero() : Operation.second.Reserve;
 				if (SupplyDelta.IsNegative() || ReserveDelta.IsNegative())
 				{
-					auto Balance = Context->GetAccountBalance((uint8_t*)Operation.first.data());
+					auto Balance = Context->GetAccountBalance(Asset, (uint8_t*)Operation.first.data());
 					auto Supply = (Balance ? Balance->Supply : Decimal::Zero()) + SupplyDelta;
 					auto Reserve = (Balance ? Balance->Reserve : Decimal::Zero()) + ReserveDelta;
 					if (Supply < 0.0 || Reserve < 0.0)
@@ -1663,23 +1662,23 @@ namespace Tangent
 					}
 				}
 
-				auto Transfer = Context->ApplyTransfer((uint8_t*)Operation.first.data(), SupplyDelta, ReserveDelta);
+				auto Transfer = Context->ApplyTransfer(Asset, (uint8_t*)Operation.first.data(), SupplyDelta, ReserveDelta);
 				if (!Transfer)
 					return Transfer.Error();
 			}
 
 			for (auto& Operation : Operations.Contributions)
 			{
-				auto Depository = Context->ApplyAccountDepositoryChange((uint8_t*)Operation.first.data(), Operation.second.Custody, std::move(Operation.second.Contributions), std::move(Operation.second.Reservations));
+				auto Depository = Context->ApplyAccountDepositoryChange(Asset, (uint8_t*)Operation.first.data(), Operation.second.Custody, std::move(Operation.second.Contributions), std::move(Operation.second.Reservations));
 				if (!Depository)
 					return Depository.Error();
 			}
 
-			auto Witness = Context->ApplyWitnessTransaction(Assertion->TransactionId);
+			auto Witness = Context->ApplyWitnessTransaction(Asset, Assertion->TransactionId);
 			if (!Witness)
 				return Witness.Error();
 
-			return Context->EmitWitness(Assertion->BlockId);
+			return Context->EmitWitness(Asset, Assertion->BlockId);
 		}
 		bool IncomingClaim::StoreBody(Format::Stream* Stream) const
 		{
@@ -1691,30 +1690,22 @@ namespace Tangent
 		}
 		bool IncomingClaim::RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
 		{
-			auto* Chain = NSS::ServerNode::Get()->GetChainparams(Asset);
-			if (!Chain)
-				return false;
-
-			auto Assertion = GetAssertion(nullptr);
-			if (!Assertion)
-				return false;
-
-			auto Context = Ledger::TransactionContext();
-			auto BaseDerivationIndex = Protocol::Now().Account.RootAddressIndex;
-			for (auto& Item : Assertion->From)
+			const Format::Variables* Event = nullptr;
+			size_t Offset = 0;
+			do
 			{
-				uint64_t AddressIndex = Item.AddressIndex && Chain->Routing == Mediator::RoutingPolicy::Memo ? *Item.AddressIndex : BaseDerivationIndex;
-				auto Source = Context.GetWitnessAddress(Algorithm::Asset::BaseIdOf(Asset), Item.Address, AddressIndex, 0);
-				if (Source)
-					Parties.insert(String((char*)Source->Owner, sizeof(Source->Owner)));
-			}
-			for (auto& Item : Assertion->To)
+				Event = Receipt.FindEvent<States::AccountBalance>(Offset++);
+				if (Event != nullptr && Event->size() >= 2 && Event->at(1).AsString().size() == sizeof(Algorithm::Pubkeyhash))
+					Parties.insert(Event->at(1).AsBlob());
+			} while (Event != nullptr);
+
+			Offset = 0;
+			do
 			{
-				uint64_t AddressIndex = Item.AddressIndex && Chain->Routing == Mediator::RoutingPolicy::Memo ? *Item.AddressIndex : BaseDerivationIndex;
-				auto Source = Context.GetWitnessAddress(Algorithm::Asset::BaseIdOf(Asset), Item.Address, AddressIndex, 0);
-				if (Source)
-					Parties.insert(String((char*)Source->Owner, sizeof(Source->Owner)));
-			}
+				Event = Receipt.FindEvent<States::AccountDepository>(Offset++);
+				if (Event != nullptr && Event->size() >= 2 && Event->at(1).AsString().size() == sizeof(Algorithm::Pubkeyhash))
+					Parties.insert(Event->at(1).AsBlob());
+			} while (Event != nullptr);
 			return true;
 		}
 		void IncomingClaim::SetWitness(uint64_t BlockHeight, const std::string_view& TransactionId, Decimal&& Fee, Vector<Mediator::Transferer>&& Senders, Vector<Mediator::Transferer>&& Receivers)
@@ -1786,7 +1777,7 @@ namespace Tangent
 			if (!Validation)
 				return Validation.Error();
 
-			auto Event = Context->ApplyWitnessEvent(TransactionHash);
+			auto Event = Context->ApplyWitnessEvent(TransactionHash, Context->Receipt.TransactionHash);
 			if (!Event)
 				return Event.Error();
 
@@ -1801,7 +1792,7 @@ namespace Tangent
 				if (memcmp(ParentTransaction->Proposer, Context->Receipt.From, sizeof(Algorithm::Pubkeyhash)) != 0)
 					return LayerException("parent transaction not valid");
 
-				auto Finalization = Context->ApplyAccountDepositoryTransaction(ParentTransaction->Proposer, TransactionHash, -1);
+				auto Finalization = Context->ApplyAccountDepositoryTransaction(Asset, ParentTransaction->Proposer, TransactionHash, -1);
 				if (!Finalization)
 					return Finalization.Error();
 
@@ -1825,15 +1816,15 @@ namespace Tangent
 				auto Value = ParentTransaction->GetTotalValue();
 				auto TokenReward = BaseAsset == Asset || !Charges ? BaseReward : Context->GetAccountReward(Asset, ParentTransaction->Proposer);
 				auto TokenFee = (TokenReward ? TokenReward->CalculateOutgoingFee(Value) : Decimal::Zero());
-				auto TokenTransfer = Context->ApplyTransfer(Parent->Receipt.From, TokenFee, TokenFee - Value);
+				auto TokenTransfer = Context->ApplyTransfer(Asset, Parent->Receipt.From, TokenFee, TokenFee - Value);
 				if (!TokenTransfer)
 					return TokenTransfer.Error();
-				else if (TokenFee.IsPositive() && !Context->ApplyTransfer(ParentTransaction->Proposer, -TokenFee, Decimal::Zero()))
+				else if (TokenFee.IsPositive() && !Context->ApplyTransfer(Asset, ParentTransaction->Proposer, -TokenFee, Decimal::Zero()))
 					Honest = false;
 
 				if (!Honest)
 				{
-					auto Depository = Context->ApplyAccountDepositoryCustody(ParentTransaction->Proposer, Decimal::NaN());
+					auto Depository = Context->ApplyAccountDepositoryCustody(Asset, ParentTransaction->Proposer, Decimal::NaN());
 					if (!Depository)
 						return Depository.Error();
 				}
@@ -1975,11 +1966,11 @@ namespace Tangent
 				return PublicKeyHash.Error();
 
 			uint64_t AddressIndex = Protocol::Now().Account.RootAddressIndex;
-			auto Collision = Context->GetWitnessAddress(Address, AddressIndex, 0);
+			auto Collision = Context->GetWitnessAddress(Asset, Address, AddressIndex, 0);
 			if (Collision)
 				return LayerException("account address " + Address + " taken");
 
-			auto Status = Context->ApplyWitnessAddress(Context->Receipt.From, nullptr, { { (uint8_t)0, String(Address) } }, AddressIndex, States::AddressType::Router);
+			auto Status = Context->ApplyWitnessAddress(Asset, Context->Receipt.From, nullptr, { { (uint8_t)0, String(Address) } }, AddressIndex, States::AddressType::Router);
 			if (!Status)
 				return Status.Error();
 
@@ -2098,7 +2089,7 @@ namespace Tangent
 				return VerifyingWallet.Error();
 
 			uint64_t AddressIndex = Protocol::Now().Account.RootAddressIndex;
-			auto Status = Context->ApplyWitnessAddress(Context->Receipt.From, nullptr, VerifyingWallet->Addresses, AddressIndex, States::AddressType::Router);
+			auto Status = Context->ApplyWitnessAddress(Asset, Context->Receipt.From, nullptr, VerifyingWallet->Addresses, AddressIndex, States::AddressType::Router);
 			if (!Status)
 				return Status.Error();
 
@@ -2129,7 +2120,7 @@ namespace Tangent
 		{
 			Schema* Data = Ledger::DelegationTransaction::AsSchema().Reset();
 			Data->Set("pubkey", Var::Set::String(Pubkey));
-			Data->Set("sighash", Var::String(Format::Util::Encode0xHex(Sighash)));
+			Data->Set("sighash", Var::String(Sighash));
 			return Data;
 		}
 		uint32_t PubkeyAccount::AsType() const
@@ -2183,7 +2174,7 @@ namespace Tangent
 				return WorkRequirement.Error();
 
 			auto Work = Context->GetAccountWork(Proposer);
-			auto Depository = Context->GetAccountDepository(Proposer);
+			auto Depository = Context->GetAccountDepository(Asset, Proposer);
 			auto Coverage = Depository ? Depository->GetCoverage(Work ? Work->Flags : 0) : Decimal::Zero();
 			if (Coverage.IsNegative())
 				return LayerException("depository contribution is too low for custodian account creation");
@@ -2316,7 +2307,7 @@ namespace Tangent
 			if (!Child)
 				return Child.Error();
 
-			SetPubkey(Child->VerifyingKey.ExposeToHeap(), AddressIndex);
+			SetPubkey(Child->VerifyingKey, AddressIndex);
 			SetOwner(NewOwner);
 			return SignPubkey(Child->SigningKey);
 		}
@@ -2397,7 +2388,7 @@ namespace Tangent
 
 			if (DelegationAccountHash > 0)
 			{
-				auto Event = Context->ApplyWitnessEvent(DelegationAccountHash);
+				auto Event = Context->ApplyWitnessEvent(DelegationAccountHash, Context->Receipt.TransactionHash);
 				if (!Event)
 					return Event.Error();
 
@@ -2418,7 +2409,7 @@ namespace Tangent
 				return WorkRequirement.Error();
 
 			auto Work = Context->GetAccountWork(Context->Receipt.From);
-			auto Depository = Context->GetAccountDepository(Context->Receipt.From);
+			auto Depository = Context->GetAccountDepository(Asset, Context->Receipt.From);
 			auto Coverage = Depository ? Depository->GetCoverage(Work ? Work->Flags : 0) : Decimal::Zero();
 			if (Coverage.IsNegative())
 				return LayerException("depository contribution is too low for custodian account creation");
@@ -2426,20 +2417,20 @@ namespace Tangent
 			uint64_t AddressIndex = Params->Routing == Mediator::RoutingPolicy::Memo ? PubkeyIndex : Protocol::Now().Account.RootAddressIndex;
 			for (auto& Address : VerifyingWallet->Addresses)
 			{
-				auto Collision = Context->GetWitnessAddress(Address.second, AddressIndex, 0);
+				auto Collision = Context->GetWitnessAddress(Asset, Address.second, AddressIndex, 0);
 				if (Collision)
 					return LayerException("account address " + Address.second + " taken");
 			}
 
-			auto Derivation = Context->GetAccountDerivation(Context->Receipt.From);
+			auto Derivation = Context->GetAccountDerivation(Asset, Context->Receipt.From);
 			if (!Derivation || Derivation->MaxAddressIndex < AddressIndex)
 			{
-				auto Status = Context->ApplyAccountDerivation(Context->Receipt.From, AddressIndex);
+				auto Status = Context->ApplyAccountDerivation(Asset, Context->Receipt.From, AddressIndex);
 				if (!Status)
 					return Status.Error();
 			}
 
-			auto Status = Context->ApplyWitnessAddress(Owner, Context->Receipt.From, VerifyingWallet->Addresses, AddressIndex, States::AddressType::Custodian);
+			auto Status = Context->ApplyWitnessAddress(Asset, Owner, Context->Receipt.From, VerifyingWallet->Addresses, AddressIndex, States::AddressType::Custodian);
 			if (!Status)
 				return Status.Error();
 
@@ -2536,7 +2527,7 @@ namespace Tangent
 			Data->Set("owner", Algorithm::Signing::SerializeAddress(Owner));
 			Data->Set("pubkey_index", Var::Integer(PubkeyIndex));
 			Data->Set("pubkey", Var::String(Pubkey));
-			Data->Set("sighash", Var::String(Format::Util::Encode0xHex(Sighash)));
+			Data->Set("sighash", Var::String(Sighash));
 			return Data;
 		}
 		uint32_t CustodianAccount::AsType() const
@@ -2582,7 +2573,7 @@ namespace Tangent
 			if (!Validation)
 				return Validation.Error();
 
-			auto Work = Context->VerifyAccountWork(false);
+			auto Work = Context->VerifyAccountWork(Context->Receipt.From);
 			if (!Work)
 				return Work;
 
@@ -2617,7 +2608,7 @@ namespace Tangent
 			UPtr<ContributionSelection> Transaction = Memory::New<ContributionSelection>();
 			Transaction->Asset = Asset;
 
-			auto Status = Transaction->SetShare1(Proposer.SecretKey, Context->Receipt.TransactionHash, Context->Receipt.From);
+			auto Status = Transaction->SetShare1(Context->Receipt.TransactionHash, Proposer.SecretKey);
 			if (!Status)
 				return ExpectsPromiseRT<void>(RemoteException(std::move(Status.Error().message())));
 
@@ -2673,21 +2664,23 @@ namespace Tangent
 			return "contribution_allocation";
 		}
 
-		ExpectsLR<void> ContributionSelection::SetShare1(const Algorithm::Seckey SecretKey, const uint256_t& NewContributionAllocationHash, const Algorithm::Pubkeyhash NewProposer)
+		ExpectsLR<void> ContributionSelection::SetShare1(const uint256_t& NewContributionAllocationHash, const Algorithm::Seckey SecretKey)
 		{
 			auto* Chain = NSS::ServerNode::Get()->GetChainparams(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
 
+			Algorithm::Pubkey SecretKeyHash;
+			Algorithm::Signing::DerivePublicKeyHash(SecretKey, SecretKeyHash);
+
 			Format::Stream Entropy;
 			Entropy.WriteTypeless(ContributionAllocationHash = NewContributionAllocationHash);
-			Entropy.WriteTypeless((char*)NewProposer, (uint32_t)sizeof(Algorithm::Pubkeyhash));
-			memcpy(Proposer, NewProposer, sizeof(Proposer));
+			Entropy.WriteTypeless((char*)SecretKeyHash, (uint32_t)sizeof(SecretKeyHash));
 
 			Algorithm::Composition::CSeed Seed1;
 			Algorithm::Composition::CSeckey SecretKey1;
 			Algorithm::Composition::ConvertToSecretSeed(SecretKey, Entropy.Data, Seed1);
-			return Algorithm::Composition::DeriveKeypair1(Chain->Composition, Seed1, SecretKey1, PublicKey1);
+			return Algorithm::Composition::DeriveKeypair(Chain->Composition, Seed1, SecretKey1, PublicKey1);
 		}
 		ExpectsLR<void> ContributionSelection::Validate(uint64_t BlockNumber) const
 		{
@@ -2713,16 +2706,13 @@ namespace Tangent
 			if (!Validation)
 				return Validation.Error();
 
-			auto Event = Context->ApplyWitnessEvent(ContributionAllocationHash);
+			auto Event = Context->ApplyWitnessEvent(ContributionAllocationHash, Context->Receipt.TransactionHash);
 			if (!Event)
 				return Event.Error();
 
 			auto Allocation = Context->GetBlockTransaction<ContributionAllocation>(ContributionAllocationHash);
 			if (!Allocation)
 				return Allocation.Error();
-
-			if (memcmp(Proposer, Allocation->Receipt.From, sizeof(Proposer)) != 0)
-				return LayerException("invalid proposer");
 			else if (Asset != Allocation->Transaction->Asset)
 				return LayerException("invalid asset");
 
@@ -2734,11 +2724,11 @@ namespace Tangent
 			if (It->size() != sizeof(Algorithm::Pubkeyhash) || memcmp(It->data(), Context->Receipt.From, sizeof(Context->Receipt.From)) != 0)
 				return LayerException("invalid origin");
 
-			auto Work = Context->VerifyAccountWork(false);
+			auto Work = Context->VerifyAccountWork(Context->Receipt.From);
 			if (!Work)
 				return Work;
 
-			return Expectation::Met;
+			return Context->EmitEvent<ContributionSelection>({ Format::Variable(std::string_view((char*)Allocation->Receipt.From, sizeof(Allocation->Receipt.From))) });
 		}
 		ExpectsPromiseRT<void> ContributionSelection::Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const
 		{
@@ -2761,7 +2751,7 @@ namespace Tangent
 			UPtr<ContributionActivation> Transaction = Memory::New<ContributionActivation>();
 			Transaction->Asset = Asset;
 
-			auto Status = Transaction->SetShare2(Proposer.SecretKey, Context->Receipt.TransactionHash, Allocation->Receipt.From, PublicKey1);
+			auto Status = Transaction->SetShare2(Context->Receipt.TransactionHash, Proposer.SecretKey, PublicKey1);
 			if (!Status)
 				return ExpectsPromiseRT<void>(RemoteException(std::move(Status.Error().message())));
 
@@ -2771,11 +2761,8 @@ namespace Tangent
 		bool ContributionSelection::StoreBody(Format::Stream* Stream) const
 		{
 			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Algorithm::Pubkeyhash PkhNull = { 0 };
-			Algorithm::Pubkey PubNull = { 0 };
 			Algorithm::Composition::CPubkey CPubNull = { 0 };
 			Stream->WriteString(std::string_view((char*)PublicKey1, memcmp(PublicKey1, CPubNull, sizeof(CPubNull)) == 0 ? 0 : sizeof(PublicKey1)));
-			Stream->WriteString(std::string_view((char*)Proposer, memcmp(Proposer, PkhNull, sizeof(PkhNull)) == 0 ? 0 : sizeof(Proposer)));
 			Stream->WriteInteger(ContributionAllocationHash);
 			return true;
 		}
@@ -2785,10 +2772,6 @@ namespace Tangent
 			if (!Stream.ReadString(Stream.ReadType(), &PublicKey1Assembly) || !Algorithm::Encoding::DecodeUintBlob(PublicKey1Assembly, PublicKey1, sizeof(PublicKey1)))
 				return false;
 
-			String ProposerAssembly;
-			if (!Stream.ReadString(Stream.ReadType(), &ProposerAssembly) || !Algorithm::Encoding::DecodeUintBlob(ProposerAssembly, Proposer, sizeof(Proposer)))
-				return false;
-
 			if (!Stream.ReadInteger(Stream.ReadType(), &ContributionAllocationHash))
 				return false;
 
@@ -2796,7 +2779,11 @@ namespace Tangent
 		}
 		bool ContributionSelection::RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
 		{
-			Parties.insert(String((char*)Proposer, sizeof(Proposer)));
+			auto* Event = Receipt.FindEvent<ContributionSelection>();
+			if (!Event || Event->size() != 1 || Event->front().AsString().size() != sizeof(Algorithm::Pubkeyhash))
+				return false;
+
+			Parties.insert(Event->front().AsBlob());
 			return true;
 		}
 		UPtr<Schema> ContributionSelection::AsSchema() const
@@ -2804,7 +2791,6 @@ namespace Tangent
 			Schema* Data = Ledger::Transaction::AsSchema().Reset();
 			Data->Set("contribution_allocation_hash", Var::String(Algorithm::Encoding::Encode0xHex256(ContributionAllocationHash)));
 			Data->Set("public_key_1", Var::String(Format::Util::Encode0xHex(std::string_view((char*)PublicKey1, sizeof(PublicKey1)))));
-			Data->Set("proposer", Algorithm::Signing::SerializeAddress(Proposer));
 			return Data;
 		}
 		uint32_t ContributionSelection::AsType() const
@@ -2833,23 +2819,29 @@ namespace Tangent
 			return "contribution_selection";
 		}
 
-		ExpectsLR<void> ContributionActivation::SetShare2(const Algorithm::Seckey SecretKey, const uint256_t& NewContributionSelectionHash, const Algorithm::Pubkeyhash NewProposer, const Algorithm::Composition::CPubkey PublicKey1)
+		ExpectsLR<void> ContributionActivation::SetShare2(const uint256_t& NewContributionSelectionHash, const Algorithm::Seckey SecretKey, const Algorithm::Composition::CPubkey PublicKey1)
 		{
 			auto* Chain = NSS::ServerNode::Get()->GetChainparams(Asset);
 			if (!Chain)
 				return LayerException("invalid operation");
 
+			Algorithm::Pubkey SecretKeyHash;
+			Algorithm::Signing::DerivePublicKeyHash(SecretKey, SecretKeyHash);
+
 			Format::Stream Entropy;
 			Entropy.WriteTypeless(ContributionSelectionHash = NewContributionSelectionHash);
+			Entropy.WriteTypeless((char*)SecretKeyHash, (uint32_t)sizeof(SecretKeyHash));
 			Entropy.WriteTypeless((char*)PublicKey1, (uint32_t)sizeof(Algorithm::Composition::CPubkey));
-			Entropy.WriteTypeless((char*)NewProposer, (uint32_t)sizeof(Algorithm::Pubkeyhash));
-			memcpy(Proposer, NewProposer, sizeof(Proposer));
 
-			size_t PublicKeySize32 = 0;
 			Algorithm::Composition::CSeed Seed2;
 			Algorithm::Composition::CSeckey SecretKey2;
 			Algorithm::Composition::ConvertToSecretSeed(SecretKey, Entropy.Data, Seed2);
-			auto Status = Algorithm::Composition::DeriveKeypair2(Chain->Composition, Seed2, PublicKey1, SecretKey2, PublicKey2, PublicKey, &PublicKeySize32);
+			auto Status = Algorithm::Composition::DeriveKeypair(Chain->Composition, Seed2, SecretKey2, PublicKey2);
+			if (!Status)
+				return Status;
+
+			size_t PublicKeySize32 = 0;
+			Status = Algorithm::Composition::DerivePublicKey(Chain->Composition, PublicKey1, SecretKey2, PublicKey, &PublicKeySize32);
 			if (!Status)
 				return LayerException("invalid message");
 
@@ -2884,7 +2876,7 @@ namespace Tangent
 			if (!Validation)
 				return Validation.Error();
 
-			auto Event = Context->ApplyWitnessEvent(ContributionSelectionHash);
+			auto Event = Context->ApplyWitnessEvent(ContributionSelectionHash, Context->Receipt.TransactionHash);
 			if (!Event)
 				return Event.Error();
 
@@ -2895,15 +2887,12 @@ namespace Tangent
 			auto Allocation = Context->GetBlockTransaction<ContributionAllocation>(((ContributionSelection*)*Selection->Transaction)->ContributionAllocationHash);
 			if (!Allocation)
 				return Allocation.Error();
+			else if (Asset != Allocation->Transaction->Asset)
+				return LayerException("invalid asset");
 
 			auto VerifyingWallet = GetVerifyingWallet();
 			if (!VerifyingWallet)
 				return VerifyingWallet.Error();
-
-			if (memcmp(Proposer, Allocation->Receipt.From, sizeof(Proposer)) != 0)
-				return LayerException("invalid proposer");
-			else if (Asset != Allocation->Transaction->Asset)
-				return LayerException("invalid asset");
 
 			OrderedSet<String> Parties;
 			if (!Allocation->Transaction->RecoverMany(Allocation->Receipt, Parties) || Parties.size() != 2)
@@ -2916,16 +2905,16 @@ namespace Tangent
 			auto AddressIndex = Protocol::Now().Account.RootAddressIndex;
 			for (auto& Address : VerifyingWallet->Addresses)
 			{
-				auto Collision = Context->GetWitnessAddress(Address.second, AddressIndex, 0);
+				auto Collision = Context->GetWitnessAddress(Asset, Address.second, AddressIndex, 0);
 				if (Collision)
 					return LayerException("address " + Address.second + " taken");
 			}
 
-			auto Status = Context->ApplyWitnessAddress(Allocation->Receipt.From, Allocation->Receipt.From, VerifyingWallet->Addresses, AddressIndex, States::AddressType::Contribution);
+			auto Status = Context->ApplyWitnessAddress(Asset, Allocation->Receipt.From, Allocation->Receipt.From, VerifyingWallet->Addresses, AddressIndex, States::AddressType::Contribution);
 			if (!Status)
 				return Status.Error();
 
-			return Expectation::Met;
+			return Context->EmitEvent<ContributionActivation>({ Format::Variable(std::string_view((char*)Allocation->Receipt.From, sizeof(Allocation->Receipt.From))) });
 		}
 		ExpectsPromiseRT<void> ContributionActivation::Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const
 		{
@@ -2954,11 +2943,9 @@ namespace Tangent
 		bool ContributionActivation::StoreBody(Format::Stream* Stream) const
 		{
 			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Algorithm::Pubkeyhash PkhNull = { 0 };
 			Algorithm::Composition::CPubkey CPubNull = { 0 };
 			Stream->WriteString(std::string_view((char*)PublicKey, std::min<size_t>(sizeof(PublicKey), PublicKeySize)));
 			Stream->WriteString(std::string_view((char*)PublicKey2, memcmp(PublicKey2, CPubNull, sizeof(CPubNull)) == 0 ? 0 : sizeof(PublicKey2)));
-			Stream->WriteString(std::string_view((char*)Proposer, memcmp(Proposer, PkhNull, sizeof(PkhNull)) == 0 ? 0 : sizeof(Proposer)));
 			Stream->WriteInteger(ContributionSelectionHash);
 			return true;
 		}
@@ -2972,10 +2959,6 @@ namespace Tangent
 			if (!Stream.ReadString(Stream.ReadType(), &PublicKey2Assembly) || !Algorithm::Encoding::DecodeUintBlob(PublicKey2Assembly, PublicKey2, sizeof(PublicKey2)))
 				return false;
 
-			String ProposerAssembly;
-			if (!Stream.ReadString(Stream.ReadType(), &ProposerAssembly) || !Algorithm::Encoding::DecodeUintBlob(ProposerAssembly, Proposer, sizeof(Proposer)))
-				return false;
-
 			if (!Stream.ReadInteger(Stream.ReadType(), &ContributionSelectionHash))
 				return false;
 
@@ -2984,7 +2967,11 @@ namespace Tangent
 		}
 		bool ContributionActivation::RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
 		{
-			Parties.insert(String((char*)Proposer, sizeof(Proposer)));
+			auto* Event = Receipt.FindEvent<ContributionActivation>();
+			if (!Event || Event->size() != 1 || Event->front().AsString().size() != sizeof(Algorithm::Pubkeyhash))
+				return false;
+
+			Parties.insert(Event->front().AsBlob());
 			return true;
 		}
 		ExpectsLR<Mediator::DerivedVerifyingWallet> ContributionActivation::GetVerifyingWallet() const
@@ -2997,7 +2984,6 @@ namespace Tangent
 			Schema* Data = Ledger::ConsensusTransaction::AsSchema().Reset();
 			Data->Set("contribution_selection_hash", Var::String(Algorithm::Encoding::Encode0xHex256(ContributionSelectionHash)));
 			Data->Set("public_key_2", Var::String(Format::Util::Encode0xHex(std::string_view((char*)PublicKey2, sizeof(PublicKey2)))));
-			Data->Set("proposer", Algorithm::Signing::SerializeAddress(Proposer));
 			Data->Set("verifying_wallet", VerifyingWallet ? VerifyingWallet->AsSchema().Reset() : Var::Set::Null());
 			return Data;
 		}
@@ -3048,10 +3034,18 @@ namespace Tangent
 				return Activation.Error();
 
 			auto* ActivationTransaction = (ContributionActivation*)*Activation->Transaction;
-			if (Asset != ActivationTransaction->Asset)
+			auto Selection = Context->GetBlockTransaction<ContributionSelection>(ActivationTransaction->ContributionSelectionHash);
+			if (!Selection)
+				return Selection.Error();
+
+			auto Allocation = Context->GetBlockTransaction<ContributionAllocation>(((ContributionSelection*)*Selection->Transaction)->ContributionAllocationHash);
+			if (!Allocation)
+				return Allocation.Error();
+
+			if (Asset != Allocation->Transaction->Asset)
 				return LayerException("invalid asset");
 
-			auto WorkRequirement = Context->VerifyAccountWork(false);
+			auto WorkRequirement = Context->VerifyAccountWork(Context->Receipt.From);
 			if (!WorkRequirement)
 				return WorkRequirement;
 
@@ -3059,17 +3053,17 @@ namespace Tangent
 			if (!Wallet)
 				return Wallet.Error();
 
-			bool Migration = memcmp(ActivationTransaction->Proposer, Context->Receipt.From, sizeof(ActivationTransaction->Proposer)) != 0;
-			auto FromDepository = Context->GetAccountDepository(ActivationTransaction->Proposer);
+			bool Migration = memcmp(Allocation->Receipt.From, Context->Receipt.From, sizeof(Context->Receipt.From)) != 0;
+			auto FromDepository = Context->GetAccountDepository(Asset, Allocation->Receipt.From);
 			if (FromDepository)
 			{
 				if (Migration)
 				{
-					auto Work = Context->GetAccountWork(ActivationTransaction->Proposer);
+					auto Work = Context->GetAccountWork(Allocation->Receipt.From);
 					if (!Work->IsMatching(States::AccountFlags::Outlaw))
 						return LayerException("contribution's proposer is honest");
 
-					auto ToDepository = Context->GetAccountDepository(ActivationTransaction->Proposer);
+					auto ToDepository = Context->GetAccountDepository(Asset, Allocation->Receipt.From);
 					if (!ToDepository)
 						return LayerException("migration's proposer depository does not exist");
 
@@ -3096,13 +3090,13 @@ namespace Tangent
 				}
 			}
 
-			auto ToDepository = Migration ? Context->GetAccountDepository(Context->Receipt.From) : FromDepository;
+			auto ToDepository = Migration ? Context->GetAccountDepository(Asset, Context->Receipt.From) : FromDepository;
 			if (Migration && !ToDepository)
 				return LayerException("migration's proposer depository does not exist");
 
 			Algorithm::Pubkeyhash Null = { 0 };
 			auto AddressIndex = Protocol::Now().Account.RootAddressIndex;
-			auto Status = Context->ApplyWitnessAddress(ActivationTransaction->Proposer, Null, Wallet->Addresses, AddressIndex, States::AddressType::Witness);
+			auto Status = Context->ApplyWitnessAddress(Asset, Allocation->Receipt.From, Null, Wallet->Addresses, AddressIndex, States::AddressType::Witness);
 			if (!Status)
 				return Status.Error();
 
@@ -3114,7 +3108,7 @@ namespace Tangent
 					ToDepository->Custody += Value;
 			}
 
-			auto Work = Context->GetAccountWork(ActivationTransaction->Proposer);
+			auto Work = Context->GetAccountWork(Allocation->Receipt.From);
 			auto Coverage = FromDepository->GetCoverage(Work ? Work->Flags : 0);
 			if (Coverage.IsNaN() || Coverage.IsNegative())
 				return LayerException("depository contribution change does not cover balance (contribution: " + FromDepository->GetContribution().ToString() + ", custody: " + FromDepository->Custody.ToString() + ")");
@@ -3141,13 +3135,13 @@ namespace Tangent
 				return LayerException("invalid operation");
 
 			AddressIndex = (Derivation && Chain->Routing != Mediator::RoutingPolicy::Memo ? Derivation->MaxAddressIndex + 1 : Protocol::Now().Account.RootAddressIndex);
-			Status = Context->ApplyWitnessAddress(ActivationTransaction->Proposer, Context->Receipt.From, Wallet->Addresses, AddressIndex, States::AddressType::Custodian);
+			Status = Context->ApplyWitnessAddress(Asset, Allocation->Receipt.From, Context->Receipt.From, Wallet->Addresses, AddressIndex, States::AddressType::Custodian);
 			if (!Status)
 				return Status.Error();
 
 			if (!Derivation || Derivation->MaxAddressIndex < AddressIndex)
 			{
-				auto Substatus = Context->ApplyAccountDerivation(Derivation->Owner, AddressIndex);
+				auto Substatus = Context->ApplyAccountDerivation(Asset, Derivation->Owner, AddressIndex);
 				if (!Substatus)
 					return Substatus.Error();
 			}
@@ -3258,7 +3252,8 @@ namespace Tangent
 			if (!Deallocation)
 				return Deallocation.Error();
 
-			auto Activation = Context->GetBlockTransaction<ContributionActivation>(((ContributionDeallocation*)*Deallocation->Transaction)->ContributionActivationHash);
+			auto DeallocationTransaction = (ContributionDeallocation*)*Deallocation->Transaction;
+			auto Activation = Context->GetBlockTransaction<ContributionActivation>(DeallocationTransaction->ContributionActivationHash);
 			if (!Activation)
 				return Activation.Error();
 
@@ -3266,21 +3261,19 @@ namespace Tangent
 			if (!Selection)
 				return Selection.Error();
 
+			Algorithm::Pubkey SecretKeyHash;
+			Algorithm::Signing::DerivePublicKeyHash(SecretKey, SecretKeyHash);
+
 			auto SelectionTransaction = (ContributionSelection*)*Selection->Transaction;
 			Format::Stream Entropy;
 			Entropy.WriteTypeless(SelectionTransaction->ContributionAllocationHash);
-			Entropy.WriteTypeless((char*)SelectionTransaction->Proposer, (uint32_t)sizeof(Algorithm::Pubkeyhash));
-			memcpy(Proposer, SelectionTransaction->Proposer, sizeof(SelectionTransaction->Proposer));
-
-			Algorithm::Pubkey ProposerPublicKey;
-			if (!SelectionTransaction->Recover(ProposerPublicKey))
-				return LayerException("invalid proposer public key");
+			Entropy.WriteTypeless((char*)SecretKeyHash, (uint32_t)sizeof(SecretKeyHash));
 
 			Algorithm::Composition::CSeed Seed1;
 			Algorithm::Composition::CSeckey SecretKey1;
 			Algorithm::Composition::CPubkey PublicKey1;
 			Algorithm::Composition::ConvertToSecretSeed(SecretKey, Entropy.Data, Seed1);
-			auto Status = Algorithm::Composition::DeriveKeypair1(Chain->Composition, Seed1, SecretKey1, PublicKey1);
+			auto Status = Algorithm::Composition::DeriveKeypair(Chain->Composition, Seed1, SecretKey1, PublicKey1);
 			if (!Status)
 				return Status;
 
@@ -3288,7 +3281,7 @@ namespace Tangent
 			Entropy.WriteTypeless(Deallocation->Receipt.TransactionHash);
 			Entropy.WriteTypeless(Activation->Receipt.TransactionHash);
 			Entropy.WriteTypeless(Selection->Receipt.TransactionHash);
-			EncryptedSecretKey1 = Algorithm::Signing::PublicEncrypt(ProposerPublicKey, std::string_view((char*)SecretKey1, sizeof(SecretKey1)), Entropy.Data).Or(String());
+			EncryptedSecretKey1 = Algorithm::Signing::PublicEncrypt(DeallocationTransaction->CipherPublicKey1, std::string_view((char*)SecretKey1, sizeof(SecretKey1)), Entropy.Data).Or(String());
 			if (EncryptedSecretKey1.empty())
 				return LayerException("secret key encryption error");
 
@@ -3313,7 +3306,7 @@ namespace Tangent
 			if (!Validation)
 				return Validation.Error();
 
-			auto Event = Context->ApplyWitnessEvent(ContributionDeallocationHash);
+			auto Event = Context->ApplyWitnessEvent(ContributionDeallocationHash, Context->Receipt.TransactionHash);
 			if (!Event)
 				return Event.Error();
 
@@ -3335,11 +3328,14 @@ namespace Tangent
 			if (memcmp(Selection->Receipt.From, Context->Receipt.From, sizeof(Selection->Receipt.From)) != 0)
 				return LayerException("invalid transaction owner");
 
-			auto* SelectionTransaction = (ContributionSelection*)*Selection->Transaction;
-			if (memcmp(SelectionTransaction->Proposer, Proposer, sizeof(Proposer)) != 0)
-				return LayerException("invalid proposer");
+			OrderedSet<String> Initiator;
+			Selection->Transaction->RecoverMany(Selection->Receipt, Initiator);
 
-			return Expectation::Met;
+			Format::Variables Parties = { Format::Variable(std::string_view((char*)Deallocation->Receipt.From, sizeof(Deallocation->Receipt.From))) };
+			if (!Initiator.empty() && *Initiator.begin() != Parties.begin()->AsString())
+				Parties.push_back(Format::Variable(*Initiator.begin()));
+
+			return Context->EmitEvent<ContributionDeselection>(std::move(Parties));
 		}
 		ExpectsPromiseRT<void> ContributionDeselection::Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const
 		{
@@ -3370,18 +3366,12 @@ namespace Tangent
 		bool ContributionDeselection::StoreBody(Format::Stream* Stream) const
 		{
 			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Algorithm::Pubkeyhash Null = { 0 };
-			Stream->WriteString(std::string_view((char*)Proposer, memcmp(Proposer, Null, sizeof(Null)) == 0 ? 0 : sizeof(Proposer)));
 			Stream->WriteInteger(ContributionDeallocationHash);
 			Stream->WriteString(EncryptedSecretKey1);
 			return true;
 		}
 		bool ContributionDeselection::LoadBody(Format::Stream& Stream)
 		{
-			String ProposerAssembly;
-			if (!Stream.ReadString(Stream.ReadType(), &ProposerAssembly) || !Algorithm::Encoding::DecodeUintBlob(ProposerAssembly, Proposer, sizeof(Proposer)))
-				return false;
-
 			if (!Stream.ReadInteger(Stream.ReadType(), &ContributionDeallocationHash))
 				return false;
 
@@ -3392,7 +3382,15 @@ namespace Tangent
 		}
 		bool ContributionDeselection::RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
 		{
-			Parties.insert(String((char*)Proposer, sizeof(Proposer)));
+			auto* Event = Receipt.FindEvent<ContributionDeselection>();
+			if (!Event || Event->empty())
+				return false;
+
+			for (auto& Owner : *Event)
+			{
+				if (Owner.AsString().size() == sizeof(Algorithm::Pubkeyhash))
+					Parties.insert(Owner.AsBlob());
+			}
 			return true;
 		}
 		Option<String> ContributionDeselection::GetSecretKey1(const Ledger::TransactionContext* Context, const Algorithm::Seckey SecretKey) const
@@ -3454,7 +3452,8 @@ namespace Tangent
 			if (!Deallocation)
 				return Deallocation.Error();
 
-			auto Activation = Context->GetBlockTransaction<ContributionActivation>(((ContributionDeallocation*)*Deallocation->Transaction)->ContributionActivationHash);
+			auto* DeallocationTransaction = (ContributionDeallocation*)*Deallocation->Transaction;
+			auto Activation = Context->GetBlockTransaction<ContributionActivation>(DeallocationTransaction->ContributionActivationHash);
 			if (!Activation)
 				return Activation.Error();
 
@@ -3463,24 +3462,26 @@ namespace Tangent
 			if (!Selection)
 				return Selection.Error();
 
+			Algorithm::Pubkey SecretKeyHash;
+			Algorithm::Signing::DerivePublicKeyHash(SecretKey, SecretKeyHash);
+
 			auto SelectionTransaction = (ContributionSelection*)*Selection->Transaction;
 			Format::Stream Entropy;
 			Entropy.WriteTypeless(ActivationTransaction->ContributionSelectionHash);
+			Entropy.WriteTypeless((char*)SecretKeyHash, (uint32_t)sizeof(SecretKeyHash));
 			Entropy.WriteTypeless((char*)SelectionTransaction->PublicKey1, (uint32_t)sizeof(Algorithm::Composition::CPubkey));
-			Entropy.WriteTypeless((char*)SelectionTransaction->Proposer, (uint32_t)sizeof(Algorithm::Pubkeyhash));
-			memcpy(Proposer, SelectionTransaction->Proposer, sizeof(SelectionTransaction->Proposer));
 
-			Algorithm::Pubkey ProposerPublicKey;
-			if (!SelectionTransaction->Recover(ProposerPublicKey))
-				return LayerException("invalid proposer public key");
-
-			size_t SharedPublicKeySize = 0;
-			Algorithm::Composition::CPubkey SharedPublicKey;
 			Algorithm::Composition::CSeed Seed2;
 			Algorithm::Composition::CSeckey SecretKey2;
 			Algorithm::Composition::CPubkey PublicKey2;
 			Algorithm::Composition::ConvertToSecretSeed(SecretKey, Entropy.Data, Seed2);
-			auto Status = Algorithm::Composition::DeriveKeypair2(Chain->Composition, Seed2, SelectionTransaction->PublicKey1, SecretKey2, PublicKey2, SharedPublicKey, &SharedPublicKeySize);
+			auto Status = Algorithm::Composition::DeriveKeypair(Chain->Composition, Seed2, SecretKey2, PublicKey2);
+			if (!Status)
+				return Status;
+
+			size_t SharedPublicKeySize = 0;
+			Algorithm::Composition::CPubkey SharedPublicKey;
+			Status = Algorithm::Composition::DerivePublicKey(Chain->Composition, SelectionTransaction->PublicKey1, SecretKey2, SharedPublicKey, &SharedPublicKeySize);
 			if (!Status)
 				return Status;
 
@@ -3489,7 +3490,7 @@ namespace Tangent
 			Entropy.WriteTypeless(Deallocation->Receipt.TransactionHash);
 			Entropy.WriteTypeless(Activation->Receipt.TransactionHash);
 			Entropy.WriteTypeless(Selection->Receipt.TransactionHash);
-			EncryptedSecretKey2 = Algorithm::Signing::PublicEncrypt(ProposerPublicKey, std::string_view((char*)SecretKey2, sizeof(SecretKey2)), Entropy.Data).Or(String());
+			EncryptedSecretKey2 = Algorithm::Signing::PublicEncrypt(DeallocationTransaction->CipherPublicKey2, std::string_view((char*)SecretKey2, sizeof(SecretKey2)), Entropy.Data).Or(String());
 			if (EncryptedSecretKey2.empty())
 				return LayerException("secret key encryption error");
 
@@ -3514,7 +3515,7 @@ namespace Tangent
 			if (!Validation)
 				return Validation.Error();
 
-			auto Event = Context->ApplyWitnessEvent(ContributionDeselectionHash);
+			auto Event = Context->ApplyWitnessEvent(ContributionDeselectionHash, Context->Receipt.TransactionHash);
 			if (!Event)
 				return Event.Error();
 
@@ -3536,11 +3537,14 @@ namespace Tangent
 			if (memcmp(Activation->Receipt.From, Context->Receipt.From, sizeof(Activation->Receipt.From)) != 0)
 				return LayerException("invalid transaction owner");
 
-			auto* ActivationTransaction = (ContributionActivation*)*Activation->Transaction;
-			if (memcmp(ActivationTransaction->Proposer, Proposer, sizeof(Proposer)) != 0)
-				return LayerException("invalid proposer");
+			OrderedSet<String> Initiator;
+			Activation->Transaction->RecoverMany(Activation->Receipt, Initiator);
 
-			return Expectation::Met;
+			Format::Variables Parties = { Format::Variable(std::string_view((char*)Deallocation->Receipt.From, sizeof(Deallocation->Receipt.From))) };
+			if (!Initiator.empty() && *Initiator.begin() != Parties.begin()->AsString())
+				Parties.push_back(Format::Variable(*Initiator.begin()));
+
+			return Context->EmitEvent<ContributionDeactivation>(std::move(Parties));
 		}
 		ExpectsPromiseRT<void> ContributionDeactivation::Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const
 		{
@@ -3561,14 +3565,15 @@ namespace Tangent
 			if (!VerifyingWallet)
 				return ExpectsPromiseRT<void>(RemoteException(std::move(VerifyingWallet.Error().message())));
 
-			if (memcmp(ActivationTransaction->Proposer, Deallocation->Receipt.From, sizeof(ActivationTransaction->Proposer)) != 0)
+			auto* Event = Context->Receipt.FindEvent<ContributionDeactivation>();
+			if (Event != nullptr && Event->size() == 2)
 			{
 				auto* Server = NSS::ServerNode::Get();
 				auto* Event = Deallocation->Receipt.ReverseFindEvent<States::WitnessAddress>();
-				if (!Event || Event->size() < 2)
+				if (!Event || Event->size() < 3)
 					return ExpectsPromiseRT<void>(RemoteException("bad event type"));
 
-				auto AddressIndex = (*Event)[1].AsUint64();
+				auto AddressIndex = (*Event)[2].AsUint64();
 				if (!memcmp(Proposer.PublicKeyHash, Deallocation->Receipt.From, sizeof(Proposer.PublicKeyHash)))
 				{
 					auto Parent = Server->NewMasterWallet(Asset, Proposer.SecretKey);
@@ -3611,18 +3616,12 @@ namespace Tangent
 		bool ContributionDeactivation::StoreBody(Format::Stream* Stream) const
 		{
 			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Algorithm::Pubkeyhash Null = { 0 };
-			Stream->WriteString(std::string_view((char*)Proposer, memcmp(Proposer, Null, sizeof(Null)) == 0 ? 0 : sizeof(Proposer)));
 			Stream->WriteInteger(ContributionDeselectionHash);
 			Stream->WriteString(EncryptedSecretKey2);
 			return true;
 		}
 		bool ContributionDeactivation::LoadBody(Format::Stream& Stream)
 		{
-			String ProposerAssembly;
-			if (!Stream.ReadString(Stream.ReadType(), &ProposerAssembly) || !Algorithm::Encoding::DecodeUintBlob(ProposerAssembly, Proposer, sizeof(Proposer)))
-				return false;
-
 			if (!Stream.ReadInteger(Stream.ReadType(), &ContributionDeselectionHash))
 				return false;
 
@@ -3633,7 +3632,15 @@ namespace Tangent
 		}
 		bool ContributionDeactivation::RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
 		{
-			Parties.insert(String((char*)Proposer, sizeof(Proposer)));
+			auto* Event = Receipt.FindEvent<ContributionDeactivation>();
+			if (!Event || Event->empty())
+				return false;
+
+			for (auto& Owner : *Event)
+			{
+				if (Owner.AsString().size() == sizeof(Algorithm::Pubkeyhash))
+					Parties.insert(Owner.AsBlob());
+			}
 			return true;
 		}
 		Option<String> ContributionDeactivation::GetSecretKey1(const Ledger::TransactionContext* Context, const Algorithm::Seckey SecretKey) const
@@ -3681,7 +3688,7 @@ namespace Tangent
 			if (!Status)
 				return LayerException("invalid message");
 
-			return NSS::ServerNode::Get()->NewSigningWallet(Asset, std::string_view((char*)SharedSecretKey, SharedSecretKeySize));
+			return NSS::ServerNode::Get()->NewSigningWallet(Asset, PrivateKey(std::string_view((char*)SharedSecretKey, SharedSecretKeySize)));
 		}
 		ExpectsPromiseRT<Mediator::OutgoingTransaction> ContributionDeactivation::WithdrawToAddress(const Ledger::TransactionContext* Context, const Algorithm::Seckey SecretKey, const std::string_view& Address)
 		{
@@ -3758,11 +3765,11 @@ namespace Tangent
 			if (!Validation)
 				return Validation.Error();
 
-			auto Work = Context->VerifyAccountWork(false);
+			auto Work = Context->VerifyAccountWork(Context->Receipt.From);
 			if (!Work)
 				return Work;
 
-			auto Reward = Context->ApplyAccountReward(Context->Receipt.From, IncomingAbsoluteFee, IncomingRelativeFee, OutgoingAbsoluteFee, OutgoingRelativeFee);
+			auto Reward = Context->ApplyAccountReward(Asset, Context->Receipt.From, IncomingAbsoluteFee, IncomingRelativeFee, OutgoingAbsoluteFee, OutgoingRelativeFee);
 			if (!Reward)
 				return Reward.Error();
 
@@ -3853,11 +3860,11 @@ namespace Tangent
 			if (!memcmp(Context->Receipt.From, Proposer, sizeof(Proposer)))
 				return LayerException("self migration not allowed");
 
-			auto WorkRequirement = Context->VerifyAccountWork(true);
+			auto WorkRequirement = Context->VerifyAccountDepositoryWork(Asset, Context->Receipt.From);
 			if (!WorkRequirement)
 				return WorkRequirement;
 
-			auto Depository = Context->GetAccountDepository(Context->Receipt.From);
+			auto Depository = Context->GetAccountDepository(Asset, Context->Receipt.From);
 			if (!Depository)
 				return LayerException("proposer has no depository");
 
@@ -3869,7 +3876,7 @@ namespace Tangent
 				return LayerException("proposer does not have enough custody (value: " + Value.ToString() + ", custody: " + Depository->Custody.ToString() + ")");
 
 			Work = Context->GetAccountWork(Proposer);
-			Depository = Context->GetAccountDepository(Proposer);
+			Depository = Context->GetAccountDepository(Asset, Proposer);
 			if (!Depository)
 				return LayerException("migration proposer has no depository");
 

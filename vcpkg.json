@@ -1,5 +1,5 @@
 {
-  "name": "tangent",
+  "name": "tangentd",
   "version": "1.0.0",
   "dependencies": [
     "secp256k1",

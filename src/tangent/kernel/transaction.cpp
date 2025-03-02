@@ -38,7 +38,7 @@ namespace Tangent
 			if (!SequenceRequirement)
 				return SequenceRequirement;
 
-			return Context->VerifyTransferBalance(Decimal::Zero());
+			return Context->VerifyGasTransferBalance();
 		}
 		ExpectsPromiseRT<void> Transaction::Dispatch(const Wallet& Proposer, const TransactionContext* Context, Vector<UPtr<Transaction>>* Pipeline) const
 		{
@@ -128,6 +128,10 @@ namespace Tangent
 			auto Level = GetType();
 			return Level == TransactionLevel::Consensus || Level == TransactionLevel::Aggregation;
 		}
+		Algorithm::AssetId Transaction::GetGasAsset() const
+		{
+			return Algorithm::Asset::BaseIdOf(Asset);
+		}
 		TransactionLevel Transaction::GetType() const
 		{
 			return TransactionLevel::Functional;
@@ -185,7 +189,7 @@ namespace Tangent
 			if (!SequenceRequirement)
 				return SequenceRequirement;
 
-			return Context->VerifyAccountWork(false);
+			return Context->VerifyAccountWork(Context->Receipt.From);
 		}
 		TransactionLevel ConsensusTransaction::GetType() const
 		{
@@ -269,7 +273,7 @@ namespace Tangent
 				}
 			}
 
-			return Context->VerifyAccountWork(false);
+			return Context->VerifyAccountWork(Context->Receipt.From);
 		}
 		bool AggregationTransaction::StorePayload(Format::Stream* Stream) const
 		{

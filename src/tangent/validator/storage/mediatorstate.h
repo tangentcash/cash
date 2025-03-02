@@ -7,7 +7,7 @@ namespace Tangent
 {
 	namespace Storages
 	{
-		struct TAN_OUT Mediatorstate : Ledger::MutableStorage
+		struct Mediatorstate : Ledger::MutableStorage
 		{
 		private:
 			Algorithm::AssetId Asset;

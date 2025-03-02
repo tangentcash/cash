@@ -9,6 +9,7 @@
 #include "tangent/validator/service/nds.h"
 #include "tangent/validator/service/nss.h"
 #include <sstream>
+#define TEST_BLOCK(X, Y, Z) NewBlockFromGenerator(*Data, Users, X, #X, Y, Z)
 
 using namespace Tangent;
 
@@ -125,7 +126,7 @@ public:
 			auto* PubkeyAccountEthereum = Memory::New<Transactions::PubkeyAccount>();
 			PubkeyAccountEthereum->SetAsset("ETH");
 			PubkeyAccountEthereum->SetEstimateGas(Decimal::Zero());
-			PubkeyAccountEthereum->SetPubkey(EthereumWallet.VerifyingKey.ExposeToHeap());
+			PubkeyAccountEthereum->SetPubkey(EthereumWallet.VerifyingKey);
 			PubkeyAccountEthereum->SignPubkey(EthereumWallet.SigningKey).Expect("pubkey account not signed");
 			VI_PANIC(PubkeyAccountEthereum->Sign(User1.SecretKey, User1Sequence++), "account not signed");
 			Transactions.push_back(PubkeyAccountEthereum);
@@ -135,7 +136,7 @@ public:
 			auto* PubkeyAccountRipple = Memory::New<Transactions::PubkeyAccount>();
 			PubkeyAccountRipple->SetAsset("XRP");
 			PubkeyAccountRipple->SetEstimateGas(Decimal::Zero());
-			PubkeyAccountRipple->SetPubkey(RippleWallet.VerifyingKey.ExposeToHeap());
+			PubkeyAccountRipple->SetPubkey(RippleWallet.VerifyingKey);
 			PubkeyAccountRipple->SignPubkey(RippleWallet.SigningKey).Expect("pubkey account not signed");
 			VI_PANIC(PubkeyAccountRipple->Sign(User1.SecretKey, User1Sequence++), "account not signed");
 			Transactions.push_back(PubkeyAccountRipple);
@@ -145,7 +146,7 @@ public:
 			auto* PubkeyAccountBitcoin = Memory::New<Transactions::PubkeyAccount>();
 			PubkeyAccountBitcoin->SetAsset("BTC");
 			PubkeyAccountBitcoin->SetEstimateGas(Decimal::Zero());
-			PubkeyAccountBitcoin->SetPubkey(BitcoinWallet.VerifyingKey.ExposeToHeap());
+			PubkeyAccountBitcoin->SetPubkey(BitcoinWallet.VerifyingKey);
 			PubkeyAccountBitcoin->SignPubkey(BitcoinWallet.SigningKey).Expect("pubkey account not signed");
 			VI_PANIC(PubkeyAccountBitcoin->Sign(User1.SecretKey, User1Sequence++), "account not signed");
 			Transactions.push_back(PubkeyAccountBitcoin);
@@ -1020,43 +1021,57 @@ public:
 	{
 		auto* Term = Console::Get();
 		auto* Server = NSS::ServerNode::Get();
-		auto Id = Algorithm::Asset::IdOf("BTC");
-		auto Alg = Algorithm::Composition::Type::SECP256K1;
-		String Hash1 = *Crypto::HashRaw(Digests::SHA256(), "seed1");
-		String Hash2 = *Crypto::HashRaw(Digests::SHA256(), "seed2");
-		String Message = "Hello, World!";
-		size_t PublicKeySize = 0;
-		size_t SecretKeySize = 0;
-		Algorithm::Composition::CPubkey PublicKey;
-		Algorithm::Composition::CSeckey SecretKey;
-		Algorithm::Composition::CSeed Seed1, Seed2;
-		Algorithm::Composition::CSeckey SecretKey1, SecretKey2;
-		Algorithm::Composition::CPubkey PublicKey1, PublicKey2;
-		Algorithm::Composition::ConvertToSecretSeed((uint8_t*)Hash1.data(), *Crypto::RandomBytes(64), Seed1);
-		Algorithm::Composition::ConvertToSecretSeed((uint8_t*)Hash2.data(), *Crypto::RandomBytes(64), Seed2);
-		Algorithm::Composition::DeriveKeypair1(Alg, Seed1, SecretKey1, PublicKey1);
-		Algorithm::Composition::DeriveKeypair2(Alg, Seed2, PublicKey1, SecretKey2, PublicKey2, PublicKey, &PublicKeySize);
-		Algorithm::Composition::DeriveSecretKey(Alg, SecretKey1, SecretKey2, SecretKey, &SecretKeySize);
-		auto SigningWallet = Server->NewSigningWallet(Id, std::string_view((char*)SecretKey, SecretKeySize)).Expect("wallet derivation failed");
-		auto VerifyingWallet = Server->NewVerifyingWallet(Id, std::string_view((char*)PublicKey, PublicKeySize)).Expect("wallet derivation failed");
-		auto Signature = Server->SignMessage(Id, Message, SigningWallet.SigningKey);
-		auto Verification = Signature ? Server->VerifyMessage(Id, Message, SigningWallet.VerifyingKey.ExposeToHeap(), *Signature) : ExpectsLR<void>(LayerException("signature generation failed"));
+		auto Results = UPtr<Schema>(Var::Set::Array());
+		for (auto& Id : Server->GetAssets())
+		{
+			auto Alg = Server->GetChainparams(Id)->Composition;
+			String Hash1 = *Crypto::HashRaw(Digests::SHA256(), "seed1");
+			String Hash2 = *Crypto::HashRaw(Digests::SHA256(), "seed2");
+			String Bytes1 = *Crypto::RandomBytes(64);
+			String Bytes2 = *Crypto::RandomBytes(64);
+			String Message = "Hello, World!";
+			size_t PublicKeySize = 0;
+			size_t SecretKeySize = 0;
+			Algorithm::Composition::CPubkey PublicKey;
+			Algorithm::Composition::CSeckey SecretKey;
+			Algorithm::Composition::CSeed Seed1, Seed2;
+			Algorithm::Composition::CSeckey SecretKey1, SecretKey2;
+			Algorithm::Composition::CPubkey PublicKey1, PublicKey2;
+			Algorithm::Composition::ConvertToSecretSeed((uint8_t*)Hash1.data(), Bytes1, Seed1);
+			Algorithm::Composition::ConvertToSecretSeed((uint8_t*)Hash2.data(), Bytes2, Seed2);
+			Algorithm::Composition::DeriveKeypair(Alg, Seed1, SecretKey1, PublicKey1);
+			Algorithm::Composition::DeriveKeypair(Alg, Seed2, SecretKey2, PublicKey2);
+			Algorithm::Composition::DerivePublicKey(Alg, PublicKey1, SecretKey2, PublicKey, &PublicKeySize);
+			Algorithm::Composition::DeriveSecretKey(Alg, SecretKey1, SecretKey2, SecretKey, &SecretKeySize);
+			auto SigningWallet = Server->NewSigningWallet(Id, PrivateKey::GetPlain(std::string_view((char*)SecretKey, SecretKeySize))).Expect("wallet derivation failed");
+			auto VerifyingWallet = Server->NewVerifyingWallet(Id, std::string_view((char*)PublicKey, PublicKeySize)).Expect("wallet derivation failed");
+			auto Signature = Server->SignMessage(Id, Message, SigningWallet.SigningKey);
+			auto Verification = Signature ? Server->VerifyMessage(Id, Message, SigningWallet.VerifyingKey, *Signature) : ExpectsLR<void>(LayerException("signature generation failed"));
 
-		UPtr<Schema> Data = Var::Set::Object();
-		Data->Set("secret_key_share_1", Var::String(Format::Util::Encode0xHex(std::string_view((char*)SecretKey1, sizeof(SecretKey1)))));
-		Data->Set("secret_key_share_2", Var::String(Format::Util::Encode0xHex(std::string_view((char*)SecretKey2, sizeof(SecretKey2)))));
-		Data->Set("secret_key_composition", Var::String(Format::Util::Encode0xHex(std::string_view((char*)SecretKey, SecretKeySize))));
-		Data->Set("public_key_composition", Var::String(Format::Util::Encode0xHex(std::string_view((char*)PublicKey, PublicKeySize))));
-		Data->Set("signing_wallet_secret_key", Var::String(SigningWallet.SigningKey.ExposeToHeap()));
-		Data->Set("signing_wallet_public_key", Var::String(SigningWallet.VerifyingKey.ExposeToHeap()));
-		Data->Set("signing_wallet_address", Var::String(SigningWallet.Addresses.begin()->second));
-		Data->Set("verifying_wallet_public_key", Var::String(VerifyingWallet.VerifyingKey.ExposeToHeap()));
-		Data->Set("verifying_wallet_address", Var::String(VerifyingWallet.Addresses.begin()->second));
-		Data->Set("signature_payload", Var::String((Signature ? Format::Util::Encode0xHex(*Signature) : Signature.Error().message()) + String(Signature ? "" : " (failed)")));
-		Data->Set("signature_verification", Var::String(String(Verification ? "passed" : Verification.Error().what()) + String(Verification ? "" : " (failed)")));
-		Data->Set("blob_payload", Var::String(Message));
-		Term->jWriteLine(*Data);
-		VI_PANIC(Schema::ToJSON(*Data).find("failed") == std::string::npos, "cryptographic error");
+			UPtr<Schema> Data = Var::Set::Object();
+			Data->Set("asset", Algorithm::Asset::Serialize(Id));
+			Data->Set("algorithm", Var::String(Alg == Algorithm::Composition::Type::SECP256K1 ? "secp256k1" : "ed25519"));
+			Data->Set("seed_hash_1", Var::String(Format::Util::Encode0xHex(Hash1)));
+			Data->Set("seed_hash_2", Var::String(Format::Util::Encode0xHex(Hash2)));
+			Data->Set("seed_bytes_1", Var::String(Format::Util::Encode0xHex(Bytes1)));
+			Data->Set("seed_bytes_2", Var::String(Format::Util::Encode0xHex(Bytes2)));
+			Data->Set("secret_key_share_1", Var::String(Format::Util::Encode0xHex(std::string_view((char*)SecretKey1, sizeof(SecretKey1)))));
+			Data->Set("secret_key_share_2", Var::String(Format::Util::Encode0xHex(std::string_view((char*)SecretKey2, sizeof(SecretKey2)))));
+			Data->Set("secret_key_composition", Var::String(Format::Util::Encode0xHex(std::string_view((char*)SecretKey, SecretKeySize))));
+			Data->Set("public_key_composition", Var::String(Format::Util::Encode0xHex(std::string_view((char*)PublicKey, PublicKeySize))));
+			Data->Set("keypair_composition", Var::String(SigningWallet.Addresses.begin()->second == VerifyingWallet.Addresses.begin()->second ? "passed" : "failed"));
+			Data->Set("signing_wallet_secret_key", Var::String(SigningWallet.SigningKey.ExposeToHeap()));
+			Data->Set("signing_wallet_public_key", Var::String(SigningWallet.VerifyingKey));
+			Data->Set("signing_wallet_address", Var::String(SigningWallet.Addresses.begin()->second));
+			Data->Set("verifying_wallet_public_key", Var::String(VerifyingWallet.VerifyingKey));
+			Data->Set("verifying_wallet_address", Var::String(VerifyingWallet.Addresses.begin()->second));
+			Data->Set("signature_payload", Var::String((Signature ? *Signature : Signature.Error().message()) + String(Signature ? "" : " (failed)")));
+			Data->Set("signature_verification", Var::String(String(Verification ? "passed" : Verification.Error().what()) + String(Verification ? "" : " (failed)")));
+			Data->Set("blob_payload", Var::String(Message));
+			VI_PANIC(Schema::ToJSON(*Data).find("failed") == std::string::npos, "cryptographic error");
+			Results->Push(Data.Reset());
+		}
+		Term->jWriteLine(*Results);
 	}
 	/* Wallet encryption cryptography */
 	static void CryptographyWalletMessaging()
@@ -1210,25 +1225,25 @@ public:
 			Account(Ledger::Wallet::FromSeed("000000"), 0),
 			Account(Ledger::Wallet::FromSeed("000002"), 0)
 		};
-		NewBlockFromGenerator(*Data, &Generators::Commitments, Users, "0xa004030f97a9a1bacf2f1d2c8304ae7fd27e3cc262418406e27045e2c1bff232");
-		NewBlockFromGenerator(*Data, &Generators::Adjustments, Users, "0xcf86a27ab142a00ea12300fee506cac8078686f69e95deb24abc42d3bcb63dc9");
-		NewBlockFromGenerator(*Data, &Generators::AddressAccounts, Users, "0x20457dfb69c3f1ea6976beaccc4e1f51eb8c02efaed9a06e73d206792b891d43");
-		NewBlockFromGenerator(*Data, &Generators::PubkeyAccounts, Users, "0x8977d483ee3c574748d79b461a60dc3f362b2585056873fddc8a4f738961a146");
-		NewBlockFromGenerator(*Data, std::bind(&Generators::CommitmentOnline, std::placeholders::_1, std::placeholders::_2, 2), Users, "0x578f5a1f34b7eb253d3ae80faaef1c42b9bc4032de5c340552ac362233261f60");
-		NewBlockFromGenerator(*Data, &Generators::Allocations, Users, "0xaf540109f637459de2da593a369f14b55650e2011eef0bf4d6fc57131c1d688f");
-		NewBlockFromGenerator(*Data, &Generators::Contributions, Users, "0x374a5c22e95c95865e7ab77b8e8bd761e0adb643780a51a9aa65168f76607985");
-		NewBlockFromGenerator(*Data, &Generators::DelegatedCustodianAccounts, Users, "0xb6279bd5b6f967665ca5d0ca6bf8ee908e46d4ed45b537d9175367855896c202");
-		NewBlockFromGenerator(*Data, &Generators::Claims, Users, "0x9a8b816cc220b4f8926477f0407ff32088375add7b708eff008d942f22630093");
-		NewBlockFromGenerator(*Data, &Generators::Transfers, Users, "0x5f6dc5c1638c716e0d76803d1ee413c053361aa8642d7d1965ee5d0e5a5d2d88");
-		NewBlockFromGenerator(*Data, &Generators::Rollups, Users, "0x7056c97e442cbf35a004e6f87f727df6a7fbcaec5401b775070d39d6f28bd372");
-		NewBlockFromGenerator(*Data, &Generators::Deployments, Users, "0x737853c5a6351c3e0fdba068b84b577836813395131755e47334bcae4c86e289");
-		NewBlockFromGenerator(*Data, &Generators::Invocations, Users, "0x21f5198aa7075cf7ad2207f0a75207be307b99799c5e40867756b057ad7f3d65");
-		NewBlockFromGenerator(*Data, &Generators::MigrationsStage1, Users, "0x229d90661a16802ee4b60b7ce7bc227f9af8ea16c7fe58d6d18b68b10bcd2785");
-		NewBlockFromGenerator(*Data, &Generators::MigrationsStage2, Users, "0x7f63a8f2d726d2a8b785396af2ca061781565f24ae0e542aa4ca5e4d2c2d9305");
-		NewBlockFromGenerator(*Data, &Generators::WithdrawalsStage1, Users, "0x1be6be5d11774198a95426ef82959d6849b0184524c83886c090bd777254f7ba");
-		NewBlockFromGenerator(*Data, &Generators::WithdrawalsStage2, Users, "0xb3e6dfb2356b137eb4e6bae1e0f3983a793574a8f7ca7e900293be407df1889f");
-		NewBlockFromGenerator(*Data, std::bind(&Generators::CommitmentOffline, std::placeholders::_1, std::placeholders::_2, 2), Users, "0x027359f5971fdaf27284f728e22a5739d263faef78212737eadd1782ffb1b860");
-		NewBlockFromGenerator(*Data, &Generators::Deallocations, Users, "0xc7be840b690453ca96a39034b6d08a91a3d2f418b714aa08d4ab90365c7c7580");
+		TEST_BLOCK(&Generators::Commitments, "0xa004030f97a9a1bacf2f1d2c8304ae7fd27e3cc262418406e27045e2c1bff232", 1);
+		TEST_BLOCK(&Generators::Adjustments, "0xcf86a27ab142a00ea12300fee506cac8078686f69e95deb24abc42d3bcb63dc9", 2);
+		TEST_BLOCK(&Generators::AddressAccounts, "0x71603c6f7a41212ab949d12871abc9ec2bd4f9eddd1704a620bb39a626d1462d", 3);
+		TEST_BLOCK(&Generators::PubkeyAccounts, "0x08a5c556dda4de4519aa4ac324bea1a31ba11d9a974fd17e0f2e86781e30cac0", 4);
+		TEST_BLOCK(std::bind(&Generators::CommitmentOnline, std::placeholders::_1, std::placeholders::_2, 2), "0x264bb7610dbb3fb9481e3e8c7717211bc1f6a0e05d7f6f84badfdbe9cb23d5a8", 5);
+		TEST_BLOCK(&Generators::Allocations, "0xb289f4f1bdbe169140f7db7c0045447e118159a4e9ed11d9ebc897dbd0e6b102", 6);
+		TEST_BLOCK(&Generators::Contributions, "0x491e9938f9dc7ff87b986fe53458afb3e3c815944a80eedad6b0874e60844d45", 9);
+		TEST_BLOCK(&Generators::DelegatedCustodianAccounts, "0x027629b91cabd1f0e140cde6a82267745e05f8421f7023f93203305a55878ea7", 10);
+		TEST_BLOCK(&Generators::Claims, "0x7e2dd603cc21b29d3e3abdb993fc3cee24ddc26f6dcbcc00598f04ab6878b4d2", 12);
+		TEST_BLOCK(&Generators::Transfers, "0xb1eb6586c3b9d018a09614ff865541c4b14797f38a26333b318ca8877b106b21", 13);
+		TEST_BLOCK(&Generators::Rollups, "0x6ec231f58d5493996480ff83c046278b6c45c030c83021b5af9bec672402197e", 14);
+		TEST_BLOCK(&Generators::Deployments, "0x8b05ef9dec67544ca4e076b91c875ad6a9878d5238d8557d50dc29629fcb4044", 15);
+		TEST_BLOCK(&Generators::Invocations, "0x30cb2f7130ed3f9ad72189c043576727313fab7906b4984854dfba27a62293e3", 16);
+		TEST_BLOCK(&Generators::MigrationsStage1, "0x596f09aca3e0ee3d79a294c37d405e46bec94661f11214762eec6fbdac0e1d2e", 17);
+		TEST_BLOCK(&Generators::MigrationsStage2, "0x93ce040d9791f827fa58c3ef4e5df97181d89ca23d5d07ac0b9095c7c91633b2", 18);
+		TEST_BLOCK(&Generators::WithdrawalsStage1, "0xa444fcfa3c6c6aa096e1c041883026da1fbb748d7c5b5de651802f1bc82447a5", 20);
+		TEST_BLOCK(&Generators::WithdrawalsStage2, "0x6a167678e375329f5632ef77c70c06c63293ac63591560ed6356c4ba57d17827", 22);
+		TEST_BLOCK(std::bind(&Generators::CommitmentOffline, std::placeholders::_1, std::placeholders::_2, 2), "0xe5605576a48010ccd735145eb4196709430cfcfe46c08994a66be5970e3ed476", 24);
+		TEST_BLOCK(&Generators::Deallocations, "0xb12b3a5cd99ef9e532881b1d6b483ede82fc9a2058b58a5ca40875abdd7482de", 25);
 		if (Userdata != nullptr)
 			*Userdata = std::move(Users);
 		else
@@ -1250,15 +1265,15 @@ public:
 			Account(Ledger::Wallet::FromSeed("000000"), 0),
 			Account(Ledger::Wallet::FromSeed("000001"), 0)
 		};
-		NewBlockFromGenerator(*Data, &Generators::Commitments, Users, "0x80c0c8bedd1cf81dbf74b17fb3308fcd807c586546e4b9096b4f90484dec4e59");
-		NewBlockFromGenerator(*Data, &Generators::Adjustments, Users, "0x0cef756f9bd46b9c7a5601c8cf91ba95ae343ddc198850226eff42b29b874191");
-		NewBlockFromGenerator(*Data, &Generators::AddressAccounts, Users, "0x7a385502c58b86b8044ed05b798cd9b571cdeaa040011641279ef6d5b8ab9282");
-		NewBlockFromGenerator(*Data, &Generators::DelegatedCustodianAccounts, Users, "0x46dd379ee996ef952a688f0b4a0155c1f43f1a2ab94a8afe5879e217259b7d5b");
-		NewBlockFromGenerator(*Data, &Generators::Claims, Users, "0xbad64e02f1dd2732605892525d58c9a554f9e29b4d7f941bacadafbb6ee8b107");
-		NewBlockFromGenerator(*Data, &Generators::Transfers, Users, "0x172903b0aea42b99600523c9b65cd5a239ebc33512c4cf75eb1210751f019207");
-		NewBlockFromGenerator(*Data, &Generators::Rollups, Users, "0xec04cc37780fdd60b1758f51fa983077dafce77dc492ec7d0f50a88e30e9ba7f");
-		NewBlockFromGenerator(*Data, std::bind(&Generators::CommitmentOffline, std::placeholders::_1, std::placeholders::_2, 0), Users, "0x5f7b13b56c433b9df8673cc3b7e9bab08f5a5c2802440c8193d6ed29266f6af7");
-		NewBlockFromGenerator(*Data, std::bind(&Generators::TransferToWallet, std::placeholders::_1, std::placeholders::_2, 0, Algorithm::Asset::IdOf("BTC"), "tcrt1xrzy5qh6vs7phqnrft5se2sps8wyvr4u8tphzwl", 0.1), Users, "0x2bedd6f0a1edc81d29d3756025504e59956c66ec09efac698bf1e7696dd70afd");
+		TEST_BLOCK(&Generators::Commitments, "0x80c0c8bedd1cf81dbf74b17fb3308fcd807c586546e4b9096b4f90484dec4e59", 1);
+		TEST_BLOCK(&Generators::Adjustments, "0x0cef756f9bd46b9c7a5601c8cf91ba95ae343ddc198850226eff42b29b874191", 2);
+		TEST_BLOCK(&Generators::AddressAccounts, "0x9a56732df9b8c35cef0d634ac0bde7aab76198d31481d54f3da68dccaf82853d", 3);
+		TEST_BLOCK(&Generators::DelegatedCustodianAccounts, "0x99fb50ec6ed8a55576a4aed08b82a01731b09fb1bbbf8c8376db21240b4694cc", 4);
+		TEST_BLOCK(&Generators::Claims, "0x89cb3b7e4d931459f3a66e17a8cb18785fc8d5f80998719524fd9cc585d432a4", 6);
+		TEST_BLOCK(&Generators::Transfers, "0xaa761a44098cff249587c28e2b4854a0a4bebd80b5aa96b8205e7003556bced7", 7);
+		TEST_BLOCK(&Generators::Rollups, "0x6bfcaad8e68454fae91cc54a74919d4f4364c1e6ce04713063dae87add5befdc", 8);
+		TEST_BLOCK(std::bind(&Generators::CommitmentOffline, std::placeholders::_1, std::placeholders::_2, 0), "0x98d36768655ef6c28226b7fcd5da5441feeade91764e16f25f95ab7fbf4cef7f", 9);
+		TEST_BLOCK(std::bind(&Generators::TransferToWallet, std::placeholders::_1, std::placeholders::_2, 0, Algorithm::Asset::IdOf("BTC"), "tcrt1xrzy5qh6vs7phqnrft5se2sps8wyvr4u8tphzwl", 0.1), "0x1a742f548c1ba2f4af1ce9c96abbb6b9a4cd81dfb3f84ac165460ccc9f85344e", 10);
 		if (Userdata != nullptr)
 			*Userdata = std::move(Users);
 		else
@@ -1376,7 +1391,7 @@ public:
 
 		Data->Set(T::AsInstanceTypename(), Var::String(Algorithm::Encoding::Encode0xHex256(Message.Hash())));
 	}
-	static Ledger::Block NewBlockFromGenerator(Schema* Results, std::function<void(Vector<UPtr<Ledger::Transaction>>&, Vector<Account>&)>&& TestCase, Vector<Account>& Users, const std::string_view& StateRootHash)
+	static Ledger::Block NewBlockFromGenerator(Schema* Results, Vector<Account>& Users, std::function<void(Vector<UPtr<Ledger::Transaction>>&, Vector<Account>&)>&& TestCase, const std::string_view& TestCaseCall, const std::string_view& StateRootHash, uint64_t BlockNumber)
 	{
 		for (auto& User : Users)
 			User.Sequence = User.Wallet.GetLatestSequence().Or(1);
@@ -1384,15 +1399,16 @@ public:
 		Vector<UPtr<Ledger::Transaction>> Transactions;
 		TestCase(Transactions, Users);
 
-		auto Block = NewBlockFromList(Results, std::move(Transactions), Users);
+		auto Block = NewBlockFromList(Results, Users, std::move(Transactions));
 		auto Hash = Algorithm::Encoding::Encode0xHex256(Block.StateRoot);
 		if (Results != nullptr)
-			Console::Get()->fWriteLine("%02" PRIu64 ": %s", Block.Number, Hash.c_str());
+			Console::Get()->fWriteLine("TEST_BLOCK(%s, \"%s\", %" PRIu64 ");", TestCaseCall.data(), Hash.c_str(), Block.Number);
 
 		VI_PANIC(StateRootHash.empty() || StateRootHash == Hash, "block state root deviation");
+		VI_PANIC(!BlockNumber || BlockNumber == Block.Number, "block number deviation");
 		return Block;
 	}
-	static Ledger::Block NewBlockFromList(Schema* Results, Vector<UPtr<Ledger::Transaction>>&& Transactions, Vector<Account>& Users)
+	static Ledger::Block NewBlockFromList(Schema* Results, Vector<Account>& Users, Vector<UPtr<Ledger::Transaction>>&& Transactions)
 	{
 		Ledger::EvaluationContext Environment;
 		uint64_t Priority = std::numeric_limits<uint64_t>::max();
@@ -1474,7 +1490,7 @@ public:
 			Dispatch.Checkpoint().Expect("dispatch checkpoint failed");
 
 		if (!Transactions.empty())
-			NewBlockFromList(Results, std::move(Transactions), Users);
+			NewBlockFromList(Results, Users, std::move(Transactions));
 		return Proposal;
 	}
 };
@@ -1485,10 +1501,11 @@ public:
 	/* NSS, NDS, P2P, NDS nodes */
 	static int Consensus(int argc, char* argv[])
 	{
+		VI_PANIC(argc > 1, "config path argument is required");
 		Vitex::Runtime Scope;
-		String Config = argc > 1 ? argv[1] : TAN_CONFIG_PATH;
-		String Number = Config.substr(Config.find('-') + 1);
-		Protocol Params = Protocol(Config);
+		std::string_view Config = argv[1];
+		std::string_view Number = Config.substr(Config.find('-') + 1);
+		Protocol Params = Protocol(argc, argv);
 		uint32_t Index = FromString<uint32_t>(Number.substr(0, Number.find_first_not_of("0123456789"))).Or(1);
 
 		Ledger::Wallet Wallet = Ledger::Wallet::FromSeed(Stringify::Text("00000%i", Index - 1));
@@ -1526,8 +1543,9 @@ public:
 	/* Simplest blockchain explorer for debugging */
 	static int Explorer(int argc, char* argv[])
 	{
+		VI_PANIC(argc > 1, "config path argument is required");
 		Vitex::Runtime Scope;
-		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
+		Protocol Params = Protocol(argc, argv);
 
 		auto* Term = Console::Get();
 		Term->Show();
@@ -2020,8 +2038,9 @@ public:
 	/* Mediator node for debugging */
 	static int Mediator(int argc, char* argv[])
 	{
+		VI_PANIC(argc > 1, "config path argument is required");
 		Vitex::Runtime Scope;
-		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
+		Protocol Params = Protocol(argc, argv);
 
 		auto* Term = Console::Get();
 		Term->Show();
@@ -2034,7 +2053,7 @@ public:
 		Queue->Start(Policy);
 
 		auto* Server = NSS::ServerNode::Get();
-		auto Asset = Algorithm::Asset::IdOf("BTC");
+		auto Asset = Algorithm::Asset::IdOf("XMR");
 		auto Parent = Server->NewMasterWallet(Asset, String("123456"));
 		auto Child = Mediator::DynamicWallet(*Server->NewSigningWallet(Asset, *Parent, 0));
 		for (auto& Address : Child.SigningChild->Addresses)
@@ -2046,6 +2065,7 @@ public:
 			auto Info = Parent->AsSchema();
 			auto* WalletInfo = Info->Set("wallet", Child.SigningChild->AsSchema().Reset());
 			WalletInfo->Set("balance", Var::String(Balance ? Balance->ToString().c_str() : "?"));
+			Term->jWriteLine(*Info);
 
 			Server->Startup();
 			for (size_t i = 0; i < 0; i++)
@@ -2087,8 +2107,9 @@ public:
 	/* Blockchain derived from partial coverage test with 1920 additional blocks filled with configurable entropy transactions (non-zero balance accounts, valid regtest chain, entropy 0 - low entropy, entropy 1 - medium entropy, entropy 2 - high entropy) */
 	static int Benchmark(int argc, char* argv[], uint8_t Entropy)
 	{
+		VI_PANIC(argc > 1, "config path argument is required");
 		Vitex::Runtime Scope;
-		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
+		Protocol Params = Protocol(argc, argv);
 
 		auto* Term = Console::Get();
 		Term->Show();
@@ -2096,14 +2117,14 @@ public:
 		auto* Queue = Schedule::Get();
 		Queue->Start(Schedule::Desc());
 
-		const size_t BlockCount = 72960;//1920;
+		const size_t BlockCount = 1920;
 		const size_t TransactionCount = (size_t)(uint64_t)(Ledger::Block::GetGasLimit() / Transactions::Transfer().GetGasEstimate());
 		const Decimal StartingAccountBalance = Decimal(500).Truncate(12);
 		auto Checkpoint = [&](Vector<UPtr<Ledger::Transaction>>&& Transactions, Vector<Tests::Account>& Users)
 		{
 			static uint64_t CumulativeTransactionCount = 0, CumulativeStateCount = 0;
 			auto CumulativeQueryCount = (uint64_t)Ledger::StorageUtil::GetThreadQueries(); Term->CaptureTime();
-			auto Block = Tests::NewBlockFromList(nullptr, std::move(Transactions), Users);
+			auto Block = Tests::NewBlockFromList(nullptr, Users, std::move(Transactions));
 			auto Time = Term->GetCapturedTime();
 			CumulativeTransactionCount += Block.TransactionCount;
 			CumulativeStateCount += Block.StateCount;
@@ -2299,8 +2320,9 @@ public:
 	/* Test case runner for integration testing */
 	static int Integration(int argc, char* argv[])
 	{
+		VI_PANIC(argc > 1, "config path argument is required");
 		Vitex::Runtime Scope;
-		Protocol Params = Protocol(argc > 1 ? std::string_view(argv[1]) : TAN_CONFIG_PATH);
+		Protocol Params = Protocol(argc, argv);
 
 		auto* Term = Console::Get();
 		Term->Show();
@@ -2360,5 +2382,5 @@ public:
 
 int main(int argc, char* argv[])
 {
-    return Apps::Integration(argc, argv);
+    return Apps::Consensus(argc, argv);
 }

@@ -1,5 +1,5 @@
-#ifndef TAN_MEDIATOR_SOLANA_H
-#define TAN_MEDIATOR_SOLANA_H
+#ifndef TAN_MEDIATOR_MONERO_H
+#define TAN_MEDIATOR_MONERO_H
 #include "../../kernel/mediator.h"
 
 struct btc_chainparams_;
@@ -10,44 +10,38 @@ namespace Tangent
 	{
 		namespace Backends
 		{
-			class Solana : public RelayBackend
+			class Monero : public RelayBackendUTXO
 			{
-			public:
-				struct TokenAccount
-				{
-					String ProgramId;
-					String Account;
-					Decimal Balance;
-					Decimal Divisibility;
-				};
-
 			public:
 				class NdCall
 				{
 				public:
-					static String GetTokenMetadata(const std::string_view& Mint);
-					static const char* GetTokenBalance();
-					static const char* GetBalance();
-					static const char* GetBlockHash();
-					static const char* GetBlockNumber();
+					static const char* JsonRpc();
+					static const char* SendRawTransaction();
+					static const char* GetTransactions();
+					static const char* GetHeight();
+				};
+
+				class NdCallRestricted
+				{
+				public:
 					static const char* GetBlock();
-					static const char* GetTransaction();
-					static const char* SendTransaction();
+					static const char* GetFeeEstimate();
 				};
 
 			protected:
 				Chainparams Netdata;
 
 			public:
-				Solana() noexcept;
-				virtual ~Solana() override = default;
+				Monero() noexcept;
+				virtual ~Monero() noexcept = default;
 				virtual ExpectsPromiseRT<void> BroadcastTransaction(const Algorithm::AssetId& Asset, const OutgoingTransaction& TxData) override;
 				virtual ExpectsPromiseRT<uint64_t> GetLatestBlockHeight(const Algorithm::AssetId& Asset) override;
 				virtual ExpectsPromiseRT<Schema*> GetBlockTransactions(const Algorithm::AssetId& Asset, uint64_t BlockHeight, String* BlockHash) override;
 				virtual ExpectsPromiseRT<Schema*> GetBlockTransaction(const Algorithm::AssetId& Asset, uint64_t BlockHeight, const std::string_view& BlockHash, const std::string_view& TransactionId) override;
 				virtual ExpectsPromiseRT<Vector<IncomingTransaction>> GetAuthenticTransactions(const Algorithm::AssetId& Asset, uint64_t BlockHeight, const std::string_view& BlockHash, Schema* TransactionData) override;
 				virtual ExpectsPromiseRT<BaseFee> EstimateFee(const Algorithm::AssetId& Asset, const DynamicWallet& Wallet, const Vector<Transferer>& To, const FeeSupervisorOptions& Options) override;
-				virtual ExpectsPromiseRT<Decimal> CalculateBalance(const Algorithm::AssetId& Asset, const DynamicWallet& Wallet, Option<String>&& Address) override;
+				virtual ExpectsPromiseRT<CoinUTXO> GetTransactionOutput(const Algorithm::AssetId& Asset, const std::string_view& TxId, uint32_t Index) override;
 				virtual ExpectsPromiseRT<OutgoingTransaction> NewTransaction(const Algorithm::AssetId& Asset, const DynamicWallet& Wallet, const Vector<Transferer>& To, const BaseFee& Fee) override;
 				virtual ExpectsLR<MasterWallet> NewMasterWallet(const std::string_view& Seed) override;
 				virtual ExpectsLR<DerivedSigningWallet> NewSigningWallet(const Algorithm::AssetId& Asset, const MasterWallet& Wallet, uint64_t AddressIndex) override;
@@ -57,16 +51,15 @@ namespace Tangent
 				virtual ExpectsLR<String> SignMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const PrivateKey& SigningKey) override;
 				virtual ExpectsLR<void> VerifyMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const std::string_view& VerifyingKey, const std::string_view& Signature) override;
 				virtual String GetDerivation(uint64_t AddressIndex) const override;
+				virtual const btc_chainparams_* GetChain();
 				virtual const Chainparams& GetChainparams() const override;
+				virtual uint64_t GetRetirementBlockNumber() const override;
 
 			public:
-				virtual ExpectsPromiseRT<String> GetTokenSymbol(const std::string_view& Mint);
-				virtual ExpectsPromiseRT<TokenAccount> GetTokenBalance(const Algorithm::AssetId& Asset, const std::string_view& Mint, const std::string_view& Owner);
-				virtual ExpectsPromiseRT<Decimal> GetBalance(const Algorithm::AssetId& Asset, const std::string_view& Owner);
-				virtual ExpectsPromiseRT<String> GetRecentBlockHash(const Algorithm::AssetId& Asset);
-				virtual bool DecodePrivateKey(const std::string_view& Data, uint8_t PrivateKey[64]);
-				virtual bool DecodeSecretOrPublicKey(const std::string_view& Data, uint8_t SecretKey[32]);
-				virtual const btc_chainparams_* GetChain();
+				virtual bool MessageHash(uint8_t Hash[32], const uint8_t* Message, size_t MessageSize, const uint8_t PublicSpendKey[32], const uint8_t PublicViewKey[32], const uint8_t Mode);
+				virtual void DeriveKnownPrivateViewKey(const uint8_t PublicSpendKey[32], uint8_t PrivateViewKey[32]);
+				virtual void DeriveKnownPublicViewKey(const uint8_t PublicSpendKey[32], uint8_t PublicViewKey[32]);
+				virtual uint64_t GetNetworkType() const;
 			};
 		}
 	}

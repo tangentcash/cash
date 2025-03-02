@@ -310,7 +310,7 @@ namespace Tangent
 	ExpectsLR<String> Vectorstate::EncryptKey(const PrivateKey& Data) const
 	{
 		auto Value = Data.Expose<2048>();
-		return EncryptBlob(std::string_view(Value.Key, Value.Size));
+		return EncryptBlob(Value.View);
 	}
 	ExpectsLR<PrivateKey> Vectorstate::DecryptKey(const std::string_view& Data) const
 	{
@@ -407,14 +407,39 @@ namespace Tangent
 		Resource = OS::File::OpenArchive(Path, Protocol::Now().User.Logs.ArchiveSize).Or(nullptr);
 	}
 
-	Protocol::Protocol(const std::string_view& ConfigPath)
+	Protocol::Protocol(int Argc, char** Argv)
 	{
-		auto Module = OS::Directory::GetModule();
-		Path = OS::Path::Resolve(ConfigPath, *Module, true).Or(String(ConfigPath));
-		ErrorHandling::SetFlag(LogOption::Pretty, true);
-		ErrorHandling::SetFlag(LogOption::Dated, true);
+		auto Environment = Argc > 0 && Argv != nullptr ? OS::Process::ParseArgs(Argc, Argv, (size_t)ArgsFormat::KeyValue) : InlineArgs();
+		if (!Environment.Params.empty())
+			Path = std::move(Environment.Params.back());
 
-		auto Config = UPtr<Schema>(Schema::FromJSON(OS::File::ReadAsString(Path).Or(String())));
+		auto Module = OS::Directory::GetModule();
+		if (!Path.empty())
+		{
+			Path = OS::Path::Resolve(Path, *Module, true).Or(String(Path));
+			ErrorHandling::SetFlag(LogOption::Pretty, true);
+			ErrorHandling::SetFlag(LogOption::Dated, true);
+			ErrorHandling::SetFlag(LogOption::Active, true);
+			OS::Directory::SetWorking(Module->c_str());
+			Console::Get()->Attach();
+		}
+
+		auto Config = UPtr<Schema>(Path.empty() ? (Schema*)nullptr : Schema::FromJSON(OS::File::ReadAsString(Path).Or(String())));
+		if (!Environment.Args.empty())
+		{
+			if (!Config)
+				Config = Var::Set::Object();
+			for (auto& [Key, Value] : Environment.Args)
+			{
+				auto Parent = *Config;
+				for (auto& Name : Stringify::Split(Key, '.'))
+				{
+					auto Child = Parent->Get(Name);
+					Parent = (Child ? Child : Parent->Set(Name, Var::Set::Object()));
+				}
+				Parent->Value = Var::Auto(Value);
+			}
+		}
 		if (Config)
 		{
 			auto* Value = Config->Get("network");
@@ -755,18 +780,23 @@ namespace Tangent
 		}
 
 		Instance = this;
-		auto VectorstateBase = Database.Resolve(User.Network, User.Storage.Directory) + User.Vectorstate;
-		auto VectorstatePath = OS::Path::Resolve(OS::Path::Resolve(VectorstateBase, *Module, true).Or(User.Vectorstate)).Or(User.Vectorstate);
-		auto VectorstateFile = OS::File::ReadAsString(VectorstatePath);
-		if (!VectorstateFile)
+		if (Config)
 		{
-			VectorstateFile = Key.New();
-			VI_PANIC(Location(VectorstatePath).Protocol == "file", "cannot save vectorstate into %s", VectorstatePath.c_str());
-			OS::Directory::Patch(OS::Path::GetDirectory(VectorstatePath)).Expect("cannot save vectorstate into " + VectorstatePath);
-			OS::File::Write(VectorstatePath, (uint8_t*)VectorstateFile->data(), VectorstateFile->size()).Expect("cannot save vectorstate into " + VectorstatePath);
+			auto VectorstateBase = Database.Resolve(User.Network, User.Storage.Directory) + User.Vectorstate;
+			auto VectorstatePath = OS::Path::Resolve(OS::Path::Resolve(VectorstateBase, *Module, true).Or(User.Vectorstate)).Or(User.Vectorstate);
+			auto VectorstateFile = OS::File::ReadAsString(VectorstatePath);
+			if (!VectorstateFile)
+			{
+				VectorstateFile = Key.New();
+				VI_PANIC(Location(VectorstatePath).Protocol == "file", "cannot save vectorstate into %s", VectorstatePath.c_str());
+				OS::Directory::Patch(OS::Path::GetDirectory(VectorstatePath)).Expect("cannot save vectorstate into " + VectorstatePath);
+				OS::File::Write(VectorstatePath, (uint8_t*)VectorstateFile->data(), VectorstateFile->size()).Expect("cannot save vectorstate into " + VectorstatePath);
+			}
+			Key.Use(User.Network, *VectorstateFile);
 		}
-		
-		Key.Use(User.Network, *VectorstateFile);
+		else
+			Key.Use(User.Network, Key.New());
+
 		switch (User.Network)
 		{
 			case Tangent::NetworkType::Regtest:
@@ -799,12 +829,8 @@ namespace Tangent
 				break;
 		}
 
-		Console::Get()->Attach();
-		ErrorHandling::SetFlag(LogOption::Active, true);
-		ErrorHandling::SetFlag(LogOption::Dated, true);
 		Uplinks::LinkInstance();
 		Algorithm::Signing::Initialize();
-		OS::Directory::SetWorking(Module->c_str());
 	}
 	Protocol::~Protocol()
 	{

@@ -6,13 +6,13 @@ namespace Tangent
 {
 	namespace Ledger
 	{
-		class TAN_OUT StorageUtil
+		class StorageUtil
 		{
 		public:
 			static uint64_t GetThreadQueries();
 		};
 
-		struct TAN_OUT MutableStorage
+		struct MutableStorage
 		{
 		private:
 			std::atomic<uint64_t> Queries = 0;
@@ -46,7 +46,7 @@ namespace Tangent
 			virtual bool ReconstructStorage() = 0;
 		};
 
-		struct TAN_OUT PermanentStorage
+		struct PermanentStorage
 		{
 		public:
 			typedef UnorderedMap<LDB::Connection*, LDB::SessionId> MultiSessionId;

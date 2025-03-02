@@ -12,7 +12,7 @@ namespace Tangent
 
 	namespace Transactions
 	{
-		struct TAN_OUT Transfer final : Ledger::Transaction
+		struct Transfer final : Ledger::Transaction
 		{
 			Algorithm::Pubkeyhash To = { 0 };
 			Decimal Value;
@@ -33,7 +33,7 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct TAN_OUT Omnitransfer final : Ledger::Transaction
+		struct Omnitransfer final : Ledger::Transaction
 		{
 			struct Subtransfer
 			{
@@ -58,7 +58,7 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct TAN_OUT Deployment final : Ledger::Transaction
+		struct Deployment final : Ledger::Transaction
 		{
 			Algorithm::Recsighash Location = { 0 };
 			Format::Variables Args;
@@ -86,7 +86,7 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct TAN_OUT Invocation final : Ledger::Transaction
+		struct Invocation final : Ledger::Transaction
 		{
 			Algorithm::Pubkeyhash To = { 0 };
 			Format::Variables Args;
@@ -109,7 +109,7 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct TAN_OUT Withdrawal final : Ledger::Transaction
+		struct Withdrawal final : Ledger::Transaction
 		{
 			Vector<std::pair<String, Decimal>> To;
 			Algorithm::Pubkeyhash Proposer = { 0 };
@@ -133,7 +133,7 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct TAN_OUT Rollup final : Ledger::Transaction
+		struct Rollup final : Ledger::Transaction
 		{
 			OrderedMap<Algorithm::AssetId, Vector<UPtr<Ledger::Transaction>>> Transactions;
 
@@ -165,7 +165,7 @@ namespace Tangent
 			static bool SignChild(Ledger::Transaction& Transaction, const Algorithm::Seckey SecretKey, const Algorithm::AssetId& Asset, uint16_t Index);
 		};
 
-		struct TAN_OUT Commitment final : Ledger::Transaction
+		struct Commitment final : Ledger::Transaction
 		{
 			OrderedMap<Algorithm::AssetId, bool> Observers;
 			Option<bool> Online = Optional::None;
@@ -188,7 +188,7 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct TAN_OUT IncomingClaim final : Ledger::AggregationTransaction
+		struct IncomingClaim final : Ledger::AggregationTransaction
 		{
 			struct CustodyTransfer
 			{
@@ -225,7 +225,7 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct TAN_OUT OutgoingClaim final : Ledger::ConsensusTransaction
+		struct OutgoingClaim final : Ledger::ConsensusTransaction
 		{
 			String TransactionId;
 			String TransactionData;
@@ -247,7 +247,7 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct TAN_OUT AddressAccount final : Ledger::DelegationTransaction
+		struct AddressAccount final : Ledger::DelegationTransaction
 		{
 			String Address;
 
@@ -264,7 +264,7 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct TAN_OUT PubkeyAccount final : Ledger::DelegationTransaction
+		struct PubkeyAccount final : Ledger::DelegationTransaction
 		{
 			String Pubkey;
 			String Sighash;
@@ -284,7 +284,7 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct TAN_OUT DelegationAccount final : Ledger::DelegationTransaction
+		struct DelegationAccount final : Ledger::DelegationTransaction
 		{
 			Algorithm::Pubkeyhash Proposer = { 0 };
 
@@ -305,7 +305,7 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct TAN_OUT CustodianAccount final : Ledger::ConsensusTransaction
+		struct CustodianAccount final : Ledger::ConsensusTransaction
 		{
 			uint256_t DelegationAccountHash = 0;
 			Algorithm::Pubkeyhash Owner = { 0 };
@@ -335,7 +335,7 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct TAN_OUT ContributionAllocation final : Ledger::Transaction
+		struct ContributionAllocation final : Ledger::Transaction
 		{
 			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
@@ -351,13 +351,12 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct TAN_OUT ContributionSelection final : Ledger::ConsensusTransaction
+		struct ContributionSelection final : Ledger::ConsensusTransaction
 		{
 			uint256_t ContributionAllocationHash = 0;
 			Algorithm::Composition::CPubkey PublicKey1 = { 0 };
-			Algorithm::Pubkeyhash Proposer = { 0 };
 
-			ExpectsLR<void> SetShare1(const Algorithm::Seckey SecretKey, const uint256_t& NewContributionAllocationHash, const Algorithm::Pubkeyhash NewProposer);
+			ExpectsLR<void> SetShare1(const uint256_t& NewContributionAllocationHash, const Algorithm::Seckey SecretKey);
 			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
@@ -373,15 +372,14 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct TAN_OUT ContributionActivation final : Ledger::ConsensusTransaction
+		struct ContributionActivation final : Ledger::ConsensusTransaction
 		{
 			uint256_t ContributionSelectionHash = 0;
 			Algorithm::Composition::CPubkey PublicKey2 = { 0 };
 			Algorithm::Composition::CPubkey PublicKey = { 0 };
-			Algorithm::Pubkeyhash Proposer = { 0 };
 			uint16_t PublicKeySize = 0;
 
-			ExpectsLR<void> SetShare2(const Algorithm::Seckey SecretKey, const uint256_t& NewContributionSelectionHash, const Algorithm::Pubkeyhash NewProposer, const Algorithm::Composition::CPubkey PublicKey1);
+			ExpectsLR<void> SetShare2(const uint256_t& NewContributionSelectionHash, const Algorithm::Seckey SecretKey, const Algorithm::Composition::CPubkey PublicKey1);
 			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
 			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
 			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
@@ -398,7 +396,7 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct TAN_OUT ContributionDeallocation final : Ledger::Transaction
+		struct ContributionDeallocation final : Ledger::Transaction
 		{
 			uint256_t ContributionActivationHash = 0;
 			Algorithm::Pubkey CipherPublicKey1 = { 0 };
@@ -419,10 +417,9 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct TAN_OUT ContributionDeselection final : Ledger::ConsensusTransaction
+		struct ContributionDeselection final : Ledger::ConsensusTransaction
 		{
 			uint256_t ContributionDeallocationHash = 0;
-			Algorithm::Pubkeyhash Proposer = { 0 };
 			String EncryptedSecretKey1;
 
 			ExpectsLR<void> SetRevealingShare1(const Ledger::TransactionContext* Context, const uint256_t& ContributionDeallocationHash, const Algorithm::Seckey SecretKey);
@@ -442,10 +439,9 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct TAN_OUT ContributionDeactivation final : Ledger::ConsensusTransaction
+		struct ContributionDeactivation final : Ledger::ConsensusTransaction
 		{
 			uint256_t ContributionDeselectionHash = 0;
-			Algorithm::Pubkeyhash Proposer = { 0 };
 			String EncryptedSecretKey2;
 
 			ExpectsLR<void> SetRevealingShare2(const Ledger::TransactionContext* Context, const uint256_t& ContributionDeselectionHash, const Algorithm::Seckey SecretKey);
@@ -468,7 +464,7 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct TAN_OUT DepositoryAdjustment final : Ledger::Transaction
+		struct DepositoryAdjustment final : Ledger::Transaction
 		{
 			Decimal IncomingAbsoluteFee = Decimal::Zero();
 			Decimal IncomingRelativeFee = Decimal::Zero();
@@ -489,7 +485,7 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		struct TAN_OUT DepositoryMigration final : Ledger::Transaction
+		struct DepositoryMigration final : Ledger::Transaction
 		{
 			Algorithm::Pubkeyhash Proposer = { 0 };
 			Decimal Value;
@@ -512,7 +508,7 @@ namespace Tangent
 			static std::string_view AsInstanceTypename();
 		};
 
-		class TAN_OUT Resolver
+		class Resolver
 		{
 		public:
 			static Ledger::Transaction* New(uint32_t Hash);

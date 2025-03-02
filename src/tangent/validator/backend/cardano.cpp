@@ -430,9 +430,9 @@ namespace Tangent
 						if (!SigningWallet)
 							throw std::invalid_argument("address " + Copy<std::string>(Input.Address) + " cannot be used to sign the transaction (wallet not valid)");
 
-						auto Private = SigningWallet->SigningKey.Expose<2048>();
+						auto Private = SigningWallet->SigningKey.Expose<KEY_LIMIT>();
 						uint8_t RawPrivateKey[XSK_LENGTH];
-						if (!DecodePrivateKey(Private.Key, RawPrivateKey, nullptr))
+						if (!DecodePrivateKey(Private.View.data(), RawPrivateKey, nullptr))
 							throw std::invalid_argument("could not get a valid private key for address " + Copy<std::string>(Input.Address));
 
 						Builder.addExtendedSigningKey(RawPrivateKey);
@@ -489,8 +489,7 @@ namespace Tangent
 					::Cardano::Hash::bech32_encode("xprv", PrivateKey, sizeof(PrivateKey), EncodedPrivateKey);
 					::Cardano::Hash::bech32_encode("xpub", PublicKey, sizeof(PublicKey), EncodedPublicKey);
 
-					String HexSeed = Codec::HexEncode(Seed);
-					return ExpectsLR<MasterWallet>(MasterWallet(::PrivateKey(std::move(HexSeed)), ::PrivateKey(EncodedPublicKey), ::PrivateKey(EncodedPrivateKey)));
+					return ExpectsLR<MasterWallet>(MasterWallet(::PrivateKey(Codec::HexEncode(Seed)), ::PrivateKey(EncodedPrivateKey), String(EncodedPublicKey.begin(), EncodedPublicKey.end())));
 				}
 				catch (const std::invalid_argument& Error)
 				{
@@ -508,16 +507,16 @@ namespace Tangent
 
 				try
 				{
-					auto Private = Wallet.SigningKey.Expose<2048>();
+					auto Private = Wallet.SigningKey.Expose<KEY_LIMIT>();
 					uint8_t MasterKey[MASTERSECRETKEY_LENGTH]; uint16_t MasterKeySize = (uint16_t)sizeof(MasterKey);
-					if (!::Cardano::Hash::bech32_decode_extended(Private.Key, MasterKey, &MasterKeySize, sizeof(MasterKey)))
+					if (!::Cardano::Hash::bech32_decode_extended(Private.View.data(), MasterKey, &MasterKeySize, sizeof(MasterKey)))
 						throw std::invalid_argument("could not get a valid master key");
 
 					uint8_t RawDerivedPrivateKey[XSK_LENGTH];
 					if (!::Cardano::getRawKey(::Cardano::InputKey::MasterKey, MasterKey, ::Cardano::Wallet::HD, ::Cardano::OutputKey::Private, AccountIndex, ::Cardano::Role::Extern, (uint32_t)AddressIndex, RawDerivedPrivateKey))
 						throw std::invalid_argument("could not get a valid private key");
 
-					auto Derived = NewSigningWallet(Asset, std::string_view((char*)RawDerivedPrivateKey, sizeof(RawDerivedPrivateKey)));
+					auto Derived = NewSigningWallet(Asset, PrivateKey(std::string_view((char*)RawDerivedPrivateKey, sizeof(RawDerivedPrivateKey))));
 					if (Derived)
 						Derived->AddressIndex = AddressIndex;
 					return Derived;
@@ -531,25 +530,27 @@ namespace Tangent
 					return ExpectsLR<DerivedSigningWallet>(LayerException("private key invalid"));
 				}
 			}
-			ExpectsLR<DerivedSigningWallet> Cardano::NewSigningWallet(const Algorithm::AssetId& Asset, const std::string_view& SigningKey)
+			ExpectsLR<DerivedSigningWallet> Cardano::NewSigningWallet(const Algorithm::AssetId& Asset, const PrivateKey& SigningKey)
 			{
 				const auto Network = (Protocol::Now().Is(NetworkType::Mainnet) ? ::Cardano::Network::Mainnet : ::Cardano::Network::Testnet);
-				String RawPrivateKey = String(SigningKey);
-				if (RawPrivateKey.size() != 32 && RawPrivateKey.size() != 64 && RawPrivateKey.size() != XSK_LENGTH)
+				uint8_t PrivateKey[XSK_LENGTH]; size_t PrivateKeySize = 0;
+				if (SigningKey.Size() != 32 && SigningKey.Size() != 64 && SigningKey.Size() != XSK_LENGTH)
 				{
-					uint8_t Xsk[XSK_LENGTH]; size_t XskSize = 0;
-					if (!DecodePrivateKey(RawPrivateKey, Xsk, &XskSize))
+					if (!DecodePrivateKey(SigningKey.Expose<KEY_LIMIT>().View, PrivateKey, &PrivateKeySize))
 						return LayerException("invalid private key");
-
-					RawPrivateKey = String((char*)Xsk, XskSize);
+				}
+				else
+				{
+					PrivateKeySize = SigningKey.Size();
+					SigningKey.ExposeToStack((char*)PrivateKey, PrivateKeySize);
 				}
 
 				try
 				{
-					if (RawPrivateKey.size() == XSK_LENGTH)
+					if (PrivateKeySize == XSK_LENGTH)
 					{
 						uint8_t RawDerivedPublicKey[XVK_LENGTH];
-						if (!::Cardano::rawprivatekey_to_rawpublickey((uint8_t*)RawPrivateKey.data(), RawDerivedPublicKey))
+						if (!::Cardano::rawprivatekey_to_rawpublickey(PrivateKey, RawDerivedPublicKey))
 							throw std::invalid_argument("could not get a valid public key");
 
 						auto Derived = NewVerifyingWallet(Asset, std::string_view((char*)RawDerivedPublicKey, sizeof(RawDerivedPublicKey)));
@@ -557,21 +558,21 @@ namespace Tangent
 							return Derived.Error();
 
 						std::string DerivedPrivateKey;
-						::Cardano::Hash::bech32_encode("addr_xsk", (uint8_t*)RawPrivateKey.data(), (uint16_t)RawPrivateKey.size(), DerivedPrivateKey);
-						return ExpectsLR<DerivedSigningWallet>(DerivedSigningWallet(std::move(*Derived), PrivateKey(DerivedPrivateKey)));
+						::Cardano::Hash::bech32_encode("addr_xsk", PrivateKey, (uint16_t)PrivateKeySize, DerivedPrivateKey);
+						return ExpectsLR<DerivedSigningWallet>(DerivedSigningWallet(std::move(*Derived), ::PrivateKey(DerivedPrivateKey)));
 					}
 					else
 					{
 						uint8_t RawDerivedPublicKey[32];
-						ed25519_publickey_ext((uint8_t*)RawPrivateKey.data(), RawDerivedPublicKey);
+						ed25519_publickey_ext(PrivateKey, RawDerivedPublicKey);
 
 						auto Derived = NewVerifyingWallet(Asset, std::string_view((char*)RawDerivedPublicKey, sizeof(RawDerivedPublicKey)));
 						if (!Derived)
 							return Derived.Error();
 
 						std::string DerivedPrivateKey;
-						::Cardano::Hash::bech32_encode("ed25519e_sk", (uint8_t*)RawPrivateKey.data(), (uint16_t)RawPrivateKey.size(), DerivedPrivateKey);
-						return ExpectsLR<DerivedSigningWallet>(DerivedSigningWallet(std::move(*Derived), PrivateKey(DerivedPrivateKey)));
+						::Cardano::Hash::bech32_encode("ed25519e_sk", PrivateKey, (uint16_t)PrivateKeySize, DerivedPrivateKey);
+						return ExpectsLR<DerivedSigningWallet>(DerivedSigningWallet(std::move(*Derived), ::PrivateKey(DerivedPrivateKey)));
 					}
 				}
 				catch (const std::invalid_argument& Error)
@@ -605,7 +606,7 @@ namespace Tangent
 
 						std::string Address;
 						::Cardano::getBech32Address(::Cardano::InputKey::AccountKey_xvk, (uint8_t*)RawPublicKey.data(), Network, ::Cardano::Wallet::HD, ::Cardano::Address::Enterprise_Extern, 0, 0, Address);
-						return ExpectsLR<DerivedVerifyingWallet>(DerivedVerifyingWallet({ { (uint8_t)1, Copy<String>(Address) } }, Optional::None, PrivateKey(DerivedPublicKey)));
+						return ExpectsLR<DerivedVerifyingWallet>(DerivedVerifyingWallet({ { (uint8_t)1, Copy<String>(Address) } }, Optional::None, String(DerivedPublicKey.begin(), DerivedPublicKey.end())));
 					}
 					else
 					{
@@ -617,7 +618,7 @@ namespace Tangent
 
 						std::string Address;
 						::Cardano::getBech32Address(::Cardano::InputKey::AccountKey_xvk, ExtendedPublicKey, Network, ::Cardano::Wallet::HD, ::Cardano::Address::Enterprise_Extern, 0, 0, Address);
-						return ExpectsLR<DerivedVerifyingWallet>(DerivedVerifyingWallet({ { (uint8_t)1, Copy<String>(Address) } }, Optional::None, PrivateKey(DerivedPublicKey)));
+						return ExpectsLR<DerivedVerifyingWallet>(DerivedVerifyingWallet({ { (uint8_t)1, Copy<String>(Address) } }, Optional::None, String(DerivedPublicKey.begin(), DerivedPublicKey.end())));
 					}
 				}
 				catch (const std::invalid_argument& Error)
@@ -648,13 +649,13 @@ namespace Tangent
 			}
 			ExpectsLR<String> Cardano::SignMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const PrivateKey& SigningKey)
 			{
-				auto SigningWallet = NewSigningWallet(Asset, SigningKey.ExposeToHeap());
+				auto SigningWallet = NewSigningWallet(Asset, SigningKey);
 				if (!SigningWallet)
 					return SigningWallet.Error();
 
 				uint8_t RawPrivateKey[XSK_LENGTH];
-				auto Private = SigningWallet->SigningKey.Expose<2048>();
-				if (!DecodePrivateKey(Private.Key, RawPrivateKey, nullptr))
+				auto Private = SigningWallet->SigningKey.Expose<KEY_LIMIT>();
+				if (!DecodePrivateKey(Private.View.data(), RawPrivateKey, nullptr))
 					return ExpectsLR<String>(LayerException("input private key invalid"));
 
 				uint8_t Hash[32];
@@ -664,25 +665,25 @@ namespace Tangent
 				if (!::Cardano::signature(RawPrivateKey, Hash, sizeof(Hash), Signature))
 					return ExpectsLR<String>(LayerException("input private key invalid"));
 
-				return String((char*)Signature, sizeof(Signature));
+				return Codec::Base64URLEncode(std::string_view((char*)Signature, sizeof(Signature)));
 			}
 			ExpectsLR<void> Cardano::VerifyMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const std::string_view& VerifyingKey, const std::string_view& Signature)
 			{
-				if (Signature.size() < 64)
-					return LayerException("signature invalid");
+				String SignatureData = Signature.size() == 64 ? String(Signature) : Codec::Base64URLDecode(Signature);
+				if (SignatureData.size() != 64)
+					return LayerException("signature not valid");
 
 				auto VerifyingWallet = NewVerifyingWallet(Asset, VerifyingKey);
 				if (!VerifyingWallet)
 					return VerifyingWallet.Error();
 
 				uint8_t RawPublicKey[XVK_LENGTH];
-				auto Public = VerifyingWallet->VerifyingKey.Expose<2048>();
-				if (!DecodePublicKey(Public.Key, RawPublicKey, nullptr))
+				if (!DecodePublicKey(VerifyingWallet->VerifyingKey, RawPublicKey, nullptr))
 					return LayerException("input public key invalid");
 
 				uint8_t Hash[32];
 				crypto_generichash_blake2b(Hash, sizeof(Hash), (uint8_t*)Message.data(), Message.size(), nullptr, 0);
-				if (!::Cardano::verify(RawPublicKey, Hash, sizeof(Hash), (uint8_t*)Signature.data()))
+				if (!::Cardano::verify(RawPublicKey, Hash, sizeof(Hash), (uint8_t*)SignatureData.data()))
 					return LayerException("signature verification failed with used public key");
 
 				return Expectation::Met;

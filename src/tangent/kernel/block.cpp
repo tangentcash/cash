@@ -1489,10 +1489,6 @@ namespace Tangent
 			Delta.Outgoing->CopyAny(Next);
 			return Expectation::Met;
 		}
-		ExpectsLR<void> TransactionContext::EmitWitness(uint64_t BlockNumber)
-		{
-			return EmitWitness(Transaction ? Transaction->Asset : uint256_t(0), BlockNumber);
-		}
 		ExpectsLR<void> TransactionContext::EmitWitness(const Algorithm::AssetId& Asset, uint64_t BlockNumber)
 		{
 			if (!Asset || !BlockNumber)
@@ -1549,11 +1545,40 @@ namespace Tangent
 
 			return Expectation::Met;
 		}
-		ExpectsLR<void> TransactionContext::VerifyAccountWork(bool DepositoryRequirement) const
+		ExpectsLR<void> TransactionContext::VerifyGasTransferBalance() const
 		{
-			return VerifyAccountWork(Receipt.From, DepositoryRequirement);
+			if (!Transaction)
+				return LayerException("invalid transaction");
+
+			if (!Transaction->GasPrice.IsPositive())
+				return Expectation::Met;
+
+			auto Asset = Transaction->GetGasAsset();
+			auto CurrentBalance = GetAccountBalance(Asset, Receipt.From);
+			Decimal MaxPaidValue = Transaction->GasPrice * Transaction->GasLimit.ToDecimal();
+			Decimal MaxPayableValue = CurrentBalance ? CurrentBalance->GetBalance() : Decimal::Zero();
+			if (MaxPayableValue < MaxPaidValue)
+				return LayerException(Algorithm::Asset::HandleOf(Asset) + " balance is insufficient (balance: " + MaxPayableValue.ToString() + ", value: " + MaxPaidValue.ToString() + ")");
+
+			return Expectation::Met;
 		}
-		ExpectsLR<void> TransactionContext::VerifyAccountWork(const Algorithm::Pubkeyhash Owner, bool DepositoryRequirement) const
+		ExpectsLR<void> TransactionContext::VerifyTransferBalance(const Algorithm::AssetId& Asset, const Decimal& Value) const
+		{
+			if (!Transaction)
+				return LayerException("invalid transaction");
+
+			Decimal MaxPaidValue = Value;
+			if (!MaxPaidValue.IsPositive())
+				return Expectation::Met;
+
+			auto CurrentBalance = GetAccountBalance(Asset, Receipt.From);
+			Decimal MaxPayableValue = CurrentBalance ? CurrentBalance->GetBalance() : Decimal::Zero();
+			if (MaxPayableValue < MaxPaidValue)
+				return LayerException(Algorithm::Asset::HandleOf(Asset) + " balance is insufficient (balance: " + MaxPayableValue.ToString() + ", value: " + MaxPaidValue.ToString() + ")");
+
+			return Expectation::Met;
+		}
+		ExpectsLR<void> TransactionContext::VerifyAccountWork(const Algorithm::Pubkeyhash Owner) const
 		{
 			if (!Environment)
 				return LayerException("invalid evaluation context");
@@ -1565,54 +1590,26 @@ namespace Tangent
 				return LayerException("account work is insufficient (work: " + CurrentGasWork.ToString() + ", value: " + CurrentGasRequirement.ToString() + ")");
 			else if (CurrentWork && CurrentWork->IsMatching(States::AccountFlags::Outlaw))
 				return LayerException("account is outlaw");
-			else if (!DepositoryRequirement)
-				return Expectation::Met;
 
-			auto CurrentDepository = GetAccountDepository(Owner);
+			return Expectation::Met;
+		}
+		ExpectsLR<void> TransactionContext::VerifyAccountDepositoryWork(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner) const
+		{
+			if (!Environment)
+				return LayerException("invalid evaluation context");
+
+			auto CurrentWork = GetAccountWork(Owner);
+			uint256_t CurrentGasWork = CurrentWork ? CurrentWork->GetGasUse() : uint256_t(0);
+			uint256_t CurrentGasRequirement = States::AccountWork::GetGasWorkRequired(Block, CurrentGasWork);
+			if (CurrentGasRequirement > 0)
+				return LayerException("account work is insufficient (work: " + CurrentGasWork.ToString() + ", value: " + CurrentGasRequirement.ToString() + ")");
+			else if (CurrentWork && CurrentWork->IsMatching(States::AccountFlags::Outlaw))
+				return LayerException("account is outlaw");
+
+			auto CurrentDepository = GetAccountDepository(Asset, Owner);
 			auto CurrentCoverage = CurrentDepository ? CurrentDepository->GetCoverage(CurrentWork ? CurrentWork->Flags : 0) : Decimal::Zero();
 			if (CurrentCoverage.IsNegative())
 				return LayerException("account depository contribution is too low (coverage: " + CurrentCoverage.ToString() + ")");
-
-			return Expectation::Met;
-		}
-		ExpectsLR<void> TransactionContext::VerifyGasTransferBalance() const
-		{
-			if (!Transaction)
-				return LayerException("invalid transaction");
-
-			if (!Transaction->GasPrice.IsPositive())
-				return Expectation::Met;
-
-			auto CurrentBalance = GetAccountBalance(Transaction->Asset, Receipt.From);
-			Decimal MaxPaidValue = Transaction->GasPrice * Transaction->GasLimit.ToDecimal();
-			Decimal MaxPayableValue = CurrentBalance ? CurrentBalance->GetBalance() : Decimal::Zero();
-			if (MaxPayableValue < MaxPaidValue)
-				return LayerException(Algorithm::Asset::HandleOf(Transaction->Asset) + " balance is insufficient (balance: " + MaxPayableValue.ToString() + ", value: " + MaxPaidValue.ToString() + ")");
-
-			return Expectation::Met;
-		}
-		ExpectsLR<void> TransactionContext::VerifyTransferBalance(const Decimal& Value) const
-		{
-			if (!Transaction)
-				return LayerException("invalid transaction");
-
-			return VerifyTransferBalance(Transaction->Asset, Value);
-		}
-		ExpectsLR<void> TransactionContext::VerifyTransferBalance(const Algorithm::AssetId& Asset, const Decimal& Value) const
-		{
-			if (!Transaction)
-				return LayerException("invalid transaction");
-
-			Decimal MaxPaidValue = Value;
-			if (Transaction->GasPrice.IsPositive())
-				MaxPaidValue += Transaction->GasPrice * Transaction->GasLimit.ToDecimal();
-			else if (!MaxPaidValue.IsPositive())
-				return Expectation::Met;
-
-			auto CurrentBalance = GetAccountBalance(Asset, Receipt.From);
-			Decimal MaxPayableValue = CurrentBalance ? CurrentBalance->GetBalance() : Decimal::Zero();
-			if (MaxPayableValue < MaxPaidValue)
-				return LayerException(Algorithm::Asset::HandleOf(Asset) + " balance is insufficient (balance: " + MaxPayableValue.ToString() + ", value: " + MaxPaidValue.ToString() + ")");
 
 			return Expectation::Met;
 		}
@@ -1737,10 +1734,6 @@ namespace Tangent
 
 			return Committee;
 		}
-		ExpectsLR<States::AccountSequence> TransactionContext::ApplyAccountSequence()
-		{
-			return ApplyAccountSequence(Receipt.From, (Transaction ? Transaction->Sequence : 0) + 1);
-		}
 		ExpectsLR<States::AccountSequence> TransactionContext::ApplyAccountSequence(const Algorithm::Pubkeyhash Owner, uint64_t Sequence)
 		{
 			States::AccountSequence NewState = States::AccountSequence(Owner, Block);
@@ -1779,10 +1772,6 @@ namespace Tangent
 
 			return NewState;
 		}
-		ExpectsLR<States::AccountProgram> TransactionContext::ApplyAccountProgram(const std::string_view& ProgramHashcode)
-		{
-			return ApplyAccountProgram(Receipt.From, ProgramHashcode);
-		}
 		ExpectsLR<States::AccountProgram> TransactionContext::ApplyAccountProgram(const Algorithm::Pubkeyhash Owner, const std::string_view& ProgramHashcode)
 		{
 			States::AccountProgram NewState = States::AccountProgram(Owner, Block);
@@ -1793,10 +1782,6 @@ namespace Tangent
 				return Result.Error();
 
 			return NewState;
-		}
-		ExpectsLR<States::AccountStorage> TransactionContext::ApplyAccountStorage(const std::string_view& Location, const std::string_view& Storage)
-		{
-			return ApplyAccountStorage(Receipt.From, Location, Storage);
 		}
 		ExpectsLR<States::AccountStorage> TransactionContext::ApplyAccountStorage(const Algorithm::Pubkeyhash Owner, const std::string_view& Location, const std::string_view& Storage)
 		{
@@ -1809,10 +1794,6 @@ namespace Tangent
 				return Result.Error();
 
 			return NewState;
-		}
-		ExpectsLR<States::AccountReward> TransactionContext::ApplyAccountReward(const Algorithm::Pubkeyhash Owner, const Decimal& IncomingAbsoluteFee, const Decimal& IncomingRelativeFee, const Decimal& OutgoingAbsoluteFee, const Decimal& OutgoingRelativeFee)
-		{
-			return ApplyAccountReward(Transaction ? Transaction->Asset : uint256_t(0), Owner, IncomingAbsoluteFee, IncomingRelativeFee, OutgoingAbsoluteFee, OutgoingRelativeFee);
 		}
 		ExpectsLR<States::AccountReward> TransactionContext::ApplyAccountReward(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner, const Decimal& IncomingAbsoluteFee, const Decimal& IncomingRelativeFee, const Decimal& OutgoingAbsoluteFee, const Decimal& OutgoingRelativeFee)
 		{
@@ -1829,10 +1810,6 @@ namespace Tangent
 
 			return NewState;
 		}
-		ExpectsLR<States::AccountDerivation> TransactionContext::ApplyAccountDerivation(const Algorithm::Pubkeyhash Owner, uint64_t MaxAddressIndex)
-		{
-			return ApplyAccountDerivation(Transaction ? Transaction->Asset : uint256_t(0), Owner, MaxAddressIndex);
-		}
 		ExpectsLR<States::AccountDerivation> TransactionContext::ApplyAccountDerivation(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner, uint64_t MaxAddressIndex)
 		{
 			States::AccountDerivation NewState = States::AccountDerivation(Owner, Block);
@@ -1844,10 +1821,6 @@ namespace Tangent
 				return Status.Error();
 
 			return NewState;
-		}
-		ExpectsLR<States::AccountDepository> TransactionContext::ApplyAccountDepositoryCustody(const Algorithm::Pubkeyhash Owner, const Decimal& Custody)
-		{
-			return ApplyAccountDepositoryCustody(Transaction ? Transaction->Asset : uint256_t(0), Owner, Custody);
 		}
 		ExpectsLR<States::AccountDepository> TransactionContext::ApplyAccountDepositoryCustody(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner, const Decimal& Custody)
 		{
@@ -1873,10 +1846,6 @@ namespace Tangent
 				return Status.Error();
 
 			return NewState;
-		}
-		ExpectsLR<States::AccountDepository> TransactionContext::ApplyAccountDepositoryChange(const Algorithm::Pubkeyhash Owner, const Decimal& Custody, AddressValueMap&& Contributions, AccountValueMap&& Reservations)
-		{
-			return ApplyAccountDepositoryChange(Transaction ? Transaction->Asset : uint256_t(0), Owner, Custody, std::move(Contributions), std::move(Reservations));
 		}
 		ExpectsLR<States::AccountDepository> TransactionContext::ApplyAccountDepositoryChange(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner, const Decimal& Custody, AddressValueMap&& Contributions, AccountValueMap&& Reservations)
 		{
@@ -1912,7 +1881,7 @@ namespace Tangent
 			{
 				auto Reservation = NewState.Reservations.begin();
 				auto Reserve = std::min(Coverage, Reservation->second);
-				auto Transfer = ApplyTransfer((uint8_t*)Reservation->first.data(), Decimal::Zero(), -Reserve);
+				auto Transfer = ApplyTransfer(Asset, (uint8_t*)Reservation->first.data(), Decimal::Zero(), -Reserve);
 				if (!Transfer)
 					return Transfer.Error();
 
@@ -1933,10 +1902,6 @@ namespace Tangent
 				return Status.Error();
 
 			return NewState;
-		}
-		ExpectsLR<States::AccountDepository> TransactionContext::ApplyAccountDepositoryTransaction(const Algorithm::Pubkeyhash Owner, const uint256_t& TransactionHash, int8_t Direction)
-		{
-			return ApplyAccountDepositoryTransaction(Transaction ? Transaction->Asset : uint256_t(0), Owner, TransactionHash, Direction);
 		}
 		ExpectsLR<States::AccountDepository> TransactionContext::ApplyAccountDepositoryTransaction(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner, const uint256_t& TransactionHash, int8_t Direction)
 		{
@@ -1989,10 +1954,6 @@ namespace Tangent
 
 			return NewState;
 		}
-		ExpectsLR<States::WitnessEvent> TransactionContext::ApplyWitnessEvent(const uint256_t& ParentTransactionHash)
-		{
-			return ApplyWitnessEvent(ParentTransactionHash, Receipt.TransactionHash);
-		}
 		ExpectsLR<States::WitnessEvent> TransactionContext::ApplyWitnessEvent(const uint256_t& ParentTransactionHash, const uint256_t& ChildTransactionHash)
 		{
 			States::WitnessEvent NewState = States::WitnessEvent(Block);
@@ -2004,10 +1965,6 @@ namespace Tangent
 				return Status.Error();
 
 			return NewState;
-		}
-		ExpectsLR<States::WitnessAddress> TransactionContext::ApplyWitnessAddress(const Algorithm::Pubkeyhash Owner, const Algorithm::Pubkeyhash Proposer, const AddressMap& Addresses, uint64_t AddressIndex, States::AddressType Purpose)
-		{
-			return ApplyWitnessAddress(Transaction ? Transaction->Asset : uint256_t(0), Owner, Proposer, Addresses, AddressIndex, Purpose);
 		}
 		ExpectsLR<States::WitnessAddress> TransactionContext::ApplyWitnessAddress(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner, const Algorithm::Pubkeyhash Proposer, const AddressMap& Addresses, uint64_t AddressIndex, States::AddressType Purpose)
 		{
@@ -2042,7 +1999,7 @@ namespace Tangent
 				if (!Status)
 					return Status.Error();
 
-				Format::Variables Event = { Format::Variable(Asset), Format::Variable(AddressIndex) };
+				Format::Variables Event = { Format::Variable(Asset), Format::Variable((uint8_t)Purpose), Format::Variable(AddressIndex) };
 				for (auto& Address : NewState.Addresses)
 					Event.push_back(Format::Variable(Address.second));
 
@@ -2052,10 +2009,6 @@ namespace Tangent
 
 			}
 			return NewState;
-		}
-		ExpectsLR<States::WitnessTransaction> TransactionContext::ApplyWitnessTransaction(const std::string_view& TransactionId)
-		{
-			return ApplyWitnessTransaction(Transaction ? Transaction->Asset : uint256_t(0), TransactionId);
 		}
 		ExpectsLR<States::WitnessTransaction> TransactionContext::ApplyWitnessTransaction(const Algorithm::AssetId& Asset, const std::string_view& TransactionId)
 		{
@@ -2073,10 +2026,6 @@ namespace Tangent
 
 			return NewState;
 		}
-		ExpectsLR<States::AccountBalance> TransactionContext::ApplyTransfer(const Algorithm::Pubkeyhash Owner, const Decimal& Supply, const Decimal& Reserve)
-		{
-			return ApplyTransfer(Transaction ? Transaction->Asset : uint256_t(0), Owner, Supply, Reserve);
-		}
 		ExpectsLR<States::AccountBalance> TransactionContext::ApplyTransfer(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner, const Decimal& Supply, const Decimal& Reserve)
 		{
 			States::AccountBalance NewState = States::AccountBalance(Owner, Block);
@@ -2093,14 +2042,6 @@ namespace Tangent
 				return Status.Error();
 
 			return NewState;
-		}
-		ExpectsLR<States::AccountBalance> TransactionContext::ApplyPayment(const Algorithm::Pubkeyhash To, const Decimal& Value)
-		{
-			return ApplyPayment(Transaction ? Transaction->Asset : uint256_t(0), To, Value);
-		}
-		ExpectsLR<States::AccountBalance> TransactionContext::ApplyPayment(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash To, const Decimal& Value)
-		{
-			return ApplyPayment(Transaction ? Transaction->Asset : uint256_t(0), Receipt.From, To, Value);
 		}
 		ExpectsLR<States::AccountBalance> TransactionContext::ApplyPayment(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash From, const Algorithm::Pubkeyhash To, const Decimal& Value)
 		{
@@ -2127,11 +2068,6 @@ namespace Tangent
 				return Status.Error();
 
 			return NewState1;
-		}
-		ExpectsLR<States::AccountBalance> TransactionContext::ApplyFunding(const Decimal& Value)
-		{
-			Algorithm::Pubkeyhash Null = { 0 };
-			return ApplyFunding(Transaction ? Transaction->Asset : uint256_t(0), Receipt.From, Environment ? Environment->Proposer.PublicKeyHash : Null, Value);
 		}
 		ExpectsLR<States::AccountBalance> TransactionContext::ApplyFunding(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash From, const Algorithm::Pubkeyhash To, const Decimal& Value)
 		{
@@ -2275,10 +2211,6 @@ namespace Tangent
 
 			return States::AccountStorage(std::move(*(States::AccountStorage*)**State));
 		}
-		ExpectsLR<States::AccountReward> TransactionContext::GetAccountReward(const Algorithm::Pubkeyhash Owner) const
-		{
-			return GetAccountReward(Transaction ? Transaction->Asset : uint256_t(0), Owner);
-		}
 		ExpectsLR<States::AccountReward> TransactionContext::GetAccountReward(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner) const
 		{
 			VI_ASSERT(Owner != nullptr, "owner should be set");
@@ -2292,10 +2224,6 @@ namespace Tangent
 				return Status.Error();
 
 			return States::AccountReward(std::move(*(States::AccountReward*)**State));
-		}
-		ExpectsLR<States::AccountBalance> TransactionContext::GetAccountBalance(const Algorithm::Pubkeyhash Owner) const
-		{
-			return GetAccountBalance(Transaction ? Transaction->Asset : uint256_t(0), Owner);
 		}
 		ExpectsLR<States::AccountBalance> TransactionContext::GetAccountBalance(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner) const
 		{
@@ -2311,10 +2239,6 @@ namespace Tangent
 
 			return States::AccountBalance(std::move(*(States::AccountBalance*)**State));
 		}
-		ExpectsLR<States::AccountDepository> TransactionContext::GetAccountDepository(const Algorithm::Pubkeyhash Owner) const
-		{
-			return GetAccountDepository(Transaction ? Transaction->Asset : uint256_t(0), Owner);
-		}
 		ExpectsLR<States::AccountDepository> TransactionContext::GetAccountDepository(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner) const
 		{
 			VI_ASSERT(Owner != nullptr, "owner should be set");
@@ -2328,10 +2252,6 @@ namespace Tangent
 				return Status.Error();
 
 			return States::AccountDepository(std::move(*(States::AccountDepository*)**State));
-		}
-		ExpectsLR<States::AccountDerivation> TransactionContext::GetAccountDerivation(const Algorithm::Pubkeyhash Owner) const
-		{
-			return GetAccountDerivation(Transaction ? Transaction->Asset : uint256_t(0), Owner);
 		}
 		ExpectsLR<States::AccountDerivation> TransactionContext::GetAccountDerivation(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner) const
 		{
@@ -2414,10 +2334,6 @@ namespace Tangent
 				Addresses.emplace_back(std::move(*(States::WitnessAddress*)*State));
 			return Addresses;
 		}
-		ExpectsLR<States::WitnessAddress> TransactionContext::GetWitnessAddress(const Algorithm::Pubkeyhash Owner, const std::string_view& Address, uint64_t AddressIndex) const
-		{
-			return GetWitnessAddress(Transaction ? Transaction->Asset : uint256_t(0), Owner, Address, AddressIndex);
-		}
 		ExpectsLR<States::WitnessAddress> TransactionContext::GetWitnessAddress(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner, const std::string_view& Address, uint64_t AddressIndex) const
 		{
 			auto Chain = Storages::Chainstate(__func__);
@@ -2431,10 +2347,6 @@ namespace Tangent
 
 			return States::WitnessAddress(std::move(*(States::WitnessAddress*)**State));
 		}
-		ExpectsLR<States::WitnessAddress> TransactionContext::GetWitnessAddress(const std::string_view& Address, uint64_t AddressIndex, size_t Offset) const
-		{
-			return GetWitnessAddress(Transaction ? Transaction->Asset : uint256_t(0), Address, AddressIndex, Offset);
-		}
 		ExpectsLR<States::WitnessAddress> TransactionContext::GetWitnessAddress(const Algorithm::AssetId& Asset, const std::string_view& Address, uint64_t AddressIndex, size_t Offset) const
 		{
 			auto Chain = Storages::Chainstate(__func__);
@@ -2447,10 +2359,6 @@ namespace Tangent
 				return Status.Error();
 
 			return States::WitnessAddress(std::move(*(States::WitnessAddress*)**State));
-		}
-		ExpectsLR<States::WitnessTransaction> TransactionContext::GetWitnessTransaction(const std::string_view& TransactionId) const
-		{
-			return GetWitnessTransaction(Transaction ? Transaction->Asset : uint256_t(0), TransactionId);
 		}
 		ExpectsLR<States::WitnessTransaction> TransactionContext::GetWitnessTransaction(const Algorithm::AssetId& Asset, const std::string_view& TransactionId) const
 		{
@@ -2552,7 +2460,7 @@ namespace Tangent
 
 			if (!(Flags & (uint8_t)ExecutionFlags::SkipSequencing) && Context.Transaction->GetType() != TransactionLevel::Aggregation)
 			{
-				auto Info = Context.ApplyAccountSequence();
+				auto Info = Context.ApplyAccountSequence(Context.Receipt.From, Context.Transaction->Sequence + 1);
 				if (!Info)
 					return Info.Error();
 			}
@@ -2565,7 +2473,7 @@ namespace Tangent
 			{
 				if (Context.Receipt.RelativeGasPaid > 0 && Context.Transaction->GasPrice.IsPositive())
 				{
-					auto Funding = Context.ApplyFunding(Context.Transaction->GasPrice * Context.Receipt.RelativeGasPaid.ToDecimal());
+					auto Funding = Context.ApplyFunding(Context.Transaction->GetGasAsset(), Context.Receipt.From, Context.Environment->Proposer.PublicKeyHash, Context.Transaction->GasPrice * Context.Receipt.RelativeGasPaid.ToDecimal());
 					if (!Funding)
 						return Funding.Error();
 				}

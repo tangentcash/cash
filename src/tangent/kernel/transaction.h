@@ -25,7 +25,7 @@ namespace Tangent
 			Aggregation
 		};
 
-		struct TAN_OUT Transaction : Messages::Authentic
+		struct Transaction : Messages::Authentic
 		{
 			Algorithm::AssetId Asset = 0;
 			Decimal GasPrice;
@@ -50,6 +50,7 @@ namespace Tangent
 			virtual void SetGas(const Decimal& Price, const uint256_t& Limit);
 			virtual void SetAsset(const std::string_view& Blockchain, const std::string_view& Token = std::string_view(), const std::string_view& ContractAddress = std::string_view());
 			virtual bool IsConsensus() const;
+			virtual Algorithm::AssetId GetGasAsset() const;
 			virtual TransactionLevel GetType() const;
 			virtual UPtr<Schema> AsSchema() const override;
 			virtual uint32_t AsType() const override = 0;
@@ -58,19 +59,19 @@ namespace Tangent
 			virtual uint64_t GetDispatchOffset() const;
 		};
 
-		struct TAN_OUT DelegationTransaction : Transaction
+		struct DelegationTransaction : Transaction
 		{
 			virtual ExpectsLR<void> Execute(TransactionContext* Context) const override;
 			TransactionLevel GetType() const override;
 		};
 
-		struct TAN_OUT ConsensusTransaction : Transaction
+		struct ConsensusTransaction : Transaction
 		{
 			virtual ExpectsLR<void> Execute(TransactionContext* Context) const override;
 			TransactionLevel GetType() const override;
 		};
 
-		struct TAN_OUT AggregationTransaction : Transaction
+		struct AggregationTransaction : Transaction
 		{
 			struct CumulativeBranch
 			{
@@ -118,7 +119,7 @@ namespace Tangent
 			TransactionLevel GetType() const override;
 		};
 
-		struct TAN_OUT Receipt final : Messages::Generic
+		struct Receipt final : Messages::Generic
 		{
 			Vector<std::pair<uint32_t, Format::Variables>> Events;
 			Algorithm::Pubkeyhash From = { 0 };
@@ -160,7 +161,7 @@ namespace Tangent
 			}
 		};
 
-		struct TAN_OUT State : Messages::Generic
+		struct State : Messages::Generic
 		{
 			uint64_t BlockNumber = 0;
 			uint64_t BlockNonce = 0;
@@ -180,7 +181,7 @@ namespace Tangent
 			virtual std::string_view AsTypename() const override = 0;
 		};
 
-		struct TAN_OUT Uniform : State
+		struct Uniform : State
 		{
 			Uniform(uint64_t NewBlockNumber, uint64_t NewBlockNonce);
 			Uniform(const BlockHeader* NewBlockHeader);
@@ -191,7 +192,7 @@ namespace Tangent
 			static String AsInstanceComposite(const std::string_view& Index);
 		};
 		
-		struct TAN_OUT Multiform : State
+		struct Multiform : State
 		{
 			Multiform(uint64_t NewBlockNumber, uint64_t NewBlockNonce);
 			Multiform(const BlockHeader* NewBlockHeader);
@@ -204,7 +205,7 @@ namespace Tangent
 			static String AsInstanceComposite(const std::string_view& Column, const std::string_view& Row);
 		};
 
-		class TAN_OUT GasUtil
+		class GasUtil
 		{
 		public:
 			static uint256_t GetGasWork(const uint128_t& Difficulty, const uint256_t& GasUse, const uint256_t& GasLimit, uint64_t Priority);

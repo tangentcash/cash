@@ -7,7 +7,7 @@ set(VI_POSTGRESQL OFF CACHE BOOL "-")
 set(VI_PUGIXML OFF CACHE BOOL "-")
 include(${VI_DIRECTORY}/deps/toolchain.cmake)
 
-project(tangent)
+project(tangentd)
 set(CMAKE_DISABLE_IN_SOURCE_BUILD ON)
 
 if (NOT DEFINED CMAKE_RUNTIME_OUTPUT_DIRECTORY)
@@ -41,8 +41,8 @@ if (NOT TAN_LIBRARY)
     else()
         list(FILTER SOURCE EXCLUDE REGEX "src/test")
     endif()
-    add_executable(tangent ${SOURCE})
-    set_target_properties(tangent PROPERTIES
+    add_executable(tangentd ${SOURCE})
+    set_target_properties(tangentd PROPERTIES
         OUTPUT_NAME "tangentd"
         CXX_STANDARD ${VI_CXX}
         CXX_STANDARD_REQUIRED ON
@@ -54,8 +54,8 @@ if (NOT TAN_LIBRARY)
     endif()
 else()
     list(FILTER SOURCE EXCLUDE REGEX "src/(main|test)")
-    add_library(tangent SHARED ${SOURCE})
-    set_target_properties(tangent PROPERTIES
+    add_library(tangentd SHARED ${SOURCE})
+    set_target_properties(tangentd PROPERTIES
             CXX_STANDARD ${VI_CXX}
             CXX_STANDARD_REQUIRED ON
             CXX_EXTENSIONS OFF
@@ -63,11 +63,10 @@ else()
             SOVERSION ${PROJECT_VERSION})
 endif()
 
-target_compile_definitions(tangent PRIVATE -DTAN_EXPORT)
-target_precompile_headers(tangent PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${CMAKE_CURRENT_LIST_DIR}/src/tangent/kernel/chain.h>)
+target_precompile_headers(tangentd PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${CMAKE_CURRENT_LIST_DIR}/src/tangent/kernel/chain.h>)
 if (MSVC)
-    target_compile_definitions(tangent PRIVATE -D_CRT_SECURE_NO_WARNINGS)
-    target_compile_options(tangent PRIVATE
+    target_compile_definitions(tangentd PRIVATE -D_CRT_SECURE_NO_WARNINGS)
+    target_compile_options(tangentd PRIVATE
         $<$<COMPILE_LANGUAGE:CXX>:/wd4146>
         $<$<COMPILE_LANGUAGE:CXX>:/wd4244>
         $<$<COMPILE_LANGUAGE:CXX>:/wd4251>
@@ -75,8 +74,5 @@ if (MSVC)
 endif()
 
 add_subdirectory(${VI_DIRECTORY} vitex)
-link_directories(${VI_DIRECTORY})
-target_include_directories(tangent PRIVATE ${VI_DIRECTORY})
-target_link_libraries(tangent PRIVATE vitex)
-target_include_directories(tangent PUBLIC ${CMAKE_CURRENT_LIST_DIR}/../)
+target_link_libraries(tangentd PRIVATE vitex)
 include(deps/externals.cmake)

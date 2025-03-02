@@ -1,11 +1,5 @@
 #ifndef TAN_KERNEL_CHAIN_H
 #define TAN_KERNEL_CHAIN_H
-#ifndef TAN_EXPORT
-#define TAN_OUT __declspec(dllimport)
-#else
-#define TAN_OUT __declspec(dllexport)
-#endif
-#define TAN_CONFIG_PATH "./node.json"
 #include <vitex/compute.h>
 #include <vitex/layer.h>
 #include <vitex/scripting.h>
@@ -54,10 +48,10 @@ namespace Tangent
         String Message;
 
     public:
-        TAN_OUT LayerException();
-        TAN_OUT LayerException(String&& Text);
-        TAN_OUT const char* what() const noexcept override;
-        TAN_OUT String&& message() noexcept;
+        LayerException();
+        LayerException(String&& Text);
+        const char* what() const noexcept override;
+        String&& message() noexcept;
     };
 
     class RemoteException : public std::exception
@@ -67,16 +61,16 @@ namespace Tangent
         int8_t Status;
 
     public:
-        TAN_OUT RemoteException(String&& Text);
-        TAN_OUT const char* what() const noexcept override;
-        TAN_OUT String&& message() noexcept;
-        TAN_OUT bool retry() const noexcept;
-        TAN_OUT bool shutdown() const noexcept;
-        TAN_OUT static RemoteException Retry();
-        TAN_OUT static RemoteException Shutdown();
+        RemoteException(String&& Text);
+        const char* what() const noexcept override;
+        String&& message() noexcept;
+        bool retry() const noexcept;
+        bool shutdown() const noexcept;
+        static RemoteException Retry();
+        static RemoteException Shutdown();
 
     private:
-        TAN_OUT RemoteException(int8_t NewStatus);
+        RemoteException(int8_t NewStatus);
     };
 
     template <typename V>
@@ -91,7 +85,7 @@ namespace Tangent
     template <typename V>
     using ExpectsPromiseRT = ExpectsPromise<V, RemoteException>;
 
-    class TAN_OUT Repository
+    class Repository
     {
         friend class Protocol;
 
@@ -111,7 +105,7 @@ namespace Tangent
         const String Location() const;
     };
 
-    class TAN_OUT Timepoint
+    class Timepoint
     {
     private:
         UnorderedMap<String, int64_t> Offsets;
@@ -124,7 +118,7 @@ namespace Tangent
         uint64_t NowCPU() const;
     };
 
-    class TAN_OUT Vectorstate
+    class Vectorstate
     {
     private:
         PrivateKey Key;
@@ -138,7 +132,7 @@ namespace Tangent
         ExpectsLR<PrivateKey> DecryptKey(const std::string_view& Data) const;
     };
 
-    class TAN_OUT Protocol : public Reference<Protocol>
+    class Protocol : public Reference<Protocol>
     {
     private:
         static Protocol* Instance;
@@ -303,7 +297,7 @@ namespace Tangent
         Timepoint Time;
 
     public:
-        Protocol(const std::string_view& Path = TAN_CONFIG_PATH);
+        Protocol(int Argc = 0, char** Argv = nullptr);
         virtual ~Protocol();
         bool Is(NetworkType Type) const;
         Logger& StateLog();

@@ -6,7 +6,7 @@ namespace Tangent
 {
 	namespace Ledger
 	{
-		struct TAN_OUT Wallet : Messages::Generic
+		struct Wallet : Messages::Generic
 		{
 			Algorithm::Seckey SecretKey = { 0 };
 			Algorithm::Pubkey PublicKey = { 0 };
@@ -45,7 +45,7 @@ namespace Tangent
 			static Wallet FromPublicKeyHash(const Algorithm::Pubkeyhash Key);
 		};
 
-		struct TAN_OUT Validator final : Messages::Generic
+		struct Validator final : Messages::Generic
 		{
 			struct
 			{

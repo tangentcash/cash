@@ -29,7 +29,7 @@ namespace Tangent
 			Invalid = 255
 		};
 
-		struct TAN_OUT Stream
+		struct Stream
 		{
 			String Data;
 			uint256_t Checksum;
@@ -76,7 +76,7 @@ namespace Tangent
 			static Stream Decode(const std::string_view& Data);
 		};
 
-		class TAN_OUT Util
+		class Util
 		{
 		public:
 			static String Encode0xHex(const std::string_view& Data);

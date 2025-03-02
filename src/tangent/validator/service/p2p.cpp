@@ -496,28 +496,22 @@ namespace Tangent
 
 			for (auto& Receipt : Logs.Transactions)
 			{
-				if (!Receipt.IsApproved())
+				if (Receipt.IsApproved())
 				{
-					if (Protocol::Now().User.P2P.Logging)
-						VI_INFO("[p2p] %s observer transaction %s queued", Algorithm::Asset::HandleOf(Receipt.Asset).c_str(), Receipt.TransactionId.c_str());
+					auto Collision = Ledger::TransactionContext().GetWitnessTransaction(Receipt.Asset, Receipt.TransactionId);
+					if (!Collision)
+					{
+						UPtr<Transactions::IncomingClaim> Transaction = Memory::New<Transactions::IncomingClaim>();
+						Transaction->SetWitness(Receipt);
 
-					continue;
-				}
-
-				auto Collision = Ledger::TransactionContext().GetWitnessTransaction(Receipt.TransactionId);
-				if (Collision)
-				{
-					if (Protocol::Now().User.P2P.Logging)
+						if (ProposeTransaction(nullptr, std::move(*Transaction), AccountSequence))
+							++AccountSequence;
+					}
+					else if (Protocol::Now().User.P2P.Logging)
 						VI_INFO("[p2p] %s observer transaction %s approved", Algorithm::Asset::HandleOf(Receipt.Asset).c_str(), Receipt.TransactionId.c_str());
-
-					continue;
 				}
-
-				UPtr<Transactions::IncomingClaim> Transaction = Memory::New<Transactions::IncomingClaim>();
-				Transaction->SetWitness(Receipt);
-
-				if (ProposeTransaction(nullptr, std::move(*Transaction), AccountSequence))
-					++AccountSequence;
+				else if (Protocol::Now().User.P2P.Logging)
+					VI_INFO("[p2p] %s observer transaction %s queued", Algorithm::Asset::HandleOf(Receipt.Asset).c_str(), Receipt.TransactionId.c_str());
 			}
 			return Promise<void>::Null();
 		}
