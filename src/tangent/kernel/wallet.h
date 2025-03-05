@@ -2,88 +2,88 @@
 #define TAN_KERNEL_WALLET_H
 #include "../policy/messages.h"
 
-namespace Tangent
+namespace tangent
 {
-	namespace Ledger
+	namespace ledger
 	{
-		struct Wallet : Messages::Generic
+		struct wallet : messages::standard
 		{
-			Algorithm::Seckey SecretKey = { 0 };
-			Algorithm::Pubkey PublicKey = { 0 };
-			Algorithm::Pubkeyhash PublicKeyHash = { 0 };
+			algorithm::seckey secret_key = { 0 };
+			algorithm::pubkey public_key = { 0 };
+			algorithm::pubkeyhash public_key_hash = { 0 };
 
-			bool SetSecretKey(const Algorithm::Seckey Value);
-			void SetPublicKey(const Algorithm::Pubkey Value);
-			void SetPublicKeyHash(const Algorithm::Pubkeyhash Value);
-			bool VerifySecretKey() const;
-			bool VerifyPublicKey() const;
-			bool VerifyAddress() const;
-			bool Verify(const Messages::Authentic& Message) const;
-			bool Recovers(Messages::Authentic& Message) const;
-			bool Sign(Messages::Authentic& Message) const;
-			bool StorePayload(Format::Stream* Stream) const override;
-			bool LoadPayload(Format::Stream& Stream) override;
-			bool HasSecretKey() const;
-			bool HasPublicKey() const;
-			bool HasPublicKeyHash() const;
-			Option<String> SealMessage(const std::string_view& Plaintext, const Algorithm::Pubkey CipherPublicKey, const std::string_view& Entropy) const;
-			Option<String> OpenMessage(const uint256_t& Nonce, const std::string_view& Ciphertext) const;
-			String GetSecretKey() const;
-			String GetPublicKey() const;
-			String GetAddress() const;
-			ExpectsLR<uint64_t> GetLatestSequence() const;
-			UPtr<Schema> AsSchema() const override;
-			UPtr<Schema> AsPublicSchema() const;
-			uint32_t AsType() const override;
-			std::string_view AsTypename() const override;
-			static uint32_t AsInstanceType();
-			static std::string_view AsInstanceTypename();
-			static Wallet FromMnemonic(const std::string_view& Mnemonic);
-			static Wallet FromSeed(const std::string_view& Seed = std::string_view());
-			static Wallet FromSecretKey(const Algorithm::Seckey Key);
-			static Wallet FromPublicKey(const Algorithm::Pubkey Key);
-			static Wallet FromPublicKeyHash(const Algorithm::Pubkeyhash Key);
+			bool set_secret_key(const algorithm::seckey value);
+			void set_public_key(const algorithm::pubkey value);
+			void set_public_key_hash(const algorithm::pubkeyhash value);
+			bool verify_secret_key() const;
+			bool verify_public_key() const;
+			bool verify_address() const;
+			bool verify(const messages::authentic& message) const;
+			bool recovers(messages::authentic& message) const;
+			bool sign(messages::authentic& message) const;
+			bool store_payload(format::stream* stream) const override;
+			bool load_payload(format::stream& stream) override;
+			bool has_secret_key() const;
+			bool has_public_key() const;
+			bool has_public_key_hash() const;
+			option<string> seal_message(const std::string_view& plaintext, const algorithm::pubkey cipher_public_key, const std::string_view& entropy) const;
+			option<string> open_message(const uint256_t& nonce, const std::string_view& ciphertext) const;
+			string get_secret_key() const;
+			string get_public_key() const;
+			string get_address() const;
+			expects_lr<uint64_t> get_latest_sequence() const;
+			uptr<schema> as_schema() const override;
+			uptr<schema> as_public_schema() const;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
+			static wallet from_mnemonic(const std::string_view& mnemonic);
+			static wallet from_seed(const std::string_view& seed = std::string_view());
+			static wallet from_secret_key(const algorithm::seckey key);
+			static wallet from_public_key(const algorithm::pubkey key);
+			static wallet from_public_key_hash(const algorithm::pubkeyhash key);
 		};
 
-		struct Validator final : Messages::Generic
+		struct validator final : messages::standard
 		{
 			struct
 			{
-				uint64_t Latency = (uint64_t)std::numeric_limits<int64_t>::max();
-				uint64_t Timestamp = 0;
-				uint64_t Calls = 0;
-				uint64_t Errors = 0;
-			} Availability;
+				uint64_t latency = (uint64_t)std::numeric_limits<int64_t>::max();
+				uint64_t timestamp = 0;
+				uint64_t calls = 0;
+				uint64_t errors = 0;
+			} availability;
 
 			struct
 			{
-				uint16_t P2P = 0;
-				uint16_t NDS = 0;
-				uint16_t RPC = 0;
-			} Ports;
+				uint16_t p2p = 0;
+				uint16_t nds = 0;
+				uint16_t rpc = 0;
+			} ports;
 
 			struct
 			{
-				bool Consensus = false;
-				bool Discovery = false;
-				bool Interface = false;
-				bool Synchronization = false;
-				bool Proposer = false;
-				bool Public = false;
-				bool Streaming = false;
-			} Services;
+				bool has_consensus = false;
+				bool has_discovery = false;
+				bool has_interfaces = false;
+				bool has_synchronization = false;
+				bool has_proposer = false;
+				bool has_publicity = false;
+				bool has_streaming = false;
+			} services;
 
-			SocketAddress Address;
+			socket_address address;
 
-			bool StorePayload(Format::Stream* Stream) const override;
-			bool LoadPayload(Format::Stream& Stream) override;
-			bool IsValid() const;
-			uint64_t GetPreference() const;
-			UPtr<Schema> AsSchema() const override;
-			uint32_t AsType() const override;
-			std::string_view AsTypename() const override;
-			static uint32_t AsInstanceType();
-			static std::string_view AsInstanceTypename();
+			bool store_payload(format::stream* stream) const override;
+			bool load_payload(format::stream& stream) override;
+			bool is_valid() const;
+			uint64_t get_preference() const;
+			uptr<schema> as_schema() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
 		};
 	}
 }

@@ -4,310 +4,310 @@
 #include <vitex/layer.h>
 #include <vitex/scripting.h>
 #include <vitex/network/http.h>
-#include <vitex/network/ldb.h>
+#include <vitex/network/sqlite.h>
 #include <vitex/vitex.h>
 #include <set>
-
-using namespace Vitex::Core;
-using namespace Vitex::Compute;
-using namespace Vitex::Layer;
-using namespace Vitex::Network;
 
 namespace rocksdb
 {
     class DB;
 }
 
-namespace Tangent
+namespace tangent
 {
-    template <typename K, typename Comparator = typename std::set<K>::key_compare>
-    using OrderedSet = std::set<K, Comparator, typename AllocationType<typename std::set<K>::value_type>::type>;
+    using namespace vitex::core;
+    using namespace vitex::compute;
+    using namespace vitex::layer;
+    using namespace vitex::network;
 
-    enum 
+    template <typename k, typename comparator = typename std::set<k>::key_compare>
+    using ordered_set = std::set<k, comparator, typename allocation_type<typename std::set<k>::value_type>::type>;
+
+    enum
     {
         ELEMENTS_FEW = 32,
         ELEMENTS_MANY = 512
     };
 
-    enum class NetworkType
+    enum class network_type
     {
-        Regtest,
-        Testnet,
-        Mainnet
+        regtest,
+        testnet,
+        mainnet
     };
 
-    enum class StorageOptimization
+    enum class storage_optimization
     {
-        Safety,
-        Speed
+        safety,
+        speed
     };
 
-    class LayerException : public std::exception
+    class layer_exception : public std::exception
     {
     private:
-        String Message;
+        string error_message;
 
     public:
-        LayerException();
-        LayerException(String&& Text);
+        layer_exception();
+        layer_exception(string&& text);
         const char* what() const noexcept override;
-        String&& message() noexcept;
+        string&& message() noexcept;
     };
 
-    class RemoteException : public std::exception
+    class remote_exception : public std::exception
     {
     private:
-        String Message;
-        int8_t Status;
+        string error_message;
+        int8_t error_status;
 
     public:
-        RemoteException(String&& Text);
+        remote_exception(string&& text);
         const char* what() const noexcept override;
-        String&& message() noexcept;
-        bool retry() const noexcept;
-        bool shutdown() const noexcept;
-        static RemoteException Retry();
-        static RemoteException Shutdown();
+        string&& message() noexcept;
+        bool is_retry() const noexcept;
+        bool is_shutdown() const noexcept;
+        static remote_exception retry();
+        static remote_exception shutdown();
 
     private:
-        RemoteException(int8_t NewStatus);
+        remote_exception(int8_t new_status);
     };
 
-    template <typename V>
-    using ExpectsLR = Expects<V, LayerException>;
+    template <typename v>
+    using expects_lr = expects<v, layer_exception>;
 
-    template <typename V>
-    using ExpectsPromiseLR = ExpectsPromise<V, LayerException>;
+    template <typename v>
+    using expects_promise_lr = expects_promise<v, layer_exception>;
 
-    template <typename V>
-    using ExpectsRT = Expects<V, RemoteException>;
+    template <typename v>
+    using expects_rt = expects<v, remote_exception>;
 
-    template <typename V>
-    using ExpectsPromiseRT = ExpectsPromise<V, RemoteException>;
+    template <typename v>
+    using expects_promise_rt = expects_promise<v, remote_exception>;
 
-    class Repository
+    class repository
     {
-        friend class Protocol;
+        friend class protocol;
 
     private:
-        UnorderedMap<String, SingleQueue<UPtr<LDB::Connection>>> Indices;
-        UnorderedMap<String, rocksdb::DB*> Blobs;
-        std::mutex Mutex;
-        String TargetPath;
+        unordered_map<string, single_queue<uptr<sqlite::connection>>> indices;
+        unordered_map<string, rocksdb::DB*> blobs;
+        std::mutex mutex;
+        string target_path;
 
     public:
-        rocksdb::DB* LoadBlob(const std::string_view& Location);
-        UPtr<LDB::Connection> LoadIndex(const std::string_view& Location, std::function<void(LDB::Connection*)>&& Initializer);
-        void UnloadIndex(UPtr<LDB::Connection>&& Connection);
-        void Reset();
-        void Checkpoint();
-        const String& Resolve(NetworkType Type, const std::string_view& Path);
-        const String Location() const;
+        rocksdb::DB* load_blob(const std::string_view& location);
+        uptr<sqlite::connection> load_index(const std::string_view& location, std::function<void(sqlite::connection*)>&& initializer);
+        void unload_index(uptr<sqlite::connection>&& connection);
+        void reset();
+        void checkpoint();
+        const string& resolve(network_type type, const std::string_view& path);
+        const string location() const;
     };
 
-    class Timepoint
+    class timepoint
     {
     private:
-        UnorderedMap<String, int64_t> Offsets;
-        int64_t MillisecondsOffset = 0;
-        std::mutex Mutex;
+        unordered_map<string, int64_t> offsets;
+        int64_t milliseconds_offset = 0;
+        std::mutex mutex;
 
     public:
-        String Adjust(const SocketAddress& Source, int64_t MillisecondsDelta);
-        uint64_t Now() const;
-        uint64_t NowCPU() const;
+        string adjust(const socket_address& source, int64_t milliseconds_delta);
+        uint64_t now() const;
+        uint64_t now_cpu() const;
     };
 
-    class Vectorstate
+    class vectorstate
     {
     private:
-        PrivateKey Key;
+        secret_box key;
 
     public:
-        String New();
-        void Use(NetworkType Type, const std::string_view& Data);
-        ExpectsLR<String> EncryptBlob(const std::string_view& Data) const;
-        ExpectsLR<String> DecryptBlob(const std::string_view& Data) const;
-        ExpectsLR<String> EncryptKey(const PrivateKey& Data) const;
-        ExpectsLR<PrivateKey> DecryptKey(const std::string_view& Data) const;
+        string init();
+        void use(network_type type, const std::string_view& data);
+        expects_lr<string> encrypt_blob(const std::string_view& data) const;
+        expects_lr<string> decrypt_blob(const std::string_view& data) const;
+        expects_lr<string> encrypt_key(const secret_box& data) const;
+        expects_lr<secret_box> decrypt_key(const std::string_view& data) const;
     };
 
-    class Protocol : public Reference<Protocol>
+    class protocol : public reference<protocol>
     {
     private:
-        static Protocol* Instance;
+        static protocol* instance;
 
     public:
-        struct Logger
+        struct logger
         {
-            std::recursive_mutex Mutex;
-            UPtr<Stream> Resource;
-            int64_t RepackTime = 0;
+            std::recursive_mutex mutex;
+            uptr<stream> resource;
+            int64_t repack_time = 0;
 
-            void Output(const std::string_view& Message);
+            void output(const std::string_view& message);
         };
 
     public:
-        struct UserDynamicConfig
+        struct user_dynamic_config
         {
             struct
             {
-                String Address = "0.0.0.0";
-                uint16_t Port = 18418;
-                uint64_t TimeOffset = 300000;
-                uint64_t CursorSize = 2048;
-                uint32_t MaxInboundConnections = 32;
-                uint32_t MaxOutboundConnections = 8;
-                uint32_t InventorySize = 8192;
-                uint32_t InventoryTimeout = 300;
-                uint32_t InventoryCleanupTimeout = 10000;
-                uint32_t RediscoveryTimeout = 120000;
-                bool Proposer = false;
-                bool Server = true;
-                bool Logging = true;
-            } P2P;
+                string address = "0.0.0.0";
+                uint16_t port = 18418;
+                uint64_t time_offset = 300000;
+                uint64_t cursor_size = 2048;
+                uint32_t max_inbound_connections = 32;
+                uint32_t max_outbound_connections = 8;
+                uint32_t inventory_size = 8192;
+                uint32_t inventory_timeout = 300;
+                uint32_t inventory_cleanup_timeout = 10000;
+                uint32_t rediscovery_timeout = 120000;
+                bool proposer = false;
+                bool server = true;
+                bool logging = true;
+            } p2p;
             struct
             {
-                String Address = "0.0.0.0";
-                uint16_t Port = 18420;
-                uint64_t CursorSize = 512;
-                bool Server = false;
-                bool Logging = true;
-            } NDS;
+                string address = "0.0.0.0";
+                uint16_t port = 18420;
+                uint64_t cursor_size = 512;
+                bool server = false;
+                bool logging = true;
+            } nds;
             struct
             {
-                UPtr<Schema> Options;
-                uint64_t BlockReplayMultiplier = 4;
-                uint64_t RelayingTimeout = 30000;
-                uint64_t RelayingRetryTimeout = 300;
-                uint32_t CacheShortSize = 16384;
-                uint32_t CacheExtendedSize = 65536;
-                uint64_t FeeEstimationSeconds = 600;
-                uint64_t WithdrawalTime = 300000;
-                bool Server = false;
-                bool Logging = true;
-            } NSS;
+                uptr<schema> options;
+                uint64_t block_replay_multiplier = 4;
+                uint64_t relaying_timeout = 30000;
+                uint64_t relaying_retry_timeout = 300;
+                uint32_t cache_short_size = 16384;
+                uint32_t cache_extended_size = 65536;
+                uint64_t fee_estimation_seconds = 600;
+                uint64_t withdrawal_time = 300000;
+                bool server = false;
+                bool logging = true;
+            } nss;
             struct
             {
-                String Address = "0.0.0.0";
-                uint16_t Port = 18419;
-                String AdminUsername;
-                String AdminPassword;
-                String UserUsername;
-                String UserPassword;
-                uint64_t CursorSize = 512;
-                uint64_t PageSize = 64;
-                bool Messaging = true;
-                bool WebSockets = false;
-                bool Server = false;
-                bool Logging = true;
-            } RPC;
+                string address = "0.0.0.0";
+                uint16_t port = 18419;
+                string admin_username;
+                string admin_password;
+                string user_username;
+                string user_password;
+                uint64_t cursor_size = 512;
+                uint64_t page_size = 64;
+                bool messaging = true;
+                bool web_sockets = false;
+                bool server = false;
+                bool logging = true;
+            } rpc;
             struct
             {
-                uint64_t Timeout = 10000;
-                uint64_t TlsTrustedPeers = 100;
-            } TCP;
+                uint64_t timeout = 10000;
+                uint64_t tls_trusted_peers = 100;
+            } tcp;
             struct
             {
-                String Directory = "./";
-                StorageOptimization Optimization = StorageOptimization::Speed;
-                uint64_t TransactionDispatchRepeatInterval = 600;
-                uint64_t TransactionTimeout = 86400;
-                uint64_t CheckpointSize = 64;
-                uint64_t LocationCacheSize = 500000;
-                uint64_t ScriptCacheSize = 8192;
-                uint64_t BlobCacheSize = 134217728;
-                uint64_t IndexPageSize = 65536;
-                int64_t IndexCacheSize = -2000;
-                double FlushThreadsRatio = 0.25;
-                double CompactionThreadsRatio = 0.25;
-                double ComputationThreadsRatio = 0.00;
-                bool PruneAggressively = false;
-                bool TransactionToAccountIndex = true;
-                bool TransactionToRollupIndex = true;
-                bool Logging = true;
-            } Storage;
+                string directory = "./";
+                storage_optimization optimization = storage_optimization::speed;
+                uint64_t transaction_dispatch_repeat_interval = 600;
+                uint64_t transaction_timeout = 86400;
+                uint64_t checkpoint_size = 64;
+                uint64_t location_cache_size = 500000;
+                uint64_t script_cache_size = 8192;
+                uint64_t blob_cache_size = 134217728;
+                uint64_t index_page_size = 65536;
+                int64_t index_cache_size = -2000;
+                double flush_threads_ratio = 0.25;
+                double compaction_threads_ratio = 0.25;
+                double computation_threads_ratio = 0.00;
+                bool prune_aggressively = false;
+                bool transaction_to_account_index = true;
+                bool transaction_to_rollup_index = true;
+                bool logging = true;
+            } storage;
             struct
             {
-                String State;
-                String Message;
-                String Data;
-                uint64_t ArchiveSize = 8 * 1024 * 1024;
-                uint64_t ArchiveRepackInterval = 1800;
-            } Logs;
-            UnorderedSet<String> Nodes;
-            UnorderedSet<String> Seeds;
-            NetworkType Network = NetworkType::Mainnet;
-            String Vectorstate = "./vectorstate.bsk";
-        } User;
-        struct ProtocolMessagingConfig
+                string state;
+                string message;
+                string data;
+                uint64_t archive_size = 8 * 1024 * 1024;
+                uint64_t archive_repack_interval = 1800;
+            } logs;
+            unordered_set<string> nodes;
+            unordered_set<string> seeds;
+            network_type network = network_type::mainnet;
+            string vectorstate = "./vectorstate.bsk";
+        } user;
+        struct protocol_messaging_config
         {
-            uint32_t ProtocolVersion = 0x10;
-            uint32_t PacketMagic = 0x73d308e9;
-            uint32_t MaxMessageSize = 0xffffff;
-            uint32_t MaxBodySize = 1024 * 1024 * 32;
-            uint32_t Precision = 18;
-        } Message;
-        struct ProtocolAccountConfig
+            uint32_t protocol_version = 0x10;
+            uint32_t packet_magic = 0x73d308e9;
+            uint32_t max_message_size = 0xffffff;
+            uint32_t max_body_size = 1024 * 1024 * 32;
+            uint32_t precision = 18;
+        } message;
+        struct protocol_account_config
         {
-            String SecretKeyPrefix = "sec";
-            String PublicKeyPrefix = "pub";
-            String AddressPrefix = "tc";
-            uint64_t RootAddressIndex = 0;
-            uint64_t MessageMagic = 0x6a513fb6b3b71f02;
-            uint8_t SecretKeyVersion = 0xF;
-            uint8_t PublicKeyVersion = 0xE;
-            uint8_t AddressVersion = 0x4;
-        } Account;
-        struct ProtocolPolicyConfig
+            string secret_key_prefix = "sec";
+            string public_key_prefix = "pub";
+            string address_prefix = "tc";
+            uint64_t root_address_index = 0;
+            uint64_t message_magic = 0x6a513fb6b3b71f02;
+            uint8_t secret_key_version = 0xF;
+            uint8_t public_key_version = 0xE;
+            uint8_t address_version = 0x4;
+        } account;
+        struct protocol_policy_config
         {
-            uint64_t ConsensusCommitteeSize = 6;
-            uint64_t ConsensusProofTime = 8000;
-            uint64_t ConsensusAdjustmentTime = 3600000;
-            uint64_t ConsensusPenaltyPointTime = 600000;
-            uint64_t ConsensusRecoveryTime = 60000;
-            uint64_t AggregatorsCommitteeSize = 32;
-            uint64_t TransactionThroughput = 210;
-            uint64_t ParallelDelegationLimit = 1;
-            uint64_t ParallelConsensusLimit = 128;
-            uint64_t ParallelAggregationLimit = 256;
-            double ConsensusRecoveryBump = 36.0;
-            double AggregationThreshold = 0.66;
-            double GenesisSlotTimeBump = 0.2;
-            double MaxConsensusDifficultyIncrease = 0.25;
-            double MaxConsensusDifficultyDecrease = 0.75;
-            double AccountGasWorkRequired = 1000.0;
-            double AccountContributionRequired = 1.0;
-            double AccountRewardMaxIncrease = 0.05;
-            double WeightMultiplier = 10000.0;
-        } Policy;
+            uint64_t consensus_committee_size = 6;
+            uint64_t consensus_proof_time = 8000;
+            uint64_t consensus_adjustment_time = 3600000;
+            uint64_t consensus_penalty_point_time = 600000;
+            uint64_t consensus_recovery_time = 60000;
+            uint64_t aggregators_committee_size = 32;
+            uint64_t transaction_throughput = 210;
+            uint64_t parallel_delegation_limit = 1;
+            uint64_t parallel_consensus_limit = 128;
+            uint64_t parallel_aggregation_limit = 256;
+            double consensus_recovery_bump = 36.0;
+            double aggregation_threshold = 0.66;
+            double genesis_slot_time_bump = 0.2;
+            double max_consensus_difficulty_increase = 0.25;
+            double max_consensus_difficulty_decrease = 0.75;
+            double account_gas_work_required = 1000.0;
+            double account_contribution_required = 1.0;
+            double account_reward_max_increase = 0.05;
+            double weight_multiplier = 10000.0;
+        } policy;
 
     private:
         struct
         {
-            Logger State;
-            Logger Message;
-            Logger Data;
-        } Logs;
-        String Path;
+            logger state;
+            logger message;
+            logger data;
+        } logs;
+        string path;
 
     public:
-        Repository Database;
-        Vectorstate Key;
-        Timepoint Time;
+        repository database;
+        vectorstate key;
+        timepoint time;
 
     public:
-        Protocol(int Argc = 0, char** Argv = nullptr);
-        virtual ~Protocol();
-        bool Is(NetworkType Type) const;
-        Logger& StateLog();
-        Logger& MessageLog();
-        Logger& DataLog();
+        protocol(int argc = 0, char** argv = nullptr);
+        virtual ~protocol();
+        bool is(network_type type) const;
+        logger& state_log();
+        logger& message_log();
+        logger& data_log();
 
     public:
-        static bool Bound();
-        static Protocol& Change();
-        static const Protocol& Now();
+        static bool bound();
+        static protocol& change();
+        static const protocol& now();
     };
 }
 #endif

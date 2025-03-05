@@ -15,1220 +15,1220 @@ extern "C"
 #include "../../internal/segwit_addr.h"
 }
 
-namespace Tangent
+namespace tangent
 {
-	namespace Mediator
+	namespace mediator
 	{
-		namespace Backends
+		namespace backends
 		{
-			static bool CashAddressFromLegacyHash(const btc_chainparams_* Chain, const uint8_t* AddressHash, size_t AddressHashSize, char* OutAddress, size_t OutAddressSize)
+			static bool cash_address_from_legacy_hash(const btc_chainparams_* chain, const uint8_t* address_hash, size_t address_hash_size, char* out_address, size_t out_address_size)
 			{
-				uint8_t Type = (base58_prefix_check(Chain->b58prefix_pubkey_address, AddressHash) ? 0 : 1);
-				if (Type == 1 && !base58_prefix_check(Chain->b58prefix_script_address, AddressHash))
+				uint8_t type = (base58_prefix_check(chain->b58prefix_pubkey_address, address_hash) ? 0 : 1);
+				if (type == 1 && !base58_prefix_check(chain->b58prefix_script_address, address_hash))
 					return false;
 
-				std::vector<uint8_t> RawHash;
-				RawHash.resize(sizeof(uint160));
+				std::vector<uint8_t> raw_hash;
+				raw_hash.resize(sizeof(uint160));
 
-				size_t Offset = base58_prefix_size(Type == 0 ? Chain->b58prefix_pubkey_address : Chain->b58prefix_script_address);
-				memcpy(&RawHash[0], AddressHash + Offset, std::min<size_t>(RawHash.size(), AddressHashSize));
+				size_t offset = base58_prefix_size(type == 0 ? chain->b58prefix_pubkey_address : chain->b58prefix_script_address);
+				memcpy(&raw_hash[0], address_hash + offset, std::min<size_t>(raw_hash.size(), address_hash_size));
 
-				std::vector<uint8_t> Hash = cashaddr::PackAddrData(RawHash, Type);
-				if (Hash.empty())
+				std::vector<uint8_t> hash = cashaddr::PackAddrData(raw_hash, type);
+				if (hash.empty())
 					return false;
 
-				std::string CashAddress = cashaddr::Encode(Chain->bech32_cashaddr, Hash);
-				memcpy(OutAddress, CashAddress.c_str(), std::min(CashAddress.size() + 1, OutAddressSize));
+				std::string cash_address = cashaddr::Encode(chain->bech32_cashaddr, hash);
+				memcpy(out_address, cash_address.c_str(), std::min(cash_address.size() + 1, out_address_size));
 				return true;
 			}
-			static bool LegacyHashFromCashAddress(const btc_chainparams_* Chain, const std::string_view& Address, uint8_t* OutAddressHash, size_t* OutAddressHashSize, size_t* OutPrefixSize, Bitcoin::AddressFormat* OutType)
+			static bool legacy_hash_from_cash_address(const btc_chainparams_* chain, const std::string_view& address, uint8_t* out_address_hash, size_t* out_address_hash_size, size_t* out_prefix_size, bitcoin::address_format* out_type)
 			{
-				auto DecodedAddress = cashaddr::Decode(Copy<std::string>(Address), Chain->bech32_cashaddr);
-				auto& Prefix = DecodedAddress.first;
-				auto& Hash = DecodedAddress.second;
-				if (Hash.empty() || Prefix != Chain->bech32_cashaddr)
+				auto decoded_address = cashaddr::Decode(copy<std::string>(address), chain->bech32_cashaddr);
+				auto& prefix = decoded_address.first;
+				auto& hash = decoded_address.second;
+				if (hash.empty() || prefix != chain->bech32_cashaddr)
 					return false;
 
-				Vector<uint8_t> Data;
-				Data.reserve(Hash.size() * 5 / 8);
-				if (!cashaddr::ConvertBits<5, 8, false>([&](uint8_t V) { Data.push_back(V); }, std::begin(Hash), std::end(Hash)))
+				vector<uint8_t> data;
+				data.reserve(hash.size() * 5 / 8);
+				if (!cashaddr::ConvertBits<5, 8, false>([&](uint8_t v) { data.push_back(v); }, std::begin(hash), std::end(hash)))
 					return false;
 
-				uint8_t Version = Data[0];
-				if (Version & 0x80)
+				uint8_t version = data[0];
+				if (version & 0x80)
 					return false;
 
-				uint32_t HashSize = 20 + 4 * (Version & 0x03);
-				if (Version & 0x04)
-					HashSize *= 2;
+				uint32_t hash_size = 20 + 4 * (version & 0x03);
+				if (version & 0x04)
+					hash_size *= 2;
 
-				if (Data.size() != HashSize + 1)
+				if (data.size() != hash_size + 1)
 					return false;
 
-				uint8_t Type = (Version >> 3) & 0x1f;
-				if (Type == 0)
+				uint8_t type = (version >> 3) & 0x1f;
+				if (type == 0)
 				{
-					*OutPrefixSize = base58_prefix_size(Chain->b58prefix_pubkey_address);
-					if (*OutPrefixSize > 1)
-						Data.insert(Data.begin(), 0);
-					base58_prefix_dump(Chain->b58prefix_pubkey_address, &Data[0]);
-					*OutType = Bitcoin::AddressFormat::Pay2PublicKeyHash;
+					*out_prefix_size = base58_prefix_size(chain->b58prefix_pubkey_address);
+					if (*out_prefix_size > 1)
+						data.insert(data.begin(), 0);
+					base58_prefix_dump(chain->b58prefix_pubkey_address, &data[0]);
+					*out_type = bitcoin::address_format::pay2_public_key_hash;
 				}
-				else if (Type == 1)
+				else if (type == 1)
 				{
-					*OutPrefixSize = base58_prefix_size(Chain->b58prefix_script_address);
-					if (*OutPrefixSize > 1)
-						Data.insert(Data.begin(), 0);
-					base58_prefix_dump(Chain->b58prefix_script_address, &Data[0]);
-					*OutType = Bitcoin::AddressFormat::Pay2ScriptHash;
+					*out_prefix_size = base58_prefix_size(chain->b58prefix_script_address);
+					if (*out_prefix_size > 1)
+						data.insert(data.begin(), 0);
+					base58_prefix_dump(chain->b58prefix_script_address, &data[0]);
+					*out_type = bitcoin::address_format::pay2_script_hash;
 				}
 				else
-					*OutType = Bitcoin::AddressFormat::Unknown;
+					*out_type = bitcoin::address_format::unknown;
 
-				memcpy(OutAddressHash, Data.data(), std::min(Data.size(), *OutAddressHashSize));
-				*OutAddressHashSize = Data.size();
+				memcpy(out_address_hash, data.data(), std::min(data.size(), *out_address_hash_size));
+				*out_address_hash_size = data.size();
 				return true;
 			}
-			static bool BitcoinCashPublicKeyGetAddressP2PKH(const btc_pubkey* PublicKey, const btc_chainparams_* Chain, char* AddressOut, size_t AddressOutSize)
+			static bool bitcoin_cash_public_key_get_address_p2pkh(const btc_pubkey* public_key, const btc_chainparams_* chain, char* address_out, size_t address_out_size)
 			{
-				if (Chain->bech32_cashaddr[0] == '\0')
+				if (chain->bech32_cashaddr[0] == '\0')
 					return false;
 
-				uint8_t PublicKeyHash[sizeof(uint160) + B58_PREFIX_MAX_SIZE]; size_t PublicKeyHashOffset;
-				if (btc_pubkey_getaddr_p2pkh_hash(PublicKey, Chain, PublicKeyHash, &PublicKeyHashOffset) != 1)
+				uint8_t public_key_hash[sizeof(uint160) + B58_PREFIX_MAX_SIZE]; size_t public_key_hash_offset;
+				if (btc_pubkey_getaddr_p2pkh_hash(public_key, chain, public_key_hash, &public_key_hash_offset) != 1)
 					return false;
 
-				return CashAddressFromLegacyHash(Chain, PublicKeyHash, sizeof(uint160) + PublicKeyHashOffset, AddressOut, AddressOutSize);
+				return cash_address_from_legacy_hash(chain, public_key_hash, sizeof(uint160) + public_key_hash_offset, address_out, address_out_size);
 			}
-			static bool BitcoinCashPublicKeyGetAddressP2SH(const btc_pubkey* PublicKey, const btc_chainparams_* Chain, char* AddressOut, size_t AddressOutSize)
+			static bool bitcoin_cash_public_key_get_address_p2sh(const btc_pubkey* public_key, const btc_chainparams_* chain, char* address_out, size_t address_out_size)
 			{
-				if (Chain->bech32_cashaddr[0] == '\0')
+				if (chain->bech32_cashaddr[0] == '\0')
 					return false;
 
-				uint8_t ScriptHash[sizeof(uint160) + B58_PREFIX_MAX_SIZE]; size_t ScriptHashOffset;
-				if (btc_pubkey_getaddr_p2sh_p2wpkh_hash(PublicKey, Chain, ScriptHash, &ScriptHashOffset) != 1)
+				uint8_t script_hash[sizeof(uint160) + B58_PREFIX_MAX_SIZE]; size_t script_hash_offset;
+				if (btc_pubkey_getaddr_p2sh_p2wpkh_hash(public_key, chain, script_hash, &script_hash_offset) != 1)
 					return false;
 
-				return CashAddressFromLegacyHash(Chain, ScriptHash, sizeof(uint160) + ScriptHashOffset, AddressOut, AddressOutSize);
+				return cash_address_from_legacy_hash(chain, script_hash, sizeof(uint160) + script_hash_offset, address_out, address_out_size);
 			}
 
-			const char* Bitcoin::NdCall::GetBlockCount()
+			const char* bitcoin::nd_call::get_block_count()
 			{
 				return "getblockcount";
 			}
-			const char* Bitcoin::NdCall::GetBlockHash()
+			const char* bitcoin::nd_call::get_block_hash()
 			{
 				return "getblockhash";
 			}
-			const char* Bitcoin::NdCall::GetBlockStats()
+			const char* bitcoin::nd_call::get_block_stats()
 			{
 				return "getblockstats";
 			}
-			const char* Bitcoin::NdCall::GetBlock()
+			const char* bitcoin::nd_call::get_block()
 			{
 				return "getblock";
 			}
-			const char* Bitcoin::NdCall::GetRawTransaction()
+			const char* bitcoin::nd_call::get_raw_transaction()
 			{
 				return "getrawtransaction";
 			}
-			const char* Bitcoin::NdCall::SendRawTransaction()
+			const char* bitcoin::nd_call::send_raw_transaction()
 			{
 				return "sendrawtransaction";
 			}
 
-			Bitcoin::SighashContext::~SighashContext()
+			bitcoin::sighash_context::~sighash_context()
 			{
-				for (auto& Item : Scripts.Locking)
-					cstr_free(Item, true);
+				for (auto& item : scripts.locking)
+					cstr_free(item, true);
 
-				for (auto& Items : Scripts.Unlocking)
+				for (auto& items : scripts.unlocking)
 				{
-					for (auto& Item : Items)
-						cstr_free(Item, true);
+					for (auto& item : items)
+						cstr_free(item, true);
 				}
 			}
 
-			Bitcoin::Bitcoin() noexcept : RelayBackendUTXO()
+			bitcoin::bitcoin() noexcept : relay_backend_utxo()
 			{
 				btc_ecc_start();
-				Netdata.Composition = Algorithm::Composition::Type::SECP256K1;
-				Netdata.Routing = RoutingPolicy::UTXO;
-				Netdata.SyncLatency = 2;
-				Netdata.Divisibility = Decimal(100000000).Truncate(Protocol::Now().Message.Precision);
-				Netdata.SupportsTokenTransfer.clear();
-				Netdata.SupportsBulkTransfer = true;
+				netdata.composition = algorithm::composition::type::SECP256K1;
+				netdata.routing = routing_policy::UTXO;
+				netdata.sync_latency = 2;
+				netdata.divisibility = decimal(100000000).truncate(protocol::now().message.precision);
+				netdata.supports_token_transfer.clear();
+				netdata.supports_bulk_transfer = true;
 			}
-			Bitcoin::~Bitcoin()
+			bitcoin::~bitcoin()
 			{
 				btc_ecc_stop();
 			}
-			ExpectsPromiseRT<void> Bitcoin::BroadcastTransaction(const Algorithm::AssetId& Asset, const OutgoingTransaction& TxData)
+			expects_promise_rt<void> bitcoin::broadcast_transaction(const algorithm::asset_id& asset, const outgoing_transaction& tx_data)
 			{
-				SchemaList Map;
-				Map.emplace_back(Var::Set::String(Format::Util::Clear0xHex(TxData.Data)));
+				schema_list map;
+				map.emplace_back(var::set::string(format::util::clear_0xhex(tx_data.data)));
 
-				auto HexData = Coawait(ExecuteRPC(Asset, NdCall::SendRawTransaction(), std::move(Map), CachePolicy::Greedy));
-				if (!HexData)
+				auto hex_data = coawait(execute_rpc(asset, nd_call::send_raw_transaction(), std::move(map), cache_policy::greedy));
+				if (!hex_data)
 				{
-					auto Message = HexData.What();
-					if (Stringify::Find(Message, "-27").Found || Stringify::Find(Message, "Transaction already in").Found)
-						Coreturn ExpectsRT<void>(Expectation::Met);
+					auto message = hex_data.what();
+					if (stringify::find(message, "-27").found || stringify::find(message, "Transaction already in").found)
+						coreturn expects_rt<void>(expectation::met);
 
-					Coreturn ExpectsRT<void>(std::move(HexData.Error()));
+					coreturn expects_rt<void>(std::move(hex_data.error()));
 				}
 
-				Memory::Release(*HexData);
-				UpdateCoins(Asset, TxData);
-				Coreturn ExpectsRT<void>(Expectation::Met);
+				memory::release(*hex_data);
+				update_coins(asset, tx_data);
+				coreturn expects_rt<void>(expectation::met);
 			}
-			ExpectsPromiseRT<uint64_t> Bitcoin::GetLatestBlockHeight(const Algorithm::AssetId& Asset)
+			expects_promise_rt<uint64_t> bitcoin::get_latest_block_height(const algorithm::asset_id& asset)
 			{
-				auto BlockCount = Coawait(ExecuteRPC(Asset, NdCall::GetBlockCount(), { }, CachePolicy::Lazy));
-				if (!BlockCount)
-					Coreturn ExpectsRT<uint64_t>(std::move(BlockCount.Error()));
+				auto block_count = coawait(execute_rpc(asset, nd_call::get_block_count(), { }, cache_policy::lazy));
+				if (!block_count)
+					coreturn expects_rt<uint64_t>(std::move(block_count.error()));
 
-				uint64_t BlockHeight = (uint64_t)BlockCount->Value.GetInteger();
-				Memory::Release(*BlockCount);
-				Coreturn ExpectsRT<uint64_t>(BlockHeight);
+				uint64_t block_height = (uint64_t)block_count->value.get_integer();
+				memory::release(*block_count);
+				coreturn expects_rt<uint64_t>(block_height);
 			}
-			ExpectsPromiseRT<Schema*> Bitcoin::GetBlockTransactions(const Algorithm::AssetId& Asset, uint64_t BlockHeight, String* BlockHash)
+			expects_promise_rt<schema*> bitcoin::get_block_transactions(const algorithm::asset_id& asset, uint64_t block_height, string* block_hash)
 			{
-				SchemaList HashMap;
-				HashMap.emplace_back(Var::Set::Integer(BlockHeight));
+				schema_list hash_map;
+				hash_map.emplace_back(var::set::integer(block_height));
 
-				auto BlockId = Coawait(ExecuteRPC(Asset, NdCall::GetBlockHash(), std::move(HashMap), CachePolicy::Shortened));
-				if (!BlockId)
-					Coreturn BlockId;
+				auto block_id = coawait(execute_rpc(asset, nd_call::get_block_hash(), std::move(hash_map), cache_policy::shortened));
+				if (!block_id)
+					coreturn block_id;
 
-				SchemaList BlockMap;
-				BlockMap.emplace_back(Var::Set::String(BlockId->Value.GetBlob()));
-				BlockMap.emplace_back(Legacy.GetBlock ? Var::Set::Boolean(true) : Var::Set::Integer(2));
-				if (BlockHash != nullptr)
-					*BlockHash = BlockId->Value.GetBlob();
+				schema_list block_map;
+				block_map.emplace_back(var::set::string(block_id->value.get_blob()));
+				block_map.emplace_back(legacy.get_block ? var::set::boolean(true) : var::set::integer(2));
+				if (block_hash != nullptr)
+					*block_hash = block_id->value.get_blob();
 
-				auto BlockData = Coawait(ExecuteRPC(Asset, NdCall::GetBlock(), std::move(BlockMap), CachePolicy::Shortened));
-				if (!BlockData)
+				auto block_data = coawait(execute_rpc(asset, nd_call::get_block(), std::move(block_map), cache_policy::shortened));
+				if (!block_data)
 				{
-					SchemaList LegacyBlockMap;
-					LegacyBlockMap.emplace_back(Var::Set::String(BlockId->Value.GetBlob()));
-					LegacyBlockMap.emplace_back(Var::Set::Boolean(true));
+					schema_list legacy_block_map;
+					legacy_block_map.emplace_back(var::set::string(block_id->value.get_blob()));
+					legacy_block_map.emplace_back(var::set::boolean(true));
 
-					BlockData = Coawait(ExecuteRPC(Asset, NdCall::GetBlock(), std::move(LegacyBlockMap), CachePolicy::Shortened));
-					if (!BlockData)
+					block_data = coawait(execute_rpc(asset, nd_call::get_block(), std::move(legacy_block_map), cache_policy::shortened));
+					if (!block_data)
 					{
-						Memory::Release(*BlockId);
-						Coreturn BlockData;
+						memory::release(*block_id);
+						coreturn block_data;
 					}
 					else
-						Legacy.GetBlock = 1;
+						legacy.get_block = 1;
 				}
 
-				Memory::Release(*BlockId);
-				auto* Transactions = BlockData->Get("tx");
-				if (!Transactions)
+				memory::release(*block_id);
+				auto* transactions = block_data->get("tx");
+				if (!transactions)
 				{
-					Memory::Release(*BlockData);
-					Coreturn ExpectsRT<Schema*>(RemoteException("tx field not found"));
+					memory::release(*block_data);
+					coreturn expects_rt<schema*>(remote_exception("tx field not found"));
 				}
 
-				Transactions->Unlink();
-				Memory::Release(*BlockData);
-				Coreturn ExpectsRT<Schema*>(Transactions);
+				transactions->unlink();
+				memory::release(*block_data);
+				coreturn expects_rt<schema*>(transactions);
 			}
-			ExpectsPromiseRT<Schema*> Bitcoin::GetBlockTransaction(const Algorithm::AssetId& Asset, uint64_t BlockHeight, const std::string_view& BlockHash, const std::string_view& TransactionId)
+			expects_promise_rt<schema*> bitcoin::get_block_transaction(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, const std::string_view& transaction_id)
 			{
-				SchemaList TransactionMap;
-				TransactionMap.emplace_back(Var::Set::String(Format::Util::Clear0xHex(TransactionId)));
-				TransactionMap.emplace_back(Legacy.GetRawTransaction ? Var::Set::Boolean(true) : Var::Set::Integer(2));
+				schema_list transaction_map;
+				transaction_map.emplace_back(var::set::string(format::util::clear_0xhex(transaction_id)));
+				transaction_map.emplace_back(legacy.get_raw_transaction ? var::set::boolean(true) : var::set::integer(2));
 
-				auto TxData = Coawait(ExecuteRPC(Asset, NdCall::GetRawTransaction(), std::move(TransactionMap), CachePolicy::Persistent));
-				if (!TxData)
+				auto tx_data = coawait(execute_rpc(asset, nd_call::get_raw_transaction(), std::move(transaction_map), cache_policy::persistent));
+				if (!tx_data)
 				{
-					SchemaList LegacyTransactionMap;
-					LegacyTransactionMap.emplace_back(Var::Set::String(Format::Util::Clear0xHex(TransactionId)));
-					LegacyTransactionMap.emplace_back(Var::Set::Boolean(true));
+					schema_list legacy_transaction_map;
+					legacy_transaction_map.emplace_back(var::set::string(format::util::clear_0xhex(transaction_id)));
+					legacy_transaction_map.emplace_back(var::set::boolean(true));
 
-					TxData = Coawait(ExecuteRPC(Asset, NdCall::GetRawTransaction(), std::move(LegacyTransactionMap), CachePolicy::Persistent));
-					if (!TxData)
-						Coreturn TxData;
+					tx_data = coawait(execute_rpc(asset, nd_call::get_raw_transaction(), std::move(legacy_transaction_map), cache_policy::persistent));
+					if (!tx_data)
+						coreturn tx_data;
 					else
-						Legacy.GetRawTransaction = 1;
+						legacy.get_raw_transaction = 1;
 				}
 
-				Coreturn TxData;
+				coreturn tx_data;
 			}
-			ExpectsPromiseRT<Vector<IncomingTransaction>> Bitcoin::GetAuthenticTransactions(const Algorithm::AssetId& Asset, uint64_t BlockHeight, const std::string_view& BlockHash, Schema* TransactionData)
+			expects_promise_rt<vector<incoming_transaction>> bitcoin::get_authentic_transactions(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, schema* transaction_data)
 			{
-				UnorderedSet<String> Addresses;
-				Schema* TxInputs = TransactionData->Get("vin");
-				if (TxInputs != nullptr)
+				unordered_set<string> addresses;
+				schema* tx_inputs = transaction_data->get("vin");
+				if (tx_inputs != nullptr)
 				{
-					for (auto& Input : TxInputs->GetChilds())
+					for (auto& input : tx_inputs->get_childs())
 					{
-						if (Input->Has("txid") && Input->Has("vout"))
+						if (input->has("txid") && input->has("vout"))
 						{
-							auto Output = GetCoins(Asset, Input->GetVar("txid").GetBlob(), (uint32_t)Input->GetVar("vout").GetInteger());
-							if (Output && !Output->Address.empty())
-								Addresses.insert(Output->Address);
+							auto output = get_coins(asset, input->get_var("txid").get_blob(), (uint32_t)input->get_var("vout").get_integer());
+							if (output && !output->address.empty())
+								addresses.insert(output->address);
 						}
 					}
 				}
 
-				Schema* TxOutputs = TransactionData->Get("vout");
-				if (TxOutputs != nullptr)
+				schema* tx_outputs = transaction_data->get("vout");
+				if (tx_outputs != nullptr)
 				{
-					for (auto& Output : TxOutputs->GetChilds())
+					for (auto& output : tx_outputs->get_childs())
 					{
-						bool IsAllowed = true;
-						auto Input = GetOutputAddresses(Output, &IsAllowed);
-						if (IsAllowed)
+						bool is_allowed = true;
+						auto input = get_output_addresses(output, &is_allowed);
+						if (is_allowed)
 						{
-							for (auto& Address : Input)
-								Addresses.insert(Address);
+							for (auto& address : input)
+								addresses.insert(address);
 						}
 					}
 				}
 
-				if (!FindCheckpointAddresses(Asset, Addresses))
-					Coreturn ExpectsRT<Vector<IncomingTransaction>>(RemoteException("tx not involved"));
+				if (!find_checkpoint_addresses(asset, addresses))
+					coreturn expects_rt<vector<incoming_transaction>>(remote_exception("tx not involved"));
 
-				if (TxInputs != nullptr)
+				if (tx_inputs != nullptr)
 				{
-					for (auto& Input : TxInputs->GetChilds())
+					for (auto& input : tx_inputs->get_childs())
 					{
-						if (Input->Has("txid") && Input->Has("vout"))
+						if (input->has("txid") && input->has("vout"))
 						{
-							auto Output = Coawait(GetTransactionOutput(Asset, Input->GetVar("txid").GetBlob(), (uint32_t)Input->GetVar("vout").GetInteger()));
-							if (Output && !Output->Address.empty())
-								Addresses.insert(Output->Address);
+							auto output = coawait(get_transaction_output(asset, input->get_var("txid").get_blob(), (uint32_t)input->get_var("vout").get_integer()));
+							if (output && !output->address.empty())
+								addresses.insert(output->address);
 						}
 					}
 				}
 
-				auto Discovery = FindCheckpointAddresses(Asset, Addresses);
-				if (!Discovery)
-					Coreturn ExpectsRT<Vector<IncomingTransaction>>(RemoteException("tx not involved"));
+				auto discovery = find_checkpoint_addresses(asset, addresses);
+				if (!discovery)
+					coreturn expects_rt<vector<incoming_transaction>>(remote_exception("tx not involved"));
 
-				IncomingTransaction Tx;
-				Tx.SetTransaction(Asset, BlockHeight, TransactionData->GetVar("txid").GetBlob(), Decimal::Zero());
+				incoming_transaction tx;
+				tx.set_transaction(asset, block_height, transaction_data->get_var("txid").get_blob(), decimal::zero());
 
-				bool IsCoinbase = false;
-				if (TxInputs != nullptr)
+				bool is_coinbase = false;
+				if (tx_inputs != nullptr)
 				{
-					Tx.From.reserve(TxInputs->GetChilds().size());
-					for (auto& Input : TxInputs->GetChilds())
+					tx.from.reserve(tx_inputs->get_childs().size());
+					for (auto& input : tx_inputs->get_childs())
 					{
-						if (Input->Has("coinbase"))
+						if (input->has("coinbase"))
 						{
-							IsCoinbase = true;
+							is_coinbase = true;
 							continue;
 						}
 
-						auto Output = Coawait(GetTransactionOutput(Asset, Input->GetVar("txid").GetBlob(), (uint32_t)Input->GetVar("vout").GetInteger()));
-						if (Output)
+						auto output = coawait(get_transaction_output(asset, input->get_var("txid").get_blob(), (uint32_t)input->get_var("vout").get_integer()));
+						if (output)
 						{
-							RemoveCoins(Asset, Output->TransactionId, Output->Index);
-							Tx.From.emplace_back(Output->Address, Option<uint64_t>(Output->AddressIndex), Decimal(Output->Value));
-							Tx.Fee += Output->Value;
+							remove_coins(asset, output->transaction_id, output->index);
+							tx.from.emplace_back(output->address, option<uint64_t>(output->address_index), decimal(output->value));
+							tx.fee += output->value;
 						}
 					}
 				}
 
-				if (TxOutputs != nullptr)
+				if (tx_outputs != nullptr)
 				{
-					size_t OutputIndex = 0;
-					UnorderedSet<size_t> Resets;
-					Tx.To.resize(TxOutputs->GetChilds().size());
-					for (auto& Output : TxOutputs->GetChilds())
+					size_t output_index = 0;
+					unordered_set<size_t> resets;
+					tx.to.resize(tx_outputs->get_childs().size());
+					for (auto& output : tx_outputs->get_childs())
 					{
-						CoinUTXO NewOutput;
-						NewOutput.TransactionId = Tx.TransactionId;
-						NewOutput.Value = Output->GetVar("value").GetDecimal();
-						NewOutput.Index = (uint32_t)(Output->Has("n") ? Output->GetVar("n").GetInteger() : OutputIndex);
-						if (NewOutput.Index > (uint32_t)Tx.To.size())
-							NewOutput.Index = (uint32_t)OutputIndex;
+						coin_utxo new_output;
+						new_output.transaction_id = tx.transaction_id;
+						new_output.value = output->get_var("value").get_decimal();
+						new_output.index = (uint32_t)(output->has("n") ? output->get_var("n").get_integer() : output_index);
+						if (new_output.index > (uint32_t)tx.to.size())
+							new_output.index = (uint32_t)output_index;
 
-						bool IsAllowed = true;
-						auto ReceiverAddresses = GetOutputAddresses(Output, &IsAllowed);
-						NewOutput.Address = ReceiverAddresses.empty() ? String() : *ReceiverAddresses.begin();
-						if (IsAllowed)
+						bool is_allowed = true;
+						auto receiver_addresses = get_output_addresses(output, &is_allowed);
+						new_output.address = receiver_addresses.empty() ? string() : *receiver_addresses.begin();
+						if (is_allowed)
 						{
-							auto It = Discovery->find(NewOutput.Address);
-							if (It != Discovery->end())
-								NewOutput.AddressIndex = It->second;
+							auto it = discovery->find(new_output.address);
+							if (it != discovery->end())
+								new_output.address_index = it->second;
 						}
 						else
-							Resets.insert(NewOutput.Index);
+							resets.insert(new_output.index);
 
-						if (NewOutput.AddressIndex)
-							AddCoins(Asset, NewOutput);
+						if (new_output.address_index)
+							add_coins(asset, new_output);
 
-						Tx.To[(size_t)NewOutput.Index] = Transferer(NewOutput.Address, std::move(NewOutput.AddressIndex), Decimal(NewOutput.Value));
-						Tx.Fee -= NewOutput.Value;
-						++OutputIndex;
+						tx.to[(size_t)new_output.index] = transferer(new_output.address, std::move(new_output.address_index), decimal(new_output.value));
+						tx.fee -= new_output.value;
+						++output_index;
 					}
 
-					for (auto& Index : Resets)
-						Tx.To[Index].Value = Decimal::NaN();
+					for (auto& index : resets)
+						tx.to[index].value = decimal::nan();
 
-					for (auto It = Tx.To.begin(); It != Tx.To.end();)
+					for (auto it = tx.to.begin(); it != tx.to.end();)
 					{
-						if (It->Value.IsNaN())
-							It = Tx.To.erase(It);
+						if (it->value.is_nan())
+							it = tx.to.erase(it);
 						else
-							++It;
+							++it;
 					}
 				}
 
-				if (Tx.Fee.IsNegative())
-					Tx.Fee = 0.0;
+				if (tx.fee.is_negative())
+					tx.fee = 0.0;
 
-				if (IsCoinbase && !Tx.To.empty())
-					Tx.From.emplace_back(String("null"), Option<uint64_t>(Optional::None), Decimal(Tx.To.front().Value));
+				if (is_coinbase && !tx.to.empty())
+					tx.from.emplace_back(string("null"), option<uint64_t>(optional::none), decimal(tx.to.front().value));
 
-				Coreturn ExpectsRT<Vector<IncomingTransaction>>({ std::move(Tx) });
+				coreturn expects_rt<vector<incoming_transaction>>({ std::move(tx) });
 			}
-			ExpectsPromiseRT<BaseFee> Bitcoin::EstimateFee(const Algorithm::AssetId& Asset, const DynamicWallet& Wallet, const Vector<Transferer>& To, const FeeSupervisorOptions& Options)
+			expects_promise_rt<base_fee> bitcoin::estimate_fee(const algorithm::asset_id& asset, const dynamic_wallet& wallet, const vector<transferer>& to, const fee_supervisor_options& options)
 			{
-				auto BlockHeight = Coawait(GetLatestBlockHeight(Asset));
-				if (!BlockHeight)
-					Coreturn ExpectsRT<BaseFee>(std::move(BlockHeight.Error()));
+				auto block_height = coawait(get_latest_block_height(asset));
+				if (!block_height)
+					coreturn expects_rt<base_fee>(std::move(block_height.error()));
 
-				SchemaList Map;
-				Map.emplace_back(Var::Set::Integer(*BlockHeight));
-				Map.emplace_back(Var::Set::Null());
+				schema_list map;
+				map.emplace_back(var::set::integer(*block_height));
+				map.emplace_back(var::set::null());
 
-				auto BlockStats = Coawait(ExecuteRPC(Asset, NdCall::GetBlockStats(), std::move(Map), CachePolicy::Greedy));
-				if (!BlockStats)
-					Coreturn ExpectsRT<BaseFee>(std::move(BlockStats.Error()));
+				auto block_stats = coawait(execute_rpc(asset, nd_call::get_block_stats(), std::move(map), cache_policy::greedy));
+				if (!block_stats)
+					coreturn expects_rt<base_fee>(std::move(block_stats.error()));
 
-				Decimal FeeRate = BlockStats->GetVar("avgfeerate").GetDecimal();
-				size_t TxSize = (size_t)BlockStats->GetVar("avgtxsize").GetInteger();
+				decimal fee_rate = block_stats->get_var("avgfeerate").get_decimal();
+				size_t tx_size = (size_t)block_stats->get_var("avgtxsize").get_integer();
 
-				const size_t ExpectedMaxTxSize = 1000;
-				TxSize = std::min<size_t>(ExpectedMaxTxSize, (size_t)(std::ceil((double)TxSize / 100.0) * 100.0));
-				Coreturn ExpectsRT<BaseFee>(BaseFee(FeeRate / Netdata.Divisibility, Decimal(TxSize)));
+				const size_t expected_max_tx_size = 1000;
+				tx_size = std::min<size_t>(expected_max_tx_size, (size_t)(std::ceil((double)tx_size / 100.0) * 100.0));
+				coreturn expects_rt<base_fee>(base_fee(fee_rate / netdata.divisibility, decimal(tx_size)));
 			}
-			ExpectsPromiseRT<CoinUTXO> Bitcoin::GetTransactionOutput(const Algorithm::AssetId& Asset, const std::string_view& TransactionId, uint32_t Index)
+			expects_promise_rt<coin_utxo> bitcoin::get_transaction_output(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint32_t index)
 			{
-				auto Output = GetCoins(Asset, TransactionId, Index);
-				if (Output)
-					Coreturn RemoteException(std::move(Output.Error().message()));
+				auto output = get_coins(asset, transaction_id, index);
+				if (output)
+					coreturn remote_exception(std::move(output.error().message()));
 
-				auto TxData = Coawait(GetBlockTransaction(Asset, 0, std::string_view(), TransactionId));
-				if (!TxData)
-					Coreturn ExpectsRT<CoinUTXO>(std::move(TxData.Error()));
+				auto tx_data = coawait(get_block_transaction(asset, 0, std::string_view(), transaction_id));
+				if (!tx_data)
+					coreturn expects_rt<coin_utxo>(std::move(tx_data.error()));
 
-				if (!TxData->Has("vout"))
+				if (!tx_data->has("vout"))
 				{
-					Memory::Release(*TxData);
-					Coreturn ExpectsRT<CoinUTXO>(RemoteException("transaction does not have any UTXO"));
+					memory::release(*tx_data);
+					coreturn expects_rt<coin_utxo>(remote_exception("transaction does not have any UTXO"));
 				}
 
-				auto* VOUT = TxData->Fetch("vout." + ToString(Index));
+				auto* VOUT = tx_data->fetch("vout." + to_string(index));
 				if (!VOUT)
 				{
-					Memory::Release(*TxData);
-					Coreturn ExpectsRT<CoinUTXO>(RemoteException("transaction does not have specified UTXO"));
+					memory::release(*tx_data);
+					coreturn expects_rt<coin_utxo>(remote_exception("transaction does not have specified UTXO"));
 				}
 
-				CoinUTXO Input;
-				Input.TransactionId = TransactionId;
-				Input.Value = VOUT->GetVar("value").GetDecimal();
-				Input.Index = Index;
+				coin_utxo input;
+				input.transaction_id = transaction_id;
+				input.value = VOUT->get_var("value").get_decimal();
+				input.index = index;
 
-				bool IsAllowed = true;
-				auto Addresses = GetOutputAddresses(VOUT, &IsAllowed);
-				if (IsAllowed && !Addresses.empty())
+				bool is_allowed = true;
+				auto addresses = get_output_addresses(VOUT, &is_allowed);
+				if (is_allowed && !addresses.empty())
 				{
-					Input.Address = *Addresses.begin();
-					auto Discovery = FindCheckpointAddresses(Asset, Addresses);
-					if (Discovery && !Discovery->empty())
-						Input.AddressIndex = Discovery->begin()->second;
+					input.address = *addresses.begin();
+					auto discovery = find_checkpoint_addresses(asset, addresses);
+					if (discovery && !discovery->empty())
+						input.address_index = discovery->begin()->second;
 				}
 
-				Memory::Release(*TxData);
-				Coreturn ExpectsRT<CoinUTXO>(std::move(Input));
+				memory::release(*tx_data);
+				coreturn expects_rt<coin_utxo>(std::move(input));
 			}
-			UnorderedSet<String> Bitcoin::GetOutputAddresses(Schema* TxOutput, bool* IsAllowed)
+			unordered_set<string> bitcoin::get_output_addresses(schema* tx_output, bool* is_allowed)
 			{
-				bool Allowance = true;
-				UnorderedSet<String> Addresses;
-				auto* ScriptPubKey = TxOutput->Get("scriptPubKey");
-				if (ScriptPubKey != nullptr)
+				bool allowance = true;
+				unordered_set<string> addresses;
+				auto* script_pub_key = tx_output->get("scriptPubKey");
+				if (script_pub_key != nullptr)
 				{
-					if (ScriptPubKey->Has("address"))
+					if (script_pub_key->has("address"))
 					{
-						String Value = ScriptPubKey->GetVar("address").GetBlob();
-						if (!Value.empty())
-							Addresses.insert(Value);
+						string value = script_pub_key->get_var("address").get_blob();
+						if (!value.empty())
+							addresses.insert(value);
 					}
 
-					if (ScriptPubKey->Has("addresses"))
+					if (script_pub_key->has("addresses"))
 					{
-						for (auto& Item : ScriptPubKey->Get("addresses")->GetChilds())
+						for (auto& item : script_pub_key->get("addresses")->get_childs())
 						{
-							String Value = Item->Value.GetBlob();
-							if (!Value.empty())
-								Addresses.insert(Value);
+							string value = item->value.get_blob();
+							if (!value.empty())
+								addresses.insert(value);
 						}
 					}
 
-					if (ScriptPubKey->Has("type"))
+					if (script_pub_key->has("type"))
 					{
-						String Type = ScriptPubKey->GetVar("type").GetBlob();
-						if (Type == "pubkey")
+						string type = script_pub_key->get_var("type").get_blob();
+						if (type == "pubkey")
 						{
-							String Asm = ScriptPubKey->GetVar("asm").GetBlob();
-							size_t Index = Asm.find(' ');
-							Allowance = Index != std::string::npos;
-							if (Allowance)
+							string raw = script_pub_key->get_var("asm").get_blob();
+							size_t index = raw.find(' ');
+							allowance = index != std::string::npos;
+							if (allowance)
 							{
-								auto PublicKey = Codec::HexDecode(Asm.substr(0, Index));
-								Allowance = PublicKey.size() == BTC_ECKEY_COMPRESSED_LENGTH || PublicKey.size() == BTC_ECKEY_UNCOMPRESSED_LENGTH;
-								if (Allowance)
-									Addresses.insert(Format::Util::Encode0xHex(PublicKey));
+								auto public_key = codec::hex_decode(raw.substr(0, index));
+								allowance = public_key.size() == BTC_ECKEY_COMPRESSED_LENGTH || public_key.size() == BTC_ECKEY_UNCOMPRESSED_LENGTH;
+								if (allowance)
+									addresses.insert(format::util::encode_0xhex(public_key));
 							}
 						}
-						else if (Type != "nulldata" && Type != "pubkeyhash" && Type != "scripthash" && Type != "witness_v0_keyhash" && Type != "witness_v0_scripthash" && Type != "witness_v1_taproot")
-							Allowance = false;
+						else if (type != "nulldata" && type != "pubkeyhash" && type != "scripthash" && type != "witness_v0_keyhash" && type != "witness_v0_scripthash" && type != "witness_v1_taproot")
+							allowance = false;
 					}
 				}
 
-				if (IsAllowed)
-					*IsAllowed = Allowance && !Addresses.empty();
+				if (is_allowed)
+					*is_allowed = allowance && !addresses.empty();
 
-				return Addresses;
+				return addresses;
 			}
-			ExpectsPromiseRT<OutgoingTransaction> Bitcoin::NewTransaction(const Algorithm::AssetId& Asset, const DynamicWallet& Wallet, const Vector<Transferer>& To, const BaseFee& Fee)
+			expects_promise_rt<outgoing_transaction> bitcoin::new_transaction(const algorithm::asset_id& asset, const dynamic_wallet& wallet, const vector<transferer>& to, const base_fee& fee)
 			{
-				ExpectsLR<DerivedSigningWallet> ChangeWallet = LayerException();
-				if (Wallet.Parent)
-					ChangeWallet = NSS::ServerNode::Get()->NewSigningWallet(Asset, *Wallet.Parent, Protocol::Now().Account.RootAddressIndex);
-				else if (Wallet.SigningChild)
-					ChangeWallet = *Wallet.SigningChild;
-				if (!ChangeWallet)
-					Coreturn ExpectsRT<OutgoingTransaction>(RemoteException("invalid output change address"));
+				expects_lr<derived_signing_wallet> change_wallet = layer_exception();
+				if (wallet.parent)
+					change_wallet = nss::server_node::get()->new_signing_wallet(asset, *wallet.parent, protocol::now().account.root_address_index);
+				else if (wallet.signing_child)
+					change_wallet = *wallet.signing_child;
+				if (!change_wallet)
+					coreturn expects_rt<outgoing_transaction>(remote_exception("invalid output change address"));
 
-				auto AppliedFee = Coawait(CalculateTransactionFeeFromFeeEstimate(Asset, Wallet, To, Fee, ChangeWallet->Addresses.begin()->second));
-				Decimal FeeValue = AppliedFee ? AppliedFee->GetFee() : Fee.GetFee();
-				Decimal TotalValue = FeeValue;
-				for (auto& Item : To)
-					TotalValue += Item.Value;
+				auto applied_fee = coawait(calculate_transaction_fee_from_fee_estimate(asset, wallet, to, fee, change_wallet->addresses.begin()->second));
+				decimal fee_value = applied_fee ? applied_fee->get_fee() : fee.get_fee();
+				decimal total_value = fee_value;
+				for (auto& item : to)
+					total_value += item.value;
 
-				auto Inputs = CalculateCoins(Asset, Wallet, TotalValue, Optional::None);
-				Decimal InputValue = Inputs ? GetCoinsValue(*Inputs, Optional::None) : 0.0;
-				if (!Inputs || Inputs->empty())
-					Coreturn ExpectsRT<OutgoingTransaction>(RemoteException(Stringify::Text("insufficient funds: %s < %s", InputValue.ToString().c_str(), TotalValue.ToString().c_str())));
+				auto inputs = calculate_coins(asset, wallet, total_value, optional::none);
+				decimal input_value = inputs ? get_coins_value(*inputs, optional::none) : 0.0;
+				if (!inputs || inputs->empty())
+					coreturn expects_rt<outgoing_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", input_value.to_string().c_str(), total_value.to_string().c_str())));
 
-				Vector<CoinUTXO> Outputs;
-				Outputs.reserve(To.size() + 1);
-				for (auto& Item : To)
-					Outputs.push_back(CoinUTXO(String(), Item.Address, Option<uint64_t>(Item.AddressIndex), Decimal(Item.Value), (uint32_t)Outputs.size()));
+				vector<coin_utxo> outputs;
+				outputs.reserve(to.size() + 1);
+				for (auto& item : to)
+					outputs.push_back(coin_utxo(string(), item.address, option<uint64_t>(item.address_index), decimal(item.value), (uint32_t)outputs.size()));
 
-				Decimal ChangeValue = InputValue - TotalValue;
-				if (ChangeValue.IsPositive())
-					Outputs.push_back(CoinUTXO(String(), ChangeWallet->Addresses.begin()->second, Option<uint64_t>(ChangeWallet->AddressIndex), Decimal(ChangeValue), (uint32_t)Outputs.size()));
+				decimal change_value = input_value - total_value;
+				if (change_value.is_positive())
+					outputs.push_back(coin_utxo(string(), change_wallet->addresses.begin()->second, option<uint64_t>(change_wallet->address_index), decimal(change_value), (uint32_t)outputs.size()));
 
-				btc_tx* Builder = btc_tx_new();
-				for (auto& Output : Outputs)
+				btc_tx* builder = btc_tx_new();
+				for (auto& output : outputs)
 				{
-					auto Status = AddTransactionOutput(Builder, Output.Address, Output.Value);
-					if (Status)
+					auto status = add_transaction_output(builder, output.address, output.value);
+					if (status)
 					{
-						btc_tx_free(Builder);
-						Coreturn ExpectsRT<OutgoingTransaction>(RemoteException(std::move((*Status).message())));
+						btc_tx_free(builder);
+						coreturn expects_rt<outgoing_transaction>(remote_exception(std::move((*status).message())));
 					}
 				}
 
-				SighashContext Context;
-				for (auto& Input : *Inputs)
+				sighash_context context;
+				for (auto& input : *inputs)
 				{
-					if (!Input.AddressIndex)
-						Coreturn ExpectsRT<OutgoingTransaction>(RemoteException("address " + Input.Address + " cannot be used to sign the transaction (wallet not found)"));
+					if (!input.address_index)
+						coreturn expects_rt<outgoing_transaction>(remote_exception("address " + input.address + " cannot be used to sign the transaction (wallet not found)"));
 
-					ExpectsLR<DerivedSigningWallet> SigningWallet = LayerException();
-					if (Wallet.Parent)
-						SigningWallet = NSS::ServerNode::Get()->NewSigningWallet(Asset, *Wallet.Parent, *Input.AddressIndex);
-					else if (Wallet.SigningChild)
-						SigningWallet = *Wallet.SigningChild;
-					if (!SigningWallet)
-						Coreturn ExpectsRT<OutgoingTransaction>(RemoteException("address " + Input.Address + " cannot be used to sign the transaction (wallet not valid)"));
+					expects_lr<derived_signing_wallet> signing_wallet = layer_exception();
+					if (wallet.parent)
+						signing_wallet = nss::server_node::get()->new_signing_wallet(asset, *wallet.parent, *input.address_index);
+					else if (wallet.signing_child)
+						signing_wallet = *wallet.signing_child;
+					if (!signing_wallet)
+						coreturn expects_rt<outgoing_transaction>(remote_exception("address " + input.address + " cannot be used to sign the transaction (wallet not valid)"));
 
-					auto Private = SigningWallet->SigningKey.Expose<KEY_LIMIT>();
-					auto Status = AddTransactionInput(Builder, Input, Context, Private.View.data());
-					if (Status)
+					auto secret = signing_wallet->signing_key.expose<KEY_LIMIT>();
+					auto status = add_transaction_input(builder, input, context, secret.view.data());
+					if (status)
 					{
-						btc_tx_free(Builder);
-						Coreturn ExpectsRT<OutgoingTransaction>(std::move(RemoteException(std::move((*Status).message()))));
+						btc_tx_free(builder);
+						coreturn expects_rt<outgoing_transaction>(std::move(remote_exception(std::move((*status).message()))));
 					}
 				}
 
-				Vector<Transferer> From;
-				for (auto& Input : *Inputs)
+				vector<transferer> from;
+				for (auto& input : *inputs)
 				{
-					auto Status = SignTransactionInput(Builder, Input, Context, From.size());
-					if (Status)
+					auto status = sign_transaction_input(builder, input, context, from.size());
+					if (status)
 					{
-						btc_tx_free(Builder);
-						Coreturn ExpectsRT<OutgoingTransaction>(std::move(RemoteException(std::move((*Status).message()))));
+						btc_tx_free(builder);
+						coreturn expects_rt<outgoing_transaction>(std::move(remote_exception(std::move((*status).message()))));
 					}
-					From.emplace_back(Input.Address, Option<uint64_t>(Input.AddressIndex), Decimal(Input.Value));
+					from.emplace_back(input.address, option<uint64_t>(input.address_index), decimal(input.value));
 				}
 
-				String TransactionData = SerializeTransactionData(Builder);
-				String TransactionId = SerializeTransactionId(Builder);
-				for (auto& Output : Outputs)
-					Output.TransactionId = TransactionId;
+				string transaction_data = serialize_transaction_data(builder);
+				string transaction_id = serialize_transaction_id(builder);
+				for (auto& output : outputs)
+					output.transaction_id = transaction_id;
 
-				btc_tx_free(Builder);
-				if (TransactionId.empty() || TransactionData.empty() || Inputs->empty() || Outputs.empty())
-					Coreturn ExpectsRT<OutgoingTransaction>(RemoteException("tx serialization error"));
+				btc_tx_free(builder);
+				if (transaction_id.empty() || transaction_data.empty() || inputs->empty() || outputs.empty())
+					coreturn expects_rt<outgoing_transaction>(remote_exception("tx serialization error"));
 
-				IncomingTransaction Tx;
-				Tx.SetTransaction(Asset, 0, TransactionId, std::move(FeeValue));
-				Tx.SetOperations(std::move(From), Vector<Transferer>(To));
-				Coreturn ExpectsRT<OutgoingTransaction>(OutgoingTransaction(std::move(Tx), std::move(TransactionData), std::move(*Inputs), std::move(Outputs)));
+				incoming_transaction tx;
+				tx.set_transaction(asset, 0, transaction_id, std::move(fee_value));
+				tx.set_operations(std::move(from), vector<transferer>(to));
+				coreturn expects_rt<outgoing_transaction>(outgoing_transaction(std::move(tx), std::move(transaction_data), std::move(*inputs), std::move(outputs)));
 			}
-			ExpectsLR<MasterWallet> Bitcoin::NewMasterWallet(const std::string_view& Seed)
+			expects_lr<master_wallet> bitcoin::new_master_wallet(const std::string_view& seed)
 			{
-				auto* Chain = GetChain();
-				btc_hdnode RootNode;
-				if (!btc_hdnode_from_seed((uint8_t*)Seed.data(), (int)Seed.size(), &RootNode))
-					return ExpectsLR<MasterWallet>(LayerException("seed value invalid"));
+				auto* chain = get_chain();
+				btc_hdnode root_node;
+				if (!btc_hdnode_from_seed((uint8_t*)seed.data(), (int)seed.size(), &root_node))
+					return expects_lr<master_wallet>(layer_exception("seed value invalid"));
 
-				char PrivateKey[256];
-				btc_hdnode_serialize_private(&RootNode, Chain, PrivateKey, sizeof(PrivateKey));
+				char private_key[256];
+				btc_hdnode_serialize_private(&root_node, chain, private_key, sizeof(private_key));
 
-				char PublicKey[256];
-				btc_hdnode_serialize_public(&RootNode, Chain, PublicKey, (int)sizeof(PublicKey));
+				char public_key[256];
+				btc_hdnode_serialize_public(&root_node, chain, public_key, (int)sizeof(public_key));
 
-				return ExpectsLR<MasterWallet>(MasterWallet(::PrivateKey(Codec::HexEncode(Seed)), ::PrivateKey(PrivateKey), PublicKey));
+				return expects_lr<master_wallet>(master_wallet(secret_box::secure(codec::hex_encode(seed)), secret_box::secure(private_key), public_key));
 			}
-			ExpectsLR<DerivedSigningWallet> Bitcoin::NewSigningWallet(const Algorithm::AssetId& Asset, const MasterWallet& Wallet, uint64_t AddressIndex)
+			expects_lr<derived_signing_wallet> bitcoin::new_signing_wallet(const algorithm::asset_id& asset, const master_wallet& wallet, uint64_t address_index)
 			{
-				auto* Chain = GetChain();
-				char MasterPrivateKey[256];
+				auto* chain = get_chain();
+				char master_private_key[256];
 				{
-					auto Private = Wallet.SigningKey.Expose<KEY_LIMIT>();
-					if (!hd_derive(Chain, Private.View.data(), GetDerivation(AddressIndex).c_str(), MasterPrivateKey, sizeof(MasterPrivateKey)))
-						return ExpectsLR<DerivedSigningWallet>(LayerException("invalid private key"));
+					auto secret = wallet.signing_key.expose<KEY_LIMIT>();
+					if (!hd_derive(chain, secret.view.data(), get_derivation(address_index).c_str(), master_private_key, sizeof(master_private_key)))
+						return expects_lr<derived_signing_wallet>(layer_exception("invalid private key"));
 				}
 
-				btc_hdnode Node;
-				if (!btc_hdnode_deserialize(MasterPrivateKey, Chain, &Node))
-					return LayerException("input address derivation invalid");
+				btc_hdnode node;
+				if (!btc_hdnode_deserialize(master_private_key, chain, &node))
+					return layer_exception("input address derivation invalid");
 
-				auto Derived = NewSigningWallet(Asset, PrivateKey(std::string_view((char*)Node.private_key, sizeof(Node.private_key))));
-				if (Derived)
-					Derived->AddressIndex = AddressIndex;
-				return Derived;
+				auto derived = new_signing_wallet(asset, secret_box::view(std::string_view((char*)node.private_key, sizeof(node.private_key))));
+				if (derived)
+					derived->address_index = address_index;
+				return derived;
 			}
-			ExpectsLR<DerivedSigningWallet> Bitcoin::NewSigningWallet(const Algorithm::AssetId& Asset, const PrivateKey& SigningKey)
+			expects_lr<derived_signing_wallet> bitcoin::new_signing_wallet(const algorithm::asset_id& asset, const secret_box& signing_key)
 			{
-				btc_key PrivateKey;
-				btc_privkey_init(&PrivateKey);
-				if (SigningKey.Size() != sizeof(PrivateKey.privkey))
+				btc_key private_key;
+				btc_privkey_init(&private_key);
+				if (signing_key.size() != sizeof(private_key.privkey))
 				{
-					auto Data = SigningKey.Expose<KEY_LIMIT>();
-					if (!btc_privkey_decode_wif(Data.View.data(), GetChain(), &PrivateKey))
-						return LayerException("not a valid wif private key");
+					auto data = signing_key.expose<KEY_LIMIT>();
+					if (!btc_privkey_decode_wif(data.view.data(), get_chain(), &private_key))
+						return layer_exception("not a valid wif private key");
 				}
 				else
-					memcpy(PrivateKey.privkey, SigningKey.Expose<KEY_LIMIT>().Buffer, sizeof(PrivateKey.privkey));
+					memcpy(private_key.privkey, signing_key.expose<KEY_LIMIT>().buffer, sizeof(private_key.privkey));
 
-				btc_pubkey PublicKey;
-				btc_pubkey_from_key(&PrivateKey, &PublicKey);
+				btc_pubkey public_key;
+				btc_pubkey_from_key(&private_key, &public_key);
 
-				auto Derived = NewVerifyingWallet(Asset, std::string_view((char*)PublicKey.pubkey, btc_pubkey_get_length(PublicKey.pubkey[0])));
-				if (!Derived)
-					return Derived.Error();
+				auto derived = new_verifying_wallet(asset, std::string_view((char*)public_key.pubkey, btc_pubkey_get_length(public_key.pubkey[0])));
+				if (!derived)
+					return derived.error();
 
-				auto* Chain = GetChain();
-				char DerivedPrivateKey[256]; size_t DerivedPrivateKeySize = sizeof(DerivedPrivateKey);
-				btc_privkey_encode_wif(&PrivateKey, Chain, DerivedPrivateKey, &DerivedPrivateKeySize);
-				return ExpectsLR<DerivedSigningWallet>(DerivedSigningWallet(std::move(*Derived), ::PrivateKey(DerivedPrivateKey)));
+				auto* chain = get_chain();
+				char derived_private_key[256]; size_t derived_private_key_size = sizeof(derived_private_key);
+				btc_privkey_encode_wif(&private_key, chain, derived_private_key, &derived_private_key_size);
+				return expects_lr<derived_signing_wallet>(derived_signing_wallet(std::move(*derived), secret_box::secure(derived_private_key)));
 			}
-			ExpectsLR<DerivedVerifyingWallet> Bitcoin::NewVerifyingWallet(const Algorithm::AssetId& Asset, const std::string_view& VerifyingKey)
+			expects_lr<derived_verifying_wallet> bitcoin::new_verifying_wallet(const algorithm::asset_id& asset, const std::string_view& verifying_key)
 			{
-				auto* Chain = GetChain();
-				auto* Options = NSS::ServerNode::Get()->GetSpecifications(Asset);
-				size_t Types = (size_t)GetAddressType();
-				if (Options != nullptr && Options->Value.Is(VarType::Array))
+				auto* chain = get_chain();
+				auto* options = nss::server_node::get()->get_specifications(asset);
+				size_t types = (size_t)get_address_type();
+				if (options != nullptr && options->value.is(var_type::array))
 				{
-					Types = 0;
-					for (auto& Type : Options->GetChilds())
+					types = 0;
+					for (auto& type : options->get_childs())
 					{
-						std::string_view Typename = Type->Value.GetString();
-						if (Typename == "p2pk")
-							Types |= (size_t)AddressFormat::Pay2PublicKey;
-						else if (Typename == "p2sh_p2wpkh")
-							Types |= (size_t)AddressFormat::Pay2ScriptHash;
-						else if (Typename == "p2pkh")
-							Types |= (size_t)AddressFormat::Pay2PublicKeyHash;
-						else if (Typename == "p2wsh_p2pkh")
-							Types |= (size_t)AddressFormat::Pay2WitnessScriptHash;
-						else if (Typename == "p2wpkh")
-							Types |= (size_t)AddressFormat::Pay2WitnessPublicKeyHash;
-						else if (Typename == "p2tr")
-							Types |= (size_t)AddressFormat::Pay2Taproot;
+						std::string_view name = type->value.get_string();
+						if (name == "p2pk")
+							types |= (size_t)address_format::pay2_public_key;
+						else if (name == "p2sh_p2wpkh")
+							types |= (size_t)address_format::pay2_script_hash;
+						else if (name == "p2pkh")
+							types |= (size_t)address_format::pay2_public_key_hash;
+						else if (name == "p2wsh_p2pkh")
+							types |= (size_t)address_format::pay2_witness_script_hash;
+						else if (name == "p2wpkh")
+							types |= (size_t)address_format::pay2_witness_public_key_hash;
+						else if (name == "p2tr")
+							types |= (size_t)address_format::pay2_taproot;
 					}
 				}
 
-				AddressMap Addresses;
-				btc_pubkey PublicKey;
-				btc_pubkey_init(&PublicKey);
-				if (VerifyingKey.size() != BTC_ECKEY_COMPRESSED_LENGTH && VerifyingKey.size() != BTC_ECKEY_UNCOMPRESSED_LENGTH)
+				address_map addresses;
+				btc_pubkey public_key;
+				btc_pubkey_init(&public_key);
+				if (verifying_key.size() != BTC_ECKEY_COMPRESSED_LENGTH && verifying_key.size() != BTC_ECKEY_UNCOMPRESSED_LENGTH)
 				{
-					auto Key = Format::Util::Decode0xHex(VerifyingKey);
-					if (Key.size() != BTC_ECKEY_COMPRESSED_LENGTH && Key.size() != BTC_ECKEY_UNCOMPRESSED_LENGTH)
-						return LayerException("not a valid hex public key");
+					auto key = format::util::decode_0xhex(verifying_key);
+					if (key.size() != BTC_ECKEY_COMPRESSED_LENGTH && key.size() != BTC_ECKEY_UNCOMPRESSED_LENGTH)
+						return layer_exception("not a valid hex public key");
 
-					memcpy(PublicKey.pubkey, Key.data(), std::min(Key.size(), sizeof(PublicKey.pubkey)));
+					memcpy(public_key.pubkey, key.data(), std::min(key.size(), sizeof(public_key.pubkey)));
 				}
 				else
-					memcpy(PublicKey.pubkey, VerifyingKey.data(), std::min(VerifyingKey.size(), sizeof(PublicKey.pubkey)));
-				PublicKey.compressed = btc_pubkey_get_length(PublicKey.pubkey[0]) == BTC_ECKEY_COMPRESSED_LENGTH;
+					memcpy(public_key.pubkey, verifying_key.data(), std::min(verifying_key.size(), sizeof(public_key.pubkey)));
+				public_key.compressed = btc_pubkey_get_length(public_key.pubkey[0]) == BTC_ECKEY_COMPRESSED_LENGTH;
 
-				char DerivedAddress[128];
-				if (Chain->bech32_cashaddr[0] == '\0')
+				char derived_address[128];
+				if (chain->bech32_cashaddr[0] == '\0')
 				{
-					if (Types & (size_t)AddressFormat::Pay2PublicKey && btc_pubkey_getaddr_p2pk(&PublicKey, Chain, DerivedAddress))
-						Addresses[(uint8_t)Addresses.size() + 1] = DerivedAddress;
+					if (types & (size_t)address_format::pay2_public_key && btc_pubkey_getaddr_p2pk(&public_key, chain, derived_address))
+						addresses[(uint8_t)addresses.size() + 1] = derived_address;
 
-					if ((Types & (size_t)AddressFormat::Pay2ScriptHash || Types & (size_t)AddressFormat::Pay2CashaddrScriptHash) && btc_pubkey_getaddr_p2sh_p2wpkh(&PublicKey, Chain, DerivedAddress))
-						Addresses[(uint8_t)Addresses.size() + 1] = DerivedAddress;
+					if ((types & (size_t)address_format::pay2_script_hash || types & (size_t)address_format::pay2_cashaddr_script_hash) && btc_pubkey_getaddr_p2sh_p2wpkh(&public_key, chain, derived_address))
+						addresses[(uint8_t)addresses.size() + 1] = derived_address;
 
-					if ((Types & (size_t)AddressFormat::Pay2PublicKeyHash || Types & (size_t)AddressFormat::Pay2CashaddrPublicKeyHash) && btc_pubkey_getaddr_p2pkh(&PublicKey, Chain, DerivedAddress))
-						Addresses[(uint8_t)Addresses.size() + 1] = DerivedAddress;
+					if ((types & (size_t)address_format::pay2_public_key_hash || types & (size_t)address_format::pay2_cashaddr_public_key_hash) && btc_pubkey_getaddr_p2pkh(&public_key, chain, derived_address))
+						addresses[(uint8_t)addresses.size() + 1] = derived_address;
 
-					if (false && (Types & (size_t)AddressFormat::Pay2Tapscript) && btc_pubkey_getaddr_p2tr_p2pk(&PublicKey, Chain, DerivedAddress))
-						Addresses[(uint8_t)Addresses.size() + 1] = DerivedAddress;
+					if (false && (types & (size_t)address_format::pay2_tapscript) && btc_pubkey_getaddr_p2tr_p2pk(&public_key, chain, derived_address))
+						addresses[(uint8_t)addresses.size() + 1] = derived_address;
 
-					if ((Types & (size_t)AddressFormat::Pay2Taproot) && btc_pubkey_getaddr_p2tr(&PublicKey, Chain, DerivedAddress))
-						Addresses[(uint8_t)Addresses.size() + 1] = DerivedAddress;
+					if ((types & (size_t)address_format::pay2_taproot) && btc_pubkey_getaddr_p2tr(&public_key, chain, derived_address))
+						addresses[(uint8_t)addresses.size() + 1] = derived_address;
 
-					if ((Types & (size_t)AddressFormat::Pay2WitnessScriptHash) && btc_pubkey_getaddr_p2wsh_p2pkh(&PublicKey, Chain, DerivedAddress))
-						Addresses[(uint8_t)Addresses.size() + 1] = DerivedAddress;
+					if ((types & (size_t)address_format::pay2_witness_script_hash) && btc_pubkey_getaddr_p2wsh_p2pkh(&public_key, chain, derived_address))
+						addresses[(uint8_t)addresses.size() + 1] = derived_address;
 
-					if ((Types & (size_t)AddressFormat::Pay2WitnessPublicKeyHash) && btc_pubkey_getaddr_p2wpkh(&PublicKey, Chain, DerivedAddress))
-						Addresses[(uint8_t)Addresses.size() + 1] = DerivedAddress;
+					if ((types & (size_t)address_format::pay2_witness_public_key_hash) && btc_pubkey_getaddr_p2wpkh(&public_key, chain, derived_address))
+						addresses[(uint8_t)addresses.size() + 1] = derived_address;
 				}
 				else
 				{
-					if (Types & (size_t)AddressFormat::Pay2PublicKey && btc_pubkey_getaddr_p2pk(&PublicKey, Chain, DerivedAddress))
-						Addresses[(uint8_t)Addresses.size() + 1] = DerivedAddress;
+					if (types & (size_t)address_format::pay2_public_key && btc_pubkey_getaddr_p2pk(&public_key, chain, derived_address))
+						addresses[(uint8_t)addresses.size() + 1] = derived_address;
 
-					if ((Types & (size_t)AddressFormat::Pay2ScriptHash || Types & (size_t)AddressFormat::Pay2CashaddrScriptHash) && BitcoinCashPublicKeyGetAddressP2SH(&PublicKey, Chain, DerivedAddress, sizeof(DerivedAddress)))
-						Addresses[(uint8_t)Addresses.size() + 1] = DerivedAddress;
+					if ((types & (size_t)address_format::pay2_script_hash || types & (size_t)address_format::pay2_cashaddr_script_hash) && bitcoin_cash_public_key_get_address_p2sh(&public_key, chain, derived_address, sizeof(derived_address)))
+						addresses[(uint8_t)addresses.size() + 1] = derived_address;
 
-					if ((Types & (size_t)AddressFormat::Pay2PublicKeyHash || Types & (size_t)AddressFormat::Pay2CashaddrPublicKeyHash) && BitcoinCashPublicKeyGetAddressP2PKH(&PublicKey, Chain, DerivedAddress, sizeof(DerivedAddress)))
-						Addresses[(uint8_t)Addresses.size() + 1] = DerivedAddress;
+					if ((types & (size_t)address_format::pay2_public_key_hash || types & (size_t)address_format::pay2_cashaddr_public_key_hash) && bitcoin_cash_public_key_get_address_p2pkh(&public_key, chain, derived_address, sizeof(derived_address)))
+						addresses[(uint8_t)addresses.size() + 1] = derived_address;
 				}
 
-				if (Addresses.empty())
-					return ExpectsLR<DerivedVerifyingWallet>(LayerException("address generation not supported"));
+				if (addresses.empty())
+					return expects_lr<derived_verifying_wallet>(layer_exception("address generation not supported"));
 
-				char DerivedPublicKey[256]; size_t DerivedPublicKeySize = sizeof(DerivedPublicKey);
-				btc_pubkey_get_hex(&PublicKey, DerivedPublicKey, &DerivedPublicKeySize);
-				return ExpectsLR<DerivedVerifyingWallet>(DerivedVerifyingWallet(std::move(Addresses), Optional::None, DerivedPublicKey));
+				char derived_public_key[256]; size_t derived_public_key_size = sizeof(derived_public_key);
+				btc_pubkey_get_hex(&public_key, derived_public_key, &derived_public_key_size);
+				return expects_lr<derived_verifying_wallet>(derived_verifying_wallet(std::move(addresses), optional::none, derived_public_key));
 			}
-			ExpectsLR<String> Bitcoin::NewPublicKeyHash(const std::string_view& Address)
+			expects_lr<string> bitcoin::new_public_key_hash(const std::string_view& address)
 			{
-				uint8_t Data[256]; size_t DataSize = sizeof(Data);
-				if (ParseAddress(Address, Data, &DataSize) == AddressFormat::Unknown)
-					return LayerException("invalid address");
+				uint8_t data[256]; size_t data_size = sizeof(data);
+				if (parse_address(address, data, &data_size) == address_format::unknown)
+					return layer_exception("invalid address");
 
-				return String((char*)Data, DataSize);
+				return string((char*)data, data_size);
 			}
-			ExpectsLR<String> Bitcoin::SignMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const PrivateKey& SigningKey)
+			expects_lr<string> bitcoin::sign_message(const algorithm::asset_id& asset, const std::string_view& message, const secret_box& signing_key)
 			{
-				auto SigningWallet = NewSigningWallet(Asset, SigningKey);
-				if (!SigningWallet)
-					return SigningWallet.Error();
+				auto signing_wallet = new_signing_wallet(asset, signing_key);
+				if (!signing_wallet)
+					return signing_wallet.error();
 
-				btc_key PrivateKey;
-				auto Private = SigningWallet->SigningKey.Expose<KEY_LIMIT>();
-				if (btc_privkey_decode_wif(Private.View.data(), GetChain(), &PrivateKey) != 1)
-					return LayerException("private key not valid");
+				btc_key private_key;
+				auto secret = signing_wallet->signing_key.expose<KEY_LIMIT>();
+				if (btc_privkey_decode_wif(secret.view.data(), get_chain(), &private_key) != 1)
+					return layer_exception("private key not valid");
 
-				uint256 Hash;
-				GenerateMessageHash(Message, Hash);
+				uint8_t hash[32];
+				generate_message_hash(message, hash);
 
-				uint8_t RawSignature[64]; size_t RawSignatureSize = sizeof(RawSignature); int RecoveryId = 0;
-				if (btc_key_sign_hash_compact_recoverable(&PrivateKey, Hash, RawSignature, &RawSignatureSize, &RecoveryId) != 1)
-					return LayerException("private key not valid");
+				uint8_t raw_signature[64]; size_t raw_signature_size = sizeof(raw_signature); int recovery_id = 0;
+				if (btc_key_sign_hash_compact_recoverable(&private_key, hash, raw_signature, &raw_signature_size, &recovery_id) != 1)
+					return layer_exception("private key not valid");
 
-				uint8_t Signature[65];
-				memcpy(Signature + 1, RawSignature, sizeof(RawSignature));
-				Signature[0] = RecoveryId;
-				return Codec::Base64Encode(std::string_view((char*)Signature, sizeof(Signature)));
+				uint8_t signature[65];
+				memcpy(signature + 1, raw_signature, sizeof(raw_signature));
+				signature[0] = recovery_id;
+				return codec::base64_encode(std::string_view((char*)signature, sizeof(signature)));
 			}
-			ExpectsLR<void> Bitcoin::VerifyMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const std::string_view& VerifyingKey, const std::string_view& Signature)
+			expects_lr<void> bitcoin::verify_message(const algorithm::asset_id& asset, const std::string_view& message, const std::string_view& verifying_key, const std::string_view& signature)
 			{
-				String SignatureData = Signature.size() == 64 || Signature.size() == 65 ? String(Signature) : Codec::Base64Decode(Signature);
-				if (SignatureData.size() != 64 && SignatureData.size() != 65)
-					return LayerException("signature not valid");
+				string signature_data = signature.size() == 64 || signature.size() == 65 ? string(signature) : codec::base64_decode(signature);
+				if (signature_data.size() != 64 && signature_data.size() != 65)
+					return layer_exception("signature not valid");
 
-				auto VerifyingWallet = NewVerifyingWallet(Asset, VerifyingKey);
-				if (!VerifyingWallet)
-					return VerifyingWallet.Error();
+				auto verifying_wallet = new_verifying_wallet(asset, verifying_key);
+				if (!verifying_wallet)
+					return verifying_wallet.error();
 
-				uint256 Hash;
-				GenerateMessageHash(Message, Hash);
-				for (auto& Item : VerifyingWallet->Addresses)
+				uint8_t hash[32];
+				generate_message_hash(message, hash);
+				for (auto& item : verifying_wallet->addresses)
 				{
-					const auto& Address = Item.second;
-					uint8_t TargetProgram[256];
-					size_t TargetProgramSize = sizeof(TargetProgram);
-					if (ParseAddress(Address, TargetProgram, &TargetProgramSize) == AddressFormat::Unknown)
+					const auto& address = item.second;
+					uint8_t target_program[256];
+					size_t target_program_size = sizeof(target_program);
+					if (parse_address(address, target_program, &target_program_size) == address_format::unknown)
 						continue;
 
 					for (int i = 0; i < 4; i++)
 					{
-						btc_pubkey PublicKey;
-						if (btc_key_sign_recover_pubkey((uint8_t*)(SignatureData.size() == 65 ? SignatureData.data() + 1 : SignatureData.data()), Hash, i, &PublicKey) != 1)
+						btc_pubkey public_key;
+						if (btc_key_sign_recover_pubkey((uint8_t*)(signature_data.size() == 65 ? signature_data.data() + 1 : signature_data.data()), hash, i, &public_key) != 1)
 							continue;
 
-						if (!memcmp(PublicKey.pubkey, TargetProgram, std::min(TargetProgramSize, sizeof(PublicKey.pubkey))))
-							return Expectation::Met;
+						if (!memcmp(public_key.pubkey, target_program, std::min(target_program_size, sizeof(public_key.pubkey))))
+							return expectation::met;
 
-						uint160 ActualProgram;
-						btc_pubkey_get_hash160(&PublicKey, ActualProgram);
-						if (memcmp(TargetProgram, ActualProgram, std::min(TargetProgramSize, sizeof(ActualProgram))) == 0)
-							return Expectation::Met;
+						uint160 actual_program;
+						btc_pubkey_get_hash160(&public_key, actual_program);
+						if (memcmp(target_program, actual_program, std::min(target_program_size, sizeof(actual_program))) == 0)
+							return expectation::met;
 
-						char SignerAddress[256];
-						if (btc_pubkey_getaddr_p2sh_p2wpkh(&PublicKey, GetChain(), SignerAddress) && Address == SignerAddress)
-							return Expectation::Met;
-						else if (btc_pubkey_getaddr_p2pkh(&PublicKey, GetChain(), SignerAddress) && Address == SignerAddress)
-							return Expectation::Met;
-						else if (btc_pubkey_getaddr_p2wsh_p2pkh(&PublicKey, GetChain(), SignerAddress) && Address == SignerAddress)
-							return Expectation::Met;
-						else if (btc_pubkey_getaddr_p2wpkh(&PublicKey, GetChain(), SignerAddress) && Address == SignerAddress)
-							return Expectation::Met;
-						else if (btc_pubkey_getaddr_p2tr_p2pk(&PublicKey, GetChain(), SignerAddress) && Address == SignerAddress)
-							return Expectation::Met;
-						else if (btc_pubkey_getaddr_p2tr(&PublicKey, GetChain(), SignerAddress) && Address == SignerAddress)
-							return Expectation::Met;
-						else if (BitcoinCashPublicKeyGetAddressP2SH(&PublicKey, GetChain(), SignerAddress, sizeof(SignerAddress)) && Address == SignerAddress)
-							return Expectation::Met;
-						else if (BitcoinCashPublicKeyGetAddressP2PKH(&PublicKey, GetChain(), SignerAddress, sizeof(SignerAddress)) && Address == SignerAddress)
-							return Expectation::Met;
+						char signer_address[256];
+						if (btc_pubkey_getaddr_p2sh_p2wpkh(&public_key, get_chain(), signer_address) && address == signer_address)
+							return expectation::met;
+						else if (btc_pubkey_getaddr_p2pkh(&public_key, get_chain(), signer_address) && address == signer_address)
+							return expectation::met;
+						else if (btc_pubkey_getaddr_p2wsh_p2pkh(&public_key, get_chain(), signer_address) && address == signer_address)
+							return expectation::met;
+						else if (btc_pubkey_getaddr_p2wpkh(&public_key, get_chain(), signer_address) && address == signer_address)
+							return expectation::met;
+						else if (btc_pubkey_getaddr_p2tr_p2pk(&public_key, get_chain(), signer_address) && address == signer_address)
+							return expectation::met;
+						else if (btc_pubkey_getaddr_p2tr(&public_key, get_chain(), signer_address) && address == signer_address)
+							return expectation::met;
+						else if (bitcoin_cash_public_key_get_address_p2sh(&public_key, get_chain(), signer_address, sizeof(signer_address)) && address == signer_address)
+							return expectation::met;
+						else if (bitcoin_cash_public_key_get_address_p2pkh(&public_key, get_chain(), signer_address, sizeof(signer_address)) && address == signer_address)
+							return expectation::met;
 					}
 				}
 
-				return LayerException("signature verification failed with used public key");
+				return layer_exception("signature verification failed with used public key");
 			}
-			String Bitcoin::GetDerivation(uint64_t AddressIndex) const
+			string bitcoin::get_derivation(uint64_t address_index) const
 			{
-				return Stringify::Text(Protocol::Now().Is(NetworkType::Mainnet) ? "m/44'/0'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, AddressIndex);
+				return stringify::text(protocol::now().is(network_type::mainnet) ? "m/44'/0'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, address_index);
 			}
-			const Bitcoin::Chainparams& Bitcoin::GetChainparams() const
+			const bitcoin::chainparams& bitcoin::get_chainparams() const
 			{
-				return Netdata;
+				return netdata;
 			}
-			ExpectsPromiseRT<BaseFee> Bitcoin::CalculateTransactionFeeFromFeeEstimate(const Algorithm::AssetId& Asset, const DynamicWallet& Wallet, const Vector<Transferer>& To, const BaseFee& Estimate, const std::string_view& ChangeAddress)
+			expects_promise_rt<base_fee> bitcoin::calculate_transaction_fee_from_fee_estimate(const algorithm::asset_id& asset, const dynamic_wallet& wallet, const vector<transferer>& to, const base_fee& estimate, const std::string_view& change_address)
 			{
-				Decimal BaselineFee = Estimate.GetFee();
-				Decimal SendingValue = BaselineFee;
-				for (auto& Destination : To)
-					SendingValue += Destination.Value;
+				decimal baseline_fee = estimate.get_fee();
+				decimal sending_value = baseline_fee;
+				for (auto& destination : to)
+					sending_value += destination.value;
 
-				auto Inputs = CalculateCoins(Asset, Wallet, SendingValue, Optional::None);
-				Decimal InputValue = Inputs ? GetCoinsValue(*Inputs, Optional::None) : 0.0;
-				if (!Inputs || Inputs->empty())
-					Coreturn ExpectsRT<BaseFee>(RemoteException(Stringify::Text("insufficient funds: %s < %s", InputValue.ToString().c_str(), SendingValue.ToString().c_str())));
+				auto inputs = calculate_coins(asset, wallet, sending_value, optional::none);
+				decimal input_value = inputs ? get_coins_value(*inputs, optional::none) : 0.0;
+				if (!inputs || inputs->empty())
+					coreturn expects_rt<base_fee>(remote_exception(stringify::text("insufficient funds: %s < %s", input_value.to_string().c_str(), sending_value.to_string().c_str())));
 
-				Vector<String> Outputs = { String(ChangeAddress) };
-				Outputs.reserve(To.size() + 1);
-				for (auto& Item : To)
-					Outputs.push_back(Item.Address);
+				vector<string> outputs = { string(change_address) };
+				outputs.reserve(to.size() + 1);
+				for (auto& item : to)
+					outputs.push_back(item.address);
 
-				bool HasWitness = false;
-				double VirtualSize = 10;
-				for (auto& Input : *Inputs)
+				bool has_witness = false;
+				double virtual_size = 10;
+				for (auto& input : *inputs)
 				{
-					switch (ParseAddress(Input.Address))
+					switch (parse_address(input.address))
 					{
-						case AddressFormat::Pay2PublicKeyHash:
-						case AddressFormat::Pay2CashaddrPublicKeyHash:
-							VirtualSize += 148;
+						case address_format::pay2_public_key_hash:
+						case address_format::pay2_cashaddr_public_key_hash:
+							virtual_size += 148;
 							break;
-						case AddressFormat::Pay2ScriptHash:
-						case AddressFormat::Pay2CashaddrScriptHash:
-							VirtualSize = 153;
+						case address_format::pay2_script_hash:
+						case address_format::pay2_cashaddr_script_hash:
+							virtual_size = 153;
 							break;
-						case AddressFormat::Pay2WitnessPublicKeyHash:
-						case AddressFormat::Pay2WitnessScriptHash:
-							VirtualSize += 67.75;
-							HasWitness = true;
+						case address_format::pay2_witness_public_key_hash:
+						case address_format::pay2_witness_script_hash:
+							virtual_size += 67.75;
+							has_witness = true;
 							break;
-						case AddressFormat::Pay2Taproot:
-							VirtualSize += 57.25;
-							HasWitness = true;
+						case address_format::pay2_taproot:
+							virtual_size += 57.25;
+							has_witness = true;
 							break;
 						default:
-							Coreturn ExpectsRT<BaseFee>(RemoteException("invalid input address"));
+							coreturn expects_rt<base_fee>(remote_exception("invalid input address"));
 					}
 				}
 
-				for (auto& Output : Outputs)
+				for (auto& output : outputs)
 				{
-					switch (ParseAddress(Output))
+					switch (parse_address(output))
 					{
-						case AddressFormat::Pay2PublicKeyHash:
-						case AddressFormat::Pay2CashaddrPublicKeyHash:
-							VirtualSize += 32;
+						case address_format::pay2_public_key_hash:
+						case address_format::pay2_cashaddr_public_key_hash:
+							virtual_size += 32;
 							break;
-						case AddressFormat::Pay2ScriptHash:
-						case AddressFormat::Pay2CashaddrScriptHash:
-							VirtualSize = 32;
+						case address_format::pay2_script_hash:
+						case address_format::pay2_cashaddr_script_hash:
+							virtual_size = 32;
 							break;
-						case AddressFormat::Pay2WitnessPublicKeyHash:
-							VirtualSize += 31;
+						case address_format::pay2_witness_public_key_hash:
+							virtual_size += 31;
 							break;
-						case AddressFormat::Pay2WitnessScriptHash:
-							VirtualSize += 32;
+						case address_format::pay2_witness_script_hash:
+							virtual_size += 32;
 							break;
-						case AddressFormat::Pay2Taproot:
-							VirtualSize += 43;
+						case address_format::pay2_taproot:
+							virtual_size += 43;
 							break;
 						default:
-							Coreturn ExpectsRT<BaseFee>(RemoteException("invalid input address"));
+							coreturn expects_rt<base_fee>(remote_exception("invalid input address"));
 					}
 				}
 
-				if (HasWitness)
-					VirtualSize += 0.5 + (double)Inputs->size() / 4.0;
-				VirtualSize = std::ceil(VirtualSize);
+				if (has_witness)
+					virtual_size += 0.5 + (double)inputs->size() / 4.0;
+				virtual_size = std::ceil(virtual_size);
 
-				Decimal FeePerVByte = Estimate.Price;
-				if (Estimate.Limit <= 1.0)
-					FeePerVByte /= Decimal(VirtualSize).Truncate(Protocol::Now().Message.Precision);
-				Coreturn ExpectsRT<BaseFee>(BaseFee(FeePerVByte, VirtualSize));
+				decimal fee_per_vbyte = estimate.price;
+				if (estimate.limit <= 1.0)
+					fee_per_vbyte /= decimal(virtual_size).truncate(protocol::now().message.precision);
+				coreturn expects_rt<base_fee>(base_fee(fee_per_vbyte, virtual_size));
 			}
-			Option<LayerException> Bitcoin::SignTransactionInput(btc_tx_* Transaction, const CoinUTXO& Output, const SighashContext& Context, size_t Index)
+			option<layer_exception> bitcoin::sign_transaction_input(btc_tx_* transaction, const coin_utxo& output, const sighash_context& context, size_t index)
 			{
-				if (Index >= Context.Keys.size())
-					return LayerException("invalid sighash keys data");
-				else if (Index >= Context.Scripts.Locking.size())
-					return LayerException("invalid sighash locking scripts data");
-				else if (Index >= Context.Scripts.Unlocking.size())
-					return LayerException("invalid sighash unlocking scripts data");
-				else if (Index >= Context.Values.size())
-					return LayerException("invalid sighash values data");
-				else if (Index >= Context.Types.size())
-					return LayerException("invalid sighash types data");
+				if (index >= context.keys.size())
+					return layer_exception("invalid sighash keys data");
+				else if (index >= context.scripts.locking.size())
+					return layer_exception("invalid sighash locking scripts data");
+				else if (index >= context.scripts.unlocking.size())
+					return layer_exception("invalid sighash unlocking scripts data");
+				else if (index >= context.values.size())
+					return layer_exception("invalid sighash values data");
+				else if (index >= context.types.size())
+					return layer_exception("invalid sighash types data");
 
-				auto& Key = Context.Keys[Index];
-				auto& UnlockingScripts = Context.Scripts.Unlocking[Index];
-				auto Type = (btc_tx_out_type)Context.Types[Index];
+				auto& key = context.keys[index];
+				auto& unlocking_scripts = context.scripts.unlocking[index];
+				auto type = (btc_tx_out_type)context.types[index];
 
-				btc_key PrivateKey;
-				btc_privkey_init(&PrivateKey);
-				memcpy(PrivateKey.privkey, Key.data(), std::min(Key.size(), sizeof(PrivateKey)));
+				btc_key private_key;
+				btc_privkey_init(&private_key);
+				memcpy(private_key.privkey, key.data(), std::min(key.size(), sizeof(private_key)));
 
-				auto Status = btc_tx_sign_input(Transaction, &PrivateKey, GetSigHashType(), Type, UnlockingScripts.data(), UnlockingScripts.size(), Context.Scripts.Locking.data(), Context.Values.data(), (uint32_t)Index, nullptr, nullptr);
-				if (Status != BTC_SIGN_OK)
-					return LayerException(btc_tx_sign_result_to_str(Status));
+				auto status = btc_tx_sign_input(transaction, &private_key, get_sig_hash_type(), type, unlocking_scripts.data(), unlocking_scripts.size(), context.scripts.locking.data(), context.values.data(), (uint32_t)index, nullptr, nullptr);
+				if (status != BTC_SIGN_OK)
+					return layer_exception(btc_tx_sign_result_to_str(status));
 
-				return Optional::None;
+				return optional::none;
 			}
-			Option<LayerException> Bitcoin::AddTransactionInput(btc_tx_* Transaction, const CoinUTXO& Output, SighashContext& Context, const char* PrivateKeyWif)
+			option<layer_exception> bitcoin::add_transaction_input(btc_tx_* transaction, const coin_utxo& output, sighash_context& context, const char* private_key_wif)
 			{
-				btc_key PrivateKey;
-				if (btc_privkey_decode_wif(PrivateKeyWif, GetChain(), &PrivateKey) != 1)
-					return LayerException("input private key invalid");
+				btc_key private_key;
+				if (btc_privkey_decode_wif(private_key_wif, get_chain(), &private_key) != 1)
+					return layer_exception("input private key invalid");
 
-				btc_pubkey PublicKey;
-				btc_pubkey_init(&PublicKey);
-				btc_pubkey_from_key(&PrivateKey, &PublicKey);
-				if (!btc_pubkey_is_valid(&PublicKey))
-					return LayerException("input public key invalid");
+				btc_pubkey public_key;
+				btc_pubkey_init(&public_key);
+				btc_pubkey_from_key(&private_key, &public_key);
+				if (!btc_pubkey_is_valid(&public_key))
+					return layer_exception("input public key invalid");
 
-				btc_tx_out_type ScriptType = BTC_TX_INVALID;
-				cstring* LockingScript = cstr_new_sz(256), *UnlockingScript = nullptr;
-				uint8_t Program[256]; size_t ProgramSize = sizeof(Program);
-				switch (ParseAddress(Output.Address, Program, &ProgramSize))
+				btc_tx_out_type script_type = BTC_TX_INVALID;
+				cstring* locking_script = cstr_new_sz(256), * unlocking_script = nullptr;
+				uint8_t program[256]; size_t program_size = sizeof(program);
+				switch (parse_address(output.address, program, &program_size))
 				{
-					case AddressFormat::Pay2PublicKey:
-						if (btc_script_build_p2pk(LockingScript, Program, ProgramSize))
-							ScriptType = BTC_TX_PUBKEY;
+					case address_format::pay2_public_key:
+						if (btc_script_build_p2pk(locking_script, program, program_size))
+							script_type = BTC_TX_PUBKEY;
 						break;
-					case AddressFormat::Pay2PublicKeyHash:
-						if (btc_script_build_p2pkh(LockingScript, Program))
-							ScriptType = BTC_TX_PUBKEYHASH;
+					case address_format::pay2_public_key_hash:
+						if (btc_script_build_p2pkh(locking_script, program))
+							script_type = BTC_TX_PUBKEYHASH;
 						break;
-					case AddressFormat::Pay2ScriptHash:
+					case address_format::pay2_script_hash:
 					{
-						ProgramSize = sizeof(uint160);
-						btc_pubkey_get_hash160(&PublicKey, Program);
-						if (btc_script_build_p2pkh(LockingScript, Program))
+						program_size = sizeof(uint160);
+						btc_pubkey_get_hash160(&public_key, program);
+						if (btc_script_build_p2pkh(locking_script, program))
 						{
-							uint8_t Version = 0;
-							UnlockingScript = cstr_new_sz(256);
-							ser_varlen(UnlockingScript, 22);
-							ser_bytes(UnlockingScript, &Version, 1);
-							ser_varlen(UnlockingScript, 20);
-							ser_bytes(UnlockingScript, Program, 20);
-							ScriptType = BTC_TX_WITNESS_V0_PUBKEYHASH;
+							uint8_t version = 0;
+							unlocking_script = cstr_new_sz(256);
+							ser_varlen(unlocking_script, 22);
+							ser_bytes(unlocking_script, &version, 1);
+							ser_varlen(unlocking_script, 20);
+							ser_bytes(unlocking_script, program, 20);
+							script_type = BTC_TX_WITNESS_V0_PUBKEYHASH;
 						}
 						break;
 					}
-					case AddressFormat::Pay2WitnessScriptHash:
+					case address_format::pay2_witness_script_hash:
 					{
-						ProgramSize = sizeof(uint160);
-						btc_pubkey_get_hash160(&PublicKey, Program);
-						if (btc_script_build_p2pkh(LockingScript, Program))
+						program_size = sizeof(uint160);
+						btc_pubkey_get_hash160(&public_key, program);
+						if (btc_script_build_p2pkh(locking_script, program))
 						{
-							UnlockingScript = cstr_new_cstr(LockingScript);
-							ScriptType = BTC_TX_WITNESS_V0_SCRIPTHASH;
+							unlocking_script = cstr_new_cstr(locking_script);
+							script_type = BTC_TX_WITNESS_V0_SCRIPTHASH;
 						}
 						break;
 					}
-					case AddressFormat::Pay2WitnessPublicKeyHash:
-						if (btc_script_build_p2pkh(LockingScript, Program))
-							ScriptType = BTC_TX_WITNESS_V0_PUBKEYHASH;
+					case address_format::pay2_witness_public_key_hash:
+						if (btc_script_build_p2pkh(locking_script, program))
+							script_type = BTC_TX_WITNESS_V0_PUBKEYHASH;
 						break;
-					case AddressFormat::Pay2Taproot:
+					case address_format::pay2_taproot:
 					{
-						uint256 KeypathProgram;
-						btc_pubkey_get_taproot_pubkey(&PublicKey, nullptr, KeypathProgram);
-						if (!btc_script_build_p2tr(LockingScript, Program))
+						uint8_t keypath_program[32];
+						btc_pubkey_get_taproot_pubkey(&public_key, nullptr, keypath_program);
+						if (!btc_script_build_p2tr(locking_script, program))
 							break;
 
-						if (ProgramSize != sizeof(KeypathProgram) || memcmp(KeypathProgram, Program, ProgramSize) != 0)
+						if (program_size != sizeof(keypath_program) || memcmp(keypath_program, program, program_size) != 0)
 						{
 							if (false)
 							{
-								UnlockingScript = cstr_new_sz(256);
-								if (btc_script_build_p2pk(UnlockingScript, KeypathProgram, sizeof(KeypathProgram)))
-									ScriptType = BTC_TX_WITNESS_V1_TAPROOT_SCRIPTPATH;
+								unlocking_script = cstr_new_sz(256);
+								if (btc_script_build_p2pk(unlocking_script, keypath_program, sizeof(keypath_program)))
+									script_type = BTC_TX_WITNESS_V1_TAPROOT_SCRIPTPATH;
 							}
 						}
-						else 
-							ScriptType = BTC_TX_WITNESS_V1_TAPROOT_KEYPATH;
+						else
+							script_type = BTC_TX_WITNESS_V1_TAPROOT_KEYPATH;
 						break;
 					}
 					default:
 						break;
 				}
 
-				String RawTransactionId = Codec::HexDecode(Output.TransactionId);
-				std::reverse(RawTransactionId.begin(), RawTransactionId.end());
+				string raw_transaction_id = codec::hex_decode(output.transaction_id);
+				std::reverse(raw_transaction_id.begin(), raw_transaction_id.end());
 
-				Context.Scripts.Unlocking.emplace_back();
-				auto& UnlockingScripts = Context.Scripts.Unlocking.back();
-				if (UnlockingScript != nullptr)
-					UnlockingScripts.push_back(UnlockingScript);
+				context.scripts.unlocking.emplace_back();
+				auto& unlocking_scripts = context.scripts.unlocking.back();
+				if (unlocking_script != nullptr)
+					unlocking_scripts.push_back(unlocking_script);
 
-				Context.Scripts.Locking.push_back(LockingScript);
-				Context.Keys.push_back(String((char*)PrivateKey.privkey, sizeof(PrivateKey.privkey)));
-				Context.Values.push_back((uint64_t)ToBaselineValue(Output.Value));
-				Context.Types.push_back(ScriptType);
+				context.scripts.locking.push_back(locking_script);
+				context.keys.push_back(string((char*)private_key.privkey, sizeof(private_key.privkey)));
+				context.values.push_back((uint64_t)to_baseline_value(output.value));
+				context.types.push_back(script_type);
 
-				btc_tx_in* Input = btc_tx_in_new();
-				memcpy(Input->prevout.hash, RawTransactionId.c_str(), sizeof(Input->prevout.hash));
-				Input->script_sig = cstr_new_sz(128);
-				Input->prevout.n = Output.Index;
-				vector_add(Transaction->vin, Input);
-				return Optional::None;
+				btc_tx_in* input = btc_tx_in_new();
+				memcpy(input->prevout.hash, raw_transaction_id.c_str(), sizeof(input->prevout.hash));
+				input->script_sig = cstr_new_sz(128);
+				input->prevout.n = output.index;
+				vector_add(transaction->vin, input);
+				return optional::none;
 			}
-			Option<LayerException> Bitcoin::AddTransactionOutput(btc_tx_* Transaction, const std::string_view& Address, const Decimal& Value)
+			option<layer_exception> bitcoin::add_transaction_output(btc_tx_* transaction, const std::string_view& address, const decimal& value)
 			{
-				uint8_t Program[256];
-				size_t ProgramSize = sizeof(Program);
+				uint8_t program[256];
+				size_t program_size = sizeof(program);
 
-				bool ScriptExists = false;
-				switch (ParseAddress(Address, Program, &ProgramSize))
+				bool script_exists = false;
+				switch (parse_address(address, program, &program_size))
 				{
-					case AddressFormat::Pay2PublicKey:
-						ScriptExists = btc_tx_add_p2pk_out(Transaction, (uint64_t)ToBaselineValue(Value), Program, ProgramSize);
+					case address_format::pay2_public_key:
+						script_exists = btc_tx_add_p2pk_out(transaction, (uint64_t)to_baseline_value(value), program, program_size);
 						break;
-					case AddressFormat::Pay2PublicKeyHash:
-						ScriptExists = btc_tx_add_p2pkh_hash160_out(Transaction, (uint64_t)ToBaselineValue(Value), Program);
+					case address_format::pay2_public_key_hash:
+						script_exists = btc_tx_add_p2pkh_hash160_out(transaction, (uint64_t)to_baseline_value(value), program);
 						break;
-					case AddressFormat::Pay2ScriptHash:
-						ScriptExists = btc_tx_add_p2sh_hash160_out(Transaction, (uint64_t)ToBaselineValue(Value), Program);
+					case address_format::pay2_script_hash:
+						script_exists = btc_tx_add_p2sh_hash160_out(transaction, (uint64_t)to_baseline_value(value), program);
 						break;
-					case AddressFormat::Pay2WitnessScriptHash:
-						ScriptExists = btc_tx_add_p2wsh_hash256_out(Transaction, (uint64_t)ToBaselineValue(Value), Program);
+					case address_format::pay2_witness_script_hash:
+						script_exists = btc_tx_add_p2wsh_hash256_out(transaction, (uint64_t)to_baseline_value(value), program);
 						break;
-					case AddressFormat::Pay2WitnessPublicKeyHash:
-						ScriptExists = btc_tx_add_p2wpkh_hash160_out(Transaction, (uint64_t)ToBaselineValue(Value), Program);
+					case address_format::pay2_witness_public_key_hash:
+						script_exists = btc_tx_add_p2wpkh_hash160_out(transaction, (uint64_t)to_baseline_value(value), program);
 						break;
-					case AddressFormat::Pay2Tapscript:
-					case AddressFormat::Pay2Taproot:
-						ScriptExists = btc_tx_add_p2tr_hash256_out(Transaction, (uint64_t)ToBaselineValue(Value), Program);
+					case address_format::pay2_tapscript:
+					case address_format::pay2_taproot:
+						script_exists = btc_tx_add_p2tr_hash256_out(transaction, (uint64_t)to_baseline_value(value), program);
 						break;
 					default:
-						return LayerException("output address type invalid");
+						return layer_exception("output address type invalid");
 				}
 
-				if (!ScriptExists)
-					return LayerException("output address script type invalid");
+				if (!script_exists)
+					return layer_exception("output address script type invalid");
 
-				return Optional::None;
+				return optional::none;
 			}
-			String Bitcoin::SerializeTransactionData(btc_tx_* Transaction)
+			string bitcoin::serialize_transaction_data(btc_tx_* transaction)
 			{
-				cstring* Data = cstr_new_sz(1024);
-				btc_tx_serialize(Data, Transaction, true);
+				cstring* data = cstr_new_sz(1024);
+				btc_tx_serialize(data, transaction, true);
 
-				String HexData(Data->len * 2, '\0');
-				utils_bin_to_hex((uint8_t*)Data->str, Data->len, (char*)HexData.data());
-				cstr_free(Data, true);
-				return HexData;
+				string hex_data(data->len * 2, '\0');
+				utils_bin_to_hex((uint8_t*)data->str, data->len, (char*)hex_data.data());
+				cstr_free(data, true);
+				return hex_data;
 			}
-			String Bitcoin::SerializeTransactionId(btc_tx_* Transaction)
+			string bitcoin::serialize_transaction_id(btc_tx_* transaction)
 			{
-				uint256 Hash;
-				btc_tx_hash(Transaction, Hash);
+				uint8_t hash[32];
+				btc_tx_hash(transaction, hash);
 
-				String Intermediate = String((char*)Hash, sizeof(Hash));
-				std::reverse(Intermediate.begin(), Intermediate.end());
-				return Codec::HexEncode(Intermediate);
+				string intermediate = string((char*)hash, sizeof(hash));
+				std::reverse(intermediate.begin(), intermediate.end());
+				return codec::hex_encode(intermediate);
 			}
-			Bitcoin::AddressFormat Bitcoin::ParseAddress(const std::string_view& Address, uint8_t* DataOut, size_t* DataSizeOut)
+			bitcoin::address_format bitcoin::parse_address(const std::string_view& address, uint8_t* data_out, size_t* data_size_out)
 			{
-				auto* Chain = GetChain();
-				if (Address.empty())
-					return AddressFormat::Unknown;
+				auto* chain = get_chain();
+				if (address.empty())
+					return address_format::unknown;
 
-				uint8_t Data[256]; size_t DataSize = sizeof(Data);
-				if (Chain->bech32_cashaddr[0] != '\0')
+				uint8_t data[256]; size_t data_size = sizeof(data);
+				if (chain->bech32_cashaddr[0] != '\0')
 				{
-					AddressFormat Type; size_t PrefixSize;
-					if (LegacyHashFromCashAddress(Chain, Address, Data, &DataSize, &PrefixSize, &Type))
+					address_format type; size_t prefix_size;
+					if (legacy_hash_from_cash_address(chain, address, data, &data_size, &prefix_size, &type))
 					{
-						*DataSizeOut = std::min(DataSize - PrefixSize, *DataSizeOut);
-						memcpy(DataOut, Data + PrefixSize, *DataSizeOut);
-						return Type;
+						*data_size_out = std::min(data_size - prefix_size, *data_size_out);
+						memcpy(data_out, data + prefix_size, *data_size_out);
+						return type;
 					}
 				}
-				if (Chain->bech32_hrp[0] == '\0' || Stringify::StartsWith(Address, Chain->bech32_hrp))
+				if (chain->bech32_hrp[0] == '\0' || stringify::starts_with(address, chain->bech32_hrp))
 				{
-					int32_t WitnessVersion = 0;
-					if (segwit_addr_decode(&WitnessVersion, Data, &DataSize, Chain->bech32_hrp, String(Address).c_str()))
+					int32_t witness_version = 0;
+					if (segwit_addr_decode(&witness_version, data, &data_size, chain->bech32_hrp, string(address).c_str()))
 					{
-						if (DataOut && DataSizeOut)
+						if (data_out && data_size_out)
 						{
-							*DataSizeOut = std::min(DataSize, *DataSizeOut);
-							memcpy(DataOut, Data, *DataSizeOut);
+							*data_size_out = std::min(data_size, *data_size_out);
+							memcpy(data_out, data, *data_size_out);
 						}
 
-						if (DataSize == 32)
+						if (data_size == 32)
 						{
-							if (WitnessVersion == 1)
-								return AddressFormat::Pay2Taproot;
+							if (witness_version == 1)
+								return address_format::pay2_taproot;
 
-							return AddressFormat::Pay2WitnessScriptHash;
+							return address_format::pay2_witness_script_hash;
 						}
-						else if (DataSize == 20)
-							return AddressFormat::Pay2WitnessPublicKeyHash;
+						else if (data_size == 20)
+							return address_format::pay2_witness_public_key_hash;
 					}
 				}
 
-				DataSize = sizeof(uint8_t) * Address.size() * 2;
-				int NewSize = btc_base58_decode_check(String(Address).c_str(), Data, DataSize);
-				if (!NewSize)
+				data_size = sizeof(uint8_t) * address.size() * 2;
+				int new_size = btc_base58_decode_check(string(address).c_str(), data, data_size);
+				if (!new_size)
 				{
-				TryPublicKey:
-					if (!Format::Util::IsHexEncoding(Address))
-						return AddressFormat::Unknown;
+				try_public_key:
+					if (!format::util::is_hex_encoding(address))
+						return address_format::unknown;
 
-					auto RawPublicKey = Codec::HexDecode(Address);
-					if (RawPublicKey.size() != BTC_ECKEY_COMPRESSED_LENGTH && RawPublicKey.size() != BTC_ECKEY_UNCOMPRESSED_LENGTH)
-						return AddressFormat::Unknown;
+					auto raw_public_key = codec::hex_decode(address);
+					if (raw_public_key.size() != BTC_ECKEY_COMPRESSED_LENGTH && raw_public_key.size() != BTC_ECKEY_UNCOMPRESSED_LENGTH)
+						return address_format::unknown;
 
-					btc_pubkey PublicKey;
-					btc_pubkey_init(&PublicKey);
-					memcpy(PublicKey.pubkey, RawPublicKey.data(), RawPublicKey.size());
-					PublicKey.compressed = RawPublicKey.size() == BTC_ECKEY_COMPRESSED_LENGTH;
-					if (!btc_pubkey_is_valid(&PublicKey))
-						return AddressFormat::Unknown;
+					btc_pubkey public_key;
+					btc_pubkey_init(&public_key);
+					memcpy(public_key.pubkey, raw_public_key.data(), raw_public_key.size());
+					public_key.compressed = raw_public_key.size() == BTC_ECKEY_COMPRESSED_LENGTH;
+					if (!btc_pubkey_is_valid(&public_key))
+						return address_format::unknown;
 
-					memcpy(Data, RawPublicKey.data(), RawPublicKey.size());
-					if (DataOut && DataSizeOut)
+					memcpy(data, raw_public_key.data(), raw_public_key.size());
+					if (data_out && data_size_out)
 					{
-						*DataSizeOut = std::min(RawPublicKey.size(), *DataSizeOut);
-						memcpy(DataOut, RawPublicKey.data(), *DataSizeOut);
+						*data_size_out = std::min(raw_public_key.size(), *data_size_out);
+						memcpy(data_out, raw_public_key.data(), *data_size_out);
 					}
 
-					return AddressFormat::Pay2PublicKey;
+					return address_format::pay2_public_key;
 				}
 
-				DataSize = (size_t)(NewSize - 4);
-				if (base58_prefix_check(Chain->b58prefix_pubkey_address, Data))
+				data_size = (size_t)(new_size - 4);
+				if (base58_prefix_check(chain->b58prefix_pubkey_address, data))
 				{
-					size_t PrefixSize = base58_prefix_size(Chain->b58prefix_pubkey_address);
-					if (DataSize != sizeof(uint160) + PrefixSize)
-						goto TryPublicKey;
+					size_t prefix_size = base58_prefix_size(chain->b58prefix_pubkey_address);
+					if (data_size != sizeof(uint160) + prefix_size)
+						goto try_public_key;
 
-					if (DataOut && DataSizeOut)
+					if (data_out && data_size_out)
 					{
-						*DataSizeOut = std::min(DataSize - PrefixSize, *DataSizeOut);
-						memcpy(DataOut, Data + PrefixSize, *DataSizeOut);
+						*data_size_out = std::min(data_size - prefix_size, *data_size_out);
+						memcpy(data_out, data + prefix_size, *data_size_out);
 					}
 
-					return AddressFormat::Pay2PublicKeyHash;
+					return address_format::pay2_public_key_hash;
 				}
-				else if (base58_prefix_check(Chain->b58prefix_script_address, Data))
+				else if (base58_prefix_check(chain->b58prefix_script_address, data))
 				{
-					size_t PrefixSize = base58_prefix_size(Chain->b58prefix_script_address);
-					if (DataSize != sizeof(uint160) + PrefixSize)
-						goto TryPublicKey;
+					size_t prefix_size = base58_prefix_size(chain->b58prefix_script_address);
+					if (data_size != sizeof(uint160) + prefix_size)
+						goto try_public_key;
 
-					if (DataOut && DataSizeOut)
+					if (data_out && data_size_out)
 					{
-						*DataSizeOut = std::min(DataSize - PrefixSize, *DataSizeOut);
-						memcpy(DataOut, Data + PrefixSize, *DataSizeOut);
+						*data_size_out = std::min(data_size - prefix_size, *data_size_out);
+						memcpy(data_out, data + prefix_size, *data_size_out);
 					}
 
-					return AddressFormat::Pay2ScriptHash;
+					return address_format::pay2_script_hash;
 				}
 
-				goto TryPublicKey;
+				goto try_public_key;
 			}
-			String Bitcoin::GetMessageMagic()
+			string bitcoin::get_message_magic()
 			{
-				return "Bitcoin Signed Message:\n";
+				return "Bitcoin signed message:\n";
 			}
-			void Bitcoin::GenerateMessageHash(const std::string_view& Input, uint8_t Output[32])
+			void bitcoin::generate_message_hash(const std::string_view& input, uint8_t output[32])
 			{
-				String Size(1, (char)Input.size());
-				if (Input.size() > 253)
+				string size(1, (char)input.size());
+				if (input.size() > 253)
 				{
-					uint16_t Size16 = OS::CPU::ToEndianness(OS::CPU::Endian::Little, (uint16_t)Input.size());
-					Size.append((char*)&Size16, sizeof(Size16));
+					uint16_t size16 = os::hw::to_endianness(os::hw::endian::little, (uint16_t)input.size());
+					size.append((char*)&size16, sizeof(size16));
 				}
 
-				String Header = GetMessageMagic();
-				String Payload = Stringify::Text("%c%s%.*s%.*s", (char)Header.size(), Header.c_str(), (int)Size.size(), Size.c_str(), (int)Input.size(), Input.data());
-				btc_hash((uint8_t*)Payload.data(), Payload.size(), Output);
+				string header = get_message_magic();
+				string payload = stringify::text("%c%s%.*s%.*s", (char)header.size(), header.c_str(), (int)size.size(), size.c_str(), (int)input.size(), input.data());
+				btc_hash((uint8_t*)payload.data(), payload.size(), output);
 			}
-			const btc_chainparams_* Bitcoin::GetChain()
+			const btc_chainparams_* bitcoin::get_chain()
 			{
-				switch (Protocol::Now().User.Network)
+				switch (protocol::now().user.network)
 				{
-					case NetworkType::Regtest:
+					case network_type::regtest:
 						return &btc_chainparams_regtest;
-					case NetworkType::Testnet:
+					case network_type::testnet:
 						return &btc_chainparams_test;
-					case NetworkType::Mainnet:
+					case network_type::mainnet:
 						return &btc_chainparams_main;
 					default:
 						VI_PANIC(false, "invalid network type");
 						return nullptr;
 				}
 			}
-			Bitcoin::AddressFormat Bitcoin::GetAddressType()
+			bitcoin::address_format bitcoin::get_address_type()
 			{
-				return (AddressFormat)((size_t)AddressFormat::Pay2PublicKeyHash | (size_t)AddressFormat::Pay2WitnessPublicKeyHash | (size_t)AddressFormat::Pay2Taproot);
+				return (address_format)((size_t)address_format::pay2_public_key_hash | (size_t)address_format::pay2_witness_public_key_hash | (size_t)address_format::pay2_taproot);
 			}
-			uint32_t Bitcoin::GetSigHashType()
+			uint32_t bitcoin::get_sig_hash_type()
 			{
 				return SIGHASH_ALL;
 			}

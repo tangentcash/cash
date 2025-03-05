@@ -3,76 +3,76 @@
 #include "engine.h"
 #include "../../kernel/block.h"
 
-namespace Tangent
+namespace tangent
 {
-	namespace Storages
+	namespace storages
 	{
-		enum class FeePriority
+		enum class fee_priority
 		{
-			Fastest,
-			Fast,
-			Medium,
-			Slow
+			fastest,
+			fast,
+			medium,
+			slow
 		};
 
-		enum class NodeServices
+		enum class node_services
 		{
-			Consensus = (1 << 0),
-			Discovery = (1 << 1),
-			Synchronization = (1 << 2),
-			Interface = (1 << 3),
-			Proposer = (1 << 4),
-			Public = (1 << 5),
-			Streaming = (1 << 6)
+			consensus = (1 << 0),
+			discovery = (1 << 1),
+			synchronization = (1 << 2),
+			interfaces = (1 << 3),
+			proposer = (1 << 4),
+			publicity = (1 << 5),
+			streaming = (1 << 6)
 		};
 
-		struct AccountBandwidth
+		struct account_bandwidth
 		{
-			uint64_t Sequence = 0;
-			size_t Count = 0;
-			bool Congested = false;
+			uint64_t sequence = 0;
+			size_t count = 0;
+			bool congested = false;
 		};
 
-		struct Mempoolstate : Ledger::MutableStorage
+		struct mempoolstate : ledger::mutable_storage
 		{
 		private:
-			std::string_view Label;
-			bool Borrows;
+			std::string_view label;
+			bool borrows;
 
 		public:
-			Mempoolstate(const std::string_view& NewLabel) noexcept;
-			virtual ~Mempoolstate() noexcept override;
-			ExpectsLR<void> ApplyTrialAddress(const SocketAddress& Address);
-			ExpectsLR<void> ApplyValidator(const Ledger::Validator& Node, Option<Ledger::Wallet>&& Wallet);
-			ExpectsLR<void> ClearValidator(const SocketAddress& ValidatorAddress);
-			ExpectsLR<std::pair<Ledger::Validator, Ledger::Wallet>> GetValidatorByOwnership(size_t Offset);
-			ExpectsLR<Ledger::Validator> GetValidatorByAddress(const SocketAddress& ValidatorAddress);
-			ExpectsLR<Ledger::Validator> GetValidatorByPreference(size_t Offset);
-			ExpectsLR<Vector<SocketAddress>> GetValidatorAddresses(size_t Offset, size_t Count, uint32_t Services = 0);
-			ExpectsLR<Vector<SocketAddress>> GetRandomizedValidatorAddresses(size_t Count, uint32_t Services = 0);
-			ExpectsLR<SocketAddress> NextTrialAddress();
-			ExpectsLR<size_t> GetValidatorsCount();
-			ExpectsLR<Decimal> GetGasPrice(const Algorithm::AssetId& Asset, double PriorityPercentile);
-			ExpectsLR<Decimal> GetAssetPrice(const Algorithm::AssetId& PriceOf, const Algorithm::AssetId& RelativeTo, double PriorityPercentile = 0.5);
-			ExpectsLR<void> AddTransaction(Ledger::Transaction& Value, bool BypassCongestion = false);
-			ExpectsLR<void> RemoveTransactions(const Vector<uint256_t>& TransactionHashes);
-			ExpectsLR<void> RemoveTransactions(const UnorderedSet<uint256_t>& TransactionHashes);
-			ExpectsLR<void> ExpireTransactions();
-			ExpectsLR<AccountBandwidth> GetBandwidthByOwner(const Algorithm::Pubkeyhash Owner, Ledger::TransactionLevel Type);
-			ExpectsLR<bool> HasTransaction(const uint256_t& TransactionHash);
-			ExpectsLR<uint64_t> GetLowestTransactionSequence(const Algorithm::Pubkeyhash Owner);
-			ExpectsLR<uint64_t> GetHighestTransactionSequence(const Algorithm::Pubkeyhash Owner);
-			ExpectsLR<UPtr<Ledger::Transaction>> GetTransactionByHash(const uint256_t& TransactionHash);
-			ExpectsLR<Vector<UPtr<Ledger::Transaction>>> GetTransactions(size_t Offset, size_t Count);
-			ExpectsLR<Vector<UPtr<Ledger::Transaction>>> GetTransactionsByOwner(const Algorithm::Pubkeyhash Owner, int8_t Direction, size_t Offset, size_t Count);
-			ExpectsLR<Vector<UPtr<Ledger::Transaction>>> GetCumulativeEventTransactions(const uint256_t& CumulativeHash, size_t Offset, size_t Count);
-			ExpectsLR<Vector<uint256_t>> GetTransactionHashset(size_t Offset, size_t Count);
+			mempoolstate(const std::string_view& new_label) noexcept;
+			virtual ~mempoolstate() noexcept override;
+			expects_lr<void> apply_trial_address(const socket_address& address);
+			expects_lr<void> apply_validator(const ledger::validator& node, option<ledger::wallet>&& wallet);
+			expects_lr<void> clear_validator(const socket_address& validator_address);
+			expects_lr<std::pair<ledger::validator, ledger::wallet>> get_validator_by_ownership(size_t offset);
+			expects_lr<ledger::validator> get_validator_by_address(const socket_address& validator_address);
+			expects_lr<ledger::validator> get_validator_by_preference(size_t offset);
+			expects_lr<vector<socket_address>> get_validator_addresses(size_t offset, size_t count, uint32_t services = 0);
+			expects_lr<vector<socket_address>> get_randomized_validator_addresses(size_t count, uint32_t services = 0);
+			expects_lr<socket_address> next_trial_address();
+			expects_lr<size_t> get_validators_count();
+			expects_lr<decimal> get_gas_price(const algorithm::asset_id& asset, double priority_percentile);
+			expects_lr<decimal> get_asset_price(const algorithm::asset_id& price_of, const algorithm::asset_id& relative_to, double priority_percentile = 0.5);
+			expects_lr<void> add_transaction(ledger::transaction& value, bool bypass_congestion = false);
+			expects_lr<void> remove_transactions(const vector<uint256_t>& transaction_hashes);
+			expects_lr<void> remove_transactions(const unordered_set<uint256_t>& transaction_hashes);
+			expects_lr<void> expire_transactions();
+			expects_lr<account_bandwidth> get_bandwidth_by_owner(const algorithm::pubkeyhash owner, ledger::transaction_level type);
+			expects_lr<bool> has_transaction(const uint256_t& transaction_hash);
+			expects_lr<uint64_t> get_lowest_transaction_sequence(const algorithm::pubkeyhash owner);
+			expects_lr<uint64_t> get_highest_transaction_sequence(const algorithm::pubkeyhash owner);
+			expects_lr<uptr<ledger::transaction>> get_transaction_by_hash(const uint256_t& transaction_hash);
+			expects_lr<vector<uptr<ledger::transaction>>> get_transactions(size_t offset, size_t count);
+			expects_lr<vector<uptr<ledger::transaction>>> get_transactions_by_owner(const algorithm::pubkeyhash owner, int8_t direction, size_t offset, size_t count);
+			expects_lr<vector<uptr<ledger::transaction>>> get_cumulative_event_transactions(const uint256_t& cumulative_hash, size_t offset, size_t count);
+			expects_lr<vector<uint256_t>> get_transaction_hashset(size_t offset, size_t count);
 
 		public:
-			static double FeePercentile(FeePriority Priority);
+			static double fee_percentile(fee_priority priority);
 
 		protected:
-			bool ReconstructStorage() override;
+			bool reconstruct_storage() override;
 		};
 	}
 }

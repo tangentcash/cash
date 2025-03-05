@@ -1,603 +1,603 @@
 #include "format.h"
 #include "../kernel/algorithm.h"
 
-namespace Tangent
+namespace tangent
 {
-	namespace Format
+	namespace format
 	{
-		Variable::Variable() noexcept : Type(Viewable::Invalid), Length(0)
+		variable::variable() noexcept : type(viewable::invalid), length(0)
 		{
-			Value.Pointer = nullptr;
+			value.pointer = nullptr;
 		}
-		Variable::Variable(const char* NewValue) noexcept : Variable(std::string_view(NewValue))
+		variable::variable(const char* new_value) noexcept : variable(std::string_view(new_value))
 		{
 		}
-		Variable::Variable(const std::string_view& NewValue) noexcept : Variable(Viewable::StringAny10)
+		variable::variable(const std::string_view& new_value) noexcept : variable(viewable::string_any10)
 		{
-			Length = (uint32_t)NewValue.size();
-			size_t StringSize = sizeof(char) * (Length + 1);
-			if (Length > GetMaxSmallStringSize())
-				Value.Pointer = Memory::Allocate<char>(StringSize);
+			length = (uint32_t)new_value.size();
+			size_t string_size = sizeof(char) * (length + 1);
+			if (length > get_max_small_string_size())
+				value.pointer = memory::allocate<char>(string_size);
 
-			char* Data = (char*)AsString().data();
-			memcpy(Data, NewValue.data(), StringSize - sizeof(char));
-			Data[StringSize - 1] = '\0';
+			char* data = (char*)as_string().data();
+			memcpy(data, new_value.data(), string_size - sizeof(char));
+			data[string_size - 1] = '\0';
 		}
-		Variable::Variable(const String& NewValue) noexcept : Variable(std::string_view(NewValue))
+		variable::variable(const string& new_value) noexcept : variable(std::string_view(new_value))
 		{
 		}
-		Variable::Variable(const Decimal& NewValue) noexcept : Variable(Viewable::DecimalZero)
+		variable::variable(const decimal& new_value) noexcept : variable(viewable::decimal_zero)
 		{
-			Value.Pointer = (char*)Memory::New<Decimal>(NewValue);
+			value.pointer = (char*)memory::init<decimal>(new_value);
 		}
-		Variable::Variable(const uint8_t& NewValue) noexcept : Variable(Viewable::UintMin)
+		variable::variable(const uint8_t& new_value) noexcept : variable(viewable::uint_min)
 		{
-			Value.Integer = NewValue;
+			value.integer = new_value;
 		}
-		Variable::Variable(const uint16_t& NewValue) noexcept : Variable(Viewable::UintMin)
+		variable::variable(const uint16_t& new_value) noexcept : variable(viewable::uint_min)
 		{
-			Value.Integer = NewValue;
+			value.integer = new_value;
 		}
-		Variable::Variable(const uint32_t& NewValue) noexcept : Variable(Viewable::UintMin)
+		variable::variable(const uint32_t& new_value) noexcept : variable(viewable::uint_min)
 		{
-			Value.Integer = NewValue;
+			value.integer = new_value;
 		}
-		Variable::Variable(const uint64_t& NewValue) noexcept : Variable(Viewable::UintMin)
+		variable::variable(const uint64_t& new_value) noexcept : variable(viewable::uint_min)
 		{
-			Value.Integer = NewValue;
+			value.integer = new_value;
 		}
-		Variable::Variable(const uint128_t& NewValue) noexcept : Variable(Viewable::UintMin)
+		variable::variable(const uint128_t& new_value) noexcept : variable(viewable::uint_min)
 		{
-			Value.Integer = NewValue;
+			value.integer = new_value;
 		}
-		Variable::Variable(const uint256_t& NewValue) noexcept : Variable(Viewable::UintMin)
+		variable::variable(const uint256_t& new_value) noexcept : variable(viewable::uint_min)
 		{
-			Value.Integer = NewValue;
+			value.integer = new_value;
 		}
-		Variable::Variable(bool NewValue) noexcept : Variable(NewValue ? Viewable::True : Viewable::False)
+		variable::variable(bool new_value) noexcept : variable(new_value ? viewable::true_type : viewable::false_type)
 		{
-			Value.Boolean = NewValue;
+			value.boolean = new_value;
 		}
-		Variable::Variable(Viewable NewType) noexcept : Type(NewType), Length(0)
+		variable::variable(viewable new_type) noexcept : type(new_type), length(0)
 		{
-			Value.Pointer = nullptr;
+			value.pointer = nullptr;
 		}
-		Variable::Variable(const Variable& Other) noexcept
+		variable::variable(const variable& other) noexcept
 		{
-			Copy(Other);
+			copy(other);
 		}
-		Variable::Variable(Variable&& Other) noexcept
+		variable::variable(variable&& other) noexcept
 		{
-			Move(std::move(Other));
+			move(std::move(other));
 		}
-		Variable::~Variable() noexcept
+		variable::~variable() noexcept
 		{
-			Free();
+			free();
 		}
-		String Variable::AsConstant() const
+		string variable::as_constant() const
 		{
-			switch (Type)
+			switch (type)
 			{
-				case Viewable::StringAny10:
+				case viewable::string_any10:
 				{
-					auto Value = String(AsString());
-					if (!VariablesUtil::IsAsciiEncoding(Value))
-						return Util::Encode0xHex(Value);
+					auto value = string(as_string());
+					if (!variables_util::is_ascii_encoding(value))
+						return util::encode_0xhex(value);
 
-					Stringify::Replace(Value, "\"", "\\\"");
-					Value.insert(Value.begin(), '\"');
-					Value.append(1, '\"');
-					return Value;
+					stringify::replace(value, "\"", "\\\"");
+					value.insert(value.begin(), '\"');
+					value.append(1, '\"');
+					return value;
 				}
-				case Viewable::DecimalZero:
-					return ((Decimal*)Value.Pointer)->ToString();
-				case Viewable::UintMin:
-					return Value.Integer.ToString();
-				case Viewable::True:
-				case Viewable::False:
-					return Value.Boolean ? "true" : "false";
-				case Viewable::Invalid:
+				case viewable::decimal_zero:
+					return ((decimal*)value.pointer)->to_string();
+				case viewable::uint_min:
+					return value.integer.to_string();
+				case viewable::true_type:
+				case viewable::false_type:
+					return value.boolean ? "true" : "false";
+				case viewable::invalid:
 				default:
 					return "null";
 			}
 		}
-		String Variable::AsBlob() const
+		string variable::as_blob() const
 		{
-			switch (Type)
+			switch (type)
 			{
-				case Viewable::StringAny10:
-					return String(AsString());
-				case Viewable::DecimalZero:
-					return ((Decimal*)Value.Pointer)->ToString();
-				case Viewable::UintMin:
-					return Value.Integer.ToString();
-				case Viewable::True:
-				case Viewable::False:
-					return Value.Boolean ? "1" : "0";
-				case Viewable::Invalid:
+				case viewable::string_any10:
+					return string(as_string());
+				case viewable::decimal_zero:
+					return ((decimal*)value.pointer)->to_string();
+				case viewable::uint_min:
+					return value.integer.to_string();
+				case viewable::true_type:
+				case viewable::false_type:
+					return value.boolean ? "1" : "0";
+				case viewable::invalid:
 				default:
-					return String();
+					return string();
 			}
 		}
-		Decimal Variable::AsDecimal() const
+		decimal variable::as_decimal() const
 		{
-			switch (Type)
+			switch (type)
 			{
-				case Viewable::StringAny10:
-					return Decimal(AsString());
-				case Viewable::DecimalZero:
-					return *(Decimal*)Value.Pointer;
-				case Viewable::UintMin:
-					return Decimal(Value.Integer.ToString());
-				case Viewable::True:
-				case Viewable::False:
-					return Decimal(Value.Boolean ? 1 : 0);
-				case Viewable::Invalid:
+				case viewable::string_any10:
+					return decimal(as_string());
+				case viewable::decimal_zero:
+					return *(decimal*)value.pointer;
+				case viewable::uint_min:
+					return decimal(value.integer.to_string());
+				case viewable::true_type:
+				case viewable::false_type:
+					return decimal(value.boolean ? 1 : 0);
+				case viewable::invalid:
 				default:
-					return Decimal::NaN();
+					return decimal::nan();
 			}
 		}
-		UPtr<Schema> Variable::AsSchema() const
+		uptr<schema> variable::as_schema() const
 		{
-			switch (Type)
+			switch (type)
 			{
-				case Viewable::StringAny10:
+				case viewable::string_any10:
 				{
-					auto Value = AsString();
-					if (!VariablesUtil::IsAsciiEncoding(Value))
-						return Var::Set::String(Util::Encode0xHex(Value));
+					auto value = as_string();
+					if (!variables_util::is_ascii_encoding(value))
+						return var::set::string(util::encode_0xhex(value));
 
-					return Var::Set::String(Value);
+					return var::set::string(value);
 				}
-				case Viewable::DecimalZero:
-					return Var::Set::Decimal(*(Decimal*)Value.Pointer);
-				case Viewable::UintMin:
-					return Algorithm::Encoding::SerializeUint256(Value.Integer);
-				case Viewable::True:
-				case Viewable::False:
-					return Var::Set::Boolean(Value.Boolean);
-				case Viewable::Invalid:
+				case viewable::decimal_zero:
+					return var::set::decimal(*(decimal*)value.pointer);
+				case viewable::uint_min:
+					return algorithm::encoding::serialize_uint256(value.integer);
+				case viewable::true_type:
+				case viewable::false_type:
+					return var::set::boolean(value.boolean);
+				case viewable::invalid:
 				default:
-					return Var::Set::Null();
+					return var::set::null();
 			}
 		}
-		std::string_view Variable::AsString() const
+		std::string_view variable::as_string() const
 		{
-			switch (Type)
+			switch (type)
 			{
-				case Viewable::StringAny10:
-					return std::string_view(Length <= GetMaxSmallStringSize() ? Value.String : Value.Pointer, Length);
+				case viewable::string_any10:
+					return std::string_view(length <= get_max_small_string_size() ? value.string : value.pointer, length);
 				default:
 					return std::string_view("", 0);
 			}
 		}
-		uint8_t Variable::AsUint8() const
+		uint8_t variable::as_uint8() const
 		{
-			switch (Type)
+			switch (type)
 			{
-				case Viewable::StringAny10:
-					return FromString<uint8_t>(AsString()).Or(0);
-				case Viewable::DecimalZero:
-					return ((Decimal*)Value.Pointer)->ToUInt8();
-				case Viewable::UintMin:
-					return (uint8_t)Value.Integer;
-				case Viewable::True:
-				case Viewable::False:
-					return Value.Boolean ? 1 : 0;
-				case Viewable::Invalid:
+				case viewable::string_any10:
+					return from_string<uint8_t>(as_string()).otherwise(0);
+				case viewable::decimal_zero:
+					return ((decimal*)value.pointer)->to_uint8();
+				case viewable::uint_min:
+					return (uint8_t)value.integer;
+				case viewable::true_type:
+				case viewable::false_type:
+					return value.boolean ? 1 : 0;
+				case viewable::invalid:
 				default:
 					return 0;
 			}
 		}
-		uint16_t Variable::AsUint16() const
+		uint16_t variable::as_uint16() const
 		{
-			switch (Type)
+			switch (type)
 			{
-				case Viewable::StringAny10:
-					return FromString<uint16_t>(AsString()).Or(0);
-				case Viewable::DecimalZero:
-					return ((Decimal*)Value.Pointer)->ToUInt16();
-				case Viewable::UintMin:
-					return (uint16_t)Value.Integer;
-				case Viewable::True:
-				case Viewable::False:
-					return Value.Boolean ? 1 : 0;
-				case Viewable::Invalid:
+				case viewable::string_any10:
+					return from_string<uint16_t>(as_string()).otherwise(0);
+				case viewable::decimal_zero:
+					return ((decimal*)value.pointer)->to_uint16();
+				case viewable::uint_min:
+					return (uint16_t)value.integer;
+				case viewable::true_type:
+				case viewable::false_type:
+					return value.boolean ? 1 : 0;
+				case viewable::invalid:
 				default:
 					return 0;
 			}
 		}
-		uint32_t Variable::AsUint32() const
+		uint32_t variable::as_uint32() const
 		{
-			switch (Type)
+			switch (type)
 			{
-				case Viewable::StringAny10:
-					return FromString<uint32_t>(AsString()).Or(0);
-				case Viewable::DecimalZero:
-					return ((Decimal*)Value.Pointer)->ToUInt32();
-				case Viewable::UintMin:
-					return (uint32_t)Value.Integer;
-				case Viewable::True:
-				case Viewable::False:
-					return Value.Boolean ? 1 : 0;
-				case Viewable::Invalid:
+				case viewable::string_any10:
+					return from_string<uint32_t>(as_string()).otherwise(0);
+				case viewable::decimal_zero:
+					return ((decimal*)value.pointer)->to_uint32();
+				case viewable::uint_min:
+					return (uint32_t)value.integer;
+				case viewable::true_type:
+				case viewable::false_type:
+					return value.boolean ? 1 : 0;
+				case viewable::invalid:
 				default:
 					return 0;
 			}
 		}
-		uint64_t Variable::AsUint64() const
+		uint64_t variable::as_uint64() const
 		{
-			switch (Type)
+			switch (type)
 			{
-				case Viewable::StringAny10:
-					return FromString<uint64_t>(AsString()).Or(0);
-				case Viewable::DecimalZero:
-					return ((Decimal*)Value.Pointer)->ToUInt64();
-				case Viewable::UintMin:
-					return (uint64_t)Value.Integer;
-				case Viewable::True:
-				case Viewable::False:
-					return Value.Boolean ? 1 : 0;
-				case Viewable::Invalid:
+				case viewable::string_any10:
+					return from_string<uint64_t>(as_string()).otherwise(0);
+				case viewable::decimal_zero:
+					return ((decimal*)value.pointer)->to_uint64();
+				case viewable::uint_min:
+					return (uint64_t)value.integer;
+				case viewable::true_type:
+				case viewable::false_type:
+					return value.boolean ? 1 : 0;
+				case viewable::invalid:
 				default:
 					return 0;
 			}
 		}
-		uint128_t Variable::AsUint128() const
+		uint128_t variable::as_uint128() const
 		{
-			switch (Type)
+			switch (type)
 			{
-				case Viewable::StringAny10:
-					return uint128_t(AsString(), Util::IsHexEncoding(AsString()) ? 16 : 10);
-				case Viewable::DecimalZero:
-					return uint128_t(((Decimal*)Value.Pointer)->ToString());
-				case Viewable::UintMin:
-					return uint128_t(Value.Integer);
-				case Viewable::True:
-				case Viewable::False:
-					return uint128_t(Value.Boolean ? 1 : 0);
-				case Viewable::Invalid:
+				case viewable::string_any10:
+					return uint128_t(as_string(), util::is_hex_encoding(as_string()) ? 16 : 10);
+				case viewable::decimal_zero:
+					return uint128_t(((decimal*)value.pointer)->to_string());
+				case viewable::uint_min:
+					return uint128_t(value.integer);
+				case viewable::true_type:
+				case viewable::false_type:
+					return uint128_t(value.boolean ? 1 : 0);
+				case viewable::invalid:
 				default:
 					return uint128_t(0);
 			}
 		}
-		uint256_t Variable::AsUint256() const
+		uint256_t variable::as_uint256() const
 		{
-			switch (Type)
+			switch (type)
 			{
-				case Viewable::StringAny10:
-					return uint256_t(AsString(), Util::IsHexEncoding(AsString()) ? 16 : 10);
-				case Viewable::DecimalZero:
-					return uint256_t(((Decimal*)Value.Pointer)->ToString());
-				case Viewable::UintMin:
-					return Value.Integer;
-				case Viewable::True:
-				case Viewable::False:
-					return uint256_t(Value.Boolean ? 1 : 0);
-				case Viewable::Invalid:
+				case viewable::string_any10:
+					return uint256_t(as_string(), util::is_hex_encoding(as_string()) ? 16 : 10);
+				case viewable::decimal_zero:
+					return uint256_t(((decimal*)value.pointer)->to_string());
+				case viewable::uint_min:
+					return value.integer;
+				case viewable::true_type:
+				case viewable::false_type:
+					return uint256_t(value.boolean ? 1 : 0);
+				case viewable::invalid:
 				default:
 					return uint256_t(0);
 			}
 		}
-		float Variable::AsFloat() const
+		float variable::as_float() const
 		{
-			switch (Type)
+			switch (type)
 			{
-				case Viewable::StringAny10:
-					return FromString<float>(AsString()).Or(0.0f);
-				case Viewable::DecimalZero:
-					return ((Decimal*)Value.Pointer)->ToFloat();
-				case Viewable::UintMin:
-					return (float)(uint64_t)Value.Integer;
-				case Viewable::True:
-				case Viewable::False:
-					return Value.Boolean ? 1.0f : 0.0f;
-				case Viewable::Invalid:
+				case viewable::string_any10:
+					return from_string<float>(as_string()).otherwise(0.0f);
+				case viewable::decimal_zero:
+					return ((decimal*)value.pointer)->to_float();
+				case viewable::uint_min:
+					return (float)(uint64_t)value.integer;
+				case viewable::true_type:
+				case viewable::false_type:
+					return value.boolean ? 1.0f : 0.0f;
+				case viewable::invalid:
 				default:
 					return 0.0f;
 			}
 		}
-		double Variable::AsDouble() const
+		double variable::as_double() const
 		{
-			switch (Type)
+			switch (type)
 			{
-				case Viewable::StringAny10:
-					return FromString<double>(AsString()).Or(0.0);
-				case Viewable::DecimalZero:
-					return ((Decimal*)Value.Pointer)->ToDouble();
-				case Viewable::UintMin:
-					return (double)(uint64_t)Value.Integer;
-				case Viewable::True:
-				case Viewable::False:
-					return Value.Boolean ? 1.0 : 0.0;
-				case Viewable::Invalid:
+				case viewable::string_any10:
+					return from_string<double>(as_string()).otherwise(0.0);
+				case viewable::decimal_zero:
+					return ((decimal*)value.pointer)->to_double();
+				case viewable::uint_min:
+					return (double)(uint64_t)value.integer;
+				case viewable::true_type:
+				case viewable::false_type:
+					return value.boolean ? 1.0 : 0.0;
+				case viewable::invalid:
 				default:
 					return 0.0;
 			}
 		}
-		bool Variable::AsBoolean() const
+		bool variable::as_boolean() const
 		{
-			switch (Type)
+			switch (type)
 			{
-				case Viewable::StringAny10:
-					return !AsString().empty();
-				case Viewable::DecimalZero:
-					return !((Decimal*)Value.Pointer)->IsZeroOrNaN();
-				case Viewable::UintMin:
-					return Value.Integer > 0;
-				case Viewable::True:
-				case Viewable::False:
-					return Value.Boolean;
-				case Viewable::Invalid:
+				case viewable::string_any10:
+					return !as_string().empty();
+				case viewable::decimal_zero:
+					return !((decimal*)value.pointer)->is_zero_or_nan();
+				case viewable::uint_min:
+					return value.integer > 0;
+				case viewable::true_type:
+				case viewable::false_type:
+					return value.boolean;
+				case viewable::invalid:
 				default:
 					return false;
 			}
 		}
-		bool Variable::IsString() const
+		bool variable::is_string() const
 		{
-			switch (Type)
+			switch (type)
 			{
-				case Viewable::StringAny10:
+				case viewable::string_any10:
 					return true;
 				default:
 					return false;
 			}
 		}
-		bool Variable::IsDecimal() const
+		bool variable::is_decimal() const
 		{
-			switch (Type)
+			switch (type)
 			{
-				case Viewable::DecimalZero:
+				case viewable::decimal_zero:
 					return true;
 				default:
 					return false;
 			}
 		}
-		bool Variable::IsInteger() const
+		bool variable::is_integer() const
 		{
-			switch (Type)
+			switch (type)
 			{
-				case Viewable::UintMin:
+				case viewable::uint_min:
 					return true;
 				default:
 					return false;
 			}
 		}
-		Viewable Variable::TypeOf() const
+		viewable variable::type_of() const
 		{
-			return Type;
+			return type;
 		}
-		bool Variable::operator== (const Variable& Other) const
+		bool variable::operator== (const variable& other) const
 		{
-			return Same(Other);
+			return same(other);
 		}
-		bool Variable::operator!= (const Variable& Other) const
+		bool variable::operator!= (const variable& other) const
 		{
-			return !Same(Other);
+			return !same(other);
 		}
-		Variable& Variable::operator= (const Variable& Other) noexcept
+		variable& variable::operator= (const variable& other) noexcept
 		{
-			Free();
-			Copy(Other);
+			free();
+			copy(other);
 
 			return *this;
 		}
-		Variable& Variable::operator= (Variable&& Other) noexcept
+		variable& variable::operator= (variable&& other) noexcept
 		{
-			Free();
-			Move(std::move(Other));
+			free();
+			move(std::move(other));
 
 			return *this;
 		}
-		bool Variable::Same(const Variable& Other) const
+		bool variable::same(const variable& other) const
 		{
-			if (Type != Other.Type)
+			if (type != other.type)
 				return false;
 
-			switch (Type)
+			switch (type)
 			{
-				case Viewable::StringAny10:
-					return AsString() == Other.AsString();
-				case Viewable::DecimalZero:
-					return AsDecimal() == Other.AsDecimal();
-				case Viewable::UintMin:
-					return Value.Integer == Other.Value.Integer;
-				case Viewable::True:
-				case Viewable::False:
-					return AsBoolean() == Other.AsBoolean();
-				case Viewable::Invalid:
+				case viewable::string_any10:
+					return as_string() == other.as_string();
+				case viewable::decimal_zero:
+					return as_decimal() == other.as_decimal();
+				case viewable::uint_min:
+					return value.integer == other.value.integer;
+				case viewable::true_type:
+				case viewable::false_type:
+					return as_boolean() == other.as_boolean();
+				case viewable::invalid:
 					return true;
 				default:
 					return false;
 			}
 		}
-		void Variable::Copy(const Variable& Other)
+		void variable::copy(const variable& other)
 		{
-			Type = Other.Type;
-			Length = Other.Length;
+			type = other.type;
+			length = other.length;
 
-			switch (Type)
+			switch (type)
 			{
-				case Viewable::StringAny10:
+				case viewable::string_any10:
 				{
-					size_t StringSize = sizeof(char) * (Length + 1);
-					if (Length > GetMaxSmallStringSize())
-						Value.Pointer = Memory::Allocate<char>(StringSize);
-					memcpy((void*)AsString().data(), Other.AsString().data(), StringSize);
+					size_t string_size = sizeof(char) * (length + 1);
+					if (length > get_max_small_string_size())
+						value.pointer = memory::allocate<char>(string_size);
+					memcpy((void*)as_string().data(), other.as_string().data(), string_size);
 					break;
 				}
-				case Viewable::DecimalZero:
+				case viewable::decimal_zero:
 				{
-					Decimal* From = (Decimal*)Other.Value.Pointer;
-					Value.Pointer = (char*)Memory::New<Decimal>(*From);
+					decimal* from = (decimal*)other.value.pointer;
+					value.pointer = (char*)memory::init<decimal>(*from);
 					break;
 				}
-				case Viewable::UintMin:
-					Value.Integer = Other.Value.Integer;
+				case viewable::uint_min:
+					value.integer = other.value.integer;
 					break;
-				case Viewable::True:
-				case Viewable::False:
-					Value.Boolean = Other.Value.Boolean;
+				case viewable::true_type:
+				case viewable::false_type:
+					value.boolean = other.value.boolean;
 					break;
-				case Viewable::Invalid:
+				case viewable::invalid:
 				default:
-					Value.Pointer = nullptr;
+					value.pointer = nullptr;
 					break;
 			}
 		}
-		void Variable::Move(Variable&& Other)
+		void variable::move(variable&& other)
 		{
-			Type = Other.Type;
-			Length = Other.Length;
-			switch (Type)
+			type = other.type;
+			length = other.length;
+			switch (type)
 			{
-				case Viewable::StringAny10:
-					if (Length <= GetMaxSmallStringSize())
-						memcpy((void*)AsString().data(), Other.AsString().data(), sizeof(char) * (Length + 1));
+				case viewable::string_any10:
+					if (length <= get_max_small_string_size())
+						memcpy((void*)as_string().data(), other.as_string().data(), sizeof(char) * (length + 1));
 					else
-						Value.Pointer = Other.Value.Pointer;
-					Other.Value.Pointer = nullptr;
+						value.pointer = other.value.pointer;
+					other.value.pointer = nullptr;
 					break;
-				case Viewable::DecimalZero:
-					Value.Pointer = Other.Value.Pointer;
-					Other.Value.Pointer = nullptr;
+				case viewable::decimal_zero:
+					value.pointer = other.value.pointer;
+					other.value.pointer = nullptr;
 					break;
-				case Viewable::UintMin:
-					Value.Integer = Other.Value.Integer;
+				case viewable::uint_min:
+					value.integer = other.value.integer;
 					break;
-				case Viewable::True:
-				case Viewable::False:
-					Value.Boolean = Other.Value.Boolean;
+				case viewable::true_type:
+				case viewable::false_type:
+					value.boolean = other.value.boolean;
 					break;
-				case Viewable::Invalid:
+				case viewable::invalid:
 				default:
 					break;
 			}
 
-			Other.Type = Viewable::Invalid;
-			Other.Length = 0;
+			other.type = viewable::invalid;
+			other.length = 0;
 		}
-		void Variable::Free()
+		void variable::free()
 		{
-			switch (Type)
+			switch (type)
 			{
-				case Viewable::StringAny10:
+				case viewable::string_any10:
 				{
-					if (!Value.Pointer || Length <= GetMaxSmallStringSize())
+					if (!value.pointer || length <= get_max_small_string_size())
 						break;
 
-					Memory::Deallocate(Value.Pointer);
-					Value.Pointer = nullptr;
+					memory::deallocate(value.pointer);
+					value.pointer = nullptr;
 					break;
 				}
-				case Viewable::DecimalZero:
+				case viewable::decimal_zero:
 				{
-					if (!Value.Pointer)
+					if (!value.pointer)
 						break;
 
-					Decimal* Buffer = (Decimal*)Value.Pointer;
-					Memory::Delete(Buffer);
-					Value.Pointer = nullptr;
+					decimal* buffer = (decimal*)value.pointer;
+					memory::deinit(buffer);
+					value.pointer = nullptr;
 					break;
 				}
 				default:
 					break;
 			}
 		}
-		size_t Variable::GetMaxSmallStringSize()
+		size_t variable::get_max_small_string_size()
 		{
-			return sizeof(Tag::String) - 1;
+			return sizeof(tag::string) - 1;
 		}
 
-		bool VariablesUtil::IsAsciiEncoding(const std::string_view& Data)
+		bool variables_util::is_ascii_encoding(const std::string_view& data)
 		{
-			return !std::any_of(Data.begin(), Data.end(), [](char V) { return static_cast<unsigned char>(V) > 127; });
+			return !std::any_of(data.begin(), data.end(), [](char v) { return static_cast<unsigned char>(v) > 127; });
 		}
-		bool VariablesUtil::DeserializeFlatFrom(Stream& Stream, Variables* Result)
+		bool variables_util::deserialize_flat_from(stream& stream, variables* result)
 		{
-			return DeserializeFrom(Stream, Result, false);
+			return deserialize_from(stream, result, false);
 		}
-		bool VariablesUtil::SerializeFlatInto(const Variables& Data, Stream* Result)
+		bool variables_util::serialize_flat_into(const variables& data, stream* result)
 		{
-			return SerializeInto(Data, Result, false);
+			return serialize_into(data, result, false);
 		}
-		bool VariablesUtil::DeserializeMergeFrom(Stream& Stream, Variables* Result)
+		bool variables_util::deserialize_merge_from(stream& stream, variables* result)
 		{
-			return DeserializeFrom(Stream, Result, true);
+			return deserialize_from(stream, result, true);
 		}
-		bool VariablesUtil::SerializeMergeInto(const Variables& Data, Stream* Result)
+		bool variables_util::serialize_merge_into(const variables& data, stream* result)
 		{
-			return SerializeInto(Data, Result, true);
+			return serialize_into(data, result, true);
 		}
-		bool VariablesUtil::DeserializeFrom(Stream& Stream, Variables* Result, bool Merging)
+		bool variables_util::deserialize_from(stream& stream, variables* result, bool merging)
 		{
-			VI_ASSERT(Result != nullptr, "result should be set");
-			uint16_t Size = std::numeric_limits<uint16_t>::max();
-			if (Merging && !Stream.ReadInteger(Stream.ReadType(), &Size))
+			VI_ASSERT(result != nullptr, "result should be set");
+			uint16_t size = std::numeric_limits<uint16_t>::max();
+			if (merging && !stream.read_integer(stream.read_type(), &size))
 				return false;
-			else if (!Size)
+			else if (!size)
 				return true;
-			
-			while (!Stream.IsEof() && Size-- != 0)
+
+			while (!stream.is_eof() && size-- != 0)
 			{
-				auto Type = Stream.ReadType();
-				if (Type == Viewable::Invalid)
-					return !Size;
+				auto type = stream.read_type();
+				if (type == viewable::invalid)
+					return !size;
 
-				switch (Type)
+				switch (type)
 				{
-					case Viewable::StringAny10:
-					case Viewable::StringAny16:
+					case viewable::string_any10:
+					case viewable::string_any16:
 					{
-						String Value;
-						if (!Stream.ReadString(Type, &Value))
+						string value;
+						if (!stream.read_string(type, &value))
 							return false;
 
-						Result->emplace_back(std::string_view(Value));
+						result->emplace_back(std::string_view(value));
 						break;
 					}
-					case Viewable::DecimalNaN:
-					case Viewable::DecimalZero:
-					case Viewable::DecimalNeg1:
-					case Viewable::DecimalNeg2:
-					case Viewable::DecimalPos1:
-					case Viewable::DecimalPos2:
+					case viewable::decimal_nan:
+					case viewable::decimal_zero:
+					case viewable::decimal_neg1:
+					case viewable::decimal_neg2:
+					case viewable::decimal_pos1:
+					case viewable::decimal_pos2:
 					{
-						Decimal Value;
-						if (!Stream.ReadDecimal(Type, &Value))
+						decimal value;
+						if (!stream.read_decimal(type, &value))
 							return false;
 
-						Result->emplace_back(Value);
+						result->emplace_back(value);
 						break;
 					}
-					case Viewable::True:
-					case Viewable::False:
+					case viewable::true_type:
+					case viewable::false_type:
 					{
-						bool Value;
-						if (!Stream.ReadBoolean(Type, &Value))
+						bool value;
+						if (!stream.read_boolean(type, &value))
 							return false;
 
-						Result->emplace_back(Value);
+						result->emplace_back(value);
 						break;
 					}
 					default:
 					{
-						if (Util::IsString(Type))
+						if (util::is_string(type))
 						{
-							String Value;
-							if (!Stream.ReadString(Type, &Value))
+							string value;
+							if (!stream.read_string(type, &value))
 								return false;
 
-							Result->emplace_back(std::string_view(Value));
+							result->emplace_back(std::string_view(value));
 							break;
 						}
-						else if (Util::IsInteger(Type))
+						else if (util::is_integer(type))
 						{
-							uint256_t Value;
-							if (!Stream.ReadInteger(Type, &Value))
+							uint256_t value;
+							if (!stream.read_integer(type, &value))
 								return false;
 
-							Result->emplace_back(Value);
+							result->emplace_back(value);
 							break;
 						}
 						return false;
@@ -606,35 +606,35 @@ namespace Tangent
 			}
 			return true;
 		}
-		bool VariablesUtil::SerializeInto(const Variables& Data, Stream* Result, bool Merging)
+		bool variables_util::serialize_into(const variables& data, stream* result, bool merging)
 		{
-			if (Data.size() > std::numeric_limits<uint16_t>::max())
+			if (data.size() > std::numeric_limits<uint16_t>::max())
 				return false;
 
-			auto& Message = Protocol::Now().Message;
-			if (Merging)
-				Result->WriteInteger(Data.size());
+			auto& message = protocol::now().message;
+			if (merging)
+				result->write_integer(data.size());
 
-			for (auto& Item : Data)
+			for (auto& item : data)
 			{
-				auto Type = Item.TypeOf();
-				if (Type == Viewable::Invalid || Result->Data.size() > Message.MaxBodySize)
+				auto type = item.type_of();
+				if (type == viewable::invalid || result->data.size() > message.max_body_size)
 					return false;
 
-				switch (Type)
+				switch (type)
 				{
-					case Viewable::StringAny10:
-						Result->WriteString(Item.AsString());
+					case viewable::string_any10:
+						result->write_string(item.as_string());
 						break;
-					case Viewable::DecimalZero:
-						Result->WriteDecimal(Item.AsDecimal());
+					case viewable::decimal_zero:
+						result->write_decimal(item.as_decimal());
 						break;
-					case Viewable::UintMin:
-						Result->WriteInteger(Item.AsUint256());
+					case viewable::uint_min:
+						result->write_integer(item.as_uint256());
 						break;
-					case Viewable::True:
-					case Viewable::False:
-						Result->WriteBoolean(Item.AsBoolean());
+					case viewable::true_type:
+					case viewable::false_type:
+						result->write_boolean(item.as_boolean());
 						break;
 					default:
 						return false;
@@ -642,41 +642,41 @@ namespace Tangent
 			}
 			return true;
 		}
-		String VariablesUtil::AsConstant(const Variables& Data)
+		string variables_util::as_constant(const variables& data)
 		{
-			String Result;
-			for (size_t i = 0; i < Data.size(); i++)
+			string result;
+			for (size_t i = 0; i < data.size(); i++)
 			{
-				Result += Data[i].AsConstant();
-				if (i < Data.size() - 1)
-					Result += ", ";
+				result += data[i].as_constant();
+				if (i < data.size() - 1)
+					result += ", ";
 			}
-			return Result;
+			return result;
 		}
-		String VariablesUtil::AsConstantJSON(const Variables& Data, size_t Spaces)
+		string variables_util::as_constant_json(const variables& data, size_t spaces)
 		{
-			String Space(Spaces, ' ');
-			String Result = "[";
-			for (size_t i = 0; i < Data.size(); i++)
+			string space(spaces, ' ');
+			string result = "[";
+			for (size_t i = 0; i < data.size(); i++)
 			{
 				if (i == 0)
-					Result += '\n';
-				Result += Space;
-				Result += Data[i].AsConstant();
-				if (i < Data.size() - 1)
-					Result += ",\n";
+					result += '\n';
+				result += space;
+				result += data[i].as_constant();
+				if (i < data.size() - 1)
+					result += ",\n";
 				else
-					Result += '\n';
+					result += '\n';
 			}
-			Result.append(1, ']');
-			return Result;
+			result.append(1, ']');
+			return result;
 		}
-		Schema* VariablesUtil::Serialize(const Variables& Value)
+		schema* variables_util::serialize(const variables& value)
 		{
-			Schema* Data = Var::Set::Array();
-			for (auto& Item : Value)
-				Data->Push(Item.AsSchema().Reset());
-			return Data;
+			schema* data = var::set::array();
+			for (auto& item : value)
+				data->push(item.as_schema().reset());
+			return data;
 		}
 	}
 }

@@ -2,118 +2,118 @@
 #define TAN_MEDIATOR_FORKS_ETHEREUM_H
 #include "../ethereum.h"
 
-namespace Tangent
+namespace tangent
 {
-    namespace Mediator
+    namespace mediator
     {
-        namespace Backends
+        namespace backends
         {
-            class Arbitrum : public Ethereum
+            class arbitrum : public ethereum
             {
             public:
-                Arbitrum() noexcept = default;
-                virtual ~Arbitrum() override = default;
-                virtual String GetDerivation(uint64_t AddressIndex) const override;
-                virtual const btc_chainparams_* GetChain() override;
+                arbitrum() noexcept = default;
+                virtual ~arbitrum() override = default;
+                virtual string get_derivation(uint64_t address_index) const override;
+                virtual const btc_chainparams_* get_chain() override;
             };
 
-            class Avalanche : public Ethereum
+            class avalanche : public ethereum
             {
             public:
-                Avalanche() noexcept = default;
-                virtual ~Avalanche() override = default;
-                virtual String GetDerivation(uint64_t AddressIndex) const override;
-                virtual const btc_chainparams_* GetChain() override;
+                avalanche() noexcept = default;
+                virtual ~avalanche() override = default;
+                virtual string get_derivation(uint64_t address_index) const override;
+                virtual const btc_chainparams_* get_chain() override;
             };
 
-            class Celo : public Ethereum
+            class celo : public ethereum
             {
             public:
-                Celo() noexcept = default;
-                virtual ~Celo() override = default;
-                virtual String GetDerivation(uint64_t AddressIndex) const override;
-                virtual const btc_chainparams_* GetChain() override;
+                celo() noexcept = default;
+                virtual ~celo() override = default;
+                virtual string get_derivation(uint64_t address_index) const override;
+                virtual const btc_chainparams_* get_chain() override;
             };
 
-            class EthereumClassic : public Ethereum
+            class ethereum_classic : public ethereum
             {
             public:
-                EthereumClassic() noexcept = default;
-                virtual ~EthereumClassic() override = default;
-                virtual String GetDerivation(uint64_t AddressIndex) const override;
-                virtual const btc_chainparams_* GetChain() override;
+                ethereum_classic() noexcept = default;
+                virtual ~ethereum_classic() override = default;
+                virtual string get_derivation(uint64_t address_index) const override;
+                virtual const btc_chainparams_* get_chain() override;
             };
 
-            class Fantom : public Ethereum
+            class fantom : public ethereum
             {
             public:
-                Fantom() noexcept = default;
-                virtual ~Fantom() override = default;
-                virtual String GetDerivation(uint64_t AddressIndex) const override;
-                virtual const btc_chainparams_* GetChain() override;
+                fantom() noexcept = default;
+                virtual ~fantom() override = default;
+                virtual string get_derivation(uint64_t address_index) const override;
+                virtual const btc_chainparams_* get_chain() override;
             };
 
-            class Fuse : public Ethereum
+            class fuse : public ethereum
             {
             public:
-                Fuse() noexcept = default;
-                virtual ~Fuse() override = default;
-                virtual String GetDerivation(uint64_t AddressIndex) const override;
-                virtual const btc_chainparams_* GetChain() override;
+                fuse() noexcept = default;
+                virtual ~fuse() override = default;
+                virtual string get_derivation(uint64_t address_index) const override;
+                virtual const btc_chainparams_* get_chain() override;
             };
 
-            class Harmony : public Ethereum
+            class harmony : public ethereum
             {
             public:
-                Harmony() noexcept = default;
-                virtual ~Harmony() override = default;
-                virtual String GetDerivation(uint64_t AddressIndex) const override;
-                virtual const btc_chainparams_* GetChain() override;
+                harmony() noexcept = default;
+                virtual ~harmony() override = default;
+                virtual string get_derivation(uint64_t address_index) const override;
+                virtual const btc_chainparams_* get_chain() override;
             };
 
-            class Moonbeam : public Ethereum
+            class moonbeam : public ethereum
             {
             public:
-                Moonbeam() noexcept = default;
-                virtual ~Moonbeam() override = default;
-                virtual String GetDerivation(uint64_t AddressIndex) const override;
-                virtual const btc_chainparams_* GetChain() override;
+                moonbeam() noexcept = default;
+                virtual ~moonbeam() override = default;
+                virtual string get_derivation(uint64_t address_index) const override;
+                virtual const btc_chainparams_* get_chain() override;
             };
 
-            class Optimism : public Ethereum
+            class optimism : public ethereum
             {
             public:
-                Optimism() noexcept = default;
-                virtual ~Optimism() override = default;
-                virtual String GetDerivation(uint64_t AddressIndex) const override;
-                virtual const btc_chainparams_* GetChain() override;
+                optimism() noexcept = default;
+                virtual ~optimism() override = default;
+                virtual string get_derivation(uint64_t address_index) const override;
+                virtual const btc_chainparams_* get_chain() override;
             };
 
-            class Polygon : public Ethereum
+            class polygon : public ethereum
             {
             public:
-                Polygon() noexcept = default;
-                virtual ~Polygon() override = default;
-                virtual String GetDerivation(uint64_t AddressIndex) const override;
-                virtual const btc_chainparams_* GetChain() override;
+                polygon() noexcept = default;
+                virtual ~polygon() override = default;
+                virtual string get_derivation(uint64_t address_index) const override;
+                virtual const btc_chainparams_* get_chain() override;
             };
 
-            class Rootstock : public Ethereum
+            class rootstock : public ethereum
             {
             public:
-                Rootstock() noexcept = default;
-                virtual ~Rootstock() override = default;
-                virtual String GetDerivation(uint64_t AddressIndex) const override;
-                virtual const btc_chainparams_* GetChain() override;
+                rootstock() noexcept = default;
+                virtual ~rootstock() override = default;
+                virtual string get_derivation(uint64_t address_index) const override;
+                virtual const btc_chainparams_* get_chain() override;
             };
 
-            class BinanceSmartChain : public Ethereum
+            class binance_smart_chain : public ethereum
             {
             public:
-                BinanceSmartChain() noexcept;
-                virtual ~BinanceSmartChain() override = default;
-                virtual String GetDerivation(uint64_t AddressIndex) const override;
-                virtual const btc_chainparams_* GetChain() override;
+                binance_smart_chain() noexcept;
+                virtual ~binance_smart_chain() override = default;
+                virtual string get_derivation(uint64_t address_index) const override;
+                virtual const btc_chainparams_* get_chain() override;
             };
         }
     }

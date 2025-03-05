@@ -2,361 +2,361 @@
 #include <iostream>
 #define LOCKED_TASK_ID std::numeric_limits<uint64_t>::max()
 
-namespace Tangent
+namespace tangent
 {
-	SystemEndpoint::SystemEndpoint(const std::string_view& URI) : Scheme(URI), Secure(false)
+	system_endpoint::system_endpoint(const std::string_view& URI) : scheme(URI), secure(false)
 	{
-		if (Scheme.Hostname.empty())
+		if (scheme.hostname.empty())
 			return;
 
-		SocketAddress PrimaryCandidate = SocketAddress(Scheme.Hostname, Scheme.Port > 0 ? Scheme.Port : Protocol::Now().User.P2P.Port);
-		if (!PrimaryCandidate.IsValid())
+		socket_address primary_candidate = socket_address(scheme.hostname, scheme.port > 0 ? scheme.port : protocol::now().user.p2p.port);
+		if (!primary_candidate.is_valid())
 		{
-			auto SecondaryCandidate = DNS::Get()->Lookup(Scheme.Hostname, ToString(Scheme.Port > 0 ? Scheme.Port : Protocol::Now().User.P2P.Port), DNSType::Listen);
-			if (!SecondaryCandidate)
+			auto secondary_candidate = dns::get()->lookup(scheme.hostname, to_string(scheme.port > 0 ? scheme.port : protocol::now().user.p2p.port), dns_type::listen);
+			if (!secondary_candidate)
 				return;
 
-			auto IpAddress = SecondaryCandidate->GetIpAddress();
-			if (!IpAddress)
+			auto ip_address = secondary_candidate->get_ip_address();
+			if (!ip_address)
 				return;
 
-			Scheme.Hostname = std::move(*IpAddress);
+			scheme.hostname = std::move(*ip_address);
 		}
 
-		if (Scheme.Protocol == "tcp" || Scheme.Protocol == "tcps")
-			Address = SocketAddress(Scheme.Hostname, Scheme.Port > 0 ? Scheme.Port : Protocol::Now().User.P2P.Port);
-		else if (Scheme.Protocol == "http" || Scheme.Protocol == "https")
-			Address = SocketAddress(Scheme.Hostname, Scheme.Port > 0 ? Scheme.Port : Protocol::Now().User.NDS.Port);
-		else if (Scheme.Protocol == "rpc" || Scheme.Protocol == "rpcs")
-			Address = SocketAddress(Scheme.Hostname, Scheme.Port > 0 ? Scheme.Port : Protocol::Now().User.RPC.Port);
-		Secure = Address.IsValid() && Scheme.Protocol.back() == 's';
+		if (scheme.protocol == "tcp" || scheme.protocol == "tcps")
+			address = socket_address(scheme.hostname, scheme.port > 0 ? scheme.port : protocol::now().user.p2p.port);
+		else if (scheme.protocol == "http" || scheme.protocol == "https")
+			address = socket_address(scheme.hostname, scheme.port > 0 ? scheme.port : protocol::now().user.nds.port);
+		else if (scheme.protocol == "rpc" || scheme.protocol == "rpcs")
+			address = socket_address(scheme.hostname, scheme.port > 0 ? scheme.port : protocol::now().user.rpc.port);
+		secure = address.is_valid() && scheme.protocol.back() == 's';
 	}
-	bool SystemEndpoint::IsValid() const
+	bool system_endpoint::is_valid() const
 	{
-		return Address.IsValid() && !Scheme.Hostname.empty() && !Scheme.Protocol.empty() && (Scheme.Protocol == "tcp" || Scheme.Protocol == "tcps" || Scheme.Protocol == "http" || Scheme.Protocol == "https" || Scheme.Protocol == "rpc" || Scheme.Protocol == "rpcs");
+		return address.is_valid() && !scheme.hostname.empty() && !scheme.protocol.empty() && (scheme.protocol == "tcp" || scheme.protocol == "tcps" || scheme.protocol == "http" || scheme.protocol == "https" || scheme.protocol == "rpc" || scheme.protocol == "rpcs");
 	}
-	String SystemEndpoint::ToURI(const SocketAddress& Address, const std::string_view& Protocol)
+	string system_endpoint::to_uri(const socket_address& address, const std::string_view& protocol)
 	{
-		String URI = String(Protocol);
+		string URI = string(protocol);
 		URI.append("://");
-		URI.append(Address.GetIpAddress().Or("[bad_address]"));
+		URI.append(address.get_ip_address().otherwise("[bad_address]"));
 
-		auto IpPort = Address.GetIpPort();
-		if (IpPort)
-			URI.append(":").append(ToString(*IpPort));
+		auto ip_port = address.get_ip_port();
+		if (ip_port)
+			URI.append(":").append(to_string(*ip_port));
 
 		return URI;
 	}
 
-	SystemControl::SystemControl(const std::string_view& Label) noexcept : Timers(nullptr), Tasks(0), Active(false), ServiceName(Label.empty() ? "unknown" : Label)
+	system_control::system_control(const std::string_view& label) noexcept : timers(nullptr), tasks(0), active(false), service_name(label.empty() ? "unknown" : label)
 	{
 	}
-	Promise<void> SystemControl::Shutdown() noexcept
+	promise<void> system_control::shutdown() noexcept
 	{
-		VI_PANIC(!Active, "controller is still active");
-		if (!IsBusy())
+		VI_PANIC(!active, "controller is still active");
+		if (!is_busy())
 		{
-			VI_DEBUG("[sysctl] OK shutdown %.*s service", (int)ServiceName.size(), ServiceName.data());
-			CoreturnVoid;
+			VI_DEBUG("[sysctl] OK shutdown %.*s service", (int)service_name.size(), service_name.data());
+			coreturn_void;
 		}
 
-		Promise<void> Timeout;
-		std::thread([this, Timeout]() mutable
+		promise<void> timeout;
+		std::thread([this, timeout]() mutable
 		{
-			auto Time = time(nullptr);
-			while (IsBusy())
+			auto time = ::time(nullptr);
+			while (is_busy())
 			{
 				std::this_thread::sleep_for(std::chrono::milliseconds(500));
-				if (time(nullptr) - Time > 2)
-					VI_DEBUG("[sysctl] waiting %i tasks on %.*s service to finish (longer than expected)", (int)Tasks.load(), (int)ServiceName.size(), ServiceName.data());
+				if (::time(nullptr) - time > 2)
+					VI_DEBUG("[sysctl] waiting %i tasks on %.*s service to finish (longer than expected)", (int)tasks.load(), (int)service_name.size(), service_name.data());
 			}
-			Timeout.Set();
+			timeout.set();
 		}).detach();
 
-		uint64_t TimeStart = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-		VI_DEBUG("[sysctl] waiting on %.*s service to finish (queue = %i tasks)", (int)ServiceName.size(), ServiceName.data(), (int)Tasks.load());
-		Coawait(std::move(Timeout));
+		uint64_t time_start = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+		VI_DEBUG("[sysctl] waiting on %.*s service to finish (queue = %i tasks)", (int)service_name.size(), service_name.data(), (int)tasks.load());
+		coawait(std::move(timeout));
 
-		uint64_t TimeEnd = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-		VI_DEBUG("[sysctl] OK shutdown %.*s service (wait = %" PRIu64 " ms)", (int)ServiceName.size(), ServiceName.data(), TimeEnd - TimeStart);
-		CoreturnVoid;
+		uint64_t time_end = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+		VI_DEBUG("[sysctl] OK shutdown %.*s service (wait = %" PRIu64 " ms)", (int)service_name.size(), service_name.data(), time_end - time_start);
+		coreturn_void;
 	}
-	bool SystemControl::LockTimeout(const std::string_view& Name)
+	bool system_control::lock_timeout(const std::string_view& name)
 	{
-		UMutex<std::recursive_mutex> Unique(Sync);
-		if (!Active)
+		umutex<std::recursive_mutex> unique(sync);
+		if (!active)
 		{
-			VI_DEBUG("[sysctl] cancel %.*s lock on %.*s service: shutdown", (int)Name.size(), Name.data(), (int)ServiceName.size(), ServiceName.data());
+			VI_DEBUG("[sysctl] cancel %.*s lock on %.*s service: shutdown", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
 			return false;
 		}
 
-		VI_ASSERT(Timers != nullptr, "timers should be initialized");
-		if (Timers->find(KeyLookupCast(Name)) == Timers->end())
-			VI_DEBUG("[sysctl] OK spawn %.*s locked task on %.*s service (mode = lock-timeout)", (int)Name.size(), Name.data(), (int)ServiceName.size(), ServiceName.data());
+		VI_ASSERT(timers != nullptr, "timers should be initialized");
+		if (timers->find(key_lookup_cast(name)) == timers->end())
+			VI_DEBUG("[sysctl] OK spawn %.*s locked task on %.*s service (mode = lock-timeout)", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
 
-		auto& Timer = (*Timers)[String(Name)];
-		if (Timer != INVALID_TASK_ID)
+		auto& timer = (*timers)[string(name)];
+		if (timer != INVALID_TASK_ID)
 		{
-			VI_DEBUG("[sysctl] cancel %.*s lock on %.*s service: in use", (int)Name.size(), Name.data(), (int)ServiceName.size(), ServiceName.data());
+			VI_DEBUG("[sysctl] cancel %.*s lock on %.*s service: in use", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
 			return false;
 		}
 
-		Timer = LOCKED_TASK_ID;
+		timer = LOCKED_TASK_ID;
 		return true;
 	}
-	bool SystemControl::UnlockTimeout(const std::string_view& Name)
+	bool system_control::unlock_timeout(const std::string_view& name)
 	{
-		UMutex<std::recursive_mutex> Unique(Sync);
-		if (!Active)
+		umutex<std::recursive_mutex> unique(sync);
+		if (!active)
 		{
-			VI_DEBUG("[sysctl] cancel %.*s unlock on %.*s service: shutdown", (int)Name.size(), Name.data(), (int)ServiceName.size(), ServiceName.data());
+			VI_DEBUG("[sysctl] cancel %.*s unlock on %.*s service: shutdown", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
 			return false;
 		}
 
-		VI_ASSERT(Timers != nullptr, "timers should be initialized");
-		if (Timers->find(KeyLookupCast(Name)) == Timers->end())
+		VI_ASSERT(timers != nullptr, "timers should be initialized");
+		if (timers->find(key_lookup_cast(name)) == timers->end())
 		{
-			VI_DEBUG("[sysctl] cancel %.*s unlock on %.*s service: not locked", (int)Name.size(), Name.data(), (int)ServiceName.size(), ServiceName.data());
+			VI_DEBUG("[sysctl] cancel %.*s unlock on %.*s service: not locked", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
 			return false;
 		}
 
-		auto& Timer = (*Timers)[String(Name)];
-		if (Timer == LOCKED_TASK_ID)
-			Timer = INVALID_TASK_ID;
+		auto& timer = (*timers)[string(name)];
+		if (timer == LOCKED_TASK_ID)
+			timer = INVALID_TASK_ID;
 		return true;
 	}
-	bool SystemControl::IntervalIfNone(const std::string_view& Name, uint64_t Ms, TaskCallback&& Callback) noexcept
+	bool system_control::interval_if_none(const std::string_view& name, uint64_t ms, task_callback&& callback) noexcept
 	{
-		UMutex<std::recursive_mutex> Unique(Sync);
-		if (!Active)
+		umutex<std::recursive_mutex> unique(sync);
+		if (!active)
 		{
-			VI_DEBUG("[sysctl] cancel %.*s interval on %.*s service: shutdown", (int)Name.size(), Name.data(), (int)ServiceName.size(), ServiceName.data());
+			VI_DEBUG("[sysctl] cancel %.*s interval on %.*s service: shutdown", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
 			return false;
 		}
 
-		VI_ASSERT(Timers != nullptr, "timers should be initialized");
-		if (Timers->find(KeyLookupCast(Name)) == Timers->end())
-			VI_DEBUG("[sysctl] OK spawn %.*s task on %.*s service (mode = interval, delay = %" PRIu64 " ms)", (int)Name.size(), Name.data(), (int)ServiceName.size(), ServiceName.data(), Ms);
+		VI_ASSERT(timers != nullptr, "timers should be initialized");
+		if (timers->find(key_lookup_cast(name)) == timers->end())
+			VI_DEBUG("[sysctl] OK spawn %.*s task on %.*s service (mode = interval, delay = %" PRIu64 " ms)", (int)name.size(), name.data(), (int)service_name.size(), service_name.data(), ms);
 
-		auto& Timer = (*Timers)[String(Name)];
-		if (Timer != INVALID_TASK_ID || Timer == LOCKED_TASK_ID)
+		auto& timer = (*timers)[string(name)];
+		if (timer != INVALID_TASK_ID || timer == LOCKED_TASK_ID)
 			return false;
 
-		Timer = Schedule::Get()->SetInterval(Ms, std::move(Callback));
-		if (Timer != INVALID_TASK_ID)
+		timer = schedule::get()->set_interval(ms, std::move(callback));
+		if (timer != INVALID_TASK_ID)
 			return true;
 
-		VI_DEBUG("[sysctl] cancel %.*s interval on %.*s service: inactive", (int)Name.size(), Name.data(), (int)ServiceName.size(), ServiceName.data());
+		VI_DEBUG("[sysctl] cancel %.*s interval on %.*s service: inactive", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
 		return false;
 	}
-	bool SystemControl::TimeoutIfNone(const std::string_view& Name, uint64_t Ms, TaskCallback&& Callback) noexcept
+	bool system_control::timeout_if_none(const std::string_view& name, uint64_t ms, task_callback&& callback) noexcept
 	{
-		UMutex<std::recursive_mutex> Unique(Sync);
-		if (!Active)
+		umutex<std::recursive_mutex> unique(sync);
+		if (!active)
 		{
-			VI_DEBUG("[sysctl] cancel %.*s timeout on %.*s service: shutdown", (int)Name.size(), Name.data(), (int)ServiceName.size(), ServiceName.data());
+			VI_DEBUG("[sysctl] cancel %.*s timeout on %.*s service: shutdown", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
 			return false;
 		}
 
-		VI_ASSERT(Timers != nullptr, "timers should be initialized");
-		if (Timers->find(KeyLookupCast(Name)) == Timers->end())
-			VI_DEBUG("[sysctl] OK spawn %.*s task on %.*s service (mode = timeout, delay = %" PRIu64 " ms)", (int)Name.size(), Name.data(), (int)ServiceName.size(), ServiceName.data(), Ms);
+		VI_ASSERT(timers != nullptr, "timers should be initialized");
+		if (timers->find(key_lookup_cast(name)) == timers->end())
+			VI_DEBUG("[sysctl] OK spawn %.*s task on %.*s service (mode = timeout, delay = %" PRIu64 " ms)", (int)name.size(), name.data(), (int)service_name.size(), service_name.data(), ms);
 
-		auto& Timer = (*Timers)[String(Name)];
-		if (Timer != INVALID_TASK_ID || Timer == LOCKED_TASK_ID)
+		auto& timer = (*timers)[string(name)];
+		if (timer != INVALID_TASK_ID || timer == LOCKED_TASK_ID)
 			return false;
 
-		Timer = Schedule::Get()->SetTimeout(Ms, std::move(Callback));
-		if (Timer != INVALID_TASK_ID)
+		timer = schedule::get()->set_timeout(ms, std::move(callback));
+		if (timer != INVALID_TASK_ID)
 			return true;
 
-		VI_DEBUG("[sysctl] cancel %.*s timeout on %.*s service: inactive", (int)Name.size(), Name.data(), (int)ServiceName.size(), ServiceName.data());
+		VI_DEBUG("[sysctl] cancel %.*s timeout on %.*s service: inactive", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
 		return false;
 	}
-	bool SystemControl::UpsertTimeout(const std::string_view& Name, uint64_t Ms, TaskCallback&& Callback) noexcept
+	bool system_control::upsert_timeout(const std::string_view& name, uint64_t ms, task_callback&& callback) noexcept
 	{
-		UMutex<std::recursive_mutex> Unique(Sync);
-		if (!Active)
+		umutex<std::recursive_mutex> unique(sync);
+		if (!active)
 		{
-			VI_DEBUG("[sysctl] cancel %.*s timeout on %.*s service: shutdown", (int)Name.size(), Name.data(), (int)ServiceName.size(), ServiceName.data());
+			VI_DEBUG("[sysctl] cancel %.*s timeout on %.*s service: shutdown", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
 			return false;
 		}
 
-		VI_ASSERT(Timers != nullptr, "timers should be initialized");
-		if (Timers->find(KeyLookupCast(Name)) == Timers->end())
-			VI_DEBUG("[sysctl] OK spawn %.*s task on %.*s service (mode = upsert-timeout, delay = %" PRIu64 " ms)", (int)Name.size(), Name.data(), (int)ServiceName.size(), ServiceName.data(), Ms);
+		VI_ASSERT(timers != nullptr, "timers should be initialized");
+		if (timers->find(key_lookup_cast(name)) == timers->end())
+			VI_DEBUG("[sysctl] OK spawn %.*s task on %.*s service (mode = upsert-timeout, delay = %" PRIu64 " ms)", (int)name.size(), name.data(), (int)service_name.size(), service_name.data(), ms);
 
-		auto& Timer = (*Timers)[String(Name)];
-		if (Timer == LOCKED_TASK_ID)
+		auto& timer = (*timers)[string(name)];
+		if (timer == LOCKED_TASK_ID)
 			return false;
 
-		Timer = Schedule::Get()->SetTimeout(Ms, std::move(Callback));
-		if (Timer != INVALID_TASK_ID)
+		timer = schedule::get()->set_timeout(ms, std::move(callback));
+		if (timer != INVALID_TASK_ID)
 			return true;
 
-		VI_DEBUG("[sysctl] cancel %.*s timeout on %.*s service: inactive", (int)Name.size(), Name.data(), (int)ServiceName.size(), ServiceName.data());
+		VI_DEBUG("[sysctl] cancel %.*s timeout on %.*s service: inactive", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
 		return false;
 	}
-	bool SystemControl::ClearTimeout(const std::string_view& Name, bool ClearScheduled) noexcept
+	bool system_control::clear_timeout(const std::string_view& name, bool clear_scheduled) noexcept
 	{
-		UMutex<std::recursive_mutex> Unique(Sync);
-		if (!Active)
+		umutex<std::recursive_mutex> unique(sync);
+		if (!active)
 			return false;
 
-		VI_ASSERT(Timers != nullptr, "timers should be initialized");
-		auto It = Timers->find(Name);
-		if (It != Timers->end() && It->second != INVALID_TASK_ID && It->second != LOCKED_TASK_ID)
+		VI_ASSERT(timers != nullptr, "timers should be initialized");
+		auto it = timers->find(name);
+		if (it != timers->end() && it->second != INVALID_TASK_ID && it->second != LOCKED_TASK_ID)
 		{
-			if (ClearScheduled)
-				Schedule::Get()->ClearTimeout(It->second);
-			It->second = INVALID_TASK_ID;
+			if (clear_scheduled)
+				schedule::get()->clear_timeout(it->second);
+			it->second = INVALID_TASK_ID;
 		}
-		return Active;
+		return active;
 	}
-	bool SystemControl::ActivateAndEnqueue() noexcept
+	bool system_control::activate_and_enqueue() noexcept
 	{
-		UMutex<std::recursive_mutex> Unique(Sync);
-		if (Active || Tasks > 0)
+		umutex<std::recursive_mutex> unique(sync);
+		if (active || tasks > 0)
 			return false;
 
-		using TimersType = UnorderedMap<String, TaskId>;
-		if (!Timers)
-			Timers = Memory::New<TimersType>();
+		using timers_type = unordered_map<string, task_id>;
+		if (!timers)
+			timers = memory::init<timers_type>();
 
-		Tasks = 1;
-		Active = true;
+		tasks = 1;
+		active = true;
 		return true;
 	}
-	bool SystemControl::Deactivate() noexcept
+	bool system_control::deactivate() noexcept
 	{
-		UMutex<std::recursive_mutex> Unique(Sync);
-		if (!Active)
+		umutex<std::recursive_mutex> unique(sync);
+		if (!active)
 			return false;
 
-		auto* Queue = Schedule::Get();
-		Active = false;
-		if (!Timers)
+		auto* queue = schedule::get();
+		active = false;
+		if (!timers)
 			return true;
 
-		if (!Timers->empty())
-			VI_DEBUG("[sysctl] OK clear timers on %.*s service (timers = %" PRIu64 ")", (int)ServiceName.size(), ServiceName.data(), (uint64_t)Timers->size());
-		for (auto& TimerId : *Timers)
-			Queue->ClearTimeout(TimerId.second);
+		if (!timers->empty())
+			VI_DEBUG("[sysctl] OK clear timers on %.*s service (timers = %" PRIu64 ")", (int)service_name.size(), service_name.data(), (uint64_t)timers->size());
+		for (auto& timer_id : *timers)
+			queue->clear_timeout(timer_id.second);
 
-		Memory::Delete(Timers);
+		memory::deinit(timers);
 		return true;
 	}
-	bool SystemControl::EnqueueIfNone() noexcept
+	bool system_control::enqueue_if_none() noexcept
 	{
-		UMutex<std::recursive_mutex> Unique(Sync);
-		if (!Active)
+		umutex<std::recursive_mutex> unique(sync);
+		if (!active)
 		{
-			VI_DEBUG("[sysctl] cancel task on %.*s service: shutdown", (int)ServiceName.size(), ServiceName.data());
+			VI_DEBUG("[sysctl] cancel task on %.*s service: shutdown", (int)service_name.size(), service_name.data());
 			return false;
 		}
-		else if (Tasks > 0)
+		else if (tasks > 0)
 			return false;
 
-		++Tasks;
+		++tasks;
 		return true;
 	}
-	bool SystemControl::Enqueue() noexcept
+	bool system_control::enqueue() noexcept
 	{
-		UMutex<std::recursive_mutex> Unique(Sync);
-		if (!Active)
+		umutex<std::recursive_mutex> unique(sync);
+		if (!active)
 		{
-			VI_DEBUG("[sysctl] cancel task on %.*s service: shutdown", (int)ServiceName.size(), ServiceName.data());
-			return false;
-		}
-
-		++Tasks;
-		return true;
-	}
-	bool SystemControl::Dequeue() noexcept
-	{
-		UMutex<std::recursive_mutex> Unique(Sync);
-		if (!Tasks)
-		{
-			VI_DEBUG("[sysctl] finish task on %.*s service: already finalized", (int)ServiceName.size(), ServiceName.data());
+			VI_DEBUG("[sysctl] cancel task on %.*s service: shutdown", (int)service_name.size(), service_name.data());
 			return false;
 		}
 
-		--Tasks;
-		return Active;
+		++tasks;
+		return true;
 	}
-	bool SystemControl::IsActive() noexcept
+	bool system_control::dequeue() noexcept
 	{
-		return Active;
+		umutex<std::recursive_mutex> unique(sync);
+		if (!tasks)
+		{
+			VI_DEBUG("[sysctl] finish task on %.*s service: already finalized", (int)service_name.size(), service_name.data());
+			return false;
+		}
+
+		--tasks;
+		return active;
 	}
-	bool SystemControl::IsBusy() noexcept
+	bool system_control::is_active() noexcept
 	{
-		UMutex<std::recursive_mutex> Unique(Sync);
-		return Tasks > 0;
+		return active;
+	}
+	bool system_control::is_busy() noexcept
+	{
+		umutex<std::recursive_mutex> unique(sync);
+		return tasks > 0;
 	}
 
-	ServiceControl::ServiceControl() noexcept : ExitCode(0xFFFFFFFF)
+	service_control::service_control() noexcept : exit_code(0xFFFFFFFF)
 	{
-		Instance = this;
-		BindFatalTermination<Signal::SIG_ABRT>();
-		BindFatalTermination<Signal::SIG_FPE>();
-		BindFatalTermination<Signal::SIG_ILL>();
-		BindFatalTermination<Signal::SIG_SEGV>();
-		BindNormalTermination<Signal::SIG_INT>();
-		BindNormalTermination<Signal::SIG_TERM>();
+		instance = this;
+		bind_fatal_termination<signal_code::SIG_ABRT>();
+		bind_fatal_termination<signal_code::SIG_FPE>();
+		bind_fatal_termination<signal_code::SIG_ILL>();
+		bind_fatal_termination<signal_code::SIG_SEGV>();
+		bind_normal_termination<signal_code::SIG_INT>();
+		bind_normal_termination<signal_code::SIG_TERM>();
 	}
-	void ServiceControl::Bind(ServiceNode&& Entrypoint) noexcept
+	void service_control::bind(service_node&& entrypoint) noexcept
 	{
-		if (Entrypoint.Startup && Entrypoint.Shutdown)
-			Services.push_back(std::move(Entrypoint));
+		if (entrypoint.startup && entrypoint.shutdown)
+			services.push_back(std::move(entrypoint));
 	}
-	void ServiceControl::Shutdown(int Signal) noexcept
+	void service_control::shutdown(int signal) noexcept
 	{
-		VI_INFO("[srvctl] service shutdown requested (signal code = %i, state = OK)", Signal);
-		Instance = nullptr;
-		if (Signal != OS::Process::GetSignalId(Signal::SIG_INT) && Signal != OS::Process::GetSignalId(Signal::SIG_TERM))
-			ExitCode = 0x1;
+		VI_INFO("[srvctl] service shutdown requested (signal code = %i, state = OK)", signal);
+		instance = nullptr;
+		if (signal != os::process::get_signal_id(signal_code::SIG_INT) && signal != os::process::get_signal_id(signal_code::SIG_TERM))
+			exit_code = 0x1;
 		else
-			ExitCode = 0x0;
-		Schedule::Get()->Wakeup();
+			exit_code = 0x0;
+		schedule::get()->wakeup();
 	}
-	void ServiceControl::Abort(int Signal) noexcept
+	void service_control::abort(int signal) noexcept
 	{
-		std::cout << "[srvctl] PANIC! service termination requested (signal code " << Signal << ", state = unrecoverable, mode = abort):\n" << ErrorHandling::GetStackTrace(0) << std::endl;
-		Instance = nullptr;
-		OS::Process::Abort();
+		std::cout << "[srvctl] PANIC! service termination requested (signal code " << signal << ", state = unrecoverable, mode = abort):\n" << error_handling::get_stack_trace(0) << std::endl;
+		instance = nullptr;
+		os::process::abort();
 	}
-	int ServiceControl::Launch() noexcept
+	int service_control::launch() noexcept
 	{
-		Schedule::Desc Policy;
-		Policy.Ping = [this]() { return ExitCode == 0xFFFFFFFF; };
-		if (Protocol::Now().User.Storage.ComputationThreadsRatio > 0.0)
+		schedule::desc policy;
+		policy.ping = [this]() { return exit_code == 0xFFFFFFFF; };
+		if (protocol::now().user.storage.computation_threads_ratio > 0.0)
 		{
-			auto Threads = OS::CPU::GetQuantityInfo().Logical;
+			auto threads = os::hw::get_quantity_info().logical;
 #ifndef VI_CXX20
-			Policy.Threads[((size_t)Difficulty::Async)] = (size_t)std::max(std::ceil(Threads * 0.20), 1.0);
+			policy.threads[((size_t)difficulty::async)] = (size_t)std::max(std::ceil(threads * 0.20), 1.0);
 #else
-			Policy.Threads[((size_t)Difficulty::Async)] = 1;
+			policy.threads[((size_t)difficulty::async)] = 1;
 #endif
-			Policy.Threads[((size_t)Difficulty::Sync)] = (size_t)std::max(std::ceil(Threads * Protocol::Now().User.Storage.ComputationThreadsRatio), 1.0);
-			Policy.Threads[((size_t)Difficulty::Timeout)] = 1;
+			policy.threads[((size_t)difficulty::sync)] = (size_t)std::max(std::ceil(threads * protocol::now().user.storage.computation_threads_ratio), 1.0);
+			policy.threads[((size_t)difficulty::timeout)] = 1;
 		}
 
-		VI_INFO("[srvctl] service launch requested (services: %i)", (int)Services.size());
-		for (auto& Service : Services)
-			Service.Startup();
+		VI_INFO("[srvctl] service launch requested (services: %i)", (int)services.size());
+		for (auto& service : services)
+			service.startup();
 
-		ErrorHandling::SetFlag(LogOption::Async, true);
-		Schedule* Queue = Schedule::Get();
-		if (!Queue->Start(Policy))
+		error_handling::set_flag(log_option::async, true);
+		schedule* queue = schedule::get();
+		if (!queue->start(policy))
 			return -1;
 
-		ErrorHandling::SetFlag(LogOption::Async, false);
-		for (auto& Service : Services)
-			Service.Shutdown();
+		error_handling::set_flag(log_option::async, false);
+		for (auto& service : services)
+			service.shutdown();
 
-		Queue->Stop();
-		while (Queue->Dispatch());
+		queue->stop();
+		while (queue->dispatch());
 		return 0;
 	}
-	ServiceControl* ServiceControl::Instance = nullptr;
+	service_control* service_control::instance = nullptr;
 }

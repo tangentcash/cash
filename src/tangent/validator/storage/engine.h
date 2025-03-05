@@ -2,95 +2,95 @@
 #define TAN_STORAGE_ENGINE_H
 #include "../../kernel/chain.h"
 
-namespace Tangent
+namespace tangent
 {
-	namespace Ledger
+	namespace ledger
 	{
-		class StorageUtil
+		class storage_util
 		{
 		public:
-			static uint64_t GetThreadQueries();
+			static uint64_t get_thread_queries();
 		};
 
-		struct MutableStorage
+		struct mutable_storage
 		{
 		private:
-			std::atomic<uint64_t> Queries = 0;
+			std::atomic<uint64_t> queries = 0;
 
 		protected:
-			UPtr<LDB::Connection> Storage;
-			LDB::SessionId Transaction = nullptr;
+			uptr<sqlite::connection> storage;
+			sqlite::session_id transaction = nullptr;
 
 		public:
-			MutableStorage() = default;
-			MutableStorage(const MutableStorage&) = delete;
-			MutableStorage(MutableStorage&&) = delete;
-			virtual ~MutableStorage();
-			MutableStorage& operator=(const MutableStorage&) = delete;
-			MutableStorage& operator=(MutableStorage&&) = delete;
-			bool QueryUsed() const;
-			size_t GetQueries() const;
+			mutable_storage() = default;
+			mutable_storage(const mutable_storage&) = delete;
+			mutable_storage(mutable_storage&&) = delete;
+			virtual ~mutable_storage();
+			mutable_storage& operator=(const mutable_storage&) = delete;
+			mutable_storage& operator=(mutable_storage&&) = delete;
+			bool query_used() const;
+			size_t get_queries() const;
 
 		public:
-			virtual LDB::ExpectsDB<void> TxBegin(const std::string_view& Label, const std::string_view& Operation, LDB::Isolation Type);
-			virtual LDB::ExpectsDB<void> TxCommit(const std::string_view& Label, const std::string_view& Operation);
-			virtual LDB::ExpectsDB<void> TxRollback(const std::string_view& Label, const std::string_view& Operation);
+			virtual sqlite::expects_db<void> tx_begin(const std::string_view& label, const std::string_view& operation, sqlite::isolation type);
+			virtual sqlite::expects_db<void> tx_commit(const std::string_view& label, const std::string_view& operation);
+			virtual sqlite::expects_db<void> tx_rollback(const std::string_view& label, const std::string_view& operation);
 
 		protected:
-			virtual LDB::ExpectsDB<LDB::Cursor> Query(const std::string_view& Label, const std::string_view& Operation, const std::string_view& Command, size_t QueryOps = 0);
-			virtual LDB::ExpectsDB<LDB::Cursor> EmplaceQuery(const std::string_view& Label, const std::string_view& Operation, const std::string_view& Command, SchemaList* Map, size_t QueryOps = 0);
-			virtual String ErrorOf(LDB::ExpectsDB<LDB::SessionId>& Cursor);
-			virtual String ErrorOf(LDB::ExpectsDB<void>& Cursor);
-			virtual String ErrorOf(LDB::ExpectsDB<LDB::Cursor>& Cursor);
-			virtual void StorageOf(const std::string_view& Location);
-			virtual bool ReconstructStorage() = 0;
+			virtual sqlite::expects_db<sqlite::cursor> query(const std::string_view& label, const std::string_view& operation, const std::string_view& command, size_t query_ops = 0);
+			virtual sqlite::expects_db<sqlite::cursor> emplace_query(const std::string_view& label, const std::string_view& operation, const std::string_view& command, schema_list* map, size_t query_ops = 0);
+			virtual string error_of(sqlite::expects_db<sqlite::session_id>& cursor);
+			virtual string error_of(sqlite::expects_db<void>& cursor);
+			virtual string error_of(sqlite::expects_db<sqlite::cursor>& cursor);
+			virtual void storage_of(const std::string_view& location);
+			virtual bool reconstruct_storage() = 0;
 		};
 
-		struct PermanentStorage
+		struct permanent_storage
 		{
 		public:
-			typedef UnorderedMap<LDB::Connection*, LDB::SessionId> MultiSessionId;
+			typedef unordered_map<sqlite::connection*, sqlite::session_id> multi_session_id;
 
 		private:
-			std::atomic<uint64_t> Queries = 0;
+			std::atomic<uint64_t> queries = 0;
 
 		protected:
-			UPtr<MultiSessionId> Transaction;
-			rocksdb::DB* Blob = nullptr;
+			uptr<multi_session_id> transaction;
+			rocksdb::DB* blob = nullptr;
 
 		public:
-			PermanentStorage() = default;
-			PermanentStorage(const PermanentStorage&) = delete;
-			PermanentStorage(PermanentStorage&&) = delete;
-			virtual ~PermanentStorage() = default;
-			PermanentStorage& operator=(const PermanentStorage&) = delete;
-			PermanentStorage& operator=(PermanentStorage&&) = delete;
-			bool QueryUsed() const;
-			size_t GetQueries() const;
+			permanent_storage() = default;
+			permanent_storage(const permanent_storage&) = delete;
+			permanent_storage(permanent_storage&&) = delete;
+			virtual ~permanent_storage() = default;
+			permanent_storage& operator=(const permanent_storage&) = delete;
+			permanent_storage& operator=(permanent_storage&&) = delete;
+			bool query_used() const;
+			size_t get_queries() const;
 
 		public:
-			virtual LDB::ExpectsDB<void> MultiTxBegin(const std::string_view& Label, const std::string_view& Operation, LDB::Isolation Type);
-			virtual LDB::ExpectsDB<void> MultiTxCommit(const std::string_view& Label, const std::string_view& Operation);
-			virtual LDB::ExpectsDB<void> MultiTxRollback(const std::string_view& Label, const std::string_view& Operation);
+			virtual sqlite::expects_db<void> multi_tx_begin(const std::string_view& label, const std::string_view& operation, sqlite::isolation type);
+			virtual sqlite::expects_db<void> multi_tx_commit(const std::string_view& label, const std::string_view& operation);
+			virtual sqlite::expects_db<void> multi_tx_rollback(const std::string_view& label, const std::string_view& operation);
 
 		protected:
-			virtual LDB::ExpectsDB<LDB::SessionId> TxBegin(LDB::Connection* Storage, const std::string_view& Label, const std::string_view& Operation, LDB::Isolation Type);
-			virtual LDB::ExpectsDB<void> TxCommit(LDB::Connection* Storage, const std::string_view& Label, const std::string_view& Operation, LDB::SessionId Session);
-			virtual LDB::ExpectsDB<void> TxRollback(LDB::Connection* Storage, const std::string_view& Label, const std::string_view& Operation, LDB::SessionId Session);
-			virtual LDB::ExpectsDB<LDB::Cursor> Query(LDB::Connection* Storage, const std::string_view& Label, const std::string_view& Operation, const std::string_view& Command, size_t QueryOps = 0);
-			virtual LDB::ExpectsDB<LDB::Cursor> EmplaceQuery(LDB::Connection* Storage, const std::string_view& Label, const std::string_view& Operation, const std::string_view& Command, SchemaList* Map, size_t QueryOps = 0);
-			virtual LDB::ExpectsDB<LDB::Cursor> PreparedQuery(LDB::Connection* Storage, const std::string_view& Label, const std::string_view& Operation, LDB::TStatement* Statement);
-			virtual LDB::ExpectsDB<String> Load(const std::string_view& Label, const std::string_view& Operation, const std::string_view& Key);
-			virtual LDB::ExpectsDB<void> Store(const std::string_view& Label, const std::string_view& Operation, const std::string_view& Key, const std::string_view& Value);
-			virtual LDB::ExpectsDB<void> Clear(const std::string_view& Label, const std::string_view& Operation, const std::string_view& TableIds);
-			virtual String ErrorOf(LDB::ExpectsDB<LDB::SessionId>& Cursor);
-			virtual String ErrorOf(LDB::ExpectsDB<void>& Cursor);
-			virtual String ErrorOf(LDB::ExpectsDB<LDB::Cursor>& Cursor);
-			virtual UPtr<LDB::Connection> IndexStorageOf(const std::string_view& Location, const std::string_view& Name);
-			virtual void BlobStorageOf(const std::string_view& Location);
-			virtual void UnloadIndexOf(UPtr<LDB::Connection>&& Storage, bool Borrows);
-			virtual bool ReconstructIndexStorage(LDB::Connection* Storage, const std::string_view& Name) = 0;
-			virtual Vector<LDB::Connection*> GetIndexStorages() = 0;
+			virtual sqlite::expects_db<sqlite::session_id> tx_begin(sqlite::connection* storage, const std::string_view& label, const std::string_view& operation, sqlite::isolation type);
+			virtual sqlite::expects_db<void> tx_commit(sqlite::connection* storage, const std::string_view& label, const std::string_view& operation, sqlite::session_id session);
+			virtual sqlite::expects_db<void> tx_rollback(sqlite::connection* storage, const std::string_view& label, const std::string_view& operation, sqlite::session_id session);
+			virtual sqlite::expects_db<sqlite::cursor> query(sqlite::connection* storage, const std::string_view& label, const std::string_view& operation, const std::string_view& command, size_t query_ops = 0);
+			virtual sqlite::expects_db<sqlite::cursor> emplace_query(sqlite::connection* storage, const std::string_view& label, const std::string_view& operation, const std::string_view& command, schema_list* map, size_t query_ops = 0);
+			virtual sqlite::expects_db<sqlite::cursor> prepared_query(sqlite::connection* storage, const std::string_view& label, const std::string_view& operation, sqlite::tstatement* statement);
+			virtual sqlite::expects_db<string> load(const std::string_view& label, const std::string_view& operation, const std::string_view& key);
+			virtual sqlite::expects_db<void> store(const std::string_view& label, const std::string_view& operation, const std::string_view& key, const std::string_view& value);
+			virtual sqlite::expects_db<void> clear(const std::string_view& label, const std::string_view& operation, const std::string_view& table_ids);
+			virtual string error_of(sqlite::expects_db<sqlite::session_id>& cursor);
+			virtual string error_of(sqlite::expects_db<void>& cursor);
+			virtual string error_of(sqlite::expects_db<sqlite::cursor>& cursor);
+			virtual uptr<sqlite::connection> index_storage_of(const std::string_view& location, const std::string_view& name);
+			virtual void blob_storage_of(const std::string_view& location);
+			virtual void unload_index_of(uptr<sqlite::connection>&& storage, bool borrows);
+			virtual bool reconstruct_index_storage(sqlite::connection* storage, const std::string_view& name) = 0;
+			virtual vector<sqlite::connection*> get_index_storages() = 0;
 		};
 	}
 }

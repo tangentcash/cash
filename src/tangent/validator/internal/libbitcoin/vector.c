@@ -27,9 +27,9 @@
 #include "vector.h"
 #include "memory.h"
 
-vector* vector_new(size_t res, void (*free_f)(void*))
+dvector* vector_new(size_t res, void (*free_f)(void*))
 {
-    vector* vec = btc_calloc(1, sizeof(vector));
+    dvector* vec = btc_calloc(1, sizeof(dvector));
     if (!vec)
         return NULL;
 
@@ -47,7 +47,7 @@ vector* vector_new(size_t res, void (*free_f)(void*))
     return vec;
 }
 
-static void vector_free_data(vector* vec)
+static void vector_free_data(dvector* vec)
 {
     if (!vec->data)
         return;
@@ -67,7 +67,7 @@ static void vector_free_data(vector* vec)
     vec->len = 0;
 }
 
-void vector_free(vector* vec, btc_bool free_array)
+void vector_free(dvector* vec, btc_bool free_array)
 {
     if (!vec)
         return;
@@ -79,7 +79,7 @@ void vector_free(vector* vec, btc_bool free_array)
     btc_free(vec);
 }
 
-static btc_bool vector_grow(vector* vec, size_t min_sz)
+static btc_bool vector_grow(dvector* vec, size_t min_sz)
 {
     size_t new_alloc = vec->alloc;
     while (new_alloc < min_sz)
@@ -97,7 +97,7 @@ static btc_bool vector_grow(vector* vec, size_t min_sz)
     return true;
 }
 
-ssize_t vector_find(vector* vec, void* data)
+ssize_t vector_find(dvector* vec, void* data)
 {
     if (vec && vec->len) {
         size_t i;
@@ -109,7 +109,7 @@ ssize_t vector_find(vector* vec, void* data)
     return -1;
 }
 
-btc_bool vector_add(vector* vec, void* data)
+btc_bool vector_add(dvector* vec, void* data)
 {
     if (vec->len == vec->alloc)
         if (!vector_grow(vec, vec->len + 1))
@@ -120,7 +120,7 @@ btc_bool vector_add(vector* vec, void* data)
     return true;
 }
 
-void vector_remove_range(vector* vec, size_t pos, size_t len)
+void vector_remove_range(dvector* vec, size_t pos, size_t len)
 {
     if (!vec || ((pos + len) > vec->len))
         return;
@@ -135,12 +135,12 @@ void vector_remove_range(vector* vec, size_t pos, size_t len)
     vec->len -= len;
 }
 
-void vector_remove_idx(vector* vec, size_t pos)
+void vector_remove_idx(dvector* vec, size_t pos)
 {
     vector_remove_range(vec, pos, 1);
 }
 
-btc_bool vector_remove(vector* vec, void* data)
+btc_bool vector_remove(dvector* vec, void* data)
 {
     ssize_t idx = vector_find(vec, data);
     if (idx < 0)
@@ -150,7 +150,7 @@ btc_bool vector_remove(vector* vec, void* data)
     return true;
 }
 
-btc_bool vector_resize(vector* vec, size_t newsz)
+btc_bool vector_resize(dvector* vec, size_t newsz)
 {
     unsigned int i;
 

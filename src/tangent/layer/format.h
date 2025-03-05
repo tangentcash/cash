@@ -2,92 +2,92 @@
 #define TAN_LAYER_FORMAT_H
 #include "serialization.h"
 
-namespace Tangent
+namespace tangent
 {
-	namespace Format
+	namespace format
 	{
-		typedef Vector<struct Variable> Variables;
+		typedef vector<struct variable> variables;
 
-		struct Variable
+		struct variable
 		{
 		private:
-			union Tag
+			union tag
 			{
-				char String[52];
-				char* Pointer;
-				uint256_t Integer;
-				bool Boolean;
-			} Value;
+				char string[52];
+				char* pointer;
+				uint256_t integer;
+				bool boolean;
+			} value;
 
 		private:
-			Viewable Type;
-			uint32_t Length;
+			viewable type;
+			uint32_t length;
 
 		public:
-			Variable() noexcept;
-			explicit Variable(const char* Value) noexcept;
-			explicit Variable(const std::string_view& Value) noexcept;
-			explicit Variable(const String& Value) noexcept;
-			explicit Variable(const Decimal& Value) noexcept;
-			explicit Variable(const uint8_t& Value) noexcept;
-			explicit Variable(const uint16_t& Value) noexcept;
-			explicit Variable(const uint32_t& Value) noexcept;
-			explicit Variable(const uint64_t& Value) noexcept;
-			explicit Variable(const uint128_t& Value) noexcept;
-			explicit Variable(const uint256_t& Value) noexcept;
-			explicit Variable(bool Value) noexcept;
-			Variable(const Variable& Other) noexcept;
-			Variable(Variable&& Other) noexcept;
-			~Variable() noexcept;
-			String AsConstant() const;
-			String AsBlob() const;
-			Decimal AsDecimal() const;
-			UPtr<Schema> AsSchema() const;
-			std::string_view AsString() const;
-			uint8_t AsUint8() const;
-			uint16_t AsUint16() const;
-			uint32_t AsUint32() const;
-			uint64_t AsUint64() const;
-			uint128_t AsUint128() const;
-			uint256_t AsUint256() const;
-			float AsFloat() const;
-			double AsDouble() const;
-			bool AsBoolean() const;
-			bool IsString() const;
-			bool IsDecimal() const;
-			bool IsInteger() const;
-			Viewable TypeOf() const;
-			Variable& operator= (const Variable& Other) noexcept;
-			Variable& operator= (Variable&& Other) noexcept;
-			bool operator== (const Variable& Other) const;
-			bool operator!= (const Variable& Other) const;
+			variable() noexcept;
+			explicit variable(const char* value) noexcept;
+			explicit variable(const std::string_view& value) noexcept;
+			explicit variable(const string& value) noexcept;
+			explicit variable(const decimal& value) noexcept;
+			explicit variable(const uint8_t& value) noexcept;
+			explicit variable(const uint16_t& value) noexcept;
+			explicit variable(const uint32_t& value) noexcept;
+			explicit variable(const uint64_t& value) noexcept;
+			explicit variable(const uint128_t& value) noexcept;
+			explicit variable(const uint256_t& value) noexcept;
+			explicit variable(bool value) noexcept;
+			variable(const variable& other) noexcept;
+			variable(variable&& other) noexcept;
+			~variable() noexcept;
+			string as_constant() const;
+			string as_blob() const;
+			decimal as_decimal() const;
+			uptr<schema> as_schema() const;
+			std::string_view as_string() const;
+			uint8_t as_uint8() const;
+			uint16_t as_uint16() const;
+			uint32_t as_uint32() const;
+			uint64_t as_uint64() const;
+			uint128_t as_uint128() const;
+			uint256_t as_uint256() const;
+			float as_float() const;
+			double as_double() const;
+			bool as_boolean() const;
+			bool is_string() const;
+			bool is_decimal() const;
+			bool is_integer() const;
+			viewable type_of() const;
+			variable& operator= (const variable& other) noexcept;
+			variable& operator= (variable&& other) noexcept;
+			bool operator== (const variable& other) const;
+			bool operator!= (const variable& other) const;
 
 		private:
-			Variable(Viewable NewType) noexcept;
-			bool Same(const Variable& Value) const;
-			void Copy(const Variable& Other);
-			void Move(Variable&& Other);
-			void Free();
+			variable(viewable new_type) noexcept;
+			bool same(const variable& value) const;
+			void copy(const variable& other);
+			void move(variable&& other);
+			void free();
 
 		private:
-			static size_t GetMaxSmallStringSize();
+			static size_t get_max_small_string_size();
 		};
 
-		class VariablesUtil
+		class variables_util
 		{
 		public:
-			static bool IsAsciiEncoding(const std::string_view& Data);
-			static bool DeserializeFlatFrom(Stream& Stream, Variables* Result);
-			static bool SerializeFlatInto(const Variables& Data, Stream* Result);
-			static bool DeserializeMergeFrom(Stream& Stream, Variables* Result);
-			static bool SerializeMergeInto(const Variables& Data, Stream* Result);
-			static String AsConstant(const Variables& Data);
-			static String AsConstantJSON(const Variables& Data, size_t Spaces = 2);
-			static Schema* Serialize(const Variables& Data);
+			static bool is_ascii_encoding(const std::string_view& data);
+			static bool deserialize_flat_from(stream& stream, variables* result);
+			static bool serialize_flat_into(const variables& data, stream* result);
+			static bool deserialize_merge_from(stream& stream, variables* result);
+			static bool serialize_merge_into(const variables& data, stream* result);
+			static string as_constant(const variables& data);
+			static string as_constant_json(const variables& data, size_t spaces = 2);
+			static schema* serialize(const variables& data);
 
 		private:
-			static bool DeserializeFrom(Stream& Stream, Variables* Result, bool Merging);
-			static bool SerializeInto(const Variables& Data, Stream* Result, bool Merging);
+			static bool deserialize_from(stream& stream, variables* result, bool merging);
+			static bool serialize_into(const variables& data, stream* result, bool merging);
 		};
 	}
 }

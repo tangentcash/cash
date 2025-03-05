@@ -8,765 +8,765 @@ extern "C"
 #include "../../internal/sha2.h"
 }
 
-namespace Tangent
+namespace tangent
 {
-	namespace Mediator
+	namespace mediator
 	{
-		namespace Backends
+		namespace backends
 		{
-			const char* Cardano::NdCall::NetworkStatus()
+			const char* cardano::nd_call::network_status()
 			{
 				return "/network/status";
 			}
-			const char* Cardano::NdCall::BlockData()
+			const char* cardano::nd_call::block_data()
 			{
 				return "/block";
 			}
-			const char* Cardano::NdCall::TransactionData()
+			const char* cardano::nd_call::transaction_data()
 			{
 				return "/block/transaction";
 			}
-			const char* Cardano::NdCall::SubmitTransaction()
+			const char* cardano::nd_call::submit_transaction()
 			{
 				return "submitTransaction";
 			}
 
-			Cardano::Cardano() noexcept : RelayBackendUTXO()
+			cardano::cardano() noexcept : relay_backend_utxo()
 			{
-				Netdata.Composition = Algorithm::Composition::Type::ED25519;
-				Netdata.Routing = RoutingPolicy::UTXO;
-				Netdata.SyncLatency = 12;
-				Netdata.Divisibility = Decimal(1000000).Truncate(Protocol::Now().Message.Precision);
-				Netdata.SupportsTokenTransfer = "native";
-				Netdata.SupportsBulkTransfer = true;
+				netdata.composition = algorithm::composition::type::ED25519;
+				netdata.routing = routing_policy::UTXO;
+				netdata.sync_latency = 12;
+				netdata.divisibility = decimal(1000000).truncate(protocol::now().message.precision);
+				netdata.supports_token_transfer = "native";
+				netdata.supports_bulk_transfer = true;
 			}
-			ExpectsPromiseRT<void> Cardano::BroadcastTransaction(const Algorithm::AssetId& Asset, const OutgoingTransaction& TxData)
+			expects_promise_rt<void> cardano::broadcast_transaction(const algorithm::asset_id& asset, const outgoing_transaction& tx_data)
 			{
-				Schema* Transaction = Var::Set::Object();
-				Transaction->Set("cbor", Var::String(Format::Util::Clear0xHex(TxData.Data)));
+				schema* transaction = var::set::object();
+				transaction->set("cbor", var::string(format::util::clear_0xhex(tx_data.data)));
 
-				SchemaArgs Map;
-				Map["transaction"] = Transaction;
+				schema_args map;
+				map["transaction"] = transaction;
 
-				auto HexData = Coawait(ExecuteRPC3(Asset, NdCall::SubmitTransaction(), std::move(Map), CachePolicy::Lazy));
-				if (!HexData)
-					Coreturn ExpectsRT<void>(std::move(HexData.Error()));
+				auto hex_data = coawait(execute_rpc3(asset, nd_call::submit_transaction(), std::move(map), cache_policy::lazy));
+				if (!hex_data)
+					coreturn expects_rt<void>(std::move(hex_data.error()));
 
-				Memory::Release(*HexData);
-				UpdateCoins(Asset, TxData);
-				Coreturn ExpectsRT<void>(Expectation::Met);
+				memory::release(*hex_data);
+				update_coins(asset, tx_data);
+				coreturn expects_rt<void>(expectation::met);
 			}
-			ExpectsPromiseRT<uint64_t> Cardano::GetLatestBlockHeight(const Algorithm::AssetId& Asset)
+			expects_promise_rt<uint64_t> cardano::get_latest_block_height(const algorithm::asset_id& asset)
 			{
-				Schema* Args = Var::Set::Object();
-				Schema* NetworkQuery = Args->Set("network_identifier", Var::Object());
-				NetworkQuery->Set("blockchain", Var::String(GetBlockchain()));
-				NetworkQuery->Set("network", Var::String(GetNetwork()));
+				schema* args = var::set::object();
+				schema* network_query = args->set("network_identifier", var::object());
+				network_query->set("blockchain", var::string(get_blockchain()));
+				network_query->set("network", var::string(get_network()));
 
-				auto Netstat = Coawait(ExecuteREST(Asset, "POST", NdCall::NetworkStatus(), Args, CachePolicy::Lazy));
-				if (!Netstat)
-					Coreturn ExpectsRT<uint64_t>(Netstat.Error());
+				auto netstat = coawait(execute_rest(asset, "POST", nd_call::network_status(), args, cache_policy::lazy));
+				if (!netstat)
+					coreturn expects_rt<uint64_t>(netstat.error());
 
-				uint64_t BlockHeight = Netstat->FetchVar("current_block_identifier.index").GetInteger();
-				Memory::Release(*Netstat);
-				Coreturn ExpectsRT<uint64_t>(BlockHeight);
+				uint64_t block_height = netstat->fetch_var("current_block_identifier.index").get_integer();
+				memory::release(*netstat);
+				coreturn expects_rt<uint64_t>(block_height);
 			}
-			ExpectsPromiseRT<Schema*> Cardano::GetBlockTransactions(const Algorithm::AssetId& Asset, uint64_t BlockHeight, String* BlockHash)
+			expects_promise_rt<schema*> cardano::get_block_transactions(const algorithm::asset_id& asset, uint64_t block_height, string* block_hash)
 			{
-				Schema* Args = Var::Set::Object();
-				Schema* NetworkQuery = Args->Set("network_identifier", Var::Object());
-				NetworkQuery->Set("blockchain", Var::String(GetBlockchain()));
-				NetworkQuery->Set("network", Var::String(GetNetwork()));
-				Schema* BlockQuery = Args->Set("block_identifier", Var::Object());
-				BlockQuery->Set("index", Var::Integer(BlockHeight));
+				schema* args = var::set::object();
+				schema* network_query = args->set("network_identifier", var::object());
+				network_query->set("blockchain", var::string(get_blockchain()));
+				network_query->set("network", var::string(get_network()));
+				schema* block_query = args->set("block_identifier", var::object());
+				block_query->set("index", var::integer(block_height));
 
-				auto BlockData = Coawait(ExecuteREST(Asset, "POST", NdCall::BlockData(), Args, CachePolicy::Shortened));
-				if (!BlockData)
-					Coreturn ExpectsRT<Schema*>(BlockData.Error());
+				auto block_data = coawait(execute_rest(asset, "POST", nd_call::block_data(), args, cache_policy::shortened));
+				if (!block_data)
+					coreturn expects_rt<schema*>(block_data.error());
 
-				if (BlockHash)
-					*BlockHash = BlockData->FetchVar("block.block_identifier.hash").GetBlob();
+				if (block_hash)
+					*block_hash = block_data->fetch_var("block.block_identifier.hash").get_blob();
 
-				auto* Transactions = BlockData->Fetch("block.transactions");
-				if (!Transactions)
+				auto* transactions = block_data->fetch("block.transactions");
+				if (!transactions)
 				{
-					Memory::Release(*BlockData);
-					Coreturn RemoteException("block.transactions field not found");
+					memory::release(*block_data);
+					coreturn remote_exception("block.transactions field not found");
 				}
 
-				Transactions->Unlink();
-				Memory::Release(*BlockData);
-				Coreturn ExpectsRT<Schema*>(Transactions);
+				transactions->unlink();
+				memory::release(*block_data);
+				coreturn expects_rt<schema*>(transactions);
 			}
-			ExpectsPromiseRT<Schema*> Cardano::GetBlockTransaction(const Algorithm::AssetId& Asset, uint64_t BlockHeight, const std::string_view& BlockHash, const std::string_view& TransactionId)
+			expects_promise_rt<schema*> cardano::get_block_transaction(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, const std::string_view& transaction_id)
 			{
-				String TargetBlockHash = Format::Util::Clear0xHex(BlockHash);
-				if (TargetBlockHash.empty())
+				string target_block_hash = format::util::clear_0xhex(block_hash);
+				if (target_block_hash.empty())
 				{
-					auto TransactionsData = Coawait(GetBlockTransactions(Asset, BlockHeight, &TargetBlockHash));
-					if (!TransactionsData)
-						Coreturn ExpectsRT<Schema*>(TransactionsData.Error());
+					auto transactions_data = coawait(get_block_transactions(asset, block_height, &target_block_hash));
+					if (!transactions_data)
+						coreturn expects_rt<schema*>(transactions_data.error());
 
-					Memory::Release(*TransactionsData);
+					memory::release(*transactions_data);
 				}
 
-				Schema* Args = Var::Set::Object();
-				Schema* NetworkQuery = Args->Set("network_identifier", Var::Object());
-				NetworkQuery->Set("blockchain", Var::String(GetBlockchain()));
-				NetworkQuery->Set("network", Var::String(GetNetwork()));
-				Schema* BlockQuery = Args->Set("block_identifier", Var::Object());
-				BlockQuery->Set("index", Var::Integer(BlockHeight));
-				BlockQuery->Set("hash", Var::String(TargetBlockHash));
-				Schema* TransactionQuery = Args->Set("transaction_identifier", Var::Object());
-				TransactionQuery->Set("hash", Var::String(Format::Util::Clear0xHex(TransactionId)));
+				schema* args = var::set::object();
+				schema* network_query = args->set("network_identifier", var::object());
+				network_query->set("blockchain", var::string(get_blockchain()));
+				network_query->set("network", var::string(get_network()));
+				schema* block_query = args->set("block_identifier", var::object());
+				block_query->set("index", var::integer(block_height));
+				block_query->set("hash", var::string(target_block_hash));
+				schema* transaction_query = args->set("transaction_identifier", var::object());
+				transaction_query->set("hash", var::string(format::util::clear_0xhex(transaction_id)));
 
-				auto TransactionData = Coawait(ExecuteREST(Asset, "POST", NdCall::TransactionData(), Args, CachePolicy::Shortened));
-				if (!TransactionData)
-					Coreturn ExpectsRT<Schema*>(TransactionData.Error());
+				auto transaction_data = coawait(execute_rest(asset, "POST", nd_call::transaction_data(), args, cache_policy::shortened));
+				if (!transaction_data)
+					coreturn expects_rt<schema*>(transaction_data.error());
 
-				auto* TransactionObject = TransactionData->Get("transaction");
-				if (!TransactionObject)
+				auto* transaction_object = transaction_data->get("transaction");
+				if (!transaction_object)
 				{
-					Memory::Release(*TransactionData);
-					Coreturn RemoteException("transaction field not found");
+					memory::release(*transaction_data);
+					coreturn remote_exception("transaction field not found");
 				}
 
-				TransactionObject->Unlink();
-				Memory::Release(*TransactionData);
-				Coreturn ExpectsRT<Schema*>(TransactionObject);
+				transaction_object->unlink();
+				memory::release(*transaction_data);
+				coreturn expects_rt<schema*>(transaction_object);
 			}
-			ExpectsPromiseRT<Vector<IncomingTransaction>> Cardano::GetAuthenticTransactions(const Algorithm::AssetId& Asset, uint64_t BlockHeight, const std::string_view& BlockHash, Schema* TransactionData)
+			expects_promise_rt<vector<incoming_transaction>> cardano::get_authentic_transactions(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, schema* transaction_data)
 			{
-				auto* BaseImplementation = (Cardano*)NSS::ServerNode::Get()->GetChain(Asset);
-				if (!BaseImplementation)
-					Coreturn ExpectsRT<Vector<IncomingTransaction>>(RemoteException("chain not found"));
+				auto* base_implementation = (cardano*)nss::server_node::get()->get_chain(asset);
+				if (!base_implementation)
+					coreturn expects_rt<vector<incoming_transaction>>(remote_exception("chain not found"));
 
-				if (!TransactionData->Value.IsObject())
+				if (!transaction_data->value.is_object())
 				{
-					auto InternalInfo = UPtr<Schema>(Coawait(GetBlockTransaction(Asset, BlockHeight, BlockHash, TransactionData->Value.GetBlob())));
-					if (!InternalInfo)
-						Coreturn ExpectsRT<Vector<IncomingTransaction>>(RemoteException("tx not found"));
+					auto internal_info = uptr<schema>(coawait(get_block_transaction(asset, block_height, block_hash, transaction_data->value.get_blob())));
+					if (!internal_info)
+						coreturn expects_rt<vector<incoming_transaction>>(remote_exception("tx not found"));
 
-					TransactionData->Value = InternalInfo->Value;
-					TransactionData->Join(*InternalInfo, true);
+					transaction_data->value = internal_info->value;
+					transaction_data->join(*internal_info, true);
 				}
 
 
-				auto* OperationsData = TransactionData->Get("operations");
-				if (!OperationsData || OperationsData->Empty())
-					Coreturn ExpectsRT<Vector<IncomingTransaction>>(RemoteException("tx not involved"));
+				auto* operations_data = transaction_data->get("operations");
+				if (!operations_data || operations_data->empty())
+					coreturn expects_rt<vector<incoming_transaction>>(remote_exception("tx not involved"));
 
-				UnorderedSet<String> Addresses;
-				for (auto& TxOperation : OperationsData->GetChilds())
+				unordered_set<string> addresses;
+				for (auto& tx_operation : operations_data->get_childs())
 				{
-					String Status = TxOperation->GetVar("status").GetBlob();
-					if (Status == "success")
-						Addresses.insert(TxOperation->FetchVar("account.address").GetBlob());
+					string status = tx_operation->get_var("status").get_blob();
+					if (status == "success")
+						addresses.insert(tx_operation->fetch_var("account.address").get_blob());
 				}
 
-				auto Discovery = FindCheckpointAddresses(Asset, Addresses);
-				if (!Discovery)
-					Coreturn ExpectsRT<Vector<IncomingTransaction>>(RemoteException("tx not involved"));
+				auto discovery = find_checkpoint_addresses(asset, addresses);
+				if (!discovery)
+					coreturn expects_rt<vector<incoming_transaction>>(remote_exception("tx not involved"));
 
-				IncomingTransaction Tx;
-				Tx.SetTransaction(Asset, BlockHeight, TransactionData->FetchVar("transaction_identifier.hash").GetBlob(), Decimal::Zero());
+				incoming_transaction tx;
+				tx.set_transaction(asset, block_height, transaction_data->fetch_var("transaction_identifier.hash").get_blob(), decimal::zero());
 
-				Decimal OutputValue = 0.0;
-				Decimal InputValue = 0.0;
-				for (auto& TxOperation : OperationsData->GetChilds())
+				decimal output_value = 0.0;
+				decimal input_value = 0.0;
+				for (auto& tx_operation : operations_data->get_childs())
 				{
-					String Status = TxOperation->GetVar("status").GetBlob();
-					if (Status != "success")
+					string status = tx_operation->get_var("status").get_blob();
+					if (status != "success")
 						continue;
 
-					auto Identifier = Stringify::Split(TxOperation->FetchVar("coin_change.coin_identifier.identifier").GetBlob(), ':');
-					uint32_t Index = FromString<uint32_t>(Identifier.back()).Or(0);
-					String TransactionId = Identifier.front();
-					String Symbol = TxOperation->FetchVar("amount.currency.symbol").GetBlob();
-					String Address = TxOperation->FetchVar("account.address").GetBlob();
-					String Type = TxOperation->GetVar("type").GetBlob();
-					Decimal Value = Math0::Abs(TxOperation->FetchVar("amount.value").GetDecimal()) / BaseImplementation->Netdata.Divisibility;
-					if (Type == "output")
+					auto identifier = stringify::split(tx_operation->fetch_var("coin_change.coin_identifier.identifier").get_blob(), ':');
+					uint32_t index = from_string<uint32_t>(identifier.back()).otherwise(0);
+					string transaction_id = identifier.front();
+					string symbol = tx_operation->fetch_var("amount.currency.symbol").get_blob();
+					string address = tx_operation->fetch_var("account.address").get_blob();
+					string type = tx_operation->get_var("type").get_blob();
+					decimal value = math0::abs(tx_operation->fetch_var("amount.value").get_decimal()) / base_implementation->netdata.divisibility;
+					if (type == "output")
 					{
-						auto TargetAddress = Discovery->find(Address);
-						if (TargetAddress != Discovery->end())
+						auto target_address = discovery->find(address);
+						if (target_address != discovery->end())
 						{
-							CoinUTXO Output;
-							Output.TransactionId = TransactionId;
-							Output.Address = TargetAddress->first;
-							Output.AddressIndex = TargetAddress->second;
-							Output.Value = Value;
-							Output.Index = Index;
+							coin_utxo output;
+							output.transaction_id = transaction_id;
+							output.address = target_address->first;
+							output.address_index = target_address->second;
+							output.value = value;
+							output.index = index;
 
-							Schema* TokenBundle = TxOperation->Fetch("metadata.tokenBundle");
-							if (TokenBundle != nullptr)
+							schema* token_bundle = tx_operation->fetch("metadata.tokenBundle");
+							if (token_bundle != nullptr)
 							{
-								for (auto& TokenOperation : TokenBundle->GetChilds())
+								for (auto& token_operation : token_bundle->get_childs())
 								{
-									Schema* Tokens = TokenOperation->Get("tokens");
-									if (Tokens != nullptr)
+									schema* tokens = token_operation->get("tokens");
+									if (tokens != nullptr)
 									{
-										String ContractAddress = TokenOperation->GetVar("policyId").GetBlob();
-										for (auto& Item : Tokens->GetChilds())
+										string contract_address = token_operation->get_var("policyId").get_blob();
+										for (auto& item : tokens->get_childs())
 										{
-											String Symbol = Item->FetchVar("currency.symbol").GetBlob();
-											auto TokenAsset = Algorithm::Asset::IdOf(Algorithm::Asset::BlockchainOf(Asset), Symbol, ContractAddress);
-											if (!NSS::ServerNode::Get()->EnableContractAddress(TokenAsset, ContractAddress))
+											string symbol = item->fetch_var("currency.symbol").get_blob();
+											auto token_asset = algorithm::asset::id_of(algorithm::asset::blockchain_of(asset), symbol, contract_address);
+											if (!nss::server_node::get()->enable_contract_address(token_asset, contract_address))
 												continue;
 
-											uint8_t Decimals = (uint8_t)Item->FetchVar("currency.decimals").GetInteger();
-											Decimal Divisibility = Decimals > 0 ? Decimal("1" + String(Decimals, '0')) : Decimal(1);
-											Decimal TokenValue = Math0::Abs(Item->GetVar("value").GetDecimal()) / Divisibility.Truncate(Protocol::Now().Message.Precision);
-											Output.ApplyTokenValue(ContractAddress, Symbol, TokenValue, Decimals);
+											uint8_t decimals = (uint8_t)item->fetch_var("currency.decimals").get_integer();
+											decimal divisibility = decimals > 0 ? decimal("1" + string(decimals, '0')) : decimal(1);
+											decimal token_value = math0::abs(item->get_var("value").get_decimal()) / divisibility.truncate(protocol::now().message.precision);
+											output.apply_token_value(contract_address, symbol, token_value, decimals);
 										}
 									}
 								}
 							}
 
-							AddCoins(Asset, Output);
-							Tx.To.push_back(Transferer(std::move(Output.Address), std::move(Output.AddressIndex), Decimal(Value)));
+							add_coins(asset, output);
+							tx.to.push_back(transferer(std::move(output.address), std::move(output.address_index), decimal(value)));
 						}
 						else
-							Tx.To.push_back(Transferer(Address, Optional::None, Decimal(Value)));
-						OutputValue += Value;
+							tx.to.push_back(transferer(address, optional::none, decimal(value)));
+						output_value += value;
 					}
-					else if (Type == "input")
+					else if (type == "input")
 					{
-						auto Output = GetCoins(Asset, TransactionId, Index);
-						if (!Output)
+						auto output = get_coins(asset, transaction_id, index);
+						if (!output)
 						{
-							auto TargetAddress = Discovery->find(Address);
-							Tx.From.push_back(Transferer(Address, TargetAddress != Discovery->end() ? Option<uint64_t>(TargetAddress->second) : Option<uint64_t>(Optional::None), Decimal(Value)));
+							auto target_address = discovery->find(address);
+							tx.from.push_back(transferer(address, target_address != discovery->end() ? option<uint64_t>(target_address->second) : option<uint64_t>(optional::none), decimal(value)));
 						}
 						else
 						{
-							Tx.From.push_back(Transferer(Address, Optional::None, Decimal(Value)));
-							RemoveCoins(Asset, Output->TransactionId, Output->Index);
+							tx.from.push_back(transferer(address, optional::none, decimal(value)));
+							remove_coins(asset, output->transaction_id, output->index);
 						}
-						InputValue += Value;
+						input_value += value;
 					}
 				}
 
-				if (InputValue > OutputValue)
-					Tx.Fee = InputValue - OutputValue;
-				Coreturn ExpectsRT<Vector<IncomingTransaction>>({ std::move(Tx) });
+				if (input_value > output_value)
+					tx.fee = input_value - output_value;
+				coreturn expects_rt<vector<incoming_transaction>>({ std::move(tx) });
 			}
-			ExpectsPromiseRT<BaseFee> Cardano::EstimateFee(const Algorithm::AssetId& Asset, const DynamicWallet& Wallet, const Vector<Transferer>& To, const FeeSupervisorOptions& Options)
+			expects_promise_rt<base_fee> cardano::estimate_fee(const algorithm::asset_id& asset, const dynamic_wallet& wallet, const vector<transferer>& to, const fee_supervisor_options& options)
 			{
-				auto* BaseImplementation = (Backends::Cardano*)NSS::ServerNode::Get()->GetChain(Asset);
-				if (!BaseImplementation)
-					Coreturn ExpectsRT<BaseFee>(RemoteException("chain not found"));
+				auto* base_implementation = (backends::cardano*)nss::server_node::get()->get_chain(asset);
+				if (!base_implementation)
+					coreturn expects_rt<base_fee>(remote_exception("chain not found"));
 
-				auto BlockHeight = Coawait(GetLatestBlockHeight(Asset));
-				if (!BlockHeight)
-					Coreturn ExpectsRT<BaseFee>(std::move(BlockHeight.Error()));
+				auto block_height = coawait(get_latest_block_height(asset));
+				if (!block_height)
+					coreturn expects_rt<base_fee>(std::move(block_height.error()));
 
-				if (!TxAnalytics.BlockHeight || *BlockHeight < TxAnalytics.BlockHeight || *BlockHeight - TxAnalytics.BlockHeight > GetTxFeeBlockDelta())
+				if (!tx_analytics.block_height || *block_height < tx_analytics.block_height || *block_height - tx_analytics.block_height > get_tx_fee_block_delta())
 				{
-					size_t Offset = 0, Count = 0;
-					size_t MaxCount = std::min<size_t>(*BlockHeight - TxAnalytics.BlockHeight, GetTxFeeBlocks());
-					TxAnalytics.BlockHeight = *BlockHeight;
-					while (Count < MaxCount)
+					size_t offset = 0, count = 0;
+					size_t max_count = std::min<size_t>(*block_height - tx_analytics.block_height, get_tx_fee_blocks());
+					tx_analytics.block_height = *block_height;
+					while (count < max_count)
 					{
-						auto Transactions = UPtr<Schema>(Coawait(GetBlockTransactions(Asset, *BlockHeight - (Offset++), nullptr)));
-						if (!Transactions || Transactions->Empty())
+						auto transactions = uptr<schema>(coawait(get_block_transactions(asset, *block_height - (offset++), nullptr)));
+						if (!transactions || transactions->empty())
 							continue;
 
-						++Count;
-						for (auto& TxData : Transactions->GetChilds())
+						++count;
+						for (auto& tx_data : transactions->get_childs())
 						{
-							TxAnalytics.TotalSize += (size_t)TxData->FetchVar("metadata.size").GetInteger();
-							TxAnalytics.Transactions++;
+							tx_analytics.total_size += (size_t)tx_data->fetch_var("metadata.size").get_integer();
+							tx_analytics.transactions++;
 						}
 					}
 
-					if (!TxAnalytics.Transactions)
-						TxAnalytics.Transactions = 1;
+					if (!tx_analytics.transactions)
+						tx_analytics.transactions = 1;
 
-					size_t Bottom = TxAnalytics.Transactions * GetTxFeeBaseSize();
-					if (TxAnalytics.TotalSize < Bottom)
-						TxAnalytics.TotalSize = Bottom;
+					size_t bottom = tx_analytics.transactions * get_tx_fee_base_size();
+					if (tx_analytics.total_size < bottom)
+						tx_analytics.total_size = bottom;
 				}
 
-				Decimal FeeRateA = Decimal(BaseImplementation->GetMinProtocolFeeA()) / BaseImplementation->Netdata.Divisibility;
-				Decimal FeeRateB = Decimal(BaseImplementation->GetMinProtocolFeeB()) / BaseImplementation->Netdata.Divisibility;
-				size_t TxSize = (size_t)((double)TxAnalytics.TotalSize / (double)TxAnalytics.Transactions);
+				decimal fee_rate_a = decimal(base_implementation->get_min_protocol_fee_a()) / base_implementation->netdata.divisibility;
+				decimal fee_rate_b = decimal(base_implementation->get_min_protocol_fee_b()) / base_implementation->netdata.divisibility;
+				size_t tx_size = (size_t)((double)tx_analytics.total_size / (double)tx_analytics.transactions);
 
-				const uint64_t ExpectedMaxTxSize = 1000;
-				TxSize = std::min<size_t>(ExpectedMaxTxSize, (size_t)(std::ceil((double)TxSize / 100.0) * 100.0));
-				Coreturn ExpectsRT<BaseFee>(BaseFee(FeeRateA * Decimal(TxSize) + FeeRateB, 1.0));
+				const uint64_t expected_max_tx_size = 1000;
+				tx_size = std::min<size_t>(expected_max_tx_size, (size_t)(std::ceil((double)tx_size / 100.0) * 100.0));
+				coreturn expects_rt<base_fee>(base_fee(fee_rate_a * decimal(tx_size) + fee_rate_b, 1.0));
 			}
-			ExpectsPromiseRT<CoinUTXO> Cardano::GetTransactionOutput(const Algorithm::AssetId& Asset, const std::string_view& TransactionId, uint32_t Index)
+			expects_promise_rt<coin_utxo> cardano::get_transaction_output(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint32_t index)
 			{
-				auto Result = GetCoins(Asset, TransactionId, Index);
-				if (!Result)
-					return ExpectsPromiseRT<CoinUTXO>(RemoteException(std::move(Result.Error().message())));
+				auto result = get_coins(asset, transaction_id, index);
+				if (!result)
+					return expects_promise_rt<coin_utxo>(remote_exception(std::move(result.error().message())));
 
-				return ExpectsPromiseRT<CoinUTXO>(std::move(*Result));
+				return expects_promise_rt<coin_utxo>(std::move(*result));
 			}
-			ExpectsPromiseRT<uint64_t> Cardano::GetLatestBlockSlot(const Algorithm::AssetId& Asset)
+			expects_promise_rt<uint64_t> cardano::get_latest_block_slot(const algorithm::asset_id& asset)
 			{
-				auto BlockHeight = Coawait(Cardano::GetLatestBlockHeight(Asset));
-				if (!BlockHeight)
-					Coreturn ExpectsRT<uint64_t>(BlockHeight.Error());
+				auto block_height = coawait(cardano::get_latest_block_height(asset));
+				if (!block_height)
+					coreturn expects_rt<uint64_t>(block_height.error());
 
-				auto BlockData = Coawait(Cardano::GetBlockTransactions(Asset, *BlockHeight, nullptr));
-				if (!BlockData)
-					Coreturn ExpectsRT<uint64_t>(BlockData.Error());
+				auto block_data = coawait(cardano::get_block_transactions(asset, *block_height, nullptr));
+				if (!block_data)
+					coreturn expects_rt<uint64_t>(block_data.error());
 
-                uint64_t BlockSlot = BlockData->FetchVar("metadata.slotNo").GetInteger();
-				Memory::Release(*BlockData);
-				Coreturn ExpectsRT<uint64_t>(BlockSlot);
+				uint64_t block_slot = block_data->fetch_var("metadata.slotNo").get_integer();
+				memory::release(*block_data);
+				coreturn expects_rt<uint64_t>(block_slot);
 			}
-			ExpectsPromiseRT<OutgoingTransaction> Cardano::NewTransaction(const Algorithm::AssetId& Asset, const DynamicWallet& Wallet, const Vector<Transferer>& To, const BaseFee& Fee)
+			expects_promise_rt<outgoing_transaction> cardano::new_transaction(const algorithm::asset_id& asset, const dynamic_wallet& wallet, const vector<transferer>& to, const base_fee& fee)
 			{
-				ExpectsLR<DerivedSigningWallet> ChangeWallet = LayerException();
-				if (Wallet.Parent)
-					ChangeWallet = NSS::ServerNode::Get()->NewSigningWallet(Asset, *Wallet.Parent, Protocol::Now().Account.RootAddressIndex);
-				else if (Wallet.SigningChild)
-					ChangeWallet = *Wallet.SigningChild;
-				if (!ChangeWallet)
-					Coreturn ExpectsRT<OutgoingTransaction>(RemoteException("invalid output change address"));
+				expects_lr<derived_signing_wallet> change_wallet = layer_exception();
+				if (wallet.parent)
+					change_wallet = nss::server_node::get()->new_signing_wallet(asset, *wallet.parent, protocol::now().account.root_address_index);
+				else if (wallet.signing_child)
+					change_wallet = *wallet.signing_child;
+				if (!change_wallet)
+					coreturn expects_rt<outgoing_transaction>(remote_exception("invalid output change address"));
 
-				auto BlockSlot = Coawait(GetLatestBlockSlot(Asset));
-				if (!BlockSlot)
-					Coreturn ExpectsRT<OutgoingTransaction>(RemoteException("latest block slot not found"));
+				auto block_slot = coawait(get_latest_block_slot(asset));
+				if (!block_slot)
+					coreturn expects_rt<outgoing_transaction>(remote_exception("latest block slot not found"));
 
-				Option<BaseFee> ActualFee = Optional::None;
-				Option<Vector<CoinUTXO>> Inputs = Optional::None;
-				Decimal FeeValue = ActualFee ? ActualFee->GetFee() : Fee.GetFee();
-				Decimal InputNativeValue = 0.0;
-				Decimal InputTokenValue = 0.0;
-				Decimal MinOutputValue = GetMinValuePerOutput();
-			RetryWithActualFee:
-				Decimal TotalValue = FeeValue + MinOutputValue;
-				Decimal SpendingValue = 0.0;
-				for (auto& Item : To)
+				option<base_fee> actual_fee = optional::none;
+				option<vector<coin_utxo>> inputs = optional::none;
+				decimal fee_value = actual_fee ? actual_fee->get_fee() : fee.get_fee();
+				decimal input_native_value = 0.0;
+				decimal input_token_value = 0.0;
+				decimal min_output_value = get_min_value_per_output();
+			retry_with_actual_fee:
+				decimal total_value = fee_value + min_output_value;
+				decimal spending_value = 0.0;
+				for (auto& item : to)
 				{
-					SpendingValue += Item.Value;
-					if (Item.Value < MinOutputValue)
-						Coreturn ExpectsRT<OutgoingTransaction>(RemoteException(Stringify::Text("insufficient funds: %s < %s (value is less than minimum required by protocol)", Item.Value.ToString().c_str(), MinOutputValue.ToString().c_str())));
+					spending_value += item.value;
+					if (item.value < min_output_value)
+						coreturn expects_rt<outgoing_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s (value is less than minimum required by protocol)", item.value.to_string().c_str(), min_output_value.to_string().c_str())));
 				}
 
-				auto ContractAddress = NSS::ServerNode::Get()->GetContractAddress(Asset);
-				if (!ContractAddress)
-					TotalValue += SpendingValue;
+				auto contract_address = nss::server_node::get()->get_contract_address(asset);
+				if (!contract_address)
+					total_value += spending_value;
 
-				if (!Inputs || (ActualFee ? FeeValue > ActualFee->GetFee() : true))
+				if (!inputs || (actual_fee ? fee_value > actual_fee->get_fee() : true))
 				{
-					auto NewInputs = CalculateCoins(Asset, Wallet, TotalValue, ContractAddress ? Option<TokenUTXO>(TokenUTXO(*ContractAddress, SpendingValue)) : Option<TokenUTXO>(Optional::None));
-					InputNativeValue = NewInputs ? GetCoinsValue(*NewInputs, Optional::None) : 0.0;
-					InputTokenValue = NewInputs && ContractAddress ? GetCoinsValue(*NewInputs, *ContractAddress) : 0.0;
-					if (!NewInputs || NewInputs->empty())
-						Coreturn ExpectsRT<OutgoingTransaction>(RemoteException(Stringify::Text("insufficient funds: %s < %s", (ContractAddress ? SpendingValue : TotalValue).ToString().c_str(), (ContractAddress ? InputTokenValue : InputNativeValue).ToString().c_str())));
-					Inputs = std::move(*NewInputs);
+					auto new_inputs = calculate_coins(asset, wallet, total_value, contract_address ? option<token_utxo>(token_utxo(*contract_address, spending_value)) : option<token_utxo>(optional::none));
+					input_native_value = new_inputs ? get_coins_value(*new_inputs, optional::none) : 0.0;
+					input_token_value = new_inputs && contract_address ? get_coins_value(*new_inputs, *contract_address) : 0.0;
+					if (!new_inputs || new_inputs->empty())
+						coreturn expects_rt<outgoing_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (contract_address ? spending_value : total_value).to_string().c_str(), (contract_address ? input_token_value : input_native_value).to_string().c_str())));
+					inputs = std::move(*new_inputs);
 				}
 
-				UnorderedMap<String, TokenUTXO> Tokens;
-				for (auto& Item : *Inputs)
+				unordered_map<string, token_utxo> tokens;
+				for (auto& item : *inputs)
 				{
-					for (auto& Token : Item.Tokens)
+					for (auto& token : item.tokens)
 					{
-						auto& Next = Tokens[Token.ContractAddress];
-						if (Next.IsCoinValid())
-							Next.Value += Token.Value;
+						auto& next = tokens[token.contract_address];
+						if (next.is_coin_valid())
+							next.value += token.value;
 						else
-							Next = Token;
+							next = token;
 					}
 				}
 
-				Vector<CoinUTXO> Outputs;
-				Outputs.reserve(To.size() + 1);
-				for (auto& Item : To)
+				vector<coin_utxo> outputs;
+				outputs.reserve(to.size() + 1);
+				for (auto& item : to)
 				{
-					auto Output = CoinUTXO(String(), Item.Address, Option<uint64_t>(Item.AddressIndex), Decimal(Item.Value), (uint32_t)Outputs.size());
-					if (ContractAddress)
+					auto output = coin_utxo(string(), item.address, option<uint64_t>(item.address_index), decimal(item.value), (uint32_t)outputs.size());
+					if (contract_address)
 					{
-						auto& Token = Tokens[*ContractAddress];
-						if (!Token.IsCoinValid() || Token.Value < SpendingValue)
-							Coreturn ExpectsRT<OutgoingTransaction>(RemoteException(Stringify::Text("insufficient funds: %s < %s", SpendingValue.ToString().c_str(), Token.Value.ToString().c_str())));
-			
-						Output.ApplyTokenValue(*ContractAddress, Token.Symbol, SpendingValue, Token.Decimals);
-						Output.Value = Decimal::Zero();
-						Token.Value -= SpendingValue;
+						auto& token = tokens[*contract_address];
+						if (!token.is_coin_valid() || token.value < spending_value)
+							coreturn expects_rt<outgoing_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", spending_value.to_string().c_str(), token.value.to_string().c_str())));
+
+						output.apply_token_value(*contract_address, token.symbol, spending_value, token.decimals);
+						output.value = decimal::zero();
+						token.value -= spending_value;
 					}
-					Outputs.push_back(std::move(Output));
+					outputs.push_back(std::move(output));
 				}
 
-				auto ChangeOutput = CoinUTXO(String(), ChangeWallet->Addresses.begin()->second, Option<uint64_t>(ChangeWallet->AddressIndex), Decimal(InputNativeValue - (TotalValue - MinOutputValue)), (uint32_t)Outputs.size());
-				for (auto& Token : Tokens)
+				auto change_output = coin_utxo(string(), change_wallet->addresses.begin()->second, option<uint64_t>(change_wallet->address_index), decimal(input_native_value - (total_value - min_output_value)), (uint32_t)outputs.size());
+				for (auto& token : tokens)
 				{
-					if (Token.second.IsCoinValid() && Token.second.Value.IsPositive())
-						ChangeOutput.ApplyTokenValue(Token.second.ContractAddress, Token.second.Symbol, Token.second.Value, Token.second.Decimals);
+					if (token.second.is_coin_valid() && token.second.value.is_positive())
+						change_output.apply_token_value(token.second.contract_address, token.second.symbol, token.second.value, token.second.decimals);
 				}
-				if (ChangeOutput.Value.IsPositive() || !ChangeOutput.Tokens.empty())
-					Outputs.push_back(std::move(ChangeOutput));
+				if (change_output.value.is_positive() || !change_output.tokens.empty())
+					outputs.push_back(std::move(change_output));
 
 				try
 				{
-					::Cardano::Transaction Builder = ::Cardano::Transaction();
-					for (auto& Input : *Inputs)
-						Builder.Body.TransactionInput.addInput(Copy<std::string>(Input.TransactionId), Input.Index);
-					for (auto& Output : Outputs)
+					::Cardano::Transaction builder = ::Cardano::Transaction();
+					for (auto& input : *inputs)
+						builder.Body.TransactionInput.addInput(copy<std::string>(input.transaction_id), input.index);
+					for (auto& output : outputs)
 					{
-						Builder.Body.TransactionOutput.addOutput(Copy<std::string>(Output.Address), (uint64_t)ToLovelace(Output.Value));
-						for (auto& Token : Output.Tokens)
-							Builder.Body.TransactionOutput.addAsset(Copy<std::string>(Token.ContractAddress), Copy<std::string>(Token.Symbol), (uint64_t)uint256_t((Token.Value * Token.GetDivisibility()).Truncate(0).ToString()));
+						builder.Body.TransactionOutput.addOutput(copy<std::string>(output.address), (uint64_t)to_lovelace(output.value));
+						for (auto& token : output.tokens)
+							builder.Body.TransactionOutput.addAsset(copy<std::string>(token.contract_address), copy<std::string>(token.symbol), (uint64_t)uint256_t((token.value * token.get_divisibility()).truncate(0).to_string()));
 					}
-					Builder.Body.addFee((uint64_t)ToLovelace(FeeValue));
-					Builder.Body.addInvalidAfter(*BlockSlot + GetBlockSlotOffset());
+					builder.Body.addFee((uint64_t)to_lovelace(fee_value));
+					builder.Body.addInvalidAfter(*block_slot + get_block_slot_offset());
 
-					Vector<Transferer> From;
-					for (auto& Input : *Inputs)
+					vector<transferer> from;
+					for (auto& input : *inputs)
 					{
-						if (!Input.AddressIndex)
-							Coreturn ExpectsRT<OutgoingTransaction>(RemoteException("address " + Input.Address + " cannot be used to sign the transaction (wallet not found)"));
+						if (!input.address_index)
+							coreturn expects_rt<outgoing_transaction>(remote_exception("address " + input.address + " cannot be used to sign the transaction (wallet not found)"));
 
-						ExpectsLR<DerivedSigningWallet> SigningWallet = LayerException();
-						if (Wallet.Parent)
-							SigningWallet = NSS::ServerNode::Get()->NewSigningWallet(Asset, *Wallet.Parent, *Input.AddressIndex);
-						else if (Wallet.SigningChild)
-							SigningWallet = *Wallet.SigningChild;
-						if (!SigningWallet)
-							throw std::invalid_argument("address " + Copy<std::string>(Input.Address) + " cannot be used to sign the transaction (wallet not valid)");
+						expects_lr<derived_signing_wallet> signing_wallet = layer_exception();
+						if (wallet.parent)
+							signing_wallet = nss::server_node::get()->new_signing_wallet(asset, *wallet.parent, *input.address_index);
+						else if (wallet.signing_child)
+							signing_wallet = *wallet.signing_child;
+						if (!signing_wallet)
+							throw std::invalid_argument("address " + copy<std::string>(input.address) + " cannot be used to sign the transaction (wallet not valid)");
 
-						auto Private = SigningWallet->SigningKey.Expose<KEY_LIMIT>();
-						uint8_t RawPrivateKey[XSK_LENGTH];
-						if (!DecodePrivateKey(Private.View.data(), RawPrivateKey, nullptr))
-							throw std::invalid_argument("could not get a valid private key for address " + Copy<std::string>(Input.Address));
+						auto secret = signing_wallet->signing_key.expose<KEY_LIMIT>();
+						uint8_t raw_private_key[XSK_LENGTH];
+						if (!decode_private_key(secret.view.data(), raw_private_key, nullptr))
+							throw std::invalid_argument("could not get a valid private key for address " + copy<std::string>(input.address));
 
-						Builder.addExtendedSigningKey(RawPrivateKey);
-						From.emplace_back(Input.Address, Option<uint64_t>(Input.AddressIndex), Decimal(Input.Value));
-					}
-
-					uint8_t RawTransactionId[BLAKE256_LENGTH];
-					auto& RawBodyData = Builder.Body.Build();
-					crypto_generichash_blake2b(RawTransactionId, sizeof(RawTransactionId), RawBodyData.data(), RawBodyData.size(), nullptr, 0);
-
-					auto& RawTxData = Builder.Build();
-					if (!ActualFee)
-					{
-						Decimal LovelaceFee = Builder.getFeeTransacion_PostBuild(0);
-						ActualFee = BaseFee(LovelaceFee / Netdata.Divisibility, 1.0);
-						FeeValue = ActualFee->GetFee();
-						goto RetryWithActualFee;
+						builder.addExtendedSigningKey(raw_private_key);
+						from.emplace_back(input.address, option<uint64_t>(input.address_index), decimal(input.value));
 					}
 
-					String TransactionData = Codec::HexEncode(std::string_view((const char*)RawTxData.data(), RawTxData.size()));
-					String TransactionId = Codec::HexEncode(std::string_view((const char*)RawTransactionId, sizeof(RawTransactionId)));
-					for (auto& Output : Outputs)
-						Output.TransactionId = TransactionId;
+					uint8_t raw_transaction_id[BLAKE256_LENGTH];
+					auto& raw_body_data = builder.Body.Build();
+					crypto_generichash_blake2b(raw_transaction_id, sizeof(raw_transaction_id), raw_body_data.data(), raw_body_data.size(), nullptr, 0);
 
-					if (TransactionId.empty() || TransactionData.empty() || Inputs->empty() || Outputs.empty())
-						Coreturn ExpectsRT<OutgoingTransaction>(RemoteException("tx serialization error"));
+					auto& raw_tx_data = builder.Build();
+					if (!actual_fee)
+					{
+						decimal lovelace_fee = builder.getFeeTransacion_PostBuild(0);
+						actual_fee = base_fee(lovelace_fee / netdata.divisibility, 1.0);
+						fee_value = actual_fee->get_fee();
+						goto retry_with_actual_fee;
+					}
 
-					IncomingTransaction Tx;
-					Tx.SetTransaction(Asset, 0, TransactionId, std::move(FeeValue));
-					Tx.SetOperations(std::move(From), Vector<Transferer>(To));
-					Coreturn ExpectsRT<OutgoingTransaction>(OutgoingTransaction(std::move(Tx), std::move(TransactionData), std::move(*Inputs), std::move(Outputs)));
+					string transaction_data = codec::hex_encode(std::string_view((const char*)raw_tx_data.data(), raw_tx_data.size()));
+					string transaction_id = codec::hex_encode(std::string_view((const char*)raw_transaction_id, sizeof(raw_transaction_id)));
+					for (auto& output : outputs)
+						output.transaction_id = transaction_id;
+
+					if (transaction_id.empty() || transaction_data.empty() || inputs->empty() || outputs.empty())
+						coreturn expects_rt<outgoing_transaction>(remote_exception("tx serialization error"));
+
+					incoming_transaction tx;
+					tx.set_transaction(asset, 0, transaction_id, std::move(fee_value));
+					tx.set_operations(std::move(from), vector<transferer>(to));
+					coreturn expects_rt<outgoing_transaction>(outgoing_transaction(std::move(tx), std::move(transaction_data), std::move(*inputs), std::move(outputs)));
 				}
-				catch (const std::invalid_argument& Error)
+				catch (const std::invalid_argument& error)
 				{
-					Coreturn ExpectsRT<OutgoingTransaction>(RemoteException("tx serialization error: " + String(Error.what())));
+					coreturn expects_rt<outgoing_transaction>(remote_exception("tx serialization error: " + string(error.what())));
 				}
 				catch (...)
 				{
-					Coreturn ExpectsRT<OutgoingTransaction>(RemoteException("tx serialization error"));
+					coreturn expects_rt<outgoing_transaction>(remote_exception("tx serialization error"));
 				}
 			}
-			ExpectsLR<MasterWallet> Cardano::NewMasterWallet(const std::string_view& Seed)
+			expects_lr<master_wallet> cardano::new_master_wallet(const std::string_view& seed)
 			{
 				try
 				{
-					uint8_t PrivateKey[MASTERSECRETKEY_LENGTH];
-					if (!::Cardano::getRawMasterKey((const uint8_t*)Seed.data(), Seed.size(), nullptr, 0, PrivateKey))
-						return ExpectsLR<MasterWallet>(LayerException("seed value invalid"));
+					uint8_t private_key[MASTERSECRETKEY_LENGTH];
+					if (!::Cardano::getRawMasterKey((const uint8_t*)seed.data(), seed.size(), nullptr, 0, private_key))
+						return expects_lr<master_wallet>(layer_exception("seed value invalid"));
 
-					uint8_t PublicKey[XVK_LENGTH];
-					::Cardano::rawprivatekey_to_rawpublickey(PrivateKey, PublicKey);
+					uint8_t public_key[XVK_LENGTH];
+					::Cardano::rawprivatekey_to_rawpublickey(private_key, public_key);
 
-					std::string EncodedPrivateKey, EncodedPublicKey;
-					::Cardano::Hash::bech32_encode("xprv", PrivateKey, sizeof(PrivateKey), EncodedPrivateKey);
-					::Cardano::Hash::bech32_encode("xpub", PublicKey, sizeof(PublicKey), EncodedPublicKey);
+					std::string encoded_private_key, encoded_public_key;
+					::Cardano::Hash::bech32_encode("xprv", private_key, sizeof(private_key), encoded_private_key);
+					::Cardano::Hash::bech32_encode("xpub", public_key, sizeof(public_key), encoded_public_key);
 
-					return ExpectsLR<MasterWallet>(MasterWallet(::PrivateKey(Codec::HexEncode(Seed)), ::PrivateKey(EncodedPrivateKey), String(EncodedPublicKey.begin(), EncodedPublicKey.end())));
+					return expects_lr<master_wallet>(master_wallet(secret_box::secure(codec::hex_encode(seed)), secret_box::secure(encoded_private_key), string(encoded_public_key.begin(), encoded_public_key.end())));
 				}
-				catch (const std::invalid_argument& Error)
+				catch (const std::invalid_argument& error)
 				{
-					return ExpectsLR<MasterWallet>(LayerException("seed value invalid: " + String(Error.what())));
+					return expects_lr<master_wallet>(layer_exception("seed value invalid: " + string(error.what())));
 				}
 				catch (...)
 				{
-					return ExpectsLR<MasterWallet>(LayerException("seed value invalid"));
+					return expects_lr<master_wallet>(layer_exception("seed value invalid"));
 				}
 			}
-			ExpectsLR<DerivedSigningWallet> Cardano::NewSigningWallet(const Algorithm::AssetId& Asset, const MasterWallet& Wallet, uint64_t AddressIndex)
+			expects_lr<derived_signing_wallet> cardano::new_signing_wallet(const algorithm::asset_id& asset, const master_wallet& wallet, uint64_t address_index)
 			{
-				const uint32_t AccountIndex = 0;
-				const auto Network = (Protocol::Now().Is(NetworkType::Mainnet) ? ::Cardano::Network::Mainnet : ::Cardano::Network::Testnet);
+				const uint32_t account_index = 0;
+				const auto network = (protocol::now().is(network_type::mainnet) ? ::Cardano::Network::Mainnet : ::Cardano::Network::Testnet);
 
 				try
 				{
-					auto Private = Wallet.SigningKey.Expose<KEY_LIMIT>();
-					uint8_t MasterKey[MASTERSECRETKEY_LENGTH]; uint16_t MasterKeySize = (uint16_t)sizeof(MasterKey);
-					if (!::Cardano::Hash::bech32_decode_extended(Private.View.data(), MasterKey, &MasterKeySize, sizeof(MasterKey)))
+					auto secret = wallet.signing_key.expose<KEY_LIMIT>();
+					uint8_t master_key[MASTERSECRETKEY_LENGTH]; uint16_t master_key_size = (uint16_t)sizeof(master_key);
+					if (!::Cardano::Hash::bech32_decode_extended(secret.view.data(), master_key, &master_key_size, sizeof(master_key)))
 						throw std::invalid_argument("could not get a valid master key");
 
-					uint8_t RawDerivedPrivateKey[XSK_LENGTH];
-					if (!::Cardano::getRawKey(::Cardano::InputKey::MasterKey, MasterKey, ::Cardano::Wallet::HD, ::Cardano::OutputKey::Private, AccountIndex, ::Cardano::Role::Extern, (uint32_t)AddressIndex, RawDerivedPrivateKey))
+					uint8_t raw_derived_private_key[XSK_LENGTH];
+					if (!::Cardano::getRawKey(::Cardano::InputKey::MasterKey, master_key, ::Cardano::Wallet::HD, ::Cardano::OutputKey::Private, account_index, ::Cardano::Role::Extern, (uint32_t)address_index, raw_derived_private_key))
 						throw std::invalid_argument("could not get a valid private key");
 
-					auto Derived = NewSigningWallet(Asset, PrivateKey(std::string_view((char*)RawDerivedPrivateKey, sizeof(RawDerivedPrivateKey))));
-					if (Derived)
-						Derived->AddressIndex = AddressIndex;
-					return Derived;
+					auto derived = new_signing_wallet(asset, secret_box::view(std::string_view((char*)raw_derived_private_key, sizeof(raw_derived_private_key))));
+					if (derived)
+						derived->address_index = address_index;
+					return derived;
 				}
-				catch (const std::invalid_argument& Error)
+				catch (const std::invalid_argument& error)
 				{
-					return ExpectsLR<DerivedSigningWallet>(LayerException("private key invalid: " + String(Error.what())));
+					return expects_lr<derived_signing_wallet>(layer_exception("private key invalid: " + string(error.what())));
 				}
 				catch (...)
 				{
-					return ExpectsLR<DerivedSigningWallet>(LayerException("private key invalid"));
+					return expects_lr<derived_signing_wallet>(layer_exception("private key invalid"));
 				}
 			}
-			ExpectsLR<DerivedSigningWallet> Cardano::NewSigningWallet(const Algorithm::AssetId& Asset, const PrivateKey& SigningKey)
+			expects_lr<derived_signing_wallet> cardano::new_signing_wallet(const algorithm::asset_id& asset, const secret_box& signing_key)
 			{
-				const auto Network = (Protocol::Now().Is(NetworkType::Mainnet) ? ::Cardano::Network::Mainnet : ::Cardano::Network::Testnet);
-				uint8_t PrivateKey[XSK_LENGTH]; size_t PrivateKeySize = 0;
-				if (SigningKey.Size() != 32 && SigningKey.Size() != 64 && SigningKey.Size() != XSK_LENGTH)
+				const auto network = (protocol::now().is(network_type::mainnet) ? ::Cardano::Network::Mainnet : ::Cardano::Network::Testnet);
+				uint8_t private_key[XSK_LENGTH]; size_t private_key_size = 0;
+				if (signing_key.size() != 32 && signing_key.size() != 64 && signing_key.size() != XSK_LENGTH)
 				{
-					if (!DecodePrivateKey(SigningKey.Expose<KEY_LIMIT>().View, PrivateKey, &PrivateKeySize))
-						return LayerException("invalid private key");
+					if (!decode_private_key(signing_key.expose<KEY_LIMIT>().view, private_key, &private_key_size))
+						return layer_exception("invalid private key");
 				}
 				else
 				{
-					PrivateKeySize = SigningKey.Size();
-					SigningKey.ExposeToStack((char*)PrivateKey, PrivateKeySize);
+					private_key_size = signing_key.size();
+					signing_key.stack((char*)private_key, private_key_size);
 				}
 
 				try
 				{
-					if (PrivateKeySize == XSK_LENGTH)
+					if (private_key_size == XSK_LENGTH)
 					{
-						uint8_t RawDerivedPublicKey[XVK_LENGTH];
-						if (!::Cardano::rawprivatekey_to_rawpublickey(PrivateKey, RawDerivedPublicKey))
+						uint8_t raw_derived_public_key[XVK_LENGTH];
+						if (!::Cardano::rawprivatekey_to_rawpublickey(private_key, raw_derived_public_key))
 							throw std::invalid_argument("could not get a valid public key");
 
-						auto Derived = NewVerifyingWallet(Asset, std::string_view((char*)RawDerivedPublicKey, sizeof(RawDerivedPublicKey)));
-						if (!Derived)
-							return Derived.Error();
+						auto derived = new_verifying_wallet(asset, std::string_view((char*)raw_derived_public_key, sizeof(raw_derived_public_key)));
+						if (!derived)
+							return derived.error();
 
-						std::string DerivedPrivateKey;
-						::Cardano::Hash::bech32_encode("addr_xsk", PrivateKey, (uint16_t)PrivateKeySize, DerivedPrivateKey);
-						return ExpectsLR<DerivedSigningWallet>(DerivedSigningWallet(std::move(*Derived), ::PrivateKey(DerivedPrivateKey)));
+						std::string derived_private_key;
+						::Cardano::Hash::bech32_encode("addr_xsk", private_key, (uint16_t)private_key_size, derived_private_key);
+						return expects_lr<derived_signing_wallet>(derived_signing_wallet(std::move(*derived), secret_box::secure(derived_private_key)));
 					}
 					else
 					{
-						uint8_t RawDerivedPublicKey[32];
-						ed25519_publickey_ext(PrivateKey, RawDerivedPublicKey);
+						uint8_t raw_derived_public_key[32];
+						ed25519_publickey_ext(private_key, raw_derived_public_key);
 
-						auto Derived = NewVerifyingWallet(Asset, std::string_view((char*)RawDerivedPublicKey, sizeof(RawDerivedPublicKey)));
-						if (!Derived)
-							return Derived.Error();
+						auto derived = new_verifying_wallet(asset, std::string_view((char*)raw_derived_public_key, sizeof(raw_derived_public_key)));
+						if (!derived)
+							return derived.error();
 
-						std::string DerivedPrivateKey;
-						::Cardano::Hash::bech32_encode("ed25519e_sk", PrivateKey, (uint16_t)PrivateKeySize, DerivedPrivateKey);
-						return ExpectsLR<DerivedSigningWallet>(DerivedSigningWallet(std::move(*Derived), ::PrivateKey(DerivedPrivateKey)));
+						std::string derived_private_key;
+						::Cardano::Hash::bech32_encode("ed25519e_sk", private_key, (uint16_t)private_key_size, derived_private_key);
+						return expects_lr<derived_signing_wallet>(derived_signing_wallet(std::move(*derived), secret_box::secure(derived_private_key)));
 					}
 				}
-				catch (const std::invalid_argument& Error)
+				catch (const std::invalid_argument& error)
 				{
-					return ExpectsLR<DerivedSigningWallet>(LayerException("private key invalid: " + String(Error.what())));
+					return expects_lr<derived_signing_wallet>(layer_exception("private key invalid: " + string(error.what())));
 				}
 				catch (...)
 				{
-					return ExpectsLR<DerivedSigningWallet>(LayerException("private key invalid"));
+					return expects_lr<derived_signing_wallet>(layer_exception("private key invalid"));
 				}
 			}
-			ExpectsLR<DerivedVerifyingWallet> Cardano::NewVerifyingWallet(const Algorithm::AssetId& Asset, const std::string_view& VerifyingKey)
+			expects_lr<derived_verifying_wallet> cardano::new_verifying_wallet(const algorithm::asset_id& asset, const std::string_view& verifying_key)
 			{
-				const auto Network = (Protocol::Now().Is(NetworkType::Mainnet) ? ::Cardano::Network::Mainnet : ::Cardano::Network::Testnet);
-				String RawPublicKey = String(VerifyingKey);
-				if (RawPublicKey.size() != 32 && RawPublicKey.size() != XVK_LENGTH)
+				const auto network = (protocol::now().is(network_type::mainnet) ? ::Cardano::Network::Mainnet : ::Cardano::Network::Testnet);
+				string raw_public_key = string(verifying_key);
+				if (raw_public_key.size() != 32 && raw_public_key.size() != XVK_LENGTH)
 				{
-					uint8_t Xvk[XSK_LENGTH]; size_t XvkSize = 0;
-					if (!DecodePublicKey(RawPublicKey, Xvk, &XvkSize))
-						return LayerException("invalid public key");
+					uint8_t xvk[XSK_LENGTH]; size_t xvk_size = 0;
+					if (!decode_public_key(raw_public_key, xvk, &xvk_size))
+						return layer_exception("invalid public key");
 
-					RawPublicKey = String((char*)Xvk, XvkSize);
+					raw_public_key = string((char*)xvk, xvk_size);
 				}
 
 				try
 				{
-					if (RawPublicKey.size() == XVK_LENGTH)
+					if (raw_public_key.size() == XVK_LENGTH)
 					{
-						std::string DerivedPublicKey;
-						::Cardano::Hash::bech32_encode("addr_xvk", (uint8_t*)RawPublicKey.data(), (uint16_t)RawPublicKey.size(), DerivedPublicKey);
+						std::string derived_public_key;
+						::Cardano::Hash::bech32_encode("addr_xvk", (uint8_t*)raw_public_key.data(), (uint16_t)raw_public_key.size(), derived_public_key);
 
-						std::string Address;
-						::Cardano::getBech32Address(::Cardano::InputKey::AccountKey_xvk, (uint8_t*)RawPublicKey.data(), Network, ::Cardano::Wallet::HD, ::Cardano::Address::Enterprise_Extern, 0, 0, Address);
-						return ExpectsLR<DerivedVerifyingWallet>(DerivedVerifyingWallet({ { (uint8_t)1, Copy<String>(Address) } }, Optional::None, String(DerivedPublicKey.begin(), DerivedPublicKey.end())));
+						std::string address;
+						::Cardano::getBech32Address(::Cardano::InputKey::AccountKey_xvk, (uint8_t*)raw_public_key.data(), network, ::Cardano::Wallet::HD, ::Cardano::Address::Enterprise_Extern, 0, 0, address);
+						return expects_lr<derived_verifying_wallet>(derived_verifying_wallet({ { (uint8_t)1, copy<string>(address) } }, optional::none, string(derived_public_key.begin(), derived_public_key.end())));
 					}
 					else
 					{
-						std::string DerivedPublicKey;
-						::Cardano::Hash::bech32_encode("ed25519_pk", (uint8_t*)RawPublicKey.data(), (uint16_t)RawPublicKey.size(), DerivedPublicKey);
+						std::string derived_public_key;
+						::Cardano::Hash::bech32_encode("ed25519_pk", (uint8_t*)raw_public_key.data(), (uint16_t)raw_public_key.size(), derived_public_key);
 
-						uint8_t ExtendedPublicKey[XVK_LENGTH] = { 0 };
-						memcpy(ExtendedPublicKey, (uint8_t*)RawPublicKey.data(), RawPublicKey.size());
+						uint8_t extended_public_key[XVK_LENGTH] = { 0 };
+						memcpy(extended_public_key, (uint8_t*)raw_public_key.data(), raw_public_key.size());
 
-						std::string Address;
-						::Cardano::getBech32Address(::Cardano::InputKey::AccountKey_xvk, ExtendedPublicKey, Network, ::Cardano::Wallet::HD, ::Cardano::Address::Enterprise_Extern, 0, 0, Address);
-						return ExpectsLR<DerivedVerifyingWallet>(DerivedVerifyingWallet({ { (uint8_t)1, Copy<String>(Address) } }, Optional::None, String(DerivedPublicKey.begin(), DerivedPublicKey.end())));
+						std::string address;
+						::Cardano::getBech32Address(::Cardano::InputKey::AccountKey_xvk, extended_public_key, network, ::Cardano::Wallet::HD, ::Cardano::Address::Enterprise_Extern, 0, 0, address);
+						return expects_lr<derived_verifying_wallet>(derived_verifying_wallet({ { (uint8_t)1, copy<string>(address) } }, optional::none, string(derived_public_key.begin(), derived_public_key.end())));
 					}
 				}
-				catch (const std::invalid_argument& Error)
+				catch (const std::invalid_argument& error)
 				{
-					return ExpectsLR<DerivedVerifyingWallet>(LayerException("public key invalid: " + String(Error.what())));
+					return expects_lr<derived_verifying_wallet>(layer_exception("public key invalid: " + string(error.what())));
 				}
 				catch (...)
 				{
-					return ExpectsLR<DerivedVerifyingWallet>(LayerException("public key invalid"));
+					return expects_lr<derived_verifying_wallet>(layer_exception("public key invalid"));
 				}
 			}
-			ExpectsLR<String> Cardano::NewPublicKeyHash(const std::string_view& Address)
+			expects_lr<string> cardano::new_public_key_hash(const std::string_view& address)
 			{
-				uint8_t Data[256]; uint16_t DataSize = sizeof(Data);
-				if (!::Cardano::Hash::bech32_decode("addr", Data, &DataSize))
+				uint8_t data[256]; uint16_t data_size = sizeof(data);
+				if (!::Cardano::Hash::bech32_decode("addr", data, &data_size))
 				{
-					if (!::Cardano::Hash::bech32_decode("stake", Data, &DataSize))
+					if (!::Cardano::Hash::bech32_decode("stake", data, &data_size))
 					{
-						if (!::Cardano::Hash::bech32_decode("addr_test", Data, &DataSize))
+						if (!::Cardano::Hash::bech32_decode("addr_test", data, &data_size))
 						{
-							if (!::Cardano::Hash::bech32_decode("stake_test", Data, &DataSize))
-								return LayerException("invalid address");
+							if (!::Cardano::Hash::bech32_decode("stake_test", data, &data_size))
+								return layer_exception("invalid address");
 						}
 					}
 				}
 
-				return String((char*)Data, DataSize);
+				return string((char*)data, data_size);
 			}
-			ExpectsLR<String> Cardano::SignMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const PrivateKey& SigningKey)
+			expects_lr<string> cardano::sign_message(const algorithm::asset_id& asset, const std::string_view& message, const secret_box& signing_key)
 			{
-				auto SigningWallet = NewSigningWallet(Asset, SigningKey);
-				if (!SigningWallet)
-					return SigningWallet.Error();
+				auto signing_wallet = new_signing_wallet(asset, signing_key);
+				if (!signing_wallet)
+					return signing_wallet.error();
 
-				uint8_t RawPrivateKey[XSK_LENGTH];
-				auto Private = SigningWallet->SigningKey.Expose<KEY_LIMIT>();
-				if (!DecodePrivateKey(Private.View.data(), RawPrivateKey, nullptr))
-					return ExpectsLR<String>(LayerException("input private key invalid"));
+				uint8_t raw_private_key[XSK_LENGTH];
+				auto secret = signing_wallet->signing_key.expose<KEY_LIMIT>();
+				if (!decode_private_key(secret.view.data(), raw_private_key, nullptr))
+					return expects_lr<string>(layer_exception("input private key invalid"));
 
-				uint8_t Hash[32];
-				crypto_generichash_blake2b(Hash, sizeof(Hash), (uint8_t*)Message.data(), Message.size(), nullptr, 0);
+				uint8_t hash[32];
+				crypto_generichash_blake2b(hash, sizeof(hash), (uint8_t*)message.data(), message.size(), nullptr, 0);
 
-				uint8_t Signature[64];
-				if (!::Cardano::signature(RawPrivateKey, Hash, sizeof(Hash), Signature))
-					return ExpectsLR<String>(LayerException("input private key invalid"));
+				uint8_t signature[64];
+				if (!::Cardano::signature(raw_private_key, hash, sizeof(hash), signature))
+					return expects_lr<string>(layer_exception("input private key invalid"));
 
-				return Codec::Base64URLEncode(std::string_view((char*)Signature, sizeof(Signature)));
+				return codec::base64_url_encode(std::string_view((char*)signature, sizeof(signature)));
 			}
-			ExpectsLR<void> Cardano::VerifyMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const std::string_view& VerifyingKey, const std::string_view& Signature)
+			expects_lr<void> cardano::verify_message(const algorithm::asset_id& asset, const std::string_view& message, const std::string_view& verifying_key, const std::string_view& signature)
 			{
-				String SignatureData = Signature.size() == 64 ? String(Signature) : Codec::Base64URLDecode(Signature);
-				if (SignatureData.size() != 64)
-					return LayerException("signature not valid");
+				string signature_data = signature.size() == 64 ? string(signature) : codec::base64_url_decode(signature);
+				if (signature_data.size() != 64)
+					return layer_exception("signature not valid");
 
-				auto VerifyingWallet = NewVerifyingWallet(Asset, VerifyingKey);
-				if (!VerifyingWallet)
-					return VerifyingWallet.Error();
+				auto verifying_wallet = new_verifying_wallet(asset, verifying_key);
+				if (!verifying_wallet)
+					return verifying_wallet.error();
 
-				uint8_t RawPublicKey[XVK_LENGTH];
-				if (!DecodePublicKey(VerifyingWallet->VerifyingKey, RawPublicKey, nullptr))
-					return LayerException("input public key invalid");
+				uint8_t raw_public_key[XVK_LENGTH];
+				if (!decode_public_key(verifying_wallet->verifying_key, raw_public_key, nullptr))
+					return layer_exception("input public key invalid");
 
-				uint8_t Hash[32];
-				crypto_generichash_blake2b(Hash, sizeof(Hash), (uint8_t*)Message.data(), Message.size(), nullptr, 0);
-				if (!::Cardano::verify(RawPublicKey, Hash, sizeof(Hash), (uint8_t*)SignatureData.data()))
-					return LayerException("signature verification failed with used public key");
+				uint8_t hash[32];
+				crypto_generichash_blake2b(hash, sizeof(hash), (uint8_t*)message.data(), message.size(), nullptr, 0);
+				if (!::Cardano::verify(raw_public_key, hash, sizeof(hash), (uint8_t*)signature_data.data()))
+					return layer_exception("signature verification failed with used public key");
 
-				return Expectation::Met;
+				return expectation::met;
 			}
-			ExpectsLR<void> Cardano::VerifyNodeCompatibility(ServerRelay* Node)
+			expects_lr<void> cardano::verify_node_compatibility(server_relay* node)
 			{
-				if (!Node->HasDistinctURL(ServerRelay::TransmitType::JSONRPC))
-					return LayerException("cardano ogmios jsonrpc node is required");
+				if (!node->has_distinct_url(server_relay::transmit_type::JSONRPC))
+					return layer_exception("cardano ogmios jsonrpc node is required");
 
-				if (!Node->HasDistinctURL(ServerRelay::TransmitType::REST))
-					return LayerException("cardano rosetta rest node is required");
+				if (!node->has_distinct_url(server_relay::transmit_type::REST))
+					return layer_exception("cardano rosetta rest node is required");
 
-				return Expectation::Met;
+				return expectation::met;
 			}
-			String Cardano::GetDerivation(uint64_t AddressIndex) const
+			string cardano::get_derivation(uint64_t address_index) const
 			{
-				return Stringify::Text(Protocol::Now().Is(NetworkType::Mainnet) ? "m/1852'/1815'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, AddressIndex);
+				return stringify::text(protocol::now().is(network_type::mainnet) ? "m/1852'/1815'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, address_index);
 			}
-			const Cardano::Chainparams& Cardano::GetChainparams() const
+			const cardano::chainparams& cardano::get_chainparams() const
 			{
-				return Netdata;
+				return netdata;
 			}
-			bool Cardano::DecodePrivateKey(const std::string_view& Data, uint8_t PrivateKey[96], size_t* PrivateKeySize)
+			bool cardano::decode_private_key(const std::string_view& data, uint8_t private_key[96], size_t* private_key_size)
 			{
-				uint8_t DerivedPrivateKey[XSK_LENGTH]; uint16_t DerivedPrivateKeySize = sizeof(DerivedPrivateKey);
-				if (!::Cardano::Hash::bech32_decode_extended(Data.data(), DerivedPrivateKey, &DerivedPrivateKeySize, sizeof(DerivedPrivateKey)))
+				uint8_t derived_private_key[XSK_LENGTH]; uint16_t derived_private_key_size = sizeof(derived_private_key);
+				if (!::Cardano::Hash::bech32_decode_extended(data.data(), derived_private_key, &derived_private_key_size, sizeof(derived_private_key)))
 					return false;
 
-				if (PrivateKeySize != nullptr)
-					*PrivateKeySize = (size_t)DerivedPrivateKeySize;
+				if (private_key_size != nullptr)
+					*private_key_size = (size_t)derived_private_key_size;
 
-				memset(PrivateKey, 0, sizeof(DerivedPrivateKey));
-				memcpy(PrivateKey, DerivedPrivateKey, DerivedPrivateKeySize);
-				return DerivedPrivateKeySize == sizeof(DerivedPrivateKey) || DerivedPrivateKeySize == 64;
+				memset(private_key, 0, sizeof(derived_private_key));
+				memcpy(private_key, derived_private_key, derived_private_key_size);
+				return derived_private_key_size == sizeof(derived_private_key) || derived_private_key_size == 64;
 			}
-			bool Cardano::DecodePublicKey(const std::string_view& Data, uint8_t PublicKey[64], size_t* PublicKeySize)
+			bool cardano::decode_public_key(const std::string_view& data, uint8_t public_key[64], size_t* public_key_size)
 			{
-				uint16_t DerivedPublicKeySize = 64;
-				if (!::Cardano::Hash::bech32_decode_extended(Data.data(), PublicKey, &DerivedPublicKeySize, XVK_LENGTH))
+				uint16_t derived_public_key_size = 64;
+				if (!::Cardano::Hash::bech32_decode_extended(data.data(), public_key, &derived_public_key_size, XVK_LENGTH))
 					return false;
 
-				if (PublicKeySize != nullptr)
-					*PublicKeySize = (size_t)DerivedPublicKeySize;
+				if (public_key_size != nullptr)
+					*public_key_size = (size_t)derived_public_key_size;
 
-				return DerivedPublicKeySize == XVK_LENGTH || DerivedPublicKeySize == 32;
+				return derived_public_key_size == XVK_LENGTH || derived_public_key_size == 32;
 			}
-			Decimal Cardano::GetMinValuePerOutput()
+			decimal cardano::get_min_value_per_output()
 			{
 				return 1.0;
 			}
-			uint256_t Cardano::ToLovelace(const Decimal& Value)
+			uint256_t cardano::to_lovelace(const decimal& value)
 			{
-				return uint256_t((Value * Netdata.Divisibility).Truncate(0).ToString());
+				return uint256_t((value * netdata.divisibility).truncate(0).to_string());
 			}
-			uint64_t Cardano::GetMinProtocolFeeA()
+			uint64_t cardano::get_min_protocol_fee_a()
 			{
 				return PROTOCOL_FEE_A;
 			}
-			uint64_t Cardano::GetMinProtocolFeeB()
+			uint64_t cardano::get_min_protocol_fee_b()
 			{
 				return PROTOCOL_FEE_B;
 			}
-			size_t Cardano::GetBlockSlotOffset()
+			size_t cardano::get_block_slot_offset()
 			{
 				return 300;
 			}
-			String Cardano::GetBlockchain()
+			string cardano::get_blockchain()
 			{
 				return "cardano";
 			}
-			String Cardano::GetNetwork()
+			string cardano::get_network()
 			{
-				return Protocol::Now().Is(NetworkType::Mainnet) ? "mainnet" : "preview";
+				return protocol::now().is(network_type::mainnet) ? "mainnet" : "preview";
 			}
-			size_t Cardano::GetTxFeeBlocks()
+			size_t cardano::get_tx_fee_blocks()
 			{
 				return 6;
 			}
-			size_t Cardano::GetTxFeeBlockDelta()
+			size_t cardano::get_tx_fee_block_delta()
 			{
 				return 32;
 			}
-			size_t Cardano::GetTxFeeBaseSize()
+			size_t cardano::get_tx_fee_base_size()
 			{
 				return 300;
 			}

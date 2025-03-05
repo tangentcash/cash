@@ -12,360 +12,360 @@ extern "C"
 }
 #include <secp256k1_recovery.h>
 
-namespace Tangent
+namespace tangent
 {
-	namespace Mediator
+	namespace mediator
 	{
-		namespace Backends
+		namespace backends
 		{
-			const char* Tron::TrxNdCall::BroadcastTransaction()
+			const char* tron::trx_nd_call::broadcast_transaction()
 			{
 				return "/wallet/broadcasttransaction";
 			}
-			const char* Tron::TrxNdCall::GetBlock()
+			const char* tron::trx_nd_call::get_block()
 			{
 				return "/wallet/getblock";
 			}
 
-			Tron::Tron() noexcept : Ethereum()
+			tron::tron() noexcept : ethereum()
 			{
-				Netdata.Composition = Algorithm::Composition::Type::SECP256K1;
-				Netdata.Routing = RoutingPolicy::Account;
-				Netdata.SyncLatency = 15;
-				Netdata.Divisibility = Decimal(1000000).Truncate(Protocol::Now().Message.Precision);
-				Netdata.SupportsTokenTransfer = "trc20";
-				Netdata.SupportsBulkTransfer = false;
+				netdata.composition = algorithm::composition::type::SECP256K1;
+				netdata.routing = routing_policy::account;
+				netdata.sync_latency = 15;
+				netdata.divisibility = decimal(1000000).truncate(protocol::now().message.precision);
+				netdata.supports_token_transfer = "trc20";
+				netdata.supports_bulk_transfer = false;
 			}
-			ExpectsPromiseRT<Tron::TrxTxBlockHeaderInfo> Tron::GetBlockHeaderForTx(const Algorithm::AssetId& Asset)
+			expects_promise_rt<tron::trx_tx_block_header_info> tron::get_block_header_for_tx(const algorithm::asset_id& asset)
 			{
-				Schema* Args = Var::Set::Object();
-				Args->Set("detail", Var::Boolean(false));
+				schema* args = var::set::object();
+				args->set("detail", var::boolean(false));
 
-				auto BlockData = Coawait(ExecuteREST(Asset, "POST", TrxNdCall::GetBlock(), Args, CachePolicy::Lazy));
-				if (!BlockData)
-					Coreturn ExpectsRT<Tron::TrxTxBlockHeaderInfo>(std::move(BlockData.Error()));
+				auto block_data = coawait(execute_rest(asset, "POST", trx_nd_call::get_block(), args, cache_policy::lazy));
+				if (!block_data)
+					coreturn expects_rt<tron::trx_tx_block_header_info>(std::move(block_data.error()));
 
-				TrxTxBlockHeaderInfo Info;
-				Info.RefBlockBytes = uint128_t(BlockData->FetchVar("block_header.raw_data.number").GetInteger()).ToString(16);
-				Info.RefBlockBytes = Info.RefBlockBytes.substr(Info.RefBlockBytes.size() - 4);
-				Info.RefBlockHash = BlockData->GetVar("blockID").GetBlob().substr(16, 16);
-				Info.Timestamp = BlockData->FetchVar("block_header.raw_data.timestamp").GetInteger();
-				Info.Expiration = Info.Timestamp + 60 * 1000;
-				Memory::Release(*BlockData);
+				trx_tx_block_header_info info;
+				info.ref_block_bytes = uint128_t(block_data->fetch_var("block_header.raw_data.number").get_integer()).to_string(16);
+				info.ref_block_bytes = info.ref_block_bytes.substr(info.ref_block_bytes.size() - 4);
+				info.ref_block_hash = block_data->get_var("blockID").get_blob().substr(16, 16);
+				info.timestamp = block_data->fetch_var("block_header.raw_data.timestamp").get_integer();
+				info.expiration = info.timestamp + 60 * 1000;
+				memory::release(*block_data);
 
-				while (Info.RefBlockBytes.size() < 4)
-					Info.RefBlockBytes.insert(Info.RefBlockBytes.begin(), '0');
+				while (info.ref_block_bytes.size() < 4)
+					info.ref_block_bytes.insert(info.ref_block_bytes.begin(), '0');
 
-				Coreturn ExpectsRT<Tron::TrxTxBlockHeaderInfo>(std::move(Info));
+				coreturn expects_rt<tron::trx_tx_block_header_info>(std::move(info));
 			}
-			ExpectsLR<void> Tron::VerifyNodeCompatibility(ServerRelay* Node)
+			expects_lr<void> tron::verify_node_compatibility(server_relay* node)
 			{
-				if (!Node->HasDistinctURL(ServerRelay::TransmitType::JSONRPC))
-					return LayerException("trongrid jsonrpc node is required");
+				if (!node->has_distinct_url(server_relay::transmit_type::JSONRPC))
+					return layer_exception("trongrid jsonrpc node is required");
 
-				if (!Node->HasDistinctURL(ServerRelay::TransmitType::HTTP))
-					return LayerException("trongrid rest node is required");
+				if (!node->has_distinct_url(server_relay::transmit_type::HTTP))
+					return layer_exception("trongrid rest node is required");
 
-				return Expectation::Met;
+				return expectation::met;
 			}
-			ExpectsPromiseRT<void> Tron::BroadcastTransaction(const Algorithm::AssetId& Asset, const OutgoingTransaction& TxData)
+			expects_promise_rt<void> tron::broadcast_transaction(const algorithm::asset_id& asset, const outgoing_transaction& tx_data)
 			{
-				auto HexData = Coawait(ExecuteHTTP(Asset, "POST", TrxNdCall::BroadcastTransaction(), "application/json", TxData.Data, CachePolicy::Greedy));
-				if (!HexData)
-					Coreturn ExpectsRT<void>(std::move(HexData.Error()));
+				auto hex_data = coawait(execute_http(asset, "POST", trx_nd_call::broadcast_transaction(), "application/json", tx_data.data, cache_policy::greedy));
+				if (!hex_data)
+					coreturn expects_rt<void>(std::move(hex_data.error()));
 
-				bool Success = HexData->GetVar("result").GetBoolean();
-				String Code = HexData->GetVar("code").GetBlob();
-				String Message = HexData->GetVar("message").GetBlob();
-				if (Code.empty())
-					Code = HexData->GetVar("Error").GetBlob();
+				bool success = hex_data->get_var("result").get_boolean();
+				string code = hex_data->get_var("code").get_blob();
+				string message = hex_data->get_var("message").get_blob();
+				if (code.empty())
+					code = hex_data->get_var("Error").get_blob();
 
-				Memory::Release(*HexData);
-				if (!Success)
-					Coreturn ExpectsRT<void>(RemoteException(Message.empty() ? Code : Code + ": " + Codec::HexDecode(Message)));
+				memory::release(*hex_data);
+				if (!success)
+					coreturn expects_rt<void>(remote_exception(message.empty() ? code : code + ": " + codec::hex_decode(message)));
 
-				Coreturn ExpectsRT<void>(Expectation::Met);
+				coreturn expects_rt<void>(expectation::met);
 			}
-			ExpectsPromiseRT<Decimal> Tron::CalculateBalance(const Algorithm::AssetId& Asset, const DynamicWallet& Wallet, Option<String>&& Address)
+			expects_promise_rt<decimal> tron::calculate_balance(const algorithm::asset_id& asset, const dynamic_wallet& wallet, option<string>&& address)
 			{
-				auto* Implementation = (Backends::Tron*)NSS::ServerNode::Get()->GetChain(Asset);
-				if (!Address)
+				auto* implementation = (backends::tron*)nss::server_node::get()->get_chain(asset);
+				if (!address)
 				{
-					ExpectsLR<DerivedVerifyingWallet> FromWallet = LayerException("signing wallet not found");
-					if (Wallet.Parent)
+					expects_lr<derived_verifying_wallet> from_wallet = layer_exception("signing wallet not found");
+					if (wallet.parent)
 					{
-						auto SigningWallet = NSS::ServerNode::Get()->NewSigningWallet(Asset, *Wallet.Parent, Protocol::Now().Account.RootAddressIndex);
-						if (SigningWallet)
-							FromWallet = *SigningWallet;
+						auto signing_wallet = nss::server_node::get()->new_signing_wallet(asset, *wallet.parent, protocol::now().account.root_address_index);
+						if (signing_wallet)
+							from_wallet = *signing_wallet;
 						else
-							FromWallet = SigningWallet.Error();
+							from_wallet = signing_wallet.error();
 					}
-					else if (Wallet.VerifyingChild)
-						FromWallet = *Wallet.VerifyingChild;
-					else if (Wallet.SigningChild)
-						FromWallet = *Wallet.SigningChild;
-					if (!FromWallet)
-						Coreturn ExpectsRT<Decimal>(RemoteException(std::move(FromWallet.Error().message())));
+					else if (wallet.verifying_child)
+						from_wallet = *wallet.verifying_child;
+					else if (wallet.signing_child)
+						from_wallet = *wallet.signing_child;
+					if (!from_wallet)
+						coreturn expects_rt<decimal>(remote_exception(std::move(from_wallet.error().message())));
 
-					Address = FromWallet->Addresses.begin()->second;
+					address = from_wallet->addresses.begin()->second;
 				}
 
-				auto ContractAddress = NSS::ServerNode::Get()->GetContractAddress(Asset);
-				Decimal Divisibility = Implementation->Netdata.Divisibility;
-				if (ContractAddress)
+				auto contract_address = nss::server_node::get()->get_contract_address(asset);
+				decimal divisibility = implementation->netdata.divisibility;
+				if (contract_address)
 				{
-					auto ContractDivisibility = Coawait(GetContractDivisibility(Asset, Implementation, *ContractAddress));
-					if (ContractDivisibility)
-						Divisibility = *ContractDivisibility;
+					auto contract_divisibility = coawait(get_contract_divisibility(asset, implementation, *contract_address));
+					if (contract_divisibility)
+						divisibility = *contract_divisibility;
 				}
 
-				const char* Method = nullptr;
-				Schema* Params = nullptr;
-				if (ContractAddress)
+				const char* method = nullptr;
+				schema* params = nullptr;
+				if (contract_address)
 				{
-					Method = NdCall::Call();
-					Params = Var::Set::Object();
-					Params->Set("to", Var::String(Implementation->DecodeNonEthAddress(*ContractAddress)));
-					Params->Set("data", Var::String(Implementation->GenerateUncheckedAddress(Backends::Ethereum::ScCall::BalanceOf(Implementation->DecodeNonEthAddress(*Address)))));
-				}
-				else
-				{
-					Method = NdCall::GetBalance();
-					Params = Var::Set::String(Implementation->DecodeNonEthAddress(*Address));
-				}
-
-				SchemaList Map;
-				Map.emplace_back(Params);
-				Map.emplace_back(Var::Set::String("latest"));
-
-				auto ConfirmedBalance = Coawait(ExecuteRPC(Asset, Method, std::move(Map), CachePolicy::Lazy));
-				if (!ConfirmedBalance)
-					Coreturn ExpectsRT<Decimal>(std::move(ConfirmedBalance.Error()));
-
-				Decimal Balance = Implementation->ToEth(Implementation->HexToUint256(ConfirmedBalance->Value.GetBlob()), Divisibility);
-				Memory::Release(*ConfirmedBalance);
-				Coreturn ExpectsRT<Decimal>(std::move(Balance));
-			}
-			ExpectsPromiseRT<OutgoingTransaction> Tron::NewTransaction(const Algorithm::AssetId& Asset, const DynamicWallet& Wallet, const Vector<Transferer>& To, const BaseFee& Fee)
-			{
-				ExpectsLR<DerivedSigningWallet> FromWallet = LayerException();
-				if (Wallet.Parent)
-					FromWallet = NSS::ServerNode::Get()->NewSigningWallet(Asset, *Wallet.Parent, Protocol::Now().Account.RootAddressIndex);
-				else if (Wallet.SigningChild)
-					FromWallet = *Wallet.SigningChild;
-				if (!FromWallet)
-					Coreturn ExpectsRT<OutgoingTransaction>(RemoteException("signing wallet not found"));
-
-				auto ChainId = Coawait(GetChainId(Asset));
-				if (!ChainId)
-					Coreturn ExpectsRT<OutgoingTransaction>(std::move(ChainId.Error()));
-
-				auto& Subject = To.front();
-				auto ContractAddress = NSS::ServerNode::Get()->GetContractAddress(Asset);
-				Decimal FeeValue = Fee.GetFee();
-				Decimal TotalValue = Subject.Value;
-				if (ContractAddress)
-				{
-					auto Balance = Coawait(CalculateBalance(Algorithm::Asset::BaseIdOf(Asset), Wallet, FromWallet->Addresses.begin()->second));
-					if (!Balance || *Balance < FeeValue)
-						Coreturn ExpectsRT<OutgoingTransaction>(RemoteException(Stringify::Text("insufficient funds: %s < %s", (Balance ? *Balance : Decimal(0.0)).ToString().c_str(), FeeValue.ToString().c_str())));
-				}
-				else
-					TotalValue += FeeValue;
-
-				auto Balance = Coawait(CalculateBalance(Asset, Wallet, FromWallet->Addresses.begin()->second));
-				if (!Balance || *Balance < TotalValue)
-					Coreturn ExpectsRT<OutgoingTransaction>(RemoteException(Stringify::Text("insufficient funds: %s < %s", (Balance ? *Balance : Decimal(0.0)).ToString().c_str(), TotalValue.ToString().c_str())));
-
-				auto BlockHeader = Coawait(GetBlockHeaderForTx(Asset));
-				if (!BlockHeader)
-					Coreturn ExpectsRT<OutgoingTransaction>(std::move(BlockHeader.Error()));
-
-				Decimal Divisibility = Netdata.Divisibility;
-				if (ContractAddress)
-				{
-					auto ContractDivisibility = Coawait(GetContractDivisibility(Asset, this, *ContractAddress));
-					if (ContractDivisibility)
-						Divisibility = *ContractDivisibility;
-				}
-
-				uint8_t RawPrivateKey[256];
-				auto PrivateKey = FromWallet->SigningKey.Expose<KEY_LIMIT>();
-				GeneratePrivateKeyDataFromPrivateKey(PrivateKey.View.data(), PrivateKey.View.size(), RawPrivateKey);
-
-				uint8_t RawPublicKey[256];
-				auto PublicKey = Codec::HexDecode(FromWallet->VerifyingKey);
-				memcpy(RawPublicKey, PublicKey.data(), std::min(sizeof(RawPrivateKey), PublicKey.size()));
-
-				protocol::Transaction Transaction;
-				protocol::Transaction_raw* RawData = Transaction.mutable_raw_data();
-				RawData->set_ref_block_bytes(Copy<std::string>(Codec::HexDecode(BlockHeader->RefBlockBytes)));
-				RawData->set_ref_block_hash(Copy<std::string>(Codec::HexDecode(BlockHeader->RefBlockHash)));
-				RawData->set_expiration(BlockHeader->Expiration);
-				RawData->set_timestamp(BlockHeader->Timestamp);
-
-				if (ContractAddress)
-				{
-					protocol::TriggerSmartContract Transfer;
-					Transfer.set_data(Copy<std::string>(Ethereum::ScCall::Transfer(DecodeNonEthAddressPf(FromWallet->Addresses.begin()->second), FromEth(Subject.Value, Divisibility))));
-					Transfer.set_token_id(0);
-					Transfer.set_owner_address(Copy<std::string>(Codec::HexDecode(DecodeNonEthAddressPf(FromWallet->Addresses.begin()->second))));
-					Transfer.set_call_token_value((uint64_t)FromEth(Subject.Value, Divisibility));
-					Transfer.set_call_value(0);
-					Transfer.set_contract_address(Copy<std::string>(Codec::HexDecode(DecodeNonEthAddressPf(*ContractAddress))));
-
-					protocol::Transaction_Contract* Contract = RawData->add_contract();
-					Contract->set_type(protocol::Transaction_Contract_ContractType_TriggerSmartContract);
-					Contract->mutable_parameter()->PackFrom(Transfer);
+					method = nd_call::call();
+					params = var::set::object();
+					params->set("to", var::string(implementation->decode_non_eth_address(*contract_address)));
+					params->set("data", var::string(implementation->generate_unchecked_address(backends::ethereum::sc_call::balance_of(implementation->decode_non_eth_address(*address)))));
 				}
 				else
 				{
-					protocol::TransferContract Transfer;
-					Transfer.set_owner_address(Copy<std::string>(Codec::HexDecode(DecodeNonEthAddressPf(FromWallet->Addresses.begin()->second))));
-					Transfer.set_to_address(Copy<std::string>(Codec::HexDecode(DecodeNonEthAddressPf(Subject.Address))));
-					Transfer.set_amount((uint64_t)FromEth(Subject.Value, Divisibility));
-
-					protocol::Transaction_Contract* Contract = RawData->add_contract();
-					Contract->set_type(protocol::Transaction_Contract_ContractType_TransferContract);
-					Contract->mutable_parameter()->PackFrom(Transfer);
+					method = nd_call::get_balance();
+					params = var::set::string(implementation->decode_non_eth_address(*address));
 				}
 
-				String TransactionData = Copy<String>(Transaction.raw_data().SerializeAsString());
-				String TransactionId = *Crypto::HashHex(Digests::SHA256(), TransactionData);
-				String Message = Codec::HexDecode(TransactionId);
+				schema_list map;
+				map.emplace_back(params);
+				map.emplace_back(var::set::string("latest"));
 
-				uint8_t RawSignature[65];
-				if (ecdsa_sign_digest(&secp256k1, RawPrivateKey, (uint8_t*)Message.data(), RawSignature, RawSignature + 64, nullptr) != 0)
-					Coreturn ExpectsRT<OutgoingTransaction>(RemoteException("input private key invalid"));
+				auto confirmed_balance = coawait(execute_rpc(asset, method, std::move(map), cache_policy::lazy));
+				if (!confirmed_balance)
+					coreturn expects_rt<decimal>(std::move(confirmed_balance.error()));
 
-				if (RawSignature[64] > 0)
-					RawSignature[64] = 0x1c;
-				else
-					RawSignature[64] = 0x1b;
+				decimal balance = implementation->to_eth(implementation->hex_to_uint256(confirmed_balance->value.get_blob()), divisibility);
+				memory::release(*confirmed_balance);
+				coreturn expects_rt<decimal>(std::move(balance));
+			}
+			expects_promise_rt<outgoing_transaction> tron::new_transaction(const algorithm::asset_id& asset, const dynamic_wallet& wallet, const vector<transferer>& to, const base_fee& fee)
+			{
+				expects_lr<derived_signing_wallet> from_wallet = layer_exception();
+				if (wallet.parent)
+					from_wallet = nss::server_node::get()->new_signing_wallet(asset, *wallet.parent, protocol::now().account.root_address_index);
+				else if (wallet.signing_child)
+					from_wallet = *wallet.signing_child;
+				if (!from_wallet)
+					coreturn expects_rt<outgoing_transaction>(remote_exception("signing wallet not found"));
 
-				String Signature = Codec::HexEncode(std::string_view((char*)RawSignature, sizeof(RawSignature)));
-				if (ecdsa_verify_digest(&secp256k1, RawPublicKey, RawSignature, (uint8_t*)Message.data()) != 0)
-					Coreturn ExpectsRT<OutgoingTransaction>(RemoteException("input private key invalid"));
+				auto chain_id = coawait(get_chain_id(asset));
+				if (!chain_id)
+					coreturn expects_rt<outgoing_transaction>(std::move(chain_id.error()));
 
-				UPtr<Schema> TransactionObject = Var::Set::Object();
-				TransactionObject->Set("visible", Var::Boolean(false));
-				TransactionObject->Set("txID", Var::String(TransactionId));
-				TransactionObject->Set("raw_data_hex", Var::String(Codec::HexEncode(TransactionData)));
-
-				Schema* RawDataObject = TransactionObject->Set("raw_data", Var::Set::Object());
-				Schema* ContractObject = RawDataObject->Set("contract", Var::Set::Array())->Push(Var::Set::Object());
-				Schema* ParameterObject = ContractObject->Set("parameter", Var::Set::Object());
-				Schema* ValueObject = ParameterObject->Set("value", Var::Set::Object());
-				ParameterObject->Set("type_url", Var::String(Copy<String>(RawData->contract().at(0).parameter().type_url())));
-				ContractObject->Set("type", Var::String(Copy<String>(Transaction_Contract_ContractType_Name(RawData->contract().at(0).type()))));
-
-				if (ContractAddress)
+				auto& subject = to.front();
+				auto contract_address = nss::server_node::get()->get_contract_address(asset);
+				decimal fee_value = fee.get_fee();
+				decimal total_value = subject.value;
+				if (contract_address)
 				{
-					protocol::TriggerSmartContract Contract;
-					RawData->contract().at(0).parameter().UnpackTo(&Contract);
-					ValueObject->Set("data", Var::String(Codec::HexEncode(Copy<String>(Contract.data()))));
-					if (Contract.token_id() > 0)
-						ValueObject->Set("token_id", Var::Integer(Contract.token_id()));
-					ValueObject->Set("owner_address", Var::String(Codec::HexEncode(Copy<String>(Contract.owner_address()))));
-					if (Contract.call_token_value() > 0)
-						ValueObject->Set("call_token_value", Var::Integer(Contract.call_token_value()));
-					if (Contract.call_value() > 0)
-						ValueObject->Set("call_value", Var::Integer(Contract.call_value()));
-					ValueObject->Set("contract_address", Var::String(Codec::HexEncode(Copy<String>(Contract.contract_address()))));
+					auto balance = coawait(calculate_balance(algorithm::asset::base_id_of(asset), wallet, from_wallet->addresses.begin()->second));
+					if (!balance || *balance < fee_value)
+						coreturn expects_rt<outgoing_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (balance ? *balance : decimal(0.0)).to_string().c_str(), fee_value.to_string().c_str())));
 				}
 				else
+					total_value += fee_value;
+
+				auto balance = coawait(calculate_balance(asset, wallet, from_wallet->addresses.begin()->second));
+				if (!balance || *balance < total_value)
+					coreturn expects_rt<outgoing_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (balance ? *balance : decimal(0.0)).to_string().c_str(), total_value.to_string().c_str())));
+
+				auto block_header = coawait(get_block_header_for_tx(asset));
+				if (!block_header)
+					coreturn expects_rt<outgoing_transaction>(std::move(block_header.error()));
+
+				decimal divisibility = netdata.divisibility;
+				if (contract_address)
 				{
-					protocol::TransferContract Contract;
-					RawData->contract().at(0).parameter().UnpackTo(&Contract);
-					ValueObject->Set("to_address", Var::String(Codec::HexEncode(Copy<String>(Contract.to_address()))));
-					ValueObject->Set("owner_address", Var::String(Codec::HexEncode(Copy<String>(Contract.owner_address()))));
-					if (Contract.amount() > 0)
-						ValueObject->Set("amount", Var::Integer(Contract.amount()));
+					auto contract_divisibility = coawait(get_contract_divisibility(asset, this, *contract_address));
+					if (contract_divisibility)
+						divisibility = *contract_divisibility;
 				}
 
-				RawDataObject->Set("ref_block_bytes", Var::String(Codec::HexEncode(Copy<String>(RawData->ref_block_bytes()))));
-				RawDataObject->Set("ref_block_hash", Var::String(Codec::HexEncode(Copy<String>(RawData->ref_block_hash()))));
-				if (RawData->ref_block_num() > 0)
-					RawDataObject->Set("ref_block_num", Var::Integer(RawData->ref_block_num()));
-				RawDataObject->Set("expiration", Var::Integer(RawData->expiration()));
-				RawDataObject->Set("timestamp", Var::Integer(RawData->timestamp()));
-				if (RawData->fee_limit() > 0)
-					RawDataObject->Set("fee_limit", Var::Integer(RawData->fee_limit()));
+				uint8_t raw_private_key[256];
+				auto private_key = from_wallet->signing_key.expose<KEY_LIMIT>();
+				generate_private_key_data_from_private_key(private_key.view.data(), private_key.view.size(), raw_private_key);
 
-				Schema* SignatureObject = TransactionObject->Set("signature", Var::Array());
-				SignatureObject->Push(Var::String(Signature));
+				uint8_t raw_public_key[256];
+				auto public_key = codec::hex_decode(from_wallet->verifying_key);
+				memcpy(raw_public_key, public_key.data(), std::min(sizeof(raw_private_key), public_key.size()));
 
-				TransactionData = Schema::ToJSON(*TransactionObject);
-				IncomingTransaction Tx;
-				Tx.SetTransaction(Asset, 0, TransactionId, std::move(FeeValue));
-				Tx.SetOperations({ Transferer(FromWallet->Addresses.begin()->second, Option<uint64_t>(FromWallet->AddressIndex), Decimal(Subject.Value)) }, Vector<Transferer>(To));
-				Coreturn ExpectsRT<OutgoingTransaction>(OutgoingTransaction(std::move(Tx), std::move(TransactionData)));
-			}
-			ExpectsLR<String> Tron::NewPublicKeyHash(const std::string_view& Address)
-			{
-				return Ethereum::NewPublicKeyHash(DecodeNonEthAddress(Address));
-			}
-			String Tron::GetDerivation(uint64_t AddressIndex) const
-			{
-				return Stringify::Text(Protocol::Now().Is(NetworkType::Mainnet) ? "m/44'/195'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, AddressIndex);
-			}
-			String Tron::GetMessageMagic()
-			{
-				return "\x19TRON Signed Message:\n";
-			}
-			String Tron::EncodeEthAddress(const std::string_view& EthAddress)
-			{
-				auto* Chain = GetChain();
-				if (!Stringify::StartsWith(EthAddress, "0x"))
-					return String(EthAddress);
+				::protocol::Transaction transaction;
+				::protocol::Transaction_raw* raw_data = transaction.mutable_raw_data();
+				raw_data->set_ref_block_bytes(copy<std::string>(codec::hex_decode(block_header->ref_block_bytes)));
+				raw_data->set_ref_block_hash(copy<std::string>(codec::hex_decode(block_header->ref_block_hash)));
+				raw_data->set_expiration(block_header->expiration);
+				raw_data->set_timestamp(block_header->timestamp);
 
-				uint8_t Hash160[sizeof(uint160) + B58_PREFIX_MAX_SIZE];
-				int Offset = (int)base58_prefix_dump(Chain->b58prefix_pubkey_address, Hash160);
-				int Hash160Size = sizeof(Hash160) - Offset;
-				utils_hex_to_bin(EthAddress.data() + 2, Hash160 + Offset, (int)EthAddress.size() - 2, &Hash160Size);
-
-				char Address[128];
-				btc_base58_encode_check(Hash160, sizeof(uint160) + Offset, Address, 100);
-				return Address;
-			}
-			String Tron::DecodeNonEthAddress(const std::string_view& NonEthAddress)
-			{
-				auto* Chain = GetChain();
-				uint8_t Hash160[sizeof(uint160) + B58_PREFIX_MAX_SIZE];
-				int PrefixSize = (int)base58_prefix_size(Chain->b58prefix_pubkey_address);
-				int Size = btc_base58_decode_check(String(NonEthAddress).c_str(), Hash160, sizeof(Hash160)) - PrefixSize - 4;
-				if (Size < 20)
-					return String();
-
-				return GeneratePkhAddress((char*)Hash160 + PrefixSize);
-			}
-			String Tron::DecodeNonEthAddressPf(const std::string_view& NonEthAddress)
-			{
-				String Address = DecodeNonEthAddress(NonEthAddress);
-				return Stringify::ToLower(Stringify::Replace(Address, "0x", "41"));
-			}
-			Decimal Tron::GetDivisibilityGwei()
-			{
-				return Decimal("1000000");
-			}
-			void Tron::GenerateMessageHash(const String& Input, uint8_t Output[32])
-			{
-				String Header = GetMessageMagic();
-				String Payload = Stringify::Text("%s%i%s",
-					Header.c_str(),
-					(int)Input.size(),
-					Input.c_str());
-				keccak_256((uint8_t*)Payload.data(), Payload.size(), Output);
-			}
-			const btc_chainparams_* Tron::GetChain()
-			{
-				switch (Protocol::Now().User.Network)
+				if (contract_address)
 				{
-					case NetworkType::Regtest:
+					::protocol::TriggerSmartContract transfer;
+					transfer.set_data(copy<std::string>(ethereum::sc_call::transfer(decode_non_eth_address_pf(from_wallet->addresses.begin()->second), from_eth(subject.value, divisibility))));
+					transfer.set_token_id(0);
+					transfer.set_owner_address(copy<std::string>(codec::hex_decode(decode_non_eth_address_pf(from_wallet->addresses.begin()->second))));
+					transfer.set_call_token_value((uint64_t)from_eth(subject.value, divisibility));
+					transfer.set_call_value(0);
+					transfer.set_contract_address(copy<std::string>(codec::hex_decode(decode_non_eth_address_pf(*contract_address))));
+
+					::protocol::Transaction_Contract* contract = raw_data->add_contract();
+					contract->set_type(::protocol::Transaction_Contract_ContractType_TriggerSmartContract);
+					contract->mutable_parameter()->PackFrom(transfer);
+				}
+				else
+				{
+					::protocol::TransferContract transfer;
+					transfer.set_owner_address(copy<std::string>(codec::hex_decode(decode_non_eth_address_pf(from_wallet->addresses.begin()->second))));
+					transfer.set_to_address(copy<std::string>(codec::hex_decode(decode_non_eth_address_pf(subject.address))));
+					transfer.set_amount((uint64_t)from_eth(subject.value, divisibility));
+
+					::protocol::Transaction_Contract* contract = raw_data->add_contract();
+					contract->set_type(::protocol::Transaction_Contract_ContractType_TransferContract);
+					contract->mutable_parameter()->PackFrom(transfer);
+				}
+
+				string transaction_data = copy<string>(transaction.raw_data().SerializeAsString());
+				string transaction_id = *crypto::hash_hex(digests::SHA256(), transaction_data);
+				string message = codec::hex_decode(transaction_id);
+
+				uint8_t raw_signature[65];
+				if (ecdsa_sign_digest(&secp256k1, raw_private_key, (uint8_t*)message.data(), raw_signature, raw_signature + 64, nullptr) != 0)
+					coreturn expects_rt<outgoing_transaction>(remote_exception("input private key invalid"));
+
+				if (raw_signature[64] > 0)
+					raw_signature[64] = 0x1c;
+				else
+					raw_signature[64] = 0x1b;
+
+				string signature = codec::hex_encode(std::string_view((char*)raw_signature, sizeof(raw_signature)));
+				if (ecdsa_verify_digest(&secp256k1, raw_public_key, raw_signature, (uint8_t*)message.data()) != 0)
+					coreturn expects_rt<outgoing_transaction>(remote_exception("input private key invalid"));
+
+				uptr<schema> transaction_object = var::set::object();
+				transaction_object->set("visible", var::boolean(false));
+				transaction_object->set("txID", var::string(transaction_id));
+				transaction_object->set("raw_data_hex", var::string(codec::hex_encode(transaction_data)));
+
+				schema* raw_data_object = transaction_object->set("raw_data", var::set::object());
+				schema* contract_object = raw_data_object->set("contract", var::set::array())->push(var::set::object());
+				schema* parameter_object = contract_object->set("parameter", var::set::object());
+				schema* value_object = parameter_object->set("value", var::set::object());
+				parameter_object->set("type_url", var::string(copy<string>(raw_data->contract().at(0).parameter().type_url())));
+				contract_object->set("type", var::string(copy<string>(::protocol::Transaction_Contract_ContractType_Name(raw_data->contract().at(0).type()))));
+
+				if (contract_address)
+				{
+					::protocol::TriggerSmartContract contract;
+					raw_data->contract().at(0).parameter().UnpackTo(&contract);
+					value_object->set("data", var::string(codec::hex_encode(copy<string>(contract.data()))));
+					if (contract.token_id() > 0)
+						value_object->set("token_id", var::integer(contract.token_id()));
+					value_object->set("owner_address", var::string(codec::hex_encode(copy<string>(contract.owner_address()))));
+					if (contract.call_token_value() > 0)
+						value_object->set("call_token_value", var::integer(contract.call_token_value()));
+					if (contract.call_value() > 0)
+						value_object->set("call_value", var::integer(contract.call_value()));
+					value_object->set("contract_address", var::string(codec::hex_encode(copy<string>(contract.contract_address()))));
+				}
+				else
+				{
+					::protocol::TransferContract contract;
+					raw_data->contract().at(0).parameter().UnpackTo(&contract);
+					value_object->set("to_address", var::string(codec::hex_encode(copy<string>(contract.to_address()))));
+					value_object->set("owner_address", var::string(codec::hex_encode(copy<string>(contract.owner_address()))));
+					if (contract.amount() > 0)
+						value_object->set("amount", var::integer(contract.amount()));
+				}
+
+				raw_data_object->set("ref_block_bytes", var::string(codec::hex_encode(copy<string>(raw_data->ref_block_bytes()))));
+				raw_data_object->set("ref_block_hash", var::string(codec::hex_encode(copy<string>(raw_data->ref_block_hash()))));
+				if (raw_data->ref_block_num() > 0)
+					raw_data_object->set("ref_block_num", var::integer(raw_data->ref_block_num()));
+				raw_data_object->set("expiration", var::integer(raw_data->expiration()));
+				raw_data_object->set("timestamp", var::integer(raw_data->timestamp()));
+				if (raw_data->fee_limit() > 0)
+					raw_data_object->set("fee_limit", var::integer(raw_data->fee_limit()));
+
+				schema* signature_object = transaction_object->set("signature", var::array());
+				signature_object->push(var::string(signature));
+
+				transaction_data = schema::to_json(*transaction_object);
+				incoming_transaction tx;
+				tx.set_transaction(asset, 0, transaction_id, std::move(fee_value));
+				tx.set_operations({ transferer(from_wallet->addresses.begin()->second, option<uint64_t>(from_wallet->address_index), decimal(subject.value)) }, vector<transferer>(to));
+				coreturn expects_rt<outgoing_transaction>(outgoing_transaction(std::move(tx), std::move(transaction_data)));
+			}
+			expects_lr<string> tron::new_public_key_hash(const std::string_view& address)
+			{
+				return ethereum::new_public_key_hash(decode_non_eth_address(address));
+			}
+			string tron::get_derivation(uint64_t address_index) const
+			{
+				return stringify::text(protocol::now().is(network_type::mainnet) ? "m/44'/195'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, address_index);
+			}
+			string tron::get_message_magic()
+			{
+				return "\x19TRON signed message:\n";
+			}
+			string tron::encode_eth_address(const std::string_view& eth_address)
+			{
+				auto* chain = get_chain();
+				if (!stringify::starts_with(eth_address, "0x"))
+					return string(eth_address);
+
+				uint8_t hash160[sizeof(uint160) + B58_PREFIX_MAX_SIZE];
+				int offset = (int)base58_prefix_dump(chain->b58prefix_pubkey_address, hash160);
+				int hash160_size = sizeof(hash160) - offset;
+				utils_hex_to_bin(eth_address.data() + 2, hash160 + offset, (int)eth_address.size() - 2, &hash160_size);
+
+				char address[128];
+				btc_base58_encode_check(hash160, sizeof(uint160) + offset, address, 100);
+				return address;
+			}
+			string tron::decode_non_eth_address(const std::string_view& non_eth_address)
+			{
+				auto* chain = get_chain();
+				uint8_t hash160[sizeof(uint160) + B58_PREFIX_MAX_SIZE];
+				int prefix_size = (int)base58_prefix_size(chain->b58prefix_pubkey_address);
+				int size = btc_base58_decode_check(string(non_eth_address).c_str(), hash160, sizeof(hash160)) - prefix_size - 4;
+				if (size < 20)
+					return string();
+
+				return generate_pkh_address((char*)hash160 + prefix_size);
+			}
+			string tron::decode_non_eth_address_pf(const std::string_view& non_eth_address)
+			{
+				string address = decode_non_eth_address(non_eth_address);
+				return stringify::to_lower(stringify::replace(address, "0x", "41"));
+			}
+			decimal tron::get_divisibility_gwei()
+			{
+				return decimal("1000000");
+			}
+			void tron::generate_message_hash(const string& input, uint8_t output[32])
+			{
+				string header = get_message_magic();
+				string payload = stringify::text("%s%i%s",
+					header.c_str(),
+					(int)input.size(),
+					input.c_str());
+				keccak_256((uint8_t*)payload.data(), payload.size(), output);
+			}
+			const btc_chainparams_* tron::get_chain()
+			{
+				switch (protocol::now().user.network)
+				{
+					case network_type::regtest:
 						return &trx_chainparams_regtest;
-					case NetworkType::Testnet:
+					case network_type::testnet:
 						return &trx_chainparams_test;
-					case NetworkType::Mainnet:
+					case network_type::mainnet:
 						return &trx_chainparams_main;
 					default:
 						VI_PANIC(false, "invalid network type");

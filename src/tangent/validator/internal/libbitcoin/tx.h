@@ -38,7 +38,7 @@ LIBBTC_BEGIN_DECL
 
 typedef struct btc_script_ {
     int* data;
-    size_t limit;   // Total size of the vector
+    size_t limit;   // Total size of the dvector
     size_t current; //Number of vectors in it at present
 } btc_script;
 
@@ -51,7 +51,7 @@ typedef struct btc_tx_in_ {
     btc_tx_outpoint prevout;
     cstring* script_sig;
     uint32_t sequence;
-    vector* witness_stack;
+    dvector* witness_stack;
 } btc_tx_in;
 
 typedef struct btc_tx_out_ {
@@ -61,8 +61,8 @@ typedef struct btc_tx_out_ {
 
 typedef struct btc_tx_ {
     int32_t version;
-    vector* vin;
-    vector* vout;
+    dvector* vin;
+    dvector* vout;
     uint32_t locktime;
 } btc_tx;
 

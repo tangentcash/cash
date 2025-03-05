@@ -2,1005 +2,1005 @@
 #include "block.h"
 #include "mediator.h"
 
-namespace Tangent
+namespace tangent
 {
-	namespace Ledger
+	namespace ledger
 	{
-		ExpectsLR<void> Transaction::Validate(uint64_t BlockNumber) const
+		expects_lr<void> transaction::validate(uint64_t block_number) const
 		{
-			uint64_t ExpiryNumber = Algorithm::Asset::ExpiryOf(Asset);
-			if (!ExpiryNumber)
-				return LayerException("invalid asset");
-			else if (BlockNumber > ExpiryNumber)
-				return LayerException("asset is no longer supported");
+			uint64_t expiry_number = algorithm::asset::expiry_of(asset);
+			if (!expiry_number)
+				return layer_exception("invalid asset");
+			else if (block_number > expiry_number)
+				return layer_exception("asset is no longer supported");
 
-			if (!Sequence || Sequence >= std::numeric_limits<uint64_t>::max() - 1)
-				return LayerException("invalid sequence");
+			if (!sequence || sequence >= std::numeric_limits<uint64_t>::max() - 1)
+				return layer_exception("invalid sequence");
 
-			if (!GasLimit)
-				return LayerException("gas limit requirement not met (min: 1)");
+			if (!gas_limit)
+				return layer_exception("gas limit requirement not met (min: 1)");
 
-			uint256_t MaxGasLimit = Block::GetGasLimit();
-			if (GasLimit > MaxGasLimit)
-				return LayerException("gas limit requirement not met (max: " + MaxGasLimit.ToString() + ")");
+			uint256_t max_gas_limit = block::get_gas_limit();
+			if (gas_limit > max_gas_limit)
+				return layer_exception("gas limit requirement not met (max: " + max_gas_limit.to_string() + ")");
 
-			if (GasPrice.IsNaN() || GasPrice.IsNegative())
-				return LayerException("invalid gas price");
+			if (gas_price.is_nan() || gas_price.is_negative())
+				return layer_exception("invalid gas price");
 
-			if (IsSignatureNull())
-				return LayerException("invalid signature");
+			if (is_signature_null())
+				return layer_exception("invalid signature");
 
-			return Expectation::Met;
+			return expectation::met;
 		}
-		ExpectsLR<void> Transaction::Execute(TransactionContext* Context) const
+		expects_lr<void> transaction::execute(transaction_context* context) const
 		{
-			auto SequenceRequirement = Context->VerifyAccountSequence();
-			if (!SequenceRequirement)
-				return SequenceRequirement;
+			auto sequence_requirement = context->verify_account_sequence();
+			if (!sequence_requirement)
+				return sequence_requirement;
 
-			return Context->VerifyGasTransferBalance();
+			return context->verify_gas_transfer_balance();
 		}
-		ExpectsPromiseRT<void> Transaction::Dispatch(const Wallet& Proposer, const TransactionContext* Context, Vector<UPtr<Transaction>>* Pipeline) const
+		expects_promise_rt<void> transaction::dispatch(const wallet& proposer, const transaction_context* context, vector<uptr<transaction>>* pipeline) const
 		{
-			return ExpectsPromiseRT<void>(RemoteException("invalid operation"));
+			return expects_promise_rt<void>(remote_exception("invalid operation"));
 		}
-		bool Transaction::StorePayload(Format::Stream* Stream) const
+		bool transaction::store_payload(format::stream* stream) const
 		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Stream->WriteInteger(Asset);
-			Stream->WriteDecimal(GasPrice);
-			Stream->WriteInteger(GasLimit);
-			Stream->WriteInteger(Sequence);
-			Stream->WriteBoolean(Conservative);
-			return StoreBody(Stream);
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_integer(asset);
+			stream->write_decimal(gas_price);
+			stream->write_integer(gas_limit);
+			stream->write_integer(sequence);
+			stream->write_boolean(conservative);
+			return store_body(stream);
 		}
-		bool Transaction::LoadPayload(Format::Stream& Stream)
+		bool transaction::load_payload(format::stream& stream)
 		{
-			if (!Stream.ReadInteger(Stream.ReadType(), &Asset))
+			if (!stream.read_integer(stream.read_type(), &asset))
 				return false;
 
-			if (!Stream.ReadDecimal(Stream.ReadType(), &GasPrice))
+			if (!stream.read_decimal(stream.read_type(), &gas_price))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &GasLimit))
+			if (!stream.read_integer(stream.read_type(), &gas_limit))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &Sequence))
+			if (!stream.read_integer(stream.read_type(), &sequence))
 				return false;
 
-			if (!Stream.ReadBoolean(Stream.ReadType(), &Conservative))
+			if (!stream.read_boolean(stream.read_type(), &conservative))
 				return false;
 
-			return LoadBody(Stream);
+			return load_body(stream);
 		}
-		bool Transaction::RecoverMany(const Receipt& Receipt, OrderedSet<String>& Parties) const
+		bool transaction::recover_many(const receipt& receipt, ordered_set<string>& parties) const
 		{
 			return true;
 		}
-		bool Transaction::RecoverAliases(const Receipt& Receipt, OrderedSet<uint256_t>& Aliases) const
+		bool transaction::recover_aliases(const receipt& receipt, ordered_set<uint256_t>& aliases) const
 		{
 			return true;
 		}
-		bool Transaction::Sign(const Algorithm::Seckey SecretKey)
+		bool transaction::sign(const algorithm::seckey secret_key)
 		{
-			return Authentic::Sign(SecretKey);
+			return authentic::sign(secret_key);
 		}
-		bool Transaction::Sign(const Algorithm::Seckey SecretKey, uint64_t NewSequence)
+		bool transaction::sign(const algorithm::seckey secret_key, uint64_t new_sequence)
 		{
-			Sequence = NewSequence;
-			return Sign(SecretKey);
+			sequence = new_sequence;
+			return sign(secret_key);
 		}
-		bool Transaction::Sign(const Algorithm::Seckey SecretKey, uint64_t NewSequence, const Decimal& Price)
+		bool transaction::sign(const algorithm::seckey secret_key, uint64_t new_sequence, const decimal& price)
 		{
-			SetEstimateGas(Price);
-			if (!Sign(SecretKey, NewSequence))
+			set_estimate_gas(price);
+			if (!sign(secret_key, new_sequence))
 				return false;
 
-			auto OptimalGas = Ledger::TransactionContext::CalculateTxGas(this);
-			if (!OptimalGas || GasLimit == *OptimalGas)
+			auto optimal_gas = ledger::transaction_context::calculate_tx_gas(this);
+			if (!optimal_gas || gas_limit == *optimal_gas)
 				return true;
 
-			GasLimit = *OptimalGas;
-			return Sign(SecretKey);
+			gas_limit = *optimal_gas;
+			return sign(secret_key);
 		}
-		void Transaction::SetOptimalGas(const Decimal& Price)
+		void transaction::set_optimal_gas(const decimal& price)
 		{
-			auto OptimalGas = Ledger::TransactionContext::CalculateTxGas(this);
-			if (!OptimalGas)
-				OptimalGas = GetGasEstimate();
-			SetGas(Price, *OptimalGas);
+			auto optimal_gas = ledger::transaction_context::calculate_tx_gas(this);
+			if (!optimal_gas)
+				optimal_gas = get_gas_estimate();
+			set_gas(price, *optimal_gas);
 		}
-		void Transaction::SetEstimateGas(const Decimal& Price)
+		void transaction::set_estimate_gas(const decimal& price)
 		{
-			SetGas(Price, GetGasEstimate());
+			set_gas(price, get_gas_estimate());
 		}
-		void Transaction::SetGas(const Decimal& Price, const uint256_t& Limit)
+		void transaction::set_gas(const decimal& price, const uint256_t& limit)
 		{
-			GasPrice = Price;
-			GasLimit = Limit;
+			gas_price = price;
+			gas_limit = limit;
 		}
-		void Transaction::SetAsset(const std::string_view& Blockchain, const std::string_view& Token, const std::string_view& ContractAddress)
+		void transaction::set_asset(const std::string_view& blockchain, const std::string_view& token, const std::string_view& contract_address)
 		{
-			Asset = Algorithm::Asset::IdOf(Blockchain, Token, ContractAddress);
+			asset = algorithm::asset::id_of(blockchain, token, contract_address);
 		}
-		bool Transaction::IsConsensus() const
+		bool transaction::is_consensus() const
 		{
-			auto Level = GetType();
-			return Level == TransactionLevel::Consensus || Level == TransactionLevel::Aggregation;
+			auto level = get_type();
+			return level == transaction_level::consensus || level == transaction_level::aggregation;
 		}
-		Algorithm::AssetId Transaction::GetGasAsset() const
+		algorithm::asset_id transaction::get_gas_asset() const
 		{
-			return Algorithm::Asset::BaseIdOf(Asset);
+			return algorithm::asset::base_id_of(asset);
 		}
-		TransactionLevel Transaction::GetType() const
+		transaction_level transaction::get_type() const
 		{
-			return TransactionLevel::Functional;
+			return transaction_level::functional;
 		}
-		UPtr<Schema> Transaction::AsSchema() const
+		uptr<schema> transaction::as_schema() const
 		{
-			std::string_view Category;
-			switch (GetType())
+			std::string_view category;
+			switch (get_type())
 			{
-				case TransactionLevel::Functional:
-					Category = "functional";
+				case transaction_level::functional:
+					category = "functional";
 					break;
-				case TransactionLevel::Delegation:
-					Category = "delegation";
+				case transaction_level::delegation:
+					category = "delegation";
 					break;
-				case TransactionLevel::Consensus:
-					Category = "consensus";
+				case transaction_level::consensus:
+					category = "consensus";
 					break;
-				case TransactionLevel::Aggregation:
-					Category = "aggregation";
+				case transaction_level::aggregation:
+					category = "aggregation";
 					break;
 				default:
-					Category = "unknown";
+					category = "unknown";
 					break;
 			}
 
-			Schema* Data = Var::Set::Object();
-			Data->Set("hash", Var::String(Algorithm::Encoding::Encode0xHex256(AsHash())));
-			Data->Set("signature", Var::String(Format::Util::Encode0xHex(std::string_view((char*)Signature, sizeof(Signature)))));
-			Data->Set("type", Var::String(AsTypename()));
-			Data->Set("category", Var::String(Category));
-			Data->Set("asset", Algorithm::Asset::Serialize(Asset));
-			Data->Set("sequence", Var::Integer(Sequence));
-			Data->Set("gas_price", Var::Decimal(GasPrice));
-			Data->Set("gas_limit", Algorithm::Encoding::SerializeUint256(GasLimit));
-			return Data;
+			schema* data = var::set::object();
+			data->set("hash", var::string(algorithm::encoding::encode_0xhex256(as_hash())));
+			data->set("signature", var::string(format::util::encode_0xhex(std::string_view((char*)signature, sizeof(signature)))));
+			data->set("type", var::string(as_typename()));
+			data->set("category", var::string(category));
+			data->set("asset", algorithm::asset::serialize(asset));
+			data->set("sequence", var::integer(sequence));
+			data->set("gas_price", var::decimal(gas_price));
+			data->set("gas_limit", algorithm::encoding::serialize_uint256(gas_limit));
+			return data;
 		}
-		uint64_t Transaction::GetDispatchOffset() const
+		uint64_t transaction::get_dispatch_offset() const
 		{
 			return 0;
 		}
 
-		ExpectsLR<void> DelegationTransaction::Execute(TransactionContext* Context) const
+		expects_lr<void> delegation_transaction::execute(transaction_context* context) const
 		{
-			return Context->VerifyAccountSequence();
+			return context->verify_account_sequence();
 		}
-		TransactionLevel DelegationTransaction::GetType() const
+		transaction_level delegation_transaction::get_type() const
 		{
-			return TransactionLevel::Delegation;
-		}
-
-		ExpectsLR<void> ConsensusTransaction::Execute(TransactionContext* Context) const
-		{
-			auto SequenceRequirement = Context->VerifyAccountSequence();
-			if (!SequenceRequirement)
-				return SequenceRequirement;
-
-			return Context->VerifyAccountWork(Context->Receipt.From);
-		}
-		TransactionLevel ConsensusTransaction::GetType() const
-		{
-			return TransactionLevel::Consensus;
+			return transaction_level::delegation;
 		}
 
-		ExpectsLR<void> AggregationTransaction::Validate(uint64_t BlockNumber) const
+		expects_lr<void> consensus_transaction::execute(transaction_context* context) const
 		{
-			uint64_t ExpiryNumber = Algorithm::Asset::ExpiryOf(Asset);
-			if (!ExpiryNumber)
-				return LayerException("invalid asset");
-			else if (BlockNumber > ExpiryNumber)
-				return LayerException("asset is no longer supported");
+			auto sequence_requirement = context->verify_account_sequence();
+			if (!sequence_requirement)
+				return sequence_requirement;
 
-			if (Sequence != 0)
-				return LayerException("invalid sequence (neq: 0)");
+			return context->verify_account_work(context->receipt.from);
+		}
+		transaction_level consensus_transaction::get_type() const
+		{
+			return transaction_level::consensus;
+		}
 
-			if (Conservative)
-				return LayerException("transaction should not be conservative");
+		expects_lr<void> aggregation_transaction::validate(uint64_t block_number) const
+		{
+			uint64_t expiry_number = algorithm::asset::expiry_of(asset);
+			if (!expiry_number)
+				return layer_exception("invalid asset");
+			else if (block_number > expiry_number)
+				return layer_exception("asset is no longer supported");
 
-			if (!GasLimit)
-				return LayerException("gas limit requirement not met (min: 1)");
+			if (sequence != 0)
+				return layer_exception("invalid sequence (neq: 0)");
 
-			uint256_t MaxGasLimit = Block::GetGasLimit();
-			if (GasLimit > MaxGasLimit)
-				return LayerException("gas limit requirement not met (max: " + MaxGasLimit.ToString() + ")");
+			if (conservative)
+				return layer_exception("transaction should not be conservative");
 
-			if (GasPrice.IsNaN() || GasPrice.IsNegative())
-				return LayerException("invalid gas price");
+			if (!gas_limit)
+				return layer_exception("gas limit requirement not met (min: 1)");
 
-			if (!IsSignatureNull())
-				return LayerException("invalid signature");
+			uint256_t max_gas_limit = block::get_gas_limit();
+			if (gas_limit > max_gas_limit)
+				return layer_exception("gas limit requirement not met (max: " + max_gas_limit.to_string() + ")");
 
-			if (!InputHash)
-				return LayerException("invalid input hash");
+			if (gas_price.is_nan() || gas_price.is_negative())
+				return layer_exception("invalid gas price");
 
-			if (OutputHashes.empty())
-				return LayerException("invalid output hashes");
+			if (!is_signature_null())
+				return layer_exception("invalid signature");
 
-			size_t BranchIndex = 0;
-			for (auto& Branch : OutputHashes)
+			if (!input_hash)
+				return layer_exception("invalid input hash");
+
+			if (output_hashes.empty())
+				return layer_exception("invalid output hashes");
+
+			size_t branch_index = 0;
+			for (auto& branch : output_hashes)
 			{
-				++BranchIndex;
-				if (!Branch.first)
-					return LayerException(Stringify::Text("invalid output hash (branch: %i)", (int)BranchIndex));
+				++branch_index;
+				if (!branch.first)
+					return layer_exception(stringify::text("invalid output hash (branch: %i)", (int)branch_index));
 
-				size_t SignatureIndex = 0;
-				for (auto& Signature : Branch.second.Attestations)
+				size_t signature_index = 0;
+				for (auto& signature : branch.second.attestations)
 				{
-					++SignatureIndex;
-					if (Signature.size() != sizeof(Algorithm::Recsighash))
-						return LayerException(Stringify::Text("invalid attestation signature (branch: %i, signature: %i)", (int)BranchIndex, (int)SignatureIndex));
+					++signature_index;
+					if (signature.size() != sizeof(algorithm::recsighash))
+						return layer_exception(stringify::text("invalid attestation signature (branch: %i, signature: %i)", (int)branch_index, (int)signature_index));
 
-					Algorithm::Pubkeyhash Proposer = { 0 }, Null = { 0 };
-					if (!RecoverHash(Proposer, Branch.first, SignatureIndex - 1) || !memcmp(Proposer, Null, sizeof(Null)))
-						return LayerException(Stringify::Text("invalid attestation proposer (branch: %i, signature: %i)", (int)BranchIndex, (int)SignatureIndex));
+					algorithm::pubkeyhash proposer = { 0 }, null = { 0 };
+					if (!recover_hash(proposer, branch.first, signature_index - 1) || !memcmp(proposer, null, sizeof(null)))
+						return layer_exception(stringify::text("invalid attestation proposer (branch: %i, signature: %i)", (int)branch_index, (int)signature_index));
 				}
 			}
 
-			return Expectation::Met;
+			return expectation::met;
 		}
-		ExpectsLR<void> AggregationTransaction::Execute(TransactionContext* Context) const
+		expects_lr<void> aggregation_transaction::execute(transaction_context* context) const
 		{
-			size_t BranchIndex = 0;
-			for (auto& Branch : OutputHashes)
+			size_t branch_index = 0;
+			for (auto& branch : output_hashes)
 			{
-				++BranchIndex;
-				if (!Branch.first)
-					return LayerException(Stringify::Text("invalid output hash (branch: %i)", (int)BranchIndex));
+				++branch_index;
+				if (!branch.first)
+					return layer_exception(stringify::text("invalid output hash (branch: %i)", (int)branch_index));
 
-				size_t SignatureIndex = 0;
-				for (auto& Signature : Branch.second.Attestations)
+				size_t signature_index = 0;
+				for (auto& signature : branch.second.attestations)
 				{
-					Algorithm::Pubkeyhash Proposer = { 0 };
-					if (!RecoverHash(Proposer, Branch.first, SignatureIndex++))
-						return LayerException(Stringify::Text("invalid attestation proposer (branch: %i, signature: %i)", (int)BranchIndex, (int)SignatureIndex));
+					algorithm::pubkeyhash proposer = { 0 };
+					if (!recover_hash(proposer, branch.first, signature_index++))
+						return layer_exception(stringify::text("invalid attestation proposer (branch: %i, signature: %i)", (int)branch_index, (int)signature_index));
 
-					auto Status = Context->VerifyAccountWork(Proposer);
-					if (!Status)
-						return Status;
+					auto status = context->verify_account_work(proposer);
+					if (!status)
+						return status;
 				}
 			}
 
-			return Context->VerifyAccountWork(Context->Receipt.From);
+			return context->verify_account_work(context->receipt.from);
 		}
-		bool AggregationTransaction::StorePayload(Format::Stream* Stream) const
+		bool aggregation_transaction::store_payload(format::stream* stream) const
 		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
-			if (!Ledger::Transaction::StorePayload(Stream))
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			if (!ledger::transaction::store_payload(stream))
 				return false;
 
-			Stream->WriteInteger(InputHash);
-			Stream->WriteInteger((uint16_t)OutputHashes.size());
-			for (auto& Branch : OutputHashes)
+			stream->write_integer(input_hash);
+			stream->write_integer((uint16_t)output_hashes.size());
+			for (auto& branch : output_hashes)
 			{
-				Stream->WriteString(Branch.second.Message.Data);
-				Stream->WriteInteger((uint16_t)Branch.second.Attestations.size());
-				for (auto& Signature : Branch.second.Attestations)
+				stream->write_string(branch.second.message.data);
+				stream->write_integer((uint16_t)branch.second.attestations.size());
+				for (auto& signature : branch.second.attestations)
 				{
-					if (Signature.size() != sizeof(Algorithm::Recsighash))
+					if (signature.size() != sizeof(algorithm::recsighash))
 						return false;
 
-					Stream->WriteString(Signature);
+					stream->write_string(signature);
 				}
 			}
 			return true;
 		}
-		bool AggregationTransaction::LoadPayload(Format::Stream& Stream)
+		bool aggregation_transaction::load_payload(format::stream& stream)
 		{
-			if (!Ledger::Transaction::LoadPayload(Stream))
+			if (!ledger::transaction::load_payload(stream))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &InputHash))
+			if (!stream.read_integer(stream.read_type(), &input_hash))
 				return false;
 
-			uint16_t OutputHashesSize;
-			if (!Stream.ReadInteger(Stream.ReadType(), &OutputHashesSize))
+			uint16_t output_hashes_size;
+			if (!stream.read_integer(stream.read_type(), &output_hashes_size))
 				return false;
 
-			OutputHashes.clear();
-			for (uint16_t i = 0; i < OutputHashesSize; i++)
+			output_hashes.clear();
+			for (uint16_t i = 0; i < output_hashes_size; i++)
 			{
-				Format::Stream Message;
-				if (!Stream.ReadString(Stream.ReadType(), &Message.Data))
+				format::stream message;
+				if (!stream.read_string(stream.read_type(), &message.data))
 					return false;
 
-				uint16_t SignaturesSize;
-				if (!Stream.ReadInteger(Stream.ReadType(), &SignaturesSize))
+				uint16_t signatures_size;
+				if (!stream.read_integer(stream.read_type(), &signatures_size))
 					return false;
 
-				OrderedSet<String> Signatures;
-				for (uint16_t i = 0; i < SignaturesSize; i++)
+				ordered_set<string> signatures;
+				for (uint16_t i = 0; i < signatures_size; i++)
 				{
-					String Signature;
-					if (!Stream.ReadString(Stream.ReadType(), &Signature) || Signature.size() != sizeof(Algorithm::Recsighash))
+					string signature;
+					if (!stream.read_string(stream.read_type(), &signature) || signature.size() != sizeof(algorithm::recsighash))
 						return false;
 
-					Signatures.insert(Signature);
+					signatures.insert(signature);
 				}
 
-				auto& Branch = OutputHashes[Message.Hash()];
-				Branch.Message = std::move(Message);
-				Branch.Attestations = std::move(Signatures);
+				auto& branch = output_hashes[message.hash()];
+				branch.message = std::move(message);
+				branch.attestations = std::move(signatures);
 			}
 
 			return true;
 		}
-		bool AggregationTransaction::Sign(const Algorithm::Seckey SecretKey)
+		bool aggregation_transaction::sign(const algorithm::seckey secret_key)
 		{
-			Sequence = 0;
-			Conservative = false;
-			memset(Signature, 0, sizeof(Signature));
-			return Attestate(SecretKey);
+			sequence = 0;
+			conservative = false;
+			memset(signature, 0, sizeof(signature));
+			return attestate(secret_key);
 		}
-		bool AggregationTransaction::Sign(const Algorithm::Seckey SecretKey, uint64_t NewSequence)
+		bool aggregation_transaction::sign(const algorithm::seckey secret_key, uint64_t new_sequence)
 		{
-			return Sign(SecretKey);
+			return sign(secret_key);
 		}
-		bool AggregationTransaction::Sign(const Algorithm::Seckey SecretKey, uint64_t NewSequence, const Decimal& Price)
+		bool aggregation_transaction::sign(const algorithm::seckey secret_key, uint64_t new_sequence, const decimal& price)
 		{
-			SetEstimateGas(Price);
-			if (!Sign(SecretKey, NewSequence))
+			set_estimate_gas(price);
+			if (!sign(secret_key, new_sequence))
 				return false;
 
-			size_t TransactionSize1 = AsMessage().Data.size();
-			auto OptimalGas = Ledger::TransactionContext::CalculateTxGas(this);
-			if (!OptimalGas || GasLimit == *OptimalGas)
+			size_t transaction_size1 = as_message().data.size();
+			auto optimal_gas = ledger::transaction_context::calculate_tx_gas(this);
+			if (!optimal_gas || gas_limit == *optimal_gas)
 				return true;
 
-			GasLimit = *OptimalGas;
-			return Sign(SecretKey);
+			gas_limit = *optimal_gas;
+			return sign(secret_key);
 		}
-		bool AggregationTransaction::Verify(const Algorithm::Pubkey PublicKey) const
+		bool aggregation_transaction::verify(const algorithm::pubkey public_key) const
 		{
-			for (auto& Branch : OutputHashes)
+			for (auto& branch : output_hashes)
 			{
-				size_t SignatureIndex = 0;
-				for (auto& Candidate : Branch.second.Attestations)
+				size_t signature_index = 0;
+				for (auto& candidate : branch.second.attestations)
 				{
-					if (Candidate.size() != sizeof(Algorithm::Recsighash))
+					if (candidate.size() != sizeof(algorithm::recsighash))
 						return false;
 
-					if (Verify(PublicKey, Branch.first, SignatureIndex++))
+					if (verify(public_key, branch.first, signature_index++))
 						return true;
 				}
 			}
 			return false;
 		}
-		bool AggregationTransaction::Verify(const Algorithm::Pubkey PublicKey, const uint256_t& OutputHash, size_t Index) const
+		bool aggregation_transaction::verify(const algorithm::pubkey public_key, const uint256_t& output_hash, size_t index) const
 		{
-			auto Branch = OutputHashes.find(OutputHash);
-			if (Branch == OutputHashes.end())
+			auto branch = output_hashes.find(output_hash);
+			if (branch == output_hashes.end())
 				return false;
 
-			if (Index >= Branch->second.Attestations.size())
+			if (index >= branch->second.attestations.size())
 				return false;
 
-			auto Signature = Branch->second.Attestations.begin();
-			for (size_t i = 0; i < Index; i++)
-				++Signature;
+			auto signature = branch->second.attestations.begin();
+			for (size_t i = 0; i < index; i++)
+				++signature;
 
-			if (Signature->size() != sizeof(Algorithm::Recsighash))
+			if (signature->size() != sizeof(algorithm::recsighash))
 				return false;
 
-			Format::Stream Message;
-			Message.WriteInteger(Asset);
-			Message.WriteInteger(InputHash);
-			Message.WriteInteger(OutputHash);
-			return Algorithm::Signing::Verify(Message.Hash(), PublicKey, (uint8_t*)Signature->data());
+			format::stream message;
+			message.write_integer(asset);
+			message.write_integer(input_hash);
+			message.write_integer(output_hash);
+			return algorithm::signing::verify(message.hash(), public_key, (uint8_t*)signature->data());
 		}
-		bool AggregationTransaction::Recover(Algorithm::Pubkey PublicKey) const
+		bool aggregation_transaction::recover(algorithm::pubkey public_key) const
 		{
-			for (auto& Branch : OutputHashes)
+			for (auto& branch : output_hashes)
 			{
-				size_t SignatureIndex = 0;
-				for (auto& Candidate : Branch.second.Attestations)
+				size_t signature_index = 0;
+				for (auto& candidate : branch.second.attestations)
 				{
-					if (Candidate.size() != sizeof(Algorithm::Recsighash))
+					if (candidate.size() != sizeof(algorithm::recsighash))
 						return false;
 
-					if (Recover(PublicKey, Branch.first, SignatureIndex++))
-						return true;
-				}
-			}
-
-			return false;
-		}
-		bool AggregationTransaction::Recover(Algorithm::Pubkey PublicKey, const uint256_t& OutputHash, size_t Index) const
-		{
-			auto Branch = OutputHashes.find(OutputHash);
-			if (Branch == OutputHashes.end())
-				return false;
-
-			if (Index >= Branch->second.Attestations.size())
-				return false;
-
-			auto Signature = Branch->second.Attestations.begin();
-			for (size_t i = 0; i < Index; i++)
-				++Signature;
-
-			if (Signature->size() != sizeof(Algorithm::Recsighash))
-				return false;
-
-			Format::Stream Message;
-			Message.WriteInteger(Asset);
-			Message.WriteInteger(InputHash);
-			Message.WriteInteger(OutputHash);
-			return Algorithm::Signing::Recover(Message.Hash(), PublicKey, (uint8_t*)Signature->data());
-		}
-		bool AggregationTransaction::RecoverHash(Algorithm::Pubkeyhash PublicKeyHash) const
-		{
-			for (auto& Branch : OutputHashes)
-			{
-				size_t SignatureIndex = 0;
-				for (auto& Candidate : Branch.second.Attestations)
-				{
-					if (Candidate.size() != sizeof(Algorithm::Recsighash))
-						return false;
-
-					if (RecoverHash(PublicKeyHash, Branch.first, SignatureIndex++))
+					if (recover(public_key, branch.first, signature_index++))
 						return true;
 				}
 			}
 
 			return false;
 		}
-		bool AggregationTransaction::RecoverHash(Algorithm::Pubkeyhash PublicKeyHash, const uint256_t& OutputHash, size_t Index) const
+		bool aggregation_transaction::recover(algorithm::pubkey public_key, const uint256_t& output_hash, size_t index) const
 		{
-			auto Branch = OutputHashes.find(OutputHash);
-			if (Branch == OutputHashes.end())
+			auto branch = output_hashes.find(output_hash);
+			if (branch == output_hashes.end())
 				return false;
 
-			if (Index >= Branch->second.Attestations.size())
+			if (index >= branch->second.attestations.size())
 				return false;
 
-			auto Signature = Branch->second.Attestations.begin();
-			for (size_t i = 0; i < Index; i++)
-				++Signature;
+			auto signature = branch->second.attestations.begin();
+			for (size_t i = 0; i < index; i++)
+				++signature;
 
-			if (Signature->size() != sizeof(Algorithm::Recsighash))
+			if (signature->size() != sizeof(algorithm::recsighash))
 				return false;
 
-			Format::Stream Message;
-			Message.WriteInteger(Asset);
-			Message.WriteInteger(InputHash);
-			Message.WriteInteger(OutputHash);
-			return Algorithm::Signing::RecoverHash(Message.Hash(), PublicKeyHash, (uint8_t*)Signature->data());
+			format::stream message;
+			message.write_integer(asset);
+			message.write_integer(input_hash);
+			message.write_integer(output_hash);
+			return algorithm::signing::recover(message.hash(), public_key, (uint8_t*)signature->data());
 		}
-		bool AggregationTransaction::Attestate(const Algorithm::Seckey SecretKey)
+		bool aggregation_transaction::recover_hash(algorithm::pubkeyhash public_key_hash) const
 		{
-			if (OutputHashes.size() > 1)
+			for (auto& branch : output_hashes)
+			{
+				size_t signature_index = 0;
+				for (auto& candidate : branch.second.attestations)
+				{
+					if (candidate.size() != sizeof(algorithm::recsighash))
+						return false;
+
+					if (recover_hash(public_key_hash, branch.first, signature_index++))
+						return true;
+				}
+			}
+
+			return false;
+		}
+		bool aggregation_transaction::recover_hash(algorithm::pubkeyhash public_key_hash, const uint256_t& output_hash, size_t index) const
+		{
+			auto branch = output_hashes.find(output_hash);
+			if (branch == output_hashes.end())
 				return false;
 
-			auto GenesisBranch = OutputHashes.begin();
-			Format::Stream CumulativeMessage;
-			CumulativeMessage.WriteInteger(Asset);
-			CumulativeMessage.WriteInteger(InputHash);
-			CumulativeMessage.WriteInteger(GenesisBranch->first);
-
-			Algorithm::Recsighash CumulativeSignature;
-			if (!Algorithm::Signing::Sign(CumulativeMessage.Hash(), SecretKey, CumulativeSignature))
+			if (index >= branch->second.attestations.size())
 				return false;
 
-			GenesisBranch->second.Attestations.insert(String((char*)CumulativeSignature, sizeof(CumulativeSignature)));
+			auto signature = branch->second.attestations.begin();
+			for (size_t i = 0; i < index; i++)
+				++signature;
+
+			if (signature->size() != sizeof(algorithm::recsighash))
+				return false;
+
+			format::stream message;
+			message.write_integer(asset);
+			message.write_integer(input_hash);
+			message.write_integer(output_hash);
+			return algorithm::signing::recover_hash(message.hash(), public_key_hash, (uint8_t*)signature->data());
+		}
+		bool aggregation_transaction::attestate(const algorithm::seckey secret_key)
+		{
+			if (output_hashes.size() > 1)
+				return false;
+
+			auto genesis_branch = output_hashes.begin();
+			format::stream cumulative_message;
+			cumulative_message.write_integer(asset);
+			cumulative_message.write_integer(input_hash);
+			cumulative_message.write_integer(genesis_branch->first);
+
+			algorithm::recsighash cumulative_signature;
+			if (!algorithm::signing::sign(cumulative_message.hash(), secret_key, cumulative_signature))
+				return false;
+
+			genesis_branch->second.attestations.insert(string((char*)cumulative_signature, sizeof(cumulative_signature)));
 			return true;
 		}
-		bool AggregationTransaction::Merge(const TransactionContext* Context, const AggregationTransaction& Other)
+		bool aggregation_transaction::merge(const transaction_context* context, const aggregation_transaction& other)
 		{
-			if (Asset > 0 && Other.Asset != Asset)
+			if (asset > 0 && other.asset != asset)
 				return false;
-			else if (InputHash > 0 && Other.InputHash != InputHash)
-				return false;
-
-			Algorithm::Pubkeyhash Null = { 0 }, Owner = { 0 };
-			if (!Other.RecoverHash(Owner) || !memcmp(Owner, Null, sizeof(Null)))
+			else if (input_hash > 0 && other.input_hash != input_hash)
 				return false;
 
-			UnorderedSet<String> Proposers;
-			auto Branches = std::move(OutputHashes);
-			auto* BranchA = GetCumulativeBranch(Context);
-			auto* BranchB = Other.GetCumulativeBranch(Context);
-			size_t BranchLengthA = (BranchA ? BranchA->Attestations.size() : 0);
-			size_t BranchLengthB = (BranchB ? BranchB->Attestations.size() : 0);
-			if (BranchLengthA < BranchLengthB)
-				*this = Other;
+			algorithm::pubkeyhash null = { 0 }, owner = { 0 };
+			if (!other.recover_hash(owner) || !memcmp(owner, null, sizeof(null)))
+				return false;
 
-			Asset = Other.Asset;
-			InputHash = Other.InputHash;
-			OutputHashes = std::move(Branches);
-			if (GasLimit < Other.GasLimit)
-				GasLimit = Other.GasLimit;
-			if (GasPrice < Other.GasPrice)
-				GasPrice = Other.GasPrice;
+			unordered_set<string> proposers;
+			auto branches = std::move(output_hashes);
+			auto* branch_a = get_cumulative_branch(context);
+			auto* branch_b = other.get_cumulative_branch(context);
+			size_t branch_length_a = (branch_a ? branch_a->attestations.size() : 0);
+			size_t branch_length_b = (branch_b ? branch_b->attestations.size() : 0);
+			if (branch_length_a < branch_length_b)
+				*this = other;
 
-			for (auto& Branch : OutputHashes)
+			asset = other.asset;
+			input_hash = other.input_hash;
+			output_hashes = std::move(branches);
+			if (gas_limit < other.gas_limit)
+				gas_limit = other.gas_limit;
+			if (gas_price < other.gas_price)
+				gas_price = other.gas_price;
+
+			for (auto& branch : output_hashes)
 			{
-				Format::Stream CumulativeMessage;
-				CumulativeMessage.WriteInteger(Asset);
-				CumulativeMessage.WriteInteger(InputHash);
-				CumulativeMessage.WriteInteger(Branch.first);
+				format::stream cumulative_message;
+				cumulative_message.write_integer(asset);
+				cumulative_message.write_integer(input_hash);
+				cumulative_message.write_integer(branch.first);
 
-				uint256_t CumulativeMessageHash = CumulativeMessage.Hash();
-				for (auto& Signature : Branch.second.Attestations)
+				uint256_t cumulative_message_hash = cumulative_message.hash();
+				for (auto& signature : branch.second.attestations)
 				{
-					Algorithm::Pubkeyhash Proposer = { 0 };
-					if (Signature.size() == sizeof(Algorithm::Recsighash) && Algorithm::Signing::RecoverHash(CumulativeMessageHash, Proposer, (uint8_t*)Signature.data()))
-						Proposers.insert(String((char*)Proposer, sizeof(Proposer)));
+					algorithm::pubkeyhash proposer = { 0 };
+					if (signature.size() == sizeof(algorithm::recsighash) && algorithm::signing::recover_hash(cumulative_message_hash, proposer, (uint8_t*)signature.data()))
+						proposers.insert(string((char*)proposer, sizeof(proposer)));
 				}
 			}
 
-			for (auto& Branch : Other.OutputHashes)
+			for (auto& branch : other.output_hashes)
 			{
-				Format::Stream CumulativeMessage;
-				CumulativeMessage.WriteInteger(Asset);
-				CumulativeMessage.WriteInteger(InputHash);
-				CumulativeMessage.WriteInteger(Branch.first);
+				format::stream cumulative_message;
+				cumulative_message.write_integer(asset);
+				cumulative_message.write_integer(input_hash);
+				cumulative_message.write_integer(branch.first);
 
-				uint256_t CumulativeMessageHash = CumulativeMessage.Hash();
-				auto& Fork = OutputHashes[Branch.first];
-				for (auto& Signature : Branch.second.Attestations)
+				uint256_t cumulative_message_hash = cumulative_message.hash();
+				auto& fork = output_hashes[branch.first];
+				for (auto& signature : branch.second.attestations)
 				{
-					Algorithm::Pubkeyhash Proposer = { 0 };
-					if (Signature.size() == sizeof(Algorithm::Recsighash) && Algorithm::Signing::RecoverHash(CumulativeMessageHash, Proposer, (uint8_t*)Signature.data()) && Proposers.find(String((char*)Proposer, sizeof(Proposer))) == Proposers.end())
+					algorithm::pubkeyhash proposer = { 0 };
+					if (signature.size() == sizeof(algorithm::recsighash) && algorithm::signing::recover_hash(cumulative_message_hash, proposer, (uint8_t*)signature.data()) && proposers.find(string((char*)proposer, sizeof(proposer))) == proposers.end())
 					{
-						Proposers.insert(String((char*)Proposer, sizeof(Proposer)));
-						Fork.Attestations.insert(Signature);
+						proposers.insert(string((char*)proposer, sizeof(proposer)));
+						fork.attestations.insert(signature);
 					}
 				}
 			}
 
 			return true;
 		}
-		bool AggregationTransaction::IsSignatureNull() const
+		bool aggregation_transaction::is_signature_null() const
 		{
-			Algorithm::Recsighash Null = { 0 };
-			for (auto& Branch : OutputHashes)
+			algorithm::recsighash null = { 0 };
+			for (auto& branch : output_hashes)
 			{
-				for (auto& Candidate : Branch.second.Attestations)
+				for (auto& candidate : branch.second.attestations)
 				{
-					if (Candidate.size() != sizeof(Null) || !memcmp(Candidate.data(), Null, sizeof(Null)))
+					if (candidate.size() != sizeof(null) || !memcmp(candidate.data(), null, sizeof(null)))
 						return true;
 				}
 			}
-			return memcmp(Signature, Null, sizeof(Null)) == 0;
+			return memcmp(signature, null, sizeof(null)) == 0;
 		}
-		bool AggregationTransaction::IsConsensusReached() const
+		bool aggregation_transaction::is_consensus_reached() const
 		{
-			if (OutputHashes.size() != 1)
+			if (output_hashes.size() != 1)
 				return false;
 
-			auto GenesisBranch = OutputHashes.begin();
-			if (GenesisBranch->second.Attestations.empty())
+			auto genesis_branch = output_hashes.begin();
+			if (genesis_branch->second.attestations.empty())
 				return false;
 
-			return GenesisBranch->second.Message.Hash() == GenesisBranch->first;
+			return genesis_branch->second.message.hash() == genesis_branch->first;
 		}
-		void AggregationTransaction::SetOptimalGas(const Decimal& Price)
+		void aggregation_transaction::set_optimal_gas(const decimal& price)
 		{
-			auto OptimalGas = Ledger::TransactionContext::CalculateTxGas(this);
-			if (OptimalGas)
+			auto optimal_gas = ledger::transaction_context::calculate_tx_gas(this);
+			if (optimal_gas)
 			{
-				Format::Stream Message;
-				auto Blob = String(sizeof(Algorithm::Recsighash), '0');
-				size_t Size = (size_t)Protocol::Now().Policy.AggregatorsCommitteeSize;
-				Message.WriteInteger((uint16_t)OutputHashes.size());
-				Message.WriteString(String(sizeof(Mediator::IncomingTransaction) * 10, '0'));
-				Message.WriteInteger((uint16_t)Size);
-				for (size_t i = 0; i < Size; i++)
-					Message.WriteString(Blob);
+				format::stream message;
+				auto blob = string(sizeof(algorithm::recsighash), '0');
+				size_t size = (size_t)protocol::now().policy.aggregators_committee_size;
+				message.write_integer((uint16_t)output_hashes.size());
+				message.write_string(string(sizeof(mediator::incoming_transaction) * 10, '0'));
+				message.write_integer((uint16_t)size);
+				for (size_t i = 0; i < size; i++)
+					message.write_string(blob);
 
-				SetGas(Price, *OptimalGas + Message.Data.size() * (uint64_t)GasCost::WriteByte);
+				set_gas(price, *optimal_gas + message.data.size() * (uint64_t)gas_cost::write_byte);
 			}
 			else
-				SetGas(Price, GetGasEstimate());
+				set_gas(price, get_gas_estimate());
 		}
-		void AggregationTransaction::SetConsensus(const uint256_t& OutputHash)
+		void aggregation_transaction::set_consensus(const uint256_t& output_hash)
 		{
-			auto It = OutputHashes.find(OutputHash);
-			if (It == OutputHashes.end())
-				return OutputHashes.clear();
+			auto it = output_hashes.find(output_hash);
+			if (it == output_hashes.end())
+				return output_hashes.clear();
 
-			auto Value = std::move(It->second);
-			OutputHashes.clear();
-			OutputHashes[OutputHash] = std::move(Value);
+			auto value = std::move(it->second);
+			output_hashes.clear();
+			output_hashes[output_hash] = std::move(value);
 		}
-		void AggregationTransaction::SetSignature(const Algorithm::Recsighash NewValue)
+		void aggregation_transaction::set_signature(const algorithm::recsighash new_value)
 		{
-			VI_ASSERT(NewValue != nullptr, "new value should be set");
-			memcpy(Signature, NewValue, sizeof(Algorithm::Recsighash));
+			VI_ASSERT(new_value != nullptr, "new value should be set");
+			memcpy(signature, new_value, sizeof(algorithm::recsighash));
 		}
-		void AggregationTransaction::SetStatement(const uint256_t& NewInputHash, const Format::Stream& OutputMessage)
+		void aggregation_transaction::set_statement(const uint256_t& new_input_hash, const format::stream& output_message)
 		{
-			OutputHashes.clear();
-			OutputHashes[OutputMessage.Hash()].Message = OutputMessage;
-			InputHash = NewInputHash;
+			output_hashes.clear();
+			output_hashes[output_message.hash()].message = output_message;
+			input_hash = new_input_hash;
 		}
-		const AggregationTransaction::CumulativeBranch* AggregationTransaction::GetCumulativeBranch(const TransactionContext* Context) const
+		const aggregation_transaction::cumulative_branch* aggregation_transaction::get_cumulative_branch(const transaction_context* context) const
 		{
-			if (!Context)
-				return OutputHashes.size() == 1 ? &OutputHashes.begin()->second : nullptr;
+			if (!context)
+				return output_hashes.size() == 1 ? &output_hashes.begin()->second : nullptr;
 
-			uint256_t BestBranchWork = 0;
-			const CumulativeBranch* BestBranch = nullptr;
-			auto& Policy = Protocol::Now().Policy;
-			for (auto& Branch : OutputHashes)
+			uint256_t best_branch_work = 0;
+			const cumulative_branch* best_branch = nullptr;
+			auto& policy = protocol::now().policy;
+			for (auto& branch : output_hashes)
 			{
-				Format::Stream CumulativeMessage;
-				CumulativeMessage.WriteInteger(Asset);
-				CumulativeMessage.WriteInteger(InputHash);
-				CumulativeMessage.WriteInteger(Branch.first);
+				format::stream cumulative_message;
+				cumulative_message.write_integer(asset);
+				cumulative_message.write_integer(input_hash);
+				cumulative_message.write_integer(branch.first);
 
-				uint256_t CumulativeMessageHash = CumulativeMessage.Hash();
-				uint256_t BranchWork = 0, WorkLimit = uint256_t::Max() / uint256_t(Branch.second.Attestations.size());
-				for (auto& Signature : Branch.second.Attestations)
+				uint256_t cumulative_message_hash = cumulative_message.hash();
+				uint256_t branch_work = 0, work_limit = uint256_t::max() / uint256_t(branch.second.attestations.size());
+				for (auto& signature : branch.second.attestations)
 				{
-					Algorithm::Pubkeyhash Proposer = { 0 };
-					if (Signature.size() != sizeof(Algorithm::Recsighash) || !Algorithm::Signing::RecoverHash(CumulativeMessageHash, Proposer, (uint8_t*)Signature.data()))
+					algorithm::pubkeyhash proposer = { 0 };
+					if (signature.size() != sizeof(algorithm::recsighash) || !algorithm::signing::recover_hash(cumulative_message_hash, proposer, (uint8_t*)signature.data()))
 						continue;
 
-					auto Work = Context->GetAccountWork(Proposer);
-					BranchWork += std::min(Work ? Work->GetGasUse() : uint256_t(0), WorkLimit);
+					auto work = context->get_account_work(proposer);
+					branch_work += std::min(work ? work->get_gas_use() : uint256_t(0), work_limit);
 				}
 
-				if (BranchWork > BestBranchWork)
+				if (branch_work > best_branch_work)
 				{
-					BestBranch = &Branch.second;
-					BestBranchWork = BranchWork;
+					best_branch = &branch.second;
+					best_branch_work = branch_work;
 				}
 			}
-			return BestBranch;
+			return best_branch;
 		}
-		Option<AggregationTransaction::CumulativeConsensus> AggregationTransaction::CalculateCumulativeConsensus(OrderedMap<Algorithm::AssetId, size_t>* Aggregators, TransactionContext* Context) const
+		option<aggregation_transaction::cumulative_consensus> aggregation_transaction::calculate_cumulative_consensus(ordered_map<algorithm::asset_id, size_t>* aggregators, transaction_context* context) const
 		{
-			if (!Context)
-				return Optional::None;
+			if (!context)
+				return optional::none;
 
-			auto* Branch = GetCumulativeBranch(Context);
-			if (!Branch || Branch->Attestations.empty())
-				return Optional::None;
-			
-			size_t Committee = 0;
-			if (Aggregators != nullptr)
+			auto* branch = get_cumulative_branch(context);
+			if (!branch || branch->attestations.empty())
+				return optional::none;
+
+			size_t committee = 0;
+			if (aggregators != nullptr)
 			{
-				auto It = Aggregators->find(Asset);
-				if (It == Aggregators->end())
-					(*Aggregators)[Asset] = Committee = Context->CalculateAggregationCommitteeSize(Asset).Or(0);
+				auto it = aggregators->find(asset);
+				if (it == aggregators->end())
+					(*aggregators)[asset] = committee = context->calculate_aggregation_committee_size(asset).otherwise(0);
 				else
-					Committee = It->second;
+					committee = it->second;
 			}
 			else
-				Committee = Context->CalculateAggregationCommitteeSize(Asset).Or(0);
+				committee = context->calculate_aggregation_committee_size(asset).otherwise(0);
 
-			CumulativeConsensus Consensus;
-			Consensus.Branch = Branch;
-			Consensus.Committee = std::min(Committee, Protocol::Now().Policy.AggregatorsCommitteeSize);
-			Consensus.Threshold = Protocol::Now().Policy.AggregationThreshold;
-			Consensus.Progress = Consensus.Committee > 0 ? ((double)Branch->Attestations.size() / (double)Consensus.Committee) : 0.0;
-			Consensus.Reached = Consensus.Progress >= Consensus.Threshold;
-			return Consensus;
+			cumulative_consensus consensus;
+			consensus.branch = branch;
+			consensus.committee = std::min(committee, protocol::now().policy.aggregators_committee_size);
+			consensus.threshold = protocol::now().policy.aggregation_threshold;
+			consensus.progress = consensus.committee > 0 ? ((double)branch->attestations.size() / (double)consensus.committee) : 0.0;
+			consensus.reached = consensus.progress >= consensus.threshold;
+			return consensus;
 		}
-		uint256_t AggregationTransaction::GetCumulativeHash() const
+		uint256_t aggregation_transaction::get_cumulative_hash() const
 		{
-			Format::Stream Message;
-			Message.WriteInteger(Asset);
-			Message.WriteInteger(InputHash);
-			return Message.Hash();
+			format::stream message;
+			message.write_integer(asset);
+			message.write_integer(input_hash);
+			return message.hash();
 		}
-		TransactionLevel AggregationTransaction::GetType() const
+		transaction_level aggregation_transaction::get_type() const
 		{
-			return TransactionLevel::Aggregation;
+			return transaction_level::aggregation;
 		}
-		UPtr<Schema> AggregationTransaction::AsSchema() const
+		uptr<schema> aggregation_transaction::as_schema() const
 		{
-			Schema* Data = Ledger::Transaction::AsSchema().Reset();
-			Data->Set("input_hash", Var::String(Algorithm::Encoding::Encode0xHex256(InputHash)));
+			schema* data = ledger::transaction::as_schema().reset();
+			data->set("input_hash", var::string(algorithm::encoding::encode_0xhex256(input_hash)));
 
-			auto* Branches = Data->Set("output_hashes", Var::Set::Object());
-			for (auto& Branch : OutputHashes)
+			auto* branches = data->set("output_hashes", var::set::object());
+			for (auto& branch : output_hashes)
 			{
-				auto* Signatures = Branches->Set(Algorithm::Encoding::Encode0xHex256(Branch.first), Var::Set::Array());
-				for (auto& Signature : Branch.second.Attestations)
-					Signatures->Push(Var::String(Format::Util::Encode0xHex(Signature)));
+				auto* signatures = branches->set(algorithm::encoding::encode_0xhex256(branch.first), var::set::array());
+				for (auto& signature : branch.second.attestations)
+					signatures->push(var::string(format::util::encode_0xhex(signature)));
 			}
-			return Data;
+			return data;
 		}
 
-		bool Receipt::StorePayload(Format::Stream* Stream) const
+		bool receipt::store_payload(format::stream* stream) const
 		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Stream->WriteInteger(TransactionHash);
-			Stream->WriteInteger(AbsoluteGasUse);
-			Stream->WriteInteger(RelativeGasUse);
-			Stream->WriteInteger(RelativeGasPaid);
-			Stream->WriteInteger(GenerationTime);
-			Stream->WriteInteger(FinalizationTime);
-			Stream->WriteInteger(BlockNumber);
-			Stream->WriteBoolean(Successful);
-			Stream->WriteString(std::string_view((char*)From, IsFromNull() ? 0 : sizeof(From)));
-			Stream->WriteInteger((uint16_t)Events.size());
-			for (auto& Item : Events)
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_integer(transaction_hash);
+			stream->write_integer(absolute_gas_use);
+			stream->write_integer(relative_gas_use);
+			stream->write_integer(relative_gas_paid);
+			stream->write_integer(generation_time);
+			stream->write_integer(finalization_time);
+			stream->write_integer(block_number);
+			stream->write_boolean(successful);
+			stream->write_string(std::string_view((char*)from, is_from_null() ? 0 : sizeof(from)));
+			stream->write_integer((uint16_t)events.size());
+			for (auto& item : events)
 			{
-				Stream->WriteInteger(Item.first);
-				if (!Format::VariablesUtil::SerializeMergeInto(Item.second, Stream))
+				stream->write_integer(item.first);
+				if (!format::variables_util::serialize_merge_into(item.second, stream))
 					return false;
 			}
 			return true;
 		}
-		bool Receipt::LoadPayload(Format::Stream& Stream)
+		bool receipt::load_payload(format::stream& stream)
 		{
-			if (!Stream.ReadInteger(Stream.ReadType(), &TransactionHash))
+			if (!stream.read_integer(stream.read_type(), &transaction_hash))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &AbsoluteGasUse))
+			if (!stream.read_integer(stream.read_type(), &absolute_gas_use))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &RelativeGasUse))
+			if (!stream.read_integer(stream.read_type(), &relative_gas_use))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &RelativeGasPaid))
+			if (!stream.read_integer(stream.read_type(), &relative_gas_paid))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &GenerationTime))
+			if (!stream.read_integer(stream.read_type(), &generation_time))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &FinalizationTime))
+			if (!stream.read_integer(stream.read_type(), &finalization_time))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &BlockNumber))
+			if (!stream.read_integer(stream.read_type(), &block_number))
 				return false;
 
-			if (!Stream.ReadBoolean(Stream.ReadType(), &Successful))
+			if (!stream.read_boolean(stream.read_type(), &successful))
 				return false;
 
-			String FromAssembly;
-			if (!Stream.ReadString(Stream.ReadType(), &FromAssembly) || !Algorithm::Encoding::DecodeUintBlob(FromAssembly, From, sizeof(From)))
+			string from_assembly;
+			if (!stream.read_string(stream.read_type(), &from_assembly) || !algorithm::encoding::decode_uint_blob(from_assembly, from, sizeof(from)))
 				return false;
 
-			uint16_t Size;
-			if (!Stream.ReadInteger(Stream.ReadType(), &Size))
+			uint16_t size;
+			if (!stream.read_integer(stream.read_type(), &size))
 				return false;
 
-			Events.clear();
-			Events.reserve((size_t)Size);
-			for (uint16_t i = 0; i < Size; i++)
+			events.clear();
+			events.reserve((size_t)size);
+			for (uint16_t i = 0; i < size; i++)
 			{
-				uint32_t Type;
-				if (!Stream.ReadInteger(Stream.ReadType(), &Type))
+				uint32_t type;
+				if (!stream.read_integer(stream.read_type(), &type))
 					return false;
 
-				Format::Variables Values;
-				if (!Format::VariablesUtil::DeserializeMergeFrom(Stream, &Values))
+				format::variables values;
+				if (!format::variables_util::deserialize_merge_from(stream, &values))
 					return false;
 
-				Events.emplace_back(std::make_pair(Type, std::move(Values)));
+				events.emplace_back(std::make_pair(type, std::move(values)));
 			}
 
 			return true;
 		}
-		bool Receipt::IsFromNull() const
+		bool receipt::is_from_null() const
 		{
-			Algorithm::Pubkeyhash Null = { 0 };
-			return memcmp(From, Null, sizeof(Null)) == 0;
+			algorithm::pubkeyhash null = { 0 };
+			return memcmp(from, null, sizeof(null)) == 0;
 		}
-		void Receipt::EmitEvent(uint32_t Type, Format::Variables&& Values)
+		void receipt::emit_event(uint32_t type, format::variables&& values)
 		{
-			Events.emplace_back(std::make_pair(Type, std::move(Values)));
+			events.emplace_back(std::make_pair(type, std::move(values)));
 		}
-		const Format::Variables* Receipt::FindEvent(uint32_t Type, size_t Offset) const
+		const format::variables* receipt::find_event(uint32_t type, size_t offset) const
 		{
-			for (auto& Item : Events)
+			for (auto& item : events)
 			{
-				if (Item.first == Type && !Offset--)
-					return &Item.second;
+				if (item.first == type && !offset--)
+					return &item.second;
 			}
 			return nullptr;
 		}
-		const Format::Variables* Receipt::ReverseFindEvent(uint32_t Type, size_t Offset) const
+		const format::variables* receipt::reverse_find_event(uint32_t type, size_t offset) const
 		{
-			for (auto It = Events.rbegin(); It != Events.rend(); ++It)
+			for (auto it = events.rbegin(); it != events.rend(); ++it)
 			{
-				auto& Item = *It;
-				if (Item.first == Type && !Offset--)
-					return &Item.second;
+				auto& item = *it;
+				if (item.first == type && !offset--)
+					return &item.second;
 			}
 			return nullptr;
 		}
-		Option<String> Receipt::GetErrorMessages() const
+		option<string> receipt::get_error_messages() const
 		{
-			String Messages;
-			size_t Offset = 0;
+			string messages;
+			size_t offset = 0;
 			while (true)
 			{
-				auto* Event = FindEvent(0, Offset++);
-				if (Event && !Event->empty())
-					Messages.append(Event->front().AsBlob()).push_back('\n');
-				else if (!Event)
+				auto* event = find_event(0, offset++);
+				if (event && !event->empty())
+					messages.append(event->front().as_blob()).push_back('\n');
+				else if (!event)
 					break;
 			}
 
-			if (Messages.empty())
-				return Optional::None;
+			if (messages.empty())
+				return optional::none;
 
-			Messages.pop_back();
-			return Messages;
+			messages.pop_back();
+			return messages;
 		}
-		UPtr<Schema> Receipt::AsSchema() const
+		uptr<schema> receipt::as_schema() const
 		{
-			Schema* Data = Var::Set::Object();
-			Data->Set("hash", Var::String(Algorithm::Encoding::Encode0xHex256(AsHash())));
-			Data->Set("transaction_hash", Var::String(Algorithm::Encoding::Encode0xHex256(TransactionHash)));
-			Data->Set("from", Algorithm::Signing::SerializeAddress(From));
-			Data->Set("absolute_gas_use", Algorithm::Encoding::SerializeUint256(AbsoluteGasUse));
-			Data->Set("relative_gas_use", Algorithm::Encoding::SerializeUint256(RelativeGasUse));
-			Data->Set("relative_gas_paid", Algorithm::Encoding::SerializeUint256(RelativeGasPaid));
-			Data->Set("generation_time", Algorithm::Encoding::SerializeUint256(GenerationTime));
-			Data->Set("finalization_time", Algorithm::Encoding::SerializeUint256(FinalizationTime));
-			Data->Set("block_number", Algorithm::Encoding::SerializeUint256(BlockNumber));
-			Data->Set("successful", Var::Boolean(Successful));
-			auto* EventsData = Data->Set("events", Var::Set::Array());
-			for (auto& Item : Events)
+			schema* data = var::set::object();
+			data->set("hash", var::string(algorithm::encoding::encode_0xhex256(as_hash())));
+			data->set("transaction_hash", var::string(algorithm::encoding::encode_0xhex256(transaction_hash)));
+			data->set("from", algorithm::signing::serialize_address(from));
+			data->set("absolute_gas_use", algorithm::encoding::serialize_uint256(absolute_gas_use));
+			data->set("relative_gas_use", algorithm::encoding::serialize_uint256(relative_gas_use));
+			data->set("relative_gas_paid", algorithm::encoding::serialize_uint256(relative_gas_paid));
+			data->set("generation_time", algorithm::encoding::serialize_uint256(generation_time));
+			data->set("finalization_time", algorithm::encoding::serialize_uint256(finalization_time));
+			data->set("block_number", algorithm::encoding::serialize_uint256(block_number));
+			data->set("successful", var::boolean(successful));
+			auto* events_data = data->set("events", var::set::array());
+			for (auto& item : events)
 			{
-				auto* EventData = EventsData->Push(Var::Set::Object());
-				EventData->Set("event", Var::Integer(Item.first));
-				EventData->Set("args", Format::VariablesUtil::Serialize(Item.second));
+				auto* event_data = events_data->push(var::set::object());
+				event_data->set("event", var::integer(item.first));
+				event_data->set("args", format::variables_util::serialize(item.second));
 			}
-			return Data;
+			return data;
 		}
-		uint32_t Receipt::AsType() const
+		uint32_t receipt::as_type() const
 		{
-			return AsInstanceType();
+			return as_instance_type();
 		}
-		std::string_view Receipt::AsTypename() const
+		std::string_view receipt::as_typename() const
 		{
-			return AsInstanceTypename();
+			return as_instance_typename();
 		}
-		uint32_t Receipt::AsInstanceType()
+		uint32_t receipt::as_instance_type()
 		{
-			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
-			return Hash;
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
 		}
-		std::string_view Receipt::AsInstanceTypename()
+		std::string_view receipt::as_instance_typename()
 		{
 			return "receipt";
 		}
 
-		State::State(uint64_t NewBlockNumber, uint64_t NewBlockNonce) : BlockNumber(NewBlockNumber), BlockNonce(NewBlockNonce)
+		state::state(uint64_t new_block_number, uint64_t new_block_nonce) : block_number(new_block_number), block_nonce(new_block_nonce)
 		{
 		}
-		State::State(const BlockHeader* NewBlockHeader) : BlockNumber(NewBlockHeader ? NewBlockHeader->Number : 0), BlockNonce(NewBlockHeader ? NewBlockHeader->MutationCount : 0)
+		state::state(const block_header* new_block_header) : block_number(new_block_header ? new_block_header->number : 0), block_nonce(new_block_header ? new_block_header->mutation_count : 0)
 		{
 		}
-		bool State::Store(Format::Stream* Stream) const
+		bool state::store(format::stream* stream) const
 		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Stream->WriteInteger(Version);
-			Stream->WriteInteger(AsType());
-			Stream->WriteInteger(BlockNumber);
-			Stream->WriteInteger(BlockNonce);
-			return StorePayload(Stream);
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_integer(version);
+			stream->write_integer(as_type());
+			stream->write_integer(block_number);
+			stream->write_integer(block_nonce);
+			return store_payload(stream);
 		}
-		bool State::Load(Format::Stream& Stream)
+		bool state::load(format::stream& stream)
 		{
-			auto Type = ResolveType(Stream, &Version);
-			if (!Type || *Type != AsType())
+			auto type = resolve_type(stream, &version);
+			if (!type || *type != as_type())
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &BlockNumber))
+			if (!stream.read_integer(stream.read_type(), &block_number))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &BlockNonce))
+			if (!stream.read_integer(stream.read_type(), &block_nonce))
 				return false;
 
-			if (!LoadPayload(Stream))
+			if (!load_payload(stream))
 				return false;
 
 			return true;
 		}
 
-		Uniform::Uniform(uint64_t NewBlockNumber, uint64_t NewBlockNonce) : State(NewBlockNumber, NewBlockNonce)
+		uniform::uniform(uint64_t new_block_number, uint64_t new_block_nonce) : state(new_block_number, new_block_nonce)
 		{
 		}
-		Uniform::Uniform(const BlockHeader* NewBlockHeader) : State(NewBlockHeader)
+		uniform::uniform(const block_header* new_block_header) : state(new_block_header)
 		{
 		}
-		UPtr<Schema> Uniform::AsSchema() const
+		uptr<schema> uniform::as_schema() const
 		{
-			Schema* Data = Var::Set::Object();
-			Data->Set("hash", Var::String(Algorithm::Encoding::Encode0xHex256(AsHash())));
-			Data->Set("type", Var::String(AsTypename()));
-			Data->Set("index", Var::String(Format::Util::Encode0xHex(AsIndex())));
-			Data->Set("block_number", Algorithm::Encoding::SerializeUint256(BlockNumber));
-			Data->Set("block_nonce", Algorithm::Encoding::SerializeUint256(BlockNonce));
-			return Data;
+			schema* data = var::set::object();
+			data->set("hash", var::string(algorithm::encoding::encode_0xhex256(as_hash())));
+			data->set("type", var::string(as_typename()));
+			data->set("index", var::string(format::util::encode_0xhex(as_index())));
+			data->set("block_number", algorithm::encoding::serialize_uint256(block_number));
+			data->set("block_nonce", algorithm::encoding::serialize_uint256(block_nonce));
+			return data;
 		}
-		StateLevel Uniform::AsLevel() const
+		state_level uniform::as_level() const
 		{
-			return StateLevel::Uniform;
+			return state_level::uniform;
 		}
-		String Uniform::AsComposite() const
+		string uniform::as_composite() const
 		{
-			return AsInstanceComposite(AsIndex());
+			return as_instance_composite(as_index());
 		}
-		String Uniform::AsInstanceComposite(const std::string_view& Index)
+		string uniform::as_instance_composite(const std::string_view& index)
 		{
-			auto Composite = String(1 + Index.size(), 1);
-			memcpy(Composite.data() + 1, Index.data(), Index.size());
-			return Composite;
-		}
-
-		Multiform::Multiform(uint64_t NewBlockNumber, uint64_t NewBlockNonce) : State(NewBlockNumber, NewBlockNonce)
-		{
-		}
-		Multiform::Multiform(const BlockHeader* NewBlockHeader) : State(NewBlockHeader)
-		{
-		}
-		UPtr<Schema> Multiform::AsSchema() const
-		{
-			Schema* Data = Var::Set::Object();
-			Data->Set("hash", Var::String(Algorithm::Encoding::Encode0xHex256(AsHash())));
-			Data->Set("type", Var::String(AsTypename()));
-			Data->Set("column", Var::String(Format::Util::Encode0xHex(AsColumn())));
-			Data->Set("row", Var::String(Format::Util::Encode0xHex(AsRow())));
-			Data->Set("factor", Var::Integer(AsFactor()));
-			Data->Set("block_number", Algorithm::Encoding::SerializeUint256(BlockNumber));
-			Data->Set("block_nonce", Algorithm::Encoding::SerializeUint256(BlockNonce));
-			return Data;
-		}
-		StateLevel Multiform::AsLevel() const
-		{
-			return StateLevel::Multiform;
-		}
-		String Multiform::AsComposite() const
-		{
-			return AsInstanceComposite(AsColumn(), AsRow());
-		}
-		String Multiform::AsInstanceComposite(const std::string_view& Column, const std::string_view& Row)
-		{
-			auto Composite = String(1 + Column.size() + Row.size(), 2);
-			memcpy(Composite.data() + 1, Column.data(), Column.size());
-			memcpy(Composite.data() + 1 + Column.size(), Row.data(), Row.size());
-			return Composite;
+			auto composite = string(1 + index.size(), 1);
+			memcpy(composite.data() + 1, index.data(), index.size());
+			return composite;
 		}
 
-		uint256_t GasUtil::GetGasWork(const uint128_t& Difficulty, const uint256_t& GasUse, const uint256_t& GasLimit, uint64_t Priority)
+		multiform::multiform(uint64_t new_block_number, uint64_t new_block_nonce) : state(new_block_number, new_block_nonce)
 		{
-			if (!GasLimit)
+		}
+		multiform::multiform(const block_header* new_block_header) : state(new_block_header)
+		{
+		}
+		uptr<schema> multiform::as_schema() const
+		{
+			schema* data = var::set::object();
+			data->set("hash", var::string(algorithm::encoding::encode_0xhex256(as_hash())));
+			data->set("type", var::string(as_typename()));
+			data->set("column", var::string(format::util::encode_0xhex(as_column())));
+			data->set("row", var::string(format::util::encode_0xhex(as_row())));
+			data->set("factor", var::integer(as_factor()));
+			data->set("block_number", algorithm::encoding::serialize_uint256(block_number));
+			data->set("block_nonce", algorithm::encoding::serialize_uint256(block_nonce));
+			return data;
+		}
+		state_level multiform::as_level() const
+		{
+			return state_level::multiform;
+		}
+		string multiform::as_composite() const
+		{
+			return as_instance_composite(as_column(), as_row());
+		}
+		string multiform::as_instance_composite(const std::string_view& column, const std::string_view& row)
+		{
+			auto composite = string(1 + column.size() + row.size(), 2);
+			memcpy(composite.data() + 1, column.data(), column.size());
+			memcpy(composite.data() + 1 + column.size(), row.data(), row.size());
+			return composite;
+		}
+
+		uint256_t gas_util::get_gas_work(const uint128_t& difficulty, const uint256_t& gas_use, const uint256_t& gas_limit, uint64_t priority)
+		{
+			if (!gas_limit)
 				return 0;
 
-			auto& Policy = Protocol::Now().Policy;
-			uint256_t Alignment = 16;
-			uint256_t Committee = Policy.ConsensusCommitteeSize;
-			uint256_t Multiplier = Priority >= Committee ? 0 : Math64u::Pow3(Committee - Priority);
-			uint256_t Work = (Multiplier * GasUse) / GasLimit;
-			return Work - (Work % Alignment) + Alignment;
+			auto& policy = protocol::now().policy;
+			uint256_t alignment = 16;
+			uint256_t committee = policy.consensus_committee_size;
+			uint256_t multiplier = priority >= committee ? 0 : math64u::pow3(committee - priority);
+			uint256_t work = (multiplier * gas_use) / gas_limit;
+			return work - (work % alignment) + alignment;
 		}
-		uint256_t GasUtil::GetOperationalGasEstimate(size_t Bytes, size_t Operations)
+		uint256_t gas_util::get_operational_gas_estimate(size_t bytes, size_t operations)
 		{
-			Algorithm::Pubkeyhash Owner = { 1 };
-			static size_t Limit = States::AccountSequence(Owner, 1, 1).AsMessage().Data.size();
-			Bytes += Limit * Operations;
-			return GetStorageGasEstimate(Bytes, Bytes);
+			algorithm::pubkeyhash owner = { 1 };
+			static size_t limit = states::account_sequence(owner, 1, 1).as_message().data.size();
+			bytes += limit * operations;
+			return get_storage_gas_estimate(bytes, bytes);
 		}
-		uint256_t GasUtil::GetStorageGasEstimate(size_t BytesIn, size_t BytesOut)
+		uint256_t gas_util::get_storage_gas_estimate(size_t bytes_in, size_t bytes_out)
 		{
-			const double HeapOverhead = 2.0, FormatOverhead = 1.05;
-			BytesIn = (size_t)((double)BytesIn * FormatOverhead / HeapOverhead);
-			BytesOut = (size_t)((double)BytesOut * FormatOverhead / HeapOverhead);
+			const double heap_overhead = 2.0, format_overhead = 1.05;
+			bytes_in = (size_t)((double)bytes_in * format_overhead / heap_overhead);
+			bytes_out = (size_t)((double)bytes_out * format_overhead / heap_overhead);
 
-			uint256_t Gas = BytesIn * (size_t)Ledger::GasCost::WriteByte + BytesOut * (size_t)Ledger::GasCost::ReadByte;
-			Gas -= Gas % 1000;
-			return Gas + 1000;
+			uint256_t gas = bytes_in * (size_t)ledger::gas_cost::write_byte + bytes_out * (size_t)ledger::gas_cost::read_byte;
+			gas -= gas % 1000;
+			return gas + 1000;
 		}
 	}
 }

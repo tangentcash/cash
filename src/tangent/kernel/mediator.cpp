@@ -2,1632 +2,1632 @@
 #include "../validator/service/nss.h"
 #include <sstream>
 
-namespace Tangent
+namespace tangent
 {
-	namespace Mediator
+	namespace mediator
 	{
-		static bool IsPrivateKeyEmptyOrWhitespace(const PrivateKey& Value)
+		static bool is_secret_box_empty_or_whitespace(const secret_box& value)
 		{
-			if (!Value.Size())
+			if (!value.size())
 				return true;
 
-			auto Data = Value.Expose<KEY_LIMIT>();
-			for (char V : Data.View)
+			auto data = value.expose<KEY_LIMIT>();
+			for (char v : data.view)
 			{
-				if (V != ' ' && V != '\t' && V != '\r' && V != '\n')
+				if (v != ' ' && v != '\t' && v != '\r' && v != '\n')
 					return false;
 			}
 
 			return true;
 		}
 
-		TokenUTXO::TokenUTXO() : Decimals(0)
+		token_utxo::token_utxo() : decimals(0)
 		{
 		}
-		TokenUTXO::TokenUTXO(const std::string_view& NewContractAddress, const Decimal& NewValue) : ContractAddress(NewContractAddress), Value(NewValue), Decimals(0)
+		token_utxo::token_utxo(const std::string_view& new_contract_address, const decimal& new_value) : contract_address(new_contract_address), value(new_value), decimals(0)
 		{
 		}
-		TokenUTXO::TokenUTXO(const std::string_view& NewContractAddress, const std::string_view& NewSymbol, const Decimal& NewValue, uint8_t NewDecimals) : ContractAddress(NewContractAddress), Symbol(NewSymbol), Value(NewValue), Decimals(NewDecimals)
+		token_utxo::token_utxo(const std::string_view& new_contract_address, const std::string_view& new_symbol, const decimal& new_value, uint8_t new_decimals) : contract_address(new_contract_address), symbol(new_symbol), value(new_value), decimals(new_decimals)
 		{
 		}
-		Decimal TokenUTXO::GetDivisibility()
+		decimal token_utxo::get_divisibility()
 		{
-			Decimal Divisibility = Decimals > 0 ? Decimal("1" + String(Decimals, '0')) : Decimal(1);
-			return Divisibility.Truncate(Protocol::Now().Message.Precision);
+			decimal divisibility = decimals > 0 ? decimal("1" + string(decimals, '0')) : decimal(1);
+			return divisibility.truncate(protocol::now().message.precision);
 		}
-		bool TokenUTXO::IsCoinValid() const
+		bool token_utxo::is_coin_valid() const
 		{
-			return !ContractAddress.empty() && !Symbol.empty() && !Value.IsNegative() && !Value.IsNaN();
+			return !contract_address.empty() && !symbol.empty() && !value.is_negative() && !value.is_nan();
 		}
 
-		CoinUTXO::CoinUTXO(const std::string_view& NewTransactionId, const std::string_view& NewAddress, Option<uint64_t>&& NewAddressIndex, Decimal&& NewValue, uint32_t NewIndex) : TransactionId(NewTransactionId), Address(NewAddress), Value(std::move(NewValue)), AddressIndex(NewAddressIndex), Index(NewIndex)
+		coin_utxo::coin_utxo(const std::string_view& new_transaction_id, const std::string_view& new_address, option<uint64_t>&& new_address_index, decimal&& new_value, uint32_t new_index) : transaction_id(new_transaction_id), address(new_address), value(std::move(new_value)), address_index(new_address_index), index(new_index)
 		{
 		}
-		void CoinUTXO::ApplyTokenValue(const std::string_view& ContractAddress, const std::string_view& Symbol, const Decimal& NewValue, uint8_t Decimals)
+		void coin_utxo::apply_token_value(const std::string_view& contract_address, const std::string_view& symbol, const decimal& new_value, uint8_t decimals)
 		{
-			if (!ContractAddress.empty())
+			if (!contract_address.empty())
 			{
-				for (auto& Item : Tokens)
+				for (auto& item : tokens)
 				{
-					if (Item.ContractAddress == ContractAddress)
+					if (item.contract_address == contract_address)
 					{
-						if (Item.Value.IsNaN())
-							Item.Value = NewValue;
+						if (item.value.is_nan())
+							item.value = new_value;
 						else
-							Item.Value += NewValue;
+							item.value += new_value;
 						return;
 					}
 				}
-				Tokens.push_back(TokenUTXO(ContractAddress, Symbol, NewValue, Decimals));
+				tokens.push_back(token_utxo(contract_address, symbol, new_value, decimals));
 			}
-			else if (Value.IsNaN())
-				Value = NewValue;
+			else if (value.is_nan())
+				value = new_value;
 			else
-				Value += NewValue;
+				value += new_value;
 		}
-		Option<Decimal> CoinUTXO::GetTokenValue(const std::string_view& ContractAddress)
+		option<decimal> coin_utxo::get_token_value(const std::string_view& contract_address)
 		{
-			if (ContractAddress.empty())
-				return Value;
+			if (contract_address.empty())
+				return value;
 
-			for (auto& Item : Tokens)
+			for (auto& item : tokens)
 			{
-				if (Item.ContractAddress == ContractAddress)
-					return Item.Value;
+				if (item.contract_address == contract_address)
+					return item.value;
 			}
 
-			return Optional::None;
+			return optional::none;
 		}
-		bool CoinUTXO::IsValid() const
+		bool coin_utxo::is_valid() const
 		{
-			for (auto& Token : Tokens)
+			for (auto& token : tokens)
 			{
-				if (!Token.IsCoinValid())
+				if (!token.is_coin_valid())
 					return false;
 			}
 
-			return !TransactionId.empty() && !Value.IsNaN() && !Value.IsNegative() && !Stringify::IsEmptyOrWhitespace(Address);
+			return !transaction_id.empty() && !value.is_nan() && !value.is_negative() && !stringify::is_empty_or_whitespace(address);
 		}
 
-		Transferer::Transferer() : Value(Decimal::NaN())
+		transferer::transferer() : value(decimal::nan())
 		{
 		}
-		Transferer::Transferer(const std::string_view& NewAddress, Option<uint64_t>&& NewAddressIndex, Decimal&& NewValue) : Address(NewAddress), Value(std::move(NewValue)), AddressIndex(NewAddressIndex)
+		transferer::transferer(const std::string_view& new_address, option<uint64_t>&& new_address_index, decimal&& new_value) : address(new_address), value(std::move(new_value)), address_index(new_address_index)
 		{
 		}
-		bool Transferer::IsValid() const
+		bool transferer::is_valid() const
 		{
-			return !Stringify::IsEmptyOrWhitespace(Address) && (Value.IsZero() || Value.IsPositive());
+			return !stringify::is_empty_or_whitespace(address) && (value.is_zero() || value.is_positive());
 		}
 
-		MasterWallet::MasterWallet(PrivateKey&& NewSeedingKey, PrivateKey&& NewSigningKey, String&& NewVerifyingKey) : SeedingKey(std::move(NewSeedingKey)), SigningKey(std::move(NewSigningKey)), VerifyingKey(std::move(NewVerifyingKey))
+		master_wallet::master_wallet(secret_box&& new_seeding_key, secret_box&& new_signing_key, string&& new_verifying_key) : seeding_key(std::move(new_seeding_key)), signing_key(std::move(new_signing_key)), verifying_key(std::move(new_verifying_key))
 		{
 		}
-		bool MasterWallet::StorePayload(Format::Stream* Stream) const
+		bool master_wallet::store_payload(format::stream* stream) const
 		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Stream->WriteInteger(MaxAddressIndex);
-			Stream->WriteString(SeedingKey.Expose<KEY_LIMIT>().View);
-			Stream->WriteString(SigningKey.Expose<KEY_LIMIT>().View);
-			Stream->WriteString(VerifyingKey);
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_integer(max_address_index);
+			stream->write_string(seeding_key.expose<KEY_LIMIT>().view);
+			stream->write_string(signing_key.expose<KEY_LIMIT>().view);
+			stream->write_string(verifying_key);
 			return true;
 		}
-		bool MasterWallet::LoadPayload(Format::Stream& Stream)
+		bool master_wallet::load_payload(format::stream& stream)
 		{
-			if (!Stream.ReadInteger(Stream.ReadType(), &MaxAddressIndex))
+			if (!stream.read_integer(stream.read_type(), &max_address_index))
 				return false;
 
-			String SeedingKeyData;
-			if (!Stream.ReadString(Stream.ReadType(), &SeedingKeyData))
+			string seeding_key_data;
+			if (!stream.read_string(stream.read_type(), &seeding_key_data))
 				return false;
 
-			String SigningKeyData;
-			if (!Stream.ReadString(Stream.ReadType(), &SigningKeyData))
+			string signing_key_data;
+			if (!stream.read_string(stream.read_type(), &signing_key_data))
 				return false;
 
-			if (!Stream.ReadString(Stream.ReadType(), &VerifyingKey))
+			if (!stream.read_string(stream.read_type(), &verifying_key))
 				return false;
 
-			SeedingKey = PrivateKey(SeedingKeyData);
-			SigningKey = PrivateKey(SigningKeyData);
+			seeding_key = secret_box::secure(seeding_key_data);
+			signing_key = secret_box::secure(signing_key_data);
 			return true;
 		}
-		bool MasterWallet::IsValid() const
+		bool master_wallet::is_valid() const
 		{
-			return !IsPrivateKeyEmptyOrWhitespace(SeedingKey) && !IsPrivateKeyEmptyOrWhitespace(SigningKey) && !Stringify::IsEmptyOrWhitespace(VerifyingKey);
+			return !is_secret_box_empty_or_whitespace(seeding_key) && !is_secret_box_empty_or_whitespace(signing_key) && !stringify::is_empty_or_whitespace(verifying_key);
 		}
-		UPtr<Schema> MasterWallet::AsSchema() const
+		uptr<schema> master_wallet::as_schema() const
 		{
-			Schema* Data = Var::Set::Object();
-			Data->Set("seeding_key", Var::String(SeedingKey.ExposeToHeap()));
-			Data->Set("signing_key", Var::String(SigningKey.ExposeToHeap()));
-			Data->Set("verifying_key", Var::String(VerifyingKey));
-			Data->Set("max_address_index", Algorithm::Encoding::SerializeUint256(MaxAddressIndex));
-			return Data;
+			schema* data = var::set::object();
+			data->set("seeding_key", var::string(seeding_key.expose<KEY_LIMIT>().view));
+			data->set("signing_key", var::string(signing_key.expose<KEY_LIMIT>().view));
+			data->set("verifying_key", var::string(verifying_key));
+			data->set("max_address_index", algorithm::encoding::serialize_uint256(max_address_index));
+			return data;
 		}
-		uint256_t MasterWallet::AsHash(bool Renew) const
+		uint256_t master_wallet::as_hash(bool renew) const
 		{
-			if (!Renew && Checksum != 0)
-				return Checksum;
+			if (!renew && checksum != 0)
+				return checksum;
 
-			Format::Stream Message;
-			Message.WriteString(*Crypto::HashHex(Digests::SHA512(), SigningKey.Expose<KEY_LIMIT>().View));
-			((MasterWallet*)this)->Checksum = Message.Hash();
-			return Checksum;
+			format::stream message;
+			message.write_string(*crypto::hash_hex(digests::SHA512(), signing_key.expose<KEY_LIMIT>().view));
+			((master_wallet*)this)->checksum = message.hash();
+			return checksum;
 		}
-		uint32_t MasterWallet::AsType() const
+		uint32_t master_wallet::as_type() const
 		{
-			return AsInstanceType();
+			return as_instance_type();
 		}
-		std::string_view MasterWallet::AsTypename() const
+		std::string_view master_wallet::as_typename() const
 		{
-			return AsInstanceTypename();
+			return as_instance_typename();
 		}
-		uint32_t MasterWallet::AsInstanceType()
+		uint32_t master_wallet::as_instance_type()
 		{
-			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
-			return Hash;
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
 		}
-		std::string_view MasterWallet::AsInstanceTypename()
+		std::string_view master_wallet::as_instance_typename()
 		{
 			return "observer_master_wallet";
 		}
 
-		DerivedVerifyingWallet::DerivedVerifyingWallet(AddressMap&& NewAddresses, Option<uint64_t>&& NewAddressIndex, String&& NewVerifyingKey) : Addresses(std::move(NewAddresses)), AddressIndex(std::move(NewAddressIndex)), VerifyingKey(std::move(NewVerifyingKey))
+		derived_verifying_wallet::derived_verifying_wallet(address_map&& new_addresses, option<uint64_t>&& new_address_index, string&& new_verifying_key) : addresses(std::move(new_addresses)), address_index(std::move(new_address_index)), verifying_key(std::move(new_verifying_key))
 		{
 		}
-		bool DerivedVerifyingWallet::StorePayload(Format::Stream* Stream) const
+		bool derived_verifying_wallet::store_payload(format::stream* stream) const
 		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Stream->WriteBoolean(!!AddressIndex);
-			if (AddressIndex)
-				Stream->WriteInteger(*AddressIndex);
-			Stream->WriteInteger((uint8_t)Addresses.size());
-			for (auto& Address : Addresses)
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_boolean(!!address_index);
+			if (address_index)
+				stream->write_integer(*address_index);
+			stream->write_integer((uint8_t)addresses.size());
+			for (auto& address : addresses)
 			{
-				Stream->WriteInteger(Address.first);
-				Stream->WriteString(Address.second);
+				stream->write_integer(address.first);
+				stream->write_string(address.second);
 			}
-			Stream->WriteString(VerifyingKey);
+			stream->write_string(verifying_key);
 			return true;
 		}
-		bool DerivedVerifyingWallet::LoadPayload(Format::Stream& Stream)
+		bool derived_verifying_wallet::load_payload(format::stream& stream)
 		{
-			bool HasAddressIndex;
-			if (!Stream.ReadBoolean(Stream.ReadType(), &HasAddressIndex))
-				return false;
-			
-			AddressIndex = HasAddressIndex ? Option<uint64_t>(0) : Option<uint64_t>(Optional::None);
-			if (AddressIndex && !Stream.ReadInteger(Stream.ReadType(), AddressIndex.Address()))
+			bool has_address_index;
+			if (!stream.read_boolean(stream.read_type(), &has_address_index))
 				return false;
 
-			uint8_t AddressesSize;
-			if (!Stream.ReadInteger(Stream.ReadType(), &AddressesSize))
+			address_index = has_address_index ? option<uint64_t>(0) : option<uint64_t>(optional::none);
+			if (address_index && !stream.read_integer(stream.read_type(), address_index.address()))
 				return false;
 
-			Addresses.clear();
-			for (uint8_t i = 0; i < AddressesSize; i++)
+			uint8_t addresses_size;
+			if (!stream.read_integer(stream.read_type(), &addresses_size))
+				return false;
+
+			addresses.clear();
+			for (uint8_t i = 0; i < addresses_size; i++)
 			{
-				uint8_t Version;
-				if (!Stream.ReadInteger(Stream.ReadType(), &Version))
+				uint8_t version;
+				if (!stream.read_integer(stream.read_type(), &version))
 					return false;
 
-				String Address;
-				if (!Stream.ReadString(Stream.ReadType(), &Address))
+				string address;
+				if (!stream.read_string(stream.read_type(), &address))
 					return false;
 
-				Addresses[Version] = std::move(Address);
+				addresses[version] = std::move(address);
 			}
 
-			if (!Stream.ReadString(Stream.ReadType(), &VerifyingKey))
+			if (!stream.read_string(stream.read_type(), &verifying_key))
 				return false;
-
-			return true;
-		}
-		bool DerivedVerifyingWallet::IsValid() const
-		{
-			if (Addresses.empty())
-				return false;
-
-			if (Stringify::IsEmptyOrWhitespace(VerifyingKey))
-				return false;
-
-			for (auto& Address : Addresses)
-			{
-				if (Stringify::IsEmptyOrWhitespace(Address.second))
-					return false;
-			}
 
 			return true;
 		}
-		UPtr<Schema> DerivedVerifyingWallet::AsSchema() const
+		bool derived_verifying_wallet::is_valid() const
 		{
-			Schema* Data = Var::Set::Object();
-			auto* AddressesData = Data->Set("addresses", Var::Set::Array());
-			for (auto& Address : Addresses)
-				AddressesData->Push(Var::String(Address.second));
-			Data->Set("address_index", AddressIndex ? Algorithm::Encoding::SerializeUint256(*AddressIndex) : Var::Set::Null());
-			Data->Set("verifying_key", Var::String(VerifyingKey));
-			return Data;
+			if (addresses.empty())
+				return false;
+
+			if (stringify::is_empty_or_whitespace(verifying_key))
+				return false;
+
+			for (auto& address : addresses)
+			{
+				if (stringify::is_empty_or_whitespace(address.second))
+					return false;
+			}
+
+			return true;
 		}
-		uint32_t DerivedVerifyingWallet::AsType() const
+		uptr<schema> derived_verifying_wallet::as_schema() const
 		{
-			return AsInstanceType();
+			schema* data = var::set::object();
+			auto* addresses_data = data->set("addresses", var::set::array());
+			for (auto& address : addresses)
+				addresses_data->push(var::string(address.second));
+			data->set("address_index", address_index ? algorithm::encoding::serialize_uint256(*address_index) : var::set::null());
+			data->set("verifying_key", var::string(verifying_key));
+			return data;
 		}
-		std::string_view DerivedVerifyingWallet::AsTypename() const
+		uint32_t derived_verifying_wallet::as_type() const
 		{
-			return AsInstanceTypename();
+			return as_instance_type();
 		}
-		uint32_t DerivedVerifyingWallet::AsInstanceType()
+		std::string_view derived_verifying_wallet::as_typename() const
 		{
-			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
-			return Hash;
+			return as_instance_typename();
 		}
-		std::string_view DerivedVerifyingWallet::AsInstanceTypename()
+		uint32_t derived_verifying_wallet::as_instance_type()
+		{
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
+		}
+		std::string_view derived_verifying_wallet::as_instance_typename()
 		{
 			return "observer_derived_verifying_wallet";
 		}
 
-		DerivedSigningWallet::DerivedSigningWallet(DerivedVerifyingWallet&& NewWallet, PrivateKey&& NewSigningKey) : DerivedVerifyingWallet(std::move(NewWallet)), SigningKey(std::move(NewSigningKey))
+		derived_signing_wallet::derived_signing_wallet(derived_verifying_wallet&& new_wallet, secret_box&& new_signing_key) : derived_verifying_wallet(std::move(new_wallet)), signing_key(std::move(new_signing_key))
 		{
 		}
-		bool DerivedSigningWallet::StorePayload(Format::Stream* Stream) const
+		bool derived_signing_wallet::store_payload(format::stream* stream) const
 		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
-			if (!DerivedVerifyingWallet::StorePayload(Stream))
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			if (!derived_verifying_wallet::store_payload(stream))
 				return false;
 
-			Stream->WriteString(SigningKey.Expose<KEY_LIMIT>().View);
+			stream->write_string(signing_key.expose<KEY_LIMIT>().view);
 			return true;
 		}
-		bool DerivedSigningWallet::LoadPayload(Format::Stream& Stream)
+		bool derived_signing_wallet::load_payload(format::stream& stream)
 		{
-			if (!DerivedVerifyingWallet::LoadPayload(Stream))
+			if (!derived_verifying_wallet::load_payload(stream))
 				return false;
 
-			String RawSigningKey;
-			if (!Stream.ReadString(Stream.ReadType(), &RawSigningKey))
+			string raw_signing_key;
+			if (!stream.read_string(stream.read_type(), &raw_signing_key))
 				return false;
 
-			SigningKey = PrivateKey(RawSigningKey);
+			signing_key = secret_box::secure(raw_signing_key);
 			return true;
 		}
-		bool DerivedSigningWallet::IsValid() const
+		bool derived_signing_wallet::is_valid() const
 		{
-			return DerivedVerifyingWallet::IsValid() && !IsPrivateKeyEmptyOrWhitespace(SigningKey);
+			return derived_verifying_wallet::is_valid() && !is_secret_box_empty_or_whitespace(signing_key);
 		}
-		UPtr<Schema> DerivedSigningWallet::AsSchema() const
+		uptr<schema> derived_signing_wallet::as_schema() const
 		{
-			Schema* Data = DerivedVerifyingWallet::AsSchema().Reset();
-			Data->Set("signing_key", Var::String(SigningKey.ExposeToHeap()));
-			return Data;
+			schema* data = derived_verifying_wallet::as_schema().reset();
+			data->set("signing_key", var::string(signing_key.expose<KEY_LIMIT>().view));
+			return data;
 		}
-		uint32_t DerivedSigningWallet::AsType() const
+		uint32_t derived_signing_wallet::as_type() const
 		{
-			return AsInstanceType();
+			return as_instance_type();
 		}
-		std::string_view DerivedSigningWallet::AsTypename() const
+		std::string_view derived_signing_wallet::as_typename() const
 		{
-			return AsInstanceTypename();
+			return as_instance_typename();
 		}
-		uint32_t DerivedSigningWallet::AsInstanceType()
+		uint32_t derived_signing_wallet::as_instance_type()
 		{
-			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
-			return Hash;
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
 		}
-		std::string_view DerivedSigningWallet::AsInstanceTypename()
+		std::string_view derived_signing_wallet::as_instance_typename()
 		{
 			return "observer_derived_signing_wallet";
 		}
 
-		DynamicWallet::DynamicWallet() : Parent(Optional::None), VerifyingChild(Optional::None), SigningChild(Optional::None)
+		dynamic_wallet::dynamic_wallet() : parent(optional::none), verifying_child(optional::none), signing_child(optional::none)
 		{
 		}
-		DynamicWallet::DynamicWallet(const MasterWallet& Value) : Parent(Value), VerifyingChild(Optional::None), SigningChild(Optional::None)
+		dynamic_wallet::dynamic_wallet(const master_wallet& value) : parent(value), verifying_child(optional::none), signing_child(optional::none)
 		{
-			if (!Parent->IsValid())
-				Parent = Optional::None;
+			if (!parent->is_valid())
+				parent = optional::none;
 		}
-		DynamicWallet::DynamicWallet(const DerivedVerifyingWallet& Value) : Parent(Optional::None), VerifyingChild(Value), SigningChild(Optional::None)
+		dynamic_wallet::dynamic_wallet(const derived_verifying_wallet& value) : parent(optional::none), verifying_child(value), signing_child(optional::none)
 		{
-			if (!VerifyingChild->IsValid())
-				VerifyingChild = Optional::None;
+			if (!verifying_child->is_valid())
+				verifying_child = optional::none;
 		}
-		DynamicWallet::DynamicWallet(const DerivedSigningWallet& Value) : Parent(Optional::None), VerifyingChild(Optional::None), SigningChild(Value)
+		dynamic_wallet::dynamic_wallet(const derived_signing_wallet& value) : parent(optional::none), verifying_child(optional::none), signing_child(value)
 		{
-			if (!SigningChild->IsValid())
-				SigningChild = Optional::None;
+			if (!signing_child->is_valid())
+				signing_child = optional::none;
 		}
-		Option<String> DynamicWallet::GetBinding() const
+		option<string> dynamic_wallet::get_binding() const
 		{
-			const String* VerifyingKey = nullptr;
-			if (Parent)
-				VerifyingKey = &Parent->VerifyingKey;
-			else if (VerifyingChild)
-				VerifyingKey = &VerifyingChild->VerifyingKey;
-			else if (SigningChild)
-				VerifyingKey = &SigningChild->VerifyingKey;
-			if (!VerifyingKey)
-				return Optional::None;
+			const string* verifying_key = nullptr;
+			if (parent)
+				verifying_key = &parent->verifying_key;
+			else if (verifying_child)
+				verifying_key = &verifying_child->verifying_key;
+			else if (signing_child)
+				verifying_key = &signing_child->verifying_key;
+			if (!verifying_key)
+				return optional::none;
 
-			return Algorithm::Hashing::Hash256((uint8_t*)VerifyingKey->data(), VerifyingKey->size());
+			return algorithm::hashing::hash256((uint8_t*)verifying_key->data(), verifying_key->size());
 		}
-		bool DynamicWallet::IsValid() const
+		bool dynamic_wallet::is_valid() const
 		{
-			return (Parent && Parent->IsValid()) || (VerifyingChild && VerifyingChild->IsValid()) || (SigningChild && SigningChild->IsValid());
+			return (parent && parent->is_valid()) || (verifying_child && verifying_child->is_valid()) || (signing_child && signing_child->is_valid());
 		}
 
-		IncomingTransaction::IncomingTransaction() : Asset(0), BlockId(0)
+		incoming_transaction::incoming_transaction() : asset(0), block_id(0)
 		{
 		}
-		bool IncomingTransaction::StorePayload(Format::Stream* Stream) const
+		bool incoming_transaction::store_payload(format::stream* stream) const
 		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Stream->WriteInteger(Asset);
-			Stream->WriteInteger(BlockId);
-			Stream->WriteString(TransactionId);
-			Stream->WriteDecimal(Fee);
-			Stream->WriteInteger((uint32_t)From.size());
-			for (auto& Item : From)
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_integer(asset);
+			stream->write_integer(block_id);
+			stream->write_string(transaction_id);
+			stream->write_decimal(fee);
+			stream->write_integer((uint32_t)from.size());
+			for (auto& item : from)
 			{
-				Stream->WriteString(Item.Address);
-				Stream->WriteBoolean(!!Item.AddressIndex);
-				if (Item.AddressIndex)
-					Stream->WriteInteger(*Item.AddressIndex);
-				Stream->WriteDecimal(Item.Value);
+				stream->write_string(item.address);
+				stream->write_boolean(!!item.address_index);
+				if (item.address_index)
+					stream->write_integer(*item.address_index);
+				stream->write_decimal(item.value);
 			}
-			Stream->WriteInteger((uint32_t)To.size());
-			for (auto& Item : To)
+			stream->write_integer((uint32_t)to.size());
+			for (auto& item : to)
 			{
-				Stream->WriteString(Item.Address);
-				Stream->WriteBoolean(!!Item.AddressIndex);
-				if (Item.AddressIndex)
-					Stream->WriteInteger(*Item.AddressIndex);
-				Stream->WriteDecimal(Item.Value);
+				stream->write_string(item.address);
+				stream->write_boolean(!!item.address_index);
+				if (item.address_index)
+					stream->write_integer(*item.address_index);
+				stream->write_decimal(item.value);
 			}
 			return true;
 		}
-		bool IncomingTransaction::LoadPayload(Format::Stream& Stream)
+		bool incoming_transaction::load_payload(format::stream& stream)
 		{
-			if (!Stream.ReadInteger(Stream.ReadType(), &Asset))
+			if (!stream.read_integer(stream.read_type(), &asset))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &BlockId))
+			if (!stream.read_integer(stream.read_type(), &block_id))
 				return false;
 
-			if (!Stream.ReadString(Stream.ReadType(), &TransactionId))
+			if (!stream.read_string(stream.read_type(), &transaction_id))
 				return false;
 
-			if (!Stream.ReadDecimal(Stream.ReadType(), &Fee))
+			if (!stream.read_decimal(stream.read_type(), &fee))
 				return false;
 
-			uint32_t FromSize;
-			if (!Stream.ReadInteger(Stream.ReadType(), &FromSize))
+			uint32_t from_size;
+			if (!stream.read_integer(stream.read_type(), &from_size))
 				return false;
 
-			From.reserve(FromSize);
-			for (size_t i = 0; i < FromSize; i++)
+			from.reserve(from_size);
+			for (size_t i = 0; i < from_size; i++)
 			{
-				Transferer Transferer;
-				if (!Stream.ReadString(Stream.ReadType(), &Transferer.Address))
+				transferer transferer;
+				if (!stream.read_string(stream.read_type(), &transferer.address))
 					return false;
 
-				bool HasAddressIndex;
-				if (!Stream.ReadBoolean(Stream.ReadType(), &HasAddressIndex))
+				bool has_address_index;
+				if (!stream.read_boolean(stream.read_type(), &has_address_index))
 					return false;
 
-				Transferer.AddressIndex = HasAddressIndex ? Option<uint64_t>(0) : Option<uint64_t>(Optional::None);
-				if (Transferer.AddressIndex && !Stream.ReadInteger(Stream.ReadType(), Transferer.AddressIndex.Address()))
+				transferer.address_index = has_address_index ? option<uint64_t>(0) : option<uint64_t>(optional::none);
+				if (transferer.address_index && !stream.read_integer(stream.read_type(), transferer.address_index.address()))
 					return false;
 
-				if (!Stream.ReadDecimal(Stream.ReadType(), &Transferer.Value))
+				if (!stream.read_decimal(stream.read_type(), &transferer.value))
 					return false;
 
-				From.emplace_back(std::move(Transferer));
+				from.emplace_back(std::move(transferer));
 			}
 
-			uint32_t ToSize;
-			if (!Stream.ReadInteger(Stream.ReadType(), &ToSize))
+			uint32_t to_size;
+			if (!stream.read_integer(stream.read_type(), &to_size))
 				return false;
 
-			To.reserve(ToSize);
-			for (size_t i = 0; i < ToSize; i++)
+			to.reserve(to_size);
+			for (size_t i = 0; i < to_size; i++)
 			{
-				Transferer Transferer;
-				if (!Stream.ReadString(Stream.ReadType(), &Transferer.Address))
+				transferer transferer;
+				if (!stream.read_string(stream.read_type(), &transferer.address))
 					return false;
 
-				bool HasAddressIndex;
-				if (!Stream.ReadBoolean(Stream.ReadType(), &HasAddressIndex))
+				bool has_address_index;
+				if (!stream.read_boolean(stream.read_type(), &has_address_index))
 					return false;
 
-				Transferer.AddressIndex = HasAddressIndex ? Option<uint64_t>(0) : Option<uint64_t>(Optional::None);
-				if (Transferer.AddressIndex && !Stream.ReadInteger(Stream.ReadType(), Transferer.AddressIndex.Address()))
+				transferer.address_index = has_address_index ? option<uint64_t>(0) : option<uint64_t>(optional::none);
+				if (transferer.address_index && !stream.read_integer(stream.read_type(), transferer.address_index.address()))
 					return false;
 
-				if (!Stream.ReadDecimal(Stream.ReadType(), &Transferer.Value))
+				if (!stream.read_decimal(stream.read_type(), &transferer.value))
 					return false;
 
-				To.emplace_back(std::move(Transferer));
+				to.emplace_back(std::move(transferer));
 			}
 
 			return true;
 		}
-		bool IncomingTransaction::IsValid() const
+		bool incoming_transaction::is_valid() const
 		{
-			if (From.empty() || To.empty())
+			if (from.empty() || to.empty())
 				return false;
 
-			if (Fee.IsNegative() || Fee.IsNaN())
+			if (fee.is_negative() || fee.is_nan())
 				return false;
 
-			Decimal Input = 0.0;
-			for (auto& Address : From)
+			decimal input = 0.0;
+			for (auto& address : from)
 			{
-				if (!Address.Value.IsPositive() && !Address.Value.IsZero())
+				if (!address.value.is_positive() && !address.value.is_zero())
 					return false;
-				Input += Address.Value;
+				input += address.value;
 			}
 
-			if (Input < Fee)
+			if (input < fee)
 				return false;
 
-			Decimal Output = 0.0;
-			for (auto& Address : To)
+			decimal output = 0.0;
+			for (auto& address : to)
 			{
-				if (!Address.IsValid())
+				if (!address.is_valid())
 					return false;
-				Output += Address.Value;
+				output += address.value;
 			}
 
-			return Algorithm::Asset::IsValid(Asset) && !Stringify::IsEmptyOrWhitespace(TransactionId) && Output <= Input;
+			return algorithm::asset::is_valid(asset) && !stringify::is_empty_or_whitespace(transaction_id) && output <= input;
 		}
-		void IncomingTransaction::SetTransaction(const Algorithm::AssetId& NewAsset, uint64_t NewBlockId, const std::string_view& NewTransactionId, Decimal&& NewFee)
+		void incoming_transaction::set_transaction(const algorithm::asset_id& new_asset, uint64_t new_block_id, const std::string_view& new_transaction_id, decimal&& new_fee)
 		{
-			BlockId = NewBlockId;
-			TransactionId = NewTransactionId;
-			Asset = NewAsset;
-			Fee = std::move(NewFee);
+			block_id = new_block_id;
+			transaction_id = new_transaction_id;
+			asset = new_asset;
+			fee = std::move(new_fee);
 		}
-		void IncomingTransaction::SetOperations(Vector<Transferer>&& NewFrom, Vector<Transferer>&& NewTo)
+		void incoming_transaction::set_operations(vector<transferer>&& new_from, vector<transferer>&& new_to)
 		{
-			From = std::move(NewFrom);
-			To = std::move(NewTo);
+			from = std::move(new_from);
+			to = std::move(new_to);
 		}
-		Decimal IncomingTransaction::GetInputValue() const
+		decimal incoming_transaction::get_input_value() const
 		{
-			Decimal Value = 0.0;
-			for (auto& Address : To)
-				Value += Address.Value;
-			return Value;
+			decimal value = 0.0;
+			for (auto& address : to)
+				value += address.value;
+			return value;
 		}
-		Decimal IncomingTransaction::GetOutputValue() const
+		decimal incoming_transaction::get_output_value() const
 		{
-			Decimal Value = 0.0;
-			for (auto& Address : To)
-				Value += Address.Value;
-			return Value;
+			decimal value = 0.0;
+			for (auto& address : to)
+				value += address.value;
+			return value;
 		}
-		bool IncomingTransaction::IsLatencyApproved() const
+		bool incoming_transaction::is_latency_approved() const
 		{
-			auto* Chain = NSS::ServerNode::Get()->GetChain(Asset);
-			if (!Chain)
+			auto* chain = nss::server_node::get()->get_chain(asset);
+			if (!chain)
 				return false;
 
-			return BlockId >= Chain->GetChainparams().SyncLatency;
+			return block_id >= chain->get_chainparams().sync_latency;
 		}
-		bool IncomingTransaction::IsApproved() const
+		bool incoming_transaction::is_approved() const
 		{
-			auto* Server = NSS::ServerNode::Get();
-			auto* Chain = Server->GetChain(Asset);
-			if (!Chain)
+			auto* server = nss::server_node::get();
+			auto* chain = server->get_chain(asset);
+			if (!chain)
 				return false;
 
-			auto LatestBlockId = Server->GetLatestKnownBlockHeight(Asset).Or(0);
-			if (LatestBlockId < BlockId)
-				return BlockId >= Chain->GetChainparams().SyncLatency;
+			auto latest_block_id = server->get_latest_known_block_height(asset).otherwise(0);
+			if (latest_block_id < block_id)
+				return block_id >= chain->get_chainparams().sync_latency;
 
-			return LatestBlockId - BlockId >= Chain->GetChainparams().SyncLatency;
+			return latest_block_id - block_id >= chain->get_chainparams().sync_latency;
 		}
-		UPtr<Schema> IncomingTransaction::AsSchema() const
+		uptr<schema> incoming_transaction::as_schema() const
 		{
-			Schema* Data = Var::Set::Object();
-			auto* FromData = Data->Set("from", Var::Set::Array());
-			for (auto& Item : From)
+			schema* data = var::set::object();
+			auto* from_data = data->set("from", var::set::array());
+			for (auto& item : from)
 			{
-				auto* CoinData = FromData->Push(Var::Set::Object());
-				CoinData->Set("address", Var::String(Item.Address));
-				CoinData->Set("address_index", Item.AddressIndex ? Algorithm::Encoding::SerializeUint256(*Item.AddressIndex) : Var::Set::Null());
-				CoinData->Set("value", Var::Decimal(Item.Value));
+				auto* coin_data = from_data->push(var::set::object());
+				coin_data->set("address", var::string(item.address));
+				coin_data->set("address_index", item.address_index ? algorithm::encoding::serialize_uint256(*item.address_index) : var::set::null());
+				coin_data->set("value", var::decimal(item.value));
 			}
-			auto* ToData = Data->Set("to", Var::Set::Array());
-			for (auto& Item : To)
+			auto* to_data = data->set("to", var::set::array());
+			for (auto& item : to)
 			{
-				auto* CoinData = ToData->Push(Var::Set::Object());
-				CoinData->Set("address", Var::String(Item.Address));
-				CoinData->Set("address_index", Item.AddressIndex ? Algorithm::Encoding::SerializeUint256(*Item.AddressIndex) : Var::Set::Null());
-				CoinData->Set("value", Var::Decimal(Item.Value));
+				auto* coin_data = to_data->push(var::set::object());
+				coin_data->set("address", var::string(item.address));
+				coin_data->set("address_index", item.address_index ? algorithm::encoding::serialize_uint256(*item.address_index) : var::set::null());
+				coin_data->set("value", var::decimal(item.value));
 			}
-			Data->Set("asset", Algorithm::Asset::Serialize(Asset));
-			Data->Set("transaction_id", Var::String(TransactionId));
-			Data->Set("block_id", Algorithm::Encoding::SerializeUint256(BlockId));
-			Data->Set("fee", Var::Decimal(Fee));
-			return Data;
+			data->set("asset", algorithm::asset::serialize(asset));
+			data->set("transaction_id", var::string(transaction_id));
+			data->set("block_id", algorithm::encoding::serialize_uint256(block_id));
+			data->set("fee", var::decimal(fee));
+			return data;
 		}
-		uint32_t IncomingTransaction::AsType() const
+		uint32_t incoming_transaction::as_type() const
 		{
-			return AsInstanceType();
+			return as_instance_type();
 		}
-		std::string_view IncomingTransaction::AsTypename() const
+		std::string_view incoming_transaction::as_typename() const
 		{
-			return AsInstanceTypename();
+			return as_instance_typename();
 		}
-		uint32_t IncomingTransaction::AsInstanceType()
+		uint32_t incoming_transaction::as_instance_type()
 		{
-			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
-			return Hash;
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
 		}
-		std::string_view IncomingTransaction::AsInstanceTypename()
+		std::string_view incoming_transaction::as_instance_typename()
 		{
 			return "observer_incoming_transaction";
 		}
 
-		OutgoingTransaction::OutgoingTransaction() : Inputs(Optional::None), Outputs(Optional::None)
+		outgoing_transaction::outgoing_transaction() : inputs(optional::none), outputs(optional::none)
 		{
 		}
-		OutgoingTransaction::OutgoingTransaction(IncomingTransaction&& NewTransaction, const std::string_view& NewData, Option<Vector<CoinUTXO>>&& NewInputs, Option<Vector<CoinUTXO>>&& NewOutputs) : Inputs(std::move(NewInputs)), Outputs(std::move(NewOutputs)), Transaction(std::move(NewTransaction)), Data(NewData)
+		outgoing_transaction::outgoing_transaction(incoming_transaction&& new_transaction, const std::string_view& new_data, option<vector<coin_utxo>>&& new_inputs, option<vector<coin_utxo>>&& new_outputs) : inputs(std::move(new_inputs)), outputs(std::move(new_outputs)), transaction(std::move(new_transaction)), data(new_data)
 		{
 		}
-		bool OutgoingTransaction::StorePayload(Format::Stream* Stream) const
+		bool outgoing_transaction::store_payload(format::stream* stream) const
 		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
-			if (!Transaction.StorePayload(Stream))
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			if (!transaction.store_payload(stream))
 				return false;
 
-			Stream->WriteString(Data);
-			Stream->WriteInteger(Inputs ? (uint32_t)Inputs->size() : (uint32_t)0);
-			if (Inputs)
+			stream->write_string(data);
+			stream->write_integer(inputs ? (uint32_t)inputs->size() : (uint32_t)0);
+			if (inputs)
 			{
-				for (auto& Item : *Inputs)
+				for (auto& item : *inputs)
 				{
-					IndexUTXO Next;
-					Next.UTXO = Item;
-					if (!Next.StorePayload(Stream))
+					index_utxo next;
+					next.UTXO = item;
+					if (!next.store_payload(stream))
 						return false;
 				}
 			}
 
-			Stream->WriteInteger(Outputs ? (uint32_t)Outputs->size() : (uint32_t)0);
-			if (Outputs)
+			stream->write_integer(outputs ? (uint32_t)outputs->size() : (uint32_t)0);
+			if (outputs)
 			{
-				for (auto& Item : *Outputs)
+				for (auto& item : *outputs)
 				{
-					IndexUTXO Next;
-					Next.UTXO = Item;
-					if (!Next.StorePayload(Stream))
+					index_utxo next;
+					next.UTXO = item;
+					if (!next.store_payload(stream))
 						return false;
 				}
 			}
 			return true;
 		}
-		bool OutgoingTransaction::LoadPayload(Format::Stream& Stream)
+		bool outgoing_transaction::load_payload(format::stream& stream)
 		{
-			if (!Transaction.LoadPayload(Stream))
+			if (!transaction.load_payload(stream))
 				return false;
 
-			if (!Stream.ReadString(Stream.ReadType(), &Data))
+			if (!stream.read_string(stream.read_type(), &data))
 				return false;
 
-			uint32_t InputsSize;
-			if (!Stream.ReadInteger(Stream.ReadType(), &InputsSize))
+			uint32_t inputs_size;
+			if (!stream.read_integer(stream.read_type(), &inputs_size))
 				return false;
 
-			if (InputsSize > 0)
+			if (inputs_size > 0)
 			{
-				Inputs = Vector<CoinUTXO>();
-				Inputs->reserve(InputsSize);
-				for (size_t i = 0; i < InputsSize; i++)
+				inputs = vector<coin_utxo>();
+				inputs->reserve(inputs_size);
+				for (size_t i = 0; i < inputs_size; i++)
 				{
-					IndexUTXO Next;
-					if (!Next.LoadPayload(Stream))
+					index_utxo next;
+					if (!next.load_payload(stream))
 						return false;
 
-					Inputs->emplace_back(std::move(Next.UTXO));
+					inputs->emplace_back(std::move(next.UTXO));
 				}
 			}
 
-			uint32_t OutputsSize;
-			if (!Stream.ReadInteger(Stream.ReadType(), &OutputsSize))
+			uint32_t outputs_size;
+			if (!stream.read_integer(stream.read_type(), &outputs_size))
 				return false;
 
-			if (OutputsSize > 0)
+			if (outputs_size > 0)
 			{
-				Outputs = Vector<CoinUTXO>();
-				Outputs->reserve(OutputsSize);
-				for (size_t i = 0; i < OutputsSize; i++)
+				outputs = vector<coin_utxo>();
+				outputs->reserve(outputs_size);
+				for (size_t i = 0; i < outputs_size; i++)
 				{
-					IndexUTXO Next;
-					if (!Next.LoadPayload(Stream))
+					index_utxo next;
+					if (!next.load_payload(stream))
 						return false;
 
-					Outputs->emplace_back(std::move(Next.UTXO));
+					outputs->emplace_back(std::move(next.UTXO));
 				}
 			}
 
 			return true;
 		}
-		bool OutgoingTransaction::IsValid() const
+		bool outgoing_transaction::is_valid() const
 		{
-			if (Inputs)
+			if (inputs)
 			{
-				for (auto& Item : *Inputs)
+				for (auto& item : *inputs)
 				{
-					if (!Item.IsValid())
+					if (!item.is_valid())
 						return false;
 				}
 			}
 
-			if (Outputs)
+			if (outputs)
 			{
-				for (auto& Item : *Outputs)
+				for (auto& item : *outputs)
 				{
-					if (!Item.IsValid())
+					if (!item.is_valid())
 						return false;
 				}
 			}
-			return Transaction.IsValid() && !Data.empty();
+			return transaction.is_valid() && !data.empty();
 		}
-		UPtr<Schema> OutgoingTransaction::AsSchema() const
+		uptr<schema> outgoing_transaction::as_schema() const
 		{
-			Schema* Data = Var::Set::Object();
-			Data->Set("transaction_info", Transaction.AsSchema().Reset());
-			Data->Set("transaction_data", Var::String(this->Data));
-			return Data;
+			schema* data = var::set::object();
+			data->set("transaction_info", transaction.as_schema().reset());
+			data->set("transaction_data", var::string(this->data));
+			return data;
 		}
-		uint32_t OutgoingTransaction::AsType() const
+		uint32_t outgoing_transaction::as_type() const
 		{
-			return AsInstanceType();
+			return as_instance_type();
 		}
-		std::string_view OutgoingTransaction::AsTypename() const
+		std::string_view outgoing_transaction::as_typename() const
 		{
-			return AsInstanceTypename();
+			return as_instance_typename();
 		}
-		uint32_t OutgoingTransaction::AsInstanceType()
+		uint32_t outgoing_transaction::as_instance_type()
 		{
-			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
-			return Hash;
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
 		}
-		std::string_view OutgoingTransaction::AsInstanceTypename()
+		std::string_view outgoing_transaction::as_instance_typename()
 		{
 			return "observer_outgoing_transaction";
 		}
 
-		bool IndexAddress::StorePayload(Format::Stream* Stream) const
+		bool index_address::store_payload(format::stream* stream) const
 		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Stream->WriteString(Binding);
-			Stream->WriteString(Address);
-			Stream->WriteBoolean(!!AddressIndex);
-			if (AddressIndex)
-				Stream->WriteInteger(*AddressIndex);
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_string(binding);
+			stream->write_string(address);
+			stream->write_boolean(!!address_index);
+			if (address_index)
+				stream->write_integer(*address_index);
 			return true;
 		}
-		bool IndexAddress::LoadPayload(Format::Stream& Stream)
+		bool index_address::load_payload(format::stream& stream)
 		{
-			if (!Stream.ReadString(Stream.ReadType(), &Binding))
+			if (!stream.read_string(stream.read_type(), &binding))
 				return false;
 
-			if (!Stream.ReadString(Stream.ReadType(), &Address))
+			if (!stream.read_string(stream.read_type(), &address))
 				return false;
 
-			bool HasAddressIndex;
-			if (!Stream.ReadBoolean(Stream.ReadType(), &HasAddressIndex))
+			bool has_address_index;
+			if (!stream.read_boolean(stream.read_type(), &has_address_index))
 				return false;
 
-			AddressIndex = HasAddressIndex ? Option<uint64_t>(0) : Option<uint64_t>(Optional::None);
-			if (AddressIndex && !Stream.ReadInteger(Stream.ReadType(), AddressIndex.Address()))
+			address_index = has_address_index ? option<uint64_t>(0) : option<uint64_t>(optional::none);
+			if (address_index && !stream.read_integer(stream.read_type(), address_index.address()))
 				return false;
 
 			return true;
 		}
-		UPtr<Schema> IndexAddress::AsSchema() const
+		uptr<schema> index_address::as_schema() const
 		{
-			Schema* Data = Var::Set::Object();
-			Data->Set("address", Var::String(Address));
-			Data->Set("address_index", AddressIndex ? Algorithm::Encoding::SerializeUint256(*AddressIndex) : Var::Set::Null());
-			Data->Set("binding", Var::String(Binding));
-			return Data;
+			schema* data = var::set::object();
+			data->set("address", var::string(address));
+			data->set("address_index", address_index ? algorithm::encoding::serialize_uint256(*address_index) : var::set::null());
+			data->set("binding", var::string(binding));
+			return data;
 		}
-		uint32_t IndexAddress::AsType() const
+		uint32_t index_address::as_type() const
 		{
-			return AsInstanceType();
+			return as_instance_type();
 		}
-		std::string_view IndexAddress::AsTypename() const
+		std::string_view index_address::as_typename() const
 		{
-			return AsInstanceTypename();
+			return as_instance_typename();
 		}
-		uint32_t IndexAddress::AsInstanceType()
+		uint32_t index_address::as_instance_type()
 		{
-			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
-			return Hash;
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
 		}
-		std::string_view IndexAddress::AsInstanceTypename()
+		std::string_view index_address::as_instance_typename()
 		{
 			return "observer_index_address";
 		}
 
-		bool IndexUTXO::StorePayload(Format::Stream* Stream) const
+		bool index_utxo::store_payload(format::stream* stream) const
 		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Stream->WriteString(UTXO.Address);
-			Stream->WriteBoolean(!!UTXO.AddressIndex);
-			if (UTXO.AddressIndex)
-				Stream->WriteInteger(*UTXO.AddressIndex);
-			Stream->WriteString(UTXO.TransactionId);
-			Stream->WriteInteger(UTXO.Index);
-			Stream->WriteDecimal(UTXO.Value);
-			Stream->WriteInteger((uint32_t)UTXO.Tokens.size());
-			for (auto& Item : UTXO.Tokens)
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_string(UTXO.address);
+			stream->write_boolean(!!UTXO.address_index);
+			if (UTXO.address_index)
+				stream->write_integer(*UTXO.address_index);
+			stream->write_string(UTXO.transaction_id);
+			stream->write_integer(UTXO.index);
+			stream->write_decimal(UTXO.value);
+			stream->write_integer((uint32_t)UTXO.tokens.size());
+			for (auto& item : UTXO.tokens)
 			{
-				Stream->WriteString(Item.ContractAddress);
-				Stream->WriteString(Item.Symbol);
-				Stream->WriteDecimal(Item.Value);
-				Stream->WriteInteger(Item.Decimals);
+				stream->write_string(item.contract_address);
+				stream->write_string(item.symbol);
+				stream->write_decimal(item.value);
+				stream->write_integer(item.decimals);
 			}
 			return true;
 		}
-		bool IndexUTXO::LoadPayload(Format::Stream& Stream)
+		bool index_utxo::load_payload(format::stream& stream)
 		{
-			if (!Stream.ReadString(Stream.ReadType(), &UTXO.Address))
+			if (!stream.read_string(stream.read_type(), &UTXO.address))
 				return false;
 
-			bool HasAddressIndex;
-			if (!Stream.ReadBoolean(Stream.ReadType(), &HasAddressIndex))
+			bool has_address_index;
+			if (!stream.read_boolean(stream.read_type(), &has_address_index))
 				return false;
 
-			UTXO.AddressIndex = HasAddressIndex ? Option<uint64_t>(0) : Option<uint64_t>(Optional::None);
-			if (UTXO.AddressIndex && !Stream.ReadInteger(Stream.ReadType(), UTXO.AddressIndex.Address()))
+			UTXO.address_index = has_address_index ? option<uint64_t>(0) : option<uint64_t>(optional::none);
+			if (UTXO.address_index && !stream.read_integer(stream.read_type(), UTXO.address_index.address()))
 				return false;
 
-			if (!Stream.ReadString(Stream.ReadType(), &UTXO.TransactionId))
+			if (!stream.read_string(stream.read_type(), &UTXO.transaction_id))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &UTXO.Index))
+			if (!stream.read_integer(stream.read_type(), &UTXO.index))
 				return false;
 
-			if (!Stream.ReadDecimal(Stream.ReadType(), &UTXO.Value))
+			if (!stream.read_decimal(stream.read_type(), &UTXO.value))
 				return false;
 
-			uint32_t Size;
-			if (!Stream.ReadInteger(Stream.ReadType(), &Size))
+			uint32_t size;
+			if (!stream.read_integer(stream.read_type(), &size))
 				return false;
 
-			UTXO.Tokens.reserve(Size);
-			for (uint32_t i = 0; i < Size; i++)
+			UTXO.tokens.reserve(size);
+			for (uint32_t i = 0; i < size; i++)
 			{
-				TokenUTXO Token;
-				if (!Stream.ReadString(Stream.ReadType(), &Token.ContractAddress))
+				token_utxo token;
+				if (!stream.read_string(stream.read_type(), &token.contract_address))
 					return false;
 
-				if (!Stream.ReadString(Stream.ReadType(), &Token.Symbol))
+				if (!stream.read_string(stream.read_type(), &token.symbol))
 					return false;
 
-				if (!Stream.ReadDecimal(Stream.ReadType(), &Token.Value))
+				if (!stream.read_decimal(stream.read_type(), &token.value))
 					return false;
 
-				if (!Stream.ReadInteger(Stream.ReadType(), &Token.Decimals))
+				if (!stream.read_integer(stream.read_type(), &token.decimals))
 					return false;
 
-				UTXO.Tokens.emplace_back(std::move(Token));
+				UTXO.tokens.emplace_back(std::move(token));
 			}
 
 			return true;
 		}
-		UPtr<Schema> IndexUTXO::AsSchema() const
+		uptr<schema> index_utxo::as_schema() const
 		{
-			Schema* Data = Var::Set::Object();
-			auto* UTXOData = Data->Set("utxo", Var::Set::Object());
-			auto* TokensData = UTXOData->Set("tokens", Var::Set::Array());
-			for (auto& Item : UTXO.Tokens)
+			schema* data = var::set::object();
+			auto* utxo_data = data->set("utxo", var::set::object());
+			auto* tokens_data = utxo_data->set("tokens", var::set::array());
+			for (auto& item : UTXO.tokens)
 			{
-				auto* TokenData = TokensData->Push(Var::Set::Object());
-				TokenData->Set("contract_address", Var::String(Item.ContractAddress));
-				TokenData->Set("symbol", Var::String(Item.Symbol));
-				TokenData->Set("value", Var::Decimal(Item.Value));
-				TokenData->Set("Decimals", Var::Integer(Item.Decimals));
+				auto* token_data = tokens_data->push(var::set::object());
+				token_data->set("contract_address", var::string(item.contract_address));
+				token_data->set("symbol", var::string(item.symbol));
+				token_data->set("value", var::decimal(item.value));
+				token_data->set("Decimals", var::integer(item.decimals));
 			}
-			Data->Set("transaction_id", Var::String(UTXO.TransactionId));
-			Data->Set("address", Var::String(UTXO.Address));
-			Data->Set("address_index", UTXO.AddressIndex ? Algorithm::Encoding::SerializeUint256(*UTXO.AddressIndex) : Var::Set::Null());
-			Data->Set("value", Var::Decimal(UTXO.Value));
-			Data->Set("index", Var::Integer(UTXO.Index));
-			Data->Set("binding", Var::String(Binding));
-			return Data;
+			data->set("transaction_id", var::string(UTXO.transaction_id));
+			data->set("address", var::string(UTXO.address));
+			data->set("address_index", UTXO.address_index ? algorithm::encoding::serialize_uint256(*UTXO.address_index) : var::set::null());
+			data->set("value", var::decimal(UTXO.value));
+			data->set("index", var::integer(UTXO.index));
+			data->set("binding", var::string(binding));
+			return data;
 		}
-		uint32_t IndexUTXO::AsType() const
+		uint32_t index_utxo::as_type() const
 		{
-			return AsInstanceType();
+			return as_instance_type();
 		}
-		std::string_view IndexUTXO::AsTypename() const
+		std::string_view index_utxo::as_typename() const
 		{
-			return AsInstanceTypename();
+			return as_instance_typename();
 		}
-		uint32_t IndexUTXO::AsInstanceType()
+		uint32_t index_utxo::as_instance_type()
 		{
-			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
-			return Hash;
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
 		}
-		std::string_view IndexUTXO::AsInstanceTypename()
+		std::string_view index_utxo::as_instance_typename()
 		{
 			return "observer_index_utxo";
 		}
 
-		BaseFee::BaseFee() : Price(Decimal::NaN()), Limit(Decimal::NaN())
+		base_fee::base_fee() : price(decimal::nan()), limit(decimal::nan())
 		{
 		}
-		BaseFee::BaseFee(const Decimal& NewPrice, const Decimal& NewLimit) : Price(NewPrice), Limit(NewLimit)
+		base_fee::base_fee(const decimal& new_price, const decimal& new_limit) : price(new_price), limit(new_limit)
 		{
 		}
-		Decimal BaseFee::GetFee() const
+		decimal base_fee::get_fee() const
 		{
-			return Price * Limit;
+			return price * limit;
 		}
-		bool BaseFee::IsValid() const
+		bool base_fee::is_valid() const
 		{
-			return Price.IsPositive() && !Limit.IsNaN() && Limit >= 0.0;
+			return price.is_positive() && !limit.is_nan() && limit >= 0.0;
 		}
 
-		void ChainSupervisorOptions::SetCheckpointFromBlock(uint64_t BlockHeight)
+		void chain_supervisor_options::set_checkpoint_from_block(uint64_t block_height)
 		{
-			if (!State.StartingBlockHeight)
-				State.StartingBlockHeight = BlockHeight;
-			State.LatestBlockHeight = BlockHeight;
+			if (!state.starting_block_height)
+				state.starting_block_height = block_height;
+			state.latest_block_height = block_height;
 		}
-		void ChainSupervisorOptions::SetCheckpointToBlock(uint64_t BlockHeight)
+		void chain_supervisor_options::set_checkpoint_to_block(uint64_t block_height)
 		{
-			if (!State.CurrentBlockHeight && !State.LatestBlockHeight && !State.StartingBlockHeight)
-				SetCheckpointFromBlock(BlockHeight > 1 ? BlockHeight - 1 : BlockHeight);
-			State.CurrentBlockHeight = BlockHeight;
+			if (!state.current_block_height && !state.latest_block_height && !state.starting_block_height)
+				set_checkpoint_from_block(block_height > 1 ? block_height - 1 : block_height);
+			state.current_block_height = block_height;
 		}
-		uint64_t ChainSupervisorOptions::GetNextBlockHeight()
+		uint64_t chain_supervisor_options::get_next_block_height()
 		{
-			return ++State.LatestBlockHeight;
+			return ++state.latest_block_height;
 		}
-		uint64_t ChainSupervisorOptions::GetTimeAwaited() const
+		uint64_t chain_supervisor_options::get_time_awaited() const
 		{
-			return State.LatestTimeAwaited;
+			return state.latest_time_awaited;
 		}
-		bool ChainSupervisorOptions::HasNextBlockHeight() const
+		bool chain_supervisor_options::has_next_block_height() const
 		{
-			return State.CurrentBlockHeight > State.LatestBlockHeight + MinBlockConfirmations;
+			return state.current_block_height > state.latest_block_height + min_block_confirmations;
 		}
-		bool ChainSupervisorOptions::HasCurrentBlockHeight() const
+		bool chain_supervisor_options::has_current_block_height() const
 		{
-			return State.CurrentBlockHeight > 0;
+			return state.current_block_height > 0;
 		}
-		bool ChainSupervisorOptions::HasLatestBlockHeight() const
+		bool chain_supervisor_options::has_latest_block_height() const
 		{
-			return State.LatestBlockHeight > 0;
+			return state.latest_block_height > 0;
 		}
-		bool ChainSupervisorOptions::WillWaitForTransactions() const
+		bool chain_supervisor_options::will_wait_for_transactions() const
 		{
-			return HasLatestBlockHeight() && !HasNextBlockHeight();
+			return has_latest_block_height() && !has_next_block_height();
 		}
-		double ChainSupervisorOptions::GetCheckpointPercentage() const
+		double chain_supervisor_options::get_checkpoint_percentage() const
 		{
-			if (!HasLatestBlockHeight() || !HasCurrentBlockHeight())
+			if (!has_latest_block_height() || !has_current_block_height())
 				return 0.0;
 
-			double Multiplier = 100.0;
-			double CurrentValue = (double)(State.LatestBlockHeight - State.StartingBlockHeight);
-			double TargetValue = (double)(State.CurrentBlockHeight - State.StartingBlockHeight);
-			double Percentage = Multiplier * CurrentValue / TargetValue;
-			return std::floor(Percentage * Multiplier) / Multiplier;
+			double multiplier = 100.0;
+			double current_value = (double)(state.latest_block_height - state.starting_block_height);
+			double target_value = (double)(state.current_block_height - state.starting_block_height);
+			double percentage = multiplier * current_value / target_value;
+			return std::floor(percentage * multiplier) / multiplier;
 		}
-		const UnorderedSet<ServerRelay*>& ChainSupervisorOptions::GetInteractedNodes() const
+		const unordered_set<server_relay*>& chain_supervisor_options::get_interacted_nodes() const
 		{
-			return State.Interactions;
+			return state.interactions;
 		}
-		bool ChainSupervisorOptions::IsCancelled(const Algorithm::AssetId& Asset)
+		bool chain_supervisor_options::is_cancelled(const algorithm::asset_id& asset)
 		{
-			auto* Nodes = NSS::ServerNode::Get()->GetNodes(Asset);
-			if (!Nodes || Nodes->empty())
+			auto* nodes = nss::server_node::get()->get_nodes(asset);
+			if (!nodes || nodes->empty())
 				return true;
 
-			for (auto& Node : *Nodes)
+			for (auto& node : *nodes)
 			{
-				if (!Node->IsActivityAllowed())
+				if (!node->is_activity_allowed())
 					return true;
 			}
 
 			return false;
 		}
 
-		ChainSupervisorOptions& MultichainSupervisorOptions::AddSpecificOptions(const std::string_view& Blockchain)
+		chain_supervisor_options& multichain_supervisor_options::add_specific_options(const std::string_view& blockchain)
 		{
-			auto& Options = Specifics[String(Blockchain)];
-			auto* Settings = (SupervisorOptions*)&Options;
-			*Settings = *(SupervisorOptions*)this;
-			return Options;
+			auto& options = specifics[string(blockchain)];
+			auto* settings = (supervisor_options*)&options;
+			*settings = *(supervisor_options*)this;
+			return options;
 		}
 
-		ServerRelay::ServerRelay(const std::string_view& NodeURL, double NodeThrottling) noexcept : Throttling(NodeThrottling), Latest(0), Allowed(true), UserData(nullptr)
+		server_relay::server_relay(const std::string_view& node_url, double node_throttling) noexcept : throttling(node_throttling), latest(0), allowed(true), user_data(nullptr)
 		{
-			for (auto& Path : Stringify::Split(NodeURL, ';'))
+			for (auto& path : stringify::split(node_url, ';'))
 			{
-				if (Stringify::StartsWith(Path, "jsonrpc="))
+				if (stringify::starts_with(path, "jsonrpc="))
 				{
-					Paths.JsonRpcPath = Path.substr(8);
-					Paths.JsonRpcDistinct = true;
+					paths.json_rpc_path = path.substr(8);
+					paths.json_rpc_distinct = true;
 				}
-				else if (Stringify::StartsWith(Path, "rest="))
+				else if (stringify::starts_with(path, "rest="))
 				{
-					Paths.RestPath = Path.substr(5);
-					Paths.RestDistinct = true;
+					paths.rest_path = path.substr(5);
+					paths.rest_distinct = true;
 				}
-				else if (Stringify::StartsWith(Path, "http="))
+				else if (stringify::starts_with(path, "http="))
 				{
-					Paths.HttpPath = Path.substr(5);
-					Paths.HttpDistinct = true;
+					paths.http_path = path.substr(5);
+					paths.http_distinct = true;
 				}
 			}
-			if (Paths.HttpPath.empty())
+			if (paths.http_path.empty())
 			{
-				size_t Index = NodeURL.find('=');
-				if (Index != std::string::npos)
+				size_t index = node_url.find('=');
+				if (index != std::string::npos)
 				{
-					Paths.HttpPath = NodeURL.substr(Index + 1);
-					Paths.HttpDistinct = true;
+					paths.http_path = node_url.substr(index + 1);
+					paths.http_distinct = true;
 				}
 				else
 				{
-					Paths.HttpPath = NodeURL;
-					Paths.HttpDistinct = false;
+					paths.http_path = node_url;
+					paths.http_distinct = false;
 				}
 			}
-			if (Paths.JsonRpcPath.empty())
+			if (paths.json_rpc_path.empty())
 			{
-				Paths.JsonRpcPath = Paths.HttpPath;
-				Paths.JsonRpcDistinct = false;
+				paths.json_rpc_path = paths.http_path;
+				paths.json_rpc_distinct = false;
 			}
-			if (Paths.RestPath.empty())
+			if (paths.rest_path.empty())
 			{
-				Paths.RestPath = Paths.HttpPath;
-				Paths.RestDistinct = false;
+				paths.rest_path = paths.http_path;
+				paths.rest_distinct = false;
 			}
-			Stringify::Trim(Paths.JsonRpcPath);
-			Stringify::Trim(Paths.RestPath);
-			Stringify::Trim(Paths.HttpPath);
+			stringify::trim(paths.json_rpc_path);
+			stringify::trim(paths.rest_path);
+			stringify::trim(paths.http_path);
 		}
-		ServerRelay::~ServerRelay() noexcept
+		server_relay::~server_relay() noexcept
 		{
-			CancelActivities();
+			cancel_activities();
 		}
-		ExpectsPromiseRT<Schema*> ServerRelay::ExecuteRPC(const Algorithm::AssetId& Asset, ErrorReporter& Reporter, const std::string_view& Method, const SchemaList& Args, CachePolicy Cache, const std::string_view& Path)
+		expects_promise_rt<schema*> server_relay::execute_rpc(const algorithm::asset_id& asset, error_reporter& reporter, const std::string_view& method, const schema_list& args, cache_policy cache, const std::string_view& path)
 		{
-			if (Reporter.Type == TransmitType::Any)
-				Reporter.Type = TransmitType::JSONRPC;
-			if (Reporter.Method.empty())
-				Reporter.Method = Method;
+			if (reporter.type == transmit_type::any)
+				reporter.type = transmit_type::JSONRPC;
+			if (reporter.method.empty())
+				reporter.method = method;
 
-			Schema* Params = Var::Set::Array();
-			Params->Reserve(Args.size());
-			for (auto& Item : Args)
-				Params->Push(Item->Copy());
+			schema* params = var::set::array();
+			params->reserve(args.size());
+			for (auto& item : args)
+				params->push(item->copy());
 
-			UPtr<Schema> Setup = Var::Set::Object();
-			Setup->Set("jsonrpc", Var::String("2.0"));
-			Setup->Set("id", Var::String(GetCacheType(Cache)));
-			Setup->Set("method", Var::String(Method));
-			Setup->Set("params", Params);
+			uptr<schema> setup = var::set::object();
+			setup->set("jsonrpc", var::string("2.0"));
+			setup->set("id", var::string(get_cache_type(cache)));
+			setup->set("method", var::string(method));
+			setup->set("params", params);
 
-			auto ResponseStatus = Coawait(ExecuteREST(Asset, Reporter, "POST", Path, *Setup, Cache));
-			if (!ResponseStatus)
-				Coreturn ExpectsRT<Schema*>(std::move(ResponseStatus.Error()));
+			auto response_status = coawait(execute_rest(asset, reporter, "POST", path, *setup, cache));
+			if (!response_status)
+				coreturn expects_rt<schema*>(std::move(response_status.error()));
 
-			UPtr<Schema> Response = *ResponseStatus;
-			if (Response->Has("error.code"))
+			uptr<schema> response = *response_status;
+			if (response->has("error.code"))
 			{
-				String Code = Response->FetchVar("error.code").GetBlob();
-				String Description = Response->Has("error.message") ? Response->FetchVar("error.message").GetBlob() : "no error description";
-				Coreturn ExpectsRT<Schema*>(RemoteException(GenerateErrorMessage(ExpectsSystem<HTTP::ResponseFrame>(SystemException()), Reporter, Code, Description)));
+				string code = response->fetch_var("error.code").get_blob();
+				string description = response->has("error.message") ? response->fetch_var("error.message").get_blob() : "no error description";
+				coreturn expects_rt<schema*>(remote_exception(generate_error_message(expects_system<http::response_frame>(system_exception()), reporter, code, description)));
 			}
-			else if (Response->Has("result.error_code"))
+			else if (response->has("result.error_code"))
 			{
-				String Code = Response->FetchVar("result.error_code").GetBlob();
-				String Description = Response->Has("result.error_message") ? Response->FetchVar("result.error_message").GetBlob() : "no error description";
-				Coreturn ExpectsRT<Schema*>(RemoteException(GenerateErrorMessage(ExpectsSystem<HTTP::ResponseFrame>(SystemException()), Reporter, Code, Description)));
-			}
-
-			Schema* Result = Response->Get("result");
-			if (!Result)
-			{
-				String Description = Response->Value.GetType() == VarType::String ? Response->Value.GetBlob() : "no error description";
-				Coreturn ExpectsRT<Schema*>(RemoteException(GenerateErrorMessage(ExpectsSystem<HTTP::ResponseFrame>(SystemException()), Reporter, "null", Description)));
+				string code = response->fetch_var("result.error_code").get_blob();
+				string description = response->has("result.error_message") ? response->fetch_var("result.error_message").get_blob() : "no error description";
+				coreturn expects_rt<schema*>(remote_exception(generate_error_message(expects_system<http::response_frame>(system_exception()), reporter, code, description)));
 			}
 
-			Result->Unlink();
-			Coreturn ExpectsRT<Schema*>(Result);
+			schema* result = response->get("result");
+			if (!result)
+			{
+				string description = response->value.get_type() == var_type::string ? response->value.get_blob() : "no error description";
+				coreturn expects_rt<schema*>(remote_exception(generate_error_message(expects_system<http::response_frame>(system_exception()), reporter, "null", description)));
+			}
+
+			result->unlink();
+			coreturn expects_rt<schema*>(result);
 		}
-		ExpectsPromiseRT<Schema*> ServerRelay::ExecuteRPC3(const Algorithm::AssetId& Asset, ErrorReporter& Reporter, const std::string_view& Method, const SchemaArgs& Args, CachePolicy Cache, const std::string_view& Path)
+		expects_promise_rt<schema*> server_relay::execute_rpc3(const algorithm::asset_id& asset, error_reporter& reporter, const std::string_view& method, const schema_args& args, cache_policy cache, const std::string_view& path)
 		{
-			if (Reporter.Type == TransmitType::Any)
-				Reporter.Type = TransmitType::JSONRPC;
-			if (Reporter.Method.empty())
-				Reporter.Method = Method;
+			if (reporter.type == transmit_type::any)
+				reporter.type = transmit_type::JSONRPC;
+			if (reporter.method.empty())
+				reporter.method = method;
 
-			Schema* Params = Var::Set::Object();
-			Params->Reserve(Args.size());
-			for (auto& Item : Args)
-				Params->Set(Item.first, Item.second->Copy());
+			schema* params = var::set::object();
+			params->reserve(args.size());
+			for (auto& item : args)
+				params->set(item.first, item.second->copy());
 
-			UPtr<Schema> Setup = Var::Set::Object();
-			Setup->Set("jsonrpc", Var::String("2.0"));
-			Setup->Set("id", Var::String(GetCacheType(Cache)));
-			Setup->Set("method", Var::String(Method));
-			Setup->Set("params", Params);
+			uptr<schema> setup = var::set::object();
+			setup->set("jsonrpc", var::string("2.0"));
+			setup->set("id", var::string(get_cache_type(cache)));
+			setup->set("method", var::string(method));
+			setup->set("params", params);
 
-			auto ResponseStatus = Coawait(ExecuteREST(Asset, Reporter, "POST", Path, *Setup, Cache));
-			if (!ResponseStatus)
-				Coreturn ExpectsRT<Schema*>(std::move(ResponseStatus.Error()));
+			auto response_status = coawait(execute_rest(asset, reporter, "POST", path, *setup, cache));
+			if (!response_status)
+				coreturn expects_rt<schema*>(std::move(response_status.error()));
 
-			UPtr<Schema> Response = *ResponseStatus;
-			if (Response->Has("error.code"))
+			uptr<schema> response = *response_status;
+			if (response->has("error.code"))
 			{
-				String Code = Response->FetchVar("error.code").GetBlob();
-				String Description = Response->Has("error.message") ? Response->FetchVar("error.message").GetBlob() : "no error description";
-				Coreturn ExpectsRT<Schema*>(RemoteException(GenerateErrorMessage(ExpectsSystem<HTTP::ResponseFrame>(SystemException()), Reporter, Code, Description)));
+				string code = response->fetch_var("error.code").get_blob();
+				string description = response->has("error.message") ? response->fetch_var("error.message").get_blob() : "no error description";
+				coreturn expects_rt<schema*>(remote_exception(generate_error_message(expects_system<http::response_frame>(system_exception()), reporter, code, description)));
 			}
-			else if (Response->Has("result.error_code"))
+			else if (response->has("result.error_code"))
 			{
-				String Code = Response->FetchVar("result.error_code").GetBlob();
-				String Description = Response->Has("result.error_message") ? Response->FetchVar("result.error_message").GetBlob() : "no error description";
-				Coreturn ExpectsRT<Schema*>(RemoteException(GenerateErrorMessage(ExpectsSystem<HTTP::ResponseFrame>(SystemException()), Reporter, Code, Description)));
-			}
-
-			Schema* Result = Response->Get("result");
-			if (!Result)
-			{
-				String Description = Response->Value.GetType() == VarType::String ? Response->Value.GetBlob() : "no error description";
-				Coreturn ExpectsRT<Schema*>(RemoteException(GenerateErrorMessage(ExpectsSystem<HTTP::ResponseFrame>(SystemException()), Reporter, "null", Description)));
+				string code = response->fetch_var("result.error_code").get_blob();
+				string description = response->has("result.error_message") ? response->fetch_var("result.error_message").get_blob() : "no error description";
+				coreturn expects_rt<schema*>(remote_exception(generate_error_message(expects_system<http::response_frame>(system_exception()), reporter, code, description)));
 			}
 
-			Result->Unlink();
-			Coreturn ExpectsRT<Schema*>(Result);
+			schema* result = response->get("result");
+			if (!result)
+			{
+				string description = response->value.get_type() == var_type::string ? response->value.get_blob() : "no error description";
+				coreturn expects_rt<schema*>(remote_exception(generate_error_message(expects_system<http::response_frame>(system_exception()), reporter, "null", description)));
+			}
+
+			result->unlink();
+			coreturn expects_rt<schema*>(result);
 		}
-		ExpectsPromiseRT<Schema*> ServerRelay::ExecuteREST(const Algorithm::AssetId& Asset, ErrorReporter& Reporter, const std::string_view& Method, const std::string_view& Path, Schema* Args, CachePolicy Cache)
+		expects_promise_rt<schema*> server_relay::execute_rest(const algorithm::asset_id& asset, error_reporter& reporter, const std::string_view& method, const std::string_view& path, schema* args, cache_policy cache)
 		{
-			if (Reporter.Type == TransmitType::Any)
-				Reporter.Type = TransmitType::REST;
-			if (Reporter.Method.empty())
-				Reporter.Method = Location(GetNodeURL(Reporter.Type, Path)).Path.substr(1);
+			if (reporter.type == transmit_type::any)
+				reporter.type = transmit_type::REST;
+			if (reporter.method.empty())
+				reporter.method = location(get_node_url(reporter.type, path)).path.substr(1);
 
-			String Body = (Args ? Schema::ToJSON(Args) : String());
-			Coreturn Coawait(ExecuteHTTP(Asset, Reporter, Method, Path, "application/json", Body, Cache));
+			string body = (args ? schema::to_json(args) : string());
+			coreturn coawait(execute_http(asset, reporter, method, path, "application/json", body, cache));
 		}
-		ExpectsPromiseRT<Schema*> ServerRelay::ExecuteHTTP(const Algorithm::AssetId& Asset, ErrorReporter& Reporter, const std::string_view& Method, const std::string_view& Path, const std::string_view& Type, const std::string_view& Body, CachePolicy Cache)
+		expects_promise_rt<schema*> server_relay::execute_http(const algorithm::asset_id& asset, error_reporter& reporter, const std::string_view& method, const std::string_view& path, const std::string_view& type, const std::string_view& body, cache_policy cache)
 		{
-			if (Reporter.Type == TransmitType::Any)
-				Reporter.Type = TransmitType::HTTP;
+			if (reporter.type == transmit_type::any)
+				reporter.type = transmit_type::HTTP;
 
-			String TargetURL = GetNodeURL(Reporter.Type, Path);
-			if (Reporter.Method.empty())
-				Reporter.Method = Location(TargetURL).Path.substr(1);
+			string target_url = get_node_url(reporter.type, path);
+			if (reporter.method.empty())
+				reporter.method = location(target_url).path.substr(1);
 
-			if (!Allowed)
-				Coreturn ExpectsRT<Schema*>(RemoteException(GenerateErrorMessage(ExpectsSystem<HTTP::ResponseFrame>(SystemException()), Reporter, "null", "system shutdown (cancelled)")));
+			if (!allowed)
+				coreturn expects_rt<schema*>(remote_exception(generate_error_message(expects_system<http::response_frame>(system_exception()), reporter, "null", "system shutdown (cancelled)")));
 
-			if (Path.empty() && Body.empty())
-				Cache = CachePolicy::Lazy;
+			if (path.empty() && body.empty())
+				cache = cache_policy::lazy;
 
-			auto* Server = NSS::ServerNode::Get();
-			String Message = String(Path).append(Body);
-			String Hash = Codec::HexEncode(Algorithm::Hashing::Hash256((uint8_t*)Message.data(), Message.size()));
-			if (Cache != CachePolicy::Lazy && Cache != CachePolicy::Greedy)
+			auto* server = nss::server_node::get();
+			string message = string(path).append(body);
+			string hash = codec::hex_encode(algorithm::hashing::hash256((uint8_t*)message.data(), message.size()));
+			if (cache != cache_policy::lazy && cache != cache_policy::greedy)
 			{
-				auto Data = Server->LoadCache(Asset, Cache, Hash);
-				if (Data)
-					Coreturn ExpectsRT<Schema*>(*Data);
+				auto data = server->load_cache(asset, cache, hash);
+				if (data)
+					coreturn expects_rt<schema*>(*data);
 			}
 
-			if (Throttling > 0.0 && Cache != CachePolicy::Greedy)
+			if (throttling > 0.0 && cache != cache_policy::greedy)
 			{
-				const int64_t Time = (int64_t)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-				const double Timeout = (double)(Time - Latest);
-				const double Limit = 1000.0 / Throttling;
-				const uint64_t Cooldown = (uint64_t)(Limit - Timeout);
-				uint64_t RetryTimeout = Cooldown;
-				if (Timeout < Limit && !Coawait(YieldForCooldown(RetryTimeout, Protocol::Now().User.NSS.RelayingTimeout)))
-					Coreturn ExpectsRT<Schema*>(RemoteException::Retry());
-				else if (!Allowed)
-					Coreturn ExpectsRT<Schema*>(RemoteException::Shutdown());
-				Latest = (int64_t)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+				const int64_t time = (int64_t)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+				const double timeout = (double)(time - latest);
+				const double limit = 1000.0 / throttling;
+				const uint64_t cooldown = (uint64_t)(limit - timeout);
+				uint64_t retry_timeout = cooldown;
+				if (timeout < limit && !coawait(yield_for_cooldown(retry_timeout, protocol::now().user.nss.relaying_timeout)))
+					coreturn expects_rt<schema*>(remote_exception::retry());
+				else if (!allowed)
+					coreturn expects_rt<schema*>(remote_exception::shutdown());
+				latest = (int64_t)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 			}
 
-			HTTP::FetchFrame Setup;
-			Setup.MaxSize = 16 * 1024 * 1024;
-			Setup.VerifyPeers = (uint32_t)Protocol::Now().User.TCP.TlsTrustedPeers;
-			Setup.Timeout = Protocol::Now().User.NSS.RelayingTimeout;
+			http::fetch_frame setup;
+			setup.max_size = 16 * 1024 * 1024;
+			setup.verify_peers = (uint32_t)protocol::now().user.tcp.tls_trusted_peers;
+			setup.timeout = protocol::now().user.nss.relaying_timeout;
 
-			uint64_t RetryResponses = 0;
-			uint64_t RetryTimeout = Protocol::Now().User.NSS.RelayingRetryTimeout;
-			if (!Body.empty())
+			uint64_t retry_responses = 0;
+			uint64_t retry_timeout = protocol::now().user.nss.relaying_retry_timeout;
+			if (!body.empty())
 			{
-				Setup.SetHeader("Content-Type", Type);
-				Setup.Content.Assign(Body);
+				setup.set_header("Content-Type", type);
+				setup.content.assign(body);
 			}
-		Retry:
-			auto Response = Coawait(Server->InternalCall(TargetURL, Method, Setup));
-			if (!Response || Response->StatusCode == 408 || Response->StatusCode == 429 || Response->StatusCode == 502 || Response->StatusCode == 503 || Response->StatusCode == 504)
+		retry:
+			auto response = coawait(server->internal_call(target_url, method, setup));
+			if (!response || response->status_code == 408 || response->status_code == 429 || response->status_code == 502 || response->status_code == 503 || response->status_code == 504)
 			{
-				++RetryResponses;
-				if (Cache == CachePolicy::Greedy)
-					Coreturn  Response ? ExpectsRT<Schema*>(RemoteException(GenerateErrorMessage(Response, Reporter, "null", "node has rejected the request"))) : ExpectsRT<Schema*>(RemoteException::Shutdown());
-				else if (RetryResponses > 5)
-					Coreturn Response ? ExpectsRT<Schema*>(RemoteException(GenerateErrorMessage(Response, Reporter, "null", "node has rejected the request too many times"))) : ExpectsRT<Schema*>(RemoteException::Shutdown());
-				else if (!Coawait(YieldForCooldown(RetryTimeout, Setup.Timeout)))
-					Coreturn Response ? ExpectsRT<Schema*>(RemoteException(GenerateErrorMessage(Response, Reporter, "null", "node has rejected the request after cooldown"))) : ExpectsRT<Schema*>(RemoteException::Shutdown());
-				else if (!Allowed)
-					Coreturn ExpectsRT<Schema*>(RemoteException::Shutdown());
-				goto Retry;
-			}
-
-			auto Text = Response->Content.GetText();
-			auto Data = Response->Content.GetJSON();
-			if (!Data)
-				Coreturn ExpectsRT<Schema*>(RemoteException(GenerateErrorMessage(Response, Reporter, "null", "node's response is not JSON compliant")));
-
-			if (Cache != CachePolicy::Lazy && Cache != CachePolicy::Greedy && (Response->StatusCode < 400 || Response->StatusCode == 404))
-			{
-				Data->AddRef();
-				Server->StoreCache(Asset, Cache, Hash, UPtr<Schema>(Data));
+				++retry_responses;
+				if (cache == cache_policy::greedy)
+					coreturn  response ? expects_rt<schema*>(remote_exception(generate_error_message(response, reporter, "null", "node has rejected the request"))) : expects_rt<schema*>(remote_exception::shutdown());
+				else if (retry_responses > 5)
+					coreturn response ? expects_rt<schema*>(remote_exception(generate_error_message(response, reporter, "null", "node has rejected the request too many times"))) : expects_rt<schema*>(remote_exception::shutdown());
+				else if (!coawait(yield_for_cooldown(retry_timeout, setup.timeout)))
+					coreturn response ? expects_rt<schema*>(remote_exception(generate_error_message(response, reporter, "null", "node has rejected the request after cooldown"))) : expects_rt<schema*>(remote_exception::shutdown());
+				else if (!allowed)
+					coreturn expects_rt<schema*>(remote_exception::shutdown());
+				goto retry;
 			}
 
-			Coreturn ExpectsRT<Schema*>(*Data);
+			auto text = response->content.get_text();
+			auto data = response->content.get_json();
+			if (!data)
+				coreturn expects_rt<schema*>(remote_exception(generate_error_message(response, reporter, "null", "node's response is not JSON compliant")));
+
+			if (cache != cache_policy::lazy && cache != cache_policy::greedy && (response->status_code < 400 || response->status_code == 404))
+			{
+				data->add_ref();
+				server->store_cache(asset, cache, hash, uptr<schema>(data));
+			}
+
+			coreturn expects_rt<schema*>(*data);
 		}
-		Promise<bool> ServerRelay::YieldForCooldown(uint64_t& RetryTimeout, uint64_t TotalTimeoutMs)
+		promise<bool> server_relay::yield_for_cooldown(uint64_t& retry_timeout, uint64_t total_timeout_ms)
 		{
-			if (TotalTimeoutMs > 0 && RetryTimeout >= TotalTimeoutMs)
-				Coreturn false;
+			if (total_timeout_ms > 0 && retry_timeout >= total_timeout_ms)
+				coreturn false;
 
-			Promise<bool> Future;
-			TaskId TimerId = EnqueueActivity(Future, Schedule::Get()->SetTimeout(RetryTimeout, [Future]() mutable
+			promise<bool> future;
+			task_id timer_id = enqueue_activity(future, schedule::get()->set_timeout(retry_timeout, [future]() mutable
 			{
-				if (Future.IsPending())
-					Future.Set(true);
+				if (future.is_pending())
+					future.set(true);
 			}));
-			if (!Coawait(std::move(Future)))
-				Coreturn false;
+			if (!coawait(std::move(future)))
+				coreturn false;
 
-			DequeueActivity(TimerId);
-			RetryTimeout *= 2;
-			Coreturn true;
+			dequeue_activity(timer_id);
+			retry_timeout *= 2;
+			coreturn true;
 		}
-		Promise<bool> ServerRelay::YieldForDiscovery(ChainSupervisorOptions* Options)
+		promise<bool> server_relay::yield_for_discovery(chain_supervisor_options* options)
 		{
-			if (!Allowed)
-				Coreturn Promise<bool>(false);
+			if (!allowed)
+				coreturn promise<bool>(false);
 
-			Promise<bool> Future;
-			Options->State.LatestTimeAwaited += Options->PollingFrequencyMs;
-			TaskId TimerId = EnqueueActivity(Future, Schedule::Get()->SetTimeout(Options->PollingFrequencyMs, [Future]() mutable
+			promise<bool> future;
+			options->state.latest_time_awaited += options->polling_frequency_ms;
+			task_id timer_id = enqueue_activity(future, schedule::get()->set_timeout(options->polling_frequency_ms, [future]() mutable
 			{
-				if (Future.IsPending())
-					Future.Set(true);
+				if (future.is_pending())
+					future.set(true);
 			}));
-			if (!Coawait(std::move(Future)))
-				Coreturn false;
+			if (!coawait(std::move(future)))
+				coreturn false;
 
-			DequeueActivity(TimerId);
-			Coreturn true;
+			dequeue_activity(timer_id);
+			coreturn true;
 		}
-		ExpectsLR<void> ServerRelay::VerifyCompatibility(const Algorithm::AssetId& Asset)
+		expects_lr<void> server_relay::verify_compatibility(const algorithm::asset_id& asset)
 		{
-			auto* Implementation = NSS::ServerNode::Get()->GetChain(Asset);
-			if (!Implementation)
-				return Expectation::Met;
+			auto* implementation = nss::server_node::get()->get_chain(asset);
+			if (!implementation)
+				return expectation::met;
 
-			return Implementation->VerifyNodeCompatibility(this);
+			return implementation->verify_node_compatibility(this);
 		}
-		TaskId ServerRelay::EnqueueActivity(const Promise<bool>& Future, TaskId TimerId)
+		task_id server_relay::enqueue_activity(const promise<bool>& future, task_id timer_id)
 		{
-			if (Future.IsPending())
+			if (future.is_pending())
 			{
-				UMutex<std::recursive_mutex> Unique(Mutex);
-				Tasks.push_back(std::make_pair(Future, TimerId));
+				umutex<std::recursive_mutex> unique(mutex);
+				tasks.push_back(std::make_pair(future, timer_id));
 			}
-			if (!Allowed)
-				CancelActivities();
-			return TimerId;
+			if (!allowed)
+				cancel_activities();
+			return timer_id;
 		}
-		void ServerRelay::DequeueActivity(TaskId TimerId)
+		void server_relay::dequeue_activity(task_id timer_id)
 		{
-			UMutex<std::recursive_mutex> Unique(Mutex);
-			for (auto It = Tasks.begin(); It != Tasks.end(); It++)
+			umutex<std::recursive_mutex> unique(mutex);
+			for (auto it = tasks.begin(); it != tasks.end(); it++)
 			{
-				if (It->second == TimerId)
+				if (it->second == timer_id)
 				{
-					Tasks.erase(It);
+					tasks.erase(it);
 					break;
 				}
 			}
 		}
-		void ServerRelay::AllowActivities()
+		void server_relay::allow_activities()
 		{
-			Allowed = true;
+			allowed = true;
 		}
-		void ServerRelay::CancelActivities()
+		void server_relay::cancel_activities()
 		{
-			UMutex<std::recursive_mutex> Unique(Mutex);
-			Allowed = false;
-			for (auto& Task : Tasks)
+			umutex<std::recursive_mutex> unique(mutex);
+			allowed = false;
+			for (auto& task : tasks)
 			{
-				Schedule::Get()->ClearTimeout(Task.second);
-				if (Task.first.IsPending())
-					Task.first.Set(false);
+				schedule::get()->clear_timeout(task.second);
+				if (task.first.is_pending())
+					task.first.set(false);
 			}
-			Tasks.clear();
+			tasks.clear();
 		}
-		bool ServerRelay::HasDistinctURL(TransmitType Type) const
+		bool server_relay::has_distinct_url(transmit_type type) const
 		{
-			switch (Type)
+			switch (type)
 			{
-				case TransmitType::JSONRPC:
-					return Paths.JsonRpcDistinct;
-				case TransmitType::REST:
-					return Paths.RestDistinct;
-				case TransmitType::HTTP:
-					return Paths.HttpDistinct;
+				case transmit_type::JSONRPC:
+					return paths.json_rpc_distinct;
+				case transmit_type::REST:
+					return paths.rest_distinct;
+				case transmit_type::HTTP:
+					return paths.http_distinct;
 				default:
-					return Paths.JsonRpcDistinct || Paths.RestDistinct || Paths.HttpDistinct;
+					return paths.json_rpc_distinct || paths.rest_distinct || paths.http_distinct;
 			}
 		}
-		bool ServerRelay::IsActivityAllowed() const
+		bool server_relay::is_activity_allowed() const
 		{
-			return Allowed;
+			return allowed;
 		}
-		const String& ServerRelay::GetNodeURL(TransmitType Type) const
+		const string& server_relay::get_node_url(transmit_type type) const
 		{
-			switch (Type)
+			switch (type)
 			{
-				case ServerRelay::TransmitType::JSONRPC:
-					return Paths.JsonRpcPath;
-				case ServerRelay::TransmitType::REST:
-					return Paths.RestPath;
-				case ServerRelay::TransmitType::HTTP:
+				case server_relay::transmit_type::JSONRPC:
+					return paths.json_rpc_path;
+				case server_relay::transmit_type::REST:
+					return paths.rest_path;
+				case server_relay::transmit_type::HTTP:
 				default:
-					return Paths.HttpPath;
+					return paths.http_path;
 			}
 		}
-		String ServerRelay::GetNodeURL(TransmitType Type, const std::string_view& Endpoint) const
+		string server_relay::get_node_url(transmit_type type, const std::string_view& endpoint) const
 		{
-			if (Stringify::StartsWith(Endpoint, "http"))
-				return String(Endpoint);
+			if (stringify::starts_with(endpoint, "http"))
+				return string(endpoint);
 
-			String URL = GetNodeURL(Type);
-			if (URL.empty() || Endpoint.empty())
+			string URL = get_node_url(type);
+			if (URL.empty() || endpoint.empty())
 				return URL;
 
-			if (URL.back() == '/' && Endpoint.front() == '/')
+			if (URL.back() == '/' && endpoint.front() == '/')
 				URL.erase(URL.end() - 1);
-			else if (URL.back() != '/' && Endpoint.front() != '/')
+			else if (URL.back() != '/' && endpoint.front() != '/')
 				URL += '/';
-			URL += Endpoint;
+			URL += endpoint;
 			return URL;
 		}
-		std::string_view ServerRelay::GetCacheType(CachePolicy Cache)
+		std::string_view server_relay::get_cache_type(cache_policy cache)
 		{
-			switch (Cache)
+			switch (cache)
 			{
-				case CachePolicy::Greedy:
+				case cache_policy::greedy:
 					return "greedy";
-				case CachePolicy::Lazy:
+				case cache_policy::lazy:
 					return "lazy";
-				case CachePolicy::Shortened:
+				case cache_policy::shortened:
 					return "scache";
-				case CachePolicy::Extended:
+				case cache_policy::extended:
 					return "ecache";
-				case CachePolicy::Persistent:
+				case cache_policy::persistent:
 					return "pcache";
 				default:
 					return "any";
 			}
 		}
-		String ServerRelay::GenerateErrorMessage(const ExpectsSystem<HTTP::ResponseFrame>& Response, const ErrorReporter& Reporter, const std::string_view& ErrorCode, const std::string_view& ErrorMessage)
+		string server_relay::generate_error_message(const expects_system<http::response_frame>& response, const error_reporter& reporter, const std::string_view& error_code, const std::string_view& error_message)
 		{
-			std::string_view Domain;
-			switch (Reporter.Type)
+			std::string_view domain;
+			switch (reporter.type)
 			{
-				case ServerRelay::TransmitType::JSONRPC:
-					Domain = "jrpc";
+				case server_relay::transmit_type::JSONRPC:
+					domain = "jrpc";
 					break;
-				case ServerRelay::TransmitType::REST:
-					Domain = "rest";
+				case server_relay::transmit_type::REST:
+					domain = "rest";
 					break;
-				case ServerRelay::TransmitType::HTTP:
-					Domain = "http";
+				case server_relay::transmit_type::HTTP:
+					domain = "http";
 					break;
 				default:
-					Domain = "call";
+					domain = "call";
 					break;
 			}
 
-			StringStream Message;
-			String Method = Reporter.Method;
-			Message << "observer::" << Domain << "::" << Stringify::ToLower(Method) << " error: ";
-			if (ErrorMessage.empty())
-				Message << "no response";
+			string_stream message;
+			string method = reporter.method;
+			message << "observer::" << domain << "::" << stringify::to_lower(method) << " error: ";
+			if (error_message.empty())
+				message << "no response";
 			else
-				Message << ErrorMessage;
-			Message << " (netc: " << (Response ? Response->StatusCode : 500) << ", " << Domain << "c: " << ErrorCode << ")";
-			return Message.str();
+				message << error_message;
+			message << " (netc: " << (response ? response->status_code : 500) << ", " << domain << "c: " << error_code << ")";
+			return message.str();
 		}
 
-		RelayBackend::RelayBackend() noexcept : Interact(nullptr)
+		relay_backend::relay_backend() noexcept : interact(nullptr)
 		{
 		}
-		RelayBackend::~RelayBackend() noexcept
+		relay_backend::~relay_backend() noexcept
 		{
 		}
-		ExpectsPromiseRT<Schema*> RelayBackend::ExecuteRPC(const Algorithm::AssetId& Asset, const std::string_view& Method, SchemaList&& Args, CachePolicy Cache, const std::string_view& Path)
+		expects_promise_rt<schema*> relay_backend::execute_rpc(const algorithm::asset_id& asset, const std::string_view& method, schema_list&& args, cache_policy cache, const std::string_view& path)
 		{
-			auto* Nodes = NSS::ServerNode::Get()->GetNodes(Asset);
-			if (!Nodes || Nodes->empty())
-				Coreturn ExpectsRT<Schema*>(RemoteException("node not found"));
+			auto* nodes = nss::server_node::get()->get_nodes(asset);
+			if (!nodes || nodes->empty())
+				coreturn expects_rt<schema*>(remote_exception("node not found"));
 
-			size_t Index = Crypto::Random();
+			size_t index = crypto::random();
 			while (true)
 			{
-				ServerRelay::ErrorReporter Reporter;
-				Index = (Index + 1) % Nodes->size();
-				auto* Node = *Nodes->at(Index);
-				auto Result = Coawait(Node->ExecuteRPC(Asset, Reporter, Method, Args, Cache, Path));
-				if (Interact) Interact(Node);
-				if (Result || !Result.Error().retry())
-					Coreturn Result;
+				server_relay::error_reporter reporter;
+				index = (index + 1) % nodes->size();
+				auto* node = *nodes->at(index);
+				auto result = coawait(node->execute_rpc(asset, reporter, method, args, cache, path));
+				if (interact) interact(node);
+				if (result || !result.error().is_retry())
+					coreturn result;
 			}
 
-			Coreturn ExpectsRT<Schema*>(RemoteException("node not found"));
+			coreturn expects_rt<schema*>(remote_exception("node not found"));
 		}
-		ExpectsPromiseRT<Schema*> RelayBackend::ExecuteRPC3(const Algorithm::AssetId& Asset, const std::string_view& Method, SchemaArgs&& Args, CachePolicy Cache, const std::string_view& Path)
+		expects_promise_rt<schema*> relay_backend::execute_rpc3(const algorithm::asset_id& asset, const std::string_view& method, schema_args&& args, cache_policy cache, const std::string_view& path)
 		{
-			auto* Nodes = NSS::ServerNode::Get()->GetNodes(Asset);
-			if (!Nodes || Nodes->empty())
-				Coreturn ExpectsRT<Schema*>(RemoteException("node not found"));
+			auto* nodes = nss::server_node::get()->get_nodes(asset);
+			if (!nodes || nodes->empty())
+				coreturn expects_rt<schema*>(remote_exception("node not found"));
 
-			size_t Index = Crypto::Random();
+			size_t index = crypto::random();
 			while (true)
 			{
-				ServerRelay::ErrorReporter Reporter;
-				Index = (Index + 1) % Nodes->size();
-				auto* Node = *Nodes->at(Index);
-				auto Result = Coawait(Node->ExecuteRPC3(Asset, Reporter, Method, Args, Cache, Path));
-				if (Interact) Interact(Node);
-				if (Result || !Result.Error().retry())
-					Coreturn Result;
+				server_relay::error_reporter reporter;
+				index = (index + 1) % nodes->size();
+				auto* node = *nodes->at(index);
+				auto result = coawait(node->execute_rpc3(asset, reporter, method, args, cache, path));
+				if (interact) interact(node);
+				if (result || !result.error().is_retry())
+					coreturn result;
 			}
 
-			Coreturn ExpectsRT<Schema*>(RemoteException("node not found"));
+			coreturn expects_rt<schema*>(remote_exception("node not found"));
 		}
-		ExpectsPromiseRT<Schema*> RelayBackend::ExecuteREST(const Algorithm::AssetId& Asset, const std::string_view& Method, const std::string_view& Path, Schema* Args, CachePolicy Cache)
+		expects_promise_rt<schema*> relay_backend::execute_rest(const algorithm::asset_id& asset, const std::string_view& method, const std::string_view& path, schema* args, cache_policy cache)
 		{
-			UPtr<Schema> Body = Args;
-			auto* Nodes = NSS::ServerNode::Get()->GetNodes(Asset);
-			if (!Nodes || Nodes->empty())
-				Coreturn ExpectsRT<Schema*>(RemoteException("node not found"));
+			uptr<schema> body = args;
+			auto* nodes = nss::server_node::get()->get_nodes(asset);
+			if (!nodes || nodes->empty())
+				coreturn expects_rt<schema*>(remote_exception("node not found"));
 
-			size_t Index = Crypto::Random();
+			size_t index = crypto::random();
 			while (true)
 			{
-				ServerRelay::ErrorReporter Reporter;
-				Index = (Index + 1) % Nodes->size();
-				auto* Node = *Nodes->at(Index);
-				auto Result = Coawait(Node->ExecuteREST(Asset, Reporter, Method, Path, *Body, Cache));
-				if (Interact) Interact(Node);
-				if (Result || !Result.Error().retry())
-					Coreturn Result;
+				server_relay::error_reporter reporter;
+				index = (index + 1) % nodes->size();
+				auto* node = *nodes->at(index);
+				auto result = coawait(node->execute_rest(asset, reporter, method, path, *body, cache));
+				if (interact) interact(node);
+				if (result || !result.error().is_retry())
+					coreturn result;
 			}
 
-			Coreturn ExpectsRT<Schema*>(RemoteException("node not found"));
+			coreturn expects_rt<schema*>(remote_exception("node not found"));
 		}
-		ExpectsPromiseRT<Schema*> RelayBackend::ExecuteHTTP(const Algorithm::AssetId& Asset, const std::string_view& Method, const std::string_view& Path, const std::string_view& Type, const std::string_view& Body, CachePolicy Cache)
+		expects_promise_rt<schema*> relay_backend::execute_http(const algorithm::asset_id& asset, const std::string_view& method, const std::string_view& path, const std::string_view& type, const std::string_view& body, cache_policy cache)
 		{
-			auto* Nodes = NSS::ServerNode::Get()->GetNodes(Asset);
-			if (!Nodes || Nodes->empty())
-				Coreturn ExpectsRT<Schema*>(RemoteException("node not found"));
+			auto* nodes = nss::server_node::get()->get_nodes(asset);
+			if (!nodes || nodes->empty())
+				coreturn expects_rt<schema*>(remote_exception("node not found"));
 
-			size_t Index = Crypto::Random();
+			size_t index = crypto::random();
 			while (true)
 			{
-				ServerRelay::ErrorReporter Reporter;
-				Index = (Index + 1) % Nodes->size();
-				auto* Node = *Nodes->at(Index);
-				auto Result = Coawait(Node->ExecuteHTTP(Asset, Reporter, Method, Path, Type, Body, Cache));
-				if (Interact) Interact(Node);
-				if (Result || !Result.Error().retry())
-					Coreturn Result;
+				server_relay::error_reporter reporter;
+				index = (index + 1) % nodes->size();
+				auto* node = *nodes->at(index);
+				auto result = coawait(node->execute_http(asset, reporter, method, path, type, body, cache));
+				if (interact) interact(node);
+				if (result || !result.error().is_retry())
+					coreturn result;
 			}
 
-			Coreturn ExpectsRT<Schema*>(RemoteException("node not found"));
+			coreturn expects_rt<schema*>(remote_exception("node not found"));
 		}
-		ExpectsLR<OrderedMap<String, uint64_t>> RelayBackend::FindCheckpointAddresses(const Algorithm::AssetId& Asset, const UnorderedSet<String>& Addresses)
+		expects_lr<ordered_map<string, uint64_t>> relay_backend::find_checkpoint_addresses(const algorithm::asset_id& asset, const unordered_set<string>& addresses)
 		{
-			if (Addresses.empty())
-				return ExpectsLR<OrderedMap<String, uint64_t>>(LayerException("no addresses supplied"));
+			if (addresses.empty())
+				return expects_lr<ordered_map<string, uint64_t>>(layer_exception("no addresses supplied"));
 
-			auto* Server = NSS::ServerNode::Get();
-			auto* Implementation = Server->GetChain(Asset);
-			if (!Implementation)
-				return ExpectsLR<OrderedMap<String, uint64_t>>(LayerException("chain not found"));
+			auto* server = nss::server_node::get();
+			auto* implementation = server->get_chain(asset);
+			if (!implementation)
+				return expects_lr<ordered_map<string, uint64_t>>(layer_exception("chain not found"));
 
-			auto Results = Server->GetAddressIndices(Asset, Addresses);
-			if (!Results || Results->empty())
-				return ExpectsLR<OrderedMap<String, uint64_t>>(LayerException("no addresses found"));
+			auto results = server->get_address_indices(asset, addresses);
+			if (!results || results->empty())
+				return expects_lr<ordered_map<string, uint64_t>>(layer_exception("no addresses found"));
 
-			OrderedMap<String, uint64_t> Info;
-			for (auto& Item : *Results)
-				Info[Item.first] = Item.second.AddressIndex.Or(Protocol::Now().Account.RootAddressIndex);
+			ordered_map<string, uint64_t> info;
+			for (auto& item : *results)
+				info[item.first] = item.second.address_index.otherwise(protocol::now().account.root_address_index);
 
-			return ExpectsLR<OrderedMap<String, uint64_t>>(std::move(Info));
+			return expects_lr<ordered_map<string, uint64_t>>(std::move(info));
 		}
-		ExpectsLR<Vector<String>> RelayBackend::GetCheckpointAddresses(const Algorithm::AssetId& Asset)
+		expects_lr<vector<string>> relay_backend::get_checkpoint_addresses(const algorithm::asset_id& asset)
 		{
-			return NSS::ServerNode::Get()->GetAddressIndices(Asset);
+			return nss::server_node::get()->get_address_indices(asset);
 		}
-		ExpectsLR<void> RelayBackend::VerifyNodeCompatibility(ServerRelay* Node)
+		expects_lr<void> relay_backend::verify_node_compatibility(server_relay* node)
 		{
-			return Expectation::Met;
+			return expectation::met;
 		}
-		String RelayBackend::GetChecksumHash(const std::string_view& Value) const
+		string relay_backend::get_checksum_hash(const std::string_view& value) const
 		{
-			return String(Value);
+			return string(value);
 		}
-		uint256_t RelayBackend::ToBaselineValue(const Decimal& Value) const
+		uint256_t relay_backend::to_baseline_value(const decimal& value) const
 		{
-			Decimal Baseline = Value * GetChainparams().Divisibility;
-			return uint256_t(Baseline.Truncate(0).ToString());
+			decimal baseline = value * get_chainparams().divisibility;
+			return uint256_t(baseline.truncate(0).to_string());
 		}
-		uint64_t RelayBackend::GetRetirementBlockNumber() const
+		uint64_t relay_backend::get_retirement_block_number() const
 		{
 			return std::numeric_limits<uint64_t>::max();
 		}
 
-		RelayBackendUTXO::RelayBackendUTXO() noexcept : RelayBackend()
+		relay_backend_utxo::relay_backend_utxo() noexcept : relay_backend()
 		{
 		}
-		ExpectsPromiseRT<Decimal> RelayBackendUTXO::CalculateBalance(const Algorithm::AssetId& Asset, const DynamicWallet& Wallet, Option<String>&& Address)
+		expects_promise_rt<decimal> relay_backend_utxo::calculate_balance(const algorithm::asset_id& asset, const dynamic_wallet& wallet, option<string>&& address)
 		{
-			Decimal Balance = 0.0;
-			auto Outputs = CalculateCoins(Asset, Wallet, Optional::None, Optional::None);
-			if (!Outputs)
-				return ExpectsPromiseRT<Decimal>(std::move(Balance));
+			decimal balance = 0.0;
+			auto outputs = calculate_coins(asset, wallet, optional::none, optional::none);
+			if (!outputs)
+				return expects_promise_rt<decimal>(std::move(balance));
 
-			auto ContractAddress = NSS::ServerNode::Get()->GetContractAddress(Asset);
-			if (ContractAddress)
+			auto contract_address = nss::server_node::get()->get_contract_address(asset);
+			if (contract_address)
 			{
-				for (auto& Output : *Outputs)
+				for (auto& output : *outputs)
 				{
-					auto Value = Output.GetTokenValue(*ContractAddress);
-					if (Value)
-						Balance += *Value;
+					auto value = output.get_token_value(*contract_address);
+					if (value)
+						balance += *value;
 				}
 			}
 			else
 			{
-				for (auto& Output : *Outputs)
-					Balance += Output.Value;
+				for (auto& output : *outputs)
+					balance += output.value;
 			}
 
-			return ExpectsPromiseRT<Decimal>(std::move(Balance));
+			return expects_promise_rt<decimal>(std::move(balance));
 		}
-		ExpectsLR<Vector<CoinUTXO>> RelayBackendUTXO::CalculateCoins(const Algorithm::AssetId& Asset, const DynamicWallet& Wallet, Option<Decimal>&& MinValue, Option<TokenUTXO>&& MinTokenValue)
+		expects_lr<vector<coin_utxo>> relay_backend_utxo::calculate_coins(const algorithm::asset_id& asset, const dynamic_wallet& wallet, option<decimal>&& min_value, option<token_utxo>&& min_token_value)
 		{
-			if (!Wallet.IsValid())
-				return ExpectsLR<Vector<CoinUTXO>>(LayerException("wallet not found"));
+			if (!wallet.is_valid())
+				return expects_lr<vector<coin_utxo>>(layer_exception("wallet not found"));
 
-			auto Binding = Wallet.GetBinding();
-			if (!Binding)
-				return ExpectsLR<Vector<CoinUTXO>>(LayerException("binding not found"));
+			auto binding = wallet.get_binding();
+			if (!binding)
+				return expects_lr<vector<coin_utxo>>(layer_exception("binding not found"));
 
-			Vector<CoinUTXO> Values;
-			Decimal CurrentValue = 0.0, CurrentTokenValue = 0.0;
-			auto* Server = NSS::ServerNode::Get();
-			auto ContinueAccumulation = [&]() { return (!MinValue || CurrentValue < *MinValue) && (!MinTokenValue || CurrentTokenValue < MinTokenValue->Value); };
-			while (ContinueAccumulation())
+			vector<coin_utxo> values;
+			decimal current_value = 0.0, current_token_value = 0.0;
+			auto* server = nss::server_node::get();
+			auto continue_accumulation = [&]() { return (!min_value || current_value < *min_value) && (!min_token_value || current_token_value < min_token_value->value); };
+			while (continue_accumulation())
 			{
-				const size_t Count = 64;
-				auto Outputs = Server->GetUTXOs(Asset, *Binding, Values.size(), Count);
-				if (!Outputs || Outputs->empty())
+				const size_t count = 64;
+				auto outputs = server->get_utxos(asset, *binding, values.size(), count);
+				if (!outputs || outputs->empty())
 					break;
 
-				bool EofValue = false;
-				bool EofUTXO = Outputs->size() < Count;
-				Values.reserve(Values.size() + Outputs->size());
-				for (auto& Output : *Outputs)
+				bool eof_value = false;
+				bool eof_utxo = outputs->size() < count;
+				values.reserve(values.size() + outputs->size());
+				for (auto& output : *outputs)
 				{
-					CurrentValue += Output.UTXO.Value;
-					EofValue = !ContinueAccumulation();
-					Values.emplace_back(std::move(Output.UTXO));
-					if (EofValue)
+					current_value += output.UTXO.value;
+					eof_value = !continue_accumulation();
+					values.emplace_back(std::move(output.UTXO));
+					if (eof_value)
 						break;
 				}
-				if (EofUTXO || EofValue)
+				if (eof_utxo || eof_value)
 					break;
 			}
 
-			if (ContinueAccumulation() && (MinValue || MinTokenValue))
-				return ExpectsLR<Vector<CoinUTXO>>(LayerException("insufficient funds"));
+			if (continue_accumulation() && (min_value || min_token_value))
+				return expects_lr<vector<coin_utxo>>(layer_exception("insufficient funds"));
 
-			return ExpectsLR<Vector<CoinUTXO>>(std::move(Values));
+			return expects_lr<vector<coin_utxo>>(std::move(values));
 		}
-		ExpectsLR<CoinUTXO> RelayBackendUTXO::GetCoins(const Algorithm::AssetId& Asset, const std::string_view& TransactionId, uint32_t Index)
+		expects_lr<coin_utxo> relay_backend_utxo::get_coins(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint32_t index)
 		{
-			auto Output = NSS::ServerNode::Get()->GetUTXO(Asset, TransactionId, Index);
-			if (!Output)
-				return ExpectsLR<CoinUTXO>(LayerException("transaction output was not found"));
+			auto output = nss::server_node::get()->get_utxo(asset, transaction_id, index);
+			if (!output)
+				return expects_lr<coin_utxo>(layer_exception("transaction output was not found"));
 
-			return ExpectsLR<CoinUTXO>(std::move(Output->UTXO));
+			return expects_lr<coin_utxo>(std::move(output->UTXO));
 		}
-		ExpectsLR<void> RelayBackendUTXO::UpdateCoins(const Algorithm::AssetId& Asset, const OutgoingTransaction& TxData)
+		expects_lr<void> relay_backend_utxo::update_coins(const algorithm::asset_id& asset, const outgoing_transaction& tx_data)
 		{
-			if (TxData.Inputs)
+			if (tx_data.inputs)
 			{
-				for (auto& Output : *TxData.Inputs)
-					RemoveCoins(Asset, Output.TransactionId, Output.Index);
+				for (auto& output : *tx_data.inputs)
+					remove_coins(asset, output.transaction_id, output.index);
 			}
-			if (TxData.Outputs)
+			if (tx_data.outputs)
 			{
-				for (auto& Input : *TxData.Outputs)
-					AddCoins(Asset, Input);
+				for (auto& input : *tx_data.outputs)
+					add_coins(asset, input);
 			}
-			return ExpectsLR<void>(Expectation::Met);
+			return expects_lr<void>(expectation::met);
 		}
-		ExpectsLR<void> RelayBackendUTXO::AddCoins(const Algorithm::AssetId& Asset, const CoinUTXO& Output)
+		expects_lr<void> relay_backend_utxo::add_coins(const algorithm::asset_id& asset, const coin_utxo& output)
 		{
-			auto* Server = NSS::ServerNode::Get();
-			auto* Implementation = Server->GetChain(Asset);
-			if (!Implementation)
-				return ExpectsLR<void>(LayerException("chain not found"));
+			auto* server = nss::server_node::get();
+			auto* implementation = server->get_chain(asset);
+			if (!implementation)
+				return expects_lr<void>(layer_exception("chain not found"));
 
-			auto AddressIndex = Server->GetAddressIndex(Asset, Implementation->GetChecksumHash(Output.Address));
-			if (!AddressIndex)
-				return ExpectsLR<void>(LayerException("transaction output is not being watched"));
+			auto address_index = server->get_address_index(asset, implementation->get_checksum_hash(output.address));
+			if (!address_index)
+				return expects_lr<void>(layer_exception("transaction output is not being watched"));
 
-			IndexUTXO NewOutput;
-			NewOutput.Binding = std::move(AddressIndex->Binding);
-			NewOutput.UTXO = Output;
+			index_utxo new_output;
+			new_output.binding = std::move(address_index->binding);
+			new_output.UTXO = output;
 
-			auto Status = Server->AddUTXO(Asset, NewOutput);
-			if (Status)
-				return ExpectsLR<void>(Expectation::Met);
+			auto status = server->add_utxo(asset, new_output);
+			if (status)
+				return expects_lr<void>(expectation::met);
 
-			RemoveCoins(Asset, Output.TransactionId, Output.Index);
-			return ExpectsLR<void>(std::move(Status.Error()));
+			remove_coins(asset, output.transaction_id, output.index);
+			return expects_lr<void>(std::move(status.error()));
 		}
-		ExpectsLR<void> RelayBackendUTXO::RemoveCoins(const Algorithm::AssetId& Asset, const std::string_view& TransactionId, uint32_t Index)
+		expects_lr<void> relay_backend_utxo::remove_coins(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint32_t index)
 		{
-			return NSS::ServerNode::Get()->RemoveUTXO(Asset, TransactionId, Index);
+			return nss::server_node::get()->remove_utxo(asset, transaction_id, index);
 		}
-		Decimal RelayBackendUTXO::GetCoinsValue(const Vector<CoinUTXO>& Values, Option<String>&& ContractAddress)
+		decimal relay_backend_utxo::get_coins_value(const vector<coin_utxo>& values, option<string>&& contract_address)
 		{
-			Decimal Value = 0.0;
-			if (ContractAddress)
+			decimal value = 0.0;
+			if (contract_address)
 			{
-				for (auto& Item : Values)
+				for (auto& item : values)
 				{
-					for (auto& Token : Item.Tokens)
+					for (auto& token : item.tokens)
 					{
-						if (Token.ContractAddress == *ContractAddress)
-							Value += Token.Value;
+						if (token.contract_address == *contract_address)
+							value += token.value;
 					}
 				}
 			}
 			else
 			{
-				for (auto& Item : Values)
-					Value += Item.Value;
+				for (auto& item : values)
+					value += item.value;
 			}
-			return Value;
+			return value;
 		}
 	}
 }

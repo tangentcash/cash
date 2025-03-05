@@ -2,110 +2,110 @@
 #define TAN_MEDIATOR_FORKS_BITCOIN_H
 #include "../bitcoin.h"
 
-namespace Tangent
+namespace tangent
 {
-    namespace Mediator
-    {
-        namespace Backends
-        {
-			class BitcoinCash : public Bitcoin
+	namespace mediator
+	{
+		namespace backends
+		{
+			class bitcoin_cash : public bitcoin
 			{
 			public:
-				BitcoinCash() noexcept;
-				virtual ~BitcoinCash() override = default;
-				virtual String GetDerivation(uint64_t AddressIndex) const override;
-				virtual const btc_chainparams_* GetChain() override;
-				virtual AddressFormat GetAddressType() override;
-				virtual uint32_t GetSigHashType() override;
+				bitcoin_cash() noexcept;
+				virtual ~bitcoin_cash() override = default;
+				virtual string get_derivation(uint64_t address_index) const override;
+				virtual const btc_chainparams_* get_chain() override;
+				virtual address_format get_address_type() override;
+				virtual uint32_t get_sig_hash_type() override;
 			};
 
-			class BitcoinGold : public Bitcoin
+			class bitcoin_gold : public bitcoin
 			{
 			public:
-				BitcoinGold() noexcept;
-				virtual ~BitcoinGold() override = default;
-				virtual String GetDerivation(uint64_t AddressIndex) const override;
-				virtual String GetMessageMagic() override;
-				virtual const btc_chainparams_* GetChain() override;
-				virtual AddressFormat GetAddressType() override;
+				bitcoin_gold() noexcept;
+				virtual ~bitcoin_gold() override = default;
+				virtual string get_derivation(uint64_t address_index) const override;
+				virtual string get_message_magic() override;
+				virtual const btc_chainparams_* get_chain() override;
+				virtual address_format get_address_type() override;
 			};
 
-			class BitcoinSV : public Bitcoin
+			class bitcoin_sv : public bitcoin
 			{
 			public:
-				BitcoinSV() noexcept;
-				virtual ~BitcoinSV() override = default;
-				virtual String GetDerivation(uint64_t AddressIndex) const override;
-				virtual const btc_chainparams_* GetChain() override;
-				virtual AddressFormat GetAddressType() override;
+				bitcoin_sv() noexcept;
+				virtual ~bitcoin_sv() override = default;
+				virtual string get_derivation(uint64_t address_index) const override;
+				virtual const btc_chainparams_* get_chain() override;
+				virtual address_format get_address_type() override;
 			};
 
-			class Dash : public Bitcoin
+			class dash : public bitcoin
 			{
 			public:
-				Dash() noexcept;
-				virtual ~Dash() override = default;
-				virtual String GetDerivation(uint64_t AddressIndex) const override;
-				virtual String GetMessageMagic() override;
-				virtual const btc_chainparams_* GetChain() override;
-				virtual AddressFormat GetAddressType() override;
+				dash() noexcept;
+				virtual ~dash() override = default;
+				virtual string get_derivation(uint64_t address_index) const override;
+				virtual string get_message_magic() override;
+				virtual const btc_chainparams_* get_chain() override;
+				virtual address_format get_address_type() override;
 			};
 
-			class Digibyte : public Bitcoin
+			class digibyte : public bitcoin
 			{
 			public:
-				Digibyte() noexcept;
-				virtual ~Digibyte() override = default;
-				virtual String GetDerivation(uint64_t AddressIndex) const override;
-				virtual String GetMessageMagic() override;
-				virtual const btc_chainparams_* GetChain() override;
-				virtual AddressFormat GetAddressType() override;
+				digibyte() noexcept;
+				virtual ~digibyte() override = default;
+				virtual string get_derivation(uint64_t address_index) const override;
+				virtual string get_message_magic() override;
+				virtual const btc_chainparams_* get_chain() override;
+				virtual address_format get_address_type() override;
 			};
 
-			class Dogecoin : public Bitcoin
+			class dogecoin : public bitcoin
 			{
 			public:
-				Dogecoin() noexcept;
-				virtual ~Dogecoin() override = default;
-				virtual String GetDerivation(uint64_t AddressIndex) const override;
-				virtual String GetMessageMagic() override;
-				virtual const btc_chainparams_* GetChain() override;
-				virtual AddressFormat GetAddressType() override;
+				dogecoin() noexcept;
+				virtual ~dogecoin() override = default;
+				virtual string get_derivation(uint64_t address_index) const override;
+				virtual string get_message_magic() override;
+				virtual const btc_chainparams_* get_chain() override;
+				virtual address_format get_address_type() override;
 			};
 
-			class ECash : public Bitcoin
+			class ecash : public bitcoin
 			{
 			public:
-				ECash() noexcept;
-				virtual ~ECash() override = default;
-				virtual String GetDerivation(uint64_t AddressIndex) const override;
-				virtual String GetMessageMagic() override;
-				virtual const btc_chainparams_* GetChain() override;
-				virtual AddressFormat GetAddressType() override;
-				virtual uint32_t GetSigHashType() override;
+				ecash() noexcept;
+				virtual ~ecash() override = default;
+				virtual string get_derivation(uint64_t address_index) const override;
+				virtual string get_message_magic() override;
+				virtual const btc_chainparams_* get_chain() override;
+				virtual address_format get_address_type() override;
+				virtual uint32_t get_sig_hash_type() override;
 			};
 
-			class Litecoin : public Bitcoin
+			class litecoin : public bitcoin
 			{
 			public:
-				Litecoin() noexcept;
-				virtual ~Litecoin() override = default;
-				virtual String GetDerivation(uint64_t AddressIndex) const override;
-				virtual String GetMessageMagic() override;
-				virtual const btc_chainparams_* GetChain() override;
-				virtual AddressFormat GetAddressType() override;
+				litecoin() noexcept;
+				virtual ~litecoin() override = default;
+				virtual string get_derivation(uint64_t address_index) const override;
+				virtual string get_message_magic() override;
+				virtual const btc_chainparams_* get_chain() override;
+				virtual address_format get_address_type() override;
 			};
 
-			class ZCash : public Bitcoin
+			class zcash : public bitcoin
 			{
 			public:
-				ZCash() noexcept;
-				virtual ~ZCash() override = default;
-				virtual String GetDerivation(uint64_t AddressIndex) const override;
-				virtual const btc_chainparams_* GetChain() override;
-				virtual AddressFormat GetAddressType() override;
+				zcash() noexcept;
+				virtual ~zcash() override = default;
+				virtual string get_derivation(uint64_t address_index) const override;
+				virtual const btc_chainparams_* get_chain() override;
+				virtual address_format get_address_type() override;
 			};
-        }
-    }
+		}
+	}
 }
 #endif

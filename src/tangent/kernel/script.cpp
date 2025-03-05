@@ -21,1618 +21,1618 @@ extern "C"
 #define SCRIPT_EXCEPTION_EXECUTION "execution_error"
 #define SCRIPT_FUNCTION_INITIALIZE "initialize"
 
-namespace Tangent
+namespace tangent
 {
-	namespace Ledger
+	namespace ledger
 	{
-		struct UScriptObject
+		struct uscript_object
 		{
-			VirtualMachine* VM;
-			asITypeInfo* Type;
-			void* Address;
+			virtual_machine* vm;
+			asITypeInfo* type;
+			void* address;
 
-			UScriptObject(VirtualMachine* NewVM, asITypeInfo* NewType, void* NewAddress) noexcept : VM(NewVM), Type(NewType), Address(NewAddress)
+			uscript_object(virtual_machine* new_vm, asITypeInfo* new_type, void* new_address) noexcept : vm(new_vm), type(new_type), address(new_address)
 			{
 			}
-			UScriptObject(const UScriptObject& Other) noexcept : VM(Other.VM), Type(Other.Type), Address(Other.Address)
+			uscript_object(const uscript_object& other) noexcept : vm(other.vm), type(other.type), address(other.address)
 			{
-				((UScriptObject*)&Other)->Address = nullptr;
+				((uscript_object*)&other)->address = nullptr;
 			}
-			UScriptObject(UScriptObject&& Other) noexcept : VM(Other.VM), Type(Other.Type), Address(Other.Address)
+			uscript_object(uscript_object&& other) noexcept : vm(other.vm), type(other.type), address(other.address)
 			{
-				Other.Address = nullptr;
+				other.address = nullptr;
 			}
-			~UScriptObject()
+			~uscript_object()
 			{
-				Destroy();
+				destroy();
 			}
-			UScriptObject& operator= (const UScriptObject& Other) noexcept
+			uscript_object& operator= (const uscript_object& other) noexcept
 			{
-				if (this == &Other)
+				if (this == &other)
 					return *this;
 
-				Destroy();
-				VM = Other.VM;
-				Type = Other.Type;
-				Address = Other.Address;
-				((UScriptObject*)&Other)->Address = nullptr;
+				destroy();
+				vm = other.vm;
+				type = other.type;
+				address = other.address;
+				((uscript_object*)&other)->address = nullptr;
 				return *this;
 			}
-			UScriptObject& operator= (UScriptObject&& Other) noexcept
+			uscript_object& operator= (uscript_object&& other) noexcept
 			{
-				if (this == &Other)
+				if (this == &other)
 					return *this;
 
-				Destroy();
-				VM = Other.VM;
-				Type = Other.Type;
-				Address = Other.Address;
-				Other.Address = nullptr;
+				destroy();
+				vm = other.vm;
+				type = other.type;
+				address = other.address;
+				other.address = nullptr;
 				return *this;
 			}
-			inline void Destroy()
+			inline void destroy()
 			{
-				if (VM != nullptr && Type != nullptr && Address != nullptr)
-					VM->ReleaseObject(Address, TypeInfo(Type));
+				if (vm != nullptr && type != nullptr && address != nullptr)
+					vm->release_object(address, typeinfo(type));
 			}
 		};
 
-		static String Crc32(const std::string_view& Data)
+		static string crc32(const std::string_view& data)
 		{
-			uint8_t Buffer[32];
-			uint256_t Value = Algorithm::Hashing::Hash32d(Data);
-			Algorithm::Encoding::DecodeUint256(Value, Buffer);
-			return String((char*)Buffer + (sizeof(uint256_t) - sizeof(uint32_t)), sizeof(uint32_t));
+			uint8_t buffer[32];
+			uint256_t value = algorithm::hashing::hash32d(data);
+			algorithm::encoding::decode_uint256(value, buffer);
+			return string((char*)buffer + (sizeof(uint256_t) - sizeof(uint32_t)), sizeof(uint32_t));
 		}
-		static String RipeMD160(const std::string_view& Data)
+		static string ripe_md160(const std::string_view& data)
 		{
-			return Algorithm::Hashing::Hash160((uint8_t*)Data.data(), Data.size());
+			return algorithm::hashing::hash160((uint8_t*)data.data(), data.size());
 		}
-		static String ERecover160(const uint256_t& Hash, const std::string_view& Signature)
+		static string erecover160(const uint256_t& hash, const std::string_view& signature)
 		{
-			if (Signature.size() != sizeof(Algorithm::Recsighash))
-				return String();
+			if (signature.size() != sizeof(algorithm::recsighash))
+				return string();
 
-			Algorithm::Pubkeyhash PublicKeyHash = { 0 }, Null = { 0 };
-			if (!Algorithm::Signing::RecoverHash(Hash, PublicKeyHash, (uint8_t*)Signature.data()) || !memcmp(PublicKeyHash, Null, sizeof(Null)))
-				return String();
+			algorithm::pubkeyhash public_key_hash = { 0 }, null = { 0 };
+			if (!algorithm::signing::recover_hash(hash, public_key_hash, (uint8_t*)signature.data()) || !memcmp(public_key_hash, null, sizeof(null)))
+				return string();
 
-			return String((char*)PublicKeyHash, sizeof(PublicKeyHash));
+			return string((char*)public_key_hash, sizeof(public_key_hash));
 		}
-		static String ERecover256(const uint256_t& Hash, const std::string_view& Signature)
+		static string erecover256(const uint256_t& hash, const std::string_view& signature)
 		{
-			if (Signature.size() != sizeof(Algorithm::Recsighash))
-				return String();
+			if (signature.size() != sizeof(algorithm::recsighash))
+				return string();
 
-			Algorithm::Pubkey PublicKey = { 0 }, Null = { 0 };
-			if (!Algorithm::Signing::Recover(Hash, PublicKey, (uint8_t*)Signature.data()) || !memcmp(PublicKey, Null, sizeof(Null)))
-				return String();
+			algorithm::pubkey public_key = { 0 }, null = { 0 };
+			if (!algorithm::signing::recover(hash, public_key, (uint8_t*)signature.data()) || !memcmp(public_key, null, sizeof(null)))
+				return string();
 
-			return String((char*)PublicKey, sizeof(PublicKey));
+			return string((char*)public_key, sizeof(public_key));
 		}
-		static String Blake2b256(const std::string_view& Data)
+		static string blake2b256(const std::string_view& data)
 		{
-			return Algorithm::Hashing::Hash256((uint8_t*)Data.data(), Data.size());
+			return algorithm::hashing::hash256((uint8_t*)data.data(), data.size());
 		}
-		static String Keccak256(const std::string_view& Data)
+		static string keccak256(const std::string_view& data)
 		{
-			uint8_t Buffer[SHA3_256_DIGEST_LENGTH];
-			sha256_Raw((uint8_t*)Data.data(), Data.size(), Buffer);
-			return String((char*)Buffer, sizeof(Buffer));
+			uint8_t buffer[SHA3_256_DIGEST_LENGTH];
+			sha256_Raw((uint8_t*)data.data(), data.size(), buffer);
+			return string((char*)buffer, sizeof(buffer));
 		}
-		static String Keccak512(const std::string_view& Data)
+		static string keccak512(const std::string_view& data)
 		{
-			uint8_t Buffer[SHA3_512_DIGEST_LENGTH];
-			keccak_512((uint8_t*)Data.data(), Data.size(), Buffer);
-			return String((char*)Buffer, sizeof(Buffer));
+			uint8_t buffer[SHA3_512_DIGEST_LENGTH];
+			keccak_512((uint8_t*)data.data(), data.size(), buffer);
+			return string((char*)buffer, sizeof(buffer));
 		}
-		static String Sha256(const std::string_view& Data)
+		static string sha256(const std::string_view& data)
 		{
-			uint8_t Buffer[SHA3_256_DIGEST_LENGTH];
-			keccak_256((uint8_t*)Data.data(), Data.size(), Buffer);
-			return String((char*)Buffer, sizeof(Buffer));
+			uint8_t buffer[SHA3_256_DIGEST_LENGTH];
+			keccak_256((uint8_t*)data.data(), data.size(), buffer);
+			return string((char*)buffer, sizeof(buffer));
 		}
-		static String Sha512(const std::string_view& Data)
+		static string sha512(const std::string_view& data)
 		{
-			return Algorithm::Hashing::Hash512((uint8_t*)Data.data(), Data.size());
+			return algorithm::hashing::hash512((uint8_t*)data.data(), data.size());
 		}
-		static String EncodeBytes(const uint256_t& Value)
+		static string encode_bytes(const uint256_t& value)
 		{
-			uint8_t Data[32];
-			Algorithm::Encoding::DecodeUint256(Value, Data);
-			return String((char*)Data, sizeof(Data));
+			uint8_t data[32];
+			algorithm::encoding::decode_uint256(value, data);
+			return string((char*)data, sizeof(data));
 		}
-		static uint256_t DecodeBytes(const std::string_view& Value)
+		static uint256_t decode_bytes(const std::string_view& value)
 		{
-			uint8_t Data[32];
-			memcpy(Data, Value.data(), std::min(sizeof(Data), Value.size()));
+			uint8_t data[32];
+			memcpy(data, value.data(), std::min(sizeof(data), value.size()));
 
-			uint256_t Buffer;
-			Algorithm::Encoding::EncodeUint256(Data, Buffer);
-			return Buffer;
+			uint256_t buffer;
+			algorithm::encoding::encode_uint256(data, buffer);
+			return buffer;
 		}
-		
-		ExpectsLR<void> ScriptMarshalling::Store(Format::Stream* Stream, void* Value, int ValueTypeId)
+
+		expects_lr<void> script_marshalling::store(format::stream* stream, void* value, int value_type_id)
 		{
-			switch (ValueTypeId)
+			switch (value_type_id)
 			{
-				case (int)TypeId::VOIDF:
-					return LayerException("store not supported for void type");
-				case (int)TypeId::BOOL:
-					Stream->WriteBoolean(*(bool*)Value);
-					return Expectation::Met;
-				case (int)TypeId::INT8:
-				case (int)TypeId::UINT8:
-					Stream->WriteInteger(*(uint8_t*)Value);
-					return Expectation::Met;
-				case (int)TypeId::INT16:
-				case (int)TypeId::UINT16:
-					Stream->WriteInteger(*(uint16_t*)Value);
-					return Expectation::Met;
-				case (int)TypeId::INT32:
-				case (int)TypeId::UINT32:
-					Stream->WriteInteger(*(uint32_t*)Value);
-					return Expectation::Met;
-				case (int)TypeId::INT64:
-				case (int)TypeId::UINT64:
-					Stream->WriteInteger(*(uint64_t*)Value);
-					return Expectation::Met;
-				case (int)TypeId::FLOAT:
-					Stream->WriteDecimal(Decimal(*(float*)Value));
-					return Expectation::Met;
-				case (int)TypeId::DOUBLE:
-					Stream->WriteDecimal(Decimal(*(double*)Value));
-					return Expectation::Met;
+				case (int)type_id::voidf:
+					return layer_exception("store not supported for void type");
+				case (int)type_id::boolf:
+					stream->write_boolean(*(bool*)value);
+					return expectation::met;
+				case (int)type_id::int8:
+				case (int)type_id::uint8:
+					stream->write_integer(*(uint8_t*)value);
+					return expectation::met;
+				case (int)type_id::int16:
+				case (int)type_id::uint16:
+					stream->write_integer(*(uint16_t*)value);
+					return expectation::met;
+				case (int)type_id::int32:
+				case (int)type_id::uint32:
+					stream->write_integer(*(uint32_t*)value);
+					return expectation::met;
+				case (int)type_id::int64:
+				case (int)type_id::uint64:
+					stream->write_integer(*(uint64_t*)value);
+					return expectation::met;
+				case (int)type_id::floatf:
+					stream->write_decimal(decimal(*(float*)value));
+					return expectation::met;
+				case (int)type_id::doublef:
+					stream->write_decimal(decimal(*(double*)value));
+					return expectation::met;
 				default:
 				{
-					auto Type = ScriptHost::Get()->GetVM()->GetTypeInfoById(ValueTypeId);
-					auto Typename = Type.IsValid() ? Type.GetName() : std::string_view();
-					Value = ValueTypeId & (int)Vitex::Scripting::TypeId::OBJHANDLE ? *(void**)Value : Value;
-					if (Typename == SCRIPT_CLASS_STRINGVIEW)
+					auto type = script_host::get()->get_vm()->get_type_info_by_id(value_type_id);
+					auto name = type.is_valid() ? type.get_name() : std::string_view();
+					value = value_type_id & (int)vitex::scripting::type_id::objhandle ? *(void**)value : value;
+					if (name == SCRIPT_CLASS_STRINGVIEW)
 					{
-						Stream->WriteString(*(std::string_view*)Value);
-						return Expectation::Met;
+						stream->write_string(*(std::string_view*)value);
+						return expectation::met;
 					}
-					else if (Typename == SCRIPT_CLASS_ADDRESS)
+					else if (name == SCRIPT_CLASS_ADDRESS)
 					{
-						Stream->WriteString(Format::Util::Encode0xHex(std::string_view((char*)((ScriptAddress*)Value)->Hash, sizeof(Algorithm::Pubkeyhash))));
-						return Expectation::Met;
+						stream->write_string(format::util::encode_0xhex(std::string_view((char*)((script_address*)value)->hash, sizeof(algorithm::pubkeyhash))));
+						return expectation::met;
 					}
-					else if (Typename == SCRIPT_CLASS_STRING)
+					else if (name == SCRIPT_CLASS_STRING)
 					{
-						Stream->WriteString(*(String*)Value);
-						return Expectation::Met;
+						stream->write_string(*(string*)value);
+						return expectation::met;
 					}
-					else if (Typename == SCRIPT_CLASS_UINT128)
+					else if (name == SCRIPT_CLASS_UINT128)
 					{
-						Stream->WriteInteger(*(uint128_t*)Value);
-						return Expectation::Met;
+						stream->write_integer(*(uint128_t*)value);
+						return expectation::met;
 					}
-					else if (Typename == SCRIPT_CLASS_UINT256)
+					else if (name == SCRIPT_CLASS_UINT256)
 					{
-						Stream->WriteInteger(*(uint256_t*)Value);
-						return Expectation::Met;
+						stream->write_integer(*(uint256_t*)value);
+						return expectation::met;
 					}
-					else if (Typename == SCRIPT_CLASS_DECIMAL)
+					else if (name == SCRIPT_CLASS_DECIMAL)
 					{
-						Stream->WriteDecimal(*(Decimal*)Value);
-						return Expectation::Met;
+						stream->write_decimal(*(decimal*)value);
+						return expectation::met;
 					}
-					else if (ValueTypeId & (int)Vitex::Scripting::TypeId::SCRIPTOBJECT)
+					else if (value_type_id & (int)vitex::scripting::type_id::scriptobject)
 					{
-						auto Object = ScriptObject((asIScriptObject*)Value);
-						size_t Properties = Object.GetPropertiesCount();
-						for (size_t i = 0; i < Properties; i++)
+						auto object = script_object((asIScriptObject*)value);
+						size_t properties = object.get_properties_count();
+						for (size_t i = 0; i < properties; i++)
 						{
-							void* Address = Object.GetAddressOfProperty(i);
-							int TypeId = Object.GetPropertyTypeId(i);
-							auto Status = Store(Stream, Address, TypeId);
-							if (!Status)
-								return Status;
+							void* address = object.get_address_of_property(i);
+							int type_id = object.get_property_type_id(i);
+							auto status = store(stream, address, type_id);
+							if (!status)
+								return status;
 						}
-						return Expectation::Met;
+						return expectation::met;
 					}
-					return LayerException(Stringify::Text("store not supported for %s type", Typename.data()));
+					return layer_exception(stringify::text("store not supported for %s type", name.data()));
 				}
 			}
 		}
-		ExpectsLR<void> ScriptMarshalling::Store(Schema* Stream, void* Value, int ValueTypeId)
+		expects_lr<void> script_marshalling::store(schema* stream, void* value, int value_type_id)
 		{
-			switch (ValueTypeId)
+			switch (value_type_id)
 			{
-				case (int)TypeId::VOIDF:
-					return LayerException("store not supported for void type");
-				case (int)TypeId::BOOL:
-					Stream->Value = Var::Boolean(*(bool*)Value);
-					return Expectation::Met;
-				case (int)TypeId::INT8:
-				case (int)TypeId::UINT8:
-					Stream->Value = Var::Integer(*(uint8_t*)Value);
-					return Expectation::Met;
-				case (int)TypeId::INT16:
-				case (int)TypeId::UINT16:
-					Stream->Value = Var::Integer(*(uint16_t*)Value);
-					return Expectation::Met;
-				case (int)TypeId::INT32:
-				case (int)TypeId::UINT32:
-					Stream->Value = Var::Integer(*(uint32_t*)Value);
-					return Expectation::Met;
-				case (int)TypeId::INT64:
-				case (int)TypeId::UINT64:
-					Stream->Value = Var::Integer(*(uint64_t*)Value);
-					return Expectation::Met;
-				case (int)TypeId::FLOAT:
-					Stream->Value = Var::Number(*(float*)Value);
-					return Expectation::Met;
-				case (int)TypeId::DOUBLE:
-					Stream->Value = Var::Number(*(double*)Value);
-					return Expectation::Met;
+				case (int)type_id::voidf:
+					return layer_exception("store not supported for void type");
+				case (int)type_id::boolf:
+					stream->value = var::boolean(*(bool*)value);
+					return expectation::met;
+				case (int)type_id::int8:
+				case (int)type_id::uint8:
+					stream->value = var::integer(*(uint8_t*)value);
+					return expectation::met;
+				case (int)type_id::int16:
+				case (int)type_id::uint16:
+					stream->value = var::integer(*(uint16_t*)value);
+					return expectation::met;
+				case (int)type_id::int32:
+				case (int)type_id::uint32:
+					stream->value = var::integer(*(uint32_t*)value);
+					return expectation::met;
+				case (int)type_id::int64:
+				case (int)type_id::uint64:
+					stream->value = var::integer(*(uint64_t*)value);
+					return expectation::met;
+				case (int)type_id::floatf:
+					stream->value = var::number(*(float*)value);
+					return expectation::met;
+				case (int)type_id::doublef:
+					stream->value = var::number(*(double*)value);
+					return expectation::met;
 				default:
 				{
-					auto Type = ScriptHost::Get()->GetVM()->GetTypeInfoById(ValueTypeId);
-					auto Typename = Type.IsValid() ? Type.GetName() : std::string_view();
-					Value = ValueTypeId & (int)Vitex::Scripting::TypeId::OBJHANDLE ? *(void**)Value : Value;
-					if (Typename == SCRIPT_CLASS_STRINGVIEW)
+					auto type = script_host::get()->get_vm()->get_type_info_by_id(value_type_id);
+					auto name = type.is_valid() ? type.get_name() : std::string_view();
+					value = value_type_id & (int)vitex::scripting::type_id::objhandle ? *(void**)value : value;
+					if (name == SCRIPT_CLASS_STRINGVIEW)
 					{
-						Stream->Value = Var::String(*(std::string_view*)Value);
-						return Expectation::Met;
+						stream->value = var::string(*(std::string_view*)value);
+						return expectation::met;
 					}
-					else if (Typename == SCRIPT_CLASS_ADDRESS)
+					else if (name == SCRIPT_CLASS_ADDRESS)
 					{
-						UPtr<Schema> Data = Algorithm::Signing::SerializeAddress(((ScriptAddress*)Value)->Hash);
-						Stream->Value = std::move(Data->Value);
-						return Expectation::Met;
+						uptr<schema> data = algorithm::signing::serialize_address(((script_address*)value)->hash);
+						stream->value = std::move(data->value);
+						return expectation::met;
 					}
-					else if (Typename == SCRIPT_CLASS_STRING)
+					else if (name == SCRIPT_CLASS_STRING)
 					{
-						Stream->Value = Var::String(*(String*)Value);
-						return Expectation::Met;
+						stream->value = var::string(*(string*)value);
+						return expectation::met;
 					}
-					else if (Typename == SCRIPT_CLASS_UINT128)
+					else if (name == SCRIPT_CLASS_UINT128)
 					{
-						Stream->Value = Var::DecimalString(((uint128_t*)Value)->ToString());
-						return Expectation::Met;
+						stream->value = var::decimal_string(((uint128_t*)value)->to_string());
+						return expectation::met;
 					}
-					else if (Typename == SCRIPT_CLASS_UINT256)
+					else if (name == SCRIPT_CLASS_UINT256)
 					{
-						Stream->Value = Var::DecimalString(((uint256_t*)Value)->ToString());
-						return Expectation::Met;
+						stream->value = var::decimal_string(((uint256_t*)value)->to_string());
+						return expectation::met;
 					}
-					else if (Typename == SCRIPT_CLASS_DECIMAL)
+					else if (name == SCRIPT_CLASS_DECIMAL)
 					{
-						Stream->Value = Var::Decimal(*(Decimal*)Value);
-						return Expectation::Met;
+						stream->value = var::decimal(*(decimal*)value);
+						return expectation::met;
 					}
-					else if (ValueTypeId & (int)Vitex::Scripting::TypeId::SCRIPTOBJECT)
+					else if (value_type_id & (int)vitex::scripting::type_id::scriptobject)
 					{
-						auto Object = ScriptObject((asIScriptObject*)Value);
-						size_t Properties = Object.GetPropertiesCount();
-						for (size_t i = 0; i < Properties; i++)
+						auto object = script_object((asIScriptObject*)value);
+						size_t properties = object.get_properties_count();
+						for (size_t i = 0; i < properties; i++)
 						{
-							std::string_view Name = Object.GetPropertyName(i);
-							void* Address = Object.GetAddressOfProperty(i);
-							int TypeId = Object.GetPropertyTypeId(i);
-							auto Status = Store(Stream->Set(Name, Var::Undefined()), Address, TypeId);
-							if (!Status)
-								return Status;
+							std::string_view name = object.get_property_name(i);
+							void* address = object.get_address_of_property(i);
+							int type_id = object.get_property_type_id(i);
+							auto status = store(stream->set(name, var::undefined()), address, type_id);
+							if (!status)
+								return status;
 						}
-						return Expectation::Met;
+						return expectation::met;
 					}
-					return LayerException(Stringify::Text("store not supported for %s type", Typename.data()));
+					return layer_exception(stringify::text("store not supported for %s type", name.data()));
 				}
 			}
 		}
-		ExpectsLR<void> ScriptMarshalling::Load(Format::Stream& Stream, void* Value, int ValueTypeId)
+		expects_lr<void> script_marshalling::load(format::stream& stream, void* value, int value_type_id)
 		{
-			switch (ValueTypeId)
+			switch (value_type_id)
 			{
-				case (int)TypeId::VOIDF:
-					return LayerException("load not supported for void type");
-				case (int)TypeId::BOOL:
-					if (!Stream.ReadBoolean(Stream.ReadType(), (bool*)Value))
-						return LayerException("load failed for bool type");
-					return Expectation::Met;
-				case (int)TypeId::INT8:
-				case (int)TypeId::UINT8:
-					if (!Stream.ReadInteger(Stream.ReadType(), (uint8_t*)Value))
-						return LayerException("load failed for uint8 type");
-					return Expectation::Met;
-				case (int)TypeId::INT16:
-				case (int)TypeId::UINT16:
-					if (!Stream.ReadInteger(Stream.ReadType(), (uint16_t*)Value))
-						return LayerException("load failed for uint16 type");
-					return Expectation::Met;
-				case (int)TypeId::INT32:
-				case (int)TypeId::UINT32:
-					if (!Stream.ReadInteger(Stream.ReadType(), (uint32_t*)Value))
-						return LayerException("load failed for uint32 type");
-					return Expectation::Met;
-				case (int)TypeId::INT64:
-				case (int)TypeId::UINT64:
-					if (!Stream.ReadInteger(Stream.ReadType(), (uint64_t*)Value))
-						return LayerException("load failed for uint64 type");
-					return Expectation::Met;
-				case (int)TypeId::FLOAT:
+				case (int)type_id::voidf:
+					return layer_exception("load not supported for void type");
+				case (int)type_id::boolf:
+					if (!stream.read_boolean(stream.read_type(), (bool*)value))
+						return layer_exception("load failed for bool type");
+					return expectation::met;
+				case (int)type_id::int8:
+				case (int)type_id::uint8:
+					if (!stream.read_integer(stream.read_type(), (uint8_t*)value))
+						return layer_exception("load failed for uint8 type");
+					return expectation::met;
+				case (int)type_id::int16:
+				case (int)type_id::uint16:
+					if (!stream.read_integer(stream.read_type(), (uint16_t*)value))
+						return layer_exception("load failed for uint16 type");
+					return expectation::met;
+				case (int)type_id::int32:
+				case (int)type_id::uint32:
+					if (!stream.read_integer(stream.read_type(), (uint32_t*)value))
+						return layer_exception("load failed for uint32 type");
+					return expectation::met;
+				case (int)type_id::int64:
+				case (int)type_id::uint64:
+					if (!stream.read_integer(stream.read_type(), (uint64_t*)value))
+						return layer_exception("load failed for uint64 type");
+					return expectation::met;
+				case (int)type_id::floatf:
 				{
-					Decimal Wrapper;
-					if (!Stream.ReadDecimal(Stream.ReadType(), &Wrapper))
-						return LayerException("load failed for float type");
+					decimal wrapper;
+					if (!stream.read_decimal(stream.read_type(), &wrapper))
+						return layer_exception("load failed for float type");
 
-					*(float*)Value = Wrapper.ToFloat();
-					return Expectation::Met;
+					*(float*)value = wrapper.to_float();
+					return expectation::met;
 				}
-				case (int)TypeId::DOUBLE:
+				case (int)type_id::doublef:
 				{
-					Decimal Wrapper;
-					if (!Stream.ReadDecimal(Stream.ReadType(), &Wrapper))
-						return LayerException("load failed for double type");
+					decimal wrapper;
+					if (!stream.read_decimal(stream.read_type(), &wrapper))
+						return layer_exception("load failed for double type");
 
-					*(double*)Value = Wrapper.ToDouble();
-					return Expectation::Met;
+					*(double*)value = wrapper.to_double();
+					return expectation::met;
 				}
 				default:
 				{
-					bool Managing = false;
-					auto* VM = ScriptHost::Get()->GetVM();
-					auto Type = VM->GetTypeInfoById(ValueTypeId);
-					auto Typename = Type.IsValid() ? Type.GetName() : std::string_view();
-					if (ValueTypeId & (int)Vitex::Scripting::TypeId::OBJHANDLE && !*(void**)Value)
+					bool managing = false;
+					auto* vm = script_host::get()->get_vm();
+					auto type = vm->get_type_info_by_id(value_type_id);
+					auto name = type.is_valid() ? type.get_name() : std::string_view();
+					if (value_type_id & (int)vitex::scripting::type_id::objhandle && !*(void**)value)
 					{
-						void* Address = VM->CreateObject(Type);
-						if (!Address)
-							return LayerException(Stringify::Text("allocation failed for %s type", Typename.data()));
+						void* address = vm->create_object(type);
+						if (!address)
+							return layer_exception(stringify::text("allocation failed for %s type", name.data()));
 
-						*(void**)Value = Address;
-						Value = Address;
-						Managing = true;
+						*(void**)value = address;
+						value = address;
+						managing = true;
 					}
 
-					auto Unique = UScriptObject(VM, Type.GetTypeInfo(), Managing ? Value : nullptr);
-					if (Typename == SCRIPT_CLASS_ADDRESS)
+					auto unique = uscript_object(vm, type.get_type_info(), managing ? value : nullptr);
+					if (name == SCRIPT_CLASS_ADDRESS)
 					{
-						String Data;
-						if (!Stream.ReadString(Stream.ReadType(), &Data))
-							return LayerException("load failed for address type");
+						string data;
+						if (!stream.read_string(stream.read_type(), &data))
+							return layer_exception("load failed for address type");
 
-						Data = Format::Util::IsHexEncoding(Data) ? Format::Util::Decode0xHex(Data) : Data;
-						if (Data.size() != sizeof(Algorithm::Pubkeyhash))
+						data = format::util::is_hex_encoding(data) ? format::util::decode_0xhex(data) : data;
+						if (data.size() != sizeof(algorithm::pubkeyhash))
 						{
-							if (!Algorithm::Signing::DecodeAddress(Data, ((ScriptAddress*)Value)->Hash))
-								return LayerException("load failed for address type");
+							if (!algorithm::signing::decode_address(data, ((script_address*)value)->hash))
+								return layer_exception("load failed for address type");
 						}
 						else
-							memcpy(((ScriptAddress*)Value)->Hash, Data.data(), Data.size());
+							memcpy(((script_address*)value)->hash, data.data(), data.size());
 
-						Unique.Address = nullptr;
-						return Expectation::Met;
+						unique.address = nullptr;
+						return expectation::met;
 					}
-					else if (Typename == SCRIPT_CLASS_STRING)
+					else if (name == SCRIPT_CLASS_STRING)
 					{
-						if (!Stream.ReadString(Stream.ReadType(), (String*)Value))
-							return LayerException("load failed for string type");
+						if (!stream.read_string(stream.read_type(), (string*)value))
+							return layer_exception("load failed for string type");
 
-						Unique.Address = nullptr;
-						return Expectation::Met;
+						unique.address = nullptr;
+						return expectation::met;
 					}
-					else if (Typename == SCRIPT_CLASS_UINT128)
+					else if (name == SCRIPT_CLASS_UINT128)
 					{
-						if (!Stream.ReadInteger(Stream.ReadType(), (uint128_t*)Value))
-							return LayerException("load failed for uint128 type");
+						if (!stream.read_integer(stream.read_type(), (uint128_t*)value))
+							return layer_exception("load failed for uint128 type");
 
-						Unique.Address = nullptr;
-						return Expectation::Met;
+						unique.address = nullptr;
+						return expectation::met;
 					}
-					else if (Typename == SCRIPT_CLASS_UINT256)
+					else if (name == SCRIPT_CLASS_UINT256)
 					{
-						if (!Stream.ReadInteger(Stream.ReadType(), (uint256_t*)Value))
-							return LayerException("load failed for uint256 type");
+						if (!stream.read_integer(stream.read_type(), (uint256_t*)value))
+							return layer_exception("load failed for uint256 type");
 
-						Unique.Address = nullptr;
-						return Expectation::Met;
+						unique.address = nullptr;
+						return expectation::met;
 					}
-					else if (Typename == SCRIPT_CLASS_DECIMAL)
+					else if (name == SCRIPT_CLASS_DECIMAL)
 					{
-						if (!Stream.ReadDecimal(Stream.ReadType(), (Decimal*)Value))
-							return LayerException("load failed for decimal type");
+						if (!stream.read_decimal(stream.read_type(), (decimal*)value))
+							return layer_exception("load failed for decimal type");
 
-						Unique.Address = nullptr;
-						return Expectation::Met;
+						unique.address = nullptr;
+						return expectation::met;
 					}
-					else if (ValueTypeId & (int)Vitex::Scripting::TypeId::SCRIPTOBJECT)
+					else if (value_type_id & (int)vitex::scripting::type_id::scriptobject)
 					{
-						auto Object = ScriptObject((asIScriptObject*)Value);
-						size_t Properties = Object.GetPropertiesCount();
-						for (size_t i = 0; i < Properties; i++)
+						auto object = script_object((asIScriptObject*)value);
+						size_t properties = object.get_properties_count();
+						for (size_t i = 0; i < properties; i++)
 						{
-							void* Address = Object.GetAddressOfProperty(i);
-							int TypeId = Object.GetPropertyTypeId(i);
-							auto Status = Load(Stream, Address, TypeId);
-							if (!Status)
-								return Status;
+							void* address = object.get_address_of_property(i);
+							int type_id = object.get_property_type_id(i);
+							auto status = load(stream, address, type_id);
+							if (!status)
+								return status;
 						}
 
-						Unique.Address = nullptr;
-						return Expectation::Met;
+						unique.address = nullptr;
+						return expectation::met;
 					}
-					return LayerException(Stringify::Text("load not supported for %s type", Typename.data()));
+					return layer_exception(stringify::text("load not supported for %s type", name.data()));
 				}
 			}
 		}
-		ExpectsLR<void> ScriptMarshalling::Load(Schema* Stream, void* Value, int ValueTypeId)
+		expects_lr<void> script_marshalling::load(schema* stream, void* value, int value_type_id)
 		{
-			switch (ValueTypeId)
+			switch (value_type_id)
 			{
-				case (int)TypeId::VOIDF:
-					return LayerException("load not supported for void type");
-				case (int)TypeId::BOOL:
-					*(bool*)Value = Stream->Value.GetBoolean();
-					return Expectation::Met;
-				case (int)TypeId::INT8:
-				case (int)TypeId::UINT8:
-					*(uint8_t*)Value = (uint8_t)Stream->Value.GetInteger();
-					return Expectation::Met;
-				case (int)TypeId::INT16:
-				case (int)TypeId::UINT16:
-					*(uint16_t*)Value = (uint16_t)Stream->Value.GetInteger();
-					return Expectation::Met;
-				case (int)TypeId::INT32:
-				case (int)TypeId::UINT32:
-					*(uint32_t*)Value = (uint32_t)Stream->Value.GetInteger();
-					return Expectation::Met;
-				case (int)TypeId::INT64:
-				case (int)TypeId::UINT64:
-					*(uint64_t*)Value = (uint64_t)Stream->Value.GetInteger();
-					return Expectation::Met;
-				case (int)TypeId::FLOAT:
-					*(float*)Value = (float)Stream->Value.GetNumber();
-					return Expectation::Met;
-				case (int)TypeId::DOUBLE:
-					*(double*)Value = (double)Stream->Value.GetNumber();
-					return Expectation::Met;
+				case (int)type_id::voidf:
+					return layer_exception("load not supported for void type");
+				case (int)type_id::boolf:
+					*(bool*)value = stream->value.get_boolean();
+					return expectation::met;
+				case (int)type_id::int8:
+				case (int)type_id::uint8:
+					*(uint8_t*)value = (uint8_t)stream->value.get_integer();
+					return expectation::met;
+				case (int)type_id::int16:
+				case (int)type_id::uint16:
+					*(uint16_t*)value = (uint16_t)stream->value.get_integer();
+					return expectation::met;
+				case (int)type_id::int32:
+				case (int)type_id::uint32:
+					*(uint32_t*)value = (uint32_t)stream->value.get_integer();
+					return expectation::met;
+				case (int)type_id::int64:
+				case (int)type_id::uint64:
+					*(uint64_t*)value = (uint64_t)stream->value.get_integer();
+					return expectation::met;
+				case (int)type_id::floatf:
+					*(float*)value = (float)stream->value.get_number();
+					return expectation::met;
+				case (int)type_id::doublef:
+					*(double*)value = (double)stream->value.get_number();
+					return expectation::met;
 				default:
 				{
-					bool Managing = false;
-					auto* VM = ScriptHost::Get()->GetVM();
-					auto Type = VM->GetTypeInfoById(ValueTypeId);
-					auto Typename = Type.IsValid() ? Type.GetName() : std::string_view();
-					if (ValueTypeId & (int)Vitex::Scripting::TypeId::OBJHANDLE && !*(void**)Value)
+					bool managing = false;
+					auto* vm = script_host::get()->get_vm();
+					auto type = vm->get_type_info_by_id(value_type_id);
+					auto name = type.is_valid() ? type.get_name() : std::string_view();
+					if (value_type_id & (int)vitex::scripting::type_id::objhandle && !*(void**)value)
 					{
-						void* Address = VM->CreateObject(Type);
-						if (!Address)
-							return LayerException(Stringify::Text("allocation failed for %s type", Typename.data()));
+						void* address = vm->create_object(type);
+						if (!address)
+							return layer_exception(stringify::text("allocation failed for %s type", name.data()));
 
-						*(void**)Value = Address;
-						Value = Address;
-						Managing = true;
+						*(void**)value = address;
+						value = address;
+						managing = true;
 					}
 
-					auto Unique = UScriptObject(VM, Type.GetTypeInfo(), Managing ? Value : nullptr);
-					if (Typename == SCRIPT_CLASS_ADDRESS)
+					auto unique = uscript_object(vm, type.get_type_info(), managing ? value : nullptr);
+					if (name == SCRIPT_CLASS_ADDRESS)
 					{
-						String Data = Stream->Value.GetBlob();
-						Data = Format::Util::IsHexEncoding(Data) ? Format::Util::Decode0xHex(Data) : Data;
-						if (Data.size() != sizeof(Algorithm::Pubkeyhash))
+						string data = stream->value.get_blob();
+						data = format::util::is_hex_encoding(data) ? format::util::decode_0xhex(data) : data;
+						if (data.size() != sizeof(algorithm::pubkeyhash))
 						{
-							if (!Algorithm::Signing::DecodeAddress(Data, ((ScriptAddress*)Value)->Hash))
-								return LayerException("load failed for address type");
+							if (!algorithm::signing::decode_address(data, ((script_address*)value)->hash))
+								return layer_exception("load failed for address type");
 						}
 						else
-							memcpy(((ScriptAddress*)Value)->Hash, Data.data(), Data.size());
+							memcpy(((script_address*)value)->hash, data.data(), data.size());
 
-						Unique.Address = nullptr;
-						return Expectation::Met;
+						unique.address = nullptr;
+						return expectation::met;
 					}
-					else if (Typename == SCRIPT_CLASS_STRING)
+					else if (name == SCRIPT_CLASS_STRING)
 					{
-						*(String*)Value = Stream->Value.GetBlob();
-						Unique.Address = nullptr;
-						return Expectation::Met;
+						*(string*)value = stream->value.get_blob();
+						unique.address = nullptr;
+						return expectation::met;
 					}
-					else if (Typename == SCRIPT_CLASS_UINT128)
+					else if (name == SCRIPT_CLASS_UINT128)
 					{
-						*(uint128_t*)Value = uint128_t(Stream->Value.GetDecimal().ToString());
-						Unique.Address = nullptr;
-						return Expectation::Met;
+						*(uint128_t*)value = uint128_t(stream->value.get_decimal().to_string());
+						unique.address = nullptr;
+						return expectation::met;
 					}
-					else if (Typename == SCRIPT_CLASS_UINT256)
+					else if (name == SCRIPT_CLASS_UINT256)
 					{
-						*(uint256_t*)Value = uint256_t(Stream->Value.GetDecimal().ToString());
-						Unique.Address = nullptr;
-						return Expectation::Met;
+						*(uint256_t*)value = uint256_t(stream->value.get_decimal().to_string());
+						unique.address = nullptr;
+						return expectation::met;
 					}
-					else if (Typename == SCRIPT_CLASS_DECIMAL)
+					else if (name == SCRIPT_CLASS_DECIMAL)
 					{
-						*(Decimal*)Value = Stream->Value.GetDecimal();
-						Unique.Address = nullptr;
-						return Expectation::Met;
+						*(decimal*)value = stream->value.get_decimal();
+						unique.address = nullptr;
+						return expectation::met;
 					}
-					else if (ValueTypeId & (int)Vitex::Scripting::TypeId::SCRIPTOBJECT)
+					else if (value_type_id & (int)vitex::scripting::type_id::scriptobject)
 					{
-						auto Object = ScriptObject((asIScriptObject*)Value);
-						size_t Properties = Object.GetPropertiesCount();
-						for (size_t i = 0; i < Properties; i++)
+						auto object = script_object((asIScriptObject*)value);
+						size_t properties = object.get_properties_count();
+						for (size_t i = 0; i < properties; i++)
 						{
-							std::string_view Name = Object.GetPropertyName(i);
-							auto* Substream = Stream->Get(Name);
-							if (!Substream)
-								return LayerException(Stringify::Text("load failed for %s type while searching for %s property", Typename.data(), Name.data()));
+							std::string_view name = object.get_property_name(i);
+							auto* substream = stream->get(name);
+							if (!substream)
+								return layer_exception(stringify::text("load failed for %s type while searching for %s property", name.data(), name.data()));
 
-							void* Address = Object.GetAddressOfProperty(i);
-							int TypeId = Object.GetPropertyTypeId(i);
-							auto Status = Load(Substream, Address, TypeId);
-							if (!Status)
-								return Status;
+							void* address = object.get_address_of_property(i);
+							int type_id = object.get_property_type_id(i);
+							auto status = load(substream, address, type_id);
+							if (!status)
+								return status;
 						}
 
-						Unique.Address = nullptr;
-						return Expectation::Met;
+						unique.address = nullptr;
+						return expectation::met;
 					}
-					return LayerException(Stringify::Text("load not supported for %s type", Typename.data()));
+					return layer_exception(stringify::text("load not supported for %s type", name.data()));
 				}
 			}
 		}
 
-		ScriptHost::ScriptHost() noexcept
+		script_host::script_host() noexcept
 		{
-			Preprocessor::Desc CompilerFeatures;
-			CompilerFeatures.Conditions = false;
-			CompilerFeatures.Defines = false;
-			CompilerFeatures.Includes = false;
-			CompilerFeatures.Pragmas = false;
+			preprocessor::desc compiler_features;
+			compiler_features.conditions = false;
+			compiler_features.defines = false;
+			compiler_features.includes = false;
+			compiler_features.pragmas = false;
 
-			VM = new VirtualMachine();
-			VM->SetCompilerFeatures(CompilerFeatures);
-			VM->SetLibraryProperty(LibraryFeatures::PromiseNoConstructor, 1);
-			VM->SetLibraryProperty(LibraryFeatures::PromiseNoCallbacks, 1);
-			VM->SetLibraryProperty(LibraryFeatures::CTypesNoPointerCast, 1);
-			VM->SetProperty(Features::DISALLOW_GLOBAL_VARS, 1);
-			VM->SetTsImports(false);
-			VM->SetCache(false);
+			vm = new virtual_machine();
+			vm->set_compiler_features(compiler_features);
+			vm->set_library_property(library_features::promise_no_constructor, 1);
+			vm->set_library_property(library_features::promise_no_callbacks, 1);
+			vm->set_library_property(library_features::ctypes_no_pointer_cast, 1);
+			vm->set_property(features::disallow_global_vars, 1);
+			vm->set_ts_imports(false);
+			vm->set_cache(false);
 
-			Bindings::Registry::ImportCTypes(*VM);
-			Bindings::Registry::ImportArray(*VM);
-			Bindings::Registry::ImportSafeString(*VM);
-			Bindings::Registry::ImportException(*VM);
-			Bindings::Registry::ImportDecimal(*VM);
-			Bindings::Registry::ImportUInt128(*VM);
-			Bindings::Registry::ImportUInt256(*VM);
+			bindings::registry::import_ctypes(*vm);
+			bindings::registry::import_array(*vm);
+			bindings::registry::import_safe_string(*vm);
+			bindings::registry::import_exception(*vm);
+			bindings::registry::import_decimal(*vm);
+			bindings::registry::import_uint128(*vm);
+			bindings::registry::import_uint256(*vm);
 
-			auto Address = VM->SetPod<ScriptAddress>(SCRIPT_CLASS_ADDRESS);
-			Address->SetConstructor<ScriptAddress>("void f()");
-			Address->SetConstructor<ScriptAddress, const std::string_view&>("void f(const string_view&in)");
-			Address->SetConstructor<ScriptAddress, const uint256_t&>("void f(const uint256&in)");
-			Address->SetMethod("string to_string() const", &ScriptAddress::ToString);
-			Address->SetMethod("uint256 to_uint256() const", &ScriptAddress::ToUint256);
-			Address->SetMethod("bool is_null() const", &ScriptAddress::IsNull);
-			Address->SetOperatorEx(Operators::Equals, (uint32_t)Position::Const, "bool", "const address&in", &ScriptAddress::Equals);
+			auto address = vm->set_pod<script_address>(SCRIPT_CLASS_ADDRESS);
+			address->set_constructor<script_address>("void f()");
+			address->set_constructor<script_address, const std::string_view&>("void f(const string_view&in)");
+			address->set_constructor<script_address, const uint256_t&>("void f(const uint256&in)");
+			address->set_method("string to_string() const", &script_address::to_string);
+			address->set_method("uint256 to_uint256() const", &script_address::to_uint256);
+			address->set_method("bool is_null() const", &script_address::is_null);
+			address->set_operator_ex(operators::equals, (uint32_t)position::constant, "bool", "const address&in", &script_address::equals);
 
-			auto Program = VM->SetInterfaceClass<ScriptProgram>(SCRIPT_CLASS_PROGRAM);
-			Program->SetMethod("bool call(const address&in, const string_view&in, const ?&in, ?&out)", &ScriptProgram::CallMutableFunction);
-			Program->SetMethod("bool call(const address&in, const string_view&in, const ?&in, ?&out) const", &ScriptProgram::CallImmutableFunction);
-			Program->SetMethod("bool store(const address&in, const ?&in)", &ScriptProgram::StoreByAddress);
-			Program->SetMethod("bool store(const string_view&in, const ?&in)", &ScriptProgram::StoreByLocation);
-			Program->SetMethod("bool load(const address&in, ?&out) const", &ScriptProgram::LoadByAddress);
-			Program->SetMethod("bool load(const string_view&in, ?&out) const", &ScriptProgram::LoadByLocation);
-			Program->SetMethod("bool load_from(const address&in, const address&in, ?&out) const", &ScriptProgram::LoadByAddress);
-			Program->SetMethod("bool load_from(const address&in, const string_view&in, ?&out) const", &ScriptProgram::LoadByLocation);
-			Program->SetMethod("bool emit(const address&in, const ?&in)", &ScriptProgram::EmitByAddress);
-			Program->SetMethod("bool emit(const string_view&in, const ?&in)", &ScriptProgram::EmitByLocation);
-			Program->SetMethod("bool transfer(const address&in, const uint256&in, const decimal&in)", &ScriptProgram::Transfer);
-			Program->SetMethod("uint64 account_sequence_of(const address&in) const", &ScriptProgram::AccountSequenceOf);
-			Program->SetMethod("uint256 account_work_of(const address&in) const", &ScriptProgram::AccountWorkOf);
-			Program->SetMethod("string account_program_of(const address&in) const", &ScriptProgram::AccountProgramOf);
-			Program->SetMethod("decimal account_incoming_reward_of(const address&in, const uint256&in, const decimal&in) const", &ScriptProgram::AccountIncomingRewardOf);
-			Program->SetMethod("decimal account_outgoing_reward_of(const address&in, const uint256&in, const decimal&in) const", &ScriptProgram::AccountOutgoingRewardOf);
-			Program->SetMethod("uint64 account_derivation_of(const address&in, const uint256&in) const", &ScriptProgram::AccountDerivationOf);
-			Program->SetMethod("decimal account_balance_of(const address&in, const uint256&in) const", &ScriptProgram::AccountBalanceOf);
-			Program->SetMethod("decimal account_coverage_of(const address&in, const uint256&in) const", &ScriptProgram::AccountCoverageOf);
-			Program->SetMethod("decimal account_contribution_of(const address&in, const uint256&in) const", &ScriptProgram::AccountContributionOf);
-			Program->SetMethod("decimal account_reservation_of(const address&in, const uint256&in) const", &ScriptProgram::AccountReservationOf);
-			Program->SetMethod("decimal account_custody_of(const address&in, const uint256&in) const", &ScriptProgram::AccountCustodyOf);
-			Program->SetMethod("bool has_witness_program_of(const string_view&in) const", &ScriptProgram::HasWitnessProgramOf);
-			Program->SetMethod("uint256 witness_event_of(const uint256&in)", &ScriptProgram::WitnessEventOf);
-			Program->SetMethod("address witness_address_of(const uint256&in, const string_view&in, uint64, usize) const", &ScriptProgram::WitnessAddressOf);
-			Program->SetMethod("bool has_witness_transaction_of(const uint256&in, const string_view&in) const", &ScriptProgram::HasWitnessTransactionOf);
-			Program->SetMethod("bool is_account_honest(const address&in) const", &ScriptProgram::IsAccountHonest);
-			Program->SetMethod("uint256 random()", &ScriptProgram::Random);
-			Program->SetMethod("address from() const", &ScriptProgram::From);
-			Program->SetMethod("address to() const", &ScriptProgram::To);
-			Program->SetMethod("string blockchain() const", &ScriptProgram::Blockchain);
-			Program->SetMethod("string token() const", &ScriptProgram::Token);
-			Program->SetMethod("string contract() const", &ScriptProgram::Contract);
-			Program->SetMethod("decimal gas_price() const", &ScriptProgram::GasPrice);
-			Program->SetMethod("uint256 gas_use() const", &ScriptProgram::GasUse);
-			Program->SetMethod("uint256 gas_limit() const", &ScriptProgram::GasLimit);
-			Program->SetMethod("uint256 asset() const", &ScriptProgram::Asset);
-			Program->SetMethod("uint256 parent_block_hash() const", &ScriptProgram::ParentBlockHash);
-			Program->SetMethod("uint256 block_gas_use() const", &ScriptProgram::BlockGasUse);
-			Program->SetMethod("uint256 block_gas_limit() const", &ScriptProgram::BlockGasLimit);
-			Program->SetMethod("uint128 block_difficulty() const", &ScriptProgram::BlockDifficulty);
-			Program->SetMethod("uint64 block_time() const", &ScriptProgram::BlockTime);
-			Program->SetMethod("uint64 block_priority() const", &ScriptProgram::BlockPriority);
-			Program->SetMethod("uint64 block_number() const", &ScriptProgram::BlockNumber);
+			auto program = vm->set_interface_class<script_program>(SCRIPT_CLASS_PROGRAM);
+			program->set_method("bool call(const address&in, const string_view&in, const ?&in, ?&out)", &script_program::call_mutable_function);
+			program->set_method("bool call(const address&in, const string_view&in, const ?&in, ?&out) const", &script_program::call_immutable_function);
+			program->set_method("bool store(const address&in, const ?&in)", &script_program::store_by_address);
+			program->set_method("bool store(const string_view&in, const ?&in)", &script_program::store_by_location);
+			program->set_method("bool load(const address&in, ?&out) const", &script_program::load_by_address);
+			program->set_method("bool load(const string_view&in, ?&out) const", &script_program::load_by_location);
+			program->set_method("bool load_from(const address&in, const address&in, ?&out) const", &script_program::load_by_address);
+			program->set_method("bool load_from(const address&in, const string_view&in, ?&out) const", &script_program::load_by_location);
+			program->set_method("bool emit(const address&in, const ?&in)", &script_program::emit_by_address);
+			program->set_method("bool emit(const string_view&in, const ?&in)", &script_program::emit_by_location);
+			program->set_method("bool transfer(const address&in, const uint256&in, const decimal&in)", &script_program::transfer);
+			program->set_method("uint64 account_sequence_of(const address&in) const", &script_program::account_sequence_of);
+			program->set_method("uint256 account_work_of(const address&in) const", &script_program::account_work_of);
+			program->set_method("string account_program_of(const address&in) const", &script_program::account_program_of);
+			program->set_method("decimal account_incoming_reward_of(const address&in, const uint256&in, const decimal&in) const", &script_program::account_incoming_reward_of);
+			program->set_method("decimal account_outgoing_reward_of(const address&in, const uint256&in, const decimal&in) const", &script_program::account_outgoing_reward_of);
+			program->set_method("uint64 account_derivation_of(const address&in, const uint256&in) const", &script_program::account_derivation_of);
+			program->set_method("decimal account_balance_of(const address&in, const uint256&in) const", &script_program::account_balance_of);
+			program->set_method("decimal account_coverage_of(const address&in, const uint256&in) const", &script_program::account_coverage_of);
+			program->set_method("decimal account_contribution_of(const address&in, const uint256&in) const", &script_program::account_contribution_of);
+			program->set_method("decimal account_reservation_of(const address&in, const uint256&in) const", &script_program::account_reservation_of);
+			program->set_method("decimal account_custody_of(const address&in, const uint256&in) const", &script_program::account_custody_of);
+			program->set_method("bool has_witness_program_of(const string_view&in) const", &script_program::has_witness_program_of);
+			program->set_method("uint256 witness_event_of(const uint256&in)", &script_program::witness_event_of);
+			program->set_method("address witness_address_of(const uint256&in, const string_view&in, uint64, usize) const", &script_program::witness_address_of);
+			program->set_method("bool has_witness_transaction_of(const uint256&in, const string_view&in) const", &script_program::has_witness_transaction_of);
+			program->set_method("bool is_account_honest(const address&in) const", &script_program::is_account_honest);
+			program->set_method("uint256 random()", &script_program::random);
+			program->set_method("address from() const", &script_program::from);
+			program->set_method("address to() const", &script_program::to);
+			program->set_method("string blockchain() const", &script_program::blockchain);
+			program->set_method("string token() const", &script_program::token);
+			program->set_method("string contract() const", &script_program::contract);
+			program->set_method("decimal gas_price() const", &script_program::gas_price);
+			program->set_method("uint256 gas_use() const", &script_program::gas_use);
+			program->set_method("uint256 gas_limit() const", &script_program::gas_limit);
+			program->set_method("uint256 asset() const", &script_program::asset);
+			program->set_method("uint256 parent_block_hash() const", &script_program::parent_block_hash);
+			program->set_method("uint256 block_gas_use() const", &script_program::block_gas_use);
+			program->set_method("uint256 block_gas_limit() const", &script_program::block_gas_limit);
+			program->set_method("uint128 block_difficulty() const", &script_program::block_difficulty);
+			program->set_method("uint64 block_time() const", &script_program::block_time);
+			program->set_method("uint64 block_priority() const", &script_program::block_priority);
+			program->set_method("uint64 block_number() const", &script_program::block_number);
 
-			VM->BeginNamespace("asset_utils");
-			VM->SetFunction("uint256 to_asset(const string_view&in, const string_view&in = string_view(), const string_view&in = string_view())", &Algorithm::Asset::IdOf);
-			VM->SetFunction("string to_blockchain(const uint256&in)", &Algorithm::Asset::BlockchainOf);
-			VM->SetFunction("string to_token(const uint256&in)", &Algorithm::Asset::TokenOf);
-			VM->SetFunction("string to_contract(const uint256&in)", &Algorithm::Asset::ChecksumOf);
-			VM->EndNamespace();
+			vm->begin_namespace("asset_utils");
+			vm->set_function("uint256 to_asset(const string_view&in, const string_view&in = string_view(), const string_view&in = string_view())", &algorithm::asset::id_of);
+			vm->set_function("string to_blockchain(const uint256&in)", &algorithm::asset::blockchain_of);
+			vm->set_function("string to_token(const uint256&in)", &algorithm::asset::token_of);
+			vm->set_function("string to_contract(const uint256&in)", &algorithm::asset::checksum_of);
+			vm->end_namespace();
 
-			VM->BeginNamespace("byte_utils");
-			VM->SetFunction("string encode256(const uint256&in)", &EncodeBytes);
-			VM->SetFunction("uint256 decode256(const string_view&in)", &DecodeBytes);
-			VM->EndNamespace();
+			vm->begin_namespace("byte_utils");
+			vm->set_function("string encode256(const uint256&in)", &encode_bytes);
+			vm->set_function("uint256 decode256(const string_view&in)", &decode_bytes);
+			vm->end_namespace();
 
-			VM->BeginNamespace("hash_utils");
-			VM->SetFunction("string crc32(const string_view&in)", &Crc32);
-			VM->SetFunction("string ripemd160(const string_view&in)", &RipeMD160);
-			VM->SetFunction("string erecover160(const string_view&in, const string_view&in)", &ERecover160);
-			VM->SetFunction("string erecover256(const string_view&in, const string_view&in)", &ERecover256);
-			VM->SetFunction("string blake2b256(const string_view&in)", &Blake2b256);
-			VM->SetFunction("string keccak256(const string_view&in)", &Keccak256);
-			VM->SetFunction("string keccak512(const string_view&in)", &Keccak512);
-			VM->SetFunction("string sha256(const string_view&in)", &Sha256);
-			VM->SetFunction("string sha512(const string_view&in)", &Sha512);
-			VM->EndNamespace();
+			vm->begin_namespace("hash_utils");
+			vm->set_function("string crc32(const string_view&in)", &crc32);
+			vm->set_function("string ripemd160(const string_view&in)", &ripe_md160);
+			vm->set_function("string erecover160(const string_view&in, const string_view&in)", &erecover160);
+			vm->set_function("string erecover256(const string_view&in, const string_view&in)", &erecover256);
+			vm->set_function("string blake2b256(const string_view&in)", &blake2b256);
+			vm->set_function("string keccak256(const string_view&in)", &keccak256);
+			vm->set_function("string keccak512(const string_view&in)", &keccak512);
+			vm->set_function("string sha256(const string_view&in)", &sha256);
+			vm->set_function("string sha512(const string_view&in)", &sha512);
+			vm->end_namespace();
 		}
-		ScriptHost::~ScriptHost() noexcept
+		script_host::~script_host() noexcept
 		{
-			for (auto& Link : Modules)
-				Module(Link.second).Discard();
-			Modules.clear();
+			for (auto& link : modules)
+				library(link.second).discard();
+			modules.clear();
 		}
-		UPtr<Compiler> ScriptHost::Allocate()
+		uptr<compiler> script_host::allocate()
 		{
-			UMutex<std::mutex> Unique(Mutex);
-			if (!Compilers.empty())
+			umutex<std::mutex> unique(mutex);
+			if (!compilers.empty())
 			{
-				auto Compiler = std::move(Compilers.front());
-				Compilers.pop();
-				return Compiler;
+				auto compiler = std::move(compilers.front());
+				compilers.pop();
+				return compiler;
 			}
 
-			UPtr<Compiler> Compiler = VM->CreateCompiler();
-			Compiler->Clear();
-			return Compiler;
+			uptr<compiler> compiler = vm->create_compiler();
+			compiler->clear();
+			return compiler;
 		}
-		void ScriptHost::Deallocate(UPtr<Compiler>&& Compiler)
+		void script_host::deallocate(uptr<compiler>&& compiler)
 		{
-			if (!Compiler)
+			if (!compiler)
 				return;
 
-			UMutex<std::mutex> Unique(Mutex);
-			Compiler->UnlinkModule();
-			Compilers.push(std::move(Compiler));
+			umutex<std::mutex> unique(mutex);
+			compiler->unlink_module();
+			compilers.push(std::move(compiler));
 		}
-		ExpectsLR<void> ScriptHost::Compile(Compiler* Compiler, const std::string_view& ProgramHashcode, const std::string_view& UnpackedProgramCode)
+		expects_lr<void> script_host::compile(compiler* compiler, const std::string_view& program_hashcode, const std::string_view& unpacked_program_code)
 		{
-			VI_ASSERT(Compiler != nullptr, "compiler should not be null");
-			String Messages, Id = String(ProgramHashcode), Scope = Format::Util::Encode0xHex(ProgramHashcode);
-			VM->SetCompileCallback(Scope, [&Messages](const std::string_view& Message) { Messages.append(Message).append("\r\n"); });
+			VI_ASSERT(compiler != nullptr, "compiler should not be null");
+			string messages, id = string(program_hashcode), scope = format::util::encode_0xhex(program_hashcode);
+			vm->set_compile_callback(scope, [&messages](const std::string_view& message) { messages.append(message).append("\r\n"); });
 
-			auto Preparation = Compiler->Prepare(Scope, true);
-			if (!Preparation)
+			auto preparation = compiler->prepare(scope, true);
+			if (!preparation)
 			{
-				Messages.append("ERR preparation failed: " + Preparation.Error().message() + "\r\n");
-			Error:
-				VM->SetCompileCallback(Scope, nullptr);
-				return LayerException(std::move(Messages));
+				messages.append("ERR preparation failed: " + preparation.error().message() + "\r\n");
+			error:
+				vm->set_compile_callback(scope, nullptr);
+				return layer_exception(std::move(messages));
 			}
 
-			auto Injection = Compiler->LoadCode(Scope, UnpackedProgramCode);
-			if (!Injection)
+			auto injection = compiler->load_code(scope, unpacked_program_code);
+			if (!injection)
 			{
-				Messages.append("ERR injection failed: " + Injection.Error().message() + "\r\n");
-				goto Error;
+				messages.append("ERR injection failed: " + injection.error().message() + "\r\n");
+				goto error;
 			}
 
-			auto Compilation = Compiler->CompileSync();
-			if (!Compilation)
+			auto compilation = compiler->compile_sync();
+			if (!compilation)
 			{
-				Messages.append("ERR compilation failed: " + Compilation.Error().message() + "\r\n");
-				goto Error;
+				messages.append("ERR compilation failed: " + compilation.error().message() + "\r\n");
+				goto error;
 			}
 
-			UnorderedSet<String> Mapping;
-			auto Module = Compiler->GetModule();
-			size_t Functions = Module.GetFunctionCount();
-			for (size_t i = 0; i < Functions; i++)
+			unordered_set<string> mapping;
+			auto library = compiler->get_module();
+			size_t functions = library.get_function_count();
+			for (size_t i = 0; i < functions; i++)
 			{
-				auto Function = Module.GetFunctionByIndex(i);
-				String Name = String(Function.GetName());
-				if (Mapping.find(Name) != Mapping.end())
-					return LayerException(Stringify::Text("program function %s is ambiguous", Name.c_str()));
+				auto function = library.get_function_by_index(i);
+				string name = string(function.get_name());
+				if (mapping.find(name) != mapping.end())
+					return layer_exception(stringify::text("program function %s is ambiguous", name.c_str()));
 
-				Mapping.insert(Name);
+				mapping.insert(name);
 			}
 
-			UMutex<std::mutex> Unique(Mutex);
-			if (Modules.size() <= Protocol::Now().User.Storage.ScriptCacheSize)
+			umutex<std::mutex> unique(mutex);
+			if (modules.size() <= protocol::now().user.storage.script_cache_size)
 			{
-				auto& Link = Modules[Id];
-				if (Link != nullptr)
-					::Module(Link).Discard();
+				auto& link = modules[id];
+				if (link != nullptr)
+					::library(link).discard();
 
-				Link = Compiler->GetModule().GetModule();
-				return Expectation::Met;
-			}
-			
-			for (auto& Link : Modules)
-				::Module(Link.second).Discard();
-
-			Modules.clear();
-			Modules[Id] = Compiler->GetModule().GetModule();
-			return Expectation::Met;
-		}
-		bool ScriptHost::Precompile(Compiler* Compiler, const std::string_view& ProgramHashcode)
-		{
-			VI_ASSERT(Compiler != nullptr, "compiler should not be null");
-			String Id = String(ProgramHashcode);
-			UMutex<std::mutex> Unique(Mutex);
-			auto It = Modules.find(Id);
-			return It != Modules.end() ? !!Compiler->Prepare(It->second) : false;
-		}
-		String ScriptHost::Hashcode(const std::string_view& UnpackedProgramCode)
-		{
-			static std::string_view Lines = "\r\n";
-			static std::string_view Erasable = " \r\n\t\'\"()<>=%&^*/+-,.!?:;@~";
-			static std::string_view Quotes = "\"'`";
-			String Hashable = String(UnpackedProgramCode);
-			Stringify::ReplaceInBetween(Stringify::Trim(Hashable), "/*", "*/", "", false);
-			Stringify::ReplaceStartsWithEndsOf(Stringify::Trim(Hashable), "//", Lines, "");
-			Stringify::Compress(Stringify::Trim(Hashable), Erasable, Quotes);
-			return Algorithm::Hashing::Hash512((uint8_t*)Hashable.data(), Hashable.size());
-		}
-		ExpectsLR<String> ScriptHost::Pack(const std::string_view& UnpackedProgramCode)
-		{
-			auto PackedProgramCode = Codec::Compress(UnpackedProgramCode, Compression::BestCompression);
-			if (!PackedProgramCode)
-				return LayerException(std::move(PackedProgramCode.Error().message()));
-
-			return *PackedProgramCode;
-		}
-		ExpectsLR<String> ScriptHost::Unpack(const std::string_view& PackedProgramCode)
-		{
-			auto UnpackedProgramCode = Codec::Decompress(PackedProgramCode);
-			if (!UnpackedProgramCode)
-				return LayerException(std::move(UnpackedProgramCode.Error().message()));
-
-			return *UnpackedProgramCode;
-		}
-		VirtualMachine* ScriptHost::GetVM()
-		{
-			return *VM;
-		}
-
-		ScriptAddress::ScriptAddress()
-		{
-		}
-		ScriptAddress::ScriptAddress(const Algorithm::Pubkeyhash Owner)
-		{
-			if (Owner != nullptr)
-				memcpy(Hash, Owner, sizeof(Hash));
-		}
-		ScriptAddress::ScriptAddress(const std::string_view& Address)
-		{
-			Algorithm::Signing::DecodeAddress(Address, Hash);
-		}
-		ScriptAddress::ScriptAddress(const uint256_t& Numeric)
-		{
-			uint8_t Data[32];
-			Algorithm::Encoding::DecodeUint256(Numeric, Data);
-			memcpy(Hash, Data, sizeof(Hash));
-		}
-		String ScriptAddress::ToString() const
-		{
-			String Address;
-			Algorithm::Signing::EncodeAddress(Hash, Address);
-			return Address;
-		}
-		uint256_t ScriptAddress::ToUint256() const
-		{
-			uint8_t Data[32] = { 0 };
-			memcpy(Data, Hash, sizeof(Hash));
-
-			uint256_t Numeric = 0;
-			Algorithm::Encoding::EncodeUint256(Data, Numeric);
-			return Numeric;
-		}
-		bool ScriptAddress::IsNull() const
-		{
-			Algorithm::Pubkeyhash Null = { 0 };
-			return !memcmp(Hash, Null, sizeof(Null));
-		}
-		bool ScriptAddress::Equals(const ScriptAddress& A, const ScriptAddress& B)
-		{
-			return !memcmp(A.Hash, B.Hash, sizeof(A.Hash));
-		}
-
-		ScriptProgram::ScriptProgram(Ledger::TransactionContext* NewContext) : Distribution(Optional::None), Context(NewContext)
-		{
-			VI_ASSERT(Context != nullptr, "transaction context should be set");
-		}
-		ExpectsLR<void> ScriptProgram::Initialize(Compiler* Compiler, const Format::Variables& Args)
-		{
-			return Execute(Compiler, std::string_view(), Args, 1, nullptr);
-		}
-		ExpectsLR<void> ScriptProgram::MutableCall(Compiler* Compiler, const std::string_view& FunctionName, const Format::Variables& Args)
-		{
-			if (FunctionName.empty())
-				return LayerException("illegal call to function: function not found");
-
-			return Execute(Compiler, FunctionName, Args, -1, nullptr);
-		}
-		ExpectsLR<void> ScriptProgram::ImmutableCall(Compiler* Compiler, const std::string_view& FunctionName, const Format::Variables& Args)
-		{
-			if (FunctionName.empty())
-				return LayerException("illegal call to function: function not found");
-
-			return Execute(Compiler, FunctionName, Args, 0, nullptr);
-		}
-		ExpectsLR<void> ScriptProgram::Execute(Compiler* Compiler, const std::string_view& FunctionName, const Format::Variables& Args, int8_t Mutable, std::function<ExpectsLR<void>(void*, int)>&& ReturnCallback)
-		{
-			if (!FunctionName.empty() && (FunctionName == SCRIPT_FUNCTION_INITIALIZE || Stringify::StartsWith(FunctionName, "_")))
-				return LayerException(Stringify::Text("illegal call to function \"%.*s\": illegal operation", (int)FunctionName.size(), FunctionName.data()));
-
-			Function Entrypoint = Compiler->GetModule().GetFunctionByName(FunctionName.empty() ? SCRIPT_FUNCTION_INITIALIZE : FunctionName);
-			if (!Entrypoint.IsValid())
-			{
-				if (FunctionName.empty())
-					return Expectation::Met;
-
-				return LayerException(Stringify::Text("illegal call to function \"%.*s\": function not found", (int)FunctionName.size(), FunctionName.data()));
+				link = compiler->get_module().get_module();
+				return expectation::met;
 			}
 
-			auto Binders = LoadArguments(Entrypoint, Args, Mutable);
-			if (!Binders)
-				return Binders.Error();
+			for (auto& link : modules)
+				::library(link.second).discard();
 
-			auto* VM = Entrypoint.GetVM();
-			auto* Caller = ImmediateContext::Get();
-			auto* Coroutine = Caller ? Caller : VM->RequestContext();			
-			auto Execution = ExpectsVM<Vitex::Scripting::Execution>(Vitex::Scripting::Execution::Error);
-			auto Resolver = ExpectsLR<void>(LayerException());
-			auto Resolve = [this, &Resolver, &Entrypoint, &ReturnCallback](ImmediateContext* Coroutine)
+			modules.clear();
+			modules[id] = compiler->get_module().get_module();
+			return expectation::met;
+		}
+		bool script_host::precompile(compiler* compiler, const std::string_view& program_hashcode)
+		{
+			VI_ASSERT(compiler != nullptr, "compiler should not be null");
+			string id = string(program_hashcode);
+			umutex<std::mutex> unique(mutex);
+			auto it = modules.find(id);
+			return it != modules.end() ? !!compiler->prepare(it->second) : false;
+		}
+		string script_host::hashcode(const std::string_view& unpacked_program_code)
+		{
+			static std::string_view lines = "\r\n";
+			static std::string_view erasable = " \r\n\t\'\"()<>=%&^*/+-,.!?:;@~";
+			static std::string_view quotes = "\"'`";
+			string hashable = string(unpacked_program_code);
+			stringify::replace_in_between(stringify::trim(hashable), "/*", "*/", "", false);
+			stringify::replace_starts_with_ends_of(stringify::trim(hashable), "//", lines, "");
+			stringify::compress(stringify::trim(hashable), erasable, quotes);
+			return algorithm::hashing::hash512((uint8_t*)hashable.data(), hashable.size());
+		}
+		expects_lr<string> script_host::pack(const std::string_view& unpacked_program_code)
+		{
+			auto packed_program_code = codec::compress(unpacked_program_code, compression::best_compression);
+			if (!packed_program_code)
+				return layer_exception(std::move(packed_program_code.error().message()));
+
+			return *packed_program_code;
+		}
+		expects_lr<string> script_host::unpack(const std::string_view& packed_program_code)
+		{
+			auto unpacked_program_code = codec::decompress(packed_program_code);
+			if (!unpacked_program_code)
+				return layer_exception(std::move(unpacked_program_code.error().message()));
+
+			return *unpacked_program_code;
+		}
+		virtual_machine* script_host::get_vm()
+		{
+			return *vm;
+		}
+
+		script_address::script_address()
+		{
+		}
+		script_address::script_address(const algorithm::pubkeyhash owner)
+		{
+			if (owner != nullptr)
+				memcpy(hash, owner, sizeof(hash));
+		}
+		script_address::script_address(const std::string_view& address)
+		{
+			algorithm::signing::decode_address(address, hash);
+		}
+		script_address::script_address(const uint256_t& numeric)
+		{
+			uint8_t data[32];
+			algorithm::encoding::decode_uint256(numeric, data);
+			memcpy(hash, data, sizeof(hash));
+		}
+		string script_address::to_string() const
+		{
+			string address;
+			algorithm::signing::encode_address(hash, address);
+			return address;
+		}
+		uint256_t script_address::to_uint256() const
+		{
+			uint8_t data[32] = { 0 };
+			memcpy(data, hash, sizeof(hash));
+
+			uint256_t numeric = 0;
+			algorithm::encoding::encode_uint256(data, numeric);
+			return numeric;
+		}
+		bool script_address::is_null() const
+		{
+			algorithm::pubkeyhash null = { 0 };
+			return !memcmp(hash, null, sizeof(null));
+		}
+		bool script_address::equals(const script_address& a, const script_address& b)
+		{
+			return !memcmp(a.hash, b.hash, sizeof(a.hash));
+		}
+
+		script_program::script_program(ledger::transaction_context* new_context) : distribution(optional::none), context(new_context)
+		{
+			VI_ASSERT(context != nullptr, "transaction context should be set");
+		}
+		expects_lr<void> script_program::initialize(compiler* compiler, const format::variables& args)
+		{
+			return execute(compiler, std::string_view(), args, 1, nullptr);
+		}
+		expects_lr<void> script_program::mutable_call(compiler* compiler, const std::string_view& function_name, const format::variables& args)
+		{
+			if (function_name.empty())
+				return layer_exception("illegal call to function: function not found");
+
+			return execute(compiler, function_name, args, -1, nullptr);
+		}
+		expects_lr<void> script_program::immutable_call(compiler* compiler, const std::string_view& function_name, const format::variables& args)
+		{
+			if (function_name.empty())
+				return layer_exception("illegal call to function: function not found");
+
+			return execute(compiler, function_name, args, 0, nullptr);
+		}
+		expects_lr<void> script_program::execute(compiler* compiler, const std::string_view& function_name, const format::variables& args, int8_t mutability, std::function<expects_lr<void>(void*, int)>&& return_callback)
+		{
+			if (!function_name.empty() && (function_name == SCRIPT_FUNCTION_INITIALIZE || stringify::starts_with(function_name, "_")))
+				return layer_exception(stringify::text("illegal call to function \"%.*s\": illegal operation", (int)function_name.size(), function_name.data()));
+
+			function entrypoint = compiler->get_module().get_function_by_name(function_name.empty() ? SCRIPT_FUNCTION_INITIALIZE : function_name);
+			if (!entrypoint.is_valid())
 			{
-				void* Address = Coroutine->GetReturnAddress();
-				int TypeId = Entrypoint.GetReturnTypeId();
-				Resolver = Expectation::Met;
-				if (!Address || TypeId <= 0)
+				if (function_name.empty())
+					return expectation::met;
+
+				return layer_exception(stringify::text("illegal call to function \"%.*s\": function not found", (int)function_name.size(), function_name.data()));
+			}
+
+			auto binders = load_arguments(entrypoint, args, mutability);
+			if (!binders)
+				return binders.error();
+
+			auto* vm = entrypoint.get_vm();
+			auto* caller = immediate_context::get();
+			auto* coroutine = caller ? caller : vm->request_context();
+			auto execution = expects_vm<vitex::scripting::execution>(vitex::scripting::execution::error);
+			auto resolver = expects_lr<void>(layer_exception());
+			auto resolve = [this, &resolver, &entrypoint, &return_callback](immediate_context* coroutine)
+			{
+				void* address = coroutine->get_return_address();
+				int type_id = entrypoint.get_return_type_id();
+				resolver = expectation::met;
+				if (!address || type_id <= 0)
 					return;
 
-				if (!ReturnCallback)
+				if (!return_callback)
 				{
-					Format::Stream Stream;
-					auto Serialization = ScriptMarshalling::Store(&Stream, Address, TypeId);
-					if (Serialization)
+					format::stream stream;
+					auto serialization = script_marshalling::store(&stream, address, type_id);
+					if (serialization)
 					{
-						Format::Variables Returns;
-						if (Format::VariablesUtil::DeserializeFlatFrom(Stream, &Returns))
+						format::variables returns;
+						if (format::variables_util::deserialize_flat_from(stream, &returns))
 						{
-							auto Type = ScriptHost::Get()->GetVM()->GetTypeInfoById(TypeId);
-							auto Typename = Type.IsValid() ? Type.GetName() : std::string_view("primitive");
-							auto Status = Context->EmitEvent(Algorithm::Hashing::Hash32d(Typename), std::move(Returns));
-							if (!Status)
-								Resolver = std::move(Status);
+							auto type = script_host::get()->get_vm()->get_type_info_by_id(type_id);
+							auto name = type.is_valid() ? type.get_name() : std::string_view("primitive");
+							auto status = context->emit_event(algorithm::hashing::hash32d(name), std::move(returns));
+							if (!status)
+								resolver = std::move(status);
 						}
 						else
-							Resolver = LayerException("return value conversion error");
+							resolver = layer_exception("return value conversion error");
 					}
 					else
-						Resolver = LayerException("return value error: " + Serialization.Error().message());
+						resolver = layer_exception("return value error: " + serialization.error().message());
 				}
 				else
 				{
-					auto Status = ReturnCallback(Address, TypeId);
-					if (!Status)
-						Resolver = std::move(Status);
+					auto status = return_callback(address, type_id);
+					if (!status)
+						resolver = std::move(status);
 				}
 			};
-			if (Caller != Coroutine)
+			if (caller != coroutine)
 			{
-				Vector<ScriptFrame> Frames;
-				Coroutine->SetLineCallback(std::bind(&ScriptProgram::LoadCoroutine, this, std::placeholders::_1, Frames));
-				Execution = Coroutine->ExecuteInlineCall(Entrypoint, [&Binders](ImmediateContext* Coroutine) { for (auto& Bind : *Binders) Bind(Coroutine); });
-				Resolve(Coroutine);
+				vector<script_frame> frames;
+				coroutine->set_line_callback(std::bind(&script_program::load_coroutine, this, std::placeholders::_1, frames));
+				execution = coroutine->execute_inline_call(entrypoint, [&binders](immediate_context* coroutine) { for (auto& bind : *binders) bind(coroutine); });
+				resolve(coroutine);
 			}
 			else
-				Execution = Coroutine->ExecuteSubcall(Entrypoint, [&Binders](ImmediateContext* Coroutine) { for (auto& Bind : *Binders) Bind(Coroutine); }, Resolve);
+				execution = coroutine->execute_subcall(entrypoint, [&binders](immediate_context* coroutine) { for (auto& bind : *binders) bind(coroutine); }, resolve);
 
-			auto Exception = Bindings::Exception::GetExceptionAt(Coroutine);
-			if (!Execution || (Execution && *Execution != Execution::Finished) || !Exception.Empty())
+			auto exception = bindings::exception::get_exception_at(coroutine);
+			if (!execution || (execution && *execution != execution::finished) || !exception.empty())
 			{
-				if (Caller != Coroutine)
-					VM->ReturnContext(Coroutine);
-				return LayerException(Exception.Empty() ? (Execution ? "execution error" : Execution.Error().message()) : Exception.What());
+				if (caller != coroutine)
+					vm->return_context(coroutine);
+				return layer_exception(exception.empty() ? (execution ? "execution error" : execution.error().message()) : exception.what());
 			}
 
-			if (Caller != Coroutine)
-				VM->ReturnContext(Coroutine);
-			return Resolver;
+			if (caller != coroutine)
+				vm->return_context(coroutine);
+			return resolver;
 		}
-		ExpectsLR<void> ScriptProgram::Subexecute(const ScriptAddress& Target, const std::string_view& FunctionName, void* InputValue, int InputTypeId, void* OutputValue, int OutputTypeId, int8_t Mutable) const
+		expects_lr<void> script_program::subexecute(const script_address& target, const std::string_view& function_name, void* input_value, int input_type_id, void* output_value, int output_type_id, int8_t mutability) const
 		{
-			if (FunctionName.empty())
-				return LayerException(Stringify::Text("illegal subcall to %s program: illegal operation", Target.ToString().c_str()));
+			if (function_name.empty())
+				return layer_exception(stringify::text("illegal subcall to %s program: illegal operation", target.to_string().c_str()));
 
-			auto Link = Context->GetAccountProgram(Target.Hash);
-			if (!Link)
-				return LayerException(Stringify::Text("illegal subcall to %s program on function \"%.*s\": illegal operation", Target.ToString().c_str(), (int)FunctionName.size(), FunctionName.data()));
+			auto link = context->get_account_program(target.hash);
+			if (!link)
+				return layer_exception(stringify::text("illegal subcall to %s program on function \"%.*s\": illegal operation", target.to_string().c_str(), (int)function_name.size(), function_name.data()));
 
-			auto* Host = Ledger::ScriptHost::Get();
-			auto Compiler = Host->Allocate();
-			if (!Host->Precompile(*Compiler, Link->Hashcode))
+			auto* host = ledger::script_host::get();
+			auto compiler = host->allocate();
+			if (!host->precompile(*compiler, link->hashcode))
 			{
-				auto Program = Context->GetWitnessProgram(Link->Hashcode);
-				if (!Program)
+				auto program = context->get_witness_program(link->hashcode);
+				if (!program)
 				{
-					Host->Deallocate(std::move(Compiler));
-					return LayerException(Stringify::Text("illegal subcall to %s program on function \"%.*s\": %s", Target.ToString().c_str(), (int)FunctionName.size(), FunctionName.data(), Program.Error().what()));
+					host->deallocate(std::move(compiler));
+					return layer_exception(stringify::text("illegal subcall to %s program on function \"%.*s\": %s", target.to_string().c_str(), (int)function_name.size(), function_name.data(), program.error().what()));
 				}
 
-				auto Code = Program->AsCode();
-				if (!Code)
+				auto code = program->as_code();
+				if (!code)
 				{
-					Host->Deallocate(std::move(Compiler));
-					return LayerException(Stringify::Text("illegal subcall to %s program on function \"%.*s\": %s", Target.ToString().c_str(), (int)FunctionName.size(), FunctionName.data(), Code.Error().what()));
+					host->deallocate(std::move(compiler));
+					return layer_exception(stringify::text("illegal subcall to %s program on function \"%.*s\": %s", target.to_string().c_str(), (int)function_name.size(), function_name.data(), code.error().what()));
 				}
 
-				auto Compilation = Host->Compile(*Compiler, Link->Hashcode, *Code);
-				if (!Compilation)
+				auto compilation = host->compile(*compiler, link->hashcode, *code);
+				if (!compilation)
 				{
-					Host->Deallocate(std::move(Compiler));
-					return LayerException(Stringify::Text("illegal subcall to %s program on function \"%.*s\": %s", Target.ToString().c_str(), (int)FunctionName.size(), FunctionName.data(), Compilation.Error().what()));
+					host->deallocate(std::move(compiler));
+					return layer_exception(stringify::text("illegal subcall to %s program on function \"%.*s\": %s", target.to_string().c_str(), (int)function_name.size(), function_name.data(), compilation.error().what()));
 				}
 			}
 
-			Format::Variables Args;
-			if (InputValue != nullptr && InputTypeId > 0)
+			format::variables args;
+			if (input_value != nullptr && input_type_id > 0)
 			{
-				Format::Stream Stream;
-				auto Serialization = ScriptMarshalling::Store(&Stream, InputValue, InputTypeId);
-				if (!Serialization)
+				format::stream stream;
+				auto serialization = script_marshalling::store(&stream, input_value, input_type_id);
+				if (!serialization)
 				{
-					Host->Deallocate(std::move(Compiler));
-					return LayerException(Stringify::Text("illegal subcall to %s program on function \"%.*s\": %s", Target.ToString().c_str(), (int)FunctionName.size(), FunctionName.data(), Serialization.Error().what()));
+					host->deallocate(std::move(compiler));
+					return layer_exception(stringify::text("illegal subcall to %s program on function \"%.*s\": %s", target.to_string().c_str(), (int)function_name.size(), function_name.data(), serialization.error().what()));
 				}
 
-				if (!Format::VariablesUtil::DeserializeFlatFrom(Stream, &Args))
+				if (!format::variables_util::deserialize_flat_from(stream, &args))
 				{
-					Host->Deallocate(std::move(Compiler));
-					return LayerException(Stringify::Text("illegal subcall to %s program on function \"%.*s\": argument serialization error", Target.ToString().c_str(), (int)FunctionName.size(), FunctionName.data()));
+					host->deallocate(std::move(compiler));
+					return layer_exception(stringify::text("illegal subcall to %s program on function \"%.*s\": argument serialization error", target.to_string().c_str(), (int)function_name.size(), function_name.data()));
 				}
 			}
 
-			auto Transaction = Transactions::Invocation();
-			Transaction.SetAsset("ETH");
-			Transaction.SetCalldata(Target.Hash, Algorithm::Hashing::Hash32d(Link->Hashcode), FunctionName, std::move(Args));
-			Transaction.GasPrice = Context->Transaction->GasPrice;
-			Transaction.GasLimit = Context->GetGasLeft();
-			Transaction.Sequence = 1;
+			auto transaction = transactions::invocation();
+			transaction.set_asset("ETH");
+			transaction.set_calldata(target.hash, algorithm::hashing::hash32d(link->hashcode), function_name, std::move(args));
+			transaction.gas_price = context->transaction->gas_price;
+			transaction.gas_limit = context->get_gas_left();
+			transaction.sequence = 1;
 
-			Ledger::Receipt Receipt;
-			Receipt.TransactionHash = Transaction.AsHash();
-			Receipt.GenerationTime = Protocol::Now().Time.Now();
-			Receipt.AbsoluteGasUse = Context->Block->GasUse;
-			Receipt.BlockNumber = Context->Block->Number;
-			memcpy(Receipt.From, To().Hash, sizeof(Receipt.From));
+			ledger::receipt receipt;
+			receipt.transaction_hash = transaction.as_hash();
+			receipt.generation_time = protocol::now().time.now();
+			receipt.absolute_gas_use = context->block->gas_use;
+			receipt.block_number = context->block->number;
+			memcpy(receipt.from, to().hash, sizeof(receipt.from));
 
-			auto Next = TransactionContext(Context->Block, Context->Environment, &Transaction, std::move(Receipt));
-			auto* Prev = Context;
-			auto* Main = (ScriptProgram*)this;
-			Main->Context = &Next;
+			auto next = transaction_context(context->block, context->environment, &transaction, std::move(receipt));
+			auto* prev = context;
+			auto* main = (script_program*)this;
+			main->context = &next;
 
-			auto Execution = Main->Execute(*Compiler, FunctionName, Transaction.Args, Mutable, [&Target, &FunctionName, OutputValue, OutputTypeId](void* Address, int TypeId) -> ExpectsLR<void>
+			auto execution = main->execute(*compiler, function_name, transaction.args, mutability, [&target, &function_name, output_value, output_type_id](void* address, int type_id) -> expects_lr<void>
 			{
-				Format::Stream Stream;
-				auto Serialization = ScriptMarshalling::Store(&Stream, Address, TypeId);
-				if (!Serialization)
-					return LayerException(Stringify::Text("illegal subcall to %s program on function \"%.*s\": return serialization error", Target.ToString().c_str(), (int)FunctionName.size(), FunctionName.data()));
+				format::stream stream;
+				auto serialization = script_marshalling::store(&stream, address, type_id);
+				if (!serialization)
+					return layer_exception(stringify::text("illegal subcall to %s program on function \"%.*s\": return serialization error", target.to_string().c_str(), (int)function_name.size(), function_name.data()));
 
-				Serialization = ScriptMarshalling::Load(Stream, OutputValue, OutputTypeId);
-				if (!Serialization)
-					return LayerException(Stringify::Text("illegal subcall to %s program on function \"%.*s\": %s", Target.ToString().c_str(), (int)FunctionName.size(), FunctionName.data(), Serialization.Error().what()));
+				serialization = script_marshalling::load(stream, output_value, output_type_id);
+				if (!serialization)
+					return layer_exception(stringify::text("illegal subcall to %s program on function \"%.*s\": %s", target.to_string().c_str(), (int)function_name.size(), function_name.data(), serialization.error().what()));
 
-				return Expectation::Met;
+				return expectation::met;
 			});
 
-			Prev->Receipt.Events.insert(Prev->Receipt.Events.begin(), Next.Receipt.Events.begin(), Next.Receipt.Events.end());
-			Prev->Receipt.RelativeGasUse += Next.Receipt.RelativeGasUse;
-			Main->Context = Prev;
-			Host->Deallocate(std::move(Compiler));
-			return Execution;
+			prev->receipt.events.insert(prev->receipt.events.begin(), next.receipt.events.begin(), next.receipt.events.end());
+			prev->receipt.relative_gas_use += next.receipt.relative_gas_use;
+			main->context = prev;
+			host->deallocate(std::move(compiler));
+			return execution;
 		}
-		ExpectsLR<Vector<std::function<void(ImmediateContext*)>>> ScriptProgram::LoadArguments(const Function& Entrypoint, const Format::Variables& Args, int8_t Mutable) const
+		expects_lr<vector<std::function<void(immediate_context*)>>> script_program::load_arguments(const function& entrypoint, const format::variables& args, int8_t mutability) const
 		{
-			auto* VM = Entrypoint.GetVM();
-			size_t ArgsCount = Entrypoint.GetArgsCount();
-			if (ArgsCount != Args.size() + 1)
-				return LayerException(Stringify::Text("illegal call to function \"%s\": expected exactly %i arguments", Entrypoint.GetDecl().data(), (int)ArgsCount));
+			auto* vm = entrypoint.get_vm();
+			size_t args_count = entrypoint.get_args_count();
+			if (args_count != args.size() + 1)
+				return layer_exception(stringify::text("illegal call to function \"%s\": expected exactly %i arguments", entrypoint.get_decl().data(), (int)args_count));
 
-			Vector<std::function<void(ImmediateContext*)>> Frames = { };
-			Frames.reserve(ArgsCount);
+			vector<std::function<void(immediate_context*)>> frames = { };
+			frames.reserve(args_count);
 
-			for (size_t i = 0; i < ArgsCount; i++)
+			for (size_t i = 0; i < args_count; i++)
 			{
-				int TypeId; size_t Flags;
-				if (!Entrypoint.GetArg(i, &TypeId, &Flags))
-					return LayerException(Stringify::Text("illegal call to function \"%s\": argument #%i not bound", Entrypoint.GetDecl().data(), i));
+				int type_id; size_t flags;
+				if (!entrypoint.get_arg(i, &type_id, &flags))
+					return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound", entrypoint.get_decl().data(), i));
 
-				size_t Index = i - 1;
-				auto Type = VM->GetTypeInfoById(TypeId);
+				size_t index = i - 1;
+				auto type = vm->get_type_info_by_id(type_id);
 				if (i > 0)
 				{
-					if (Index >= Args.size())
-						return LayerException(Stringify::Text("illegal call to function \"%s\": argument #%i not bound", Entrypoint.GetDecl().data(), i));
+					if (index >= args.size())
+						return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound", entrypoint.get_decl().data(), i));
 
-					switch (TypeId)
+					switch (type_id)
 					{
-						case (int)TypeId::BOOL:
-							Frames.emplace_back([i, Index, &Args](ImmediateContext* Coroutine) { Coroutine->SetArg8(i, (uint8_t)Args[Index].AsBoolean()); });
+						case (int)type_id::boolf:
+							frames.emplace_back([i, index, &args](immediate_context* coroutine) { coroutine->set_arg8(i, (uint8_t)args[index].as_boolean()); });
 							break;
-						case (int)TypeId::INT8:
-						case (int)TypeId::UINT8:
-							Frames.emplace_back([i, Index, &Args](ImmediateContext* Coroutine) { Coroutine->SetArg8(i, (uint8_t)Args[Index].AsUint8()); });
+						case (int)type_id::int8:
+						case (int)type_id::uint8:
+							frames.emplace_back([i, index, &args](immediate_context* coroutine) { coroutine->set_arg8(i, (uint8_t)args[index].as_uint8()); });
 							break;
-						case (int)TypeId::INT16:
-						case (int)TypeId::UINT16:
-							Frames.emplace_back([i, Index, &Args](ImmediateContext* Coroutine) { Coroutine->SetArg16(i, (uint16_t)Args[Index].AsUint16()); });
+						case (int)type_id::int16:
+						case (int)type_id::uint16:
+							frames.emplace_back([i, index, &args](immediate_context* coroutine) { coroutine->set_arg16(i, (uint16_t)args[index].as_uint16()); });
 							break;
-						case (int)TypeId::INT32:
-						case (int)TypeId::UINT32:
-							Frames.emplace_back([i, Index, &Args](ImmediateContext* Coroutine) { Coroutine->SetArg32(i, (uint32_t)Args[Index].AsUint32()); });
+						case (int)type_id::int32:
+						case (int)type_id::uint32:
+							frames.emplace_back([i, index, &args](immediate_context* coroutine) { coroutine->set_arg32(i, (uint32_t)args[index].as_uint32()); });
 							break;
-						case (int)TypeId::INT64:
-						case (int)TypeId::UINT64:
-							Frames.emplace_back([i, Index, &Args](ImmediateContext* Coroutine) { Coroutine->SetArg64(i, (uint64_t)Args[Index].AsUint64()); });
+						case (int)type_id::int64:
+						case (int)type_id::uint64:
+							frames.emplace_back([i, index, &args](immediate_context* coroutine) { coroutine->set_arg64(i, (uint64_t)args[index].as_uint64()); });
 							break;
-						case (int)TypeId::FLOAT:
-							Frames.emplace_back([i, Index, &Args](ImmediateContext* Coroutine) { Coroutine->SetArgFloat(i, (float)Args[Index].AsFloat()); });
+						case (int)type_id::floatf:
+							frames.emplace_back([i, index, &args](immediate_context* coroutine) { coroutine->set_arg_float(i, (float)args[index].as_float()); });
 							break;
-						case (int)TypeId::DOUBLE:
-							Frames.emplace_back([i, Index, &Args](ImmediateContext* Coroutine) { Coroutine->SetArgDouble(i, (double)Args[Index].AsDouble()); });
+						case (int)type_id::doublef:
+							frames.emplace_back([i, index, &args](immediate_context* coroutine) { coroutine->set_arg_double(i, (double)args[index].as_double()); });
 							break;
 						default:
 						{
-							void* Address = nullptr;
-							auto& Value = Args[Index];
-							Format::Stream Stream;
-							Format::VariablesUtil::SerializeFlatInto({ Value }, &Stream);
-							auto Status = ScriptMarshalling::Load(Stream, (void*)&Address, TypeId | (int)Vitex::Scripting::TypeId::OBJHANDLE);
-							if (!Status)
+							void* address = nullptr;
+							auto& value = args[index];
+							format::stream stream;
+							format::variables_util::serialize_flat_into({ value }, &stream);
+							auto status = script_marshalling::load(stream, (void*)&address, type_id | (int)vitex::scripting::type_id::objhandle);
+							if (!status)
 							{
-								Stream = Format::Stream::Decode(Value.AsString());
-								Status = ScriptMarshalling::Load(Stream, (void*)&Address, TypeId | (int)Vitex::Scripting::TypeId::OBJHANDLE);
-								if (!Status)
-									return LayerException(Stringify::Text("illegal call to function \"%s\": argument #%i not bound to program (%s)", Entrypoint.GetDecl().data(), i, Status.Error().what()));
+								stream = format::stream::decode(value.as_string());
+								status = script_marshalling::load(stream, (void*)&address, type_id | (int)vitex::scripting::type_id::objhandle);
+								if (!status)
+									return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound to program (%s)", entrypoint.get_decl().data(), i, status.error().what()));
 							}
 
-							auto Object = UScriptObject(VM, Type.GetTypeInfo(), Address);
-							Frames.emplace_back([i, TypeId, Object = std::move(Object)](ImmediateContext* Coroutine) mutable { Coroutine->SetArgObject(i, TypeId & (int)Vitex::Scripting::TypeId::OBJHANDLE ? (void*)&Object.Address : (void*)Object.Address); });
+							auto object = uscript_object(vm, type.get_type_info(), address);
+							frames.emplace_back([i, type_id, object = std::move(object)](immediate_context* coroutine) mutable { coroutine->set_arg_object(i, type_id & (int)vitex::scripting::type_id::objhandle ? (void*)&object.address : (void*)object.address); });
 							break;
 						}
 					}
 				}
 				else
 				{
-					if (!Type.IsValid() || Type.GetName() != SCRIPT_CLASS_PROGRAM)
-						return LayerException(Stringify::Text("illegal call to function \"%s\": argument #%i not bound to program", Entrypoint.GetDecl().data()));
+					if (!type.is_valid() || type.get_name() != SCRIPT_CLASS_PROGRAM)
+						return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound to program", entrypoint.get_decl().data()));
 
-					bool IsConst = Mutable == 0;
-					if (Mutable != -1 && IsConst != (!!(Flags & (size_t)Modifiers::CONSTF)))
-						return LayerException(Stringify::Text("illegal call to function \"%s\": mutability not preserved", Entrypoint.GetDecl().data()));
+					bool is_const = mutability == 0;
+					if (mutability != -1 && is_const != (!!(flags & (size_t)modifiers::constf)))
+						return layer_exception(stringify::text("illegal call to function \"%s\": mutability not preserved", entrypoint.get_decl().data()));
 
-					Frames.emplace_back([i, Index, &Args, this](ImmediateContext* Coroutine) { Coroutine->SetArgObject(i, (ScriptProgram*)this); });
+					frames.emplace_back([i, index, &args, this](immediate_context* coroutine) { coroutine->set_arg_object(i, (script_program*)this); });
 				}
 			}
-			return std::move(Frames);
+			return std::move(frames);
 		}
-		void ScriptProgram::LoadCoroutine(ImmediateContext* Coroutine, Vector<ScriptFrame>& Frames)
+		void script_program::load_coroutine(immediate_context* coroutine, vector<script_frame>& frames)
 		{
-			ScriptFrame CurrentFrame; size_t CurrentDepth = Coroutine->GetCallstackSize();
-			if (!Coroutine->GetCallStateRegisters(0, nullptr, &CurrentFrame.Call, &CurrentFrame.Pointer, nullptr, nullptr))
+			script_frame current_frame; size_t current_depth = coroutine->get_callstack_size();
+			if (!coroutine->get_call_state_registers(0, nullptr, &current_frame.call, &current_frame.pointer, nullptr, nullptr))
 				return;
 
-			size_t LatestDepth = Frames.size();
-			if (LatestDepth < CurrentDepth)
+			size_t latest_depth = frames.size();
+			if (latest_depth < current_depth)
 			{
-				auto LatestFrame = CurrentFrame;
-				LatestFrame.ByteCode = CurrentFrame.Call.GetByteCode(&LatestFrame.ByteCodeSize);
-				LatestFrame.Pointer = 0;
-				Frames.push_back(std::move(LatestFrame));
+				auto latest_frame = current_frame;
+				latest_frame.byte_code = current_frame.call.get_byte_code(&latest_frame.byte_code_size);
+				latest_frame.pointer = 0;
+				frames.push_back(std::move(latest_frame));
 			}
-			else if (LatestDepth > CurrentDepth)
-				Frames.pop_back();
+			else if (latest_depth > current_depth)
+				frames.pop_back();
 
-			if (Frames.empty() || !Frames.back().ByteCode)
+			if (frames.empty() || !frames.back().byte_code)
 				return;
 
-			auto& LatestFrame = Frames.back();
-			auto* VM = Coroutine->GetVM();
-			size_t Start = std::min<size_t>(LatestFrame.ByteCodeSize - 1, CurrentFrame.Pointer > LatestFrame.Pointer ? LatestFrame.Pointer : CurrentFrame.Pointer);
-			size_t Count = (CurrentFrame.Pointer > LatestFrame.Pointer ? CurrentFrame.Pointer - LatestFrame.Pointer : LatestFrame.Pointer - CurrentFrame.Pointer);
-			size_t End = std::min<size_t>(LatestFrame.ByteCodeSize, Start + std::max<size_t>(1, Count));
-			while (Start < End)
+			auto& latest_frame = frames.back();
+			auto* vm = coroutine->get_vm();
+			size_t start = std::min<size_t>(latest_frame.byte_code_size - 1, current_frame.pointer > latest_frame.pointer ? latest_frame.pointer : current_frame.pointer);
+			size_t count = (current_frame.pointer > latest_frame.pointer ? current_frame.pointer - latest_frame.pointer : latest_frame.pointer - current_frame.pointer);
+			size_t end = std::min<size_t>(latest_frame.byte_code_size, start + std::max<size_t>(1, count));
+			while (start < end)
 			{
-				auto Opcode = VirtualMachine::GetByteCodeInfo((uint8_t) * (LatestFrame.ByteCode + Start));
-				Start += Opcode.Size;
-				if (!DispatchInstruction(VM, Coroutine, LatestFrame.ByteCode, Start, Opcode))
+				auto opcode = virtual_machine::get_byte_code_info((uint8_t) * (latest_frame.byte_code + start));
+				start += opcode.size;
+				if (!dispatch_instruction(vm, coroutine, latest_frame.byte_code, start, opcode))
 					return;
 			}
 
-			LatestFrame.Pointer = CurrentFrame.Pointer;
+			latest_frame.pointer = current_frame.pointer;
 		}
-		bool ScriptProgram::DispatchInstruction(VirtualMachine* VM, ImmediateContext* Coroutine, uint32_t* ProgramData, size_t ProgramCounter, ByteCodeLabel& Opcode)
+		bool script_program::dispatch_instruction(virtual_machine* vm, immediate_context* coroutine, uint32_t* program_data, size_t program_counter, byte_code_label& opcode)
 		{
-			auto Gas = (size_t)(Opcode.OffsetOfArg2 + Opcode.SizeOfArg2) * (size_t)GasCost::Opcode;
-			auto Status = Context->BurnGas(Gas);
-			if (Status)
+			auto gas = (size_t)(opcode.offset_of_arg2 + opcode.size_of_arg2) * (size_t)gas_cost::opcode;
+			auto status = context->burn_gas(gas);
+			if (status)
 				return true;
-			
-			Coroutine = Coroutine ? Coroutine : ImmediateContext::Get();
-			if (Coroutine != nullptr)
-				Coroutine->SetException(Bindings::Exception::Pointer(SCRIPT_EXCEPTION_EXECUTION, Status.Error().message()).ToExceptionString(), false);
+
+			coroutine = coroutine ? coroutine : immediate_context::get();
+			if (coroutine != nullptr)
+				coroutine->set_exception(bindings::exception::pointer(SCRIPT_EXCEPTION_EXECUTION, status.error().message()).to_exception_string(), false);
 
 			return false;
 		}
-		bool ScriptProgram::CallMutableFunction(const ScriptAddress& Target, const std::string_view& Function, void* InputValue, int InputTypeId, void* OutputValue, int OutputTypeId)
+		bool script_program::call_mutable_function(const script_address& target, const std::string_view& function, void* input_value, int input_type_id, void* output_value, int output_type_id)
 		{
-			auto Execution = Subexecute(Target, Function, InputValue, InputTypeId, OutputValue, OutputTypeId, -1);
-			if (!Execution)
+			auto execution = subexecute(target, function, input_value, input_type_id, output_value, output_type_id, -1);
+			if (!execution)
 			{
-				Bindings::Exception::Throw(Bindings::Exception::Pointer(SCRIPT_EXCEPTION_EXECUTION, Execution.Error().message()));
+				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_EXECUTION, execution.error().message()));
 				return false;
 			}
 
 			return true;
 		}
-		bool ScriptProgram::CallImmutableFunction(const ScriptAddress& Target, const std::string_view& Function, void* InputValue, int InputTypeId, void* OutputValue, int OutputTypeId) const
+		bool script_program::call_immutable_function(const script_address& target, const std::string_view& function, void* input_value, int input_type_id, void* output_value, int output_type_id) const
 		{
-			auto Execution = Subexecute(Target, Function, InputValue, InputTypeId, OutputValue, OutputTypeId, 0);
-			if (!Execution)
+			auto execution = subexecute(target, function, input_value, input_type_id, output_value, output_type_id, 0);
+			if (!execution)
 			{
-				Bindings::Exception::Throw(Bindings::Exception::Pointer(SCRIPT_EXCEPTION_EXECUTION, Execution.Error().message()));
+				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_EXECUTION, execution.error().message()));
 				return false;
 			}
 
 			return true;
 		}
-		bool ScriptProgram::StoreByAddress(const ScriptAddress& Location, const void* ObjectValue, int ObjectTypeId)
+		bool script_program::store_by_address(const script_address& location, const void* object_value, int object_type_id)
 		{
-			String Data = String((char*)Location.Hash, sizeof(Location.Hash));
-			return StoreByLocation(Data, ObjectValue, ObjectTypeId);
+			string data = string((char*)location.hash, sizeof(location.hash));
+			return store_by_location(data, object_value, object_type_id);
 		}
-		bool ScriptProgram::StoreByLocation(const std::string_view& Location, const void* ObjectValue, int ObjectTypeId)
+		bool script_program::store_by_location(const std::string_view& location, const void* object_value, int object_type_id)
 		{
-			if (!ObjectValue)
+			if (!object_value)
 			{
-				Bindings::Exception::Throw(Bindings::Exception::Pointer(SCRIPT_EXCEPTION_ARGUMENT, "store not supported for null value"));
+				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "store not supported for null value"));
 				return false;
 			}
-			else if (Location.size() > std::numeric_limits<uint8_t>::max())
+			else if (location.size() > std::numeric_limits<uint8_t>::max())
 			{
-				Bindings::Exception::Throw(Bindings::Exception::Pointer(SCRIPT_EXCEPTION_ARGUMENT, "store location max length is 256 bytes"));
+				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "store location max length is 256 bytes"));
 				return false;
 			}
 
-			Format::Stream Stream;
-			auto Status = ScriptMarshalling::Store(&Stream, (void*)ObjectValue, ObjectTypeId);
-			if (!Status)
+			format::stream stream;
+			auto status = script_marshalling::store(&stream, (void*)object_value, object_type_id);
+			if (!status)
 			{
-				Bindings::Exception::Throw(Bindings::Exception::Pointer(SCRIPT_EXCEPTION_ARGUMENT, Status.Error().message()));
+				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, status.error().message()));
 				return false;
 			}
 
-			auto Data = Context->ApplyAccountStorage(To().Hash, Location, Stream.Data);
-			if (!Data)
+			auto data = context->apply_account_storage(to().hash, location, stream.data);
+			if (!data)
 			{
-				Bindings::Exception::Throw(Bindings::Exception::Pointer(SCRIPT_EXCEPTION_STORAGE, Data.Error().message()));
-				return false;
-			}
-
-			return true;
-		}
-		bool ScriptProgram::LoadByAddress(const ScriptAddress& Location, void* ObjectValue, int ObjectTypeId) const
-		{
-			return LoadFromByAddress(To(), Location, ObjectValue, ObjectTypeId);
-		}
-		bool ScriptProgram::LoadByLocation(const std::string_view& Location, void* ObjectValue, int ObjectTypeId) const
-		{
-			return LoadFromByLocation(To(), Location, ObjectValue, ObjectTypeId);
-		}
-		bool ScriptProgram::LoadFromByAddress(const ScriptAddress& Target, const ScriptAddress& Location, void* ObjectValue, int ObjectTypeId) const
-		{
-			String Data = String((char*)Location.Hash, sizeof(Location.Hash));
-			return LoadFromByLocation(Target, Data, ObjectValue, ObjectTypeId);
-		}
-		bool ScriptProgram::LoadFromByLocation(const ScriptAddress& Target, const std::string_view& Location, void* ObjectValue, int ObjectTypeId) const
-		{
-			if (!ObjectValue)
-			{
-				Bindings::Exception::Throw(Bindings::Exception::Pointer(SCRIPT_EXCEPTION_ARGUMENT, "load not supported for null value"));
-				return false;
-			}
-			else if (Location.size() > std::numeric_limits<uint8_t>::max())
-			{
-				Bindings::Exception::Throw(Bindings::Exception::Pointer(SCRIPT_EXCEPTION_ARGUMENT, "load location max length is 256 bytes"));
-				return false;
-			}
-
-			auto Data = Context->GetAccountStorage(Target.Hash, Location);
-			if (!Data || Data->Storage.empty())
-				return false;
-
-			Format::Stream Stream = Format::Stream(Data->Storage);
-			auto Status = ScriptMarshalling::Load(Stream, ObjectValue, ObjectTypeId);
-			if (!Status)
-			{
-				Bindings::Exception::Throw(Bindings::Exception::Pointer(SCRIPT_EXCEPTION_ARGUMENT, Status.Error().message()));
+				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_STORAGE, data.error().message()));
 				return false;
 			}
 
 			return true;
 		}
-		bool ScriptProgram::EmitByAddress(const ScriptAddress& Location, const void* ObjectValue, int ObjectTypeId)
+		bool script_program::load_by_address(const script_address& location, void* object_value, int object_type_id) const
 		{
-			String Data = String((char*)Location.Hash, sizeof(Location.Hash));
-			return EmitByLocation(Data, ObjectValue, ObjectTypeId);
+			return load_from_by_address(to(), location, object_value, object_type_id);
 		}
-		bool ScriptProgram::EmitByLocation(const std::string_view& Location, const void* ObjectValue, int ObjectTypeId)
+		bool script_program::load_by_location(const std::string_view& location, void* object_value, int object_type_id) const
 		{
-			if (!ObjectValue)
+			return load_from_by_location(to(), location, object_value, object_type_id);
+		}
+		bool script_program::load_from_by_address(const script_address& target, const script_address& location, void* object_value, int object_type_id) const
+		{
+			string data = string((char*)location.hash, sizeof(location.hash));
+			return load_from_by_location(target, data, object_value, object_type_id);
+		}
+		bool script_program::load_from_by_location(const script_address& target, const std::string_view& location, void* object_value, int object_type_id) const
+		{
+			if (!object_value)
 			{
-				Bindings::Exception::Throw(Bindings::Exception::Pointer(SCRIPT_EXCEPTION_ARGUMENT, "emit not supported for null value"));
+				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "load not supported for null value"));
 				return false;
 			}
-			else if (Location.size() > std::numeric_limits<uint8_t>::max())
+			else if (location.size() > std::numeric_limits<uint8_t>::max())
 			{
-				Bindings::Exception::Throw(Bindings::Exception::Pointer(SCRIPT_EXCEPTION_ARGUMENT, "emit location max length is 256 bytes"));
-				return false;
-			}
-
-			Format::Stream Stream;
-			auto Status = ScriptMarshalling::Store(&Stream, (void*)ObjectValue, ObjectTypeId);
-			if (!Status)
-			{
-				Bindings::Exception::Throw(Bindings::Exception::Pointer(SCRIPT_EXCEPTION_ARGUMENT, Status.Error().message()));
-				return false;
-			}
-
-			Format::Variables Returns;
-			if (!Format::VariablesUtil::DeserializeFlatFrom(Stream, &Returns))
-			{
-				Bindings::Exception::Throw(Bindings::Exception::Pointer(SCRIPT_EXCEPTION_ARGUMENT, "emit value conversion error"));
+				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "load location max length is 256 bytes"));
 				return false;
 			}
 
-			auto Type = ScriptHost::Get()->GetVM()->GetTypeInfoById(ObjectTypeId);
-			auto Typename = Type.IsValid() ? Type.GetName() : std::string_view("primitive");
-			auto Data = Context->EmitEvent(Algorithm::Hashing::Hash32d(Typename), std::move(Returns));
-			if (!Data)
+			auto data = context->get_account_storage(target.hash, location);
+			if (!data || data->storage.empty())
+				return false;
+
+			format::stream stream = format::stream(data->storage);
+			auto status = script_marshalling::load(stream, object_value, object_type_id);
+			if (!status)
 			{
-				Bindings::Exception::Throw(Bindings::Exception::Pointer(SCRIPT_EXCEPTION_STORAGE, Data.Error().message()));
+				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, status.error().message()));
 				return false;
 			}
 
 			return true;
 		}
-		bool ScriptProgram::Transfer(const ScriptAddress& To, const uint256_t& Asset, const Decimal& Value)
+		bool script_program::emit_by_address(const script_address& location, const void* object_value, int object_type_id)
 		{
-			auto Status = Context->ApplyPayment(Asset, Context->Receipt.From, To.Hash, Value);
-			if (!Status)
+			string data = string((char*)location.hash, sizeof(location.hash));
+			return emit_by_location(data, object_value, object_type_id);
+		}
+		bool script_program::emit_by_location(const std::string_view& location, const void* object_value, int object_type_id)
+		{
+			if (!object_value)
 			{
-				Bindings::Exception::Throw(Bindings::Exception::Pointer(SCRIPT_EXCEPTION_EXECUTION, Status.Error().message()));
+				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "emit not supported for null value"));
+				return false;
+			}
+			else if (location.size() > std::numeric_limits<uint8_t>::max())
+			{
+				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "emit location max length is 256 bytes"));
+				return false;
+			}
+
+			format::stream stream;
+			auto status = script_marshalling::store(&stream, (void*)object_value, object_type_id);
+			if (!status)
+			{
+				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, status.error().message()));
+				return false;
+			}
+
+			format::variables returns;
+			if (!format::variables_util::deserialize_flat_from(stream, &returns))
+			{
+				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "emit value conversion error"));
+				return false;
+			}
+
+			auto type = script_host::get()->get_vm()->get_type_info_by_id(object_type_id);
+			auto name = type.is_valid() ? type.get_name() : std::string_view("primitive");
+			auto data = context->emit_event(algorithm::hashing::hash32d(name), std::move(returns));
+			if (!data)
+			{
+				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_STORAGE, data.error().message()));
 				return false;
 			}
 
 			return true;
 		}
-		uint64_t ScriptProgram::AccountSequenceOf(const ScriptAddress& Target) const
+		bool script_program::transfer(const script_address& to, const uint256_t& asset, const decimal& value)
 		{
-			auto Data = Context->GetAccountSequence(Target.Hash);
-			return Data ? Data->Sequence : 0;
-		}
-		uint256_t ScriptProgram::AccountWorkOf(const ScriptAddress& Target) const
-		{
-			auto Data = Context->GetAccountWork(Target.Hash);
-			return Data ? Data->GetGasUse() : uint256_t(0);
-		}
-		String ScriptProgram::AccountProgramOf(const ScriptAddress& Target) const
-		{
-			auto Data = Context->GetAccountProgram(Target.Hash);
-			return Data ? Data->Hashcode : String();
-		}
-		Decimal ScriptProgram::AccountIncomingRewardOf(const ScriptAddress& Target, const Algorithm::AssetId& Asset, const Decimal& Value) const
-		{
-			auto Data = Context->GetAccountReward(Asset, Target.Hash);
-			return Data ? Data->CalculateIncomingFee(Value) : Decimal::NaN();
-		}
-		Decimal ScriptProgram::AccountOutgoingRewardOf(const ScriptAddress& Target, const Algorithm::AssetId& Asset, const Decimal& Value) const
-		{
-			auto Data = Context->GetAccountReward(Asset, Target.Hash);
-			return Data ? Data->CalculateOutgoingFee(Value) : Decimal::NaN();
-		}
-		uint64_t ScriptProgram::AccountDerivationOf(const ScriptAddress& Target, const Algorithm::AssetId& Asset) const
-		{
-			auto Data = Context->GetAccountDerivation(Asset, Target.Hash);
-			return Data ? Data->MaxAddressIndex : 0;
-		}
-		Decimal ScriptProgram::AccountBalanceOf(const ScriptAddress& Target, const Algorithm::AssetId& Asset) const
-		{
-			auto Data = Context->GetAccountBalance(Asset, Target.Hash);
-			return Data ? Data->GetBalance() : Decimal::Zero();
-		}
-		Decimal ScriptProgram::AccountCoverageOf(const ScriptAddress& Target, const Algorithm::AssetId& Asset) const
-		{
-			auto Data = Context->GetAccountDepository(Asset, Target.Hash);
-			if (!Data)
-				return Decimal::NaN();
-
-			auto Work = Context->GetAccountWork(Target.Hash);
-			return Data->GetCoverage(Work ? Work->Flags : 0);
-		}
-		Decimal ScriptProgram::AccountContributionOf(const ScriptAddress& Target, const Algorithm::AssetId& Asset) const
-		{
-			auto Data = Context->GetAccountDepository(Asset, Target.Hash);
-			return Data ? Data->GetContribution() : Decimal::NaN();
-		}
-		Decimal ScriptProgram::AccountReservationOf(const ScriptAddress& Target, const Algorithm::AssetId& Asset) const
-		{
-			auto Data = Context->GetAccountDepository(Asset, Target.Hash);
-			return Data ? Data->GetReservation() : Decimal::NaN();
-		}
-		Decimal ScriptProgram::AccountCustodyOf(const ScriptAddress& Target, const Algorithm::AssetId& Asset) const
-		{
-			auto Data = Context->GetAccountDepository(Asset, Target.Hash);
-			return Data ? Data->Custody : Decimal::NaN();
-		}
-		bool ScriptProgram::HasWitnessProgramOf(const std::string_view& Hashcode) const
-		{
-			return !!Context->GetWitnessProgram(Hashcode);
-		}
-		uint256_t ScriptProgram::WitnessEventOf(const uint256_t& TransactionHash) const
-		{
-			auto Data = Context->GetWitnessEvent(TransactionHash);
-			return Data ? Data->ChildTransactionHash : uint256_t(0);
-		}
-		ScriptAddress ScriptProgram::WitnessAddressOf(const Algorithm::AssetId& Asset, const std::string_view& Address, uint64_t AddressIndex, size_t Offset) const
-		{
-			auto Data = Context->GetWitnessAddress(Asset, Address, AddressIndex, Offset);
-			return Data ? ScriptAddress(Data->Owner) : ScriptAddress();
-		}
-		bool ScriptProgram::HasWitnessTransactionOf(const Algorithm::AssetId& Asset, const std::string_view& TransactionId) const
-		{
-			return !!Context->GetWitnessTransaction(Asset, TransactionId);
-		}
-		bool ScriptProgram::IsAccountHonest(const ScriptAddress& Target) const
-		{
-			auto Data = Context->GetAccountWork(Target.Hash);
-			return !Data || !Data->IsMatching(States::AccountFlags::Outlaw);
-		}
-		uint256_t ScriptProgram::Random()
-		{
-			if (!Distribution)
+			auto status = context->apply_payment(asset, context->receipt.from, to.hash, value);
+			if (!status)
 			{
-				auto Candidate = Context->CalculateRandom(Context->GetGasUse());
-				if (!Candidate)
+				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_EXECUTION, status.error().message()));
+				return false;
+			}
+
+			return true;
+		}
+		uint64_t script_program::account_sequence_of(const script_address& target) const
+		{
+			auto data = context->get_account_sequence(target.hash);
+			return data ? data->sequence : 0;
+		}
+		uint256_t script_program::account_work_of(const script_address& target) const
+		{
+			auto data = context->get_account_work(target.hash);
+			return data ? data->get_gas_use() : uint256_t(0);
+		}
+		string script_program::account_program_of(const script_address& target) const
+		{
+			auto data = context->get_account_program(target.hash);
+			return data ? data->hashcode : string();
+		}
+		decimal script_program::account_incoming_reward_of(const script_address& target, const algorithm::asset_id& asset, const decimal& value) const
+		{
+			auto data = context->get_account_reward(asset, target.hash);
+			return data ? data->calculate_incoming_fee(value) : decimal::nan();
+		}
+		decimal script_program::account_outgoing_reward_of(const script_address& target, const algorithm::asset_id& asset, const decimal& value) const
+		{
+			auto data = context->get_account_reward(asset, target.hash);
+			return data ? data->calculate_outgoing_fee(value) : decimal::nan();
+		}
+		uint64_t script_program::account_derivation_of(const script_address& target, const algorithm::asset_id& asset) const
+		{
+			auto data = context->get_account_derivation(asset, target.hash);
+			return data ? data->max_address_index : 0;
+		}
+		decimal script_program::account_balance_of(const script_address& target, const algorithm::asset_id& asset) const
+		{
+			auto data = context->get_account_balance(asset, target.hash);
+			return data ? data->get_balance() : decimal::zero();
+		}
+		decimal script_program::account_coverage_of(const script_address& target, const algorithm::asset_id& asset) const
+		{
+			auto data = context->get_account_depository(asset, target.hash);
+			if (!data)
+				return decimal::nan();
+
+			auto work = context->get_account_work(target.hash);
+			return data->get_coverage(work ? work->flags : 0);
+		}
+		decimal script_program::account_contribution_of(const script_address& target, const algorithm::asset_id& asset) const
+		{
+			auto data = context->get_account_depository(asset, target.hash);
+			return data ? data->get_contribution() : decimal::nan();
+		}
+		decimal script_program::account_reservation_of(const script_address& target, const algorithm::asset_id& asset) const
+		{
+			auto data = context->get_account_depository(asset, target.hash);
+			return data ? data->get_reservation() : decimal::nan();
+		}
+		decimal script_program::account_custody_of(const script_address& target, const algorithm::asset_id& asset) const
+		{
+			auto data = context->get_account_depository(asset, target.hash);
+			return data ? data->custody : decimal::nan();
+		}
+		bool script_program::has_witness_program_of(const std::string_view& hashcode) const
+		{
+			return !!context->get_witness_program(hashcode);
+		}
+		uint256_t script_program::witness_event_of(const uint256_t& transaction_hash) const
+		{
+			auto data = context->get_witness_event(transaction_hash);
+			return data ? data->child_transaction_hash : uint256_t(0);
+		}
+		script_address script_program::witness_address_of(const algorithm::asset_id& asset, const std::string_view& address, uint64_t address_index, size_t offset) const
+		{
+			auto data = context->get_witness_address(asset, address, address_index, offset);
+			return data ? script_address(data->owner) : script_address();
+		}
+		bool script_program::has_witness_transaction_of(const algorithm::asset_id& asset, const std::string_view& transaction_id) const
+		{
+			return !!context->get_witness_transaction(asset, transaction_id);
+		}
+		bool script_program::is_account_honest(const script_address& target) const
+		{
+			auto data = context->get_account_work(target.hash);
+			return !data || !data->is_matching(states::account_flags::outlaw);
+		}
+		uint256_t script_program::random()
+		{
+			if (!distribution)
+			{
+				auto candidate = context->calculate_random(context->get_gas_use());
+				if (!candidate)
 				{
-					Bindings::Exception::Throw(Bindings::Exception::Pointer(SCRIPT_EXCEPTION_EXECUTION, Candidate.Error().message()));
+					bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_EXECUTION, candidate.error().message()));
 					return 0;
 				}
-				Distribution = std::move(*Candidate);
+				distribution = std::move(*candidate);
 			}
-			return Distribution->Derive();
+			return distribution->derive();
 		}
-		ScriptAddress ScriptProgram::From() const
+		script_address script_program::from() const
 		{
-			return ScriptAddress(Context->Receipt.From);
+			return script_address(context->receipt.from);
 		}
-		ScriptAddress ScriptProgram::To() const
+		script_address script_program::to() const
 		{
-			uint32_t Type = Context->Transaction->AsType();
-			if (Type == Transactions::Deployment::AsInstanceType())
+			uint32_t type = context->transaction->as_type();
+			if (type == transactions::deployment::as_instance_type())
 			{
-				Algorithm::Pubkeyhash Owner;
-				if (((Transactions::Deployment*)Context->Transaction)->RecoverLocation(Owner))
-					return ScriptAddress(Owner);
+				algorithm::pubkeyhash owner;
+				if (((transactions::deployment*)context->transaction)->recover_location(owner))
+					return script_address(owner);
 			}
-			else if (Type == Transactions::Invocation::AsInstanceType())
-				return ScriptAddress(((Transactions::Invocation*)Context->Transaction)->To);
+			else if (type == transactions::invocation::as_instance_type())
+				return script_address(((transactions::invocation*)context->transaction)->to);
 
-			return ScriptAddress(Context->Receipt.From);
+			return script_address(context->receipt.from);
 		}
-		String ScriptProgram::Blockchain() const
+		string script_program::blockchain() const
 		{
-			return Algorithm::Asset::BlockchainOf(Context->Transaction->Asset);
+			return algorithm::asset::blockchain_of(context->transaction->asset);
 		}
-		String ScriptProgram::Token() const
+		string script_program::token() const
 		{
-			return Algorithm::Asset::TokenOf(Context->Transaction->Asset);
+			return algorithm::asset::token_of(context->transaction->asset);
 		}
-		String ScriptProgram::Contract() const
+		string script_program::contract() const
 		{
-			return Algorithm::Asset::ChecksumOf(Context->Transaction->Asset);
+			return algorithm::asset::checksum_of(context->transaction->asset);
 		}
-		Decimal ScriptProgram::GasPrice() const
+		decimal script_program::gas_price() const
 		{
-			return Context->Transaction->GasPrice;
+			return context->transaction->gas_price;
 		}
-		uint256_t ScriptProgram::GasLeft() const
+		uint256_t script_program::gas_left() const
 		{
-			return Context->GetGasLeft();
+			return context->get_gas_left();
 		}
-		uint256_t ScriptProgram::GasUse() const
+		uint256_t script_program::gas_use() const
 		{
-			return Context->Receipt.RelativeGasUse;
+			return context->receipt.relative_gas_use;
 		}
-		uint256_t ScriptProgram::GasLimit() const
+		uint256_t script_program::gas_limit() const
 		{
-			return Context->Transaction->GasLimit;
+			return context->transaction->gas_limit;
 		}
-		uint256_t ScriptProgram::Asset() const
+		uint256_t script_program::asset() const
 		{
-			return Context->Transaction->Asset;
+			return context->transaction->asset;
 		}
-		uint256_t ScriptProgram::ParentBlockHash() const
+		uint256_t script_program::parent_block_hash() const
 		{
-			return Context->Block->ParentHash;
+			return context->block->parent_hash;
 		}
-		uint256_t ScriptProgram::BlockGasUse() const
+		uint256_t script_program::block_gas_use() const
 		{
-			return Context->Block->GasUse;
+			return context->block->gas_use;
 		}
-		uint256_t ScriptProgram::BlockGasLeft() const
+		uint256_t script_program::block_gas_left() const
 		{
-			return Context->Block->GasLimit - Context->Block->GasUse;
+			return context->block->gas_limit - context->block->gas_use;
 		}
-		uint256_t ScriptProgram::BlockGasLimit() const
+		uint256_t script_program::block_gas_limit() const
 		{
-			return Context->Block->GasLimit;
+			return context->block->gas_limit;
 		}
-		uint128_t ScriptProgram::BlockDifficulty() const
+		uint128_t script_program::block_difficulty() const
 		{
-			return Context->Block->Target.Difficulty();
+			return context->block->target.difficulty();
 		}
-		uint64_t ScriptProgram::BlockTime() const
+		uint64_t script_program::block_time() const
 		{
-			return Context->Block->Time;
+			return context->block->time;
 		}
-		uint64_t ScriptProgram::BlockPriority() const
+		uint64_t script_program::block_priority() const
 		{
-			return Context->Block->Priority;
+			return context->block->priority;
 		}
-		uint64_t ScriptProgram::BlockNumber() const
+		uint64_t script_program::block_number() const
 		{
-			return Context->Block->Number;
+			return context->block->number;
 		}
 
-		ScriptProgramTrace::ScriptProgramTrace(Ledger::Transaction* Transaction, const Algorithm::Pubkeyhash From, bool Tracing) : ScriptProgram(&Environment.Validation.Context), Debugging(Tracing)
+		script_program_trace::script_program_trace(ledger::transaction* transaction, const algorithm::pubkeyhash from, bool tracing) : script_program(&environment.validation.context), debugging(tracing)
 		{
-			VI_ASSERT(Transaction != nullptr && From != nullptr, "transaction and from should be set");
+			VI_ASSERT(transaction != nullptr && from != nullptr, "transaction and from should be set");
 
-			auto Chain = Storages::Chainstate(__func__);
-			auto Tip = Chain.GetLatestBlockHeader();
-			if (Tip)
-				Environment.Tip = std::move(*Tip);
+			auto chain = storages::chainstate(__func__);
+			auto tip = chain.get_latest_block_header();
+			if (tip)
+				environment.tip = std::move(*tip);
 
-			Ledger::Receipt Receipt;
-			Block.SetParentBlock(Environment.Tip.Address());
-			Receipt.TransactionHash = Transaction->AsHash();
-			Receipt.GenerationTime = Protocol::Now().Time.Now();
-			Receipt.BlockNumber = Block.Number + 1;
-			memcpy(Receipt.From, From, sizeof(Algorithm::Pubkeyhash));
+			ledger::receipt receipt;
+			block.set_parent_block(environment.tip.address());
+			receipt.transaction_hash = transaction->as_hash();
+			receipt.generation_time = protocol::now().time.now();
+			receipt.block_number = block.number + 1;
+			memcpy(receipt.from, from, sizeof(algorithm::pubkeyhash));
 
-			memset(Environment.Proposer.PublicKeyHash, 0xFF, sizeof(Algorithm::Pubkeyhash));
-			memset(Environment.Proposer.SecretKey, 0xFF, sizeof(Algorithm::Seckey));
-			Environment.Validation.Context = TransactionContext(&Block, &Environment, Transaction, std::move(Receipt));
+			memset(environment.proposer.public_key_hash, 0xFF, sizeof(algorithm::pubkeyhash));
+			memset(environment.proposer.secret_key, 0xFF, sizeof(algorithm::seckey));
+			environment.validation.context = transaction_context(&block, &environment, transaction, std::move(receipt));
 		}
-		ExpectsLR<void> ScriptProgramTrace::TraceCall(const std::string_view& Function, const Format::Variables& Args, int8_t Mutable)
+		expects_lr<void> script_program_trace::trace_call(const std::string_view& function, const format::variables& args, int8_t mutability)
 		{
-			auto Index = Environment.Validation.Context.GetAccountProgram(To().Hash);
-			if (!Index)
-				return LayerException("program not assigned to address");
+			auto index = environment.validation.context.get_account_program(to().hash);
+			if (!index)
+				return layer_exception("program not assigned to address");
 
-			auto* Host = Ledger::ScriptHost::Get();
-			auto& Hashcode = Index->Hashcode;
-			auto Compiler = Host->Allocate();
-			if (!Host->Precompile(*Compiler, Hashcode))
+			auto* host = ledger::script_host::get();
+			auto& hashcode = index->hashcode;
+			auto compiler = host->allocate();
+			if (!host->precompile(*compiler, hashcode))
 			{
-				auto Program = Environment.Validation.Context.GetWitnessProgram(Hashcode);
-				if (!Program)
+				auto program = environment.validation.context.get_witness_program(hashcode);
+				if (!program)
 				{
-					Host->Deallocate(std::move(Compiler));
-					return LayerException("program not stored to address");
+					host->deallocate(std::move(compiler));
+					return layer_exception("program not stored to address");
 				}
 
-				auto Code = Program->AsCode();
-				if (!Code)
+				auto code = program->as_code();
+				if (!code)
 				{
-					Host->Deallocate(std::move(Compiler));
-					return Code.Error();
+					host->deallocate(std::move(compiler));
+					return code.error();
 				}
 
-				auto Compilation = Host->Compile(*Compiler, Hashcode, *Code);
-				if (!Compilation)
+				auto compilation = host->compile(*compiler, hashcode, *code);
+				if (!compilation)
 				{
-					Host->Deallocate(std::move(Compiler));
-					return Compilation.Error();
+					host->deallocate(std::move(compiler));
+					return compilation.error();
 				}
 			}
 
-			auto Execution = Execute(*Compiler, Function, Args, Mutable, [this](void* Address, int TypeId) -> ExpectsLR<void>
+			auto execution = execute(*compiler, function, args, mutability, [this](void* address, int type_id) -> expects_lr<void>
 			{
-				Returning = Var::Set::Object();
-				auto Serialization = ScriptMarshalling::Store(*Returning, Address, TypeId);
-				if (!Serialization)
+				returning = var::set::object();
+				auto serialization = script_marshalling::store(*returning, address, type_id);
+				if (!serialization)
 				{
-					Returning.Destroy();
-					return LayerException("return value error: " + Serialization.Error().message());
+					returning.destroy();
+					return layer_exception("return value error: " + serialization.error().message());
 				}
 
-				return Expectation::Met;
+				return expectation::met;
 			});
-			Context->Receipt.Successful = !!Execution;
-			Context->Receipt.FinalizationTime = Protocol::Now().Time.Now();
-			if (!Context->Receipt.Successful)
-				Context->EmitEvent(0, { Format::Variable(Execution.What()) }, false);
+			context->receipt.successful = !!execution;
+			context->receipt.finalization_time = protocol::now().time.now();
+			if (!context->receipt.successful)
+				context->emit_event(0, { format::variable(execution.what()) }, false);
 
-			Host->Deallocate(std::move(Compiler));
-			return Execution;
+			host->deallocate(std::move(compiler));
+			return execution;
 		}
-		bool ScriptProgramTrace::DispatchInstruction(VirtualMachine* VM, ImmediateContext* Coroutine, uint32_t* ProgramData, size_t ProgramCounter, ByteCodeLabel& Opcode)
+		bool script_program_trace::dispatch_instruction(virtual_machine* vm, immediate_context* coroutine, uint32_t* program_data, size_t program_counter, byte_code_label& opcode)
 		{
-			if (Debugging)
+			if (debugging)
 			{
-				StringStream Stream;
-				DebuggerContext::ByteCodeLabelToText(Stream, VM, ProgramData, ProgramCounter, false, true);
+				string_stream stream;
+				debugger_context::byte_code_label_to_text(stream, vm, program_data, program_counter, false, true);
 
-				String Instruction = Stream.str();
-				Stringify::Trim(Instruction);
+				string instruction = stream.str();
+				stringify::trim(instruction);
 #if VI_64
-				Instruction.erase(2, 8);
+				instruction.erase(2, 8);
 #endif
-				auto Gas = (size_t)(Opcode.OffsetOfArg2 + Opcode.SizeOfArg2) * (size_t)GasCost::Opcode;
-				Instruction.append(Instruction.find('%') != std::string::npos ? ", %gc:" : " %gc:");
-				Instruction.append(ToString(Gas));
-				Instructions.push_back(std::move(Instruction));
+				auto gas = (size_t)(opcode.offset_of_arg2 + opcode.size_of_arg2) * (size_t)gas_cost::opcode;
+				instruction.append(instruction.find('%') != std::string::npos ? ", %gc:" : " %gc:");
+				instruction.append(to_string(gas));
+				instructions.push_back(std::move(instruction));
 			}
-			return ScriptProgram::DispatchInstruction(VM, Coroutine, ProgramData, ProgramCounter, Opcode);
+			return script_program::dispatch_instruction(vm, coroutine, program_data, program_counter, opcode);
 		}
-		UPtr<Schema> ScriptProgramTrace::AsSchema() const
+		uptr<schema> script_program_trace::as_schema() const
 		{
-			Schema* Data = Var::Set::Object();
-			Data->Set("block_hash", Var::String(Algorithm::Encoding::Encode0xHex256(Block.Number > 0 ? Block.AsHash() : uint256_t(0))));
-			Data->Set("transaction_hash", Var::String(Algorithm::Encoding::Encode0xHex256(Context->Receipt.TransactionHash)));
-			Data->Set("from", Algorithm::Signing::SerializeAddress(((ScriptProgramTrace*)this)->From().Hash));
-			Data->Set("to", Algorithm::Signing::SerializeAddress(((ScriptProgramTrace*)this)->To().Hash));
-			Data->Set("gas", Algorithm::Encoding::SerializeUint256(Context->Receipt.RelativeGasUse));
-			Data->Set("time", Algorithm::Encoding::SerializeUint256(Context->Receipt.FinalizationTime - Context->Receipt.GenerationTime));
-			Data->Set("successful", Var::Boolean(Context->Receipt.Successful));
-			Data->Set("returns", Returning ? Returning->Copy() : Var::Set::Null());
-			if (!Context->Receipt.Events.empty())
+			schema* data = var::set::object();
+			data->set("block_hash", var::string(algorithm::encoding::encode_0xhex256(block.number > 0 ? block.as_hash() : uint256_t(0))));
+			data->set("transaction_hash", var::string(algorithm::encoding::encode_0xhex256(context->receipt.transaction_hash)));
+			data->set("from", algorithm::signing::serialize_address(((script_program_trace*)this)->from().hash));
+			data->set("to", algorithm::signing::serialize_address(((script_program_trace*)this)->to().hash));
+			data->set("gas", algorithm::encoding::serialize_uint256(context->receipt.relative_gas_use));
+			data->set("time", algorithm::encoding::serialize_uint256(context->receipt.finalization_time - context->receipt.generation_time));
+			data->set("successful", var::boolean(context->receipt.successful));
+			data->set("returns", returning ? returning->copy() : var::set::null());
+			if (!context->receipt.events.empty())
 			{
-				auto* EventsData = Data->Set("events", Var::Set::Array());
-				for (auto& Item : Context->Receipt.Events)
+				auto* events_data = data->set("events", var::set::array());
+				for (auto& item : context->receipt.events)
 				{
-					auto* EventData = EventsData->Push(Var::Set::Object());
-					EventData->Set("event", Var::Integer(Item.first));
-					EventData->Set("args", Format::VariablesUtil::Serialize(Item.second));
+					auto* event_data = events_data->push(var::set::object());
+					event_data->set("event", var::integer(item.first));
+					event_data->set("args", format::variables_util::serialize(item.second));
 				}
 			}
-			if (!Context->Delta.Outgoing->At(WorkCommitment::Pending).empty())
+			if (!context->delta.outgoing->at(work_commitment::pending).empty())
 			{
-				auto* StatesData = Data->Set("states", Var::Set::Array());
-				for (auto& Item : Context->Delta.Outgoing->At(WorkCommitment::Pending))
-					StatesData->Push(Item.second->AsSchema().Reset());
+				auto* states_data = data->set("states", var::set::array());
+				for (auto& item : context->delta.outgoing->at(work_commitment::pending))
+					states_data->push(item.second->as_schema().reset());
 			}
-			if (!Instructions.empty())
+			if (!instructions.empty())
 			{
-				auto* InstructionsData = Data->Set("instructions", Var::Set::Array());
-				for (auto& Item : Instructions)
-					InstructionsData->Push(Var::String(Item));
+				auto* instructions_data = data->set("instructions", var::set::array());
+				for (auto& item : instructions)
+					instructions_data->push(var::string(item));
 			}
-			return Data;
+			return data;
 		}
 	}
 }

@@ -4,591 +4,591 @@
 #include "../validator/storage/mempoolstate.h"
 #include "../validator/storage/chainstate.h"
 
-namespace Tangent
+namespace tangent
 {
-	namespace Ledger
+	namespace ledger
 	{
-		static size_t ExponentialRangeDistribution(const uint256_t& Entropy, size_t Range)
+		static size_t exponential_range_distribution(const uint256_t& entropy, size_t range)
 		{
-			const double Lamda = 9.0;
-			const double Exponent = std::exp(-Lamda);
-			const double Base = (double)(uint64_t)(Entropy % std::numeric_limits<uint32_t>::max()) / (double)std::numeric_limits<uint32_t>::max();
-			const double Factor = std::min(1.0, std::max(0.0, -std::log(1.0 - (1.0 - Exponent) * Base) / Lamda));
-			const size_t Index = (size_t)((uint64_t)(Factor * (double)Range) % (uint64_t)Range);
-			return Index;
+			const double lamda = 9.0;
+			const double exponent = std::exp(-lamda);
+			const double base = (double)(uint64_t)(entropy % std::numeric_limits<uint32_t>::max()) / (double)std::numeric_limits<uint32_t>::max();
+			const double factor = std::min(1.0, std::max(0.0, -std::log(1.0 - (1.0 - exponent) * base) / lamda));
+			const size_t index = (size_t)((uint64_t)(factor * (double)range) % (uint64_t)range);
+			return index;
 		}
 
-		BlockTransaction::BlockTransaction(UPtr<Ledger::Transaction>&& NewTransaction, Ledger::Receipt&& NewReceipt) : Transaction(std::move(NewTransaction)), Receipt(std::move(NewReceipt))
+		block_transaction::block_transaction(uptr<ledger::transaction>&& new_transaction, ledger::receipt&& new_receipt) : transaction(std::move(new_transaction)), receipt(std::move(new_receipt))
 		{
-			VI_ASSERT(Transaction, "transaction should be set");
+			VI_ASSERT(transaction, "transaction should be set");
 		}
-		BlockTransaction::BlockTransaction(const BlockTransaction& Other) : Transaction(Other.Transaction ? Transactions::Resolver::Copy(*Other.Transaction) : nullptr), Receipt(Other.Receipt)
+		block_transaction::block_transaction(const block_transaction& other) : transaction(other.transaction ? transactions::resolver::copy(*other.transaction) : nullptr), receipt(other.receipt)
 		{
 		}
-		BlockTransaction& BlockTransaction::operator= (const BlockTransaction& Other)
+		block_transaction& block_transaction::operator= (const block_transaction& other)
 		{
-			if (this == &Other)
+			if (this == &other)
 				return *this;
 
-			Transaction = Other.Transaction ? Transactions::Resolver::Copy(*Other.Transaction) : nullptr;
-			Receipt = Other.Receipt;
+			transaction = other.transaction ? transactions::resolver::copy(*other.transaction) : nullptr;
+			receipt = other.receipt;
 			return *this;
 		}
-		bool BlockTransaction::StorePayload(Format::Stream* Stream) const
+		bool block_transaction::store_payload(format::stream* stream) const
 		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
-			if (Transaction && !Transaction->Store(Stream))
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			if (transaction && !transaction->store(stream))
 				return false;
 
-			if (!Receipt.StorePayload(Stream))
-				return false;
-
-			return true;
-		}
-		bool BlockTransaction::LoadPayload(Format::Stream& Stream)
-		{
-			Transaction = Tangent::Transactions::Resolver::New(Messages::Authentic::ResolveType(Stream).Or(0));
-			if (Transaction && !Transaction->Load(Stream))
-				return false;
-
-			if (!Receipt.LoadPayload(Stream))
+			if (!receipt.store_payload(stream))
 				return false;
 
 			return true;
 		}
-		UPtr<Schema> BlockTransaction::AsSchema() const
+		bool block_transaction::load_payload(format::stream& stream)
 		{
-			Schema* Data = Var::Set::Object();
-			Data->Set("transaction", Transaction ? Transaction->AsSchema().Reset() : Var::Set::Null());
-			Data->Set("receipt", Receipt.AsSchema().Reset());
-			return Data;
+			transaction = tangent::transactions::resolver::init(messages::authentic::resolve_type(stream).otherwise(0));
+			if (transaction && !transaction->load(stream))
+				return false;
+
+			if (!receipt.load_payload(stream))
+				return false;
+
+			return true;
 		}
-		uint32_t BlockTransaction::AsType() const
+		uptr<schema> block_transaction::as_schema() const
 		{
-			return AsInstanceType();
+			schema* data = var::set::object();
+			data->set("transaction", transaction ? transaction->as_schema().reset() : var::set::null());
+			data->set("receipt", receipt.as_schema().reset());
+			return data;
 		}
-		std::string_view BlockTransaction::AsTypename() const
+		uint32_t block_transaction::as_type() const
 		{
-			return AsInstanceTypename();
+			return as_instance_type();
 		}
-		uint32_t BlockTransaction::AsInstanceType()
+		std::string_view block_transaction::as_typename() const
 		{
-			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
-			return Hash;
+			return as_instance_typename();
 		}
-		std::string_view BlockTransaction::AsInstanceTypename()
+		uint32_t block_transaction::as_instance_type()
+		{
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
+		}
+		std::string_view block_transaction::as_instance_typename()
 		{
 			return "block_transaction";
 		}
 
-		BlockWork::BlockWork(const BlockWork& Other) : ParentWork(Other.ParentWork)
+		block_work::block_work(const block_work& other) : parent_work(other.parent_work)
 		{
-			for (size_t i = 0; i < (size_t)WorkCommitment::__Count__; i++)
+			for (size_t i = 0; i < (size_t)work_commitment::__Count__; i++)
 			{
-				auto& Mapping = Map[i];
-				for (auto& Item : Other.Map[i])
-					Mapping[Item.first] = Item.second ? States::Resolver::Copy(*Item.second) : nullptr;
+				auto& mapping = map[i];
+				for (auto& item : other.map[i])
+					mapping[item.first] = item.second ? states::resolver::copy(*item.second) : nullptr;
 			}
 		}
-		BlockWork& BlockWork::operator= (const BlockWork& Other)
+		block_work& block_work::operator= (const block_work& other)
 		{
-			if (&Other == this)
+			if (&other == this)
 				return *this;
 
-			ParentWork = Other.ParentWork;
-			for (size_t i = 0; i < (size_t)WorkCommitment::__Count__; i++)
+			parent_work = other.parent_work;
+			for (size_t i = 0; i < (size_t)work_commitment::__Count__; i++)
 			{
-				auto& Mapping = Map[i];
-				Mapping.clear();
-				for (auto& Item : Other.Map[i])
-					Mapping[Item.first] = Item.second ? States::Resolver::Copy(*Item.second) : nullptr;
+				auto& mapping = map[i];
+				mapping.clear();
+				for (auto& item : other.map[i])
+					mapping[item.first] = item.second ? states::resolver::copy(*item.second) : nullptr;
 			}
 			return *this;
 		}
-		Option<UPtr<State>> BlockWork::FindUniform(const std::string_view& Index) const
+		option<uptr<state>> block_work::find_uniform(const std::string_view& index) const
 		{
-			auto Composite = Uniform::AsInstanceComposite(Index);
-			for (size_t i = 0; i < (size_t)WorkCommitment::__Count__; i++)
+			auto composite = uniform::as_instance_composite(index);
+			for (size_t i = 0; i < (size_t)work_commitment::__Count__; i++)
 			{
-				auto& Mapping = Map[i];
-				auto It = Mapping.find(Composite);
-				if (It != Mapping.end())
-					return It->second ? Option<UPtr<State>>(States::Resolver::Copy(*It->second)) : Option<UPtr<State>>(nullptr);
+				auto& mapping = map[i];
+				auto it = mapping.find(composite);
+				if (it != mapping.end())
+					return it->second ? option<uptr<state>>(states::resolver::copy(*it->second)) : option<uptr<state>>(nullptr);
 			}
-			return ParentWork ? ParentWork->FindUniform(Index) : Option<UPtr<State>>(Optional::None);
+			return parent_work ? parent_work->find_uniform(index) : option<uptr<state>>(optional::none);
 		}
-		Option<UPtr<State>> BlockWork::FindMultiform(const std::string_view& Column, const std::string_view& Row) const
+		option<uptr<state>> block_work::find_multiform(const std::string_view& column, const std::string_view& row) const
 		{
-			auto Composite = Multiform::AsInstanceComposite(Column, Row);
-			for (size_t i = 0; i < (size_t)WorkCommitment::__Count__; i++)
+			auto composite = multiform::as_instance_composite(column, row);
+			for (size_t i = 0; i < (size_t)work_commitment::__Count__; i++)
 			{
-				auto& Mapping = Map[i];
-				auto It = Mapping.find(Composite);
-				if (It != Mapping.end())
-					return It->second ? Option<UPtr<State>>(States::Resolver::Copy(*It->second)) : Option<UPtr<State>>(nullptr);
+				auto& mapping = map[i];
+				auto it = mapping.find(composite);
+				if (it != mapping.end())
+					return it->second ? option<uptr<state>>(states::resolver::copy(*it->second)) : option<uptr<state>>(nullptr);
 			}
-			return ParentWork ? ParentWork->FindMultiform(Column, Row) : Option<UPtr<State>>(Optional::None);
+			return parent_work ? parent_work->find_multiform(column, row) : option<uptr<state>>(optional::none);
 		}
-		void BlockWork::ClearUniform(const std::string_view& Index)
+		void block_work::clear_uniform(const std::string_view& index)
 		{
-			Map[(size_t)WorkCommitment::Pending][Uniform::AsInstanceComposite(Index)].Destroy();
+			map[(size_t)work_commitment::pending][uniform::as_instance_composite(index)].destroy();
 		}
-		void BlockWork::ClearMultiform(const std::string_view& Column, const std::string_view& Row)
+		void block_work::clear_multiform(const std::string_view& column, const std::string_view& row)
 		{
-			Map[(size_t)WorkCommitment::Pending][Multiform::AsInstanceComposite(Column, Row)].Destroy();
+			map[(size_t)work_commitment::pending][multiform::as_instance_composite(column, row)].destroy();
 		}
-		void BlockWork::CopyAny(State* Value)
+		void block_work::copy_any(state* value)
 		{
-			if (Value)
+			if (value)
 			{
-				auto Copy = States::Resolver::Copy(Value);
-				if (Copy)
-					Map[(size_t)WorkCommitment::Pending][Value->AsComposite()] = Copy;
+				auto copy = states::resolver::copy(value);
+				if (copy)
+					map[(size_t)work_commitment::pending][value->as_composite()] = copy;
 			}
 		}
-		void BlockWork::MoveAny(UPtr<State>&& Value)
+		void block_work::move_any(uptr<state>&& value)
 		{
-			auto Composite = Value->AsComposite();
-			Map[(size_t)WorkCommitment::Pending][Composite] = std::move(Value);
+			auto composite = value->as_composite();
+			map[(size_t)work_commitment::pending][composite] = std::move(value);
 		}
-		const StateWork& BlockWork::At(WorkCommitment Level) const
+		const state_work& block_work::at(work_commitment level) const
 		{
-			switch (Level)
+			switch (level)
 			{
-				case Tangent::Ledger::WorkCommitment::Pending:
-				case Tangent::Ledger::WorkCommitment::Finalized:
-					return Map[(size_t)Level];
+				case tangent::ledger::work_commitment::pending:
+				case tangent::ledger::work_commitment::finalized:
+					return map[(size_t)level];
 				default:
-					return Map[(size_t)WorkCommitment::Finalized];
+					return map[(size_t)work_commitment::finalized];
 			}
 		}
-		StateWork& BlockWork::Clear()
+		state_work& block_work::clear()
 		{
-			Map[(size_t)WorkCommitment::Pending].clear();
-			Map[(size_t)WorkCommitment::Finalized].clear();
-			return Map[(size_t)WorkCommitment::Finalized];
+			map[(size_t)work_commitment::pending].clear();
+			map[(size_t)work_commitment::finalized].clear();
+			return map[(size_t)work_commitment::finalized];
 		}
-		StateWork& BlockWork::Rollback()
+		state_work& block_work::rollback()
 		{
-			Map[(size_t)WorkCommitment::Pending].clear();
-			return Map[(size_t)WorkCommitment::Finalized];
+			map[(size_t)work_commitment::pending].clear();
+			return map[(size_t)work_commitment::finalized];
 		}
-		StateWork& BlockWork::Commit()
+		state_work& block_work::commit()
 		{
-			for (auto& Item : Map[(size_t)WorkCommitment::Pending])
+			for (auto& item : map[(size_t)work_commitment::pending])
 			{
-				if (Item.second)
-					Map[(size_t)WorkCommitment::Finalized][Item.first] = std::move(Item.second);
+				if (item.second)
+					map[(size_t)work_commitment::finalized][item.first] = std::move(item.second);
 			}
-			Map[(size_t)WorkCommitment::Pending].clear();
-			return Map[(size_t)WorkCommitment::Finalized];
+			map[(size_t)work_commitment::pending].clear();
+			return map[(size_t)work_commitment::finalized];
 		}
 
-		BlockMutation::BlockMutation() noexcept : Outgoing(nullptr)
+		block_mutation::block_mutation() noexcept : outgoing(nullptr)
 		{
-			Incoming = &Cache;
+			incoming = &cache;
 		}
-		BlockMutation::BlockMutation(const BlockMutation& Other) noexcept : Cache(Other.Cache), Outgoing(Other.Outgoing)
+		block_mutation::block_mutation(const block_mutation& other) noexcept : cache(other.cache), outgoing(other.outgoing)
 		{
-			Incoming = Other.Incoming == &Other.Cache ? &Cache : Other.Incoming;
+			incoming = other.incoming == &other.cache ? &cache : other.incoming;
 		}
-		BlockMutation::BlockMutation(BlockMutation&& Other) noexcept : Cache(std::move(Other.Cache)), Outgoing(Other.Outgoing)
+		block_mutation::block_mutation(block_mutation&& other) noexcept : cache(std::move(other.cache)), outgoing(other.outgoing)
 		{
-			Other.Outgoing = nullptr;
-			Incoming = Other.Incoming == &Other.Cache ? &Cache : Other.Incoming;
+			other.outgoing = nullptr;
+			incoming = other.incoming == &other.cache ? &cache : other.incoming;
 		}
-		BlockMutation& BlockMutation::operator=(const BlockMutation& Other) noexcept
+		block_mutation& block_mutation::operator=(const block_mutation& other) noexcept
 		{
-			if (this == &Other)
+			if (this == &other)
 				return *this;
 
-			Cache = Other.Cache;
-			Outgoing = Other.Outgoing;
-			Incoming = Other.Incoming == &Other.Cache ? &Cache : Other.Incoming;
+			cache = other.cache;
+			outgoing = other.outgoing;
+			incoming = other.incoming == &other.cache ? &cache : other.incoming;
 			return *this;
 		}
-		BlockMutation& BlockMutation::operator=(BlockMutation&& Other) noexcept
+		block_mutation& block_mutation::operator=(block_mutation&& other) noexcept
 		{
-			if (this == &Other)
+			if (this == &other)
 				return *this;
 
-			Cache = std::move(Other.Cache);
-			Outgoing = Other.Outgoing;
-			Incoming = Other.Incoming == &Other.Cache ? &Cache : Other.Incoming;
-			Other.Outgoing = nullptr;
+			cache = std::move(other.cache);
+			outgoing = other.outgoing;
+			incoming = other.incoming == &other.cache ? &cache : other.incoming;
+			other.outgoing = nullptr;
 			return *this;
 		}
 
-		BlockDispatch::BlockDispatch(const BlockDispatch& Other) noexcept : Inputs(Other.Inputs)
+		block_dispatch::block_dispatch(const block_dispatch& other) noexcept : inputs(other.inputs)
 		{
-			Outputs.reserve(Other.Outputs.size());
-			for (auto& Output : Other.Outputs)
+			outputs.reserve(other.outputs.size());
+			for (auto& output : other.outputs)
 			{
-				auto* Copy = Transactions::Resolver::Copy(*Output);
-				if (Copy)
-					Outputs.push_back(Copy);
+				auto* copy = transactions::resolver::copy(*output);
+				if (copy)
+					outputs.push_back(copy);
 			}
 		}
-		BlockDispatch& BlockDispatch::operator=(const BlockDispatch& Other) noexcept
+		block_dispatch& block_dispatch::operator=(const block_dispatch& other) noexcept
 		{
-			if (this == &Other)
+			if (this == &other)
 				return *this;
 
-			Inputs = Other.Inputs;
-			Outputs.clear();
-			Outputs.reserve(Other.Outputs.size());
-			for (auto& Output : Other.Outputs)
+			inputs = other.inputs;
+			outputs.clear();
+			outputs.reserve(other.outputs.size());
+			for (auto& output : other.outputs)
 			{
-				auto* Copy = Transactions::Resolver::Copy(*Output);
-				if (Copy)
-					Outputs.push_back(Copy);
+				auto* copy = transactions::resolver::copy(*output);
+				if (copy)
+					outputs.push_back(copy);
 			}
 			return *this;
 		}
-		ExpectsLR<void> BlockDispatch::Checkpoint() const
+		expects_lr<void> block_dispatch::checkpoint() const
 		{
-			auto Chain = Storages::Chainstate(__func__);
-			return Chain.Dispatch(Inputs, Repeaters);
+			auto chain = storages::chainstate(__func__);
+			return chain.dispatch(inputs, repeaters);
 		}
 
-		bool BlockHeader::operator<(const BlockHeader& Other) const
+		bool block_header::operator<(const block_header& other) const
 		{
-			return GetRelativeOrder(Other) < 0;
+			return get_relative_order(other) < 0;
 		}
-		bool BlockHeader::operator>(const BlockHeader& Other) const
+		bool block_header::operator>(const block_header& other) const
 		{
-			return GetRelativeOrder(Other) > 0;
+			return get_relative_order(other) > 0;
 		}
-		bool BlockHeader::operator<=(const BlockHeader& Other) const
+		bool block_header::operator<=(const block_header& other) const
 		{
-			return GetRelativeOrder(Other) <= 0;
+			return get_relative_order(other) <= 0;
 		}
-		bool BlockHeader::operator>=(const BlockHeader& Other) const
+		bool block_header::operator>=(const block_header& other) const
 		{
-			return GetRelativeOrder(Other) >= 0;
+			return get_relative_order(other) >= 0;
 		}
-		bool BlockHeader::operator==(const BlockHeader& Other) const
+		bool block_header::operator==(const block_header& other) const
 		{
-			return GetRelativeOrder(Other) == 0;
+			return get_relative_order(other) == 0;
 		}
-		bool BlockHeader::operator!=(const BlockHeader& Other) const
+		bool block_header::operator!=(const block_header& other) const
 		{
-			return GetRelativeOrder(Other) != 0;
+			return get_relative_order(other) != 0;
 		}
-		ExpectsLR<BlockDispatch> BlockHeader::DispatchSync(const Wallet& Proposer) const
+		expects_lr<block_dispatch> block_header::dispatch_sync(const wallet& proposer) const
 		{
-			size_t Offset = 0, Count = 512;
-			BlockDispatch Pipeline;
+			size_t offset = 0, count = 512;
+			block_dispatch pipeline;
 			while (true)
 			{
-				auto Chain = Storages::Chainstate(__func__);
-				auto Candidates = Chain.GetPendingBlockTransactions(Number, Offset, Count);
-				if (!Candidates || Candidates->empty())
+				auto chain = storages::chainstate(__func__);
+				auto candidates = chain.get_pending_block_transactions(number, offset, count);
+				if (!candidates || candidates->empty())
 					break;
 
-				Offset += Candidates->size();
-				for (auto& Input : *Candidates)
+				offset += candidates->size();
+				for (auto& input : *candidates)
 				{
-					auto Execution = Ledger::TransactionContext::DispatchTx(Proposer, &Input, &Pipeline.Outputs).Get();
-					if (!Execution)
+					auto execution = ledger::transaction_context::dispatch_tx(proposer, &input, &pipeline.outputs).get();
+					if (!execution)
 					{
-						if (!Execution.Error().retry() && !Execution.Error().shutdown())
-							Pipeline.Errors[Input.Receipt.TransactionHash].append(Stringify::Text("in transaction %s dispatch reverted: %s\n", Algorithm::Encoding::Encode0xHex256(Input.Receipt.TransactionHash).c_str(), Execution.Error().what()));
+						if (!execution.error().is_retry() && !execution.error().is_shutdown())
+							pipeline.errors[input.receipt.transaction_hash].append(stringify::text("in transaction %s dispatch reverted: %s\n", algorithm::encoding::encode_0xhex256(input.receipt.transaction_hash).c_str(), execution.error().what()));
 						else
-							Pipeline.Repeaters.push_back(Input.Receipt.TransactionHash);
+							pipeline.repeaters.push_back(input.receipt.transaction_hash);
 					}
-					Pipeline.Inputs.push_back(Input.Receipt.TransactionHash);
+					pipeline.inputs.push_back(input.receipt.transaction_hash);
 				}
-				if (Candidates->size() < Count)
+				if (candidates->size() < count)
 					break;
 			}
 
-			for (auto& Item : Pipeline.Errors)
-				Item.second.pop_back();
+			for (auto& item : pipeline.errors)
+				item.second.pop_back();
 
-			return Pipeline;
+			return pipeline;
 		}
-		ExpectsPromiseLR<BlockDispatch> BlockHeader::DispatchAsync(const Wallet& Proposer) const
+		expects_promise_lr<block_dispatch> block_header::dispatch_async(const wallet& proposer) const
 		{
-			return Coasync<ExpectsLR<BlockDispatch>>([this, Proposer]() -> ExpectsPromiseLR<BlockDispatch>
+			return coasync<expects_lr<block_dispatch>>([this, proposer]() -> expects_promise_lr<block_dispatch>
 			{
-				size_t Offset = 0, Count = 512;
-				BlockDispatch Pipeline;
+				size_t offset = 0, count = 512;
+				block_dispatch pipeline;
 				while (true)
 				{
-					auto Chain = Storages::Chainstate(__func__);
-					auto Candidates = Chain.GetPendingBlockTransactions(Number, Offset, Count);
-					if (!Candidates || Candidates->empty())
+					auto chain = storages::chainstate(__func__);
+					auto candidates = chain.get_pending_block_transactions(number, offset, count);
+					if (!candidates || candidates->empty())
 						break;
 
-					Offset += Candidates->size();
-					for (auto& Input : *Candidates)
+					offset += candidates->size();
+					for (auto& input : *candidates)
 					{
-						auto Execution = Coawait(Ledger::TransactionContext::DispatchTx(Proposer, &Input, &Pipeline.Outputs));
-						if (!Execution)
-							Pipeline.Errors[Input.Receipt.TransactionHash].append(Stringify::Text("in transaction %s dispatch reverted: %s\n", Algorithm::Encoding::Encode0xHex256(Input.Receipt.TransactionHash).c_str(), Execution.Error().what()));
-						Pipeline.Inputs.push_back(Input.Receipt.TransactionHash);
+						auto execution = coawait(ledger::transaction_context::dispatch_tx(proposer, &input, &pipeline.outputs));
+						if (!execution)
+							pipeline.errors[input.receipt.transaction_hash].append(stringify::text("in transaction %s dispatch reverted: %s\n", algorithm::encoding::encode_0xhex256(input.receipt.transaction_hash).c_str(), execution.error().what()));
+						pipeline.inputs.push_back(input.receipt.transaction_hash);
 					}
-					if (Candidates->size() < Count)
+					if (candidates->size() < count)
 						break;
 				}
 
-				for (auto& Item : Pipeline.Errors)
-					Item.second.pop_back();
+				for (auto& item : pipeline.errors)
+					item.second.pop_back();
 
-				Coreturn Pipeline;
+				coreturn pipeline;
 			});
 		}
-		ExpectsLR<void> BlockHeader::VerifyValidity(const BlockHeader* ParentBlock) const
+		expects_lr<void> block_header::verify_validity(const block_header* parent_block) const
 		{
-			if (!Number || (!ParentHash && Number > 1) || (Number == 1 && ParentHash > 0))
-				return LayerException("invalid number");
+			if (!number || (!parent_hash && number > 1) || (number == 1 && parent_hash > 0))
+				return layer_exception("invalid number");
 
-			uint128_t Difficulty = Target.Difficulty();
-			if (Wesolowski.empty() || Difficulty < Algorithm::WVDF::GetDefault().Difficulty())
-				return LayerException("invalid wesolowski target");
+			uint128_t difficulty = target.difficulty();
+			if (wesolowski.empty() || difficulty < algorithm::wesolowski::get_default().difficulty())
+				return layer_exception("invalid wesolowski target");
 
-			if (!TransactionRoot || !ReceiptRoot || !StateRoot)
-				return LayerException("invalid transaction/receipt/state merkle tree root");
+			if (!transaction_root || !receipt_root || !state_root)
+				return layer_exception("invalid transaction/receipt/state merkle tree root");
 
-			uint256_t GasWork = GasUtil::GetGasWork(Difficulty, GasUse, GasLimit, Priority);
-			if (!GasLimit || GasUse > GasLimit || AbsoluteWork < GasWork)
-				return LayerException("invalid gas work");
+			uint256_t gas_work = gas_util::get_gas_work(difficulty, gas_use, gas_limit, priority);
+			if (!gas_limit || gas_use > gas_limit || absolute_work < gas_work)
+				return layer_exception("invalid gas work");
 
-			if (!TransactionCount)
-				return LayerException("invalid transaction count");
+			if (!transaction_count)
+				return layer_exception("invalid transaction count");
 
-			Algorithm::Pubkeyhash PublicKeyHash = { 0 };
-			if (!RecoverHash(PublicKeyHash))
-				return LayerException("proposer proof verification failed");
+			algorithm::pubkeyhash public_key_hash = { 0 };
+			if (!recover_hash(public_key_hash))
+				return layer_exception("proposer proof verification failed");
 
-			if (!VerifyWesolowski())
-				return LayerException("wesolowski proof verification failed");
+			if (!verify_wesolowski())
+				return layer_exception("wesolowski proof verification failed");
 
-			if (!ParentBlock && Number > 1)
-				return Expectation::Met;
+			if (!parent_block && number > 1)
+				return expectation::met;
 
-			if (AbsoluteWork != (ParentBlock ? ParentBlock->AbsoluteWork + GasWork : GasWork))
-				return LayerException("invalid absolute gas work");
+			if (absolute_work != (parent_block ? parent_block->absolute_work + gas_work : gas_work))
+				return layer_exception("invalid absolute gas work");
 
-			uint256_t Cumulative = GetSlotLength() > 1 ? uint256_t(1) : uint256_t(0);
-            if (SlotGasUse != ((ParentBlock ? ParentBlock->SlotGasUse : uint256_t(0)) * Cumulative + GasUse))
-				return LayerException("invalid slot gas use");
+			uint256_t cumulative = get_slot_length() > 1 ? uint256_t(1) : uint256_t(0);
+			if (slot_gas_use != ((parent_block ? parent_block->slot_gas_use : uint256_t(0)) * cumulative + gas_use))
+				return layer_exception("invalid slot gas use");
 
-			if (SlotGasTarget != ((ParentBlock ? ParentBlock->SlotGasTarget : uint256_t(0)) * Cumulative + (TransactionCount > 0 ? GasUse / TransactionCount : uint256_t(0))))
-				return LayerException("invalid slot gas target");
+			if (slot_gas_target != ((parent_block ? parent_block->slot_gas_target : uint256_t(0)) * cumulative + (transaction_count > 0 ? gas_use / transaction_count : uint256_t(0))))
+				return layer_exception("invalid slot gas target");
 
-			if (SlotDuration != ((ParentBlock ? ParentBlock->SlotDuration + ParentBlock->GetDuration() : uint256_t(0)) * Cumulative))
-				return LayerException("invalid slot duration");
+			if (slot_duration != ((parent_block ? parent_block->slot_duration + parent_block->get_duration() : uint256_t(0)) * cumulative))
+				return layer_exception("invalid slot duration");
 
-			for (auto& Witness : Witnesses)
+			for (auto& witness : witnesses)
 			{
-				uint64_t ExpiryNumber = Algorithm::Asset::ExpiryOf(Witness.first);
-				if (!ExpiryNumber || Number > ExpiryNumber)
-					return LayerException("invalid witness " + Algorithm::Asset::HandleOf(Witness.first));
+				uint64_t expiry_number = algorithm::asset::expiry_of(witness.first);
+				if (!expiry_number || number > expiry_number)
+					return layer_exception("invalid witness " + algorithm::asset::handle_of(witness.first));
 			}
 
-			return Expectation::Met;
+			return expectation::met;
 		}
-		bool BlockHeader::StorePayloadWesolowski(Format::Stream* Stream) const
+		bool block_header::store_payload_wesolowski(format::stream* stream) const
 		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Stream->WriteInteger(ParentHash);
-			Stream->WriteInteger(TransactionRoot);
-			Stream->WriteInteger(ReceiptRoot);
-			Stream->WriteInteger(StateRoot);
-			Stream->WriteInteger(GasUse);
-			Stream->WriteInteger(GasLimit);
-			Stream->WriteInteger(AbsoluteWork);
-			Stream->WriteInteger(SlotGasUse);
-			Stream->WriteInteger(SlotGasTarget);
-			Stream->WriteInteger(SlotDuration);
-			Stream->WriteInteger(Target.Length);
-			Stream->WriteInteger(Target.Bits);
-			Stream->WriteInteger(Target.Pow);
-			Stream->WriteInteger(Recovery);
-			Stream->WriteInteger(Time);
-			Stream->WriteInteger(Priority);
-			Stream->WriteInteger(Number);
-			Stream->WriteInteger(MutationCount);
-			Stream->WriteInteger(TransactionCount);
-			Stream->WriteInteger(StateCount);
-			Stream->WriteInteger((uint16_t)Witnesses.size());
-			for (auto& Item : Witnesses)
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_integer(parent_hash);
+			stream->write_integer(transaction_root);
+			stream->write_integer(receipt_root);
+			stream->write_integer(state_root);
+			stream->write_integer(gas_use);
+			stream->write_integer(gas_limit);
+			stream->write_integer(absolute_work);
+			stream->write_integer(slot_gas_use);
+			stream->write_integer(slot_gas_target);
+			stream->write_integer(slot_duration);
+			stream->write_integer(target.length);
+			stream->write_integer(target.bits);
+			stream->write_integer(target.pow);
+			stream->write_integer(recovery);
+			stream->write_integer(time);
+			stream->write_integer(priority);
+			stream->write_integer(number);
+			stream->write_integer(mutation_count);
+			stream->write_integer(transaction_count);
+			stream->write_integer(state_count);
+			stream->write_integer((uint16_t)witnesses.size());
+			for (auto& item : witnesses)
 			{
-				Stream->WriteInteger(Item.first);
-				Stream->WriteInteger(Item.second);
+				stream->write_integer(item.first);
+				stream->write_integer(item.second);
 			}
 			return true;
 		}
-		bool BlockHeader::LoadPayloadWesolowski(Format::Stream& Stream)
+		bool block_header::load_payload_wesolowski(format::stream& stream)
 		{
-			if (!Stream.ReadInteger(Stream.ReadType(), &ParentHash))
+			if (!stream.read_integer(stream.read_type(), &parent_hash))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &TransactionRoot))
+			if (!stream.read_integer(stream.read_type(), &transaction_root))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &ReceiptRoot))
+			if (!stream.read_integer(stream.read_type(), &receipt_root))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &StateRoot))
+			if (!stream.read_integer(stream.read_type(), &state_root))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &GasUse))
+			if (!stream.read_integer(stream.read_type(), &gas_use))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &GasLimit))
+			if (!stream.read_integer(stream.read_type(), &gas_limit))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &AbsoluteWork))
+			if (!stream.read_integer(stream.read_type(), &absolute_work))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &SlotGasUse))
+			if (!stream.read_integer(stream.read_type(), &slot_gas_use))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &SlotGasTarget))
+			if (!stream.read_integer(stream.read_type(), &slot_gas_target))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &SlotDuration))
+			if (!stream.read_integer(stream.read_type(), &slot_duration))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &Target.Length))
+			if (!stream.read_integer(stream.read_type(), &target.length))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &Target.Bits))
+			if (!stream.read_integer(stream.read_type(), &target.bits))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &Target.Pow))
+			if (!stream.read_integer(stream.read_type(), &target.pow))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &Recovery))
+			if (!stream.read_integer(stream.read_type(), &recovery))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &Time))
+			if (!stream.read_integer(stream.read_type(), &time))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &Priority))
+			if (!stream.read_integer(stream.read_type(), &priority))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &Number))
+			if (!stream.read_integer(stream.read_type(), &number))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &MutationCount))
+			if (!stream.read_integer(stream.read_type(), &mutation_count))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &TransactionCount))
+			if (!stream.read_integer(stream.read_type(), &transaction_count))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &StateCount))
+			if (!stream.read_integer(stream.read_type(), &state_count))
 				return false;
 
-			uint16_t WitnessesSize;
-			if (!Stream.ReadInteger(Stream.ReadType(), &WitnessesSize))
+			uint16_t witnesses_size;
+			if (!stream.read_integer(stream.read_type(), &witnesses_size))
 				return false;
 
-			Witnesses.clear();
-			for (size_t i = 0; i < WitnessesSize; i++)
+			witnesses.clear();
+			for (size_t i = 0; i < witnesses_size; i++)
 			{
-				Algorithm::AssetId Asset;
-				if (!Stream.ReadInteger(Stream.ReadType(), &Asset))
+				algorithm::asset_id asset;
+				if (!stream.read_integer(stream.read_type(), &asset))
 					return false;
 
-				uint64_t BlockNumber;
-				if (!Stream.ReadInteger(Stream.ReadType(), &BlockNumber))
+				uint64_t block_number;
+				if (!stream.read_integer(stream.read_type(), &block_number))
 					return false;
 
-				SetWitnessRequirement(Asset, BlockNumber);
+				set_witness_requirement(asset, block_number);
 			}
 
 			return true;
 		}
-		bool BlockHeader::StorePayload(Format::Stream* Stream) const
+		bool block_header::store_payload(format::stream* stream) const
 		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
-			if (!StorePayloadWesolowski(Stream))
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			if (!store_payload_wesolowski(stream))
 				return false;
 
-			Stream->WriteString(Wesolowski);
+			stream->write_string(wesolowski);
 			return true;
 		}
-		bool BlockHeader::LoadPayload(Format::Stream& Stream)
+		bool block_header::load_payload(format::stream& stream)
 		{
-			if (!LoadPayloadWesolowski(Stream))
+			if (!load_payload_wesolowski(stream))
 				return false;
 
-			if (!Stream.ReadString(Stream.ReadType(), &Wesolowski))
+			if (!stream.read_string(stream.read_type(), &wesolowski))
 				return false;
 
 			return true;
 		}
-		bool BlockHeader::Sign(const Algorithm::Seckey SecretKey)
+		bool block_header::sign(const algorithm::seckey secret_key)
 		{
-			Format::Stream Message;
-			if (!BlockHeader::StorePayload(&Message))
+			format::stream message;
+			if (!block_header::store_payload(&message))
 				return false;
 
-			return Algorithm::Signing::Sign(Message.Hash(), SecretKey, Signature);
+			return algorithm::signing::sign(message.hash(), secret_key, signature);
 		}
-		bool BlockHeader::Solve(const Algorithm::Seckey SecretKey)
+		bool block_header::solve(const algorithm::seckey secret_key)
 		{
-			Format::Stream Message;
-			if (!StorePayloadWesolowski(&Message))
+			format::stream message;
+			if (!store_payload_wesolowski(&message))
 				return false;
 
-			Wesolowski = Algorithm::WVDF::Evaluate(Target, Message.Data);
-			return !Wesolowski.empty();
+			wesolowski = algorithm::wesolowski::evaluate(target, message.data);
+			return !wesolowski.empty();
 		}
-		bool BlockHeader::Verify(const Algorithm::Pubkey PublicKey) const
+		bool block_header::verify(const algorithm::pubkey public_key) const
 		{
-			Format::Stream Message;
-			if (!BlockHeader::StorePayload(&Message))
+			format::stream message;
+			if (!block_header::store_payload(&message))
 				return false;
 
-			return Algorithm::Signing::Verify(Message.Hash(), PublicKey, Signature);
+			return algorithm::signing::verify(message.hash(), public_key, signature);
 		}
-		bool BlockHeader::Recover(Algorithm::Pubkey PublicKey) const
+		bool block_header::recover(algorithm::pubkey public_key) const
 		{
-			Format::Stream Message;
-			if (!BlockHeader::StorePayload(&Message))
+			format::stream message;
+			if (!block_header::store_payload(&message))
 				return false;
 
-			return Algorithm::Signing::Recover(Message.Hash(), PublicKey, Signature);
+			return algorithm::signing::recover(message.hash(), public_key, signature);
 		}
-		bool BlockHeader::RecoverHash(Algorithm::Pubkeyhash PublicKeyHash) const
+		bool block_header::recover_hash(algorithm::pubkeyhash public_key_hash) const
 		{
-			Format::Stream Message;
-			if (!BlockHeader::StorePayload(&Message))
+			format::stream message;
+			if (!block_header::store_payload(&message))
 				return false;
 
-			return Algorithm::Signing::RecoverHash(Message.Hash(), PublicKeyHash, Signature);
+			return algorithm::signing::recover_hash(message.hash(), public_key_hash, signature);
 		}
-		bool BlockHeader::VerifyWesolowski() const
+		bool block_header::verify_wesolowski() const
 		{
-			Format::Stream Message;
-			if (!StorePayloadWesolowski(&Message))
+			format::stream message;
+			if (!store_payload_wesolowski(&message))
 				return false;
 
-			return Algorithm::WVDF::Verify(Target, Message.Data, Wesolowski);
+			return algorithm::wesolowski::verify(target, message.data, wesolowski);
 		}
-		void BlockHeader::SetParentBlock(const BlockHeader* ParentBlock)
+		void block_header::set_parent_block(const block_header* parent_block)
 		{
-			ParentHash = (ParentBlock ? ParentBlock->AsHash() : uint256_t(0));
-			Number = (ParentBlock ? ParentBlock->Number : 0) + 1;
-			Time = Protocol::Now().Time.Now();
+			parent_hash = (parent_block ? parent_block->as_hash() : uint256_t(0));
+			number = (parent_block ? parent_block->number : 0) + 1;
+			time = protocol::now().time.now();
 		}
-		void BlockHeader::SetWitnessRequirement(const Algorithm::AssetId& Asset, uint64_t BlockNumber)
+		void block_header::set_witness_requirement(const algorithm::asset_id& asset, uint64_t block_number)
 		{
-			auto& Number = Witnesses[Algorithm::Asset::BaseIdOf(Asset)];
-			if (Number < BlockNumber)
-				Number = BlockNumber;
+			auto& number = witnesses[algorithm::asset::base_id_of(asset)];
+			if (number < block_number)
+				number = block_number;
 		}
-		uint64_t BlockHeader::GetWitnessRequirement(const Algorithm::AssetId& Asset) const
+		uint64_t block_header::get_witness_requirement(const algorithm::asset_id& asset) const
 		{
-			auto It = Witnesses.find(Algorithm::Asset::BaseIdOf(Asset));
-			return It != Witnesses.end() ? It->second : 0;
+			auto it = witnesses.find(algorithm::asset::base_id_of(asset));
+			return it != witnesses.end() ? it->second : 0;
 		}
-		int8_t BlockHeader::GetRelativeOrder(const BlockHeader& Other) const
+		int8_t block_header::get_relative_order(const block_header& other) const
 		{
 			/*
 				order priority:
@@ -602,2180 +602,2180 @@ namespace Tangent
 				8. LOWEST  block hash
 				9. HIGHEST block data (lexicographical order)
 			*/
-			if (Number != Other.Number)
-				return Number > Other.Number ? 1 : -1;
+			if (number != other.number)
+				return number > other.number ? 1 : -1;
 
-			if (Priority != Other.Priority)
-				return Priority < Other.Priority ? 1 : -1;
+			if (priority != other.priority)
+				return priority < other.priority ? 1 : -1;
 
-			if (AbsoluteWork != Other.AbsoluteWork)
-				return AbsoluteWork > Other.AbsoluteWork ? 1 : -1;
+			if (absolute_work != other.absolute_work)
+				return absolute_work > other.absolute_work ? 1 : -1;
 
-			if (Recovery != Other.Recovery)
-				return Recovery < Other.Recovery ? 1 : -1;
+			if (recovery != other.recovery)
+				return recovery < other.recovery ? 1 : -1;
 
-			uint128_t DifficultyA = Target.Difficulty();
-			uint128_t DifficultyB = Other.Target.Difficulty();
-			if (DifficultyA != DifficultyB)
-				return DifficultyA > DifficultyB ? 1 : -1;
+			uint128_t difficulty_a = target.difficulty();
+			uint128_t difficulty_b = other.target.difficulty();
+			if (difficulty_a != difficulty_b)
+				return difficulty_a > difficulty_b ? 1 : -1;
 
-			int8_t Security = Algorithm::WVDF::Compare(Wesolowski, Other.Wesolowski);
-			if (Security != 0)
-				return Security;
+			int8_t security = algorithm::wesolowski::compare(wesolowski, other.wesolowski);
+			if (security != 0)
+				return security;
 
-			if (GasUse != Other.GasUse)
-				return GasUse > Other.GasUse ? 1 : -1;
+			if (gas_use != other.gas_use)
+				return gas_use > other.gas_use ? 1 : -1;
 
-			uint256_t MutationsA = uint256_t(TransactionCount) * uint256_t(StateCount);
-			uint256_t MutationsB = uint256_t(Other.TransactionCount) * uint256_t(Other.StateCount);
-			if (MutationsA != MutationsB)
-				return MutationsA > MutationsB ? 1 : -1;
+			uint256_t mutations_a = uint256_t(transaction_count) * uint256_t(state_count);
+			uint256_t mutations_b = uint256_t(other.transaction_count) * uint256_t(other.state_count);
+			if (mutations_a != mutations_b)
+				return mutations_a > mutations_b ? 1 : -1;
 
-			uint256_t HashA = AsHash();
-			uint256_t HashB = Other.AsHash();
-			if (HashA == HashB)
+			uint256_t hash_a = as_hash();
+			uint256_t hash_b = other.as_hash();
+			if (hash_a == hash_b)
 				return 0;
 
-			return HashA > HashB ? -1 : 1;
+			return hash_a > hash_b ? -1 : 1;
 		}
-		uint256_t BlockHeader::GetSlotGasUse() const
+		uint256_t block_header::get_slot_gas_use() const
 		{
-			return SlotGasUse / GetSlotLength();
+			return slot_gas_use / get_slot_length();
 		}
-		uint256_t BlockHeader::GetSlotGasTarget() const
+		uint256_t block_header::get_slot_gas_target() const
 		{
-			return SlotGasTarget / GetSlotLength();
+			return slot_gas_target / get_slot_length();
 		}
-		uint64_t BlockHeader::GetSlotDuration() const
+		uint64_t block_header::get_slot_duration() const
 		{
-			return (SlotDuration + GetDuration()) / GetSlotLength();
+			return (slot_duration + get_duration()) / get_slot_length();
 		}
-		uint64_t BlockHeader::GetSlotLength() const
+		uint64_t block_header::get_slot_length() const
 		{
-			auto Interval = Algorithm::WVDF::AdjustmentInterval();
-			return Number < Interval ? Number : ((Number % Interval) + 1);
+			auto interval = algorithm::wesolowski::adjustment_interval();
+			return number < interval ? number : ((number % interval) + 1);
 		}
-		uint64_t BlockHeader::GetDuration() const
+		uint64_t block_header::get_duration() const
 		{
-			uint64_t ProofTime = GetProofTime();
-			return ProofTime > Time ? ProofTime - Time : 0;
+			uint64_t proof_time = get_proof_time();
+			return proof_time > time ? proof_time - time : 0;
 		}
-		uint64_t BlockHeader::GetProofTime() const
+		uint64_t block_header::get_proof_time() const
 		{
-			return Algorithm::WVDF::Locktime(Wesolowski);
+			return algorithm::wesolowski::locktime(wesolowski);
 		}
-		UPtr<Schema> BlockHeader::AsSchema() const
+		uptr<schema> block_header::as_schema() const
 		{
-			Algorithm::Pubkeyhash Proposer = { 0 };
-			bool HasProposer = RecoverHash(Proposer);
-			Schema* Data = Var::Set::Object();
-			Data->Set("wesolowski", Var::String(Format::Util::Encode0xHex(Wesolowski)));
-			Data->Set("signature", Var::String(Format::Util::Encode0xHex(std::string_view((char*)Signature, sizeof(Signature)))));
-			Data->Set("proposer", HasProposer ? Algorithm::Signing::SerializeAddress(Proposer) : Var::Set::Null());
-			Data->Set("hash", Var::String(Algorithm::Encoding::Encode0xHex256(AsHash())));
-			Data->Set("parent_hash", Var::String(Algorithm::Encoding::Encode0xHex256(ParentHash)));
-			Data->Set("transaction_root", Var::String(Algorithm::Encoding::Encode0xHex256(TransactionRoot)));
-			Data->Set("receipt_root", Var::String(Algorithm::Encoding::Encode0xHex256(ReceiptRoot)));
-			Data->Set("state_root", Var::String(Algorithm::Encoding::Encode0xHex256(StateRoot)));
-			Data->Set("absolute_work", Algorithm::Encoding::SerializeUint256(AbsoluteWork));
-			Data->Set("difficulty", Algorithm::Encoding::SerializeUint256(Target.Difficulty()));
-			Data->Set("gas_use", Algorithm::Encoding::SerializeUint256(GasUse));
-			Data->Set("gas_limit", Algorithm::Encoding::SerializeUint256(GasLimit));
-			Data->Set("slot_gas_use", Algorithm::Encoding::SerializeUint256(GetSlotGasUse()));
-			Data->Set("slot_gas_target", Algorithm::Encoding::SerializeUint256(GetSlotGasTarget()));
-			Data->Set("slot_duration", Algorithm::Encoding::SerializeUint256(GetSlotDuration()));
-			Data->Set("slot_length", Algorithm::Encoding::SerializeUint256(GetSlotLength()));
-			Data->Set("proposal_time", Algorithm::Encoding::SerializeUint256(Time));
-			Data->Set("approval_time", Algorithm::Encoding::SerializeUint256(GetProofTime()));
-			Data->Set("wesolowski_time", Algorithm::Encoding::SerializeUint256(GetDuration()));
-			Data->Set("priority", Algorithm::Encoding::SerializeUint256(Priority));
-			Data->Set("number", Algorithm::Encoding::SerializeUint256(Number));
-			Data->Set("recovery", Algorithm::Encoding::SerializeUint256(Recovery));
-			Data->Set("mutation_count", Algorithm::Encoding::SerializeUint256(MutationCount));
-			Data->Set("transaction_count", Algorithm::Encoding::SerializeUint256(TransactionCount));
-			Data->Set("state_count", Algorithm::Encoding::SerializeUint256(StateCount));
-			auto* WitnessesData = Data->Set("witnesses", Var::Set::Array());
-			for (auto& Item : Witnesses)
+			algorithm::pubkeyhash proposer = { 0 };
+			bool has_proposer = recover_hash(proposer);
+			schema* data = var::set::object();
+			data->set("wesolowski", var::string(format::util::encode_0xhex(wesolowski)));
+			data->set("signature", var::string(format::util::encode_0xhex(std::string_view((char*)signature, sizeof(signature)))));
+			data->set("proposer", has_proposer ? algorithm::signing::serialize_address(proposer) : var::set::null());
+			data->set("hash", var::string(algorithm::encoding::encode_0xhex256(as_hash())));
+			data->set("parent_hash", var::string(algorithm::encoding::encode_0xhex256(parent_hash)));
+			data->set("transaction_root", var::string(algorithm::encoding::encode_0xhex256(transaction_root)));
+			data->set("receipt_root", var::string(algorithm::encoding::encode_0xhex256(receipt_root)));
+			data->set("state_root", var::string(algorithm::encoding::encode_0xhex256(state_root)));
+			data->set("absolute_work", algorithm::encoding::serialize_uint256(absolute_work));
+			data->set("difficulty", algorithm::encoding::serialize_uint256(target.difficulty()));
+			data->set("gas_use", algorithm::encoding::serialize_uint256(gas_use));
+			data->set("gas_limit", algorithm::encoding::serialize_uint256(gas_limit));
+			data->set("slot_gas_use", algorithm::encoding::serialize_uint256(get_slot_gas_use()));
+			data->set("slot_gas_target", algorithm::encoding::serialize_uint256(get_slot_gas_target()));
+			data->set("slot_duration", algorithm::encoding::serialize_uint256(get_slot_duration()));
+			data->set("slot_length", algorithm::encoding::serialize_uint256(get_slot_length()));
+			data->set("proposal_time", algorithm::encoding::serialize_uint256(time));
+			data->set("approval_time", algorithm::encoding::serialize_uint256(get_proof_time()));
+			data->set("wesolowski_time", algorithm::encoding::serialize_uint256(get_duration()));
+			data->set("priority", algorithm::encoding::serialize_uint256(priority));
+			data->set("number", algorithm::encoding::serialize_uint256(number));
+			data->set("recovery", algorithm::encoding::serialize_uint256(recovery));
+			data->set("mutation_count", algorithm::encoding::serialize_uint256(mutation_count));
+			data->set("transaction_count", algorithm::encoding::serialize_uint256(transaction_count));
+			data->set("state_count", algorithm::encoding::serialize_uint256(state_count));
+			auto* witnesses_data = data->set("witnesses", var::set::array());
+			for (auto& item : witnesses)
 			{
-				auto* WitnessData = WitnessesData->Push(Var::Set::Object());
-				WitnessData->Set("asset", Algorithm::Asset::Serialize(Item.first));
-				WitnessData->Set("number", Algorithm::Encoding::SerializeUint256(Item.second));
+				auto* witness_data = witnesses_data->push(var::set::object());
+				witness_data->set("asset", algorithm::asset::serialize(item.first));
+				witness_data->set("number", algorithm::encoding::serialize_uint256(item.second));
 			}
-			return Data;
+			return data;
 		}
-		uint256_t BlockHeader::AsHash(bool Renew) const
+		uint256_t block_header::as_hash(bool renew) const
 		{
-			if (!Renew && Checksum != 0)
-				return Checksum;
+			if (!renew && checksum != 0)
+				return checksum;
 
-			Format::Stream Message;
-			((BlockHeader*)this)->Checksum = BlockHeader::Store(&Message) ? Message.Hash() : uint256_t(0);
-			return Checksum;
+			format::stream message;
+			((block_header*)this)->checksum = block_header::store(&message) ? message.hash() : uint256_t(0);
+			return checksum;
 		}
-		uint32_t BlockHeader::AsType() const
+		uint32_t block_header::as_type() const
 		{
-			return AsInstanceType();
+			return as_instance_type();
 		}
-		std::string_view BlockHeader::AsTypename() const
+		std::string_view block_header::as_typename() const
 		{
-			return AsInstanceTypename();
+			return as_instance_typename();
 		}
-		uint32_t BlockHeader::AsInstanceType()
+		uint32_t block_header::as_instance_type()
 		{
-			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
-			return Hash;
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
 		}
-		std::string_view BlockHeader::AsInstanceTypename()
+		std::string_view block_header::as_instance_typename()
 		{
 			return "block";
 		}
-		uint256_t BlockHeader::GetGasLimit()
+		uint256_t block_header::get_gas_limit()
 		{
-			static uint256_t Limit = Transactions::Transfer().GetGasEstimate() * (uint64_t)std::ceil((double)Protocol::Now().Policy.ConsensusProofTime * (double)Protocol::Now().Policy.TransactionThroughput / 1000.0);
-			return Limit;
+			static uint256_t limit = transactions::transfer().get_gas_estimate() * (uint64_t)std::ceil((double)protocol::now().policy.consensus_proof_time * (double)protocol::now().policy.transaction_throughput / 1000.0);
+			return limit;
 		}
 
-		Block::Block(const BlockHeader& Other) : BlockHeader(Other)
+		block::block(const block_header& other) : block_header(other)
 		{
 		}
-		ExpectsLR<void> Block::Evaluate(const BlockHeader* ParentBlock, EvaluationContext* Environment, String* Errors)
+		expects_lr<void> block::evaluate(const block_header* parent_block, evaluation_context* environment, string* errors)
 		{
-			VI_ASSERT(Environment != nullptr, "evaluation context should be set");
-			if (Environment->Incoming.empty())
-				return LayerException("empty block is not valid");
+			VI_ASSERT(environment != nullptr, "evaluation context should be set");
+			if (environment->incoming.empty())
+				return layer_exception("empty block is not valid");
 
-			BlockHeader::SetParentBlock(ParentBlock);
-			auto Position = std::find_if(Environment->Proposers.begin(), Environment->Proposers.end(), [&Environment](const States::AccountWork& A) { return !memcmp(A.Owner, Environment->Proposer.PublicKeyHash, sizeof(Environment->Proposer.PublicKeyHash)); });
-			auto PrevDuration = ParentBlock ? ParentBlock->GetSlotDuration() : (uint64_t)((double)Protocol::Now().Policy.ConsensusProofTime * Protocol::Now().Policy.GenesisSlotTimeBump);
-			auto PrevTarget = ParentBlock ? ParentBlock->Target : Algorithm::WVDF::GetDefault();
-			if (ParentBlock && ParentBlock->Recovery)
-				PrevTarget = Algorithm::WVDF::Bump(Target, 1.0 / Protocol::Now().Policy.ConsensusRecoveryBump);
+			block_header::set_parent_block(parent_block);
+			auto position = std::find_if(environment->proposers.begin(), environment->proposers.end(), [&environment](const states::account_work& a) { return !memcmp(a.owner, environment->proposer.public_key_hash, sizeof(environment->proposer.public_key_hash)); });
+			auto prev_duration = parent_block ? parent_block->get_slot_duration() : (uint64_t)((double)protocol::now().policy.consensus_proof_time * protocol::now().policy.genesis_slot_time_bump);
+			auto prev_target = parent_block ? parent_block->target : algorithm::wesolowski::get_default();
+			if (parent_block && parent_block->recovery)
+				prev_target = algorithm::wesolowski::bump(target, 1.0 / protocol::now().policy.consensus_recovery_bump);
 
-			Recovery = (Position == Environment->Proposers.end() ? 1 : 0);
-			Priority = Recovery ? 0 : (uint64_t)std::distance(Environment->Proposers.begin(), Position);
-			Target = Algorithm::WVDF::Adjust(PrevTarget, PrevDuration, Number);
-			if (Recovery)
-				Target = Algorithm::WVDF::Bump(Target, Protocol::Now().Policy.ConsensusRecoveryBump);
+			recovery = (position == environment->proposers.end() ? 1 : 0);
+			priority = recovery ? 0 : (uint64_t)std::distance(environment->proposers.begin(), position);
+			target = algorithm::wesolowski::adjust(prev_target, prev_duration, number);
+			if (recovery)
+				target = algorithm::wesolowski::bump(target, protocol::now().policy.consensus_recovery_bump);
 
-			BlockWork Cache;
-			for (auto& Item : Environment->Incoming)
+			block_work cache;
+			for (auto& item : environment->incoming)
 			{
-				auto Execution = TransactionContext::ExecuteTx(this, Environment, *Item.Candidate, Item.Hash, Item.Owner, Cache, Item.Size, Item.Candidate->Conservative ? 0 : (uint8_t)TransactionContext::ExecutionFlags::OnlySuccessful);
-				if (Execution)
+				auto execution = transaction_context::execute_tx(this, environment, *item.candidate, item.hash, item.owner, cache, item.size, item.candidate->conservative ? 0 : (uint8_t)transaction_context::execution_flags::only_successful);
+				if (execution)
 				{
-					auto& Blob = Transactions.emplace_back();
-					Blob.Transaction = std::move(Item.Candidate);
-					Blob.Receipt = std::move(Execution->Receipt);
-					States.Commit();
+					auto& blob = transactions.emplace_back();
+					blob.transaction = std::move(item.candidate);
+					blob.receipt = std::move(execution->receipt);
+					states.commit();
 				}
 				else
 				{
-					if (Errors != nullptr)
-						Errors->append(Stringify::Text("\n  in transaction %s execution error: %s", Algorithm::Encoding::Encode0xHex256(Item.Hash).c_str(), Execution.Error().what()));
-					Environment->Outgoing.push_back(Item.Hash);
+					if (errors != nullptr)
+						errors->append(stringify::text("\n  in transaction %s execution error: %s", algorithm::encoding::encode_0xhex256(item.hash).c_str(), execution.error().what()));
+					environment->outgoing.push_back(item.hash);
 				}
 			}
 
-			if (Transactions.empty())
+			if (transactions.empty())
 			{
-				if (!Errors)
-					return LayerException("block does not have any valid transaction");
-				else if (Errors->empty())
-					Errors->assign("\n  block does not have any valid transactions");
+				if (!errors)
+					return layer_exception("block does not have any valid transaction");
+				else if (errors->empty())
+					errors->assign("\n  block does not have any valid transactions");
 
-				return LayerException(String(*Errors));
+				return layer_exception(string(*errors));
 			}
 
-			size_t Participants = (size_t)(Priority + 1);
-			uint256_t GasPenalty = Participants > 0 ? (GasUse / Participants) : uint256_t(0);
-			for (size_t i = 0; i < Participants; i++)
+			size_t participants = (size_t)(priority + 1);
+			uint256_t gas_penalty = participants > 0 ? (gas_use / participants) : uint256_t(0);
+			for (size_t i = 0; i < participants; i++)
 			{
-				bool Winner = (i == Priority);
-				auto& Participant = Environment->Proposers[i];
-				auto Work = Winner ? Environment->Validation.Context.ApplyAccountWork(Participant.Owner, Participant.IsMatching(States::AccountFlags::Online) ? States::AccountFlags::AsIs : States::AccountFlags::Online, 0, GasUse, 0) : Environment->Validation.Context.ApplyAccountWork(Participant.Owner, States::AccountFlags::Offline, 1, 0, GasPenalty);
-				if (!Work)
-					return Work.Error();
+				bool winner = (i == priority);
+				auto& participant = environment->proposers[i];
+				auto work = winner ? environment->validation.context.apply_account_work(participant.owner, participant.is_matching(states::account_flags::online) ? states::account_flags::as_is : states::account_flags::online, 0, gas_use, 0) : environment->validation.context.apply_account_work(participant.owner, states::account_flags::offline, 1, 0, gas_penalty);
+				if (!work)
+					return work.error();
 			}
 
-			States.Commit();
-			Recalculate(ParentBlock);
-			return Expectation::Met;
+			states.commit();
+			recalculate(parent_block);
+			return expectation::met;
 		}
-		ExpectsLR<void> Block::Validate(const BlockHeader* ParentBlock, Block* EvaluatedBlock) const
+		expects_lr<void> block::validate(const block_header* parent_block, block* evaluated_block) const
 		{
-			if (ParentBlock && (ParentBlock->Number != Number - 1 || ParentBlock->AsHash() != ParentHash))
-				return LayerException("invalid parent block");
+			if (parent_block && (parent_block->number != number - 1 || parent_block->as_hash() != parent_hash))
+				return layer_exception("invalid parent block");
 
-			Algorithm::Pubkeyhash Proposer = { 0 };
-			if (!RecoverHash(Proposer))
-				return LayerException("invalid proposer signature");
+			algorithm::pubkeyhash proposer = { 0 };
+			if (!recover_hash(proposer))
+				return layer_exception("invalid proposer signature");
 
-			EvaluationContext Environment;
-			if (!Environment.Priority(Proposer, nullptr, Option<BlockHeader*>((BlockHeader*)ParentBlock)))
+			evaluation_context environment;
+			if (!environment.priority(proposer, nullptr, option<block_header*>((block_header*)parent_block)))
 			{
-				if (!Recovery)
-					return LayerException("invalid proposer election");
+				if (!recovery)
+					return layer_exception("invalid proposer election");
 
-				auto PrevDuration = ParentBlock ? ParentBlock->GetSlotDuration() : (uint64_t)((double)Protocol::Now().Policy.ConsensusProofTime * Protocol::Now().Policy.GenesisSlotTimeBump);
-				auto PrevTarget = ParentBlock ? ParentBlock->Target : Algorithm::WVDF::GetDefault();
-				if (ParentBlock && ParentBlock->Recovery)
-					PrevTarget = Algorithm::WVDF::Bump(Target, 1.0 / Protocol::Now().Policy.ConsensusRecoveryBump);
+				auto prev_duration = parent_block ? parent_block->get_slot_duration() : (uint64_t)((double)protocol::now().policy.consensus_proof_time * protocol::now().policy.genesis_slot_time_bump);
+				auto prev_target = parent_block ? parent_block->target : algorithm::wesolowski::get_default();
+				if (parent_block && parent_block->recovery)
+					prev_target = algorithm::wesolowski::bump(target, 1.0 / protocol::now().policy.consensus_recovery_bump);
 
-				auto CandidateTarget = Algorithm::WVDF::Bump(Algorithm::WVDF::Adjust(PrevTarget, PrevDuration, Number), Protocol::Now().Policy.ConsensusRecoveryBump);
-				if (Target.Difficulty() != CandidateTarget.Difficulty())
-					return LayerException("invalid proposer election");
+				auto candidate_target = algorithm::wesolowski::bump(algorithm::wesolowski::adjust(prev_target, prev_duration, number), protocol::now().policy.consensus_recovery_bump);
+				if (target.difficulty() != candidate_target.difficulty())
+					return layer_exception("invalid proposer election");
 			}
 
-			UnorderedMap<uint256_t, std::pair<const BlockTransaction*, const EvaluationContext::TransactionInfo*>> Childs;
-			Environment.Incoming.reserve(Transactions.size());
-			for (auto& Transaction : Transactions)
+			unordered_map<uint256_t, std::pair<const block_transaction*, const evaluation_context::transaction_info*>> childs;
+			environment.incoming.reserve(transactions.size());
+			for (auto& transaction : transactions)
 			{
-				if (!Transaction.Transaction)
-					return LayerException("invalid transaction included in a block");
+				if (!transaction.transaction)
+					return layer_exception("invalid transaction included in a block");
 
-				auto& Info = Environment.Include(Transactions::Resolver::Copy(*Transaction.Transaction));
-				Childs[Transaction.Receipt.TransactionHash] = std::make_pair(&Transaction, (const EvaluationContext::TransactionInfo*)&Info);
+				auto& info = environment.include(transactions::resolver::copy(*transaction.transaction));
+				childs[transaction.receipt.transaction_hash] = std::make_pair(&transaction, (const evaluation_context::transaction_info*)&info);
 			}
 
-			auto Evaluation = Environment.Evaluate();
-			if (!Evaluation)
-				return Evaluation.Error();
+			auto evaluation = environment.evaluate();
+			if (!evaluation)
+				return evaluation.error();
 
-			auto& Result = *Evaluation;
-			for (auto& Transaction : Result.Transactions)
+			auto& result = *evaluation;
+			for (auto& transaction : result.transactions)
 			{
-				auto It = Childs.find(Transaction.Receipt.TransactionHash);
-				if (It == Childs.end())
-					return LayerException("transaction " + Algorithm::Encoding::Encode0xHex256(Transaction.Receipt.TransactionHash) + " not found in block");
+				auto it = childs.find(transaction.receipt.transaction_hash);
+				if (it == childs.end())
+					return layer_exception("transaction " + algorithm::encoding::encode_0xhex256(transaction.receipt.transaction_hash) + " not found in block");
 
-				auto& Child = It->second;
-				if (memcmp(Transaction.Receipt.From, Child.second->Owner, sizeof(Child.second->Owner)) != 0)
-					return LayerException("transaction " + Algorithm::Encoding::Encode0xHex256(Transaction.Receipt.TransactionHash) + " public key recovery failed");
+				auto& child = it->second;
+				if (memcmp(transaction.receipt.from, child.second->owner, sizeof(child.second->owner)) != 0)
+					return layer_exception("transaction " + algorithm::encoding::encode_0xhex256(transaction.receipt.transaction_hash) + " public key recovery failed");
 
-				Transaction.Receipt.GenerationTime = Child.first->Receipt.GenerationTime;
-				Transaction.Receipt.FinalizationTime = Child.first->Receipt.FinalizationTime;
-				Transaction.Receipt.Checksum = 0;
+				transaction.receipt.generation_time = child.first->receipt.generation_time;
+				transaction.receipt.finalization_time = child.first->receipt.finalization_time;
+				transaction.receipt.checksum = 0;
 			}
 
-			memcpy(Result.Signature, Signature, sizeof(Signature));
-			Result.Wesolowski = Wesolowski;
-			Result.Time = Time;
-			Result.Recalculate(ParentBlock);
+			memcpy(result.signature, signature, sizeof(signature));
+			result.wesolowski = wesolowski;
+			result.time = time;
+			result.recalculate(parent_block);
 
-			BlockHeader Input = *this, Output = Result;
-			if (Input.AsMessage().Data != Output.AsMessage().Data)
-				return LayerException("resulting block deviates from pre-computed block");
+			block_header input = *this, output = result;
+			if (input.as_message().data != output.as_message().data)
+				return layer_exception("resulting block deviates from pre-computed block");
 
-			auto Validity = Result.VerifyValidity(ParentBlock);
-			if (!Validity)
-				return Validity;
+			auto validity = result.verify_validity(parent_block);
+			if (!validity)
+				return validity;
 
-			auto Integrity = Result.VerifyIntegrity(ParentBlock);
-			if (!Integrity)
-				return Integrity;
-			
-			if (EvaluatedBlock != nullptr)
-				*EvaluatedBlock = std::move(Result);
+			auto integrity = result.verify_integrity(parent_block);
+			if (!integrity)
+				return integrity;
 
-			return Expectation::Met;
+			if (evaluated_block != nullptr)
+				*evaluated_block = std::move(result);
+
+			return expectation::met;
 		}
-		ExpectsLR<void> Block::VerifyIntegrity(const BlockHeader* ParentBlock) const
+		expects_lr<void> block::verify_integrity(const block_header* parent_block) const
 		{
-			if (Transactions.empty() || TransactionCount != (uint32_t)Transactions.size())
-				return LayerException("invalid transactions count");
-			else if (!StateCount || StateCount != (uint32_t)States.At(WorkCommitment::Finalized).size())
-				return LayerException("invalid states count");
+			if (transactions.empty() || transaction_count != (uint32_t)transactions.size())
+				return layer_exception("invalid transactions count");
+			else if (!state_count || state_count != (uint32_t)states.at(work_commitment::finalized).size())
+				return layer_exception("invalid states count");
 
-			if (!ParentBlock && Number > 1)
-				return Expectation::Met;
+			if (!parent_block && number > 1)
+				return expectation::met;
 
-			Algorithm::MerkleTree Tree = (ParentBlock ? ParentBlock->TransactionRoot : uint256_t(0));
-			for (auto& Item : Transactions)
-				Tree.Push(Item.Receipt.TransactionHash);
-			if (Tree.CalculateRoot() != TransactionRoot)
-				return LayerException("invalid transactions merkle tree root");
+			algorithm::merkle_tree tree = (parent_block ? parent_block->transaction_root : uint256_t(0));
+			for (auto& item : transactions)
+				tree.push(item.receipt.transaction_hash);
+			if (tree.calculate_root() != transaction_root)
+				return layer_exception("invalid transactions merkle tree root");
 
-			Tree = (ParentBlock ? ParentBlock->ReceiptRoot : uint256_t(0));
-			for (auto& Item : Transactions)
-				Tree.Push(Item.Receipt.AsHash());
-			if (Tree.CalculateRoot() != ReceiptRoot)
-				return LayerException("invalid receipts merkle tree root");
+			tree = (parent_block ? parent_block->receipt_root : uint256_t(0));
+			for (auto& item : transactions)
+				tree.push(item.receipt.as_hash());
+			if (tree.calculate_root() != receipt_root)
+				return layer_exception("invalid receipts merkle tree root");
 
-			Tree = (ParentBlock ? ParentBlock->StateRoot : uint256_t(0));
-			for (auto& Item : States.At(WorkCommitment::Finalized))
-				Tree.Push(Item.second->AsHash());
-			if (Tree.CalculateRoot() != StateRoot)
-				return LayerException("invalid states merkle tree root");
+			tree = (parent_block ? parent_block->state_root : uint256_t(0));
+			for (auto& item : states.at(work_commitment::finalized))
+				tree.push(item.second->as_hash());
+			if (tree.calculate_root() != state_root)
+				return layer_exception("invalid states merkle tree root");
 
-			return Expectation::Met;
+			return expectation::met;
 		}
-		ExpectsLR<BlockCheckpoint> Block::Checkpoint(bool KeepRevertedTransactions) const
+		expects_lr<block_checkpoint> block::checkpoint(bool keep_reverted_transactions) const
 		{
-			auto Chain = Storages::Chainstate(__func__);
-			auto ChainSession = Chain.MultiTxBegin("chainwork", "apply", LDB::Isolation::Default);
-			if (!ChainSession)
-				return LayerException(std::move(ChainSession.Error().message()));
+			auto chain = storages::chainstate(__func__);
+			auto chain_session = chain.multi_tx_begin("chainwork", "apply", sqlite::isolation::placeholder);
+			if (!chain_session)
+				return layer_exception(std::move(chain_session.error().message()));
 
-			UnorderedSet<uint256_t> FinalizedTransactions;
-			FinalizedTransactions.reserve(Transactions.size());
-			for (auto& Transaction : Transactions)
-				FinalizedTransactions.insert(Transaction.Receipt.TransactionHash);
+			unordered_set<uint256_t> finalized_transactions;
+			finalized_transactions.reserve(transactions.size());
+			for (auto& transaction : transactions)
+				finalized_transactions.insert(transaction.receipt.transaction_hash);
 
-			BlockCheckpoint Mutation;
-			Mutation.OldTipBlockNumber = Chain.GetLatestBlockNumber().Or(0);
-			Mutation.NewTipBlockNumber = Number;
-			Mutation.BlockDelta = 1;
-			Mutation.TransactionDelta = TransactionCount;
-			Mutation.StateDelta = StateCount;
-			Mutation.IsFork = Mutation.OldTipBlockNumber > 0 && Mutation.OldTipBlockNumber >= Mutation.NewTipBlockNumber;
-			if (Mutation.IsFork)
+			block_checkpoint mutation;
+			mutation.old_tip_block_number = chain.get_latest_block_number().otherwise(0);
+			mutation.new_tip_block_number = number;
+			mutation.block_delta = 1;
+			mutation.transaction_delta = transaction_count;
+			mutation.state_delta = state_count;
+			mutation.is_fork = mutation.old_tip_block_number > 0 && mutation.old_tip_block_number >= mutation.new_tip_block_number;
+			if (mutation.is_fork)
 			{
-				if (KeepRevertedTransactions)
+				if (keep_reverted_transactions)
 				{
-					auto Mempool = Storages::Mempoolstate(__func__);
-					auto MempoolSession = Mempool.TxBegin("mempoolwork", "apply", LDB::Isolation::Default);
-					if (!MempoolSession)
+					auto mempool = storages::mempoolstate(__func__);
+					auto mempool_session = mempool.tx_begin("mempoolwork", "apply", sqlite::isolation::placeholder);
+					if (!mempool_session)
 					{
-						Chain.MultiTxRollback("chainwork", "apply");
-						return LayerException(std::move(MempoolSession.Error().message()));
+						chain.multi_tx_rollback("chainwork", "apply");
+						return layer_exception(std::move(mempool_session.error().message()));
 					}
 
-					uint64_t RevertNumber = Mutation.OldTipBlockNumber;
-					while (RevertNumber >= Mutation.NewTipBlockNumber)
+					uint64_t revert_number = mutation.old_tip_block_number;
+					while (revert_number >= mutation.new_tip_block_number)
 					{
-						size_t Offset = 0, Count = 512;
+						size_t offset = 0, count = 512;
 						while (true)
 						{
-							auto Transactions = Chain.GetTransactionsByNumber(RevertNumber, Offset, Count);
-							if (!Transactions || Transactions->empty())
+							auto transactions = chain.get_transactions_by_number(revert_number, offset, count);
+							if (!transactions || transactions->empty())
 								break;
 
-							for (auto& Item : *Transactions)
+							for (auto& item : *transactions)
 							{
-								if (FinalizedTransactions.find(Item->AsHash()) == FinalizedTransactions.end())
+								if (finalized_transactions.find(item->as_hash()) == finalized_transactions.end())
 								{
-									auto Status = Mempool.AddTransaction(**Item, true);
-									Status.Report("transaction resurrection failed");
-									Mutation.MempoolTransactions += Status ? 1 : 0;
+									auto status = mempool.add_transaction(**item, true);
+									status.report("transaction resurrection failed");
+									mutation.mempool_transactions += status ? 1 : 0;
 								}
 							}
 
-							Offset += Transactions->size();
-							if (Transactions->size() < Count)
+							offset += transactions->size();
+							if (transactions->size() < count)
 								break;
 						}
-						--RevertNumber;
+						--revert_number;
 					}
 
-					auto Status = Chain.Revert(Mutation.NewTipBlockNumber - 1, &Mutation.BlockDelta, &Mutation.TransactionDelta, &Mutation.StateDelta);
-					if (!Status)
+					auto status = chain.revert(mutation.new_tip_block_number - 1, &mutation.block_delta, &mutation.transaction_delta, &mutation.state_delta);
+					if (!status)
 					{
-						Chain.MultiTxRollback("chainwork", "apply");
-						Mempool.TxRollback("mempoolwork", "apply");
-						return Status.Error();
+						chain.multi_tx_rollback("chainwork", "apply");
+						mempool.tx_rollback("mempoolwork", "apply");
+						return status.error();
 					}
 
-					if (Protocol::Now().User.Storage.Logging)
-						VI_INFO("[checkpoint] revert chain to block %s (height: %" PRIu64 ", mempool: +%" PRIu64 ", blocktrie: %" PRIi64 ", transactiontrie: %" PRIi64 ", statetrie: %" PRIi64 ")", Algorithm::Encoding::Encode0xHex256(AsHash()).c_str(), Mutation.NewTipBlockNumber, Mutation.MempoolTransactions, Mutation.BlockDelta, Mutation.TransactionDelta, Mutation.StateDelta);
+					if (protocol::now().user.storage.logging)
+						VI_INFO("[checkpoint] revert chain to block %s (height: %" PRIu64 ", mempool: +%" PRIu64 ", blocktrie: %" PRIi64 ", transactiontrie: %" PRIi64 ", statetrie: %" PRIi64 ")", algorithm::encoding::encode_0xhex256(as_hash()).c_str(), mutation.new_tip_block_number, mutation.mempool_transactions, mutation.block_delta, mutation.transaction_delta, mutation.state_delta);
 
-					Status = Chain.Checkpoint(*this);
-					if (!Status)
+					status = chain.checkpoint(*this);
+					if (!status)
 					{
-						Chain.MultiTxRollback("chainwork", "apply");
-						Mempool.TxRollback("mempoolwork", "apply");
-						return Status.Error();
+						chain.multi_tx_rollback("chainwork", "apply");
+						mempool.tx_rollback("mempoolwork", "apply");
+						return status.error();
 					}
 
-					auto Result = Chain.MultiTxCommit("chainwork", "apply");
-					if (!Result)
+					auto result = chain.multi_tx_commit("chainwork", "apply");
+					if (!result)
 					{
-						Mempool.TxRollback("mempoolwork", "apply");
-						return LayerException(std::move(Result.Error().message()));
+						mempool.tx_rollback("mempoolwork", "apply");
+						return layer_exception(std::move(result.error().message()));
 					}
 
-					Mempool.RemoveTransactions(FinalizedTransactions).Report("mempool cleanup failed");
-					Mempool.TxCommit("mempoolwork", "apply").Report("mempool commit failed");
+					mempool.remove_transactions(finalized_transactions).report("mempool cleanup failed");
+					mempool.tx_commit("mempoolwork", "apply").report("mempool commit failed");
 				}
 				else
 				{
-					auto Status = Chain.Revert(Mutation.NewTipBlockNumber - 1, &Mutation.BlockDelta, &Mutation.TransactionDelta, &Mutation.StateDelta);
-					if (!Status)
+					auto status = chain.revert(mutation.new_tip_block_number - 1, &mutation.block_delta, &mutation.transaction_delta, &mutation.state_delta);
+					if (!status)
 					{
-						Chain.MultiTxRollback("chainwork", "apply");
-						return Status.Error();
+						chain.multi_tx_rollback("chainwork", "apply");
+						return status.error();
 					}
 
-					if (Protocol::Now().User.Storage.Logging)
-						VI_INFO("[checkpoint] revert chain to block %s (height: %" PRIu64 ", blocktrie: %" PRIi64 ", transactiontrie: %" PRIi64 ", statetrie: %" PRIi64 ")", Algorithm::Encoding::Encode0xHex256(AsHash()).c_str(), Mutation.NewTipBlockNumber, Mutation.BlockDelta, Mutation.TransactionDelta, Mutation.StateDelta);
+					if (protocol::now().user.storage.logging)
+						VI_INFO("[checkpoint] revert chain to block %s (height: %" PRIu64 ", blocktrie: %" PRIi64 ", transactiontrie: %" PRIi64 ", statetrie: %" PRIi64 ")", algorithm::encoding::encode_0xhex256(as_hash()).c_str(), mutation.new_tip_block_number, mutation.block_delta, mutation.transaction_delta, mutation.state_delta);
 
-					Status = Chain.Checkpoint(*this);
-					if (!Status)
+					status = chain.checkpoint(*this);
+					if (!status)
 					{
-						Chain.MultiTxRollback("chainwork", "apply");
-						return Status.Error();
+						chain.multi_tx_rollback("chainwork", "apply");
+						return status.error();
 					}
 
-					auto Result = Chain.MultiTxCommit("chainwork", "apply");
-					if (!Result)
-						return LayerException(std::move(Result.Error().message()));
+					auto result = chain.multi_tx_commit("chainwork", "apply");
+					if (!result)
+						return layer_exception(std::move(result.error().message()));
 				}
 			}
 			else
 			{
-				auto Status = Chain.Checkpoint(*this);
-				if (!Status)
+				auto status = chain.checkpoint(*this);
+				if (!status)
 				{
-					Chain.MultiTxRollback("chainwork", "apply");
-					return Status.Error();
+					chain.multi_tx_rollback("chainwork", "apply");
+					return status.error();
 				}
 
-				auto Result = Chain.MultiTxCommit("chainwork", "apply");
-				if (!Result)
-					return LayerException(std::move(Result.Error().message()));
+				auto result = chain.multi_tx_commit("chainwork", "apply");
+				if (!result)
+					return layer_exception(std::move(result.error().message()));
 
-				auto Mempool = Storages::Mempoolstate(__func__);
-				Mempool.RemoveTransactions(FinalizedTransactions).Report("mempool cleanup failed");
+				auto mempool = storages::mempoolstate(__func__);
+				mempool.remove_transactions(finalized_transactions).report("mempool cleanup failed");
 			}
-			return Mutation;
+			return mutation;
 		}
-		bool Block::StorePayload(Format::Stream* Stream) const
+		bool block::store_payload(format::stream* stream) const
 		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
-			if (!StoreHeaderPayload(Stream))
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			if (!store_header_payload(stream))
 				return false;
 
-			if (!StoreBodyPayload(Stream))
-				return false;
-
-			return true;
-		}
-		bool Block::LoadPayload(Format::Stream& Stream)
-		{
-			if (!LoadHeaderPayload(Stream))
-				return false;
-
-			if (!LoadBodyPayload(Stream))
+			if (!store_body_payload(stream))
 				return false;
 
 			return true;
 		}
-		bool Block::StoreHeaderPayload(Format::Stream* Stream) const
+		bool block::load_payload(format::stream& stream)
 		{
-			return BlockHeader::StorePayload(Stream);
-		}
-		bool Block::LoadHeaderPayload(Format::Stream& Stream)
-		{
-			return BlockHeader::LoadPayload(Stream);
-		}
-		bool Block::StoreBodyPayload(Format::Stream* Stream) const
-		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Stream->WriteInteger((uint32_t)Transactions.size());
-			for (auto& Item : Transactions)
-				Item.StorePayload(Stream);
-
-			Stream->WriteInteger((uint32_t)States.At(WorkCommitment::Finalized).size());
-			for (auto& Item : States.At(WorkCommitment::Finalized))
-				Item.second->Store(Stream);
-			return true;
-		}
-		bool Block::LoadBodyPayload(Format::Stream& Stream)
-		{
-			uint32_t TransactionsSize;
-			if (!Stream.ReadInteger(Stream.ReadType(), &TransactionsSize))
+			if (!load_header_payload(stream))
 				return false;
 
-			Transactions.clear();
-			Transactions.reserve(TransactionsSize);
-			for (size_t i = 0; i < TransactionsSize; i++)
+			if (!load_body_payload(stream))
+				return false;
+
+			return true;
+		}
+		bool block::store_header_payload(format::stream* stream) const
+		{
+			return block_header::store_payload(stream);
+		}
+		bool block::load_header_payload(format::stream& stream)
+		{
+			return block_header::load_payload(stream);
+		}
+		bool block::store_body_payload(format::stream* stream) const
+		{
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_integer((uint32_t)transactions.size());
+			for (auto& item : transactions)
+				item.store_payload(stream);
+
+			stream->write_integer((uint32_t)states.at(work_commitment::finalized).size());
+			for (auto& item : states.at(work_commitment::finalized))
+				item.second->store(stream);
+			return true;
+		}
+		bool block::load_body_payload(format::stream& stream)
+		{
+			uint32_t transactions_size;
+			if (!stream.read_integer(stream.read_type(), &transactions_size))
+				return false;
+
+			transactions.clear();
+			transactions.reserve(transactions_size);
+			for (size_t i = 0; i < transactions_size; i++)
 			{
-				BlockTransaction Value;
-				if (!Value.LoadPayload(Stream))
+				block_transaction value;
+				if (!value.load_payload(stream))
 					return false;
 
-				Transactions.emplace_back(std::move(Value));
+				transactions.emplace_back(std::move(value));
 			}
 
-			uint32_t StatesSize;
-			if (!Stream.ReadInteger(Stream.ReadType(), &StatesSize))
+			uint32_t states_size;
+			if (!stream.read_integer(stream.read_type(), &states_size))
 				return false;
 
-			States.Clear();
-			for (size_t i = 0; i < StatesSize; i++)
+			states.clear();
+			for (size_t i = 0; i < states_size; i++)
 			{
-				UPtr<Ledger::State> Value = States::Resolver::New(Messages::Generic::ResolveType(Stream).Or(0));
-				if (!Value || !Value->Load(Stream))
+				uptr<ledger::state> value = states::resolver::init(messages::standard::resolve_type(stream).otherwise(0));
+				if (!value || !value->load(stream))
 					return false;
 
-				States.MoveAny(std::move(Value));
+				states.move_any(std::move(value));
 			}
 
-			States.Commit();
+			states.commit();
 			return true;
 		}
-		void Block::Recalculate(const BlockHeader* ParentBlock)
+		void block::recalculate(const block_header* parent_block)
 		{
-			auto& StateTree = States.At(WorkCommitment::Finalized);
-			auto TaskQueue1 = Parallel::ForEachSequential(StateTree.begin(), StateTree.end(), StateTree.size(), ELEMENTS_FEW, [](const std::pair<const String, UPtr<Ledger::State>>& Item) { Item.second->AsHash(); });
-			auto TaskQueue2 = Parallel::ForEach(Transactions.begin(), Transactions.end(), ELEMENTS_FEW, [](BlockTransaction& Item) { Item.Receipt.AsHash(); });
-			Parallel::WailAll(std::move(TaskQueue1));
-			Parallel::WailAll(std::move(TaskQueue2));
+			auto& state_tree = states.at(work_commitment::finalized);
+			auto task_queue1 = parallel::for_each_sequential(state_tree.begin(), state_tree.end(), state_tree.size(), ELEMENTS_FEW, [](const std::pair<const string, uptr<ledger::state>>& item) { item.second->as_hash(); });
+			auto task_queue2 = parallel::for_each(transactions.begin(), transactions.end(), ELEMENTS_FEW, [](block_transaction& item) { item.receipt.as_hash(); });
+			parallel::wail_all(std::move(task_queue1));
+			parallel::wail_all(std::move(task_queue2));
 
-			Algorithm::MerkleTree Tree = (ParentBlock ? ParentBlock->TransactionRoot : uint256_t(0));
-			for (auto& Item : Transactions)
-				Tree.Push(Item.Receipt.TransactionHash);
-			TransactionRoot = Tree.CalculateRoot();
+			algorithm::merkle_tree tree = (parent_block ? parent_block->transaction_root : uint256_t(0));
+			for (auto& item : transactions)
+				tree.push(item.receipt.transaction_hash);
+			transaction_root = tree.calculate_root();
 
-			Tree = (ParentBlock ? ParentBlock->ReceiptRoot : uint256_t(0));
-			for (auto& Item : Transactions)
-				Tree.Push(Item.Receipt.AsHash());
-			ReceiptRoot = Tree.CalculateRoot();
+			tree = (parent_block ? parent_block->receipt_root : uint256_t(0));
+			for (auto& item : transactions)
+				tree.push(item.receipt.as_hash());
+			receipt_root = tree.calculate_root();
 
-			Tree = (ParentBlock ? ParentBlock->StateRoot : uint256_t(0));
-			for (auto& Item : StateTree)
-				Tree.Push(Item.second->AsHash());
-			StateRoot = Tree.CalculateRoot();
+			tree = (parent_block ? parent_block->state_root : uint256_t(0));
+			for (auto& item : state_tree)
+				tree.push(item.second->as_hash());
+			state_root = tree.calculate_root();
 
-			uint256_t Cumulative = GetSlotLength() > 1 ? 1 : 0;
-			AbsoluteWork = (ParentBlock ? ParentBlock->AbsoluteWork : uint256_t(0)) + GasUtil::GetGasWork(Target.Difficulty(), GasUse, GasLimit, Priority);
-			SlotGasUse = (ParentBlock ? ParentBlock->SlotGasUse : uint256_t(0)) * Cumulative + GasUse;
-			SlotGasTarget = (ParentBlock ? ParentBlock->SlotGasTarget : uint256_t(0)) * Cumulative + (Transactions.size() > 0 ? GasUse / Transactions.size() : uint256_t(0));
-			SlotDuration = (ParentBlock ? ParentBlock->SlotDuration + ParentBlock->GetDuration() : uint256_t(0)) * Cumulative;
-			TransactionCount = (uint32_t)Transactions.size();
-			StateCount = (uint32_t)StateTree.size();
+			uint256_t cumulative = get_slot_length() > 1 ? 1 : 0;
+			absolute_work = (parent_block ? parent_block->absolute_work : uint256_t(0)) + gas_util::get_gas_work(target.difficulty(), gas_use, gas_limit, priority);
+			slot_gas_use = (parent_block ? parent_block->slot_gas_use : uint256_t(0)) * cumulative + gas_use;
+			slot_gas_target = (parent_block ? parent_block->slot_gas_target : uint256_t(0)) * cumulative + (transactions.size() > 0 ? gas_use / transactions.size() : uint256_t(0));
+			slot_duration = (parent_block ? parent_block->slot_duration + parent_block->get_duration() : uint256_t(0)) * cumulative;
+			transaction_count = (uint32_t)transactions.size();
+			state_count = (uint32_t)state_tree.size();
 		}
-		void Block::InheritWork(const Block* ParentBlock)
+		void block::inherit_work(const block* parent_block)
 		{
-			States.ParentWork = ParentBlock ? &ParentBlock->States : nullptr;
+			states.parent_work = parent_block ? &parent_block->states : nullptr;
 		}
-		void Block::InheritWork(const BlockWork* ParentWork)
+		void block::inherit_work(const block_work* parent_work)
 		{
-			States.ParentWork = ParentWork;
+			states.parent_work = parent_work;
 		}
-		UPtr<Schema> Block::AsSchema() const
+		uptr<schema> block::as_schema() const
 		{
-			Schema* Data = BlockHeader::AsSchema().Reset();
-			auto* TransactionsData = Data->Set("transactions", Var::Set::Array());
-			for (auto& Item : Transactions)
-				TransactionsData->Push(Item.AsSchema().Reset());
-			auto* StatesData = Data->Set("states", Var::Set::Array());
-			for (auto& Item : States.At(WorkCommitment::Finalized))
-				StatesData->Push(Item.second->AsSchema().Reset());
-			return Data;
+			schema* data = block_header::as_schema().reset();
+			auto* transactions_data = data->set("transactions", var::set::array());
+			for (auto& item : transactions)
+				transactions_data->push(item.as_schema().reset());
+			auto* states_data = data->set("states", var::set::array());
+			for (auto& item : states.at(work_commitment::finalized))
+				states_data->push(item.second->as_schema().reset());
+			return data;
 		}
-		BlockHeader Block::AsHeader() const
+		block_header block::as_header() const
 		{
-			return BlockHeader(*this);
+			return block_header(*this);
 		}
-		BlockProof Block::AsProof(const BlockHeader* ParentBlock) const
+		block_proof block::as_proof(const block_header* parent_block) const
 		{
-			auto Proof = BlockProof(*this, ParentBlock);
-			Proof.Transactions.reserve(Transactions.size());
-			Proof.Receipts.reserve(Transactions.size());
-			for (auto& Item : Transactions)
+			auto proof = block_proof(*this, parent_block);
+			proof.transactions.reserve(transactions.size());
+			proof.receipts.reserve(transactions.size());
+			for (auto& item : transactions)
 			{
-				Proof.Transactions.push_back(Item.Receipt.TransactionHash);
-				Proof.Receipts.push_back(Item.Receipt.AsHash());
+				proof.transactions.push_back(item.receipt.transaction_hash);
+				proof.receipts.push_back(item.receipt.as_hash());
 			}
 
-			Proof.States.reserve(States.At(WorkCommitment::Finalized).size());
-			for (auto& Item : States.At(WorkCommitment::Finalized))
-				Proof.States.push_back(Item.second->AsHash());
+			proof.states.reserve(states.at(work_commitment::finalized).size());
+			for (auto& item : states.at(work_commitment::finalized))
+				proof.states.push_back(item.second->as_hash());
 
-			return Proof;
+			return proof;
 		}
-		uint256_t Block::AsHash(bool Renew) const
+		uint256_t block::as_hash(bool renew) const
 		{
-			return AsHeader().AsHash(Renew);
+			return as_header().as_hash(renew);
 		}
 
-		BlockProof::BlockProof(const BlockHeader& FromBlock, const BlockHeader* FromParentBlock)
+		block_proof::block_proof(const block_header& from_block, const block_header* from_parent_block)
 		{
-			Internal.TransactionsTree = Algorithm::MerkleTree(FromParentBlock ? FromParentBlock->TransactionRoot : uint256_t(0));
-			Internal.ReceiptsTree = Algorithm::MerkleTree(FromParentBlock ? FromParentBlock->ReceiptRoot : uint256_t(0));
-			Internal.StatesTree = Algorithm::MerkleTree(FromParentBlock ? FromParentBlock->StateRoot : uint256_t(0));
-			TransactionRoot = FromBlock.TransactionRoot;
-			ReceiptRoot = FromBlock.ReceiptRoot;
-			StateRoot = FromBlock.StateRoot;
+			internal.transactions_tree = algorithm::merkle_tree(from_parent_block ? from_parent_block->transaction_root : uint256_t(0));
+			internal.receipts_tree = algorithm::merkle_tree(from_parent_block ? from_parent_block->receipt_root : uint256_t(0));
+			internal.states_tree = algorithm::merkle_tree(from_parent_block ? from_parent_block->state_root : uint256_t(0));
+			transaction_root = from_block.transaction_root;
+			receipt_root = from_block.receipt_root;
+			state_root = from_block.state_root;
 		}
-		Option<Algorithm::MerkleTree::Path> BlockProof::FindTransaction(const uint256_t& Hash)
+		option<algorithm::merkle_tree::path> block_proof::find_transaction(const uint256_t& hash)
 		{
-			auto Path = GetTransactionsTree().CalculatePath(Hash);
-			if (Path.Empty())
-				return Optional::None;
+			auto path = get_transactions_tree().calculate_path(hash);
+			if (path.empty())
+				return optional::none;
 
-			return Path;
+			return path;
 		}
-		Option<Algorithm::MerkleTree::Path> BlockProof::FindReceipt(const uint256_t& Hash)
+		option<algorithm::merkle_tree::path> block_proof::find_receipt(const uint256_t& hash)
 		{
-			auto Path = GetReceiptsTree().CalculatePath(Hash);
-			if (Path.Empty())
-				return Optional::None;
+			auto path = get_receipts_tree().calculate_path(hash);
+			if (path.empty())
+				return optional::none;
 
-			return Path;
+			return path;
 		}
-		Option<Algorithm::MerkleTree::Path> BlockProof::FindState(const uint256_t& Hash)
+		option<algorithm::merkle_tree::path> block_proof::find_state(const uint256_t& hash)
 		{
-			auto Path = GetStatesTree().CalculatePath(Hash);
-			if (Path.Empty())
-				return Optional::None;
+			auto path = get_states_tree().calculate_path(hash);
+			if (path.empty())
+				return optional::none;
 
-			return Path;
+			return path;
 		}
-		bool BlockProof::StorePayload(Format::Stream* Stream) const
+		bool block_proof::store_payload(format::stream* stream) const
 		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Stream->WriteInteger(TransactionRoot);
-			Stream->WriteInteger((uint32_t)Transactions.size());
-			for (auto& Item : Transactions)
-				Stream->WriteInteger(Item);
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_integer(transaction_root);
+			stream->write_integer((uint32_t)transactions.size());
+			for (auto& item : transactions)
+				stream->write_integer(item);
 
-			Stream->WriteInteger(ReceiptRoot);
-			Stream->WriteInteger((uint32_t)Receipts.size());
-			for (auto& Item : Receipts)
-				Stream->WriteInteger(Item);
+			stream->write_integer(receipt_root);
+			stream->write_integer((uint32_t)receipts.size());
+			for (auto& item : receipts)
+				stream->write_integer(item);
 
-			Stream->WriteInteger(StateRoot);
-			Stream->WriteInteger((uint32_t)States.size());
-			for (auto& Item : States)
-				Stream->WriteInteger(Item);
+			stream->write_integer(state_root);
+			stream->write_integer((uint32_t)states.size());
+			for (auto& item : states)
+				stream->write_integer(item);
 
 			return true;
 		}
-		bool BlockProof::LoadPayload(Format::Stream& Stream)
+		bool block_proof::load_payload(format::stream& stream)
 		{
-			if (!Stream.ReadInteger(Stream.ReadType(), &TransactionRoot))
+			if (!stream.read_integer(stream.read_type(), &transaction_root))
 				return false;
 
-			uint32_t TransactionsSize;
-			if (!Stream.ReadInteger(Stream.ReadType(), &TransactionsSize))
+			uint32_t transactions_size;
+			if (!stream.read_integer(stream.read_type(), &transactions_size))
 				return false;
 
-			Transactions.resize(TransactionsSize);
-			for (size_t i = 0; i < TransactionsSize; i++)
+			transactions.resize(transactions_size);
+			for (size_t i = 0; i < transactions_size; i++)
 			{
-				if (!Stream.ReadInteger(Stream.ReadType(), &Transactions[i]))
-					return false;
-			}
-
-			if (!Stream.ReadInteger(Stream.ReadType(), &ReceiptRoot))
-				return false;
-
-			uint32_t ReceiptsSize;
-			if (!Stream.ReadInteger(Stream.ReadType(), &ReceiptsSize))
-				return false;
-
-			Receipts.resize(ReceiptsSize);
-			for (size_t i = 0; i < ReceiptsSize; i++)
-			{
-				if (!Stream.ReadInteger(Stream.ReadType(), &Receipts[i]))
+				if (!stream.read_integer(stream.read_type(), &transactions[i]))
 					return false;
 			}
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &StateRoot))
+			if (!stream.read_integer(stream.read_type(), &receipt_root))
 				return false;
 
-			uint32_t StatesSize;
-			if (!Stream.ReadInteger(Stream.ReadType(), &StatesSize))
+			uint32_t receipts_size;
+			if (!stream.read_integer(stream.read_type(), &receipts_size))
 				return false;
 
-			States.resize(StatesSize);
-			for (size_t i = 0; i < StatesSize; i++)
+			receipts.resize(receipts_size);
+			for (size_t i = 0; i < receipts_size; i++)
 			{
-				if (!Stream.ReadInteger(Stream.ReadType(), &States[i]))
+				if (!stream.read_integer(stream.read_type(), &receipts[i]))
+					return false;
+			}
+
+			if (!stream.read_integer(stream.read_type(), &state_root))
+				return false;
+
+			uint32_t states_size;
+			if (!stream.read_integer(stream.read_type(), &states_size))
+				return false;
+
+			states.resize(states_size);
+			for (size_t i = 0; i < states_size; i++)
+			{
+				if (!stream.read_integer(stream.read_type(), &states[i]))
 					return false;
 			}
 
 			return true;
 		}
-		bool BlockProof::HasTransaction(const uint256_t& Hash)
+		bool block_proof::has_transaction(const uint256_t& hash)
 		{
-			auto Path = FindTransaction(Hash);
-			return Path && Path->CalculateRoot(Hash) == TransactionRoot;
+			auto path = find_transaction(hash);
+			return path && path->calculate_root(hash) == transaction_root;
 		}
-		bool BlockProof::HasReceipt(const uint256_t& Hash)
+		bool block_proof::has_receipt(const uint256_t& hash)
 		{
-			auto Path = FindReceipt(Hash);
-			return Path && Path->CalculateRoot(Hash) == ReceiptRoot;
+			auto path = find_receipt(hash);
+			return path && path->calculate_root(hash) == receipt_root;
 		}
-		bool BlockProof::HasState(const uint256_t& Hash)
+		bool block_proof::has_state(const uint256_t& hash)
 		{
-			auto Path = FindState(Hash);
-			return Path && Path->CalculateRoot(Hash) == StateRoot;
+			auto path = find_state(hash);
+			return path && path->calculate_root(hash) == state_root;
 		}
-		Algorithm::MerkleTree& BlockProof::GetTransactionsTree()
+		algorithm::merkle_tree& block_proof::get_transactions_tree()
 		{
-			if (!Internal.TransactionsTree.IsCalculated() || Internal.TransactionsTree.GetTree().size() < Transactions.size())
+			if (!internal.transactions_tree.is_calculated() || internal.transactions_tree.get_tree().size() < transactions.size())
 			{
-				for (auto& Item : Transactions)
-					Internal.TransactionsTree.Push(Item);
+				for (auto& item : transactions)
+					internal.transactions_tree.push(item);
 			}
-			return Internal.TransactionsTree.Calculate();
+			return internal.transactions_tree.calculate();
 		}
-		Algorithm::MerkleTree& BlockProof::GetReceiptsTree()
+		algorithm::merkle_tree& block_proof::get_receipts_tree()
 		{
-			if (!Internal.ReceiptsTree.IsCalculated() || Internal.ReceiptsTree.GetTree().size() < Receipts.size())
+			if (!internal.receipts_tree.is_calculated() || internal.receipts_tree.get_tree().size() < receipts.size())
 			{
-				for (auto& Item : Receipts)
-					Internal.ReceiptsTree.Push(Item);
+				for (auto& item : receipts)
+					internal.receipts_tree.push(item);
 			}
-			return Internal.ReceiptsTree.Calculate();
+			return internal.receipts_tree.calculate();
 		}
-		Algorithm::MerkleTree& BlockProof::GetStatesTree()
+		algorithm::merkle_tree& block_proof::get_states_tree()
 		{
-			if (!Internal.StatesTree.IsCalculated() || Internal.StatesTree.GetTree().size() < States.size())
+			if (!internal.states_tree.is_calculated() || internal.states_tree.get_tree().size() < states.size())
 			{
-				for (auto& Item : States)
-					Internal.StatesTree.Push(Item);
+				for (auto& item : states)
+					internal.states_tree.push(item);
 			}
-			return Internal.StatesTree.Calculate();
+			return internal.states_tree.calculate();
 		}
-		UPtr<Schema> BlockProof::AsSchema() const
+		uptr<schema> block_proof::as_schema() const
 		{
-			Schema* Data = Var::Set::Object();
-			auto* TransactionsData = Data->Set("transactions", Var::Set::Object());
-			auto* TransactionsHashes = TransactionsData->Set("hashes", Var::Set::Array());
-			auto* TransactionsTree = TransactionsData->Set("tree", Var::Set::Array());
-			TransactionsData->Set("root", Var::String(Algorithm::Encoding::Encode0xHex256(TransactionRoot)));
-			if (Internal.TransactionsTree.GetTree().empty())
+			schema* data = var::set::object();
+			auto* transactions_data = data->set("transactions", var::set::object());
+			auto* transactions_hashes = transactions_data->set("hashes", var::set::array());
+			auto* transactions_tree = transactions_data->set("tree", var::set::array());
+			transactions_data->set("root", var::string(algorithm::encoding::encode_0xhex256(transaction_root)));
+			if (internal.transactions_tree.get_tree().empty())
 			{
-				for (auto& Item : Transactions)
-					TransactionsHashes->Push(Var::String(Algorithm::Encoding::Encode0xHex256(Item)));
+				for (auto& item : transactions)
+					transactions_hashes->push(var::string(algorithm::encoding::encode_0xhex256(item)));
 			}
 			else
-				TransactionsHashes->Value = Var::Integer(Transactions.size());
-			for (auto& Item : Internal.TransactionsTree.GetTree())
-				TransactionsTree->Push(Var::String(Algorithm::Encoding::Encode0xHex256(Item)));
+				transactions_hashes->value = var::integer(transactions.size());
+			for (auto& item : internal.transactions_tree.get_tree())
+				transactions_tree->push(var::string(algorithm::encoding::encode_0xhex256(item)));
 
-			auto* ReceiptsData = Data->Set("receipts", Var::Set::Object());
-			auto* ReceiptsHashes = ReceiptsData->Set("hashes", Var::Set::Array());
-			auto* ReceiptsTree = ReceiptsData->Set("tree", Var::Set::Array());
-			ReceiptsData->Set("root", Var::String(Algorithm::Encoding::Encode0xHex256(ReceiptRoot)));
-			if (Internal.ReceiptsTree.GetTree().empty())
+			auto* receipts_data = data->set("receipts", var::set::object());
+			auto* receipts_hashes = receipts_data->set("hashes", var::set::array());
+			auto* receipts_tree = receipts_data->set("tree", var::set::array());
+			receipts_data->set("root", var::string(algorithm::encoding::encode_0xhex256(receipt_root)));
+			if (internal.receipts_tree.get_tree().empty())
 			{
-				for (auto& Item : Receipts)
-					ReceiptsHashes->Push(Var::String(Algorithm::Encoding::Encode0xHex256(Item)));
+				for (auto& item : receipts)
+					receipts_hashes->push(var::string(algorithm::encoding::encode_0xhex256(item)));
 			}
 			else
-				ReceiptsHashes->Value = Var::Integer(Receipts.size());
-			for (auto& Item : Internal.ReceiptsTree.GetTree())
-				ReceiptsTree->Push(Var::String(Algorithm::Encoding::Encode0xHex256(Item)));
+				receipts_hashes->value = var::integer(receipts.size());
+			for (auto& item : internal.receipts_tree.get_tree())
+				receipts_tree->push(var::string(algorithm::encoding::encode_0xhex256(item)));
 
-			auto* StatesData = Data->Set("states", Var::Set::Object());
-			auto* StatesHashes = StatesData->Set("hashes", Var::Set::Array());
-			auto* StatesTree = StatesData->Set("tree", Var::Set::Array());
-			StatesData->Set("root", Var::String(Algorithm::Encoding::Encode0xHex256(StateRoot)));
-			if (Internal.StatesTree.GetTree().empty())
+			auto* states_data = data->set("states", var::set::object());
+			auto* states_hashes = states_data->set("hashes", var::set::array());
+			auto* states_tree = states_data->set("tree", var::set::array());
+			states_data->set("root", var::string(algorithm::encoding::encode_0xhex256(state_root)));
+			if (internal.states_tree.get_tree().empty())
 			{
-				for (auto& Item : States)
-					StatesHashes->Push(Var::String(Algorithm::Encoding::Encode0xHex256(Item)));
+				for (auto& item : states)
+					states_hashes->push(var::string(algorithm::encoding::encode_0xhex256(item)));
 			}
 			else
-				StatesHashes->Value = Var::Integer(States.size());
-			for (auto& Item : Internal.StatesTree.GetTree())
-				StatesTree->Push(Var::String(Algorithm::Encoding::Encode0xHex256(Item)));
-			return Data;
+				states_hashes->value = var::integer(states.size());
+			for (auto& item : internal.states_tree.get_tree())
+				states_tree->push(var::string(algorithm::encoding::encode_0xhex256(item)));
+			return data;
 		}
-		uint32_t BlockProof::AsType() const
+		uint32_t block_proof::as_type() const
 		{
-			return AsInstanceType();
+			return as_instance_type();
 		}
-		std::string_view BlockProof::AsTypename() const
+		std::string_view block_proof::as_typename() const
 		{
-			return AsInstanceTypename();
+			return as_instance_typename();
 		}
-		uint32_t BlockProof::AsInstanceType()
+		uint32_t block_proof::as_instance_type()
 		{
-			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
-			return Hash;
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
 		}
-		std::string_view BlockProof::AsInstanceTypename()
+		std::string_view block_proof::as_instance_typename()
 		{
 			return "block_proof";
 		}
 
-		TransactionContext::TransactionContext() : Environment(nullptr), Transaction(nullptr), Block(nullptr)
+		transaction_context::transaction_context() : environment(nullptr), transaction(nullptr), block(nullptr)
 		{
 		}
-		TransactionContext::TransactionContext(Ledger::Block* NewBlock) : Environment(nullptr), Transaction(nullptr), Block(NewBlock)
+		transaction_context::transaction_context(ledger::block* new_block) : environment(nullptr), transaction(nullptr), block(new_block)
 		{
-			if (NewBlock)
-				Delta.Outgoing = &NewBlock->States;
+			if (new_block)
+				delta.outgoing = &new_block->states;
 		}
-		TransactionContext::TransactionContext(Ledger::BlockHeader* NewBlockHeader) : Environment(nullptr), Transaction(nullptr), Block(NewBlockHeader)
-		{
-		}
-		TransactionContext::TransactionContext(Ledger::Block* NewBlock, const Ledger::EvaluationContext* NewEnvironment, const Ledger::Transaction* NewTransaction, Ledger::Receipt&& NewReceipt) : Environment(NewEnvironment), Transaction(NewTransaction), Block(NewBlock), Receipt(std::move(NewReceipt))
-		{
-			if (NewBlock)
-				Delta.Outgoing = &NewBlock->States;
-		}
-		TransactionContext::TransactionContext(Ledger::BlockHeader* NewBlockHeader, const Ledger::EvaluationContext* NewEnvironment, const Ledger::Transaction* NewTransaction, Ledger::Receipt&& NewReceipt) : Environment(NewEnvironment), Transaction(NewTransaction), Block(NewBlockHeader), Receipt(std::move(NewReceipt))
+		transaction_context::transaction_context(ledger::block_header* new_block_header) : environment(nullptr), transaction(nullptr), block(new_block_header)
 		{
 		}
-		TransactionContext::TransactionContext(const TransactionContext& Other) : Delta(Other.Delta), Environment(Other.Environment), Receipt(Other.Receipt), Block(Other.Block)
+		transaction_context::transaction_context(ledger::block* new_block, const ledger::evaluation_context* new_environment, const ledger::transaction* new_transaction, ledger::receipt&& new_receipt) : environment(new_environment), transaction(new_transaction), block(new_block), receipt(std::move(new_receipt))
 		{
-			Transaction = Other.Transaction ? Transactions::Resolver::Copy(Other.Transaction) : nullptr;
+			if (new_block)
+				delta.outgoing = &new_block->states;
 		}
-		TransactionContext& TransactionContext::operator=(const TransactionContext& Other)
+		transaction_context::transaction_context(ledger::block_header* new_block_header, const ledger::evaluation_context* new_environment, const ledger::transaction* new_transaction, ledger::receipt&& new_receipt) : environment(new_environment), transaction(new_transaction), block(new_block_header), receipt(std::move(new_receipt))
 		{
-			if (this == &Other)
+		}
+		transaction_context::transaction_context(const transaction_context& other) : delta(other.delta), environment(other.environment), receipt(other.receipt), block(other.block)
+		{
+			transaction = other.transaction ? transactions::resolver::copy(other.transaction) : nullptr;
+		}
+		transaction_context& transaction_context::operator=(const transaction_context& other)
+		{
+			if (this == &other)
 				return *this;
 
-			Delta = Other.Delta;
-			Environment = Other.Environment;
-			Transaction = Other.Transaction ? Transactions::Resolver::Copy(Other.Transaction) : nullptr;
-			Receipt = Other.Receipt;
-			Block = Other.Block;
+			delta = other.delta;
+			environment = other.environment;
+			transaction = other.transaction ? transactions::resolver::copy(other.transaction) : nullptr;
+			receipt = other.receipt;
+			block = other.block;
 			return *this;
 		}
-		ExpectsLR<void> TransactionContext::Load(State* Next, bool Paid)
+		expects_lr<void> transaction_context::load(state* next, bool paid)
 		{
-			if (!Next)
-				return LayerException("state not found");
-			else if (!Paid)
-				return Expectation::Met;
+			if (!next)
+				return layer_exception("state not found");
+			else if (!paid)
+				return expectation::met;
 
-			return BurnGas(Next->AsMessage().Data.size() * (size_t)GasCost::ReadByte);
+			return burn_gas(next->as_message().data.size() * (size_t)gas_cost::read_byte);
 		}
-		ExpectsLR<void> TransactionContext::Store(State* Next, bool Paid)
+		expects_lr<void> transaction_context::store(state* next, bool paid)
 		{
-			if (!Next)
-				return LayerException("invalid state");
+			if (!next)
+				return layer_exception("invalid state");
 
-			if (Block != nullptr)
+			if (block != nullptr)
 			{
-				Next->BlockNumber = Block->Number;
-				Next->BlockNonce = Block->MutationCount++;
+				next->block_number = block->number;
+				next->block_nonce = block->mutation_count++;
 			}
 
-			if (!Next->BlockNumber)
-				return LayerException("invalid state block number");
-			else if (!Delta.Outgoing)
-				return LayerException("invalid state delta");
+			if (!next->block_number)
+				return layer_exception("invalid state block number");
+			else if (!delta.outgoing)
+				return layer_exception("invalid state delta");
 
-			auto Chain = Storages::Chainstate(__func__);
-			switch (Next->AsLevel())
+			auto chain = storages::chainstate(__func__);
+			switch (next->as_level())
 			{
-				case StateLevel::Uniform:
+				case state_level::uniform:
 				{
-					auto* State = (Uniform*)Next;
-					auto Prev = Chain.GetUniformByIndex(&Delta, State->AsIndex(), GetValidationNonce());
-					auto Status = State->Transition(this, Prev ? **Prev : nullptr);
-					if (!Status)
-						return Status;
+					auto* state = (uniform*)next;
+					auto prev = chain.get_uniform_by_index(&delta, state->as_index(), get_validation_nonce());
+					auto status = state->transition(this, prev ? **prev : nullptr);
+					if (!status)
+						return status;
 					break;
 				}
-				case StateLevel::Multiform:
+				case state_level::multiform:
 				{
-					auto* State = (Multiform*)Next;
-					auto Prev = Chain.GetMultiformByComposition(&Delta, State->AsColumn(), State->AsRow(), GetValidationNonce());
-					auto Status = State->Transition(this, Prev ? **Prev : nullptr);
-					if (!Status)
-						return Status;
+					auto* state = (multiform*)next;
+					auto prev = chain.get_multiform_by_composition(&delta, state->as_column(), state->as_row(), get_validation_nonce());
+					auto status = state->transition(this, prev ? **prev : nullptr);
+					if (!status)
+						return status;
 					break;
 				}
 				default:
-					return LayerException("invalid state level");
+					return layer_exception("invalid state level");
 			}
 
-			if (Paid)
+			if (paid)
 			{
-				auto Status = BurnGas(Next->AsMessage().Data.size() * (size_t)GasCost::WriteByte);
-				if (!Status)
-					return Status;
+				auto status = burn_gas(next->as_message().data.size() * (size_t)gas_cost::write_byte);
+				if (!status)
+					return status;
 			}
 
-			Delta.Outgoing->CopyAny(Next);
-			return Expectation::Met;
+			delta.outgoing->copy_any(next);
+			return expectation::met;
 		}
-		ExpectsLR<void> TransactionContext::EmitWitness(const Algorithm::AssetId& Asset, uint64_t BlockNumber)
+		expects_lr<void> transaction_context::emit_witness(const algorithm::asset_id& asset, uint64_t block_number)
 		{
-			if (!Asset || !BlockNumber)
-				return LayerException("invalid witness");
+			if (!asset || !block_number)
+				return layer_exception("invalid witness");
 
-			auto& CurrentNumber = Witnesses[Algorithm::Asset::BaseIdOf(Asset)];
-			if (CurrentNumber < BlockNumber)
-				CurrentNumber = BlockNumber;
+			auto& current_number = witnesses[algorithm::asset::base_id_of(asset)];
+			if (current_number < block_number)
+				current_number = block_number;
 
-			return Expectation::Met;
+			return expectation::met;
 		}
-		ExpectsLR<void> TransactionContext::EmitEvent(uint32_t Event, Format::Variables&& Values, bool Paid)
+		expects_lr<void> transaction_context::emit_event(uint32_t event, format::variables&& values, bool paid)
 		{
-			if (Paid)
+			if (paid)
 			{
-				Format::Stream Stream;
-				Format::VariablesUtil::SerializeMergeInto(Values, &Stream);
-				Stream.WriteInteger(Event);
+				format::stream stream;
+				format::variables_util::serialize_merge_into(values, &stream);
+				stream.write_integer(event);
 
-				auto Status = BurnGas(Stream.Data.size() * (size_t)GasCost::WriteByte);
-				if (!Status)
-					return Status;
+				auto status = burn_gas(stream.data.size() * (size_t)gas_cost::write_byte);
+				if (!status)
+					return status;
 			}
-			Receipt.EmitEvent(Event, std::move(Values));
-			return Expectation::Met;
+			receipt.emit_event(event, std::move(values));
+			return expectation::met;
 		}
-		ExpectsLR<void> TransactionContext::BurnGas()
+		expects_lr<void> transaction_context::burn_gas()
 		{
-			if (!Transaction)
-				return Expectation::Met;
+			if (!transaction)
+				return expectation::met;
 
-			return BurnGas(Transaction->GasLimit - Receipt.RelativeGasUse);
+			return burn_gas(transaction->gas_limit - receipt.relative_gas_use);
 		}
-		ExpectsLR<void> TransactionContext::BurnGas(const uint256_t& Value)
+		expects_lr<void> transaction_context::burn_gas(const uint256_t& value)
 		{
-			if (!Transaction)
-				return Expectation::Met;
+			if (!transaction)
+				return expectation::met;
 
-			Receipt.RelativeGasUse += Value;
-			if (Receipt.RelativeGasUse <= Transaction->GasLimit)
-				return Expectation::Met;
+			receipt.relative_gas_use += value;
+			if (receipt.relative_gas_use <= transaction->gas_limit)
+				return expectation::met;
 
-			Receipt.RelativeGasUse = Transaction->GasLimit;
-			return LayerException("ran out of gas");
+			receipt.relative_gas_use = transaction->gas_limit;
+			return layer_exception("ran out of gas");
 		}
-		ExpectsLR<void> TransactionContext::VerifyAccountSequence() const
+		expects_lr<void> transaction_context::verify_account_sequence() const
 		{
-			if (!Transaction)
-				return LayerException("invalid transaction");
+			if (!transaction)
+				return layer_exception("invalid transaction");
 
-			auto CurrentSequence = GetAccountSequence(Receipt.From);
-			if (CurrentSequence && CurrentSequence->Sequence > Transaction->Sequence)
-				return LayerException("sequence is invalid (now: " + ToString(CurrentSequence->Sequence) + ")");
+			auto current_sequence = get_account_sequence(receipt.from);
+			if (current_sequence && current_sequence->sequence > transaction->sequence)
+				return layer_exception("sequence is invalid (now: " + to_string(current_sequence->sequence) + ")");
 
-			return Expectation::Met;
+			return expectation::met;
 		}
-		ExpectsLR<void> TransactionContext::VerifyGasTransferBalance() const
+		expects_lr<void> transaction_context::verify_gas_transfer_balance() const
 		{
-			if (!Transaction)
-				return LayerException("invalid transaction");
+			if (!transaction)
+				return layer_exception("invalid transaction");
 
-			if (!Transaction->GasPrice.IsPositive())
-				return Expectation::Met;
+			if (!transaction->gas_price.is_positive())
+				return expectation::met;
 
-			auto Asset = Transaction->GetGasAsset();
-			auto CurrentBalance = GetAccountBalance(Asset, Receipt.From);
-			Decimal MaxPaidValue = Transaction->GasPrice * Transaction->GasLimit.ToDecimal();
-			Decimal MaxPayableValue = CurrentBalance ? CurrentBalance->GetBalance() : Decimal::Zero();
-			if (MaxPayableValue < MaxPaidValue)
-				return LayerException(Algorithm::Asset::HandleOf(Asset) + " balance is insufficient (balance: " + MaxPayableValue.ToString() + ", value: " + MaxPaidValue.ToString() + ")");
+			auto asset = transaction->get_gas_asset();
+			auto current_balance = get_account_balance(asset, receipt.from);
+			decimal max_paid_value = transaction->gas_price * transaction->gas_limit.to_decimal();
+			decimal max_payable_value = current_balance ? current_balance->get_balance() : decimal::zero();
+			if (max_payable_value < max_paid_value)
+				return layer_exception(algorithm::asset::handle_of(asset) + " balance is insufficient (balance: " + max_payable_value.to_string() + ", value: " + max_paid_value.to_string() + ")");
 
-			return Expectation::Met;
+			return expectation::met;
 		}
-		ExpectsLR<void> TransactionContext::VerifyTransferBalance(const Algorithm::AssetId& Asset, const Decimal& Value) const
+		expects_lr<void> transaction_context::verify_transfer_balance(const algorithm::asset_id& asset, const decimal& value) const
 		{
-			if (!Transaction)
-				return LayerException("invalid transaction");
+			if (!transaction)
+				return layer_exception("invalid transaction");
 
-			Decimal MaxPaidValue = Value;
-			if (!MaxPaidValue.IsPositive())
-				return Expectation::Met;
+			decimal max_paid_value = value;
+			if (!max_paid_value.is_positive())
+				return expectation::met;
 
-			auto CurrentBalance = GetAccountBalance(Asset, Receipt.From);
-			Decimal MaxPayableValue = CurrentBalance ? CurrentBalance->GetBalance() : Decimal::Zero();
-			if (MaxPayableValue < MaxPaidValue)
-				return LayerException(Algorithm::Asset::HandleOf(Asset) + " balance is insufficient (balance: " + MaxPayableValue.ToString() + ", value: " + MaxPaidValue.ToString() + ")");
+			auto current_balance = get_account_balance(asset, receipt.from);
+			decimal max_payable_value = current_balance ? current_balance->get_balance() : decimal::zero();
+			if (max_payable_value < max_paid_value)
+				return layer_exception(algorithm::asset::handle_of(asset) + " balance is insufficient (balance: " + max_payable_value.to_string() + ", value: " + max_paid_value.to_string() + ")");
 
-			return Expectation::Met;
+			return expectation::met;
 		}
-		ExpectsLR<void> TransactionContext::VerifyAccountWork(const Algorithm::Pubkeyhash Owner) const
+		expects_lr<void> transaction_context::verify_account_work(const algorithm::pubkeyhash owner) const
 		{
-			if (!Environment)
-				return LayerException("invalid evaluation context");
+			if (!environment)
+				return layer_exception("invalid evaluation context");
 
-			auto CurrentWork = GetAccountWork(Owner);
-			uint256_t CurrentGasWork = CurrentWork ? CurrentWork->GetGasUse() : uint256_t(0);
-			uint256_t CurrentGasRequirement = States::AccountWork::GetGasWorkRequired(Block, CurrentGasWork);
-			if (CurrentGasRequirement > 0)
-				return LayerException("account work is insufficient (work: " + CurrentGasWork.ToString() + ", value: " + CurrentGasRequirement.ToString() + ")");
-			else if (CurrentWork && CurrentWork->IsMatching(States::AccountFlags::Outlaw))
-				return LayerException("account is outlaw");
+			auto current_work = get_account_work(owner);
+			uint256_t current_gas_work = current_work ? current_work->get_gas_use() : uint256_t(0);
+			uint256_t current_gas_requirement = states::account_work::get_gas_work_required(block, current_gas_work);
+			if (current_gas_requirement > 0)
+				return layer_exception("account work is insufficient (work: " + current_gas_work.to_string() + ", value: " + current_gas_requirement.to_string() + ")");
+			else if (current_work && current_work->is_matching(states::account_flags::outlaw))
+				return layer_exception("account is outlaw");
 
-			return Expectation::Met;
+			return expectation::met;
 		}
-		ExpectsLR<void> TransactionContext::VerifyAccountDepositoryWork(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner) const
+		expects_lr<void> transaction_context::verify_account_depository_work(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner) const
 		{
-			if (!Environment)
-				return LayerException("invalid evaluation context");
+			if (!environment)
+				return layer_exception("invalid evaluation context");
 
-			auto CurrentWork = GetAccountWork(Owner);
-			uint256_t CurrentGasWork = CurrentWork ? CurrentWork->GetGasUse() : uint256_t(0);
-			uint256_t CurrentGasRequirement = States::AccountWork::GetGasWorkRequired(Block, CurrentGasWork);
-			if (CurrentGasRequirement > 0)
-				return LayerException("account work is insufficient (work: " + CurrentGasWork.ToString() + ", value: " + CurrentGasRequirement.ToString() + ")");
-			else if (CurrentWork && CurrentWork->IsMatching(States::AccountFlags::Outlaw))
-				return LayerException("account is outlaw");
+			auto current_work = get_account_work(owner);
+			uint256_t current_gas_work = current_work ? current_work->get_gas_use() : uint256_t(0);
+			uint256_t current_gas_requirement = states::account_work::get_gas_work_required(block, current_gas_work);
+			if (current_gas_requirement > 0)
+				return layer_exception("account work is insufficient (work: " + current_gas_work.to_string() + ", value: " + current_gas_requirement.to_string() + ")");
+			else if (current_work && current_work->is_matching(states::account_flags::outlaw))
+				return layer_exception("account is outlaw");
 
-			auto CurrentDepository = GetAccountDepository(Asset, Owner);
-			auto CurrentCoverage = CurrentDepository ? CurrentDepository->GetCoverage(CurrentWork ? CurrentWork->Flags : 0) : Decimal::Zero();
-			if (CurrentCoverage.IsNegative())
-				return LayerException("account depository contribution is too low (coverage: " + CurrentCoverage.ToString() + ")");
+			auto current_depository = get_account_depository(asset, owner);
+			auto current_coverage = current_depository ? current_depository->get_coverage(current_work ? current_work->flags : 0) : decimal::zero();
+			if (current_coverage.is_negative())
+				return layer_exception("account depository contribution is too low (coverage: " + current_coverage.to_string() + ")");
 
-			return Expectation::Met;
+			return expectation::met;
 		}
-		ExpectsLR<Algorithm::WVDF::Distribution> TransactionContext::CalculateRandom(const uint256_t& Seed)
+		expects_lr<algorithm::wesolowski::distribution> transaction_context::calculate_random(const uint256_t& seed)
 		{
-			if (!Block)
-				return LayerException("block not found");
+			if (!block)
+				return layer_exception("block not found");
 
-			Format::Stream Message;
-			Message.WriteTypeless(Block->ParentHash);
-			Message.WriteTypeless(Block->Recovery);
-			Message.WriteTypeless(Block->Priority);
-			Message.WriteTypeless(Block->Target.Difficulty());
-			Message.WriteTypeless(Block->MutationCount);
-			Message.WriteTypeless(Receipt.RelativeGasUse);
-			Message.WriteTypeless(Seed);
+			format::stream message;
+			message.write_typeless(block->parent_hash);
+			message.write_typeless(block->recovery);
+			message.write_typeless(block->priority);
+			message.write_typeless(block->target.difficulty());
+			message.write_typeless(block->mutation_count);
+			message.write_typeless(receipt.relative_gas_use);
+			message.write_typeless(seed);
 
-			Algorithm::WVDF::Distribution Distribution;
-			Distribution.Signature = Message.Data;
-			Distribution.Value = Algorithm::Hashing::Hash256i(*Crypto::HashRaw(Digests::SHA512(), Distribution.Signature));
-			return Distribution;
+			algorithm::wesolowski::distribution distribution;
+			distribution.signature = message.data;
+			distribution.value = algorithm::hashing::hash256i(*crypto::hash_raw(digests::SHA512(), distribution.signature));
+			return distribution;
 		}
-		ExpectsLR<size_t> TransactionContext::CalculateAggregationCommitteeSize(const Algorithm::AssetId& Asset)
+		expects_lr<size_t> transaction_context::calculate_aggregation_committee_size(const algorithm::asset_id& asset)
 		{
-			auto Nonce = GetValidationNonce();
-			auto Chain = Storages::Chainstate(__func__);
-			auto Filter = Storages::FactorFilter::Equal(1, 1);
-			return Chain.GetMultiformsCountByRowFilter(States::AccountObserver::AsInstanceRow(Asset), Filter, Nonce);
+			auto nonce = get_validation_nonce();
+			auto chain = storages::chainstate(__func__);
+			auto filter = storages::factor_filter::equal(1, 1);
+			return chain.get_multiforms_count_by_row_filter(states::account_observer::as_instance_row(asset), filter, nonce);
 		}
-		ExpectsLR<Vector<States::AccountWork>> TransactionContext::CalculateProposalCommittee(size_t TargetSize)
+		expects_lr<vector<states::account_work>> transaction_context::calculate_proposal_committee(size_t target_size)
 		{
-			auto Random = CalculateRandom(0);
-			if (!Random)
-				return Random.Error();
+			auto random = calculate_random(0);
+			if (!random)
+				return random.error();
 
-			auto Nonce = GetValidationNonce();
-			auto Chain = Storages::Chainstate(__func__);
-			auto Filter = Storages::FactorFilter::GreaterEqual(0, -1);
-			auto Window = Storages::FactorIndexWindow();
-			auto Pool = Chain.GetMultiformsCountByRowFilter(States::AccountWork::AsInstanceRow(), Filter, Nonce).Or(0);
-			auto Size = std::min(TargetSize, Pool);
-			auto Indices = OrderedSet<size_t>();
-			while (Indices.size() < Size)
+			auto nonce = get_validation_nonce();
+			auto chain = storages::chainstate(__func__);
+			auto filter = storages::factor_filter::greater_equal(0, -1);
+			auto window = storages::factor_index_window();
+			auto pool = chain.get_multiforms_count_by_row_filter(states::account_work::as_instance_row(), filter, nonce).otherwise(0);
+			auto size = std::min(target_size, pool);
+			auto indices = ordered_set<size_t>();
+			while (indices.size() < size)
 			{
-				size_t Index = ExponentialRangeDistribution(Random->Derive(), Size);
-				if (Indices.find(Index) == Indices.end())
+				size_t index = exponential_range_distribution(random->derive(), size);
+				if (indices.find(index) == indices.end())
 				{
-					Window.Indices.push_back(Index);
-					Indices.insert(Index);
+					window.indices.push_back(index);
+					indices.insert(index);
 				}
 			}
 
-			auto Results = Chain.GetMultiformsByRowFilter(&Delta, States::AccountWork::AsInstanceRow(), Filter, Nonce, Window);
-			if (!Results || Results->empty())
-				return LayerException("committee threshold not met");
+			auto results = chain.get_multiforms_by_row_filter(&delta, states::account_work::as_instance_row(), filter, nonce, window);
+			if (!results || results->empty())
+				return layer_exception("committee threshold not met");
 
-			Vector<States::AccountWork> Committee;
-			Committee.reserve(Results->size());
-			for (auto& Result : *Results)
+			vector<states::account_work> committee;
+			committee.reserve(results->size());
+			for (auto& result : *results)
 			{
-				auto& Work = *(States::AccountWork*)*Result;
-				Committee.emplace_back(std::move(Work));
+				auto& work = *(states::account_work*)*result;
+				committee.emplace_back(std::move(work));
 			}
 
-			if (Committee.size() >= TargetSize)
-				std::sort(Committee.begin(), Committee.end(), [](const States::AccountWork&A, const States::AccountWork& B) { return A.GetGasUse() > B.GetGasUse(); });
+			if (committee.size() >= target_size)
+				std::sort(committee.begin(), committee.end(), [](const states::account_work& a, const states::account_work& b) { return a.get_gas_use() > b.get_gas_use(); });
 
-			return Committee;
+			return committee;
 		}
-		ExpectsLR<Vector<States::AccountWork>> TransactionContext::CalculateSharingCommittee(OrderedSet<String>& Hashset, size_t RequiredSize)
+		expects_lr<vector<states::account_work>> transaction_context::calculate_sharing_committee(ordered_set<string>& hashset, size_t required_size)
 		{
-			auto Random = CalculateRandom(1);
-			if (!Random)
-				return Random.Error();
+			auto random = calculate_random(1);
+			if (!random)
+				return random.error();
 
-			auto Nonce = GetValidationNonce();
-			auto Chain = Storages::Chainstate(__func__);
-			auto Filter = Storages::FactorFilter::GreaterEqual(0, -1);
-			auto Pool = Chain.GetMultiformsCountByRowFilter(States::AccountWork::AsInstanceRow(), Filter, Nonce).Or(0);
-			if (Pool < RequiredSize)
-				return LayerException("committee threshold not met");
+			auto nonce = get_validation_nonce();
+			auto chain = storages::chainstate(__func__);
+			auto filter = storages::factor_filter::greater_equal(0, -1);
+			auto pool = chain.get_multiforms_count_by_row_filter(states::account_work::as_instance_row(), filter, nonce).otherwise(0);
+			if (pool < required_size)
+				return layer_exception("committee threshold not met");
 
-			Vector<States::AccountWork> Committee;
-			auto Indices = OrderedSet<size_t>();
-			while (Indices.size() < Pool)
+			vector<states::account_work> committee;
+			auto indices = ordered_set<size_t>();
+			while (indices.size() < pool)
 			{
-				auto Window = Storages::FactorIndexWindow();
-				auto Prefetch = std::min<size_t>(std::max<size_t>(32, RequiredSize), Pool);
-				while (Window.Indices.size() < Prefetch)
+				auto window = storages::factor_index_window();
+				auto prefetch = std::min<size_t>(std::max<size_t>(32, required_size), pool);
+				while (window.indices.size() < prefetch)
 				{
-					size_t Index = ExponentialRangeDistribution(Random->Derive(), Pool);
-					if (Indices.find(Index) == Indices.end())
+					size_t index = exponential_range_distribution(random->derive(), pool);
+					if (indices.find(index) == indices.end())
 					{
-						Window.Indices.push_back(Index);
-						Indices.insert(Index);
+						window.indices.push_back(index);
+						indices.insert(index);
 					}
 				}
 
-				auto Results = Chain.GetMultiformsByRowFilter(&Delta, States::AccountWork::AsInstanceRow(), Filter, Nonce, Window);
-				if (!Results || Results->empty())
+				auto results = chain.get_multiforms_by_row_filter(&delta, states::account_work::as_instance_row(), filter, nonce, window);
+				if (!results || results->empty())
 					break;
 
-				for (auto& Result : *Results)
+				for (auto& result : *results)
 				{
-					auto& Work = *(States::AccountWork*)*Result;
-					auto Hash = String((char*)Work.Owner, sizeof(Work.Owner));
-					if (Hashset.find(Hash) != Hashset.end() || !VerifyAccountWork(Work.Owner))
+					auto& work = *(states::account_work*)*result;
+					auto hash = string((char*)work.owner, sizeof(work.owner));
+					if (hashset.find(hash) != hashset.end() || !verify_account_work(work.owner))
 						continue;
 
-					Hashset.insert(std::move(Hash));
-					Committee.push_back(std::move(Work));
-					if (Committee.size() >= RequiredSize)
+					hashset.insert(std::move(hash));
+					committee.push_back(std::move(work));
+					if (committee.size() >= required_size)
 						break;
 				}
 
-				if (Committee.size() >= RequiredSize)
+				if (committee.size() >= required_size)
 					break;
 			}
 
-			if (Committee.size() < RequiredSize)
-				return LayerException("committee threshold not met");
+			if (committee.size() < required_size)
+				return layer_exception("committee threshold not met");
 
-			return Committee;
+			return committee;
 		}
-		ExpectsLR<States::AccountSequence> TransactionContext::ApplyAccountSequence(const Algorithm::Pubkeyhash Owner, uint64_t Sequence)
+		expects_lr<states::account_sequence> transaction_context::apply_account_sequence(const algorithm::pubkeyhash owner, uint64_t sequence)
 		{
-			States::AccountSequence NewState = States::AccountSequence(Owner, Block);
-			NewState.Sequence = Sequence;
+			states::account_sequence new_state = states::account_sequence(owner, block);
+			new_state.sequence = sequence;
 
-			auto Status = Store(&NewState, false);
-			if (!Status)
-				return Status.Error();
+			auto status = store(&new_state, false);
+			if (!status)
+				return status.error();
 
-			return NewState;
+			return new_state;
 		}
-		ExpectsLR<States::AccountWork> TransactionContext::ApplyAccountWork(const Algorithm::Pubkeyhash Owner, States::AccountFlags Flags, uint64_t Penalty, const uint256_t& GasInput, const uint256_t& GasOutput)
+		expects_lr<states::account_work> transaction_context::apply_account_work(const algorithm::pubkeyhash owner, states::account_flags flags, uint64_t penalty, const uint256_t& gas_input, const uint256_t& gas_output)
 		{
-			States::AccountWork NewState = States::AccountWork(Owner, Block);
-			NewState.GasInput = GasInput;
-			NewState.GasOutput = GasOutput;
-			NewState.Flags = (uint8_t)Flags;
-			if (Penalty > 0)
-				NewState.Penalty = (Block ? Block->Number : 0) + Penalty * (Protocol::Now().Policy.ConsensusPenaltyPointTime / Protocol::Now().Policy.ConsensusProofTime);
+			states::account_work new_state = states::account_work(owner, block);
+			new_state.gas_input = gas_input;
+			new_state.gas_output = gas_output;
+			new_state.flags = (uint8_t)flags;
+			if (penalty > 0)
+				new_state.penalty = (block ? block->number : 0) + penalty * (protocol::now().policy.consensus_penalty_point_time / protocol::now().policy.consensus_proof_time);
 
-			auto Result = Store(&NewState);
-			if (!Result)
-				return Result.Error();
+			auto result = store(&new_state);
+			if (!result)
+				return result.error();
 
-			return NewState;
+			return new_state;
 		}
-		ExpectsLR<States::AccountObserver> TransactionContext::ApplyAccountObserver(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner, bool Observing)
+		expects_lr<states::account_observer> transaction_context::apply_account_observer(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, bool observing)
 		{
-			States::AccountObserver NewState = States::AccountObserver(Owner, Block);
-			NewState.Asset = Asset;
-			NewState.Observing = Observing;
+			states::account_observer new_state = states::account_observer(owner, block);
+			new_state.asset = asset;
+			new_state.observing = observing;
 
-			auto Result = Store(&NewState);
-			if (!Result)
-				return Result.Error();
+			auto result = store(&new_state);
+			if (!result)
+				return result.error();
 
-			return NewState;
+			return new_state;
 		}
-		ExpectsLR<States::AccountProgram> TransactionContext::ApplyAccountProgram(const Algorithm::Pubkeyhash Owner, const std::string_view& ProgramHashcode)
+		expects_lr<states::account_program> transaction_context::apply_account_program(const algorithm::pubkeyhash owner, const std::string_view& program_hashcode)
 		{
-			States::AccountProgram NewState = States::AccountProgram(Owner, Block);
-			NewState.Hashcode = ProgramHashcode;
+			states::account_program new_state = states::account_program(owner, block);
+			new_state.hashcode = program_hashcode;
 
-			auto Result = Store(&NewState);
-			if (!Result)
-				return Result.Error();
+			auto result = store(&new_state);
+			if (!result)
+				return result.error();
 
-			return NewState;
+			return new_state;
 		}
-		ExpectsLR<States::AccountStorage> TransactionContext::ApplyAccountStorage(const Algorithm::Pubkeyhash Owner, const std::string_view& Location, const std::string_view& Storage)
+		expects_lr<states::account_storage> transaction_context::apply_account_storage(const algorithm::pubkeyhash owner, const std::string_view& location, const std::string_view& storage)
 		{
-			States::AccountStorage NewState = States::AccountStorage(Owner, Block);
-			NewState.Location = Location;
-			NewState.Storage = Storage;
+			states::account_storage new_state = states::account_storage(owner, block);
+			new_state.location = location;
+			new_state.storage = storage;
 
-			auto Result = Store(&NewState);
-			if (!Result)
-				return Result.Error();
+			auto result = store(&new_state);
+			if (!result)
+				return result.error();
 
-			return NewState;
+			return new_state;
 		}
-		ExpectsLR<States::AccountReward> TransactionContext::ApplyAccountReward(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner, const Decimal& IncomingAbsoluteFee, const Decimal& IncomingRelativeFee, const Decimal& OutgoingAbsoluteFee, const Decimal& OutgoingRelativeFee)
+		expects_lr<states::account_reward> transaction_context::apply_account_reward(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const decimal& incoming_absolute_fee, const decimal& incoming_relative_fee, const decimal& outgoing_absolute_fee, const decimal& outgoing_relative_fee)
 		{
-			States::AccountReward NewState = States::AccountReward(Owner, Block);
-			NewState.IncomingAbsoluteFee = IncomingAbsoluteFee;
-			NewState.IncomingRelativeFee = IncomingRelativeFee;
-			NewState.OutgoingAbsoluteFee = OutgoingAbsoluteFee;
-			NewState.OutgoingRelativeFee = OutgoingRelativeFee;
-			NewState.Asset = Asset;
+			states::account_reward new_state = states::account_reward(owner, block);
+			new_state.incoming_absolute_fee = incoming_absolute_fee;
+			new_state.incoming_relative_fee = incoming_relative_fee;
+			new_state.outgoing_absolute_fee = outgoing_absolute_fee;
+			new_state.outgoing_relative_fee = outgoing_relative_fee;
+			new_state.asset = asset;
 
-			auto Status = Store(&NewState);
-			if (!Status)
-				return Status.Error();
+			auto status = store(&new_state);
+			if (!status)
+				return status.error();
 
-			return NewState;
+			return new_state;
 		}
-		ExpectsLR<States::AccountDerivation> TransactionContext::ApplyAccountDerivation(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner, uint64_t MaxAddressIndex)
+		expects_lr<states::account_derivation> transaction_context::apply_account_derivation(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, uint64_t max_address_index)
 		{
-			States::AccountDerivation NewState = States::AccountDerivation(Owner, Block);
-			NewState.Asset = Asset;
-			NewState.MaxAddressIndex = MaxAddressIndex;
+			states::account_derivation new_state = states::account_derivation(owner, block);
+			new_state.asset = asset;
+			new_state.max_address_index = max_address_index;
 
-			auto Status = Store(&NewState);
-			if (!Status)
-				return Status.Error();
+			auto status = store(&new_state);
+			if (!status)
+				return status.error();
 
-			return NewState;
+			return new_state;
 		}
-		ExpectsLR<States::AccountDepository> TransactionContext::ApplyAccountDepositoryCustody(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner, const Decimal& Custody)
+		expects_lr<states::account_depository> transaction_context::apply_account_depository_custody(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const decimal& custody)
 		{
-			States::AccountDepository NewState = States::AccountDepository(Owner, Block);
-			NewState.Asset = Asset;
-			NewState.Custody = Custody.IsNaN() ? Decimal::Zero() : Custody;
+			states::account_depository new_state = states::account_depository(owner, block);
+			new_state.asset = asset;
+			new_state.custody = custody.is_nan() ? decimal::zero() : custody;
 
-			auto OldState = GetAccountDepository(Asset, Owner);
-			if (OldState)
+			auto old_state = get_account_depository(asset, owner);
+			if (old_state)
 			{
-				NewState.Contributions = std::move(OldState->Contributions);
-				NewState.Reservations = std::move(OldState->Reservations);
-				NewState.Transactions = std::move(OldState->Transactions);
-				NewState.Custody += OldState->Custody;
+				new_state.contributions = std::move(old_state->contributions);
+				new_state.reservations = std::move(old_state->reservations);
+				new_state.transactions = std::move(old_state->transactions);
+				new_state.custody += old_state->custody;
 			}
 
-			auto Status = Store(&NewState);
-			if (!Status)
-				return Status.Error();
+			auto status = store(&new_state);
+			if (!status)
+				return status.error();
 
-			Status = EmitEvent<States::AccountDepository>({ Format::Variable(Asset), Format::Variable(std::string_view((char*)Owner, sizeof(Algorithm::Pubkeyhash))), Format::Variable(Custody) });
-			if (!Status)
-				return Status.Error();
+			status = emit_event<states::account_depository>({ format::variable(asset), format::variable(std::string_view((char*)owner, sizeof(algorithm::pubkeyhash))), format::variable(custody) });
+			if (!status)
+				return status.error();
 
-			return NewState;
+			return new_state;
 		}
-		ExpectsLR<States::AccountDepository> TransactionContext::ApplyAccountDepositoryChange(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner, const Decimal& Custody, AddressValueMap&& Contributions, AccountValueMap&& Reservations)
+		expects_lr<states::account_depository> transaction_context::apply_account_depository_change(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const decimal& custody, address_value_map&& contributions, account_value_map&& reservations)
 		{
-			States::AccountDepository NewState = States::AccountDepository(Owner, Block);
-			NewState.Asset = Asset;
-			NewState.Custody = Custody.IsNaN() ? Decimal::Zero() : Custody;
-			NewState.Contributions = std::move(Contributions);
-			NewState.Reservations = std::move(Reservations);
+			states::account_depository new_state = states::account_depository(owner, block);
+			new_state.asset = asset;
+			new_state.custody = custody.is_nan() ? decimal::zero() : custody;
+			new_state.contributions = std::move(contributions);
+			new_state.reservations = std::move(reservations);
 
-			auto OldState = GetAccountDepository(Asset, Owner);
-			if (OldState)
+			auto old_state = get_account_depository(asset, owner);
+			if (old_state)
 			{
-				NewState.Transactions = std::move(OldState->Transactions);
-				NewState.Custody += OldState->Custody;
+				new_state.transactions = std::move(old_state->transactions);
+				new_state.custody += old_state->custody;
 
-				for (auto& Item : OldState->Reservations)
+				for (auto& item : old_state->reservations)
 				{
-					auto& Reservation = NewState.Reservations[Item.first];
-					Reservation = Reservation.IsNaN() ? Item.second : Reservation + Item.second;
+					auto& reservation = new_state.reservations[item.first];
+					reservation = reservation.is_nan() ? item.second : reservation + item.second;
 				}
 
-				for (auto& Item : OldState->Contributions)
+				for (auto& item : old_state->contributions)
 				{
-					auto& Contibution = NewState.Contributions[Item.first];
-					Contibution = Contibution.IsNaN() ? Item.second : Contibution + Item.second;
+					auto& contibution = new_state.contributions[item.first];
+					contibution = contibution.is_nan() ? item.second : contibution + item.second;
 				}
 			}
 
-			Decimal OldContribution = (OldState ? OldState->GetContribution() : Decimal::Zero());
-			Decimal NewContribution = NewState.GetContribution();
-			Decimal Coverage = NewContribution - OldContribution;
-			while (Coverage.IsPositive() && !NewState.Reservations.empty())
+			decimal old_contribution = (old_state ? old_state->get_contribution() : decimal::zero());
+			decimal new_contribution = new_state.get_contribution();
+			decimal coverage = new_contribution - old_contribution;
+			while (coverage.is_positive() && !new_state.reservations.empty())
 			{
-				auto Reservation = NewState.Reservations.begin();
-				auto Reserve = std::min(Coverage, Reservation->second);
-				auto Transfer = ApplyTransfer(Asset, (uint8_t*)Reservation->first.data(), Decimal::Zero(), -Reserve);
-				if (!Transfer)
-					return Transfer.Error();
+				auto reservation = new_state.reservations.begin();
+				auto reserve = std::min(coverage, reservation->second);
+				auto transfer = apply_transfer(asset, (uint8_t*)reservation->first.data(), decimal::zero(), -reserve);
+				if (!transfer)
+					return transfer.error();
 
-				Reservation->second -= Reserve;
-				if (Reservation->second.IsPositive())
+				reservation->second -= reserve;
+				if (reservation->second.is_positive())
 					break;
 
-				Coverage -= Reserve;
-				NewState.Reservations.erase(Reservation);
+				coverage -= reserve;
+				new_state.reservations.erase(reservation);
 			}
 
-			auto Status = Store(&NewState);
-			if (!Status)
-				return Status.Error();
+			auto status = store(&new_state);
+			if (!status)
+				return status.error();
 
-			Status = EmitEvent<States::AccountDepository>({ Format::Variable(Asset), Format::Variable(std::string_view((char*)Owner, sizeof(Algorithm::Pubkeyhash))), Format::Variable(Custody), Format::Variable(NewState.GetCoverage(0)) });
-			if (!Status)
-				return Status.Error();
+			status = emit_event<states::account_depository>({ format::variable(asset), format::variable(std::string_view((char*)owner, sizeof(algorithm::pubkeyhash))), format::variable(custody), format::variable(new_state.get_coverage(0)) });
+			if (!status)
+				return status.error();
 
-			return NewState;
+			return new_state;
 		}
-		ExpectsLR<States::AccountDepository> TransactionContext::ApplyAccountDepositoryTransaction(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner, const uint256_t& TransactionHash, int8_t Direction)
+		expects_lr<states::account_depository> transaction_context::apply_account_depository_transaction(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const uint256_t& transaction_hash, int8_t direction)
 		{
-			States::AccountDepository NewState = States::AccountDepository(Owner, Block);
-			NewState.Asset = Asset;
-			if (Direction > 0)
-				NewState.Transactions.insert(TransactionHash);
+			states::account_depository new_state = states::account_depository(owner, block);
+			new_state.asset = asset;
+			if (direction > 0)
+				new_state.transactions.insert(transaction_hash);
 
-			auto OldState = GetAccountDepository(Asset, Owner);
-			Decimal OldContribution = (OldState ? OldState->GetContribution() : Decimal::Zero());
-			if (OldState)
+			auto old_state = get_account_depository(asset, owner);
+			decimal old_contribution = (old_state ? old_state->get_contribution() : decimal::zero());
+			if (old_state)
 			{
-				NewState.Contributions = std::move(OldState->Contributions);
-				NewState.Reservations = std::move(OldState->Reservations);
-				NewState.Custody = std::move(OldState->Custody);
-				if (Direction <= 0)
+				new_state.contributions = std::move(old_state->contributions);
+				new_state.reservations = std::move(old_state->reservations);
+				new_state.custody = std::move(old_state->custody);
+				if (direction <= 0)
 				{
-					NewState.Transactions = std::move(OldState->Transactions);
-					auto It = NewState.Transactions.find(TransactionHash);
-					if (It == NewState.Transactions.end())
-						return LayerException("transaction hash not found");
+					new_state.transactions = std::move(old_state->transactions);
+					auto it = new_state.transactions.find(transaction_hash);
+					if (it == new_state.transactions.end())
+						return layer_exception("transaction hash not found");
 
-					NewState.Transactions.erase(It);
+					new_state.transactions.erase(it);
 				}
 				else
 				{
-					for (auto& Item : OldState->Transactions)
-						NewState.Transactions.insert(Item);
+					for (auto& item : old_state->transactions)
+						new_state.transactions.insert(item);
 				}
 			}
 
-			auto Status = Store(&NewState);
-			if (!Status)
-				return Status.Error();
+			auto status = store(&new_state);
+			if (!status)
+				return status.error();
 
-			Status = EmitEvent<States::AccountDepository>({ Format::Variable(Asset), Format::Variable(std::string_view((char*)Owner, sizeof(Algorithm::Pubkeyhash))), Format::Variable(TransactionHash), Format::Variable(Direction > 0) });
-			if (!Status)
-				return Status.Error();
+			status = emit_event<states::account_depository>({ format::variable(asset), format::variable(std::string_view((char*)owner, sizeof(algorithm::pubkeyhash))), format::variable(transaction_hash), format::variable(direction > 0) });
+			if (!status)
+				return status.error();
 
-			return NewState;
+			return new_state;
 		}
-		ExpectsLR<States::WitnessProgram> TransactionContext::ApplyWitnessProgram(const std::string_view& PackedProgramCode)
+		expects_lr<states::witness_program> transaction_context::apply_witness_program(const std::string_view& packed_program_code)
 		{
-			States::WitnessProgram NewState = States::WitnessProgram(Block);
-			NewState.Storage = PackedProgramCode;
+			states::witness_program new_state = states::witness_program(block);
+			new_state.storage = packed_program_code;
 
-			auto Status = Store(&NewState);
-			if (!Status)
-				return Status.Error();
+			auto status = store(&new_state);
+			if (!status)
+				return status.error();
 
-			return NewState;
+			return new_state;
 		}
-		ExpectsLR<States::WitnessEvent> TransactionContext::ApplyWitnessEvent(const uint256_t& ParentTransactionHash, const uint256_t& ChildTransactionHash)
+		expects_lr<states::witness_event> transaction_context::apply_witness_event(const uint256_t& parent_transaction_hash, const uint256_t& child_transaction_hash)
 		{
-			States::WitnessEvent NewState = States::WitnessEvent(Block);
-			NewState.ParentTransactionHash = ParentTransactionHash;
-			NewState.ChildTransactionHash = ChildTransactionHash;
+			states::witness_event new_state = states::witness_event(block);
+			new_state.parent_transaction_hash = parent_transaction_hash;
+			new_state.child_transaction_hash = child_transaction_hash;
 
-			auto Status = Store(&NewState);
-			if (!Status)
-				return Status.Error();
+			auto status = store(&new_state);
+			if (!status)
+				return status.error();
 
-			return NewState;
+			return new_state;
 		}
-		ExpectsLR<States::WitnessAddress> TransactionContext::ApplyWitnessAddress(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner, const Algorithm::Pubkeyhash Proposer, const AddressMap& Addresses, uint64_t AddressIndex, States::AddressType Purpose)
+		expects_lr<states::witness_address> transaction_context::apply_witness_address(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const algorithm::pubkeyhash proposer, const address_map& addresses, uint64_t address_index, states::address_type purpose)
 		{
-			if (Addresses.empty())
-				return LayerException("invalid operation");
+			if (addresses.empty())
+				return layer_exception("invalid operation");
 
-			auto* Chain = NSS::ServerNode::Get()->GetChain(Asset);
-			if (!Chain)
-				return LayerException("invalid operation");
+			auto* chain = nss::server_node::get()->get_chain(asset);
+			if (!chain)
+				return layer_exception("invalid operation");
 
-			OrderedMap<String, AddressMap> Segments;
-			for (auto& Address : Addresses)
+			ordered_map<string, address_map> segments;
+			for (auto& address : addresses)
 			{
-				auto Hash = Chain->NewPublicKeyHash(Address.second);
-				if (Hash)
-					Segments[*Hash][Address.first] = Address.second;
+				auto hash = chain->new_public_key_hash(address.second);
+				if (hash)
+					segments[*hash][address.first] = address.second;
 				else
-					Segments[Address.second][Address.first] = Address.second;
+					segments[address.second][address.first] = address.second;
 			}
 
-			States::WitnessAddress NewState = States::WitnessAddress(nullptr, nullptr);
-			for (auto& Segment : Segments)
+			states::witness_address new_state = states::witness_address(nullptr, nullptr);
+			for (auto& segment : segments)
 			{
-				NewState = States::WitnessAddress(Owner, Block);
-				NewState.SetProposer(Proposer);
-				NewState.AddressIndex = AddressIndex;
-				NewState.Addresses = std::move(Segment.second);
-				NewState.Asset = Asset;
-				NewState.Purpose = Purpose;
+				new_state = states::witness_address(owner, block);
+				new_state.set_proposer(proposer);
+				new_state.address_index = address_index;
+				new_state.addresses = std::move(segment.second);
+				new_state.asset = asset;
+				new_state.purpose = purpose;
 
-				auto Status = Store(&NewState);
-				if (!Status)
-					return Status.Error();
+				auto status = store(&new_state);
+				if (!status)
+					return status.error();
 
-				Format::Variables Event = { Format::Variable(Asset), Format::Variable((uint8_t)Purpose), Format::Variable(AddressIndex) };
-				for (auto& Address : NewState.Addresses)
-					Event.push_back(Format::Variable(Address.second));
+				format::variables event = { format::variable(asset), format::variable((uint8_t)purpose), format::variable(address_index) };
+				for (auto& address : new_state.addresses)
+					event.push_back(format::variable(address.second));
 
-				Status = EmitEvent<States::WitnessAddress>(std::move(Event));
-				if (!Status)
-					return Status.Error();
+				status = emit_event<states::witness_address>(std::move(event));
+				if (!status)
+					return status.error();
 
 			}
-			return NewState;
+			return new_state;
 		}
-		ExpectsLR<States::WitnessTransaction> TransactionContext::ApplyWitnessTransaction(const Algorithm::AssetId& Asset, const std::string_view& TransactionId)
+		expects_lr<states::witness_transaction> transaction_context::apply_witness_transaction(const algorithm::asset_id& asset, const std::string_view& transaction_id)
 		{
-			States::WitnessTransaction NewState = States::WitnessTransaction(Block);
-			NewState.TransactionId = TransactionId;
-			NewState.Asset = Asset;
+			states::witness_transaction new_state = states::witness_transaction(block);
+			new_state.transaction_id = transaction_id;
+			new_state.asset = asset;
 
-			auto Status = Store(&NewState);
-			if (!Status)
-				return Status.Error();
+			auto status = store(&new_state);
+			if (!status)
+				return status.error();
 
-			Status = EmitEvent<States::WitnessTransaction>({ Format::Variable(Asset), Format::Variable(TransactionId) });
-			if (!Status)
-				return Status.Error();
+			status = emit_event<states::witness_transaction>({ format::variable(asset), format::variable(transaction_id) });
+			if (!status)
+				return status.error();
 
-			return NewState;
+			return new_state;
 		}
-		ExpectsLR<States::AccountBalance> TransactionContext::ApplyTransfer(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner, const Decimal& Supply, const Decimal& Reserve)
+		expects_lr<states::account_balance> transaction_context::apply_transfer(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const decimal& supply, const decimal& reserve)
 		{
-			States::AccountBalance NewState = States::AccountBalance(Owner, Block);
-			NewState.Asset = Asset;
-			NewState.Supply = Supply;
-			NewState.Reserve = Reserve;
+			states::account_balance new_state = states::account_balance(owner, block);
+			new_state.asset = asset;
+			new_state.supply = supply;
+			new_state.reserve = reserve;
 
-			auto Status = Store(&NewState);
-			if (!Status)
-				return Status.Error();
+			auto status = store(&new_state);
+			if (!status)
+				return status.error();
 
-			Status = EmitEvent<States::AccountBalance>({ Format::Variable(Asset), Format::Variable(std::string_view((char*)Owner, sizeof(Algorithm::Pubkeyhash))), Format::Variable(Supply), Format::Variable(Reserve) });
-			if (!Status)
-				return Status.Error();
+			status = emit_event<states::account_balance>({ format::variable(asset), format::variable(std::string_view((char*)owner, sizeof(algorithm::pubkeyhash))), format::variable(supply), format::variable(reserve) });
+			if (!status)
+				return status.error();
 
-			return NewState;
+			return new_state;
 		}
-		ExpectsLR<States::AccountBalance> TransactionContext::ApplyPayment(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash From, const Algorithm::Pubkeyhash To, const Decimal& Value)
+		expects_lr<states::account_balance> transaction_context::apply_payment(const algorithm::asset_id& asset, const algorithm::pubkeyhash from, const algorithm::pubkeyhash to, const decimal& value)
 		{
-			States::AccountBalance NewState1 = States::AccountBalance(From, Block);
-			NewState1.Asset = Asset;
-			NewState1.Supply = -Value;
-			if (!memcmp(From, To, sizeof(Algorithm::Pubkeyhash)))
-				return NewState1;
+			states::account_balance new_state1 = states::account_balance(from, block);
+			new_state1.asset = asset;
+			new_state1.supply = -value;
+			if (!memcmp(from, to, sizeof(algorithm::pubkeyhash)))
+				return new_state1;
 
-			auto Status = Store(&NewState1);
-			if (!Status)
-				return Status.Error();
+			auto status = store(&new_state1);
+			if (!status)
+				return status.error();
 
-			States::AccountBalance NewState2 = States::AccountBalance(To, Block);
-			NewState2.Asset = Asset;
-			NewState2.Supply = Value;
+			states::account_balance new_state2 = states::account_balance(to, block);
+			new_state2.asset = asset;
+			new_state2.supply = value;
 
-			Status = Store(&NewState2);
-			if (!Status)
-				return Status.Error();
+			status = store(&new_state2);
+			if (!status)
+				return status.error();
 
-			Status = EmitEvent<States::AccountBalance>({ Format::Variable(Asset), Format::Variable(std::string_view((char*)From, sizeof(Algorithm::Pubkeyhash))), Format::Variable(std::string_view((char*)To, sizeof(Algorithm::Pubkeyhash))), Format::Variable(Value) });
-			if (!Status)
-				return Status.Error();
+			status = emit_event<states::account_balance>({ format::variable(asset), format::variable(std::string_view((char*)from, sizeof(algorithm::pubkeyhash))), format::variable(std::string_view((char*)to, sizeof(algorithm::pubkeyhash))), format::variable(value) });
+			if (!status)
+				return status.error();
 
-			return NewState1;
+			return new_state1;
 		}
-		ExpectsLR<States::AccountBalance> TransactionContext::ApplyFunding(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash From, const Algorithm::Pubkeyhash To, const Decimal& Value)
+		expects_lr<states::account_balance> transaction_context::apply_funding(const algorithm::asset_id& asset, const algorithm::pubkeyhash from, const algorithm::pubkeyhash to, const decimal& value)
 		{
-			States::AccountBalance NewState1 = States::AccountBalance(From, Block);
-			NewState1.Asset = Asset;
-			NewState1.Supply = -Value;
-			if (!memcmp(From, To, sizeof(Algorithm::Pubkeyhash)))
-				return NewState1;
+			states::account_balance new_state1 = states::account_balance(from, block);
+			new_state1.asset = asset;
+			new_state1.supply = -value;
+			if (!memcmp(from, to, sizeof(algorithm::pubkeyhash)))
+				return new_state1;
 
-			auto Status = Store(&NewState1, false);
-			if (!Status)
-				return Status.Error();
+			auto status = store(&new_state1, false);
+			if (!status)
+				return status.error();
 
-			States::AccountBalance NewState2 = States::AccountBalance(To, Block);
-			NewState2.Asset = Asset;
-			NewState2.Supply = Value;
+			states::account_balance new_state2 = states::account_balance(to, block);
+			new_state2.asset = asset;
+			new_state2.supply = value;
 
-			Status = Store(&NewState2, false);
-			if (!Status)
-				return Status.Error();
+			status = store(&new_state2, false);
+			if (!status)
+				return status.error();
 
-			Status = EmitEvent<States::AccountBalance>({ Format::Variable(Asset), Format::Variable(std::string_view((char*)From, sizeof(Algorithm::Pubkeyhash))), Format::Variable(std::string_view((char*)To, sizeof(Algorithm::Pubkeyhash))), Format::Variable(Value) }, false);
-			if (!Status)
-				return Status.Error();
+			status = emit_event<states::account_balance>({ format::variable(asset), format::variable(std::string_view((char*)from, sizeof(algorithm::pubkeyhash))), format::variable(std::string_view((char*)to, sizeof(algorithm::pubkeyhash))), format::variable(value) }, false);
+			if (!status)
+				return status.error();
 
-			return NewState1;
+			return new_state1;
 		}
-		ExpectsLR<States::AccountSequence> TransactionContext::GetAccountSequence(const Algorithm::Pubkeyhash Owner) const
+		expects_lr<states::account_sequence> transaction_context::get_account_sequence(const algorithm::pubkeyhash owner) const
 		{
-			VI_ASSERT(Owner != nullptr, "owner should be set");
-			auto Chain = Storages::Chainstate(__func__);
-			auto State = Chain.GetUniformByIndex(&Delta, States::AccountSequence::AsInstanceIndex(Owner), GetValidationNonce());
-			if (!State)
-				return State.Error();
+			VI_ASSERT(owner != nullptr, "owner should be set");
+			auto chain = storages::chainstate(__func__);
+			auto state = chain.get_uniform_by_index(&delta, states::account_sequence::as_instance_index(owner), get_validation_nonce());
+			if (!state)
+				return state.error();
 
-			auto Status = ((TransactionContext*)this)->Load(**State, Chain.QueryUsed());
-			if (!Status)
-				return Status.Error();
+			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
+			if (!status)
+				return status.error();
 
-			return States::AccountSequence(std::move(*(States::AccountSequence*)**State));
+			return states::account_sequence(std::move(*(states::account_sequence*)**state));
 		}
-		ExpectsLR<States::AccountWork> TransactionContext::GetAccountWork(const Algorithm::Pubkeyhash Owner) const
+		expects_lr<states::account_work> transaction_context::get_account_work(const algorithm::pubkeyhash owner) const
 		{
-			VI_ASSERT(Owner != nullptr, "owner should be set");
-			Algorithm::Pubkeyhash Null = { 0 };
-			auto Chain = Storages::Chainstate(__func__);
-			auto State = Chain.GetMultiformByComposition(&Delta, States::AccountWork::AsInstanceColumn(Owner), States::AccountWork::AsInstanceRow(), GetValidationNonce());
-			if (!State)
+			VI_ASSERT(owner != nullptr, "owner should be set");
+			algorithm::pubkeyhash null = { 0 };
+			auto chain = storages::chainstate(__func__);
+			auto state = chain.get_multiform_by_composition(&delta, states::account_work::as_instance_column(owner), states::account_work::as_instance_row(), get_validation_nonce());
+			if (!state)
 			{
-				if (memcmp(Owner, Environment ? Environment->Proposer.PublicKeyHash : Null, sizeof(Null)) != 0)
-					return State.Error();
+				if (memcmp(owner, environment ? environment->proposer.public_key_hash : null, sizeof(null)) != 0)
+					return state.error();
 
-				States::AccountWork Result = States::AccountWork(Owner, Block);
-				return Result;
+				states::account_work result = states::account_work(owner, block);
+				return result;
 			}
 
-			auto Status = ((TransactionContext*)this)->Load(**State, Chain.QueryUsed());
-			if (!Status)
+			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
+			if (!status)
 			{
-				if (memcmp(Owner, Environment ? Environment->Proposer.PublicKeyHash : Null, sizeof(Null)) != 0)
-					return Status.Error();
+				if (memcmp(owner, environment ? environment->proposer.public_key_hash : null, sizeof(null)) != 0)
+					return status.error();
 
-				States::AccountWork Result = States::AccountWork(Owner, Block);
-				return Result;
+				states::account_work result = states::account_work(owner, block);
+				return result;
 			}
 
-			return States::AccountWork(std::move(*(States::AccountWork*)**State));
+			return states::account_work(std::move(*(states::account_work*)**state));
 		}
-		ExpectsLR<States::AccountObserver> TransactionContext::GetAccountObserver(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner) const
+		expects_lr<states::account_observer> transaction_context::get_account_observer(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner) const
 		{
-			VI_ASSERT(Owner != nullptr, "owner should be set");
-			Algorithm::Pubkeyhash Null = { 0 };
-			auto Chain = Storages::Chainstate(__func__);
-			auto State = Chain.GetMultiformByComposition(&Delta, States::AccountObserver::AsInstanceColumn(Owner), States::AccountObserver::AsInstanceRow(Asset), GetValidationNonce());
-			if (!State)
+			VI_ASSERT(owner != nullptr, "owner should be set");
+			algorithm::pubkeyhash null = { 0 };
+			auto chain = storages::chainstate(__func__);
+			auto state = chain.get_multiform_by_composition(&delta, states::account_observer::as_instance_column(owner), states::account_observer::as_instance_row(asset), get_validation_nonce());
+			if (!state)
 			{
-				if (memcmp(Owner, Environment ? Environment->Proposer.PublicKeyHash : Null, sizeof(Null)) != 0)
-					return State.Error();
+				if (memcmp(owner, environment ? environment->proposer.public_key_hash : null, sizeof(null)) != 0)
+					return state.error();
 
-				States::AccountObserver Result = States::AccountObserver(Owner, Block);
-				return Result;
+				states::account_observer result = states::account_observer(owner, block);
+				return result;
 			}
 
-			auto Status = ((TransactionContext*)this)->Load(**State, Chain.QueryUsed());
-			if (!Status)
+			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
+			if (!status)
 			{
-				if (memcmp(Owner, Environment ? Environment->Proposer.PublicKeyHash : Null, sizeof(Null)) != 0)
-					return Status.Error();
+				if (memcmp(owner, environment ? environment->proposer.public_key_hash : null, sizeof(null)) != 0)
+					return status.error();
 
-				States::AccountObserver Result = States::AccountObserver(Owner, Block);
-				return Result;
+				states::account_observer result = states::account_observer(owner, block);
+				return result;
 			}
 
-			return States::AccountObserver(std::move(*(States::AccountObserver*)**State));
+			return states::account_observer(std::move(*(states::account_observer*)**state));
 		}
-		ExpectsLR<Vector<States::AccountObserver>> TransactionContext::GetAccountObservers(const Algorithm::Pubkeyhash Owner, size_t Offset, size_t Count) const
+		expects_lr<vector<states::account_observer>> transaction_context::get_account_observers(const algorithm::pubkeyhash owner, size_t offset, size_t count) const
 		{
-			auto Chain = Storages::Chainstate(__func__);
-			auto States = Chain.GetMultiformsByColumn(&Delta, States::AccountObserver::AsInstanceColumn(Owner), GetValidationNonce(), Offset, Count);
-			if (!States)
-				return States.Error();
+			auto chain = storages::chainstate(__func__);
+			auto states = chain.get_multiforms_by_column(&delta, states::account_observer::as_instance_column(owner), get_validation_nonce(), offset, count);
+			if (!states)
+				return states.error();
 
-			if (!States->empty())
+			if (!states->empty())
 			{
-				auto Status = ((TransactionContext*)this)->Load(*States->front(), Chain.QueryUsed());
-				if (!Status)
-					return Status.Error();
+				auto status = ((transaction_context*)this)->load(*states->front(), chain.query_used());
+				if (!status)
+					return status.error();
 			}
 
-			Vector<States::AccountObserver> Addresses;
-			Addresses.reserve(States->size());
-			for (auto& State : *States)
-				Addresses.emplace_back(std::move(*(States::AccountObserver*)*State));
-			return Addresses;
+			vector<states::account_observer> addresses;
+			addresses.reserve(states->size());
+			for (auto& state : *states)
+				addresses.emplace_back(std::move(*(states::account_observer*)*state));
+			return addresses;
 		}
-		ExpectsLR<States::AccountProgram> TransactionContext::GetAccountProgram(const Algorithm::Pubkeyhash Owner) const
+		expects_lr<states::account_program> transaction_context::get_account_program(const algorithm::pubkeyhash owner) const
 		{
-			VI_ASSERT(Owner != nullptr, "owner should be set");
-			auto Chain = Storages::Chainstate(__func__);
-			auto State = Chain.GetUniformByIndex(&Delta, States::AccountProgram::AsInstanceIndex(Owner), GetValidationNonce());
-			if (!State)
-				return State.Error();
+			VI_ASSERT(owner != nullptr, "owner should be set");
+			auto chain = storages::chainstate(__func__);
+			auto state = chain.get_uniform_by_index(&delta, states::account_program::as_instance_index(owner), get_validation_nonce());
+			if (!state)
+				return state.error();
 
-			auto Status = ((TransactionContext*)this)->Load(**State, Chain.QueryUsed());
-			if (!Status)
-				return Status.Error();
+			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
+			if (!status)
+				return status.error();
 
-			return States::AccountProgram(std::move(*(States::AccountProgram*)**State));
+			return states::account_program(std::move(*(states::account_program*)**state));
 		}
-		ExpectsLR<States::AccountStorage> TransactionContext::GetAccountStorage(const Algorithm::Pubkeyhash Owner, const std::string_view& Location) const
+		expects_lr<states::account_storage> transaction_context::get_account_storage(const algorithm::pubkeyhash owner, const std::string_view& location) const
 		{
-			VI_ASSERT(Owner != nullptr, "owner should be set");
-			auto Chain = Storages::Chainstate(__func__);
-			auto State = Chain.GetUniformByIndex(&Delta, States::AccountStorage::AsInstanceIndex(Owner, Location), GetValidationNonce());
-			if (!State)
-				return State.Error();
+			VI_ASSERT(owner != nullptr, "owner should be set");
+			auto chain = storages::chainstate(__func__);
+			auto state = chain.get_uniform_by_index(&delta, states::account_storage::as_instance_index(owner, location), get_validation_nonce());
+			if (!state)
+				return state.error();
 
-			auto Status = ((TransactionContext*)this)->Load(**State, Chain.QueryUsed());
-			if (!Status)
-				return Status.Error();
+			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
+			if (!status)
+				return status.error();
 
-			return States::AccountStorage(std::move(*(States::AccountStorage*)**State));
+			return states::account_storage(std::move(*(states::account_storage*)**state));
 		}
-		ExpectsLR<States::AccountReward> TransactionContext::GetAccountReward(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner) const
+		expects_lr<states::account_reward> transaction_context::get_account_reward(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner) const
 		{
-			VI_ASSERT(Owner != nullptr, "owner should be set");
-			auto Chain = Storages::Chainstate(__func__);
-			auto State = Chain.GetMultiformByComposition(&Delta, States::AccountReward::AsInstanceColumn(Owner), States::AccountReward::AsInstanceRow(Asset), GetValidationNonce());
-			if (!State)
-				return State.Error();
+			VI_ASSERT(owner != nullptr, "owner should be set");
+			auto chain = storages::chainstate(__func__);
+			auto state = chain.get_multiform_by_composition(&delta, states::account_reward::as_instance_column(owner), states::account_reward::as_instance_row(asset), get_validation_nonce());
+			if (!state)
+				return state.error();
 
-			auto Status = ((TransactionContext*)this)->Load(**State, Chain.QueryUsed());
-			if (!Status)
-				return Status.Error();
+			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
+			if (!status)
+				return status.error();
 
-			return States::AccountReward(std::move(*(States::AccountReward*)**State));
+			return states::account_reward(std::move(*(states::account_reward*)**state));
 		}
-		ExpectsLR<States::AccountBalance> TransactionContext::GetAccountBalance(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner) const
+		expects_lr<states::account_balance> transaction_context::get_account_balance(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner) const
 		{
-			VI_ASSERT(Owner != nullptr, "owner should be set");
-			auto Chain = Storages::Chainstate(__func__);
-			auto State = Chain.GetMultiformByComposition(&Delta, States::AccountBalance::AsInstanceColumn(Owner), States::AccountBalance::AsInstanceRow(Asset), GetValidationNonce());
-			if (!State)
-				return State.Error();
+			VI_ASSERT(owner != nullptr, "owner should be set");
+			auto chain = storages::chainstate(__func__);
+			auto state = chain.get_multiform_by_composition(&delta, states::account_balance::as_instance_column(owner), states::account_balance::as_instance_row(asset), get_validation_nonce());
+			if (!state)
+				return state.error();
 
-			auto Status = ((TransactionContext*)this)->Load(**State, Chain.QueryUsed());
-			if (!Status)
-				return Status.Error();
+			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
+			if (!status)
+				return status.error();
 
-			return States::AccountBalance(std::move(*(States::AccountBalance*)**State));
+			return states::account_balance(std::move(*(states::account_balance*)**state));
 		}
-		ExpectsLR<States::AccountDepository> TransactionContext::GetAccountDepository(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner) const
+		expects_lr<states::account_depository> transaction_context::get_account_depository(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner) const
 		{
-			VI_ASSERT(Owner != nullptr, "owner should be set");
-			auto Chain = Storages::Chainstate(__func__);
-			auto State = Chain.GetMultiformByComposition(&Delta, States::AccountDepository::AsInstanceColumn(Owner), States::AccountDepository::AsInstanceRow(Asset), GetValidationNonce());
-			if (!State)
-				return State.Error();
+			VI_ASSERT(owner != nullptr, "owner should be set");
+			auto chain = storages::chainstate(__func__);
+			auto state = chain.get_multiform_by_composition(&delta, states::account_depository::as_instance_column(owner), states::account_depository::as_instance_row(asset), get_validation_nonce());
+			if (!state)
+				return state.error();
 
-			auto Status = ((TransactionContext*)this)->Load(**State, Chain.QueryUsed());
-			if (!Status)
-				return Status.Error();
+			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
+			if (!status)
+				return status.error();
 
-			return States::AccountDepository(std::move(*(States::AccountDepository*)**State));
+			return states::account_depository(std::move(*(states::account_depository*)**state));
 		}
-		ExpectsLR<States::AccountDerivation> TransactionContext::GetAccountDerivation(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner) const
+		expects_lr<states::account_derivation> transaction_context::get_account_derivation(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner) const
 		{
-			VI_ASSERT(Owner != nullptr, "owner should be set");
-			auto Chain = Storages::Chainstate(__func__);
-			auto State = Chain.GetUniformByIndex(&Delta, States::AccountDerivation::AsInstanceIndex(Owner, Asset), GetValidationNonce());
-			if (!State)
-				return State.Error();
+			VI_ASSERT(owner != nullptr, "owner should be set");
+			auto chain = storages::chainstate(__func__);
+			auto state = chain.get_uniform_by_index(&delta, states::account_derivation::as_instance_index(owner, asset), get_validation_nonce());
+			if (!state)
+				return state.error();
 
-			auto Status = ((TransactionContext*)this)->Load(**State, Chain.QueryUsed());
-			if (!Status)
-				return Status.Error();
+			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
+			if (!status)
+				return status.error();
 
-			return States::AccountDerivation(std::move(*(States::AccountDerivation*)**State));
+			return states::account_derivation(std::move(*(states::account_derivation*)**state));
 		}
-		ExpectsLR<States::WitnessProgram> TransactionContext::GetWitnessProgram(const std::string_view& ProgramHashcode) const
+		expects_lr<states::witness_program> transaction_context::get_witness_program(const std::string_view& program_hashcode) const
 		{
-			auto Chain = Storages::Chainstate(__func__);
-			auto State = Chain.GetUniformByIndex(&Delta, States::WitnessProgram::AsInstanceIndex(ProgramHashcode), GetValidationNonce());
-			if (!State)
-				return State.Error();
+			auto chain = storages::chainstate(__func__);
+			auto state = chain.get_uniform_by_index(&delta, states::witness_program::as_instance_index(program_hashcode), get_validation_nonce());
+			if (!state)
+				return state.error();
 
-			auto Status = ((TransactionContext*)this)->Load(**State, Chain.QueryUsed());
-			if (!Status)
-				return Status.Error();
+			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
+			if (!status)
+				return status.error();
 
-			return States::WitnessProgram(std::move(*(States::WitnessProgram*)**State));
+			return states::witness_program(std::move(*(states::witness_program*)**state));
 		}
-		ExpectsLR<States::WitnessEvent> TransactionContext::GetWitnessEvent(const uint256_t& ParentTransactionHash) const
+		expects_lr<states::witness_event> transaction_context::get_witness_event(const uint256_t& parent_transaction_hash) const
 		{
-			auto Chain = Storages::Chainstate(__func__);
-			auto State = Chain.GetUniformByIndex(&Delta, States::WitnessEvent::AsInstanceIndex(ParentTransactionHash), GetValidationNonce());
-			if (!State)
-				return State.Error();
+			auto chain = storages::chainstate(__func__);
+			auto state = chain.get_uniform_by_index(&delta, states::witness_event::as_instance_index(parent_transaction_hash), get_validation_nonce());
+			if (!state)
+				return state.error();
 
-			auto Status = ((TransactionContext*)this)->Load(**State, Chain.QueryUsed());
-			if (!Status)
-				return Status.Error();
+			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
+			if (!status)
+				return status.error();
 
-			return States::WitnessEvent(std::move(*(States::WitnessEvent*)**State));
+			return states::witness_event(std::move(*(states::witness_event*)**state));
 		}
-		ExpectsLR<Vector<States::WitnessAddress>> TransactionContext::GetWitnessAddresses(const Algorithm::Pubkeyhash Owner, size_t Offset, size_t Count) const
+		expects_lr<vector<states::witness_address>> transaction_context::get_witness_addresses(const algorithm::pubkeyhash owner, size_t offset, size_t count) const
 		{
-			auto Chain = Storages::Chainstate(__func__);
-			auto States = Chain.GetMultiformsByColumn(&Delta, States::WitnessAddress::AsInstanceColumn(Owner), GetValidationNonce(), Offset, Count);
-			if (!States)
-				return States.Error();
+			auto chain = storages::chainstate(__func__);
+			auto states = chain.get_multiforms_by_column(&delta, states::witness_address::as_instance_column(owner), get_validation_nonce(), offset, count);
+			if (!states)
+				return states.error();
 
-			if (!States->empty())
+			if (!states->empty())
 			{
-				auto Status = ((TransactionContext*)this)->Load(*States->front(), Chain.QueryUsed());
-				if (!Status)
-					return Status.Error();
+				auto status = ((transaction_context*)this)->load(*states->front(), chain.query_used());
+				if (!status)
+					return status.error();
 			}
 
-			Vector<States::WitnessAddress> Addresses;
-			Addresses.reserve(States->size());
-			for (auto& State : *States)
-				Addresses.emplace_back(std::move(*(States::WitnessAddress*)*State));
-			return Addresses;
+			vector<states::witness_address> addresses;
+			addresses.reserve(states->size());
+			for (auto& state : *states)
+				addresses.emplace_back(std::move(*(states::witness_address*)*state));
+			return addresses;
 		}
-		ExpectsLR<Vector<States::WitnessAddress>> TransactionContext::GetWitnessAddressesByPurpose(const Algorithm::Pubkeyhash Owner, States::AddressType Purpose, size_t Offset, size_t Count) const
+		expects_lr<vector<states::witness_address>> transaction_context::get_witness_addresses_by_purpose(const algorithm::pubkeyhash owner, states::address_type purpose, size_t offset, size_t count) const
 		{
-			auto Chain = Storages::Chainstate(__func__);
-			auto Filter = Storages::FactorFilter::Equal((int64_t)Purpose, 1);
-			auto States = Chain.GetMultiformsByColumnFilter(&Delta, States::WitnessAddress::AsInstanceColumn(Owner), Filter, GetValidationNonce(), Storages::FactorRangeWindow(Offset, Count));
-			if (!States)
-				return States.Error();
+			auto chain = storages::chainstate(__func__);
+			auto filter = storages::factor_filter::equal((int64_t)purpose, 1);
+			auto states = chain.get_multiforms_by_column_filter(&delta, states::witness_address::as_instance_column(owner), filter, get_validation_nonce(), storages::factor_range_window(offset, count));
+			if (!states)
+				return states.error();
 
-			if (!States->empty())
+			if (!states->empty())
 			{
-				auto Status = ((TransactionContext*)this)->Load(*States->front(), Chain.QueryUsed());
-				if (!Status)
-					return Status.Error();
+				auto status = ((transaction_context*)this)->load(*states->front(), chain.query_used());
+				if (!status)
+					return status.error();
 			}
 
-			Vector<States::WitnessAddress> Addresses;
-			Addresses.reserve(States->size());
-			for (auto& State : *States)
-				Addresses.emplace_back(std::move(*(States::WitnessAddress*)*State));
-			return Addresses;
+			vector<states::witness_address> addresses;
+			addresses.reserve(states->size());
+			for (auto& state : *states)
+				addresses.emplace_back(std::move(*(states::witness_address*)*state));
+			return addresses;
 		}
-		ExpectsLR<States::WitnessAddress> TransactionContext::GetWitnessAddress(const Algorithm::AssetId& Asset, const Algorithm::Pubkeyhash Owner, const std::string_view& Address, uint64_t AddressIndex) const
+		expects_lr<states::witness_address> transaction_context::get_witness_address(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const std::string_view& address, uint64_t address_index) const
 		{
-			auto Chain = Storages::Chainstate(__func__);
-			auto State = Chain.GetMultiformByComposition(&Delta, States::WitnessAddress::AsInstanceColumn(Owner), States::WitnessAddress::AsInstanceRow(Asset, Address, AddressIndex), GetValidationNonce());
-			if (!State)
-				return State.Error();
+			auto chain = storages::chainstate(__func__);
+			auto state = chain.get_multiform_by_composition(&delta, states::witness_address::as_instance_column(owner), states::witness_address::as_instance_row(asset, address, address_index), get_validation_nonce());
+			if (!state)
+				return state.error();
 
-			auto Status = ((TransactionContext*)this)->Load(**State, Chain.QueryUsed());
-			if (!Status)
-				return Status.Error();
+			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
+			if (!status)
+				return status.error();
 
-			return States::WitnessAddress(std::move(*(States::WitnessAddress*)**State));
+			return states::witness_address(std::move(*(states::witness_address*)**state));
 		}
-		ExpectsLR<States::WitnessAddress> TransactionContext::GetWitnessAddress(const Algorithm::AssetId& Asset, const std::string_view& Address, uint64_t AddressIndex, size_t Offset) const
+		expects_lr<states::witness_address> transaction_context::get_witness_address(const algorithm::asset_id& asset, const std::string_view& address, uint64_t address_index, size_t offset) const
 		{
-			auto Chain = Storages::Chainstate(__func__);
-			auto State = Chain.GetMultiformByRow(&Delta, States::WitnessAddress::AsInstanceRow(Asset, Address, AddressIndex), GetValidationNonce(), Offset);
-			if (!State)
-				return State.Error();
+			auto chain = storages::chainstate(__func__);
+			auto state = chain.get_multiform_by_row(&delta, states::witness_address::as_instance_row(asset, address, address_index), get_validation_nonce(), offset);
+			if (!state)
+				return state.error();
 
-			auto Status = ((TransactionContext*)this)->Load(**State, Chain.QueryUsed());
-			if (!Status)
-				return Status.Error();
+			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
+			if (!status)
+				return status.error();
 
-			return States::WitnessAddress(std::move(*(States::WitnessAddress*)**State));
+			return states::witness_address(std::move(*(states::witness_address*)**state));
 		}
-		ExpectsLR<States::WitnessTransaction> TransactionContext::GetWitnessTransaction(const Algorithm::AssetId& Asset, const std::string_view& TransactionId) const
+		expects_lr<states::witness_transaction> transaction_context::get_witness_transaction(const algorithm::asset_id& asset, const std::string_view& transaction_id) const
 		{
-			auto Chain = Storages::Chainstate(__func__);
-			auto State = Chain.GetUniformByIndex(&Delta, States::WitnessTransaction::AsInstanceIndex(Asset, TransactionId), GetValidationNonce());
-			if (!State)
-				return State.Error();
+			auto chain = storages::chainstate(__func__);
+			auto state = chain.get_uniform_by_index(&delta, states::witness_transaction::as_instance_index(asset, transaction_id), get_validation_nonce());
+			if (!state)
+				return state.error();
 
-			auto Status = ((TransactionContext*)this)->Load(**State, Chain.QueryUsed());
-			if (!Status)
-				return Status.Error();
+			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
+			if (!status)
+				return status.error();
 
-			return States::WitnessTransaction(std::move(*(States::WitnessTransaction*)**State));
+			return states::witness_transaction(std::move(*(states::witness_transaction*)**state));
 		}
-		ExpectsLR<Ledger::BlockTransaction> TransactionContext::GetBlockTransactionInstance(const uint256_t& TransactionHash) const
+		expects_lr<ledger::block_transaction> transaction_context::get_block_transaction_instance(const uint256_t& transaction_hash) const
 		{
-			if (!TransactionHash)
-				return LayerException("block transaction not found");
+			if (!transaction_hash)
+				return layer_exception("block transaction not found");
 
-			auto Chain = Storages::Chainstate(__func__);
-			auto Candidate = Chain.GetBlockTransactionByHash(TransactionHash);
-			if (!Candidate || !Candidate->Transaction || !Candidate->Receipt.Successful)
-				return LayerException("block transaction not found");
+			auto chain = storages::chainstate(__func__);
+			auto candidate = chain.get_block_transaction_by_hash(transaction_hash);
+			if (!candidate || !candidate->transaction || !candidate->receipt.successful)
+				return layer_exception("block transaction not found");
 
-			if (Transaction && Transaction->Asset != Candidate->Transaction->Asset)
-				return LayerException("block transaction asset is distinct");
+			if (transaction && transaction->asset != candidate->transaction->asset)
+				return layer_exception("block transaction asset is distinct");
 
-			if (Candidate->Receipt.TransactionHash != TransactionHash && Candidate->Transaction->AsType() == Transactions::Rollup::AsInstanceType())
-				Candidate = ((Transactions::Rollup*)*Candidate->Transaction)->ResolveBlockTransaction(Candidate->Receipt, TransactionHash);
+			if (candidate->receipt.transaction_hash != transaction_hash && candidate->transaction->as_type() == transactions::rollup::as_instance_type())
+				candidate = ((transactions::rollup*)*candidate->transaction)->resolve_block_transaction(candidate->receipt, transaction_hash);
 
-			return Candidate;
+			return candidate;
 		}
-		uint64_t TransactionContext::GetValidationNonce() const
+		uint64_t transaction_context::get_validation_nonce() const
 		{
-			if (!Environment)
-				return Block ? Block->Number : 0;
-			else if (!Environment->Validation.Tip)
-				return Block ? Block->Number : 1;
+			if (!environment)
+				return block ? block->number : 0;
+			else if (!environment->validation.tip)
+				return block ? block->number : 1;
 			return 0;
 		}
-		uint256_t TransactionContext::GetGasUse() const
+		uint256_t transaction_context::get_gas_use() const
 		{
-			return Receipt.RelativeGasUse;
+			return receipt.relative_gas_use;
 		}
-		uint256_t TransactionContext::GetGasLeft() const
+		uint256_t transaction_context::get_gas_left() const
 		{
-			if (!Transaction)
+			if (!transaction)
 				return 0;
 
-			return Transaction->GasLimit > Receipt.RelativeGasUse ? Transaction->GasLimit - Receipt.RelativeGasUse : uint256_t(0);
+			return transaction->gas_limit > receipt.relative_gas_use ? transaction->gas_limit - receipt.relative_gas_use : uint256_t(0);
 		}
-		Decimal TransactionContext::GetGasCost() const
+		decimal transaction_context::get_gas_cost() const
 		{
-			if (!Transaction || !Transaction->GasPrice.IsPositive())
+			if (!transaction || !transaction->gas_price.is_positive())
 				return 0;
 
-			return Transaction->GasPrice * GetGasUse().ToDecimal();
+			return transaction->gas_price * get_gas_use().to_decimal();
 		}
-		ExpectsLR<void> TransactionContext::ValidateTx(const Ledger::Transaction* NewTransaction, const uint256_t& NewTransactionHash, Algorithm::Pubkeyhash Owner)
+		expects_lr<void> transaction_context::validate_tx(const ledger::transaction* new_transaction, const uint256_t& new_transaction_hash, algorithm::pubkeyhash owner)
 		{
-			VI_ASSERT(NewTransaction && Owner, "transaction and owner should be set");
-			Algorithm::Pubkeyhash Null = { 0 };
-			if (!Algorithm::Signing::RecoverHash(NewTransactionHash, Owner, NewTransaction->Signature) || !memcmp(Owner, Null, sizeof(Null)))
-				return LayerException("invalid signature");
+			VI_ASSERT(new_transaction && owner, "transaction and owner should be set");
+			algorithm::pubkeyhash null = { 0 };
+			if (!algorithm::signing::recover_hash(new_transaction_hash, owner, new_transaction->signature) || !memcmp(owner, null, sizeof(null)))
+				return layer_exception("invalid signature");
 
-			auto Chain = Storages::Chainstate(__func__);
-			return NewTransaction->Validate(Chain.GetLatestBlockNumber().Or(1));
+			auto chain = storages::chainstate(__func__);
+			return new_transaction->validate(chain.get_latest_block_number().otherwise(1));
 		}
-		ExpectsLR<TransactionContext> TransactionContext::ExecuteTx(Ledger::Block* NewBlock, const Ledger::EvaluationContext* NewEnvironment, const Ledger::Transaction* NewTransaction, const uint256_t& NewTransactionHash, const Algorithm::Pubkeyhash Owner, BlockWork& Cache, size_t TransactionSize, uint8_t Flags)
+		expects_lr<transaction_context> transaction_context::execute_tx(ledger::block* new_block, const ledger::evaluation_context* new_environment, const ledger::transaction* new_transaction, const uint256_t& new_transaction_hash, const algorithm::pubkeyhash owner, block_work& cache, size_t transaction_size, uint8_t flags)
 		{
-			VI_ASSERT(NewBlock && NewEnvironment && NewTransaction && Owner, "block, env, transaction and owner should be set");
-			Ledger::Receipt NewReceipt;
-			NewReceipt.TransactionHash = NewTransactionHash;
-			NewReceipt.GenerationTime = Protocol::Now().Time.Now();
-			NewReceipt.AbsoluteGasUse = NewBlock->GasUse;
-			NewReceipt.BlockNumber = NewBlock->Number;
-			memcpy(NewReceipt.From, Owner, sizeof(NewReceipt.From));
+			VI_ASSERT(new_block && new_environment && new_transaction && owner, "block, env, transaction and owner should be set");
+			ledger::receipt new_receipt;
+			new_receipt.transaction_hash = new_transaction_hash;
+			new_receipt.generation_time = protocol::now().time.now();
+			new_receipt.absolute_gas_use = new_block->gas_use;
+			new_receipt.block_number = new_block->number;
+			memcpy(new_receipt.from, owner, sizeof(new_receipt.from));
 
-			auto Validation = NewTransaction->Validate(NewReceipt.BlockNumber);
-			if (!Validation)
-				return Validation.Error();
+			auto validation = new_transaction->validate(new_receipt.block_number);
+			if (!validation)
+				return validation.error();
 
-			TransactionContext Context = TransactionContext(NewBlock, NewEnvironment, NewTransaction, std::move(NewReceipt));
-			Context.Delta.Incoming = &Cache;
+			transaction_context context = transaction_context(new_block, new_environment, new_transaction, std::move(new_receipt));
+			context.delta.incoming = &cache;
 
-			auto Deployment = Context.BurnGas(TransactionSize * (size_t)GasCost::WriteByte);
-			if (!Deployment)
-				return Deployment.Error();
+			auto deployment = context.burn_gas(transaction_size * (size_t)gas_cost::write_byte);
+			if (!deployment)
+				return deployment.error();
 
-			bool Discard = (Context.Receipt.Events.size() == 1 && Context.Receipt.Events.front().first == 0 && Context.Receipt.Events.front().second.size() == 1);
-			auto Execution = Discard ? ExpectsLR<void>(LayerException(Context.Receipt.Events.front().second.front().AsBlob())) : Context.Transaction->Execute(&Context);
-			Context.Receipt.Successful = !!Execution;
-			if (!Context.Receipt.Successful)
-				Context.Delta.Outgoing->Rollback();
-			if (Discard)
-				Context.Receipt.Events.clear();
-			if ((Flags & (uint8_t)ExecutionFlags::OnlySuccessful) && !Context.Receipt.Successful)
-				return Execution.Error();
+			bool discard = (context.receipt.events.size() == 1 && context.receipt.events.front().first == 0 && context.receipt.events.front().second.size() == 1);
+			auto execution = discard ? expects_lr<void>(layer_exception(context.receipt.events.front().second.front().as_blob())) : context.transaction->execute(&context);
+			context.receipt.successful = !!execution;
+			if (!context.receipt.successful)
+				context.delta.outgoing->rollback();
+			if (discard)
+				context.receipt.events.clear();
+			if ((flags & (uint8_t)execution_flags::only_successful) && !context.receipt.successful)
+				return execution.error();
 
-			if (!(Flags & (uint8_t)ExecutionFlags::SkipSequencing) && Context.Transaction->GetType() != TransactionLevel::Aggregation)
+			if (!(flags & (uint8_t)execution_flags::skip_sequencing) && context.transaction->get_type() != transaction_level::aggregation)
 			{
-				auto Info = Context.ApplyAccountSequence(Context.Receipt.From, Context.Transaction->Sequence + 1);
-				if (!Info)
-					return Info.Error();
+				auto info = context.apply_account_sequence(context.receipt.from, context.transaction->sequence + 1);
+				if (!info)
+					return info.error();
 			}
 
-			auto Work = Context.GetAccountWork(Context.Receipt.From);
-			auto GasUse = Work ? Work->GetGasUse() : uint256_t(0);
-			Context.Receipt.RelativeGasPaid = States::AccountWork::GetAdjustedGasPaid(GasUse, Context.Receipt.RelativeGasUse);
-			Context.Receipt.FinalizationTime = Protocol::Now().Time.Now();
-			if (memcmp(Context.Environment->Proposer.PublicKeyHash, Context.Receipt.From, sizeof(Context.Receipt.From)) != 0)
+			auto work = context.get_account_work(context.receipt.from);
+			auto gas_use = work ? work->get_gas_use() : uint256_t(0);
+			context.receipt.relative_gas_paid = states::account_work::get_adjusted_gas_paid(gas_use, context.receipt.relative_gas_use);
+			context.receipt.finalization_time = protocol::now().time.now();
+			if (memcmp(context.environment->proposer.public_key_hash, context.receipt.from, sizeof(context.receipt.from)) != 0)
 			{
-				if (Context.Receipt.RelativeGasPaid > 0 && Context.Transaction->GasPrice.IsPositive())
+				if (context.receipt.relative_gas_paid > 0 && context.transaction->gas_price.is_positive())
 				{
-					auto Funding = Context.ApplyFunding(Context.Transaction->GetGasAsset(), Context.Receipt.From, Context.Environment->Proposer.PublicKeyHash, Context.Transaction->GasPrice * Context.Receipt.RelativeGasPaid.ToDecimal());
-					if (!Funding)
-						return Funding.Error();
+					auto funding = context.apply_funding(context.transaction->get_gas_asset(), context.receipt.from, context.environment->proposer.public_key_hash, context.transaction->gas_price * context.receipt.relative_gas_paid.to_decimal());
+					if (!funding)
+						return funding.error();
 				}
 
-				auto GasOutput = States::AccountWork::GetAdjustedGasOutput(GasUse, Context.Receipt.RelativeGasUse);
-				if (GasOutput > 0)
+				auto gas_output = states::account_work::get_adjusted_gas_output(gas_use, context.receipt.relative_gas_use);
+				if (gas_output > 0)
 				{
-					Work = Context.ApplyAccountWork(Context.Receipt.From, States::AccountFlags::AsIs, 0, 0, GasOutput);
-					if (!Work)
-						return Work.Error();
+					work = context.apply_account_work(context.receipt.from, states::account_flags::as_is, 0, 0, gas_output);
+					if (!work)
+						return work.error();
 				}
 			}
 
-			if (Context.Receipt.Successful)
+			if (context.receipt.successful)
 			{
-				for (auto& Item : Context.Witnesses)
-					Context.Block->SetWitnessRequirement(Item.first, Item.second);
+				for (auto& item : context.witnesses)
+					context.block->set_witness_requirement(item.first, item.second);
 			}
 			else
-				Context.EmitEvent(0, { Format::Variable(Execution.What()) }, false);
+				context.emit_event(0, { format::variable(execution.what()) }, false);
 
-			Context.Block->GasUse += Context.Receipt.RelativeGasUse;
-			Context.Block->GasLimit += Context.Transaction->GasLimit;
-			return ExpectsLR<TransactionContext>(std::move(Context));
+			context.block->gas_use += context.receipt.relative_gas_use;
+			context.block->gas_limit += context.transaction->gas_limit;
+			return expects_lr<transaction_context>(std::move(context));
 		}
-		ExpectsLR<uint256_t> TransactionContext::CalculateTxGas(const Ledger::Transaction* Transaction)
+		expects_lr<uint256_t> transaction_context::calculate_tx_gas(const ledger::transaction* transaction)
 		{
-			VI_ASSERT(Transaction != nullptr, "transaction should be set");
-			Algorithm::Pubkeyhash Owner;
-			if (!Transaction->RecoverHash(Owner))
-				return LayerException("invalid signature");
+			VI_ASSERT(transaction != nullptr, "transaction should be set");
+			algorithm::pubkeyhash owner;
+			if (!transaction->recover_hash(owner))
+				return layer_exception("invalid signature");
 
-			auto* Mutable = (Ledger::Transaction*)Transaction;
-			auto InitialChecksum = Transaction->Checksum;
-			auto InitialGasLimit = Transaction->GasLimit;
-			auto InitialConservative = Transaction->Conservative;
-			auto RevertTransaction = [&]()
+			auto* reference = (ledger::transaction*)transaction;
+			auto initial_checksum = transaction->checksum;
+			auto initial_gas_limit = transaction->gas_limit;
+			auto initial_conservative = transaction->conservative;
+			auto revert_transaction = [&]()
 			{
-				Mutable->Checksum = InitialChecksum;
-				Mutable->GasLimit = InitialGasLimit;
-				Mutable->Conservative = InitialConservative;
+				reference->checksum = initial_checksum;
+				reference->gas_limit = initial_gas_limit;
+				reference->conservative = initial_conservative;
 			};
-			Mutable->Checksum = 0;
-			Mutable->GasLimit = Block::GetGasLimit();
-			Mutable->Conservative = false;
+			reference->checksum = 0;
+			reference->gas_limit = block::get_gas_limit();
+			reference->conservative = false;
 
-			Ledger::Block TempBlock;
-			TempBlock.Number = std::numeric_limits<int64_t>::max() - 1;
+			ledger::block temp_block;
+			temp_block.number = std::numeric_limits<int64_t>::max() - 1;
 
-			Algorithm::Pubkeyhash PublicKeyHash = { 1 };
-			Ledger::EvaluationContext TempEnvironment;
-			memcpy(TempEnvironment.Proposer.PublicKeyHash, PublicKeyHash, sizeof(Algorithm::Pubkeyhash));
+			algorithm::pubkeyhash public_key_hash = { 1 };
+			ledger::evaluation_context temp_environment;
+			memcpy(temp_environment.proposer.public_key_hash, public_key_hash, sizeof(algorithm::pubkeyhash));
 
-			Ledger::BlockWork Cache;
-			auto Validation = Transaction->Validate(TempBlock.Number);
-			if (!Validation)
+			ledger::block_work cache;
+			auto validation = transaction->validate(temp_block.number);
+			if (!validation)
 			{
-				RevertTransaction();
-				return Validation.Error();
+				revert_transaction();
+				return validation.error();
 			}
 
-			size_t TransactionSize = Transaction->AsMessage().Data.size();
-			auto Execution = TransactionContext::ExecuteTx(&TempBlock, &TempEnvironment, Transaction, Transaction->AsHash(), Owner, Cache, TransactionSize, (uint8_t)TransactionContext::ExecutionFlags::SkipSequencing);
-			if (!Execution)
+			size_t transaction_size = transaction->as_message().data.size();
+			auto execution = transaction_context::execute_tx(&temp_block, &temp_environment, transaction, transaction->as_hash(), owner, cache, transaction_size, (uint8_t)transaction_context::execution_flags::skip_sequencing);
+			if (!execution)
 			{
-				RevertTransaction();
-				return Execution.Error();
+				revert_transaction();
+				return execution.error();
 			}
 
-			RevertTransaction();
-			auto Gas = Execution->Receipt.RelativeGasUse;
-			Gas -= Gas % 1000;
-			return Gas + 1000;
+			revert_transaction();
+			auto gas = execution->receipt.relative_gas_use;
+			gas -= gas % 1000;
+			return gas + 1000;
 		}
-		ExpectsPromiseRT<void> TransactionContext::DispatchTx(const Wallet& Proposer, Ledger::BlockTransaction* Transaction, Vector<UPtr<Ledger::Transaction>>* Pipeline)
+		expects_promise_rt<void> transaction_context::dispatch_tx(const wallet& proposer, ledger::block_transaction* transaction, vector<uptr<ledger::transaction>>* pipeline)
 		{
-			VI_ASSERT(Transaction != nullptr, "transaction should be set");
-			VI_ASSERT(Pipeline != nullptr, "pipeline should be set");
-			auto GasLimit = Transaction->Transaction->GasLimit;
-			Transaction->Transaction->GasLimit = Block::GetGasLimit();
+			VI_ASSERT(transaction != nullptr, "transaction should be set");
+			VI_ASSERT(pipeline != nullptr, "pipeline should be set");
+			auto gas_limit = transaction->transaction->gas_limit;
+			transaction->transaction->gas_limit = block::get_gas_limit();
 
-			auto* Context = Memory::New<Ledger::TransactionContext>();
-			Context->Transaction = *Transaction->Transaction;
-			Context->Receipt = Transaction->Receipt;
-			return Transaction->Transaction->Dispatch(Proposer, Context, Pipeline).Then<ExpectsRT<void>>([Transaction, Context, GasLimit](ExpectsRT<void>&& Result)
+			auto* context = memory::init<ledger::transaction_context>();
+			context->transaction = *transaction->transaction;
+			context->receipt = transaction->receipt;
+			return transaction->transaction->dispatch(proposer, context, pipeline).then<expects_rt<void>>([transaction, context, gas_limit](expects_rt<void>&& result)
 			{
-				Transaction->Transaction->GasLimit = GasLimit;
-				Memory::Delete(Context);
-				return std::move(Result);
+				transaction->transaction->gas_limit = gas_limit;
+				memory::deinit(context);
+				return std::move(result);
 			});
 		}
 
-		EvaluationContext::TransactionInfo::TransactionInfo(const TransactionInfo& Other) : Hash(Other.Hash), Size(Other.Size)
+		evaluation_context::transaction_info::transaction_info(const transaction_info& other) : hash(other.hash), size(other.size)
 		{
-			auto* Mutable = (TransactionInfo*)&Other;
-			Candidate = Mutable->Candidate.Reset();
-			memcpy(Owner, Other.Owner, sizeof(Other.Owner));
+			auto* reference = (transaction_info*)&other;
+			candidate = reference->candidate.reset();
+			memcpy(owner, other.owner, sizeof(other.owner));
 		}
-		EvaluationContext::TransactionInfo& EvaluationContext::TransactionInfo::operator= (const TransactionInfo& Other)
+		evaluation_context::transaction_info& evaluation_context::transaction_info::operator= (const transaction_info& other)
 		{
-			if (this == &Other)
+			if (this == &other)
 				return *this;
 
-			auto* Mutable = (TransactionInfo*)&Other;
-			Hash = Other.Hash;
-			Size = Other.Size;
-			Candidate = Mutable->Candidate.Reset();
-			memcpy(Owner, Other.Owner, sizeof(Other.Owner));
+			auto* reference = (transaction_info*)&other;
+			hash = other.hash;
+			size = other.size;
+			candidate = reference->candidate.reset();
+			memcpy(owner, other.owner, sizeof(other.owner));
 			return *this;
 		}
 
-		Option<uint64_t> EvaluationContext::Priority(const Algorithm::Pubkeyhash PublicKeyHash, const Algorithm::Seckey SecretKey, Option<BlockHeader*>&& ParentBlock)
+		option<uint64_t> evaluation_context::priority(const algorithm::pubkeyhash public_key_hash, const algorithm::seckey secret_key, option<block_header*>&& parent_block)
 		{
-			if (!ParentBlock)
+			if (!parent_block)
 			{
-				auto Chain = Storages::Chainstate(__func__);
-				auto Latest = Chain.GetLatestBlockHeader();
-				Tip = Latest ? Option<Ledger::BlockHeader>(std::move(*Latest)) : Option<Ledger::BlockHeader>(Optional::None);
-				Validation.Tip = true;
+				auto chain = storages::chainstate(__func__);
+				auto latest = chain.get_latest_block_header();
+				tip = latest ? option<ledger::block_header>(std::move(*latest)) : option<ledger::block_header>(optional::none);
+				validation.tip = true;
 			}
-			else if (*ParentBlock != nullptr)
+			else if (*parent_block != nullptr)
 			{
-				auto Chain = Storages::Chainstate(__func__);
-				auto Latest = Chain.GetLatestBlockNumber();
-				Tip = **ParentBlock;
-				Validation.Tip = Latest.Or(Tip->Number) < (Tip->Number + 1);
+				auto chain = storages::chainstate(__func__);
+				auto latest = chain.get_latest_block_number();
+				tip = **parent_block;
+				validation.tip = latest.otherwise(tip->number) < (tip->number + 1);
 			}
 			else
 			{
-				auto Chain = Storages::Chainstate(__func__);
-				auto Latest = Chain.GetLatestBlockNumber();
-				Tip = Option<Ledger::BlockHeader>(Optional::None);
-				Validation.Tip = !Latest;
+				auto chain = storages::chainstate(__func__);
+				auto latest = chain.get_latest_block_number();
+				tip = option<ledger::block_header>(optional::none);
+				validation.tip = !latest;
 			}
 
-			memcpy(Proposer.PublicKeyHash, PublicKeyHash, sizeof(Algorithm::Pubkeyhash));
-			if (SecretKey != nullptr)
-				memcpy(Proposer.SecretKey, SecretKey, sizeof(Algorithm::Seckey));
+			memcpy(proposer.public_key_hash, public_key_hash, sizeof(algorithm::pubkeyhash));
+			if (secret_key != nullptr)
+				memcpy(proposer.secret_key, secret_key, sizeof(algorithm::seckey));
 
-			Validation.Cache = BlockWork();
-			Validation.Context = Ledger::TransactionContext(Tip.Address());
-			Validation.Context.Environment = this;
-			Validation.Context.Delta.Incoming = &Validation.Cache;
-			Validation.CumulativeGas = 0;
-			Precomputed = 0;
-			Proposers.clear();
-			Aggregators.clear();
-			Incoming.clear();
-			Outgoing.clear();
+			validation.cache = block_work();
+			validation.context = ledger::transaction_context(tip.address());
+			validation.context.environment = this;
+			validation.context.delta.incoming = &validation.cache;
+			validation.cumulative_gas = 0;
+			precomputed = 0;
+			proposers.clear();
+			aggregators.clear();
+			incoming.clear();
+			outgoing.clear();
 
-			if (Validation.Context.Block && !Validation.Tip)
-				++Validation.Context.Block->Number;
+			if (validation.context.block && !validation.tip)
+				++validation.context.block->number;
 
-			auto& Policy = Protocol::Now().Policy;
-			auto Committee = Validation.Context.CalculateProposalCommittee(Policy.ConsensusCommitteeSize);
-			if (Committee)
-				Proposers = std::move(*Committee);
+			auto& policy = protocol::now().policy;
+			auto committee = validation.context.calculate_proposal_committee(policy.consensus_committee_size);
+			if (committee)
+				proposers = std::move(*committee);
 
-			if (Proposers.empty())
+			if (proposers.empty())
 			{
-				auto Work = Validation.Context.GetAccountWork(Proposer.PublicKeyHash);
-				if (!Work)
-					Proposers.push_back(States::AccountWork(Proposer.PublicKeyHash, Tip.Address()));
+				auto work = validation.context.get_account_work(proposer.public_key_hash);
+				if (!work)
+					proposers.push_back(states::account_work(proposer.public_key_hash, tip.address()));
 				else
-					Proposers.push_back(std::move(*Work));
+					proposers.push_back(std::move(*work));
 			}
 
-			if (Validation.Context.Block && !Validation.Tip)
-				--Validation.Context.Block->Number;
+			if (validation.context.block && !validation.tip)
+				--validation.context.block->number;
 
-			auto Position = std::find_if(Proposers.begin(), Proposers.end(), [this](const States::AccountWork& A) { return !memcmp(A.Owner, Proposer.PublicKeyHash, sizeof(Proposer.PublicKeyHash)); });
-			if (Position == Proposers.end())
-				return Optional::None;
+			auto position = std::find_if(proposers.begin(), proposers.end(), [this](const states::account_work& a) { return !memcmp(a.owner, proposer.public_key_hash, sizeof(proposer.public_key_hash)); });
+			if (position == proposers.end())
+				return optional::none;
 
-			return std::distance(Proposers.begin(), Position);
+			return std::distance(proposers.begin(), position);
 		}
-		size_t EvaluationContext::Apply(Vector<UPtr<Transaction>>&& Candidates)
+		size_t evaluation_context::apply(vector<uptr<transaction>>&& candidates)
 		{
-			Vector<TransactionInfo> Subqueue;
-			Subqueue.reserve(Candidates.size());
-			Incoming.reserve(Incoming.size() + Candidates.size());
-			for (auto& Candidate : Candidates)
+			vector<transaction_info> subqueue;
+			subqueue.reserve(candidates.size());
+			incoming.reserve(incoming.size() + candidates.size());
+			for (auto& candidate : candidates)
 			{
-				auto& Info = Subqueue.emplace_back();
-				Info.Candidate = std::move(Candidate);
+				auto& info = subqueue.emplace_back();
+				info.candidate = std::move(candidate);
 			}
 
-			auto TotalGasLimit = BlockHeader::GetGasLimit();
-			Precompute(Subqueue);
+			auto total_gas_limit = block_header::get_gas_limit();
+			precompute(subqueue);
 
-			Algorithm::Pubkeyhash Null = { 0 };
-			for (auto& Item : Subqueue)
+			algorithm::pubkeyhash null = { 0 };
+			for (auto& item : subqueue)
 			{
-				if (!memcmp(Item.Owner, Null, sizeof(Null)))
+				if (!memcmp(item.owner, null, sizeof(null)))
 				{
-				Erase:
-					Outgoing.push_back(Item.Hash);
+				erase:
+					outgoing.push_back(item.hash);
 					continue;
 				}
 
-				uint256_t NewCumulativeGas = Validation.CumulativeGas + Item.Candidate->GasLimit;
-				if (NewCumulativeGas > TotalGasLimit)
+				uint256_t new_cumulative_gas = validation.cumulative_gas + item.candidate->gas_limit;
+				if (new_cumulative_gas > total_gas_limit)
 					break;
 
-				if (Item.Candidate->GetType() == TransactionLevel::Aggregation)
+				if (item.candidate->get_type() == transaction_level::aggregation)
 				{
-					auto* Aggregation = ((AggregationTransaction*)*Item.Candidate);
-					auto Consensus = Aggregation->CalculateCumulativeConsensus(&Aggregators, &Validation.Context);
-					if (!Consensus || !Consensus->Reached)
+					auto* aggregation = ((aggregation_transaction*)*item.candidate);
+					auto consensus = aggregation->calculate_cumulative_consensus(&aggregators, &validation.context);
+					if (!consensus || !consensus->reached)
 						continue;
 
-					Aggregation->SetConsensus(Consensus->Branch->Message.Hash());
+					aggregation->set_consensus(consensus->branch->message.hash());
 				}
 				else
 				{
-					auto AccountSequence = Validation.Context.GetAccountSequence(Item.Owner);
-					uint64_t SequenceTarget = (AccountSequence ? AccountSequence->Sequence : 0);
-					uint64_t SequenceDelta = (SequenceTarget > Item.Candidate->Sequence ? SequenceTarget - Item.Candidate->Sequence : 0);
-					if (SequenceDelta > 1)
-						goto Erase;
-					else if (SequenceDelta > 0)
+					auto account_sequence = validation.context.get_account_sequence(item.owner);
+					uint64_t sequence_target = (account_sequence ? account_sequence->sequence : 0);
+					uint64_t sequence_delta = (sequence_target > item.candidate->sequence ? sequence_target - item.candidate->sequence : 0);
+					if (sequence_delta > 1)
+						goto erase;
+					else if (sequence_delta > 0)
 						continue;
 				}
 
-				Validation.CumulativeGas = NewCumulativeGas;
-				Incoming.emplace_back(std::move(Item));
-				++Precomputed;
+				validation.cumulative_gas = new_cumulative_gas;
+				incoming.emplace_back(std::move(item));
+				++precomputed;
 			}
-			return Candidates.size();
+			return candidates.size();
 		}
-		EvaluationContext::TransactionInfo& EvaluationContext::Include(UPtr<Transaction>&& Candidate)
+		evaluation_context::transaction_info& evaluation_context::include(uptr<transaction>&& candidate)
 		{
-			auto& Info = Incoming.emplace_back();
-			Info.Candidate = std::move(Candidate);
-			return Info;
+			auto& info = incoming.emplace_back();
+			info.candidate = std::move(candidate);
+			return info;
 		}
-		ExpectsLR<Block> EvaluationContext::Evaluate(String* Errors)
+		expects_lr<block> evaluation_context::evaluate(string* errors)
 		{
-			Ledger::Block Candidate;
-			auto Status = Precompute(Candidate);
-			if (!Status)
-				return Status.Error();
+			ledger::block candidate;
+			auto status = precompute(candidate);
+			if (!status)
+				return status.error();
 
-			auto Chain = Storages::Chainstate(__func__);
-			auto Evaluation = Candidate.Evaluate(Tip.Address(), this, Errors);
-			Cleanup().Report("mempool cleanup failed");
-			if (!Evaluation)
-				return Evaluation.Error();
+			auto chain = storages::chainstate(__func__);
+			auto evaluation = candidate.evaluate(tip.address(), this, errors);
+			cleanup().report("mempool cleanup failed");
+			if (!evaluation)
+				return evaluation.error();
 
-			return Candidate;
+			return candidate;
 		}
-		ExpectsLR<void> EvaluationContext::Solve(Block& Candidate)
+		expects_lr<void> evaluation_context::solve(block& candidate)
 		{
-			if (!Candidate.Solve(Proposer.SecretKey))
-				return LayerException("block proof evaluation failed");
+			if (!candidate.solve(proposer.secret_key))
+				return layer_exception("block proof evaluation failed");
 
-			if (!Candidate.Sign(Proposer.SecretKey))
-				return LayerException("block signature evaluation failed");
+			if (!candidate.sign(proposer.secret_key))
+				return layer_exception("block signature evaluation failed");
 
-			return Expectation::Met;
+			return expectation::met;
 		}
-		ExpectsLR<void> EvaluationContext::Verify(const Block& Candidate)
+		expects_lr<void> evaluation_context::verify(const block& candidate)
 		{
-			auto Validity = Candidate.VerifyValidity(Tip.Address());
-			if (!Validity)
-				return Validity;
+			auto validity = candidate.verify_validity(tip.address());
+			if (!validity)
+				return validity;
 
-			return Candidate.VerifyIntegrity(Tip.Address());
+			return candidate.verify_integrity(tip.address());
 		}
-		ExpectsLR<void> EvaluationContext::Precompute(Block& Candidate)
+		expects_lr<void> evaluation_context::precompute(block& candidate)
 		{
-			Validation.Context = TransactionContext(&Candidate);
-			Validation.Context.Environment = this;
-			if (Precomputed != Incoming.size())
+			validation.context = transaction_context(&candidate);
+			validation.context.environment = this;
+			if (precomputed != incoming.size())
 			{
-				Precomputed = Incoming.size();
-				Precompute(Incoming);
+				precomputed = incoming.size();
+				precompute(incoming);
 			}
-			return Expectation::Met;
+			return expectation::met;
 		}
-		ExpectsLR<void> EvaluationContext::Cleanup()
+		expects_lr<void> evaluation_context::cleanup()
 		{
-			if (Outgoing.empty())
-				return Expectation::Met;
+			if (outgoing.empty())
+				return expectation::met;
 
-			auto Mempool = Storages::Mempoolstate(__func__);
-			return Mempool.RemoveTransactions(Outgoing);
+			auto mempool = storages::mempoolstate(__func__);
+			return mempool.remove_transactions(outgoing);
 		}
-		void EvaluationContext::Precompute(Vector<TransactionInfo>& Candidates)
+		void evaluation_context::precompute(vector<transaction_info>& candidates)
 		{
-			Algorithm::Pubkeyhash Null = { 0 };
-			Parallel::WailAll(Parallel::ForEach(Candidates.begin(), Candidates.end(), ELEMENTS_FEW, [&Null](TransactionInfo& Item)
+			algorithm::pubkeyhash null = { 0 };
+			parallel::wail_all(parallel::for_each(candidates.begin(), candidates.end(), ELEMENTS_FEW, [&null](transaction_info& item)
 			{
-				Item.Hash = Item.Candidate->AsHash();
-				if (memcmp(Item.Owner, Null, sizeof(Null)) != 0)
+				item.hash = item.candidate->as_hash();
+				if (memcmp(item.owner, null, sizeof(null)) != 0)
 					return;
 
-				Item.Size = Item.Candidate->AsMessage().Data.size();
-				if (Item.Candidate->GetType() != TransactionLevel::Aggregation)
-					Algorithm::Signing::RecoverHash(Item.Candidate->AsPayload().Hash(), Item.Owner, Item.Candidate->Signature);
+				item.size = item.candidate->as_message().data.size();
+				if (item.candidate->get_type() != transaction_level::aggregation)
+					algorithm::signing::recover_hash(item.candidate->as_payload().hash(), item.owner, item.candidate->signature);
 				else
-					Item.Candidate->RecoverHash(Item.Owner);
+					item.candidate->recover_hash(item.owner);
 			}));
 		}
 	}

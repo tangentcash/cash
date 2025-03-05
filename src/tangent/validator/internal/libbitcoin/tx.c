@@ -63,7 +63,7 @@ void btc_tx_in_free(btc_tx_in* tx_in)
 	btc_free(tx_in);
 }
 
-//callback for vector free function
+//callback for dvector free function
 void btc_tx_in_free_cb(void* data)
 {
 	if (!data)
@@ -245,7 +245,7 @@ int btc_tx_deserialize(const unsigned char* tx_serialized, size_t inlen, btc_tx*
 					cstr_free(witness_item, true);
 					return false;
 				}
-				vector_add(tx_in->witness_stack, witness_item); //vector is responsible for freeing the items memory
+				vector_add(tx_in->witness_stack, witness_item); //dvector is responsible for freeing the items memory
 			}
 		}
 	}

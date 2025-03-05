@@ -2,50 +2,50 @@
 #define TAN_MEDIATOR_TRON_H
 #include "ethereum.h"
 
-namespace Tangent
+namespace tangent
 {
-	namespace Mediator
+	namespace mediator
 	{
-		namespace Backends
+		namespace backends
 		{
-			class Tron : public Ethereum
+			class tron : public ethereum
 			{
 			public:
-				struct TrxTxBlockHeaderInfo
+				struct trx_tx_block_header_info
 				{
-					String RefBlockBytes;
-					String RefBlockHash;
-					int64_t Expiration;
-					int64_t Timestamp;
+					string ref_block_bytes;
+					string ref_block_hash;
+					int64_t expiration;
+					int64_t timestamp;
 				};
 
 			public:
-				class TrxNdCall
+				class trx_nd_call
 				{
 				public:
-					static const char* BroadcastTransaction();
-					static const char* GetBlock();
+					static const char* broadcast_transaction();
+					static const char* get_block();
 				};
 
 			public:
-				Tron() noexcept;
-				virtual ~Tron() override = default;
-				virtual ExpectsPromiseRT<void> BroadcastTransaction(const Algorithm::AssetId& Asset, const OutgoingTransaction& TxData) override;
-				virtual ExpectsPromiseRT<Decimal> CalculateBalance(const Algorithm::AssetId& Asset, const DynamicWallet& Seed, Option<String>&& Address) override;
-				virtual ExpectsPromiseRT<OutgoingTransaction> NewTransaction(const Algorithm::AssetId& Asset, const DynamicWallet& Wallet, const Vector<Transferer>& To, const BaseFee& Fee) override;
-				virtual ExpectsLR<String> NewPublicKeyHash(const std::string_view& Address) override;
-				virtual ExpectsLR<void> VerifyNodeCompatibility(ServerRelay* Node) override;
-				virtual String GetMessageMagic() override;
-				virtual String GetDerivation(uint64_t AddressIndex) const override;
-				virtual const btc_chainparams_* GetChain() override;
+				tron() noexcept;
+				virtual ~tron() override = default;
+				virtual expects_promise_rt<void> broadcast_transaction(const algorithm::asset_id& asset, const outgoing_transaction& tx_data) override;
+				virtual expects_promise_rt<decimal> calculate_balance(const algorithm::asset_id& asset, const dynamic_wallet& seed, option<string>&& address) override;
+				virtual expects_promise_rt<outgoing_transaction> new_transaction(const algorithm::asset_id& asset, const dynamic_wallet& wallet, const vector<transferer>& to, const base_fee& fee) override;
+				virtual expects_lr<string> new_public_key_hash(const std::string_view& address) override;
+				virtual expects_lr<void> verify_node_compatibility(server_relay* node) override;
+				virtual string get_message_magic() override;
+				virtual string get_derivation(uint64_t address_index) const override;
+				virtual const btc_chainparams_* get_chain() override;
 
 			public:
-				virtual ExpectsPromiseRT<TrxTxBlockHeaderInfo> GetBlockHeaderForTx(const Algorithm::AssetId& Asset);
-				virtual void GenerateMessageHash(const String& Input, uint8_t Output[32]);
-				virtual String EncodeEthAddress(const std::string_view& EthAddress) override;
-				virtual String DecodeNonEthAddress(const std::string_view& NonEthAddress) override;
-				virtual String DecodeNonEthAddressPf(const std::string_view& NonEthAddress);
-				virtual Decimal GetDivisibilityGwei() override;
+				virtual expects_promise_rt<trx_tx_block_header_info> get_block_header_for_tx(const algorithm::asset_id& asset);
+				virtual void generate_message_hash(const string& input, uint8_t output[32]);
+				virtual string encode_eth_address(const std::string_view& eth_address) override;
+				virtual string decode_non_eth_address(const std::string_view& non_eth_address) override;
+				virtual string decode_non_eth_address_pf(const std::string_view& non_eth_address);
+				virtual decimal get_divisibility_gwei() override;
 			};
 		}
 	}

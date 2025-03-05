@@ -4,217 +4,217 @@
 #include "../../layer/control.h"
 #include "../../kernel/block.h"
 
-namespace Tangent
+namespace tangent
 {
-	namespace P2P
+	namespace p2p
 	{
-		class ServerNode;
+		class server_node;
 	}
 
-	namespace RPC
+	namespace rpc
 	{
-		using ServerFunction = std::function<struct ServerResponse(HTTP::Connection*, Format::Variables&&)>;
+		using server_function = std::function<struct server_response(http::connection*, format::variables&&)>;
 
-		enum class AccessType
+		enum class access_type
 		{
-			R = (1 << 0),
-			W = (1 << 1),
-			A = (1 << 2)
+			r = (1 << 0),
+			w = (1 << 1),
+			a = (1 << 2)
 		};
 
-		enum class ErrorCodes
+		enum class error_codes
 		{
-			Response = 0,
-			Notification = 1,
-			BadRequest = -1,
-			BadVersion = -2,
-			BadMethod = -3,
-			BadParams = -4,
-			NotFound = -5
+			response = 0,
+			notification = 1,
+			bad_request = -1,
+			bad_version = -2,
+			bad_method = -3,
+			bad_params = -4,
+			not_found = -5
 		};
 
-		inline uint32_t operator |(AccessType A, AccessType B)
+		inline uint32_t operator |(access_type a, access_type b)
 		{
-			return static_cast<uint32_t>(A) | static_cast<uint32_t>(B);
+			return static_cast<uint32_t>(a) | static_cast<uint32_t>(b);
 		}
-		inline uint32_t operator |(uint32_t, AccessType A)
+		inline uint32_t operator |(uint32_t, access_type a)
 		{
-			return static_cast<uint32_t>(A);
+			return static_cast<uint32_t>(a);
 		}
 
-		struct ServerResponse
+		struct server_response
 		{
-			UPtr<Schema> Data;
-			String ErrorMessage;
-			ErrorCodes Status = ErrorCodes::Response;
+			uptr<schema> data;
+			string error_message;
+			error_codes status = error_codes::response;
 
-			ServerResponse&& Success(UPtr<Schema>&& Value);
-			ServerResponse&& Notification(UPtr<Schema>&& Value);
-			ServerResponse&& Error(ErrorCodes Code, const std::string_view& Message);
-			UPtr<Schema> Transform(Schema* Request);
+			server_response&& success(uptr<schema>&& value);
+			server_response&& notification(uptr<schema>&& value);
+			server_response&& error(error_codes code, const std::string_view& message);
+			uptr<schema> transform(schema* request);
 		};
 
-		struct ServerRequest
+		struct server_request
 		{
-			uint32_t AccessTypes = 0;
-			size_t MinParams = 0;
-			size_t MaxParams = 0;
-			ServerFunction Function;
-			String Description;
-			String Args;
-			String Domain;
-			String Returns;
+			uint32_t access_types = 0;
+			size_t min_params = 0;
+			size_t max_params = 0;
+			server_function function;
+			string description;
+			string args;
+			string domain;
+			string returns;
 		};
 
-		class ServerNode : public Reference<ServerNode>
+		class server_node : public reference<server_node>
 		{
 		private:
-			struct WsListener
+			struct ws_listener
 			{
-				UnorderedSet<String> Addresses;
-				bool Transactions = false;
-				bool Blocks = false;
+				unordered_set<string> addresses;
+				bool transactions = false;
+				bool blocks = false;
 			};
 
 		private:
-			UnorderedMap<HTTP::Connection*, WsListener> Listeners;
-			UnorderedMap<String, ServerRequest> Methods;
-			std::mutex Mutex;
+			unordered_map<http::connection*, ws_listener> listeners;
+			unordered_map<string, server_request> methods;
+			std::mutex mutex;
 
 		protected:
-			SystemControl ControlSys;
-			UPtr<HTTP::Server> Node;
-			P2P::ServerNode* Validator;
-			String AdminToken;
-			String UserToken;
+			system_control control_sys;
+			uptr<http::server> node;
+			p2p::server_node* validator;
+			string admin_token;
+			string user_token;
 
 		public:
-			ServerNode(P2P::ServerNode* NewValidator) noexcept;
-			~ServerNode() noexcept;
-			void Startup();
-			void Shutdown();
-			void Bind(uint32_t AccessTypes, const std::string_view& Domain, const std::string_view& Method, size_t MinParams, size_t MaxParams, const std::string_view& Args, const std::string_view& Returns, const std::string_view& Description, ServerFunction&& Function);
-			bool HasAdminAuthorization();
-			bool HasUserAuthorization();
-			bool IsActive();
-			ServiceControl::ServiceNode GetEntrypoint();
+			server_node(p2p::server_node* new_validator) noexcept;
+			~server_node() noexcept;
+			void startup();
+			void shutdown();
+			void bind(uint32_t access_types, const std::string_view& domain, const std::string_view& method, size_t min_params, size_t max_params, const std::string_view& args, const std::string_view& returns, const std::string_view& description, server_function&& function);
+			bool has_admin_authorization();
+			bool has_user_authorization();
+			bool is_active();
+			service_control::service_node get_entrypoint();
 
 		private:
-			bool Authorize(HTTP::Connection* Base, HTTP::Credentials* Credentials);
-			bool Headers(HTTP::Connection* Base, String& Content);
-			bool Options(HTTP::Connection* Base);
-			bool HttpRequest(HTTP::Connection* Base);
-			bool WsReceive(HTTP::WebSocketFrame* WebSocket, HTTP::WebSocketOp Opcode, const std::string_view& Buffer);
-			void WsDisconnect(HTTP::WebSocketFrame* WebSocket);
-			bool DispatchResponse(HTTP::Connection* Base, UPtr<Schema>&& Requests, UPtr<Schema>&& Responses, size_t Index, std::function<void(HTTP::Connection*, UPtr<Schema>&&)>&& Callback);
-			void DispatchAcceptBlock(const uint256_t& Hash, const Ledger::Block& Block, const Ledger::BlockCheckpoint& Checkpoint);
-			void DispatchAcceptTransaction(const uint256_t& Hash, const Ledger::Transaction* Transaction, const Algorithm::Pubkeyhash Owner);
-			ServerResponse WebSocketSubscribe(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse WebSocketUnsubscribe(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse UtilityEncodeAddress(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse UtilityDecodeAddress(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse UtilityDecodeMessage(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse UtilityDecodeTransaction(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse UtilityHelp(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse BlockstateGetBlocks(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse BlockstateGetBlockCheckpointHash(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse BlockstateGetBlockCheckpointNumber(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse BlockstateGetBlockTipHash(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse BlockstateGetBlockTipNumber(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse BlockstateGetBlockByHash(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse BlockstateGetBlockByNumber(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse BlockstateGetRawBlockByHash(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse BlockstateGetRawBlockByNumber(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse BlockstateGetBlockProofByHash(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse BlockstateGetBlockProofByNumber(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse BlockstateGetBlockNumberByHash(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse BlockstateGetBlockHashByNumber(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse TxnstateGetBlockTransactionsByHash(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse TxnstateGetBlockTransactionsByNumber(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse TxnstateGetBlockReceiptsByHash(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse TxnstateGetBlockReceiptsByNumber(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse TxnstateGetPendingTransactions(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse TxnstateGetTransactionsByOwner(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse TxnstateGetTransactionByHash(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse TxnstateGetRawTransactionByHash(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse TxnstateGetReceiptByTransactionHash(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ChainstateCall(Format::Variables&& Args, bool Tracing);
-			ServerResponse ChainstateImmutableCall(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ChainstateTraceCall(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ChainstateGetBlockStatesByHash(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ChainstateGetBlockStatesByNumber(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ChainstateGetBlockGasPriceByHash(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ChainstateGetBlockGasPriceByNumber(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ChainstateGetBlockAssetPriceByHash(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ChainstateGetBlockAssetPriceByNumber(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ChainstateGetUniformByIndex(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ChainstateGetMultiformByComposition(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ChainstateGetMultiformByColumn(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ChainstateGetMultiformsByColumn(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ChainstateGetMultiformByRow(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ChainstateGetMultiformsByRow(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ChainstateGetMultiformsCountByRow(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ChainstateGetAccountSequence(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ChainstateGetAccountWork(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ChainstateGetBestAccountWorkers(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ChainstateGetAccountObserver(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ChainstateGetAccountObservers(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ChainstateGetBestAccountObservers(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ChainstateGetAccountProgram(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ChainstateGetAccountStorage(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ChainstateGetAccountReward(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ChainstateGetAccountRewards(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ChainstateGetBestAccountRewards(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ChainstateGetBestAccountRewardsForSelection(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ChainstateGetAccountDerivation(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ChainstateGetAccountBalance(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ChainstateGetAccountBalances(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ChainstateGetAccountDepository(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ChainstateGetAccountDepositories(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ChainstateGetBestAccountDepositories(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ChainstateGetBestAccountDepositoriesForSelection(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ChainstateGetWitnessProgram(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ChainstateGetWitnessEvent(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ChainstateGetWitnessAddress(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ChainstateGetWitnessAddresses(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ChainstateGetWitnessAddressesByPurpose(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ChainstateGetWitnessTransaction(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse MempoolstateAddNode(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse MempoolstateClearNode(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse MempoolstateGetClosestNode(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse MempoolstateGetClosestNodeCounter(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse MempoolstateGetNode(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse MempoolstateGetAddresses(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse MempoolstateGetGasPrice(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse MempoolstateGetAssetPrice(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse MempoolstateGetOptimalTransactionGas(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse MempoolstateGetEstimateTransactionGas(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse MempoolstateSubmitTransaction(HTTP::Connection* Base, Format::Variables&& Args, Ledger::Transaction* Prebuilt);
-			ServerResponse MempoolstateRejectTransaction(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse MempoolstateGetTransactionByHash(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse MempoolstateGetRawTransactionByHash(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse MempoolstateGetNextAccountSequence(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse MempoolstateGetTransactions(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse MempoolstateGetTransactionsByOwner(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse MempoolstateGetCumulativeEventTransactions(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse MempoolstateGetCumulativeConsensus(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ValidatorstatePrune(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ValidatorstateRevert(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ValidatorstateReorganize(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ValidatorstateVerify(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ValidatorstateAcceptNode(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ValidatorstateRejectNode(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ValidatorstateGetNode(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ValidatorstateGetBlockchains(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ValidatorstateStatus(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ProposerstateSubmitBlock(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ProposerstateSubmitCommitmentTransaction(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ProposerstateSubmitContributionAllocation(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ProposerstateSubmitContributionDeallocation(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ProposerstateSubmitContributionWithdrawal(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ProposerstateSubmitDepositoryAdjustment(HTTP::Connection* Base, Format::Variables&& Args);
-			ServerResponse ProposerstateSubmitDepositoryMigration(HTTP::Connection* Base, Format::Variables&& Args);
-		};	
+			bool authorize(http::connection* base, http::credentials* credentials);
+			bool headers(http::connection* base, string& content);
+			bool options(http::connection* base);
+			bool http_request(http::connection* base);
+			bool ws_receive(http::web_socket_frame* web_socket, http::web_socket_op opcode, const std::string_view& buffer);
+			void ws_disconnect(http::web_socket_frame* web_socket);
+			bool dispatch_response(http::connection* base, uptr<schema>&& requests, uptr<schema>&& responses, size_t index, std::function<void(http::connection*, uptr<schema>&&)>&& callback);
+			void dispatch_accept_block(const uint256_t& hash, const ledger::block& block, const ledger::block_checkpoint& checkpoint);
+			void dispatch_accept_transaction(const uint256_t& hash, const ledger::transaction* transaction, const algorithm::pubkeyhash owner);
+			server_response web_socket_subscribe(http::connection* base, format::variables&& args);
+			server_response web_socket_unsubscribe(http::connection* base, format::variables&& args);
+			server_response utility_encode_address(http::connection* base, format::variables&& args);
+			server_response utility_decode_address(http::connection* base, format::variables&& args);
+			server_response utility_decode_message(http::connection* base, format::variables&& args);
+			server_response utility_decode_transaction(http::connection* base, format::variables&& args);
+			server_response utility_help(http::connection* base, format::variables&& args);
+			server_response blockstate_get_blocks(http::connection* base, format::variables&& args);
+			server_response blockstate_get_block_checkpoint_hash(http::connection* base, format::variables&& args);
+			server_response blockstate_get_block_checkpoint_number(http::connection* base, format::variables&& args);
+			server_response blockstate_get_block_tip_hash(http::connection* base, format::variables&& args);
+			server_response blockstate_get_block_tip_number(http::connection* base, format::variables&& args);
+			server_response blockstate_get_block_by_hash(http::connection* base, format::variables&& args);
+			server_response blockstate_get_block_by_number(http::connection* base, format::variables&& args);
+			server_response blockstate_get_raw_block_by_hash(http::connection* base, format::variables&& args);
+			server_response blockstate_get_raw_block_by_number(http::connection* base, format::variables&& args);
+			server_response blockstate_get_block_proof_by_hash(http::connection* base, format::variables&& args);
+			server_response blockstate_get_block_proof_by_number(http::connection* base, format::variables&& args);
+			server_response blockstate_get_block_number_by_hash(http::connection* base, format::variables&& args);
+			server_response blockstate_get_block_hash_by_number(http::connection* base, format::variables&& args);
+			server_response txnstate_get_block_transactions_by_hash(http::connection* base, format::variables&& args);
+			server_response txnstate_get_block_transactions_by_number(http::connection* base, format::variables&& args);
+			server_response txnstate_get_block_receipts_by_hash(http::connection* base, format::variables&& args);
+			server_response txnstate_get_block_receipts_by_number(http::connection* base, format::variables&& args);
+			server_response txnstate_get_pending_transactions(http::connection* base, format::variables&& args);
+			server_response txnstate_get_transactions_by_owner(http::connection* base, format::variables&& args);
+			server_response txnstate_get_transaction_by_hash(http::connection* base, format::variables&& args);
+			server_response txnstate_get_raw_transaction_by_hash(http::connection* base, format::variables&& args);
+			server_response txnstate_get_receipt_by_transaction_hash(http::connection* base, format::variables&& args);
+			server_response chainstate_call(format::variables&& args, bool tracing);
+			server_response chainstate_immutable_call(http::connection* base, format::variables&& args);
+			server_response chainstate_trace_call(http::connection* base, format::variables&& args);
+			server_response chainstate_get_block_states_by_hash(http::connection* base, format::variables&& args);
+			server_response chainstate_get_block_states_by_number(http::connection* base, format::variables&& args);
+			server_response chainstate_get_block_gas_price_by_hash(http::connection* base, format::variables&& args);
+			server_response chainstate_get_block_gas_price_by_number(http::connection* base, format::variables&& args);
+			server_response chainstate_get_block_asset_price_by_hash(http::connection* base, format::variables&& args);
+			server_response chainstate_get_block_asset_price_by_number(http::connection* base, format::variables&& args);
+			server_response chainstate_get_uniform_by_index(http::connection* base, format::variables&& args);
+			server_response chainstate_get_multiform_by_composition(http::connection* base, format::variables&& args);
+			server_response chainstate_get_multiform_by_column(http::connection* base, format::variables&& args);
+			server_response chainstate_get_multiforms_by_column(http::connection* base, format::variables&& args);
+			server_response chainstate_get_multiform_by_row(http::connection* base, format::variables&& args);
+			server_response chainstate_get_multiforms_by_row(http::connection* base, format::variables&& args);
+			server_response chainstate_get_multiforms_count_by_row(http::connection* base, format::variables&& args);
+			server_response chainstate_get_account_sequence(http::connection* base, format::variables&& args);
+			server_response chainstate_get_account_work(http::connection* base, format::variables&& args);
+			server_response chainstate_get_best_account_workers(http::connection* base, format::variables&& args);
+			server_response chainstate_get_account_observer(http::connection* base, format::variables&& args);
+			server_response chainstate_get_account_observers(http::connection* base, format::variables&& args);
+			server_response chainstate_get_best_account_observers(http::connection* base, format::variables&& args);
+			server_response chainstate_get_account_program(http::connection* base, format::variables&& args);
+			server_response chainstate_get_account_storage(http::connection* base, format::variables&& args);
+			server_response chainstate_get_account_reward(http::connection* base, format::variables&& args);
+			server_response chainstate_get_account_rewards(http::connection* base, format::variables&& args);
+			server_response chainstate_get_best_account_rewards(http::connection* base, format::variables&& args);
+			server_response chainstate_get_best_account_rewards_for_selection(http::connection* base, format::variables&& args);
+			server_response chainstate_get_account_derivation(http::connection* base, format::variables&& args);
+			server_response chainstate_get_account_balance(http::connection* base, format::variables&& args);
+			server_response chainstate_get_account_balances(http::connection* base, format::variables&& args);
+			server_response chainstate_get_account_depository(http::connection* base, format::variables&& args);
+			server_response chainstate_get_account_depositories(http::connection* base, format::variables&& args);
+			server_response chainstate_get_best_account_depositories(http::connection* base, format::variables&& args);
+			server_response chainstate_get_best_account_depositories_for_selection(http::connection* base, format::variables&& args);
+			server_response chainstate_get_witness_program(http::connection* base, format::variables&& args);
+			server_response chainstate_get_witness_event(http::connection* base, format::variables&& args);
+			server_response chainstate_get_witness_address(http::connection* base, format::variables&& args);
+			server_response chainstate_get_witness_addresses(http::connection* base, format::variables&& args);
+			server_response chainstate_get_witness_addresses_by_purpose(http::connection* base, format::variables&& args);
+			server_response chainstate_get_witness_transaction(http::connection* base, format::variables&& args);
+			server_response mempoolstate_add_node(http::connection* base, format::variables&& args);
+			server_response mempoolstate_clear_node(http::connection* base, format::variables&& args);
+			server_response mempoolstate_get_closest_node(http::connection* base, format::variables&& args);
+			server_response mempoolstate_get_closest_node_counter(http::connection* base, format::variables&& args);
+			server_response mempoolstate_get_node(http::connection* base, format::variables&& args);
+			server_response mempoolstate_get_addresses(http::connection* base, format::variables&& args);
+			server_response mempoolstate_get_gas_price(http::connection* base, format::variables&& args);
+			server_response mempoolstate_get_asset_price(http::connection* base, format::variables&& args);
+			server_response mempoolstate_get_optimal_transaction_gas(http::connection* base, format::variables&& args);
+			server_response mempoolstate_get_estimate_transaction_gas(http::connection* base, format::variables&& args);
+			server_response mempoolstate_submit_transaction(http::connection* base, format::variables&& args, ledger::transaction* prebuilt);
+			server_response mempoolstate_reject_transaction(http::connection* base, format::variables&& args);
+			server_response mempoolstate_get_transaction_by_hash(http::connection* base, format::variables&& args);
+			server_response mempoolstate_get_raw_transaction_by_hash(http::connection* base, format::variables&& args);
+			server_response mempoolstate_get_next_account_sequence(http::connection* base, format::variables&& args);
+			server_response mempoolstate_get_transactions(http::connection* base, format::variables&& args);
+			server_response mempoolstate_get_transactions_by_owner(http::connection* base, format::variables&& args);
+			server_response mempoolstate_get_cumulative_event_transactions(http::connection* base, format::variables&& args);
+			server_response mempoolstate_get_cumulative_consensus(http::connection* base, format::variables&& args);
+			server_response validatorstate_prune(http::connection* base, format::variables&& args);
+			server_response validatorstate_revert(http::connection* base, format::variables&& args);
+			server_response validatorstate_reorganize(http::connection* base, format::variables&& args);
+			server_response validatorstate_verify(http::connection* base, format::variables&& args);
+			server_response validatorstate_accept_node(http::connection* base, format::variables&& args);
+			server_response validatorstate_reject_node(http::connection* base, format::variables&& args);
+			server_response validatorstate_get_node(http::connection* base, format::variables&& args);
+			server_response validatorstate_get_blockchains(http::connection* base, format::variables&& args);
+			server_response validatorstate_status(http::connection* base, format::variables&& args);
+			server_response proposerstate_submit_block(http::connection* base, format::variables&& args);
+			server_response proposerstate_submit_commitment_transaction(http::connection* base, format::variables&& args);
+			server_response proposerstate_submit_contribution_allocation(http::connection* base, format::variables&& args);
+			server_response proposerstate_submit_contribution_deallocation(http::connection* base, format::variables&& args);
+			server_response proposerstate_submit_contribution_withdrawal(http::connection* base, format::variables&& args);
+			server_response proposerstate_submit_depository_adjustment(http::connection* base, format::variables&& args);
+			server_response proposerstate_submit_depository_migration(http::connection* base, format::variables&& args);
+		};
 	}
 }
 #endif

@@ -31,24 +31,24 @@
 
 LIBBTC_BEGIN_DECL
 
-typedef struct vector {
+typedef struct dvector {
     void** data;  /* array of pointers */
     size_t len;   /* array element count */
     size_t alloc; /* allocated array elements */
 
     void (*elem_free_f)(void*);
-} vector;
+} dvector;
 
-LIBBTC_API vector* vector_new(size_t res, void (*free_f)(void*));
-LIBBTC_API void vector_free(vector* vec, btc_bool free_array);
+LIBBTC_API dvector* vector_new(size_t res, void (*free_f)(void*));
+LIBBTC_API void vector_free(dvector* vec, btc_bool free_array);
 
-LIBBTC_API btc_bool vector_add(vector* vec, void* data);
-LIBBTC_API btc_bool vector_remove(vector* vec, void* data);
-LIBBTC_API void vector_remove_idx(vector* vec, size_t idx);
-LIBBTC_API void vector_remove_range(vector* vec, size_t idx, size_t len);
-LIBBTC_API btc_bool vector_resize(vector* vec, size_t newsz);
+LIBBTC_API btc_bool vector_add(dvector* vec, void* data);
+LIBBTC_API btc_bool vector_remove(dvector* vec, void* data);
+LIBBTC_API void vector_remove_idx(dvector* vec, size_t idx);
+LIBBTC_API void vector_remove_range(dvector* vec, size_t idx, size_t len);
+LIBBTC_API btc_bool vector_resize(dvector* vec, size_t newsz);
 
-LIBBTC_API ssize_t vector_find(vector* vec, void* data);
+LIBBTC_API ssize_t vector_find(dvector* vec, void* data);
 
 #define vector_idx(vec, idx) ((vec)->data[(idx)])
 

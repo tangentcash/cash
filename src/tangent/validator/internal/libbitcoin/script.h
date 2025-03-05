@@ -236,10 +236,10 @@ btc_bool btc_script_copy_without_op_codeseperator(const cstring* scriptin, cstri
 LIBBTC_API btc_script_op* btc_script_op_new();
 LIBBTC_API void btc_script_op_free(btc_script_op* script_op);
 void btc_script_op_free_cb(void* data);
-btc_bool btc_script_get_ops(const cstring* script_in, vector* ops_out);
+btc_bool btc_script_get_ops(const cstring* script_in, dvector* ops_out);
 
-LIBBTC_API enum btc_tx_out_type btc_script_classify_ops(const vector* ops);
-LIBBTC_API enum btc_tx_out_type btc_script_classify(const cstring* script, vector* data_out);
+LIBBTC_API enum btc_tx_out_type btc_script_classify_ops(const dvector* ops);
+LIBBTC_API enum btc_tx_out_type btc_script_classify(const cstring* script, dvector* data_out);
 
 LIBBTC_API enum opcodetype btc_encode_op_n(const int n);
 LIBBTC_API void btc_script_append_op(cstring* script_in, enum opcodetype op);
@@ -250,7 +250,7 @@ LIBBTC_API btc_bool btc_controlblock_append_internalpubkey(cstring* controlblock
 LIBBTC_API btc_bool btc_controlblock_append_leafscripthash(cstring* controlblock_in, const uint256 hash);
 LIBBTC_API btc_bool btc_controlblock_append_leafscript(cstring* controlblock_in, const cstring* script);
 
-LIBBTC_API btc_bool btc_script_build_multisig(cstring* script_in, const unsigned int required_signatures, const vector* pubkeys_chars);
+LIBBTC_API btc_bool btc_script_build_multisig(cstring* script_in, const unsigned int required_signatures, const dvector* pubkeys_chars);
 LIBBTC_API btc_bool btc_script_build_p2pk(cstring* script, const uint8_t* pubkey, size_t pubkey_size);
 LIBBTC_API btc_bool btc_script_build_p2pkh(cstring* script, const uint160 hash160);
 LIBBTC_API btc_bool btc_script_build_p2wpkh(cstring* script, const uint160 hash160);

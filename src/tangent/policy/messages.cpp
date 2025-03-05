@@ -1,185 +1,185 @@
 #include "messages.h"
 
-namespace Tangent
+namespace tangent
 {
-	namespace Messages
+	namespace messages
 	{
-		Generic::Generic() : Checksum(0), Version(Protocol::Now().Message.ProtocolVersion)
+		standard::standard() : checksum(0), version(protocol::now().message.protocol_version)
 		{
 		}
-		bool Generic::Store(Format::Stream* Stream) const
+		bool standard::store(format::stream* stream) const
 		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Stream->WriteInteger(Version);
-			Stream->WriteInteger(AsType());
-			return StorePayload(Stream);
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_integer(version);
+			stream->write_integer(as_type());
+			return store_payload(stream);
 		}
-		bool Generic::Load(Format::Stream& Stream)
+		bool standard::load(format::stream& stream)
 		{
-			auto Type = ResolveType(Stream, &Version);
-			if (!Type || *Type != AsType())
+			auto type = resolve_type(stream, &version);
+			if (!type || *type != as_type())
 				return false;
 
-			if (!LoadPayload(Stream))
-				return false;
-
-			return true;
-		}
-		uint256_t Generic::AsHash(bool Renew) const
-		{
-			if (!Renew && Checksum != 0)
-				return Checksum;
-
-			Format::Stream Message;
-			((Generic*)this)->Checksum = Store(&Message) ? Message.Hash() : uint256_t(0);
-			return Checksum;
-		}
-		Format::Stream Generic::AsMessage() const
-		{
-			Format::Stream Message;
-			if (!Store(&Message))
-				Message.Clear();
-			return Message;
-		}
-		Format::Stream Generic::AsPayload() const
-		{
-			Format::Stream Message;
-			if (!StorePayload(&Message))
-				Message.Clear();
-			return Message;
-		}
-		Option<uint32_t> Generic::ResolveType(Format::Stream& Stream, uint32_t* OutVersion)
-		{
-			uint32_t Version; size_t Seek = Stream.Seek;
-			if (!Stream.ReadInteger(Stream.ReadType(), &Version))
-			{
-				if (!OutVersion)
-					Stream.Seek = Seek;
-				return Optional::None;
-			}
-
-			uint32_t Type;
-			if (!Stream.ReadInteger(Stream.ReadType(), &Type))
-				return Optional::None;
-
-			if (OutVersion)
-				*OutVersion = Version;
-			else
-				Stream.Seek = Seek;
-			return Type;
-		}
-
-		Authentic::Authentic() : Checksum(0), Version(Protocol::Now().Message.ProtocolVersion)
-		{
-		}
-		bool Authentic::Store(Format::Stream* Stream) const
-		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Stream->WriteInteger(Version);
-			Stream->WriteInteger(AsType());
-			Stream->WriteString(std::string_view((char*)Signature, sizeof(Signature)));
-			return StorePayload(Stream);
-		}
-		bool Authentic::Load(Format::Stream& Stream)
-		{
-			auto Type = ResolveType(Stream, &Version);
-			if (!Type || *Type != AsType())
-				return false;
-
-			String SignatureAssembly;
-			if (!Stream.ReadString(Stream.ReadType(), &SignatureAssembly) || SignatureAssembly.size() != sizeof(Algorithm::Recsighash))
-				return false;
-
-			memcpy(Signature, SignatureAssembly.data(), SignatureAssembly.size());
-			if (!LoadPayload(Stream))
+			if (!load_payload(stream))
 				return false;
 
 			return true;
 		}
-		bool Authentic::Sign(const Algorithm::Seckey SecretKey)
+		uint256_t standard::as_hash(bool renew) const
 		{
-			Format::Stream Message;
-			if (!StorePayload(&Message))
-				return false;
+			if (!renew && checksum != 0)
+				return checksum;
 
-			return Algorithm::Signing::Sign(Message.Hash(), SecretKey, Signature);
+			format::stream message;
+			((standard*)this)->checksum = store(&message) ? message.hash() : uint256_t(0);
+			return checksum;
 		}
-		bool Authentic::Verify(const Algorithm::Pubkey PublicKey) const
+		format::stream standard::as_message() const
 		{
-			Format::Stream Message;
-			if (!StorePayload(&Message))
-				return false;
-
-			return Algorithm::Signing::Verify(Message.Hash(), PublicKey, Signature);
+			format::stream message;
+			if (!store(&message))
+				message.clear();
+			return message;
 		}
-		bool Authentic::Recover(Algorithm::Pubkey PublicKey) const
+		format::stream standard::as_payload() const
 		{
-			Format::Stream Message;
-			if (!StorePayload(&Message))
-				return false;
-
-			return Algorithm::Signing::Recover(Message.Hash(), PublicKey, Signature);
+			format::stream message;
+			if (!store_payload(&message))
+				message.clear();
+			return message;
 		}
-		bool Authentic::RecoverHash(Algorithm::Pubkeyhash PublicKeyHash) const
+		option<uint32_t> standard::resolve_type(format::stream& stream, uint32_t* out_version)
 		{
-			Format::Stream Message;
-			if (!StorePayload(&Message))
-				return false;
-
-			return Algorithm::Signing::RecoverHash(Message.Hash(), PublicKeyHash, Signature);
-		}
-		void Authentic::SetSignature(const Algorithm::Recsighash NewValue)
-		{
-			VI_ASSERT(NewValue != nullptr, "new value should be set");
-			memcpy(Signature, NewValue, sizeof(Algorithm::Recsighash));
-		}
-		bool Authentic::IsSignatureNull() const
-		{
-			Algorithm::Recsighash Null = { 0 };
-			return memcmp(Signature, Null, sizeof(Null)) == 0;
-		}
-		uint256_t Authentic::AsHash(bool Renew) const
-		{
-			if (!Renew && Checksum != 0)
-				return Checksum;
-
-			Format::Stream Message;
-			((Authentic*)this)->Checksum = Store(&Message) ? Message.Hash() : uint256_t(0);
-			return Checksum;
-		}
-		Format::Stream Authentic::AsMessage() const
-		{
-			Format::Stream Message;
-			if (!Store(&Message))
-				Message.Clear();
-			return Message;
-		}
-		Format::Stream Authentic::AsPayload() const
-		{
-			Format::Stream Message;
-			if (!StorePayload(&Message))
-				Message.Clear();
-			return Message;
-		}
-		Option<uint32_t> Authentic::ResolveType(Format::Stream& Stream, uint32_t* OutVersion)
-		{
-			uint32_t Version; size_t Seek = Stream.Seek;
-			if (!Stream.ReadInteger(Stream.ReadType(), &Version))
+			uint32_t version; size_t seek = stream.seek;
+			if (!stream.read_integer(stream.read_type(), &version))
 			{
-				if (!OutVersion)
-					Stream.Seek = Seek;
-				return Optional::None;
+				if (!out_version)
+					stream.seek = seek;
+				return optional::none;
 			}
 
-			uint32_t Type;
-			if (!Stream.ReadInteger(Stream.ReadType(), &Type))
-				return Optional::None;
+			uint32_t type;
+			if (!stream.read_integer(stream.read_type(), &type))
+				return optional::none;
 
-			if (OutVersion)
-				*OutVersion = Version;
+			if (out_version)
+				*out_version = version;
 			else
-				Stream.Seek = Seek;
-			return Type;
+				stream.seek = seek;
+			return type;
+		}
+
+		authentic::authentic() : checksum(0), version(protocol::now().message.protocol_version)
+		{
+		}
+		bool authentic::store(format::stream* stream) const
+		{
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_integer(version);
+			stream->write_integer(as_type());
+			stream->write_string(std::string_view((char*)signature, sizeof(signature)));
+			return store_payload(stream);
+		}
+		bool authentic::load(format::stream& stream)
+		{
+			auto type = resolve_type(stream, &version);
+			if (!type || *type != as_type())
+				return false;
+
+			string signature_assembly;
+			if (!stream.read_string(stream.read_type(), &signature_assembly) || signature_assembly.size() != sizeof(algorithm::recsighash))
+				return false;
+
+			memcpy(signature, signature_assembly.data(), signature_assembly.size());
+			if (!load_payload(stream))
+				return false;
+
+			return true;
+		}
+		bool authentic::sign(const algorithm::seckey secret_key)
+		{
+			format::stream message;
+			if (!store_payload(&message))
+				return false;
+
+			return algorithm::signing::sign(message.hash(), secret_key, signature);
+		}
+		bool authentic::verify(const algorithm::pubkey public_key) const
+		{
+			format::stream message;
+			if (!store_payload(&message))
+				return false;
+
+			return algorithm::signing::verify(message.hash(), public_key, signature);
+		}
+		bool authentic::recover(algorithm::pubkey public_key) const
+		{
+			format::stream message;
+			if (!store_payload(&message))
+				return false;
+
+			return algorithm::signing::recover(message.hash(), public_key, signature);
+		}
+		bool authentic::recover_hash(algorithm::pubkeyhash public_key_hash) const
+		{
+			format::stream message;
+			if (!store_payload(&message))
+				return false;
+
+			return algorithm::signing::recover_hash(message.hash(), public_key_hash, signature);
+		}
+		void authentic::set_signature(const algorithm::recsighash new_value)
+		{
+			VI_ASSERT(new_value != nullptr, "new value should be set");
+			memcpy(signature, new_value, sizeof(algorithm::recsighash));
+		}
+		bool authentic::is_signature_null() const
+		{
+			algorithm::recsighash null = { 0 };
+			return memcmp(signature, null, sizeof(null)) == 0;
+		}
+		uint256_t authentic::as_hash(bool renew) const
+		{
+			if (!renew && checksum != 0)
+				return checksum;
+
+			format::stream message;
+			((authentic*)this)->checksum = store(&message) ? message.hash() : uint256_t(0);
+			return checksum;
+		}
+		format::stream authentic::as_message() const
+		{
+			format::stream message;
+			if (!store(&message))
+				message.clear();
+			return message;
+		}
+		format::stream authentic::as_payload() const
+		{
+			format::stream message;
+			if (!store_payload(&message))
+				message.clear();
+			return message;
+		}
+		option<uint32_t> authentic::resolve_type(format::stream& stream, uint32_t* out_version)
+		{
+			uint32_t version; size_t seek = stream.seek;
+			if (!stream.read_integer(stream.read_type(), &version))
+			{
+				if (!out_version)
+					stream.seek = seek;
+				return optional::none;
+			}
+
+			uint32_t type;
+			if (!stream.read_integer(stream.read_type(), &type))
+				return optional::none;
+
+			if (out_version)
+				*out_version = version;
+			else
+				stream.seek = seek;
+			return type;
 		}
 	}
 }

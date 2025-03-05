@@ -2,551 +2,551 @@
 #include "../service/nss.h"
 #undef NULL
 
-namespace Tangent
+namespace tangent
 {
-	namespace Storages
+	namespace storages
 	{
-		Mediatorstate::Mediatorstate(const std::string_view& NewLabel, const Algorithm::AssetId& NewAsset) noexcept : Asset(NewAsset), Label(NewLabel)
+		mediatorstate::mediatorstate(const std::string_view& new_label, const algorithm::asset_id& new_asset) noexcept : asset(new_asset), label(new_label)
 		{
-			String Blockchain = Algorithm::Asset::BlockchainOf(Asset);
-			StorageOf("mediatorstate." + Stringify::ToLower(Blockchain) + "data");
+			string blockchain = algorithm::asset::blockchain_of(asset);
+			storage_of("mediatorstate." + stringify::to_lower(blockchain) + "data");
 		}
-		ExpectsLR<void> Mediatorstate::AddMasterWallet(const Mediator::MasterWallet& Value)
+		expects_lr<void> mediatorstate::add_master_wallet(const mediator::master_wallet& value)
 		{
-			Format::Stream Message;
-			if (!Value.Store(&Message))
-				return ExpectsLR<void>(LayerException("wallet serialization error"));
+			format::stream message;
+			if (!value.store(&message))
+				return expects_lr<void>(layer_exception("wallet serialization error"));
 
-			auto Blob = Protocol::Now().Key.EncryptBlob(Message.Data);
-			if (!Blob)
-				return Blob.Error();
+			auto blob = protocol::now().key.encrypt_blob(message.data);
+			if (!blob)
+				return blob.error();
 
-			uint8_t Hash[32];
-			Algorithm::Encoding::DecodeUint256(Value.AsHash(), Hash);
+			uint8_t hash[32];
+			algorithm::encoding::decode_uint256(value.as_hash(), hash);
 
-			SchemaList Map;
-			Map.push_back(Var::Set::Binary(Hash, sizeof(Hash)));
-			Map.push_back(Var::Set::Integer(DateTime().Milliseconds()));
-			Map.push_back(Var::Set::Binary(*Blob));
+			schema_list map;
+			map.push_back(var::set::binary(hash, sizeof(hash)));
+			map.push_back(var::set::integer(date_time().milliseconds()));
+			map.push_back(var::set::binary(*blob));
 
-			auto Cursor = EmplaceQuery(Label, __func__, "INSERT OR REPLACE INTO wallets (hash, address_index, nonce, message) VALUES (?, -1, ?, ?)", &Map);
-			if (!Cursor || Cursor->Error())
-				return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
+			auto cursor = emplace_query(label, __func__, "INSERT OR REPLACE INTO wallets (hash, address_index, nonce, message) VALUES (?, -1, ?, ?)", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<void>(layer_exception(error_of(cursor)));
 
-			return Expectation::Met;
+			return expectation::met;
 		}
-		ExpectsLR<Mediator::MasterWallet> Mediatorstate::GetMasterWallet()
+		expects_lr<mediator::master_wallet> mediatorstate::get_master_wallet()
 		{
-			auto Cursor = Query(Label, __func__, "SELECT message FROM wallets WHERE address_index = -1 ORDER BY nonce DESC LIMIT 1");
-			if (!Cursor || Cursor->ErrorOrEmpty())
-				return ExpectsLR<Mediator::MasterWallet>(LayerException(ErrorOf(Cursor)));
+			auto cursor = query(label, __func__, "SELECT message FROM wallets WHERE address_index = -1 ORDER BY nonce DESC LIMIT 1");
+			if (!cursor || cursor->error_or_empty())
+				return expects_lr<mediator::master_wallet>(layer_exception(error_of(cursor)));
 
-			auto Blob = Protocol::Now().Key.DecryptBlob((*Cursor)["message"].Get().GetBlob());
-			if (!Blob)
-				return Blob.Error();
+			auto blob = protocol::now().key.decrypt_blob((*cursor)["message"].get().get_blob());
+			if (!blob)
+				return blob.error();
 
-			Mediator::MasterWallet Value;
-			Format::Stream Message = Format::Stream(std::move(*Blob));
-			if (!Value.Load(Message))
-				return ExpectsLR<Mediator::MasterWallet>(LayerException("wallet deserialization error"));
+			mediator::master_wallet value;
+			format::stream message = format::stream(std::move(*blob));
+			if (!value.load(message))
+				return expects_lr<mediator::master_wallet>(layer_exception("wallet deserialization error"));
 
-			return Value;
+			return value;
 		}
-		ExpectsLR<Mediator::MasterWallet> Mediatorstate::GetMasterWalletByHash(const uint256_t& MasterWalletHash)
+		expects_lr<mediator::master_wallet> mediatorstate::get_master_wallet_by_hash(const uint256_t& master_wallet_hash)
 		{
-			uint8_t Hash[32];
-			Algorithm::Encoding::DecodeUint256(MasterWalletHash, Hash);
+			uint8_t hash[32];
+			algorithm::encoding::decode_uint256(master_wallet_hash, hash);
 
-			SchemaList Map;
-			Map.push_back(Var::Set::Binary(Hash, sizeof(Hash)));
+			schema_list map;
+			map.push_back(var::set::binary(hash, sizeof(hash)));
 
-			auto Cursor = EmplaceQuery(Label, __func__, "SELECT message FROM wallets WHERE hash = ? AND address_index = -1", &Map);
-			if (!Cursor || Cursor->ErrorOrEmpty())
-				return ExpectsLR<Mediator::MasterWallet>(LayerException(ErrorOf(Cursor)));
+			auto cursor = emplace_query(label, __func__, "SELECT message FROM wallets WHERE hash = ? AND address_index = -1", &map);
+			if (!cursor || cursor->error_or_empty())
+				return expects_lr<mediator::master_wallet>(layer_exception(error_of(cursor)));
 
-			auto Blob = Protocol::Now().Key.DecryptBlob((*Cursor)["message"].Get().GetBlob());
-			if (!Blob)
-				return Blob.Error();
+			auto blob = protocol::now().key.decrypt_blob((*cursor)["message"].get().get_blob());
+			if (!blob)
+				return blob.error();
 
-			Mediator::MasterWallet Value;
-			Format::Stream Message = Format::Stream(std::move(*Blob));
-			if (!Value.Load(Message))
-				return ExpectsLR<Mediator::MasterWallet>(LayerException("wallet deserialization error"));
+			mediator::master_wallet value;
+			format::stream message = format::stream(std::move(*blob));
+			if (!value.load(message))
+				return expects_lr<mediator::master_wallet>(layer_exception("wallet deserialization error"));
 
-			return Value;
+			return value;
 		}
-		ExpectsLR<void> Mediatorstate::AddDerivedWallet(const Mediator::MasterWallet& Parent, const Mediator::DerivedSigningWallet& Value)
+		expects_lr<void> mediatorstate::add_derived_wallet(const mediator::master_wallet& parent, const mediator::derived_signing_wallet& value)
 		{
-			if (!Value.IsValid())
-				return ExpectsLR<void>(LayerException("invalid wallet"));
+			if (!value.is_valid())
+				return expects_lr<void>(layer_exception("invalid wallet"));
 
-			Format::Stream Message;
-			if (!Value.Store(&Message))
-				return ExpectsLR<void>(LayerException("wallet serialization error"));
+			format::stream message;
+			if (!value.store(&message))
+				return expects_lr<void>(layer_exception("wallet serialization error"));
 
-			auto Blob = Protocol::Now().Key.EncryptBlob(Message.Data);
-			if (!Blob)
-				return Blob.Error();
+			auto blob = protocol::now().key.encrypt_blob(message.data);
+			if (!blob)
+				return blob.error();
 
-			uint8_t Hash[32];
-			Algorithm::Encoding::DecodeUint256(Parent.AsHash(), Hash);
+			uint8_t hash[32];
+			algorithm::encoding::decode_uint256(parent.as_hash(), hash);
 
-			SchemaList Map;
-			Map.push_back(Var::Set::Binary(Hash, sizeof(Hash)));
-			Map.push_back(Var::Set::Integer(Value.AddressIndex.Or(0)));
-			Map.push_back(Var::Set::Integer(DateTime().Milliseconds()));
-			Map.push_back(Var::Set::Binary(*Blob));
+			schema_list map;
+			map.push_back(var::set::binary(hash, sizeof(hash)));
+			map.push_back(var::set::integer(value.address_index.otherwise(0)));
+			map.push_back(var::set::integer(date_time().milliseconds()));
+			map.push_back(var::set::binary(*blob));
 
-			auto Cursor = EmplaceQuery(Label, __func__, "INSERT OR REPLACE INTO wallets (hash, address_index, nonce, message) VALUES (?, ?, ?, ?)", &Map);
-			if (!Cursor || Cursor->Error())
-				return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
+			auto cursor = emplace_query(label, __func__, "INSERT OR REPLACE INTO wallets (hash, address_index, nonce, message) VALUES (?, ?, ?, ?)", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<void>(layer_exception(error_of(cursor)));
 
-			return AddMasterWallet(Parent);
+			return add_master_wallet(parent);
 		}
-		ExpectsLR<Mediator::DerivedSigningWallet> Mediatorstate::GetDerivedWallet(const uint256_t& MasterWalletHash, uint64_t AddressIndex)
+		expects_lr<mediator::derived_signing_wallet> mediatorstate::get_derived_wallet(const uint256_t& master_wallet_hash, uint64_t address_index)
 		{
-			uint8_t Hash[32];
-			Algorithm::Encoding::DecodeUint256(MasterWalletHash, Hash);
+			uint8_t hash[32];
+			algorithm::encoding::decode_uint256(master_wallet_hash, hash);
 
-			SchemaList Map;
-			Map.push_back(Var::Set::Binary(Hash, sizeof(Hash)));
-			Map.push_back(Var::Set::Integer(AddressIndex));
+			schema_list map;
+			map.push_back(var::set::binary(hash, sizeof(hash)));
+			map.push_back(var::set::integer(address_index));
 
-			auto Cursor = EmplaceQuery(Label, __func__, "SELECT message FROM wallets WHERE hash = ? AND address_index = ?", &Map);
-			if (!Cursor || Cursor->ErrorOrEmpty())
-				return ExpectsLR<Mediator::DerivedSigningWallet>(LayerException(ErrorOf(Cursor)));
+			auto cursor = emplace_query(label, __func__, "SELECT message FROM wallets WHERE hash = ? AND address_index = ?", &map);
+			if (!cursor || cursor->error_or_empty())
+				return expects_lr<mediator::derived_signing_wallet>(layer_exception(error_of(cursor)));
 
-			auto Blob = Protocol::Now().Key.DecryptBlob((*Cursor)["message"].Get().GetBlob());
-			if (!Blob)
-				return Blob.Error();
+			auto blob = protocol::now().key.decrypt_blob((*cursor)["message"].get().get_blob());
+			if (!blob)
+				return blob.error();
 
-			Mediator::DerivedSigningWallet Value;
-			Format::Stream Message = Format::Stream(std::move(*Blob));
-			if (!Value.Load(Message))
-				return ExpectsLR<Mediator::DerivedSigningWallet>(LayerException("wallet deserialization error"));
+			mediator::derived_signing_wallet value;
+			format::stream message = format::stream(std::move(*blob));
+			if (!value.load(message))
+				return expects_lr<mediator::derived_signing_wallet>(layer_exception("wallet deserialization error"));
 
-			return Value;
+			return value;
 		}
-		ExpectsLR<void> Mediatorstate::AddUTXO(const Mediator::IndexUTXO& Value)
+		expects_lr<void> mediatorstate::add_utxo(const mediator::index_utxo& value)
 		{
-			Format::Stream Message;
-			if (!Value.Store(&Message))
-				return ExpectsLR<void>(LayerException("utxo serialization error"));
+			format::stream message;
+			if (!value.store(&message))
+				return expects_lr<void>(layer_exception("utxo serialization error"));
 
-			SchemaList Map;
-			Map.push_back(Var::Set::Binary(GetCoinLocation(Value.UTXO.TransactionId, Value.UTXO.Index)));
-			Map.push_back(Var::Set::Binary(Value.Binding));
-			Map.push_back(Var::Set::Boolean(false));
-			Map.push_back(Var::Set::Binary(Message.Data));
+			schema_list map;
+			map.push_back(var::set::binary(get_coin_location(value.UTXO.transaction_id, value.UTXO.index)));
+			map.push_back(var::set::binary(value.binding));
+			map.push_back(var::set::boolean(false));
+			map.push_back(var::set::binary(message.data));
 			
-			auto Cursor = EmplaceQuery(Label, __func__, "INSERT OR REPLACE INTO coins (location, binding, spent, message) VALUES (?, ?, ?, ?)", &Map);
-			if (!Cursor || Cursor->Error())
-				return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
+			auto cursor = emplace_query(label, __func__, "INSERT OR REPLACE INTO coins (location, binding, spent, message) VALUES (?, ?, ?, ?)", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<void>(layer_exception(error_of(cursor)));
 
-			return Expectation::Met;
+			return expectation::met;
 		}
-		ExpectsLR<void> Mediatorstate::RemoveUTXO(const std::string_view& TransactionId, uint32_t Index)
+		expects_lr<void> mediatorstate::remove_utxo(const std::string_view& transaction_id, uint32_t index)
 		{
-			SchemaList Map;
-			Map.push_back(Var::Set::Binary(GetCoinLocation(TransactionId, Index)));
+			schema_list map;
+			map.push_back(var::set::binary(get_coin_location(transaction_id, index)));
 
-			auto Cursor = EmplaceQuery(Label, __func__, "UPDATE coins SET spent = TRUE WHERE location = ?", &Map);
-			if (!Cursor || Cursor->Error())
-				return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
+			auto cursor = emplace_query(label, __func__, "UPDATE coins SET spent = TRUE WHERE location = ?", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<void>(layer_exception(error_of(cursor)));
 
-			return Expectation::Met;
+			return expectation::met;
 		}
-		ExpectsLR<Mediator::IndexUTXO> Mediatorstate::GetSTXO(const std::string_view& TransactionId, uint32_t Index)
+		expects_lr<mediator::index_utxo> mediatorstate::get_stxo(const std::string_view& transaction_id, uint32_t index)
 		{
-			SchemaList Map;
-			Map.push_back(Var::Set::String(String(TransactionId) + ":" + ToString(Index)));
+			schema_list map;
+			map.push_back(var::set::string(string(transaction_id) + ":" + to_string(index)));
 
-			auto Cursor = EmplaceQuery(Label, __func__, "SELECT message FROM coins WHERE location = ?", &Map);
-			if (!Cursor || Cursor->ErrorOrEmpty())
-				return ExpectsLR<Mediator::IndexUTXO>(LayerException(ErrorOf(Cursor)));
+			auto cursor = emplace_query(label, __func__, "SELECT message FROM coins WHERE location = ?", &map);
+			if (!cursor || cursor->error_or_empty())
+				return expects_lr<mediator::index_utxo>(layer_exception(error_of(cursor)));
 
-			Mediator::IndexUTXO Value;
-			Format::Stream Message = Format::Stream((*Cursor)["message"].Get().GetBlob());
-			if (!Value.Load(Message))
-				return ExpectsLR<Mediator::IndexUTXO>(LayerException("utxo deserialization error"));
+			mediator::index_utxo value;
+			format::stream message = format::stream((*cursor)["message"].get().get_blob());
+			if (!value.load(message))
+				return expects_lr<mediator::index_utxo>(layer_exception("utxo deserialization error"));
 
-			return Value;
+			return value;
 		}
-		ExpectsLR<Mediator::IndexUTXO> Mediatorstate::GetUTXO(const std::string_view& TransactionId, uint32_t Index)
+		expects_lr<mediator::index_utxo> mediatorstate::get_utxo(const std::string_view& transaction_id, uint32_t index)
 		{
-			SchemaList Map;
-			Map.push_back(Var::Set::Binary(GetCoinLocation(TransactionId, Index)));
+			schema_list map;
+			map.push_back(var::set::binary(get_coin_location(transaction_id, index)));
 
-			auto Cursor = EmplaceQuery(Label, __func__, "SELECT message FROM coins WHERE location = ? AND spent = FALSE", &Map);
-			if (!Cursor || Cursor->ErrorOrEmpty())
-				return ExpectsLR<Mediator::IndexUTXO>(LayerException(ErrorOf(Cursor)));
+			auto cursor = emplace_query(label, __func__, "SELECT message FROM coins WHERE location = ? AND spent = FALSE", &map);
+			if (!cursor || cursor->error_or_empty())
+				return expects_lr<mediator::index_utxo>(layer_exception(error_of(cursor)));
 
-			Mediator::IndexUTXO Value;
-			Format::Stream Message = Format::Stream((*Cursor)["message"].Get().GetBlob());
-			if (!Value.Load(Message))
-				return ExpectsLR<Mediator::IndexUTXO>(LayerException("utxo deserialization error"));
+			mediator::index_utxo value;
+			format::stream message = format::stream((*cursor)["message"].get().get_blob());
+			if (!value.load(message))
+				return expects_lr<mediator::index_utxo>(layer_exception("utxo deserialization error"));
 
-			return Value;
+			return value;
 		}
-		ExpectsLR<Vector<Mediator::IndexUTXO>> Mediatorstate::GetUTXOs(const std::string_view& Binding, size_t Offset, size_t Count)
+		expects_lr<vector<mediator::index_utxo>> mediatorstate::get_utxos(const std::string_view& binding, size_t offset, size_t count)
 		{
-			SchemaList Map;
-			Map.push_back(Var::Set::Binary(Binding));
-			Map.push_back(Var::Set::Integer(Count));
-			Map.push_back(Var::Set::Integer(Offset));
+			schema_list map;
+			map.push_back(var::set::binary(binding));
+			map.push_back(var::set::integer(count));
+			map.push_back(var::set::integer(offset));
 
-			auto Cursor = EmplaceQuery(Label, __func__, "SELECT message FROM coins WHERE spent = FALSE AND binding = ? LIMIT ? OFFSET ?", &Map);
-			if (!Cursor || Cursor->Error())
-				return ExpectsLR<Vector<Mediator::IndexUTXO>>(LayerException(ErrorOf(Cursor)));
+			auto cursor = emplace_query(label, __func__, "SELECT message FROM coins WHERE spent = FALSE AND binding = ? LIMIT ? OFFSET ?", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<vector<mediator::index_utxo>>(layer_exception(error_of(cursor)));
 
-			auto& Response = Cursor->First();
-			size_t Size = Response.Size();
-			Vector<Mediator::IndexUTXO> Values;
-			Values.reserve(Size);
+			auto& response = cursor->first();
+			size_t size = response.size();
+			vector<mediator::index_utxo> values;
+			values.reserve(size);
 
-			for (size_t i = 0; i < Size; i++)
+			for (size_t i = 0; i < size; i++)
 			{
-				Mediator::IndexUTXO Value;
-				Format::Stream Message = Format::Stream(Response[i]["message"].Get().GetBlob());
-				if (Value.Load(Message))
-					Values.emplace_back(std::move(Value));
+				mediator::index_utxo value;
+				format::stream message = format::stream(response[i]["message"].get().get_blob());
+				if (value.load(message))
+					values.emplace_back(std::move(value));
 			}
 
-			return Values;
+			return values;
 		}
-		ExpectsLR<void> Mediatorstate::AddIncomingTransaction(const Mediator::IncomingTransaction& Value, uint64_t BlockId)
+		expects_lr<void> mediatorstate::add_incoming_transaction(const mediator::incoming_transaction& value, uint64_t block_id)
 		{
-			auto* Chain = NSS::ServerNode::Get()->GetChain(Value.Asset);
-			if (!Chain)
-				return ExpectsLR<void>(LayerException("invalid witness transaction asset"));
+			auto* chain = nss::server_node::get()->get_chain(value.asset);
+			if (!chain)
+				return expects_lr<void>(layer_exception("invalid witness transaction asset"));
 
-			Format::Stream Message;
-			if (!Value.Store(&Message))
-				return ExpectsLR<void>(LayerException("witness transaction serialization error"));
+			format::stream message;
+			if (!value.store(&message))
+				return expects_lr<void>(layer_exception("witness transaction serialization error"));
 
-			SchemaList Map;
-			Map.push_back(Var::Set::Binary(GetTransactionLocation(Value.TransactionId)));
-			Map.push_back(Var::Set::Null());
-			Map.push_back(Var::Set::Integer(Value.BlockId));
-			Map.push_back(Var::Set::Boolean(Value.BlockId <= BlockId ? BlockId - Value.BlockId >= Chain->GetChainparams().SyncLatency : false));
-			Map.push_back(Var::Set::Binary(Message.Data));
+			schema_list map;
+			map.push_back(var::set::binary(get_transaction_location(value.transaction_id)));
+			map.push_back(var::set::null());
+			map.push_back(var::set::integer(value.block_id));
+			map.push_back(var::set::boolean(value.block_id <= block_id ? block_id - value.block_id >= chain->get_chainparams().sync_latency : false));
+			map.push_back(var::set::binary(message.data));
 
-			auto Cursor = EmplaceQuery(Label, __func__, "INSERT INTO transactions (location, binding, block_id, approved, message) VALUES (?, ?, ?, ?, ?) ON CONFLICT (location) DO UPDATE SET binding = (CASE WHEN binding IS NOT NULL THEN binding ELSE EXCLUDED.binding END), block_id = EXCLUDED.block_id, approved = EXCLUDED.approved, message = EXCLUDED.message", &Map);
-			if (!Cursor || Cursor->Error())
-				return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
+			auto cursor = emplace_query(label, __func__, "INSERT INTO transactions (location, binding, block_id, approved, message) VALUES (?, ?, ?, ?, ?) ON CONFLICT (location) DO UPDATE SET binding = (CASE WHEN binding IS NOT NULL THEN binding ELSE EXCLUDED.binding END), block_id = EXCLUDED.block_id, approved = EXCLUDED.approved, message = EXCLUDED.message", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<void>(layer_exception(error_of(cursor)));
 
-			return Expectation::Met;
+			return expectation::met;
 		}
-		ExpectsLR<void> Mediatorstate::AddOutgoingTransaction(const Mediator::IncomingTransaction& Value, const uint256_t ExternalId)
+		expects_lr<void> mediatorstate::add_outgoing_transaction(const mediator::incoming_transaction& value, const uint256_t external_id)
 		{
-			Format::Stream Message;
-			if (!Value.Store(&Message))
-				return ExpectsLR<void>(LayerException("witness transaction serialization error"));
+			format::stream message;
+			if (!value.store(&message))
+				return expects_lr<void>(layer_exception("witness transaction serialization error"));
 
-			uint8_t Hash[32];
-			Algorithm::Encoding::DecodeUint256(ExternalId, Hash);
+			uint8_t hash[32];
+			algorithm::encoding::decode_uint256(external_id, hash);
 
-			SchemaList Map;
-			Map.push_back(Var::Set::Binary(GetTransactionLocation(Value.TransactionId)));
-			Map.push_back(ExternalId > 0 ? Var::Set::Binary(Hash, sizeof(Hash)) : Var::Set::Null());
-			Map.push_back(Var::Set::Integer(Value.BlockId));
-			Map.push_back(Var::Set::Boolean(false));
-			Map.push_back(Var::Set::Binary(Message.Data));
+			schema_list map;
+			map.push_back(var::set::binary(get_transaction_location(value.transaction_id)));
+			map.push_back(external_id > 0 ? var::set::binary(hash, sizeof(hash)) : var::set::null());
+			map.push_back(var::set::integer(value.block_id));
+			map.push_back(var::set::boolean(false));
+			map.push_back(var::set::binary(message.data));
 
-			auto Cursor = EmplaceQuery(Label, __func__, "INSERT INTO transactions (location, external_id, block_id, approved, message) VALUES (?, ?, ?, ?, ?) ON CONFLICT (location) DO UPDATE SET external_id = (CASE WHEN external_id IS NOT NULL THEN external_id ELSE EXCLUDED.external_id END), block_id = EXCLUDED.block_id, approved = EXCLUDED.approved, message = EXCLUDED.message", &Map);
-			if (!Cursor || Cursor->Error())
-				return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
+			auto cursor = emplace_query(label, __func__, "INSERT INTO transactions (location, external_id, block_id, approved, message) VALUES (?, ?, ?, ?, ?) ON CONFLICT (location) DO UPDATE SET external_id = (CASE WHEN external_id IS NOT NULL THEN external_id ELSE EXCLUDED.external_id END), block_id = EXCLUDED.block_id, approved = EXCLUDED.approved, message = EXCLUDED.message", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<void>(layer_exception(error_of(cursor)));
 
-			return Expectation::Met;
+			return expectation::met;
 		}
-		ExpectsLR<Mediator::IncomingTransaction> Mediatorstate::GetTransaction(const std::string_view& TransactionId, const uint256_t& ExternalId)
+		expects_lr<mediator::incoming_transaction> mediatorstate::get_transaction(const std::string_view& transaction_id, const uint256_t& external_id)
 		{
-			uint8_t Hash[32];
-			Algorithm::Encoding::DecodeUint256(ExternalId, Hash);
+			uint8_t hash[32];
+			algorithm::encoding::decode_uint256(external_id, hash);
 
-			SchemaList Map;
-			Map.push_back(Var::Set::Binary(GetTransactionLocation(TransactionId)));
-			Map.push_back(ExternalId > 0 ? Var::Set::Binary(Hash, sizeof(Hash)) : Var::Set::Null());
+			schema_list map;
+			map.push_back(var::set::binary(get_transaction_location(transaction_id)));
+			map.push_back(external_id > 0 ? var::set::binary(hash, sizeof(hash)) : var::set::null());
 
-			auto Cursor = EmplaceQuery(Label, __func__, "SELECT message FROM transactions WHERE location = ? OR binding = ?", &Map);
-			if (!Cursor || Cursor->ErrorOrEmpty())
-				return ExpectsLR<Mediator::IncomingTransaction>(LayerException(ErrorOf(Cursor)));
+			auto cursor = emplace_query(label, __func__, "SELECT message FROM transactions WHERE location = ? OR binding = ?", &map);
+			if (!cursor || cursor->error_or_empty())
+				return expects_lr<mediator::incoming_transaction>(layer_exception(error_of(cursor)));
 
-			Mediator::IncomingTransaction Value;
-			Format::Stream Message = Format::Stream((*Cursor)["message"].Get().GetBlob());
-			if (!Value.Load(Message))
-				return ExpectsLR<Mediator::IncomingTransaction>(LayerException("witness transaction deserialization error"));
+			mediator::incoming_transaction value;
+			format::stream message = format::stream((*cursor)["message"].get().get_blob());
+			if (!value.load(message))
+				return expects_lr<mediator::incoming_transaction>(layer_exception("witness transaction deserialization error"));
 
-			return Value;
+			return value;
 		}
-		ExpectsLR<Vector<Mediator::IncomingTransaction>> Mediatorstate::ApproveTransactions(uint64_t BlockHeight, uint64_t BlockLatency)
+		expects_lr<vector<mediator::incoming_transaction>> mediatorstate::approve_transactions(uint64_t block_height, uint64_t block_latency)
 		{
-			if (!BlockHeight || !BlockLatency)
-				return ExpectsLR<Vector<Mediator::IncomingTransaction>>(LayerException("invalid block height or block latency"));
-			else if (BlockHeight <= BlockLatency)
-				return ExpectsLR<Vector<Mediator::IncomingTransaction>>(Vector<Mediator::IncomingTransaction>());
+			if (!block_height || !block_latency)
+				return expects_lr<vector<mediator::incoming_transaction>>(layer_exception("invalid block height or block latency"));
+			else if (block_height <= block_latency)
+				return expects_lr<vector<mediator::incoming_transaction>>(vector<mediator::incoming_transaction>());
 
-			SchemaList Map;
-			Map.push_back(Var::Set::Integer(BlockHeight - BlockLatency));
-			Map.push_back(Var::Set::Integer(BlockHeight - BlockLatency));
+			schema_list map;
+			map.push_back(var::set::integer(block_height - block_latency));
+			map.push_back(var::set::integer(block_height - block_latency));
 
-			auto Cursor = EmplaceQuery(Label, __func__, "SELECT message FROM transactions WHERE block_id <= ? AND approved = FALSE", &Map);
-			if (!Cursor || Cursor->Error())
-				return ExpectsLR<Vector<Mediator::IncomingTransaction>>(LayerException(ErrorOf(Cursor)));
+			auto cursor = emplace_query(label, __func__, "SELECT message FROM transactions WHERE block_id <= ? AND approved = FALSE", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<vector<mediator::incoming_transaction>>(layer_exception(error_of(cursor)));
 
-			auto& Response = Cursor->First();
-			size_t Size = Response.Size();
-			Vector<Mediator::IncomingTransaction> Values;
-			Values.reserve(Size);
+			auto& response = cursor->first();
+			size_t size = response.size();
+			vector<mediator::incoming_transaction> values;
+			values.reserve(size);
 
-			for (size_t i = 0; i < Size; i++)
+			for (size_t i = 0; i < size; i++)
 			{
-				Mediator::IncomingTransaction Value;
-				Format::Stream Message = Format::Stream(Response[i]["message"].Get().GetBlob());
-				if (!Value.Load(Message))
+				mediator::incoming_transaction value;
+				format::stream message = format::stream(response[i]["message"].get().get_blob());
+				if (!value.load(message))
 					continue;
 
-				if (Value.BlockId > 0)
+				if (value.block_id > 0)
 				{
-					if (AddIncomingTransaction(Value, BlockHeight))
-						Values.emplace_back(std::move(Value));
+					if (add_incoming_transaction(value, block_height))
+						values.emplace_back(std::move(value));
 				}
 				else
 				{
-					Value.BlockId = BlockHeight;
-					AddIncomingTransaction(Value, BlockHeight);
+					value.block_id = block_height;
+					add_incoming_transaction(value, block_height);
 				}
 			}
 
-			return ExpectsLR<Vector<Mediator::IncomingTransaction>>(std::move(Values));
+			return expects_lr<vector<mediator::incoming_transaction>>(std::move(values));
 		}
-		ExpectsLR<void> Mediatorstate::SetProperty(const std::string_view& Key, UPtr<Schema>&& Value)
+		expects_lr<void> mediatorstate::set_property(const std::string_view& key, uptr<schema>&& value)
 		{
-			auto Buffer = Schema::ToJSONB(*Value);
-			Format::Stream Message;
-			Message.WriteString(std::string_view(Buffer.begin(), Buffer.end()));
+			auto buffer = schema::to_jsonb(*value);
+			format::stream message;
+			message.write_string(std::string_view(buffer.begin(), buffer.end()));
 
-			SchemaList Map;
-			Map.push_back(Var::Set::String(Algorithm::Asset::BlockchainOf(Asset) + ":" + String(Key)));
-			Map.push_back(Var::Set::Binary(Message.Compress()));
+			schema_list map;
+			map.push_back(var::set::string(algorithm::asset::blockchain_of(asset) + ":" + string(key)));
+			map.push_back(var::set::binary(message.compress()));
 
-			if (Value)
+			if (value)
 			{
-				auto Cursor = EmplaceQuery(Label, __func__, "INSERT OR REPLACE INTO properties (key, message) VALUES (?, ?)", &Map);
-				if (!Cursor || Cursor->Error())
-					return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
+				auto cursor = emplace_query(label, __func__, "INSERT OR REPLACE INTO properties (key, message) VALUES (?, ?)", &map);
+				if (!cursor || cursor->error())
+					return expects_lr<void>(layer_exception(error_of(cursor)));
 			}
 			else
 			{
-				auto Cursor = EmplaceQuery(Label, __func__, "DELETE FROM properties WHERE key = ?", &Map);
-				if (!Cursor || Cursor->Error())
-					return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
+				auto cursor = emplace_query(label, __func__, "DELETE FROM properties WHERE key = ?", &map);
+				if (!cursor || cursor->error())
+					return expects_lr<void>(layer_exception(error_of(cursor)));
 			}
 
-			return Expectation::Met;
+			return expectation::met;
 		}
-		ExpectsLR<Schema*> Mediatorstate::GetProperty(const std::string_view& Key)
+		expects_lr<schema*> mediatorstate::get_property(const std::string_view& key)
 		{
-			SchemaList Map;
-			Map.push_back(Var::Set::String(Algorithm::Asset::BlockchainOf(Asset) + ":" + String(Key)));
+			schema_list map;
+			map.push_back(var::set::string(algorithm::asset::blockchain_of(asset) + ":" + string(key)));
 
-			auto Cursor = EmplaceQuery(Label, __func__, "SELECT message FROM properties WHERE key = ?", &Map);
-			if (!Cursor || Cursor->ErrorOrEmpty())
-				return ExpectsLR<Schema*>(LayerException(ErrorOf(Cursor)));
+			auto cursor = emplace_query(label, __func__, "SELECT message FROM properties WHERE key = ?", &map);
+			if (!cursor || cursor->error_or_empty())
+				return expects_lr<schema*>(layer_exception(error_of(cursor)));
 
-			String Buffer;
-			Format::Stream Message = Format::Stream::Decompress((*Cursor)["message"].Get().GetString());
-			if (!Message.ReadString(Message.ReadType(), &Buffer))
-				return ExpectsLR<Schema*>(LayerException("state value deserialization error"));
+			string buffer;
+			format::stream message = format::stream::decompress((*cursor)["message"].get().get_string());
+			if (!message.read_string(message.read_type(), &buffer))
+				return expects_lr<schema*>(layer_exception("state value deserialization error"));
 			
-			auto Value = Schema::FromJSONB(Buffer);
-			if (!Value)
-				return ExpectsLR<Schema*>(LayerException(std::move(Value.Error().message())));
+			auto value = schema::from_jsonb(buffer);
+			if (!value)
+				return expects_lr<schema*>(layer_exception(std::move(value.error().message())));
 
-			return *Value;
+			return *value;
 		}
-		ExpectsLR<void> Mediatorstate::SetCache(Mediator::CachePolicy Policy, const std::string_view& Key, UPtr<Schema>&& Value)
+		expects_lr<void> mediatorstate::set_cache(mediator::cache_policy policy, const std::string_view& key, uptr<schema>&& value)
 		{
-			auto Buffer = Schema::ToJSONB(*Value);
-			Format::Stream Message;
-			Message.WriteString(std::string_view(Buffer.begin(), Buffer.end()));
+			auto buffer = schema::to_jsonb(*value);
+			format::stream message;
+			message.write_string(std::string_view(buffer.begin(), buffer.end()));
 
-			SchemaList Map;
-			Map.push_back(Var::Set::Binary(Format::Util::IsHexEncoding(Key) ? Codec::HexDecode(Key) : String(Key)));
-			Map.push_back(Var::Set::Binary(Message.Compress()));
+			schema_list map;
+			map.push_back(var::set::binary(format::util::is_hex_encoding(key) ? codec::hex_decode(key) : string(key)));
+			map.push_back(var::set::binary(message.compress()));
 
-			if (Value)
+			if (value)
 			{
-				auto Cursor = EmplaceQuery(Label, __func__, Stringify::Text("INSERT INTO %s (key, message) VALUES (?, ?)", GetCacheLocation(Policy).data()), &Map);
-				if (!Cursor || Cursor->Error())
-					return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
+				auto cursor = emplace_query(label, __func__, stringify::text("INSERT INTO %s (key, message) VALUES (?, ?)", get_cache_location(policy).data()), &map);
+				if (!cursor || cursor->error())
+					return expects_lr<void>(layer_exception(error_of(cursor)));
 			}
 			else
 			{
-				auto Cursor = EmplaceQuery(Label, __func__, Stringify::Text("DELETE FROM %s WHERE key = ?", GetCacheLocation(Policy).data()), &Map);
-				if (!Cursor || Cursor->Error())
-					return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
+				auto cursor = emplace_query(label, __func__, stringify::text("DELETE FROM %s WHERE key = ?", get_cache_location(policy).data()), &map);
+				if (!cursor || cursor->error())
+					return expects_lr<void>(layer_exception(error_of(cursor)));
 			}
 
-			return Expectation::Met;
+			return expectation::met;
 		}
-		ExpectsLR<Schema*> Mediatorstate::GetCache(Mediator::CachePolicy Policy, const std::string_view& Key)
+		expects_lr<schema*> mediatorstate::get_cache(mediator::cache_policy policy, const std::string_view& key)
 		{
-			SchemaList Map;
-			Map.push_back(Var::Set::Binary(Format::Util::IsHexEncoding(Key) ? Codec::HexDecode(Key) : String(Key)));
+			schema_list map;
+			map.push_back(var::set::binary(format::util::is_hex_encoding(key) ? codec::hex_decode(key) : string(key)));
 
-			auto Cursor = EmplaceQuery(Label, __func__, Stringify::Text("SELECT message FROM %s WHERE key = ?", GetCacheLocation(Policy).data()), &Map);
-			if (!Cursor || Cursor->ErrorOrEmpty())
-				return ExpectsLR<Schema*>(LayerException(ErrorOf(Cursor)));
+			auto cursor = emplace_query(label, __func__, stringify::text("SELECT message FROM %s WHERE key = ?", get_cache_location(policy).data()), &map);
+			if (!cursor || cursor->error_or_empty())
+				return expects_lr<schema*>(layer_exception(error_of(cursor)));
 
-			String Buffer;
-			Format::Stream Message = Format::Stream::Decompress((*Cursor)["message"].Get().GetString());
-			if (!Message.ReadString(Message.ReadType(), &Buffer))
-				return ExpectsLR<Schema*>(LayerException("cache value deserialization error"));
+			string buffer;
+			format::stream message = format::stream::decompress((*cursor)["message"].get().get_string());
+			if (!message.read_string(message.read_type(), &buffer))
+				return expects_lr<schema*>(layer_exception("cache value deserialization error"));
 
-			auto Value = Schema::FromJSONB(Buffer);
-			if (!Value)
-				return ExpectsLR<Schema*>(LayerException(std::move(Value.Error().message())));
+			auto value = schema::from_jsonb(buffer);
+			if (!value)
+				return expects_lr<schema*>(layer_exception(std::move(value.error().message())));
 
-			return *Value;
+			return *value;
 		}
-		ExpectsLR<void> Mediatorstate::SetAddressIndex(const std::string_view& Address, const Mediator::IndexAddress& Value)
+		expects_lr<void> mediatorstate::set_address_index(const std::string_view& address, const mediator::index_address& value)
 		{
-			Format::Stream Message;
-			if (!Value.Store(&Message))
-				return ExpectsLR<void>(LayerException("address index serialization error"));
+			format::stream message;
+			if (!value.store(&message))
+				return expects_lr<void>(layer_exception("address index serialization error"));
 
-			SchemaList Map;
-			Map.push_back(Var::Set::Binary(GetAddressLocation(Address)));
-			Map.push_back(Var::Set::Binary(Message.Data));
+			schema_list map;
+			map.push_back(var::set::binary(get_address_location(address)));
+			map.push_back(var::set::binary(message.data));
 
-			auto Cursor = EmplaceQuery(Label, __func__, "INSERT OR REPLACE INTO addresses (location, message) VALUES (?, ?)", &Map);
-			if (!Cursor || Cursor->Error())
-				return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
+			auto cursor = emplace_query(label, __func__, "INSERT OR REPLACE INTO addresses (location, message) VALUES (?, ?)", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<void>(layer_exception(error_of(cursor)));
 
-			return Expectation::Met;
+			return expectation::met;
 		}
-		ExpectsLR<void> Mediatorstate::ClearAddressIndex(const std::string_view& Address)
+		expects_lr<void> mediatorstate::clear_address_index(const std::string_view& address)
 		{
-			SchemaList Map;
-			Map.push_back(Var::Set::Binary(GetAddressLocation(Address)));
+			schema_list map;
+			map.push_back(var::set::binary(get_address_location(address)));
 
-			auto Cursor = EmplaceQuery(Label, __func__, "DELETE FROM addresses WHERE location = ?", &Map);
-			if (!Cursor || Cursor->Error())
-				return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
+			auto cursor = emplace_query(label, __func__, "DELETE FROM addresses WHERE location = ?", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<void>(layer_exception(error_of(cursor)));
 
-			return Expectation::Met;
+			return expectation::met;
 		}
-		ExpectsLR<Mediator::IndexAddress> Mediatorstate::GetAddressIndex(const std::string_view& Address)
+		expects_lr<mediator::index_address> mediatorstate::get_address_index(const std::string_view& address)
 		{
-			SchemaList Map;
-			Map.push_back(Var::Set::Binary(GetAddressLocation(Address)));
+			schema_list map;
+			map.push_back(var::set::binary(get_address_location(address)));
 
-			auto Cursor = EmplaceQuery(Label, __func__, "SELECT message FROM addresses WHERE location = ?", &Map);
-			if (!Cursor || Cursor->ErrorOrEmpty())
-				return ExpectsLR<Mediator::IndexAddress>(LayerException(ErrorOf(Cursor)));
+			auto cursor = emplace_query(label, __func__, "SELECT message FROM addresses WHERE location = ?", &map);
+			if (!cursor || cursor->error_or_empty())
+				return expects_lr<mediator::index_address>(layer_exception(error_of(cursor)));
 
-			Mediator::IndexAddress Value;
-			Format::Stream Message = Format::Stream((*Cursor)["message"].Get().GetBlob());
-			if (!Value.Load(Message))
-				return ExpectsLR<Mediator::IndexAddress>(LayerException("address index deserialization error"));
+			mediator::index_address value;
+			format::stream message = format::stream((*cursor)["message"].get().get_blob());
+			if (!value.load(message))
+				return expects_lr<mediator::index_address>(layer_exception("address index deserialization error"));
 
-			return Value;
+			return value;
 		}
-		ExpectsLR<UnorderedMap<String, Mediator::IndexAddress>> Mediatorstate::GetAddressIndices(const UnorderedSet<String>& Addresses)
+		expects_lr<unordered_map<string, mediator::index_address>> mediatorstate::get_address_indices(const unordered_set<string>& addresses)
 		{
-			UPtr<Schema> AddressList = Var::Set::Array();
-			AddressList->Reserve(Addresses.size());
-			for (auto& Item : Addresses)
+			uptr<schema> address_list = var::set::array();
+			address_list->reserve(addresses.size());
+			for (auto& item : addresses)
 			{
-				if (!Item.empty())
-					AddressList->Push(Var::Binary(GetAddressLocation(Item)));
+				if (!item.empty())
+					address_list->push(var::binary(get_address_location(item)));
 			}
-			if (AddressList->Empty())
-				return ExpectsLR<UnorderedMap<String, Mediator::IndexAddress>>(LayerException("no locations"));
+			if (address_list->empty())
+				return expects_lr<unordered_map<string, mediator::index_address>>(layer_exception("no locations"));
 
-			SchemaList Map;
-			Map.push_back(Var::Set::String(*LDB::Utils::InlineArray(std::move(AddressList))));
+			schema_list map;
+			map.push_back(var::set::string(*sqlite::utils::inline_array(std::move(address_list))));
 
-			auto Cursor = EmplaceQuery(Label, __func__, "SELECT message FROM addresses WHERE location IN ($?)", &Map);
-			if (!Cursor || Cursor->Error())
-				return ExpectsLR<UnorderedMap<String, Mediator::IndexAddress>>(LayerException(ErrorOf(Cursor)));
+			auto cursor = emplace_query(label, __func__, "SELECT message FROM addresses WHERE location IN ($?)", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<unordered_map<string, mediator::index_address>>(layer_exception(error_of(cursor)));
 
-			auto& Response = Cursor->First();
-			size_t Size = Response.Size();
-			UnorderedMap<String, Mediator::IndexAddress> Values;
-			Values.reserve(Size);
+			auto& response = cursor->first();
+			size_t size = response.size();
+			unordered_map<string, mediator::index_address> values;
+			values.reserve(size);
 
-			for (size_t i = 0; i < Size; i++)
+			for (size_t i = 0; i < size; i++)
 			{
-				Mediator::IndexAddress Value;
-				Format::Stream Message = Format::Stream(Response[i]["message"].Get().GetBlob());
-				if (Value.Load(Message))
-					Values[Value.Address] = std::move(Value);
-			}
-
-			return Values;
-		}
-		ExpectsLR<Vector<String>> Mediatorstate::GetAddressIndices()
-		{
-			auto Cursor = Query(Label, __func__, "SELECT message FROM addresses");
-			if (!Cursor || Cursor->Error())
-				return ExpectsLR<Vector<String>>(LayerException(ErrorOf(Cursor)));
-
-			auto& Response = Cursor->First();
-			size_t Size = Response.Size();
-			Vector<String> Values;
-			Values.reserve(Size);
-
-			for (size_t i = 0; i < Size; i++)
-			{
-				Mediator::IndexAddress Value;
-				Format::Stream Message = Format::Stream(Response[i]["message"].Get().GetBlob());
-				if (Value.Load(Message))
-					Values.emplace_back(std::move(Value.Address));
+				mediator::index_address value;
+				format::stream message = format::stream(response[i]["message"].get().get_blob());
+				if (value.load(message))
+					values[value.address] = std::move(value);
 			}
 
-			return Values;
+			return values;
 		}
-		std::string_view Mediatorstate::GetCacheLocation(Mediator::CachePolicy Policy)
+		expects_lr<vector<string>> mediatorstate::get_address_indices()
 		{
-			switch (Policy)
+			auto cursor = query(label, __func__, "SELECT message FROM addresses");
+			if (!cursor || cursor->error())
+				return expects_lr<vector<string>>(layer_exception(error_of(cursor)));
+
+			auto& response = cursor->first();
+			size_t size = response.size();
+			vector<string> values;
+			values.reserve(size);
+
+			for (size_t i = 0; i < size; i++)
 			{
-				case Mediator::CachePolicy::Persistent:
+				mediator::index_address value;
+				format::stream message = format::stream(response[i]["message"].get().get_blob());
+				if (value.load(message))
+					values.emplace_back(std::move(value.address));
+			}
+
+			return values;
+		}
+		std::string_view mediatorstate::get_cache_location(mediator::cache_policy policy)
+		{
+			switch (policy)
+			{
+				case mediator::cache_policy::persistent:
 					return "persistent_caches";
-				case Mediator::CachePolicy::Extended:
+				case mediator::cache_policy::extended:
 					return "extended_caches";
-				case Mediator::CachePolicy::Greedy:
-				case Mediator::CachePolicy::Lazy:
-				case Mediator::CachePolicy::Shortened:
+				case mediator::cache_policy::greedy:
+				case mediator::cache_policy::lazy:
+				case mediator::cache_policy::shortened:
 				default:
 					return "shortened_caches";
 			}
 		}
-		String Mediatorstate::GetAddressLocation(const std::string_view& Address)
+		string mediatorstate::get_address_location(const std::string_view& address)
 		{
-			Format::Stream Message;
-			Message.WriteString(Address);
-			return Message.Data;
+			format::stream message;
+			message.write_string(address);
+			return message.data;
 		}
-		String Mediatorstate::GetTransactionLocation(const std::string_view& TransactionId)
+		string mediatorstate::get_transaction_location(const std::string_view& transaction_id)
 		{
-			Format::Stream Message;
-			Message.WriteString(TransactionId);
-			return Message.Data;
+			format::stream message;
+			message.write_string(transaction_id);
+			return message.data;
 		}
-		String Mediatorstate::GetCoinLocation(const std::string_view& TransactionId, uint32_t Index)
+		string mediatorstate::get_coin_location(const std::string_view& transaction_id, uint32_t index)
 		{
-			Format::Stream Message;
-			Message.WriteString(TransactionId);
-			Message.WriteTypeless(Index);
-			return Message.Data;
+			format::stream message;
+			message.write_string(transaction_id);
+			message.write_typeless(index);
+			return message.data;
 		}
-		bool Mediatorstate::ReconstructStorage()
+		bool mediatorstate::reconstruct_storage()
 		{
-			const uint32_t MaxECacheCapacity = Protocol::Now().User.NSS.CacheExtendedSize;
-			const uint32_t MaxSCacheCapacity = Protocol::Now().User.NSS.CacheShortSize;
-			String Command = VI_STRINGIFY(
+			const uint32_t max_ecache_capacity = protocol::now().user.nss.cache_extended_size;
+			const uint32_t max_scache_capacity = protocol::now().user.nss.cache_short_size;
+			string command = VI_STRINGIFY(
 				CREATE TABLE IF NOT EXISTS wallets
 				(
 					hash BINARY(32) NOT NULL,
@@ -616,11 +616,11 @@ namespace Tangent
 				CREATE TRIGGER IF NOT EXISTS shortened_caches_capacity AFTER INSERT ON shortened_caches BEGIN
 					DELETE FROM shortened_caches WHERE id = (SELECT id FROM shortened_caches ORDER BY id ASC) AND (SELECT COUNT(1) FROM shortened_caches) > max_shortened_cache_capacity;
 				END;);
-			Stringify::Replace(Command, "max_extended_cache_capacity", ToString(MaxECacheCapacity));
-			Stringify::Replace(Command, "max_shortened_cache_capacity", ToString(MaxSCacheCapacity));
+			stringify::replace(command, "max_extended_cache_capacity", to_string(max_ecache_capacity));
+			stringify::replace(command, "max_shortened_cache_capacity", to_string(max_scache_capacity));
 
-			auto Cursor = Query(Label, __func__, Command);
-			return (Cursor && !Cursor->Error());
+			auto cursor = query(label, __func__, command);
+			return (cursor && !cursor->error());
 		}
 	}
 }

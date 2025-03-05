@@ -12,910 +12,910 @@ extern "C"
 }
 #include <sodium.h>
 
-namespace Tangent
+namespace tangent
 {
-	namespace Mediator
+	namespace mediator
 	{
-		namespace Backends
+		namespace backends
 		{
-			static void TxAppend(Vector<uint8_t>& Tx, const uint8_t* Data, size_t DataSize)
+			static void tx_append(vector<uint8_t>& tx, const uint8_t* data, size_t data_size)
 			{
-				size_t Offset = Tx.size();
-				Tx.resize(Tx.size() + DataSize);
-				memcpy(&Tx[Offset], Data, DataSize);
+				size_t offset = tx.size();
+				tx.resize(tx.size() + data_size);
+				memcpy(&tx[offset], data, data_size);
 			}
-			static void TxAppendUint32(Vector<uint8_t>& Tx, uint32_t Data)
+			static void tx_append_uint32(vector<uint8_t>& tx, uint32_t data)
 			{
-				uint8_t Buffer[sizeof(uint32_t)];
-				Buffer[0] = (uint8_t)((Data >> 24) & 0xFF);
-				Buffer[1] = (uint8_t)((Data >> 16) & 0xFF);
-				Buffer[2] = (uint8_t)((Data >> 8) & 0xFF);
-				Buffer[3] = (uint8_t)((Data >> 0) & 0xFF);
-				TxAppend(Tx, Buffer, sizeof(Buffer));
+				uint8_t buffer[sizeof(uint32_t)];
+				buffer[0] = (uint8_t)((data >> 24) & 0xFF);
+				buffer[1] = (uint8_t)((data >> 16) & 0xFF);
+				buffer[2] = (uint8_t)((data >> 8) & 0xFF);
+				buffer[3] = (uint8_t)((data >> 0) & 0xFF);
+				tx_append(tx, buffer, sizeof(buffer));
 			}
-			static void TxAppendUint64(Vector<uint8_t>& Tx, uint64_t Data)
+			static void tx_append_uint64(vector<uint8_t>& tx, uint64_t data)
 			{
-				uint8_t Buffer[sizeof(uint64_t)];
-				Buffer[0] = (uint8_t)(Data >> 56);
-				Buffer[1] = (uint8_t)(Data >> 48);
-				Buffer[2] = (uint8_t)(Data >> 40);
-				Buffer[3] = (uint8_t)(Data >> 32);
-				Buffer[4] = (uint8_t)(Data >> 24);
-				Buffer[5] = (uint8_t)(Data >> 16);
-				Buffer[6] = (uint8_t)(Data >> 8);
-				Buffer[7] = (uint8_t)(Data >> 0);
-				TxAppend(Tx, Buffer, sizeof(Buffer));
+				uint8_t buffer[sizeof(uint64_t)];
+				buffer[0] = (uint8_t)(data >> 56);
+				buffer[1] = (uint8_t)(data >> 48);
+				buffer[2] = (uint8_t)(data >> 40);
+				buffer[3] = (uint8_t)(data >> 32);
+				buffer[4] = (uint8_t)(data >> 24);
+				buffer[5] = (uint8_t)(data >> 16);
+				buffer[6] = (uint8_t)(data >> 8);
+				buffer[7] = (uint8_t)(data >> 0);
+				tx_append(tx, buffer, sizeof(buffer));
 			}
-			static void TxAppendAddress(Vector<uint8_t>& Tx, const std::string_view& Data)
+			static void tx_append_address(vector<uint8_t>& tx, const std::string_view& data)
 			{
-				uint8_t PublicKey[STELLAR_KEY_SIZE];
-				stellar_getAddressBytes((char*)String(Data).c_str(), PublicKey);
-				TxAppendUint32(Tx, 0);
-				TxAppend(Tx, PublicKey, sizeof(PublicKey));
+				uint8_t public_key[STELLAR_KEY_SIZE];
+				stellar_getAddressBytes((char*)string(data).c_str(), public_key);
+				tx_append_uint32(tx, 0);
+				tx_append(tx, public_key, sizeof(public_key));
 			}
-			static void TxAppendHash(Vector<uint8_t>& Tx, const std::string_view& Data)
+			static void tx_append_hash(vector<uint8_t>& tx, const std::string_view& data)
 			{
-				String Hash = *Crypto::HashRaw(Digests::SHA256(), Data);
-				TxAppend(Tx, (uint8_t*)Hash.data(), Hash.size());
+				string hash = *crypto::hash_raw(digests::SHA256(), data);
+				tx_append(tx, (uint8_t*)hash.data(), hash.size());
 			}
-			static void TxAppendOpCreateAccount(Vector<uint8_t>& Tx, StellarCreateAccountOp& Data)
+			static void tx_append_op_create_account(vector<uint8_t>& tx, StellarCreateAccountOp& data)
 			{
 				/* sourceAccount: */
-				TxAppendUint32(Tx, 0);
+				tx_append_uint32(tx, 0);
 				/* type: */
-				TxAppendUint32(Tx, 0);
+				tx_append_uint32(tx, 0);
 				/* destination: */
-				TxAppendAddress(Tx, Data.new_account);
+				tx_append_address(tx, data.new_account);
 				/* startingBalance: */
-				TxAppendUint64(Tx, (uint64_t)Data.starting_balance);
+				tx_append_uint64(tx, (uint64_t)data.starting_balance);
 			}
-			static void TxAppendOpPayment(Vector<uint8_t>& Tx, StellarPaymentOp& Data)
+			static void tx_append_op_payment(vector<uint8_t>& tx, StellarPaymentOp& data)
 			{
 				/* sourceAccount: */
-				TxAppendUint32(Tx, 0);
+				tx_append_uint32(tx, 0);
 				/* type: */
-				TxAppendUint32(Tx, 1);
+				tx_append_uint32(tx, 1);
 				/* destination: */
-				TxAppendAddress(Tx, Data.destination_account);
+				tx_append_address(tx, data.destination_account);
 				/* asset.type: */
-				TxAppendUint32(Tx, Data.asset.type);
+				tx_append_uint32(tx, data.asset.type);
 				/* asset.assetCode: */
-				if (Data.asset.has_code)
-					TxAppend(Tx, (uint8_t*)Data.asset.code, Data.asset.type == (uint32_t)Stellar::AssetType::ASSET_TYPE_CREDIT_ALPHANUM4 ? 4 : 12);
+				if (data.asset.has_code)
+					tx_append(tx, (uint8_t*)data.asset.code, data.asset.type == (uint32_t)stellar::asset_type::ASSET_TYPE_CREDIT_ALPHANUM4 ? 4 : 12);
 				/* asset.issuer: */
-				if (Data.asset.has_issuer)
-					TxAppendAddress(Tx, Data.asset.issuer);
+				if (data.asset.has_issuer)
+					tx_append_address(tx, data.asset.issuer);
 				/* amount: */
-				TxAppendUint64(Tx, (uint64_t)Data.amount);
+				tx_append_uint64(tx, (uint64_t)data.amount);
 			}
-			static void TxAppendDecoratedSignature(Vector<uint8_t>& Tx, StellarSignedTx& Data)
+			static void tx_append_decorated_signature(vector<uint8_t>& tx, StellarSignedTx& data)
 			{
 				/* hint: */
-				TxAppend(Tx, Data.public_key.bytes + 28, 4);
+				tx_append(tx, data.public_key.bytes + 28, 4);
 				/* signature: */
-				TxAppendUint32(Tx, Data.signature.size);
-				TxAppend(Tx, Data.signature.bytes, 64);
+				tx_append_uint32(tx, data.signature.size);
+				tx_append(tx, data.signature.bytes, 64);
 			}
-			static void TxAppendTransactionV0(Vector<uint8_t>& Tx, const StellarSignTx& Transaction, Vector<StellarCreateAccountOp>& Accounts, Vector<StellarPaymentOp>& Payments)
+			static void tx_append_transaction_v0(vector<uint8_t>& tx, const StellarSignTx& transaction, vector<StellarCreateAccountOp>& accounts, vector<StellarPaymentOp>& payments)
 			{
 				/* sourceAccountEd25519: */
-				TxAppendAddress(Tx, Transaction.source_account);
+				tx_append_address(tx, transaction.source_account);
 				/* fee: */
-				TxAppendUint32(Tx, Transaction.fee);
+				tx_append_uint32(tx, transaction.fee);
 				/* seqNum: */
-				TxAppendUint64(Tx, Transaction.sequence_number);
+				tx_append_uint64(tx, transaction.sequence_number);
 				/* timeBounds: */
-				TxAppendUint32(Tx, 0);
+				tx_append_uint32(tx, 0);
 				/* memo: */
-				if (Transaction.memo_type == 2)
+				if (transaction.memo_type == 2)
 				{
-					TxAppendUint32(Tx, Transaction.memo_type);
-					TxAppendUint64(Tx, Transaction.memo_id);
+					tx_append_uint32(tx, transaction.memo_type);
+					tx_append_uint64(tx, transaction.memo_id);
 				}
 				else
-					TxAppendUint32(Tx, 0);
+					tx_append_uint32(tx, 0);
 				/* operations: */
-				TxAppendUint32(Tx, Transaction.num_operations);
-				for (auto& Item : Accounts)
-					TxAppendOpCreateAccount(Tx, Item);
-				for (auto& Item : Payments)
-					TxAppendOpPayment(Tx, Item);
+				tx_append_uint32(tx, transaction.num_operations);
+				for (auto& item : accounts)
+					tx_append_op_create_account(tx, item);
+				for (auto& item : payments)
+					tx_append_op_payment(tx, item);
 				/* ext: */
-				TxAppendUint32(Tx, 0);
+				tx_append_uint32(tx, 0);
 			}
-			static void TxAppendTransactionSignaturePayload(Vector<uint8_t>& Tx, const StellarSignTx& Transaction, Vector<StellarCreateAccountOp>& Accounts, Vector<StellarPaymentOp>& Payments)
+			static void tx_append_transaction_signature_payload(vector<uint8_t>& tx, const StellarSignTx& transaction, vector<StellarCreateAccountOp>& accounts, vector<StellarPaymentOp>& payments)
 			{
 				/* networkId: */
-				TxAppendHash(Tx, Transaction.network_passphrase);
+				tx_append_hash(tx, transaction.network_passphrase);
 				/* type: (ENVELOPE_TYPE_TX) */
-				TxAppendUint32(Tx, 2);
+				tx_append_uint32(tx, 2);
 				/* tx: */
-				TxAppendTransactionV0(Tx, Transaction, Accounts, Payments);
+				tx_append_transaction_v0(tx, transaction, accounts, payments);
 			}
-			static void TxAppendTransactionV0Envelope(Vector<uint8_t>& Tx, const StellarSignTx& Transaction, Vector<StellarSignedTx>& Signatures, Vector<StellarCreateAccountOp>& Accounts, Vector<StellarPaymentOp>& Payments)
+			static void tx_append_transaction_v0_envelope(vector<uint8_t>& tx, const StellarSignTx& transaction, vector<StellarSignedTx>& signatures, vector<StellarCreateAccountOp>& accounts, vector<StellarPaymentOp>& payments)
 			{
 				/* tx: */
-				TxAppendTransactionV0(Tx, Transaction, Accounts, Payments);
+				tx_append_transaction_v0(tx, transaction, accounts, payments);
 				/* signatures: */
-				TxAppendUint32(Tx, (uint32_t)Signatures.size());
-				for (auto& Item : Signatures)
-					TxAppendDecoratedSignature(Tx, Item);
+				tx_append_uint32(tx, (uint32_t)signatures.size());
+				for (auto& item : signatures)
+					tx_append_decorated_signature(tx, item);
 			}
-			static Vector<uint8_t> TxDataFromSignature(const StellarSignTx& Transaction, Vector<StellarCreateAccountOp>& Accounts, Vector<StellarPaymentOp>& Payments)
+			static vector<uint8_t> tx_data_from_signature(const StellarSignTx& transaction, vector<StellarCreateAccountOp>& accounts, vector<StellarPaymentOp>& payments)
 			{
-				Vector<uint8_t> Tx;
-				Tx.reserve(8192);
-				TxAppendTransactionSignaturePayload(Tx, Transaction, Accounts, Payments);
+				vector<uint8_t> tx;
+				tx.reserve(8192);
+				tx_append_transaction_signature_payload(tx, transaction, accounts, payments);
 
-				String Hash = *Crypto::HashRaw(Digests::SHA256(), String((char*)Tx.data(), Tx.size()));
-				Tx.resize(Hash.size());
-				memcpy(Tx.data(), Hash.data(), Hash.size());
-				return Tx;
+				string hash = *crypto::hash_raw(digests::SHA256(), string((char*)tx.data(), tx.size()));
+				tx.resize(hash.size());
+				memcpy(tx.data(), hash.data(), hash.size());
+				return tx;
 			}
-			static Vector<uint8_t> TxDataFromEnvelope(const StellarSignTx& Transaction, Vector<StellarSignedTx>& Signatures, Vector<StellarCreateAccountOp>& Accounts, Vector<StellarPaymentOp>& Payments)
+			static vector<uint8_t> tx_data_from_envelope(const StellarSignTx& transaction, vector<StellarSignedTx>& signatures, vector<StellarCreateAccountOp>& accounts, vector<StellarPaymentOp>& payments)
 			{
-				Vector<uint8_t> Tx; Tx.reserve(8192);
-				TxAppendTransactionV0Envelope(Tx, Transaction, Signatures, Accounts, Payments);
-				return Tx;
+				vector<uint8_t> tx; tx.reserve(8192);
+				tx_append_transaction_v0_envelope(tx, transaction, signatures, accounts, payments);
+				return tx;
 			}
 
-			String Stellar::NdCall::GetLedger(uint64_t BlockHeight)
+			string stellar::nd_call::get_ledger(uint64_t block_height)
 			{
-				return Stringify::Text("/ledgers/%" PRIu64, (uint64_t)BlockHeight);
+				return stringify::text("/ledgers/%" PRIu64, (uint64_t)block_height);
 			}
-			String Stellar::NdCall::GetLedgerOperations(uint64_t BlockHeight)
+			string stellar::nd_call::get_ledger_operations(uint64_t block_height)
 			{
-				return Stringify::Text("/ledgers/%" PRIu64 "/operations?include_failed=false", (uint64_t)BlockHeight);
+				return stringify::text("/ledgers/%" PRIu64 "/operations?include_failed=false", (uint64_t)block_height);
 			}
-			String Stellar::NdCall::GetOperations(const std::string_view& TxId)
+			string stellar::nd_call::get_operations(const std::string_view& tx_id)
 			{
-				return Stringify::Text("/transactions/%.*s/operations?include_failed=false", (int)TxId.size(), TxId.data());
+				return stringify::text("/transactions/%.*s/operations?include_failed=false", (int)tx_id.size(), tx_id.data());
 			}
-			String Stellar::NdCall::GetTransactions(const std::string_view& TxId)
+			string stellar::nd_call::get_transactions(const std::string_view& tx_id)
 			{
-				return Stringify::Text("/transactions/%" PRIu64, (int)TxId.size(), TxId.data());
+				return stringify::text("/transactions/%" PRIu64, (int)tx_id.size(), tx_id.data());
 			}
-			String Stellar::NdCall::GetAccounts(const std::string_view& Address)
+			string stellar::nd_call::get_accounts(const std::string_view& address)
 			{
-				return Stringify::Text("/accounts/%" PRIu64, (int)Address.size(), Address.data());
+				return stringify::text("/accounts/%" PRIu64, (int)address.size(), address.data());
 			}
-			String Stellar::NdCall::GetAssets(const std::string_view& Issuer, const std::string_view& Code)
+			string stellar::nd_call::get_assets(const std::string_view& issuer, const std::string_view& code)
 			{
-				return Stringify::Text("/assets?asset_isser=%.*s&asset_code=%" PRIu64, (int)Issuer.size(), Issuer.data(), (int)Code.size(), Code.data());
+				return stringify::text("/assets?asset_isser=%.*s&asset_code=%" PRIu64, (int)issuer.size(), issuer.data(), (int)code.size(), code.data());
 			}
-			const char* Stellar::NdCall::GetLastLedger()
+			const char* stellar::nd_call::get_last_ledger()
 			{
 				return "/ledgers?order=desc&limit=1";
 			}
-			const char* Stellar::NdCall::SubmitTransaction()
+			const char* stellar::nd_call::submit_transaction()
 			{
 				return "/transactions";
 			}
 
-			Stellar::Stellar(ChainConfig* NewConfig) noexcept : RelayBackend()
+			stellar::stellar(chain_config* new_config) noexcept : relay_backend()
 			{
-				if (NewConfig != nullptr)
-					Config = *NewConfig;
+				if (new_config != nullptr)
+					config = *new_config;
 
-				Netdata.Composition = Algorithm::Composition::Type::ED25519;
-				Netdata.Routing = RoutingPolicy::Memo;
-				Netdata.SyncLatency = 1;
-				Netdata.Divisibility = Decimal(10000000).Truncate(Protocol::Now().Message.Precision);
-				Netdata.SupportsTokenTransfer = "sac";
-				Netdata.SupportsBulkTransfer = true;
+				netdata.composition = algorithm::composition::type::ED25519;
+				netdata.routing = routing_policy::memo;
+				netdata.sync_latency = 1;
+				netdata.divisibility = decimal(10000000).truncate(protocol::now().message.precision);
+				netdata.supports_token_transfer = "sac";
+				netdata.supports_bulk_transfer = true;
 			}
-			ExpectsPromiseRT<Stellar::AssetInfo> Stellar::GetAssetInfo(const Algorithm::AssetId& Asset, const std::string_view& Address, const std::string_view& Code)
+			expects_promise_rt<stellar::asset_info> stellar::get_asset_info(const algorithm::asset_id& asset, const std::string_view& address, const std::string_view& code)
 			{
-				auto AssetData = Coawait(ExecuteREST(Asset, "GET", NdCall::GetAssets(Address, Code), nullptr, CachePolicy::Persistent));
-				if (!AssetData)
-					Coreturn ExpectsRT<Stellar::AssetInfo>(std::move(AssetData.Error()));
+				auto asset_data = coawait(execute_rest(asset, "GET", nd_call::get_assets(address, code), nullptr, cache_policy::persistent));
+				if (!asset_data)
+					coreturn expects_rt<stellar::asset_info>(std::move(asset_data.error()));
 
-				UPtr<Schema> AssetWrap = *AssetData;
-				Schema* Records = AssetWrap->Fetch("_embedded.records");
-				if (!Records)
-					Coreturn ExpectsRT<Stellar::AssetInfo>(RemoteException("contract address not found"));
+				uptr<schema> asset_wrap = *asset_data;
+				schema* records = asset_wrap->fetch("_embedded.records");
+				if (!records)
+					coreturn expects_rt<stellar::asset_info>(remote_exception("contract address not found"));
 
-				for (auto& Asset : Records->GetChilds())
+				for (auto& asset : records->get_childs())
 				{
-					AssetInfo Info;
-					Info.Code = Asset->GetVar("asset_code").GetBlob();
-					Info.Issuer = Asset->GetVar("asset_isser").GetBlob();
-					Info.Type = Asset->GetVar("asset_type").GetBlob();
-					if (Info.Issuer == Address)
-						Coreturn ExpectsRT<Stellar::AssetInfo>(std::move(Info));
+					asset_info info;
+					info.code = asset->get_var("asset_code").get_blob();
+					info.issuer = asset->get_var("asset_isser").get_blob();
+					info.type = asset->get_var("asset_type").get_blob();
+					if (info.issuer == address)
+						coreturn expects_rt<stellar::asset_info>(std::move(info));
 				}
 
-				Coreturn ExpectsRT<Stellar::AssetInfo>(RemoteException("contract address not found"));
+				coreturn expects_rt<stellar::asset_info>(remote_exception("contract address not found"));
 			}
-			ExpectsPromiseRT<Stellar::AccountInfo> Stellar::GetAccountInfo(const Algorithm::AssetId& Asset, const std::string_view& Address)
+			expects_promise_rt<stellar::account_info> stellar::get_account_info(const algorithm::asset_id& asset, const std::string_view& address)
 			{
-				auto AccountData = Coawait(ExecuteREST(Asset, "GET", NdCall::GetAccounts(Address), nullptr, CachePolicy::Lazy));
-				if (!AccountData)
-					Coreturn ExpectsRT<Stellar::AccountInfo>(std::move(AccountData.Error()));
+				auto account_data = coawait(execute_rest(asset, "GET", nd_call::get_accounts(address), nullptr, cache_policy::lazy));
+				if (!account_data)
+					coreturn expects_rt<stellar::account_info>(std::move(account_data.error()));
 
-				AccountInfo Info;
-				Info.Sequence = AccountData->GetVar("sequence").GetInteger();
-				if (AccountData->Has("balances"))
+				account_info info;
+				info.sequence = account_data->get_var("sequence").get_integer();
+				if (account_data->has("balances"))
 				{
-					for (auto& Item : AccountData->Get("balances")->GetChilds())
+					for (auto& item : account_data->get("balances")->get_childs())
 					{
-						AssetBalance Balance;
-						Balance.Info.Type = Item->GetVar("asset_type").GetBlob();
-						Balance.Info.Code = Item->GetVar("asset_code").GetBlob();
-						Balance.Info.Issuer = Item->GetVar("asset_issuer").GetBlob();
-						Balance.Balance = Item->GetVar("balance").GetDecimal();
-						if (Balance.Info.Code.empty())
+						asset_balance balance;
+						balance.info.type = item->get_var("asset_type").get_blob();
+						balance.info.code = item->get_var("asset_code").get_blob();
+						balance.info.issuer = item->get_var("asset_issuer").get_blob();
+						balance.balance = item->get_var("balance").get_decimal();
+						if (balance.info.code.empty())
 						{
-							Balance.Info.Code = Algorithm::Asset::BlockchainOf(Asset);
-							if (Balance.Info.Type != "native")
+							balance.info.code = algorithm::asset::blockchain_of(asset);
+							if (balance.info.type != "native")
 								continue;
 						}
-						Info.Balances[Balance.Info.Code] = Balance;
+						info.balances[balance.info.code] = balance;
 					}
 				}
 
-				Memory::Release(*AccountData);
-				Coreturn ExpectsRT<Stellar::AccountInfo>(std::move(Info));
+				memory::release(*account_data);
+				coreturn expects_rt<stellar::account_info>(std::move(info));
 			}
-			ExpectsPromiseRT<String> Stellar::GetTransactionMemo(const Algorithm::AssetId& Asset, const std::string_view& TxId)
+			expects_promise_rt<string> stellar::get_transaction_memo(const algorithm::asset_id& asset, const std::string_view& tx_id)
 			{
-				auto TxData = Coawait(ExecuteREST(Asset, "GET", NdCall::GetTransactions(Format::Util::Clear0xHex(TxId)), nullptr, CachePolicy::Shortened));
-				if (!TxData)
-					Coreturn ExpectsRT<String>(std::move(TxData.Error()));
+				auto tx_data = coawait(execute_rest(asset, "GET", nd_call::get_transactions(format::util::clear_0xhex(tx_id)), nullptr, cache_policy::shortened));
+				if (!tx_data)
+					coreturn expects_rt<string>(std::move(tx_data.error()));
 
-				String Memo = TxData->GetVar("memo").GetBlob();
-				if (Memo.empty())
-					Coreturn ExpectsRT<String>(RemoteException("transaction memo not found"));
+				string memo = tx_data->get_var("memo").get_blob();
+				if (memo.empty())
+					coreturn expects_rt<string>(remote_exception("transaction memo not found"));
 
-				Coreturn ExpectsRT<String>(std::move(Memo));
+				coreturn expects_rt<string>(std::move(memo));
 			}
-			ExpectsPromiseRT<bool> Stellar::IsAccountExists(const Algorithm::AssetId& Asset, const std::string_view& Address)
+			expects_promise_rt<bool> stellar::is_account_exists(const algorithm::asset_id& asset, const std::string_view& address)
 			{
-				auto AccountData = Coawait(ExecuteREST(Asset, "GET", NdCall::GetAccounts(Address), nullptr, CachePolicy::Lazy));
-				if (!AccountData && (AccountData.Error().retry() || AccountData.Error().shutdown()))
-					Coreturn ExpectsRT<bool>(AccountData.Error());
+				auto account_data = coawait(execute_rest(asset, "GET", nd_call::get_accounts(address), nullptr, cache_policy::lazy));
+				if (!account_data && (account_data.error().is_retry() || account_data.error().is_shutdown()))
+					coreturn expects_rt<bool>(account_data.error());
 
-				auto Account = UPtr<Schema>(AccountData.Or(nullptr));
-				Coreturn ExpectsRT<bool>(Account && Account->Has("account_id"));
+				auto account = uptr<schema>(account_data.otherwise(nullptr));
+				coreturn expects_rt<bool>(account && account->has("account_id"));
 			}
-			ExpectsPromiseRT<void> Stellar::BroadcastTransaction(const Algorithm::AssetId& Asset, const OutgoingTransaction& TxData)
+			expects_promise_rt<void> stellar::broadcast_transaction(const algorithm::asset_id& asset, const outgoing_transaction& tx_data)
 			{
-				UPtr<HTTP::Query> Args = new HTTP::Query();
-				Args->Object->Set("tx", Var::String(TxData.Data));
+				uptr<http::query> args = new http::query();
+				args->object->set("tx", var::string(tx_data.data));
 
-				const char* Type = "application/x-www-form-urlencoded";
-				String Body = Args->Encode(Type);
-				auto HexData = Coawait(ExecuteHTTP(Asset, "POST", NdCall::SubmitTransaction(), Type, Body, CachePolicy::Greedy));
-				if (!HexData)
-					Coreturn ExpectsRT<void>(std::move(HexData.Error()));
+				const char* type = "application/x-www-form-urlencoded";
+				string body = args->encode(type);
+				auto hex_data = coawait(execute_http(asset, "POST", nd_call::submit_transaction(), type, body, cache_policy::greedy));
+				if (!hex_data)
+					coreturn expects_rt<void>(std::move(hex_data.error()));
 
-				String Detail = HexData->GetVar("detail").GetBlob();
-				if (!Detail.empty())
+				string detail = hex_data->get_var("detail").get_blob();
+				if (!detail.empty())
 				{
-					String Code = HexData->FetchVar("extras.result_codes.transaction").GetBlob();
-					Coreturn ExpectsRT<void>(RemoteException(std::move(Code.empty() ? Detail : Code)));
+					string code = hex_data->fetch_var("extras.result_codes.transaction").get_blob();
+					coreturn expects_rt<void>(remote_exception(std::move(code.empty() ? detail : code)));
 				}
 
-				Memory::Release(*HexData);
-				Coreturn ExpectsRT<void>(Expectation::Met);
+				memory::release(*hex_data);
+				coreturn expects_rt<void>(expectation::met);
 			}
-			ExpectsPromiseRT<uint64_t> Stellar::GetLatestBlockHeight(const Algorithm::AssetId& Asset)
+			expects_promise_rt<uint64_t> stellar::get_latest_block_height(const algorithm::asset_id& asset)
 			{
-				auto LastBlockData = Coawait(ExecuteREST(Asset, "GET", NdCall::GetLastLedger(), nullptr, CachePolicy::Lazy));
-				if (!LastBlockData)
-					Coreturn ExpectsRT<uint64_t>(std::move(LastBlockData.Error()));
+				auto last_block_data = coawait(execute_rest(asset, "GET", nd_call::get_last_ledger(), nullptr, cache_policy::lazy));
+				if (!last_block_data)
+					coreturn expects_rt<uint64_t>(std::move(last_block_data.error()));
 
-				uint64_t BlockHeight = (uint64_t)LastBlockData->FetchVar("_embedded.records.0.sequence").GetInteger();
-				Memory::Release(*LastBlockData);
-				Coreturn ExpectsRT<uint64_t>(BlockHeight);
+				uint64_t block_height = (uint64_t)last_block_data->fetch_var("_embedded.records.0.sequence").get_integer();
+				memory::release(*last_block_data);
+				coreturn expects_rt<uint64_t>(block_height);
 			}
-			ExpectsPromiseRT<Schema*> Stellar::GetBlockTransactions(const Algorithm::AssetId& Asset, uint64_t BlockHeight, String* BlockHash)
+			expects_promise_rt<schema*> stellar::get_block_transactions(const algorithm::asset_id& asset, uint64_t block_height, string* block_hash)
 			{
-				auto BlockData = Coawait(ExecuteREST(Asset, "GET", NdCall::GetLedgerOperations(BlockHeight), nullptr, CachePolicy::Shortened));
-				if (!BlockData)
-					Coreturn ExpectsRT<Schema*>(std::move(BlockData.Error()));
+				auto block_data = coawait(execute_rest(asset, "GET", nd_call::get_ledger_operations(block_height), nullptr, cache_policy::shortened));
+				if (!block_data)
+					coreturn expects_rt<schema*>(std::move(block_data.error()));
 
-				if (BlockHash != nullptr)
-					*BlockHash = ToString(BlockHeight);
+				if (block_hash != nullptr)
+					*block_hash = to_string(block_height);
 
-				Schema* Data = BlockData->Fetch("_embedded.records");
-				if (!Data)
+				schema* data = block_data->fetch("_embedded.records");
+				if (!data)
 				{
-					Memory::Release(*BlockData);
-					Coreturn ExpectsRT<Schema*>(RemoteException("block not found"));
+					memory::release(*block_data);
+					coreturn expects_rt<schema*>(remote_exception("block not found"));
 				}
 
-				Data->Unlink();
-				Memory::Release(*BlockData);
-				Coreturn ExpectsRT<Schema*>(Data);
+				data->unlink();
+				memory::release(*block_data);
+				coreturn expects_rt<schema*>(data);
 			}
-			ExpectsPromiseRT<Schema*> Stellar::GetBlockTransaction(const Algorithm::AssetId& Asset, uint64_t BlockHeight, const std::string_view& BlockHash, const std::string_view& TransactionId)
+			expects_promise_rt<schema*> stellar::get_block_transaction(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, const std::string_view& transaction_id)
 			{
-				auto TxData = Coawait(ExecuteREST(Asset, "GET", NdCall::GetOperations(Format::Util::Clear0xHex(TransactionId)), nullptr, CachePolicy::Extended));
-				Coreturn TxData;
+				auto tx_data = coawait(execute_rest(asset, "GET", nd_call::get_operations(format::util::clear_0xhex(transaction_id)), nullptr, cache_policy::extended));
+				coreturn tx_data;
 			}
-			ExpectsPromiseRT<Vector<IncomingTransaction>> Stellar::GetAuthenticTransactions(const Algorithm::AssetId& Asset, uint64_t BlockHeight, const std::string_view& BlockHash, Schema* TransactionData)
+			expects_promise_rt<vector<incoming_transaction>> stellar::get_authentic_transactions(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, schema* transaction_data)
 			{
-				auto* Implementation = (Backends::Stellar*)NSS::ServerNode::Get()->GetChain(Asset);
-				if (!Implementation)
-					Coreturn ExpectsRT<Vector<IncomingTransaction>>(RemoteException("chain not found"));
+				auto* implementation = (backends::stellar*)nss::server_node::get()->get_chain(asset);
+				if (!implementation)
+					coreturn expects_rt<vector<incoming_transaction>>(remote_exception("chain not found"));
 
-				Algorithm::AssetId TokenAsset = Asset;
-				String TxHash = TransactionData->GetVar("transaction_hash").GetBlob();
-				String TxType = TransactionData->GetVar("type").GetBlob();
-				Decimal FeeValue = Implementation->FromStroop(Implementation->GetBaseStroopFee());
-				Decimal BaseValue = 0.0, TokenValue = 0.0;
-				String From = String(), To = String();
-				bool IsPayment = (TxType == "payment");
-				bool IsCreateAccount = (!IsPayment && TxType == "create_account");
-				bool IsNativeToken = (TransactionData->GetVar("asset_type").GetBlob() != "native");
-				if (IsPayment)
+				algorithm::asset_id token_asset = asset;
+				string tx_hash = transaction_data->get_var("transaction_hash").get_blob();
+				string tx_type = transaction_data->get_var("type").get_blob();
+				decimal fee_value = implementation->from_stroop(implementation->get_base_stroop_fee());
+				decimal base_value = 0.0, token_value = 0.0;
+				string from = string(), to = string();
+				bool is_payment = (tx_type == "payment");
+				bool is_create_account = (!is_payment && tx_type == "create_account");
+				bool is_native_token = (transaction_data->get_var("asset_type").get_blob() != "native");
+				if (is_payment)
 				{
-					From = TransactionData->GetVar("from").GetBlob();
-					To = TransactionData->GetVar("to").GetBlob();
-					TokenValue = TransactionData->GetVar("amount").GetDecimal();
-					if (IsNativeToken)
+					from = transaction_data->get_var("from").get_blob();
+					to = transaction_data->get_var("to").get_blob();
+					token_value = transaction_data->get_var("amount").get_decimal();
+					if (is_native_token)
 					{
-						String Token = TransactionData->GetVar("asset_code").GetBlob();
-						String Issuer = TransactionData->GetVar("asset_issuer").GetBlob();
-						TokenAsset = Algorithm::Asset::IdOf(Algorithm::Asset::BlockchainOf(Asset), Token, Issuer);
-						if (!NSS::ServerNode::Get()->EnableContractAddress(TokenAsset, Issuer))
-							Coreturn ExpectsRT<Vector<IncomingTransaction>>(RemoteException("tx not involved"));
+						string token = transaction_data->get_var("asset_code").get_blob();
+						string issuer = transaction_data->get_var("asset_issuer").get_blob();
+						token_asset = algorithm::asset::id_of(algorithm::asset::blockchain_of(asset), token, issuer);
+						if (!nss::server_node::get()->enable_contract_address(token_asset, issuer))
+							coreturn expects_rt<vector<incoming_transaction>>(remote_exception("tx not involved"));
 					}
 					else
 					{
-						BaseValue = TokenValue;
-						TokenValue = 0.0;
+						base_value = token_value;
+						token_value = 0.0;
 					}
 				}
-				else if (IsCreateAccount)
+				else if (is_create_account)
 				{
-					From = TransactionData->GetVar("funder").GetBlob();
-					To = TransactionData->GetVar("account").GetBlob();
-					BaseValue = TransactionData->GetVar("starting_balance").GetDecimal();
+					from = transaction_data->get_var("funder").get_blob();
+					to = transaction_data->get_var("account").get_blob();
+					base_value = transaction_data->get_var("starting_balance").get_decimal();
 				}
 
-				auto Discovery = FindCheckpointAddresses(Asset, { From, To });
-				if (!Discovery || Discovery->empty())
-					Coreturn ExpectsRT<Vector<IncomingTransaction>>(RemoteException("tx not involved"));
+				auto discovery = find_checkpoint_addresses(asset, { from, to });
+				if (!discovery || discovery->empty())
+					coreturn expects_rt<vector<incoming_transaction>>(remote_exception("tx not involved"));
 
-				Option<uint64_t> ToAddressIndex = Optional::None;
-				auto FromAddress = Discovery->find(From);
-				auto ToAddress = Discovery->find(To);
-				if (ToAddress != Discovery->end())
+				option<uint64_t> to_address_index = optional::none;
+				auto from_address = discovery->find(from);
+				auto to_address = discovery->find(to);
+				if (to_address != discovery->end())
 				{
-					auto Memo = Coawait(GetTransactionMemo(Asset, TxHash));
-					if (Memo && !Memo->empty())
-						ToAddressIndex = FromString<uint64_t>(*Memo).Or(ToAddress->second);
+					auto memo = coawait(get_transaction_memo(asset, tx_hash));
+					if (memo && !memo->empty())
+						to_address_index = from_string<uint64_t>(*memo).otherwise(to_address->second);
 					else
-						ToAddressIndex = ToAddress->second;
+						to_address_index = to_address->second;
 				}
 
-				Vector<IncomingTransaction> Transactions;
-				if (FeeValue + BaseValue > 0.0)
+				vector<incoming_transaction> transactions;
+				if (fee_value + base_value > 0.0)
 				{
-					IncomingTransaction Tx;
-					Tx.SetTransaction(Algorithm::Asset::BaseIdOf(Asset), BlockHeight, TxHash, std::move(FeeValue));
-					Tx.SetOperations({ Transferer(From, FromAddress != Discovery->end() ? Option<uint64_t>(FromAddress->second) : Option<uint64_t>(Optional::None), Decimal(BaseValue)) }, { Transferer(To, ToAddressIndex ? Option<uint64_t>(*ToAddressIndex) : Option<uint64_t>(Optional::None), Decimal(BaseValue)) });
-					Transactions.push_back(std::move(Tx));
+					incoming_transaction tx;
+					tx.set_transaction(algorithm::asset::base_id_of(asset), block_height, tx_hash, std::move(fee_value));
+					tx.set_operations({ transferer(from, from_address != discovery->end() ? option<uint64_t>(from_address->second) : option<uint64_t>(optional::none), decimal(base_value)) }, { transferer(to, to_address_index ? option<uint64_t>(*to_address_index) : option<uint64_t>(optional::none), decimal(base_value)) });
+					transactions.push_back(std::move(tx));
 				}
-				if (TokenValue.IsPositive())
+				if (token_value.is_positive())
 				{
-					IncomingTransaction Tx;
-					Tx.SetTransaction(TokenAsset, BlockHeight, TxHash, Decimal::Zero());
-					Tx.SetOperations({ Transferer(From, FromAddress != Discovery->end() ? Option<uint64_t>(FromAddress->second) : Option<uint64_t>(Optional::None), Decimal(TokenValue)) }, { Transferer(To, ToAddressIndex ? Option<uint64_t>(*ToAddressIndex) : Option<uint64_t>(Optional::None), Decimal(TokenValue)) });
-					Transactions.push_back(std::move(Tx));
+					incoming_transaction tx;
+					tx.set_transaction(token_asset, block_height, tx_hash, decimal::zero());
+					tx.set_operations({ transferer(from, from_address != discovery->end() ? option<uint64_t>(from_address->second) : option<uint64_t>(optional::none), decimal(token_value)) }, { transferer(to, to_address_index ? option<uint64_t>(*to_address_index) : option<uint64_t>(optional::none), decimal(token_value)) });
+					transactions.push_back(std::move(tx));
 				}
-				Coreturn ExpectsRT<Vector<IncomingTransaction>>(std::move(Transactions));
+				coreturn expects_rt<vector<incoming_transaction>>(std::move(transactions));
 			}
-			ExpectsPromiseRT<BaseFee> Stellar::EstimateFee(const Algorithm::AssetId& Asset, const DynamicWallet& Wallet, const Vector<Transferer>& To, const FeeSupervisorOptions& Options)
+			expects_promise_rt<base_fee> stellar::estimate_fee(const algorithm::asset_id& asset, const dynamic_wallet& wallet, const vector<transferer>& to, const fee_supervisor_options& options)
 			{
-				auto* Implementation = (Backends::Stellar*)NSS::ServerNode::Get()->GetChain(Asset);
-				if (Algorithm::Asset::TokenOf(Asset).empty())
-					Coreturn ExpectsRT<BaseFee>(BaseFee(Implementation->FromStroop(Implementation->GetBaseStroopFee() * To.size()), Decimal(1.0)));
+				auto* implementation = (backends::stellar*)nss::server_node::get()->get_chain(asset);
+				if (algorithm::asset::token_of(asset).empty())
+					coreturn expects_rt<base_fee>(base_fee(implementation->from_stroop(implementation->get_base_stroop_fee() * to.size()), decimal(1.0)));
 
-				uint64_t Fee = Implementation->GetBaseStroopFee() * To.size();
-				for (auto& Item : To)
+				uint64_t fee = implementation->get_base_stroop_fee() * to.size();
+				for (auto& item : to)
 				{
-					auto Status = Coawait(IsAccountExists(Asset, Item.Address));
-					if (!Status)
-						Coreturn ExpectsRT<BaseFee>(Status.Error());
-					else if (!*Status)
-						Fee += Implementation->GetBaseStroopFee();
+					auto status = coawait(is_account_exists(asset, item.address));
+					if (!status)
+						coreturn expects_rt<base_fee>(status.error());
+					else if (!*status)
+						fee += implementation->get_base_stroop_fee();
 				}
 
-				Coreturn ExpectsRT<BaseFee>(BaseFee(Implementation->FromStroop(Fee), Decimal(1.0)));
+				coreturn expects_rt<base_fee>(base_fee(implementation->from_stroop(fee), decimal(1.0)));
 			}
-			ExpectsPromiseRT<Decimal> Stellar::CalculateBalance(const Algorithm::AssetId& Asset, const DynamicWallet& Wallet, Option<String>&& Address)
+			expects_promise_rt<decimal> stellar::calculate_balance(const algorithm::asset_id& asset, const dynamic_wallet& wallet, option<string>&& address)
 			{
-				auto* Implementation = (Backends::Stellar*)NSS::ServerNode::Get()->GetChain(Asset);
-				if (!Address)
+				auto* implementation = (backends::stellar*)nss::server_node::get()->get_chain(asset);
+				if (!address)
 				{
-					ExpectsLR<DerivedVerifyingWallet> FromWallet = LayerException("signing wallet not found");
-					if (Wallet.Parent)
+					expects_lr<derived_verifying_wallet> from_wallet = layer_exception("signing wallet not found");
+					if (wallet.parent)
 					{
-						auto SigningWallet = NSS::ServerNode::Get()->NewSigningWallet(Asset, *Wallet.Parent, Protocol::Now().Account.RootAddressIndex);
-						if (SigningWallet)
-							FromWallet = *SigningWallet;
+						auto signing_wallet = nss::server_node::get()->new_signing_wallet(asset, *wallet.parent, protocol::now().account.root_address_index);
+						if (signing_wallet)
+							from_wallet = *signing_wallet;
 						else
-							FromWallet = SigningWallet.Error();
+							from_wallet = signing_wallet.error();
 					}
-					else if (Wallet.VerifyingChild)
-						FromWallet = *Wallet.VerifyingChild;
-					else if (Wallet.SigningChild)
-						FromWallet = *Wallet.SigningChild;
-					if (!FromWallet)
-						Coreturn ExpectsRT<Decimal>(RemoteException(std::move(FromWallet.Error().message())));
+					else if (wallet.verifying_child)
+						from_wallet = *wallet.verifying_child;
+					else if (wallet.signing_child)
+						from_wallet = *wallet.signing_child;
+					if (!from_wallet)
+						coreturn expects_rt<decimal>(remote_exception(std::move(from_wallet.error().message())));
 
-					Address = FromWallet->Addresses.begin()->second;
+					address = from_wallet->addresses.begin()->second;
 				}
 
-				auto Account = Coawait(GetAccountInfo(Asset, *Address));
-				if (!Account)
-					Coreturn ExpectsRT<Decimal>(std::move(Account.Error()));
+				auto account = coawait(get_account_info(asset, *address));
+				if (!account)
+					coreturn expects_rt<decimal>(std::move(account.error()));
 
-				auto Balance = Account->Balances.find(Algorithm::Asset::TokenOf(Asset));
-				if (Balance == Account->Balances.end())
-					Coreturn ExpectsRT<Decimal>(Decimal::Zero());
+				auto balance = account->balances.find(algorithm::asset::token_of(asset));
+				if (balance == account->balances.end())
+					coreturn expects_rt<decimal>(decimal::zero());
 
-				auto ContractAddress = NSS::ServerNode::Get()->GetContractAddress(Asset);
-				if (ContractAddress && Balance->second.Info.Issuer != *ContractAddress)
-					Coreturn ExpectsRT<Decimal>(Decimal::Zero());
+				auto contract_address = nss::server_node::get()->get_contract_address(asset);
+				if (contract_address && balance->second.info.issuer != *contract_address)
+					coreturn expects_rt<decimal>(decimal::zero());
 
-				Coreturn ExpectsRT<Decimal>(Balance->second.Balance);
+				coreturn expects_rt<decimal>(balance->second.balance);
 			}
-			ExpectsPromiseRT<OutgoingTransaction> Stellar::NewTransaction(const Algorithm::AssetId& Asset, const DynamicWallet& Wallet, const Vector<Transferer>& To, const BaseFee& Fee)
+			expects_promise_rt<outgoing_transaction> stellar::new_transaction(const algorithm::asset_id& asset, const dynamic_wallet& wallet, const vector<transferer>& to, const base_fee& fee)
 			{
-				ExpectsLR<DerivedSigningWallet> FromWallet = LayerException();
-				if (Wallet.Parent)
-					FromWallet = NSS::ServerNode::Get()->NewSigningWallet(Asset, *Wallet.Parent, Protocol::Now().Account.RootAddressIndex);
-				else if (Wallet.SigningChild)
-					FromWallet = *Wallet.SigningChild;
-				if (!FromWallet)
-					Coreturn ExpectsRT<OutgoingTransaction>(RemoteException("signing wallet not found"));
+				expects_lr<derived_signing_wallet> from_wallet = layer_exception();
+				if (wallet.parent)
+					from_wallet = nss::server_node::get()->new_signing_wallet(asset, *wallet.parent, protocol::now().account.root_address_index);
+				else if (wallet.signing_child)
+					from_wallet = *wallet.signing_child;
+				if (!from_wallet)
+					coreturn expects_rt<outgoing_transaction>(remote_exception("signing wallet not found"));
 
-				auto AccountInfo = Coawait(GetAccountInfo(Asset, FromWallet->Addresses.begin()->second));
-				if (!AccountInfo)
-					Coreturn ExpectsRT<OutgoingTransaction>(std::move(AccountInfo.Error()));
+				auto account_info = coawait(get_account_info(asset, from_wallet->addresses.begin()->second));
+				if (!account_info)
+					coreturn expects_rt<outgoing_transaction>(std::move(account_info.error()));
 
-				auto& Params = GetParams();
-				uint8_t DerivedPublicKey[256]; size_t DerivedPublicKeySize = sizeof(DerivedPublicKey);
-				if (!DecodeKey(Params.Ed25519PublicKey, FromWallet->VerifyingKey, DerivedPublicKey, &DerivedPublicKeySize))
-					Coreturn ExpectsRT<OutgoingTransaction>(RemoteException("input private key invalid"));
+				auto& params = get_params();
+				uint8_t derived_public_key[256]; size_t derived_public_key_size = sizeof(derived_public_key);
+				if (!decode_key(params.ed25519_public_key, from_wallet->verifying_key, derived_public_key, &derived_public_key_size))
+					coreturn expects_rt<outgoing_transaction>(remote_exception("input private key invalid"));
 
-				String Memo;
-				for (auto& Item : To)
+				string memo;
+				for (auto& item : to)
 				{
-					if (Item.AddressIndex)
+					if (item.address_index)
 					{
-						if (Memo.empty())
-							Memo = ToString(*Item.AddressIndex);
-						else if (Memo != ToString(*Item.AddressIndex))
-							Coreturn ExpectsRT<OutgoingTransaction>(RemoteException("input memo invalid"));
+						if (memo.empty())
+							memo = to_string(*item.address_index);
+						else if (memo != to_string(*item.address_index))
+							coreturn expects_rt<outgoing_transaction>(remote_exception("input memo invalid"));
 					}
-					else if (!Memo.empty())
-						Coreturn ExpectsRT<OutgoingTransaction>(RemoteException("input memo invalid"));
+					else if (!memo.empty())
+						coreturn expects_rt<outgoing_transaction>(remote_exception("input memo invalid"));
 				}
 
-				auto MemoId = FromString<uint64_t>(Memo);
-				if (Memo.size() > 28 || (!Memo.empty() && !MemoId))
-					Coreturn ExpectsRT<OutgoingTransaction>(RemoteException("input memo invalid"));
+				auto memo_id = from_string<uint64_t>(memo);
+				if (memo.size() > 28 || (!memo.empty() && !memo_id))
+					coreturn expects_rt<outgoing_transaction>(remote_exception("input memo invalid"));
 
-				Vector<StellarCreateAccountOp> Accounts;
-				Accounts.reserve(To.size());
+				vector<StellarCreateAccountOp> accounts;
+				accounts.reserve(to.size());
 
-				Vector<StellarPaymentOp> Payments;
-				Payments.reserve(To.size());
+				vector<StellarPaymentOp> payments;
+				payments.reserve(to.size());
 
-				Decimal TotalValue = 0.0;
-				auto Passphrase = GetNetworkPassphrase();
-				auto ContractAddress = NSS::ServerNode::Get()->GetContractAddress(Asset);
-				for (auto& Item : To)
+				decimal total_value = 0.0;
+				auto passphrase = get_network_passphrase();
+				auto contract_address = nss::server_node::get()->get_contract_address(asset);
+				for (auto& item : to)
 				{
-					auto Status = Coawait(IsAccountExists(Asset, Item.Address));
-					if (!Status)
-						Coreturn ExpectsRT<OutgoingTransaction>(Status.Error());
+					auto status = coawait(is_account_exists(asset, item.address));
+					if (!status)
+						coreturn expects_rt<outgoing_transaction>(status.error());
 
-					TotalValue += Item.Value;
-					if (!*Status)
+					total_value += item.value;
+					if (!*status)
 					{
-						StellarCreateAccountOp Account;
-						memset(&Account, 0, sizeof(Account));
-						strncpy(Account.new_account, Item.Address.c_str(), std::min<size_t>(sizeof(Account.new_account), Item.Address.size()));
-						strncpy(Account.source_account, FromWallet->Addresses.begin()->second.c_str(), std::min<size_t>(sizeof(Account.source_account), FromWallet->Addresses.begin()->second.size()));
-						Account.has_new_account = true;
-						Account.has_source_account = true;
-						Account.has_starting_balance = !ContractAddress;
-						Account.starting_balance = Account.has_starting_balance ? (uint64_t)ToStroop(Item.Value) : 0;
-						Accounts.push_back(Account);
-						if (Account.has_starting_balance)
+						StellarCreateAccountOp account;
+						memset(&account, 0, sizeof(account));
+						strncpy(account.new_account, item.address.c_str(), std::min<size_t>(sizeof(account.new_account), item.address.size()));
+						strncpy(account.source_account, from_wallet->addresses.begin()->second.c_str(), std::min<size_t>(sizeof(account.source_account), from_wallet->addresses.begin()->second.size()));
+						account.has_new_account = true;
+						account.has_source_account = true;
+						account.has_starting_balance = !contract_address;
+						account.starting_balance = account.has_starting_balance ? (uint64_t)to_stroop(item.value) : 0;
+						accounts.push_back(account);
+						if (account.has_starting_balance)
 							continue;
 					}
 
-					StellarPaymentOp Payment;
-					memset(&Payment, 0, sizeof(Payment));
-					strncpy(Payment.destination_account, Item.Address.c_str(), std::min<size_t>(sizeof(Payment.destination_account), Item.Address.size()));
-					strncpy(Payment.source_account, FromWallet->Addresses.begin()->second.c_str(), std::min<size_t>(sizeof(Payment.source_account), FromWallet->Addresses.begin()->second.size()));
-					Payment.has_destination_account = true;
-					Payment.has_source_account = true;
-					Payment.has_amount = true;
-					Payment.amount = (uint64_t)ToStroop(Item.Value);
-					Payments.push_back(Payment);
+					StellarPaymentOp payment;
+					memset(&payment, 0, sizeof(payment));
+					strncpy(payment.destination_account, item.address.c_str(), std::min<size_t>(sizeof(payment.destination_account), item.address.size()));
+					strncpy(payment.source_account, from_wallet->addresses.begin()->second.c_str(), std::min<size_t>(sizeof(payment.source_account), from_wallet->addresses.begin()->second.size()));
+					payment.has_destination_account = true;
+					payment.has_source_account = true;
+					payment.has_amount = true;
+					payment.amount = (uint64_t)to_stroop(item.value);
+					payments.push_back(payment);
 				}
 
-				StellarSignTx Transaction;
-				memset(&Transaction, 0, sizeof(Transaction));
-				strncpy(Transaction.source_account, FromWallet->Addresses.begin()->second.c_str(), std::min<size_t>(sizeof(Transaction.source_account), FromWallet->Addresses.begin()->second.size()));
-				strncpy(Transaction.network_passphrase, Passphrase.c_str(), std::min<size_t>(sizeof(Transaction.network_passphrase), Passphrase.size()));
-				Transaction.has_source_account = true;
-				Transaction.has_network_passphrase = true;
-				Transaction.has_sequence_number = true;
-				Transaction.has_memo_type = true;
-				Transaction.has_num_operations = true;
-				Transaction.has_fee = true;
-				Transaction.sequence_number = AccountInfo->Sequence + 1;
-				Transaction.memo_type = Memo.empty() ? 0 : 2;
-				Transaction.memo_id = MemoId.Or(0);
-				Transaction.num_operations = (uint32_t)(Accounts.size() + Payments.size());
-				Transaction.fee = (uint32_t)(Transaction.num_operations * GetBaseStroopFee());
+				StellarSignTx transaction;
+				memset(&transaction, 0, sizeof(transaction));
+				strncpy(transaction.source_account, from_wallet->addresses.begin()->second.c_str(), std::min<size_t>(sizeof(transaction.source_account), from_wallet->addresses.begin()->second.size()));
+				strncpy(transaction.network_passphrase, passphrase.c_str(), std::min<size_t>(sizeof(transaction.network_passphrase), passphrase.size()));
+				transaction.has_source_account = true;
+				transaction.has_network_passphrase = true;
+				transaction.has_sequence_number = true;
+				transaction.has_memo_type = true;
+				transaction.has_num_operations = true;
+				transaction.has_fee = true;
+				transaction.sequence_number = account_info->sequence + 1;
+				transaction.memo_type = memo.empty() ? 0 : 2;
+				transaction.memo_id = memo_id.otherwise(0);
+				transaction.num_operations = (uint32_t)(accounts.size() + payments.size());
+				transaction.fee = (uint32_t)(transaction.num_operations * get_base_stroop_fee());
 
-				Decimal FeeValue = FromStroop(Transaction.fee);
-				if (ContractAddress)
+				decimal fee_value = from_stroop(transaction.fee);
+				if (contract_address)
 				{
-					auto Native = AccountInfo->Balances.find(Algorithm::Asset::BlockchainOf(Asset));
-					if (Native == AccountInfo->Balances.end() || Native->second.Balance < FeeValue)
-						Coreturn ExpectsRT<OutgoingTransaction>(RemoteException(Stringify::Text("insufficient funds: %s < %s", (Native != AccountInfo->Balances.end() ? Native->second.Balance : Decimal(0.0)).ToString().c_str(), FeeValue.ToString().c_str())));
+					auto native = account_info->balances.find(algorithm::asset::blockchain_of(asset));
+					if (native == account_info->balances.end() || native->second.balance < fee_value)
+						coreturn expects_rt<outgoing_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (native != account_info->balances.end() ? native->second.balance : decimal(0.0)).to_string().c_str(), fee_value.to_string().c_str())));
 				}
 				else
-					TotalValue += FeeValue;
+					total_value += fee_value;
 
-				auto Token = AccountInfo->Balances.find(ContractAddress ? Algorithm::Asset::TokenOf(Asset) : Algorithm::Asset::BlockchainOf(Asset));
-				if (Token == AccountInfo->Balances.end() || Token->second.Balance < TotalValue)
-					Coreturn ExpectsRT<OutgoingTransaction>(RemoteException(Stringify::Text("insufficient funds: %s < %s", (Token != AccountInfo->Balances.end() ? Token->second.Balance : Decimal(0.0)).ToString().c_str(), FeeValue.ToString().c_str())));
+				auto token = account_info->balances.find(contract_address ? algorithm::asset::token_of(asset) : algorithm::asset::blockchain_of(asset));
+				if (token == account_info->balances.end() || token->second.balance < total_value)
+					coreturn expects_rt<outgoing_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (token != account_info->balances.end() ? token->second.balance : decimal(0.0)).to_string().c_str(), fee_value.to_string().c_str())));
 
-				StellarAssetType StellarAsset;
-				memset(&StellarAsset, 0, sizeof(StellarAsset));
-				if (ContractAddress)
+				StellarAssetType stellar_asset;
+				memset(&stellar_asset, 0, sizeof(stellar_asset));
+				if (contract_address)
 				{
-					strncpy(StellarAsset.code, Token->second.Info.Code.c_str(), std::min<size_t>(sizeof(StellarAsset.code), Token->second.Info.Code.size()));
-					strncpy(StellarAsset.issuer, Token->second.Info.Issuer.c_str(), std::min<size_t>(sizeof(StellarAsset.issuer), Token->second.Info.Issuer.size()));
-					if (Token->second.Info.Type == "credit_alphanum4")
-						StellarAsset.type = (uint32_t)AssetType::ASSET_TYPE_CREDIT_ALPHANUM4;
-					else if (Token->second.Info.Type == "credit_alphanum12")
-						StellarAsset.type = (uint32_t)AssetType::ASSET_TYPE_CREDIT_ALPHANUM12;
+					strncpy(stellar_asset.code, token->second.info.code.c_str(), std::min<size_t>(sizeof(stellar_asset.code), token->second.info.code.size()));
+					strncpy(stellar_asset.issuer, token->second.info.issuer.c_str(), std::min<size_t>(sizeof(stellar_asset.issuer), token->second.info.issuer.size()));
+					if (token->second.info.type == "credit_alphanum4")
+						stellar_asset.type = (uint32_t)asset_type::ASSET_TYPE_CREDIT_ALPHANUM4;
+					else if (token->second.info.type == "credit_alphanum12")
+						stellar_asset.type = (uint32_t)asset_type::ASSET_TYPE_CREDIT_ALPHANUM12;
 					else
-						Coreturn ExpectsRT<OutgoingTransaction>(RemoteException("standard not supported"));
-					StellarAsset.has_code = true;
-					StellarAsset.has_issuer = true;
-					StellarAsset.has_type = true;
+						coreturn expects_rt<outgoing_transaction>(remote_exception("standard not supported"));
+					stellar_asset.has_code = true;
+					stellar_asset.has_issuer = true;
+					stellar_asset.has_type = true;
 				}
 				else
 				{
-					StellarAsset.type = (uint32_t)AssetType::ASSET_TYPE_NATIVE;
-					StellarAsset.has_code = false;
-					StellarAsset.has_issuer = false;
-					StellarAsset.has_type = true;
+					stellar_asset.type = (uint32_t)asset_type::ASSET_TYPE_NATIVE;
+					stellar_asset.has_code = false;
+					stellar_asset.has_issuer = false;
+					stellar_asset.has_type = true;
 				}
 
-				for (auto& Payment : Payments)
-					Payment.asset = StellarAsset;
+				for (auto& payment : payments)
+					payment.asset = stellar_asset;
 
-				String TransactionId;
-				uint8_t Signature[crypto_sign_BYTES];
+				string transaction_id;
+				uint8_t signature[crypto_sign_BYTES];
 				{
-					uint8_t DerivedPrivateKey[64];
-					if (!DecodePrivateKey(FromWallet->SigningKey.ExposeToHeap(), DerivedPrivateKey))
-						Coreturn ExpectsRT<OutgoingTransaction>(RemoteException("private key invalid"));
+					uint8_t derived_private_key[64];
+					if (!decode_private_key(from_wallet->signing_key.expose<KEY_LIMIT>().view, derived_private_key))
+						coreturn expects_rt<outgoing_transaction>(remote_exception("private key invalid"));
 
-					Vector<uint8_t> RawData = TxDataFromSignature(Transaction, Accounts, Payments);
-					ed25519_signature Signature;
-					ed25519_sign_ext((uint8_t*)&RawData[0], RawData.size(), DerivedPrivateKey, DerivedPrivateKey + 32, Signature);
-					if (crypto_sign_verify_detached(Signature, (uint8_t*)&RawData[0], RawData.size(), DerivedPublicKey) != 0)
-						Coreturn ExpectsRT<OutgoingTransaction>(RemoteException("private key invalid"));
+					vector<uint8_t> raw_data = tx_data_from_signature(transaction, accounts, payments);
+					ed25519_signature signature;
+					ed25519_sign_ext((uint8_t*)&raw_data[0], raw_data.size(), derived_private_key, derived_private_key + 32, signature);
+					if (crypto_sign_verify_detached(signature, (uint8_t*)&raw_data[0], raw_data.size(), derived_public_key) != 0)
+						coreturn expects_rt<outgoing_transaction>(remote_exception("private key invalid"));
 
-					TransactionId.assign((char*)RawData.data(), RawData.size());
-					TransactionId = Codec::HexEncode(TransactionId);
+					transaction_id.assign((char*)raw_data.data(), raw_data.size());
+					transaction_id = codec::hex_encode(transaction_id);
 				}
 
-				Vector<StellarSignedTx> Signatures;
+				vector<StellarSignedTx> signatures;
 				{
-					StellarSignedTx Sign;
-					memset(&Sign, 0, sizeof(Sign));
-					Sign.signature.size = (pb_size_t)std::min<size_t>(sizeof(Sign.signature.bytes), sizeof(Signature));
-					Sign.public_key.size = (pb_size_t)std::min<size_t>(sizeof(Sign.public_key.bytes), DerivedPublicKeySize);
-					memcpy(Sign.signature.bytes, Signature, Sign.signature.size);
-					memcpy(Sign.public_key.bytes, DerivedPublicKey, Sign.public_key.size);
-					Sign.has_public_key = true;
-					Sign.has_signature = true;
-					Signatures.push_back(std::move(Sign));
+					StellarSignedTx sign;
+					memset(&sign, 0, sizeof(sign));
+					sign.signature.size = (pb_size_t)std::min<size_t>(sizeof(sign.signature.bytes), sizeof(signature));
+					sign.public_key.size = (pb_size_t)std::min<size_t>(sizeof(sign.public_key.bytes), derived_public_key_size);
+					memcpy(sign.signature.bytes, signature, sign.signature.size);
+					memcpy(sign.public_key.bytes, derived_public_key, sign.public_key.size);
+					sign.has_public_key = true;
+					sign.has_signature = true;
+					signatures.push_back(std::move(sign));
 				}
 
-				Vector<uint8_t> RawData = TxDataFromEnvelope(Transaction, Signatures, Accounts, Payments);
-				String TransactionData = Codec::Base64Encode(std::string_view((char*)RawData.data(), RawData.size()));
-				if (TransactionId.empty() || TransactionData.empty())
-					Coreturn ExpectsRT<OutgoingTransaction>(RemoteException("tx serialization error"));
+				vector<uint8_t> raw_data = tx_data_from_envelope(transaction, signatures, accounts, payments);
+				string transaction_data = codec::base64_encode(std::string_view((char*)raw_data.data(), raw_data.size()));
+				if (transaction_id.empty() || transaction_data.empty())
+					coreturn expects_rt<outgoing_transaction>(remote_exception("tx serialization error"));
 
-				Decimal Value = ContractAddress ? TotalValue : TotalValue - FeeValue;
-				IncomingTransaction Tx;
-				Tx.SetTransaction(Asset, 0, TransactionId, std::move(FeeValue));
-				Tx.SetOperations({ Transferer(FromWallet->Addresses.begin()->second, Option<uint64_t>(FromWallet->AddressIndex), std::move(Value)) }, Vector<Transferer>(To));
-				Coreturn ExpectsRT<OutgoingTransaction>(OutgoingTransaction(std::move(Tx), std::move(TransactionData)));
+				decimal value = contract_address ? total_value : total_value - fee_value;
+				incoming_transaction tx;
+				tx.set_transaction(asset, 0, transaction_id, std::move(fee_value));
+				tx.set_operations({ transferer(from_wallet->addresses.begin()->second, option<uint64_t>(from_wallet->address_index), std::move(value)) }, vector<transferer>(to));
+				coreturn expects_rt<outgoing_transaction>(outgoing_transaction(std::move(tx), std::move(transaction_data)));
 			}
-			ExpectsLR<MasterWallet> Stellar::NewMasterWallet(const std::string_view& Seed)
+			expects_lr<master_wallet> stellar::new_master_wallet(const std::string_view& seed)
 			{
-				auto* Chain = GetChain();
-				btc_hdnode RootNode;
-				if (!btc_hdnode_from_seed((uint8_t*)Seed.data(), (int)Seed.size(), &RootNode))
-					return ExpectsLR<MasterWallet>(LayerException("seed value invalid"));
+				auto* chain = get_chain();
+				btc_hdnode root_node;
+				if (!btc_hdnode_from_seed((uint8_t*)seed.data(), (int)seed.size(), &root_node))
+					return expects_lr<master_wallet>(layer_exception("seed value invalid"));
 
-				char PrivateKey[256];
-				btc_hdnode_serialize_private(&RootNode, Chain, PrivateKey, sizeof(PrivateKey));
+				char private_key[256];
+				btc_hdnode_serialize_private(&root_node, chain, private_key, sizeof(private_key));
 
-				char PublicKey[256];
-				btc_hdnode_serialize_public(&RootNode, Chain, PublicKey, (int)sizeof(PublicKey));
+				char public_key[256];
+				btc_hdnode_serialize_public(&root_node, chain, public_key, (int)sizeof(public_key));
 
-				return ExpectsLR<MasterWallet>(MasterWallet(::PrivateKey(Codec::HexEncode(Seed)), ::PrivateKey(PrivateKey), PublicKey));
+				return expects_lr<master_wallet>(master_wallet(secret_box::secure(codec::hex_encode(seed)), secret_box::secure(private_key), public_key));
 			}
-			ExpectsLR<DerivedSigningWallet> Stellar::NewSigningWallet(const Algorithm::AssetId& Asset, const MasterWallet& Wallet, uint64_t AddressIndex)
+			expects_lr<derived_signing_wallet> stellar::new_signing_wallet(const algorithm::asset_id& asset, const master_wallet& wallet, uint64_t address_index)
 			{
-				auto* Chain = GetChain();
-				char DerivedPrivateKey[256];
+				auto* chain = get_chain();
+				char derived_private_key[256];
 				{
-					auto Private = Wallet.SigningKey.Expose<KEY_LIMIT>();
-					if (!hd_derive(Chain, Private.View.data(), GetDerivation(Protocol::Now().Account.RootAddressIndex).c_str(), DerivedPrivateKey, sizeof(DerivedPrivateKey)))
-						return ExpectsLR<DerivedSigningWallet>(LayerException("input private key invalid"));
+					auto secret = wallet.signing_key.expose<KEY_LIMIT>();
+					if (!hd_derive(chain, secret.view.data(), get_derivation(protocol::now().account.root_address_index).c_str(), derived_private_key, sizeof(derived_private_key)))
+						return expects_lr<derived_signing_wallet>(layer_exception("input private key invalid"));
 				}
 
-				btc_hdnode Node;
-				if (!btc_hdnode_deserialize(DerivedPrivateKey, Chain, &Node))
-					return ExpectsLR<DerivedSigningWallet>(LayerException("input private key invalid"));
+				btc_hdnode node;
+				if (!btc_hdnode_deserialize(derived_private_key, chain, &node))
+					return expects_lr<derived_signing_wallet>(layer_exception("input private key invalid"));
 
-				auto Derived = NewSigningWallet(Asset, PrivateKey(std::string_view((char*)Node.private_key, sizeof(Node.private_key))));
-				if (Derived)
-					Derived->AddressIndex = AddressIndex;
-				return Derived;
+				auto derived = new_signing_wallet(asset, secret_box::view(std::string_view((char*)node.private_key, sizeof(node.private_key))));
+				if (derived)
+					derived->address_index = address_index;
+				return derived;
 			}
-			ExpectsLR<DerivedSigningWallet> Stellar::NewSigningWallet(const Algorithm::AssetId& Asset, const PrivateKey& SigningKey)
+			expects_lr<derived_signing_wallet> stellar::new_signing_wallet(const algorithm::asset_id& asset, const secret_box& signing_key)
 			{
-				uint8_t RawPrivateKey[64]; size_t RawPrivateKeySize = 0;
-				if (SigningKey.Size() != 32 && SigningKey.Size() != 64)
+				uint8_t raw_private_key[64]; size_t raw_private_key_size = 0;
+				if (signing_key.size() != 32 && signing_key.size() != 64)
 				{
-					auto Data = SigningKey.Expose<KEY_LIMIT>();
-					if (!DecodePrivateKey(Data.View, RawPrivateKey))
+					auto data = signing_key.expose<KEY_LIMIT>();
+					if (!decode_private_key(data.view, raw_private_key))
 					{
-						if (!DecodeKey(GetParams().Ed25519SecretSeed, Data.View, RawPrivateKey, &RawPrivateKeySize) || RawPrivateKeySize != 32)
-							return LayerException("bad private key");
+						if (!decode_key(get_params().ed25519_secret_seed, data.view, raw_private_key, &raw_private_key_size) || raw_private_key_size != 32)
+							return layer_exception("bad private key");
 					}
 					else
-						RawPrivateKeySize = 64;
+						raw_private_key_size = 64;
 				}
 				else
 				{
-					RawPrivateKeySize = SigningKey.Size();
-					SigningKey.ExposeToStack((char*)RawPrivateKey, RawPrivateKeySize);
+					raw_private_key_size = signing_key.size();
+					signing_key.stack((char*)raw_private_key, raw_private_key_size);
 				}
 
-				uint8_t PrivateKey[64]; String SecretKey;
-				if (RawPrivateKeySize == 32)
+				uint8_t private_key[64]; string secret_key;
+				if (raw_private_key_size == 32)
 				{
-					sha512_Raw(RawPrivateKey, RawPrivateKeySize, PrivateKey);
-					Algorithm::Composition::ConvertToSecretKeyEd25519(PrivateKey);
-					SecretKey = EncodeKey(GetParams().Ed25519SecretSeed, RawPrivateKey, RawPrivateKeySize);
+					sha512_Raw(raw_private_key, raw_private_key_size, private_key);
+					algorithm::composition::convert_to_secret_key_ed25519(private_key);
+					secret_key = encode_key(get_params().ed25519_secret_seed, raw_private_key, raw_private_key_size);
 				}
-				else if (RawPrivateKeySize == 64)
-					memcpy(PrivateKey, RawPrivateKey, RawPrivateKeySize);
+				else if (raw_private_key_size == 64)
+					memcpy(private_key, raw_private_key, raw_private_key_size);
 
-				uint8_t PublicKey[32];
-				ed25519_publickey_ext(PrivateKey, PublicKey);
+				uint8_t public_key[32];
+				ed25519_publickey_ext(private_key, public_key);
 
-				auto Derived = NewVerifyingWallet(Asset, std::string_view((char*)PublicKey, sizeof(PublicKey)));
-				if (!Derived)
-					return Derived.Error();
+				auto derived = new_verifying_wallet(asset, std::string_view((char*)public_key, sizeof(public_key)));
+				if (!derived)
+					return derived.error();
 
-				String DerivedPrivateKey = EncodePrivateKey(PrivateKey, sizeof(PrivateKey));
-				if (!SecretKey.empty())
-					DerivedPrivateKey.append(1, ':').append(SecretKey);
-				return ExpectsLR<DerivedSigningWallet>(DerivedSigningWallet(std::move(*Derived), ::PrivateKey(DerivedPrivateKey)));
+				string derived_private_key = encode_private_key(private_key, sizeof(private_key));
+				if (!secret_key.empty())
+					derived_private_key.append(1, ':').append(secret_key);
+				return expects_lr<derived_signing_wallet>(derived_signing_wallet(std::move(*derived), secret_box::secure(derived_private_key)));
 			}
-			ExpectsLR<DerivedVerifyingWallet> Stellar::NewVerifyingWallet(const Algorithm::AssetId& Asset, const std::string_view& VerifyingKey)
+			expects_lr<derived_verifying_wallet> stellar::new_verifying_wallet(const algorithm::asset_id& asset, const std::string_view& verifying_key)
 			{
-				String RawPublicKey = String(VerifyingKey);
-				if (RawPublicKey.size() != 32)
+				string raw_public_key = string(verifying_key);
+				if (raw_public_key.size() != 32)
 				{
-					uint8_t PublicKey[32]; size_t PublicKeySize = sizeof(PublicKey);
-					if (!DecodeKey(GetParams().Ed25519PublicKey, RawPublicKey, PublicKey, &PublicKeySize) || PublicKeySize != sizeof(PublicKey))
-						return LayerException("invalid public key");
+					uint8_t public_key[32]; size_t public_key_size = sizeof(public_key);
+					if (!decode_key(get_params().ed25519_public_key, raw_public_key, public_key, &public_key_size) || public_key_size != sizeof(public_key))
+						return layer_exception("invalid public key");
 
-					RawPublicKey = String((char*)PublicKey, sizeof(PublicKey));
+					raw_public_key = string((char*)public_key, sizeof(public_key));
 				}
 
-				String PublicKey = EncodeKey(GetParams().Ed25519PublicKey, (uint8_t*)RawPublicKey.data(), RawPublicKey.size());
-				return ExpectsLR<DerivedVerifyingWallet>(DerivedVerifyingWallet({ { (uint8_t)1, PublicKey } }, Optional::None, std::move(PublicKey)));
+				string public_key = encode_key(get_params().ed25519_public_key, (uint8_t*)raw_public_key.data(), raw_public_key.size());
+				return expects_lr<derived_verifying_wallet>(derived_verifying_wallet({ { (uint8_t)1, public_key } }, optional::none, std::move(public_key)));
 			}
-			ExpectsLR<String> Stellar::NewPublicKeyHash(const std::string_view& Address)
+			expects_lr<string> stellar::new_public_key_hash(const std::string_view& address)
 			{
-				uint8_t Data[128]; size_t DataSize = sizeof(Data);
-				if (!DecodeKey(GetParams().Ed25519PublicKey, Address, Data, &DataSize))
-					return LayerException("invalid address");
+				uint8_t data[128]; size_t data_size = sizeof(data);
+				if (!decode_key(get_params().ed25519_public_key, address, data, &data_size))
+					return layer_exception("invalid address");
 
-				return String((char*)Data, sizeof(Data));
+				return string((char*)data, sizeof(data));
 			}
-			ExpectsLR<String> Stellar::SignMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const PrivateKey& SigningKey)
+			expects_lr<string> stellar::sign_message(const algorithm::asset_id& asset, const std::string_view& message, const secret_box& signing_key)
 			{
-				auto SigningWallet = NewSigningWallet(Asset, SigningKey);
-				if (!SigningWallet)
-					return SigningWallet.Error();
+				auto signing_wallet = new_signing_wallet(asset, signing_key);
+				if (!signing_wallet)
+					return signing_wallet.error();
 
-				uint8_t DerivedPrivateKey[64];
-				auto Private = SigningWallet->SigningKey.Expose<KEY_LIMIT>();
-				if (!DecodePrivateKey(Private.View, DerivedPrivateKey))
-					return LayerException("private key invalid");
+				uint8_t derived_private_key[64];
+				auto secret = signing_wallet->signing_key.expose<KEY_LIMIT>();
+				if (!decode_private_key(secret.view, derived_private_key))
+					return layer_exception("private key invalid");
 
-				ed25519_signature Signature;
-				ed25519_sign_ext((uint8_t*)Message.data(), Message.size(), DerivedPrivateKey, DerivedPrivateKey + 32, Signature);
-				return Codec::Base64Encode(std::string_view((char*)Signature, sizeof(Signature)));
+				ed25519_signature signature;
+				ed25519_sign_ext((uint8_t*)message.data(), message.size(), derived_private_key, derived_private_key + 32, signature);
+				return codec::base64_encode(std::string_view((char*)signature, sizeof(signature)));
 			}
-			ExpectsLR<void> Stellar::VerifyMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const std::string_view& VerifyingKey, const std::string_view& Signature)
+			expects_lr<void> stellar::verify_message(const algorithm::asset_id& asset, const std::string_view& message, const std::string_view& verifying_key, const std::string_view& signature)
 			{
-				String SignatureData = Signature.size() == 64 ? String(Signature) : Codec::Base64Decode(Signature);
-				if (SignatureData.size() != 64)
-					return LayerException("signature not valid");
+				string signature_data = signature.size() == 64 ? string(signature) : codec::base64_decode(signature);
+				if (signature_data.size() != 64)
+					return layer_exception("signature not valid");
 
-				auto VerifyingWallet = NewVerifyingWallet(Asset, VerifyingKey);
-				if (!VerifyingWallet)
-					return VerifyingWallet.Error();
+				auto verifying_wallet = new_verifying_wallet(asset, verifying_key);
+				if (!verifying_wallet)
+					return verifying_wallet.error();
 
-				auto& Params = GetParams();
-				uint8_t DerivedPublicKey[256]; size_t DerivedPublicKeySize = sizeof(DerivedPublicKey);
-				if (!DecodeKey(Params.Ed25519PublicKey, VerifyingWallet->VerifyingKey, DerivedPublicKey, &DerivedPublicKeySize))
-					return LayerException("public key invalid");
+				auto& params = get_params();
+				uint8_t derived_public_key[256]; size_t derived_public_key_size = sizeof(derived_public_key);
+				if (!decode_key(params.ed25519_public_key, verifying_wallet->verifying_key, derived_public_key, &derived_public_key_size))
+					return layer_exception("public key invalid");
 
-				if (crypto_sign_verify_detached((uint8_t*)SignatureData.data(), (uint8_t*)Message.data(), Message.size(), DerivedPublicKey) != 0)
-					return LayerException("signature verification failed with used public key");
+				if (crypto_sign_verify_detached((uint8_t*)signature_data.data(), (uint8_t*)message.data(), message.size(), derived_public_key) != 0)
+					return layer_exception("signature verification failed with used public key");
 
-				return Expectation::Met;
+				return expectation::met;
 			}
-			String Stellar::GetDerivation(uint64_t AddressIndex) const
+			string stellar::get_derivation(uint64_t address_index) const
 			{
-				return Stringify::Text(Protocol::Now().Is(NetworkType::Mainnet) ? "m/44'/148'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, AddressIndex);
+				return stringify::text(protocol::now().is(network_type::mainnet) ? "m/44'/148'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, address_index);
 			}
-			const Stellar::Chainparams& Stellar::GetChainparams() const
+			const stellar::chainparams& stellar::get_chainparams() const
 			{
-				return Netdata;
+				return netdata;
 			}
-			String Stellar::GetNetworkPassphrase()
+			string stellar::get_network_passphrase()
 			{
-				switch (Protocol::Now().User.Network)
+				switch (protocol::now().user.network)
 				{
-					case NetworkType::Regtest:
-						return "Standalone Network ; February 2017";
-					case NetworkType::Testnet:
-						return "Test SDF Network ; September 2015";
-					case NetworkType::Mainnet:
-						return "Public Global Stellar Network ; September 2015";
+					case network_type::regtest:
+						return "Standalone network ; february 2017";
+					case network_type::testnet:
+						return "Test SDF network ; september 2015";
+					case network_type::mainnet:
+						return "Public global stellar network ; september 2015";
 					default:
 						VI_PANIC(false, "invalid network type");
-						return String();
+						return string();
 				}
 			}
-			Decimal Stellar::FromStroop(const uint256_t& Value)
+			decimal stellar::from_stroop(const uint256_t& value)
 			{
-				return Decimal(Value.ToString()) / Netdata.Divisibility;
+				return decimal(value.to_string()) / netdata.divisibility;
 			}
-			uint256_t Stellar::ToStroop(const Decimal& Value)
+			uint256_t stellar::to_stroop(const decimal& value)
 			{
-				return uint256_t((Value * Netdata.Divisibility).Truncate(0).ToString());
+				return uint256_t((value * netdata.divisibility).truncate(0).to_string());
 			}
-			uint64_t Stellar::GetBaseStroopFee()
+			uint64_t stellar::get_base_stroop_fee()
 			{
 				return 100;
 			}
-			uint16_t Stellar::CalculateChecksum(const uint8_t* Value, size_t Size)
+			uint16_t stellar::calculate_checksum(const uint8_t* value, size_t size)
 			{
-				uint64_t Hash = 0x0; // CRC16 XMODEM
-				for (size_t i = 0; i < Size; i++)
+				uint64_t hash = 0x0; // CRC16 XMODEM
+				for (size_t i = 0; i < size; i++)
 				{
-					uint8_t Byte = Value[i];
-					uint64_t Code = (Hash >> 8) & 0xff;
-					Code ^= Byte & 0xff;
-					Code ^= Code >> 4;
-					Hash = (Hash << 8) & 0xffff;
-					Hash ^= Code;
-					Code = (Code << 5) & 0xffff;
-					Hash ^= Code;
-					Code = (Code << 7) & 0xffff;
-					Hash ^= Code;
+					uint8_t byte = value[i];
+					uint64_t code = (hash >> 8) & 0xff;
+					code ^= byte & 0xff;
+					code ^= code >> 4;
+					hash = (hash << 8) & 0xffff;
+					hash ^= code;
+					code = (code << 5) & 0xffff;
+					hash ^= code;
+					code = (code << 7) & 0xffff;
+					hash ^= code;
 				}
-				return (uint16_t)Hash;
+				return (uint16_t)hash;
 			}
-			String Stellar::EncodePrivateKey(uint8_t* PrivateKey, size_t PrivateKeySize)
+			string stellar::encode_private_key(uint8_t* private_key, size_t private_key_size)
 			{
-				return Codec::HexEncode(std::string_view((char*)PrivateKey, PrivateKeySize));
+				return codec::hex_encode(std::string_view((char*)private_key, private_key_size));
 			}
-			bool Stellar::DecodeKey(uint8_t Version, const std::string_view& Data, uint8_t* OutValue, size_t* OutSize)
+			bool stellar::decode_key(uint8_t version, const std::string_view& data, uint8_t* out_value, size_t* out_size)
 			{
-				Vector<uint8_t> Key(base32_decoded_length(Data.size()), 0);
-				if (Key.size() < 3 || *OutSize < Key.size() - 3)
+				vector<uint8_t> key(base32_decoded_length(data.size()), 0);
+				if (key.size() < 3 || *out_size < key.size() - 3)
 					return false;
 
-				*OutSize = Key.size();
-				if (!DecodeBase32(Data, &Key[0], OutSize))
+				*out_size = key.size();
+				if (!decode_base32(data, &key[0], out_size))
 					return false;
 
-				uint8_t GivenVersion = Key[0];
-				if (GivenVersion != Version)
+				uint8_t given_version = key[0];
+				if (given_version != version)
 					return false;
 
-				uint16_t GivenChecksum = 0;
-				uint16_t Checksum = CalculateChecksum(&Key[0], Key.size() - 2);
-				memcpy(&GivenChecksum, &Key[Key.size() - 2], sizeof(uint8_t) * 2);
-				if (GivenChecksum != Checksum)
+				uint16_t given_checksum = 0;
+				uint16_t checksum = calculate_checksum(&key[0], key.size() - 2);
+				memcpy(&given_checksum, &key[key.size() - 2], sizeof(uint8_t) * 2);
+				if (given_checksum != checksum)
 					return false;
 
-				*OutSize = Key.size() - 3;
-				memcpy(OutValue, &Key[1], sizeof(uint8_t) * (*OutSize));
+				*out_size = key.size() - 3;
+				memcpy(out_value, &key[1], sizeof(uint8_t) * (*out_size));
 				return true;
 			}
-			bool Stellar::DecodeBase32(const std::string_view& Data, uint8_t* OutValue, size_t* OutSize)
+			bool stellar::decode_base32(const std::string_view& data, uint8_t* out_value, size_t* out_size)
 			{
-				size_t ExpectedSize = base32_decoded_length(Data.size());
-				if (*OutSize < ExpectedSize)
+				size_t expected_size = base32_decoded_length(data.size());
+				if (*out_size < expected_size)
 					return false;
 
-				*OutSize = ExpectedSize;
-				return base32_decode(Data.data(), Data.size(), OutValue, *OutSize, BASE32_ALPHABET_RFC4648) != nullptr;
+				*out_size = expected_size;
+				return base32_decode(data.data(), data.size(), out_value, *out_size, BASE32_ALPHABET_RFC4648) != nullptr;
 			}
-			bool Stellar::DecodePrivateKey(const std::string_view& Data, uint8_t PrivateKey[64])
+			bool stellar::decode_private_key(const std::string_view& data, uint8_t private_key[64])
 			{
-				auto Slice = Data.substr(0, Data.find(':'));
-				String Result = Codec::HexDecode(Slice);
-				if (Result.size() != 64)
+				auto slice = data.substr(0, data.find(':'));
+				string result = codec::hex_decode(slice);
+				if (result.size() != 64)
 					return false;
 
-				memcpy(PrivateKey, Result.data(), Result.size());
+				memcpy(private_key, result.data(), result.size());
 				return true;
 			}
-			String Stellar::EncodeKey(uint8_t Version, const uint8_t* Value, size_t Size)
+			string stellar::encode_key(uint8_t version, const uint8_t* value, size_t size)
 			{
-				Vector<uint8_t> Key(1 + Size + 2, Version);
-				memcpy(&Key[1], Value, sizeof(uint8_t) * Size);
+				vector<uint8_t> key(1 + size + 2, version);
+				memcpy(&key[1], value, sizeof(uint8_t) * size);
 
-				uint16_t Checksum = CalculateChecksum(&Key[0], Size + 1);
-				memcpy(&Key[Key.size() - 2], &Checksum, sizeof(uint8_t) * 2);
-				return EncodeBase32(&Key[0], Key.size());
+				uint16_t checksum = calculate_checksum(&key[0], size + 1);
+				memcpy(&key[key.size() - 2], &checksum, sizeof(uint8_t) * 2);
+				return encode_base32(&key[0], key.size());
 			}
-			String Stellar::EncodeBase32(const uint8_t* Value, size_t Size)
+			string stellar::encode_base32(const uint8_t* value, size_t size)
 			{
-				size_t ExpectedSize = std::max<size_t>(1, base32_encoded_length(Size));
-				String Data(ExpectedSize, '\0');
-				if (!base32_encode(Value, Size, (char*)Data.data(), Data.size() + 1, BASE32_ALPHABET_RFC4648))
-					Data.clear();
-				return Data;
+				size_t expected_size = std::max<size_t>(1, base32_encoded_length(size));
+				string data(expected_size, '\0');
+				if (!base32_encode(value, size, (char*)data.data(), data.size() + 1, BASE32_ALPHABET_RFC4648))
+					data.clear();
+				return data;
 			}
-			Stellar::ChainInfo& Stellar::GetParams()
+			stellar::chain_info& stellar::get_params()
 			{
-				switch (Protocol::Now().User.Network)
+				switch (protocol::now().user.network)
 				{
-					case NetworkType::Regtest:
-						return Config.Regtest;
-					case NetworkType::Testnet:
-						return Config.Testnet;
-					case NetworkType::Mainnet:
-						return Config.Mainnet;
+					case network_type::regtest:
+						return config.regtest;
+					case network_type::testnet:
+						return config.testnet;
+					case network_type::mainnet:
+						return config.mainnet;
 					default:
 						VI_PANIC(false, "invalid network type");
-						return Config.Regtest;
+						return config.regtest;
 				}
 			}
-			const btc_chainparams_* Stellar::GetChain()
+			const btc_chainparams_* stellar::get_chain()
 			{
-				switch (Protocol::Now().User.Network)
+				switch (protocol::now().user.network)
 				{
-					case NetworkType::Regtest:
+					case network_type::regtest:
 						return &xlm_chainparams_regtest;
-					case NetworkType::Testnet:
+					case network_type::testnet:
 						return &xlm_chainparams_test;
-					case NetworkType::Mainnet:
+					case network_type::mainnet:
 						return &xlm_chainparams_main;
 					default:
 						VI_PANIC(false, "invalid network type");

@@ -3,21 +3,21 @@
 #include "tangent/validator/service/p2p.h"
 #include "tangent/validator/service/rpc.h"
 
-using namespace Tangent;
+using namespace tangent;
 
 int main(int argc, char* argv[])
 {
-	Vitex::Runtime Scope;
-	Protocol Params = Protocol(argc, argv);
-	NDS::ServerNode Discovery;
-	P2P::ServerNode Consensus;
-	NSS::ServerNode& Synchronization = *NSS::ServerNode::Get();
-	RPC::ServerNode Interface = RPC::ServerNode(&Consensus);
+	vitex::runtime scope;
+	protocol params = protocol(argc, argv);
+	nds::server_node discovery;
+	p2p::server_node consensus;
+	nss::server_node& synchronization = *nss::server_node::get();
+	rpc::server_node interfaces = rpc::server_node(&consensus);
 
-	ServiceControl Control;
-	Control.Bind(Discovery.GetEntrypoint());
-	Control.Bind(Consensus.GetEntrypoint());
-	Control.Bind(Synchronization.GetEntrypoint());
-	Control.Bind(Interface.GetEntrypoint());
-	return Control.Launch();
+	service_control control;
+	control.bind(discovery.get_entrypoint());
+	control.bind(consensus.get_entrypoint());
+	control.bind(synchronization.get_entrypoint());
+	control.bind(interfaces.get_entrypoint());
+	return control.launch();
 }

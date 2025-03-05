@@ -12,496 +12,496 @@ extern "C"
 #include "../../internal/sha3.h"
 }
 
-namespace Tangent
+namespace tangent
 {
-	namespace Mediator
+	namespace mediator
 	{
-		namespace Backends
+		namespace backends
 		{
-			const char* Monero::NdCall::JsonRpc()
+			const char* monero::nd_call::json_rpc()
 			{
 				return "/json_rpc";
 			}
-			const char* Monero::NdCall::SendRawTransaction()
+			const char* monero::nd_call::send_raw_transaction()
 			{
 				return "/send_raw_transaction";
 			}
-			const char* Monero::NdCall::GetTransactions()
+			const char* monero::nd_call::get_transactions()
 			{
 				return "/get_transactions";
 			}
-			const char* Monero::NdCall::GetHeight()
+			const char* monero::nd_call::get_height()
 			{
 				return "/get_height";
 			}
 
-			const char* Monero::NdCallRestricted::GetBlock()
+			const char* monero::nd_call_restricted::get_block()
 			{
 				return "get_block";
 			}
-			const char* Monero::NdCallRestricted::GetFeeEstimate()
+			const char* monero::nd_call_restricted::get_fee_estimate()
 			{
 				return "get_fee_estimate";
 			}
 
-			Monero::Monero() noexcept : RelayBackendUTXO()
+			monero::monero() noexcept : relay_backend_utxo()
 			{
-				Netdata.Composition = Algorithm::Composition::Type::ED25519;
-				Netdata.Routing = RoutingPolicy::UTXO;
-				Netdata.SyncLatency = 5;
-				Netdata.Divisibility = Decimal(1000000000000).Truncate(Protocol::Now().Message.Precision);
-				Netdata.SupportsTokenTransfer.clear();
-				Netdata.SupportsBulkTransfer = true;
+				netdata.composition = algorithm::composition::type::ED25519;
+				netdata.routing = routing_policy::UTXO;
+				netdata.sync_latency = 5;
+				netdata.divisibility = decimal(1000000000000).truncate(protocol::now().message.precision);
+				netdata.supports_token_transfer.clear();
+				netdata.supports_bulk_transfer = true;
 			}
-			ExpectsPromiseRT<void> Monero::BroadcastTransaction(const Algorithm::AssetId& Asset, const OutgoingTransaction& TxData)
+			expects_promise_rt<void> monero::broadcast_transaction(const algorithm::asset_id& asset, const outgoing_transaction& tx_data)
 			{
-				Schema* Args = Var::Set::Object();
-				Args->Set("tx_as_hex", Var::String(Format::Util::Clear0xHex(TxData.Data)));
+				schema* args = var::set::object();
+				args->set("tx_as_hex", var::string(format::util::clear_0xhex(tx_data.data)));
 
-				auto HexData = Coawait(ExecuteREST(Asset, "POST", NdCall::SendRawTransaction(), Args, CachePolicy::Lazy));
-				if (!HexData)
-					Coreturn ExpectsRT<void>(HexData.Error());
+				auto hex_data = coawait(execute_rest(asset, "POST", nd_call::send_raw_transaction(), args, cache_policy::lazy));
+				if (!hex_data)
+					coreturn expects_rt<void>(hex_data.error());
 
-				bool DoubleSpend = HexData->GetVar("double_spend").GetBoolean();
-				bool FeeTooLow = HexData->GetVar("fee_too_low").GetBoolean();
-				bool InvalidInput = HexData->GetVar("invalid_input").GetBoolean();
-				bool InvalidOutput = HexData->GetVar("invalid_output").GetBoolean();
-				bool LowMixin = HexData->GetVar("low_mixin").GetBoolean();
-				bool Overspend = HexData->GetVar("overspend").GetBoolean();
-				bool TooBig = HexData->GetVar("too_big").GetBoolean();
-				Memory::Release(*HexData);
+				bool double_spend = hex_data->get_var("double_spend").get_boolean();
+				bool fee_too_low = hex_data->get_var("fee_too_low").get_boolean();
+				bool invalid_input = hex_data->get_var("invalid_input").get_boolean();
+				bool invalid_output = hex_data->get_var("invalid_output").get_boolean();
+				bool low_mixin = hex_data->get_var("low_mixin").get_boolean();
+				bool overspend = hex_data->get_var("overspend").get_boolean();
+				bool too_big = hex_data->get_var("too_big").get_boolean();
+				memory::release(*hex_data);
 
-				if (DoubleSpend)
-					Coreturn ExpectsRT<void>(RemoteException("transaction double spends inputs"));
-				else if (FeeTooLow)
-					Coreturn ExpectsRT<void>(RemoteException("transaction fee is too low"));
-				else if (InvalidInput)
-					Coreturn ExpectsRT<void>(RemoteException("transaction uses invalid input"));
-				else if (InvalidOutput)
-					Coreturn ExpectsRT<void>(RemoteException("transaction uses invalid output"));
-				else if (LowMixin)
-					Coreturn ExpectsRT<void>(RemoteException("transaction mixin count is too low"));
-				else if (Overspend)
-					Coreturn ExpectsRT<void>(RemoteException("transaction overspends inputs"));
-				else if (TooBig)
-					Coreturn ExpectsRT<void>(RemoteException("transaction is too big"));
+				if (double_spend)
+					coreturn expects_rt<void>(remote_exception("transaction double spends inputs"));
+				else if (fee_too_low)
+					coreturn expects_rt<void>(remote_exception("transaction fee is too low"));
+				else if (invalid_input)
+					coreturn expects_rt<void>(remote_exception("transaction uses invalid input"));
+				else if (invalid_output)
+					coreturn expects_rt<void>(remote_exception("transaction uses invalid output"));
+				else if (low_mixin)
+					coreturn expects_rt<void>(remote_exception("transaction mixin count is too low"));
+				else if (overspend)
+					coreturn expects_rt<void>(remote_exception("transaction overspends inputs"));
+				else if (too_big)
+					coreturn expects_rt<void>(remote_exception("transaction is too big"));
 
-				UpdateCoins(Asset, TxData);
-				Coreturn ExpectsRT<void>(Expectation::Met);
+				update_coins(asset, tx_data);
+				coreturn expects_rt<void>(expectation::met);
 			}
-			ExpectsPromiseRT<uint64_t> Monero::GetLatestBlockHeight(const Algorithm::AssetId& Asset)
+			expects_promise_rt<uint64_t> monero::get_latest_block_height(const algorithm::asset_id& asset)
 			{
-				auto Height = Coawait(ExecuteREST(Asset, "POST", NdCall::GetHeight(), nullptr, CachePolicy::Lazy));
-				if (!Height)
-					Coreturn ExpectsRT<uint64_t>(Height.Error());
+				auto height = coawait(execute_rest(asset, "POST", nd_call::get_height(), nullptr, cache_policy::lazy));
+				if (!height)
+					coreturn expects_rt<uint64_t>(height.error());
 
-				uint64_t BlockHeight = Height->GetVar("height").GetInteger();
-				Memory::Release(*Height);
-				Coreturn ExpectsRT<uint64_t>(BlockHeight);
+				uint64_t block_height = height->get_var("height").get_integer();
+				memory::release(*height);
+				coreturn expects_rt<uint64_t>(block_height);
 			}
-			ExpectsPromiseRT<Schema*> Monero::GetBlockTransactions(const Algorithm::AssetId& Asset, uint64_t BlockHeight, String* BlockHash)
+			expects_promise_rt<schema*> monero::get_block_transactions(const algorithm::asset_id& asset, uint64_t block_height, string* block_hash)
 			{
-				SchemaArgs Args;
-				Args["height"] = Var::Set::Integer(BlockHeight);
+				schema_args args;
+				args["height"] = var::set::integer(block_height);
 
-				auto BlockData = Coawait(ExecuteRPC3(Asset, NdCallRestricted::GetBlock(), std::move(Args), CachePolicy::Shortened, NdCall::JsonRpc()));
-				if (!BlockData)
-					Coreturn ExpectsRT<Schema*>(BlockData.Error());
+				auto block_data = coawait(execute_rpc3(asset, nd_call_restricted::get_block(), std::move(args), cache_policy::shortened, nd_call::json_rpc()));
+				if (!block_data)
+					coreturn expects_rt<schema*>(block_data.error());
 
-				auto BlockBlob = Schema::FromJSON(BlockData->GetVar("json").GetBlob());
-				Memory::Release(*BlockData);
-				if (!BlockBlob)
-					Coreturn ExpectsRT<Schema*>(RemoteException(std::move(BlockBlob.Error().message())));
+				auto block_blob = schema::from_json(block_data->get_var("json").get_blob());
+				memory::release(*block_data);
+				if (!block_blob)
+					coreturn expects_rt<schema*>(remote_exception(std::move(block_blob.error().message())));
 
-				Schema* TransactionData = Var::Set::Array();
-				auto Destructor = UPtr<Schema>(*BlockBlob);
-				auto CoinbaseTx = BlockBlob->Get("miner_tx");
-				if (CoinbaseTx != nullptr)
+				schema* transaction_data = var::set::array();
+				auto destructor = uptr<schema>(*block_blob);
+				auto coinbase_tx = block_blob->get("miner_tx");
+				if (coinbase_tx != nullptr)
 				{
-					TransactionData->Push(CoinbaseTx);
-					CoinbaseTx->Unlink();
+					transaction_data->push(coinbase_tx);
+					coinbase_tx->unlink();
 				}
 
-				auto TransactionHashes = BlockBlob->Get("tx_hashes");
-				if (TransactionHashes != nullptr && !TransactionHashes->Empty())
+				auto transaction_hashes = block_blob->get("tx_hashes");
+				if (transaction_hashes != nullptr && !transaction_hashes->empty())
 				{
-					Schema* Args = Var::Set::Object();
-					Args->Set("tx_hashes", TransactionHashes);
-					TransactionHashes->Unlink();
+					schema* args = var::set::object();
+					args->set("tx_hashes", transaction_hashes);
+					transaction_hashes->unlink();
 
-					auto Transactions = UPtr<Schema>(Coawait(ExecuteREST(Asset, "POST", NdCall::GetTransactions(), nullptr, CachePolicy::Shortened)));
-					if (Transactions)
+					auto transactions = uptr<schema>(coawait(execute_rest(asset, "POST", nd_call::get_transactions(), nullptr, cache_policy::shortened)));
+					if (transactions)
 					{
-						auto* List = Transactions->Get("txs");
-						if (List != nullptr)
+						auto* list = transactions->get("txs");
+						if (list != nullptr)
 						{
-							for (auto& Transaction : List->GetChilds())
+							for (auto& transaction : list->get_childs())
 							{
-								auto TransactionBlob = Schema::FromJSON(Transaction->GetVar("as_json").GetBlob());
-								if (TransactionBlob)
-									TransactionData->Push(*TransactionBlob);
+								auto transaction_blob = schema::from_json(transaction->get_var("as_json").get_blob());
+								if (transaction_blob)
+									transaction_data->push(*transaction_blob);
 							}
 						}
 					}
 				}
 
-				Coreturn ExpectsRT<Schema*>(TransactionData);
+				coreturn expects_rt<schema*>(transaction_data);
 			}
-			ExpectsPromiseRT<Schema*> Monero::GetBlockTransaction(const Algorithm::AssetId& Asset, uint64_t BlockHeight, const std::string_view& BlockHash, const std::string_view& TransactionId)
+			expects_promise_rt<schema*> monero::get_block_transaction(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, const std::string_view& transaction_id)
 			{
-				Schema* Args = Var::Set::Object();
-				Schema* Hashes = Args->Set("tx_hashes", Var::Set::Array());
-				Hashes->Push(Var::String(TransactionId));
+				schema* args = var::set::object();
+				schema* hashes = args->set("tx_hashes", var::set::array());
+				hashes->push(var::string(transaction_id));
 
-				auto Transactions = Coawait(ExecuteREST(Asset, "POST", NdCall::GetTransactions(), nullptr, CachePolicy::Shortened));
-				if (!Transactions)
-					Coreturn ExpectsRT<Schema*>(Transactions.Error());
+				auto transactions = coawait(execute_rest(asset, "POST", nd_call::get_transactions(), nullptr, cache_policy::shortened));
+				if (!transactions)
+					coreturn expects_rt<schema*>(transactions.error());
 
-				auto Destructor = UPtr<Schema>(Transactions);
-				auto* List = Transactions->Get("txs");
-				if (!List || List->Empty())
-					Coreturn ExpectsRT<Schema*>(RemoteException("transaction not found"));
+				auto destructor = uptr<schema>(transactions);
+				auto* list = transactions->get("txs");
+				if (!list || list->empty())
+					coreturn expects_rt<schema*>(remote_exception("transaction not found"));
 
-				auto TransactionBlob = Schema::FromJSON(List->GetChilds().front()->GetVar("as_json").GetBlob());
-				if (!TransactionBlob)
-					Coreturn ExpectsRT<Schema*>(RemoteException(std::move(TransactionBlob.Error().message())));
-		
-				Coreturn ExpectsRT<Schema*>(*TransactionBlob);
+				auto transaction_blob = schema::from_json(list->get_childs().front()->get_var("as_json").get_blob());
+				if (!transaction_blob)
+					coreturn expects_rt<schema*>(remote_exception(std::move(transaction_blob.error().message())));
+
+				coreturn expects_rt<schema*>(*transaction_blob);
 			}
-			ExpectsPromiseRT<Vector<IncomingTransaction>> Monero::GetAuthenticTransactions(const Algorithm::AssetId& Asset, uint64_t BlockHeight, const std::string_view& BlockHash, Schema* TransactionData)
+			expects_promise_rt<vector<incoming_transaction>> monero::get_authentic_transactions(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, schema* transaction_data)
 			{
-				Coreturn ExpectsRT<Vector<IncomingTransaction>>(RemoteException("not implemented"));
+				coreturn expects_rt<vector<incoming_transaction>>(remote_exception("not implemented"));
 			}
-			ExpectsPromiseRT<BaseFee> Monero::EstimateFee(const Algorithm::AssetId& Asset, const DynamicWallet& Wallet, const Vector<Transferer>& To, const FeeSupervisorOptions& Options)
+			expects_promise_rt<base_fee> monero::estimate_fee(const algorithm::asset_id& asset, const dynamic_wallet& wallet, const vector<transferer>& to, const fee_supervisor_options& options)
 			{
-				SchemaArgs Args;
-				Args["grace_blocks"] = Var::Set::Integer(10);
+				schema_args args;
+				args["grace_blocks"] = var::set::integer(10);
 
-				auto Fee = Coawait(ExecuteRPC3(Asset, NdCallRestricted::GetFeeEstimate(), std::move(Args), CachePolicy::Greedy, NdCall::JsonRpc()));
-				if (!Fee)
-					Coreturn ExpectsRT<BaseFee>(Fee.Error());
+				auto fee = coawait(execute_rpc3(asset, nd_call_restricted::get_fee_estimate(), std::move(args), cache_policy::greedy, nd_call::json_rpc()));
+				if (!fee)
+					coreturn expects_rt<base_fee>(fee.error());
 
-				uint64_t FeeRate = Fee->GetVar("fee").GetInteger();
-				const size_t ExpectedMaxTxSize = 1000;
-				Coreturn ExpectsRT<BaseFee>(BaseFee(FeeRate / Netdata.Divisibility, Decimal(ExpectedMaxTxSize)));
+				uint64_t fee_rate = fee->get_var("fee").get_integer();
+				const size_t expected_max_tx_size = 1000;
+				coreturn expects_rt<base_fee>(base_fee(fee_rate / netdata.divisibility, decimal(expected_max_tx_size)));
 			}
-			ExpectsPromiseRT<CoinUTXO> Monero::GetTransactionOutput(const Algorithm::AssetId& Asset, const std::string_view& TransactionId, uint32_t Index)
+			expects_promise_rt<coin_utxo> monero::get_transaction_output(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint32_t index)
 			{
-				auto Result = GetCoins(Asset, TransactionId, Index);
-				if (Result)
-					return ExpectsPromiseRT<CoinUTXO>(RemoteException(std::move(Result.Error().message())));
+				auto result = get_coins(asset, transaction_id, index);
+				if (result)
+					return expects_promise_rt<coin_utxo>(remote_exception(std::move(result.error().message())));
 
-				return ExpectsPromiseRT<CoinUTXO>(std::move(*Result));
+				return expects_promise_rt<coin_utxo>(std::move(*result));
 			}
-			ExpectsPromiseRT<OutgoingTransaction> Monero::NewTransaction(const Algorithm::AssetId& Asset, const DynamicWallet& Wallet, const Vector<Transferer>& To, const BaseFee& Fee)
+			expects_promise_rt<outgoing_transaction> monero::new_transaction(const algorithm::asset_id& asset, const dynamic_wallet& wallet, const vector<transferer>& to, const base_fee& fee)
 			{
-				Coreturn ExpectsRT<OutgoingTransaction>(RemoteException("not implemented"));
+				coreturn expects_rt<outgoing_transaction>(remote_exception("not implemented"));
 			}
-			ExpectsLR<MasterWallet> Monero::NewMasterWallet(const std::string_view& Seed)
+			expects_lr<master_wallet> monero::new_master_wallet(const std::string_view& seed)
 			{
-				auto* Chain = GetChain();
-				btc_hdnode RootNode;
-				if (!btc_hdnode_from_seed((uint8_t*)Seed.data(), (int)Seed.size(), &RootNode))
-					return ExpectsLR<MasterWallet>(LayerException("seed value invalid"));
+				auto* chain = get_chain();
+				btc_hdnode root_node;
+				if (!btc_hdnode_from_seed((uint8_t*)seed.data(), (int)seed.size(), &root_node))
+					return expects_lr<master_wallet>(layer_exception("seed value invalid"));
 
-				char PrivateKey[256];
-				btc_hdnode_serialize_private(&RootNode, Chain, PrivateKey, sizeof(PrivateKey));
+				char private_key[256];
+				btc_hdnode_serialize_private(&root_node, chain, private_key, sizeof(private_key));
 
-				char PublicKey[256];
-				btc_hdnode_serialize_public(&RootNode, Chain, PublicKey, (int)sizeof(PublicKey));
+				char public_key[256];
+				btc_hdnode_serialize_public(&root_node, chain, public_key, (int)sizeof(public_key));
 
-				return ExpectsLR<MasterWallet>(MasterWallet(::PrivateKey(Codec::HexEncode(Seed)), ::PrivateKey(PrivateKey), PublicKey));
+				return expects_lr<master_wallet>(master_wallet(secret_box::secure(codec::hex_encode(seed)), secret_box::secure(private_key), public_key));
 			}
-			ExpectsLR<DerivedSigningWallet> Monero::NewSigningWallet(const Algorithm::AssetId& Asset, const MasterWallet& Wallet, uint64_t AddressIndex)
+			expects_lr<derived_signing_wallet> monero::new_signing_wallet(const algorithm::asset_id& asset, const master_wallet& wallet, uint64_t address_index)
 			{
-				auto* Chain = GetChain();
-				char MasterPrivateKey[256];
+				auto* chain = get_chain();
+				char master_private_key[256];
 				{
-					auto Private = Wallet.SigningKey.Expose<KEY_LIMIT>();
-					if (!hd_derive(Chain, Private.View.data(), GetDerivation(AddressIndex).c_str(), MasterPrivateKey, sizeof(MasterPrivateKey)))
-						return ExpectsLR<DerivedSigningWallet>(LayerException("invalid private key"));
+					auto secret = wallet.signing_key.expose<KEY_LIMIT>();
+					if (!hd_derive(chain, secret.view.data(), get_derivation(address_index).c_str(), master_private_key, sizeof(master_private_key)))
+						return expects_lr<derived_signing_wallet>(layer_exception("invalid private key"));
 				}
 
-				btc_hdnode Node;
-				if (!btc_hdnode_deserialize(MasterPrivateKey, Chain, &Node))
-					return LayerException("input address derivation invalid");
+				btc_hdnode node;
+				if (!btc_hdnode_deserialize(master_private_key, chain, &node))
+					return layer_exception("input address derivation invalid");
 
-				Algorithm::Composition::ConvertToScalarEd25519(Node.private_key);
-				auto Derived = NewSigningWallet(Asset, PrivateKey(std::string_view((char*)Node.private_key, sizeof(Node.private_key))));
-				if (Derived)
-					Derived->AddressIndex = AddressIndex;
-				return Derived;
+				algorithm::composition::convert_to_scalar_ed25519(node.private_key);
+				auto derived = new_signing_wallet(asset, secret_box::view(std::string_view((char*)node.private_key, sizeof(node.private_key))));
+				if (derived)
+					derived->address_index = address_index;
+				return derived;
 			}
-			ExpectsLR<DerivedSigningWallet> Monero::NewSigningWallet(const Algorithm::AssetId& Asset, const PrivateKey& SigningKey)
+			expects_lr<derived_signing_wallet> monero::new_signing_wallet(const algorithm::asset_id& asset, const secret_box& signing_key)
 			{
-				bool UsePubliclyKnownKeypair = false;
-				auto SigningKeypair = SigningKey.Expose<KEY_LIMIT>();
-				uint8_t PrivateSpendKey[32], PrivateViewKey[32];
-				size_t Split = SigningKeypair.View.find(':');
-				if (SigningKeypair.View.size() != 32 && SigningKeypair.View.size() != 64)
+				bool use_publicly_known_keypair = false;
+				auto signing_keypair = signing_key.expose<KEY_LIMIT>();
+				uint8_t private_spend_key[32], private_view_key[32];
+				size_t split = signing_keypair.view.find(':');
+				if (signing_keypair.view.size() != 32 && signing_keypair.view.size() != 64)
 				{
-					auto RawSpendKey = Codec::HexDecode(SigningKeypair.View.substr(0, Split));
-					if (RawSpendKey.size() != 32)
-						return LayerException("not a valid hex private spend-view keypair");
+					auto raw_spend_key = codec::hex_decode(signing_keypair.view.substr(0, split));
+					if (raw_spend_key.size() != 32)
+						return layer_exception("not a valid hex private spend-view keypair");
 
-					memcpy(PrivateSpendKey, RawSpendKey.data(), sizeof(PrivateSpendKey));
-					auto RawViewKey = Codec::HexDecode(SigningKeypair.View.substr(Split + 1));
-					if (RawViewKey.size() == 32)
-						memcpy(PrivateViewKey, RawViewKey.data(), sizeof(PrivateViewKey));
+					memcpy(private_spend_key, raw_spend_key.data(), sizeof(private_spend_key));
+					auto raw_view_key = codec::hex_decode(signing_keypair.view.substr(split + 1));
+					if (raw_view_key.size() == 32)
+						memcpy(private_view_key, raw_view_key.data(), sizeof(private_view_key));
 					else
-						UsePubliclyKnownKeypair = true;
+						use_publicly_known_keypair = true;
 				}
 				else
 				{
-					memcpy(PrivateSpendKey, SigningKeypair.View.data(), sizeof(PrivateSpendKey));
-					if (SigningKeypair.View.size() == 64)
-						memcpy(PrivateViewKey, SigningKeypair.View.data() + sizeof(PrivateSpendKey), sizeof(PrivateViewKey));
+					memcpy(private_spend_key, signing_keypair.view.data(), sizeof(private_spend_key));
+					if (signing_keypair.view.size() == 64)
+						memcpy(private_view_key, signing_keypair.view.data() + sizeof(private_spend_key), sizeof(private_view_key));
 					else
-						UsePubliclyKnownKeypair = true;
+						use_publicly_known_keypair = true;
 				}
 
-				uint8_t PublicSpendKey[32];
-				if (crypto_scalarmult_ed25519_base_noclamp(PublicSpendKey, PrivateSpendKey) != 0)
-					return LayerException("not a valid private spend-view key");
+				uint8_t public_spend_key[32];
+				if (crypto_scalarmult_ed25519_base_noclamp(public_spend_key, private_spend_key) != 0)
+					return layer_exception("not a valid private spend-view key");
 
-				if (UsePubliclyKnownKeypair)
-					DeriveKnownPrivateViewKey(PublicSpendKey, PrivateViewKey);
+				if (use_publicly_known_keypair)
+					derive_known_private_view_key(public_spend_key, private_view_key);
 
-				auto Derived = NewVerifyingWallet(Asset, std::string_view((char*)PublicSpendKey, sizeof(PublicSpendKey)));
-				if (!Derived)
-					return Derived.Error();
+				auto derived = new_verifying_wallet(asset, std::string_view((char*)public_spend_key, sizeof(public_spend_key)));
+				if (!derived)
+					return derived.error();
 
-				String PrivateSpendViewKey = Codec::HexEncode(std::string_view((char*)PrivateSpendKey, sizeof(PrivateSpendKey)));
-				PrivateSpendViewKey.append(1, ':').append(Codec::HexEncode(std::string_view((char*)PrivateViewKey, sizeof(PrivateViewKey))));
-				return ExpectsLR<DerivedSigningWallet>(DerivedSigningWallet(std::move(*Derived), ::PrivateKey(PrivateSpendViewKey)));
+				string private_spend_view_key = codec::hex_encode(std::string_view((char*)private_spend_key, sizeof(private_spend_key)));
+				private_spend_view_key.append(1, ':').append(codec::hex_encode(std::string_view((char*)private_view_key, sizeof(private_view_key))));
+				return expects_lr<derived_signing_wallet>(derived_signing_wallet(std::move(*derived), secret_box::secure(private_spend_view_key)));
 			}
-			ExpectsLR<DerivedVerifyingWallet> Monero::NewVerifyingWallet(const Algorithm::AssetId& Asset, const std::string_view& VerifyingKey)
+			expects_lr<derived_verifying_wallet> monero::new_verifying_wallet(const algorithm::asset_id& asset, const std::string_view& verifying_key)
 			{
-				bool UsePubliclyKnownKeypair = false;
-				uint8_t PublicSpendKey[32], PublicViewKey[32];
-				size_t Split = VerifyingKey.find(':');
-				if (VerifyingKey.size() != 32 && VerifyingKey.size() != 64)
+				bool use_publicly_known_keypair = false;
+				uint8_t public_spend_key[32], public_view_key[32];
+				size_t split = verifying_key.find(':');
+				if (verifying_key.size() != 32 && verifying_key.size() != 64)
 				{
-					auto RawSpendKey = Codec::HexDecode(VerifyingKey.substr(0, Split));
-					if (RawSpendKey.size() != 32)
-						return LayerException("not a valid hex public spend-view keypair");
+					auto raw_spend_key = codec::hex_decode(verifying_key.substr(0, split));
+					if (raw_spend_key.size() != 32)
+						return layer_exception("not a valid hex public spend-view keypair");
 
-					memcpy(PublicSpendKey, RawSpendKey.data(), sizeof(PublicSpendKey));
-					auto RawViewKey = Codec::HexDecode(VerifyingKey.substr(Split + 1));
-					if (RawViewKey.size() == 32)
-						memcpy(PublicViewKey, RawViewKey.data(), sizeof(PublicViewKey));
+					memcpy(public_spend_key, raw_spend_key.data(), sizeof(public_spend_key));
+					auto raw_view_key = codec::hex_decode(verifying_key.substr(split + 1));
+					if (raw_view_key.size() == 32)
+						memcpy(public_view_key, raw_view_key.data(), sizeof(public_view_key));
 					else
-						UsePubliclyKnownKeypair = true;
+						use_publicly_known_keypair = true;
 				}
 				else
 				{
-					memcpy(PublicSpendKey, VerifyingKey.data(), sizeof(PublicSpendKey));
-					if (VerifyingKey.size() == 64)
-						memcpy(PublicViewKey, VerifyingKey.data() + sizeof(PublicSpendKey), sizeof(PublicViewKey));
+					memcpy(public_spend_key, verifying_key.data(), sizeof(public_spend_key));
+					if (verifying_key.size() == 64)
+						memcpy(public_view_key, verifying_key.data() + sizeof(public_spend_key), sizeof(public_view_key));
 					else
-						UsePubliclyKnownKeypair = true;
+						use_publicly_known_keypair = true;
 				}
 
-				if (UsePubliclyKnownKeypair)
-					DeriveKnownPublicViewKey(PublicSpendKey, PublicViewKey);
+				if (use_publicly_known_keypair)
+					derive_known_public_view_key(public_spend_key, public_view_key);
 
-				uint8_t Buffer[64];
-				memcpy((char*)Buffer, PublicSpendKey, sizeof(PublicSpendKey));
-				memcpy((char*)Buffer + sizeof(PublicSpendKey), PublicViewKey, sizeof(PublicViewKey));
+				uint8_t buffer[64];
+				memcpy((char*)buffer, public_spend_key, sizeof(public_spend_key));
+				memcpy((char*)buffer + sizeof(public_spend_key), public_view_key, sizeof(public_view_key));
 
-				char Address[256] = { 0 };
-				if (xmr_base58_addr_encode_check(GetNetworkType(), Buffer, sizeof(Buffer), Address, sizeof(Address)) == 0)
-					return LayerException("not a valid public spend key");
+				char address[256] = { 0 };
+				if (xmr_base58_addr_encode_check(get_network_type(), buffer, sizeof(buffer), address, sizeof(address)) == 0)
+					return layer_exception("not a valid public spend key");
 
-				String PublicSpendViewKey = Codec::HexEncode(std::string_view((char*)PublicSpendKey, sizeof(PublicSpendKey)));
-				PublicSpendViewKey.append(1, ':').append(Codec::HexEncode(std::string_view((char*)PublicViewKey, sizeof(PublicViewKey))));
-				return ExpectsLR<DerivedVerifyingWallet>(DerivedVerifyingWallet({ { (uint8_t)1, String(Address) } }, Optional::None, std::move(PublicSpendViewKey)));
+				string public_spend_view_key = codec::hex_encode(std::string_view((char*)public_spend_key, sizeof(public_spend_key)));
+				public_spend_view_key.append(1, ':').append(codec::hex_encode(std::string_view((char*)public_view_key, sizeof(public_view_key))));
+				return expects_lr<derived_verifying_wallet>(derived_verifying_wallet({ { (uint8_t)1, string(address) } }, optional::none, std::move(public_spend_view_key)));
 			}
-			ExpectsLR<String> Monero::NewPublicKeyHash(const std::string_view& Address)
+			expects_lr<string> monero::new_public_key_hash(const std::string_view& address)
 			{
-				uint8_t Buffer[128]; uint64_t Tag;
-				if (xmr_base58_addr_decode_check(Address.data(), Address.size(), &Tag, Buffer, sizeof(Buffer)) == 0)
-					return LayerException("not a valid address data");
-				else if (Tag != GetNetworkType())
-					return LayerException("not a valid address type");
-				return String((char*)Buffer, 64);
+				uint8_t buffer[128]; uint64_t tag;
+				if (xmr_base58_addr_decode_check(address.data(), address.size(), &tag, buffer, sizeof(buffer)) == 0)
+					return layer_exception("not a valid address data");
+				else if (tag != get_network_type())
+					return layer_exception("not a valid address type");
+				return string((char*)buffer, 64);
 			}
-			ExpectsLR<String> Monero::SignMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const PrivateKey& SigningKey)
+			expects_lr<string> monero::sign_message(const algorithm::asset_id& asset, const std::string_view& message, const secret_box& signing_key)
 			{
-				auto SigningWallet = NewSigningWallet(Asset, SigningKey);
-				if (!SigningWallet)
-					return SigningWallet.Error();
+				auto signing_wallet = new_signing_wallet(asset, signing_key);
+				if (!signing_wallet)
+					return signing_wallet.error();
 
-				auto PrivateKeypair = SigningWallet->SigningKey.Expose<KEY_LIMIT>();
-				auto PrivateSpendKeyBuffer = Codec::HexDecode(PrivateKeypair.View.substr(0, PrivateKeypair.View.find(':')));
-				auto PublicSplit = SigningWallet->VerifyingKey.find(':');
-				auto PublicSpendKeyBuffer = Codec::HexDecode(SigningWallet->VerifyingKey.substr(0, PublicSplit));
-				auto PublicViewKeyBuffer = Codec::HexDecode(SigningWallet->VerifyingKey.substr(PublicSplit + 1));
-				if (PrivateSpendKeyBuffer.size() != 32 || PublicSpendKeyBuffer.size() != 32 || PublicViewKeyBuffer.size() != 32)
-					return LayerException("bad signing/verifying keypair");
+				auto private_keypair = signing_wallet->signing_key.expose<KEY_LIMIT>();
+				auto private_spend_key_buffer = codec::hex_decode(private_keypair.view.substr(0, private_keypair.view.find(':')));
+				auto public_split = signing_wallet->verifying_key.find(':');
+				auto public_spend_key_buffer = codec::hex_decode(signing_wallet->verifying_key.substr(0, public_split));
+				auto public_view_key_buffer = codec::hex_decode(signing_wallet->verifying_key.substr(public_split + 1));
+				if (private_spend_key_buffer.size() != 32 || public_spend_key_buffer.size() != 32 || public_view_key_buffer.size() != 32)
+					return layer_exception("bad signing/verifying keypair");
 
-				uint8_t Body[96];
-				uint8_t SignatureData[64];
-				uint8_t* SignatureC = (uint8_t*)((char*)SignatureData + 00);
-				uint8_t* SignatureR = (uint8_t*)((char*)SignatureData + 32);
-				uint8_t* PrivateSpendKey = (uint8_t*)PrivateSpendKeyBuffer.data();
-				uint8_t* PublicSpendKey = (uint8_t*)PublicSpendKeyBuffer.data();
-				uint8_t* PublicViewKey = (uint8_t*)PublicViewKeyBuffer.data();
-				memcpy((char*)Body + 32, PublicSpendKey, PublicSpendKeyBuffer.size());
-				MessageHash(Body, (uint8_t*)Message.data(), Message.size(), PublicSpendKey, PublicViewKey, 1);
-			Retry:
-				ge_p3 Point3;
-				uint8_t Scalar[32];
-				Crypto::FillRandomBytes(Scalar, sizeof(Scalar));
-				sc_reduce32(Scalar);
-				ge_scalarmult_base(&Point3, Scalar);
-				ge_p3_tobytes((uint8_t*)((char*)Body + 64), &Point3);
-				xmr_fast_hash(SignatureC, Body, sizeof(Body));
-				sc_reduce32(SignatureC);
-				if (!sc_isnonzero(SignatureC))
-					goto Retry;
+				uint8_t body[96];
+				uint8_t signature_data[64];
+				uint8_t* signature_c = (uint8_t*)((char*)signature_data + 00);
+				uint8_t* signature_r = (uint8_t*)((char*)signature_data + 32);
+				uint8_t* private_spend_key = (uint8_t*)private_spend_key_buffer.data();
+				uint8_t* public_spend_key = (uint8_t*)public_spend_key_buffer.data();
+				uint8_t* public_view_key = (uint8_t*)public_view_key_buffer.data();
+				memcpy((char*)body + 32, public_spend_key, public_spend_key_buffer.size());
+				message_hash(body, (uint8_t*)message.data(), message.size(), public_spend_key, public_view_key, 1);
+			retry:
+				ge_p3 point3;
+				uint8_t scalar[32];
+				crypto::fill_random_bytes(scalar, sizeof(scalar));
+				sc_reduce32(scalar);
+				ge_scalarmult_base(&point3, scalar);
+				ge_p3_tobytes((uint8_t*)((char*)body + 64), &point3);
+				xmr_fast_hash(signature_c, body, sizeof(body));
+				sc_reduce32(signature_c);
+				if (!sc_isnonzero(signature_c))
+					goto retry;
 
-				sc_mulsub(SignatureR, SignatureC, PrivateSpendKey, Scalar);
-				if (!sc_isnonzero(SignatureR))
-					goto Retry;
+				sc_mulsub(signature_r, signature_c, private_spend_key, scalar);
+				if (!sc_isnonzero(signature_r))
+					goto retry;
 
-				char EncodedSignature[256];
-				size_t EncodedSignatureSize = sizeof(EncodedSignature);
-				if (!xmr_base58_encode(EncodedSignature, &EncodedSignatureSize, SignatureData, sizeof(SignatureData)))
-					return LayerException("failed to encode the signature");
+				char encoded_signature[256];
+				size_t encoded_signature_size = sizeof(encoded_signature);
+				if (!xmr_base58_encode(encoded_signature, &encoded_signature_size, signature_data, sizeof(signature_data)))
+					return layer_exception("failed to encode the signature");
 
-				String Result = "SigV2";
-				Result.append(EncodedSignature, EncodedSignatureSize);
-				return ExpectsLR<String>(std::move(Result));
+				string result = "SigV2";
+				result.append(encoded_signature, encoded_signature_size);
+				return expects_lr<string>(std::move(result));
 			}
-			ExpectsLR<void> Monero::VerifyMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const std::string_view& VerifyingKey, const std::string_view& Signature)
+			expects_lr<void> monero::verify_message(const algorithm::asset_id& asset, const std::string_view& message, const std::string_view& verifying_key, const std::string_view& signature)
 			{
-				uint8_t SignatureData[64]; size_t SignatureSize = sizeof(SignatureData);
-				uint8_t* SignatureC = (uint8_t*)((char*)SignatureData + 00);
-				uint8_t* SignatureR = (uint8_t*)((char*)SignatureData + 32);
-				if (Signature.size() != 64)
+				uint8_t signature_data[64]; size_t signature_size = sizeof(signature_data);
+				uint8_t* signature_c = (uint8_t*)((char*)signature_data + 00);
+				uint8_t* signature_r = (uint8_t*)((char*)signature_data + 32);
+				if (signature.size() != 64)
 				{
-					auto SignatureDigest = Signature.substr(5);
-					if (!xmr_base58_decode(SignatureDigest.data(), SignatureDigest.size(), SignatureData, &SignatureSize))
-						return LayerException("failed to decode the signature");
-					else if (SignatureSize != 64)
-						return LayerException("failed to decode the signature");
+					auto signature_digest = signature.substr(5);
+					if (!xmr_base58_decode(signature_digest.data(), signature_digest.size(), signature_data, &signature_size))
+						return layer_exception("failed to decode the signature");
+					else if (signature_size != 64)
+						return layer_exception("failed to decode the signature");
 				}
 				else
-					memcpy(SignatureData, Signature.data(), Signature.size());
+					memcpy(signature_data, signature.data(), signature.size());
 
-				auto VerifyingWallet = NewVerifyingWallet(Asset, VerifyingKey);
-				if (!VerifyingWallet)
-					return VerifyingWallet.Error();
+				auto verifying_wallet = new_verifying_wallet(asset, verifying_key);
+				if (!verifying_wallet)
+					return verifying_wallet.error();
 
-				auto PublicSplit = VerifyingWallet->VerifyingKey.find(':');
-				auto PublicSpendKeyBuffer = Codec::HexDecode(VerifyingWallet->VerifyingKey.substr(0, PublicSplit));
-				auto PublicViewKeyBuffer = Codec::HexDecode(VerifyingWallet->VerifyingKey.substr(PublicSplit + 1));
-				if (PublicSpendKeyBuffer.size() != 32 || PublicViewKeyBuffer.size() != 32)
-					return LayerException("bad verifying keypair");
+				auto public_split = verifying_wallet->verifying_key.find(':');
+				auto public_spend_key_buffer = codec::hex_decode(verifying_wallet->verifying_key.substr(0, public_split));
+				auto public_view_key_buffer = codec::hex_decode(verifying_wallet->verifying_key.substr(public_split + 1));
+				if (public_spend_key_buffer.size() != 32 || public_view_key_buffer.size() != 32)
+					return layer_exception("bad verifying keypair");
 
-				uint8_t Body[96];
-				uint8_t* BodyComm = (uint8_t*)((char*)Body + 64);
-				uint8_t* PublicSpendKey = (uint8_t*)PublicSpendKeyBuffer.data();
-				uint8_t* PublicViewKey = (uint8_t*)PublicViewKeyBuffer.data();
-				memcpy((char*)Body + 32, PublicSpendKey, PublicSpendKeyBuffer.size());
-				MessageHash(Body, (uint8_t*)Message.data(), Message.size(), PublicSpendKey, PublicViewKey, 1);
+				uint8_t body[96];
+				uint8_t* body_comm = (uint8_t*)((char*)body + 64);
+				uint8_t* public_spend_key = (uint8_t*)public_spend_key_buffer.data();
+				uint8_t* public_view_key = (uint8_t*)public_view_key_buffer.data();
+				memcpy((char*)body + 32, public_spend_key, public_spend_key_buffer.size());
+				message_hash(body, (uint8_t*)message.data(), message.size(), public_spend_key, public_view_key, 1);
 
-				ge_p2 Point2; ge_p3 Point3;
-				if (ge_frombytes_vartime(&Point3, PublicSpendKey) != 0)
-					return LayerException("bad signature");
-				else if (sc_check(SignatureC) != 0 || sc_check(SignatureR) != 0 || !sc_isnonzero(SignatureC))
-					return LayerException("bad signature");
+				ge_p2 point2; ge_p3 point3;
+				if (ge_frombytes_vartime(&point3, public_spend_key) != 0)
+					return layer_exception("bad signature");
+				else if (sc_check(signature_c) != 0 || sc_check(signature_r) != 0 || !sc_isnonzero(signature_c))
+					return layer_exception("bad signature");
 
-				static uint8_t Infinity[32] = { 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-				ge_double_scalarmult_base_vartime(&Point2, SignatureC, &Point3, SignatureR);
-				ge_tobytes(BodyComm, &Point2);
-				if (memcmp(BodyComm, Infinity, sizeof(Infinity)) == 0)
-					return LayerException("bad signature");
+				static uint8_t infinity[32] = { 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+				ge_double_scalarmult_base_vartime(&point2, signature_c, &point3, signature_r);
+				ge_tobytes(body_comm, &point2);
+				if (memcmp(body_comm, infinity, sizeof(infinity)) == 0)
+					return layer_exception("bad signature");
 
-				uint8_t C[32];
-				xmr_fast_hash(C, Body, sizeof(Body));
-				sc_reduce32(C);
-				sc_sub(C, C, SignatureC);
-				if (sc_isnonzero(C) != 0)
-					return LayerException("bad signature");
+				uint8_t c[32];
+				xmr_fast_hash(c, body, sizeof(body));
+				sc_reduce32(c);
+				sc_sub(c, c, signature_c);
+				if (sc_isnonzero(c) != 0)
+					return layer_exception("bad signature");
 
-				return Expectation::Met;
+				return expectation::met;
 			}
-			String Monero::GetDerivation(uint64_t AddressIndex) const
+			string monero::get_derivation(uint64_t address_index) const
 			{
-				return Stringify::Text(Protocol::Now().Is(NetworkType::Mainnet) ? "m/44'/128'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, AddressIndex);
+				return stringify::text(protocol::now().is(network_type::mainnet) ? "m/44'/128'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, address_index);
 			}
-			const btc_chainparams_* Monero::GetChain()
+			const btc_chainparams_* monero::get_chain()
 			{
-				switch (Protocol::Now().User.Network)
+				switch (protocol::now().user.network)
 				{
-					case NetworkType::Regtest:
+					case network_type::regtest:
 						return &btc_chainparams_regtest;
-					case NetworkType::Testnet:
+					case network_type::testnet:
 						return &btc_chainparams_test;
-					case NetworkType::Mainnet:
+					case network_type::mainnet:
 						return &btc_chainparams_main;
 					default:
 						VI_PANIC(false, "invalid network type");
 						return nullptr;
 				}
 			}
-			const Monero::Chainparams& Monero::GetChainparams() const
+			const monero::chainparams& monero::get_chainparams() const
 			{
-				return Netdata;
+				return netdata;
 			}
-			uint64_t Monero::GetRetirementBlockNumber() const
+			uint64_t monero::get_retirement_block_number() const
 			{
 				return 0;
 			}
-			uint64_t Monero::GetNetworkType() const
+			uint64_t monero::get_network_type() const
 			{
-				switch (Protocol::Now().User.Network)
+				switch (protocol::now().user.network)
 				{
-					case NetworkType::Mainnet:
-					case NetworkType::Regtest:
+					case network_type::mainnet:
+					case network_type::regtest:
 						return 18;
-					case NetworkType::Testnet:
+					case network_type::testnet:
 						return 53;
 					default:
 						VI_PANIC(false, "invalid network type");
 						return 24;
 				}
 			}
-			bool Monero::MessageHash(uint8_t Hash[32], const uint8_t* Message, size_t MessageSize, const uint8_t PublicSpendKey[32], const uint8_t PublicViewKey[32], const uint8_t Mode)
+			bool monero::message_hash(uint8_t hash[32], const uint8_t* message, size_t message_size, const uint8_t public_spend_key[32], const uint8_t public_view_key[32], const uint8_t mode)
 			{
 				static const char HASH_KEY_MESSAGE_SIGNING[] = "MoneroMessageSignature";
 
-				SHA3_CTX Context;
-				keccak_256_Init(&Context);
-				keccak_Update(&Context, (const uint8_t*)HASH_KEY_MESSAGE_SIGNING, sizeof(HASH_KEY_MESSAGE_SIGNING));
-				keccak_Update(&Context, PublicSpendKey, sizeof(uint8_t) * 32);
-				keccak_Update(&Context, PublicViewKey, sizeof(uint8_t) * 32);
-				keccak_Update(&Context, (const uint8_t*)&Mode, sizeof(uint8_t));
+				SHA3_CTX context;
+				keccak_256_Init(&context);
+				keccak_Update(&context, (const uint8_t*)HASH_KEY_MESSAGE_SIGNING, sizeof(HASH_KEY_MESSAGE_SIGNING));
+				keccak_Update(&context, public_spend_key, sizeof(uint8_t) * 32);
+				keccak_Update(&context, public_view_key, sizeof(uint8_t) * 32);
+				keccak_Update(&context, (const uint8_t*)&mode, sizeof(uint8_t));
 
-				uint8_t LengthBuffer[(sizeof(size_t) * 8 + 6) / 7];
-				int LengthBufferSize = xmr_write_varint(LengthBuffer, sizeof(LengthBuffer), MessageSize);
-				if (LengthBufferSize == -1)
+				uint8_t length_buffer[(sizeof(size_t) * 8 + 6) / 7];
+				int length_buffer_size = xmr_write_varint(length_buffer, sizeof(length_buffer), message_size);
+				if (length_buffer_size == -1)
 					return false;
 
-				keccak_Update(&Context, LengthBuffer, (size_t)LengthBufferSize);
-				keccak_Update(&Context, Message, MessageSize);
-				keccak_Final(&Context, Hash);
+				keccak_Update(&context, length_buffer, (size_t)length_buffer_size);
+				keccak_Update(&context, message, message_size);
+				keccak_Final(&context, hash);
 				return true;
 			}
-			void Monero::DeriveKnownPrivateViewKey(const uint8_t PublicSpendKey[32], uint8_t PrivateViewKey[32])
+			void monero::derive_known_private_view_key(const uint8_t public_spend_key[32], uint8_t private_view_key[32])
 			{
-				uint8_t Hash[32];
-				xmr_fast_hash(Hash, PublicSpendKey, sizeof(Hash));
-				memcpy(PrivateViewKey, Hash, sizeof(Hash));
-				Algorithm::Composition::ConvertToScalarEd25519(PrivateViewKey);
+				uint8_t hash[32];
+				xmr_fast_hash(hash, public_spend_key, sizeof(hash));
+				memcpy(private_view_key, hash, sizeof(hash));
+				algorithm::composition::convert_to_scalar_ed25519(private_view_key);
 			}
-			void Monero::DeriveKnownPublicViewKey(const uint8_t PublicSpendKey[32], uint8_t PublicViewKey[32])
+			void monero::derive_known_public_view_key(const uint8_t public_spend_key[32], uint8_t public_view_key[32])
 			{
-				uint8_t PrivateViewKey[32];
-				DeriveKnownPrivateViewKey(PublicSpendKey, PrivateViewKey);
-				crypto_scalarmult_ed25519_base_noclamp(PublicViewKey, PrivateViewKey);
+				uint8_t private_view_key[32];
+				derive_known_private_view_key(public_spend_key, private_view_key);
+				crypto_scalarmult_ed25519_base_noclamp(public_view_key, private_view_key);
 			}
 		}
 	}

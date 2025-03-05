@@ -2,86 +2,86 @@
 #define TAN_LAYER_CONTROL_H
 #include "../kernel/chain.h"
 
-namespace Tangent
+namespace tangent
 {
-	struct SystemEndpoint
+	struct system_endpoint
 	{
-		Location Scheme;
-		SocketAddress Address;
-		bool Secure;
+		location scheme;
+		socket_address address;
+		bool secure;
 
-		SystemEndpoint(const std::string_view& URI);
-		bool IsValid() const;
-		static String ToURI(const SocketAddress& Address, const std::string_view& Protocol = "tcp");
+		system_endpoint(const std::string_view& URI);
+		bool is_valid() const;
+		static string to_uri(const socket_address& address, const std::string_view& protocol = "tcp");
 	};
 
-	struct SystemControl
+	struct system_control
 	{
-		UnorderedMap<String, TaskId>* Timers;
-		std::atomic<size_t> Tasks;
-		std::atomic<bool> Active;
-		std::recursive_mutex Sync;
-		std::string_view ServiceName;
+		unordered_map<string, task_id>* timers;
+		std::atomic<size_t> tasks;
+		std::atomic<bool> active;
+		std::recursive_mutex sync;
+		std::string_view service_name;
 
-		SystemControl(const std::string_view& Label) noexcept;
-		Promise<void> Shutdown() noexcept;
-		bool LockTimeout(const std::string_view& Name);
-		bool UnlockTimeout(const std::string_view& Name);
-		bool IntervalIfNone(const std::string_view& Name, uint64_t Ms, TaskCallback&& Callback) noexcept;
-		bool TimeoutIfNone(const std::string_view& Name, uint64_t Ms, TaskCallback&& Callback) noexcept;
-		bool UpsertTimeout(const std::string_view& Name, uint64_t Ms, TaskCallback&& Callback) noexcept;
-		bool ClearTimeout(const std::string_view& Name, bool ClearScheduled = false) noexcept;
-		bool ActivateAndEnqueue() noexcept;
-		bool Deactivate() noexcept;
-		bool EnqueueIfNone() noexcept;
-		bool Enqueue() noexcept;
-		bool Dequeue() noexcept;
-		bool IsActive() noexcept;
-		bool IsBusy() noexcept;
+		system_control(const std::string_view& label) noexcept;
+		promise<void> shutdown() noexcept;
+		bool lock_timeout(const std::string_view& name);
+		bool unlock_timeout(const std::string_view& name);
+		bool interval_if_none(const std::string_view& name, uint64_t ms, task_callback&& callback) noexcept;
+		bool timeout_if_none(const std::string_view& name, uint64_t ms, task_callback&& callback) noexcept;
+		bool upsert_timeout(const std::string_view& name, uint64_t ms, task_callback&& callback) noexcept;
+		bool clear_timeout(const std::string_view& name, bool clear_scheduled = false) noexcept;
+		bool activate_and_enqueue() noexcept;
+		bool deactivate() noexcept;
+		bool enqueue_if_none() noexcept;
+		bool enqueue() noexcept;
+		bool dequeue() noexcept;
+		bool is_active() noexcept;
+		bool is_busy() noexcept;
 	};
 
-	struct ServiceControl
+	struct service_control
 	{
 	public:
-		struct ServiceNode
+		struct service_node
 		{
-			std::function<void()> Startup;
-			std::function<void()> Shutdown;
+			std::function<void()> startup;
+			std::function<void()> shutdown;
 		};
 
 	private:
-		static ServiceControl* Instance;
+		static service_control* instance;
 
 	private:
-		Vector<ServiceNode> Services;
-		std::atomic<int> ExitCode;
+		vector<service_node> services;
+		std::atomic<int> exit_code;
 
 	public:
-		ServiceControl() noexcept;
-		void Bind(ServiceNode&& Entrypoint) noexcept;
-		void Shutdown(int Signal) noexcept;
-		void Abort(int Signal) noexcept;
-		int Launch() noexcept;
+		service_control() noexcept;
+		void bind(service_node&& entrypoint) noexcept;
+		void shutdown(int signal) noexcept;
+		void abort(int signal) noexcept;
+		int launch() noexcept;
 
 	private:
-		template <Signal Type>
-		static void BindNormalTermination()
+		template <signal_code type>
+		static void bind_normal_termination()
 		{
-			OS::Process::BindSignal(Type, [](int Signal)
+			os::process::bind_signal(type, [](int signal)
 			{
-				OS::Process::RebindSignal(Type);
-				if (Instance != nullptr)
-					Instance->Shutdown(Signal);
+				os::process::rebind_signal(type);
+				if (instance != nullptr)
+					instance->shutdown(signal);
 			});
 		}
-		template <Signal Type>
-		static void BindFatalTermination()
+		template <signal_code type>
+		static void bind_fatal_termination()
 		{
-			OS::Process::BindSignal(Type, [](int Signal)
+			os::process::bind_signal(type, [](int signal)
 			{
-				OS::Process::RebindSignal(Type);
-				if (Instance != nullptr)
-					Instance->Abort(Signal);
+				os::process::rebind_signal(type);
+				if (instance != nullptr)
+					instance->abort(signal);
 			});
 		}
 	};

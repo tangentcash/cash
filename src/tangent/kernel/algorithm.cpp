@@ -14,1444 +14,1444 @@ extern "C"
 #include "../internal/sha2.h"
 }
 
-namespace Tangent
+namespace tangent
 {
-	namespace Algorithm
+	namespace algorithm
 	{
-		struct Gmp
+		struct gmp
 		{
-			static void Free(void* Data, size_t Size)
+			static void free(void* data, size_t size)
 			{
 				typedef void (*gmp_free_t)(void*, size_t);
 				static gmp_free_t gmp_free = nullptr;
 				if (!gmp_free)
 					mp_get_memory_functions(nullptr, nullptr, &gmp_free);
-				gmp_free(Data, Size);
+				gmp_free(data, size);
 			}
-			static void Import(const uint8_t* Data, size_t Size, mpz_t Value)
+			static void import0(const uint8_t * data, size_t size, mpz_t value)
 			{
-				mpz_import(Value, Size, 1, 1, 1, 0, Data);
+				mpz_import(value, size, 1, 1, 1, 0, data);
 			}
-			static void Import256(const uint256_t& Data, mpz_t Value)
+			static void import256(const uint256_t& data, mpz_t value)
 			{
-				uint8_t Buffer[32];
-				Encoding::DecodeUint256(Data, Buffer);
-				mpz_import(Value, sizeof(Buffer), 1, 1, 1, 0, Buffer);
+				uint8_t buffer[32];
+				encoding::decode_uint256(data, buffer);
+				mpz_import(value, sizeof(buffer), 1, 1, 1, 0, buffer);
 			}
-			static String Export(const mpz_t Value)
+			static string export0(const mpz_t value)
 			{
-				size_t Size = 0;
-				char* Data = (char*)mpz_export(nullptr, &Size, 1, 1, 1, 0, Value);
-				String Buffer = String(Data, Size);
-				Free(Data, Size);
-				return Buffer;
+				size_t size = 0;
+				char* data = (char*)mpz_export(nullptr, &size, 1, 1, 1, 0, value);
+				string buffer = string(data, size);
+				free(data, size);
+				return buffer;
 			}
-			static uint256_t Export256(const mpz_t Value)
+			static uint256_t export256(const mpz_t value)
 			{
-				size_t Size = 0;
-				char* Data = (char*)mpz_export(nullptr, &Size, 1, 1, 1, 0, Value);
-				uint8_t Buffer[32] = { 0 };
-				memcpy((char*)Buffer + (sizeof(Buffer) - Size), Data, Size);
-				Free(Data, Size);
+				size_t size = 0;
+				char* data = (char*)mpz_export(nullptr, &size, 1, 1, 1, 0, value);
+				uint8_t buffer[32] = { 0 };
+				memcpy((char*)buffer + (sizeof(buffer) - size), data, size);
+				free(data, size);
 
-				uint256_t V;
-				Encoding::EncodeUint256(Buffer, V);
-				return V;
+				uint256_t v;
+				encoding::encode_uint256(buffer, v);
+				return v;
 			}
-			static void Export256(const mpz_t Value, uint8_t Buffer[32])
+			static void export256(const mpz_t value, uint8_t buffer[32])
 			{
-				size_t Size = 0;
-				char* Data = (char*)mpz_export(nullptr, &Size, 1, 1, 1, 0, Value);
-				memset(Buffer, 0, sizeof(uint256_t));
-				memcpy((char*)Buffer + (sizeof(uint256_t) - Size), Data, Size);
-				Free(Data, Size);
+				size_t size = 0;
+				char* data = (char*)mpz_export(nullptr, &size, 1, 1, 1, 0, value);
+				memset(buffer, 0, sizeof(uint256_t));
+				memcpy((char*)buffer + (sizeof(uint256_t) - size), data, size);
+				free(data, size);
 			}
 		};
 
-		struct GmpSignature
+		struct gmp_signature
 		{
-			mpz_t P;
-			mpz_t L;
-			mpz_t Y;
-			mpz_t N;
-			uint64_t T;
+			mpz_t p;
+			mpz_t l;
+			mpz_t y;
+			mpz_t n;
+			uint64_t t;
 
-			GmpSignature()
+			gmp_signature()
 			{
-				mpz_init(P);
-				mpz_init(L);
-				mpz_init(Y);
-				mpz_init(N);
+				mpz_init(p);
+				mpz_init(l);
+				mpz_init(y);
+				mpz_init(n);
 			}
-			GmpSignature(const GmpSignature&) = delete;
-			GmpSignature(GmpSignature&& Other) noexcept
+			gmp_signature(const gmp_signature&) = delete;
+			gmp_signature(gmp_signature&& other) noexcept
 			{
-				memcpy(this, &Other, sizeof(Other));
-				memset(&Other, 0, sizeof(Other));
+				memcpy(this, &other, sizeof(other));
+				memset(&other, 0, sizeof(other));
 			}
-			~GmpSignature()
+			~gmp_signature()
 			{
-				if (P)
-					mpz_clear(P);
-				if (L)
-					mpz_clear(L);
-				if (Y)
-					mpz_clear(Y);
-				if (N)
-					mpz_clear(N);
+				if (p)
+					mpz_clear(p);
+				if (l)
+					mpz_clear(l);
+				if (y)
+					mpz_clear(y);
+				if (n)
+					mpz_clear(n);
 			}
-			GmpSignature& operator= (const GmpSignature&) = delete;
-			GmpSignature& operator= (GmpSignature&& Other) noexcept
+			gmp_signature& operator= (const gmp_signature&) = delete;
+			gmp_signature& operator= (gmp_signature&& other) noexcept
 			{
-				if (this == &Other)
+				if (this == &other)
 					return *this;
 
-				this->~GmpSignature();
-				memcpy(this, &Other, sizeof(Other));
-				memset(&Other, 0, sizeof(Other));
+				this->~gmp_signature();
+				memcpy(this, &other, sizeof(other));
+				memset(&other, 0, sizeof(other));
 				return *this;
 			}
-			String Serialize() const
+			string serialize() const
 			{
-				Format::Stream Stream;
-				Stream.WriteInteger(T);
-				Stream.WriteString(Gmp::Export(P));
-				Stream.WriteString(Gmp::Export(L));
-				Stream.WriteString(Gmp::Export(Y));
-				Stream.WriteString(Gmp::Export(N));
-				Stream.WriteInteger(Hashing::Sha64d(Stream.Data));
-				return Stream.Data;
+				format::stream stream;
+				stream.write_integer(t);
+				stream.write_string(gmp::export0(p));
+				stream.write_string(gmp::export0(l));
+				stream.write_string(gmp::export0(y));
+				stream.write_string(gmp::export0(n));
+				stream.write_integer(hashing::sha64d(stream.data));
+				return stream.data;
 			}
-			static Option<GmpSignature> Deserialize(const std::string_view& Sig)
+			static option<gmp_signature> deserialize(const std::string_view& sig)
 			{
-				GmpSignature Result;
-				Format::Stream Stream = Format::Stream(Sig);
-				if (!Stream.ReadInteger(Stream.ReadType(), &Result.T))
-					return Optional::None;
+				gmp_signature result;
+				format::stream stream = format::stream(sig);
+				if (!stream.read_integer(stream.read_type(), &result.t))
+					return optional::none;
 
-				String Numeric;
-				if (!Stream.ReadString(Stream.ReadType(), &Numeric))
-					return Optional::None;
+				string numeric;
+				if (!stream.read_string(stream.read_type(), &numeric))
+					return optional::none;
 
-				Gmp::Import((uint8_t*)Numeric.data(), Numeric.size(), Result.P);
-				if (!Stream.ReadString(Stream.ReadType(), &Numeric))
-					return Optional::None;
+				gmp::import0((uint8_t*)numeric.data(), numeric.size(), result.p);
+				if (!stream.read_string(stream.read_type(), &numeric))
+					return optional::none;
 
-				Gmp::Import((uint8_t*)Numeric.data(), Numeric.size(), Result.L);
-				if (!Stream.ReadString(Stream.ReadType(), &Numeric))
-					return Optional::None;
+				gmp::import0((uint8_t*)numeric.data(), numeric.size(), result.l);
+				if (!stream.read_string(stream.read_type(), &numeric))
+					return optional::none;
 
-				Gmp::Import((uint8_t*)Numeric.data(), Numeric.size(), Result.Y);
-				if (!Stream.ReadString(Stream.ReadType(), &Numeric))
-					return Optional::None;
+				gmp::import0((uint8_t*)numeric.data(), numeric.size(), result.y);
+				if (!stream.read_string(stream.read_type(), &numeric))
+					return optional::none;
 
-				uint64_t Checksum, Seek = Stream.Seek;
-				Gmp::Import((uint8_t*)Numeric.data(), Numeric.size(), Result.N);
-				if (!Stream.ReadInteger(Stream.ReadType(), &Checksum))
-					return Optional::None;
+				uint64_t checksum, seek = stream.seek;
+				gmp::import0((uint8_t*)numeric.data(), numeric.size(), result.n);
+				if (!stream.read_integer(stream.read_type(), &checksum))
+					return optional::none;
 
-				if (Checksum != Hashing::Sha64d(std::string_view(Stream.Data.data(), Seek)))
-					return Optional::None;
+				if (checksum != hashing::sha64d(std::string_view(stream.data.data(), seek)))
+					return optional::none;
 
-				return Result;
+				return result;
 			}
 		};
 
-		uint128_t WVDF::Parameters::Difficulty() const
+		uint128_t wesolowski::parameters::difficulty() const
 		{
-			return uint128_t(Length) * uint128_t(Bits) + uint128_t(Pow);
+			return uint128_t(length) * uint128_t(bits) + uint128_t(pow);
 		}
 
-		uint256_t WVDF::Distribution::Derive()
+		uint256_t wesolowski::distribution::derive()
 		{
-			return Derive(Nonce++);
+			return derive(nonce++);
 		}
-		uint256_t WVDF::Distribution::Derive(const uint256_t& Step) const
+		uint256_t wesolowski::distribution::derive(const uint256_t& step) const
 		{
-			char Data[sizeof(uint256_t) * 2] = { 0 };
-			Encoding::DecodeUint256(Step, (uint8_t*)((char*)Data + sizeof(uint256_t) * 0));
-			Encoding::DecodeUint256(Value, (uint8_t*)((char*)Data + sizeof(uint256_t) * 1));
-			return Hashing::Hash256i(std::string_view(Data, sizeof(Data)));
+			char data[sizeof(uint256_t) * 2] = { 0 };
+			encoding::decode_uint256(step, (uint8_t*)((char*)data + sizeof(uint256_t) * 0));
+			encoding::decode_uint256(value, (uint8_t*)((char*)data + sizeof(uint256_t) * 1));
+			return hashing::hash256i(std::string_view(data, sizeof(data)));
 		}
 
-		WVDF::Distribution WVDF::Random(const Parameters& Alg, const Format::Stream& Seed)
+		wesolowski::distribution wesolowski::random(const parameters& alg, const format::stream& seed)
 		{
-			Distribution Result;
-			Result.Signature = Evaluate(Alg, Seed.Data);
-			Result.Value = Hashing::Hash256i(*Crypto::HashRaw(Digests::SHA512(), Result.Signature));
-			return Result;
+			distribution result;
+			result.signature = evaluate(alg, seed.data);
+			result.value = hashing::hash256i(*crypto::hash_raw(digests::SHA512(), result.signature));
+			return result;
 		}
-		WVDF::Parameters WVDF::Calibrate(uint64_t Confidence, uint64_t TargetTime)
+		wesolowski::parameters wesolowski::calibrate(uint64_t confidence, uint64_t target_time)
 		{
-			uint64_t TargetNonce = Confidence;
-			auto Alg = DefaultAlg;
+			uint64_t target_nonce = confidence;
+			auto alg = default_alg;
 			while (true)
 			{
-			Retry:
-				uint64_t StartTime = Protocol::Now().Time.Now();
-				auto Signature = Evaluate(Alg, *Crypto::RandomBytes(Math32u::Random(256, 1024)));
-				if (Signature.empty())
+			retry:
+				uint64_t start_time = protocol::now().time.now();
+				auto signature = evaluate(alg, *crypto::random_bytes(math32u::random(256, 1024)));
+				if (signature.empty())
 					break;
 
-				uint64_t EndTime = Protocol::Now().Time.Now();
-				uint64_t DeltaTime = EndTime - StartTime;
-				double DeltaTarget = (double)DeltaTime - (double)TargetTime;
-				if (std::abs(DeltaTarget) / TargetTime < 0.05)
+				uint64_t end_time = protocol::now().time.now();
+				uint64_t delta_time = end_time - start_time;
+				double delta_target = (double)delta_time - (double)target_time;
+				if (std::abs(delta_target) / target_time < 0.05)
 				{
-					if (!TargetNonce--)
+					if (!target_nonce--)
 						break;
-					goto Retry;
+					goto retry;
 				}
 
-				Alg = Adjust(Alg, DeltaTime, AdjustmentInterval());
-				TargetNonce = Confidence;
+				alg = adjust(alg, delta_time, adjustment_interval());
+				target_nonce = confidence;
 			}
-			return Alg;
+			return alg;
 		}
-		WVDF::Parameters WVDF::Adjust(const Parameters& PrevAlg, uint64_t PrevTime, uint64_t TargetIndex)
+		wesolowski::parameters wesolowski::adjust(const parameters& prev_alg, uint64_t prev_time, uint64_t target_index)
 		{
-			if (TargetIndex <= 1)
-				return DefaultAlg;
+			if (target_index <= 1)
+				return default_alg;
 
-			if (AdjustmentIndex(TargetIndex) != TargetIndex)
+			if (adjustment_index(target_index) != target_index)
 			{
-			LeaveAsIs:
-				return (PrevAlg.Difficulty() < DefaultAlg.Difficulty() ? DefaultAlg : PrevAlg);
+			leave_as_is:
+				return (prev_alg.difficulty() < default_alg.difficulty() ? default_alg : prev_alg);
 			}
 
-			auto& Policy = Protocol::Now().Policy;
-			PrevTime = std::max(Policy.ConsensusProofTime / 4, std::min(Policy.ConsensusProofTime * 4, PrevTime));
+			auto& policy = protocol::now().policy;
+			prev_time = std::max(policy.consensus_proof_time / 4, std::min(policy.consensus_proof_time * 4, prev_time));
 
-			int64_t TimeDelta = (int64_t)Policy.ConsensusProofTime - (int64_t)PrevTime;
-			if (std::abs((double)TimeDelta) / (double)Policy.ConsensusProofTime < 0.05)
-				goto LeaveAsIs;
+			int64_t time_delta = (int64_t)policy.consensus_proof_time - (int64_t)prev_time;
+			if (std::abs((double)time_delta) / (double)policy.consensus_proof_time < 0.05)
+				goto leave_as_is;
 
-			Parameters NewAlg = PrevAlg;
-			Decimal Adjustment = Decimal(TimeDelta).Truncate(Protocol::Now().Message.Precision) / PrevTime;
-			if (Adjustment > 1.0 + Policy.MaxConsensusDifficultyIncrease)
-				Adjustment = 1.0 + Policy.MaxConsensusDifficultyIncrease;
-			else if (Adjustment < Policy.MaxConsensusDifficultyDecrease)
-				Adjustment = Policy.MaxConsensusDifficultyDecrease;
+			parameters new_alg = prev_alg;
+			decimal adjustment = decimal(time_delta).truncate(protocol::now().message.precision) / prev_time;
+			if (adjustment > 1.0 + policy.max_consensus_difficulty_increase)
+				adjustment = 1.0 + policy.max_consensus_difficulty_increase;
+			else if (adjustment < policy.max_consensus_difficulty_decrease)
+				adjustment = policy.max_consensus_difficulty_decrease;
 
-			uint64_t PowOffset = (Decimal(NewAlg.Pow) * Adjustment).ToUInt64();
-			if (NewAlg.Pow + PowOffset < NewAlg.Pow)
-				NewAlg.Pow = std::numeric_limits<uint64_t>::max();
+			uint64_t pow_offset = (decimal(new_alg.pow) * adjustment).to_uint64();
+			if (new_alg.pow + pow_offset < new_alg.pow)
+				new_alg.pow = std::numeric_limits<uint64_t>::max();
 			else
-				NewAlg.Pow += PowOffset;
+				new_alg.pow += pow_offset;
 
-			if (NewAlg.Pow < DefaultAlg.Pow)
-				NewAlg.Pow = DefaultAlg.Pow;
+			if (new_alg.pow < default_alg.pow)
+				new_alg.pow = default_alg.pow;
 
-			return (NewAlg.Difficulty() < DefaultAlg.Difficulty() ? DefaultAlg : NewAlg);
+			return (new_alg.difficulty() < default_alg.difficulty() ? default_alg : new_alg);
 		}
-		WVDF::Parameters WVDF::Bump(const Parameters& Alg, double Bump)
+		wesolowski::parameters wesolowski::bump(const parameters& alg, double bump)
 		{
-			Parameters NewAlg = Alg;
-			uint64_t NewPow = (Decimal(NewAlg.Pow) * Decimal(Bump)).ToUInt64();
-			if (NewPow < NewAlg.Pow)
-				NewAlg.Pow = std::numeric_limits<uint64_t>::max();
+			parameters new_alg = alg;
+			uint64_t new_pow = (decimal(new_alg.pow) * decimal(bump)).to_uint64();
+			if (new_pow < new_alg.pow)
+				new_alg.pow = std::numeric_limits<uint64_t>::max();
 			else
-				NewAlg.Pow = NewPow;
+				new_alg.pow = new_pow;
 
-			if (NewAlg.Pow < DefaultAlg.Pow)
-				NewAlg.Pow = DefaultAlg.Pow;
+			if (new_alg.pow < default_alg.pow)
+				new_alg.pow = default_alg.pow;
 
-			return (NewAlg.Difficulty() < DefaultAlg.Difficulty() ? DefaultAlg : NewAlg);
+			return (new_alg.difficulty() < default_alg.difficulty() ? default_alg : new_alg);
 		}
-		String WVDF::Evaluate(const Parameters& Alg, const std::string_view& Message)
+		string wesolowski::evaluate(const parameters& alg, const std::string_view& message)
 		{
-			uint8_t MData[64];
-			Hashing::Hash512((uint8_t*)Message.data(), Message.size(), MData);
+			uint8_t mdata[64];
+			hashing::hash512((uint8_t*)message.data(), message.size(), mdata);
 
-			mpz_t V;
-			mpz_init(V);
-			Gmp::Import(MData, sizeof(MData), V);
+			mpz_t v;
+			mpz_init(v);
+			gmp::import0(mdata, sizeof(mdata), v);
 
-			GmpSignature Signature;
-			gmp_randstate_t R;
-			gmp_randinit_mt(R);
-			gmp_randseed(R, V);
+			gmp_signature signature;
+			gmp_randstate_t r;
+			gmp_randinit_mt(r);
+			gmp_randseed(r, v);
 
-			mpz_t P;
-			mpz_init(P);
-			mpz_urandomb(P, R, Alg.Length / 2);
-			mpz_nextprime(P, P);
+			mpz_t p;
+			mpz_init(p);
+			mpz_urandomb(p, r, alg.length / 2);
+			mpz_nextprime(p, p);
 
-			mpz_t Q;
-			mpz_init(Q);
-			mpz_urandomb(Q, R, Alg.Length / 2);
-			mpz_nextprime(Q, Q);
-			mpz_init(Signature.N);
-			mpz_mul(Signature.N, P, Q);
-			mpz_clear(P);
-			mpz_clear(Q);
+			mpz_t q;
+			mpz_init(q);
+			mpz_urandomb(q, r, alg.length / 2);
+			mpz_nextprime(q, q);
+			mpz_init(signature.n);
+			mpz_mul(signature.n, p, q);
+			mpz_clear(p);
+			mpz_clear(q);
 
-			mpz_t E, C;
-			mpz_init(E);
-			mpz_ui_pow_ui(E, 2, Alg.Pow);
-			mpz_init(Signature.Y);
-			mpz_init(C);
-			mpz_urandomb(C, R, 2 * Alg.Bits);
-			mpz_nextprime(Signature.L, C);
-			mpz_init(Q);
-			mpz_powm(Signature.Y, V, E, Signature.N);
-			mpz_fdiv_q(Q, E, Signature.L);
-			mpz_powm(Signature.P, V, Q, Signature.N);
-			mpz_clear(Q);
-			mpz_clear(E);
-			mpz_clear(C);
-			mpz_clear(V);
-			gmp_randclear(R);
+			mpz_t e, c;
+			mpz_init(e);
+			mpz_ui_pow_ui(e, 2, alg.pow);
+			mpz_init(signature.y);
+			mpz_init(c);
+			mpz_urandomb(c, r, 2 * alg.bits);
+			mpz_nextprime(signature.l, c);
+			mpz_init(q);
+			mpz_powm(signature.y, v, e, signature.n);
+			mpz_fdiv_q(q, e, signature.l);
+			mpz_powm(signature.p, v, q, signature.n);
+			mpz_clear(q);
+			mpz_clear(e);
+			mpz_clear(c);
+			mpz_clear(v);
+			gmp_randclear(r);
 
-			Signature.T = Protocol::Now().Time.Now();
-			return Signature.Serialize();
+			signature.t = protocol::now().time.now();
+			return signature.serialize();
 		}
-		bool WVDF::Verify(const Parameters& Alg, const std::string_view& Message, const std::string_view& Sig)
+		bool wesolowski::verify(const parameters& alg, const std::string_view& message, const std::string_view& sig)
 		{
-			auto Signature = GmpSignature::Deserialize(Sig);
-			if (!Signature)
+			auto signature = gmp_signature::deserialize(sig);
+			if (!signature)
 				return false;
 
-			uint8_t MData[64];
-			Hashing::Hash512((uint8_t*)Message.data(), Message.size(), MData);
+			uint8_t mdata[64];
+			hashing::hash512((uint8_t*)message.data(), message.size(), mdata);
 
-			mpz_t V;
-			mpz_init(V);
-			Gmp::Import(MData, sizeof(MData), V);
+			mpz_t v;
+			mpz_init(v);
+			gmp::import0(mdata, sizeof(mdata), v);
 
-			mpz_t P;
-			mpz_init(P);
-			mpz_sub_ui(P, Signature->L, 1);
+			mpz_t p;
+			mpz_init(p);
+			mpz_sub_ui(p, signature->l, 1);
 
-			mpz_t T;
-			mpz_init(T);
-			mpz_set_ui(T, Alg.Pow);
-			mpz_mod(T, T, P);
-			mpz_clear(P);
+			mpz_t t;
+			mpz_init(t);
+			mpz_set_ui(t, alg.pow);
+			mpz_mod(t, t, p);
+			mpz_clear(p);
 
-			mpz_t D;
-			mpz_init(D);
-			mpz_set_ui(D, 2);
+			mpz_t d;
+			mpz_init(d);
+			mpz_set_ui(d, 2);
 
-			mpz_t R;
-			mpz_init(R);
-			mpz_powm(R, D, T, Signature->L);
-			mpz_clear(T);
-			mpz_clear(D);
+			mpz_t r;
+			mpz_init(r);
+			mpz_powm(r, d, t, signature->l);
+			mpz_clear(t);
+			mpz_clear(d);
 
-			mpz_t Y, W;
-			mpz_init(Y);
-			mpz_init(W);
-			mpz_powm(Y, Signature->P, Signature->L, Signature->N);
-			mpz_powm(W, V, R, Signature->N);
-			mpz_mul(Y, Y, W);
-			mpz_mod(Y, Y, Signature->N);
-			mpz_clear(R);
-			mpz_clear(W);
-			mpz_clear(V);
+			mpz_t y, w;
+			mpz_init(y);
+			mpz_init(w);
+			mpz_powm(y, signature->p, signature->l, signature->n);
+			mpz_powm(w, v, r, signature->n);
+			mpz_mul(y, y, w);
+			mpz_mod(y, y, signature->n);
+			mpz_clear(r);
+			mpz_clear(w);
+			mpz_clear(v);
 
-			int Diff = mpz_cmp(Y, Signature->Y);
-			mpz_clear(Y);
-			return Diff == 0;
+			int diff = mpz_cmp(y, signature->y);
+			mpz_clear(y);
+			return diff == 0;
 		}
-		int8_t WVDF::Compare(const std::string_view& Sig1, const std::string_view& Sig2)
+		int8_t wesolowski::compare(const std::string_view& sig1, const std::string_view& sig2)
 		{
-			auto Signature1 = GmpSignature::Deserialize(Sig1);
-			auto Signature2 = GmpSignature::Deserialize(Sig2);
-			if (!Signature1 || !Signature2)
-				return Signature1 ? 1 : -1;
+			auto signature1 = gmp_signature::deserialize(sig1);
+			auto signature2 = gmp_signature::deserialize(sig2);
+			if (!signature1 || !signature2)
+				return signature1 ? 1 : -1;
 
-			int CompareY = mpz_cmp(Signature1->Y, Signature2->Y);
-			if (CompareY != 0)
-				return (int8_t)CompareY;
+			int compare_y = mpz_cmp(signature1->y, signature2->y);
+			if (compare_y != 0)
+				return (int8_t)compare_y;
 
-			int CompareP = mpz_cmp(Signature1->P, Signature2->P);
-			if (CompareP != 0)
-				return (int8_t)CompareP;
+			int compare_p = mpz_cmp(signature1->p, signature2->p);
+			if (compare_p != 0)
+				return (int8_t)compare_p;
 
-			int CompareN = mpz_cmp(Signature1->N, Signature2->N);
-			if (CompareN != 0)
-				return (int8_t)CompareN;
+			int compare_n = mpz_cmp(signature1->n, signature2->n);
+			if (compare_n != 0)
+				return (int8_t)compare_n;
 
-			int CompareL = mpz_cmp(Signature1->L, Signature2->L);
-			if (CompareL != 0)
-				return (int8_t)CompareL;
+			int compare_l = mpz_cmp(signature1->l, signature2->l);
+			if (compare_l != 0)
+				return (int8_t)compare_l;
 
-			if (Signature1->T < Signature2->T)
+			if (signature1->t < signature2->t)
 				return 1;
-			else if (Signature1->T > Signature2->T)
+			else if (signature1->t > signature2->t)
 				return -1;
 
 			return 0;
 		}
-		uint64_t WVDF::Locktime(const std::string_view& Sig)
+		uint64_t wesolowski::locktime(const std::string_view& sig)
 		{
-			auto Signature = GmpSignature::Deserialize(Sig);
-			if (!Signature)
+			auto signature = gmp_signature::deserialize(sig);
+			if (!signature)
 				return 0;
 
-			return Signature->T;
+			return signature->t;
 		}
-		uint64_t WVDF::AdjustmentInterval()
+		uint64_t wesolowski::adjustment_interval()
 		{
-			auto& Policy = Protocol::Now().Policy;
-			return Policy.ConsensusAdjustmentTime / Policy.ConsensusProofTime;
+			auto& policy = protocol::now().policy;
+			return policy.consensus_adjustment_time / policy.consensus_proof_time;
 		}
-		uint64_t WVDF::AdjustmentIndex(uint64_t Index)
+		uint64_t wesolowski::adjustment_index(uint64_t index)
 		{
-			return Index - Index % AdjustmentInterval();
+			return index - index % adjustment_interval();
 		}
-		void WVDF::SetDefault(const Parameters& Alg)
+		void wesolowski::set_default(const parameters& alg)
 		{
-			DefaultAlg = Alg;
+			default_alg = alg;
 		}
-		const WVDF::Parameters& WVDF::GetDefault()
+		const wesolowski::parameters& wesolowski::get_default()
 		{
-			return DefaultAlg;
+			return default_alg;
 		}
-		WVDF::Parameters WVDF::DefaultAlg;
+		wesolowski::parameters wesolowski::default_alg;
 
-		uint256_t NPOW::Evaluate(const uint256_t& Nonce, const std::string_view& Message)
+		uint256_t nakamoto::evaluate(const uint256_t& nonce, const std::string_view& message)
 		{
-			Format::Stream Stream;
-			Serialize(Stream, Nonce, Message);
-			return Stream.Hash();
+			format::stream stream;
+			serialize(stream, nonce, message);
+			return stream.hash();
 		}
-		bool NPOW::Verify(const uint256_t& Nonce, const std::string_view& Message, const uint256_t& Target, const uint256_t& Solution)
+		bool nakamoto::verify(const uint256_t& nonce, const std::string_view& message, const uint256_t& target, const uint256_t& solution)
 		{
-			if (Solution > Target)
+			if (solution > target)
 				return false;
-			else if (Nonce == uint256_t::Max())
+			else if (nonce == uint256_t::max())
 				return false;
 
-			return Solution == Evaluate(Nonce, Message);
+			return solution == evaluate(nonce, message);
 		}
-		void NPOW::Serialize(Format::Stream& Stream, const uint256_t& Nonce, const std::string_view& Message)
+		void nakamoto::serialize(format::stream& stream, const uint256_t& nonce, const std::string_view& message)
 		{
-			Stream.Clear();
-			Stream.WriteTypeless(Message);
-			Stream.WriteTypeless(Nonce);
+			stream.clear();
+			stream.write_typeless(message);
+			stream.write_typeless(nonce);
 		}
 
-		int Segwit::Tweak(uint8_t* Output, size_t* OutputSize, int32_t OutputBits, const uint8_t* Input, size_t InputSize, int32_t InputBits, int32_t Padding)
+		int segwit::tweak(uint8_t* output, size_t* output_size, int32_t output_bits, const uint8_t* input, size_t input_size, int32_t input_bits, int32_t padding)
 		{
-			int32_t Bits = 0;
-			uint32_t Value = 0;
-			uint32_t Max = (((uint32_t)1) << OutputBits) - 1;
-			while (InputSize--)
+			int32_t bits = 0;
+			uint32_t value = 0;
+			uint32_t max = (((uint32_t)1) << output_bits) - 1;
+			while (input_size--)
 			{
-				Value = (Value << InputBits) | *(Input++);
-				Bits += InputBits;
-				while (Bits >= OutputBits)
+				value = (value << input_bits) | *(input++);
+				bits += input_bits;
+				while (bits >= output_bits)
 				{
-					Bits -= OutputBits;
-					Output[(*OutputSize)++] = (Value >> Bits) & Max;
+					bits -= output_bits;
+					output[(*output_size)++] = (value >> bits) & max;
 				}
 			}
 
-			if (Padding)
+			if (padding)
 			{
-				if (Bits)
-					Output[(*OutputSize)++] = (Value << (OutputBits - Bits)) & Max;
+				if (bits)
+					output[(*output_size)++] = (value << (output_bits - bits)) & max;
 			}
-			else if (((Value << (OutputBits - Bits)) & Max) || Bits >= InputBits)
+			else if (((value << (output_bits - bits)) & max) || bits >= input_bits)
 				return 0;
 
 			return 1;
 		}
-		int Segwit::Encode(char* Output, const char* Prefix, int32_t Version, const uint8_t* Program, size_t ProgramSize)
+		int segwit::encode(char* output, const char* prefix, int32_t version, const uint8_t* program, size_t program_size)
 		{
-			uint8_t Data[65] = { 0 };
-			size_t DataSize = 0;
-			if (Version == 0 && ProgramSize != 20 && ProgramSize != 32)
+			uint8_t data[65] = { 0 };
+			size_t data_size = 0;
+			if (version == 0 && program_size != 20 && program_size != 32)
 				return 0;
-			else if (ProgramSize < 2 || ProgramSize > 40)
+			else if (program_size < 2 || program_size > 40)
 				return 0;
 
-			Data[0] = Version;
-			Tweak(Data + 1, &DataSize, 5, Program, ProgramSize, 8, 1);
-			++DataSize;
+			data[0] = version;
+			tweak(data + 1, &data_size, 5, program, program_size, 8, 1);
+			++data_size;
 
-			return bech32_encode(Output, Prefix, Data, DataSize, BECH32_ENCODING_BECH32M);
+			return bech32_encode(output, prefix, data, data_size, BECH32_ENCODING_BECH32M);
 		}
-		int Segwit::Decode(int* Version, uint8_t* Program, size_t* ProgramSize, const char* Prefix, const char* Input)
+		int segwit::decode(int* version, uint8_t* program, size_t* program_size, const char* prefix, const char* input)
 		{
-			char Hrp[84] = { 0 };
-			uint8_t Data[84] = { 0 };
-			size_t DataSize = 0;
-			if (bech32_decode(Hrp, Data, &DataSize, Input) != BECH32_ENCODING_BECH32M)
+			char hrp[84] = { 0 };
+			uint8_t data[84] = { 0 };
+			size_t data_size = 0;
+			if (bech32_decode(hrp, data, &data_size, input) != BECH32_ENCODING_BECH32M)
 				return 0;
 
-			if (DataSize == 0 || DataSize > 65)
+			if (data_size == 0 || data_size > 65)
 				return 0;
 
-			if (strncmp(Prefix, Hrp, 84) != 0)
+			if (strncmp(prefix, hrp, 84) != 0)
 				return 0;
 
-			*ProgramSize = 0;
-			if (!Tweak(Program, ProgramSize, 8, Data + 1, DataSize - 1, 5, 0))
+			*program_size = 0;
+			if (!tweak(program, program_size, 8, data + 1, data_size - 1, 5, 0))
 				return 0;
 
-			if (*ProgramSize < 2 || *ProgramSize > 40)
+			if (*program_size < 2 || *program_size > 40)
 				return 0;
 
-			if (Data[0] == 0 && *ProgramSize != 20 && *ProgramSize != 32)
+			if (data[0] == 0 && *program_size != 20 && *program_size != 32)
 				return 0;
 
-			*Version = Data[0];
+			*version = data[0];
 			return 1;
 		}
 
-		void Signing::Initialize()
+		void signing::initialize()
 		{
-			if (!SharedContext)
-				SharedContext = secp256k1_context_create(SECP256K1_CONTEXT_VERIFY | SECP256K1_CONTEXT_SIGN);
+			if (!shared_context)
+				shared_context = secp256k1_context_create(SECP256K1_CONTEXT_VERIFY | SECP256K1_CONTEXT_SIGN);
 		}
-		void Signing::Deinitialize()
+		void signing::deinitialize()
 		{
-			if (SharedContext != nullptr)
+			if (shared_context != nullptr)
 			{
-				secp256k1_context_destroy(SharedContext);
-				SharedContext = nullptr;
+				secp256k1_context_destroy(shared_context);
+				shared_context = nullptr;
 			}
 		}
-		uint256_t Signing::MessageHash(const std::string_view& SignableMessage)
+		uint256_t signing::message_hash(const std::string_view& signable_message)
 		{
-			Format::Stream Message;
-			Message.WriteTypeless(Protocol::Now().Account.MessageMagic);
-			Message.WriteTypeless(SignableMessage.data(), (uint32_t)SignableMessage.size());
-			return Message.Hash();
+			format::stream message;
+			message.write_typeless(protocol::now().account.message_magic);
+			message.write_typeless(signable_message.data(), (uint32_t)signable_message.size());
+			return message.hash();
 		}
-		String Signing::Mnemonicgen(uint16_t Strength)
+		string signing::mnemonicgen(uint16_t strength)
 		{
-			char Buffer[256] = { 0 };
-			mnemonic_generate((int)Strength, Buffer, (int)sizeof(Buffer));
-			return String(Buffer, strnlen(Buffer, sizeof(Buffer)));
+			char buffer[256] = { 0 };
+			mnemonic_generate((int)strength, buffer, (int)sizeof(buffer));
+			return string(buffer, strnlen(buffer, sizeof(buffer)));
 		}
-		void Signing::Keygen(Seckey SecretKey)
+		void signing::keygen(seckey secret_key)
 		{
-			VI_ASSERT(SecretKey != nullptr, "secret key should be set");
+			VI_ASSERT(secret_key != nullptr, "secret key should be set");
 			while (true)
 			{
-				if (!Crypto::FillRandomBytes(SecretKey, sizeof(Seckey)))
+				if (!crypto::fill_random_bytes(secret_key, sizeof(seckey)))
 					break;
-				else if (VerifySecretKey(SecretKey))
+				else if (verify_secret_key(secret_key))
 					break;
 			}
 		}
-		bool Signing::Recover(const uint256_t& Hash, Pubkey PublicKey, const Recsighash Signature)
+		bool signing::recover(const uint256_t& hash, pubkey public_key, const recsighash signature)
 		{
-			VI_ASSERT(PublicKey != nullptr && Signature != nullptr, "public key and signature should be set");
-			uint8_t RecoveryId = 0;
-			size_t SignatureSize = sizeof(Recsighash);
-			size_t RecoveryOffset = SignatureSize - sizeof(RecoveryId);
-			memcpy(&RecoveryId, Signature + RecoveryOffset, sizeof(RecoveryId));
-			if (RecoveryId > 4)
+			VI_ASSERT(public_key != nullptr && signature != nullptr, "public key and signature should be set");
+			uint8_t recovery_id = 0;
+			size_t signature_size = sizeof(recsighash);
+			size_t recovery_offset = signature_size - sizeof(recovery_id);
+			memcpy(&recovery_id, signature + recovery_offset, sizeof(recovery_id));
+			if (recovery_id > 4)
 				return false;
 
-			secp256k1_context* Context = GetContext();
-			secp256k1_ecdsa_recoverable_signature RecoverableSignature;
-			if (!secp256k1_ecdsa_recoverable_signature_parse_compact(Context, &RecoverableSignature, Signature, RecoveryId))
+			secp256k1_context* context = get_context();
+			secp256k1_ecdsa_recoverable_signature recoverable_signature;
+			if (!secp256k1_ecdsa_recoverable_signature_parse_compact(context, &recoverable_signature, signature, recovery_id))
 				return false;
 
-			uint8_t Data[32];
-			Encoding::DecodeUint256(Hash, Data);
+			uint8_t data[32];
+			encoding::decode_uint256(hash, data);
 
-			secp256k1_pubkey RecoveredPublicKey;
-			if (secp256k1_ecdsa_recover(Context, &RecoveredPublicKey, &RecoverableSignature, Data) != 1)
+			secp256k1_pubkey recovered_public_key;
+			if (secp256k1_ecdsa_recover(context, &recovered_public_key, &recoverable_signature, data) != 1)
 				return false;
 
-			size_t PublicKeySize = sizeof(Pubkey);
-			return secp256k1_ec_pubkey_serialize(Context, PublicKey, &PublicKeySize, &RecoveredPublicKey, SECP256K1_EC_COMPRESSED) == 1;
+			size_t public_key_size = sizeof(pubkey);
+			return secp256k1_ec_pubkey_serialize(context, public_key, &public_key_size, &recovered_public_key, SECP256K1_EC_COMPRESSED) == 1;
 		}
-		bool Signing::RecoverHash(const uint256_t& Hash, Pubkeyhash PublicKeyHash, const Recsighash Signature)
+		bool signing::recover_hash(const uint256_t& hash, pubkeyhash public_key_hash, const recsighash signature)
 		{
-			VI_ASSERT(PublicKeyHash != nullptr && Signature != nullptr, "public key hash and signature should be set");
-			Pubkey PublicKey;
-			if (!Recover(Hash, PublicKey, Signature))
+			VI_ASSERT(public_key_hash != nullptr && signature != nullptr, "public key hash and signature should be set");
+			pubkey public_key;
+			if (!recover(hash, public_key, signature))
 				return false;
 
-			DerivePublicKeyHash(PublicKey, PublicKeyHash);
+			derive_public_key_hash(public_key, public_key_hash);
 			return true;
 		}
-		bool Signing::Sign(const uint256_t& Hash, const Seckey SecretKey, Recsighash Signature)
+		bool signing::sign(const uint256_t& hash, const seckey secret_key, recsighash signature)
 		{
-			VI_ASSERT(SecretKey != nullptr && Signature != nullptr, "secret key and signature should be set");
-			uint8_t Data[32];
-			Encoding::DecodeUint256(Hash, Data);
-			memset(Signature, 0, sizeof(Recsighash));
+			VI_ASSERT(secret_key != nullptr && signature != nullptr, "secret key and signature should be set");
+			uint8_t data[32];
+			encoding::decode_uint256(hash, data);
+			memset(signature, 0, sizeof(recsighash));
 
-			secp256k1_context* Context = GetContext();
-			secp256k1_ecdsa_recoverable_signature RecoverableSignature;
-			if (secp256k1_ecdsa_sign_recoverable(Context, &RecoverableSignature, Data, SecretKey, secp256k1_nonce_function_rfc6979, nullptr) != 1)
+			secp256k1_context* context = get_context();
+			secp256k1_ecdsa_recoverable_signature recoverable_signature;
+			if (secp256k1_ecdsa_sign_recoverable(context, &recoverable_signature, data, secret_key, secp256k1_nonce_function_rfc6979, nullptr) != 1)
 				return false;
 
-			int RecoveryId = 0;
-			if (secp256k1_ecdsa_recoverable_signature_serialize_compact(Context, Signature, &RecoveryId, &RecoverableSignature) != 1)
+			int recovery_id = 0;
+			if (secp256k1_ecdsa_recoverable_signature_serialize_compact(context, signature, &recovery_id, &recoverable_signature) != 1)
 				return false;
 
-			Signature[sizeof(Sighash)] = (uint8_t)RecoveryId;
+			signature[sizeof(sighash)] = (uint8_t)recovery_id;
 			return true;
 		}
-		bool Signing::Verify(const uint256_t& Hash, const Pubkey PublicKey, const Recsighash Signature)
+		bool signing::verify(const uint256_t& hash, const pubkey public_key, const recsighash signature)
 		{
-			VI_ASSERT(PublicKey != nullptr && Signature != nullptr, "public key and signature should be set");
-			secp256k1_context* Context = GetContext();
-			secp256k1_ecdsa_signature CompactSignature;
-			if (secp256k1_ecdsa_signature_parse_compact(Context, &CompactSignature, Signature) != 1)
+			VI_ASSERT(public_key != nullptr && signature != nullptr, "public key and signature should be set");
+			secp256k1_context* context = get_context();
+			secp256k1_ecdsa_signature compact_signature;
+			if (secp256k1_ecdsa_signature_parse_compact(context, &compact_signature, signature) != 1)
 				return false;
 
-			secp256k1_ecdsa_signature NormalizedSignature;
-			secp256k1_ecdsa_signature_normalize(Context, &NormalizedSignature, &CompactSignature);
+			secp256k1_ecdsa_signature normalized_signature;
+			secp256k1_ecdsa_signature_normalize(context, &normalized_signature, &compact_signature);
 
-			secp256k1_pubkey DerivedPublicKey;
-			if (secp256k1_ec_pubkey_parse(Context, &DerivedPublicKey, PublicKey, sizeof(Pubkey)) != 1)
+			secp256k1_pubkey derived_public_key;
+			if (secp256k1_ec_pubkey_parse(context, &derived_public_key, public_key, sizeof(pubkey)) != 1)
 				return false;
 
-			uint8_t Data[32];
-			Encoding::DecodeUint256(Hash, Data);
-			return secp256k1_ecdsa_verify(Context, &NormalizedSignature, Data, &DerivedPublicKey) == 1;
+			uint8_t data[32];
+			encoding::decode_uint256(hash, data);
+			return secp256k1_ecdsa_verify(context, &normalized_signature, data, &derived_public_key) == 1;
 		}
-		bool Signing::VerifyMnemonic(const std::string_view& Mnemonic)
+		bool signing::verify_mnemonic(const std::string_view& mnemonic)
 		{
-			String Data = String(Mnemonic);
-			return mnemonic_check(Data.c_str()) == 1;
+			string data = string(mnemonic);
+			return mnemonic_check(data.c_str()) == 1;
 		}
-		bool Signing::VerifySecretKey(const Seckey SecretKey)
+		bool signing::verify_secret_key(const seckey secret_key)
 		{
-			VI_ASSERT(SecretKey != nullptr, "secret key should be set");
-			secp256k1_context* Context = GetContext();
-			return secp256k1_ec_seckey_verify(Context, SecretKey) == 1;
+			VI_ASSERT(secret_key != nullptr, "secret key should be set");
+			secp256k1_context* context = get_context();
+			return secp256k1_ec_seckey_verify(context, secret_key) == 1;
 		}
-		bool Signing::VerifyPublicKey(const Pubkey PublicKey)
+		bool signing::verify_public_key(const pubkey public_key)
 		{
-			VI_ASSERT(PublicKey != nullptr, "public key should be set");
-			secp256k1_pubkey DerivedPublicKey;
-			secp256k1_context* Context = GetContext();
-			return secp256k1_ec_pubkey_parse(Context, &DerivedPublicKey, PublicKey, sizeof(Pubkey)) == 1;
+			VI_ASSERT(public_key != nullptr, "public key should be set");
+			secp256k1_pubkey derived_public_key;
+			secp256k1_context* context = get_context();
+			return secp256k1_ec_pubkey_parse(context, &derived_public_key, public_key, sizeof(pubkey)) == 1;
 		}
-		bool Signing::VerifyAddress(const std::string_view& Address)
+		bool signing::verify_address(const std::string_view& address)
 		{
-			Pubkeyhash PublicKeyHash;
-			return DecodeAddress(Address, PublicKeyHash);
+			pubkeyhash public_key_hash;
+			return decode_address(address, public_key_hash);
 		}
-		bool Signing::VerifySealedMessage(const std::string_view& Ciphertext)
+		bool signing::verify_sealed_message(const std::string_view& ciphertext)
 		{
-			return Ciphertext.size() > crypto_box_SEALBYTES;
+			return ciphertext.size() > crypto_box_SEALBYTES;
 		}
-		void Signing::DeriveSecretKeyFromMnemonic(const std::string_view& Mnemonic, Seckey SecretKey)
+		void signing::derive_secret_key_from_mnemonic(const std::string_view& mnemonic, seckey secret_key)
 		{
-			VI_ASSERT(SecretKey != nullptr, "secret key should be set");
-			VI_ASSERT(Stringify::IsCString(Mnemonic), "mnemonic should be set");
-			uint8_t Seed[64] = { 0 };
-			mnemonic_to_seed(Mnemonic.data(), "", Seed, nullptr);
-			DeriveSecretKey(std::string_view((char*)Seed, sizeof(Seed)), SecretKey);
+			VI_ASSERT(secret_key != nullptr, "secret key should be set");
+			VI_ASSERT(stringify::is_cstring(mnemonic), "mnemonic should be set");
+			uint8_t seed[64] = { 0 };
+			mnemonic_to_seed(mnemonic.data(), "", seed, nullptr);
+			derive_secret_key(std::string_view((char*)seed, sizeof(seed)), secret_key);
 		}
-		void Signing::DeriveSecretKey(const std::string_view& Seed, Seckey SecretKey)
+		void signing::derive_secret_key(const std::string_view& seed, seckey secret_key)
 		{
-			VI_ASSERT(SecretKey != nullptr, "secret key should be set");
-			String Derivation = String(Seed);
+			VI_ASSERT(secret_key != nullptr, "secret key should be set");
+			string derivation = string(seed);
 			while (true)
 			{
-				Derivation = Hashing::Hash256((uint8_t*)Derivation.data(), Derivation.size());
-				memcpy(SecretKey, Derivation.data(), sizeof(Seckey));
-				if (VerifySecretKey(SecretKey))
+				derivation = hashing::hash256((uint8_t*)derivation.data(), derivation.size());
+				memcpy(secret_key, derivation.data(), sizeof(seckey));
+				if (verify_secret_key(secret_key))
 					break;
 			}
 		}
-		bool Signing::DerivePublicKey(const Seckey SecretKey, Pubkey PublicKey)
+		bool signing::derive_public_key(const seckey secret_key, pubkey public_key)
 		{
-			VI_ASSERT(SecretKey != nullptr && PublicKey != nullptr, "secret key and public key should be set");
-			secp256k1_pubkey DerivedPublicKey;
-			secp256k1_context* Context = GetContext();
-			memset(PublicKey, 0, sizeof(Pubkey));
-			if (secp256k1_ec_pubkey_create(Context, &DerivedPublicKey, SecretKey) != 1)
+			VI_ASSERT(secret_key != nullptr && public_key != nullptr, "secret key and public key should be set");
+			secp256k1_pubkey derived_public_key;
+			secp256k1_context* context = get_context();
+			memset(public_key, 0, sizeof(pubkey));
+			if (secp256k1_ec_pubkey_create(context, &derived_public_key, secret_key) != 1)
 				return false;
 
-			size_t PublicKeySize = sizeof(Pubkey);
-			return secp256k1_ec_pubkey_serialize(Context, PublicKey, &PublicKeySize, &DerivedPublicKey, SECP256K1_EC_COMPRESSED) == 1;
+			size_t public_key_size = sizeof(pubkey);
+			return secp256k1_ec_pubkey_serialize(context, public_key, &public_key_size, &derived_public_key, SECP256K1_EC_COMPRESSED) == 1;
 		}
-		void Signing::DerivePublicKeyHash(const Pubkey PublicKey, Pubkeyhash PublicKeyHash)
+		void signing::derive_public_key_hash(const pubkey public_key, pubkeyhash public_key_hash)
 		{
-			VI_ASSERT(PublicKey != nullptr, "public key should be set");
-			VI_ASSERT(PublicKeyHash != nullptr, "public key hash should be set");
-			Hashing::Hash160(PublicKey, sizeof(Pubkey), PublicKeyHash);
+			VI_ASSERT(public_key != nullptr, "public key should be set");
+			VI_ASSERT(public_key_hash != nullptr, "public key hash should be set");
+			hashing::hash160(public_key, sizeof(pubkey), public_key_hash);
 		}
-		void Signing::DeriveCipherKeypair(const Seckey SecretKey, const uint256_t& Nonce, Seckey CipherSecretKey, Pubkey CipherPublicKey)
+		void signing::derive_cipher_keypair(const seckey secret_key, const uint256_t& nonce, seckey cipher_secret_key, pubkey cipher_public_key)
 		{
-			VI_ASSERT(SecretKey != nullptr, "secret key should be set");
-			VI_ASSERT(CipherSecretKey != nullptr, "cipher secret key should be set");
-			VI_ASSERT(CipherPublicKey != nullptr, "cipher public key should be set");
-			Format::Stream Message;
-			Message.WriteTypeless((char*)SecretKey, (uint32_t)sizeof(Seckey));
-			Message.WriteTypeless(Nonce);
-			
-			uint8_t Seed[32];
-			Encoding::DecodeUint256(Message.Hash(), Seed);
-			memset(CipherPublicKey, 0, sizeof(Pubkey));
-			crypto_box_seed_keypair(CipherPublicKey, CipherSecretKey, Seed);
+			VI_ASSERT(secret_key != nullptr, "secret key should be set");
+			VI_ASSERT(cipher_secret_key != nullptr, "cipher secret key should be set");
+			VI_ASSERT(cipher_public_key != nullptr, "cipher public key should be set");
+			format::stream message;
+			message.write_typeless((char*)secret_key, (uint32_t)sizeof(seckey));
+			message.write_typeless(nonce);
+
+			uint8_t seed[32];
+			encoding::decode_uint256(message.hash(), seed);
+			memset(cipher_public_key, 0, sizeof(pubkey));
+			crypto_box_seed_keypair(cipher_public_key, cipher_secret_key, seed);
 		}
-		Option<String> Signing::PublicEncrypt(const Pubkey CipherPublicKey, const std::string_view& Plaintext, const std::string_view& Entropy)
+		option<string> signing::public_encrypt(const pubkey cipher_public_key, const std::string_view& plaintext, const std::string_view& entropy)
 		{
-			VI_ASSERT(CipherPublicKey != nullptr, "cipher public key should be set");
-			if (Plaintext.empty())
-				return Optional::None;
+			VI_ASSERT(cipher_public_key != nullptr, "cipher public key should be set");
+			if (plaintext.empty())
+				return optional::none;
 
-			String Salt = Hashing::Hash512((uint8_t*)Entropy.data(), Entropy.size());
-			String Body = Salt + String(Plaintext);
-			for (size_t i = Salt.size(); i < Body.size(); i++)
-				Body[i] ^= Salt[i % Salt.size()];
-			Body.append(Hashing::Hash256((uint8_t*)Plaintext.data(), Plaintext.size()));
+			string salt = hashing::hash512((uint8_t*)entropy.data(), entropy.size());
+			string body = salt + string(plaintext);
+			for (size_t i = salt.size(); i < body.size(); i++)
+				body[i] ^= salt[i % salt.size()];
+			body.append(hashing::hash256((uint8_t*)plaintext.data(), plaintext.size()));
 
-			String Ciphertext;
-			Ciphertext.resize(crypto_box_SEALBYTES + Body.size());
-			if (crypto_box_seal((uint8_t*)Ciphertext.data(), (uint8_t*)Body.data(), Body.size(), CipherPublicKey) != 0)
-				return Optional::None;
+			string ciphertext;
+			ciphertext.resize(crypto_box_SEALBYTES + body.size());
+			if (crypto_box_seal((uint8_t*)ciphertext.data(), (uint8_t*)body.data(), body.size(), cipher_public_key) != 0)
+				return optional::none;
 
-			return Ciphertext;
+			return ciphertext;
 		}
-		Option<String> Signing::PrivateDecrypt(const Seckey CipherSecretKey, const Pubkey CipherPublicKey, const std::string_view& Ciphertext)
+		option<string> signing::private_decrypt(const seckey cipher_secret_key, const pubkey cipher_public_key, const std::string_view& ciphertext)
 		{
-			VI_ASSERT(CipherSecretKey != nullptr, "cipher secret key should be set");
-			VI_ASSERT(CipherPublicKey != nullptr, "cipher public key should be set");
-			if (Ciphertext.size() <= crypto_box_SEALBYTES)
-				return Optional::None;
+			VI_ASSERT(cipher_secret_key != nullptr, "cipher secret key should be set");
+			VI_ASSERT(cipher_public_key != nullptr, "cipher public key should be set");
+			if (ciphertext.size() <= crypto_box_SEALBYTES)
+				return optional::none;
 
-			String Body;
-			Body.resize(Ciphertext.size() - crypto_box_SEALBYTES);
-			if (crypto_box_seal_open((uint8_t*)Body.data(), (uint8_t*)Ciphertext.data(), Ciphertext.size(), CipherPublicKey, CipherSecretKey) != 0)
-				return Optional::None;
+			string body;
+			body.resize(ciphertext.size() - crypto_box_SEALBYTES);
+			if (crypto_box_seal_open((uint8_t*)body.data(), (uint8_t*)ciphertext.data(), ciphertext.size(), cipher_public_key, cipher_secret_key) != 0)
+				return optional::none;
 
-			if (Body.size() < 96)
-				return Optional::None;
+			if (body.size() < 96)
+				return optional::none;
 
-			size_t SaltBodySize = Body.size() - 32;
-			std::string_view Salt = std::string_view(Body).substr(0, 64);
-			for (size_t i = Salt.size(); i < SaltBodySize; i++)
-				Body[i] ^= Salt[i % Salt.size()];
+			size_t salt_body_size = body.size() - 32;
+			std::string_view salt = std::string_view(body).substr(0, 64);
+			for (size_t i = salt.size(); i < salt_body_size; i++)
+				body[i] ^= salt[i % salt.size()];
 
-			size_t PlaintextSize = Body.size() - 96;
-			std::string_view Checksum = std::string_view(Body).substr(SaltBodySize);
-			std::string_view Plaintext = std::string_view(Body).substr(Salt.size(), PlaintextSize);
-			if (Hashing::Hash256((uint8_t*)Plaintext.data(), Plaintext.size()) != Checksum)
-				return Optional::None;
+			size_t plaintext_size = body.size() - 96;
+			std::string_view checksum = std::string_view(body).substr(salt_body_size);
+			std::string_view plaintext = std::string_view(body).substr(salt.size(), plaintext_size);
+			if (hashing::hash256((uint8_t*)plaintext.data(), plaintext.size()) != checksum)
+				return optional::none;
 
-			return String(Plaintext);
+			return string(plaintext);
 		}
-		bool Signing::DecodeSecretKey(const std::string_view& Value, Seckey SecretKey)
+		bool signing::decode_secret_key(const std::string_view& value, seckey secret_key)
 		{
-			VI_ASSERT(SecretKey != nullptr && Stringify::IsCString(Value), "secret key and value should be set");
-			auto& Account = Protocol::Now().Account;
-			uint8_t Decoded[40];
-			size_t DecodedSize = sizeof(Decoded);
-			int Version = 0;
+			VI_ASSERT(secret_key != nullptr && stringify::is_cstring(value), "secret key and value should be set");
+			auto& account = protocol::now().account;
+			uint8_t decoded[40];
+			size_t decoded_size = sizeof(decoded);
+			int version = 0;
 
-			if (Segwit::Decode(&Version, Decoded, &DecodedSize, Account.SecretKeyPrefix.c_str(), Value.data()) != 1)
+			if (segwit::decode(&version, decoded, &decoded_size, account.secret_key_prefix.c_str(), value.data()) != 1)
 				return false;
-			else if (Version != (int)Account.SecretKeyVersion)
+			else if (version != (int)account.secret_key_version)
 				return false;
-			else if (DecodedSize != sizeof(Seckey))
+			else if (decoded_size != sizeof(seckey))
 				return false;
 
-			memcpy(SecretKey, Decoded, sizeof(Seckey));
+			memcpy(secret_key, decoded, sizeof(seckey));
 			return true;
 		}
-		bool Signing::EncodeSecretKey(const Seckey SecretKey, String& Value)
+		bool signing::encode_secret_key(const seckey secret_key, string& value)
 		{
-			VI_ASSERT(SecretKey != nullptr, "secret key should be set");
-			auto& Account = Protocol::Now().Account;
-			char Encoded[128];
-			if (Segwit::Encode(Encoded, Account.SecretKeyPrefix.c_str(), (int)Account.SecretKeyVersion, SecretKey, sizeof(Seckey)) != 1)
+			VI_ASSERT(secret_key != nullptr, "secret key should be set");
+			auto& account = protocol::now().account;
+			char encoded[128];
+			if (segwit::encode(encoded, account.secret_key_prefix.c_str(), (int)account.secret_key_version, secret_key, sizeof(seckey)) != 1)
 				return false;
 
-			size_t Size = strnlen(Encoded, sizeof(Encoded));
-			Value.resize(Size);
-			memcpy(Value.data(), Encoded, Size);
+			size_t size = strnlen(encoded, sizeof(encoded));
+			value.resize(size);
+			memcpy(value.data(), encoded, size);
 			return true;
 		}
-		bool Signing::DecodePublicKey(const std::string_view& Value, Pubkey PublicKey)
+		bool signing::decode_public_key(const std::string_view& value, pubkey public_key)
 		{
-			VI_ASSERT(PublicKey != nullptr && Stringify::IsCString(Value), "public key and value should be set");
-			auto& Account = Protocol::Now().Account;
-			uint8_t Decoded[40];
-			size_t DecodedSize = sizeof(Decoded);
-			int Version = 0;
+			VI_ASSERT(public_key != nullptr && stringify::is_cstring(value), "public key and value should be set");
+			auto& account = protocol::now().account;
+			uint8_t decoded[40];
+			size_t decoded_size = sizeof(decoded);
+			int version = 0;
 
-			if (Segwit::Decode(&Version, Decoded, &DecodedSize, Account.PublicKeyPrefix.c_str(), Value.data()) != 1)
+			if (segwit::decode(&version, decoded, &decoded_size, account.public_key_prefix.c_str(), value.data()) != 1)
 				return false;
-			else if (Version != (int)Account.PublicKeyVersion)
+			else if (version != (int)account.public_key_version)
 				return false;
-			else if (DecodedSize != sizeof(Pubkey))
+			else if (decoded_size != sizeof(pubkey))
 				return false;
 
-			memcpy(PublicKey, Decoded, sizeof(Pubkey));
+			memcpy(public_key, decoded, sizeof(pubkey));
 			return true;
 		}
-		bool Signing::EncodePublicKey(const Pubkey PublicKey, String& Value)
+		bool signing::encode_public_key(const pubkey public_key, string& value)
 		{
-			VI_ASSERT(PublicKey != nullptr, "public key should be set");
-			auto& Account = Protocol::Now().Account;
-			char Encoded[128];
-			if (Segwit::Encode(Encoded, Account.PublicKeyPrefix.c_str(), (int)Account.PublicKeyVersion, PublicKey, sizeof(Pubkey)) != 1)
+			VI_ASSERT(public_key != nullptr, "public key should be set");
+			auto& account = protocol::now().account;
+			char encoded[128];
+			if (segwit::encode(encoded, account.public_key_prefix.c_str(), (int)account.public_key_version, public_key, sizeof(pubkey)) != 1)
 				return false;
 
-			size_t Size = strnlen(Encoded, sizeof(Encoded));
-			Value.resize(Size);
-			memcpy(Value.data(), Encoded, Size);
+			size_t size = strnlen(encoded, sizeof(encoded));
+			value.resize(size);
+			memcpy(value.data(), encoded, size);
 			return true;
 		}
-		bool Signing::DecodeAddress(const std::string_view& Address, Pubkeyhash PublicKeyHash)
+		bool signing::decode_address(const std::string_view& address, pubkeyhash public_key_hash)
 		{
-			VI_ASSERT(PublicKeyHash != nullptr && Stringify::IsCString(Address), "public key hash and address should be set");
-			auto& Account = Protocol::Now().Account;
-			uint8_t Decoded[40];
-			size_t DecodedSize = sizeof(Decoded);
-			int Version = 0;
+			VI_ASSERT(public_key_hash != nullptr && stringify::is_cstring(address), "public key hash and address should be set");
+			auto& account = protocol::now().account;
+			uint8_t decoded[40];
+			size_t decoded_size = sizeof(decoded);
+			int version = 0;
 
-			if (Segwit::Decode(&Version, Decoded, &DecodedSize, Account.AddressPrefix.c_str(), Address.data()) != 1)
+			if (segwit::decode(&version, decoded, &decoded_size, account.address_prefix.c_str(), address.data()) != 1)
 				return false;
-			else if (Version != (int)Account.AddressVersion)
+			else if (version != (int)account.address_version)
 				return false;
-			else if (DecodedSize != sizeof(Pubkeyhash))
+			else if (decoded_size != sizeof(pubkeyhash))
 				return false;
 
-			memcpy(PublicKeyHash, Decoded, sizeof(Pubkeyhash));
+			memcpy(public_key_hash, decoded, sizeof(pubkeyhash));
 			return true;
 		}
-		bool Signing::EncodeAddress(const Pubkeyhash PublicKeyHash, String& Address)
+		bool signing::encode_address(const pubkeyhash public_key_hash, string& address)
 		{
-			VI_ASSERT(PublicKeyHash != nullptr, "public key hash should be set");
-			auto& Account = Protocol::Now().Account;
-			char Encoded[128];
+			VI_ASSERT(public_key_hash != nullptr, "public key hash should be set");
+			auto& account = protocol::now().account;
+			char encoded[128];
 
-			if (Segwit::Encode(Encoded, Account.AddressPrefix.c_str(), (int)Account.AddressVersion, PublicKeyHash, sizeof(Pubkeyhash)) != 1)
+			if (segwit::encode(encoded, account.address_prefix.c_str(), (int)account.address_version, public_key_hash, sizeof(pubkeyhash)) != 1)
 				return false;
 
-			size_t Size = strnlen(Encoded, sizeof(Encoded));
-			Address.resize(Size);
-			memcpy(Address.data(), Encoded, Size);
+			size_t size = strnlen(encoded, sizeof(encoded));
+			address.resize(size);
+			memcpy(address.data(), encoded, size);
 			return true;
 		}
-		Schema* Signing::SerializeSecretKey(const Seckey SecretKey)
+		schema* signing::serialize_secret_key(const seckey secret_key)
 		{
-			Seckey Null = { 0 };
-			if (!memcmp(SecretKey, Null, sizeof(Null)))
-				return Var::Set::Null();
+			seckey null = { 0 };
+			if (!memcmp(secret_key, null, sizeof(null)))
+				return var::set::null();
 
-			String Data;
-			if (!EncodeSecretKey(SecretKey, Data))
-				return Var::Set::Null();
+			string data;
+			if (!encode_secret_key(secret_key, data))
+				return var::set::null();
 
-			return Var::Set::String(Data);
+			return var::set::string(data);
 		}
-		Schema* Signing::SerializePublicKey(const Pubkey PublicKey)
+		schema* signing::serialize_public_key(const pubkey public_key)
 		{
-			Pubkey Null = { 0 };
-			if (!memcmp(PublicKey, Null, sizeof(Null)))
-				return Var::Set::Null();
+			pubkey null = { 0 };
+			if (!memcmp(public_key, null, sizeof(null)))
+				return var::set::null();
 
-			String Data;
-			if (!EncodePublicKey(PublicKey, Data))
-				return Var::Set::Null();
+			string data;
+			if (!encode_public_key(public_key, data))
+				return var::set::null();
 
-			return Var::Set::String(Data);
+			return var::set::string(data);
 		}
-		Schema* Signing::SerializeAddress(const Pubkeyhash PublicKeyHash)
+		schema* signing::serialize_address(const pubkeyhash public_key_hash)
 		{
-			Pubkeyhash Null = { 0 };
-			if (!memcmp(PublicKeyHash, Null, sizeof(Null)))
-				return Var::Set::Null();
+			pubkeyhash null = { 0 };
+			if (!memcmp(public_key_hash, null, sizeof(null)))
+				return var::set::null();
 
-			String Data;
-			if (!EncodeAddress(PublicKeyHash, Data))
-				return Var::Set::Null();
+			string data;
+			if (!encode_address(public_key_hash, data))
+				return var::set::null();
 
-			return Var::Set::String(Data);
+			return var::set::string(data);
 		}
-		secp256k1_context* Signing::GetContext()
+		secp256k1_context* signing::get_context()
 		{
-			VI_ASSERT(SharedContext != nullptr, "secp256k1 context is not initialized");
-			return SharedContext;
+			VI_ASSERT(shared_context != nullptr, "secp256k1 context is not initialized");
+			return shared_context;
 		}
-		secp256k1_context* Signing::SharedContext = nullptr;
+		secp256k1_context* signing::shared_context = nullptr;
 
-		bool Encoding::DecodeUintBlob(const String& Value, uint8_t* Data, size_t DataSize)
+		bool encoding::decode_uint_blob(const string& value, uint8_t* data, size_t data_size)
 		{
-			VI_ASSERT(Data != nullptr, "data should be set");
-			if (Value.size() != DataSize)
+			VI_ASSERT(data != nullptr, "data should be set");
+			if (value.size() != data_size)
 			{
-				memset(Data, 0, DataSize);
-				return Value.empty();
+				memset(data, 0, data_size);
+				return value.empty();
 			}
 
-			memcpy(Data, Value.data(), Value.size());
+			memcpy(data, value.data(), value.size());
 			return true;
 		}
-		void Encoding::EncodeUint128(const uint8_t Value[16], uint128_t& Data)
+		void encoding::encode_uint128(const uint8_t value[16], uint128_t& data)
 		{
-			VI_ASSERT(Value != nullptr, "value should be set");
-			uint64_t Array[2] = { 0 };
-			memcpy(Array, Value, sizeof(Array));
-			auto& Bits0 = Data.High();
-			auto& Bits1 = Data.Low();
-			Array[1] = OS::CPU::ToEndianness(OS::CPU::Endian::Big, Array[1]);
-			Array[0] = OS::CPU::ToEndianness(OS::CPU::Endian::Big, Array[0]);
-			memcpy((uint64_t*)&Bits0, &Array[0], sizeof(uint64_t));
-			memcpy((uint64_t*)&Bits1, &Array[1], sizeof(uint64_t));
+			VI_ASSERT(value != nullptr, "value should be set");
+			uint64_t array[2] = { 0 };
+			memcpy(array, value, sizeof(array));
+			auto& bits0 = data.high();
+			auto& bits1 = data.low();
+			array[1] = os::hw::to_endianness(os::hw::endian::big, array[1]);
+			array[0] = os::hw::to_endianness(os::hw::endian::big, array[0]);
+			memcpy((uint64_t*)&bits0, &array[0], sizeof(uint64_t));
+			memcpy((uint64_t*)&bits1, &array[1], sizeof(uint64_t));
 		}
-		void Encoding::DecodeUint128(const uint128_t& Value, uint8_t Data[16])
+		void encoding::decode_uint128(const uint128_t& value, uint8_t data[16])
 		{
-			VI_ASSERT(Data != nullptr, "data should be set");
-			uint64_t Array[2] =
+			VI_ASSERT(data != nullptr, "data should be set");
+			uint64_t array[2] =
 			{
-				OS::CPU::ToEndianness(OS::CPU::Endian::Big, Value.High()),
-				OS::CPU::ToEndianness(OS::CPU::Endian::Big, Value.Low())
+				os::hw::to_endianness(os::hw::endian::big, value.high()),
+				os::hw::to_endianness(os::hw::endian::big, value.low())
 			};
-			memcpy((char*)Data, Array, sizeof(Array));
+			memcpy((char*)data, array, sizeof(array));
 		}
-		void Encoding::EncodeUint256(const uint8_t Value[32], uint256_t& Data)
+		void encoding::encode_uint256(const uint8_t value[32], uint256_t& data)
 		{
-			VI_ASSERT(Value != nullptr, "value should be set");
-			uint64_t Array[4] = { 0 };
-			memcpy(Array, Value, sizeof(Array));
-			auto& Bits0 = Data.High().High();
-			auto& Bits1 = Data.High().Low();
-			auto& Bits2 = Data.Low().High();
-			auto& Bits3 = Data.Low().Low();
-			Array[0] = OS::CPU::ToEndianness(OS::CPU::Endian::Big, Array[0]);
-			Array[1] = OS::CPU::ToEndianness(OS::CPU::Endian::Big, Array[1]);
-			Array[2] = OS::CPU::ToEndianness(OS::CPU::Endian::Big, Array[2]);
-			Array[3] = OS::CPU::ToEndianness(OS::CPU::Endian::Big, Array[3]);
-			memcpy((uint64_t*)&Bits0, &Array[0], sizeof(uint64_t));
-			memcpy((uint64_t*)&Bits1, &Array[1], sizeof(uint64_t));
-			memcpy((uint64_t*)&Bits2, &Array[2], sizeof(uint64_t));
-			memcpy((uint64_t*)&Bits3, &Array[3], sizeof(uint64_t));
+			VI_ASSERT(value != nullptr, "value should be set");
+			uint64_t array[4] = { 0 };
+			memcpy(array, value, sizeof(array));
+			auto& bits0 = data.high().high();
+			auto& bits1 = data.high().low();
+			auto& bits2 = data.low().high();
+			auto& bits3 = data.low().low();
+			array[0] = os::hw::to_endianness(os::hw::endian::big, array[0]);
+			array[1] = os::hw::to_endianness(os::hw::endian::big, array[1]);
+			array[2] = os::hw::to_endianness(os::hw::endian::big, array[2]);
+			array[3] = os::hw::to_endianness(os::hw::endian::big, array[3]);
+			memcpy((uint64_t*)&bits0, &array[0], sizeof(uint64_t));
+			memcpy((uint64_t*)&bits1, &array[1], sizeof(uint64_t));
+			memcpy((uint64_t*)&bits2, &array[2], sizeof(uint64_t));
+			memcpy((uint64_t*)&bits3, &array[3], sizeof(uint64_t));
 		}
-		void Encoding::DecodeUint256(const uint256_t& Value, uint8_t Data[32])
+		void encoding::decode_uint256(const uint256_t& value, uint8_t data[32])
 		{
-			VI_ASSERT(Data != nullptr, "data should be set");
-			uint64_t Array[4] =
+			VI_ASSERT(data != nullptr, "data should be set");
+			uint64_t array[4] =
 			{
-				OS::CPU::ToEndianness(OS::CPU::Endian::Big, Value.High().High()),
-				OS::CPU::ToEndianness(OS::CPU::Endian::Big, Value.High().Low()),
-				OS::CPU::ToEndianness(OS::CPU::Endian::Big, Value.Low().High()),
-				OS::CPU::ToEndianness(OS::CPU::Endian::Big, Value.Low().Low())
+				os::hw::to_endianness(os::hw::endian::big, value.high().high()),
+				os::hw::to_endianness(os::hw::endian::big, value.high().low()),
+				os::hw::to_endianness(os::hw::endian::big, value.low().high()),
+				os::hw::to_endianness(os::hw::endian::big, value.low().low())
 			};
-			memcpy((char*)Data, Array, sizeof(Array));
+			memcpy((char*)data, array, sizeof(array));
 		}
-		String Encoding::Encode0xHex256(const uint256_t& Value)
+		string encoding::encode_0xhex256(const uint256_t& value)
 		{
-			uint8_t Data[32];
-			DecodeUint256(Value, Data);
-			return "0x" + Codec::HexEncode(std::string_view((char*)Data, sizeof(Data)));
+			uint8_t data[32];
+			decode_uint256(value, data);
+			return "0x" + codec::hex_encode(std::string_view((char*)data, sizeof(data)));
 		}
-		uint256_t Encoding::Decode0xHex256(const std::string_view& Data)
+		uint256_t encoding::decode_0xhex256(const std::string_view& data)
 		{
-			if (Data.size() < 2)
+			if (data.size() < 2)
 				return uint256_t(0);
 
-			return uint256_t(Data[0] == '0' && Data[1] == 'x' ? Data.substr(2) : Data, 16);
+			return uint256_t(data[0] == '0' && data[1] == 'x' ? data.substr(2) : data, 16);
 		}
-		String Encoding::Encode0xHex128(const uint128_t& Value)
+		string encoding::encode_0xhex128(const uint128_t& value)
 		{
-			uint8_t Data[16];
-			DecodeUint128(Value, Data);
-			return "0x" + Codec::HexEncode(std::string_view((char*)Data, sizeof(Data)));
+			uint8_t data[16];
+			decode_uint128(value, data);
+			return "0x" + codec::hex_encode(std::string_view((char*)data, sizeof(data)));
 		}
-		uint128_t Encoding::Decode0xHex128(const std::string_view& Data)
+		uint128_t encoding::decode_0xhex128(const std::string_view& data)
 		{
-			if (Data.size() < 2)
+			if (data.size() < 2)
 				return uint128_t(0);
 
-			return uint128_t(Data[0] == '0' && Data[1] == 'x' ? Data.substr(2) : Data, 16);
+			return uint128_t(data[0] == '0' && data[1] == 'x' ? data.substr(2) : data, 16);
 		}
-		uint32_t Encoding::TypeOf(const std::string_view& Name)
+		uint32_t encoding::type_of(const std::string_view& name)
 		{
-			return Hashing::Hash32d(Name);
+			return hashing::hash32d(name);
 		}
-		Schema* Encoding::SerializeUint256(const uint256_t& Value)
+		schema* encoding::serialize_uint256(const uint256_t& value)
 		{
-			if (Value <= std::numeric_limits<int64_t>::max())
-				return Var::Set::Integer((uint64_t)Value);
+			if (value <= std::numeric_limits<int64_t>::max())
+				return var::set::integer((uint64_t)value);
 
-			uint8_t Data[32];
-			DecodeUint256(Value, Data);
+			uint8_t data[32];
+			decode_uint256(value, data);
 
-			size_t Size = Value.Bytes();
-			return Var::Set::String(Format::Util::Encode0xHex(std::string_view((char*)Data + (sizeof(Data) - Size), Size)));
+			size_t size = value.bytes();
+			return var::set::string(format::util::encode_0xhex(std::string_view((char*)data + (sizeof(data) - size), size)));
 		}
 
-		uint256_t Hashing::Sha256ci(const uint256_t& A, const uint256_t& B)
+		uint256_t hashing::sha256ci(const uint256_t& a, const uint256_t& b)
 		{
-			uint8_t CombineBuffer[sizeof(uint256_t) * 2];
-			Encoding::DecodeUint256(A, CombineBuffer + sizeof(uint256_t) * 0);
-			Encoding::DecodeUint256(B, CombineBuffer + sizeof(uint256_t) * 1);
-			return Hashing::Hash256i(CombineBuffer, sizeof(CombineBuffer));
+			uint8_t combine_buffer[sizeof(uint256_t) * 2];
+			encoding::decode_uint256(a, combine_buffer + sizeof(uint256_t) * 0);
+			encoding::decode_uint256(b, combine_buffer + sizeof(uint256_t) * 1);
+			return hashing::hash256i(combine_buffer, sizeof(combine_buffer));
 		}
-		uint64_t Hashing::Sha64d(const uint8_t* Buffer, size_t Size)
+		uint64_t hashing::sha64d(const uint8_t* buffer, size_t size)
 		{
-			uint64_t Result = 0;
-			if (!Size)
+			uint64_t result = 0;
+			if (!size)
 				return uint64_t(0);
 
-			String Hash = Hashing::Hash256(Buffer, Size);
-			if (Hash.size() < sizeof(Result))
+			string hash = hashing::hash256(buffer, size);
+			if (hash.size() < sizeof(result))
 				return uint64_t(0);
 
-			memcpy(&Result, Hash.data(), sizeof(Result));
-			return OS::CPU::ToEndianness(OS::CPU::Endian::Little, Result);
+			memcpy(&result, hash.data(), sizeof(result));
+			return os::hw::to_endianness(os::hw::endian::little, result);
 		}
-		uint64_t Hashing::Sha64d(const std::string_view& Buffer)
+		uint64_t hashing::sha64d(const std::string_view& buffer)
 		{
-			return Sha64d((uint8_t*)Buffer.data(), Buffer.size());
+			return sha64d((uint8_t*)buffer.data(), buffer.size());
 		}
-		uint32_t Hashing::Hash32d(const uint8_t* Buffer, size_t Size)
+		uint32_t hashing::hash32d(const uint8_t* buffer, size_t size)
 		{
-			uint8_t Data[20];
-			sha1_Raw(Buffer, Size, Data);
+			uint8_t data[20];
+			sha1_Raw(buffer, size, data);
 
-			uint32_t Result;
-			memcpy(&Result, Data, sizeof(Result));
-			return OS::CPU::ToEndianness(OS::CPU::Endian::Little, Result);
+			uint32_t result;
+			memcpy(&result, data, sizeof(result));
+			return os::hw::to_endianness(os::hw::endian::little, result);
 		}
-		uint32_t Hashing::Hash32d(const std::string_view& Buffer)
+		uint32_t hashing::hash32d(const std::string_view& buffer)
 		{
-			return Hash32d((uint8_t*)Buffer.data(), Buffer.size());
+			return hash32d((uint8_t*)buffer.data(), buffer.size());
 		}
-		void Hashing::Hash160(const uint8_t* Buffer, size_t Size, uint8_t OutBuffer[20])
+		void hashing::hash160(const uint8_t* buffer, size_t size, uint8_t out_buffer[20])
 		{
-			ripemd160(Buffer, (uint32_t)Size, OutBuffer);
+			ripemd160(buffer, (uint32_t)size, out_buffer);
 		}
-		String Hashing::Hash160(const uint8_t* Buffer, size_t Size)
+		string hashing::hash160(const uint8_t* buffer, size_t size)
 		{
-			uint8_t Hash[RIPEMD160_DIGEST_LENGTH];
-			Hash160(Buffer, Size, Hash);
-			return String((char*)Hash, sizeof(Hash));
+			uint8_t hash[RIPEMD160_DIGEST_LENGTH];
+			hash160(buffer, size, hash);
+			return string((char*)hash, sizeof(hash));
 		}
-		void Hashing::Hash256(const uint8_t* Buffer, size_t Size, uint8_t OutBuffer[32])
+		void hashing::hash256(const uint8_t* buffer, size_t size, uint8_t out_buffer[32])
 		{
-			blake2b(Buffer, (uint32_t)Size, OutBuffer, sizeof(uint256_t));
+			blake2b(buffer, (uint32_t)size, out_buffer, sizeof(uint256_t));
 		}
-		String Hashing::Hash256(const uint8_t* Buffer, size_t Size)
+		string hashing::hash256(const uint8_t* buffer, size_t size)
 		{
-			uint8_t Hash[BLAKE256_DIGEST_LENGTH];
-			Hash256(Buffer, Size, Hash);
-			return String((char*)Hash, sizeof(Hash));
+			uint8_t hash[BLAKE256_DIGEST_LENGTH];
+			hash256(buffer, size, hash);
+			return string((char*)hash, sizeof(hash));
 		}
-		void Hashing::Hash512(const uint8_t* Buffer, size_t Size, uint8_t OutBuffer[64])
+		void hashing::hash512(const uint8_t* buffer, size_t size, uint8_t out_buffer[64])
 		{
-			sha3_512(Buffer, Size, OutBuffer);
+			sha3_512(buffer, size, out_buffer);
 		}
-		String Hashing::Hash512(const uint8_t* Buffer, size_t Size)
+		string hashing::hash512(const uint8_t* buffer, size_t size)
 		{
-			uint8_t Hash[SHA3_512_DIGEST_LENGTH];
-			Hash512(Buffer, Size, Hash);
-			return String((char*)Hash, sizeof(Hash));
+			uint8_t hash[SHA3_512_DIGEST_LENGTH];
+			hash512(buffer, size, hash);
+			return string((char*)hash, sizeof(hash));
 		}
-		uint256_t Hashing::Hash256i(const uint8_t* Buffer, size_t Size)
+		uint256_t hashing::hash256i(const uint8_t* buffer, size_t size)
 		{
-			uint256_t Value;
-			auto Hash = Hash256(Buffer, Size);
-			Encoding::EncodeUint256((uint8_t*)Hash.data(), Value);
-			return Value;
+			uint256_t value;
+			auto hash = hash256(buffer, size);
+			encoding::encode_uint256((uint8_t*)hash.data(), value);
+			return value;
 		}
-		uint256_t Hashing::Hash256i(const std::string_view& Data)
+		uint256_t hashing::hash256i(const std::string_view& data)
 		{
-			return Hash256i((uint8_t*)Data.data(), Data.size());
+			return hash256i((uint8_t*)data.data(), data.size());
 		}
 
-		AssetId Asset::IdOfHandle(const std::string_view& Handle)
+		asset_id asset::id_of_handle(const std::string_view& handle)
 		{
-			uint8_t Data[32] = { 0 };
-			size_t Size = std::min<size_t>(sizeof(Data), Handle.size());
-			memcpy((char*)Data + (sizeof(Data) - Size), Handle.data(), Size);
+			uint8_t data[32] = { 0 };
+			size_t size = std::min<size_t>(sizeof(data), handle.size());
+			memcpy((char*)data + (sizeof(data) - size), handle.data(), size);
 
-			uint256_t Value;
-			Encoding::EncodeUint256(Data, Value);
-			return IdOf(BlockchainOf(Value), TokenOf(Value), ChecksumOf(Value));
+			uint256_t value;
+			encoding::encode_uint256(data, value);
+			return id_of(blockchain_of(value), token_of(value), checksum_of(value));
 		}
-		AssetId Asset::IdOf(const std::string_view& Blockchain, const std::string_view& Token, const std::string_view& ContractAddress)
+		asset_id asset::id_of(const std::string_view& blockchain, const std::string_view& token, const std::string_view& contract_address)
 		{
-			uint8_t Data[32] = { 0 };
-			String Handle = HandleOf(Blockchain, Token, ContractAddress);
-			size_t Size = std::min<size_t>(sizeof(Data), Handle.size());
-			memcpy((char*)Data + (sizeof(Data) - Size), Handle.data(), Size);
+			uint8_t data[32] = { 0 };
+			string handle = handle_of(blockchain, token, contract_address);
+			size_t size = std::min<size_t>(sizeof(data), handle.size());
+			memcpy((char*)data + (sizeof(data) - size), handle.data(), size);
 
-			uint256_t Value;
-			Encoding::EncodeUint256(Data, Value);
-			return Value;
+			uint256_t value;
+			encoding::encode_uint256(data, value);
+			return value;
 		}
-		AssetId Asset::BaseIdOf(const AssetId& Value)
+		asset_id asset::base_id_of(const asset_id& value)
 		{
-			return IdOf(BlockchainOf(Value));
+			return id_of(blockchain_of(value));
 		}
-		String Asset::HandleOf(const std::string_view& Blockchain, const std::string_view& Token, const std::string_view& ContractAddress)
+		string asset::handle_of(const std::string_view& blockchain, const std::string_view& token, const std::string_view& contract_address)
 		{
-			String Handle;
-			Handle.append(Blockchain.substr(0, 8));
-			if (!Token.empty())
+			string handle;
+			handle.append(blockchain.substr(0, 8));
+			if (!token.empty())
 			{
-				Handle.append(1, ':').append(Token.substr(0, 8));
-				Stringify::ToUpper(Handle);
-				if (!ContractAddress.empty())
+				handle.append(1, ':').append(token.substr(0, 8));
+				stringify::to_upper(handle);
+				if (!contract_address.empty())
 				{
-					auto Hash = Codec::Base64URLEncode(*Crypto::HashRaw(Digests::SHA1(), Format::Util::IsHexEncoding(ContractAddress) ? Codec::HexDecode(ContractAddress) : String(ContractAddress)));
-					Handle.append(1, ':').append(Hash.substr(0, 32 - Handle.size()));
+					auto hash = codec::base64_url_encode(*crypto::hash_raw(digests::SHA1(), format::util::is_hex_encoding(contract_address) ? codec::hex_decode(contract_address) : string(contract_address)));
+					handle.append(1, ':').append(hash.substr(0, 32 - handle.size()));
 				}
 			}
 			else
-				Stringify::ToUpper(Handle);
-			return Handle.substr(0, 32);
+				stringify::to_upper(handle);
+			return handle.substr(0, 32);
 		}
-		String Asset::HandleOf(const AssetId& Value)
+		string asset::handle_of(const asset_id& value)
 		{
-			uint8_t Data[33];
-			Encoding::DecodeUint256(Value, Data);
+			uint8_t data[33];
+			encoding::decode_uint256(value, data);
 
-			size_t Offset = 0;
-			while (!Data[Offset] && Offset + 1 < sizeof(Data))
-				++Offset;
+			size_t offset = 0;
+			while (!data[offset] && offset + 1 < sizeof(data))
+				++offset;
 
-			char* Handle = (char*)Data + Offset;
-			return String(Handle, strnlen(Handle, (sizeof(Data) - 1) - Offset));
+			char* handle = (char*)data + offset;
+			return string(handle, strnlen(handle, (sizeof(data) - 1) - offset));
 		}
-		String Asset::BaseHandleOf(const AssetId& Value)
+		string asset::base_handle_of(const asset_id& value)
 		{
-			return HandleOf(BaseIdOf(Value));
+			return handle_of(base_id_of(value));
 		}
-		String Asset::BlockchainOf(const AssetId& Value)
+		string asset::blockchain_of(const asset_id& value)
 		{
-			String Handle = HandleOf(Value);
-			size_t Index = Handle.find(':');
-			return Handle.substr(0, Index);
+			string handle = handle_of(value);
+			size_t index = handle.find(':');
+			return handle.substr(0, index);
 		}
-		String Asset::TokenOf(const AssetId& Value)
+		string asset::token_of(const asset_id& value)
 		{
-			String Handle = HandleOf(Value);
-			size_t Index = Handle.find(':');
-			return Index == std::string::npos ? String() : Handle.substr(Index + 1, Handle.rfind(':', Index) + 1);
+			string handle = handle_of(value);
+			size_t index = handle.find(':');
+			return index == std::string::npos ? string() : handle.substr(index + 1, handle.rfind(':', index) + 1);
 		}
-		String Asset::ChecksumOf(const AssetId& Value)
+		string asset::checksum_of(const asset_id& value)
 		{
-			String Handle = HandleOf(Value);
-			size_t Index1 = Handle.find(':');
-			size_t Index2 = Handle.rfind(':');
-			return Index1 == std::string::npos || Index2 == std::string::npos || Index1 == Index2 ? String() : Handle.substr(Index2 + 1);
+			string handle = handle_of(value);
+			size_t index1 = handle.find(':');
+			size_t index2 = handle.rfind(':');
+			return index1 == std::string::npos || index2 == std::string::npos || index1 == index2 ? string() : handle.substr(index2 + 1);
 		}
-		bool Asset::IsValid(const AssetId& Value)
+		bool asset::is_valid(const asset_id& value)
 		{
-			if (!Value)
+			if (!value)
 				return false;
 
-			auto Blockchain = BlockchainOf(Value);
-			if (Stringify::IsEmptyOrWhitespace(Blockchain))
+			auto blockchain = blockchain_of(value);
+			if (stringify::is_empty_or_whitespace(blockchain))
 				return false;
 
-			if (!NSS::ServerNode::Get()->HasChain(Value))
+			if (!nss::server_node::get()->has_chain(value))
 				return false;
 
-			auto Token = TokenOf(Value);
-			if (Stringify::IsEmptyOrWhitespace(Token))
+			auto token = token_of(value);
+			if (stringify::is_empty_or_whitespace(token))
 				return true;
 
-			auto Checksum = ChecksumOf(Value);
-			return !Stringify::IsEmptyOrWhitespace(Checksum);
+			auto checksum = checksum_of(value);
+			return !stringify::is_empty_or_whitespace(checksum);
 		}
-		uint64_t Asset::ExpiryOf(const AssetId& Value)
+		uint64_t asset::expiry_of(const asset_id& value)
 		{
-			if (!Value)
+			if (!value)
 				return 0;
 
-			auto Blockchain = BlockchainOf(Value);
-			if (Stringify::IsEmptyOrWhitespace(Blockchain))
+			auto blockchain = blockchain_of(value);
+			if (stringify::is_empty_or_whitespace(blockchain))
 				return 0;
 
-			auto* Chain = NSS::ServerNode::Get()->GetChain(Value);
-			if (!Chain)
+			auto* chain = nss::server_node::get()->get_chain(value);
+			if (!chain)
 				return 0;
 
-			auto Token = TokenOf(Value);
-			if (Stringify::IsEmptyOrWhitespace(Token))
-				return Chain->GetRetirementBlockNumber();
+			auto token = token_of(value);
+			if (stringify::is_empty_or_whitespace(token))
+				return chain->get_retirement_block_number();
 
-			auto Checksum = ChecksumOf(Value);
-			if (Stringify::IsEmptyOrWhitespace(Checksum))
+			auto checksum = checksum_of(value);
+			if (stringify::is_empty_or_whitespace(checksum))
 				return 0;
 
-			return Chain->GetRetirementBlockNumber();
+			return chain->get_retirement_block_number();
 		}
-		Schema* Asset::Serialize(const AssetId& Value)
+		schema* asset::serialize(const asset_id& value)
 		{
-			Schema* Data = Var::Set::Object();
-			Data->Set("id", Encoding::SerializeUint256(Value));
-			String Chain = BlockchainOf(Value);
-			if (!Chain.empty())
-				Data->Set("chain", Var::String(Chain));
-			String Token = TokenOf(Value);
-			if (!Token.empty())
-				Data->Set("token", Var::String(Token));
-			String Checksum = ChecksumOf(Value);
-			if (!Checksum.empty())
-				Data->Set("checksum", Var::String(Checksum));
-			return Data;
+			schema* data = var::set::object();
+			data->set("id", encoding::serialize_uint256(value));
+			string chain = blockchain_of(value);
+			if (!chain.empty())
+				data->set("chain", var::string(chain));
+			string token = token_of(value);
+			if (!token.empty())
+				data->set("token", var::string(token));
+			string checksum = checksum_of(value);
+			if (!checksum.empty())
+				data->set("checksum", var::string(checksum));
+			return data;
 		}
 
-		ExpectsLR<void> Composition::DeriveKeypair(Type Alg, const CSeed Seed, CSeckey SecretKey, CPubkey PublicKey)
+		expects_lr<void> composition::derive_keypair(type alg, const cseed seed, cseckey secret_key, cpubkey public_key)
 		{
-			VI_ASSERT(SecretKey != nullptr, "secret key should be set");
-			VI_ASSERT(PublicKey != nullptr, "public key should be set");
-			Hashing::Hash512(Seed, sizeof(CSeed), SecretKey);
-			memset(PublicKey, 0, sizeof(CPubkey));
-			switch (Alg)
+			VI_ASSERT(secret_key != nullptr, "secret key should be set");
+			VI_ASSERT(public_key != nullptr, "public key should be set");
+			hashing::hash512(seed, sizeof(cseed), secret_key);
+			memset(public_key, 0, sizeof(cpubkey));
+			switch (alg)
 			{
-				case Type::ED25519:
+				case type::ED25519:
 				{
-					ConvertToSecretKeyEd25519(SecretKey);
-					ed25519_publickey_ext(SecretKey, PublicKey);
-					Hashing::Hash256(PublicKey, sizeof(CPubkey) / 2, PublicKey + sizeof(CPubkey) / 2);
-					return Expectation::Met;
+					convert_to_secret_key_ed25519(secret_key);
+					ed25519_publickey_ext(secret_key, public_key);
+					hashing::hash256(public_key, sizeof(cpubkey) / 2, public_key + sizeof(cpubkey) / 2);
+					return expectation::met;
 				}
-				case Type::SECP256K1:
+				case type::SECP256K1:
 				{
-					secp256k1_context* Context = Signing::GetContext();
-					secp256k1_pubkey ExtendedPublicKey;
-					while (secp256k1_ec_seckey_verify(Context, SecretKey) != 1 || secp256k1_ec_pubkey_create(Context, &ExtendedPublicKey, SecretKey) != 1)
-						Hashing::Hash512(SecretKey, sizeof(CSeckey), SecretKey);
+					secp256k1_context* context = signing::get_context();
+					secp256k1_pubkey extended_public_key;
+					while (secp256k1_ec_seckey_verify(context, secret_key) != 1 || secp256k1_ec_pubkey_create(context, &extended_public_key, secret_key) != 1)
+						hashing::hash512(secret_key, sizeof(cseckey), secret_key);
 
-					memcpy(PublicKey, ExtendedPublicKey.data, sizeof(ExtendedPublicKey.data));
-					return Expectation::Met;
+					memcpy(public_key, extended_public_key.data, sizeof(extended_public_key.data));
+					return expectation::met;
 				}
 				default:
-					return LayerException("invalid composition algorithm");
+					return layer_exception("invalid composition algorithm");
 			}
 		}
-		ExpectsLR<void> Composition::DerivePublicKey(Type Alg, const CPubkey PublicKey1, const CSeckey SecretKey2, CPubkey PublicKey, size_t* PublicKeySize)
+		expects_lr<void> composition::derive_public_key(type alg, const cpubkey public_key1, const cseckey secret_key2, cpubkey public_key, size_t* public_key_size)
 		{
-			VI_ASSERT(PublicKey1 != nullptr, "public key 1 should be set");
-			VI_ASSERT(SecretKey2 != nullptr, "secret key 2 should be set");
-			VI_ASSERT(PublicKey != nullptr, "public key should be set");
-			memset(PublicKey, 0, sizeof(CPubkey));
-			switch (Alg)
+			VI_ASSERT(public_key1 != nullptr, "public key 1 should be set");
+			VI_ASSERT(secret_key2 != nullptr, "secret key 2 should be set");
+			VI_ASSERT(public_key != nullptr, "public key should be set");
+			memset(public_key, 0, sizeof(cpubkey));
+			switch (alg)
 			{
-				case Type::ED25519:
+				case type::ED25519:
 				{
 					uint8_t FX[crypto_sign_PUBLICKEYBYTES];
-					memcpy(FX, PublicKey1, sizeof(FX));
+					memcpy(FX, public_key1, sizeof(FX));
 
-					uint8_t Y[crypto_core_ed25519_SCALARBYTES];
-					memcpy(Y, SecretKey2, sizeof(Y));
+					uint8_t y[crypto_core_ed25519_SCALARBYTES];
+					memcpy(y, secret_key2, sizeof(y));
 
-					if (crypto_scalarmult_ed25519(FX, Y, FX) != 0)
-						return LayerException("bad parameters");
+					if (crypto_scalarmult_ed25519(FX, y, FX) != 0)
+						return layer_exception("bad parameters");
 
-					memcpy(PublicKey, FX, sizeof(FX));
-					if (PublicKeySize != nullptr)
-						*PublicKeySize = sizeof(FX);
-					return Expectation::Met;
+					memcpy(public_key, FX, sizeof(FX));
+					if (public_key_size != nullptr)
+						*public_key_size = sizeof(FX);
+					return expectation::met;
 				}
-				case Type::SECP256K1:
+				case type::SECP256K1:
 				{
-					secp256k1_context* Context = Signing::GetContext();
+					secp256k1_context* context = signing::get_context();
 					secp256k1_pubkey FX;
-					memcpy(FX.data, PublicKey1, sizeof(FX));
+					memcpy(FX.data, public_key1, sizeof(FX));
 
-					uint8_t Y[32];
-					memcpy(Y, SecretKey2, sizeof(Y));
-					if (secp256k1_ec_pubkey_tweak_mul(Context, &FX, Y) != 1)
-						return LayerException("bad secret key 2");
+					uint8_t y[32];
+					memcpy(y, secret_key2, sizeof(y));
+					if (secp256k1_ec_pubkey_tweak_mul(context, &FX, y) != 1)
+						return layer_exception("bad secret key 2");
 
-					size_t KeySize = sizeof(FX);
-					secp256k1_ec_pubkey_serialize(Context, PublicKey, &KeySize, &FX, SECP256K1_EC_COMPRESSED);
-					if (PublicKeySize != nullptr)
-						*PublicKeySize = KeySize;
-					return Expectation::Met;
+					size_t key_size = sizeof(FX);
+					secp256k1_ec_pubkey_serialize(context, public_key, &key_size, &FX, SECP256K1_EC_COMPRESSED);
+					if (public_key_size != nullptr)
+						*public_key_size = key_size;
+					return expectation::met;
 				}
 				default:
-					return LayerException("invalid composition algorithm");
+					return layer_exception("invalid composition algorithm");
 			}
 		}
-		ExpectsLR<void> Composition::DeriveSecretKey(Type Alg, const CSeckey SecretKey1, const CSeckey SecretKey2, CSeckey SecretKey, size_t* SecretKeySize)
+		expects_lr<void> composition::derive_secret_key(type alg, const cseckey secret_key1, const cseckey secret_key2, cseckey secret_key, size_t* secret_key_size)
 		{
-			VI_ASSERT(SecretKey != nullptr, "secret key should be set");
-			VI_ASSERT(SecretKey1 != nullptr, "secret1 should be set");
-			VI_ASSERT(SecretKey2 != nullptr, "secret2 should be set");
-			memset(SecretKey, 0, sizeof(CSeckey));
-			switch (Alg)
+			VI_ASSERT(secret_key != nullptr, "secret key should be set");
+			VI_ASSERT(secret_key1 != nullptr, "secret1 should be set");
+			VI_ASSERT(secret_key2 != nullptr, "secret2 should be set");
+			memset(secret_key, 0, sizeof(cseckey));
+			switch (alg)
 			{
-				case Type::ED25519:
+				case type::ED25519:
 				{
-					uint8_t X[crypto_core_ed25519_SCALARBYTES], Y[crypto_core_ed25519_SCALARBYTES];
-					memcpy(X, SecretKey1, sizeof(X));
-					memcpy(Y, SecretKey2, sizeof(Y));
+					uint8_t x[crypto_core_ed25519_SCALARBYTES], y[crypto_core_ed25519_SCALARBYTES];
+					memcpy(x, secret_key1, sizeof(x));
+					memcpy(y, secret_key2, sizeof(y));
 
-					CSeckey R;
-					crypto_core_ed25519_scalar_mul(R, X, Y);
-					sha256_Raw(R, sizeof(R) / 2, R + sizeof(R) / 2);
-					memcpy(SecretKey, R, sizeof(R));
-					if (SecretKeySize != nullptr)
-						*SecretKeySize = sizeof(R);
+					cseckey r;
+					crypto_core_ed25519_scalar_mul(r, x, y);
+					sha256_Raw(r, sizeof(r) / 2, r + sizeof(r) / 2);
+					memcpy(secret_key, r, sizeof(r));
+					if (secret_key_size != nullptr)
+						*secret_key_size = sizeof(r);
 
-					return Expectation::Met;
+					return expectation::met;
 				}
-				case Type::SECP256K1:
+				case type::SECP256K1:
 				{
-					secp256k1_context* Context = Signing::GetContext();
-					uint8_t X[32], Y[32];
-					memcpy(X, SecretKey1, sizeof(X));
-					memcpy(Y, SecretKey2, sizeof(Y));
-					if (secp256k1_ec_seckey_tweak_mul(Context, X, Y) != 1)
-						return LayerException("bad parameters");
+					secp256k1_context* context = signing::get_context();
+					uint8_t x[32], y[32];
+					memcpy(x, secret_key1, sizeof(x));
+					memcpy(y, secret_key2, sizeof(y));
+					if (secp256k1_ec_seckey_tweak_mul(context, x, y) != 1)
+						return layer_exception("bad parameters");
 
-					memcpy(SecretKey, X, sizeof(X));
-					if (SecretKeySize)
-						*SecretKeySize = sizeof(X);
-					return Expectation::Met;
+					memcpy(secret_key, x, sizeof(x));
+					if (secret_key_size)
+						*secret_key_size = sizeof(x);
+					return expectation::met;
 				}
 				default:
-					return LayerException("invalid composition algorithm");
+					return layer_exception("invalid composition algorithm");
 			}
 		}
-		void Composition::ConvertToCompositeHash(const uint8_t* A, size_t ASize, const uint8_t* B, size_t BSize, uint8_t C[32])
+		void composition::convert_to_composite_hash(const uint8_t* a, size_t asize, const uint8_t* b, size_t bsize, uint8_t c[32])
 		{
-			SHA256_CTX Context;
-			sha256_Init(&Context);
-			sha256_Update(&Context, A, ASize);
-			sha256_Update(&Context, B, BSize);
-			sha256_Final(&Context, C);
+			SHA256_CTX context;
+			sha256_Init(&context);
+			sha256_Update(&context, a, asize);
+			sha256_Update(&context, b, bsize);
+			sha256_Final(&context, c);
 		}
-		void Composition::ConvertToSecretKeyEd25519(uint8_t SecretKey[32])
+		void composition::convert_to_secret_key_ed25519(uint8_t secret_key[32])
 		{
-			SecretKey[0] &= 248;
-			SecretKey[31] &= 127;
-			SecretKey[31] |= 64;
+			secret_key[0] &= 248;
+			secret_key[31] &= 127;
+			secret_key[31] |= 64;
 		}
-		void Composition::ConvertToScalarEd25519(uint8_t SecretKey[32])
+		void composition::convert_to_scalar_ed25519(uint8_t secret_key[32])
 		{
-			uint8_t Point[64] = { 0 };
-			memcpy(Point, SecretKey, 32);
-			crypto_core_ed25519_scalar_reduce(SecretKey, Point);
+			uint8_t point[64] = { 0 };
+			memcpy(point, secret_key, 32);
+			crypto_core_ed25519_scalar_reduce(secret_key, point);
 		}
-		void Composition::ConvertToSecretSeed(const Seckey SecretKey, const std::string_view& Entropy, CSeed Seed)
+		void composition::convert_to_secret_seed(const seckey secret_key, const std::string_view& entropy, cseed seed)
 		{
-			auto Input = Hashing::Hash512((uint8_t*)Entropy.data(), Entropy.size());
-			Input += Hashing::Hash256(SecretKey, sizeof(Seckey));
-			Hashing::Hash512((uint8_t*)Input.data(), Input.size(), Seed);
+			auto input = hashing::hash512((uint8_t*)entropy.data(), entropy.size());
+			input += hashing::hash256(secret_key, sizeof(seckey));
+			hashing::hash512((uint8_t*)input.data(), input.size(), seed);
 		}
 
-		uint256_t MerkleTree::Path::CalculateRoot(uint256_t Hash) const
+		uint256_t merkle_tree::path::calculate_root(uint256_t hash) const
 		{
-			size_t Offset = Index;
-			for (size_t i = 0; i < Nodes.size(); i++)
+			size_t offset = index;
+			for (size_t i = 0; i < nodes.size(); i++)
 			{
-				Hash = (Offset & 1 ? Hasher(Nodes[i], Hash) : Hasher(Hash, Nodes[i]));
-				Offset >>= 1;
+				hash = (offset & 1 ? hasher(nodes[i], hash) : hasher(hash, nodes[i]));
+				offset >>= 1;
 			}
-			return Hash;
+			return hash;
 		}
-		Vector<uint256_t>& MerkleTree::Path::GetBranch()
+		vector<uint256_t>& merkle_tree::path::get_branch()
 		{
-			return Nodes;
+			return nodes;
 		}
-		const Vector<uint256_t>& MerkleTree::Path::GetBranch() const
+		const vector<uint256_t>& merkle_tree::path::get_branch() const
 		{
-			return Nodes;
+			return nodes;
 		}
-		size_t MerkleTree::Path::GetIndex() const
+		size_t merkle_tree::path::get_index() const
 		{
-			return Index;
+			return index;
 		}
-		bool MerkleTree::Path::Empty()
+		bool merkle_tree::path::empty()
 		{
-			return Nodes.empty();
+			return nodes.empty();
 		}
 
-		MerkleTree::MerkleTree()
+		merkle_tree::merkle_tree()
 		{
 		}
-		MerkleTree::MerkleTree(const uint256_t& PrevMerkleRoot)
+		merkle_tree::merkle_tree(const uint256_t& prev_merkle_root)
 		{
-			if (PrevMerkleRoot > 0)
-				Push(PrevMerkleRoot);
+			if (prev_merkle_root > 0)
+				push(prev_merkle_root);
 		}
-		MerkleTree& MerkleTree::Shift(const uint256_t& Hash)
+		merkle_tree& merkle_tree::shift(const uint256_t& hash)
 		{
-			Nodes.insert(Nodes.begin(), Hash);
-			++Hashes;
+			nodes.insert(nodes.begin(), hash);
+			++hashes;
 			return *this;
 		}
-		MerkleTree& MerkleTree::Push(const uint256_t& Hash)
+		merkle_tree& merkle_tree::push(const uint256_t& hash)
 		{
-			Nodes.push_back(Hash);
-			++Hashes;
+			nodes.push_back(hash);
+			++hashes;
 			return *this;
 		}
-		MerkleTree& MerkleTree::Reset()
+		merkle_tree& merkle_tree::reset()
 		{
-			Nodes.clear();
-			Hashes = 0;
+			nodes.clear();
+			hashes = 0;
 			return *this;
 		}
-		MerkleTree& MerkleTree::Calculate()
+		merkle_tree& merkle_tree::calculate()
 		{
-			VI_ASSERT(Hasher != nullptr, "hash function should be set");
-			if (IsCalculated())
+			VI_ASSERT(hasher != nullptr, "hash function should be set");
+			if (is_calculated())
 				return *this;
 
-			std::sort(Nodes.begin(), Nodes.end());
-			for (size_t Size = Hashes, Node = 0; Size > 1; Size = (Size + 1) / 2)
+			std::sort(nodes.begin(), nodes.end());
+			for (size_t size = hashes, node = 0; size > 1; size = (size + 1) / 2)
 			{
-				for (size_t Offset = 0; Offset < Size; Offset += 2)
-					Nodes.push_back(Hasher(Nodes[Node + Offset], Nodes[Node + std::min(Offset + 1, Size - 1)]));
-				Node += Size;
+				for (size_t offset = 0; offset < size; offset += 2)
+					nodes.push_back(hasher(nodes[node + offset], nodes[node + std::min(offset + 1, size - 1)]));
+				node += size;
 			}
 			return *this;
 		}
-		MerkleTree::Path MerkleTree::CalculatePath(const uint256_t& Hash)
+		merkle_tree::path merkle_tree::calculate_path(const uint256_t& hash)
 		{
-			Path Branch;
-			Branch.Hasher = Hasher;
-			Calculate();
+			path branch;
+			branch.hasher = hasher;
+			calculate();
 
-			auto Begin = Nodes.begin(), End = Nodes.begin() + Hashes;
-			auto It = std::lower_bound(Nodes.begin(), Nodes.begin() + Hashes, Hash);
-			if (It == End)
-				return Branch;
+			auto begin = nodes.begin(), end = nodes.begin() + hashes;
+			auto it = std::lower_bound(nodes.begin(), nodes.begin() + hashes, hash);
+			if (it == end)
+				return branch;
 
-			size_t Index = It - Begin;
-			Branch.Index = Index;
+			size_t index = it - begin;
+			branch.index = index;
 
-			for (size_t Size = Hashes, Node = 0; Size > 1; Size = (Size + 1) / 2)
+			for (size_t size = hashes, node = 0; size > 1; size = (size + 1) / 2)
 			{
-				Branch.Nodes.push_back(Nodes[Node + std::min(Index ^ 1, Size - 1)]);
-				Index >>= 1;
-				Node += Size;
+				branch.nodes.push_back(nodes[node + std::min(index ^ 1, size - 1)]);
+				index >>= 1;
+				node += size;
 			}
 
-			return Branch;
+			return branch;
 		}
-		uint256_t MerkleTree::CalculateRoot()
+		uint256_t merkle_tree::calculate_root()
 		{
-			Calculate();
-			return Nodes.empty() ? uint256_t(0) : Nodes.back();
+			calculate();
+			return nodes.empty() ? uint256_t(0) : nodes.back();
 		}
-		const Vector<uint256_t>& MerkleTree::GetTree()
+		const vector<uint256_t>& merkle_tree::get_tree()
 		{
-			if (!IsCalculated())
-				Calculate();
+			if (!is_calculated())
+				calculate();
 
-			return Nodes;
+			return nodes;
 		}
-		const Vector<uint256_t>& MerkleTree::GetTree() const
+		const vector<uint256_t>& merkle_tree::get_tree() const
 		{
-			return Nodes;
+			return nodes;
 		}
-		size_t MerkleTree::GetComplexity() const
+		size_t merkle_tree::get_complexity() const
 		{
-			return Hashes;
+			return hashes;
 		}
-		bool MerkleTree::IsCalculated() const
+		bool merkle_tree::is_calculated() const
 		{
-			return !Hashes || Hashes < Nodes.size();
+			return !hashes || hashes < nodes.size();
 		}
 	}
 }

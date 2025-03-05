@@ -2,220 +2,220 @@
 #define TAN_KERNEL_TRANSACTION_H
 #include "wallet.h"
 
-namespace Tangent
+namespace tangent
 {
-	namespace Ledger
+	namespace ledger
 	{
-		struct State;
-		struct BlockHeader;
-		struct TransactionContext;
-		struct Receipt;
+		struct state;
+		struct block_header;
+		struct transaction_context;
+		struct receipt;
 
-		enum class StateLevel
+		enum class state_level
 		{
-			Uniform,
-			Multiform
+			uniform,
+			multiform
 		};
 
-		enum class TransactionLevel
+		enum class transaction_level
 		{
-			Functional,
-			Delegation,
-			Consensus,
-			Aggregation
+			functional,
+			delegation,
+			consensus,
+			aggregation
 		};
 
-		struct Transaction : Messages::Authentic
+		struct transaction : messages::authentic
 		{
-			Algorithm::AssetId Asset = 0;
-			Decimal GasPrice;
-			uint256_t GasLimit = 0;
-			uint64_t Sequence = 0;
-			bool Conservative = false;
+			algorithm::asset_id asset = 0;
+			decimal gas_price;
+			uint256_t gas_limit = 0;
+			uint64_t sequence = 0;
+			bool conservative = false;
 
-			virtual ExpectsLR<void> Validate(uint64_t BlockNumber) const;
-			virtual ExpectsLR<void> Execute(TransactionContext* Context) const;
-			virtual ExpectsPromiseRT<void> Dispatch(const Wallet& Proposer, const TransactionContext* Context, Vector<UPtr<Transaction>>* Pipeline) const;
-			virtual bool StorePayload(Format::Stream* Stream) const override;
-			virtual bool LoadPayload(Format::Stream& Stream) override;
-			virtual bool StoreBody(Format::Stream* Stream) const = 0;
-			virtual bool LoadBody(Format::Stream& Stream) = 0;
-			virtual bool RecoverMany(const Receipt& Receipt, OrderedSet<String>& Parties) const;
-			virtual bool RecoverAliases(const Receipt& Receipt, OrderedSet<uint256_t>& Aliases) const;
-			virtual bool Sign(const Algorithm::Seckey SecretKey) override;
-			virtual bool Sign(const Algorithm::Seckey SecretKey, uint64_t NewSequence);
-			virtual bool Sign(const Algorithm::Seckey SecretKey, uint64_t NewSequence, const Decimal& Price);
-			virtual void SetOptimalGas(const Decimal& Price);
-			virtual void SetEstimateGas(const Decimal& Price);
-			virtual void SetGas(const Decimal& Price, const uint256_t& Limit);
-			virtual void SetAsset(const std::string_view& Blockchain, const std::string_view& Token = std::string_view(), const std::string_view& ContractAddress = std::string_view());
-			virtual bool IsConsensus() const;
-			virtual Algorithm::AssetId GetGasAsset() const;
-			virtual TransactionLevel GetType() const;
-			virtual UPtr<Schema> AsSchema() const override;
-			virtual uint32_t AsType() const override = 0;
-			virtual std::string_view AsTypename() const override = 0;
-			virtual uint256_t GetGasEstimate() const = 0;
-			virtual uint64_t GetDispatchOffset() const;
+			virtual expects_lr<void> validate(uint64_t block_number) const;
+			virtual expects_lr<void> execute(transaction_context* context) const;
+			virtual expects_promise_rt<void> dispatch(const wallet& proposer, const transaction_context* context, vector<uptr<transaction>>* pipeline) const;
+			virtual bool store_payload(format::stream* stream) const override;
+			virtual bool load_payload(format::stream& stream) override;
+			virtual bool store_body(format::stream* stream) const = 0;
+			virtual bool load_body(format::stream& stream) = 0;
+			virtual bool recover_many(const receipt& receipt, ordered_set<string>& parties) const;
+			virtual bool recover_aliases(const receipt& receipt, ordered_set<uint256_t>& aliases) const;
+			virtual bool sign(const algorithm::seckey secret_key) override;
+			virtual bool sign(const algorithm::seckey secret_key, uint64_t new_sequence);
+			virtual bool sign(const algorithm::seckey secret_key, uint64_t new_sequence, const decimal& price);
+			virtual void set_optimal_gas(const decimal& price);
+			virtual void set_estimate_gas(const decimal& price);
+			virtual void set_gas(const decimal& price, const uint256_t& limit);
+			virtual void set_asset(const std::string_view& blockchain, const std::string_view& token = std::string_view(), const std::string_view& contract_address = std::string_view());
+			virtual bool is_consensus() const;
+			virtual algorithm::asset_id get_gas_asset() const;
+			virtual transaction_level get_type() const;
+			virtual uptr<schema> as_schema() const override;
+			virtual uint32_t as_type() const override = 0;
+			virtual std::string_view as_typename() const override = 0;
+			virtual uint256_t get_gas_estimate() const = 0;
+			virtual uint64_t get_dispatch_offset() const;
 		};
 
-		struct DelegationTransaction : Transaction
+		struct delegation_transaction : transaction
 		{
-			virtual ExpectsLR<void> Execute(TransactionContext* Context) const override;
-			TransactionLevel GetType() const override;
+			virtual expects_lr<void> execute(transaction_context* context) const override;
+			transaction_level get_type() const override;
 		};
 
-		struct ConsensusTransaction : Transaction
+		struct consensus_transaction : transaction
 		{
-			virtual ExpectsLR<void> Execute(TransactionContext* Context) const override;
-			TransactionLevel GetType() const override;
+			virtual expects_lr<void> execute(transaction_context* context) const override;
+			transaction_level get_type() const override;
 		};
 
-		struct AggregationTransaction : Transaction
+		struct aggregation_transaction : transaction
 		{
-			struct CumulativeBranch
+			struct cumulative_branch
 			{
-				OrderedSet<String> Attestations;
-				Format::Stream Message;
+				ordered_set<string> attestations;
+				format::stream message;
 			};
 
-			struct CumulativeConsensus
+			struct cumulative_consensus
 			{
-				const CumulativeBranch* Branch = nullptr;
-				double Threshold = 0.0;
-				double Progress = 0.0;
-				size_t Committee = 0;
-				bool Reached = false;
+				const cumulative_branch* branch = nullptr;
+				double threshold = 0.0;
+				double progress = 0.0;
+				size_t committee = 0;
+				bool reached = false;
 			};
 
-			OrderedMap<uint256_t, CumulativeBranch> OutputHashes;
-			uint256_t InputHash = 0;
+			ordered_map<uint256_t, cumulative_branch> output_hashes;
+			uint256_t input_hash = 0;
 
-			virtual ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
-			virtual ExpectsLR<void> Execute(TransactionContext* Context) const override;
-			virtual bool StorePayload(Format::Stream* Stream) const override;
-			virtual bool LoadPayload(Format::Stream& Stream) override;
-			virtual bool Sign(const Algorithm::Seckey SecretKey) override;
-			virtual bool Sign(const Algorithm::Seckey SecretKey, uint64_t NewSequence) override;
-			virtual bool Sign(const Algorithm::Seckey SecretKey, uint64_t NewSequence, const Decimal& Price) override;
-			virtual bool Verify(const Algorithm::Pubkey PublicKey) const override;
-			virtual bool Verify(const Algorithm::Pubkey PublicKey, const uint256_t& OutputHash, size_t Index) const;
-			virtual bool Recover(Algorithm::Pubkey PublicKey) const override;
-			virtual bool Recover(Algorithm::Pubkey PublicKey, const uint256_t& OutputHash, size_t Index) const;
-			virtual bool RecoverHash(Algorithm::Pubkeyhash PublicKeyHash) const override;
-			virtual bool RecoverHash(Algorithm::Pubkeyhash PublicKeyHash, const uint256_t& OutputHash, size_t Index) const;
-			virtual bool Attestate(const Algorithm::Seckey SecretKey);
-			virtual bool Merge(const TransactionContext* Context, const AggregationTransaction& Other);
-			virtual bool IsSignatureNull() const override;
-			virtual bool IsConsensusReached() const;
-			virtual void SetOptimalGas(const Decimal& Price) override;
-			virtual void SetConsensus(const uint256_t& OutputHash);
-			virtual void SetSignature(const Algorithm::Recsighash NewValue) override;
-			virtual void SetStatement(const uint256_t& NewInputHash, const Format::Stream& OutputMessage);
-			virtual const CumulativeBranch* GetCumulativeBranch(const TransactionContext* Context) const;
-			virtual Option<CumulativeConsensus> CalculateCumulativeConsensus(OrderedMap<Algorithm::AssetId, size_t>* Aggregators, TransactionContext* Context) const;
-			virtual uint256_t GetCumulativeHash() const;
-			virtual UPtr<Schema> AsSchema() const override;
-			TransactionLevel GetType() const override;
+			virtual expects_lr<void> validate(uint64_t block_number) const override;
+			virtual expects_lr<void> execute(transaction_context* context) const override;
+			virtual bool store_payload(format::stream* stream) const override;
+			virtual bool load_payload(format::stream& stream) override;
+			virtual bool sign(const algorithm::seckey secret_key) override;
+			virtual bool sign(const algorithm::seckey secret_key, uint64_t new_sequence) override;
+			virtual bool sign(const algorithm::seckey secret_key, uint64_t new_sequence, const decimal& price) override;
+			virtual bool verify(const algorithm::pubkey public_key) const override;
+			virtual bool verify(const algorithm::pubkey public_key, const uint256_t& output_hash, size_t index) const;
+			virtual bool recover(algorithm::pubkey public_key) const override;
+			virtual bool recover(algorithm::pubkey public_key, const uint256_t& output_hash, size_t index) const;
+			virtual bool recover_hash(algorithm::pubkeyhash public_key_hash) const override;
+			virtual bool recover_hash(algorithm::pubkeyhash public_key_hash, const uint256_t& output_hash, size_t index) const;
+			virtual bool attestate(const algorithm::seckey secret_key);
+			virtual bool merge(const transaction_context* context, const aggregation_transaction& other);
+			virtual bool is_signature_null() const override;
+			virtual bool is_consensus_reached() const;
+			virtual void set_optimal_gas(const decimal& price) override;
+			virtual void set_consensus(const uint256_t& output_hash);
+			virtual void set_signature(const algorithm::recsighash new_value) override;
+			virtual void set_statement(const uint256_t& new_input_hash, const format::stream& output_message);
+			virtual const cumulative_branch* get_cumulative_branch(const transaction_context* context) const;
+			virtual option<cumulative_consensus> calculate_cumulative_consensus(ordered_map<algorithm::asset_id, size_t>* aggregators, transaction_context* context) const;
+			virtual uint256_t get_cumulative_hash() const;
+			virtual uptr<schema> as_schema() const override;
+			transaction_level get_type() const override;
 		};
 
-		struct Receipt final : Messages::Generic
+		struct receipt final : messages::standard
 		{
-			Vector<std::pair<uint32_t, Format::Variables>> Events;
-			Algorithm::Pubkeyhash From = { 0 };
-			uint256_t TransactionHash = 0;
-			uint256_t AbsoluteGasUse = 0;
-			uint256_t RelativeGasUse = 0;
-			uint256_t RelativeGasPaid = 0;
-			uint64_t GenerationTime = 0;
-			uint64_t FinalizationTime = 0;
-			uint64_t BlockNumber = 0;
-			bool Successful = false;
+			vector<std::pair<uint32_t, format::variables>> events;
+			algorithm::pubkeyhash from = { 0 };
+			uint256_t transaction_hash = 0;
+			uint256_t absolute_gas_use = 0;
+			uint256_t relative_gas_use = 0;
+			uint256_t relative_gas_paid = 0;
+			uint64_t generation_time = 0;
+			uint64_t finalization_time = 0;
+			uint64_t block_number = 0;
+			bool successful = false;
 
-			bool StorePayload(Format::Stream* Stream) const override;
-			bool LoadPayload(Format::Stream& Stream) override;
-			bool IsFromNull() const;
-			void EmitEvent(uint32_t Type, Format::Variables&& Values);
-			const Format::Variables* FindEvent(uint32_t Type, size_t Offset = 0) const;
-			const Format::Variables* ReverseFindEvent(uint32_t Type, size_t Offset = 0) const;
-			Option<String> GetErrorMessages() const;
-			UPtr<Schema> AsSchema() const override;
-			uint32_t AsType() const override;
-			std::string_view AsTypename() const override;
-			static uint32_t AsInstanceType();
-			static std::string_view AsInstanceTypename();
-			template <typename T>
-			void EmitEvent(Format::Variables&& Values)
+			bool store_payload(format::stream* stream) const override;
+			bool load_payload(format::stream& stream) override;
+			bool is_from_null() const;
+			void emit_event(uint32_t type, format::variables&& values);
+			const format::variables* find_event(uint32_t type, size_t offset = 0) const;
+			const format::variables* reverse_find_event(uint32_t type, size_t offset = 0) const;
+			option<string> get_error_messages() const;
+			uptr<schema> as_schema() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
+			template <typename t>
+			void emit_event(format::variables&& values)
 			{
-				EmitEvent(T::AsInstanceType(), std::move(Values));
+				emit_event(t::as_instance_type(), std::move(values));
 			}
-			template <typename T>
-			const Format::Variables* FindEvent(size_t Offset = 0) const
+			template <typename t>
+			const format::variables* find_event(size_t offset = 0) const
 			{
-				return FindEvent(T::AsInstanceType(), Offset);
+				return find_event(t::as_instance_type(), offset);
 			}
-			template <typename T>
-			const Format::Variables* ReverseFindEvent(size_t Offset = 0) const
+			template <typename t>
+			const format::variables* reverse_find_event(size_t offset = 0) const
 			{
-				return ReverseFindEvent(T::AsInstanceType(), Offset);
+				return reverse_find_event(t::as_instance_type(), offset);
 			}
 		};
 
-		struct State : Messages::Generic
+		struct state : messages::standard
 		{
-			uint64_t BlockNumber = 0;
-			uint64_t BlockNonce = 0;
+			uint64_t block_number = 0;
+			uint64_t block_nonce = 0;
 
-			State(uint64_t NewBlockNumber, uint64_t NewBlockNonce);
-			State(const BlockHeader* NewBlockHeader);
-			virtual ~State() = default;
-			virtual ExpectsLR<void> Transition(const TransactionContext* Context, const State* PrevState) = 0;
-			virtual bool Store(Format::Stream* Stream) const override;
-			virtual bool Load(Format::Stream& Stream) override;
-			virtual bool StorePayload(Format::Stream* Stream) const override = 0;
-			virtual bool LoadPayload(Format::Stream& Stream) override = 0;
-			virtual StateLevel AsLevel() const = 0;
-			virtual String AsComposite() const = 0;
-			virtual UPtr<Schema> AsSchema() const override = 0;
-			virtual uint32_t AsType() const override = 0;
-			virtual std::string_view AsTypename() const override = 0;
+			state(uint64_t new_block_number, uint64_t new_block_nonce);
+			state(const block_header* new_block_header);
+			virtual ~state() = default;
+			virtual expects_lr<void> transition(const transaction_context* context, const state* prev_state) = 0;
+			virtual bool store(format::stream* stream) const override;
+			virtual bool load(format::stream& stream) override;
+			virtual bool store_payload(format::stream* stream) const override = 0;
+			virtual bool load_payload(format::stream& stream) override = 0;
+			virtual state_level as_level() const = 0;
+			virtual string as_composite() const = 0;
+			virtual uptr<schema> as_schema() const override = 0;
+			virtual uint32_t as_type() const override = 0;
+			virtual std::string_view as_typename() const override = 0;
 		};
 
-		struct Uniform : State
+		struct uniform : state
 		{
-			Uniform(uint64_t NewBlockNumber, uint64_t NewBlockNonce);
-			Uniform(const BlockHeader* NewBlockHeader);
-			virtual UPtr<Schema> AsSchema() const override;
-			virtual StateLevel AsLevel() const override;
-			virtual String AsComposite() const override;
-			virtual String AsIndex() const = 0;
-			static String AsInstanceComposite(const std::string_view& Index);
-		};
-		
-		struct Multiform : State
-		{
-			Multiform(uint64_t NewBlockNumber, uint64_t NewBlockNonce);
-			Multiform(const BlockHeader* NewBlockHeader);
-			virtual UPtr<Schema> AsSchema() const override;
-			virtual StateLevel AsLevel() const override;
-			virtual String AsComposite() const override;
-			virtual String AsColumn() const = 0;
-			virtual String AsRow() const = 0;
-			virtual int64_t AsFactor() const = 0;
-			static String AsInstanceComposite(const std::string_view& Column, const std::string_view& Row);
+			uniform(uint64_t new_block_number, uint64_t new_block_nonce);
+			uniform(const block_header* new_block_header);
+			virtual uptr<schema> as_schema() const override;
+			virtual state_level as_level() const override;
+			virtual string as_composite() const override;
+			virtual string as_index() const = 0;
+			static string as_instance_composite(const std::string_view& index);
 		};
 
-		class GasUtil
+		struct multiform : state
+		{
+			multiform(uint64_t new_block_number, uint64_t new_block_nonce);
+			multiform(const block_header* new_block_header);
+			virtual uptr<schema> as_schema() const override;
+			virtual state_level as_level() const override;
+			virtual string as_composite() const override;
+			virtual string as_column() const = 0;
+			virtual string as_row() const = 0;
+			virtual int64_t as_factor() const = 0;
+			static string as_instance_composite(const std::string_view& column, const std::string_view& row);
+		};
+
+		class gas_util
 		{
 		public:
-			static uint256_t GetGasWork(const uint128_t& Difficulty, const uint256_t& GasUse, const uint256_t& GasLimit, uint64_t Priority);
-			static uint256_t GetOperationalGasEstimate(size_t Size, size_t Operations);
-			static uint256_t GetStorageGasEstimate(size_t BytesIn, size_t BytesOut);
-			template <typename T, size_t Operations>
-			static uint256_t GetGasEstimate()
+			static uint256_t get_gas_work(const uint128_t& difficulty, const uint256_t& gas_use, const uint256_t& gas_limit, uint64_t priority);
+			static uint256_t get_operational_gas_estimate(size_t size, size_t operations);
+			static uint256_t get_storage_gas_estimate(size_t bytes_in, size_t bytes_out);
+			template <typename t, size_t operations>
+			static uint256_t get_gas_estimate()
 			{
-				static uint256_t Limit = GetOperationalGasEstimate(T().AsMessage().Data.size(), Operations);
-				return Limit;
+				static uint256_t limit = get_operational_gas_estimate(t().as_message().data.size(), operations);
+				return limit;
 			}
 		};
 	}

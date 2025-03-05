@@ -1,512 +1,512 @@
 #include "serialization.h"
 #include "../kernel/algorithm.h"
 
-namespace Tangent
+namespace tangent
 {
-	namespace Format
+	namespace format
 	{
-		static uint256_t ContextualParseUint256(const std::string_view& Numeric)
+		static uint256_t contextual_parse_uint256(const std::string_view& numeric)
 		{
-			if (Numeric.size() < 3)
-				return uint256_t(*FromString<uint8_t>(Numeric));
-			else if (Numeric.size() < 5)
-				return uint256_t(*FromString<uint16_t>(Numeric));
-			else if (Numeric.size() < 10)
-				return uint256_t(*FromString<uint32_t>(Numeric));
-			else if (Numeric.size() < 20)
-				return uint256_t(*FromString<uint64_t>(Numeric));
+			if (numeric.size() < 3)
+				return uint256_t(*from_string<uint8_t>(numeric));
+			else if (numeric.size() < 5)
+				return uint256_t(*from_string<uint16_t>(numeric));
+			else if (numeric.size() < 10)
+				return uint256_t(*from_string<uint32_t>(numeric));
+			else if (numeric.size() < 20)
+				return uint256_t(*from_string<uint64_t>(numeric));
 
-			return uint256_t(Numeric);
+			return uint256_t(numeric);
 		}
 
-		Stream::Stream() : Checksum(0), Seek(0)
+		stream::stream() : checksum(0), seek(0)
 		{
 		}
-		Stream::Stream(const std::string_view& NewData) : Data(NewData), Checksum(0), Seek(0)
+		stream::stream(const std::string_view& new_data) : data(new_data), checksum(0), seek(0)
 		{
 		}
-		Stream::Stream(String&& NewData) : Data(std::move(NewData)), Checksum(0), Seek(0)
+		stream::stream(string&& new_data) : data(std::move(new_data)), checksum(0), seek(0)
 		{
 		}
-		size_t Stream::Read(void* Value, uint32_t Size)
+		size_t stream::read(void* value, uint32_t size)
 		{
-			if (!Value || !Size || Size + Seek > Data.size())
+			if (!value || !size || size + seek > data.size())
 				return 0;
 
-			memcpy(Value, Data.data() + Seek, (size_t)Size);
-			Seek += Size;
-			return Size;
+			memcpy(value, data.data() + seek, (size_t)size);
+			seek += size;
+			return size;
 		}
-		Viewable Stream::ReadType()
+		viewable stream::read_type()
 		{
-			Viewable Type = Viewable::Invalid;
-			return ReadType(&Type) ? Type : Viewable::Invalid;
+			viewable type = viewable::invalid;
+			return read_type(&type) ? type : viewable::invalid;
 		}
-		bool Stream::ReadType(Viewable* Value)
+		bool stream::read_type(viewable* value)
 		{
-			VI_ASSERT(Value != nullptr, "value should be set");
-			return Read(Value, sizeof(uint8_t)) == sizeof(uint8_t);
+			VI_ASSERT(value != nullptr, "value should be set");
+			return read(value, sizeof(uint8_t)) == sizeof(uint8_t);
 		}
-		bool Stream::ReadString(Viewable Type, String* Value)
+		bool stream::read_string(viewable type, string* value)
 		{
-			VI_ASSERT(Value != nullptr, "value should be set");
-			if (Util::IsString(Type))
+			VI_ASSERT(value != nullptr, "value should be set");
+			if (util::is_string(type))
 			{
-				char Buffer[256];
-				uint8_t Size = Util::GetStringSize(Type);
-				if (Read(Buffer, Size) != Size)
+				char buffer[256];
+				uint8_t size = util::get_string_size(type);
+				if (read(buffer, size) != size)
 					return false;
 
-				if (Util::IsString16(Type))
-					Value->assign(Util::Encode0xHex(std::string_view(Buffer, (size_t)Size)));
+				if (util::is_string16(type))
+					value->assign(util::encode_0xhex(std::string_view(buffer, (size_t)size)));
 				else
-					Value->assign(Buffer, (size_t)Size);
+					value->assign(buffer, (size_t)size);
 				return true;
 			}
-			else if (Type != Viewable::StringAny10 && Type != Viewable::StringAny16)
+			else if (type != viewable::string_any10 && type != viewable::string_any16)
 				return false;
 
-			Viewable Subtype; uint32_t Size = 0;
-			if (!ReadType(&Subtype) || !ReadInteger(Subtype, &Size) || Size > Protocol::Now().Message.MaxMessageSize)
+			viewable subtype; uint32_t size = 0;
+			if (!read_type(&subtype) || !read_integer(subtype, &size) || size > protocol::now().message.max_message_size)
 				return false;
 
-			Vector<char> Data;
-			Data.resize((size_t)Size);
-			if (Read((void*)Data.data(), Size) != Size)
+			vector<char> data;
+			data.resize((size_t)size);
+			if (read((void*)data.data(), size) != size)
 				return false;
 
-			switch (Type)
+			switch (type)
 			{
-				case Viewable::StringAny10:
-					Value->assign(Data.begin(), Data.end());
+				case viewable::string_any10:
+					value->assign(data.begin(), data.end());
 					return true;
-				case Viewable::StringAny16:
-					Value->assign(Util::Encode0xHex(std::string_view(Data.data(), Data.size())));
+				case viewable::string_any16:
+					value->assign(util::encode_0xhex(std::string_view(data.data(), data.size())));
 					return true;
 				default:
 					return false;
 			}
 		}
-		bool Stream::ReadDecimal(Viewable Type, Decimal* Value)
+		bool stream::read_decimal(viewable type, decimal* value)
 		{
-			VI_ASSERT(Value != nullptr, "value should be set");
-			Viewable Subtype;
-			if (Type == Viewable::DecimalNaN)
+			VI_ASSERT(value != nullptr, "value should be set");
+			viewable subtype;
+			if (type == viewable::decimal_nan)
 			{
-				*Value = Decimal::NaN();
+				*value = decimal::nan();
 				return true;
 			}
-			else if (Type == Viewable::DecimalZero)
+			else if (type == viewable::decimal_zero)
 			{
-				*Value = Decimal::Zero();
+				*value = decimal::zero();
 				return true;
 			}
-			else if (Type != Viewable::DecimalNeg1 && Type != Viewable::DecimalNeg2 && Type != Viewable::DecimalPos1 && Type != Viewable::DecimalPos2)
+			else if (type != viewable::decimal_neg1 && type != viewable::decimal_neg2 && type != viewable::decimal_pos1 && type != viewable::decimal_pos2)
 				return false;
 
-			uint256_t Left;
-			if (!ReadType(&Subtype) || !ReadInteger(Subtype, &Left))
+			uint256_t left;
+			if (!read_type(&subtype) || !read_integer(subtype, &left))
 				return false;
 
-			String Numeric = "-";
-			Numeric.append(Left.ToString());
-			if (Type == Viewable::DecimalNeg2 || Type == Viewable::DecimalPos2)
+			string numeric = "-";
+			numeric.append(left.to_string());
+			if (type == viewable::decimal_neg2 || type == viewable::decimal_pos2)
 			{
-				uint256_t Right;
-				if (!ReadType(&Subtype) || !ReadInteger(Subtype, &Right))
+				uint256_t right;
+				if (!read_type(&subtype) || !read_integer(subtype, &right))
 					return false;
 
-				Numeric.append(1, '.');
-				size_t Offset = Numeric.size();
-				Numeric.append(Right.ToString());
-				std::reverse(Numeric.begin() + Offset, Numeric.end());
+				numeric.append(1, '.');
+				size_t offset = numeric.size();
+				numeric.append(right.to_string());
+				std::reverse(numeric.begin() + offset, numeric.end());
 			}
 
-			if (Type != Viewable::DecimalNeg1 && Type != Viewable::DecimalNeg2)
-				*Value = Decimal(std::string_view(Numeric).substr(1));
+			if (type != viewable::decimal_neg1 && type != viewable::decimal_neg2)
+				*value = decimal(std::string_view(numeric).substr(1));
 			else
-				*Value = Decimal(Numeric);
+				*value = decimal(numeric);
 			return true;
 		}
-		bool Stream::ReadInteger(Viewable Type, uint8_t* Value)
+		bool stream::read_integer(viewable type, uint8_t* value)
 		{
-			VI_ASSERT(Value != nullptr, "value should be set");
-			uint256_t Base;
-			if (!ReadInteger(Type, &Base) || Base > std::numeric_limits<uint8_t>::max())
+			VI_ASSERT(value != nullptr, "value should be set");
+			uint256_t base;
+			if (!read_integer(type, &base) || base > std::numeric_limits<uint8_t>::max())
 				return false;
 
-			*Value = (uint8_t)Base;
+			*value = (uint8_t)base;
 			return true;
 		}
-		bool Stream::ReadInteger(Viewable Type, uint16_t* Value)
+		bool stream::read_integer(viewable type, uint16_t* value)
 		{
-			VI_ASSERT(Value != nullptr, "value should be set");
-			uint256_t Base;
-			if (!ReadInteger(Type, &Base) || Base > std::numeric_limits<uint16_t>::max())
+			VI_ASSERT(value != nullptr, "value should be set");
+			uint256_t base;
+			if (!read_integer(type, &base) || base > std::numeric_limits<uint16_t>::max())
 				return false;
 
-			*Value = (uint16_t)Base;
+			*value = (uint16_t)base;
 			return true;
 		}
-		bool Stream::ReadInteger(Viewable Type, uint32_t* Value)
+		bool stream::read_integer(viewable type, uint32_t* value)
 		{
-			VI_ASSERT(Value != nullptr, "value should be set");
-			uint256_t Base;
-			if (!ReadInteger(Type, &Base) || Base > std::numeric_limits<uint32_t>::max())
+			VI_ASSERT(value != nullptr, "value should be set");
+			uint256_t base;
+			if (!read_integer(type, &base) || base > std::numeric_limits<uint32_t>::max())
 				return false;
 
-			*Value = (uint32_t)Base;
+			*value = (uint32_t)base;
 			return true;
 		}
-		bool Stream::ReadInteger(Viewable Type, uint64_t* Value)
+		bool stream::read_integer(viewable type, uint64_t* value)
 		{
-			VI_ASSERT(Value != nullptr, "value should be set");
-			uint256_t Base;
-			if (!ReadInteger(Type, &Base) || Base > std::numeric_limits<uint64_t>::max())
+			VI_ASSERT(value != nullptr, "value should be set");
+			uint256_t base;
+			if (!read_integer(type, &base) || base > std::numeric_limits<uint64_t>::max())
 				return false;
 
-			*Value = (uint64_t)Base;
+			*value = (uint64_t)base;
 			return true;
 		}
-		bool Stream::ReadInteger(Viewable Type, uint128_t* Value)
+		bool stream::read_integer(viewable type, uint128_t* value)
 		{
-			VI_ASSERT(Value != nullptr, "value should be set");
-			uint256_t Base;
-			if (!ReadInteger(Type, &Base) || Base > uint128_t::Max())
+			VI_ASSERT(value != nullptr, "value should be set");
+			uint256_t base;
+			if (!read_integer(type, &base) || base > uint128_t::max())
 				return false;
 
-			*Value = (uint128_t)Base;
+			*value = (uint128_t)base;
 			return true;
 		}
-		bool Stream::ReadInteger(Viewable Type, uint256_t* Value)
+		bool stream::read_integer(viewable type, uint256_t* value)
 		{
-			VI_ASSERT(Value != nullptr, "value should be set");
-			if (!Util::IsInteger(Type))
+			VI_ASSERT(value != nullptr, "value should be set");
+			if (!util::is_integer(type))
 				return false;
 
-			uint64_t Array[4] = { 0 };
-			uint8_t Size = Util::GetIntegerSize(Type);
-			if (Read(Array, Size) != Size)
+			uint64_t array[4] = { 0 };
+			uint8_t size = util::get_integer_size(type);
+			if (read(array, size) != size)
 				return false;
 
-			auto& Bits0 = Value->Low().Low();
-			auto& Bits1 = Value->Low().High();
-			auto& Bits2 = Value->High().Low();
-			auto& Bits3 = Value->High().High();
-			Array[0] = OS::CPU::ToEndianness(OS::CPU::Endian::Little, Array[0]);
-			Array[1] = OS::CPU::ToEndianness(OS::CPU::Endian::Little, Array[1]);
-			Array[2] = OS::CPU::ToEndianness(OS::CPU::Endian::Little, Array[2]);
-			Array[3] = OS::CPU::ToEndianness(OS::CPU::Endian::Little, Array[3]);
-			memcpy((uint64_t*)&Bits0, &Array[0], sizeof(uint64_t));
-			memcpy((uint64_t*)&Bits1, &Array[1], sizeof(uint64_t));
-			memcpy((uint64_t*)&Bits2, &Array[2], sizeof(uint64_t));
-			memcpy((uint64_t*)&Bits3, &Array[3], sizeof(uint64_t));
+			auto& bits0 = value->low().low();
+			auto& bits1 = value->low().high();
+			auto& bits2 = value->high().low();
+			auto& bits3 = value->high().high();
+			array[0] = os::hw::to_endianness(os::hw::endian::little, array[0]);
+			array[1] = os::hw::to_endianness(os::hw::endian::little, array[1]);
+			array[2] = os::hw::to_endianness(os::hw::endian::little, array[2]);
+			array[3] = os::hw::to_endianness(os::hw::endian::little, array[3]);
+			memcpy((uint64_t*)&bits0, &array[0], sizeof(uint64_t));
+			memcpy((uint64_t*)&bits1, &array[1], sizeof(uint64_t));
+			memcpy((uint64_t*)&bits2, &array[2], sizeof(uint64_t));
+			memcpy((uint64_t*)&bits3, &array[3], sizeof(uint64_t));
 			return true;
 		}
-		bool Stream::ReadBoolean(Viewable Type, bool* Value)
+		bool stream::read_boolean(viewable type, bool* value)
 		{
-			VI_ASSERT(Value != nullptr, "value should be set");
-			if (Type != Viewable::True && Type != Viewable::False)
+			VI_ASSERT(value != nullptr, "value should be set");
+			if (type != viewable::true_type && type != viewable::false_type)
 				return false;
 
-			*Value = (Type == Viewable::True);
+			*value = (type == viewable::true_type);
 			return true;
 		}
-		Stream& Stream::Clear()
+		stream& stream::clear()
 		{
-			Data.clear();
-			Checksum = 0;
-			Seek = 0;
+			data.clear();
+			checksum = 0;
+			seek = 0;
 			return *this;
 		}
-		Stream& Stream::Rewind(size_t Offset)
+		stream& stream::rewind(size_t offset)
 		{
-			Seek = (Offset <= Data.size() ? Offset : Data.size());
+			seek = (offset <= data.size() ? offset : data.size());
 			return *this;
 		}
-		void Stream::Write(const void* Value, uint32_t Size)
+		void stream::write(const void* value, uint32_t size)
 		{
-			if (Size > 0 && Value != nullptr)
+			if (size > 0 && value != nullptr)
 			{
-				size_t Index = Data.size();
-				Data.resize(Data.size() + (size_t)Size);
-				memcpy((char*)Data.data() + Index, Value, (size_t)Size);
-				Checksum = 0;
+				size_t index = data.size();
+				data.resize(data.size() + (size_t)size);
+				memcpy((char*)data.data() + index, value, (size_t)size);
+				checksum = 0;
 			}
 		}
-		Stream& Stream::WriteString(const std::string_view& Value)
+		stream& stream::write_string(const std::string_view& value)
 		{
-			if (Util::IsHexEncoding(Value))
+			if (util::is_hex_encoding(value))
 			{
-				String Source = Codec::HexDecode(Value);
-				if (Source.size() > Util::GetMaxStringSize())
+				string source = codec::hex_decode(value);
+				if (source.size() > util::get_max_string_size())
 				{
-					uint8_t Type = (uint8_t)Util::GetStringType(Source, true);
-					uint32_t Size = std::min<uint32_t>(Protocol::Now().Message.MaxMessageSize, (uint32_t)Source.size());
-					Write(&Type, sizeof(uint8_t));
-					WriteInteger(Size);
-					Write(Source.data(), Size);
+					uint8_t type = (uint8_t)util::get_string_type(source, true);
+					uint32_t size = std::min<uint32_t>(protocol::now().message.max_message_size, (uint32_t)source.size());
+					write(&type, sizeof(uint8_t));
+					write_integer(size);
+					write(source.data(), size);
 				}
 				else
 				{
-					uint8_t Type = (uint8_t)Util::GetStringType(Source, true);
-					uint8_t Size = Util::GetStringSize((Viewable)Type);
-					Write(&Type, sizeof(uint8_t));
-					Write(Source.data(), Size);
+					uint8_t type = (uint8_t)util::get_string_type(source, true);
+					uint8_t size = util::get_string_size((viewable)type);
+					write(&type, sizeof(uint8_t));
+					write(source.data(), size);
 				}
 			}
-			else if (Value.size() > Util::GetMaxStringSize())
+			else if (value.size() > util::get_max_string_size())
 			{
-				uint32_t Size = std::min<uint32_t>(Protocol::Now().Message.MaxMessageSize, (uint32_t)Value.size());
-				uint8_t Type = (uint8_t)Util::GetStringType(Value, false);
-				Write(&Type, sizeof(uint8_t));
-				WriteInteger(Size);
-				Write(Value.data(), Size);
+				uint32_t size = std::min<uint32_t>(protocol::now().message.max_message_size, (uint32_t)value.size());
+				uint8_t type = (uint8_t)util::get_string_type(value, false);
+				write(&type, sizeof(uint8_t));
+				write_integer(size);
+				write(value.data(), size);
 			}
 			else
 			{
-				uint8_t Type = (uint8_t)Util::GetStringType(Value, false);
-				uint8_t Size = Util::GetStringSize((Viewable)Type);
-				Write(&Type, sizeof(uint8_t));
-				Write(Value.data(), Size);
+				uint8_t type = (uint8_t)util::get_string_type(value, false);
+				uint8_t size = util::get_string_size((viewable)type);
+				write(&type, sizeof(uint8_t));
+				write(value.data(), size);
 			}
 			return *this;
 		}
-		Stream& Stream::WriteDecimal(const Decimal& Value)
+		stream& stream::write_decimal(const decimal& value)
 		{
-			if (Value.IsNaN())
+			if (value.is_nan())
 			{
-				uint8_t Type = (uint8_t)Viewable::DecimalNaN;
-				Write(&Type, sizeof(uint8_t));
+				uint8_t type = (uint8_t)viewable::decimal_nan;
+				write(&type, sizeof(uint8_t));
 				return *this;
 			}
-			else if (Value.IsZero())
+			else if (value.is_zero())
 			{
-				uint8_t Type = (uint8_t)Viewable::DecimalZero;
-				Write(&Type, sizeof(uint8_t));
+				uint8_t type = (uint8_t)viewable::decimal_zero;
+				write(&type, sizeof(uint8_t));
 				return *this;
 			}
 
-			String Numeric = Value.Numeric();
-			uint16_t Decimals = Value.DecimalPlaces();
-			int8_t Position = Value.Position();
-			uint8_t Type = (uint8_t)(Decimals > 0 ? (Position < 0 ? Viewable::DecimalNeg2 : Viewable::DecimalPos2) : (Position < 0 ? Viewable::DecimalNeg1 : Viewable::DecimalPos1));
-			std::reverse(Numeric.begin() + Decimals, Numeric.end());
+			string numeric = value.numeric();
+			uint16_t decimals = value.decimal_places();
+			int8_t position = value.position();
+			uint8_t type = (uint8_t)(decimals > 0 ? (position < 0 ? viewable::decimal_neg2 : viewable::decimal_pos2) : (position < 0 ? viewable::decimal_neg1 : viewable::decimal_pos1));
+			std::reverse(numeric.begin() + decimals, numeric.end());
 
-			auto Left = std::string_view(Numeric).substr(Decimals);
-			Write(&Type, sizeof(uint8_t));
-			WriteInteger(ContextualParseUint256(Left));
-			if (Decimals > 0)
+			auto left = std::string_view(numeric).substr(decimals);
+			write(&type, sizeof(uint8_t));
+			write_integer(contextual_parse_uint256(left));
+			if (decimals > 0)
 			{
-				auto Right = std::string_view(Numeric).substr(0, Decimals);
-				WriteInteger(ContextualParseUint256(Right));
+				auto right = std::string_view(numeric).substr(0, decimals);
+				write_integer(contextual_parse_uint256(right));
 			}
 			return *this;
 		}
-		Stream& Stream::WriteInteger(const uint256_t& Value)
+		stream& stream::write_integer(const uint256_t& value)
 		{
-			uint8_t Type = (uint8_t)Util::GetIntegerType(Value);
-			uint8_t Size = Util::GetIntegerSize((Viewable)Type);
-			Write(&Type, sizeof(uint8_t));
+			uint8_t type = (uint8_t)util::get_integer_type(value);
+			uint8_t size = util::get_integer_size((viewable)type);
+			write(&type, sizeof(uint8_t));
 
-			uint64_t Array[4];
-			if (Size > sizeof(uint64_t) * 0)
+			uint64_t array[4];
+			if (size > sizeof(uint64_t) * 0)
 			{
-				Array[0] = OS::CPU::ToEndianness(OS::CPU::Endian::Little, Value.Low().Low());
-				if (Size > sizeof(uint64_t) * 1)
+				array[0] = os::hw::to_endianness(os::hw::endian::little, value.low().low());
+				if (size > sizeof(uint64_t) * 1)
 				{
-					Array[1] = OS::CPU::ToEndianness(OS::CPU::Endian::Little, Value.Low().High());
-					if (Size > sizeof(uint64_t) * 2)
+					array[1] = os::hw::to_endianness(os::hw::endian::little, value.low().high());
+					if (size > sizeof(uint64_t) * 2)
 					{
-						Array[2] = OS::CPU::ToEndianness(OS::CPU::Endian::Little, Value.High().Low());
-						if (Size > sizeof(uint64_t) * 3)
-							Array[3] = OS::CPU::ToEndianness(OS::CPU::Endian::Little, Value.High().High());
+						array[2] = os::hw::to_endianness(os::hw::endian::little, value.high().low());
+						if (size > sizeof(uint64_t) * 3)
+							array[3] = os::hw::to_endianness(os::hw::endian::little, value.high().high());
 					}
 				}
 			}
-			Write(Array, Size);
+			write(array, size);
 			return *this;
 		}
-		Stream& Stream::WriteBoolean(bool Value)
+		stream& stream::write_boolean(bool value)
 		{
-			uint8_t Type = (uint8_t)(Value ? Viewable::True : Viewable::False);
-			Write(&Type, sizeof(uint8_t));
+			uint8_t type = (uint8_t)(value ? viewable::true_type : viewable::false_type);
+			write(&type, sizeof(uint8_t));
 			return *this;
 		}
-		Stream& Stream::WriteTypeless(const uint256_t& Value)
+		stream& stream::write_typeless(const uint256_t& value)
 		{
-			uint8_t Size = Util::GetIntegerSize(Util::GetIntegerType(Value));
-			uint64_t Array[4];
-			if (Size > sizeof(uint64_t) * 0)
+			uint8_t size = util::get_integer_size(util::get_integer_type(value));
+			uint64_t array[4];
+			if (size > sizeof(uint64_t) * 0)
 			{
-				Array[0] = OS::CPU::ToEndianness(OS::CPU::Endian::Little, Value.Low().Low());
-				if (Size > sizeof(uint64_t) * 1)
+				array[0] = os::hw::to_endianness(os::hw::endian::little, value.low().low());
+				if (size > sizeof(uint64_t) * 1)
 				{
-					Array[1] = OS::CPU::ToEndianness(OS::CPU::Endian::Little, Value.Low().High());
-					if (Size > sizeof(uint64_t) * 2)
+					array[1] = os::hw::to_endianness(os::hw::endian::little, value.low().high());
+					if (size > sizeof(uint64_t) * 2)
 					{
-						Array[2] = OS::CPU::ToEndianness(OS::CPU::Endian::Little, Value.High().Low());
-						if (Size > sizeof(uint64_t) * 3)
-							Array[3] = OS::CPU::ToEndianness(OS::CPU::Endian::Little, Value.High().High());
+						array[2] = os::hw::to_endianness(os::hw::endian::little, value.high().low());
+						if (size > sizeof(uint64_t) * 3)
+							array[3] = os::hw::to_endianness(os::hw::endian::little, value.high().high());
 					}
 				}
 			}
-			Write(Array, Size);
+			write(array, size);
 			return *this;
 		}
-		Stream& Stream::WriteTypeless(const char* Data, uint8_t Size)
+		stream& stream::write_typeless(const char* data, uint8_t size)
 		{
-			Write(Data, Size);
+			write(data, size);
 			return *this;
 		}
-		Stream& Stream::WriteTypeless(const char* Data, uint32_t Size)
+		stream& stream::write_typeless(const char* data, uint32_t size)
 		{
-			Write(Data, Size);
+			write(data, size);
 			return *this;
 		}
-		bool Stream::IsEof() const
+		bool stream::is_eof() const
 		{
-			return Seek >= Data.size();
+			return seek >= data.size();
 		}
-		String Stream::Compress() const
+		string stream::compress() const
 		{
-			auto Status = Codec::Compress(Data, Compression::BestCompression);
-			return Status ? *Status : Data;
+			auto status = codec::compress(data, compression::best_compression);
+			return status ? *status : data;
 		}
-		String Stream::Encode() const
+		string stream::encode() const
 		{
-			return Util::Encode0xHex(Data);
+			return util::encode_0xhex(data);
 		}
-		uint256_t Stream::Hash(bool Renew) const
+		uint256_t stream::hash(bool renew) const
 		{
-			if (Renew || !Checksum)
-				((Stream*)this)->Checksum = Algorithm::Hashing::Hash256i(Data);
-			return Checksum;
+			if (renew || !checksum)
+				((stream*)this)->checksum = algorithm::hashing::hash256i(data);
+			return checksum;
 		}
-		Stream Stream::Decompress(const std::string_view& Data)
+		stream stream::decompress(const std::string_view& data)
 		{
-			auto Raw = Util::IsHexEncoding(Data) ? Util::Decode0xHex(Data) : String(Data);
-			auto Status = Codec::Decompress(Raw);
-			return Stream(Status ? *Status : Raw);
+			auto raw = util::is_hex_encoding(data) ? util::decode_0xhex(data) : string(data);
+			auto status = codec::decompress(raw);
+			return stream(status ? *status : raw);
 		}
-		Stream Stream::Decode(const std::string_view& Data)
+		stream stream::decode(const std::string_view& data)
 		{
-			return Util::IsHexEncoding(Data) ? Stream(Util::Decode0xHex(Data)) : Stream(Data);
+			return util::is_hex_encoding(data) ? stream(util::decode_0xhex(data)) : stream(data);
 		}
 
-		String Util::Encode0xHex(const std::string_view& Data)
+		string util::encode_0xhex(const std::string_view& data)
 		{
-			return Assign0xHex(Codec::HexEncode(Data));
+			return assign_0xhex(codec::hex_encode(data));
 		}
-		String Util::Decode0xHex(const std::string_view& Data)
+		string util::decode_0xhex(const std::string_view& data)
 		{
-			return Codec::HexDecode(Data);
+			return codec::hex_decode(data);
 		}
-		String Util::Assign0xHex(const std::string_view& Data)
+		string util::assign_0xhex(const std::string_view& data)
 		{
-			String Result = Stringify::StartsWith(Data, "0x") ? String() : String(Data.empty() ? "0x0" : "0x");
-			return Result.append(Data);
+			string result = stringify::starts_with(data, "0x") ? string() : string(data.empty() ? "0x0" : "0x");
+			return result.append(data);
 		}
-		String Util::Clear0xHex(const std::string_view& Data, bool Uppercase)
+		string util::clear_0xhex(const std::string_view& data, bool uppercase)
 		{
-			String Result = String(Stringify::StartsWith(Data, "0x") ? Data.substr(2) : Data);
-			return Uppercase ? Stringify::ToUpper(Result) : Stringify::ToLower(Result);
+			string result = string(stringify::starts_with(data, "0x") ? data.substr(2) : data);
+			return uppercase ? stringify::to_upper(result) : stringify::to_lower(result);
 		}
-		bool Util::IsHexEncoding(const std::string_view& Data)
+		bool util::is_hex_encoding(const std::string_view& data)
 		{
-			static std::string_view Alphabet = "0123456789abcdefABCDEF";
-			if (Data.empty() || Data.size() % 2 != 0)
+			static std::string_view alphabet = "0123456789abcdefABCDEF";
+			if (data.empty() || data.size() % 2 != 0)
 				return false;
 
-			auto Text = (Data.size() < 2 || Data[0] != '0' || Data[1] != 'x' ? Data : Data.substr(2));
-			return Text.find_first_not_of(Alphabet) == std::string::npos;
+			auto text = (data.size() < 2 || data[0] != '0' || data[1] != 'x' ? data : data.substr(2));
+			return text.find_first_not_of(alphabet) == std::string::npos;
 		}
-		bool Util::IsBase64Encoding(const std::string_view& Data)
+		bool util::is_base64_encoding(const std::string_view& data)
 		{
-			static std::string_view Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-			if (Data.empty())
+			static std::string_view alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+			if (data.empty())
 				return false;
 
-			return Data.find_first_not_of(Alphabet) == std::string::npos;
+			return data.find_first_not_of(alphabet) == std::string::npos;
 		}
-		bool Util::IsBase64URLEncoding(const std::string_view& Data)
+		bool util::is_base64_url_encoding(const std::string_view& data)
 		{
-			static std::string_view Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-			if (Data.empty())
+			static std::string_view alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+			if (data.empty())
 				return false;
 
-			return Data.find_first_not_of(Alphabet) == std::string::npos;
+			return data.find_first_not_of(alphabet) == std::string::npos;
 		}
-		bool Util::IsInteger(Viewable Type)
+		bool util::is_integer(viewable type)
 		{
-			return (uint8_t)Type >= (uint8_t)Viewable::UintMin && (uint8_t)Type <= (uint8_t)Viewable::UintMax;
+			return (uint8_t)type >= (uint8_t)viewable::uint_min && (uint8_t)type <= (uint8_t)viewable::uint_max;
 		}
-		bool Util::IsString(Viewable Type)
+		bool util::is_string(viewable type)
 		{
-			return IsString10(Type) || IsString16(Type);
+			return is_string10(type) || is_string16(type);
 		}
-		bool Util::IsString10(Viewable Type)
+		bool util::is_string10(viewable type)
 		{
-			return (uint8_t)Type >= (uint8_t)Viewable::StringMin10 && (uint8_t)Type <= (uint8_t)Viewable::StringMax10;
+			return (uint8_t)type >= (uint8_t)viewable::string_min10 && (uint8_t)type <= (uint8_t)viewable::string_max10;
 		}
-		bool Util::IsString16(Viewable Type)
+		bool util::is_string16(viewable type)
 		{
-			return (uint8_t)Type >= (uint8_t)Viewable::StringMin16;
+			return (uint8_t)type >= (uint8_t)viewable::string_min16;
 		}
-		uint8_t Util::GetIntegerSize(Viewable Type)
+		uint8_t util::get_integer_size(viewable type)
 		{
-			if ((uint8_t)Type < (uint8_t)Viewable::UintMin)
+			if ((uint8_t)type < (uint8_t)viewable::uint_min)
 				return 0;
 
-			return (uint8_t)Type - (uint8_t)Viewable::UintMin;
+			return (uint8_t)type - (uint8_t)viewable::uint_min;
 		}
-		Viewable Util::GetIntegerType(const uint256_t& Data)
+		viewable util::get_integer_type(const uint256_t& data)
 		{
-			uint64_t Array[4] =
+			uint64_t array[4] =
 			{
-				OS::CPU::ToEndianness(OS::CPU::Endian::Little, Data.Low().Low()),
-				OS::CPU::ToEndianness(OS::CPU::Endian::Little, Data.Low().High()),
-				OS::CPU::ToEndianness(OS::CPU::Endian::Little, Data.High().Low()),
-				OS::CPU::ToEndianness(OS::CPU::Endian::Little, Data.High().High())
+				os::hw::to_endianness(os::hw::endian::little, data.low().low()),
+				os::hw::to_endianness(os::hw::endian::little, data.low().high()),
+				os::hw::to_endianness(os::hw::endian::little, data.high().low()),
+				os::hw::to_endianness(os::hw::endian::little, data.high().high())
 			};
-			uint8_t Bytes = sizeof(Array);
-			char* Inline = (char*)Array;
-			while (Bytes > 0 && !Inline[Bytes - 1])
-				--Bytes;
-			uint8_t Type = (uint8_t)Viewable::UintMin + Bytes;
-			return (Viewable)Type;
+			uint8_t bytes = sizeof(array);
+			char* inline_data = (char*)array;
+			while (bytes > 0 && !inline_data[bytes - 1])
+				--bytes;
+			uint8_t type = (uint8_t)viewable::uint_min + bytes;
+			return (viewable)type;
 		}
-		uint8_t Util::GetStringSize(Viewable Type)
+		uint8_t util::get_string_size(viewable type)
 		{
-			if (IsString10(Type))
-				return (uint8_t)Type - (uint8_t)Viewable::StringMin10;
+			if (is_string10(type))
+				return (uint8_t)type - (uint8_t)viewable::string_min10;
 
-			if (IsString16(Type))
-				return (uint8_t)Type - (uint8_t)Viewable::StringMin16;
+			if (is_string16(type))
+				return (uint8_t)type - (uint8_t)viewable::string_min16;
 
 			return 0;
 		}
-		Viewable Util::GetStringType(const std::string_view& Data, bool HexEncoding)
+		viewable util::get_string_type(const std::string_view& data, bool hex_encoding)
 		{
-			auto Limit = Util::GetMaxStringSize();
-			if (HexEncoding)
+			auto limit = util::get_max_string_size();
+			if (hex_encoding)
 			{
-				if (Data.size() > Limit)
-					return Viewable::StringAny16;
+				if (data.size() > limit)
+					return viewable::string_any16;
 
-				return (Viewable)((uint8_t)Viewable::StringMin16 + (uint8_t)std::min<size_t>(Data.size(), Limit));
+				return (viewable)((uint8_t)viewable::string_min16 + (uint8_t)std::min<size_t>(data.size(), limit));
 			}
 			else
 			{
-				if (Data.size() > Limit)
-					return Viewable::StringAny10;
+				if (data.size() > limit)
+					return viewable::string_any10;
 
-				return (Viewable)((uint8_t)Viewable::StringMin10 + (uint8_t)std::min<size_t>(Data.size(), Limit));
+				return (viewable)((uint8_t)viewable::string_min10 + (uint8_t)std::min<size_t>(data.size(), limit));
 			}
 		}
-		size_t Util::GetMaxStringSize()
+		size_t util::get_max_string_size()
 		{
-			return (size_t)Viewable::StringMax10 - (size_t)Viewable::StringMin10;
+			return (size_t)viewable::string_max10 - (size_t)viewable::string_min10;
 		}
 	}
 }

@@ -4,298 +4,298 @@
 #include "../../kernel/wallet.h"
 #include "../../kernel/mediator.h"
 
-namespace Tangent
+namespace tangent
 {
-	namespace Storages
+	namespace storages
 	{
-		struct Mempoolstate;
+		struct mempoolstate;
 	};
 
-	namespace P2P
+	namespace p2p
 	{
-		struct Procedure;
+		struct procedure;
 
-		class Relay;
+		class relay;
 
-		class OutboundNode;
+		class outbound_node;
 
-		class ServerNode;
+		class server_node;
 
-		typedef std::function<void(Relay*)> AbortCallback;
-		typedef SocketConnection InboundNode;
+		typedef std::function<void(relay*)> abort_callback;
+		typedef socket_connection inbound_node;
 
-		enum class NodeType
+		enum class node_type
 		{
-			Inbound,
-			Outbound
+			inbound,
+			outbound
 		};
 
-		struct Procedure
+		struct procedure
 		{
-			Format::Variables Args;
-			uint32_t Magic = 0;
-			uint32_t Method = 0;
-			uint32_t Size = 0;
-			uint32_t Checksum = 0;
+			format::variables args;
+			uint32_t magic = 0;
+			uint32_t method = 0;
+			uint32_t size = 0;
+			uint32_t checksum = 0;
 
-			bool SerializeInto(String* Buffer);
-			bool DeserializeFrom(String& Message);
-			bool DeserializeFromStream(String& Message, const uint8_t* Buffer, size_t Size);
+			bool serialize_into(string* buffer);
+			bool deserialize_from(string& message);
+			bool deserialize_from_stream(string& message, const uint8_t* buffer, size_t size);
 		};
 
-		class RelayProcedure : public Reference<RelayProcedure>
+		class relay_procedure : public reference<relay_procedure>
 		{
 		public:
-			Procedure Data;
+			procedure data;
 
 		public:
-			RelayProcedure(Procedure&& NewData);
-			~RelayProcedure() = default;
+			relay_procedure(procedure&& new_data);
+			~relay_procedure() = default;
 		};
 
-		class Relay : public Reference<Relay>
+		class relay : public reference<relay>
 		{
 		private:
 			struct
 			{
-				void(*Destructor)(void*) = nullptr;
-				void* Pointer = nullptr;
-			} UserData;
-			std::mutex Mutex;
-			SingleQueue<URef<RelayProcedure>> PriorityMessages;
-			SingleQueue<Procedure> IncomingMessages;
-			SingleQueue<Procedure> OutgoingMessages;
-			String IncomingData;
-			String OutgoingData;
-			String Address;
-			String Service;
-			void* Instance;
-			NodeType Type;
+				void(*destructor)(void*) = nullptr;
+				void* pointer = nullptr;
+			} user_data;
+			std::mutex mutex;
+			single_queue<uref<relay_procedure>> priority_messages;
+			single_queue<procedure> incoming_messages;
+			single_queue<procedure> outgoing_messages;
+			string incoming_data;
+			string outgoing_data;
+			string address;
+			string service;
+			void* instance;
+			node_type type;
 
 		public:
-			Relay(NodeType NewType, void* NewInstance);
-			~Relay();
-			bool IncomingMessageInto(Procedure* Message);
-			bool PullIncomingMessage(const uint8_t* Buffer, size_t Size);
-			bool BeginOutgoingMessage();
-			void EndOutgoingMessage();
-			void PushMessage(Procedure&& Message);
-			void RelayMessage(URef<RelayProcedure>&& Message);
-			void Invalidate();
-			const String& PeerAddress();
-			const String& PeerService();
-			const SingleQueue<URef<RelayProcedure>>& GetPriorityMessages() const;
-			const SingleQueue<Procedure>& GetIncomingMessages() const;
-			const SingleQueue<Procedure>& GetOutgoingMessages() const;
-			const uint8_t* OutgoingBuffer();
-			NodeType TypeOf();
-			size_t IncomingSize();
-			size_t OutgoingSize();
-			InboundNode* AsInboundNode();
-			OutboundNode* AsOutboundNode();
-			Socket* AsSocket();
-			void* AsInstance();
-			UPtr<Schema> AsSchema() const;
-			template <typename T>
-			void Use(T* Pointer, void(*Destructor)(T*) = nullptr)
+			relay(node_type new_type, void* new_instance);
+			~relay();
+			bool incoming_message_into(procedure* message);
+			bool pull_incoming_message(const uint8_t* buffer, size_t size);
+			bool begin_outgoing_message();
+			void end_outgoing_message();
+			void push_message(procedure&& message);
+			void relay_message(uref<relay_procedure>&& message);
+			void invalidate();
+			const string& peer_address();
+			const string& peer_service();
+			const single_queue<uref<relay_procedure>>& get_priority_messages() const;
+			const single_queue<procedure>& get_incoming_messages() const;
+			const single_queue<procedure>& get_outgoing_messages() const;
+			const uint8_t* outgoing_buffer();
+			node_type type_of();
+			size_t incoming_size();
+			size_t outgoing_size();
+			inbound_node* as_inbound_node();
+			outbound_node* as_outbound_node();
+			socket* as_socket();
+			void* as_instance();
+			uptr<schema> as_schema() const;
+			template <typename t>
+			void use(t* pointer, void(*destructor)(t*) = nullptr)
 			{
-				if (UserData.Pointer && UserData.Destructor)
-					UserData.Destructor(UserData.Pointer);
-				UserData.Pointer = (void*)Pointer;
-				UserData.Destructor = (void(*)(void*))Destructor;
+				if (user_data.pointer && user_data.destructor)
+					user_data.destructor(user_data.pointer);
+				user_data.pointer = (void*)pointer;
+				user_data.destructor = (void(*)(void*))destructor;
 			}
-			template <typename T>
-			T* AsUser() const
+			template <typename t>
+			t* as_user() const
 			{
-				return (T*)UserData.Pointer;
+				return (t*)user_data.pointer;
 			}
 		};
 
-		class OutboundNode final : public SocketClient
+		class outbound_node final : public socket_client
 		{
-			friend ServerNode;
+			friend server_node;
 
 		public:
-			OutboundNode() noexcept;
-			~OutboundNode() override = default;
+			outbound_node() noexcept;
+			~outbound_node() override = default;
 
 		protected:
-			void ConfigureStream() override;
+			void configure_stream() override;
 		};
 
-		class ServerNode final : public SocketServer
+		class server_node final : public socket_server
 		{
 		public:
-			using ReceiveFunction = Promise<void>(*)(ServerNode*, UPtr<Relay>&&, Format::Variables&&);
+			using receive_function = promise<void>(*)(server_node*, uptr<relay>&&, format::variables&&);
 
 		public:
 			struct
 			{
-				Option<Ledger::Block> Block = Optional::None;
-				uint256_t Hash = 0;
-				TaskId Timeout = INVALID_TASK_ID;
-			} PendingTip;
+				option<ledger::block> block = optional::none;
+				uint256_t hash = 0;
+				task_id timeout = INVALID_TASK_ID;
+			} pending_tip;
 
 			struct
 			{
-				Ledger::Wallet Wallet;
-				Ledger::Validator Node;
-			} Validator;
+				ledger::wallet wallet;
+				ledger::validator node;
+			} validator;
 
 			struct
 			{
-				std::recursive_mutex Account;
-				std::recursive_mutex Block;
-				std::mutex Inventory;
-			} Sync;
+				std::recursive_mutex account;
+				std::recursive_mutex block;
+				std::mutex inventory;
+			} sync;
 
 			struct
 			{
-				size_t Count = 0;
-				size_t Offset = 0;
-			} Discovery;
+				size_t count = 0;
+				size_t offset = 0;
+			} discovery;
 
 			struct
 			{
-				std::function<void(const uint256_t&, const Ledger::Block&, const Ledger::BlockCheckpoint&)> AcceptBlock;
-				std::function<void(const uint256_t&, const Ledger::Transaction*, const Algorithm::Pubkeyhash)> AcceptTransaction;
-			} Events;
+				std::function<void(const uint256_t&, const ledger::block&, const ledger::block_checkpoint&)> accept_block;
+				std::function<void(const uint256_t&, const ledger::transaction*, const algorithm::pubkeyhash)> accept_transaction;
+			} events;
 
 		private:
 			struct
 			{
-				Option<uint64_t> ActivationBlock = Optional::None;
-				bool Dirty = false;
-			} Mempool;
+				option<uint64_t> activation_block = optional::none;
+				bool dirty = false;
+			} mempool;
 
 		private:
-			UnorderedMap<uint256_t, int64_t> Inventory;
-			UnorderedMap<uint32_t, std::pair<void*, bool>> InMethods;
-			UnorderedMap<void*, uint32_t> OutMethods;
-			UnorderedMap<void*, Relay*> Nodes;
-			UnorderedSet<OutboundNode*> CandidateNodes;
-			SingleQueue<URef<RelayProcedure>> Messages;
-			uint32_t MethodAddress;
-			SystemControl ControlSys;
+			unordered_map<uint256_t, int64_t> inventory;
+			unordered_map<uint32_t, std::pair<void*, bool>> in_methods;
+			unordered_map<void*, uint32_t> out_methods;
+			unordered_map<void*, relay*> nodes;
+			unordered_set<outbound_node*> candidate_nodes;
+			single_queue<uref<relay_procedure>> messages;
+			uint32_t method_address;
+			system_control control_sys;
 
 		public:
-			Ledger::EvaluationContext Environment;
-			UnorderedMap<uint256_t, Ledger::BlockHeader> Forks;
+			ledger::evaluation_context environment;
+			unordered_map<uint256_t, ledger::block_header> forks;
 
 		public:
-			ServerNode() noexcept;
-			virtual ~ServerNode() noexcept override;
-			void Startup();
-			void Shutdown();
-			void Reject(Relay* State);
-			void ClearPendingTip();
-			void AcceptForkTip(const uint256_t& ForkTip, const uint256_t& CandidateHash, Ledger::BlockHeader&& ForkTipBlock);
-			void AcceptPendingTip();
-			bool ClearMempool(bool Wait);
-			bool AcceptMempool();
-			bool AcceptDispatchpool(const Ledger::BlockHeader& Tip);
-			bool AcceptBlock(Relay* From, Ledger::Block&& CandidateBlock, const uint256_t& ForkTip);
-			bool Accept(Option<SocketAddress>&& Address = Optional::None);
-			ExpectsLR<void> ProposeTransaction(Relay* From, UPtr<Ledger::Transaction>&& CandidateTx, uint64_t AccountSequence, uint256_t* OutputHash = nullptr);
-			ExpectsLR<void> AcceptTransaction(Relay* From, UPtr<Ledger::Transaction>&& CandidateTx, bool ValidateExecution = false);
-			ExpectsLR<void> BroadcastTransaction(Relay* From, UPtr<Ledger::Transaction>&& CandidateTx, const Algorithm::Pubkeyhash Owner);
-			Relay* Find(const SocketAddress& Address);
-			size_t SizeOf(NodeType Type);
-			size_t GetConnections();
-			bool IsActive();
-			bool IsSyncing();
-			double GetSyncProgress(const uint256_t& ForkTip, uint64_t CurrentNumber);
-			ServiceControl::ServiceNode GetEntrypoint();
-			std::recursive_mutex& GetMutex();
-			const UnorderedMap<void*, Relay*>& GetNodes() const;
-			const UnorderedSet<OutboundNode*>& GetCandidateNodes() const;
-			const SingleQueue<URef<RelayProcedure>>& GetMessages() const;
+			server_node() noexcept;
+			virtual ~server_node() noexcept override;
+			void startup();
+			void shutdown();
+			void reject(relay* state);
+			void clear_pending_tip();
+			void accept_fork_tip(const uint256_t& fork_tip, const uint256_t& candidate_hash, ledger::block_header&& fork_tip_block);
+			void accept_pending_tip();
+			bool clear_mempool(bool wait);
+			bool accept_mempool();
+			bool accept_dispatchpool(const ledger::block_header& tip);
+			bool accept_block(relay* from, ledger::block&& candidate_block, const uint256_t& fork_tip);
+			bool accept(option<socket_address>&& address = optional::none);
+			expects_lr<void> propose_transaction(relay* from, uptr<ledger::transaction>&& candidate_tx, uint64_t account_sequence, uint256_t* output_hash = nullptr);
+			expects_lr<void> accept_transaction(relay* from, uptr<ledger::transaction>&& candidate_tx, bool validate_execution = false);
+			expects_lr<void> broadcast_transaction(relay* from, uptr<ledger::transaction>&& candidate_tx, const algorithm::pubkeyhash owner);
+			relay* find(const socket_address& address);
+			size_t size_of(node_type type);
+			size_t get_connections();
+			bool is_active();
+			bool is_syncing();
+			double get_sync_progress(const uint256_t& fork_tip, uint64_t current_number);
+			service_control::service_node get_entrypoint();
+			std::recursive_mutex& get_mutex();
+			const unordered_map<void*, relay*>& get_nodes() const;
+			const unordered_set<outbound_node*>& get_candidate_nodes() const;
+			const single_queue<uref<relay_procedure>>& get_messages() const;
 
 		public:
-			void BindCallable(ReceiveFunction Function)
+			void bind_callable(receive_function function)
 			{
-				BindFunction((ReceiveFunction)Function, false);
+				bind_function((receive_function)function, false);
 			}
-			void BindMulticallable(ReceiveFunction Function)
+			void bind_multicallable(receive_function function)
 			{
-				BindFunction((ReceiveFunction)Function, true);
+				bind_function((receive_function)function, true);
 			}
-			bool Call(Relay* State, ReceiveFunction Function, Format::Variable&& Argument)
+			bool call(relay* state, receive_function function, format::variable&& argument)
 			{
-				return CallFunction(State, (ReceiveFunction)Function, { std::move(Argument) });
+				return call_function(state, (receive_function)function, { std::move(argument) });
 			}
-			size_t Multicall(Relay* State, ReceiveFunction Function, Format::Variable&& Argument)
+			size_t multicall(relay* state, receive_function function, format::variable&& argument)
 			{
-				return MulticallFunction(State, (ReceiveFunction)Function, { std::move(Argument) });
+				return multicall_function(state, (receive_function)function, { std::move(argument) });
 			}
-			bool Call(Relay* State, ReceiveFunction Function, Format::Variables&& Args)
+			bool call(relay* state, receive_function function, format::variables&& args)
 			{
-				return CallFunction(State, (ReceiveFunction)Function, std::move(Args));
+				return call_function(state, (receive_function)function, std::move(args));
 			}
-			size_t Multicall(Relay* State, ReceiveFunction Function, Format::Variables&& Args)
+			size_t multicall(relay* state, receive_function function, format::variables&& args)
 			{
-				return MulticallFunction(State, (ReceiveFunction)Function, std::move(Args));
+				return multicall_function(state, (receive_function)function, std::move(args));
 			}
 
 		private:
-			ExpectsSystem<void> OnUnlisten() override;
-			ExpectsSystem<void> OnAfterUnlisten() override;
-			ExpectsLR<void> ApplyValidator(Storages::Mempoolstate& Mempool, Ledger::Validator& Node, Option<Ledger::Wallet>&& Wallet);
-			Relay* FindNodeByInstance(void* Instance);
-			int32_t ConnectOutboundNode(const SocketAddress& Address);
-			bool AcceptBlockCandidate(const Ledger::Block& CandidateBlock, const uint256_t& CandidateHash, const uint256_t& ForkTip);
-			bool AcceptProposalTransaction(const Ledger::Block& CheckpointBlock, const Ledger::BlockTransaction& Transaction);
-			bool ReceiveOutboundNode(Option<SocketAddress>&& ErrorAddress);
-			bool PushNextProcedure(Relay* State);
-			void BindFunction(ReceiveFunction Function, bool Multicallable);
-			bool CallFunction(Relay* State, ReceiveFunction Function, Format::Variables&& Args);
-			size_t MulticallFunction(Relay* State, ReceiveFunction Function, Format::Variables&& Args);
-			void AcceptOutboundNode(OutboundNode* Candidate, ExpectsSystem<void>&& Status);
-			void PullProcedure(Relay* State, const AbortCallback& AbortCallback);
-			void PushProcedure(Relay* State, const AbortCallback& AbortCallback);
-			void AbortInboundNode(InboundNode* Node);
-			void AbortOutboundNode(OutboundNode* Node);
-			void AppendNode(Relay* State, TaskCallback&& Callback);
-			void EraseNode(Relay* State, TaskCallback&& Callback);
-			void EraseNodeByInstance(void* Instance, TaskCallback&& Callback);
-			void OnRequestOpen(InboundNode* Base) override;
+			expects_system<void> on_unlisten() override;
+			expects_system<void> on_after_unlisten() override;
+			expects_lr<void> apply_validator(storages::mempoolstate& mempool, ledger::validator& node, option<ledger::wallet>&& wallet);
+			relay* find_node_by_instance(void* instance);
+			int32_t connect_outbound_node(const socket_address& address);
+			bool accept_block_candidate(const ledger::block& candidate_block, const uint256_t& candidate_hash, const uint256_t& fork_tip);
+			bool accept_proposal_transaction(const ledger::block& checkpoint_block, const ledger::block_transaction& transaction);
+			bool receive_outbound_node(option<socket_address>&& error_address);
+			bool push_next_procedure(relay* state);
+			void bind_function(receive_function function, bool multicallable);
+			bool call_function(relay* state, receive_function function, format::variables&& args);
+			size_t multicall_function(relay* state, receive_function function, format::variables&& args);
+			void accept_outbound_node(outbound_node* candidate, expects_system<void>&& status);
+			void pull_procedure(relay* state, const abort_callback& abort_callback);
+			void push_procedure(relay* state, const abort_callback& abort_callback);
+			void abort_inbound_node(inbound_node* node);
+			void abort_outbound_node(outbound_node* node);
+			void append_node(relay* state, task_callback&& callback);
+			void erase_node(relay* state, task_callback&& callback);
+			void erase_node_by_instance(void* instance, task_callback&& callback);
+			void on_request_open(inbound_node* base) override;
 
 		private:
-			Promise<Option<SocketAddress>> ConnectNodeFromMempool(Option<SocketAddress>&& ErrorAddress, bool AllowSeeding);
-			Promise<Option<SocketAddress>> FindNodeFromSeeding();
-			Promise<void> Connect(UPtr<Relay>&& From);
-			Promise<void> Disconnect(UPtr<Relay>&& From);
-			Promise<void> ProposeTransactionLogs(const Mediator::ChainSupervisorOptions& Options, Mediator::TransactionLogs&& Logs);
+			promise<option<socket_address>> connect_node_from_mempool(option<socket_address>&& error_address, bool allow_seeding);
+			promise<option<socket_address>> find_node_from_seeding();
+			promise<void> connect(uptr<relay>&& from);
+			promise<void> disconnect(uptr<relay>&& from);
+			promise<void> propose_transaction_logs(const mediator::chain_supervisor_options& options, mediator::transaction_logs&& logs);
 
 		private:
-			static Promise<void> ProposeHandshake(ServerNode* Relayer, UPtr<Relay>&& From, Format::Variables&& Args);
-			static Promise<void> ApproveHandshake(ServerNode* Relayer, UPtr<Relay>&& From, Format::Variables&& Args);
-			static Promise<void> ProposeNodes(ServerNode* Relayer, UPtr<Relay>&& From, Format::Variables&& Args);
-			static Promise<void> FindForkCollision(ServerNode* Relayer, UPtr<Relay>&& From, Format::Variables&& Args);
-			static Promise<void> VerifyForkCollision(ServerNode* Relayer, UPtr<Relay>&& From, Format::Variables&& Args);
-			static Promise<void> RequestForkBlock(ServerNode* Relayer, UPtr<Relay>&& From, Format::Variables&& Args);
-			static Promise<void> ProposeForkBlock(ServerNode* Relayer, UPtr<Relay>&& From, Format::Variables&& Args);
-			static Promise<void> RequestBlock(ServerNode* Relayer, UPtr<Relay>&& From, Format::Variables&& Args);
-			static Promise<void> ProposeBlock(ServerNode* Relayer, UPtr<Relay>&& From, Format::Variables&& Args);
-			static Promise<void> ProposeBlockHash(ServerNode* Relayer, UPtr<Relay>&& From, Format::Variables&& Args);
-			static Promise<void> RequestTransaction(ServerNode* Relayer, UPtr<Relay>&& From, Format::Variables&& Args);
-			static Promise<void> ProposeTransaction(ServerNode* Relayer, UPtr<Relay>&& From, Format::Variables&& Args);
-			static Promise<void> ProposeTransactionHash(ServerNode* Relayer, UPtr<Relay>&& From, Format::Variables&& Args);
-			static Promise<void> RequestMempool(ServerNode* Relayer, UPtr<Relay>&& From, Format::Variables&& Args);
-			static Promise<void> ProposeMempool(ServerNode* Relayer, UPtr<Relay>&& From, Format::Variables&& Args);
+			static promise<void> propose_handshake(server_node* relayer, uptr<relay>&& from, format::variables&& args);
+			static promise<void> approve_handshake(server_node* relayer, uptr<relay>&& from, format::variables&& args);
+			static promise<void> propose_nodes(server_node* relayer, uptr<relay>&& from, format::variables&& args);
+			static promise<void> find_fork_collision(server_node* relayer, uptr<relay>&& from, format::variables&& args);
+			static promise<void> verify_fork_collision(server_node* relayer, uptr<relay>&& from, format::variables&& args);
+			static promise<void> request_fork_block(server_node* relayer, uptr<relay>&& from, format::variables&& args);
+			static promise<void> propose_fork_block(server_node* relayer, uptr<relay>&& from, format::variables&& args);
+			static promise<void> request_block(server_node* relayer, uptr<relay>&& from, format::variables&& args);
+			static promise<void> propose_block(server_node* relayer, uptr<relay>&& from, format::variables&& args);
+			static promise<void> propose_block_hash(server_node* relayer, uptr<relay>&& from, format::variables&& args);
+			static promise<void> request_transaction(server_node* relayer, uptr<relay>&& from, format::variables&& args);
+			static promise<void> propose_transaction(server_node* relayer, uptr<relay>&& from, format::variables&& args);
+			static promise<void> propose_transaction_hash(server_node* relayer, uptr<relay>&& from, format::variables&& args);
+			static promise<void> request_mempool(server_node* relayer, uptr<relay>&& from, format::variables&& args);
+			static promise<void> propose_mempool(server_node* relayer, uptr<relay>&& from, format::variables&& args);
 
 		private:
-			static Promise<void> ReturnAbort(ServerNode* Relayer, Relay* From, const char* Function, const std::string_view& Message);
-			static Promise<void> ReturnError(ServerNode* Relayer, Relay* From, const char* Function, const std::string_view& Message);
-			static Promise<void> ReturnOK(Relay* From, const char* Function, const std::string_view& Message);
-			static std::string_view NodeTypeOf(Relay* From);
+			static promise<void> return_abort(server_node* relayer, relay* from, const char* function, const std::string_view& message);
+			static promise<void> return_error(server_node* relayer, relay* from, const char* function, const std::string_view& message);
+			static promise<void> return_ok(relay* from, const char* function, const std::string_view& message);
+			static std::string_view node_type_of(relay* from);
 
 		};
 
-		class Routing
+		class routing
 		{
 		public:
-			static bool IsAddressReserved(const SocketAddress& Address);
+			static bool is_address_reserved(const socket_address& address);
 		};
 	}
 }

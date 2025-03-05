@@ -2,726 +2,728 @@
 #include "../../policy/transactions.h"
 #undef NULL
 
-namespace Tangent
+namespace tangent
 {
-	namespace Storages
+	namespace storages
 	{
-		static void FinalizeChecksum(Messages::Authentic& Message, const Variant& Column)
+		static void finalize_checksum(messages::authentic& message, const variant& column)
 		{
-			if (Column.Size() == sizeof(uint256_t))
-				Algorithm::Encoding::EncodeUint256(Column.GetBinary(), Message.Checksum);
+			if (column.size() == sizeof(uint256_t))
+				algorithm::encoding::encode_uint256(column.get_binary(), message.checksum);
 		}
-		static String AddressToMessage(const SocketAddress& Address)
+		static string address_to_message(const socket_address& address)
 		{
-			Format::Stream Message;
-			Message.WriteString(Address.GetIpAddress().Or("[bad_address]"));
-			Message.WriteInteger(Address.GetIpPort().Or(0));
-			return Message.Data;
+			format::stream message;
+			message.write_string(address.get_ip_address().otherwise("[bad_address]"));
+			message.write_integer(address.get_ip_port().otherwise(0));
+			return message.data;
 		}
-		static Option<SocketAddress> MessageToAddress(const std::string_view& Data)
+		static option<socket_address> message_to_address(const std::string_view& data)
 		{
-			Format::Stream Message(Data);
-			String IpAddress;
-			if (!Message.ReadString(Message.ReadType(), &IpAddress))
-				return Optional::None;
+			format::stream message(data);
+			string ip_address;
+			if (!message.read_string(message.read_type(), &ip_address))
+				return optional::none;
 
-			uint16_t IpPort;
-			if (!Message.ReadInteger(Message.ReadType(), &IpPort))
-				return Optional::None;
+			uint16_t ip_port;
+			if (!message.read_integer(message.read_type(), &ip_port))
+				return optional::none;
 
-			SocketAddress Address(IpAddress, IpPort);
-			if (!Address.IsValid())
-				return Optional::None;
+			socket_address address(ip_address, ip_port);
+			if (!address.is_valid())
+				return optional::none;
 
-			return Address;
+			return address;
 		}
 
-		static thread_local Mempoolstate* LatestMempoolstate = nullptr;
-		Mempoolstate::Mempoolstate(const std::string_view& NewLabel) noexcept : Label(NewLabel), Borrows(LatestMempoolstate != nullptr)
+		static thread_local mempoolstate* latest_mempoolstate = nullptr;
+		mempoolstate::mempoolstate(const std::string_view& new_label) noexcept : label(new_label), borrows(latest_mempoolstate != nullptr)
 		{
-			if (!Borrows)
+			if (!borrows)
 			{
-				StorageOf("mempoolstate");
-				LatestMempoolstate = this;
+				storage_of("mempoolstate");
+				latest_mempoolstate = this;
 			}
 			else
-				Storage = *LatestMempoolstate->Storage;
+				storage = *latest_mempoolstate->storage;
 		}
-		Mempoolstate::~Mempoolstate() noexcept
+		mempoolstate::~mempoolstate() noexcept
 		{
-			if (Borrows)
-				Storage.Reset();
-			if (LatestMempoolstate == this)
-				LatestMempoolstate = nullptr;
+			if (borrows)
+				storage.reset();
+			if (latest_mempoolstate == this)
+				latest_mempoolstate = nullptr;
 		}
-		ExpectsLR<void> Mempoolstate::ApplyTrialAddress(const SocketAddress& Address)
+		expects_lr<void> mempoolstate::apply_trial_address(const socket_address& address)
 		{
-			if (!Address.IsValid())
-				return ExpectsLR<void>(LayerException("invalid ip address"));
+			if (!address.is_valid())
+				return expects_lr<void>(layer_exception("invalid ip address"));
 
-			if (GetValidatorByAddress(Address))
-				return ExpectsLR<void>(LayerException("ip address and port found"));
+			if (get_validator_by_address(address))
+				return expects_lr<void>(layer_exception("ip address and port found"));
 
-			SchemaList Map;
-			Map.push_back(Var::Set::Binary(AddressToMessage(Address)));
+			schema_list map;
+			map.push_back(var::set::binary(address_to_message(address)));
 
-			auto Cursor = EmplaceQuery(Label, __func__, "INSERT OR IGNORE INTO seeds (address) VALUES (?)", &Map);
-			if (!Cursor || Cursor->Error())
-				return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
+			auto cursor = emplace_query(label, __func__, "INSERT OR IGNORE INTO seeds (address) VALUES (?)", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<void>(layer_exception(error_of(cursor)));
 
-			return Expectation::Met;
+			return expectation::met;
 		}
-		ExpectsLR<void> Mempoolstate::ApplyValidator(const Ledger::Validator& Value, Option<Ledger::Wallet>&& Wallet)
+		expects_lr<void> mempoolstate::apply_validator(const ledger::validator& value, option<ledger::wallet>&& wallet)
 		{
-			Format::Stream EdgeMessage;
-			if (!Value.Store(&EdgeMessage))
-				return ExpectsLR<void>(LayerException("validator serialization error"));
+			format::stream edge_message;
+			if (!value.store(&edge_message))
+				return expects_lr<void>(layer_exception("validator serialization error"));
 
-			Format::Stream WalletMessage;
-			if (Wallet && !Wallet->Store(&WalletMessage))
-				return ExpectsLR<void>(LayerException("wallet serialization error"));
+			format::stream wallet_message;
+			if (wallet && !wallet->store(&wallet_message))
+				return expects_lr<void>(layer_exception("wallet serialization error"));
 
-			if (!Wallet)
+			if (!wallet)
 			{
-				SchemaList Map;
-				Map.push_back(Var::Set::Binary(AddressToMessage(Value.Address)));
+				schema_list map;
+				map.push_back(var::set::binary(address_to_message(value.address)));
 
-				auto Cursor = EmplaceQuery(Label, __func__, "SELECT wallet_message FROM validators WHERE address = ? AND wallet_message IS NOT NULL", &Map);
-				if (Cursor && !Cursor->ErrorOrEmpty())
+				auto cursor = emplace_query(label, __func__, "SELECT wallet_message FROM validators WHERE address = ? AND wallet_message IS NOT NULL", &map);
+				if (cursor && !cursor->error_or_empty())
 				{
-					WalletMessage.Data = (*Cursor)["wallet_message"].Get().GetBlob();
-					Wallet = Ledger::Wallet();
+					wallet_message.data = (*cursor)["wallet_message"].get().get_blob();
+					wallet = ledger::wallet();
 				}
 			}
 			else
 			{
-				auto Blob = Protocol::Now().Key.EncryptBlob(WalletMessage.Data);
-				if (!Blob)
-					return Blob.Error();
+				auto blob = protocol::now().key.encrypt_blob(wallet_message.data);
+				if (!blob)
+					return blob.error();
 
-				WalletMessage.Data = std::move(*Blob);
+				wallet_message.data = std::move(*blob);
 			}
 
-			uint32_t Services = 0;
-			if (Value.Services.Consensus)
-				Services |= (uint32_t)NodeServices::Consensus;
-			if (Value.Services.Discovery)
-				Services |= (uint32_t)NodeServices::Discovery;
-			if (Value.Services.Synchronization)
-				Services |= (uint32_t)NodeServices::Synchronization;
-			if (Value.Services.Interface)
-				Services |= (uint32_t)NodeServices::Interface;
-			if (Value.Services.Proposer)
-				Services |= (uint32_t)NodeServices::Proposer;
-			if (Value.Services.Public)
-				Services |= (uint32_t)NodeServices::Public;
+			uint32_t services = 0;
+			if (value.services.has_consensus)
+				services |= (uint32_t)node_services::consensus;
+			if (value.services.has_discovery)
+				services |= (uint32_t)node_services::discovery;
+			if (value.services.has_interfaces)
+				services |= (uint32_t)node_services::interfaces;
+			if (value.services.has_synchronization)
+				services |= (uint32_t)node_services::synchronization;
+			if (value.services.has_proposer)
+				services |= (uint32_t)node_services::proposer;
+			if (value.services.has_publicity)
+				services |= (uint32_t)node_services::publicity;
+			if (value.services.has_streaming)
+				services |= (uint32_t)node_services::streaming;
 
-			SchemaList Map;
-			Map.push_back(Var::Set::Binary(AddressToMessage(Value.Address)));
-			Map.push_back(Var::Set::Integer(Value.GetPreference()));
-			Map.push_back(Var::Set::Integer(Services));
-			Map.push_back(Var::Set::Binary(EdgeMessage.Data));
-			Map.push_back(Wallet ? Var::Set::Binary(WalletMessage.Data) : Var::Set::Null());
+			schema_list map;
+			map.push_back(var::set::binary(address_to_message(value.address)));
+			map.push_back(var::set::integer(value.get_preference()));
+			map.push_back(var::set::integer(services));
+			map.push_back(var::set::binary(edge_message.data));
+			map.push_back(wallet ? var::set::binary(wallet_message.data) : var::set::null());
 
-			auto Cursor = EmplaceQuery(Label, __func__, "INSERT OR REPLACE INTO validators (address, preference, services, validator_message, wallet_message) VALUES (?, ?, ?, ?, ?)", &Map);
-			if (!Cursor || Cursor->Error())
-				return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
+			auto cursor = emplace_query(label, __func__, "INSERT OR REPLACE INTO validators (address, preference, services, validator_message, wallet_message) VALUES (?, ?, ?, ?, ?)", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<void>(layer_exception(error_of(cursor)));
 
-			return Expectation::Met;
+			return expectation::met;
 		}
-		ExpectsLR<void> Mempoolstate::ClearValidator(const SocketAddress& ValidatorAddress)
+		expects_lr<void> mempoolstate::clear_validator(const socket_address& validator_address)
 		{
-			SchemaList Map;
-			Map.push_back(Var::Set::Binary(AddressToMessage(ValidatorAddress)));
+			schema_list map;
+			map.push_back(var::set::binary(address_to_message(validator_address)));
 
-			auto Cursor = EmplaceQuery(Label, __func__, "DELETE FROM validators WHERE address = ?", &Map);
-			if (!Cursor || Cursor->Error())
-				return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
+			auto cursor = emplace_query(label, __func__, "DELETE FROM validators WHERE address = ?", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<void>(layer_exception(error_of(cursor)));
 
-			return Expectation::Met;
+			return expectation::met;
 		}
-		ExpectsLR<std::pair<Ledger::Validator, Ledger::Wallet>> Mempoolstate::GetValidatorByOwnership(size_t Offset)
+		expects_lr<std::pair<ledger::validator, ledger::wallet>> mempoolstate::get_validator_by_ownership(size_t offset)
 		{
-			SchemaList Map;
-			Map.push_back(Var::Set::Integer(Offset));
+			schema_list map;
+			map.push_back(var::set::integer(offset));
 
-			auto Cursor = EmplaceQuery(Label, __func__, "SELECT validator_message, wallet_message FROM validators WHERE NOT (wallet_message IS NULL) LIMIT 1 OFFSET ?", &Map);
-			if (!Cursor || Cursor->ErrorOrEmpty())
-				return ExpectsLR<std::pair<Ledger::Validator, Ledger::Wallet>>(LayerException(ErrorOf(Cursor)));
+			auto cursor = emplace_query(label, __func__, "SELECT validator_message, wallet_message FROM validators WHERE NOT (wallet_message IS NULL) LIMIT 1 OFFSET ?", &map);
+			if (!cursor || cursor->error_or_empty())
+				return expects_lr<std::pair<ledger::validator, ledger::wallet>>(layer_exception(error_of(cursor)));
 
-			auto Blob = Protocol::Now().Key.DecryptBlob((*Cursor)["wallet_message"].Get().GetBlob());
-			if (!Blob)
-				return Blob.Error();
+			auto blob = protocol::now().key.decrypt_blob((*cursor)["wallet_message"].get().get_blob());
+			if (!blob)
+				return blob.error();
 
-			Ledger::Validator Node;
-			Format::Stream EdgeMessage = Format::Stream((*Cursor)["validator_message"].Get().GetBlob());
-			if (!Node.Load(EdgeMessage))
-				return ExpectsLR<std::pair<Ledger::Validator, Ledger::Wallet>>(LayerException("validator deserialization error"));
+			ledger::validator node;
+			format::stream edge_message = format::stream((*cursor)["validator_message"].get().get_blob());
+			if (!node.load(edge_message))
+				return expects_lr<std::pair<ledger::validator, ledger::wallet>>(layer_exception("validator deserialization error"));
 
-			Ledger::Wallet Wallet;
-			Format::Stream WalletMessage = Format::Stream(std::move(*Blob));
-			if (!Wallet.Load(WalletMessage))
-				return ExpectsLR<std::pair<Ledger::Validator, Ledger::Wallet>>(LayerException("wallet deserialization error"));
+			ledger::wallet wallet;
+			format::stream wallet_message = format::stream(std::move(*blob));
+			if (!wallet.load(wallet_message))
+				return expects_lr<std::pair<ledger::validator, ledger::wallet>>(layer_exception("wallet deserialization error"));
 
-			return std::make_pair(std::move(Node), std::move(Wallet));
+			return std::make_pair(std::move(node), std::move(wallet));
 		}
-		ExpectsLR<Ledger::Validator> Mempoolstate::GetValidatorByAddress(const SocketAddress& ValidatorAddress)
+		expects_lr<ledger::validator> mempoolstate::get_validator_by_address(const socket_address& validator_address)
 		{
-			SchemaList Map;
-			Map.push_back(Var::Set::Binary(AddressToMessage(ValidatorAddress)));
+			schema_list map;
+			map.push_back(var::set::binary(address_to_message(validator_address)));
 
-			auto Cursor = EmplaceQuery(Label, __func__, "SELECT validator_message FROM validators WHERE address = ?", &Map);
-			if (!Cursor || Cursor->ErrorOrEmpty())
-				return ExpectsLR<Ledger::Validator>(LayerException(ErrorOf(Cursor)));
+			auto cursor = emplace_query(label, __func__, "SELECT validator_message FROM validators WHERE address = ?", &map);
+			if (!cursor || cursor->error_or_empty())
+				return expects_lr<ledger::validator>(layer_exception(error_of(cursor)));
 
-			Ledger::Validator Value;
-			Format::Stream Message = Format::Stream((*Cursor)["validator_message"].Get().GetBlob());
-			if (!Value.Load(Message))
-				return ExpectsLR<Ledger::Validator>(LayerException("validator deserialization error"));
+			ledger::validator value;
+			format::stream message = format::stream((*cursor)["validator_message"].get().get_blob());
+			if (!value.load(message))
+				return expects_lr<ledger::validator>(layer_exception("validator deserialization error"));
 
-			return Value;
+			return value;
 		}
-		ExpectsLR<Ledger::Validator> Mempoolstate::GetValidatorByPreference(size_t Offset)
+		expects_lr<ledger::validator> mempoolstate::get_validator_by_preference(size_t offset)
 		{
-			SchemaList Map;
-			Map.push_back(Var::Set::Integer(Offset));
+			schema_list map;
+			map.push_back(var::set::integer(offset));
 
-			auto Cursor = EmplaceQuery(Label, __func__, "SELECT validator_message FROM validators WHERE wallet_message IS NULL ORDER BY preference DESC NULLS FIRST LIMIT 1 OFFSET ?", &Map);
-			if (!Cursor || Cursor->ErrorOrEmpty())
-				return ExpectsLR<Ledger::Validator>(LayerException(ErrorOf(Cursor)));
+			auto cursor = emplace_query(label, __func__, "SELECT validator_message FROM validators WHERE wallet_message IS NULL ORDER BY preference DESC NULLS FIRST LIMIT 1 OFFSET ?", &map);
+			if (!cursor || cursor->error_or_empty())
+				return expects_lr<ledger::validator>(layer_exception(error_of(cursor)));
 
-			Ledger::Validator Value;
-			Format::Stream Message = Format::Stream((*Cursor)["validator_message"].Get().GetBlob());
-			if (!Value.Load(Message))
-				return ExpectsLR<Ledger::Validator>(LayerException("validator deserialization error"));
+			ledger::validator value;
+			format::stream message = format::stream((*cursor)["validator_message"].get().get_blob());
+			if (!value.load(message))
+				return expects_lr<ledger::validator>(layer_exception("validator deserialization error"));
 
-			return Value;
+			return value;
 		}
-		ExpectsLR<Vector<SocketAddress>> Mempoolstate::GetValidatorAddresses(size_t Offset, size_t Count, uint32_t Services)
+		expects_lr<vector<socket_address>> mempoolstate::get_validator_addresses(size_t offset, size_t count, uint32_t services)
 		{
-			SchemaList Map;
-			if (Services > 0)
-				Map.push_back(Var::Set::Integer(Services));
-			Map.push_back(Var::Set::Integer(Count));
-			Map.push_back(Var::Set::Integer(Offset));
+			schema_list map;
+			if (services > 0)
+				map.push_back(var::set::integer(services));
+			map.push_back(var::set::integer(count));
+			map.push_back(var::set::integer(offset));
 
-			auto Cursor = EmplaceQuery(Label, __func__, Stringify::Text("SELECT validator_message FROM validators WHERE wallet_message IS NULL %s ORDER BY preference DESC NULLS FIRST LIMIT ? OFFSET ?", Services > 0 ? "AND services & ? > 0" : ""), &Map);
-			if (!Cursor || Cursor->Error())
-				return ExpectsLR<Vector<SocketAddress>>(LayerException(ErrorOf(Cursor)));
+			auto cursor = emplace_query(label, __func__, stringify::text("SELECT validator_message FROM validators WHERE wallet_message IS NULL %s ORDER BY preference DESC NULLS FIRST LIMIT ? OFFSET ?", services > 0 ? "AND services & ? > 0" : ""), &map);
+			if (!cursor || cursor->error())
+				return expects_lr<vector<socket_address>>(layer_exception(error_of(cursor)));
 
-			Vector<SocketAddress> Result;
-			auto& Response = Cursor->First();
-			size_t Size = Response.Size();
-			for (size_t i = 0; i < Size; i++)
+			vector<socket_address> result;
+			auto& response = cursor->first();
+			size_t size = response.size();
+			for (size_t i = 0; i < size; i++)
 			{
-				Ledger::Validator Value;
-				Format::Stream Message = Format::Stream(Response[i]["validator_message"].Get().GetBlob());
-				if (Value.Load(Message))
-					Result.push_back(std::move(Value.Address));
+				ledger::validator value;
+				format::stream message = format::stream(response[i]["validator_message"].get().get_blob());
+				if (value.load(message))
+					result.push_back(std::move(value.address));
 			}
 
-			return Result;
+			return result;
 		}
-		ExpectsLR<Vector<SocketAddress>> Mempoolstate::GetRandomizedValidatorAddresses(size_t Count, uint32_t Services)
+		expects_lr<vector<socket_address>> mempoolstate::get_randomized_validator_addresses(size_t count, uint32_t services)
 		{
-			SchemaList Map;
-			if (Services > 0)
-				Map.push_back(Var::Set::Integer(Services));
-			Map.push_back(Var::Set::Integer(Count));
+			schema_list map;
+			if (services > 0)
+				map.push_back(var::set::integer(services));
+			map.push_back(var::set::integer(count));
 
-			auto Cursor = EmplaceQuery(Label, __func__, Stringify::Text("SELECT validator_message FROM validators WHERE wallet_message IS NULL %s ORDER BY random() LIMIT ?", Services > 0 ? "AND services & ? > 0" : ""), &Map);
-			if (!Cursor || Cursor->Error())
-				return ExpectsLR<Vector<SocketAddress>>(LayerException(ErrorOf(Cursor)));
+			auto cursor = emplace_query(label, __func__, stringify::text("SELECT validator_message FROM validators WHERE wallet_message IS NULL %s ORDER BY random() LIMIT ?", services > 0 ? "AND services & ? > 0" : ""), &map);
+			if (!cursor || cursor->error())
+				return expects_lr<vector<socket_address>>(layer_exception(error_of(cursor)));
 
-			Vector<SocketAddress> Result;
-			auto& Response = Cursor->First();
-			size_t Size = Response.Size();
-			for (size_t i = 0; i < Size; i++)
+			vector<socket_address> result;
+			auto& response = cursor->first();
+			size_t size = response.size();
+			for (size_t i = 0; i < size; i++)
 			{
-				Ledger::Validator Value;
-				Format::Stream Message = Format::Stream(Response[i]["validator_message"].Get().GetBlob());
-				if (Value.Load(Message))
-					Result.push_back(std::move(Value.Address));
+				ledger::validator value;
+				format::stream message = format::stream(response[i]["validator_message"].get().get_blob());
+				if (value.load(message))
+					result.push_back(std::move(value.address));
 			}
 
-			return Result;
+			return result;
 		}
-		ExpectsLR<SocketAddress> Mempoolstate::NextTrialAddress()
+		expects_lr<socket_address> mempoolstate::next_trial_address()
 		{
-			auto Cursor = Query(Label, __func__, "SELECT address FROM seeds ORDER BY random() LIMIT 1");
-			if (!Cursor || Cursor->ErrorOrEmpty())
-				return ExpectsLR<SocketAddress>(LayerException(ErrorOf(Cursor)));
+			auto cursor = query(label, __func__, "SELECT address FROM seeds ORDER BY random() LIMIT 1");
+			if (!cursor || cursor->error_or_empty())
+				return expects_lr<socket_address>(layer_exception(error_of(cursor)));
 
-			auto Message = (*Cursor)["address"].Get().GetBlob();
-			SchemaList Map;
-			Map.push_back(Var::Set::Binary(Message));
+			auto message = (*cursor)["address"].get().get_blob();
+			schema_list map;
+			map.push_back(var::set::binary(message));
 
-			Cursor = EmplaceQuery(Label, __func__, "DELETE FROM seeds WHERE address = ?", &Map);
-			if (!Cursor || Cursor->Error())
-				return ExpectsLR<SocketAddress>(LayerException(ErrorOf(Cursor)));
+			cursor = emplace_query(label, __func__, "DELETE FROM seeds WHERE address = ?", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<socket_address>(layer_exception(error_of(cursor)));
 
-			auto Address = MessageToAddress(Message);
-			if (!Address)
-				return ExpectsLR<SocketAddress>(LayerException("bad address"));
+			auto address = message_to_address(message);
+			if (!address)
+				return expects_lr<socket_address>(layer_exception("bad address"));
 
-			return *Address;
+			return *address;
 		}
-		ExpectsLR<size_t> Mempoolstate::GetValidatorsCount()
+		expects_lr<size_t> mempoolstate::get_validators_count()
 		{
-			auto Cursor = Query(Label, __func__, "SELECT COUNT(1) AS counter FROM validators WHERE wallet_message IS NULL");
-			if (!Cursor || Cursor->ErrorOrEmpty())
-				return ExpectsLR<size_t>(LayerException(ErrorOf(Cursor)));
+			auto cursor = query(label, __func__, "SELECT COUNT(1) AS counter FROM validators WHERE wallet_message IS NULL");
+			if (!cursor || cursor->error_or_empty())
+				return expects_lr<size_t>(layer_exception(error_of(cursor)));
 
-			return (size_t)(*Cursor)["counter"].Get().GetInteger();
+			return (size_t)(*cursor)["counter"].get().get_integer();
 		}
-		ExpectsLR<Decimal> Mempoolstate::GetGasPrice(const Algorithm::AssetId& Asset, double PriorityPercentile)
+		expects_lr<decimal> mempoolstate::get_gas_price(const algorithm::asset_id& asset, double priority_percentile)
 		{
-			if (PriorityPercentile < 0.0 || PriorityPercentile > 1.0)
-				return ExpectsLR<Decimal>(LayerException("invalid priority percentile"));
+			if (priority_percentile < 0.0 || priority_percentile > 1.0)
+				return expects_lr<decimal>(layer_exception("invalid priority percentile"));
 
-			uint8_t Hash[16];
-			Algorithm::Encoding::DecodeUint128(Asset, Hash);
+			uint8_t hash[16];
+			algorithm::encoding::decode_uint128(asset, hash);
 
-			SchemaList Map;
-			Map.push_back(Var::Set::Binary(Hash, sizeof(Hash)));
-			Map.push_back(Var::Set::Number(1.0 - PriorityPercentile));
+			schema_list map;
+			map.push_back(var::set::binary(hash, sizeof(hash)));
+			map.push_back(var::set::number(1.0 - priority_percentile));
 
-			auto Cursor = EmplaceQuery(Label, __func__, "SELECT price FROM transactions WHERE asset = ? ORDER BY preference DESC NULLS FIRST LIMIT 1 OFFSET (SELECT CAST((COUNT(1) * ?) AS INT) FROM transactions)", &Map);
-			if (!Cursor || Cursor->ErrorOrEmpty())
-				return ExpectsLR<Decimal>(LayerException(ErrorOf(Cursor)));
+			auto cursor = emplace_query(label, __func__, "SELECT price FROM transactions WHERE asset = ? ORDER BY preference DESC NULLS FIRST LIMIT 1 OFFSET (SELECT CAST((COUNT(1) * ?) AS INT) FROM transactions)", &map);
+			if (!cursor || cursor->error_or_empty())
+				return expects_lr<decimal>(layer_exception(error_of(cursor)));
 
-			Decimal Price = (*Cursor)["price"].Get().GetDecimal();
-			return Price;
+			decimal price = (*cursor)["price"].get().get_decimal();
+			return price;
 		}
-		ExpectsLR<Decimal> Mempoolstate::GetAssetPrice(const Algorithm::AssetId& PriceOf, const Algorithm::AssetId& RelativeTo, double PriorityPercentile)
+		expects_lr<decimal> mempoolstate::get_asset_price(const algorithm::asset_id& price_of, const algorithm::asset_id& relative_to, double priority_percentile)
 		{
-			auto A = GetGasPrice(PriceOf, PriorityPercentile);
-			if (!A || A->IsZero())
-				return Decimal::Zero();
+			auto a = get_gas_price(price_of, priority_percentile);
+			if (!a || a->is_zero())
+				return decimal::zero();
 
-			auto B = GetGasPrice(RelativeTo, PriorityPercentile);
-			if (!B)
-				return Decimal::Zero();
+			auto b = get_gas_price(relative_to, priority_percentile);
+			if (!b)
+				return decimal::zero();
 
-			return *B / A->Truncate(Protocol::Now().Message.Precision);
+			return *b / a->truncate(protocol::now().message.precision);
 		}
-		ExpectsLR<void> Mempoolstate::AddTransaction(Ledger::Transaction& Value, bool BypassCongestion)
+		expects_lr<void> mempoolstate::add_transaction(ledger::transaction& value, bool bypass_congestion)
 		{
-			Format::Stream Message;
-			if (!Value.Store(&Message))
-				return ExpectsLR<void>(LayerException("transaction serialization error"));
+			format::stream message;
+			if (!value.store(&message))
+				return expects_lr<void>(layer_exception("transaction serialization error"));
 
-			Algorithm::Pubkeyhash Owner;
-			if (!Value.RecoverHash(Owner))
-				return ExpectsLR<void>(LayerException("transaction owner recovery error"));
+			algorithm::pubkeyhash owner;
+			if (!value.recover_hash(owner))
+				return expects_lr<void>(layer_exception("transaction owner recovery error"));
 
-			uint256_t Group = 0;
-			Decimal Preference = Decimal::NaN();
-			auto Type = Value.GetType();
-			auto Queue = [this, &Value]() -> Decimal
+			uint256_t group = 0;
+			decimal preference = decimal::nan();
+			auto type = value.get_type();
+			auto queue = [this, &value]() -> decimal
 			{
-				auto MedianGasPrice = GetGasPrice(Value.Asset, FeePercentile(FeePriority::Medium));
-				Decimal DeltaGas = MedianGasPrice && MedianGasPrice->IsPositive() ? Value.GasPrice / *MedianGasPrice : 1.0;
-				Decimal MaxGas = DeltaGas.IsPositive() ? Value.GasPrice * Value.GasLimit.ToDecimal() / DeltaGas.Truncate(Protocol::Now().Message.Precision) : Decimal::Zero();
-				Decimal Multiplier = 2 << 20;
-				return MaxGas * Multiplier;
+				auto median_gas_price = get_gas_price(value.asset, fee_percentile(fee_priority::medium));
+				decimal delta_gas = median_gas_price && median_gas_price->is_positive() ? value.gas_price / *median_gas_price : 1.0;
+				decimal max_gas = delta_gas.is_positive() ? value.gas_price * value.gas_limit.to_decimal() / delta_gas.truncate(protocol::now().message.precision) : decimal::zero();
+				decimal multiplier = 2 << 20;
+				return max_gas * multiplier;
 			};
-			switch (Type)
+			switch (type)
 			{
-				case Ledger::TransactionLevel::Functional:
+				case ledger::transaction_level::functional:
 				{
-					Preference = Queue();
+					preference = queue();
 					break;
 				}
-				case Ledger::TransactionLevel::Delegation:
+				case ledger::transaction_level::delegation:
 				{
-					auto Bandwidth = GetBandwidthByOwner(Owner, Type);
-					if (!Bandwidth->Congested || Bandwidth->Sequence >= Value.Sequence)
+					auto bandwidth = get_bandwidth_by_owner(owner, type);
+					if (!bandwidth->congested || bandwidth->sequence >= value.sequence)
 						break;
 
-					if (!BypassCongestion && !Value.GasPrice.IsPositive())
-						return ExpectsLR<void>(LayerException(Stringify::Text("wait for finalization of or replace previous delegation transaction (queue: %" PRIu64 ", sequence: %" PRIu64 ")", (uint64_t)Bandwidth->Count, Bandwidth->Sequence)));
+					if (!bypass_congestion && !value.gas_price.is_positive())
+						return expects_lr<void>(layer_exception(stringify::text("wait for finalization of or replace previous delegation transaction (queue: %" PRIu64 ", sequence: %" PRIu64 ")", (uint64_t)bandwidth->count, bandwidth->sequence)));
 
-					Preference = Queue();
+					preference = queue();
 					break;
 				}
-				case Ledger::TransactionLevel::Consensus:
+				case ledger::transaction_level::consensus:
 				{
-					auto Bandwidth = GetBandwidthByOwner(Owner, Type);
-					if (!Bandwidth->Congested || Bandwidth->Sequence >= Value.Sequence)
+					auto bandwidth = get_bandwidth_by_owner(owner, type);
+					if (!bandwidth->congested || bandwidth->sequence >= value.sequence)
 						break;
 
-					if (!BypassCongestion && !Value.GasPrice.IsPositive())
-						return ExpectsLR<void>(LayerException(Stringify::Text("wait for finalization of or replace previous consensus transaction (queue: %" PRIu64 ", sequence: %" PRIu64 ")", (uint64_t)Bandwidth->Count, Bandwidth->Sequence)));
+					if (!bypass_congestion && !value.gas_price.is_positive())
+						return expects_lr<void>(layer_exception(stringify::text("wait for finalization of or replace previous consensus transaction (queue: %" PRIu64 ", sequence: %" PRIu64 ")", (uint64_t)bandwidth->count, bandwidth->sequence)));
 
-					Preference = Queue();
+					preference = queue();
 					break;
 				}
-				case Ledger::TransactionLevel::Aggregation:
+				case ledger::transaction_level::aggregation:
 				{
-					Vector<uint256_t> Merges;
-					size_t Offset = 0, Count = 64;
-					auto Context = Ledger::TransactionContext();
-					auto* Aggregation = ((Ledger::AggregationTransaction*)&Value);
-					Group = Aggregation->GetCumulativeHash();
+					vector<uint256_t> merges;
+					size_t offset = 0, count = 64;
+					auto context = ledger::transaction_context();
+					auto* aggregation = ((ledger::aggregation_transaction*)&value);
+					group = aggregation->get_cumulative_hash();
 					while (true)
 					{
-						auto Transactions = GetCumulativeEventTransactions(Group, Offset, Count);
-						if (!Transactions || Transactions->empty())
+						auto transactions = get_cumulative_event_transactions(group, offset, count);
+						if (!transactions || transactions->empty())
 							break;
 
-						for (auto& Item : *Transactions)
+						for (auto& item : *transactions)
 						{
-							Merges.push_back(Item->AsHash());
-							if (Item->GetType() != Ledger::TransactionLevel::Aggregation)
+							merges.push_back(item->as_hash());
+							if (item->get_type() != ledger::transaction_level::aggregation)
 								continue;
 
-							auto& Candidate = *(Ledger::AggregationTransaction*)*Item;
-							Aggregation->Merge(&Context, Candidate);
+							auto& candidate = *(ledger::aggregation_transaction*)*item;
+							aggregation->merge(&context, candidate);
 						}
 
-						Offset += Transactions->size();
-						if (Transactions->size() != Count)
+						offset += transactions->size();
+						if (transactions->size() != count)
 							break;
 					}
 
-					auto Status = RemoveTransactions(Merges);
-					if (!Status)
-						return Status;
-					else if (!Merges.empty())
+					auto status = remove_transactions(merges);
+					if (!status)
+						return status;
+					else if (!merges.empty())
 						break;
 
-					auto OptimalGasLimit = Ledger::TransactionContext::CalculateTxGas(Aggregation);
-					if (OptimalGasLimit && *OptimalGasLimit > Aggregation->GasLimit)
-						Aggregation->GasLimit = *OptimalGasLimit;
+					auto optimal_gas_limit = ledger::transaction_context::calculate_tx_gas(aggregation);
+					if (optimal_gas_limit && *optimal_gas_limit > aggregation->gas_limit)
+						aggregation->gas_limit = *optimal_gas_limit;
 
-					Preference = Queue();
+					preference = queue();
 					break;
 				}
 				default:
 					break;
 			}
 
-			uint8_t Hash[32];
-			Algorithm::Encoding::DecodeUint256(Value.AsHash(), Hash);
+			uint8_t hash[32];
+			algorithm::encoding::decode_uint256(value.as_hash(), hash);
 
-			uint8_t GroupHash[32];
-			Algorithm::Encoding::DecodeUint256(Group, GroupHash);
+			uint8_t group_hash[32];
+			algorithm::encoding::decode_uint256(group, group_hash);
 
-			uint8_t Asset[16];
-			Algorithm::Encoding::DecodeUint128(Value.Asset, Asset);
+			uint8_t asset[16];
+			algorithm::encoding::decode_uint128(value.asset, asset);
 
-			SchemaList Map;
-			Map.push_back(Var::Set::Binary(Hash, sizeof(Hash)));
-			Map.push_back(Var::Set::Binary(GroupHash, sizeof(GroupHash)));
-			Map.push_back(Var::Set::Binary(Owner, sizeof(Owner)));
-			Map.push_back(Var::Set::Binary(Asset, sizeof(Asset)));
-			Map.push_back(Var::Set::Integer(Value.Sequence));
-			Map.push_back(Preference.IsNaN() ? Var::Set::Null() : Var::Set::Integer(Preference.ToUInt64()));
-			Map.push_back(Var::Set::Integer((int64_t)Type));
-			Map.push_back(Var::Set::Integer(time(nullptr)));
-			Map.push_back(Var::Set::String(Value.GasPrice.ToString()));
-			Map.push_back(Var::Set::Binary(Message.Data));
-			Map.push_back(Var::Set::Binary(Owner, sizeof(Owner)));
+			schema_list map;
+			map.push_back(var::set::binary(hash, sizeof(hash)));
+			map.push_back(var::set::binary(group_hash, sizeof(group_hash)));
+			map.push_back(var::set::binary(owner, sizeof(owner)));
+			map.push_back(var::set::binary(asset, sizeof(asset)));
+			map.push_back(var::set::integer(value.sequence));
+			map.push_back(preference.is_nan() ? var::set::null() : var::set::integer(preference.to_uint64()));
+			map.push_back(var::set::integer((int64_t)type));
+			map.push_back(var::set::integer(time(nullptr)));
+			map.push_back(var::set::string(value.gas_price.to_string()));
+			map.push_back(var::set::binary(message.data));
+			map.push_back(var::set::binary(owner, sizeof(owner)));
 
-			auto Cursor = EmplaceQuery(Label, __func__,
+			auto cursor = emplace_query(label, __func__,
 				"INSERT OR REPLACE INTO transactions (hash, attestation, owner, asset, sequence, preference, type, time, price, message) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
-				"WITH epochs AS (SELECT rowid, ROW_NUMBER() OVER (ORDER BY sequence) AS epoch FROM transactions WHERE owner = ?) UPDATE transactions SET epoch = epochs.epoch FROM epochs WHERE transactions.rowid = epochs.rowid", &Map);
-			if (!Cursor || Cursor->Error())
-				return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
+				"WITH epochs AS (SELECT rowid, ROW_NUMBER() OVER (ORDER BY sequence) AS epoch FROM transactions WHERE owner = ?) UPDATE transactions SET epoch = epochs.epoch FROM epochs WHERE transactions.rowid = epochs.rowid", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<void>(layer_exception(error_of(cursor)));
 
-			return Expectation::Met;
+			return expectation::met;
 		}
-		ExpectsLR<void> Mempoolstate::RemoveTransactions(const Vector<uint256_t>& TransactionHashes)
+		expects_lr<void> mempoolstate::remove_transactions(const vector<uint256_t>& transaction_hashes)
 		{
-			if (TransactionHashes.empty())
-				return Expectation::Met;
+			if (transaction_hashes.empty())
+				return expectation::met;
 
-			UPtr<Schema> HashList = Var::Set::Array();
-			HashList->Reserve(TransactionHashes.size());
-			for (auto& Item : TransactionHashes)
+			uptr<schema> hash_list = var::set::array();
+			hash_list->reserve(transaction_hashes.size());
+			for (auto& item : transaction_hashes)
 			{
-				uint8_t Hash[32];
-				Algorithm::Encoding::DecodeUint256(Item, Hash);
-				HashList->Push(Var::Binary(Hash, sizeof(Hash)));
+				uint8_t hash[32];
+				algorithm::encoding::decode_uint256(item, hash);
+				hash_list->push(var::binary(hash, sizeof(hash)));
 			}
 
-			SchemaList Map;
-			Map.push_back(Var::Set::String(*LDB::Utils::InlineArray(std::move(HashList))));
+			schema_list map;
+			map.push_back(var::set::string(*sqlite::utils::inline_array(std::move(hash_list))));
 
-			auto Cursor = EmplaceQuery(Label, __func__, "DELETE FROM transactions WHERE hash IN ($?)", &Map);
-			if (!Cursor || Cursor->Error())
-				return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
+			auto cursor = emplace_query(label, __func__, "DELETE FROM transactions WHERE hash IN ($?)", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<void>(layer_exception(error_of(cursor)));
 
-			return Expectation::Met;
+			return expectation::met;
 		}
-		ExpectsLR<void> Mempoolstate::RemoveTransactions(const UnorderedSet<uint256_t>& TransactionHashes)
+		expects_lr<void> mempoolstate::remove_transactions(const unordered_set<uint256_t>& transaction_hashes)
 		{
-			if (TransactionHashes.empty())
-				return Expectation::Met;
+			if (transaction_hashes.empty())
+				return expectation::met;
 
-			UPtr<Schema> HashList = Var::Set::Array();
-			HashList->Reserve(TransactionHashes.size());
-			for (auto& Item : TransactionHashes)
+			uptr<schema> hash_list = var::set::array();
+			hash_list->reserve(transaction_hashes.size());
+			for (auto& item : transaction_hashes)
 			{
-				uint8_t Hash[32];
-				Algorithm::Encoding::DecodeUint256(Item, Hash);
-				HashList->Push(Var::Binary(Hash, sizeof(Hash)));
+				uint8_t hash[32];
+				algorithm::encoding::decode_uint256(item, hash);
+				hash_list->push(var::binary(hash, sizeof(hash)));
 			}
 
-			SchemaList Map;
-			Map.push_back(Var::Set::String(*LDB::Utils::InlineArray(std::move(HashList))));
+			schema_list map;
+			map.push_back(var::set::string(*sqlite::utils::inline_array(std::move(hash_list))));
 
-			auto Cursor = EmplaceQuery(Label, __func__, "DELETE FROM transactions WHERE hash IN ($?)", &Map);
-			if (!Cursor || Cursor->Error())
-				return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
+			auto cursor = emplace_query(label, __func__, "DELETE FROM transactions WHERE hash IN ($?)", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<void>(layer_exception(error_of(cursor)));
 
-			return Expectation::Met;
+			return expectation::met;
 		}
-		ExpectsLR<void> Mempoolstate::ExpireTransactions()
+		expects_lr<void> mempoolstate::expire_transactions()
 		{
-			SchemaList Map;
-			Map.push_back(Var::Set::Integer(time(nullptr) - Protocol::Now().User.Storage.TransactionTimeout));
+			schema_list map;
+			map.push_back(var::set::integer(time(nullptr) - protocol::now().user.storage.transaction_timeout));
 
-			auto Cursor = EmplaceQuery(Label, __func__, "DELETE FROM transactions WHERE time < ?", &Map);
-			if (!Cursor || Cursor->Error())
-				return ExpectsLR<void>(LayerException(ErrorOf(Cursor)));
+			auto cursor = emplace_query(label, __func__, "DELETE FROM transactions WHERE time < ?", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<void>(layer_exception(error_of(cursor)));
 
-			return Expectation::Met;
+			return expectation::met;
 		}
-		ExpectsLR<AccountBandwidth> Mempoolstate::GetBandwidthByOwner(const Algorithm::Pubkeyhash Owner, Ledger::TransactionLevel Type)
+		expects_lr<account_bandwidth> mempoolstate::get_bandwidth_by_owner(const algorithm::pubkeyhash owner, ledger::transaction_level type)
 		{
-			SchemaList Map;
-			Map.push_back(Var::Set::Binary(Owner, sizeof(Algorithm::Pubkeyhash)));
-			Map.push_back(Var::Set::Integer((int64_t)Type));
+			schema_list map;
+			map.push_back(var::set::binary(owner, sizeof(algorithm::pubkeyhash)));
+			map.push_back(var::set::integer((int64_t)type));
 
-			auto Cursor = EmplaceQuery(Label, __func__, "SELECT COUNT(1) AS counter, MAX(sequence) AS sequence FROM transactions WHERE owner = ? AND type = ?", &Map);
-			if (!Cursor || Cursor->Error())
-				return ExpectsLR<AccountBandwidth>(LayerException(ErrorOf(Cursor)));
+			auto cursor = emplace_query(label, __func__, "SELECT COUNT(1) AS counter, max(sequence) AS sequence FROM transactions WHERE owner = ? AND type = ?", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<account_bandwidth>(layer_exception(error_of(cursor)));
 
-			AccountBandwidth Result;
-			Result.Count = Cursor->Empty() ? 0 : (size_t)(*Cursor)["counter"].Get().GetInteger();
-			Result.Sequence = Cursor->Empty() ? 1 : (size_t)(*Cursor)["sequence"].Get().GetInteger();
-			switch (Type)
+			account_bandwidth result;
+			result.count = cursor->empty() ? 0 : (size_t)(*cursor)["counter"].get().get_integer();
+			result.sequence = cursor->empty() ? 1 : (size_t)(*cursor)["sequence"].get().get_integer();
+			switch (type)
 			{
-				case Tangent::Ledger::TransactionLevel::Functional:
-					Result.Congested = false;
+				case tangent::ledger::transaction_level::functional:
+					result.congested = false;
 					break;
-				case Tangent::Ledger::TransactionLevel::Delegation:
-					Result.Congested = Protocol::Now().Policy.ParallelDelegationLimit > 0 && Result.Count >= Protocol::Now().Policy.ParallelDelegationLimit;
+				case tangent::ledger::transaction_level::delegation:
+					result.congested = protocol::now().policy.parallel_delegation_limit > 0 && result.count >= protocol::now().policy.parallel_delegation_limit;
 					break;
-				case Tangent::Ledger::TransactionLevel::Consensus:
-					Result.Congested = Protocol::Now().Policy.ParallelConsensusLimit > 0 && Result.Count >= Protocol::Now().Policy.ParallelConsensusLimit;
+				case tangent::ledger::transaction_level::consensus:
+					result.congested = protocol::now().policy.parallel_consensus_limit > 0 && result.count >= protocol::now().policy.parallel_consensus_limit;
 					break;
-				case Tangent::Ledger::TransactionLevel::Aggregation:
-					Result.Congested = Protocol::Now().Policy.ParallelAggregationLimit > 0 && Result.Count >= Protocol::Now().Policy.ParallelAggregationLimit;
+				case tangent::ledger::transaction_level::aggregation:
+					result.congested = protocol::now().policy.parallel_aggregation_limit > 0 && result.count >= protocol::now().policy.parallel_aggregation_limit;
 					break;
 				default:
-					Result.Congested = true;
+					result.congested = true;
 					break;
 			}
-			return Result;
+			return result;
 		}
-		ExpectsLR<bool> Mempoolstate::HasTransaction(const uint256_t& TransactionHash)
+		expects_lr<bool> mempoolstate::has_transaction(const uint256_t& transaction_hash)
 		{
-			uint8_t Hash[32];
-			Algorithm::Encoding::DecodeUint256(TransactionHash, Hash);
+			uint8_t hash[32];
+			algorithm::encoding::decode_uint256(transaction_hash, hash);
 
-			SchemaList Map;
-			Map.push_back(Var::Set::Binary(Hash, sizeof(Hash)));
+			schema_list map;
+			map.push_back(var::set::binary(hash, sizeof(hash)));
 
-			auto Cursor = EmplaceQuery(Label, __func__, "SELECT TRUE FROM transactions WHERE hash = ?", &Map);
-			if (!Cursor || Cursor->Error())
-				return ExpectsLR<bool>(LayerException(ErrorOf(Cursor)));
+			auto cursor = emplace_query(label, __func__, "SELECT TRUE FROM transactions WHERE hash = ?", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<bool>(layer_exception(error_of(cursor)));
 
-			return !Cursor->Empty();
+			return !cursor->empty();
 		}
-		ExpectsLR<uint64_t> Mempoolstate::GetLowestTransactionSequence(const Algorithm::Pubkeyhash Owner)
+		expects_lr<uint64_t> mempoolstate::get_lowest_transaction_sequence(const algorithm::pubkeyhash owner)
 		{
-			SchemaList Map;
-			Map.push_back(Var::Set::Binary(Owner, sizeof(Algorithm::Pubkeyhash)));
+			schema_list map;
+			map.push_back(var::set::binary(owner, sizeof(algorithm::pubkeyhash)));
 
-			auto Cursor = EmplaceQuery(Label, __func__, "SELECT MIN(sequence) AS sequence FROM transactions WHERE owner = ?", &Map);
-			if (!Cursor || Cursor->ErrorOrEmpty())
-				return ExpectsLR<uint64_t>(LayerException(ErrorOf(Cursor)));
+			auto cursor = emplace_query(label, __func__, "SELECT MIN(sequence) AS sequence FROM transactions WHERE owner = ?", &map);
+			if (!cursor || cursor->error_or_empty())
+				return expects_lr<uint64_t>(layer_exception(error_of(cursor)));
 
-			uint64_t Sequence = (*Cursor)["sequence"].Get().GetInteger();
-			return Sequence;
+			uint64_t sequence = (*cursor)["sequence"].get().get_integer();
+			return sequence;
 		}
-		ExpectsLR<uint64_t> Mempoolstate::GetHighestTransactionSequence(const Algorithm::Pubkeyhash Owner)
+		expects_lr<uint64_t> mempoolstate::get_highest_transaction_sequence(const algorithm::pubkeyhash owner)
 		{
-			SchemaList Map;
-			Map.push_back(Var::Set::Binary(Owner, sizeof(Algorithm::Pubkeyhash)));
+			schema_list map;
+			map.push_back(var::set::binary(owner, sizeof(algorithm::pubkeyhash)));
 
-			auto Cursor = EmplaceQuery(Label, __func__, "SELECT MAX(sequence) AS sequence FROM transactions WHERE owner = ?", &Map);
-			if (!Cursor || Cursor->ErrorOrEmpty())
-				return ExpectsLR<uint64_t>(LayerException(ErrorOf(Cursor)));
+			auto cursor = emplace_query(label, __func__, "SELECT max(sequence) AS sequence FROM transactions WHERE owner = ?", &map);
+			if (!cursor || cursor->error_or_empty())
+				return expects_lr<uint64_t>(layer_exception(error_of(cursor)));
 
-			uint64_t Sequence = (*Cursor)["sequence"].Get().GetInteger();
-			return Sequence;
+			uint64_t sequence = (*cursor)["sequence"].get().get_integer();
+			return sequence;
 		}
-		ExpectsLR<UPtr<Ledger::Transaction>> Mempoolstate::GetTransactionByHash(const uint256_t& TransactionHash)
+		expects_lr<uptr<ledger::transaction>> mempoolstate::get_transaction_by_hash(const uint256_t& transaction_hash)
 		{
-			uint8_t Hash[32];
-			Algorithm::Encoding::DecodeUint256(TransactionHash, Hash);
+			uint8_t hash[32];
+			algorithm::encoding::decode_uint256(transaction_hash, hash);
 
-			SchemaList Map;
-			Map.push_back(Var::Set::Binary(Hash, sizeof(Hash)));
+			schema_list map;
+			map.push_back(var::set::binary(hash, sizeof(hash)));
 
-			auto Cursor = EmplaceQuery(Label, __func__, "SELECT hash, message FROM transactions WHERE hash = ?", &Map);
-			if (!Cursor || Cursor->ErrorOrEmpty())
-				return ExpectsLR<UPtr<Ledger::Transaction>>(LayerException(ErrorOf(Cursor)));
+			auto cursor = emplace_query(label, __func__, "SELECT hash, message FROM transactions WHERE hash = ?", &map);
+			if (!cursor || cursor->error_or_empty())
+				return expects_lr<uptr<ledger::transaction>>(layer_exception(error_of(cursor)));
 
-			Format::Stream Message = Format::Stream((*Cursor)["message"].Get().GetBlob());
-			UPtr<Ledger::Transaction> Value = Transactions::Resolver::New(Messages::Authentic::ResolveType(Message).Or(0));
-			if (!Value || !Value->Load(Message))
-				return ExpectsLR<UPtr<Ledger::Transaction>>(LayerException("transaction deserialization error"));
+			format::stream message = format::stream((*cursor)["message"].get().get_blob());
+			uptr<ledger::transaction> value = transactions::resolver::init(messages::authentic::resolve_type(message).otherwise(0));
+			if (!value || !value->load(message))
+				return expects_lr<uptr<ledger::transaction>>(layer_exception("transaction deserialization error"));
 
-			FinalizeChecksum(**Value, (*Cursor)["hash"].Get());
-			return Value;
+			finalize_checksum(**value, (*cursor)["hash"].get());
+			return value;
 		}
-		ExpectsLR<Vector<UPtr<Ledger::Transaction>>> Mempoolstate::GetTransactions(size_t Offset, size_t Count)
+		expects_lr<vector<uptr<ledger::transaction>>> mempoolstate::get_transactions(size_t offset, size_t count)
 		{
-			SchemaList Map;
-			Map.push_back(Var::Set::Integer(Count));
-			Map.push_back(Var::Set::Integer(Offset));
+			schema_list map;
+			map.push_back(var::set::integer(count));
+			map.push_back(var::set::integer(offset));
 
-			auto Cursor = EmplaceQuery(Label, __func__, "SELECT message FROM transactions ORDER BY epoch ASC, preference DESC NULLS FIRST LIMIT ? OFFSET ?", &Map);
-			if (!Cursor || Cursor->Error())
-				return ExpectsLR<Vector<UPtr<Ledger::Transaction>>>(LayerException(ErrorOf(Cursor)));
+			auto cursor = emplace_query(label, __func__, "SELECT message FROM transactions ORDER BY epoch ASC, preference DESC NULLS FIRST LIMIT ? OFFSET ?", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<vector<uptr<ledger::transaction>>>(layer_exception(error_of(cursor)));
 
-			auto& Response = Cursor->First();
-			size_t Size = Response.Size();
-			Vector<UPtr<Ledger::Transaction>> Values;
-			Values.reserve(Size);
+			auto& response = cursor->first();
+			size_t size = response.size();
+			vector<uptr<ledger::transaction>> values;
+			values.reserve(size);
 
-			for (size_t i = 0; i < Size; i++)
+			for (size_t i = 0; i < size; i++)
 			{
-				auto Row = Response[i];
-				Format::Stream Message = Format::Stream(Row["message"].Get().GetBlob());
-				UPtr<Ledger::Transaction> Value = Transactions::Resolver::New(Messages::Authentic::ResolveType(Message).Or(0));
-				if (Value && Value->Load(Message))
+				auto row = response[i];
+				format::stream message = format::stream(row["message"].get().get_blob());
+				uptr<ledger::transaction> value = transactions::resolver::init(messages::authentic::resolve_type(message).otherwise(0));
+				if (value && value->load(message))
 				{
-					FinalizeChecksum(**Value, Row["hash"].Get());
-					Values.emplace_back(std::move(Value));
+					finalize_checksum(**value, row["hash"].get());
+					values.emplace_back(std::move(value));
 				}
 			}
 
-			return Values;
+			return values;
 		}
-		ExpectsLR<Vector<UPtr<Ledger::Transaction>>> Mempoolstate::GetTransactionsByOwner(const Algorithm::Pubkeyhash Owner, int8_t Direction, size_t Offset, size_t Count)
+		expects_lr<vector<uptr<ledger::transaction>>> mempoolstate::get_transactions_by_owner(const algorithm::pubkeyhash owner, int8_t direction, size_t offset, size_t count)
 		{
-			SchemaList Map;
-			Map.push_back(Var::Set::Binary(Owner, sizeof(Algorithm::Pubkeyhash)));
-			Map.push_back(Var::Set::String(Direction < 0 ? "DESC" : "ASC"));
-			Map.push_back(Var::Set::Integer(Count));
-			Map.push_back(Var::Set::Integer(Offset));
+			schema_list map;
+			map.push_back(var::set::binary(owner, sizeof(algorithm::pubkeyhash)));
+			map.push_back(var::set::string(direction < 0 ? "DESC" : "ASC"));
+			map.push_back(var::set::integer(count));
+			map.push_back(var::set::integer(offset));
 
-			auto Cursor = EmplaceQuery(Label, __func__, "SELECT message FROM transactions WHERE owner = ? ORDER BY sequence $? LIMIT ? OFFSET ?", &Map);
-			if (!Cursor || Cursor->Error())
-				return ExpectsLR<Vector<UPtr<Ledger::Transaction>>>(LayerException(ErrorOf(Cursor)));
+			auto cursor = emplace_query(label, __func__, "SELECT message FROM transactions WHERE owner = ? ORDER BY sequence $? LIMIT ? OFFSET ?", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<vector<uptr<ledger::transaction>>>(layer_exception(error_of(cursor)));
 
-			auto& Response = Cursor->First();
-			size_t Size = Response.Size();
-			Vector<UPtr<Ledger::Transaction>> Values;
-			Values.reserve(Size);
+			auto& response = cursor->first();
+			size_t size = response.size();
+			vector<uptr<ledger::transaction>> values;
+			values.reserve(size);
 
-			for (size_t i = 0; i < Size; i++)
+			for (size_t i = 0; i < size; i++)
 			{
-				auto Row = Response[i];
-				Format::Stream Message = Format::Stream(Row["message"].Get().GetBlob());
-				UPtr<Ledger::Transaction> Value = Transactions::Resolver::New(Messages::Authentic::ResolveType(Message).Or(0));
-				if (Value && Value->Load(Message))
+				auto row = response[i];
+				format::stream message = format::stream(row["message"].get().get_blob());
+				uptr<ledger::transaction> value = transactions::resolver::init(messages::authentic::resolve_type(message).otherwise(0));
+				if (value && value->load(message))
 				{
-					FinalizeChecksum(**Value, Row["hash"].Get());
-					Values.emplace_back(std::move(Value));
+					finalize_checksum(**value, row["hash"].get());
+					values.emplace_back(std::move(value));
 				}
 			}
 
-			return Values;
+			return values;
 		}
-		ExpectsLR<Vector<UPtr<Ledger::Transaction>>> Mempoolstate::GetCumulativeEventTransactions(const uint256_t& CumulativeHash, size_t Offset, size_t Count)
+		expects_lr<vector<uptr<ledger::transaction>>> mempoolstate::get_cumulative_event_transactions(const uint256_t& cumulative_hash, size_t offset, size_t count)
 		{
-			uint8_t Hash[32];
-			Algorithm::Encoding::DecodeUint256(CumulativeHash, Hash);
+			uint8_t hash[32];
+			algorithm::encoding::decode_uint256(cumulative_hash, hash);
 
-			SchemaList Map;
-			Map.push_back(Var::Set::Binary(Hash, sizeof(Hash)));
-			Map.push_back(Var::Set::Integer(Count));
-			Map.push_back(Var::Set::Integer(Offset));
+			schema_list map;
+			map.push_back(var::set::binary(hash, sizeof(hash)));
+			map.push_back(var::set::integer(count));
+			map.push_back(var::set::integer(offset));
 
-			auto Cursor = EmplaceQuery(Label, __func__, "SELECT message FROM transactions WHERE attestation = ? ORDER BY attestation ASC LIMIT ? OFFSET ?", &Map);
-			if (!Cursor || Cursor->Error())
-				return ExpectsLR<Vector<UPtr<Ledger::Transaction>>>(LayerException(ErrorOf(Cursor)));
+			auto cursor = emplace_query(label, __func__, "SELECT message FROM transactions WHERE attestation = ? ORDER BY attestation ASC LIMIT ? OFFSET ?", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<vector<uptr<ledger::transaction>>>(layer_exception(error_of(cursor)));
 
-			auto& Response = Cursor->First();
-			size_t Size = Response.Size();
-			Vector<UPtr<Ledger::Transaction>> Values;
-			Values.reserve(Size);
+			auto& response = cursor->first();
+			size_t size = response.size();
+			vector<uptr<ledger::transaction>> values;
+			values.reserve(size);
 
-			for (size_t i = 0; i < Size; i++)
+			for (size_t i = 0; i < size; i++)
 			{
-				auto Row = Response[i];
-				Format::Stream Message = Format::Stream(Row["message"].Get().GetBlob());
-				UPtr<Ledger::Transaction> Value = Transactions::Resolver::New(Messages::Authentic::ResolveType(Message).Or(0));
-				if (Value && Value->Load(Message))
+				auto row = response[i];
+				format::stream message = format::stream(row["message"].get().get_blob());
+				uptr<ledger::transaction> value = transactions::resolver::init(messages::authentic::resolve_type(message).otherwise(0));
+				if (value && value->load(message))
 				{
-					FinalizeChecksum(**Value, Row["hash"].Get());
-					Values.emplace_back(std::move(Value));
+					finalize_checksum(**value, row["hash"].get());
+					values.emplace_back(std::move(value));
 				}
 			}
 
-			return Values;
+			return values;
 		}
-		ExpectsLR<Vector<uint256_t>> Mempoolstate::GetTransactionHashset(size_t Offset, size_t Count)
+		expects_lr<vector<uint256_t>> mempoolstate::get_transaction_hashset(size_t offset, size_t count)
 		{
-			if (!Count)
-				return LayerException("invalid count");
+			if (!count)
+				return layer_exception("invalid count");
 
-			SchemaList Map;
-			Map.push_back(Var::Set::Integer(Count));
-			Map.push_back(Var::Set::Integer(Offset));
+			schema_list map;
+			map.push_back(var::set::integer(count));
+			map.push_back(var::set::integer(offset));
 
-			auto Cursor = EmplaceQuery(Label, __func__, "SELECT hash FROM transactions ORDER BY hash ASC LIMIT ? OFFSET ?", &Map);
-			if (!Cursor || Cursor->Error())
-				return ExpectsLR<Vector<uint256_t>>(LayerException(ErrorOf(Cursor)));
+			auto cursor = emplace_query(label, __func__, "SELECT hash FROM transactions ORDER BY hash ASC LIMIT ? OFFSET ?", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<vector<uint256_t>>(layer_exception(error_of(cursor)));
 
-			auto& Response = Cursor->First();
-			size_t Size = Response.Size();
-			Vector<uint256_t> Result;
-			Result.reserve(Result.size() + Size);
-			for (size_t i = 0; i < Size; i++)
+			auto& response = cursor->first();
+			size_t size = response.size();
+			vector<uint256_t> result;
+			result.reserve(result.size() + size);
+			for (size_t i = 0; i < size; i++)
 			{
-				auto InHash = Response[i]["hash"].Get().GetBlob();
-				if (InHash.size() != sizeof(uint256_t))
+				auto in_hash = response[i]["hash"].get().get_blob();
+				if (in_hash.size() != sizeof(uint256_t))
 					continue;
 
-				uint256_t OutHash;
-				Algorithm::Encoding::EncodeUint256((uint8_t*)InHash.data(), OutHash);
-				Result.push_back(OutHash);
+				uint256_t out_hash;
+				algorithm::encoding::encode_uint256((uint8_t*)in_hash.data(), out_hash);
+				result.push_back(out_hash);
 			}
 
-			return Result;
+			return result;
 		}
-		double Mempoolstate::FeePercentile(FeePriority Priority)
+		double mempoolstate::fee_percentile(fee_priority priority)
 		{
-			switch (Priority)
+			switch (priority)
 			{
-				case Tangent::Storages::FeePriority::Fastest:
+				case tangent::storages::fee_priority::fastest:
 					return 0.90;
-				case Tangent::Storages::FeePriority::Fast:
+				case tangent::storages::fee_priority::fast:
 					return 0.75;
-				case Tangent::Storages::FeePriority::Medium:
+				case tangent::storages::fee_priority::medium:
 					return 0.50;
-				case Tangent::Storages::FeePriority::Slow:
+				case tangent::storages::fee_priority::slow:
 					return 0.25;
 				default:
 					return 1.00;
 			}
 		}
-		bool Mempoolstate::ReconstructStorage()
+		bool mempoolstate::reconstruct_storage()
 		{
-			String Command = VI_STRINGIFY(
+			string command = VI_STRINGIFY(
 				CREATE TABLE IF NOT EXISTS validators
 				(
 					address BINARY NOT NULL,
@@ -757,8 +759,8 @@ namespace Tangent
 				CREATE INDEX IF NOT EXISTS transactions_asset_preference ON transactions (asset ASC, preference DESC);
 				CREATE INDEX IF NOT EXISTS transactions_epoch_preference ON transactions (epoch ASC, preference DESC););
 
-			auto Cursor = Query(Label, __func__, Command);
-			return (Cursor && !Cursor->Error());
+			auto cursor = query(label, __func__, command);
+			return (cursor && !cursor->error());
 		}
 	}
 }

@@ -3,517 +3,521 @@
 #include "states.h"
 #include "../kernel/mediator.h"
 
-namespace Tangent
+namespace tangent
 {
-	namespace Ledger
+	namespace ledger
 	{
-		struct BlockTransaction;
+		struct block_transaction;
 	}
 
-	namespace Transactions
+	namespace transactions
 	{
-		struct Transfer final : Ledger::Transaction
+		struct transfer final : ledger::transaction
 		{
-			Algorithm::Pubkeyhash To = { 0 };
-			Decimal Value;
-			String Memo;
+			algorithm::pubkeyhash to = { 0 };
+			decimal value;
+			string memo;
 
-			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
-			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
-			bool StoreBody(Format::Stream* Stream) const override;
-			bool LoadBody(Format::Stream& Stream) override;
-			bool RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
-			void SetTo(const Algorithm::Pubkeyhash NewTo, const Decimal& NewValue, const std::string_view& NewMemo = std::string_view());
-			bool IsToNull() const;
-			UPtr<Schema> AsSchema() const override;
-			uint32_t AsType() const override;
-			std::string_view AsTypename() const override;
-			uint256_t GetGasEstimate() const override;
-			static uint32_t AsInstanceType();
-			static std::string_view AsInstanceTypename();
+			expects_lr<void> validate(uint64_t block_number) const override;
+			expects_lr<void> execute(ledger::transaction_context* context) const override;
+			bool store_body(format::stream* stream) const override;
+			bool load_body(format::stream& stream) override;
+			bool recover_many(const ledger::receipt& receipt, ordered_set<string>& parties) const override;
+			void set_to(const algorithm::pubkeyhash new_to, const decimal& new_value, const std::string_view& new_memo = std::string_view());
+			bool is_to_null() const;
+			uptr<schema> as_schema() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			uint256_t get_gas_estimate() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
 		};
 
-		struct Omnitransfer final : Ledger::Transaction
+		struct omnitransfer final : ledger::transaction
 		{
-			struct Subtransfer
+			struct subtransfer
 			{
-				Algorithm::Pubkeyhash To = { 0 };
-				Decimal Value;
-				String Memo;
+				algorithm::pubkeyhash to = { 0 };
+				decimal value;
+				string memo;
 			};
-			Vector<Subtransfer> Transfers;
+			vector<subtransfer> transfers;
 
-			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
-			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
-			bool StoreBody(Format::Stream* Stream) const override;
-			bool LoadBody(Format::Stream& Stream) override;
-			bool RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
-			void SetTo(const Algorithm::Pubkeyhash NewTo, const Decimal& NewValue, const std::string_view& NewMemo = std::string_view());
-			bool IsToNull() const;
-			UPtr<Schema> AsSchema() const override;
-			uint32_t AsType() const override;
-			std::string_view AsTypename() const override;
-			uint256_t GetGasEstimate() const override;
-			static uint32_t AsInstanceType();
-			static std::string_view AsInstanceTypename();
+			expects_lr<void> validate(uint64_t block_number) const override;
+			expects_lr<void> execute(ledger::transaction_context* context) const override;
+			bool store_body(format::stream* stream) const override;
+			bool load_body(format::stream& stream) override;
+			bool recover_many(const ledger::receipt& receipt, ordered_set<string>& parties) const override;
+			void set_to(const algorithm::pubkeyhash new_to, const decimal& new_value, const std::string_view& new_memo = std::string_view());
+			bool is_to_null() const;
+			uptr<schema> as_schema() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			uint256_t get_gas_estimate() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
 		};
 
-		struct Deployment final : Ledger::Transaction
+		struct deployment final : ledger::transaction
 		{
-			Algorithm::Recsighash Location = { 0 };
-			Format::Variables Args;
-			String Calldata;
-			bool Patchable = false;
-			bool Segregated = false;
-
-			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
-			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
-			bool StoreBody(Format::Stream* Stream) const override;
-			bool LoadBody(Format::Stream& Stream) override;
-			bool RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
-			bool SignLocation(const Algorithm::Seckey SecretKey);
-			bool VerifyLocation(const Algorithm::Pubkey PublicKey) const;
-			bool RecoverLocation(Algorithm::Pubkeyhash PublicKeyHash) const;
-			bool IsLocationNull() const;
-			void SetLocation(const Algorithm::Recsighash NewValue);
-			void SetCalldata(const std::string_view& NewProgram, Format::Variables&& NewArgs, bool MayPatch = false);
-			void SetSegregatedCalldata(const std::string_view& NewHashcode, Format::Variables&& NewArgs, bool MayPatch = false);
-			UPtr<Schema> AsSchema() const override;
-			uint32_t AsType() const override;
-			std::string_view AsTypename() const override;
-			uint256_t GetGasEstimate() const override;
-			static uint32_t AsInstanceType();
-			static std::string_view AsInstanceTypename();
-		};
-
-		struct Invocation final : Ledger::Transaction
-		{
-			Algorithm::Pubkeyhash To = { 0 };
-			Format::Variables Args;
-			String Function;
-			uint32_t Hashcode = 0;
-
-			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
-			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
-			bool StoreBody(Format::Stream* Stream) const override;
-			bool LoadBody(Format::Stream& Stream) override;
-			bool RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
-			void SetCalldata(const Algorithm::Pubkeyhash NewTo, const std::string_view& NewFunction, Format::Variables&& NewArgs);
-			void SetCalldata(const Algorithm::Pubkeyhash NewTo, uint32_t NewHashcode, const std::string_view& NewFunction, Format::Variables&& NewArgs);
-			bool IsToNull() const;
-			UPtr<Schema> AsSchema() const override;
-			uint32_t AsType() const override;
-			std::string_view AsTypename() const override;
-			uint256_t GetGasEstimate() const override;
-			static uint32_t AsInstanceType();
-			static std::string_view AsInstanceTypename();
-		};
-
-		struct Withdrawal final : Ledger::Transaction
-		{
-			Vector<std::pair<String, Decimal>> To;
-			Algorithm::Pubkeyhash Proposer = { 0 };
-
-			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
-			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
-			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
-			bool StoreBody(Format::Stream* Stream) const override;
-			bool LoadBody(Format::Stream& Stream) override;
-			bool RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
-			void SetTo(const std::string_view& Address, const Decimal& Value);
-			void SetProposer(const Algorithm::Pubkeyhash NewProposer);
-			bool IsProposerNull() const;
-			Decimal GetTotalValue() const;
-			UPtr<Schema> AsSchema() const override;
-			uint32_t AsType() const override;
-			std::string_view AsTypename() const override;
-			uint256_t GetGasEstimate() const override;
-			uint64_t GetDispatchOffset() const override;
-			static uint32_t AsInstanceType();
-			static std::string_view AsInstanceTypename();
-		};
-
-		struct Rollup final : Ledger::Transaction
-		{
-			OrderedMap<Algorithm::AssetId, Vector<UPtr<Ledger::Transaction>>> Transactions;
-
-			Rollup() = default;
-			Rollup(const Rollup& Other);
-			Rollup(Rollup&&) noexcept = default;
-			Rollup& operator= (const Rollup& Other);
-			Rollup& operator= (Rollup&&) noexcept = default;
-			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
-			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
-			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
-			bool StoreBody(Format::Stream* Stream) const override;
-			bool LoadBody(Format::Stream& Stream) override;
-			bool RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
-			bool RecoverAliases(const Ledger::Receipt& Receipt, OrderedSet<uint256_t>& Aliases) const override;
-			bool Merge(const Ledger::Transaction& Transaction);
-			bool Merge(Ledger::Transaction& Transaction, const Algorithm::Seckey SecretKey);
-			bool Merge(Ledger::Transaction& Transaction, const Algorithm::Seckey SecretKey, uint64_t Sequence);
-			ExpectsLR<Ledger::BlockTransaction> ResolveBlockTransaction(const Ledger::Receipt& Receipt, const uint256_t& TransactionHash) const;
-			const Ledger::Transaction* ResolveTransaction(const uint256_t& TransactionHash) const;
-			UPtr<Schema> AsSchema() const override;
-			uint32_t AsType() const override;
-			std::string_view AsTypename() const override;
-			uint256_t GetGasEstimate() const override;
-			uint64_t GetDispatchOffset() const override;
-			static uint32_t AsInstanceType();
-			static std::string_view AsInstanceTypename();
-			static void SetupChild(Ledger::Transaction& Transaction, const Algorithm::AssetId& Asset);
-			static bool SignChild(Ledger::Transaction& Transaction, const Algorithm::Seckey SecretKey, const Algorithm::AssetId& Asset, uint16_t Index);
-		};
-
-		struct Commitment final : Ledger::Transaction
-		{
-			OrderedMap<Algorithm::AssetId, bool> Observers;
-			Option<bool> Online = Optional::None;
-
-			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
-			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
-			bool StoreBody(Format::Stream* Stream) const override;
-			bool LoadBody(Format::Stream& Stream) override;
-			void SetOnline();
-			void SetOnline(const Algorithm::AssetId& Asset);
-			void SetOffline();
-			void SetOffline(const Algorithm::AssetId& Asset);
-			void SetStandby();
-			void SetStandby(const Algorithm::AssetId& Asset);
-			UPtr<Schema> AsSchema() const override;
-			uint32_t AsType() const override;
-			std::string_view AsTypename() const override;
-			uint256_t GetGasEstimate() const override;
-			static uint32_t AsInstanceType();
-			static std::string_view AsInstanceTypename();
-		};
-
-		struct IncomingClaim final : Ledger::AggregationTransaction
-		{
-			struct CustodyTransfer
+			enum class calldata_type : uint8_t
 			{
-				AddressValueMap Contributions;
-				AccountValueMap Reservations;
-				Decimal Custody = Decimal::Zero();
+				program = 0x33,
+				hashcode = 0x66
 			};
+			algorithm::recsighash location = { 0 };
+			format::variables args;
+			string calldata;
 
-			struct BalanceTransfer
+			expects_lr<void> validate(uint64_t block_number) const override;
+			expects_lr<void> execute(ledger::transaction_context* context) const override;
+			bool store_body(format::stream* stream) const override;
+			bool load_body(format::stream& stream) override;
+			bool recover_many(const ledger::receipt& receipt, ordered_set<string>& parties) const override;
+			bool sign_location(const algorithm::seckey secret_key);
+			bool verify_location(const algorithm::pubkey public_key) const;
+			bool recover_location(algorithm::pubkeyhash public_key_hash) const;
+			bool is_location_null() const;
+			void set_location(const algorithm::recsighash new_value);
+			void set_program_calldata(const std::string_view& new_calldata, format::variables&& new_args);
+			void set_hashcode_calldata(const std::string_view& new_calldata, format::variables&& new_args);
+			option<calldata_type> get_calldata_type() const;
+			uptr<schema> as_schema() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			uint256_t get_gas_estimate() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
+		};
+
+		struct invocation final : ledger::transaction
+		{
+			algorithm::pubkeyhash to = { 0 };
+			format::variables args;
+			string function;
+			uint32_t hashcode = 0;
+
+			expects_lr<void> validate(uint64_t block_number) const override;
+			expects_lr<void> execute(ledger::transaction_context* context) const override;
+			bool store_body(format::stream* stream) const override;
+			bool load_body(format::stream& stream) override;
+			bool recover_many(const ledger::receipt& receipt, ordered_set<string>& parties) const override;
+			void set_calldata(const algorithm::pubkeyhash new_to, const std::string_view& new_function, format::variables&& new_args);
+			void set_calldata(const algorithm::pubkeyhash new_to, uint32_t new_hashcode, const std::string_view& new_function, format::variables&& new_args);
+			bool is_to_null() const;
+			uptr<schema> as_schema() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			uint256_t get_gas_estimate() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
+		};
+
+		struct withdrawal final : ledger::transaction
+		{
+			vector<std::pair<string, decimal>> to;
+			algorithm::pubkeyhash proposer = { 0 };
+
+			expects_lr<void> validate(uint64_t block_number) const override;
+			expects_lr<void> execute(ledger::transaction_context* context) const override;
+			expects_promise_rt<void> dispatch(const ledger::wallet& proposer, const ledger::transaction_context* context, vector<uptr<ledger::transaction>>* pipeline) const override;
+			bool store_body(format::stream* stream) const override;
+			bool load_body(format::stream& stream) override;
+			bool recover_many(const ledger::receipt& receipt, ordered_set<string>& parties) const override;
+			void set_to(const std::string_view& address, const decimal& value);
+			void set_proposer(const algorithm::pubkeyhash new_proposer);
+			bool is_proposer_null() const;
+			decimal get_total_value() const;
+			uptr<schema> as_schema() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			uint256_t get_gas_estimate() const override;
+			uint64_t get_dispatch_offset() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
+		};
+
+		struct rollup final : ledger::transaction
+		{
+			ordered_map<algorithm::asset_id, vector<uptr<ledger::transaction>>> transactions;
+
+			rollup() = default;
+			rollup(const rollup& other);
+			rollup(rollup&&) noexcept = default;
+			rollup& operator= (const rollup& other);
+			rollup& operator= (rollup&&) noexcept = default;
+			expects_lr<void> validate(uint64_t block_number) const override;
+			expects_lr<void> execute(ledger::transaction_context* context) const override;
+			expects_promise_rt<void> dispatch(const ledger::wallet& proposer, const ledger::transaction_context* context, vector<uptr<ledger::transaction>>* pipeline) const override;
+			bool store_body(format::stream* stream) const override;
+			bool load_body(format::stream& stream) override;
+			bool recover_many(const ledger::receipt& receipt, ordered_set<string>& parties) const override;
+			bool recover_aliases(const ledger::receipt& receipt, ordered_set<uint256_t>& aliases) const override;
+			bool merge(const ledger::transaction& transaction);
+			bool merge(ledger::transaction& transaction, const algorithm::seckey secret_key);
+			bool merge(ledger::transaction& transaction, const algorithm::seckey secret_key, uint64_t sequence);
+			expects_lr<ledger::block_transaction> resolve_block_transaction(const ledger::receipt& receipt, const uint256_t& transaction_hash) const;
+			const ledger::transaction* resolve_transaction(const uint256_t& transaction_hash) const;
+			uptr<schema> as_schema() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			uint256_t get_gas_estimate() const override;
+			uint64_t get_dispatch_offset() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
+			static void setup_child(ledger::transaction& transaction, const algorithm::asset_id& asset);
+			static bool sign_child(ledger::transaction& transaction, const algorithm::seckey secret_key, const algorithm::asset_id& asset, uint16_t index);
+		};
+
+		struct commitment final : ledger::transaction
+		{
+			ordered_map<algorithm::asset_id, bool> observers;
+			option<bool> online = optional::none;
+
+			expects_lr<void> validate(uint64_t block_number) const override;
+			expects_lr<void> execute(ledger::transaction_context* context) const override;
+			bool store_body(format::stream* stream) const override;
+			bool load_body(format::stream& stream) override;
+			void set_online();
+			void set_online(const algorithm::asset_id& asset);
+			void set_offline();
+			void set_offline(const algorithm::asset_id& asset);
+			void set_standby();
+			void set_standby(const algorithm::asset_id& asset);
+			uptr<schema> as_schema() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			uint256_t get_gas_estimate() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
+		};
+
+		struct incoming_claim final : ledger::aggregation_transaction
+		{
+			struct custody_transfer
 			{
-				Decimal Supply = Decimal::Zero();
-				Decimal Reserve = Decimal::Zero();
+				address_value_map contributions;
+				account_value_map reservations;
+				decimal custody = decimal::zero();
 			};
 
-			struct Transition
+			struct balance_transfer
 			{
-				OrderedMap<String, CustodyTransfer> Contributions;
-				OrderedMap<String, BalanceTransfer> Transfers;
+				decimal supply = decimal::zero();
+				decimal reserve = decimal::zero();
 			};
 
-			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
-			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
-			bool StoreBody(Format::Stream* Stream) const override;
-			bool LoadBody(Format::Stream& Stream) override;
-			bool RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
-			void SetWitness(uint64_t BlockHeight, const std::string_view& TransactionId, Decimal&& Fee, Vector<Mediator::Transferer>&& Senders, Vector<Mediator::Transferer>&& Receivers);
-			void SetWitness(const Mediator::IncomingTransaction& Witness);
-			Option<Mediator::IncomingTransaction> GetAssertion(const Ledger::TransactionContext* Context) const;
-			UPtr<Schema> AsSchema() const override;
-			uint32_t AsType() const override;
-			std::string_view AsTypename() const override;
-			uint256_t GetGasEstimate() const override;
-			static uint32_t AsInstanceType();
-			static std::string_view AsInstanceTypename();
+			struct transition
+			{
+				ordered_map<string, custody_transfer> contributions;
+				ordered_map<string, balance_transfer> transfers;
+			};
+
+			expects_lr<void> validate(uint64_t block_number) const override;
+			expects_lr<void> execute(ledger::transaction_context* context) const override;
+			bool store_body(format::stream* stream) const override;
+			bool load_body(format::stream& stream) override;
+			bool recover_many(const ledger::receipt& receipt, ordered_set<string>& parties) const override;
+			void set_witness(uint64_t block_height, const std::string_view& transaction_id, decimal&& fee, vector<mediator::transferer>&& senders, vector<mediator::transferer>&& receivers);
+			void set_witness(const mediator::incoming_transaction& witness);
+			option<mediator::incoming_transaction> get_assertion(const ledger::transaction_context* context) const;
+			uptr<schema> as_schema() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			uint256_t get_gas_estimate() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
 		};
 
-		struct OutgoingClaim final : Ledger::ConsensusTransaction
+		struct outgoing_claim final : ledger::consensus_transaction
 		{
-			String TransactionId;
-			String TransactionData;
-			String TransactionMessage;
-			uint256_t TransactionHash = 0;
+			string transaction_id;
+			string transaction_data;
+			string transaction_message;
+			uint256_t transaction_hash = 0;
 
-			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
-			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
-			bool StoreBody(Format::Stream* Stream) const override;
-			bool LoadBody(Format::Stream& Stream) override;
-			bool RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
-			void SetSuccessWitness(const std::string_view& TransactionId, const std::string_view& TransactionData, const uint256_t& TransactionHash);
-			void SetFailureWitness(const std::string_view& TransactionMessage, const uint256_t& TransactionHash);
-			UPtr<Schema> AsSchema() const override;
-			uint32_t AsType() const override;
-			std::string_view AsTypename() const override;
-			uint256_t GetGasEstimate() const override;
-			static uint32_t AsInstanceType();
-			static std::string_view AsInstanceTypename();
+			expects_lr<void> validate(uint64_t block_number) const override;
+			expects_lr<void> execute(ledger::transaction_context* context) const override;
+			bool store_body(format::stream* stream) const override;
+			bool load_body(format::stream& stream) override;
+			bool recover_many(const ledger::receipt& receipt, ordered_set<string>& parties) const override;
+			void set_success_witness(const std::string_view& transaction_id, const std::string_view& transaction_data, const uint256_t& transaction_hash);
+			void set_failure_witness(const std::string_view& transaction_message, const uint256_t& transaction_hash);
+			uptr<schema> as_schema() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			uint256_t get_gas_estimate() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
 		};
 
-		struct AddressAccount final : Ledger::DelegationTransaction
+		struct address_account final : ledger::delegation_transaction
 		{
-			String Address;
+			string address;
 
-			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
-			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
-			bool StoreBody(Format::Stream* Stream) const override;
-			bool LoadBody(Format::Stream& Stream) override;
-			void SetAddress(const std::string_view& NewAddress);
-			UPtr<Schema> AsSchema() const override;
-			uint32_t AsType() const override;
-			std::string_view AsTypename() const override;
-			uint256_t GetGasEstimate() const override;
-			static uint32_t AsInstanceType();
-			static std::string_view AsInstanceTypename();
+			expects_lr<void> validate(uint64_t block_number) const override;
+			expects_lr<void> execute(ledger::transaction_context* context) const override;
+			bool store_body(format::stream* stream) const override;
+			bool load_body(format::stream& stream) override;
+			void set_address(const std::string_view& new_address);
+			uptr<schema> as_schema() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			uint256_t get_gas_estimate() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
 		};
 
-		struct PubkeyAccount final : Ledger::DelegationTransaction
+		struct pubkey_account final : ledger::delegation_transaction
 		{
-			String Pubkey;
-			String Sighash;
+			string pubkey;
+			string sighash;
 
-			ExpectsLR<void> SignPubkey(const PrivateKey& SigningKey);
-			ExpectsLR<void> VerifyPubkey() const;
-			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
-			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
-			bool StoreBody(Format::Stream* Stream) const override;
-			bool LoadBody(Format::Stream& Stream) override;
-			void SetPubkey(const std::string_view& VerifyingKey);
-			UPtr<Schema> AsSchema() const override;
-			uint32_t AsType() const override;
-			std::string_view AsTypename() const override;
-			uint256_t GetGasEstimate() const override;
-			static uint32_t AsInstanceType();
-			static std::string_view AsInstanceTypename();
+			expects_lr<void> sign_pubkey(const secret_box& signing_key);
+			expects_lr<void> verify_pubkey() const;
+			expects_lr<void> validate(uint64_t block_number) const override;
+			expects_lr<void> execute(ledger::transaction_context* context) const override;
+			bool store_body(format::stream* stream) const override;
+			bool load_body(format::stream& stream) override;
+			void set_pubkey(const std::string_view& verifying_key);
+			uptr<schema> as_schema() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			uint256_t get_gas_estimate() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
 		};
 
-		struct DelegationAccount final : Ledger::DelegationTransaction
+		struct delegation_account final : ledger::delegation_transaction
 		{
-			Algorithm::Pubkeyhash Proposer = { 0 };
+			algorithm::pubkeyhash proposer = { 0 };
 
-			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
-			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
-			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
-			bool StoreBody(Format::Stream* Stream) const override;
-			bool LoadBody(Format::Stream& Stream) override;
-			bool RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
-			void SetProposer(const Algorithm::Pubkeyhash NewProposer);
-			bool IsProposerNull() const;
-			UPtr<Schema> AsSchema() const override;
-			uint32_t AsType() const override;
-			std::string_view AsTypename() const override;
-			uint256_t GetGasEstimate() const override;
-			uint64_t GetDispatchOffset() const override;
-			static uint32_t AsInstanceType();
-			static std::string_view AsInstanceTypename();
+			expects_lr<void> validate(uint64_t block_number) const override;
+			expects_lr<void> execute(ledger::transaction_context* context) const override;
+			expects_promise_rt<void> dispatch(const ledger::wallet& proposer, const ledger::transaction_context* context, vector<uptr<ledger::transaction>>* pipeline) const override;
+			bool store_body(format::stream* stream) const override;
+			bool load_body(format::stream& stream) override;
+			bool recover_many(const ledger::receipt& receipt, ordered_set<string>& parties) const override;
+			void set_proposer(const algorithm::pubkeyhash new_proposer);
+			bool is_proposer_null() const;
+			uptr<schema> as_schema() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			uint256_t get_gas_estimate() const override;
+			uint64_t get_dispatch_offset() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
 		};
 
-		struct CustodianAccount final : Ledger::ConsensusTransaction
+		struct custodian_account final : ledger::consensus_transaction
 		{
-			uint256_t DelegationAccountHash = 0;
-			Algorithm::Pubkeyhash Owner = { 0 };
-			uint64_t PubkeyIndex = 0;
-			String Pubkey;
-			String Sighash;
+			uint256_t delegation_account_hash = 0;
+			algorithm::pubkeyhash owner = { 0 };
+			uint64_t pubkey_index = 0;
+			string pubkey;
+			string sighash;
 
-			ExpectsLR<void> SetWallet(const Ledger::TransactionContext* Context, const Ledger::Wallet& Proposer, const Algorithm::Pubkeyhash NewOwner);
-			ExpectsLR<void> SignPubkey(const PrivateKey& SigningKey);
-			ExpectsLR<void> VerifyPubkey() const;
-			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
-			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
-			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
-			bool StoreBody(Format::Stream* Stream) const override;
-			bool LoadBody(Format::Stream& Stream) override;
-			bool RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
-			void SetWitness(const uint256_t& DelegationAccountHash);
-			void SetPubkey(const std::string_view& VerifyingKey, uint64_t NewPubkeyIndex);
-			void SetOwner(const Algorithm::Pubkeyhash NewOwner);
-			bool IsOwnerNull() const;
-			UPtr<Schema> AsSchema() const override;
-			uint32_t AsType() const override;
-			std::string_view AsTypename() const override;
-			uint256_t GetGasEstimate() const override;
-			uint64_t GetDispatchOffset() const override;
-			static uint32_t AsInstanceType();
-			static std::string_view AsInstanceTypename();
+			expects_lr<void> set_wallet(const ledger::transaction_context* context, const ledger::wallet& proposer, const algorithm::pubkeyhash new_owner);
+			expects_lr<void> sign_pubkey(const secret_box& signing_key);
+			expects_lr<void> verify_pubkey() const;
+			expects_lr<void> validate(uint64_t block_number) const override;
+			expects_lr<void> execute(ledger::transaction_context* context) const override;
+			expects_promise_rt<void> dispatch(const ledger::wallet& proposer, const ledger::transaction_context* context, vector<uptr<ledger::transaction>>* pipeline) const override;
+			bool store_body(format::stream* stream) const override;
+			bool load_body(format::stream& stream) override;
+			bool recover_many(const ledger::receipt& receipt, ordered_set<string>& parties) const override;
+			void set_witness(const uint256_t& delegation_account_hash);
+			void set_pubkey(const std::string_view& verifying_key, uint64_t new_pubkey_index);
+			void set_owner(const algorithm::pubkeyhash new_owner);
+			bool is_owner_null() const;
+			uptr<schema> as_schema() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			uint256_t get_gas_estimate() const override;
+			uint64_t get_dispatch_offset() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
 		};
 
-		struct ContributionAllocation final : Ledger::Transaction
+		struct contribution_allocation final : ledger::transaction
 		{
-			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
-			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
-			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
-			bool StoreBody(Format::Stream* Stream) const override;
-			bool LoadBody(Format::Stream& Stream) override;
-			bool RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
-			uint32_t AsType() const override;
-			std::string_view AsTypename() const override;
-			uint256_t GetGasEstimate() const override;
-			uint64_t GetDispatchOffset() const override;
-			static uint32_t AsInstanceType();
-			static std::string_view AsInstanceTypename();
+			expects_lr<void> validate(uint64_t block_number) const override;
+			expects_lr<void> execute(ledger::transaction_context* context) const override;
+			expects_promise_rt<void> dispatch(const ledger::wallet& proposer, const ledger::transaction_context* context, vector<uptr<ledger::transaction>>* pipeline) const override;
+			bool store_body(format::stream* stream) const override;
+			bool load_body(format::stream& stream) override;
+			bool recover_many(const ledger::receipt& receipt, ordered_set<string>& parties) const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			uint256_t get_gas_estimate() const override;
+			uint64_t get_dispatch_offset() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
 		};
 
-		struct ContributionSelection final : Ledger::ConsensusTransaction
+		struct contribution_selection final : ledger::consensus_transaction
 		{
-			uint256_t ContributionAllocationHash = 0;
-			Algorithm::Composition::CPubkey PublicKey1 = { 0 };
+			uint256_t contribution_allocation_hash = 0;
+			algorithm::composition::cpubkey public_key1 = { 0 };
 
-			ExpectsLR<void> SetShare1(const uint256_t& NewContributionAllocationHash, const Algorithm::Seckey SecretKey);
-			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
-			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
-			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
-			bool StoreBody(Format::Stream* Stream) const override;
-			bool LoadBody(Format::Stream& Stream) override;
-			bool RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
-			UPtr<Schema> AsSchema() const override;
-			uint32_t AsType() const override;
-			std::string_view AsTypename() const override;
-			uint256_t GetGasEstimate() const override;
-			uint64_t GetDispatchOffset() const override;
-			static uint32_t AsInstanceType();
-			static std::string_view AsInstanceTypename();
+			expects_lr<void> set_share1(const uint256_t& new_contribution_allocation_hash, const algorithm::seckey secret_key);
+			expects_lr<void> validate(uint64_t block_number) const override;
+			expects_lr<void> execute(ledger::transaction_context* context) const override;
+			expects_promise_rt<void> dispatch(const ledger::wallet& proposer, const ledger::transaction_context* context, vector<uptr<ledger::transaction>>* pipeline) const override;
+			bool store_body(format::stream* stream) const override;
+			bool load_body(format::stream& stream) override;
+			bool recover_many(const ledger::receipt& receipt, ordered_set<string>& parties) const override;
+			uptr<schema> as_schema() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			uint256_t get_gas_estimate() const override;
+			uint64_t get_dispatch_offset() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
 		};
 
-		struct ContributionActivation final : Ledger::ConsensusTransaction
+		struct contribution_activation final : ledger::consensus_transaction
 		{
-			uint256_t ContributionSelectionHash = 0;
-			Algorithm::Composition::CPubkey PublicKey2 = { 0 };
-			Algorithm::Composition::CPubkey PublicKey = { 0 };
-			uint16_t PublicKeySize = 0;
+			uint256_t contribution_selection_hash = 0;
+			algorithm::composition::cpubkey public_key2 = { 0 };
+			algorithm::composition::cpubkey public_key = { 0 };
+			uint16_t public_key_size = 0;
 
-			ExpectsLR<void> SetShare2(const uint256_t& NewContributionSelectionHash, const Algorithm::Seckey SecretKey, const Algorithm::Composition::CPubkey PublicKey1);
-			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
-			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
-			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
-			bool StoreBody(Format::Stream* Stream) const override;
-			bool LoadBody(Format::Stream& Stream) override;
-			bool RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
-			ExpectsLR<Mediator::DerivedVerifyingWallet> GetVerifyingWallet() const;
-			UPtr<Schema> AsSchema() const override;
-			uint32_t AsType() const override;
-			std::string_view AsTypename() const override;
-			uint256_t GetGasEstimate() const override;
-			uint64_t GetDispatchOffset() const override;
-			static uint32_t AsInstanceType();
-			static std::string_view AsInstanceTypename();
+			expects_lr<void> set_share2(const uint256_t& new_contribution_selection_hash, const algorithm::seckey secret_key, const algorithm::composition::cpubkey public_key1);
+			expects_lr<void> validate(uint64_t block_number) const override;
+			expects_lr<void> execute(ledger::transaction_context* context) const override;
+			expects_promise_rt<void> dispatch(const ledger::wallet& proposer, const ledger::transaction_context* context, vector<uptr<ledger::transaction>>* pipeline) const override;
+			bool store_body(format::stream* stream) const override;
+			bool load_body(format::stream& stream) override;
+			bool recover_many(const ledger::receipt& receipt, ordered_set<string>& parties) const override;
+			expects_lr<mediator::derived_verifying_wallet> get_verifying_wallet() const;
+			uptr<schema> as_schema() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			uint256_t get_gas_estimate() const override;
+			uint64_t get_dispatch_offset() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
 		};
 
-		struct ContributionDeallocation final : Ledger::Transaction
+		struct contribution_deallocation final : ledger::transaction
 		{
-			uint256_t ContributionActivationHash = 0;
-			Algorithm::Pubkey CipherPublicKey1 = { 0 };
-			Algorithm::Pubkey CipherPublicKey2 = { 0 };
+			uint256_t contribution_activation_hash = 0;
+			algorithm::pubkey cipher_public_key1 = { 0 };
+			algorithm::pubkey cipher_public_key2 = { 0 };
 
-			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
-			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
-			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
-			bool StoreBody(Format::Stream* Stream) const override;
-			bool LoadBody(Format::Stream& Stream) override;
-			void SetWitness(const Algorithm::Seckey SecretKey, const uint256_t& ContributionActivationHash);
-			UPtr<Schema> AsSchema() const override;
-			uint32_t AsType() const override;
-			std::string_view AsTypename() const override;
-			uint256_t GetGasEstimate() const override;
-			uint64_t GetDispatchOffset() const override;
-			static uint32_t AsInstanceType();
-			static std::string_view AsInstanceTypename();
+			expects_lr<void> validate(uint64_t block_number) const override;
+			expects_lr<void> execute(ledger::transaction_context* context) const override;
+			expects_promise_rt<void> dispatch(const ledger::wallet& proposer, const ledger::transaction_context* context, vector<uptr<ledger::transaction>>* pipeline) const override;
+			bool store_body(format::stream* stream) const override;
+			bool load_body(format::stream& stream) override;
+			void set_witness(const algorithm::seckey secret_key, const uint256_t& contribution_activation_hash);
+			uptr<schema> as_schema() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			uint256_t get_gas_estimate() const override;
+			uint64_t get_dispatch_offset() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
 		};
 
-		struct ContributionDeselection final : Ledger::ConsensusTransaction
+		struct contribution_deselection final : ledger::consensus_transaction
 		{
-			uint256_t ContributionDeallocationHash = 0;
-			String EncryptedSecretKey1;
+			uint256_t contribution_deallocation_hash = 0;
+			string encrypted_secret_key1;
 
-			ExpectsLR<void> SetRevealingShare1(const Ledger::TransactionContext* Context, const uint256_t& ContributionDeallocationHash, const Algorithm::Seckey SecretKey);
-			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
-			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
-			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
-			bool StoreBody(Format::Stream* Stream) const override;
-			bool LoadBody(Format::Stream& Stream) override;
-			bool RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
-			Option<String> GetSecretKey1(const Ledger::TransactionContext* Context, const Algorithm::Seckey SecretKey) const;
-			UPtr<Schema> AsSchema() const override;
-			uint32_t AsType() const override;
-			std::string_view AsTypename() const override;
-			uint256_t GetGasEstimate() const override;
-			uint64_t GetDispatchOffset() const override;
-			static uint32_t AsInstanceType();
-			static std::string_view AsInstanceTypename();
+			expects_lr<void> set_revealing_share1(const ledger::transaction_context* context, const uint256_t& contribution_deallocation_hash, const algorithm::seckey secret_key);
+			expects_lr<void> validate(uint64_t block_number) const override;
+			expects_lr<void> execute(ledger::transaction_context* context) const override;
+			expects_promise_rt<void> dispatch(const ledger::wallet& proposer, const ledger::transaction_context* context, vector<uptr<ledger::transaction>>* pipeline) const override;
+			bool store_body(format::stream* stream) const override;
+			bool load_body(format::stream& stream) override;
+			bool recover_many(const ledger::receipt& receipt, ordered_set<string>& parties) const override;
+			option<string> get_secret_key1(const ledger::transaction_context* context, const algorithm::seckey secret_key) const;
+			uptr<schema> as_schema() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			uint256_t get_gas_estimate() const override;
+			uint64_t get_dispatch_offset() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
 		};
 
-		struct ContributionDeactivation final : Ledger::ConsensusTransaction
+		struct contribution_deactivation final : ledger::consensus_transaction
 		{
-			uint256_t ContributionDeselectionHash = 0;
-			String EncryptedSecretKey2;
+			uint256_t contribution_deselection_hash = 0;
+			string encrypted_secret_key2;
 
-			ExpectsLR<void> SetRevealingShare2(const Ledger::TransactionContext* Context, const uint256_t& ContributionDeselectionHash, const Algorithm::Seckey SecretKey);
-			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
-			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
-			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
-			bool StoreBody(Format::Stream* Stream) const override;
-			bool LoadBody(Format::Stream& Stream) override;
-			bool RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
-			Option<String> GetSecretKey1(const Ledger::TransactionContext* Context, const Algorithm::Seckey SecretKey) const;
-			Option<String> GetSecretKey2(const Ledger::TransactionContext* Context, const Algorithm::Seckey SecretKey) const;
-			ExpectsLR<Mediator::DerivedSigningWallet> GetSigningWallet(const Ledger::TransactionContext* Context, const Algorithm::Seckey SecretKey) const;
-			ExpectsPromiseRT<Mediator::OutgoingTransaction> WithdrawToAddress(const Ledger::TransactionContext* Context, const Algorithm::Seckey SecretKey, const std::string_view& Address);
-			UPtr<Schema> AsSchema() const override;
-			uint32_t AsType() const override;
-			std::string_view AsTypename() const override;
-			uint256_t GetGasEstimate() const override;
-			uint64_t GetDispatchOffset() const override;
-			static uint32_t AsInstanceType();
-			static std::string_view AsInstanceTypename();
+			expects_lr<void> set_revealing_share2(const ledger::transaction_context* context, const uint256_t& contribution_deselection_hash, const algorithm::seckey secret_key);
+			expects_lr<void> validate(uint64_t block_number) const override;
+			expects_lr<void> execute(ledger::transaction_context* context) const override;
+			expects_promise_rt<void> dispatch(const ledger::wallet& proposer, const ledger::transaction_context* context, vector<uptr<ledger::transaction>>* pipeline) const override;
+			bool store_body(format::stream* stream) const override;
+			bool load_body(format::stream& stream) override;
+			bool recover_many(const ledger::receipt& receipt, ordered_set<string>& parties) const override;
+			option<string> get_secret_key1(const ledger::transaction_context* context, const algorithm::seckey secret_key) const;
+			option<string> get_secret_key2(const ledger::transaction_context* context, const algorithm::seckey secret_key) const;
+			expects_lr<mediator::derived_signing_wallet> get_signing_wallet(const ledger::transaction_context* context, const algorithm::seckey secret_key) const;
+			expects_promise_rt<mediator::outgoing_transaction> withdraw_to_address(const ledger::transaction_context* context, const algorithm::seckey secret_key, const std::string_view& address);
+			uptr<schema> as_schema() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			uint256_t get_gas_estimate() const override;
+			uint64_t get_dispatch_offset() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
 		};
 
-		struct DepositoryAdjustment final : Ledger::Transaction
+		struct depository_adjustment final : ledger::transaction
 		{
-			Decimal IncomingAbsoluteFee = Decimal::Zero();
-			Decimal IncomingRelativeFee = Decimal::Zero();
-			Decimal OutgoingAbsoluteFee = Decimal::Zero();
-			Decimal OutgoingRelativeFee = Decimal::Zero();
+			decimal incoming_absolute_fee = decimal::zero();
+			decimal incoming_relative_fee = decimal::zero();
+			decimal outgoing_absolute_fee = decimal::zero();
+			decimal outgoing_relative_fee = decimal::zero();
 
-			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
-			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
-			bool StoreBody(Format::Stream* Stream) const override;
-			bool LoadBody(Format::Stream& Stream) override;
-			void SetIncomingFee(const Decimal& AbsoluteFee, const Decimal& RelativeFee);
-			void SetOutgoingFee(const Decimal& AbsoluteFee, const Decimal& RelativeFee);
-			UPtr<Schema> AsSchema() const override;
-			uint32_t AsType() const override;
-			std::string_view AsTypename() const override;
-			uint256_t GetGasEstimate() const override;
-			static uint32_t AsInstanceType();
-			static std::string_view AsInstanceTypename();
+			expects_lr<void> validate(uint64_t block_number) const override;
+			expects_lr<void> execute(ledger::transaction_context* context) const override;
+			bool store_body(format::stream* stream) const override;
+			bool load_body(format::stream& stream) override;
+			void set_incoming_fee(const decimal& absolute_fee, const decimal& relative_fee);
+			void set_outgoing_fee(const decimal& absolute_fee, const decimal& relative_fee);
+			uptr<schema> as_schema() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			uint256_t get_gas_estimate() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
 		};
 
-		struct DepositoryMigration final : Ledger::Transaction
+		struct depository_migration final : ledger::transaction
 		{
-			Algorithm::Pubkeyhash Proposer = { 0 };
-			Decimal Value;
+			algorithm::pubkeyhash proposer = { 0 };
+			decimal value;
 
-			ExpectsLR<void> Validate(uint64_t BlockNumber) const override;
-			ExpectsLR<void> Execute(Ledger::TransactionContext* Context) const override;
-			ExpectsPromiseRT<void> Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const override;
-			bool StoreBody(Format::Stream* Stream) const override;
-			bool LoadBody(Format::Stream& Stream) override;
-			bool RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const override;
-			void SetProposer(const Algorithm::Pubkeyhash NewProposer, const Decimal& NewValue);
-			bool IsProposerNull() const;
-			ExpectsLR<States::WitnessAddress> GetDestination(const Ledger::TransactionContext* Context) const;
-			UPtr<Schema> AsSchema() const override;
-			uint32_t AsType() const override;
-			std::string_view AsTypename() const override;
-			uint256_t GetGasEstimate() const override;
-			uint64_t GetDispatchOffset() const override;
-			static uint32_t AsInstanceType();
-			static std::string_view AsInstanceTypename();
+			expects_lr<void> validate(uint64_t block_number) const override;
+			expects_lr<void> execute(ledger::transaction_context* context) const override;
+			expects_promise_rt<void> dispatch(const ledger::wallet& proposer, const ledger::transaction_context* context, vector<uptr<ledger::transaction>>* pipeline) const override;
+			bool store_body(format::stream* stream) const override;
+			bool load_body(format::stream& stream) override;
+			bool recover_many(const ledger::receipt& receipt, ordered_set<string>& parties) const override;
+			void set_proposer(const algorithm::pubkeyhash new_proposer, const decimal& new_value);
+			bool is_proposer_null() const;
+			expects_lr<states::witness_address> get_destination(const ledger::transaction_context* context) const;
+			uptr<schema> as_schema() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			uint256_t get_gas_estimate() const override;
+			uint64_t get_dispatch_offset() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
 		};
 
-		class Resolver
+		class resolver
 		{
 		public:
-			static Ledger::Transaction* New(uint32_t Hash);
-			static Ledger::Transaction* Copy(const Ledger::Transaction* Base);
-			static ExpectsPromiseRT<Mediator::OutgoingTransaction> EmitTransaction(Vector<UPtr<Ledger::Transaction>>* Pipeline, Mediator::DynamicWallet&& Wallet, const Algorithm::AssetId& Asset, const uint256_t& TransactionHash, Vector<Mediator::Transferer>&& To);
+			static ledger::transaction* init(uint32_t hash);
+			static ledger::transaction* copy(const ledger::transaction* base);
+			static expects_promise_rt<mediator::outgoing_transaction> emit_transaction(vector<uptr<ledger::transaction>>* pipeline, mediator::dynamic_wallet&& wallet, const algorithm::asset_id& asset, const uint256_t& transaction_hash, vector<mediator::transferer>&& to);
 		};
 	}
 }

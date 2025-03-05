@@ -11,876 +11,876 @@ extern "C"
 }
 #include <sodium.h>
 
-namespace Tangent
+namespace tangent
 {
-	namespace Mediator
+	namespace mediator
 	{
-		namespace Backends
+		namespace backends
 		{
-			static uint64_t GetExponent(const Decimal& Value)
+			static uint64_t get_exponent(const decimal& value)
 			{
-				String RawExponent = Value.ToExponent();
-				size_t Index = RawExponent.rfind("e+");
-				if (Index == std::string::npos)
+				string raw_exponent = value.to_exponent();
+				size_t index = raw_exponent.rfind("e+");
+				if (index == std::string::npos)
 					return 0;
 
-				auto Exponent = FromString<uint64_t>(RawExponent.substr(Index + 2));
-				return Exponent ? *Exponent : 0;
+				auto exponent = from_string<uint64_t>(raw_exponent.substr(index + 2));
+				return exponent ? *exponent : 0;
 			}
-			static void TxAppend(Vector<uint8_t>& Tx, const uint8_t* Data, size_t DataSize)
+			static void tx_append(vector<uint8_t>& tx, const uint8_t* data, size_t data_size)
 			{
-				size_t Offset = Tx.size();
-				Tx.resize(Tx.size() + DataSize);
-				memcpy(&Tx[Offset], Data, DataSize);
+				size_t offset = tx.size();
+				tx.resize(tx.size() + data_size);
+				memcpy(&tx[offset], data, data_size);
 			}
-			static void TxAppendUint16(Vector<uint8_t>& Tx, uint16_t Data)
+			static void tx_append_uint16(vector<uint8_t>& tx, uint16_t data)
 			{
-				uint8_t Buffer[sizeof(uint16_t)];
-				Buffer[0] = (uint8_t)(Data & 0xFF);
-				Buffer[1] = (uint8_t)(Data >> 8);
-				TxAppend(Tx, Buffer, sizeof(Buffer));
+				uint8_t buffer[sizeof(uint16_t)];
+				buffer[0] = (uint8_t)(data & 0xFF);
+				buffer[1] = (uint8_t)(data >> 8);
+				tx_append(tx, buffer, sizeof(buffer));
 			}
-			static void TxAppendUint32(Vector<uint8_t>& Tx, uint32_t Data)
+			static void tx_append_uint32(vector<uint8_t>& tx, uint32_t data)
 			{
-				uint8_t Buffer[sizeof(uint32_t)];
-				Buffer[0] = (uint8_t)((Data >> 24) & 0xFF);
-				Buffer[1] = (uint8_t)((Data >> 16) & 0xFF);
-				Buffer[2] = (uint8_t)((Data >> 8) & 0xFF);
-				Buffer[3] = (uint8_t)((Data >> 0) & 0xFF);
-				TxAppend(Tx, Buffer, sizeof(Buffer));
+				uint8_t buffer[sizeof(uint32_t)];
+				buffer[0] = (uint8_t)((data >> 24) & 0xFF);
+				buffer[1] = (uint8_t)((data >> 16) & 0xFF);
+				buffer[2] = (uint8_t)((data >> 8) & 0xFF);
+				buffer[3] = (uint8_t)((data >> 0) & 0xFF);
+				tx_append(tx, buffer, sizeof(buffer));
 			}
-			static void TxAppendUint64(Vector<uint8_t>& Tx, uint64_t Data)
+			static void tx_append_uint64(vector<uint8_t>& tx, uint64_t data)
 			{
-				uint8_t Buffer[sizeof(uint64_t)];
-				Buffer[0] = (uint8_t)(Data >> 56);
-				Buffer[1] = (uint8_t)(Data >> 48);
-				Buffer[2] = (uint8_t)(Data >> 40);
-				Buffer[3] = (uint8_t)(Data >> 32);
-				Buffer[4] = (uint8_t)(Data >> 24);
-				Buffer[5] = (uint8_t)(Data >> 16);
-				Buffer[6] = (uint8_t)(Data >> 8);
-				Buffer[7] = (uint8_t)(Data >> 0);
-				TxAppend(Tx, Buffer, sizeof(Buffer));
+				uint8_t buffer[sizeof(uint64_t)];
+				buffer[0] = (uint8_t)(data >> 56);
+				buffer[1] = (uint8_t)(data >> 48);
+				buffer[2] = (uint8_t)(data >> 40);
+				buffer[3] = (uint8_t)(data >> 32);
+				buffer[4] = (uint8_t)(data >> 24);
+				buffer[5] = (uint8_t)(data >> 16);
+				buffer[6] = (uint8_t)(data >> 8);
+				buffer[7] = (uint8_t)(data >> 0);
+				tx_append(tx, buffer, sizeof(buffer));
 			}
-			static void TxAppendAmount(Vector<uint8_t>& Tx, Ripple* Implementation, const std::string_view& Asset, const std::string_view& Issuer, const Decimal& TokenValue, uint64_t BaseValue)
+			static void tx_append_amount(vector<uint8_t>& tx, ripple* implementation, const std::string_view& asset, const std::string_view& issuer, const decimal& token_value, uint64_t base_value)
 			{
-				bool IsToken = (!Asset.empty() && !Issuer.empty());
-				uint64_t Value = BaseValue, Exponent = GetExponent(TokenValue);
-				if (IsToken)
+				bool is_token = (!asset.empty() && !issuer.empty());
+				uint64_t value = base_value, exponent = get_exponent(token_value);
+				if (is_token)
 				{
-					String Multiplier(1 + (Exponent > 15 ? Exponent - 15 : 15 - Exponent), '0');
-					Multiplier[0] = '1';
+					string multiplier(1 + (exponent > 15 ? exponent - 15 : 15 - exponent), '0');
+					multiplier[0] = '1';
 
-					Decimal AdjustedValue = TokenValue * Decimal(Multiplier);
-					Value = AdjustedValue.Truncate(0).ToUInt64();
+					decimal adjusted_value = token_value * decimal(multiplier);
+					value = adjusted_value.truncate(0).to_uint64();
 				}
 
-				uint32_t Left = (Value >> 32);
-				uint32_t Right = Value & 0x00000000ffffffff;
-				TxAppendUint32(Tx, Left);
-				TxAppendUint32(Tx, Right);
+				uint32_t left = (value >> 32);
+				uint32_t right = value & 0x00000000ffffffff;
+				tx_append_uint32(tx, left);
+				tx_append_uint32(tx, right);
 
-				size_t Offset = Tx.size() - sizeof(uint32_t) * 2;
-				uint8_t& Bit1 = Tx[Offset + 0];
-				if (!IsToken)
+				size_t offset = tx.size() - sizeof(uint32_t) * 2;
+				uint8_t& bit1 = tx[offset + 0];
+				if (!is_token)
 				{
-					Bit1 |= 0x40;
+					bit1 |= 0x40;
 					return;
 				}
 
-				uint8_t& Bit2 = Tx[Offset + 1];
-				Bit1 |= 0x80;
-				if (Value > 0)
-					Bit1 |= 0x40;
+				uint8_t& bit2 = tx[offset + 1];
+				bit1 |= 0x80;
+				if (value > 0)
+					bit1 |= 0x40;
 
-				int8_t ExponentValue = (int8_t)Exponent - 15;
-				uint8_t ExponentByte = 97 + ExponentValue;
-				Bit1 |= ExponentByte >> 2;
-				Bit2 |= (ExponentByte & 0x03) << 6;
+				int8_t exponent_value = (int8_t)exponent - 15;
+				uint8_t exponent_byte = 97 + exponent_value;
+				bit1 |= exponent_byte >> 2;
+				bit2 |= (exponent_byte & 0x03) << 6;
 
-				uint8_t AssetBuffer[20] = { 0 };
-				if (Asset.size() != 3)
+				uint8_t asset_buffer[20] = { 0 };
+				if (asset.size() != 3)
 				{
-					String AssetData = Codec::HexDecode(Asset);
-					memcpy(AssetBuffer, AssetData.data(), std::min<size_t>(AssetData.size(), sizeof(AssetBuffer)));
+					string asset_data = codec::hex_decode(asset);
+					memcpy(asset_buffer, asset_data.data(), std::min<size_t>(asset_data.size(), sizeof(asset_buffer)));
 				}
 				else
-					memcpy(AssetBuffer + 12, Asset.data(), Asset.size());
-				TxAppend(Tx, AssetBuffer, sizeof(AssetBuffer));
+					memcpy(asset_buffer + 12, asset.data(), asset.size());
+				tx_append(tx, asset_buffer, sizeof(asset_buffer));
 
-				uint8_t PublicKeyHash[20];
-				Implementation->DecodePublicKeyHash(Issuer, PublicKeyHash);
-				TxAppend(Tx, PublicKeyHash, sizeof(PublicKeyHash));
+				uint8_t public_key_hash[20];
+				implementation->decode_public_key_hash(issuer, public_key_hash);
+				tx_append(tx, public_key_hash, sizeof(public_key_hash));
 			}
-			static void TxAppendLength(Vector<uint8_t>& Tx, size_t Size)
+			static void tx_append_length(vector<uint8_t>& tx, size_t size)
 			{
-				uint8_t Length[3] = { 0, 0, 0 };
-				if (Size <= 192)
+				uint8_t length[3] = { 0, 0, 0 };
+				if (size <= 192)
 				{
-					Length[0] = (uint8_t)Size;
-					TxAppend(Tx, Length, sizeof(uint8_t) * 1);
+					length[0] = (uint8_t)size;
+					tx_append(tx, length, sizeof(uint8_t) * 1);
 				}
-				else if (Size <= 12480)
+				else if (size <= 12480)
 				{
-					Size -= 193;
-					Length[0] = (uint8_t)(193 + (Size >> 8));
-					Length[1] = (uint8_t)(Size & 0xFF);
-					TxAppend(Tx, Length, sizeof(uint8_t) * 2);
+					size -= 193;
+					length[0] = (uint8_t)(193 + (size >> 8));
+					length[1] = (uint8_t)(size & 0xFF);
+					tx_append(tx, length, sizeof(uint8_t) * 2);
 				}
-				else if (Size <= 918744)
+				else if (size <= 918744)
 				{
-					Size -= 12481;
-					Length[0] = (uint8_t)(241 + (Size >> 16));
-					Length[1] = (uint8_t)((Size >> 8) & 0xFF);
-					Length[2] = (uint8_t)(Size & 0xFF);
-					TxAppend(Tx, Length, sizeof(uint8_t) * 3);
+					size -= 12481;
+					length[0] = (uint8_t)(241 + (size >> 16));
+					length[1] = (uint8_t)((size >> 8) & 0xFF);
+					length[2] = (uint8_t)(size & 0xFF);
+					tx_append(tx, length, sizeof(uint8_t) * 3);
 				}
 			}
-			static void TxAppendBinary(Vector<uint8_t>& Tx, const uint8_t* Data, size_t DataSize)
+			static void tx_append_binary(vector<uint8_t>& tx, const uint8_t* data, size_t data_size)
 			{
-				TxAppendLength(Tx, DataSize);
-				TxAppend(Tx, Data, DataSize);
+				tx_append_length(tx, data_size);
+				tx_append(tx, data, data_size);
 			}
-			static void TxAppendPublicKey(Vector<uint8_t>& Tx, Ripple* Implementation, const std::string_view& Data)
+			static void tx_append_public_key(vector<uint8_t>& tx, ripple* implementation, const std::string_view& data)
 			{
-				uint8_t PublicKey[33] = { 0 };
-				Implementation->DecodePublicKey(Data, PublicKey);
-				TxAppendBinary(Tx, PublicKey, sizeof(PublicKey));
+				uint8_t public_key[33] = { 0 };
+				implementation->decode_public_key(data, public_key);
+				tx_append_binary(tx, public_key, sizeof(public_key));
 			}
-			static void TxAppendAddress(Vector<uint8_t>& Tx, Ripple* Implementation, const std::string_view& Data)
+			static void tx_append_address(vector<uint8_t>& tx, ripple* implementation, const std::string_view& data)
 			{
-				uint8_t PublicKeyHash[20] = { 0 };
-				Implementation->DecodePublicKeyHash(Data, PublicKeyHash);
-				TxAppendBinary(Tx, PublicKeyHash, sizeof(PublicKeyHash));
+				uint8_t public_key_hash[20] = { 0 };
+				implementation->decode_public_key_hash(data, public_key_hash);
+				tx_append_binary(tx, public_key_hash, sizeof(public_key_hash));
 			}
-			static void TxAppendSignature(Vector<uint8_t>& Tx, const std::string_view& Data)
+			static void tx_append_signature(vector<uint8_t>& tx, const std::string_view& data)
 			{
-				String Binary = Codec::HexDecode(Data);
-				TxAppendBinary(Tx, (uint8_t*)Binary.data(), Binary.size());
+				string binary = codec::hex_decode(data);
+				tx_append_binary(tx, (uint8_t*)binary.data(), binary.size());
 			}
 
-			const char* Ripple::NdCall::Ledger()
+			const char* ripple::nd_call::ledger()
 			{
 				return "ledger";
 			}
-			const char* Ripple::NdCall::Transaction()
+			const char* ripple::nd_call::transaction()
 			{
 				return "tx";
 			}
-			const char* Ripple::NdCall::ServerInfo()
+			const char* ripple::nd_call::server_info()
 			{
 				return "server_info";
 			}
-			const char* Ripple::NdCall::AccountInfo()
+			const char* ripple::nd_call::account_info()
 			{
 				return "account_info";
 			}
-			const char* Ripple::NdCall::AccountObjects()
+			const char* ripple::nd_call::account_objects()
 			{
 				return "account_objects";
 			}
-			const char* Ripple::NdCall::SubmitTransaction()
+			const char* ripple::nd_call::submit_transaction()
 			{
 				return "submit";
 			}
 
-			Ripple::Ripple() noexcept : RelayBackend()
+			ripple::ripple() noexcept : relay_backend()
 			{
-				Netdata.Composition = Algorithm::Composition::Type::ED25519;
-				Netdata.Routing = RoutingPolicy::Memo;
-				Netdata.SyncLatency = 1;
-				Netdata.Divisibility = Decimal(1000000).Truncate(Protocol::Now().Message.Precision);
-				Netdata.SupportsTokenTransfer = "iou";
-				Netdata.SupportsBulkTransfer = false;
+				netdata.composition = algorithm::composition::type::ED25519;
+				netdata.routing = routing_policy::memo;
+				netdata.sync_latency = 1;
+				netdata.divisibility = decimal(1000000).truncate(protocol::now().message.precision);
+				netdata.supports_token_transfer = "iou";
+				netdata.supports_bulk_transfer = false;
 			}
-			ExpectsPromiseRT<Ripple::AccountInfo> Ripple::GetAccountInfo(const Algorithm::AssetId& Asset, const std::string_view& Address)
+			expects_promise_rt<ripple::account_info> ripple::get_account_info(const algorithm::asset_id& asset, const std::string_view& address)
 			{
-				auto* Implementation = (Backends::Ripple*)NSS::ServerNode::Get()->GetChain(Asset);
-				if (!Implementation)
-					Coreturn ExpectsRT<Ripple::AccountInfo>(RemoteException("chain not found"));
+				auto* implementation = (backends::ripple*)nss::server_node::get()->get_chain(asset);
+				if (!implementation)
+					coreturn expects_rt<ripple::account_info>(remote_exception("chain not found"));
 
-				Schema* Params = Var::Set::Object();
-				Params->Set("account", Var::String(Address));
-				Params->Set("ledger_index", Var::String("current"));
+				schema* params = var::set::object();
+				params->set("account", var::string(address));
+				params->set("ledger_index", var::string("current"));
 
-				SchemaList Map;
-				Map.emplace_back(Params);
+				schema_list map;
+				map.emplace_back(params);
 
-				auto AccountData = Coawait(ExecuteRPC(Asset, NdCall::AccountInfo(), std::move(Map), CachePolicy::Lazy));
-				if (!AccountData)
-					Coreturn ExpectsRT<Ripple::AccountInfo>(std::move(AccountData.Error()));
+				auto account_data = coawait(execute_rpc(asset, nd_call::account_info(), std::move(map), cache_policy::lazy));
+				if (!account_data)
+					coreturn expects_rt<ripple::account_info>(std::move(account_data.error()));
 
-				AccountInfo Info;
-				Info.Balance = Implementation->FromDrop(uint256_t(AccountData->FetchVar("account_data.Balance").GetBlob()));
-				Info.Sequence = AccountData->FetchVar("account_data.Sequence").GetInteger();
-				Memory::Release(*AccountData);
-				Coreturn ExpectsRT<Ripple::AccountInfo>(std::move(Info));
+				account_info info;
+				info.balance = implementation->from_drop(uint256_t(account_data->fetch_var("account_data.Balance").get_blob()));
+				info.sequence = account_data->fetch_var("account_data.Sequence").get_integer();
+				memory::release(*account_data);
+				coreturn expects_rt<ripple::account_info>(std::move(info));
 			}
-			ExpectsPromiseRT<Ripple::AccountTokenInfo> Ripple::GetAccountTokenInfo(const Algorithm::AssetId& Asset, const std::string_view& Address)
+			expects_promise_rt<ripple::account_token_info> ripple::get_account_token_info(const algorithm::asset_id& asset, const std::string_view& address)
 			{
-				AccountTokenInfo Info;
-				Info.Balance = 0.0;
+				account_token_info info;
+				info.balance = 0.0;
 
-				auto ContractAddress = NSS::ServerNode::Get()->GetContractAddress(Asset);
-				size_t Marker = 0, Limit = 400;
-				while (ContractAddress && Limit > 0)
+				auto contract_address = nss::server_node::get()->get_contract_address(asset);
+				size_t marker = 0, limit = 400;
+				while (contract_address && limit > 0)
 				{
-					Schema* Params = Var::Set::Object();
-					Params->Set("account", Var::String(Address));
-					Params->Set("ledger_index", Var::String("current"));
-					Params->Set("deletion_blockers_only", Var::Boolean(false));
-					Params->Set("marker", Var::Integer(Marker));
-					Params->Set("limit", Var::Integer(Limit));
+					schema* params = var::set::object();
+					params->set("account", var::string(address));
+					params->set("ledger_index", var::string("current"));
+					params->set("deletion_blockers_only", var::boolean(false));
+					params->set("marker", var::integer(marker));
+					params->set("limit", var::integer(limit));
 
-					SchemaList Map;
-					Map.emplace_back(Params);
+					schema_list map;
+					map.emplace_back(params);
 
-					auto AccountData = UPtr<Schema>(Coawait(ExecuteRPC(Asset, NdCall::AccountObjects(), std::move(Map), CachePolicy::Lazy)));
-					if (!AccountData)
+					auto account_data = uptr<schema>(coawait(execute_rpc(asset, nd_call::account_objects(), std::move(map), cache_policy::lazy)));
+					if (!account_data)
 						break;
 
-					auto* Objects = AccountData->Get("account_objects");
-					if (!Objects || Objects->Empty())
+					auto* objects = account_data->get("account_objects");
+					if (!objects || objects->empty())
 						break;
 
-					String IssuerChecksum = ContractAddress->substr(ContractAddress->size() - 6);
-					for (auto& Object : Objects->GetChilds())
+					string issuer_checksum = contract_address->substr(contract_address->size() - 6);
+					for (auto& object : objects->get_childs())
 					{
-						String Token = Object->FetchVar("Balance.currency").GetBlob();
-						if (Token != Algorithm::Asset::TokenOf(Asset))
+						string token = object->fetch_var("Balance.currency").get_blob();
+						if (token != algorithm::asset::token_of(asset))
 							continue;
 
-						String Issuer = Object->FetchVar("Balance.issuer").GetBlob();
-						if (Issuer.substr(Issuer.size() - 6) != IssuerChecksum)
+						string issuer = object->fetch_var("Balance.issuer").get_blob();
+						if (issuer.substr(issuer.size() - 6) != issuer_checksum)
 							continue;
 
-						Info.Balance = Object->FetchVar("Balance.value").GetDecimal();
-						Limit = 0;
+						info.balance = object->fetch_var("Balance.value").get_decimal();
+						limit = 0;
 						break;
 					}
 
-					size_t Size = Objects->Size();
-					Marker += Size;
-					if (Size < Limit)
+					size_t size = objects->size();
+					marker += size;
+					if (size < limit)
 						break;
 				}
 
-				Coreturn ExpectsRT<Ripple::AccountTokenInfo>(std::move(Info));
+				coreturn expects_rt<ripple::account_token_info>(std::move(info));
 			}
-			ExpectsPromiseRT<Ripple::LedgerSequenceInfo> Ripple::GetLedgerSequenceInfo(const Algorithm::AssetId& Asset)
+			expects_promise_rt<ripple::ledger_sequence_info> ripple::get_ledger_sequence_info(const algorithm::asset_id& asset)
 			{
-				Schema* Params = Var::Set::Object();
-				Params->Set("ledger_index", Var::String("validated"));
+				schema* params = var::set::object();
+				params->set("ledger_index", var::string("validated"));
 
-				SchemaList Map;
-				Map.emplace_back(Params);
+				schema_list map;
+				map.emplace_back(params);
 
-				auto BlockData = Coawait(ExecuteRPC(Asset, NdCall::Ledger(), std::move(Map), CachePolicy::Lazy));
-				if (!BlockData)
-					Coreturn ExpectsRT<Ripple::LedgerSequenceInfo>(BlockData.Error());
+				auto block_data = coawait(execute_rpc(asset, nd_call::ledger(), std::move(map), cache_policy::lazy));
+				if (!block_data)
+					coreturn expects_rt<ripple::ledger_sequence_info>(block_data.error());
 
-				LedgerSequenceInfo Info;
-				Info.Index = BlockData->GetVar("ledger_index").GetInteger();
-				Info.Sequence = Info.Index + 20;
-				Memory::Release(*BlockData);
-				Coreturn ExpectsRT<Ripple::LedgerSequenceInfo>(std::move(Info));
+				ledger_sequence_info info;
+				info.index = block_data->get_var("ledger_index").get_integer();
+				info.sequence = info.index + 20;
+				memory::release(*block_data);
+				coreturn expects_rt<ripple::ledger_sequence_info>(std::move(info));
 			}
-			ExpectsPromiseRT<void> Ripple::BroadcastTransaction(const Algorithm::AssetId& Asset, const OutgoingTransaction& TxData)
+			expects_promise_rt<void> ripple::broadcast_transaction(const algorithm::asset_id& asset, const outgoing_transaction& tx_data)
 			{
-				Schema* Params = Var::Set::Object();
-				Params->Set("tx_blob", Var::String(Format::Util::Clear0xHex(TxData.Data, true)));
-				Params->Set("fail_hard", Var::Boolean(true));
+				schema* params = var::set::object();
+				params->set("tx_blob", var::string(format::util::clear_0xhex(tx_data.data, true)));
+				params->set("fail_hard", var::boolean(true));
 
-				SchemaList Map;
-				Map.emplace_back(Params);
+				schema_list map;
+				map.emplace_back(params);
 
-				auto HexData = Coawait(ExecuteRPC(Asset, NdCall::SubmitTransaction(), std::move(Map), CachePolicy::Greedy));
-				if (!HexData)
-					Coreturn ExpectsRT<void>(std::move(HexData.Error()));
+				auto hex_data = coawait(execute_rpc(asset, nd_call::submit_transaction(), std::move(map), cache_policy::greedy));
+				if (!hex_data)
+					coreturn expects_rt<void>(std::move(hex_data.error()));
 
-				String ErrorMessage = HexData->GetVar("engine_result_message").GetBlob();
-				bool IsAccepted = HexData->GetVar("accepted").GetBoolean();
-				Memory::Release(*HexData);
-				if (IsAccepted)
-					Coreturn ExpectsRT<void>(Expectation::Met);
-				else if (ErrorMessage.empty())
-					ErrorMessage = "broadcast error";
+				string error_message = hex_data->get_var("engine_result_message").get_blob();
+				bool is_accepted = hex_data->get_var("accepted").get_boolean();
+				memory::release(*hex_data);
+				if (is_accepted)
+					coreturn expects_rt<void>(expectation::met);
+				else if (error_message.empty())
+					error_message = "broadcast error";
 
-				Coreturn ExpectsRT<void>(RemoteException(std::move(ErrorMessage)));
+				coreturn expects_rt<void>(remote_exception(std::move(error_message)));
 			}
-			ExpectsPromiseRT<uint64_t> Ripple::GetLatestBlockHeight(const Algorithm::AssetId& Asset)
+			expects_promise_rt<uint64_t> ripple::get_latest_block_height(const algorithm::asset_id& asset)
 			{
-				auto LedgerSequenceInfo = Coawait(GetLedgerSequenceInfo(Asset));
-				if (!LedgerSequenceInfo)
-					Coreturn ExpectsRT<uint64_t>(LedgerSequenceInfo.Error());
+				auto ledger_sequence_info = coawait(get_ledger_sequence_info(asset));
+				if (!ledger_sequence_info)
+					coreturn expects_rt<uint64_t>(ledger_sequence_info.error());
 
-				Coreturn ExpectsRT<uint64_t>(LedgerSequenceInfo->Index);
+				coreturn expects_rt<uint64_t>(ledger_sequence_info->index);
 			}
-			ExpectsPromiseRT<Schema*> Ripple::GetBlockTransactions(const Algorithm::AssetId& Asset, uint64_t BlockHeight, String* BlockHash)
+			expects_promise_rt<schema*> ripple::get_block_transactions(const algorithm::asset_id& asset, uint64_t block_height, string* block_hash)
 			{
-				Schema* Params = Var::Set::Object();
-				Params->Set("ledger_index", Var::Integer(BlockHeight));
-				Params->Set("transactions", Var::Boolean(true));
-				Params->Set("expand", Var::Boolean(true));
+				schema* params = var::set::object();
+				params->set("ledger_index", var::integer(block_height));
+				params->set("transactions", var::boolean(true));
+				params->set("expand", var::boolean(true));
 
-				SchemaList Map;
-				Map.emplace_back(Params);
+				schema_list map;
+				map.emplace_back(params);
 
-				auto BlockData = Coawait(ExecuteRPC(Asset, NdCall::Ledger(), std::move(Map), CachePolicy::Shortened));
-				if (!BlockData)
-					Coreturn BlockData;
+				auto block_data = coawait(execute_rpc(asset, nd_call::ledger(), std::move(map), cache_policy::shortened));
+				if (!block_data)
+					coreturn block_data;
 
-				if (BlockHash != nullptr)
-					*BlockHash = BlockData->GetVar("ledger_hash").GetBlob();
+				if (block_hash != nullptr)
+					*block_hash = block_data->get_var("ledger_hash").get_blob();
 
-				auto* Transactions = BlockData->Fetch("ledger.transactions");
-				if (!Transactions)
+				auto* transactions = block_data->fetch("ledger.transactions");
+				if (!transactions)
 				{
-					Memory::Release(*BlockData);
-					Coreturn ExpectsRT<Schema*>(RemoteException("ledger.transactions field not found"));
+					memory::release(*block_data);
+					coreturn expects_rt<schema*>(remote_exception("ledger.transactions field not found"));
 				}
 
-				Transactions->Unlink();
-				Memory::Release(*BlockData);
-				Coreturn ExpectsRT<Schema*>(Transactions);
+				transactions->unlink();
+				memory::release(*block_data);
+				coreturn expects_rt<schema*>(transactions);
 			}
-			ExpectsPromiseRT<Schema*> Ripple::GetBlockTransaction(const Algorithm::AssetId& Asset, uint64_t BlockHeight, const std::string_view& BlockHash, const std::string_view& TransactionId)
+			expects_promise_rt<schema*> ripple::get_block_transaction(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, const std::string_view& transaction_id)
 			{
-				Schema* Params = Var::Set::Object();
-				Params->Set("transaction", Var::String(Format::Util::Clear0xHex(TransactionId, true)));
-				Params->Set("binary", Var::Boolean(false));
+				schema* params = var::set::object();
+				params->set("transaction", var::string(format::util::clear_0xhex(transaction_id, true)));
+				params->set("binary", var::boolean(false));
 
-				SchemaList Map;
-				Map.emplace_back(Params);
+				schema_list map;
+				map.emplace_back(params);
 
-				auto TxData = Coawait(ExecuteRPC(Asset, NdCall::Transaction(), std::move(Map), CachePolicy::Extended));
-				Coreturn TxData;
+				auto tx_data = coawait(execute_rpc(asset, nd_call::transaction(), std::move(map), cache_policy::extended));
+				coreturn tx_data;
 			}
-			ExpectsPromiseRT<Vector<IncomingTransaction>> Ripple::GetAuthenticTransactions(const Algorithm::AssetId& Asset, uint64_t BlockHeight, const std::string_view& BlockHash, Schema* TransactionData)
+			expects_promise_rt<vector<incoming_transaction>> ripple::get_authentic_transactions(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, schema* transaction_data)
 			{
-				auto* Implementation = (Backends::Ripple*)NSS::ServerNode::Get()->GetChain(Asset);
-				if (!Implementation)
-					Coreturn ExpectsRT<Vector<IncomingTransaction>>(RemoteException("chain not found"));
+				auto* implementation = (backends::ripple*)nss::server_node::get()->get_chain(asset);
+				if (!implementation)
+					coreturn expects_rt<vector<incoming_transaction>>(remote_exception("chain not found"));
 
-				String TxHash = TransactionData->GetVar("hash").GetBlob();
-				String Type = TransactionData->GetVar("TransactionType").GetBlob();
-				String From = TransactionData->GetVar("Account").GetBlob();
-				String To = TransactionData->GetVar("Destination").GetBlob();
-				Decimal FeeValue = Implementation->FromDrop(uint256_t(TransactionData->GetVar("Fee").GetBlob()));
-				auto* Amount = TransactionData->Get("Amount");
-				if (Type != "Payment" || !Amount)
-					Coreturn ExpectsRT<Vector<IncomingTransaction>>(RemoteException("tx not involved"));
+				string tx_hash = transaction_data->get_var("hash").get_blob();
+				string type = transaction_data->get_var("TransactionType").get_blob();
+				string from = transaction_data->get_var("Account").get_blob();
+				string to = transaction_data->get_var("Destination").get_blob();
+				decimal fee_value = implementation->from_drop(uint256_t(transaction_data->get_var("Fee").get_blob()));
+				auto* amount = transaction_data->get("Amount");
+				if (type != "Payment" || !amount)
+					coreturn expects_rt<vector<incoming_transaction>>(remote_exception("tx not involved"));
 
-				Decimal BaseValue = 0.0, TokenValue = 0.0;
-				Algorithm::AssetId TokenAsset = Asset;
-				if (Amount->Value.IsObject())
+				decimal base_value = 0.0, token_value = 0.0;
+				algorithm::asset_id token_asset = asset;
+				if (amount->value.is_object())
 				{
-					String Token = Amount->GetVar("currency").GetBlob();
-					String Issuer = Amount->FetchVar("issuer").GetBlob();
-					TokenValue = Amount->GetVar("value").GetDecimal();
-					TokenAsset = Algorithm::Asset::IdOf(Algorithm::Asset::BlockchainOf(Asset), Token, Issuer);
-					if (!NSS::ServerNode::Get()->EnableContractAddress(TokenAsset, Issuer))
-						Coreturn ExpectsRT<Vector<IncomingTransaction>>(RemoteException("tx not involved"));
+					string token = amount->get_var("currency").get_blob();
+					string issuer = amount->fetch_var("issuer").get_blob();
+					token_value = amount->get_var("value").get_decimal();
+					token_asset = algorithm::asset::id_of(algorithm::asset::blockchain_of(asset), token, issuer);
+					if (!nss::server_node::get()->enable_contract_address(token_asset, issuer))
+						coreturn expects_rt<vector<incoming_transaction>>(remote_exception("tx not involved"));
 				}
 				else
-					BaseValue = Implementation->FromDrop(uint256_t(Amount->Value.GetBlob()));
+					base_value = implementation->from_drop(uint256_t(amount->value.get_blob()));
 
-				auto Discovery = FindCheckpointAddresses(Asset, { From, To });
-				if (!Discovery || Discovery->empty())
-					Coreturn ExpectsRT<Vector<IncomingTransaction>>(RemoteException("tx not involved"));
+				auto discovery = find_checkpoint_addresses(asset, { from, to });
+				if (!discovery || discovery->empty())
+					coreturn expects_rt<vector<incoming_transaction>>(remote_exception("tx not involved"));
 
-				auto FromAddress = Discovery->find(From);
-				auto ToAddress = Discovery->find(To);
-				auto DestinationTag = TransactionData->GetVar("DestinationTag").GetBlob();
-				auto ToAddressIndex = FromString<uint64_t>(DestinationTag);
-				if (!ToAddressIndex && ToAddress != Discovery->end())
-					ToAddressIndex = ToAddress->second;
+				auto from_address = discovery->find(from);
+				auto to_address = discovery->find(to);
+				auto destination_tag = transaction_data->get_var("DestinationTag").get_blob();
+				auto to_address_index = from_string<uint64_t>(destination_tag);
+				if (!to_address_index && to_address != discovery->end())
+					to_address_index = to_address->second;
 
-				Vector<IncomingTransaction> Transactions;
-				if (FeeValue + BaseValue > 0.0)
+				vector<incoming_transaction> transactions;
+				if (fee_value + base_value > 0.0)
 				{
-					IncomingTransaction Tx;
-					Tx.SetTransaction(Algorithm::Asset::BaseIdOf(Asset), BlockHeight, TxHash, std::move(FeeValue));
-					Tx.SetOperations({ Transferer(From, FromAddress != Discovery->end() ? Option<uint64_t>(FromAddress->second) : Option<uint64_t>(Optional::None), Decimal(BaseValue)) }, { Transferer(To, ToAddressIndex ? Option<uint64_t>(*ToAddressIndex) : Option<uint64_t>(Optional::None), Decimal(BaseValue)) });
-					Transactions.push_back(std::move(Tx));
+					incoming_transaction tx;
+					tx.set_transaction(algorithm::asset::base_id_of(asset), block_height, tx_hash, std::move(fee_value));
+					tx.set_operations({ transferer(from, from_address != discovery->end() ? option<uint64_t>(from_address->second) : option<uint64_t>(optional::none), decimal(base_value)) }, { transferer(to, to_address_index ? option<uint64_t>(*to_address_index) : option<uint64_t>(optional::none), decimal(base_value)) });
+					transactions.push_back(std::move(tx));
 				}
-				if (TokenValue.IsPositive())
+				if (token_value.is_positive())
 				{
-					IncomingTransaction Tx;
-					Tx.SetTransaction(TokenAsset, BlockHeight, TxHash, Decimal::Zero());
-					Tx.SetOperations({ Transferer(From, FromAddress != Discovery->end() ? Option<uint64_t>(FromAddress->second) : Option<uint64_t>(Optional::None), Decimal(TokenValue)) }, { Transferer(To, ToAddressIndex ? Option<uint64_t>(*ToAddressIndex) : Option<uint64_t>(Optional::None), Decimal(TokenValue)) });
-					Transactions.push_back(std::move(Tx));
+					incoming_transaction tx;
+					tx.set_transaction(token_asset, block_height, tx_hash, decimal::zero());
+					tx.set_operations({ transferer(from, from_address != discovery->end() ? option<uint64_t>(from_address->second) : option<uint64_t>(optional::none), decimal(token_value)) }, { transferer(to, to_address_index ? option<uint64_t>(*to_address_index) : option<uint64_t>(optional::none), decimal(token_value)) });
+					transactions.push_back(std::move(tx));
 				}
-				Coreturn ExpectsRT<Vector<IncomingTransaction>>(std::move(Transactions));
+				coreturn expects_rt<vector<incoming_transaction>>(std::move(transactions));
 			}
-			ExpectsPromiseRT<BaseFee> Ripple::EstimateFee(const Algorithm::AssetId& Asset, const DynamicWallet& Wallet, const Vector<Transferer>& To, const FeeSupervisorOptions& Options)
+			expects_promise_rt<base_fee> ripple::estimate_fee(const algorithm::asset_id& asset, const dynamic_wallet& wallet, const vector<transferer>& to, const fee_supervisor_options& options)
 			{
-				SchemaList Map;
-				Map.emplace_back(Var::Set::Object());
+				schema_list map;
+				map.emplace_back(var::set::object());
 
-				auto ServerInfo = Coawait(ExecuteRPC(Asset, NdCall::ServerInfo(), std::move(Map), CachePolicy::Lazy));
-				if (!ServerInfo)
-					Coreturn ExpectsRT<BaseFee>(std::move(ServerInfo.Error()));
+				auto server_info = coawait(execute_rpc(asset, nd_call::server_info(), std::move(map), cache_policy::lazy));
+				if (!server_info)
+					coreturn expects_rt<base_fee>(std::move(server_info.error()));
 
-				Decimal BaseConstantFee = ServerInfo->FetchVar("info.validated_ledger.base_fee_xrp").GetDecimal();
-				if (!BaseConstantFee.IsPositive())
+				decimal base_constant_fee = server_info->fetch_var("info.validated_ledger.base_fee_xrp").get_decimal();
+				if (!base_constant_fee.is_positive())
 				{
-					auto* Implementation = (Backends::Ripple*)NSS::ServerNode::Get()->GetChain(Asset);
-					BaseConstantFee = Implementation->GetBaseFeeXRP();
+					auto* implementation = (backends::ripple*)nss::server_node::get()->get_chain(asset);
+					base_constant_fee = implementation->get_base_fee_xrp();
 				}
 
-				Decimal LoadFactor = ServerInfo->FetchVar("info.load_factor").GetDecimal();
-				if (!LoadFactor.IsPositive())
-					LoadFactor = 1.0;
+				decimal load_factor = server_info->fetch_var("info.load_factor").get_decimal();
+				if (!load_factor.is_positive())
+					load_factor = 1.0;
 
-				Decimal FeeCushion = 1.2;
-				Memory::Release(*ServerInfo);
-				Coreturn ExpectsRT<BaseFee>(BaseFee(BaseConstantFee * LoadFactor * FeeCushion, 1.0));
+				decimal fee_cushion = 1.2;
+				memory::release(*server_info);
+				coreturn expects_rt<base_fee>(base_fee(base_constant_fee * load_factor * fee_cushion, 1.0));
 			}
-			ExpectsPromiseRT<Decimal> Ripple::CalculateBalance(const Algorithm::AssetId& Asset, const DynamicWallet& Wallet, Option<String>&& Address)
+			expects_promise_rt<decimal> ripple::calculate_balance(const algorithm::asset_id& asset, const dynamic_wallet& wallet, option<string>&& address)
 			{
-				auto* Implementation = (Backends::Ripple*)NSS::ServerNode::Get()->GetChain(Asset);
-				if (!Address)
+				auto* implementation = (backends::ripple*)nss::server_node::get()->get_chain(asset);
+				if (!address)
 				{
-					ExpectsLR<DerivedVerifyingWallet> FromWallet = LayerException("signing wallet not found");
-					if (Wallet.Parent)
+					expects_lr<derived_verifying_wallet> from_wallet = layer_exception("signing wallet not found");
+					if (wallet.parent)
 					{
-						auto SigningWallet = NSS::ServerNode::Get()->NewSigningWallet(Asset, *Wallet.Parent, Protocol::Now().Account.RootAddressIndex);
-						if (SigningWallet)
-							FromWallet = *SigningWallet;
+						auto signing_wallet = nss::server_node::get()->new_signing_wallet(asset, *wallet.parent, protocol::now().account.root_address_index);
+						if (signing_wallet)
+							from_wallet = *signing_wallet;
 						else
-							FromWallet = SigningWallet.Error();
+							from_wallet = signing_wallet.error();
 					}
-					else if (Wallet.VerifyingChild)
-						FromWallet = *Wallet.VerifyingChild;
-					else if (Wallet.SigningChild)
-						FromWallet = *Wallet.SigningChild;
-					if (!FromWallet)
-						Coreturn ExpectsRT<Decimal>(RemoteException(std::move(FromWallet.Error().message())));
+					else if (wallet.verifying_child)
+						from_wallet = *wallet.verifying_child;
+					else if (wallet.signing_child)
+						from_wallet = *wallet.signing_child;
+					if (!from_wallet)
+						coreturn expects_rt<decimal>(remote_exception(std::move(from_wallet.error().message())));
 
-					Address = FromWallet->Addresses.begin()->second;
+					address = from_wallet->addresses.begin()->second;
 				}
 
-				if (!Algorithm::Asset::TokenOf(Asset).empty())
+				if (!algorithm::asset::token_of(asset).empty())
 				{
-					auto Account = Coawait(GetAccountTokenInfo(Asset, *Address));
-					if (!Account)
-						Coreturn ExpectsRT<Decimal>(std::move(Account.Error()));
+					auto account = coawait(get_account_token_info(asset, *address));
+					if (!account)
+						coreturn expects_rt<decimal>(std::move(account.error()));
 
-					Coreturn ExpectsRT<Decimal>(std::move(Account->Balance));
-				}
-				else
-				{
-					auto Account = Coawait(GetAccountInfo(Asset, *Address));
-					if (!Account)
-						Coreturn ExpectsRT<Decimal>(std::move(Account.Error()));
-
-					Coreturn ExpectsRT<Decimal>(std::move(Account->Balance));
-				}
-			}
-			ExpectsPromiseRT<OutgoingTransaction> Ripple::NewTransaction(const Algorithm::AssetId& Asset, const DynamicWallet& Wallet, const Vector<Transferer>& To, const BaseFee& Fee)
-			{
-				ExpectsLR<DerivedSigningWallet> FromWallet = LayerException();
-				if (Wallet.Parent)
-					FromWallet = NSS::ServerNode::Get()->NewSigningWallet(Asset, *Wallet.Parent, Protocol::Now().Account.RootAddressIndex);
-				else if (Wallet.SigningChild)
-					FromWallet = *Wallet.SigningChild;
-				if (!FromWallet)
-					Coreturn ExpectsRT<OutgoingTransaction>(RemoteException("signing wallet not found"));
-
-				auto AccountInfo = Coawait(GetAccountInfo(Asset, FromWallet->Addresses.begin()->second));
-				if (!AccountInfo)
-					Coreturn ExpectsRT<OutgoingTransaction>(std::move(AccountInfo.Error()));
-
-				auto LedgerInfo = Coawait(GetLedgerSequenceInfo(Asset));
-				if (!LedgerInfo)
-					Coreturn ExpectsRT<OutgoingTransaction>(std::move(LedgerInfo.Error()));
-
-				auto& Subject = To.front();
-				auto ContractAddress = NSS::ServerNode::Get()->GetContractAddress(Asset);
-				Decimal TotalValue = Subject.Value;
-				Decimal FeeValue = Fee.GetFee();
-				if (ContractAddress)
-				{
-					auto AccountTokenInfo = Coawait(GetAccountTokenInfo(Asset, FromWallet->Addresses.begin()->second));
-					if (!AccountTokenInfo || AccountTokenInfo->Balance < TotalValue)
-						Coreturn ExpectsRT<OutgoingTransaction>(RemoteException(Stringify::Text("insufficient funds: %s < %s", (AccountTokenInfo ? AccountTokenInfo->Balance : Decimal(0.0)).ToString().c_str(), TotalValue.ToString().c_str())));
-					TotalValue = FeeValue;
+					coreturn expects_rt<decimal>(std::move(account->balance));
 				}
 				else
-					TotalValue += FeeValue;
-
-				if (AccountInfo->Balance < TotalValue)
-					Coreturn ExpectsRT<OutgoingTransaction>(RemoteException(Stringify::Text("insufficient funds: %s < %s", AccountInfo->Balance.ToString().c_str(), TotalValue.ToString().c_str())));
-
-				TransactionBuffer Buffer;
-				Buffer.TransactionType = 0;
-				Buffer.Flags = 0;
-				Buffer.Sequence = (uint32_t)AccountInfo->Sequence;
-				Buffer.DestinationTag = (uint32_t)Subject.AddressIndex.Or(0);
-				Buffer.LastLedgerSequence = (uint32_t)LedgerInfo->Sequence;
-				if (ContractAddress)
 				{
-					Buffer.Amount.TokenValue = Subject.Value;
-					Buffer.Amount.Asset = Algorithm::Asset::TokenOf(Asset);
-					Buffer.Amount.Issuer = *ContractAddress;
+					auto account = coawait(get_account_info(asset, *address));
+					if (!account)
+						coreturn expects_rt<decimal>(std::move(account.error()));
+
+					coreturn expects_rt<decimal>(std::move(account->balance));
+				}
+			}
+			expects_promise_rt<outgoing_transaction> ripple::new_transaction(const algorithm::asset_id& asset, const dynamic_wallet& wallet, const vector<transferer>& to, const base_fee& fee)
+			{
+				expects_lr<derived_signing_wallet> from_wallet = layer_exception();
+				if (wallet.parent)
+					from_wallet = nss::server_node::get()->new_signing_wallet(asset, *wallet.parent, protocol::now().account.root_address_index);
+				else if (wallet.signing_child)
+					from_wallet = *wallet.signing_child;
+				if (!from_wallet)
+					coreturn expects_rt<outgoing_transaction>(remote_exception("signing wallet not found"));
+
+				auto account_info = coawait(get_account_info(asset, from_wallet->addresses.begin()->second));
+				if (!account_info)
+					coreturn expects_rt<outgoing_transaction>(std::move(account_info.error()));
+
+				auto ledger_info = coawait(get_ledger_sequence_info(asset));
+				if (!ledger_info)
+					coreturn expects_rt<outgoing_transaction>(std::move(ledger_info.error()));
+
+				auto& subject = to.front();
+				auto contract_address = nss::server_node::get()->get_contract_address(asset);
+				decimal total_value = subject.value;
+				decimal fee_value = fee.get_fee();
+				if (contract_address)
+				{
+					auto account_token_info = coawait(get_account_token_info(asset, from_wallet->addresses.begin()->second));
+					if (!account_token_info || account_token_info->balance < total_value)
+						coreturn expects_rt<outgoing_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (account_token_info ? account_token_info->balance : decimal(0.0)).to_string().c_str(), total_value.to_string().c_str())));
+					total_value = fee_value;
 				}
 				else
-					Buffer.Amount.BaseValue = (uint64_t)ToDrop(Subject.Value);
-				Buffer.Fee = (uint64_t)ToDrop(FeeValue);
-				Buffer.SigningPubKey = FromWallet->VerifyingKey;
-				Buffer.Account = FromWallet->Addresses.begin()->first;
-				Buffer.Destination = Subject.Address;
-				if (!TxSignAndVerify(&Buffer, FromWallet->VerifyingKey, FromWallet->SigningKey))
-					Coreturn ExpectsRT<OutgoingTransaction>(RemoteException("invalid private key"));
+					total_value += fee_value;
 
-				Vector<uint8_t> RawTransactionData = TxSerialize(&Buffer, false);
-				String TransactionData = Codec::HexEncode(std::string_view((char*)&RawTransactionData[0], RawTransactionData.size()), true);
-				String TransactionId = TxHash(RawTransactionData);
-				if (TransactionId.empty() || TransactionData.empty())
-					Coreturn ExpectsRT<OutgoingTransaction>(RemoteException("tx serialization error"));
+				if (account_info->balance < total_value)
+					coreturn expects_rt<outgoing_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", account_info->balance.to_string().c_str(), total_value.to_string().c_str())));
 
-				IncomingTransaction Tx;
-				Tx.SetTransaction(Asset, 0, TransactionId, std::move(FeeValue));
-				Tx.SetOperations({ Transferer(FromWallet->Addresses.begin()->second, Option<uint64_t>(FromWallet->AddressIndex), Decimal(Subject.Value)) }, Vector<Transferer>(To));
-				Coreturn ExpectsRT<OutgoingTransaction>(OutgoingTransaction(std::move(Tx), std::move(TransactionData)));
-			}
-			ExpectsLR<MasterWallet> Ripple::NewMasterWallet(const std::string_view& Seed)
-			{
-				auto* Chain = GetChain();
-				btc_hdnode RootNode;
-				if (!btc_hdnode_from_seed((uint8_t*)Seed.data(), (int)Seed.size(), &RootNode))
-					return ExpectsLR<MasterWallet>(LayerException("seed value invalid"));
-
-				char PrivateKey[256];
-				btc_hdnode_serialize_private(&RootNode, Chain, PrivateKey, sizeof(PrivateKey));
-
-				char PublicKey[256];
-				btc_hdnode_serialize_public(&RootNode, Chain, PublicKey, (int)sizeof(PublicKey));
-
-				return ExpectsLR<MasterWallet>(MasterWallet(::PrivateKey(Codec::HexEncode(Seed)), ::PrivateKey(PrivateKey), PublicKey));
-			}
-			ExpectsLR<DerivedSigningWallet> Ripple::NewSigningWallet(const Algorithm::AssetId& Asset, const MasterWallet& Wallet, uint64_t AddressIndex)
-			{
-				auto* Chain = GetChain();
-				char DerivedSeedKey[256];
+				transaction_buffer buffer;
+				buffer.transaction_type = 0;
+				buffer.flags = 0;
+				buffer.sequence = (uint32_t)account_info->sequence;
+				buffer.destination_tag = (uint32_t)subject.address_index.otherwise(0);
+				buffer.last_ledger_sequence = (uint32_t)ledger_info->sequence;
+				if (contract_address)
 				{
-					auto Private = Wallet.SigningKey.Expose<KEY_LIMIT>();
-					if (!hd_derive(Chain, Private.View.data(), GetDerivation(Protocol::Now().Account.RootAddressIndex).c_str(), DerivedSeedKey, sizeof(DerivedSeedKey)))
-						return ExpectsLR<DerivedSigningWallet>(LayerException("private key invalid"));
+					buffer.amount.token_value = subject.value;
+					buffer.amount.asset = algorithm::asset::token_of(asset);
+					buffer.amount.issuer = *contract_address;
+				}
+				else
+					buffer.amount.base_value = (uint64_t)to_drop(subject.value);
+				buffer.fee = (uint64_t)to_drop(fee_value);
+				buffer.signing_pub_key = from_wallet->verifying_key;
+				buffer.account = from_wallet->addresses.begin()->first;
+				buffer.destination = subject.address;
+				if (!tx_sign_and_verify(&buffer, from_wallet->verifying_key, from_wallet->signing_key))
+					coreturn expects_rt<outgoing_transaction>(remote_exception("invalid private key"));
+
+				vector<uint8_t> raw_transaction_data = tx_serialize(&buffer, false);
+				string transaction_data = codec::hex_encode(std::string_view((char*)&raw_transaction_data[0], raw_transaction_data.size()), true);
+				string transaction_id = tx_hash(raw_transaction_data);
+				if (transaction_id.empty() || transaction_data.empty())
+					coreturn expects_rt<outgoing_transaction>(remote_exception("tx serialization error"));
+
+				incoming_transaction tx;
+				tx.set_transaction(asset, 0, transaction_id, std::move(fee_value));
+				tx.set_operations({ transferer(from_wallet->addresses.begin()->second, option<uint64_t>(from_wallet->address_index), decimal(subject.value)) }, vector<transferer>(to));
+				coreturn expects_rt<outgoing_transaction>(outgoing_transaction(std::move(tx), std::move(transaction_data)));
+			}
+			expects_lr<master_wallet> ripple::new_master_wallet(const std::string_view& seed)
+			{
+				auto* chain = get_chain();
+				btc_hdnode root_node;
+				if (!btc_hdnode_from_seed((uint8_t*)seed.data(), (int)seed.size(), &root_node))
+					return expects_lr<master_wallet>(layer_exception("seed value invalid"));
+
+				char private_key[256];
+				btc_hdnode_serialize_private(&root_node, chain, private_key, sizeof(private_key));
+
+				char public_key[256];
+				btc_hdnode_serialize_public(&root_node, chain, public_key, (int)sizeof(public_key));
+
+				return expects_lr<master_wallet>(master_wallet(secret_box::secure(codec::hex_encode(seed)), secret_box::secure(private_key), public_key));
+			}
+			expects_lr<derived_signing_wallet> ripple::new_signing_wallet(const algorithm::asset_id& asset, const master_wallet& wallet, uint64_t address_index)
+			{
+				auto* chain = get_chain();
+				char derived_seed_key[256];
+				{
+					auto secret = wallet.signing_key.expose<KEY_LIMIT>();
+					if (!hd_derive(chain, secret.view.data(), get_derivation(protocol::now().account.root_address_index).c_str(), derived_seed_key, sizeof(derived_seed_key)))
+						return expects_lr<derived_signing_wallet>(layer_exception("private key invalid"));
 				}
 
-				btc_hdnode Node;
-				if (!btc_hdnode_deserialize(DerivedSeedKey, Chain, &Node))
-					return ExpectsLR<DerivedSigningWallet>(LayerException("private key invalid"));
+				btc_hdnode node;
+				if (!btc_hdnode_deserialize(derived_seed_key, chain, &node))
+					return expects_lr<derived_signing_wallet>(layer_exception("private key invalid"));
 
-				auto Derived = NewSigningWallet(Asset, PrivateKey(std::string_view((char*)Node.private_key, sizeof(Node.private_key))));
-				if (Derived)
-					Derived->AddressIndex = AddressIndex;
-				return Derived;
+				auto derived = new_signing_wallet(asset, secret_box::view(std::string_view((char*)node.private_key, sizeof(node.private_key))));
+				if (derived)
+					derived->address_index = address_index;
+				return derived;
 			}
-			ExpectsLR<DerivedSigningWallet> Ripple::NewSigningWallet(const Algorithm::AssetId& Asset, const PrivateKey& SigningKey)
+			expects_lr<derived_signing_wallet> ripple::new_signing_wallet(const algorithm::asset_id& asset, const secret_box& signing_key)
 			{
-				uint8_t RawPrivateKey[65]; size_t RawPrivateKeySize = 0;
-				if (SigningKey.Size() != 16 && SigningKey.Size() != 32 && SigningKey.Size() != 33 && SigningKey.Size() != 64 && SigningKey.Size() != 65)
+				uint8_t raw_private_key[65]; size_t raw_private_key_size = 0;
+				if (signing_key.size() != 16 && signing_key.size() != 32 && signing_key.size() != 33 && signing_key.size() != 64 && signing_key.size() != 65)
 				{
-					auto Data = SigningKey.Expose<KEY_LIMIT>();
-					if (!DecodePrivateKey(Data.View, RawPrivateKey))
+					auto data = signing_key.expose<KEY_LIMIT>();
+					if (!decode_private_key(data.view, raw_private_key))
 					{
-						if (!DecodeSecretKey(Data.View, RawPrivateKey))
-							return LayerException("bad private key");
+						if (!decode_secret_key(data.view, raw_private_key))
+							return layer_exception("bad private key");
 
-						RawPrivateKeySize = 16;
+						raw_private_key_size = 16;
 					}
 					else
-						RawPrivateKeySize = 65;
+						raw_private_key_size = 65;
 				}
 				else
 				{
-					RawPrivateKeySize = SigningKey.Size();
-					SigningKey.ExposeToStack((char*)RawPrivateKey, RawPrivateKeySize);
+					raw_private_key_size = signing_key.size();
+					signing_key.stack((char*)raw_private_key, raw_private_key_size);
 				}
 
-				uint8_t PrivateKey[65]; String SecretKey;
-				if (RawPrivateKeySize == 16)
+				uint8_t private_key[65]; string secret_key;
+				if (raw_private_key_size == 16)
 				{
-					SecretKey = EncodeSecretKey(RawPrivateKey, RawPrivateKeySize);
-					uint8_t IntermediatePrivateKey[65];
-					sha512_Raw(RawPrivateKey, RawPrivateKeySize, IntermediatePrivateKey);
-					sha512_Raw(IntermediatePrivateKey, sizeof(IntermediatePrivateKey) / 2, PrivateKey + 1);
-					Algorithm::Composition::ConvertToSecretKeyEd25519(PrivateKey + 1);
-					SecretKey = EncodeSecretKey(RawPrivateKey, RawPrivateKeySize);
+					secret_key = encode_secret_key(raw_private_key, raw_private_key_size);
+					uint8_t intermediate_private_key[65];
+					sha512_Raw(raw_private_key, raw_private_key_size, intermediate_private_key);
+					sha512_Raw(intermediate_private_key, sizeof(intermediate_private_key) / 2, private_key + 1);
+					algorithm::composition::convert_to_secret_key_ed25519(private_key + 1);
+					secret_key = encode_secret_key(raw_private_key, raw_private_key_size);
 				}
-				else if (RawPrivateKeySize == 32 || RawPrivateKeySize == 33)
+				else if (raw_private_key_size == 32 || raw_private_key_size == 33)
 				{
-					size_t Offset = RawPrivateKeySize == 33 ? 1 : 0;
-					uint8_t IntermediatePrivateKey[65];
-					auto RawSecretKey = *Crypto::HashRaw(Digests::Shake128(), std::string_view((char*)RawPrivateKey, RawPrivateKeySize));
-					sha512_Raw((uint8_t*)RawSecretKey.data() + Offset, RawSecretKey.size() - Offset, IntermediatePrivateKey);
-					sha512_Raw(IntermediatePrivateKey, sizeof(IntermediatePrivateKey) / 2, PrivateKey + 1);
-					Algorithm::Composition::ConvertToSecretKeyEd25519(PrivateKey + 1);
-					SecretKey = EncodeSecretKey((uint8_t*)RawSecretKey.data(), RawSecretKey.size());
+					size_t offset = raw_private_key_size == 33 ? 1 : 0;
+					uint8_t intermediate_private_key[65];
+					auto raw_secret_key = *crypto::hash_raw(digests::shake128(), std::string_view((char*)raw_private_key, raw_private_key_size));
+					sha512_Raw((uint8_t*)raw_secret_key.data() + offset, raw_secret_key.size() - offset, intermediate_private_key);
+					sha512_Raw(intermediate_private_key, sizeof(intermediate_private_key) / 2, private_key + 1);
+					algorithm::composition::convert_to_secret_key_ed25519(private_key + 1);
+					secret_key = encode_secret_key((uint8_t*)raw_secret_key.data(), raw_secret_key.size());
 				}
-				else if (RawPrivateKeySize == 64 || RawPrivateKeySize == 65)
+				else if (raw_private_key_size == 64 || raw_private_key_size == 65)
 				{
-					size_t Offset = RawPrivateKeySize == 65 ? 1 : 0;
-					memcpy(PrivateKey + 1, RawPrivateKey + Offset, RawPrivateKeySize - Offset);
+					size_t offset = raw_private_key_size == 65 ? 1 : 0;
+					memcpy(private_key + 1, raw_private_key + offset, raw_private_key_size - offset);
 				}
-				PrivateKey[0] = 0xED;
+				private_key[0] = 0xED;
 
-				uint8_t PublicKey[32];
-				ed25519_publickey_ext(PrivateKey + 1, PublicKey);
+				uint8_t public_key[32];
+				ed25519_publickey_ext(private_key + 1, public_key);
 
-				auto Derived = NewVerifyingWallet(Asset, std::string_view((char*)PublicKey, sizeof(PublicKey)));
-				if (!Derived)
-					return Derived.Error();
+				auto derived = new_verifying_wallet(asset, std::string_view((char*)public_key, sizeof(public_key)));
+				if (!derived)
+					return derived.error();
 
-				String DerivedPrivateKey = EncodePrivateKey(PrivateKey, sizeof(PrivateKey));
-				if (!SecretKey.empty())
-					DerivedPrivateKey.append(1, ':').append(SecretKey);
-				return ExpectsLR<DerivedSigningWallet>(DerivedSigningWallet(std::move(*Derived), ::PrivateKey(DerivedPrivateKey)));
+				string derived_private_key = encode_private_key(private_key, sizeof(private_key));
+				if (!secret_key.empty())
+					derived_private_key.append(1, ':').append(secret_key);
+				return expects_lr<derived_signing_wallet>(derived_signing_wallet(std::move(*derived), secret_box::secure(derived_private_key)));
 			}
-			ExpectsLR<DerivedVerifyingWallet> Ripple::NewVerifyingWallet(const Algorithm::AssetId& Asset, const std::string_view& VerifyingKey)
+			expects_lr<derived_verifying_wallet> ripple::new_verifying_wallet(const algorithm::asset_id& asset, const std::string_view& verifying_key)
 			{
-				String RawPublicKey = String(VerifyingKey);
-				if (RawPublicKey.size() != 32 && RawPublicKey.size() != 33)
+				string raw_public_key = string(verifying_key);
+				if (raw_public_key.size() != 32 && raw_public_key.size() != 33)
 				{
-					uint8_t PublicKey[33];
-					if (!DecodePublicKey(RawPublicKey, PublicKey))
-						return LayerException("invalid public key");
+					uint8_t public_key[33];
+					if (!decode_public_key(raw_public_key, public_key))
+						return layer_exception("invalid public key");
 
-					RawPublicKey = String((char*)PublicKey, sizeof(PublicKey));
+					raw_public_key = string((char*)public_key, sizeof(public_key));
 				}
 
-				uint8_t PublicKey[33];
-				size_t Offset = RawPublicKey.size() == 33 ? 1 : 0;
-				memcpy(PublicKey + 1, RawPublicKey.data() + Offset, RawPublicKey.size() - Offset);
-				PublicKey[0] = 0xED;
+				uint8_t public_key[33];
+				size_t offset = raw_public_key.size() == 33 ? 1 : 0;
+				memcpy(public_key + 1, raw_public_key.data() + offset, raw_public_key.size() - offset);
+				public_key[0] = 0xED;
 
-				String DerivedPublicKey = EncodePublicKey(PublicKey, sizeof(PublicKey));
-				String DerivedAddress = EncodeAndHashPublicKey(PublicKey, sizeof(PublicKey));
-				return ExpectsLR<DerivedVerifyingWallet>(DerivedVerifyingWallet({ { (uint8_t)1, DerivedAddress } }, Optional::None, std::move(DerivedPublicKey)));
+				string derived_public_key = encode_public_key(public_key, sizeof(public_key));
+				string derived_address = encode_and_hash_public_key(public_key, sizeof(public_key));
+				return expects_lr<derived_verifying_wallet>(derived_verifying_wallet({ { (uint8_t)1, derived_address } }, optional::none, std::move(derived_public_key)));
 			}
-			ExpectsLR<String> Ripple::NewPublicKeyHash(const std::string_view& Address)
+			expects_lr<string> ripple::new_public_key_hash(const std::string_view& address)
 			{
-				uint8_t Data[20];
-				if (!DecodePublicKeyHash(Address, Data))
-					return LayerException("invalid address");
+				uint8_t data[20];
+				if (!decode_public_key_hash(address, data))
+					return layer_exception("invalid address");
 
-				return String((char*)Data, sizeof(Data));
+				return string((char*)data, sizeof(data));
 			}
-			ExpectsLR<String> Ripple::SignMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const PrivateKey& SigningKey)
+			expects_lr<string> ripple::sign_message(const algorithm::asset_id& asset, const std::string_view& message, const secret_box& signing_key)
 			{
-				auto SigningWallet = NewSigningWallet(Asset, SigningKey);
-				if (!SigningWallet)
-					return SigningWallet.Error();
+				auto signing_wallet = new_signing_wallet(asset, signing_key);
+				if (!signing_wallet)
+					return signing_wallet.error();
 
-				uint8_t PrivateKey[65];
-				auto Private = SigningWallet->SigningKey.Expose<KEY_LIMIT>();
-				if (!DecodePrivateKey(Private.View.data(), PrivateKey))
-					return LayerException("private key invalid");
+				uint8_t private_key[65];
+				auto secret = signing_wallet->signing_key.expose<KEY_LIMIT>();
+				if (!decode_private_key(secret.view.data(), private_key))
+					return layer_exception("private key invalid");
 
-				ed25519_signature Signature;
-				ed25519_sign_ext((uint8_t*)Message.data(), Message.size(), PrivateKey + 1, PrivateKey + 33, Signature);
-				return Codec::Base64Encode(std::string_view((char*)Signature, sizeof(Signature)));
+				ed25519_signature signature;
+				ed25519_sign_ext((uint8_t*)message.data(), message.size(), private_key + 1, private_key + 33, signature);
+				return codec::base64_encode(std::string_view((char*)signature, sizeof(signature)));
 			}
-			ExpectsLR<void> Ripple::VerifyMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const std::string_view& VerifyingKey, const std::string_view& Signature)
+			expects_lr<void> ripple::verify_message(const algorithm::asset_id& asset, const std::string_view& message, const std::string_view& verifying_key, const std::string_view& signature)
 			{
-				String SignatureData = Signature.size() == 64 ? String(Signature) : Codec::Base64Decode(Signature);
-				if (SignatureData.size() != 64)
-					return LayerException("signature not valid");
+				string signature_data = signature.size() == 64 ? string(signature) : codec::base64_decode(signature);
+				if (signature_data.size() != 64)
+					return layer_exception("signature not valid");
 
-				auto VerifyingWallet = NewVerifyingWallet(Asset, VerifyingKey);
-				if (!VerifyingWallet)
-					return VerifyingWallet.Error();
+				auto verifying_wallet = new_verifying_wallet(asset, verifying_key);
+				if (!verifying_wallet)
+					return verifying_wallet.error();
 
-				uint8_t RawPublicKey[33];
-				if (!DecodePublicKey(VerifyingWallet->VerifyingKey, RawPublicKey))
-					return LayerException("public key invalid");
+				uint8_t raw_public_key[33];
+				if (!decode_public_key(verifying_wallet->verifying_key, raw_public_key))
+					return layer_exception("public key invalid");
 
-				if (crypto_sign_ed25519_verify_detached((uint8_t*)SignatureData.data(), (uint8_t*)Message.data(), Message.size(), RawPublicKey + 1) != 0)
-					return LayerException("signature verification failed with used public key");
-				
-				return Expectation::Met;
+				if (crypto_sign_ed25519_verify_detached((uint8_t*)signature_data.data(), (uint8_t*)message.data(), message.size(), raw_public_key + 1) != 0)
+					return layer_exception("signature verification failed with used public key");
+
+				return expectation::met;
 			}
-			String Ripple::GetDerivation(uint64_t AddressIndex) const
+			string ripple::get_derivation(uint64_t address_index) const
 			{
-				return Stringify::Text(Protocol::Now().Is(NetworkType::Mainnet) ? "m/44'/144'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, AddressIndex);
+				return stringify::text(protocol::now().is(network_type::mainnet) ? "m/44'/144'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, address_index);
 			}
-			const Ripple::Chainparams& Ripple::GetChainparams() const
+			const ripple::chainparams& ripple::get_chainparams() const
 			{
-				return Netdata;
+				return netdata;
 			}
-			bool Ripple::TxSignAndVerify(TransactionBuffer* TxData, const std::string_view& Public, const PrivateKey& Private)
+			bool ripple::tx_sign_and_verify(transaction_buffer* tx_data, const std::string_view& encoded_public_key, const secret_box& encoded_private_key)
 			{
-				uint8_t PrivateKey[65];
-				if (!DecodePrivateKey(Private.ExposeToHeap(), PrivateKey))
+				uint8_t private_key[65];
+				if (!decode_private_key(encoded_private_key.expose<KEY_LIMIT>().view, private_key))
 					return false;
 
-				uint8_t PublicKey[33];
-				if (!DecodePublicKey(Public, PublicKey))
+				uint8_t public_key[33];
+				if (!decode_public_key(encoded_public_key, public_key))
 					return false;
 
-				Vector<uint8_t> TxBlob = TxSerialize(TxData, true);
-				ed25519_signature Signature;
-				ed25519_sign_ext(TxBlob.data(), TxBlob.size(), PrivateKey + 1, PrivateKey + 33, Signature);
-				if (crypto_sign_ed25519_verify_detached(Signature, TxBlob.data(), TxBlob.size(), PublicKey) != 0)
+				vector<uint8_t> tx_blob = tx_serialize(tx_data, true);
+				ed25519_signature signature;
+				ed25519_sign_ext(tx_blob.data(), tx_blob.size(), private_key + 1, private_key + 33, signature);
+				if (crypto_sign_ed25519_verify_detached(signature, tx_blob.data(), tx_blob.size(), public_key) != 0)
 					return false;
 
-				TxData->TxnSignature = Codec::HexEncode(std::string_view((char*)Signature, sizeof(Signature)));
+				tx_data->txn_signature = codec::hex_encode(std::string_view((char*)signature, sizeof(signature)));
 				return true;
 			}
-			Vector<uint8_t> Ripple::TxSerialize(TransactionBuffer* TxData, bool SigningData)
+			vector<uint8_t> ripple::tx_serialize(transaction_buffer* tx_data, bool signing_data)
 			{
-				static const uint8_t TransactionType[1] = { 18 };
-				static const uint8_t Flags[1] = { 34 };
-				static const uint8_t Sequence[1] = { 36 };
-				static const uint8_t DestinationTag[1] = { 46 };
-				static const uint8_t LastLedgerSequence[2] = { 32, 27 };
-				static const uint8_t Amount[1] = { 97 };
-				static const uint8_t Fee[1] = { 104 };
-				static const uint8_t SigningPubKey[1] = { 115 };
-				static const uint8_t TxnSignature[1] = { 116 };
-				static const uint8_t Account[1] = { 129 };
-				static const uint8_t Destination[1] = { 131 };
+				static const uint8_t transaction_type[1] = { 18 };
+				static const uint8_t flags[1] = { 34 };
+				static const uint8_t sequence[1] = { 36 };
+				static const uint8_t destination_tag[1] = { 46 };
+				static const uint8_t last_ledger_sequence[2] = { 32, 27 };
+				static const uint8_t amount[1] = { 97 };
+				static const uint8_t fee[1] = { 104 };
+				static const uint8_t signing_pub_key[1] = { 115 };
+				static const uint8_t txn_signature[1] = { 116 };
+				static const uint8_t account[1] = { 129 };
+				static const uint8_t destination[1] = { 131 };
 
-				Vector<uint8_t> Tx;
-				if (SigningData)
-					TxAppendUint32(Tx, 0x53545800);
-				TxAppend(Tx, TransactionType, sizeof(TransactionType));
-				TxAppendUint16(Tx, TxData->TransactionType);
-				TxAppend(Tx, Flags, sizeof(Flags));
-				TxAppendUint32(Tx, TxData->Flags);
-				TxAppend(Tx, Sequence, sizeof(Sequence));
-				TxAppendUint32(Tx, TxData->Sequence);
-				TxAppend(Tx, DestinationTag, sizeof(DestinationTag));
-				TxAppendUint32(Tx, TxData->DestinationTag);
-				TxAppend(Tx, LastLedgerSequence, sizeof(LastLedgerSequence));
-				TxAppendUint32(Tx, TxData->LastLedgerSequence);
-				TxAppend(Tx, Amount, sizeof(Amount));
-				TxAppendAmount(Tx, this, TxData->Amount.Asset, TxData->Amount.Issuer, TxData->Amount.TokenValue, TxData->Amount.BaseValue);
-				TxAppend(Tx, Fee, sizeof(Fee));
-				TxAppendAmount(Tx, this, String(), String(), Decimal::NaN(), TxData->Fee);
-				TxAppend(Tx, SigningPubKey, sizeof(SigningPubKey));
-				TxAppendPublicKey(Tx, this, TxData->SigningPubKey);
-				if (!SigningData)
+				vector<uint8_t> tx;
+				if (signing_data)
+					tx_append_uint32(tx, 0x53545800);
+				tx_append(tx, transaction_type, sizeof(transaction_type));
+				tx_append_uint16(tx, tx_data->transaction_type);
+				tx_append(tx, flags, sizeof(flags));
+				tx_append_uint32(tx, tx_data->flags);
+				tx_append(tx, sequence, sizeof(sequence));
+				tx_append_uint32(tx, tx_data->sequence);
+				tx_append(tx, destination_tag, sizeof(destination_tag));
+				tx_append_uint32(tx, tx_data->destination_tag);
+				tx_append(tx, last_ledger_sequence, sizeof(last_ledger_sequence));
+				tx_append_uint32(tx, tx_data->last_ledger_sequence);
+				tx_append(tx, amount, sizeof(amount));
+				tx_append_amount(tx, this, tx_data->amount.asset, tx_data->amount.issuer, tx_data->amount.token_value, tx_data->amount.base_value);
+				tx_append(tx, fee, sizeof(fee));
+				tx_append_amount(tx, this, string(), string(), decimal::nan(), tx_data->fee);
+				tx_append(tx, signing_pub_key, sizeof(signing_pub_key));
+				tx_append_public_key(tx, this, tx_data->signing_pub_key);
+				if (!signing_data)
 				{
-					TxAppend(Tx, TxnSignature, sizeof(TxnSignature));
-					TxAppendSignature(Tx, TxData->TxnSignature);
+					tx_append(tx, txn_signature, sizeof(txn_signature));
+					tx_append_signature(tx, tx_data->txn_signature);
 				}
-				TxAppend(Tx, Account, sizeof(Account));
-				TxAppendAddress(Tx, this, TxData->Account);
-				TxAppend(Tx, Destination, sizeof(Destination));
-				TxAppendAddress(Tx, this, TxData->Destination);
-				return Tx;
+				tx_append(tx, account, sizeof(account));
+				tx_append_address(tx, this, tx_data->account);
+				tx_append(tx, destination, sizeof(destination));
+				tx_append_address(tx, this, tx_data->destination);
+				return tx;
 			}
-			String Ripple::TxHash(const Vector<uint8_t>& TxBlob)
+			string ripple::tx_hash(const vector<uint8_t>& tx_blob)
 			{
-				Vector<uint8_t> Tx;
-				Tx.reserve(sizeof(uint32_t) + TxBlob.size());
-				TxAppendUint32(Tx, 0x54584e00);
-				TxAppend(Tx, TxBlob.data(), TxBlob.size());
+				vector<uint8_t> tx;
+				tx.reserve(sizeof(uint32_t) + tx_blob.size());
+				tx_append_uint32(tx, 0x54584e00);
+				tx_append(tx, tx_blob.data(), tx_blob.size());
 
-				uint8_t Hash512[64];
-				sha512_Raw(Tx.data(), Tx.size(), Hash512);
-				return Codec::HexEncode(std::string_view((char*)Hash512, sizeof(Hash512) / 2), true);
+				uint8_t hash512[64];
+				sha512_Raw(tx.data(), tx.size(), hash512);
+				return codec::hex_encode(std::string_view((char*)hash512, sizeof(hash512) / 2), true);
 			}
-			Decimal Ripple::GetBaseFeeXRP()
+			decimal ripple::get_base_fee_xrp()
 			{
 				return 0.00001;
 			}
-			Decimal Ripple::FromDrop(const uint256_t& Value)
+			decimal ripple::from_drop(const uint256_t& value)
 			{
-				return Decimal(Value.ToString()) / Netdata.Divisibility;
+				return decimal(value.to_string()) / netdata.divisibility;
 			}
-			uint256_t Ripple::ToDrop(const Decimal& Value)
+			uint256_t ripple::to_drop(const decimal& value)
 			{
-				return uint256_t((Value * Netdata.Divisibility).Truncate(0).ToString());
+				return uint256_t((value * netdata.divisibility).truncate(0).to_string());
 			}
-			String Ripple::EncodeSecretKey(uint8_t* SecretKey, size_t SecretKeySize)
+			string ripple::encode_secret_key(uint8_t* secret_key, size_t secret_key_size)
 			{
-				char Intermediate[256];
-				size_t IntermediateSize = sizeof(Intermediate);
-				uint8_t Versions[3] = { 0x01, 0xe1, 0x4b };
-				xb58check_enc(Intermediate, &IntermediateSize, Versions, sizeof(Versions), SecretKey, SecretKeySize);
-				return String(Intermediate);
+				char intermediate[256];
+				size_t intermediate_size = sizeof(intermediate);
+				uint8_t versions[3] = { 0x01, 0xe1, 0x4b };
+				xb58check_enc(intermediate, &intermediate_size, versions, sizeof(versions), secret_key, secret_key_size);
+				return string(intermediate);
 			}
-			String Ripple::EncodePrivateKey(uint8_t* PrivateKey, size_t PrivateKeySize)
+			string ripple::encode_private_key(uint8_t* private_key, size_t private_key_size)
 			{
-				return Codec::HexEncode(std::string_view((char*)PrivateKey, PrivateKeySize));
+				return codec::hex_encode(std::string_view((char*)private_key, private_key_size));
 			}
-			String Ripple::EncodePublicKey(uint8_t* PublicKey, size_t PublicKeySize)
+			string ripple::encode_public_key(uint8_t* public_key, size_t public_key_size)
 			{
-				return Codec::HexEncode(std::string_view((char*)PublicKey, PublicKeySize));
+				return codec::hex_encode(std::string_view((char*)public_key, public_key_size));
 			}
-			String Ripple::EncodeAndHashPublicKey(uint8_t* PublicKey, size_t PublicKeySize)
+			string ripple::encode_and_hash_public_key(uint8_t* public_key, size_t public_key_size)
 			{
-				uint256 PublicKeyHash256;
-				sha256_Raw(PublicKey, PublicKeySize, PublicKeyHash256);
+				uint8_t public_key_hash256[32];
+				sha256_Raw(public_key, public_key_size, public_key_hash256);
 
-				uint160 PublicKeyHash160;
-				btc_ripemd160(PublicKeyHash256, sizeof(PublicKeyHash256), PublicKeyHash160);
+				uint160 public_key_hash160;
+				btc_ripemd160(public_key_hash256, sizeof(public_key_hash256), public_key_hash160);
 
-				char Intermediate[256];
-				size_t IntermediateSize = sizeof(Intermediate);
-				uint8_t Versions = 0x0;
-				xb58check_enc(Intermediate, &IntermediateSize, &Versions, sizeof(Versions), PublicKeyHash160, sizeof(PublicKeyHash160));
-				return String(Intermediate);
+				char intermediate[256];
+				size_t intermediate_size = sizeof(intermediate);
+				uint8_t versions = 0x0;
+				xb58check_enc(intermediate, &intermediate_size, &versions, sizeof(versions), public_key_hash160, sizeof(public_key_hash160));
+				return string(intermediate);
 			}
-			bool Ripple::DecodeSecretKey(const std::string_view& Data, uint8_t SecretKey[16])
+			bool ripple::decode_secret_key(const std::string_view& data, uint8_t secret_key[16])
 			{
-				uint8_t Intermediate[128];
-				size_t IntermediateSize = sizeof(Intermediate);
-				if (!xb58check_dec(String(Data).c_str(), Intermediate, &IntermediateSize))
+				uint8_t intermediate[128];
+				size_t intermediate_size = sizeof(intermediate);
+				if (!xb58check_dec(string(data).c_str(), intermediate, &intermediate_size))
 					return false;
 
-				if (IntermediateSize != 19)
+				if (intermediate_size != 19)
 					return false;
 
-				memcpy(SecretKey, Intermediate + 3, IntermediateSize);
+				memcpy(secret_key, intermediate + 3, intermediate_size);
 				return true;
 			}
-			bool Ripple::DecodePrivateKey(const std::string_view& Data, uint8_t PrivateKey[65])
+			bool ripple::decode_private_key(const std::string_view& data, uint8_t private_key[65])
 			{
-				auto Slice = Data.substr(0, Data.find(':'));
-				String Result = Codec::HexDecode(Slice);
-				if (Result.size() != 65)
+				auto slice = data.substr(0, data.find(':'));
+				string result = codec::hex_decode(slice);
+				if (result.size() != 65)
 					return false;
 
-				memcpy(PrivateKey, Result.data(), Result.size());
+				memcpy(private_key, result.data(), result.size());
 				return true;
 			}
-			bool Ripple::DecodePublicKey(const std::string_view& Data, uint8_t PublicKey[33])
+			bool ripple::decode_public_key(const std::string_view& data, uint8_t public_key[33])
 			{
-				String Result = Codec::HexDecode(Data);
-				if (Result.size() != 33)
+				string result = codec::hex_decode(data);
+				if (result.size() != 33)
 					return false;
 
-				memcpy(PublicKey, Result.data(), Result.size());
+				memcpy(public_key, result.data(), result.size());
 				return true;
 			}
-			bool Ripple::DecodePublicKeyHash(const std::string_view& Data, uint8_t PublicKeyHash[20])
+			bool ripple::decode_public_key_hash(const std::string_view& data, uint8_t public_key_hash[20])
 			{
-				uint8_t Intermediate[128];
-				size_t IntermediateSize = sizeof(Intermediate);
-				if (!xb58check_dec(String(Data).c_str(), Intermediate, &IntermediateSize))
+				uint8_t intermediate[128];
+				size_t intermediate_size = sizeof(intermediate);
+				if (!xb58check_dec(string(data).c_str(), intermediate, &intermediate_size))
 					return false;
 
-				if (IntermediateSize != 21)
+				if (intermediate_size != 21)
 					return false;
 
-				memcpy(PublicKeyHash, Intermediate + 1, IntermediateSize - 1);
+				memcpy(public_key_hash, intermediate + 1, intermediate_size - 1);
 				return true;
 			}
-			const btc_chainparams_* Ripple::GetChain()
+			const btc_chainparams_* ripple::get_chain()
 			{
-				switch (Protocol::Now().User.Network)
+				switch (protocol::now().user.network)
 				{
-					case NetworkType::Regtest:
+					case network_type::regtest:
 						return &xrp_chainparams_regtest;
-					case NetworkType::Testnet:
+					case network_type::testnet:
 						return &xrp_chainparams_test;
-					case NetworkType::Mainnet:
+					case network_type::mainnet:
 						return &xrp_chainparams_main;
 					default:
 						VI_PANIC(false, "invalid network type");

@@ -2,133 +2,133 @@
 #define TAN_LAYER_NSS_H
 #include "../../kernel/mediator.h"
 
-namespace Tangent
+namespace tangent
 {
-	namespace NSS
+	namespace nss
 	{
-		typedef std::function<bool(const std::string_view&)> InvocationCallback;
-		typedef std::function<Promise<void>(const Mediator::ChainSupervisorOptions&, Mediator::TransactionLogs&&)> TransactionCallback;
+		typedef std::function<bool(const std::string_view&)> invocation_callback;
+		typedef std::function<promise<void>(const mediator::chain_supervisor_options&, mediator::transaction_logs&&)> transaction_callback;
 
-		struct TransactionListener
+		struct transaction_listener
 		{
-			Algorithm::AssetId Asset = 0;
-			Mediator::ChainSupervisorOptions Options;
-			TaskId CooldownId = INVALID_TASK_ID;
-			bool IsDryRun = true;
-			bool IsDead = false;
+			algorithm::asset_id asset = 0;
+			mediator::chain_supervisor_options options;
+			task_id cooldown_id = INVALID_TASK_ID;
+			bool is_dry_run = true;
+			bool is_dead = false;
 		};
 
-		struct TransactionParams
+		struct transaction_params
 		{
-			Vector<Mediator::Transferer> To;
-			Option<Mediator::BaseFee> Fee = Optional::None;
-			uint256_t ExternalId = 0;
-			Algorithm::AssetId Asset = 0;
-			Mediator::DynamicWallet Wallet = Mediator::DynamicWallet();
-			ExpectsPromiseRT<Mediator::OutgoingTransaction> Future;
+			vector<mediator::transferer> to;
+			option<mediator::base_fee> fee = optional::none;
+			uint256_t external_id = 0;
+			algorithm::asset_id asset = 0;
+			mediator::dynamic_wallet wallet = mediator::dynamic_wallet();
+			expects_promise_rt<mediator::outgoing_transaction> future;
 		};
 
-		struct TransactionQueueState
+		struct transaction_queue_state
 		{
-			SingleQueue<TransactionParams*> Queue;
-			String Blockchain;
-			size_t Transactions = 0;
-			bool IsBusy = false;
+			single_queue<transaction_params*> queue;
+			string blockchain;
+			size_t transactions = 0;
+			bool is_busy = false;
 		};
 
-		class ServerNode : public Singleton<ServerNode>
+		class server_node : public singleton<server_node>
 		{
 		protected:
-			UnorderedSet<String> Connections;
-			UnorderedMap<String, InvocationCallback> Registrations;
-			UnorderedMap<String, UPtr<TransactionQueueState>> States;
-			UnorderedMap<String, TransactionCallback> Callbacks;
-			UnorderedMap<String, std::pair<Mediator::BaseFee, int64_t>> Fees;
-			UnorderedMap<String, Vector<UPtr<Mediator::ServerRelay>>> Nodes;
-			UnorderedMap<String, UPtr<Mediator::RelayBackend>> Chains;
-			UnorderedMap<String, UPtr<Schema>> Specifications;
-			Vector<UPtr<TransactionListener>> Listeners;
-			Mediator::MultichainSupervisorOptions Options;
-			SystemControl ControlSys;
+			unordered_set<string> connections;
+			unordered_map<string, invocation_callback> registrations;
+			unordered_map<string, uptr<transaction_queue_state>> states;
+			unordered_map<string, transaction_callback> callbacks;
+			unordered_map<string, std::pair<mediator::base_fee, int64_t>> fees;
+			unordered_map<string, vector<uptr<mediator::server_relay>>> nodes;
+			unordered_map<string, uptr<mediator::relay_backend>> chains;
+			unordered_map<string, uptr<schema>> specifications;
+			vector<uptr<transaction_listener>> listeners;
+			mediator::multichain_supervisor_options options;
+			system_control control_sys;
 
 		public:
-			ServerNode() noexcept;
-			~ServerNode() noexcept;
-			ExpectsPromiseSystem<HTTP::ResponseFrame> InternalCall(const std::string_view& Location, const std::string_view& Method, const HTTP::FetchFrame& Options);
-			ExpectsPromiseRT<Mediator::OutgoingTransaction> SubmitTransaction(const uint256_t& ExternalId, const Algorithm::AssetId& Asset, Mediator::DynamicWallet&& Wallet, Vector<Mediator::Transferer>&& To, Option<Mediator::BaseFee>&& Fee = Optional::None);
-			ExpectsPromiseRT<void> BroadcastTransaction(const Algorithm::AssetId& Asset, const uint256_t& ExternalId, const Mediator::OutgoingTransaction& TxData);
-			ExpectsPromiseRT<void> ValidateTransaction(const Mediator::IncomingTransaction& Value);
-			ExpectsPromiseRT<uint64_t> GetLatestBlockHeight(const Algorithm::AssetId& Asset);
-			ExpectsPromiseRT<Schema*> GetBlockTransactions(const Algorithm::AssetId& Asset, uint64_t BlockHeight, String* BlockHash);
-			ExpectsPromiseRT<Schema*> GetBlockTransaction(const Algorithm::AssetId& Asset, uint64_t BlockHeight, const std::string_view& BlockHash, const std::string_view& TransactionId);
-			ExpectsPromiseRT<Vector<Mediator::IncomingTransaction>> GetAuthenticTransactions(const Algorithm::AssetId& Asset, uint64_t BlockHeight, const std::string_view& BlockHash, Schema* TransactionData);
-			ExpectsPromiseRT<Schema*> ExecuteRPC(const Algorithm::AssetId& Asset, const std::string_view& Method, SchemaList&& Args, Mediator::CachePolicy Cache);
-			ExpectsPromiseRT<Mediator::OutgoingTransaction> NewTransaction(const Algorithm::AssetId& Asset, const Mediator::DynamicWallet& Wallet, const Vector<Mediator::Transferer>& To, Option<Mediator::BaseFee>&& Fee = Optional::None);
-			ExpectsPromiseRT<Mediator::TransactionLogs> GetTransactionLogs(const Algorithm::AssetId& Asset, Mediator::ChainSupervisorOptions* Options);
-			ExpectsPromiseRT<Mediator::BaseFee> EstimateFee(const Algorithm::AssetId& Asset, const Mediator::DynamicWallet& Wallet, const Vector<Mediator::Transferer>& To, const Mediator::FeeSupervisorOptions& Options = Mediator::FeeSupervisorOptions());
-			ExpectsPromiseRT<Decimal> CalculateBalance(const Algorithm::AssetId& Asset, const Mediator::DynamicWallet& Wallet, Option<String>&& Address = Optional::None);
-			ExpectsLR<Mediator::MasterWallet> NewMasterWallet(const Algorithm::AssetId& Asset, const std::string_view& Seed);
-			ExpectsLR<Mediator::MasterWallet> NewMasterWallet(const Algorithm::AssetId& Asset, const Algorithm::Seckey PrivateKey);
-			ExpectsLR<Mediator::DerivedSigningWallet> NewSigningWallet(const Algorithm::AssetId& Asset, const Mediator::MasterWallet& Wallet, Option<uint64_t>&& AddressIndex = Optional::None);
-			ExpectsLR<Mediator::DerivedSigningWallet> NewSigningWallet(const Algorithm::AssetId& Asset, const PrivateKey& SigningKey);
-			ExpectsLR<Mediator::DerivedVerifyingWallet> NewVerifyingWallet(const Algorithm::AssetId& Asset, const std::string_view& VerifyingKey);
-			ExpectsLR<String> NewPublicKeyHash(const Algorithm::AssetId& Asset, const std::string_view& Address);
-			ExpectsLR<String> SignMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const PrivateKey& SigningKey);
-			ExpectsLR<void> VerifyMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const std::string_view& VerifyingKey, const std::string_view& Signature);
-			ExpectsLR<void> EnableSigningWallet(const Algorithm::AssetId& Asset, const Mediator::MasterWallet& Wallet, const Mediator::DerivedSigningWallet& SigningWallet);
-			ExpectsLR<void> EnableCheckpointHeight(const Algorithm::AssetId& Asset, uint64_t BlockHeight);
-			ExpectsLR<void> EnableContractAddress(const Algorithm::AssetId& Asset, const std::string_view& ContractAddress);
-			ExpectsLR<void> EnableWalletAddress(const Algorithm::AssetId& Asset, const std::string_view& Binding, const std::string_view& Address, uint64_t AddressIndex);
-			ExpectsLR<void> DisableWalletAddress(const Algorithm::AssetId& Asset, const std::string_view& Address);
-			ExpectsLR<uint64_t> GetLatestKnownBlockHeight(const Algorithm::AssetId& Asset);
-			ExpectsLR<Mediator::IndexAddress> GetAddressIndex(const Algorithm::AssetId& Asset, const std::string_view& Address);
-			ExpectsLR<UnorderedMap<String, Mediator::IndexAddress>> GetAddressIndices(const Algorithm::AssetId& Asset, const UnorderedSet<String>& Addresses);
-			ExpectsLR<Vector<String>> GetAddressIndices(const Algorithm::AssetId& Asset);
-			ExpectsLR<void> AddUTXO(const Algorithm::AssetId& Asset, const Mediator::IndexUTXO& Value);
-			ExpectsLR<void> RemoveUTXO(const Algorithm::AssetId& Asset, const std::string_view& TransactionId, uint32_t Index);
-			ExpectsLR<Mediator::IndexUTXO> GetUTXO(const Algorithm::AssetId& Asset, const std::string_view& TransactionId, uint32_t Index);
-			ExpectsLR<Vector<Mediator::IndexUTXO>> GetUTXOs(const Algorithm::AssetId& Asset, const std::string_view& Binding, size_t Offset, size_t Count);
-			ExpectsLR<Schema*> LoadCache(const Algorithm::AssetId& Asset, Mediator::CachePolicy Policy, const std::string_view& Key);
-			ExpectsLR<void> StoreCache(const Algorithm::AssetId& Asset, Mediator::CachePolicy Policy, const std::string_view& Key, UPtr<Schema>&& Value);
-			Option<String> GetContractAddress(const Algorithm::AssetId& Asset);
-			UnorderedMap<Algorithm::AssetId, Mediator::RelayBackend::Chainparams> GetChains();
-			UnorderedMap<String, Mediator::MasterWallet> GetWallets(const Algorithm::Seckey PrivateKey);
-			UnorderedMap<String, InvocationCallback>& GetRegistrations();
-			Vector<Algorithm::AssetId> GetAssets(bool ObservingOnly = false);
-			Vector<UPtr<Mediator::ServerRelay>>* GetNodes(const Algorithm::AssetId& Asset);
-			const Mediator::RelayBackend::Chainparams* GetChainparams(const Algorithm::AssetId& Asset);
-			Mediator::ServerRelay* AddNode(const Algorithm::AssetId& Asset, const std::string_view& URL, double Throttling);
-			Mediator::ServerRelay* GetNode(const Algorithm::AssetId& Asset);
-			Mediator::RelayBackend* GetChain(const Algorithm::AssetId& Asset);
-			Schema* GetSpecifications(const Algorithm::AssetId& Asset);
-			Schema* AddSpecifications(const Algorithm::AssetId& Asset, UPtr<Schema>&& Value);
-			ServiceControl::ServiceNode GetEntrypoint();
-			Mediator::MultichainSupervisorOptions& GetOptions();
-			SystemControl& GetControl();
-			void AddTransactionCallback(const std::string_view& Name, TransactionCallback&& Callback);
-			void Startup();
-			void Shutdown();
-			bool HasChain(const Algorithm::AssetId& Asset);
-			bool HasNode(const Algorithm::AssetId& Asset);
-			bool HasObserver(const Algorithm::AssetId& Asset);
-			bool HasSupport(const Algorithm::AssetId& Asset);
-			bool IsActive();
+			server_node() noexcept;
+			~server_node() noexcept;
+			expects_promise_system<http::response_frame> internal_call(const std::string_view& location, const std::string_view& method, const http::fetch_frame& options);
+			expects_promise_rt<mediator::outgoing_transaction> submit_transaction(const uint256_t& external_id, const algorithm::asset_id& asset, mediator::dynamic_wallet&& wallet, vector<mediator::transferer>&& to, option<mediator::base_fee>&& fee = optional::none);
+			expects_promise_rt<void> broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, const mediator::outgoing_transaction& tx_data);
+			expects_promise_rt<void> validate_transaction(const mediator::incoming_transaction& value);
+			expects_promise_rt<uint64_t> get_latest_block_height(const algorithm::asset_id& asset);
+			expects_promise_rt<schema*> get_block_transactions(const algorithm::asset_id& asset, uint64_t block_height, string* block_hash);
+			expects_promise_rt<schema*> get_block_transaction(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, const std::string_view& transaction_id);
+			expects_promise_rt<vector<mediator::incoming_transaction>> get_authentic_transactions(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, schema* transaction_data);
+			expects_promise_rt<schema*> execute_rpc(const algorithm::asset_id& asset, const std::string_view& method, schema_list&& args, mediator::cache_policy cache);
+			expects_promise_rt<mediator::outgoing_transaction> new_transaction(const algorithm::asset_id& asset, const mediator::dynamic_wallet& wallet, const vector<mediator::transferer>& to, option<mediator::base_fee>&& fee = optional::none);
+			expects_promise_rt<mediator::transaction_logs> get_transaction_logs(const algorithm::asset_id& asset, mediator::chain_supervisor_options* options);
+			expects_promise_rt<mediator::base_fee> estimate_fee(const algorithm::asset_id& asset, const mediator::dynamic_wallet& wallet, const vector<mediator::transferer>& to, const mediator::fee_supervisor_options& options = mediator::fee_supervisor_options());
+			expects_promise_rt<decimal> calculate_balance(const algorithm::asset_id& asset, const mediator::dynamic_wallet& wallet, option<string>&& address = optional::none);
+			expects_lr<mediator::master_wallet> new_master_wallet(const algorithm::asset_id& asset, const std::string_view& seed);
+			expects_lr<mediator::master_wallet> new_master_wallet(const algorithm::asset_id& asset, const algorithm::seckey private_key);
+			expects_lr<mediator::derived_signing_wallet> new_signing_wallet(const algorithm::asset_id& asset, const mediator::master_wallet& wallet, option<uint64_t>&& address_index = optional::none);
+			expects_lr<mediator::derived_signing_wallet> new_signing_wallet(const algorithm::asset_id& asset, const secret_box& signing_key);
+			expects_lr<mediator::derived_verifying_wallet> new_verifying_wallet(const algorithm::asset_id& asset, const std::string_view& verifying_key);
+			expects_lr<string> new_public_key_hash(const algorithm::asset_id& asset, const std::string_view& address);
+			expects_lr<string> sign_message(const algorithm::asset_id& asset, const std::string_view& message, const secret_box& signing_key);
+			expects_lr<void> verify_message(const algorithm::asset_id& asset, const std::string_view& message, const std::string_view& verifying_key, const std::string_view& signature);
+			expects_lr<void> enable_signing_wallet(const algorithm::asset_id& asset, const mediator::master_wallet& wallet, const mediator::derived_signing_wallet& signing_wallet);
+			expects_lr<void> enable_checkpoint_height(const algorithm::asset_id& asset, uint64_t block_height);
+			expects_lr<void> enable_contract_address(const algorithm::asset_id& asset, const std::string_view& contract_address);
+			expects_lr<void> enable_wallet_address(const algorithm::asset_id& asset, const std::string_view& binding, const std::string_view& address, uint64_t address_index);
+			expects_lr<void> disable_wallet_address(const algorithm::asset_id& asset, const std::string_view& address);
+			expects_lr<uint64_t> get_latest_known_block_height(const algorithm::asset_id& asset);
+			expects_lr<mediator::index_address> get_address_index(const algorithm::asset_id& asset, const std::string_view& address);
+			expects_lr<unordered_map<string, mediator::index_address>> get_address_indices(const algorithm::asset_id& asset, const unordered_set<string>& addresses);
+			expects_lr<vector<string>> get_address_indices(const algorithm::asset_id& asset);
+			expects_lr<void> add_utxo(const algorithm::asset_id& asset, const mediator::index_utxo& value);
+			expects_lr<void> remove_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint32_t index);
+			expects_lr<mediator::index_utxo> get_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint32_t index);
+			expects_lr<vector<mediator::index_utxo>> get_utxos(const algorithm::asset_id& asset, const std::string_view& binding, size_t offset, size_t count);
+			expects_lr<schema*> load_cache(const algorithm::asset_id& asset, mediator::cache_policy policy, const std::string_view& key);
+			expects_lr<void> store_cache(const algorithm::asset_id& asset, mediator::cache_policy policy, const std::string_view& key, uptr<schema>&& value);
+			option<string> get_contract_address(const algorithm::asset_id& asset);
+			unordered_map<algorithm::asset_id, mediator::relay_backend::chainparams> get_chains();
+			unordered_map<string, mediator::master_wallet> get_wallets(const algorithm::seckey private_key);
+			unordered_map<string, invocation_callback>& get_registrations();
+			vector<algorithm::asset_id> get_assets(bool observing_only = false);
+			vector<uptr<mediator::server_relay>>* get_nodes(const algorithm::asset_id& asset);
+			const mediator::relay_backend::chainparams* get_chainparams(const algorithm::asset_id& asset);
+			mediator::server_relay* add_node(const algorithm::asset_id& asset, const std::string_view& URL, double throttling);
+			mediator::server_relay* get_node(const algorithm::asset_id& asset);
+			mediator::relay_backend* get_chain(const algorithm::asset_id& asset);
+			schema* get_specifications(const algorithm::asset_id& asset);
+			schema* add_specifications(const algorithm::asset_id& asset, uptr<schema>&& value);
+			service_control::service_node get_entrypoint();
+			mediator::multichain_supervisor_options& get_options();
+			system_control& get_control();
+			void add_transaction_callback(const std::string_view& name, transaction_callback&& callback);
+			void startup();
+			void shutdown();
+			bool has_chain(const algorithm::asset_id& asset);
+			bool has_node(const algorithm::asset_id& asset);
+			bool has_observer(const algorithm::asset_id& asset);
+			bool has_support(const algorithm::asset_id& asset);
+			bool is_active();
 
 		public:
-			template <typename T, typename... Args>
-			T* AddChain(const Algorithm::AssetId& Asset, Args&&... Values)
+			template <typename t, typename... args>
+			t* add_chain(const algorithm::asset_id& asset, args&&... values)
 			{
-				T* Instance = new T(Values...);
-				AddChainInstance(Asset, Instance);
-				return Instance;
+				t* instance = new t(values...);
+				add_chain_instance(asset, instance);
+				return instance;
 			}
 
 		private:
-			void AddNodeInstance(const Algorithm::AssetId& Asset, Mediator::ServerRelay* Instance);
-			void AddChainInstance(const Algorithm::AssetId& Asset, Mediator::RelayBackend* Instance);
-			void DispatchTransactionQueue(TransactionQueueState* State, TransactionParams* FromParams);
-			void FinalizeTransaction(TransactionQueueState* State, UPtr<TransactionParams>&& Params, ExpectsRT<Mediator::OutgoingTransaction>&& Transaction);
-			bool CallTransactionListener(TransactionListener* Listener);
+			void add_node_instance(const algorithm::asset_id& asset, mediator::server_relay* instance);
+			void add_chain_instance(const algorithm::asset_id& asset, mediator::relay_backend* instance);
+			void dispatch_transaction_queue(transaction_queue_state* state, transaction_params* from_params);
+			void finalize_transaction(transaction_queue_state* state, uptr<transaction_params>&& params, expects_rt<mediator::outgoing_transaction>&& transaction);
+			bool call_transaction_listener(transaction_listener* listener);
 		};
 	}
 }

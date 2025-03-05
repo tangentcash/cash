@@ -1,157 +1,157 @@
 #include "nds.h"
 #include "../storage/mempoolstate.h"
 
-namespace Tangent
+namespace tangent
 {
-	namespace NDS
+	namespace nds
 	{
-		ServerNode::ServerNode() noexcept : ControlSys("nds-node"), Node(new HTTP::Server())
+		server_node::server_node() noexcept : control_sys("nds-node"), node(new http::server())
 		{
 		}
-		ServerNode::~ServerNode() noexcept
+		server_node::~server_node() noexcept
 		{
 		}
-		void ServerNode::Startup()
+		void server_node::startup()
 		{
-			if (!Protocol::Now().User.NDS.Server)
+			if (!protocol::now().user.nds.server)
 				return;
 
-			HTTP::MapRouter* Router = new HTTP::MapRouter();
-			Router->Listen(Protocol::Now().User.NDS.Address, ToString(Protocol::Now().User.NDS.Port)).Expect("listener binding error");
-			Router->Get("/", std::bind(&ServerNode::Dispatch, this, std::placeholders::_1));
-			Router->Base->Callbacks.Headers = std::bind(&ServerNode::Headers, this, std::placeholders::_1, std::placeholders::_2);
-			Router->Base->Callbacks.Options = std::bind(&ServerNode::Options, this, std::placeholders::_1);
-			Router->TemporaryDirectory.clear();
-			Node->Configure(Router).Expect("configuration error");
-			Node->Listen().Expect("listen queue error");
+			http::map_router* router = new http::map_router();
+			router->listen(protocol::now().user.nds.address, to_string(protocol::now().user.nds.port)).expect("listener binding error");
+			router->get("/", std::bind(&server_node::dispatch, this, std::placeholders::_1));
+			router->base->callbacks.headers = std::bind(&server_node::headers, this, std::placeholders::_1, std::placeholders::_2);
+			router->base->callbacks.options = std::bind(&server_node::options, this, std::placeholders::_1);
+			router->temporary_directory.clear();
+			node->configure(router).expect("configuration error");
+			node->listen().expect("listen queue error");
 
-			if (Protocol::Now().User.NDS.Logging)
-				VI_INFO("[nds] nds node listen (location: %s:%i)", Protocol::Now().User.NDS.Address.c_str(), (int)Protocol::Now().User.NDS.Port);
+			if (protocol::now().user.nds.logging)
+				VI_INFO("[nds] nds node listen (location: %s:%i)", protocol::now().user.nds.address.c_str(), (int)protocol::now().user.nds.port);
 		}
-		void ServerNode::Shutdown()
+		void server_node::shutdown()
 		{
-			if (!IsActive())
+			if (!is_active())
 				return;
 
-			if (Protocol::Now().User.NDS.Logging)
+			if (protocol::now().user.nds.logging)
 				VI_INFO("[nds] nds node shutdown requested");
 
-			Node->Unlisten(false);
+			node->unlisten(false);
 		}
-		bool ServerNode::IsActive()
+		bool server_node::is_active()
 		{
-			return Node->GetState() == ServerState::Working;
+			return node->get_state() == server_state::working;
 		}
-		bool ServerNode::Headers(HTTP::Connection* Client, String& Content)
+		bool server_node::headers(http::connection* client, string& content)
 		{
-			auto Headers = Client->Request.ComposeHeader("access-control-request-headers");
-			if (Headers.empty())
-				Headers = "Authorization";
+			auto headers = client->request.compose_header("access-control-request-headers");
+			if (headers.empty())
+				headers = "Authorization";
 
-			auto* Origin = Client->Request.GetHeaderBlob("origin");
-			if (Origin != nullptr)
-				Content.append("Access-Control-Allow-Origin: ").append(*Origin).append("\r\n");
+			auto* origin = client->request.get_header_blob("origin");
+			if (origin != nullptr)
+				content.append("Access-control-allow-origin: ").append(*origin).append("\r\n");
 
-			Content.append("Access-Control-Allow-Headers: *, ");
-			Content.append(Headers);
-			Content.append("\r\n");
-			Content.append("Access-Control-Allow-Methods: GET\r\n");
-			Content.append("Access-Control-Allow-Credentials: true\r\n");
-			Content.append("Access-Control-Max-Age: 86400\r\n");
+			content.append("Access-control-allow-headers: *, ");
+			content.append(headers);
+			content.append("\r\n");
+			content.append("Access-control-allow-methods: GET\r\n");
+			content.append("Access-control-allow-credentials: true\r\n");
+			content.append("Access-control-max-age: 86400\r\n");
 			return true;
 		}
-		bool ServerNode::Options(HTTP::Connection* Client)
+		bool server_node::options(http::connection* client)
 		{
-			char Date[64];
-			String* Content = HTTP::HrmCache::Get()->Pop();
-			Content->append(Client->Request.Version);
-			Content->append(" 204 No Content\r\nDate: ");
-			Content->append(DateTime::SerializeGlobal(Date, sizeof(Date), std::chrono::duration_cast<std::chrono::system_clock::duration>(std::chrono::milliseconds(Client->Info.Start)), DateTime::FormatWebTime())).append("\r\n", 2);
-			Content->append("Allow: GET\r\n");
+			char date[64];
+			string* content = http::hrm_cache::get()->pop();
+			content->append(client->request.version);
+			content->append(" 204 no content\r\nDate: ");
+			content->append(date_time::serialize_global(date, sizeof(date), std::chrono::duration_cast<std::chrono::system_clock::duration>(std::chrono::milliseconds(client->info.start)), date_time::format_web_time())).append("\r\n", 2);
+			content->append("Allow: GET\r\n");
 
-			HTTP::Utils::UpdateKeepAliveHeaders(Client, *Content);
-			if (Client->Route && Client->Route->Callbacks.Headers)
-				Client->Route->Callbacks.Headers(Client, *Content);
+			http::utils::update_keep_alive_headers(client, *content);
+			if (client->route && client->route->callbacks.headers)
+				client->route->callbacks.headers(client, *content);
 
-			Content->append("\r\n", 2);
-			return !!Client->Stream->WriteQueued((uint8_t*)Content->c_str(), Content->size(), [Client, Content](SocketPoll Event)
+			content->append("\r\n", 2);
+			return !!client->stream->write_queued((uint8_t*)content->c_str(), content->size(), [client, content](socket_poll event)
 			{
-				HTTP::HrmCache::Get()->Push(Content);
-				if (Packet::IsDone(Event))
-					Client->Next(204);
-				else if (Packet::IsError(Event))
-					Client->Abort();
+				http::hrm_cache::get()->push(content);
+				if (packet::is_done(event))
+					client->next(204);
+				else if (packet::is_error(event))
+					client->abort();
 			}, false);
 		}
-		bool ServerNode::Dispatch(HTTP::Connection* Base)
+		bool server_node::dispatch(http::connection* base)
 		{
-			HTTP::Query Query;
-			Query.Decode("application/x-www-form-urlencoded", Base->Request.Query);
+			http::query query;
+			query.decode("application/x-www-form-urlencoded", base->request.query);
 
-			auto* ConsensusArgument = Query.Get("consensus");
-			auto* DiscoveryArgument = Query.Get("discovery");
-			auto* SynchronizationArgument = Query.Get("synchronization");
-			auto* InterfaceArgument = Query.Get("interface");
-			auto* ProposerArgument = Query.Get("proposer");
-			auto* StreamingArgument = Query.Get("streaming");
-			auto* PublicArgument = Query.Get("public");
-			auto* OffsetArgument = Query.Get("offset");
-			auto* CountArgument = Query.Get("count");
-			uint64_t Count = CountArgument && CountArgument->Value.Is(VarType::Integer) ? CountArgument->Value.GetInteger() : Protocol::Now().User.NDS.CursorSize;
-			if (!Count || Count > Protocol::Now().User.NDS.CursorSize)
+			auto* consensus_argument = query.get("consensus");
+			auto* discovery_argument = query.get("discovery");
+			auto* synchronization_argument = query.get("synchronization");
+			auto* interface_argument = query.get("interface");
+			auto* proposer_argument = query.get("proposer");
+			auto* streaming_argument = query.get("streaming");
+			auto* public_argument = query.get("public");
+			auto* offset_argument = query.get("offset");
+			auto* count_argument = query.get("count");
+			uint64_t count = count_argument && count_argument->value.is(var_type::integer) ? count_argument->value.get_integer() : protocol::now().user.nds.cursor_size;
+			if (!count || count > protocol::now().user.nds.cursor_size)
 			{
-				if (Protocol::Now().User.NDS.Logging)
-					VI_WARN("[nds] peer %s discovery failed: bad arguments (time: %" PRId64 " ms, args: %s)", Base->GetPeerIpAddress().Or("[bad_address]").c_str(), DateTime().Milliseconds() - Base->Info.Start, Base->Request.Query.c_str());
+				if (protocol::now().user.nds.logging)
+					VI_WARN("[nds] peer %s discovery failed: bad arguments (time: %" PRId64 " ms, args: %s)", base->get_peer_ip_address().otherwise("[bad_address]").c_str(), date_time().milliseconds() - base->info.start, base->request.query.c_str());
 
-				return Base->Abort(400, "Bad page size. Count must not exceed %" PRIu64 " elements.", Protocol::Now().User.NDS.CursorSize);
+				return base->abort(400, "Bad page size. count must not exceed %" PRIu64 " elements.", protocol::now().user.nds.cursor_size);
 			}
 
-			uint32_t Services = 0;
-			if (ConsensusArgument != nullptr && ConsensusArgument->Value.GetBoolean())
-				Services |= (uint32_t)Storages::NodeServices::Consensus;
-			if (DiscoveryArgument != nullptr && DiscoveryArgument->Value.GetBoolean())
-				Services |= (uint32_t)Storages::NodeServices::Discovery;
-			if (SynchronizationArgument != nullptr && SynchronizationArgument->Value.GetBoolean())
-				Services |= (uint32_t)Storages::NodeServices::Synchronization;
-			if (InterfaceArgument != nullptr && InterfaceArgument->Value.GetBoolean())
-				Services |= (uint32_t)Storages::NodeServices::Interface;
-			if (ProposerArgument != nullptr && ProposerArgument->Value.GetBoolean())
-				Services |= (uint32_t)Storages::NodeServices::Proposer;
-			if (PublicArgument != nullptr && PublicArgument->Value.GetBoolean())
-				Services |= (uint32_t)Storages::NodeServices::Public;
-			if (StreamingArgument != nullptr && StreamingArgument->Value.GetBoolean())
-				Services |= (uint32_t)Storages::NodeServices::Streaming;
+			uint32_t services = 0;
+			if (consensus_argument != nullptr && consensus_argument->value.get_boolean())
+				services |= (uint32_t)storages::node_services::consensus;
+			if (discovery_argument != nullptr && discovery_argument->value.get_boolean())
+				services |= (uint32_t)storages::node_services::discovery;
+			if (synchronization_argument != nullptr && synchronization_argument->value.get_boolean())
+				services |= (uint32_t)storages::node_services::synchronization;
+			if (interface_argument != nullptr && interface_argument->value.get_boolean())
+				services |= (uint32_t)storages::node_services::interfaces;
+			if (proposer_argument != nullptr && proposer_argument->value.get_boolean())
+				services |= (uint32_t)storages::node_services::proposer;
+			if (public_argument != nullptr && public_argument->value.get_boolean())
+				services |= (uint32_t)storages::node_services::publicity;
+			if (streaming_argument != nullptr && streaming_argument->value.get_boolean())
+				services |= (uint32_t)storages::node_services::streaming;
 
-			auto Mempool = Storages::Mempoolstate(__func__);
-			auto Seeds = Mempool.GetRandomizedValidatorAddresses(Count, Services);
-			if (!Seeds || Seeds->empty())
+			auto mempool = storages::mempoolstate(__func__);
+			auto seeds = mempool.get_randomized_validator_addresses(count, services);
+			if (!seeds || seeds->empty())
 			{
-				if (Protocol::Now().User.NDS.Logging)
-					VI_INFO("[nds] peer %s discovery: no nodes returned (time: %" PRId64 " ms, args: %s)", Base->GetPeerIpAddress().Or("[bad_address]").c_str(), DateTime().Milliseconds() - Base->Info.Start, Base->Request.Query.c_str());
+				if (protocol::now().user.nds.logging)
+					VI_INFO("[nds] peer %s discovery: no nodes returned (time: %" PRId64 " ms, args: %s)", base->get_peer_ip_address().otherwise("[bad_address]").c_str(), date_time().milliseconds() - base->info.start, base->request.query.c_str());
 
-				return Base->Abort(404, "No nodes found.");
+				return base->abort(404, "No nodes found.");
 			}
 
-			if (Protocol::Now().User.NDS.Logging)
-				VI_INFO("[nds] peer %s discovery: %i nodes returned (time: %" PRId64 " ms, args: %s)", Base->GetPeerIpAddress().Or("[bad_address]").c_str(), (int)Seeds->size(), DateTime().Milliseconds() - Base->Info.Start, Base->Request.Query.c_str());
+			if (protocol::now().user.nds.logging)
+				VI_INFO("[nds] peer %s discovery: %i nodes returned (time: %" PRId64 " ms, args: %s)", base->get_peer_ip_address().otherwise("[bad_address]").c_str(), (int)seeds->size(), date_time().milliseconds() - base->info.start, base->request.query.c_str());
 
-			UPtr<Schema> Data = Var::Set::Array();
-			for (auto& Seed : *Seeds)
-				Data->Push(Var::String(SystemEndpoint::ToURI(Seed)));
+			uptr<schema> data = var::set::array();
+			for (auto& seed : *seeds)
+				data->push(var::string(system_endpoint::to_uri(seed)));
 
-			Base->Response.SetHeader("Content-Type", "application/json");
-			Base->Response.Content.Assign(Schema::ToJSON(*Data));
-			return Base->Next(200);
+			base->response.set_header("Content-Type", "application/json");
+			base->response.content.assign(schema::to_json(*data));
+			return base->next(200);
 		}
-		ServiceControl::ServiceNode ServerNode::GetEntrypoint()
+		service_control::service_node server_node::get_entrypoint()
 		{
-			if (!Protocol::Now().User.NDS.Server)
-				return ServiceControl::ServiceNode();
+			if (!protocol::now().user.nds.server)
+				return service_control::service_node();
 
-			ServiceControl::ServiceNode Entrypoint;
-			Entrypoint.Startup = std::bind(&ServerNode::Startup, this);
-			Entrypoint.Shutdown = std::bind(&ServerNode::Shutdown, this);
-			return Entrypoint;
+			service_control::service_node entrypoint;
+			entrypoint.startup = std::bind(&server_node::startup, this);
+			entrypoint.shutdown = std::bind(&server_node::shutdown, this);
+			return entrypoint;
 		}
 	}
 }

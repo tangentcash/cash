@@ -3,28 +3,28 @@
 #include "../../kernel/chain.h"
 #include "../../layer/control.h"
 
-namespace Tangent
+namespace tangent
 {
-	namespace NDS
+	namespace nds
 	{
-		class ServerNode : public Reference<ServerNode>
+		class server_node : public reference<server_node>
 		{
 		protected:
-			SystemControl ControlSys;
-			UPtr<HTTP::Server> Node;
+			system_control control_sys;
+			uptr<http::server> node;
 
 		public:
-			ServerNode() noexcept;
-			~ServerNode() noexcept;
-			void Startup();
-			void Shutdown();
-			bool IsActive();
-			ServiceControl::ServiceNode GetEntrypoint();
+			server_node() noexcept;
+			~server_node() noexcept;
+			void startup();
+			void shutdown();
+			bool is_active();
+			service_control::service_node get_entrypoint();
 
 		private:
-			bool Headers(HTTP::Connection* Base, String& Content);
-			bool Options(HTTP::Connection* Base);
-			bool Dispatch(HTTP::Connection* Base);
+			bool headers(http::connection* base, string& content);
+			bool options(http::connection* base);
+			bool dispatch(http::connection* base);
 		};
 	}
 }

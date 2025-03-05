@@ -3,427 +3,427 @@
 #include "../policy/messages.h"
 #include "../layer/control.h"
 
-namespace Tangent
+namespace tangent
 {
-	namespace Mediator
+	namespace mediator
 	{
 		enum
 		{
 			KEY_LIMIT = 1024
 		};
 
-		enum class RoutingPolicy
+		enum class routing_policy
 		{
-			Account,
-			Memo,
+			account,
+			memo,
 			UTXO
 		};
 
-		enum class CachePolicy
+		enum class cache_policy
 		{
-			Greedy,
-			Lazy,
-			Shortened,
-			Extended,
-			Persistent
+			greedy,
+			lazy,
+			shortened,
+			extended,
+			persistent
 		};
 
-		class ServerRelay;
+		class server_relay;
 
-		class RelayBackend;
+		class relay_backend;
 
-		struct TokenUTXO
+		struct token_utxo
 		{
-			String ContractAddress;
-			String Symbol;
-			Decimal Value;
-			uint8_t Decimals;
+			string contract_address;
+			string symbol;
+			decimal value;
+			uint8_t decimals;
 
-			TokenUTXO();
-			TokenUTXO(const std::string_view& NewContractAddress, const Decimal& NewValue);
-			TokenUTXO(const std::string_view& NewContractAddress, const std::string_view& NewSymbol, const Decimal& NewValue, uint8_t NewDecimals);
-			Decimal GetDivisibility();
-			bool IsCoinValid() const;
+			token_utxo();
+			token_utxo(const std::string_view& new_contract_address, const decimal& new_value);
+			token_utxo(const std::string_view& new_contract_address, const std::string_view& new_symbol, const decimal& new_value, uint8_t new_decimals);
+			decimal get_divisibility();
+			bool is_coin_valid() const;
 		};
 
-		struct CoinUTXO
+		struct coin_utxo
 		{
-			Vector<TokenUTXO> Tokens;
-			Option<uint64_t> AddressIndex = Optional::None;
-			String TransactionId;
-			String Address;
-			Decimal Value;
-			uint32_t Index = 0;
+			vector<token_utxo> tokens;
+			option<uint64_t> address_index = optional::none;
+			string transaction_id;
+			string address;
+			decimal value;
+			uint32_t index = 0;
 
-			CoinUTXO() = default;
-			CoinUTXO(const std::string_view& NewTransactionId, const std::string_view& NewAddress, Option<uint64_t>&& AddressIndex, Decimal&& NewValue, uint32_t NewIndex);
-			void ApplyTokenValue(const std::string_view& ContractAddress, const std::string_view& Symbol, const Decimal& Value, uint8_t Decimals);
-			Option<Decimal> GetTokenValue(const std::string_view& ContractAddress);
-			bool IsValid() const;
+			coin_utxo() = default;
+			coin_utxo(const std::string_view& new_transaction_id, const std::string_view& new_address, option<uint64_t>&& address_index, decimal&& new_value, uint32_t new_index);
+			void apply_token_value(const std::string_view& contract_address, const std::string_view& symbol, const decimal& value, uint8_t decimals);
+			option<decimal> get_token_value(const std::string_view& contract_address);
+			bool is_valid() const;
 		};
 
-		struct Transferer
+		struct transferer
 		{
-			Option<uint64_t> AddressIndex = Optional::None;
-			String Address;
-			Decimal Value;
+			option<uint64_t> address_index = optional::none;
+			string address;
+			decimal value;
 
-			Transferer();
-			Transferer(const std::string_view& NewAddress, Option<uint64_t>&& AddressIndex, Decimal&& NewValue);
-			bool IsValid() const;
+			transferer();
+			transferer(const std::string_view& new_address, option<uint64_t>&& address_index, decimal&& new_value);
+			bool is_valid() const;
 		};
 
-		struct MasterWallet : Messages::Generic
+		struct master_wallet : messages::standard
 		{
-			PrivateKey SeedingKey;
-			PrivateKey SigningKey;
-			String VerifyingKey;
-			uint64_t MaxAddressIndex = 0;
+			secret_box seeding_key;
+			secret_box signing_key;
+			string verifying_key;
+			uint64_t max_address_index = 0;
 
-			MasterWallet() = default;
-			MasterWallet(PrivateKey&& NewSeedingKey, PrivateKey&& NewSigningKey, String&& NewVerifyingKey);
-			MasterWallet(const MasterWallet&) = default;
-			MasterWallet(MasterWallet&&) = default;
-			MasterWallet& operator=(const MasterWallet&) = default;
-			MasterWallet& operator=(MasterWallet&&) = default;
-			bool StorePayload(Format::Stream* Stream) const override;
-			bool LoadPayload(Format::Stream& Stream) override;
-			bool IsValid() const;
-			UPtr<Schema> AsSchema() const override;
-			uint256_t AsHash(bool Renew = false) const override;
-			uint32_t AsType() const override;
-			std::string_view AsTypename() const override;
-			static uint32_t AsInstanceType();
-			static std::string_view AsInstanceTypename();
+			master_wallet() = default;
+			master_wallet(secret_box&& new_seeding_key, secret_box&& new_signing_key, string&& new_verifying_key);
+			master_wallet(const master_wallet&) = default;
+			master_wallet(master_wallet&&) = default;
+			master_wallet& operator=(const master_wallet&) = default;
+			master_wallet& operator=(master_wallet&&) = default;
+			bool store_payload(format::stream* stream) const override;
+			bool load_payload(format::stream& stream) override;
+			bool is_valid() const;
+			uptr<schema> as_schema() const override;
+			uint256_t as_hash(bool renew = false) const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
 		};
 
-		struct DerivedVerifyingWallet : Messages::Generic
+		struct derived_verifying_wallet : messages::standard
 		{
-			AddressMap Addresses;
-			Option<uint64_t> AddressIndex = Optional::None;
-			String VerifyingKey;
+			address_map addresses;
+			option<uint64_t> address_index = optional::none;
+			string verifying_key;
 
-			DerivedVerifyingWallet() = default;
-			DerivedVerifyingWallet(AddressMap&& NewAddresses, Option<uint64_t>&& NewAddressIndex, String&& NewVerifyingKey);
-			DerivedVerifyingWallet(const DerivedVerifyingWallet&) = default;
-			DerivedVerifyingWallet(DerivedVerifyingWallet&&) = default;
-			DerivedVerifyingWallet& operator=(const DerivedVerifyingWallet&) = default;
-			DerivedVerifyingWallet& operator=(DerivedVerifyingWallet&&) = default;
-			virtual bool StorePayload(Format::Stream* Stream) const override;
-			virtual bool LoadPayload(Format::Stream& Stream) override;
-			virtual bool IsValid() const;
-			UPtr<Schema> AsSchema() const override;
-			uint32_t AsType() const override;
-			std::string_view AsTypename() const override;
-			static uint32_t AsInstanceType();
-			static std::string_view AsInstanceTypename();
+			derived_verifying_wallet() = default;
+			derived_verifying_wallet(address_map&& new_addresses, option<uint64_t>&& new_address_index, string&& new_verifying_key);
+			derived_verifying_wallet(const derived_verifying_wallet&) = default;
+			derived_verifying_wallet(derived_verifying_wallet&&) = default;
+			derived_verifying_wallet& operator=(const derived_verifying_wallet&) = default;
+			derived_verifying_wallet& operator=(derived_verifying_wallet&&) = default;
+			virtual bool store_payload(format::stream* stream) const override;
+			virtual bool load_payload(format::stream& stream) override;
+			virtual bool is_valid() const;
+			uptr<schema> as_schema() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
 		};
 
-		struct DerivedSigningWallet : DerivedVerifyingWallet
+		struct derived_signing_wallet : derived_verifying_wallet
 		{
-			PrivateKey SigningKey;
+			secret_box signing_key;
 
-			DerivedSigningWallet() = default;
-			DerivedSigningWallet(DerivedVerifyingWallet&& NewWallet, PrivateKey&& NewSigningKey);
-			DerivedSigningWallet(const DerivedSigningWallet&) = default;
-			DerivedSigningWallet(DerivedSigningWallet&&) = default;
-			DerivedSigningWallet& operator=(const DerivedSigningWallet&) = default;
-			DerivedSigningWallet& operator=(DerivedSigningWallet&&) = default;
-			bool StorePayload(Format::Stream* Stream) const override;
-			bool LoadPayload(Format::Stream& Stream) override;
-			bool IsValid() const override;
-			UPtr<Schema> AsSchema() const override;
-			uint32_t AsType() const override;
-			std::string_view AsTypename() const override;
-			static uint32_t AsInstanceType();
-			static std::string_view AsInstanceTypename();
+			derived_signing_wallet() = default;
+			derived_signing_wallet(derived_verifying_wallet&& new_wallet, secret_box&& new_signing_key);
+			derived_signing_wallet(const derived_signing_wallet&) = default;
+			derived_signing_wallet(derived_signing_wallet&&) = default;
+			derived_signing_wallet& operator=(const derived_signing_wallet&) = default;
+			derived_signing_wallet& operator=(derived_signing_wallet&&) = default;
+			bool store_payload(format::stream* stream) const override;
+			bool load_payload(format::stream& stream) override;
+			bool is_valid() const override;
+			uptr<schema> as_schema() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
 		};
 
-		struct DynamicWallet
+		struct dynamic_wallet
 		{
-			Option<MasterWallet> Parent;
-			Option<DerivedVerifyingWallet> VerifyingChild;
-			Option<DerivedSigningWallet> SigningChild;
+			option<master_wallet> parent;
+			option<derived_verifying_wallet> verifying_child;
+			option<derived_signing_wallet> signing_child;
 
-			DynamicWallet();
-			DynamicWallet(const MasterWallet& Value);
-			DynamicWallet(const DerivedVerifyingWallet& Value);
-			DynamicWallet(const DerivedSigningWallet& Value);
-			DynamicWallet(const DynamicWallet&) = default;
-			DynamicWallet(DynamicWallet&&) = default;
-			DynamicWallet& operator=(const DynamicWallet&) = default;
-			DynamicWallet& operator=(DynamicWallet&&) = default;
-			Option<String> GetBinding() const;
-			bool IsValid() const;
+			dynamic_wallet();
+			dynamic_wallet(const master_wallet& value);
+			dynamic_wallet(const derived_verifying_wallet& value);
+			dynamic_wallet(const derived_signing_wallet& value);
+			dynamic_wallet(const dynamic_wallet&) = default;
+			dynamic_wallet(dynamic_wallet&&) = default;
+			dynamic_wallet& operator=(const dynamic_wallet&) = default;
+			dynamic_wallet& operator=(dynamic_wallet&&) = default;
+			option<string> get_binding() const;
+			bool is_valid() const;
 		};
 
-		struct IncomingTransaction : Messages::Generic
+		struct incoming_transaction : messages::standard
 		{
-			Vector<Transferer> To;
-			Vector<Transferer> From;
-			Algorithm::AssetId Asset;
-			String TransactionId;
-			uint64_t BlockId = 0;
-			Decimal Fee;
+			vector<transferer> to;
+			vector<transferer> from;
+			algorithm::asset_id asset;
+			string transaction_id;
+			uint64_t block_id = 0;
+			decimal fee;
 
-			IncomingTransaction();
-			bool StorePayload(Format::Stream* Stream) const override;
-			bool LoadPayload(Format::Stream& Stream) override;
-			bool IsValid() const;
-			void SetTransaction(const Algorithm::AssetId& NewAsset, uint64_t NewBlockId, const std::string_view& NewTransactionId, Decimal&& NewFee);
-			void SetOperations(Vector<Transferer>&& NewFrom, Vector<Transferer>&& NewTo);
-			bool IsLatencyApproved() const;
-			bool IsApproved() const;
-			Decimal GetInputValue() const;
-			Decimal GetOutputValue() const;
-			UPtr<Schema> AsSchema() const override;
-			uint32_t AsType() const override;
-			std::string_view AsTypename() const override;
-			static uint32_t AsInstanceType();
-			static std::string_view AsInstanceTypename();
+			incoming_transaction();
+			bool store_payload(format::stream* stream) const override;
+			bool load_payload(format::stream& stream) override;
+			bool is_valid() const;
+			void set_transaction(const algorithm::asset_id& new_asset, uint64_t new_block_id, const std::string_view& new_transaction_id, decimal&& new_fee);
+			void set_operations(vector<transferer>&& new_from, vector<transferer>&& new_to);
+			bool is_latency_approved() const;
+			bool is_approved() const;
+			decimal get_input_value() const;
+			decimal get_output_value() const;
+			uptr<schema> as_schema() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
 		};
 
-		struct OutgoingTransaction : Messages::Generic
+		struct outgoing_transaction : messages::standard
 		{
-			Option<Vector<CoinUTXO>> Inputs;
-			Option<Vector<CoinUTXO>> Outputs;
-			IncomingTransaction Transaction;
-			String Data;
+			option<vector<coin_utxo>> inputs;
+			option<vector<coin_utxo>> outputs;
+			incoming_transaction transaction;
+			string data;
 
-			OutgoingTransaction();
-			OutgoingTransaction(IncomingTransaction&& NewTransaction, const std::string_view& NewData, Option<Vector<CoinUTXO>>&& NewInputs = Optional::None, Option<Vector<CoinUTXO>>&& NewOutputs = Optional::None);
-			bool StorePayload(Format::Stream* Stream) const override;
-			bool LoadPayload(Format::Stream& Stream) override;
-			bool IsValid() const;
-			UPtr<Schema> AsSchema() const override;
-			uint32_t AsType() const override;
-			std::string_view AsTypename() const override;
-			static uint32_t AsInstanceType();
-			static std::string_view AsInstanceTypename();
+			outgoing_transaction();
+			outgoing_transaction(incoming_transaction&& new_transaction, const std::string_view& new_data, option<vector<coin_utxo>>&& new_inputs = optional::none, option<vector<coin_utxo>>&& new_outputs = optional::none);
+			bool store_payload(format::stream* stream) const override;
+			bool load_payload(format::stream& stream) override;
+			bool is_valid() const;
+			uptr<schema> as_schema() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
 		};
 
-		struct TransactionLogs
+		struct transaction_logs
 		{
-			Vector<IncomingTransaction> Transactions;
-			uint64_t BlockHeight = (uint64_t)-1;
-			String BlockHash;
+			vector<incoming_transaction> transactions;
+			uint64_t block_height = (uint64_t)-1;
+			string block_hash;
 		};
 
-		struct IndexAddress : Messages::Generic
+		struct index_address : messages::standard
 		{
-			Option<uint64_t> AddressIndex = Optional::None;
-			String Address;
-			String Binding;
+			option<uint64_t> address_index = optional::none;
+			string address;
+			string binding;
 
-			bool StorePayload(Format::Stream* Stream) const override;
-			bool LoadPayload(Format::Stream& Stream) override;
-			UPtr<Schema> AsSchema() const override;
-			uint32_t AsType() const override;
-			std::string_view AsTypename() const override;
-			static uint32_t AsInstanceType();
-			static std::string_view AsInstanceTypename();
+			bool store_payload(format::stream* stream) const override;
+			bool load_payload(format::stream& stream) override;
+			uptr<schema> as_schema() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
 		};
 
-		struct IndexUTXO : Messages::Generic
+		struct index_utxo : messages::standard
 		{
-			CoinUTXO UTXO;
-			String Binding;
+			coin_utxo UTXO;
+			string binding;
 
-			bool StorePayload(Format::Stream* Stream) const override;
-			bool LoadPayload(Format::Stream& Stream) override;
-			UPtr<Schema> AsSchema() const override;
-			uint32_t AsType() const override;
-			std::string_view AsTypename() const override;
-			static uint32_t AsInstanceType();
-			static std::string_view AsInstanceTypename();
+			bool store_payload(format::stream* stream) const override;
+			bool load_payload(format::stream& stream) override;
+			uptr<schema> as_schema() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
 		};
 
-		struct BaseFee
+		struct base_fee
 		{
-			Decimal Price;
-			Decimal Limit;
+			decimal price;
+			decimal limit;
 
-			BaseFee();
-			BaseFee(const Decimal& NewPrice, const Decimal& NewLimit);
-			Decimal GetFee() const;
-			bool IsValid() const;
+			base_fee();
+			base_fee(const decimal& new_price, const decimal& new_limit);
+			decimal get_fee() const;
+			bool is_valid() const;
 		};
 
-		struct SupervisorOptions
+		struct supervisor_options
 		{
-			uint64_t PollingFrequencyMs = 70000;
-			uint64_t MinBlockConfirmations = 0;
+			uint64_t polling_frequency_ms = 70000;
+			uint64_t min_block_confirmations = 0;
 		};
 
-		struct ChainSupervisorOptions : SupervisorOptions
+		struct chain_supervisor_options : supervisor_options
 		{
 			struct
 			{
-				UnorderedSet<ServerRelay*> Interactions;
-				uint64_t CurrentBlockHeight = 0;
-				uint64_t LatestBlockHeight = 0;
-				uint64_t StartingBlockHeight = 0;
-				uint64_t LatestTimeAwaited = 0;
-			} State;
+				unordered_set<server_relay*> interactions;
+				uint64_t current_block_height = 0;
+				uint64_t latest_block_height = 0;
+				uint64_t starting_block_height = 0;
+				uint64_t latest_time_awaited = 0;
+			} state;
 
-			void SetCheckpointFromBlock(uint64_t BlockHeight);
-			void SetCheckpointToBlock(uint64_t BlockHeight);
-			uint64_t GetNextBlockHeight();
-			uint64_t GetTimeAwaited() const;
-			bool HasNextBlockHeight() const;
-			bool HasCurrentBlockHeight() const;
-			bool HasLatestBlockHeight() const;
-			bool WillWaitForTransactions() const;
-			double GetCheckpointPercentage() const;
-			const UnorderedSet<ServerRelay*>& GetInteractedNodes() const;
-			bool IsCancelled(const Algorithm::AssetId& Asset);
+			void set_checkpoint_from_block(uint64_t block_height);
+			void set_checkpoint_to_block(uint64_t block_height);
+			uint64_t get_next_block_height();
+			uint64_t get_time_awaited() const;
+			bool has_next_block_height() const;
+			bool has_current_block_height() const;
+			bool has_latest_block_height() const;
+			bool will_wait_for_transactions() const;
+			double get_checkpoint_percentage() const;
+			const unordered_set<server_relay*>& get_interacted_nodes() const;
+			bool is_cancelled(const algorithm::asset_id& asset);
 		};
 
-		struct MultichainSupervisorOptions : SupervisorOptions
+		struct multichain_supervisor_options : supervisor_options
 		{
-			UnorderedMap<String, ChainSupervisorOptions> Specifics;
-			uint64_t RetryWaitingTimeMs = 30000;
+			unordered_map<string, chain_supervisor_options> specifics;
+			uint64_t retry_waiting_time_ms = 30000;
 
-			ChainSupervisorOptions& AddSpecificOptions(const std::string_view& Blockchain);
+			chain_supervisor_options& add_specific_options(const std::string_view& blockchain);
 		};
 
-		struct FeeSupervisorOptions
+		struct fee_supervisor_options
 		{
-			uint64_t BlockHeightOffset = 1;
-			uint64_t MaxBlocks = 10;
-			uint64_t MaxTransactions = 32;
+			uint64_t block_height_offset = 1;
+			uint64_t max_blocks = 10;
+			uint64_t max_transactions = 32;
 		};
 
-		class ServerRelay : public Reference<ServerRelay>
+		class server_relay : public reference<server_relay>
 		{
 		public:
-			enum class TransmitType
+			enum class transmit_type
 			{
-				Any,
+				any,
 				JSONRPC,
 				REST,
 				HTTP
 			};
 
-			struct ErrorReporter
+			struct error_reporter
 			{
-				TransmitType Type = TransmitType::Any;
-				String Method;
+				transmit_type type = transmit_type::any;
+				string method;
 			};
 
 		private:
 			struct
 			{
-				String JsonRpcPath;
-				bool JsonRpcDistinct = false;
-				String RestPath;
-				bool RestDistinct = false;
-				String HttpPath;
-				bool HttpDistinct = false;
-			} Paths;
+				string json_rpc_path;
+				bool json_rpc_distinct = false;
+				string rest_path;
+				bool rest_distinct = false;
+				string http_path;
+				bool http_distinct = false;
+			} paths;
 
 		private:
-			Vector<std::pair<Promise<bool>, TaskId>> Tasks;
-			std::recursive_mutex Mutex;
-			double Throttling;
-			int64_t Latest;
-			bool Allowed;
+			vector<std::pair<promise<bool>, task_id>> tasks;
+			std::recursive_mutex mutex;
+			double throttling;
+			int64_t latest;
+			bool allowed;
 
 		public:
-			void* UserData;
+			void* user_data;
 
 		public:
-			ServerRelay(const std::string_view& NodeURL, double NodeThrottling) noexcept;
-			~ServerRelay() noexcept;
-			ExpectsPromiseRT<Schema*> ExecuteRPC(const Algorithm::AssetId& Asset, ErrorReporter& Reporter, const std::string_view& Method, const SchemaList& Args, CachePolicy Cache, const std::string_view& Path);
-			ExpectsPromiseRT<Schema*> ExecuteRPC3(const Algorithm::AssetId& Asset, ErrorReporter& Reporter, const std::string_view& Method, const SchemaArgs& Args, CachePolicy Cache, const std::string_view& Path);
-			ExpectsPromiseRT<Schema*> ExecuteREST(const Algorithm::AssetId& Asset, ErrorReporter& Reporter, const std::string_view& Method, const std::string_view& Path, Schema* Args, CachePolicy Cache);
-			ExpectsPromiseRT<Schema*> ExecuteHTTP(const Algorithm::AssetId& Asset, ErrorReporter& Reporter, const std::string_view& Method, const std::string_view& Path, const std::string_view& Type, const std::string_view& Body, CachePolicy Cache);
-			Promise<bool> YieldForCooldown(uint64_t& RetryTimeout, uint64_t TotalTimeoutMs);
-			Promise<bool> YieldForDiscovery(ChainSupervisorOptions* Options);
-			ExpectsLR<void> VerifyCompatibility(const Algorithm::AssetId& Asset);
-			TaskId EnqueueActivity(const Promise<bool>& Future, TaskId TimerId);
-			void DequeueActivity(TaskId TimerId);
-			void AllowActivities();
-			void CancelActivities();
-			bool HasDistinctURL(TransmitType Type) const;
-			bool IsActivityAllowed() const;
-			const String& GetNodeURL(TransmitType Type) const;
-			String GetNodeURL(TransmitType Type, const std::string_view& Path) const;
+			server_relay(const std::string_view& node_url, double node_throttling) noexcept;
+			~server_relay() noexcept;
+			expects_promise_rt<schema*> execute_rpc(const algorithm::asset_id& asset, error_reporter& reporter, const std::string_view& method, const schema_list& args, cache_policy cache, const std::string_view& path);
+			expects_promise_rt<schema*> execute_rpc3(const algorithm::asset_id& asset, error_reporter& reporter, const std::string_view& method, const schema_args& args, cache_policy cache, const std::string_view& path);
+			expects_promise_rt<schema*> execute_rest(const algorithm::asset_id& asset, error_reporter& reporter, const std::string_view& method, const std::string_view& path, schema* args, cache_policy cache);
+			expects_promise_rt<schema*> execute_http(const algorithm::asset_id& asset, error_reporter& reporter, const std::string_view& method, const std::string_view& path, const std::string_view& type, const std::string_view& body, cache_policy cache);
+			promise<bool> yield_for_cooldown(uint64_t& retry_timeout, uint64_t total_timeout_ms);
+			promise<bool> yield_for_discovery(chain_supervisor_options* options);
+			expects_lr<void> verify_compatibility(const algorithm::asset_id& asset);
+			task_id enqueue_activity(const promise<bool>& future, task_id timer_id);
+			void dequeue_activity(task_id timer_id);
+			void allow_activities();
+			void cancel_activities();
+			bool has_distinct_url(transmit_type type) const;
+			bool is_activity_allowed() const;
+			const string& get_node_url(transmit_type type) const;
+			string get_node_url(transmit_type type, const std::string_view& path) const;
 
 		public:
-			static std::string_view GetCacheType(CachePolicy Cache);
+			static std::string_view get_cache_type(cache_policy cache);
 
 		private:
-			static String GenerateErrorMessage(const ExpectsSystem<HTTP::ResponseFrame>& Response, const ErrorReporter& Reporter, const std::string_view& ErrorCode, const std::string_view& ErrorMessage);
+			static string generate_error_message(const expects_system<http::response_frame>& response, const error_reporter& reporter, const std::string_view& error_code, const std::string_view& error_message);
 		};
 
-		class RelayBackend : public Reference<RelayBackend>
+		class relay_backend : public reference<relay_backend>
 		{
-			friend class Datamaster;
+			friend class datamaster;
 
 		public:
-			typedef std::function<void(ServerRelay*)> InteractionCallback;
+			typedef std::function<void(server_relay*)> interaction_callback;
 
 		public:
-			struct Chainparams
+			struct chainparams
 			{
-				Algorithm::Composition::Type Composition;
-				RoutingPolicy Routing;
-				uint64_t SyncLatency;
-				Decimal Divisibility;
-				String SupportsTokenTransfer;
-				bool SupportsBulkTransfer;
+				algorithm::composition::type composition;
+				routing_policy routing;
+				uint64_t sync_latency;
+				decimal divisibility;
+				string supports_token_transfer;
+				bool supports_bulk_transfer;
 			};
 
 		public:
-			InteractionCallback Interact;
+			interaction_callback interact;
 
 		public:
-			RelayBackend() noexcept;
-			virtual ~RelayBackend() noexcept;
-			virtual ExpectsPromiseRT<void> BroadcastTransaction(const Algorithm::AssetId& Asset, const OutgoingTransaction& TxData) = 0;
-			virtual ExpectsPromiseRT<uint64_t> GetLatestBlockHeight(const Algorithm::AssetId& Asset) = 0;
-			virtual ExpectsPromiseRT<Schema*> GetBlockTransactions(const Algorithm::AssetId& Asset, uint64_t BlockHeight, String* BlockHash) = 0;
-			virtual ExpectsPromiseRT<Schema*> GetBlockTransaction(const Algorithm::AssetId& Asset, uint64_t BlockHeight, const std::string_view& BlockHash, const std::string_view& TransactionId) = 0;
-			virtual ExpectsPromiseRT<Vector<IncomingTransaction>> GetAuthenticTransactions(const Algorithm::AssetId& Asset, uint64_t BlockHeight, const std::string_view& BlockHash, Schema* TransactionData) = 0;
-			virtual ExpectsPromiseRT<BaseFee> EstimateFee(const Algorithm::AssetId& Asset, const DynamicWallet& Wallet, const Vector<Transferer>& To, const FeeSupervisorOptions& Options) = 0;
-			virtual ExpectsPromiseRT<Decimal> CalculateBalance(const Algorithm::AssetId& Asset, const DynamicWallet& Wallet, Option<String>&& Address) = 0;
-			virtual ExpectsPromiseRT<Schema*> ExecuteRPC(const Algorithm::AssetId& Asset, const std::string_view& Method, SchemaList&& Args, CachePolicy Cache, const std::string_view& Path = std::string_view());
-			virtual ExpectsPromiseRT<Schema*> ExecuteRPC3(const Algorithm::AssetId& Asset, const std::string_view& Method, SchemaArgs&& Args, CachePolicy Cache, const std::string_view& Path = std::string_view());
-			virtual ExpectsPromiseRT<Schema*> ExecuteREST(const Algorithm::AssetId& Asset, const std::string_view& Method, const std::string_view& Path, Schema* Args, CachePolicy Cache);
-			virtual ExpectsPromiseRT<Schema*> ExecuteHTTP(const Algorithm::AssetId& Asset, const std::string_view& Method, const std::string_view& Path, const std::string_view& Type, const std::string_view& Body, CachePolicy Cache);
-			virtual ExpectsPromiseRT<OutgoingTransaction> NewTransaction(const Algorithm::AssetId& Asset, const DynamicWallet& Wallet, const Vector<Transferer>& To, const BaseFee& Fee) = 0;
-			virtual ExpectsLR<MasterWallet> NewMasterWallet(const std::string_view& Seed) = 0;
-			virtual ExpectsLR<DerivedSigningWallet> NewSigningWallet(const Algorithm::AssetId& Asset, const MasterWallet& Wallet, uint64_t AddressIndex) = 0;
-			virtual ExpectsLR<DerivedSigningWallet> NewSigningWallet(const Algorithm::AssetId& Asset, const PrivateKey& SigningKey) = 0;
-			virtual ExpectsLR<DerivedVerifyingWallet> NewVerifyingWallet(const Algorithm::AssetId& Asset, const std::string_view& VerifyingKey) = 0;
-			virtual ExpectsLR<String> NewPublicKeyHash(const std::string_view& Address) = 0;
-			virtual ExpectsLR<String> SignMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const PrivateKey& SigningKey) = 0;
-			virtual ExpectsLR<void> VerifyMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const std::string_view& VerifyingKey, const std::string_view& Signature) = 0;
-			virtual ExpectsLR<OrderedMap<String, uint64_t>> FindCheckpointAddresses(const Algorithm::AssetId& Asset, const UnorderedSet<String>& Addresses);
-			virtual ExpectsLR<Vector<String>> GetCheckpointAddresses(const Algorithm::AssetId& Asset);
-			virtual ExpectsLR<void> VerifyNodeCompatibility(ServerRelay* Node);
-			virtual String GetDerivation(uint64_t AddressIndex) const = 0;
-			virtual String GetChecksumHash(const std::string_view& Value) const;
-			virtual uint256_t ToBaselineValue(const Decimal& Value) const;
-			virtual uint64_t GetRetirementBlockNumber() const;
-			virtual const Chainparams& GetChainparams() const = 0;
+			relay_backend() noexcept;
+			virtual ~relay_backend() noexcept;
+			virtual expects_promise_rt<void> broadcast_transaction(const algorithm::asset_id& asset, const outgoing_transaction& tx_data) = 0;
+			virtual expects_promise_rt<uint64_t> get_latest_block_height(const algorithm::asset_id& asset) = 0;
+			virtual expects_promise_rt<schema*> get_block_transactions(const algorithm::asset_id& asset, uint64_t block_height, string* block_hash) = 0;
+			virtual expects_promise_rt<schema*> get_block_transaction(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, const std::string_view& transaction_id) = 0;
+			virtual expects_promise_rt<vector<incoming_transaction>> get_authentic_transactions(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, schema* transaction_data) = 0;
+			virtual expects_promise_rt<base_fee> estimate_fee(const algorithm::asset_id& asset, const dynamic_wallet& wallet, const vector<transferer>& to, const fee_supervisor_options& options) = 0;
+			virtual expects_promise_rt<decimal> calculate_balance(const algorithm::asset_id& asset, const dynamic_wallet& wallet, option<string>&& address) = 0;
+			virtual expects_promise_rt<schema*> execute_rpc(const algorithm::asset_id& asset, const std::string_view& method, schema_list&& args, cache_policy cache, const std::string_view& path = std::string_view());
+			virtual expects_promise_rt<schema*> execute_rpc3(const algorithm::asset_id& asset, const std::string_view& method, schema_args&& args, cache_policy cache, const std::string_view& path = std::string_view());
+			virtual expects_promise_rt<schema*> execute_rest(const algorithm::asset_id& asset, const std::string_view& method, const std::string_view& path, schema* args, cache_policy cache);
+			virtual expects_promise_rt<schema*> execute_http(const algorithm::asset_id& asset, const std::string_view& method, const std::string_view& path, const std::string_view& type, const std::string_view& body, cache_policy cache);
+			virtual expects_promise_rt<outgoing_transaction> new_transaction(const algorithm::asset_id& asset, const dynamic_wallet& wallet, const vector<transferer>& to, const base_fee& fee) = 0;
+			virtual expects_lr<master_wallet> new_master_wallet(const std::string_view& seed) = 0;
+			virtual expects_lr<derived_signing_wallet> new_signing_wallet(const algorithm::asset_id& asset, const master_wallet& wallet, uint64_t address_index) = 0;
+			virtual expects_lr<derived_signing_wallet> new_signing_wallet(const algorithm::asset_id& asset, const secret_box& signing_key) = 0;
+			virtual expects_lr<derived_verifying_wallet> new_verifying_wallet(const algorithm::asset_id& asset, const std::string_view& verifying_key) = 0;
+			virtual expects_lr<string> new_public_key_hash(const std::string_view& address) = 0;
+			virtual expects_lr<string> sign_message(const algorithm::asset_id& asset, const std::string_view& message, const secret_box& signing_key) = 0;
+			virtual expects_lr<void> verify_message(const algorithm::asset_id& asset, const std::string_view& message, const std::string_view& verifying_key, const std::string_view& signature) = 0;
+			virtual expects_lr<ordered_map<string, uint64_t>> find_checkpoint_addresses(const algorithm::asset_id& asset, const unordered_set<string>& addresses);
+			virtual expects_lr<vector<string>> get_checkpoint_addresses(const algorithm::asset_id& asset);
+			virtual expects_lr<void> verify_node_compatibility(server_relay* node);
+			virtual string get_derivation(uint64_t address_index) const = 0;
+			virtual string get_checksum_hash(const std::string_view& value) const;
+			virtual uint256_t to_baseline_value(const decimal& value) const;
+			virtual uint64_t get_retirement_block_number() const;
+			virtual const chainparams& get_chainparams() const = 0;
 		};
 
-		class RelayBackendUTXO : public RelayBackend
+		class relay_backend_utxo : public relay_backend
 		{
 		public:
-			RelayBackendUTXO() noexcept;
-			virtual ~RelayBackendUTXO() = default;
-			virtual ExpectsPromiseRT<CoinUTXO> GetTransactionOutput(const Algorithm::AssetId& Asset, const std::string_view& TransactionId, uint32_t Index) = 0;
-			virtual ExpectsPromiseRT<Decimal> CalculateBalance(const Algorithm::AssetId& Asset, const DynamicWallet& Wallet, Option<String>&& Address) override;
-			virtual ExpectsLR<Vector<CoinUTXO>> CalculateCoins(const Algorithm::AssetId& Asset, const DynamicWallet& Wallet, Option<Decimal>&& MinNativeValue, Option<TokenUTXO>&& MinTokenValue);
-			virtual ExpectsLR<CoinUTXO> GetCoins(const Algorithm::AssetId& Asset, const std::string_view& TransactionId, uint32_t Index);
-			virtual ExpectsLR<void> UpdateCoins(const Algorithm::AssetId& Asset, const OutgoingTransaction& TxData);
-			virtual ExpectsLR<void> AddCoins(const Algorithm::AssetId& Asset, const CoinUTXO& Output);
-			virtual ExpectsLR<void> RemoveCoins(const Algorithm::AssetId& Asset, const std::string_view& TransactionId, uint32_t Index);
-			virtual Decimal GetCoinsValue(const Vector<CoinUTXO>& Values, Option<String>&& ContractAddress);
+			relay_backend_utxo() noexcept;
+			virtual ~relay_backend_utxo() = default;
+			virtual expects_promise_rt<coin_utxo> get_transaction_output(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint32_t index) = 0;
+			virtual expects_promise_rt<decimal> calculate_balance(const algorithm::asset_id& asset, const dynamic_wallet& wallet, option<string>&& address) override;
+			virtual expects_lr<vector<coin_utxo>> calculate_coins(const algorithm::asset_id& asset, const dynamic_wallet& wallet, option<decimal>&& min_native_value, option<token_utxo>&& min_token_value);
+			virtual expects_lr<coin_utxo> get_coins(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint32_t index);
+			virtual expects_lr<void> update_coins(const algorithm::asset_id& asset, const outgoing_transaction& tx_data);
+			virtual expects_lr<void> add_coins(const algorithm::asset_id& asset, const coin_utxo& output);
+			virtual expects_lr<void> remove_coins(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint32_t index);
+			virtual decimal get_coins_value(const vector<coin_utxo>& values, option<string>&& contract_address);
 		};
 	}
 }

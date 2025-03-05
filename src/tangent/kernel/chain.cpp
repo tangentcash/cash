@@ -10,870 +10,870 @@
 #define KEY_BACK 32
 #define KEY_SIZE 2048
 
-namespace Tangent
+namespace tangent
 {
 #ifdef TAN_ROCKSDB
-	static rocksdb::Options BlobStorageConfiguration(uint64_t BlobCacheSize)
+	static rocksdb::Options blob_storage_configuration(uint64_t blob_cache_size)
 	{
-		rocksdb::BlockBasedTableOptions TableOptions;
-		TableOptions.block_cache = rocksdb::NewLRUCache(BlobCacheSize);
+		rocksdb::BlockBasedTableOptions table_options;
+		table_options.block_cache = rocksdb::NewLRUCache(blob_cache_size);
 
-		rocksdb::Options Options;
-		Options.create_if_missing = true;
-		Options.table_factory.reset(rocksdb::NewBlockBasedTableFactory(TableOptions));
+		rocksdb::Options options;
+		options.create_if_missing = true;
+		options.table_factory.reset(rocksdb::NewBlockBasedTableFactory(table_options));
 
-		return Options;
+		return options;
 	}
 #endif
-	static String IndexStorageConfiguration(StorageOptimization Type, uint64_t IndexPageSize, int64_t IndexCacheSize)
+	static string index_storage_configuration(storage_optimization type, uint64_t index_page_size, int64_t index_cache_size)
 	{
-		switch (Type)
+		switch (type)
 		{
-			case Tangent::StorageOptimization::Speed:
-				return Stringify::Text(
+			case tangent::storage_optimization::speed:
+				return stringify::text(
 					"PRAGMA journal_mode = WAL;"
 					"PRAGMA synchronous = off;"
 					"PRAGMA temp_store = memory;"
 					"PRAGMA mmap_size = 68719476736;"
 					"PRAGMA page_size = %" PRIu64 ";"
-					"PRAGMA cache_size = %" PRIi64 ";", IndexPageSize, IndexCacheSize);
-			case Tangent::StorageOptimization::Safety:
+					"PRAGMA cache_size = %" PRIi64 ";", index_page_size, index_cache_size);
+			case tangent::storage_optimization::safety:
 			default:
-				return Stringify::Text(
+				return stringify::text(
 					"PRAGMA journal_mode = WAL;"
 					"PRAGMA synchronous = normal;"
 					"PRAGMA temp_store = file;"
 					"PRAGMA mmap_size = 68719476736;"
 					"PRAGMA page_size = %" PRIu64 ";"
-					"PRAGMA cache_size = %" PRIi64 ";", IndexPageSize, IndexCacheSize);
+					"PRAGMA cache_size = %" PRIi64 ";", index_page_size, index_cache_size);
 		}
 	}
 
-	LayerException::LayerException() : std::exception()
+	layer_exception::layer_exception() : std::exception()
 	{
 	}
-	LayerException::LayerException(String&& Text) : std::exception(), Message(std::move(Text))
+	layer_exception::layer_exception(string&& text) : std::exception(), error_message(std::move(text))
 	{
 	}
-	const char* LayerException::what() const noexcept
+	const char* layer_exception::what() const noexcept
 	{
-		return Message.c_str();
+		return error_message.c_str();
 	}
-	String&& LayerException::message() noexcept
+	string&& layer_exception::message() noexcept
 	{
-		return std::move(Message);
+		return std::move(error_message);
 	}
 
-	RemoteException::RemoteException(int8_t NewStatus) : std::exception(), Status(NewStatus)
+	remote_exception::remote_exception(int8_t new_status) : std::exception(), error_status(new_status)
 	{
 	}
-	RemoteException::RemoteException(String&& Text) : std::exception(), Message(std::move(Text)), Status(0)
+	remote_exception::remote_exception(string&& text) : std::exception(), error_message(std::move(text)), error_status(0)
 	{
 	}
-	const char* RemoteException::what() const noexcept
+	const char* remote_exception::what() const noexcept
 	{
-		if (Status > 0)
+		if (error_status > 0)
 			return "retry again later (minor failure)";
-		else if (Status < 0)
+		else if (error_status < 0)
 			return "retry again later (major failure)";
-		return Message.c_str();
+		return error_message.c_str();
 	}
-	String&& RemoteException::message() noexcept
+	string&& remote_exception::message() noexcept
 	{
-		if (Message.empty() && Status > 0)
-			Message = "retry again later (minor failure)";
-		else if (Message.empty() && Status < 0)
-			Message = "retry again later (major failure)";
-		return std::move(Message);
+		if (error_message.empty() && error_status > 0)
+			error_message = "retry again later (minor failure)";
+		else if (error_message.empty() && error_status < 0)
+			error_message = "retry again later (major failure)";
+		return std::move(error_message);
 	}
-	bool RemoteException::retry() const noexcept
+	bool remote_exception::is_retry() const noexcept
 	{
-		return Status > 0;
+		return error_status > 0;
 	}
-	bool RemoteException::shutdown() const noexcept
+	bool remote_exception::is_shutdown() const noexcept
 	{
-		return Status < 0;
+		return error_status < 0;
 	}
-	RemoteException RemoteException::Retry()
+	remote_exception remote_exception::retry()
 	{
-		return RemoteException(1);
+		return remote_exception(1);
 	}
-	RemoteException RemoteException::Shutdown()
+	remote_exception remote_exception::shutdown()
 	{
-		return RemoteException(-1);
+		return remote_exception(-1);
 	}
 
-	rocksdb::DB* Repository::LoadBlob(const std::string_view& Location)
+	rocksdb::DB* repository::load_blob(const std::string_view& location)
 	{
 #ifdef TAN_ROCKSDB
-		UMutex<std::mutex> Unique(Mutex);
-		if (TargetPath.empty())
-			Resolve(Protocol::Now().User.Network, Protocol::Now().User.Storage.Directory);
+		umutex<std::mutex> unique(mutex);
+		if (target_path.empty())
+			resolve(protocol::now().user.network, protocol::now().user.storage.directory);
 
-		String Address = Stringify::Text("%s%.*sdb", TargetPath.c_str(), (int)Location.size(), Location.data());
-		auto It = Blobs.find(Address);
-		if (It != Blobs.end() && It->second)
-			return It->second;
-		
-		rocksdb::DB* Result = nullptr;
-		auto Status = rocksdb::DB::Open(BlobStorageConfiguration(Protocol::Now().User.Storage.BlobCacheSize), std::string(Address.begin(), Address.end()), &Result);
-		if (!Status.ok())
+		string address = stringify::text("%s%.*sdb", target_path.c_str(), (int)location.size(), location.data());
+		auto it = blobs.find(address);
+		if (it != blobs.end() && it->second)
+			return it->second;
+
+		rocksdb::DB* result = nullptr;
+		auto status = rocksdb::DB::Open(blob_storage_configuration(protocol::now().user.storage.blob_cache_size), std::string(address.begin(), address.end()), &result);
+		if (!status.ok())
 		{
-			if (Protocol::Now().User.Storage.Logging)
-				VI_ERR("[blobdb] wal append error: %s (location: %s)", Status.ToString().c_str(), Address.c_str());
+			if (protocol::now().user.storage.logging)
+				VI_ERR("[blobdb] wal append error: %s (location: %s)", status.ToString().c_str(), address.c_str());
 
 			return nullptr;
 		}
 
-		if (Protocol::Now().User.Storage.Logging)
-			VI_DEBUG("[blobdb] wal append on %s (handle: 0x%" PRIXPTR ")", Address.c_str(), (uintptr_t)Result);
+		if (protocol::now().user.storage.logging)
+			VI_DEBUG("[blobdb] wal append on %s (handle: 0x%" PRIXPTR ")", address.c_str(), (uintptr_t)result);
 
-		Blobs[Address] = Result;
-		return Result;
+		blobs[address] = result;
+		return result;
 #else
 		return nullptr;
 #endif
 	}
-	UPtr<LDB::Connection> Repository::LoadIndex(const std::string_view& Location, std::function<void(LDB::Connection*)>&& Initializer)
+	uptr<sqlite::connection> repository::load_index(const std::string_view& location, std::function<void(sqlite::connection*)>&& initializer)
 	{
-		UMutex<std::mutex> Unique(Mutex);
-		if (TargetPath.empty())
-			Resolve(Protocol::Now().User.Network, Protocol::Now().User.Storage.Directory);
+		umutex<std::mutex> unique(mutex);
+		if (target_path.empty())
+			resolve(protocol::now().user.network, protocol::now().user.storage.directory);
 
-		UPtr<LDB::Connection> Result;
-		String Address = Stringify::Text("file:///%s%.*s.db", TargetPath.c_str(), (int)Location.size(), Location.data());
-		auto& Queue = Indices[Address];
-		if (!Queue.empty())
+		uptr<sqlite::connection> result;
+		string address = stringify::text("file:///%s%.*s.db", target_path.c_str(), (int)location.size(), location.data());
+		auto& queue = indices[address];
+		if (!queue.empty())
 		{
-			Result = std::move(Queue.front());
-			Queue.pop();
-			return Result;
+			result = std::move(queue.front());
+			queue.pop();
+			return result;
 		}
 
-		Result = new LDB::Connection();
-		auto Status = Result->Connect(Address);
-		if (!Status)
+		result = new sqlite::connection();
+		auto status = result->connect(address);
+		if (!status)
 		{
-			if (Protocol::Now().User.Storage.Logging)
-				VI_ERR("[indexdb] wal append error: %s (location: %s)", Status.Error().what(), Address.c_str());
-			
-			return Result;
-		}
-		else if (!Result->Query(IndexStorageConfiguration(Protocol::Now().User.Storage.Optimization, Protocol::Now().User.Storage.IndexPageSize, Protocol::Now().User.Storage.IndexCacheSize)))
-			return Result;
-		else if (Initializer)
-			Initializer(*Result);
+			if (protocol::now().user.storage.logging)
+				VI_ERR("[indexdb] wal append error: %s (location: %s)", status.error().what(), address.c_str());
 
-		if (Protocol::Now().User.Storage.Logging)
-			VI_DEBUG("[indexdb] wal append on %s (handle: 0x%" PRIXPTR ")", Address.c_str(), (uintptr_t)*Result);
-		
-		return Result;
+			return result;
+		}
+		else if (!result->query(index_storage_configuration(protocol::now().user.storage.optimization, protocol::now().user.storage.index_page_size, protocol::now().user.storage.index_cache_size)))
+			return result;
+		else if (initializer)
+			initializer(*result);
+
+		if (protocol::now().user.storage.logging)
+			VI_DEBUG("[indexdb] wal append on %s (handle: 0x%" PRIXPTR ")", address.c_str(), (uintptr_t)*result);
+
+		return result;
 	}
-	void Repository::UnloadIndex(UPtr<LDB::Connection>&& Value)
+	void repository::unload_index(uptr<sqlite::connection>&& value)
 	{
-		VI_ASSERT(Value, "connection should be set");
-		UMutex<std::mutex> Unique(Mutex);
-		auto& Queue = Indices[Value->GetAddress()];
-		Queue.push(std::move(Value));
+		VI_ASSERT(value, "connection should be set");
+		umutex<std::mutex> unique(mutex);
+		auto& queue = indices[value->get_address()];
+		queue.push(std::move(value));
 	}
-	void Repository::Reset()
+	void repository::reset()
 	{
-		UMutex<std::mutex> Unique(Mutex);
+		umutex<std::mutex> unique(mutex);
 #ifdef TAN_ROCKSDB
-		for (auto& Handle : Blobs)
-			delete Handle.second;
+		for (auto& handle : blobs)
+			delete handle.second;
 #endif
-		Blobs.clear();
-		Indices.clear();
-		TargetPath.clear();
+		blobs.clear();
+		indices.clear();
+		target_path.clear();
 	}
-	void Repository::Checkpoint()
+	void repository::checkpoint()
 	{
 #ifdef TAN_ROCKSDB
-		UMutex<std::mutex> Unique(Mutex);
-		for (auto& Handle : Blobs)
+		umutex<std::mutex> unique(mutex);
+		for (auto& handle : blobs)
 		{
-			if (!Handle.second)
+			if (!handle.second)
 				continue;
 
-			rocksdb::FlushOptions Options;
-			Options.allow_write_stall = true;
-			Options.wait = true;
+			rocksdb::FlushOptions options;
+			options.allow_write_stall = true;
+			options.wait = true;
 
-			auto Status = Handle.second->Flush(Options);
-			if (Protocol::Now().User.Storage.Logging)
+			auto status = handle.second->Flush(options);
+			if (protocol::now().user.storage.logging)
 			{
-				if (Status.ok())
-					VI_DEBUG("[blobdb] wal checkpoint on %s", Handle.first.c_str());
+				if (status.ok())
+					VI_DEBUG("[blobdb] wal checkpoint on %s", handle.first.c_str());
 				else
-					VI_ERR("[blobdb] wal checkpoint error on: %s (location: %s)", Status.ToString().c_str(), Handle.first.c_str());
+					VI_ERR("[blobdb] wal checkpoint error on: %s (location: %s)", status.ToString().c_str(), handle.first.c_str());
 			}
 		}
 #endif
-		for (auto& Queue : Indices)
+		for (auto& queue : indices)
 		{
-			if (Queue.second.empty())
+			if (queue.second.empty())
 				continue;
 
-			auto& Handle = Queue.second.front();
-			auto States = Handle->WalCheckpoint(LDB::CheckpointMode::Truncate);
-			if (Protocol::Now().User.Storage.Logging)
+			auto& handle = queue.second.front();
+			auto states = handle->wal_checkpoint(sqlite::checkpoint_mode::truncate);
+			if (protocol::now().user.storage.logging)
 			{
-				for (auto& State : States)
-					VI_DEBUG("[indexdb] wal checkpoint on %s (db: %s, fc: %i, fs: %i, stat: %i)", Queue.first.c_str(), State.Database.empty() ? "all" : State.Database.c_str(), State.FramesCount, State.FramesSize, State.Status);
+				for (auto& state : states)
+					VI_DEBUG("[indexdb] wal checkpoint on %s (db: %s, fc: %i, fs: %i, stat: %i)", queue.first.c_str(), state.database.empty() ? "all" : state.database.c_str(), state.frames_count, state.frames_size, state.status);
 			}
 		}
 	}
-	const String& Repository::Resolve(NetworkType Type, const std::string_view& Path)
+	const string& repository::resolve(network_type type, const std::string_view& path)
 	{
-		if (!TargetPath.empty())
-			return TargetPath;
+		if (!target_path.empty())
+			return target_path;
 
-		auto ModuleDirectory = OS::Directory::GetModule();
-		if (!ModuleDirectory->empty() && ModuleDirectory->back() != '/' && ModuleDirectory->back() != '\\')
-			*ModuleDirectory += VI_SPLITTER;
+		auto module_directory = os::directory::get_module();
+		if (!module_directory->empty() && module_directory->back() != '/' && module_directory->back() != '\\')
+			*module_directory += VI_SPLITTER;
 
-		auto AbsoluteDirectory = OS::Path::Resolve(Path, *ModuleDirectory, true);
-		String BaseDirectory = AbsoluteDirectory ? *AbsoluteDirectory : *ModuleDirectory + String(Path);
-		if (!BaseDirectory.empty() && BaseDirectory.back() != '/' && BaseDirectory.back() != '\\')
-			BaseDirectory += VI_SPLITTER;
+		auto absolute_directory = os::path::resolve(path, *module_directory, true);
+		string base_directory = absolute_directory ? *absolute_directory : *module_directory + string(path);
+		if (!base_directory.empty() && base_directory.back() != '/' && base_directory.back() != '\\')
+			base_directory += VI_SPLITTER;
 
-		switch (Type)
+		switch (type)
 		{
-			case NetworkType::Regtest:
-				BaseDirectory += "regtest";
+			case network_type::regtest:
+				base_directory += "regtest";
 				break;
-			case NetworkType::Testnet:
-				BaseDirectory += "testnet";
+			case network_type::testnet:
+				base_directory += "testnet";
 				break;
-			case NetworkType::Mainnet:
-				BaseDirectory += "mainnet";
+			case network_type::mainnet:
+				base_directory += "mainnet";
 				break;
 			default:
 				VI_PANIC(false, "invalid network type");
 				break;
 		}
 
-		BaseDirectory += VI_SPLITTER;
-		auto TargetDirectory = OS::Path::Resolve(BaseDirectory);
-		VI_PANIC(TargetDirectory && OS::Directory::Patch(*TargetDirectory), "invalid storage path: %s", BaseDirectory.c_str());
-		TargetPath = std::move(*TargetDirectory);
-		if (!TargetPath.empty() && TargetPath.back() != '/' && TargetPath.back() != '\\')
-			TargetPath += VI_SPLITTER;
-		return TargetPath;
+		base_directory += VI_SPLITTER;
+		auto target_directory = os::path::resolve(base_directory);
+		VI_PANIC(target_directory && os::directory::patch(*target_directory), "invalid storage path: %s", base_directory.c_str());
+		target_path = std::move(*target_directory);
+		if (!target_path.empty() && target_path.back() != '/' && target_path.back() != '\\')
+			target_path += VI_SPLITTER;
+		return target_path;
 	}
-	const String Repository::Location() const
+	const string repository::location() const
 	{
-		return TargetPath;
-	}
-
-	String Vectorstate::New()
-	{
-		auto Data = *Crypto::RandomBytes(KEY_SIZE);
-		auto Checksum = *Crypto::HashRaw(Digests::SHA256(), Data);
-		return Data + Checksum;
-	}
-	void Vectorstate::Use(NetworkType Type, const std::string_view& Data)
-	{
-		VI_PANIC(Data.size() == KEY_SIZE + 32, "invalid key size");
-		VI_PANIC(*Crypto::HashRaw(Digests::SHA256(), Data.substr(0, KEY_SIZE)) == Data.substr(KEY_SIZE), "invalid key checksum");
-		String Blob = ToString((uint8_t)Type) + String(Data);
-		for (size_t i = 0; i < Data.size(); i++)
-			Blob = *Crypto::HashRaw(Digests::SHA256(), Blob);
-		Key = PrivateKey(Blob);
-	}
-	ExpectsLR<String> Vectorstate::EncryptBlob(const std::string_view& Data) const
-	{
-		auto Front = *Crypto::RandomBytes(KEY_FRONT), Back = *Crypto::RandomBytes(KEY_BACK);
-		auto Salt = Crypto::HashRaw(Digests::SHA256(), Front + Back);
-		auto Result = Crypto::Encrypt(Ciphers::AES_256_CBC(), Data, Key, PrivateKey::GetPlain(*Salt));
-		if (!Result)
-			return LayerException(std::move(Result.Error().message()));
-
-		Result->insert(Result->begin(), Front.begin(), Front.end());
-		Result->append(Back);
-		return *Result;
-	}
-	ExpectsLR<String> Vectorstate::DecryptBlob(const std::string_view& Data) const
-	{
-		if (Data.size() <= KEY_FRONT + KEY_BACK)
-			return LayerException("invalid blob");
-
-		auto Front = Data.substr(0, KEY_FRONT), Back = Data.substr(Data.size() - KEY_BACK);
-		auto Salt = Crypto::HashRaw(Digests::SHA256(), String(Front) + String(Back));
-		auto Result = Crypto::Decrypt(Ciphers::AES_256_CBC(), Data.substr(KEY_FRONT, Data.size() - KEY_FRONT - KEY_BACK), Key, PrivateKey::GetPlain(*Salt));
-		if (!Result)
-			return LayerException(std::move(Result.Error().message()));
-
-		return *Result;
-	}
-	ExpectsLR<String> Vectorstate::EncryptKey(const PrivateKey& Data) const
-	{
-		auto Value = Data.Expose<2048>();
-		return EncryptBlob(Value.View);
-	}
-	ExpectsLR<PrivateKey> Vectorstate::DecryptKey(const std::string_view& Data) const
-	{
-		auto Result = DecryptBlob(Data);
-		if (!Result)
-			return Result.Error();
-
-		return PrivateKey(*Result);
+		return target_path;
 	}
 
-	String Timepoint::Adjust(const SocketAddress& Address, int64_t MillisecondsDelta)
+	string vectorstate::init()
 	{
-		String Source = Address.GetIpAddress().Or("[bad_address]") + ":" + ToString(Address.GetIpPort().Or(0));
-		UMutex<std::mutex> Unique(Mutex);
-		size_t Sources = Offsets.size();
-		if (MillisecondsDelta != 0)
+		auto data = *crypto::random_bytes(KEY_SIZE);
+		auto checksum = *crypto::hash_raw(digests::SHA256(), data);
+		return data + checksum;
+	}
+	void vectorstate::use(network_type type, const std::string_view& data)
+	{
+		VI_PANIC(data.size() == KEY_SIZE + 32, "invalid key size");
+		VI_PANIC(*crypto::hash_raw(digests::SHA256(), data.substr(0, KEY_SIZE)) == data.substr(KEY_SIZE), "invalid key checksum");
+		string blob = to_string((uint8_t)type) + string(data);
+		for (size_t i = 0; i < data.size(); i++)
+			blob = *crypto::hash_raw(digests::SHA256(), blob);
+		key = secret_box::secure(blob);
+	}
+	expects_lr<string> vectorstate::encrypt_blob(const std::string_view& data) const
+	{
+		auto front = *crypto::random_bytes(KEY_FRONT), back = *crypto::random_bytes(KEY_BACK);
+		auto salt = crypto::hash_raw(digests::SHA256(), front + back);
+		auto result = crypto::encrypt(ciphers::AES_256_CBC(), data, key, secret_box::view(*salt));
+		if (!result)
+			return layer_exception(std::move(result.error().message()));
+
+		result->insert(result->begin(), front.begin(), front.end());
+		result->append(back);
+		return *result;
+	}
+	expects_lr<string> vectorstate::decrypt_blob(const std::string_view& data) const
+	{
+		if (data.size() <= KEY_FRONT + KEY_BACK)
+			return layer_exception("invalid blob");
+
+		auto front = data.substr(0, KEY_FRONT), back = data.substr(data.size() - KEY_BACK);
+		auto salt = crypto::hash_raw(digests::SHA256(), string(front) + string(back));
+		auto result = crypto::decrypt(ciphers::AES_256_CBC(), data.substr(KEY_FRONT, data.size() - KEY_FRONT - KEY_BACK), key, secret_box::view(*salt));
+		if (!result)
+			return layer_exception(std::move(result.error().message()));
+
+		return *result;
+	}
+	expects_lr<string> vectorstate::encrypt_key(const secret_box& data) const
+	{
+		auto value = data.expose<2048>();
+		return encrypt_blob(value.view);
+	}
+	expects_lr<secret_box> vectorstate::decrypt_key(const std::string_view& data) const
+	{
+		auto result = decrypt_blob(data);
+		if (!result)
+			return result.error();
+
+		return secret_box::secure(*result);
+	}
+
+	string timepoint::adjust(const socket_address& address, int64_t milliseconds_delta)
+	{
+		string source = address.get_ip_address().otherwise("[bad_address]") + ":" + to_string(address.get_ip_port().otherwise(0));
+		umutex<std::mutex> unique(mutex);
+		size_t sources = offsets.size();
+		if (milliseconds_delta != 0)
 		{
-			auto It = Offsets.find(Source);
-			if (It == Offsets.end())
+			auto it = offsets.find(source);
+			if (it == offsets.end())
 			{
-				Offsets[Source] = MillisecondsDelta;
-				++Sources;
+				offsets[source] = milliseconds_delta;
+				++sources;
 			}
 			else
-				It->second = MillisecondsDelta;
+				it->second = milliseconds_delta;
 		}
 		else
-			Offsets.erase(Source);
+			offsets.erase(source);
 
-		if (Offsets.size() < 5 || Offsets.size() % 2 != 1)
-			return String();
+		if (offsets.size() < 5 || offsets.size() % 2 != 1)
+			return string();
 
-		using TimeSource = std::pair<std::string_view, int64_t>;
-		Vector<TimeSource> TimeOffsets;
-		TimeOffsets.reserve(Offsets.size());
-		for (auto& Item : Offsets)
-			TimeOffsets.push_back(std::make_pair(std::string_view(Item.first), Item.second));
+		using time_source = std::pair<std::string_view, int64_t>;
+		vector<time_source> time_offsets;
+		time_offsets.reserve(offsets.size());
+		for (auto& item : offsets)
+			time_offsets.push_back(std::make_pair(std::string_view(item.first), item.second));
 
-		auto& Peer = Protocol::Now().User.P2P;
-		std::sort(TimeOffsets.begin(), TimeOffsets.end(), [](const TimeSource& A, const TimeSource& B)
+		auto& peer = protocol::now().user.p2p;
+		std::sort(time_offsets.begin(), time_offsets.end(), [](const time_source& a, const time_source& b)
 		{
-			return A.second < B.second;
+			return a.second < b.second;
 		});
-		
-		bool IsSevereDesync = false;
-		auto& MedianTime = TimeOffsets[TimeOffsets.size() / 2];
-		if (MedianTime.second > (int64_t)Peer.TimeOffset)
+
+		bool is_severe_desync = false;
+		auto& median_time = time_offsets[time_offsets.size() / 2];
+		if (median_time.second > (int64_t)peer.time_offset)
 		{
-			MedianTime.second = (int64_t)Peer.TimeOffset;
-			IsSevereDesync = true;
+			median_time.second = (int64_t)peer.time_offset;
+			is_severe_desync = true;
 		}
-		else if (MedianTime.second < -(int64_t)Peer.TimeOffset)
+		else if (median_time.second < -(int64_t)peer.time_offset)
 		{
-			MedianTime.second = -(int64_t)Peer.TimeOffset;
-			IsSevereDesync = true;
+			median_time.second = -(int64_t)peer.time_offset;
+			is_severe_desync = true;
 		}
 
-		MillisecondsOffset = MedianTime.second;
-		if (IsSevereDesync)
-			return String(MedianTime.first);
+		milliseconds_offset = median_time.second;
+		if (is_severe_desync)
+			return string(median_time.first);
 
-		return String();
+		return string();
 	}
-	uint64_t Timepoint::Now() const
+	uint64_t timepoint::now() const
 	{
-		return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count() + MillisecondsOffset;
+		return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count() + milliseconds_offset;
 	}
-	uint64_t Timepoint::NowCPU() const
+	uint64_t timepoint::now_cpu() const
 	{
 		return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 	}
 
-	void Protocol::Logger::Output(const std::string_view& Message)
+	void protocol::logger::output(const std::string_view& message)
 	{
-		if (!Resource || Message.empty())
+		if (!resource || message.empty())
 			return;
 
-		time_t Time = time(nullptr);
-		UMutex<std::recursive_mutex> Unique(Mutex);
-		Resource->Write((uint8_t*)Message.data(), Message.size());
-		if (Message.back() != '\r' && Message.back() != '\n')
-			Resource->Write((uint8_t*)"\n", 1);
+		time_t time = ::time(nullptr);
+		umutex<std::recursive_mutex> unique(mutex);
+		resource->write((uint8_t*)message.data(), message.size());
+		if (message.back() != '\r' && message.back() != '\n')
+			resource->write((uint8_t*)"\n", 1);
 
-		if (!Protocol::Bound() || Time - RepackTime < (int64_t)Protocol::Now().User.Logs.ArchiveRepackInterval)
+		if (!protocol::bound() || time - repack_time < (int64_t)protocol::now().user.logs.archive_repack_interval)
 			return;
 
-		auto State = OS::File::GetProperties(Resource->VirtualName());
-		size_t CurrentSize = State ? State->Size : 0;
-		RepackTime = Time;
-		if (CurrentSize <= Protocol::Now().User.Logs.ArchiveSize)
+		auto state = os::file::get_properties(resource->virtual_name());
+		size_t current_size = state ? state->size : 0;
+		repack_time = time;
+		if (current_size <= protocol::now().user.logs.archive_size)
 			return;
 
-		String Path = String(Resource->VirtualName());
-		Resource = OS::File::OpenArchive(Path, Protocol::Now().User.Logs.ArchiveSize).Or(nullptr);
+		string path = string(resource->virtual_name());
+		resource = os::file::open_archive(path, protocol::now().user.logs.archive_size).otherwise(nullptr);
 	}
 
-	Protocol::Protocol(int Argc, char** Argv)
+	protocol::protocol(int argc, char** argv)
 	{
-		auto Environment = Argc > 0 && Argv != nullptr ? OS::Process::ParseArgs(Argc, Argv, (size_t)ArgsFormat::KeyValue) : InlineArgs();
-		if (!Environment.Params.empty())
-			Path = std::move(Environment.Params.back());
+		auto environment = argc > 0 && argv != nullptr ? os::process::parse_args(argc, argv, (size_t)args_format::key_value) : inline_args();
+		if (!environment.params.empty())
+			path = std::move(environment.params.back());
 
-		auto Module = OS::Directory::GetModule();
-		if (!Path.empty())
+		auto library = os::directory::get_module();
+		if (!path.empty())
 		{
-			Path = OS::Path::Resolve(Path, *Module, true).Or(String(Path));
-			ErrorHandling::SetFlag(LogOption::Pretty, true);
-			ErrorHandling::SetFlag(LogOption::Dated, true);
-			ErrorHandling::SetFlag(LogOption::Active, true);
-			OS::Directory::SetWorking(Module->c_str());
-			Console::Get()->Attach();
+			path = os::path::resolve(path, *library, true).otherwise(string(path));
+			error_handling::set_flag(log_option::pretty, true);
+			error_handling::set_flag(log_option::dated, true);
+			error_handling::set_flag(log_option::active, true);
+			os::directory::set_working(library->c_str());
+			console::get()->attach();
 		}
 
-		auto Config = UPtr<Schema>(Path.empty() ? (Schema*)nullptr : Schema::FromJSON(OS::File::ReadAsString(Path).Or(String())));
-		if (!Environment.Args.empty())
+		auto config = uptr<schema>(path.empty() ? (schema*)nullptr : schema::from_json(os::file::read_as_string(path).otherwise(string())));
+		if (!environment.args.empty())
 		{
-			if (!Config)
-				Config = Var::Set::Object();
-			for (auto& [Key, Value] : Environment.Args)
+			if (!config)
+				config = var::set::object();
+			for (auto& [key, value] : environment.args)
 			{
-				auto Parent = *Config;
-				for (auto& Name : Stringify::Split(Key, '.'))
+				auto parent = *config;
+				for (auto& name : stringify::split(key, '.'))
 				{
-					auto Child = Parent->Get(Name);
-					Parent = (Child ? Child : Parent->Set(Name, Var::Set::Object()));
+					auto child = parent->get(name);
+					parent = (child ? child : parent->set(name, var::set::object()));
 				}
-				Parent->Value = Var::Auto(Value);
+				parent->value = var::any(value);
 			}
 		}
-		if (Config)
+		if (config)
 		{
-			auto* Value = Config->Get("network");
-			if (Value != nullptr && Value->Value.Is(VarType::String))
+			auto* value = config->get("network");
+			if (value != nullptr && value->value.is(var_type::string))
 			{
-				auto Type = Value->Value.GetBlob();
-				if (Type == "mainnet")
-					User.Network = NetworkType::Mainnet;
-				else if (Type == "testnet")
-					User.Network = NetworkType::Testnet;
-				else if (Type == "regtest")
-					User.Network = NetworkType::Regtest;
+				auto type = value->value.get_blob();
+				if (type == "mainnet")
+					user.network = network_type::mainnet;
+				else if (type == "testnet")
+					user.network = network_type::testnet;
+				else if (type == "regtest")
+					user.network = network_type::regtest;
 			}
 
-			Value = Config->Get("vectorstate");
-			if (Value != nullptr && Value->Value.Is(VarType::String))
-				User.Vectorstate = Value->Value.GetBlob();
+			value = config->get("vectorstate");
+			if (value != nullptr && value->value.is(var_type::string))
+				user.vectorstate = value->value.get_blob();
 
-			Value = Config->Get("nodes");
-			if (Value != nullptr && Value->Value.GetType() == VarType::Array)
+			value = config->get("nodes");
+			if (value != nullptr && value->value.get_type() == var_type::array)
 			{
-				for (auto& Seed : Value->GetChilds())
+				for (auto& seed : value->get_childs())
 				{
-					if (Seed->Value.Is(VarType::String))
-						User.Nodes.insert(Seed->Value.GetBlob());
-				}
-			}
-
-			Value = Config->Get("seeds");
-			if (Value != nullptr && Value->Value.GetType() == VarType::Array)
-			{
-				for (auto& Seed : Value->GetChilds())
-				{
-					if (Seed->Value.Is(VarType::String))
-						User.Seeds.insert(Seed->Value.GetBlob());
+					if (seed->value.is(var_type::string))
+						user.nodes.insert(seed->value.get_blob());
 				}
 			}
 
-			Value = Config->Fetch("logs.state");
-			if (Value != nullptr && Value->Value.Is(VarType::String))
-				User.Logs.State = Value->Value.GetBlob();
-
-			Value = Config->Fetch("logs.message");
-			if (Value != nullptr && Value->Value.Is(VarType::String))
-				User.Logs.Message = Value->Value.GetBlob();
-
-			Value = Config->Fetch("logs.data");
-			if (Value != nullptr && Value->Value.Is(VarType::String))
-				User.Logs.Data = Value->Value.GetBlob();
-
-			Value = Config->Fetch("logs.archive_size");
-			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.Logs.ArchiveSize = Value->Value.GetInteger();
-
-			Value = Config->Fetch("logs.archive_repack_interval");
-			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.Logs.ArchiveRepackInterval = Value->Value.GetInteger();
-
-			Value = Config->Fetch("p2p.address");
-			if (Value != nullptr && Value->Value.Is(VarType::String))
-				User.P2P.Address = Value->Value.GetBlob();
-
-			Value = Config->Fetch("p2p.port");
-			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.P2P.Port = Value->Value.GetInteger();
-
-			Value = Config->Fetch("p2p.time_offset");
-			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.P2P.TimeOffset = Value->Value.GetInteger();
-
-			Value = Config->Fetch("p2p.max_inbound_connections");
-			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.P2P.MaxInboundConnections = (uint32_t)Value->Value.GetInteger();
-
-			Value = Config->Fetch("p2p.max_outbound_connections");
-			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.P2P.MaxOutboundConnections = (uint32_t)Value->Value.GetInteger();
-
-			Value = Config->Fetch("p2p.inventory_size");
-			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.P2P.InventorySize = Value->Value.GetInteger();
-
-			Value = Config->Fetch("p2p.inventory_timeout");
-			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.P2P.InventoryTimeout = Value->Value.GetInteger();
-
-			Value = Config->Fetch("p2p.inventory_cleanup_timeout");
-			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.P2P.InventoryCleanupTimeout = Value->Value.GetInteger();
-
-			Value = Config->Fetch("p2p.rediscovery_timeout");
-			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.P2P.RediscoveryTimeout = Value->Value.GetInteger();
-
-			Value = Config->Fetch("p2p.cursor_size");
-			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.P2P.CursorSize = Value->Value.GetInteger();
-
-			Value = Config->Fetch("p2p.proposer");
-			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
-				User.P2P.Proposer = Value->Value.GetBoolean();
-
-			Value = Config->Fetch("p2p.server");
-			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
-				User.P2P.Server = Value->Value.GetBoolean();
-
-			Value = Config->Fetch("p2p.logging");
-			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
-				User.P2P.Logging = Value->Value.GetBoolean();
-
-			Value = Config->Fetch("rpc.address");
-			if (Value != nullptr && Value->Value.Is(VarType::String))
-				User.RPC.Address = Value->Value.GetBlob();
-
-			Value = Config->Fetch("rpc.port");
-			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.RPC.Port = Value->Value.GetInteger();
-
-			Value = Config->Fetch("rpc.admin_username");
-			if (Value != nullptr && Value->Value.Is(VarType::String))
-				User.RPC.AdminUsername = Value->Value.GetBlob();
-
-			Value = Config->Fetch("rpc.admin_password");
-			if (Value != nullptr && Value->Value.Is(VarType::String))
-				User.RPC.AdminPassword = Value->Value.GetBlob();
-
-			Value = Config->Fetch("rpc.user_useranme");
-			if (Value != nullptr && Value->Value.Is(VarType::String))
-				User.RPC.UserUsername = Value->Value.GetBlob();
-
-			Value = Config->Fetch("rpc.user_password");
-			if (Value != nullptr && Value->Value.Is(VarType::String))
-				User.RPC.UserPassword = Value->Value.GetBlob();
-
-			Value = Config->Fetch("rpc.cursor_size");
-			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.RPC.CursorSize = Value->Value.GetInteger();
-
-			Value = Config->Fetch("rpc.page_size");
-			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.RPC.PageSize = Value->Value.GetInteger();
-
-			Value = Config->Fetch("rpc.messaging");
-			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
-				User.RPC.Messaging = Value->Value.GetBoolean();
-
-			Value = Config->Fetch("rpc.websockets");
-			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
-				User.RPC.WebSockets = Value->Value.GetBoolean();
-
-			Value = Config->Fetch("rpc.server");
-			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
-				User.RPC.Server = Value->Value.GetBoolean();
-
-			Value = Config->Fetch("rpc.logging");
-			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
-				User.RPC.Logging = Value->Value.GetBoolean();
-
-			Value = Config->Fetch("nds.address");
-			if (Value != nullptr && Value->Value.Is(VarType::String))
-				User.NDS.Address = Value->Value.GetBlob();
-
-			Value = Config->Fetch("nds.port");
-			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.NDS.Port = Value->Value.GetInteger();
-
-			Value = Config->Fetch("nds.cursor_size");
-			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.NDS.CursorSize = Value->Value.GetInteger();
-
-			Value = Config->Fetch("nds.server");
-			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
-				User.NDS.Server = Value->Value.GetBoolean();
-
-			Value = Config->Fetch("nds.logging");
-			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
-				User.NDS.Logging = Value->Value.GetBoolean();
-
-			Value = Config->Fetch("nss.block_replay_multiplier");
-			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.NSS.BlockReplayMultiplier = Value->Value.GetInteger();
-
-			Value = Config->Fetch("nss.relaying_timeout");
-			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.NSS.RelayingTimeout = Value->Value.GetInteger();
-
-			Value = Config->Fetch("nss.relaying_retry_timeout");
-			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.NSS.RelayingRetryTimeout = Value->Value.GetInteger();
-
-			Value = Config->Fetch("nss.cache_short_size");
-			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.NSS.CacheShortSize = (uint32_t)Value->Value.GetInteger();
-
-			Value = Config->Fetch("nss.cache_extended_size");
-			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.NSS.CacheExtendedSize = (uint32_t)Value->Value.GetInteger();
-
-			Value = Config->Fetch("nss.fee_estimation_seconds");
-			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.NSS.FeeEstimationSeconds = Value->Value.GetInteger();
-
-			Value = Config->Fetch("nss.withdrawal_time");
-			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.NSS.WithdrawalTime = Value->Value.GetInteger();
-
-			Value = Config->Fetch("nss.server");
-			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
-				User.NSS.Server = Value->Value.GetBoolean();
-
-			Value = Config->Fetch("nss.logging");
-			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
-				User.NSS.Logging = Value->Value.GetBoolean();
-
-			Value = Config->Fetch("tcp.tls_trusted_peers");
-			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.TCP.TlsTrustedPeers = Value->Value.GetInteger();
-
-			Value = Config->Fetch("tcp.timeout");
-			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.TCP.Timeout = Value->Value.GetInteger();
-
-			Value = Config->Fetch("storage.directory");
-			if (Value != nullptr && Value->Value.Is(VarType::String))
-				User.Storage.Directory = Value->Value.GetBlob();
-
-			Value = Config->Fetch("storage.optimization");
-			if (Value != nullptr && Value->Value.Is(VarType::String))
+			value = config->get("seeds");
+			if (value != nullptr && value->value.get_type() == var_type::array)
 			{
-				auto Type = Value->Value.GetBlob();
-				if (Type == "speed")
-					User.Storage.Optimization = StorageOptimization::Speed;
-				else if (Type == "safety")
-					User.Storage.Optimization = StorageOptimization::Safety;
+				for (auto& seed : value->get_childs())
+				{
+					if (seed->value.is(var_type::string))
+						user.seeds.insert(seed->value.get_blob());
+				}
 			}
 
-			Value = Config->Fetch("storage.checkpoint_size");
-			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.Storage.CheckpointSize = Value->Value.GetInteger();
-				
-			Value = Config->Fetch("storage.transaction_timeout");
-			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.Storage.TransactionTimeout = Value->Value.GetInteger();
+			value = config->fetch("logs.state");
+			if (value != nullptr && value->value.is(var_type::string))
+				user.logs.state = value->value.get_blob();
 
-			Value = Config->Fetch("storage.transaction_dispatch_repeat_interval");
-			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.Storage.TransactionDispatchRepeatInterval = Value->Value.GetInteger();
+			value = config->fetch("logs.message");
+			if (value != nullptr && value->value.is(var_type::string))
+				user.logs.message = value->value.get_blob();
 
-			Value = Config->Fetch("storage.location_cache_size");
-			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.Storage.LocationCacheSize = Value->Value.GetInteger();
+			value = config->fetch("logs.data");
+			if (value != nullptr && value->value.is(var_type::string))
+				user.logs.data = value->value.get_blob();
 
-			Value = Config->Fetch("storage.script_cache_size");
-			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.Storage.ScriptCacheSize = Value->Value.GetInteger();
+			value = config->fetch("logs.archive_size");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.logs.archive_size = value->value.get_integer();
 
-			Value = Config->Fetch("storage.blob_cache_size");
-			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.Storage.BlobCacheSize = Value->Value.GetInteger();
+			value = config->fetch("logs.archive_repack_interval");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.logs.archive_repack_interval = value->value.get_integer();
 
-			Value = Config->Fetch("storage.index_page_size");
-			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.Storage.IndexPageSize = Value->Value.GetInteger();
+			value = config->fetch("p2p.address");
+			if (value != nullptr && value->value.is(var_type::string))
+				user.p2p.address = value->value.get_blob();
 
-			Value = Config->Fetch("storage.index_cache_size");
-			if (Value != nullptr && Value->Value.Is(VarType::Integer))
-				User.Storage.IndexCacheSize = Value->Value.GetInteger();
+			value = config->fetch("p2p.port");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.p2p.port = value->value.get_integer();
 
-			Value = Config->Fetch("storage.flush_threads_ratio");
-			if (Value != nullptr && Value->Value.Is(VarType::Number))
-				User.Storage.FlushThreadsRatio = Value->Value.GetNumber();
+			value = config->fetch("p2p.time_offset");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.p2p.time_offset = value->value.get_integer();
 
-			Value = Config->Fetch("storage.compaction_threads_ratio");
-			if (Value != nullptr && Value->Value.Is(VarType::Number))
-				User.Storage.CompactionThreadsRatio = Value->Value.GetNumber();
+			value = config->fetch("p2p.max_inbound_connections");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.p2p.max_inbound_connections = (uint32_t)value->value.get_integer();
 
-			Value = Config->Fetch("storage.computation_threads_ratio");
-			if (Value != nullptr && Value->Value.Is(VarType::Number))
-				User.Storage.ComputationThreadsRatio = Value->Value.GetNumber();
+			value = config->fetch("p2p.max_outbound_connections");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.p2p.max_outbound_connections = (uint32_t)value->value.get_integer();
 
-			Value = Config->Fetch("storage.prune_aggressively");
-			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
-				User.Storage.PruneAggressively = Value->Value.GetBoolean();
+			value = config->fetch("p2p.inventory_size");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.p2p.inventory_size = value->value.get_integer();
 
-			Value = Config->Fetch("storage.transaction_to_account_index");
-			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
-				User.Storage.TransactionToAccountIndex = Value->Value.GetBoolean();
+			value = config->fetch("p2p.inventory_timeout");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.p2p.inventory_timeout = value->value.get_integer();
 
-			Value = Config->Fetch("storage.transaction_to_rollup_index");
-			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
-				User.Storage.TransactionToRollupIndex = Value->Value.GetBoolean();
+			value = config->fetch("p2p.inventory_cleanup_timeout");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.p2p.inventory_cleanup_timeout = value->value.get_integer();
 
-			Value = Config->Fetch("storage.logging");
-			if (Value != nullptr && Value->Value.Is(VarType::Boolean))
-				User.Storage.Logging = Value->Value.GetBoolean();
+			value = config->fetch("p2p.rediscovery_timeout");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.p2p.rediscovery_timeout = value->value.get_integer();
 
-			User.NSS.Options = Config->Get("nss");
-			if (User.NSS.Options)
-				User.NSS.Options->Unlink();
-		}
+			value = config->fetch("p2p.cursor_size");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.p2p.cursor_size = value->value.get_integer();
 
-		if (!User.Logs.State.empty())
-		{
-			auto LogBase = Database.Resolve(User.Network, User.Storage.Directory) + User.Logs.State;
-			auto LogPath = OS::Path::Resolve(OS::Path::Resolve(LogBase, *Module, true).Or(User.Logs.State)).Or(User.Logs.State);
-			Stringify::EvalEnvs(LogPath, OS::Path::GetDirectory(LogPath.c_str()), Vitex::Network::Utils::GetHostIpAddresses());
-			OS::Directory::Patch(OS::Path::GetDirectory(LogPath.c_str()));
-			if (!LogPath.empty())
+			value = config->fetch("p2p.proposer");
+			if (value != nullptr && value->value.is(var_type::boolean))
+				user.p2p.proposer = value->value.get_boolean();
+
+			value = config->fetch("p2p.server");
+			if (value != nullptr && value->value.is(var_type::boolean))
+				user.p2p.server = value->value.get_boolean();
+
+			value = config->fetch("p2p.logging");
+			if (value != nullptr && value->value.is(var_type::boolean))
+				user.p2p.logging = value->value.get_boolean();
+
+			value = config->fetch("rpc.address");
+			if (value != nullptr && value->value.is(var_type::string))
+				user.rpc.address = value->value.get_blob();
+
+			value = config->fetch("rpc.port");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.rpc.port = value->value.get_integer();
+
+			value = config->fetch("rpc.admin_username");
+			if (value != nullptr && value->value.is(var_type::string))
+				user.rpc.admin_username = value->value.get_blob();
+
+			value = config->fetch("rpc.admin_password");
+			if (value != nullptr && value->value.is(var_type::string))
+				user.rpc.admin_password = value->value.get_blob();
+
+			value = config->fetch("rpc.user_useranme");
+			if (value != nullptr && value->value.is(var_type::string))
+				user.rpc.user_username = value->value.get_blob();
+
+			value = config->fetch("rpc.user_password");
+			if (value != nullptr && value->value.is(var_type::string))
+				user.rpc.user_password = value->value.get_blob();
+
+			value = config->fetch("rpc.cursor_size");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.rpc.cursor_size = value->value.get_integer();
+
+			value = config->fetch("rpc.page_size");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.rpc.page_size = value->value.get_integer();
+
+			value = config->fetch("rpc.messaging");
+			if (value != nullptr && value->value.is(var_type::boolean))
+				user.rpc.messaging = value->value.get_boolean();
+
+			value = config->fetch("rpc.websockets");
+			if (value != nullptr && value->value.is(var_type::boolean))
+				user.rpc.web_sockets = value->value.get_boolean();
+
+			value = config->fetch("rpc.server");
+			if (value != nullptr && value->value.is(var_type::boolean))
+				user.rpc.server = value->value.get_boolean();
+
+			value = config->fetch("rpc.logging");
+			if (value != nullptr && value->value.is(var_type::boolean))
+				user.rpc.logging = value->value.get_boolean();
+
+			value = config->fetch("nds.address");
+			if (value != nullptr && value->value.is(var_type::string))
+				user.nds.address = value->value.get_blob();
+
+			value = config->fetch("nds.port");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.nds.port = value->value.get_integer();
+
+			value = config->fetch("nds.cursor_size");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.nds.cursor_size = value->value.get_integer();
+
+			value = config->fetch("nds.server");
+			if (value != nullptr && value->value.is(var_type::boolean))
+				user.nds.server = value->value.get_boolean();
+
+			value = config->fetch("nds.logging");
+			if (value != nullptr && value->value.is(var_type::boolean))
+				user.nds.logging = value->value.get_boolean();
+
+			value = config->fetch("nss.block_replay_multiplier");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.nss.block_replay_multiplier = value->value.get_integer();
+
+			value = config->fetch("nss.relaying_timeout");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.nss.relaying_timeout = value->value.get_integer();
+
+			value = config->fetch("nss.relaying_retry_timeout");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.nss.relaying_retry_timeout = value->value.get_integer();
+
+			value = config->fetch("nss.cache_short_size");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.nss.cache_short_size = (uint32_t)value->value.get_integer();
+
+			value = config->fetch("nss.cache_extended_size");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.nss.cache_extended_size = (uint32_t)value->value.get_integer();
+
+			value = config->fetch("nss.fee_estimation_seconds");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.nss.fee_estimation_seconds = value->value.get_integer();
+
+			value = config->fetch("nss.withdrawal_time");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.nss.withdrawal_time = value->value.get_integer();
+
+			value = config->fetch("nss.server");
+			if (value != nullptr && value->value.is(var_type::boolean))
+				user.nss.server = value->value.get_boolean();
+
+			value = config->fetch("nss.logging");
+			if (value != nullptr && value->value.is(var_type::boolean))
+				user.nss.logging = value->value.get_boolean();
+
+			value = config->fetch("tcp.tls_trusted_peers");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.tcp.tls_trusted_peers = value->value.get_integer();
+
+			value = config->fetch("tcp.timeout");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.tcp.timeout = value->value.get_integer();
+
+			value = config->fetch("storage.directory");
+			if (value != nullptr && value->value.is(var_type::string))
+				user.storage.directory = value->value.get_blob();
+
+			value = config->fetch("storage.optimization");
+			if (value != nullptr && value->value.is(var_type::string))
 			{
-				Logs.State.Resource = OS::File::OpenArchive(LogPath, User.Logs.ArchiveSize).Or(nullptr);
-				if (Logs.State.Resource)
-					ErrorHandling::SetCallback([this](ErrorHandling::Details& Data) { Logs.State.Output(ErrorHandling::GetMessageText(Data)); });
+				auto type = value->value.get_blob();
+				if (type == "speed")
+					user.storage.optimization = storage_optimization::speed;
+				else if (type == "safety")
+					user.storage.optimization = storage_optimization::safety;
 			}
+
+			value = config->fetch("storage.checkpoint_size");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.storage.checkpoint_size = value->value.get_integer();
+
+			value = config->fetch("storage.transaction_timeout");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.storage.transaction_timeout = value->value.get_integer();
+
+			value = config->fetch("storage.transaction_dispatch_repeat_interval");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.storage.transaction_dispatch_repeat_interval = value->value.get_integer();
+
+			value = config->fetch("storage.location_cache_size");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.storage.location_cache_size = value->value.get_integer();
+
+			value = config->fetch("storage.script_cache_size");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.storage.script_cache_size = value->value.get_integer();
+
+			value = config->fetch("storage.blob_cache_size");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.storage.blob_cache_size = value->value.get_integer();
+
+			value = config->fetch("storage.index_page_size");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.storage.index_page_size = value->value.get_integer();
+
+			value = config->fetch("storage.index_cache_size");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.storage.index_cache_size = value->value.get_integer();
+
+			value = config->fetch("storage.flush_threads_ratio");
+			if (value != nullptr && value->value.is(var_type::number))
+				user.storage.flush_threads_ratio = value->value.get_number();
+
+			value = config->fetch("storage.compaction_threads_ratio");
+			if (value != nullptr && value->value.is(var_type::number))
+				user.storage.compaction_threads_ratio = value->value.get_number();
+
+			value = config->fetch("storage.computation_threads_ratio");
+			if (value != nullptr && value->value.is(var_type::number))
+				user.storage.computation_threads_ratio = value->value.get_number();
+
+			value = config->fetch("storage.prune_aggressively");
+			if (value != nullptr && value->value.is(var_type::boolean))
+				user.storage.prune_aggressively = value->value.get_boolean();
+
+			value = config->fetch("storage.transaction_to_account_index");
+			if (value != nullptr && value->value.is(var_type::boolean))
+				user.storage.transaction_to_account_index = value->value.get_boolean();
+
+			value = config->fetch("storage.transaction_to_rollup_index");
+			if (value != nullptr && value->value.is(var_type::boolean))
+				user.storage.transaction_to_rollup_index = value->value.get_boolean();
+
+			value = config->fetch("storage.logging");
+			if (value != nullptr && value->value.is(var_type::boolean))
+				user.storage.logging = value->value.get_boolean();
+
+			user.nss.options = config->get("nss");
+			if (user.nss.options)
+				user.nss.options->unlink();
 		}
 
-		if (!User.Logs.Message.empty())
+		if (!user.logs.state.empty())
 		{
-			auto LogBase = Database.Resolve(User.Network, User.Storage.Directory) + User.Logs.Message;
-			auto LogPath = OS::Path::Resolve(OS::Path::Resolve(LogBase, *Module, true).Or(User.Logs.Message)).Or(User.Logs.Message);
-			Stringify::EvalEnvs(LogPath, OS::Path::GetDirectory(LogPath.c_str()), Vitex::Network::Utils::GetHostIpAddresses());
-			OS::Directory::Patch(OS::Path::GetDirectory(LogPath.c_str()));
-			if (!LogPath.empty())
-				Logs.Message.Resource = OS::File::OpenArchive(LogPath, User.Logs.ArchiveSize).Or(nullptr);
-		}
-
-		if (!User.Logs.Data.empty())
-		{
-			auto LogBase = Database.Resolve(User.Network, User.Storage.Directory) + User.Logs.Data;
-			auto LogPath = OS::Path::Resolve(OS::Path::Resolve(LogBase, *Module, true).Or(User.Logs.Data)).Or(User.Logs.Data);
-			Stringify::EvalEnvs(LogPath, OS::Path::GetDirectory(LogPath.c_str()), Vitex::Network::Utils::GetHostIpAddresses());
-			OS::Directory::Patch(OS::Path::GetDirectory(LogPath.c_str()));
-			if (!LogPath.empty())
+			auto log_base = database.resolve(user.network, user.storage.directory) + user.logs.state;
+			auto log_path = os::path::resolve(os::path::resolve(log_base, *library, true).otherwise(user.logs.state)).otherwise(user.logs.state);
+			stringify::eval_envs(log_path, os::path::get_directory(log_path.c_str()), vitex::network::utils::get_host_ip_addresses());
+			os::directory::patch(os::path::get_directory(log_path.c_str()));
+			if (!log_path.empty())
 			{
-				Logs.Data.Resource = OS::File::OpenArchive(LogPath, User.Logs.ArchiveSize).Or(nullptr);
-				if (Logs.Data.Resource)
-					LDB::Driver::Get()->SetQueryLog([this](const std::string_view& Data) { Logs.Data.Output(String(Data)); });
+				logs.state.resource = os::file::open_archive(log_path, user.logs.archive_size).otherwise(nullptr);
+				if (logs.state.resource)
+					error_handling::set_callback([this](error_handling::details& data) { logs.state.output(error_handling::get_message_text(data)); });
 			}
 		}
 
-		Instance = this;
-		if (Config)
+		if (!user.logs.message.empty())
 		{
-			auto VectorstateBase = Database.Resolve(User.Network, User.Storage.Directory) + User.Vectorstate;
-			auto VectorstatePath = OS::Path::Resolve(OS::Path::Resolve(VectorstateBase, *Module, true).Or(User.Vectorstate)).Or(User.Vectorstate);
-			auto VectorstateFile = OS::File::ReadAsString(VectorstatePath);
-			if (!VectorstateFile)
+			auto log_base = database.resolve(user.network, user.storage.directory) + user.logs.message;
+			auto log_path = os::path::resolve(os::path::resolve(log_base, *library, true).otherwise(user.logs.message)).otherwise(user.logs.message);
+			stringify::eval_envs(log_path, os::path::get_directory(log_path.c_str()), vitex::network::utils::get_host_ip_addresses());
+			os::directory::patch(os::path::get_directory(log_path.c_str()));
+			if (!log_path.empty())
+				logs.message.resource = os::file::open_archive(log_path, user.logs.archive_size).otherwise(nullptr);
+		}
+
+		if (!user.logs.data.empty())
+		{
+			auto log_base = database.resolve(user.network, user.storage.directory) + user.logs.data;
+			auto log_path = os::path::resolve(os::path::resolve(log_base, *library, true).otherwise(user.logs.data)).otherwise(user.logs.data);
+			stringify::eval_envs(log_path, os::path::get_directory(log_path.c_str()), vitex::network::utils::get_host_ip_addresses());
+			os::directory::patch(os::path::get_directory(log_path.c_str()));
+			if (!log_path.empty())
 			{
-				VectorstateFile = Key.New();
-				VI_PANIC(Location(VectorstatePath).Protocol == "file", "cannot save vectorstate into %s", VectorstatePath.c_str());
-				OS::Directory::Patch(OS::Path::GetDirectory(VectorstatePath)).Expect("cannot save vectorstate into " + VectorstatePath);
-				OS::File::Write(VectorstatePath, (uint8_t*)VectorstateFile->data(), VectorstateFile->size()).Expect("cannot save vectorstate into " + VectorstatePath);
+				logs.data.resource = os::file::open_archive(log_path, user.logs.archive_size).otherwise(nullptr);
+				if (logs.data.resource)
+					sqlite::driver::get()->set_query_log([this](const std::string_view& data) { logs.data.output(string(data)); });
 			}
-			Key.Use(User.Network, *VectorstateFile);
+		}
+
+		instance = this;
+		if (config)
+		{
+			auto vectorstate_base = database.resolve(user.network, user.storage.directory) + user.vectorstate;
+			auto vectorstate_path = os::path::resolve(os::path::resolve(vectorstate_base, *library, true).otherwise(user.vectorstate)).otherwise(user.vectorstate);
+			auto vectorstate_file = os::file::read_as_string(vectorstate_path);
+			if (!vectorstate_file)
+			{
+				vectorstate_file = key.init();
+				VI_PANIC(location(vectorstate_path).protocol == "file", "cannot save vectorstate into %s", vectorstate_path.c_str());
+				os::directory::patch(os::path::get_directory(vectorstate_path)).expect("cannot save vectorstate into " + vectorstate_path);
+				os::file::write(vectorstate_path, (uint8_t*)vectorstate_file->data(), vectorstate_file->size()).expect("cannot save vectorstate into " + vectorstate_path);
+			}
+			key.use(user.network, *vectorstate_file);
 		}
 		else
-			Key.Use(User.Network, Key.New());
+			key.use(user.network, key.init());
 
-		switch (User.Network)
+		switch (user.network)
 		{
-			case Tangent::NetworkType::Regtest:
-				Message.PacketMagic = 0xe249c307;
-				Account.SecretKeyPrefix = "secrt";
-				Account.PublicKeyPrefix = "pubrt";
-				Account.AddressPrefix = "tcrt";
-				Account.SecretKeyVersion = 0xD;
-				Account.PublicKeyVersion = 0xC;
-				Account.AddressVersion = 0x6;
-				Policy.AccountContributionRequired = 0.0;
-				Policy.AccountGasWorkRequired = 0.0;
-				Policy.ConsensusProofTime = 30;
-				Policy.TransactionThroughput = 21000;
-				User.NSS.WithdrawalTime = Policy.ConsensusProofTime;
+			case tangent::network_type::regtest:
+				message.packet_magic = 0xe249c307;
+				account.secret_key_prefix = "secrt";
+				account.public_key_prefix = "pubrt";
+				account.address_prefix = "tcrt";
+				account.secret_key_version = 0xD;
+				account.public_key_version = 0xC;
+				account.address_version = 0x6;
+				policy.account_contribution_required = 0.0;
+				policy.account_gas_work_required = 0.0;
+				policy.consensus_proof_time = 30;
+				policy.transaction_throughput = 21000;
+				user.nss.withdrawal_time = policy.consensus_proof_time;
 				break;
-			case Tangent::NetworkType::Testnet:
-				Message.PacketMagic = 0xf815c95c;
-				Account.SecretKeyPrefix = "sect";
-				Account.PublicKeyPrefix = "pubt";
-				Account.AddressPrefix = "tct";
-				Account.SecretKeyVersion = 0xE;
-				Account.PublicKeyVersion = 0xD;
-				Account.AddressVersion = 0x5;
+			case tangent::network_type::testnet:
+				message.packet_magic = 0xf815c95c;
+				account.secret_key_prefix = "sect";
+				account.public_key_prefix = "pubt";
+				account.address_prefix = "tct";
+				account.secret_key_version = 0xE;
+				account.public_key_version = 0xD;
+				account.address_version = 0x5;
 				break;
-			case Tangent::NetworkType::Mainnet:
+			case tangent::network_type::mainnet:
 				break;
 			default:
 				VI_PANIC(false, "bad network type");
 				break;
 		}
 
-		Uplinks::LinkInstance();
-		Algorithm::Signing::Initialize();
+		uplinks::link_instance();
+		algorithm::signing::initialize();
 	}
-	Protocol::~Protocol()
+	protocol::~protocol()
 	{
-		Database.Checkpoint();
-		Storages::AccountCache::CleanupInstance();
-		Storages::UniformCache::CleanupInstance();
-		Storages::MultiformCache::CleanupInstance();
-		NSS::ServerNode::CleanupInstance();
-		Ledger::ScriptHost::CleanupInstance();
-		Algorithm::Signing::Deinitialize();
-		ErrorHandling::SetCallback(nullptr);
-		if (Instance == this)
-			Instance = nullptr;
+		database.checkpoint();
+		storages::account_cache::cleanup_instance();
+		storages::uniform_cache::cleanup_instance();
+		storages::multiform_cache::cleanup_instance();
+		nss::server_node::cleanup_instance();
+		ledger::script_host::cleanup_instance();
+		algorithm::signing::deinitialize();
+		error_handling::set_callback(nullptr);
+		if (instance == this)
+			instance = nullptr;
 	}
-	bool Protocol::Is(NetworkType Type) const
+	bool protocol::is(network_type type) const
 	{
-		return User.Network == Type;
+		return user.network == type;
 	}
-	Protocol::Logger& Protocol::StateLog()
+	protocol::logger& protocol::state_log()
 	{
-		return Logs.State;
+		return logs.state;
 	}
-	Protocol::Logger& Protocol::MessageLog()
+	protocol::logger& protocol::message_log()
 	{
-		return Logs.Message;
+		return logs.message;
 	}
-	Protocol::Logger& Protocol::DataLog()
+	protocol::logger& protocol::data_log()
 	{
-		return Logs.Data;
+		return logs.data;
 	}
-	bool Protocol::Bound()
+	bool protocol::bound()
 	{
-		return Instance != nullptr;
+		return instance != nullptr;
 	}
-	Protocol& Protocol::Change()
+	protocol& protocol::change()
 	{
-		VI_ASSERT(Instance != nullptr, "chain parameters are not set!");
-		return *Instance;
+		VI_ASSERT(instance != nullptr, "chain parameters are not set!");
+		return *instance;
 	}
-	const Protocol& Protocol::Now()
+	const protocol& protocol::now()
 	{
-		VI_ASSERT(Instance != nullptr, "chain parameters are not set!");
-		return *Instance;
+		VI_ASSERT(instance != nullptr, "chain parameters are not set!");
+		return *instance;
 	}
-	Protocol* Protocol::Instance = nullptr;
+	protocol* protocol::instance = nullptr;
 }

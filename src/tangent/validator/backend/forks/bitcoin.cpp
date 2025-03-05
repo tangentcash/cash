@@ -2,285 +2,285 @@
 #include "../../internal/libbitcoin/chainparams.h"
 #include "../../internal/libbitcoin/script.h"
 
-namespace Tangent
+namespace tangent
 {
-	namespace Mediator
+	namespace mediator
 	{
-		namespace Backends
+		namespace backends
 		{
-			BitcoinCash::BitcoinCash() noexcept : Bitcoin()
+			bitcoin_cash::bitcoin_cash() noexcept : bitcoin()
 			{
 			}
-			String BitcoinCash::GetDerivation(uint64_t AddressIndex) const
+			string bitcoin_cash::get_derivation(uint64_t address_index) const
 			{
-				return Stringify::Text(Protocol::Now().Is(NetworkType::Mainnet) ? "m/44'/145'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, AddressIndex);
+				return stringify::text(protocol::now().is(network_type::mainnet) ? "m/44'/145'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, address_index);
 			}
-			const btc_chainparams_* BitcoinCash::GetChain()
+			const btc_chainparams_* bitcoin_cash::get_chain()
 			{
-				switch (Protocol::Now().User.Network)
+				switch (protocol::now().user.network)
 				{
-					case NetworkType::Regtest:
+					case network_type::regtest:
 						return &bch_chainparams_regtest;
-					case NetworkType::Testnet:
+					case network_type::testnet:
 						return &bch_chainparams_test;
-					case NetworkType::Mainnet:
+					case network_type::mainnet:
 						return &bch_chainparams_main;
 					default:
 						VI_PANIC(false, "invalid network type");
 						return nullptr;
 				}
 			}
-			BitcoinCash::AddressFormat BitcoinCash::GetAddressType()
+			bitcoin_cash::address_format bitcoin_cash::get_address_type()
 			{
-				return (AddressFormat)((size_t)AddressFormat::Pay2CashaddrPublicKeyHash);
+				return (address_format)((size_t)address_format::pay2_cashaddr_public_key_hash);
 			}
-			uint32_t BitcoinCash::GetSigHashType()
+			uint32_t bitcoin_cash::get_sig_hash_type()
 			{
 				return SIGHASH_ALL | SIGHASH_FORKID;
 			}
 
-			BitcoinGold::BitcoinGold() noexcept : Bitcoin()
+			bitcoin_gold::bitcoin_gold() noexcept : bitcoin()
 			{
 			}
-			String BitcoinGold::GetDerivation(uint64_t AddressIndex) const
+			string bitcoin_gold::get_derivation(uint64_t address_index) const
 			{
-				return Stringify::Text(Protocol::Now().Is(NetworkType::Mainnet) ? "m/44'/156'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, AddressIndex);
+				return stringify::text(protocol::now().is(network_type::mainnet) ? "m/44'/156'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, address_index);
 			}
-			String BitcoinGold::GetMessageMagic()
+			string bitcoin_gold::get_message_magic()
 			{
-				return "Bitcoin Gold Signed Message:\n";
+				return "Bitcoin gold signed message:\n";
 			}
-			const btc_chainparams_* BitcoinGold::GetChain()
+			const btc_chainparams_* bitcoin_gold::get_chain()
 			{
-				switch (Protocol::Now().User.Network)
+				switch (protocol::now().user.network)
 				{
-					case NetworkType::Regtest:
+					case network_type::regtest:
 						return &btg_chainparams_regtest;
-					case NetworkType::Testnet:
+					case network_type::testnet:
 						return &btg_chainparams_test;
-					case NetworkType::Mainnet:
+					case network_type::mainnet:
 						return &btg_chainparams_main;
 					default:
 						VI_PANIC(false, "invalid network type");
 						return nullptr;
 				}
 			}
-			BitcoinGold::AddressFormat BitcoinGold::GetAddressType()
+			bitcoin_gold::address_format bitcoin_gold::get_address_type()
 			{
-				return (AddressFormat)((size_t)AddressFormat::Pay2PublicKeyHash | (size_t)AddressFormat::Pay2WitnessPublicKeyHash);
+				return (address_format)((size_t)address_format::pay2_public_key_hash | (size_t)address_format::pay2_witness_public_key_hash);
 			}
 
-			BitcoinSV::BitcoinSV() noexcept : Bitcoin()
+			bitcoin_sv::bitcoin_sv() noexcept : bitcoin()
 			{
 			}
-			String BitcoinSV::GetDerivation(uint64_t AddressIndex) const
+			string bitcoin_sv::get_derivation(uint64_t address_index) const
 			{
-				return Stringify::Text(Protocol::Now().Is(NetworkType::Mainnet) ? "m/44'/236'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, AddressIndex);
+				return stringify::text(protocol::now().is(network_type::mainnet) ? "m/44'/236'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, address_index);
 			}
-			const btc_chainparams_* BitcoinSV::GetChain()
+			const btc_chainparams_* bitcoin_sv::get_chain()
 			{
-				switch (Protocol::Now().User.Network)
+				switch (protocol::now().user.network)
 				{
-					case NetworkType::Regtest:
+					case network_type::regtest:
 						return &bsv_chainparams_regtest;
-					case NetworkType::Testnet:
+					case network_type::testnet:
 						return &bsv_chainparams_test;
-					case NetworkType::Mainnet:
+					case network_type::mainnet:
 						return &bsv_chainparams_main;
 					default:
 						VI_PANIC(false, "invalid network type");
 						return nullptr;
 				}
 			}
-			BitcoinSV::AddressFormat BitcoinSV::GetAddressType()
+			bitcoin_sv::address_format bitcoin_sv::get_address_type()
 			{
-				return (AddressFormat)((size_t)AddressFormat::Pay2PublicKeyHash);
+				return (address_format)((size_t)address_format::pay2_public_key_hash);
 			}
 
-			Dash::Dash() noexcept : Bitcoin()
+			dash::dash() noexcept : bitcoin()
 			{
 			}
-			String Dash::GetDerivation(uint64_t AddressIndex) const
+			string dash::get_derivation(uint64_t address_index) const
 			{
-				return Stringify::Text(Protocol::Now().Is(NetworkType::Mainnet) ? "m/44'/5'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, AddressIndex);
+				return stringify::text(protocol::now().is(network_type::mainnet) ? "m/44'/5'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, address_index);
 			}
-			String Dash::GetMessageMagic()
+			string dash::get_message_magic()
 			{
-				return "DarkCoin Signed Message:\n";
+				return "DarkCoin signed message:\n";
 			}
-			const btc_chainparams_* Dash::GetChain()
+			const btc_chainparams_* dash::get_chain()
 			{
-				switch (Protocol::Now().User.Network)
+				switch (protocol::now().user.network)
 				{
-					case NetworkType::Regtest:
+					case network_type::regtest:
 						return &dash_chainparams_regtest;
-					case NetworkType::Testnet:
+					case network_type::testnet:
 						return &dash_chainparams_test;
-					case NetworkType::Mainnet:
+					case network_type::mainnet:
 						return &dash_chainparams_main;
 					default:
 						VI_PANIC(false, "invalid network type");
 						return nullptr;
 				}
 			}
-			Dash::AddressFormat Dash::GetAddressType()
+			dash::address_format dash::get_address_type()
 			{
-				return (AddressFormat)((size_t)AddressFormat::Pay2PublicKeyHash);
+				return (address_format)((size_t)address_format::pay2_public_key_hash);
 			}
 
-			Digibyte::Digibyte() noexcept : Bitcoin()
+			digibyte::digibyte() noexcept : bitcoin()
 			{
 			}
-			String Digibyte::GetDerivation(uint64_t AddressIndex) const
+			string digibyte::get_derivation(uint64_t address_index) const
 			{
-				return Stringify::Text(Protocol::Now().Is(NetworkType::Mainnet) ? "m/44'/20'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, AddressIndex);
+				return stringify::text(protocol::now().is(network_type::mainnet) ? "m/44'/20'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, address_index);
 			}
-			String Digibyte::GetMessageMagic()
+			string digibyte::get_message_magic()
 			{
-				return "DigiByte Signed Message:\n";
+				return "DigiByte signed message:\n";
 			}
-			const btc_chainparams_* Digibyte::GetChain()
+			const btc_chainparams_* digibyte::get_chain()
 			{
-				switch (Protocol::Now().User.Network)
+				switch (protocol::now().user.network)
 				{
-					case NetworkType::Regtest:
+					case network_type::regtest:
 						return &dgb_chainparams_regtest;
-					case NetworkType::Testnet:
+					case network_type::testnet:
 						return &dgb_chainparams_test;
-					case NetworkType::Mainnet:
+					case network_type::mainnet:
 						return &dgb_chainparams_main;
 					default:
 						VI_PANIC(false, "invalid network type");
 						return nullptr;
 				}
 			}
-			Digibyte::AddressFormat Digibyte::GetAddressType()
+			digibyte::address_format digibyte::get_address_type()
 			{
-				return (AddressFormat)((size_t)AddressFormat::Pay2PublicKeyHash | (size_t)AddressFormat::Pay2WitnessPublicKeyHash);
+				return (address_format)((size_t)address_format::pay2_public_key_hash | (size_t)address_format::pay2_witness_public_key_hash);
 			}
 
-			Dogecoin::Dogecoin() noexcept : Bitcoin()
+			dogecoin::dogecoin() noexcept : bitcoin()
 			{
 			}
-			String Dogecoin::GetDerivation(uint64_t AddressIndex) const
+			string dogecoin::get_derivation(uint64_t address_index) const
 			{
-				return Stringify::Text(Protocol::Now().Is(NetworkType::Mainnet) ? "m/44'/3'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, AddressIndex);
+				return stringify::text(protocol::now().is(network_type::mainnet) ? "m/44'/3'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, address_index);
 			}
-			String Dogecoin::GetMessageMagic()
+			string dogecoin::get_message_magic()
 			{
-				return "Dogecoin Signed Message:\n";
+				return "Dogecoin signed message:\n";
 			}
-			const btc_chainparams_* Dogecoin::GetChain()
+			const btc_chainparams_* dogecoin::get_chain()
 			{
-				switch (Protocol::Now().User.Network)
+				switch (protocol::now().user.network)
 				{
-					case NetworkType::Regtest:
+					case network_type::regtest:
 						return &doge_chainparams_regtest;
-					case NetworkType::Testnet:
+					case network_type::testnet:
 						return &doge_chainparams_test;
-					case NetworkType::Mainnet:
+					case network_type::mainnet:
 						return &doge_chainparams_main;
 					default:
 						VI_PANIC(false, "invalid network type");
 						return nullptr;
 				}
 			}
-			Dogecoin::AddressFormat Dogecoin::GetAddressType()
+			dogecoin::address_format dogecoin::get_address_type()
 			{
-				return (AddressFormat)((size_t)AddressFormat::Pay2PublicKeyHash);
+				return (address_format)((size_t)address_format::pay2_public_key_hash);
 			}
 
-			ECash::ECash() noexcept : Bitcoin()
+			ecash::ecash() noexcept : bitcoin()
 			{
 			}
-			String ECash::GetDerivation(uint64_t AddressIndex) const
+			string ecash::get_derivation(uint64_t address_index) const
 			{
-				return Stringify::Text(Protocol::Now().Is(NetworkType::Mainnet) ? "m/44'/145'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, AddressIndex);
+				return stringify::text(protocol::now().is(network_type::mainnet) ? "m/44'/145'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, address_index);
 			}
-			String ECash::GetMessageMagic()
+			string ecash::get_message_magic()
 			{
-				return "eCash Signed Message:\n";
+				return "eCash signed message:\n";
 			}
-			const btc_chainparams_* ECash::GetChain()
+			const btc_chainparams_* ecash::get_chain()
 			{
-				switch (Protocol::Now().User.Network)
+				switch (protocol::now().user.network)
 				{
-					case NetworkType::Regtest:
+					case network_type::regtest:
 						return &xec_chainparams_regtest;
-					case NetworkType::Testnet:
+					case network_type::testnet:
 						return &xec_chainparams_test;
-					case NetworkType::Mainnet:
+					case network_type::mainnet:
 						return &xec_chainparams_main;
 					default:
 						VI_PANIC(false, "invalid network type");
 						return nullptr;
 				}
 			}
-			Dogecoin::AddressFormat ECash::GetAddressType()
+			dogecoin::address_format ecash::get_address_type()
 			{
-				return (AddressFormat)((size_t)AddressFormat::Pay2CashaddrPublicKeyHash);
+				return (address_format)((size_t)address_format::pay2_cashaddr_public_key_hash);
 			}
-			uint32_t ECash::GetSigHashType()
+			uint32_t ecash::get_sig_hash_type()
 			{
 				return SIGHASH_ALL | SIGHASH_FORKID;
 			}
 
-			Litecoin::Litecoin() noexcept : Bitcoin()
+			litecoin::litecoin() noexcept : bitcoin()
 			{
 			}
-			String Litecoin::GetDerivation(uint64_t AddressIndex) const
+			string litecoin::get_derivation(uint64_t address_index) const
 			{
-				return Stringify::Text(Protocol::Now().Is(NetworkType::Mainnet) ? "m/44'/2'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, AddressIndex);
+				return stringify::text(protocol::now().is(network_type::mainnet) ? "m/44'/2'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, address_index);
 			}
-			String Litecoin::GetMessageMagic()
+			string litecoin::get_message_magic()
 			{
-				return "Litecoin Signed Message:\n";
+				return "Litecoin signed message:\n";
 			}
-			const btc_chainparams_* Litecoin::GetChain()
+			const btc_chainparams_* litecoin::get_chain()
 			{
-				switch (Protocol::Now().User.Network)
+				switch (protocol::now().user.network)
 				{
-					case NetworkType::Regtest:
+					case network_type::regtest:
 						return &ltc_chainparams_regtest;
-					case NetworkType::Testnet:
+					case network_type::testnet:
 						return &ltc_chainparams_test;
-					case NetworkType::Mainnet:
+					case network_type::mainnet:
 						return &ltc_chainparams_main;
 					default:
 						VI_PANIC(false, "invalid network type");
 						return nullptr;
 				}
 			}
-			Litecoin::AddressFormat Litecoin::GetAddressType()
+			litecoin::address_format litecoin::get_address_type()
 			{
-				return (AddressFormat)((size_t)AddressFormat::Pay2PublicKeyHash | (size_t)AddressFormat::Pay2WitnessPublicKeyHash | (size_t)AddressFormat::Pay2Taproot);
+				return (address_format)((size_t)address_format::pay2_public_key_hash | (size_t)address_format::pay2_witness_public_key_hash | (size_t)address_format::pay2_taproot);
 			}
 
-			ZCash::ZCash() noexcept : Bitcoin()
+			zcash::zcash() noexcept : bitcoin()
 			{
 			}
-			String ZCash::GetDerivation(uint64_t AddressIndex) const
+			string zcash::get_derivation(uint64_t address_index) const
 			{
-				return Stringify::Text(Protocol::Now().Is(NetworkType::Mainnet) ? "m/44'/133'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, AddressIndex);
+				return stringify::text(protocol::now().is(network_type::mainnet) ? "m/44'/133'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, address_index);
 			}
-			const btc_chainparams_* ZCash::GetChain()
+			const btc_chainparams_* zcash::get_chain()
 			{
-				switch (Protocol::Now().User.Network)
+				switch (protocol::now().user.network)
 				{
-					case NetworkType::Regtest:
+					case network_type::regtest:
 						return &zec_chainparams_regtest;
-					case NetworkType::Testnet:
+					case network_type::testnet:
 						return &zec_chainparams_test;
-					case NetworkType::Mainnet:
+					case network_type::mainnet:
 						return &zec_chainparams_main;
 					default:
 						VI_PANIC(false, "invalid network type");
 						return nullptr;
 				}
 			}
-			ZCash::AddressFormat ZCash::GetAddressType()
+			zcash::address_format zcash::get_address_type()
 			{
-				return (AddressFormat)((size_t)AddressFormat::Pay2PublicKeyHash);
+				return (address_format)((size_t)address_format::pay2_public_key_hash);
 			}
 		}
 	}

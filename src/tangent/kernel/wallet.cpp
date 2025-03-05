@@ -3,403 +3,403 @@
 #include "../validator/storage/chainstate.h"
 #include "../validator/service/p2p.h"
 
-namespace Tangent
+namespace tangent
 {
-	namespace Ledger
+	namespace ledger
 	{
-		bool Wallet::SetSecretKey(const Algorithm::Seckey Value)
+		bool wallet::set_secret_key(const algorithm::seckey value)
 		{
-			memset(SecretKey, 0, sizeof(SecretKey));
-			memset(PublicKey, 0, sizeof(PublicKey));
-			memset(PublicKeyHash, 0, sizeof(PublicKeyHash));
-			if (Value != nullptr)
-				memcpy(SecretKey, Value, sizeof(SecretKey));
+			memset(secret_key, 0, sizeof(secret_key));
+			memset(public_key, 0, sizeof(public_key));
+			memset(public_key_hash, 0, sizeof(public_key_hash));
+			if (value != nullptr)
+				memcpy(secret_key, value, sizeof(secret_key));
 
-			if (!HasSecretKey())
+			if (!has_secret_key())
 				return false;
 
-			if (!Algorithm::Signing::DerivePublicKey(SecretKey, PublicKey))
+			if (!algorithm::signing::derive_public_key(secret_key, public_key))
 				return false;
 
-			Algorithm::Signing::DerivePublicKeyHash(PublicKey, PublicKeyHash);
+			algorithm::signing::derive_public_key_hash(public_key, public_key_hash);
 			return true;
 		}
-		void Wallet::SetPublicKey(const Algorithm::Pubkey Value)
+		void wallet::set_public_key(const algorithm::pubkey value)
 		{
-			memset(SecretKey, 0, sizeof(SecretKey));
-			memset(PublicKey, 0, sizeof(PublicKey));
-			memset(PublicKeyHash, 0, sizeof(PublicKeyHash));
-			if (Value != nullptr)
-				memcpy(PublicKey, Value, sizeof(PublicKey));
+			memset(secret_key, 0, sizeof(secret_key));
+			memset(public_key, 0, sizeof(public_key));
+			memset(public_key_hash, 0, sizeof(public_key_hash));
+			if (value != nullptr)
+				memcpy(public_key, value, sizeof(public_key));
 
-			if (HasPublicKey())
-				Algorithm::Signing::DerivePublicKeyHash(PublicKey, PublicKeyHash);
+			if (has_public_key())
+				algorithm::signing::derive_public_key_hash(public_key, public_key_hash);
 		}
-		void Wallet::SetPublicKeyHash(const Algorithm::Pubkeyhash Value)
+		void wallet::set_public_key_hash(const algorithm::pubkeyhash value)
 		{
-			memset(SecretKey, 0, sizeof(SecretKey));
-			memset(PublicKey, 0, sizeof(PublicKey));
-			memset(PublicKeyHash, 0, sizeof(PublicKeyHash));
-			if (Value != nullptr)
-				memcpy(PublicKeyHash, Value, sizeof(PublicKeyHash));
+			memset(secret_key, 0, sizeof(secret_key));
+			memset(public_key, 0, sizeof(public_key));
+			memset(public_key_hash, 0, sizeof(public_key_hash));
+			if (value != nullptr)
+				memcpy(public_key_hash, value, sizeof(public_key_hash));
 		}
-		bool Wallet::VerifySecretKey() const
+		bool wallet::verify_secret_key() const
 		{
-			return HasSecretKey() && Algorithm::Signing::VerifySecretKey(SecretKey);
+			return has_secret_key() && algorithm::signing::verify_secret_key(secret_key);
 		}
-		bool Wallet::VerifyPublicKey() const
+		bool wallet::verify_public_key() const
 		{
-			if (!VerifySecretKey())
+			if (!verify_secret_key())
 				return false;
 
-			Algorithm::Pubkey Copy = { 0 };
-			Algorithm::Signing::DerivePublicKey(SecretKey, Copy);
-			if (memcmp(PublicKey, Copy, sizeof(Copy)) != 0)
+			algorithm::pubkey copy = { 0 };
+			algorithm::signing::derive_public_key(secret_key, copy);
+			if (memcmp(public_key, copy, sizeof(copy)) != 0)
 				return false;
 
-			return HasPublicKey() && Algorithm::Signing::VerifyPublicKey(PublicKey);
+			return has_public_key() && algorithm::signing::verify_public_key(public_key);
 		}
-		bool Wallet::VerifyAddress() const
+		bool wallet::verify_address() const
 		{
-			if (!VerifyPublicKey())
+			if (!verify_public_key())
 				return false;
 
-			Algorithm::Pubkeyhash Copy;
-			Algorithm::Signing::DerivePublicKeyHash(PublicKey, Copy);
-			if (memcmp(PublicKeyHash, Copy, sizeof(Copy)) != 0)
+			algorithm::pubkeyhash copy;
+			algorithm::signing::derive_public_key_hash(public_key, copy);
+			if (memcmp(public_key_hash, copy, sizeof(copy)) != 0)
 				return false;
 
-			return HasPublicKeyHash() && Algorithm::Signing::VerifyAddress(GetAddress());
+			return has_public_key_hash() && algorithm::signing::verify_address(get_address());
 		}
-		bool Wallet::Verify(const Messages::Authentic& Message) const
+		bool wallet::verify(const messages::authentic& message) const
 		{
-			return HasPublicKey() && Message.Verify(PublicKey);
+			return has_public_key() && message.verify(public_key);
 		}
-		bool Wallet::Recovers(Messages::Authentic& Message) const
+		bool wallet::recovers(messages::authentic& message) const
 		{
-			Algorithm::Pubkeyhash RecoverPublicKeyHash;
-			return Message.RecoverHash(RecoverPublicKeyHash) && memcmp(RecoverPublicKeyHash, PublicKeyHash, sizeof(PublicKeyHash)) == 0;
+			algorithm::pubkeyhash recover_public_key_hash;
+			return message.recover_hash(recover_public_key_hash) && memcmp(recover_public_key_hash, public_key_hash, sizeof(public_key_hash)) == 0;
 		}
-		bool Wallet::Sign(Messages::Authentic& Message) const
+		bool wallet::sign(messages::authentic& message) const
 		{
-			return HasSecretKey() && Message.Sign(SecretKey);
+			return has_secret_key() && message.sign(secret_key);
 		}
-		bool Wallet::StorePayload(Format::Stream* Stream) const
+		bool wallet::store_payload(format::stream* stream) const
 		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Stream->WriteString(std::string_view((char*)SecretKey, HasSecretKey() ? sizeof(SecretKey) : 0));
-			Stream->WriteString(std::string_view((char*)PublicKey, HasPublicKey() ? sizeof(PublicKey) : 0));
-			Stream->WriteString(std::string_view((char*)PublicKeyHash, HasPublicKeyHash() ? sizeof(PublicKeyHash) : 0));
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_string(std::string_view((char*)secret_key, has_secret_key() ? sizeof(secret_key) : 0));
+			stream->write_string(std::string_view((char*)public_key, has_public_key() ? sizeof(public_key) : 0));
+			stream->write_string(std::string_view((char*)public_key_hash, has_public_key_hash() ? sizeof(public_key_hash) : 0));
 			return true;
 		}
-		bool Wallet::LoadPayload(Format::Stream& Stream)
+		bool wallet::load_payload(format::stream& stream)
 		{
-			String SecretKeyAssembly; memset(SecretKey, 0, sizeof(SecretKey));
-			if (!Stream.ReadString(Stream.ReadType(), &SecretKeyAssembly))
+			string secret_key_assembly; memset(secret_key, 0, sizeof(secret_key));
+			if (!stream.read_string(stream.read_type(), &secret_key_assembly))
 				return false;
 
-			if (!SecretKeyAssembly.empty())
+			if (!secret_key_assembly.empty())
 			{
-				if (SecretKeyAssembly.size() != sizeof(SecretKey))
+				if (secret_key_assembly.size() != sizeof(secret_key))
 					return false;
 
-				memcpy(SecretKey, SecretKeyAssembly.data(), sizeof(SecretKey));
+				memcpy(secret_key, secret_key_assembly.data(), sizeof(secret_key));
 			}
 
-			String PublicKeyAssembly; memset(PublicKey, 0, sizeof(PublicKey));
-			if (!Stream.ReadString(Stream.ReadType(), &PublicKeyAssembly))
+			string public_key_assembly; memset(public_key, 0, sizeof(public_key));
+			if (!stream.read_string(stream.read_type(), &public_key_assembly))
 				return false;
 
-			if (!PublicKeyAssembly.empty())
+			if (!public_key_assembly.empty())
 			{
-				if (PublicKeyAssembly.size() != sizeof(PublicKey))
+				if (public_key_assembly.size() != sizeof(public_key))
 					return false;
 
-				memcpy(PublicKey, PublicKeyAssembly.data(), sizeof(PublicKey));
+				memcpy(public_key, public_key_assembly.data(), sizeof(public_key));
 			}
 
-			String PublicKeyHashAssembly; memset(PublicKeyHash, 0, sizeof(PublicKeyHash));
-			if (!Stream.ReadString(Stream.ReadType(), &PublicKeyHashAssembly))
+			string public_key_hash_assembly; memset(public_key_hash, 0, sizeof(public_key_hash));
+			if (!stream.read_string(stream.read_type(), &public_key_hash_assembly))
 				return false;
 
-			if (!PublicKeyHashAssembly.empty())
+			if (!public_key_hash_assembly.empty())
 			{
-				if (PublicKeyHashAssembly.size() != sizeof(PublicKeyHash))
+				if (public_key_hash_assembly.size() != sizeof(public_key_hash))
 					return false;
 
-				memcpy(PublicKeyHash, PublicKeyHashAssembly.data(), sizeof(PublicKeyHash));
+				memcpy(public_key_hash, public_key_hash_assembly.data(), sizeof(public_key_hash));
 			}
 
 			return true;
 		}
-		bool Wallet::HasSecretKey() const
+		bool wallet::has_secret_key() const
 		{
-			Algorithm::Seckey Null = { 0 };
-			return memcmp(SecretKey, Null, sizeof(Null)) != 0;
+			algorithm::seckey null = { 0 };
+			return memcmp(secret_key, null, sizeof(null)) != 0;
 		}
-		bool Wallet::HasPublicKey() const
+		bool wallet::has_public_key() const
 		{
-			Algorithm::Pubkey Null = { 0 };
-			return memcmp(PublicKey, Null, sizeof(Null)) != 0;
+			algorithm::pubkey null = { 0 };
+			return memcmp(public_key, null, sizeof(null)) != 0;
 		}
-		bool Wallet::HasPublicKeyHash() const
+		bool wallet::has_public_key_hash() const
 		{
-			Algorithm::Pubkeyhash Null = { 0 };
-			return memcmp(PublicKeyHash, Null, sizeof(Null)) != 0;
+			algorithm::pubkeyhash null = { 0 };
+			return memcmp(public_key_hash, null, sizeof(null)) != 0;
 		}
-		Option<String> Wallet::SealMessage(const std::string_view& Plaintext, const Algorithm::Pubkey CipherPublicKey, const std::string_view& Entropy) const
+		option<string> wallet::seal_message(const std::string_view& plaintext, const algorithm::pubkey cipher_public_key, const std::string_view& entropy) const
 		{
-			return Algorithm::Signing::PublicEncrypt(CipherPublicKey, Plaintext, Entropy);
+			return algorithm::signing::public_encrypt(cipher_public_key, plaintext, entropy);
 		}
-		Option<String> Wallet::OpenMessage(const uint256_t& Nonce, const std::string_view& Ciphertext) const
+		option<string> wallet::open_message(const uint256_t& nonce, const std::string_view& ciphertext) const
 		{
-			if (!HasSecretKey())
-				return Optional::None;
+			if (!has_secret_key())
+				return optional::none;
 
-			Algorithm::Seckey CipherSecretKey;
-			Algorithm::Pubkey CipherPublicKey;
-			Algorithm::Signing::DeriveCipherKeypair(SecretKey, Nonce, CipherSecretKey, CipherPublicKey);
-			return Algorithm::Signing::PrivateDecrypt(CipherSecretKey, CipherPublicKey, Ciphertext);
+			algorithm::seckey cipher_secret_key;
+			algorithm::pubkey cipher_public_key;
+			algorithm::signing::derive_cipher_keypair(secret_key, nonce, cipher_secret_key, cipher_public_key);
+			return algorithm::signing::private_decrypt(cipher_secret_key, cipher_public_key, ciphertext);
 		}
-		String Wallet::GetSecretKey() const
+		string wallet::get_secret_key() const
 		{
-			String Value;
-			if (!HasSecretKey())
-				return Value;
+			string value;
+			if (!has_secret_key())
+				return value;
 
-			Algorithm::Signing::EncodeSecretKey(SecretKey, Value);
-			return Value;
+			algorithm::signing::encode_secret_key(secret_key, value);
+			return value;
 		}
-		String Wallet::GetPublicKey() const
+		string wallet::get_public_key() const
 		{
-			String Value;
-			if (!HasPublicKey())
-				return Value;
+			string value;
+			if (!has_public_key())
+				return value;
 
-			Algorithm::Signing::EncodePublicKey(PublicKey, Value);
-			return Value;
+			algorithm::signing::encode_public_key(public_key, value);
+			return value;
 		}
-		String Wallet::GetAddress() const
+		string wallet::get_address() const
 		{
-			String Value;
-			if (!HasPublicKeyHash())
-				return Value;
+			string value;
+			if (!has_public_key_hash())
+				return value;
 
-			Algorithm::Signing::EncodeAddress(PublicKeyHash, Value);
-			return Value;
+			algorithm::signing::encode_address(public_key_hash, value);
+			return value;
 		}
-		ExpectsLR<uint64_t> Wallet::GetLatestSequence() const
+		expects_lr<uint64_t> wallet::get_latest_sequence() const
 		{
-			auto Mempool = Storages::Mempoolstate(__func__);
-			auto Chain = Storages::Chainstate(__func__);
-			auto State = Chain.GetUniformByIndex(nullptr, States::AccountSequence::AsInstanceIndex(PublicKeyHash), 0);
-			uint64_t PendingSequence = Mempool.GetHighestTransactionSequence(PublicKeyHash).Or(1);
-			uint64_t FinalizedSequence = (State ? ((States::AccountSequence*)**State)->Sequence : 1);
-			return std::max(FinalizedSequence, PendingSequence);
+			auto mempool = storages::mempoolstate(__func__);
+			auto chain = storages::chainstate(__func__);
+			auto state = chain.get_uniform_by_index(nullptr, states::account_sequence::as_instance_index(public_key_hash), 0);
+			uint64_t pending_sequence = mempool.get_highest_transaction_sequence(public_key_hash).otherwise(1);
+			uint64_t finalized_sequence = (state ? ((states::account_sequence*)**state)->sequence : 1);
+			return std::max(finalized_sequence, pending_sequence);
 		}
-		UPtr<Schema> Wallet::AsSchema() const
+		uptr<schema> wallet::as_schema() const
 		{
-			Schema* Data = Var::Set::Object();
-			Data->Set("secret_key", Algorithm::Signing::SerializeSecretKey(SecretKey));
-			Data->Set("public_key", Algorithm::Signing::SerializePublicKey(PublicKey));
-			Data->Set("public_key_hash", Var::String(Format::Util::Encode0xHex(std::string_view((char*)PublicKeyHash, sizeof(PublicKeyHash)))));
-			Data->Set("address", Algorithm::Signing::SerializeAddress(PublicKeyHash));
-			return Data;
+			schema* data = var::set::object();
+			data->set("secret_key", algorithm::signing::serialize_secret_key(secret_key));
+			data->set("public_key", algorithm::signing::serialize_public_key(public_key));
+			data->set("public_key_hash", var::string(format::util::encode_0xhex(std::string_view((char*)public_key_hash, sizeof(public_key_hash)))));
+			data->set("address", algorithm::signing::serialize_address(public_key_hash));
+			return data;
 		}
-		UPtr<Schema> Wallet::AsPublicSchema() const
+		uptr<schema> wallet::as_public_schema() const
 		{
-			Schema* Data = Var::Set::Object();
-			Data->Set("public_key", Algorithm::Signing::SerializePublicKey(PublicKey));
-			Data->Set("public_key_hash", Var::String(Format::Util::Encode0xHex(std::string_view((char*)PublicKeyHash, sizeof(PublicKeyHash)))));
-			Data->Set("address", Algorithm::Signing::SerializeAddress(PublicKeyHash));
-			return Data;
+			schema* data = var::set::object();
+			data->set("public_key", algorithm::signing::serialize_public_key(public_key));
+			data->set("public_key_hash", var::string(format::util::encode_0xhex(std::string_view((char*)public_key_hash, sizeof(public_key_hash)))));
+			data->set("address", algorithm::signing::serialize_address(public_key_hash));
+			return data;
 		}
-		uint32_t Wallet::AsType() const
+		uint32_t wallet::as_type() const
 		{
-			return AsInstanceType();
+			return as_instance_type();
 		}
-		std::string_view Wallet::AsTypename() const
+		std::string_view wallet::as_typename() const
 		{
-			return AsInstanceTypename();
+			return as_instance_typename();
 		}
-		uint32_t Wallet::AsInstanceType()
+		uint32_t wallet::as_instance_type()
 		{
-			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
-			return Hash;
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
 		}
-		std::string_view Wallet::AsInstanceTypename()
+		std::string_view wallet::as_instance_typename()
 		{
 			return "wallet";
 		}
-		Wallet Wallet::FromMnemonic(const std::string_view& Mnemonic)
+		wallet wallet::from_mnemonic(const std::string_view& mnemonic)
 		{
-			Algorithm::Seckey Key;
-			Algorithm::Signing::DeriveSecretKeyFromMnemonic(Mnemonic, Key);
-			return FromSecretKey(Key);
+			algorithm::seckey key;
+			algorithm::signing::derive_secret_key_from_mnemonic(mnemonic, key);
+			return from_secret_key(key);
 		}
-		Wallet Wallet::FromSeed(const std::string_view& Seed)
+		wallet wallet::from_seed(const std::string_view& seed)
 		{
-			Algorithm::Seckey Key;
-			if (Seed.empty())
+			algorithm::seckey key;
+			if (seed.empty())
 			{
-				auto Entropy = *Crypto::RandomBytes(64);
-				Algorithm::Signing::DeriveSecretKey(Entropy, Key);
+				auto entropy = *crypto::random_bytes(64);
+				algorithm::signing::derive_secret_key(entropy, key);
 			}
 			else
-				Algorithm::Signing::DeriveSecretKey(Seed, Key);
-			return FromSecretKey(Key);
+				algorithm::signing::derive_secret_key(seed, key);
+			return from_secret_key(key);
 		}
-		Wallet Wallet::FromSecretKey(const Algorithm::Seckey Key)
+		wallet wallet::from_secret_key(const algorithm::seckey key)
 		{
-			Wallet Result;
-			Result.SetSecretKey(Key);
-			return Result;
+			wallet result;
+			result.set_secret_key(key);
+			return result;
 		}
-		Wallet Wallet::FromPublicKey(const Algorithm::Pubkey Key)
+		wallet wallet::from_public_key(const algorithm::pubkey key)
 		{
-			Wallet Result;
-			Result.SetPublicKey(Key);
-			return Result;
+			wallet result;
+			result.set_public_key(key);
+			return result;
 		}
-		Wallet Wallet::FromPublicKeyHash(const Algorithm::Pubkeyhash Key)
+		wallet wallet::from_public_key_hash(const algorithm::pubkeyhash key)
 		{
-			Wallet Result;
-			Result.SetPublicKeyHash(Key);
-			return Result;
+			wallet result;
+			result.set_public_key_hash(key);
+			return result;
 		}
 
-		bool Validator::StorePayload(Format::Stream* Stream) const
+		bool validator::store_payload(format::stream* stream) const
 		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Stream->WriteString(Address.GetIpAddress().Or(String()));
-			Stream->WriteInteger(Address.GetIpPort().Or(0));
-			Stream->WriteInteger(Availability.Latency);
-			Stream->WriteInteger(Availability.Timestamp);
-			Stream->WriteInteger(Availability.Calls);
-			Stream->WriteInteger(Availability.Errors);
-			Stream->WriteInteger(Ports.P2P);
-			Stream->WriteInteger(Ports.NDS);
-			Stream->WriteInteger(Ports.RPC);
-			Stream->WriteBoolean(Services.Consensus);
-			Stream->WriteBoolean(Services.Discovery);
-			Stream->WriteBoolean(Services.Synchronization);
-			Stream->WriteBoolean(Services.Interface);
-			Stream->WriteBoolean(Services.Proposer);
-			Stream->WriteBoolean(Services.Public);
-			Stream->WriteBoolean(Services.Streaming);
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_string(address.get_ip_address().otherwise(string()));
+			stream->write_integer(address.get_ip_port().otherwise(0));
+			stream->write_integer(availability.latency);
+			stream->write_integer(availability.timestamp);
+			stream->write_integer(availability.calls);
+			stream->write_integer(availability.errors);
+			stream->write_integer(ports.p2p);
+			stream->write_integer(ports.nds);
+			stream->write_integer(ports.rpc);
+			stream->write_boolean(services.has_consensus);
+			stream->write_boolean(services.has_discovery);
+			stream->write_boolean(services.has_synchronization);
+			stream->write_boolean(services.has_interfaces);
+			stream->write_boolean(services.has_proposer);
+			stream->write_boolean(services.has_publicity);
+			stream->write_boolean(services.has_streaming);
 			return true;
 		}
-		bool Validator::LoadPayload(Format::Stream& Stream)
+		bool validator::load_payload(format::stream& stream)
 		{
-			String IpAddress;
-			if (!Stream.ReadString(Stream.ReadType(), &IpAddress))
+			string ip_address;
+			if (!stream.read_string(stream.read_type(), &ip_address))
 				return false;
 
-			uint16_t IpPort;
-			if (!Stream.ReadInteger(Stream.ReadType(), &IpPort))
+			uint16_t ip_port;
+			if (!stream.read_integer(stream.read_type(), &ip_port))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &Availability.Latency))
+			if (!stream.read_integer(stream.read_type(), &availability.latency))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &Availability.Timestamp))
+			if (!stream.read_integer(stream.read_type(), &availability.timestamp))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &Availability.Calls))
+			if (!stream.read_integer(stream.read_type(), &availability.calls))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &Availability.Errors))
+			if (!stream.read_integer(stream.read_type(), &availability.errors))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &Ports.P2P))
+			if (!stream.read_integer(stream.read_type(), &ports.p2p))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &Ports.NDS))
+			if (!stream.read_integer(stream.read_type(), &ports.nds))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &Ports.RPC))
+			if (!stream.read_integer(stream.read_type(), &ports.rpc))
 				return false;
 
-			if (!Stream.ReadBoolean(Stream.ReadType(), &Services.Consensus))
+			if (!stream.read_boolean(stream.read_type(), &services.has_consensus))
 				return false;
 
-			if (!Stream.ReadBoolean(Stream.ReadType(), &Services.Discovery))
+			if (!stream.read_boolean(stream.read_type(), &services.has_discovery))
 				return false;
 
-			if (!Stream.ReadBoolean(Stream.ReadType(), &Services.Synchronization))
+			if (!stream.read_boolean(stream.read_type(), &services.has_synchronization))
 				return false;
 
-			if (!Stream.ReadBoolean(Stream.ReadType(), &Services.Interface))
+			if (!stream.read_boolean(stream.read_type(), &services.has_interfaces))
 				return false;
 
-			if (!Stream.ReadBoolean(Stream.ReadType(), &Services.Proposer))
+			if (!stream.read_boolean(stream.read_type(), &services.has_proposer))
 				return false;
 
-			if (!Stream.ReadBoolean(Stream.ReadType(), &Services.Public))
+			if (!stream.read_boolean(stream.read_type(), &services.has_publicity))
 				return false;
 
-			if (!Stream.ReadBoolean(Stream.ReadType(), &Services.Streaming))
+			if (!stream.read_boolean(stream.read_type(), &services.has_streaming))
 				return false;
 
-			Address = SocketAddress(IpAddress, IpPort);
+			address = socket_address(ip_address, ip_port);
 			return true;
 		}
-		bool Validator::IsValid() const
+		bool validator::is_valid() const
 		{
-			if (!Address.IsValid())
+			if (!address.is_valid())
 				return false;
 
-			return !P2P::Routing::IsAddressReserved(Address);
+			return !p2p::routing::is_address_reserved(address);
 		}
-		uint64_t Validator::GetPreference() const
+		uint64_t validator::get_preference() const
 		{
-			double Messages = (double)Availability.Calls;
-			double Confidence = Messages > 0.0 ? Mathd::Exp((double)(Availability.Calls < Availability.Errors ? 0 : Availability.Calls - Availability.Errors) / Messages) : 0.0;
-			double Uncertainty = Messages > 0.0 ? Mathd::Exp((double)Availability.Errors / Messages) : 0.0;
-			double Preference = Availability.Latency > 0.0 ? 1000.0 / (double)Availability.Latency : 1000.0;
-			double Score = (Confidence - Uncertainty) * Preference + Preference * 0.1;
-			return (uint64_t)(1000.0 * Score);
+			double messages = (double)availability.calls;
+			double confidence = messages > 0.0 ? mathd::exp((double)(availability.calls < availability.errors ? 0 : availability.calls - availability.errors) / messages) : 0.0;
+			double uncertainty = messages > 0.0 ? mathd::exp((double)availability.errors / messages) : 0.0;
+			double preference = availability.latency > 0.0 ? 1000.0 / (double)availability.latency : 1000.0;
+			double score = (confidence - uncertainty) * preference + preference * 0.1;
+			return (uint64_t)(1000.0 * score);
 		}
-		UPtr<Schema> Validator::AsSchema() const
+		uptr<schema> validator::as_schema() const
 		{
-			Schema* Data = Var::Set::Object();
-			Data->Set("address", Var::String(Address.GetIpAddress().Or("[bad_address]") + ":" + ToString(Address.GetIpPort().Or(0))));
+			schema* data = var::set::object();
+			data->set("address", var::string(address.get_ip_address().otherwise("[bad_address]") + ":" + to_string(address.get_ip_port().otherwise(0))));
 
-			auto* AvailabilityData = Data->Set("availability");
-			AvailabilityData->Set("latency", Algorithm::Encoding::SerializeUint256(Availability.Latency));
-			AvailabilityData->Set("timestamp", Algorithm::Encoding::SerializeUint256(Availability.Timestamp));
-			AvailabilityData->Set("calls", Algorithm::Encoding::SerializeUint256(Availability.Calls));
-			AvailabilityData->Set("errors", Algorithm::Encoding::SerializeUint256(Availability.Errors));
+			auto* availability_data = data->set("availability");
+			availability_data->set("latency", algorithm::encoding::serialize_uint256(availability.latency));
+			availability_data->set("timestamp", algorithm::encoding::serialize_uint256(availability.timestamp));
+			availability_data->set("calls", algorithm::encoding::serialize_uint256(availability.calls));
+			availability_data->set("errors", algorithm::encoding::serialize_uint256(availability.errors));
 
-			auto* PortsData = Data->Set("ports");
-			PortsData->Set("p2p", Var::Integer(Ports.P2P));
-			PortsData->Set("nds", Var::Integer(Ports.NDS));
-			PortsData->Set("rpc", Var::Integer(Ports.RPC));
+			auto* ports_data = data->set("ports");
+			ports_data->set("p2p", var::integer(ports.p2p));
+			ports_data->set("nds", var::integer(ports.nds));
+			ports_data->set("rpc", var::integer(ports.rpc));
 
-			auto* ServicesData = Data->Set("services");
-			ServicesData->Set("consensus", Var::Boolean(Services.Consensus));
-			ServicesData->Set("discovery", Var::Boolean(Services.Discovery));
-			ServicesData->Set("synchronization", Var::Boolean(Services.Synchronization));
-			ServicesData->Set("interface", Var::Boolean(Services.Interface));
-			ServicesData->Set("proposer", Var::Boolean(Services.Proposer));
-			ServicesData->Set("public", Var::Boolean(Services.Public));
-			ServicesData->Set("streaming", Var::Boolean(Services.Streaming));
-			return Data;
+			auto* services_data = data->set("services");
+			services_data->set("consensus", var::boolean(services.has_consensus));
+			services_data->set("discovery", var::boolean(services.has_discovery));
+			services_data->set("synchronization", var::boolean(services.has_synchronization));
+			services_data->set("interfaces", var::boolean(services.has_interfaces));
+			services_data->set("proposer", var::boolean(services.has_proposer));
+			services_data->set("public", var::boolean(services.has_publicity));
+			services_data->set("streaming", var::boolean(services.has_streaming));
+			return data;
 		}
-		uint32_t Validator::AsType() const
+		uint32_t validator::as_type() const
 		{
-			return AsInstanceType();
+			return as_instance_type();
 		}
-		std::string_view Validator::AsTypename() const
+		std::string_view validator::as_typename() const
 		{
-			return AsInstanceTypename();
+			return as_instance_typename();
 		}
-		uint32_t Validator::AsInstanceType()
+		uint32_t validator::as_instance_type()
 		{
-			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
-			return Hash;
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
 		}
-		std::string_view Validator::AsInstanceTypename()
+		std::string_view validator::as_instance_typename()
 		{
 			return "validator";
 		}

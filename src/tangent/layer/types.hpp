@@ -2,55 +2,55 @@
 #define TAN_LAYER_TYPES_HPP
 #include "../kernel/chain.h"
 
-namespace Vitex
+namespace vitex
 {
-	namespace Core
+	namespace core
 	{
 		template <>
-		struct KeyHasher<uint256_t>
+		struct key_hasher<uint256_t>
 		{
 			typedef float argument_type;
 			typedef size_t result_type;
 			using is_transparent = void;
 
-			inline result_type operator()(const uint256_t& Value) const noexcept
+			inline result_type operator()(const uint256_t& value) const noexcept
 			{
-				return KeyHasher<std::string_view>()(std::string_view((char*)&Value, sizeof(Value)));
+				return key_hasher<std::string_view>()(std::string_view((char*)&value, sizeof(value)));
 			}
 		};
 
 		template <>
-		struct KeyHasher<uint128_t>
+		struct key_hasher<uint128_t>
 		{
 			typedef float argument_type;
 			typedef size_t result_type;
 			using is_transparent = void;
 
-			inline result_type operator()(const uint128_t& Value) const noexcept
+			inline result_type operator()(const uint128_t& value) const noexcept
 			{
-				return KeyHasher<std::string_view>()(std::string_view((char*)&Value, sizeof(Value)));
+				return key_hasher<std::string_view>()(std::string_view((char*)&value, sizeof(value)));
 			}
 		};
 
-		struct InsensitiveComparator
+		struct insensitive_comparator
 		{
-			bool operator() (const String& A, const String& B) const
+			bool operator() (const string& a, const string& b) const
 			{
-				return std::lexicographical_compare(A.begin(), A.end(), B.begin(), B.end(), [](char A, char B) { return std::tolower(A) < std::tolower(B); });
+				return std::lexicographical_compare(a.begin(), a.end(), b.begin(), b.end(), [](char a, char b) { return std::tolower(a) < std::tolower(b); });
 			}
 		};
 
-		struct InversionComparator
+		struct inversion_comparator
 		{
-			bool operator() (uint8_t A, uint8_t B) const
+			bool operator() (uint8_t a, uint8_t b) const
 			{
-				return A > B;
+				return a > b;
 			}
 		};
 
-		using AccountValueMap = OrderedMap<String, Decimal>;
-		using AddressValueMap = OrderedMap<String, Decimal, InsensitiveComparator>;
-		using AddressMap = OrderedMap<uint8_t, String, InversionComparator>;
+		using account_value_map = ordered_map<string, decimal>;
+		using address_value_map = ordered_map<string, decimal, insensitive_comparator>;
+		using address_map = ordered_map<uint8_t, string, inversion_comparator>;
 	}
 }
 #endif

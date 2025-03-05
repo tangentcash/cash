@@ -15,1319 +15,1319 @@ extern "C"
 #include "../internal/libbitcoin/ecc.h"
 }
 
-namespace Tangent
+namespace tangent
 {
-	namespace NSS
+	namespace nss
 	{
-		template <typename T>
-		static InvocationCallback Chain(ServerNode* Server)
+		template <typename t>
+		static invocation_callback chain(server_node* server)
 		{
-			return [Server](const std::string_view& Blockchain) -> bool
+			return [server](const std::string_view& blockchain) -> bool
 			{
-				Algorithm::AssetId Asset = Algorithm::Asset::IdOf(Blockchain);
-				if (Server->HasChain(Asset))
+				algorithm::asset_id asset = algorithm::asset::id_of(blockchain);
+				if (server->has_chain(asset))
 					return false;
 
-				Server->AddChain<T>(Asset);
+				server->add_chain<t>(asset);
 				return true;
 			};
 		}
 
-		ServerNode::ServerNode() noexcept : ControlSys("nss-node")
+		server_node::server_node() noexcept : control_sys("nss-node")
 		{
-			auto& Chains = GetRegistrations();
-			for (auto& Chain : Chains)
-				Chain.second(Chain.first);
+			auto& chains = get_registrations();
+			for (auto& chain : chains)
+				chain.second(chain.first);
 
-			auto& Config = Protocol::Now().User.NSS.Options;
-			if (Config)
+			auto& config = protocol::now().user.nss.options;
+			if (config)
 			{
-				auto* RetryTimeout = Config->Fetch("strategy.retry_timeout");
-				if (RetryTimeout != nullptr && RetryTimeout->Value.Is(VarType::Integer))
-					Options.RetryWaitingTimeMs = RetryTimeout->Value.GetInteger();
+				auto* retry_timeout = config->fetch("strategy.retry_timeout");
+				if (retry_timeout != nullptr && retry_timeout->value.is(var_type::integer))
+					options.retry_waiting_time_ms = retry_timeout->value.get_integer();
 
-				auto* PollingFrequency = Config->Fetch("strategy.polling_frequency");
-				if (PollingFrequency != nullptr && PollingFrequency->Value.Is(VarType::Integer))
-					Options.PollingFrequencyMs = PollingFrequency->Value.GetInteger();
+				auto* polling_frequency = config->fetch("strategy.polling_frequency");
+				if (polling_frequency != nullptr && polling_frequency->value.is(var_type::integer))
+					options.polling_frequency_ms = polling_frequency->value.get_integer();
 
-				auto* BlockConfirmations = Config->Fetch("strategy.block_confirmations");
-				if (BlockConfirmations != nullptr && BlockConfirmations->Value.Is(VarType::Integer))
-					Options.MinBlockConfirmations = BlockConfirmations->Value.GetInteger();
+				auto* block_confirmations = config->fetch("strategy.block_confirmations");
+				if (block_confirmations != nullptr && block_confirmations->value.is(var_type::integer))
+					options.min_block_confirmations = block_confirmations->value.get_integer();
 
-				auto* Protocols = Config->Get("protocols");
-				if (Protocols != nullptr)
+				auto* protocols = config->get("protocols");
+				if (protocols != nullptr)
 				{
-					for (auto& Root : Protocols->GetChilds())
+					for (auto& root : protocols->get_childs())
 					{
-						Algorithm::AssetId Asset = Algorithm::Asset::IdOf(Root->Key);
-						auto* Peers = Root->Get("peers");
-						if (Peers && !Peers->Empty())
+						algorithm::asset_id asset = algorithm::asset::id_of(root->key);
+						auto* peers = root->get("peers");
+						if (peers && !peers->empty())
 						{
-							UnorderedMap<std::string_view, double> Sources;
-							for (auto& Child : Peers->GetChilds())
+							unordered_map<std::string_view, double> sources;
+							for (auto& child : peers->get_childs())
 							{
-								auto Source = Child->Size() > 0 ? Child->Get(0)->Value.GetString() : Child->Value.GetString();
-								auto Throttling = Child->Size() > 1 ? Child->Get(1)->Value.GetNumber() : 0.0;
-								if (!Stringify::IsEmptyOrWhitespace(Source) && Throttling >= 0.0)
-									Sources[Source] = 1000.0 / Throttling;
+								auto source = child->size() > 0 ? child->get(0)->value.get_string() : child->value.get_string();
+								auto throttling = child->size() > 1 ? child->get(1)->value.get_number() : 0.0;
+								if (!stringify::is_empty_or_whitespace(source) && throttling >= 0.0)
+									sources[source] = 1000.0 / throttling;
 							}
 
-							for (auto& Source : Sources)
+							for (auto& source : sources)
 							{
-								if (AddNode(Asset, Source.first, Source.second))
+								if (add_node(asset, source.first, source.second))
 								{
-									if (Protocol::Now().User.NSS.Server && Protocol::Now().User.NSS.Logging)
-										VI_INFO("[observer] %s server node %.*s added (limit: %.2f rps)", Algorithm::Asset::HandleOf(Asset).c_str(), (int)Source.first.size(), Source.first.data(), Source.second);
+									if (protocol::now().user.nss.server && protocol::now().user.nss.logging)
+										VI_INFO("[observer] %s server node %.*s added (limit: %.2f rps)", algorithm::asset::handle_of(asset).c_str(), (int)source.first.size(), source.first.data(), source.second);
 								}
-								else if (Protocol::Now().User.NSS.Logging)
-									VI_ERR("[observer] %s server node on %.*s add failed (limit: %.2f rps)", Algorithm::Asset::HandleOf(Asset).c_str(), (int)Source.first.size(), Source.first.data(), Source.second);
+								else if (protocol::now().user.nss.logging)
+									VI_ERR("[observer] %s server node on %.*s add failed (limit: %.2f rps)", algorithm::asset::handle_of(asset).c_str(), (int)source.first.size(), source.first.data(), source.second);
 							}
 						}
 
-						auto* Props = Root->Fetch("server.props");
-						if (Props != nullptr && Props->Value.GetType() != VarType::Null)
+						auto* props = root->fetch("server.props");
+						if (props != nullptr && props->value.get_type() != var_type::null)
 						{
-							AddSpecifications(Asset, Props);
-							Props->Unlink();
+							add_specifications(asset, props);
+							props->unlink();
 						}
 
-						auto* Tip = Root->Fetch("server.tip");
-						if (Tip != nullptr && Tip->Value.Is(VarType::Integer))
-							EnableCheckpointHeight(Asset, Tip->Value.GetInteger());
+						auto* tip = root->fetch("server.tip");
+						if (tip != nullptr && tip->value.is(var_type::integer))
+							enable_checkpoint_height(asset, tip->value.get_integer());
 
-						BlockConfirmations = Root->Fetch("server.delay");
-						if (BlockConfirmations != nullptr && BlockConfirmations->Value.Is(VarType::Integer))
-							Options.AddSpecificOptions(Root->Key).MinBlockConfirmations = BlockConfirmations->Value.GetInteger();
+						block_confirmations = root->fetch("server.delay");
+						if (block_confirmations != nullptr && block_confirmations->value.is(var_type::integer))
+							options.add_specific_options(root->key).min_block_confirmations = block_confirmations->value.get_integer();
 					}
 				}
 			}
 			btc_ecc_start();
 		}
-		ServerNode::~ServerNode() noexcept
+		server_node::~server_node() noexcept
 		{
 			btc_ecc_stop();
 		}
-		ExpectsPromiseSystem<HTTP::ResponseFrame> ServerNode::InternalCall(const std::string_view& Location, const std::string_view& Method, const HTTP::FetchFrame& Options)
+		expects_promise_system<http::response_frame> server_node::internal_call(const std::string_view& location, const std::string_view& method, const http::fetch_frame& options)
 		{
-			return HTTP::Fetch(Location, Method, Options);
+			return http::fetch(location, method, options);
 		}
-		ExpectsPromiseRT<Mediator::OutgoingTransaction> ServerNode::SubmitTransaction(const uint256_t& ExternalId, const Algorithm::AssetId& Asset, Mediator::DynamicWallet&& Wallet, Vector<Mediator::Transferer>&& To, Option<Mediator::BaseFee>&& Fee)
+		expects_promise_rt<mediator::outgoing_transaction> server_node::submit_transaction(const uint256_t& external_id, const algorithm::asset_id& asset, mediator::dynamic_wallet&& wallet, vector<mediator::transferer>&& to, option<mediator::base_fee>&& fee)
 		{
-			if (!ControlSys.IsActive())
-				Coreturn ExpectsRT<Mediator::OutgoingTransaction>(RemoteException::Shutdown());
+			if (!control_sys.is_active())
+				coreturn expects_rt<mediator::outgoing_transaction>(remote_exception::shutdown());
 
-			auto Blockchain = Algorithm::Asset::BlockchainOf(Asset);
-			UMutex<std::recursive_mutex> Unique(ControlSys.Sync);
-			if (Connections.find(Blockchain) == Connections.end())
-				Coreturn ExpectsRT<Mediator::OutgoingTransaction>(RemoteException(Stringify::Text("%s blockchain operations are disabled", Algorithm::Asset::HandleOf(Asset).c_str())));
+			auto blockchain = algorithm::asset::blockchain_of(asset);
+			umutex<std::recursive_mutex> unique(control_sys.sync);
+			if (connections.find(blockchain) == connections.end())
+				coreturn expects_rt<mediator::outgoing_transaction>(remote_exception(stringify::text("%s blockchain operations are disabled", algorithm::asset::handle_of(asset).c_str())));
 
-			TransactionParams* Params = Memory::New<TransactionParams>();
-			Params->Asset = std::move(Asset);
-			Params->Wallet = std::move(Wallet);
-			Params->To = std::move(To);
-			Params->Fee = std::move(Fee);
-			Params->ExternalId = ExternalId;
+			transaction_params* params = memory::init<transaction_params>();
+			params->asset = std::move(asset);
+			params->wallet = std::move(wallet);
+			params->to = std::move(to);
+			params->fee = std::move(fee);
+			params->external_id = external_id;
 
-			auto& State = States[Blockchain];
-			if (!State)
+			auto& state = states[blockchain];
+			if (!state)
 			{
-				State = Memory::New<TransactionQueueState>();
-				State->Blockchain = Blockchain;
+				state = memory::init<transaction_queue_state>();
+				state->blockchain = blockchain;
 			}
 
-			auto Future = Params->Future;
-			State->Queue.push(Params);
-			DispatchTransactionQueue(*State, Params);
-			Unique.Negate();
-			Coreturn Coawait(std::move(Future));
+			auto future = params->future;
+			state->queue.push(params);
+			dispatch_transaction_queue(*state, params);
+			unique.negate();
+			coreturn coawait(std::move(future));
 		}
-		ExpectsPromiseRT<void> ServerNode::BroadcastTransaction(const Algorithm::AssetId& Asset, const uint256_t& ExternalId, const Mediator::OutgoingTransaction& TxData)
+		expects_promise_rt<void> server_node::broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, const mediator::outgoing_transaction& tx_data)
 		{
-			if (!Algorithm::Asset::IsValid(Asset) || TxData.Transaction.Asset != Asset)
-				Coreturn ExpectsRT<void>(RemoteException("asset not found"));
+			if (!algorithm::asset::is_valid(asset) || tx_data.transaction.asset != asset)
+				coreturn expects_rt<void>(remote_exception("asset not found"));
 
-			if (!TxData.IsValid())
-				Coreturn ExpectsRT<void>(RemoteException("transaction not found"));
+			if (!tx_data.is_valid())
+				coreturn expects_rt<void>(remote_exception("transaction not found"));
 
-			auto* Implementation = GetChain(Asset);
-			if (!Implementation)
-				Coreturn ExpectsRT<void>(RemoteException("chain not found"));
+			auto* implementation = get_chain(asset);
+			if (!implementation)
+				coreturn expects_rt<void>(remote_exception("chain not found"));
 
-			Storages::Mediatorstate State = Storages::Mediatorstate(__func__, Asset);
-			auto DuplicateTransaction = State.GetTransaction(TxData.Transaction.TransactionId, ExternalId);
-			if (DuplicateTransaction)
-				Coreturn ExpectsRT<void>(Expectation::Met);
+			storages::mediatorstate state = storages::mediatorstate(__func__, asset);
+			auto duplicate_transaction = state.get_transaction(tx_data.transaction.transaction_id, external_id);
+			if (duplicate_transaction)
+				coreturn expects_rt<void>(expectation::met);
 
-			auto NewTransaction = TxData.Transaction;
-			NewTransaction.TransactionId = Implementation->GetChecksumHash(NewTransaction.TransactionId);
-			NewTransaction.BlockId = 0;
+			auto new_transaction = tx_data.transaction;
+			new_transaction.transaction_id = implementation->get_checksum_hash(new_transaction.transaction_id);
+			new_transaction.block_id = 0;
 
-			State.AddOutgoingTransaction(NewTransaction, ExternalId);
-			Coreturn Coawait(Implementation->BroadcastTransaction(Asset, TxData));
+			state.add_outgoing_transaction(new_transaction, external_id);
+			coreturn coawait(implementation->broadcast_transaction(asset, tx_data));
 		}
-		ExpectsPromiseRT<void> ServerNode::ValidateTransaction(const Mediator::IncomingTransaction& Value)
+		expects_promise_rt<void> server_node::validate_transaction(const mediator::incoming_transaction& value)
 		{
-			if (!Value.IsValid())
-				Coreturn ExpectsRT<void>(RemoteException("transaction not valid"));
+			if (!value.is_valid())
+				coreturn expects_rt<void>(remote_exception("transaction not valid"));
 
-			Storages::Mediatorstate State = Storages::Mediatorstate(__func__, Value.Asset);
-			if (State.GetTransaction(Value.TransactionId, 0))
-				Coreturn ExpectsRT<void>(Expectation::Met);
+			storages::mediatorstate state = storages::mediatorstate(__func__, value.asset);
+			if (state.get_transaction(value.transaction_id, 0))
+				coreturn expects_rt<void>(expectation::met);
 
-			auto TransactionData = Coawait(GetBlockTransaction(Value.Asset, Value.BlockId, std::string_view(), Value.TransactionId));
-			if (!TransactionData)
-				Coreturn ExpectsRT<void>(std::move(TransactionData.Error()));
+			auto transaction_data = coawait(get_block_transaction(value.asset, value.block_id, std::string_view(), value.transaction_id));
+			if (!transaction_data)
+				coreturn expects_rt<void>(std::move(transaction_data.error()));
 
-			auto Transactions = Coawait(GetAuthenticTransactions(Value.Asset, Value.BlockId, std::string_view(), *TransactionData));
-			Memory::Release(*TransactionData);
-			if (!Transactions)
-				Coreturn ExpectsRT<void>(std::move(Transactions.Error()));
+			auto transactions = coawait(get_authentic_transactions(value.asset, value.block_id, std::string_view(), *transaction_data));
+			memory::release(*transaction_data);
+			if (!transactions)
+				coreturn expects_rt<void>(std::move(transactions.error()));
 
-			auto Left = Value;
-			for (auto& Item : Left.To)
-				Item.AddressIndex = 0;
-			for (auto& Item : Left.From)
-				Item.AddressIndex = 0;
+			auto left = value;
+			for (auto& item : left.to)
+				item.address_index = 0;
+			for (auto& item : left.from)
+				item.address_index = 0;
 
-			uint256_t Hash = Left.AsHash();
-			for (auto& Right : *Transactions)
+			uint256_t hash = left.as_hash();
+			for (auto& right : *transactions)
 			{
-				for (auto& Item : Right.To)
-					Item.AddressIndex = 0;
-				for (auto& Item : Right.From)
-					Item.AddressIndex = 0;
-				if (Right.AsHash() == Hash)
-					Coreturn ExpectsRT<void>(Expectation::Met);
+				for (auto& item : right.to)
+					item.address_index = 0;
+				for (auto& item : right.from)
+					item.address_index = 0;
+				if (right.as_hash() == hash)
+					coreturn expects_rt<void>(expectation::met);
 			}
-			Coreturn ExpectsRT<void>(RemoteException("transaction not valid"));
+			coreturn expects_rt<void>(remote_exception("transaction not valid"));
 		}
-		ExpectsPromiseRT<uint64_t> ServerNode::GetLatestBlockHeight(const Algorithm::AssetId& Asset)
+		expects_promise_rt<uint64_t> server_node::get_latest_block_height(const algorithm::asset_id& asset)
 		{
-			if (!Algorithm::Asset::IsValid(Asset))
-				Coreturn ExpectsRT<uint64_t>(RemoteException("asset not found"));
+			if (!algorithm::asset::is_valid(asset))
+				coreturn expects_rt<uint64_t>(remote_exception("asset not found"));
 
-			auto* Implementation = GetChain(Asset);
-			if (!Implementation)
-				Coreturn ExpectsRT<uint64_t>(RemoteException("chain not found"));
+			auto* implementation = get_chain(asset);
+			if (!implementation)
+				coreturn expects_rt<uint64_t>(remote_exception("chain not found"));
 
-			Coreturn Coawait(Implementation->GetLatestBlockHeight(Asset));
+			coreturn coawait(implementation->get_latest_block_height(asset));
 		}
-		ExpectsPromiseRT<Schema*> ServerNode::GetBlockTransactions(const Algorithm::AssetId& Asset, uint64_t BlockHeight, String* BlockHash)
+		expects_promise_rt<schema*> server_node::get_block_transactions(const algorithm::asset_id& asset, uint64_t block_height, string* block_hash)
 		{
-			if (!Algorithm::Asset::IsValid(Asset))
-				Coreturn ExpectsRT<Schema*>(RemoteException("asset not found"));
+			if (!algorithm::asset::is_valid(asset))
+				coreturn expects_rt<schema*>(remote_exception("asset not found"));
 
-			auto* Implementation = GetChain(Asset);
-			if (!Implementation)
-				Coreturn ExpectsRT<Schema*>(RemoteException("chain not found"));
+			auto* implementation = get_chain(asset);
+			if (!implementation)
+				coreturn expects_rt<schema*>(remote_exception("chain not found"));
 
-			Coreturn Coawait(Implementation->GetBlockTransactions(Asset, BlockHeight, BlockHash));
+			coreturn coawait(implementation->get_block_transactions(asset, block_height, block_hash));
 		}
-		ExpectsPromiseRT<Schema*> ServerNode::GetBlockTransaction(const Algorithm::AssetId& Asset, uint64_t BlockHeight, const std::string_view& BlockHash, const std::string_view& TransactionId)
+		expects_promise_rt<schema*> server_node::get_block_transaction(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, const std::string_view& transaction_id)
 		{
-			if (!Algorithm::Asset::IsValid(Asset))
-				Coreturn ExpectsRT<Schema*>(RemoteException("asset not found"));
+			if (!algorithm::asset::is_valid(asset))
+				coreturn expects_rt<schema*>(remote_exception("asset not found"));
 
-			if (!BlockHeight || Stringify::IsEmptyOrWhitespace(TransactionId))
-				Coreturn ExpectsRT<Schema*>(RemoteException("tx not found"));
+			if (!block_height || stringify::is_empty_or_whitespace(transaction_id))
+				coreturn expects_rt<schema*>(remote_exception("tx not found"));
 
-			auto* Implementation = GetChain(Asset);
-			if (!Implementation)
-				Coreturn ExpectsRT<Schema*>(RemoteException("chain not found"));
+			auto* implementation = get_chain(asset);
+			if (!implementation)
+				coreturn expects_rt<schema*>(remote_exception("chain not found"));
 
-			Coreturn Coawait(Implementation->GetBlockTransaction(Asset, BlockHeight, BlockHash, TransactionId));
+			coreturn coawait(implementation->get_block_transaction(asset, block_height, block_hash, transaction_id));
 		}
-		ExpectsPromiseRT<Vector<Mediator::IncomingTransaction>> ServerNode::GetAuthenticTransactions(const Algorithm::AssetId& Asset, uint64_t BlockHeight, const std::string_view& BlockHash, Schema* TransactionData)
+		expects_promise_rt<vector<mediator::incoming_transaction>> server_node::get_authentic_transactions(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, schema* transaction_data)
 		{
-			if (!Algorithm::Asset::IsValid(Asset))
-				Coreturn ExpectsRT<Vector<Mediator::IncomingTransaction>>(RemoteException("asset not found"));
+			if (!algorithm::asset::is_valid(asset))
+				coreturn expects_rt<vector<mediator::incoming_transaction>>(remote_exception("asset not found"));
 
-			if (!BlockHeight)
-				Coreturn ExpectsRT<Vector<Mediator::IncomingTransaction>>(RemoteException("txs not found"));
+			if (!block_height)
+				coreturn expects_rt<vector<mediator::incoming_transaction>>(remote_exception("txs not found"));
 
-			auto* Implementation = GetChain(Asset);
-			if (!Implementation)
-				Coreturn ExpectsRT<Vector<Mediator::IncomingTransaction>>(RemoteException("chain not found"));
+			auto* implementation = get_chain(asset);
+			if (!implementation)
+				coreturn expects_rt<vector<mediator::incoming_transaction>>(remote_exception("chain not found"));
 
-			Coreturn Coawait(Implementation->GetAuthenticTransactions(Asset, BlockHeight, BlockHash, TransactionData));
+			coreturn coawait(implementation->get_authentic_transactions(asset, block_height, block_hash, transaction_data));
 		}
-		ExpectsPromiseRT<Schema*> ServerNode::ExecuteRPC(const Algorithm::AssetId& Asset, const std::string_view& Method, SchemaList&& Args, Mediator::CachePolicy Cache)
+		expects_promise_rt<schema*> server_node::execute_rpc(const algorithm::asset_id& asset, const std::string_view& method, schema_list&& args, mediator::cache_policy cache)
 		{
-			if (!Algorithm::Asset::IsValid(Asset))
-				Coreturn ExpectsRT<Schema*>(RemoteException("asset not found"));
+			if (!algorithm::asset::is_valid(asset))
+				coreturn expects_rt<schema*>(remote_exception("asset not found"));
 
-			if (Method.empty())
-				Coreturn ExpectsRT<Schema*>(RemoteException("method not found"));
+			if (method.empty())
+				coreturn expects_rt<schema*>(remote_exception("method not found"));
 
-			auto* Implementation = GetChain(Asset);
-			if (!Implementation)
-				Coreturn ExpectsRT<Schema*>(RemoteException("chain not found"));
+			auto* implementation = get_chain(asset);
+			if (!implementation)
+				coreturn expects_rt<schema*>(remote_exception("chain not found"));
 
-			Coreturn Coawait(Implementation->ExecuteRPC(Asset, Method, std::move(Args), Cache));
+			coreturn coawait(implementation->execute_rpc(asset, method, std::move(args), cache));
 		}
-		ExpectsPromiseRT<Mediator::OutgoingTransaction> ServerNode::NewTransaction(const Algorithm::AssetId& Asset, const Mediator::DynamicWallet& Wallet, const Vector<Mediator::Transferer>& To, Option<Mediator::BaseFee>&& Fee)
+		expects_promise_rt<mediator::outgoing_transaction> server_node::new_transaction(const algorithm::asset_id& asset, const mediator::dynamic_wallet& wallet, const vector<mediator::transferer>& to, option<mediator::base_fee>&& fee)
 		{
-			if (!Algorithm::Asset::IsValid(Asset))
-				Coreturn ExpectsRT<Mediator::OutgoingTransaction>(RemoteException("asset not found"));
+			if (!algorithm::asset::is_valid(asset))
+				coreturn expects_rt<mediator::outgoing_transaction>(remote_exception("asset not found"));
 
-			if (!Wallet.IsValid())
-				Coreturn ExpectsRT<Mediator::OutgoingTransaction>(RemoteException("wallet not found"));
+			if (!wallet.is_valid())
+				coreturn expects_rt<mediator::outgoing_transaction>(remote_exception("wallet not found"));
 
-			if (To.empty())
-				Coreturn ExpectsRT<Mediator::OutgoingTransaction>(RemoteException("to address not found"));
+			if (to.empty())
+				coreturn expects_rt<mediator::outgoing_transaction>(remote_exception("to address not found"));
 
-			for (auto& Address : To)
+			for (auto& address : to)
 			{
-				if (Stringify::IsEmptyOrWhitespace(Address.Address))
-					Coreturn ExpectsRT<Mediator::OutgoingTransaction>(RemoteException("receiver address not valid"));
+				if (stringify::is_empty_or_whitespace(address.address))
+					coreturn expects_rt<mediator::outgoing_transaction>(remote_exception("receiver address not valid"));
 
-				if (!Address.Value.IsPositive())
-					Coreturn ExpectsRT<Mediator::OutgoingTransaction>(RemoteException("receiver quantity not valid"));
+				if (!address.value.is_positive())
+					coreturn expects_rt<mediator::outgoing_transaction>(remote_exception("receiver quantity not valid"));
 			}
 
-			if (Fee && !Fee->IsValid())
-				Coreturn ExpectsRT<Mediator::OutgoingTransaction>(RemoteException("fee not valid"));
+			if (fee && !fee->is_valid())
+				coreturn expects_rt<mediator::outgoing_transaction>(remote_exception("fee not valid"));
 
-			auto* Implementation = GetChain(Asset);
-			if (!Implementation)
-				Coreturn ExpectsRT<Mediator::OutgoingTransaction>(RemoteException("chain not found"));
+			auto* implementation = get_chain(asset);
+			if (!implementation)
+				coreturn expects_rt<mediator::outgoing_transaction>(remote_exception("chain not found"));
 
-			if (!Implementation->GetChainparams().SupportsBulkTransfer && To.size() > 1)
-				Coreturn ExpectsRT<Mediator::OutgoingTransaction>(RemoteException("only one receiver allowed"));
+			if (!implementation->get_chainparams().supports_bulk_transfer && to.size() > 1)
+				coreturn expects_rt<mediator::outgoing_transaction>(remote_exception("only one receiver allowed"));
 
-			Mediator::BaseFee ActualFee = Mediator::BaseFee(Decimal::NaN(), Decimal::NaN());
-			if (!Fee)
+			mediator::base_fee actual_fee = mediator::base_fee(decimal::nan(), decimal::nan());
+			if (!fee)
 			{
-				auto EstimatedFee = Coawait(EstimateFee(Asset, Wallet, To));
-				if (!EstimatedFee)
-					Coreturn ExpectsRT<Mediator::OutgoingTransaction>(std::move(EstimatedFee.Error()));
-				ActualFee = *EstimatedFee;
+				auto estimated_fee = coawait(estimate_fee(asset, wallet, to));
+				if (!estimated_fee)
+					coreturn expects_rt<mediator::outgoing_transaction>(std::move(estimated_fee.error()));
+				actual_fee = *estimated_fee;
 			}
 			else
-				ActualFee = *Fee;
+				actual_fee = *fee;
 
-			Decimal FeeValue = ActualFee.GetFee();
-			if (!FeeValue.IsPositive())
-				Coreturn ExpectsRT<Mediator::OutgoingTransaction>(RemoteException(Stringify::Text("fee not valid: %s", FeeValue.ToString().c_str())));
+			decimal fee_value = actual_fee.get_fee();
+			if (!fee_value.is_positive())
+				coreturn expects_rt<mediator::outgoing_transaction>(remote_exception(stringify::text("fee not valid: %s", fee_value.to_string().c_str())));
 
-			Coreturn Coawait(Implementation->NewTransaction(Asset, Wallet, To, ActualFee));
+			coreturn coawait(implementation->new_transaction(asset, wallet, to, actual_fee));
 		}
-		ExpectsPromiseRT<Mediator::TransactionLogs> ServerNode::GetTransactionLogs(const Algorithm::AssetId& Asset, Mediator::ChainSupervisorOptions* Options)
+		expects_promise_rt<mediator::transaction_logs> server_node::get_transaction_logs(const algorithm::asset_id& asset, mediator::chain_supervisor_options* options)
 		{
-			if (!Algorithm::Asset::IsValid(Asset))
-				Coreturn ExpectsRT<Mediator::TransactionLogs>(RemoteException("asset not found"));
+			if (!algorithm::asset::is_valid(asset))
+				coreturn expects_rt<mediator::transaction_logs>(remote_exception("asset not found"));
 
-			if (!Options)
-				Coreturn ExpectsRT<Mediator::TransactionLogs>(RemoteException("options not found"));
+			if (!options)
+				coreturn expects_rt<mediator::transaction_logs>(remote_exception("options not found"));
 
-			auto* Implementation = GetChain(Asset);
-			if (!Implementation)
-				Coreturn ExpectsRT<Mediator::TransactionLogs>(RemoteException("chain not found"));
+			auto* implementation = get_chain(asset);
+			if (!implementation)
+				coreturn expects_rt<mediator::transaction_logs>(remote_exception("chain not found"));
 
-			auto* Provider = GetNode(Asset);
-			if (!Provider)
-				Coreturn ExpectsRT<Mediator::TransactionLogs>(RemoteException("node not found"));
+			auto* provider = get_node(asset);
+			if (!provider)
+				coreturn expects_rt<mediator::transaction_logs>(remote_exception("node not found"));
 
-			bool IsDryRun = !Options->HasLatestBlockHeight();
-			Storages::Mediatorstate State = Storages::Mediatorstate(__func__, Asset);
-			Implementation->Interact = [Options](Mediator::ServerRelay* Service) { Options->State.Interactions.insert(Service); };
-			Options->State.Interactions.clear();
+			bool is_dry_run = !options->has_latest_block_height();
+			storages::mediatorstate state = storages::mediatorstate(__func__, asset);
+			implementation->interact = [options](mediator::server_relay* service) { options->state.interactions.insert(service); };
+			options->state.interactions.clear();
 
-			auto TipCheckpoint = UPtr<Schema>(State.GetProperty("tip_checkpoint"));
-			if (TipCheckpoint)
-				Options->SetCheckpointFromBlock((uint64_t)std::max<int64_t>(1, TipCheckpoint->Value.GetInteger()) - 1);
+			auto tip_checkpoint = uptr<schema>(state.get_property("tip_checkpoint"));
+			if (tip_checkpoint)
+				options->set_checkpoint_from_block((uint64_t)std::max<int64_t>(1, tip_checkpoint->value.get_integer()) - 1);
 
-			auto TipLatest = UPtr<Schema>(State.GetProperty("tip_latest"));
-			if (TipLatest && (uint64_t)TipLatest->Value.GetInteger() > Options->State.LatestBlockHeight)
-				Options->SetCheckpointFromBlock((uint64_t)TipLatest->Value.GetInteger());
+			auto tip_latest = uptr<schema>(state.get_property("tip_latest"));
+			if (tip_latest && (uint64_t)tip_latest->value.get_integer() > options->state.latest_block_height)
+				options->set_checkpoint_from_block((uint64_t)tip_latest->value.get_integer());
 
-			auto TipOverride = UPtr<Schema>(State.GetProperty("tip_override"));
-			if (TipOverride)
+			auto tip_override = uptr<schema>(state.get_property("tip_override"));
+			if (tip_override)
 			{
-				uint64_t Tip = (uint64_t)TipOverride->Value.GetInteger();
-				Options->State.StartingBlockHeight = Tip;
-				Options->SetCheckpointFromBlock(Tip);
+				uint64_t tip = (uint64_t)tip_override->value.get_integer();
+				options->state.starting_block_height = tip;
+				options->set_checkpoint_from_block(tip);
 			}
 
-			if (!Options->HasCurrentBlockHeight())
+			if (!options->has_current_block_height())
 			{
-			Retry:
-				auto LatestBlockHeight = Coawait(Implementation->GetLatestBlockHeight(Asset));
-				if (!LatestBlockHeight)
-					Coreturn ExpectsRT<Mediator::TransactionLogs>(std::move(LatestBlockHeight.Error()));
-				Options->SetCheckpointToBlock(*LatestBlockHeight);
+			retry:
+				auto latest_block_height = coawait(implementation->get_latest_block_height(asset));
+				if (!latest_block_height)
+					coreturn expects_rt<mediator::transaction_logs>(std::move(latest_block_height.error()));
+				options->set_checkpoint_to_block(*latest_block_height);
 			}
 
-			if (!Options->HasNextBlockHeight())
+			if (!options->has_next_block_height())
 			{
-				if (IsDryRun)
-					Coreturn ExpectsRT<Mediator::TransactionLogs>(Mediator::TransactionLogs());
-				else if (!Coawait(Provider->YieldForDiscovery(Options)))
-					Coreturn ExpectsRT<Mediator::TransactionLogs>(RemoteException::Retry());
-				goto Retry;
+				if (is_dry_run)
+					coreturn expects_rt<mediator::transaction_logs>(mediator::transaction_logs());
+				else if (!coawait(provider->yield_for_discovery(options)))
+					coreturn expects_rt<mediator::transaction_logs>(remote_exception::retry());
+				goto retry;
 			}
 
-			Mediator::TransactionLogs Logs;
-			Logs.BlockHeight = TipOverride ? (uint64_t)TipOverride->Value.GetInteger() : Options->GetNextBlockHeight();
-			Logs.BlockHash = ToString(Logs.BlockHeight);
+			mediator::transaction_logs logs;
+			logs.block_height = tip_override ? (uint64_t)tip_override->value.get_integer() : options->get_next_block_height();
+			logs.block_hash = to_string(logs.block_height);
 
-			auto Transactions = UPtr<Schema>(Coawait(Implementation->GetBlockTransactions(Asset, Logs.BlockHeight, &Logs.BlockHash)));
-			if (Transactions)
+			auto transactions = uptr<schema>(coawait(implementation->get_block_transactions(asset, logs.block_height, &logs.block_hash)));
+			if (transactions)
 			{
-				for (auto& Item : Transactions->GetChilds())
+				for (auto& item : transactions->get_childs())
 				{
-					if (!Item->Value.IsObject())
+					if (!item->value.is_object())
 					{
-						auto Details = UPtr<Schema>(Coawait(Implementation->GetBlockTransaction(Asset, Logs.BlockHeight, Logs.BlockHash, Item->Value.GetBlob())));
-						if (!Details)
+						auto details = uptr<schema>(coawait(implementation->get_block_transaction(asset, logs.block_height, logs.block_hash, item->value.get_blob())));
+						if (!details)
 							continue;
 
-						Memory::Release(Item);
-						Item = *Details;
+						memory::release(item);
+						item = *details;
 					}
 
-					auto Authentics = Coawait(Implementation->GetAuthenticTransactions(Asset, Logs.BlockHeight, Logs.BlockHash, Item));
-					if (Authentics)
+					auto authentics = coawait(implementation->get_authentic_transactions(asset, logs.block_height, logs.block_hash, item));
+					if (authentics)
 					{
-						for (auto& Next : *Authentics)
-							Logs.Transactions.push_back(std::move(Next));
+						for (auto& next : *authentics)
+							logs.transactions.push_back(std::move(next));
 					}
 				}
 			}
 
-			if (!TipCheckpoint || (uint64_t)TipCheckpoint->Value.GetInteger() != Logs.BlockHeight)
-				State.SetProperty("tip_checkpoint", Var::Set::Integer(Logs.BlockHeight));
-			if (!TipLatest || (uint64_t)TipLatest->Value.GetInteger() != Options->State.LatestBlockHeight)
-				State.SetProperty("tip_latest", Var::Set::Integer(Options->State.LatestBlockHeight));
-			if (TipOverride)
-				State.SetProperty("tip_override", nullptr);
+			if (!tip_checkpoint || (uint64_t)tip_checkpoint->value.get_integer() != logs.block_height)
+				state.set_property("tip_checkpoint", var::set::integer(logs.block_height));
+			if (!tip_latest || (uint64_t)tip_latest->value.get_integer() != options->state.latest_block_height)
+				state.set_property("tip_latest", var::set::integer(options->state.latest_block_height));
+			if (tip_override)
+				state.set_property("tip_override", nullptr);
 
-			UnorderedSet<String> TransactionIds;
-			for (auto& NewTransaction : Logs.Transactions)
+			unordered_set<string> transaction_ids;
+			for (auto& new_transaction : logs.transactions)
 			{
-				NewTransaction.BlockId = Logs.BlockHeight;
-				NewTransaction.TransactionId = Implementation->GetChecksumHash(NewTransaction.TransactionId);
-				State.AddIncomingTransaction(NewTransaction, Logs.BlockHeight);
-				TransactionIds.insert(Algorithm::Asset::HandleOf(NewTransaction.Asset) + ":" + NewTransaction.TransactionId);
+				new_transaction.block_id = logs.block_height;
+				new_transaction.transaction_id = implementation->get_checksum_hash(new_transaction.transaction_id);
+				state.add_incoming_transaction(new_transaction, logs.block_height);
+				transaction_ids.insert(algorithm::asset::handle_of(new_transaction.asset) + ":" + new_transaction.transaction_id);
 			}
 
-			auto Approvals = State.ApproveTransactions(Logs.BlockHeight, Implementation->GetChainparams().SyncLatency);
-			if (Approvals && !Approvals->empty())
+			auto approvals = state.approve_transactions(logs.block_height, implementation->get_chainparams().sync_latency);
+			if (approvals && !approvals->empty())
 			{
-				Logs.Transactions.reserve(Logs.Transactions.size() + Approvals->size());
-				for (auto& NewTransaction : *Approvals)
+				logs.transactions.reserve(logs.transactions.size() + approvals->size());
+				for (auto& new_transaction : *approvals)
 				{
-					if (TransactionIds.find(Algorithm::Asset::HandleOf(NewTransaction.Asset) + ":" + NewTransaction.TransactionId) == TransactionIds.end())
-						Logs.Transactions.push_back(std::move(NewTransaction));
+					if (transaction_ids.find(algorithm::asset::handle_of(new_transaction.asset) + ":" + new_transaction.transaction_id) == transaction_ids.end())
+						logs.transactions.push_back(std::move(new_transaction));
 				}
 			}
 
-			Coreturn ExpectsRT<Mediator::TransactionLogs>(std::move(Logs));
+			coreturn expects_rt<mediator::transaction_logs>(std::move(logs));
 		}
-		ExpectsPromiseRT<Mediator::BaseFee> ServerNode::EstimateFee(const Algorithm::AssetId& Asset, const Mediator::DynamicWallet& Wallet, const Vector<Mediator::Transferer>& To, const Mediator::FeeSupervisorOptions& Options)
+		expects_promise_rt<mediator::base_fee> server_node::estimate_fee(const algorithm::asset_id& asset, const mediator::dynamic_wallet& wallet, const vector<mediator::transferer>& to, const mediator::fee_supervisor_options& options)
 		{
-			if (!Algorithm::Asset::IsValid(Asset) || !Options.MaxBlocks || !Options.MaxTransactions)
-				Coreturn ExpectsRT<Mediator::BaseFee>(RemoteException("asset not found"));
+			if (!algorithm::asset::is_valid(asset) || !options.max_blocks || !options.max_transactions)
+				coreturn expects_rt<mediator::base_fee>(remote_exception("asset not found"));
 
-			if (!Wallet.IsValid())
-				Coreturn ExpectsRT<Mediator::BaseFee>(RemoteException("wallet not found"));
+			if (!wallet.is_valid())
+				coreturn expects_rt<mediator::base_fee>(remote_exception("wallet not found"));
 
-			if (To.empty())
-				Coreturn ExpectsRT<Mediator::BaseFee>(RemoteException("to address not found"));
+			if (to.empty())
+				coreturn expects_rt<mediator::base_fee>(remote_exception("to address not found"));
 
-			for (auto& Address : To)
+			for (auto& address : to)
 			{
-				if (Stringify::IsEmptyOrWhitespace(Address.Address))
-					Coreturn ExpectsRT<Mediator::BaseFee>(RemoteException("receiver address not valid"));
+				if (stringify::is_empty_or_whitespace(address.address))
+					coreturn expects_rt<mediator::base_fee>(remote_exception("receiver address not valid"));
 
-				if (!Address.Value.IsPositive())
-					Coreturn ExpectsRT<Mediator::BaseFee>(RemoteException("receiver quantity not valid"));
+				if (!address.value.is_positive())
+					coreturn expects_rt<mediator::base_fee>(remote_exception("receiver quantity not valid"));
 			}
 
-			auto* Implementation = GetChain(Asset);
-			if (!Implementation)
-				Coreturn ExpectsRT<Mediator::BaseFee>(RemoteException("chain not found"));
+			auto* implementation = get_chain(asset);
+			if (!implementation)
+				coreturn expects_rt<mediator::base_fee>(remote_exception("chain not found"));
 
-			if (!Implementation->GetChainparams().SupportsBulkTransfer && To.size() > 1)
-				Coreturn ExpectsRT<Mediator::BaseFee>(RemoteException("only one receiver allowed"));
+			if (!implementation->get_chainparams().supports_bulk_transfer && to.size() > 1)
+				coreturn expects_rt<mediator::base_fee>(remote_exception("only one receiver allowed"));
 
-			int64_t Time = time(nullptr);
-			String FeeKey = Stringify::Text("%s:%i", Algorithm::Asset::BlockchainOf(Asset).c_str(), To.size());
+			int64_t time = ::time(nullptr);
+			string fee_key = stringify::text("%s:%i", algorithm::asset::blockchain_of(asset).c_str(), to.size());
 			{
-				UMutex<std::recursive_mutex> Unique(ControlSys.Sync);
-				auto It = Fees.find(FeeKey);
-				if (It != Fees.end() && It->second.second >= Time)
-					Coreturn ExpectsRT<Mediator::BaseFee>(It->second.first);
+				umutex<std::recursive_mutex> unique(control_sys.sync);
+				auto it = fees.find(fee_key);
+				if (it != fees.end() && it->second.second >= time)
+					coreturn expects_rt<mediator::base_fee>(it->second.first);
 			}
 
-			auto Estimate = Coawait(Implementation->EstimateFee(Asset, Wallet, To, Options));
-			if (!Estimate)
-				Coreturn ExpectsRT<Mediator::BaseFee>(std::move(Estimate.Error()));
+			auto estimate = coawait(implementation->estimate_fee(asset, wallet, to, options));
+			if (!estimate)
+				coreturn expects_rt<mediator::base_fee>(std::move(estimate.error()));
 
-			UMutex<std::recursive_mutex> Unique(ControlSys.Sync);
-			Fees[FeeKey] = std::make_pair(*Estimate, Time + (int64_t)Protocol::Now().User.NSS.FeeEstimationSeconds);
-			Coreturn Estimate;
+			umutex<std::recursive_mutex> unique(control_sys.sync);
+			fees[fee_key] = std::make_pair(*estimate, time + (int64_t)protocol::now().user.nss.fee_estimation_seconds);
+			coreturn estimate;
 		}
-		ExpectsPromiseRT<Decimal> ServerNode::CalculateBalance(const Algorithm::AssetId& Asset, const Mediator::DynamicWallet& Wallet, Option<String>&& Address)
+		expects_promise_rt<decimal> server_node::calculate_balance(const algorithm::asset_id& asset, const mediator::dynamic_wallet& wallet, option<string>&& address)
 		{
-			if (!Algorithm::Asset::IsValid(Asset))
-				Coreturn ExpectsRT<Decimal>(RemoteException("asset not found"));
+			if (!algorithm::asset::is_valid(asset))
+				coreturn expects_rt<decimal>(remote_exception("asset not found"));
 
-			auto Binding = Wallet.GetBinding();
-			if (!Binding || Binding->empty())
-				Coreturn ExpectsRT<Decimal>(RemoteException("binding not found"));
+			auto binding = wallet.get_binding();
+			if (!binding || binding->empty())
+				coreturn expects_rt<decimal>(remote_exception("binding not found"));
 
-			if (Address && Stringify::IsEmptyOrWhitespace(*Address))
-				Coreturn ExpectsRT<Decimal>(RemoteException("address not found"));
+			if (address && stringify::is_empty_or_whitespace(*address))
+				coreturn expects_rt<decimal>(remote_exception("address not found"));
 
-			auto* Implementation = GetChain(Asset);
-			if (!Implementation)
-				Coreturn ExpectsRT<Decimal>(RemoteException("chain not found"));
+			auto* implementation = get_chain(asset);
+			if (!implementation)
+				coreturn expects_rt<decimal>(remote_exception("chain not found"));
 
-			Coreturn Coawait(Implementation->CalculateBalance(Asset, Wallet, std::move(Address)));
+			coreturn coawait(implementation->calculate_balance(asset, wallet, std::move(address)));
 		}
-		ExpectsLR<Mediator::MasterWallet> ServerNode::NewMasterWallet(const Algorithm::AssetId& Asset, const std::string_view& SeedingKey)
+		expects_lr<mediator::master_wallet> server_node::new_master_wallet(const algorithm::asset_id& asset, const std::string_view& seeding_key)
 		{
-			if (!Algorithm::Asset::IsValid(Asset))
-				return ExpectsLR<Mediator::MasterWallet>(LayerException("asset not found"));
+			if (!algorithm::asset::is_valid(asset))
+				return expects_lr<mediator::master_wallet>(layer_exception("asset not found"));
 
-			String Seed = Format::Util::IsHexEncoding(SeedingKey) ? Codec::HexDecode(SeedingKey) : String(SeedingKey);
-			if (Seed.empty())
-				return ExpectsLR<Mediator::MasterWallet>(LayerException("seed not found"));
+			string seed = format::util::is_hex_encoding(seeding_key) ? codec::hex_decode(seeding_key) : string(seeding_key);
+			if (seed.empty())
+				return expects_lr<mediator::master_wallet>(layer_exception("seed not found"));
 
-			auto* Implementation = GetChain(Asset);
-			if (!Implementation)
-				return ExpectsLR<Mediator::MasterWallet>(LayerException("chain not found"));
+			auto* implementation = get_chain(asset);
+			if (!implementation)
+				return expects_lr<mediator::master_wallet>(layer_exception("chain not found"));
 
-			auto Result = Implementation->NewMasterWallet(Seed);
-			if (Result)
+			auto result = implementation->new_master_wallet(seed);
+			if (result)
 			{
-				Storages::Mediatorstate State = Storages::Mediatorstate(__func__, Asset);
-				auto Status = State.AddMasterWallet(*Result);
-				if (!Status)
-					return Status.Error();
+				storages::mediatorstate state = storages::mediatorstate(__func__, asset);
+				auto status = state.add_master_wallet(*result);
+				if (!status)
+					return status.error();
 			}
-			return Result;
+			return result;
 		}
-		ExpectsLR<Mediator::MasterWallet> ServerNode::NewMasterWallet(const Algorithm::AssetId& Asset, const Algorithm::Seckey PrivateKey)
+		expects_lr<mediator::master_wallet> server_node::new_master_wallet(const algorithm::asset_id& asset, const algorithm::seckey private_key)
 		{
-			Format::Stream Message;
-			Message.WriteInteger(Asset);
-			Message.WriteString(*Crypto::HashRaw(Digests::SHA512(), std::string_view((char*)PrivateKey, sizeof(Algorithm::Seckey))));
-			return NewMasterWallet(Asset, *Crypto::HashRaw(Digests::SHA512(), Message.Data));
+			format::stream message;
+			message.write_integer(asset);
+			message.write_string(*crypto::hash_raw(digests::SHA512(), std::string_view((char*)private_key, sizeof(algorithm::seckey))));
+			return new_master_wallet(asset, *crypto::hash_raw(digests::SHA512(), message.data));
 		}
-		ExpectsLR<Mediator::DerivedSigningWallet> ServerNode::NewSigningWallet(const Algorithm::AssetId& Asset, const Mediator::MasterWallet& Wallet, Option<uint64_t>&& AddressIndex)
+		expects_lr<mediator::derived_signing_wallet> server_node::new_signing_wallet(const algorithm::asset_id& asset, const mediator::master_wallet& wallet, option<uint64_t>&& address_index)
 		{
-			if (!Algorithm::Asset::IsValid(Asset))
-				return ExpectsLR<Mediator::DerivedSigningWallet>(LayerException("asset not found"));
+			if (!algorithm::asset::is_valid(asset))
+				return expects_lr<mediator::derived_signing_wallet>(layer_exception("asset not found"));
 
-			if (!Wallet.IsValid())
-				return ExpectsLR<Mediator::DerivedSigningWallet>(LayerException("wallet not found"));
+			if (!wallet.is_valid())
+				return expects_lr<mediator::derived_signing_wallet>(layer_exception("wallet not found"));
 
-			auto* Implementation = GetChain(Asset);
-			if (!Implementation)
-				return ExpectsLR<Mediator::DerivedSigningWallet>(LayerException("chain not found"));
+			auto* implementation = get_chain(asset);
+			if (!implementation)
+				return expects_lr<mediator::derived_signing_wallet>(layer_exception("chain not found"));
 
-			if (AddressIndex)
+			if (address_index)
 			{
-				Storages::Mediatorstate State = Storages::Mediatorstate(__func__, Asset);
-				auto Result = State.GetDerivedWallet(Wallet.AsHash(), *AddressIndex);
-				if (Result)
-					return Result;
+				storages::mediatorstate state = storages::mediatorstate(__func__, asset);
+				auto result = state.get_derived_wallet(wallet.as_hash(), *address_index);
+				if (result)
+					return result;
 			}
 			else
-				AddressIndex = Wallet.MaxAddressIndex + 1;
+				address_index = wallet.max_address_index + 1;
 
-			auto Result = Implementation->NewSigningWallet(Asset, Wallet, *AddressIndex);
-			if (!Result || *AddressIndex <= Wallet.MaxAddressIndex)
-				return Result;
+			auto result = implementation->new_signing_wallet(asset, wallet, *address_index);
+			if (!result || *address_index <= wallet.max_address_index)
+				return result;
 
-			auto WalletCopy = Wallet;
-			WalletCopy.MaxAddressIndex = *AddressIndex;
+			auto wallet_copy = wallet;
+			wallet_copy.max_address_index = *address_index;
 
-			Storages::Mediatorstate State = Storages::Mediatorstate(__func__, Asset);
-			auto Status = State.AddDerivedWallet(WalletCopy, *Result);
-			if (!Status)
-				return Status.Error();
+			storages::mediatorstate state = storages::mediatorstate(__func__, asset);
+			auto status = state.add_derived_wallet(wallet_copy, *result);
+			if (!status)
+				return status.error();
 
-			return Result;
+			return result;
 		}
-		ExpectsLR<Mediator::DerivedSigningWallet> ServerNode::NewSigningWallet(const Algorithm::AssetId& Asset, const PrivateKey& SigningKey)
+		expects_lr<mediator::derived_signing_wallet> server_node::new_signing_wallet(const algorithm::asset_id& asset, const secret_box& signing_key)
 		{
-			if (!Algorithm::Asset::IsValid(Asset))
-				return ExpectsLR<Mediator::DerivedSigningWallet>(LayerException("asset not found"));
+			if (!algorithm::asset::is_valid(asset))
+				return expects_lr<mediator::derived_signing_wallet>(layer_exception("asset not found"));
 
-			if (SigningKey.Empty())
-				return ExpectsLR<Mediator::DerivedSigningWallet>(LayerException("key not found"));
+			if (signing_key.empty())
+				return expects_lr<mediator::derived_signing_wallet>(layer_exception("key not found"));
 
-			auto* Implementation = GetChain(Asset);
-			if (!Implementation)
-				return ExpectsLR<Mediator::DerivedSigningWallet>(LayerException("chain not found"));
+			auto* implementation = get_chain(asset);
+			if (!implementation)
+				return expects_lr<mediator::derived_signing_wallet>(layer_exception("chain not found"));
 
-			return Implementation->NewSigningWallet(Asset, SigningKey);
+			return implementation->new_signing_wallet(asset, signing_key);
 		}
-		ExpectsLR<Mediator::DerivedVerifyingWallet> ServerNode::NewVerifyingWallet(const Algorithm::AssetId& Asset, const std::string_view& VerifyingKey)
+		expects_lr<mediator::derived_verifying_wallet> server_node::new_verifying_wallet(const algorithm::asset_id& asset, const std::string_view& verifying_key)
 		{
-			if (!Algorithm::Asset::IsValid(Asset))
-				return ExpectsLR<Mediator::DerivedVerifyingWallet>(LayerException("asset not found"));
+			if (!algorithm::asset::is_valid(asset))
+				return expects_lr<mediator::derived_verifying_wallet>(layer_exception("asset not found"));
 
-			if (VerifyingKey.empty())
-				return ExpectsLR<Mediator::DerivedVerifyingWallet>(LayerException("key not found"));
+			if (verifying_key.empty())
+				return expects_lr<mediator::derived_verifying_wallet>(layer_exception("key not found"));
 
-			auto* Implementation = GetChain(Asset);
-			if (!Implementation)
-				return ExpectsLR<Mediator::DerivedVerifyingWallet>(LayerException("chain not found"));
+			auto* implementation = get_chain(asset);
+			if (!implementation)
+				return expects_lr<mediator::derived_verifying_wallet>(layer_exception("chain not found"));
 
-			return Implementation->NewVerifyingWallet(Asset, VerifyingKey);
+			return implementation->new_verifying_wallet(asset, verifying_key);
 		}
-		ExpectsLR<String> ServerNode::NewPublicKeyHash(const Algorithm::AssetId& Asset, const std::string_view& Address)
+		expects_lr<string> server_node::new_public_key_hash(const algorithm::asset_id& asset, const std::string_view& address)
 		{
-			if (!Algorithm::Asset::IsValid(Asset))
-				return ExpectsLR<String>(LayerException("asset not found"));
+			if (!algorithm::asset::is_valid(asset))
+				return expects_lr<string>(layer_exception("asset not found"));
 
-			if (Address.empty())
-				return ExpectsLR<String>(LayerException("address not found"));
+			if (address.empty())
+				return expects_lr<string>(layer_exception("address not found"));
 
-			auto* Implementation = GetChain(Asset);
-			if (!Implementation)
-				return ExpectsLR<String>(LayerException("chain not found"));
+			auto* implementation = get_chain(asset);
+			if (!implementation)
+				return expects_lr<string>(layer_exception("chain not found"));
 
-			return Implementation->NewPublicKeyHash(Address);
+			return implementation->new_public_key_hash(address);
 		}
-		ExpectsLR<String> ServerNode::SignMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const PrivateKey& SigningKey)
+		expects_lr<string> server_node::sign_message(const algorithm::asset_id& asset, const std::string_view& message, const secret_box& signing_key)
 		{
-			if (!Algorithm::Asset::IsValid(Asset))
-				return ExpectsLR<String>(LayerException("asset not found"));
+			if (!algorithm::asset::is_valid(asset))
+				return expects_lr<string>(layer_exception("asset not found"));
 
-			auto* Implementation = GetChain(Asset);
-			if (!Implementation)
-				return ExpectsLR<String>(LayerException("chain not found"));
+			auto* implementation = get_chain(asset);
+			if (!implementation)
+				return expects_lr<string>(layer_exception("chain not found"));
 
-			return Implementation->SignMessage(Asset, Message, SigningKey);
+			return implementation->sign_message(asset, message, signing_key);
 		}
-		ExpectsLR<void> ServerNode::VerifyMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const std::string_view& VerifyingKey, const std::string_view& Signature)
+		expects_lr<void> server_node::verify_message(const algorithm::asset_id& asset, const std::string_view& message, const std::string_view& verifying_key, const std::string_view& signature)
 		{
-			if (!Algorithm::Asset::IsValid(Asset))
-				return ExpectsLR<void>(LayerException("asset not found"));
+			if (!algorithm::asset::is_valid(asset))
+				return expects_lr<void>(layer_exception("asset not found"));
 
-			auto* Implementation = GetChain(Asset);
-			if (!Implementation)
-				return ExpectsLR<void>(LayerException("chain not found"));
+			auto* implementation = get_chain(asset);
+			if (!implementation)
+				return expects_lr<void>(layer_exception("chain not found"));
 
-			bool IsMessageHex = Format::Util::IsHexEncoding(Message);
-			String MessageData1 = IsMessageHex ? Format::Util::Decode0xHex(Message) : String(Message);
-			String MessageData2 = IsMessageHex ? String(Message) : Format::Util::Encode0xHex(Message);
-			auto Status = Implementation->VerifyMessage(Asset, MessageData1, VerifyingKey, Signature);
-			if (Status)
-				return Status;
+			bool is_message_hex = format::util::is_hex_encoding(message);
+			string message_data1 = is_message_hex ? format::util::decode_0xhex(message) : string(message);
+			string message_data2 = is_message_hex ? string(message) : format::util::encode_0xhex(message);
+			auto status = implementation->verify_message(asset, message_data1, verifying_key, signature);
+			if (status)
+				return status;
 
-			return Implementation->VerifyMessage(Asset, MessageData2, VerifyingKey, Signature);
+			return implementation->verify_message(asset, message_data2, verifying_key, signature);
 		}
-		ExpectsLR<void> ServerNode::EnableSigningWallet(const Algorithm::AssetId& Asset, const Mediator::MasterWallet& Wallet, const Mediator::DerivedSigningWallet& SigningWallet)
+		expects_lr<void> server_node::enable_signing_wallet(const algorithm::asset_id& asset, const mediator::master_wallet& wallet, const mediator::derived_signing_wallet& signing_wallet)
 		{
-			if (!Algorithm::Asset::IsValid(Asset))
-				return LayerException("asset not found");
+			if (!algorithm::asset::is_valid(asset))
+				return layer_exception("asset not found");
 
-			if (!Wallet.IsValid())
-				return LayerException("wallet not found");
+			if (!wallet.is_valid())
+				return layer_exception("wallet not found");
 
-			auto* Implementation = GetChain(Asset);
-			if (!Implementation)
-				return LayerException("chain not found");
+			auto* implementation = get_chain(asset);
+			if (!implementation)
+				return layer_exception("chain not found");
 
-			if (Wallet.MaxAddressIndex < SigningWallet.AddressIndex.Or(0))
-				return LayerException("bad address index");
+			if (wallet.max_address_index < signing_wallet.address_index.otherwise(0))
+				return layer_exception("bad address index");
 
-			Storages::Mediatorstate State = Storages::Mediatorstate(__func__, Asset);
-			auto Status = State.AddDerivedWallet(Wallet, SigningWallet);
-			if (!Status)
-				return Status.Error();
+			storages::mediatorstate state = storages::mediatorstate(__func__, asset);
+			auto status = state.add_derived_wallet(wallet, signing_wallet);
+			if (!status)
+				return status.error();
 
-			return Expectation::Met;
+			return expectation::met;
 		}
-		ExpectsLR<void> ServerNode::EnableCheckpointHeight(const Algorithm::AssetId& Asset, uint64_t BlockHeight)
+		expects_lr<void> server_node::enable_checkpoint_height(const algorithm::asset_id& asset, uint64_t block_height)
 		{
-			if (!Algorithm::Asset::IsValid(Asset))
-				return ExpectsLR<void>(LayerException("asset not found"));
+			if (!algorithm::asset::is_valid(asset))
+				return expects_lr<void>(layer_exception("asset not found"));
 
-			Storages::Mediatorstate State = Storages::Mediatorstate(__func__, Asset);
-			return State.SetProperty("tip_override", Var::Set::Integer(BlockHeight));
+			storages::mediatorstate state = storages::mediatorstate(__func__, asset);
+			return state.set_property("tip_override", var::set::integer(block_height));
 		}
-		ExpectsLR<void> ServerNode::EnableContractAddress(const Algorithm::AssetId& Asset, const std::string_view& ContractAddress)
+		expects_lr<void> server_node::enable_contract_address(const algorithm::asset_id& asset, const std::string_view& contract_address)
 		{
-			if (!Algorithm::Asset::IsValid(Asset))
-				return ExpectsLR<void>(LayerException("asset not found"));
+			if (!algorithm::asset::is_valid(asset))
+				return expects_lr<void>(layer_exception("asset not found"));
 
-			if (ContractAddress.empty())
-				return ExpectsLR<void>(LayerException("contract address not found"));
+			if (contract_address.empty())
+				return expects_lr<void>(layer_exception("contract address not found"));
 
-			auto* Implementation = GetChain(Asset);
-			if (!Implementation)
-				return ExpectsLR<void>(LayerException("chain not found"));
+			auto* implementation = get_chain(asset);
+			if (!implementation)
+				return expects_lr<void>(layer_exception("chain not found"));
 
-			Storages::Mediatorstate State = Storages::Mediatorstate(__func__, Asset);
-			auto Key = "contract_address:" + Algorithm::Asset::TokenOf(Asset);
-			auto Value = State.GetProperty(Key);
-			if (!Value)
-				Value = Var::Set::Array();
+			storages::mediatorstate state = storages::mediatorstate(__func__, asset);
+			auto key = "contract_address:" + algorithm::asset::token_of(asset);
+			auto value = state.get_property(key);
+			if (!value)
+				value = var::set::array();
 
-			UnorderedSet<String> Addresses;
-			for (auto& Item : Value->GetChilds())
-				Addresses.insert(Item->Value.GetBlob());
+			unordered_set<string> addresses;
+			for (auto& item : value->get_childs())
+				addresses.insert(item->value.get_blob());
 
-			auto Address = Implementation->GetChecksumHash(ContractAddress);
-			if (Addresses.find(Address) != Addresses.end())
-				return Expectation::Met;
+			auto address = implementation->get_checksum_hash(contract_address);
+			if (addresses.find(address) != addresses.end())
+				return expectation::met;
 
-			Value->Push(Var::Set::String(Address));
-			return State.SetProperty(Key, *Value);
+			value->push(var::set::string(address));
+			return state.set_property(key, *value);
 		}
-		ExpectsLR<void> ServerNode::EnableWalletAddress(const Algorithm::AssetId& Asset, const std::string_view& Binding, const std::string_view& Address, uint64_t AddressIndex)
+		expects_lr<void> server_node::enable_wallet_address(const algorithm::asset_id& asset, const std::string_view& binding, const std::string_view& address, uint64_t address_index)
 		{
-			if (!Algorithm::Asset::IsValid(Asset))
-				return ExpectsLR<void>(LayerException("asset not found"));
+			if (!algorithm::asset::is_valid(asset))
+				return expects_lr<void>(layer_exception("asset not found"));
 
-			if (Stringify::IsEmptyOrWhitespace(Address))
-				return ExpectsLR<void>(LayerException("address not found"));
+			if (stringify::is_empty_or_whitespace(address))
+				return expects_lr<void>(layer_exception("address not found"));
 
-			if (Binding.empty())
-				return ExpectsLR<void>(LayerException("binding not found"));
+			if (binding.empty())
+				return expects_lr<void>(layer_exception("binding not found"));
 
-			auto* Implementation = GetChain(Asset);
-			if (!Implementation)
-				return ExpectsLR<void>(LayerException("chain not found"));
+			auto* implementation = get_chain(asset);
+			if (!implementation)
+				return expects_lr<void>(layer_exception("chain not found"));
 
-			Storages::Mediatorstate State = Storages::Mediatorstate(__func__, Asset);
-			String CanonicalAddress = Implementation->GetChecksumHash(Address);
-			auto CandidateAddressIndex = State.GetAddressIndex(CanonicalAddress);
-			if (!CandidateAddressIndex)
+			storages::mediatorstate state = storages::mediatorstate(__func__, asset);
+			string canonical_address = implementation->get_checksum_hash(address);
+			auto candidate_address_index = state.get_address_index(canonical_address);
+			if (!candidate_address_index)
 			{
-				Mediator::IndexAddress NewAddressIndex;
-				NewAddressIndex.Binding = Binding;
-				NewAddressIndex.Address = Address;
-				NewAddressIndex.AddressIndex = AddressIndex;
+				mediator::index_address new_address_index;
+				new_address_index.binding = binding;
+				new_address_index.address = address;
+				new_address_index.address_index = address_index;
 
-				auto Status = State.SetAddressIndex(CanonicalAddress, NewAddressIndex);
-				if (!Status)
-					return Status;
-				goto Degrade;
+				auto status = state.set_address_index(canonical_address, new_address_index);
+				if (!status)
+					return status;
+				goto degrade;
 			}
-			else if (!CandidateAddressIndex->AddressIndex || AddressIndex != *CandidateAddressIndex->AddressIndex)
+			else if (!candidate_address_index->address_index || address_index != *candidate_address_index->address_index)
 			{
-				CandidateAddressIndex->AddressIndex = AddressIndex;
-				auto Status = State.SetAddressIndex(CanonicalAddress, *CandidateAddressIndex);
-				if (!Status)
-					return Status;
-				goto Degrade;
-			}
-
-			return Expectation::Met;
-		Degrade:
-			auto BlockHeight = GetLatestKnownBlockHeight(Asset);
-			if (!BlockHeight || !*BlockHeight)
-				return Expectation::Met;
-
-			uint64_t Latency = Implementation->GetChainparams().SyncLatency * Protocol::Now().User.NSS.BlockReplayMultiplier;
-			if (Latency > 0)
-				EnableCheckpointHeight(Asset, Latency >= *BlockHeight ? 1 : *BlockHeight - Latency);
-
-			return Expectation::Met;
-		}
-		ExpectsLR<void> ServerNode::DisableWalletAddress(const Algorithm::AssetId& Asset, const std::string_view& Address)
-		{
-			if (!Algorithm::Asset::IsValid(Asset))
-				return ExpectsLR<void>(LayerException("asset not found"));
-
-			if (Stringify::IsEmptyOrWhitespace(Address))
-				return ExpectsLR<void>(LayerException("address not found"));
-
-			auto* Implementation = GetChain(Asset);
-			if (!Implementation)
-				return ExpectsLR<void>(LayerException("chain not found"));
-
-			Storages::Mediatorstate State = Storages::Mediatorstate(__func__, Asset);
-			String CanonicalAddress = Implementation->GetChecksumHash(Address);
-			return State.ClearAddressIndex(CanonicalAddress);
-		}
-		ExpectsLR<uint64_t> ServerNode::GetLatestKnownBlockHeight(const Algorithm::AssetId& Asset)
-		{
-			if (!Algorithm::Asset::IsValid(Asset))
-				return ExpectsLR<uint64_t>(LayerException("asset not found"));
-
-			uint64_t BlockHeight = 0;
-			Storages::Mediatorstate State = Storages::Mediatorstate(__func__, Asset);
-			auto LatestBlockHeight = UPtr<Schema>(State.GetProperty("tip_latest"));
-			if (LatestBlockHeight)
-			{
-				uint64_t PossibleBlockHeight = (uint64_t)LatestBlockHeight->Value.GetInteger();
-				if (PossibleBlockHeight > BlockHeight)
-					BlockHeight = PossibleBlockHeight;
+				candidate_address_index->address_index = address_index;
+				auto status = state.set_address_index(canonical_address, *candidate_address_index);
+				if (!status)
+					return status;
+				goto degrade;
 			}
 
-			auto CheckpointBlockHeight = UPtr<Schema>(State.GetProperty("tip_checkpoint"));
-			if (CheckpointBlockHeight)
+			return expectation::met;
+		degrade:
+			auto block_height = get_latest_known_block_height(asset);
+			if (!block_height || !*block_height)
+				return expectation::met;
+
+			uint64_t latency = implementation->get_chainparams().sync_latency * protocol::now().user.nss.block_replay_multiplier;
+			if (latency > 0)
+				enable_checkpoint_height(asset, latency >= *block_height ? 1 : *block_height - latency);
+
+			return expectation::met;
+		}
+		expects_lr<void> server_node::disable_wallet_address(const algorithm::asset_id& asset, const std::string_view& address)
+		{
+			if (!algorithm::asset::is_valid(asset))
+				return expects_lr<void>(layer_exception("asset not found"));
+
+			if (stringify::is_empty_or_whitespace(address))
+				return expects_lr<void>(layer_exception("address not found"));
+
+			auto* implementation = get_chain(asset);
+			if (!implementation)
+				return expects_lr<void>(layer_exception("chain not found"));
+
+			storages::mediatorstate state = storages::mediatorstate(__func__, asset);
+			string canonical_address = implementation->get_checksum_hash(address);
+			return state.clear_address_index(canonical_address);
+		}
+		expects_lr<uint64_t> server_node::get_latest_known_block_height(const algorithm::asset_id& asset)
+		{
+			if (!algorithm::asset::is_valid(asset))
+				return expects_lr<uint64_t>(layer_exception("asset not found"));
+
+			uint64_t block_height = 0;
+			storages::mediatorstate state = storages::mediatorstate(__func__, asset);
+			auto latest_block_height = uptr<schema>(state.get_property("tip_latest"));
+			if (latest_block_height)
 			{
-				uint64_t PossibleBlockHeight = (uint64_t)CheckpointBlockHeight->Value.GetInteger();
-				if (PossibleBlockHeight > BlockHeight)
-					BlockHeight = PossibleBlockHeight;
+				uint64_t possible_block_height = (uint64_t)latest_block_height->value.get_integer();
+				if (possible_block_height > block_height)
+					block_height = possible_block_height;
 			}
 
-			if (!BlockHeight)
-				return ExpectsLR<uint64_t>(LayerException("block not found"));
-
-			return ExpectsLR<uint64_t>(BlockHeight);
-		}
-		ExpectsLR<Mediator::IndexAddress> ServerNode::GetAddressIndex(const Algorithm::AssetId& Asset, const std::string_view& Address)
-		{
-			Storages::Mediatorstate State = Storages::Mediatorstate(__func__, Asset);
-			return State.GetAddressIndex(Address);
-		}
-		ExpectsLR<UnorderedMap<String, Mediator::IndexAddress>> ServerNode::GetAddressIndices(const Algorithm::AssetId& Asset, const UnorderedSet<String>& Addresses)
-		{
-			Storages::Mediatorstate State = Storages::Mediatorstate(__func__, Asset);
-			return State.GetAddressIndices(Addresses);
-		}
-		ExpectsLR<Vector<String>> ServerNode::GetAddressIndices(const Algorithm::AssetId& Asset)
-		{
-			Storages::Mediatorstate State = Storages::Mediatorstate(__func__, Asset);
-			return State.GetAddressIndices();
-		}
-		ExpectsLR<void> ServerNode::AddUTXO(const Algorithm::AssetId& Asset, const Mediator::IndexUTXO& Value)
-		{
-			Storages::Mediatorstate State = Storages::Mediatorstate(__func__, Asset);
-			return State.AddUTXO(Value);
-		}
-		ExpectsLR<void> ServerNode::RemoveUTXO(const Algorithm::AssetId& Asset, const std::string_view& TransactionId, uint32_t Index)
-		{
-			Storages::Mediatorstate State = Storages::Mediatorstate(__func__, Asset);
-			return State.RemoveUTXO(TransactionId, Index);
-		}
-		ExpectsLR<Mediator::IndexUTXO> ServerNode::GetUTXO(const Algorithm::AssetId& Asset, const std::string_view& TransactionId, uint32_t Index)
-		{
-			Storages::Mediatorstate State = Storages::Mediatorstate(__func__, Asset);
-			return State.GetUTXO(TransactionId, Index);
-		}
-		ExpectsLR<Vector<Mediator::IndexUTXO>> ServerNode::GetUTXOs(const Algorithm::AssetId& Asset, const std::string_view& Binding, size_t Offset, size_t Count)
-		{
-			Storages::Mediatorstate State = Storages::Mediatorstate(__func__, Asset);
-			return State.GetUTXOs(Binding, Offset, Count);
-		}
-		ExpectsLR<Schema*> ServerNode::LoadCache(const Algorithm::AssetId& Asset, Mediator::CachePolicy Policy, const std::string_view& Key)
-		{
-			Storages::Mediatorstate State = Storages::Mediatorstate(__func__, Asset);
-			return State.GetCache(Policy, Key);
-		}
-		ExpectsLR<void> ServerNode::StoreCache(const Algorithm::AssetId& Asset, Mediator::CachePolicy Policy, const std::string_view& Key, UPtr<Schema>&& Value)
-		{
-			Storages::Mediatorstate State = Storages::Mediatorstate(__func__, Asset);
-			return State.SetCache(Policy, Key, std::move(Value));
-		}
-		Option<String> ServerNode::GetContractAddress(const Algorithm::AssetId& Asset)
-		{
-			if (!Algorithm::Asset::IsValid(Asset))
-				return Optional::None;
-
-			auto Blockchain = Algorithm::Asset::BlockchainOf(Asset);
-			auto Token = Algorithm::Asset::TokenOf(Asset);
-			Storages::Mediatorstate State = Storages::Mediatorstate(__func__, Asset);
-			auto Value = UPtr<Schema>(State.GetProperty("contract_address:" + Token));
-			if (!Value || Value->Empty())
-				return Optional::None;
-
-			auto TargetChecksum = Algorithm::Asset::ChecksumOf(Asset);
-			for (auto& Item : Value->GetChilds())
+			auto checkpoint_block_height = uptr<schema>(state.get_property("tip_checkpoint"));
+			if (checkpoint_block_height)
 			{
-				auto CandidateAddress = Item->Value.GetBlob();
-				auto CandidateChecksum = Algorithm::Asset::ChecksumOf(Algorithm::Asset::IdOf(Blockchain, Token, CandidateAddress));
-				if (CandidateChecksum == TargetChecksum)
-					return CandidateAddress;
+				uint64_t possible_block_height = (uint64_t)checkpoint_block_height->value.get_integer();
+				if (possible_block_height > block_height)
+					block_height = possible_block_height;
 			}
 
-			return Value->Get(0)->Value.GetBlob();
-		}
-		UnorderedMap<Algorithm::AssetId, Mediator::RelayBackend::Chainparams> ServerNode::GetChains()
-		{
-			UMutex<std::recursive_mutex> Unique(ControlSys.Sync);
-			UnorderedMap<Algorithm::AssetId, Mediator::RelayBackend::Chainparams> Result;
-			Result.reserve(Chains.size());
-			for (auto& Next : Chains)
-				Result[Algorithm::Asset::IdOf(Next.first)] = Next.second->GetChainparams();
-			return Result;
-		}
-		UnorderedMap<String, Mediator::MasterWallet> ServerNode::GetWallets(const Algorithm::Seckey PrivateKey)
-		{
-			UnorderedMap<String, Mediator::MasterWallet> Wallets;
-			for (auto& Chain : GetAssets())
-			{
-				auto Wallet = NewMasterWallet(Chain, PrivateKey);
-				if (Wallet)
-					Wallets[Algorithm::Asset::HandleOf(Chain)] = std::move(*Wallet);
-			}
-			return Wallets;
-		}
-		UnorderedMap<String, InvocationCallback>& ServerNode::GetRegistrations()
-		{
-			if (!Registrations.empty())
-				return Registrations;
+			if (!block_height)
+				return expects_lr<uint64_t>(layer_exception("block not found"));
 
-			Registrations =
+			return expects_lr<uint64_t>(block_height);
+		}
+		expects_lr<mediator::index_address> server_node::get_address_index(const algorithm::asset_id& asset, const std::string_view& address)
+		{
+			storages::mediatorstate state = storages::mediatorstate(__func__, asset);
+			return state.get_address_index(address);
+		}
+		expects_lr<unordered_map<string, mediator::index_address>> server_node::get_address_indices(const algorithm::asset_id& asset, const unordered_set<string>& addresses)
+		{
+			storages::mediatorstate state = storages::mediatorstate(__func__, asset);
+			return state.get_address_indices(addresses);
+		}
+		expects_lr<vector<string>> server_node::get_address_indices(const algorithm::asset_id& asset)
+		{
+			storages::mediatorstate state = storages::mediatorstate(__func__, asset);
+			return state.get_address_indices();
+		}
+		expects_lr<void> server_node::add_utxo(const algorithm::asset_id& asset, const mediator::index_utxo& value)
+		{
+			storages::mediatorstate state = storages::mediatorstate(__func__, asset);
+			return state.add_utxo(value);
+		}
+		expects_lr<void> server_node::remove_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint32_t index)
+		{
+			storages::mediatorstate state = storages::mediatorstate(__func__, asset);
+			return state.remove_utxo(transaction_id, index);
+		}
+		expects_lr<mediator::index_utxo> server_node::get_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint32_t index)
+		{
+			storages::mediatorstate state = storages::mediatorstate(__func__, asset);
+			return state.get_utxo(transaction_id, index);
+		}
+		expects_lr<vector<mediator::index_utxo>> server_node::get_utxos(const algorithm::asset_id& asset, const std::string_view& binding, size_t offset, size_t count)
+		{
+			storages::mediatorstate state = storages::mediatorstate(__func__, asset);
+			return state.get_utxos(binding, offset, count);
+		}
+		expects_lr<schema*> server_node::load_cache(const algorithm::asset_id& asset, mediator::cache_policy policy, const std::string_view& key)
+		{
+			storages::mediatorstate state = storages::mediatorstate(__func__, asset);
+			return state.get_cache(policy, key);
+		}
+		expects_lr<void> server_node::store_cache(const algorithm::asset_id& asset, mediator::cache_policy policy, const std::string_view& key, uptr<schema>&& value)
+		{
+			storages::mediatorstate state = storages::mediatorstate(__func__, asset);
+			return state.set_cache(policy, key, std::move(value));
+		}
+		option<string> server_node::get_contract_address(const algorithm::asset_id& asset)
+		{
+			if (!algorithm::asset::is_valid(asset))
+				return optional::none;
+
+			auto blockchain = algorithm::asset::blockchain_of(asset);
+			auto token = algorithm::asset::token_of(asset);
+			storages::mediatorstate state = storages::mediatorstate(__func__, asset);
+			auto value = uptr<schema>(state.get_property("contract_address:" + token));
+			if (!value || value->empty())
+				return optional::none;
+
+			auto target_checksum = algorithm::asset::checksum_of(asset);
+			for (auto& item : value->get_childs())
 			{
-				{ "ARB", Chain<Mediator::Backends::Arbitrum>(this) },
-				{ "AVAX", Chain<Mediator::Backends::Avalanche>(this) },
-				{ "BTC", Chain<Mediator::Backends::Bitcoin>(this) },
-				{ "BCH", Chain<Mediator::Backends::BitcoinCash>(this) },
-				{ "BTG", Chain<Mediator::Backends::BitcoinGold>(this) },
-				{ "BSC", Chain<Mediator::Backends::BinanceSmartChain>(this) },
-				{ "BSV", Chain<Mediator::Backends::BitcoinSV>(this) },
-				{ "ADA", Chain<Mediator::Backends::Cardano>(this) },
-				{ "CELO", Chain<Mediator::Backends::Celo>(this) },
-				{ "DASH", Chain<Mediator::Backends::Dash>(this) },
-				{ "DGB", Chain<Mediator::Backends::Digibyte>(this) },
-				{ "DOGE", Chain<Mediator::Backends::Dogecoin>(this) },
-				{ "ETH", Chain<Mediator::Backends::Ethereum>(this) },
-				{ "ETC", Chain<Mediator::Backends::EthereumClassic>(this) },
-				{ "FTM", Chain<Mediator::Backends::Fantom>(this) },
-				{ "FUSE", Chain<Mediator::Backends::Fuse>(this) },
-				{ "ONE", Chain<Mediator::Backends::Harmony>(this) },
-				{ "LTC", Chain<Mediator::Backends::Litecoin>(this) },
-				{ "GLMR", Chain<Mediator::Backends::Moonbeam>(this) },
-				{ "OP", Chain<Mediator::Backends::Optimism>(this) },
-				{ "MATIC", Chain<Mediator::Backends::Polygon>(this) },
-				{ "XRP", Chain<Mediator::Backends::Ripple>(this) },
-				{ "XEC", Chain<Mediator::Backends::ECash>(this) },
-				{ "RIF", Chain<Mediator::Backends::Rootstock>(this) },
-				{ "SOL", Chain<Mediator::Backends::Solana>(this) },
-				{ "XLM", Chain<Mediator::Backends::Stellar>(this) },
-				{ "TRX", Chain<Mediator::Backends::Tron>(this) },
-				{ "ZEC", Chain<Mediator::Backends::ZCash>(this) },
-				{ "XMR", Chain<Mediator::Backends::Monero>(this) },
+				auto candidate_address = item->value.get_blob();
+				auto candidate_checksum = algorithm::asset::checksum_of(algorithm::asset::id_of(blockchain, token, candidate_address));
+				if (candidate_checksum == target_checksum)
+					return candidate_address;
+			}
+
+			return value->get(0)->value.get_blob();
+		}
+		unordered_map<algorithm::asset_id, mediator::relay_backend::chainparams> server_node::get_chains()
+		{
+			umutex<std::recursive_mutex> unique(control_sys.sync);
+			unordered_map<algorithm::asset_id, mediator::relay_backend::chainparams> result;
+			result.reserve(chains.size());
+			for (auto& next : chains)
+				result[algorithm::asset::id_of(next.first)] = next.second->get_chainparams();
+			return result;
+		}
+		unordered_map<string, mediator::master_wallet> server_node::get_wallets(const algorithm::seckey private_key)
+		{
+			unordered_map<string, mediator::master_wallet> wallets;
+			for (auto& chain : get_assets())
+			{
+				auto wallet = new_master_wallet(chain, private_key);
+				if (wallet)
+					wallets[algorithm::asset::handle_of(chain)] = std::move(*wallet);
+			}
+			return wallets;
+		}
+		unordered_map<string, invocation_callback>& server_node::get_registrations()
+		{
+			if (!registrations.empty())
+				return registrations;
+
+			registrations =
+			{
+				{ "ARB", chain<mediator::backends::arbitrum>(this) },
+				{ "AVAX", chain<mediator::backends::avalanche>(this) },
+				{ "BTC", chain<mediator::backends::bitcoin>(this) },
+				{ "BCH", chain<mediator::backends::bitcoin_cash>(this) },
+				{ "BTG", chain<mediator::backends::bitcoin_gold>(this) },
+				{ "BSC", chain<mediator::backends::binance_smart_chain>(this) },
+				{ "BSV", chain<mediator::backends::bitcoin_sv>(this) },
+				{ "ADA", chain<mediator::backends::cardano>(this) },
+				{ "CELO", chain<mediator::backends::celo>(this) },
+				{ "DASH", chain<mediator::backends::dash>(this) },
+				{ "DGB", chain<mediator::backends::digibyte>(this) },
+				{ "DOGE", chain<mediator::backends::dogecoin>(this) },
+				{ "ETH", chain<mediator::backends::ethereum>(this) },
+				{ "ETC", chain<mediator::backends::ethereum_classic>(this) },
+				{ "FTM", chain<mediator::backends::fantom>(this) },
+				{ "FUSE", chain<mediator::backends::fuse>(this) },
+				{ "ONE", chain<mediator::backends::harmony>(this) },
+				{ "LTC", chain<mediator::backends::litecoin>(this) },
+				{ "GLMR", chain<mediator::backends::moonbeam>(this) },
+				{ "OP", chain<mediator::backends::optimism>(this) },
+				{ "MATIC", chain<mediator::backends::polygon>(this) },
+				{ "XRP", chain<mediator::backends::ripple>(this) },
+				{ "XEC", chain<mediator::backends::ecash>(this) },
+				{ "RIF", chain<mediator::backends::rootstock>(this) },
+				{ "SOL", chain<mediator::backends::solana>(this) },
+				{ "XLM", chain<mediator::backends::stellar>(this) },
+				{ "TRX", chain<mediator::backends::tron>(this) },
+				{ "ZEC", chain<mediator::backends::zcash>(this) },
+				{ "XMR", chain<mediator::backends::monero>(this) },
 			};
-			return Registrations;
+			return registrations;
 		}
-		Vector<Algorithm::AssetId> ServerNode::GetAssets(bool ObservingOnly)
+		vector<algorithm::asset_id> server_node::get_assets(bool observing_only)
 		{
-			UMutex<std::recursive_mutex> Unique(ControlSys.Sync);
-			Vector<Algorithm::AssetId> Currencies;
-			if (ObservingOnly)
+			umutex<std::recursive_mutex> unique(control_sys.sync);
+			vector<algorithm::asset_id> currencies;
+			if (observing_only)
 			{
-				Currencies.reserve(Nodes.size());
-				for (auto& Node : Nodes)
-					Currencies.push_back(Algorithm::Asset::IdOf(Node.first));
+				currencies.reserve(nodes.size());
+				for (auto& node : nodes)
+					currencies.push_back(algorithm::asset::id_of(node.first));
 			}
 			else
 			{
-				Currencies.reserve(Chains.size());
-				for (auto& Next : Chains)
-					Currencies.push_back(Algorithm::Asset::IdOf(Next.first));
+				currencies.reserve(chains.size());
+				for (auto& next : chains)
+					currencies.push_back(algorithm::asset::id_of(next.first));
 			}
-			return Currencies;
+			return currencies;
 		}
-		Vector<UPtr<Mediator::ServerRelay>>* ServerNode::GetNodes(const Algorithm::AssetId& Asset)
+		vector<uptr<mediator::server_relay>>* server_node::get_nodes(const algorithm::asset_id& asset)
 		{
-			UMutex<std::recursive_mutex> Unique(ControlSys.Sync);
-			auto It = Nodes.find(Algorithm::Asset::BlockchainOf(Asset));
-			if (It == Nodes.end() || It->second.empty())
+			umutex<std::recursive_mutex> unique(control_sys.sync);
+			auto it = nodes.find(algorithm::asset::blockchain_of(asset));
+			if (it == nodes.end() || it->second.empty())
 				return nullptr;
 
-			return &It->second;
+			return &it->second;
 		}
-		const Mediator::RelayBackend::Chainparams* ServerNode::GetChainparams(const Algorithm::AssetId& Asset)
+		const mediator::relay_backend::chainparams* server_node::get_chainparams(const algorithm::asset_id& asset)
 		{
-			UMutex<std::recursive_mutex> Unique(ControlSys.Sync);
-			auto It = Chains.find(Algorithm::Asset::BlockchainOf(Asset));
-			if (It != Chains.end())
+			umutex<std::recursive_mutex> unique(control_sys.sync);
+			auto it = chains.find(algorithm::asset::blockchain_of(asset));
+			if (it != chains.end())
 			{
-				auto& Params = It->second->GetChainparams();
-				return &Params;
+				auto& params = it->second->get_chainparams();
+				return &params;
 			}
 
 			return nullptr;
 		}
-		Mediator::ServerRelay* ServerNode::AddNode(const Algorithm::AssetId& Asset, const std::string_view& URL, double Throttling)
+		mediator::server_relay* server_node::add_node(const algorithm::asset_id& asset, const std::string_view& URL, double throttling)
 		{
-			Mediator::ServerRelay* Instance = new Mediator::ServerRelay(URL, Throttling);
-			AddNodeInstance(Asset, Instance);
-			return Instance;
+			mediator::server_relay* instance = new mediator::server_relay(URL, throttling);
+			add_node_instance(asset, instance);
+			return instance;
 		}
-		Mediator::ServerRelay* ServerNode::GetNode(const Algorithm::AssetId& Asset)
+		mediator::server_relay* server_node::get_node(const algorithm::asset_id& asset)
 		{
-			UMutex<std::recursive_mutex> Unique(ControlSys.Sync);
-			auto It = Nodes.find(Algorithm::Asset::BlockchainOf(Asset));
-			if (It == Nodes.end() || It->second.empty())
+			umutex<std::recursive_mutex> unique(control_sys.sync);
+			auto it = nodes.find(algorithm::asset::blockchain_of(asset));
+			if (it == nodes.end() || it->second.empty())
 				return nullptr;
 
-			if (It->second.size() == 1)
-				return *It->second.front();
+			if (it->second.size() == 1)
+				return *it->second.front();
 
-			size_t Index = ((size_t)Math<size_t>::Random()) % It->second.size();
-			return *It->second[Index];
+			size_t index = ((size_t)math<size_t>::random()) % it->second.size();
+			return *it->second[index];
 		}
-		Mediator::RelayBackend* ServerNode::GetChain(const Algorithm::AssetId& Asset)
+		mediator::relay_backend* server_node::get_chain(const algorithm::asset_id& asset)
 		{
-			UMutex<std::recursive_mutex> Unique(ControlSys.Sync);
-			auto It = Chains.find(Algorithm::Asset::BlockchainOf(Asset));
-			if (It != Chains.end())
-				return *It->second;
-
-			return nullptr;
-		}
-		Schema* ServerNode::AddSpecifications(const Algorithm::AssetId& Asset, UPtr<Schema>&& Value)
-		{
-			UMutex<std::recursive_mutex> Unique(ControlSys.Sync);
-			auto& Instance = Specifications[Algorithm::Asset::BlockchainOf(Asset)];
-			Instance = std::move(Value);
-			return *Instance;
-		}
-		Schema* ServerNode::GetSpecifications(const Algorithm::AssetId& Asset)
-		{
-			UMutex<std::recursive_mutex> Unique(ControlSys.Sync);
-			auto It = Specifications.find(Algorithm::Asset::BlockchainOf(Asset));
-			if (It != Specifications.end())
-				return *It->second;
+			umutex<std::recursive_mutex> unique(control_sys.sync);
+			auto it = chains.find(algorithm::asset::blockchain_of(asset));
+			if (it != chains.end())
+				return *it->second;
 
 			return nullptr;
 		}
-		ServiceControl::ServiceNode ServerNode::GetEntrypoint()
+		schema* server_node::add_specifications(const algorithm::asset_id& asset, uptr<schema>&& value)
 		{
-			if (!Protocol::Now().User.NSS.Server)
-				return ServiceControl::ServiceNode();
+			umutex<std::recursive_mutex> unique(control_sys.sync);
+			auto& instance = specifications[algorithm::asset::blockchain_of(asset)];
+			instance = std::move(value);
+			return *instance;
+		}
+		schema* server_node::get_specifications(const algorithm::asset_id& asset)
+		{
+			umutex<std::recursive_mutex> unique(control_sys.sync);
+			auto it = specifications.find(algorithm::asset::blockchain_of(asset));
+			if (it != specifications.end())
+				return *it->second;
 
-			ServiceControl::ServiceNode Entrypoint;
-			Entrypoint.Startup = std::bind(&ServerNode::Startup, this);
-			Entrypoint.Shutdown = std::bind(&ServerNode::Shutdown, this);
-			return Entrypoint;
+			return nullptr;
 		}
-		Mediator::MultichainSupervisorOptions& ServerNode::GetOptions()
+		service_control::service_node server_node::get_entrypoint()
 		{
-			return Options;
+			if (!protocol::now().user.nss.server)
+				return service_control::service_node();
+
+			service_control::service_node entrypoint;
+			entrypoint.startup = std::bind(&server_node::startup, this);
+			entrypoint.shutdown = std::bind(&server_node::shutdown, this);
+			return entrypoint;
 		}
-		SystemControl& ServerNode::GetControl()
+		mediator::multichain_supervisor_options& server_node::get_options()
 		{
-			return ControlSys;
+			return options;
 		}
-		void ServerNode::AddTransactionCallback(const std::string_view& Name, TransactionCallback&& Callback)
+		system_control& server_node::get_control()
 		{
-			UMutex<std::recursive_mutex> Unique(ControlSys.Sync);
-			if (Callback)
-				Callbacks[String(Name)] = std::move(Callback);
+			return control_sys;
+		}
+		void server_node::add_transaction_callback(const std::string_view& name, transaction_callback&& callback)
+		{
+			umutex<std::recursive_mutex> unique(control_sys.sync);
+			if (callback)
+				callbacks[string(name)] = std::move(callback);
 			else
-				Callbacks.erase(String(Name));
+				callbacks.erase(string(name));
 		}
-		void ServerNode::AddNodeInstance(const Algorithm::AssetId& Asset, Mediator::ServerRelay* Instance)
+		void server_node::add_node_instance(const algorithm::asset_id& asset, mediator::server_relay* instance)
 		{
-			UMutex<std::recursive_mutex> Unique(ControlSys.Sync);
-			Nodes[Algorithm::Asset::BlockchainOf(Asset)].push_back(Instance);
+			umutex<std::recursive_mutex> unique(control_sys.sync);
+			nodes[algorithm::asset::blockchain_of(asset)].push_back(instance);
 		}
-		void ServerNode::AddChainInstance(const Algorithm::AssetId& Asset, Mediator::RelayBackend* Instance)
+		void server_node::add_chain_instance(const algorithm::asset_id& asset, mediator::relay_backend* instance)
 		{
-			UMutex<std::recursive_mutex> Unique(ControlSys.Sync);
-			Chains[Algorithm::Asset::BlockchainOf(Asset)] = Instance;
+			umutex<std::recursive_mutex> unique(control_sys.sync);
+			chains[algorithm::asset::blockchain_of(asset)] = instance;
 		}
-		void ServerNode::DispatchTransactionQueue(TransactionQueueState* State, TransactionParams* FromParams)
+		void server_node::dispatch_transaction_queue(transaction_queue_state* state, transaction_params* from_params)
 		{
-			if (!ControlSys.Enqueue())
+			if (!control_sys.enqueue())
 				return;
 
-			UMutex<std::recursive_mutex> Unique(ControlSys.Sync);
-			if (State->IsBusy && FromParams != nullptr)
+			umutex<std::recursive_mutex> unique(control_sys.sync);
+			if (state->is_busy && from_params != nullptr)
 			{
-				if (Protocol::Now().User.NSS.Logging)
-					VI_INFO("[observer] %s transaction 0x%p queued (position: %i)", State->Blockchain.c_str(), FromParams, (int)State->Transactions);
+				if (protocol::now().user.nss.logging)
+					VI_INFO("[observer] %s transaction 0x%p queued (position: %i)", state->blockchain.c_str(), from_params, (int)state->transactions);
 
-				++State->Transactions;
-				ControlSys.Dequeue();
-				return;
-			}
-			else if (State->Queue.empty())
-			{
-				if (Protocol::Now().User.NSS.Logging)
-					VI_INFO("[observer] %s transaction queue emptied (dispatches: %i)", State->Blockchain.c_str(), (int)State->Transactions);
-
-				State->Transactions = 0;
-				State->IsBusy = false;
-				ControlSys.Dequeue();
+				++state->transactions;
+				control_sys.dequeue();
 				return;
 			}
-			else if (FromParams != nullptr)
-				++State->Transactions;
-
-			auto* Params = State->Queue.front();
-			State->IsBusy = true;
-			State->Queue.pop();
-
-			if (Protocol::Now().User.NSS.Logging)
-				VI_INFO("[observer] %s transaction 0x%p now dispatching (position: %i)", State->Blockchain.c_str(), Params, (int)(State->Transactions - State->Queue.size() - 1));
-
-			Coasync<void>([this, State, Params]() -> Promise<void>
+			else if (state->queue.empty())
 			{
-				auto SignedTransaction = Coawait(NewTransaction(Params->Asset, Params->Wallet, Params->To, std::move(Params->Fee)));
-				if (!SignedTransaction)
+				if (protocol::now().user.nss.logging)
+					VI_INFO("[observer] %s transaction queue emptied (dispatches: %i)", state->blockchain.c_str(), (int)state->transactions);
+
+				state->transactions = 0;
+				state->is_busy = false;
+				control_sys.dequeue();
+				return;
+			}
+			else if (from_params != nullptr)
+				++state->transactions;
+
+			auto* params = state->queue.front();
+			state->is_busy = true;
+			state->queue.pop();
+
+			if (protocol::now().user.nss.logging)
+				VI_INFO("[observer] %s transaction 0x%p now dispatching (position: %i)", state->blockchain.c_str(), params, (int)(state->transactions - state->queue.size() - 1));
+
+			coasync<void>([this, state, params]() -> promise<void>
+			{
+				auto signed_transaction = coawait(new_transaction(params->asset, params->wallet, params->to, std::move(params->fee)));
+				if (!signed_transaction)
 				{
-					if (Protocol::Now().User.NSS.Logging)
-						VI_ERR("[observer] %s transaction 0x%p sign failed (%s)", State->Blockchain.c_str(), Params, SignedTransaction.Error().what());
+					if (protocol::now().user.nss.logging)
+						VI_ERR("[observer] %s transaction 0x%p sign failed (%s)", state->blockchain.c_str(), params, signed_transaction.error().what());
 
-					FinalizeTransaction(State, Params, std::move(SignedTransaction));
-					ControlSys.Dequeue();
-					CoreturnVoid;
+					finalize_transaction(state, params, std::move(signed_transaction));
+					control_sys.dequeue();
+					coreturn_void;
 				}
 
-				if (Protocol::Now().User.NSS.Logging)
+				if (protocol::now().user.nss.logging)
 					VI_INFO("[observer] %s transaction 0x%p signed (sighash: %s, data: %s)",
-					State->Blockchain.c_str(),
-					Params,
-					SignedTransaction->Transaction.TransactionId.c_str(),
-					SignedTransaction->Data.c_str());
+					state->blockchain.c_str(),
+					params,
+					signed_transaction->transaction.transaction_id.c_str(),
+					signed_transaction->data.c_str());
 
-				auto Status = Coawait(BroadcastTransaction(Params->Asset, Params->ExternalId, *SignedTransaction));
-				if (!Status)
+				auto status = coawait(broadcast_transaction(params->asset, params->external_id, *signed_transaction));
+				if (!status)
 				{
-					if (Protocol::Now().User.NSS.Logging)
-						VI_ERR("[observer] %s transaction 0x%p broadcast failed (%s)", State->Blockchain.c_str(), Params, Status.Error().what());
+					if (protocol::now().user.nss.logging)
+						VI_ERR("[observer] %s transaction 0x%p broadcast failed (%s)", state->blockchain.c_str(), params, status.error().what());
 
-					FinalizeTransaction(State, Params, Status.Error());
-					ControlSys.Dequeue();
-					CoreturnVoid;
+					finalize_transaction(state, params, status.error());
+					control_sys.dequeue();
+					coreturn_void;
 				}
-				else if (Protocol::Now().User.NSS.Logging)
-					VI_INFO("[observer] %s transaction 0x%p broadcasted", State->Blockchain.c_str(), Params, SignedTransaction->Transaction.TransactionId.c_str());
+				else if (protocol::now().user.nss.logging)
+					VI_INFO("[observer] %s transaction 0x%p broadcasted", state->blockchain.c_str(), params, signed_transaction->transaction.transaction_id.c_str());
 
-				FinalizeTransaction(State, Params, std::move(SignedTransaction));
-				ControlSys.Dequeue();
-				CoreturnVoid;
+				finalize_transaction(state, params, std::move(signed_transaction));
+				control_sys.dequeue();
+				coreturn_void;
 			}, true);
 		}
-		void ServerNode::FinalizeTransaction(TransactionQueueState* State, UPtr<TransactionParams>&& Params, ExpectsRT<Mediator::OutgoingTransaction>&& Transaction)
+		void server_node::finalize_transaction(transaction_queue_state* state, uptr<transaction_params>&& params, expects_rt<mediator::outgoing_transaction>&& transaction)
 		{
-			if (Protocol::Now().User.NSS.Logging)
-				VI_INFO("[observer] %s transaction 0x%p finalized (position: %i)", State->Blockchain.c_str(), *Params, (int)(State->Transactions - State->Queue.size() - 1));
+			if (protocol::now().user.nss.logging)
+				VI_INFO("[observer] %s transaction 0x%p finalized (position: %i)", state->blockchain.c_str(), *params, (int)(state->transactions - state->queue.size() - 1));
 
-			Params->Future.Set(std::move(Transaction));
-			DispatchTransactionQueue(State, nullptr);
+			params->future.set(std::move(transaction));
+			dispatch_transaction_queue(state, nullptr);
 		}
-		bool ServerNode::CallTransactionListener(TransactionListener* Listener)
+		bool server_node::call_transaction_listener(transaction_listener* listener)
 		{
-			if (Listener->Options.IsCancelled(Listener->Asset) || !ControlSys.Enqueue())
+			if (listener->options.is_cancelled(listener->asset) || !control_sys.enqueue())
 			{
-				Listener->IsDead = true;
+				listener->is_dead = true;
 				return false;
 			}
-			else if (Listener->CooldownId != INVALID_TASK_ID)
+			else if (listener->cooldown_id != INVALID_TASK_ID)
 			{
-				if (Protocol::Now().User.NSS.Logging)
-					VI_INFO("[observer] %s server data collection: re-queued", Algorithm::Asset::HandleOf(Listener->Asset).c_str());
-				Listener->CooldownId = INVALID_TASK_ID;
+				if (protocol::now().user.nss.logging)
+					VI_INFO("[observer] %s server data collection: re-queued", algorithm::asset::handle_of(listener->asset).c_str());
+				listener->cooldown_id = INVALID_TASK_ID;
 			}
-			else if (Listener->IsDryRun)
+			else if (listener->is_dry_run)
 			{
-				if (Protocol::Now().User.NSS.Logging)
-					VI_INFO("[observer] %s server data collection: queued", Algorithm::Asset::HandleOf(Listener->Asset).c_str());
-				Listener->IsDryRun = false;
+				if (protocol::now().user.nss.logging)
+					VI_INFO("[observer] %s server data collection: queued", algorithm::asset::handle_of(listener->asset).c_str());
+				listener->is_dry_run = false;
 			}
-			else if (Listener->Options.WillWaitForTransactions())
+			else if (listener->options.will_wait_for_transactions())
 			{
-				if (Protocol::Now().User.NSS.Logging)
+				if (protocol::now().user.nss.logging)
 					VI_INFO("[observer] %s server data collection: waiting for updates in %is (total: %is)",
-					Algorithm::Asset::HandleOf(Listener->Asset).c_str(),
-					(int)(Listener->Options.PollingFrequencyMs / 1000),
-					(int)(Listener->Options.State.LatestTimeAwaited / 1000));
-				Listener->Options.State.LatestTimeAwaited = 0;
+					algorithm::asset::handle_of(listener->asset).c_str(),
+					(int)(listener->options.polling_frequency_ms / 1000),
+					(int)(listener->options.state.latest_time_awaited / 1000));
+				listener->options.state.latest_time_awaited = 0;
 			}
 
-			Coasync<void>([this, Listener]() -> Promise<void>
+			coasync<void>([this, listener]() -> promise<void>
 			{
-				auto Info = Coawait(GetTransactionLogs(Listener->Asset, &Listener->Options));
-				if (!Info)
+				auto info = coawait(get_transaction_logs(listener->asset, &listener->options));
+				if (!info)
 				{
-					if (Info.Error().retry())
+					if (info.error().is_retry())
 					{
-						if (Protocol::Now().User.NSS.Logging)
-							VI_INFO("[observer] %s server data collection: finalized", Algorithm::Asset::HandleOf(Listener->Asset).c_str());
+						if (protocol::now().user.nss.logging)
+							VI_INFO("[observer] %s server data collection: finalized", algorithm::asset::handle_of(listener->asset).c_str());
 
-						CallTransactionListener(Listener);
-						ControlSys.Dequeue();
-						CoreturnVoid;
+						call_transaction_listener(listener);
+						control_sys.dequeue();
+						coreturn_void;
 					}
 
-					UMutex<std::recursive_mutex> Unique(ControlSys.Sync);
-					if (ControlSys.IsActive() && !Listener->Options.IsCancelled(Listener->Asset))
+					umutex<std::recursive_mutex> unique(control_sys.sync);
+					if (control_sys.is_active() && !listener->options.is_cancelled(listener->asset))
 					{
-						Listener->CooldownId = Schedule::Get()->SetTimeout(Options.RetryWaitingTimeMs, [this, Listener]() { CallTransactionListener(Listener); });
-						if (Protocol::Now().User.NSS.Logging)
-							VI_ERR("[observer] %s server data collection: waiting for connection (%s)", Algorithm::Asset::HandleOf(Listener->Asset).c_str(), Info.Error().what());
+						listener->cooldown_id = schedule::get()->set_timeout(options.retry_waiting_time_ms, [this, listener]() { call_transaction_listener(listener); });
+						if (protocol::now().user.nss.logging)
+							VI_ERR("[observer] %s server data collection: waiting for connection (%s)", algorithm::asset::handle_of(listener->asset).c_str(), info.error().what());
 					}
 					else
-						Listener->IsDead = true;
-					ControlSys.Dequeue();
-					CoreturnVoid;
+						listener->is_dead = true;
+					control_sys.dequeue();
+					coreturn_void;
 				}
-				else if (Info->Transactions.empty())
+				else if (info->transactions.empty())
 				{
-					if (!Info->BlockHash.empty())
+					if (!info->block_hash.empty())
 					{
-						if (Protocol::Now().User.NSS.Logging)
+						if (protocol::now().user.nss.logging)
 							VI_INFO("[observer] %s block %s accepted (height: %i, progress: %.2f%%, txns: 0)",
-							Algorithm::Asset::HandleOf(Listener->Asset).c_str(),
-							Info->BlockHash.c_str(),
-							(int)Info->BlockHeight,
-							Listener->Options.GetCheckpointPercentage());
+							algorithm::asset::handle_of(listener->asset).c_str(),
+							info->block_hash.c_str(),
+							(int)info->block_height,
+							listener->options.get_checkpoint_percentage());
 					}
 
-					for (auto& Item : Callbacks)
-						Coawait(Item.second(Listener->Options, std::move(*Info)));
+					for (auto& item : callbacks)
+						coawait(item.second(listener->options, std::move(*info)));
 
-					CallTransactionListener(Listener);
-					ControlSys.Dequeue();
-					CoreturnVoid;
+					call_transaction_listener(listener);
+					control_sys.dequeue();
+					coreturn_void;
 				}
-				else if (Protocol::Now().User.NSS.Logging)
+				else if (protocol::now().user.nss.logging)
 					VI_INFO("[observer] %s block %s accepted (height: %i, progress: %.2f%%, txns: %i)",
-					Algorithm::Asset::HandleOf(Listener->Asset).c_str(),
-					Info->BlockHash.c_str(),
-					(int)Info->BlockHeight,
-					Listener->Options.GetCheckpointPercentage(),
-					(int)Info->Transactions.size());
+					algorithm::asset::handle_of(listener->asset).c_str(),
+					info->block_hash.c_str(),
+					(int)info->block_height,
+					listener->options.get_checkpoint_percentage(),
+					(int)info->transactions.size());
 
-				if (Protocol::Now().User.NSS.Logging)
+				if (protocol::now().user.nss.logging)
 				{
-					for (auto& Tx : Info->Transactions)
+					for (auto& tx : info->transactions)
 					{
-						auto Chain = GetChain(Tx.Asset);
-						String TransferLogs = Stringify::Text(
+						auto chain = get_chain(tx.asset);
+						string transfer_logs = stringify::text(
 							"%s transaction %s accepted (status: %s, cost: %s %s)\n",
-							Algorithm::Asset::HandleOf(Listener->Asset).c_str(),
-							Tx.TransactionId.c_str(), Tx.IsApproved() ? "confirmation" : "pending",
-							Tx.Fee.ToString().c_str(), Algorithm::Asset::HandleOf(Tx.Asset).c_str());
+							algorithm::asset::handle_of(listener->asset).c_str(),
+							tx.transaction_id.c_str(), tx.is_approved() ? "confirmation" : "pending",
+							tx.fee.to_string().c_str(), algorithm::asset::handle_of(tx.asset).c_str());
 
-						if (!Tx.IsApproved() || (Chain && !Chain->GetChainparams().SyncLatency))
+						if (!tx.is_approved() || (chain && !chain->get_chainparams().sync_latency))
 						{
-							for (auto& Item : Tx.From)
+							for (auto& item : tx.from)
 							{
-								TransferLogs += Stringify::Text("  <== %s spends %s %s%s%s%s\n",
-									Item.Address.empty() ? "coinbase" : Item.Address.c_str(), Item.Value.ToString().c_str(), Algorithm::Asset::HandleOf(Tx.Asset).c_str(),
-									Item.AddressIndex ? " (index: " : "", Item.AddressIndex ? ToString(*Item.AddressIndex).c_str() : "", Item.AddressIndex ? ", status: spent)" : "");
+								transfer_logs += stringify::text("  <== %s spends %s %s%s%s%s\n",
+									item.address.empty() ? "coinbase" : item.address.c_str(), item.value.to_string().c_str(), algorithm::asset::handle_of(tx.asset).c_str(),
+									item.address_index ? " (index: " : "", item.address_index ? to_string(*item.address_index).c_str() : "", item.address_index ? ", status: spent)" : "");
 							}
-							for (auto& Item : Tx.To)
+							for (auto& item : tx.to)
 							{
-								TransferLogs += Stringify::Text("  ==> %s receives %s %s%s%s%s\n",
-									Item.Address.empty() ? "reward" : Item.Address.c_str(), Item.Value.ToString().c_str(), Algorithm::Asset::HandleOf(Tx.Asset).c_str(),
-									Item.AddressIndex ? " (index: " : "", Item.AddressIndex ? ToString(*Item.AddressIndex).c_str() : "", Item.AddressIndex ? ", status: unspent)" : "");
+								transfer_logs += stringify::text("  ==> %s receives %s %s%s%s%s\n",
+									item.address.empty() ? "reward" : item.address.c_str(), item.value.to_string().c_str(), algorithm::asset::handle_of(tx.asset).c_str(),
+									item.address_index ? " (index: " : "", item.address_index ? to_string(*item.address_index).c_str() : "", item.address_index ? ", status: unspent)" : "");
 							}
 						}
 
-						if (TransferLogs.back() == '\n')
-							TransferLogs.erase(TransferLogs.end() - 1);
+						if (transfer_logs.back() == '\n')
+							transfer_logs.erase(transfer_logs.end() - 1);
 
-						VI_INFO("[observer] %s", TransferLogs.c_str());
+						VI_INFO("[observer] %s", transfer_logs.c_str());
 					}
 				}
 
-				for (auto& Item : Callbacks)
-					Coawait(Item.second(Listener->Options, std::move(*Info)));
+				for (auto& item : callbacks)
+					coawait(item.second(listener->options, std::move(*info)));
 
-				CallTransactionListener(Listener);
-				ControlSys.Dequeue();
-				CoreturnVoid;
+				call_transaction_listener(listener);
+				control_sys.dequeue();
+				coreturn_void;
 			}, true);
 			return true;
 		}
-		void ServerNode::Startup()
+		void server_node::startup()
 		{
-			if (!Protocol::Now().User.NSS.Server)
+			if (!protocol::now().user.nss.server)
 				return;
-			else if (!Options.RetryWaitingTimeMs || !ControlSys.ActivateAndEnqueue())
+			else if (!options.retry_waiting_time_ms || !control_sys.activate_and_enqueue())
 				return;
 
-			if (Protocol::Now().User.NSS.Logging)
+			if (protocol::now().user.nss.logging)
 				VI_INFO("[nss] nss node startup");
 
-			UnorderedSet<String> Blockchains;
-			Blockchains.reserve(Nodes.size());
-			for (auto& Implementation : Nodes)
-				Blockchains.insert(Implementation.first);
+			unordered_set<string> blockchains;
+			blockchains.reserve(nodes.size());
+			for (auto& implementation : nodes)
+				blockchains.insert(implementation.first);
 
-			Listeners.reserve(Blockchains.size());
-			for (auto& Blockchain : Blockchains)
+			listeners.reserve(blockchains.size());
+			for (auto& blockchain : blockchains)
 			{
-				TransactionListener* Listener = Memory::New<TransactionListener>();
-				Listener->Asset = Algorithm::Asset::IdOf(Blockchain);
-				Listeners.emplace_back(Listener);
+				transaction_listener* listener = memory::init<transaction_listener>();
+				listener->asset = algorithm::asset::id_of(blockchain);
+				listeners.emplace_back(listener);
 
-				auto& Suboptions = *(Mediator::SupervisorOptions*)&Listener->Options;
-				Suboptions = *(Mediator::SupervisorOptions*)&Options;
+				auto& suboptions = *(mediator::supervisor_options*)&listener->options;
+				suboptions = *(mediator::supervisor_options*)&options;
 
-				auto It = Options.Specifics.find(Blockchain);
-				if (It != Options.Specifics.end())
-					Listener->Options = It->second;
+				auto it = options.specifics.find(blockchain);
+				if (it != options.specifics.end())
+					listener->options = it->second;
 
-				if (!CallTransactionListener(Listener))
+				if (!call_transaction_listener(listener))
 				{
-					ControlSys.Dequeue();
-					return Shutdown();
+					control_sys.dequeue();
+					return shutdown();
 				}
 
-				Connections.insert(Algorithm::Asset::BlockchainOf(Listener->Asset));
+				connections.insert(algorithm::asset::blockchain_of(listener->asset));
 			}
-			ControlSys.Dequeue();
+			control_sys.dequeue();
 		}
-		void ServerNode::Shutdown()
+		void server_node::shutdown()
 		{
-			if (!ControlSys.Deactivate())
+			if (!control_sys.deactivate())
 				return;
 
-			if (Protocol::Now().User.NSS.Logging)
+			if (protocol::now().user.nss.logging)
 				VI_INFO("[nss] nss node shutdown requested");
 
-			UMutex<std::recursive_mutex> Unique(ControlSys.Sync);
-			for (auto& Nodes : Nodes)
+			umutex<std::recursive_mutex> unique(control_sys.sync);
+			for (auto& nodes : nodes)
 			{
-				for (auto& Node : Nodes.second)
-					Node->CancelActivities();
+				for (auto& node : nodes.second)
+					node->cancel_activities();
 			}
 
-			for (auto& Listener : Listeners)
+			for (auto& listener : listeners)
 			{
-				if (Schedule::Get()->ClearTimeout(Listener->CooldownId))
-					Listener->IsDead = true;
+				if (schedule::get()->clear_timeout(listener->cooldown_id))
+					listener->is_dead = true;
 			}
 
-			Unique.Unlock();
-			ControlSys.Shutdown().Wait();
-			Unique.Lock();
+			unique.unlock();
+			control_sys.shutdown().wait();
+			unique.lock();
 
-			for (auto& Nodes : Nodes)
+			for (auto& nodes : nodes)
 			{
-				for (auto& Node : Nodes.second)
-					Node->AllowActivities();
+				for (auto& node : nodes.second)
+					node->allow_activities();
 			}
 		}
-		bool ServerNode::IsActive()
+		bool server_node::is_active()
 		{
-			return ControlSys.IsActive();
+			return control_sys.is_active();
 		}
-		bool ServerNode::HasNode(const Algorithm::AssetId& Asset)
+		bool server_node::has_node(const algorithm::asset_id& asset)
 		{
-			UMutex<std::recursive_mutex> Unique(ControlSys.Sync);
-			auto Target = Nodes.find(Algorithm::Asset::BlockchainOf(Asset));
-			return Target != Nodes.end();
+			umutex<std::recursive_mutex> unique(control_sys.sync);
+			auto target = nodes.find(algorithm::asset::blockchain_of(asset));
+			return target != nodes.end();
 		}
-		bool ServerNode::HasChain(const Algorithm::AssetId& Asset)
+		bool server_node::has_chain(const algorithm::asset_id& asset)
 		{
-			UMutex<std::recursive_mutex> Unique(ControlSys.Sync);
-			auto Target = Chains.find(Algorithm::Asset::BlockchainOf(Asset));
-			return Target != Chains.end();
+			umutex<std::recursive_mutex> unique(control_sys.sync);
+			auto target = chains.find(algorithm::asset::blockchain_of(asset));
+			return target != chains.end();
 		}
-		bool ServerNode::HasObserver(const Algorithm::AssetId& Asset)
+		bool server_node::has_observer(const algorithm::asset_id& asset)
 		{
-			return GetChain(Asset) != nullptr && GetNode(Asset) != nullptr;
+			return get_chain(asset) != nullptr && get_node(asset) != nullptr;
 		}
-		bool ServerNode::HasSupport(const Algorithm::AssetId& Asset)
+		bool server_node::has_support(const algorithm::asset_id& asset)
 		{
-			if (!ControlSys.IsActive())
+			if (!control_sys.is_active())
 				return false;
 
-			auto Blockchain = Algorithm::Asset::BlockchainOf(Asset);
-			UMutex<std::recursive_mutex> Unique(ControlSys.Sync);
-			return Connections.find(Blockchain) != Connections.end();
+			auto blockchain = algorithm::asset::blockchain_of(asset);
+			umutex<std::recursive_mutex> unique(control_sys.sync);
+			return connections.find(blockchain) != connections.end();
 		}
 	}
 }

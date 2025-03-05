@@ -11,847 +11,847 @@ extern "C"
 }
 #include <sodium.h>
 
-namespace Tangent
+namespace tangent
 {
-	namespace Mediator
+	namespace mediator
 	{
-		namespace Backends
+		namespace backends
 		{
-			struct TransactionHeader
+			struct transaction_header
 			{
-				uint8_t RequiredSignatures;
-				uint8_t ReadonlySignedAccounts;
-				uint8_t ReadonlyUnsignedAccounts;
+				uint8_t required_signatures;
+				uint8_t readonly_signed_accounts;
+				uint8_t readonly_unsigned_accounts;
 			};
 
-			static void TxAppend(Vector<uint8_t>& Tx, const uint8_t* Data, size_t DataSize)
+			static void tx_append(vector<uint8_t>& tx, const uint8_t* data, size_t data_size)
 			{
-				size_t Offset = Tx.size();
-				Tx.resize(Tx.size() + DataSize);
-				memcpy(&Tx[Offset], Data, DataSize);
+				size_t offset = tx.size();
+				tx.resize(tx.size() + data_size);
+				memcpy(&tx[offset], data, data_size);
 			}
 
-			String Solana::NdCall::GetTokenMetadata(const std::string_view& Mint)
+			string solana::nd_call::get_token_metadata(const std::string_view& mint)
 			{
-				return Stringify::Text("https://api.solana.fm/v1/tokens/%" PRIu64, (int)Mint.size(), Mint.data());
+				return stringify::text("https://api.solana.fm/v1/tokens/%" PRIu64, (int)mint.size(), mint.data());
 			}
-			const char* Solana::NdCall::GetTokenBalance()
+			const char* solana::nd_call::get_token_balance()
 			{
 				return "getTokenAccountsByOwner";
 			}
-			const char* Solana::NdCall::GetBalance()
+			const char* solana::nd_call::get_balance()
 			{
 				return "getBalance";
 			}
-			const char* Solana::NdCall::GetBlockHash()
+			const char* solana::nd_call::get_block_hash()
 			{
 				return "getLatestBlockhash";
 			}
-			const char* Solana::NdCall::GetBlockNumber()
+			const char* solana::nd_call::get_block_number()
 			{
 				return "getBlockHeight";
 			}
-			const char* Solana::NdCall::GetBlock()
+			const char* solana::nd_call::get_block()
 			{
 				return "getBlock";
 			}
-			const char* Solana::NdCall::GetTransaction()
+			const char* solana::nd_call::get_transaction()
 			{
 				return "getTransaction";
 			}
-			const char* Solana::NdCall::SendTransaction()
+			const char* solana::nd_call::send_transaction()
 			{
 				return "sendTransaction";
 			}
 
-			Solana::Solana() noexcept : RelayBackend()
+			solana::solana() noexcept : relay_backend()
 			{
-				Netdata.Composition = Algorithm::Composition::Type::ED25519;
-				Netdata.Routing = RoutingPolicy::Account;
-				Netdata.SyncLatency = 31;
-				Netdata.Divisibility = Decimal(1000000000).Truncate(Protocol::Now().Message.Precision);
-				Netdata.SupportsTokenTransfer = "spl";
-				Netdata.SupportsBulkTransfer = false;
+				netdata.composition = algorithm::composition::type::ED25519;
+				netdata.routing = routing_policy::account;
+				netdata.sync_latency = 31;
+				netdata.divisibility = decimal(1000000000).truncate(protocol::now().message.precision);
+				netdata.supports_token_transfer = "spl";
+				netdata.supports_bulk_transfer = false;
 			}
-			ExpectsPromiseRT<void> Solana::BroadcastTransaction(const Algorithm::AssetId& Asset, const OutgoingTransaction& TxData)
+			expects_promise_rt<void> solana::broadcast_transaction(const algorithm::asset_id& asset, const outgoing_transaction& tx_data)
 			{
-				SchemaList Map;
-				Map.emplace_back(Var::Set::String(TxData.Data));
-				Map.emplace_back(Var::Set::Null());
+				schema_list map;
+				map.emplace_back(var::set::string(tx_data.data));
+				map.emplace_back(var::set::null());
 
-				auto Status = Coawait(ExecuteRPC(Asset, NdCall::SendTransaction(), std::move(Map), CachePolicy::Greedy));
-				if (!Status)
-					Coreturn ExpectsRT<void>(std::move(Status.Error()));
+				auto status = coawait(execute_rpc(asset, nd_call::send_transaction(), std::move(map), cache_policy::greedy));
+				if (!status)
+					coreturn expects_rt<void>(std::move(status.error()));
 
-				Memory::Release(*Status);
-				Coreturn ExpectsRT<void>(Expectation::Met);
+				memory::release(*status);
+				coreturn expects_rt<void>(expectation::met);
 			}
-			ExpectsPromiseRT<uint64_t> Solana::GetLatestBlockHeight(const Algorithm::AssetId& Asset)
+			expects_promise_rt<uint64_t> solana::get_latest_block_height(const algorithm::asset_id& asset)
 			{
-				auto BlockHeight = Coawait(ExecuteRPC(Asset, NdCall::GetBlockNumber(), { }, CachePolicy::Lazy));
-				if (!BlockHeight)
-					Coreturn ExpectsRT<uint64_t>(std::move(BlockHeight.Error()));
+				auto block_height = coawait(execute_rpc(asset, nd_call::get_block_number(), { }, cache_policy::lazy));
+				if (!block_height)
+					coreturn expects_rt<uint64_t>(std::move(block_height.error()));
 
-				uint64_t Value = (uint64_t)BlockHeight->Value.GetInteger();
-				Memory::Release(*BlockHeight);
-				Coreturn ExpectsRT<uint64_t>(Value);
+				uint64_t value = (uint64_t)block_height->value.get_integer();
+				memory::release(*block_height);
+				coreturn expects_rt<uint64_t>(value);
 			}
-			ExpectsPromiseRT<Schema*> Solana::GetBlockTransactions(const Algorithm::AssetId& Asset, uint64_t BlockHeight, String* BlockHash)
+			expects_promise_rt<schema*> solana::get_block_transactions(const algorithm::asset_id& asset, uint64_t block_height, string* block_hash)
 			{
-				UPtr<Schema> Config = Var::Set::Object();
-				Config->Set("encoding", Var::String("jsonParsed"));
-				Config->Set("maxSupportedTransactionVersion", Var::Integer(0));
-				Config->Set("transactionDetails", Var::String("accounts"));
-				Config->Set("rewards", Var::Boolean(false));
+				uptr<schema> config = var::set::object();
+				config->set("encoding", var::string("jsonParsed"));
+				config->set("maxSupportedTransactionVersion", var::integer(0));
+				config->set("transactionDetails", var::string("accounts"));
+				config->set("rewards", var::boolean(false));
 
-				SchemaList Map;
-				Map.emplace_back(Var::Set::Integer(BlockHeight));
-				Map.emplace_back(std::move(Config));
+				schema_list map;
+				map.emplace_back(var::set::integer(block_height));
+				map.emplace_back(std::move(config));
 
-				auto BlockData = Coawait(ExecuteRPC(Asset, NdCall::GetBlock(), std::move(Map), CachePolicy::Shortened));
-				if (!BlockData)
-					Coreturn BlockData;
+				auto block_data = coawait(execute_rpc(asset, nd_call::get_block(), std::move(map), cache_policy::shortened));
+				if (!block_data)
+					coreturn block_data;
 
-				if (BlockHash != nullptr)
-					*BlockHash = BlockData->GetVar("blockhash").GetBlob();
+				if (block_hash != nullptr)
+					*block_hash = block_data->get_var("blockhash").get_blob();
 
-				auto* Transactions = BlockData->Get("transactions");
-				if (!Transactions)
+				auto* transactions = block_data->get("transactions");
+				if (!transactions)
 				{
-					Memory::Release(*BlockData);
-					Coreturn ExpectsRT<Schema*>(RemoteException("transactions field not found"));
+					memory::release(*block_data);
+					coreturn expects_rt<schema*>(remote_exception("transactions field not found"));
 				}
 
-				Transactions->Unlink();
-				Memory::Release(*BlockData);
-				Coreturn ExpectsRT<Schema*>(Transactions);
+				transactions->unlink();
+				memory::release(*block_data);
+				coreturn expects_rt<schema*>(transactions);
 			}
-			ExpectsPromiseRT<Schema*> Solana::GetBlockTransaction(const Algorithm::AssetId& Asset, uint64_t BlockHeight, const std::string_view& BlockHash, const std::string_view& TransactionId)
+			expects_promise_rt<schema*> solana::get_block_transaction(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, const std::string_view& transaction_id)
 			{
-				SchemaList Map;
-				Map.emplace_back(Var::Set::String(Format::Util::Assign0xHex(TransactionId)));
-				Map.emplace_back(Var::Set::Null());
+				schema_list map;
+				map.emplace_back(var::set::string(format::util::assign_0xhex(transaction_id)));
+				map.emplace_back(var::set::null());
 
-				auto TxData = Coawait(ExecuteRPC(Asset, NdCall::GetTransaction(), std::move(Map), CachePolicy::Extended));
-				Coreturn TxData;
+				auto tx_data = coawait(execute_rpc(asset, nd_call::get_transaction(), std::move(map), cache_policy::extended));
+				coreturn tx_data;
 			}
-			ExpectsPromiseRT<Vector<IncomingTransaction>> Solana::GetAuthenticTransactions(const Algorithm::AssetId& Asset, uint64_t BlockHeight, const std::string_view& BlockHash, Schema* TransactionData)
+			expects_promise_rt<vector<incoming_transaction>> solana::get_authentic_transactions(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, schema* transaction_data)
 			{
-				auto* Error = TransactionData->Fetch("meta.status.Err");
-				if (Error != nullptr)
-					Coreturn ExpectsRT<Vector<IncomingTransaction>>(RemoteException("tx not involved"));
+				auto* error = transaction_data->fetch("meta.status.Err");
+				if (error != nullptr)
+					coreturn expects_rt<vector<incoming_transaction>>(remote_exception("tx not involved"));
 
-				auto* PreBalances = TransactionData->Fetch("meta.preBalances");
-				auto* PostBalances = TransactionData->Fetch("meta.postBalances");
-				auto* AccountKeys = TransactionData->Fetch("transaction.accountKeys");
-				if (!PreBalances || !PostBalances || PreBalances->Size() != PostBalances->Size() || PreBalances->Empty() || !AccountKeys)
-					Coreturn ExpectsRT<Vector<IncomingTransaction>>(RemoteException("tx not involved"));
+				auto* pre_balances = transaction_data->fetch("meta.preBalances");
+				auto* post_balances = transaction_data->fetch("meta.postBalances");
+				auto* account_keys = transaction_data->fetch("transaction.accountKeys");
+				if (!pre_balances || !post_balances || pre_balances->size() != post_balances->size() || pre_balances->empty() || !account_keys)
+					coreturn expects_rt<vector<incoming_transaction>>(remote_exception("tx not involved"));
 
-				bool NonTransferring = true;
-				for (size_t i = 0; i < PreBalances->Size(); i++)
+				bool non_transferring = true;
+				for (size_t i = 0; i < pre_balances->size(); i++)
 				{
-					if (PreBalances->Get(i)->Value.GetDecimal() != PostBalances->Get(i)->Value.GetDecimal())
+					if (pre_balances->get(i)->value.get_decimal() != post_balances->get(i)->value.get_decimal())
 					{
-						NonTransferring = false;
+						non_transferring = false;
 						break;
 					}
 				}
-				if (NonTransferring)
-					Coreturn ExpectsRT<Vector<IncomingTransaction>>(RemoteException("tx not involved"));
+				if (non_transferring)
+					coreturn expects_rt<vector<incoming_transaction>>(remote_exception("tx not involved"));
 
-				UnorderedSet<String> Addresses;
-				for (auto& AccountKey : AccountKeys->GetChilds())
+				unordered_set<string> addresses;
+				for (auto& account_key : account_keys->get_childs())
 				{
-					if (AccountKey->GetVar("writable").GetBoolean() || AccountKey->GetVar("signer").GetBoolean())
-						Addresses.insert(AccountKey->GetVar("pubkey").GetBlob());
+					if (account_key->get_var("writable").get_boolean() || account_key->get_var("signer").get_boolean())
+						addresses.insert(account_key->get_var("pubkey").get_blob());
 				}
 
-				auto Discovery = FindCheckpointAddresses(Asset, Addresses);
-				if (!Discovery || Discovery->empty())
-					Coreturn ExpectsRT<Vector<IncomingTransaction>>(RemoteException("tx not involved"));
+				auto discovery = find_checkpoint_addresses(asset, addresses);
+				if (!discovery || discovery->empty())
+					coreturn expects_rt<vector<incoming_transaction>>(remote_exception("tx not involved"));
 
-				auto* Instructions = TransactionData->Fetch("transaction.message.instructions");
-				if (!Instructions || Instructions->Empty())
-					Coreturn ExpectsRT<Vector<IncomingTransaction>>(RemoteException("tx not valid"));
+				auto* instructions = transaction_data->fetch("transaction.message.instructions");
+				if (!instructions || instructions->empty())
+					coreturn expects_rt<vector<incoming_transaction>>(remote_exception("tx not valid"));
 
-				Vector<IncomingTransaction> Transactions;
-				UnorderedMap<String, UnorderedMap<String, Decimal>> Balances;
-				auto Signature = TransactionData->FetchVar("transaction.signatures.0").GetBlob();
-				auto FeeValue = TransactionData->FetchVar("meta.fee").GetDecimal() / Netdata.Divisibility;
-				for (auto& Instruction : Instructions->GetChilds())
+				vector<incoming_transaction> transactions;
+				unordered_map<string, unordered_map<string, decimal>> balances;
+				auto signature = transaction_data->fetch_var("transaction.signatures.0").get_blob();
+				auto fee_value = transaction_data->fetch_var("meta.fee").get_decimal() / netdata.divisibility;
+				for (auto& instruction : instructions->get_childs())
 				{
-					auto* Info = Instruction->Fetch("parsed.info");
-					if (!Info)
+					auto* info = instruction->fetch("parsed.info");
+					if (!info)
 						continue;
 
-					auto Type = Info->GetVar("type").GetBlob();
-					if (Type == "transfer" || Type == "transferWithSeed")
+					auto type = info->get_var("type").get_blob();
+					if (type == "transfer" || type == "transferWithSeed")
 					{
-						auto From = Info->GetVar("source").GetBlob();
-						auto To = Info->GetVar("destination").GetBlob();
-						auto Value = FeeValue + Info->GetVar("lamports").GetDecimal() / Netdata.Divisibility;
-						if (!Addresses.count(From) && !Addresses.count(To))
+						auto from = info->get_var("source").get_blob();
+						auto to = info->get_var("destination").get_blob();
+						auto value = fee_value + info->get_var("lamports").get_decimal() / netdata.divisibility;
+						if (!addresses.count(from) && !addresses.count(to))
 							continue;
 
-						IncomingTransaction Tx;
-						Tx.SetTransaction(Algorithm::Asset::BaseIdOf(Asset), BlockHeight, Signature, Decimal(FeeValue));
-						Tx.SetOperations({ Transferer(From, Optional::None, Decimal(Value)) }, { Transferer(To, Optional::None, Decimal(Value)) });
-						Transactions.push_back(std::move(Tx));
+						incoming_transaction tx;
+						tx.set_transaction(algorithm::asset::base_id_of(asset), block_height, signature, decimal(fee_value));
+						tx.set_operations({ transferer(from, optional::none, decimal(value)) }, { transferer(to, optional::none, decimal(value)) });
+						transactions.push_back(std::move(tx));
 					}
-					else if (Type == "createAccount" || Type == "createAccountWithSeed")
+					else if (type == "createAccount" || type == "createAccountWithSeed")
 					{
-						auto From = Info->GetVar("source").GetBlob();
-						auto To = Info->GetVar("newAccount").GetBlob();
-						auto Value = FeeValue + Info->GetVar("lamports").GetDecimal() / Netdata.Divisibility;
-						if (!Addresses.count(From) && !Addresses.count(To))
+						auto from = info->get_var("source").get_blob();
+						auto to = info->get_var("newAccount").get_blob();
+						auto value = fee_value + info->get_var("lamports").get_decimal() / netdata.divisibility;
+						if (!addresses.count(from) && !addresses.count(to))
 							continue;
 
-						IncomingTransaction Tx;
-						Tx.SetTransaction(Algorithm::Asset::BaseIdOf(Asset), BlockHeight, Signature, Decimal(FeeValue));
-						Tx.SetOperations({ Transferer(From, Optional::None, Decimal(Value)) }, { Transferer(To, Optional::None, Decimal(Value)) });
-						Transactions.push_back(std::move(Tx));
+						incoming_transaction tx;
+						tx.set_transaction(algorithm::asset::base_id_of(asset), block_height, signature, decimal(fee_value));
+						tx.set_operations({ transferer(from, optional::none, decimal(value)) }, { transferer(to, optional::none, decimal(value)) });
+						transactions.push_back(std::move(tx));
 					}
-					else if (Type == "withdrawFromNonce")
+					else if (type == "withdrawFromNonce")
 					{
-						auto From = Info->GetVar("nonceAccount").GetBlob();
-						auto To = Info->GetVar("destination").GetBlob();
-						auto Value = FeeValue + Info->GetVar("lamports").GetDecimal() / Netdata.Divisibility;
-						if (!Addresses.count(From) && !Addresses.count(To))
+						auto from = info->get_var("nonceAccount").get_blob();
+						auto to = info->get_var("destination").get_blob();
+						auto value = fee_value + info->get_var("lamports").get_decimal() / netdata.divisibility;
+						if (!addresses.count(from) && !addresses.count(to))
 							continue;
 
-						IncomingTransaction Tx;
-						Tx.SetTransaction(Algorithm::Asset::BaseIdOf(Asset), BlockHeight, Signature, Decimal(FeeValue));
-						Tx.SetOperations({ Transferer(From, Optional::None, Decimal(Value)) }, { Transferer(To, Optional::None, Decimal(Value)) });
-						Transactions.push_back(std::move(Tx));
+						incoming_transaction tx;
+						tx.set_transaction(algorithm::asset::base_id_of(asset), block_height, signature, decimal(fee_value));
+						tx.set_operations({ transferer(from, optional::none, decimal(value)) }, { transferer(to, optional::none, decimal(value)) });
+						transactions.push_back(std::move(tx));
 					}
-					else if (Type == "withdraw")
+					else if (type == "withdraw")
 					{
-						auto From = Info->GetVar("stakeAccount").GetBlob();
-						auto To = Info->GetVar("destination").GetBlob();
-						auto Value = FeeValue + Info->GetVar("lamports").GetDecimal() / Netdata.Divisibility;
-						if (!Addresses.count(From) && !Addresses.count(To))
+						auto from = info->get_var("stakeAccount").get_blob();
+						auto to = info->get_var("destination").get_blob();
+						auto value = fee_value + info->get_var("lamports").get_decimal() / netdata.divisibility;
+						if (!addresses.count(from) && !addresses.count(to))
 							continue;
 
-						IncomingTransaction Tx;
-						Tx.SetTransaction(Algorithm::Asset::BaseIdOf(Asset), BlockHeight, Signature, Decimal(FeeValue));
-						Tx.SetOperations({ Transferer(From, Optional::None, Decimal(Value)) }, { Transferer(To, Optional::None, Decimal(Value)) });
-						Transactions.push_back(std::move(Tx));
+						incoming_transaction tx;
+						tx.set_transaction(algorithm::asset::base_id_of(asset), block_height, signature, decimal(fee_value));
+						tx.set_operations({ transferer(from, optional::none, decimal(value)) }, { transferer(to, optional::none, decimal(value)) });
+						transactions.push_back(std::move(tx));
 					}
-					else if (Type == "split")
+					else if (type == "split")
 					{
-						auto From = Info->GetVar("stakeAccount").GetBlob();
-						auto To = Info->GetVar("newSplitAccount").GetBlob();
-						auto Value = FeeValue + Info->GetVar("lamports").GetDecimal() / Netdata.Divisibility;
-						if (!Addresses.count(From) && !Addresses.count(To))
+						auto from = info->get_var("stakeAccount").get_blob();
+						auto to = info->get_var("newSplitAccount").get_blob();
+						auto value = fee_value + info->get_var("lamports").get_decimal() / netdata.divisibility;
+						if (!addresses.count(from) && !addresses.count(to))
 							continue;
 
-						IncomingTransaction Tx;
-						Tx.SetTransaction(Algorithm::Asset::BaseIdOf(Asset), BlockHeight, Signature, Decimal(FeeValue));
-						Tx.SetOperations({ Transferer(From, Optional::None, Decimal(Value)) }, { Transferer(To, Optional::None, Decimal(Value)) });
-						Transactions.push_back(std::move(Tx));
-					}
-				}
-
-				auto* PreTokenBalances = TransactionData->Fetch("meta.preTokenBalances");
-				if (PreTokenBalances != nullptr && !PreTokenBalances->Empty())
-				{
-					for (auto& Balance : PreTokenBalances->GetChilds())
-					{
-						Decimal Value = Balance->FetchVar("uiTokenAmount.amount").GetDecimal();
-						if (!Value.IsPositive())
-							continue;
-
-						uint64_t Subdivisions = 1;
-						uint64_t Decimals = std::min<uint64_t>(Balance->FetchVar("uiTokenAmount.decimals").GetInteger(), Protocol::Now().Message.Precision);
-						for (uint64_t i = 0; i < Decimals; i++)
-							Subdivisions *= 10;
-						
-						String Mint = Balance->GetVar("mint").GetBlob();
-						String Owner = Balance->GetVar("mint").GetBlob();
-						auto& Change = Balances[Mint][Owner];
-						Value /= Decimal(Subdivisions).Truncate(Protocol::Now().Message.Precision);
-						Change = Change.IsNaN() ? Value : (Change + Value);
+						incoming_transaction tx;
+						tx.set_transaction(algorithm::asset::base_id_of(asset), block_height, signature, decimal(fee_value));
+						tx.set_operations({ transferer(from, optional::none, decimal(value)) }, { transferer(to, optional::none, decimal(value)) });
+						transactions.push_back(std::move(tx));
 					}
 				}
 
-				auto* PostTokenBalances = TransactionData->Fetch("meta.postTokenBalances");
-				if (PostTokenBalances != nullptr && !PostTokenBalances->Empty())
+				auto* pre_token_balances = transaction_data->fetch("meta.preTokenBalances");
+				if (pre_token_balances != nullptr && !pre_token_balances->empty())
 				{
-					for (auto& Balance : PostTokenBalances->GetChilds())
+					for (auto& balance : pre_token_balances->get_childs())
 					{
-						Decimal Value = Balance->FetchVar("uiTokenAmount.amount").GetDecimal();
-						if (!Value.IsPositive())
+						decimal value = balance->fetch_var("uiTokenAmount.amount").get_decimal();
+						if (!value.is_positive())
 							continue;
 
-						uint64_t Subdivisions = 1;
-						uint64_t Decimals = std::min<uint64_t>(Balance->FetchVar("uiTokenAmount.decimals").GetInteger(), Protocol::Now().Message.Precision);
-						for (uint64_t i = 0; i < Decimals; i++)
-							Subdivisions *= 10;
+						uint64_t subdivisions = 1;
+						uint64_t decimals = std::min<uint64_t>(balance->fetch_var("uiTokenAmount.decimals").get_integer(), protocol::now().message.precision);
+						for (uint64_t i = 0; i < decimals; i++)
+							subdivisions *= 10;
 
-						String Mint = Balance->GetVar("mint").GetBlob();
-						String Owner = Balance->GetVar("mint").GetBlob();
-						auto& Change = Balances[Mint][Owner];
-						Value /= Decimal(Subdivisions).Truncate(Protocol::Now().Message.Precision);
-						Change = Change.IsNaN() ? Value : (Value - Change);
+						string mint = balance->get_var("mint").get_blob();
+						string owner = balance->get_var("mint").get_blob();
+						auto& change = balances[mint][owner];
+						value /= decimal(subdivisions).truncate(protocol::now().message.precision);
+						change = change.is_nan() ? value : (change + value);
 					}
 				}
 
-				for (auto& Token : Balances)
+				auto* post_token_balances = transaction_data->fetch("meta.postTokenBalances");
+				if (post_token_balances != nullptr && !post_token_balances->empty())
 				{
-					size_t Index = Transactions.size();
-					for (auto& A : Token.second)
+					for (auto& balance : post_token_balances->get_childs())
 					{
-						if (A.second.IsPositive())
+						decimal value = balance->fetch_var("uiTokenAmount.amount").get_decimal();
+						if (!value.is_positive())
+							continue;
+
+						uint64_t subdivisions = 1;
+						uint64_t decimals = std::min<uint64_t>(balance->fetch_var("uiTokenAmount.decimals").get_integer(), protocol::now().message.precision);
+						for (uint64_t i = 0; i < decimals; i++)
+							subdivisions *= 10;
+
+						string mint = balance->get_var("mint").get_blob();
+						string owner = balance->get_var("mint").get_blob();
+						auto& change = balances[mint][owner];
+						value /= decimal(subdivisions).truncate(protocol::now().message.precision);
+						change = change.is_nan() ? value : (value - change);
+					}
+				}
+
+				for (auto& token : balances)
+				{
+					size_t index = transactions.size();
+					for (auto& a : token.second)
+					{
+						if (a.second.is_positive())
 						{
-							IncomingTransaction Tx;
-							Tx.SetTransaction(Algorithm::Asset::BaseIdOf(Asset), BlockHeight, Signature, Decimal::Zero());
-							for (auto& B : Token.second)
+							incoming_transaction tx;
+							tx.set_transaction(algorithm::asset::base_id_of(asset), block_height, signature, decimal::zero());
+							for (auto& b : token.second)
 							{
-								if (!B.second.IsNegative())
+								if (!b.second.is_negative())
 									continue;
 
-								Decimal Delta = std::min(A.second, -B.second);
-								Tx.SetOperations({ Transferer(B.first, Optional::None, Decimal(Delta)) }, { Transferer(A.first, Optional::None, Decimal(Delta)) });
-								A.second -= Delta;
-								B.second += Delta;
-								if (A.second.IsZero())
+								decimal delta = std::min(a.second, -b.second);
+								tx.set_operations({ transferer(b.first, optional::none, decimal(delta)) }, { transferer(a.first, optional::none, decimal(delta)) });
+								a.second -= delta;
+								b.second += delta;
+								if (a.second.is_zero())
 									break;
 							}
-							Transactions.push_back(std::move(Tx));
+							transactions.push_back(std::move(tx));
 						}
-						else if (A.second.IsNegative())
+						else if (a.second.is_negative())
 						{
-							IncomingTransaction Tx;
-							Tx.SetTransaction(Algorithm::Asset::BaseIdOf(Asset), BlockHeight, Signature, Decimal::Zero());
-							for (auto& B : Token.second)
+							incoming_transaction tx;
+							tx.set_transaction(algorithm::asset::base_id_of(asset), block_height, signature, decimal::zero());
+							for (auto& b : token.second)
 							{
-								if (!B.second.IsPositive())
+								if (!b.second.is_positive())
 									continue;
 
-								Decimal Delta = std::min(-A.second, B.second);
-								Tx.SetOperations({ Transferer(A.first, Optional::None, Decimal(Delta)) }, { Transferer(B.first, Optional::None, Decimal(Delta)) });
-								A.second += Delta;
-								B.second -= Delta;
-								if (A.second.IsZero())
+								decimal delta = std::min(-a.second, b.second);
+								tx.set_operations({ transferer(a.first, optional::none, decimal(delta)) }, { transferer(b.first, optional::none, decimal(delta)) });
+								a.second += delta;
+								b.second -= delta;
+								if (a.second.is_zero())
 									break;
 							}
-							Transactions.push_back(std::move(Tx));
+							transactions.push_back(std::move(tx));
 						}
 					}
-					if (Index == Transactions.size())
+					if (index == transactions.size())
 						continue;
 
-					auto Symbol = Coawait(GetTokenSymbol(Token.first));
-					auto Replacement = Algorithm::Asset::IdOf(Algorithm::Asset::BlockchainOf(Asset), Symbol ? *Symbol : Token.first, Token.first);
-					for (size_t i = Index - 1; i < Transactions.size(); i++)
-						Transactions[i].Asset = Replacement;
+					auto symbol = coawait(get_token_symbol(token.first));
+					auto replacement = algorithm::asset::id_of(algorithm::asset::blockchain_of(asset), symbol ? *symbol : token.first, token.first);
+					for (size_t i = index - 1; i < transactions.size(); i++)
+						transactions[i].asset = replacement;
 
-					if (!NSS::ServerNode::Get()->EnableContractAddress(Replacement, Token.first))
-						Coreturn ExpectsRT<Vector<IncomingTransaction>>(RemoteException("tx not involved"));
+					if (!nss::server_node::get()->enable_contract_address(replacement, token.first))
+						coreturn expects_rt<vector<incoming_transaction>>(remote_exception("tx not involved"));
 				}
 
-				Addresses.clear();
-				Addresses.reserve(Transactions.size() * 2);
-				for (auto& Item : Transactions)
+				addresses.clear();
+				addresses.reserve(transactions.size() * 2);
+				for (auto& item : transactions)
 				{
-					for (auto& Next : Item.From)
-						Addresses.insert(Next.Address);
-					for (auto& Next : Item.To)
-						Addresses.insert(Next.Address);
+					for (auto& next : item.from)
+						addresses.insert(next.address);
+					for (auto& next : item.to)
+						addresses.insert(next.address);
 				}
 
-				Discovery = FindCheckpointAddresses(Asset, Addresses);
-				if (!Discovery || Discovery->empty())
-					Coreturn ExpectsRT<Vector<IncomingTransaction>>(RemoteException("tx not involved"));
+				discovery = find_checkpoint_addresses(asset, addresses);
+				if (!discovery || discovery->empty())
+					coreturn expects_rt<vector<incoming_transaction>>(remote_exception("tx not involved"));
 
-				for (auto& Item : Transactions)
+				for (auto& item : transactions)
 				{
-					for (auto& Next : Item.From)
+					for (auto& next : item.from)
 					{
-						auto Address = Discovery->find(Next.Address);
-						if (Address != Discovery->end())
-							Next.AddressIndex = Address->second;
+						auto address = discovery->find(next.address);
+						if (address != discovery->end())
+							next.address_index = address->second;
 					}
-					for (auto& Next : Item.To)
+					for (auto& next : item.to)
 					{
-						auto Address = Discovery->find(Next.Address);
-						if (Address != Discovery->end())
-							Next.AddressIndex = Address->second;
+						auto address = discovery->find(next.address);
+						if (address != discovery->end())
+							next.address_index = address->second;
 					}
 				}
 
-				Coreturn ExpectsRT<Vector<IncomingTransaction>>(std::move(Transactions));
+				coreturn expects_rt<vector<incoming_transaction>>(std::move(transactions));
 			}
-			ExpectsPromiseRT<BaseFee> Solana::EstimateFee(const Algorithm::AssetId& Asset, const DynamicWallet& Wallet, const Vector<Transferer>& To, const FeeSupervisorOptions& Options)
+			expects_promise_rt<base_fee> solana::estimate_fee(const algorithm::asset_id& asset, const dynamic_wallet& wallet, const vector<transferer>& to, const fee_supervisor_options& options)
 			{
-				Decimal Fee = 5000;
-				if (!Algorithm::Asset::TokenOf(Asset).empty())
-					Fee += Fee * 2;
-				Fee /= Netdata.Divisibility;
-				Coreturn ExpectsRT<BaseFee>(BaseFee(Fee, 1));
+				decimal fee = 5000;
+				if (!algorithm::asset::token_of(asset).empty())
+					fee += fee * 2;
+				fee /= netdata.divisibility;
+				coreturn expects_rt<base_fee>(base_fee(fee, 1));
 			}
-			ExpectsPromiseRT<Decimal> Solana::CalculateBalance(const Algorithm::AssetId& Asset, const DynamicWallet& Wallet, Option<String>&& Address)
+			expects_promise_rt<decimal> solana::calculate_balance(const algorithm::asset_id& asset, const dynamic_wallet& wallet, option<string>&& address)
 			{
-				if (!Address)
+				if (!address)
 				{
-					ExpectsLR<DerivedVerifyingWallet> FromWallet = LayerException("signing wallet not found");
-					if (Wallet.Parent)
+					expects_lr<derived_verifying_wallet> from_wallet = layer_exception("signing wallet not found");
+					if (wallet.parent)
 					{
-						auto SigningWallet = NSS::ServerNode::Get()->NewSigningWallet(Asset, *Wallet.Parent, Protocol::Now().Account.RootAddressIndex);
-						if (SigningWallet)
-							FromWallet = *SigningWallet;
+						auto signing_wallet = nss::server_node::get()->new_signing_wallet(asset, *wallet.parent, protocol::now().account.root_address_index);
+						if (signing_wallet)
+							from_wallet = *signing_wallet;
 						else
-							FromWallet = SigningWallet.Error();
+							from_wallet = signing_wallet.error();
 					}
-					else if (Wallet.VerifyingChild)
-						FromWallet = *Wallet.VerifyingChild;
-					else if (Wallet.SigningChild)
-						FromWallet = *Wallet.SigningChild;
-					if (!FromWallet)
-						Coreturn ExpectsRT<Decimal>(RemoteException(std::move(FromWallet.Error().message())));
+					else if (wallet.verifying_child)
+						from_wallet = *wallet.verifying_child;
+					else if (wallet.signing_child)
+						from_wallet = *wallet.signing_child;
+					if (!from_wallet)
+						coreturn expects_rt<decimal>(remote_exception(std::move(from_wallet.error().message())));
 
-					Address = FromWallet->Addresses.begin()->second;
+					address = from_wallet->addresses.begin()->second;
 				}
 
-				SchemaList Map;
-				Map.emplace_back(Var::Set::String(*Address));
-				Map.emplace_back(Var::Set::Null());
+				schema_list map;
+				map.emplace_back(var::set::string(*address));
+				map.emplace_back(var::set::null());
 
-				auto Balance = Coawait(ExecuteRPC(Asset, NdCall::GetBalance(), std::move(Map), CachePolicy::Lazy));
-				if (!Balance)
-					Coreturn ExpectsRT<Decimal>(std::move(Balance.Error()));
+				auto balance = coawait(execute_rpc(asset, nd_call::get_balance(), std::move(map), cache_policy::lazy));
+				if (!balance)
+					coreturn expects_rt<decimal>(std::move(balance.error()));
 
-				Decimal Value = Balance->GetVar("value").GetDecimal();
-				Memory::Release(*Balance);
-				Coreturn ExpectsRT<Decimal>(Value);
+				decimal value = balance->get_var("value").get_decimal();
+				memory::release(*balance);
+				coreturn expects_rt<decimal>(value);
 			}
-			ExpectsPromiseRT<OutgoingTransaction> Solana::NewTransaction(const Algorithm::AssetId& Asset, const DynamicWallet& Wallet, const Vector<Transferer>& To, const BaseFee& Fee)
+			expects_promise_rt<outgoing_transaction> solana::new_transaction(const algorithm::asset_id& asset, const dynamic_wallet& wallet, const vector<transferer>& to, const base_fee& fee)
 			{
-				ExpectsLR<DerivedSigningWallet> FromWallet = LayerException();
-				if (Wallet.Parent)
-					FromWallet = NSS::ServerNode::Get()->NewSigningWallet(Asset, *Wallet.Parent, Protocol::Now().Account.RootAddressIndex);
-				else if (Wallet.SigningChild)
-					FromWallet = *Wallet.SigningChild;
-				if (!FromWallet)
-					Coreturn ExpectsRT<OutgoingTransaction>(RemoteException("signing wallet not found"));
+				expects_lr<derived_signing_wallet> from_wallet = layer_exception();
+				if (wallet.parent)
+					from_wallet = nss::server_node::get()->new_signing_wallet(asset, *wallet.parent, protocol::now().account.root_address_index);
+				else if (wallet.signing_child)
+					from_wallet = *wallet.signing_child;
+				if (!from_wallet)
+					coreturn expects_rt<outgoing_transaction>(remote_exception("signing wallet not found"));
 
-				auto NativeBalance = Coawait(GetBalance(Asset, FromWallet->Addresses.begin()->second));
-				if (!NativeBalance)
-					Coreturn ExpectsRT<OutgoingTransaction>(std::move(NativeBalance.Error()));
+				auto native_balance = coawait(get_balance(asset, from_wallet->addresses.begin()->second));
+				if (!native_balance)
+					coreturn expects_rt<outgoing_transaction>(std::move(native_balance.error()));
 
-				auto RecentBlockHash = Coawait(GetRecentBlockHash(Asset));
-				if (!RecentBlockHash)
-					Coreturn ExpectsRT<OutgoingTransaction>(std::move(RecentBlockHash.Error()));
+				auto recent_block_hash = coawait(get_recent_block_hash(asset));
+				if (!recent_block_hash)
+					coreturn expects_rt<outgoing_transaction>(std::move(recent_block_hash.error()));
 
-				auto& Subject = To.front();
-				auto ContractAddress = NSS::ServerNode::Get()->GetContractAddress(Asset);
-				Option<TokenAccount> FromToken = Optional::None;
-				Option<TokenAccount> ToToken = Optional::None;
-				Decimal TotalValue = Subject.Value;
-				Decimal FeeValue = Fee.GetFee();
-				if (ContractAddress)
+				auto& subject = to.front();
+				auto contract_address = nss::server_node::get()->get_contract_address(asset);
+				option<token_account> from_token = optional::none;
+				option<token_account> to_token = optional::none;
+				decimal total_value = subject.value;
+				decimal fee_value = fee.get_fee();
+				if (contract_address)
 				{
-					auto FromTokenBalance = Coawait(GetTokenBalance(Asset, *ContractAddress, FromWallet->Addresses.begin()->second));
-					if (!FromTokenBalance || FromTokenBalance->Balance < TotalValue)
-						Coreturn ExpectsRT<OutgoingTransaction>(RemoteException(Stringify::Text("insufficient funds: %s < %s", (FromTokenBalance ? FromTokenBalance->Balance : Decimal(0.0)).ToString().c_str(), TotalValue.ToString().c_str())));
+					auto from_token_balance = coawait(get_token_balance(asset, *contract_address, from_wallet->addresses.begin()->second));
+					if (!from_token_balance || from_token_balance->balance < total_value)
+						coreturn expects_rt<outgoing_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (from_token_balance ? from_token_balance->balance : decimal(0.0)).to_string().c_str(), total_value.to_string().c_str())));
 
-					auto ToTokenBalance = Coawait(GetTokenBalance(Asset, *ContractAddress, Subject.Address));
-					if (!ToTokenBalance)
-						Coreturn ExpectsRT<OutgoingTransaction>(RemoteException(Stringify::Text("account %s does not have associated token account", Subject.Address.c_str())));
+					auto to_token_balance = coawait(get_token_balance(asset, *contract_address, subject.address));
+					if (!to_token_balance)
+						coreturn expects_rt<outgoing_transaction>(remote_exception(stringify::text("account %s does not have associated token account", subject.address.c_str())));
 
-					TotalValue = FeeValue;
-					FromToken = std::move(*FromTokenBalance);
-					ToToken = std::move(*ToTokenBalance);
-				}
-				else
-					TotalValue += FeeValue;
-
-				if (*NativeBalance < TotalValue)
-					Coreturn ExpectsRT<OutgoingTransaction>(RemoteException(Stringify::Text("insufficient funds: %s < %s", NativeBalance->ToString().c_str(), TotalValue.ToString().c_str())));
-
-				uint8_t FromTokenBuffer[32]; size_t FromTokenBufferSize = sizeof(FromTokenBuffer);
-				if (FromToken && !b58dec(FromTokenBuffer, &FromTokenBufferSize, FromToken->Account.c_str(), FromToken->Account.size()))
-					Coreturn ExpectsRT<OutgoingTransaction>(RemoteException("invalid sender token account"));
-
-				uint8_t FromBuffer[32]; size_t FromBufferSize = sizeof(FromBuffer);
-				if (!b58dec(FromBuffer, &FromBufferSize, FromWallet->Addresses.begin()->second.c_str(), FromWallet->Addresses.begin()->second.size()))
-					Coreturn ExpectsRT<OutgoingTransaction>(RemoteException("invalid sender account"));
-
-				uint8_t ToBuffer[32]; size_t ToBufferSize = sizeof(ToBuffer);
-				if (ToToken && !b58dec(ToBuffer, &ToBufferSize, ToToken->Account.c_str(), ToToken->Account.size()))
-					Coreturn ExpectsRT<OutgoingTransaction>(RemoteException("invalid receiver token account"));
-				else if (!b58dec(ToBuffer, &ToBufferSize, Subject.Address.c_str(), Subject.Address.size()))
-					Coreturn ExpectsRT<OutgoingTransaction>(RemoteException("invalid receiver account"));
-
-				uint8_t ProgramId[32]; size_t ProgramIdSize = sizeof(ProgramId);
-				String SystemProgramId = FromToken ? FromToken->ProgramId.c_str() : "11111111111111111111111111111111";
-				if (!b58dec(ProgramId, &ProgramIdSize, SystemProgramId.c_str(), SystemProgramId.size()))
-					Coreturn ExpectsRT<OutgoingTransaction>(RemoteException("invalid system program id"));
-
-				uint8_t BlockHash[32]; size_t BlockHashSize = sizeof(BlockHash);
-				if (!b58dec(BlockHash, &BlockHashSize, RecentBlockHash->c_str(), RecentBlockHash->size()))
-					Coreturn ExpectsRT<OutgoingTransaction>(RemoteException("invalid recent block hash"));
-
-				uint64_t Value = (Subject.Value * (FromToken ? FromToken->Divisibility : Netdata.Divisibility)).ToUInt64();
-				uint8_t Prefix = 1 << 7;
-				uint8_t Signatures = 1;
-				uint8_t AccountKeys = ContractAddress ? 4 : 3;
-				uint8_t Instructions = 1;
-				uint8_t Lookups = 0;
-
-				TransactionHeader Header;
-				Header.RequiredSignatures = 1;
-				Header.ReadonlySignedAccounts = 0;
-				Header.ReadonlyUnsignedAccounts = 1;
-
-				Vector<uint8_t> MessageBuffer;
-				TxAppend(MessageBuffer, (uint8_t*)&Prefix, sizeof(Prefix));
-				TxAppend(MessageBuffer, (uint8_t*)&Header, sizeof(Header));
-				TxAppend(MessageBuffer, (uint8_t*)&AccountKeys, sizeof(AccountKeys));
-				TxAppend(MessageBuffer, FromBuffer, FromBufferSize);
-				if (ContractAddress)
-					TxAppend(MessageBuffer, FromTokenBuffer, FromTokenBufferSize);
-				TxAppend(MessageBuffer, ToBuffer, ToBufferSize);
-				TxAppend(MessageBuffer, ProgramId, ProgramIdSize);
-				TxAppend(MessageBuffer, BlockHash, BlockHashSize);
-				TxAppend(MessageBuffer, (uint8_t*)&Instructions, sizeof(Instructions));
-				if (ContractAddress)
-				{
-					uint8_t Indices = 3, Size = 9, Instruction = 3;
-					uint8_t ProgramIdIndex = 3, FromIndex = 0, ToIndex = 1, OwnerIndex = 2;
-					TxAppend(MessageBuffer, (uint8_t*)&ProgramIdIndex, sizeof(ProgramIdIndex));
-					TxAppend(MessageBuffer, (uint8_t*)&Indices, sizeof(Indices));
-					TxAppend(MessageBuffer, (uint8_t*)&ToIndex, sizeof(ToIndex));
-					TxAppend(MessageBuffer, (uint8_t*)&OwnerIndex, sizeof(OwnerIndex));
-					TxAppend(MessageBuffer, (uint8_t*)&FromIndex, sizeof(FromIndex));
-					TxAppend(MessageBuffer, (uint8_t*)&Size, sizeof(Size));
-					TxAppend(MessageBuffer, (uint8_t*)&Instruction, sizeof(Instruction));
-					TxAppend(MessageBuffer, (uint8_t*)&Value, sizeof(Value));
+					total_value = fee_value;
+					from_token = std::move(*from_token_balance);
+					to_token = std::move(*to_token_balance);
 				}
 				else
+					total_value += fee_value;
+
+				if (*native_balance < total_value)
+					coreturn expects_rt<outgoing_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", native_balance->to_string().c_str(), total_value.to_string().c_str())));
+
+				uint8_t from_token_buffer[32]; size_t from_token_buffer_size = sizeof(from_token_buffer);
+				if (from_token && !b58dec(from_token_buffer, &from_token_buffer_size, from_token->account.c_str(), from_token->account.size()))
+					coreturn expects_rt<outgoing_transaction>(remote_exception("invalid sender token account"));
+
+				uint8_t from_buffer[32]; size_t from_buffer_size = sizeof(from_buffer);
+				if (!b58dec(from_buffer, &from_buffer_size, from_wallet->addresses.begin()->second.c_str(), from_wallet->addresses.begin()->second.size()))
+					coreturn expects_rt<outgoing_transaction>(remote_exception("invalid sender account"));
+
+				uint8_t to_buffer[32]; size_t to_buffer_size = sizeof(to_buffer);
+				if (to_token && !b58dec(to_buffer, &to_buffer_size, to_token->account.c_str(), to_token->account.size()))
+					coreturn expects_rt<outgoing_transaction>(remote_exception("invalid receiver token account"));
+				else if (!b58dec(to_buffer, &to_buffer_size, subject.address.c_str(), subject.address.size()))
+					coreturn expects_rt<outgoing_transaction>(remote_exception("invalid receiver account"));
+
+				uint8_t program_id[32]; size_t program_id_size = sizeof(program_id);
+				string system_program_id = from_token ? from_token->program_id.c_str() : "11111111111111111111111111111111";
+				if (!b58dec(program_id, &program_id_size, system_program_id.c_str(), system_program_id.size()))
+					coreturn expects_rt<outgoing_transaction>(remote_exception("invalid system program id"));
+
+				uint8_t block_hash[32]; size_t block_hash_size = sizeof(block_hash);
+				if (!b58dec(block_hash, &block_hash_size, recent_block_hash->c_str(), recent_block_hash->size()))
+					coreturn expects_rt<outgoing_transaction>(remote_exception("invalid recent block hash"));
+
+				uint64_t value = (subject.value * (from_token ? from_token->divisibility : netdata.divisibility)).to_uint64();
+				uint8_t prefix = 1 << 7;
+				uint8_t signatures = 1;
+				uint8_t account_keys = contract_address ? 4 : 3;
+				uint8_t instructions = 1;
+				uint8_t lookups = 0;
+
+				transaction_header header;
+				header.required_signatures = 1;
+				header.readonly_signed_accounts = 0;
+				header.readonly_unsigned_accounts = 1;
+
+				vector<uint8_t> message_buffer;
+				tx_append(message_buffer, (uint8_t*)&prefix, sizeof(prefix));
+				tx_append(message_buffer, (uint8_t*)&header, sizeof(header));
+				tx_append(message_buffer, (uint8_t*)&account_keys, sizeof(account_keys));
+				tx_append(message_buffer, from_buffer, from_buffer_size);
+				if (contract_address)
+					tx_append(message_buffer, from_token_buffer, from_token_buffer_size);
+				tx_append(message_buffer, to_buffer, to_buffer_size);
+				tx_append(message_buffer, program_id, program_id_size);
+				tx_append(message_buffer, block_hash, block_hash_size);
+				tx_append(message_buffer, (uint8_t*)&instructions, sizeof(instructions));
+				if (contract_address)
 				{
-					uint8_t Indices = 2, Size = 4 + 8;
-					uint8_t ProgramIdIndex = 2, FromIndex = 0, ToIndex = 1;
-					uint32_t Instruction = OS::CPU::ToEndianness<uint32_t>(OS::CPU::Endian::Little, 2);
-					TxAppend(MessageBuffer, (uint8_t*)&ProgramIdIndex, sizeof(ProgramIdIndex));
-					TxAppend(MessageBuffer, (uint8_t*)&Indices, sizeof(Indices));
-					TxAppend(MessageBuffer, (uint8_t*)&FromIndex, sizeof(FromIndex));
-					TxAppend(MessageBuffer, (uint8_t*)&ToIndex, sizeof(ToIndex));
-					TxAppend(MessageBuffer, (uint8_t*)&Size, sizeof(Size));
-					TxAppend(MessageBuffer, (uint8_t*)&Instruction, sizeof(Instruction));
-					TxAppend(MessageBuffer, (uint8_t*)&Value, sizeof(Value));
+					uint8_t indices = 3, size = 9, instruction = 3;
+					uint8_t program_id_index = 3, from_index = 0, to_index = 1, owner_index = 2;
+					tx_append(message_buffer, (uint8_t*)&program_id_index, sizeof(program_id_index));
+					tx_append(message_buffer, (uint8_t*)&indices, sizeof(indices));
+					tx_append(message_buffer, (uint8_t*)&to_index, sizeof(to_index));
+					tx_append(message_buffer, (uint8_t*)&owner_index, sizeof(owner_index));
+					tx_append(message_buffer, (uint8_t*)&from_index, sizeof(from_index));
+					tx_append(message_buffer, (uint8_t*)&size, sizeof(size));
+					tx_append(message_buffer, (uint8_t*)&instruction, sizeof(instruction));
+					tx_append(message_buffer, (uint8_t*)&value, sizeof(value));
 				}
-				TxAppend(MessageBuffer, (uint8_t*)&Lookups, sizeof(Lookups));
-
-				uint8_t PrivateKey[64];
-				if (!DecodePrivateKey(FromWallet->SigningKey.ExposeToHeap(), PrivateKey))
-					Coreturn ExpectsRT<OutgoingTransaction>(RemoteException("invalid private key"));
-
-				uint8_t PublicKey[32]; size_t PublicKeySize = sizeof(PublicKey);
-				if (!b58dec(PublicKey, &PublicKeySize, FromWallet->VerifyingKey.c_str(), FromWallet->VerifyingKey.size()))
-					Coreturn ExpectsRT<OutgoingTransaction>(RemoteException("invalid public key"));
-
-				ed25519_signature Signature;
-				ed25519_sign_ext(MessageBuffer.data(), MessageBuffer.size(), PrivateKey, PrivateKey + 32, Signature);
-				if (crypto_sign_ed25519_verify_detached(Signature, MessageBuffer.data(), MessageBuffer.size(), PublicKey) != 0)
-					Coreturn ExpectsRT<OutgoingTransaction>(RemoteException("invalid private key"));
-
-				Vector<uint8_t> TransactionBuffer;
-				TxAppend(TransactionBuffer, (uint8_t*)&Signatures, sizeof(Signatures));
-				TxAppend(TransactionBuffer, (uint8_t*)&Signature, sizeof(Signature));
-				TransactionBuffer.insert(TransactionBuffer.end(), MessageBuffer.begin(), MessageBuffer.end());
-
-				char TransactionId[256]; size_t TransactionIdSize = sizeof(TransactionId);
-				if (!b58enc(TransactionId, &TransactionIdSize, &Signature, sizeof(Signature)))
-					Coreturn ExpectsRT<OutgoingTransaction>(RemoteException("invalid signature"));
-
-				String TransactionData;
-				TransactionData.resize(TransactionBuffer.size() * 4);
-
-				size_t TransactionDataSize = TransactionData.size();
-				if (!b58enc(TransactionData.data(), &TransactionDataSize, &TransactionBuffer[0], TransactionBuffer.size()))
-					Coreturn ExpectsRT<OutgoingTransaction>(RemoteException("tx serialization error"));
-
-				TransactionData.resize(TransactionDataSize - 1);
-				IncomingTransaction Tx;
-				Tx.SetTransaction(Asset, 0, std::string_view(TransactionId, TransactionIdSize - 1), std::move(FeeValue));
-				Tx.SetOperations({ Transferer(FromWallet->Addresses.begin()->second, Option<uint64_t>(FromWallet->AddressIndex), Decimal(FromToken ? Subject.Value : TotalValue)) }, Vector<Transferer>(To));
-				Coreturn ExpectsRT<OutgoingTransaction>(OutgoingTransaction(std::move(Tx), std::move(TransactionData)));
-			}
-			ExpectsPromiseRT<String> Solana::GetTokenSymbol(const std::string_view& Mint)
-			{
-				auto Metadata = Coawait(ExecuteHTTP(Algorithm::Asset::IdOf("SOL"), "GET", NdCall::GetTokenMetadata(Mint), std::string_view(), std::string_view(), CachePolicy::Persistent));
-				if (!Metadata)
-					Coreturn ExpectsRT<String>(std::move(Metadata.Error()));
-
-				String Symbol1 = Metadata->FetchVar("tokenList.symbol").GetBlob();
-				String Symbol2 = Metadata->FetchVar("tokenMetadata.onChainInfo.symbol").GetBlob();
-				Memory::Release(*Metadata);
-				if (!Symbol2.empty())
-					Coreturn ExpectsRT<String>(std::move(Symbol2));
-
-				if (!Symbol1.empty())
-					Coreturn ExpectsRT<String>(std::move(Symbol1));
-
-				Coreturn ExpectsRT<String>(RemoteException("mint not found"));
-			}
-			ExpectsPromiseRT<Solana::TokenAccount> Solana::GetTokenBalance(const Algorithm::AssetId& Asset, const std::string_view& Mint, const std::string_view& Owner)
-			{
-				SchemaList Map;
-				Map.emplace_back(Var::Set::String(Owner));
-				Map.emplace_back(Var::Set::Object());
-				Map.back()->Set("mint", Var::String(Mint));
-				Map.emplace_back(Var::Set::Object());
-				Map.back()->Set("encoding", Var::String("jsonParsed"));
-
-				auto Balance = Coawait(ExecuteRPC(Asset, NdCall::GetTokenBalance(), std::move(Map), CachePolicy::Greedy));
-				if (!Balance)
-					Coreturn ExpectsRT<TokenAccount>(std::move(Balance.Error()));
-
-				auto* Info = Balance->Fetch("value.0.account.data.parsed.info.tokenAmount");
-				if (!Info)
+				else
 				{
-					Memory::Release(*Balance);
-					Coreturn ExpectsRT<TokenAccount>(RemoteException("invalid account"));
+					uint8_t indices = 2, size = 4 + 8;
+					uint8_t program_id_index = 2, from_index = 0, to_index = 1;
+					uint32_t instruction = os::hw::to_endianness<uint32_t>(os::hw::endian::little, 2);
+					tx_append(message_buffer, (uint8_t*)&program_id_index, sizeof(program_id_index));
+					tx_append(message_buffer, (uint8_t*)&indices, sizeof(indices));
+					tx_append(message_buffer, (uint8_t*)&from_index, sizeof(from_index));
+					tx_append(message_buffer, (uint8_t*)&to_index, sizeof(to_index));
+					tx_append(message_buffer, (uint8_t*)&size, sizeof(size));
+					tx_append(message_buffer, (uint8_t*)&instruction, sizeof(instruction));
+					tx_append(message_buffer, (uint8_t*)&value, sizeof(value));
 				}
+				tx_append(message_buffer, (uint8_t*)&lookups, sizeof(lookups));
 
-				uint64_t Subdivisions = 1;
-				uint64_t Decimals = std::min<uint64_t>(Info->GetVar("decimals").GetInteger(), Protocol::Now().Message.Precision);
-				for (uint64_t i = 0; i < Decimals; i++)
-					Subdivisions *= 10;
+				uint8_t private_key[64];
+				if (!decode_private_key(from_wallet->signing_key.expose<KEY_LIMIT>().view, private_key))
+					coreturn expects_rt<outgoing_transaction>(remote_exception("invalid private key"));
 
-				String ProgramId = Balance->FetchVar("value.0.account.owner").GetBlob();
-				String Account = Balance->FetchVar("value.0.pubkey").GetBlob();
-				Decimal Value = Info->GetVar("amount").GetDecimal();
-				Memory::Release(*Balance);
-				if (Value.IsNaN())
-					Coreturn ExpectsRT<TokenAccount>(RemoteException("invalid account"));
+				uint8_t public_key[32]; size_t public_key_size = sizeof(public_key);
+				if (!b58dec(public_key, &public_key_size, from_wallet->verifying_key.c_str(), from_wallet->verifying_key.size()))
+					coreturn expects_rt<outgoing_transaction>(remote_exception("invalid public key"));
 
-				TokenAccount Result;
-				Result.ProgramId = std::move(ProgramId);
-				Result.Account = std::move(Account);
-				Result.Divisibility = Decimal(Subdivisions).Truncate(Protocol::Now().Message.Precision);
-				Result.Balance = Value / Result.Divisibility;
-				Coreturn ExpectsRT<TokenAccount>(std::move(Result));
+				ed25519_signature signature;
+				ed25519_sign_ext(message_buffer.data(), message_buffer.size(), private_key, private_key + 32, signature);
+				if (crypto_sign_ed25519_verify_detached(signature, message_buffer.data(), message_buffer.size(), public_key) != 0)
+					coreturn expects_rt<outgoing_transaction>(remote_exception("invalid private key"));
+
+				vector<uint8_t> transaction_buffer;
+				tx_append(transaction_buffer, (uint8_t*)&signatures, sizeof(signatures));
+				tx_append(transaction_buffer, (uint8_t*)&signature, sizeof(signature));
+				transaction_buffer.insert(transaction_buffer.end(), message_buffer.begin(), message_buffer.end());
+
+				char transaction_id[256]; size_t transaction_id_size = sizeof(transaction_id);
+				if (!b58enc(transaction_id, &transaction_id_size, &signature, sizeof(signature)))
+					coreturn expects_rt<outgoing_transaction>(remote_exception("invalid signature"));
+
+				string transaction_data;
+				transaction_data.resize(transaction_buffer.size() * 4);
+
+				size_t transaction_data_size = transaction_data.size();
+				if (!b58enc(transaction_data.data(), &transaction_data_size, &transaction_buffer[0], transaction_buffer.size()))
+					coreturn expects_rt<outgoing_transaction>(remote_exception("tx serialization error"));
+
+				transaction_data.resize(transaction_data_size - 1);
+				incoming_transaction tx;
+				tx.set_transaction(asset, 0, std::string_view(transaction_id, transaction_id_size - 1), std::move(fee_value));
+				tx.set_operations({ transferer(from_wallet->addresses.begin()->second, option<uint64_t>(from_wallet->address_index), decimal(from_token ? subject.value : total_value)) }, vector<transferer>(to));
+				coreturn expects_rt<outgoing_transaction>(outgoing_transaction(std::move(tx), std::move(transaction_data)));
 			}
-			ExpectsPromiseRT<Decimal> Solana::GetBalance(const Algorithm::AssetId& Asset, const std::string_view& Owner)
+			expects_promise_rt<string> solana::get_token_symbol(const std::string_view& mint)
 			{
-				SchemaList Map;
-				Map.emplace_back(Var::Set::String(Owner));
+				auto metadata = coawait(execute_http(algorithm::asset::id_of("SOL"), "GET", nd_call::get_token_metadata(mint), std::string_view(), std::string_view(), cache_policy::persistent));
+				if (!metadata)
+					coreturn expects_rt<string>(std::move(metadata.error()));
 
-				auto Balance = Coawait(ExecuteRPC(Asset, NdCall::GetBalance(), std::move(Map), CachePolicy::Greedy));
-				if (!Balance)
-					Coreturn ExpectsRT<Decimal>(std::move(Balance.Error()));
+				string symbol1 = metadata->fetch_var("tokenList.symbol").get_blob();
+				string symbol2 = metadata->fetch_var("tokenMetadata.onChainInfo.symbol").get_blob();
+				memory::release(*metadata);
+				if (!symbol2.empty())
+					coreturn expects_rt<string>(std::move(symbol2));
 
-				Decimal Value = Balance->GetVar("value").GetDecimal();
-				Memory::Release(*Balance);
-				if (Value.IsNaN())
-					Coreturn ExpectsRT<Decimal>(RemoteException("invalid account"));
+				if (!symbol1.empty())
+					coreturn expects_rt<string>(std::move(symbol1));
 
-				Value /= Netdata.Divisibility;
-				Coreturn ExpectsRT<Decimal>(std::move(Value));
+				coreturn expects_rt<string>(remote_exception("mint not found"));
 			}
-			ExpectsPromiseRT<String> Solana::GetRecentBlockHash(const Algorithm::AssetId& Asset)
+			expects_promise_rt<solana::token_account> solana::get_token_balance(const algorithm::asset_id& asset, const std::string_view& mint, const std::string_view& owner)
 			{
-				auto Hash = Coawait(ExecuteRPC(Asset, NdCall::GetBlockHash(), { }, CachePolicy::Greedy));
-				if (!Hash)
-					Coreturn ExpectsRT<String>(std::move(Hash.Error()));
+				schema_list map;
+				map.emplace_back(var::set::string(owner));
+				map.emplace_back(var::set::object());
+				map.back()->set("mint", var::string(mint));
+				map.emplace_back(var::set::object());
+				map.back()->set("encoding", var::string("jsonParsed"));
 
-				String Value = Hash->FetchVar("value.blockhash").GetBlob();
-				Memory::Release(*Hash);
-				if (Value.empty())
-					Coreturn ExpectsRT<String>(RemoteException("invalid hash"));
+				auto balance = coawait(execute_rpc(asset, nd_call::get_token_balance(), std::move(map), cache_policy::greedy));
+				if (!balance)
+					coreturn expects_rt<token_account>(std::move(balance.error()));
 
-				Coreturn ExpectsRT<String>(std::move(Value));
-			}
-			ExpectsLR<MasterWallet> Solana::NewMasterWallet(const std::string_view& Seed)
-			{
-				auto* Chain = GetChain();
-				btc_hdnode RootNode;
-				if (!btc_hdnode_from_seed((uint8_t*)Seed.data(), (int)Seed.size(), &RootNode))
-					return ExpectsLR<MasterWallet>(LayerException("seed value invalid"));
-
-				char PrivateKey[256];
-				btc_hdnode_serialize_private(&RootNode, Chain, PrivateKey, sizeof(PrivateKey));
-
-				char PublicKey[256];
-				btc_hdnode_serialize_public(&RootNode, Chain, PublicKey, (int)sizeof(PublicKey));
-
-				return ExpectsLR<MasterWallet>(MasterWallet(::PrivateKey(Codec::HexEncode(Seed)), ::PrivateKey(PrivateKey), PublicKey));
-			}
-			ExpectsLR<DerivedSigningWallet> Solana::NewSigningWallet(const Algorithm::AssetId& Asset, const MasterWallet& Wallet, uint64_t AddressIndex)
-			{
-				auto* Chain = GetChain();
-				char MasterPrivateKey[256];
+				auto* info = balance->fetch("value.0.account.data.parsed.info.tokenAmount");
+				if (!info)
 				{
-					auto Private = Wallet.SigningKey.Expose<KEY_LIMIT>();
-					if (!hd_derive(Chain, Private.View.data(), GetDerivation(Protocol::Now().Account.RootAddressIndex).c_str(), MasterPrivateKey, sizeof(MasterPrivateKey)))
-						return ExpectsLR<DerivedSigningWallet>(LayerException("invalid private key"));
+					memory::release(*balance);
+					coreturn expects_rt<token_account>(remote_exception("invalid account"));
 				}
 
-				btc_hdnode Node;
-				if (!btc_hdnode_deserialize(MasterPrivateKey, Chain, &Node))
-					return ExpectsLR<DerivedSigningWallet>(LayerException("invalid private key"));
+				uint64_t subdivisions = 1;
+				uint64_t decimals = std::min<uint64_t>(info->get_var("decimals").get_integer(), protocol::now().message.precision);
+				for (uint64_t i = 0; i < decimals; i++)
+					subdivisions *= 10;
 
-				auto Derived = NewSigningWallet(Asset, PrivateKey(std::string_view((char*)Node.private_key, sizeof(Node.private_key))));
-				if (Derived)
-					Derived->AddressIndex = AddressIndex;
-				return Derived;
+				string program_id = balance->fetch_var("value.0.account.owner").get_blob();
+				string account = balance->fetch_var("value.0.pubkey").get_blob();
+				decimal value = info->get_var("amount").get_decimal();
+				memory::release(*balance);
+				if (value.is_nan())
+					coreturn expects_rt<token_account>(remote_exception("invalid account"));
+
+				token_account result;
+				result.program_id = std::move(program_id);
+				result.account = std::move(account);
+				result.divisibility = decimal(subdivisions).truncate(protocol::now().message.precision);
+				result.balance = value / result.divisibility;
+				coreturn expects_rt<token_account>(std::move(result));
 			}
-			ExpectsLR<DerivedSigningWallet> Solana::NewSigningWallet(const Algorithm::AssetId& Asset, const PrivateKey& SigningKey)
+			expects_promise_rt<decimal> solana::get_balance(const algorithm::asset_id& asset, const std::string_view& owner)
 			{
-				uint8_t RawPrivateKey[64]; size_t RawPrivateKeySize = 0;
-				if (SigningKey.Size() != 32 && SigningKey.Size() != 64)
+				schema_list map;
+				map.emplace_back(var::set::string(owner));
+
+				auto balance = coawait(execute_rpc(asset, nd_call::get_balance(), std::move(map), cache_policy::greedy));
+				if (!balance)
+					coreturn expects_rt<decimal>(std::move(balance.error()));
+
+				decimal value = balance->get_var("value").get_decimal();
+				memory::release(*balance);
+				if (value.is_nan())
+					coreturn expects_rt<decimal>(remote_exception("invalid account"));
+
+				value /= netdata.divisibility;
+				coreturn expects_rt<decimal>(std::move(value));
+			}
+			expects_promise_rt<string> solana::get_recent_block_hash(const algorithm::asset_id& asset)
+			{
+				auto hash = coawait(execute_rpc(asset, nd_call::get_block_hash(), { }, cache_policy::greedy));
+				if (!hash)
+					coreturn expects_rt<string>(std::move(hash.error()));
+
+				string value = hash->fetch_var("value.blockhash").get_blob();
+				memory::release(*hash);
+				if (value.empty())
+					coreturn expects_rt<string>(remote_exception("invalid hash"));
+
+				coreturn expects_rt<string>(std::move(value));
+			}
+			expects_lr<master_wallet> solana::new_master_wallet(const std::string_view& seed)
+			{
+				auto* chain = get_chain();
+				btc_hdnode root_node;
+				if (!btc_hdnode_from_seed((uint8_t*)seed.data(), (int)seed.size(), &root_node))
+					return expects_lr<master_wallet>(layer_exception("seed value invalid"));
+
+				char private_key[256];
+				btc_hdnode_serialize_private(&root_node, chain, private_key, sizeof(private_key));
+
+				char public_key[256];
+				btc_hdnode_serialize_public(&root_node, chain, public_key, (int)sizeof(public_key));
+
+				return expects_lr<master_wallet>(master_wallet(secret_box::secure(codec::hex_encode(seed)), secret_box::secure(private_key), public_key));
+			}
+			expects_lr<derived_signing_wallet> solana::new_signing_wallet(const algorithm::asset_id& asset, const master_wallet& wallet, uint64_t address_index)
+			{
+				auto* chain = get_chain();
+				char master_private_key[256];
 				{
-					auto Data = SigningKey.Expose<KEY_LIMIT>();
-					if (!DecodePrivateKey(Data.View, RawPrivateKey))
+					auto secret = wallet.signing_key.expose<KEY_LIMIT>();
+					if (!hd_derive(chain, secret.view.data(), get_derivation(protocol::now().account.root_address_index).c_str(), master_private_key, sizeof(master_private_key)))
+						return expects_lr<derived_signing_wallet>(layer_exception("invalid private key"));
+				}
+
+				btc_hdnode node;
+				if (!btc_hdnode_deserialize(master_private_key, chain, &node))
+					return expects_lr<derived_signing_wallet>(layer_exception("invalid private key"));
+
+				auto derived = new_signing_wallet(asset, secret_box::secure(std::string_view((char*)node.private_key, sizeof(node.private_key))));
+				if (derived)
+					derived->address_index = address_index;
+				return derived;
+			}
+			expects_lr<derived_signing_wallet> solana::new_signing_wallet(const algorithm::asset_id& asset, const secret_box& signing_key)
+			{
+				uint8_t raw_private_key[64]; size_t raw_private_key_size = 0;
+				if (signing_key.size() != 32 && signing_key.size() != 64)
+				{
+					auto data = signing_key.expose<KEY_LIMIT>();
+					if (!decode_private_key(data.view, raw_private_key))
 					{
-						if (!DecodeSecretOrPublicKey(Data.View, RawPrivateKey))
-							return LayerException("bad private key");
+						if (!decode_secret_or_public_key(data.view, raw_private_key))
+							return layer_exception("bad private key");
 
-						RawPrivateKeySize = 32;
+						raw_private_key_size = 32;
 					}
 					else
-						RawPrivateKeySize = 64;
+						raw_private_key_size = 64;
 				}
 				else
 				{
-					RawPrivateKeySize = SigningKey.Size();
-					SigningKey.ExposeToStack((char*)RawPrivateKey, RawPrivateKeySize);
+					raw_private_key_size = signing_key.size();
+					signing_key.stack((char*)raw_private_key, raw_private_key_size);
 				}
 
-				uint8_t PrivateKey[64]; String SecretKey;
-				if (RawPrivateKeySize == 32)
+				uint8_t private_key[64]; string secret_key;
+				if (raw_private_key_size == 32)
 				{
-					sha512_Raw(RawPrivateKey, RawPrivateKeySize, PrivateKey);
-					Algorithm::Composition::ConvertToSecretKeyEd25519(PrivateKey);
+					sha512_Raw(raw_private_key, raw_private_key_size, private_key);
+					algorithm::composition::convert_to_secret_key_ed25519(private_key);
 
-					char EncodedSecretKey[256]; size_t EncodedSecretKeySize = sizeof(EncodedSecretKey);
-					if (!b58enc(EncodedSecretKey, &EncodedSecretKeySize, RawPrivateKey, RawPrivateKeySize))
-						return LayerException("invalid private key");
+					char encoded_secret_key[256]; size_t encoded_secret_key_size = sizeof(encoded_secret_key);
+					if (!b58enc(encoded_secret_key, &encoded_secret_key_size, raw_private_key, raw_private_key_size))
+						return layer_exception("invalid private key");
 
-					SecretKey.assign(EncodedSecretKey, EncodedSecretKeySize - 1);
+					secret_key.assign(encoded_secret_key, encoded_secret_key_size - 1);
 				}
-				else if (RawPrivateKeySize == 64)
-					memcpy(PrivateKey, RawPrivateKey, RawPrivateKeySize);
+				else if (raw_private_key_size == 64)
+					memcpy(private_key, raw_private_key, raw_private_key_size);
 
-				uint8_t PublicKey[32];
-				ed25519_publickey_ext(PrivateKey, PublicKey);
+				uint8_t public_key[32];
+				ed25519_publickey_ext(private_key, public_key);
 
-				auto Derived = NewVerifyingWallet(Asset, std::string_view((char*)PublicKey, sizeof(PublicKey)));
-				if (!Derived)
-					return Derived.Error();
+				auto derived = new_verifying_wallet(asset, std::string_view((char*)public_key, sizeof(public_key)));
+				if (!derived)
+					return derived.error();
 
-				char EncodedPrivateKey[256]; size_t EncodedPrivateKeySize = sizeof(EncodedPrivateKey);
-				if (!b58enc(EncodedPrivateKey, &EncodedPrivateKeySize, PrivateKey, sizeof(PrivateKey)))
-					return LayerException("invalid private key");
+				char encoded_private_key[256]; size_t encoded_private_key_size = sizeof(encoded_private_key);
+				if (!b58enc(encoded_private_key, &encoded_private_key_size, private_key, sizeof(private_key)))
+					return layer_exception("invalid private key");
 
-				String DerivedPrivateKey = String(EncodedPrivateKey, EncodedPrivateKeySize - 1);
-				if (!SecretKey.empty())
-					DerivedPrivateKey.append(1, ':').append(SecretKey);
-				return ExpectsLR<DerivedSigningWallet>(DerivedSigningWallet(std::move(*Derived), ::PrivateKey(DerivedPrivateKey)));
+				string derived_private_key = string(encoded_private_key, encoded_private_key_size - 1);
+				if (!secret_key.empty())
+					derived_private_key.append(1, ':').append(secret_key);
+				return expects_lr<derived_signing_wallet>(derived_signing_wallet(std::move(*derived), secret_box::secure(derived_private_key)));
 			}
-			ExpectsLR<DerivedVerifyingWallet> Solana::NewVerifyingWallet(const Algorithm::AssetId& Asset, const std::string_view& VerifyingKey)
+			expects_lr<derived_verifying_wallet> solana::new_verifying_wallet(const algorithm::asset_id& asset, const std::string_view& verifying_key)
 			{
-				String RawPublicKey = String(VerifyingKey);
-				if (RawPublicKey.size() != 32)
+				string raw_public_key = string(verifying_key);
+				if (raw_public_key.size() != 32)
 				{
-					uint8_t PublicKey[32];
-					if (!DecodeSecretOrPublicKey(RawPublicKey, PublicKey))
-						return LayerException("invalid public key size");
+					uint8_t public_key[32];
+					if (!decode_secret_or_public_key(raw_public_key, public_key))
+						return layer_exception("invalid public key size");
 
-					RawPublicKey = String((char*)PublicKey, sizeof(PublicKey));
+					raw_public_key = string((char*)public_key, sizeof(public_key));
 				}
 
-				char EncodedPublicKey[256]; size_t EncodedPublicKeySize = sizeof(EncodedPublicKey);
-				if (!b58enc(EncodedPublicKey, &EncodedPublicKeySize, RawPublicKey.data(), RawPublicKey.size()))
-					return LayerException("invalid public key");
+				char encoded_public_key[256]; size_t encoded_public_key_size = sizeof(encoded_public_key);
+				if (!b58enc(encoded_public_key, &encoded_public_key_size, raw_public_key.data(), raw_public_key.size()))
+					return layer_exception("invalid public key");
 
-				uint8_t DerivedPublicKey[256]; size_t DerivedPublicKeySize = sizeof(DerivedPublicKey);
-				if (!b58dec(DerivedPublicKey, &DerivedPublicKeySize, EncodedPublicKey, EncodedPublicKeySize - 1))
-					return LayerException("invalid public key");
+				uint8_t derived_public_key[256]; size_t derived_public_key_size = sizeof(derived_public_key);
+				if (!b58dec(derived_public_key, &derived_public_key_size, encoded_public_key, encoded_public_key_size - 1))
+					return layer_exception("invalid public key");
 
-				return ExpectsLR<DerivedVerifyingWallet>(DerivedVerifyingWallet({ { (uint8_t)1, String(EncodedPublicKey, EncodedPublicKeySize - 1) } }, Optional::None, String(EncodedPublicKey, EncodedPublicKeySize - 1)));
+				return expects_lr<derived_verifying_wallet>(derived_verifying_wallet({ { (uint8_t)1, string(encoded_public_key, encoded_public_key_size - 1) } }, optional::none, string(encoded_public_key, encoded_public_key_size - 1)));
 			}
-			ExpectsLR<String> Solana::NewPublicKeyHash(const std::string_view& Address)
+			expects_lr<string> solana::new_public_key_hash(const std::string_view& address)
 			{
-				uint8_t Data[256]; size_t DataSize = sizeof(Data);
-				if (!b58dec(Data, &DataSize, Address.data(), Address.size()))
-					return LayerException("invalid address");
+				uint8_t data[256]; size_t data_size = sizeof(data);
+				if (!b58dec(data, &data_size, address.data(), address.size()))
+					return layer_exception("invalid address");
 
-				return String((char*)Data, sizeof(Data));
+				return string((char*)data, sizeof(data));
 			}
-			ExpectsLR<String> Solana::SignMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const PrivateKey& SigningKey)
+			expects_lr<string> solana::sign_message(const algorithm::asset_id& asset, const std::string_view& message, const secret_box& signing_key)
 			{
-				auto SigningWallet = NewSigningWallet(Asset, SigningKey);
-				if (!SigningWallet)
-					return SigningWallet.Error();
+				auto signing_wallet = new_signing_wallet(asset, signing_key);
+				if (!signing_wallet)
+					return signing_wallet.error();
 
-				uint8_t DerivedPrivateKey[64];
-				auto Private = SigningWallet->SigningKey.Expose<KEY_LIMIT>();
-				if (!DecodePrivateKey(Private.View, DerivedPrivateKey))
-					return LayerException("private key invalid");
+				uint8_t derived_private_key[64];
+				auto secret = signing_wallet->signing_key.expose<KEY_LIMIT>();
+				if (!decode_private_key(secret.view, derived_private_key))
+					return layer_exception("private key invalid");
 
-				ed25519_signature Signature;
-				ed25519_sign_ext((uint8_t*)Message.data(), Message.size(), DerivedPrivateKey, DerivedPrivateKey + 32, Signature);
-				return Codec::Base64Encode(std::string_view((char*)Signature, sizeof(Signature)));
+				ed25519_signature signature;
+				ed25519_sign_ext((uint8_t*)message.data(), message.size(), derived_private_key, derived_private_key + 32, signature);
+				return codec::base64_encode(std::string_view((char*)signature, sizeof(signature)));
 			}
-			ExpectsLR<void> Solana::VerifyMessage(const Algorithm::AssetId& Asset, const std::string_view& Message, const std::string_view& VerifyingKey, const std::string_view& Signature)
+			expects_lr<void> solana::verify_message(const algorithm::asset_id& asset, const std::string_view& message, const std::string_view& verifying_key, const std::string_view& signature)
 			{
-				VI_ASSERT(Stringify::IsCString(VerifyingKey), "verifying key must be c-string");
-				String SignatureData = Signature.size() == 64 ? String(Signature) : Codec::Base64Decode(Signature);
-				if (SignatureData.size() != 64)
-					return LayerException("signature not valid");
+				VI_ASSERT(stringify::is_cstring(verifying_key), "verifying key must be c-string");
+				string signature_data = signature.size() == 64 ? string(signature) : codec::base64_decode(signature);
+				if (signature_data.size() != 64)
+					return layer_exception("signature not valid");
 
-				auto VerifyingWallet = NewVerifyingWallet(Asset, VerifyingKey);
-				if (!VerifyingWallet)
-					return VerifyingWallet.Error();
+				auto verifying_wallet = new_verifying_wallet(asset, verifying_key);
+				if (!verifying_wallet)
+					return verifying_wallet.error();
 
-				uint8_t DerivedPublicKey[256]; size_t DerivedPublicKeySize = sizeof(DerivedPublicKey);
-				if (!b58dec(DerivedPublicKey, &DerivedPublicKeySize, VerifyingWallet->VerifyingKey.data(), (int)VerifyingWallet->VerifyingKey.size()))
-					return LayerException("invalid public key");
+				uint8_t derived_public_key[256]; size_t derived_public_key_size = sizeof(derived_public_key);
+				if (!b58dec(derived_public_key, &derived_public_key_size, verifying_wallet->verifying_key.data(), (int)verifying_wallet->verifying_key.size()))
+					return layer_exception("invalid public key");
 
-				if (crypto_sign_verify_detached((uint8_t*)SignatureData.data(), (uint8_t*)Message.data(), Message.size(), DerivedPublicKey) != 0)
-					return LayerException("signature verification failed with used public key");
+				if (crypto_sign_verify_detached((uint8_t*)signature_data.data(), (uint8_t*)message.data(), message.size(), derived_public_key) != 0)
+					return layer_exception("signature verification failed with used public key");
 
-				return Expectation::Met;
+				return expectation::met;
 			}
-			String Solana::GetDerivation(uint64_t AddressIndex) const
+			string solana::get_derivation(uint64_t address_index) const
 			{
-				return Stringify::Text(Protocol::Now().Is(NetworkType::Mainnet) ? "m/44'/501'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, AddressIndex);
+				return stringify::text(protocol::now().is(network_type::mainnet) ? "m/44'/501'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, address_index);
 			}
-			const Solana::Chainparams& Solana::GetChainparams() const
+			const solana::chainparams& solana::get_chainparams() const
 			{
-				return Netdata;
+				return netdata;
 			}
-			bool Solana::DecodePrivateKey(const std::string_view& Data, uint8_t PrivateKey[64])
+			bool solana::decode_private_key(const std::string_view& data, uint8_t private_key[64])
 			{
-				auto Slice = String(Data.substr(0, Data.find(':')));
-				uint8_t Key[64]; size_t KeySize = sizeof(Key);
-				if (!b58dec(Key, &KeySize, Slice.c_str(), Slice.size()) || KeySize < 64)
+				auto slice = string(data.substr(0, data.find(':')));
+				uint8_t key[64]; size_t key_size = sizeof(key);
+				if (!b58dec(key, &key_size, slice.c_str(), slice.size()) || key_size < 64)
 					return false;
 
-				memcpy(PrivateKey, Key, 64);
+				memcpy(private_key, key, 64);
 				return true;
 			}
-			bool Solana::DecodeSecretOrPublicKey(const std::string_view& Data, uint8_t SecretKey[32])
+			bool solana::decode_secret_or_public_key(const std::string_view& data, uint8_t secret_key[32])
 			{
-				uint8_t Key[32]; size_t KeySize = sizeof(Key);
-				if (!b58dec(Key, &KeySize, Data.data(), Data.size()) || KeySize < 32)
+				uint8_t key[32]; size_t key_size = sizeof(key);
+				if (!b58dec(key, &key_size, data.data(), data.size()) || key_size < 32)
 					return false;
 
-				memcpy(SecretKey, Key, 32);
+				memcpy(secret_key, key, 32);
 				return true;
 			}
-			const btc_chainparams_* Solana::GetChain()
+			const btc_chainparams_* solana::get_chain()
 			{
-				switch (Protocol::Now().User.Network)
+				switch (protocol::now().user.network)
 				{
-					case NetworkType::Regtest:
+					case network_type::regtest:
 						return &sol_chainparams_regtest;
-					case NetworkType::Testnet:
+					case network_type::testnet:
 						return &sol_chainparams_test;
-					case NetworkType::Mainnet:
+					case network_type::mainnet:
 						return &sol_chainparams_main;
 					default:
 						VI_PANIC(false, "invalid network type");

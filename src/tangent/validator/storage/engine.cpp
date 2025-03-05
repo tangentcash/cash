@@ -4,457 +4,457 @@
 #include "rocksdb/db.h"
 #endif
 
-namespace Tangent
+namespace tangent
 {
-	namespace Ledger
+	namespace ledger
 	{
 #ifdef TAN_ROCKSDB
-		static const rocksdb::ReadOptions& GetBlobReadOptions()
+		static const rocksdb::ReadOptions& get_blob_read_options()
 		{
-			static rocksdb::ReadOptions Options;
-			return Options;
+			static rocksdb::ReadOptions options;
+			return options;
 		}
-		static const rocksdb::WriteOptions& GetBlobWriteOptions()
+		static const rocksdb::WriteOptions& get_blob_write_options()
 		{
-			static rocksdb::WriteOptions Options;
-			return Options;
+			static rocksdb::WriteOptions options;
+			return options;
 		}
 #endif
-		static LDB::SessionId ResolveTransactionSession(LDB::Connection* Storage, UPtr<PermanentStorage::MultiSessionId>& Transaction)
+		static sqlite::session_id resolve_transaction_session(sqlite::connection* storage, uptr<permanent_storage::multi_session_id>& transaction)
 		{
-			if (!Transaction || Transaction->empty())
+			if (!transaction || transaction->empty())
 				return nullptr;
 
-			auto It = Transaction->find(Storage);
-			return It != Transaction->end() ? It->second : nullptr;
+			auto it = transaction->find(storage);
+			return it != transaction->end() ? it->second : nullptr;
 		}
-		static thread_local std::atomic<uint64_t> ThreadQueries = 0;
-		uint64_t StorageUtil::GetThreadQueries()
+		static thread_local std::atomic<uint64_t> thread_queries = 0;
+		uint64_t storage_util::get_thread_queries()
 		{
-			return ThreadQueries;
+			return thread_queries;
 		}
 
-		MutableStorage::~MutableStorage()
+		mutable_storage::~mutable_storage()
 		{
-			if (Storage)
-				Protocol::Change().Database.UnloadIndex(std::move(Storage));
+			if (storage)
+				protocol::change().database.unload_index(std::move(storage));
 		}
-		LDB::ExpectsDB<void> MutableStorage::TxBegin(const std::string_view& Label, const std::string_view& Operation, LDB::Isolation Type)
+		sqlite::expects_db<void> mutable_storage::tx_begin(const std::string_view& label, const std::string_view& operation, sqlite::isolation type)
 		{
-			if (Transaction != nullptr)
-				return LDB::DatabaseException("rollback or commit current transaction");
+			if (transaction != nullptr)
+				return sqlite::database_exception("rollback or commit current transaction");
 
-			VI_ASSERT(Storage, "storage connection not initialized (transaction begin)");
-			auto Cursor = Storage->TxBegin(Type);
+			VI_ASSERT(storage, "storage connection not initialized (transaction begin)");
+			auto cursor = storage->tx_begin(type);
 #ifdef _DEBUG
-			String Error = ErrorOf(Cursor);
-			if (!Error.empty() && Protocol::Now().User.Storage.Logging)
-				VI_ERR("[indexdb] operation %.*s::%.*s error (transaction begin): %s", (int)Label.size(), Label.data(), (int)Operation.size(), Operation.data(), Error.c_str());
+			string error = error_of(cursor);
+			if (!error.empty() && protocol::now().user.storage.logging)
+				VI_ERR("[indexdb] operation %.*s::%.*s error (transaction begin): %s", (int)label.size(), label.data(), (int)operation.size(), operation.data(), error.c_str());
 #endif
-			++Queries; ++ThreadQueries;
-			Transaction = *Cursor;
-			return Expectation::Met;
+			++queries; ++thread_queries;
+			transaction = *cursor;
+			return expectation::met;
 		}
-		LDB::ExpectsDB<void> MutableStorage::TxCommit(const std::string_view& Label, const std::string_view& Operation)
+		sqlite::expects_db<void> mutable_storage::tx_commit(const std::string_view& label, const std::string_view& operation)
 		{
-			if (!Transaction)
-				return LDB::DatabaseException("current transaction not found");
+			if (!transaction)
+				return sqlite::database_exception("current transaction not found");
 
-			VI_ASSERT(Storage, "storage connection not initialized (transaction commit)");
-			auto Cursor = Storage->TxCommit(Transaction);
+			VI_ASSERT(storage, "storage connection not initialized (transaction commit)");
+			auto cursor = storage->tx_commit(transaction);
 #ifdef _DEBUG
-			String Error = ErrorOf(Cursor);
-			if (!Error.empty() && Protocol::Now().User.Storage.Logging)
-				VI_ERR("[indexdb] operation %.*s::%.*s error (transaction commit): %s", (int)Label.size(), Label.data(), (int)Operation.size(), Operation.data(), Error.c_str());
+			string error = error_of(cursor);
+			if (!error.empty() && protocol::now().user.storage.logging)
+				VI_ERR("[indexdb] operation %.*s::%.*s error (transaction commit): %s", (int)label.size(), label.data(), (int)operation.size(), operation.data(), error.c_str());
 #endif
-			++Queries; ++ThreadQueries;
-			Transaction = nullptr;
-			return Cursor;
+			++queries; ++thread_queries;
+			transaction = nullptr;
+			return cursor;
 		}
-		LDB::ExpectsDB<void> MutableStorage::TxRollback(const std::string_view& Label, const std::string_view& Operation)
+		sqlite::expects_db<void> mutable_storage::tx_rollback(const std::string_view& label, const std::string_view& operation)
 		{
-			if (!Transaction)
-				return LDB::DatabaseException("current transaction not found");
+			if (!transaction)
+				return sqlite::database_exception("current transaction not found");
 
-			VI_ASSERT(Storage, "storage connection not initialized (transaction rollback)");
-			auto Cursor = Storage->TxRollback(Transaction);
+			VI_ASSERT(storage, "storage connection not initialized (transaction rollback)");
+			auto cursor = storage->tx_rollback(transaction);
 #ifdef _DEBUG
-			String Error = ErrorOf(Cursor);
-			if (!Error.empty() && Protocol::Now().User.Storage.Logging)
-				VI_ERR("[indexdb] operation %.*s::%.*s error (transaction rollback): %s", (int)Label.size(), Label.data(), (int)Operation.size(), Operation.data(), Error.c_str());
+			string error = error_of(cursor);
+			if (!error.empty() && protocol::now().user.storage.logging)
+				VI_ERR("[indexdb] operation %.*s::%.*s error (transaction rollback): %s", (int)label.size(), label.data(), (int)operation.size(), operation.data(), error.c_str());
 #endif
-			++Queries; ++ThreadQueries;
-			Transaction = nullptr;
-			return Cursor;
+			++queries; ++thread_queries;
+			transaction = nullptr;
+			return cursor;
 		}
-		LDB::ExpectsDB<LDB::Cursor> MutableStorage::Query(const std::string_view& Label, const std::string_view& Operation, const std::string_view& Command, size_t QueryOps)
+		sqlite::expects_db<sqlite::cursor> mutable_storage::query(const std::string_view& label, const std::string_view& operation, const std::string_view& command, size_t query_ops)
 		{
-			VI_ASSERT(Storage, "storage connection not initialized (operation: %.*s::%.*s)", (int)Label.size(), Label.data(), (int)Operation.size(), Operation.data());
-			auto Cursor = Storage->Query(Command, QueryOps, Transaction);
+			VI_ASSERT(storage, "storage connection not initialized (operation: %.*s::%.*s)", (int)label.size(), label.data(), (int)operation.size(), operation.data());
+			auto cursor = storage->query(command, query_ops, transaction);
 #ifdef _DEBUG
-			String Error = ErrorOf(Cursor);
-			if (!Error.empty() && Protocol::Now().User.Storage.Logging)
-				VI_ERR("[indexdb] operation %.*s::%.*s failed: %s", (int)Label.size(), Label.data(), (int)Operation.size(), Operation.data(), Error.c_str());
+			string error = error_of(cursor);
+			if (!error.empty() && protocol::now().user.storage.logging)
+				VI_ERR("[indexdb] operation %.*s::%.*s failed: %s", (int)label.size(), label.data(), (int)operation.size(), operation.data(), error.c_str());
 #endif
-			++Queries; ++ThreadQueries;
-			return Cursor;
+			++queries; ++thread_queries;
+			return cursor;
 		}
-		LDB::ExpectsDB<LDB::Cursor> MutableStorage::EmplaceQuery(const std::string_view& Label, const std::string_view& Operation, const std::string_view& Command, SchemaList* Map, size_t QueryOps)
+		sqlite::expects_db<sqlite::cursor> mutable_storage::emplace_query(const std::string_view& label, const std::string_view& operation, const std::string_view& command, schema_list* map, size_t query_ops)
 		{
-			VI_ASSERT(Storage, "storage connection not initialized (operation: %.*s::%.*s)", (int)Label.size(), Label.data(), (int)Operation.size(), Operation.data());
-			auto Cursor = Storage->EmplaceQuery(Command, Map, QueryOps, Transaction);
+			VI_ASSERT(storage, "storage connection not initialized (operation: %.*s::%.*s)", (int)label.size(), label.data(), (int)operation.size(), operation.data());
+			auto cursor = storage->emplace_query(command, map, query_ops, transaction);
 #ifdef _DEBUG
-			String Error = ErrorOf(Cursor);
-			if (!Error.empty() && Protocol::Now().User.Storage.Logging)
-				VI_ERR("[indexdb] operation %.*s::%.*s failed: %s", (int)Label.size(), Label.data(), (int)Operation.size(), Operation.data(), Error.c_str());
+			string error = error_of(cursor);
+			if (!error.empty() && protocol::now().user.storage.logging)
+				VI_ERR("[indexdb] operation %.*s::%.*s failed: %s", (int)label.size(), label.data(), (int)operation.size(), operation.data(), error.c_str());
 #endif
-			++Queries; ++ThreadQueries;
-			return Cursor;
+			++queries; ++thread_queries;
+			return cursor;
 		}
-		String MutableStorage::ErrorOf(LDB::ExpectsDB<LDB::SessionId>& Cursor)
+		string mutable_storage::error_of(sqlite::expects_db<sqlite::session_id>& cursor)
 		{
-			String Error;
-			if (!Cursor)
-				Error = Cursor.What();
-			return Error;
+			string error;
+			if (!cursor)
+				error = cursor.what();
+			return error;
 		}
-		String MutableStorage::ErrorOf(LDB::ExpectsDB<void>& Cursor)
+		string mutable_storage::error_of(sqlite::expects_db<void>& cursor)
 		{
-			String Error;
-			if (!Cursor)
-				Error = Cursor.What();
-			return Error;
+			string error;
+			if (!cursor)
+				error = cursor.what();
+			return error;
 		}
-		String MutableStorage::ErrorOf(LDB::ExpectsDB<LDB::Cursor>& Cursor)
+		string mutable_storage::error_of(sqlite::expects_db<sqlite::cursor>& cursor)
 		{
-			String Error;
-			if (Cursor)
+			string error;
+			if (cursor)
 			{
-				if (Cursor->Error())
+				if (cursor->error())
 				{
-					for (auto& Response : *Cursor)
+					for (auto& response : *cursor)
 					{
-						if (Response.Error())
+						if (response.error())
 						{
-							if (!Error.empty())
-								Error += "; ";
-							Error += Response.GetStatusText();
+							if (!error.empty())
+								error += "; ";
+							error += response.get_status_text();
 						}
 					}
 				}
 			}
 			else
-				Error = Cursor.What();
-			return Error;
+				error = cursor.what();
+			return error;
 		}
-		void MutableStorage::StorageOf(const std::string_view& Path)
+		void mutable_storage::storage_of(const std::string_view& path)
 		{
-			Storage = Protocol::Change().Database.LoadIndex(Path, [this, &Path](LDB::Connection* Intermediate)
+			storage = protocol::change().database.load_index(path, [this, &path](sqlite::connection* intermediate)
 			{
-				size_t LastQueries = Queries;
-				Storage = Intermediate;
-				VI_PANIC(ReconstructStorage(), "storage verification error (path = %.*s)", (int)Path.size(), Path.data());
-				Storage.Reset();
-				Queries = LastQueries;
+				size_t last_queries = queries;
+				storage = intermediate;
+				VI_PANIC(reconstruct_storage(), "storage verification error (path = %.*s)", (int)path.size(), path.data());
+				storage.reset();
+				queries = last_queries;
 			});
-			VI_PANIC(Storage, "storage connection error (path = %.*s)", (int)Path.size(), Path.data());
+			VI_PANIC(storage, "storage connection error (path = %.*s)", (int)path.size(), path.data());
 		}
-		bool MutableStorage::QueryUsed() const
+		bool mutable_storage::query_used() const
 		{
-			return Queries > 0;
+			return queries > 0;
 		}
-		size_t MutableStorage::GetQueries() const
+		size_t mutable_storage::get_queries() const
 		{
-			return Queries;
+			return queries;
 		}
 
-		LDB::ExpectsDB<void> PermanentStorage::MultiTxBegin(const std::string_view& Label, const std::string_view& Operation, LDB::Isolation Type)
+		sqlite::expects_db<void> permanent_storage::multi_tx_begin(const std::string_view& label, const std::string_view& operation, sqlite::isolation type)
 		{
-			if (Transaction)
-				return LDB::DatabaseException("rollback or commit current transaction");
+			if (transaction)
+				return sqlite::database_exception("rollback or commit current transaction");
 
-			auto Index = GetIndexStorages();
-			Transaction = Memory::New<MultiSessionId>();
-			Transaction->reserve(Index.size());
-			for (auto& Storage : Index)
-				(**Transaction)[Storage] = nullptr;
+			auto index = get_index_storages();
+			transaction = memory::init<multi_session_id>();
+			transaction->reserve(index.size());
+			for (auto& storage : index)
+				(**transaction)[storage] = nullptr;
 
-			std::mutex Mutex;
-			LDB::ExpectsDB<void> Status = Expectation::Met;
-			Parallel::WailAll(Parallel::ForEachSequential(Index.begin(), Index.end(), Index.size(), ELEMENTS_FEW, [&](LDB::Connection* Storage)
+			std::mutex mutex;
+			sqlite::expects_db<void> status = expectation::met;
+			parallel::wail_all(parallel::for_each_sequential(index.begin(), index.end(), index.size(), ELEMENTS_FEW, [&](sqlite::connection* storage)
 			{
-				auto Result = TxBegin(Storage, Label, Operation, Type);
-				if (!Result)
+				auto result = tx_begin(storage, label, operation, type);
+				if (!result)
 				{
-					UMutex<std::mutex> Unique(Mutex);
-					if (!Status)
-						Status = LDB::DatabaseException(Status.Error().message() + ", " + Result.Error().message());
+					umutex<std::mutex> unique(mutex);
+					if (!status)
+						status = sqlite::database_exception(status.error().message() + ", " + result.error().message());
 					else
-						Status = std::move(Result.Error());
+						status = std::move(result.error());
 				}
 				else
-					(**Transaction)[Storage] = *Result;
+					(**transaction)[storage] = *result;
 			}));
-			if (Status)
-				return Expectation::Met;
+			if (status)
+				return expectation::met;
 
-			for (auto& Substorage : **Transaction)
+			for (auto& substorage : **transaction)
 			{
-				if (Substorage.second != nullptr)
-					TxRollback(Substorage.first, Label, Operation, Substorage.second);
+				if (substorage.second != nullptr)
+					tx_rollback(substorage.first, label, operation, substorage.second);
 			}
-			return Status.Error();
+			return status.error();
 		}
-		LDB::ExpectsDB<void> PermanentStorage::MultiTxCommit(const std::string_view& Label, const std::string_view& Operation)
+		sqlite::expects_db<void> permanent_storage::multi_tx_commit(const std::string_view& label, const std::string_view& operation)
 		{
-			if (!Transaction)
-				return LDB::DatabaseException("current transaction not found");
+			if (!transaction)
+				return sqlite::database_exception("current transaction not found");
 
-			std::mutex Mutex;
-			LDB::ExpectsDB<void> Status = Expectation::Met;
-			Parallel::WailAll(Parallel::ForEachSequential(Transaction->begin(), Transaction->end(), Transaction->size(), ELEMENTS_FEW, [&](const std::pair<LDB::Connection* const, LDB::SessionId>& Storage)
+			std::mutex mutex;
+			sqlite::expects_db<void> status = expectation::met;
+			parallel::wail_all(parallel::for_each_sequential(transaction->begin(), transaction->end(), transaction->size(), ELEMENTS_FEW, [&](const std::pair<sqlite::connection* const, sqlite::session_id>& storage)
 			{
-				auto Result = TxCommit(Storage.first, Label, Operation, Storage.second);
-				if (Result)
+				auto result = tx_commit(storage.first, label, operation, storage.second);
+				if (result)
 					return;
 
-				UMutex<std::mutex> Unique(Mutex);
-				if (!Status)
-					Status = LDB::DatabaseException(Status.Error().message() + ", " + Result.Error().message());
+				umutex<std::mutex> unique(mutex);
+				if (!status)
+					status = sqlite::database_exception(status.error().message() + ", " + result.error().message());
 				else
-					Status = std::move(Result.Error());
+					status = std::move(result.error());
 			}));
-			Transaction.Destroy();
-			return Status;
+			transaction.destroy();
+			return status;
 		}
-		LDB::ExpectsDB<void> PermanentStorage::MultiTxRollback(const std::string_view& Label, const std::string_view& Operation)
+		sqlite::expects_db<void> permanent_storage::multi_tx_rollback(const std::string_view& label, const std::string_view& operation)
 		{
-			if (!Transaction)
-				return LDB::DatabaseException("current transaction not found");
+			if (!transaction)
+				return sqlite::database_exception("current transaction not found");
 
-			std::mutex Mutex;
-			LDB::ExpectsDB<void> Status = Expectation::Met;
-			Parallel::WailAll(Parallel::ForEachSequential(Transaction->begin(), Transaction->end(), Transaction->size(), ELEMENTS_FEW, [&](const std::pair<LDB::Connection* const, LDB::SessionId>& Storage)
+			std::mutex mutex;
+			sqlite::expects_db<void> status = expectation::met;
+			parallel::wail_all(parallel::for_each_sequential(transaction->begin(), transaction->end(), transaction->size(), ELEMENTS_FEW, [&](const std::pair<sqlite::connection* const, sqlite::session_id>& storage)
 			{
-				auto Result = TxRollback(Storage.first, Label, Operation, Storage.second);
-				if (Result)
+				auto result = tx_rollback(storage.first, label, operation, storage.second);
+				if (result)
 					return;
 
-				UMutex<std::mutex> Unique(Mutex);
-				if (!Status)
-					Status = LDB::DatabaseException(Status.Error().message() + ", " + Result.Error().message());
+				umutex<std::mutex> unique(mutex);
+				if (!status)
+					status = sqlite::database_exception(status.error().message() + ", " + result.error().message());
 				else
-					Status = std::move(Result.Error());
+					status = std::move(result.error());
 			}));
-			Transaction.Destroy();
-			return Status;
+			transaction.destroy();
+			return status;
 		}
-		LDB::ExpectsDB<LDB::SessionId> PermanentStorage::TxBegin(LDB::Connection* Storage, const std::string_view& Label, const std::string_view& Operation, LDB::Isolation Type)
+		sqlite::expects_db<sqlite::session_id> permanent_storage::tx_begin(sqlite::connection* storage, const std::string_view& label, const std::string_view& operation, sqlite::isolation type)
 		{
-			VI_ASSERT(Storage, "storage connection not initialized (transaction begin)");
-			auto Cursor = Storage->TxBegin(Type);
+			VI_ASSERT(storage, "storage connection not initialized (transaction begin)");
+			auto cursor = storage->tx_begin(type);
 #ifdef _DEBUG
-			String Error = ErrorOf(Cursor);
-			if (!Error.empty() && Protocol::Now().User.Storage.Logging)
-				VI_ERR("[indexdb] operation %.*s::%.*s error (transaction begin): %s", (int)Label.size(), Label.data(), (int)Operation.size(), Operation.data(), Error.c_str());
+			string error = error_of(cursor);
+			if (!error.empty() && protocol::now().user.storage.logging)
+				VI_ERR("[indexdb] operation %.*s::%.*s error (transaction begin): %s", (int)label.size(), label.data(), (int)operation.size(), operation.data(), error.c_str());
 #endif
-			++Queries; ++ThreadQueries;
-			return Cursor;
+			++queries; ++thread_queries;
+			return cursor;
 		}
-		LDB::ExpectsDB<void> PermanentStorage::TxCommit(LDB::Connection* Storage, const std::string_view& Label, const std::string_view& Operation, LDB::SessionId Session)
+		sqlite::expects_db<void> permanent_storage::tx_commit(sqlite::connection* storage, const std::string_view& label, const std::string_view& operation, sqlite::session_id session)
 		{
-			VI_ASSERT(Storage, "storage connection not initialized (transaction commit)");
-			auto Cursor = Storage->TxCommit(Session);
+			VI_ASSERT(storage, "storage connection not initialized (transaction commit)");
+			auto cursor = storage->tx_commit(session);
 #ifdef _DEBUG
-			String Error = ErrorOf(Cursor);
-			if (!Error.empty() && Protocol::Now().User.Storage.Logging)
-				VI_ERR("[indexdb] operation %.*s::%.*s error (transaction commit): %s", (int)Label.size(), Label.data(), (int)Operation.size(), Operation.data(), Error.c_str());
+			string error = error_of(cursor);
+			if (!error.empty() && protocol::now().user.storage.logging)
+				VI_ERR("[indexdb] operation %.*s::%.*s error (transaction commit): %s", (int)label.size(), label.data(), (int)operation.size(), operation.data(), error.c_str());
 #endif
-			++Queries; ++ThreadQueries;
-			return Cursor;
+			++queries; ++thread_queries;
+			return cursor;
 		}
-		LDB::ExpectsDB<void> PermanentStorage::TxRollback(LDB::Connection* Storage, const std::string_view& Label, const std::string_view& Operation, LDB::SessionId Session)
+		sqlite::expects_db<void> permanent_storage::tx_rollback(sqlite::connection* storage, const std::string_view& label, const std::string_view& operation, sqlite::session_id session)
 		{
-			VI_ASSERT(Storage, "storage connection not initialized (transaction rollback)");
-			auto Cursor = Storage->TxRollback(Session);
+			VI_ASSERT(storage, "storage connection not initialized (transaction rollback)");
+			auto cursor = storage->tx_rollback(session);
 #ifdef _DEBUG
-			String Error = ErrorOf(Cursor);
-			if (!Error.empty() && Protocol::Now().User.Storage.Logging)
-				VI_ERR("[indexdb] operation %.*s::%.*s error (transaction rollback): %s", (int)Label.size(), Label.data(), (int)Operation.size(), Operation.data(), Error.c_str());
+			string error = error_of(cursor);
+			if (!error.empty() && protocol::now().user.storage.logging)
+				VI_ERR("[indexdb] operation %.*s::%.*s error (transaction rollback): %s", (int)label.size(), label.data(), (int)operation.size(), operation.data(), error.c_str());
 #endif
-			++Queries; ++ThreadQueries;
-			return Cursor;
+			++queries; ++thread_queries;
+			return cursor;
 		}
-		LDB::ExpectsDB<LDB::Cursor> PermanentStorage::Query(LDB::Connection* Storage, const std::string_view& Label, const std::string_view& Operation, const std::string_view& Command, size_t QueryOps)
+		sqlite::expects_db<sqlite::cursor> permanent_storage::query(sqlite::connection* storage, const std::string_view& label, const std::string_view& operation, const std::string_view& command, size_t query_ops)
 		{
-			VI_ASSERT(Storage, "storage connection not initialized (operation: %.*s::%.*s)", (int)Label.size(), Label.data(), (int)Operation.size(), Operation.data());
-			auto Cursor = Storage->Query(Command, QueryOps, ResolveTransactionSession(Storage, Transaction));
+			VI_ASSERT(storage, "storage connection not initialized (operation: %.*s::%.*s)", (int)label.size(), label.data(), (int)operation.size(), operation.data());
+			auto cursor = storage->query(command, query_ops, resolve_transaction_session(storage, transaction));
 #ifdef _DEBUG
-			String Error = ErrorOf(Cursor);
-			if (!Error.empty() && Protocol::Now().User.Storage.Logging)
-				VI_ERR("[indexdb] operation %.*s::%.*s failed: %s", (int)Label.size(), Label.data(), (int)Operation.size(), Operation.data(), Error.c_str());
+			string error = error_of(cursor);
+			if (!error.empty() && protocol::now().user.storage.logging)
+				VI_ERR("[indexdb] operation %.*s::%.*s failed: %s", (int)label.size(), label.data(), (int)operation.size(), operation.data(), error.c_str());
 #endif
-			++Queries; ++ThreadQueries;
-			return Cursor;
+			++queries; ++thread_queries;
+			return cursor;
 		}
-		LDB::ExpectsDB<LDB::Cursor> PermanentStorage::EmplaceQuery(LDB::Connection* Storage, const std::string_view& Label, const std::string_view& Operation, const std::string_view& Command, SchemaList* Map, size_t QueryOps)
+		sqlite::expects_db<sqlite::cursor> permanent_storage::emplace_query(sqlite::connection* storage, const std::string_view& label, const std::string_view& operation, const std::string_view& command, schema_list* map, size_t query_ops)
 		{
-			VI_ASSERT(Storage, "storage connection not initialized (operation: %.*s::%.*s)", (int)Label.size(), Label.data(), (int)Operation.size(), Operation.data());
-			auto Cursor = Storage->EmplaceQuery(Command, Map, QueryOps, ResolveTransactionSession(Storage, Transaction));
+			VI_ASSERT(storage, "storage connection not initialized (operation: %.*s::%.*s)", (int)label.size(), label.data(), (int)operation.size(), operation.data());
+			auto cursor = storage->emplace_query(command, map, query_ops, resolve_transaction_session(storage, transaction));
 #ifdef _DEBUG
-			String Error = ErrorOf(Cursor);
-			if (!Error.empty() && Protocol::Now().User.Storage.Logging)
-				VI_ERR("[indexdb] operation %.*s::%.*s failed: %s", (int)Label.size(), Label.data(), (int)Operation.size(), Operation.data(), Error.c_str());
+			string error = error_of(cursor);
+			if (!error.empty() && protocol::now().user.storage.logging)
+				VI_ERR("[indexdb] operation %.*s::%.*s failed: %s", (int)label.size(), label.data(), (int)operation.size(), operation.data(), error.c_str());
 #endif
-			++Queries; ++ThreadQueries;
-			return Cursor;
+			++queries; ++thread_queries;
+			return cursor;
 		}
-		LDB::ExpectsDB<LDB::Cursor> PermanentStorage::PreparedQuery(LDB::Connection* Storage, const std::string_view& Label, const std::string_view& Operation, LDB::TStatement* Statement)
+		sqlite::expects_db<sqlite::cursor> permanent_storage::prepared_query(sqlite::connection* storage, const std::string_view& label, const std::string_view& operation, sqlite::tstatement* statement)
 		{
-			VI_ASSERT(Storage, "storage connection not initialized (operation: %.*s::%.*s)", (int)Label.size(), Label.data(), (int)Operation.size(), Operation.data());
-			auto Cursor = Storage->PreparedQuery(Statement, ResolveTransactionSession(Storage, Transaction));
+			VI_ASSERT(storage, "storage connection not initialized (operation: %.*s::%.*s)", (int)label.size(), label.data(), (int)operation.size(), operation.data());
+			auto cursor = storage->prepared_query(statement, resolve_transaction_session(storage, transaction));
 #ifdef _DEBUG
-			String Error = ErrorOf(Cursor);
-			if (!Error.empty() && Protocol::Now().User.Storage.Logging)
-				VI_ERR("[indexdb] operation %.*s::%.*s failed: %s", (int)Label.size(), Label.data(), (int)Operation.size(), Operation.data(), Error.c_str());
+			string error = error_of(cursor);
+			if (!error.empty() && protocol::now().user.storage.logging)
+				VI_ERR("[indexdb] operation %.*s::%.*s failed: %s", (int)label.size(), label.data(), (int)operation.size(), operation.data(), error.c_str());
 #endif
-			++Queries; ++ThreadQueries;
-			return Cursor;
+			++queries; ++thread_queries;
+			return cursor;
 		}
-		LDB::ExpectsDB<String> PermanentStorage::Load(const std::string_view& Label, const std::string_view& Operation, const std::string_view& Key)
+		sqlite::expects_db<string> permanent_storage::load(const std::string_view& label, const std::string_view& operation, const std::string_view& key)
 		{
 #ifdef TAN_ROCKSDB
-			VI_ASSERT(Blob, "storage connection not initialized (operation: %.*s::%.*s)", (int)Label.size(), Label.data(), (int)Operation.size(), Operation.data());
-			rocksdb::PinnableSlice Value;
-			auto Status = Blob->Get(GetBlobReadOptions(), Blob->DefaultColumnFamily(), rocksdb::Slice(Key.data(), Key.size()), &Value);
-			++Queries; ++ThreadQueries;
-			if (!Status.ok())
+			VI_ASSERT(blob, "storage connection not initialized (operation: %.*s::%.*s)", (int)label.size(), label.data(), (int)operation.size(), operation.data());
+			rocksdb::PinnableSlice value;
+			auto status = blob->Get(get_blob_read_options(), blob->DefaultColumnFamily(), rocksdb::Slice(key.data(), key.size()), &value);
+			++queries; ++thread_queries;
+			if (!status.ok())
 			{
-				auto Message = Status.ToString();
-				if (!Status.IsNotFound() && Protocol::Now().User.Storage.Logging)
-					VI_ERR("[blobdb] operation %.*s::%.*s failed: %s", (int)Label.size(), Label.data(), (int)Operation.size(), Operation.data(), Message.c_str());
-				return LDB::ExpectsDB<String>(LDB::DatabaseException(String(Message.begin(), Message.end())));
+				auto message = status.ToString();
+				if (!status.IsNotFound() && protocol::now().user.storage.logging)
+					VI_ERR("[blobdb] operation %.*s::%.*s failed: %s", (int)label.size(), label.data(), (int)operation.size(), operation.data(), message.c_str());
+				return sqlite::expects_db<string>(sqlite::database_exception(string(message.begin(), message.end())));
 			}
 
-			String Result = String(Value.data(), Value.size());
-			return LDB::ExpectsDB<String>(std::move(Result));
+			string result = string(value.data(), value.size());
+			return sqlite::expects_db<string>(std::move(result));
 #else
-			return LDB::DatabaseException("blob db not supported");
+			return sqlite::database_exception("blob db not supported");
 #endif
 		}
-		LDB::ExpectsDB<void> PermanentStorage::Store(const std::string_view& Label, const std::string_view& Operation, const std::string_view& Key, const std::string_view& Value)
+		sqlite::expects_db<void> permanent_storage::store(const std::string_view& label, const std::string_view& operation, const std::string_view& key, const std::string_view& value)
 		{
 #ifdef TAN_ROCKSDB
-			VI_ASSERT(Blob, "storage connection not initialized (operation: %.*s::%.*s)", (int)Label.size(), Label.data(), (int)Operation.size(), Operation.data());
-			auto Status = Value.empty() ? Blob->Delete(GetBlobWriteOptions(), rocksdb::Slice(Key.data(), Key.size())) : Blob->Put(GetBlobWriteOptions(), rocksdb::Slice(Key.data(), Key.size()), rocksdb::Slice(Value.data(), Value.size()));
-			++Queries; ++ThreadQueries;
-			if (!Status.ok())
+			VI_ASSERT(blob, "storage connection not initialized (operation: %.*s::%.*s)", (int)label.size(), label.data(), (int)operation.size(), operation.data());
+			auto status = value.empty() ? blob->Delete(get_blob_write_options(), rocksdb::Slice(key.data(), key.size())) : blob->Put(get_blob_write_options(), rocksdb::Slice(key.data(), key.size()), rocksdb::Slice(value.data(), value.size()));
+			++queries; ++thread_queries;
+			if (!status.ok())
 			{
-				auto Message = Status.ToString();
-				if (!Status.IsNotFound() && Protocol::Now().User.Storage.Logging)
-					VI_ERR("[blobdb] operation %.*s::%.*s failed: %s", (int)Label.size(), Label.data(), (int)Operation.size(), Operation.data(), Message.c_str());
-				return LDB::DatabaseException(String(Message.begin(), Message.end()));
+				auto message = status.ToString();
+				if (!status.IsNotFound() && protocol::now().user.storage.logging)
+					VI_ERR("[blobdb] operation %.*s::%.*s failed: %s", (int)label.size(), label.data(), (int)operation.size(), operation.data(), message.c_str());
+				return sqlite::database_exception(string(message.begin(), message.end()));
 			}
 
-			return Expectation::Met;
+			return expectation::met;
 #else
-			return LDB::DatabaseException("blob db not supported");
+			return sqlite::database_exception("blob db not supported");
 #endif
 		}
-		LDB::ExpectsDB<void> PermanentStorage::Clear(const std::string_view& Label, const std::string_view& Operation, const std::string_view& TableIds)
+		sqlite::expects_db<void> permanent_storage::clear(const std::string_view& label, const std::string_view& operation, const std::string_view& table_ids)
 		{
 #ifdef TAN_ROCKSDB
-			VI_ASSERT(Blob, "storage connection not initialized (operation: %.*s::%.*s)", (int)Label.size(), Label.data(), (int)Operation.size(), Operation.data());
-			auto& Read = GetBlobReadOptions();
-			auto& Write = GetBlobWriteOptions();
-			auto It = Blob->NewIterator(Read);
-			It->SeekToFirst();
-			while (It->Valid())
+			VI_ASSERT(blob, "storage connection not initialized (operation: %.*s::%.*s)", (int)label.size(), label.data(), (int)operation.size(), operation.data());
+			auto& read = get_blob_read_options();
+			auto& write = get_blob_write_options();
+			auto it = blob->NewIterator(read);
+			it->SeekToFirst();
+			while (it->Valid())
 			{
-				if (TableIds.find(*It->key().data()))
-					Blob->Delete(Write, It->key());
-				It->Next();
+				if (table_ids.find(*it->key().data()))
+					blob->Delete(write, it->key());
+				it->Next();
 			}
-			delete It;
-			return Expectation::Met;
+			delete it;
+			return expectation::met;
 #else
-			return LDB::DatabaseException("blob db not supported");
+			return sqlite::database_exception("blob db not supported");
 #endif
 		}
-		String PermanentStorage::ErrorOf(LDB::ExpectsDB<LDB::SessionId>& Cursor)
+		string permanent_storage::error_of(sqlite::expects_db<sqlite::session_id>& cursor)
 		{
-			String Error;
-			if (!Cursor)
-				Error = Cursor.What();
-			return Error;
+			string error;
+			if (!cursor)
+				error = cursor.what();
+			return error;
 		}
-		String PermanentStorage::ErrorOf(LDB::ExpectsDB<void>& Cursor)
+		string permanent_storage::error_of(sqlite::expects_db<void>& cursor)
 		{
-			String Error;
-			if (!Cursor)
-				Error = Cursor.What();
-			return Error;
+			string error;
+			if (!cursor)
+				error = cursor.what();
+			return error;
 		}
-		String PermanentStorage::ErrorOf(LDB::ExpectsDB<LDB::Cursor>& Cursor)
+		string permanent_storage::error_of(sqlite::expects_db<sqlite::cursor>& cursor)
 		{
-			String Error;
-			if (Cursor)
+			string error;
+			if (cursor)
 			{
-				if (Cursor->Error())
+				if (cursor->error())
 				{
-					for (auto& Response : *Cursor)
+					for (auto& response : *cursor)
 					{
-						if (Response.Error())
+						if (response.error())
 						{
-							if (!Error.empty())
-								Error += "; ";
-							Error += Response.GetStatusText();
+							if (!error.empty())
+								error += "; ";
+							error += response.get_status_text();
 						}
 					}
 				}
 			}
 			else
-				Error = Cursor.What();
-			return Error;
+				error = cursor.what();
+			return error;
 		}
-		UPtr<LDB::Connection> PermanentStorage::IndexStorageOf(const std::string_view& Path, const std::string_view& Name)
+		uptr<sqlite::connection> permanent_storage::index_storage_of(const std::string_view& path, const std::string_view& name)
 		{
-			UPtr<LDB::Connection> Storage = Protocol::Change().Database.LoadIndex(String(Path) + "." + String(Name), [this, &Path, &Name](LDB::Connection* Intermediate)
+			uptr<sqlite::connection> storage = protocol::change().database.load_index(string(path) + "." + string(name), [this, &path, &name](sqlite::connection* intermediate)
 			{
-				size_t LastQueries = Queries;
-				VI_PANIC(ReconstructIndexStorage(Intermediate, Name), "storage verification error (path = %.*s)", (int)Path.size(), Path.data());
-				Queries = LastQueries;
+				size_t last_queries = queries;
+				VI_PANIC(reconstruct_index_storage(intermediate, name), "storage verification error (path = %.*s)", (int)path.size(), path.data());
+				queries = last_queries;
 			});
-			VI_PANIC(Storage, "index storage connection error (path = %.*s)", (int)Path.size(), Path.data());
-			return Storage;
+			VI_PANIC(storage, "index storage connection error (path = %.*s)", (int)path.size(), path.data());
+			return storage;
 		}
-		void PermanentStorage::BlobStorageOf(const std::string_view& Path)
+		void permanent_storage::blob_storage_of(const std::string_view& path)
 		{
-			Blob = Protocol::Change().Database.LoadBlob(Path);
-			VI_PANIC(Blob, "blob storage connection error (path = %.*s)", (int)Path.size(), Path.data());
+			blob = protocol::change().database.load_blob(path);
+			VI_PANIC(blob, "blob storage connection error (path = %.*s)", (int)path.size(), path.data());
 #ifdef TAN_ROCKSDB
-			auto Threads = OS::CPU::GetQuantityInfo().Physical;
-			auto Options = Blob->GetOptions();
-			if (Protocol::Now().User.Storage.CompactionThreadsRatio > 0.0)
-				Options.env->SetBackgroundThreads((int)std::max(std::ceil(Threads * Protocol::Now().User.Storage.CompactionThreadsRatio), 1.0), rocksdb::Env::Priority::LOW);
-			if (Protocol::Now().User.Storage.FlushThreadsRatio > 0.0)
-				Options.env->SetBackgroundThreads((int)std::max(std::ceil(Threads * Protocol::Now().User.Storage.FlushThreadsRatio), 1.0), rocksdb::Env::Priority::HIGH);
+			auto threads = os::hw::get_quantity_info().physical;
+			auto options = blob->GetOptions();
+			if (protocol::now().user.storage.compaction_threads_ratio > 0.0)
+				options.env->SetBackgroundThreads((int)std::max(std::ceil(threads * protocol::now().user.storage.compaction_threads_ratio), 1.0), rocksdb::Env::Priority::LOW);
+			if (protocol::now().user.storage.flush_threads_ratio > 0.0)
+				options.env->SetBackgroundThreads((int)std::max(std::ceil(threads * protocol::now().user.storage.flush_threads_ratio), 1.0), rocksdb::Env::Priority::HIGH);
 #endif
 		}
-		void PermanentStorage::UnloadIndexOf(UPtr<LDB::Connection>&& Storage, bool Borrows)
+		void permanent_storage::unload_index_of(uptr<sqlite::connection>&& storage, bool borrows)
 		{
-			if (Borrows)
-				Storage.Reset();
-			else if (Storage)
-				Protocol::Change().Database.UnloadIndex(std::move(Storage));
+			if (borrows)
+				storage.reset();
+			else if (storage)
+				protocol::change().database.unload_index(std::move(storage));
 		}
-		bool PermanentStorage::QueryUsed() const
+		bool permanent_storage::query_used() const
 		{
-			return Queries > 0;
+			return queries > 0;
 		}
-		size_t PermanentStorage::GetQueries() const
+		size_t permanent_storage::get_queries() const
 		{
-			return Queries;
+			return queries;
 		}
 	}
 }

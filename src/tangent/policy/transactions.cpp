@@ -3,4160 +3,4184 @@
 #include "../kernel/script.h"
 #include "../validator/service/nss.h"
 
-namespace Tangent
+namespace tangent
 {
-	namespace Transactions
+	namespace transactions
 	{
-		ExpectsLR<void> Transfer::Validate(uint64_t BlockNumber) const
+		expects_lr<void> transfer::validate(uint64_t block_number) const
 		{
-			if (!Value.IsPositive())
-				return LayerException("invalid value");
+			if (!value.is_positive())
+				return layer_exception("invalid value");
 
-			return Ledger::Transaction::Validate(BlockNumber);
+			return ledger::transaction::validate(block_number);
 		}
-		ExpectsLR<void> Transfer::Execute(Ledger::TransactionContext* Context) const
+		expects_lr<void> transfer::execute(ledger::transaction_context* context) const
 		{
-			auto Validation = Transaction::Execute(Context);
-			if (!Validation)
-				return Validation.Error();
-			else if (memcmp(Context->Receipt.From, To, sizeof(Algorithm::Pubkeyhash)) == 0)
-				return LayerException("invalid receiver");
+			auto validation = transaction::execute(context);
+			if (!validation)
+				return validation.error();
+			else if (memcmp(context->receipt.from, to, sizeof(algorithm::pubkeyhash)) == 0)
+				return layer_exception("invalid receiver");
 
-			auto Payment = Context->ApplyPayment(Asset, Context->Receipt.From, To, Value);
-			if (!Payment)
-				return Payment.Error();
+			auto payment = context->apply_payment(asset, context->receipt.from, to, value);
+			if (!payment)
+				return payment.error();
 
-			return Expectation::Met;
+			return expectation::met;
 		}
-		bool Transfer::StoreBody(Format::Stream* Stream) const
+		bool transfer::store_body(format::stream* stream) const
 		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Algorithm::Pubkeyhash Null = { 0 };
-			Stream->WriteString(Memo);
-			Stream->WriteDecimal(Value);
-			Stream->WriteString(std::string_view((char*)To, memcmp(To, Null, sizeof(Null)) == 0 ? 0 : sizeof(To)));
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			algorithm::pubkeyhash null = { 0 };
+			stream->write_string(memo);
+			stream->write_decimal(value);
+			stream->write_string(std::string_view((char*)to, memcmp(to, null, sizeof(null)) == 0 ? 0 : sizeof(to)));
 			return true;
 		}
-		bool Transfer::LoadBody(Format::Stream& Stream)
+		bool transfer::load_body(format::stream& stream)
 		{
-			if (!Stream.ReadString(Stream.ReadType(), &Memo))
+			if (!stream.read_string(stream.read_type(), &memo))
 				return false;
 
-			if (!Stream.ReadDecimal(Stream.ReadType(), &Value))
+			if (!stream.read_decimal(stream.read_type(), &value))
 				return false;
 
-			String ToAssembly;
-			if (!Stream.ReadString(Stream.ReadType(), &ToAssembly) || !Algorithm::Encoding::DecodeUintBlob(ToAssembly, To, sizeof(To)))
+			string to_assembly;
+			if (!stream.read_string(stream.read_type(), &to_assembly) || !algorithm::encoding::decode_uint_blob(to_assembly, to, sizeof(to)))
 				return false;
 
 			return true;
 		}
-		bool Transfer::RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
+		bool transfer::recover_many(const ledger::receipt& receipt, ordered_set<string>& parties) const
 		{
-			Parties.insert(String((char*)To, sizeof(To)));
+			parties.insert(string((char*)to, sizeof(to)));
 			return true;
 		}
-		void Transfer::SetTo(const Algorithm::Pubkeyhash NewTo, const Decimal& NewValue, const std::string_view& NewMemo)
+		void transfer::set_to(const algorithm::pubkeyhash new_to, const decimal& new_value, const std::string_view& new_memo)
 		{
-			Value = NewValue;
-			Memo = NewMemo;
-			if (!NewTo)
+			value = new_value;
+			memo = new_memo;
+			if (!new_to)
 			{
-				Algorithm::Pubkeyhash Null = { 0 };
-				memcpy(To, Null, sizeof(Algorithm::Pubkeyhash));
+				algorithm::pubkeyhash null = { 0 };
+				memcpy(to, null, sizeof(algorithm::pubkeyhash));
 			}
 			else
-				memcpy(To, NewTo, sizeof(Algorithm::Pubkeyhash));
+				memcpy(to, new_to, sizeof(algorithm::pubkeyhash));
 		}
-		bool Transfer::IsToNull() const
+		bool transfer::is_to_null() const
 		{
-			Algorithm::Pubkeyhash Null = { 0 };
-			return memcmp(To, Null, sizeof(Null)) == 0;
+			algorithm::pubkeyhash null = { 0 };
+			return memcmp(to, null, sizeof(null)) == 0;
 		}
-		UPtr<Schema> Transfer::AsSchema() const
+		uptr<schema> transfer::as_schema() const
 		{
-			Schema* Data = Ledger::Transaction::AsSchema().Reset();
-			Data->Set("to", Algorithm::Signing::SerializeAddress(To));
-			Data->Set("value", Var::Decimal(Value));
-			Data->Set("memo", Memo.empty() ? Var::Null() : Var::String(Memo));
-			return Data;
+			schema* data = ledger::transaction::as_schema().reset();
+			data->set("to", algorithm::signing::serialize_address(to));
+			data->set("value", var::decimal(value));
+			data->set("memo", memo.empty() ? var::null() : var::string(memo));
+			return data;
 		}
-		uint32_t Transfer::AsType() const
+		uint32_t transfer::as_type() const
 		{
-			return AsInstanceType();
+			return as_instance_type();
 		}
-		std::string_view Transfer::AsTypename() const
+		std::string_view transfer::as_typename() const
 		{
-			return AsInstanceTypename();
+			return as_instance_typename();
 		}
-		uint256_t Transfer::GetGasEstimate() const
+		uint256_t transfer::get_gas_estimate() const
 		{
-			return Ledger::GasUtil::GetGasEstimate<Transfer, 20>();
+			return ledger::gas_util::get_gas_estimate<transfer, 20>();
 		}
-		uint32_t Transfer::AsInstanceType()
+		uint32_t transfer::as_instance_type()
 		{
-			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
-			return Hash;
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
 		}
-		std::string_view Transfer::AsInstanceTypename()
+		std::string_view transfer::as_instance_typename()
 		{
 			return "transfer";
 		}
 
-		ExpectsLR<void> Omnitransfer::Validate(uint64_t BlockNumber) const
+		expects_lr<void> omnitransfer::validate(uint64_t block_number) const
 		{
-			if (Transfers.empty())
-				return LayerException("no transfers");
+			if (transfers.empty())
+				return layer_exception("no transfers");
 
-			for (auto& Transfer : Transfers)
+			for (auto& transfer : transfers)
 			{
-				if (!Transfer.Value.IsPositive())
-					return LayerException("invalid value");
+				if (!transfer.value.is_positive())
+					return layer_exception("invalid value");
 			}
 
-			return Ledger::Transaction::Validate(BlockNumber);
+			return ledger::transaction::validate(block_number);
 		}
-		ExpectsLR<void> Omnitransfer::Execute(Ledger::TransactionContext* Context) const
+		expects_lr<void> omnitransfer::execute(ledger::transaction_context* context) const
 		{
-			auto Validation = Transaction::Execute(Context);
-			if (!Validation)
-				return Validation.Error();
+			auto validation = transaction::execute(context);
+			if (!validation)
+				return validation.error();
 
-			for (auto& Transfer : Transfers)
+			for (auto& transfer : transfers)
 			{
-				if (memcmp(Context->Receipt.From, Transfer.To, sizeof(Algorithm::Pubkeyhash)) == 0)
-					return LayerException("invalid receiver");
+				if (memcmp(context->receipt.from, transfer.to, sizeof(algorithm::pubkeyhash)) == 0)
+					return layer_exception("invalid receiver");
 
-				auto Payment = Context->ApplyPayment(Asset, Context->Receipt.From, Transfer.To, Transfer.Value);
-				if (!Payment)
-					return Payment.Error();
+				auto payment = context->apply_payment(asset, context->receipt.from, transfer.to, transfer.value);
+				if (!payment)
+					return payment.error();
 			}
 
-			return Expectation::Met;
+			return expectation::met;
 		}
-		bool Omnitransfer::StoreBody(Format::Stream* Stream) const
+		bool omnitransfer::store_body(format::stream* stream) const
 		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Algorithm::Pubkeyhash Null = { 0 };
-			Stream->WriteInteger((uint16_t)Transfers.size());
-			for (auto& Transfer : Transfers)
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			algorithm::pubkeyhash null = { 0 };
+			stream->write_integer((uint16_t)transfers.size());
+			for (auto& transfer : transfers)
 			{
-				Stream->WriteString(Transfer.Memo);
-				Stream->WriteDecimal(Transfer.Value);
-				Stream->WriteString(std::string_view((char*)Transfer.To, memcmp(Transfer.To, Null, sizeof(Null)) == 0 ? 0 : sizeof(Transfer.To)));
+				stream->write_string(transfer.memo);
+				stream->write_decimal(transfer.value);
+				stream->write_string(std::string_view((char*)transfer.to, memcmp(transfer.to, null, sizeof(null)) == 0 ? 0 : sizeof(transfer.to)));
 			}
 
 			return true;
 		}
-		bool Omnitransfer::LoadBody(Format::Stream& Stream)
+		bool omnitransfer::load_body(format::stream& stream)
 		{
-			uint16_t TransfersSize;
-			if (!Stream.ReadInteger(Stream.ReadType(), &TransfersSize))
+			uint16_t transfers_size;
+			if (!stream.read_integer(stream.read_type(), &transfers_size))
 				return false;
 
-			Transfers.clear();
-			Transfers.reserve(TransfersSize);
-			for (uint16_t i = 0; i < TransfersSize; i++)
+			transfers.clear();
+			transfers.reserve(transfers_size);
+			for (uint16_t i = 0; i < transfers_size; i++)
 			{
-				Subtransfer Transfer;
-				if (!Stream.ReadString(Stream.ReadType(), &Transfer.Memo))
+				subtransfer transfer;
+				if (!stream.read_string(stream.read_type(), &transfer.memo))
 					return false;
 
-				if (!Stream.ReadDecimal(Stream.ReadType(), &Transfer.Value))
+				if (!stream.read_decimal(stream.read_type(), &transfer.value))
 					return false;
 
-				String ToAssembly;
-				if (!Stream.ReadString(Stream.ReadType(), &ToAssembly) || !Algorithm::Encoding::DecodeUintBlob(ToAssembly, Transfer.To, sizeof(Transfer.To)))
+				string to_assembly;
+				if (!stream.read_string(stream.read_type(), &to_assembly) || !algorithm::encoding::decode_uint_blob(to_assembly, transfer.to, sizeof(transfer.to)))
 					return false;
 
-				Transfers.push_back(std::move(Transfer));
+				transfers.push_back(std::move(transfer));
 			}
 
 			return true;
 		}
-		bool Omnitransfer::RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
+		bool omnitransfer::recover_many(const ledger::receipt& receipt, ordered_set<string>& parties) const
 		{
-			for (auto& Transfer : Transfers)
-				Parties.insert(String((char*)Transfer.To, sizeof(Transfer.To)));
+			for (auto& transfer : transfers)
+				parties.insert(string((char*)transfer.to, sizeof(transfer.to)));
 			return true;
 		}
-		void Omnitransfer::SetTo(const Algorithm::Pubkeyhash NewTo, const Decimal& NewValue, const std::string_view& NewMemo)
+		void omnitransfer::set_to(const algorithm::pubkeyhash new_to, const decimal& new_value, const std::string_view& new_memo)
 		{
-			Subtransfer Transfer;
-			Transfer.Value = NewValue;
-			Transfer.Memo = NewMemo;
-			if (!NewTo)
+			subtransfer transfer;
+			transfer.value = new_value;
+			transfer.memo = new_memo;
+			if (!new_to)
 			{
-				Algorithm::Pubkeyhash Null = { 0 };
-				memcpy(Transfer.To, Null, sizeof(Algorithm::Pubkeyhash));
+				algorithm::pubkeyhash null = { 0 };
+				memcpy(transfer.to, null, sizeof(algorithm::pubkeyhash));
 			}
 			else
-				memcpy(Transfer.To, NewTo, sizeof(Algorithm::Pubkeyhash));
-			Transfers.push_back(std::move(Transfer));
+				memcpy(transfer.to, new_to, sizeof(algorithm::pubkeyhash));
+			transfers.push_back(std::move(transfer));
 		}
-		bool Omnitransfer::IsToNull() const
+		bool omnitransfer::is_to_null() const
 		{
-			Algorithm::Pubkeyhash Null = { 0 };
-			for (auto& Transfer : Transfers)
+			algorithm::pubkeyhash null = { 0 };
+			for (auto& transfer : transfers)
 			{
-				if (memcmp(Transfer.To, Null, sizeof(Null)) == 0)
+				if (memcmp(transfer.to, null, sizeof(null)) == 0)
 					return true;
 			}
-			return Transfers.empty();
+			return transfers.empty();
 		}
-		UPtr<Schema> Omnitransfer::AsSchema() const
+		uptr<schema> omnitransfer::as_schema() const
 		{
-			Schema* Data = Ledger::Transaction::AsSchema().Reset();
-			auto* TransfersData = Data->Set("transfers", Var::Set::Array());
-			for (auto& Transfer : Transfers)
+			schema* data = ledger::transaction::as_schema().reset();
+			auto* transfers_data = data->set("transfers", var::set::array());
+			for (auto& transfer : transfers)
 			{
-				auto* TransferData = TransfersData->Push(Var::Set::Object());
-				TransferData->Set("to", Algorithm::Signing::SerializeAddress(Transfer.To));
-				TransferData->Set("value", Var::Decimal(Transfer.Value));
-				TransferData->Set("memo", Transfer.Memo.empty() ? Var::Null() : Var::String(Transfer.Memo));
+				auto* transfer_data = transfers_data->push(var::set::object());
+				transfer_data->set("to", algorithm::signing::serialize_address(transfer.to));
+				transfer_data->set("value", var::decimal(transfer.value));
+				transfer_data->set("memo", transfer.memo.empty() ? var::null() : var::string(transfer.memo));
 			}
-			return Data;
+			return data;
 		}
-		uint32_t Omnitransfer::AsType() const
+		uint32_t omnitransfer::as_type() const
 		{
-			return AsInstanceType();
+			return as_instance_type();
 		}
-		std::string_view Omnitransfer::AsTypename() const
+		std::string_view omnitransfer::as_typename() const
 		{
-			return AsInstanceTypename();
+			return as_instance_typename();
 		}
-		uint256_t Omnitransfer::GetGasEstimate() const
+		uint256_t omnitransfer::get_gas_estimate() const
 		{
-			return Ledger::GasUtil::GetGasEstimate<Omnitransfer, 64>();
+			return ledger::gas_util::get_gas_estimate<omnitransfer, 64>();
 		}
-		uint32_t Omnitransfer::AsInstanceType()
+		uint32_t omnitransfer::as_instance_type()
 		{
-			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
-			return Hash;
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
 		}
-		std::string_view Omnitransfer::AsInstanceTypename()
+		std::string_view omnitransfer::as_instance_typename()
 		{
 			return "omnitransfer";
 		}
 
-		ExpectsLR<void> Deployment::Validate(uint64_t BlockNumber) const
+		expects_lr<void> deployment::validate(uint64_t block_number) const
 		{
-			if (IsLocationNull())
-				return LayerException("invalid location");
-			else if (Segregated && Calldata.size() != 64)
-				return LayerException("invalid hashcode");
+			if (is_location_null())
+				return layer_exception("invalid location");
 
-			return Ledger::Transaction::Validate(BlockNumber);
+			auto type = get_calldata_type();
+			if (!type)
+				return layer_exception("invalid calldata type");
+			else if (*type == calldata_type::hashcode && calldata.size() != 65)
+				return layer_exception("invalid hashcode calldata");
+
+			return ledger::transaction::validate(block_number);
 		}
-		ExpectsLR<void> Deployment::Execute(Ledger::TransactionContext* Context) const
+		expects_lr<void> deployment::execute(ledger::transaction_context* context) const
 		{
-			auto Validation = Transaction::Execute(Context);
-			if (!Validation)
-				return Validation.Error();
+			auto validation = transaction::execute(context);
+			if (!validation)
+				return validation.error();
 
-			Algorithm::Pubkeyhash Owner;
-			if (!RecoverLocation(Owner))
-				return LayerException("invalid location");
+			algorithm::pubkeyhash owner;
+			if (!recover_location(owner))
+				return layer_exception("invalid location");
 
-			auto* Host = Ledger::ScriptHost::Get();
-			auto Compiler = Host->Allocate();
-			if (!Segregated)
+			auto data = std::string_view(calldata).substr(1);
+			auto type = get_calldata_type().otherwise(calldata_type::hashcode);
+			auto* host = ledger::script_host::get();
+			auto compiler = host->allocate();
+			switch (type)
 			{
-				auto Code = Host->Unpack(Calldata);
-				if (!Code)
-					return Code.Error();
-
-				auto Hashcode = Host->Hashcode(*Code);
-				if (!Host->Precompile(*Compiler, Hashcode))
+				case calldata_type::program:
 				{
-					auto Compilation = Host->Compile(*Compiler, Hashcode, *Code);
-					if (!Compilation)
+					auto code = host->unpack(data);
+					if (!code)
+						return code.error();
+
+					auto hashcode = host->hashcode(*code);
+					if (!host->precompile(*compiler, hashcode))
 					{
-						Host->Deallocate(std::move(Compiler));
-						return Compilation.Error();
+						auto compilation = host->compile(*compiler, hashcode, *code);
+						if (!compilation)
+						{
+							host->deallocate(std::move(compiler));
+							return compilation.error();
+						}
 					}
-				}
 
-				auto Collision = Context->GetWitnessProgram(Hashcode);
-				if (!Collision)
-				{
-					auto Status = Context->ApplyWitnessProgram(Calldata);
-					if (!Status)
+					auto collision = context->get_witness_program(hashcode);
+					if (!collision)
 					{
-						Host->Deallocate(std::move(Compiler));
-						return Status.Error();
+						auto status = context->apply_witness_program(data);
+						if (!status)
+						{
+							host->deallocate(std::move(compiler));
+							return status.error();
+						}
 					}
-				}
-				else if (Collision->Storage != Calldata)
-				{
-					Host->Deallocate(std::move(Compiler));
-					return LayerException("program hashcode collision");
-				}
+					else if (collision->storage != data)
+					{
+						host->deallocate(std::move(compiler));
+						return layer_exception("program hashcode collision");
+					}
 
-				auto Status = Context->ApplyAccountProgram(Owner, Hashcode);
-				if (!Status)
-				{
-					Host->Deallocate(std::move(Compiler));
-					return Status.Error();
+					auto status = context->apply_account_program(owner, hashcode);
+					if (!status)
+					{
+						host->deallocate(std::move(compiler));
+						return status.error();
+					}
+					break;
 				}
+				case calldata_type::hashcode:
+				{
+					if (!host->precompile(*compiler, data))
+					{
+						auto program = context->get_witness_program(data);
+						if (!program)
+						{
+							host->deallocate(std::move(compiler));
+							return layer_exception("program is not stored");
+						}
+
+						auto code = program->as_code();
+						if (!code)
+						{
+							host->deallocate(std::move(compiler));
+							return code.error();
+						}
+
+						auto compilation = host->compile(*compiler, data, *code);
+						if (!compilation)
+						{
+							host->deallocate(std::move(compiler));
+							return compilation.error();
+						}
+					}
+
+					auto status = context->apply_account_program(owner, data);
+					if (!status)
+					{
+						host->deallocate(std::move(compiler));
+						return status.error();
+					}
+					break;
+				}
+				default:
+					host->deallocate(std::move(compiler));
+					return layer_exception("invalid calldata type");
 			}
-			else
+
+			auto sequence = context->apply_account_sequence(owner, std::numeric_limits<uint64_t>::max());
+			if (!sequence)
 			{
-				if (!Host->Precompile(*Compiler, Calldata))
-				{
-					auto Program = Context->GetWitnessProgram(Calldata);
-					if (!Program)
-					{
-						Host->Deallocate(std::move(Compiler));
-						return LayerException("program is not stored");
-					}
-
-					auto Code = Program->AsCode();
-					if (!Code)
-					{
-						Host->Deallocate(std::move(Compiler));
-						return Code.Error();
-					}
-
-					auto Compilation = Host->Compile(*Compiler, Calldata, *Code);
-					if (!Compilation)
-					{
-						Host->Deallocate(std::move(Compiler));
-						return Compilation.Error();
-					}
-				}
-
-				auto Status = Context->ApplyAccountProgram(Owner, Calldata);
-				if (!Status)
-				{
-					Host->Deallocate(std::move(Compiler));
-					return Status.Error();
-				}
-			}
-			
-			if (!Patchable)
-			{
-				auto Sequence = Context->ApplyAccountSequence(Owner, std::numeric_limits<uint64_t>::max());
-				if (!Sequence)
-				{
-					Host->Deallocate(std::move(Compiler));
-					return Sequence.Error();
-				}
+				host->deallocate(std::move(compiler));
+				return sequence.error();
 			}
 
-			auto Script = Ledger::ScriptProgram(Context);
-			auto Execution = Script.Initialize(*Compiler, Args);
-			Host->Deallocate(std::move(Compiler));
-			return Execution;
+			auto script = ledger::script_program(context);
+			auto execution = script.initialize(*compiler, args);
+			host->deallocate(std::move(compiler));
+			return execution;
 		}
-		bool Deployment::StoreBody(Format::Stream* Stream) const
+		bool deployment::store_body(format::stream* stream) const
 		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Stream->WriteBoolean(Patchable);
-			Stream->WriteBoolean(Segregated);
-			Stream->WriteString(Calldata);
-			Stream->WriteString(std::string_view((char*)Location, sizeof(Location)));
-			return Format::VariablesUtil::SerializeMergeInto(Args, Stream);
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_string(calldata);
+			stream->write_string(std::string_view((char*)location, sizeof(location)));
+			return format::variables_util::serialize_merge_into(args, stream);
 		}
-		bool Deployment::LoadBody(Format::Stream& Stream)
+		bool deployment::load_body(format::stream& stream)
 		{
-			if (!Stream.ReadBoolean(Stream.ReadType(), &Patchable))
+			if (!stream.read_string(stream.read_type(), &calldata))
 				return false;
 
-			if (!Stream.ReadBoolean(Stream.ReadType(), &Segregated))
+			string location_assembly;
+			if (!stream.read_string(stream.read_type(), &location_assembly) || location_assembly.size() != sizeof(algorithm::recsighash))
 				return false;
 
-			if (!Stream.ReadString(Stream.ReadType(), &Calldata))
-				return false;
-
-			String LocationAssembly;
-			if (!Stream.ReadString(Stream.ReadType(), &LocationAssembly) || LocationAssembly.size() != sizeof(Algorithm::Recsighash))
-				return false;
-
-			Args.clear();
-			memcpy(Location, LocationAssembly.data(), LocationAssembly.size());
-			return Format::VariablesUtil::DeserializeMergeFrom(Stream, &Args);
+			args.clear();
+			memcpy(location, location_assembly.data(), location_assembly.size());
+			return format::variables_util::deserialize_merge_from(stream, &args);
 		}
-		bool Deployment::RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
+		bool deployment::recover_many(const ledger::receipt& receipt, ordered_set<string>& parties) const
 		{
-			Algorithm::Pubkeyhash Owner;
-			if (RecoverLocation(Owner))
-				Parties.insert(String((char*)Owner, sizeof(Owner)));
+			algorithm::pubkeyhash owner;
+			if (recover_location(owner))
+				parties.insert(string((char*)owner, sizeof(owner)));
 			return true;
 		}
-		bool Deployment::SignLocation(const Algorithm::Seckey SecretKey)
+		bool deployment::sign_location(const algorithm::seckey secret_key)
 		{
-			Format::Stream Message;
-			Format::VariablesUtil::SerializeMergeInto(Args, &Message);
-			Message.WriteBoolean(Patchable);
-			Message.WriteBoolean(Segregated);
-			Message.WriteString(Calldata);
-			return Algorithm::Signing::Sign(Algorithm::Signing::MessageHash(Message.Data), SecretKey, Location);
+			format::stream message;
+			format::variables_util::serialize_merge_into(args, &message);
+			message.write_string(calldata);
+			return algorithm::signing::sign(algorithm::signing::message_hash(message.data), secret_key, location);
 		}
-		bool Deployment::VerifyLocation(const Algorithm::Pubkey PublicKey) const
+		bool deployment::verify_location(const algorithm::pubkey public_key) const
 		{
-			Format::Stream Message;
-			Format::VariablesUtil::SerializeMergeInto(Args, &Message);
-			Message.WriteBoolean(Patchable);
-			Message.WriteBoolean(Segregated);
-			Message.WriteString(Calldata);
-			return Algorithm::Signing::Verify(Algorithm::Signing::MessageHash(Message.Data), PublicKey, Location);
+			format::stream message;
+			format::variables_util::serialize_merge_into(args, &message);
+			message.write_string(calldata);
+			return algorithm::signing::verify(algorithm::signing::message_hash(message.data), public_key, location);
 		}
-		bool Deployment::RecoverLocation(Algorithm::Pubkeyhash PublicKeyHash) const
+		bool deployment::recover_location(algorithm::pubkeyhash public_key_hash) const
 		{
-			Format::Stream Message;
-			Format::VariablesUtil::SerializeMergeInto(Args, &Message);
-			Message.WriteBoolean(Patchable);
-			Message.WriteBoolean(Segregated);
-			Message.WriteString(Calldata);
-			return Algorithm::Signing::RecoverHash(Algorithm::Signing::MessageHash(Message.Data), PublicKeyHash, Location);
+			format::stream message;
+			format::variables_util::serialize_merge_into(args, &message);
+			message.write_string(calldata);
+			return algorithm::signing::recover_hash(algorithm::signing::message_hash(message.data), public_key_hash, location);
 		}
-		bool Deployment::IsLocationNull() const
+		bool deployment::is_location_null() const
 		{
-			Algorithm::Recsighash Null = { 0 };
-			return memcmp(Location, Null, sizeof(Null)) == 0;
+			algorithm::recsighash null = { 0 };
+			return memcmp(location, null, sizeof(null)) == 0;
 		}
-		void Deployment::SetLocation(const Algorithm::Recsighash NewValue)
+		void deployment::set_location(const algorithm::recsighash new_value)
 		{
-			VI_ASSERT(NewValue != nullptr, "new value should be set");
-			memcpy(Location, NewValue, sizeof(Algorithm::Recsighash));
+			VI_ASSERT(new_value != nullptr, "new value should be set");
+			memcpy(location, new_value, sizeof(algorithm::recsighash));
 		}
-		void Deployment::SetCalldata(const std::string_view& NewProgram, Format::Variables&& NewArgs, bool MayPatch)
+		void deployment::set_program_calldata(const std::string_view& new_calldata, format::variables&& new_args)
 		{
-			Calldata = Ledger::ScriptHost::Get()->Pack(NewProgram).Or(String());
-			Args = std::move(NewArgs);
-			Patchable = MayPatch;
-			Segregated = false;
+			args = std::move(new_args);
+			calldata.clear();
+			calldata.assign(1, (char)calldata_type::program);
+			calldata.append(ledger::script_host::get()->pack(new_calldata).otherwise(string()));
 		}
-		void Deployment::SetSegregatedCalldata(const std::string_view& NewHashcode, Format::Variables&& NewArgs, bool MayPatch)
+		void deployment::set_hashcode_calldata(const std::string_view& new_calldata, format::variables&& new_args)
 		{
-			Calldata = NewHashcode.substr(0, 64);
-			Args = std::move(NewArgs);
-			Patchable = MayPatch;
-			Segregated = true;
+			args = std::move(new_args);
+			calldata.clear();
+			calldata.assign(1, (char)calldata_type::hashcode);
+			calldata.append(new_calldata.substr(0, 64));
 		}
-		UPtr<Schema> Deployment::AsSchema() const
+		option<deployment::calldata_type> deployment::get_calldata_type() const
 		{
-			Algorithm::Pubkeyhash Owner;
-			RecoverLocation(Owner);
+			if (calldata.empty())
+				return optional::none;
 
-			Schema* Data = Ledger::Transaction::AsSchema().Reset();
-			Data->Set("location_signature", Var::String(Format::Util::Encode0xHex(std::string_view((char*)Location, sizeof(Location)))));
-			Data->Set("location_address", Algorithm::Signing::SerializeAddress(Owner));
-			Data->Set("calldata", Var::String(Format::Util::Encode0xHex(Calldata)));
-			Data->Set("args", Format::VariablesUtil::Serialize(Args));
-			Data->Set("patchable", Var::Boolean(Patchable));
-			Data->Set("segregated", Var::Boolean(Segregated));
-			return Data;
+			calldata_type type = (calldata_type)(uint8_t)calldata.front();
+			switch (type)
+			{
+				case calldata_type::program:
+				case calldata_type::hashcode:
+					return type;
+				default:
+					return optional::none;
+			}
 		}
-		uint32_t Deployment::AsType() const
+		uptr<schema> deployment::as_schema() const
 		{
-			return AsInstanceType();
+			algorithm::pubkeyhash owner;
+			recover_location(owner);
+
+			std::string_view name;
+			switch (get_calldata_type().otherwise((calldata_type)(uint8_t)0))
+			{
+				case calldata_type::program:
+					name = "program";
+					break;
+				case calldata_type::hashcode:
+					name = "hashcode";
+					break;
+				default:
+					break;
+			}
+
+			schema* data = ledger::transaction::as_schema().reset();
+			data->set("location_signature", var::string(format::util::encode_0xhex(std::string_view((char*)location, sizeof(location)))));
+			data->set("location_address", algorithm::signing::serialize_address(owner));
+			data->set("calldata", var::string(format::util::encode_0xhex(calldata)));
+			data->set("args", format::variables_util::serialize(args));
+			data->set("type", name.empty() ? var::null() : var::string(name));
+			return data;
 		}
-		std::string_view Deployment::AsTypename() const
+		uint32_t deployment::as_type() const
 		{
-			return AsInstanceTypename();
+			return as_instance_type();
 		}
-		uint256_t Deployment::GetGasEstimate() const
+		std::string_view deployment::as_typename() const
 		{
-			return Ledger::GasUtil::GetGasEstimate<Deployment, 128>();
+			return as_instance_typename();
 		}
-		uint32_t Deployment::AsInstanceType()
+		uint256_t deployment::get_gas_estimate() const
 		{
-			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
-			return Hash;
+			return ledger::gas_util::get_gas_estimate<deployment, 128>();
 		}
-		std::string_view Deployment::AsInstanceTypename()
+		uint32_t deployment::as_instance_type()
+		{
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
+		}
+		std::string_view deployment::as_instance_typename()
 		{
 			return "deployment";
 		}
 
-		ExpectsLR<void> Invocation::Validate(uint64_t BlockNumber) const
+		expects_lr<void> invocation::validate(uint64_t block_number) const
 		{
-			if (Function.empty())
-				return LayerException("invalid function invocation");
+			if (function.empty())
+				return layer_exception("invalid function invocation");
 
-			return Ledger::Transaction::Validate(BlockNumber);
+			return ledger::transaction::validate(block_number);
 		}
-		ExpectsLR<void> Invocation::Execute(Ledger::TransactionContext* Context) const
+		expects_lr<void> invocation::execute(ledger::transaction_context* context) const
 		{
-			auto Validation = Transaction::Execute(Context);
-			if (!Validation)
-				return Validation.Error();
+			auto validation = transaction::execute(context);
+			if (!validation)
+				return validation.error();
 
-			auto Index = Context->GetAccountProgram(To);
-			if (!Index)
-				return LayerException("program is not assigned");
+			auto index = context->get_account_program(to);
+			if (!index)
+				return layer_exception("program is not assigned");
 
-			if (Hashcode > 0)
+			if (hashcode > 0)
 			{
-				uint32_t Basecode = Algorithm::Hashing::Hash32d(Index->Hashcode);
-				if (Hashcode != Basecode)
-					return LayerException(Stringify::Text("program hashcode does not match (%i != %i)", Hashcode, Basecode));
+				uint32_t basecode = algorithm::hashing::hash32d(index->hashcode);
+				if (hashcode != basecode)
+					return layer_exception(stringify::text("program hashcode does not match (%i != %i)", hashcode, basecode));
 			}
 
-			auto* Host = Ledger::ScriptHost::Get();
-			auto& Hashcode = Index->Hashcode;
-			auto Compiler = Host->Allocate();
-			if (!Host->Precompile(*Compiler, Hashcode))
+			auto* host = ledger::script_host::get();
+			auto& hashcode = index->hashcode;
+			auto compiler = host->allocate();
+			if (!host->precompile(*compiler, hashcode))
 			{
-				auto Program = Context->GetWitnessProgram(Hashcode);
-				if (!Program)
+				auto program = context->get_witness_program(hashcode);
+				if (!program)
 				{
-					Host->Deallocate(std::move(Compiler));
-					return LayerException("program is not stored");
+					host->deallocate(std::move(compiler));
+					return layer_exception("program is not stored");
 				}
 
-				auto Code = Program->AsCode();
-				if (!Code)
+				auto code = program->as_code();
+				if (!code)
 				{
-					Host->Deallocate(std::move(Compiler));
-					return Code.Error();
+					host->deallocate(std::move(compiler));
+					return code.error();
 				}
 
-				auto Compilation = Host->Compile(*Compiler, Hashcode, *Code);
-				if (!Compilation)
+				auto compilation = host->compile(*compiler, hashcode, *code);
+				if (!compilation)
 				{
-					Host->Deallocate(std::move(Compiler));
-					return Compilation.Error();
+					host->deallocate(std::move(compiler));
+					return compilation.error();
 				}
 			}
 
-			auto Script = Ledger::ScriptProgram(Context);
-			auto Execution = Script.MutableCall(*Compiler, Function, Args);
-			Host->Deallocate(std::move(Compiler));
-			return Execution;
+			auto script = ledger::script_program(context);
+			auto execution = script.mutable_call(*compiler, function, args);
+			host->deallocate(std::move(compiler));
+			return execution;
 		}
-		bool Invocation::StoreBody(Format::Stream* Stream) const
+		bool invocation::store_body(format::stream* stream) const
 		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Algorithm::Pubkeyhash Null = { 0 };
-			Stream->WriteInteger(Hashcode);
-			Stream->WriteString(std::string_view((char*)To, memcmp(To, Null, sizeof(Null)) == 0 ? 0 : sizeof(To)));
-			Stream->WriteString(Function);
-			return Format::VariablesUtil::SerializeMergeInto(Args, Stream);
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			algorithm::pubkeyhash null = { 0 };
+			stream->write_integer(hashcode);
+			stream->write_string(std::string_view((char*)to, memcmp(to, null, sizeof(null)) == 0 ? 0 : sizeof(to)));
+			stream->write_string(function);
+			return format::variables_util::serialize_merge_into(args, stream);
 		}
-		bool Invocation::LoadBody(Format::Stream& Stream)
+		bool invocation::load_body(format::stream& stream)
 		{
-			if (!Stream.ReadInteger(Stream.ReadType(), &Hashcode))
+			if (!stream.read_integer(stream.read_type(), &hashcode))
 				return false;
 
-			String ToAssembly;
-			if (!Stream.ReadString(Stream.ReadType(), &ToAssembly) || !Algorithm::Encoding::DecodeUintBlob(ToAssembly, To, sizeof(To)))
+			string to_assembly;
+			if (!stream.read_string(stream.read_type(), &to_assembly) || !algorithm::encoding::decode_uint_blob(to_assembly, to, sizeof(to)))
 				return false;
 
-			if (!Stream.ReadString(Stream.ReadType(), &Function))
+			if (!stream.read_string(stream.read_type(), &function))
 				return false;
 
-			Args.clear();
-			return Format::VariablesUtil::DeserializeMergeFrom(Stream, &Args);
+			args.clear();
+			return format::variables_util::deserialize_merge_from(stream, &args);
 		}
-		bool Invocation::RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
+		bool invocation::recover_many(const ledger::receipt& receipt, ordered_set<string>& parties) const
 		{
-			Parties.insert(String((char*)To, sizeof(To)));
+			parties.insert(string((char*)to, sizeof(to)));
 			return true;
 		}
-		void Invocation::SetCalldata(const Algorithm::Pubkeyhash NewTo, const std::string_view& NewFunction, Format::Variables&& NewArgs)
+		void invocation::set_calldata(const algorithm::pubkeyhash new_to, const std::string_view& new_function, format::variables&& new_args)
 		{
-			SetCalldata(NewTo, 0, NewFunction, std::move(NewArgs));
+			set_calldata(new_to, 0, new_function, std::move(new_args));
 		}
-		void Invocation::SetCalldata(const Algorithm::Pubkeyhash NewTo, uint32_t NewHashcode, const std::string_view& NewFunction, Format::Variables&& NewArgs)
+		void invocation::set_calldata(const algorithm::pubkeyhash new_to, uint32_t new_hashcode, const std::string_view& new_function, format::variables&& new_args)
 		{
-			Args = std::move(NewArgs);
-			Function = NewFunction;
-			Hashcode = NewHashcode;
-			if (!NewTo)
+			args = std::move(new_args);
+			function = new_function;
+			hashcode = new_hashcode;
+			if (!new_to)
 			{
-				Algorithm::Pubkeyhash Null = { 0 };
-				memcpy(To, Null, sizeof(Algorithm::Pubkeyhash));
+				algorithm::pubkeyhash null = { 0 };
+				memcpy(to, null, sizeof(algorithm::pubkeyhash));
 			}
 			else
-				memcpy(To, NewTo, sizeof(Algorithm::Pubkeyhash));
+				memcpy(to, new_to, sizeof(algorithm::pubkeyhash));
 		}
-		bool Invocation::IsToNull() const
+		bool invocation::is_to_null() const
 		{
-			Algorithm::Pubkeyhash Null = { 0 };
-			return memcmp(To, Null, sizeof(Null)) == 0;
+			algorithm::pubkeyhash null = { 0 };
+			return memcmp(to, null, sizeof(null)) == 0;
 		}
-		UPtr<Schema> Invocation::AsSchema() const
+		uptr<schema> invocation::as_schema() const
 		{
-			Schema* Data = Ledger::Transaction::AsSchema().Reset();
-			Data->Set("to", Algorithm::Signing::SerializeAddress(To));
-			Data->Set("hashcode", Var::Integer(Hashcode));
-			Data->Set("function", Var::String(Function));
-			Data->Set("args", Format::VariablesUtil::Serialize(Args));
-			return Data;
+			schema* data = ledger::transaction::as_schema().reset();
+			data->set("to", algorithm::signing::serialize_address(to));
+			data->set("hashcode", var::integer(hashcode));
+			data->set("function", var::string(function));
+			data->set("args", format::variables_util::serialize(args));
+			return data;
 		}
-		uint32_t Invocation::AsType() const
+		uint32_t invocation::as_type() const
 		{
-			return AsInstanceType();
+			return as_instance_type();
 		}
-		std::string_view Invocation::AsTypename() const
+		std::string_view invocation::as_typename() const
 		{
-			return AsInstanceTypename();
+			return as_instance_typename();
 		}
-		uint256_t Invocation::GetGasEstimate() const
+		uint256_t invocation::get_gas_estimate() const
 		{
-			return Ledger::GasUtil::GetGasEstimate<Invocation, 128>();
+			return ledger::gas_util::get_gas_estimate<invocation, 128>();
 		}
-		uint32_t Invocation::AsInstanceType()
+		uint32_t invocation::as_instance_type()
 		{
-			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
-			return Hash;
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
 		}
-		std::string_view Invocation::AsInstanceTypename()
+		std::string_view invocation::as_instance_typename()
 		{
 			return "invocation";
 		}
 
-		ExpectsLR<void> Withdrawal::Validate(uint64_t BlockNumber) const
+		expects_lr<void> withdrawal::validate(uint64_t block_number) const
 		{
-			if (To.empty())
-				return LayerException("invalid to");
+			if (to.empty())
+				return layer_exception("invalid to");
 
-			auto* Chain = NSS::ServerNode::Get()->GetChainparams(Asset);
-			if (!Chain)
-				return LayerException("invalid operation");
+			auto* chain = nss::server_node::get()->get_chainparams(asset);
+			if (!chain)
+				return layer_exception("invalid operation");
 
-			if (!Chain->SupportsBulkTransfer && To.size() > 1)
-				return LayerException("too many to addresses");
+			if (!chain->supports_bulk_transfer && to.size() > 1)
+				return layer_exception("too many to addresses");
 
-			UnorderedSet<String> Addresses;
-			for (auto& Item : To)
+			unordered_set<string> addresses;
+			for (auto& item : to)
 			{
-				if (Addresses.find(Item.first) != Addresses.end())
-					return LayerException("duplicate to address");
+				if (addresses.find(item.first) != addresses.end())
+					return layer_exception("duplicate to address");
 
-				if (!Item.second.IsPositive())
-					return LayerException("invalid to value");
+				if (!item.second.is_positive())
+					return layer_exception("invalid to value");
 
-				Addresses.insert(Item.first);
+				addresses.insert(item.first);
 			}
 
-			return Ledger::Transaction::Validate(BlockNumber);
+			return ledger::transaction::validate(block_number);
 		}
-		ExpectsLR<void> Withdrawal::Execute(Ledger::TransactionContext* Context) const
+		expects_lr<void> withdrawal::execute(ledger::transaction_context* context) const
 		{
-			auto Validation = Transaction::Execute(Context);
-			if (!Validation)
-				return Validation.Error();
+			auto validation = transaction::execute(context);
+			if (!validation)
+				return validation.error();
 
-			bool Charges = memcmp(Context->Receipt.From, Proposer, sizeof(Algorithm::Pubkeyhash)) != 0;
-			auto Value = GetTotalValue();
-			auto BaseAsset = Algorithm::Asset::BaseIdOf(Asset);
-			auto BaseReward = Charges ? Context->GetAccountReward(BaseAsset, Proposer) : ExpectsLR<States::AccountReward>(LayerException());
-			auto BaseFee = (BaseReward ? BaseReward->OutgoingAbsoluteFee : Decimal::Zero());
-			if (BaseReward && BaseAsset != Asset)
+			bool charges = memcmp(context->receipt.from, proposer, sizeof(algorithm::pubkeyhash)) != 0;
+			auto value = get_total_value();
+			auto base_asset = algorithm::asset::base_id_of(asset);
+			auto base_reward = charges ? context->get_account_reward(base_asset, proposer) : expects_lr<states::account_reward>(layer_exception());
+			auto base_fee = (base_reward ? base_reward->outgoing_absolute_fee : decimal::zero());
+			if (base_reward && base_asset != asset)
 			{
-				auto BalanceRequirement = Context->VerifyTransferBalance(BaseAsset, BaseReward->OutgoingAbsoluteFee);
-				if (!BalanceRequirement)
-					return BalanceRequirement.Error();
+				auto balance_requirement = context->verify_transfer_balance(base_asset, base_reward->outgoing_absolute_fee);
+				if (!balance_requirement)
+					return balance_requirement.error();
 
-				auto Depository = Context->GetAccountDepository(BaseAsset, Proposer);
-				if (!Depository || Depository->Custody < BaseReward->OutgoingAbsoluteFee)
-					return LayerException("proposer's " + Algorithm::Asset::HandleOf(BaseAsset) + " balance is insufficient to cover withdrawal fee (value: " + BaseReward->OutgoingAbsoluteFee.ToString() + ")");
+				auto depository = context->get_account_depository(base_asset, proposer);
+				if (!depository || depository->custody < base_reward->outgoing_absolute_fee)
+					return layer_exception("proposer's " + algorithm::asset::handle_of(base_asset) + " balance is insufficient to cover withdrawal fee (value: " + base_reward->outgoing_absolute_fee.to_string() + ")");
 			}
 
-			auto TokenReward = BaseAsset == Asset || !Charges ? BaseReward : Context->GetAccountReward(Asset, Proposer);
-			auto BalanceRequirement = Context->VerifyTransferBalance(Asset, std::max(Value, TokenReward ? TokenReward->CalculateOutgoingFee(Value) : Decimal::Zero()));
-			if (!BalanceRequirement)
-				return BalanceRequirement;
+			auto token_reward = base_asset == asset || !charges ? base_reward : context->get_account_reward(asset, proposer);
+			auto balance_requirement = context->verify_transfer_balance(asset, std::max(value, token_reward ? token_reward->calculate_outgoing_fee(value) : decimal::zero()));
+			if (!balance_requirement)
+				return balance_requirement;
 
-			auto Depository = Context->GetAccountDepository(Asset, Proposer);
-			if (!Depository || Depository->Custody < Value)
-				return LayerException("proposer's " + Algorithm::Asset::HandleOf(Asset) + " balance is insufficient to cover withdrawal value (value: " + Value.ToString() + ")");
+			auto depository = context->get_account_depository(asset, proposer);
+			if (!depository || depository->custody < value)
+				return layer_exception("proposer's " + algorithm::asset::handle_of(asset) + " balance is insufficient to cover withdrawal value (value: " + value.to_string() + ")");
 
-			uint64_t AddressIndex = Protocol::Now().Account.RootAddressIndex;
-			for (auto& Item : To)
+			uint64_t address_index = protocol::now().account.root_address_index;
+			for (auto& item : to)
 			{
-				auto Collision = Context->GetWitnessAddress(BaseAsset, Item.first, Protocol::Now().Account.RootAddressIndex, 0);
-				if (Collision && memcmp(Collision->Owner, Context->Receipt.From, sizeof(Collision->Owner)) != 0)
-					return LayerException("invalid to address (not owned by sender)");
-				else if (!Collision)
-					Collision = Context->ApplyWitnessAddress(Asset, Context->Receipt.From, nullptr, { { (uint8_t)0, String(Item.first) } }, AddressIndex, States::AddressType::Router);
-				if (!Collision)
-					return Collision.Error();
+				auto collision = context->get_witness_address(base_asset, item.first, protocol::now().account.root_address_index, 0);
+				if (collision && memcmp(collision->owner, context->receipt.from, sizeof(collision->owner)) != 0)
+					return layer_exception("invalid to address (not owned by sender)");
+				else if (!collision)
+					collision = context->apply_witness_address(asset, context->receipt.from, nullptr, { { (uint8_t)0, string(item.first) } }, address_index, states::address_type::router);
+				if (!collision)
+					return collision.error();
 			}
 
-			if (BaseAsset != Asset && BaseFee.IsPositive())
+			if (base_asset != asset && base_fee.is_positive())
 			{
-				auto BaseTransfer = Context->ApplyTransfer(BaseAsset, Context->Receipt.From, -BaseFee, Decimal::Zero());
-				if (!BaseTransfer)
-					return BaseTransfer.Error();
+				auto base_transfer = context->apply_transfer(base_asset, context->receipt.from, -base_fee, decimal::zero());
+				if (!base_transfer)
+					return base_transfer.error();
 
-				BaseTransfer = Context->ApplyTransfer(BaseAsset, Proposer, BaseFee, Decimal::Zero());
-				if (!BaseTransfer)
-					return BaseTransfer.Error();
+				base_transfer = context->apply_transfer(base_asset, proposer, base_fee, decimal::zero());
+				if (!base_transfer)
+					return base_transfer.error();
 			}
 
-			auto TokenFee = (TokenReward ? TokenReward->CalculateOutgoingFee(Value) : Decimal::Zero());
-			auto TokenTransfer = Context->ApplyTransfer(Asset, Context->Receipt.From, -TokenFee, Value - TokenFee);
-			if (!TokenTransfer)
-				return TokenTransfer.Error();
+			auto token_fee = (token_reward ? token_reward->calculate_outgoing_fee(value) : decimal::zero());
+			auto token_transfer = context->apply_transfer(asset, context->receipt.from, -token_fee, value - token_fee);
+			if (!token_transfer)
+				return token_transfer.error();
 
-			if (TokenFee.IsPositive())
+			if (token_fee.is_positive())
 			{
-				TokenTransfer = Context->ApplyTransfer(Asset, Proposer, TokenFee, Decimal::Zero());
-				if (!TokenTransfer)
-					return TokenTransfer.Error();
+				token_transfer = context->apply_transfer(asset, proposer, token_fee, decimal::zero());
+				if (!token_transfer)
+					return token_transfer.error();
 			}
 
-			auto Registration = Context->ApplyAccountDepositoryTransaction(Asset, Proposer, Context->Receipt.TransactionHash, 1);
-			if (!Registration)
-				return Registration.Error();
+			auto registration = context->apply_account_depository_transaction(asset, proposer, context->receipt.transaction_hash, 1);
+			if (!registration)
+				return registration.error();
 
-			return Expectation::Met;
+			return expectation::met;
 		}
-		ExpectsPromiseRT<void> Withdrawal::Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const
+		expects_promise_rt<void> withdrawal::dispatch(const ledger::wallet& proposer, const ledger::transaction_context* context, vector<uptr<ledger::transaction>>* pipeline) const
 		{
-			if (memcmp(Proposer.PublicKeyHash, this->Proposer, sizeof(this->Proposer)) != 0)
-				return ExpectsPromiseRT<void>(Expectation::Met);
+			if (memcmp(proposer.public_key_hash, this->proposer, sizeof(this->proposer)) != 0)
+				return expects_promise_rt<void>(expectation::met);
 
-			if (Context->GetWitnessEvent(Context->Receipt.TransactionHash))
-				return ExpectsPromiseRT<void>(Expectation::Met);
+			if (context->get_witness_event(context->receipt.transaction_hash))
+				return expects_promise_rt<void>(expectation::met);
 
-			bool Charges = memcmp(Context->Receipt.From, Proposer.PublicKeyHash, sizeof(Algorithm::Pubkeyhash)) != 0;
-			auto BaseAsset = Algorithm::Asset::BaseIdOf(Asset);
-			auto BaseReward = Charges ? Context->GetAccountReward(BaseAsset, Proposer.PublicKeyHash) : ExpectsLR<States::AccountReward>(LayerException());
-			auto TokenReward = BaseAsset == Asset || !Charges ? BaseReward : Context->GetAccountReward(Asset, Proposer.PublicKeyHash);
-			auto PartitionFee = (TokenReward ? TokenReward->CalculateOutgoingFee(GetTotalValue()) : Decimal::Zero());
-			if (To.size() > 1)
-				PartitionFee /= Decimal(To.size()).Truncate(Protocol::Now().Message.Precision);
+			bool charges = memcmp(context->receipt.from, proposer.public_key_hash, sizeof(algorithm::pubkeyhash)) != 0;
+			auto base_asset = algorithm::asset::base_id_of(asset);
+			auto base_reward = charges ? context->get_account_reward(base_asset, proposer.public_key_hash) : expects_lr<states::account_reward>(layer_exception());
+			auto token_reward = base_asset == asset || !charges ? base_reward : context->get_account_reward(asset, proposer.public_key_hash);
+			auto partition_fee = (token_reward ? token_reward->calculate_outgoing_fee(get_total_value()) : decimal::zero());
+			if (to.size() > 1)
+				partition_fee /= decimal(to.size()).truncate(protocol::now().message.precision);
 
-			auto* Transaction = Memory::New<OutgoingClaim>();
-			Transaction->Asset = Asset;
-			Pipeline->push_back(Transaction);
+			auto* transaction = memory::init<outgoing_claim>();
+			transaction->asset = asset;
+			pipeline->push_back(transaction);
 
-			Vector<Mediator::Transferer> Destinations;
-			Destinations.reserve(To.size());
-			for (auto& Item : To)
-				Destinations.push_back(Mediator::Transferer(Item.first, Optional::None, Item.second - PartitionFee));
+			vector<mediator::transferer> destinations;
+			destinations.reserve(to.size());
+			for (auto& item : to)
+				destinations.push_back(mediator::transferer(item.first, optional::none, item.second - partition_fee));
 
-			auto Parent = NSS::ServerNode::Get()->NewMasterWallet(Asset, Proposer.SecretKey);
-			auto Child = Parent ? Mediator::DynamicWallet(*Parent) : Mediator::DynamicWallet();
-			return Resolver::EmitTransaction(Pipeline, std::move(Child), Asset, Context->Receipt.TransactionHash, std::move(Destinations)).Then<ExpectsRT<void>>([this, Context, Pipeline, Transaction](ExpectsRT<Mediator::OutgoingTransaction>&& Result)
+			auto parent = nss::server_node::get()->new_master_wallet(asset, proposer.secret_key);
+			auto child = parent ? mediator::dynamic_wallet(*parent) : mediator::dynamic_wallet();
+			return resolver::emit_transaction(pipeline, std::move(child), asset, context->receipt.transaction_hash, std::move(destinations)).then<expects_rt<void>>([this, context, pipeline, transaction](expects_rt<mediator::outgoing_transaction>&& result)
 			{
-				if (!Result || Result->Transaction.TransactionId.empty())
+				if (!result || result->transaction.transaction_id.empty())
 				{
-					Transaction->SetFailureWitness(Result ? "transaction broadcast failed" : Result.What(), Context->Receipt.TransactionHash);
-					if (!Result && (Result.Error().retry() || Result.Error().shutdown()))
+					transaction->set_failure_witness(result ? "transaction broadcast failed" : result.what(), context->receipt.transaction_hash);
+					if (!result && (result.error().is_retry() || result.error().is_shutdown()))
 					{
-						Pipeline->pop_back();
-						Memory::Delete(Transaction);
-						return ExpectsRT<void>(Result.Error());
+						pipeline->pop_back();
+						memory::deinit(transaction);
+						return expects_rt<void>(result.error());
 					}
 				}
 				else
-					Transaction->SetSuccessWitness(Result->Transaction.TransactionId, Result->Data, Context->Receipt.TransactionHash);
-				return ExpectsRT<void>(Expectation::Met);
+					transaction->set_success_witness(result->transaction.transaction_id, result->data, context->receipt.transaction_hash);
+				return expects_rt<void>(expectation::met);
 			});
 		}
-		bool Withdrawal::StoreBody(Format::Stream* Stream) const
+		bool withdrawal::store_body(format::stream* stream) const
 		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Algorithm::Pubkeyhash Null = { 0 };
-			Stream->WriteString(std::string_view((char*)Proposer, memcmp(Proposer, Null, sizeof(Null)) == 0 ? 0 : sizeof(Proposer)));
-			Stream->WriteInteger((uint16_t)To.size());
-			for (auto& Item : To)
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			algorithm::pubkeyhash null = { 0 };
+			stream->write_string(std::string_view((char*)proposer, memcmp(proposer, null, sizeof(null)) == 0 ? 0 : sizeof(proposer)));
+			stream->write_integer((uint16_t)to.size());
+			for (auto& item : to)
 			{
-				Stream->WriteString(Item.first);
-				Stream->WriteDecimal(Item.second);
+				stream->write_string(item.first);
+				stream->write_decimal(item.second);
 			}
 			return true;
 		}
-		bool Withdrawal::LoadBody(Format::Stream& Stream)
+		bool withdrawal::load_body(format::stream& stream)
 		{
-			String ProposerAssembly;
-			if (!Stream.ReadString(Stream.ReadType(), &ProposerAssembly) || !Algorithm::Encoding::DecodeUintBlob(ProposerAssembly, Proposer, sizeof(Proposer)))
+			string proposer_assembly;
+			if (!stream.read_string(stream.read_type(), &proposer_assembly) || !algorithm::encoding::decode_uint_blob(proposer_assembly, proposer, sizeof(proposer)))
 				return false;
 
-			uint16_t ToSize;
-			if (!Stream.ReadInteger(Stream.ReadType(), &ToSize))
+			uint16_t to_size;
+			if (!stream.read_integer(stream.read_type(), &to_size))
 				return false;
 
-			for (uint16_t i = 0; i < ToSize; i++)
+			for (uint16_t i = 0; i < to_size; i++)
 			{
-				String Address;
-				if (!Stream.ReadString(Stream.ReadType(), &Address))
+				string address;
+				if (!stream.read_string(stream.read_type(), &address))
 					return false;
 
-				Decimal Value;
-				if (!Stream.ReadDecimal(Stream.ReadType(), &Value))
+				decimal value;
+				if (!stream.read_decimal(stream.read_type(), &value))
 					return false;
 
-				To.push_back(std::make_pair(std::move(Address), std::move(Value)));
+				to.push_back(std::make_pair(std::move(address), std::move(value)));
 			}
 
 			return true;
 		}
-		bool Withdrawal::RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
+		bool withdrawal::recover_many(const ledger::receipt& receipt, ordered_set<string>& parties) const
 		{
-			if (!IsProposerNull())
-				Parties.insert(String((char*)Proposer, sizeof(Proposer)));
+			if (!is_proposer_null())
+				parties.insert(string((char*)proposer, sizeof(proposer)));
 			return true;
 		}
-		void Withdrawal::SetTo(const std::string_view& Address, const Decimal& Value)
+		void withdrawal::set_to(const std::string_view& address, const decimal& value)
 		{
-			for (auto& Item : To)
+			for (auto& item : to)
 			{
-				if (Item.first == Address)
+				if (item.first == address)
 				{
-					Item.second = Value;
+					item.second = value;
 					return;
 				}
 			}
-			To.push_back(std::make_pair(String(Address), Decimal(Value)));
+			to.push_back(std::make_pair(string(address), decimal(value)));
 		}
-		void Withdrawal::SetProposer(const Algorithm::Pubkeyhash NewProposer)
+		void withdrawal::set_proposer(const algorithm::pubkeyhash new_proposer)
 		{
-			if (!NewProposer)
+			if (!new_proposer)
 			{
-				Algorithm::Pubkeyhash Null = { 0 };
-				memcpy(Proposer, Null, sizeof(Algorithm::Pubkeyhash));
+				algorithm::pubkeyhash null = { 0 };
+				memcpy(proposer, null, sizeof(algorithm::pubkeyhash));
 			}
 			else
-				memcpy(Proposer, NewProposer, sizeof(Algorithm::Pubkeyhash));
+				memcpy(proposer, new_proposer, sizeof(algorithm::pubkeyhash));
 		}
-		bool Withdrawal::IsProposerNull() const
+		bool withdrawal::is_proposer_null() const
 		{
-			Algorithm::Pubkeyhash Null = { 0 };
-			return memcmp(Proposer, Null, sizeof(Null)) == 0;
+			algorithm::pubkeyhash null = { 0 };
+			return memcmp(proposer, null, sizeof(null)) == 0;
 		}
-		Decimal Withdrawal::GetTotalValue() const
+		decimal withdrawal::get_total_value() const
 		{
-			Decimal Value = 0.0;
-			for (auto& Item : To)
-				Value += Item.second;
-			return Value;
+			decimal value = 0.0;
+			for (auto& item : to)
+				value += item.second;
+			return value;
 		}
-		UPtr<Schema> Withdrawal::AsSchema() const
+		uptr<schema> withdrawal::as_schema() const
 		{
-			Schema* Data = Ledger::Transaction::AsSchema().Reset();
-			auto* ToData = Data->Set("to", Var::Set::Array());
-			for (auto& Item : To)
+			schema* data = ledger::transaction::as_schema().reset();
+			auto* to_data = data->set("to", var::set::array());
+			for (auto& item : to)
 			{
-				auto* CoinData = ToData->Push(Var::Set::Object());
-				CoinData->Set("address", Var::String(Item.first));
-				CoinData->Set("value", Var::Decimal(Item.second));
+				auto* coin_data = to_data->push(var::set::object());
+				coin_data->set("address", var::string(item.first));
+				coin_data->set("value", var::decimal(item.second));
 			}
-			Data->Set("proposer", Algorithm::Signing::SerializeAddress(Proposer));
-			return Data;
+			data->set("proposer", algorithm::signing::serialize_address(proposer));
+			return data;
 		}
-		uint32_t Withdrawal::AsType() const
+		uint32_t withdrawal::as_type() const
 		{
-			return AsInstanceType();
+			return as_instance_type();
 		}
-		std::string_view Withdrawal::AsTypename() const
+		std::string_view withdrawal::as_typename() const
 		{
-			return AsInstanceTypename();
+			return as_instance_typename();
 		}
-		uint256_t Withdrawal::GetGasEstimate() const
+		uint256_t withdrawal::get_gas_estimate() const
 		{
-			return Ledger::GasUtil::GetGasEstimate<Withdrawal, 36>();
+			return ledger::gas_util::get_gas_estimate<withdrawal, 36>();
 		}
-		uint64_t Withdrawal::GetDispatchOffset() const
+		uint64_t withdrawal::get_dispatch_offset() const
 		{
-			return Protocol::Now().User.NSS.WithdrawalTime / Protocol::Now().Policy.ConsensusProofTime;
+			return protocol::now().user.nss.withdrawal_time / protocol::now().policy.consensus_proof_time;
 		}
-		uint32_t Withdrawal::AsInstanceType()
+		uint32_t withdrawal::as_instance_type()
 		{
-			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
-			return Hash;
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
 		}
-		std::string_view Withdrawal::AsInstanceTypename()
+		std::string_view withdrawal::as_instance_typename()
 		{
 			return "withdrawal";
 		}
 
-		Rollup::Rollup(const Rollup& Other)
+		rollup::rollup(const rollup& other)
 		{
-			Ledger::Transaction& Base = *this;
-			Base = *(Ledger::Transaction*)&Other;
-			Transactions.clear();
-			for (auto& Group : Other.Transactions)
+			ledger::transaction& base = *this;
+			base = *(ledger::transaction*)&other;
+			transactions.clear();
+			for (auto& group : other.transactions)
 			{
-				auto& GroupCopy = Transactions[Group.first];
-				GroupCopy.reserve(Group.second.size());
-				for (auto& Transaction : Group.second)
+				auto& group_copy = transactions[group.first];
+				group_copy.reserve(group.second.size());
+				for (auto& transaction : group.second)
 				{
-					auto* Copy = Resolver::Copy(*Transaction);
-					if (Copy != nullptr)
-						GroupCopy.push_back(Copy);
+					auto* copy = resolver::copy(*transaction);
+					if (copy != nullptr)
+						group_copy.push_back(copy);
 				}
 			}
 		}
-		Rollup& Rollup::operator= (const Rollup& Other)
+		rollup& rollup::operator= (const rollup& other)
 		{
-			if (this == &Other)
+			if (this == &other)
 				return *this;
 
-			Ledger::Transaction& Base = *this;
-			Base = *(Ledger::Transaction*)&Other;
-			Transactions.clear();
-			for (auto& Group : Other.Transactions)
+			ledger::transaction& base = *this;
+			base = *(ledger::transaction*)&other;
+			transactions.clear();
+			for (auto& group : other.transactions)
 			{
-				auto& GroupCopy = Transactions[Group.first];
-				GroupCopy.reserve(Group.second.size());
-				for (auto& Transaction : Group.second)
+				auto& group_copy = transactions[group.first];
+				group_copy.reserve(group.second.size());
+				for (auto& transaction : group.second)
 				{
-					auto* Copy = Resolver::Copy(*Transaction);
-					if (Copy != nullptr)
-						GroupCopy.push_back(Copy);
+					auto* copy = resolver::copy(*transaction);
+					if (copy != nullptr)
+						group_copy.push_back(copy);
 				}
 			}
 			return *this;
 		}
-		ExpectsLR<void> Rollup::Validate(uint64_t BlockNumber) const
+		expects_lr<void> rollup::validate(uint64_t block_number) const
 		{
-			if (Transactions.empty())
-				return LayerException("invalid transactions");
+			if (transactions.empty())
+				return layer_exception("invalid transactions");
 
-			for (auto& Group : Transactions)
+			for (auto& group : transactions)
 			{
-				if (Group.second.empty())
-					return LayerException("invalid transactions");
+				if (group.second.empty())
+					return layer_exception("invalid transactions");
 
-				for (auto& Transaction : Group.second)
+				for (auto& transaction : group.second)
 				{
-					if (!Transaction || Transaction->AsType() == AsType())
-						return LayerException("invalid sub-transaction");
+					if (!transaction || transaction->as_type() == as_type())
+						return layer_exception("invalid sub-transaction");
 
-					auto* Mutable = (Ledger::Transaction*)*Transaction;
-					if (Transaction->Asset != Group.first || Transaction->Conservative || !Transaction->GasPrice.IsNaN() || !Transaction->GasLimit)
-						return LayerException("invalid sub-transaction data");
+					auto* reference = (ledger::transaction*)*transaction;
+					if (transaction->asset != group.first || transaction->conservative || !transaction->gas_price.is_nan() || !transaction->gas_limit)
+						return layer_exception("invalid sub-transaction data");
 
-					uint256_t TransactionHash = Transaction->AsHash();
-					Mutable->GasPrice = Decimal::Zero();
-					auto Validation = Transaction->Validate(BlockNumber);
-					Mutable->GasPrice = Decimal::NaN();
-					if (!Validation)
-						return LayerException("sub-transaction " + Algorithm::Encoding::Encode0xHex256(TransactionHash) + " validation failed: " + Validation.Error().message());
+					uint256_t transaction_hash = transaction->as_hash();
+					reference->gas_price = decimal::zero();
+					auto validation = transaction->validate(block_number);
+					reference->gas_price = decimal::nan();
+					if (!validation)
+						return layer_exception("sub-transaction " + algorithm::encoding::encode_0xhex256(transaction_hash) + " validation failed: " + validation.error().message());
 				}
 			}
 
-			return Ledger::Transaction::Validate(BlockNumber);
+			return ledger::transaction::validate(block_number);
 		}
-		ExpectsLR<void> Rollup::Execute(Ledger::TransactionContext* Context) const
+		expects_lr<void> rollup::execute(ledger::transaction_context* context) const
 		{
-			auto Validation = Transaction::Execute(Context);
-			if (!Validation)
-				return Validation.Error();
+			auto validation = transaction::execute(context);
+			if (!validation)
+				return validation.error();
 
-			Vector<std::pair<Ledger::Transaction*, uint16_t>> Queue;
-			for (auto& Group : Transactions)
+			vector<std::pair<ledger::transaction*, uint16_t>> queue;
+			for (auto& group : transactions)
 			{
-				uint16_t Index = 0;
-				Queue.reserve(Queue.size() + Group.second.size());
-				for (auto& Transaction : Group.second)
-					Queue.push_back(std::make_pair(*Transaction, Index++));
+				uint16_t index = 0;
+				queue.reserve(queue.size() + group.second.size());
+				for (auto& transaction : group.second)
+					queue.push_back(std::make_pair(*transaction, index++));
 			}
 
-			uint256_t AbsoluteGasLimit = Context->Block->GasLimit;
-			uint256_t AbsoluteGasUse = Context->Block->GasUse;
-			uint256_t RelativeGasUse = Context->Receipt.RelativeGasUse;
-			std::sort(Queue.begin(), Queue.end(), [](const std::pair<Ledger::Transaction*, uint16_t>& A, const std::pair<Ledger::Transaction*, uint16_t>& B)
+			uint256_t absolute_gas_limit = context->block->gas_limit;
+			uint256_t absolute_gas_use = context->block->gas_use;
+			uint256_t relative_gas_use = context->receipt.relative_gas_use;
+			std::sort(queue.begin(), queue.end(), [](const std::pair<ledger::transaction*, uint16_t>& a, const std::pair<ledger::transaction*, uint16_t>& b)
 			{
-				return A.first->Sequence < B.first->Sequence;
+				return a.first->sequence < b.first->sequence;
 			});
 
-			Algorithm::Pubkeyhash Null = { 0 };
-			for (auto& [Transaction, Index] : Queue)
+			algorithm::pubkeyhash null = { 0 };
+			for (auto& [transaction, index] : queue)
 			{
-				Format::Stream Message;
-				Message.WriteInteger(Rollup::AsInstanceType());
-				Message.WriteInteger(Asset);
-				Message.WriteInteger(Index);
-				if (!Transaction->StorePayload(&Message))
-					return LayerException("sub-transaction " + Algorithm::Encoding::Encode0xHex256(Transaction->AsHash()) + " validation failed: invalid payload");
+				format::stream message;
+				message.write_integer(rollup::as_instance_type());
+				message.write_integer(asset);
+				message.write_integer(index);
+				if (!transaction->store_payload(&message))
+					return layer_exception("sub-transaction " + algorithm::encoding::encode_0xhex256(transaction->as_hash()) + " validation failed: invalid payload");
 
-				Algorithm::Pubkeyhash Owner;
-				if (!Algorithm::Signing::RecoverHash(Message.Hash(), Owner, Transaction->Signature) || !memcmp(Owner, Null, sizeof(Null)))
-					return LayerException("sub-transaction " + Algorithm::Encoding::Encode0xHex256(Transaction->AsHash()) + " validation failed: invalid signature");
+				algorithm::pubkeyhash owner;
+				if (!algorithm::signing::recover_hash(message.hash(), owner, transaction->signature) || !memcmp(owner, null, sizeof(null)))
+					return layer_exception("sub-transaction " + algorithm::encoding::encode_0xhex256(transaction->as_hash()) + " validation failed: invalid signature");
 
-				Transaction->GasPrice = Decimal::Zero();
-				auto Execution = Ledger::TransactionContext::ExecuteTx((Ledger::Block*)Context->Block, Context->Environment, Transaction, Transaction->AsHash(), Owner, *Context->Delta.Incoming, Transaction->AsMessage().Data.size(), (uint8_t)Ledger::TransactionContext::ExecutionFlags::OnlySuccessful);
-				Transaction->GasPrice = Decimal::NaN();
-				RelativeGasUse += Execution->Receipt.RelativeGasUse;
-				if (!Execution)
-					return LayerException("sub-transaction " + Algorithm::Encoding::Encode0xHex256(Transaction->AsHash()) + " execution failed: " + Execution.Error().message());
+				transaction->gas_price = decimal::zero();
+				auto execution = ledger::transaction_context::execute_tx((ledger::block*)context->block, context->environment, transaction, transaction->as_hash(), owner, *context->delta.incoming, transaction->as_message().data.size(), (uint8_t)ledger::transaction_context::execution_flags::only_successful);
+				transaction->gas_price = decimal::nan();
+				relative_gas_use += execution->receipt.relative_gas_use;
+				if (!execution)
+					return layer_exception("sub-transaction " + algorithm::encoding::encode_0xhex256(transaction->as_hash()) + " execution failed: " + execution.error().message());
 
-				auto Report = Context->EmitEvent<Rollup>({ Format::Variable(Execution->Receipt.TransactionHash), Format::Variable(Execution->Receipt.RelativeGasUse), Format::Variable(Execution->Receipt.RelativeGasPaid) });
-				if (!Report)
-					return LayerException("sub-transaction " + Algorithm::Encoding::Encode0xHex256(Transaction->AsHash()) + " event merge failed: " + Report.Error().message());
+				auto report = context->emit_event<rollup>({ format::variable(execution->receipt.transaction_hash), format::variable(execution->receipt.relative_gas_use), format::variable(execution->receipt.relative_gas_paid) });
+				if (!report)
+					return layer_exception("sub-transaction " + algorithm::encoding::encode_0xhex256(transaction->as_hash()) + " event merge failed: " + report.error().message());
 
-				Context->Receipt.Events.reserve(Context->Receipt.Events.size() + Execution->Receipt.Events.size());
-				for (auto& Event : Execution->Receipt.Events)
-					Context->Receipt.Events.push_back(std::move(Event));
+				context->receipt.events.reserve(context->receipt.events.size() + execution->receipt.events.size());
+				for (auto& event : execution->receipt.events)
+					context->receipt.events.push_back(std::move(event));
 			}
 
-			Context->Block->GasLimit = AbsoluteGasLimit;
-			Context->Block->GasUse = AbsoluteGasUse;
-			Context->Receipt.RelativeGasUse = RelativeGasUse;
-			return Expectation::Met;
+			context->block->gas_limit = absolute_gas_limit;
+			context->block->gas_use = absolute_gas_use;
+			context->receipt.relative_gas_use = relative_gas_use;
+			return expectation::met;
 		}
-		ExpectsPromiseRT<void> Rollup::Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const
+		expects_promise_rt<void> rollup::dispatch(const ledger::wallet& proposer, const ledger::transaction_context* context, vector<uptr<ledger::transaction>>* pipeline) const
 		{
-			auto Requirement = GetDispatchOffset();
-			if (!Requirement)
-				return ExpectsPromiseRT<void>(Expectation::Met);
+			auto requirement = get_dispatch_offset();
+			if (!requirement)
+				return expects_promise_rt<void>(expectation::met);
 
-			return Coasync<ExpectsRT<void>>([this, Proposer, Context, Pipeline]() -> ExpectsPromiseRT<void>
+			return coasync<expects_rt<void>>([this, proposer, context, pipeline]() -> expects_promise_rt<void>
 			{
-				String ErrorMessage;
-				for (auto& Group : Transactions)
+				string error_message;
+				for (auto& group : transactions)
 				{
-					for (auto& Transaction : Group.second)
+					for (auto& transaction : group.second)
 					{
-						auto Status = Coawait(Transaction->Dispatch(Proposer, Context, Pipeline));
-						if (Status)
+						auto status = coawait(transaction->dispatch(proposer, context, pipeline));
+						if (status)
 							continue;
-						else if (Status.Error().retry() || Status.Error().shutdown())
-							Coreturn Status;
+						else if (status.error().is_retry() || status.error().is_shutdown())
+							coreturn status;
 
-						ErrorMessage += "sub-transaction " + Algorithm::Encoding::Encode0xHex256(Transaction->AsHash()) + " dispatch failed: " + Status.Error().message() + "\n";
+						error_message += "sub-transaction " + algorithm::encoding::encode_0xhex256(transaction->as_hash()) + " dispatch failed: " + status.error().message() + "\n";
 					}
 				}
-				if (ErrorMessage.empty())
-					Coreturn Expectation::Met;
-				
-				ErrorMessage.pop_back();
-				Coreturn RemoteException(std::move(ErrorMessage));
+				if (error_message.empty())
+					coreturn expectation::met;
+
+				error_message.pop_back();
+				coreturn remote_exception(std::move(error_message));
 			});
 		}
-		bool Rollup::StoreBody(Format::Stream* Stream) const
+		bool rollup::store_body(format::stream* stream) const
 		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Stream->WriteInteger((uint16_t)Transactions.size());
-			for (auto& Group : Transactions)
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_integer((uint16_t)transactions.size());
+			for (auto& group : transactions)
 			{
-				Stream->WriteInteger(Group.first == Asset ? uint256_t(0) : Group.first);
-				Stream->WriteInteger((uint32_t)Group.second.size());
-				for (auto& Transaction : Group.second)
+				stream->write_integer(group.first == asset ? uint256_t(0) : group.first);
+				stream->write_integer((uint32_t)group.second.size());
+				for (auto& transaction : group.second)
 				{
-					Stream->WriteInteger(Transaction->AsType());
-					Stream->WriteInteger(Transaction->Sequence);
-					Stream->WriteInteger(Transaction->GasLimit);
-					Stream->WriteString(std::string_view((char*)Transaction->Signature, sizeof(Transaction->Signature)));
-					if (!Transaction->StoreBody(Stream))
+					stream->write_integer(transaction->as_type());
+					stream->write_integer(transaction->sequence);
+					stream->write_integer(transaction->gas_limit);
+					stream->write_string(std::string_view((char*)transaction->signature, sizeof(transaction->signature)));
+					if (!transaction->store_body(stream))
 						return false;
 				}
 			}
 
 			return true;
 		}
-		bool Rollup::LoadBody(Format::Stream& Stream)
+		bool rollup::load_body(format::stream& stream)
 		{
-			Transactions.clear();
-			uint16_t GroupsCount;
-			if (!Stream.ReadInteger(Stream.ReadType(), &GroupsCount))
+			transactions.clear();
+			uint16_t groups_count;
+			if (!stream.read_integer(stream.read_type(), &groups_count))
 				return false;
 
-			String SignatureAssembly;
-			for (uint16_t i = 0; i < GroupsCount; i++)
+			string signature_assembly;
+			for (uint16_t i = 0; i < groups_count; i++)
 			{
-				Algorithm::AssetId GroupAsset;
-				if (!Stream.ReadInteger(Stream.ReadType(), &GroupAsset))
+				algorithm::asset_id group_asset;
+				if (!stream.read_integer(stream.read_type(), &group_asset))
 					return false;
 
-				uint32_t TransactionsCount;
-				if (!Stream.ReadInteger(Stream.ReadType(), &TransactionsCount))
+				uint32_t transactions_count;
+				if (!stream.read_integer(stream.read_type(), &transactions_count))
 					return false;
 
-				GroupAsset = GroupAsset ? GroupAsset : Asset;
-				auto& Group = Transactions[GroupAsset];
-				Group.reserve(TransactionsCount);
-				for (uint32_t j = 0; j < TransactionsCount; j++)
+				group_asset = group_asset ? group_asset : asset;
+				auto& group = transactions[group_asset];
+				group.reserve(transactions_count);
+				for (uint32_t j = 0; j < transactions_count; j++)
 				{
-					uint32_t Type;
-					if (!Stream.ReadInteger(Stream.ReadType(), &Type))
+					uint32_t type;
+					if (!stream.read_integer(stream.read_type(), &type))
 						return false;
 
-					UPtr<Ledger::Transaction> Next = Resolver::New(Type);
-					if (!Next || !Stream.ReadInteger(Stream.ReadType(), &Next->Sequence))
+					uptr<ledger::transaction> next = resolver::init(type);
+					if (!next || !stream.read_integer(stream.read_type(), &next->sequence))
 						return false;
 
-					if (!Stream.ReadInteger(Stream.ReadType(), &Next->GasLimit))
+					if (!stream.read_integer(stream.read_type(), &next->gas_limit))
 						return false;
 
-					if (!Stream.ReadString(Stream.ReadType(), &SignatureAssembly) || SignatureAssembly.size() != sizeof(Algorithm::Recsighash))
+					if (!stream.read_string(stream.read_type(), &signature_assembly) || signature_assembly.size() != sizeof(algorithm::recsighash))
 						return false;
 
-					Next->Asset = GroupAsset;
-					if (!Next->LoadBody(Stream))
+					next->asset = group_asset;
+					if (!next->load_body(stream))
 						return false;
 
-					SetupChild(**Next, Asset);
-					memcpy(Next->Signature, SignatureAssembly.data(), SignatureAssembly.size());
-					Group.push_back(std::move(Next));
+					setup_child(**next, asset);
+					memcpy(next->signature, signature_assembly.data(), signature_assembly.size());
+					group.push_back(std::move(next));
 				}
 			}
 			return true;
 		}
-		bool Rollup::RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
+		bool rollup::recover_many(const ledger::receipt& receipt, ordered_set<string>& parties) const
 		{
-			for (auto& Group : Transactions)
+			for (auto& group : transactions)
 			{
-				for (auto& Transaction : Group.second)
+				for (auto& transaction : group.second)
 				{
-					Algorithm::Pubkeyhash From = { 0 };
-					if (Transaction->RecoverHash(From))
+					algorithm::pubkeyhash from = { 0 };
+					if (transaction->recover_hash(from))
 					{
-						Parties.insert(String((char*)From, sizeof(From)));
-						Transaction->RecoverMany(Receipt, Parties);
+						parties.insert(string((char*)from, sizeof(from)));
+						transaction->recover_many(receipt, parties);
 					}
 				}
 			}
 			return true;
 		}
-		bool Rollup::RecoverAliases(const Ledger::Receipt& Receipt, OrderedSet<uint256_t>& Aliases) const
+		bool rollup::recover_aliases(const ledger::receipt& receipt, ordered_set<uint256_t>& aliases) const
 		{
-			for (auto& Group : Transactions)
+			for (auto& group : transactions)
 			{
-				for (auto& Transaction : Group.second)
+				for (auto& transaction : group.second)
 				{
-					Algorithm::Pubkeyhash From = { 0 };
-					Aliases.insert(Transaction->AsHash());
-					Transaction->RecoverAliases(Receipt, Aliases);
+					algorithm::pubkeyhash from = { 0 };
+					aliases.insert(transaction->as_hash());
+					transaction->recover_aliases(receipt, aliases);
 				}
 			}
 			return true;
 		}
-		bool Rollup::Merge(const Ledger::Transaction& Transaction)
+		bool rollup::merge(const ledger::transaction& transaction)
 		{
-			auto* Next = Resolver::Copy(&Transaction);
-			if (!Next)
+			auto* next = resolver::copy(&transaction);
+			if (!next)
 				return false;
 
-			Transactions[Next->Asset].push_back(Next);
+			transactions[next->asset].push_back(next);
 			return true;
 		}
-		bool Rollup::Merge(Ledger::Transaction& Transaction, const Algorithm::Seckey SecretKey)
+		bool rollup::merge(ledger::transaction& transaction, const algorithm::seckey secret_key)
 		{
-			auto It = Transactions.find(Transaction.Asset ? Transaction.Asset : Asset);
-			uint16_t Index = It != Transactions.end() ? It->second.size() : 0;
-			return SignChild(Transaction, SecretKey, Asset, Index) && Merge(Transaction);
+			auto it = transactions.find(transaction.asset ? transaction.asset : asset);
+			uint16_t index = it != transactions.end() ? it->second.size() : 0;
+			return sign_child(transaction, secret_key, asset, index) && merge(transaction);
 		}
-		bool Rollup::Merge(Ledger::Transaction& Transaction, const Algorithm::Seckey SecretKey, uint64_t Sequence)
+		bool rollup::merge(ledger::transaction& transaction, const algorithm::seckey secret_key, uint64_t sequence)
 		{
-			Transaction.Sequence = Sequence;
-			return Merge(Transaction, SecretKey);
+			transaction.sequence = sequence;
+			return merge(transaction, secret_key);
 		}
-		ExpectsLR<Ledger::BlockTransaction> Rollup::ResolveBlockTransaction(const Ledger::Receipt& Receipt, const uint256_t& TransactionHash) const
+		expects_lr<ledger::block_transaction> rollup::resolve_block_transaction(const ledger::receipt& receipt, const uint256_t& transaction_hash) const
 		{
-			if (!TransactionHash)
-				return LayerException("sub-transaction not found");
+			if (!transaction_hash)
+				return layer_exception("sub-transaction not found");
 
-			Ledger::Transaction* Target = nullptr;
-			for (auto& Group : Transactions)
+			ledger::transaction* target = nullptr;
+			for (auto& group : transactions)
 			{
-				for (auto& Transaction : Group.second)
+				for (auto& transaction : group.second)
 				{
-					if (Transaction->AsHash() == TransactionHash)
+					if (transaction->as_hash() == transaction_hash)
 					{
-						Target = *Transaction;
+						target = *transaction;
 						break;
 					}
-					else if (Transaction->AsType() != Rollup::AsInstanceType())
+					else if (transaction->as_type() != rollup::as_instance_type())
 						continue;
 
-					auto Candidate = ((Rollup*)*Transaction)->ResolveBlockTransaction(Receipt, TransactionHash);
-					if (Candidate)
-						return Candidate;
+					auto candidate = ((rollup*)*transaction)->resolve_block_transaction(receipt, transaction_hash);
+					if (candidate)
+						return candidate;
 				}
 			}
 
-			if (!Target)
-				return LayerException("sub-transaction not found");
+			if (!target)
+				return layer_exception("sub-transaction not found");
 
-			Ledger::BlockTransaction Transaction;
-			Transaction.Transaction = Resolver::Copy(Target);
-			Transaction.Receipt = Receipt;
-			if (!Transaction.Transaction)
-				return LayerException("sub-transaction not valid");
+			ledger::block_transaction transaction;
+			transaction.transaction = resolver::copy(target);
+			transaction.receipt = receipt;
+			if (!transaction.transaction)
+				return layer_exception("sub-transaction not valid");
 
-			Transaction.Receipt.RelativeGasUse = 0;
-			Transaction.Receipt.RelativeGasPaid = 0;
-			Transaction.Receipt.TransactionHash = Transaction.Transaction->AsHash();
-			if (!Transaction.Transaction->RecoverHash(Transaction.Receipt.From))
-				return LayerException("sub-transaction not valid");
+			transaction.receipt.relative_gas_use = 0;
+			transaction.receipt.relative_gas_paid = 0;
+			transaction.receipt.transaction_hash = transaction.transaction->as_hash();
+			if (!transaction.transaction->recover_hash(transaction.receipt.from))
+				return layer_exception("sub-transaction not valid");
 
-			size_t Offset = 0;
-			size_t Begin = std::string::npos, End = std::string::npos;
-			for (auto& Event : Receipt.Events)
+			size_t offset = 0;
+			size_t begin = std::string::npos, end = std::string::npos;
+			for (auto& event : receipt.events)
 			{
-				++Offset;
-				if (Event.first != Rollup::AsInstanceType() || Event.second.size() != 3)
+				++offset;
+				if (event.first != rollup::as_instance_type() || event.second.size() != 3)
 					continue;
 
-				uint256_t CandidateHash = Event.second[0].AsUint256();
-				if (CandidateHash == TransactionHash)
+				uint256_t candidate_hash = event.second[0].as_uint256();
+				if (candidate_hash == transaction_hash)
 				{
-					Begin = Offset - 1;
-					Transaction.Receipt.RelativeGasUse = Event.second[1].AsUint256();
-					Transaction.Receipt.RelativeGasPaid = Event.second[2].AsUint256();
+					begin = offset - 1;
+					transaction.receipt.relative_gas_use = event.second[1].as_uint256();
+					transaction.receipt.relative_gas_paid = event.second[2].as_uint256();
 					continue;
 				}
-				else if (Begin != std::string::npos)
+				else if (begin != std::string::npos)
 				{
-					End = Offset - 1;
+					end = offset - 1;
 					break;
 				}
 			}
 
-			if (Begin == std::string::npos)
-				return LayerException("sub-transaction not valid");
-			else if (End == std::string::npos)
-				End = Offset;
+			if (begin == std::string::npos)
+				return layer_exception("sub-transaction not valid");
+			else if (end == std::string::npos)
+				end = offset;
 
-			Transaction.Receipt.Events.resize(End - 1);
-			Transaction.Receipt.Events.erase(Transaction.Receipt.Events.begin(), Transaction.Receipt.Events.begin() + Begin + 1);
-			return Transaction;
+			transaction.receipt.events.resize(end - 1);
+			transaction.receipt.events.erase(transaction.receipt.events.begin(), transaction.receipt.events.begin() + begin + 1);
+			return transaction;
 		}
-		const Ledger::Transaction* Rollup::ResolveTransaction(const uint256_t& TransactionHash) const
+		const ledger::transaction* rollup::resolve_transaction(const uint256_t& transaction_hash) const
 		{
-			if (!TransactionHash)
+			if (!transaction_hash)
 				return nullptr;
 
-			for (auto& Group : Transactions)
+			for (auto& group : transactions)
 			{
-				for (auto& Transaction : Group.second)
+				for (auto& transaction : group.second)
 				{
-					if (Transaction->AsHash() == TransactionHash)
-						return *Transaction;
-					else if (Transaction->AsType() != Rollup::AsInstanceType())
+					if (transaction->as_hash() == transaction_hash)
+						return *transaction;
+					else if (transaction->as_type() != rollup::as_instance_type())
 						continue;
 
-					auto* Candidate = ((Rollup*)*Transaction)->ResolveTransaction(TransactionHash);
-					if (Candidate != nullptr)
-						return Candidate;
+					auto* candidate = ((rollup*)*transaction)->resolve_transaction(transaction_hash);
+					if (candidate != nullptr)
+						return candidate;
 				}
 			}
 
 			return nullptr;
 		}
-		UPtr<Schema> Rollup::AsSchema() const
+		uptr<schema> rollup::as_schema() const
 		{
-			Schema* Data = Ledger::Transaction::AsSchema().Reset();
-			Schema* TransactionsData = Data->Set("transactions", Var::Array());
-			for (auto& Group : Transactions)
+			schema* data = ledger::transaction::as_schema().reset();
+			schema* transactions_data = data->set("transactions", var::array());
+			for (auto& group : transactions)
 			{
-				for (auto& Transaction : Group.second)
-					TransactionsData->Push(Transaction->AsSchema().Reset());
+				for (auto& transaction : group.second)
+					transactions_data->push(transaction->as_schema().reset());
 			}
-			return Data;
+			return data;
 		}
-		uint32_t Rollup::AsType() const
+		uint32_t rollup::as_type() const
 		{
-			return AsInstanceType();
+			return as_instance_type();
 		}
-		std::string_view Rollup::AsTypename() const
+		std::string_view rollup::as_typename() const
 		{
-			return AsInstanceTypename();
+			return as_instance_typename();
 		}
-		uint256_t Rollup::GetGasEstimate() const
+		uint256_t rollup::get_gas_estimate() const
 		{
-			uint256_t GasRequirement = Ledger::GasUtil::GetGasEstimate<Rollup, 8>();
-			for (auto& Group : Transactions)
+			uint256_t gas_requirement = ledger::gas_util::get_gas_estimate<rollup, 8>();
+			for (auto& group : transactions)
 			{
-				for (auto& Transaction : Group.second)
-					GasRequirement += Transaction->GasLimit;
+				for (auto& transaction : group.second)
+					gas_requirement += transaction->gas_limit;
 			}
-			return GasRequirement;
+			return gas_requirement;
 		}
-		uint64_t Rollup::GetDispatchOffset() const
+		uint64_t rollup::get_dispatch_offset() const
 		{
-			uint64_t Max = 0;
-			for (auto& Group : Transactions)
+			uint64_t max = 0;
+			for (auto& group : transactions)
 			{
-				for (auto& Transaction : Group.second)
+				for (auto& transaction : group.second)
 				{
-					uint64_t Value = Transaction->GetDispatchOffset();
-					if (Value > Max)
-						Max = Value;
+					uint64_t value = transaction->get_dispatch_offset();
+					if (value > max)
+						max = value;
 				}
 			}
-			return Max;
+			return max;
 		}
-		uint32_t Rollup::AsInstanceType()
+		uint32_t rollup::as_instance_type()
 		{
-			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
-			return Hash;
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
 		}
-		std::string_view Rollup::AsInstanceTypename()
+		std::string_view rollup::as_instance_typename()
 		{
 			return "rollup";
 		}
-		void Rollup::SetupChild(Ledger::Transaction& Transaction, const Algorithm::AssetId& Asset)
+		void rollup::setup_child(ledger::transaction& transaction, const algorithm::asset_id& asset)
 		{
-			if (!Transaction.Asset)
-				Transaction.Asset = Asset;
-			Transaction.Conservative = false;
-			Transaction.GasPrice = Decimal::NaN();
-			if (!Transaction.GasLimit)
-				Transaction.GasLimit = Transaction.GetGasEstimate();
+			if (!transaction.asset)
+				transaction.asset = asset;
+			transaction.conservative = false;
+			transaction.gas_price = decimal::nan();
+			if (!transaction.gas_limit)
+				transaction.gas_limit = transaction.get_gas_estimate();
 		}
-		bool Rollup::SignChild(Ledger::Transaction& Transaction, const Algorithm::Seckey SecretKey, const Algorithm::AssetId& Asset, uint16_t Index)
+		bool rollup::sign_child(ledger::transaction& transaction, const algorithm::seckey secret_key, const algorithm::asset_id& asset, uint16_t index)
 		{
-			Format::Stream Message;
-			Message.WriteInteger(Rollup::AsInstanceType());
-			Message.WriteInteger(Asset);
-			Message.WriteInteger(Index);
-			SetupChild(Transaction, Asset);
+			format::stream message;
+			message.write_integer(rollup::as_instance_type());
+			message.write_integer(asset);
+			message.write_integer(index);
+			setup_child(transaction, asset);
 
-			if (!Transaction.StorePayload(&Message))
+			if (!transaction.store_payload(&message))
 				return false;
-			
-			return Algorithm::Signing::Sign(Message.Hash(), SecretKey, Transaction.Signature);
+
+			return algorithm::signing::sign(message.hash(), secret_key, transaction.signature);
 		}
 
-		ExpectsLR<void> Commitment::Validate(uint64_t BlockNumber) const
+		expects_lr<void> commitment::validate(uint64_t block_number) const
 		{
-			if (!Online && Observers.empty())
-				return LayerException("invalid status");
+			if (!online && observers.empty())
+				return layer_exception("invalid status");
 
-			for (auto& Mediator : Observers)
+			for (auto& mediator : observers)
 			{
-				uint64_t ExpiryNumber = Algorithm::Asset::ExpiryOf(Mediator.first);
-				if (!ExpiryNumber || (BlockNumber > ExpiryNumber && Mediator.second))
-					return LayerException("invalid observer asset");
+				uint64_t expiry_number = algorithm::asset::expiry_of(mediator.first);
+				if (!expiry_number || (block_number > expiry_number && mediator.second))
+					return layer_exception("invalid observer asset");
 			}
 
-			return Ledger::Transaction::Validate(BlockNumber);
+			return ledger::transaction::validate(block_number);
 		}
-		ExpectsLR<void> Commitment::Execute(Ledger::TransactionContext* Context) const
+		expects_lr<void> commitment::execute(ledger::transaction_context* context) const
 		{
-			auto Validation = Transaction::Execute(Context);
-			if (!Validation)
-				return Validation.Error();
+			auto validation = transaction::execute(context);
+			if (!validation)
+				return validation.error();
 
-			bool GoesOnline = Online.Or(false);
-			for (auto& Mediator : Observers)
-				GoesOnline = Mediator.second || GoesOnline;
+			bool goes_online = online.otherwise(false);
+			for (auto& mediator : observers)
+				goes_online = mediator.second || goes_online;
 
-			if (GoesOnline)
+			if (goes_online)
 			{
-				auto Status = Context->VerifyAccountWork(Context->Receipt.From);
-				if (!Status)
-					return Status;
+				auto status = context->verify_account_work(context->receipt.from);
+				if (!status)
+					return status;
 			}
 
-			if (Online)
+			if (online)
 			{
-				auto Work = Context->ApplyAccountWork(Context->Receipt.From, *Online ? States::AccountFlags::Online : States::AccountFlags::Offline, 0, 0, 0);
-				if (!Work)
-					return Work.Error();
+				auto work = context->apply_account_work(context->receipt.from, *online ? states::account_flags::online : states::account_flags::offline, 0, 0, 0);
+				if (!work)
+					return work.error();
 			}
 
-			for (auto& Mediator : Observers)
+			for (auto& mediator : observers)
 			{
-				auto ObserverWork = Context->ApplyAccountObserver(Mediator.first, Context->Receipt.From, Mediator.second);
-				if (!ObserverWork)
-					return ObserverWork.Error();
+				auto observer_work = context->apply_account_observer(mediator.first, context->receipt.from, mediator.second);
+				if (!observer_work)
+					return observer_work.error();
 			}
 
-			return Expectation::Met;
+			return expectation::met;
 		}
-		bool Commitment::StoreBody(Format::Stream* Stream) const
+		bool commitment::store_body(format::stream* stream) const
 		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Stream->WriteInteger((uint8_t)(Online ? (*Online ? 1 : 0) : 2));
-			Stream->WriteInteger((uint16_t)Observers.size());
-			for (auto& Mediator : Observers)
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_integer((uint8_t)(online ? (*online ? 1 : 0) : 2));
+			stream->write_integer((uint16_t)observers.size());
+			for (auto& mediator : observers)
 			{
-				Stream->WriteInteger(Mediator.first);
-				Stream->WriteBoolean(Mediator.second);
+				stream->write_integer(mediator.first);
+				stream->write_boolean(mediator.second);
 			}
 			return true;
 		}
-		bool Commitment::LoadBody(Format::Stream& Stream)
+		bool commitment::load_body(format::stream& stream)
 		{
-			uint8_t Status;
-			if (!Stream.ReadInteger(Stream.ReadType(), &Status))
+			uint8_t status;
+			if (!stream.read_integer(stream.read_type(), &status))
 				return false;
 
-			if (Status == 0)
-				Online = false;
-			else if (Status == 1)
-				Online = true;
+			if (status == 0)
+				online = false;
+			else if (status == 1)
+				online = true;
 			else
-				Online = Optional::None;
+				online = optional::none;
 
-			uint16_t ObserversSize = 0;
-			if (!Stream.ReadInteger(Stream.ReadType(), &ObserversSize))
+			uint16_t observers_size = 0;
+			if (!stream.read_integer(stream.read_type(), &observers_size))
 				return false;
 
-			Observers.clear();
-			for (uint16_t i = 0; i < ObserversSize; i++)
+			observers.clear();
+			for (uint16_t i = 0; i < observers_size; i++)
 			{
-				Algorithm::AssetId Asset;
-				if (!Stream.ReadInteger(Stream.ReadType(), &Asset))
+				algorithm::asset_id asset;
+				if (!stream.read_integer(stream.read_type(), &asset))
 					return false;
 
-				bool Observing;
-				if (!Stream.ReadBoolean(Stream.ReadType(), &Observing))
+				bool observing;
+				if (!stream.read_boolean(stream.read_type(), &observing))
 					return false;
 
-				Observers[Asset] = Observing;
+				observers[asset] = observing;
 			}
 
 			return true;
 		}
-		void Commitment::SetOnline()
+		void commitment::set_online()
 		{
-			Online = true;
+			online = true;
 		}
-		void Commitment::SetOnline(const Algorithm::AssetId& Asset)
+		void commitment::set_online(const algorithm::asset_id& asset)
 		{
-			Observers[Asset] = true;
+			observers[asset] = true;
 		}
-		void Commitment::SetOffline()
+		void commitment::set_offline()
 		{
-			Online = false;
+			online = false;
 		}
-		void Commitment::SetOffline(const Algorithm::AssetId& Asset)
+		void commitment::set_offline(const algorithm::asset_id& asset)
 		{
-			Observers[Asset] = false;
+			observers[asset] = false;
 		}
-		void Commitment::SetStandby()
+		void commitment::set_standby()
 		{
-			Online = Optional::None;
+			online = optional::none;
 		}
-		void Commitment::SetStandby(const Algorithm::AssetId& Asset)
+		void commitment::set_standby(const algorithm::asset_id& asset)
 		{
-			Observers.erase(Asset);
+			observers.erase(asset);
 		}
-		UPtr<Schema> Commitment::AsSchema() const
+		uptr<schema> commitment::as_schema() const
 		{
-			Schema* Data = Ledger::Transaction::AsSchema().Reset();
-			Data->Set("online", Var::Integer(Online ? (*Online ? 1 : 0) : -1));
-			
-			auto* ObserversData = Data->Set("observers", Var::Set::Array());
-			for (auto& Mediator : Observers)
+			schema* data = ledger::transaction::as_schema().reset();
+			data->set("online", var::integer(online ? (*online ? 1 : 0) : -1));
+
+			auto* observers_data = data->set("observers", var::set::array());
+			for (auto& mediator : observers)
 			{
-				auto* ObserverData = ObserversData->Push(Var::Set::Object());
-				ObserverData->Set("asset", Algorithm::Asset::Serialize(Mediator.first));
-				ObserverData->Set("online", Var::Boolean(Mediator.second));
+				auto* observer_data = observers_data->push(var::set::object());
+				observer_data->set("asset", algorithm::asset::serialize(mediator.first));
+				observer_data->set("online", var::boolean(mediator.second));
 			}
-			return Data;
+			return data;
 		}
-		uint32_t Commitment::AsType() const
+		uint32_t commitment::as_type() const
 		{
-			return AsInstanceType();
+			return as_instance_type();
 		}
-		std::string_view Commitment::AsTypename() const
+		std::string_view commitment::as_typename() const
 		{
-			return AsInstanceTypename();
+			return as_instance_typename();
 		}
-		uint256_t Commitment::GetGasEstimate() const
+		uint256_t commitment::get_gas_estimate() const
 		{
-			return Ledger::GasUtil::GetGasEstimate<Commitment, 64>();
+			return ledger::gas_util::get_gas_estimate<commitment, 64>();
 		}
-		uint32_t Commitment::AsInstanceType()
+		uint32_t commitment::as_instance_type()
 		{
-			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
-			return Hash;
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
 		}
-		std::string_view Commitment::AsInstanceTypename()
+		std::string_view commitment::as_instance_typename()
 		{
 			return "commitment";
 		}
 
-		ExpectsLR<void> IncomingClaim::Validate(uint64_t BlockNumber) const
+		expects_lr<void> incoming_claim::validate(uint64_t block_number) const
 		{
-			auto Assertion = GetAssertion(nullptr);
-			if (!Assertion || !Assertion->IsValid())
-				return LayerException("invalid assertion");
+			auto assertion = get_assertion(nullptr);
+			if (!assertion || !assertion->is_valid())
+				return layer_exception("invalid assertion");
 
-			if (Assertion->Asset != Asset)
-				return LayerException("invalid assertion asset");
+			if (assertion->asset != asset)
+				return layer_exception("invalid assertion asset");
 
-			if (!Assertion->IsLatencyApproved())
-				return LayerException("invalid assertion status");
+			if (!assertion->is_latency_approved())
+				return layer_exception("invalid assertion status");
 
-			return Ledger::AggregationTransaction::Validate(BlockNumber);
+			return ledger::aggregation_transaction::validate(block_number);
 		}
-		ExpectsLR<void> IncomingClaim::Execute(Ledger::TransactionContext* Context) const
+		expects_lr<void> incoming_claim::execute(ledger::transaction_context* context) const
 		{
-			auto Validation = AggregationTransaction::Execute(Context);
-			if (!Validation)
-				return Validation.Error();
+			auto validation = aggregation_transaction::execute(context);
+			if (!validation)
+				return validation.error();
 
-			auto Assertion = GetAssertion(Context);
-			if (!Assertion)
-				return LayerException("invalid assertion");
+			auto assertion = get_assertion(context);
+			if (!assertion)
+				return layer_exception("invalid assertion");
 
-			if (Assertion->Asset != Asset)
-				return LayerException("invalid assertion asset");
+			if (assertion->asset != asset)
+				return layer_exception("invalid assertion asset");
 
-			if (!Assertion->IsLatencyApproved())
-				return LayerException("invalid assertion status");
+			if (!assertion->is_latency_approved())
+				return layer_exception("invalid assertion status");
 
-			auto Collision = Context->GetWitnessTransaction(Asset, Assertion->TransactionId);
-			if (Collision)
-				return LayerException("assertion " + Assertion->TransactionId + " finalized");
+			auto collision = context->get_witness_transaction(asset, assertion->transaction_id);
+			if (collision)
+				return layer_exception("assertion " + assertion->transaction_id + " finalized");
 
-			auto BaseDerivationIndex = Protocol::Now().Account.RootAddressIndex;
-			auto* Chain = NSS::ServerNode::Get()->GetChainparams(Asset);
-			if (!Chain)
-				return LayerException("invalid chain");
+			auto base_derivation_index = protocol::now().account.root_address_index;
+			auto* chain = nss::server_node::get()->get_chainparams(asset);
+			if (!chain)
+				return layer_exception("invalid chain");
 
-			Transition Operations;
-			bool Migration = true;
-			Algorithm::Pubkeyhash Null = { 0 };
-			Algorithm::Pubkeyhash Router = { 0 };
-			UnorderedMap<String, Decimal> Inputs, Outputs;
-			Decimal Change = Decimal::Zero(), Input = Decimal::Zero(), Output = Decimal::Zero();
-			std::for_each(Assertion->From.begin(), Assertion->From.end(), [&](auto& Item) { auto& Value = Inputs[Item.Address]; Value = Value.IsNaN() ? Item.Value : Value + Item.Value; Input += Item.Value; });
-			std::for_each(Assertion->To.begin(), Assertion->To.end(), [&](auto& Item) { auto& Value = Outputs[Item.Address]; Value = Value.IsNaN() ? Item.Value : Value + Item.Value; Output += Item.Value; });
-			std::for_each(Inputs.begin(), Inputs.end(), [&](auto& Item) { auto Value = Outputs.find(Item.first); if (Value != Outputs.end()) { auto Delta = Item.second; Item.second -= Value->second; Value->second -= Delta; } });
-			Assertion->From.erase(std::remove_if(Assertion->From.begin(), Assertion->From.end(), [&](auto& Item) { return !Inputs[Item.Address].IsPositive(); }), Assertion->From.end());
-			Assertion->To.erase(std::remove_if(Assertion->To.begin(), Assertion->To.end(), [&](auto& Item) { return !Outputs[Item.Address].IsPositive(); }), Assertion->To.end());
+			transition operations;
+			bool migration = true;
+			algorithm::pubkeyhash null = { 0 };
+			algorithm::pubkeyhash router = { 0 };
+			unordered_map<string, decimal> inputs, outputs;
+			decimal change = decimal::zero(), input = decimal::zero(), output = decimal::zero();
+			std::for_each(assertion->from.begin(), assertion->from.end(), [&](auto& item) { auto& value = inputs[item.address]; value = value.is_nan() ? item.value : value + item.value; input += item.value; });
+			std::for_each(assertion->to.begin(), assertion->to.end(), [&](auto& item) { auto& value = outputs[item.address]; value = value.is_nan() ? item.value : value + item.value; output += item.value; });
+			std::for_each(inputs.begin(), inputs.end(), [&](auto& item) { auto value = outputs.find(item.first); if (value != outputs.end()) { auto delta = item.second; item.second -= value->second; value->second -= delta; } });
+			assertion->from.erase(std::remove_if(assertion->from.begin(), assertion->from.end(), [&](auto& item) { return !inputs[item.address].is_positive(); }), assertion->from.end());
+			assertion->to.erase(std::remove_if(assertion->to.begin(), assertion->to.end(), [&](auto& item) { return !outputs[item.address].is_positive(); }), assertion->to.end());
 
-			if (Input.IsNaN() || Input.IsNegative())
-				return LayerException("invalid input value");
+			if (input.is_nan() || input.is_negative())
+				return layer_exception("invalid input value");
 
-			if (Input < Output || Output.IsNaN() || Output.IsNegative())
-				return LayerException("invalid output value");
+			if (input < output || output.is_nan() || output.is_negative())
+				return layer_exception("invalid output value");
 
-			switch (Chain->Routing)
+			switch (chain->routing)
 			{
-				case Tangent::Mediator::RoutingPolicy::Account:
-				case Tangent::Mediator::RoutingPolicy::Memo:
-					if (Assertion->From.size() > 1)
-						return LayerException("too many inputs");
+				case tangent::mediator::routing_policy::account:
+				case tangent::mediator::routing_policy::memo:
+					if (assertion->from.size() > 1)
+						return layer_exception("too many inputs");
 
-					if (Assertion->To.size() > 1)
-						return LayerException("too many outputs");
+					if (assertion->to.size() > 1)
+						return layer_exception("too many outputs");
 					break;
 				default:
 					break;
 			}
 
-			for (auto& Item : Assertion->From)
+			for (auto& item : assertion->from)
 			{
-				uint64_t AddressIndex = Item.AddressIndex && Chain->Routing == Mediator::RoutingPolicy::Memo ? *Item.AddressIndex : BaseDerivationIndex;
-				auto Source = Context->GetWitnessAddress(Algorithm::Asset::BaseIdOf(Asset), Item.Address, AddressIndex, 0);
-				if (Source)
+				uint64_t address_index = item.address_index && chain->routing == mediator::routing_policy::memo ? *item.address_index : base_derivation_index;
+				auto source = context->get_witness_address(algorithm::asset::base_id_of(asset), item.address, address_index, 0);
+				if (source)
 				{
-					if (Source->IsCustodianAddress() || Source->IsContributionAddress())
+					if (source->is_custodian_address() || source->is_contribution_address())
 					{
-						auto& Contribution = Operations.Contributions[String((char*)Source->Proposer, sizeof(Source->Proposer))];
-						Contribution.Custody -= Item.Value;
+						auto& contribution = operations.contributions[string((char*)source->proposer, sizeof(source->proposer))];
+						contribution.custody -= item.value;
 					}
-					else if (Source->IsRouterAddress())
+					else if (source->is_router_address())
 					{
-						memcpy(Router, Source->Owner, sizeof(Source->Owner));
-						Migration = false;
+						memcpy(router, source->owner, sizeof(source->owner));
+						migration = false;
 					}
 				}
 				else
 				{
-					Change -= Item.Value;
-					Migration = false;
+					change -= item.value;
+					migration = false;
 				}
 			}
 
-			for (auto& Item : Assertion->To)
+			for (auto& item : assertion->to)
 			{
-				uint64_t AddressIndex = Item.AddressIndex && Chain->Routing == Mediator::RoutingPolicy::Memo ? *Item.AddressIndex : BaseDerivationIndex;
-				auto Source = Context->GetWitnessAddress(Algorithm::Asset::BaseIdOf(Asset), Item.Address, AddressIndex, 0);
-				if (Source)
+				uint64_t address_index = item.address_index && chain->routing == mediator::routing_policy::memo ? *item.address_index : base_derivation_index;
+				auto source = context->get_witness_address(algorithm::asset::base_id_of(asset), item.address, address_index, 0);
+				if (source)
 				{
-					auto* Owner = (Chain->Routing == Mediator::RoutingPolicy::Account && memcmp(Router, Null, sizeof(Null)) != 0 ? Router : Source->Owner);
-					if (!Source->IsRouterAddress())
+					auto* owner = (chain->routing == mediator::routing_policy::account && memcmp(router, null, sizeof(null)) != 0 ? router : source->owner);
+					if (!source->is_router_address())
 					{
-						auto& Contribution = Operations.Contributions[String((char*)Source->Proposer, sizeof(Source->Proposer))];
-						if (Source->IsCustodianAddress())
+						auto& contribution = operations.contributions[string((char*)source->proposer, sizeof(source->proposer))];
+						if (source->is_custodian_address())
 						{
-							Contribution.Custody += Item.Value;
-							if (!Migration)
+							contribution.custody += item.value;
+							if (!migration)
 							{
-								auto& Balance = Operations.Transfers[String((char*)Owner, sizeof(Source->Owner))];
-								Balance.Supply += Item.Value;
+								auto& balance = operations.transfers[string((char*)owner, sizeof(source->owner))];
+								balance.supply += item.value;
 
-								auto Reward = Context->GetAccountReward(Asset, Source->Proposer);
-								if (Reward && Reward->HasIncomingFee())
+								auto reward = context->get_account_reward(asset, source->proposer);
+								if (reward && reward->has_incoming_fee())
 								{
-									auto Fee = Reward->CalculateIncomingFee(Item.Value);
-									Balance.Supply -= Fee;
+									auto fee = reward->calculate_incoming_fee(item.value);
+									balance.supply -= fee;
 
-									auto& Redeemer = Operations.Transfers[String((char*)Source->Proposer, sizeof(Source->Proposer))];
-									Redeemer.Supply += Fee;
+									auto& redeemer = operations.transfers[string((char*)source->proposer, sizeof(source->proposer))];
+									redeemer.supply += fee;
 								}
 							}
 						}
-						else if (Source->IsContributionAddress())
+						else if (source->is_contribution_address())
 						{
-							auto& Coverage = Contribution.Contributions[Item.Address];
-							Coverage = Coverage.IsNaN() ? Item.Value : Coverage + Item.Value;
+							auto& coverage = contribution.contributions[item.address];
+							coverage = coverage.is_nan() ? item.value : coverage + item.value;
 						}
 					}
 					else
 					{
-						auto& Balance = Operations.Transfers[String((char*)Owner, sizeof(Source->Owner))];
-						Balance.Supply -= Item.Value;
-						Balance.Reserve -= Item.Value;
+						auto& balance = operations.transfers[string((char*)owner, sizeof(source->owner))];
+						balance.supply -= item.value;
+						balance.reserve -= item.value;
 					}
 				}
 				else
-					Change += Item.Value;
+					change += item.value;
 			}
 
-			for (auto& Item : Operations.Contributions)
+			for (auto& item : operations.contributions)
 			{
-				if (Change.IsNegative() && Item.second.Custody.IsNegative())
+				if (change.is_negative() && item.second.custody.is_negative())
 				{
-					Item.second.Custody = Decimal::NaN();
+					item.second.custody = decimal::nan();
 					continue;
 				}
 
-				auto Depository = Context->GetAccountDepository(Asset, (uint8_t*)Item.first.data()).Or(States::AccountDepository((uint8_t*)Item.first.data(), Context->Block));
-				Depository.Custody += Item.second.Custody;
-				for (auto& Coverage : Item.second.Contributions)
+				auto depository = context->get_account_depository(asset, (uint8_t*)item.first.data()).otherwise(states::account_depository((uint8_t*)item.first.data(), context->block));
+				depository.custody += item.second.custody;
+				for (auto& coverage : item.second.contributions)
 				{
-					auto& Merging = Depository.Contributions[Coverage.first];
-					Merging = Merging.IsNaN() ? Coverage.second : Merging + Coverage.second;
+					auto& merging = depository.contributions[coverage.first];
+					merging = merging.is_nan() ? coverage.second : merging + coverage.second;
 				}
 
-				auto Work = Context->GetAccountWork((uint8_t*)Item.first.data());
-				Decimal Coverage = Depository.GetCoverage(Work ? Work->Flags : 0);
-				if (!Coverage.IsNegative())
+				auto work = context->get_account_work((uint8_t*)item.first.data());
+				decimal coverage = depository.get_coverage(work ? work->flags : 0);
+				if (!coverage.is_negative())
 					continue;
 
-				Coverage = -Coverage;
-				auto It = Operations.Transfers.begin();
-				while (It != Operations.Transfers.end() && Coverage.IsPositive())
+				coverage = -coverage;
+				auto it = operations.transfers.begin();
+				while (it != operations.transfers.end() && coverage.is_positive())
 				{
-					auto& Reserve = std::min(It->second.Supply, Coverage);
-					if (Reserve.IsPositive())
+					auto& reserve = std::min(it->second.supply, coverage);
+					if (reserve.is_positive())
 					{
-						auto& Reservation = Item.second.Reservations[It->first];
-						Reservation = Reservation.IsNaN() ? Reserve : Reservation + Reserve;
-						It->second.Reserve += Reserve;
-						Coverage -= Reserve;
+						auto& reservation = item.second.reservations[it->first];
+						reservation = reservation.is_nan() ? reserve : reservation + reserve;
+						it->second.reserve += reserve;
+						coverage -= reserve;
 					}
-					++It;
+					++it;
 				}
 			}
 
-			if (Operations.Transfers.empty() && Operations.Contributions.empty())
-				return LayerException("invalid claim");
+			if (operations.transfers.empty() && operations.contributions.empty())
+				return layer_exception("invalid claim");
 
-			for (auto& Operation : Operations.Transfers)
+			for (auto& operation : operations.transfers)
 			{
-				if (Operation.second.Supply.IsZeroOrNaN() && Operation.second.Reserve.IsZeroOrNaN())
+				if (operation.second.supply.is_zero_or_nan() && operation.second.reserve.is_zero_or_nan())
 					continue;
 
-				auto SupplyDelta = Operation.second.Supply.IsNaN() ? Decimal::Zero() : Operation.second.Supply;
-				auto ReserveDelta = Operation.second.Reserve.IsNaN() ? Decimal::Zero() : Operation.second.Reserve;
-				if (SupplyDelta.IsNegative() || ReserveDelta.IsNegative())
+				auto supply_delta = operation.second.supply.is_nan() ? decimal::zero() : operation.second.supply;
+				auto reserve_delta = operation.second.reserve.is_nan() ? decimal::zero() : operation.second.reserve;
+				if (supply_delta.is_negative() || reserve_delta.is_negative())
 				{
-					auto Balance = Context->GetAccountBalance(Asset, (uint8_t*)Operation.first.data());
-					auto Supply = (Balance ? Balance->Supply : Decimal::Zero()) + SupplyDelta;
-					auto Reserve = (Balance ? Balance->Reserve : Decimal::Zero()) + ReserveDelta;
-					if (Supply < 0.0 || Reserve < 0.0)
+					auto balance = context->get_account_balance(asset, (uint8_t*)operation.first.data());
+					auto supply = (balance ? balance->supply : decimal::zero()) + supply_delta;
+					auto reserve = (balance ? balance->reserve : decimal::zero()) + reserve_delta;
+					if (supply < 0.0 || reserve < 0.0)
 					{
-						for (auto& Item : Operations.Contributions)
-							Item.second.Custody = Decimal::NaN();
+						for (auto& item : operations.contributions)
+							item.second.custody = decimal::nan();
 						continue;
 					}
 				}
 
-				auto Transfer = Context->ApplyTransfer(Asset, (uint8_t*)Operation.first.data(), SupplyDelta, ReserveDelta);
-				if (!Transfer)
-					return Transfer.Error();
+				auto transfer = context->apply_transfer(asset, (uint8_t*)operation.first.data(), supply_delta, reserve_delta);
+				if (!transfer)
+					return transfer.error();
 			}
 
-			for (auto& Operation : Operations.Contributions)
+			for (auto& operation : operations.contributions)
 			{
-				auto Depository = Context->ApplyAccountDepositoryChange(Asset, (uint8_t*)Operation.first.data(), Operation.second.Custody, std::move(Operation.second.Contributions), std::move(Operation.second.Reservations));
-				if (!Depository)
-					return Depository.Error();
+				auto depository = context->apply_account_depository_change(asset, (uint8_t*)operation.first.data(), operation.second.custody, std::move(operation.second.contributions), std::move(operation.second.reservations));
+				if (!depository)
+					return depository.error();
 			}
 
-			auto Witness = Context->ApplyWitnessTransaction(Asset, Assertion->TransactionId);
-			if (!Witness)
-				return Witness.Error();
+			auto witness = context->apply_witness_transaction(asset, assertion->transaction_id);
+			if (!witness)
+				return witness.error();
 
-			return Context->EmitWitness(Asset, Assertion->BlockId);
+			return context->emit_witness(asset, assertion->block_id);
 		}
-		bool IncomingClaim::StoreBody(Format::Stream* Stream) const
+		bool incoming_claim::store_body(format::stream* stream) const
 		{
 			return true;
 		}
-		bool IncomingClaim::LoadBody(Format::Stream& Stream)
+		bool incoming_claim::load_body(format::stream& stream)
 		{
 			return true;
 		}
-		bool IncomingClaim::RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
+		bool incoming_claim::recover_many(const ledger::receipt& receipt, ordered_set<string>& parties) const
 		{
-			const Format::Variables* Event = nullptr;
-			size_t Offset = 0;
+			const format::variables* event = nullptr;
+			size_t offset = 0;
 			do
 			{
-				Event = Receipt.FindEvent<States::AccountBalance>(Offset++);
-				if (Event != nullptr && Event->size() >= 2 && Event->at(1).AsString().size() == sizeof(Algorithm::Pubkeyhash))
-					Parties.insert(Event->at(1).AsBlob());
-			} while (Event != nullptr);
+				event = receipt.find_event<states::account_balance>(offset++);
+				if (event != nullptr && event->size() >= 2 && event->at(1).as_string().size() == sizeof(algorithm::pubkeyhash))
+					parties.insert(event->at(1).as_blob());
+			} while (event != nullptr);
 
-			Offset = 0;
+			offset = 0;
 			do
 			{
-				Event = Receipt.FindEvent<States::AccountDepository>(Offset++);
-				if (Event != nullptr && Event->size() >= 2 && Event->at(1).AsString().size() == sizeof(Algorithm::Pubkeyhash))
-					Parties.insert(Event->at(1).AsBlob());
-			} while (Event != nullptr);
+				event = receipt.find_event<states::account_depository>(offset++);
+				if (event != nullptr && event->size() >= 2 && event->at(1).as_string().size() == sizeof(algorithm::pubkeyhash))
+					parties.insert(event->at(1).as_blob());
+			} while (event != nullptr);
 			return true;
 		}
-		void IncomingClaim::SetWitness(uint64_t BlockHeight, const std::string_view& TransactionId, Decimal&& Fee, Vector<Mediator::Transferer>&& Senders, Vector<Mediator::Transferer>&& Receivers)
+		void incoming_claim::set_witness(uint64_t block_height, const std::string_view& transaction_id, decimal&& fee, vector<mediator::transferer>&& senders, vector<mediator::transferer>&& receivers)
 		{
-			Mediator::IncomingTransaction Target;
-			Target.SetTransaction(Asset, BlockHeight, TransactionId, std::move(Fee));
-			Target.SetOperations(std::move(Senders), std::move(Receivers));
-			SetWitness(Target);
+			mediator::incoming_transaction target;
+			target.set_transaction(asset, block_height, transaction_id, std::move(fee));
+			target.set_operations(std::move(senders), std::move(receivers));
+			set_witness(target);
 		}
-		void IncomingClaim::SetWitness(const Mediator::IncomingTransaction& Witness)
+		void incoming_claim::set_witness(const mediator::incoming_transaction& witness)
 		{
-			Asset = Witness.Asset;
-			SetStatement(Algorithm::Hashing::Hash256i(Witness.TransactionId), Witness.AsMessage());
+			asset = witness.asset;
+			set_statement(algorithm::hashing::hash256i(witness.transaction_id), witness.as_message());
 		}
-		Option<Mediator::IncomingTransaction> IncomingClaim::GetAssertion(const Ledger::TransactionContext* Context) const
+		option<mediator::incoming_transaction> incoming_claim::get_assertion(const ledger::transaction_context* context) const
 		{
-			auto* BestBranch = GetCumulativeBranch(Context);
-			if (!BestBranch)
-				return Optional::None;
+			auto* best_branch = get_cumulative_branch(context);
+			if (!best_branch)
+				return optional::none;
 
-			auto Message = BestBranch->Message;
-			Message.Seek = 0;
+			auto message = best_branch->message;
+			message.seek = 0;
 
-			Mediator::IncomingTransaction Assertion;
-			if (!Assertion.Load(Message))
-				return Optional::None;
+			mediator::incoming_transaction assertion;
+			if (!assertion.load(message))
+				return optional::none;
 
-			return Assertion;
+			return assertion;
 		}
-		UPtr<Schema> IncomingClaim::AsSchema() const
+		uptr<schema> incoming_claim::as_schema() const
 		{
-			auto Assertion = GetAssertion(nullptr);
-			Schema* Data = Ledger::AggregationTransaction::AsSchema().Reset();
-			Data->Set("assertion", Assertion ? Assertion->AsSchema().Reset() : Var::Set::Null());
-			return Data;
+			auto assertion = get_assertion(nullptr);
+			schema* data = ledger::aggregation_transaction::as_schema().reset();
+			data->set("assertion", assertion ? assertion->as_schema().reset() : var::set::null());
+			return data;
 		}
-		uint32_t IncomingClaim::AsType() const
+		uint32_t incoming_claim::as_type() const
 		{
-			return AsInstanceType();
+			return as_instance_type();
 		}
-		std::string_view IncomingClaim::AsTypename() const
+		std::string_view incoming_claim::as_typename() const
 		{
-			return AsInstanceTypename();
+			return as_instance_typename();
 		}
-		uint256_t IncomingClaim::GetGasEstimate() const
+		uint256_t incoming_claim::get_gas_estimate() const
 		{
-			return Ledger::GasUtil::GetGasEstimate<IncomingClaim, 144>();
+			return ledger::gas_util::get_gas_estimate<incoming_claim, 144>();
 		}
-		uint32_t IncomingClaim::AsInstanceType()
+		uint32_t incoming_claim::as_instance_type()
 		{
-			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
-			return Hash;
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
 		}
-		std::string_view IncomingClaim::AsInstanceTypename()
+		std::string_view incoming_claim::as_instance_typename()
 		{
 			return "incoming_claim";
 		}
 
-		ExpectsLR<void> OutgoingClaim::Validate(uint64_t BlockNumber) const
+		expects_lr<void> outgoing_claim::validate(uint64_t block_number) const
 		{
-			if (!TransactionHash)
-				return LayerException("transaction hash not valid");
+			if (!transaction_hash)
+				return layer_exception("transaction hash not valid");
 
-			return Ledger::ConsensusTransaction::Validate(BlockNumber);
+			return ledger::consensus_transaction::validate(block_number);
 		}
-		ExpectsLR<void> OutgoingClaim::Execute(Ledger::TransactionContext* Context) const
+		expects_lr<void> outgoing_claim::execute(ledger::transaction_context* context) const
 		{
-			auto Validation = ConsensusTransaction::Execute(Context);
-			if (!Validation)
-				return Validation.Error();
+			auto validation = consensus_transaction::execute(context);
+			if (!validation)
+				return validation.error();
 
-			auto Event = Context->ApplyWitnessEvent(TransactionHash, Context->Receipt.TransactionHash);
-			if (!Event)
-				return Event.Error();
+			auto event = context->apply_witness_event(transaction_hash, context->receipt.transaction_hash);
+			if (!event)
+				return event.error();
 
-			auto Parent = Context->GetBlockTransactionInstance(TransactionHash);
-			if (!Parent)
-				return LayerException("parent transaction not found");
+			auto parent = context->get_block_transaction_instance(transaction_hash);
+			if (!parent)
+				return layer_exception("parent transaction not found");
 
-			uint32_t Type = Parent->Transaction->AsType();
-			if (Type == Withdrawal::AsInstanceType())
+			uint32_t type = parent->transaction->as_type();
+			if (type == withdrawal::as_instance_type())
 			{
-				auto* ParentTransaction = (Withdrawal*)*Parent->Transaction;
-				if (memcmp(ParentTransaction->Proposer, Context->Receipt.From, sizeof(Algorithm::Pubkeyhash)) != 0)
-					return LayerException("parent transaction not valid");
+				auto* parent_transaction = (withdrawal*)*parent->transaction;
+				if (memcmp(parent_transaction->proposer, context->receipt.from, sizeof(algorithm::pubkeyhash)) != 0)
+					return layer_exception("parent transaction not valid");
 
-				auto Finalization = Context->ApplyAccountDepositoryTransaction(Asset, ParentTransaction->Proposer, TransactionHash, -1);
-				if (!Finalization)
-					return Finalization.Error();
+				auto finalization = context->apply_account_depository_transaction(asset, parent_transaction->proposer, transaction_hash, -1);
+				if (!finalization)
+					return finalization.error();
 
-				if (!TransactionId.empty())
-					return Expectation::Met;
+				if (!transaction_id.empty())
+					return expectation::met;
 
-				bool Honest = true;
-				bool Charges = memcmp(Parent->Receipt.From, ParentTransaction->Proposer, sizeof(Algorithm::Pubkeyhash)) != 0;
-				auto BaseAsset = Algorithm::Asset::BaseIdOf(Asset);
-				auto BaseReward = Charges ? Context->GetAccountReward(BaseAsset, ParentTransaction->Proposer) : ExpectsLR<States::AccountReward>(LayerException());
-				auto BaseFee = (BaseReward ? BaseReward->OutgoingAbsoluteFee : Decimal::Zero());
-				if (BaseAsset != Asset && BaseFee.IsPositive())
+				bool honest = true;
+				bool charges = memcmp(parent->receipt.from, parent_transaction->proposer, sizeof(algorithm::pubkeyhash)) != 0;
+				auto base_asset = algorithm::asset::base_id_of(asset);
+				auto base_reward = charges ? context->get_account_reward(base_asset, parent_transaction->proposer) : expects_lr<states::account_reward>(layer_exception());
+				auto base_fee = (base_reward ? base_reward->outgoing_absolute_fee : decimal::zero());
+				if (base_asset != asset && base_fee.is_positive())
 				{
-					auto BaseTransfer = Context->ApplyTransfer(BaseAsset, Parent->Receipt.From, BaseFee, Decimal::Zero());
-					if (!BaseTransfer)
-						return BaseTransfer.Error();
-					else if (!Context->ApplyTransfer(BaseAsset, ParentTransaction->Proposer, -BaseFee, Decimal::Zero()))
-						Honest = false;
+					auto base_transfer = context->apply_transfer(base_asset, parent->receipt.from, base_fee, decimal::zero());
+					if (!base_transfer)
+						return base_transfer.error();
+					else if (!context->apply_transfer(base_asset, parent_transaction->proposer, -base_fee, decimal::zero()))
+						honest = false;
 				}
 
-				auto Value = ParentTransaction->GetTotalValue();
-				auto TokenReward = BaseAsset == Asset || !Charges ? BaseReward : Context->GetAccountReward(Asset, ParentTransaction->Proposer);
-				auto TokenFee = (TokenReward ? TokenReward->CalculateOutgoingFee(Value) : Decimal::Zero());
-				auto TokenTransfer = Context->ApplyTransfer(Asset, Parent->Receipt.From, TokenFee, TokenFee - Value);
-				if (!TokenTransfer)
-					return TokenTransfer.Error();
-				else if (TokenFee.IsPositive() && !Context->ApplyTransfer(Asset, ParentTransaction->Proposer, -TokenFee, Decimal::Zero()))
-					Honest = false;
+				auto value = parent_transaction->get_total_value();
+				auto token_reward = base_asset == asset || !charges ? base_reward : context->get_account_reward(asset, parent_transaction->proposer);
+				auto token_fee = (token_reward ? token_reward->calculate_outgoing_fee(value) : decimal::zero());
+				auto token_transfer = context->apply_transfer(asset, parent->receipt.from, token_fee, token_fee - value);
+				if (!token_transfer)
+					return token_transfer.error();
+				else if (token_fee.is_positive() && !context->apply_transfer(asset, parent_transaction->proposer, -token_fee, decimal::zero()))
+					honest = false;
 
-				if (!Honest)
+				if (!honest)
 				{
-					auto Depository = Context->ApplyAccountDepositoryCustody(Asset, ParentTransaction->Proposer, Decimal::NaN());
-					if (!Depository)
-						return Depository.Error();
+					auto depository = context->apply_account_depository_custody(asset, parent_transaction->proposer, decimal::nan());
+					if (!depository)
+						return depository.error();
 				}
 
-				return Expectation::Met;
+				return expectation::met;
 			}
-			else if (Type == ContributionDeactivation::AsInstanceType())
+			else if (type == contribution_deactivation::as_instance_type())
 			{
-				auto* ParentTransaction = (ContributionDeactivation*)*Parent->Transaction;
-				auto Deactivation = Context->GetBlockTransaction<ContributionDeselection>(ParentTransaction->ContributionDeselectionHash);
-				if (!Deactivation)
-					return Deactivation.Error();
+				auto* parent_transaction = (contribution_deactivation*)*parent->transaction;
+				auto deactivation = context->get_block_transaction<contribution_deselection>(parent_transaction->contribution_deselection_hash);
+				if (!deactivation)
+					return deactivation.error();
 
-				auto Deallocation = Context->GetBlockTransaction<ContributionDeallocation>(((ContributionDeselection*)*Deactivation->Transaction)->ContributionDeallocationHash);
-				if (!Deallocation)
-					return Deallocation.Error();
+				auto deallocation = context->get_block_transaction<contribution_deallocation>(((contribution_deselection*)*deactivation->transaction)->contribution_deallocation_hash);
+				if (!deallocation)
+					return deallocation.error();
 
-				if (memcmp(Deallocation->Receipt.From, Context->Receipt.From, sizeof(Algorithm::Pubkeyhash)) != 0)
-					return LayerException("parent transaction not valid");
+				if (memcmp(deallocation->receipt.from, context->receipt.from, sizeof(algorithm::pubkeyhash)) != 0)
+					return layer_exception("parent transaction not valid");
 
-				return Expectation::Met;
+				return expectation::met;
 			}
-			else if (Type == DepositoryMigration::AsInstanceType())
+			else if (type == depository_migration::as_instance_type())
 			{
-				auto* ParentTransaction = (DepositoryMigration*)*Parent->Transaction;
-				if (memcmp(ParentTransaction->Proposer, Context->Receipt.From, sizeof(Algorithm::Pubkeyhash)) == 0)
-					return LayerException("depository migration transaction not valid");
+				auto* parent_transaction = (depository_migration*)*parent->transaction;
+				if (memcmp(parent_transaction->proposer, context->receipt.from, sizeof(algorithm::pubkeyhash)) == 0)
+					return layer_exception("depository migration transaction not valid");
 
-				return Expectation::Met;
+				return expectation::met;
 			}
 
-			return LayerException("parent transaction not valid");
+			return layer_exception("parent transaction not valid");
 		}
-		bool OutgoingClaim::StoreBody(Format::Stream* Stream) const
+		bool outgoing_claim::store_body(format::stream* stream) const
 		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Stream->WriteString(TransactionId);
-			Stream->WriteString(TransactionData);
-			Stream->WriteString(TransactionMessage);
-			Stream->WriteInteger(TransactionHash);
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_string(transaction_id);
+			stream->write_string(transaction_data);
+			stream->write_string(transaction_message);
+			stream->write_integer(transaction_hash);
 			return true;
 		}
-		bool OutgoingClaim::LoadBody(Format::Stream& Stream)
+		bool outgoing_claim::load_body(format::stream& stream)
 		{
-			if (!Stream.ReadString(Stream.ReadType(), &TransactionId))
+			if (!stream.read_string(stream.read_type(), &transaction_id))
 				return false;
 
-			if (!Stream.ReadString(Stream.ReadType(), &TransactionData))
+			if (!stream.read_string(stream.read_type(), &transaction_data))
 				return false;
 
-			if (!Stream.ReadString(Stream.ReadType(), &TransactionMessage))
+			if (!stream.read_string(stream.read_type(), &transaction_message))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &TransactionHash))
+			if (!stream.read_integer(stream.read_type(), &transaction_hash))
 				return false;
 
 			return true;
 		}
-		bool OutgoingClaim::RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
+		bool outgoing_claim::recover_many(const ledger::receipt& receipt, ordered_set<string>& parties) const
 		{
-			auto Context = Ledger::TransactionContext();
-			auto Parent = Context.GetBlockTransactionInstance(TransactionHash);
-			if (!Parent)
+			auto context = ledger::transaction_context();
+			auto parent = context.get_block_transaction_instance(transaction_hash);
+			if (!parent)
 				return false;
 
-			Parties.insert(String((char*)Parent->Receipt.From, sizeof(Parent->Receipt.From)));
+			parties.insert(string((char*)parent->receipt.from, sizeof(parent->receipt.from)));
 			return true;
 		}
-		void OutgoingClaim::SetSuccessWitness(const std::string_view& NewTransactionId, const std::string_view& NewTransactionData, const uint256_t& NewTransactionHash)
+		void outgoing_claim::set_success_witness(const std::string_view& new_transaction_id, const std::string_view& new_transaction_data, const uint256_t& new_transaction_hash)
 		{
-			TransactionId = NewTransactionId;
-			TransactionData = NewTransactionData;
-			TransactionMessage.clear();
-			TransactionHash = NewTransactionHash;
+			transaction_id = new_transaction_id;
+			transaction_data = new_transaction_data;
+			transaction_message.clear();
+			transaction_hash = new_transaction_hash;
 		}
-		void OutgoingClaim::SetFailureWitness(const std::string_view& NewTransactionMessage, const uint256_t& NewTransactionHash)
+		void outgoing_claim::set_failure_witness(const std::string_view& new_transaction_message, const uint256_t& new_transaction_hash)
 		{
-			TransactionId.clear();
-			TransactionData.clear();
-			TransactionMessage = NewTransactionMessage;
-			TransactionHash = NewTransactionHash;
+			transaction_id.clear();
+			transaction_data.clear();
+			transaction_message = new_transaction_message;
+			transaction_hash = new_transaction_hash;
 		}
-		UPtr<Schema> OutgoingClaim::AsSchema() const
+		uptr<schema> outgoing_claim::as_schema() const
 		{
-			Schema* Data = Ledger::ConsensusTransaction::AsSchema().Reset();
-			Data->Set("transaction_hash", Var::String(Algorithm::Encoding::Encode0xHex256(TransactionHash)));
-			Data->Set("transaction_id", TransactionId.empty() ? Var::Null() : Var::String(TransactionId));
-			Data->Set("transaction_data", TransactionData.empty() ? Var::Null() : Var::String(TransactionData));
-			Data->Set("transaction_message", TransactionMessage.empty() ? Var::Null() : Var::String(TransactionMessage));
-			return Data;
+			schema* data = ledger::consensus_transaction::as_schema().reset();
+			data->set("transaction_hash", var::string(algorithm::encoding::encode_0xhex256(transaction_hash)));
+			data->set("transaction_id", transaction_id.empty() ? var::null() : var::string(transaction_id));
+			data->set("transaction_data", transaction_data.empty() ? var::null() : var::string(transaction_data));
+			data->set("transaction_message", transaction_message.empty() ? var::null() : var::string(transaction_message));
+			return data;
 		}
-		uint32_t OutgoingClaim::AsType() const
+		uint32_t outgoing_claim::as_type() const
 		{
-			return AsInstanceType();
+			return as_instance_type();
 		}
-		std::string_view OutgoingClaim::AsTypename() const
+		std::string_view outgoing_claim::as_typename() const
 		{
-			return AsInstanceTypename();
+			return as_instance_typename();
 		}
-		uint256_t OutgoingClaim::GetGasEstimate() const
+		uint256_t outgoing_claim::get_gas_estimate() const
 		{
-			return Ledger::GasUtil::GetGasEstimate<OutgoingClaim, 32>();
+			return ledger::gas_util::get_gas_estimate<outgoing_claim, 32>();
 		}
-		uint32_t OutgoingClaim::AsInstanceType()
+		uint32_t outgoing_claim::as_instance_type()
 		{
-			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
-			return Hash;
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
 		}
-		std::string_view OutgoingClaim::AsInstanceTypename()
+		std::string_view outgoing_claim::as_instance_typename()
 		{
 			return "outgoing_claim";
 		}
 
-		ExpectsLR<void> AddressAccount::Validate(uint64_t BlockNumber) const
+		expects_lr<void> address_account::validate(uint64_t block_number) const
 		{
-			if (!Algorithm::Asset::TokenOf(Asset).empty())
-				return LayerException("invalid asset");
+			if (!algorithm::asset::token_of(asset).empty())
+				return layer_exception("invalid asset");
 
-			if (Address.empty())
-				return LayerException("invalid address");
+			if (address.empty())
+				return layer_exception("invalid address");
 
-			return Expectation::Met;
+			return expectation::met;
 		}
-		ExpectsLR<void> AddressAccount::Execute(Ledger::TransactionContext* Context) const
+		expects_lr<void> address_account::execute(ledger::transaction_context* context) const
 		{
-			auto Validation = DelegationTransaction::Execute(Context);
-			if (!Validation)
-				return Validation.Error();
+			auto validation = delegation_transaction::execute(context);
+			if (!validation)
+				return validation.error();
 
-			if (!Algorithm::Asset::TokenOf(Asset).empty())
-				return LayerException("invalid asset");
+			if (!algorithm::asset::token_of(asset).empty())
+				return layer_exception("invalid asset");
 
-			auto* Chain = NSS::ServerNode::Get()->GetChain(Asset);
-			if (!Chain)
-				return LayerException("invalid operation");
+			auto* chain = nss::server_node::get()->get_chain(asset);
+			if (!chain)
+				return layer_exception("invalid operation");
 
-			auto PublicKeyHash = Chain->NewPublicKeyHash(Address);
-			if (!PublicKeyHash)
-				return PublicKeyHash.Error();
+			auto public_key_hash = chain->new_public_key_hash(address);
+			if (!public_key_hash)
+				return public_key_hash.error();
 
-			uint64_t AddressIndex = Protocol::Now().Account.RootAddressIndex;
-			auto Collision = Context->GetWitnessAddress(Asset, Address, AddressIndex, 0);
-			if (Collision)
-				return LayerException("account address " + Address + " taken");
+			uint64_t address_index = protocol::now().account.root_address_index;
+			auto collision = context->get_witness_address(asset, address, address_index, 0);
+			if (collision)
+				return layer_exception("account address " + address + " taken");
 
-			auto Status = Context->ApplyWitnessAddress(Asset, Context->Receipt.From, nullptr, { { (uint8_t)0, String(Address) } }, AddressIndex, States::AddressType::Router);
-			if (!Status)
-				return Status.Error();
+			auto status = context->apply_witness_address(asset, context->receipt.from, nullptr, { { (uint8_t)0, string(address) } }, address_index, states::address_type::router);
+			if (!status)
+				return status.error();
 
-			return Expectation::Met;
+			return expectation::met;
 		}
-		bool AddressAccount::StoreBody(Format::Stream* Stream) const
+		bool address_account::store_body(format::stream* stream) const
 		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Stream->WriteString(Address);
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_string(address);
 			return true;
 		}
-		bool AddressAccount::LoadBody(Format::Stream& Stream)
+		bool address_account::load_body(format::stream& stream)
 		{
-			if (!Stream.ReadString(Stream.ReadType(), &Address))
+			if (!stream.read_string(stream.read_type(), &address))
 				return false;
 
 			return true;
 		}
-		void AddressAccount::SetAddress(const std::string_view& NewAddress)
+		void address_account::set_address(const std::string_view& new_address)
 		{
-			Address = NewAddress;
+			address = new_address;
 		}
-		UPtr<Schema> AddressAccount::AsSchema() const
+		uptr<schema> address_account::as_schema() const
 		{
-			Schema* Data = Ledger::DelegationTransaction::AsSchema().Reset();
-			Data->Set("address", Var::String(Address));
-			return Data;
+			schema* data = ledger::delegation_transaction::as_schema().reset();
+			data->set("address", var::string(address));
+			return data;
 		}
-		uint32_t AddressAccount::AsType() const
+		uint32_t address_account::as_type() const
 		{
-			return AsInstanceType();
+			return as_instance_type();
 		}
-		std::string_view AddressAccount::AsTypename() const
+		std::string_view address_account::as_typename() const
 		{
-			return AsInstanceTypename();
+			return as_instance_typename();
 		}
-		uint256_t AddressAccount::GetGasEstimate() const
+		uint256_t address_account::get_gas_estimate() const
 		{
-			return Ledger::GasUtil::GetGasEstimate<AddressAccount, 128>();
+			return ledger::gas_util::get_gas_estimate<address_account, 128>();
 		}
-		uint32_t AddressAccount::AsInstanceType()
+		uint32_t address_account::as_instance_type()
 		{
-			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
-			return Hash;
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
 		}
-		std::string_view AddressAccount::AsInstanceTypename()
+		std::string_view address_account::as_instance_typename()
 		{
 			return "address_account";
 		}
 
-		ExpectsLR<void> PubkeyAccount::SignPubkey(const PrivateKey& SigningKey)
+		expects_lr<void> pubkey_account::sign_pubkey(const secret_box& signing_key)
 		{
-			UPtr<PubkeyAccount> Copy = (PubkeyAccount*)Resolver::Copy(this);
-			Copy->GasPrice = Decimal::NaN();
-			Copy->GasLimit = 0;
-			Copy->Sighash.clear();
-			Copy->Sequence = 0;
+			uptr<pubkey_account> copy = (pubkey_account*)resolver::copy(this);
+			copy->gas_price = decimal::nan();
+			copy->gas_limit = 0;
+			copy->sighash.clear();
+			copy->sequence = 0;
 
-			Format::Stream Message;
-			if (!Copy->StorePayload(&Message))
-				return LayerException("serialization error");
+			format::stream message;
+			if (!copy->store_payload(&message))
+				return layer_exception("serialization error");
 
-			auto Signature = NSS::ServerNode::Get()->SignMessage(Asset, Message.Data, SigningKey);
-			if (!Signature)
-				return Signature.Error();
+			auto signature = nss::server_node::get()->sign_message(asset, message.data, signing_key);
+			if (!signature)
+				return signature.error();
 
-			Sighash = std::move(*Signature);
-			return Expectation::Met;
+			sighash = std::move(*signature);
+			return expectation::met;
 		}
-		ExpectsLR<void> PubkeyAccount::VerifyPubkey() const
+		expects_lr<void> pubkey_account::verify_pubkey() const
 		{
-			UPtr<PubkeyAccount> Copy = (PubkeyAccount*)Resolver::Copy(this);
-			Copy->GasPrice = Decimal::NaN();
-			Copy->GasLimit = 0;
-			Copy->Sighash.clear();
-			Copy->Sequence = 0;
+			uptr<pubkey_account> copy = (pubkey_account*)resolver::copy(this);
+			copy->gas_price = decimal::nan();
+			copy->gas_limit = 0;
+			copy->sighash.clear();
+			copy->sequence = 0;
 
-			Format::Stream Message;
-			if (!Copy->StorePayload(&Message))
-				return LayerException("serialization error");
+			format::stream message;
+			if (!copy->store_payload(&message))
+				return layer_exception("serialization error");
 
-			return NSS::ServerNode::Get()->VerifyMessage(Asset, Message.Data, Pubkey, Sighash);
+			return nss::server_node::get()->verify_message(asset, message.data, pubkey, sighash);
 		}
-		ExpectsLR<void> PubkeyAccount::Validate(uint64_t BlockNumber) const
+		expects_lr<void> pubkey_account::validate(uint64_t block_number) const
 		{
-			if (!Algorithm::Asset::TokenOf(Asset).empty())
-				return LayerException("invalid asset");
+			if (!algorithm::asset::token_of(asset).empty())
+				return layer_exception("invalid asset");
 
-			if (Pubkey.empty())
-				return LayerException("invalid public key");
+			if (pubkey.empty())
+				return layer_exception("invalid public key");
 
-			if (Sighash.empty())
-				return LayerException("invalid public key signature");
+			if (sighash.empty())
+				return layer_exception("invalid public key signature");
 
-			return Ledger::DelegationTransaction::Validate(BlockNumber);
+			return ledger::delegation_transaction::validate(block_number);
 		}
-		ExpectsLR<void> PubkeyAccount::Execute(Ledger::TransactionContext* Context) const
+		expects_lr<void> pubkey_account::execute(ledger::transaction_context* context) const
 		{
-			auto Validation = DelegationTransaction::Execute(Context);
-			if (!Validation)
-				return Validation.Error();
+			auto validation = delegation_transaction::execute(context);
+			if (!validation)
+				return validation.error();
 
-			if (!Algorithm::Asset::TokenOf(Asset).empty())
-				return LayerException("invalid asset");
+			if (!algorithm::asset::token_of(asset).empty())
+				return layer_exception("invalid asset");
 
-			auto Verification = VerifyPubkey();
-			if (!Verification)
-				return Verification.Error();
+			auto verification = verify_pubkey();
+			if (!verification)
+				return verification.error();
 
-			auto* Chain = NSS::ServerNode::Get()->GetChain(Asset);
-			if (!Chain)
-				return LayerException("invalid operation");
+			auto* chain = nss::server_node::get()->get_chain(asset);
+			if (!chain)
+				return layer_exception("invalid operation");
 
-			auto VerifyingWallet = Chain->NewVerifyingWallet(Asset, Pubkey);
-			if (!VerifyingWallet)
-				return VerifyingWallet.Error();
+			auto verifying_wallet = chain->new_verifying_wallet(asset, pubkey);
+			if (!verifying_wallet)
+				return verifying_wallet.error();
 
-			uint64_t AddressIndex = Protocol::Now().Account.RootAddressIndex;
-			auto Status = Context->ApplyWitnessAddress(Asset, Context->Receipt.From, nullptr, VerifyingWallet->Addresses, AddressIndex, States::AddressType::Router);
-			if (!Status)
-				return Status.Error();
+			uint64_t address_index = protocol::now().account.root_address_index;
+			auto status = context->apply_witness_address(asset, context->receipt.from, nullptr, verifying_wallet->addresses, address_index, states::address_type::router);
+			if (!status)
+				return status.error();
 
-			return Expectation::Met;
+			return expectation::met;
 		}
-		bool PubkeyAccount::StoreBody(Format::Stream* Stream) const
+		bool pubkey_account::store_body(format::stream* stream) const
 		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Stream->WriteString(Pubkey);
-			Stream->WriteString(Sighash);
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_string(pubkey);
+			stream->write_string(sighash);
 			return true;
 		}
-		bool PubkeyAccount::LoadBody(Format::Stream& Stream)
+		bool pubkey_account::load_body(format::stream& stream)
 		{
-			if (!Stream.ReadString(Stream.ReadType(), &Pubkey))
+			if (!stream.read_string(stream.read_type(), &pubkey))
 				return false;
 
-			if (!Stream.ReadString(Stream.ReadType(), &Sighash))
+			if (!stream.read_string(stream.read_type(), &sighash))
 				return false;
 
 			return true;
 		}
-		void PubkeyAccount::SetPubkey(const std::string_view& VerifyingKey)
+		void pubkey_account::set_pubkey(const std::string_view& verifying_key)
 		{
-			Pubkey = VerifyingKey;
+			pubkey = verifying_key;
 		}
-		UPtr<Schema> PubkeyAccount::AsSchema() const
+		uptr<schema> pubkey_account::as_schema() const
 		{
-			Schema* Data = Ledger::DelegationTransaction::AsSchema().Reset();
-			Data->Set("pubkey", Var::Set::String(Pubkey));
-			Data->Set("sighash", Var::String(Sighash));
-			return Data;
+			schema* data = ledger::delegation_transaction::as_schema().reset();
+			data->set("pubkey", var::set::string(pubkey));
+			data->set("sighash", var::string(sighash));
+			return data;
 		}
-		uint32_t PubkeyAccount::AsType() const
+		uint32_t pubkey_account::as_type() const
 		{
-			return AsInstanceType();
+			return as_instance_type();
 		}
-		std::string_view PubkeyAccount::AsTypename() const
+		std::string_view pubkey_account::as_typename() const
 		{
-			return AsInstanceTypename();
+			return as_instance_typename();
 		}
-		uint256_t PubkeyAccount::GetGasEstimate() const
+		uint256_t pubkey_account::get_gas_estimate() const
 		{
-			return Ledger::GasUtil::GetGasEstimate<PubkeyAccount, 128>();
+			return ledger::gas_util::get_gas_estimate<pubkey_account, 128>();
 		}
-		uint32_t PubkeyAccount::AsInstanceType()
+		uint32_t pubkey_account::as_instance_type()
 		{
-			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
-			return Hash;
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
 		}
-		std::string_view PubkeyAccount::AsInstanceTypename()
+		std::string_view pubkey_account::as_instance_typename()
 		{
 			return "pubkey_account";
 		}
 
-		ExpectsLR<void> DelegationAccount::Validate(uint64_t BlockNumber) const
+		expects_lr<void> delegation_account::validate(uint64_t block_number) const
 		{
-			if (!Algorithm::Asset::TokenOf(Asset).empty())
-				return LayerException("invalid asset");
+			if (!algorithm::asset::token_of(asset).empty())
+				return layer_exception("invalid asset");
 
-			Algorithm::Pubkeyhash Null = { 0 };
-			if (memcmp(Proposer, Null, sizeof(Null)) == 0)
-				return LayerException("invalid account proposer");
+			algorithm::pubkeyhash null = { 0 };
+			if (memcmp(proposer, null, sizeof(null)) == 0)
+				return layer_exception("invalid account proposer");
 
-			return Ledger::DelegationTransaction::Validate(BlockNumber);
+			return ledger::delegation_transaction::validate(block_number);
 		}
-		ExpectsLR<void> DelegationAccount::Execute(Ledger::TransactionContext* Context) const
+		expects_lr<void> delegation_account::execute(ledger::transaction_context* context) const
 		{
-			auto Validation = DelegationTransaction::Execute(Context);
-			if (!Validation)
-				return Validation.Error();
+			auto validation = delegation_transaction::execute(context);
+			if (!validation)
+				return validation.error();
 
-			if (!Algorithm::Asset::TokenOf(Asset).empty())
-				return LayerException("invalid asset");
+			if (!algorithm::asset::token_of(asset).empty())
+				return layer_exception("invalid asset");
 
-			auto* Chain = NSS::ServerNode::Get()->GetChainparams(Asset);
-			if (!Chain)
-				return LayerException("invalid operation");
+			auto* chain = nss::server_node::get()->get_chainparams(asset);
+			if (!chain)
+				return layer_exception("invalid operation");
 
-			auto WorkRequirement = Context->VerifyAccountWork(Proposer);
-			if (!WorkRequirement)
-				return WorkRequirement.Error();
+			auto work_requirement = context->verify_account_work(proposer);
+			if (!work_requirement)
+				return work_requirement.error();
 
-			auto Work = Context->GetAccountWork(Proposer);
-			auto Depository = Context->GetAccountDepository(Asset, Proposer);
-			auto Coverage = Depository ? Depository->GetCoverage(Work ? Work->Flags : 0) : Decimal::Zero();
-			if (Coverage.IsNegative())
-				return LayerException("depository contribution is too low for custodian account creation");
+			auto work = context->get_account_work(proposer);
+			auto depository = context->get_account_depository(asset, proposer);
+			auto coverage = depository ? depository->get_coverage(work ? work->flags : 0) : decimal::zero();
+			if (coverage.is_negative())
+				return layer_exception("depository contribution is too low for custodian account creation");
 
-			switch (Chain->Routing)
+			switch (chain->routing)
 			{
-				case Mediator::RoutingPolicy::Account:
+				case mediator::routing_policy::account:
 				{
-					if (memcmp(Context->Receipt.From, Proposer, sizeof(Proposer)) != 0)
-						return LayerException("invalid account proposer");
+					if (memcmp(context->receipt.from, proposer, sizeof(proposer)) != 0)
+						return layer_exception("invalid account proposer");
 
-					return Expectation::Met;
+					return expectation::met;
 				}
-				case Mediator::RoutingPolicy::Memo:
-				case Mediator::RoutingPolicy::UTXO:
-					return Expectation::Met;
+				case mediator::routing_policy::memo:
+				case mediator::routing_policy::UTXO:
+					return expectation::met;
 				default:
-					return LayerException("invalid operation");
+					return layer_exception("invalid operation");
 			}
 		}
-		ExpectsPromiseRT<void> DelegationAccount::Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const
+		expects_promise_rt<void> delegation_account::dispatch(const ledger::wallet& proposer, const ledger::transaction_context* context, vector<uptr<ledger::transaction>>* pipeline) const
 		{
-			if (memcmp(this->Proposer, Proposer.PublicKeyHash, sizeof(Algorithm::Pubkeyhash)) != 0)
-				return ExpectsPromiseRT<void>(Expectation::Met);
+			if (memcmp(this->proposer, proposer.public_key_hash, sizeof(algorithm::pubkeyhash)) != 0)
+				return expects_promise_rt<void>(expectation::met);
 
-			if (Context->GetWitnessEvent(Context->Receipt.TransactionHash))
-				return ExpectsPromiseRT<void>(Expectation::Met);
+			if (context->get_witness_event(context->receipt.transaction_hash))
+				return expects_promise_rt<void>(expectation::met);
 
-			UPtr<CustodianAccount> Transaction = Memory::New<CustodianAccount>();
-			Transaction->Asset = Asset;
-			Transaction->SetWitness(Context->Receipt.TransactionHash);
+			uptr<custodian_account> transaction = memory::init<custodian_account>();
+			transaction->asset = asset;
+			transaction->set_witness(context->receipt.transaction_hash);
 
-			auto Account = Transaction->SetWallet(Context, Proposer, Context->Receipt.From);
-			if (!Account)
-				return ExpectsPromiseRT<void>(RemoteException(std::move(Account.Error().message())));
+			auto account = transaction->set_wallet(context, proposer, context->receipt.from);
+			if (!account)
+				return expects_promise_rt<void>(remote_exception(std::move(account.error().message())));
 
-			Pipeline->push_back(Transaction.Reset());
-			return ExpectsPromiseRT<void>(Expectation::Met);
+			pipeline->push_back(transaction.reset());
+			return expects_promise_rt<void>(expectation::met);
 		}
-		bool DelegationAccount::StoreBody(Format::Stream* Stream) const
+		bool delegation_account::store_body(format::stream* stream) const
 		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Algorithm::Pubkeyhash Null = { 0 };
-			Stream->WriteString(std::string_view((char*)Proposer, memcmp(Proposer, Null, sizeof(Null)) == 0 ? 0 : sizeof(Proposer)));
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			algorithm::pubkeyhash null = { 0 };
+			stream->write_string(std::string_view((char*)proposer, memcmp(proposer, null, sizeof(null)) == 0 ? 0 : sizeof(proposer)));
 			return true;
 		}
-		bool DelegationAccount::LoadBody(Format::Stream& Stream)
+		bool delegation_account::load_body(format::stream& stream)
 		{
-			String ProposerAssembly;
-			if (!Stream.ReadString(Stream.ReadType(), &ProposerAssembly) || !Algorithm::Encoding::DecodeUintBlob(ProposerAssembly, Proposer, sizeof(Proposer)))
+			string proposer_assembly;
+			if (!stream.read_string(stream.read_type(), &proposer_assembly) || !algorithm::encoding::decode_uint_blob(proposer_assembly, proposer, sizeof(proposer)))
 				return false;
 
 			return true;
 		}
-		bool DelegationAccount::RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
+		bool delegation_account::recover_many(const ledger::receipt& receipt, ordered_set<string>& parties) const
 		{
-			Parties.insert(String((char*)Proposer, sizeof(Proposer)));
+			parties.insert(string((char*)proposer, sizeof(proposer)));
 			return true;
 		}
-		void DelegationAccount::SetProposer(const Algorithm::Pubkeyhash NewProposer)
+		void delegation_account::set_proposer(const algorithm::pubkeyhash new_proposer)
 		{
-			if (!NewProposer)
+			if (!new_proposer)
 			{
-				Algorithm::Pubkeyhash Null = { 0 };
-				memcpy(Proposer, Null, sizeof(Algorithm::Pubkeyhash));
+				algorithm::pubkeyhash null = { 0 };
+				memcpy(proposer, null, sizeof(algorithm::pubkeyhash));
 			}
 			else
-				memcpy(Proposer, NewProposer, sizeof(Algorithm::Pubkeyhash));
+				memcpy(proposer, new_proposer, sizeof(algorithm::pubkeyhash));
 		}
-		bool DelegationAccount::IsProposerNull() const
+		bool delegation_account::is_proposer_null() const
 		{
-			Algorithm::Pubkeyhash Null = { 0 };
-			return memcmp(Proposer, Null, sizeof(Null)) == 0;
+			algorithm::pubkeyhash null = { 0 };
+			return memcmp(proposer, null, sizeof(null)) == 0;
 		}
-		UPtr<Schema> DelegationAccount::AsSchema() const
+		uptr<schema> delegation_account::as_schema() const
 		{
-			Schema* Data = Ledger::DelegationTransaction::AsSchema().Reset();
-			Data->Set("proposer", Algorithm::Signing::SerializeAddress(Proposer));
-			return Data;
+			schema* data = ledger::delegation_transaction::as_schema().reset();
+			data->set("proposer", algorithm::signing::serialize_address(proposer));
+			return data;
 		}
-		uint32_t DelegationAccount::AsType() const
+		uint32_t delegation_account::as_type() const
 		{
-			return AsInstanceType();
+			return as_instance_type();
 		}
-		std::string_view DelegationAccount::AsTypename() const
+		std::string_view delegation_account::as_typename() const
 		{
-			return AsInstanceTypename();
+			return as_instance_typename();
 		}
-		uint256_t DelegationAccount::GetGasEstimate() const
+		uint256_t delegation_account::get_gas_estimate() const
 		{
-			return Ledger::GasUtil::GetGasEstimate<DelegationAccount, 16>();
+			return ledger::gas_util::get_gas_estimate<delegation_account, 16>();
 		}
-		uint64_t DelegationAccount::GetDispatchOffset() const
+		uint64_t delegation_account::get_dispatch_offset() const
 		{
 			return 1;
 		}
-		uint32_t DelegationAccount::AsInstanceType()
+		uint32_t delegation_account::as_instance_type()
 		{
-			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
-			return Hash;
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
 		}
-		std::string_view DelegationAccount::AsInstanceTypename()
+		std::string_view delegation_account::as_instance_typename()
 		{
 			return "delegation_account";
 		}
 
-		ExpectsLR<void> CustodianAccount::SetWallet(const Ledger::TransactionContext* Context, const Ledger::Wallet& Proposer, const Algorithm::Pubkeyhash NewOwner)
+		expects_lr<void> custodian_account::set_wallet(const ledger::transaction_context* context, const ledger::wallet& proposer, const algorithm::pubkeyhash new_owner)
 		{
-			auto* Server = NSS::ServerNode::Get();
-			auto* Chain = Server->GetChainparams(Asset);
-			if (!Chain)
-				return LayerException("invalid operation");
+			auto* server = nss::server_node::get();
+			auto* chain = server->get_chainparams(asset);
+			if (!chain)
+				return layer_exception("invalid operation");
 
-			auto Derivation = Context->GetAccountDerivation(Asset, Proposer.PublicKeyHash);
-			uint64_t AddressIndex = (Derivation ? Derivation->MaxAddressIndex + 1 : Protocol::Now().Account.RootAddressIndex);
-			if (Chain->Routing == Mediator::RoutingPolicy::Account)
+			auto derivation = context->get_account_derivation(asset, proposer.public_key_hash);
+			uint64_t address_index = (derivation ? derivation->max_address_index + 1 : protocol::now().account.root_address_index);
+			if (chain->routing == mediator::routing_policy::account)
 			{
-				AddressIndex = Protocol::Now().Account.RootAddressIndex;
-				if (Derivation)
-					return LayerException("account exists");
-				else if (memcmp(NewOwner, Proposer.PublicKeyHash, sizeof(Algorithm::Pubkeyhash)) != 0)
-					return LayerException("invalid account owner");
+				address_index = protocol::now().account.root_address_index;
+				if (derivation)
+					return layer_exception("account exists");
+				else if (memcmp(new_owner, proposer.public_key_hash, sizeof(algorithm::pubkeyhash)) != 0)
+					return layer_exception("invalid account owner");
 			}
 
-			auto Parent = Server->NewMasterWallet(Asset, Proposer.SecretKey);
-			if (!Parent)
-				return LayerException("invalid master wallet");
+			auto parent = server->new_master_wallet(asset, proposer.secret_key);
+			if (!parent)
+				return layer_exception("invalid master wallet");
 
-			auto Child = Server->NewSigningWallet(Asset, *Parent, AddressIndex);
-			if (!Child)
-				return Child.Error();
+			auto child = server->new_signing_wallet(asset, *parent, address_index);
+			if (!child)
+				return child.error();
 
-			SetPubkey(Child->VerifyingKey, AddressIndex);
-			SetOwner(NewOwner);
-			return SignPubkey(Child->SigningKey);
+			set_pubkey(child->verifying_key, address_index);
+			set_owner(new_owner);
+			return sign_pubkey(child->signing_key);
 		}
-		ExpectsLR<void> CustodianAccount::SignPubkey(const PrivateKey& SigningKey)
+		expects_lr<void> custodian_account::sign_pubkey(const secret_box& signing_key)
 		{
-			UPtr<CustodianAccount> Copy = (CustodianAccount*)Resolver::Copy(this);
-			Copy->GasPrice = Decimal::NaN();
-			Copy->GasLimit = 0;
-			Copy->Sighash.clear();
-			Copy->Sequence = 0;
+			uptr<custodian_account> copy = (custodian_account*)resolver::copy(this);
+			copy->gas_price = decimal::nan();
+			copy->gas_limit = 0;
+			copy->sighash.clear();
+			copy->sequence = 0;
 
-			Format::Stream Message;
-			if (!Copy->StorePayload(&Message))
-				return LayerException("serialization error");
+			format::stream message;
+			if (!copy->store_payload(&message))
+				return layer_exception("serialization error");
 
-			auto Signature = NSS::ServerNode::Get()->SignMessage(Asset, Message.Data, SigningKey);
-			if (!Signature)
-				return Signature.Error();
+			auto signature = nss::server_node::get()->sign_message(asset, message.data, signing_key);
+			if (!signature)
+				return signature.error();
 
-			Sighash = std::move(*Signature);
-			return Expectation::Met;
+			sighash = std::move(*signature);
+			return expectation::met;
 		}
-		ExpectsLR<void> CustodianAccount::VerifyPubkey() const
+		expects_lr<void> custodian_account::verify_pubkey() const
 		{
-			UPtr<CustodianAccount> Copy = (CustodianAccount*)Resolver::Copy(this);
-			Copy->GasPrice = Decimal::NaN();
-			Copy->GasLimit = 0;
-			Copy->Sighash.clear();
-			Copy->Sequence = 0;
+			uptr<custodian_account> copy = (custodian_account*)resolver::copy(this);
+			copy->gas_price = decimal::nan();
+			copy->gas_limit = 0;
+			copy->sighash.clear();
+			copy->sequence = 0;
 
-			Format::Stream Message;
-			if (!Copy->StorePayload(&Message))
-				return LayerException("serialization error");
+			format::stream message;
+			if (!copy->store_payload(&message))
+				return layer_exception("serialization error");
 
-			return NSS::ServerNode::Get()->VerifyMessage(Asset, Message.Data, Pubkey, Sighash);
+			return nss::server_node::get()->verify_message(asset, message.data, pubkey, sighash);
 		}
-		ExpectsLR<void> CustodianAccount::Validate(uint64_t BlockNumber) const
+		expects_lr<void> custodian_account::validate(uint64_t block_number) const
 		{
-			if (!Algorithm::Asset::TokenOf(Asset).empty())
-				return LayerException("invalid asset");
+			if (!algorithm::asset::token_of(asset).empty())
+				return layer_exception("invalid asset");
 
-			if (Pubkey.empty())
-				return LayerException("invalid public key");
+			if (pubkey.empty())
+				return layer_exception("invalid public key");
 
-			if (Sighash.empty())
-				return LayerException("invalid public key signature");
+			if (sighash.empty())
+				return layer_exception("invalid public key signature");
 
-			Algorithm::Pubkeyhash Null = { 0 };
-			if (!memcmp(Owner, Null, sizeof(Null)))
-				return LayerException("invalid owner");
+			algorithm::pubkeyhash null = { 0 };
+			if (!memcmp(owner, null, sizeof(null)))
+				return layer_exception("invalid owner");
 
-			return Ledger::ConsensusTransaction::Validate(BlockNumber);
+			return ledger::consensus_transaction::validate(block_number);
 		}
-		ExpectsLR<void> CustodianAccount::Execute(Ledger::TransactionContext* Context) const
+		expects_lr<void> custodian_account::execute(ledger::transaction_context* context) const
 		{
-			auto Validation = ConsensusTransaction::Execute(Context);
-			if (!Validation)
-				return Validation.Error();
+			auto validation = consensus_transaction::execute(context);
+			if (!validation)
+				return validation.error();
 
-			if (!Algorithm::Asset::TokenOf(Asset).empty())
-				return LayerException("invalid asset");
+			if (!algorithm::asset::token_of(asset).empty())
+				return layer_exception("invalid asset");
 
-			auto Verification = VerifyPubkey();
-			if (!Verification)
-				return Verification.Error();
+			auto verification = verify_pubkey();
+			if (!verification)
+				return verification.error();
 
-			auto* Chain = NSS::ServerNode::Get()->GetChain(Asset);
-			if (!Chain)
-				return LayerException("invalid operation");
+			auto* chain = nss::server_node::get()->get_chain(asset);
+			if (!chain)
+				return layer_exception("invalid operation");
 
-			auto VerifyingWallet = Chain->NewVerifyingWallet(Asset, Pubkey);
-			if (!VerifyingWallet)
-				return VerifyingWallet.Error();
+			auto verifying_wallet = chain->new_verifying_wallet(asset, pubkey);
+			if (!verifying_wallet)
+				return verifying_wallet.error();
 
-			auto* Params = NSS::ServerNode::Get()->GetChainparams(Asset);
-			if (!Params)
-				return LayerException("invalid operation");
+			auto* params = nss::server_node::get()->get_chainparams(asset);
+			if (!params)
+				return layer_exception("invalid operation");
 
-			if (DelegationAccountHash > 0)
+			if (delegation_account_hash > 0)
 			{
-				auto Event = Context->ApplyWitnessEvent(DelegationAccountHash, Context->Receipt.TransactionHash);
-				if (!Event)
-					return Event.Error();
+				auto event = context->apply_witness_event(delegation_account_hash, context->receipt.transaction_hash);
+				if (!event)
+					return event.error();
 
-				auto Delegation = Context->GetBlockTransaction<DelegationAccount>(DelegationAccountHash);
-				if (!Delegation)
-					return Delegation.Error();
+				auto delegation = context->get_block_transaction<delegation_account>(delegation_account_hash);
+				if (!delegation)
+					return delegation.error();
 
-				auto* DelegationTransaction = (DelegationAccount*)*Delegation->Transaction;
-				if (memcmp(DelegationTransaction->Proposer, Context->Receipt.From, sizeof(Context->Receipt.From)) != 0)
-					return LayerException("invalid origin");
+				auto* delegation_transaction = (delegation_account*)*delegation->transaction;
+				if (memcmp(delegation_transaction->proposer, context->receipt.from, sizeof(context->receipt.from)) != 0)
+					return layer_exception("invalid origin");
 
-				if (Params->Routing == Mediator::RoutingPolicy::Account && memcmp(Delegation->Receipt.From, Context->Receipt.From, sizeof(Context->Receipt.From)) != 0)
-					return LayerException("invalid account owner");
+				if (params->routing == mediator::routing_policy::account && memcmp(delegation->receipt.from, context->receipt.from, sizeof(context->receipt.from)) != 0)
+					return layer_exception("invalid account owner");
 			}
 
-			auto WorkRequirement = Context->VerifyAccountWork(Context->Receipt.From);
-			if (!WorkRequirement)
-				return WorkRequirement.Error();
+			auto work_requirement = context->verify_account_work(context->receipt.from);
+			if (!work_requirement)
+				return work_requirement.error();
 
-			auto Work = Context->GetAccountWork(Context->Receipt.From);
-			auto Depository = Context->GetAccountDepository(Asset, Context->Receipt.From);
-			auto Coverage = Depository ? Depository->GetCoverage(Work ? Work->Flags : 0) : Decimal::Zero();
-			if (Coverage.IsNegative())
-				return LayerException("depository contribution is too low for custodian account creation");
+			auto work = context->get_account_work(context->receipt.from);
+			auto depository = context->get_account_depository(asset, context->receipt.from);
+			auto coverage = depository ? depository->get_coverage(work ? work->flags : 0) : decimal::zero();
+			if (coverage.is_negative())
+				return layer_exception("depository contribution is too low for custodian account creation");
 
-			uint64_t AddressIndex = Params->Routing == Mediator::RoutingPolicy::Memo ? PubkeyIndex : Protocol::Now().Account.RootAddressIndex;
-			for (auto& Address : VerifyingWallet->Addresses)
+			uint64_t address_index = params->routing == mediator::routing_policy::memo ? pubkey_index : protocol::now().account.root_address_index;
+			for (auto& address : verifying_wallet->addresses)
 			{
-				auto Collision = Context->GetWitnessAddress(Asset, Address.second, AddressIndex, 0);
-				if (Collision)
-					return LayerException("account address " + Address.second + " taken");
+				auto collision = context->get_witness_address(asset, address.second, address_index, 0);
+				if (collision)
+					return layer_exception("account address " + address.second + " taken");
 			}
 
-			auto Derivation = Context->GetAccountDerivation(Asset, Context->Receipt.From);
-			if (!Derivation || Derivation->MaxAddressIndex < AddressIndex)
+			auto derivation = context->get_account_derivation(asset, context->receipt.from);
+			if (!derivation || derivation->max_address_index < address_index)
 			{
-				auto Status = Context->ApplyAccountDerivation(Asset, Context->Receipt.From, AddressIndex);
-				if (!Status)
-					return Status.Error();
+				auto status = context->apply_account_derivation(asset, context->receipt.from, address_index);
+				if (!status)
+					return status.error();
 			}
 
-			auto Status = Context->ApplyWitnessAddress(Asset, Owner, Context->Receipt.From, VerifyingWallet->Addresses, AddressIndex, States::AddressType::Custodian);
-			if (!Status)
-				return Status.Error();
+			auto status = context->apply_witness_address(asset, owner, context->receipt.from, verifying_wallet->addresses, address_index, states::address_type::custodian);
+			if (!status)
+				return status.error();
 
-			return Expectation::Met;
+			return expectation::met;
 		}
-		ExpectsPromiseRT<void> CustodianAccount::Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const
+		expects_promise_rt<void> custodian_account::dispatch(const ledger::wallet& proposer, const ledger::transaction_context* context, vector<uptr<ledger::transaction>>* pipeline) const
 		{
-			auto* Chain = NSS::ServerNode::Get()->GetChain(Asset);
-			if (!Chain)
-				return ExpectsPromiseRT<void>(RemoteException("invalid operation"));
+			auto* chain = nss::server_node::get()->get_chain(asset);
+			if (!chain)
+				return expects_promise_rt<void>(remote_exception("invalid operation"));
 
-			auto VerifyingWallet = Chain->NewVerifyingWallet(Asset, Pubkey);
-			if (!VerifyingWallet)
-				return ExpectsPromiseRT<void>(RemoteException(std::move(VerifyingWallet.Error().message())));
+			auto verifying_wallet = chain->new_verifying_wallet(asset, pubkey);
+			if (!verifying_wallet)
+				return expects_promise_rt<void>(remote_exception(std::move(verifying_wallet.error().message())));
 
-			auto* Params = NSS::ServerNode::Get()->GetChainparams(Asset);
-			if (!Params)
-				return ExpectsPromiseRT<void>(RemoteException("invalid operation"));
+			auto* params = nss::server_node::get()->get_chainparams(asset);
+			if (!params)
+				return expects_promise_rt<void>(remote_exception("invalid operation"));
 
-			uint64_t AddressIndex = Params->Routing == Mediator::RoutingPolicy::Memo ? PubkeyIndex : Protocol::Now().Account.RootAddressIndex;
-			for (auto& Address : VerifyingWallet->Addresses)
+			uint64_t address_index = params->routing == mediator::routing_policy::memo ? pubkey_index : protocol::now().account.root_address_index;
+			for (auto& address : verifying_wallet->addresses)
 			{
-				auto Status = NSS::ServerNode::Get()->EnableWalletAddress(Asset, std::string_view((char*)Context->Receipt.From, sizeof(Algorithm::Pubkeyhash)), Address.second, AddressIndex);
-				if (!Status)
-					return ExpectsPromiseRT<void>(RemoteException(std::move(Status.Error().message())));
+				auto status = nss::server_node::get()->enable_wallet_address(asset, std::string_view((char*)context->receipt.from, sizeof(algorithm::pubkeyhash)), address.second, address_index);
+				if (!status)
+					return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
 			}
 
-			return ExpectsPromiseRT<void>(Expectation::Met);
+			return expects_promise_rt<void>(expectation::met);
 		}
-		bool CustodianAccount::StoreBody(Format::Stream* Stream) const
+		bool custodian_account::store_body(format::stream* stream) const
 		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Algorithm::Pubkeyhash Null = { 0 };
-			Stream->WriteString(std::string_view((char*)Owner, memcmp(Owner, Null, sizeof(Null)) == 0 ? 0 : sizeof(Owner)));
-			Stream->WriteInteger(DelegationAccountHash);
-			Stream->WriteInteger(PubkeyIndex);
-			Stream->WriteString(Pubkey);
-			Stream->WriteString(Sighash);
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			algorithm::pubkeyhash null = { 0 };
+			stream->write_string(std::string_view((char*)owner, memcmp(owner, null, sizeof(null)) == 0 ? 0 : sizeof(owner)));
+			stream->write_integer(delegation_account_hash);
+			stream->write_integer(pubkey_index);
+			stream->write_string(pubkey);
+			stream->write_string(sighash);
 			return true;
 		}
-		bool CustodianAccount::LoadBody(Format::Stream& Stream)
+		bool custodian_account::load_body(format::stream& stream)
 		{
-			String OwnerAssembly;
-			if (!Stream.ReadString(Stream.ReadType(), &OwnerAssembly) || !Algorithm::Encoding::DecodeUintBlob(OwnerAssembly, Owner, sizeof(Owner)))
+			string owner_assembly;
+			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner, sizeof(owner)))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &DelegationAccountHash))
+			if (!stream.read_integer(stream.read_type(), &delegation_account_hash))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &PubkeyIndex))
+			if (!stream.read_integer(stream.read_type(), &pubkey_index))
 				return false;
 
-			if (!Stream.ReadString(Stream.ReadType(), &Pubkey))
+			if (!stream.read_string(stream.read_type(), &pubkey))
 				return false;
 
-			if (!Stream.ReadString(Stream.ReadType(), &Sighash))
+			if (!stream.read_string(stream.read_type(), &sighash))
 				return false;
 
 			return true;
 		}
-		bool CustodianAccount::RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
+		bool custodian_account::recover_many(const ledger::receipt& receipt, ordered_set<string>& parties) const
 		{
-			Parties.insert(String((char*)Owner, sizeof(Owner)));
+			parties.insert(string((char*)owner, sizeof(owner)));
 			return true;
 		}
-		void CustodianAccount::SetWitness(const uint256_t& NewDelegationAccountHash)
+		void custodian_account::set_witness(const uint256_t& new_delegation_account_hash)
 		{
-			DelegationAccountHash = NewDelegationAccountHash;
+			delegation_account_hash = new_delegation_account_hash;
 		}
-		void CustodianAccount::SetPubkey(const std::string_view& VerifyingKey, uint64_t NewPubkeyIndex)
+		void custodian_account::set_pubkey(const std::string_view& verifying_key, uint64_t new_pubkey_index)
 		{
-			Pubkey = VerifyingKey;
-			PubkeyIndex = NewPubkeyIndex;
+			pubkey = verifying_key;
+			pubkey_index = new_pubkey_index;
 		}
-		void CustodianAccount::SetOwner(const Algorithm::Pubkeyhash NewOwner)
+		void custodian_account::set_owner(const algorithm::pubkeyhash new_owner)
 		{
-			if (!NewOwner)
+			if (!new_owner)
 			{
-				Algorithm::Pubkeyhash Null = { 0 };
-				memcpy(Owner, Null, sizeof(Algorithm::Pubkeyhash));
+				algorithm::pubkeyhash null = { 0 };
+				memcpy(owner, null, sizeof(algorithm::pubkeyhash));
 			}
 			else
-				memcpy(Owner, NewOwner, sizeof(Algorithm::Pubkeyhash));
+				memcpy(owner, new_owner, sizeof(algorithm::pubkeyhash));
 		}
-		bool CustodianAccount::IsOwnerNull() const
+		bool custodian_account::is_owner_null() const
 		{
-			Algorithm::Pubkeyhash Null = { 0 };
-			return memcmp(Owner, Null, sizeof(Null)) == 0;
+			algorithm::pubkeyhash null = { 0 };
+			return memcmp(owner, null, sizeof(null)) == 0;
 		}
-		UPtr<Schema> CustodianAccount::AsSchema() const
+		uptr<schema> custodian_account::as_schema() const
 		{
-			Schema* Data = Ledger::ConsensusTransaction::AsSchema().Reset();
-			Data->Set("delegation_account_hash", DelegationAccountHash > 0 ? Var::String(Algorithm::Encoding::Encode0xHex256(DelegationAccountHash)) : Var::Null());
-			Data->Set("owner", Algorithm::Signing::SerializeAddress(Owner));
-			Data->Set("pubkey_index", Var::Integer(PubkeyIndex));
-			Data->Set("pubkey", Var::String(Pubkey));
-			Data->Set("sighash", Var::String(Sighash));
-			return Data;
+			schema* data = ledger::consensus_transaction::as_schema().reset();
+			data->set("delegation_account_hash", delegation_account_hash > 0 ? var::string(algorithm::encoding::encode_0xhex256(delegation_account_hash)) : var::null());
+			data->set("owner", algorithm::signing::serialize_address(owner));
+			data->set("pubkey_index", var::integer(pubkey_index));
+			data->set("pubkey", var::string(pubkey));
+			data->set("sighash", var::string(sighash));
+			return data;
 		}
-		uint32_t CustodianAccount::AsType() const
+		uint32_t custodian_account::as_type() const
 		{
-			return AsInstanceType();
+			return as_instance_type();
 		}
-		std::string_view CustodianAccount::AsTypename() const
+		std::string_view custodian_account::as_typename() const
 		{
-			return AsInstanceTypename();
+			return as_instance_typename();
 		}
-		uint256_t CustodianAccount::GetGasEstimate() const
+		uint256_t custodian_account::get_gas_estimate() const
 		{
-			return Ledger::GasUtil::GetGasEstimate<CustodianAccount, 128>();
+			return ledger::gas_util::get_gas_estimate<custodian_account, 128>();
 		}
-		uint64_t CustodianAccount::GetDispatchOffset() const
+		uint64_t custodian_account::get_dispatch_offset() const
 		{
 			return 1;
 		}
-		uint32_t CustodianAccount::AsInstanceType()
+		uint32_t custodian_account::as_instance_type()
 		{
-			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
-			return Hash;
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
 		}
-		std::string_view CustodianAccount::AsInstanceTypename()
+		std::string_view custodian_account::as_instance_typename()
 		{
 			return "custodian_account";
 		}
 
-		ExpectsLR<void> ContributionAllocation::Validate(uint64_t BlockNumber) const
+		expects_lr<void> contribution_allocation::validate(uint64_t block_number) const
 		{
-			if (!Algorithm::Asset::TokenOf(Asset).empty())
-				return LayerException("invalid asset");
+			if (!algorithm::asset::token_of(asset).empty())
+				return layer_exception("invalid asset");
 
-			auto* Chain = NSS::ServerNode::Get()->GetChainparams(Asset);
-			if (!Chain)
-				return LayerException("invalid operation");
+			auto* chain = nss::server_node::get()->get_chainparams(asset);
+			if (!chain)
+				return layer_exception("invalid operation");
 
-			return Ledger::Transaction::Validate(BlockNumber);
+			return ledger::transaction::validate(block_number);
 		}
-		ExpectsLR<void> ContributionAllocation::Execute(Ledger::TransactionContext* Context) const
+		expects_lr<void> contribution_allocation::execute(ledger::transaction_context* context) const
 		{
-			auto Validation = Transaction::Execute(Context);
-			if (!Validation)
-				return Validation.Error();
+			auto validation = transaction::execute(context);
+			if (!validation)
+				return validation.error();
 
-			auto Work = Context->VerifyAccountWork(Context->Receipt.From);
-			if (!Work)
-				return Work;
+			auto work = context->verify_account_work(context->receipt.from);
+			if (!work)
+				return work;
 
-			OrderedSet<String> Hashset = { String((char*)Context->Receipt.From, sizeof(Algorithm::Pubkeyhash)) };
-			auto Committee = Context->CalculateSharingCommittee(Hashset, 2);
-			if (!Committee)
-				return Committee.Error();
+			ordered_set<string> hashset = { string((char*)context->receipt.from, sizeof(algorithm::pubkeyhash)) };
+			auto committee = context->calculate_sharing_committee(hashset, 2);
+			if (!committee)
+				return committee.error();
 
-			for (auto& Work : *Committee)
+			for (auto& work : *committee)
 			{
-				auto Event = Context->EmitEvent<ContributionAllocation>({ Format::Variable(std::string_view((char*)Work.Owner, sizeof(Work.Owner))) });
-				if (!Event)
-					return Event;
+				auto event = context->emit_event<contribution_allocation>({ format::variable(std::string_view((char*)work.owner, sizeof(work.owner))) });
+				if (!event)
+					return event;
 			}
 
-			return Expectation::Met;
+			return expectation::met;
 		}
-		ExpectsPromiseRT<void> ContributionAllocation::Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const
+		expects_promise_rt<void> contribution_allocation::dispatch(const ledger::wallet& proposer, const ledger::transaction_context* context, vector<uptr<ledger::transaction>>* pipeline) const
 		{
-			OrderedSet<String> Parties;
-			if (!RecoverMany(Context->Receipt, Parties) || Parties.size() != 2)
-				return ExpectsPromiseRT<void>(RemoteException("transaction receipt does not have a proposer"));
+			ordered_set<string> parties;
+			if (!recover_many(context->receipt, parties) || parties.size() != 2)
+				return expects_promise_rt<void>(remote_exception("transaction receipt does not have a proposer"));
 
-			Algorithm::Pubkeyhash Chosen = { 0 };
-			memcpy(Chosen, Parties.begin()->data(), sizeof(Chosen));
-			if (memcmp(Chosen, Proposer.PublicKeyHash, sizeof(Chosen)) != 0)
-				return ExpectsPromiseRT<void>(Expectation::Met);
+			algorithm::pubkeyhash chosen = { 0 };
+			memcpy(chosen, parties.begin()->data(), sizeof(chosen));
+			if (memcmp(chosen, proposer.public_key_hash, sizeof(chosen)) != 0)
+				return expects_promise_rt<void>(expectation::met);
 
-			if (Context->GetWitnessEvent(Context->Receipt.TransactionHash))
-				return ExpectsPromiseRT<void>(Expectation::Met);
+			if (context->get_witness_event(context->receipt.transaction_hash))
+				return expects_promise_rt<void>(expectation::met);
 
-			UPtr<ContributionSelection> Transaction = Memory::New<ContributionSelection>();
-			Transaction->Asset = Asset;
+			uptr<contribution_selection> transaction = memory::init<contribution_selection>();
+			transaction->asset = asset;
 
-			auto Status = Transaction->SetShare1(Context->Receipt.TransactionHash, Proposer.SecretKey);
-			if (!Status)
-				return ExpectsPromiseRT<void>(RemoteException(std::move(Status.Error().message())));
+			auto status = transaction->set_share1(context->receipt.transaction_hash, proposer.secret_key);
+			if (!status)
+				return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
 
-			Pipeline->push_back(Transaction.Reset());
-			return ExpectsPromiseRT<void>(Expectation::Met);
+			pipeline->push_back(transaction.reset());
+			return expects_promise_rt<void>(expectation::met);
 		}
-		bool ContributionAllocation::StoreBody(Format::Stream* Stream) const
+		bool contribution_allocation::store_body(format::stream* stream) const
 		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
+			VI_ASSERT(stream != nullptr, "stream should be set");
 			return true;
 		}
-		bool ContributionAllocation::LoadBody(Format::Stream& Stream)
+		bool contribution_allocation::load_body(format::stream& stream)
 		{
 			return true;
 		}
-		bool ContributionAllocation::RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
+		bool contribution_allocation::recover_many(const ledger::receipt& receipt, ordered_set<string>& parties) const
 		{
-			auto* Event1 = Receipt.FindEvent<ContributionAllocation>();
-			if (!Event1 || Event1->size() != 1 || Event1->front().AsString().size() != sizeof(Algorithm::Pubkeyhash))
+			auto* event1 = receipt.find_event<contribution_allocation>();
+			if (!event1 || event1->size() != 1 || event1->front().as_string().size() != sizeof(algorithm::pubkeyhash))
 				return false;
 
-			auto* Event2 = Receipt.FindEvent<ContributionAllocation>(1);
-			if (!Event2 || Event2->size() != 1 || Event2->front().AsString().size() != sizeof(Algorithm::Pubkeyhash))
+			auto* event2 = receipt.find_event<contribution_allocation>(1);
+			if (!event2 || event2->size() != 1 || event2->front().as_string().size() != sizeof(algorithm::pubkeyhash))
 				return false;
 
-			Parties.insert(Event1->front().AsBlob());
-			Parties.insert(Event2->back().AsBlob());
+			parties.insert(event1->front().as_blob());
+			parties.insert(event2->back().as_blob());
 			return true;
 		}
-		uint32_t ContributionAllocation::AsType() const
+		uint32_t contribution_allocation::as_type() const
 		{
-			return AsInstanceType();
+			return as_instance_type();
 		}
-		std::string_view ContributionAllocation::AsTypename() const
+		std::string_view contribution_allocation::as_typename() const
 		{
-			return AsInstanceTypename();
+			return as_instance_typename();
 		}
-		uint256_t ContributionAllocation::GetGasEstimate() const
+		uint256_t contribution_allocation::get_gas_estimate() const
 		{
-			return Ledger::GasUtil::GetGasEstimate<ContributionAllocation, 24>();
+			return ledger::gas_util::get_gas_estimate<contribution_allocation, 24>();
 		}
-		uint64_t ContributionAllocation::GetDispatchOffset() const
+		uint64_t contribution_allocation::get_dispatch_offset() const
 		{
 			return 1;
 		}
-		uint32_t ContributionAllocation::AsInstanceType()
+		uint32_t contribution_allocation::as_instance_type()
 		{
-			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
-			return Hash;
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
 		}
-		std::string_view ContributionAllocation::AsInstanceTypename()
+		std::string_view contribution_allocation::as_instance_typename()
 		{
 			return "contribution_allocation";
 		}
 
-		ExpectsLR<void> ContributionSelection::SetShare1(const uint256_t& NewContributionAllocationHash, const Algorithm::Seckey SecretKey)
+		expects_lr<void> contribution_selection::set_share1(const uint256_t& new_contribution_allocation_hash, const algorithm::seckey secret_key)
 		{
-			auto* Chain = NSS::ServerNode::Get()->GetChainparams(Asset);
-			if (!Chain)
-				return LayerException("invalid operation");
+			auto* chain = nss::server_node::get()->get_chainparams(asset);
+			if (!chain)
+				return layer_exception("invalid operation");
 
-			Algorithm::Pubkey SecretKeyHash;
-			Algorithm::Signing::DerivePublicKeyHash(SecretKey, SecretKeyHash);
+			algorithm::pubkey secret_key_hash;
+			algorithm::signing::derive_public_key_hash(secret_key, secret_key_hash);
 
-			Format::Stream Entropy;
-			Entropy.WriteTypeless(ContributionAllocationHash = NewContributionAllocationHash);
-			Entropy.WriteTypeless((char*)SecretKeyHash, (uint32_t)sizeof(SecretKeyHash));
+			format::stream entropy;
+			entropy.write_typeless(contribution_allocation_hash = new_contribution_allocation_hash);
+			entropy.write_typeless((char*)secret_key_hash, (uint32_t)sizeof(secret_key_hash));
 
-			Algorithm::Composition::CSeed Seed1;
-			Algorithm::Composition::CSeckey SecretKey1;
-			Algorithm::Composition::ConvertToSecretSeed(SecretKey, Entropy.Data, Seed1);
-			return Algorithm::Composition::DeriveKeypair(Chain->Composition, Seed1, SecretKey1, PublicKey1);
+			algorithm::composition::cseed seed1;
+			algorithm::composition::cseckey secret_key1;
+			algorithm::composition::convert_to_secret_seed(secret_key, entropy.data, seed1);
+			return algorithm::composition::derive_keypair(chain->composition, seed1, secret_key1, public_key1);
 		}
-		ExpectsLR<void> ContributionSelection::Validate(uint64_t BlockNumber) const
+		expects_lr<void> contribution_selection::validate(uint64_t block_number) const
 		{
-			if (!Algorithm::Asset::TokenOf(Asset).empty())
-				return LayerException("invalid asset");
+			if (!algorithm::asset::token_of(asset).empty())
+				return layer_exception("invalid asset");
 
-			Algorithm::Composition::CPubkey Null = { 0 };
-			if (!memcmp(PublicKey1, Null, sizeof(Null)))
-				return LayerException("invalid public key 1");
+			algorithm::composition::cpubkey null = { 0 };
+			if (!memcmp(public_key1, null, sizeof(null)))
+				return layer_exception("invalid public key 1");
 
-			auto* Chain = NSS::ServerNode::Get()->GetChainparams(Asset);
-			if (!Chain)
-				return LayerException("invalid operation");
+			auto* chain = nss::server_node::get()->get_chainparams(asset);
+			if (!chain)
+				return layer_exception("invalid operation");
 
-			if (!ContributionAllocationHash)
-				return LayerException("invalid parent transaction");
+			if (!contribution_allocation_hash)
+				return layer_exception("invalid parent transaction");
 
-			return Ledger::Transaction::Validate(BlockNumber);
+			return ledger::transaction::validate(block_number);
 		}
-		ExpectsLR<void> ContributionSelection::Execute(Ledger::TransactionContext* Context) const
+		expects_lr<void> contribution_selection::execute(ledger::transaction_context* context) const
 		{
-			auto Validation = ConsensusTransaction::Execute(Context);
-			if (!Validation)
-				return Validation.Error();
+			auto validation = consensus_transaction::execute(context);
+			if (!validation)
+				return validation.error();
 
-			auto Event = Context->ApplyWitnessEvent(ContributionAllocationHash, Context->Receipt.TransactionHash);
-			if (!Event)
-				return Event.Error();
+			auto event = context->apply_witness_event(contribution_allocation_hash, context->receipt.transaction_hash);
+			if (!event)
+				return event.error();
 
-			auto Allocation = Context->GetBlockTransaction<ContributionAllocation>(ContributionAllocationHash);
-			if (!Allocation)
-				return Allocation.Error();
-			else if (Asset != Allocation->Transaction->Asset)
-				return LayerException("invalid asset");
+			auto allocation = context->get_block_transaction<contribution_allocation>(contribution_allocation_hash);
+			if (!allocation)
+				return allocation.error();
+			else if (asset != allocation->transaction->asset)
+				return layer_exception("invalid asset");
 
-			OrderedSet<String> Parties;
-			if (!Allocation->Transaction->RecoverMany(Allocation->Receipt, Parties) || Parties.size() != 2)
-				return LayerException("transaction receipt does not have a proposer");
+			ordered_set<string> parties;
+			if (!allocation->transaction->recover_many(allocation->receipt, parties) || parties.size() != 2)
+				return layer_exception("transaction receipt does not have a proposer");
 
-			auto It = Parties.begin();
-			if (It->size() != sizeof(Algorithm::Pubkeyhash) || memcmp(It->data(), Context->Receipt.From, sizeof(Context->Receipt.From)) != 0)
-				return LayerException("invalid origin");
+			auto it = parties.begin();
+			if (it->size() != sizeof(algorithm::pubkeyhash) || memcmp(it->data(), context->receipt.from, sizeof(context->receipt.from)) != 0)
+				return layer_exception("invalid origin");
 
-			auto Work = Context->VerifyAccountWork(Context->Receipt.From);
-			if (!Work)
-				return Work;
+			auto work = context->verify_account_work(context->receipt.from);
+			if (!work)
+				return work;
 
-			return Context->EmitEvent<ContributionSelection>({ Format::Variable(std::string_view((char*)Allocation->Receipt.From, sizeof(Allocation->Receipt.From))) });
+			return context->emit_event<contribution_selection>({ format::variable(std::string_view((char*)allocation->receipt.from, sizeof(allocation->receipt.from))) });
 		}
-		ExpectsPromiseRT<void> ContributionSelection::Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const
+		expects_promise_rt<void> contribution_selection::dispatch(const ledger::wallet& proposer, const ledger::transaction_context* context, vector<uptr<ledger::transaction>>* pipeline) const
 		{
-			if (Context->GetWitnessEvent(Context->Receipt.TransactionHash))
-				return ExpectsPromiseRT<void>(Expectation::Met);
+			if (context->get_witness_event(context->receipt.transaction_hash))
+				return expects_promise_rt<void>(expectation::met);
 
-			auto Allocation = Context->GetBlockTransaction<ContributionAllocation>(ContributionAllocationHash);
-			if (!Allocation)
-				return ExpectsPromiseRT<void>(RemoteException(std::move(Allocation.Error().message())));
+			auto allocation = context->get_block_transaction<contribution_allocation>(contribution_allocation_hash);
+			if (!allocation)
+				return expects_promise_rt<void>(remote_exception(std::move(allocation.error().message())));
 
-			OrderedSet<String> Parties;
-			if (!Allocation->Transaction->RecoverMany(Allocation->Receipt, Parties) || Parties.size() != 2)
-				return ExpectsPromiseRT<void>(RemoteException("transaction receipt does not have a proposer"));
+			ordered_set<string> parties;
+			if (!allocation->transaction->recover_many(allocation->receipt, parties) || parties.size() != 2)
+				return expects_promise_rt<void>(remote_exception("transaction receipt does not have a proposer"));
 
-			Algorithm::Pubkeyhash Chosen = { 0 };
-			memcpy(Chosen, (++Parties.begin())->data(), sizeof(Chosen));
-			if (memcmp(Chosen, Proposer.PublicKeyHash, sizeof(Chosen)) != 0)
-				return ExpectsPromiseRT<void>(Expectation::Met);
+			algorithm::pubkeyhash chosen = { 0 };
+			memcpy(chosen, (++parties.begin())->data(), sizeof(chosen));
+			if (memcmp(chosen, proposer.public_key_hash, sizeof(chosen)) != 0)
+				return expects_promise_rt<void>(expectation::met);
 
-			UPtr<ContributionActivation> Transaction = Memory::New<ContributionActivation>();
-			Transaction->Asset = Asset;
+			uptr<contribution_activation> transaction = memory::init<contribution_activation>();
+			transaction->asset = asset;
 
-			auto Status = Transaction->SetShare2(Context->Receipt.TransactionHash, Proposer.SecretKey, PublicKey1);
-			if (!Status)
-				return ExpectsPromiseRT<void>(RemoteException(std::move(Status.Error().message())));
+			auto status = transaction->set_share2(context->receipt.transaction_hash, proposer.secret_key, public_key1);
+			if (!status)
+				return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
 
-			Pipeline->push_back(Transaction.Reset());
-			return ExpectsPromiseRT<void>(Expectation::Met);
+			pipeline->push_back(transaction.reset());
+			return expects_promise_rt<void>(expectation::met);
 		}
-		bool ContributionSelection::StoreBody(Format::Stream* Stream) const
+		bool contribution_selection::store_body(format::stream* stream) const
 		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Algorithm::Composition::CPubkey CPubNull = { 0 };
-			Stream->WriteString(std::string_view((char*)PublicKey1, memcmp(PublicKey1, CPubNull, sizeof(CPubNull)) == 0 ? 0 : sizeof(PublicKey1)));
-			Stream->WriteInteger(ContributionAllocationHash);
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			algorithm::composition::cpubkey cpub_null = { 0 };
+			stream->write_string(std::string_view((char*)public_key1, memcmp(public_key1, cpub_null, sizeof(cpub_null)) == 0 ? 0 : sizeof(public_key1)));
+			stream->write_integer(contribution_allocation_hash);
 			return true;
 		}
-		bool ContributionSelection::LoadBody(Format::Stream& Stream)
+		bool contribution_selection::load_body(format::stream& stream)
 		{
-			String PublicKey1Assembly;
-			if (!Stream.ReadString(Stream.ReadType(), &PublicKey1Assembly) || !Algorithm::Encoding::DecodeUintBlob(PublicKey1Assembly, PublicKey1, sizeof(PublicKey1)))
+			string public_key1_assembly;
+			if (!stream.read_string(stream.read_type(), &public_key1_assembly) || !algorithm::encoding::decode_uint_blob(public_key1_assembly, public_key1, sizeof(public_key1)))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &ContributionAllocationHash))
+			if (!stream.read_integer(stream.read_type(), &contribution_allocation_hash))
 				return false;
 
 			return true;
 		}
-		bool ContributionSelection::RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
+		bool contribution_selection::recover_many(const ledger::receipt& receipt, ordered_set<string>& parties) const
 		{
-			auto* Event = Receipt.FindEvent<ContributionSelection>();
-			if (!Event || Event->size() != 1 || Event->front().AsString().size() != sizeof(Algorithm::Pubkeyhash))
+			auto* event = receipt.find_event<contribution_selection>();
+			if (!event || event->size() != 1 || event->front().as_string().size() != sizeof(algorithm::pubkeyhash))
 				return false;
 
-			Parties.insert(Event->front().AsBlob());
+			parties.insert(event->front().as_blob());
 			return true;
 		}
-		UPtr<Schema> ContributionSelection::AsSchema() const
+		uptr<schema> contribution_selection::as_schema() const
 		{
-			Schema* Data = Ledger::Transaction::AsSchema().Reset();
-			Data->Set("contribution_allocation_hash", Var::String(Algorithm::Encoding::Encode0xHex256(ContributionAllocationHash)));
-			Data->Set("public_key_1", Var::String(Format::Util::Encode0xHex(std::string_view((char*)PublicKey1, sizeof(PublicKey1)))));
-			return Data;
+			schema* data = ledger::transaction::as_schema().reset();
+			data->set("contribution_allocation_hash", var::string(algorithm::encoding::encode_0xhex256(contribution_allocation_hash)));
+			data->set("public_key_1", var::string(format::util::encode_0xhex(std::string_view((char*)public_key1, sizeof(public_key1)))));
+			return data;
 		}
-		uint32_t ContributionSelection::AsType() const
+		uint32_t contribution_selection::as_type() const
 		{
-			return AsInstanceType();
+			return as_instance_type();
 		}
-		std::string_view ContributionSelection::AsTypename() const
+		std::string_view contribution_selection::as_typename() const
 		{
-			return AsInstanceTypename();
+			return as_instance_typename();
 		}
-		uint256_t ContributionSelection::GetGasEstimate() const
+		uint256_t contribution_selection::get_gas_estimate() const
 		{
-			return Ledger::GasUtil::GetGasEstimate<ContributionSelection, 36>();
+			return ledger::gas_util::get_gas_estimate<contribution_selection, 36>();
 		}
-		uint64_t ContributionSelection::GetDispatchOffset() const
+		uint64_t contribution_selection::get_dispatch_offset() const
 		{
 			return 1;
 		}
-		uint32_t ContributionSelection::AsInstanceType()
+		uint32_t contribution_selection::as_instance_type()
 		{
-			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
-			return Hash;
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
 		}
-		std::string_view ContributionSelection::AsInstanceTypename()
+		std::string_view contribution_selection::as_instance_typename()
 		{
 			return "contribution_selection";
 		}
 
-		ExpectsLR<void> ContributionActivation::SetShare2(const uint256_t& NewContributionSelectionHash, const Algorithm::Seckey SecretKey, const Algorithm::Composition::CPubkey PublicKey1)
+		expects_lr<void> contribution_activation::set_share2(const uint256_t& new_contribution_selection_hash, const algorithm::seckey secret_key, const algorithm::composition::cpubkey public_key1)
 		{
-			auto* Chain = NSS::ServerNode::Get()->GetChainparams(Asset);
-			if (!Chain)
-				return LayerException("invalid operation");
+			auto* chain = nss::server_node::get()->get_chainparams(asset);
+			if (!chain)
+				return layer_exception("invalid operation");
 
-			Algorithm::Pubkey SecretKeyHash;
-			Algorithm::Signing::DerivePublicKeyHash(SecretKey, SecretKeyHash);
+			algorithm::pubkey secret_key_hash;
+			algorithm::signing::derive_public_key_hash(secret_key, secret_key_hash);
 
-			Format::Stream Entropy;
-			Entropy.WriteTypeless(ContributionSelectionHash = NewContributionSelectionHash);
-			Entropy.WriteTypeless((char*)SecretKeyHash, (uint32_t)sizeof(SecretKeyHash));
-			Entropy.WriteTypeless((char*)PublicKey1, (uint32_t)sizeof(Algorithm::Composition::CPubkey));
+			format::stream entropy;
+			entropy.write_typeless(contribution_selection_hash = new_contribution_selection_hash);
+			entropy.write_typeless((char*)secret_key_hash, (uint32_t)sizeof(secret_key_hash));
+			entropy.write_typeless((char*)public_key1, (uint32_t)sizeof(algorithm::composition::cpubkey));
 
-			Algorithm::Composition::CSeed Seed2;
-			Algorithm::Composition::CSeckey SecretKey2;
-			Algorithm::Composition::ConvertToSecretSeed(SecretKey, Entropy.Data, Seed2);
-			auto Status = Algorithm::Composition::DeriveKeypair(Chain->Composition, Seed2, SecretKey2, PublicKey2);
-			if (!Status)
-				return Status;
+			algorithm::composition::cseed seed2;
+			algorithm::composition::cseckey secret_key2;
+			algorithm::composition::convert_to_secret_seed(secret_key, entropy.data, seed2);
+			auto status = algorithm::composition::derive_keypair(chain->composition, seed2, secret_key2, public_key2);
+			if (!status)
+				return status;
 
-			size_t PublicKeySize32 = 0;
-			Status = Algorithm::Composition::DerivePublicKey(Chain->Composition, PublicKey1, SecretKey2, PublicKey, &PublicKeySize32);
-			if (!Status)
-				return LayerException("invalid message");
+			size_t public_key_size32 = 0;
+			status = algorithm::composition::derive_public_key(chain->composition, public_key1, secret_key2, public_key, &public_key_size32);
+			if (!status)
+				return layer_exception("invalid message");
 
-			PublicKeySize = (uint16_t)PublicKeySize32;
-			auto VerifyingWallet = GetVerifyingWallet();
-			if (!VerifyingWallet)
-				return VerifyingWallet.Error();
+			public_key_size = (uint16_t)public_key_size32;
+			auto verifying_wallet = get_verifying_wallet();
+			if (!verifying_wallet)
+				return verifying_wallet.error();
 
-			return Expectation::Met;
+			return expectation::met;
 		}
-		ExpectsLR<void> ContributionActivation::Validate(uint64_t BlockNumber) const
+		expects_lr<void> contribution_activation::validate(uint64_t block_number) const
 		{
-			if (!Algorithm::Asset::TokenOf(Asset).empty())
-				return LayerException("invalid asset");
+			if (!algorithm::asset::token_of(asset).empty())
+				return layer_exception("invalid asset");
 
-			Algorithm::Composition::CPubkey PubNull = { 0 };
-			if (!memcmp(PublicKey, PubNull, sizeof(PubNull)) || !PublicKeySize || PublicKeySize > sizeof(PublicKey))
-				return LayerException("invalid public key");
+			algorithm::composition::cpubkey pub_null = { 0 };
+			if (!memcmp(public_key, pub_null, sizeof(pub_null)) || !public_key_size || public_key_size > sizeof(public_key))
+				return layer_exception("invalid public key");
 
-			Algorithm::Composition::CPubkey CPubNull = { 0 };
-			if (!memcmp(PublicKey2, CPubNull, sizeof(CPubNull)))
-				return LayerException("invalid public key 2");
+			algorithm::composition::cpubkey cpub_null = { 0 };
+			if (!memcmp(public_key2, cpub_null, sizeof(cpub_null)))
+				return layer_exception("invalid public key 2");
 
-			if (!ContributionSelectionHash)
-				return LayerException("invalid parent transaction");
+			if (!contribution_selection_hash)
+				return layer_exception("invalid parent transaction");
 
-			return Ledger::ConsensusTransaction::Validate(BlockNumber);
+			return ledger::consensus_transaction::validate(block_number);
 		}
-		ExpectsLR<void> ContributionActivation::Execute(Ledger::TransactionContext* Context) const
+		expects_lr<void> contribution_activation::execute(ledger::transaction_context* context) const
 		{
-			auto Validation = ConsensusTransaction::Execute(Context);
-			if (!Validation)
-				return Validation.Error();
+			auto validation = consensus_transaction::execute(context);
+			if (!validation)
+				return validation.error();
 
-			auto Event = Context->ApplyWitnessEvent(ContributionSelectionHash, Context->Receipt.TransactionHash);
-			if (!Event)
-				return Event.Error();
+			auto event = context->apply_witness_event(contribution_selection_hash, context->receipt.transaction_hash);
+			if (!event)
+				return event.error();
 
-			auto Selection = Context->GetBlockTransaction<ContributionSelection>(ContributionSelectionHash);
-			if (!Selection)
-				return Selection.Error();
+			auto selection = context->get_block_transaction<contribution_selection>(contribution_selection_hash);
+			if (!selection)
+				return selection.error();
 
-			auto Allocation = Context->GetBlockTransaction<ContributionAllocation>(((ContributionSelection*)*Selection->Transaction)->ContributionAllocationHash);
-			if (!Allocation)
-				return Allocation.Error();
-			else if (Asset != Allocation->Transaction->Asset)
-				return LayerException("invalid asset");
+			auto allocation = context->get_block_transaction<contribution_allocation>(((contribution_selection*)*selection->transaction)->contribution_allocation_hash);
+			if (!allocation)
+				return allocation.error();
+			else if (asset != allocation->transaction->asset)
+				return layer_exception("invalid asset");
 
-			auto VerifyingWallet = GetVerifyingWallet();
-			if (!VerifyingWallet)
-				return VerifyingWallet.Error();
+			auto verifying_wallet = get_verifying_wallet();
+			if (!verifying_wallet)
+				return verifying_wallet.error();
 
-			OrderedSet<String> Parties;
-			if (!Allocation->Transaction->RecoverMany(Allocation->Receipt, Parties) || Parties.size() != 2)
-				return LayerException("transaction receipt does not have a proposer");
+			ordered_set<string> parties;
+			if (!allocation->transaction->recover_many(allocation->receipt, parties) || parties.size() != 2)
+				return layer_exception("transaction receipt does not have a proposer");
 
-			auto It = ++Parties.begin();
-			if (It->size() != sizeof(Algorithm::Pubkeyhash) || memcmp(It->data(), Context->Receipt.From, sizeof(Context->Receipt.From)) != 0)
-				return LayerException("invalid origin");
+			auto it = ++parties.begin();
+			if (it->size() != sizeof(algorithm::pubkeyhash) || memcmp(it->data(), context->receipt.from, sizeof(context->receipt.from)) != 0)
+				return layer_exception("invalid origin");
 
-			auto AddressIndex = Protocol::Now().Account.RootAddressIndex;
-			for (auto& Address : VerifyingWallet->Addresses)
+			auto address_index = protocol::now().account.root_address_index;
+			for (auto& address : verifying_wallet->addresses)
 			{
-				auto Collision = Context->GetWitnessAddress(Asset, Address.second, AddressIndex, 0);
-				if (Collision)
-					return LayerException("address " + Address.second + " taken");
+				auto collision = context->get_witness_address(asset, address.second, address_index, 0);
+				if (collision)
+					return layer_exception("address " + address.second + " taken");
 			}
 
-			auto Status = Context->ApplyWitnessAddress(Asset, Allocation->Receipt.From, Allocation->Receipt.From, VerifyingWallet->Addresses, AddressIndex, States::AddressType::Contribution);
-			if (!Status)
-				return Status.Error();
+			auto status = context->apply_witness_address(asset, allocation->receipt.from, allocation->receipt.from, verifying_wallet->addresses, address_index, states::address_type::contribution);
+			if (!status)
+				return status.error();
 
-			return Context->EmitEvent<ContributionActivation>({ Format::Variable(std::string_view((char*)Allocation->Receipt.From, sizeof(Allocation->Receipt.From))) });
+			return context->emit_event<contribution_activation>({ format::variable(std::string_view((char*)allocation->receipt.from, sizeof(allocation->receipt.from))) });
 		}
-		ExpectsPromiseRT<void> ContributionActivation::Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const
+		expects_promise_rt<void> contribution_activation::dispatch(const ledger::wallet& proposer, const ledger::transaction_context* context, vector<uptr<ledger::transaction>>* pipeline) const
 		{
-			auto Selection = Context->GetBlockTransaction<ContributionSelection>(ContributionSelectionHash);
-			if (!Selection)
-				return ExpectsPromiseRT<void>(RemoteException(std::move(Selection.Error().message())));
+			auto selection = context->get_block_transaction<contribution_selection>(contribution_selection_hash);
+			if (!selection)
+				return expects_promise_rt<void>(remote_exception(std::move(selection.error().message())));
 
-			auto Allocation = Context->GetBlockTransaction<ContributionAllocation>(((ContributionSelection*)*Selection->Transaction)->ContributionAllocationHash);
-			if (!Allocation)
-				return ExpectsPromiseRT<void>(RemoteException(std::move(Allocation.Error().message())));
+			auto allocation = context->get_block_transaction<contribution_allocation>(((contribution_selection*)*selection->transaction)->contribution_allocation_hash);
+			if (!allocation)
+				return expects_promise_rt<void>(remote_exception(std::move(allocation.error().message())));
 
-			auto VerifyingWallet = GetVerifyingWallet();
-			if (!VerifyingWallet)
-				return ExpectsPromiseRT<void>(RemoteException(std::move(VerifyingWallet.Error().message())));
+			auto verifying_wallet = get_verifying_wallet();
+			if (!verifying_wallet)
+				return expects_promise_rt<void>(remote_exception(std::move(verifying_wallet.error().message())));
 
-			auto AddressIndex = Protocol::Now().Account.RootAddressIndex;
-			for (auto& Address : VerifyingWallet->Addresses)
+			auto address_index = protocol::now().account.root_address_index;
+			for (auto& address : verifying_wallet->addresses)
 			{
-				auto Status = NSS::ServerNode::Get()->EnableWalletAddress(Asset, std::string_view((char*)Allocation->Receipt.From, sizeof(Allocation->Receipt.From)), Address.second, AddressIndex);
-				if (!Status)
-					return ExpectsPromiseRT<void>(RemoteException(std::move(Status.Error().message())));
+				auto status = nss::server_node::get()->enable_wallet_address(asset, std::string_view((char*)allocation->receipt.from, sizeof(allocation->receipt.from)), address.second, address_index);
+				if (!status)
+					return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
 			}
 
-			return ExpectsPromiseRT<void>(Expectation::Met);
+			return expects_promise_rt<void>(expectation::met);
 		}
-		bool ContributionActivation::StoreBody(Format::Stream* Stream) const
+		bool contribution_activation::store_body(format::stream* stream) const
 		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Algorithm::Composition::CPubkey CPubNull = { 0 };
-			Stream->WriteString(std::string_view((char*)PublicKey, std::min<size_t>(sizeof(PublicKey), PublicKeySize)));
-			Stream->WriteString(std::string_view((char*)PublicKey2, memcmp(PublicKey2, CPubNull, sizeof(CPubNull)) == 0 ? 0 : sizeof(PublicKey2)));
-			Stream->WriteInteger(ContributionSelectionHash);
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			algorithm::composition::cpubkey cpub_null = { 0 };
+			stream->write_string(std::string_view((char*)public_key, std::min<size_t>(sizeof(public_key), public_key_size)));
+			stream->write_string(std::string_view((char*)public_key2, memcmp(public_key2, cpub_null, sizeof(cpub_null)) == 0 ? 0 : sizeof(public_key2)));
+			stream->write_integer(contribution_selection_hash);
 			return true;
 		}
-		bool ContributionActivation::LoadBody(Format::Stream& Stream)
+		bool contribution_activation::load_body(format::stream& stream)
 		{
-			String PublicKeyAssembly;
-			if (!Stream.ReadString(Stream.ReadType(), &PublicKeyAssembly) || !Algorithm::Encoding::DecodeUintBlob(PublicKeyAssembly, PublicKey, std::min(PublicKeyAssembly.size(), sizeof(PublicKey))))
+			string public_key_assembly;
+			if (!stream.read_string(stream.read_type(), &public_key_assembly) || !algorithm::encoding::decode_uint_blob(public_key_assembly, public_key, std::min(public_key_assembly.size(), sizeof(public_key))))
 				return false;
 
-			String PublicKey2Assembly;
-			if (!Stream.ReadString(Stream.ReadType(), &PublicKey2Assembly) || !Algorithm::Encoding::DecodeUintBlob(PublicKey2Assembly, PublicKey2, sizeof(PublicKey2)))
+			string public_key2_assembly;
+			if (!stream.read_string(stream.read_type(), &public_key2_assembly) || !algorithm::encoding::decode_uint_blob(public_key2_assembly, public_key2, sizeof(public_key2)))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &ContributionSelectionHash))
+			if (!stream.read_integer(stream.read_type(), &contribution_selection_hash))
 				return false;
 
-			PublicKeySize = (uint16_t)std::min(PublicKeyAssembly.size(), sizeof(PublicKey));
+			public_key_size = (uint16_t)std::min(public_key_assembly.size(), sizeof(public_key));
 			return true;
 		}
-		bool ContributionActivation::RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
+		bool contribution_activation::recover_many(const ledger::receipt& receipt, ordered_set<string>& parties) const
 		{
-			auto* Event = Receipt.FindEvent<ContributionActivation>();
-			if (!Event || Event->size() != 1 || Event->front().AsString().size() != sizeof(Algorithm::Pubkeyhash))
+			auto* event = receipt.find_event<contribution_activation>();
+			if (!event || event->size() != 1 || event->front().as_string().size() != sizeof(algorithm::pubkeyhash))
 				return false;
 
-			Parties.insert(Event->front().AsBlob());
+			parties.insert(event->front().as_blob());
 			return true;
 		}
-		ExpectsLR<Mediator::DerivedVerifyingWallet> ContributionActivation::GetVerifyingWallet() const
+		expects_lr<mediator::derived_verifying_wallet> contribution_activation::get_verifying_wallet() const
 		{
-			return NSS::ServerNode::Get()->NewVerifyingWallet(Asset, std::string_view((char*)PublicKey, PublicKeySize));
+			return nss::server_node::get()->new_verifying_wallet(asset, std::string_view((char*)public_key, public_key_size));
 		}
-		UPtr<Schema> ContributionActivation::AsSchema() const
+		uptr<schema> contribution_activation::as_schema() const
 		{
-			auto VerifyingWallet = GetVerifyingWallet();
-			Schema* Data = Ledger::ConsensusTransaction::AsSchema().Reset();
-			Data->Set("contribution_selection_hash", Var::String(Algorithm::Encoding::Encode0xHex256(ContributionSelectionHash)));
-			Data->Set("public_key_2", Var::String(Format::Util::Encode0xHex(std::string_view((char*)PublicKey2, sizeof(PublicKey2)))));
-			Data->Set("verifying_wallet", VerifyingWallet ? VerifyingWallet->AsSchema().Reset() : Var::Set::Null());
-			return Data;
+			auto verifying_wallet = get_verifying_wallet();
+			schema* data = ledger::consensus_transaction::as_schema().reset();
+			data->set("contribution_selection_hash", var::string(algorithm::encoding::encode_0xhex256(contribution_selection_hash)));
+			data->set("public_key_2", var::string(format::util::encode_0xhex(std::string_view((char*)public_key2, sizeof(public_key2)))));
+			data->set("verifying_wallet", verifying_wallet ? verifying_wallet->as_schema().reset() : var::set::null());
+			return data;
 		}
-		uint32_t ContributionActivation::AsType() const
+		uint32_t contribution_activation::as_type() const
 		{
-			return AsInstanceType();
+			return as_instance_type();
 		}
-		std::string_view ContributionActivation::AsTypename() const
+		std::string_view contribution_activation::as_typename() const
 		{
-			return AsInstanceTypename();
+			return as_instance_typename();
 		}
-		uint256_t ContributionActivation::GetGasEstimate() const
+		uint256_t contribution_activation::get_gas_estimate() const
 		{
-			return Ledger::GasUtil::GetGasEstimate<ContributionActivation, 96>();
+			return ledger::gas_util::get_gas_estimate<contribution_activation, 96>();
 		}
-		uint64_t ContributionActivation::GetDispatchOffset() const
+		uint64_t contribution_activation::get_dispatch_offset() const
 		{
 			return 1;
 		}
-		uint32_t ContributionActivation::AsInstanceType()
+		uint32_t contribution_activation::as_instance_type()
 		{
-			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
-			return Hash;
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
 		}
-		std::string_view ContributionActivation::AsInstanceTypename()
+		std::string_view contribution_activation::as_instance_typename()
 		{
 			return "contribution_activation";
 		}
 
-		ExpectsLR<void> ContributionDeallocation::Validate(uint64_t BlockNumber) const
+		expects_lr<void> contribution_deallocation::validate(uint64_t block_number) const
 		{
-			if (!Algorithm::Asset::TokenOf(Asset).empty())
-				return LayerException("invalid asset");
+			if (!algorithm::asset::token_of(asset).empty())
+				return layer_exception("invalid asset");
 
-			if (!ContributionActivationHash)
-				return LayerException("invalid parent transaction");
+			if (!contribution_activation_hash)
+				return layer_exception("invalid parent transaction");
 
-			return Ledger::Transaction::Validate(BlockNumber);
+			return ledger::transaction::validate(block_number);
 		}
-		ExpectsLR<void> ContributionDeallocation::Execute(Ledger::TransactionContext* Context) const
+		expects_lr<void> contribution_deallocation::execute(ledger::transaction_context* context) const
 		{
-			auto Validation = Transaction::Execute(Context);
-			if (!Validation)
-				return Validation.Error();
+			auto validation = transaction::execute(context);
+			if (!validation)
+				return validation.error();
 
-			auto Activation = Context->GetBlockTransaction<ContributionActivation>(ContributionActivationHash);
-			if (!Activation)
-				return Activation.Error();
+			auto activation = context->get_block_transaction<contribution_activation>(contribution_activation_hash);
+			if (!activation)
+				return activation.error();
 
-			auto* ActivationTransaction = (ContributionActivation*)*Activation->Transaction;
-			auto Selection = Context->GetBlockTransaction<ContributionSelection>(ActivationTransaction->ContributionSelectionHash);
-			if (!Selection)
-				return Selection.Error();
+			auto* activation_transaction = (contribution_activation*)*activation->transaction;
+			auto selection = context->get_block_transaction<contribution_selection>(activation_transaction->contribution_selection_hash);
+			if (!selection)
+				return selection.error();
 
-			auto Allocation = Context->GetBlockTransaction<ContributionAllocation>(((ContributionSelection*)*Selection->Transaction)->ContributionAllocationHash);
-			if (!Allocation)
-				return Allocation.Error();
+			auto allocation = context->get_block_transaction<contribution_allocation>(((contribution_selection*)*selection->transaction)->contribution_allocation_hash);
+			if (!allocation)
+				return allocation.error();
 
-			if (Asset != Allocation->Transaction->Asset)
-				return LayerException("invalid asset");
+			if (asset != allocation->transaction->asset)
+				return layer_exception("invalid asset");
 
-			auto WorkRequirement = Context->VerifyAccountWork(Context->Receipt.From);
-			if (!WorkRequirement)
-				return WorkRequirement;
+			auto work_requirement = context->verify_account_work(context->receipt.from);
+			if (!work_requirement)
+				return work_requirement;
 
-			auto Wallet = ActivationTransaction->GetVerifyingWallet();
-			if (!Wallet)
-				return Wallet.Error();
+			auto wallet = activation_transaction->get_verifying_wallet();
+			if (!wallet)
+				return wallet.error();
 
-			bool Migration = memcmp(Allocation->Receipt.From, Context->Receipt.From, sizeof(Context->Receipt.From)) != 0;
-			auto FromDepository = Context->GetAccountDepository(Asset, Allocation->Receipt.From);
-			if (FromDepository)
+			bool migration = memcmp(allocation->receipt.from, context->receipt.from, sizeof(context->receipt.from)) != 0;
+			auto from_depository = context->get_account_depository(asset, allocation->receipt.from);
+			if (from_depository)
 			{
-				if (Migration)
+				if (migration)
 				{
-					auto Work = Context->GetAccountWork(Allocation->Receipt.From);
-					if (!Work->IsMatching(States::AccountFlags::Outlaw))
-						return LayerException("contribution's proposer is honest");
+					auto work = context->get_account_work(allocation->receipt.from);
+					if (!work->is_matching(states::account_flags::outlaw))
+						return layer_exception("contribution's proposer is honest");
 
-					auto ToDepository = Context->GetAccountDepository(Asset, Allocation->Receipt.From);
-					if (!ToDepository)
-						return LayerException("migration's proposer depository does not exist");
+					auto to_depository = context->get_account_depository(asset, allocation->receipt.from);
+					if (!to_depository)
+						return layer_exception("migration's proposer depository does not exist");
 
-					for (auto& Address : Wallet->Addresses)
+					for (auto& address : wallet->addresses)
 					{
-						auto It = FromDepository->Contributions.find(Address.second);
-						if (It != FromDepository->Contributions.end())
-							ToDepository->Custody += It->second;
+						auto it = from_depository->contributions.find(address.second);
+						if (it != from_depository->contributions.end())
+							to_depository->custody += it->second;
 					}
 
-					auto Coverage = ToDepository->GetCoverage(Work ? Work->Flags : 0);
-					if (Coverage.IsNaN() || Coverage.IsNegative())
-						return LayerException("migration's proposer depository contribution change does not cover balance (contribution: " + ToDepository->GetContribution().ToString() + ", custody: " + ToDepository->Custody.ToString() + ")");
+					auto coverage = to_depository->get_coverage(work ? work->flags : 0);
+					if (coverage.is_nan() || coverage.is_negative())
+						return layer_exception("migration's proposer depository contribution change does not cover balance (contribution: " + to_depository->get_contribution().to_string() + ", custody: " + to_depository->custody.to_string() + ")");
 				}
 				else
 				{
-					for (auto& Address : Wallet->Addresses)
-						FromDepository->Contributions.erase(Address.second);
+					for (auto& address : wallet->addresses)
+						from_depository->contributions.erase(address.second);
 
-					auto Work = Context->GetAccountWork(Context->Receipt.From);
-					auto Coverage = FromDepository->GetCoverage(Work ? Work->Flags : 0);
-					if (Coverage.IsNaN() || Coverage.IsNegative())
-						return LayerException("depository contribution change does not cover balance (contribution: " + FromDepository->GetContribution().ToString() + ", custody: " + FromDepository->Custody.ToString() + ")");
+					auto work = context->get_account_work(context->receipt.from);
+					auto coverage = from_depository->get_coverage(work ? work->flags : 0);
+					if (coverage.is_nan() || coverage.is_negative())
+						return layer_exception("depository contribution change does not cover balance (contribution: " + from_depository->get_contribution().to_string() + ", custody: " + from_depository->custody.to_string() + ")");
 				}
 			}
 
-			auto ToDepository = Migration ? Context->GetAccountDepository(Asset, Context->Receipt.From) : FromDepository;
-			if (Migration && !ToDepository)
-				return LayerException("migration's proposer depository does not exist");
+			auto to_depository = migration ? context->get_account_depository(asset, context->receipt.from) : from_depository;
+			if (migration && !to_depository)
+				return layer_exception("migration's proposer depository does not exist");
 
-			Algorithm::Pubkeyhash Null = { 0 };
-			auto AddressIndex = Protocol::Now().Account.RootAddressIndex;
-			auto Status = Context->ApplyWitnessAddress(Asset, Allocation->Receipt.From, Null, Wallet->Addresses, AddressIndex, States::AddressType::Witness);
-			if (!Status)
-				return Status.Error();
+			algorithm::pubkeyhash null = { 0 };
+			auto address_index = protocol::now().account.root_address_index;
+			auto status = context->apply_witness_address(asset, allocation->receipt.from, null, wallet->addresses, address_index, states::address_type::witness);
+			if (!status)
+				return status.error();
 
-			for (auto& Address : Wallet->Addresses)
+			for (auto& address : wallet->addresses)
 			{
-				auto Value = FromDepository->GetContribution(Address.second);
-				FromDepository->Contributions.erase(Address.second);
-				if (Migration && Value.IsPositive())
-					ToDepository->Custody += Value;
+				auto value = from_depository->get_contribution(address.second);
+				from_depository->contributions.erase(address.second);
+				if (migration && value.is_positive())
+					to_depository->custody += value;
 			}
 
-			auto Work = Context->GetAccountWork(Allocation->Receipt.From);
-			auto Coverage = FromDepository->GetCoverage(Work ? Work->Flags : 0);
-			if (Coverage.IsNaN() || Coverage.IsNegative())
-				return LayerException("depository contribution change does not cover balance (contribution: " + FromDepository->GetContribution().ToString() + ", custody: " + FromDepository->Custody.ToString() + ")");
+			auto work = context->get_account_work(allocation->receipt.from);
+			auto coverage = from_depository->get_coverage(work ? work->flags : 0);
+			if (coverage.is_nan() || coverage.is_negative())
+				return layer_exception("depository contribution change does not cover balance (contribution: " + from_depository->get_contribution().to_string() + ", custody: " + from_depository->custody.to_string() + ")");
 
-			auto Resignation = Context->Store(FromDepository.Address());
-			if (!Resignation)
-				return Resignation.Error();
+			auto resignation = context->store(from_depository.address());
+			if (!resignation)
+				return resignation.error();
 
-			if (!Migration)
-				return Expectation::Met;
+			if (!migration)
+				return expectation::met;
 
-			Work = Context->GetAccountWork(Context->Receipt.From);
-			Coverage = FromDepository->GetCoverage(Work ? Work->Flags : 0);
-			if (Coverage.IsNaN() || Coverage.IsNegative())
-				return LayerException("migration's depository contribution change does not cover balance (contribution: " + FromDepository->GetContribution().ToString() + ", custody: " + FromDepository->Custody.ToString() + ")");
+			work = context->get_account_work(context->receipt.from);
+			coverage = from_depository->get_coverage(work ? work->flags : 0);
+			if (coverage.is_nan() || coverage.is_negative())
+				return layer_exception("migration's depository contribution change does not cover balance (contribution: " + from_depository->get_contribution().to_string() + ", custody: " + from_depository->custody.to_string() + ")");
 
-			auto Application = Context->Store(ToDepository.Address());
-			if (!Application)
-				return Application.Error();
+			auto application = context->store(to_depository.address());
+			if (!application)
+				return application.error();
 
-			auto Derivation = Context->GetAccountDerivation(Asset, Context->Receipt.From);
-			auto* Chain = NSS::ServerNode::Get()->GetChainparams(Asset);
-			if (!Chain)
-				return LayerException("invalid operation");
+			auto derivation = context->get_account_derivation(asset, context->receipt.from);
+			auto* chain = nss::server_node::get()->get_chainparams(asset);
+			if (!chain)
+				return layer_exception("invalid operation");
 
-			AddressIndex = (Derivation && Chain->Routing != Mediator::RoutingPolicy::Memo ? Derivation->MaxAddressIndex + 1 : Protocol::Now().Account.RootAddressIndex);
-			Status = Context->ApplyWitnessAddress(Asset, Allocation->Receipt.From, Context->Receipt.From, Wallet->Addresses, AddressIndex, States::AddressType::Custodian);
-			if (!Status)
-				return Status.Error();
+			address_index = (derivation && chain->routing != mediator::routing_policy::memo ? derivation->max_address_index + 1 : protocol::now().account.root_address_index);
+			status = context->apply_witness_address(asset, allocation->receipt.from, context->receipt.from, wallet->addresses, address_index, states::address_type::custodian);
+			if (!status)
+				return status.error();
 
-			if (!Derivation || Derivation->MaxAddressIndex < AddressIndex)
+			if (!derivation || derivation->max_address_index < address_index)
 			{
-				auto Substatus = Context->ApplyAccountDerivation(Asset, Derivation->Owner, AddressIndex);
-				if (!Substatus)
-					return Substatus.Error();
+				auto substatus = context->apply_account_derivation(asset, derivation->owner, address_index);
+				if (!substatus)
+					return substatus.error();
 			}
 
-			return Expectation::Met;
+			return expectation::met;
 		}
-		ExpectsPromiseRT<void> ContributionDeallocation::Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const
+		expects_promise_rt<void> contribution_deallocation::dispatch(const ledger::wallet& proposer, const ledger::transaction_context* context, vector<uptr<ledger::transaction>>* pipeline) const
 		{
-			if (Context->GetWitnessEvent(Context->Receipt.TransactionHash))
-				return ExpectsPromiseRT<void>(Expectation::Met);
+			if (context->get_witness_event(context->receipt.transaction_hash))
+				return expects_promise_rt<void>(expectation::met);
 
-			auto Activation = Context->GetBlockTransaction<ContributionActivation>(ContributionActivationHash);
-			if (!Activation)
-				return ExpectsPromiseRT<void>(RemoteException(std::move(Activation.Error().message())));
+			auto activation = context->get_block_transaction<contribution_activation>(contribution_activation_hash);
+			if (!activation)
+				return expects_promise_rt<void>(remote_exception(std::move(activation.error().message())));
 
-			auto* ActivationTransaction = (ContributionActivation*)*Activation->Transaction;
-			auto Selection = Context->GetBlockTransaction<ContributionSelection>(ActivationTransaction->ContributionSelectionHash);
-			if (!Selection)
-				return ExpectsPromiseRT<void>(RemoteException(std::move(Selection.Error().message())));
+			auto* activation_transaction = (contribution_activation*)*activation->transaction;
+			auto selection = context->get_block_transaction<contribution_selection>(activation_transaction->contribution_selection_hash);
+			if (!selection)
+				return expects_promise_rt<void>(remote_exception(std::move(selection.error().message())));
 
-			if (memcmp(Selection->Receipt.From, Proposer.PublicKeyHash, sizeof(Selection->Receipt.From)) != 0)
-				return ExpectsPromiseRT<void>(Expectation::Met);
+			if (memcmp(selection->receipt.from, proposer.public_key_hash, sizeof(selection->receipt.from)) != 0)
+				return expects_promise_rt<void>(expectation::met);
 
-			UPtr<ContributionDeselection> Transaction = Memory::New<ContributionDeselection>();
-			Transaction->Asset = Asset;
+			uptr<contribution_deselection> transaction = memory::init<contribution_deselection>();
+			transaction->asset = asset;
 
-			auto Status = Transaction->SetRevealingShare1(Context, Context->Receipt.TransactionHash, Proposer.SecretKey);
-			if (!Status)
-				return ExpectsPromiseRT<void>(RemoteException(std::move(Status.Error().message())));
+			auto status = transaction->set_revealing_share1(context, context->receipt.transaction_hash, proposer.secret_key);
+			if (!status)
+				return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
 
-			Pipeline->push_back(Transaction.Reset());
-			return ExpectsPromiseRT<void>(Expectation::Met);
+			pipeline->push_back(transaction.reset());
+			return expects_promise_rt<void>(expectation::met);
 		}
-		bool ContributionDeallocation::StoreBody(Format::Stream* Stream) const
+		bool contribution_deallocation::store_body(format::stream* stream) const
 		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Algorithm::Pubkey Null = { 0 };
-			Stream->WriteString(std::string_view((char*)CipherPublicKey1, memcmp(CipherPublicKey1, Null, sizeof(Null)) == 0 ? 0 : sizeof(CipherPublicKey1)));
-			Stream->WriteString(std::string_view((char*)CipherPublicKey2, memcmp(CipherPublicKey2, Null, sizeof(Null)) == 0 ? 0 : sizeof(CipherPublicKey2)));
-			Stream->WriteInteger(ContributionActivationHash);
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			algorithm::pubkey null = { 0 };
+			stream->write_string(std::string_view((char*)cipher_public_key1, memcmp(cipher_public_key1, null, sizeof(null)) == 0 ? 0 : sizeof(cipher_public_key1)));
+			stream->write_string(std::string_view((char*)cipher_public_key2, memcmp(cipher_public_key2, null, sizeof(null)) == 0 ? 0 : sizeof(cipher_public_key2)));
+			stream->write_integer(contribution_activation_hash);
 			return true;
 		}
-		bool ContributionDeallocation::LoadBody(Format::Stream& Stream)
+		bool contribution_deallocation::load_body(format::stream& stream)
 		{
-			String CipherPublicKey1Assembly;
-			if (!Stream.ReadString(Stream.ReadType(), &CipherPublicKey1Assembly) || !Algorithm::Encoding::DecodeUintBlob(CipherPublicKey1Assembly, CipherPublicKey1, sizeof(CipherPublicKey1)))
+			string cipher_public_key1_assembly;
+			if (!stream.read_string(stream.read_type(), &cipher_public_key1_assembly) || !algorithm::encoding::decode_uint_blob(cipher_public_key1_assembly, cipher_public_key1, sizeof(cipher_public_key1)))
 				return false;
 
-			String CipherPublicKey2Assembly;
-			if (!Stream.ReadString(Stream.ReadType(), &CipherPublicKey2Assembly) || !Algorithm::Encoding::DecodeUintBlob(CipherPublicKey2Assembly, CipherPublicKey2, sizeof(CipherPublicKey2)))
+			string cipher_public_key2_assembly;
+			if (!stream.read_string(stream.read_type(), &cipher_public_key2_assembly) || !algorithm::encoding::decode_uint_blob(cipher_public_key2_assembly, cipher_public_key2, sizeof(cipher_public_key2)))
 				return false;
 
-			if (!Stream.ReadInteger(Stream.ReadType(), &ContributionActivationHash))
+			if (!stream.read_integer(stream.read_type(), &contribution_activation_hash))
 				return false;
 
 			return true;
 		}
-		void ContributionDeallocation::SetWitness(const Algorithm::Seckey SecretKey, const uint256_t& NewContributionActivationHash)
+		void contribution_deallocation::set_witness(const algorithm::seckey secret_key, const uint256_t& new_contribution_activation_hash)
 		{
-			uint8_t Seed[32];
-			Algorithm::Encoding::DecodeUint256(ContributionActivationHash = NewContributionActivationHash, Seed);
+			uint8_t seed[32];
+			algorithm::encoding::decode_uint256(contribution_activation_hash = new_contribution_activation_hash, seed);
 
-			Algorithm::Seckey CipherSecretKey;
-			Algorithm::Signing::DeriveCipherKeypair(SecretKey, ContributionActivationHash, CipherSecretKey, CipherPublicKey1);
-			Algorithm::Signing::DeriveCipherKeypair(SecretKey, Algorithm::Hashing::Hash256i(Seed, sizeof(Seed)), CipherSecretKey, CipherPublicKey2);
+			algorithm::seckey cipher_secret_key;
+			algorithm::signing::derive_cipher_keypair(secret_key, contribution_activation_hash, cipher_secret_key, cipher_public_key1);
+			algorithm::signing::derive_cipher_keypair(secret_key, algorithm::hashing::hash256i(seed, sizeof(seed)), cipher_secret_key, cipher_public_key2);
 		}
-		UPtr<Schema> ContributionDeallocation::AsSchema() const
+		uptr<schema> contribution_deallocation::as_schema() const
 		{
-			Schema* Data = Ledger::Transaction::AsSchema().Reset();
-			Data->Set("contribution_activation_hash", Var::String(Algorithm::Encoding::Encode0xHex256(ContributionActivationHash)));
-			Data->Set("cipher_public_key_1", Var::String(Format::Util::Encode0xHex(std::string_view((char*)CipherPublicKey1, sizeof(CipherPublicKey1)))));
-			Data->Set("cipher_public_key_2", Var::String(Format::Util::Encode0xHex(std::string_view((char*)CipherPublicKey2, sizeof(CipherPublicKey2)))));
-			return Data;
+			schema* data = ledger::transaction::as_schema().reset();
+			data->set("contribution_activation_hash", var::string(algorithm::encoding::encode_0xhex256(contribution_activation_hash)));
+			data->set("cipher_public_key_1", var::string(format::util::encode_0xhex(std::string_view((char*)cipher_public_key1, sizeof(cipher_public_key1)))));
+			data->set("cipher_public_key_2", var::string(format::util::encode_0xhex(std::string_view((char*)cipher_public_key2, sizeof(cipher_public_key2)))));
+			return data;
 		}
-		uint32_t ContributionDeallocation::AsType() const
+		uint32_t contribution_deallocation::as_type() const
 		{
-			return AsInstanceType();
+			return as_instance_type();
 		}
-		std::string_view ContributionDeallocation::AsTypename() const
+		std::string_view contribution_deallocation::as_typename() const
 		{
-			return AsInstanceTypename();
+			return as_instance_typename();
 		}
-		uint256_t ContributionDeallocation::GetGasEstimate() const
+		uint256_t contribution_deallocation::get_gas_estimate() const
 		{
-			return Ledger::GasUtil::GetGasEstimate<ContributionDeallocation, 64>();
+			return ledger::gas_util::get_gas_estimate<contribution_deallocation, 64>();
 		}
-		uint64_t ContributionDeallocation::GetDispatchOffset() const
+		uint64_t contribution_deallocation::get_dispatch_offset() const
 		{
 			return 1;
 		}
-		uint32_t ContributionDeallocation::AsInstanceType()
+		uint32_t contribution_deallocation::as_instance_type()
 		{
-			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
-			return Hash;
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
 		}
-		std::string_view ContributionDeallocation::AsInstanceTypename()
+		std::string_view contribution_deallocation::as_instance_typename()
 		{
 			return "contribution_deallocation";
 		}
 
-		ExpectsLR<void> ContributionDeselection::SetRevealingShare1(const Ledger::TransactionContext* Context, const uint256_t& NewContributionDeallocationHash, const Algorithm::Seckey SecretKey)
+		expects_lr<void> contribution_deselection::set_revealing_share1(const ledger::transaction_context* context, const uint256_t& new_contribution_deallocation_hash, const algorithm::seckey secret_key)
 		{
-			auto* Chain = NSS::ServerNode::Get()->GetChainparams(Asset);
-			if (!Chain)
-				return LayerException("invalid operation");
+			auto* chain = nss::server_node::get()->get_chainparams(asset);
+			if (!chain)
+				return layer_exception("invalid operation");
 
-			auto Deallocation = Context->GetBlockTransaction<ContributionDeallocation>(ContributionDeallocationHash = NewContributionDeallocationHash);
-			if (!Deallocation)
-				return Deallocation.Error();
+			auto deallocation = context->get_block_transaction<contribution_deallocation>(contribution_deallocation_hash = new_contribution_deallocation_hash);
+			if (!deallocation)
+				return deallocation.error();
 
-			auto DeallocationTransaction = (ContributionDeallocation*)*Deallocation->Transaction;
-			auto Activation = Context->GetBlockTransaction<ContributionActivation>(DeallocationTransaction->ContributionActivationHash);
-			if (!Activation)
-				return Activation.Error();
+			auto deallocation_transaction = (contribution_deallocation*)*deallocation->transaction;
+			auto activation = context->get_block_transaction<contribution_activation>(deallocation_transaction->contribution_activation_hash);
+			if (!activation)
+				return activation.error();
 
-			auto Selection = Context->GetBlockTransaction<ContributionSelection>(((ContributionActivation*)*Activation->Transaction)->ContributionSelectionHash);
-			if (!Selection)
-				return Selection.Error();
+			auto selection = context->get_block_transaction<contribution_selection>(((contribution_activation*)*activation->transaction)->contribution_selection_hash);
+			if (!selection)
+				return selection.error();
 
-			Algorithm::Pubkey SecretKeyHash;
-			Algorithm::Signing::DerivePublicKeyHash(SecretKey, SecretKeyHash);
+			algorithm::pubkey secret_key_hash;
+			algorithm::signing::derive_public_key_hash(secret_key, secret_key_hash);
 
-			auto SelectionTransaction = (ContributionSelection*)*Selection->Transaction;
-			Format::Stream Entropy;
-			Entropy.WriteTypeless(SelectionTransaction->ContributionAllocationHash);
-			Entropy.WriteTypeless((char*)SecretKeyHash, (uint32_t)sizeof(SecretKeyHash));
+			auto selection_transaction = (contribution_selection*)*selection->transaction;
+			format::stream entropy;
+			entropy.write_typeless(selection_transaction->contribution_allocation_hash);
+			entropy.write_typeless((char*)secret_key_hash, (uint32_t)sizeof(secret_key_hash));
 
-			Algorithm::Composition::CSeed Seed1;
-			Algorithm::Composition::CSeckey SecretKey1;
-			Algorithm::Composition::CPubkey PublicKey1;
-			Algorithm::Composition::ConvertToSecretSeed(SecretKey, Entropy.Data, Seed1);
-			auto Status = Algorithm::Composition::DeriveKeypair(Chain->Composition, Seed1, SecretKey1, PublicKey1);
-			if (!Status)
-				return Status;
+			algorithm::composition::cseed seed1;
+			algorithm::composition::cseckey secret_key1;
+			algorithm::composition::cpubkey public_key1;
+			algorithm::composition::convert_to_secret_seed(secret_key, entropy.data, seed1);
+			auto status = algorithm::composition::derive_keypair(chain->composition, seed1, secret_key1, public_key1);
+			if (!status)
+				return status;
 
-			Entropy.WriteTypeless((char*)Seed1, (uint32_t)sizeof(Seed1));
-			Entropy.WriteTypeless(Deallocation->Receipt.TransactionHash);
-			Entropy.WriteTypeless(Activation->Receipt.TransactionHash);
-			Entropy.WriteTypeless(Selection->Receipt.TransactionHash);
-			EncryptedSecretKey1 = Algorithm::Signing::PublicEncrypt(DeallocationTransaction->CipherPublicKey1, std::string_view((char*)SecretKey1, sizeof(SecretKey1)), Entropy.Data).Or(String());
-			if (EncryptedSecretKey1.empty())
-				return LayerException("secret key encryption error");
+			entropy.write_typeless((char*)seed1, (uint32_t)sizeof(seed1));
+			entropy.write_typeless(deallocation->receipt.transaction_hash);
+			entropy.write_typeless(activation->receipt.transaction_hash);
+			entropy.write_typeless(selection->receipt.transaction_hash);
+			encrypted_secret_key1 = algorithm::signing::public_encrypt(deallocation_transaction->cipher_public_key1, std::string_view((char*)secret_key1, sizeof(secret_key1)), entropy.data).otherwise(string());
+			if (encrypted_secret_key1.empty())
+				return layer_exception("secret key encryption error");
 
-			return Expectation::Met;
+			return expectation::met;
 		}
-		ExpectsLR<void> ContributionDeselection::Validate(uint64_t BlockNumber) const
+		expects_lr<void> contribution_deselection::validate(uint64_t block_number) const
 		{
-			if (!Algorithm::Asset::TokenOf(Asset).empty())
-				return LayerException("invalid asset");
+			if (!algorithm::asset::token_of(asset).empty())
+				return layer_exception("invalid asset");
 
-			if (!ContributionDeallocationHash)
-				return LayerException("invalid parent transaction");
+			if (!contribution_deallocation_hash)
+				return layer_exception("invalid parent transaction");
 
-			if (EncryptedSecretKey1.empty())
-				return LayerException("invalid encrypted secret key 1");
+			if (encrypted_secret_key1.empty())
+				return layer_exception("invalid encrypted secret key 1");
 
-			return Ledger::ConsensusTransaction::Validate(BlockNumber);
+			return ledger::consensus_transaction::validate(block_number);
 		}
-		ExpectsLR<void> ContributionDeselection::Execute(Ledger::TransactionContext* Context) const
+		expects_lr<void> contribution_deselection::execute(ledger::transaction_context* context) const
 		{
-			auto Validation = ConsensusTransaction::Execute(Context);
-			if (!Validation)
-				return Validation.Error();
+			auto validation = consensus_transaction::execute(context);
+			if (!validation)
+				return validation.error();
 
-			auto Event = Context->ApplyWitnessEvent(ContributionDeallocationHash, Context->Receipt.TransactionHash);
-			if (!Event)
-				return Event.Error();
+			auto event = context->apply_witness_event(contribution_deallocation_hash, context->receipt.transaction_hash);
+			if (!event)
+				return event.error();
 
-			auto Deallocation = Context->GetBlockTransaction<ContributionDeallocation>(ContributionDeallocationHash);
-			if (!Deallocation)
-				return Deallocation.Error();
+			auto deallocation = context->get_block_transaction<contribution_deallocation>(contribution_deallocation_hash);
+			if (!deallocation)
+				return deallocation.error();
 
-			auto Activation = Context->GetBlockTransaction<ContributionActivation>(((ContributionDeallocation*)*Deallocation->Transaction)->ContributionActivationHash);
-			if (!Activation)
-				return Activation.Error();
+			auto activation = context->get_block_transaction<contribution_activation>(((contribution_deallocation*)*deallocation->transaction)->contribution_activation_hash);
+			if (!activation)
+				return activation.error();
 
-			auto Selection = Context->GetBlockTransaction<ContributionSelection>(((ContributionActivation*)*Activation->Transaction)->ContributionSelectionHash);
-			if (!Selection)
-				return Selection.Error();
+			auto selection = context->get_block_transaction<contribution_selection>(((contribution_activation*)*activation->transaction)->contribution_selection_hash);
+			if (!selection)
+				return selection.error();
 
-			if (Asset != Deallocation->Transaction->Asset)
-				return LayerException("invalid asset");
+			if (asset != deallocation->transaction->asset)
+				return layer_exception("invalid asset");
 
-			if (memcmp(Selection->Receipt.From, Context->Receipt.From, sizeof(Selection->Receipt.From)) != 0)
-				return LayerException("invalid transaction owner");
+			if (memcmp(selection->receipt.from, context->receipt.from, sizeof(selection->receipt.from)) != 0)
+				return layer_exception("invalid transaction owner");
 
-			OrderedSet<String> Initiator;
-			Selection->Transaction->RecoverMany(Selection->Receipt, Initiator);
+			ordered_set<string> initiator;
+			selection->transaction->recover_many(selection->receipt, initiator);
 
-			Format::Variables Parties = { Format::Variable(std::string_view((char*)Deallocation->Receipt.From, sizeof(Deallocation->Receipt.From))) };
-			if (!Initiator.empty() && *Initiator.begin() != Parties.begin()->AsString())
-				Parties.push_back(Format::Variable(*Initiator.begin()));
+			format::variables parties = { format::variable(std::string_view((char*)deallocation->receipt.from, sizeof(deallocation->receipt.from))) };
+			if (!initiator.empty() && *initiator.begin() != parties.begin()->as_string())
+				parties.push_back(format::variable(*initiator.begin()));
 
-			return Context->EmitEvent<ContributionDeselection>(std::move(Parties));
+			return context->emit_event<contribution_deselection>(std::move(parties));
 		}
-		ExpectsPromiseRT<void> ContributionDeselection::Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const
+		expects_promise_rt<void> contribution_deselection::dispatch(const ledger::wallet& proposer, const ledger::transaction_context* context, vector<uptr<ledger::transaction>>* pipeline) const
 		{
-			if (Context->GetWitnessEvent(Context->Receipt.TransactionHash))
-				return ExpectsPromiseRT<void>(Expectation::Met);
+			if (context->get_witness_event(context->receipt.transaction_hash))
+				return expects_promise_rt<void>(expectation::met);
 
-			auto Deallocation = Context->GetBlockTransaction<ContributionDeallocation>(ContributionDeallocationHash);
-			if (!Deallocation)
-				return ExpectsPromiseRT<void>(RemoteException(std::move(Deallocation.Error().message())));
+			auto deallocation = context->get_block_transaction<contribution_deallocation>(contribution_deallocation_hash);
+			if (!deallocation)
+				return expects_promise_rt<void>(remote_exception(std::move(deallocation.error().message())));
 
-			auto Activation = Context->GetBlockTransaction<ContributionActivation>(((ContributionDeallocation*)*Deallocation->Transaction)->ContributionActivationHash);
-			if (!Activation)
-				return ExpectsPromiseRT<void>(RemoteException(std::move(Activation.Error().message())));
+			auto activation = context->get_block_transaction<contribution_activation>(((contribution_deallocation*)*deallocation->transaction)->contribution_activation_hash);
+			if (!activation)
+				return expects_promise_rt<void>(remote_exception(std::move(activation.error().message())));
 
-			if (memcmp(Activation->Receipt.From, Proposer.PublicKeyHash, sizeof(Activation->Receipt.From)) != 0)
-				return ExpectsPromiseRT<void>(Expectation::Met);
+			if (memcmp(activation->receipt.from, proposer.public_key_hash, sizeof(activation->receipt.from)) != 0)
+				return expects_promise_rt<void>(expectation::met);
 
-			UPtr<ContributionDeactivation> Transaction = Memory::New<ContributionDeactivation>();
-			Transaction->Asset = Asset;
+			uptr<contribution_deactivation> transaction = memory::init<contribution_deactivation>();
+			transaction->asset = asset;
 
-			auto Status = Transaction->SetRevealingShare2(Context, Context->Receipt.TransactionHash, Proposer.SecretKey);
-			if (!Status)
-				return ExpectsPromiseRT<void>(RemoteException(std::move(Status.Error().message())));
+			auto status = transaction->set_revealing_share2(context, context->receipt.transaction_hash, proposer.secret_key);
+			if (!status)
+				return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
 
-			Pipeline->push_back(Transaction.Reset());
-			return ExpectsPromiseRT<void>(Expectation::Met);
+			pipeline->push_back(transaction.reset());
+			return expects_promise_rt<void>(expectation::met);
 		}
-		bool ContributionDeselection::StoreBody(Format::Stream* Stream) const
+		bool contribution_deselection::store_body(format::stream* stream) const
 		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Stream->WriteInteger(ContributionDeallocationHash);
-			Stream->WriteString(EncryptedSecretKey1);
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_integer(contribution_deallocation_hash);
+			stream->write_string(encrypted_secret_key1);
 			return true;
 		}
-		bool ContributionDeselection::LoadBody(Format::Stream& Stream)
+		bool contribution_deselection::load_body(format::stream& stream)
 		{
-			if (!Stream.ReadInteger(Stream.ReadType(), &ContributionDeallocationHash))
+			if (!stream.read_integer(stream.read_type(), &contribution_deallocation_hash))
 				return false;
 
-			if (!Stream.ReadString(Stream.ReadType(), &EncryptedSecretKey1))
+			if (!stream.read_string(stream.read_type(), &encrypted_secret_key1))
 				return false;
 
 			return true;
 		}
-		bool ContributionDeselection::RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
+		bool contribution_deselection::recover_many(const ledger::receipt& receipt, ordered_set<string>& parties) const
 		{
-			auto* Event = Receipt.FindEvent<ContributionDeselection>();
-			if (!Event || Event->empty())
+			auto* event = receipt.find_event<contribution_deselection>();
+			if (!event || event->empty())
 				return false;
 
-			for (auto& Owner : *Event)
+			for (auto& owner : *event)
 			{
-				if (Owner.AsString().size() == sizeof(Algorithm::Pubkeyhash))
-					Parties.insert(Owner.AsBlob());
+				if (owner.as_string().size() == sizeof(algorithm::pubkeyhash))
+					parties.insert(owner.as_blob());
 			}
 			return true;
 		}
-		Option<String> ContributionDeselection::GetSecretKey1(const Ledger::TransactionContext* Context, const Algorithm::Seckey SecretKey) const
+		option<string> contribution_deselection::get_secret_key1(const ledger::transaction_context* context, const algorithm::seckey secret_key) const
 		{
-			auto Deallocation = Context->GetBlockTransaction<ContributionDeallocation>(ContributionDeallocationHash);
-			if (!Deallocation)
-				return Optional::None;
+			auto deallocation = context->get_block_transaction<contribution_deallocation>(contribution_deallocation_hash);
+			if (!deallocation)
+				return optional::none;
 
-			auto* DeallocationTransaction = (ContributionDeallocation*)*Deallocation->Transaction;
-			Algorithm::Seckey CipherSecretKey; Algorithm::Pubkey CipherPublicKey;
-			Algorithm::Signing::DeriveCipherKeypair(SecretKey, DeallocationTransaction->ContributionActivationHash, CipherSecretKey, CipherPublicKey);
-			return Algorithm::Signing::PrivateDecrypt(CipherSecretKey, CipherPublicKey, EncryptedSecretKey1);
+			auto* deallocation_transaction = (contribution_deallocation*)*deallocation->transaction;
+			algorithm::seckey cipher_secret_key; algorithm::pubkey cipher_public_key;
+			algorithm::signing::derive_cipher_keypair(secret_key, deallocation_transaction->contribution_activation_hash, cipher_secret_key, cipher_public_key);
+			return algorithm::signing::private_decrypt(cipher_secret_key, cipher_public_key, encrypted_secret_key1);
 		}
-		UPtr<Schema> ContributionDeselection::AsSchema() const
+		uptr<schema> contribution_deselection::as_schema() const
 		{
-			Schema* Data = Ledger::ConsensusTransaction::AsSchema().Reset();
-			Data->Set("contribution_deallocation_hash", Var::String(Algorithm::Encoding::Encode0xHex256(ContributionDeallocationHash)));
-			Data->Set("encrypted_secret_key_1", Var::String(Format::Util::Encode0xHex(EncryptedSecretKey1)));
-			return Data;
+			schema* data = ledger::consensus_transaction::as_schema().reset();
+			data->set("contribution_deallocation_hash", var::string(algorithm::encoding::encode_0xhex256(contribution_deallocation_hash)));
+			data->set("encrypted_secret_key_1", var::string(format::util::encode_0xhex(encrypted_secret_key1)));
+			return data;
 		}
-		uint32_t ContributionDeselection::AsType() const
+		uint32_t contribution_deselection::as_type() const
 		{
-			return AsInstanceType();
+			return as_instance_type();
 		}
-		std::string_view ContributionDeselection::AsTypename() const
+		std::string_view contribution_deselection::as_typename() const
 		{
-			return AsInstanceTypename();
+			return as_instance_typename();
 		}
-		uint256_t ContributionDeselection::GetGasEstimate() const
+		uint256_t contribution_deselection::get_gas_estimate() const
 		{
-			return Ledger::GasUtil::GetGasEstimate<ContributionDeselection, 52>();
+			return ledger::gas_util::get_gas_estimate<contribution_deselection, 52>();
 		}
-		uint64_t ContributionDeselection::GetDispatchOffset() const
+		uint64_t contribution_deselection::get_dispatch_offset() const
 		{
 			return 1;
 		}
-		uint32_t ContributionDeselection::AsInstanceType()
+		uint32_t contribution_deselection::as_instance_type()
 		{
-			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
-			return Hash;
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
 		}
-		std::string_view ContributionDeselection::AsInstanceTypename()
+		std::string_view contribution_deselection::as_instance_typename()
 		{
 			return "contribution_deselection";
 		}
 
-		ExpectsLR<void> ContributionDeactivation::SetRevealingShare2(const Ledger::TransactionContext* Context, const uint256_t& NewContributionDeselectionHash, const Algorithm::Seckey SecretKey)
+		expects_lr<void> contribution_deactivation::set_revealing_share2(const ledger::transaction_context* context, const uint256_t& new_contribution_deselection_hash, const algorithm::seckey secret_key)
 		{
-			auto* Chain = NSS::ServerNode::Get()->GetChainparams(Asset);
-			if (!Chain)
-				return LayerException("invalid operation");
-			
-			ContributionDeselectionHash = NewContributionDeselectionHash;
-			auto Deselection = Context->GetBlockTransaction<ContributionDeselection>(ContributionDeselectionHash);
-			if (!Deselection)
-				return Deselection.Error();
+			auto* chain = nss::server_node::get()->get_chainparams(asset);
+			if (!chain)
+				return layer_exception("invalid operation");
 
-			auto Deallocation = Context->GetBlockTransaction<ContributionDeallocation>(((ContributionDeselection*)*Deselection->Transaction)->ContributionDeallocationHash);
-			if (!Deallocation)
-				return Deallocation.Error();
+			contribution_deselection_hash = new_contribution_deselection_hash;
+			auto deselection = context->get_block_transaction<contribution_deselection>(contribution_deselection_hash);
+			if (!deselection)
+				return deselection.error();
 
-			auto* DeallocationTransaction = (ContributionDeallocation*)*Deallocation->Transaction;
-			auto Activation = Context->GetBlockTransaction<ContributionActivation>(DeallocationTransaction->ContributionActivationHash);
-			if (!Activation)
-				return Activation.Error();
+			auto deallocation = context->get_block_transaction<contribution_deallocation>(((contribution_deselection*)*deselection->transaction)->contribution_deallocation_hash);
+			if (!deallocation)
+				return deallocation.error();
 
-			auto* ActivationTransaction = ((ContributionActivation*)*Activation->Transaction);
-			auto Selection = Context->GetBlockTransaction<ContributionSelection>(ActivationTransaction->ContributionSelectionHash);
-			if (!Selection)
-				return Selection.Error();
+			auto* deallocation_transaction = (contribution_deallocation*)*deallocation->transaction;
+			auto activation = context->get_block_transaction<contribution_activation>(deallocation_transaction->contribution_activation_hash);
+			if (!activation)
+				return activation.error();
 
-			Algorithm::Pubkey SecretKeyHash;
-			Algorithm::Signing::DerivePublicKeyHash(SecretKey, SecretKeyHash);
+			auto* activation_transaction = ((contribution_activation*)*activation->transaction);
+			auto selection = context->get_block_transaction<contribution_selection>(activation_transaction->contribution_selection_hash);
+			if (!selection)
+				return selection.error();
 
-			auto SelectionTransaction = (ContributionSelection*)*Selection->Transaction;
-			Format::Stream Entropy;
-			Entropy.WriteTypeless(ActivationTransaction->ContributionSelectionHash);
-			Entropy.WriteTypeless((char*)SecretKeyHash, (uint32_t)sizeof(SecretKeyHash));
-			Entropy.WriteTypeless((char*)SelectionTransaction->PublicKey1, (uint32_t)sizeof(Algorithm::Composition::CPubkey));
+			algorithm::pubkey secret_key_hash;
+			algorithm::signing::derive_public_key_hash(secret_key, secret_key_hash);
 
-			Algorithm::Composition::CSeed Seed2;
-			Algorithm::Composition::CSeckey SecretKey2;
-			Algorithm::Composition::CPubkey PublicKey2;
-			Algorithm::Composition::ConvertToSecretSeed(SecretKey, Entropy.Data, Seed2);
-			auto Status = Algorithm::Composition::DeriveKeypair(Chain->Composition, Seed2, SecretKey2, PublicKey2);
-			if (!Status)
-				return Status;
+			auto selection_transaction = (contribution_selection*)*selection->transaction;
+			format::stream entropy;
+			entropy.write_typeless(activation_transaction->contribution_selection_hash);
+			entropy.write_typeless((char*)secret_key_hash, (uint32_t)sizeof(secret_key_hash));
+			entropy.write_typeless((char*)selection_transaction->public_key1, (uint32_t)sizeof(algorithm::composition::cpubkey));
 
-			size_t SharedPublicKeySize = 0;
-			Algorithm::Composition::CPubkey SharedPublicKey;
-			Status = Algorithm::Composition::DerivePublicKey(Chain->Composition, SelectionTransaction->PublicKey1, SecretKey2, SharedPublicKey, &SharedPublicKeySize);
-			if (!Status)
-				return Status;
+			algorithm::composition::cseed seed2;
+			algorithm::composition::cseckey secret_key2;
+			algorithm::composition::cpubkey public_key2;
+			algorithm::composition::convert_to_secret_seed(secret_key, entropy.data, seed2);
+			auto status = algorithm::composition::derive_keypair(chain->composition, seed2, secret_key2, public_key2);
+			if (!status)
+				return status;
 
-			Entropy.WriteTypeless((char*)Seed2, (uint32_t)sizeof(Seed2));
-			Entropy.WriteTypeless(Deselection->Receipt.TransactionHash);
-			Entropy.WriteTypeless(Deallocation->Receipt.TransactionHash);
-			Entropy.WriteTypeless(Activation->Receipt.TransactionHash);
-			Entropy.WriteTypeless(Selection->Receipt.TransactionHash);
-			EncryptedSecretKey2 = Algorithm::Signing::PublicEncrypt(DeallocationTransaction->CipherPublicKey2, std::string_view((char*)SecretKey2, sizeof(SecretKey2)), Entropy.Data).Or(String());
-			if (EncryptedSecretKey2.empty())
-				return LayerException("secret key encryption error");
+			size_t shared_public_key_size = 0;
+			algorithm::composition::cpubkey shared_public_key;
+			status = algorithm::composition::derive_public_key(chain->composition, selection_transaction->public_key1, secret_key2, shared_public_key, &shared_public_key_size);
+			if (!status)
+				return status;
 
-			return Expectation::Met;
+			entropy.write_typeless((char*)seed2, (uint32_t)sizeof(seed2));
+			entropy.write_typeless(deselection->receipt.transaction_hash);
+			entropy.write_typeless(deallocation->receipt.transaction_hash);
+			entropy.write_typeless(activation->receipt.transaction_hash);
+			entropy.write_typeless(selection->receipt.transaction_hash);
+			encrypted_secret_key2 = algorithm::signing::public_encrypt(deallocation_transaction->cipher_public_key2, std::string_view((char*)secret_key2, sizeof(secret_key2)), entropy.data).otherwise(string());
+			if (encrypted_secret_key2.empty())
+				return layer_exception("secret key encryption error");
+
+			return expectation::met;
 		}
-		ExpectsLR<void> ContributionDeactivation::Validate(uint64_t BlockNumber) const
+		expects_lr<void> contribution_deactivation::validate(uint64_t block_number) const
 		{
-			if (!Algorithm::Asset::TokenOf(Asset).empty())
-				return LayerException("invalid asset");
+			if (!algorithm::asset::token_of(asset).empty())
+				return layer_exception("invalid asset");
 
-			if (!ContributionDeselectionHash)
-				return LayerException("invalid parent transaction");
+			if (!contribution_deselection_hash)
+				return layer_exception("invalid parent transaction");
 
-			if (EncryptedSecretKey2.empty())
-				return LayerException("invalid encrypted secret key 2");
+			if (encrypted_secret_key2.empty())
+				return layer_exception("invalid encrypted secret key 2");
 
-			return Ledger::ConsensusTransaction::Validate(BlockNumber);
+			return ledger::consensus_transaction::validate(block_number);
 		}
-		ExpectsLR<void> ContributionDeactivation::Execute(Ledger::TransactionContext* Context) const
+		expects_lr<void> contribution_deactivation::execute(ledger::transaction_context* context) const
 		{
-			auto Validation = ConsensusTransaction::Execute(Context);
-			if (!Validation)
-				return Validation.Error();
+			auto validation = consensus_transaction::execute(context);
+			if (!validation)
+				return validation.error();
 
-			auto Event = Context->ApplyWitnessEvent(ContributionDeselectionHash, Context->Receipt.TransactionHash);
-			if (!Event)
-				return Event.Error();
+			auto event = context->apply_witness_event(contribution_deselection_hash, context->receipt.transaction_hash);
+			if (!event)
+				return event.error();
 
-			auto Deselection = Context->GetBlockTransaction<ContributionDeselection>(ContributionDeselectionHash);
-			if (!Deselection)
-				return Deselection.Error();
+			auto deselection = context->get_block_transaction<contribution_deselection>(contribution_deselection_hash);
+			if (!deselection)
+				return deselection.error();
 
-			auto Deallocation = Context->GetBlockTransaction<ContributionDeallocation>(((ContributionDeselection*)*Deselection->Transaction)->ContributionDeallocationHash);
-			if (!Deallocation)
-				return Deallocation.Error();
+			auto deallocation = context->get_block_transaction<contribution_deallocation>(((contribution_deselection*)*deselection->transaction)->contribution_deallocation_hash);
+			if (!deallocation)
+				return deallocation.error();
 
-			auto Activation = Context->GetBlockTransaction<ContributionActivation>(((ContributionDeallocation*)*Deallocation->Transaction)->ContributionActivationHash);
-			if (!Activation)
-				return Activation.Error();
+			auto activation = context->get_block_transaction<contribution_activation>(((contribution_deallocation*)*deallocation->transaction)->contribution_activation_hash);
+			if (!activation)
+				return activation.error();
 
-			if (Asset != Deallocation->Transaction->Asset)
-				return LayerException("invalid asset");
+			if (asset != deallocation->transaction->asset)
+				return layer_exception("invalid asset");
 
-			if (memcmp(Activation->Receipt.From, Context->Receipt.From, sizeof(Activation->Receipt.From)) != 0)
-				return LayerException("invalid transaction owner");
+			if (memcmp(activation->receipt.from, context->receipt.from, sizeof(activation->receipt.from)) != 0)
+				return layer_exception("invalid transaction owner");
 
-			OrderedSet<String> Initiator;
-			Activation->Transaction->RecoverMany(Activation->Receipt, Initiator);
+			ordered_set<string> initiator;
+			activation->transaction->recover_many(activation->receipt, initiator);
 
-			Format::Variables Parties = { Format::Variable(std::string_view((char*)Deallocation->Receipt.From, sizeof(Deallocation->Receipt.From))) };
-			if (!Initiator.empty() && *Initiator.begin() != Parties.begin()->AsString())
-				Parties.push_back(Format::Variable(*Initiator.begin()));
+			format::variables parties = { format::variable(std::string_view((char*)deallocation->receipt.from, sizeof(deallocation->receipt.from))) };
+			if (!initiator.empty() && *initiator.begin() != parties.begin()->as_string())
+				parties.push_back(format::variable(*initiator.begin()));
 
-			return Context->EmitEvent<ContributionDeactivation>(std::move(Parties));
+			return context->emit_event<contribution_deactivation>(std::move(parties));
 		}
-		ExpectsPromiseRT<void> ContributionDeactivation::Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const
+		expects_promise_rt<void> contribution_deactivation::dispatch(const ledger::wallet& proposer, const ledger::transaction_context* context, vector<uptr<ledger::transaction>>* pipeline) const
 		{
-			auto Deselection = Context->GetBlockTransaction<ContributionDeselection>(ContributionDeselectionHash);
-			if (!Deselection)
-				return ExpectsPromiseRT<void>(RemoteException(std::move(Deselection.Error().message())));
+			auto deselection = context->get_block_transaction<contribution_deselection>(contribution_deselection_hash);
+			if (!deselection)
+				return expects_promise_rt<void>(remote_exception(std::move(deselection.error().message())));
 
-			auto Deallocation = Context->GetBlockTransaction<ContributionDeallocation>(((ContributionDeselection*)*Deselection->Transaction)->ContributionDeallocationHash);
-			if (!Deallocation)
-				return ExpectsPromiseRT<void>(RemoteException(std::move(Deallocation.Error().message())));
+			auto deallocation = context->get_block_transaction<contribution_deallocation>(((contribution_deselection*)*deselection->transaction)->contribution_deallocation_hash);
+			if (!deallocation)
+				return expects_promise_rt<void>(remote_exception(std::move(deallocation.error().message())));
 
-			auto Activation = Context->GetBlockTransaction<ContributionActivation>(((ContributionDeallocation*)*Deallocation->Transaction)->ContributionActivationHash);
-			if (!Activation)
-				return ExpectsPromiseRT<void>(RemoteException(std::move(Activation.Error().message())));
+			auto activation = context->get_block_transaction<contribution_activation>(((contribution_deallocation*)*deallocation->transaction)->contribution_activation_hash);
+			if (!activation)
+				return expects_promise_rt<void>(remote_exception(std::move(activation.error().message())));
 
-			auto* ActivationTransaction = ((ContributionActivation*)*Activation->Transaction);
-			auto VerifyingWallet = ActivationTransaction->GetVerifyingWallet();
-			if (!VerifyingWallet)
-				return ExpectsPromiseRT<void>(RemoteException(std::move(VerifyingWallet.Error().message())));
+			auto* activation_transaction = ((contribution_activation*)*activation->transaction);
+			auto verifying_wallet = activation_transaction->get_verifying_wallet();
+			if (!verifying_wallet)
+				return expects_promise_rt<void>(remote_exception(std::move(verifying_wallet.error().message())));
 
-			auto* Event = Context->Receipt.FindEvent<ContributionDeactivation>();
-			if (Event != nullptr && Event->size() == 2)
+			auto* event = context->receipt.find_event<contribution_deactivation>();
+			if (event != nullptr && event->size() == 2)
 			{
-				auto* Server = NSS::ServerNode::Get();
-				auto* Event = Deallocation->Receipt.ReverseFindEvent<States::WitnessAddress>();
-				if (!Event || Event->size() < 3)
-					return ExpectsPromiseRT<void>(RemoteException("bad event type"));
+				auto* server = nss::server_node::get();
+				auto* event = deallocation->receipt.reverse_find_event<states::witness_address>();
+				if (!event || event->size() < 3)
+					return expects_promise_rt<void>(remote_exception("bad event type"));
 
-				auto AddressIndex = (*Event)[2].AsUint64();
-				if (!memcmp(Proposer.PublicKeyHash, Deallocation->Receipt.From, sizeof(Proposer.PublicKeyHash)))
+				auto address_index = (*event)[2].as_uint64();
+				if (!memcmp(proposer.public_key_hash, deallocation->receipt.from, sizeof(proposer.public_key_hash)))
 				{
-					auto Parent = Server->NewMasterWallet(Asset, Proposer.SecretKey);
-					if (!Parent)
-						return ExpectsPromiseRT<void>(RemoteException(std::move(Parent.Error().message())));
+					auto parent = server->new_master_wallet(asset, proposer.secret_key);
+					if (!parent)
+						return expects_promise_rt<void>(remote_exception(std::move(parent.error().message())));
 
-					auto Child = GetSigningWallet(Context, Proposer.SecretKey);
-					if (!Child)
-						return ExpectsPromiseRT<void>(RemoteException(std::move(Child.Error().message())));
+					auto child = get_signing_wallet(context, proposer.secret_key);
+					if (!child)
+						return expects_promise_rt<void>(remote_exception(std::move(child.error().message())));
 
-					Child->AddressIndex = AddressIndex;
-					if (Parent->MaxAddressIndex < AddressIndex)
-						Parent->MaxAddressIndex = AddressIndex;
+					child->address_index = address_index;
+					if (parent->max_address_index < address_index)
+						parent->max_address_index = address_index;
 
-					auto Status = Server->EnableSigningWallet(Asset, *Parent, *Child);
-					if (!Status)
-						return ExpectsPromiseRT<void>(RemoteException(std::move(Status.Error().message())));
+					auto status = server->enable_signing_wallet(asset, *parent, *child);
+					if (!status)
+						return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
 				}
 
-				for (auto& Address : VerifyingWallet->Addresses)
+				for (auto& address : verifying_wallet->addresses)
 				{
-					auto Status = Server->EnableWalletAddress(Asset, std::string_view((char*)Deallocation->Receipt.From, sizeof(Algorithm::Pubkeyhash)), Address.second, AddressIndex);
-					if (!Status)
-						return ExpectsPromiseRT<void>(RemoteException(std::move(Status.Error().message())));
+					auto status = server->enable_wallet_address(asset, std::string_view((char*)deallocation->receipt.from, sizeof(algorithm::pubkeyhash)), address.second, address_index);
+					if (!status)
+						return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
 				}
 			}
 			else
 			{
-				auto AddressIndex = Protocol::Now().Account.RootAddressIndex;
-				for (auto& Address : VerifyingWallet->Addresses)
+				auto address_index = protocol::now().account.root_address_index;
+				for (auto& address : verifying_wallet->addresses)
 				{
-					auto Status = NSS::ServerNode::Get()->DisableWalletAddress(Asset, Address.second);
-					if (!Status)
-						return ExpectsPromiseRT<void>(RemoteException(std::move(Status.Error().message())));
+					auto status = nss::server_node::get()->disable_wallet_address(asset, address.second);
+					if (!status)
+						return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
 				}
 			}
 
-			return ExpectsPromiseRT<void>(Expectation::Met);
+			return expects_promise_rt<void>(expectation::met);
 		}
-		bool ContributionDeactivation::StoreBody(Format::Stream* Stream) const
+		bool contribution_deactivation::store_body(format::stream* stream) const
 		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Stream->WriteInteger(ContributionDeselectionHash);
-			Stream->WriteString(EncryptedSecretKey2);
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_integer(contribution_deselection_hash);
+			stream->write_string(encrypted_secret_key2);
 			return true;
 		}
-		bool ContributionDeactivation::LoadBody(Format::Stream& Stream)
+		bool contribution_deactivation::load_body(format::stream& stream)
 		{
-			if (!Stream.ReadInteger(Stream.ReadType(), &ContributionDeselectionHash))
+			if (!stream.read_integer(stream.read_type(), &contribution_deselection_hash))
 				return false;
 
-			if (!Stream.ReadString(Stream.ReadType(), &EncryptedSecretKey2))
+			if (!stream.read_string(stream.read_type(), &encrypted_secret_key2))
 				return false;
 
 			return true;
 		}
-		bool ContributionDeactivation::RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
+		bool contribution_deactivation::recover_many(const ledger::receipt& receipt, ordered_set<string>& parties) const
 		{
-			auto* Event = Receipt.FindEvent<ContributionDeactivation>();
-			if (!Event || Event->empty())
+			auto* event = receipt.find_event<contribution_deactivation>();
+			if (!event || event->empty())
 				return false;
 
-			for (auto& Owner : *Event)
+			for (auto& owner : *event)
 			{
-				if (Owner.AsString().size() == sizeof(Algorithm::Pubkeyhash))
-					Parties.insert(Owner.AsBlob());
+				if (owner.as_string().size() == sizeof(algorithm::pubkeyhash))
+					parties.insert(owner.as_blob());
 			}
 			return true;
 		}
-		Option<String> ContributionDeactivation::GetSecretKey1(const Ledger::TransactionContext* Context, const Algorithm::Seckey SecretKey) const
+		option<string> contribution_deactivation::get_secret_key1(const ledger::transaction_context* context, const algorithm::seckey secret_key) const
 		{
-			auto Deselection = Context->GetBlockTransaction<ContributionDeselection>(ContributionDeselectionHash);
-			if (!Deselection)
-				return Optional::None;
+			auto deselection = context->get_block_transaction<contribution_deselection>(contribution_deselection_hash);
+			if (!deselection)
+				return optional::none;
 
-			return ((ContributionDeselection*)*Deselection->Transaction)->GetSecretKey1(Context, SecretKey);
+			return ((contribution_deselection*)*deselection->transaction)->get_secret_key1(context, secret_key);
 		}
-		Option<String> ContributionDeactivation::GetSecretKey2(const Ledger::TransactionContext* Context, const Algorithm::Seckey SecretKey) const
+		option<string> contribution_deactivation::get_secret_key2(const ledger::transaction_context* context, const algorithm::seckey secret_key) const
 		{
-			auto Deselection = Context->GetBlockTransaction<ContributionDeselection>(ContributionDeselectionHash);
-			if (!Deselection)
-				return Optional::None;
+			auto deselection = context->get_block_transaction<contribution_deselection>(contribution_deselection_hash);
+			if (!deselection)
+				return optional::none;
 
-			auto Deallocation = Context->GetBlockTransaction<ContributionDeallocation>(((ContributionDeselection*)*Deselection->Transaction)->ContributionDeallocationHash);
-			if (!Deallocation)
-				return Optional::None;
+			auto deallocation = context->get_block_transaction<contribution_deallocation>(((contribution_deselection*)*deselection->transaction)->contribution_deallocation_hash);
+			if (!deallocation)
+				return optional::none;
 
-			uint8_t Seed[32];
-			auto* DeallocationTransaction = (ContributionDeallocation*)*Deallocation->Transaction;
-			Algorithm::Seckey CipherSecretKey; Algorithm::Pubkey CipherPublicKey;
-			Algorithm::Encoding::DecodeUint256(DeallocationTransaction->ContributionActivationHash, Seed);
-			Algorithm::Signing::DeriveCipherKeypair(SecretKey, Algorithm::Hashing::Hash256i(Seed, sizeof(Seed)), CipherSecretKey, CipherPublicKey);
-			return Algorithm::Signing::PrivateDecrypt(CipherSecretKey, CipherPublicKey, EncryptedSecretKey2);
+			uint8_t seed[32];
+			auto* deallocation_transaction = (contribution_deallocation*)*deallocation->transaction;
+			algorithm::seckey cipher_secret_key; algorithm::pubkey cipher_public_key;
+			algorithm::encoding::decode_uint256(deallocation_transaction->contribution_activation_hash, seed);
+			algorithm::signing::derive_cipher_keypair(secret_key, algorithm::hashing::hash256i(seed, sizeof(seed)), cipher_secret_key, cipher_public_key);
+			return algorithm::signing::private_decrypt(cipher_secret_key, cipher_public_key, encrypted_secret_key2);
 		}
-		ExpectsLR<Mediator::DerivedSigningWallet> ContributionDeactivation::GetSigningWallet(const Ledger::TransactionContext* Context, const Algorithm::Seckey SecretKey) const
+		expects_lr<mediator::derived_signing_wallet> contribution_deactivation::get_signing_wallet(const ledger::transaction_context* context, const algorithm::seckey secret_key) const
 		{
-			auto* Chain = NSS::ServerNode::Get()->GetChainparams(Asset);
-			if (!Chain)
-				return LayerException("invalid operation");
+			auto* chain = nss::server_node::get()->get_chainparams(asset);
+			if (!chain)
+				return layer_exception("invalid operation");
 
-			auto SecretKey2 = GetSecretKey2(Context, SecretKey);
-			if (!SecretKey2)
-				return LayerException("invalid secret key 2");
+			auto secret_key2 = get_secret_key2(context, secret_key);
+			if (!secret_key2)
+				return layer_exception("invalid secret key 2");
 
-			auto SecretKey1 = GetSecretKey1(Context, SecretKey);
-			if (!SecretKey1)
-				return LayerException("invalid secret key 1");
+			auto secret_key1 = get_secret_key1(context, secret_key);
+			if (!secret_key1)
+				return layer_exception("invalid secret key 1");
 
-			size_t SharedSecretKeySize = 0;
-			Algorithm::Composition::CSeckey SharedSecretKey;
-			auto Status = Algorithm::Composition::DeriveSecretKey(Chain->Composition, (uint8_t*)SecretKey1->data(), (uint8_t*)SecretKey2->data(), SharedSecretKey, &SharedSecretKeySize);
-			if (!Status)
-				return LayerException("invalid message");
+			size_t shared_secret_key_size = 0;
+			algorithm::composition::cseckey shared_secret_key;
+			auto status = algorithm::composition::derive_secret_key(chain->composition, (uint8_t*)secret_key1->data(), (uint8_t*)secret_key2->data(), shared_secret_key, &shared_secret_key_size);
+			if (!status)
+				return layer_exception("invalid message");
 
-			return NSS::ServerNode::Get()->NewSigningWallet(Asset, PrivateKey(std::string_view((char*)SharedSecretKey, SharedSecretKeySize)));
+			return nss::server_node::get()->new_signing_wallet(asset, secret_box::view(std::string_view((char*)shared_secret_key, shared_secret_key_size)));
 		}
-		ExpectsPromiseRT<Mediator::OutgoingTransaction> ContributionDeactivation::WithdrawToAddress(const Ledger::TransactionContext* Context, const Algorithm::Seckey SecretKey, const std::string_view& Address)
+		expects_promise_rt<mediator::outgoing_transaction> contribution_deactivation::withdraw_to_address(const ledger::transaction_context* context, const algorithm::seckey secret_key, const std::string_view& address)
 		{
-			return Coasync<ExpectsRT<Mediator::OutgoingTransaction>>([this, Context, SecretKey, Address]() -> ExpectsPromiseRT<Mediator::OutgoingTransaction>
+			return coasync<expects_rt<mediator::outgoing_transaction>>([this, context, secret_key, address]() -> expects_promise_rt<mediator::outgoing_transaction>
 			{
-				auto SigningWallet = GetSigningWallet(Context, SecretKey);
-				if (!SigningWallet)
-					Coreturn RemoteException(std::move(SigningWallet.Error().message()));
+				auto signing_wallet = get_signing_wallet(context, secret_key);
+				if (!signing_wallet)
+					coreturn remote_exception(std::move(signing_wallet.error().message()));
 
-				auto DynamicWallet = Mediator::DynamicWallet(*SigningWallet);
-				auto RemainingBalance = Coawait(NSS::ServerNode::Get()->CalculateBalance(Asset, DynamicWallet, SigningWallet->Addresses.begin()->second));
-				if (!RemainingBalance)
-					Coreturn RemainingBalance.Error();
-				else if (!RemainingBalance->IsPositive())
-					Coreturn RemoteException("contribution wallet balance is zero");
+				auto dynamic_wallet = mediator::dynamic_wallet(*signing_wallet);
+				auto remaining_balance = coawait(nss::server_node::get()->calculate_balance(asset, dynamic_wallet, signing_wallet->addresses.begin()->second));
+				if (!remaining_balance)
+					coreturn remaining_balance.error();
+				else if (!remaining_balance->is_positive())
+					coreturn remote_exception("contribution wallet balance is zero");
 
-				auto Destinations = { Mediator::Transferer(Address, Optional::None, std::move(*RemainingBalance)) };
-				auto Result = Coawait(Resolver::EmitTransaction(nullptr, std::move(DynamicWallet), Asset, Context->Receipt.TransactionHash, std::move(Destinations)));
-				Coreturn std::move(Result);
+				auto destinations = { mediator::transferer(address, optional::none, std::move(*remaining_balance)) };
+				auto result = coawait(resolver::emit_transaction(nullptr, std::move(dynamic_wallet), asset, context->receipt.transaction_hash, std::move(destinations)));
+				coreturn std::move(result);
 			});
 		}
-		UPtr<Schema> ContributionDeactivation::AsSchema() const
+		uptr<schema> contribution_deactivation::as_schema() const
 		{
-			Schema* Data = Ledger::ConsensusTransaction::AsSchema().Reset();
-			Data->Set("contribution_deselection_hash", Var::String(Algorithm::Encoding::Encode0xHex256(ContributionDeselectionHash)));
-			Data->Set("encrypted_secret_key_2", Var::String(Format::Util::Encode0xHex(EncryptedSecretKey2)));
-			return Data;
+			schema* data = ledger::consensus_transaction::as_schema().reset();
+			data->set("contribution_deselection_hash", var::string(algorithm::encoding::encode_0xhex256(contribution_deselection_hash)));
+			data->set("encrypted_secret_key_2", var::string(format::util::encode_0xhex(encrypted_secret_key2)));
+			return data;
 		}
-		uint32_t ContributionDeactivation::AsType() const
+		uint32_t contribution_deactivation::as_type() const
 		{
-			return AsInstanceType();
+			return as_instance_type();
 		}
-		std::string_view ContributionDeactivation::AsTypename() const
+		std::string_view contribution_deactivation::as_typename() const
 		{
-			return AsInstanceTypename();
+			return as_instance_typename();
 		}
-		uint256_t ContributionDeactivation::GetGasEstimate() const
+		uint256_t contribution_deactivation::get_gas_estimate() const
 		{
-			return Ledger::GasUtil::GetGasEstimate<ContributionDeactivation, 52>();
+			return ledger::gas_util::get_gas_estimate<contribution_deactivation, 52>();
 		}
-		uint64_t ContributionDeactivation::GetDispatchOffset() const
+		uint64_t contribution_deactivation::get_dispatch_offset() const
 		{
 			return 1;
 		}
-		uint32_t ContributionDeactivation::AsInstanceType()
+		uint32_t contribution_deactivation::as_instance_type()
 		{
-			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
-			return Hash;
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
 		}
-		std::string_view ContributionDeactivation::AsInstanceTypename()
+		std::string_view contribution_deactivation::as_instance_typename()
 		{
 			return "contribution_deactivation";
 		}
 
-		ExpectsLR<void> DepositoryAdjustment::Validate(uint64_t BlockNumber) const
+		expects_lr<void> depository_adjustment::validate(uint64_t block_number) const
 		{
-			if (IncomingAbsoluteFee.IsNaN() || IncomingAbsoluteFee.IsNegative())
-				return LayerException("invalid incoming absolute fee");
+			if (incoming_absolute_fee.is_nan() || incoming_absolute_fee.is_negative())
+				return layer_exception("invalid incoming absolute fee");
 
-			if (IncomingRelativeFee.IsNaN() || IncomingRelativeFee.IsNegative() || IncomingRelativeFee > 1.0)
-				return LayerException("invalid incoming relative fee");
+			if (incoming_relative_fee.is_nan() || incoming_relative_fee.is_negative() || incoming_relative_fee > 1.0)
+				return layer_exception("invalid incoming relative fee");
 
-			if (OutgoingAbsoluteFee.IsNaN() || OutgoingAbsoluteFee.IsNegative())
-				return LayerException("invalid outgoing absolute fee");
+			if (outgoing_absolute_fee.is_nan() || outgoing_absolute_fee.is_negative())
+				return layer_exception("invalid outgoing absolute fee");
 
-			if (OutgoingRelativeFee.IsNaN() || OutgoingRelativeFee.IsNegative() || OutgoingRelativeFee > 1.0)
-				return LayerException("invalid outgoing relative fee");
+			if (outgoing_relative_fee.is_nan() || outgoing_relative_fee.is_negative() || outgoing_relative_fee > 1.0)
+				return layer_exception("invalid outgoing relative fee");
 
-			return Ledger::Transaction::Validate(BlockNumber);
+			return ledger::transaction::validate(block_number);
 		}
-		ExpectsLR<void> DepositoryAdjustment::Execute(Ledger::TransactionContext* Context) const
+		expects_lr<void> depository_adjustment::execute(ledger::transaction_context* context) const
 		{
-			auto Validation = Transaction::Execute(Context);
-			if (!Validation)
-				return Validation.Error();
+			auto validation = transaction::execute(context);
+			if (!validation)
+				return validation.error();
 
-			auto Work = Context->VerifyAccountWork(Context->Receipt.From);
-			if (!Work)
-				return Work;
+			auto work = context->verify_account_work(context->receipt.from);
+			if (!work)
+				return work;
 
-			auto Reward = Context->ApplyAccountReward(Asset, Context->Receipt.From, IncomingAbsoluteFee, IncomingRelativeFee, OutgoingAbsoluteFee, OutgoingRelativeFee);
-			if (!Reward)
-				return Reward.Error();
+			auto reward = context->apply_account_reward(asset, context->receipt.from, incoming_absolute_fee, incoming_relative_fee, outgoing_absolute_fee, outgoing_relative_fee);
+			if (!reward)
+				return reward.error();
 
-			return Expectation::Met;
+			return expectation::met;
 		}
-		bool DepositoryAdjustment::StoreBody(Format::Stream* Stream) const
+		bool depository_adjustment::store_body(format::stream* stream) const
 		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Stream->WriteDecimal(IncomingAbsoluteFee);
-			Stream->WriteDecimal(IncomingRelativeFee);
-			Stream->WriteDecimal(OutgoingAbsoluteFee);
-			Stream->WriteDecimal(OutgoingRelativeFee);
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_decimal(incoming_absolute_fee);
+			stream->write_decimal(incoming_relative_fee);
+			stream->write_decimal(outgoing_absolute_fee);
+			stream->write_decimal(outgoing_relative_fee);
 			return true;
 		}
-		bool DepositoryAdjustment::LoadBody(Format::Stream& Stream)
+		bool depository_adjustment::load_body(format::stream& stream)
 		{
-			if (!Stream.ReadDecimal(Stream.ReadType(), &IncomingAbsoluteFee))
+			if (!stream.read_decimal(stream.read_type(), &incoming_absolute_fee))
 				return false;
 
-			if (!Stream.ReadDecimal(Stream.ReadType(), &IncomingRelativeFee))
+			if (!stream.read_decimal(stream.read_type(), &incoming_relative_fee))
 				return false;
 
-			if (!Stream.ReadDecimal(Stream.ReadType(), &OutgoingAbsoluteFee))
+			if (!stream.read_decimal(stream.read_type(), &outgoing_absolute_fee))
 				return false;
 
-			if (!Stream.ReadDecimal(Stream.ReadType(), &OutgoingRelativeFee))
+			if (!stream.read_decimal(stream.read_type(), &outgoing_relative_fee))
 				return false;
 
 			return true;
 		}
-		void DepositoryAdjustment::SetIncomingFee(const Decimal& AbsoluteFee, const Decimal& RelativeFee)
+		void depository_adjustment::set_incoming_fee(const decimal& absolute_fee, const decimal& relative_fee)
 		{
-			IncomingAbsoluteFee = AbsoluteFee;
-			IncomingRelativeFee = RelativeFee;
+			incoming_absolute_fee = absolute_fee;
+			incoming_relative_fee = relative_fee;
 		}
-		void DepositoryAdjustment::SetOutgoingFee(const Decimal& AbsoluteFee, const Decimal& RelativeFee)
+		void depository_adjustment::set_outgoing_fee(const decimal& absolute_fee, const decimal& relative_fee)
 		{
-			OutgoingAbsoluteFee = AbsoluteFee;
-			OutgoingRelativeFee = RelativeFee;
+			outgoing_absolute_fee = absolute_fee;
+			outgoing_relative_fee = relative_fee;
 		}
-		UPtr<Schema> DepositoryAdjustment::AsSchema() const
+		uptr<schema> depository_adjustment::as_schema() const
 		{
-			Schema* Data = Ledger::Transaction::AsSchema().Reset();
-			Data->Set("incoming_absolute_fee", Var::Decimal(IncomingAbsoluteFee));
-			Data->Set("incoming_relative_fee", Var::Decimal(IncomingRelativeFee));
-			Data->Set("outgoing_absolute_fee", Var::Decimal(OutgoingAbsoluteFee));
-			Data->Set("outgoing_relative_fee", Var::Decimal(OutgoingRelativeFee));
-			return Data;
+			schema* data = ledger::transaction::as_schema().reset();
+			data->set("incoming_absolute_fee", var::decimal(incoming_absolute_fee));
+			data->set("incoming_relative_fee", var::decimal(incoming_relative_fee));
+			data->set("outgoing_absolute_fee", var::decimal(outgoing_absolute_fee));
+			data->set("outgoing_relative_fee", var::decimal(outgoing_relative_fee));
+			return data;
 		}
-		uint32_t DepositoryAdjustment::AsType() const
+		uint32_t depository_adjustment::as_type() const
 		{
-			return AsInstanceType();
+			return as_instance_type();
 		}
-		std::string_view DepositoryAdjustment::AsTypename() const
+		std::string_view depository_adjustment::as_typename() const
 		{
-			return AsInstanceTypename();
+			return as_instance_typename();
 		}
-		uint256_t DepositoryAdjustment::GetGasEstimate() const
+		uint256_t depository_adjustment::get_gas_estimate() const
 		{
-			return Ledger::GasUtil::GetGasEstimate<DepositoryAdjustment, 20>();
+			return ledger::gas_util::get_gas_estimate<depository_adjustment, 20>();
 		}
-		uint32_t DepositoryAdjustment::AsInstanceType()
+		uint32_t depository_adjustment::as_instance_type()
 		{
-			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
-			return Hash;
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
 		}
-		std::string_view DepositoryAdjustment::AsInstanceTypename()
+		std::string_view depository_adjustment::as_instance_typename()
 		{
 			return "depository_adjustment";
 		}
 
-		ExpectsLR<void> DepositoryMigration::Validate(uint64_t BlockNumber) const
+		expects_lr<void> depository_migration::validate(uint64_t block_number) const
 		{
-			if (IsProposerNull())
-				return LayerException("invalid proposer");
+			if (is_proposer_null())
+				return layer_exception("invalid proposer");
 
-			if (!Value.IsPositive())
-				return LayerException("invalid value");
+			if (!value.is_positive())
+				return layer_exception("invalid value");
 
-			return Ledger::Transaction::Validate(BlockNumber);
+			return ledger::transaction::validate(block_number);
 		}
-		ExpectsLR<void> DepositoryMigration::Execute(Ledger::TransactionContext* Context) const
+		expects_lr<void> depository_migration::execute(ledger::transaction_context* context) const
 		{
-			auto Validation = Transaction::Execute(Context);
-			if (!Validation)
-				return Validation.Error();
+			auto validation = transaction::execute(context);
+			if (!validation)
+				return validation.error();
 
-			if (!memcmp(Context->Receipt.From, Proposer, sizeof(Proposer)))
-				return LayerException("self migration not allowed");
+			if (!memcmp(context->receipt.from, proposer, sizeof(proposer)))
+				return layer_exception("self migration not allowed");
 
-			auto WorkRequirement = Context->VerifyAccountDepositoryWork(Asset, Context->Receipt.From);
-			if (!WorkRequirement)
-				return WorkRequirement;
+			auto work_requirement = context->verify_account_depository_work(asset, context->receipt.from);
+			if (!work_requirement)
+				return work_requirement;
 
-			auto Depository = Context->GetAccountDepository(Asset, Context->Receipt.From);
-			if (!Depository)
-				return LayerException("proposer has no depository");
+			auto depository = context->get_account_depository(asset, context->receipt.from);
+			if (!depository)
+				return layer_exception("proposer has no depository");
 
-			auto Work = Context->GetAccountWork(Context->Receipt.From);
-			auto Coverage = Depository->GetCoverage(Work ? Work->Flags : 0);
-			if (Coverage.IsNaN() || Coverage.IsNegative())
-				return LayerException("proposer does not cover balance (contribution: " + Depository->GetContribution().ToString() + ", custody: " + Depository->Custody.ToString() + ")");
-			else if (Depository->Custody < Value)
-				return LayerException("proposer does not have enough custody (value: " + Value.ToString() + ", custody: " + Depository->Custody.ToString() + ")");
+			auto work = context->get_account_work(context->receipt.from);
+			auto coverage = depository->get_coverage(work ? work->flags : 0);
+			if (coverage.is_nan() || coverage.is_negative())
+				return layer_exception("proposer does not cover balance (contribution: " + depository->get_contribution().to_string() + ", custody: " + depository->custody.to_string() + ")");
+			else if (depository->custody < value)
+				return layer_exception("proposer does not have enough custody (value: " + value.to_string() + ", custody: " + depository->custody.to_string() + ")");
 
-			Work = Context->GetAccountWork(Proposer);
-			Depository = Context->GetAccountDepository(Asset, Proposer);
-			if (!Depository)
-				return LayerException("migration proposer has no depository");
+			work = context->get_account_work(proposer);
+			depository = context->get_account_depository(asset, proposer);
+			if (!depository)
+				return layer_exception("migration proposer has no depository");
 
-			Depository->Custody += Value;
-			Coverage = Depository->GetCoverage(Work ? Work->Flags : 0);
-			if (Coverage.IsNaN() || Coverage.IsNegative())
-				return LayerException("migration proposer does not cover balance (contribution: " + Depository->GetContribution().ToString() + ", custody: " + Depository->Custody.ToString() + ")");
+			depository->custody += value;
+			coverage = depository->get_coverage(work ? work->flags : 0);
+			if (coverage.is_nan() || coverage.is_negative())
+				return layer_exception("migration proposer does not cover balance (contribution: " + depository->get_contribution().to_string() + ", custody: " + depository->custody.to_string() + ")");
 
-			auto Address = GetDestination(Context);
-			if (!Address)
-				return LayerException("migration proposer has no usable custodian address");
+			auto address = get_destination(context);
+			if (!address)
+				return layer_exception("migration proposer has no usable custodian address");
 
-			return Expectation::Met;
+			return expectation::met;
 		}
-		ExpectsPromiseRT<void> DepositoryMigration::Dispatch(const Ledger::Wallet& Proposer, const Ledger::TransactionContext* Context, Vector<UPtr<Ledger::Transaction>>* Pipeline) const
+		expects_promise_rt<void> depository_migration::dispatch(const ledger::wallet& proposer, const ledger::transaction_context* context, vector<uptr<ledger::transaction>>* pipeline) const
 		{
-			if (memcmp(Proposer.PublicKeyHash, Context->Receipt.From, sizeof(Context->Receipt.From)) != 0)
-				return ExpectsPromiseRT<void>(Expectation::Met);
+			if (memcmp(proposer.public_key_hash, context->receipt.from, sizeof(context->receipt.from)) != 0)
+				return expects_promise_rt<void>(expectation::met);
 
-			if (Context->GetWitnessEvent(Context->Receipt.TransactionHash))
-				return ExpectsPromiseRT<void>(Expectation::Met);
+			if (context->get_witness_event(context->receipt.transaction_hash))
+				return expects_promise_rt<void>(expectation::met);
 
-			auto Address = GetDestination(Context);
-			if (!Address)
-				return ExpectsPromiseRT<void>(RemoteException("migration proposer has no usable custodian address"));
+			auto address = get_destination(context);
+			if (!address)
+				return expects_promise_rt<void>(remote_exception("migration proposer has no usable custodian address"));
 
-			auto* Transaction = Memory::New<OutgoingClaim>();
-			Transaction->Asset = Asset;
-			Pipeline->push_back(Transaction);
+			auto* transaction = memory::init<outgoing_claim>();
+			transaction->asset = asset;
+			pipeline->push_back(transaction);
 
-			auto Destinations = { Mediator::Transferer(Address->Addresses.begin()->second, Address->AddressIndex, Decimal(Value)) };
-			auto Parent = NSS::ServerNode::Get()->NewMasterWallet(Asset, Proposer.SecretKey);
-			auto Child = Parent ? Mediator::DynamicWallet(*Parent) : Mediator::DynamicWallet();
-			return Resolver::EmitTransaction(Pipeline, std::move(Child), Asset, Context->Receipt.TransactionHash, std::move(Destinations)).Then<ExpectsRT<void>>([this, Context, Pipeline, Transaction](ExpectsRT<Mediator::OutgoingTransaction>&& Result)
+			auto destinations = { mediator::transferer(address->addresses.begin()->second, address->address_index, decimal(value)) };
+			auto parent = nss::server_node::get()->new_master_wallet(asset, proposer.secret_key);
+			auto child = parent ? mediator::dynamic_wallet(*parent) : mediator::dynamic_wallet();
+			return resolver::emit_transaction(pipeline, std::move(child), asset, context->receipt.transaction_hash, std::move(destinations)).then<expects_rt<void>>([this, context, pipeline, transaction](expects_rt<mediator::outgoing_transaction>&& result)
 			{
-				if (!Result || Result->Transaction.TransactionId.empty())
+				if (!result || result->transaction.transaction_id.empty())
 				{
-					Transaction->SetFailureWitness(Result ? "transaction broadcast failed" : Result.What(), Context->Receipt.TransactionHash);
-					if (!Result && (Result.Error().retry() || Result.Error().shutdown()))
+					transaction->set_failure_witness(result ? "transaction broadcast failed" : result.what(), context->receipt.transaction_hash);
+					if (!result && (result.error().is_retry() || result.error().is_shutdown()))
 					{
-						Pipeline->pop_back();
-						Memory::Delete(Transaction);
-						return ExpectsRT<void>(Result.Error());
+						pipeline->pop_back();
+						memory::deinit(transaction);
+						return expects_rt<void>(result.error());
 					}
 				}
 				else
-					Transaction->SetSuccessWitness(Result->Transaction.TransactionId, Result->Data, Context->Receipt.TransactionHash);
-				return ExpectsRT<void>(Expectation::Met);
+					transaction->set_success_witness(result->transaction.transaction_id, result->data, context->receipt.transaction_hash);
+				return expects_rt<void>(expectation::met);
 			});
 		}
-		bool DepositoryMigration::StoreBody(Format::Stream* Stream) const
+		bool depository_migration::store_body(format::stream* stream) const
 		{
-			VI_ASSERT(Stream != nullptr, "stream should be set");
-			Algorithm::Pubkeyhash Null = { 0 };
-			Stream->WriteString(std::string_view((char*)Proposer, memcmp(Proposer, Null, sizeof(Null)) == 0 ? 0 : sizeof(Proposer)));
-			Stream->WriteDecimal(Value);
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			algorithm::pubkeyhash null = { 0 };
+			stream->write_string(std::string_view((char*)proposer, memcmp(proposer, null, sizeof(null)) == 0 ? 0 : sizeof(proposer)));
+			stream->write_decimal(value);
 			return true;
 		}
-		bool DepositoryMigration::LoadBody(Format::Stream& Stream)
+		bool depository_migration::load_body(format::stream& stream)
 		{
-			String ProposerAssembly;
-			if (!Stream.ReadString(Stream.ReadType(), &ProposerAssembly) || !Algorithm::Encoding::DecodeUintBlob(ProposerAssembly, Proposer, sizeof(Proposer)))
+			string proposer_assembly;
+			if (!stream.read_string(stream.read_type(), &proposer_assembly) || !algorithm::encoding::decode_uint_blob(proposer_assembly, proposer, sizeof(proposer)))
 				return false;
 
-			if (!Stream.ReadDecimal(Stream.ReadType(), &Value))
+			if (!stream.read_decimal(stream.read_type(), &value))
 				return false;
 
 			return true;
 		}
-		bool DepositoryMigration::RecoverMany(const Ledger::Receipt& Receipt, OrderedSet<String>& Parties) const
+		bool depository_migration::recover_many(const ledger::receipt& receipt, ordered_set<string>& parties) const
 		{
-			if (!IsProposerNull())
-				Parties.insert(String((char*)Proposer, sizeof(Proposer)));
+			if (!is_proposer_null())
+				parties.insert(string((char*)proposer, sizeof(proposer)));
 			return true;
 		}
-		void DepositoryMigration::SetProposer(const Algorithm::Pubkeyhash NewProposer, const Decimal& NewValue)
+		void depository_migration::set_proposer(const algorithm::pubkeyhash new_proposer, const decimal& new_value)
 		{
-			Value = NewValue;
-			if (!NewProposer)
+			value = new_value;
+			if (!new_proposer)
 			{
-				Algorithm::Pubkeyhash Null = { 0 };
-				memcpy(Proposer, Null, sizeof(Algorithm::Pubkeyhash));
+				algorithm::pubkeyhash null = { 0 };
+				memcpy(proposer, null, sizeof(algorithm::pubkeyhash));
 			}
 			else
-				memcpy(Proposer, NewProposer, sizeof(Algorithm::Pubkeyhash));
+				memcpy(proposer, new_proposer, sizeof(algorithm::pubkeyhash));
 		}
-		bool DepositoryMigration::IsProposerNull() const
+		bool depository_migration::is_proposer_null() const
 		{
-			Algorithm::Pubkeyhash Null = { 0 };
-			return memcmp(Proposer, Null, sizeof(Null)) == 0;
+			algorithm::pubkeyhash null = { 0 };
+			return memcmp(proposer, null, sizeof(null)) == 0;
 		}
-		ExpectsLR<States::WitnessAddress> DepositoryMigration::GetDestination(const Ledger::TransactionContext* Context) const
+		expects_lr<states::witness_address> depository_migration::get_destination(const ledger::transaction_context* context) const
 		{
-			size_t Offset = 0;
-			auto Address = ExpectsLR<States::WitnessAddress>(LayerException());
+			size_t offset = 0;
+			auto address = expects_lr<states::witness_address>(layer_exception());
 			while (true)
 			{
-				auto Addresses = Context->GetWitnessAddresses(Proposer, Offset, 16);
-				if (!Addresses)
-					return Addresses.Error();
-				else if (Addresses->empty())
-					return LayerException("destination not found");
+				auto addresses = context->get_witness_addresses(proposer, offset, 16);
+				if (!addresses)
+					return addresses.error();
+				else if (addresses->empty())
+					return layer_exception("destination not found");
 
-				Offset += Addresses->size();
-				auto It = std::find_if(Addresses->begin(), Addresses->end(), [&](States::WitnessAddress& Item) { return Item.IsCustodianAddress() && !memcmp(Item.Proposer, Proposer, sizeof(Proposer)) && Item.Asset == Asset; });
-				if (It != Addresses->end())
+				offset += addresses->size();
+				auto it = std::find_if(addresses->begin(), addresses->end(), [&](states::witness_address& item) { return item.is_custodian_address() && !memcmp(item.proposer, proposer, sizeof(proposer)) && item.asset == asset; });
+				if (it != addresses->end())
 				{
-					Address = std::move(*It);
+					address = std::move(*it);
 					break;
 				}
 			}
-			return Address;
+			return address;
 		}
-		UPtr<Schema> DepositoryMigration::AsSchema() const
+		uptr<schema> depository_migration::as_schema() const
 		{
-			Schema* Data = Ledger::Transaction::AsSchema().Reset();
-			Data->Set("proposer", Algorithm::Signing::SerializeAddress(Proposer));
-			Data->Set("value", Var::Decimal(Value));
-			return Data;
+			schema* data = ledger::transaction::as_schema().reset();
+			data->set("proposer", algorithm::signing::serialize_address(proposer));
+			data->set("value", var::decimal(value));
+			return data;
 		}
-		uint32_t DepositoryMigration::AsType() const
+		uint32_t depository_migration::as_type() const
 		{
-			return AsInstanceType();
+			return as_instance_type();
 		}
-		std::string_view DepositoryMigration::AsTypename() const
+		std::string_view depository_migration::as_typename() const
 		{
-			return AsInstanceTypename();
+			return as_instance_typename();
 		}
-		uint256_t DepositoryMigration::GetGasEstimate() const
+		uint256_t depository_migration::get_gas_estimate() const
 		{
-			return Ledger::GasUtil::GetGasEstimate<DepositoryMigration, 64>();
+			return ledger::gas_util::get_gas_estimate<depository_migration, 64>();
 		}
-		uint64_t DepositoryMigration::GetDispatchOffset() const
+		uint64_t depository_migration::get_dispatch_offset() const
 		{
-			return Protocol::Now().User.NSS.WithdrawalTime / Protocol::Now().Policy.ConsensusProofTime;
+			return protocol::now().user.nss.withdrawal_time / protocol::now().policy.consensus_proof_time;
 		}
-		uint32_t DepositoryMigration::AsInstanceType()
+		uint32_t depository_migration::as_instance_type()
 		{
-			static uint32_t Hash = Algorithm::Encoding::TypeOf(AsInstanceTypename());
-			return Hash;
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
 		}
-		std::string_view DepositoryMigration::AsInstanceTypename()
+		std::string_view depository_migration::as_instance_typename()
 		{
 			return "depository_migration";
 		}
 
-		Ledger::Transaction* Resolver::New(uint32_t Hash)
+		ledger::transaction* resolver::init(uint32_t hash)
 		{
-			if (Hash == Transfer::AsInstanceType())
-				return Memory::New<Transfer>();
-			else if (Hash == Omnitransfer::AsInstanceType())
-				return Memory::New<Omnitransfer>();
-			else if (Hash == Deployment::AsInstanceType())
-				return Memory::New<Deployment>();
-			else if (Hash == Invocation::AsInstanceType())
-				return Memory::New<Invocation>();
-			else if (Hash == Withdrawal::AsInstanceType())
-				return Memory::New<Withdrawal>();
-			else if (Hash == Rollup::AsInstanceType())
-				return Memory::New<Rollup>();
-			else if (Hash == Commitment::AsInstanceType())
-				return Memory::New<Commitment>();
-			else if (Hash == IncomingClaim::AsInstanceType())
-				return Memory::New<IncomingClaim>();
-			else if (Hash == OutgoingClaim::AsInstanceType())
-				return Memory::New<OutgoingClaim>();
-			else if (Hash == AddressAccount::AsInstanceType())
-				return Memory::New<AddressAccount>();
-			else if (Hash == PubkeyAccount::AsInstanceType())
-				return Memory::New<PubkeyAccount>();
-			else if (Hash == DelegationAccount::AsInstanceType())
-				return Memory::New<DelegationAccount>();
-			else if (Hash == CustodianAccount::AsInstanceType())
-				return Memory::New<CustodianAccount>();
-			else if (Hash == ContributionAllocation::AsInstanceType())
-				return Memory::New<ContributionAllocation>();
-			else if (Hash == ContributionSelection::AsInstanceType())
-				return Memory::New<ContributionSelection>();
-			else if (Hash == ContributionActivation::AsInstanceType())
-				return Memory::New<ContributionActivation>();
-			else if (Hash == ContributionDeallocation::AsInstanceType())
-				return Memory::New<ContributionDeallocation>();
-			else if (Hash == ContributionDeselection::AsInstanceType())
-				return Memory::New<ContributionDeselection>();
-			else if (Hash == ContributionDeactivation::AsInstanceType())
-				return Memory::New<ContributionDeactivation>();
-			else if (Hash == DepositoryAdjustment::AsInstanceType())
-				return Memory::New<DepositoryAdjustment>();
-			else if (Hash == DepositoryMigration::AsInstanceType())
-				return Memory::New<DepositoryMigration>();
+			if (hash == transfer::as_instance_type())
+				return memory::init<transfer>();
+			else if (hash == omnitransfer::as_instance_type())
+				return memory::init<omnitransfer>();
+			else if (hash == deployment::as_instance_type())
+				return memory::init<deployment>();
+			else if (hash == invocation::as_instance_type())
+				return memory::init<invocation>();
+			else if (hash == withdrawal::as_instance_type())
+				return memory::init<withdrawal>();
+			else if (hash == rollup::as_instance_type())
+				return memory::init<rollup>();
+			else if (hash == commitment::as_instance_type())
+				return memory::init<commitment>();
+			else if (hash == incoming_claim::as_instance_type())
+				return memory::init<incoming_claim>();
+			else if (hash == outgoing_claim::as_instance_type())
+				return memory::init<outgoing_claim>();
+			else if (hash == address_account::as_instance_type())
+				return memory::init<address_account>();
+			else if (hash == pubkey_account::as_instance_type())
+				return memory::init<pubkey_account>();
+			else if (hash == delegation_account::as_instance_type())
+				return memory::init<delegation_account>();
+			else if (hash == custodian_account::as_instance_type())
+				return memory::init<custodian_account>();
+			else if (hash == contribution_allocation::as_instance_type())
+				return memory::init<contribution_allocation>();
+			else if (hash == contribution_selection::as_instance_type())
+				return memory::init<contribution_selection>();
+			else if (hash == contribution_activation::as_instance_type())
+				return memory::init<contribution_activation>();
+			else if (hash == contribution_deallocation::as_instance_type())
+				return memory::init<contribution_deallocation>();
+			else if (hash == contribution_deselection::as_instance_type())
+				return memory::init<contribution_deselection>();
+			else if (hash == contribution_deactivation::as_instance_type())
+				return memory::init<contribution_deactivation>();
+			else if (hash == depository_adjustment::as_instance_type())
+				return memory::init<depository_adjustment>();
+			else if (hash == depository_migration::as_instance_type())
+				return memory::init<depository_migration>();
 			return nullptr;
 		}
-		Ledger::Transaction* Resolver::Copy(const Ledger::Transaction* Base)
+		ledger::transaction* resolver::copy(const ledger::transaction* base)
 		{
-			uint32_t Hash = Base->AsType();
-			if (Hash == Transfer::AsInstanceType())
-				return Memory::New<Transfer>(*(const Transfer*)Base);
-			else if (Hash == Omnitransfer::AsInstanceType())
-				return Memory::New<Omnitransfer>(*(const Omnitransfer*)Base);
-			else if (Hash == Deployment::AsInstanceType())
-				return Memory::New<Deployment>(*(const Deployment*)Base);
-			else if (Hash == Invocation::AsInstanceType())
-				return Memory::New<Invocation>(*(const Invocation*)Base);
-			else if (Hash == Withdrawal::AsInstanceType())
-				return Memory::New<Withdrawal>(*(const Withdrawal*)Base);
-			else if (Hash == Rollup::AsInstanceType())
-				return Memory::New<Rollup>(*(const Rollup*)Base);
-			else if (Hash == Commitment::AsInstanceType())
-				return Memory::New<Commitment>(*(const Commitment*)Base);
-			else if (Hash == IncomingClaim::AsInstanceType())
-				return Memory::New<IncomingClaim>(*(const IncomingClaim*)Base);
-			else if (Hash == OutgoingClaim::AsInstanceType())
-				return Memory::New<OutgoingClaim>(*(const OutgoingClaim*)Base);
-			else if (Hash == AddressAccount::AsInstanceType())
-				return Memory::New<AddressAccount>(*(const AddressAccount*)Base);
-			else if (Hash == PubkeyAccount::AsInstanceType())
-				return Memory::New<PubkeyAccount>(*(const PubkeyAccount*)Base);
-			else if (Hash == DelegationAccount::AsInstanceType())
-				return Memory::New<DelegationAccount>(*(const DelegationAccount*)Base);
-			else if (Hash == CustodianAccount::AsInstanceType())
-				return Memory::New<CustodianAccount>(*(const CustodianAccount*)Base);
-			else if (Hash == ContributionAllocation::AsInstanceType())
-				return Memory::New<ContributionAllocation>(*(const ContributionAllocation*)Base);
-			else if (Hash == ContributionSelection::AsInstanceType())
-				return Memory::New<ContributionSelection>(*(const ContributionSelection*)Base);
-			else if (Hash == ContributionActivation::AsInstanceType())
-				return Memory::New<ContributionActivation>(*(const ContributionActivation*)Base);
-			else if (Hash == ContributionDeallocation::AsInstanceType())
-				return Memory::New<ContributionDeallocation>(*(const ContributionDeallocation*)Base);
-			else if (Hash == ContributionDeselection::AsInstanceType())
-				return Memory::New<ContributionDeselection>(*(const ContributionDeselection*)Base);
-			else if (Hash == ContributionDeactivation::AsInstanceType())
-				return Memory::New<ContributionDeactivation>(*(const ContributionDeactivation*)Base);
-			else if (Hash == DepositoryAdjustment::AsInstanceType())
-				return Memory::New<DepositoryAdjustment>(*(const DepositoryAdjustment*)Base);
-			else if (Hash == DepositoryMigration::AsInstanceType())
-				return Memory::New<DepositoryMigration>(*(const DepositoryMigration*)Base);
+			uint32_t hash = base->as_type();
+			if (hash == transfer::as_instance_type())
+				return memory::init<transfer>(*(const transfer*)base);
+			else if (hash == omnitransfer::as_instance_type())
+				return memory::init<omnitransfer>(*(const omnitransfer*)base);
+			else if (hash == deployment::as_instance_type())
+				return memory::init<deployment>(*(const deployment*)base);
+			else if (hash == invocation::as_instance_type())
+				return memory::init<invocation>(*(const invocation*)base);
+			else if (hash == withdrawal::as_instance_type())
+				return memory::init<withdrawal>(*(const withdrawal*)base);
+			else if (hash == rollup::as_instance_type())
+				return memory::init<rollup>(*(const rollup*)base);
+			else if (hash == commitment::as_instance_type())
+				return memory::init<commitment>(*(const commitment*)base);
+			else if (hash == incoming_claim::as_instance_type())
+				return memory::init<incoming_claim>(*(const incoming_claim*)base);
+			else if (hash == outgoing_claim::as_instance_type())
+				return memory::init<outgoing_claim>(*(const outgoing_claim*)base);
+			else if (hash == address_account::as_instance_type())
+				return memory::init<address_account>(*(const address_account*)base);
+			else if (hash == pubkey_account::as_instance_type())
+				return memory::init<pubkey_account>(*(const pubkey_account*)base);
+			else if (hash == delegation_account::as_instance_type())
+				return memory::init<delegation_account>(*(const delegation_account*)base);
+			else if (hash == custodian_account::as_instance_type())
+				return memory::init<custodian_account>(*(const custodian_account*)base);
+			else if (hash == contribution_allocation::as_instance_type())
+				return memory::init<contribution_allocation>(*(const contribution_allocation*)base);
+			else if (hash == contribution_selection::as_instance_type())
+				return memory::init<contribution_selection>(*(const contribution_selection*)base);
+			else if (hash == contribution_activation::as_instance_type())
+				return memory::init<contribution_activation>(*(const contribution_activation*)base);
+			else if (hash == contribution_deallocation::as_instance_type())
+				return memory::init<contribution_deallocation>(*(const contribution_deallocation*)base);
+			else if (hash == contribution_deselection::as_instance_type())
+				return memory::init<contribution_deselection>(*(const contribution_deselection*)base);
+			else if (hash == contribution_deactivation::as_instance_type())
+				return memory::init<contribution_deactivation>(*(const contribution_deactivation*)base);
+			else if (hash == depository_adjustment::as_instance_type())
+				return memory::init<depository_adjustment>(*(const depository_adjustment*)base);
+			else if (hash == depository_migration::as_instance_type())
+				return memory::init<depository_migration>(*(const depository_migration*)base);
 			return nullptr;
 		}
-		ExpectsPromiseRT<Mediator::OutgoingTransaction> Resolver::EmitTransaction(Vector<UPtr<Ledger::Transaction>>* Pipeline, Mediator::DynamicWallet&& Wallet, const Algorithm::AssetId& Asset, const uint256_t& TransactionHash, Vector<Mediator::Transferer>&& To)
+		expects_promise_rt<mediator::outgoing_transaction> resolver::emit_transaction(vector<uptr<ledger::transaction>>* pipeline, mediator::dynamic_wallet&& wallet, const algorithm::asset_id& asset, const uint256_t& transaction_hash, vector<mediator::transferer>&& to)
 		{
-			auto* Server = NSS::ServerNode::Get();
-			if (!Protocol::Now().Is(NetworkType::Regtest) || Server->HasSupport(Asset))
-				return Server->SubmitTransaction(TransactionHash, Asset, std::move(Wallet), std::move(To));
+			auto* server = nss::server_node::get();
+			if (!protocol::now().is(network_type::regtest) || server->has_support(asset))
+				return server->submit_transaction(transaction_hash, asset, std::move(wallet), std::move(to));
 
-			ExpectsLR<Mediator::DerivedVerifyingWallet> VerifyingWallet = LayerException();
-			if (Wallet.Parent)
+			expects_lr<mediator::derived_verifying_wallet> verifying_wallet = layer_exception();
+			if (wallet.parent)
 			{
-				auto SigningWallet = Server->NewSigningWallet(Asset, *Wallet.Parent, Protocol::Now().Account.RootAddressIndex);
-				if (!SigningWallet)
-					return ExpectsPromiseRT<Mediator::OutgoingTransaction>(RemoteException("wallet not found"));
+				auto signing_wallet = server->new_signing_wallet(asset, *wallet.parent, protocol::now().account.root_address_index);
+				if (!signing_wallet)
+					return expects_promise_rt<mediator::outgoing_transaction>(remote_exception("wallet not found"));
 
-				VerifyingWallet = std::move(*SigningWallet);
+				verifying_wallet = std::move(*signing_wallet);
 			}
-			else if (Wallet.SigningChild)
-				VerifyingWallet = std::move(*Wallet.SigningChild);
-			else if (Wallet.VerifyingChild)
-				VerifyingWallet = std::move(*Wallet.VerifyingChild);
-			if (!VerifyingWallet)
-				return ExpectsPromiseRT<Mediator::OutgoingTransaction>(RemoteException("wallet not found"));
+			else if (wallet.signing_child)
+				verifying_wallet = std::move(*wallet.signing_child);
+			else if (wallet.verifying_child)
+				verifying_wallet = std::move(*wallet.verifying_child);
+			if (!verifying_wallet)
+				return expects_promise_rt<mediator::outgoing_transaction>(remote_exception("wallet not found"));
 
-			Mediator::OutgoingTransaction Ephimeric;
-			Ephimeric.Transaction.To = To;
-			Ephimeric.Transaction.From.push_back(Mediator::Transferer(VerifyingWallet->Addresses.begin()->second, Option<uint64_t>(VerifyingWallet->AddressIndex), Ephimeric.Transaction.GetOutputValue()));
-			Ephimeric.Transaction.Asset = Asset;
-			Ephimeric.Transaction.TransactionId = Algorithm::Encoding::Encode0xHex256(Algorithm::Hashing::Hash256i(TransactionHash.ToString()));
-			Ephimeric.Transaction.BlockId = Algorithm::Hashing::Hash256i(Ephimeric.Transaction.TransactionId) % std::numeric_limits<uint64_t>::max();
-			Ephimeric.Transaction.Fee = Decimal::Zero();
-			Ephimeric.Data = Ephimeric.AsMessage().Encode();
+			mediator::outgoing_transaction ephimeric;
+			ephimeric.transaction.to = to;
+			ephimeric.transaction.from.push_back(mediator::transferer(verifying_wallet->addresses.begin()->second, option<uint64_t>(verifying_wallet->address_index), ephimeric.transaction.get_output_value()));
+			ephimeric.transaction.asset = asset;
+			ephimeric.transaction.transaction_id = algorithm::encoding::encode_0xhex256(algorithm::hashing::hash256i(transaction_hash.to_string()));
+			ephimeric.transaction.block_id = algorithm::hashing::hash256i(ephimeric.transaction.transaction_id) % std::numeric_limits<uint64_t>::max();
+			ephimeric.transaction.fee = decimal::zero();
+			ephimeric.data = ephimeric.as_message().encode();
 
-			if (Pipeline != nullptr)
+			if (pipeline != nullptr)
 			{
-				auto* Transaction = Memory::New<IncomingClaim>();
-				Transaction->Asset = Asset;
-				Transaction->SetEstimateGas(Decimal::Zero());
-				Transaction->SetWitness(Ephimeric.Transaction);
-				Pipeline->push_back(Transaction);
+				auto* transaction = memory::init<incoming_claim>();
+				transaction->asset = asset;
+				transaction->set_estimate_gas(decimal::zero());
+				transaction->set_witness(ephimeric.transaction);
+				pipeline->push_back(transaction);
 			}
 
-			return ExpectsPromiseRT<Mediator::OutgoingTransaction>(std::move(Ephimeric));
+			return expects_promise_rt<mediator::outgoing_transaction>(std::move(ephimeric));
 		}
 	}
 }

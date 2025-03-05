@@ -2,99 +2,99 @@
 #define TAN_LAYER_SERIALIZATION_H
 #include "types.hpp"
 
-namespace Tangent
+namespace tangent
 {
-	namespace Format
+	namespace format
 	{
-		typedef Vector<struct Variable> Variables;
+		typedef vector<struct variable> variables;
 
-		enum class Viewable : uint8_t
+		enum class viewable : uint8_t
 		{
-			DecimalNaN,
-			DecimalZero,
-			DecimalNeg1,
-			DecimalNeg2,
-			DecimalPos1,
-			DecimalPos2,
-			True,
-			False,
-			UintMin,
-			UintMax = UintMin + sizeof(uint256_t),
-			StringAny10,
-			StringMin10,
-			StringMax10 = StringMin10 + 104,
-			StringAny16,
-			StringMin16,
-			StringMax16 = StringMin16 + 104,
-			Invalid = 255
+			decimal_nan,
+			decimal_zero,
+			decimal_neg1,
+			decimal_neg2,
+			decimal_pos1,
+			decimal_pos2,
+			true_type,
+			false_type,
+			uint_min,
+			uint_max = uint_min + sizeof(uint256_t),
+			string_any10,
+			string_min10,
+			string_max10 = string_min10 + 104,
+			string_any16,
+			string_min16,
+			string_max16 = string_min16 + 104,
+			invalid = 255
 		};
 
-		struct Stream
+		struct stream
 		{
-			String Data;
-			uint256_t Checksum;
-			size_t Seek;
+			string data;
+			uint256_t checksum;
+			size_t seek;
 
-			Stream();
-			explicit Stream(const std::string_view& NewData);
-			explicit Stream(String&& NewData);
-			Stream(const Stream&) = default;
-			Stream(Stream&&) noexcept = default;
-			Stream& operator= (const Stream&) = default;
-			Stream& operator= (Stream&&) noexcept = default;
-			Stream& Clear();
-			Stream& Rewind(size_t Offset = 0);
-			Stream& WriteString(const std::string_view& Value);
-			Stream& WriteDecimal(const Decimal& Value);
-			Stream& WriteInteger(const uint256_t& Value);
-			Stream& WriteBoolean(bool Value);
-			Stream& WriteTypeless(const uint256_t& Value);
-			Stream& WriteTypeless(const char* Data, uint8_t Size);
-			Stream& WriteTypeless(const char* Data, uint32_t Size);
-			Viewable ReadType();
-			bool ReadType(Viewable* Value);
-			bool ReadString(Viewable Type, String* Value);
-			bool ReadDecimal(Viewable Type, Decimal* Value);
-			bool ReadInteger(Viewable Type, uint8_t* Value);
-			bool ReadInteger(Viewable Type, uint16_t* Value);
-			bool ReadInteger(Viewable Type, uint32_t* Value);
-			bool ReadInteger(Viewable Type, uint64_t* Value);
-			bool ReadInteger(Viewable Type, uint128_t* Value);
-			bool ReadInteger(Viewable Type, uint256_t* Value);
-			bool ReadBoolean(Viewable Type, bool* Value);
-			bool IsEof() const;
-			String Compress() const;
-			String Encode() const;
-			uint256_t Hash(bool Renew = false) const;
+			stream();
+			explicit stream(const std::string_view& new_data);
+			explicit stream(string&& new_data);
+			stream(const stream&) = default;
+			stream(stream&&) noexcept = default;
+			stream& operator= (const stream&) = default;
+			stream& operator= (stream&&) noexcept = default;
+			stream& clear();
+			stream& rewind(size_t offset = 0);
+			stream& write_string(const std::string_view& value);
+			stream& write_decimal(const decimal& value);
+			stream& write_integer(const uint256_t& value);
+			stream& write_boolean(bool value);
+			stream& write_typeless(const uint256_t& value);
+			stream& write_typeless(const char* data, uint8_t size);
+			stream& write_typeless(const char* data, uint32_t size);
+			viewable read_type();
+			bool read_type(viewable* value);
+			bool read_string(viewable type, string* value);
+			bool read_decimal(viewable type, decimal* value);
+			bool read_integer(viewable type, uint8_t* value);
+			bool read_integer(viewable type, uint16_t* value);
+			bool read_integer(viewable type, uint32_t* value);
+			bool read_integer(viewable type, uint64_t* value);
+			bool read_integer(viewable type, uint128_t* value);
+			bool read_integer(viewable type, uint256_t* value);
+			bool read_boolean(viewable type, bool* value);
+			bool is_eof() const;
+			string compress() const;
+			string encode() const;
+			uint256_t hash(bool renew = false) const;
 
 		private:
-			void Write(const void* Value, uint32_t Size);
-			size_t Read(void* Value, uint32_t Size);
+			void write(const void* value, uint32_t size);
+			size_t read(void* value, uint32_t size);
 
 		public:
-			static Stream Decompress(const std::string_view& Data);
-			static Stream Decode(const std::string_view& Data);
+			static stream decompress(const std::string_view& data);
+			static stream decode(const std::string_view& data);
 		};
 
-		class Util
+		class util
 		{
 		public:
-			static String Encode0xHex(const std::string_view& Data);
-			static String Decode0xHex(const std::string_view& Data);
-			static String Assign0xHex(const std::string_view& Data);
-			static String Clear0xHex(const std::string_view& Data, bool Uppercase = false);
-			static bool IsHexEncoding(const std::string_view& Data);
-			static bool IsBase64Encoding(const std::string_view& Data);
-			static bool IsBase64URLEncoding(const std::string_view& Data);
-			static bool IsInteger(Viewable Type);
-			static bool IsString(Viewable Type);
-			static bool IsString10(Viewable Type);
-			static bool IsString16(Viewable Type);
-			static uint8_t GetIntegerSize(Viewable Type);
-			static Viewable GetIntegerType(const uint256_t& Data);
-			static uint8_t GetStringSize(Viewable Type);
-			static Viewable GetStringType(const std::string_view& Data, bool HexEncoding);
-			static size_t GetMaxStringSize();
+			static string encode_0xhex(const std::string_view& data);
+			static string decode_0xhex(const std::string_view& data);
+			static string assign_0xhex(const std::string_view& data);
+			static string clear_0xhex(const std::string_view& data, bool uppercase = false);
+			static bool is_hex_encoding(const std::string_view& data);
+			static bool is_base64_encoding(const std::string_view& data);
+			static bool is_base64_url_encoding(const std::string_view& data);
+			static bool is_integer(viewable type);
+			static bool is_string(viewable type);
+			static bool is_string10(viewable type);
+			static bool is_string16(viewable type);
+			static uint8_t get_integer_size(viewable type);
+			static viewable get_integer_type(const uint256_t& data);
+			static uint8_t get_string_size(viewable type);
+			static viewable get_string_type(const std::string_view& data, bool hex_encoding);
+			static size_t get_max_string_size();
 		};
 	}
 }

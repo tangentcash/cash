@@ -9,7 +9,7 @@
 #endif
 
 int ethc_rand(uint8_t *bytes, size_t len) {
-    return Vitex::Compute::Crypto::FillRandomBytes(bytes, len) ? 1 : 0;
+    return vitex::compute::crypto::fill_random_bytes(bytes, len) ? 1 : 0;
 }
 
 int ethc_strncasecmp(const char *s1, const char *s2, size_t len) {
