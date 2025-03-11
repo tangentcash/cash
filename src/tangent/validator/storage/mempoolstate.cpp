@@ -14,8 +14,8 @@ namespace tangent
 		static string address_to_message(const socket_address& address)
 		{
 			format::stream message;
-			message.write_string(address.get_ip_address().otherwise("[bad_address]"));
-			message.write_integer(address.get_ip_port().otherwise(0));
+			message.write_string(address.get_ip_address().or_else("[bad_address]"));
+			message.write_integer(address.get_ip_port().or_else(0));
 			return message.data;
 		}
 		static option<socket_address> message_to_address(const std::string_view& data)
@@ -575,7 +575,7 @@ namespace tangent
 				return expects_lr<uptr<ledger::transaction>>(layer_exception(error_of(cursor)));
 
 			format::stream message = format::stream((*cursor)["message"].get().get_blob());
-			uptr<ledger::transaction> value = transactions::resolver::init(messages::authentic::resolve_type(message).otherwise(0));
+			uptr<ledger::transaction> value = transactions::resolver::init(messages::authentic::resolve_type(message).or_else(0));
 			if (!value || !value->load(message))
 				return expects_lr<uptr<ledger::transaction>>(layer_exception("transaction deserialization error"));
 
@@ -601,7 +601,7 @@ namespace tangent
 			{
 				auto row = response[i];
 				format::stream message = format::stream(row["message"].get().get_blob());
-				uptr<ledger::transaction> value = transactions::resolver::init(messages::authentic::resolve_type(message).otherwise(0));
+				uptr<ledger::transaction> value = transactions::resolver::init(messages::authentic::resolve_type(message).or_else(0));
 				if (value && value->load(message))
 				{
 					finalize_checksum(**value, row["hash"].get());
@@ -632,7 +632,7 @@ namespace tangent
 			{
 				auto row = response[i];
 				format::stream message = format::stream(row["message"].get().get_blob());
-				uptr<ledger::transaction> value = transactions::resolver::init(messages::authentic::resolve_type(message).otherwise(0));
+				uptr<ledger::transaction> value = transactions::resolver::init(messages::authentic::resolve_type(message).or_else(0));
 				if (value && value->load(message))
 				{
 					finalize_checksum(**value, row["hash"].get());
@@ -665,7 +665,7 @@ namespace tangent
 			{
 				auto row = response[i];
 				format::stream message = format::stream(row["message"].get().get_blob());
-				uptr<ledger::transaction> value = transactions::resolver::init(messages::authentic::resolve_type(message).otherwise(0));
+				uptr<ledger::transaction> value = transactions::resolver::init(messages::authentic::resolve_type(message).or_else(0));
 				if (value && value->load(message))
 				{
 					finalize_checksum(**value, row["hash"].get());

@@ -176,7 +176,7 @@ namespace tangent
 			switch (type)
 			{
 				case viewable::string_any10:
-					return from_string<uint8_t>(as_string()).otherwise(0);
+					return from_string<uint8_t>(as_string()).or_else(0);
 				case viewable::decimal_zero:
 					return ((decimal*)value.pointer)->to_uint8();
 				case viewable::uint_min:
@@ -194,7 +194,7 @@ namespace tangent
 			switch (type)
 			{
 				case viewable::string_any10:
-					return from_string<uint16_t>(as_string()).otherwise(0);
+					return from_string<uint16_t>(as_string()).or_else(0);
 				case viewable::decimal_zero:
 					return ((decimal*)value.pointer)->to_uint16();
 				case viewable::uint_min:
@@ -212,7 +212,7 @@ namespace tangent
 			switch (type)
 			{
 				case viewable::string_any10:
-					return from_string<uint32_t>(as_string()).otherwise(0);
+					return from_string<uint32_t>(as_string()).or_else(0);
 				case viewable::decimal_zero:
 					return ((decimal*)value.pointer)->to_uint32();
 				case viewable::uint_min:
@@ -230,7 +230,7 @@ namespace tangent
 			switch (type)
 			{
 				case viewable::string_any10:
-					return from_string<uint64_t>(as_string()).otherwise(0);
+					return from_string<uint64_t>(as_string()).or_else(0);
 				case viewable::decimal_zero:
 					return ((decimal*)value.pointer)->to_uint64();
 				case viewable::uint_min:
@@ -284,7 +284,7 @@ namespace tangent
 			switch (type)
 			{
 				case viewable::string_any10:
-					return from_string<float>(as_string()).otherwise(0.0f);
+					return from_string<float>(as_string()).or_else(0.0f);
 				case viewable::decimal_zero:
 					return ((decimal*)value.pointer)->to_float();
 				case viewable::uint_min:
@@ -302,7 +302,7 @@ namespace tangent
 			switch (type)
 			{
 				case viewable::string_any10:
-					return from_string<double>(as_string()).otherwise(0.0);
+					return from_string<double>(as_string()).or_else(0.0);
 				case viewable::decimal_zero:
 					return ((decimal*)value.pointer)->to_double();
 				case viewable::uint_min:

@@ -400,8 +400,8 @@ namespace tangent
 				return expects_lr<void>(layer_exception(error_of(cursor)));
 
 			uint64_t current_number = 1;
-			uint64_t checkpoint_number = get_checkpoint_block_number().otherwise(0);
-			uint64_t tip_number = get_latest_block_number().otherwise(0);
+			uint64_t checkpoint_number = get_checkpoint_block_number().or_else(0);
+			uint64_t tip_number = get_latest_block_number().or_else(0);
 			auto parent_block = expects_lr<ledger::block_header>(layer_exception());
 			while (current_number <= tip_number)
 			{
@@ -1158,7 +1158,7 @@ namespace tangent
 			if (checkpoint_number < value.number)
 				return expectation::met;
 
-			auto latest_checkpoint = get_checkpoint_block_number().otherwise(0);
+			auto latest_checkpoint = get_checkpoint_block_number().or_else(0);
 			if (value.number <= latest_checkpoint)
 				return expectation::met;
 
@@ -1183,13 +1183,13 @@ namespace tangent
 				auto row = response[i];
 				auto& next = value.transactions[i + stride];
 				auto transaction_hash = row["transaction_hash"].get();
-				format::stream transaction_message = format::stream(load(label, __func__, get_transaction_label(transaction_hash.get_binary())).otherwise(string()));
-				next.transaction = transactions::resolver::init(messages::authentic::resolve_type(transaction_message).otherwise(0));
+				format::stream transaction_message = format::stream(load(label, __func__, get_transaction_label(transaction_hash.get_binary())).or_else(string()));
+				next.transaction = transactions::resolver::init(messages::authentic::resolve_type(transaction_message).or_else(0));
 				if (next.transaction && next.transaction->load(transaction_message))
 				{
 					if (fully)
 					{
-						format::stream receipt_message = format::stream(load(label, __func__, get_receipt_label(transaction_hash.get_binary())).otherwise(string()));
+						format::stream receipt_message = format::stream(load(label, __func__, get_receipt_label(transaction_hash.get_binary())).or_else(string()));
 						if (next.receipt.load(receipt_message))
 							finalize_checksum(**next.transaction, transaction_hash);
 					}
@@ -1226,8 +1226,8 @@ namespace tangent
 				for (size_t i = 0; i < size1; i++)
 				{
 					auto row = response[i];
-					format::stream message = format::stream(load(label, __func__, get_uniform_label(row["index_hash"].get().get_blob(), value.number)).otherwise(string()));
-					uptr<ledger::state> next_state = states::resolver::init(messages::standard::resolve_type(message).otherwise(0));
+					format::stream message = format::stream(load(label, __func__, get_uniform_label(row["index_hash"].get().get_blob(), value.number)).or_else(string()));
+					uptr<ledger::state> next_state = states::resolver::init(messages::standard::resolve_type(message).or_else(0));
 					if (next_state && next_state->load(message))
 						value.states.move_any(std::move(next_state));
 				}
@@ -1241,8 +1241,8 @@ namespace tangent
 				for (size_t i = 0; i < size2; i++)
 				{
 					auto row = response[i];
-					format::stream message = format::stream(load(label, __func__, get_multiform_label(row["column_hash"].get().get_blob(), row["row_hash"].get().get_blob(), value.number)).otherwise(string()));
-					uptr<ledger::state> next_state = states::resolver::init(messages::standard::resolve_type(message).otherwise(0));
+					format::stream message = format::stream(load(label, __func__, get_multiform_label(row["column_hash"].get().get_blob(), row["row_hash"].get().get_blob(), value.number)).or_else(string()));
+					uptr<ledger::state> next_state = states::resolver::init(messages::standard::resolve_type(message).or_else(0));
 					if (next_state && next_state->load(message))
 						value.states.move_any(std::move(next_state));
 				}
@@ -1316,21 +1316,21 @@ namespace tangent
 
 			if (column && row)
 			{
-				if (!column_location.otherwise(0) || !row_location.otherwise(0))
+				if (!column_location.or_else(0) || !row_location.or_else(0))
 					return layer_exception("multiform location not found");
 				else if (update_column || update_row)
 					cache->set_multiform_location(*column, *row, *column_location, *row_location);
 			}
 			else if (column)
 			{
-				if (!column_location.otherwise(0))
+				if (!column_location.or_else(0))
 					return layer_exception("multiform column not found");
 				else if (update_column)
 					cache->set_column_location(*column, *column_location);
 			}
 			else if (row)
 			{
-				if (!row_location.otherwise(0))
+				if (!row_location.or_else(0))
 					return layer_exception("multiform row not found");
 				else if (update_row)
 					cache->set_row_location(*row, *row_location);
@@ -1352,7 +1352,7 @@ namespace tangent
 				if (!*account_number_cache)
 					return layer_exception("account not found");
 
-				return account_number_cache.otherwise(0);
+				return account_number_cache.or_else(0);
 			}
 
 			auto find_account = accountdata->prepare_statement("SELECT account_number FROM accounts WHERE account_hash = ?", nullptr);
@@ -1446,8 +1446,8 @@ namespace tangent
 					auto row = response[i];
 					auto& next = gas_prices[stride + i];
 					auto transaction_hash = row["transaction_hash"].get();
-					format::stream message = format::stream(load(label, __func__, get_transaction_label(transaction_hash.get_binary())).otherwise(string()));
-					uptr<ledger::transaction> value = transactions::resolver::init(messages::authentic::resolve_type(message).otherwise(0));
+					format::stream message = format::stream(load(label, __func__, get_transaction_label(transaction_hash.get_binary())).or_else(string()));
+					uptr<ledger::transaction> value = transactions::resolver::init(messages::authentic::resolve_type(message).or_else(0));
 					if (value && value->load(message) && value->asset == asset)
 						next = std::move(value->gas_price);
 					else
@@ -1491,7 +1491,7 @@ namespace tangent
 
 			ledger::block_header header;
 			auto block_hash = (*cursor)["block_hash"].get();
-			format::stream message = format::stream(load(label, __func__, get_block_label(block_hash.get_binary())).otherwise(string()));
+			format::stream message = format::stream(load(label, __func__, get_block_label(block_hash.get_binary())).or_else(string()));
 			if (!header.load(message))
 				return expects_lr<ledger::block>(layer_exception("block header deserialization error"));
 
@@ -1529,7 +1529,7 @@ namespace tangent
 			algorithm::encoding::decode_uint256(block_hash, hash);
 
 			ledger::block_header header;
-			format::stream message = format::stream(load(label, __func__, get_block_label(hash)).otherwise(string()));
+			format::stream message = format::stream(load(label, __func__, get_block_label(hash)).or_else(string()));
 			if (!header.load(message))
 				return expects_lr<ledger::block>(layer_exception("block header deserialization error"));
 
@@ -1569,7 +1569,7 @@ namespace tangent
 
 			ledger::block_header header;
 			auto block_hash = (*cursor)["block_hash"].get();
-			format::stream message = format::stream(load(label, __func__, get_block_label(block_hash.get_binary())).otherwise(string()));
+			format::stream message = format::stream(load(label, __func__, get_block_label(block_hash.get_binary())).or_else(string()));
 			if (!header.load(message))
 				return expects_lr<ledger::block>(layer_exception("block header deserialization error"));
 
@@ -1612,7 +1612,7 @@ namespace tangent
 
 			ledger::block_header header;
 			auto block_hash = (*cursor)["block_hash"].get();
-			format::stream message = format::stream(load(label, __func__, get_block_label(block_hash.get_binary())).otherwise(string()));
+			format::stream message = format::stream(load(label, __func__, get_block_label(block_hash.get_binary())).or_else(string()));
 			if (!header.load(message))
 				return expects_lr<ledger::block_header>(layer_exception("block header deserialization error"));
 
@@ -1625,7 +1625,7 @@ namespace tangent
 			algorithm::encoding::decode_uint256(block_hash, hash);
 
 			ledger::block_header header;
-			format::stream message = format::stream(load(label, __func__, get_block_label(hash)).otherwise(string()));
+			format::stream message = format::stream(load(label, __func__, get_block_label(hash)).or_else(string()));
 			if (!header.load(message))
 				return expects_lr<ledger::block_header>(layer_exception("block header deserialization error"));
 
@@ -1640,7 +1640,7 @@ namespace tangent
 
 			ledger::block_header header;
 			auto block_hash = (*cursor)["block_hash"].get();
-			format::stream message = format::stream(load(label, __func__, get_block_label(block_hash.get_binary())).otherwise(string()));
+			format::stream message = format::stream(load(label, __func__, get_block_label(block_hash.get_binary())).or_else(string()));
 			if (!header.load(message))
 				return expects_lr<ledger::block_header>(layer_exception("block header deserialization error"));
 
@@ -1673,7 +1673,7 @@ namespace tangent
 				if (transaction_hash.size() == sizeof(uint256_t))
 				{
 					algorithm::encoding::encode_uint256((uint8_t*)transaction_hash.data(), value.transactions[i]);
-					value.receipts[i] = format::stream(load(label, __func__, get_receipt_label((uint8_t*)transaction_hash.data())).otherwise(string())).hash();
+					value.receipts[i] = format::stream(load(label, __func__, get_receipt_label((uint8_t*)transaction_hash.data())).or_else(string())).hash();
 				}
 				else
 				{
@@ -1697,11 +1697,11 @@ namespace tangent
 			value.states.resize(size1 + size2);
 			auto task_queue1 = parallel::for_loop(size, ELEMENTS_FEW, [&](size_t i)
 			{
-				value.states[i] = format::stream(load(label, __func__, get_uniform_label(response1[i]["index_hash"].get().get_blob(), block_number)).otherwise(string())).hash();
+				value.states[i] = format::stream(load(label, __func__, get_uniform_label(response1[i]["index_hash"].get().get_blob(), block_number)).or_else(string())).hash();
 			});
 			auto task_queue2 = parallel::for_loop(size, ELEMENTS_FEW, [&](size_t i)
 			{
-				value.states[i + size1] = format::stream(load(label, __func__, get_uniform_label(response2[i]["index_hash"].get().get_blob(), block_number)).otherwise(string())).hash();
+				value.states[i + size1] = format::stream(load(label, __func__, get_uniform_label(response2[i]["index_hash"].get().get_blob(), block_number)).or_else(string())).hash();
 			});
 			parallel::wail_all(std::move(task_queue1));
 			parallel::wail_all(std::move(task_queue2));
@@ -1769,7 +1769,7 @@ namespace tangent
 				result.resize(result.size() + size);
 				parallel::wail_all(parallel::for_loop(size, ELEMENTS_FEW, [&](size_t i)
 				{
-					result[i] = format::stream(load(label, __func__, get_uniform_label(response[i]["index_hash"].get().get_blob(), block_number)).otherwise(string())).hash();
+					result[i] = format::stream(load(label, __func__, get_uniform_label(response[i]["index_hash"].get().get_blob(), block_number)).or_else(string())).hash();
 				}));
 			}
 			for (auto& response : *cursor2)
@@ -1780,7 +1780,7 @@ namespace tangent
 				parallel::wail_all(parallel::for_loop(size, ELEMENTS_FEW, [&](size_t i)
 				{
 					auto row = response[i];
-					result[i + offset] = format::stream(load(label, __func__, get_multiform_label(row["column_hash"].get().get_blob(), row["row_hash"].get().get_blob(), block_number)).otherwise(string())).hash();
+					result[i + offset] = format::stream(load(label, __func__, get_multiform_label(row["column_hash"].get().get_blob(), row["row_hash"].get().get_blob(), block_number)).or_else(string())).hash();
 				}));
 			}
 
@@ -1840,7 +1840,7 @@ namespace tangent
 				parallel::wail_all(parallel::for_loop(size, ELEMENTS_FEW, [&](size_t i)
 				{
 					auto block_hash = response[i]["block_hash"].get();
-					format::stream message = format::stream(load(label, __func__, get_block_label(block_hash.get_binary())).otherwise(string()));
+					format::stream message = format::stream(load(label, __func__, get_block_label(block_hash.get_binary())).or_else(string()));
 					result[i].load(message);
 				}));
 			}
@@ -1870,8 +1870,8 @@ namespace tangent
 				for (size_t i = 0; i < size; i++)
 				{
 					auto row = response[i];
-					auto message = format::stream(load(label, __func__, get_uniform_label(row["index_hash"].get().get_blob(), block_number)).otherwise(string()));
-					uptr<ledger::state> next_state = states::resolver::init(messages::standard::resolve_type(message).otherwise(0));
+					auto message = format::stream(load(label, __func__, get_uniform_label(row["index_hash"].get().get_blob(), block_number)).or_else(string()));
+					uptr<ledger::state> next_state = states::resolver::init(messages::standard::resolve_type(message).or_else(0));
 					if (next_state && next_state->load(message))
 						(*result)[next_state->as_composite()] = std::move(next_state);
 				}
@@ -1883,8 +1883,8 @@ namespace tangent
 				for (size_t i = 0; i < size; i++)
 				{
 					auto row = response[i];
-					auto message = format::stream(load(label, __func__, get_multiform_label(row["column_hash"].get().get_blob(), row["row_hash"].get().get_blob(), block_number)).otherwise(string()));
-					uptr<ledger::state> next_state = states::resolver::init(messages::standard::resolve_type(message).otherwise(0));
+					auto message = format::stream(load(label, __func__, get_multiform_label(row["column_hash"].get().get_blob(), row["row_hash"].get().get_blob(), block_number)).or_else(string()));
+					uptr<ledger::state> next_state = states::resolver::init(messages::standard::resolve_type(message).or_else(0));
 					if (next_state && next_state->load(message))
 						(*result)[next_state->as_composite()] = std::move(next_state);
 				}
@@ -1912,8 +1912,8 @@ namespace tangent
 				auto row = response[i];
 				auto& value = values[i];
 				auto transaction_hash = row["transaction_hash"].get();
-				format::stream message = format::stream(load(label, __func__, get_transaction_label(transaction_hash.get_binary())).otherwise(string()));
-				value = transactions::resolver::init(messages::authentic::resolve_type(message).otherwise(0));
+				format::stream message = format::stream(load(label, __func__, get_transaction_label(transaction_hash.get_binary())).or_else(string()));
+				value = transactions::resolver::init(messages::authentic::resolve_type(message).or_else(0));
 				if (value && value->load(message))
 					finalize_checksum(**value, transaction_hash);
 			}));
@@ -1963,8 +1963,8 @@ namespace tangent
 				auto row = response[i];
 				auto& value = values[i];
 				auto transaction_hash = row["transaction_hash"].get();
-				format::stream message = format::stream(load(label, __func__, get_transaction_label(transaction_hash.get_binary())).otherwise(string()));
-				value = transactions::resolver::init(messages::authentic::resolve_type(message).otherwise(0));
+				format::stream message = format::stream(load(label, __func__, get_transaction_label(transaction_hash.get_binary())).or_else(string()));
+				value = transactions::resolver::init(messages::authentic::resolve_type(message).or_else(0));
 				if (value && value->load(message))
 					finalize_checksum(**value, transaction_hash);
 			}));
@@ -1995,9 +1995,9 @@ namespace tangent
 				auto row = response[i];
 				auto& value = values[i];
 				auto transaction_hash = row["transaction_hash"].get();
-				format::stream transaction_message = format::stream(load(label, __func__, get_transaction_label(transaction_hash.get_binary())).otherwise(string()));
-				format::stream receipt_message = format::stream(load(label, __func__, get_receipt_label(transaction_hash.get_binary())).otherwise(string()));
-				value.transaction = transactions::resolver::init(messages::authentic::resolve_type(transaction_message).otherwise(0));
+				format::stream transaction_message = format::stream(load(label, __func__, get_transaction_label(transaction_hash.get_binary())).or_else(string()));
+				format::stream receipt_message = format::stream(load(label, __func__, get_receipt_label(transaction_hash.get_binary())).or_else(string()));
+				value.transaction = transactions::resolver::init(messages::authentic::resolve_type(transaction_message).or_else(0));
 				if (value.transaction && value.transaction->load(transaction_message) && value.receipt.load(receipt_message))
 					finalize_checksum(**value.transaction, transaction_hash);
 			}));
@@ -2047,9 +2047,9 @@ namespace tangent
 				auto row = response[i];
 				auto& value = values[i];
 				auto transaction_hash = row["transaction_hash"].get();
-				format::stream transaction_message = format::stream(load(label, __func__, get_transaction_label(transaction_hash.get_binary())).otherwise(string()));
-				format::stream receipt_message = format::stream(load(label, __func__, get_receipt_label(transaction_hash.get_binary())).otherwise(string()));
-				value.transaction = transactions::resolver::init(messages::authentic::resolve_type(transaction_message).otherwise(0));
+				format::stream transaction_message = format::stream(load(label, __func__, get_transaction_label(transaction_hash.get_binary())).or_else(string()));
+				format::stream receipt_message = format::stream(load(label, __func__, get_receipt_label(transaction_hash.get_binary())).or_else(string()));
+				value.transaction = transactions::resolver::init(messages::authentic::resolve_type(transaction_message).or_else(0));
 				if (value.transaction && value.transaction->load(transaction_message) && value.receipt.load(receipt_message))
 					finalize_checksum(**value.transaction, transaction_hash);
 			}));
@@ -2080,7 +2080,7 @@ namespace tangent
 				auto row = response[i];
 				ledger::receipt value;
 				auto transaction_hash = row["transaction_hash"].get();
-				format::stream message = format::stream(load(label, __func__, get_receipt_label(transaction_hash.get_binary())).otherwise(string()));
+				format::stream message = format::stream(load(label, __func__, get_receipt_label(transaction_hash.get_binary())).or_else(string()));
 				if (value.load(message))
 					values.emplace_back(std::move(value));
 			}
@@ -2108,9 +2108,9 @@ namespace tangent
 				auto row = response[i];
 				auto& value = values[i];
 				auto transaction_hash = row["transaction_hash"].get();
-				format::stream transaction_message = format::stream(load(label, __func__, get_transaction_label(transaction_hash.get_binary())).otherwise(string()));
-				format::stream receipt_message = format::stream(load(label, __func__, get_receipt_label(transaction_hash.get_binary())).otherwise(string()));
-				value.transaction = transactions::resolver::init(messages::authentic::resolve_type(transaction_message).otherwise(0));
+				format::stream transaction_message = format::stream(load(label, __func__, get_transaction_label(transaction_hash.get_binary())).or_else(string()));
+				format::stream receipt_message = format::stream(load(label, __func__, get_receipt_label(transaction_hash.get_binary())).or_else(string()));
+				value.transaction = transactions::resolver::init(messages::authentic::resolve_type(transaction_message).or_else(0));
 				if (value.transaction && value.transaction->load(transaction_message) && value.receipt.load(receipt_message))
 					finalize_checksum(**value.transaction, transaction_hash);
 			}));
@@ -2144,8 +2144,8 @@ namespace tangent
 				return expects_lr<uptr<ledger::transaction>>(layer_exception(error_of(cursor)));
 
 			auto parent_transaction_hash = (*cursor)["transaction_hash"].get();
-			format::stream message = format::stream(load(label, __func__, get_transaction_label(parent_transaction_hash.get_binary())).otherwise(string()));
-			uptr<ledger::transaction> value = transactions::resolver::init(messages::authentic::resolve_type(message).otherwise(0));
+			format::stream message = format::stream(load(label, __func__, get_transaction_label(parent_transaction_hash.get_binary())).or_else(string()));
+			uptr<ledger::transaction> value = transactions::resolver::init(messages::authentic::resolve_type(message).or_else(0));
 			if (!value || !value->load(message))
 				return expects_lr<uptr<ledger::transaction>>(layer_exception("transaction deserialization error"));
 
@@ -2176,10 +2176,10 @@ namespace tangent
 				return expects_lr<ledger::block_transaction>(layer_exception(error_of(cursor)));
 
 			auto parent_transaction_hash = (*cursor)["transaction_hash"].get();
-			format::stream transaction_message = format::stream(load(label, __func__, get_transaction_label(parent_transaction_hash.get_binary())).otherwise(string()));
-			format::stream receipt_message = format::stream(load(label, __func__, get_receipt_label(parent_transaction_hash.get_binary())).otherwise(string()));
+			format::stream transaction_message = format::stream(load(label, __func__, get_transaction_label(parent_transaction_hash.get_binary())).or_else(string()));
+			format::stream receipt_message = format::stream(load(label, __func__, get_receipt_label(parent_transaction_hash.get_binary())).or_else(string()));
 			ledger::block_transaction value;
-			value.transaction = transactions::resolver::init(messages::authentic::resolve_type(transaction_message).otherwise(0));
+			value.transaction = transactions::resolver::init(messages::authentic::resolve_type(transaction_message).or_else(0));
 			if (!value.transaction || !value.transaction->load(transaction_message) || !value.receipt.load(receipt_message))
 				return expects_lr<ledger::block_transaction>(layer_exception("block transaction deserialization error"));
 
@@ -2192,7 +2192,7 @@ namespace tangent
 			algorithm::encoding::decode_uint256(transaction_hash, hash);
 
 			ledger::receipt value;
-			format::stream message = format::stream(load(label, __func__, get_receipt_label(hash)).otherwise(string()));
+			format::stream message = format::stream(load(label, __func__, get_receipt_label(hash)).or_else(string()));
 			if (!value.load(message))
 				return expects_lr<ledger::receipt>(layer_exception("receipt deserialization error"));
 
@@ -2229,7 +2229,7 @@ namespace tangent
 				if (!find_state)
 					return expects_lr<uptr<ledger::state>>(layer_exception(std::move(find_state.error().message())));
 
-				uniformdata->bind_int64(*find_state, 0, location->index.otherwise(0));
+				uniformdata->bind_int64(*find_state, 0, location->index.or_else(0));
 				if (block_number > 0)
 					uniformdata->bind_int64(*find_state, 1, block_number);
 
@@ -2249,11 +2249,11 @@ namespace tangent
 
 				auto cache = uniform_cache::get();
 				location->block = (*cursor)["block_number"].get().get_integer();
-				cache->set_block_location(location->index.otherwise(0), location->block.otherwise(0));
+				cache->set_block_location(location->index.or_else(0), location->block.or_else(0));
 			}
 
-			format::stream message = format::stream(load(label, __func__, get_uniform_label(index, location->block.otherwise(0))).otherwise(string()));
-			uptr<ledger::state> value = states::resolver::init(messages::standard::resolve_type(message).otherwise(0));
+			format::stream message = format::stream(load(label, __func__, get_uniform_label(index, location->block.or_else(0))).or_else(string()));
+			uptr<ledger::state> value = states::resolver::init(messages::standard::resolve_type(message).or_else(0));
 			if (!value || !value->load(message))
 			{
 				if (delta != nullptr && delta->incoming != nullptr)
@@ -2296,8 +2296,8 @@ namespace tangent
 				if (!find_state)
 					return expects_lr<uptr<ledger::state>>(layer_exception(std::move(find_state.error().message())));
 
-				multiformdata->bind_int64(*find_state, 0, location->column.otherwise(0));
-				multiformdata->bind_int64(*find_state, 1, location->row.otherwise(0));
+				multiformdata->bind_int64(*find_state, 0, location->column.or_else(0));
+				multiformdata->bind_int64(*find_state, 1, location->row.or_else(0));
 				if (block_number > 0)
 					multiformdata->bind_int64(*find_state, 2, block_number);
 
@@ -2317,11 +2317,11 @@ namespace tangent
 
 				auto cache = multiform_cache::get();
 				location->block = (*cursor)["block_number"].get().get_integer();
-				cache->set_block_location(location->column.otherwise(0), location->row.otherwise(0), location->block.otherwise(0));
+				cache->set_block_location(location->column.or_else(0), location->row.or_else(0), location->block.or_else(0));
 			}
 
-			format::stream message = format::stream(load(label, __func__, get_multiform_label(column, row, location->block.otherwise(0))).otherwise(string()));
-			uptr<ledger::state> value = states::resolver::init(messages::standard::resolve_type(message).otherwise(0));
+			format::stream message = format::stream(load(label, __func__, get_multiform_label(column, row, location->block.or_else(0))).or_else(string()));
+			uptr<ledger::state> value = states::resolver::init(messages::standard::resolve_type(message).or_else(0));
 			if (!value || !value->load(message))
 			{
 				if (delta != nullptr && delta->incoming != nullptr)
@@ -2340,7 +2340,7 @@ namespace tangent
 				return location.error();
 
 			schema_list map;
-			map.push_back(var::set::integer(location->column.otherwise(0)));
+			map.push_back(var::set::integer(location->column.or_else(0)));
 			if (block_number > 0)
 				map.push_back(var::set::integer(block_number));
 			map.push_back(var::set::integer(offset));
@@ -2353,8 +2353,8 @@ namespace tangent
 			else if (cursor->empty())
 				return expects_lr<uptr<ledger::state>>(layer_exception("multiform not found"));
 
-			format::stream message = format::stream(load(label, __func__, get_multiform_label(column, (*cursor)["row_hash"].get().get_blob(), (*cursor)["block_number"].get().get_integer())).otherwise(string()));
-			uptr<ledger::state> value = states::resolver::init(messages::standard::resolve_type(message).otherwise(0));
+			format::stream message = format::stream(load(label, __func__, get_multiform_label(column, (*cursor)["row_hash"].get().get_blob(), (*cursor)["block_number"].get().get_integer())).or_else(string()));
+			uptr<ledger::state> value = states::resolver::init(messages::standard::resolve_type(message).or_else(0));
 			if (!value || !value->load(message))
 			{
 				if (value && delta != nullptr && delta->incoming != nullptr)
@@ -2373,7 +2373,7 @@ namespace tangent
 				return location.error();
 
 			schema_list map;
-			map.push_back(var::set::integer(location->row.otherwise(0)));
+			map.push_back(var::set::integer(location->row.or_else(0)));
 			if (block_number > 0)
 				map.push_back(var::set::integer(block_number));
 			map.push_back(var::set::integer(offset));
@@ -2386,8 +2386,8 @@ namespace tangent
 			else if (cursor->empty())
 				return expects_lr<uptr<ledger::state>>(layer_exception("multiform not found"));
 
-			format::stream message = format::stream(load(label, __func__, get_multiform_label((*cursor)["column_hash"].get().get_blob(), row, (*cursor)["block_number"].get().get_integer())).otherwise(string()));
-			uptr<ledger::state> value = states::resolver::init(messages::standard::resolve_type(message).otherwise(0));
+			format::stream message = format::stream(load(label, __func__, get_multiform_label((*cursor)["column_hash"].get().get_blob(), row, (*cursor)["block_number"].get().get_integer())).or_else(string()));
+			uptr<ledger::state> value = states::resolver::init(messages::standard::resolve_type(message).or_else(0));
 			if (!value || !value->load(message))
 			{
 				if (value && delta != nullptr && delta->incoming != nullptr)
@@ -2406,7 +2406,7 @@ namespace tangent
 				return expects_lr<vector<uptr<ledger::state>>>(vector<uptr<ledger::state>>());
 
 			schema_list map;
-			map.push_back(var::set::integer(location->column.otherwise(0)));
+			map.push_back(var::set::integer(location->column.or_else(0)));
 			if (block_number > 0)
 				map.push_back(var::set::integer(block_number));
 			map.push_back(var::set::integer(count));
@@ -2424,8 +2424,8 @@ namespace tangent
 			for (size_t i = 0; i < size; i++)
 			{
 				auto next = response[i];
-				format::stream message = format::stream(load(label, __func__, get_multiform_label(column, next["row_hash"].get().get_blob(), next["block_number"].get().get_integer())).otherwise(string()));
-				uptr<ledger::state> next_state = states::resolver::init(messages::standard::resolve_type(message).otherwise(0));
+				format::stream message = format::stream(load(label, __func__, get_multiform_label(column, next["row_hash"].get().get_blob(), next["block_number"].get().get_integer())).or_else(string()));
+				uptr<ledger::state> next_state = states::resolver::init(messages::standard::resolve_type(message).or_else(0));
 				if (!next_state || !next_state->load(message))
 				{
 					if (next_state && delta != nullptr && delta->incoming != nullptr)
@@ -2449,7 +2449,7 @@ namespace tangent
 			if (window.type() == factor_range_window::instance_type())
 			{
 				auto& range = *(factor_range_window*)&window;
-				map.push_back(var::set::integer(location->column.otherwise(0)));
+				map.push_back(var::set::integer(location->column.or_else(0)));
 				if (block_number > 0)
 					map.push_back(var::set::integer(block_number));
 				map.push_back(var::set::string(filter.as_condition()));
@@ -2469,7 +2469,7 @@ namespace tangent
 					indices += to_string(item + 1) + ",";
 
 				map.push_back(var::set::string(filter.as_order()));
-				map.push_back(var::set::integer(location->column.otherwise(0)));
+				map.push_back(var::set::integer(location->column.or_else(0)));
 				if (block_number > 0)
 					map.push_back(var::set::integer(block_number));
 				map.push_back(var::set::string(filter.as_condition()));
@@ -2491,8 +2491,8 @@ namespace tangent
 			for (size_t i = 0; i < size; i++)
 			{
 				auto next = response[i];
-				format::stream message = format::stream(load(label, __func__, get_multiform_label(column, next["row_hash"].get().get_blob(), next["block_number"].get().get_integer())).otherwise(string()));
-				uptr<ledger::state> next_state = states::resolver::init(messages::standard::resolve_type(message).otherwise(0));
+				format::stream message = format::stream(load(label, __func__, get_multiform_label(column, next["row_hash"].get().get_blob(), next["block_number"].get().get_integer())).or_else(string()));
+				uptr<ledger::state> next_state = states::resolver::init(messages::standard::resolve_type(message).or_else(0));
 				if (!next_state || !next_state->load(message))
 				{
 					if (next_state && delta != nullptr && delta->incoming != nullptr)
@@ -2513,7 +2513,7 @@ namespace tangent
 				return expects_lr<vector<uptr<ledger::state>>>(vector<uptr<ledger::state>>());
 
 			schema_list map;
-			map.push_back(var::set::integer(location->column.otherwise(0)));
+			map.push_back(var::set::integer(location->column.or_else(0)));
 			if (block_number > 0)
 				map.push_back(var::set::integer(block_number));
 			map.push_back(var::set::integer(count));
@@ -2531,8 +2531,8 @@ namespace tangent
 			for (size_t i = 0; i < size; i++)
 			{
 				auto next = response[i];
-				format::stream message = format::stream(load(label, __func__, get_multiform_label(next["column_hash"].get().get_blob(), row, next["block_number"].get().get_integer())).otherwise(string()));
-				uptr<ledger::state> next_state = states::resolver::init(messages::standard::resolve_type(message).otherwise(0));
+				format::stream message = format::stream(load(label, __func__, get_multiform_label(next["column_hash"].get().get_blob(), row, next["block_number"].get().get_integer())).or_else(string()));
+				uptr<ledger::state> next_state = states::resolver::init(messages::standard::resolve_type(message).or_else(0));
 				if (!next_state || !next_state->load(message))
 				{
 					if (next_state && delta != nullptr && delta->incoming != nullptr)
@@ -2556,7 +2556,7 @@ namespace tangent
 			if (window.type() == factor_range_window::instance_type())
 			{
 				auto& range = *(factor_range_window*)&window;
-				map.push_back(var::set::integer(location->row.otherwise(0)));
+				map.push_back(var::set::integer(location->row.or_else(0)));
 				if (block_number > 0)
 					map.push_back(var::set::integer(block_number));
 				map.push_back(var::set::string(filter.as_condition()));
@@ -2576,7 +2576,7 @@ namespace tangent
 					indices += to_string(item + 1) + ",";
 
 				map.push_back(var::set::string(filter.as_order()));
-				map.push_back(var::set::integer(location->row.otherwise(0)));
+				map.push_back(var::set::integer(location->row.or_else(0)));
 				if (block_number > 0)
 					map.push_back(var::set::integer(block_number));
 				map.push_back(var::set::string(filter.as_condition()));
@@ -2598,8 +2598,8 @@ namespace tangent
 			for (size_t i = 0; i < size; i++)
 			{
 				auto next = response[i];
-				format::stream message = format::stream(load(label, __func__, get_multiform_label(next["column_hash"].get().get_blob(), row, next["block_number"].get().get_integer())).otherwise(string()));
-				uptr<ledger::state> next_state = states::resolver::init(messages::standard::resolve_type(message).otherwise(0));
+				format::stream message = format::stream(load(label, __func__, get_multiform_label(next["column_hash"].get().get_blob(), row, next["block_number"].get().get_integer())).or_else(string()));
+				uptr<ledger::state> next_state = states::resolver::init(messages::standard::resolve_type(message).or_else(0));
 				if (!next_state || !next_state->load(message))
 				{
 					if (next_state && delta != nullptr && delta->incoming != nullptr)
@@ -2620,7 +2620,7 @@ namespace tangent
 				return location.error();
 
 			schema_list map;
-			map.push_back(var::set::integer(location->column.otherwise(0)));
+			map.push_back(var::set::integer(location->column.or_else(0)));
 			if (block_number > 0)
 				map.push_back(var::set::integer(block_number));
 
@@ -2638,7 +2638,7 @@ namespace tangent
 				return location.error();
 
 			schema_list map;
-			map.push_back(var::set::integer(location->column.otherwise(0)));
+			map.push_back(var::set::integer(location->column.or_else(0)));
 			if (block_number > 0)
 				map.push_back(var::set::integer(block_number));
 			map.push_back(var::set::string(filter.as_condition()));
@@ -2658,7 +2658,7 @@ namespace tangent
 				return location.error();
 
 			schema_list map;
-			map.push_back(var::set::integer(location->row.otherwise(0)));
+			map.push_back(var::set::integer(location->row.or_else(0)));
 			if (block_number > 0)
 				map.push_back(var::set::integer(block_number));
 
@@ -2676,7 +2676,7 @@ namespace tangent
 				return location.error();
 
 			schema_list map;
-			map.push_back(var::set::integer(location->row.otherwise(0)));
+			map.push_back(var::set::integer(location->row.or_else(0)));
 			if (block_number > 0)
 				map.push_back(var::set::integer(block_number));
 			map.push_back(var::set::string(filter.as_condition()));

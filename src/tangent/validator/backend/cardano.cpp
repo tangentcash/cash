@@ -180,7 +180,7 @@ namespace tangent
 						continue;
 
 					auto identifier = stringify::split(tx_operation->fetch_var("coin_change.coin_identifier.identifier").get_blob(), ':');
-					uint32_t index = from_string<uint32_t>(identifier.back()).otherwise(0);
+					uint32_t index = from_string<uint32_t>(identifier.back()).or_else(0);
 					string transaction_id = identifier.front();
 					string symbol = tx_operation->fetch_var("amount.currency.symbol").get_blob();
 					string address = tx_operation->fetch_var("account.address").get_blob();

@@ -193,7 +193,7 @@ namespace tangent
 			auto mempool = storages::mempoolstate(__func__);
 			auto chain = storages::chainstate(__func__);
 			auto state = chain.get_uniform_by_index(nullptr, states::account_sequence::as_instance_index(public_key_hash), 0);
-			uint64_t pending_sequence = mempool.get_highest_transaction_sequence(public_key_hash).otherwise(1);
+			uint64_t pending_sequence = mempool.get_highest_transaction_sequence(public_key_hash).or_else(1);
 			uint64_t finalized_sequence = (state ? ((states::account_sequence*)**state)->sequence : 1);
 			return std::max(finalized_sequence, pending_sequence);
 		}
@@ -271,8 +271,8 @@ namespace tangent
 		bool validator::store_payload(format::stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_string(address.get_ip_address().otherwise(string()));
-			stream->write_integer(address.get_ip_port().otherwise(0));
+			stream->write_string(address.get_ip_address().or_else(string()));
+			stream->write_integer(address.get_ip_port().or_else(0));
 			stream->write_integer(availability.latency);
 			stream->write_integer(availability.timestamp);
 			stream->write_integer(availability.calls);
@@ -363,7 +363,7 @@ namespace tangent
 		uptr<schema> validator::as_schema() const
 		{
 			schema* data = var::set::object();
-			data->set("address", var::string(address.get_ip_address().otherwise("[bad_address]") + ":" + to_string(address.get_ip_port().otherwise(0))));
+			data->set("address", var::string(address.get_ip_address().or_else("[bad_address]") + ":" + to_string(address.get_ip_port().or_else(0))));
 
 			auto* availability_data = data->set("availability");
 			availability_data->set("latency", algorithm::encoding::serialize_uint256(availability.latency));

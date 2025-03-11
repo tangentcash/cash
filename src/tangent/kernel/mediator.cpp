@@ -151,7 +151,7 @@ namespace tangent
 				return checksum;
 
 			format::stream message;
-			message.write_string(*crypto::hash_hex(digests::SHA512(), signing_key.expose<KEY_LIMIT>().view));
+			message.write_string(*crypto::hash_hex(digests::sha512(), signing_key.expose<KEY_LIMIT>().view));
 			((master_wallet*)this)->checksum = message.hash();
 			return checksum;
 		}
@@ -523,7 +523,7 @@ namespace tangent
 			if (!chain)
 				return false;
 
-			auto latest_block_id = server->get_latest_known_block_height(asset).otherwise(0);
+			auto latest_block_id = server->get_latest_known_block_height(asset).or_else(0);
 			if (latest_block_id < block_id)
 				return block_id >= chain->get_chainparams().sync_latency;
 
@@ -1466,7 +1466,7 @@ namespace tangent
 
 			ordered_map<string, uint64_t> info;
 			for (auto& item : *results)
-				info[item.first] = item.second.address_index.otherwise(protocol::now().account.root_address_index);
+				info[item.first] = item.second.address_index.or_else(protocol::now().account.root_address_index);
 
 			return expects_lr<ordered_map<string, uint64_t>>(std::move(info));
 		}

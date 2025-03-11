@@ -526,7 +526,7 @@ namespace tangent
 							if (!nss::server_node::get()->enable_contract_address(token_asset, contract_address))
 								continue;
 
-							decimal divisibility = coawait(get_contract_divisibility(asset, implementation, contract_address)).otherwise(implementation->netdata.divisibility);
+							decimal divisibility = coawait(get_contract_divisibility(asset, implementation, contract_address)).or_else(implementation->netdata.divisibility);
 							decimal token_value = implementation->to_eth(implementation->hex_to_uint256(invocation->get_var("data").get_blob()), divisibility);
 							if (topics->size() == 3)
 							{
@@ -563,7 +563,7 @@ namespace tangent
 					coreturn expects_rt<vector<incoming_transaction>>(remote_exception("tx not involved"));
 
 				schema* tx_receipt_cache = transaction_data->get("receipt");
-				schema* tx_receipt = tx_receipt_cache ? tx_receipt_cache : coawait(get_transaction_receipt(asset, tx_hash)).otherwise(nullptr);
+				schema* tx_receipt = tx_receipt_cache ? tx_receipt_cache : coawait(get_transaction_receipt(asset, tx_hash)).or_else(nullptr);
 				bool is_reverted = tx_receipt && tx_receipt->value.is_object() ? implementation->hex_to_uint256(tx_receipt->get_var("status").get_blob()) < 1 : false;
 				for (auto& item : results)
 				{

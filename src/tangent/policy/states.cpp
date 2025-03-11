@@ -1560,7 +1560,7 @@ namespace tangent
 		}
 		string witness_address::as_instance_row(const algorithm::asset_id& asset, const std::string_view& address, uint64_t max_address_index)
 		{
-			auto location = nss::server_node::get()->new_public_key_hash(asset, address).otherwise(string(address));
+			auto location = nss::server_node::get()->new_public_key_hash(asset, address).or_else(string(address));
 			format::stream stream;
 			stream.write_typeless(as_instance_type());
 			stream.write_typeless(location.data(), (uint8_t)location.size());

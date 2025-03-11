@@ -55,7 +55,7 @@ namespace tangent
 			}
 			static void tx_append_hash(vector<uint8_t>& tx, const std::string_view& data)
 			{
-				string hash = *crypto::hash_raw(digests::SHA256(), data);
+				string hash = *crypto::hash_raw(digests::sha256(), data);
 				tx_append(tx, (uint8_t*)hash.data(), hash.size());
 			}
 			static void tx_append_op_create_account(vector<uint8_t>& tx, StellarCreateAccountOp& data)
@@ -147,7 +147,7 @@ namespace tangent
 				tx.reserve(8192);
 				tx_append_transaction_signature_payload(tx, transaction, accounts, payments);
 
-				string hash = *crypto::hash_raw(digests::SHA256(), string((char*)tx.data(), tx.size()));
+				string hash = *crypto::hash_raw(digests::sha256(), string((char*)tx.data(), tx.size()));
 				tx.resize(hash.size());
 				memcpy(tx.data(), hash.data(), hash.size());
 				return tx;
@@ -275,7 +275,7 @@ namespace tangent
 				if (!account_data && (account_data.error().is_retry() || account_data.error().is_shutdown()))
 					coreturn expects_rt<bool>(account_data.error());
 
-				auto account = uptr<schema>(account_data.otherwise(nullptr));
+				auto account = uptr<schema>(account_data.or_else(nullptr));
 				coreturn expects_rt<bool>(account && account->has("account_id"));
 			}
 			expects_promise_rt<void> stellar::broadcast_transaction(const algorithm::asset_id& asset, const outgoing_transaction& tx_data)
@@ -386,7 +386,7 @@ namespace tangent
 				{
 					auto memo = coawait(get_transaction_memo(asset, tx_hash));
 					if (memo && !memo->empty())
-						to_address_index = from_string<uint64_t>(*memo).otherwise(to_address->second);
+						to_address_index = from_string<uint64_t>(*memo).or_else(to_address->second);
 					else
 						to_address_index = to_address->second;
 				}
@@ -555,7 +555,7 @@ namespace tangent
 				transaction.has_fee = true;
 				transaction.sequence_number = account_info->sequence + 1;
 				transaction.memo_type = memo.empty() ? 0 : 2;
-				transaction.memo_id = memo_id.otherwise(0);
+				transaction.memo_id = memo_id.or_else(0);
 				transaction.num_operations = (uint32_t)(accounts.size() + payments.size());
 				transaction.fee = (uint32_t)(transaction.num_operations * get_base_stroop_fee());
 

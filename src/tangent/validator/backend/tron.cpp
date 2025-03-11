@@ -231,7 +231,7 @@ namespace tangent
 				}
 
 				string transaction_data = copy<string>(transaction.raw_data().SerializeAsString());
-				string transaction_id = *crypto::hash_hex(digests::SHA256(), transaction_data);
+				string transaction_id = *crypto::hash_hex(digests::sha256(), transaction_data);
 				string message = codec::hex_decode(transaction_id);
 
 				uint8_t raw_signature[65];

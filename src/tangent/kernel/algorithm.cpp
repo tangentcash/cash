@@ -178,7 +178,7 @@ namespace tangent
 		{
 			distribution result;
 			result.signature = evaluate(alg, seed.data);
-			result.value = hashing::hash256i(*crypto::hash_raw(digests::SHA512(), result.signature));
+			result.value = hashing::hash256i(*crypto::hash_raw(digests::sha512(), result.signature));
 			return result;
 		}
 		wesolowski::parameters wesolowski::calibrate(uint64_t confidence, uint64_t target_time)
@@ -1095,7 +1095,7 @@ namespace tangent
 				stringify::to_upper(handle);
 				if (!contract_address.empty())
 				{
-					auto hash = codec::base64_url_encode(*crypto::hash_raw(digests::SHA1(), format::util::is_hex_encoding(contract_address) ? codec::hex_decode(contract_address) : string(contract_address)));
+					auto hash = codec::base64_url_encode(*crypto::hash_raw(digests::sha1(), format::util::is_hex_encoding(contract_address) ? codec::hex_decode(contract_address) : string(contract_address)));
 					handle.append(1, ':').append(hash.substr(0, 32 - handle.size()));
 				}
 			}

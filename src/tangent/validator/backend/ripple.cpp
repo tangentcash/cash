@@ -517,7 +517,7 @@ namespace tangent
 				buffer.transaction_type = 0;
 				buffer.flags = 0;
 				buffer.sequence = (uint32_t)account_info->sequence;
-				buffer.destination_tag = (uint32_t)subject.address_index.otherwise(0);
+				buffer.destination_tag = (uint32_t)subject.address_index.or_else(0);
 				buffer.last_ledger_sequence = (uint32_t)ledger_info->sequence;
 				if (contract_address)
 				{

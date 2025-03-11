@@ -513,8 +513,8 @@ namespace tangent
 		{
 			format::stream message;
 			message.write_integer(asset);
-			message.write_string(*crypto::hash_raw(digests::SHA512(), std::string_view((char*)private_key, sizeof(algorithm::seckey))));
-			return new_master_wallet(asset, *crypto::hash_raw(digests::SHA512(), message.data));
+			message.write_string(*crypto::hash_raw(digests::sha512(), std::string_view((char*)private_key, sizeof(algorithm::seckey))));
+			return new_master_wallet(asset, *crypto::hash_raw(digests::sha512(), message.data));
 		}
 		expects_lr<mediator::derived_signing_wallet> server_node::new_signing_wallet(const algorithm::asset_id& asset, const mediator::master_wallet& wallet, option<uint64_t>&& address_index)
 		{
@@ -635,7 +635,7 @@ namespace tangent
 			if (!implementation)
 				return layer_exception("chain not found");
 
-			if (wallet.max_address_index < signing_wallet.address_index.otherwise(0))
+			if (wallet.max_address_index < signing_wallet.address_index.or_else(0))
 				return layer_exception("bad address index");
 
 			storages::mediatorstate state = storages::mediatorstate(__func__, asset);

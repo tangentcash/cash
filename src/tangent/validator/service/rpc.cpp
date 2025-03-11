@@ -153,7 +153,7 @@ namespace tangent
 				string method = request->get_var("method").get_blob();
 				string id = request->get_var("id").get_blob();
 				VI_INFO("[rpc] peer %s call %s: %s (params: %" PRIu64 ", time: %" PRId64 " ms)",
-					base->get_peer_ip_address().otherwise("[bad_address]").c_str(),
+					base->get_peer_ip_address().or_else("[bad_address]").c_str(),
 					method.empty() ? "[bad_method]" : method.c_str(),
 					response.error_message.empty() ? (response.data ? (response.data->value.is_object() ? stringify::text("%" PRIu64 " rows", (uint64_t)response.data->size()).c_str() : "[value]") : "[null]") : response.error_message.c_str(),
 					(uint64_t)(params ? (params->value.is_object() ? params->size() : 1) : 0),
@@ -776,7 +776,7 @@ namespace tangent
 		server_response server_node::utility_decode_transaction(http::connection* base, format::variables&& args)
 		{
 			format::stream message = format::stream::decode(args[0].as_blob());
-			uptr<ledger::transaction> candidate_tx = transactions::resolver::init(messages::authentic::resolve_type(message).otherwise(0));
+			uptr<ledger::transaction> candidate_tx = transactions::resolver::init(messages::authentic::resolve_type(message).or_else(0));
 			if (!candidate_tx || !candidate_tx->load(message))
 				return server_response().error(error_codes::bad_params, "invalid message");
 
@@ -2316,7 +2316,7 @@ namespace tangent
 		server_response server_node::mempoolstate_get_estimate_transaction_gas(http::connection* base, format::variables&& args)
 		{
 			format::stream message = format::stream::decode(args[0].as_blob());
-			uptr<ledger::transaction> candidate_tx = transactions::resolver::init(messages::authentic::resolve_type(message).otherwise(0));
+			uptr<ledger::transaction> candidate_tx = transactions::resolver::init(messages::authentic::resolve_type(message).or_else(0));
 			if (!candidate_tx || !candidate_tx->load(message))
 				return server_response().error(error_codes::bad_params, "invalid message");
 
@@ -2325,7 +2325,7 @@ namespace tangent
 		server_response server_node::mempoolstate_get_optimal_transaction_gas(http::connection* base, format::variables&& args)
 		{
 			format::stream message = format::stream::decode(args[0].as_blob());
-			uptr<ledger::transaction> candidate_tx = transactions::resolver::init(messages::authentic::resolve_type(message).otherwise(0));
+			uptr<ledger::transaction> candidate_tx = transactions::resolver::init(messages::authentic::resolve_type(message).or_else(0));
 			if (!candidate_tx || !candidate_tx->load(message))
 				return server_response().error(error_codes::bad_params, "invalid message");
 
@@ -2338,7 +2338,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_request, "validator node disabled");
 
 			format::stream message = prebuilt ? format::stream() : format::stream::decode(args[0].as_blob());
-			uptr<ledger::transaction> candidate_tx = prebuilt ? prebuilt : transactions::resolver::init(messages::authentic::resolve_type(message).otherwise(0));
+			uptr<ledger::transaction> candidate_tx = prebuilt ? prebuilt : transactions::resolver::init(messages::authentic::resolve_type(message).or_else(0));
 			if (!prebuilt)
 			{
 				if (!candidate_tx || !candidate_tx->load(message))
@@ -2583,7 +2583,7 @@ namespace tangent
 		{
 			auto chain = storages::chainstate(__func__);
 			auto checkpoint = ledger::block_checkpoint();
-			checkpoint.old_tip_block_number = chain.get_latest_block_number().otherwise(0);
+			checkpoint.old_tip_block_number = chain.get_latest_block_number().or_else(0);
 			checkpoint.new_tip_block_number = checkpoint.old_tip_block_number;
 			if (!checkpoint.new_tip_block_number)
 				return server_response().error(error_codes::not_found, "block tip not found");
@@ -2609,8 +2609,8 @@ namespace tangent
 			uint64_t target_number = current_number + count;
 			bool validate = args.size() > 2 ? args[2].as_boolean() : false;
 			auto chain = storages::chainstate(__func__);
-			auto checkpoint_number = chain.get_checkpoint_block_number().otherwise(0);
-			auto tip_number = chain.get_latest_block_number().otherwise(0);
+			auto checkpoint_number = chain.get_checkpoint_block_number().or_else(0);
+			auto tip_number = chain.get_latest_block_number().or_else(0);
 			auto parent_block = current_number > 1 ? chain.get_block_header_by_number(current_number - 1) : expects_lr<ledger::block_header>(layer_exception());
 			uptr<schema> data = var::set::array();
 			while (current_number < target_number)
@@ -2837,7 +2837,7 @@ namespace tangent
 				auto& address = node->get_peer_address();
 				auto ip_address = address.get_ip_address();
 				auto ip_port = address.get_ip_port();
-				candidates->push(var::string(ip_port ? ip_address.otherwise("[???]") + ":" + to_string(*ip_port) : ip_address.otherwise("[???]")));
+				candidates->push(var::string(ip_port ? ip_address.or_else("[???]") + ":" + to_string(*ip_port) : ip_address.or_else("[???]")));
 			}
 
 			auto* forks = data->set("forks", var::set::array());
@@ -2867,7 +2867,7 @@ namespace tangent
 			}
 
 			data->set("version", var::string(algorithm::encoding::encode_0xhex128(protocol::now().message.protocol_version)));
-			data->set("checkpoint", algorithm::encoding::serialize_uint256(chain.get_checkpoint_block_number().otherwise(0)));
+			data->set("checkpoint", algorithm::encoding::serialize_uint256(chain.get_checkpoint_block_number().or_else(0)));
 			return server_response().success(data.reset());
 		}
 		server_response server_node::proposerstate_submit_block(http::connection* base, format::variables&& args)
@@ -2902,7 +2902,7 @@ namespace tangent
 			if (args.size() > 3)
 			{
 				auto assets = nss::server_node::get()->get_assets();
-				auto observers = context.get_account_observers(validator->validator.wallet.public_key_hash, 0, assets.size()).otherwise(vector<states::account_observer>());
+				auto observers = context.get_account_observers(validator->validator.wallet.public_key_hash, 0, assets.size()).or_else(vector<states::account_observer>());
 				for (auto& id : stringify::split(args[3].as_string(), ','))
 				{
 					auto asset = algorithm::asset::id_of_handle(stringify::trim(id));
@@ -2918,7 +2918,7 @@ namespace tangent
 			}
 
 			umutex<std::recursive_mutex> unique(validator->sync.account);
-			auto account_sequence = validator->validator.wallet.get_latest_sequence().otherwise(1);
+			auto account_sequence = validator->validator.wallet.get_latest_sequence().or_else(1);
 			unique.unlock();
 
 			uint256_t candidate_hash = 0;
@@ -2937,7 +2937,7 @@ namespace tangent
 			transaction->asset = algorithm::asset::id_of_handle(args[0].as_string());
 
 			umutex<std::recursive_mutex> unique(validator->sync.account);
-			auto account_sequence = validator->validator.wallet.get_latest_sequence().otherwise(1);
+			auto account_sequence = validator->validator.wallet.get_latest_sequence().or_else(1);
 			unique.unlock();
 
 			uint256_t candidate_hash = 0;
@@ -2962,7 +2962,7 @@ namespace tangent
 			transaction->set_witness(validator->validator.wallet.secret_key, initiator->receipt.transaction_hash);
 
 			umutex<std::recursive_mutex> unique(validator->sync.account);
-			auto account_sequence = validator->validator.wallet.get_latest_sequence().otherwise(1);
+			auto account_sequence = validator->validator.wallet.get_latest_sequence().or_else(1);
 			unique.unlock();
 
 			uint256_t candidate_hash = 0;
@@ -3004,7 +3004,7 @@ namespace tangent
 			transaction->set_outgoing_fee(args[3].as_decimal(), args[4].as_decimal());
 
 			umutex<std::recursive_mutex> unique(validator->sync.account);
-			auto account_sequence = validator->validator.wallet.get_latest_sequence().otherwise(1);
+			auto account_sequence = validator->validator.wallet.get_latest_sequence().or_else(1);
 			unique.unlock();
 
 			uint256_t candidate_hash = 0;
@@ -3028,7 +3028,7 @@ namespace tangent
 			transaction->set_proposer(owner, args[1].as_decimal());
 
 			umutex<std::recursive_mutex> unique(validator->sync.account);
-			auto account_sequence = validator->validator.wallet.get_latest_sequence().otherwise(1);
+			auto account_sequence = validator->validator.wallet.get_latest_sequence().or_else(1);
 			unique.unlock();
 
 			uint256_t candidate_hash = 0;

@@ -263,7 +263,7 @@ namespace tangent
 				return layer_exception("invalid location");
 
 			auto data = std::string_view(calldata).substr(1);
-			auto type = get_calldata_type().otherwise(calldata_type::hashcode);
+			auto type = get_calldata_type().or_else(calldata_type::hashcode);
 			auto* host = ledger::script_host::get();
 			auto compiler = host->allocate();
 			switch (type)
@@ -423,7 +423,7 @@ namespace tangent
 			args = std::move(new_args);
 			calldata.clear();
 			calldata.assign(1, (char)calldata_type::program);
-			calldata.append(ledger::script_host::get()->pack(new_calldata).otherwise(string()));
+			calldata.append(ledger::script_host::get()->pack(new_calldata).or_else(string()));
 		}
 		void deployment::set_hashcode_calldata(const std::string_view& new_calldata, format::variables&& new_args)
 		{
@@ -453,7 +453,7 @@ namespace tangent
 			recover_location(owner);
 
 			std::string_view name;
-			switch (get_calldata_type().otherwise((calldata_type)(uint8_t)0))
+			switch (get_calldata_type().or_else((calldata_type)(uint8_t)0))
 			{
 				case calldata_type::program:
 					name = "program";
@@ -1353,7 +1353,7 @@ namespace tangent
 			if (!validation)
 				return validation.error();
 
-			bool goes_online = online.otherwise(false);
+			bool goes_online = online.or_else(false);
 			for (auto& mediator : observers)
 				goes_online = mediator.second || goes_online;
 
@@ -1634,7 +1634,7 @@ namespace tangent
 					continue;
 				}
 
-				auto depository = context->get_account_depository(asset, (uint8_t*)item.first.data()).otherwise(states::account_depository((uint8_t*)item.first.data(), context->block));
+				auto depository = context->get_account_depository(asset, (uint8_t*)item.first.data()).or_else(states::account_depository((uint8_t*)item.first.data(), context->block));
 				depository.custody += item.second.custody;
 				for (auto& coverage : item.second.contributions)
 				{
@@ -3305,7 +3305,7 @@ namespace tangent
 			entropy.write_typeless(deallocation->receipt.transaction_hash);
 			entropy.write_typeless(activation->receipt.transaction_hash);
 			entropy.write_typeless(selection->receipt.transaction_hash);
-			encrypted_secret_key1 = algorithm::signing::public_encrypt(deallocation_transaction->cipher_public_key1, std::string_view((char*)secret_key1, sizeof(secret_key1)), entropy.data).otherwise(string());
+			encrypted_secret_key1 = algorithm::signing::public_encrypt(deallocation_transaction->cipher_public_key1, std::string_view((char*)secret_key1, sizeof(secret_key1)), entropy.data).or_else(string());
 			if (encrypted_secret_key1.empty())
 				return layer_exception("secret key encryption error");
 
@@ -3514,7 +3514,7 @@ namespace tangent
 			entropy.write_typeless(deallocation->receipt.transaction_hash);
 			entropy.write_typeless(activation->receipt.transaction_hash);
 			entropy.write_typeless(selection->receipt.transaction_hash);
-			encrypted_secret_key2 = algorithm::signing::public_encrypt(deallocation_transaction->cipher_public_key2, std::string_view((char*)secret_key2, sizeof(secret_key2)), entropy.data).otherwise(string());
+			encrypted_secret_key2 = algorithm::signing::public_encrypt(deallocation_transaction->cipher_public_key2, std::string_view((char*)secret_key2, sizeof(secret_key2)), entropy.data).or_else(string());
 			if (encrypted_secret_key2.empty())
 				return layer_exception("secret key encryption error");
 

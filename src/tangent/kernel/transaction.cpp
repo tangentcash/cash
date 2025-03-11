@@ -675,12 +675,12 @@ namespace tangent
 			{
 				auto it = aggregators->find(asset);
 				if (it == aggregators->end())
-					(*aggregators)[asset] = committee = context->calculate_aggregation_committee_size(asset).otherwise(0);
+					(*aggregators)[asset] = committee = context->calculate_aggregation_committee_size(asset).or_else(0);
 				else
 					committee = it->second;
 			}
 			else
-				committee = context->calculate_aggregation_committee_size(asset).otherwise(0);
+				committee = context->calculate_aggregation_committee_size(asset).or_else(0);
 
 			cumulative_consensus consensus;
 			consensus.branch = branch;

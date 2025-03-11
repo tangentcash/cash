@@ -47,7 +47,7 @@ namespace tangent
 		}
 		bool block_transaction::load_payload(format::stream& stream)
 		{
-			transaction = tangent::transactions::resolver::init(messages::authentic::resolve_type(stream).otherwise(0));
+			transaction = tangent::transactions::resolver::init(messages::authentic::resolve_type(stream).or_else(0));
 			if (transaction && !transaction->load(stream))
 				return false;
 
@@ -922,7 +922,7 @@ namespace tangent
 				finalized_transactions.insert(transaction.receipt.transaction_hash);
 
 			block_checkpoint mutation;
-			mutation.old_tip_block_number = chain.get_latest_block_number().otherwise(0);
+			mutation.old_tip_block_number = chain.get_latest_block_number().or_else(0);
 			mutation.new_tip_block_number = number;
 			mutation.block_delta = 1;
 			mutation.transaction_delta = transaction_count;
@@ -1103,7 +1103,7 @@ namespace tangent
 			states.clear();
 			for (size_t i = 0; i < states_size; i++)
 			{
-				uptr<ledger::state> value = states::resolver::init(messages::standard::resolve_type(stream).otherwise(0));
+				uptr<ledger::state> value = states::resolver::init(messages::standard::resolve_type(stream).or_else(0));
 				if (!value || !value->load(stream))
 					return false;
 
@@ -1629,7 +1629,7 @@ namespace tangent
 
 			algorithm::wesolowski::distribution distribution;
 			distribution.signature = message.data;
-			distribution.value = algorithm::hashing::hash256i(*crypto::hash_raw(digests::SHA512(), distribution.signature));
+			distribution.value = algorithm::hashing::hash256i(*crypto::hash_raw(digests::sha512(), distribution.signature));
 			return distribution;
 		}
 		expects_lr<size_t> transaction_context::calculate_aggregation_committee_size(const algorithm::asset_id& asset)
@@ -1649,7 +1649,7 @@ namespace tangent
 			auto chain = storages::chainstate(__func__);
 			auto filter = storages::factor_filter::greater_equal(0, -1);
 			auto window = storages::factor_index_window();
-			auto pool = chain.get_multiforms_count_by_row_filter(states::account_work::as_instance_row(), filter, nonce).otherwise(0);
+			auto pool = chain.get_multiforms_count_by_row_filter(states::account_work::as_instance_row(), filter, nonce).or_else(0);
 			auto size = std::min(target_size, pool);
 			auto indices = ordered_set<size_t>();
 			while (indices.size() < size)
@@ -1688,7 +1688,7 @@ namespace tangent
 			auto nonce = get_validation_nonce();
 			auto chain = storages::chainstate(__func__);
 			auto filter = storages::factor_filter::greater_equal(0, -1);
-			auto pool = chain.get_multiforms_count_by_row_filter(states::account_work::as_instance_row(), filter, nonce).otherwise(0);
+			auto pool = chain.get_multiforms_count_by_row_filter(states::account_work::as_instance_row(), filter, nonce).or_else(0);
 			if (pool < required_size)
 				return layer_exception("committee threshold not met");
 
@@ -2425,7 +2425,7 @@ namespace tangent
 				return layer_exception("invalid signature");
 
 			auto chain = storages::chainstate(__func__);
-			return new_transaction->validate(chain.get_latest_block_number().otherwise(1));
+			return new_transaction->validate(chain.get_latest_block_number().or_else(1));
 		}
 		expects_lr<transaction_context> transaction_context::execute_tx(ledger::block* new_block, const ledger::evaluation_context* new_environment, const ledger::transaction* new_transaction, const uint256_t& new_transaction_hash, const algorithm::pubkeyhash owner, block_work& cache, size_t transaction_size, uint8_t flags)
 		{
@@ -2599,7 +2599,7 @@ namespace tangent
 				auto chain = storages::chainstate(__func__);
 				auto latest = chain.get_latest_block_number();
 				tip = **parent_block;
-				validation.tip = latest.otherwise(tip->number) < (tip->number + 1);
+				validation.tip = latest.or_else(tip->number) < (tip->number + 1);
 			}
 			else
 			{

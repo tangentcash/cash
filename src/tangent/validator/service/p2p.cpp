@@ -382,7 +382,7 @@ namespace tangent
 				}
 
 				if (protocol::now().user.p2p.logging)
-					VI_WARN("[p2p] peer %s:%i channel skip: host not reachable", error_address->get_ip_address().otherwise("[bad_address]").c_str(), (int)error_address->get_ip_port().otherwise(0));
+					VI_WARN("[p2p] peer %s:%i channel skip: host not reachable", error_address->get_ip_address().or_else("[bad_address]").c_str(), (int)error_address->get_ip_port().or_else(0));
 			}
 		retry_validator:
 			auto next_validator = mempool.get_validator_by_preference(discovery.offset);
@@ -397,7 +397,7 @@ namespace tangent
 					goto retry_trial_address;
 
 				if (protocol::now().user.p2p.logging)
-					VI_INFO("[p2p] peer %s:%i channel try: possibly candidate node", next_trial_address->get_ip_address().otherwise(string("[bad_address]")).c_str(), (int)next_trial_address->get_ip_port().otherwise(0));
+					VI_INFO("[p2p] peer %s:%i channel try: possibly candidate node", next_trial_address->get_ip_address().or_else(string("[bad_address]")).c_str(), (int)next_trial_address->get_ip_port().or_else(0));
 
 				return promise<option<socket_address>>(std::move(*next_trial_address));
 			}
@@ -416,7 +416,7 @@ namespace tangent
 			}
 
 			if (protocol::now().user.p2p.logging)
-				VI_INFO("[p2p] peer %s:%i channel try: previosly connected node", next_validator->address.get_ip_address().otherwise(string("[bad_address]")).c_str(), (int)next_validator->address.get_ip_port().otherwise(0));
+				VI_INFO("[p2p] peer %s:%i channel try: previosly connected node", next_validator->address.get_ip_address().or_else(string("[bad_address]")).c_str(), (int)next_validator->address.get_ip_port().or_else(0));
 
 			return promise<option<socket_address>>(std::move(next_validator->address));
 		}
@@ -491,7 +491,7 @@ namespace tangent
 		promise<void> server_node::propose_transaction_logs(const mediator::chain_supervisor_options& options, mediator::transaction_logs&& logs)
 		{
 			umutex<std::recursive_mutex> unique(sync.account);
-			auto account_sequence = validator.wallet.get_latest_sequence().otherwise(1);
+			auto account_sequence = validator.wallet.get_latest_sequence().or_else(1);
 			unique.unlock();
 
 			for (auto& receipt : logs.transactions)
@@ -530,7 +530,7 @@ namespace tangent
 
 			auto& peer = protocol::now().user.p2p;
 			peer_validator->availability.latency = latency_time;
-			peer_validator->address = socket_address(from->peer_address(), peer_validator->address.get_ip_port().otherwise(protocol::now().user.p2p.port));
+			peer_validator->address = socket_address(from->peer_address(), peer_validator->address.get_ip_port().or_else(protocol::now().user.p2p.port));
 			if (!peer_validator->is_valid())
 				return return_abort(relayer, *from, __func__, "invalid validator");
 
@@ -561,7 +561,7 @@ namespace tangent
 			if (!peer_validator)
 				return return_abort(relayer, *from, __func__, "validator not found");
 
-			if (self_validator.address.get_ip_address().otherwise(string()) != relayer->validator.node.address.get_ip_address().otherwise(string()) || self_validator.availability.latency != relayer->validator.node.availability.latency)
+			if (self_validator.address.get_ip_address().or_else(string()) != relayer->validator.node.address.get_ip_address().or_else(string()) || self_validator.availability.latency != relayer->validator.node.availability.latency)
 			{
 				auto mempool = storages::mempoolstate(__func__);
 				relayer->validator.node = std::move(self_validator);
@@ -843,7 +843,7 @@ namespace tangent
 				return return_abort(relayer, *from, __func__, "invalid arguments");
 
 			format::stream message = format::stream(args.front().as_blob());
-			uptr<ledger::transaction> candidate = tangent::transactions::resolver::init(messages::authentic::resolve_type(message).otherwise(0));
+			uptr<ledger::transaction> candidate = tangent::transactions::resolver::init(messages::authentic::resolve_type(message).or_else(0));
 			if (!candidate)
 				return return_error(relayer, *from, __func__, "invalid transaction");
 
@@ -1015,7 +1015,7 @@ namespace tangent
 
 			auto status = mempool.apply_validator(node, std::move(wallet));
 			if (status && !has_wallet)
-				discovery.count = mempool.get_validators_count().otherwise(0);
+				discovery.count = mempool.get_validators_count().or_else(0);
 			return status;
 		}
 		void server_node::bind_function(receive_function function, bool multicallable)
@@ -1351,7 +1351,7 @@ namespace tangent
 				VI_INFO("[p2p] p2p node listen (type: out)");
 
 			auto mempool = storages::mempoolstate(__func__);
-			discovery.count = mempool.get_validators_count().otherwise(0);
+			discovery.count = mempool.get_validators_count().or_else(0);
 
 			auto main_validator = mempool.get_validator_by_ownership(0);
 			if (!main_validator)
@@ -1491,7 +1491,7 @@ namespace tangent
 			return control_sys.timeout_if_none("accept_mempool", 0, [this]()
 			{
 			retry:
-				if (mempool.activation_block && (!*mempool.activation_block || *mempool.activation_block <= storages::chainstate(__func__).get_latest_block_number().otherwise(0)))
+				if (mempool.activation_block && (!*mempool.activation_block || *mempool.activation_block <= storages::chainstate(__func__).get_latest_block_number().or_else(0)))
 				{
 					if (*mempool.activation_block != 0)
 						mempool.activation_block = 0;
@@ -1579,7 +1579,7 @@ namespace tangent
 						if (!dispatch->outputs.empty())
 						{
 							umutex<std::recursive_mutex> unique(sync.account);
-							auto account_sequence = validator.wallet.get_latest_sequence().otherwise(1);
+							auto account_sequence = validator.wallet.get_latest_sequence().or_else(1);
 							unique.unlock();
 
 							control_sys.lock_timeout("accept_mempool");
@@ -1854,14 +1854,14 @@ namespace tangent
 					accept_mempool();
 				}
 				else if (protocol::now().user.p2p.logging)
-					VI_ERR("[p2p] transaction %s %.*s error: %s", algorithm::encoding::encode_0xhex256(transaction.transaction->as_hash()).c_str(), (int)purpose.size(), purpose.data(), transaction.receipt.get_error_messages().otherwise(string("execution error")).c_str());
+					VI_ERR("[p2p] transaction %s %.*s error: %s", algorithm::encoding::encode_0xhex256(transaction.transaction->as_hash()).c_str(), (int)purpose.size(), purpose.data(), transaction.receipt.get_error_messages().or_else(string("execution error")).c_str());
 			}
 			else if (protocol::now().user.p2p.logging)
 			{
 				if (transaction.receipt.successful)
 					VI_INFO("[p2p] transaction %s %.*s finalized", algorithm::encoding::encode_0xhex256(transaction.transaction->as_hash()).c_str(), (int)purpose.size(), purpose.data());
 				else
-					VI_ERR("[p2p] transaction %s %.*s error: %s", algorithm::encoding::encode_0xhex256(transaction.transaction->as_hash()).c_str(), (int)purpose.size(), purpose.data(), transaction.receipt.get_error_messages().otherwise(string("execution error")).c_str());
+					VI_ERR("[p2p] transaction %s %.*s error: %s", algorithm::encoding::encode_0xhex256(transaction.transaction->as_hash()).c_str(), (int)purpose.size(), purpose.data(), transaction.receipt.get_error_messages().or_else(string("execution error")).c_str());
 			}
 			return true;
 		}
@@ -1879,7 +1879,7 @@ namespace tangent
 			if (bandwidth->congested)
 			{
 				auto price = mempool.get_gas_price(candidate_tx->asset, 0.10);
-				candidate_tx->set_optimal_gas(price.otherwise(decimal::zero()));
+				candidate_tx->set_optimal_gas(price.or_else(decimal::zero()));
 			}
 			else
 				candidate_tx->set_optimal_gas(decimal::zero());

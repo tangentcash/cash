@@ -93,7 +93,7 @@ namespace tangent
 
 			schema_list map;
 			map.push_back(var::set::binary(hash, sizeof(hash)));
-			map.push_back(var::set::integer(value.address_index.otherwise(0)));
+			map.push_back(var::set::integer(value.address_index.or_else(0)));
 			map.push_back(var::set::integer(date_time().milliseconds()));
 			map.push_back(var::set::binary(*blob));
 

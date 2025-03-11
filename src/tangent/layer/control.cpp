@@ -39,7 +39,7 @@ namespace tangent
 	{
 		string URI = string(protocol);
 		URI.append("://");
-		URI.append(address.get_ip_address().otherwise("[bad_address]"));
+		URI.append(address.get_ip_address().or_else("[bad_address]"));
 
 		auto ip_port = address.get_ip_port();
 		if (ip_port)

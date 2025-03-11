@@ -121,7 +121,7 @@ public:
 		{
 			auto* server = nss::server_node::get();
 			auto& [user1, user1_sequence] = users[0];
-			auto ethereum_seed = *crypto::hash_raw(digests::SHA256(), string((char*)user1.public_key_hash, sizeof(user1.public_key_hash)) + "ETH");
+			auto ethereum_seed = *crypto::hash_raw(digests::sha256(), string((char*)user1.public_key_hash, sizeof(user1.public_key_hash)) + "ETH");
 			auto ethereum_wallet = server->new_signing_wallet(algorithm::asset::id_of("ETH"), server->new_master_wallet(algorithm::asset::id_of("ETH"), ethereum_seed).expect("master wallet not derived")).expect("signing wallet not derived");
 			auto* pubkey_account_ethereum = memory::init<transactions::pubkey_account>();
 			pubkey_account_ethereum->set_asset("ETH");
@@ -131,7 +131,7 @@ public:
 			VI_PANIC(pubkey_account_ethereum->sign(user1.secret_key, user1_sequence++), "account not signed");
 			transactions.push_back(pubkey_account_ethereum);
 
-			auto ripple_seed = *crypto::hash_raw(digests::SHA256(), string((char*)user1.public_key_hash, sizeof(user1.public_key_hash)) + "XRP");
+			auto ripple_seed = *crypto::hash_raw(digests::sha256(), string((char*)user1.public_key_hash, sizeof(user1.public_key_hash)) + "XRP");
 			auto ripple_wallet = server->new_signing_wallet(algorithm::asset::id_of("XRP"), server->new_master_wallet(algorithm::asset::id_of("XRP"), ripple_seed).expect("master wallet not derived")).expect("signing wallet not derived");
 			auto* pubkey_account_ripple = memory::init<transactions::pubkey_account>();
 			pubkey_account_ripple->set_asset("XRP");
@@ -141,7 +141,7 @@ public:
 			VI_PANIC(pubkey_account_ripple->sign(user1.secret_key, user1_sequence++), "account not signed");
 			transactions.push_back(pubkey_account_ripple);
 
-			auto bitcoin_seed = *crypto::hash_raw(digests::SHA256(), string((char*)user1.public_key_hash, sizeof(user1.public_key_hash)) + "BTC");
+			auto bitcoin_seed = *crypto::hash_raw(digests::sha256(), string((char*)user1.public_key_hash, sizeof(user1.public_key_hash)) + "BTC");
 			auto bitcoin_wallet = server->new_signing_wallet(algorithm::asset::id_of("BTC"), server->new_master_wallet(algorithm::asset::id_of("BTC"), bitcoin_seed).expect("master wallet not derived")).expect("signing wallet not derived");
 			auto* pubkey_account_bitcoin = memory::init<transactions::pubkey_account>();
 			pubkey_account_bitcoin->set_asset("BTC");
@@ -1026,8 +1026,8 @@ public:
 		for (auto& id : server->get_assets())
 		{
 			auto alg = server->get_chainparams(id)->composition;
-			string hash1 = *crypto::hash_raw(digests::SHA256(), "seed1");
-			string hash2 = *crypto::hash_raw(digests::SHA256(), "seed2");
+			string hash1 = *crypto::hash_raw(digests::sha256(), "seed1");
+			string hash2 = *crypto::hash_raw(digests::sha256(), "seed2");
 			string bytes1 = *crypto::random_bytes(64);
 			string bytes2 = *crypto::random_bytes(64);
 			string message = "Hello, world!";
@@ -1129,7 +1129,7 @@ public:
 		auto& tx = *(transactions::transfer*)*transactions.back();
 		auto tx_blob = tx.as_message().data;
 		auto tx_body = format::stream(tx_blob);
-		auto tx_copy = uptr<ledger::transaction>(transactions::resolver::init(messages::authentic::resolve_type(tx_body).otherwise(0)));
+		auto tx_copy = uptr<ledger::transaction>(transactions::resolver::init(messages::authentic::resolve_type(tx_body).or_else(0)));
 		auto tx_info = tx.as_schema();
 		algorithm::pubkeyhash recover_public_key_hash = { 0 };
 		tx_info->set("recovery_test", var::string(tx.recover_hash(recover_public_key_hash) && !memcmp(wallet.public_key_hash, recover_public_key_hash, sizeof(recover_public_key_hash)) ? "passed" : "failed"));
@@ -1288,7 +1288,7 @@ public:
 	{
 		auto* term = console::get();
 		auto chain = storages::chainstate(__func__);
-		VI_PANIC(!chain.get_checkpoint_block_number().otherwise(0), "blockchain cannot be validated without re-executing entire blockchain");
+		VI_PANIC(!chain.get_checkpoint_block_number().or_else(0), "blockchain cannot be validated without re-executing entire blockchain");
 
 		uint64_t current_number = 1;
 		uptr<schema> data = var::set::array();
@@ -1398,7 +1398,7 @@ public:
 	static ledger::block new_block_from_generator(schema* results, vector<account>& users, std::function<void(vector<uptr<ledger::transaction>>&, vector<account>&)>&& test_case, const std::string_view& test_case_call, const std::string_view& state_root_hash, uint64_t block_number)
 	{
 		for (auto& user : users)
-			user.sequence = user.wallet.get_latest_sequence().otherwise(1);
+			user.sequence = user.wallet.get_latest_sequence().or_else(1);
 
 		vector<uptr<ledger::transaction>> transactions;
 		test_case(transactions, users);
@@ -1418,7 +1418,7 @@ public:
 		uint64_t priority = std::numeric_limits<uint64_t>::max();
 		for (auto& user : users)
 		{
-			priority = environment.priority(user.wallet.public_key_hash, user.wallet.secret_key).otherwise(std::numeric_limits<uint64_t>::max());
+			priority = environment.priority(user.wallet.public_key_hash, user.wallet.secret_key).or_else(std::numeric_limits<uint64_t>::max());
 			if (!priority)
 				break;
 		}
@@ -1436,7 +1436,7 @@ public:
 				if (memcmp(attestation_user.public_key_hash, user, sizeof(user)) != 0)
 					VI_PANIC(((ledger::aggregation_transaction*)*transaction)->attestate(attestation_user.secret_key), "transaction not attested");
 			}
-			transaction->gas_limit = ledger::transaction_context::calculate_tx_gas(*transaction).otherwise(transaction->gas_limit);
+			transaction->gas_limit = ledger::transaction_context::calculate_tx_gas(*transaction).or_else(transaction->gas_limit);
 		}
 
 		if (!environment.apply(std::move(transactions)))
@@ -1463,7 +1463,7 @@ public:
 			auto user_dispatch = proposal.dispatch_sync(user);
 			if (user_dispatch && !user_dispatch->outputs.empty())
 			{
-				user_sequence = user.get_latest_sequence().otherwise(1);
+				user_sequence = user.get_latest_sequence().or_else(1);
 				for (auto& transaction : user_dispatch->outputs)
 				{
 					if (transaction->get_type() == ledger::transaction_level::aggregation)
@@ -1474,7 +1474,7 @@ public:
 							if (memcmp(attestation_user.public_key_hash, user.public_key_hash, sizeof(user.public_key_hash)) != 0)
 								VI_PANIC(((ledger::aggregation_transaction*)*transaction)->attestate(attestation_user.secret_key), "dispatch transaction not attested");
 						}
-						transaction->gas_limit = ledger::transaction_context::calculate_tx_gas(*transaction).otherwise(transaction->gas_limit);
+						transaction->gas_limit = ledger::transaction_context::calculate_tx_gas(*transaction).or_else(transaction->gas_limit);
 					}
 					else
 						VI_PANIC(transaction->sign(user.secret_key, user_sequence++, decimal::zero()), "dispatch transaction not signed");
@@ -1510,7 +1510,7 @@ public:
 		std::string_view config = argv[1];
 		std::string_view number = config.substr(config.find('-') + 1);
 		protocol params = protocol(argc, argv);
-		uint32_t index = from_string<uint32_t>(number.substr(0, number.find_first_not_of("0123456789"))).otherwise(1);
+		uint32_t index = from_string<uint32_t>(number.substr(0, number.find_first_not_of("0123456789"))).or_else(1);
 
 		ledger::wallet wallet = ledger::wallet::from_seed(stringify::text("00000%i", index - 1));
 		ledger::validator node;
@@ -1904,7 +1904,7 @@ public:
 				uint64_t block_count = uint64_t(uint256_t(args[2], 10));
 				uint64_t current_number = block_number;
 				auto chain = storages::chainstate(__func__);
-				if (current_number < chain.get_checkpoint_block_number().otherwise(0))
+				if (current_number < chain.get_checkpoint_block_number().or_else(0))
 				{
 					term->write_line("block cannot be validated without re-executing entire blockchain");
 					continue;

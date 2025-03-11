@@ -270,23 +270,23 @@ namespace tangent
 	string vectorstate::init()
 	{
 		auto data = *crypto::random_bytes(KEY_SIZE);
-		auto checksum = *crypto::hash_raw(digests::SHA256(), data);
+		auto checksum = *crypto::hash_raw(digests::sha256(), data);
 		return data + checksum;
 	}
 	void vectorstate::use(network_type type, const std::string_view& data)
 	{
 		VI_PANIC(data.size() == KEY_SIZE + 32, "invalid key size");
-		VI_PANIC(*crypto::hash_raw(digests::SHA256(), data.substr(0, KEY_SIZE)) == data.substr(KEY_SIZE), "invalid key checksum");
+		VI_PANIC(*crypto::hash_raw(digests::sha256(), data.substr(0, KEY_SIZE)) == data.substr(KEY_SIZE), "invalid key checksum");
 		string blob = to_string((uint8_t)type) + string(data);
 		for (size_t i = 0; i < data.size(); i++)
-			blob = *crypto::hash_raw(digests::SHA256(), blob);
+			blob = *crypto::hash_raw(digests::sha256(), blob);
 		key = secret_box::secure(blob);
 	}
 	expects_lr<string> vectorstate::encrypt_blob(const std::string_view& data) const
 	{
 		auto front = *crypto::random_bytes(KEY_FRONT), back = *crypto::random_bytes(KEY_BACK);
-		auto salt = crypto::hash_raw(digests::SHA256(), front + back);
-		auto result = crypto::encrypt(ciphers::AES_256_CBC(), data, key, secret_box::view(*salt));
+		auto salt = crypto::hash_raw(digests::sha256(), front + back);
+		auto result = crypto::encrypt(ciphers::aes_256_cbc(), data, key, secret_box::view(*salt));
 		if (!result)
 			return layer_exception(std::move(result.error().message()));
 
@@ -300,8 +300,8 @@ namespace tangent
 			return layer_exception("invalid blob");
 
 		auto front = data.substr(0, KEY_FRONT), back = data.substr(data.size() - KEY_BACK);
-		auto salt = crypto::hash_raw(digests::SHA256(), string(front) + string(back));
-		auto result = crypto::decrypt(ciphers::AES_256_CBC(), data.substr(KEY_FRONT, data.size() - KEY_FRONT - KEY_BACK), key, secret_box::view(*salt));
+		auto salt = crypto::hash_raw(digests::sha256(), string(front) + string(back));
+		auto result = crypto::decrypt(ciphers::aes_256_cbc(), data.substr(KEY_FRONT, data.size() - KEY_FRONT - KEY_BACK), key, secret_box::view(*salt));
 		if (!result)
 			return layer_exception(std::move(result.error().message()));
 
@@ -323,7 +323,7 @@ namespace tangent
 
 	string timepoint::adjust(const socket_address& address, int64_t milliseconds_delta)
 	{
-		string source = address.get_ip_address().otherwise("[bad_address]") + ":" + to_string(address.get_ip_port().otherwise(0));
+		string source = address.get_ip_address().or_else("[bad_address]") + ":" + to_string(address.get_ip_port().or_else(0));
 		umutex<std::mutex> unique(mutex);
 		size_t sources = offsets.size();
 		if (milliseconds_delta != 0)
@@ -404,7 +404,7 @@ namespace tangent
 			return;
 
 		string path = string(resource->virtual_name());
-		resource = os::file::open_archive(path, protocol::now().user.logs.archive_size).otherwise(nullptr);
+		resource = os::file::open_archive(path, protocol::now().user.logs.archive_size).or_else(nullptr);
 	}
 
 	protocol::protocol(int argc, char** argv)
@@ -416,7 +416,7 @@ namespace tangent
 		auto library = os::directory::get_module();
 		if (!path.empty())
 		{
-			path = os::path::resolve(path, *library, true).otherwise(string(path));
+			path = os::path::resolve(path, *library, true).or_else(string(path));
 			error_handling::set_flag(log_option::pretty, true);
 			error_handling::set_flag(log_option::dated, true);
 			error_handling::set_flag(log_option::active, true);
@@ -424,7 +424,7 @@ namespace tangent
 			console::get()->attach();
 		}
 
-		auto config = uptr<schema>(path.empty() ? (schema*)nullptr : schema::from_json(os::file::read_as_string(path).otherwise(string())));
+		auto config = uptr<schema>(path.empty() ? (schema*)nullptr : schema::from_json(os::file::read_as_string(path).or_else(string())));
 		if (!environment.args.empty())
 		{
 			if (!config)
@@ -744,12 +744,12 @@ namespace tangent
 		if (!user.logs.state.empty())
 		{
 			auto log_base = database.resolve(user.network, user.storage.directory) + user.logs.state;
-			auto log_path = os::path::resolve(os::path::resolve(log_base, *library, true).otherwise(user.logs.state)).otherwise(user.logs.state);
+			auto log_path = os::path::resolve(os::path::resolve(log_base, *library, true).or_else(user.logs.state)).or_else(user.logs.state);
 			stringify::eval_envs(log_path, os::path::get_directory(log_path.c_str()), vitex::network::utils::get_host_ip_addresses());
 			os::directory::patch(os::path::get_directory(log_path.c_str()));
 			if (!log_path.empty())
 			{
-				logs.state.resource = os::file::open_archive(log_path, user.logs.archive_size).otherwise(nullptr);
+				logs.state.resource = os::file::open_archive(log_path, user.logs.archive_size).or_else(nullptr);
 				if (logs.state.resource)
 					error_handling::set_callback([this](error_handling::details& data) { logs.state.output(error_handling::get_message_text(data)); });
 			}
@@ -758,22 +758,22 @@ namespace tangent
 		if (!user.logs.message.empty())
 		{
 			auto log_base = database.resolve(user.network, user.storage.directory) + user.logs.message;
-			auto log_path = os::path::resolve(os::path::resolve(log_base, *library, true).otherwise(user.logs.message)).otherwise(user.logs.message);
+			auto log_path = os::path::resolve(os::path::resolve(log_base, *library, true).or_else(user.logs.message)).or_else(user.logs.message);
 			stringify::eval_envs(log_path, os::path::get_directory(log_path.c_str()), vitex::network::utils::get_host_ip_addresses());
 			os::directory::patch(os::path::get_directory(log_path.c_str()));
 			if (!log_path.empty())
-				logs.message.resource = os::file::open_archive(log_path, user.logs.archive_size).otherwise(nullptr);
+				logs.message.resource = os::file::open_archive(log_path, user.logs.archive_size).or_else(nullptr);
 		}
 
 		if (!user.logs.data.empty())
 		{
 			auto log_base = database.resolve(user.network, user.storage.directory) + user.logs.data;
-			auto log_path = os::path::resolve(os::path::resolve(log_base, *library, true).otherwise(user.logs.data)).otherwise(user.logs.data);
+			auto log_path = os::path::resolve(os::path::resolve(log_base, *library, true).or_else(user.logs.data)).or_else(user.logs.data);
 			stringify::eval_envs(log_path, os::path::get_directory(log_path.c_str()), vitex::network::utils::get_host_ip_addresses());
 			os::directory::patch(os::path::get_directory(log_path.c_str()));
 			if (!log_path.empty())
 			{
-				logs.data.resource = os::file::open_archive(log_path, user.logs.archive_size).otherwise(nullptr);
+				logs.data.resource = os::file::open_archive(log_path, user.logs.archive_size).or_else(nullptr);
 				if (logs.data.resource)
 					sqlite::driver::get()->set_query_log([this](const std::string_view& data) { logs.data.output(string(data)); });
 			}
@@ -783,7 +783,7 @@ namespace tangent
 		if (config)
 		{
 			auto vectorstate_base = database.resolve(user.network, user.storage.directory) + user.vectorstate;
-			auto vectorstate_path = os::path::resolve(os::path::resolve(vectorstate_base, *library, true).otherwise(user.vectorstate)).otherwise(user.vectorstate);
+			auto vectorstate_path = os::path::resolve(os::path::resolve(vectorstate_base, *library, true).or_else(user.vectorstate)).or_else(user.vectorstate);
 			auto vectorstate_file = os::file::read_as_string(vectorstate_path);
 			if (!vectorstate_file)
 			{
