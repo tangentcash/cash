@@ -66,6 +66,13 @@ typedef struct btc_tx_ {
     uint32_t locktime;
 } btc_tx;
 
+typedef struct btc_tx_witness_stack_ {
+    cstring* const* scripts;
+    cstring* const* stacks;
+    cstring* const* redeems;
+    uint64_t* amounts;
+} btc_tx_witness_stack;
+
 
 //!create a new tx input
 LIBBTC_API btc_tx_in* btc_tx_in_new();
@@ -90,7 +97,7 @@ LIBBTC_API void btc_tx_serialize(cstring* s, const btc_tx* tx, btc_bool allow_wi
 
 LIBBTC_API void btc_tx_hash(const btc_tx* tx, uint8_t* hashout);
 
-LIBBTC_API btc_bool btc_tx_sighash(const btc_tx* tx_to, const enum btc_sig_version sigversion, uint32_t hashtype, const cstring* const* vin_locking_scripts, const uint64_t* vin_amounts, uint32_t input_index, const uint256 leaf_hash, uint256 hash);
+LIBBTC_API btc_bool btc_tx_sighash(const btc_tx* tx_to, const enum btc_sig_version sigversion, uint32_t hashtype, const btc_tx_witness_stack* vin_stack, uint32_t input_index, const uint256 leaf_hash, uint256 hash);
 
 LIBBTC_API btc_bool btc_tx_add_address_out(btc_tx* tx, const btc_chainparams* chain, int64_t amount, const char* address);
 LIBBTC_API btc_bool btc_tx_add_p2sh_hash160_out(btc_tx* tx, int64_t amount, uint160 hash160);
@@ -116,9 +123,13 @@ enum btc_tx_sign_result {
     BTC_SIGN_INVALID_TX_OR_SCRIPT = -6,
     BTC_SIGN_INPUTINDEX_OUT_OF_RANGE = -7,
     BTC_SIGN_OK = 1,
+    BTC_SIGN_HASH_OK = 2,
+    BTC_SIGN_FINALIZE_OK = 3
 };
 const char* btc_tx_sign_result_to_str(const enum btc_tx_sign_result result);
-enum btc_tx_sign_result btc_tx_sign_input(btc_tx *tx_in_out, const btc_key* privkey, uint32_t sighashtype, enum btc_tx_out_type type, const cstring* const* vin_unlocking_scripts, size_t vin_unlocking_scripts_size, const cstring* const* vin_locking_scripts, const uint64_t* vin_amounts, uint32_t inputindex, uint8_t* sigdata_out, size_t* sigdata_size_out);
+enum btc_tx_sign_result btc_tx_hash_input(btc_tx* tx_in_out, uint32_t sighashtype, enum btc_tx_out_type type, const btc_tx_witness_stack* vin_stack, uint32_t inputindex, uint256 sighash_out);
+enum btc_tx_sign_result btc_tx_sign_input(uint256 sighash, const btc_key* privkey, uint32_t sighashtype, enum btc_tx_out_type type, uint8_t* sigdata_out, size_t* sigdata_size_out);
+enum btc_tx_sign_result btc_tx_finalize_input(btc_tx* tx_in_out, const uint8_t* sigdata, size_t sigdata_size, const btc_pubkey* pubkey, uint32_t sighashtype, enum btc_tx_out_type type, const btc_tx_witness_stack* vin_stack, uint32_t inputindex);
 
 LIBBTC_END_DECL
 

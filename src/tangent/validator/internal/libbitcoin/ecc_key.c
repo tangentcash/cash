@@ -134,19 +134,13 @@ void btc_privkey_get_taproot_privkey(const btc_key* privkey, const uint256 leaf_
     btc_pubkey_init(&pubkey);
     btc_pubkey_from_key(privkey, &pubkey);
 
-    cstring* control_block = cstr_new_sz(64);
-    btc_controlblock_append_internalpubkey(control_block, &pubkey);
-    if (leaf_hash)
-        btc_controlblock_append_leafscripthash(control_block, leaf_hash);
+    uint256 tweak_hash;
+    btc_key_get_taproot_tweak(&pubkey, leaf_hash, tweak_hash);
 
     uint256 tweak_privkey;
     memcpy(tweak_privkey, privkey->privkey, sizeof(privkey->privkey));
-
-    uint256 tweak_hash;
-    btc_tagged_hash(BTC_TAG_TAP_TWEAK, control_block->str, control_block->len, tweak_hash);
     btc_ecc_private_key_tweak_add(tweak_privkey, tweak_hash);
     memcpy(hash256, tweak_privkey, sizeof(tweak_privkey));
-    cstr_free(control_block, true);
 }
 
 void btc_pubkey_init(btc_pubkey* pubkey)
@@ -190,16 +184,13 @@ void btc_pubkey_get_hash160(const btc_pubkey* pubkey, uint160 hash160)
 
 void btc_pubkey_get_taproot_pubkey(const btc_pubkey* pubkey, const uint256 leaf_hash, uint256 hash256)
 {
-    cstring* control_block = cstr_new_sz(64);
-    btc_controlblock_append_internalpubkey(control_block, pubkey);
-    if (leaf_hash)
-        btc_controlblock_append_leafscripthash(control_block, leaf_hash);
-
     uint256 tweak_hash;
-    btc_tagged_hash(BTC_TAG_TAP_TWEAK, control_block->str, control_block->len, tweak_hash);
-    btc_xonly_public_key_tweak_add(control_block->str, tweak_hash);
-    memcpy(hash256, control_block->str, sizeof(tweak_hash));
-    cstr_free(control_block, true);
+    btc_key_get_taproot_tweak(pubkey, leaf_hash, tweak_hash);
+
+    uint256 xonly_pubkey;
+    memcpy(xonly_pubkey, pubkey->pubkey + 1, sizeof(xonly_pubkey));
+    btc_xonly_public_key_tweak_add(xonly_pubkey, tweak_hash);
+    memcpy(hash256, xonly_pubkey, sizeof(xonly_pubkey));
 }
 
 btc_bool btc_pubkey_get_hex(const btc_pubkey* pubkey, char* str, size_t* strsize)
@@ -225,6 +216,17 @@ void btc_pubkey_from_key(const btc_key* privkey, btc_pubkey* pubkey_inout)
 btc_bool btc_key_sign_hash(const btc_key* privkey, const uint256 hash, unsigned char* sigout, size_t* outlen)
 {
     return btc_ecc_sign(privkey->privkey, hash, sigout, outlen);
+}
+
+void btc_key_get_taproot_tweak(const btc_pubkey* pubkey, const uint256 leaf_hash, uint256 hash256)
+{
+    cstring* control_block = cstr_new_sz(64);
+    btc_controlblock_append_internalpubkey(control_block, pubkey);
+    if (leaf_hash)
+        btc_controlblock_append_leafscripthash(control_block, leaf_hash);
+
+    btc_tagged_hash(BTC_TAG_TAP_TWEAK, control_block->str, control_block->len, hash256);
+    cstr_free(control_block, true);
 }
 
 btc_bool btc_key_sign_hash_compact(const btc_key* privkey, const uint256 hash, unsigned char* sigout, size_t* outlen)

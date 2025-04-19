@@ -14,14 +14,13 @@ namespace tangent
 	namespace p2p
 	{
 		struct procedure;
-
 		class relay;
-
 		class outbound_node;
-
 		class server_node;
+		class dispatch_context;
 
 		typedef std::function<void(relay*)> abort_callback;
+		typedef std::function<bool(const struct procedure&)> response_callback;
 		typedef socket_connection inbound_node;
 
 		enum class node_type
@@ -41,6 +40,14 @@ namespace tangent
 			bool serialize_into(string* buffer);
 			bool deserialize_from(string& message);
 			bool deserialize_from_stream(string& message, const uint8_t* buffer, size_t size);
+			uint256_t as_hash();
+		};
+
+		struct response_procedure final
+		{
+			expects_promise_rt<format::variables> result;
+			response_callback callback;
+			task_id timeout = INVALID_TASK_ID;
 		};
 
 		class relay_procedure : public reference<relay_procedure>
@@ -65,6 +72,7 @@ namespace tangent
 			single_queue<uref<relay_procedure>> priority_messages;
 			single_queue<procedure> incoming_messages;
 			single_queue<procedure> outgoing_messages;
+			unordered_set<uint256_t> inventory;
 			string incoming_data;
 			string outgoing_data;
 			string address;
@@ -80,13 +88,14 @@ namespace tangent
 			bool begin_outgoing_message();
 			void end_outgoing_message();
 			void push_message(procedure&& message);
-			void relay_message(uref<relay_procedure>&& message);
+			bool relay_message(uref<relay_procedure>&& message, const uint256_t& message_hash);
 			void invalidate();
 			const string& peer_address();
 			const string& peer_service();
 			const single_queue<uref<relay_procedure>>& get_priority_messages() const;
 			const single_queue<procedure>& get_incoming_messages() const;
 			const single_queue<procedure>& get_outgoing_messages() const;
+			unordered_set<uint256_t>& get_inventory();
 			const uint8_t* outgoing_buffer();
 			node_type type_of();
 			size_t incoming_size();
@@ -125,8 +134,10 @@ namespace tangent
 
 		class server_node final : public socket_server
 		{
+			friend class methods;
+
 		public:
-			using receive_function = promise<void>(*)(server_node*, uptr<relay>&&, format::variables&&);
+			using receive_function = promise<void>(*)(server_node*, uref<relay>&&, procedure&&);
 
 		public:
 			struct
@@ -169,11 +180,11 @@ namespace tangent
 			} mempool;
 
 		private:
-			unordered_map<uint256_t, int64_t> inventory;
 			unordered_map<uint32_t, std::pair<void*, bool>> in_methods;
 			unordered_map<void*, uint32_t> out_methods;
 			unordered_map<void*, relay*> nodes;
-			unordered_set<outbound_node*> candidate_nodes;
+			unordered_set<uint256_t> inventory;
+			unordered_map<size_t, response_procedure> responses;
 			single_queue<uref<relay_procedure>> messages;
 			uint32_t method_address;
 			system_control control_sys;
@@ -185,6 +196,19 @@ namespace tangent
 		public:
 			server_node() noexcept;
 			virtual ~server_node() noexcept override;
+			expects_promise_rt<format::variables> call_responsive(receive_function function, format::variables&& args, uint64_t timeout_ms, response_callback&& callback);
+			promise<option<socket_address>> find_node_from_mempool(option<socket_address>&& error_address, bool allow_seeding);
+			promise<option<socket_address>> find_node_from_seeding();
+			promise<void> propose_transaction_logs(const algorithm::asset_id& asset, const mediator::chain_supervisor_options& options, mediator::transaction_logs&& logs);
+			expects_lr<void> propose_transaction(relay* from, uptr<ledger::transaction>&& candidate_tx, uint64_t account_sequence, uint256_t* output_hash = nullptr);
+			expects_lr<void> accept_transaction(relay* from, uptr<ledger::transaction>&& candidate_tx, bool validate_execution = false);
+			expects_lr<void> broadcast_transaction(relay* from, uptr<ledger::transaction>&& candidate_tx, const algorithm::pubkeyhash owner);
+			void bind_callable(receive_function function);
+			void bind_multicallable(receive_function function);
+			bool call(relay* state, receive_function function, format::variables&& args);
+			bool call(relay* state, procedure&& message);
+			size_t multicall(relay* state, receive_function function, format::variables&& args);
+			size_t multicall(relay* state, procedure&& message);
 			void startup();
 			void shutdown();
 			void reject(relay* state);
@@ -196,9 +220,6 @@ namespace tangent
 			bool accept_dispatchpool(const ledger::block_header& tip);
 			bool accept_block(relay* from, ledger::block&& candidate_block, const uint256_t& fork_tip);
 			bool accept(option<socket_address>&& address = optional::none);
-			expects_lr<void> propose_transaction(relay* from, uptr<ledger::transaction>&& candidate_tx, uint64_t account_sequence, uint256_t* output_hash = nullptr);
-			expects_lr<void> accept_transaction(relay* from, uptr<ledger::transaction>&& candidate_tx, bool validate_execution = false);
-			expects_lr<void> broadcast_transaction(relay* from, uptr<ledger::transaction>&& candidate_tx, const algorithm::pubkeyhash owner);
 			relay* find(const socket_address& address);
 			size_t size_of(node_type type);
 			size_t get_connections();
@@ -208,36 +229,12 @@ namespace tangent
 			service_control::service_node get_entrypoint();
 			std::recursive_mutex& get_mutex();
 			const unordered_map<void*, relay*>& get_nodes() const;
-			const unordered_set<outbound_node*>& get_candidate_nodes() const;
 			const single_queue<uref<relay_procedure>>& get_messages() const;
-
-		public:
-			void bind_callable(receive_function function)
-			{
-				bind_function((receive_function)function, false);
-			}
-			void bind_multicallable(receive_function function)
-			{
-				bind_function((receive_function)function, true);
-			}
-			bool call(relay* state, receive_function function, format::variable&& argument)
-			{
-				return call_function(state, (receive_function)function, { std::move(argument) });
-			}
-			size_t multicall(relay* state, receive_function function, format::variable&& argument)
-			{
-				return multicall_function(state, (receive_function)function, { std::move(argument) });
-			}
-			bool call(relay* state, receive_function function, format::variables&& args)
-			{
-				return call_function(state, (receive_function)function, std::move(args));
-			}
-			size_t multicall(relay* state, receive_function function, format::variables&& args)
-			{
-				return multicall_function(state, (receive_function)function, std::move(args));
-			}
+			dispatch_context get_dispatcher() const;
 
 		private:
+			promise<void> internal_connect(uref<relay>&& from);
+			promise<void> internal_disconnect(uref<relay>&& from);
 			expects_system<void> on_unlisten() override;
 			expects_system<void> on_after_unlisten() override;
 			expects_lr<void> apply_validator(storages::mempoolstate& mempool, ledger::validator& node, option<ledger::wallet>&& wallet);
@@ -247,10 +244,7 @@ namespace tangent
 			bool accept_proposal_transaction(const ledger::block& checkpoint_block, const ledger::block_transaction& transaction);
 			bool receive_outbound_node(option<socket_address>&& error_address);
 			bool push_next_procedure(relay* state);
-			void bind_function(receive_function function, bool multicallable);
-			bool call_function(relay* state, receive_function function, format::variables&& args);
-			size_t multicall_function(relay* state, receive_function function, format::variables&& args);
-			void accept_outbound_node(outbound_node* candidate, expects_system<void>&& status);
+			void accept_outbound_node(uptr<outbound_node>&& candidate, expects_system<void>&& status);
 			void pull_procedure(relay* state, const abort_callback& abort_callback);
 			void push_procedure(relay* state, const abort_callback& abort_callback);
 			void abort_inbound_node(inbound_node* node);
@@ -259,44 +253,84 @@ namespace tangent
 			void erase_node(relay* state, task_callback&& callback);
 			void erase_node_by_instance(void* instance, task_callback&& callback);
 			void on_request_open(inbound_node* base) override;
+		};
 
-		private:
-			promise<option<socket_address>> connect_node_from_mempool(option<socket_address>&& error_address, bool allow_seeding);
-			promise<option<socket_address>> find_node_from_seeding();
-			promise<void> connect(uptr<relay>&& from);
-			promise<void> disconnect(uptr<relay>&& from);
-			promise<void> propose_transaction_logs(const mediator::chain_supervisor_options& options, mediator::transaction_logs&& logs);
+		class methods
+		{
+			friend class server_node;
 
-		private:
-			static promise<void> propose_handshake(server_node* relayer, uptr<relay>&& from, format::variables&& args);
-			static promise<void> approve_handshake(server_node* relayer, uptr<relay>&& from, format::variables&& args);
-			static promise<void> propose_nodes(server_node* relayer, uptr<relay>&& from, format::variables&& args);
-			static promise<void> find_fork_collision(server_node* relayer, uptr<relay>&& from, format::variables&& args);
-			static promise<void> verify_fork_collision(server_node* relayer, uptr<relay>&& from, format::variables&& args);
-			static promise<void> request_fork_block(server_node* relayer, uptr<relay>&& from, format::variables&& args);
-			static promise<void> propose_fork_block(server_node* relayer, uptr<relay>&& from, format::variables&& args);
-			static promise<void> request_block(server_node* relayer, uptr<relay>&& from, format::variables&& args);
-			static promise<void> propose_block(server_node* relayer, uptr<relay>&& from, format::variables&& args);
-			static promise<void> propose_block_hash(server_node* relayer, uptr<relay>&& from, format::variables&& args);
-			static promise<void> request_transaction(server_node* relayer, uptr<relay>&& from, format::variables&& args);
-			static promise<void> propose_transaction(server_node* relayer, uptr<relay>&& from, format::variables&& args);
-			static promise<void> propose_transaction_hash(server_node* relayer, uptr<relay>&& from, format::variables&& args);
-			static promise<void> request_mempool(server_node* relayer, uptr<relay>&& from, format::variables&& args);
-			static promise<void> propose_mempool(server_node* relayer, uptr<relay>&& from, format::variables&& args);
-
-		private:
-			static promise<void> return_abort(server_node* relayer, relay* from, const char* function, const std::string_view& message);
-			static promise<void> return_error(server_node* relayer, relay* from, const char* function, const std::string_view& message);
-			static promise<void> return_ok(relay* from, const char* function, const std::string_view& message);
-			static std::string_view node_type_of(relay* from);
-
+		public:
+			class returning
+			{
+			public:
+				static promise<void> abort(server_node* relayer, relay* from, const char* function, const std::string_view& text);
+				static promise<void> error(server_node* relayer, relay* from, const char* function, const std::string_view& text);
+				static promise<void> ok(relay* from, const char* function, const std::string_view& text);
+			};
+			
+		public:
+			static promise<void> propose_handshake(server_node* relayer, uref<relay>&& from, procedure&& message);
+			static promise<void> approve_handshake(server_node* relayer, uref<relay>&& from, procedure&& message);
+			static promise<void> propose_nodes(server_node* relayer, uref<relay>&& from, procedure&& message);
+			static promise<void> find_fork_collision(server_node* relayer, uref<relay>&& from, procedure&& message);
+			static promise<void> verify_fork_collision(server_node* relayer, uref<relay>&& from, procedure&& message);
+			static promise<void> request_fork_block(server_node* relayer, uref<relay>&& from, procedure&& message);
+			static promise<void> propose_fork_block(server_node* relayer, uref<relay>&& from, procedure&& message);
+			static promise<void> request_block(server_node* relayer, uref<relay>&& from, procedure&& message);
+			static promise<void> propose_block(server_node* relayer, uref<relay>&& from, procedure&& message);
+			static promise<void> propose_block_hash(server_node* relayer, uref<relay>&& from, procedure&& message);
+			static promise<void> request_transaction(server_node* relayer, uref<relay>&& from, procedure&& message);
+			static promise<void> propose_transaction(server_node* relayer, uref<relay>&& from, procedure&& message);
+			static promise<void> propose_transaction_hash(server_node* relayer, uref<relay>&& from, procedure&& message);
+			static promise<void> request_mempool(server_node* relayer, uref<relay>&& from, procedure&& message);
+			static promise<void> propose_mempool(server_node* relayer, uref<relay>&& from, procedure&& message);
 		};
 
 		class routing
 		{
 		public:
 			static bool is_address_reserved(const socket_address& address);
+			static std::string_view node_type_of(relay* from);
 		};
+
+		class dispatch_context final : public ledger::dispatch_context
+		{
+		public:
+			server_node* server;
+
+		public:
+			dispatch_context(server_node* new_server);
+			dispatch_context(const dispatch_context& other) noexcept;
+			dispatch_context(dispatch_context&&) noexcept = default;
+			dispatch_context& operator=(const dispatch_context& other) noexcept;
+			dispatch_context& operator=(dispatch_context&&) noexcept = default;
+			expects_promise_rt<void> calculate_mpc_public_key(const ledger::transaction_context* context, const algorithm::pubkeyhash_t& share, algorithm::composition::cpubkey_t& inout) override;
+			expects_promise_rt<void> calculate_mpc_signature(const ledger::transaction_context* context, const algorithm::pubkeyhash_t& share, const mediator::prepared_transaction& prepared, ordered_map<uint8_t, algorithm::composition::cpubsig_t>& inout) override;
+			const ledger::wallet* get_wallet() const override;
+
+		public:
+			static promise<void> calculate_mpc_public_key_rpc(server_node* relayer, uref<relay>&& from, procedure&& message);
+			static promise<void> calculate_mpc_signature_rpc(server_node* relayer, uref<relay>&& from, procedure&& message);
+		};
+
+		class local_dispatch_context final : public ledger::dispatch_context
+		{
+		public:
+			ordered_map<algorithm::pubkeyhash_t, ledger::wallet> proposers;
+			ordered_map<algorithm::pubkeyhash_t, ledger::wallet>::iterator proposer;
+
+		public:
+			local_dispatch_context(const vector<ledger::wallet>& new_proposers);
+			local_dispatch_context(const local_dispatch_context& other) noexcept;
+			local_dispatch_context(local_dispatch_context&&) noexcept = default;
+			local_dispatch_context& operator=(const local_dispatch_context& other) noexcept;
+			local_dispatch_context& operator=(local_dispatch_context&&) noexcept = default;
+			void set_running_proposer(const algorithm::pubkeyhash owner);
+			expects_promise_rt<void> calculate_mpc_public_key(const ledger::transaction_context* context, const algorithm::pubkeyhash_t& share, algorithm::composition::cpubkey_t& inout) override;
+			expects_promise_rt<void> calculate_mpc_signature(const ledger::transaction_context* context, const algorithm::pubkeyhash_t& share, const mediator::prepared_transaction& prepared, ordered_map<uint8_t, algorithm::composition::cpubsig_t>& inout) override;
+			const ledger::wallet* get_wallet() const override;
+		};
+
 	}
 }
 #endif

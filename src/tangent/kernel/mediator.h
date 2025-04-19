@@ -16,102 +16,109 @@ namespace tangent
 		{
 			account,
 			memo,
-			UTXO
+			utxo
 		};
 
 		enum class cache_policy
 		{
-			greedy,
-			lazy,
-			shortened,
-			extended,
-			persistent
+			no_cache,
+			no_cache_no_throttling,
+			temporary_cache,
+			blob_cache,
+			lifetime_cache
 		};
 
 		class server_relay;
 
 		class relay_backend;
 
-		struct token_utxo
+		struct wallet_link : messages::uniform
 		{
-			string contract_address;
-			string symbol;
-			decimal value;
-			uint8_t decimals;
+			enum class search_term
+			{
+				none,
+				owner,
+				public_key,
+				address
+			};
 
-			token_utxo();
-			token_utxo(const std::string_view& new_contract_address, const decimal& new_value);
-			token_utxo(const std::string_view& new_contract_address, const std::string_view& new_symbol, const decimal& new_value, uint8_t new_decimals);
-			decimal get_divisibility();
-			bool is_coin_valid() const;
+			algorithm::pubkeyhash owner = { 0 };
+			string public_key;
+			string address;
+
+			wallet_link() = default;
+			wallet_link(const algorithm::pubkeyhash new_owner, const std::string_view& new_public_key, const std::string_view& new_address);
+			bool store_payload(format::stream* stream) const override;
+			bool load_payload(format::stream& stream) override;
+			uptr<schema> as_schema() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			search_term as_search_wide() const;
+			search_term as_search_narrow() const;
+			string as_tag_address(const std::string_view& tag = "0") const;
+			string as_name() const;
+			bool has_owner() const;
+			bool has_public_key() const;
+			bool has_address() const;
+			bool has_all() const;
+			bool has_any() const;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
+			static wallet_link from_owner(const algorithm::pubkeyhash new_owner);
+			static wallet_link from_public_key(const std::string_view& new_public_key);
+			static wallet_link from_address(const std::string_view& new_address);
 		};
 
-		struct coin_utxo
+		struct value_transfer
 		{
-			vector<token_utxo> tokens;
-			option<uint64_t> address_index = optional::none;
-			string transaction_id;
+			algorithm::asset_id asset;
 			string address;
 			decimal value;
-			uint32_t index = 0;
+
+			value_transfer();
+			value_transfer(const algorithm::asset_id& new_asset, const std::string_view& new_address, decimal&& new_value);
+			value_transfer(const value_transfer&) = default;
+			value_transfer(value_transfer&&) noexcept = default;
+			value_transfer& operator=(const value_transfer&) = default;
+			value_transfer& operator=(value_transfer&&) noexcept = default;
+			bool is_valid() const;
+		};
+
+		struct coin_utxo : messages::uniform
+		{
+			struct token_utxo
+			{
+				string contract_address;
+				string symbol;
+				decimal value;
+				uint8_t decimals;
+
+				token_utxo();
+				token_utxo(const algorithm::asset_id& new_asset, const decimal& new_value);
+				token_utxo(const std::string_view& new_contract_address, const std::string_view& new_symbol, const decimal& new_value, uint8_t new_decimals);
+				decimal get_divisibility() const;
+				algorithm::asset_id get_asset(const algorithm::asset_id& base_asset) const;
+				bool is_account() const;
+				bool is_valid() const;
+			};
+
+			vector<token_utxo> tokens;
+			wallet_link link;
+			string transaction_id;
+			decimal value;
+			uint64_t index = 0;
 
 			coin_utxo() = default;
-			coin_utxo(const std::string_view& new_transaction_id, const std::string_view& new_address, option<uint64_t>&& address_index, decimal&& new_value, uint32_t new_index);
+			coin_utxo(wallet_link&& new_link, unordered_map<algorithm::asset_id, decimal>&& new_values);
+			coin_utxo(wallet_link&& new_link, const std::string_view& new_transaction_id, uint64_t new_index, decimal&& new_value);
 			void apply_token_value(const std::string_view& contract_address, const std::string_view& symbol, const decimal& value, uint8_t decimals);
 			option<decimal> get_token_value(const std::string_view& contract_address);
-			bool is_valid() const;
-		};
-
-		struct transferer
-		{
-			option<uint64_t> address_index = optional::none;
-			string address;
-			decimal value;
-
-			transferer();
-			transferer(const std::string_view& new_address, option<uint64_t>&& address_index, decimal&& new_value);
-			bool is_valid() const;
-		};
-
-		struct master_wallet : messages::standard
-		{
-			secret_box seeding_key;
-			secret_box signing_key;
-			string verifying_key;
-			uint64_t max_address_index = 0;
-
-			master_wallet() = default;
-			master_wallet(secret_box&& new_seeding_key, secret_box&& new_signing_key, string&& new_verifying_key);
-			master_wallet(const master_wallet&) = default;
-			master_wallet(master_wallet&&) = default;
-			master_wallet& operator=(const master_wallet&) = default;
-			master_wallet& operator=(master_wallet&&) = default;
 			bool store_payload(format::stream* stream) const override;
 			bool load_payload(format::stream& stream) override;
-			bool is_valid() const;
-			uptr<schema> as_schema() const override;
-			uint256_t as_hash(bool renew = false) const override;
-			uint32_t as_type() const override;
-			std::string_view as_typename() const override;
-			static uint32_t as_instance_type();
-			static std::string_view as_instance_typename();
-		};
-
-		struct derived_verifying_wallet : messages::standard
-		{
-			address_map addresses;
-			option<uint64_t> address_index = optional::none;
-			string verifying_key;
-
-			derived_verifying_wallet() = default;
-			derived_verifying_wallet(address_map&& new_addresses, option<uint64_t>&& new_address_index, string&& new_verifying_key);
-			derived_verifying_wallet(const derived_verifying_wallet&) = default;
-			derived_verifying_wallet(derived_verifying_wallet&&) = default;
-			derived_verifying_wallet& operator=(const derived_verifying_wallet&) = default;
-			derived_verifying_wallet& operator=(derived_verifying_wallet&&) = default;
-			virtual bool store_payload(format::stream* stream) const override;
-			virtual bool load_payload(format::stream& stream) override;
-			virtual bool is_valid() const;
+			bool is_account() const;
+			bool is_valid_input() const;
+			bool is_valid_output() const;
+			algorithm::asset_id get_asset(const algorithm::asset_id& base_asset) const;
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
@@ -119,63 +126,18 @@ namespace tangent
 			static std::string_view as_instance_typename();
 		};
 
-		struct derived_signing_wallet : derived_verifying_wallet
+		struct computed_transaction : messages::uniform
 		{
-			secret_box signing_key;
-
-			derived_signing_wallet() = default;
-			derived_signing_wallet(derived_verifying_wallet&& new_wallet, secret_box&& new_signing_key);
-			derived_signing_wallet(const derived_signing_wallet&) = default;
-			derived_signing_wallet(derived_signing_wallet&&) = default;
-			derived_signing_wallet& operator=(const derived_signing_wallet&) = default;
-			derived_signing_wallet& operator=(derived_signing_wallet&&) = default;
-			bool store_payload(format::stream* stream) const override;
-			bool load_payload(format::stream& stream) override;
-			bool is_valid() const override;
-			uptr<schema> as_schema() const override;
-			uint32_t as_type() const override;
-			std::string_view as_typename() const override;
-			static uint32_t as_instance_type();
-			static std::string_view as_instance_typename();
-		};
-
-		struct dynamic_wallet
-		{
-			option<master_wallet> parent;
-			option<derived_verifying_wallet> verifying_child;
-			option<derived_signing_wallet> signing_child;
-
-			dynamic_wallet();
-			dynamic_wallet(const master_wallet& value);
-			dynamic_wallet(const derived_verifying_wallet& value);
-			dynamic_wallet(const derived_signing_wallet& value);
-			dynamic_wallet(const dynamic_wallet&) = default;
-			dynamic_wallet(dynamic_wallet&&) = default;
-			dynamic_wallet& operator=(const dynamic_wallet&) = default;
-			dynamic_wallet& operator=(dynamic_wallet&&) = default;
-			option<string> get_binding() const;
-			bool is_valid() const;
-		};
-
-		struct incoming_transaction : messages::standard
-		{
-			vector<transferer> to;
-			vector<transferer> from;
-			algorithm::asset_id asset;
+			vector<coin_utxo> inputs;
+			vector<coin_utxo> outputs;
 			string transaction_id;
 			uint64_t block_id = 0;
-			decimal fee;
 
-			incoming_transaction();
+			computed_transaction() = default;
 			bool store_payload(format::stream* stream) const override;
 			bool load_payload(format::stream& stream) override;
 			bool is_valid() const;
-			void set_transaction(const algorithm::asset_id& new_asset, uint64_t new_block_id, const std::string_view& new_transaction_id, decimal&& new_fee);
-			void set_operations(vector<transferer>&& new_from, vector<transferer>&& new_to);
-			bool is_latency_approved() const;
-			bool is_approved() const;
-			decimal get_input_value() const;
-			decimal get_output_value() const;
+			bool is_mature(const algorithm::asset_id& asset) const;
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
@@ -183,18 +145,59 @@ namespace tangent
 			static std::string_view as_instance_typename();
 		};
 
-		struct outgoing_transaction : messages::standard
+		struct prepared_transaction : messages::uniform
 		{
-			option<vector<coin_utxo>> inputs;
-			option<vector<coin_utxo>> outputs;
-			incoming_transaction transaction;
-			string data;
+			enum class status
+			{
+				invalid,
+				requires_signature,
+				requires_finalization
+			};
 
-			outgoing_transaction();
-			outgoing_transaction(incoming_transaction&& new_transaction, const std::string_view& new_data, option<vector<coin_utxo>>&& new_inputs = optional::none, option<vector<coin_utxo>>&& new_outputs = optional::none);
+			struct signable_coin_utxo
+			{
+				algorithm::composition::cpubkey public_key = { 0 };
+				algorithm::composition::cpubsig signature = { 0 };
+				algorithm::composition::type alg = algorithm::composition::type::unknown;
+				vector<uint8_t> message;
+				coin_utxo utxo;
+			};
+
+			vector<signable_coin_utxo> inputs;
+			vector<coin_utxo> outputs;
+			format::variables abi;
+
+			prepared_transaction() = default;
+			prepared_transaction& requires_input(algorithm::composition::type new_alg, const algorithm::composition::cpubkey new_public_key, uint8_t* new_message, size_t new_message_size, coin_utxo&& input);
+			prepared_transaction& requires_account_input(algorithm::composition::type new_alg, wallet_link&& new_link, const algorithm::composition::cpubkey new_public_key, uint8_t* new_message, size_t new_message_size, unordered_map<algorithm::asset_id, decimal>&& input);
+			prepared_transaction& requires_output(coin_utxo&& output);
+			prepared_transaction& requires_account_output(const std::string_view& to_address, unordered_map<algorithm::asset_id, decimal>&& output);
+			prepared_transaction& requires_abi(format::variable&& value);
+			format::variable* load_abi(size_t* ptr);
+			bool store_payload(format::stream* stream) const override;
+			bool load_payload(format::stream& stream) override;
+			bool is_accumulation_required(size_t input_index) const;
+			status as_status() const;
+			uptr<schema> as_schema() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
+		};
+
+		struct finalized_transaction : messages::uniform
+		{
+			prepared_transaction prepared;
+			string calldata;
+			string hashdata;
+			uint64_t locktime = 0;
+
+			finalized_transaction() = default;
+			finalized_transaction(prepared_transaction&& new_prepared, string&& new_calldata, string&& new_hashdata, uint64_t new_locktime = 0);
 			bool store_payload(format::stream* stream) const override;
 			bool load_payload(format::stream& stream) override;
 			bool is_valid() const;
+			computed_transaction as_computed() const;
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
@@ -204,49 +207,39 @@ namespace tangent
 
 		struct transaction_logs
 		{
-			vector<incoming_transaction> transactions;
+			vector<computed_transaction> transactions;
 			uint64_t block_height = (uint64_t)-1;
 			string block_hash;
 		};
 
-		struct index_address : messages::standard
+		struct computed_fee
 		{
-			option<uint64_t> address_index = optional::none;
-			string address;
-			string binding;
+			enum class fee_type
+			{
+				fee,
+				gas
+			};
+			struct
+			{
+				decimal fee_rate = 0.0;
+				size_t byte_rate = 0;
+			} fee;
+			struct
+			{
+				decimal gas_base_price = 0.0;
+				decimal gas_price = 0.0;
+				uint256_t gas_limit = 0;
+			} gas;
+			fee_type type;
 
-			bool store_payload(format::stream* stream) const override;
-			bool load_payload(format::stream& stream) override;
-			uptr<schema> as_schema() const override;
-			uint32_t as_type() const override;
-			std::string_view as_typename() const override;
-			static uint32_t as_instance_type();
-			static std::string_view as_instance_typename();
-		};
-
-		struct index_utxo : messages::standard
-		{
-			coin_utxo UTXO;
-			string binding;
-
-			bool store_payload(format::stream* stream) const override;
-			bool load_payload(format::stream& stream) override;
-			uptr<schema> as_schema() const override;
-			uint32_t as_type() const override;
-			std::string_view as_typename() const override;
-			static uint32_t as_instance_type();
-			static std::string_view as_instance_typename();
-		};
-
-		struct base_fee
-		{
-			decimal price;
-			decimal limit;
-
-			base_fee();
-			base_fee(const decimal& new_price, const decimal& new_limit);
-			decimal get_fee() const;
+			decimal get_max_fee() const;
+			bool is_flat_fee() const;
 			bool is_valid() const;
+			static computed_fee flat_fee(const decimal& fee);
+			static computed_fee fee_per_byte(const decimal& rate, size_t bytes);
+			static computed_fee fee_per_kilobyte(const decimal& rate);
+			static computed_fee fee_per_gas(const decimal& price, const uint256_t& limit);
+			static computed_fee fee_per_gas_priority(const decimal& base_price, const decimal& price, const uint256_t& limit);
 		};
 
 		struct supervisor_options
@@ -297,43 +290,25 @@ namespace tangent
 		class server_relay : public reference<server_relay>
 		{
 		public:
-			enum class transmit_type
-			{
-				any,
-				JSONRPC,
-				REST,
-				HTTP
-			};
-
 			struct error_reporter
 			{
-				transmit_type type = transmit_type::any;
+				string type;
 				string method;
 			};
 
 		private:
-			struct
-			{
-				string json_rpc_path;
-				bool json_rpc_distinct = false;
-				string rest_path;
-				bool rest_distinct = false;
-				string http_path;
-				bool http_distinct = false;
-			} paths;
-
-		private:
 			vector<std::pair<promise<bool>, task_id>> tasks;
+			unordered_map<string, string> urls;
 			std::recursive_mutex mutex;
-			double throttling;
 			int64_t latest;
+			double rps;
 			bool allowed;
 
 		public:
 			void* user_data;
 
 		public:
-			server_relay(const std::string_view& node_url, double node_throttling) noexcept;
+			server_relay(unordered_map<string, string>&& node_urls, double node_rps) noexcept;
 			~server_relay() noexcept;
 			expects_promise_rt<schema*> execute_rpc(const algorithm::asset_id& asset, error_reporter& reporter, const std::string_view& method, const schema_list& args, cache_policy cache, const std::string_view& path);
 			expects_promise_rt<schema*> execute_rpc3(const algorithm::asset_id& asset, error_reporter& reporter, const std::string_view& method, const schema_args& args, cache_policy cache, const std::string_view& path);
@@ -346,10 +321,10 @@ namespace tangent
 			void dequeue_activity(task_id timer_id);
 			void allow_activities();
 			void cancel_activities();
-			bool has_distinct_url(transmit_type type) const;
+			bool has_distinct_url(const std::string_view& type) const;
 			bool is_activity_allowed() const;
-			const string& get_node_url(transmit_type type) const;
-			string get_node_url(transmit_type type, const std::string_view& path) const;
+			const string& get_node_url(const std::string_view& type) const;
+			string get_node_url(const std::string_view& type, const std::string_view& path) const;
 
 		public:
 			static std::string_view get_cache_type(cache_policy cache);
@@ -374,39 +349,46 @@ namespace tangent
 				decimal divisibility;
 				string supports_token_transfer;
 				bool supports_bulk_transfer;
+				bool requires_transaction_expiration;
 			};
+
+		protected:
+			algorithm::asset_id native_asset;
 
 		public:
 			interaction_callback interact;
 
 		public:
-			relay_backend() noexcept;
+			relay_backend(const algorithm::asset_id& new_asset) noexcept;
 			virtual ~relay_backend() noexcept;
-			virtual expects_promise_rt<void> broadcast_transaction(const algorithm::asset_id& asset, const outgoing_transaction& tx_data) = 0;
-			virtual expects_promise_rt<uint64_t> get_latest_block_height(const algorithm::asset_id& asset) = 0;
-			virtual expects_promise_rt<schema*> get_block_transactions(const algorithm::asset_id& asset, uint64_t block_height, string* block_hash) = 0;
-			virtual expects_promise_rt<schema*> get_block_transaction(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, const std::string_view& transaction_id) = 0;
-			virtual expects_promise_rt<vector<incoming_transaction>> get_authentic_transactions(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, schema* transaction_data) = 0;
-			virtual expects_promise_rt<base_fee> estimate_fee(const algorithm::asset_id& asset, const dynamic_wallet& wallet, const vector<transferer>& to, const fee_supervisor_options& options) = 0;
-			virtual expects_promise_rt<decimal> calculate_balance(const algorithm::asset_id& asset, const dynamic_wallet& wallet, option<string>&& address) = 0;
-			virtual expects_promise_rt<schema*> execute_rpc(const algorithm::asset_id& asset, const std::string_view& method, schema_list&& args, cache_policy cache, const std::string_view& path = std::string_view());
-			virtual expects_promise_rt<schema*> execute_rpc3(const algorithm::asset_id& asset, const std::string_view& method, schema_args&& args, cache_policy cache, const std::string_view& path = std::string_view());
-			virtual expects_promise_rt<schema*> execute_rest(const algorithm::asset_id& asset, const std::string_view& method, const std::string_view& path, schema* args, cache_policy cache);
-			virtual expects_promise_rt<schema*> execute_http(const algorithm::asset_id& asset, const std::string_view& method, const std::string_view& path, const std::string_view& type, const std::string_view& body, cache_policy cache);
-			virtual expects_promise_rt<outgoing_transaction> new_transaction(const algorithm::asset_id& asset, const dynamic_wallet& wallet, const vector<transferer>& to, const base_fee& fee) = 0;
-			virtual expects_lr<master_wallet> new_master_wallet(const std::string_view& seed) = 0;
-			virtual expects_lr<derived_signing_wallet> new_signing_wallet(const algorithm::asset_id& asset, const master_wallet& wallet, uint64_t address_index) = 0;
-			virtual expects_lr<derived_signing_wallet> new_signing_wallet(const algorithm::asset_id& asset, const secret_box& signing_key) = 0;
-			virtual expects_lr<derived_verifying_wallet> new_verifying_wallet(const algorithm::asset_id& asset, const std::string_view& verifying_key) = 0;
-			virtual expects_lr<string> new_public_key_hash(const std::string_view& address) = 0;
-			virtual expects_lr<string> sign_message(const algorithm::asset_id& asset, const std::string_view& message, const secret_box& signing_key) = 0;
-			virtual expects_lr<void> verify_message(const algorithm::asset_id& asset, const std::string_view& message, const std::string_view& verifying_key, const std::string_view& signature) = 0;
-			virtual expects_lr<ordered_map<string, uint64_t>> find_checkpoint_addresses(const algorithm::asset_id& asset, const unordered_set<string>& addresses);
-			virtual expects_lr<vector<string>> get_checkpoint_addresses(const algorithm::asset_id& asset);
+			virtual expects_promise_rt<schema*> execute_rpc(const std::string_view& method, schema_list&& args, cache_policy cache, const std::string_view& path = std::string_view());
+			virtual expects_promise_rt<schema*> execute_rpc3(const std::string_view& method, schema_args&& args, cache_policy cache, const std::string_view& path = std::string_view());
+			virtual expects_promise_rt<schema*> execute_rest(const std::string_view& method, const std::string_view& path, schema* args, cache_policy cache);
+			virtual expects_promise_rt<schema*> execute_http(const std::string_view& method, const std::string_view& path, const std::string_view& type, const std::string_view& body, cache_policy cache);
+			virtual expects_promise_rt<uint64_t> get_latest_block_height() = 0;
+			virtual expects_promise_rt<schema*> get_block_transactions(uint64_t block_height, string* block_hash) = 0;
+			virtual expects_promise_rt<computed_transaction> link_transaction(uint64_t block_height, const std::string_view& block_hash, schema* transaction_data) = 0;
+			virtual expects_promise_rt<computed_fee> estimate_fee(const std::string_view& from_address, const vector<value_transfer>& to, const fee_supervisor_options& options) = 0;
+			virtual expects_promise_rt<decimal> calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link) = 0;
+			virtual expects_promise_rt<void> broadcast_transaction(const finalized_transaction& finalized) = 0;
+			virtual expects_promise_rt<prepared_transaction> prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee) = 0;
+			virtual expects_lr<finalized_transaction> finalize_transaction(mediator::prepared_transaction&& prepared) = 0;
+			virtual expects_lr<secret_box> encode_secret_key(const secret_box& secret_key) = 0;
+			virtual expects_lr<secret_box> decode_secret_key(const secret_box& secret_key) = 0;
+			virtual expects_lr<string> encode_public_key(const std::string_view& public_key) = 0;
+			virtual expects_lr<string> decode_public_key(const std::string_view& public_key) = 0;
+			virtual expects_lr<string> encode_address(const std::string_view& public_key_hash) = 0;
+			virtual expects_lr<string> decode_address(const std::string_view& address) = 0;
+			virtual expects_lr<string> encode_transaction_id(const std::string_view& transaction_id) = 0;
+			virtual expects_lr<string> decode_transaction_id(const std::string_view& transaction_id) = 0;
+			virtual expects_lr<algorithm::composition::cpubkey_t> to_composite_public_key(const std::string_view& public_key);
+			virtual expects_lr<address_map> to_addresses(const std::string_view& public_key) = 0;
+			virtual expects_lr<ordered_map<string, wallet_link>> find_linked_addresses(const unordered_set<string>& addresses);
+			virtual expects_lr<ordered_map<string, wallet_link>> find_linked_addresses(const algorithm::pubkeyhash owner, size_t offset, size_t count);
 			virtual expects_lr<void> verify_node_compatibility(server_relay* node);
-			virtual string get_derivation(uint64_t address_index) const = 0;
-			virtual string get_checksum_hash(const std::string_view& value) const;
+			virtual decimal to_value(const decimal& value) const;
 			virtual uint256_t to_baseline_value(const decimal& value) const;
+			virtual decimal from_baseline_value(const uint256_t& value) const;
 			virtual uint64_t get_retirement_block_number() const;
 			virtual const chainparams& get_chainparams() const = 0;
 		};
@@ -414,16 +396,36 @@ namespace tangent
 		class relay_backend_utxo : public relay_backend
 		{
 		public:
-			relay_backend_utxo() noexcept;
+			struct balance_query
+			{
+				unordered_map<algorithm::asset_id, decimal> min_token_values;
+				decimal min_native_value;
+
+				balance_query(const decimal& new_min_native_value, const unordered_map<algorithm::asset_id, decimal>& new_min_token_values);
+			};
+
+		public:
+			relay_backend_utxo(const algorithm::asset_id& new_asset) noexcept;
 			virtual ~relay_backend_utxo() = default;
-			virtual expects_promise_rt<coin_utxo> get_transaction_output(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint32_t index) = 0;
-			virtual expects_promise_rt<decimal> calculate_balance(const algorithm::asset_id& asset, const dynamic_wallet& wallet, option<string>&& address) override;
-			virtual expects_lr<vector<coin_utxo>> calculate_coins(const algorithm::asset_id& asset, const dynamic_wallet& wallet, option<decimal>&& min_native_value, option<token_utxo>&& min_token_value);
-			virtual expects_lr<coin_utxo> get_coins(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint32_t index);
-			virtual expects_lr<void> update_coins(const algorithm::asset_id& asset, const outgoing_transaction& tx_data);
-			virtual expects_lr<void> add_coins(const algorithm::asset_id& asset, const coin_utxo& output);
-			virtual expects_lr<void> remove_coins(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint32_t index);
-			virtual decimal get_coins_value(const vector<coin_utxo>& values, option<string>&& contract_address);
+			virtual expects_promise_rt<coin_utxo> get_transaction_output(const std::string_view& transaction_id, uint64_t index) = 0;
+			virtual expects_promise_rt<decimal> calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link) override;
+			virtual expects_lr<vector<coin_utxo>> calculate_utxo(const wallet_link& link, option<balance_query>&& query);
+			virtual expects_lr<coin_utxo> get_utxo(const std::string_view& transaction_id, uint64_t index);
+			virtual expects_lr<void> update_utxo(const prepared_transaction& computed);
+			virtual expects_lr<void> update_utxo(const computed_transaction& computed);
+			virtual expects_lr<void> add_utxo(const coin_utxo& output);
+			virtual expects_lr<void> remove_utxo(const std::string_view& transaction_id, uint64_t index);
+			virtual decimal get_utxo_value(const vector<coin_utxo>& values, option<string>&& contract_address);
+
+		public:
+			static relay_backend_utxo* from_relay(relay_backend* base);
+		};
+
+		class address_util
+		{
+		public:
+			static string encode_tag_address(const std::string_view& address, const std::string_view& destination_tag);
+			static std::pair<string, string> decode_tag_address(const std::string_view& address_destination_tag);
 		};
 	}
 }

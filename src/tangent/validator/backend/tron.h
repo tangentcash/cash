@@ -28,20 +28,18 @@ namespace tangent
 				};
 
 			public:
-				tron() noexcept;
+				tron(const algorithm::asset_id& new_asset) noexcept;
 				virtual ~tron() override = default;
-				virtual expects_promise_rt<void> broadcast_transaction(const algorithm::asset_id& asset, const outgoing_transaction& tx_data) override;
-				virtual expects_promise_rt<decimal> calculate_balance(const algorithm::asset_id& asset, const dynamic_wallet& seed, option<string>&& address) override;
-				virtual expects_promise_rt<outgoing_transaction> new_transaction(const algorithm::asset_id& asset, const dynamic_wallet& wallet, const vector<transferer>& to, const base_fee& fee) override;
-				virtual expects_lr<string> new_public_key_hash(const std::string_view& address) override;
+				virtual expects_promise_rt<void> broadcast_transaction(const finalized_transaction& finalized) override;
+				virtual expects_promise_rt<computed_fee> estimate_fee(const std::string_view& from_address, const vector<value_transfer>& to, const fee_supervisor_options& options) override;
+				virtual expects_promise_rt<decimal> calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link) override;
+				virtual expects_promise_rt<prepared_transaction> prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee) override;
+				virtual expects_lr<finalized_transaction> finalize_transaction(mediator::prepared_transaction&& prepared) override;
 				virtual expects_lr<void> verify_node_compatibility(server_relay* node) override;
-				virtual string get_message_magic() override;
-				virtual string get_derivation(uint64_t address_index) const override;
 				virtual const btc_chainparams_* get_chain() override;
 
 			public:
-				virtual expects_promise_rt<trx_tx_block_header_info> get_block_header_for_tx(const algorithm::asset_id& asset);
-				virtual void generate_message_hash(const string& input, uint8_t output[32]);
+				virtual expects_promise_rt<trx_tx_block_header_info> get_block_header_for_tx();
 				virtual string encode_eth_address(const std::string_view& eth_address) override;
 				virtual string decode_non_eth_address(const std::string_view& non_eth_address) override;
 				virtual string decode_non_eth_address_pf(const std::string_view& non_eth_address);

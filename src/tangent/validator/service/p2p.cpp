@@ -11,6 +11,49 @@ namespace tangent
 {
 	namespace p2p
 	{
+		static bool save_inventory(unordered_set<uint256_t>& inventory, const uint256_t& hash)
+		{
+			auto it = inventory.find(hash);
+			if (it != inventory.end())
+				return false;
+			else if (inventory.size() + 1 > protocol::now().user.p2p.inventory_size)
+				inventory.clear();
+
+			inventory.insert(hash);
+			return true;
+		}
+		static format::variables serialize_procedure_response(const algorithm::seckey secret_key, format::variables&& args)
+		{
+			format::stream buffer;
+			format::variables_util::serialize_flat_into(args, &buffer);
+
+			algorithm::recpubsig signature;
+			algorithm::signing::sign(buffer.hash(), secret_key, signature);
+
+			format::variables result;
+			result.reserve(args.size() + 1);
+			result.push_back(format::variable(algorithm::recpubsig_t(signature).optimized_view()));
+			result.insert(result.end(), std::make_move_iterator(args.begin()), std::make_move_iterator(args.end()));
+			return result;
+		}
+		static bool deserialize_procedure_response(const uint256_t& target_transaction_hash, const algorithm::pubkeyhash_t& target_owner, const p2p::procedure& message)
+		{
+			if (message.args.size() < 3)
+				return false;
+
+			auto message_transaction_hash = message.args[1].as_uint256();
+			if (message_transaction_hash != target_transaction_hash)
+				return false;
+
+			format::stream buffer;
+			if (!format::variables_util::serialize_flat_into(format::variables(message.args.begin() + 1, message.args.end()), &buffer))
+				return false;
+
+			algorithm::pubkeyhash message_owner;
+			algorithm::recpubsig_t signature = algorithm::recpubsig_t(message.args[0].as_blob());
+			return algorithm::signing::recover_hash(buffer.hash(), message_owner, signature.data) && target_owner.equals(message_owner);
+		}
+
 		bool procedure::serialize_into(string* result)
 		{
 			VI_ASSERT(result != nullptr, "result should be set");
@@ -97,6 +140,12 @@ namespace tangent
 			memcpy(message.data() + offset, buffer, size);
 			return deserialize_from(message);
 		}
+		uint256_t procedure::as_hash()
+		{
+			string body;
+			serialize_into(&body);
+			return algorithm::hashing::hash256i(body);
+		}
 
 		relay_procedure::relay_procedure(procedure&& new_data) : data(std::move(new_data))
 		{
@@ -182,10 +231,14 @@ namespace tangent
 			umutex<std::mutex> unique(mutex);
 			outgoing_messages.push(std::move(message));
 		}
-		void relay::relay_message(uref<relay_procedure>&& message)
+		bool relay::relay_message(uref<relay_procedure>&& message, const uint256_t& message_hash)
 		{
 			umutex<std::mutex> unique(mutex);
+			if (!save_inventory(inventory, message_hash))
+				return false;
+
 			priority_messages.push(std::move(message));
+			return true;
 		}
 		void relay::invalidate()
 		{
@@ -274,6 +327,10 @@ namespace tangent
 		const single_queue<procedure>& relay::get_outgoing_messages() const
 		{
 			return outgoing_messages;
+		}
+		unordered_set<uint256_t>& relay::get_inventory()
+		{
+			return inventory;
 		}
 		const uint8_t* relay::outgoing_buffer()
 		{
@@ -368,7 +425,28 @@ namespace tangent
 			}
 			clear_pending_tip();
 		}
-		promise<option<socket_address>> server_node::connect_node_from_mempool(option<socket_address>&& error_address, bool allow_seeding)
+		expects_promise_rt<format::variables> server_node::call_responsive(receive_function function, format::variables&& args, uint64_t timeout_ms, response_callback&& callback)
+		{
+			if (!is_active())
+				return expects_promise_rt<format::variables>(remote_exception::shutdown());
+
+			if (!multicall(nullptr, function, std::move(args)))
+				return expects_promise_rt<format::variables>(remote_exception::retry());
+
+			umutex<std::recursive_mutex> unique(exclusive);
+			size_t id; do { id = math64u::random() % std::numeric_limits<size_t>::max(); } while (responses.find(id) != responses.end());
+			auto& response = responses[id];
+			auto& result = response.result;
+			response.callback = std::move(callback);
+			response.timeout = schedule::get()->set_timeout(timeout_ms, [this, id, result]() mutable
+			{
+				result.set(remote_exception::retry());
+				umutex<std::recursive_mutex> unique(exclusive);
+				responses.erase(id);
+			});
+			return result;
+		}
+		promise<option<socket_address>> server_node::find_node_from_mempool(option<socket_address>&& error_address, bool allow_seeding)
 		{
 			auto mempool = storages::mempoolstate(__func__);
 			if (error_address)
@@ -462,15 +540,42 @@ namespace tangent
 					}
 				}
 
-				coreturn connect_node_from_mempool(optional::none, false);
+				coreturn find_node_from_mempool(optional::none, false);
 			});
 		}
-		promise<void> server_node::connect(uptr<relay>&& from)
+		promise<void> server_node::propose_transaction_logs(const algorithm::asset_id& asset, const mediator::chain_supervisor_options& options, mediator::transaction_logs&& logs)
 		{
-			call(*from, &server_node::propose_handshake, { format::variable(validator.node.as_message().data), format::variable(protocol::now().time.now_cpu()) });
-			return return_ok(*from, __func__, "initiate handshake");
+			umutex<std::recursive_mutex> unique(sync.account);
+			auto account_sequence = validator.wallet.get_latest_sequence().or_else(1);
+			unique.unlock();
+
+			auto context = ledger::transaction_context();
+			for (auto& receipt : logs.transactions)
+			{
+				if (receipt.is_mature(asset))
+				{
+					auto collision = context.get_witness_transaction(asset, receipt.transaction_id);
+					if (!collision)
+					{
+						uptr<transactions::depository_transaction> transaction = memory::init<transactions::depository_transaction>();
+						transaction->set_witness(receipt);
+						if (propose_transaction(nullptr, std::move(*transaction), account_sequence))
+							++account_sequence;
+					}
+					else if (protocol::now().user.p2p.logging)
+						VI_INFO("[p2p] %s observer transaction %s approved", algorithm::asset::name_of(asset).c_str(), receipt.transaction_id.c_str());
+				}
+				else if (protocol::now().user.p2p.logging)
+					VI_INFO("[p2p] %s observer transaction %s queued", algorithm::asset::name_of(asset).c_str(), receipt.transaction_id.c_str());
+			}
+			return promise<void>::null();
 		}
-		promise<void> server_node::disconnect(uptr<relay>&& from)
+		promise<void> server_node::internal_connect(uref<relay>&& from)
+		{
+			call(*from, &methods::propose_handshake, { format::variable(validator.node.as_message().data), format::variable(protocol::now().time.now_cpu()) });
+			return methods::returning::ok(*from, __func__, "initiate handshake");
+		}
+		promise<void> server_node::internal_disconnect(uref<relay>&& from)
 		{
 			auto* peer_validator = from->as_user<ledger::validator>();
 			if (peer_validator != nullptr)
@@ -484,474 +589,9 @@ namespace tangent
 				discovery.offset = 0;
 
 			if (protocol::now().user.p2p.logging)
-				VI_INFO("[p2p] validator %s channel shutdown (%s %s)", from->peer_address().c_str(), node_type_of(*from).data(), from->peer_service().c_str());
+				VI_INFO("[p2p] validator %s channel shutdown (%s %s)", from->peer_address().c_str(), routing::node_type_of(*from).data(), from->peer_service().c_str());
 
-			return return_ok(*from, __func__, "approve shutdown");
-		}
-		promise<void> server_node::propose_transaction_logs(const mediator::chain_supervisor_options& options, mediator::transaction_logs&& logs)
-		{
-			umutex<std::recursive_mutex> unique(sync.account);
-			auto account_sequence = validator.wallet.get_latest_sequence().or_else(1);
-			unique.unlock();
-
-			for (auto& receipt : logs.transactions)
-			{
-				if (receipt.is_approved())
-				{
-					auto collision = ledger::transaction_context().get_witness_transaction(receipt.asset, receipt.transaction_id);
-					if (!collision)
-					{
-						uptr<transactions::incoming_claim> transaction = memory::init<transactions::incoming_claim>();
-						transaction->set_witness(receipt);
-
-						if (propose_transaction(nullptr, std::move(*transaction), account_sequence))
-							++account_sequence;
-					}
-					else if (protocol::now().user.p2p.logging)
-						VI_INFO("[p2p] %s observer transaction %s approved", algorithm::asset::handle_of(receipt.asset).c_str(), receipt.transaction_id.c_str());
-				}
-				else if (protocol::now().user.p2p.logging)
-					VI_INFO("[p2p] %s observer transaction %s queued", algorithm::asset::handle_of(receipt.asset).c_str(), receipt.transaction_id.c_str());
-			}
-			return promise<void>::null();
-		}
-		promise<void> server_node::propose_handshake(server_node* relayer, uptr<relay>&& from, format::variables&& args)
-		{
-			if (args.size() != 2)
-				return return_abort(relayer, *from, __func__, "invalid arguments");
-
-			uptr<ledger::validator> peer_validator = memory::init<ledger::validator>();
-			format::stream validator_message = format::stream(args.front().as_blob());
-			uint64_t peer_time = args.back().as_uint64();
-			uint64_t server_time = protocol::now().time.now_cpu();
-			uint64_t latency_time = peer_time > server_time ? peer_time - server_time : server_time - peer_time;
-			if (!peer_validator->load(validator_message))
-				return return_abort(relayer, *from, __func__, "invalid message");
-
-			auto& peer = protocol::now().user.p2p;
-			peer_validator->availability.latency = latency_time;
-			peer_validator->address = socket_address(from->peer_address(), peer_validator->address.get_ip_port().or_else(protocol::now().user.p2p.port));
-			if (!peer_validator->is_valid())
-				return return_abort(relayer, *from, __func__, "invalid validator");
-
-			auto mempool = storages::mempoolstate(__func__);
-			relayer->apply_validator(mempool, **peer_validator, optional::none).report("mempool peer validator save failed");
-
-			auto chain = storages::chainstate(__func__);
-			auto tip = chain.get_latest_block_header();
-			relayer->call(*from, &server_node::approve_handshake, { format::variable(validator_message.data), format::variable(protocol::now().time.now_cpu()), format::variable(tip ? tip->number : 0), format::variable(tip ? tip->as_hash() : uint256_t(0)) });
-			from->use<ledger::validator>(peer_validator.reset(), [](ledger::validator* value) { memory::deinit(value); });
-			return return_ok(*from, __func__, "approve handshake");
-		}
-		promise<void> server_node::approve_handshake(server_node* relayer, uptr<relay>&& from, format::variables&& args)
-		{
-			if (args.size() != 4)
-				return return_abort(relayer, *from, __func__, "invalid arguments");
-
-			ledger::validator self_validator;
-			format::stream validator_message = format::stream(args[0].as_blob());
-			if (!self_validator.load(validator_message))
-				return return_abort(relayer, *from, __func__, "invalid message");
-			else if (!self_validator.is_valid())
-				return return_abort(relayer, *from, __func__, "invalid validator");
-			else if (self_validator.availability.calls != relayer->validator.node.availability.calls || self_validator.availability.errors != relayer->validator.node.availability.errors || self_validator.availability.timestamp != relayer->validator.node.availability.timestamp)
-				return return_abort(relayer, *from, __func__, "invalid validator adjustment");
-
-			auto* peer_validator = from->as_user<ledger::validator>();
-			if (!peer_validator)
-				return return_abort(relayer, *from, __func__, "validator not found");
-
-			if (self_validator.address.get_ip_address().or_else(string()) != relayer->validator.node.address.get_ip_address().or_else(string()) || self_validator.availability.latency != relayer->validator.node.availability.latency)
-			{
-				auto mempool = storages::mempoolstate(__func__);
-				relayer->validator.node = std::move(self_validator);
-				relayer->apply_validator(mempool, relayer->validator.node, relayer->validator.wallet).report("mempool self validator save failed");
-			}
-
-			auto& protocol = protocol::change();
-			uint64_t peer_time = args[1].as_uint64();
-			uint64_t server_time = protocol::now().time.now_cpu();
-			uint64_t latency_time = peer_time > server_time ? peer_time - server_time : server_time - peer_time;
-			uint64_t varying_peer_time = peer_time + (peer_validator->availability.latency + latency_time) / 2;
-			protocol.time.adjust(peer_validator->address, (int64_t)server_time - (int64_t)varying_peer_time);
-			if (protocol::now().user.p2p.logging)
-				VI_INFO("[p2p] validator %s channel accept (%s %s)", from->peer_address().c_str(), node_type_of(*from).data(), from->peer_service().c_str());
-
-			auto mempool = storages::mempoolstate(__func__);
-			auto nodes = mempool.get_validator_addresses(0, protocol::now().user.p2p.cursor_size);
-			if (nodes && !nodes->empty())
-			{
-				format::variables args;
-				args.reserve(nodes->size() * 2);
-				for (auto& item : *nodes)
-				{
-					auto ip_address = item.get_ip_address();
-					auto ip_port = item.get_ip_port();
-					if (ip_address && ip_port)
-					{
-						args.push_back(format::variable(*ip_address));
-						args.push_back(format::variable(*ip_port));
-					}
-				}
-				relayer->call(*from, &server_node::propose_nodes, std::move(args));
-			}
-
-			auto chain = storages::chainstate(__func__);
-			auto tip = chain.get_latest_block_header();
-			uint64_t peer_tip_number = args[2].as_uint64();
-			uint256_t peer_tip_hash = args[3].as_uint256();
-			if (!tip || peer_tip_number > tip->number)
-				return return_ok(*from, __func__, "tip required");
-			else if (peer_tip_number == tip->number && tip->as_hash() == peer_tip_hash)
-				return return_ok(*from, __func__, "tip synced");
-
-			auto block = chain.get_block_by_number(tip->number, BLOCK_RATE_NORMAL, BLOCK_DATA_CONSENSUS);
-			if (!block)
-				return return_ok(*from, __func__, "no tip found");
-
-			format::stream message = block->as_message();
-			relayer->call(*from, &server_node::propose_block, { format::variable(message.data) });
-			return return_ok(*from, __func__, "new tip proposed");
-		}
-		promise<void> server_node::propose_nodes(server_node* relayer, uptr<relay>&& from, format::variables&& args)
-		{
-			if (args.empty() || args.size() % 2 != 0)
-				return return_abort(relayer, *from, __func__, "invalid arguments");
-
-			size_t candidates = 0;
-			auto mempool = storages::mempoolstate(__func__);
-			for (size_t i = 0; i < args.size(); i += 2)
-			{
-				auto ip_address = args[i + 0].as_string();
-				auto ip_port = args[i + 1].as_uint16();
-				auto target = socket_address(ip_address, ip_port);
-				candidates += target.is_valid() && !routing::is_address_reserved(target) && mempool.apply_trial_address(target) ? 1 : 0;
-			}
-
-			if (candidates > 0)
-				relayer->accept();
-
-			return return_ok(*from, __func__, "accept nodes");
-		}
-		promise<void> server_node::find_fork_collision(server_node* relayer, uptr<relay>&& from, format::variables&& args)
-		{
-			if (args.size() != 2)
-				return return_abort(relayer, *from, __func__, "invalid arguments");
-
-			uint256_t fork_hash = args[0].as_uint256();
-			if (!fork_hash)
-				return return_abort(relayer, *from, __func__, "invalid fork");
-
-			uint64_t branch_number = args[1].as_uint64();
-			if (!branch_number)
-				return return_abort(relayer, *from, __func__, "invalid branch");
-
-			const uint64_t blocks_count = protocol::now().user.p2p.cursor_size;
-			const uint64_t fork_number = branch_number > blocks_count ? branch_number - blocks_count : 1;
-			auto chain = storages::chainstate(__func__);
-			auto headers = chain.get_block_headers(fork_number, blocks_count);
-			if (!headers || headers->empty())
-				return return_error(relayer, *from, __func__, "fork collision not found");
-
-			format::variables header_args;
-			header_args.reserve(headers->size() + 2);
-			header_args.push_back(format::variable(fork_hash));
-			header_args.push_back(format::variable(fork_number + headers->size() - 1));
-			for (auto& item : *headers)
-				header_args.push_back(format::variable(item.as_message().data));
-
-			relayer->call(*from, &server_node::verify_fork_collision, std::move(header_args));
-			return return_ok(*from, __func__, "fork collisions proposed");
-		}
-		promise<void> server_node::verify_fork_collision(server_node* relayer, uptr<relay>&& from, format::variables&& args)
-		{
-			if (args.size() < 2)
-				return return_abort(relayer, *from, __func__, "invalid arguments");
-
-			uint256_t fork_hash = args[0].as_uint256();
-			if (!fork_hash)
-				return return_abort(relayer, *from, __func__, "invalid fork");
-
-			uint64_t branch_number = args[1].as_uint64();
-			if (!branch_number)
-				return return_abort(relayer, *from, __func__, "invalid branch");
-
-			if (args.size() < 3)
-				return return_error(relayer, *from, __func__, "fork collision not found");
-
-			format::stream message;
-			ledger::block_header child_header;
-			message.data = args[2].as_string();
-			if (!child_header.load(message))
-				return return_abort(relayer, *from, __func__, "invalid fork block header");
-
-			ledger::block_header parent_header;
-			auto chain = storages::chainstate(__func__);
-			for (size_t i = 3; i < args.size() + 1; i++)
-			{
-				uint256_t branch_hash = child_header.as_hash(true);
-				auto collision = chain.get_block_header_by_hash(branch_hash);
-				if (collision || --branch_number < 1)
-				{
-					relayer->call(*from, &server_node::request_fork_block, { format::variable(fork_hash), format::variable(branch_hash), format::variable((uint64_t)0) });
-					return return_ok(*from, __func__, "fork collision found");
-				}
-				else if (i < args.size())
-				{
-					message.clear();
-					message.data = args[i].as_string();
-					if (!parent_header.load(message))
-						return return_abort(relayer, *from, __func__, "invalid fork block header");
-				}
-
-				auto verification = child_header.verify_validity(parent_header.number > 0 ? &parent_header : nullptr);
-				if (!verification)
-					return return_abort(relayer, *from, __func__, "invalid fork block header: " + verification.error().message());
-
-				child_header = parent_header;
-			}
-
-			relayer->call(*from, &server_node::find_fork_collision, { format::variable(fork_hash), format::variable(branch_number) });
-			return return_ok(*from, __func__, "fork collision not found");
-		}
-		promise<void> server_node::request_fork_block(server_node* relayer, uptr<relay>&& from, format::variables&& args)
-		{
-			if (args.size() != 3)
-				return return_abort(relayer, *from, __func__, "invalid arguments");
-
-			uint256_t fork_hash = args[0].as_uint256();
-			if (!fork_hash)
-				return return_abort(relayer, *from, __func__, "invalid fork");
-
-			uint256_t block_hash = args[1].as_uint256();
-			if (block_hash > 0)
-			{
-				auto chain = storages::chainstate(__func__);
-				auto block = chain.get_block_by_hash(block_hash, BLOCK_RATE_NORMAL, BLOCK_DATA_CONSENSUS);
-				if (block)
-				{
-					format::stream message = block->as_message();
-					relayer->call(*from, &server_node::propose_fork_block, { format::variable(fork_hash), format::variable(message.data) });
-					return return_ok(*from, __func__, "new fork block proposed");
-				}
-			}
-
-			uint256_t block_number = args[2].as_uint64();
-			if (block_number > 0)
-			{
-				auto chain = storages::chainstate(__func__);
-				auto block = chain.get_block_by_number(block_number, BLOCK_RATE_NORMAL, BLOCK_DATA_CONSENSUS);
-				if (block)
-				{
-					format::stream message = block->as_message();
-					relayer->call(*from, &server_node::propose_fork_block, { format::variable(fork_hash), format::variable(message.data) });
-					return return_ok(*from, __func__, "new fork block proposed");
-				}
-			}
-
-			return return_ok(*from, __func__, "fork block not found");
-		}
-		promise<void> server_node::propose_fork_block(server_node* relayer, uptr<relay>&& from, format::variables&& args)
-		{
-			if (args.size() != 2)
-				return return_abort(relayer, *from, __func__, "invalid arguments");
-
-			uint256_t fork_hash = args.front().as_uint256();
-			if (!fork_hash)
-				return return_abort(relayer, *from, __func__, "invalid fork");
-
-			ledger::block tip;
-			format::stream message = format::stream(args.back().as_blob());
-			if (!tip.load(message) || !relayer->accept_block(*from, std::move(tip), fork_hash))
-				return return_error(relayer, *from, __func__, "block rejected");
-
-			relayer->call(*from, &server_node::request_fork_block, { format::variable(fork_hash), format::variable(uint256_t(0)), format::variable(tip.number + 1) });
-			return return_ok(*from, __func__, "new fork block accepted");
-		}
-		promise<void> server_node::request_block(server_node* relayer, uptr<relay>&& from, format::variables&& args)
-		{
-			if (args.size() != 1)
-				return return_abort(relayer, *from, __func__, "invalid arguments");
-
-			uint256_t block_hash = args.front().as_uint256();
-			if (!block_hash)
-				return return_abort(relayer, *from, __func__, "invalid hash");
-
-			auto chain = storages::chainstate(__func__);
-			auto block = chain.get_block_by_hash(block_hash, BLOCK_RATE_NORMAL, BLOCK_DATA_CONSENSUS);
-			if (!block)
-				return return_ok(*from, __func__, "block not found");
-
-			format::stream message = block->as_message();
-			relayer->call(*from, &server_node::propose_block, { format::variable(message.data) });
-			return return_ok(*from, __func__, "block proposed");
-		}
-		promise<void> server_node::propose_block(server_node* relayer, uptr<relay>&& from, format::variables&& args)
-		{
-			if (args.size() != 1)
-				return return_abort(relayer, *from, __func__, "invalid arguments");
-
-			ledger::block candidate;
-			format::stream message = format::stream(args.front().as_blob());
-			if (!candidate.load(message) || !relayer->accept_block(*from, std::move(candidate), 0))
-				return return_error(relayer, *from, __func__, "block rejected");
-
-			return return_ok(*from, __func__, "block accepted");
-		}
-		promise<void> server_node::propose_block_hash(server_node* relayer, uptr<relay>&& from, format::variables&& args)
-		{
-			if (args.size() != 1)
-				return return_abort(relayer, *from, __func__, "invalid arguments");
-
-			uint256_t block_hash = args.front().as_uint256();
-			if (!block_hash)
-				return return_abort(relayer, *from, __func__, "invalid hash");
-
-			auto chain = storages::chainstate(__func__);
-			if (chain.get_block_header_by_hash(block_hash))
-				return return_ok(*from, __func__, "block found");
-
-			relayer->call(*from, &server_node::request_block, { format::variable(block_hash) });
-			return return_ok(*from, __func__, "block requested");
-		}
-		promise<void> server_node::request_transaction(server_node* relayer, uptr<relay>&& from, format::variables&& args)
-		{
-			if (args.size() != 1)
-				return return_abort(relayer, *from, __func__, "invalid arguments");
-
-			uint256_t transaction_hash = args.front().as_uint256();
-			if (!transaction_hash)
-				return return_abort(relayer, *from, __func__, "invalid hash");
-
-			auto chain = storages::chainstate(__func__);
-			auto transaction = chain.get_transaction_by_hash(transaction_hash);
-			if (!transaction)
-			{
-				auto mempool = storages::mempoolstate(__func__);
-				transaction = mempool.get_transaction_by_hash(transaction_hash);
-				if (!transaction)
-					return return_ok(*from, __func__, "transaction not found");
-			}
-
-			format::stream message = (*transaction)->as_message();
-			relayer->call(*from, &server_node::propose_transaction, { format::variable(message.data) });
-			return return_ok(*from, __func__, "transaction proposed");
-		}
-		promise<void> server_node::propose_transaction(server_node* relayer, uptr<relay>&& from, format::variables&& args)
-		{
-			if (args.size() != 1)
-				return return_abort(relayer, *from, __func__, "invalid arguments");
-
-			format::stream message = format::stream(args.front().as_blob());
-			uptr<ledger::transaction> candidate = tangent::transactions::resolver::init(messages::authentic::resolve_type(message).or_else(0));
-			if (!candidate)
-				return return_error(relayer, *from, __func__, "invalid transaction");
-
-			if (!candidate->load(message) || !relayer->accept_transaction(*from, std::move(candidate)))
-				return return_error(relayer, *from, __func__, "transaction rejected");
-
-			return return_ok(*from, __func__, "transaction accepted");
-		}
-		promise<void> server_node::propose_transaction_hash(server_node* relayer, uptr<relay>&& from, format::variables&& args)
-		{
-			if (args.size() != 1)
-				return return_abort(relayer, *from, __func__, "invalid arguments");
-
-			uint256_t transaction_hash = args.front().as_uint256();
-			if (!transaction_hash)
-				return return_abort(relayer, *from, __func__, "invalid hash");
-
-			auto chain = storages::chainstate(__func__);
-			if (chain.get_transaction_by_hash(transaction_hash))
-				return return_ok(*from, __func__, "finalized transaction found");
-
-			auto mempool = storages::mempoolstate(__func__);
-			if (mempool.get_transaction_by_hash(transaction_hash))
-				return return_ok(*from, __func__, "pending transaction found");
-
-			relayer->call(*from, &server_node::request_transaction, { format::variable(transaction_hash) });
-			return return_ok(*from, __func__, "transaction requested");
-		}
-		promise<void> server_node::request_mempool(server_node* relayer, uptr<relay>&& from, format::variables&& args)
-		{
-			if (args.size() != 1)
-				return return_abort(relayer, *from, __func__, "invalid arguments");
-
-			uint64_t cursor = args.front().as_uint64();
-			const uint64_t transactions_count = protocol::now().user.p2p.cursor_size;
-			auto mempool = storages::mempoolstate(__func__);
-			auto hashes = mempool.get_transaction_hashset(cursor, transactions_count);
-			if (!hashes || hashes->empty())
-				return return_ok(*from, __func__, "mempool is empty");
-
-			format::variables hash_args;
-			hash_args.reserve(hashes->size());
-			hash_args.push_back(format::variable(cursor + hashes->size()));
-			for (auto& item : *hashes)
-				hash_args.push_back(format::variable(item));
-
-			relayer->call(*from, &server_node::propose_mempool, std::move(hash_args));
-			return return_ok(*from, __func__, "mempool proposed");
-		}
-		promise<void> server_node::propose_mempool(server_node* relayer, uptr<relay>&& from, format::variables&& args)
-		{
-			if (args.size() < 2)
-				return return_abort(relayer, *from, __func__, "invalid arguments");
-
-			uint64_t cursor = args.front().as_uint64();
-			auto mempool = storages::mempoolstate(__func__);
-			for (size_t i = 1; i < args.size(); i++)
-			{
-				auto transaction_hash = args[i].as_uint256();
-				if (!mempool.has_transaction(transaction_hash))
-					relayer->call(*from, &server_node::request_transaction, { format::variable(transaction_hash) });
-			}
-
-			const uint64_t transactions_count = protocol::now().user.p2p.cursor_size;
-			if (args.size() > transactions_count)
-				relayer->call(*from, &server_node::request_mempool, { format::variable(cursor) });
-
-			return return_ok(*from, __func__, "mempool accepted");
-		}
-		promise<void> server_node::return_abort(server_node* relayer, relay* from, const char* function, const std::string_view& message)
-		{
-			auto* peer_validator = from->as_user<ledger::validator>();
-			if (peer_validator != nullptr)
-			{
-				++peer_validator->availability.calls;
-				++peer_validator->availability.errors;
-			}
-
-			relayer->reject(from);
-			if (protocol::now().user.p2p.logging)
-				VI_DEBUG("[p2p] validator %s call \"%s\" abort: %.*s (%s %s)", from->peer_address().c_str(), function, (int)message.size(), message.data(), node_type_of(from).data(), from->peer_service().c_str());
-
-			return promise<void>::null();
-		}
-		promise<void> server_node::return_error(server_node* relayer, relay* from, const char* function, const std::string_view& message)
-		{
-			auto* peer_validator = from->as_user<ledger::validator>();
-			if (peer_validator != nullptr)
-			{
-				++peer_validator->availability.calls;
-				++peer_validator->availability.errors;
-			}
-
-			if (protocol::now().user.p2p.logging)
-				VI_DEBUG("[p2p] validator %s call \"%s\" error: %.*s (%s %s)", from->peer_address().c_str(), function, (int)message.size(), message.data(), node_type_of(from).data(), from->peer_service().c_str());
-
-			return promise<void>::null();
-		}
-		promise<void> server_node::return_ok(relay* from, const char* function, const std::string_view& message)
-		{
-			auto* peer_validator = from->as_user<ledger::validator>();
-			if (peer_validator != nullptr)
-				++peer_validator->availability.calls;
-
-			if (protocol::now().user.p2p.logging)
-				VI_DEBUG("[p2p] validator %s call \"%s\" OK: %.*s (%s %s)", from->peer_address().c_str(), function, (int)message.size(), message.data(), node_type_of(from).data(), from->peer_service().c_str());
-
-			return promise<void>::null();
+			return methods::returning::ok(*from, __func__, "approve shutdown");
 		}
 		expects_system<void> server_node::on_unlisten()
 		{
@@ -960,20 +600,7 @@ namespace tangent
 		}
 		expects_system<void> server_node::on_after_unlisten()
 		{
-			control_sys.shutdown().wait();
 			umutex<std::recursive_mutex> unique(exclusive);
-			for (auto& instance : candidate_nodes)
-			{
-				if (instance->net.stream != nullptr)
-				{
-					if (!schedule::is_available())
-						instance->net.stream->set_blocking(true);
-					instance->net.stream->shutdown(true);
-				}
-				instance->release();
-			}
-			candidate_nodes.clear();
-
 		retry:
 			unordered_map<void*, relay*> current_nodes;
 			current_nodes.swap(nodes);
@@ -986,13 +613,21 @@ namespace tangent
 					outbound_instance->release();
 
 				relay* state = node.second;
-				disconnect(state).wait();
+				internal_disconnect(state).wait();
 			}
 
 			unique.lock();
 			if (!nodes.empty())
 				goto retry;
 
+			auto* queue = schedule::get();
+			for (auto& response : responses)
+			{
+				queue->clear_timeout(response.second.timeout);
+				response.second.result.set(remote_exception::shutdown());
+			}
+
+			responses.clear();
 			return expectation::met;
 		}
 		expects_lr<void> server_node::apply_validator(storages::mempoolstate& mempool, ledger::validator& node, option<ledger::wallet>&& wallet)
@@ -1018,14 +653,131 @@ namespace tangent
 				discovery.count = mempool.get_validators_count().or_else(0);
 			return status;
 		}
-		void server_node::bind_function(receive_function function, bool multicallable)
+		expects_lr<void> server_node::propose_transaction(relay* from, uptr<ledger::transaction>&& candidate_tx, uint64_t account_sequence, uint256_t* output_hash)
+		{
+			auto mempool = storages::mempoolstate(__func__);
+			auto bandwidth = mempool.get_bandwidth_by_owner(validator.wallet.public_key_hash, candidate_tx->get_type());
+			if (bandwidth->congested)
+			{
+				auto price = mempool.get_gas_price(candidate_tx->asset, 0.10);
+				candidate_tx->set_optimal_gas(price.or_else(decimal::zero()));
+			}
+			else
+				candidate_tx->set_optimal_gas(decimal::zero());
+
+			auto purpose = candidate_tx->as_typename();
+			if (candidate_tx->sign(validator.wallet.secret_key, account_sequence, decimal::zero()))
+			{
+				if (output_hash != nullptr)
+					*output_hash = candidate_tx->as_hash();
+
+				auto status = accept_transaction(from, std::move(candidate_tx), account_sequence);
+				if (protocol::now().user.p2p.logging && !status)
+					VI_ERR("[p2p] transaction %s %.*s error: %s", algorithm::encoding::encode_0xhex256(candidate_tx->as_hash()).c_str(), (int)purpose.size(), purpose.data(), status.error().what());
+				else if (protocol::now().user.p2p.logging)
+					VI_INFO("[p2p] transaction %s %.*s accepted", algorithm::encoding::encode_0xhex256(candidate_tx->as_hash()).c_str(), (int)purpose.size(), purpose.data());
+				return status;
+			}
+			else
+			{
+				auto status = layer_exception("transaction sign failed");
+				if (protocol::now().user.p2p.logging)
+					VI_ERR("[p2p] transaction %s %.*s error: %s", algorithm::encoding::encode_0xhex256(candidate_tx->as_hash()).c_str(), (int)purpose.size(), purpose.data(), status.what());
+				return status;
+			}
+		}
+		expects_lr<void> server_node::accept_transaction(relay* from, uptr<ledger::transaction>&& candidate_tx, bool validate_execution)
+		{
+			auto purpose = candidate_tx->as_typename();
+			auto candidate_hash = candidate_tx->as_hash();
+			auto chain = storages::chainstate(__func__);
+			if (chain.get_transaction_by_hash(candidate_hash))
+			{
+				if (protocol::now().user.p2p.logging)
+					VI_INFO("[p2p] transaction %s %.*s accepted", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data());
+				return expectation::met;
+			}
+
+			algorithm::pubkeyhash owner;
+			if (!candidate_tx->recover_hash(owner))
+			{
+				if (protocol::now().user.p2p.logging)
+					VI_WARN("[p2p] transaction %s %.*s validation failed: invalid signature", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data());
+				return layer_exception("signature key recovery failed");
+			}
+
+			algorithm::pubkeyhash validation_owner;
+			auto validation = ledger::transaction_context::validate_tx(*candidate_tx, candidate_hash, validation_owner);
+			if (!validation)
+			{
+				if (protocol::now().user.p2p.logging)
+					VI_WARN("[p2p] transaction %s %.*s validation failed: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), validation.error().what());
+				return validation.error();
+			}
+
+			bool event = candidate_tx->is_consensus() && !memcmp(validator.wallet.public_key_hash, owner, sizeof(owner));
+			if (event || validate_execution)
+			{
+				ledger::block temp_block;
+				temp_block.number = std::numeric_limits<int64_t>::max() - 1;
+
+				ledger::evaluation_context temp_environment;
+				memcpy(temp_environment.proposer.public_key_hash, validator.wallet.public_key_hash, sizeof(algorithm::pubkeyhash));
+
+				ledger::block_work cache;
+				size_t transaction_size = candidate_tx->as_message().data.size();
+				auto validation = ledger::transaction_context::execute_tx(&temp_block, &temp_environment, *candidate_tx, candidate_hash, owner, cache, transaction_size, (uint8_t)ledger::transaction_context::execution_flags::only_successful);
+				if (!validation)
+				{
+					if (protocol::now().user.p2p.logging)
+						VI_WARN("[p2p] transaction %s %.*s pre-execution failed: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), validation.error().what());
+					return validation.error();
+				}
+			}
+
+			return broadcast_transaction(from, std::move(candidate_tx), owner);
+		}
+		expects_lr<void> server_node::broadcast_transaction(relay* from, uptr<ledger::transaction>&& candidate_tx, const algorithm::pubkeyhash owner)
+		{
+			auto purpose = candidate_tx->as_typename();
+			auto candidate_hash = candidate_tx->as_hash();
+			auto mempool = storages::mempoolstate(__func__);
+			auto action = mempool.add_transaction(**candidate_tx, false);
+			if (!action)
+			{
+				if (protocol::now().user.p2p.logging)
+					VI_WARN("[p2p] transaction %s %.*s mempool rejection: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), action.error().what());
+				return action.error();
+			}
+
+			if (protocol::now().user.p2p.logging)
+				VI_INFO("[p2p] transaction %s %.*s accepted", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data());
+
+			if (events.accept_transaction)
+				events.accept_transaction(candidate_hash, *candidate_tx, owner);
+
+			size_t multicalls = from ? multicall(from, &methods::propose_transaction_hash, { format::variable(candidate_hash) }) : multicall(nullptr, &methods::propose_transaction, { format::variable(candidate_tx->as_message().data) });
+			if (multicalls > 0 && protocol::now().user.p2p.logging)
+				VI_INFO("[p2p] transaction %s %.*s broadcasted to %i nodes", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), (int)multicalls);
+
+			accept_mempool();
+			return expectation::met;
+		}
+		void server_node::bind_callable(receive_function function)
 		{
 			uint32_t method_index = method_address + (uint32_t)in_methods.size();
 			void* function_index = (void*)function;
-			in_methods[method_index] = std::make_pair(function_index, multicallable);
+			in_methods[method_index] = std::make_pair(function_index, false);
 			out_methods[function_index] = method_index;
 		}
-		bool server_node::call_function(relay* state, receive_function function, format::variables&& args)
+		void server_node::bind_multicallable(receive_function function)
+		{
+			uint32_t method_index = method_address + (uint32_t)in_methods.size();
+			void* function_index = (void*)function;
+			in_methods[method_index] = std::make_pair(function_index, true);
+			out_methods[function_index] = method_index;
+		}
+		bool server_node::call(relay* state, receive_function function, format::variables&& args)
 		{
 			VI_ASSERT(state != nullptr, "state should be set");
 			auto it = out_methods.find((void*)function);
@@ -1035,10 +787,15 @@ namespace tangent
 			procedure next;
 			next.method = it->second;
 			next.args = std::move(args);
-			state->push_message(std::move(next));
+			return call(state, std::move(next));
+		}
+		bool server_node::call(relay* state, procedure&& message)
+		{
+			VI_ASSERT(state != nullptr, "state should be set");
+			state->push_message(std::move(message));
 			return push_next_procedure(state);
 		}
-		size_t server_node::multicall_function(relay* state, receive_function function, format::variables&& args)
+		size_t server_node::multicall(relay* state, receive_function function, format::variables&& args)
 		{
 			auto it = out_methods.find((void*)function);
 			if (it == out_methods.end())
@@ -1047,43 +804,38 @@ namespace tangent
 			procedure next;
 			next.method = it->second;
 			next.args = std::move(args);
-
-			int64_t time = ::time(nullptr);
-			uref<relay_procedure> relay_message = new relay_procedure(std::move(next));
+			return multicall(state, std::move(next));
+		}
+		size_t server_node::multicall(relay* state, procedure&& message)
+		{
+			size_t calls = 0;
+			uint256_t hash = message.as_hash();
+			uref<relay_procedure> relay_message = new relay_procedure(std::move(message));
 			umutex<std::recursive_mutex> unique(exclusive);
 			for (auto& node : nodes)
 			{
 				if (state != node.second)
-					node.second->relay_message(uref<relay_procedure>(relay_message));
-			}
-
-			size_t calls = 0;
-			for (auto& node : nodes)
-			{
-				if (state != node.second)
-					calls += push_next_procedure(node.second) ? 1 : 0;
+				{
+					if (node.second->relay_message(uref<relay_procedure>(relay_message), hash))
+						calls += push_next_procedure(node.second) ? 1 : 0;
+				}
 			}
 			return calls;
 		}
-		void server_node::accept_outbound_node(outbound_node* candidate, expects_system<void>&& status)
+		void server_node::accept_outbound_node(uptr<outbound_node>&& candidate, expects_system<void>&& status)
 		{
-			uptr<outbound_node> copy = candidate;
 			umutex<std::recursive_mutex> unique(exclusive);
-			candidate_nodes.erase(candidate);
-			candidate->release();
 			if (!is_active())
-			{
-				copy.reset();
 				return;
-			}
 
 			auto* duplicate = find(candidate->get_peer_address());
 			if (status && !duplicate)
 			{
-				relay* state = new relay(node_type::outbound, candidate);
-				append_node(state, [state, candidate, this]()
+				auto* ref = candidate.reset();
+				relay* state = new relay(node_type::outbound, ref);
+				append_node(state, [state, ref, this]()
 				{
-					pull_procedure(state, std::bind(&server_node::abort_outbound_node, this, candidate));
+					pull_procedure(state, std::bind(&server_node::abort_outbound_node, this, ref));
 					receive_outbound_node(optional::none);
 				});
 			}
@@ -1103,19 +855,37 @@ namespace tangent
 		{
 			VI_ASSERT(state && abort_callback, "state and abort callback should be set");
 			auto* stream = state->as_socket();
-			if (!stream || !control_sys.enqueue())
+			if (!stream)
 				return;
-
 		retry:
 			if (state->pull_incoming_message(nullptr, 0))
 			{
 				procedure message;
 				state->incoming_message_into(&message);
-				if (in_methods.empty() || message.method < method_address || message.method > method_address + in_methods.size() - 1)
+				if (message.method == message.magic)
+				{
+					bool broadcast_further = true;
+					umutex<std::recursive_mutex> unique(exclusive);
+					for (auto it = responses.begin(); it != responses.end();)
+					{
+						auto& response = it->second;
+						if (response.callback(message))
+						{
+							broadcast_further = false;
+							response.result.set(message.args);
+							it = responses.erase(it);
+						}
+						else
+							++it;
+					}
+					if (broadcast_further)
+						multicall(state, std::move(message));
+					goto retry;
+				}
+				else if (in_methods.empty() || message.method < method_address || message.method > method_address + in_methods.size() - 1)
 				{
 				shutdown:
-					if (control_sys.dequeue())
-						abort_callback(state);
+					abort_callback(state);
 					return;
 				}
 
@@ -1125,29 +895,19 @@ namespace tangent
 
 				if (it->second.second)
 				{
-					string body;
-					if (!message.serialize_into(&body))
-						goto shutdown;
-
-					uint256_t hash = algorithm::hashing::hash256i(body);
+					uint256_t hash = message.as_hash();
 					umutex<std::mutex> unique(sync.inventory);
-					auto it = inventory.find(hash);
-					if (it != inventory.end())
+					if (!save_inventory(inventory, hash) || !save_inventory(state->get_inventory(), hash))
 						goto retry;
-					else if (inventory.size() + 1 > protocol::now().user.p2p.inventory_size)
-						inventory.clear();
-					inventory[hash] = time(nullptr) + protocol::now().user.p2p.inventory_timeout;
 				}
 
 				auto function = (receive_function)it->second.first;
-				state->add_ref();
-				return cospawn([this, state, abort_callback, function, message = std::move(message)]() mutable
+				auto copy = uref(state);
+				copy->add_ref();
+				return cospawn([this, abort_callback, function, copy = std::move(copy), message = std::move(message)]() mutable
 				{
-					(*function)(this, state, std::move(message.args)).when([this, state, abort_callback]()
-					{
-						if (control_sys.dequeue())
-							pull_procedure(state, abort_callback);
-					});
+					auto* state = *copy;
+					(*function)(this, std::move(copy), std::move(message)).when(std::bind(&server_node::pull_procedure, this, state, abort_callback));
 				});
 			}
 			else
@@ -1155,15 +915,9 @@ namespace tangent
 				stream->read_queued(BLOB_SIZE, [this, state, abort_callback](socket_poll event, const uint8_t* buffer, size_t size)
 				{
 					if (packet::is_done(event))
-					{
-						if (control_sys.dequeue())
-							cospawn(std::bind_front(&server_node::pull_procedure, this, state, abort_callback));
-					}
+						cospawn(std::bind_front(&server_node::pull_procedure, this, state, abort_callback));
 					else if (packet::is_error(event))
-					{
-						if (control_sys.dequeue())
-							abort_callback(state);
-					}
+						abort_callback(state);
 					else if (packet::is_data(event))
 						return !state->pull_incoming_message(buffer, size);
 					return true;
@@ -1210,9 +964,6 @@ namespace tangent
 		void server_node::append_node(relay* state, task_callback&& callback)
 		{
 			VI_ASSERT(state != nullptr && callback, "node and callback should be set");
-			if (!control_sys.enqueue())
-				return;
-
 			umutex<std::recursive_mutex> unique(exclusive);
 			auto it = nodes.find(state->as_instance());
 			if (it == nodes.end() || it->second != state)
@@ -1224,22 +975,16 @@ namespace tangent
 				auto& node = nodes[state->as_instance()];
 				memory::release(node);
 				node = state;
-				node->add_ref();
+
+				auto copy = uref(state);
+				copy->add_ref();
 				unique.unlock();
-				cospawn([this, state, callback = std::move(callback)]() mutable
-				{
-					connect(state).when([this, state, callback = std::move(callback)]() mutable
-					{
-						if (control_sys.dequeue())
-							callback();
-					});
-				});
+				cospawn([this, copy = std::move(copy), callback = std::move(callback)]() mutable { internal_connect(std::move(copy)).when(std::move(callback)); });
 			}
 			else
 			{
 				unique.unlock();
-				if (control_sys.dequeue())
-					callback();
+				callback();
 			}
 		}
 		void server_node::erase_node(relay* state, task_callback&& callback)
@@ -1255,27 +1000,18 @@ namespace tangent
 			if (it == nodes.end())
 				return;
 
-			uptr<relay> state = it->second;
+			uref<relay> state = it->second;
+			state->add_ref();
+
 			nodes.erase(it);
 			unique.unlock();
-			if (!control_sys.enqueue())
+			cospawn([this, state = std::move(state), callback = std::move(callback)]() mutable
 			{
-				state->invalidate();
-				callback();
-				return;
-			}
-
-			auto* copy = *state;
-			copy->add_ref();
-			cospawn([this, copy, callback = std::move(callback)]() mutable
-			{
-				copy->add_ref();
-				disconnect(copy).when([this, copy, callback = std::move(callback)]() mutable
+				uref<relay> copy = state;
+				internal_disconnect(std::move(state)).when([this, copy = std::move(copy), callback = std::move(callback)]() mutable
 				{
 					copy->invalidate();
-					copy->release();
-					if (control_sys.dequeue())
-						callback();
+					callback();
 				});
 			});
 		}
@@ -1315,20 +1051,7 @@ namespace tangent
 			socket_router* config = new socket_router();
 			config->max_connections = (size_t)protocol::now().user.p2p.max_inbound_connections;
 			config->socket_timeout = (size_t)protocol::now().user.tcp.timeout;
-			control_sys.activate_and_enqueue();
-			control_sys.dequeue();
-			control_sys.interval_if_none("inventory_cleanup", protocol::now().user.p2p.inventory_cleanup_timeout, [this]()
-			{
-				int64_t time = ::time(nullptr);
-				umutex<std::mutex> unique(sync.inventory);
-				for (auto it = inventory.cbegin(); it != inventory.cend();)
-				{
-					if (it->second < time)
-						inventory.erase(it++);
-					else
-						++it;
-				}
-			});
+			control_sys.activate();
 
 			uint32_t method_magic = os::hw::to_endianness(os::hw::endian::little, protocol::now().message.packet_magic);
 			uint32_t method_range = (uint32_t)std::numeric_limits<int32_t>::max();
@@ -1378,8 +1101,8 @@ namespace tangent
 			apply_validator(mempool, validator.node, validator.wallet).expect("failed to save trusted validator");
 
 			auto node_id = codec::hex_encode(std::string_view((char*)this, sizeof(this)));
-			nss::server_node::get()->add_transaction_callback(node_id, std::bind(&server_node::propose_transaction_logs, this, std::placeholders::_1, std::placeholders::_2));
-			console::get()->add_color_tokens({ console::color_token("CHECKPOINT SYNC DONE", std_color::white, std_color::dark_green) });
+			nss::server_node::get()->add_transaction_callback(node_id, std::bind(&server_node::propose_transaction_logs, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+			console::get()->add_colorization("CHECKPOINT SYNC DONE", std_color::white, std_color::dark_green);
 
 			for (auto& node : protocol::now().user.nodes)
 			{
@@ -1393,21 +1116,23 @@ namespace tangent
 					mempool.apply_trial_address(endpoint.address);
 			}
 
-			bind_callable(&server_node::propose_handshake);
-			bind_callable(&server_node::approve_handshake);
-			bind_callable(&server_node::propose_nodes);
-			bind_callable(&server_node::find_fork_collision);
-			bind_callable(&server_node::verify_fork_collision);
-			bind_callable(&server_node::request_fork_block);
-			bind_callable(&server_node::propose_fork_block);
-			bind_callable(&server_node::request_block);
-			bind_callable(&server_node::request_transaction);
-			bind_callable(&server_node::request_mempool);
-			bind_callable(&server_node::propose_mempool);
-			bind_multicallable(&server_node::propose_block);
-			bind_multicallable(&server_node::propose_block_hash);
-			bind_multicallable(&server_node::propose_transaction);
-			bind_multicallable(&server_node::propose_transaction_hash);
+			bind_callable(&methods::propose_handshake);
+			bind_callable(&methods::approve_handshake);
+			bind_callable(&methods::propose_nodes);
+			bind_callable(&methods::find_fork_collision);
+			bind_callable(&methods::verify_fork_collision);
+			bind_callable(&methods::request_fork_block);
+			bind_callable(&methods::propose_fork_block);
+			bind_callable(&methods::request_block);
+			bind_callable(&methods::request_transaction);
+			bind_callable(&methods::request_mempool);
+			bind_callable(&methods::propose_mempool);
+			bind_multicallable(&methods::propose_block);
+			bind_multicallable(&methods::propose_block_hash);
+			bind_multicallable(&methods::propose_transaction);
+			bind_multicallable(&methods::propose_transaction_hash);
+			bind_multicallable(&dispatch_context::calculate_mpc_public_key_rpc);
+			bind_multicallable(&dispatch_context::calculate_mpc_signature_rpc);
 			clear_mempool(false);
 			accept();
 
@@ -1570,33 +1295,35 @@ namespace tangent
 
 			return control_sys.timeout_if_none("accept_dispatchpool", 0, [this, tip]()
 			{
-				tip.dispatch_async(validator.wallet).when([this](expects_lr<ledger::block_dispatch>&& dispatch)
+				auto dispatcher = memory::init<dispatch_context>(this);
+				dispatcher->dispatch_async(tip).when([this, dispatcher]() mutable
 				{
-					dispatch.report("dispatchpool execution failed");
-					if (dispatch)
+					auto& sendable_transactions = dispatcher->get_sendable_transactions();
+					if (!sendable_transactions.empty())
 					{
-						dispatch->checkpoint().report("dispatchpool checkpoint failed");
-						if (!dispatch->outputs.empty())
-						{
-							umutex<std::recursive_mutex> unique(sync.account);
-							auto account_sequence = validator.wallet.get_latest_sequence().or_else(1);
-							unique.unlock();
+						umutex<std::recursive_mutex> unique(sync.account);
+						auto account_sequence = validator.wallet.get_latest_sequence().or_else(1);
+						unique.unlock();
 
-							control_sys.lock_timeout("accept_mempool");
-							for (auto& transaction : dispatch->outputs)
-							{
-								if (propose_transaction(nullptr, std::move(transaction), account_sequence))
-									++account_sequence;
-							}
-							if (control_sys.unlock_timeout("accept_mempool"))
-								accept_mempool();
+						control_sys.lock_timeout("accept_mempool");
+						for (auto& transaction : sendable_transactions)
+						{
+							if (propose_transaction(nullptr, std::move(transaction), account_sequence))
+								++account_sequence;
 						}
-						else
+
+						dispatcher->checkpoint().report("dispatcher checkpoint error");
+						if (control_sys.unlock_timeout("accept_mempool"))
 							accept_mempool();
 					}
 					else
+					{
+						dispatcher->checkpoint().report("dispatcher checkpoint error");
 						accept_mempool();
+					}
+
 					control_sys.clear_timeout("accept_dispatchpool");
+					memory::deinit(dispatcher);
 				});
 			});
 		}
@@ -1714,9 +1441,9 @@ namespace tangent
 				mempool.dirty = true;
 				unique.unlock();
 				if (!tip_block)
-					call(from, &server_node::request_fork_block, { format::variable(candidate_hash), format::variable(uint256_t(0)), format::variable((uint64_t)1) });
+					call(from, &methods::request_fork_block, { format::variable(candidate_hash), format::variable(uint256_t(0)), format::variable((uint64_t)1) });
 				else
-					call(from, &server_node::find_fork_collision, { format::variable(candidate_hash), format::variable(tip_block->number) });
+					call(from, &methods::find_fork_collision, { format::variable(candidate_hash), format::variable(tip_block->number) });
 
 				if (protocol::now().user.p2p.logging)
 					VI_INFO("[p2p] block %s new best branch found (height: %" PRIu64 ", distance: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), candidate_block.number, std::abs((int64_t)(tip_block ? tip_block->number : 0) - (int64_t)candidate_block.number));
@@ -1773,7 +1500,7 @@ namespace tangent
 				pending_tip.hash = candidate_hash;
 				pending_tip.timeout = schedule::get()->set_timeout(protocol::now().policy.consensus_proof_time, std::bind(&server_node::accept_pending_tip, this));
 
-				size_t multicalls = from ? multicall(from, &server_node::propose_block_hash, { format::variable(pending_tip.hash) }) : multicall(from, &server_node::propose_block, { format::variable(pending_tip.block->as_message().data) });
+				size_t multicalls = from ? multicall(from, &methods::propose_block_hash, { format::variable(pending_tip.hash) }) : multicall(from, &methods::propose_block, { format::variable(pending_tip.block->as_message().data) });
 				if (multicalls > 0 && protocol::now().user.p2p.logging)
 					VI_INFO("[p2p] block %s broadcasted to %i nodes (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)multicalls, candidate_block.number);
 
@@ -1789,7 +1516,7 @@ namespace tangent
 				if (!accept_block_candidate(candidate_block, candidate_hash, fork_tip))
 					return false;
 
-				size_t multicalls = from ? multicall(from, &server_node::propose_block_hash, { format::variable(candidate_hash) }) : multicall(from, &server_node::propose_block, { format::variable(candidate_block.as_message().data) });
+				size_t multicalls = from ? multicall(from, &methods::propose_block_hash, { format::variable(candidate_hash) }) : multicall(from, &methods::propose_block, { format::variable(candidate_block.as_message().data) });
 				if (multicalls > 0 && protocol::now().user.p2p.logging)
 					VI_INFO("[p2p] block %s broadcasted to %i nodes (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)multicalls, candidate_block.number);
 
@@ -1798,7 +1525,7 @@ namespace tangent
 				clear_pending_tip();
 				if (from != nullptr && mempool.dirty && !is_syncing())
 				{
-					call(from, &server_node::request_mempool, { format::variable((uint64_t)0) });
+					call(from, &methods::request_mempool, { format::variable((uint64_t)0) });
 					mempool.dirty = false;
 				}
 			}
@@ -1838,7 +1565,7 @@ namespace tangent
 		{
 			uint32_t type = transaction.transaction->as_type();
 			auto purpose = transaction.transaction->as_typename();
-			if (type == transactions::commitment::as_instance_type())
+			if (type == transactions::certification::as_instance_type())
 			{
 				mempool.activation_block = optional::none;
 				if (transaction.receipt.successful)
@@ -1872,136 +1599,20 @@ namespace tangent
 
 			return address ? connect_outbound_node(*address) : receive_outbound_node(optional::none);
 		}
-		expects_lr<void> server_node::propose_transaction(relay* from, uptr<ledger::transaction>&& candidate_tx, uint64_t account_sequence, uint256_t* output_hash)
-		{
-			auto mempool = storages::mempoolstate(__func__);
-			auto bandwidth = mempool.get_bandwidth_by_owner(validator.wallet.public_key_hash, candidate_tx->get_type());
-			if (bandwidth->congested)
-			{
-				auto price = mempool.get_gas_price(candidate_tx->asset, 0.10);
-				candidate_tx->set_optimal_gas(price.or_else(decimal::zero()));
-			}
-			else
-				candidate_tx->set_optimal_gas(decimal::zero());
-
-			auto purpose = candidate_tx->as_typename();
-			if (candidate_tx->sign(validator.wallet.secret_key, account_sequence, decimal::zero()))
-			{
-				if (output_hash != nullptr)
-					*output_hash = candidate_tx->as_hash();
-
-				auto status = accept_transaction(from, std::move(candidate_tx), account_sequence);
-				if (protocol::now().user.p2p.logging && !status)
-					VI_ERR("[p2p] transaction %s %.*s error: %s", algorithm::encoding::encode_0xhex256(candidate_tx->as_hash()).c_str(), (int)purpose.size(), purpose.data(), status.error().what());
-				else if (protocol::now().user.p2p.logging)
-					VI_INFO("[p2p] transaction %s %.*s accepted", algorithm::encoding::encode_0xhex256(candidate_tx->as_hash()).c_str(), (int)purpose.size(), purpose.data());
-				return status;
-			}
-			else
-			{
-				auto status = layer_exception("transaction sign failed");
-				if (protocol::now().user.p2p.logging)
-					VI_ERR("[p2p] transaction %s %.*s error: %s", algorithm::encoding::encode_0xhex256(candidate_tx->as_hash()).c_str(), (int)purpose.size(), purpose.data(), status.what());
-				return status;
-			}
-		}
-		expects_lr<void> server_node::accept_transaction(relay* from, uptr<ledger::transaction>&& candidate_tx, bool validate_execution)
-		{
-			auto purpose = candidate_tx->as_typename();
-			auto candidate_hash = candidate_tx->as_hash();
-			auto chain = storages::chainstate(__func__);
-			if (chain.get_transaction_by_hash(candidate_hash))
-			{
-				if (protocol::now().user.p2p.logging)
-					VI_INFO("[p2p] transaction %s %.*s accepted", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data());
-				return expectation::met;
-			}
-
-			algorithm::pubkeyhash owner;
-			if (!candidate_tx->recover_hash(owner))
-			{
-				if (protocol::now().user.p2p.logging)
-					VI_WARN("[p2p] transaction %s %.*s validation failed: invalid signature", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data());
-				return layer_exception("signature key recovery failed");
-			}
-
-			algorithm::pubkeyhash validation_owner;
-			auto validation = ledger::transaction_context::validate_tx(*candidate_tx, candidate_hash, validation_owner);
-			if (!validation)
-			{
-				if (protocol::now().user.p2p.logging)
-					VI_WARN("[p2p] transaction %s %.*s validation failed: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), validation.error().what());
-				return validation.error();
-			}
-
-			bool event = candidate_tx->is_consensus() && !memcmp(validator.wallet.public_key_hash, owner, sizeof(owner));
-			if (event || validate_execution)
-			{
-				ledger::block temp_block;
-				temp_block.number = std::numeric_limits<int64_t>::max() - 1;
-
-				ledger::evaluation_context temp_environment;
-				memcpy(temp_environment.proposer.public_key_hash, validator.wallet.public_key_hash, sizeof(algorithm::pubkeyhash));
-
-				ledger::block_work cache;
-				size_t transaction_size = candidate_tx->as_message().data.size();
-				auto validation = ledger::transaction_context::execute_tx(&temp_block, &temp_environment, *candidate_tx, candidate_hash, owner, cache, transaction_size, (uint8_t)ledger::transaction_context::execution_flags::only_successful);
-				if (!validation)
-				{
-					if (protocol::now().user.p2p.logging)
-						VI_WARN("[p2p] transaction %s %.*s pre-execution failed: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), validation.error().what());
-					return validation.error();
-				}
-			}
-
-			return broadcast_transaction(from, std::move(candidate_tx), owner);
-		}
-		expects_lr<void> server_node::broadcast_transaction(relay* from, uptr<ledger::transaction>&& candidate_tx, const algorithm::pubkeyhash owner)
-		{
-			auto purpose = candidate_tx->as_typename();
-			auto candidate_hash = candidate_tx->as_hash();
-			auto mempool = storages::mempoolstate(__func__);
-			auto status = mempool.add_transaction(**candidate_tx);
-			if (!status)
-			{
-				if (protocol::now().user.p2p.logging)
-					VI_WARN("[p2p] transaction %s %.*s mempool rejection: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), status.error().what());
-				return status.error();
-			}
-
-			if (protocol::now().user.p2p.logging)
-				VI_INFO("[p2p] transaction %s %.*s accepted", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data());
-
-			if (events.accept_transaction)
-				events.accept_transaction(candidate_hash, *candidate_tx, owner);
-
-			size_t multicalls = from ? multicall(from, &server_node::propose_transaction_hash, { format::variable(candidate_hash) }) : multicall(from, &server_node::propose_transaction, { format::variable(candidate_tx->as_message().data) });
-			if (multicalls > 0 && protocol::now().user.p2p.logging)
-				VI_INFO("[p2p] transaction %s %.*s broadcasted to %i nodes", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), (int)multicalls);
-
-			accept_mempool();
-			return expectation::met;
-		}
 		bool server_node::receive_outbound_node(option<socket_address>&& error_address)
 		{
 			auto& peer = protocol::now().user.p2p;
 			umutex<std::recursive_mutex> unique(exclusive);
-			size_t current_outbound_nodes = size_of(node_type::outbound) + candidate_nodes.size();
+			size_t current_outbound_nodes = size_of(node_type::outbound);
 			if (!is_active() || current_outbound_nodes >= peer.max_outbound_connections)
 				return false;
 
 			unique.unlock();
-			if (!control_sys.enqueue())
-				return false;
-
 			control_sys.clear_timeout("node_rediscovery");
 			cospawn([this, error_address = std::move(error_address)]() mutable
 			{
-				connect_node_from_mempool(std::move(error_address), true).when([this](option<socket_address>&& address)
+				find_node_from_mempool(std::move(error_address), true).when([this](option<socket_address>&& address)
 				{
-					if (!control_sys.dequeue())
-						return;
-
 					if (address)
 					{
 						int32_t status = connect_outbound_node(*address);
@@ -2023,27 +1634,19 @@ namespace tangent
 				case node_type::inbound:
 				{
 					auto* node = state->as_inbound_node();
-					if (!node || !control_sys.enqueue())
+					if (!node)
 						return false;
 
-					codefer([this, state, node]()
-					{
-						if (control_sys.dequeue())
-							push_procedure(state, std::bind(&server_node::abort_inbound_node, this, node));
-					});
+					codefer([this, state, node]() { push_procedure(state, std::bind(&server_node::abort_inbound_node, this, node)); });
 					return true;
 				}
 				case node_type::outbound:
 				{
 					auto* node = state->as_outbound_node();
-					if (!node || !control_sys.enqueue())
+					if (!node)
 						return false;
 
-					codefer([this, state, node]()
-					{
-						if (control_sys.dequeue())
-							push_procedure(state, std::bind(&server_node::abort_outbound_node, this, node));
-					});
+					codefer([this, state, node]() { push_procedure(state, std::bind(&server_node::abort_outbound_node, this, node)); });
 					return true;
 				}
 				default:
@@ -2072,13 +1675,13 @@ namespace tangent
 		{
 			return nodes;
 		}
-		const unordered_set<outbound_node*>& server_node::get_candidate_nodes() const
-		{
-			return candidate_nodes;
-		}
 		const single_queue<uref<relay_procedure>>& server_node::get_messages() const
 		{
 			return messages;
+		}
+		dispatch_context server_node::get_dispatcher() const
+		{
+			return dispatch_context((server_node*)this);
 		}
 		service_control::service_node server_node::get_entrypoint()
 		{
@@ -2137,16 +1740,9 @@ namespace tangent
 
 			auto& peer = protocol::now().user.p2p;
 			umutex<std::recursive_mutex> unique(exclusive);
-			size_t current_outbound_nodes = candidate_nodes.size();
+			size_t current_outbound_nodes = size_of(node_type::outbound);
 			if (current_outbound_nodes >= peer.max_outbound_connections)
 				return 1;
-
-			for (auto& node : candidate_nodes)
-			{
-				auto peer_ip_address = node->state.address.get_ip_address();
-				if (peer_ip_address && *peer_ip_address == *ip_address)
-					return 0;
-			}
 
 			for (auto& node : nodes)
 			{
@@ -2159,9 +1755,7 @@ namespace tangent
 					return 0;
 			}
 
-			outbound_node* node = new outbound_node();
-			candidate_nodes.insert(node);
-			node->add_ref();
+			auto* node = new outbound_node();
 			node->connect_queued(address, true, PEER_NOT_SECURE, std::bind(&server_node::accept_outbound_node, this, node, std::placeholders::_1));
 			return 1;
 		}
@@ -2171,17 +1765,444 @@ namespace tangent
 			auto it = nodes.find(instance);
 			return it != nodes.end() ? it->second : nullptr;
 		}
-		std::string_view server_node::node_type_of(relay* from)
+
+		promise<void> methods::returning::abort(server_node* relayer, relay* from, const char* function, const std::string_view& text)
 		{
-			switch (from->type_of())
+			auto* peer_validator = from->as_user<ledger::validator>();
+			if (peer_validator != nullptr)
 			{
-				case node_type::inbound:
-					return "inbound";
-				case node_type::outbound:
-					return "outbound";
-				default:
-					return "relay";
+				++peer_validator->availability.calls;
+				++peer_validator->availability.errors;
 			}
+
+			relayer->reject(from);
+			if (protocol::now().user.p2p.logging)
+				VI_DEBUG("[p2p] validator %s call \"%s\" abort: %.*s (%s %s)", from->peer_address().c_str(), function, (int)message.size(), message.data(), routing::node_type_of(from).data(), from->peer_service().c_str());
+
+			return promise<void>::null();
+		}
+		promise<void> methods::returning::error(server_node* relayer, relay* from, const char* function, const std::string_view& text)
+		{
+			auto* peer_validator = from->as_user<ledger::validator>();
+			if (peer_validator != nullptr)
+			{
+				++peer_validator->availability.calls;
+				++peer_validator->availability.errors;
+			}
+
+			if (protocol::now().user.p2p.logging)
+				VI_DEBUG("[p2p] validator %s call \"%s\" error: %.*s (%s %s)", from->peer_address().c_str(), function, (int)message.size(), message.data(), routing::node_type_of(from).data(), from->peer_service().c_str());
+
+			return promise<void>::null();
+		}
+		promise<void> methods::returning::ok(relay* from, const char* function, const std::string_view& text)
+		{
+			auto* peer_validator = from->as_user<ledger::validator>();
+			if (peer_validator != nullptr)
+				++peer_validator->availability.calls;
+
+			if (protocol::now().user.p2p.logging)
+				VI_DEBUG("[p2p] validator %s call \"%s\" OK: %.*s (%s %s)", from->peer_address().c_str(), function, (int)message.size(), message.data(), routing::node_type_of(from).data(), from->peer_service().c_str());
+
+			return promise<void>::null();
+		}
+		promise<void> methods::propose_handshake(server_node* relayer, uref<relay>&& from, procedure&& message)
+		{
+			if (message.args.size() != 2)
+				return returning::abort(relayer, *from, __func__, "invalid arguments");
+
+			uptr<ledger::validator> peer_validator = memory::init<ledger::validator>();
+			format::stream validator_message = format::stream(message.args.front().as_blob());
+			uint64_t peer_time = message.args.back().as_uint64();
+			uint64_t server_time = protocol::now().time.now_cpu();
+			uint64_t latency_time = peer_time > server_time ? peer_time - server_time : server_time - peer_time;
+			if (!peer_validator->load(validator_message))
+				return returning::abort(relayer, *from, __func__, "invalid message");
+
+			auto& peer = protocol::now().user.p2p;
+			peer_validator->availability.latency = latency_time;
+			peer_validator->address = socket_address(from->peer_address(), peer_validator->address.get_ip_port().or_else(protocol::now().user.p2p.port));
+			if (!peer_validator->is_valid())
+				return returning::abort(relayer, *from, __func__, "invalid validator");
+
+			auto mempool = storages::mempoolstate(__func__);
+			relayer->apply_validator(mempool, **peer_validator, optional::none).report("mempool peer validator save failed");
+
+			auto chain = storages::chainstate(__func__);
+			auto tip = chain.get_latest_block_header();
+			relayer->call(*from, &methods::approve_handshake, { format::variable(validator_message.data), format::variable(protocol::now().time.now_cpu()), format::variable(tip ? tip->number : 0), format::variable(tip ? tip->as_hash() : uint256_t(0)) });
+			from->use<ledger::validator>(peer_validator.reset(), [](ledger::validator* value) { memory::deinit(value); });
+			return returning::ok(*from, __func__, "approve handshake");
+		}
+		promise<void> methods::approve_handshake(server_node* relayer, uref<relay>&& from, procedure&& message)
+		{
+			if (message.args.size() != 4)
+				return returning::abort(relayer, *from, __func__, "invalid arguments");
+
+			ledger::validator self_validator;
+			format::stream validator_message = format::stream(message.args[0].as_blob());
+			if (!self_validator.load(validator_message))
+				return returning::abort(relayer, *from, __func__, "invalid message");
+			else if (!self_validator.is_valid())
+				return returning::abort(relayer, *from, __func__, "invalid validator");
+			else if (self_validator.availability.calls != relayer->validator.node.availability.calls || self_validator.availability.errors != relayer->validator.node.availability.errors || self_validator.availability.timestamp != relayer->validator.node.availability.timestamp)
+				return returning::abort(relayer, *from, __func__, "invalid validator adjustment");
+
+			auto* peer_validator = from->as_user<ledger::validator>();
+			if (!peer_validator)
+				return returning::abort(relayer, *from, __func__, "validator not found");
+
+			if (self_validator.address.get_ip_address().or_else(string()) != relayer->validator.node.address.get_ip_address().or_else(string()) || self_validator.availability.latency != relayer->validator.node.availability.latency)
+			{
+				auto mempool = storages::mempoolstate(__func__);
+				relayer->validator.node = std::move(self_validator);
+				relayer->apply_validator(mempool, relayer->validator.node, relayer->validator.wallet).report("mempool self validator save failed");
+			}
+
+			auto& protocol = protocol::change();
+			uint64_t peer_time = message.args[1].as_uint64();
+			uint64_t server_time = protocol::now().time.now_cpu();
+			uint64_t latency_time = peer_time > server_time ? peer_time - server_time : server_time - peer_time;
+			uint64_t varying_peer_time = peer_time + (peer_validator->availability.latency + latency_time) / 2;
+			protocol.time.adjust(peer_validator->address, (int64_t)server_time - (int64_t)varying_peer_time);
+			if (protocol::now().user.p2p.logging)
+				VI_INFO("[p2p] validator %s channel accept (%s %s)", from->peer_address().c_str(), routing::node_type_of(*from).data(), from->peer_service().c_str());
+
+			auto mempool = storages::mempoolstate(__func__);
+			auto nodes = mempool.get_validator_addresses(0, protocol::now().user.p2p.cursor_size);
+			if (nodes && !nodes->empty())
+			{
+				format::variables args;
+				args.reserve(nodes->size() * 2);
+				for (auto& item : *nodes)
+				{
+					auto ip_address = item.get_ip_address();
+					auto ip_port = item.get_ip_port();
+					if (ip_address && ip_port)
+					{
+						args.push_back(format::variable(*ip_address));
+						args.push_back(format::variable(*ip_port));
+					}
+				}
+				relayer->call(*from, &methods::propose_nodes, std::move(args));
+			}
+
+			auto chain = storages::chainstate(__func__);
+			auto tip = chain.get_latest_block_header();
+			uint64_t peer_tip_number = message.args[2].as_uint64();
+			uint256_t peer_tip_hash = message.args[3].as_uint256();
+			if (!tip || peer_tip_number > tip->number)
+				return returning::ok(*from, __func__, "tip required");
+			else if (peer_tip_number == tip->number && tip->as_hash() == peer_tip_hash)
+				return returning::ok(*from, __func__, "tip synced");
+
+			auto block = chain.get_block_by_number(tip->number, BLOCK_RATE_NORMAL, BLOCK_DATA_CONSENSUS);
+			if (!block)
+				return returning::ok(*from, __func__, "no tip found");
+
+			format::stream block_message = block->as_message();
+			relayer->call(*from, &methods::propose_block, { format::variable(block_message.data) });
+			return returning::ok(*from, __func__, "new tip proposed");
+		}
+		promise<void> methods::propose_nodes(server_node* relayer, uref<relay>&& from, procedure&& message)
+		{
+			if (message.args.empty() || message.args.size() % 2 != 0)
+				return returning::abort(relayer, *from, __func__, "invalid arguments");
+
+			size_t candidates = 0;
+			auto mempool = storages::mempoolstate(__func__);
+			for (size_t i = 0; i < message.args.size(); i += 2)
+			{
+				auto ip_address = message.args[i + 0].as_string();
+				auto ip_port = message.args[i + 1].as_uint16();
+				auto target = socket_address(ip_address, ip_port);
+				candidates += target.is_valid() && !routing::is_address_reserved(target) && mempool.apply_trial_address(target) ? 1 : 0;
+			}
+
+			if (candidates > 0)
+				relayer->accept();
+
+			return returning::ok(*from, __func__, "accept nodes");
+		}
+		promise<void> methods::find_fork_collision(server_node* relayer, uref<relay>&& from, procedure&& message)
+		{
+			if (message.args.size() != 2)
+				return returning::abort(relayer, *from, __func__, "invalid arguments");
+
+			uint256_t fork_hash = message.args[0].as_uint256();
+			if (!fork_hash)
+				return returning::abort(relayer, *from, __func__, "invalid fork");
+
+			uint64_t branch_number = message.args[1].as_uint64();
+			if (!branch_number)
+				return returning::abort(relayer, *from, __func__, "invalid branch");
+
+			const uint64_t blocks_count = protocol::now().user.p2p.cursor_size;
+			const uint64_t fork_number = branch_number > blocks_count ? branch_number - blocks_count : 1;
+			auto chain = storages::chainstate(__func__);
+			auto headers = chain.get_block_headers(fork_number, blocks_count);
+			if (!headers || headers->empty())
+				return returning::error(relayer, *from, __func__, "fork collision not found");
+
+			format::variables header_args;
+			header_args.reserve(headers->size() + 2);
+			header_args.push_back(format::variable(fork_hash));
+			header_args.push_back(format::variable(fork_number + headers->size() - 1));
+			for (auto& item : *headers)
+				header_args.push_back(format::variable(item.as_message().data));
+
+			relayer->call(*from, &methods::verify_fork_collision, std::move(header_args));
+			return returning::ok(*from, __func__, "fork collisions proposed");
+		}
+		promise<void> methods::verify_fork_collision(server_node* relayer, uref<relay>&& from, procedure&& message)
+		{
+			if (message.args.size() < 2)
+				return returning::abort(relayer, *from, __func__, "invalid arguments");
+
+			uint256_t fork_hash = message.args[0].as_uint256();
+			if (!fork_hash)
+				return returning::abort(relayer, *from, __func__, "invalid fork");
+
+			uint64_t branch_number = message.args[1].as_uint64();
+			if (!branch_number)
+				return returning::abort(relayer, *from, __func__, "invalid branch");
+
+			if (message.args.size() < 3)
+				return returning::error(relayer, *from, __func__, "fork collision not found");
+
+			format::stream block_message;
+			ledger::block_header child_header;
+			block_message.data = message.args[2].as_string();
+			if (!child_header.load(block_message))
+				return returning::abort(relayer, *from, __func__, "invalid fork block header");
+
+			ledger::block_header parent_header;
+			auto chain = storages::chainstate(__func__);
+			for (size_t i = 3; i < message.args.size() + 1; i++)
+			{
+				uint256_t branch_hash = child_header.as_hash(true);
+				auto collision = chain.get_block_header_by_hash(branch_hash);
+				if (collision || --branch_number < 1)
+				{
+					relayer->call(*from, &methods::request_fork_block, { format::variable(fork_hash), format::variable(branch_hash), format::variable((uint64_t)0) });
+					return returning::ok(*from, __func__, "fork collision found");
+				}
+				else if (i < message.args.size())
+				{
+					block_message.clear();
+					block_message.data = message.args[i].as_string();
+					if (!parent_header.load(block_message))
+						return returning::abort(relayer, *from, __func__, "invalid fork block header");
+				}
+
+				auto verification = child_header.verify_validity(parent_header.number > 0 ? &parent_header : nullptr);
+				if (!verification)
+					return returning::abort(relayer, *from, __func__, "invalid fork block header: " + verification.error().message());
+
+				child_header = parent_header;
+			}
+
+			relayer->call(*from, &methods::find_fork_collision, { format::variable(fork_hash), format::variable(branch_number) });
+			return returning::ok(*from, __func__, "fork collision not found");
+		}
+		promise<void> methods::request_fork_block(server_node* relayer, uref<relay>&& from, procedure&& message)
+		{
+			if (message.args.size() != 3)
+				return returning::abort(relayer, *from, __func__, "invalid arguments");
+
+			uint256_t fork_hash = message.args[0].as_uint256();
+			if (!fork_hash)
+				return returning::abort(relayer, *from, __func__, "invalid fork");
+
+			uint256_t block_hash = message.args[1].as_uint256();
+			if (block_hash > 0)
+			{
+				auto chain = storages::chainstate(__func__);
+				auto block = chain.get_block_by_hash(block_hash, BLOCK_RATE_NORMAL, BLOCK_DATA_CONSENSUS);
+				if (block)
+				{
+					format::stream block_message = block->as_message();
+					relayer->call(*from, &methods::propose_fork_block, { format::variable(fork_hash), format::variable(block_message.data) });
+					return returning::ok(*from, __func__, "new fork block proposed");
+				}
+			}
+
+			uint256_t block_number = message.args[2].as_uint64();
+			if (block_number > 0)
+			{
+				auto chain = storages::chainstate(__func__);
+				auto block = chain.get_block_by_number(block_number, BLOCK_RATE_NORMAL, BLOCK_DATA_CONSENSUS);
+				if (block)
+				{
+					format::stream block_message = block->as_message();
+					relayer->call(*from, &methods::propose_fork_block, { format::variable(fork_hash), format::variable(block_message.data) });
+					return returning::ok(*from, __func__, "new fork block proposed");
+				}
+			}
+
+			return returning::ok(*from, __func__, "fork block not found");
+		}
+		promise<void> methods::propose_fork_block(server_node* relayer, uref<relay>&& from, procedure&& message)
+		{
+			if (message.args.size() != 2)
+				return returning::abort(relayer, *from, __func__, "invalid arguments");
+
+			uint256_t fork_hash = message.args.front().as_uint256();
+			if (!fork_hash)
+				return returning::abort(relayer, *from, __func__, "invalid fork");
+
+			ledger::block tip;
+			format::stream block_message = format::stream(message.args.back().as_blob());
+			if (!tip.load(block_message) || !relayer->accept_block(*from, std::move(tip), fork_hash))
+				return returning::error(relayer, *from, __func__, "block rejected");
+
+			relayer->call(*from, &methods::request_fork_block, { format::variable(fork_hash), format::variable(uint256_t(0)), format::variable(tip.number + 1) });
+			return returning::ok(*from, __func__, "new fork block accepted");
+		}
+		promise<void> methods::request_block(server_node* relayer, uref<relay>&& from, procedure&& message)
+		{
+			if (message.args.size() != 1)
+				return returning::abort(relayer, *from, __func__, "invalid arguments");
+
+			uint256_t block_hash = message.args.front().as_uint256();
+			if (!block_hash)
+				return returning::abort(relayer, *from, __func__, "invalid hash");
+
+			auto chain = storages::chainstate(__func__);
+			auto block = chain.get_block_by_hash(block_hash, BLOCK_RATE_NORMAL, BLOCK_DATA_CONSENSUS);
+			if (!block)
+				return returning::ok(*from, __func__, "block not found");
+
+			format::stream block_message = block->as_message();
+			relayer->call(*from, &methods::propose_block, { format::variable(block_message.data) });
+			return returning::ok(*from, __func__, "block proposed");
+		}
+		promise<void> methods::propose_block(server_node* relayer, uref<relay>&& from, procedure&& message)
+		{
+			if (message.args.size() != 1)
+				return returning::abort(relayer, *from, __func__, "invalid arguments");
+
+			ledger::block candidate;
+			format::stream block_message = format::stream(message.args.front().as_blob());
+			if (!candidate.load(block_message) || !relayer->accept_block(*from, std::move(candidate), 0))
+				return returning::error(relayer, *from, __func__, "block rejected");
+
+			return returning::ok(*from, __func__, "block accepted");
+		}
+		promise<void> methods::propose_block_hash(server_node* relayer, uref<relay>&& from, procedure&& message)
+		{
+			if (message.args.size() != 1)
+				return returning::abort(relayer, *from, __func__, "invalid arguments");
+
+			uint256_t block_hash = message.args.front().as_uint256();
+			if (!block_hash)
+				return returning::abort(relayer, *from, __func__, "invalid hash");
+
+			auto chain = storages::chainstate(__func__);
+			if (chain.get_block_header_by_hash(block_hash))
+				return returning::ok(*from, __func__, "block found");
+
+			relayer->call(*from, &methods::request_block, { format::variable(block_hash) });
+			return returning::ok(*from, __func__, "block requested");
+		}
+		promise<void> methods::request_transaction(server_node* relayer, uref<relay>&& from, procedure&& message)
+		{
+			if (message.args.size() != 1)
+				return returning::abort(relayer, *from, __func__, "invalid arguments");
+
+			uint256_t transaction_hash = message.args.front().as_uint256();
+			if (!transaction_hash)
+				return returning::abort(relayer, *from, __func__, "invalid hash");
+
+			auto chain = storages::chainstate(__func__);
+			auto transaction = chain.get_transaction_by_hash(transaction_hash);
+			if (!transaction)
+			{
+				auto mempool = storages::mempoolstate(__func__);
+				transaction = mempool.get_transaction_by_hash(transaction_hash);
+				if (!transaction)
+					return returning::ok(*from, __func__, "transaction not found");
+			}
+
+			format::stream transaction_message = (*transaction)->as_message();
+			relayer->call(*from, &methods::propose_transaction, { format::variable(transaction_message.data) });
+			return returning::ok(*from, __func__, "transaction proposed");
+		}
+		promise<void> methods::propose_transaction(server_node* relayer, uref<relay>&& from, procedure&& message)
+		{
+			if (message.args.size() != 1)
+				return returning::abort(relayer, *from, __func__, "invalid arguments");
+
+			format::stream transaction_message = format::stream(message.args.front().as_blob());
+			uptr<ledger::transaction> candidate = tangent::transactions::resolver::from_stream(transaction_message);
+			if (!candidate)
+				return returning::error(relayer, *from, __func__, "invalid transaction");
+
+			if (!candidate->load(transaction_message) || !relayer->accept_transaction(*from, std::move(candidate)))
+				return returning::error(relayer, *from, __func__, "transaction rejected");
+
+			return returning::ok(*from, __func__, "transaction accepted");
+		}
+		promise<void> methods::propose_transaction_hash(server_node* relayer, uref<relay>&& from, procedure&& message)
+		{
+			if (message.args.size() != 1)
+				return returning::abort(relayer, *from, __func__, "invalid arguments");
+
+			uint256_t transaction_hash = message.args.front().as_uint256();
+			if (!transaction_hash)
+				return returning::abort(relayer, *from, __func__, "invalid hash");
+
+			auto chain = storages::chainstate(__func__);
+			if (chain.get_transaction_by_hash(transaction_hash))
+				return returning::ok(*from, __func__, "finalized transaction found");
+
+			auto mempool = storages::mempoolstate(__func__);
+			if (mempool.get_transaction_by_hash(transaction_hash))
+				return returning::ok(*from, __func__, "pending transaction found");
+
+			relayer->call(*from, &methods::request_transaction, { format::variable(transaction_hash) });
+			return returning::ok(*from, __func__, "transaction requested");
+		}
+		promise<void> methods::request_mempool(server_node* relayer, uref<relay>&& from, procedure&& message)
+		{
+			if (message.args.size() != 1)
+				return returning::abort(relayer, *from, __func__, "invalid arguments");
+
+			uint64_t cursor = message.args.front().as_uint64();
+			const uint64_t transactions_count = protocol::now().user.p2p.cursor_size;
+			auto mempool = storages::mempoolstate(__func__);
+			auto hashes = mempool.get_transaction_hashset(cursor, transactions_count);
+			if (!hashes || hashes->empty())
+				return returning::ok(*from, __func__, "mempool is empty");
+
+			format::variables hash_args;
+			hash_args.reserve(hashes->size());
+			hash_args.push_back(format::variable(cursor + hashes->size()));
+			for (auto& item : *hashes)
+				hash_args.push_back(format::variable(item));
+
+			relayer->call(*from, &methods::propose_mempool, std::move(hash_args));
+			return returning::ok(*from, __func__, "mempool proposed");
+		}
+		promise<void> methods::propose_mempool(server_node* relayer, uref<relay>&& from, procedure&& message)
+		{
+			if (message.args.size() < 2)
+				return returning::abort(relayer, *from, __func__, "invalid arguments");
+
+			uint64_t cursor = message.args.front().as_uint64();
+			auto mempool = storages::mempoolstate(__func__);
+			for (size_t i = 1; i < message.args.size(); i++)
+			{
+				auto transaction_hash = message.args[i].as_uint256();
+				if (!mempool.has_transaction(transaction_hash))
+					relayer->call(*from, &methods::request_transaction, { format::variable(transaction_hash) });
+			}
+
+			const uint64_t transactions_count = protocol::now().user.p2p.cursor_size;
+			if (message.args.size() > transactions_count)
+				relayer->call(*from, &methods::request_mempool, { format::variable(cursor) });
+
+			return returning::ok(*from, __func__, "mempool accepted");
 		}
 
 		bool routing::is_address_reserved(const socket_address& address)
@@ -2224,6 +2245,412 @@ namespace tangent
 			}
 
 			return false;
+		}
+		std::string_view routing::node_type_of(relay* from)
+		{
+			switch (from->type_of())
+			{
+				case node_type::inbound:
+					return "inbound";
+				case node_type::outbound:
+					return "outbound";
+				default:
+					return "relay";
+			}
+		}
+
+		dispatch_context::dispatch_context(server_node* new_server) : server(new_server)
+		{
+			VI_ASSERT(server != nullptr, "server should be set");
+		}
+		dispatch_context::dispatch_context(const dispatch_context& other) noexcept : ledger::dispatch_context(other), server(other.server)
+		{
+		}
+		dispatch_context& dispatch_context::operator=(const dispatch_context& other) noexcept
+		{
+			if (this == &other)
+				return *this;
+
+			auto& base_this = *(ledger::dispatch_context*)this;
+			auto& base_other = *(const ledger::dispatch_context*)&other;
+			base_this = base_other;
+			server = other.server;
+			return *this;
+		}
+		const ledger::wallet* dispatch_context::get_wallet() const
+		{
+			return &server->validator.wallet;
+		}
+		expects_promise_rt<void> dispatch_context::calculate_mpc_public_key(const ledger::transaction_context* context, const algorithm::pubkeyhash_t& share, algorithm::composition::cpubkey_t& inout)
+		{
+			auto* depository_account = (transactions::depository_account*)context->transaction;
+			if (is_on(share.data))
+			{
+				auto* chain = nss::server_node::get()->get_chainparams(depository_account->asset);
+				if (!chain)
+					return expects_promise_rt<void>(remote_exception("invalid operation"));
+
+				auto seed = calculate_or_get_mpc_seed(depository_account->asset, depository_account->proposer, context->receipt.from);
+				if (!seed)
+					return expects_promise_rt<void>(remote_exception(std::move(seed.error().message())));
+
+				algorithm::composition::keypair keypair;
+				auto status = algorithm::composition::derive_keypair(chain->composition, *seed, &keypair);
+				if (!status)
+					return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
+
+				status = algorithm::composition::accumulate_public_key(chain->composition, keypair.secret_key, inout.data);
+				if (!status)
+					return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
+
+				return expects_promise_rt<void>(expectation::met);
+			}
+
+			auto args = format::variables({ format::variable(share.optimized_view()), format::variable(context->receipt.block_number), format::variable(context->receipt.transaction_hash), format::variable(inout.optimized_view()) });
+			return server->call_responsive(&calculate_mpc_public_key_rpc, std::move(args), protocol::now().user.p2p.response_timeout, std::bind(&deserialize_procedure_response, context->receipt.transaction_hash, share, std::placeholders::_1)).then<expects_rt<void>>([&inout](expects_rt<format::variables>&& result) -> expects_rt<void>
+			{
+				if ((result && result->at(2).as_boolean()) || (!result && (result.error().is_retry() || result.error().is_shutdown())))
+					return remote_exception::retry();
+				else if (!result)
+					return result.error();
+
+				inout = result->size() > 3 ? algorithm::composition::cpubkey_t(result->at(3).as_blob()) : algorithm::composition::cpubkey_t();
+				if (inout.empty())
+					return remote_exception("mpc public key remote computation error");
+
+				return expectation::met;
+			});
+		}
+		expects_promise_rt<void> dispatch_context::calculate_mpc_signature(const ledger::transaction_context* context, const algorithm::pubkeyhash_t& share, const mediator::prepared_transaction& prepared, ordered_map<uint8_t, algorithm::composition::cpubsig_t>& inout)
+		{
+			auto* depository_withdrawal = (transactions::depository_withdrawal*)context->transaction;
+			if (is_on(share.data))
+			{
+				auto validation = transactions::depository_withdrawal::validate_prepared_transaction(context, depository_withdrawal, prepared);
+				if (!validation)
+					return expects_promise_rt<void>(remote_exception(std::move(validation.error().message())));
+
+				for (size_t i = 0; i < prepared.inputs.size(); i++)
+				{
+					auto& input = prepared.inputs[i];
+					auto witness = context->get_witness_account_tagged(depository_withdrawal->asset, input.utxo.link.address, 0);
+					if (!witness)
+						return expects_promise_rt<void>(remote_exception(std::move(witness.error().message())));
+
+					auto account = context->get_depository_account(depository_withdrawal->asset, witness->proposer, witness->owner);
+					if (!account || account->mpc.find(share) == account->mpc.end())
+						continue;
+
+					auto seed = calculate_or_get_mpc_seed(account->asset, account->proposer, account->owner);
+					if (!seed)
+						return expects_promise_rt<void>(remote_exception(std::move(seed.error().message())));
+
+					algorithm::composition::keypair keypair;
+					auto status = algorithm::composition::derive_keypair(input.alg, *seed, &keypair);
+					if (!status)
+						return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
+
+					status = algorithm::composition::accumulate_signature(input.alg, input.message.data(), input.message.size(), input.public_key, keypair.secret_key, inout[(uint8_t)i].data);
+					if (!status)
+						return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
+				}
+			}
+
+			format::stream prepared_message;
+			if (!prepared.store(&prepared_message))
+				return expects_promise_rt<void>(remote_exception("prepared transaction serialization error"));
+
+			auto args = format::variables({ format::variable(share.optimized_view()), format::variable(context->receipt.block_number), format::variable(context->receipt.transaction_hash), format::variable(prepared_message.data) });
+			for (size_t i = 0; i < prepared.inputs.size(); i++)
+			{
+				auto& input = prepared.inputs[i];
+				auto witness = context->get_witness_account_tagged(depository_withdrawal->asset, input.utxo.link.address, 0);
+				if (!witness)
+					return expects_promise_rt<void>(remote_exception(std::move(witness.error().message())));
+
+				auto account = context->get_depository_account(depository_withdrawal->asset, witness->proposer, witness->owner);
+				if (!account || account->mpc.find(share) == account->mpc.end())
+					continue;
+
+				args.push_back(format::variable((uint8_t)i));
+				args.push_back(format::variable(inout[(uint8_t)i].optimized_view()));
+			}
+
+			return server->call_responsive(&calculate_mpc_signature_rpc, std::move(args), protocol::now().user.p2p.response_timeout, std::bind(&deserialize_procedure_response, context->receipt.transaction_hash, share, std::placeholders::_1)).then<expects_rt<void>>([&inout](expects_rt<format::variables>&& result) -> expects_rt<void>
+			{
+				if ((result && result->at(2).as_boolean()) || (!result && (result.error().is_retry() || result.error().is_shutdown())))
+					return remote_exception::retry();
+				else if (!result)
+					return result.error();
+
+				for (size_t i = 3; i + 1 < result->size(); i += 2)
+				{
+					auto input_index = (*result)[i + 0].as_uint8();
+					auto input_signature = algorithm::composition::cpubsig_t((*result)[i + 1].as_blob());
+					if (input_signature.empty() || inout.find(input_index) == inout.end())
+						return remote_exception("mpc signature remote computation error");
+
+					inout[input_index] = input_signature;
+				}
+				return expectation::met;
+			});
+		}
+		promise<void> dispatch_context::calculate_mpc_public_key_rpc(server_node* relayer, uref<relay>&& from, procedure&& message)
+		{
+			if (message.args.size() != 4)
+				return methods::returning::abort(relayer, *from, __func__, "invalid arguments");
+
+			bool requires_retry = false;
+			auto proposer = algorithm::pubkeyhash_t(message.args[0].as_blob());
+			auto block_number = message.args[1].as_uint64();
+			auto depository_account_hash = message.args[2].as_uint256();
+			auto chainstate = storages::chainstate(__func__);
+			if (chainstate.get_latest_block_number().or_else(1) < block_number)
+			{
+				requires_retry = true;
+				if (!proposer.equals(relayer->validator.wallet.public_key_hash))
+				{
+					relayer->multicall(*from, &calculate_mpc_public_key_rpc, std::move(message.args));
+					return methods::returning::ok(*from, __func__, "mpc public key requested");
+				}
+			abort_mpc:
+				procedure response;
+				response.method = protocol::now().message.packet_magic;
+				response.args = serialize_procedure_response(relayer->validator.wallet.secret_key, { format::variable(depository_account_hash), format::variable(requires_retry) });
+				relayer->multicall(nullptr, std::move(response));
+				return methods::returning::ok(*from, __func__, "mpc public key computation error");
+			}
+
+			auto context = ledger::transaction_context();
+			auto depository_account = context.get_block_transaction<transactions::depository_account>(depository_account_hash);
+			if (!depository_account)
+			{
+				if (!proposer.equals(relayer->validator.wallet.public_key_hash))
+					return methods::returning::abort(relayer, *from, __func__, "invalid request");
+				goto abort_mpc;
+			}
+			else if (!proposer.equals(relayer->validator.wallet.public_key_hash))
+			{
+				relayer->multicall(*from, &calculate_mpc_public_key_rpc, std::move(message.args));
+				return methods::returning::ok(*from, __func__, "mpc public key requested");
+			}
+
+			auto* depository_account_transaction = (transactions::depository_account*)*depository_account->transaction;
+			auto* chain = nss::server_node::get()->get_chainparams(depository_account_transaction->asset);
+			if (!chain)
+				goto abort_mpc;
+
+			auto dispatcher = dispatch_context(relayer);
+			auto seed = dispatcher.calculate_or_get_mpc_seed(depository_account_transaction->asset, depository_account_transaction->proposer, depository_account->receipt.from);
+			if (!seed)
+				goto abort_mpc;
+
+			algorithm::composition::keypair keypair;
+			if (!algorithm::composition::derive_keypair(chain->composition, *seed, &keypair))
+				goto abort_mpc;
+
+			auto mpc_public_key = algorithm::composition::cpubkey_t(message.args[3].as_blob());
+			if (!algorithm::composition::accumulate_public_key(chain->composition, keypair.secret_key, mpc_public_key.data))
+				goto abort_mpc;
+
+			procedure response;
+			response.method = protocol::now().message.packet_magic;
+			response.args = serialize_procedure_response(relayer->validator.wallet.secret_key, { format::variable(depository_account_hash), format::variable(requires_retry), format::variable(mpc_public_key.optimized_view()) });
+			relayer->multicall(nullptr, std::move(response));
+			return methods::returning::ok(*from, __func__, "mpc public key proposed");
+		}
+		promise<void> dispatch_context::calculate_mpc_signature_rpc(server_node* relayer, uref<relay>&& from, procedure&& message)
+		{
+			if (message.args.size() < 6)
+				return methods::returning::abort(relayer, *from, __func__, "invalid arguments");
+
+			bool requires_retry = false;
+			auto chainstate = storages::chainstate(__func__);
+			auto proposer = algorithm::pubkeyhash_t(message.args[0].as_string());
+			auto block_number = message.args[1].as_uint64();
+			auto depository_withdrawal_hash = message.args[2].as_uint256();
+			if (chainstate.get_latest_block_number().or_else(1) < block_number)
+			{
+				requires_retry = true;
+				if (!proposer.equals(relayer->validator.wallet.public_key_hash))
+				{
+					relayer->multicall(*from, &calculate_mpc_signature_rpc, std::move(message.args));
+					return methods::returning::ok(*from, __func__, "mpc signature requested (no checkup forward)");
+				}
+			abort_mpc:
+				procedure response;
+				response.method = protocol::now().message.packet_magic;
+				response.args = serialize_procedure_response(relayer->validator.wallet.secret_key, { format::variable(depository_withdrawal_hash), format::variable(requires_retry) });
+				relayer->multicall(nullptr, std::move(response));
+				return methods::returning::ok(*from, __func__, "mpc signature computation error");
+			}
+
+			auto context = ledger::transaction_context();
+			auto depository_withdrawal = context.get_block_transaction<transactions::depository_withdrawal>(depository_withdrawal_hash);
+			if (!depository_withdrawal)
+			{
+				if (!proposer.equals(relayer->validator.wallet.public_key_hash))
+					return methods::returning::abort(relayer, *from, __func__, "invalid request");
+				goto abort_mpc;
+			}
+
+			auto prepared_message = format::stream(message.args[3].as_string());
+			auto prepared = mediator::prepared_transaction();
+			if (!prepared.load(prepared_message))
+				return methods::returning::abort(relayer, *from, __func__, "invalid arguments");
+
+			auto* depository_withdrawal_transaction = (transactions::depository_withdrawal*)*depository_withdrawal->transaction;
+			auto validation = transactions::depository_withdrawal::validate_prepared_transaction(&context, depository_withdrawal_transaction, prepared);
+			if (!validation)
+				return methods::returning::abort(relayer, *from, __func__, "mpc validation error");
+
+			if (!proposer.equals(relayer->validator.wallet.public_key_hash))
+			{
+				relayer->multicall(*from, &calculate_mpc_signature_rpc, std::move(message.args));
+				return methods::returning::ok(*from, __func__, "mpc signature requested");
+			}
+
+			auto dispatcher = dispatch_context(relayer);
+			auto* server = nss::server_node::get();
+			ordered_map<uint8_t, algorithm::composition::cpubsig_t> mpc_signature;
+			for (size_t i = 4; i < message.args.size(); i++)
+			{
+				auto input_index = message.args[i + 0].as_uint8();
+				mpc_signature[input_index] = algorithm::composition::cpubsig_t(message.args[i + 1].as_blob());
+				if (input_index > prepared.inputs.size())
+					goto abort_mpc;
+
+				auto& input = prepared.inputs[input_index];
+				auto witness = context.get_witness_account_tagged(depository_withdrawal_transaction->asset, input.utxo.link.address, 0);
+				if (!witness)
+					goto abort_mpc;
+
+				auto account = context.get_depository_account(depository_withdrawal_transaction->asset, witness->proposer, witness->owner);
+				if (!account || account->mpc.find(relayer->validator.wallet.public_key_hash) == account->mpc.end())
+					goto abort_mpc;
+
+				auto seed = dispatcher.calculate_or_get_mpc_seed(account->asset, account->proposer, account->owner);
+				if (!seed)
+					goto abort_mpc;
+
+				algorithm::composition::keypair keypair;
+				if (!algorithm::composition::derive_keypair(input.alg, *seed, &keypair))
+					goto abort_mpc;
+
+				if (!algorithm::composition::accumulate_signature(input.alg, input.message.data(), input.message.size(), input.public_key, keypair.secret_key, mpc_signature[input_index].data))
+					goto abort_mpc;
+			}
+
+			format::variables args = { format::variable(depository_withdrawal_hash), format::variable(requires_retry) };
+			args.reserve(args.size() + mpc_signature.size() * 2);
+			for (auto& [input_index, input_signature] : mpc_signature)
+			{
+				args.push_back(format::variable(input_index));
+				args.push_back(format::variable(input_signature.optimized_view()));
+			}
+
+			procedure response;
+			response.method = protocol::now().message.packet_magic;
+			response.args = serialize_procedure_response(relayer->validator.wallet.secret_key, std::move(args));
+			relayer->multicall(nullptr, std::move(response));
+			return methods::returning::ok(*from, __func__, "mpc signature proposed");
+		}
+
+		local_dispatch_context::local_dispatch_context(const vector<ledger::wallet>& new_proposers)
+		{
+			for (auto& target : new_proposers)
+				proposers[algorithm::pubkeyhash_t(target.public_key_hash)] = target;
+			proposer = proposers.find(algorithm::pubkeyhash_t(new_proposers.front().public_key_hash));
+		}
+		local_dispatch_context::local_dispatch_context(const local_dispatch_context& other) noexcept : ledger::dispatch_context(other), proposers(other.proposers)
+		{
+			proposer = proposers.find(other.proposer->first);
+		}
+		local_dispatch_context& local_dispatch_context::operator=(const local_dispatch_context& other) noexcept
+		{
+			if (this == &other)
+				return *this;
+
+			auto& base_this = *(ledger::dispatch_context*)this;
+			auto& base_other = *(const ledger::dispatch_context*)&other;
+			base_this = base_other;
+			proposers = other.proposers;
+			proposer = proposers.find(other.proposer->first);
+			return *this;
+		}
+		const ledger::wallet* local_dispatch_context::get_wallet() const
+		{
+			return &proposer->second;
+		}
+		void local_dispatch_context::set_running_proposer(const algorithm::pubkeyhash owner)
+		{
+			auto it = proposers.find(algorithm::pubkeyhash_t(owner));
+			if (it != proposers.end())
+				proposer = it;
+		}
+		expects_promise_rt<void> local_dispatch_context::calculate_mpc_public_key(const ledger::transaction_context* context, const algorithm::pubkeyhash_t& share, algorithm::composition::cpubkey_t& inout)
+		{
+			auto wallet = proposers.find(share);
+			if (wallet == proposers.end())
+				return expects_promise_rt<void>(remote_exception("invalid operation"));
+
+			auto* depository_account = (transactions::depository_account*)context->transaction;
+			auto* chain = nss::server_node::get()->get_chainparams(depository_account->asset);
+			if (!chain)
+				return expects_promise_rt<void>(remote_exception("invalid operation"));
+
+			auto seed = calculate_or_get_mpc_seed(depository_account->asset, depository_account->proposer, context->receipt.from);
+			if (!seed)
+				return expects_promise_rt<void>(remote_exception(std::move(seed.error().message())));
+
+			algorithm::composition::keypair keypair;
+			auto status = algorithm::composition::derive_keypair(chain->composition, *seed, &keypair);
+			if (!status)
+				return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
+
+			status = algorithm::composition::accumulate_public_key(chain->composition, keypair.secret_key, inout.data);
+			if (!status)
+				return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
+
+			return expects_promise_rt<void>(expectation::met);
+		}
+		expects_promise_rt<void> local_dispatch_context::calculate_mpc_signature(const ledger::transaction_context* context, const algorithm::pubkeyhash_t& share, const mediator::prepared_transaction& prepared, ordered_map<uint8_t, algorithm::composition::cpubsig_t>& inout)
+		{
+			auto wallet = proposers.find(share);
+			if (wallet == proposers.end())
+				return expects_promise_rt<void>(remote_exception("invalid operation"));
+
+			auto* depository_withdrawal = (transactions::depository_withdrawal*)context->transaction;
+			auto validation = transactions::depository_withdrawal::validate_prepared_transaction(context, depository_withdrawal, prepared);
+			if (!validation)
+				return expects_promise_rt<void>(remote_exception(std::move(validation.error().message())));
+
+			for (size_t i = 0; i < prepared.inputs.size(); i++)
+			{
+				auto& input = prepared.inputs[i];
+				auto witness = context->get_witness_account_tagged(depository_withdrawal->asset, input.utxo.link.address, 0);
+				if (!witness)
+					return expects_promise_rt<void>(remote_exception(std::move(witness.error().message())));
+
+				auto account = context->get_depository_account(depository_withdrawal->asset, witness->proposer, witness->owner);
+				if (!account || account->mpc.find(share) == account->mpc.end())
+					continue;
+
+				auto seed = calculate_or_get_mpc_seed(account->asset, account->proposer, account->owner);
+				if (!seed)
+					return expects_promise_rt<void>(remote_exception(std::move(seed.error().message())));
+
+				algorithm::composition::keypair keypair;
+				auto status = algorithm::composition::derive_keypair(input.alg, *seed, &keypair);
+				if (!status)
+					return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
+
+				status = algorithm::composition::accumulate_signature(input.alg, input.message.data(), input.message.size(), input.public_key, keypair.secret_key, inout[(uint8_t)i].data);
+				if (!status)
+					return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
+			}
+
+			return expects_promise_rt<void>(expectation::met);
 		}
 	}
 }

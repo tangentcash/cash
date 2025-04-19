@@ -17,8 +17,6 @@
         "max_inbound_connections": 32,
         "max_outbound_connections": 8,
         "inventory_size": 8192,
-        "inventory_timeout": 300,
-        "inventory_cleanup_timeout": 10000,
         "rediscovery_timeout": 120000,
         "cursor_size": 2048,
         "proposer": true,

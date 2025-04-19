@@ -272,6 +272,25 @@ namespace tangent
 			}
 			return *this;
 		}
+		stream& stream::write_string_raw(const std::string_view& value)
+		{
+			if (value.size() > util::get_max_string_size())
+			{
+				uint32_t size = std::min<uint32_t>(protocol::now().message.max_message_size, (uint32_t)value.size());
+				uint8_t type = (uint8_t)util::get_string_type(value, false);
+				write(&type, sizeof(uint8_t));
+				write_integer(size);
+				write(value.data(), size);
+			}
+			else
+			{
+				uint8_t type = (uint8_t)util::get_string_type(value, false);
+				uint8_t size = util::get_string_size((viewable)type);
+				write(&type, sizeof(uint8_t));
+				write(value.data(), size);
+			}
+			return *this;
+		}
 		stream& stream::write_decimal(const decimal& value)
 		{
 			if (value.is_nan())
@@ -451,7 +470,7 @@ namespace tangent
 		}
 		bool util::is_string16(viewable type)
 		{
-			return (uint8_t)type >= (uint8_t)viewable::string_min16;
+			return (uint8_t)type >= (uint8_t)viewable::string_min16 && (uint8_t)type <= (uint8_t)viewable::string_max16;
 		}
 		uint8_t util::get_integer_size(viewable type)
 		{

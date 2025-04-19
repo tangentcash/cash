@@ -7,9 +7,8 @@ namespace tangent
 	{
 		namespace backends
 		{
-			string arbitrum::get_derivation(uint64_t address_index) const
+			arbitrum::arbitrum(const algorithm::asset_id& new_asset) noexcept : ethereum(new_asset)
 			{
-				return stringify::text(protocol::now().is(network_type::mainnet) ? "m/44'/60'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, address_index);
 			}
 			const btc_chainparams_* arbitrum::get_chain()
 			{
@@ -27,9 +26,8 @@ namespace tangent
 				}
 			}
 
-			string avalanche::get_derivation(uint64_t address_index) const
+			avalanche::avalanche(const algorithm::asset_id& new_asset) noexcept : ethereum(new_asset)
 			{
-				return stringify::text(protocol::now().is(network_type::mainnet) ? "m/44'/60'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, address_index);
 			}
 			const btc_chainparams_* avalanche::get_chain()
 			{
@@ -47,9 +45,8 @@ namespace tangent
 				}
 			}
 
-			string celo::get_derivation(uint64_t address_index) const
+			celo::celo(const algorithm::asset_id& new_asset) noexcept : ethereum(new_asset)
 			{
-				return stringify::text(protocol::now().is(network_type::mainnet) ? "m/44'/52752'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, address_index);
 			}
 			const btc_chainparams_* celo::get_chain()
 			{
@@ -67,9 +64,8 @@ namespace tangent
 				}
 			}
 
-			string ethereum_classic::get_derivation(uint64_t address_index) const
+			ethereum_classic::ethereum_classic(const algorithm::asset_id& new_asset) noexcept : ethereum(new_asset)
 			{
-				return stringify::text(protocol::now().is(network_type::mainnet) ? "m/44'/61'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, address_index);
 			}
 			const btc_chainparams_* ethereum_classic::get_chain()
 			{
@@ -87,9 +83,8 @@ namespace tangent
 				}
 			}
 
-			string fantom::get_derivation(uint64_t address_index) const
+			fantom::fantom(const algorithm::asset_id& new_asset) noexcept : ethereum(new_asset)
 			{
-				return stringify::text(protocol::now().is(network_type::mainnet) ? "m/44'/60'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, address_index);
 			}
 			const btc_chainparams_* fantom::get_chain()
 			{
@@ -107,9 +102,8 @@ namespace tangent
 				}
 			}
 
-			string fuse::get_derivation(uint64_t address_index) const
+			fuse::fuse(const algorithm::asset_id& new_asset) noexcept : ethereum(new_asset)
 			{
-				return stringify::text(protocol::now().is(network_type::mainnet) ? "m/44'/60'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, address_index);
 			}
 			const btc_chainparams_* fuse::get_chain()
 			{
@@ -127,9 +121,8 @@ namespace tangent
 				}
 			}
 
-			string harmony::get_derivation(uint64_t address_index) const
+			harmony::harmony(const algorithm::asset_id& new_asset) noexcept : ethereum(new_asset)
 			{
-				return stringify::text(protocol::now().is(network_type::mainnet) ? "m/44'/1023'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, address_index);
 			}
 			const btc_chainparams_* harmony::get_chain()
 			{
@@ -147,9 +140,8 @@ namespace tangent
 				}
 			}
 
-			string moonbeam::get_derivation(uint64_t address_index) const
+			moonbeam::moonbeam(const algorithm::asset_id& new_asset) noexcept : ethereum(new_asset)
 			{
-				return stringify::text(protocol::now().is(network_type::mainnet) ? "m/44'/60'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, address_index);
 			}
 			const btc_chainparams_* moonbeam::get_chain()
 			{
@@ -167,9 +159,8 @@ namespace tangent
 				}
 			}
 
-			string optimism::get_derivation(uint64_t address_index) const
+			optimism::optimism(const algorithm::asset_id& new_asset) noexcept : ethereum(new_asset)
 			{
-				return stringify::text(protocol::now().is(network_type::mainnet) ? "m/44'/60'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, address_index);
 			}
 			const btc_chainparams_* optimism::get_chain()
 			{
@@ -187,9 +178,8 @@ namespace tangent
 				}
 			}
 
-			string polygon::get_derivation(uint64_t address_index) const
+			polygon::polygon(const algorithm::asset_id& new_asset) noexcept : ethereum(new_asset)
 			{
-				return stringify::text(protocol::now().is(network_type::mainnet) ? "m/44'/60'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, address_index);
 			}
 			const btc_chainparams_* polygon::get_chain()
 			{
@@ -207,9 +197,8 @@ namespace tangent
 				}
 			}
 
-			string rootstock::get_derivation(uint64_t address_index) const
+			rootstock::rootstock(const algorithm::asset_id& new_asset) noexcept : ethereum(new_asset)
 			{
-				return stringify::text(protocol::now().is(network_type::mainnet) ? "m/44'/60'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, address_index);
 			}
 			const btc_chainparams_* rootstock::get_chain()
 			{
@@ -227,13 +216,9 @@ namespace tangent
 				}
 			}
 
-			binance_smart_chain::binance_smart_chain() noexcept : ethereum()
+			binance_smart_chain::binance_smart_chain(const algorithm::asset_id& new_asset) noexcept : ethereum(new_asset)
 			{
 				netdata.supports_token_transfer = "bep20";
-			}
-			string binance_smart_chain::get_derivation(uint64_t address_index) const
-			{
-				return stringify::text(protocol::now().is(network_type::mainnet) ? "m/44'/714'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, address_index);
 			}
 			const btc_chainparams_* binance_smart_chain::get_chain()
 			{

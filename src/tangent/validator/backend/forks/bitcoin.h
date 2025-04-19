@@ -11,9 +11,8 @@ namespace tangent
 			class bitcoin_cash : public bitcoin
 			{
 			public:
-				bitcoin_cash() noexcept;
+				bitcoin_cash(const algorithm::asset_id& new_asset) noexcept;
 				virtual ~bitcoin_cash() override = default;
-				virtual string get_derivation(uint64_t address_index) const override;
 				virtual const btc_chainparams_* get_chain() override;
 				virtual address_format get_address_type() override;
 				virtual uint32_t get_sig_hash_type() override;
@@ -22,10 +21,8 @@ namespace tangent
 			class bitcoin_gold : public bitcoin
 			{
 			public:
-				bitcoin_gold() noexcept;
+				bitcoin_gold(const algorithm::asset_id& new_asset) noexcept;
 				virtual ~bitcoin_gold() override = default;
-				virtual string get_derivation(uint64_t address_index) const override;
-				virtual string get_message_magic() override;
 				virtual const btc_chainparams_* get_chain() override;
 				virtual address_format get_address_type() override;
 			};
@@ -33,9 +30,8 @@ namespace tangent
 			class bitcoin_sv : public bitcoin
 			{
 			public:
-				bitcoin_sv() noexcept;
+				bitcoin_sv(const algorithm::asset_id& new_asset) noexcept;
 				virtual ~bitcoin_sv() override = default;
-				virtual string get_derivation(uint64_t address_index) const override;
 				virtual const btc_chainparams_* get_chain() override;
 				virtual address_format get_address_type() override;
 			};
@@ -43,10 +39,8 @@ namespace tangent
 			class dash : public bitcoin
 			{
 			public:
-				dash() noexcept;
+				dash(const algorithm::asset_id& new_asset) noexcept;
 				virtual ~dash() override = default;
-				virtual string get_derivation(uint64_t address_index) const override;
-				virtual string get_message_magic() override;
 				virtual const btc_chainparams_* get_chain() override;
 				virtual address_format get_address_type() override;
 			};
@@ -54,10 +48,8 @@ namespace tangent
 			class digibyte : public bitcoin
 			{
 			public:
-				digibyte() noexcept;
+				digibyte(const algorithm::asset_id& new_asset) noexcept;
 				virtual ~digibyte() override = default;
-				virtual string get_derivation(uint64_t address_index) const override;
-				virtual string get_message_magic() override;
 				virtual const btc_chainparams_* get_chain() override;
 				virtual address_format get_address_type() override;
 			};
@@ -65,10 +57,8 @@ namespace tangent
 			class dogecoin : public bitcoin
 			{
 			public:
-				dogecoin() noexcept;
+				dogecoin(const algorithm::asset_id& new_asset) noexcept;
 				virtual ~dogecoin() override = default;
-				virtual string get_derivation(uint64_t address_index) const override;
-				virtual string get_message_magic() override;
 				virtual const btc_chainparams_* get_chain() override;
 				virtual address_format get_address_type() override;
 			};
@@ -76,10 +66,8 @@ namespace tangent
 			class ecash : public bitcoin
 			{
 			public:
-				ecash() noexcept;
+				ecash(const algorithm::asset_id& new_asset) noexcept;
 				virtual ~ecash() override = default;
-				virtual string get_derivation(uint64_t address_index) const override;
-				virtual string get_message_magic() override;
 				virtual const btc_chainparams_* get_chain() override;
 				virtual address_format get_address_type() override;
 				virtual uint32_t get_sig_hash_type() override;
@@ -88,10 +76,8 @@ namespace tangent
 			class litecoin : public bitcoin
 			{
 			public:
-				litecoin() noexcept;
+				litecoin(const algorithm::asset_id& new_asset) noexcept;
 				virtual ~litecoin() override = default;
-				virtual string get_derivation(uint64_t address_index) const override;
-				virtual string get_message_magic() override;
 				virtual const btc_chainparams_* get_chain() override;
 				virtual address_format get_address_type() override;
 			};
@@ -99,9 +85,8 @@ namespace tangent
 			class zcash : public bitcoin
 			{
 			public:
-				zcash() noexcept;
+				zcash(const algorithm::asset_id& new_asset) noexcept;
 				virtual ~zcash() override = default;
-				virtual string get_derivation(uint64_t address_index) const override;
 				virtual const btc_chainparams_* get_chain() override;
 				virtual address_format get_address_type() override;
 			};

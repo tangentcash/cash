@@ -6,7 +6,7 @@ namespace tangent
 {
 	namespace ledger
 	{
-		struct wallet : messages::standard
+		struct wallet : messages::uniform
 		{
 			algorithm::seckey secret_key = { 0 };
 			algorithm::pubkey public_key = { 0 };
@@ -45,7 +45,7 @@ namespace tangent
 			static wallet from_public_key_hash(const algorithm::pubkeyhash key);
 		};
 
-		struct validator final : messages::standard
+		struct validator final : messages::uniform
 		{
 			struct
 			{

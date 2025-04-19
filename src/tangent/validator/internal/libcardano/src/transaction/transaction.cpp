@@ -2,7 +2,7 @@
 #include "../../include/cardanoplusplus/bip32_ed25519/bip32_ed25519.hpp"
 #include "../../include/cardanoplusplus/addresses/addresses.hpp"
 #include "../../include/cardanoplusplus/utils/txutils.hpp"
-
+#include <vitex/compute.h>
 
 namespace Cardano{
 
@@ -11,8 +11,8 @@ Transaction::Transaction(){
     throw std::invalid_argument("Transaction error, could not start libsodium");
     }
 
-    feefixed = PROTOCOL_FEE_B;
-    feeperbytes = PROTOCOL_FEE_A;
+    feefixed = PROTOCOL_FEE_FIXED;
+    feeperbytes = PROTOCOL_FEE_PER_BYTE;
 
     bytesskyesInwitness =0;
     witnessmapcountbit = 0;
@@ -39,6 +39,15 @@ Transaction &Transaction::addExtendedSigningKey(uint8_t const *const xsk){
     return *this;
 }
 
+Transaction& Transaction::addExtendedVerifyingKey(uint8_t const* const xvk, uint8_t const* const signature)
+{
+    if (xvk != nullptr){
+        Witness.addVkeyWitness(xvk, signature);
+    }
+
+    return *this;
+}
+
 uint64_t Transaction::getFeeTransacion_PostBuild(uint64_t const number_of_signatures){
 // Obtener Los datos por partes
 if(xskeys_ptr.size() == 0 ){
@@ -48,7 +57,7 @@ if(xskeys_ptr.size() == 0 ){
 return ( (bytes_transaction + 9) * feeperbytes ) + feefixed;
 }
 
-std::vector<uint8_t> const &Transaction::Build(){
+std::vector<uint8_t> const &Transaction::build(std::vector<Digest>* signable_hashes32) {
 
     std::vector<uint8_t> const &auxiliary_data = Auxiliarydata.Build();
     // Primero se consulta los datos  de auxiliary data
@@ -77,9 +86,22 @@ std::vector<uint8_t> const &Transaction::Build(){
             case 0:{
                 for(uint64_t v =0;v<xskeys_ptr.size();v++){
                     crypto_generichash_blake2b(blake256, 32, body.data(), body.size(), nullptr, 0);
-                    signature(xskeys_ptr[v],blake256,32,body_signed);
-                    rawprivatekey_to_rawpublickey(xskeys_ptr[v], xvkeys );
-                    Witness.addVkeyWitness(xvkeys,body_signed);
+                    if (signable_hashes32 != nullptr)
+                    {
+                        Digest digest;
+                        memcpy(digest.Hash, blake256, sizeof(blake256));
+                        signable_hashes32->push_back(digest);
+                        memset(xvkeys, 0, sizeof(xvkeys));
+                        memset(body_signed, 0, sizeof(body_signed));
+                    }
+                    else
+                    {
+                        signature(xskeys_ptr[v], blake256, 32, body_signed);
+                        rawprivatekey_to_rawpublickey(xskeys_ptr[v], xvkeys);
+                        if (!verify(xvkeys, blake256, sizeof(blake256), body_signed))
+                            throw std::invalid_argument("failed to sign one of the inputs (invalid private key)");
+                    }
+                    Witness.addVkeyWitness(xvkeys, body_signed);
                 }
             };break;
             case 1:{
@@ -120,4 +142,5 @@ std::vector<uint8_t> const &Transaction::Build(){
     bytes_transaction = (uint32_t)cborTransaction.size();
     return cborTransaction;
 }
+
 }

@@ -1,5 +1,4 @@
 #include "engine.h"
-#include "../../layer/types.hpp"
 #ifdef TAN_ROCKSDB
 #include "rocksdb/db.h"
 #endif

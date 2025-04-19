@@ -56,7 +56,6 @@ namespace tangent
 				{
 				public:
 					static const char* ledger();
-					static const char* transaction();
 					static const char* account_info();
 					static const char* account_objects();
 					static const char* server_info();
@@ -67,44 +66,36 @@ namespace tangent
 				chainparams netdata;
 
 			public:
-				ripple() noexcept;
+				ripple(const algorithm::asset_id& new_asset) noexcept;
 				virtual ~ripple() override = default;
-				virtual expects_promise_rt<void> broadcast_transaction(const algorithm::asset_id& asset, const outgoing_transaction& tx_data) override;
-				virtual expects_promise_rt<uint64_t> get_latest_block_height(const algorithm::asset_id& asset) override;
-				virtual expects_promise_rt<schema*> get_block_transactions(const algorithm::asset_id& asset, uint64_t block_height, string* block_hash) override;
-				virtual expects_promise_rt<schema*> get_block_transaction(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, const std::string_view& transaction_id) override;
-				virtual expects_promise_rt<vector<incoming_transaction>> get_authentic_transactions(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, schema* transaction_data) override;
-				virtual expects_promise_rt<base_fee> estimate_fee(const algorithm::asset_id& asset, const dynamic_wallet& wallet, const vector<transferer>& to, const fee_supervisor_options& options) override;
-				virtual expects_promise_rt<decimal> calculate_balance(const algorithm::asset_id& asset, const dynamic_wallet& wallet, option<string>&& address) override;
-				virtual expects_promise_rt<outgoing_transaction> new_transaction(const algorithm::asset_id& asset, const dynamic_wallet& wallet, const vector<transferer>& to, const base_fee& fee) override;
-				virtual expects_lr<master_wallet> new_master_wallet(const std::string_view& seed) override;
-				virtual expects_lr<derived_signing_wallet> new_signing_wallet(const algorithm::asset_id& asset, const master_wallet& wallet, uint64_t address_index) override;
-				virtual expects_lr<derived_signing_wallet> new_signing_wallet(const algorithm::asset_id& asset, const secret_box& signing_key) override;
-				virtual expects_lr<derived_verifying_wallet> new_verifying_wallet(const algorithm::asset_id& asset, const std::string_view& verifying_key) override;
-				virtual expects_lr<string> new_public_key_hash(const std::string_view& address) override;
-				virtual expects_lr<string> sign_message(const algorithm::asset_id& asset, const std::string_view& message, const secret_box& signing_key) override;
-				virtual expects_lr<void> verify_message(const algorithm::asset_id& asset, const std::string_view& message, const std::string_view& verifying_key, const std::string_view& signature) override;
-				virtual string get_derivation(uint64_t address_index) const override;
+				virtual expects_promise_rt<uint64_t> get_latest_block_height() override;
+				virtual expects_promise_rt<schema*> get_block_transactions(uint64_t block_height, string* block_hash) override;
+				virtual expects_promise_rt<computed_transaction> link_transaction(uint64_t block_height, const std::string_view& block_hash, schema* transaction_data) override;
+				virtual expects_promise_rt<computed_fee> estimate_fee(const std::string_view& from_address, const vector<value_transfer>& to, const fee_supervisor_options& options) override;
+				virtual expects_promise_rt<decimal> calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link) override;
+				virtual expects_promise_rt<void> broadcast_transaction(const finalized_transaction& finalized) override;
+				virtual expects_promise_rt<prepared_transaction> prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee) override;
+				virtual expects_lr<finalized_transaction> finalize_transaction(mediator::prepared_transaction&& prepared) override;
+				virtual expects_lr<secret_box> encode_secret_key(const secret_box& secret_key) override;
+				virtual expects_lr<secret_box> decode_secret_key(const secret_box& secret_key) override;
+				virtual expects_lr<string> encode_public_key(const std::string_view& public_key) override;
+				virtual expects_lr<string> decode_public_key(const std::string_view& public_key) override;
+				virtual expects_lr<string> encode_address(const std::string_view& public_key_hash) override;
+				virtual expects_lr<string> decode_address(const std::string_view& address) override;
+				virtual expects_lr<string> encode_transaction_id(const std::string_view& transaction_id) override;
+				virtual expects_lr<string> decode_transaction_id(const std::string_view& transaction_id) override;
+				virtual expects_lr<address_map> to_addresses(const std::string_view& public_key) override;
 				virtual const chainparams& get_chainparams() const override;
 
 			public:
-				virtual expects_promise_rt<account_info> get_account_info(const algorithm::asset_id& asset, const std::string_view& address);
-				virtual expects_promise_rt<account_token_info> get_account_token_info(const algorithm::asset_id& asset, const std::string_view& address);
-				virtual expects_promise_rt<ledger_sequence_info> get_ledger_sequence_info(const algorithm::asset_id& asset);
-				virtual bool tx_sign_and_verify(transaction_buffer* tx_data, const std::string_view& encoded_public_key, const secret_box& encoded_private_key);
+				virtual expects_promise_rt<account_info> get_account_info(const std::string_view& address);
+				virtual expects_promise_rt<account_token_info> get_account_token_info(const algorithm::asset_id& for_asset, const std::string_view& address);
+				virtual expects_promise_rt<ledger_sequence_info> get_ledger_sequence_info();
 				virtual vector<uint8_t> tx_serialize(transaction_buffer* tx_data, bool signing_data);
 				virtual string tx_hash(const vector<uint8_t>& tx_blob);
 				virtual decimal get_base_fee_xrp();
 				virtual decimal from_drop(const uint256_t& value);
 				virtual uint256_t to_drop(const decimal& value);
-				virtual string encode_secret_key(uint8_t* secret_key, size_t secret_key_size);
-				virtual string encode_public_key(uint8_t* public_key, size_t public_key_size);
-				virtual string encode_private_key(uint8_t* private_key, size_t private_key_size);
-				virtual string encode_and_hash_public_key(uint8_t* public_key, size_t public_key_size);
-				virtual bool decode_secret_key(const std::string_view& data, uint8_t secret_key[16]);
-				virtual bool decode_private_key(const std::string_view& data, uint8_t private_key[65]);
-				virtual bool decode_public_key(const std::string_view& data, uint8_t public_key[33]);
-				virtual bool decode_public_key_hash(const std::string_view& data, uint8_t public_key_hash[20]);
 				virtual const btc_chainparams_* get_chain();
 			};
 		}

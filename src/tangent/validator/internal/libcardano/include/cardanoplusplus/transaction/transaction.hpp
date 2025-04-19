@@ -33,12 +33,18 @@ https://github.com/input-output-hk/cardano-ledger/blob/master/eras/babbage/test-
 #include "auxiliary_data.hpp"
 #include "certificates.hpp"
 #include "metadata.hpp"
-#define PROTOCOL_FEE_A 44
-#define PROTOCOL_FEE_B 155381
+#define PROTOCOL_FEE_FIXED 155381
+#define PROTOCOL_FEE_PER_BYTE 44
+#define PROTOCOL_UTXO_VALUE_PER_WORD 34482
 
 namespace Cardano{
 
 class Transaction{
+public:
+    struct Digest{
+        uint8_t Hash[32];
+    };
+
 public:
     explicit Transaction();
     explicit Transaction(uint64_t txfeefixed, uint64_t txfeeperbytes);
@@ -46,9 +52,10 @@ public:
     TransactionBody Body;
     AuxiliaryData Auxiliarydata;
     Transaction &addExtendedSigningKey(uint8_t const *const xsk);
+    Transaction &addExtendedVerifyingKey(uint8_t const *const xvk, uint8_t const* const signature);
     uint64_t getFeeTransacion_PostBuild(uint64_t const number_of_signatures);
+    std::vector<uint8_t> const& build(std::vector<Digest>* signable_hashes32);
 
-    std::vector<uint8_t> const &Build();
 private:
     TransactionWitness Witness;
     uint16_t witnessmapcountbit;

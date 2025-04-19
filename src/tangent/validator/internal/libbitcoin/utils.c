@@ -81,6 +81,12 @@ void utils_clear_buffers(void)
 void utils_hex_to_bin(const char* str, unsigned char* out, int inLen, int* outLen)
 {
     int bLen = inLen / 2;
+    if (bLen > *outLen)
+    {
+        *outLen = 0;
+        return;
+    }
+
     uint8_t c;
     int i;
     memset(out, 0, bLen);

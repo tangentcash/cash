@@ -21,6 +21,24 @@ namespace tangent
 					decimal divisibility;
 				};
 
+				struct token_transfer
+				{
+					string from_account;
+					string to_account;
+					decimal value;
+				};
+
+				struct sol_transaction
+				{
+					string token_program_address;
+					string from_token_address;
+					string to_token_address;
+					string from_address;
+					string to_address;
+					string recent_block_hash;
+					uint64_t value = 0;
+				};
+
 			public:
 				class nd_call
 				{
@@ -29,9 +47,8 @@ namespace tangent
 					static const char* get_token_balance();
 					static const char* get_balance();
 					static const char* get_block_hash();
-					static const char* get_block_number();
+					static const char* get_slot();
 					static const char* get_block();
-					static const char* get_transaction();
 					static const char* send_transaction();
 				};
 
@@ -39,33 +56,34 @@ namespace tangent
 				chainparams netdata;
 
 			public:
-				solana() noexcept;
+				solana(const algorithm::asset_id& new_asset) noexcept;
 				virtual ~solana() override = default;
-				virtual expects_promise_rt<void> broadcast_transaction(const algorithm::asset_id& asset, const outgoing_transaction& tx_data) override;
-				virtual expects_promise_rt<uint64_t> get_latest_block_height(const algorithm::asset_id& asset) override;
-				virtual expects_promise_rt<schema*> get_block_transactions(const algorithm::asset_id& asset, uint64_t block_height, string* block_hash) override;
-				virtual expects_promise_rt<schema*> get_block_transaction(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, const std::string_view& transaction_id) override;
-				virtual expects_promise_rt<vector<incoming_transaction>> get_authentic_transactions(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, schema* transaction_data) override;
-				virtual expects_promise_rt<base_fee> estimate_fee(const algorithm::asset_id& asset, const dynamic_wallet& wallet, const vector<transferer>& to, const fee_supervisor_options& options) override;
-				virtual expects_promise_rt<decimal> calculate_balance(const algorithm::asset_id& asset, const dynamic_wallet& wallet, option<string>&& address) override;
-				virtual expects_promise_rt<outgoing_transaction> new_transaction(const algorithm::asset_id& asset, const dynamic_wallet& wallet, const vector<transferer>& to, const base_fee& fee) override;
-				virtual expects_lr<master_wallet> new_master_wallet(const std::string_view& seed) override;
-				virtual expects_lr<derived_signing_wallet> new_signing_wallet(const algorithm::asset_id& asset, const master_wallet& wallet, uint64_t address_index) override;
-				virtual expects_lr<derived_signing_wallet> new_signing_wallet(const algorithm::asset_id& asset, const secret_box& signing_key) override;
-				virtual expects_lr<derived_verifying_wallet> new_verifying_wallet(const algorithm::asset_id& asset, const std::string_view& verifying_key) override;
-				virtual expects_lr<string> new_public_key_hash(const std::string_view& address) override;
-				virtual expects_lr<string> sign_message(const algorithm::asset_id& asset, const std::string_view& message, const secret_box& signing_key) override;
-				virtual expects_lr<void> verify_message(const algorithm::asset_id& asset, const std::string_view& message, const std::string_view& verifying_key, const std::string_view& signature) override;
-				virtual string get_derivation(uint64_t address_index) const override;
+				virtual expects_promise_rt<uint64_t> get_latest_block_height() override;
+				virtual expects_promise_rt<schema*> get_block_transactions(uint64_t block_height, string* block_hash) override;
+				virtual expects_promise_rt<computed_transaction> link_transaction(uint64_t block_height, const std::string_view& block_hash, schema* transaction_data) override;
+				virtual expects_promise_rt<computed_fee> estimate_fee(const std::string_view& from_address, const vector<value_transfer>& to, const fee_supervisor_options& options) override;
+				virtual expects_promise_rt<decimal> calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link) override;
+				virtual expects_promise_rt<void> broadcast_transaction(const finalized_transaction& finalized) override;
+				virtual expects_promise_rt<prepared_transaction> prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee) override;
+				virtual expects_lr<finalized_transaction> finalize_transaction(mediator::prepared_transaction&& prepared) override;
+				virtual expects_lr<secret_box> encode_secret_key(const secret_box& secret_key) override;
+				virtual expects_lr<secret_box> decode_secret_key(const secret_box& secret_key) override;
+				virtual expects_lr<string> encode_public_key(const std::string_view& public_key) override;
+				virtual expects_lr<string> decode_public_key(const std::string_view& public_key) override;
+				virtual expects_lr<string> encode_address(const std::string_view& public_key_hash) override;
+				virtual expects_lr<string> decode_address(const std::string_view& address) override;
+				virtual expects_lr<string> encode_transaction_id(const std::string_view& transaction_id) override;
+				virtual expects_lr<string> decode_transaction_id(const std::string_view& transaction_id) override;
+				virtual expects_lr<address_map> to_addresses(const std::string_view& public_key) override;
 				virtual const chainparams& get_chainparams() const override;
 
 			public:
 				virtual expects_promise_rt<string> get_token_symbol(const std::string_view& mint);
-				virtual expects_promise_rt<token_account> get_token_balance(const algorithm::asset_id& asset, const std::string_view& mint, const std::string_view& owner);
-				virtual expects_promise_rt<decimal> get_balance(const algorithm::asset_id& asset, const std::string_view& owner);
-				virtual expects_promise_rt<string> get_recent_block_hash(const algorithm::asset_id& asset);
-				virtual bool decode_private_key(const std::string_view& data, uint8_t private_key[64]);
-				virtual bool decode_secret_or_public_key(const std::string_view& data, uint8_t secret_key[32]);
+				virtual expects_promise_rt<token_account> get_token_balance(const std::string_view& mint, const std::string_view& owner);
+				virtual expects_promise_rt<decimal> get_balance(const std::string_view& owner);
+				virtual expects_promise_rt<string> get_recent_block_hash();
+				virtual vector<uint8_t> tx_message_serialize(sol_transaction* tx_data);
+				virtual vector<uint8_t> tx_result_serialize(const vector<uint8_t>& message_buffer, const algorithm::composition::cpubsig signature, size_t signature_size);
 				virtual const btc_chainparams_* get_chain();
 			};
 		}

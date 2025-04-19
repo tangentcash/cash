@@ -8,6 +8,7 @@ namespace tangent
 	{
 		struct state;
 		struct block_header;
+		struct dispatch_context;
 		struct transaction_context;
 		struct receipt;
 
@@ -22,7 +23,7 @@ namespace tangent
 			functional,
 			delegation,
 			consensus,
-			aggregation
+			attestation,
 		};
 
 		struct transaction : messages::authentic
@@ -35,13 +36,13 @@ namespace tangent
 
 			virtual expects_lr<void> validate(uint64_t block_number) const;
 			virtual expects_lr<void> execute(transaction_context* context) const;
-			virtual expects_promise_rt<void> dispatch(const wallet& proposer, const transaction_context* context, vector<uptr<transaction>>* pipeline) const;
+			virtual expects_promise_rt<void> dispatch(const transaction_context* context, dispatch_context* dispatcher) const;
 			virtual bool store_payload(format::stream* stream) const override;
 			virtual bool load_payload(format::stream& stream) override;
 			virtual bool store_body(format::stream* stream) const = 0;
 			virtual bool load_body(format::stream& stream) = 0;
-			virtual bool recover_many(const receipt& receipt, ordered_set<string>& parties) const;
-			virtual bool recover_aliases(const receipt& receipt, ordered_set<uint256_t>& aliases) const;
+			virtual bool recover_many(const transaction_context* context, const receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const;
+			virtual bool recover_aliases(const transaction_context* context, const receipt& receipt, ordered_set<uint256_t>& aliases) const;
 			virtual bool sign(const algorithm::seckey secret_key) override;
 			virtual bool sign(const algorithm::seckey secret_key, uint64_t new_sequence);
 			virtual bool sign(const algorithm::seckey secret_key, uint64_t new_sequence, const decimal& price);
@@ -49,50 +50,47 @@ namespace tangent
 			virtual void set_estimate_gas(const decimal& price);
 			virtual void set_gas(const decimal& price, const uint256_t& limit);
 			virtual void set_asset(const std::string_view& blockchain, const std::string_view& token = std::string_view(), const std::string_view& contract_address = std::string_view());
+			virtual bool is_payable() const;
 			virtual bool is_consensus() const;
+			virtual bool is_dispatchable() const;
 			virtual algorithm::asset_id get_gas_asset() const;
 			virtual transaction_level get_type() const;
 			virtual uptr<schema> as_schema() const override;
 			virtual uint32_t as_type() const override = 0;
 			virtual std::string_view as_typename() const override = 0;
 			virtual uint256_t get_gas_estimate() const = 0;
-			virtual uint64_t get_dispatch_offset() const;
 		};
 
 		struct delegation_transaction : transaction
 		{
 			virtual expects_lr<void> execute(transaction_context* context) const override;
+			virtual bool store_payload(format::stream* stream) const override;
+			virtual bool load_payload(format::stream& stream) override;
 			transaction_level get_type() const override;
 		};
 
 		struct consensus_transaction : transaction
 		{
 			virtual expects_lr<void> execute(transaction_context* context) const override;
+			virtual bool store_payload(format::stream* stream) const override;
+			virtual bool load_payload(format::stream& stream) override;
 			transaction_level get_type() const override;
 		};
 
-		struct aggregation_transaction : transaction
+		struct attestation_transaction : transaction
 		{
-			struct cumulative_branch
+			struct evaluation_branch
 			{
-				ordered_set<string> attestations;
+				ordered_set<algorithm::recpubsig_t> signatures;
 				format::stream message;
 			};
 
-			struct cumulative_consensus
-			{
-				const cumulative_branch* branch = nullptr;
-				double threshold = 0.0;
-				double progress = 0.0;
-				size_t committee = 0;
-				bool reached = false;
-			};
-
-			ordered_map<uint256_t, cumulative_branch> output_hashes;
+			ordered_map<uint256_t, evaluation_branch> output_hashes;
 			uint256_t input_hash = 0;
 
 			virtual expects_lr<void> validate(uint64_t block_number) const override;
 			virtual expects_lr<void> execute(transaction_context* context) const override;
+			virtual bool merge(const transaction_context* context, const attestation_transaction& other);
 			virtual bool store_payload(format::stream* stream) const override;
 			virtual bool load_payload(format::stream& stream) override;
 			virtual bool sign(const algorithm::seckey secret_key) override;
@@ -104,22 +102,18 @@ namespace tangent
 			virtual bool recover(algorithm::pubkey public_key, const uint256_t& output_hash, size_t index) const;
 			virtual bool recover_hash(algorithm::pubkeyhash public_key_hash) const override;
 			virtual bool recover_hash(algorithm::pubkeyhash public_key_hash, const uint256_t& output_hash, size_t index) const;
-			virtual bool attestate(const algorithm::seckey secret_key);
-			virtual bool merge(const transaction_context* context, const aggregation_transaction& other);
 			virtual bool is_signature_null() const override;
-			virtual bool is_consensus_reached() const;
 			virtual void set_optimal_gas(const decimal& price) override;
 			virtual void set_consensus(const uint256_t& output_hash);
-			virtual void set_signature(const algorithm::recsighash new_value) override;
 			virtual void set_statement(const uint256_t& new_input_hash, const format::stream& output_message);
-			virtual const cumulative_branch* get_cumulative_branch(const transaction_context* context) const;
-			virtual option<cumulative_consensus> calculate_cumulative_consensus(ordered_map<algorithm::asset_id, size_t>* aggregators, transaction_context* context) const;
-			virtual uint256_t get_cumulative_hash() const;
+			virtual const evaluation_branch* get_best_branch(const transaction_context* context) const;
+			virtual const evaluation_branch* get_final_branch(transaction_context* context, ordered_map<algorithm::asset_id, size_t>* aggregators) const;
+			virtual uint256_t as_group_hash() const;
 			virtual uptr<schema> as_schema() const override;
 			transaction_level get_type() const override;
 		};
 
-		struct receipt final : messages::standard
+		struct receipt final : messages::uniform
 		{
 			vector<std::pair<uint32_t, format::variables>> events;
 			algorithm::pubkeyhash from = { 0 };
@@ -150,6 +144,20 @@ namespace tangent
 				emit_event(t::as_instance_type(), std::move(values));
 			}
 			template <typename t>
+			vector<const format::variables*> find_events(size_t offset = 0) const
+			{
+				vector<const format::variables*> result;
+				while (true)
+				{
+					auto* event = find_event(t::as_instance_type(), offset++);
+					if (!event)
+						break;
+					
+					result.push_back(event);
+				}
+				return result;
+			}
+			template <typename t>
 			const format::variables* find_event(size_t offset = 0) const
 			{
 				return find_event(t::as_instance_type(), offset);
@@ -161,7 +169,7 @@ namespace tangent
 			}
 		};
 
-		struct state : messages::standard
+		struct state : messages::uniform
 		{
 			uint64_t block_number = 0;
 			uint64_t block_nonce = 0;

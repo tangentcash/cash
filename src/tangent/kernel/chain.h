@@ -159,9 +159,8 @@ namespace tangent
                 uint32_t max_inbound_connections = 32;
                 uint32_t max_outbound_connections = 8;
                 uint32_t inventory_size = 8192;
-                uint32_t inventory_timeout = 300;
-                uint32_t inventory_cleanup_timeout = 10000;
                 uint32_t rediscovery_timeout = 120000;
+                uint64_t response_timeout = 120000;
                 bool proposer = false;
                 bool server = true;
                 bool logging = true;
@@ -180,10 +179,9 @@ namespace tangent
                 uint64_t block_replay_multiplier = 4;
                 uint64_t relaying_timeout = 30000;
                 uint64_t relaying_retry_timeout = 300;
-                uint32_t cache_short_size = 16384;
-                uint32_t cache_extended_size = 65536;
+                uint32_t cache1_size = 32768;
+                uint32_t cache2_size = 131072;
                 uint64_t fee_estimation_seconds = 600;
-                uint64_t withdrawal_time = 300000;
                 bool server = false;
                 bool logging = true;
             } nss;
@@ -253,7 +251,6 @@ namespace tangent
             string secret_key_prefix = "sec";
             string public_key_prefix = "pub";
             string address_prefix = "tc";
-            uint64_t root_address_index = 0;
             uint64_t message_magic = 0x6a513fb6b3b71f02;
             uint8_t secret_key_version = 0xF;
             uint8_t public_key_version = 0xE;
@@ -261,24 +258,26 @@ namespace tangent
         } account;
         struct protocol_policy_config
         {
+            uint64_t depository_committee_size = 4;
+            uint64_t depository_committee_min_size = 2;
+            uint64_t depository_committee_max_size = 16;
+            uint64_t attesters_committee_size = 32;
             uint64_t consensus_committee_size = 6;
             uint64_t consensus_proof_time = 8000;
             uint64_t consensus_adjustment_time = 3600000;
             uint64_t consensus_penalty_point_time = 600000;
             uint64_t consensus_recovery_time = 60000;
-            uint64_t aggregators_committee_size = 32;
             uint64_t transaction_throughput = 210;
             uint64_t parallel_delegation_limit = 1;
             uint64_t parallel_consensus_limit = 128;
-            uint64_t parallel_aggregation_limit = 256;
+            uint64_t parallel_attestation_limit = 256;
+            double consensus_difficulty_max_increase = 0.25;
+            double consensus_difficulty_max_decrease = 0.75;
             double consensus_recovery_bump = 36.0;
-            double aggregation_threshold = 0.66;
+            double attestation_threshold = 0.66;
             double genesis_slot_time_bump = 0.2;
-            double max_consensus_difficulty_increase = 0.25;
-            double max_consensus_difficulty_decrease = 0.75;
             double account_gas_work_required = 1000.0;
-            double account_contribution_required = 1.0;
-            double account_reward_max_increase = 0.05;
+            double depository_reward_max_increase = 0.05;
             double weight_multiplier = 10000.0;
         } policy;
 

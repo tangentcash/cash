@@ -510,6 +510,10 @@ std::vector<uint8_t> const &TransactionBody::Build(){
 }
 
 
+std::vector<uint8_t> const & TransactionBody::getcbor_afterBuild() const{
+    return cbor.getCbor();
+}
+
 std::vector<uint8_t> const & TransactionBody::getcborDatums_afterBuild() const{
     return cbor_datums;
 }

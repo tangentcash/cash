@@ -13,7 +13,7 @@
 namespace tangent
 {
 #ifdef TAN_ROCKSDB
-	static rocksdb::Options blob_storage_configuration(uint64_t blob_cache_size)
+	static rocksdb::Options blob_storage_configuration(storage_optimization type, uint64_t blob_cache_size)
 	{
 		rocksdb::BlockBasedTableOptions table_options;
 		table_options.block_cache = rocksdb::NewLRUCache(blob_cache_size);
@@ -21,7 +21,17 @@ namespace tangent
 		rocksdb::Options options;
 		options.create_if_missing = true;
 		options.table_factory.reset(rocksdb::NewBlockBasedTableFactory(table_options));
-
+		switch (type)
+		{
+			case tangent::storage_optimization::speed:
+				options.random_access_max_buffer_size = 1024 * 1024 * 48;
+				options.writable_file_max_buffer_size = 1024 * 1024 * 48;
+				options.avoid_unnecessary_blocking_io = true;
+				break;
+			case tangent::storage_optimization::safety:
+			default:
+				break;
+		}
 		return options;
 	}
 #endif
@@ -116,7 +126,7 @@ namespace tangent
 			return it->second;
 
 		rocksdb::DB* result = nullptr;
-		auto status = rocksdb::DB::Open(blob_storage_configuration(protocol::now().user.storage.blob_cache_size), std::string(address.begin(), address.end()), &result);
+		auto status = rocksdb::DB::Open(blob_storage_configuration(protocol::now().user.storage.optimization, protocol::now().user.storage.blob_cache_size), std::string(address.begin(), address.end()), &result);
 		if (!status.ok())
 		{
 			if (protocol::now().user.storage.logging)
@@ -522,17 +532,13 @@ namespace tangent
 			if (value != nullptr && value->value.is(var_type::integer))
 				user.p2p.inventory_size = value->value.get_integer();
 
-			value = config->fetch("p2p.inventory_timeout");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.p2p.inventory_timeout = value->value.get_integer();
-
-			value = config->fetch("p2p.inventory_cleanup_timeout");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.p2p.inventory_cleanup_timeout = value->value.get_integer();
-
 			value = config->fetch("p2p.rediscovery_timeout");
 			if (value != nullptr && value->value.is(var_type::integer))
 				user.p2p.rediscovery_timeout = value->value.get_integer();
+
+			value = config->fetch("p2p.response_timeout");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.p2p.response_timeout = value->value.get_integer();
 
 			value = config->fetch("p2p.cursor_size");
 			if (value != nullptr && value->value.is(var_type::integer))
@@ -630,21 +636,17 @@ namespace tangent
 			if (value != nullptr && value->value.is(var_type::integer))
 				user.nss.relaying_retry_timeout = value->value.get_integer();
 
-			value = config->fetch("nss.cache_short_size");
+			value = config->fetch("nss.cache1_size");
 			if (value != nullptr && value->value.is(var_type::integer))
-				user.nss.cache_short_size = (uint32_t)value->value.get_integer();
+				user.nss.cache1_size = (uint32_t)value->value.get_integer();
 
-			value = config->fetch("nss.cache_extended_size");
+			value = config->fetch("nss.cache2_size");
 			if (value != nullptr && value->value.is(var_type::integer))
-				user.nss.cache_extended_size = (uint32_t)value->value.get_integer();
+				user.nss.cache2_size = (uint32_t)value->value.get_integer();
 
 			value = config->fetch("nss.fee_estimation_seconds");
 			if (value != nullptr && value->value.is(var_type::integer))
 				user.nss.fee_estimation_seconds = value->value.get_integer();
-
-			value = config->fetch("nss.withdrawal_time");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.nss.withdrawal_time = value->value.get_integer();
 
 			value = config->fetch("nss.server");
 			if (value != nullptr && value->value.is(var_type::boolean))
@@ -807,11 +809,10 @@ namespace tangent
 				account.secret_key_version = 0xD;
 				account.public_key_version = 0xC;
 				account.address_version = 0x6;
-				policy.account_contribution_required = 0.0;
+				policy.depository_committee_min_size = 1;
 				policy.account_gas_work_required = 0.0;
 				policy.consensus_proof_time = 30;
 				policy.transaction_throughput = 21000;
-				user.nss.withdrawal_time = policy.consensus_proof_time;
 				break;
 			case tangent::network_type::testnet:
 				message.packet_magic = 0xf815c95c;

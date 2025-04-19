@@ -71,7 +71,7 @@ namespace tangent
 		private:
 			struct ws_listener
 			{
-				unordered_set<string> addresses;
+				unordered_set<algorithm::pubkeyhash_t> addresses;
 				bool transactions = false;
 				bool blocks = false;
 			};
@@ -162,22 +162,24 @@ namespace tangent
 			server_response chainstate_get_best_account_observers(http::connection* base, format::variables&& args);
 			server_response chainstate_get_account_program(http::connection* base, format::variables&& args);
 			server_response chainstate_get_account_storage(http::connection* base, format::variables&& args);
-			server_response chainstate_get_account_reward(http::connection* base, format::variables&& args);
-			server_response chainstate_get_account_rewards(http::connection* base, format::variables&& args);
-			server_response chainstate_get_best_account_rewards(http::connection* base, format::variables&& args);
-			server_response chainstate_get_best_account_rewards_for_selection(http::connection* base, format::variables&& args);
-			server_response chainstate_get_account_derivation(http::connection* base, format::variables&& args);
+			server_response chainstate_get_depository_reward(http::connection* base, format::variables&& args);
+			server_response chainstate_get_depository_rewards(http::connection* base, format::variables&& args);
+			server_response chainstate_get_best_depository_rewards(http::connection* base, format::variables&& args);
+			server_response chainstate_get_best_depository_rewards_for_selection(http::connection* base, format::variables&& args);
+			server_response chainstate_get_depository_policy(http::connection* base, format::variables&& args);
+			server_response chainstate_get_depository_account(http::connection* base, format::variables&& args);
+			server_response chainstate_get_depository_accounts(http::connection* base, format::variables&& args);
 			server_response chainstate_get_account_balance(http::connection* base, format::variables&& args);
 			server_response chainstate_get_account_balances(http::connection* base, format::variables&& args);
-			server_response chainstate_get_account_depository(http::connection* base, format::variables&& args);
-			server_response chainstate_get_account_depositories(http::connection* base, format::variables&& args);
-			server_response chainstate_get_best_account_depositories(http::connection* base, format::variables&& args);
-			server_response chainstate_get_best_account_depositories_for_selection(http::connection* base, format::variables&& args);
+			server_response chainstate_get_depository_balance(http::connection* base, format::variables&& args);
+			server_response chainstate_get_depository_balances(http::connection* base, format::variables&& args);
+			server_response chainstate_get_best_depository_balances(http::connection* base, format::variables&& args);
+			server_response chainstate_get_best_depository_balances_for_selection(http::connection* base, format::variables&& args);
 			server_response chainstate_get_witness_program(http::connection* base, format::variables&& args);
 			server_response chainstate_get_witness_event(http::connection* base, format::variables&& args);
-			server_response chainstate_get_witness_address(http::connection* base, format::variables&& args);
-			server_response chainstate_get_witness_addresses(http::connection* base, format::variables&& args);
-			server_response chainstate_get_witness_addresses_by_purpose(http::connection* base, format::variables&& args);
+			server_response chainstate_get_witness_account(http::connection* base, format::variables&& args);
+			server_response chainstate_get_witness_accounts(http::connection* base, format::variables&& args);
+			server_response chainstate_get_witness_accounts_by_purpose(http::connection* base, format::variables&& args);
 			server_response chainstate_get_witness_transaction(http::connection* base, format::variables&& args);
 			server_response mempoolstate_add_node(http::connection* base, format::variables&& args);
 			server_response mempoolstate_clear_node(http::connection* base, format::variables&& args);
@@ -196,8 +198,8 @@ namespace tangent
 			server_response mempoolstate_get_next_account_sequence(http::connection* base, format::variables&& args);
 			server_response mempoolstate_get_transactions(http::connection* base, format::variables&& args);
 			server_response mempoolstate_get_transactions_by_owner(http::connection* base, format::variables&& args);
-			server_response mempoolstate_get_cumulative_event_transactions(http::connection* base, format::variables&& args);
-			server_response mempoolstate_get_cumulative_consensus(http::connection* base, format::variables&& args);
+			server_response mempoolstate_get_attestation_transactions(http::connection* base, format::variables&& args);
+			server_response mempoolstate_get_attestation(http::connection* base, format::variables&& args);
 			server_response validatorstate_prune(http::connection* base, format::variables&& args);
 			server_response validatorstate_revert(http::connection* base, format::variables&& args);
 			server_response validatorstate_reorganize(http::connection* base, format::variables&& args);
@@ -209,11 +211,9 @@ namespace tangent
 			server_response validatorstate_status(http::connection* base, format::variables&& args);
 			server_response proposerstate_submit_block(http::connection* base, format::variables&& args);
 			server_response proposerstate_submit_commitment_transaction(http::connection* base, format::variables&& args);
-			server_response proposerstate_submit_contribution_allocation(http::connection* base, format::variables&& args);
-			server_response proposerstate_submit_contribution_deallocation(http::connection* base, format::variables&& args);
-			server_response proposerstate_submit_contribution_withdrawal(http::connection* base, format::variables&& args);
 			server_response proposerstate_submit_depository_adjustment(http::connection* base, format::variables&& args);
-			server_response proposerstate_submit_depository_migration(http::connection* base, format::variables&& args);
+			server_response proposerstate_submit_depository_mpc_migration(http::connection* base, format::variables&& args);
+			server_response proposerstate_submit_depository_custody_migration(http::connection* base, format::variables&& args);
 		};
 	}
 }

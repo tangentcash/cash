@@ -58,6 +58,7 @@ public:
     TransactionBody & addAuxiliaryDataHash(uint8_t const *const hash_32bytes);
     TransactionBody & addTotalCollateral(uint64_t const amount);
     std::vector<uint8_t> const & Build();
+    std::vector<uint8_t> const & getcbor_afterBuild() const;
     std::vector<uint8_t> const & getcborDatums_afterBuild() const;
     std::vector<uint8_t> const & getcborRedeemers_afterBuild() const;
     uint16_t const & getWitnessMapcountbit() const;

@@ -193,8 +193,8 @@ namespace tangent
 			auto mempool = storages::mempoolstate(__func__);
 			auto chain = storages::chainstate(__func__);
 			auto state = chain.get_uniform_by_index(nullptr, states::account_sequence::as_instance_index(public_key_hash), 0);
-			uint64_t pending_sequence = mempool.get_highest_transaction_sequence(public_key_hash).or_else(1);
-			uint64_t finalized_sequence = (state ? ((states::account_sequence*)**state)->sequence : 1);
+			uint64_t pending_sequence = mempool.get_highest_transaction_sequence(public_key_hash).or_else(0);
+			uint64_t finalized_sequence = (state ? ((states::account_sequence*)**state)->sequence : 0);
 			return std::max(finalized_sequence, pending_sequence);
 		}
 		uptr<schema> wallet::as_schema() const

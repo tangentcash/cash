@@ -74,6 +74,7 @@ LIBBTC_API btc_bool btc_pubkey_get_hex(const btc_pubkey* pubkey, char* str, size
 
 //sign a 32byte message/hash and returns a DER encoded signature (through *sigout)
 LIBBTC_API btc_bool btc_key_sign_hash(const btc_key* privkey, const uint256 hash, unsigned char* sigout, size_t* outlen);
+LIBBTC_API void btc_key_get_taproot_tweak(const btc_pubkey* pubkey, const uint256 leaf_hash, uint256 hash256);
 
 //sign a 32byte message/hash and returns a 64 byte compact signature (through *sigout)
 LIBBTC_API btc_bool btc_key_sign_hash_compact(const btc_key* privkey, const uint256 hash, unsigned char* sigout, size_t* outlen);

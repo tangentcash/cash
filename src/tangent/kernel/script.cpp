@@ -90,7 +90,7 @@ namespace tangent
 		}
 		static string erecover160(const uint256_t& hash, const std::string_view& signature)
 		{
-			if (signature.size() != sizeof(algorithm::recsighash))
+			if (signature.size() != sizeof(algorithm::recpubsig))
 				return string();
 
 			algorithm::pubkeyhash public_key_hash = { 0 }, null = { 0 };
@@ -101,7 +101,7 @@ namespace tangent
 		}
 		static string erecover256(const uint256_t& hash, const std::string_view& signature)
 		{
-			if (signature.size() != sizeof(algorithm::recsighash))
+			if (signature.size() != sizeof(algorithm::recpubsig))
 				return string();
 
 			algorithm::pubkey public_key = { 0 }, null = { 0 };
@@ -621,17 +621,15 @@ namespace tangent
 			program->set_method("uint64 account_sequence_of(const address&in) const", &script_program::account_sequence_of);
 			program->set_method("uint256 account_work_of(const address&in) const", &script_program::account_work_of);
 			program->set_method("string account_program_of(const address&in) const", &script_program::account_program_of);
-			program->set_method("decimal account_incoming_reward_of(const address&in, const uint256&in, const decimal&in) const", &script_program::account_incoming_reward_of);
-			program->set_method("decimal account_outgoing_reward_of(const address&in, const uint256&in, const decimal&in) const", &script_program::account_outgoing_reward_of);
-			program->set_method("uint64 account_derivation_of(const address&in, const uint256&in) const", &script_program::account_derivation_of);
 			program->set_method("decimal account_balance_of(const address&in, const uint256&in) const", &script_program::account_balance_of);
-			program->set_method("decimal account_coverage_of(const address&in, const uint256&in) const", &script_program::account_coverage_of);
-			program->set_method("decimal account_contribution_of(const address&in, const uint256&in) const", &script_program::account_contribution_of);
 			program->set_method("decimal account_reservation_of(const address&in, const uint256&in) const", &script_program::account_reservation_of);
-			program->set_method("decimal account_custody_of(const address&in, const uint256&in) const", &script_program::account_custody_of);
+			program->set_method("decimal depository_incoming_reward_of(const address&in, const uint256&in, const decimal&in) const", &script_program::depository_incoming_reward_of);
+			program->set_method("decimal depository_outgoing_reward_of(const address&in, const uint256&in, const decimal&in) const", &script_program::depository_outgoing_reward_of);
+			program->set_method("uint64 depository_policy_of(const address&in, const uint256&in) const", &script_program::depository_policy_of);
+			program->set_method("decimal depository_balance_of(const address&in, const uint256&in) const", &script_program::depository_balance_of);
 			program->set_method("bool has_witness_program_of(const string_view&in) const", &script_program::has_witness_program_of);
 			program->set_method("uint256 witness_event_of(const uint256&in)", &script_program::witness_event_of);
-			program->set_method("address witness_address_of(const uint256&in, const string_view&in, uint64, usize) const", &script_program::witness_address_of);
+			program->set_method("address witness_address_of(const uint256&in, const string_view&in, usize) const", &script_program::witness_address_of);
 			program->set_method("bool has_witness_transaction_of(const uint256&in, const string_view&in) const", &script_program::has_witness_transaction_of);
 			program->set_method("bool is_account_honest(const address&in) const", &script_program::is_account_honest);
 			program->set_method("uint256 random()", &script_program::random);
@@ -1009,7 +1007,7 @@ namespace tangent
 			transaction.set_calldata(target.hash, algorithm::hashing::hash32d(link->hashcode), function_name, std::move(args));
 			transaction.gas_price = context->transaction->gas_price;
 			transaction.gas_limit = context->get_gas_left();
-			transaction.sequence = 1;
+			transaction.sequence = 0;
 
 			ledger::receipt receipt;
 			receipt.transaction_hash = transaction.as_hash();
@@ -1343,49 +1341,35 @@ namespace tangent
 			auto data = context->get_account_program(target.hash);
 			return data ? data->hashcode : string();
 		}
-		decimal script_program::account_incoming_reward_of(const script_address& target, const algorithm::asset_id& asset, const decimal& value) const
-		{
-			auto data = context->get_account_reward(asset, target.hash);
-			return data ? data->calculate_incoming_fee(value) : decimal::nan();
-		}
-		decimal script_program::account_outgoing_reward_of(const script_address& target, const algorithm::asset_id& asset, const decimal& value) const
-		{
-			auto data = context->get_account_reward(asset, target.hash);
-			return data ? data->calculate_outgoing_fee(value) : decimal::nan();
-		}
-		uint64_t script_program::account_derivation_of(const script_address& target, const algorithm::asset_id& asset) const
-		{
-			auto data = context->get_account_derivation(asset, target.hash);
-			return data ? data->max_address_index : 0;
-		}
 		decimal script_program::account_balance_of(const script_address& target, const algorithm::asset_id& asset) const
 		{
 			auto data = context->get_account_balance(asset, target.hash);
 			return data ? data->get_balance() : decimal::zero();
 		}
-		decimal script_program::account_coverage_of(const script_address& target, const algorithm::asset_id& asset) const
-		{
-			auto data = context->get_account_depository(asset, target.hash);
-			if (!data)
-				return decimal::nan();
-
-			auto work = context->get_account_work(target.hash);
-			return data->get_coverage(work ? work->flags : 0);
-		}
-		decimal script_program::account_contribution_of(const script_address& target, const algorithm::asset_id& asset) const
-		{
-			auto data = context->get_account_depository(asset, target.hash);
-			return data ? data->get_contribution() : decimal::nan();
-		}
 		decimal script_program::account_reservation_of(const script_address& target, const algorithm::asset_id& asset) const
 		{
-			auto data = context->get_account_depository(asset, target.hash);
-			return data ? data->get_reservation() : decimal::nan();
+			auto data = context->get_account_balance(asset, target.hash);
+			return data ? data->reserve : decimal::nan();
 		}
-		decimal script_program::account_custody_of(const script_address& target, const algorithm::asset_id& asset) const
+		decimal script_program::depository_incoming_reward_of(const script_address& target, const algorithm::asset_id& asset, const decimal& value) const
 		{
-			auto data = context->get_account_depository(asset, target.hash);
-			return data ? data->custody : decimal::nan();
+			auto data = context->get_depository_reward(asset, target.hash);
+			return data ? data->calculate_incoming_fee(value) : decimal::nan();
+		}
+		decimal script_program::depository_outgoing_reward_of(const script_address& target, const algorithm::asset_id& asset, const decimal& value) const
+		{
+			auto data = context->get_depository_reward(asset, target.hash);
+			return data ? data->calculate_outgoing_fee(value) : decimal::nan();
+		}
+		uint64_t script_program::depository_policy_of(const script_address& target, const algorithm::asset_id& asset) const
+		{
+			auto data = context->get_depository_policy(asset, target.hash);
+			return data ? data->accounts_under_management : 0;
+		}
+		decimal script_program::depository_balance_of(const script_address& target, const algorithm::asset_id& asset) const
+		{
+			auto data = context->get_depository_balance(asset, target.hash);
+			return data ? data->supply : decimal::nan();
 		}
 		bool script_program::has_witness_program_of(const std::string_view& hashcode) const
 		{
@@ -1396,9 +1380,9 @@ namespace tangent
 			auto data = context->get_witness_event(transaction_hash);
 			return data ? data->child_transaction_hash : uint256_t(0);
 		}
-		script_address script_program::witness_address_of(const algorithm::asset_id& asset, const std::string_view& address, uint64_t address_index, size_t offset) const
+		script_address script_program::witness_address_of(const algorithm::asset_id& asset, const std::string_view& address, size_t offset) const
 		{
-			auto data = context->get_witness_address(asset, address, address_index, offset);
+			auto data = context->get_witness_account_tagged(asset, address, offset);
 			return data ? script_address(data->owner) : script_address();
 		}
 		bool script_program::has_witness_transaction_of(const algorithm::asset_id& asset, const std::string_view& transaction_id) const

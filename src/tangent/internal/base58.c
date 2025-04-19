@@ -194,6 +194,7 @@ bool b58dec(void* bin, size_t* binszp, const char* b58, size_t b58size) {
   }
   uint8_t *nd = d + *binszp - res;
   memcpy(bin, nd, res);
+  *binszp = res;
   return true;
 }
 

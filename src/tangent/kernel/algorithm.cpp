@@ -5,6 +5,7 @@ extern "C"
 {
 #include <secp256k1.h>
 #include <secp256k1_recovery.h>
+#include <secp256k1_schnorrsig.h>
 #include <sodium.h>
 #include "../internal/segwit_addr.h"
 #include "../internal/ecdsa.h"
@@ -12,6 +13,8 @@ extern "C"
 #include "../internal/ripemd160.h"
 #include "../internal/bip39.h"
 #include "../internal/sha2.h"
+#include "../internal/secp256k1.h"
+#include "../internal/monero/crypto.h"
 }
 
 namespace tangent
@@ -28,7 +31,7 @@ namespace tangent
 					mp_get_memory_functions(nullptr, nullptr, &gmp_free);
 				gmp_free(data, size);
 			}
-			static void import0(const uint8_t * data, size_t size, mpz_t value)
+			static void import0(const uint8_t* data, size_t size, mpz_t value)
 			{
 				mpz_import(value, size, 1, 1, 1, 0, data);
 			}
@@ -228,10 +231,10 @@ namespace tangent
 
 			parameters new_alg = prev_alg;
 			decimal adjustment = decimal(time_delta).truncate(protocol::now().message.precision) / prev_time;
-			if (adjustment > 1.0 + policy.max_consensus_difficulty_increase)
-				adjustment = 1.0 + policy.max_consensus_difficulty_increase;
-			else if (adjustment < policy.max_consensus_difficulty_decrease)
-				adjustment = policy.max_consensus_difficulty_decrease;
+			if (adjustment > 1.0 + policy.consensus_difficulty_max_increase)
+				adjustment = 1.0 + policy.consensus_difficulty_max_increase;
+			else if (adjustment < policy.consensus_difficulty_max_decrease)
+				adjustment = policy.consensus_difficulty_max_decrease;
 
 			uint64_t pow_offset = (decimal(new_alg.pow) * adjustment).to_uint64();
 			if (new_alg.pow + pow_offset < new_alg.pow)
@@ -539,11 +542,11 @@ namespace tangent
 					break;
 			}
 		}
-		bool signing::recover(const uint256_t& hash, pubkey public_key, const recsighash signature)
+		bool signing::recover(const uint256_t& hash, pubkey public_key, const recpubsig signature)
 		{
 			VI_ASSERT(public_key != nullptr && signature != nullptr, "public key and signature should be set");
 			uint8_t recovery_id = 0;
-			size_t signature_size = sizeof(recsighash);
+			size_t signature_size = sizeof(recpubsig);
 			size_t recovery_offset = signature_size - sizeof(recovery_id);
 			memcpy(&recovery_id, signature + recovery_offset, sizeof(recovery_id));
 			if (recovery_id > 4)
@@ -564,7 +567,7 @@ namespace tangent
 			size_t public_key_size = sizeof(pubkey);
 			return secp256k1_ec_pubkey_serialize(context, public_key, &public_key_size, &recovered_public_key, SECP256K1_EC_COMPRESSED) == 1;
 		}
-		bool signing::recover_hash(const uint256_t& hash, pubkeyhash public_key_hash, const recsighash signature)
+		bool signing::recover_hash(const uint256_t& hash, pubkeyhash public_key_hash, const recpubsig signature)
 		{
 			VI_ASSERT(public_key_hash != nullptr && signature != nullptr, "public key hash and signature should be set");
 			pubkey public_key;
@@ -574,12 +577,12 @@ namespace tangent
 			derive_public_key_hash(public_key, public_key_hash);
 			return true;
 		}
-		bool signing::sign(const uint256_t& hash, const seckey secret_key, recsighash signature)
+		bool signing::sign(const uint256_t& hash, const seckey secret_key, recpubsig signature)
 		{
 			VI_ASSERT(secret_key != nullptr && signature != nullptr, "secret key and signature should be set");
 			uint8_t data[32];
 			encoding::decode_uint256(hash, data);
-			memset(signature, 0, sizeof(recsighash));
+			memset(signature, 0, sizeof(recpubsig));
 
 			secp256k1_context* context = get_context();
 			secp256k1_ecdsa_recoverable_signature recoverable_signature;
@@ -590,10 +593,10 @@ namespace tangent
 			if (secp256k1_ecdsa_recoverable_signature_serialize_compact(context, signature, &recovery_id, &recoverable_signature) != 1)
 				return false;
 
-			signature[sizeof(sighash)] = (uint8_t)recovery_id;
+			signature[sizeof(recpubsig) - 1] = (uint8_t)recovery_id;
 			return true;
 		}
-		bool signing::verify(const uint256_t& hash, const pubkey public_key, const recsighash signature)
+		bool signing::verify(const uint256_t& hash, const pubkey public_key, const recpubsig signature)
 		{
 			VI_ASSERT(public_key != nullptr && signature != nullptr, "public key and signature should be set");
 			secp256k1_context* context = get_context();
@@ -601,14 +604,13 @@ namespace tangent
 			if (secp256k1_ecdsa_signature_parse_compact(context, &compact_signature, signature) != 1)
 				return false;
 
-			secp256k1_ecdsa_signature normalized_signature;
-			secp256k1_ecdsa_signature_normalize(context, &normalized_signature, &compact_signature);
-
 			secp256k1_pubkey derived_public_key;
 			if (secp256k1_ec_pubkey_parse(context, &derived_public_key, public_key, sizeof(pubkey)) != 1)
 				return false;
 
 			uint8_t data[32];
+			secp256k1_ecdsa_signature normalized_signature;
+			secp256k1_ecdsa_signature_normalize(context, &normalized_signature, &compact_signature);
 			encoding::decode_uint256(hash, data);
 			return secp256k1_ecdsa_verify(context, &normalized_signature, data, &derived_public_key) == 1;
 		}
@@ -703,9 +705,24 @@ namespace tangent
 				body[i] ^= salt[i % salt.size()];
 			body.append(hashing::hash256((uint8_t*)plaintext.data(), plaintext.size()));
 
+			uint8_t seed[crypto_box_SEEDBYTES];
+			uint8_t ephemeral_secret_key[crypto_box_SECRETKEYBYTES];
+			uint8_t ephemeral_public_key[crypto_box_PUBLICKEYBYTES];
+			algorithm::hashing::hash256((uint8_t*)entropy.data(), entropy.size(), seed);
+			if (crypto_box_seed_keypair(ephemeral_public_key, ephemeral_secret_key, seed) != 0)
+				return optional::none;
+
+			uint8_t nonce[crypto_box_NONCEBYTES];
+			crypto_generichash_state state;
+			crypto_generichash_init(&state, nullptr, 0, crypto_box_NONCEBYTES);
+			crypto_generichash_update(&state, ephemeral_public_key, crypto_box_PUBLICKEYBYTES);
+			crypto_generichash_update(&state, cipher_public_key, crypto_box_PUBLICKEYBYTES);
+			crypto_generichash_final(&state, nonce, crypto_box_NONCEBYTES);
+
 			string ciphertext;
 			ciphertext.resize(crypto_box_SEALBYTES + body.size());
-			if (crypto_box_seal((uint8_t*)ciphertext.data(), (uint8_t*)body.data(), body.size(), cipher_public_key) != 0)
+			memcpy(ciphertext.data(), ephemeral_public_key, crypto_box_PUBLICKEYBYTES);
+			if (crypto_box_easy((uint8_t*)ciphertext.data() + crypto_box_PUBLICKEYBYTES, (uint8_t*)body.data(), body.size(), nonce, cipher_public_key, ephemeral_secret_key) != 0)
 				return optional::none;
 
 			return ciphertext;
@@ -1092,15 +1109,13 @@ namespace tangent
 			if (!token.empty())
 			{
 				handle.append(1, ':').append(token.substr(0, 8));
-				stringify::to_upper(handle);
 				if (!contract_address.empty())
 				{
 					auto hash = codec::base64_url_encode(*crypto::hash_raw(digests::sha1(), format::util::is_hex_encoding(contract_address) ? codec::hex_decode(contract_address) : string(contract_address)));
+					stringify::replace_of(hash, "-_", "");
 					handle.append(1, ':').append(hash.substr(0, 32 - handle.size()));
 				}
 			}
-			else
-				stringify::to_upper(handle);
 			return handle.substr(0, 32);
 		}
 		string asset::handle_of(const asset_id& value)
@@ -1122,21 +1137,34 @@ namespace tangent
 		string asset::blockchain_of(const asset_id& value)
 		{
 			string handle = handle_of(value);
-			size_t index = handle.find(':');
-			return handle.substr(0, index);
+			std::string_view view = std::string_view(handle);
+			size_t indices = view.find(':');
+			std::string_view blockchain = view.substr(0, indices);
+			return string(blockchain);
 		}
 		string asset::token_of(const asset_id& value)
 		{
 			string handle = handle_of(value);
-			size_t index = handle.find(':');
-			return index == std::string::npos ? string() : handle.substr(index + 1, handle.rfind(':', index) + 1);
+			std::string_view view = std::string_view(handle);
+			size_t indices[2] = { view.find(':'), view.rfind(':') };
+			std::string_view token = indices[0] != std::string::npos && indices[0] + 1 < view.size() ? view.substr(indices[0] + 1, indices[1] != std::string::npos ? indices[1] - indices[0] - 1 : std::string::npos) : std::string_view();
+			return string(token);
 		}
 		string asset::checksum_of(const asset_id& value)
 		{
 			string handle = handle_of(value);
-			size_t index1 = handle.find(':');
-			size_t index2 = handle.rfind(':');
-			return index1 == std::string::npos || index2 == std::string::npos || index1 == index2 ? string() : handle.substr(index2 + 1);
+			std::string_view view = std::string_view(handle);
+			size_t indices = view.rfind(':');
+			std::string_view checksum = indices != std::string::npos && indices + 1 < view.size() ? view.substr(indices + 1) : std::string_view();
+			return string(checksum);
+		}
+		string asset::name_of(const asset_id& value)
+		{
+			auto name = blockchain_of(value);
+			auto specification = token_of(value);
+			if (!specification.empty())
+				name = specification + " on " + name;
+			return name;
 		}
 		bool asset::is_valid(const asset_id& value)
 		{
@@ -1196,146 +1224,661 @@ namespace tangent
 			return data;
 		}
 
-		expects_lr<void> composition::derive_keypair(type alg, const cseed seed, cseckey secret_key, cpubkey public_key)
+		expects_lr<void> composition::derive_keypair(type alg, const uint256_t& seed, keypair* result)
 		{
-			VI_ASSERT(secret_key != nullptr, "secret key should be set");
-			VI_ASSERT(public_key != nullptr, "public key should be set");
-			hashing::hash512(seed, sizeof(cseed), secret_key);
-			memset(public_key, 0, sizeof(cpubkey));
+			VI_ASSERT(result != nullptr, "result should be set");
+			uint8_t seed_buffer[32];
+			encoding::decode_uint256(seed, seed_buffer);
+			hashing::hash512(seed_buffer, sizeof(seed_buffer), result->secret_key);
+			memset(result->public_key, 0, sizeof(cpubkey));
 			switch (alg)
 			{
-				case type::ED25519:
+				case type::ed25519:
 				{
-					convert_to_secret_key_ed25519(secret_key);
-					ed25519_publickey_ext(secret_key, public_key);
-					hashing::hash256(public_key, sizeof(cpubkey) / 2, public_key + sizeof(cpubkey) / 2);
+					keypair_utils::convert_to_scalar_ed25519(result->secret_key, result->secret_key);
+					ed25519_publickey_ext(result->secret_key, result->public_key);
+					memset(result->secret_key + 32, 0, 32);
+					memset(result->public_key + 32, 0, 32);
 					return expectation::met;
 				}
-				case type::SECP256K1:
+				case type::ed25519_clsag:
+				{
+					keypair_utils::convert_to_scalar_ed25519(result->secret_key, result->secret_key);
+					sc_reduce32(result->secret_key);
+					ed25519_publickey_ext(result->secret_key, result->public_key);
+					memset(result->secret_key + 32, 0, 32);
+					memset(result->public_key + 32, 0, 32);
+					return expectation::met;
+				}
+				case type::secp256k1:
+				case type::schnorr:
+				case type::schnorr_taproot:
 				{
 					secp256k1_context* context = signing::get_context();
 					secp256k1_pubkey extended_public_key;
-					while (secp256k1_ec_seckey_verify(context, secret_key) != 1 || secp256k1_ec_pubkey_create(context, &extended_public_key, secret_key) != 1)
-						hashing::hash512(secret_key, sizeof(cseckey), secret_key);
+					while (secp256k1_ec_seckey_verify(context, result->secret_key) != 1 || secp256k1_ec_pubkey_create(context, &extended_public_key, result->secret_key) != 1)
+						hashing::hash512(result->secret_key, sizeof(cseckey), result->secret_key);
 
-					memcpy(public_key, extended_public_key.data, sizeof(extended_public_key.data));
+					size_t key_size = sizeof(extended_public_key);
+					if (secp256k1_ec_pubkey_serialize(context, result->public_key, &key_size, &extended_public_key, SECP256K1_EC_COMPRESSED) != 1)
+						return layer_exception("bad seed");
+
 					return expectation::met;
 				}
 				default:
 					return layer_exception("invalid composition algorithm");
 			}
 		}
-		expects_lr<void> composition::derive_public_key(type alg, const cpubkey public_key1, const cseckey secret_key2, cpubkey public_key, size_t* public_key_size)
+		expects_lr<void> composition::accumulate_secret_key(type alg, const cseckey share_secret_key, cseckey inout)
 		{
-			VI_ASSERT(public_key1 != nullptr, "public key 1 should be set");
-			VI_ASSERT(secret_key2 != nullptr, "secret key 2 should be set");
-			VI_ASSERT(public_key != nullptr, "public key should be set");
-			memset(public_key, 0, sizeof(cpubkey));
+			VI_ASSERT(inout != nullptr, "inout secret key should be set");
+			const auto condition = stage_of(share_secret_key, inout, sizeof(cseckey));
 			switch (alg)
 			{
-				case type::ED25519:
+				case type::ed25519:
+				case type::ed25519_clsag:
 				{
-					uint8_t FX[crypto_sign_PUBLICKEYBYTES];
-					memcpy(FX, public_key1, sizeof(FX));
-
-					uint8_t y[crypto_core_ed25519_SCALARBYTES];
-					memcpy(y, secret_key2, sizeof(y));
-
-					if (crypto_scalarmult_ed25519(FX, y, FX) != 0)
-						return layer_exception("bad parameters");
-
-					memcpy(public_key, FX, sizeof(FX));
-					if (public_key_size != nullptr)
-						*public_key_size = sizeof(FX);
-					return expectation::met;
+					switch (condition)
+					{
+						case stage::configure:
+						{
+							memcpy(inout, share_secret_key, sizeof(cseckey));
+							return expectation::met;
+						}
+						case stage::accumulate:
+						{
+							crypto_core_ed25519_scalar_mul(inout, inout, share_secret_key);
+							return expectation::met;
+						}
+						case stage::finalize:
+							return expectation::met;
+						default:
+							return layer_exception("invalid stage");
+					}
 				}
-				case type::SECP256K1:
+				case type::secp256k1:
+				case type::schnorr:
+				case type::schnorr_taproot:
 				{
-					secp256k1_context* context = signing::get_context();
-					secp256k1_pubkey FX;
-					memcpy(FX.data, public_key1, sizeof(FX));
+					switch (condition)
+					{
+						case stage::configure:
+						{
+							memcpy(inout, share_secret_key, sizeof(cseckey));
+							return expectation::met;
+						}
+						case stage::accumulate:
+						{
+							secp256k1_context* context = signing::get_context();
+							if (secp256k1_ec_seckey_tweak_mul(context, inout, share_secret_key) != 1)
+								return layer_exception("bad share secret key");
 
-					uint8_t y[32];
-					memcpy(y, secret_key2, sizeof(y));
-					if (secp256k1_ec_pubkey_tweak_mul(context, &FX, y) != 1)
-						return layer_exception("bad secret key 2");
-
-					size_t key_size = sizeof(FX);
-					secp256k1_ec_pubkey_serialize(context, public_key, &key_size, &FX, SECP256K1_EC_COMPRESSED);
-					if (public_key_size != nullptr)
-						*public_key_size = key_size;
-					return expectation::met;
+							return expectation::met;
+						}
+						case stage::finalize:
+							return expectation::met;
+						default:
+							return layer_exception("invalid stage");
+					}
 				}
 				default:
 					return layer_exception("invalid composition algorithm");
 			}
 		}
-		expects_lr<void> composition::derive_secret_key(type alg, const cseckey secret_key1, const cseckey secret_key2, cseckey secret_key, size_t* secret_key_size)
+		expects_lr<void> composition::accumulate_public_key(type alg, const cseckey share_secret_key, cpubkey inout)
 		{
-			VI_ASSERT(secret_key != nullptr, "secret key should be set");
-			VI_ASSERT(secret_key1 != nullptr, "secret1 should be set");
-			VI_ASSERT(secret_key2 != nullptr, "secret2 should be set");
-			memset(secret_key, 0, sizeof(cseckey));
+			VI_ASSERT(inout != nullptr, "inout public key should be set");
+			const auto condition = stage_of(share_secret_key, inout, sizeof(cpubkey));
 			switch (alg)
 			{
-				case type::ED25519:
+				case type::ed25519:
+				case type::ed25519_clsag:
 				{
-					uint8_t x[crypto_core_ed25519_SCALARBYTES], y[crypto_core_ed25519_SCALARBYTES];
-					memcpy(x, secret_key1, sizeof(x));
-					memcpy(y, secret_key2, sizeof(y));
+					switch (condition)
+					{
+						case stage::configure:
+						{
+							ed25519_publickey_ext(share_secret_key, inout);
+							return expectation::met;
+						}
+						case stage::accumulate:
+						{
+							if (crypto_scalarmult_ed25519(inout, share_secret_key, inout) != 0)
+								return layer_exception("bad share secret key");
 
-					cseckey r;
-					crypto_core_ed25519_scalar_mul(r, x, y);
-					sha256_Raw(r, sizeof(r) / 2, r + sizeof(r) / 2);
-					memcpy(secret_key, r, sizeof(r));
-					if (secret_key_size != nullptr)
-						*secret_key_size = sizeof(r);
-
-					return expectation::met;
+							return expectation::met;
+						}
+						case stage::finalize:
+							return expectation::met;
+						default:
+							return layer_exception("invalid stage");
+					}
 				}
-				case type::SECP256K1:
+				case type::secp256k1:
 				{
 					secp256k1_context* context = signing::get_context();
-					uint8_t x[32], y[32];
-					memcpy(x, secret_key1, sizeof(x));
-					memcpy(y, secret_key2, sizeof(y));
-					if (secp256k1_ec_seckey_tweak_mul(context, x, y) != 1)
-						return layer_exception("bad parameters");
+					secp256k1_pubkey result_public_key;
+					switch (condition)
+					{
+						case stage::configure:
+						{
+							if (secp256k1_ec_pubkey_create(context, &result_public_key, share_secret_key) != 1)
+								return layer_exception("bad share secret key");
 
-					memcpy(secret_key, x, sizeof(x));
-					if (secret_key_size)
-						*secret_key_size = sizeof(x);
+							size_t key_size = sizeof(result_public_key);
+							if (secp256k1_ec_pubkey_serialize(context, inout, &key_size, &result_public_key, SECP256K1_EC_COMPRESSED) != 1)
+								return layer_exception("bad share secret key");
+
+							return expectation::met;
+						}
+						case stage::accumulate:
+						{
+							if (secp256k1_ec_pubkey_parse(context, &result_public_key, inout, size_of_public_key(alg, stage::accumulate)) != 1)
+								return layer_exception("bad intermediate public key");
+
+							if (secp256k1_ec_pubkey_tweak_mul(context, &result_public_key, share_secret_key) != 1)
+								return layer_exception("bad share secret key");
+
+							size_t key_size = sizeof(result_public_key);
+							if (secp256k1_ec_pubkey_serialize(context, inout, &key_size, &result_public_key, SECP256K1_EC_COMPRESSED) != 1)
+								return layer_exception("bad share secret key");
+
+							return expectation::met;
+						}
+						case stage::finalize:
+							return expectation::met;
+						default:
+							return layer_exception("invalid stage");
+					}
+				}
+				case type::schnorr:
+				case type::schnorr_taproot:
+				{
+					secp256k1_context* context = signing::get_context();
+					secp256k1_pubkey result_public_key;
+					switch (condition)
+					{
+						case stage::configure:
+						{
+							if (secp256k1_ec_pubkey_create(context, &result_public_key, share_secret_key) != 1)
+								return layer_exception("bad share secret key");
+
+							size_t key_size = sizeof(result_public_key);
+							if (secp256k1_ec_pubkey_serialize(context, inout, &key_size, &result_public_key, SECP256K1_EC_COMPRESSED) != 1)
+								return layer_exception("bad share secret key");
+
+							return expectation::met;
+						}
+						case stage::accumulate:
+						{
+							if (secp256k1_ec_pubkey_parse(context, &result_public_key, inout, size_of_public_key(type::secp256k1, stage::accumulate)) != 1)
+								return layer_exception("bad intermediate public key");
+							
+							if (secp256k1_ec_pubkey_tweak_mul(context, &result_public_key, share_secret_key) != 1)
+								return layer_exception("bad share secret key");
+
+							size_t key_size = sizeof(result_public_key);
+							if (secp256k1_ec_pubkey_serialize(context, inout, &key_size, &result_public_key, SECP256K1_EC_COMPRESSED) != 1)
+								return layer_exception("bad share secret key");
+
+							return expectation::met;
+						}
+						case stage::finalize:
+						{
+							if (secp256k1_ec_pubkey_parse(context, &result_public_key, inout, size_of_public_key(type::secp256k1, stage::accumulate)) != 1)
+								return layer_exception("bad intermediate public key");
+
+							secp256k1_xonly_pubkey result_xonly_public_key;
+							if (secp256k1_xonly_pubkey_from_pubkey(context, &result_xonly_public_key, nullptr, &result_public_key) != 1)
+								return layer_exception("bad share secret key");
+
+							if (secp256k1_xonly_pubkey_serialize(context, inout, &result_xonly_public_key) != 1)
+								return layer_exception("bad share secret key");
+
+							inout[32] = 0;
+							return expectation::met;
+						}
+						default:
+							return layer_exception("invalid stage");
+					}
+				}
+				default:
+					return layer_exception("invalid composition algorithm");
+			}
+		}
+		expects_lr<void> composition::accumulate_signature(type alg, const uint8_t* message, size_t message_size, const cpubkey final_public_key, const cseckey share_secret_key, cpubsig inout)
+		{
+			VI_ASSERT(final_public_key != nullptr, "final public key should be set");
+			VI_ASSERT(inout != nullptr, "inout signature should be set");
+			VI_ASSERT(message != nullptr, "message should be set");
+			const auto condition = stage_of(share_secret_key, inout, sizeof(cpubsig));
+			switch (alg)
+			{
+				case type::ed25519:
+				{
+					switch (condition)
+					{
+						case stage::configure:
+						case stage::finalize:
+						{
+							bignum256 a;
+							bn_read_uint32(0, &a);
+						retry_ed25519:
+							uint8_t nonce[64];
+							crypto_hash_sha512_state hash;
+							crypto_hash_sha512_init(&hash);
+							crypto_hash_sha512_update(&hash, final_public_key, size_of_public_key(alg, stage::finalize));
+							crypto_hash_sha512_update(&hash, message, message_size);
+							if (!bn_is_zero(&a))
+							{
+								uint8_t anonce[32];
+								bn_write_be(&a, anonce);
+								crypto_hash_sha512_update(&hash, anonce, sizeof(anonce));
+							}
+							crypto_hash_sha512_final(&hash, nonce);
+							crypto_core_ed25519_scalar_reduce(nonce, nonce);
+
+							uint8_t r[crypto_core_ed25519_SCALARBYTES], zero[crypto_core_ed25519_SCALARBYTES] = { 0 };
+							if (crypto_scalarmult_ed25519_base_noclamp(r, nonce) != 0 || !memcmp(zero, r, sizeof(r)))
+							{
+								bn_addi(&a, 1);
+								goto retry_ed25519;
+							}
+
+							if (condition == stage::configure)
+							{
+								uint8_t hram[64];
+								crypto_hash_sha512_init(&hash);
+								crypto_hash_sha512_update(&hash, r, sizeof(r));
+								crypto_hash_sha512_update(&hash, final_public_key, size_of_public_key(alg, stage::finalize));
+								crypto_hash_sha512_update(&hash, message, message_size);
+								crypto_hash_sha512_final(&hash, hram);
+								crypto_core_ed25519_scalar_reduce(hram, hram);
+								crypto_core_ed25519_scalar_mul(inout, hram, share_secret_key);
+								return expectation::met;
+							}
+
+							uint8_t s[crypto_core_ed25519_SCALARBYTES];
+							crypto_core_ed25519_scalar_add(s, inout, nonce);
+							if (!memcmp(zero, s, sizeof(s)))
+								return layer_exception("bad final signature");
+
+							memcpy(inout, r, sizeof(r));
+							memcpy(inout + sizeof(r), s, sizeof(s));
+							return verify_signature(alg, message, message_size, final_public_key, inout);
+						}
+						case stage::accumulate:
+						{
+							uint8_t zero[crypto_core_ed25519_SCALARBYTES] = { 0 };
+							crypto_core_ed25519_scalar_mul(inout, inout, share_secret_key);
+							if (!memcmp(inout, zero, sizeof(zero)))
+								return layer_exception("bad share secret key");
+
+							return expectation::met;
+						}
+						default:
+							return layer_exception("invalid stage");
+					}
+				}
+				case type::ed25519_clsag:
+				{
+					/* Not implemented yet */
+					memset(inout, 0xcc, sizeof(cpubkey));
+					return expectation::met;
+				}
+				case type::secp256k1:
+				{
+					auto* curve = &secp256k1;
+					switch (condition)
+					{
+						case stage::configure:
+						case stage::finalize:
+						{
+							uint8_t message_hash[32];
+							if (message_size != sizeof(message_hash))
+								sha256_Raw(message, message_size, message_hash);
+							else
+								memcpy(message_hash, message, sizeof(message_hash));
+
+							uint8_t ask[32], nonce[32]; uint32_t attempt = 0;
+							sha256_Raw(final_public_key, size_of_public_key(alg, stage::finalize), ask);
+						retry_secp256k1:
+							secp256k1_nonce_function_rfc6979(nonce, message_hash, ask, nullptr, nullptr, attempt);
+
+							bignum256 k = { 0 };
+							curve_point r = { 0 };
+							bn_read_be(nonce, &k);
+							bn_mod(&k, &curve->order);
+							scalar_multiply(curve, &k, &r);
+
+							bn_mod(&r.x, &curve->order);
+							if (bn_is_zero(&r.x))
+							{
+								++attempt;
+								goto retry_secp256k1;
+							}
+
+							if (condition == stage::configure)
+							{
+								bignum256 s;
+								bn_read_be(share_secret_key, &s);
+								bn_multiply(&r.x, &s, &curve->order);
+								bn_write_be(&s, inout);
+								return expectation::met;
+							}
+
+							bignum256 z = { 0 };
+							bn_read_be(message_hash, &z);
+							if (bn_is_zero(&z))
+								return layer_exception("bad message");
+
+							bignum256 s;
+							bn_read_be(inout, &s);
+							bn_inverse(&k, &curve->order);
+							bn_addmod(&s, &z, &curve->order);
+							bn_multiply(&k, &s, &curve->order);
+							if (bn_is_zero(&s))
+								return layer_exception("bad final signature");
+							if (bn_is_less(&curve->order_half, &s))
+								bn_subtract(&curve->order, &s, &s);
+
+							auto* context = signing::get_context();
+							bn_write_be(&r.x, inout);
+							bn_write_be(&s, inout + 32);
+							for (uint8_t recovery_id = 0; recovery_id < 4; recovery_id++)
+							{
+								secp256k1_ecdsa_recoverable_signature recoverable_signature;
+								if (secp256k1_ecdsa_recoverable_signature_parse_compact(context, &recoverable_signature, inout, recovery_id))
+								{
+									secp256k1_pubkey recovered_public_key;
+									if (secp256k1_ecdsa_recover(context, &recovered_public_key, &recoverable_signature, message_hash) == 1)
+									{
+										uint8_t public_key[33]; size_t public_key_size = sizeof(public_key);
+										if (secp256k1_ec_pubkey_serialize(context, public_key, &public_key_size, &recovered_public_key, SECP256K1_EC_COMPRESSED) == 1)
+										{
+											if (!memcmp(final_public_key, public_key, public_key_size))
+											{
+												inout[sizeof(cpubsig) - 1] = recovery_id;
+												return verify_signature(alg, message, message_size, final_public_key, inout);
+											}
+										}
+									}
+								}
+							}
+
+							return layer_exception("final signature verification failed");
+						}
+						case stage::accumulate:
+						{
+							bignum256 s, p;
+							bn_read_be(inout, &s);
+							bn_read_be(share_secret_key, &p);
+							bn_multiply(&p, &s, &curve->order);
+							if (bn_is_zero(&s))
+								return layer_exception("bad share secret key");
+
+							bn_write_be(&s, inout);
+							return expectation::met;
+						}
+						default:
+							return layer_exception("invalid stage");
+					}
+				}
+				case type::schnorr:
+				case type::schnorr_taproot:
+				{
+					size_t public_key_size = size_of_public_key(type::schnorr, stage::finalize);
+					auto* curve = &secp256k1;
+					switch (condition)
+					{
+						case stage::configure:
+						case stage::finalize:
+						{
+							uint8_t message_hash[32];
+							if (message_size != sizeof(message_hash))
+								sha256_Raw(message, message_size, message_hash);
+							else
+								memcpy(message_hash, message, sizeof(message_hash));
+
+							uint8_t bip340_algo[] = "BIP0340/nonce";
+							uint8_t ask[32], nonce[32], anonce[32];
+							sha256_Raw(final_public_key, public_key_size, ask);
+
+							bignum256 a;
+							bn_read_uint32(0, &a);
+						retry_schnorr:
+							bn_write_be(&a, anonce);
+							secp256k1_nonce_function_bip340(nonce, message_hash, sizeof(message_hash), ask, final_public_key, bip340_algo, sizeof(bip340_algo) - 1, anonce);
+
+							bignum256 k = { 0 };
+							curve_point r = { 0 };
+							bn_read_be(nonce, &k);
+							bn_mod(&k, &curve->order);
+							scalar_multiply(curve, &k, &r);
+							bn_mod(&r.x, &curve->order);
+							if (bn_is_zero(&r.x))
+							{
+								bn_addi(&a, 1);
+								goto retry_schnorr;
+							}
+							else if (bn_is_odd(&r.y))
+								bn_subtractmod(&curve->order, &k, &k, &curve->order);
+
+							uint8_t e_data[96], e_hash[32];
+							bn_write_be(&r.x, e_data);
+							memcpy(e_data + 32, final_public_key, public_key_size);
+							memcpy(e_data + 64, message_hash, sizeof(message_hash));
+
+							uint8_t bip340_challenge[] = "BIP0340/challenge";
+							secp256k1_context* context = signing::get_context();
+							secp256k1_tagged_sha256(context, e_hash, bip340_challenge, sizeof(bip340_challenge) - 1, e_data, sizeof(e_data));
+
+							bignum256 e;
+							bn_read_be(e_hash, &e);
+							bn_mod(&e, &curve->order);
+							if (bn_is_zero(&e))
+								return layer_exception("bad message");
+
+							if (condition == stage::configure)
+							{
+								bignum256 s;
+								bn_read_be(share_secret_key, &s);
+								bn_multiply(&e, &s, &curve->order);
+								bn_write_be(&s, inout);
+								return expectation::met;
+							}
+							
+							bignum256 s;
+							bn_read_be(inout, &s);
+							if (alg == type::schnorr_taproot)
+							{
+								bignum256 t;
+								bn_read_be(final_public_key + 32, &t);
+
+								bool is_taproot = !bn_is_zero(&t);
+								if (is_taproot)
+								{
+									bn_multiply(&e, &t, &curve->order);
+									bn_addmod(&s, &t, &curve->order);
+									if (bn_is_zero(&s))
+										return layer_exception("bad final signature");
+								}
+							}
+
+							bool is_odd = final_public_key[32];
+							if (is_odd)
+							{
+								bn_multiply(&curve->order, &e, &curve->order);
+								bn_subtractmod(&e, &s, &s, &curve->order);
+							}
+
+							bn_addmod(&s, &k, &curve->order);
+							if (bn_is_zero(&s))
+								return layer_exception("bad final signature");
+
+							bn_write_be(&r.x, inout);
+							bn_write_be(&s, inout + 32);
+							return verify_signature(alg, message, message_size, final_public_key, inout);
+						}
+						case stage::accumulate:
+						{
+							bignum256 s, p;
+							bn_read_be(inout, &s);
+							bn_read_be(share_secret_key, &p);
+							bn_multiply(&p, &s, &curve->order);
+							if (bn_is_zero(&s))
+								return layer_exception("bad share secret key");
+
+							bn_write_be(&s, inout);
+							return expectation::met;
+						}
+						default:
+							return layer_exception("invalid stage");
+					}
+
 					return expectation::met;
 				}
 				default:
 					return layer_exception("invalid composition algorithm");
 			}
 		}
-		void composition::convert_to_composite_hash(const uint8_t* a, size_t asize, const uint8_t* b, size_t bsize, uint8_t c[32])
+		expects_lr<void> composition::verify_signature(type alg, const uint8_t* message, size_t message_size, const cpubkey final_public_key, const cpubsig final_signature)
 		{
-			SHA256_CTX context;
-			sha256_Init(&context);
-			sha256_Update(&context, a, asize);
-			sha256_Update(&context, b, bsize);
-			sha256_Final(&context, c);
+			VI_ASSERT(final_public_key != nullptr, "final public key should be set");
+			VI_ASSERT(final_signature != nullptr, "final signature should be set");
+			VI_ASSERT(message != nullptr, "message should be set");
+			switch (alg)
+			{
+				case type::ed25519:
+				{
+					if (crypto_sign_verify_detached(final_signature, message, message_size, final_public_key) != 0)
+						return layer_exception("final signature verification failed");
+
+					return expectation::met;
+				}
+				case type::ed25519_clsag:
+				{
+					/* Not implemented yet */
+					return expectation::met;
+				}
+				case type::secp256k1:
+				{
+					uint8_t message_hash[32];
+					if (message_size != sizeof(message_hash))
+						sha256_Raw(message, message_size, message_hash);
+					else
+						memcpy(message_hash, message, sizeof(message_hash));
+
+					secp256k1_context* context = signing::get_context();
+					secp256k1_pubkey final_public_key_ext;
+					secp256k1_ecdsa_signature compact_signature;
+					secp256k1_ecdsa_signature normalized_signature;
+					secp256k1_ecdsa_signature_parse_compact(context, &compact_signature, final_signature);
+					secp256k1_ecdsa_signature_normalize(context, &normalized_signature, &compact_signature);
+					if (secp256k1_ec_pubkey_parse(context, &final_public_key_ext, final_public_key, sizeof(pubkey)) == 1)
+					{
+						if (secp256k1_ecdsa_verify(context, &normalized_signature, message_hash, &final_public_key_ext) == 1)
+							return expectation::met;
+					}
+
+					return layer_exception("final signature verification failed");
+				}
+				case type::schnorr:
+				case type::schnorr_taproot:
+				{
+					uint8_t message_hash[32];
+					if (message_size != sizeof(message_hash))
+						sha256_Raw(message, message_size, message_hash);
+					else
+						memcpy(message_hash, message, sizeof(message_hash));
+
+					secp256k1_context* context = signing::get_context();
+					secp256k1_xonly_pubkey final_public_key_ext;
+					secp256k1_xonly_pubkey_parse(context, &final_public_key_ext, final_public_key);
+					if (secp256k1_schnorrsig_verify(context, final_signature, message_hash, sizeof(message_hash), &final_public_key_ext) != 1)
+						return layer_exception("final signature verification failed");
+
+					return expectation::met;
+				}
+				default:
+					return layer_exception("invalid composition algorithm");
+			}
 		}
-		void composition::convert_to_secret_key_ed25519(uint8_t secret_key[32])
+		composition::stage composition::stage_of(const uint8_t* share_secret_key, const uint8_t* inout, size_t inout_size)
+		{
+			if (!share_secret_key)
+				return stage::finalize;
+
+			uint8_t null[96] = { 0 };
+			return !memcmp(inout, null, std::min(inout_size, sizeof(null))) ? stage::configure : stage::accumulate;
+		}
+		size_t composition::size_of_secret_key(type alg, stage condition)
+		{
+			switch (alg)
+			{
+				case type::ed25519:
+				case type::ed25519_clsag:
+					return crypto_core_ed25519_SCALARBYTES;
+				case type::secp256k1:
+					return 32;
+				case type::schnorr:
+				case type::schnorr_taproot:
+					return 32;
+				default:
+					return 0;
+			}
+		}
+		size_t composition::size_of_public_key(type alg, stage condition)
+		{
+			switch (alg)
+			{
+				case type::ed25519:
+				case type::ed25519_clsag:
+					return crypto_sign_PUBLICKEYBYTES;
+				case type::secp256k1:
+					return 33;
+				case type::schnorr:
+					return 32;
+				case type::schnorr_taproot:
+					return 64;
+				default:
+					return 0;
+			}
+		}
+		size_t composition::size_of_signature(type alg, stage condition)
+		{
+			switch (alg)
+			{
+				case type::ed25519:
+				case type::ed25519_clsag:
+					return condition == stage::finalize ? 64 : 32;
+				case type::secp256k1:
+					return condition == stage::finalize ? 65 : 32;
+				case type::schnorr:
+				case type::schnorr_taproot:
+					return condition == stage::finalize ? 64 : 32;
+				default:
+					return 0;
+			}
+		}
+
+		void keypair_utils::convert_to_secret_key_ed25519(uint8_t secret_key[32])
 		{
 			secret_key[0] &= 248;
 			secret_key[31] &= 127;
 			secret_key[31] |= 64;
 		}
-		void composition::convert_to_scalar_ed25519(uint8_t secret_key[32])
+		void keypair_utils::convert_to_scalar_ed25519(const uint8_t scalar[64], uint8_t reduced_scalar[32])
 		{
-			uint8_t point[64] = { 0 };
-			memcpy(point, secret_key, 32);
-			crypto_core_ed25519_scalar_reduce(secret_key, point);
+			crypto_core_ed25519_scalar_reduce(reduced_scalar, scalar);
+			convert_to_secret_key_ed25519(reduced_scalar);
 		}
-		void composition::convert_to_secret_seed(const seckey secret_key, const std::string_view& entropy, cseed seed)
+		void keypair_utils::convert_to_scalar_ed25519(uint8_t scalar[32])
 		{
-			auto input = hashing::hash512((uint8_t*)entropy.data(), entropy.size());
-			input += hashing::hash256(secret_key, sizeof(seckey));
-			hashing::hash512((uint8_t*)input.data(), input.size(), seed);
+			uint8_t scalar64[64] = { 0 };
+			memcpy(scalar64, scalar, 32);
+			crypto_core_ed25519_scalar_reduce(scalar, scalar64);
+			convert_to_secret_key_ed25519(scalar);
 		}
 
 		uint256_t merkle_tree::path::calculate_root(uint256_t hash) const

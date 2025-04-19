@@ -76,54 +76,100 @@ namespace tangent
 				if (eth_ecdsa_sign(&raw_signature, private_key, (uint8_t*)raw_hash.c_str()) != 1)
 					return evm_signature();
 
-				const uint32_t vchain_id = (uint32_t)chain_id;
-				const uint32_t vmultiplier = 2;
-				const uint32_t vrecovery_id = (uint32_t)raw_signature.recid;
-				const uint32_t vderivation = 35;
-
+				return presign(raw_signature.r, raw_signature.s, raw_signature.recid);
+			}
+			ethereum::evm_signature ethereum::evm_transaction::presign(const uint8_t signature_r[32], const uint8_t signature_s[32], int recovery_id)
+			{
 				evm_signature signature;
-				signature.v = vchain_id * vmultiplier + vrecovery_id + vderivation;
-				signature.r = binary_data_t((char*)raw_signature.r, sizeof(raw_signature.r));
-				signature.s = binary_data_t((char*)raw_signature.s, sizeof(raw_signature.s));
+				signature.v = (uint32_t)recovery_id;
+				signature.r = binary_data_t((char*)signature_r, 32);
+				signature.s = binary_data_t((char*)signature_s, 32);
 				return signature;
 			}
-			ethereum::evm_signed_transaction ethereum::evm_transaction::serialize_and_sign(const uint8_t private_key[32])
+			ethereum::evm_signed_transaction ethereum::evm_transaction::serialize_and_sign(evm_type type, const uint8_t private_key[32])
 			{
 				evm_signed_transaction transaction;
-				transaction.signature = sign(hash(serialize()), private_key);
+				transaction.signature = sign(hash(serialize(type)), private_key);
 				if (transaction.signature.r.empty() || transaction.signature.s.empty())
 					return transaction;
 
-				transaction.data = serialize(&transaction.signature);
+				transaction.data = serialize(type, &transaction.signature);
 				transaction.id = hash(transaction.data);
 				return transaction;
 			}
-			ethereum::binary_data_t ethereum::evm_transaction::serialize(evm_signature* signature)
+			ethereum::evm_signed_transaction ethereum::evm_transaction::serialize_and_presign(evm_type type, const uint8_t signature[65])
+			{
+				evm_signed_transaction transaction;
+				transaction.signature = presign(signature, signature + 32, signature[64]);
+				if (transaction.signature.r.empty() || transaction.signature.s.empty())
+					return transaction;
+
+				transaction.data = serialize(type, &transaction.signature);
+				transaction.id = hash(transaction.data);
+				return transaction;
+			}
+			ethereum::binary_data_t ethereum::evm_transaction::serialize(evm_type type, evm_signature* signature)
 			{
 				eth_rlp buffer;
 				eth_rlp_init(&buffer, ETH_RLP_ENCODE);
-				eth_rlp_array(&buffer);
-				eth_rlp_uint256(&buffer, &nonce);
-				eth_rlp_uint256(&buffer, &gas_price);
-				eth_rlp_uint256(&buffer, &gas_limit);
-				eth_rlp_address336(&buffer, &address);
-				eth_rlp_uint256(&buffer, &value);
-				eth_rlp_binary(&buffer, &abi_data);
-				if (signature)
+				switch (type)
 				{
-					uint256_t v = signature->v;
-					eth_rlp_uint256(&buffer, &v);
-					eth_rlp_binary(&buffer, &signature->r);
-					eth_rlp_binary(&buffer, &signature->s);
+					case evm_type::eip_155:
+					{
+						eth_rlp_array(&buffer);
+						eth_rlp_uint256(&buffer, &nonce);
+						eth_rlp_uint256(&buffer, &gas_price);
+						eth_rlp_uint256(&buffer, &gas_limit);
+						eth_rlp_address336(&buffer, &address);
+						eth_rlp_uint256(&buffer, &value);
+						eth_rlp_binary(&buffer, &abi_data);
+						if (signature)
+						{
+							uint256_t v = (uint32_t)chain_id * 2 + signature->v + 35;
+							eth_rlp_uint256(&buffer, &v);
+							eth_rlp_binary(&buffer, &signature->r);
+							eth_rlp_binary(&buffer, &signature->s);
+						}
+						else
+						{
+							uint8_t zero = 0;
+							eth_rlp_uint256(&buffer, &chain_id);
+							eth_rlp_uint8(&buffer, &zero);
+							eth_rlp_uint8(&buffer, &zero);
+						}
+						eth_rlp_array_end(&buffer);
+						break;
+					}
+					case evm_type::eip_1559:
+					{
+						uint8_t transaction_type = 0x02;
+						uint256_t max_fee_per_gas = gas_base_price > 0 ? gas_base_price : gas_price;
+						uint256_t max_priority_fee_per_gas = gas_base_price > 0 ? gas_price - gas_base_price : 0;
+						eth_rlp_uint8(&buffer, &transaction_type);
+						eth_rlp_array(&buffer);
+						eth_rlp_uint256(&buffer, &chain_id);
+						eth_rlp_uint256(&buffer, &nonce);
+						eth_rlp_uint256(&buffer, &max_priority_fee_per_gas);
+						eth_rlp_uint256(&buffer, &max_fee_per_gas);
+						eth_rlp_uint256(&buffer, &gas_limit);
+						eth_rlp_address336(&buffer, &address);
+						eth_rlp_uint256(&buffer, &value);
+						eth_rlp_binary(&buffer, &abi_data);
+						eth_rlp_array(&buffer);
+						eth_rlp_array_end(&buffer);
+						if (signature)
+						{
+							uint8_t v = signature->v;
+							eth_rlp_uint8(&buffer, &v);
+							eth_rlp_binary(&buffer, &signature->r);
+							eth_rlp_binary(&buffer, &signature->s);
+						}
+						eth_rlp_array_end(&buffer);
+						break;
+					}
+					default:
+						break;
 				}
-				else
-				{
-					uint8_t zero = 0;
-					eth_rlp_uint256(&buffer, &chain_id);
-					eth_rlp_uint8(&buffer, &zero);
-					eth_rlp_uint8(&buffer, &zero);
-				}
-				eth_rlp_array_end(&buffer);
 
 				uint8_t* serialized; size_t serialized_size;
 				eth_rlp_to_bytes(&serialized, &serialized_size, &buffer);
@@ -223,10 +269,6 @@ namespace tangent
 			{
 				return "eth_getTransactionReceipt";
 			}
-			const char* ethereum::nd_call::get_transaction_by_hash()
-			{
-				return "eth_getTransactionByHash";
-			}
 			const char* ethereum::nd_call::get_transaction_count()
 			{
 				return "eth_getTransactionCount";
@@ -260,151 +302,133 @@ namespace tangent
 				return "eth_sendRawTransaction";
 			}
 
-			ethereum::ethereum() noexcept : relay_backend()
+			ethereum::ethereum(const algorithm::asset_id& new_asset) noexcept : relay_backend(new_asset)
 			{
-				netdata.composition = algorithm::composition::type::SECP256K1;
+				netdata.composition = algorithm::composition::type::secp256k1;
 				netdata.routing = routing_policy::account;
 				netdata.sync_latency = 15;
 				netdata.divisibility = decimal("1000000000000000000").truncate(protocol::now().message.precision);
 				netdata.supports_token_transfer = "erc20";
 				netdata.supports_bulk_transfer = false;
+				netdata.requires_transaction_expiration = false;
 			}
-			expects_promise_rt<schema*> ethereum::get_transaction_receipt(const algorithm::asset_id& asset, const std::string_view& transaction_id)
+			expects_promise_rt<schema*> ethereum::get_transaction_receipt(const std::string_view& transaction_id)
 			{
 				schema_list map;
 				map.emplace_back(var::set::string(format::util::assign_0xhex(transaction_id)));
 
-				auto tx_data = coawait(execute_rpc(asset, nd_call::get_transaction_receipt(), std::move(map), cache_policy::shortened));
+				auto tx_data = coawait(execute_rpc(nd_call::get_transaction_receipt(), std::move(map), cache_policy::blob_cache));
+				if (tx_data && (tx_data->value.is(var_type::null) || tx_data->value.is(var_type::undefined)))
+					coreturn remote_exception("receipt not found");
+
 				coreturn tx_data;
 			}
-			expects_promise_rt<uint256_t> ethereum::get_transactions_count(const algorithm::asset_id& asset, const std::string_view& address)
+			expects_promise_rt<uint256_t> ethereum::get_transactions_count(const std::string_view& address)
 			{
-				auto* implementation = (backends::ethereum*)nss::server_node::get()->get_chain(asset);
-				if (!implementation)
-					coreturn expects_rt<uint256_t>(remote_exception("chain not found"));
-
 				schema_list latest_map;
-				latest_map.emplace_back(var::set::string(implementation->decode_non_eth_address(address)));
+				latest_map.emplace_back(var::set::string(decode_non_eth_address(address)));
 				latest_map.emplace_back(var::set::string("latest"));
 
-				auto latest_transaction_count = coawait(execute_rpc(asset, nd_call::get_transaction_count(), std::move(latest_map), cache_policy::lazy));
+				auto latest_transaction_count = coawait(execute_rpc(nd_call::get_transaction_count(), std::move(latest_map), cache_policy::no_cache));
 				if (!latest_transaction_count)
 					coreturn expects_rt<uint256_t>(std::move(latest_transaction_count.error()));
 
-				uint256_t transactions_count = implementation->hex_to_uint256(latest_transaction_count->value.get_blob());
+				uint256_t transactions_count = hex_to_uint256(latest_transaction_count->value.get_blob());
 				memory::release(*latest_transaction_count);
 
 				schema_list pending_map;
-				pending_map.emplace_back(var::set::string(implementation->decode_non_eth_address(address)));
+				pending_map.emplace_back(var::set::string(decode_non_eth_address(address)));
 				pending_map.emplace_back(var::set::string("pending"));
 
-				auto pending_transaction_count = uptr<schema>(coawait(execute_rpc(asset, nd_call::get_transaction_count(), std::move(pending_map), cache_policy::lazy)));
+				auto pending_transaction_count = uptr<schema>(coawait(execute_rpc(nd_call::get_transaction_count(), std::move(pending_map), cache_policy::no_cache)));
 				if (pending_transaction_count)
 				{
-					uint256_t pending_transactions_count = implementation->hex_to_uint256(pending_transaction_count->value.get_blob());
+					uint256_t pending_transactions_count = hex_to_uint256(pending_transaction_count->value.get_blob());
 					if (pending_transactions_count > transactions_count)
 						transactions_count = pending_transactions_count;
 				}
 
 				coreturn expects_rt<uint256_t>(std::move(transactions_count));
 			}
-			expects_promise_rt<uint256_t> ethereum::get_chain_id(const algorithm::asset_id& asset)
+			expects_promise_rt<uint256_t> ethereum::get_chain_id()
 			{
-				auto* implementation = (backends::ethereum*)nss::server_node::get()->get_chain(asset);
-				if (!implementation)
-					coreturn expects_rt<uint256_t>(remote_exception("chain not found"));
-
-				auto hex_chain_id = coawait(execute_rpc(asset, nd_call::get_chain_id(), { }, cache_policy::persistent));
+				auto hex_chain_id = coawait(execute_rpc(nd_call::get_chain_id(), { }, cache_policy::lifetime_cache));
 				if (!hex_chain_id)
 					coreturn expects_rt<uint256_t>(std::move(hex_chain_id.error()));
 
-				uint256_t chain_id = implementation->hex_to_uint256(hex_chain_id->value.get_blob());
+				uint256_t chain_id = hex_to_uint256(hex_chain_id->value.get_blob());
 				memory::release(*hex_chain_id);
 				coreturn expects_rt<uint256_t>(std::move(chain_id));
 			}
-			expects_promise_rt<string> ethereum::get_contract_symbol(const algorithm::asset_id& asset, backends::ethereum* implementation, const std::string_view& contract_address)
+			expects_promise_rt<string> ethereum::get_contract_symbol(const std::string_view& contract_address)
 			{
 				uptr<schema> params = var::set::object();
-				params->set("to", var::string(implementation->decode_non_eth_address(contract_address)));
-				params->set("data", var::string(implementation->generate_unchecked_address(backends::ethereum::sc_call::decimals())));
+				params->set("to", var::string(decode_non_eth_address(contract_address)));
+				params->set("data", var::string(encode_0xhex(backends::ethereum::sc_call::symbol())));
 
 				schema_list map;
 				map.emplace_back(std::move(params));
 				map.emplace_back(var::set::string("latest"));
 
-				auto symbol = coawait(execute_rpc(asset, nd_call::call(), std::move(map), cache_policy::persistent));
+				auto symbol = coawait(execute_rpc(nd_call::call(), std::move(map), cache_policy::lifetime_cache));
 				if (!symbol)
 					coreturn expects_rt<string>(std::move(symbol.error()));
 
-				coreturn expects_rt<string>(symbol->value.get_blob());
+				struct eth_abi evm;
+				eth_abi_init(&evm, ETH_ABI_DECODE);
+				eth_abi_from_hex(&evm, (char*)symbol->value.get_string().data(), (int)symbol->value.get_string().size());
+
+				uint8_t* bytes; size_t bytes_size;
+				bool has_bytes = eth_abi_bytes(&evm, &bytes, &bytes_size) == 1;
+				eth_abi_free(&evm);
+				if (!has_bytes)
+					coreturn expects_rt<string>(symbol->value.get_blob());
+
+				string result = string((char*)bytes, bytes_size);
+				free(bytes);
+				coreturn expects_rt<string>(std::move(result));
 			}
-			expects_promise_rt<decimal> ethereum::get_contract_divisibility(const algorithm::asset_id& asset, backends::ethereum* implementation, const std::string_view& contract_address)
+			expects_promise_rt<decimal> ethereum::get_contract_divisibility(const std::string_view& contract_address)
 			{
 				uptr<schema> params = var::set::object();
-				params->set("to", var::string(implementation->decode_non_eth_address(contract_address)));
-				params->set("data", var::string(implementation->generate_unchecked_address(backends::ethereum::sc_call::decimals())));
+				params->set("to", var::string(decode_non_eth_address(contract_address)));
+				params->set("data", var::string(encode_0xhex(backends::ethereum::sc_call::decimals())));
 
 				schema_list map;
 				map.emplace_back(std::move(params));
 				map.emplace_back(var::set::string("latest"));
 
-				auto decimals = coawait(execute_rpc(asset, nd_call::call(), std::move(map), cache_policy::persistent));
+				auto decimals = coawait(execute_rpc(nd_call::call(), std::move(map), cache_policy::lifetime_cache));
 				if (!decimals)
 					coreturn expects_rt<decimal>(std::move(decimals.error()));
 
 				uint64_t divisibility = 1;
-				uint64_t value = std::min<uint64_t>((uint64_t)implementation->hex_to_uint256(decimals->value.get_blob()), protocol::now().message.precision);
+				uint64_t value = std::min<uint64_t>((uint64_t)hex_to_uint256(decimals->value.get_blob()), protocol::now().message.precision);
 				for (uint64_t i = 0; i < value; i++)
 					divisibility *= 10;
 				coreturn expects_rt<decimal>(decimal(divisibility));
 			}
-			expects_promise_rt<void> ethereum::broadcast_transaction(const algorithm::asset_id& asset, const outgoing_transaction& tx_data)
+			expects_promise_rt<uint64_t> ethereum::get_latest_block_height()
 			{
-				auto duplicate = coawait(get_transaction_receipt(asset, format::util::assign_0xhex(tx_data.transaction.transaction_id)));
-				if (duplicate)
-				{
-					memory::release(*duplicate);
-					coreturn expects_rt<void>(expectation::met);
-				}
-
-				schema_list map;
-				map.emplace_back(var::set::string(format::util::assign_0xhex(tx_data.data)));
-
-				auto hex_data = coawait(execute_rpc(asset, nd_call::send_raw_transaction(), std::move(map), cache_policy::greedy));
-				if (!hex_data)
-					coreturn expects_rt<void>(std::move(hex_data.error()));
-
-				memory::release(*hex_data);
-				coreturn expects_rt<void>(expectation::met);
-			}
-			expects_promise_rt<uint64_t> ethereum::get_latest_block_height(const algorithm::asset_id& asset)
-			{
-				auto* implementation = (backends::ethereum*)nss::server_node::get()->get_chain(asset);
-				if (!implementation)
-					coreturn expects_rt<uint64_t>(remote_exception("chain not found"));
-
-				auto block_count = coawait(execute_rpc(asset, nd_call::block_number(), { }, cache_policy::lazy));
+				auto block_count = coawait(execute_rpc(nd_call::block_number(), { }, cache_policy::no_cache));
 				if (!block_count)
 					coreturn expects_rt<uint64_t>(std::move(block_count.error()));
 
-				uint64_t block_height = (uint64_t)implementation->hex_to_uint256(block_count->value.get_blob());
+				uint64_t block_height = (uint64_t)hex_to_uint256(block_count->value.get_blob());
 				memory::release(*block_count);
 				coreturn expects_rt<uint64_t>(block_height);
 			}
-			expects_promise_rt<schema*> ethereum::get_block_transactions(const algorithm::asset_id& asset, uint64_t block_height, string* block_hash)
+			expects_promise_rt<schema*> ethereum::get_block_transactions(uint64_t block_height, string* block_hash)
 			{
-				auto* implementation = (backends::ethereum*)nss::server_node::get()->get_chain(asset);
-				if (!implementation)
-					coreturn expects_rt<schema*>(remote_exception("chain not found"));
-
 				schema_list map;
-				map.emplace_back(var::set::string(((backends::ethereum*)implementation)->uint256_to_hex(block_height)));
+				map.emplace_back(var::set::string(uint256_to_hex(block_height)));
 				map.emplace_back(var::set::boolean(true));
 
-				auto block_data = coawait(execute_rpc(asset, nd_call::get_block_by_number(), std::move(map), cache_policy::shortened));
+				auto block_data = coawait(execute_rpc(nd_call::get_block_by_number(), std::move(map), cache_policy::temporary_cache));
 				if (!block_data)
 					coreturn block_data;
 
+				legacy.eip_155 = block_data->has("baseFeePerGas") ? 0 : 1;
 				if (block_hash != nullptr)
 					*block_hash = block_data->get_var("hash").get_blob();
 
@@ -421,14 +445,14 @@ namespace tangent
 				{
 					auto* query = var::set::array();
 					auto* cursor = query->push(var::set::object());
-					cursor->set("fromBlock", var::set::string(implementation->uint256_to_hex(block_height)));
-					cursor->set("toBlock", var::set::string(implementation->uint256_to_hex(block_height)));
-					cursor->set("topics", var::set::array())->push(var::string(implementation->get_token_transfer_signature()));
+					cursor->set("fromBlock", var::set::string(uint256_to_hex(block_height)));
+					cursor->set("toBlock", var::set::string(uint256_to_hex(block_height)));
+					cursor->set("topics", var::set::array())->push(var::string(get_token_transfer_signature()));
 
 					schema_list map;
 					map.emplace_back(query);
 
-					auto logs_data = coawait(execute_rpc(asset, nd_call::get_block_by_number(), std::move(map), cache_policy::shortened));
+					auto logs_data = coawait(execute_rpc(nd_call::get_block_by_number(), std::move(map), cache_policy::temporary_cache));
 					if (logs_data)
 					{
 						auto* logs = logs_data->get("result");
@@ -456,45 +480,40 @@ namespace tangent
 				}
 				coreturn expects_rt<schema*>(transactions);
 			}
-			expects_promise_rt<schema*> ethereum::get_block_transaction(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, const std::string_view& transaction_id)
+			expects_promise_rt<computed_transaction> ethereum::link_transaction(uint64_t block_height, const std::string_view& block_hash, schema* transaction_data)
 			{
-				schema_list map;
-				map.emplace_back(var::set::string(format::util::assign_0xhex(transaction_id)));
-
-				auto tx_data = coawait(execute_rpc(asset, nd_call::get_transaction_by_hash(), std::move(map), cache_policy::extended));
-				coreturn tx_data;
-			}
-			expects_promise_rt<vector<incoming_transaction>> ethereum::get_authentic_transactions(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, schema* transaction_data)
-			{
-				auto* implementation = (backends::ethereum*)nss::server_node::get()->get_chain(asset);
-				if (!implementation)
-					coreturn expects_rt<vector<incoming_transaction>>(remote_exception("chain not found"));
-
-				auto* chain = implementation->get_chain();
+				auto* chain = get_chain();
 				string data = transaction_data->get_var("input").get_blob();
 				if (stringify::starts_with(data, chain->bech32_hrp))
 					data.erase(0, strlen(chain->bech32_hrp));
 
 				string tx_hash = transaction_data->get_var("hash").get_blob();
-				string from = implementation->encode_eth_address(transaction_data->get_var("from").get_blob());
-				string to = implementation->encode_eth_address(transaction_data->get_var("to").get_blob());
-				decimal gas_price = implementation->to_eth(implementation->hex_to_uint256(transaction_data->get_var("gasPrice").get_blob()), implementation->get_divisibility_gwei());
-				decimal gas_limit = implementation->to_eth(implementation->hex_to_uint256(get_raw_gas_limit(transaction_data)), implementation->get_divisibility_gwei());
-				decimal base_value = implementation->to_eth(implementation->hex_to_uint256(transaction_data->get_var("value").get_blob()), implementation->netdata.divisibility);;
+				string from = encode_eth_address(transaction_data->get_var("from").get_blob());
+				string to = encode_eth_address(transaction_data->get_var("to").get_blob());
+				decimal gas_price = to_eth(hex_to_uint256(transaction_data->get_var("gasPrice").get_blob()), get_divisibility_gwei());
+				decimal gas_limit = to_eth(hex_to_uint256(get_raw_gas_limit(transaction_data)), get_divisibility_gwei());
+				decimal base_value = to_eth(hex_to_uint256(transaction_data->get_var("value").get_blob()), netdata.divisibility);
 				decimal fee_value = gas_price * gas_limit;
+				decimal total_value = base_value + fee_value;
 
-				incoming_transaction coin_tx;
-				coin_tx.set_transaction(asset, block_height, tx_hash, decimal(fee_value));
-				coin_tx.set_operations({ transferer(from, optional::none, decimal(base_value)) }, { transferer(to, optional::none, decimal(base_value)) });
+				computed_transaction result;
+				result.transaction_id = tx_hash;
+				result.block_id = block_height;
+				
+				unordered_map<string, unordered_map<algorithm::asset_id, decimal>> inputs;
+				unordered_map<string, unordered_map<algorithm::asset_id, decimal>> outputs;
+				if (total_value.is_positive())
+				{
+					inputs[from][native_asset] = total_value;
+					outputs[to][native_asset] = base_value;
+				}
 
-				vector<incoming_transaction> results;
-				results.push_back(std::move(coin_tx));
 				if (!data.empty())
 				{
 					auto* logs = transaction_data->get("logs");
 					if (!logs)
 					{
-						auto tx_receipt = coawait(get_transaction_receipt(asset, transaction_data->get_var("hash").get_blob()));
+						auto tx_receipt = coawait(get_transaction_receipt(transaction_data->get_var("hash").get_blob()));
 						if (tx_receipt)
 						{
 							logs = tx_receipt->get("logs");
@@ -514,181 +533,153 @@ namespace tangent
 						for (auto& invocation : logs->get_childs())
 						{
 							auto* topics = invocation->get("topics");
-							auto contract_address = implementation->encode_eth_address(invocation->get_var("address").get_blob());
-							if (!topics || (topics->size() != 2 && topics->size() != 3) || !implementation->is_token_transfer(topics->get_var(0).get_blob()))
+							auto contract_address = encode_eth_address(invocation->get_var("address").get_blob());
+							if (!topics || (topics->size() != 2 && topics->size() != 3) || !is_token_transfer(topics->get_var(0).get_blob()))
 								continue;
 
-							auto symbol = coawait(get_contract_symbol(asset, implementation, contract_address));
+							auto symbol = coawait(get_contract_symbol(contract_address));
 							if (!symbol)
 								continue;
 
-							auto token_asset = algorithm::asset::id_of(algorithm::asset::blockchain_of(asset), *symbol, contract_address);
-							if (!nss::server_node::get()->enable_contract_address(token_asset, contract_address))
-								continue;
-
-							decimal divisibility = coawait(get_contract_divisibility(asset, implementation, contract_address)).or_else(implementation->netdata.divisibility);
-							decimal token_value = implementation->to_eth(implementation->hex_to_uint256(invocation->get_var("data").get_blob()), divisibility);
+							auto token_asset = algorithm::asset::id_of(algorithm::asset::blockchain_of(native_asset), *symbol, contract_address);
+							decimal divisibility = coawait(get_contract_divisibility(contract_address)).or_else(netdata.divisibility);
+							decimal token_value = to_eth(hex_to_uint256(invocation->get_var("data").get_blob()), divisibility);
 							if (topics->size() == 3)
 							{
-								from = implementation->encode_eth_address(implementation->normalize_topic_address(topics->get_var(1).get_blob()));
-								to = implementation->encode_eth_address(implementation->normalize_topic_address(topics->get_var(2).get_blob()));
+								from = encode_eth_address(normalize_topic_address(topics->get_var(1).get_blob()));
+								to = encode_eth_address(normalize_topic_address(topics->get_var(2).get_blob()));
 							}
 							else if (topics->size() == 2)
-								to = implementation->encode_eth_address(topics->get_var(1).get_blob());
+								to = encode_eth_address(topics->get_var(1).get_blob());
 
-							incoming_transaction token_tx;
-							token_tx.set_transaction(std::move(token_asset), block_height, tx_hash, decimal::zero());
-							token_tx.set_operations({ transferer(from, optional::none, decimal(token_value)) }, { transferer(to, optional::none, decimal(token_value)) });
-							results.push_back(std::move(token_tx));
+							auto& token_input = inputs[from][token_asset], token_output = outputs[to][token_asset];
+							token_input = token_input.is_nan() ? token_value : (token_input + token_value);
+							token_output = token_output.is_nan() ? token_value : (token_output + token_value);
+							nss::server_node::get()->enable_contract_address(token_asset, contract_address);
 						}
 					}
 				}
-				results.erase(std::remove_if(results.begin(), results.end(), [](incoming_transaction& v)
-				{
-					return !v.get_output_value().is_positive();
-				}), results.end());
 
 				unordered_set<string> addresses;
-				addresses.reserve(results.size() * 2);
-				for (auto& item : results)
-				{
-					for (auto& next : item.from)
-						addresses.insert(next.address);
-					for (auto& next : item.to)
-						addresses.insert(next.address);
-				}
+				addresses.reserve(inputs.size() + outputs.size());
+				for (auto& next : inputs)
+					addresses.insert(next.first);
+				for (auto& next : outputs)
+					addresses.insert(next.first);
 
-				auto discovery = find_checkpoint_addresses(asset, addresses);
+				auto discovery = find_linked_addresses(addresses);
 				if (!discovery || discovery->empty())
-					coreturn expects_rt<vector<incoming_transaction>>(remote_exception("tx not involved"));
+					coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
 				schema* tx_receipt_cache = transaction_data->get("receipt");
-				schema* tx_receipt = tx_receipt_cache ? tx_receipt_cache : coawait(get_transaction_receipt(asset, tx_hash)).or_else(nullptr);
-				bool is_reverted = tx_receipt && tx_receipt->value.is_object() ? implementation->hex_to_uint256(tx_receipt->get_var("status").get_blob()) < 1 : false;
-				for (auto& item : results)
+				schema* tx_receipt = tx_receipt_cache ? tx_receipt_cache : coawait(get_transaction_receipt(tx_hash)).or_else(nullptr);
+				bool is_reverted = tx_receipt && tx_receipt->value.is_object() ? hex_to_uint256(tx_receipt->get_var("status").get_blob()) < 1 : true;
+				if (is_reverted)
+					coreturn expects_rt<computed_transaction>(remote_exception("tx reverted"));
+
+				result.inputs.reserve(inputs.size());
+				for (auto& [address, values] : inputs)
 				{
-					for (auto& next : item.from)
-					{
-						auto address = discovery->find(next.address);
-						if (address != discovery->end())
-							next.address_index = address->second;
-						if (is_reverted)
-							next.value = 0.0;
-					}
-					for (auto& next : item.to)
-					{
-						auto address = discovery->find(next.address);
-						if (address != discovery->end())
-							next.address_index = address->second;
-						if (is_reverted)
-							next.value = 0.0;
-					}
+					auto target_link = discovery->find(address);
+					result.inputs.push_back(coin_utxo(target_link != discovery->end() ? target_link->second : wallet_link::from_address(address), std::move(values)));
 				}
-				coreturn expects_rt<vector<incoming_transaction>>(results);
+
+				result.outputs.reserve(outputs.size());
+				for (auto& [address, values] : outputs)
+				{
+					auto target_link = discovery->find(address);
+					result.outputs.push_back(coin_utxo(target_link != discovery->end() ? target_link->second : wallet_link::from_address(address), std::move(values)));
+				}
+
+				coreturn expects_rt<computed_transaction>(std::move(result));
 			}
-			expects_promise_rt<base_fee> ethereum::estimate_fee(const algorithm::asset_id& asset, const dynamic_wallet& wallet, const vector<transferer>& to, const fee_supervisor_options& options)
+			expects_promise_rt<computed_fee> ethereum::estimate_fee(const std::string_view& from_address, const vector<value_transfer>& to, const fee_supervisor_options& options)
 			{
-				auto* implementation = (backends::ethereum*)nss::server_node::get()->get_chain(asset);
-				auto gas_price_estimate = coawait(execute_rpc(asset, nd_call::gas_price(), { }, cache_policy::greedy));
-				if (!gas_price_estimate)
-					coreturn expects_rt<base_fee>(std::move(gas_price_estimate.error()));
-
-				expects_lr<derived_verifying_wallet> from_wallet = layer_exception("signing wallet not found");
-				if (wallet.parent)
+				uint256_t vgas_base_price = 0;
+				if (!legacy.eip_155)
 				{
-					auto signing_wallet = nss::server_node::get()->new_signing_wallet(asset, *wallet.parent, protocol::now().account.root_address_index);
-					if (signing_wallet)
-						from_wallet = *signing_wallet;
-					else
-						from_wallet = signing_wallet.error();
-				}
-				else if (wallet.verifying_child)
-					from_wallet = *wallet.verifying_child;
-				else if (wallet.signing_child)
-					from_wallet = *wallet.signing_child;
-				if (!from_wallet)
-					coreturn expects_rt<base_fee>(remote_exception(std::move(from_wallet.error().message())));
+					auto block_number = coawait(get_latest_block_height());
+					if (!block_number)
+						coreturn expects_rt<computed_fee>(std::move(block_number.error()));
 
-				auto& subject = to.front();
+					schema_list map;
+					map.emplace_back(var::set::string(uint256_to_hex(*block_number)));
+					map.emplace_back(var::set::boolean(false));
+
+					auto block_data = coawait(execute_rpc(nd_call::get_block_by_number(), std::move(map), cache_policy::temporary_cache));
+					if (!block_data)
+						coreturn expects_rt<computed_fee>(std::move(block_data.error()));
+
+					auto value = block_data->get("baseFeePerGas");
+					if (value)
+						vgas_base_price = hex_to_uint256(value->value.get_blob());
+					else
+						legacy.eip_155 = 1;
+				}
+
+				auto gas_price_estimate = coawait(execute_rpc(nd_call::gas_price(), { }, cache_policy::no_cache_no_throttling));
+				if (!gas_price_estimate)
+					coreturn expects_rt<computed_fee>(std::move(gas_price_estimate.error()));
+
+				auto& output = to.front();
 				uptr<schema> params = var::set::object();
 				params->set("gasPrice", var::string(gas_price_estimate->value.get_blob()));
-				params->set("from", var::string(implementation->decode_non_eth_address(from_wallet->addresses.begin()->second)));
+				params->set("from", var::string(decode_non_eth_address(from_address)));
 
-				auto contract_address = nss::server_node::get()->get_contract_address(asset);
-				decimal divisibility = implementation->netdata.divisibility;
+				auto contract_address = nss::server_node::get()->get_contract_address(output.asset);
+				decimal divisibility = netdata.divisibility;
 				if (contract_address)
 				{
-					auto contract_divisibility = coawait(get_contract_divisibility(asset, implementation, *contract_address));
+					auto contract_divisibility = coawait(get_contract_divisibility(*contract_address));
 					if (contract_divisibility)
 						divisibility = *contract_divisibility;
 				}
 
 				uint64_t default_gas_limit;
-				uint256_t value = implementation->from_eth(subject.value, divisibility);
+				uint256_t value = from_eth(output.value, divisibility);
 				if (contract_address)
 				{
-					default_gas_limit = implementation->get_erc20_transfer_gas_limit_gwei();
-					params->set("to", var::string(implementation->decode_non_eth_address(*contract_address)));
-					params->set("value", var::string(implementation->uint256_to_hex(0)));
-					params->set("gas", var::string(implementation->uint256_to_hex(default_gas_limit)));
-					params->set("data", var::string(implementation->generate_unchecked_address(backends::ethereum::sc_call::transfer(implementation->decode_non_eth_address(subject.address), value))));
+					default_gas_limit = get_erc20_transfer_gas_limit_gwei();
+					params->set("to", var::string(decode_non_eth_address(*contract_address)));
+					params->set("value", var::string(uint256_to_hex(0)));
+					params->set("gas", var::string(uint256_to_hex(default_gas_limit)));
+					params->set("data", var::string(encode_0xhex(backends::ethereum::sc_call::transfer(decode_non_eth_address(output.address), value))));
 				}
 				else
 				{
-					default_gas_limit = implementation->get_eth_transfer_gas_limit_gwei();
-					params->set("to", var::string(implementation->decode_non_eth_address(subject.address)));
-					params->set("value", var::string(implementation->uint256_to_hex(value)));
-					params->set("gas", var::string(implementation->uint256_to_hex(default_gas_limit)));
+					default_gas_limit = get_eth_transfer_gas_limit_gwei();
+					params->set("to", var::string(decode_non_eth_address(output.address)));
+					params->set("value", var::string(uint256_to_hex(value)));
+					params->set("gas", var::string(uint256_to_hex(default_gas_limit)));
 				}
 
 				schema_list map;
 				map.emplace_back(std::move(params));
-				map.emplace_back(var::set::string("latest"));
+				if (!legacy.estimate_gas)
+					map.emplace_back(var::set::string("latest"));
 
-				auto gas_limit_estimate = uptr<schema>(coawait(execute_rpc(asset, nd_call::estimate_gas(), std::move(map), cache_policy::greedy)));
+				decimal gas_base_price = to_eth(vgas_base_price, netdata.divisibility);
+				auto gas_limit_estimate = uptr<schema>(coawait(execute_rpc(nd_call::estimate_gas(), std::move(map), cache_policy::no_cache_no_throttling)));
 				if (!gas_limit_estimate)
 				{
-					decimal gas_price = implementation->to_eth(implementation->hex_to_uint256(gas_price_estimate->value.get_blob()), implementation->get_divisibility_gwei());
-					decimal gas_limit = implementation->to_eth(default_gas_limit, implementation->get_divisibility_gwei());
+					decimal gas_price = to_eth(hex_to_uint256(gas_price_estimate->value.get_blob()), netdata.divisibility);
 					memory::release(*gas_price_estimate);
-					coreturn expects_rt<base_fee>(base_fee(gas_price, gas_limit));
+					coreturn expects_rt<computed_fee>(computed_fee::fee_per_gas_priority(gas_base_price, gas_price, default_gas_limit));
 				}
 
-				uint256_t vgas_limit = implementation->hex_to_uint256(gas_limit_estimate->value.get_blob());
-				decimal gas_price = implementation->to_eth(implementation->hex_to_uint256(gas_price_estimate->value.get_blob()), implementation->get_divisibility_gwei());
-				decimal gas_limit = implementation->to_eth(vgas_limit, implementation->get_divisibility_gwei());
+				uint256_t vgas_price = hex_to_uint256(gas_price_estimate->value.get_blob());
+				uint256_t vgas_limit = hex_to_uint256(gas_limit_estimate->value.get_blob());
+				decimal gas_price = to_eth(vgas_price, netdata.divisibility);
 				memory::release(*gas_price_estimate);
-				coreturn expects_rt<base_fee>(base_fee(gas_price, gas_limit));
+				coreturn expects_rt<computed_fee>(computed_fee::fee_per_gas_priority(gas_base_price, gas_price, vgas_limit > 0 ? vgas_limit : uint256_t(default_gas_limit)));
 			}
-			expects_promise_rt<decimal> ethereum::calculate_balance(const algorithm::asset_id& asset, const dynamic_wallet& wallet, option<string>&& address)
+			expects_promise_rt<decimal> ethereum::calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link)
 			{
-				auto* implementation = (backends::ethereum*)nss::server_node::get()->get_chain(asset);
-				if (!address)
-				{
-					expects_lr<derived_verifying_wallet> from_wallet = layer_exception("signing wallet not found");
-					if (wallet.parent)
-					{
-						auto signing_wallet = nss::server_node::get()->new_signing_wallet(asset, *wallet.parent, protocol::now().account.root_address_index);
-						if (signing_wallet)
-							from_wallet = *signing_wallet;
-						else
-							from_wallet = signing_wallet.error();
-					}
-					else if (wallet.verifying_child)
-						from_wallet = *wallet.verifying_child;
-					else if (wallet.signing_child)
-						from_wallet = *wallet.signing_child;
-					if (!from_wallet)
-						coreturn expects_rt<decimal>(remote_exception(std::move(from_wallet.error().message())));
-
-					address = from_wallet->addresses.begin()->second;
-				}
-
-				auto contract_address = nss::server_node::get()->get_contract_address(asset);
-				decimal divisibility = implementation->netdata.divisibility;
+				auto contract_address = nss::server_node::get()->get_contract_address(for_asset);
+				decimal divisibility = netdata.divisibility;
 				if (contract_address)
 				{
-					auto contract_divisibility = coawait(get_contract_divisibility(asset, implementation, *contract_address));
+					auto contract_divisibility = coawait(get_contract_divisibility(*contract_address));
 					if (contract_divisibility)
 						divisibility = *contract_divisibility;
 				}
@@ -699,275 +690,288 @@ namespace tangent
 				{
 					method = nd_call::call();
 					params = var::set::object();
-					params->set("to", var::string(implementation->decode_non_eth_address(*contract_address)));
-					params->set("data", var::string(implementation->generate_unchecked_address(backends::ethereum::sc_call::balance_of(implementation->decode_non_eth_address(*address)))));
+					params->set("to", var::string(decode_non_eth_address(*contract_address)));
+					params->set("data", var::string(encode_0xhex(backends::ethereum::sc_call::balance_of(decode_non_eth_address(link.address)))));
 				}
 				else
 				{
 					method = nd_call::get_balance();
-					params = var::set::string(implementation->decode_non_eth_address(*address));
+					params = var::set::string(decode_non_eth_address(link.address));
 				}
 
 				schema_list map;
 				map.emplace_back(params);
 				map.emplace_back(var::set::string("latest"));
 
-				auto confirmed_balance = coawait(execute_rpc(asset, method, std::move(map), cache_policy::lazy));
+				auto confirmed_balance = coawait(execute_rpc(method, std::move(map), cache_policy::no_cache));
 				if (!confirmed_balance)
 					coreturn expects_rt<decimal>(std::move(confirmed_balance.error()));
 
-				decimal balance = implementation->to_eth(implementation->hex_to_uint256(confirmed_balance->value.get_blob()), divisibility);
+				decimal balance = to_eth(hex_to_uint256(confirmed_balance->value.get_blob()), divisibility);
 				memory::release(*confirmed_balance);
 				coreturn expects_rt<decimal>(std::move(balance));
 			}
-			expects_promise_rt<outgoing_transaction> ethereum::new_transaction(const algorithm::asset_id& asset, const dynamic_wallet& wallet, const vector<transferer>& to, const base_fee& fee)
+			expects_promise_rt<void> ethereum::broadcast_transaction(const finalized_transaction& finalized)
 			{
-				expects_lr<derived_signing_wallet> from_wallet = layer_exception();
-				if (wallet.parent)
-					from_wallet = nss::server_node::get()->new_signing_wallet(asset, *wallet.parent, protocol::now().account.root_address_index);
-				else if (wallet.signing_child)
-					from_wallet = *wallet.signing_child;
-				if (!from_wallet)
-					coreturn expects_rt<outgoing_transaction>(remote_exception("signing wallet not found"));
+				auto duplicate = coawait(get_transaction_receipt(format::util::assign_0xhex(finalized.hashdata)));
+				if (duplicate)
+				{
+					memory::release(*duplicate);
+					coreturn expects_rt<void>(expectation::met);
+				}
 
-				auto chain_id = coawait(get_chain_id(asset));
+				schema_list map;
+				map.emplace_back(var::set::string(format::util::assign_0xhex(finalized.calldata)));
+
+				auto hex_data = coawait(execute_rpc(nd_call::send_raw_transaction(), std::move(map), cache_policy::no_cache_no_throttling));
+				if (!hex_data)
+					coreturn expects_rt<void>(std::move(hex_data.error()));
+
+				memory::release(*hex_data);
+				coreturn expects_rt<void>(expectation::met);
+			}
+			expects_promise_rt<prepared_transaction> ethereum::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee)
+			{
+				auto chain_id = coawait(get_chain_id());
 				if (!chain_id)
-					coreturn expects_rt<outgoing_transaction>(std::move(chain_id.error()));
+					coreturn expects_rt<prepared_transaction>(std::move(chain_id.error()));
 
-				auto& subject = to.front();
-				auto contract_address = nss::server_node::get()->get_contract_address(asset);
-				decimal fee_value = fee.get_fee();
-				decimal total_value = subject.value;
+				auto& output = to.front();
+				auto contract_address = nss::server_node::get()->get_contract_address(output.asset);
+				decimal fee_value = fee.get_max_fee();
+				decimal total_value = output.value;
 				if (contract_address)
 				{
-					auto balance = coawait(calculate_balance(algorithm::asset::base_id_of(asset), wallet, from_wallet->addresses.begin()->second));
+					auto balance = coawait(calculate_balance(output.asset, from_link));
 					if (!balance || *balance < fee_value)
-						coreturn expects_rt<outgoing_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (balance ? *balance : decimal(0.0)).to_string().c_str(), fee_value.to_string().c_str())));
+						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (balance ? *balance : decimal(0.0)).to_string().c_str(), fee_value.to_string().c_str())));
 				}
+				else if (!algorithm::asset::token_of(output.asset).empty())
+					coreturn expects_rt<prepared_transaction>(remote_exception("invalid sending token"));
 				else
 					total_value += fee_value;
 
-				auto balance = coawait(calculate_balance(asset, wallet, from_wallet->addresses.begin()->second));
+				auto balance = coawait(calculate_balance(output.asset, from_link));
 				if (!balance || *balance < total_value)
-					coreturn expects_rt<outgoing_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (balance ? *balance : decimal(0.0)).to_string().c_str(), total_value.to_string().c_str())));
+					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (balance ? *balance : decimal(0.0)).to_string().c_str(), total_value.to_string().c_str())));
 
-				auto nonce = coawait(get_transactions_count(asset, from_wallet->addresses.begin()->second));
+				auto nonce = coawait(get_transactions_count(from_link.address));
 				if (!nonce)
-					coreturn expects_rt<outgoing_transaction>(remote_exception("nonce value invalid"));
+					coreturn expects_rt<prepared_transaction>(remote_exception("nonce value invalid"));
 
 				evm_transaction transaction;
-				transaction.chain_id = *chain_id;
 				transaction.nonce = *nonce;
-				transaction.gas_price = from_eth(fee.price, get_divisibility_gwei());
-				transaction.gas_limit = from_eth(fee.limit, get_divisibility_gwei());
+				transaction.chain_id = *chain_id;
+				transaction.gas_base_price = from_eth(fee.gas.gas_base_price, netdata.divisibility);
+				transaction.gas_price = from_eth(fee.gas.gas_price, netdata.divisibility);
+				transaction.gas_limit = fee.gas.gas_limit;
 
 				decimal divisibility = netdata.divisibility;
 				if (contract_address)
 				{
-					auto contract_divisibility = coawait(get_contract_divisibility(asset, this, *contract_address));
+					auto contract_divisibility = coawait(get_contract_divisibility(*contract_address));
 					if (contract_divisibility)
-						divisibility = *contract_divisibility;
-				}
+						divisibility = std::move(*contract_divisibility);
 
-				uint256_t value = from_eth(subject.value, divisibility);
-				if (contract_address)
-				{
 					transaction.address = decode_non_eth_address(*contract_address);
-					transaction.abi_data = sc_call::transfer(subject.address, value);
+					transaction.abi_data = sc_call::transfer(output.address, from_eth(output.value, divisibility));
 				}
 				else
 				{
-					transaction.address = decode_non_eth_address(subject.address);
-					transaction.value = value;
+					transaction.address = decode_non_eth_address(output.address);
+					transaction.value = from_eth(output.value, divisibility);
 				}
 
-				uint8_t raw_private_key[256];
-				auto private_key = from_wallet->signing_key.expose<KEY_LIMIT>();
-				generate_private_key_data_from_private_key(private_key.view.data(), private_key.view.size(), raw_private_key);
+				auto public_key = to_composite_public_key(from_link.public_key);
+				if (!public_key)
+					coreturn expects_rt<prepared_transaction>(remote_exception(std::move(public_key.error().message())));
 
-				evm_signed_transaction info = transaction.serialize_and_sign(raw_private_key);
-				if (info.signature.r.empty() || info.signature.s.empty())
-					coreturn expects_rt<outgoing_transaction>(remote_exception("invalid private key"));
-				else if (info.id.empty() || info.data.empty())
-					coreturn expects_rt<outgoing_transaction>(remote_exception("tx serialization error"));
-
-				incoming_transaction tx;
-				tx.set_transaction(asset, 0, info.id, std::move(fee_value));
-				tx.set_operations({ transferer(from_wallet->addresses.begin()->second, option<uint64_t>(from_wallet->address_index), decimal(subject.value)) }, vector<transferer>(to));
-				coreturn expects_rt<outgoing_transaction>(outgoing_transaction(std::move(tx), std::move(info.data)));
+				legacy.eip_155 = 0;
+				auto type = legacy.eip_155 ? evm_transaction::evm_type::eip_155 : evm_transaction::evm_type::eip_1559;
+				auto hash = transaction.hash(transaction.serialize(type));
+				prepared_transaction result;
+				if (contract_address)
+					result.requires_account_input(algorithm::composition::type::secp256k1, wallet_link(from_link), public_key->data, (uint8_t*)hash.data(), hash.size(), { { output.asset, output.value }, { native_asset, fee_value } });
+				else
+					result.requires_account_input(algorithm::composition::type::secp256k1, wallet_link(from_link), public_key->data, (uint8_t*)hash.data(), hash.size(), { { native_asset, output.value + fee_value } });
+				result.requires_account_output(output.address, { { output.asset, output.value } });
+				result.requires_abi(format::variable(!!legacy.eip_155));
+				result.requires_abi(format::variable(contract_address.or_else(string())));
+				result.requires_abi(format::variable(divisibility));
+				result.requires_abi(format::variable(transaction.nonce));
+				result.requires_abi(format::variable(transaction.chain_id));
+				result.requires_abi(format::variable(transaction.gas_base_price));
+				result.requires_abi(format::variable(transaction.gas_price));
+				result.requires_abi(format::variable(transaction.gas_limit));
+				coreturn expects_rt<prepared_transaction>(std::move(result));
 			}
-			expects_lr<master_wallet> ethereum::new_master_wallet(const std::string_view& seed)
+			expects_lr<finalized_transaction> ethereum::finalize_transaction(mediator::prepared_transaction&& prepared)
 			{
-				auto* chain = get_chain();
-				btc_hdnode root_node;
-				if (!btc_hdnode_from_seed((uint8_t*)seed.data(), (int)seed.size(), &root_node))
-					return expects_lr<master_wallet>(layer_exception("seed value invalid"));
+				if (prepared.abi.size() != 8)
+					return layer_exception("invalid prepared abi");
 
-				char private_key[256];
-				btc_hdnode_serialize_private(&root_node, chain, private_key, sizeof(private_key));
+				auto& input = prepared.inputs.front();
+				auto& output = prepared.outputs.front();
+				auto output_asset = output.get_asset(native_asset);
+				auto type = prepared.abi[0].as_boolean() ? evm_transaction::evm_type::eip_155 : evm_transaction::evm_type::eip_1559;
+				auto contract_address = prepared.abi[1].as_string();
+				auto divisibility = prepared.abi[2].as_decimal();
+				if (algorithm::asset::id_of(algorithm::asset::blockchain_of(native_asset), algorithm::asset::token_of(output.get_asset(native_asset)), contract_address) != output_asset)
+					return layer_exception("invalid prepared abi");
 
-				char public_key[256];
-				btc_hdnode_serialize_public(&root_node, chain, public_key, (int)sizeof(public_key));
-
-				return expects_lr<master_wallet>(master_wallet(secret_box::secure(std::move(codec::hex_encode(seed))), secret_box::secure(private_key), public_key));
-			}
-			expects_lr<derived_signing_wallet> ethereum::new_signing_wallet(const algorithm::asset_id& asset, const master_wallet& wallet, uint64_t address_index)
-			{
-				auto* chain = get_chain();
-				char master_private_key[256];
+				evm_transaction transaction;
+				transaction.nonce = prepared.abi[3].as_uint256();
+				transaction.chain_id = prepared.abi[4].as_uint256();
+				transaction.gas_base_price = prepared.abi[5].as_uint256();
+				transaction.gas_price = prepared.abi[6].as_uint256();
+				transaction.gas_limit = prepared.abi[7].as_uint256();
+				if (!contract_address.empty())
 				{
-					auto secret = wallet.signing_key.expose<KEY_LIMIT>();
-					if (!hd_derive(chain, secret.view.data(), get_derivation(protocol::now().account.root_address_index).c_str(), master_private_key, sizeof(master_private_key)))
-						return expects_lr<derived_signing_wallet>(layer_exception("invalid private key"));
-				}
+					if (output.tokens.empty())
+						return layer_exception("invalid output");
 
-				btc_hdnode node;
-				if (!btc_hdnode_deserialize(master_private_key, chain, &node))
-					return expects_lr<derived_signing_wallet>(layer_exception("invalid private key"));
-
-				auto derived = new_signing_wallet(asset, secret_box::view(std::string_view((char*)node.private_key, sizeof(node.private_key))));
-				if (derived)
-					derived->address_index = address_index;
-				return derived;
-			}
-			expects_lr<derived_signing_wallet> ethereum::new_signing_wallet(const algorithm::asset_id& asset, const secret_box& signing_key)
-			{
-				btc_key private_key;
-				btc_privkey_init(&private_key);
-				if (signing_key.size() != sizeof(private_key.privkey))
-				{
-					auto key = format::util::decode_0xhex(signing_key.expose<KEY_LIMIT>().view);
-					if (key.size() != sizeof(private_key.privkey))
-						return layer_exception("not a valid hex private key");
-
-					memcpy(private_key.privkey, key.data(), sizeof(private_key.privkey));
+					auto& output_token = output.tokens.front();
+					transaction.address = decode_non_eth_address(contract_address);
+					transaction.abi_data = sc_call::transfer(output.link.address, from_eth(output_token.value, divisibility));
 				}
 				else
-					memcpy(private_key.privkey, signing_key.expose<KEY_LIMIT>().buffer, sizeof(private_key.privkey));
-
-				char public_key_data[128]; size_t public_key_data_size = BTC_ECKEY_UNCOMPRESSED_LENGTH;
-				btc_ecc_get_pubkey(private_key.privkey, (uint8_t*)public_key_data, &public_key_data_size, false);
-
-				auto derived = new_verifying_wallet(asset, std::string_view((char*)public_key_data + 1, public_key_data_size - 1));
-				if (!derived)
-					return derived.error();
-
-				return expects_lr<derived_signing_wallet>(derived_signing_wallet(std::move(*derived), secret_box::secure(generate_unchecked_address(std::string_view((char*)private_key.privkey, sizeof(private_key.privkey))))));
-			}
-			expects_lr<derived_verifying_wallet> ethereum::new_verifying_wallet(const algorithm::asset_id& asset, const std::string_view& verifying_key)
-			{
-				string raw_public_key = string(verifying_key);
-				if (raw_public_key.size() != BTC_ECKEY_UNCOMPRESSED_LENGTH - 1 && raw_public_key.size() != BTC_ECKEY_UNCOMPRESSED_LENGTH && raw_public_key.size() != BTC_ECKEY_COMPRESSED_LENGTH)
 				{
-					raw_public_key = format::util::decode_0xhex(raw_public_key);
-					if (raw_public_key.size() != BTC_ECKEY_UNCOMPRESSED_LENGTH - 1 && raw_public_key.size() != BTC_ECKEY_UNCOMPRESSED_LENGTH && raw_public_key.size() != BTC_ECKEY_COMPRESSED_LENGTH)
-						return layer_exception("invalid public key size");
+					transaction.address = decode_non_eth_address(output.link.address);
+					transaction.value = from_eth(output.value, divisibility);
 				}
 
-				uint8_t public_key[BTC_ECKEY_UNCOMPRESSED_LENGTH] = { 0 };
-				if (raw_public_key.size() != BTC_ECKEY_UNCOMPRESSED_LENGTH - 1)
-				{
-					secp256k1_pubkey candidate_public_key;
-					secp256k1_context* context = algorithm::signing::get_context();
-					if (secp256k1_ec_pubkey_parse(context, &candidate_public_key, (uint8_t*)raw_public_key.data(), raw_public_key.size()) != 1)
-						return layer_exception("invalid public key");
+				auto hash = transaction.hash(transaction.serialize(type));
+				if (input.message.size() != hash.size() || memcmp(input.message.data(), hash.data(), hash.size()) != 0)
+					return layer_exception("invalid input message");
 
-					size_t public_key_size = sizeof(public_key);
-					if (secp256k1_ec_pubkey_serialize(context, public_key, &public_key_size, &candidate_public_key, SECP256K1_EC_UNCOMPRESSED) != 1)
-						return layer_exception("invalid public key");
-				}
-				else
-					memcpy(public_key + 1, raw_public_key.data(), raw_public_key.size());
+				auto info = transaction.serialize_and_presign(type, input.signature);
+				auto result = finalized_transaction(std::move(prepared), encode_0xhex(info.data), encode_0xhex(info.id));
+				if (!result.is_valid())
+					return layer_exception("tx serialization error");
 
-				char public_key_hash[20];
-				generate_public_key_hash_from_public_key(public_key + 1, public_key_hash);
-				return expects_lr<derived_verifying_wallet>(derived_verifying_wallet({ { (uint8_t)1, encode_eth_address(generate_pkh_address(public_key_hash)) } }, optional::none, generate_unchecked_address(std::string_view((char*)public_key + 1, sizeof(public_key) - 1))));
+				return expects_lr<finalized_transaction>(std::move(result));
 			}
-			expects_lr<string> ethereum::new_public_key_hash(const std::string_view& address)
+			expects_lr<secret_box> ethereum::encode_secret_key(const secret_box& secret_key)
 			{
-				auto data = codec::hex_decode(address);
-				if (data.empty())
+				auto chain = get_chain();
+				char result[128] = { 0 };
+				size_t offset = strnlen(chain->bech32_hrp, sizeof(chain->bech32_hrp));
+				memcpy(result, chain->bech32_hrp, offset);
+
+				auto data = secret_key.expose<KEY_LIMIT>();
+				utils_bin_to_hex(data.buffer, data.view.size(), result + offset);
+				return secret_box::secure(std::string_view(result, strnlen(result, sizeof(result))));
+			}
+			expects_lr<secret_box> ethereum::decode_secret_key(const secret_box& secret_key)
+			{
+				auto data = secret_key.expose<KEY_LIMIT>();
+				size_t offset = data.view.starts_with("0x") ? 2 : 0;
+				uint8_t result[64] = { 0 }; int result_size = (int)sizeof(result);
+				utils_hex_to_bin(data.view.data() + offset, result, (int)data.view.size() - (int)offset, &result_size);
+				if (result_size != BTC_ECKEY_PKEY_LENGTH)
+					return layer_exception("invalid private key");
+
+				return secret_box::secure(std::string_view((char*)result, (size_t)result_size));
+			}
+			expects_lr<string> ethereum::encode_public_key(const std::string_view& public_key)
+			{
+				if (public_key.size() == BTC_ECKEY_UNCOMPRESSED_LENGTH)
+					return format::util::encode_0xhex(public_key.substr(1));
+				else if (public_key.size() == BTC_ECKEY_UNCOMPRESSED_LENGTH - 1)
+					return format::util::encode_0xhex(public_key);
+				else if (public_key.size() != BTC_ECKEY_COMPRESSED_LENGTH)
+					return layer_exception("invalid public key size");
+
+				secp256k1_pubkey candidate_public_key;
+				secp256k1_context* context = algorithm::signing::get_context();
+				if (secp256k1_ec_pubkey_parse(context, &candidate_public_key, (uint8_t*)public_key.data(), public_key.size()) != 1)
+					return layer_exception("invalid public key");
+
+				uint8_t raw_public_key[BTC_ECKEY_UNCOMPRESSED_LENGTH] = { 0 };
+				size_t raw_public_key_size = sizeof(raw_public_key);
+				if (secp256k1_ec_pubkey_serialize(context, raw_public_key, &raw_public_key_size, &candidate_public_key, SECP256K1_EC_UNCOMPRESSED) != 1)
+					return layer_exception("invalid public key");
+
+				return format::util::encode_0xhex(std::string_view((char*)raw_public_key, raw_public_key_size).substr(1));
+			}
+			expects_lr<string> ethereum::decode_public_key(const std::string_view& public_key)
+			{
+				auto result = format::util::decode_0xhex(public_key);
+				if (result.size() != BTC_ECKEY_UNCOMPRESSED_LENGTH && result.size() != BTC_ECKEY_UNCOMPRESSED_LENGTH - 1 && result.size() != BTC_ECKEY_COMPRESSED_LENGTH)
+					return layer_exception("not a valid hex public key");
+
+				return result;
+			}
+			expects_lr<string> ethereum::encode_address(const std::string_view& public_key_hash)
+			{
+				return encode_eth_address(encode_0xhex_checksum((uint8_t*)public_key_hash.data(), public_key_hash.size()));
+			}
+			expects_lr<string> ethereum::decode_address(const std::string_view& address)
+			{
+				auto data = codec::hex_decode(decode_non_eth_address(address));
+				if (data.size() != 20)
 					return layer_exception("invalid address");
 
 				return data;
 			}
-			expects_lr<string> ethereum::sign_message(const algorithm::asset_id& asset, const std::string_view& message, const secret_box& signing_key)
+			expects_lr<string> ethereum::encode_transaction_id(const std::string_view& transaction_id)
 			{
-				auto signing_wallet = new_signing_wallet(asset, signing_key);
-				if (!signing_wallet)
-					return signing_wallet.error();
-
-				uint8_t raw_private_key[256];
-				auto private_key = signing_wallet->signing_key.expose<KEY_LIMIT>();
-				generate_private_key_data_from_private_key(private_key.view.data(), private_key.view.size(), raw_private_key);
-
-				uint8_t hash[32];
-				generate_message_hash(message, hash);
-
-				eth_ecdsa_signature raw_signature;
-				if (eth_ecdsa_sign(&raw_signature, raw_private_key, hash) != 1)
-					return layer_exception("private key not valid");
-
-				uint8_t signature[65] = { 0 };
-				memcpy(signature + 00, raw_signature.r, sizeof(raw_signature.r));
-				memcpy(signature + 32, raw_signature.s, sizeof(raw_signature.s));
-				signature[64] = raw_signature.recid;
-				return format::util::encode_0xhex(std::string_view((char*)signature, sizeof(signature)));
+				return format::util::encode_0xhex(transaction_id);
 			}
-			expects_lr<void> ethereum::verify_message(const algorithm::asset_id& asset, const std::string_view& message, const std::string_view& verifying_key, const std::string_view& signature)
+			expects_lr<string> ethereum::decode_transaction_id(const std::string_view& transaction_id)
 			{
-				string signature_data = signature.size() == 65 ? string(signature) : codec::hex_decode(signature);
-				if (signature_data.size() != 65)
-					return layer_exception("signature not valid");
+				auto result = format::util::decode_0xhex(transaction_id);
+				if (result.size() != 64)
+					return layer_exception("invalid transaction id");
 
-				auto verifying_wallet = new_verifying_wallet(asset, verifying_key);
-				if (!verifying_wallet)
-					return verifying_wallet.error();
+				return result;
+			}
+			expects_lr<algorithm::composition::cpubkey_t> ethereum::to_composite_public_key(const std::string_view& public_key)
+			{
+				auto input = decode_public_key(public_key);
+				if (!input)
+					return input.error();
 
-				secp256k1_context* context = algorithm::signing::get_context();
-				if (!context)
-					return layer_exception("context not valid");
-
-				uint8_t hash[32];
-				generate_message_hash(message, hash);
-				for (auto& item : verifying_wallet->addresses)
+				if (input->size() == BTC_ECKEY_UNCOMPRESSED_LENGTH || input->size() == BTC_ECKEY_UNCOMPRESSED_LENGTH - 1)
 				{
-					const auto& address = item.second;
-					string target_address = generate_checksum_address(decode_non_eth_address(address));
-					string raw_signature = signature_data;
-					for (int i = 0; i < 4; i++)
-					{
-						secp256k1_ecdsa_recoverable_signature ecdsa_signature;
-						secp256k1_ecdsa_recoverable_signature_parse_compact(context, &ecdsa_signature, (uint8_t*)raw_signature.data(), i);
+					auto* context = algorithm::signing::get_context();
+					if (input->size() == BTC_ECKEY_UNCOMPRESSED_LENGTH - 1)
+						input->insert(input->begin(), 4);
 
-						secp256k1_pubkey pub_key;
-						if (secp256k1_ecdsa_recover(context, &pub_key, &ecdsa_signature, hash) != 1)
-							continue;
+					secp256k1_pubkey result_public_key;
+					if (secp256k1_ec_pubkey_parse(context, &result_public_key, (uint8_t*)input->data(), input->size()) != 1)
+						return layer_exception("bad public key");
 
-						char serialized_pub_key[65]; size_t serialized_pub_key_size = sizeof(serialized_pub_key);
-						if (secp256k1_ec_pubkey_serialize(context, (uint8_t*)serialized_pub_key, &serialized_pub_key_size, &pub_key, SECP256K1_EC_UNCOMPRESSED) != 1)
-							continue;
+					auto result = algorithm::composition::cpubkey_t();
+					size_t result_size = sizeof(result);
+					if (secp256k1_ec_pubkey_serialize(context, result.data, &result_size, &result_public_key, SECP256K1_EC_COMPRESSED) != 1)
+						return layer_exception("bad public key");
 
-						char actual_public_key_hash1[20], actual_public_key_hash2[20];
-						generate_public_key_hash_from_public_key((uint8_t*)serialized_pub_key, actual_public_key_hash1);
-						generate_public_key_hash_from_public_key((uint8_t*)serialized_pub_key + 1, actual_public_key_hash2);
-						string actual_address1 = generate_pkh_address(actual_public_key_hash1);
-						string actual_address2 = generate_pkh_address(actual_public_key_hash2);
-						if (actual_address1 == target_address || actual_address2 == target_address)
-							return expectation::met;
-					}
+					return expects_lr<algorithm::composition::cpubkey_t>(result);
 				}
+				else if (input->size() == BTC_ECKEY_COMPRESSED_LENGTH)
+					return expects_lr<algorithm::composition::cpubkey_t>(algorithm::composition::cpubkey_t(*input));
 
-				return layer_exception("signature verification failed with used public key");
+				return layer_exception("bad public key");
 			}
-			string ethereum::get_checksum_hash(const std::string_view& value) const
+			expects_lr<address_map> ethereum::to_addresses(const std::string_view& input_public_key)
 			{
-				string copy = string(value);
-				return stringify::to_lower(copy);
-			}
-			string ethereum::get_derivation(uint64_t address_index) const
-			{
-				return stringify::text(protocol::now().is(network_type::mainnet) ? "m/44'/60'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, address_index);
+				auto public_key = decode_public_key(input_public_key).or_else(string(input_public_key));
+				if (public_key.size() != BTC_ECKEY_UNCOMPRESSED_LENGTH - 1)
+					return layer_exception("invalid public key");
+
+				SHA3_CTX context;
+				sha3_256_Init(&context);
+				sha3_Update(&context, (uint8_t*)public_key.data(), public_key.size());
+
+				uint8_t intermediate_public_key_hash[32];
+				keccak_Final(&context, intermediate_public_key_hash);
+
+				uint8_t public_key_hash[20];
+				memcpy(public_key_hash, intermediate_public_key_hash + 12, sizeof(public_key_hash));
+
+				address_map result = { { (uint8_t)1, encode_eth_address(encode_0xhex_checksum(public_key_hash, sizeof(public_key_hash))) } };
+				return expects_lr<address_map>(std::move(result));
 			}
 			const ethereum::chainparams& ethereum::get_chainparams() const
 			{
@@ -996,72 +1000,25 @@ namespace tangent
 						return nullptr;
 				}
 			}
-			void ethereum::generate_public_key_hash_from_public_key(const uint8_t public_key[64], char out_public_key_hash[20])
+			string ethereum::encode_0xhex(const std::string_view& data)
 			{
-				SHA3_CTX context;
-				sha3_256_Init(&context);
-				sha3_Update(&context, public_key, 64);
-
-				uint8_t public_key_hash[32];
-				keccak_Final(&context, public_key_hash);
-				memcpy(out_public_key_hash, public_key_hash + 12, 20);
+				return format::util::encode_0xhex(data);
 			}
-			void ethereum::generate_private_key_data_from_private_key(const char* private_key, size_t private_key_size, uint8_t out_private_key_hash[20])
+			string ethereum::encode_0xhex_checksum(const uint8_t* data, size_t data_size)
 			{
-				auto* chain = get_chain();
-				size_t prefix_size = strlen(chain->bech32_hrp);
-				if (!memcmp(private_key, chain->bech32_hrp, sizeof(char) * prefix_size))
+				string input = codec::hex_encode(std::string_view((char*)data, data_size));
+				uint8_t input_hash[BTC_ECKEY_UNCOMPRESSED_LENGTH];
+				keccak_256((uint8_t*)input.c_str(), input.size(), input_hash);
+
+				string checksum = codec::hex_encode(std::string_view((char*)input_hash, sizeof(input_hash)));
+				size_t input_size = std::min(input.size(), checksum.size());
+				for (size_t i = 0; i < input_size; i++)
 				{
-					private_key += prefix_size;
-					private_key_size -= prefix_size;
-				}
-
-				int out_size = 20;
-				utils_hex_to_bin(private_key, out_private_key_hash, (int)private_key_size, &out_size);
-			}
-			void ethereum::generate_message_hash(const std::string_view& input, uint8_t output[32])
-			{
-				string header = get_message_magic();
-				string payload = stringify::text("%c%s%i%.*s",
-					(char)header.size(), header.c_str(),
-					(int)input.size(), (int)input.size(), input.data());
-				keccak_256((uint8_t*)payload.data(), payload.size(), output);
-			}
-			string ethereum::get_message_magic()
-			{
-				return "Ethereum signed message:\n";
-			}
-			string ethereum::generate_pkh_address(const char* public_key_hash20)
-			{
-				return generate_checksum_address(codec::hex_encode(std::string_view(public_key_hash20, 20)));
-			}
-			string ethereum::generate_unchecked_address(const std::string_view& data)
-			{
-				auto* chain = get_chain();
-				return chain->bech32_hrp + codec::hex_encode(data);
-			}
-			string ethereum::generate_checksum_address(const std::string_view& any_address)
-			{
-				string address = string(any_address);
-				stringify::to_lower(address);
-
-				auto* chain = get_chain();
-				if (stringify::starts_with(address, chain->bech32_hrp))
-					address.erase(0, strlen(chain->bech32_hrp));
-
-				uint8_t address_raw_hash[BTC_ECKEY_UNCOMPRESSED_LENGTH];
-				keccak_256((uint8_t*)address.c_str(), address.size(), address_raw_hash);
-
-				string address_hash = codec::hex_encode(std::string_view((const char*)address_raw_hash, 32));
-				size_t address_size = std::min(address.size(), address_hash.size());
-				for (size_t i = 0; i < address_size; i++)
-				{
-					uint8_t offset = address_hash[i] - '0';
+					uint8_t offset = checksum[i] - '0';
 					if (offset >= 8)
-						address[i] = toupper(address[i]);
+						input[i] = toupper(input[i]);
 				}
-
-				return chain->bech32_hrp + address;
+				return get_chain()->bech32_hrp + input;
 			}
 			string ethereum::encode_eth_address(const std::string_view& eth_address)
 			{

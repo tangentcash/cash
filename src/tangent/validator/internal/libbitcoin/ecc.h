@@ -68,7 +68,7 @@ LIBBTC_API btc_bool btc_ecc_sign_compact_recoverable(const uint8_t* private_key,
 LIBBTC_API btc_bool btc_ecc_recover_pubkey(const unsigned char* sigrec, const uint256 hash, const int recid, uint8_t* public_key, size_t *outlen);
 
 //!converts (and normalized) a compact signature to DER
-LIBBTC_API btc_bool btc_ecc_compact_to_der_normalized(unsigned char* sigcomp_in, unsigned char* sigder_out, size_t* sigder_len_out);
+LIBBTC_API btc_bool btc_ecc_compact_to_der_normalized(const unsigned char* sigcomp_in, unsigned char* sigder_out, size_t* sigder_len_out);
 
 //!convert DER signature to compact
 LIBBTC_API btc_bool btc_ecc_der_to_compact(unsigned char* sigder_in, size_t sigder_len, unsigned char* sigcomp_out);

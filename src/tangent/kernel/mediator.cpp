@@ -6,41 +6,195 @@ namespace tangent
 {
 	namespace mediator
 	{
-		static bool is_secret_box_empty_or_whitespace(const secret_box& value)
+		wallet_link::wallet_link(const algorithm::pubkeyhash new_owner, const std::string_view& new_public_key, const std::string_view& new_address) : address(new_address), public_key(new_public_key)
 		{
-			if (!value.size())
-				return true;
+			if (new_owner != nullptr)
+				memcpy(owner, new_owner, sizeof(owner));
+		}
+		bool wallet_link::store_payload(format::stream* stream) const
+		{
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			algorithm::pubkeyhash null = { 0 };
+			stream->write_string_raw(public_key);
+			stream->write_string_raw(address);
+			stream->write_string(std::string_view((char*)owner, memcmp(owner, null, sizeof(null)) == 0 ? 0 : sizeof(owner)));
+			return true;
+		}
+		bool wallet_link::load_payload(format::stream& stream)
+		{
+			if (!stream.read_string(stream.read_type(), &public_key))
+				return false;
 
-			auto data = value.expose<KEY_LIMIT>();
-			for (char v : data.view)
-			{
-				if (v != ' ' && v != '\t' && v != '\r' && v != '\n')
-					return false;
-			}
+			if (!stream.read_string(stream.read_type(), &address))
+				return false;
+
+			string owner_assembly;
+			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner, sizeof(owner)))
+				return false;
 
 			return true;
 		}
+		uptr<schema> wallet_link::as_schema() const
+		{
+			schema* data = var::set::object();
+			data->set("owner", algorithm::signing::serialize_address(owner));
+			data->set("public_key", public_key.empty() ? var::null() : var::string(public_key));
+			data->set("address", address.empty() ? var::null() : var::string(address));
+			return data;
+		}
+		uint32_t wallet_link::as_type() const
+		{
+			return as_instance_type();
+		}
+		std::string_view wallet_link::as_typename() const
+		{
+			return as_instance_typename();
+		}
+		wallet_link::search_term wallet_link::as_search_wide() const
+		{
+			if (has_owner())
+				return search_term::owner;
+			else if (has_public_key())
+				return search_term::public_key;
+			else if (has_address())
+				return search_term::address;
+			return search_term::none;
+		}
+		wallet_link::search_term wallet_link::as_search_narrow() const
+		{
+			if (has_address())
+				return search_term::address;
+			else if (has_public_key())
+				return search_term::public_key;
+			else if (has_owner())
+				return search_term::owner;
+			return search_term::none;
+		}
+		string wallet_link::as_tag_address(const std::string_view& tag) const
+		{
+			return address.empty() ? string() : address_util::encode_tag_address(address, tag);
+		}
+		string wallet_link::as_name() const
+		{
+			if (has_address())
+				return address;
 
-		token_utxo::token_utxo() : decimals(0)
+			if (has_public_key())
+				return public_key;
+
+			if (has_owner())
+			{
+				string owner_address;
+				algorithm::signing::encode_address(owner, owner_address);
+				return owner_address;
+			}
+
+			return "(confidential)";
+		}
+		bool wallet_link::has_owner() const
+		{
+			algorithm::pubkeyhash null = { 0 };
+			return memcmp(owner, null, sizeof(null)) != 0;
+		}
+		bool wallet_link::has_public_key() const
+		{
+			return !stringify::is_empty_or_whitespace(public_key);
+		}
+		bool wallet_link::has_address() const
+		{
+			return !stringify::is_empty_or_whitespace(address);
+		}
+		bool wallet_link::has_all() const
+		{
+			return has_owner() && has_public_key() && has_address();
+		}
+		bool wallet_link::has_any() const
+		{
+			return has_owner() || has_public_key() || has_address();
+		}
+		uint32_t wallet_link::as_instance_type()
+		{
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
+		}
+		std::string_view wallet_link::as_instance_typename()
+		{
+			return "mediator_wallet_link";
+		}
+		wallet_link wallet_link::from_owner(const algorithm::pubkeyhash new_owner)
+		{
+			return wallet_link(new_owner, std::string_view(), std::string_view());
+		}
+		wallet_link wallet_link::from_public_key(const std::string_view& new_public_key)
+		{
+			return wallet_link(nullptr, new_public_key, std::string_view());
+		}
+		wallet_link wallet_link::from_address(const std::string_view& new_address)
+		{
+			return wallet_link(nullptr, std::string_view(), new_address);
+		}
+
+		value_transfer::value_transfer() : asset(0), value(decimal::nan())
 		{
 		}
-		token_utxo::token_utxo(const std::string_view& new_contract_address, const decimal& new_value) : contract_address(new_contract_address), value(new_value), decimals(0)
+		value_transfer::value_transfer(const algorithm::asset_id& new_asset, const std::string_view& new_address, decimal&& new_value) : asset(new_asset), address(new_address), value(std::move(new_value))
 		{
 		}
-		token_utxo::token_utxo(const std::string_view& new_contract_address, const std::string_view& new_symbol, const decimal& new_value, uint8_t new_decimals) : contract_address(new_contract_address), symbol(new_symbol), value(new_value), decimals(new_decimals)
+		bool value_transfer::is_valid() const
+		{
+			return !stringify::is_empty_or_whitespace(address) && (value.is_zero() || value.is_positive());
+		}
+
+		coin_utxo::token_utxo::token_utxo() : decimals(0)
 		{
 		}
-		decimal token_utxo::get_divisibility()
+		coin_utxo::token_utxo::token_utxo(const algorithm::asset_id& new_asset, const decimal& new_value) : contract_address(algorithm::asset::handle_of(new_asset)), value(new_value), decimals(0)
+		{
+		}
+		coin_utxo::token_utxo::token_utxo(const std::string_view& new_contract_address, const std::string_view& new_symbol, const decimal& new_value, uint8_t new_decimals) : contract_address(new_contract_address), symbol(new_symbol), value(new_value), decimals(new_decimals)
+		{
+		}
+		decimal coin_utxo::token_utxo::get_divisibility() const
 		{
 			decimal divisibility = decimals > 0 ? decimal("1" + string(decimals, '0')) : decimal(1);
 			return divisibility.truncate(protocol::now().message.precision);
 		}
-		bool token_utxo::is_coin_valid() const
+		algorithm::asset_id coin_utxo::token_utxo::get_asset(const algorithm::asset_id& base_asset) const
 		{
+			return is_account() ? algorithm::asset::id_of_handle(contract_address) : algorithm::asset::id_of(algorithm::asset::blockchain_of(base_asset), symbol, contract_address);
+		}
+		bool coin_utxo::token_utxo::is_account() const
+		{
+			return symbol.empty() && decimals == 0;
+		}
+		bool coin_utxo::token_utxo::is_valid() const
+		{
+			if (is_account())
+				return algorithm::asset::id_of_handle(contract_address) > 0 && !value.is_negative() && !value.is_nan();
+
 			return !contract_address.empty() && !symbol.empty() && !value.is_negative() && !value.is_nan();
 		}
 
-		coin_utxo::coin_utxo(const std::string_view& new_transaction_id, const std::string_view& new_address, option<uint64_t>&& new_address_index, decimal&& new_value, uint32_t new_index) : transaction_id(new_transaction_id), address(new_address), value(std::move(new_value)), address_index(new_address_index), index(new_index)
+		coin_utxo::coin_utxo(wallet_link&& new_link, unordered_map<algorithm::asset_id, decimal>&& new_values) : link(std::move(new_link)), index(std::numeric_limits<uint32_t>::max())
+		{
+			for (auto& [asset, asset_value] : new_values)
+			{
+				if (!algorithm::asset::token_of(asset).empty())
+				{
+					apply_token_value(algorithm::asset::handle_of(asset), std::string_view(), std::move(asset_value), 0);
+					if (transaction_id.empty())
+						transaction_id = algorithm::asset::base_handle_of(asset);
+					if (value.is_nan())
+						value = decimal::zero();
+				}
+				else
+				{
+					transaction_id = algorithm::asset::handle_of(asset);
+					value = std::move(asset_value);
+				}
+			}
+		}
+		coin_utxo::coin_utxo(wallet_link&& new_link, const std::string_view& new_transaction_id, uint64_t new_index, decimal&& new_value) : link(std::move(new_link)), transaction_id(new_transaction_id), value(std::move(new_value)), index(new_index)
 		{
 		}
 		void coin_utxo::apply_token_value(const std::string_view& contract_address, const std::string_view& symbol, const decimal& new_value, uint8_t decimals)
@@ -78,731 +232,44 @@ namespace tangent
 
 			return optional::none;
 		}
-		bool coin_utxo::is_valid() const
-		{
-			for (auto& token : tokens)
-			{
-				if (!token.is_coin_valid())
-					return false;
-			}
-
-			return !transaction_id.empty() && !value.is_nan() && !value.is_negative() && !stringify::is_empty_or_whitespace(address);
-		}
-
-		transferer::transferer() : value(decimal::nan())
-		{
-		}
-		transferer::transferer(const std::string_view& new_address, option<uint64_t>&& new_address_index, decimal&& new_value) : address(new_address), value(std::move(new_value)), address_index(new_address_index)
-		{
-		}
-		bool transferer::is_valid() const
-		{
-			return !stringify::is_empty_or_whitespace(address) && (value.is_zero() || value.is_positive());
-		}
-
-		master_wallet::master_wallet(secret_box&& new_seeding_key, secret_box&& new_signing_key, string&& new_verifying_key) : seeding_key(std::move(new_seeding_key)), signing_key(std::move(new_signing_key)), verifying_key(std::move(new_verifying_key))
-		{
-		}
-		bool master_wallet::store_payload(format::stream* stream) const
+		bool coin_utxo::store_payload(format::stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_integer(max_address_index);
-			stream->write_string(seeding_key.expose<KEY_LIMIT>().view);
-			stream->write_string(signing_key.expose<KEY_LIMIT>().view);
-			stream->write_string(verifying_key);
-			return true;
-		}
-		bool master_wallet::load_payload(format::stream& stream)
-		{
-			if (!stream.read_integer(stream.read_type(), &max_address_index))
+			if (!link.store_payload(stream))
 				return false;
 
-			string seeding_key_data;
-			if (!stream.read_string(stream.read_type(), &seeding_key_data))
-				return false;
-
-			string signing_key_data;
-			if (!stream.read_string(stream.read_type(), &signing_key_data))
-				return false;
-
-			if (!stream.read_string(stream.read_type(), &verifying_key))
-				return false;
-
-			seeding_key = secret_box::secure(seeding_key_data);
-			signing_key = secret_box::secure(signing_key_data);
-			return true;
-		}
-		bool master_wallet::is_valid() const
-		{
-			return !is_secret_box_empty_or_whitespace(seeding_key) && !is_secret_box_empty_or_whitespace(signing_key) && !stringify::is_empty_or_whitespace(verifying_key);
-		}
-		uptr<schema> master_wallet::as_schema() const
-		{
-			schema* data = var::set::object();
-			data->set("seeding_key", var::string(seeding_key.expose<KEY_LIMIT>().view));
-			data->set("signing_key", var::string(signing_key.expose<KEY_LIMIT>().view));
-			data->set("verifying_key", var::string(verifying_key));
-			data->set("max_address_index", algorithm::encoding::serialize_uint256(max_address_index));
-			return data;
-		}
-		uint256_t master_wallet::as_hash(bool renew) const
-		{
-			if (!renew && checksum != 0)
-				return checksum;
-
-			format::stream message;
-			message.write_string(*crypto::hash_hex(digests::sha512(), signing_key.expose<KEY_LIMIT>().view));
-			((master_wallet*)this)->checksum = message.hash();
-			return checksum;
-		}
-		uint32_t master_wallet::as_type() const
-		{
-			return as_instance_type();
-		}
-		std::string_view master_wallet::as_typename() const
-		{
-			return as_instance_typename();
-		}
-		uint32_t master_wallet::as_instance_type()
-		{
-			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
-			return hash;
-		}
-		std::string_view master_wallet::as_instance_typename()
-		{
-			return "observer_master_wallet";
-		}
-
-		derived_verifying_wallet::derived_verifying_wallet(address_map&& new_addresses, option<uint64_t>&& new_address_index, string&& new_verifying_key) : addresses(std::move(new_addresses)), address_index(std::move(new_address_index)), verifying_key(std::move(new_verifying_key))
-		{
-		}
-		bool derived_verifying_wallet::store_payload(format::stream* stream) const
-		{
-			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_boolean(!!address_index);
-			if (address_index)
-				stream->write_integer(*address_index);
-			stream->write_integer((uint8_t)addresses.size());
-			for (auto& address : addresses)
+			stream->write_string_raw(transaction_id);
+			stream->write_integer(index);
+			stream->write_decimal(value);
+			stream->write_integer((uint32_t)tokens.size());
+			for (auto& item : tokens)
 			{
-				stream->write_integer(address.first);
-				stream->write_string(address.second);
-			}
-			stream->write_string(verifying_key);
-			return true;
-		}
-		bool derived_verifying_wallet::load_payload(format::stream& stream)
-		{
-			bool has_address_index;
-			if (!stream.read_boolean(stream.read_type(), &has_address_index))
-				return false;
-
-			address_index = has_address_index ? option<uint64_t>(0) : option<uint64_t>(optional::none);
-			if (address_index && !stream.read_integer(stream.read_type(), address_index.address()))
-				return false;
-
-			uint8_t addresses_size;
-			if (!stream.read_integer(stream.read_type(), &addresses_size))
-				return false;
-
-			addresses.clear();
-			for (uint8_t i = 0; i < addresses_size; i++)
-			{
-				uint8_t version;
-				if (!stream.read_integer(stream.read_type(), &version))
-					return false;
-
-				string address;
-				if (!stream.read_string(stream.read_type(), &address))
-					return false;
-
-				addresses[version] = std::move(address);
-			}
-
-			if (!stream.read_string(stream.read_type(), &verifying_key))
-				return false;
-
-			return true;
-		}
-		bool derived_verifying_wallet::is_valid() const
-		{
-			if (addresses.empty())
-				return false;
-
-			if (stringify::is_empty_or_whitespace(verifying_key))
-				return false;
-
-			for (auto& address : addresses)
-			{
-				if (stringify::is_empty_or_whitespace(address.second))
-					return false;
-			}
-
-			return true;
-		}
-		uptr<schema> derived_verifying_wallet::as_schema() const
-		{
-			schema* data = var::set::object();
-			auto* addresses_data = data->set("addresses", var::set::array());
-			for (auto& address : addresses)
-				addresses_data->push(var::string(address.second));
-			data->set("address_index", address_index ? algorithm::encoding::serialize_uint256(*address_index) : var::set::null());
-			data->set("verifying_key", var::string(verifying_key));
-			return data;
-		}
-		uint32_t derived_verifying_wallet::as_type() const
-		{
-			return as_instance_type();
-		}
-		std::string_view derived_verifying_wallet::as_typename() const
-		{
-			return as_instance_typename();
-		}
-		uint32_t derived_verifying_wallet::as_instance_type()
-		{
-			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
-			return hash;
-		}
-		std::string_view derived_verifying_wallet::as_instance_typename()
-		{
-			return "observer_derived_verifying_wallet";
-		}
-
-		derived_signing_wallet::derived_signing_wallet(derived_verifying_wallet&& new_wallet, secret_box&& new_signing_key) : derived_verifying_wallet(std::move(new_wallet)), signing_key(std::move(new_signing_key))
-		{
-		}
-		bool derived_signing_wallet::store_payload(format::stream* stream) const
-		{
-			VI_ASSERT(stream != nullptr, "stream should be set");
-			if (!derived_verifying_wallet::store_payload(stream))
-				return false;
-
-			stream->write_string(signing_key.expose<KEY_LIMIT>().view);
-			return true;
-		}
-		bool derived_signing_wallet::load_payload(format::stream& stream)
-		{
-			if (!derived_verifying_wallet::load_payload(stream))
-				return false;
-
-			string raw_signing_key;
-			if (!stream.read_string(stream.read_type(), &raw_signing_key))
-				return false;
-
-			signing_key = secret_box::secure(raw_signing_key);
-			return true;
-		}
-		bool derived_signing_wallet::is_valid() const
-		{
-			return derived_verifying_wallet::is_valid() && !is_secret_box_empty_or_whitespace(signing_key);
-		}
-		uptr<schema> derived_signing_wallet::as_schema() const
-		{
-			schema* data = derived_verifying_wallet::as_schema().reset();
-			data->set("signing_key", var::string(signing_key.expose<KEY_LIMIT>().view));
-			return data;
-		}
-		uint32_t derived_signing_wallet::as_type() const
-		{
-			return as_instance_type();
-		}
-		std::string_view derived_signing_wallet::as_typename() const
-		{
-			return as_instance_typename();
-		}
-		uint32_t derived_signing_wallet::as_instance_type()
-		{
-			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
-			return hash;
-		}
-		std::string_view derived_signing_wallet::as_instance_typename()
-		{
-			return "observer_derived_signing_wallet";
-		}
-
-		dynamic_wallet::dynamic_wallet() : parent(optional::none), verifying_child(optional::none), signing_child(optional::none)
-		{
-		}
-		dynamic_wallet::dynamic_wallet(const master_wallet& value) : parent(value), verifying_child(optional::none), signing_child(optional::none)
-		{
-			if (!parent->is_valid())
-				parent = optional::none;
-		}
-		dynamic_wallet::dynamic_wallet(const derived_verifying_wallet& value) : parent(optional::none), verifying_child(value), signing_child(optional::none)
-		{
-			if (!verifying_child->is_valid())
-				verifying_child = optional::none;
-		}
-		dynamic_wallet::dynamic_wallet(const derived_signing_wallet& value) : parent(optional::none), verifying_child(optional::none), signing_child(value)
-		{
-			if (!signing_child->is_valid())
-				signing_child = optional::none;
-		}
-		option<string> dynamic_wallet::get_binding() const
-		{
-			const string* verifying_key = nullptr;
-			if (parent)
-				verifying_key = &parent->verifying_key;
-			else if (verifying_child)
-				verifying_key = &verifying_child->verifying_key;
-			else if (signing_child)
-				verifying_key = &signing_child->verifying_key;
-			if (!verifying_key)
-				return optional::none;
-
-			return algorithm::hashing::hash256((uint8_t*)verifying_key->data(), verifying_key->size());
-		}
-		bool dynamic_wallet::is_valid() const
-		{
-			return (parent && parent->is_valid()) || (verifying_child && verifying_child->is_valid()) || (signing_child && signing_child->is_valid());
-		}
-
-		incoming_transaction::incoming_transaction() : asset(0), block_id(0)
-		{
-		}
-		bool incoming_transaction::store_payload(format::stream* stream) const
-		{
-			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_integer(asset);
-			stream->write_integer(block_id);
-			stream->write_string(transaction_id);
-			stream->write_decimal(fee);
-			stream->write_integer((uint32_t)from.size());
-			for (auto& item : from)
-			{
-				stream->write_string(item.address);
-				stream->write_boolean(!!item.address_index);
-				if (item.address_index)
-					stream->write_integer(*item.address_index);
-				stream->write_decimal(item.value);
-			}
-			stream->write_integer((uint32_t)to.size());
-			for (auto& item : to)
-			{
-				stream->write_string(item.address);
-				stream->write_boolean(!!item.address_index);
-				if (item.address_index)
-					stream->write_integer(*item.address_index);
-				stream->write_decimal(item.value);
-			}
-			return true;
-		}
-		bool incoming_transaction::load_payload(format::stream& stream)
-		{
-			if (!stream.read_integer(stream.read_type(), &asset))
-				return false;
-
-			if (!stream.read_integer(stream.read_type(), &block_id))
-				return false;
-
-			if (!stream.read_string(stream.read_type(), &transaction_id))
-				return false;
-
-			if (!stream.read_decimal(stream.read_type(), &fee))
-				return false;
-
-			uint32_t from_size;
-			if (!stream.read_integer(stream.read_type(), &from_size))
-				return false;
-
-			from.reserve(from_size);
-			for (size_t i = 0; i < from_size; i++)
-			{
-				transferer transferer;
-				if (!stream.read_string(stream.read_type(), &transferer.address))
-					return false;
-
-				bool has_address_index;
-				if (!stream.read_boolean(stream.read_type(), &has_address_index))
-					return false;
-
-				transferer.address_index = has_address_index ? option<uint64_t>(0) : option<uint64_t>(optional::none);
-				if (transferer.address_index && !stream.read_integer(stream.read_type(), transferer.address_index.address()))
-					return false;
-
-				if (!stream.read_decimal(stream.read_type(), &transferer.value))
-					return false;
-
-				from.emplace_back(std::move(transferer));
-			}
-
-			uint32_t to_size;
-			if (!stream.read_integer(stream.read_type(), &to_size))
-				return false;
-
-			to.reserve(to_size);
-			for (size_t i = 0; i < to_size; i++)
-			{
-				transferer transferer;
-				if (!stream.read_string(stream.read_type(), &transferer.address))
-					return false;
-
-				bool has_address_index;
-				if (!stream.read_boolean(stream.read_type(), &has_address_index))
-					return false;
-
-				transferer.address_index = has_address_index ? option<uint64_t>(0) : option<uint64_t>(optional::none);
-				if (transferer.address_index && !stream.read_integer(stream.read_type(), transferer.address_index.address()))
-					return false;
-
-				if (!stream.read_decimal(stream.read_type(), &transferer.value))
-					return false;
-
-				to.emplace_back(std::move(transferer));
-			}
-
-			return true;
-		}
-		bool incoming_transaction::is_valid() const
-		{
-			if (from.empty() || to.empty())
-				return false;
-
-			if (fee.is_negative() || fee.is_nan())
-				return false;
-
-			decimal input = 0.0;
-			for (auto& address : from)
-			{
-				if (!address.value.is_positive() && !address.value.is_zero())
-					return false;
-				input += address.value;
-			}
-
-			if (input < fee)
-				return false;
-
-			decimal output = 0.0;
-			for (auto& address : to)
-			{
-				if (!address.is_valid())
-					return false;
-				output += address.value;
-			}
-
-			return algorithm::asset::is_valid(asset) && !stringify::is_empty_or_whitespace(transaction_id) && output <= input;
-		}
-		void incoming_transaction::set_transaction(const algorithm::asset_id& new_asset, uint64_t new_block_id, const std::string_view& new_transaction_id, decimal&& new_fee)
-		{
-			block_id = new_block_id;
-			transaction_id = new_transaction_id;
-			asset = new_asset;
-			fee = std::move(new_fee);
-		}
-		void incoming_transaction::set_operations(vector<transferer>&& new_from, vector<transferer>&& new_to)
-		{
-			from = std::move(new_from);
-			to = std::move(new_to);
-		}
-		decimal incoming_transaction::get_input_value() const
-		{
-			decimal value = 0.0;
-			for (auto& address : to)
-				value += address.value;
-			return value;
-		}
-		decimal incoming_transaction::get_output_value() const
-		{
-			decimal value = 0.0;
-			for (auto& address : to)
-				value += address.value;
-			return value;
-		}
-		bool incoming_transaction::is_latency_approved() const
-		{
-			auto* chain = nss::server_node::get()->get_chain(asset);
-			if (!chain)
-				return false;
-
-			return block_id >= chain->get_chainparams().sync_latency;
-		}
-		bool incoming_transaction::is_approved() const
-		{
-			auto* server = nss::server_node::get();
-			auto* chain = server->get_chain(asset);
-			if (!chain)
-				return false;
-
-			auto latest_block_id = server->get_latest_known_block_height(asset).or_else(0);
-			if (latest_block_id < block_id)
-				return block_id >= chain->get_chainparams().sync_latency;
-
-			return latest_block_id - block_id >= chain->get_chainparams().sync_latency;
-		}
-		uptr<schema> incoming_transaction::as_schema() const
-		{
-			schema* data = var::set::object();
-			auto* from_data = data->set("from", var::set::array());
-			for (auto& item : from)
-			{
-				auto* coin_data = from_data->push(var::set::object());
-				coin_data->set("address", var::string(item.address));
-				coin_data->set("address_index", item.address_index ? algorithm::encoding::serialize_uint256(*item.address_index) : var::set::null());
-				coin_data->set("value", var::decimal(item.value));
-			}
-			auto* to_data = data->set("to", var::set::array());
-			for (auto& item : to)
-			{
-				auto* coin_data = to_data->push(var::set::object());
-				coin_data->set("address", var::string(item.address));
-				coin_data->set("address_index", item.address_index ? algorithm::encoding::serialize_uint256(*item.address_index) : var::set::null());
-				coin_data->set("value", var::decimal(item.value));
-			}
-			data->set("asset", algorithm::asset::serialize(asset));
-			data->set("transaction_id", var::string(transaction_id));
-			data->set("block_id", algorithm::encoding::serialize_uint256(block_id));
-			data->set("fee", var::decimal(fee));
-			return data;
-		}
-		uint32_t incoming_transaction::as_type() const
-		{
-			return as_instance_type();
-		}
-		std::string_view incoming_transaction::as_typename() const
-		{
-			return as_instance_typename();
-		}
-		uint32_t incoming_transaction::as_instance_type()
-		{
-			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
-			return hash;
-		}
-		std::string_view incoming_transaction::as_instance_typename()
-		{
-			return "observer_incoming_transaction";
-		}
-
-		outgoing_transaction::outgoing_transaction() : inputs(optional::none), outputs(optional::none)
-		{
-		}
-		outgoing_transaction::outgoing_transaction(incoming_transaction&& new_transaction, const std::string_view& new_data, option<vector<coin_utxo>>&& new_inputs, option<vector<coin_utxo>>&& new_outputs) : inputs(std::move(new_inputs)), outputs(std::move(new_outputs)), transaction(std::move(new_transaction)), data(new_data)
-		{
-		}
-		bool outgoing_transaction::store_payload(format::stream* stream) const
-		{
-			VI_ASSERT(stream != nullptr, "stream should be set");
-			if (!transaction.store_payload(stream))
-				return false;
-
-			stream->write_string(data);
-			stream->write_integer(inputs ? (uint32_t)inputs->size() : (uint32_t)0);
-			if (inputs)
-			{
-				for (auto& item : *inputs)
-				{
-					index_utxo next;
-					next.UTXO = item;
-					if (!next.store_payload(stream))
-						return false;
-				}
-			}
-
-			stream->write_integer(outputs ? (uint32_t)outputs->size() : (uint32_t)0);
-			if (outputs)
-			{
-				for (auto& item : *outputs)
-				{
-					index_utxo next;
-					next.UTXO = item;
-					if (!next.store_payload(stream))
-						return false;
-				}
-			}
-			return true;
-		}
-		bool outgoing_transaction::load_payload(format::stream& stream)
-		{
-			if (!transaction.load_payload(stream))
-				return false;
-
-			if (!stream.read_string(stream.read_type(), &data))
-				return false;
-
-			uint32_t inputs_size;
-			if (!stream.read_integer(stream.read_type(), &inputs_size))
-				return false;
-
-			if (inputs_size > 0)
-			{
-				inputs = vector<coin_utxo>();
-				inputs->reserve(inputs_size);
-				for (size_t i = 0; i < inputs_size; i++)
-				{
-					index_utxo next;
-					if (!next.load_payload(stream))
-						return false;
-
-					inputs->emplace_back(std::move(next.UTXO));
-				}
-			}
-
-			uint32_t outputs_size;
-			if (!stream.read_integer(stream.read_type(), &outputs_size))
-				return false;
-
-			if (outputs_size > 0)
-			{
-				outputs = vector<coin_utxo>();
-				outputs->reserve(outputs_size);
-				for (size_t i = 0; i < outputs_size; i++)
-				{
-					index_utxo next;
-					if (!next.load_payload(stream))
-						return false;
-
-					outputs->emplace_back(std::move(next.UTXO));
-				}
-			}
-
-			return true;
-		}
-		bool outgoing_transaction::is_valid() const
-		{
-			if (inputs)
-			{
-				for (auto& item : *inputs)
-				{
-					if (!item.is_valid())
-						return false;
-				}
-			}
-
-			if (outputs)
-			{
-				for (auto& item : *outputs)
-				{
-					if (!item.is_valid())
-						return false;
-				}
-			}
-			return transaction.is_valid() && !data.empty();
-		}
-		uptr<schema> outgoing_transaction::as_schema() const
-		{
-			schema* data = var::set::object();
-			data->set("transaction_info", transaction.as_schema().reset());
-			data->set("transaction_data", var::string(this->data));
-			return data;
-		}
-		uint32_t outgoing_transaction::as_type() const
-		{
-			return as_instance_type();
-		}
-		std::string_view outgoing_transaction::as_typename() const
-		{
-			return as_instance_typename();
-		}
-		uint32_t outgoing_transaction::as_instance_type()
-		{
-			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
-			return hash;
-		}
-		std::string_view outgoing_transaction::as_instance_typename()
-		{
-			return "observer_outgoing_transaction";
-		}
-
-		bool index_address::store_payload(format::stream* stream) const
-		{
-			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_string(binding);
-			stream->write_string(address);
-			stream->write_boolean(!!address_index);
-			if (address_index)
-				stream->write_integer(*address_index);
-			return true;
-		}
-		bool index_address::load_payload(format::stream& stream)
-		{
-			if (!stream.read_string(stream.read_type(), &binding))
-				return false;
-
-			if (!stream.read_string(stream.read_type(), &address))
-				return false;
-
-			bool has_address_index;
-			if (!stream.read_boolean(stream.read_type(), &has_address_index))
-				return false;
-
-			address_index = has_address_index ? option<uint64_t>(0) : option<uint64_t>(optional::none);
-			if (address_index && !stream.read_integer(stream.read_type(), address_index.address()))
-				return false;
-
-			return true;
-		}
-		uptr<schema> index_address::as_schema() const
-		{
-			schema* data = var::set::object();
-			data->set("address", var::string(address));
-			data->set("address_index", address_index ? algorithm::encoding::serialize_uint256(*address_index) : var::set::null());
-			data->set("binding", var::string(binding));
-			return data;
-		}
-		uint32_t index_address::as_type() const
-		{
-			return as_instance_type();
-		}
-		std::string_view index_address::as_typename() const
-		{
-			return as_instance_typename();
-		}
-		uint32_t index_address::as_instance_type()
-		{
-			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
-			return hash;
-		}
-		std::string_view index_address::as_instance_typename()
-		{
-			return "observer_index_address";
-		}
-
-		bool index_utxo::store_payload(format::stream* stream) const
-		{
-			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_string(UTXO.address);
-			stream->write_boolean(!!UTXO.address_index);
-			if (UTXO.address_index)
-				stream->write_integer(*UTXO.address_index);
-			stream->write_string(UTXO.transaction_id);
-			stream->write_integer(UTXO.index);
-			stream->write_decimal(UTXO.value);
-			stream->write_integer((uint32_t)UTXO.tokens.size());
-			for (auto& item : UTXO.tokens)
-			{
-				stream->write_string(item.contract_address);
+				stream->write_string_raw(item.contract_address);
 				stream->write_string(item.symbol);
 				stream->write_decimal(item.value);
 				stream->write_integer(item.decimals);
 			}
 			return true;
 		}
-		bool index_utxo::load_payload(format::stream& stream)
+		bool coin_utxo::load_payload(format::stream& stream)
 		{
-			if (!stream.read_string(stream.read_type(), &UTXO.address))
+			if (!link.load_payload(stream))
 				return false;
 
-			bool has_address_index;
-			if (!stream.read_boolean(stream.read_type(), &has_address_index))
+			if (!stream.read_string(stream.read_type(), &transaction_id))
 				return false;
 
-			UTXO.address_index = has_address_index ? option<uint64_t>(0) : option<uint64_t>(optional::none);
-			if (UTXO.address_index && !stream.read_integer(stream.read_type(), UTXO.address_index.address()))
+			if (!stream.read_integer(stream.read_type(), &index))
 				return false;
 
-			if (!stream.read_string(stream.read_type(), &UTXO.transaction_id))
-				return false;
-
-			if (!stream.read_integer(stream.read_type(), &UTXO.index))
-				return false;
-
-			if (!stream.read_decimal(stream.read_type(), &UTXO.value))
+			if (!stream.read_decimal(stream.read_type(), &value))
 				return false;
 
 			uint32_t size;
 			if (!stream.read_integer(stream.read_type(), &size))
 				return false;
 
-			UTXO.tokens.reserve(size);
+			tokens.reserve(size);
 			for (uint32_t i = 0; i < size; i++)
 			{
 				token_utxo token;
@@ -818,63 +285,606 @@ namespace tangent
 				if (!stream.read_integer(stream.read_type(), &token.decimals))
 					return false;
 
-				UTXO.tokens.emplace_back(std::move(token));
+				tokens.emplace_back(std::move(token));
 			}
 
 			return true;
 		}
-		uptr<schema> index_utxo::as_schema() const
+		bool coin_utxo::is_account() const
 		{
+			return index == std::numeric_limits<uint32_t>::max();
+		}
+		bool coin_utxo::is_valid_input() const
+		{
+			for (auto& token : tokens)
+			{
+				if (!token.is_valid())
+					return false;
+			}
+
+			if (!is_account())
+				return !transaction_id.empty() && !value.is_nan() && !value.is_negative() && link.has_all();
+
+			if (!algorithm::asset::id_of_handle(transaction_id))
+				return false;
+
+			return !value.is_nan() && !value.is_negative() && link.has_all();
+		}
+		bool coin_utxo::is_valid_output() const
+		{
+			if (is_account() && !algorithm::asset::id_of_handle(transaction_id))
+				return false;
+
+			for (auto& token : tokens)
+			{
+				if (!token.is_valid())
+					return false;
+			}
+
+			return !value.is_nan() && !value.is_negative() && (link.has_public_key() || link.has_address());
+		}
+		algorithm::asset_id coin_utxo::get_asset(const algorithm::asset_id& base_asset) const
+		{
+			return is_account() ? algorithm::asset::id_of_handle(transaction_id) : base_asset;
+		}
+		uptr<schema> coin_utxo::as_schema() const
+		{
+			bool account = is_account();
 			schema* data = var::set::object();
-			auto* utxo_data = data->set("utxo", var::set::object());
-			auto* tokens_data = utxo_data->set("tokens", var::set::array());
-			for (auto& item : UTXO.tokens)
+			data->set("link", link.as_schema().reset());
+			if (!account)
+			{
+				data->set("transaction_id", var::string(transaction_id));
+				data->set("index", var::integer(index));
+			}
+			else
+				data->set("asset", algorithm::asset::serialize(get_asset(0)));
+			data->set("value", var::decimal(value));
+			data->set("type", var::string(is_account() ? "account" : "utxo"));
+			auto* tokens_data = data->set("tokens", var::set::array());
+			for (auto& item : tokens)
 			{
 				auto* token_data = tokens_data->push(var::set::object());
-				token_data->set("contract_address", var::string(item.contract_address));
-				token_data->set("symbol", var::string(item.symbol));
-				token_data->set("value", var::decimal(item.value));
-				token_data->set("Decimals", var::integer(item.decimals));
+				if (!item.is_account())
+				{
+					token_data->set("contract_address", var::string(item.contract_address));
+					token_data->set("symbol", var::string(item.symbol));
+					token_data->set("value", var::decimal(item.value));
+					token_data->set("decimals", var::integer(item.decimals));
+				}
+				else
+				{
+					token_data->set("asset", algorithm::asset::serialize(item.get_asset(0)));
+					token_data->set("value", var::decimal(item.value));
+				}
 			}
-			data->set("transaction_id", var::string(UTXO.transaction_id));
-			data->set("address", var::string(UTXO.address));
-			data->set("address_index", UTXO.address_index ? algorithm::encoding::serialize_uint256(*UTXO.address_index) : var::set::null());
-			data->set("value", var::decimal(UTXO.value));
-			data->set("index", var::integer(UTXO.index));
-			data->set("binding", var::string(binding));
 			return data;
 		}
-		uint32_t index_utxo::as_type() const
+		uint32_t coin_utxo::as_type() const
 		{
 			return as_instance_type();
 		}
-		std::string_view index_utxo::as_typename() const
+		std::string_view coin_utxo::as_typename() const
 		{
 			return as_instance_typename();
 		}
-		uint32_t index_utxo::as_instance_type()
+		uint32_t coin_utxo::as_instance_type()
 		{
 			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
 			return hash;
 		}
-		std::string_view index_utxo::as_instance_typename()
+		std::string_view coin_utxo::as_instance_typename()
 		{
-			return "observer_index_utxo";
+			return "mediator_coin_utxo";
 		}
 
-		base_fee::base_fee() : price(decimal::nan()), limit(decimal::nan())
+		bool computed_transaction::store_payload(format::stream* stream) const
+		{
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_integer(block_id);
+			stream->write_string_raw(transaction_id);
+			stream->write_integer((uint32_t)inputs.size());
+			for (auto& item : inputs)
+			{
+				if (!item.store_payload(stream))
+					return false;
+			}
+
+			stream->write_integer((uint32_t)outputs.size());
+			for (auto& item : outputs)
+			{
+				if (!item.store_payload(stream))
+					return false;
+			}
+
+			return true;
+		}
+		bool computed_transaction::load_payload(format::stream& stream)
+		{
+			if (!stream.read_integer(stream.read_type(), &block_id))
+				return false;
+
+			if (!stream.read_string(stream.read_type(), &transaction_id))
+				return false;
+
+			uint32_t inputs_size;
+			if (!stream.read_integer(stream.read_type(), &inputs_size))
+				return false;
+
+			inputs.clear();
+			inputs.reserve(inputs_size);
+			for (size_t i = 0; i < inputs_size; i++)
+			{
+				coin_utxo next;
+				if (!next.load_payload(stream))
+					return false;
+
+				inputs.emplace_back(std::move(next));
+			}
+
+			uint32_t outputs_size;
+			if (!stream.read_integer(stream.read_type(), &outputs_size))
+				return false;
+
+			outputs.clear();
+			outputs.reserve(outputs_size);
+			for (size_t i = 0; i < outputs_size; i++)
+			{
+				coin_utxo next;
+				if (!next.load_payload(stream))
+					return false;
+
+				outputs.emplace_back(std::move(next));
+			}
+
+			return true;
+		}
+		bool computed_transaction::is_valid() const
+		{
+			if (inputs.empty() || outputs.empty() || stringify::is_empty_or_whitespace(transaction_id))
+				return false;
+
+			unordered_map<algorithm::asset_id, decimal> balance;
+			for (auto& input : inputs)
+			{
+				if (!input.is_valid_output())
+					return false;
+
+				auto& balance_value = balance[0];
+				balance_value = balance_value.is_nan() ? -input.value : (balance_value - input.value);
+				for (auto& token : input.tokens)
+				{
+					balance_value = balance[algorithm::asset::id_of("_", token.symbol, token.contract_address)];
+					balance_value = balance_value.is_nan() ? -input.value : (balance_value - input.value);
+				}
+			}
+
+			for (auto& output : outputs)
+			{
+				if (!output.is_valid_output())
+					return false;
+
+				auto& balance_value = balance[0];
+				balance_value = balance_value.is_nan() ? output.value : (balance_value + output.value);
+				for (auto& token : output.tokens)
+				{
+					balance_value = balance[algorithm::asset::id_of("_", token.symbol, token.contract_address)];
+					balance_value = balance_value.is_nan() ? output.value : (balance_value + output.value);
+				}
+			}
+
+			for (auto& balance_value : balance)
+			{
+				if (balance_value.second > 0.0)
+					return false;
+			}
+
+			return true;
+		}
+		bool computed_transaction::is_mature(const algorithm::asset_id& asset) const
+		{
+			auto* server = nss::server_node::get();
+			auto* chain = server->get_chain(asset);
+			if (!chain)
+				return false;
+
+			auto latest_block_id = server->get_latest_known_block_height(asset).or_else(0);
+			if (latest_block_id < block_id)
+				return block_id >= chain->get_chainparams().sync_latency;
+
+			return latest_block_id - block_id >= chain->get_chainparams().sync_latency;
+		}
+		uptr<schema> computed_transaction::as_schema() const
+		{
+			schema* data = var::set::object();
+			data->set("transaction_id", var::string(transaction_id));
+			data->set("block_id", algorithm::encoding::serialize_uint256(block_id));
+			schema* input_data = data->set("inputs", var::array());
+			for (auto& input : inputs)
+				input_data->push(input.as_schema().reset());
+			schema* output_data = data->set("outputs", var::array());
+			for (auto& output : outputs)
+				output_data->push(output.as_schema().reset());
+			return data;
+		}
+		uint32_t computed_transaction::as_type() const
+		{
+			return as_instance_type();
+		}
+		std::string_view computed_transaction::as_typename() const
+		{
+			return as_instance_typename();
+		}
+		uint32_t computed_transaction::as_instance_type()
+		{
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
+		}
+		std::string_view computed_transaction::as_instance_typename()
+		{
+			return "mediator_computed_transaction";
+		}
+
+		prepared_transaction& prepared_transaction::requires_input(algorithm::composition::type new_alg, const algorithm::composition::cpubkey new_public_key, uint8_t* new_message, size_t new_message_size, coin_utxo&& input)
+		{
+			VI_ASSERT(new_public_key != nullptr, "public key should be set");
+			VI_ASSERT(new_message != nullptr, "message should be set");
+			signable_coin_utxo item;
+			item.utxo = std::move(input);
+			item.alg = new_alg;
+			item.message.resize(new_message_size);
+			memcpy(item.message.data(), new_message, new_message_size);
+			memcpy(item.public_key, new_public_key, sizeof(item.public_key));
+			inputs.push_back(std::move(item));
+			return *this;
+		}
+		prepared_transaction& prepared_transaction::requires_account_input(algorithm::composition::type new_alg, wallet_link&& signer, const algorithm::composition::cpubkey new_public_key, uint8_t* new_message, size_t new_message_size, unordered_map<algorithm::asset_id, decimal>&& input)
+		{
+			coin_utxo item = coin_utxo(std::move(signer), std::move(input));
+			return requires_input(new_alg, new_public_key, new_message, new_message_size, std::move(item));
+		}
+		prepared_transaction& prepared_transaction::requires_output(coin_utxo&& output)
+		{
+			outputs.push_back(std::move(output));
+			for (size_t i = 0; i < outputs.size(); i++)
+				outputs[i].index = (outputs[i].index == std::numeric_limits<uint32_t>::max() ? std::numeric_limits<uint32_t>::max() : (uint32_t)i);
+			return *this;
+		}
+		prepared_transaction& prepared_transaction::requires_account_output(const std::string_view& to_address, unordered_map<algorithm::asset_id, decimal>&& output)
+		{
+			coin_utxo item = coin_utxo(wallet_link::from_address(to_address), std::move(output));
+			outputs.push_back(std::move(item));
+			return *this;
+		}
+		prepared_transaction& prepared_transaction::requires_abi(format::variable&& value)
+		{
+			abi.push_back(std::move(value));
+			return *this;
+		}
+		format::variable* prepared_transaction::load_abi(size_t* ptr)
+		{
+			if (!ptr)
+				return abi.empty() ? nullptr : &abi[0];
+
+			return *ptr >= abi.size() ? nullptr : &abi[(*ptr)++];
+		}
+		bool prepared_transaction::store_payload(format::stream* stream) const
+		{
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			algorithm::pubkeyhash pkh_null = { 0 };
+			algorithm::composition::cpubkey cpk_null = { 0 };
+			algorithm::composition::cpubsig cps_null = { 0 };
+			stream->write_integer((uint32_t)inputs.size());
+			for (auto& item : inputs)
+			{
+				stream->write_integer((uint8_t)item.alg);
+				stream->write_string(std::string_view((char*)item.public_key, memcmp(item.public_key, cpk_null, sizeof(cpk_null)) ? 0 : algorithm::composition::size_of_public_key(item.alg)));
+				stream->write_string(std::string_view((char*)item.signature, memcmp(item.signature, cps_null, sizeof(cps_null)) ? 0 : algorithm::composition::size_of_signature(item.alg)));
+				stream->write_string(std::string_view((char*)item.message.data(), item.message.size()));
+				if (!item.utxo.store_payload(stream))
+					return false;
+			}
+
+			stream->write_integer((uint32_t)outputs.size());
+			for (auto& item : outputs)
+			{
+				if (!item.store_payload(stream))
+					return false;
+			}
+
+			return format::variables_util::serialize_merge_into(abi, stream);
+		}
+		bool prepared_transaction::load_payload(format::stream& stream)
+		{
+			uint32_t inputs_size;
+			if (!stream.read_integer(stream.read_type(), &inputs_size))
+				return false;
+
+			inputs.clear();
+			inputs.reserve(inputs_size);
+			for (size_t i = 0; i < inputs_size; i++)
+			{
+				signable_coin_utxo next;
+				if (!stream.read_integer(stream.read_type(), (uint8_t*)&next.alg))
+					return false;
+
+				string public_key_assembly;
+				if (!stream.read_string(stream.read_type(), &public_key_assembly) || !algorithm::encoding::decode_uint_blob(public_key_assembly, next.public_key, algorithm::composition::size_of_public_key(next.alg)))
+					return false;
+
+				string signature_assembly;
+				if (!stream.read_string(stream.read_type(), &signature_assembly) || !algorithm::encoding::decode_uint_blob(signature_assembly, next.signature, algorithm::composition::size_of_signature(next.alg)))
+					return false;
+
+				string message_assembly;
+				if (!stream.read_string(stream.read_type(), &message_assembly))
+					return false;
+
+				next.message.resize(message_assembly.size());
+				memcpy(next.message.data(), message_assembly.data(), message_assembly.size());
+				if (!next.utxo.load_payload(stream))
+					return false;
+
+				inputs.emplace_back(std::move(next));
+			}
+
+			uint32_t outputs_size;
+			if (!stream.read_integer(stream.read_type(), &outputs_size))
+				return false;
+
+			outputs.clear();
+			outputs.reserve(outputs_size);
+			for (size_t i = 0; i < outputs_size; i++)
+			{
+				coin_utxo next;
+				if (!next.load_payload(stream))
+					return false;
+
+				outputs.emplace_back(std::move(next));
+			}
+
+			abi.clear();
+			return format::variables_util::deserialize_merge_from(stream, &abi);
+		}
+		bool prepared_transaction::is_accumulation_required(size_t input_index) const
+		{
+			VI_ASSERT(input_index < inputs.size(), "input index outside of range");
+			auto& item = inputs[input_index];
+			algorithm::composition::cpubsig cps_null = { 0 };
+			size_t intermediate_size = algorithm::composition::size_of_signature(item.alg, algorithm::composition::stage::accumulate);
+			size_t final_size = algorithm::composition::size_of_signature(item.alg);
+			return !memcmp(item.signature, cps_null, sizeof(cps_null)) || !memcmp(item.signature + intermediate_size, cps_null + intermediate_size, final_size - intermediate_size);
+		}
+		prepared_transaction::status prepared_transaction::as_status() const
+		{
+			if (inputs.empty() || outputs.empty())
+				return status::invalid;
+
+			algorithm::composition::cpubkey null = { 0 };
+			for (auto& item : inputs)
+			{
+				if (item.alg == algorithm::composition::type::unknown || !memcmp(item.public_key, null, sizeof(null)) || item.message.empty() || !item.utxo.is_valid_input())
+					return status::invalid;
+			}
+
+			for (auto& item : outputs)
+			{
+				if (!item.is_valid_output())
+					return status::invalid;
+			}
+
+			for (size_t i = 0; i < inputs.size(); i++)
+			{
+				if (is_accumulation_required(i))
+					return status::requires_signature;
+			}
+
+			return status::requires_finalization;
+		}
+		uptr<schema> prepared_transaction::as_schema() const
+		{
+			std::string_view status;
+			switch (as_status())
+			{
+				case status::invalid:
+					status = "invalid";
+					break;
+				case status::requires_signature:
+					status = "requires_signature";
+					break;
+				case status::requires_finalization:
+					status = "requires_finalization";
+					break;
+				default:
+					status = "unknown";
+					break;
+			}
+
+			algorithm::composition::cpubkey null_cpk = { 0 };
+			algorithm::composition::cpubsig null_cps = { 0 };
+			schema* data = var::set::object();
+			schema* input_data = data->set("inputs", var::array());
+			for (auto& input : inputs)
+			{
+				auto* signer = input_data->push(var::set::object());
+				signer->set("utxo", input.utxo.as_schema().reset());
+				switch (input.alg)
+				{
+					case algorithm::composition::type::ed25519:
+						signer->set("type", var::string("ed25519"));
+						break;
+					case algorithm::composition::type::secp256k1:
+						signer->set("type", var::string("secp256k1"));
+						break;
+					case algorithm::composition::type::schnorr:
+						signer->set("type", var::string("schnorr"));
+						break;
+					case algorithm::composition::type::schnorr_taproot:
+						signer->set("type", var::string("schnorr_taproot"));
+						break;
+					default:
+						signer->set("type", var::null());
+						break;
+				}
+				signer->set("public_key", memcmp(input.public_key, null_cpk, sizeof(null_cpk)) ? var::string(format::util::encode_0xhex(std::string_view((char*)input.public_key, algorithm::composition::size_of_public_key(input.alg)))) : var::null());
+				signer->set("signature", memcmp(input.signature, null_cps, sizeof(null_cps)) ? var::string(format::util::encode_0xhex(std::string_view((char*)input.signature, algorithm::composition::size_of_signature(input.alg)))) : var::null());
+				signer->set("message", var::string(format::util::encode_0xhex(std::string_view((char*)input.message.data(), input.message.size()))));
+				signer->set("finalized", var::boolean(!is_accumulation_required(input_data->size() - 1)));
+			}
+			schema* output_data = data->set("outputs", var::array());
+			for (auto& output : outputs)
+				output_data->push(output.as_schema().reset());
+			data->set("abi", format::variables_util::serialize(abi));
+			data->set("status", var::string(status));
+			return data;
+		}
+		uint32_t prepared_transaction::as_type() const
+		{
+			return as_instance_type();
+		}
+		std::string_view prepared_transaction::as_typename() const
+		{
+			return as_instance_typename();
+		}
+		uint32_t prepared_transaction::as_instance_type()
+		{
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
+		}
+		std::string_view prepared_transaction::as_instance_typename()
+		{
+			return "mediator_prepared_transaction";
+		}
+
+		finalized_transaction::finalized_transaction(prepared_transaction&& new_prepared, string&& new_calldata, string&& new_hashdata, uint64_t new_locktime) : prepared(std::move(new_prepared)), calldata(std::move(new_calldata)), hashdata(std::move(new_hashdata)), locktime(new_locktime)
 		{
 		}
-		base_fee::base_fee(const decimal& new_price, const decimal& new_limit) : price(new_price), limit(new_limit)
+		bool finalized_transaction::store_payload(format::stream* stream) const
 		{
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			if (!prepared.store_payload(stream))
+				return false;
+			
+			stream->write_string(calldata);
+			stream->write_string(hashdata);
+			stream->write_integer(locktime);
+			return true;
 		}
-		decimal base_fee::get_fee() const
+		bool finalized_transaction::load_payload(format::stream& stream)
 		{
-			return price * limit;
+			if (!prepared.load_payload(stream))
+				return false;
+
+			if (!stream.read_string(stream.read_type(), &calldata))
+				return false;
+
+			if (!stream.read_string(stream.read_type(), &hashdata))
+				return false;
+
+			if (!stream.read_integer(stream.read_type(), &locktime))
+				return false;
+
+			return true;
 		}
-		bool base_fee::is_valid() const
+		bool finalized_transaction::is_valid() const
 		{
-			return price.is_positive() && !limit.is_nan() && limit >= 0.0;
+			return prepared.as_status() == prepared_transaction::status::requires_finalization && !calldata.empty() && !hashdata.empty();
+		}
+		computed_transaction finalized_transaction::as_computed() const
+		{
+			computed_transaction computed;
+			computed.transaction_id = hashdata;
+			computed.block_id = locktime;
+			computed.outputs = prepared.outputs;
+			computed.inputs.reserve(prepared.inputs.size());
+			for (auto& input : prepared.inputs)
+				computed.inputs.push_back(input.utxo);
+			return computed;
+		}
+		uptr<schema> finalized_transaction::as_schema() const
+		{
+			schema* data = var::set::object();
+			data->set("prepared", prepared.as_schema().reset());
+			data->set("computed", as_computed().as_schema().reset());
+			data->set("calldata", var::string(calldata));
+			data->set("hashdata", var::string(hashdata));
+			data->set("locktime", algorithm::encoding::serialize_uint256(locktime));
+			return data;
+		}
+		uint32_t finalized_transaction::as_type() const
+		{
+			return as_instance_type();
+		}
+		std::string_view finalized_transaction::as_typename() const
+		{
+			return as_instance_typename();
+		}
+		uint32_t finalized_transaction::as_instance_type()
+		{
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
+		}
+		std::string_view finalized_transaction::as_instance_typename()
+		{
+			return "mediator_finalized_transaction";
+		}
+
+		decimal computed_fee::get_max_fee() const
+		{
+			switch (type)
+			{
+				case fee_type::fee:
+					return fee.fee_rate * decimal(fee.byte_rate);
+				case fee_type::gas:
+					return gas.gas_price * gas.gas_limit.to_decimal();
+				default:
+					return decimal::zero();
+			}
+		}
+		bool computed_fee::is_flat_fee() const
+		{
+			return type == fee_type::fee && fee.byte_rate == 1;
+		}
+		bool computed_fee::is_valid() const
+		{
+			switch (type)
+			{
+				case fee_type::fee:
+					return fee.fee_rate.is_positive() && fee.byte_rate > 0;
+				case fee_type::gas:
+					return !gas.gas_base_price.is_nan() && !gas.gas_base_price.is_negative() && gas.gas_price.is_positive() && gas.gas_base_price <= gas.gas_price && gas.gas_limit > 0;
+				default:
+					return false;
+			}
+		}
+		computed_fee computed_fee::flat_fee(const decimal& fee)
+		{
+			return fee_per_byte(fee, 1);
+		}
+		computed_fee computed_fee::fee_per_byte(const decimal& rate, size_t bytes)
+		{
+			computed_fee result;
+			result.type = fee_type::fee;
+			result.fee.fee_rate = rate;
+			result.fee.byte_rate = bytes;
+			return result;
+		}
+		computed_fee computed_fee::fee_per_kilobyte(const decimal& rate)
+		{
+			return fee_per_byte(rate, 1024);
+		}
+		computed_fee computed_fee::fee_per_gas(const decimal& price, const uint256_t& limit)
+		{
+			return fee_per_gas_priority(decimal::zero(), price, limit);
+		}
+		computed_fee computed_fee::fee_per_gas_priority(const decimal& base_price, const decimal& priority_price, const uint256_t& limit)
+		{
+			computed_fee result;
+			result.type = fee_type::gas;
+			result.gas.gas_base_price = base_price;
+			result.gas.gas_price = priority_price;
+			result.gas.gas_limit = limit;
+			return result;
 		}
 
 		void chain_supervisor_options::set_checkpoint_from_block(uint64_t block_height)
@@ -951,53 +961,10 @@ namespace tangent
 			return options;
 		}
 
-		server_relay::server_relay(const std::string_view& node_url, double node_throttling) noexcept : throttling(node_throttling), latest(0), allowed(true), user_data(nullptr)
+		server_relay::server_relay(unordered_map<string, string>&& node_urls, double node_rps) noexcept : urls(std::move(node_urls)), latest(0), rps(node_rps), allowed(true), user_data(nullptr)
 		{
-			for (auto& path : stringify::split(node_url, ';'))
-			{
-				if (stringify::starts_with(path, "jsonrpc="))
-				{
-					paths.json_rpc_path = path.substr(8);
-					paths.json_rpc_distinct = true;
-				}
-				else if (stringify::starts_with(path, "rest="))
-				{
-					paths.rest_path = path.substr(5);
-					paths.rest_distinct = true;
-				}
-				else if (stringify::starts_with(path, "http="))
-				{
-					paths.http_path = path.substr(5);
-					paths.http_distinct = true;
-				}
-			}
-			if (paths.http_path.empty())
-			{
-				size_t index = node_url.find('=');
-				if (index != std::string::npos)
-				{
-					paths.http_path = node_url.substr(index + 1);
-					paths.http_distinct = true;
-				}
-				else
-				{
-					paths.http_path = node_url;
-					paths.http_distinct = false;
-				}
-			}
-			if (paths.json_rpc_path.empty())
-			{
-				paths.json_rpc_path = paths.http_path;
-				paths.json_rpc_distinct = false;
-			}
-			if (paths.rest_path.empty())
-			{
-				paths.rest_path = paths.http_path;
-				paths.rest_distinct = false;
-			}
-			stringify::trim(paths.json_rpc_path);
-			stringify::trim(paths.rest_path);
-			stringify::trim(paths.http_path);
+			for (auto& [type, path] : urls)
+				stringify::trim(path);
 		}
 		server_relay::~server_relay() noexcept
 		{
@@ -1005,8 +972,8 @@ namespace tangent
 		}
 		expects_promise_rt<schema*> server_relay::execute_rpc(const algorithm::asset_id& asset, error_reporter& reporter, const std::string_view& method, const schema_list& args, cache_policy cache, const std::string_view& path)
 		{
-			if (reporter.type == transmit_type::any)
-				reporter.type = transmit_type::JSONRPC;
+			if (reporter.type.empty())
+				reporter.type = "jrpc";
 			if (reporter.method.empty())
 				reporter.method = method;
 
@@ -1051,8 +1018,8 @@ namespace tangent
 		}
 		expects_promise_rt<schema*> server_relay::execute_rpc3(const algorithm::asset_id& asset, error_reporter& reporter, const std::string_view& method, const schema_args& args, cache_policy cache, const std::string_view& path)
 		{
-			if (reporter.type == transmit_type::any)
-				reporter.type = transmit_type::JSONRPC;
+			if (reporter.type.empty())
+				reporter.type = "jrpc";
 			if (reporter.method.empty())
 				reporter.method = method;
 
@@ -1097,8 +1064,8 @@ namespace tangent
 		}
 		expects_promise_rt<schema*> server_relay::execute_rest(const algorithm::asset_id& asset, error_reporter& reporter, const std::string_view& method, const std::string_view& path, schema* args, cache_policy cache)
 		{
-			if (reporter.type == transmit_type::any)
-				reporter.type = transmit_type::REST;
+			if (reporter.type.empty())
+				reporter.type = "rest";
 			if (reporter.method.empty())
 				reporter.method = location(get_node_url(reporter.type, path)).path.substr(1);
 
@@ -1107,8 +1074,8 @@ namespace tangent
 		}
 		expects_promise_rt<schema*> server_relay::execute_http(const algorithm::asset_id& asset, error_reporter& reporter, const std::string_view& method, const std::string_view& path, const std::string_view& type, const std::string_view& body, cache_policy cache)
 		{
-			if (reporter.type == transmit_type::any)
-				reporter.type = transmit_type::HTTP;
+			if (reporter.type.empty())
+				reporter.type = "http";
 
 			string target_url = get_node_url(reporter.type, path);
 			if (reporter.method.empty())
@@ -1118,23 +1085,23 @@ namespace tangent
 				coreturn expects_rt<schema*>(remote_exception(generate_error_message(expects_system<http::response_frame>(system_exception()), reporter, "null", "system shutdown (cancelled)")));
 
 			if (path.empty() && body.empty())
-				cache = cache_policy::lazy;
+				cache = cache_policy::no_cache;
 
 			auto* server = nss::server_node::get();
 			string message = string(path).append(body);
 			string hash = codec::hex_encode(algorithm::hashing::hash256((uint8_t*)message.data(), message.size()));
-			if (cache != cache_policy::lazy && cache != cache_policy::greedy)
+			if (cache != cache_policy::no_cache && cache != cache_policy::no_cache_no_throttling)
 			{
 				auto data = server->load_cache(asset, cache, hash);
 				if (data)
 					coreturn expects_rt<schema*>(*data);
 			}
 
-			if (throttling > 0.0 && cache != cache_policy::greedy)
+			if (rps > 0.0 && cache != cache_policy::no_cache_no_throttling)
 			{
 				const int64_t time = (int64_t)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 				const double timeout = (double)(time - latest);
-				const double limit = 1000.0 / throttling;
+				const double limit = 1000.0 / rps;
 				const uint64_t cooldown = (uint64_t)(limit - timeout);
 				uint64_t retry_timeout = cooldown;
 				if (timeout < limit && !coawait(yield_for_cooldown(retry_timeout, protocol::now().user.nss.relaying_timeout)))
@@ -1161,7 +1128,7 @@ namespace tangent
 			if (!response || response->status_code == 408 || response->status_code == 429 || response->status_code == 502 || response->status_code == 503 || response->status_code == 504)
 			{
 				++retry_responses;
-				if (cache == cache_policy::greedy)
+				if (cache == cache_policy::no_cache_no_throttling)
 					coreturn  response ? expects_rt<schema*>(remote_exception(generate_error_message(response, reporter, "null", "node has rejected the request"))) : expects_rt<schema*>(remote_exception::shutdown());
 				else if (retry_responses > 5)
 					coreturn response ? expects_rt<schema*>(remote_exception(generate_error_message(response, reporter, "null", "node has rejected the request too many times"))) : expects_rt<schema*>(remote_exception::shutdown());
@@ -1172,18 +1139,28 @@ namespace tangent
 				goto retry;
 			}
 
-			auto text = response->content.get_text();
-			auto data = response->content.get_json();
-			if (!data)
-				coreturn expects_rt<schema*>(remote_exception(generate_error_message(response, reporter, "null", "node's response is not JSON compliant")));
-
-			if (cache != cache_policy::lazy && cache != cache_policy::greedy && (response->status_code < 400 || response->status_code == 404))
+			uptr<schema> result;
+			auto content_type = response->get_header("Content-Type");
+			if (content_type == "application/json")
 			{
-				data->add_ref();
-				server->store_cache(asset, cache, hash, uptr<schema>(data));
+				auto data = response->content.get_json();
+				if (!data)
+					coreturn expects_rt<schema*>(remote_exception(generate_error_message(response, reporter, "null", "node's response is not JSON compliant")));
+
+				result = *data;
+			}
+			else if (content_type == "application/octet-stream")
+				result = var::set::binary(response->content.get_text());
+			else
+				result = var::set::string(response->content.get_text());
+
+			if (cache != cache_policy::no_cache && cache != cache_policy::no_cache_no_throttling && (response->status_code < 400 || response->status_code == 404))
+			{
+				result->add_ref();
+				server->store_cache(asset, cache, hash, *result);
 			}
 
-			coreturn expects_rt<schema*>(*data);
+			coreturn expects_rt<schema*>(result.reset());
 		}
 		promise<bool> server_relay::yield_for_cooldown(uint64_t& retry_timeout, uint64_t total_timeout_ms)
 		{
@@ -1268,38 +1245,32 @@ namespace tangent
 			}
 			tasks.clear();
 		}
-		bool server_relay::has_distinct_url(transmit_type type) const
+		bool server_relay::has_distinct_url(const std::string_view& type) const
 		{
-			switch (type)
-			{
-				case transmit_type::JSONRPC:
-					return paths.json_rpc_distinct;
-				case transmit_type::REST:
-					return paths.rest_distinct;
-				case transmit_type::HTTP:
-					return paths.http_distinct;
-				default:
-					return paths.json_rpc_distinct || paths.rest_distinct || paths.http_distinct;
-			}
+			if (type.empty() || type == "auto")
+				return !urls.empty();
+
+			auto it = urls.find(key_lookup_cast(type));
+			return it != urls.end();
 		}
 		bool server_relay::is_activity_allowed() const
 		{
 			return allowed;
 		}
-		const string& server_relay::get_node_url(transmit_type type) const
+		const string& server_relay::get_node_url(const std::string_view& type) const
 		{
-			switch (type)
-			{
-				case server_relay::transmit_type::JSONRPC:
-					return paths.json_rpc_path;
-				case server_relay::transmit_type::REST:
-					return paths.rest_path;
-				case server_relay::transmit_type::HTTP:
-				default:
-					return paths.http_path;
-			}
+			VI_ASSERT(!urls.empty(), "node does not have any urls");
+			auto it = urls.find(key_lookup_cast(type));
+			if (it != urls.end())
+				return it->second;
+
+			it = urls.find("auto");
+			if (it != urls.end())
+				return it->second;
+
+			return urls.begin()->second;
 		}
-		string server_relay::get_node_url(transmit_type type, const std::string_view& endpoint) const
+		string server_relay::get_node_url(const std::string_view& type, const std::string_view& endpoint) const
 		{
 			if (stringify::starts_with(endpoint, "http"))
 				return string(endpoint);
@@ -1319,59 +1290,42 @@ namespace tangent
 		{
 			switch (cache)
 			{
-				case cache_policy::greedy:
-					return "greedy";
-				case cache_policy::lazy:
-					return "lazy";
-				case cache_policy::shortened:
-					return "scache";
-				case cache_policy::extended:
-					return "ecache";
-				case cache_policy::persistent:
-					return "pcache";
+				case cache_policy::no_cache:
+					return "no_cache";
+				case cache_policy::no_cache_no_throttling:
+					return "no_cache_no_throttling";
+				case cache_policy::temporary_cache:
+					return "temporary_cache";
+				case cache_policy::blob_cache:
+					return "blob_cache";
+				case cache_policy::lifetime_cache:
+					return "lifetime_cache";
 				default:
-					return "any";
+					return "unset";
 			}
 		}
 		string server_relay::generate_error_message(const expects_system<http::response_frame>& response, const error_reporter& reporter, const std::string_view& error_code, const std::string_view& error_message)
 		{
-			std::string_view domain;
-			switch (reporter.type)
-			{
-				case server_relay::transmit_type::JSONRPC:
-					domain = "jrpc";
-					break;
-				case server_relay::transmit_type::REST:
-					domain = "rest";
-					break;
-				case server_relay::transmit_type::HTTP:
-					domain = "http";
-					break;
-				default:
-					domain = "call";
-					break;
-			}
-
 			string_stream message;
 			string method = reporter.method;
-			message << "observer::" << domain << "::" << stringify::to_lower(method) << " error: ";
+			message << "observer::" << reporter.type << "::" << stringify::to_lower(method) << " error: ";
 			if (error_message.empty())
 				message << "no response";
 			else
 				message << error_message;
-			message << " (netc: " << (response ? response->status_code : 500) << ", " << domain << "c: " << error_code << ")";
+			message << " (netc: " << (response ? response->status_code : 500) << ", " << reporter.type << "c: " << error_code << ")";
 			return message.str();
 		}
 
-		relay_backend::relay_backend() noexcept : interact(nullptr)
+		relay_backend::relay_backend(const algorithm::asset_id& new_asset) noexcept : native_asset(algorithm::asset::base_id_of(new_asset)), interact(nullptr)
 		{
 		}
 		relay_backend::~relay_backend() noexcept
 		{
 		}
-		expects_promise_rt<schema*> relay_backend::execute_rpc(const algorithm::asset_id& asset, const std::string_view& method, schema_list&& args, cache_policy cache, const std::string_view& path)
+		expects_promise_rt<schema*> relay_backend::execute_rpc(const std::string_view& method, schema_list&& args, cache_policy cache, const std::string_view& path)
 		{
-			auto* nodes = nss::server_node::get()->get_nodes(asset);
+			auto* nodes = nss::server_node::get()->get_nodes(native_asset);
 			if (!nodes || nodes->empty())
 				coreturn expects_rt<schema*>(remote_exception("node not found"));
 
@@ -1381,7 +1335,7 @@ namespace tangent
 				server_relay::error_reporter reporter;
 				index = (index + 1) % nodes->size();
 				auto* node = *nodes->at(index);
-				auto result = coawait(node->execute_rpc(asset, reporter, method, args, cache, path));
+				auto result = coawait(node->execute_rpc(native_asset, reporter, method, args, cache, path));
 				if (interact) interact(node);
 				if (result || !result.error().is_retry())
 					coreturn result;
@@ -1389,9 +1343,9 @@ namespace tangent
 
 			coreturn expects_rt<schema*>(remote_exception("node not found"));
 		}
-		expects_promise_rt<schema*> relay_backend::execute_rpc3(const algorithm::asset_id& asset, const std::string_view& method, schema_args&& args, cache_policy cache, const std::string_view& path)
+		expects_promise_rt<schema*> relay_backend::execute_rpc3(const std::string_view& method, schema_args&& args, cache_policy cache, const std::string_view& path)
 		{
-			auto* nodes = nss::server_node::get()->get_nodes(asset);
+			auto* nodes = nss::server_node::get()->get_nodes(native_asset);
 			if (!nodes || nodes->empty())
 				coreturn expects_rt<schema*>(remote_exception("node not found"));
 
@@ -1401,7 +1355,7 @@ namespace tangent
 				server_relay::error_reporter reporter;
 				index = (index + 1) % nodes->size();
 				auto* node = *nodes->at(index);
-				auto result = coawait(node->execute_rpc3(asset, reporter, method, args, cache, path));
+				auto result = coawait(node->execute_rpc3(native_asset, reporter, method, args, cache, path));
 				if (interact) interact(node);
 				if (result || !result.error().is_retry())
 					coreturn result;
@@ -1409,10 +1363,10 @@ namespace tangent
 
 			coreturn expects_rt<schema*>(remote_exception("node not found"));
 		}
-		expects_promise_rt<schema*> relay_backend::execute_rest(const algorithm::asset_id& asset, const std::string_view& method, const std::string_view& path, schema* args, cache_policy cache)
+		expects_promise_rt<schema*> relay_backend::execute_rest(const std::string_view& method, const std::string_view& path, schema* args, cache_policy cache)
 		{
 			uptr<schema> body = args;
-			auto* nodes = nss::server_node::get()->get_nodes(asset);
+			auto* nodes = nss::server_node::get()->get_nodes(native_asset);
 			if (!nodes || nodes->empty())
 				coreturn expects_rt<schema*>(remote_exception("node not found"));
 
@@ -1422,7 +1376,7 @@ namespace tangent
 				server_relay::error_reporter reporter;
 				index = (index + 1) % nodes->size();
 				auto* node = *nodes->at(index);
-				auto result = coawait(node->execute_rest(asset, reporter, method, path, *body, cache));
+				auto result = coawait(node->execute_rest(native_asset, reporter, method, path, *body, cache));
 				if (interact) interact(node);
 				if (result || !result.error().is_retry())
 					coreturn result;
@@ -1430,9 +1384,9 @@ namespace tangent
 
 			coreturn expects_rt<schema*>(remote_exception("node not found"));
 		}
-		expects_promise_rt<schema*> relay_backend::execute_http(const algorithm::asset_id& asset, const std::string_view& method, const std::string_view& path, const std::string_view& type, const std::string_view& body, cache_policy cache)
+		expects_promise_rt<schema*> relay_backend::execute_http(const std::string_view& method, const std::string_view& path, const std::string_view& type, const std::string_view& body, cache_policy cache)
 		{
-			auto* nodes = nss::server_node::get()->get_nodes(asset);
+			auto* nodes = nss::server_node::get()->get_nodes(native_asset);
 			if (!nodes || nodes->empty())
 				coreturn expects_rt<schema*>(remote_exception("node not found"));
 
@@ -1442,7 +1396,7 @@ namespace tangent
 				server_relay::error_reporter reporter;
 				index = (index + 1) % nodes->size();
 				auto* node = *nodes->at(index);
-				auto result = coawait(node->execute_http(asset, reporter, method, path, type, body, cache));
+				auto result = coawait(node->execute_http(native_asset, reporter, method, path, type, body, cache));
 				if (interact) interact(node);
 				if (result || !result.error().is_retry())
 					coreturn result;
@@ -1450,59 +1404,93 @@ namespace tangent
 
 			coreturn expects_rt<schema*>(remote_exception("node not found"));
 		}
-		expects_lr<ordered_map<string, uint64_t>> relay_backend::find_checkpoint_addresses(const algorithm::asset_id& asset, const unordered_set<string>& addresses)
+		expects_lr<algorithm::composition::cpubkey_t> relay_backend::to_composite_public_key(const std::string_view& public_key)
+		{
+			auto result = decode_public_key(public_key);
+			if (!result)
+				return result.error();
+
+			return expects_lr<algorithm::composition::cpubkey_t>(algorithm::composition::cpubkey_t(*result));
+		}
+		expects_lr<ordered_map<string, wallet_link>> relay_backend::find_linked_addresses(const unordered_set<string>& addresses)
 		{
 			if (addresses.empty())
-				return expects_lr<ordered_map<string, uint64_t>>(layer_exception("no addresses supplied"));
+				return expects_lr<ordered_map<string, wallet_link>>(layer_exception("no addresses supplied"));
 
 			auto* server = nss::server_node::get();
-			auto* implementation = server->get_chain(asset);
+			auto* implementation = server->get_chain(native_asset);
 			if (!implementation)
-				return expects_lr<ordered_map<string, uint64_t>>(layer_exception("chain not found"));
+				return expects_lr<ordered_map<string, wallet_link>>(layer_exception("chain not found"));
 
-			auto results = server->get_address_indices(asset, addresses);
+			auto results = server->get_links_by_addresses(native_asset, addresses);
 			if (!results || results->empty())
-				return expects_lr<ordered_map<string, uint64_t>>(layer_exception("no addresses found"));
+				return expects_lr<ordered_map<string, wallet_link>>(layer_exception("no addresses found"));
 
-			ordered_map<string, uint64_t> info;
-			for (auto& item : *results)
-				info[item.first] = item.second.address_index.or_else(protocol::now().account.root_address_index);
-
-			return expects_lr<ordered_map<string, uint64_t>>(std::move(info));
+			auto result = ordered_map<string, wallet_link>(results->begin(), results->end());
+			return expects_lr<ordered_map<string, wallet_link>>(std::move(result));
 		}
-		expects_lr<vector<string>> relay_backend::get_checkpoint_addresses(const algorithm::asset_id& asset)
+		expects_lr<ordered_map<string, wallet_link>> relay_backend::find_linked_addresses(const algorithm::pubkeyhash owner, size_t offset, size_t count)
 		{
-			return nss::server_node::get()->get_address_indices(asset);
+			auto* server = nss::server_node::get();
+			auto* implementation = server->get_chain(native_asset);
+			if (!implementation)
+				return expects_lr<ordered_map<string, wallet_link>>(layer_exception("chain not found"));
+
+			auto results = server->get_links_by_owner(native_asset, owner, offset, count);
+			if (!results || results->empty())
+				return expects_lr<ordered_map<string, wallet_link>>(layer_exception("no addresses found"));
+
+			auto result = ordered_map<string, wallet_link>(results->begin(), results->end());
+			return expects_lr<ordered_map<string, wallet_link>>(std::move(result));
 		}
 		expects_lr<void> relay_backend::verify_node_compatibility(server_relay* node)
 		{
 			return expectation::met;
 		}
-		string relay_backend::get_checksum_hash(const std::string_view& value) const
+		decimal relay_backend::to_value(const decimal& value) const
 		{
-			return string(value);
+			if (value.is_zero_or_nan())
+				return value;
+
+			decimal normalized = decimal(value);
+			normalized.truncate(get_chainparams().divisibility.to_string().size() - 1);
+			return normalized;
 		}
 		uint256_t relay_backend::to_baseline_value(const decimal& value) const
 		{
+			if (value.is_zero_or_nan())
+				return uint256_t(0);
+
 			decimal baseline = value * get_chainparams().divisibility;
 			return uint256_t(baseline.truncate(0).to_string());
+		}
+		decimal relay_backend::from_baseline_value(const uint256_t& value) const
+		{
+			if (!value)
+				return decimal::zero();
+
+			return value.to_decimal() / get_chainparams().divisibility;
 		}
 		uint64_t relay_backend::get_retirement_block_number() const
 		{
 			return std::numeric_limits<uint64_t>::max();
 		}
 
-		relay_backend_utxo::relay_backend_utxo() noexcept : relay_backend()
+		relay_backend_utxo::balance_query::balance_query(const decimal& new_min_native_value, const unordered_map<algorithm::asset_id, decimal>& new_min_token_values) : min_native_value(new_min_native_value), min_token_values(new_min_token_values)
 		{
 		}
-		expects_promise_rt<decimal> relay_backend_utxo::calculate_balance(const algorithm::asset_id& asset, const dynamic_wallet& wallet, option<string>&& address)
+
+		relay_backend_utxo::relay_backend_utxo(const algorithm::asset_id& new_asset) noexcept : relay_backend(new_asset)
+		{
+		}
+		expects_promise_rt<decimal> relay_backend_utxo::calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link)
 		{
 			decimal balance = 0.0;
-			auto outputs = calculate_coins(asset, wallet, optional::none, optional::none);
+			auto outputs = calculate_utxo(link, optional::none);
 			if (!outputs)
 				return expects_promise_rt<decimal>(std::move(balance));
 
-			auto contract_address = nss::server_node::get()->get_contract_address(asset);
+			auto contract_address = nss::server_node::get()->get_contract_address(for_asset);
 			if (contract_address)
 			{
 				for (auto& output : *outputs)
@@ -1520,23 +1508,28 @@ namespace tangent
 
 			return expects_promise_rt<decimal>(std::move(balance));
 		}
-		expects_lr<vector<coin_utxo>> relay_backend_utxo::calculate_coins(const algorithm::asset_id& asset, const dynamic_wallet& wallet, option<decimal>&& min_value, option<token_utxo>&& min_token_value)
+		expects_lr<vector<coin_utxo>> relay_backend_utxo::calculate_utxo(const wallet_link& link, option<balance_query>&& query)
 		{
-			if (!wallet.is_valid())
-				return expects_lr<vector<coin_utxo>>(layer_exception("wallet not found"));
-
-			auto binding = wallet.get_binding();
-			if (!binding)
-				return expects_lr<vector<coin_utxo>>(layer_exception("binding not found"));
-
 			vector<coin_utxo> values;
-			decimal current_value = 0.0, current_token_value = 0.0;
+			decimal current_value = decimal::zero();
 			auto* server = nss::server_node::get();
-			auto continue_accumulation = [&]() { return (!min_value || current_value < *min_value) && (!min_token_value || current_token_value < min_token_value->value); };
+			auto continue_accumulation = [&]()
+			{
+				if (!query)
+					return true;
+
+				for (auto& current_token_value : query->min_token_values)
+				{
+					if (current_token_value.second.is_positive())
+						return true;
+				}
+
+				return current_value < query->min_native_value;
+			};
 			while (continue_accumulation())
 			{
 				const size_t count = 64;
-				auto outputs = server->get_utxos(asset, *binding, values.size(), count);
+				auto outputs = server->get_utxos(native_asset, link, values.size(), count);
 				if (!outputs || outputs->empty())
 					break;
 
@@ -1545,9 +1538,19 @@ namespace tangent
 				values.reserve(values.size() + outputs->size());
 				for (auto& output : *outputs)
 				{
-					current_value += output.UTXO.value;
+					if (query)
+					{
+						current_value += output.value;
+						for (auto& token : output.tokens)
+						{
+							auto current_token_value = query->min_token_values.find(token.get_asset(native_asset));
+							if (current_token_value != query->min_token_values.end())
+								current_token_value->second -= token.value;
+						}
+					}
+
 					eof_value = !continue_accumulation();
-					values.emplace_back(std::move(output.UTXO));
+					values.emplace_back(std::move(output));
 					if (eof_value)
 						break;
 				}
@@ -1555,69 +1558,124 @@ namespace tangent
 					break;
 			}
 
-			if (continue_accumulation() && (min_value || min_token_value))
+			if (continue_accumulation() && query)
 				return expects_lr<vector<coin_utxo>>(layer_exception("insufficient funds"));
 
 			return expects_lr<vector<coin_utxo>>(std::move(values));
 		}
-		expects_lr<coin_utxo> relay_backend_utxo::get_coins(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint32_t index)
+		expects_lr<coin_utxo> relay_backend_utxo::get_utxo(const std::string_view& transaction_id, uint64_t index)
 		{
-			auto output = nss::server_node::get()->get_utxo(asset, transaction_id, index);
-			if (!output)
-				return expects_lr<coin_utxo>(layer_exception("transaction output was not found"));
-
-			return expects_lr<coin_utxo>(std::move(output->UTXO));
+			return nss::server_node::get()->get_utxo(native_asset, transaction_id, index);
 		}
-		expects_lr<void> relay_backend_utxo::update_coins(const algorithm::asset_id& asset, const outgoing_transaction& tx_data)
+		expects_lr<void> relay_backend_utxo::update_utxo(const prepared_transaction& prepared)
 		{
-			if (tx_data.inputs)
+			for (auto& output : prepared.inputs)
 			{
-				for (auto& output : *tx_data.inputs)
-					remove_coins(asset, output.transaction_id, output.index);
+				if (!output.utxo.is_account())
+					remove_utxo(output.utxo.transaction_id, output.utxo.index);
 			}
-			if (tx_data.outputs)
+
+			for (auto& input : prepared.outputs)
 			{
-				for (auto& input : *tx_data.outputs)
-					add_coins(asset, input);
+				if (!input.is_account() && input.link.has_all())
+					add_utxo(input);
 			}
+
 			return expects_lr<void>(expectation::met);
 		}
-		expects_lr<void> relay_backend_utxo::add_coins(const algorithm::asset_id& asset, const coin_utxo& output)
+		expects_lr<void> relay_backend_utxo::update_utxo(const computed_transaction& computed)
 		{
+			for (auto& output : computed.inputs)
+			{
+				if (!output.is_account())
+					remove_utxo(output.transaction_id, output.index);
+			}
+
+			for (auto& input : computed.outputs)
+			{
+				if (!input.is_account() && input.link.has_all())
+					add_utxo(input);
+			}
+
+			return expects_lr<void>(expectation::met);
+		}
+		expects_lr<void> relay_backend_utxo::add_utxo(const coin_utxo& output)
+		{
+			if (output.transaction_id.empty() || output.index == std::numeric_limits<uint64_t>::max())
+				return expects_lr<void>(layer_exception("output must have a transaction id"));
+
 			auto* server = nss::server_node::get();
-			auto* implementation = server->get_chain(asset);
+			auto* implementation = server->get_chain(native_asset);
 			if (!implementation)
 				return expects_lr<void>(layer_exception("chain not found"));
 
-			auto address_index = server->get_address_index(asset, implementation->get_checksum_hash(output.address));
-			if (!address_index)
+			if (!output.link.has_address())
+				return expects_lr<void>(layer_exception("output does not gave an address"));
+
+			auto public_key_hash = implementation->decode_address(output.link.address);
+			if (!public_key_hash)
+				return expects_lr<void>(std::move(public_key_hash.error()));
+
+			auto address = implementation->encode_address(*public_key_hash);
+			if (!address)
+				return expects_lr<void>(std::move(address.error()));
+
+			auto link = server->get_link(native_asset, *address);
+			if (!link)
 				return expects_lr<void>(layer_exception("transaction output is not being watched"));
 
-			index_utxo new_output;
-			new_output.binding = std::move(address_index->binding);
-			new_output.UTXO = output;
+			coin_utxo copy = output;
+			copy.link = std::move(*link);
+			for (auto& item : copy.tokens)
+			{
+				public_key_hash = implementation->decode_address(item.contract_address);
+				if (public_key_hash)
+				{
+					address = implementation->encode_address(*public_key_hash);
+					if (address)
+						item.contract_address = std::move(*address);
+				}
+			}
 
-			auto status = server->add_utxo(asset, new_output);
+			auto status = server->add_utxo(native_asset, copy);
 			if (status)
 				return expects_lr<void>(expectation::met);
 
-			remove_coins(asset, output.transaction_id, output.index);
+			remove_utxo(copy.transaction_id, copy.index);
 			return expects_lr<void>(std::move(status.error()));
 		}
-		expects_lr<void> relay_backend_utxo::remove_coins(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint32_t index)
+		expects_lr<void> relay_backend_utxo::remove_utxo(const std::string_view& transaction_id, uint64_t index)
 		{
-			return nss::server_node::get()->remove_utxo(asset, transaction_id, index);
+			if (transaction_id.empty() || index == std::numeric_limits<uint64_t>::max())
+				return expects_lr<void>(layer_exception("output must have a transaction id"));
+
+			return nss::server_node::get()->remove_utxo(native_asset, transaction_id, index);
 		}
-		decimal relay_backend_utxo::get_coins_value(const vector<coin_utxo>& values, option<string>&& contract_address)
+		decimal relay_backend_utxo::get_utxo_value(const vector<coin_utxo>& values, option<string>&& contract_address)
 		{
 			decimal value = 0.0;
 			if (contract_address)
 			{
+				auto* server = nss::server_node::get();
+				auto* implementation = server->get_chain(native_asset);
+				if (!implementation)
+					return value;
+
+				auto public_key_hash = implementation->decode_address(*contract_address);
+				if (!public_key_hash)
+					return value;
+
+				auto address = implementation->encode_address(*public_key_hash);
+				if (!address)
+					return value;
+
 				for (auto& item : values)
 				{
+					auto* server = nss::server_node::get();
+					auto* implementation = server->get_chain(native_asset);
 					for (auto& token : item.tokens)
 					{
-						if (token.contract_address == *contract_address)
+						if (token.contract_address == *address)
 							value += token.value;
 					}
 				}
@@ -1628,6 +1686,28 @@ namespace tangent
 					value += item.value;
 			}
 			return value;
+		}
+		relay_backend_utxo* relay_backend_utxo::from_relay(relay_backend* base)
+		{
+			return base->get_chainparams().routing == routing_policy::utxo ? (relay_backend_utxo*)base : nullptr;
+		}
+
+		string address_util::encode_tag_address(const std::string_view& address, const std::string_view& destination_tag)
+		{
+			auto split = address.find(':');
+			size_t address_size = split == string::npos ? address.size() : split;
+			if (destination_tag.empty())
+				return string(address.substr(0, address_size));
+
+			return stringify::text("%.*s:%.*s", (int)address_size, address.data(), (int)destination_tag.size(), destination_tag.data());
+		}
+		std::pair<string, string> address_util::decode_tag_address(const std::string_view& address_destination_tag)
+		{
+			auto split = address_destination_tag.find(':');
+			if (split == string::npos || split + 1 >= address_destination_tag.size())
+				return std::make_pair(string(address_destination_tag), string());
+
+			return std::make_pair(string(address_destination_tag.substr(0, split)), string(address_destination_tag.substr(split + 1)));
 		}
 	}
 }

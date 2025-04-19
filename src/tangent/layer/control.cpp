@@ -48,38 +48,8 @@ namespace tangent
 		return URI;
 	}
 
-	system_control::system_control(const std::string_view& label) noexcept : timers(nullptr), tasks(0), active(false), service_name(label.empty() ? "unknown" : label)
+	system_control::system_control(const std::string_view& label) noexcept : timers(nullptr), active(false), service_name(label.empty() ? "unknown" : label)
 	{
-	}
-	promise<void> system_control::shutdown() noexcept
-	{
-		VI_PANIC(!active, "controller is still active");
-		if (!is_busy())
-		{
-			VI_DEBUG("[sysctl] OK shutdown %.*s service", (int)service_name.size(), service_name.data());
-			coreturn_void;
-		}
-
-		promise<void> timeout;
-		std::thread([this, timeout]() mutable
-		{
-			auto time = ::time(nullptr);
-			while (is_busy())
-			{
-				std::this_thread::sleep_for(std::chrono::milliseconds(500));
-				if (::time(nullptr) - time > 2)
-					VI_DEBUG("[sysctl] waiting %i tasks on %.*s service to finish (longer than expected)", (int)tasks.load(), (int)service_name.size(), service_name.data());
-			}
-			timeout.set();
-		}).detach();
-
-		uint64_t time_start = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-		VI_DEBUG("[sysctl] waiting on %.*s service to finish (queue = %i tasks)", (int)service_name.size(), service_name.data(), (int)tasks.load());
-		coawait(std::move(timeout));
-
-		uint64_t time_end = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-		VI_DEBUG("[sysctl] OK shutdown %.*s service (wait = %" PRIu64 " ms)", (int)service_name.size(), service_name.data(), time_end - time_start);
-		coreturn_void;
 	}
 	bool system_control::lock_timeout(const std::string_view& name)
 	{
@@ -213,17 +183,16 @@ namespace tangent
 		}
 		return active;
 	}
-	bool system_control::activate_and_enqueue() noexcept
+	bool system_control::activate() noexcept
 	{
 		umutex<std::recursive_mutex> unique(sync);
-		if (active || tasks > 0)
+		if (active)
 			return false;
 
 		using timers_type = unordered_map<string, task_id>;
 		if (!timers)
 			timers = memory::init<timers_type>();
 
-		tasks = 1;
 		active = true;
 		return true;
 	}
@@ -246,52 +215,9 @@ namespace tangent
 		memory::deinit(timers);
 		return true;
 	}
-	bool system_control::enqueue_if_none() noexcept
-	{
-		umutex<std::recursive_mutex> unique(sync);
-		if (!active)
-		{
-			VI_DEBUG("[sysctl] cancel task on %.*s service: shutdown", (int)service_name.size(), service_name.data());
-			return false;
-		}
-		else if (tasks > 0)
-			return false;
-
-		++tasks;
-		return true;
-	}
-	bool system_control::enqueue() noexcept
-	{
-		umutex<std::recursive_mutex> unique(sync);
-		if (!active)
-		{
-			VI_DEBUG("[sysctl] cancel task on %.*s service: shutdown", (int)service_name.size(), service_name.data());
-			return false;
-		}
-
-		++tasks;
-		return true;
-	}
-	bool system_control::dequeue() noexcept
-	{
-		umutex<std::recursive_mutex> unique(sync);
-		if (!tasks)
-		{
-			VI_DEBUG("[sysctl] finish task on %.*s service: already finalized", (int)service_name.size(), service_name.data());
-			return false;
-		}
-
-		--tasks;
-		return active;
-	}
 	bool system_control::is_active() noexcept
 	{
 		return active;
-	}
-	bool system_control::is_busy() noexcept
-	{
-		umutex<std::recursive_mutex> unique(sync);
-		return tasks > 0;
 	}
 
 	service_control::service_control() noexcept : exit_code(0xFFFFFFFF)

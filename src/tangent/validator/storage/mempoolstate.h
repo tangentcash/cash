@@ -15,6 +15,12 @@ namespace tangent
 			slow
 		};
 
+		enum class mempool_action
+		{
+			broatcast_again,
+			may_finalize
+		};
+
 		enum class node_services
 		{
 			consensus = (1 << 0),
@@ -54,10 +60,14 @@ namespace tangent
 			expects_lr<size_t> get_validators_count();
 			expects_lr<decimal> get_gas_price(const algorithm::asset_id& asset, double priority_percentile);
 			expects_lr<decimal> get_asset_price(const algorithm::asset_id& price_of, const algorithm::asset_id& relative_to, double priority_percentile = 0.5);
-			expects_lr<void> add_transaction(ledger::transaction& value, bool bypass_congestion = false);
+			expects_lr<void> add_transaction(ledger::transaction& value, bool resurrection);
+			expects_lr<void> remove_transactions_by_group(const uint256_t& group_hash);
 			expects_lr<void> remove_transactions(const vector<uint256_t>& transaction_hashes);
 			expects_lr<void> remove_transactions(const unordered_set<uint256_t>& transaction_hashes);
 			expects_lr<void> expire_transactions();
+			expects_lr<void> apply_mpc_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash proposer, const algorithm::pubkeyhash owner, const uint256_t& seed);
+			expects_lr<uint256_t> get_or_apply_mpc_account_seed(const algorithm::asset_id& asset, const algorithm::pubkeyhash proposer, const algorithm::pubkeyhash owner, const uint256_t& entropy);
+			expects_lr<vector<states::depository_account>> get_mpc_accounts(const algorithm::pubkeyhash proposer, size_t offset, size_t count);
 			expects_lr<account_bandwidth> get_bandwidth_by_owner(const algorithm::pubkeyhash owner, ledger::transaction_level type);
 			expects_lr<bool> has_transaction(const uint256_t& transaction_hash);
 			expects_lr<uint64_t> get_lowest_transaction_sequence(const algorithm::pubkeyhash owner);
@@ -65,7 +75,7 @@ namespace tangent
 			expects_lr<uptr<ledger::transaction>> get_transaction_by_hash(const uint256_t& transaction_hash);
 			expects_lr<vector<uptr<ledger::transaction>>> get_transactions(size_t offset, size_t count);
 			expects_lr<vector<uptr<ledger::transaction>>> get_transactions_by_owner(const algorithm::pubkeyhash owner, int8_t direction, size_t offset, size_t count);
-			expects_lr<vector<uptr<ledger::transaction>>> get_cumulative_event_transactions(const uint256_t& cumulative_hash, size_t offset, size_t count);
+			expects_lr<vector<uptr<ledger::transaction>>> get_transactions_by_group(const uint256_t& group_hash, size_t offset, size_t count);
 			expects_lr<vector<uint256_t>> get_transaction_hashset(size_t offset, size_t count);
 
 		public:

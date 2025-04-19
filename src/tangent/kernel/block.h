@@ -5,6 +5,11 @@
 
 namespace tangent
 {
+	namespace mediator
+	{
+		struct prepared_transaction;
+	}
+
 	namespace ledger
 	{
 		struct block;
@@ -25,10 +30,10 @@ namespace tangent
 		{
 			pending,
 			finalized,
-			__Count__
+			__count__
 		};
 
-		struct block_transaction final : messages::standard
+		struct block_transaction final : messages::uniform
 		{
 			uptr<ledger::transaction> transaction;
 			ledger::receipt receipt;
@@ -50,7 +55,7 @@ namespace tangent
 
 		struct block_work
 		{
-			state_work map[(size_t)work_commitment::__Count__];
+			state_work map[(size_t)work_commitment::__count__];
 			const block_work* parent_work = nullptr;
 
 			block_work() = default;
@@ -81,21 +86,6 @@ namespace tangent
 			block_mutation(block_mutation&& other) noexcept;
 			block_mutation& operator=(const block_mutation& other) noexcept;
 			block_mutation& operator=(block_mutation&& other) noexcept;
-		};
-
-		struct block_dispatch
-		{
-			ordered_map<uint256_t, string> errors;
-			vector<uint256_t> repeaters;
-			vector<uint256_t> inputs;
-			vector<uptr<transaction>> outputs;
-
-			block_dispatch() noexcept = default;
-			block_dispatch(const block_dispatch& other) noexcept;
-			block_dispatch(block_dispatch&&) noexcept = default;
-			block_dispatch& operator=(const block_dispatch& other) noexcept;
-			block_dispatch& operator=(block_dispatch&&) noexcept = default;
-			expects_lr<void> checkpoint() const;
 		};
 
 		struct block_checkpoint
@@ -139,8 +129,6 @@ namespace tangent
 			virtual bool operator>=(const block_header& other) const;
 			virtual bool operator==(const block_header& other) const;
 			virtual bool operator!=(const block_header& other) const;
-			virtual expects_lr<block_dispatch> dispatch_sync(const wallet& proposer) const;
-			virtual expects_promise_lr<block_dispatch> dispatch_async(const wallet& proposer) const;
 			virtual expects_lr<void> verify_validity(const block_header* parent_block) const;
 			virtual bool store_payload_wesolowski(format::stream* stream) const;
 			virtual bool load_payload_wesolowski(format::stream& stream);
@@ -202,7 +190,7 @@ namespace tangent
 			uint256_t as_hash(bool renew = false) const override;
 		};
 
-		struct block_proof final : messages::standard
+		struct block_proof final : messages::uniform
 		{
 			struct internal_state
 			{
@@ -273,44 +261,49 @@ namespace tangent
 			expects_lr<void> verify_gas_transfer_balance() const;
 			expects_lr<void> verify_transfer_balance(const algorithm::asset_id& asset, const decimal& value) const;
 			expects_lr<void> verify_account_work(const algorithm::pubkeyhash owner) const;
-			expects_lr<void> verify_account_depository_work(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner) const;
 			expects_lr<algorithm::wesolowski::distribution> calculate_random(const uint256_t& seed);
-			expects_lr<size_t> calculate_aggregation_committee_size(const algorithm::asset_id& asset);
+			expects_lr<size_t> calculate_attestation_committee_size(const algorithm::asset_id& asset) const;
 			expects_lr<vector<states::account_work>> calculate_proposal_committee(size_t target_size);
-			expects_lr<vector<states::account_work>> calculate_sharing_committee(ordered_set<string>& hashset, size_t required_size);
+			expects_lr<vector<states::account_work>> calculate_sharing_committee(ordered_set<algorithm::pubkeyhash_t>& exclusion, size_t required_size);
 			expects_lr<states::account_sequence> apply_account_sequence(const algorithm::pubkeyhash owner, uint64_t sequence);
 			expects_lr<states::account_work> apply_account_work(const algorithm::pubkeyhash owner, states::account_flags flags, uint64_t penalty, const uint256_t& gas_input, const uint256_t& gas_output);
 			expects_lr<states::account_observer> apply_account_observer(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, bool observing);
 			expects_lr<states::account_program> apply_account_program(const algorithm::pubkeyhash owner, const std::string_view& program_hashcode);
 			expects_lr<states::account_storage> apply_account_storage(const algorithm::pubkeyhash owner, const std::string_view& location, const std::string_view& storage);
-			expects_lr<states::account_reward> apply_account_reward(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const decimal& incoming_absolute_fee, const decimal& incoming_relative_fee, const decimal& outgoing_absolute_fee, const decimal& outgoing_relative_fee);
-			expects_lr<states::account_derivation> apply_account_derivation(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, uint64_t max_address_index);
-			expects_lr<states::account_depository> apply_account_depository_custody(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const decimal& custody);
-			expects_lr<states::account_depository> apply_account_depository_change(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const decimal& custody, address_value_map&& contributions, account_value_map&& reservations);
-			expects_lr<states::account_depository> apply_account_depository_transaction(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const uint256_t& transaction_hash, int8_t direction);
-			expects_lr<states::witness_program> apply_witness_program(const std::string_view& packed_program_code);
-			expects_lr<states::witness_event> apply_witness_event(const uint256_t& parent_transaction_hash, const uint256_t& child_transaction_hash);
-			expects_lr<states::witness_address> apply_witness_address(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const algorithm::pubkeyhash proposer, const address_map& addresses, uint64_t address_index, states::address_type purpose);
-			expects_lr<states::witness_transaction> apply_witness_transaction(const algorithm::asset_id& asset, const std::string_view& transaction_id);
 			expects_lr<states::account_balance> apply_transfer(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const decimal& supply, const decimal& reserve);
 			expects_lr<states::account_balance> apply_payment(const algorithm::asset_id& asset, const algorithm::pubkeyhash from, const algorithm::pubkeyhash to, const decimal& value);
 			expects_lr<states::account_balance> apply_funding(const algorithm::asset_id& asset, const algorithm::pubkeyhash from, const algorithm::pubkeyhash to, const decimal& value);
+			expects_lr<states::depository_reward> apply_depository_reward(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const decimal& incoming_absolute_fee, const decimal& incoming_relative_fee, const decimal& outgoing_absolute_fee, const decimal& outgoing_relative_fee);
+			expects_lr<states::depository_balance> apply_depository_balance(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const decimal& supply);
+			expects_lr<states::depository_policy> apply_depository_policy_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, uint64_t new_accounts);
+			expects_lr<states::depository_policy> apply_depository_policy_queue(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const uint256_t& transaction_hash);
+			expects_lr<states::depository_policy> apply_depository_policy(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, uint8_t security_level, bool accepts_account_requests, bool accepts_withdrawal_requests);
+			expects_lr<states::depository_account> apply_depository_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const algorithm::pubkeyhash proposer, const algorithm::composition::cpubkey mpc_public_key, ordered_set<algorithm::pubkeyhash_t>&& mpc);
+			expects_lr<states::witness_program> apply_witness_program(const std::string_view& packed_program_code);
+			expects_lr<states::witness_event> apply_witness_event(const uint256_t& parent_transaction_hash, const uint256_t& child_transaction_hash);
+			expects_lr<states::witness_account> apply_witness_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const address_map& addresses);
+			expects_lr<states::witness_account> apply_witness_routing_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const address_map& addresses);
+			expects_lr<states::witness_account> apply_witness_depository_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const address_map& addresses, const algorithm::pubkeyhash proposer, bool active = true);
+			expects_lr<states::witness_transaction> apply_witness_transaction(const algorithm::asset_id& asset, const std::string_view& transaction_id);
 			expects_lr<states::account_sequence> get_account_sequence(const algorithm::pubkeyhash owner) const;
 			expects_lr<states::account_work> get_account_work(const algorithm::pubkeyhash owner) const;
 			expects_lr<states::account_observer> get_account_observer(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner) const;
 			expects_lr<vector<states::account_observer>> get_account_observers(const algorithm::pubkeyhash owner, size_t offset, size_t count) const;
 			expects_lr<states::account_program> get_account_program(const algorithm::pubkeyhash owner) const;
 			expects_lr<states::account_storage> get_account_storage(const algorithm::pubkeyhash owner, const std::string_view& location) const;
-			expects_lr<states::account_reward> get_account_reward(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner) const;
-			expects_lr<states::account_derivation> get_account_derivation(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner) const;
 			expects_lr<states::account_balance> get_account_balance(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner) const;
-			expects_lr<states::account_depository> get_account_depository(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner) const;
+			expects_lr<states::depository_reward> get_depository_reward(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner) const;
+			expects_lr<states::depository_balance> get_depository_balance(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner) const;
+			expects_lr<states::depository_policy> get_depository_policy(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner) const;
+			expects_lr<vector<states::depository_account>> get_depository_accounts(const algorithm::pubkeyhash proposer, size_t offset, size_t count) const;
+			expects_lr<states::depository_account> get_depository_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash proposer, const algorithm::pubkeyhash owner) const;
 			expects_lr<states::witness_program> get_witness_program(const std::string_view& program_hashcode) const;
 			expects_lr<states::witness_event> get_witness_event(const uint256_t& parent_transaction_hash) const;
-			expects_lr<vector<states::witness_address>> get_witness_addresses(const algorithm::pubkeyhash owner, size_t offset, size_t count) const;
-			expects_lr<vector<states::witness_address>> get_witness_addresses_by_purpose(const algorithm::pubkeyhash owner, states::address_type purpose, size_t offset, size_t count) const;
-			expects_lr<states::witness_address> get_witness_address(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const std::string_view& address, uint64_t address_index) const;
-			expects_lr<states::witness_address> get_witness_address(const algorithm::asset_id& asset, const std::string_view& address, uint64_t address_index, size_t offset) const;
+			expects_lr<vector<states::witness_account>> get_witness_accounts(const algorithm::pubkeyhash owner, size_t offset, size_t count) const;
+			expects_lr<vector<states::witness_account>> get_witness_accounts_by_purpose(const algorithm::pubkeyhash owner, states::witness_account::account_type purpose, size_t offset, size_t count) const;
+			expects_lr<states::witness_account> get_witness_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const std::string_view& address) const;
+			expects_lr<states::witness_account> get_witness_account(const algorithm::asset_id& asset, const std::string_view& address, size_t offset) const;
+			expects_lr<states::witness_account> get_witness_account_tagged(const algorithm::asset_id& asset, const std::string_view& address, size_t offset) const;
 			expects_lr<states::witness_transaction> get_witness_transaction(const algorithm::asset_id& asset, const std::string_view& transaction_id) const;
 			expects_lr<ledger::block_transaction> get_block_transaction_instance(const uint256_t& transaction_hash) const;
 			uint64_t get_validation_nonce() const;
@@ -338,10 +331,41 @@ namespace tangent
 			}
 
 		public:
+			static expects_lr<uint256_t> calculate_tx_gas(const ledger::transaction* transaction);
 			static expects_lr<void> validate_tx(const ledger::transaction* new_transaction, const uint256_t& new_transaction_hash, algorithm::pubkeyhash owner);
 			static expects_lr<transaction_context> execute_tx(ledger::block* new_block, const ledger::evaluation_context* new_environment, const ledger::transaction* new_transaction, const uint256_t& new_transaction_hash, const algorithm::pubkeyhash owner, block_work& cache, size_t transaction_size, uint8_t flags);
-			static expects_lr<uint256_t> calculate_tx_gas(const ledger::transaction* transaction);
-			static expects_promise_rt<void> dispatch_tx(const wallet& proposer, ledger::block_transaction* transaction, vector<uptr<ledger::transaction>>* pipeline);
+			static expects_promise_rt<void> dispatch_tx(ledger::block_transaction* transaction, dispatch_context* dispatcher);
+		};
+
+		struct dispatch_context
+		{
+			ordered_map<uint256_t, string> errors;
+			vector<uptr<transaction>> outputs;
+			vector<uint256_t> inputs;
+			vector<uint256_t> repeaters;
+
+			dispatch_context() noexcept = default;
+			dispatch_context(const dispatch_context& other) noexcept;
+			dispatch_context(dispatch_context&&) noexcept = default;
+			dispatch_context& operator=(const dispatch_context& other) noexcept;
+			dispatch_context& operator=(dispatch_context&&) noexcept = default;
+			virtual expects_lr<uint256_t> apply_mpc_seed(const algorithm::asset_id& asset, const algorithm::pubkeyhash proposer, const algorithm::pubkeyhash owner, const uint256_t& mpc_seed);
+			virtual expects_lr<uint256_t> calculate_or_get_mpc_seed(const algorithm::asset_id& asset, const algorithm::pubkeyhash proposer, const algorithm::pubkeyhash owner) const;
+			virtual expects_promise_rt<void> calculate_mpc_public_key(const transaction_context* context, const algorithm::pubkeyhash_t& share, algorithm::composition::cpubkey_t& inout) = 0;
+			virtual expects_promise_rt<void> calculate_mpc_signature(const transaction_context* context, const algorithm::pubkeyhash_t& share, const mediator::prepared_transaction& prepared, ordered_map<uint8_t, algorithm::composition::cpubsig_t>& inout) = 0;
+			virtual expects_lr<void> checkpoint();
+			virtual promise<void> dispatch_async(const block_header& target);
+			virtual void dispatch_sync(const block_header& target);
+			virtual void reset_for_checkpoint();
+			virtual void emit_transaction(uptr<transaction>&& value);
+			virtual void retry_later(const uint256_t& transaction_hash);
+			virtual void report_trial(const uint256_t& transaction_hash);
+			virtual void report_error(const uint256_t& transaction_hash, const std::string_view& error_message);
+			virtual bool is_on(const algorithm::pubkeyhash proposer) const;
+			virtual vector<uptr<transaction>>& get_sendable_transactions();
+			virtual uptr<schema> load_cache(const transaction_context* context) const;
+			virtual void store_cache(const transaction_context* context, uptr<schema>&& value) const;
+			virtual const wallet* get_wallet() const = 0;
 		};
 
 		struct evaluation_context
@@ -372,7 +396,7 @@ namespace tangent
 				algorithm::seckey secret_key = { 0 };
 			} proposer;
 			option<block_header> tip = optional::none;
-			ordered_map<algorithm::asset_id, size_t> aggregators;
+			ordered_map<algorithm::asset_id, size_t> attesters;
 			vector<states::account_work> proposers;
 			vector<transaction_info> incoming;
 			vector<uint256_t> outgoing;

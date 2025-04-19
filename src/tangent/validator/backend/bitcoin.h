@@ -30,18 +30,24 @@ namespace tangent
 					all = (pay2_public_key | pay2_public_key_hash | pay2_script_hash | pay2_witness_public_key_hash | pay2_witness_public_key_hash | pay2_witness_script_hash | pay2_taproot | pay2_tapscript | pay2_cashaddr_public_key_hash | pay2_cashaddr_script_hash)
 				};
 
-				struct sighash_context
+				struct btc_tx_context
 				{
-					struct
+					struct program
 					{
-						vector<cstring*> locking;
-						vector<vector<cstring*>> unlocking;
-					} scripts;
-					vector<string> keys;
+						cstring* script = nullptr;
+						cstring* stack = nullptr;
+						cstring* redeem = nullptr;
+					};
+
+					vector<string> public_keys;
+					vector<program> scripts;
 					vector<uint64_t> values;
 					vector<uint8_t> types;
+					btc_tx_* state;
 
-					~sighash_context();
+					btc_tx_context();
+					~btc_tx_context();
+					bool is_in_range(size_t index) const;
 				};
 
 			public:
@@ -56,46 +62,44 @@ namespace tangent
 					static const char* send_raw_transaction();
 				};
 
-			private:
+			protected:
 				struct
 				{
 					uint8_t get_raw_transaction = 0;
 					uint8_t get_block = 0;
 				} legacy;
-
-			protected:
 				chainparams netdata;
 
 			public:
-				bitcoin() noexcept;
+				bitcoin(const algorithm::asset_id& new_asset) noexcept;
 				virtual ~bitcoin() override;
-				virtual expects_promise_rt<void> broadcast_transaction(const algorithm::asset_id& asset, const outgoing_transaction& tx_data) override;
-				virtual expects_promise_rt<uint64_t> get_latest_block_height(const algorithm::asset_id& asset) override;
-				virtual expects_promise_rt<schema*> get_block_transactions(const algorithm::asset_id& asset, uint64_t block_height, string* block_hash) override;
-				virtual expects_promise_rt<schema*> get_block_transaction(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, const std::string_view& transaction_id) override;
-				virtual expects_promise_rt<vector<incoming_transaction>> get_authentic_transactions(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, schema* transaction_data) override;
-				virtual expects_promise_rt<base_fee> estimate_fee(const algorithm::asset_id& asset, const dynamic_wallet& wallet, const vector<transferer>& to, const fee_supervisor_options& options) override;
-				virtual expects_promise_rt<coin_utxo> get_transaction_output(const algorithm::asset_id& asset, const std::string_view& tx_id, uint32_t index) override;
-				virtual expects_promise_rt<outgoing_transaction> new_transaction(const algorithm::asset_id& asset, const dynamic_wallet& wallet, const vector<transferer>& to, const base_fee& fee) override;
-				virtual expects_lr<master_wallet> new_master_wallet(const std::string_view& wallet) override;
-				virtual expects_lr<derived_signing_wallet> new_signing_wallet(const algorithm::asset_id& asset, const master_wallet& wallet, uint64_t address_index) override;
-				virtual expects_lr<derived_signing_wallet> new_signing_wallet(const algorithm::asset_id& asset, const secret_box& signing_key) override;
-				virtual expects_lr<derived_verifying_wallet> new_verifying_wallet(const algorithm::asset_id& asset, const std::string_view& verifying_key) override;
-				virtual expects_lr<string> new_public_key_hash(const std::string_view& address) override;
-				virtual expects_lr<string> sign_message(const algorithm::asset_id& asset, const std::string_view& message, const secret_box& signing_key) override;
-				virtual expects_lr<void> verify_message(const algorithm::asset_id& asset, const std::string_view& message, const std::string_view& verifying_key, const std::string_view& signature) override;
-				virtual string get_derivation(uint64_t address_index) const override;
+				virtual expects_promise_rt<uint64_t> get_latest_block_height() override;
+				virtual expects_promise_rt<schema*> get_block_transactions(uint64_t block_height, string* block_hash) override;
+				virtual expects_promise_rt<coin_utxo> get_transaction_output(const std::string_view& tx_id, uint64_t index) override;
+				virtual expects_promise_rt<computed_transaction> link_transaction(uint64_t block_height, const std::string_view& block_hash, schema* transaction_data) override;
+				virtual expects_promise_rt<computed_fee> estimate_fee(const std::string_view& from_address, const vector<value_transfer>& to, const fee_supervisor_options& options) override;
+				virtual expects_promise_rt<void> broadcast_transaction(const finalized_transaction& finalized) override;
+				virtual expects_promise_rt<prepared_transaction> prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee) override;
+				virtual expects_lr<finalized_transaction> finalize_transaction(prepared_transaction&& prepared) override;
+				virtual expects_lr<secret_box> encode_secret_key(const secret_box& secret_key) override;
+				virtual expects_lr<secret_box> decode_secret_key(const secret_box& secret_key) override;
+				virtual expects_lr<string> encode_public_key(const std::string_view& public_key) override;
+				virtual expects_lr<string> decode_public_key(const std::string_view& public_key) override;
+				virtual expects_lr<string> encode_address(const std::string_view& public_key_hash) override;
+				virtual expects_lr<string> decode_address(const std::string_view& address) override;
+				virtual expects_lr<string> encode_transaction_id(const std::string_view& transaction_id) override;
+				virtual expects_lr<string> decode_transaction_id(const std::string_view& transaction_id) override;
+				virtual expects_lr<address_map> to_addresses(const std::string_view& public_key) override;
 				virtual const chainparams& get_chainparams() const override;
+				virtual expects_lr<computed_fee> calculate_transaction_fee_from_fee_estimate(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& estimate);
+				virtual expects_lr<string> prepare_transaction_input(btc_tx_context& context, const coin_utxo& output, size_t index);
+				virtual expects_lr<void> finalize_transaction_input(btc_tx_context& context, const prepared_transaction::signable_coin_utxo& output, size_t index);
+				virtual expects_lr<void> add_transaction_input(btc_tx_context& context, const coin_utxo& output, const std::string_view& public_key);
+				virtual expects_lr<void> add_transaction_output(btc_tx_context& context, const std::string_view& address, const decimal& value);
 				virtual unordered_set<string> get_output_addresses(schema* tx_output, bool* is_allowed);
-				virtual expects_promise_rt<base_fee> calculate_transaction_fee_from_fee_estimate(const algorithm::asset_id& asset, const dynamic_wallet& wallet, const vector<transferer>& to, const base_fee& estimate, const std::string_view& change_address);
-				virtual option<layer_exception> sign_transaction_input(btc_tx_* transaction, const coin_utxo& output, const sighash_context& context, size_t index);
-				virtual option<layer_exception> add_transaction_input(btc_tx_* transaction, const coin_utxo& output, sighash_context& context, const char* private_key);
-				virtual option<layer_exception> add_transaction_output(btc_tx_* transaction, const std::string_view& address, const decimal& value);
-				virtual string serialize_transaction_data(btc_tx_* transaction);
-				virtual string serialize_transaction_id(btc_tx_* transaction);
+				virtual string serialize_transaction_data(btc_tx_context& context);
+				virtual string serialize_transaction_id(btc_tx_context& context);
 				virtual address_format parse_address(const std::string_view& address, uint8_t* data_out = nullptr, size_t* data_size_out = nullptr);
-				virtual string get_message_magic();
-				virtual void generate_message_hash(const std::string_view& input, uint8_t output[32]);
 				virtual const btc_chainparams_* get_chain();
 				virtual address_format get_address_type();
 				virtual uint32_t get_sig_hash_type();

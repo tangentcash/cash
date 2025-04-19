@@ -36,8 +36,15 @@ namespace tangent
 
 				struct evm_transaction
 				{
+					enum class evm_type
+					{
+						eip_155,
+						eip_1559
+					};
+
 					uint256_t nonce = 0;
 					uint256_t chain_id = 0;
+					gwei256_t gas_base_price = 0;
 					gwei256_t gas_price = 0;
 					gwei256_t gas_limit = 0;
 					wei256_t value = 0;
@@ -45,9 +52,11 @@ namespace tangent
 					binary_data_t abi_data;
 
 					evm_signature sign(const binary_data_t& hash, const uint8_t private_key[32]);
-					evm_signed_transaction serialize_and_sign(const uint8_t private_key[32]);
+					evm_signature presign(const uint8_t signature_r[32], const uint8_t signature_s[32], int recovery_id);
+					evm_signed_transaction serialize_and_sign(evm_type type, const uint8_t private_key[32]);
+					evm_signed_transaction serialize_and_presign(evm_type type, const uint8_t signature[65]);
 					binary_data_t hash(const binary_data_t& serialized_data);
-					binary_data_t serialize(evm_signature* signature = nullptr);
+					binary_data_t serialize(evm_type type, evm_signature* signature = nullptr);
 				};
 
 			public:
@@ -75,7 +84,6 @@ namespace tangent
 				public:
 					static const char* get_block_by_number();
 					static const char* get_transaction_receipt();
-					static const char* get_transaction_by_hash();
 					static const char* get_transaction_count();
 					static const char* get_balance();
 					static const char* get_chain_id();
@@ -86,52 +94,48 @@ namespace tangent
 					static const char* send_raw_transaction();
 				};
 
-			private:
+			protected:
 				struct
 				{
 					uint8_t get_logs = 0;
+					uint8_t eip_155 = 0;
+					uint8_t estimate_gas = 0;
 				} legacy;
-
-			protected:
 				chainparams netdata;
 
 			public:
-				ethereum() noexcept;
+				ethereum(const algorithm::asset_id& new_asset) noexcept;
 				virtual ~ethereum() override = default;
-				virtual expects_promise_rt<void> broadcast_transaction(const algorithm::asset_id& asset, const outgoing_transaction& tx_data) override;
-				virtual expects_promise_rt<uint64_t> get_latest_block_height(const algorithm::asset_id& asset) override;
-				virtual expects_promise_rt<schema*> get_block_transactions(const algorithm::asset_id& asset, uint64_t block_height, string* block_hash) override;
-				virtual expects_promise_rt<schema*> get_block_transaction(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, const std::string_view& transaction_id) override;
-				virtual expects_promise_rt<vector<incoming_transaction>> get_authentic_transactions(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, schema* transaction_data) override;
-				virtual expects_promise_rt<base_fee> estimate_fee(const algorithm::asset_id& asset, const dynamic_wallet& wallet, const vector<transferer>& to, const fee_supervisor_options& options) override;
-				virtual expects_promise_rt<decimal> calculate_balance(const algorithm::asset_id& asset, const dynamic_wallet& wallet, option<string>&& address) override;
-				virtual expects_promise_rt<outgoing_transaction> new_transaction(const algorithm::asset_id& asset, const dynamic_wallet& wallet, const vector<transferer>& to, const base_fee& fee) override;
-				virtual expects_lr<master_wallet> new_master_wallet(const std::string_view& seed) override;
-				virtual expects_lr<derived_signing_wallet> new_signing_wallet(const algorithm::asset_id& asset, const master_wallet& wallet, uint64_t address_index) override;
-				virtual expects_lr<derived_signing_wallet> new_signing_wallet(const algorithm::asset_id& asset, const secret_box& signing_key) override;
-				virtual expects_lr<derived_verifying_wallet> new_verifying_wallet(const algorithm::asset_id& asset, const std::string_view& verifying_key) override;
-				virtual expects_lr<string> new_public_key_hash(const std::string_view& address) override;
-				virtual expects_lr<string> sign_message(const algorithm::asset_id& asset, const std::string_view& message, const secret_box& signing_key) override;
-				virtual expects_lr<void> verify_message(const algorithm::asset_id& asset, const std::string_view& message, const std::string_view& verifying_key, const std::string_view& signature) override;
-				virtual string get_checksum_hash(const std::string_view& value) const override;
-				virtual string get_derivation(uint64_t address_index) const override;
+				virtual expects_promise_rt<uint64_t> get_latest_block_height() override;
+				virtual expects_promise_rt<schema*> get_block_transactions(uint64_t block_height, string* block_hash) override;
+				virtual expects_promise_rt<computed_transaction> link_transaction(uint64_t block_height, const std::string_view& block_hash, schema* transaction_data) override;
+				virtual expects_promise_rt<computed_fee> estimate_fee(const std::string_view& from_address, const vector<value_transfer>& to, const fee_supervisor_options& options) override;
+				virtual expects_promise_rt<decimal> calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link) override;
+				virtual expects_promise_rt<void> broadcast_transaction(const finalized_transaction& finalized) override;
+				virtual expects_promise_rt<prepared_transaction> prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee) override;
+				virtual expects_lr<finalized_transaction> finalize_transaction(mediator::prepared_transaction&& prepared) override;
+				virtual expects_lr<secret_box> encode_secret_key(const secret_box& secret_key) override;
+				virtual expects_lr<secret_box> decode_secret_key(const secret_box& secret_key) override;
+				virtual expects_lr<string> encode_public_key(const std::string_view& public_key) override;
+				virtual expects_lr<string> decode_public_key(const std::string_view& public_key) override;
+				virtual expects_lr<string> encode_address(const std::string_view& public_key_hash) override;
+				virtual expects_lr<string> decode_address(const std::string_view& address) override;
+				virtual expects_lr<string> encode_transaction_id(const std::string_view& transaction_id) override;
+				virtual expects_lr<string> decode_transaction_id(const std::string_view& transaction_id) override;
+				virtual expects_lr<algorithm::composition::cpubkey_t> to_composite_public_key(const std::string_view& public_key) override;
+				virtual expects_lr<address_map> to_addresses(const std::string_view& public_key) override;
 				virtual const chainparams& get_chainparams() const override;
 
 			public:
-				virtual expects_promise_rt<schema*> get_transaction_receipt(const algorithm::asset_id& asset, const std::string_view& tx_id);
-				virtual expects_promise_rt<uint256_t> get_transactions_count(const algorithm::asset_id& asset, const std::string_view& address);
-				virtual expects_promise_rt<uint256_t> get_chain_id(const algorithm::asset_id& asset);
-				virtual expects_promise_rt<string> get_contract_symbol(const algorithm::asset_id& asset, backends::ethereum* implementation, const std::string_view& contract_address);
-				virtual expects_promise_rt<decimal> get_contract_divisibility(const algorithm::asset_id& asset, backends::ethereum* implementation, const std::string_view& contract_address);
+				virtual expects_promise_rt<schema*> get_transaction_receipt(const std::string_view& tx_id);
+				virtual expects_promise_rt<uint256_t> get_transactions_count(const std::string_view& address);
+				virtual expects_promise_rt<uint256_t> get_chain_id();
+				virtual expects_promise_rt<string> get_contract_symbol(const std::string_view& contract_address);
+				virtual expects_promise_rt<decimal> get_contract_divisibility(const std::string_view& contract_address);
 				virtual const char* get_token_transfer_signature();
 				virtual bool is_token_transfer(const std::string_view& function_signature);
-				virtual void generate_public_key_hash_from_public_key(const uint8_t public_key[64], char out_public_key_hash[20]);
-				virtual void generate_private_key_data_from_private_key(const char* private_key, size_t private_key_size, uint8_t out_private_key_hash[20]);
-				virtual void generate_message_hash(const std::string_view& input, uint8_t output[32]);
-				virtual string get_message_magic();
-				virtual string generate_pkh_address(const char* public_key_hash20);
-				virtual string generate_unchecked_address(const std::string_view& data);
-				virtual string generate_checksum_address(const std::string_view& address);
+				virtual string encode_0xhex(const std::string_view& data);
+				virtual string encode_0xhex_checksum(const uint8_t* data, size_t data_size);
 				virtual string encode_eth_address(const std::string_view& eth_address);
 				virtual string decode_non_eth_address(const std::string_view& non_eth_address);
 				virtual string normalize_topic_address(const std::string_view& address);

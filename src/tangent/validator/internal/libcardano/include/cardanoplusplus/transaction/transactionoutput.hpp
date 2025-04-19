@@ -61,6 +61,7 @@ public:
     uint32_t const &getBodyMapcountbit() const;
     std::vector<uint8_t> const &getTransactionsOutputs();
     uint16_t const &getAmountTransactionsOutputs() const;
+
 private:
     uint8_t outputmap_countbit;  // 0x01 = address , 0x02 = asset , 0x04 = datum , 0x08 = script , 0x10 = colateralreturn
     uint32_t pos_registro_elementos; // maximo 4294967295 , indica en que posicion del vector se deben registrar la cantidad de elementos

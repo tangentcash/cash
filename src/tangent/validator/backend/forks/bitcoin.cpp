@@ -8,12 +8,8 @@ namespace tangent
 	{
 		namespace backends
 		{
-			bitcoin_cash::bitcoin_cash() noexcept : bitcoin()
+			bitcoin_cash::bitcoin_cash(const algorithm::asset_id& new_asset) noexcept : bitcoin(new_asset)
 			{
-			}
-			string bitcoin_cash::get_derivation(uint64_t address_index) const
-			{
-				return stringify::text(protocol::now().is(network_type::mainnet) ? "m/44'/145'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, address_index);
 			}
 			const btc_chainparams_* bitcoin_cash::get_chain()
 			{
@@ -39,16 +35,8 @@ namespace tangent
 				return SIGHASH_ALL | SIGHASH_FORKID;
 			}
 
-			bitcoin_gold::bitcoin_gold() noexcept : bitcoin()
+			bitcoin_gold::bitcoin_gold(const algorithm::asset_id& new_asset) noexcept : bitcoin(new_asset)
 			{
-			}
-			string bitcoin_gold::get_derivation(uint64_t address_index) const
-			{
-				return stringify::text(protocol::now().is(network_type::mainnet) ? "m/44'/156'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, address_index);
-			}
-			string bitcoin_gold::get_message_magic()
-			{
-				return "Bitcoin gold signed message:\n";
 			}
 			const btc_chainparams_* bitcoin_gold::get_chain()
 			{
@@ -70,12 +58,8 @@ namespace tangent
 				return (address_format)((size_t)address_format::pay2_public_key_hash | (size_t)address_format::pay2_witness_public_key_hash);
 			}
 
-			bitcoin_sv::bitcoin_sv() noexcept : bitcoin()
+			bitcoin_sv::bitcoin_sv(const algorithm::asset_id& new_asset) noexcept : bitcoin(new_asset)
 			{
-			}
-			string bitcoin_sv::get_derivation(uint64_t address_index) const
-			{
-				return stringify::text(protocol::now().is(network_type::mainnet) ? "m/44'/236'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, address_index);
 			}
 			const btc_chainparams_* bitcoin_sv::get_chain()
 			{
@@ -97,16 +81,8 @@ namespace tangent
 				return (address_format)((size_t)address_format::pay2_public_key_hash);
 			}
 
-			dash::dash() noexcept : bitcoin()
+			dash::dash(const algorithm::asset_id& new_asset) noexcept : bitcoin(new_asset)
 			{
-			}
-			string dash::get_derivation(uint64_t address_index) const
-			{
-				return stringify::text(protocol::now().is(network_type::mainnet) ? "m/44'/5'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, address_index);
-			}
-			string dash::get_message_magic()
-			{
-				return "DarkCoin signed message:\n";
 			}
 			const btc_chainparams_* dash::get_chain()
 			{
@@ -128,16 +104,8 @@ namespace tangent
 				return (address_format)((size_t)address_format::pay2_public_key_hash);
 			}
 
-			digibyte::digibyte() noexcept : bitcoin()
+			digibyte::digibyte(const algorithm::asset_id& new_asset) noexcept : bitcoin(new_asset)
 			{
-			}
-			string digibyte::get_derivation(uint64_t address_index) const
-			{
-				return stringify::text(protocol::now().is(network_type::mainnet) ? "m/44'/20'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, address_index);
-			}
-			string digibyte::get_message_magic()
-			{
-				return "DigiByte signed message:\n";
 			}
 			const btc_chainparams_* digibyte::get_chain()
 			{
@@ -159,16 +127,8 @@ namespace tangent
 				return (address_format)((size_t)address_format::pay2_public_key_hash | (size_t)address_format::pay2_witness_public_key_hash);
 			}
 
-			dogecoin::dogecoin() noexcept : bitcoin()
+			dogecoin::dogecoin(const algorithm::asset_id& new_asset) noexcept : bitcoin(new_asset)
 			{
-			}
-			string dogecoin::get_derivation(uint64_t address_index) const
-			{
-				return stringify::text(protocol::now().is(network_type::mainnet) ? "m/44'/3'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, address_index);
-			}
-			string dogecoin::get_message_magic()
-			{
-				return "Dogecoin signed message:\n";
 			}
 			const btc_chainparams_* dogecoin::get_chain()
 			{
@@ -190,16 +150,8 @@ namespace tangent
 				return (address_format)((size_t)address_format::pay2_public_key_hash);
 			}
 
-			ecash::ecash() noexcept : bitcoin()
+			ecash::ecash(const algorithm::asset_id& new_asset) noexcept : bitcoin(new_asset)
 			{
-			}
-			string ecash::get_derivation(uint64_t address_index) const
-			{
-				return stringify::text(protocol::now().is(network_type::mainnet) ? "m/44'/145'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, address_index);
-			}
-			string ecash::get_message_magic()
-			{
-				return "eCash signed message:\n";
 			}
 			const btc_chainparams_* ecash::get_chain()
 			{
@@ -225,16 +177,8 @@ namespace tangent
 				return SIGHASH_ALL | SIGHASH_FORKID;
 			}
 
-			litecoin::litecoin() noexcept : bitcoin()
+			litecoin::litecoin(const algorithm::asset_id& new_asset) noexcept : bitcoin(new_asset)
 			{
-			}
-			string litecoin::get_derivation(uint64_t address_index) const
-			{
-				return stringify::text(protocol::now().is(network_type::mainnet) ? "m/44'/2'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, address_index);
-			}
-			string litecoin::get_message_magic()
-			{
-				return "Litecoin signed message:\n";
 			}
 			const btc_chainparams_* litecoin::get_chain()
 			{
@@ -256,12 +200,8 @@ namespace tangent
 				return (address_format)((size_t)address_format::pay2_public_key_hash | (size_t)address_format::pay2_witness_public_key_hash | (size_t)address_format::pay2_taproot);
 			}
 
-			zcash::zcash() noexcept : bitcoin()
+			zcash::zcash(const algorithm::asset_id& new_asset) noexcept : bitcoin(new_asset)
 			{
-			}
-			string zcash::get_derivation(uint64_t address_index) const
-			{
-				return stringify::text(protocol::now().is(network_type::mainnet) ? "m/44'/133'/0'/%" PRIu64 : "m/44'/1'/0'/%" PRIu64, address_index);
 			}
 			const btc_chainparams_* zcash::get_chain()
 			{

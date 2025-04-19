@@ -10,12 +10,65 @@ namespace tangent
 	namespace algorithm
 	{
 		using asset_id = uint256_t;
-		using sighash = uint8_t[64];
-		using recsighash = uint8_t[65];
+		using pubsig = uint8_t[64];
+		using recpubsig = uint8_t[65];
 		using seckey = uint8_t[32];
 		using pubkey = uint8_t[33];
 		using pubkeyhash = uint8_t[20];
 		typedef uint256_t(*hash_function)(const uint256_t&, const uint256_t&);
+
+		template <typename t, size_t s>
+		struct storage_type
+		{
+			t data[s] = { 0 };
+
+			storage_type() = default;
+			storage_type(const t new_data[s])
+			{
+				if (new_data != nullptr)
+					memcpy(data, new_data, sizeof(data));
+			}
+			storage_type(const std::string_view& new_data)
+			{
+				memcpy(data, new_data.data(), std::min(new_data.size(), sizeof(data)));
+			}
+			storage_type(const storage_type&) = default;
+			storage_type(storage_type&&) noexcept = default;
+			storage_type& operator=(const storage_type&) = default;
+			storage_type& operator=(storage_type&&) noexcept = default;
+			bool equals(const t other[s]) const
+			{
+				return !memcmp(other, data, sizeof(data));
+			}
+			bool empty() const
+			{
+				t null[s] = { 0 };
+				return !memcmp(data, null, sizeof(null));
+			}
+			std::string_view view() const
+			{
+				return std::string_view((char*)data, sizeof(data));
+			}
+			std::string_view optimized_view() const
+			{
+				return empty() ? std::string_view("", 0) : std::string_view((char*)data, sizeof(data));
+			}
+			bool operator== (const storage_type& other) const
+			{
+				return equals(other.data);
+			}
+			bool operator< (const storage_type& other) const
+			{
+				for (size_t i = 0; i < s; ++i)
+				{
+					if (data[i] > other.data[i])
+						return false;
+					else if (data[i] < other.data[i])
+						return true;
+				}
+				return false;
+			}
+		};
 
 		class wesolowski
 		{
@@ -87,10 +140,10 @@ namespace tangent
 			static uint256_t message_hash(const std::string_view& signable_message);
 			static string mnemonicgen(uint16_t strength = 256);
 			static void keygen(seckey secret_key);
-			static bool recover(const uint256_t& hash, pubkey public_key, const recsighash signature);
-			static bool recover_hash(const uint256_t& hash, pubkeyhash public_key_hash, const recsighash signature);
-			static bool sign(const uint256_t& hash, const seckey secret_key, recsighash signature);
-			static bool verify(const uint256_t& hash, const pubkey public_key, const recsighash signature);
+			static bool recover(const uint256_t& hash, pubkey public_key, const recpubsig signature);
+			static bool recover_hash(const uint256_t& hash, pubkeyhash public_key_hash, const recpubsig signature);
+			static bool sign(const uint256_t& hash, const seckey secret_key, recpubsig signature);
+			static bool verify(const uint256_t& hash, const pubkey public_key, const recpubsig signature);
 			static bool verify_mnemonic(const std::string_view& mnemonic);
 			static bool verify_secret_key(const seckey secret_key);
 			static bool verify_public_key(const pubkey public_key);
@@ -161,6 +214,7 @@ namespace tangent
 			static string blockchain_of(const asset_id& value);
 			static string token_of(const asset_id& value);
 			static string checksum_of(const asset_id& value);
+			static string name_of(const asset_id& value);
 			static bool is_valid(const asset_id& value);
 			static uint64_t expiry_of(const asset_id& value);
 			static schema* serialize(const asset_id& value);
@@ -169,25 +223,55 @@ namespace tangent
 		class composition
 		{
 		public:
-			using cseed = uint8_t[64];
 			using cseckey = uint8_t[64];
 			using cpubkey = uint8_t[64];
+			using cpubsig = uint8_t[65];
+			using cseckey_t = storage_type<uint8_t, sizeof(cseckey)>;
+			using cpubkey_t = storage_type<uint8_t, sizeof(cpubkey)>;
+			using cpubsig_t = storage_type<uint8_t, sizeof(cpubsig)>;
 
 		public:
-			enum class type
+			enum class type : uint8_t
 			{
-				ED25519,
-				SECP256K1
+				unknown,
+				ed25519,
+				ed25519_clsag,
+				secp256k1,
+				schnorr,
+				schnorr_taproot
+			};
+
+			enum class stage
+			{
+				configure,
+				accumulate,
+				finalize
+			};
+
+			struct keypair
+			{
+				cseckey secret_key = { 0 };
+				cpubkey public_key = { 0 };
 			};
 
 		public:
-			static expects_lr<void> derive_keypair(type alg, const cseed seed, cseckey secret_key, cpubkey public_key);
-			static expects_lr<void> derive_public_key(type alg, const cpubkey public_key1, const cseckey secret_key2, cpubkey public_key, size_t* public_key_size);
-			static expects_lr<void> derive_secret_key(type alg, const cseckey secret_key1, const cseckey secret_key2, cseckey secret_key, size_t* secret_key_size);
-			static void convert_to_composite_hash(const uint8_t* a, size_t asize, const uint8_t* b, size_t bsize, uint8_t c[32]);
+			static expects_lr<void> derive_keypair(type alg, const uint256_t& seed, keypair* result);
+			static expects_lr<void> accumulate_secret_key(type alg, const cseckey share_secret_key, cseckey inout);
+			static expects_lr<void> accumulate_public_key(type alg, const cseckey share_secret_key, cpubkey inout);
+			static expects_lr<void> accumulate_signature(type alg, const uint8_t* message, size_t message_size, const cpubkey final_public_key, const cseckey share_secret_key, cpubsig inout);
+			static expects_lr<void> verify_signature(type alg, const uint8_t* message, size_t message_size, const cpubkey final_public_key, const cpubsig final_signature);
+			static stage stage_of(const uint8_t* share_secret_key, const uint8_t* inout, size_t inout_size);
+			static size_t size_of_secret_key(type alg, stage condition = stage::finalize);
+			static size_t size_of_public_key(type alg, stage condition = stage::finalize);
+			static size_t size_of_signature(type alg, stage condition = stage::finalize);
+		};
+
+		class keypair_utils
+		{
+		public:
 			static void convert_to_secret_key_ed25519(uint8_t secret_key[32]);
-			static void convert_to_scalar_ed25519(uint8_t secret_key[32]);
-			static void convert_to_secret_seed(const seckey secret_key, const std::string_view& entropy, cseed seed);
+			static void convert_to_scalar_ed25519(const uint8_t scalar[64], uint8_t reduced_scalar[32]);
+			static void convert_to_scalar_ed25519(uint8_t scalar[32]);
 		};
 
 		struct merkle_tree
@@ -236,6 +320,83 @@ namespace tangent
 			const vector<uint256_t>& get_tree() const;
 			size_t get_complexity() const;
 			bool is_calculated() const;
+		};
+
+		using pubsig_t = storage_type<uint8_t, sizeof(pubsig)>;
+		using recpubsig_t = storage_type<uint8_t, sizeof(recpubsig)>;
+		using seckey_t = storage_type<uint8_t, sizeof(seckey)>;
+		using pubkey_t = storage_type<uint8_t, sizeof(pubkey)>;
+		using pubkeyhash_t = storage_type<uint8_t, sizeof(pubkeyhash)>;
+	}
+}
+
+namespace vitex
+{
+	namespace core
+	{
+		template <>
+		struct key_hasher<tangent::algorithm::pubsig_t>
+		{
+			typedef float argument_type;
+			typedef size_t result_type;
+			using is_transparent = void;
+
+			inline result_type operator()(const tangent::algorithm::pubsig_t& value) const noexcept
+			{
+				return key_hasher<std::string_view>()(std::string_view((char*)value.data, sizeof(value.data)));
+			}
+		};
+
+		template <>
+		struct key_hasher<tangent::algorithm::recpubsig_t>
+		{
+			typedef float argument_type;
+			typedef size_t result_type;
+			using is_transparent = void;
+
+			inline result_type operator()(const tangent::algorithm::recpubsig_t& value) const noexcept
+			{
+				return key_hasher<std::string_view>()(std::string_view((char*)value.data, sizeof(value.data)));
+			}
+		};
+
+		template <>
+		struct key_hasher<tangent::algorithm::seckey_t>
+		{
+			typedef float argument_type;
+			typedef size_t result_type;
+			using is_transparent = void;
+
+			inline result_type operator()(const tangent::algorithm::seckey_t& value) const noexcept
+			{
+				return key_hasher<std::string_view>()(std::string_view((char*)value.data, sizeof(value.data)));
+			}
+		};
+
+		template <>
+		struct key_hasher<tangent::algorithm::pubkey_t>
+		{
+			typedef float argument_type;
+			typedef size_t result_type;
+			using is_transparent = void;
+
+			inline result_type operator()(const tangent::algorithm::pubkey_t& value) const noexcept
+			{
+				return key_hasher<std::string_view>()(std::string_view((char*)value.data, sizeof(value.data)));
+			}
+		};
+
+		template <>
+		struct key_hasher<tangent::algorithm::pubkeyhash_t>
+		{
+			typedef float argument_type;
+			typedef size_t result_type;
+			using is_transparent = void;
+
+			inline result_type operator()(const tangent::algorithm::pubkeyhash_t& value) const noexcept
+			{
+				return key_hasher<std::string_view>()(std::string_view((char*)value.data, sizeof(value.data)));
+			}
 		};
 	}
 }

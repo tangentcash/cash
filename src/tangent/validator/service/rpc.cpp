@@ -39,15 +39,6 @@ namespace tangent
 				return states::account_storage::as_instance_index(owner, value2.as_string());
 			}
 
-			if (type == states::account_derivation::as_instance_typename())
-			{
-				algorithm::pubkeyhash owner;
-				if (!algorithm::signing::decode_address(value1.as_string(), owner))
-					return layer_exception("invalid address");
-
-				return states::account_derivation::as_instance_index(owner, algorithm::asset::id_of_handle(value2.as_string()));
-			}
-
 			if (type == states::witness_program::as_instance_typename())
 				return states::witness_program::as_instance_index(value1.as_string());
 
@@ -79,15 +70,6 @@ namespace tangent
 				return states::account_observer::as_instance_column(owner);
 			}
 
-			if (type == states::account_reward::as_instance_typename())
-			{
-				algorithm::pubkeyhash owner;
-				if (!algorithm::signing::decode_address(value.as_string(), owner))
-					return layer_exception("invalid address");
-
-				return states::account_reward::as_instance_column(owner);
-			}
-
 			if (type == states::account_balance::as_instance_typename())
 			{
 				algorithm::pubkeyhash owner;
@@ -97,22 +79,49 @@ namespace tangent
 				return states::account_balance::as_instance_column(owner);
 			}
 
-			if (type == states::account_depository::as_instance_typename())
+			if (type == states::depository_reward::as_instance_typename())
 			{
 				algorithm::pubkeyhash owner;
 				if (!algorithm::signing::decode_address(value.as_string(), owner))
 					return layer_exception("invalid address");
 
-				return states::account_depository::as_instance_column(owner);
+				return states::depository_reward::as_instance_column(owner);
 			}
 
-			if (type == states::witness_address::as_instance_typename())
+			if (type == states::depository_balance::as_instance_typename())
 			{
 				algorithm::pubkeyhash owner;
 				if (!algorithm::signing::decode_address(value.as_string(), owner))
 					return layer_exception("invalid address");
 
-				return states::witness_address::as_instance_column(owner);
+				return states::depository_balance::as_instance_column(owner);
+			}
+
+			if (type == states::depository_policy::as_instance_typename())
+			{
+				algorithm::pubkeyhash owner;
+				if (!algorithm::signing::decode_address(value.as_string(), owner))
+					return layer_exception("invalid address");
+
+				return states::depository_policy::as_instance_column(owner);
+			}
+
+			if (type == states::depository_account::as_instance_typename())
+			{
+				algorithm::pubkeyhash proposer;
+				if (!algorithm::signing::decode_address(value.as_string(), proposer))
+					return layer_exception("invalid address");
+
+				return states::depository_account::as_instance_column(proposer);
+			}
+
+			if (type == states::witness_account::as_instance_typename())
+			{
+				algorithm::pubkeyhash owner;
+				if (!algorithm::signing::decode_address(value.as_string(), owner))
+					return layer_exception("invalid address");
+
+				return states::witness_account::as_instance_column(owner);
 			}
 
 			return layer_exception("invalid multiform type");
@@ -125,22 +134,35 @@ namespace tangent
 			if (type == states::account_observer::as_instance_typename())
 				return states::account_observer::as_instance_row(algorithm::asset::id_of_handle(value.as_string()));
 
-			if (type == states::account_reward::as_instance_typename())
-				return states::account_reward::as_instance_row(algorithm::asset::id_of_handle(value.as_string()));
-
 			if (type == states::account_balance::as_instance_typename())
 				return states::account_balance::as_instance_row(algorithm::asset::id_of_handle(value.as_string()));
 
-			if (type == states::account_depository::as_instance_typename())
-				return states::account_depository::as_instance_row(algorithm::asset::id_of_handle(value.as_string()));
+			if (type == states::depository_reward::as_instance_typename())
+				return states::depository_reward::as_instance_row(algorithm::asset::id_of_handle(value.as_string()));
 
-			if (type == states::witness_address::as_instance_typename())
+			if (type == states::depository_balance::as_instance_typename())
+				return states::depository_balance::as_instance_row(algorithm::asset::id_of_handle(value.as_string()));
+
+			if (type == states::depository_policy::as_instance_typename())
+				return states::depository_policy::as_instance_row(algorithm::asset::id_of_handle(value.as_string()));
+
+			if (type == states::depository_account::as_instance_typename())
 			{
 				auto data = value.as_schema();
 				if (!data)
-					return layer_exception("invalid value, expected { asset: string, address: string, derivation_index: uint64 }");
+					return layer_exception("invalid value, expected { asset: string, address: string }");
 
-				return states::witness_address::as_instance_row(algorithm::asset::id_of_handle(data->get_var("asset").get_blob()), data->get_var("address").get_blob(), data->get_var("derivation_index").get_integer());
+				auto owner = algorithm::pubkeyhash_t(data->get_var("owner").get_blob());
+				return states::depository_account::as_instance_row(algorithm::asset::id_of_handle(data->get_var("asset").get_blob()), owner.data);
+			}
+
+			if (type == states::witness_account::as_instance_typename())
+			{
+				auto data = value.as_schema();
+				if (!data)
+					return layer_exception("invalid value, expected { asset: string, address: string }");
+
+				return states::witness_account::as_instance_row(algorithm::asset::id_of_handle(data->get_var("asset").get_blob()), data->get_var("address").get_blob());
 			}
 
 			return layer_exception("invalid multiform type");
@@ -310,22 +332,24 @@ namespace tangent
 			bind(0 | access_type::r, "chainstate", "getbestaccountobservers", 3, 3, "string asset, bool commitment, uint64 offset, uint64 count", "multiform[]", "get best account observers (zero commitment = offline observers, non-zero commitment = online observers threshold)", std::bind(&server_node::chainstate_get_best_account_observers, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getaccountprogram", 1, 1, "string address", "uniform", "get account program hashcode by address", std::bind(&server_node::chainstate_get_account_program, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getaccountstorage", 2, 2, "string address, string location", "uniform", "get account storage by address and location", std::bind(&server_node::chainstate_get_account_storage, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getaccountreward", 2, 2, "string address, string asset", "multiform", "get account reward by address and asset", std::bind(&server_node::chainstate_get_account_reward, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getaccountrewards", 3, 3, "string address, uint64 offset, uint64 count", "multiform[]", "get account rewards by address", std::bind(&server_node::chainstate_get_account_rewards, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getbestaccountrewards", 3, 3, "string asset, uint64 offset, uint64 count", "multiform[]", "get accounts with best rewards", std::bind(&server_node::chainstate_get_best_account_rewards, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getbestaccountrewardsforselection", 3, 3, "string asset, uint64 offset, uint64 count", "{ depository: multiform?, reward: multiform }[]", "get accounts with best rewards with additional proposer info", std::bind(&server_node::chainstate_get_best_account_rewards_for_selection, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getaccountderivation", 2, 2, "string address, string asset", "uint64", "get account derivation by address and asset", std::bind(&server_node::chainstate_get_account_derivation, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getdepositoryreward", 2, 2, "string address, string asset", "multiform", "get depository reward by address and asset", std::bind(&server_node::chainstate_get_depository_reward, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getdepositoryrewards", 3, 3, "string address, uint64 offset, uint64 count", "multiform[]", "get depository rewards by address", std::bind(&server_node::chainstate_get_depository_rewards, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getbestdepositoryrewards", 3, 3, "string asset, uint64 offset, uint64 count", "multiform[]", "get accounts with best rewards", std::bind(&server_node::chainstate_get_best_depository_rewards, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getbestdepositoryrewardsforselection", 3, 3, "string asset, uint64 offset, uint64 count", "{ depository: multiform?, reward: multiform }[]", "get accounts with best rewards with additional proposer info", std::bind(&server_node::chainstate_get_best_depository_rewards_for_selection, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getdepositorypolicy", 2, 2, "string address, string asset", "uint64", "get depository policy by address and asset", std::bind(&server_node::chainstate_get_depository_policy, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getdepositoryaccount", 3, 3, "string asset, string proposer_address, string owner_address", "multiform", "get depository account by proposer and owner addresses and asset", std::bind(&server_node::chainstate_get_depository_account, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getdepositoryaccounts", 3, 3, "string proposer_address", "multiform[]", "get depository accounts by proposer", std::bind(&server_node::chainstate_get_depository_accounts, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getaccountbalance", 2, 2, "string address, string asset", "multiform", "get account balance by address and asset", std::bind(&server_node::chainstate_get_account_balance, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getaccountbalances", 3, 3, "string address, uint64 offset, uint64 count", "multiform[]", "get account balances by address", std::bind(&server_node::chainstate_get_account_balances, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getaccountdepository", 2, 2, "string address, string asset", "multiform", "get account depository by address and asset", std::bind(&server_node::chainstate_get_account_depository, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getaccountdepositories", 3, 3, "string address, uint64 offset, uint64 count", "multiform[]", "get account depositories by address", std::bind(&server_node::chainstate_get_account_depositories, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getbestaccountdepositories", 3, 3, "string asset, uint64 offset, uint64 count", "multiform[]", "get accounts with best depository", std::bind(&server_node::chainstate_get_best_account_depositories, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getbestaccountdepositoriesforselection", 3, 3, "string asset, uint64 offset, uint64 count", "{ depository: multiform, reward: multiform? }[]", "get accounts with best depository with additional proposer info", std::bind(&server_node::chainstate_get_best_account_depositories_for_selection, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getdepositorybalance", 2, 2, "string address, string asset", "multiform", "get depository balance by address and asset", std::bind(&server_node::chainstate_get_depository_balance, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getdepositorybalances", 3, 3, "string address, uint64 offset, uint64 count", "multiform[]", "get depository balances by address", std::bind(&server_node::chainstate_get_depository_balances, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getbestdepositorybalances", 3, 3, "string asset, uint64 offset, uint64 count", "multiform[]", "get accounts with best depository", std::bind(&server_node::chainstate_get_best_depository_balances, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getbestdepositorybalancesforselection", 3, 3, "string asset, uint64 offset, uint64 count", "{ depository: multiform, reward: multiform? }[]", "get accounts with best depository with additional proposer info", std::bind(&server_node::chainstate_get_best_depository_balances_for_selection, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getwitnessprogram", 1, 1, "string hashcode", "uniform", "get witness program by hashcode (512bit number)", std::bind(&server_node::chainstate_get_witness_program, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getwitnessevent", 1, 1, "uint256 transaction_hash", "uniform", "get witness event by transaction hash", std::bind(&server_node::chainstate_get_witness_event, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getwitnessaddress", 3, 4, "string address, string asset, string wallet_address, uint64? derivation_index", "multiform", "get witness address by owner address, asset, wallet address and derivation index", std::bind(&server_node::chainstate_get_witness_address, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getwitnessaddresses", 3, 3, "string address, uint64 offset, uint64 count", "multiform[]", "get witness addresses by owner address", std::bind(&server_node::chainstate_get_witness_addresses, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getwitnessaddressesbypurpose", 4, 4, "string address, string purpose = 'witness' | 'router' | 'custodian' | 'depository', uint64 offset, uint64 count", "multiform[]", "get witness addresses by owner address", std::bind(&server_node::chainstate_get_witness_addresses_by_purpose, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getwitnessaccount", 3, 3, "string address, string asset, string wallet_address", "multiform", "get witness address by owner address, asset, wallet address", std::bind(&server_node::chainstate_get_witness_account, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getwitnessaccounts", 3, 3, "string address, uint64 offset, uint64 count", "multiform[]", "get witness addresses by owner address", std::bind(&server_node::chainstate_get_witness_accounts, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getwitnessaccountsbypurpose", 4, 4, "string address, string purpose = 'witness' | 'router' | 'custodian' | 'depository', uint64 offset, uint64 count", "multiform[]", "get witness addresses by owner address", std::bind(&server_node::chainstate_get_witness_accounts_by_purpose, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getwitnesstransaction", 2, 2, "string asset, string transaction_id", "uniform", "get witness transaction by asset and transaction id", std::bind(&server_node::chainstate_get_witness_transaction, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getclosestnode", 0, 1, "uint64? offset", "validator", "get closest node info", std::bind(&server_node::mempoolstate_get_closest_node, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getclosestnodecount", 0, 0, "", "uint64", "get closest node count", std::bind(&server_node::mempoolstate_get_closest_node_counter, this, std::placeholders::_1, std::placeholders::_2));
@@ -340,8 +364,8 @@ namespace tangent
 			bind(0 | access_type::r, "mempoolstate", "getnextaccountsequence", 1, 1, "string owner_address", "{ min: uint64, max: uint64 }", "get account sequence for next transaction by owner", std::bind(&server_node::mempoolstate_get_next_account_sequence, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getmempooltransactions", 2, 3, "uint64 offset, uint64 count, uint8? unrolling", "uint256[] | txn[]", "get mempool transactions", std::bind(&server_node::mempoolstate_get_transactions, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getmempooltransactionsbyowner", 3, 5, "const string address, uint64 offset, uint64 count, uint8? direction = 1, uint8? unrolling", "uint256[] | txn[]", "get mempool transactions by signing address", std::bind(&server_node::mempoolstate_get_transactions_by_owner, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "mempoolstate", "getcumulativemempooltransactions", 3, 4, "uint256 hash, uint64 offset, uint64 count, uint8? unrolling", "uint256[] | txn[]", "get cumulative mempool transactions", std::bind(&server_node::mempoolstate_get_cumulative_event_transactions, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "mempoolstate", "getcumulativemempoolconsensus", 1, 1, "uint256 hash", "{ branch: uint256, threshold: double, progress: double, committee: uint64, reached: boolean }", "get cumulative mempool transaction consensus state", std::bind(&server_node::mempoolstate_get_cumulative_consensus, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "mempoolstate", "getmempoolattestationtransactions", 3, 4, "uint256 hash, uint64 offset, uint64 count, uint8? unrolling", "uint256[] | txn[]", "get mempool attestation transactions", std::bind(&server_node::mempoolstate_get_attestation_transactions, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "mempoolstate", "getmempoolattestation", 1, 1, "uint256 hash", "{ branch: uint256, threshold: double, progress: double, committee: uint64, reached: boolean }", "get mempool attestation transaction consensus state", std::bind(&server_node::mempoolstate_get_attestation, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "validatorstate", "getnode", 1, 1, "string uri_address", "validator", "get a node by ip address", std::bind(&server_node::validatorstate_get_node, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "validatorstate", "getblockchains", 0, 0, "", "observer::asset", "get supported blockchains", std::bind(&server_node::validatorstate_get_blockchains, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "validatorstate", "status", 0, 0, "", "validator::status", "get validator status", std::bind(&server_node::validatorstate_status, this, std::placeholders::_1, std::placeholders::_2));
@@ -358,11 +382,9 @@ namespace tangent
 			bind(access_type::w | access_type::a, "validatorstate", "rejectnode", 1, 1, "string uri_address", "void", "reject and disconnect from a node by ip address", std::bind(&server_node::validatorstate_reject_node, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "proposerstate", "submitblock", 0, 0, "", "void", "try to propose a block from mempool transactions", std::bind(&server_node::proposerstate_submit_block, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "proposerstate", "submitcommitmenttransaction", 3, 4, "string asset, bool online, bool? proposer, string? observers", "uint256", "submit commitment transaction that enables/disables block proposer and/or blockchain observer(s) defined by a comma separated list of asset handles", std::bind(&server_node::proposerstate_submit_commitment_transaction, this, std::placeholders::_1, std::placeholders::_2));
-			bind(access_type::w | access_type::a, "proposerstate", "submitcontributionallocation", 1, 1, "string asset", "uint256", "request for allocation of a depository wallet", std::bind(&server_node::proposerstate_submit_contribution_allocation, this, std::placeholders::_1, std::placeholders::_2));
-			bind(access_type::w | access_type::a, "proposerstate", "submitcontributiondeallocation", 1, 1, "uint256 depository_activation_hash", "uint256", "request for deallocation of depository wallet to withdraw locked depository funds", std::bind(&server_node::proposerstate_submit_contribution_allocation, this, std::placeholders::_1, std::placeholders::_2));
-			bind(access_type::w | access_type::a, "proposerstate", "submitcontributionwithdrawal", 2, 2, "uint256 depository_deactivation_hash, string to_address", "observer::outgoing_transaction", "send unlocked depository funds to desired wallet address", std::bind(&server_node::proposerstate_submit_contribution_withdrawal, this, std::placeholders::_1, std::placeholders::_2));
-			bind(access_type::w | access_type::a, "proposerstate", "submitdepositoryadjustment", 5, 5, "string asset, decimal incoming_absolute_fee, decimal incoming_realtive_fee, decimal outgoing_absolute_fee, decimal outgoing_realtive_fee", "uint256", "adjust depository fee policy", std::bind(&server_node::proposerstate_submit_depository_adjustment, this, std::placeholders::_1, std::placeholders::_2));
-			bind(access_type::w | access_type::a, "proposerstate", "submitdepositorymigration", 3, 3, "string asset, string proposer_address, decimal value", "uint256", "send custodial funds to another depository wallet", std::bind(&server_node::proposerstate_submit_depository_migration, this, std::placeholders::_1, std::placeholders::_2));
+			bind(access_type::w | access_type::a, "proposerstate", "submitdepositoryadjustment", 8, 8, "string asset, decimal incoming_absolute_fee, decimal incoming_realtive_fee, decimal outgoing_absolute_fee, decimal outgoing_realtive_fee, uint8 committee_size, bool accept_account_requests, bool accept_withdrawal_requests", "uint256", "adjust depository fee policy", std::bind(&server_node::proposerstate_submit_depository_adjustment, this, std::placeholders::_1, std::placeholders::_2));
+			bind(access_type::w | access_type::a, "proposerstate", "submitdepositorympcmigration", 1, 2, "string asset, string? proposer_address", "uint256", "send mpc share to another proposer (possibly filtered by proposer address)", std::bind(&server_node::proposerstate_submit_depository_mpc_migration, this, std::placeholders::_1, std::placeholders::_2));
+			bind(access_type::w | access_type::a, "proposerstate", "submitdepositorycustodymigration", 2, 2, "string asset, string proposer_address", "uint256", "send custodial funds to another depository wallet", std::bind(&server_node::proposerstate_submit_depository_custody_migration, this, std::placeholders::_1, std::placeholders::_2));
 		}
 		void server_node::shutdown()
 		{
@@ -484,7 +506,9 @@ namespace tangent
 			auto request = schema::from_json(buffer);
 			if (request)
 			{
-				cospawn(std::bind(&server_node::dispatch_response, this, web_socket->get_connection(), *request, nullptr, 0, [](http::connection* base, uptr<schema>&& responses)
+				auto* base = web_socket->get_connection();
+				base->info.start = vitex::network::utils::clock();
+				cospawn(std::bind(&server_node::dispatch_response, this, base, *request, nullptr, 0, [](http::connection* base, uptr<schema>&& responses)
 				{
 					auto response = schema::to_json(responses ? *responses : *server_response().error(error_codes::bad_request, "request is empty").transform(nullptr));
 					base->web_socket->send(response, http::web_socket_op::text, [](http::web_socket_frame* web_socket) { web_socket->next(); });
@@ -626,11 +650,12 @@ namespace tangent
 			if (listeners.empty())
 				return;
 
-			ordered_set<string> addresses;
+			ordered_set<algorithm::pubkeyhash_t> addresses;
+			auto context = ledger::transaction_context();
 			for (auto& transaction : block.transactions)
 			{
-				addresses.insert(string((char*)transaction.receipt.from, sizeof(algorithm::pubkeyhash)));
-				transaction.transaction->recover_many(transaction.receipt, addresses);
+				addresses.insert(algorithm::pubkeyhash_t(transaction.receipt.from));
+				transaction.transaction->recover_many(&context, transaction.receipt, addresses);
 			}
 
 			unordered_set<http::web_socket_frame*> web_sockets;
@@ -676,7 +701,7 @@ namespace tangent
 			if (listeners.empty())
 				return;
 
-			string address = string((char*)owner, sizeof(algorithm::pubkeyhash));
+			auto address = algorithm::pubkeyhash_t(owner);
 			unordered_set<http::web_socket_frame*> web_sockets;
 			for (auto& listener : listeners)
 			{
@@ -727,7 +752,7 @@ namespace tangent
 				if (!algorithm::signing::decode_address(address, owner))
 					return server_response().error(error_codes::bad_params, "address[" + to_string(address_index) + "] not valid");
 
-				listener.addresses.insert(string((char*)owner, sizeof(owner)));
+				listener.addresses.insert(algorithm::pubkeyhash_t(owner));
 				++address_index;
 			}
 
@@ -776,7 +801,7 @@ namespace tangent
 		server_response server_node::utility_decode_transaction(http::connection* base, format::variables&& args)
 		{
 			format::stream message = format::stream::decode(args[0].as_blob());
-			uptr<ledger::transaction> candidate_tx = transactions::resolver::init(messages::authentic::resolve_type(message).or_else(0));
+			uptr<ledger::transaction> candidate_tx = transactions::resolver::from_stream(message);
 			if (!candidate_tx || !candidate_tx->load(message))
 				return server_response().error(error_codes::bad_params, "invalid message");
 
@@ -1894,7 +1919,7 @@ namespace tangent
 			auto state = chain.get_uniform_by_index(nullptr, states::account_storage::as_instance_index(owner, args[1].as_string()), 0);
 			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
 		}
-		server_response server_node::chainstate_get_account_reward(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_depository_reward(http::connection* base, format::variables&& args)
 		{
 			algorithm::pubkeyhash owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -1902,10 +1927,10 @@ namespace tangent
 
 			auto chain = storages::chainstate(__func__);
 			auto asset = algorithm::asset::id_of_handle(args[1].as_string());
-			auto state = chain.get_multiform_by_composition(nullptr, states::account_reward::as_instance_column(owner), states::account_reward::as_instance_row(asset), 0);
+			auto state = chain.get_multiform_by_composition(nullptr, states::depository_reward::as_instance_column(owner), states::depository_reward::as_instance_row(asset), 0);
 			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
 		}
-		server_response server_node::chainstate_get_account_rewards(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_depository_rewards(http::connection* base, format::variables&& args)
 		{
 			algorithm::pubkeyhash owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -1916,7 +1941,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto chain = storages::chainstate(__func__);
-			auto list = chain.get_multiforms_by_column(nullptr, states::account_reward::as_instance_column(owner), 0, offset, count);
+			auto list = chain.get_multiforms_by_column(nullptr, states::depository_reward::as_instance_column(owner), 0, offset, count);
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
@@ -1925,7 +1950,7 @@ namespace tangent
 				data->push(item->as_schema().reset());
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::chainstate_get_best_account_rewards(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_best_depository_rewards(http::connection* base, format::variables&& args)
 		{
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
@@ -1934,7 +1959,7 @@ namespace tangent
 
 			auto filter = storages::factor_filter::greater_equal(0, -1);
 			auto chain = storages::chainstate(__func__);
-			auto list = chain.get_multiforms_by_row_filter(nullptr, states::account_reward::as_instance_row(asset), filter, 0, storages::factor_range_window(offset, count));
+			auto list = chain.get_multiforms_by_row_filter(nullptr, states::depository_reward::as_instance_row(asset), filter, 0, storages::factor_range_window(offset, count));
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
@@ -1943,7 +1968,7 @@ namespace tangent
 				data->push(item->as_schema().reset());
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::chainstate_get_best_account_rewards_for_selection(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_best_depository_rewards_for_selection(http::connection* base, format::variables&& args)
 		{
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
@@ -1952,26 +1977,29 @@ namespace tangent
 
 			auto filter = storages::factor_filter::greater_equal(0, -1);
 			auto chain = storages::chainstate(__func__);
-			auto list = chain.get_multiforms_by_row_filter(nullptr, states::account_reward::as_instance_row(asset), filter, 0, storages::factor_range_window(offset, count));
+			auto list = chain.get_multiforms_by_row_filter(nullptr, states::depository_reward::as_instance_row(asset), filter, 0, storages::factor_range_window(offset, count));
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
-			auto asset_stride = states::account_depository::as_instance_row(asset);
 			auto work_stride = states::account_work::as_instance_row();
+			auto policy_stride = states::depository_policy::as_instance_row(asset);
+			auto balance_stride = states::depository_balance::as_instance_row(asset);
 			uptr<schema> data = var::set::array();
 			for (auto& item : *list)
 			{
-				auto* reward_state = (states::account_reward*)*item;
-				auto depository_state = chain.get_multiform_by_composition(nullptr, states::account_depository::as_instance_column(reward_state->owner), asset_stride, 0);
+				auto* reward_state = (states::depository_reward*)*item;
 				auto work_state = chain.get_multiform_by_composition(nullptr, states::account_work::as_instance_column(reward_state->owner), work_stride, 0);
+				auto policy_state = chain.get_multiform_by_composition(nullptr, states::depository_policy::as_instance_column(reward_state->owner), policy_stride, 0);
+				auto balance_state = chain.get_multiform_by_composition(nullptr, states::depository_balance::as_instance_column(reward_state->owner), balance_stride, 0);
 				auto* next = data->push(var::set::object());
 				next->set("work", work_state ? (*work_state)->as_schema().reset() : var::set::null());
-				next->set("depository", depository_state ? (*depository_state)->as_schema().reset() : var::set::null());
+				next->set("balance", balance_state ? (*balance_state)->as_schema().reset() : var::set::null());
+				next->set("policy", policy_state ? (*policy_state)->as_schema().reset() : var::set::null());
 				next->set("reward", reward_state->as_schema().reset());
 			}
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::chainstate_get_account_derivation(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_depository_policy(http::connection* base, format::variables&& args)
 		{
 			algorithm::pubkeyhash owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -1979,9 +2007,46 @@ namespace tangent
 
 			auto chain = storages::chainstate(__func__);
 			auto asset = algorithm::asset::id_of_handle(args[1].as_string());
-			auto state = chain.get_uniform_by_index(nullptr, states::account_derivation::as_instance_index(owner, asset), 0);
-			auto* value = (states::account_derivation*)(state ? **state : nullptr);
-			return server_response().success(algorithm::encoding::serialize_uint256(value ? value->max_address_index : protocol::now().account.root_address_index));
+			auto state = chain.get_multiform_by_composition(nullptr, states::depository_policy::as_instance_column(owner), states::depository_policy::as_instance_row(asset), 0);
+			auto* value = (states::depository_policy*)(state ? **state : nullptr);
+			return server_response().success(value ? value->as_schema().reset() : nullptr);
+		}
+		server_response server_node::chainstate_get_depository_account(http::connection* base, format::variables&& args)
+		{
+			algorithm::pubkeyhash proposer;
+			if (!algorithm::signing::decode_address(args[1].as_string(), proposer))
+				return server_response().error(error_codes::bad_params, "account address not valid");
+
+			algorithm::pubkeyhash owner;
+			if (!algorithm::signing::decode_address(args[2].as_string(), owner))
+				return server_response().error(error_codes::bad_params, "account address not valid");
+
+			auto chain = storages::chainstate(__func__);
+			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
+			auto state = chain.get_multiform_by_composition(nullptr, states::depository_account::as_instance_column(proposer), states::depository_account::as_instance_row(asset, owner), 0);
+			auto* value = (states::depository_account*)(state ? **state : nullptr);
+			return server_response().success(value ? value->as_schema().reset() : nullptr);
+		}
+		server_response server_node::chainstate_get_depository_accounts(http::connection* base, format::variables&& args)
+		{
+			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
+			if (!count || count > protocol::now().user.rpc.page_size)
+				return server_response().error(error_codes::bad_params, "count not valid");
+
+			algorithm::pubkeyhash proposer;
+			if (!algorithm::signing::decode_address(args[0].as_string(), proposer))
+				return server_response().error(error_codes::bad_params, "account address not valid");
+
+			auto filter = storages::factor_filter::greater_equal(0, -1);
+			auto chain = storages::chainstate(__func__);
+			auto list = chain.get_multiforms_by_column_filter(nullptr, states::depository_account::as_instance_column(proposer), filter, 0, storages::factor_range_window(offset, count));
+			if (!list)
+				return server_response().error(error_codes::not_found, "data not found");
+
+			uptr<schema> data = var::set::array();
+			for (auto& item : *list)
+				data->push(item->as_schema().reset());
+			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_account_balance(http::connection* base, format::variables&& args)
 		{
@@ -2014,7 +2079,7 @@ namespace tangent
 				data->push(item->as_schema().reset());
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::chainstate_get_account_depository(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_depository_balance(http::connection* base, format::variables&& args)
 		{
 			algorithm::pubkeyhash owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -2022,10 +2087,10 @@ namespace tangent
 
 			auto chain = storages::chainstate(__func__);
 			auto asset = algorithm::asset::id_of_handle(args[1].as_string());
-			auto state = chain.get_multiform_by_composition(nullptr, states::account_depository::as_instance_column(owner), states::account_depository::as_instance_row(asset), 0);
+			auto state = chain.get_multiform_by_composition(nullptr, states::depository_balance::as_instance_column(owner), states::depository_balance::as_instance_row(asset), 0);
 			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
 		}
-		server_response server_node::chainstate_get_account_depositories(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_depository_balances(http::connection* base, format::variables&& args)
 		{
 			algorithm::pubkeyhash owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -2036,7 +2101,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto chain = storages::chainstate(__func__);
-			auto list = chain.get_multiforms_by_column(nullptr, states::account_depository::as_instance_column(owner), 0, offset, count);
+			auto list = chain.get_multiforms_by_column(nullptr, states::depository_balance::as_instance_column(owner), 0, offset, count);
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
@@ -2045,7 +2110,7 @@ namespace tangent
 				data->push(item->as_schema().reset());
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::chainstate_get_best_account_depositories(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_best_depository_balances(http::connection* base, format::variables&& args)
 		{
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
@@ -2054,7 +2119,7 @@ namespace tangent
 
 			auto filter = storages::factor_filter::greater_equal(0, -1);
 			auto chain = storages::chainstate(__func__);
-			auto list = chain.get_multiforms_by_row_filter(nullptr, states::account_depository::as_instance_row(asset), filter, 0, storages::factor_range_window(offset, count));
+			auto list = chain.get_multiforms_by_row_filter(nullptr, states::depository_balance::as_instance_row(asset), filter, 0, storages::factor_range_window(offset, count));
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
@@ -2063,7 +2128,7 @@ namespace tangent
 				data->push(item->as_schema().reset());
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::chainstate_get_best_account_depositories_for_selection(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_best_depository_balances_for_selection(http::connection* base, format::variables&& args)
 		{
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
@@ -2072,21 +2137,24 @@ namespace tangent
 
 			auto filter = storages::factor_filter::greater_equal(0, -1);
 			auto chain = storages::chainstate(__func__);
-			auto list = chain.get_multiforms_by_row_filter(nullptr, states::account_depository::as_instance_row(asset), filter, 0, storages::factor_range_window(offset, count));
+			auto list = chain.get_multiforms_by_row_filter(nullptr, states::depository_balance::as_instance_row(asset), filter, 0, storages::factor_range_window(offset, count));
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
-			auto asset_stride = states::account_reward::as_instance_row(asset);
 			auto work_stride = states::account_work::as_instance_row();
+			auto policy_stride = states::depository_policy::as_instance_row(asset);
+			auto reward_stride = states::depository_reward::as_instance_row(asset);
 			uptr<schema> data = var::set::array();
 			for (auto& item : *list)
 			{
-				auto* depository_state = (states::account_depository*)*item;
-				auto work_state = chain.get_multiform_by_composition(nullptr, states::account_work::as_instance_column(depository_state->owner), work_stride, 0);
-				auto reward_state = chain.get_multiform_by_composition(nullptr, states::account_reward::as_instance_column(depository_state->owner), asset_stride, 0);
+				auto* balance_state = (states::depository_balance*)*item;
+				auto work_state = chain.get_multiform_by_composition(nullptr, states::account_work::as_instance_column(balance_state->owner), work_stride, 0);
+				auto policy_state = chain.get_multiform_by_composition(nullptr, states::depository_policy::as_instance_column(balance_state->owner), policy_stride, 0);
+				auto reward_state = chain.get_multiform_by_composition(nullptr, states::depository_reward::as_instance_column(balance_state->owner), reward_stride, 0);
 				auto* next = data->push(var::set::object());
 				next->set("work", work_state ? (*work_state)->as_schema().reset() : var::set::null());
-				next->set("depository", depository_state->as_schema().reset());
+				next->set("balance", balance_state->as_schema().reset());
+				next->set("policy", policy_state ? (*policy_state)->as_schema().reset() : var::set::null());
 				next->set("reward", reward_state ? (*reward_state)->as_schema().reset() : var::set::null());
 			}
 			return server_response().success(std::move(data));
@@ -2109,7 +2177,7 @@ namespace tangent
 			auto state = chain.get_uniform_by_index(nullptr, states::witness_event::as_instance_index(args[0].as_uint256()), 0);
 			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
 		}
-		server_response server_node::chainstate_get_witness_address(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_witness_account(http::connection* base, format::variables&& args)
 		{
 			algorithm::pubkeyhash owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -2117,10 +2185,10 @@ namespace tangent
 
 			auto asset = algorithm::asset::id_of_handle(args[1].as_string());
 			auto chain = storages::chainstate(__func__);
-			auto state = chain.get_multiform_by_composition(nullptr, states::witness_address::as_instance_column(owner), states::witness_address::as_instance_row(asset, args[2].as_string(), args.size() > 3 ? args[3].as_uint64() : protocol::now().account.root_address_index), 0);
+			auto state = chain.get_multiform_by_composition(nullptr, states::witness_account::as_instance_column(owner), states::witness_account::as_instance_row(asset, args[2].as_string()), 0);
 			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
 		}
-		server_response server_node::chainstate_get_witness_addresses(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_witness_accounts(http::connection* base, format::variables&& args)
 		{
 			algorithm::pubkeyhash owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -2131,7 +2199,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto chain = storages::chainstate(__func__);
-			auto list = chain.get_multiforms_by_column(nullptr, states::witness_address::as_instance_column(owner), 0, offset, count);
+			auto list = chain.get_multiforms_by_column(nullptr, states::witness_account::as_instance_column(owner), 0, offset, count);
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
@@ -2140,7 +2208,7 @@ namespace tangent
 				data->push(item->as_schema().reset());
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::chainstate_get_witness_addresses_by_purpose(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_witness_accounts_by_purpose(http::connection* base, format::variables&& args)
 		{
 			algorithm::pubkeyhash owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -2149,13 +2217,11 @@ namespace tangent
 			int64_t purpose = std::numeric_limits<int64_t>::max();
 			string type = args[1].as_blob();
 			if (type == "witness")
-				purpose = (int64_t)states::address_type::witness;
-			else if (type == "router")
-				purpose = (int64_t)states::address_type::router;
-			else if (type == "custodian")
-				purpose = (int64_t)states::address_type::custodian;
+				purpose = (int64_t)states::witness_account::account_type::witness;
+			else if (type == "routing")
+				purpose = (int64_t)states::witness_account::account_type::routing;
 			else if (type == "depository")
-				purpose = (int64_t)states::address_type::contribution;
+				purpose = (int64_t)states::witness_account::account_type::depository;
 			if (purpose == std::numeric_limits<int64_t>::max())
 				return server_response().error(error_codes::bad_params, "address purpose not valid");
 
@@ -2165,7 +2231,7 @@ namespace tangent
 
 			auto chain = storages::chainstate(__func__);
 			auto filter = storages::factor_filter::equal((int64_t)purpose, 1);
-			auto list = chain.get_multiforms_by_column_filter(nullptr, states::witness_address::as_instance_column(owner), filter, 0, storages::factor_range_window(offset, count));
+			auto list = chain.get_multiforms_by_column_filter(nullptr, states::witness_account::as_instance_column(owner), filter, 0, storages::factor_range_window(offset, count));
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
@@ -2316,7 +2382,7 @@ namespace tangent
 		server_response server_node::mempoolstate_get_estimate_transaction_gas(http::connection* base, format::variables&& args)
 		{
 			format::stream message = format::stream::decode(args[0].as_blob());
-			uptr<ledger::transaction> candidate_tx = transactions::resolver::init(messages::authentic::resolve_type(message).or_else(0));
+			uptr<ledger::transaction> candidate_tx = transactions::resolver::from_stream(message);
 			if (!candidate_tx || !candidate_tx->load(message))
 				return server_response().error(error_codes::bad_params, "invalid message");
 
@@ -2325,7 +2391,7 @@ namespace tangent
 		server_response server_node::mempoolstate_get_optimal_transaction_gas(http::connection* base, format::variables&& args)
 		{
 			format::stream message = format::stream::decode(args[0].as_blob());
-			uptr<ledger::transaction> candidate_tx = transactions::resolver::init(messages::authentic::resolve_type(message).or_else(0));
+			uptr<ledger::transaction> candidate_tx = transactions::resolver::from_stream(message);
 			if (!candidate_tx || !candidate_tx->load(message))
 				return server_response().error(error_codes::bad_params, "invalid message");
 
@@ -2338,7 +2404,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_request, "validator node disabled");
 
 			format::stream message = prebuilt ? format::stream() : format::stream::decode(args[0].as_blob());
-			uptr<ledger::transaction> candidate_tx = prebuilt ? prebuilt : transactions::resolver::init(messages::authentic::resolve_type(message).or_else(0));
+			uptr<ledger::transaction> candidate_tx = prebuilt ? prebuilt : transactions::resolver::from_stream(message);
 			if (!prebuilt)
 			{
 				if (!candidate_tx || !candidate_tx->load(message))
@@ -2396,13 +2462,13 @@ namespace tangent
 			auto lowest = mempool.get_lowest_transaction_sequence(owner);
 			auto highest = mempool.get_highest_transaction_sequence(owner);
 			if (!lowest)
-				lowest = value ? value->sequence : 1;
+				lowest = value ? value->sequence : 0;
 			if (!highest)
-				highest = value ? value->sequence : 1;
+				highest = value ? value->sequence : 0;
 			else if (value != nullptr && *highest < value->sequence)
 				highest = value->sequence;
 			else
-				highest = *highest + 1;
+				highest = *highest + 0;
 
 			uptr<schema> data = var::set::object();
 			data->set("min", algorithm::encoding::serialize_uint256(*lowest));
@@ -2476,7 +2542,7 @@ namespace tangent
 				return server_response().success(std::move(data));
 			}
 		}
-		server_response server_node::mempoolstate_get_cumulative_event_transactions(http::connection* base, format::variables&& args)
+		server_response server_node::mempoolstate_get_attestation_transactions(http::connection* base, format::variables&& args)
 		{
 			uint256_t hash = args[0].as_uint256();
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
@@ -2488,7 +2554,7 @@ namespace tangent
 			if (unrolling == 0)
 			{
 				uptr<schema> data = var::set::array();
-				auto list = mempool.get_cumulative_event_transactions(hash, offset, count);
+				auto list = mempool.get_transactions_by_group(hash, offset, count);
 				if (!list)
 					return server_response().error(error_codes::not_found, "transactions not found");
 
@@ -2499,7 +2565,7 @@ namespace tangent
 			else
 			{
 				uptr<schema> data = var::set::array();
-				auto list = mempool.get_cumulative_event_transactions(hash, offset, count);
+				auto list = mempool.get_transactions_by_group(hash, offset, count);
 				if (!list)
 					return server_response().error(error_codes::not_found, "transactions not found");
 
@@ -2508,7 +2574,7 @@ namespace tangent
 				return server_response().success(std::move(data));
 			}
 		}
-		server_response server_node::mempoolstate_get_cumulative_consensus(http::connection* base, format::variables&& args)
+		server_response server_node::mempoolstate_get_attestation(http::connection* base, format::variables&& args)
 		{
 			uint256_t hash = args[0].as_uint256();
 			auto mempool = storages::mempoolstate(__func__);
@@ -2517,21 +2583,18 @@ namespace tangent
 				return server_response().error(error_codes::not_found, "transaction not found");
 
 			auto& transaction = *reference;
-			if (transaction->get_type() != ledger::transaction_level::aggregation)
+			if (transaction->get_type() != ledger::transaction_level::attestation)
 				return server_response().error(error_codes::not_found, "transaction consensus is not applicable");
 
 			auto context = ledger::transaction_context();
-			auto* aggregation = (ledger::aggregation_transaction*)*transaction;
-			auto consensus = aggregation->calculate_cumulative_consensus(nullptr, &context);
-			if (!consensus)
+			auto* aggregation = (ledger::attestation_transaction*)*transaction;
+			auto branch = aggregation->get_best_branch(&context);
+			if (!branch)
 				return server_response().error(error_codes::not_found, "transaction consensus is not computable");
 
 			auto result = var::set::object();
-			result->set("branch", var::string(algorithm::encoding::encode_0xhex256(consensus->branch->message.hash())));
-			result->set("threshold", var::number(consensus->threshold));
-			result->set("progress", var::number(consensus->progress));
-			result->set("committee", var::integer(consensus->committee));
-			result->set("reached", var::boolean(consensus->reached));
+			result->set("branch", var::string(algorithm::encoding::encode_0xhex256(branch->message.hash())));
+			result->set("signatures", var::number(branch->signatures.size()));
 			return server_response().success(result);
 		}
 		server_response server_node::validatorstate_prune(http::connection* base, format::variables&& args)
@@ -2710,11 +2773,17 @@ namespace tangent
 				next->set("sync_latency", var::integer(asset.second.sync_latency));
 				switch (asset.second.composition)
 				{
-					case algorithm::composition::type::ED25519:
+					case algorithm::composition::type::ed25519:
 						next->set("composition_policy", var::string("ed25519"));
 						break;
-					case algorithm::composition::type::SECP256K1:
+					case algorithm::composition::type::secp256k1:
 						next->set("composition_policy", var::string("secp256k1"));
+						break;
+					case algorithm::composition::type::schnorr:
+						next->set("composition_policy", var::string("schnorr"));
+						break;
+					case algorithm::composition::type::schnorr_taproot:
+						next->set("composition_policy", var::string("schnorr_taproot"));
 						break;
 					default:
 						next->set("composition_policy", var::null());
@@ -2728,7 +2797,7 @@ namespace tangent
 					case tangent::mediator::routing_policy::memo:
 						next->set("routing_policy", var::string("memo"));
 						break;
-					case tangent::mediator::routing_policy::UTXO:
+					case tangent::mediator::routing_policy::utxo:
 						next->set("routing_policy", var::string("utxo"));
 						break;
 					default:
@@ -2789,7 +2858,6 @@ namespace tangent
 				NSS->set("relaying_timeout", var::integer(protocol::now().user.nss.relaying_timeout));
 				NSS->set("relaying_retry_timeout", var::integer(protocol::now().user.nss.relaying_retry_timeout));
 				NSS->set("fee_estimation_seconds", var::integer(protocol::now().user.nss.fee_estimation_seconds));
-				NSS->set("withdrawal_time", var::integer(protocol::now().user.nss.withdrawal_time));
 				auto array = NSS->set("nodes", var::set::array());
 				for (auto& asset : nss::server_node::get()->get_assets())
 					array->push(algorithm::asset::serialize(asset));
@@ -2829,15 +2897,6 @@ namespace tangent
 				auto data = user->as_schema();
 				data->set("network", node.second->as_schema().reset());
 				connections->push(data.reset());
-			}
-
-			auto* candidates = data->set("candidates", var::set::array());
-			for (auto& node : validator->get_candidate_nodes())
-			{
-				auto& address = node->get_peer_address();
-				auto ip_address = address.get_ip_address();
-				auto ip_port = address.get_ip_port();
-				candidates->push(var::string(ip_port ? ip_address.or_else("[???]") + ":" + to_string(*ip_port) : ip_address.or_else("[???]")));
 			}
 
 			auto* forks = data->set("forks", var::set::array());
@@ -2886,7 +2945,7 @@ namespace tangent
 			bool online = args[1].as_boolean();
 			auto context = ledger::transaction_context();
 			auto work = context.get_account_work(validator->validator.wallet.public_key_hash);
-			auto transaction = memory::init<transactions::commitment>();
+			auto transaction = memory::init<transactions::certification>();
 			transaction->asset = algorithm::asset::id_of_handle(args[0].as_string());
 			if (args.size() > 2 ? args[2].as_boolean() : false)
 			{
@@ -2928,71 +2987,6 @@ namespace tangent
 
 			return server_response().success(var::set::string(algorithm::encoding::encode_0xhex256(candidate_hash)));
 		}
-		server_response server_node::proposerstate_submit_contribution_allocation(http::connection* base, format::variables&& args)
-		{
-			if (!validator)
-				return server_response().error(error_codes::bad_request, "validator node disabled");
-
-			auto transaction = memory::init<transactions::contribution_allocation>();
-			transaction->asset = algorithm::asset::id_of_handle(args[0].as_string());
-
-			umutex<std::recursive_mutex> unique(validator->sync.account);
-			auto account_sequence = validator->validator.wallet.get_latest_sequence().or_else(1);
-			unique.unlock();
-
-			uint256_t candidate_hash = 0;
-			auto status = validator->propose_transaction(nullptr, transaction, account_sequence, &candidate_hash);
-			if (!status)
-				return server_response().error(error_codes::bad_params, status.error().message());
-
-			return server_response().success(var::set::string(algorithm::encoding::encode_0xhex256(candidate_hash)));
-		}
-		server_response server_node::proposerstate_submit_contribution_deallocation(http::connection* base, format::variables&& args)
-		{
-			if (!validator)
-				return server_response().error(error_codes::bad_request, "validator node disabled");
-
-			auto context = ledger::transaction_context();
-			auto initiator = context.get_block_transaction<transactions::contribution_activation>(args[0].as_uint256());
-			if (!initiator)
-				return server_response().error(error_codes::bad_request, "transaction not found");
-
-			auto transaction = memory::init<transactions::contribution_deallocation>();
-			transaction->asset = initiator->transaction->asset;
-			transaction->set_witness(validator->validator.wallet.secret_key, initiator->receipt.transaction_hash);
-
-			umutex<std::recursive_mutex> unique(validator->sync.account);
-			auto account_sequence = validator->validator.wallet.get_latest_sequence().or_else(1);
-			unique.unlock();
-
-			uint256_t candidate_hash = 0;
-			auto status = validator->propose_transaction(nullptr, transaction, account_sequence, &candidate_hash);
-			if (!status)
-				return server_response().error(error_codes::bad_params, status.error().message());
-
-			return server_response().success(var::set::string(algorithm::encoding::encode_0xhex256(candidate_hash)));
-		}
-		server_response server_node::proposerstate_submit_contribution_withdrawal(http::connection* base, format::variables&& args)
-		{
-			if (!validator)
-				return server_response().error(error_codes::bad_request, "validator node disabled");
-
-			auto result = coasync<expects_rt<mediator::outgoing_transaction>>([this, args = std::move(args)]() mutable -> promise<expects_rt<mediator::outgoing_transaction>>
-			{
-				auto context = ledger::transaction_context();
-				auto initiator = context.get_block_transaction<transactions::contribution_deactivation>(args[0].as_uint256());
-				if (!initiator)
-					coreturn remote_exception("transaction not found");
-
-				auto* transaction = (transactions::contribution_deactivation*)*initiator->transaction;
-				auto result = coawait(transaction->withdraw_to_address(&context, validator->validator.wallet.secret_key, args[1].as_string()));
-				coreturn std::move(result);
-			}).get();
-			if (!result)
-				return server_response().error(error_codes::bad_request, result.error().message());
-
-			return server_response().success(result->as_schema().reset());
-		}
 		server_response server_node::proposerstate_submit_depository_adjustment(http::connection* base, format::variables&& args)
 		{
 			if (!validator)
@@ -3002,6 +2996,7 @@ namespace tangent
 			transaction->asset = algorithm::asset::id_of_handle(args[0].as_string());
 			transaction->set_incoming_fee(args[1].as_decimal(), args[2].as_decimal());
 			transaction->set_outgoing_fee(args[3].as_decimal(), args[4].as_decimal());
+			transaction->set_security(args[5].as_uint8(), args[6].as_boolean(), args[7].as_boolean());
 
 			umutex<std::recursive_mutex> unique(validator->sync.account);
 			auto account_sequence = validator->validator.wallet.get_latest_sequence().or_else(1);
@@ -3014,7 +3009,49 @@ namespace tangent
 
 			return server_response().success(var::set::string(algorithm::encoding::encode_0xhex256(candidate_hash)));
 		}
-		server_response server_node::proposerstate_submit_depository_migration(http::connection* base, format::variables&& args)
+		server_response server_node::proposerstate_submit_depository_mpc_migration(http::connection* base, format::variables&& args)
+		{
+			if (!validator)
+				return server_response().error(error_codes::bad_request, "validator node disabled");
+
+			uptr<transactions::depository_migration> transaction = memory::init<transactions::depository_migration>();
+			transaction->asset = algorithm::asset::id_of_handle(args[0].as_string());
+
+			algorithm::pubkeyhash_t proposer;
+			if (!algorithm::signing::decode_address(args[1].as_string(), proposer.data))
+				proposer = algorithm::pubkeyhash_t();
+
+			auto mempool = storages::mempoolstate(__func__);
+			size_t offset = 0;
+			size_t count = 64;
+			while (true)
+			{
+				auto accounts = mempool.get_mpc_accounts(proposer.empty() ? nullptr : proposer.data, offset, count);
+				if (!accounts)
+					return server_response().error(error_codes::bad_request, accounts.error().message());
+
+				offset += accounts->size();
+				for (auto& account : *accounts)
+					transaction->migrate(account.asset, account.proposer, account.owner);
+				if (accounts->empty())
+					break;
+			}
+
+			if (transaction->migrations.empty())
+				return server_response().error(error_codes::bad_request, "there are no candidate mpc migrations");
+
+			umutex<std::recursive_mutex> unique(validator->sync.account);
+			auto account_sequence = validator->validator.wallet.get_latest_sequence().or_else(1);
+			unique.unlock();
+
+			uint256_t candidate_hash = 0;
+			auto status = validator->propose_transaction(nullptr, transaction.reset(), account_sequence, &candidate_hash);
+			if (!status)
+				return server_response().error(error_codes::bad_params, status.error().message());
+
+			return server_response().success(var::set::string(algorithm::encoding::encode_0xhex256(candidate_hash)));
+		}
+		server_response server_node::proposerstate_submit_depository_custody_migration(http::connection* base, format::variables&& args)
 		{
 			if (!validator)
 				return server_response().error(error_codes::bad_request, "validator node disabled");
@@ -3023,9 +3060,9 @@ namespace tangent
 			if (!algorithm::signing::decode_address(args[1].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "invalid address");
 
-			auto transaction = memory::init<transactions::depository_migration>();
+			auto transaction = memory::init<transactions::depository_withdrawal>();
 			transaction->asset = algorithm::asset::id_of_handle(args[0].as_string());
-			transaction->set_proposer(owner, args[1].as_decimal());
+			transaction->set_proposer(validator->validator.wallet.public_key_hash, owner);
 
 			umutex<std::recursive_mutex> unique(validator->sync.account);
 			auto account_sequence = validator->validator.wallet.get_latest_sequence().or_else(1);

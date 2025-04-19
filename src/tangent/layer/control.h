@@ -18,24 +18,19 @@ namespace tangent
 	struct system_control
 	{
 		unordered_map<string, task_id>* timers;
-		std::atomic<size_t> tasks;
 		std::atomic<bool> active;
 		std::recursive_mutex sync;
 		std::string_view service_name;
 
 		system_control(const std::string_view& label) noexcept;
-		promise<void> shutdown() noexcept;
 		bool lock_timeout(const std::string_view& name);
 		bool unlock_timeout(const std::string_view& name);
 		bool interval_if_none(const std::string_view& name, uint64_t ms, task_callback&& callback) noexcept;
 		bool timeout_if_none(const std::string_view& name, uint64_t ms, task_callback&& callback) noexcept;
 		bool upsert_timeout(const std::string_view& name, uint64_t ms, task_callback&& callback) noexcept;
 		bool clear_timeout(const std::string_view& name, bool clear_scheduled = false) noexcept;
-		bool activate_and_enqueue() noexcept;
+		bool activate() noexcept;
 		bool deactivate() noexcept;
-		bool enqueue_if_none() noexcept;
-		bool enqueue() noexcept;
-		bool dequeue() noexcept;
 		bool is_active() noexcept;
 		bool is_busy() noexcept;
 	};

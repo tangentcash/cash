@@ -307,7 +307,7 @@ namespace tangent
 
 			return *b / a->truncate(protocol::now().message.precision);
 		}
-		expects_lr<void> mempoolstate::add_transaction(ledger::transaction& value, bool bypass_congestion)
+		expects_lr<void> mempoolstate::add_transaction(ledger::transaction& value, bool resurrection)
 		{
 			format::stream message;
 			if (!value.store(&message))
@@ -319,7 +319,7 @@ namespace tangent
 
 			uint256_t group = 0;
 			decimal preference = decimal::nan();
-			auto type = value.get_type();
+			auto type = resurrection ? ledger::transaction_level::functional : value.get_type();
 			auto queue = [this, &value]() -> decimal
 			{
 				auto median_gas_price = get_gas_price(value.asset, fee_percentile(fee_priority::medium));
@@ -340,8 +340,7 @@ namespace tangent
 					auto bandwidth = get_bandwidth_by_owner(owner, type);
 					if (!bandwidth->congested || bandwidth->sequence >= value.sequence)
 						break;
-
-					if (!bypass_congestion && !value.gas_price.is_positive())
+					else if (!value.gas_price.is_positive())
 						return expects_lr<void>(layer_exception(stringify::text("wait for finalization of or replace previous delegation transaction (queue: %" PRIu64 ", sequence: %" PRIu64 ")", (uint64_t)bandwidth->count, bandwidth->sequence)));
 
 					preference = queue();
@@ -352,34 +351,27 @@ namespace tangent
 					auto bandwidth = get_bandwidth_by_owner(owner, type);
 					if (!bandwidth->congested || bandwidth->sequence >= value.sequence)
 						break;
-
-					if (!bypass_congestion && !value.gas_price.is_positive())
+					else if (!value.gas_price.is_positive())
 						return expects_lr<void>(layer_exception(stringify::text("wait for finalization of or replace previous consensus transaction (queue: %" PRIu64 ", sequence: %" PRIu64 ")", (uint64_t)bandwidth->count, bandwidth->sequence)));
 
 					preference = queue();
 					break;
 				}
-				case ledger::transaction_level::aggregation:
+				case ledger::transaction_level::attestation:
 				{
-					vector<uint256_t> merges;
 					size_t offset = 0, count = 64;
 					auto context = ledger::transaction_context();
-					auto* aggregation = ((ledger::aggregation_transaction*)&value);
-					group = aggregation->get_cumulative_hash();
+					auto* attestation = ((ledger::attestation_transaction*)&value);
 					while (true)
 					{
-						auto transactions = get_cumulative_event_transactions(group, offset, count);
+						auto transactions = get_transactions_by_group(group, offset, count);
 						if (!transactions || transactions->empty())
 							break;
 
 						for (auto& item : *transactions)
 						{
-							merges.push_back(item->as_hash());
-							if (item->get_type() != ledger::transaction_level::aggregation)
-								continue;
-
-							auto& candidate = *(ledger::aggregation_transaction*)*item;
-							aggregation->merge(&context, candidate);
+							if (item->get_type() == ledger::transaction_level::attestation)
+								attestation->merge(&context, *(ledger::attestation_transaction*)*item);
 						}
 
 						offset += transactions->size();
@@ -387,21 +379,26 @@ namespace tangent
 							break;
 					}
 
-					auto status = remove_transactions(merges);
-					if (!status)
-						return status;
-					else if (!merges.empty())
+					group = attestation->as_group_hash();
+					if (offset > 0)
 						break;
 
-					auto optimal_gas_limit = ledger::transaction_context::calculate_tx_gas(aggregation);
-					if (optimal_gas_limit && *optimal_gas_limit > aggregation->gas_limit)
-						aggregation->gas_limit = *optimal_gas_limit;
+					auto optimal_gas_limit = ledger::transaction_context::calculate_tx_gas(attestation);
+					if (optimal_gas_limit && *optimal_gas_limit > attestation->gas_limit)
+						attestation->gas_limit = *optimal_gas_limit;
 
 					preference = queue();
 					break;
 				}
 				default:
 					break;
+			}
+
+			if (group > 0)
+			{
+				auto status = remove_transactions_by_group(group);
+				if (!status)
+					return status.error();
 			}
 
 			uint8_t hash[32];
@@ -415,7 +412,7 @@ namespace tangent
 
 			schema_list map;
 			map.push_back(var::set::binary(hash, sizeof(hash)));
-			map.push_back(var::set::binary(group_hash, sizeof(group_hash)));
+			map.push_back(group > 0 ? var::set::binary(group_hash, sizeof(group_hash)) : var::set::null());
 			map.push_back(var::set::binary(owner, sizeof(owner)));
 			map.push_back(var::set::binary(asset, sizeof(asset)));
 			map.push_back(var::set::integer(value.sequence));
@@ -427,8 +424,22 @@ namespace tangent
 			map.push_back(var::set::binary(owner, sizeof(owner)));
 
 			auto cursor = emplace_query(label, __func__,
-				"INSERT OR REPLACE INTO transactions (hash, attestation, owner, asset, sequence, preference, type, time, price, message) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
+				"INSERT OR REPLACE INTO transactions (hash, group_hash, owner, asset, sequence, preference, type, time, price, message) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
 				"WITH epochs AS (SELECT rowid, ROW_NUMBER() OVER (ORDER BY sequence) AS epoch FROM transactions WHERE owner = ?) UPDATE transactions SET epoch = epochs.epoch FROM epochs WHERE transactions.rowid = epochs.rowid", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<void>(layer_exception(error_of(cursor)));
+
+			return expectation::met;
+		}
+		expects_lr<void> mempoolstate::remove_transactions_by_group(const uint256_t& group_hash)
+		{
+			uint8_t hash[32];
+			algorithm::encoding::decode_uint256(group_hash, hash);
+
+			schema_list map;
+			map.push_back(var::set::binary(hash, sizeof(hash)));
+
+			auto cursor = emplace_query(label, __func__, "DELETE FROM transactions WHERE group_hash = ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(error_of(cursor)));
 
@@ -491,6 +502,92 @@ namespace tangent
 
 			return expectation::met;
 		}
+		expects_lr<void> mempoolstate::apply_mpc_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash proposer, const algorithm::pubkeyhash owner, const uint256_t& seed)
+		{
+			uint8_t seed_data[32];
+			algorithm::encoding::decode_uint256(seed, seed_data);
+
+			uint8_t asset_data[32];
+			algorithm::encoding::decode_uint256(asset, asset_data);
+
+			schema_list map;
+			map.push_back(var::set::binary(asset_data, sizeof(asset_data)));
+			map.push_back(var::set::binary(owner, sizeof(algorithm::pubkeyhash)));
+			map.push_back(var::set::binary(proposer, sizeof(algorithm::pubkeyhash)));
+			map.push_back(var::set::binary(seed_data, sizeof(seed_data)));
+
+			auto cursor = emplace_query(label, __func__, "INSERT OR REPLACE INTO mpc (asset, owner, proposer, hash) VALUES (?, ?, ?, ?);", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<void>(layer_exception(error_of(cursor)));
+
+			return expectation::met;
+		}
+		expects_lr<uint256_t> mempoolstate::get_or_apply_mpc_account_seed(const algorithm::asset_id& asset, const algorithm::pubkeyhash proposer, const algorithm::pubkeyhash owner, const uint256_t& entropy)
+		{
+			uint8_t asset_data[32];
+			algorithm::encoding::decode_uint256(asset, asset_data);
+
+			schema_list map;
+			map.push_back(var::set::binary(asset_data, sizeof(asset_data)));
+			map.push_back(var::set::binary(owner, sizeof(algorithm::pubkeyhash)));
+			map.push_back(var::set::binary(proposer, sizeof(algorithm::pubkeyhash)));
+
+			auto cursor = emplace_query(label, __func__, "SELECT hash FROM mpc WHERE asset = ? AND owner = ? AND proposer = ?", &map);
+			if (cursor && !cursor->error_or_empty())
+			{
+				auto seed_data = (*cursor)["hash"].get().get_blob();
+				if (seed_data.size() != 32)
+					return expects_lr<uint256_t>(layer_exception("bad seed"));
+
+				uint256_t seed = 0;
+				algorithm::encoding::encode_uint256((uint8_t*)seed_data.data(), seed);
+				return seed;
+			}
+			else
+			{
+				format::stream seed;
+				seed.write_integer(asset);
+				seed.write_string(algorithm::pubkeyhash_t(owner).optimized_view());
+				seed.write_string(algorithm::pubkeyhash_t(proposer).optimized_view());
+				seed.write_integer(entropy);
+				auto result = apply_mpc_account(asset, proposer, owner, seed.hash());
+				if (!result)
+					return result.error();
+
+				return seed.hash();
+			}
+		}
+		expects_lr<vector<states::depository_account>> mempoolstate::get_mpc_accounts(const algorithm::pubkeyhash proposer, size_t offset, size_t count)
+		{
+			schema_list map;
+			if (proposer != nullptr)
+				map.push_back(var::set::binary(proposer, sizeof(algorithm::pubkeyhash)));
+			map.push_back(var::set::integer(count));
+			map.push_back(var::set::integer(offset));
+
+			auto cursor = emplace_query(label, __func__, proposer != nullptr ? "SELECT asset, owner FROM mpc WHERE proposer = ? LIMIT ? OFFSET ?" : "SELECT asset, proposer, owner FROM mpc LIMIT ? OFFSET ?", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<vector<states::depository_account>>(layer_exception(error_of(cursor)));
+
+			auto context = ledger::transaction_context();
+			vector<states::depository_account> result;
+			for (auto row : cursor->first())
+			{
+				auto asset_data = row["asset"].get().get_blob();
+				if (asset_data.size() != sizeof(algorithm::asset_id))
+					continue;
+
+				algorithm::asset_id asset;
+				algorithm::encoding::encode_uint256((uint8_t*)asset_data.data(), asset);
+
+				auto owner = algorithm::pubkeyhash_t(row["owner"].get().get_blob());
+				auto subproposer = algorithm::pubkeyhash_t(row["proposer"].get().get_blob());
+				auto account = context.get_depository_account(asset, proposer ? proposer : subproposer.data, owner.data);
+				if (account)
+					result.push_back(std::move(*account));
+			}
+			return result;
+		}
 		expects_lr<account_bandwidth> mempoolstate::get_bandwidth_by_owner(const algorithm::pubkeyhash owner, ledger::transaction_level type)
 		{
 			schema_list map;
@@ -515,8 +612,8 @@ namespace tangent
 				case tangent::ledger::transaction_level::consensus:
 					result.congested = protocol::now().policy.parallel_consensus_limit > 0 && result.count >= protocol::now().policy.parallel_consensus_limit;
 					break;
-				case tangent::ledger::transaction_level::aggregation:
-					result.congested = protocol::now().policy.parallel_aggregation_limit > 0 && result.count >= protocol::now().policy.parallel_aggregation_limit;
+				case tangent::ledger::transaction_level::attestation:
+					result.congested = protocol::now().policy.parallel_attestation_limit > 0 && result.count >= protocol::now().policy.parallel_attestation_limit;
 					break;
 				default:
 					result.congested = true;
@@ -575,7 +672,7 @@ namespace tangent
 				return expects_lr<uptr<ledger::transaction>>(layer_exception(error_of(cursor)));
 
 			format::stream message = format::stream((*cursor)["message"].get().get_blob());
-			uptr<ledger::transaction> value = transactions::resolver::init(messages::authentic::resolve_type(message).or_else(0));
+			uptr<ledger::transaction> value = transactions::resolver::from_stream(message);
 			if (!value || !value->load(message))
 				return expects_lr<uptr<ledger::transaction>>(layer_exception("transaction deserialization error"));
 
@@ -601,7 +698,7 @@ namespace tangent
 			{
 				auto row = response[i];
 				format::stream message = format::stream(row["message"].get().get_blob());
-				uptr<ledger::transaction> value = transactions::resolver::init(messages::authentic::resolve_type(message).or_else(0));
+				uptr<ledger::transaction> value = transactions::resolver::from_stream(message);
 				if (value && value->load(message))
 				{
 					finalize_checksum(**value, row["hash"].get());
@@ -632,7 +729,7 @@ namespace tangent
 			{
 				auto row = response[i];
 				format::stream message = format::stream(row["message"].get().get_blob());
-				uptr<ledger::transaction> value = transactions::resolver::init(messages::authentic::resolve_type(message).or_else(0));
+				uptr<ledger::transaction> value = transactions::resolver::from_stream(message);
 				if (value && value->load(message))
 				{
 					finalize_checksum(**value, row["hash"].get());
@@ -642,17 +739,17 @@ namespace tangent
 
 			return values;
 		}
-		expects_lr<vector<uptr<ledger::transaction>>> mempoolstate::get_cumulative_event_transactions(const uint256_t& cumulative_hash, size_t offset, size_t count)
+		expects_lr<vector<uptr<ledger::transaction>>> mempoolstate::get_transactions_by_group(const uint256_t& group_hash, size_t offset, size_t count)
 		{
 			uint8_t hash[32];
-			algorithm::encoding::decode_uint256(cumulative_hash, hash);
+			algorithm::encoding::decode_uint256(group_hash, hash);
 
 			schema_list map;
 			map.push_back(var::set::binary(hash, sizeof(hash)));
 			map.push_back(var::set::integer(count));
 			map.push_back(var::set::integer(offset));
 
-			auto cursor = emplace_query(label, __func__, "SELECT message FROM transactions WHERE attestation = ? ORDER BY attestation ASC LIMIT ? OFFSET ?", &map);
+			auto cursor = emplace_query(label, __func__, "SELECT message FROM transactions WHERE group_hash = ? ORDER BY group_hash ASC LIMIT ? OFFSET ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<uptr<ledger::transaction>>>(layer_exception(error_of(cursor)));
 
@@ -665,7 +762,7 @@ namespace tangent
 			{
 				auto row = response[i];
 				format::stream message = format::stream(row["message"].get().get_blob());
-				uptr<ledger::transaction> value = transactions::resolver::init(messages::authentic::resolve_type(message).or_else(0));
+				uptr<ledger::transaction> value = transactions::resolver::from_stream(message);
 				if (value && value->load(message))
 				{
 					finalize_checksum(**value, row["hash"].get());
@@ -739,12 +836,21 @@ namespace tangent
 					address BINARY NOT NULL,
 					PRIMARY KEY (address)
 				) WITHOUT ROWID;
+				CREATE TABLE IF NOT EXISTS mpc
+				(
+					asset BINARY(32) NOT NULL,
+					owner BINARY(20) NOT NULL,
+					proposer BINARY(20) NOT NULL,
+					hash BINARY(32) NOT NULL,
+					PRIMARY KEY (asset, owner, proposer)
+				) WITHOUT ROWID;
+				CREATE INDEX IF NOT EXISTS mpc_proposer ON mpc (proposer);
 				CREATE TABLE IF NOT EXISTS transactions
 				(
 					hash BINARY(32) NOT NULL,
-					attestation BINARY(32) DEFAULT NULL,
+					group_hash BINARY(32) DEFAULT NULL,
 					owner BINARY(20) NOT NULL,
-					asset BINARY(16) NOT NULL,
+					asset BINARY(32) NOT NULL,
 					sequence BIGINT NOT NULL,
 					epoch INTEGER DEFAULT 0,
 					preference INTEGER DEFAULT NULL,
@@ -754,7 +860,7 @@ namespace tangent
 					message BINARY NOT NULL,
 					PRIMARY KEY (hash)
 				);
-				CREATE INDEX IF NOT EXISTS transactions_attestation ON transactions (attestation);
+				CREATE INDEX IF NOT EXISTS transactions_group_hash ON transactions (group_hash);
 				CREATE INDEX IF NOT EXISTS transactions_owner_sequence ON transactions (owner, sequence);
 				CREATE INDEX IF NOT EXISTS transactions_asset_preference ON transactions (asset ASC, preference DESC);
 				CREATE INDEX IF NOT EXISTS transactions_epoch_preference ON transactions (epoch ASC, preference DESC););

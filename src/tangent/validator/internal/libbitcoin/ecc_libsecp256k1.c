@@ -214,7 +214,7 @@ btc_bool btc_ecc_verify_sig(const uint8_t* public_key, btc_bool compressed, cons
     return secp256k1_ecdsa_verify(secp256k1_ctx, &sig, hash, &pubkey);
 }
 
-btc_bool btc_ecc_compact_to_der_normalized(unsigned char* sigcomp_in, unsigned char* sigder_out, size_t* sigder_len_out)
+btc_bool btc_ecc_compact_to_der_normalized(const unsigned char* sigcomp_in, unsigned char* sigder_out, size_t* sigder_len_out)
 {
     assert(secp256k1_ctx);
 
