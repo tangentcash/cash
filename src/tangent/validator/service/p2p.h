@@ -175,7 +175,6 @@ namespace tangent
 		private:
 			struct
 			{
-				option<uint64_t> activation_block = optional::none;
 				bool dirty = false;
 			} mempool;
 
@@ -200,7 +199,8 @@ namespace tangent
 			promise<option<socket_address>> find_node_from_mempool(option<socket_address>&& error_address, bool allow_seeding);
 			promise<option<socket_address>> find_node_from_seeding();
 			promise<void> propose_transaction_logs(const algorithm::asset_id& asset, const mediator::chain_supervisor_options& options, mediator::transaction_logs&& logs);
-			expects_lr<void> propose_transaction(relay* from, uptr<ledger::transaction>&& candidate_tx, uint64_t account_sequence, uint256_t* output_hash = nullptr);
+			expects_lr<void> build_transaction(ledger::transaction* candidate_tx, uint64_t account_nonce, uint256_t* output_hash = nullptr);
+			expects_lr<void> accept_unsigned_transaction(relay* from, uptr<ledger::transaction>&& candidate_tx, uint64_t account_nonce, uint256_t* output_hash = nullptr);
 			expects_lr<void> accept_transaction(relay* from, uptr<ledger::transaction>&& candidate_tx, bool validate_execution = false);
 			expects_lr<void> broadcast_transaction(relay* from, uptr<ledger::transaction>&& candidate_tx, const algorithm::pubkeyhash owner);
 			void bind_callable(receive_function function);
@@ -240,6 +240,7 @@ namespace tangent
 			expects_lr<void> apply_validator(storages::mempoolstate& mempool, ledger::validator& node, option<ledger::wallet>&& wallet);
 			relay* find_node_by_instance(void* instance);
 			int32_t connect_outbound_node(const socket_address& address);
+			void fill_validator_services();
 			bool accept_block_candidate(const ledger::block& candidate_block, const uint256_t& candidate_hash, const uint256_t& fork_tip);
 			bool accept_proposal_transaction(const ledger::block& checkpoint_block, const ledger::block_transaction& transaction);
 			bool receive_outbound_node(option<socket_address>&& error_address);
@@ -304,30 +305,30 @@ namespace tangent
 			dispatch_context(dispatch_context&&) noexcept = default;
 			dispatch_context& operator=(const dispatch_context& other) noexcept;
 			dispatch_context& operator=(dispatch_context&&) noexcept = default;
-			expects_promise_rt<void> calculate_mpc_public_key(const ledger::transaction_context* context, const algorithm::pubkeyhash_t& share, algorithm::composition::cpubkey_t& inout) override;
-			expects_promise_rt<void> calculate_mpc_signature(const ledger::transaction_context* context, const algorithm::pubkeyhash_t& share, const mediator::prepared_transaction& prepared, ordered_map<uint8_t, algorithm::composition::cpubsig_t>& inout) override;
+			expects_promise_rt<void> calculate_group_public_key(const ledger::transaction_context* context, const algorithm::pubkeyhash_t& validator, algorithm::composition::cpubkey_t& inout) override;
+			expects_promise_rt<void> calculate_group_signature(const ledger::transaction_context* context, const algorithm::pubkeyhash_t& validator, const mediator::prepared_transaction& prepared, ordered_map<uint8_t, algorithm::composition::cpubsig_t>& inout) override;
 			const ledger::wallet* get_wallet() const override;
 
 		public:
-			static promise<void> calculate_mpc_public_key_rpc(server_node* relayer, uref<relay>&& from, procedure&& message);
-			static promise<void> calculate_mpc_signature_rpc(server_node* relayer, uref<relay>&& from, procedure&& message);
+			static promise<void> calculate_group_public_key_remote(server_node* relayer, uref<relay>&& from, procedure&& message);
+			static promise<void> calculate_group_signature_remote(server_node* relayer, uref<relay>&& from, procedure&& message);
 		};
 
 		class local_dispatch_context final : public ledger::dispatch_context
 		{
 		public:
-			ordered_map<algorithm::pubkeyhash_t, ledger::wallet> proposers;
-			ordered_map<algorithm::pubkeyhash_t, ledger::wallet>::iterator proposer;
+			ordered_map<algorithm::pubkeyhash_t, ledger::wallet> validators;
+			ordered_map<algorithm::pubkeyhash_t, ledger::wallet>::iterator validator;
 
 		public:
-			local_dispatch_context(const vector<ledger::wallet>& new_proposers);
+			local_dispatch_context(const vector<ledger::wallet>& new_validators);
 			local_dispatch_context(const local_dispatch_context& other) noexcept;
 			local_dispatch_context(local_dispatch_context&&) noexcept = default;
 			local_dispatch_context& operator=(const local_dispatch_context& other) noexcept;
 			local_dispatch_context& operator=(local_dispatch_context&&) noexcept = default;
-			void set_running_proposer(const algorithm::pubkeyhash owner);
-			expects_promise_rt<void> calculate_mpc_public_key(const ledger::transaction_context* context, const algorithm::pubkeyhash_t& share, algorithm::composition::cpubkey_t& inout) override;
-			expects_promise_rt<void> calculate_mpc_signature(const ledger::transaction_context* context, const algorithm::pubkeyhash_t& share, const mediator::prepared_transaction& prepared, ordered_map<uint8_t, algorithm::composition::cpubsig_t>& inout) override;
+			void set_running_validator(const algorithm::pubkeyhash owner);
+			expects_promise_rt<void> calculate_group_public_key(const ledger::transaction_context* context, const algorithm::pubkeyhash_t& validator, algorithm::composition::cpubkey_t& inout) override;
+			expects_promise_rt<void> calculate_group_signature(const ledger::transaction_context* context, const algorithm::pubkeyhash_t& validator, const mediator::prepared_transaction& prepared, ordered_map<uint8_t, algorithm::composition::cpubsig_t>& inout) override;
 			const ledger::wallet* get_wallet() const override;
 		};
 

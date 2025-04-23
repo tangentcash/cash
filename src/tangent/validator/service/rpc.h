@@ -154,14 +154,19 @@ namespace tangent
 			server_response chainstate_get_multiform_by_row(http::connection* base, format::variables&& args);
 			server_response chainstate_get_multiforms_by_row(http::connection* base, format::variables&& args);
 			server_response chainstate_get_multiforms_count_by_row(http::connection* base, format::variables&& args);
-			server_response chainstate_get_account_sequence(http::connection* base, format::variables&& args);
-			server_response chainstate_get_account_work(http::connection* base, format::variables&& args);
-			server_response chainstate_get_best_account_workers(http::connection* base, format::variables&& args);
-			server_response chainstate_get_account_observer(http::connection* base, format::variables&& args);
-			server_response chainstate_get_account_observers(http::connection* base, format::variables&& args);
-			server_response chainstate_get_best_account_observers(http::connection* base, format::variables&& args);
+			server_response chainstate_get_account_nonce(http::connection* base, format::variables&& args);
 			server_response chainstate_get_account_program(http::connection* base, format::variables&& args);
 			server_response chainstate_get_account_storage(http::connection* base, format::variables&& args);
+			server_response chainstate_get_account_balance(http::connection* base, format::variables&& args);
+			server_response chainstate_get_account_balances(http::connection* base, format::variables&& args);
+			server_response chainstate_get_validator_production(http::connection* base, format::variables&& args);
+			server_response chainstate_get_best_validator_producers(http::connection* base, format::variables&& args);
+			server_response chainstate_get_validator_participation(http::connection* base, format::variables&& args);
+			server_response chainstate_get_validator_participations(http::connection* base, format::variables&& args);
+			server_response chainstate_get_best_validator_participations(http::connection* base, format::variables&& args);
+			server_response chainstate_get_validator_attestation(http::connection* base, format::variables&& args);
+			server_response chainstate_get_validator_attestations(http::connection* base, format::variables&& args);
+			server_response chainstate_get_best_validator_attestations(http::connection* base, format::variables&& args);
 			server_response chainstate_get_depository_reward(http::connection* base, format::variables&& args);
 			server_response chainstate_get_depository_rewards(http::connection* base, format::variables&& args);
 			server_response chainstate_get_best_depository_rewards(http::connection* base, format::variables&& args);
@@ -169,8 +174,6 @@ namespace tangent
 			server_response chainstate_get_depository_policy(http::connection* base, format::variables&& args);
 			server_response chainstate_get_depository_account(http::connection* base, format::variables&& args);
 			server_response chainstate_get_depository_accounts(http::connection* base, format::variables&& args);
-			server_response chainstate_get_account_balance(http::connection* base, format::variables&& args);
-			server_response chainstate_get_account_balances(http::connection* base, format::variables&& args);
 			server_response chainstate_get_depository_balance(http::connection* base, format::variables&& args);
 			server_response chainstate_get_depository_balances(http::connection* base, format::variables&& args);
 			server_response chainstate_get_best_depository_balances(http::connection* base, format::variables&& args);
@@ -195,7 +198,7 @@ namespace tangent
 			server_response mempoolstate_reject_transaction(http::connection* base, format::variables&& args);
 			server_response mempoolstate_get_transaction_by_hash(http::connection* base, format::variables&& args);
 			server_response mempoolstate_get_raw_transaction_by_hash(http::connection* base, format::variables&& args);
-			server_response mempoolstate_get_next_account_sequence(http::connection* base, format::variables&& args);
+			server_response mempoolstate_get_next_account_nonce(http::connection* base, format::variables&& args);
 			server_response mempoolstate_get_transactions(http::connection* base, format::variables&& args);
 			server_response mempoolstate_get_transactions_by_owner(http::connection* base, format::variables&& args);
 			server_response mempoolstate_get_attestation_transactions(http::connection* base, format::variables&& args);
@@ -208,12 +211,13 @@ namespace tangent
 			server_response validatorstate_reject_node(http::connection* base, format::variables&& args);
 			server_response validatorstate_get_node(http::connection* base, format::variables&& args);
 			server_response validatorstate_get_blockchains(http::connection* base, format::variables&& args);
+			server_response validatorstate_get_signer_address(http::connection* base, format::variables&& args);
 			server_response validatorstate_status(http::connection* base, format::variables&& args);
-			server_response proposerstate_submit_block(http::connection* base, format::variables&& args);
-			server_response proposerstate_submit_commitment_transaction(http::connection* base, format::variables&& args);
-			server_response proposerstate_submit_depository_adjustment(http::connection* base, format::variables&& args);
-			server_response proposerstate_submit_depository_mpc_migration(http::connection* base, format::variables&& args);
-			server_response proposerstate_submit_depository_custody_migration(http::connection* base, format::variables&& args);
+			server_response validatorstate_submit_block(http::connection* base, format::variables&& args);
+			server_response validatorstate_build_certification_transaction(http::connection* base, format::variables&& args);
+			server_response validatorstate_build_depository_adjustment_transaction(http::connection* base, format::variables&& args);
+			server_response validatorstate_build_depository_regrouping_transaction(http::connection* base, format::variables&& args);
+			server_response validatorstate_build_depository_withdrawal_transaction(http::connection* base, format::variables&& args);
 		};
 	}
 }

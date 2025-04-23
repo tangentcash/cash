@@ -188,14 +188,14 @@ namespace tangent
 			algorithm::signing::encode_address(public_key_hash, value);
 			return value;
 		}
-		expects_lr<uint64_t> wallet::get_latest_sequence() const
+		expects_lr<uint64_t> wallet::get_latest_nonce() const
 		{
 			auto mempool = storages::mempoolstate(__func__);
 			auto chain = storages::chainstate(__func__);
-			auto state = chain.get_uniform_by_index(nullptr, states::account_sequence::as_instance_index(public_key_hash), 0);
-			uint64_t pending_sequence = mempool.get_highest_transaction_sequence(public_key_hash).or_else(0);
-			uint64_t finalized_sequence = (state ? ((states::account_sequence*)**state)->sequence : 0);
-			return std::max(finalized_sequence, pending_sequence);
+			auto state = chain.get_uniform_by_index(nullptr, states::account_nonce::as_instance_index(public_key_hash), 0);
+			uint64_t pending_nonce = mempool.get_highest_transaction_nonce(public_key_hash).or_else(0);
+			uint64_t finalized_nonce = (state ? ((states::account_nonce*)**state)->nonce : 0);
+			return std::max(finalized_nonce, pending_nonce);
 		}
 		uptr<schema> wallet::as_schema() const
 		{
@@ -284,8 +284,10 @@ namespace tangent
 			stream->write_boolean(services.has_discovery);
 			stream->write_boolean(services.has_synchronization);
 			stream->write_boolean(services.has_interfaces);
-			stream->write_boolean(services.has_proposer);
-			stream->write_boolean(services.has_publicity);
+			stream->write_boolean(services.has_production);
+			stream->write_boolean(services.has_participation);
+			stream->write_boolean(services.has_attestation);
+			stream->write_boolean(services.has_querying);
 			stream->write_boolean(services.has_streaming);
 			return true;
 		}
@@ -332,10 +334,16 @@ namespace tangent
 			if (!stream.read_boolean(stream.read_type(), &services.has_interfaces))
 				return false;
 
-			if (!stream.read_boolean(stream.read_type(), &services.has_proposer))
+			if (!stream.read_boolean(stream.read_type(), &services.has_production))
 				return false;
 
-			if (!stream.read_boolean(stream.read_type(), &services.has_publicity))
+			if (!stream.read_boolean(stream.read_type(), &services.has_participation))
+				return false;
+
+			if (!stream.read_boolean(stream.read_type(), &services.has_attestation))
+				return false;
+
+			if (!stream.read_boolean(stream.read_type(), &services.has_querying))
 				return false;
 
 			if (!stream.read_boolean(stream.read_type(), &services.has_streaming))
@@ -381,8 +389,10 @@ namespace tangent
 			services_data->set("discovery", var::boolean(services.has_discovery));
 			services_data->set("synchronization", var::boolean(services.has_synchronization));
 			services_data->set("interfaces", var::boolean(services.has_interfaces));
-			services_data->set("proposer", var::boolean(services.has_proposer));
-			services_data->set("public", var::boolean(services.has_publicity));
+			services_data->set("production", var::boolean(services.has_production));
+			services_data->set("participation", var::boolean(services.has_participation));
+			services_data->set("attestation", var::boolean(services.has_attestation));
+			services_data->set("querying", var::boolean(services.has_querying));
 			services_data->set("streaming", var::boolean(services.has_streaming));
 			return data;
 		}

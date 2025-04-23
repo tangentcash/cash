@@ -7,378 +7,89 @@ namespace tangent
 {
 	namespace states
 	{
-		account_sequence::account_sequence(const algorithm::pubkeyhash new_owner, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::uniform(new_block_number, new_block_nonce), sequence(0)
+		account_nonce::account_nonce(const algorithm::pubkeyhash new_owner, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::uniform(new_block_number, new_block_nonce), nonce(0)
 		{
 			if (new_owner)
 				memcpy(owner, new_owner, sizeof(owner));
 		}
-		account_sequence::account_sequence(const algorithm::pubkeyhash new_owner, const ledger::block_header* new_block_header) : ledger::uniform(new_block_header), sequence(0)
+		account_nonce::account_nonce(const algorithm::pubkeyhash new_owner, const ledger::block_header* new_block_header) : ledger::uniform(new_block_header), nonce(0)
 		{
 			if (new_owner)
 				memcpy(owner, new_owner, sizeof(owner));
 		}
-		expects_lr<void> account_sequence::transition(const ledger::transaction_context* context, const ledger::state* prev_state)
+		expects_lr<void> account_nonce::transition(const ledger::transaction_context* context, const ledger::state* prev_state)
 		{
 			if (is_owner_null())
 				return layer_exception("invalid state owner");
 
-			auto* prev = (account_sequence*)prev_state;
-			if (!prev || sequence == std::numeric_limits<uint64_t>::max())
+			auto* prev = (account_nonce*)prev_state;
+			if (!prev || nonce == std::numeric_limits<uint64_t>::max())
 				return expectation::met;
 
-			if (prev->sequence >= sequence)
-				return layer_exception("sequence lower than " + to_string(prev->sequence));
-			else if (sequence - prev->sequence > 1)
-				return layer_exception("sequence skips " + to_string(sequence - prev->sequence) + " steps");
+			if (prev->nonce >= nonce)
+				return layer_exception("nonce lower than " + to_string(prev->nonce));
+			else if (nonce - prev->nonce > 1)
+				return layer_exception("nonce skips " + to_string(nonce - prev->nonce) + " steps");
 
 			return expectation::met;
 		}
-		bool account_sequence::store_payload(format::stream* stream) const
+		bool account_nonce::store_payload(format::stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			algorithm::pubkeyhash null = { 0 };
 			stream->write_string(std::string_view((char*)owner, memcmp(owner, null, sizeof(null)) == 0 ? 0 : sizeof(owner)));
-			stream->write_integer(sequence);
+			stream->write_integer(nonce);
 			return true;
 		}
-		bool account_sequence::load_payload(format::stream& stream)
+		bool account_nonce::load_payload(format::stream& stream)
 		{
 			string owner_assembly;
 			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner, sizeof(owner)))
 				return false;
 
-			if (!stream.read_integer(stream.read_type(), &sequence))
+			if (!stream.read_integer(stream.read_type(), &nonce))
 				return false;
 
 			return true;
 		}
-		bool account_sequence::is_owner_null() const
+		bool account_nonce::is_owner_null() const
 		{
 			algorithm::pubkeyhash null = { 0 };
 			return !memcmp(owner, null, sizeof(null));
 		}
-		uptr<schema> account_sequence::as_schema() const
+		uptr<schema> account_nonce::as_schema() const
 		{
 			schema* data = ledger::uniform::as_schema().reset();
 			data->set("owner", algorithm::signing::serialize_address(owner));
-			data->set("sequence", algorithm::encoding::serialize_uint256(sequence));
+			data->set("nonce", algorithm::encoding::serialize_uint256(nonce));
 			return data;
 		}
-		uint32_t account_sequence::as_type() const
+		uint32_t account_nonce::as_type() const
 		{
 			return as_instance_type();
 		}
-		std::string_view account_sequence::as_typename() const
+		std::string_view account_nonce::as_typename() const
 		{
 			return as_instance_typename();
 		}
-		string account_sequence::as_index() const
+		string account_nonce::as_index() const
 		{
 			return as_instance_index(owner);
 		}
-		uint32_t account_sequence::as_instance_type()
+		uint32_t account_nonce::as_instance_type()
 		{
 			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
 			return hash;
 		}
-		std::string_view account_sequence::as_instance_typename()
+		std::string_view account_nonce::as_instance_typename()
 		{
-			return "account_sequence";
+			return "account_nonce";
 		}
-		string account_sequence::as_instance_index(const algorithm::pubkeyhash owner)
+		string account_nonce::as_instance_index(const algorithm::pubkeyhash owner)
 		{
 			format::stream stream;
 			stream.write_typeless(as_instance_type());
 			stream.write_typeless((char*)owner, (uint8_t)sizeof(algorithm::pubkeyhash));
-			return std::move(stream.data);
-		}
-
-		account_work::account_work(const algorithm::pubkeyhash new_owner, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::multiform(new_block_number, new_block_nonce)
-		{
-			if (new_owner)
-				memcpy(owner, new_owner, sizeof(owner));
-		}
-		account_work::account_work(const algorithm::pubkeyhash new_owner, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header)
-		{
-			if (new_owner)
-				memcpy(owner, new_owner, sizeof(owner));
-		}
-		expects_lr<void> account_work::transition(const ledger::transaction_context* context, const ledger::state* prev_state)
-		{
-			if (is_owner_null())
-				return layer_exception("invalid state owner");
-
-			auto* prev = (account_work*)prev_state;
-			if (prev != nullptr)
-			{
-				uint256_t gas_input_change = gas_input + prev->gas_input;
-				uint256_t gas_output_change = gas_output + prev->gas_output;
-				gas_input = (gas_input_change >= gas_input ? gas_input_change : uint256_t::max());
-				gas_output = (gas_output_change >= gas_output ? gas_output_change : uint256_t::max());
-				if (!flags || prev->is_matching(account_flags::outlaw))
-					flags = prev->flags;
-				if (prev->is_matching(account_flags::founder))
-					flags |= (uint8_t)account_flags::founder;
-				if (penalty < prev->penalty)
-					penalty = prev->penalty;
-			}
-			else if (block_number == 1)
-				flags |= (uint8_t)account_flags::founder;
-
-			if (!flags || (is_matching(account_flags::online) && is_matching(account_flags::offline)) || (is_matching(account_flags::online) && is_matching(account_flags::outlaw)))
-				return layer_exception("invalid status");
-
-			if (gas_output > gas_input)
-				gas_output = gas_input;
-
-			if (penalty < block_number)
-				penalty = 0;
-
-			return expectation::met;
-		}
-		bool account_work::store_payload(format::stream* stream) const
-		{
-			VI_ASSERT(stream != nullptr, "stream should be set");
-			algorithm::pubkeyhash null = { 0 };
-			stream->write_string(std::string_view((char*)owner, memcmp(owner, null, sizeof(null)) == 0 ? 0 : sizeof(owner)));
-			stream->write_integer(gas_input);
-			stream->write_integer(gas_output);
-			stream->write_integer(penalty);
-			stream->write_integer(flags);
-			return true;
-		}
-		bool account_work::load_payload(format::stream& stream)
-		{
-			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner, sizeof(owner)))
-				return false;
-
-			if (!stream.read_integer(stream.read_type(), &gas_input))
-				return false;
-
-			if (!stream.read_integer(stream.read_type(), &gas_output))
-				return false;
-
-			if (!stream.read_integer(stream.read_type(), &penalty))
-				return false;
-
-			if (!stream.read_integer(stream.read_type(), &flags))
-				return false;
-
-			return true;
-		}
-		bool account_work::is_eligible(const ledger::block_header* block_header) const
-		{
-			return !get_gas_work_required(block_header, get_gas_use());
-		}
-		bool account_work::is_matching(account_flags flag) const
-		{
-			return flags & (uint8_t)flag;
-		}
-		bool account_work::is_online() const
-		{
-			return block_number > penalty && is_matching(account_flags::online);
-		}
-		bool account_work::is_owner_null() const
-		{
-			algorithm::pubkeyhash null = { 0 };
-			return !memcmp(owner, null, sizeof(null));
-		}
-		uint256_t account_work::get_gas_use() const
-		{
-			return gas_input - gas_output;
-		}
-		uint64_t account_work::get_closest_proposal_block_number() const
-		{
-			return std::max(block_number, penalty) + 1;
-		}
-		uptr<schema> account_work::as_schema() const
-		{
-			schema* data = ledger::multiform::as_schema().reset();
-			data->set("owner", algorithm::signing::serialize_address(owner));
-			data->set("gas_input", algorithm::encoding::serialize_uint256(gas_input));
-			data->set("gas_output", algorithm::encoding::serialize_uint256(gas_output));
-			data->set("gas_use", algorithm::encoding::serialize_uint256(get_gas_use()));
-			data->set("penalty", algorithm::encoding::serialize_uint256(penalty));
-			data->set("online", var::boolean(is_online()));
-
-			auto* flags_array = data->set("flags", var::set::array());
-			if (is_matching(account_flags::offline))
-				flags_array->push(var::string("offline"));
-			if (is_matching(account_flags::online))
-				flags_array->push(var::string("online"));
-			if (is_matching(account_flags::founder))
-				flags_array->push(var::string("founder"));
-			if (is_matching(account_flags::outlaw))
-				flags_array->push(var::string("outlaw"));
-			return data;
-		}
-		uint32_t account_work::as_type() const
-		{
-			return as_instance_type();
-		}
-		std::string_view account_work::as_typename() const
-		{
-			return as_instance_typename();
-		}
-		int64_t account_work::as_factor() const
-		{
-			if (!is_online())
-				return -1;
-
-			auto gas_use = get_gas_use() / 100;
-			return gas_use > std::numeric_limits<int64_t>::max() ? std::numeric_limits<int64_t>::max() : (int64_t)(uint64_t)gas_use;
-		}
-		string account_work::as_column() const
-		{
-			return as_instance_column(owner);
-		}
-		string account_work::as_row() const
-		{
-			return as_instance_row();
-		}
-		uint32_t account_work::as_instance_type()
-		{
-			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
-			return hash;
-		}
-		std::string_view account_work::as_instance_typename()
-		{
-			return "account_work";
-		}
-		string account_work::as_instance_column(const algorithm::pubkeyhash owner)
-		{
-			format::stream stream;
-			stream.write_typeless(as_instance_type());
-			stream.write_typeless((char*)owner, (uint8_t)sizeof(algorithm::pubkeyhash));
-			return std::move(stream.data);
-		}
-		string account_work::as_instance_row()
-		{
-			format::stream stream;
-			stream.write_typeless(as_instance_type());
-			return std::move(stream.data);
-		}
-		uint256_t account_work::get_gas_work_required(const ledger::block_header* block_header, const uint256_t& gas_use)
-		{
-			auto& config = protocol::now();
-			auto total_gas_limit = ledger::block_header::get_gas_limit();
-			auto requirement = block_header ? block_header->get_slot_gas_target() : uint256_t(0);
-			auto utility = (block_header ? total_gas_limit.to_decimal() / block_header->get_slot_gas_use().to_decimal() : 1);
-			if (utility.is_nan())
-				utility = decimal::zero();
-
-			auto multiplier = requirement.to_decimal() * utility * config.policy.account_gas_work_required;
-			requirement = uint256_t(multiplier.truncate(0).to_string(), 10);
-			return requirement > gas_use ? requirement - gas_use : uint256_t(0);
-		}
-		uint256_t account_work::get_adjusted_gas_paid(const uint256_t& gas_use, const uint256_t& gas_paid)
-		{
-			return gas_paid > gas_use ? gas_paid - gas_use : uint256_t(0);
-		}
-		uint256_t account_work::get_adjusted_gas_output(const uint256_t& gas_use, const uint256_t& gas_paid)
-		{
-			return gas_paid < gas_use ? gas_use - gas_paid : uint256_t(0);
-		}
-
-		account_observer::account_observer(const algorithm::pubkeyhash new_owner, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::multiform(new_block_number, new_block_nonce)
-		{
-			if (new_owner)
-				memcpy(owner, new_owner, sizeof(owner));
-		}
-		account_observer::account_observer(const algorithm::pubkeyhash new_owner, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header)
-		{
-			if (new_owner)
-				memcpy(owner, new_owner, sizeof(owner));
-		}
-		expects_lr<void> account_observer::transition(const ledger::transaction_context* context, const ledger::state* prev_state)
-		{
-			if (is_owner_null())
-				return layer_exception("invalid state owner");
-
-			auto* prev = (account_observer*)prev_state;
-			if (!prev && !(algorithm::asset::is_valid(asset) && algorithm::asset::token_of(asset).empty()))
-				return layer_exception("invalid asset");
-
-			return expectation::met;
-		}
-		bool account_observer::store_payload(format::stream* stream) const
-		{
-			VI_ASSERT(stream != nullptr, "stream should be set");
-			algorithm::pubkeyhash null = { 0 };
-			stream->write_string(std::string_view((char*)owner, memcmp(owner, null, sizeof(null)) == 0 ? 0 : sizeof(owner)));
-			stream->write_integer(asset);
-			stream->write_boolean(observing);
-			return true;
-		}
-		bool account_observer::load_payload(format::stream& stream)
-		{
-			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner, sizeof(owner)))
-				return false;
-
-			if (!stream.read_integer(stream.read_type(), &asset))
-				return false;
-
-			if (!stream.read_boolean(stream.read_type(), &observing))
-				return false;
-
-			return true;
-		}
-		bool account_observer::is_owner_null() const
-		{
-			algorithm::pubkeyhash null = { 0 };
-			return !memcmp(owner, null, sizeof(null));
-		}
-		uptr<schema> account_observer::as_schema() const
-		{
-			schema* data = ledger::multiform::as_schema().reset();
-			data->set("owner", algorithm::signing::serialize_address(owner));
-			data->set("asset", algorithm::asset::serialize(asset));
-			data->set("observing", var::boolean(observing));
-			return data;
-		}
-		uint32_t account_observer::as_type() const
-		{
-			return as_instance_type();
-		}
-		std::string_view account_observer::as_typename() const
-		{
-			return as_instance_typename();
-		}
-		int64_t account_observer::as_factor() const
-		{
-			return observing ? 1 : -1;
-		}
-		string account_observer::as_column() const
-		{
-			return as_instance_column(owner);
-		}
-		string account_observer::as_row() const
-		{
-			return as_instance_row(asset);
-		}
-		uint32_t account_observer::as_instance_type()
-		{
-			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
-			return hash;
-		}
-		std::string_view account_observer::as_instance_typename()
-		{
-			return "account_observer";
-		}
-		string account_observer::as_instance_column(const algorithm::pubkeyhash owner)
-		{
-			format::stream stream;
-			stream.write_typeless(as_instance_type());
-			stream.write_typeless((char*)owner, (uint8_t)sizeof(algorithm::pubkeyhash));
-			return std::move(stream.data);
-		}
-		string account_observer::as_instance_row(const algorithm::asset_id& asset)
-		{
-			format::stream stream;
-			stream.write_typeless(as_instance_type());
-			stream.write_typeless(asset);
 			return std::move(stream.data);
 		}
 
@@ -571,10 +282,10 @@ namespace tangent
 				return layer_exception("invalid asset");
 
 			if (supply.is_nan() || supply.is_negative())
-				return layer_exception("ran out of supply balance");
+				return layer_exception("ran out of supply value");
 
 			if (reserve.is_nan() || reserve.is_negative())
-				return layer_exception("ran out of reserve balance");
+				return layer_exception("ran out of reserve value");
 
 			if (supply < reserve)
 				return layer_exception("ran out of balance");
@@ -680,6 +391,367 @@ namespace tangent
 			return std::move(stream.data);
 		}
 
+		validator_production::validator_production(const algorithm::pubkeyhash new_owner, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::multiform(new_block_number, new_block_nonce)
+		{
+			if (new_owner)
+				memcpy(owner, new_owner, sizeof(owner));
+		}
+		validator_production::validator_production(const algorithm::pubkeyhash new_owner, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header)
+		{
+			if (new_owner)
+				memcpy(owner, new_owner, sizeof(owner));
+		}
+		expects_lr<void> validator_production::transition(const ledger::transaction_context* context, const ledger::state* prev_state)
+		{
+			if (is_owner_null())
+				return layer_exception("invalid state owner");
+
+			auto* prev = (validator_production*)prev_state;
+			if (!prev && gas > 0)
+				active = true;
+
+			return expectation::met;
+		}
+		bool validator_production::store_payload(format::stream* stream) const
+		{
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			algorithm::pubkeyhash null = { 0 };
+			stream->write_string(std::string_view((char*)owner, memcmp(owner, null, sizeof(null)) == 0 ? 0 : sizeof(owner)));
+			stream->write_boolean(active);
+			stream->write_integer(gas);
+			return true;
+		}
+		bool validator_production::load_payload(format::stream& stream)
+		{
+			string owner_assembly;
+			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner, sizeof(owner)))
+				return false;
+
+			if (!stream.read_boolean(stream.read_type(), &active))
+				return false;
+
+			if (!stream.read_integer(stream.read_type(), &gas))
+				return false;
+
+			return true;
+		}
+		bool validator_production::is_eligible(const ledger::block_header* block_header) const
+		{
+			return !get_gas_required(block_header, gas);
+		}
+		bool validator_production::is_owner_null() const
+		{
+			algorithm::pubkeyhash null = { 0 };
+			return !memcmp(owner, null, sizeof(null));
+		}
+		uptr<schema> validator_production::as_schema() const
+		{
+			schema* data = ledger::multiform::as_schema().reset();
+			data->set("owner", algorithm::signing::serialize_address(owner));
+			data->set("gas", algorithm::encoding::serialize_uint256(gas));
+			data->set("active", var::boolean(active));
+			return data;
+		}
+		uint32_t validator_production::as_type() const
+		{
+			return as_instance_type();
+		}
+		std::string_view validator_production::as_typename() const
+		{
+			return as_instance_typename();
+		}
+		int64_t validator_production::as_factor() const
+		{
+			if (!active)
+				return -1;
+
+			auto value = gas / 100;
+			return value > std::numeric_limits<int64_t>::max() ? std::numeric_limits<int64_t>::max() : (int64_t)(uint64_t)value;
+		}
+		string validator_production::as_column() const
+		{
+			return as_instance_column(owner);
+		}
+		string validator_production::as_row() const
+		{
+			return as_instance_row();
+		}
+		uint32_t validator_production::as_instance_type()
+		{
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
+		}
+		std::string_view validator_production::as_instance_typename()
+		{
+			return "validator_production";
+		}
+		string validator_production::as_instance_column(const algorithm::pubkeyhash owner)
+		{
+			format::stream stream;
+			stream.write_typeless(as_instance_type());
+			stream.write_typeless((char*)owner, (uint8_t)sizeof(algorithm::pubkeyhash));
+			return std::move(stream.data);
+		}
+		string validator_production::as_instance_row()
+		{
+			format::stream stream;
+			stream.write_typeless(as_instance_type());
+			return std::move(stream.data);
+		}
+		uint256_t validator_production::get_gas_required(const ledger::block_header* block_header, const uint256_t& gas_use)
+		{
+			auto& config = protocol::now();
+			auto total_gas_limit = ledger::block_header::get_gas_limit();
+			auto requirement = block_header ? block_header->get_slot_gas_target() : uint256_t(0);
+			auto utility = (block_header ? total_gas_limit.to_decimal() / block_header->get_slot_gas_use().to_decimal() : 1);
+			if (utility.is_nan())
+				utility = decimal::zero();
+
+			auto multiplier = requirement.to_decimal() * utility * config.policy.production_work_required;
+			requirement = uint256_t(multiplier.truncate(0).to_string(), 10);
+			return requirement > gas_use ? requirement - gas_use : uint256_t(0);
+		}
+
+		validator_participation::validator_participation(const algorithm::pubkeyhash new_owner, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::multiform(new_block_number, new_block_nonce)
+		{
+			if (new_owner)
+				memcpy(owner, new_owner, sizeof(owner));
+		}
+		validator_participation::validator_participation(const algorithm::pubkeyhash new_owner, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header)
+		{
+			if (new_owner)
+				memcpy(owner, new_owner, sizeof(owner));
+		}
+		expects_lr<void> validator_participation::transition(const ledger::transaction_context* context, const ledger::state* prev_state)
+		{
+			if (is_owner_null())
+				return layer_exception("invalid state owner");
+
+			auto* prev = (validator_participation*)prev_state;
+			if (prev)
+				stake += prev->stake;
+			else if (!algorithm::asset::is_valid(asset) || !algorithm::asset::token_of(asset).empty())
+				return layer_exception("invalid asset");
+
+			if (stake.is_negative())
+				return layer_exception("ran out of stake value");
+			
+			if (stake.is_nan() && participations > 0)
+				return layer_exception("regroup is required");
+
+			return expectation::met;
+		}
+		bool validator_participation::store_payload(format::stream* stream) const
+		{
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			algorithm::pubkeyhash null = { 0 };
+			stream->write_string(std::string_view((char*)owner, memcmp(owner, null, sizeof(null)) == 0 ? 0 : sizeof(owner)));
+			stream->write_integer(asset);
+			stream->write_integer(participations);
+			stream->write_decimal(stake);
+			return true;
+		}
+		bool validator_participation::load_payload(format::stream& stream)
+		{
+			string owner_assembly;
+			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner, sizeof(owner)))
+				return false;
+
+			if (!stream.read_integer(stream.read_type(), &asset))
+				return false;
+
+			if (!stream.read_integer(stream.read_type(), &participations))
+				return false;
+
+			if (!stream.read_decimal(stream.read_type(), &stake))
+				return false;
+
+			return true;
+		}
+		bool validator_participation::is_owner_null() const
+		{
+			algorithm::pubkeyhash null = { 0 };
+			return !memcmp(owner, null, sizeof(null));
+		}
+		bool validator_participation::is_active() const
+		{
+			return !stake.is_nan();
+		}
+		uptr<schema> validator_participation::as_schema() const
+		{
+			schema* data = ledger::multiform::as_schema().reset();
+			data->set("owner", algorithm::signing::serialize_address(owner));
+			data->set("asset", algorithm::asset::serialize(asset));
+			data->set("stake", var::decimal(stake));
+			data->set("participations", var::integer(participations));
+			data->set("active", var::boolean(is_active()));
+			return data;
+		}
+		uint32_t validator_participation::as_type() const
+		{
+			return as_instance_type();
+		}
+		std::string_view validator_participation::as_typename() const
+		{
+			return as_instance_typename();
+		}
+		int64_t validator_participation::as_factor() const
+		{
+			if (!is_active())
+				return -1;
+
+			auto value = stake;
+			value *= protocol::now().policy.weight_multiplier;
+			return value.to_uint64();
+		}
+		string validator_participation::as_column() const
+		{
+			return as_instance_column(owner);
+		}
+		string validator_participation::as_row() const
+		{
+			return as_instance_row(asset);
+		}
+		uint32_t validator_participation::as_instance_type()
+		{
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
+		}
+		std::string_view validator_participation::as_instance_typename()
+		{
+			return "validator_participation";
+		}
+		string validator_participation::as_instance_column(const algorithm::pubkeyhash owner)
+		{
+			format::stream stream;
+			stream.write_typeless(as_instance_type());
+			stream.write_typeless((char*)owner, (uint8_t)sizeof(algorithm::pubkeyhash));
+			return std::move(stream.data);
+		}
+		string validator_participation::as_instance_row(const algorithm::asset_id& asset)
+		{
+			format::stream stream;
+			stream.write_typeless(as_instance_type());
+			stream.write_typeless(asset);
+			return std::move(stream.data);
+		}
+
+		validator_attestation::validator_attestation(const algorithm::pubkeyhash new_owner, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::multiform(new_block_number, new_block_nonce)
+		{
+			if (new_owner)
+				memcpy(owner, new_owner, sizeof(owner));
+		}
+		validator_attestation::validator_attestation(const algorithm::pubkeyhash new_owner, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header)
+		{
+			if (new_owner)
+				memcpy(owner, new_owner, sizeof(owner));
+		}
+		expects_lr<void> validator_attestation::transition(const ledger::transaction_context* context, const ledger::state* prev_state)
+		{
+			if (is_owner_null())
+				return layer_exception("invalid state owner");
+
+			auto* prev = (validator_attestation*)prev_state;
+			if (prev)
+				stake += prev->stake;
+			else if (!algorithm::asset::is_valid(asset) || !algorithm::asset::token_of(asset).empty())
+				return layer_exception("invalid asset");
+
+			if (stake.is_negative())
+				return layer_exception("ran out of stake value");
+
+			return expectation::met;
+		}
+		bool validator_attestation::store_payload(format::stream* stream) const
+		{
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			algorithm::pubkeyhash null = { 0 };
+			stream->write_string(std::string_view((char*)owner, memcmp(owner, null, sizeof(null)) == 0 ? 0 : sizeof(owner)));
+			stream->write_integer(asset);
+			stream->write_decimal(stake);
+			return true;
+		}
+		bool validator_attestation::load_payload(format::stream& stream)
+		{
+			string owner_assembly;
+			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner, sizeof(owner)))
+				return false;
+
+			if (!stream.read_integer(stream.read_type(), &asset))
+				return false;
+
+			if (!stream.read_decimal(stream.read_type(), &stake))
+				return false;
+
+			return true;
+		}
+		bool validator_attestation::is_owner_null() const
+		{
+			algorithm::pubkeyhash null = { 0 };
+			return !memcmp(owner, null, sizeof(null));
+		}
+		bool validator_attestation::is_active() const
+		{
+			return !stake.is_nan();
+		}
+		uptr<schema> validator_attestation::as_schema() const
+		{
+			schema* data = ledger::multiform::as_schema().reset();
+			data->set("owner", algorithm::signing::serialize_address(owner));
+			data->set("asset", algorithm::asset::serialize(asset));
+			data->set("stake", var::decimal(stake));
+			data->set("active", var::boolean(is_active()));
+			return data;
+		}
+		uint32_t validator_attestation::as_type() const
+		{
+			return as_instance_type();
+		}
+		std::string_view validator_attestation::as_typename() const
+		{
+			return as_instance_typename();
+		}
+		int64_t validator_attestation::as_factor() const
+		{
+			if (!is_active())
+				return -1;
+
+			auto value = stake;
+			value *= protocol::now().policy.weight_multiplier;
+			return value.to_uint64();
+		}
+		string validator_attestation::as_column() const
+		{
+			return as_instance_column(owner);
+		}
+		string validator_attestation::as_row() const
+		{
+			return as_instance_row(asset);
+		}
+		uint32_t validator_attestation::as_instance_type()
+		{
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
+		}
+		std::string_view validator_attestation::as_instance_typename()
+		{
+			return "validator_attestation";
+		}
+		string validator_attestation::as_instance_column(const algorithm::pubkeyhash owner)
+		{
+			format::stream stream;
+			stream.write_typeless(as_instance_type());
+			stream.write_typeless((char*)owner, (uint8_t)sizeof(algorithm::pubkeyhash));
+			return std::move(stream.data);
+		}
+		string validator_attestation::as_instance_row(const algorithm::asset_id& asset)
+		{
+			format::stream stream;
+			stream.write_typeless(as_instance_type());
+			stream.write_typeless(asset);
+			return std::move(stream.data);
+		}
+
 		depository_reward::depository_reward(const algorithm::pubkeyhash new_owner, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::multiform(new_block_number, new_block_nonce)
 		{
 			if (new_owner)
@@ -695,17 +767,11 @@ namespace tangent
 			if (is_owner_null())
 				return layer_exception("invalid state owner");
 
-			if (incoming_absolute_fee.is_nan() || incoming_absolute_fee.is_negative())
-				return layer_exception("invalid incoming absolute fee");
+			if (incoming_fee.is_nan() || incoming_fee.is_negative())
+				return layer_exception("invalid incoming fee");
 
-			if (incoming_relative_fee.is_nan() || incoming_relative_fee.is_negative() || incoming_relative_fee > 1.0)
-				return layer_exception("invalid incoming relative fee");
-
-			if (outgoing_absolute_fee.is_nan() || outgoing_absolute_fee.is_negative())
-				return layer_exception("invalid outgoing absolute fee");
-
-			if (outgoing_relative_fee.is_nan() || outgoing_relative_fee.is_negative() || outgoing_relative_fee > 1.0)
-				return layer_exception("invalid outgoing relative fee");
+			if (outgoing_fee.is_nan() || outgoing_fee.is_negative())
+				return layer_exception("invalid outgoing fee");
 
 			auto* prev = (depository_reward*)prev_state;
 			if (!prev)
@@ -717,17 +783,11 @@ namespace tangent
 			}
 
 			decimal threshold = 1.0 - protocol::now().policy.depository_reward_max_increase;
-			if (incoming_absolute_fee.is_positive() && prev->incoming_absolute_fee / decimal(incoming_absolute_fee).truncate(protocol::now().message.precision) < threshold)
-				return layer_exception("incoming absolute fee increase overflows step threshold");
+			if (incoming_fee.is_positive() && prev->incoming_fee / decimal(incoming_fee).truncate(protocol::now().message.precision) < threshold)
+				return layer_exception("incoming fee increase overflows step threshold");
 
-			if (incoming_relative_fee.is_positive() && prev->incoming_relative_fee / decimal(incoming_relative_fee).truncate(protocol::now().message.precision) < threshold)
-				return layer_exception("incoming absolute fee relative overflows step threshold");
-
-			if (outgoing_absolute_fee.is_positive() && prev->outgoing_absolute_fee / decimal(outgoing_absolute_fee).truncate(protocol::now().message.precision) < threshold)
-				return layer_exception("outgoing absolute fee increase overflows step threshold");
-
-			if (outgoing_relative_fee.is_positive() && prev->outgoing_relative_fee / decimal(outgoing_relative_fee).truncate(protocol::now().message.precision) < threshold)
-				return layer_exception("outgoing absolute fee relative overflows step threshold");
+			if (outgoing_fee.is_positive() && prev->outgoing_fee / decimal(outgoing_fee).truncate(protocol::now().message.precision) < threshold)
+				return layer_exception("outgoing fee increase overflows step threshold");
 
 			return expectation::met;
 		}
@@ -737,10 +797,8 @@ namespace tangent
 			algorithm::pubkeyhash null = { 0 };
 			stream->write_string(std::string_view((char*)owner, memcmp(owner, null, sizeof(null)) == 0 ? 0 : sizeof(owner)));
 			stream->write_integer(asset);
-			stream->write_decimal(incoming_absolute_fee);
-			stream->write_decimal(incoming_relative_fee);
-			stream->write_decimal(outgoing_absolute_fee);
-			stream->write_decimal(outgoing_relative_fee);
+			stream->write_decimal(incoming_fee);
+			stream->write_decimal(outgoing_fee);
 			return true;
 		}
 		bool depository_reward::load_payload(format::stream& stream)
@@ -752,54 +810,26 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &asset))
 				return false;
 
-			if (!stream.read_decimal(stream.read_type(), &incoming_absolute_fee))
+			if (!stream.read_decimal(stream.read_type(), &incoming_fee))
 				return false;
 
-			if (!stream.read_decimal(stream.read_type(), &incoming_relative_fee))
-				return false;
-
-			if (!stream.read_decimal(stream.read_type(), &outgoing_absolute_fee))
-				return false;
-
-			if (!stream.read_decimal(stream.read_type(), &outgoing_relative_fee))
+			if (!stream.read_decimal(stream.read_type(), &outgoing_fee))
 				return false;
 
 			return true;
-		}
-		bool depository_reward::has_incoming_fee() const
-		{
-			return incoming_absolute_fee.is_positive() || incoming_relative_fee.is_positive();
-		}
-		bool depository_reward::has_outgoing_fee() const
-		{
-			return outgoing_absolute_fee.is_positive() || outgoing_relative_fee.is_positive();
 		}
 		bool depository_reward::is_owner_null() const
 		{
 			algorithm::pubkeyhash null = { 0 };
 			return !memcmp(owner, null, sizeof(null));
 		}
-		decimal depository_reward::calculate_incoming_fee(const decimal& value) const
-		{
-			auto relative_fee = value * decimal(incoming_relative_fee).truncate(protocol::now().message.precision);
-			auto leftover_value = value - relative_fee;
-			auto absolute_fee = std::min(leftover_value, incoming_absolute_fee);
-			return relative_fee + absolute_fee;
-		}
-		decimal depository_reward::calculate_outgoing_fee(const decimal& value) const
-		{
-			auto relative_fee = value * decimal(outgoing_relative_fee).truncate(protocol::now().message.precision);
-			return relative_fee + outgoing_absolute_fee;
-		}
 		uptr<schema> depository_reward::as_schema() const
 		{
 			schema* data = ledger::multiform::as_schema().reset();
 			data->set("owner", algorithm::signing::serialize_address(owner));
 			data->set("asset", algorithm::asset::serialize(asset));
-			data->set("incoming_absolute_fee", var::decimal(incoming_absolute_fee));
-			data->set("incoming_relative_fee", var::decimal(incoming_relative_fee));
-			data->set("outgoing_absolute_fee", var::decimal(outgoing_absolute_fee));
-			data->set("outgoing_relative_fee", var::decimal(outgoing_relative_fee));
+			data->set("incoming_fee", var::decimal(incoming_fee));
+			data->set("outgoing_fee", var::decimal(outgoing_fee));
 			return data;
 		}
 		uint32_t depository_reward::as_type() const
@@ -812,11 +842,9 @@ namespace tangent
 		}
 		int64_t depository_reward::as_factor() const
 		{
-			decimal absolute_fee = incoming_absolute_fee + outgoing_absolute_fee;
-			decimal relative_fee = incoming_relative_fee + outgoing_relative_fee + 1.0;
-			absolute_fee *= relative_fee;
-			absolute_fee *= protocol::now().policy.weight_multiplier;
-			return std::numeric_limits<int64_t>::max() - absolute_fee.to_int64();
+			decimal value = incoming_fee + outgoing_fee;
+			value *= protocol::now().policy.weight_multiplier;
+			return std::numeric_limits<int64_t>::max() - value.to_int64();
 		}
 		string depository_reward::as_column() const
 		{
@@ -977,12 +1005,7 @@ namespace tangent
 				return layer_exception("invalid state owner");
 
 			auto* prev = (depository_policy*)prev_state;
-			if (!prev)
-			{
-				if (!algorithm::asset::is_valid(asset) || !algorithm::asset::token_of(asset).empty())
-					return layer_exception("invalid asset");
-			}
-			else
+			if (prev != nullptr)
 			{
 				if (accounts_under_management < prev->accounts_under_management)
 					return layer_exception("invalid accounts count");
@@ -990,10 +1013,12 @@ namespace tangent
 				if (prev->queue_transaction_hash > 0 && queue_transaction_hash > 0 && prev->queue_transaction_hash != queue_transaction_hash)
 					return layer_exception("transaction queue head cannot be replaced with new transaction");
 			}
+			else if (!algorithm::asset::is_valid(asset) || !algorithm::asset::token_of(asset).empty())
+				return layer_exception("invalid asset");
 
-			if (security_level > (uint8_t)protocol::now().policy.depository_committee_max_size)
+			if (security_level > (uint8_t)protocol::now().policy.participation_max_per_account)
 				return layer_exception("security level too high");
-			else if (security_level < (uint8_t)protocol::now().policy.depository_committee_min_size)
+			else if (security_level < (uint8_t)protocol::now().policy.participation_min_per_account)
 				return layer_exception("security level too low");
 
 			if (accepts_account_requests && !accepts_withdrawal_requests)
@@ -1121,13 +1146,13 @@ namespace tangent
 				return layer_exception("invalid asset");
 
 			algorithm::composition::cpubkey null = { 0 };
-			if (!mpc.empty() && !memcmp(mpc_public_key, null, sizeof(null)))
-				return layer_exception("invalid mpc public key");
+			if (!group.empty() && !memcmp(public_key, null, sizeof(null)))
+				return layer_exception("invalid public key");
 
-			for (auto& item : mpc)
+			for (auto& item : group)
 			{
 				if (item.empty())
-					return layer_exception("invalid mpc");
+					return layer_exception("invalid group");
 			}
 
 			return expectation::met;
@@ -1139,10 +1164,10 @@ namespace tangent
 			algorithm::composition::cpubkey null_pk = { 0 };
 			stream->write_integer(asset);
 			stream->write_string(std::string_view((char*)owner, memcmp(owner, null_pkh, sizeof(null_pkh)) == 0 ? 0 : sizeof(owner)));
-			stream->write_string(std::string_view((char*)proposer, memcmp(proposer, null_pkh, sizeof(null_pkh)) == 0 ? 0 : sizeof(proposer)));
-			stream->write_string(std::string_view((char*)mpc_public_key, memcmp(mpc_public_key, null_pk, sizeof(null_pk)) == 0 ? 0 : sizeof(mpc_public_key)));
-			stream->write_integer((uint8_t)mpc.size());
-			for (auto& item : mpc)
+			stream->write_string(std::string_view((char*)manager, memcmp(manager, null_pkh, sizeof(null_pkh)) == 0 ? 0 : sizeof(manager)));
+			stream->write_string(std::string_view((char*)public_key, memcmp(public_key, null_pk, sizeof(null_pk)) == 0 ? 0 : sizeof(public_key)));
+			stream->write_integer((uint8_t)group.size());
+			for (auto& item : group)
 				stream->write_string(item.optimized_view());
 			return true;
 		}
@@ -1155,75 +1180,75 @@ namespace tangent
 			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner, sizeof(owner)))
 				return false;
 
-			string proposer_assembly;
-			if (!stream.read_string(stream.read_type(), &proposer_assembly) || !algorithm::encoding::decode_uint_blob(proposer_assembly, proposer, sizeof(proposer)))
+			string manager_assembly;
+			if (!stream.read_string(stream.read_type(), &manager_assembly) || !algorithm::encoding::decode_uint_blob(manager_assembly, manager, sizeof(manager)))
 				return false;
 
-			string mpc_public_key_assembly;
-			if (!stream.read_string(stream.read_type(), &mpc_public_key_assembly) || !algorithm::encoding::decode_uint_blob(mpc_public_key_assembly, mpc_public_key, sizeof(mpc_public_key)))
+			string public_key_assembly;
+			if (!stream.read_string(stream.read_type(), &public_key_assembly) || !algorithm::encoding::decode_uint_blob(public_key_assembly, public_key, sizeof(public_key)))
 				return false;
 
-			uint8_t mpc_size;
-			if (!stream.read_integer(stream.read_type(), &mpc_size))
+			uint8_t group_size;
+			if (!stream.read_integer(stream.read_type(), &group_size))
 				return false;
 
-			mpc.clear();
-			for (uint8_t i = 0; i < mpc_size; i++)
+			group.clear();
+			for (uint8_t i = 0; i < group_size; i++)
 			{
-				string mpc_assembly;
-				algorithm::pubkeyhash mpc_hash;
-				if (!stream.read_string(stream.read_type(), &mpc_assembly) || !algorithm::encoding::decode_uint_blob(mpc_assembly, mpc_hash, sizeof(mpc_hash)))
+				string group_assembly;
+				algorithm::pubkeyhash group_hash;
+				if (!stream.read_string(stream.read_type(), &group_assembly) || !algorithm::encoding::decode_uint_blob(group_assembly, group_hash, sizeof(group_hash)))
 					return false;
 
-				mpc.insert(algorithm::pubkeyhash_t(mpc_hash));
+				group.insert(algorithm::pubkeyhash_t(group_hash));
 			}
 
 			return true;
 		}
-		void depository_account::set_mpc(const algorithm::pubkeyhash new_proposer, const algorithm::composition::cpubkey new_public_key, ordered_set<algorithm::pubkeyhash_t>&& new_mpc)
+		void depository_account::set_group(const algorithm::pubkeyhash new_manager, const algorithm::composition::cpubkey new_public_key, ordered_set<algorithm::pubkeyhash_t>&& new_group)
 		{
-			mpc = std::move(new_mpc);
-			if (!new_proposer)
+			group = std::move(new_group);
+			if (!new_manager)
 			{
 				algorithm::pubkeyhash null = { 0 };
-				memcpy(proposer, null, sizeof(algorithm::pubkeyhash));
+				memcpy(manager, null, sizeof(algorithm::pubkeyhash));
 			}
 			else
-				memcpy(proposer, new_proposer, sizeof(algorithm::pubkeyhash));
+				memcpy(manager, new_manager, sizeof(algorithm::pubkeyhash));
 			if (!new_public_key)
 			{
 				algorithm::composition::cpubkey null = { 0 };
-				memcpy(mpc_public_key, null, sizeof(algorithm::composition::cpubkey));
+				memcpy(public_key, null, sizeof(algorithm::composition::cpubkey));
 			}
 			else
-				memcpy(mpc_public_key, new_public_key, sizeof(algorithm::composition::cpubkey));
+				memcpy(public_key, new_public_key, sizeof(algorithm::composition::cpubkey));
 		}
 		bool depository_account::is_owner_null() const
 		{
 			algorithm::pubkeyhash null = { 0 };
 			return !memcmp(owner, null, sizeof(null));
 		}
-		bool depository_account::is_proposer_null() const
+		bool depository_account::is_manager_null() const
 		{
 			algorithm::pubkeyhash null = { 0 };
-			return !memcmp(proposer, null, sizeof(null));
+			return !memcmp(manager, null, sizeof(null));
 		}
 		uptr<schema> depository_account::as_schema() const
 		{
 			auto* chain = nss::server_node::get()->get_chainparams(asset);
-			auto mpc_public_key_size = chain ? algorithm::composition::size_of_public_key(chain->composition) : sizeof(mpc_public_key);
+			auto public_key_size = chain ? algorithm::composition::size_of_public_key(chain->composition) : sizeof(public_key);
 			schema* data = ledger::multiform::as_schema().reset();
 			data->set("owner", algorithm::signing::serialize_address(owner));
-			data->set("proposer", algorithm::signing::serialize_address(proposer));
+			data->set("manager", algorithm::signing::serialize_address(manager));
 			data->set("asset", algorithm::asset::serialize(asset));
 			algorithm::composition::cpubkey null = { 0 };
-			if (!memcmp(mpc_public_key, null, sizeof(null)))
-				data->set("mpc_public_key", var::string(format::util::encode_0xhex(std::string_view((char*)mpc_public_key, mpc_public_key_size))));
+			if (!memcmp(public_key, null, sizeof(null)))
+				data->set("public_key", var::string(format::util::encode_0xhex(std::string_view((char*)public_key, public_key_size))));
 			else
-				data->set("mpc_public_key", var::null());
-			auto* mpc_data = data->set("mpc", var::array());
-			for (auto& item : mpc)
-				mpc_data->push(item.empty() ? var::set::null() : algorithm::signing::serialize_address(item.data));
+				data->set("public_key", var::null());
+			auto* group_data = data->set("group", var::array());
+			for (auto& item : group)
+				group_data->push(item.empty() ? var::set::null() : algorithm::signing::serialize_address(item.data));
 			return data;
 		}
 		uint32_t depository_account::as_type() const
@@ -1240,7 +1265,7 @@ namespace tangent
 		}
 		string depository_account::as_column() const
 		{
-			return as_instance_column(proposer);
+			return as_instance_column(manager);
 		}
 		string depository_account::as_row() const
 		{
@@ -1255,11 +1280,11 @@ namespace tangent
 		{
 			return "depository_account";
 		}
-		string depository_account::as_instance_column(const algorithm::pubkeyhash proposer)
+		string depository_account::as_instance_column(const algorithm::pubkeyhash manager)
 		{
 			format::stream stream;
 			stream.write_typeless(as_instance_type());
-			stream.write_typeless((char*)proposer, (uint8_t)sizeof(algorithm::pubkeyhash));
+			stream.write_typeless((char*)manager, (uint8_t)sizeof(algorithm::pubkeyhash));
 			return std::move(stream.data);
 		}
 		string depository_account::as_instance_row(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner)
@@ -1460,7 +1485,7 @@ namespace tangent
 			stream->write_integer(asset);
 			stream->write_boolean(active);
 			stream->write_string(std::string_view((char*)owner, memcmp(owner, null_pkh, sizeof(null_pkh)) == 0 ? 0 : sizeof(owner)));
-			stream->write_string(std::string_view((char*)proposer, memcmp(proposer, null_pkh, sizeof(null_pkh)) == 0 ? 0 : sizeof(proposer)));
+			stream->write_string(std::string_view((char*)manager, memcmp(manager, null_pkh, sizeof(null_pkh)) == 0 ? 0 : sizeof(manager)));
 			stream->write_integer((uint8_t)addresses.size());
 			for (auto& address : addresses)
 			{
@@ -1481,8 +1506,8 @@ namespace tangent
 			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner, sizeof(owner)))
 				return false;
 
-			string proposer_assembly;
-			if (!stream.read_string(stream.read_type(), &proposer_assembly) || !algorithm::encoding::decode_uint_blob(proposer_assembly, proposer, sizeof(proposer)))
+			string manager_assembly;
+			if (!stream.read_string(stream.read_type(), &manager_assembly) || !algorithm::encoding::decode_uint_blob(manager_assembly, manager, sizeof(manager)))
 				return false;
 
 			uint8_t addresses_size;
@@ -1513,23 +1538,23 @@ namespace tangent
 		{
 			algorithm::pubkeyhash null_pkh = { 0 };
 			algorithm::composition::cpubkey null_pk = { 0 };
-			return memcmp(proposer, null_pkh, sizeof(null_pkh)) == 0 && memcmp(owner, null_pkh, sizeof(null_pkh)) != 0 && active;
+			return memcmp(manager, null_pkh, sizeof(null_pkh)) == 0 && memcmp(owner, null_pkh, sizeof(null_pkh)) != 0 && active;
 		}
 		bool witness_account::is_depository_account() const
 		{
 			algorithm::pubkeyhash null_pkh = { 0 };
 			algorithm::composition::cpubkey null_pk = { 0 };
-			return memcmp(proposer, null_pkh, sizeof(null_pkh)) != 0 && memcmp(owner, null_pkh, sizeof(null_pkh)) != 0 && active;
+			return memcmp(manager, null_pkh, sizeof(null_pkh)) != 0 && memcmp(owner, null_pkh, sizeof(null_pkh)) != 0 && active;
 		}
 		bool witness_account::is_owner_null() const
 		{
 			algorithm::pubkeyhash null = { 0 };
 			return !memcmp(owner, null, sizeof(null));
 		}
-		bool witness_account::is_proposer_null() const
+		bool witness_account::is_manager_null() const
 		{
 			algorithm::pubkeyhash null = { 0 };
-			return !memcmp(proposer, null, sizeof(null));
+			return !memcmp(manager, null, sizeof(null));
 		}
 		witness_account::account_type witness_account::get_type() const
 		{
@@ -1546,7 +1571,7 @@ namespace tangent
 		{
 			schema* data = ledger::multiform::as_schema().reset();
 			data->set("owner", algorithm::signing::serialize_address(owner));
-			data->set("proposer", algorithm::signing::serialize_address(proposer));
+			data->set("manager", algorithm::signing::serialize_address(manager));
 			data->set("asset", algorithm::asset::serialize(asset));
 			auto* addresses_data = data->set("addresses", var::set::array());
 			for (auto& address : addresses)
@@ -1694,18 +1719,20 @@ namespace tangent
 		}
 		ledger::state* resolver::from_type(uint32_t hash)
 		{
-			if (hash == account_sequence::as_instance_type())
-				return memory::init<account_sequence>(nullptr, nullptr);
-			else if (hash == account_work::as_instance_type())
-				return memory::init<account_work>(nullptr, nullptr);
-			else if (hash == account_observer::as_instance_type())
-				return memory::init<account_observer>(nullptr, nullptr);
+			if (hash == account_nonce::as_instance_type())
+				return memory::init<account_nonce>(nullptr, nullptr);
 			else if (hash == account_program::as_instance_type())
 				return memory::init<account_program>(nullptr, nullptr);
 			else if (hash == account_storage::as_instance_type())
 				return memory::init<account_storage>(nullptr, nullptr);
 			else if (hash == account_balance::as_instance_type())
 				return memory::init<account_balance>(nullptr, nullptr);
+			else if (hash == validator_production::as_instance_type())
+				return memory::init<validator_production>(nullptr, nullptr);
+			else if (hash == validator_participation::as_instance_type())
+				return memory::init<validator_participation>(nullptr, nullptr);
+			else if (hash == validator_attestation::as_instance_type())
+				return memory::init<validator_attestation>(nullptr, nullptr);
 			else if (hash == depository_reward::as_instance_type())
 				return memory::init<depository_reward>(nullptr, nullptr);
 			else if (hash == depository_balance::as_instance_type())
@@ -1727,18 +1754,20 @@ namespace tangent
 		ledger::state* resolver::from_copy(const ledger::state* base)
 		{
 			uint32_t hash = base->as_type();
-			if (hash == account_sequence::as_instance_type())
-				return memory::init<account_sequence>(*(const account_sequence*)base);
-			else if (hash == account_work::as_instance_type())
-				return memory::init<account_work>(*(const account_work*)base);
-			else if (hash == account_observer::as_instance_type())
-				return memory::init<account_observer>(*(const account_observer*)base);
+			if (hash == account_nonce::as_instance_type())
+				return memory::init<account_nonce>(*(const account_nonce*)base);
 			else if (hash == account_program::as_instance_type())
 				return memory::init<account_program>(*(const account_program*)base);
 			else if (hash == account_storage::as_instance_type())
 				return memory::init<account_storage>(*(const account_storage*)base);
 			else if (hash == account_balance::as_instance_type())
 				return memory::init<account_balance>(*(const account_balance*)base);
+			else if (hash == validator_production::as_instance_type())
+				return memory::init<validator_production>(*(const validator_production*)base);
+			else if (hash == validator_participation::as_instance_type())
+				return memory::init<validator_participation>(*(const validator_participation*)base);
+			else if (hash == validator_attestation::as_instance_type())
+				return memory::init<validator_attestation>(*(const validator_attestation*)base);
 			else if (hash == depository_reward::as_instance_type())
 				return memory::init<depository_reward>(*(const depository_reward*)base);
 			else if (hash == depository_balance::as_instance_type())
@@ -1760,12 +1789,13 @@ namespace tangent
 		unordered_set<uint32_t> resolver::get_hashes()
 		{
 			unordered_set<uint32_t> hashes;
-			hashes.insert(account_sequence::as_instance_type());
-			hashes.insert(account_work::as_instance_type());
-			hashes.insert(account_observer::as_instance_type());
+			hashes.insert(account_nonce::as_instance_type());
 			hashes.insert(account_program::as_instance_type());
 			hashes.insert(account_storage::as_instance_type());
 			hashes.insert(account_balance::as_instance_type());
+			hashes.insert(validator_production::as_instance_type());
+			hashes.insert(validator_participation::as_instance_type());
+			hashes.insert(validator_attestation::as_instance_type());
 			hashes.insert(depository_reward::as_instance_type());
 			hashes.insert(depository_balance::as_instance_type());
 			hashes.insert(depository_policy::as_instance_type());

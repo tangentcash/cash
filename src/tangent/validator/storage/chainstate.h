@@ -130,7 +130,7 @@ namespace tangent
 
 		struct factor_index_window final : factor_window
 		{
-			vector<size_t> indices;
+			vector<uint64_t> indices;
 
 			uint8_t type() const override
 			{

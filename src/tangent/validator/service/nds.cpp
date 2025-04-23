@@ -92,9 +92,11 @@ namespace tangent
 			auto* discovery_argument = query.get("discovery");
 			auto* synchronization_argument = query.get("synchronization");
 			auto* interface_argument = query.get("interface");
-			auto* proposer_argument = query.get("proposer");
+			auto* production_argument = query.get("production");
+			auto* participation_argument = query.get("participation");
+			auto* attestation_argument = query.get("attestation");
+			auto* querying_argument = query.get("querying");
 			auto* streaming_argument = query.get("streaming");
-			auto* public_argument = query.get("public");
 			auto* offset_argument = query.get("offset");
 			auto* count_argument = query.get("count");
 			uint64_t count = count_argument && count_argument->value.is(var_type::integer) ? count_argument->value.get_integer() : protocol::now().user.nds.cursor_size;
@@ -115,10 +117,14 @@ namespace tangent
 				services |= (uint32_t)storages::node_services::synchronization;
 			if (interface_argument != nullptr && interface_argument->value.get_boolean())
 				services |= (uint32_t)storages::node_services::interfaces;
-			if (proposer_argument != nullptr && proposer_argument->value.get_boolean())
-				services |= (uint32_t)storages::node_services::proposer;
-			if (public_argument != nullptr && public_argument->value.get_boolean())
-				services |= (uint32_t)storages::node_services::publicity;
+			if (production_argument != nullptr && production_argument->value.get_boolean())
+				services |= (uint32_t)storages::node_services::production;
+			if (participation_argument != nullptr && participation_argument->value.get_boolean())
+				services |= (uint32_t)storages::node_services::participation;
+			if (attestation_argument != nullptr && attestation_argument->value.get_boolean())
+				services |= (uint32_t)storages::node_services::attestation;
+			if (querying_argument != nullptr && querying_argument->value.get_boolean())
+				services |= (uint32_t)storages::node_services::querying;
 			if (streaming_argument != nullptr && streaming_argument->value.get_boolean())
 				services |= (uint32_t)storages::node_services::streaming;
 

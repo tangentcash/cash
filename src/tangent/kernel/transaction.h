@@ -31,7 +31,7 @@ namespace tangent
 			algorithm::asset_id asset = 0;
 			decimal gas_price;
 			uint256_t gas_limit = 0;
-			uint64_t sequence = 0;
+			uint64_t nonce = 0;
 			bool conservative = false;
 
 			virtual expects_lr<void> validate(uint64_t block_number) const;
@@ -44,8 +44,8 @@ namespace tangent
 			virtual bool recover_many(const transaction_context* context, const receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const;
 			virtual bool recover_aliases(const transaction_context* context, const receipt& receipt, ordered_set<uint256_t>& aliases) const;
 			virtual bool sign(const algorithm::seckey secret_key) override;
-			virtual bool sign(const algorithm::seckey secret_key, uint64_t new_sequence);
-			virtual bool sign(const algorithm::seckey secret_key, uint64_t new_sequence, const decimal& price);
+			virtual bool sign(const algorithm::seckey secret_key, uint64_t new_nonce);
+			virtual bool sign(const algorithm::seckey secret_key, uint64_t new_nonce, const decimal& price);
 			virtual void set_optimal_gas(const decimal& price);
 			virtual void set_estimate_gas(const decimal& price);
 			virtual void set_gas(const decimal& price, const uint256_t& limit);
@@ -94,8 +94,8 @@ namespace tangent
 			virtual bool store_payload(format::stream* stream) const override;
 			virtual bool load_payload(format::stream& stream) override;
 			virtual bool sign(const algorithm::seckey secret_key) override;
-			virtual bool sign(const algorithm::seckey secret_key, uint64_t new_sequence) override;
-			virtual bool sign(const algorithm::seckey secret_key, uint64_t new_sequence, const decimal& price) override;
+			virtual bool sign(const algorithm::seckey secret_key, uint64_t new_nonce) override;
+			virtual bool sign(const algorithm::seckey secret_key, uint64_t new_nonce, const decimal& price) override;
 			virtual bool verify(const algorithm::pubkey public_key) const override;
 			virtual bool verify(const algorithm::pubkey public_key, const uint256_t& output_hash, size_t index) const;
 			virtual bool recover(algorithm::pubkey public_key) const override;
@@ -104,10 +104,10 @@ namespace tangent
 			virtual bool recover_hash(algorithm::pubkeyhash public_key_hash, const uint256_t& output_hash, size_t index) const;
 			virtual bool is_signature_null() const override;
 			virtual void set_optimal_gas(const decimal& price) override;
-			virtual void set_consensus(const uint256_t& output_hash);
 			virtual void set_statement(const uint256_t& new_input_hash, const format::stream& output_message);
-			virtual const evaluation_branch* get_best_branch(const transaction_context* context) const;
-			virtual const evaluation_branch* get_final_branch(transaction_context* context, ordered_map<algorithm::asset_id, size_t>* aggregators) const;
+			virtual void set_best_branch(const uint256_t& output_hash);
+			virtual const evaluation_branch* get_best_branch(const transaction_context* context, ordered_map<algorithm::asset_id, size_t>* aggregators) const;
+			virtual uint256_t get_branch_image(const uint256_t& output_hash) const;
 			virtual uint256_t as_group_hash() const;
 			virtual uptr<schema> as_schema() const override;
 			transaction_level get_type() const override;

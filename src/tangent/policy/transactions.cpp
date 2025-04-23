@@ -281,11 +281,11 @@ namespace tangent
 					return layer_exception("invalid calldata type");
 			}
 
-			auto sequence = context->apply_account_sequence(owner, std::numeric_limits<uint64_t>::max());
-			if (!sequence)
+			auto nonce = context->apply_account_nonce(owner, std::numeric_limits<uint64_t>::max());
+			if (!nonce)
 			{
 				host->deallocate(std::move(compiler));
-				return sequence.error();
+				return nonce.error();
 			}
 
 			auto script = ledger::script_program(context);
@@ -654,7 +654,7 @@ namespace tangent
 			uint256_t relative_gas_use = context->receipt.relative_gas_use;
 			std::sort(queue.begin(), queue.end(), [](const std::pair<ledger::transaction*, uint16_t>& a, const std::pair<ledger::transaction*, uint16_t>& b)
 			{
-				return a.first->sequence < b.first->sequence;
+				return a.first->nonce < b.first->nonce;
 			});
 
 			algorithm::pubkeyhash null = { 0 };
@@ -734,7 +734,7 @@ namespace tangent
 				for (auto& transaction : group.second)
 				{
 					stream->write_integer(transaction->as_type());
-					stream->write_integer(transaction->sequence);
+					stream->write_integer(transaction->nonce);
 					stream->write_integer(transaction->gas_limit);
 					stream->write_string(std::string_view((char*)transaction->signature, sizeof(transaction->signature)));
 					if (!transaction->store_body(stream))
@@ -772,7 +772,7 @@ namespace tangent
 						return false;
 
 					uptr<ledger::transaction> next = resolver::from_type(type);
-					if (!next || !stream.read_integer(stream.read_type(), &next->sequence))
+					if (!next || !stream.read_integer(stream.read_type(), &next->nonce))
 						return false;
 
 					if (!stream.read_integer(stream.read_type(), &next->gas_limit))
@@ -836,9 +836,9 @@ namespace tangent
 			uint16_t index = it != transactions.end() ? it->second.size() : 0;
 			return sign_child(transaction, secret_key, asset, index) && merge(transaction);
 		}
-		bool rollup::merge(ledger::transaction& transaction, const algorithm::seckey secret_key, uint64_t sequence)
+		bool rollup::merge(ledger::transaction& transaction, const algorithm::seckey secret_key, uint64_t nonce)
 		{
-			transaction.sequence = sequence;
+			transaction.nonce = nonce;
 			return merge(transaction, secret_key);
 		}
 		bool rollup::is_dispatchable() const
@@ -1009,14 +1009,21 @@ namespace tangent
 
 		expects_lr<void> certification::validate(uint64_t block_number) const
 		{
-			if (!online && observers.empty())
-				return layer_exception("invalid status");
+			if (!production && participation_stakes.empty() && attestation_stakes.empty())
+				return layer_exception("invalid certification");
 
-			for (auto& mediator : observers)
+			for (auto& [asset, stake] : participation_stakes)
 			{
-				uint64_t expiry_number = algorithm::asset::expiry_of(mediator.first);
-				if (!expiry_number || (block_number > expiry_number && mediator.second))
-					return layer_exception("invalid observer asset");
+				uint64_t expiry_number = algorithm::asset::expiry_of(asset);
+				if (!expiry_number || (block_number > expiry_number && !stake.is_nan() && !stake.is_negative()))
+					return layer_exception("invalid participation asset");
+			}
+
+			for (auto& [asset, stake] : attestation_stakes)
+			{
+				uint64_t expiry_number = algorithm::asset::expiry_of(asset);
+				if (!expiry_number || (block_number > expiry_number && !stake.is_nan() && !stake.is_negative()))
+					return layer_exception("invalid attestation asset");
 			}
 
 			return ledger::transaction::validate(block_number);
@@ -1027,29 +1034,44 @@ namespace tangent
 			if (!validation)
 				return validation.error();
 
-			bool goes_online = online.or_else(false);
-			for (auto& mediator : observers)
-				goes_online = mediator.second || goes_online;
-
-			if (goes_online)
+			if (production)
 			{
-				auto status = context->verify_account_work(context->receipt.from);
+				if (*production)
+				{
+					auto status = context->verify_validator_production(context->receipt.from);
+					if (!status)
+						return status;
+				}
+
+				auto type = *production ? ledger::transaction_context::production_type::mint_gas_and_activate : ledger::transaction_context::production_type::burn_gas_and_deactivate;
+				auto status = context->apply_validator_production(context->receipt.from, type, 0);
 				if (!status)
-					return status;
+					return status.error();
 			}
 
-			if (online)
+			for (auto& [asset, stake] : participation_stakes)
 			{
-				auto work = context->apply_account_work(context->receipt.from, *online ? states::account_flags::online : states::account_flags::offline, 0, 0, 0);
-				if (!work)
-					return work.error();
+				auto status = context->apply_validator_participation(asset, context->receipt.from, stake, 0);
+				if (!status)
+					return status.error();
 			}
 
-			for (auto& mediator : observers)
+			for (auto& [asset, stake] : attestation_stakes)
 			{
-				auto observer_work = context->apply_account_observer(mediator.first, context->receipt.from, mediator.second);
-				if (!observer_work)
-					return observer_work.error();
+				if (stake.is_nan() || stake.is_negative())
+				{
+					auto depository = context->get_depository_policy(asset, context->receipt.from);
+					if (depository && (depository->accepts_account_requests || depository->accepts_withdrawal_requests))
+						return layer_exception(algorithm::asset::handle_of(asset) + " depository is still active");
+
+					auto balance = context->get_depository_balance(asset, context->receipt.from);
+					if (balance && balance->supply.is_positive())
+						return layer_exception(algorithm::asset::handle_of(asset) + " depository has custodial balance");
+				}
+
+				auto status = context->apply_validator_attestation(asset, context->receipt.from, stake);
+				if (!status)
+					return status.error();
 			}
 
 			return expectation::met;
@@ -1057,83 +1079,139 @@ namespace tangent
 		bool certification::store_body(format::stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_integer((uint8_t)(online ? (*online ? 1 : 0) : 2));
-			stream->write_integer((uint16_t)observers.size());
-			for (auto& mediator : observers)
+			stream->write_integer((uint8_t)(production ? (*production ? 1 : 0) : 2));
+			stream->write_integer((uint8_t)participation_stakes.size());
+			for (auto& [asset, stake] : participation_stakes)
 			{
-				stream->write_integer(mediator.first);
-				stream->write_boolean(mediator.second);
+				stream->write_integer(asset);
+				stream->write_decimal(stake);
+			}
+			stream->write_integer((uint8_t)attestation_stakes.size());
+			for (auto& [asset, stake] : attestation_stakes)
+			{
+				stream->write_integer(asset);
+				stream->write_decimal(stake);
 			}
 			return true;
 		}
 		bool certification::load_body(format::stream& stream)
 		{
-			uint8_t status;
-			if (!stream.read_integer(stream.read_type(), &status))
+			uint8_t production_status;
+			if (!stream.read_integer(stream.read_type(), &production_status))
 				return false;
 
-			if (status == 0)
-				online = false;
-			else if (status == 1)
-				online = true;
+			if (production_status == 0)
+				production = false;
+			else if (production_status == 1)
+				production = true;
 			else
-				online = optional::none;
+				production = optional::none;
 
-			uint16_t observers_size = 0;
-			if (!stream.read_integer(stream.read_type(), &observers_size))
+			uint8_t participation_stakes_size = 0;
+			if (!stream.read_integer(stream.read_type(), &participation_stakes_size))
 				return false;
 
-			observers.clear();
-			for (uint16_t i = 0; i < observers_size; i++)
+			participation_stakes.clear();
+			for (uint16_t i = 0; i < participation_stakes_size; i++)
 			{
 				algorithm::asset_id asset;
 				if (!stream.read_integer(stream.read_type(), &asset))
 					return false;
 
-				bool observing;
-				if (!stream.read_boolean(stream.read_type(), &observing))
+				decimal stake;
+				if (!stream.read_decimal(stream.read_type(), &stake))
 					return false;
 
-				observers[asset] = observing;
+				participation_stakes[asset] = stake;
+			}
+
+			uint8_t attestation_stakes_size = 0;
+			if (!stream.read_integer(stream.read_type(), &attestation_stakes_size))
+				return false;
+
+			attestation_stakes.clear();
+			for (uint16_t i = 0; i < attestation_stakes_size; i++)
+			{
+				algorithm::asset_id asset;
+				if (!stream.read_integer(stream.read_type(), &asset))
+					return false;
+
+				decimal stake;
+				if (!stream.read_decimal(stream.read_type(), &stake))
+					return false;
+
+				attestation_stakes[asset] = stake;
 			}
 
 			return true;
 		}
-		void certification::set_online()
+		void certification::enable_block_production()
 		{
-			online = true;
+			production = true;
 		}
-		void certification::set_online(const algorithm::asset_id& asset)
+		void certification::disable_block_production()
 		{
-			observers[asset] = true;
+			production = false;
 		}
-		void certification::set_offline()
+		void certification::standby_on_block_production()
 		{
-			online = false;
+			production = optional::none;
 		}
-		void certification::set_offline(const algorithm::asset_id& asset)
+		void certification::allocate_participation_stake(const algorithm::asset_id& asset, const decimal& value)
 		{
-			observers[asset] = false;
+			if (value >= 0.0)
+				participation_stakes[asset] = value;
 		}
-		void certification::set_standby()
+		void certification::deallocate_participation_stake(const algorithm::asset_id& asset, const decimal& value)
 		{
-			online = optional::none;
+			if (value.is_positive())
+				participation_stakes[asset] = -value;
 		}
-		void certification::set_standby(const algorithm::asset_id& asset)
+		void certification::disable_participation(const algorithm::asset_id& asset)
 		{
-			observers.erase(asset);
+			participation_stakes[asset] = decimal::nan();
+		}
+		void certification::standby_on_participation(const algorithm::asset_id& asset)
+		{
+			participation_stakes.erase(asset);
+		}
+		void certification::allocate_attestation_stake(const algorithm::asset_id& asset, const decimal& value)
+		{
+			if (value >= 0.0)
+				attestation_stakes[asset] = value;
+		}
+		void certification::deallocate_attestation_stake(const algorithm::asset_id& asset, const decimal& value)
+		{
+			if (value.is_positive())
+				attestation_stakes[asset] = -value;
+		}
+		void certification::disable_attestation(const algorithm::asset_id& asset)
+		{
+			attestation_stakes[asset] = decimal::nan();
+		}
+		void certification::standby_on_attestation(const algorithm::asset_id& asset)
+		{
+			attestation_stakes.erase(asset);
 		}
 		uptr<schema> certification::as_schema() const
 		{
 			schema* data = ledger::transaction::as_schema().reset();
-			data->set("online", var::integer(online ? (*online ? 1 : 0) : -1));
+			data->set("block_production", var::integer(production ? (*production ? 1 : 0) : -1));
 
-			auto* observers_data = data->set("observers", var::set::array());
-			for (auto& mediator : observers)
+			auto* participation_stakes_data = data->set("participation_stakes", var::set::array());
+			for (auto& [asset, stake] : participation_stakes)
 			{
-				auto* observer_data = observers_data->push(var::set::object());
-				observer_data->set("asset", algorithm::asset::serialize(mediator.first));
-				observer_data->set("online", var::boolean(mediator.second));
+				auto* stake_data = participation_stakes_data->push(var::set::object());
+				stake_data->set("asset", algorithm::asset::serialize(asset));
+				stake_data->set("stake", var::decimal(stake));
+			}
+
+			auto* attestation_stakes_data = data->set("attestation_stakes", var::set::array());
+			for (auto& [asset, stake] : attestation_stakes)
+			{
+				auto* stake_data = attestation_stakes_data->push(var::set::object());
+				stake_data->set("asset", algorithm::asset::serialize(asset));
+				stake_data->set("stake", var::decimal(stake));
 			}
 			return data;
 		}
@@ -1247,8 +1325,8 @@ namespace tangent
 				return layer_exception("invalid asset");
 
 			algorithm::pubkeyhash null = { 0 };
-			if (memcmp(proposer, null, sizeof(null)) == 0)
-				return layer_exception("invalid account proposer");
+			if (memcmp(manager, null, sizeof(null)) == 0)
+				return layer_exception("invalid manager");
 
 			return ledger::delegation_transaction::validate(block_number);
 		}
@@ -1262,17 +1340,17 @@ namespace tangent
 			if (!chain)
 				return layer_exception("invalid operation");
 
-			auto work_requirement = context->verify_account_work(proposer);
-			if (!work_requirement)
-				return work_requirement.error();
+			auto attestation_requirement = context->verify_validator_attestation(asset, manager);
+			if (!attestation_requirement)
+				return attestation_requirement.error();
 
-			auto depository_policy = context->get_depository_policy(asset, proposer);
+			auto depository_policy = context->get_depository_policy(asset, manager);
 			if (!depository_policy)
 				return depository_policy.error();
 			else if (!depository_policy->accepts_account_requests)
-				return layer_exception("proposer's depository forbids account creations");
+				return layer_exception("depository forbids account creations");
 
-			auto duplicate = context->get_depository_account(asset, proposer, context->receipt.from);
+			auto duplicate = context->get_depository_account(asset, manager, context->receipt.from);
 			if (duplicate)
 				return layer_exception("depository account already exists");
 
@@ -1289,26 +1367,26 @@ namespace tangent
 					size_t offset = 0, count = 64;
 					while (depository_policy->accounts_under_management > 0)
 					{
-						auto candidates = context->get_witness_accounts_by_purpose(proposer, states::witness_account::account_type::depository, offset, count);
+						auto candidates = context->get_witness_accounts_by_purpose(manager, states::witness_account::account_type::depository, offset, count);
 						if (!candidates)
 							return candidates.error();
 
-						auto candidate = std::find_if(candidates->begin(), candidates->end(), [this](const states::witness_account& v) { return v.asset == asset && !memcmp(v.proposer, proposer, sizeof(proposer)); });
+						auto candidate = std::find_if(candidates->begin(), candidates->end(), [this](const states::witness_account& v) { return v.asset == asset && !memcmp(v.manager, manager, sizeof(manager)); });
 						if (candidate != candidates->end())
 						{
 							uint64_t address_index = depository_policy->accounts_under_management + 1;
 							for (auto& address : candidate->addresses)
 								address.second = mediator::address_util::encode_tag_address(address.second, to_string(address_index));
 
-							auto depository_policy_status = context->apply_depository_policy_account(asset, proposer, 1);
+							auto depository_policy_status = context->apply_depository_policy_account(asset, manager, 1);
 							if (!depository_policy_status)
 								return depository_policy_status.error();
 
-							auto depository_account_status = context->apply_depository_account(asset, context->receipt.from, proposer, nullptr, { });
+							auto depository_account_status = context->apply_depository_account(asset, context->receipt.from, manager, nullptr, { });
 							if (!depository_account_status)
 								return depository_account_status.error();
 
-							auto witness_account_status = context->apply_witness_depository_account(asset, context->receipt.from, candidate->addresses, proposer);
+							auto witness_account_status = context->apply_witness_depository_account(asset, context->receipt.from, manager, candidate->addresses);
 							if (!witness_account_status)
 								return witness_account_status.error();
 							
@@ -1328,7 +1406,7 @@ namespace tangent
 			}
 
 			ordered_set<algorithm::pubkeyhash_t> exclusion;
-			auto committee = context->calculate_sharing_committee(exclusion, depository_policy->security_level);
+			auto committee = context->calculate_participants(asset, exclusion, depository_policy->security_level);
 			if (!committee)
 				return committee.error();
 
@@ -1343,7 +1421,7 @@ namespace tangent
 		}
 		expects_promise_rt<void> depository_account::dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const
 		{
-			if (!dispatcher->is_on(proposer))
+			if (!dispatcher->is_running_on(manager))
 				return expects_promise_rt<void>(expectation::met);
 
 			auto* event = context->receipt.find_event<depository_account>();
@@ -1356,44 +1434,44 @@ namespace tangent
 				if (!chain)
 					coreturn remote_exception("invalid operation");
 
-				ordered_set<algorithm::pubkeyhash_t> mpc_signers;
-				algorithm::composition::cpubkey_t mpc_public_key;
+				ordered_set<algorithm::pubkeyhash_t> group_signers;
+				algorithm::composition::cpubkey_t group_public_key;
 				auto cache = dispatcher->load_cache(context);
 				if (cache)
 				{
-					mpc_public_key = algorithm::composition::cpubkey_t(codec::hex_decode(cache->get_var(0).get_blob()));
+					group_public_key = algorithm::composition::cpubkey_t(codec::hex_decode(cache->get_var(0).get_blob()));
 					for (size_t i = 1; i < cache->size(); i++)
-						mpc_signers.insert(algorithm::pubkeyhash_t(codec::hex_decode(cache->get_var(i).get_blob())));
+						group_signers.insert(algorithm::pubkeyhash_t(codec::hex_decode(cache->get_var(i).get_blob())));
 				}
 
-				auto mpc = get_mpc(context->receipt);
-				for (auto& share : mpc_signers)
-					mpc.erase(share);
+				auto group = get_group(context->receipt);
+				for (auto& share : group_signers)
+					group.erase(share);
 
-				bool mpc_fully_signed = true;
-				for (auto& share : mpc)
+				bool group_fully_signed = true;
+				for (auto& share : group)
 				{
-					auto result = coawait(dispatcher->calculate_mpc_public_key(context, share.data, mpc_public_key));
+					auto result = coawait(dispatcher->calculate_group_public_key(context, share.data, group_public_key));
 					if (!result && (result.error().is_retry() || result.error().is_shutdown()))
 					{
-						mpc_fully_signed = false;
+						group_fully_signed = false;
 						continue;
 					}
 					else if (!result)
 						coreturn result.error();
 
-					mpc_signers.insert(share);
+					group_signers.insert(share);
 				}
 
-				if (mpc_fully_signed)
+				if (group_fully_signed)
 				{
-					auto status = algorithm::composition::accumulate_public_key(chain->composition, nullptr, mpc_public_key.data);
+					auto status = algorithm::composition::accumulate_public_key(chain->composition, nullptr, group_public_key.data);
 					if (!status)
 						coreturn remote_exception(std::move(status.error().message()));
 
 					auto* transaction = memory::init<depository_account_finalization>();
 					transaction->asset = asset;
-					transaction->set_witness(context->receipt.transaction_hash, mpc_public_key.data);
+					transaction->set_witness(context->receipt.transaction_hash, group_public_key.data);
 					dispatcher->emit_transaction(transaction);
 					dispatcher->store_cache(context, nullptr);
 					coreturn expectation::met;
@@ -1401,8 +1479,8 @@ namespace tangent
 				else
 				{
 					cache = var::set::array();
-					cache->push(var::string(codec::hex_encode(mpc_public_key.optimized_view())));
-					for (auto& share : mpc_signers)
+					cache->push(var::string(codec::hex_encode(group_public_key.optimized_view())));
+					for (auto& share : group_signers)
 						cache->push(var::string(codec::hex_encode(share.optimized_view())));
 					dispatcher->store_cache(context, std::move(cache));
 					coreturn remote_exception::retry();
@@ -1413,44 +1491,44 @@ namespace tangent
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			algorithm::pubkeyhash null = { 0 };
-			stream->write_string(std::string_view((char*)proposer, memcmp(proposer, null, sizeof(null)) == 0 ? 0 : sizeof(proposer)));
+			stream->write_string(std::string_view((char*)manager, memcmp(manager, null, sizeof(null)) == 0 ? 0 : sizeof(manager)));
 			return true;
 		}
 		bool depository_account::load_body(format::stream& stream)
 		{
-			string proposer_assembly;
-			if (!stream.read_string(stream.read_type(), &proposer_assembly) || !algorithm::encoding::decode_uint_blob(proposer_assembly, proposer, sizeof(proposer)))
+			string manager_assembly;
+			if (!stream.read_string(stream.read_type(), &manager_assembly) || !algorithm::encoding::decode_uint_blob(manager_assembly, manager, sizeof(manager)))
 				return false;
 
 			return true;
 		}
 		bool depository_account::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
 		{
-			auto mpc = get_mpc(receipt);
-			parties.insert(algorithm::pubkeyhash_t(proposer));
-			parties.insert(mpc.begin(), mpc.end());
+			auto group = get_group(receipt);
+			parties.insert(algorithm::pubkeyhash_t(manager));
+			parties.insert(group.begin(), group.end());
 			return true;
 		}
-		void depository_account::set_proposer(const algorithm::pubkeyhash new_proposer)
+		void depository_account::set_manager(const algorithm::pubkeyhash new_manager)
 		{
-			if (!new_proposer)
+			if (!new_manager)
 			{
 				algorithm::pubkeyhash null = { 0 };
-				memcpy(proposer, null, sizeof(algorithm::pubkeyhash));
+				memcpy(manager, null, sizeof(algorithm::pubkeyhash));
 			}
 			else
-				memcpy(proposer, new_proposer, sizeof(algorithm::pubkeyhash));
+				memcpy(manager, new_manager, sizeof(algorithm::pubkeyhash));
 		}
-		bool depository_account::is_proposer_null() const
+		bool depository_account::is_manager_null() const
 		{
 			algorithm::pubkeyhash null = { 0 };
-			return memcmp(proposer, null, sizeof(null)) == 0;
+			return memcmp(manager, null, sizeof(null)) == 0;
 		}
 		bool depository_account::is_dispatchable() const
 		{
 			return true;
 		}
-		ordered_set<algorithm::pubkeyhash_t> depository_account::get_mpc(const ledger::receipt& receipt) const
+		ordered_set<algorithm::pubkeyhash_t> depository_account::get_group(const ledger::receipt& receipt) const
 		{
 			ordered_set<algorithm::pubkeyhash_t> result;
 			for (auto& event : receipt.find_events<depository_account>())
@@ -1463,7 +1541,7 @@ namespace tangent
 		uptr<schema> depository_account::as_schema() const
 		{
 			schema* data = ledger::delegation_transaction::as_schema().reset();
-			data->set("proposer", algorithm::signing::serialize_address(proposer));
+			data->set("manager", algorithm::signing::serialize_address(manager));
 			return data;
 		}
 		uint32_t depository_account::as_type() const
@@ -1497,8 +1575,8 @@ namespace tangent
 				return layer_exception("invalid depository account hash");
 			
 			algorithm::composition::cpubkey null = { 0 };
-			if (!memcmp(mpc_public_key, null, sizeof(null)))
-				return layer_exception("invalid mpc public key");
+			if (!memcmp(public_key, null, sizeof(null)))
+				return layer_exception("invalid public key");
 
 			return ledger::consensus_transaction::validate(block_number);
 		}
@@ -1523,27 +1601,21 @@ namespace tangent
 			if (!chain || !params)
 				return layer_exception("invalid operation");
 
-			auto duplicate = context->get_depository_account(asset, setup_transaction->proposer, context->receipt.from);
+			auto duplicate = context->get_depository_account(asset, setup_transaction->manager, context->receipt.from);
 			if (duplicate)
 				return layer_exception("depository account already exists");
 
-			auto public_key = chain->encode_public_key(std::string_view((char*)mpc_public_key, algorithm::composition::size_of_public_key(params->composition)));
-			if (!public_key)
-				return public_key.error();
+			auto encoded_public_key = chain->encode_public_key(std::string_view((char*)public_key, algorithm::composition::size_of_public_key(params->composition)));
+			if (!encoded_public_key)
+				return encoded_public_key.error();
 
-			auto addresses = chain->to_addresses(*public_key);
+			auto addresses = chain->to_addresses(*encoded_public_key);
 			if (!addresses)
 				return addresses.error();
 
-			auto work_requirement = context->verify_account_work(setup_transaction->proposer);
-			if (!work_requirement)
-				return work_requirement.error();
-
-			auto depository_policy = context->get_depository_policy(asset, setup_transaction->proposer);
+			auto depository_policy = context->get_depository_policy(asset, setup_transaction->manager);
 			if (!depository_policy)
 				return depository_policy.error();
-			else if (!depository_policy->accepts_account_requests)
-				return layer_exception("proposer's depository forbids account creations");
 
 			switch (params->routing)
 			{
@@ -1564,15 +1636,23 @@ namespace tangent
 					break;
 			}
 
-			auto depository_policy_status = context->apply_depository_policy_account(asset, setup_transaction->proposer, 1);
+			auto depository_policy_status = context->apply_depository_policy_account(asset, setup_transaction->manager, 1);
 			if (!depository_policy_status)
 				return depository_policy_status.error();
 
-			auto depository_account_status = context->apply_depository_account(asset, setup->receipt.from, setup_transaction->proposer, mpc_public_key, setup_transaction->get_mpc(setup->receipt));
+			auto group = setup_transaction->get_group(setup->receipt);
+			for (auto& participant : group)
+			{
+				auto status = context->apply_validator_participation(asset, participant.data, decimal::zero(), 1);
+				if (!status)
+					return status.error();
+			}
+
+			auto depository_account_status = context->apply_depository_account(asset, setup->receipt.from, setup_transaction->manager, public_key, std::move(group));
 			if (!depository_account_status)
 				return depository_account_status.error();
 
-			auto witness_account_status = context->apply_witness_depository_account(asset, setup->receipt.from, *addresses, setup_transaction->proposer);
+			auto witness_account_status = context->apply_witness_depository_account(asset, setup->receipt.from, setup_transaction->manager, *addresses);
 			if (!witness_account_status)
 				return witness_account_status.error();
 
@@ -1599,9 +1679,9 @@ namespace tangent
 			if (!chain || !params)
 				return expects_promise_rt<void>(remote_exception("invalid operation"));
 
-			auto public_key = chain->encode_public_key(std::string_view((char*)mpc_public_key, algorithm::composition::size_of_public_key(params->composition)));
-			if (!public_key)
-				return expects_promise_rt<void>(remote_exception(std::move(public_key.error().message())));
+			auto encoded_public_key = chain->encode_public_key(std::string_view((char*)public_key, algorithm::composition::size_of_public_key(params->composition)));
+			if (!encoded_public_key)
+				return expects_promise_rt<void>(remote_exception(std::move(encoded_public_key.error().message())));
 
 			auto* setup_transaction = (depository_account*)*setup->transaction;
 			for (auto& address : addresses)
@@ -1609,40 +1689,40 @@ namespace tangent
 				auto [base_address, tag] = mediator::address_util::decode_tag_address(address);
 				if (base_address != address)
 				{
-					auto status = server->enable_link(asset, mediator::wallet_link(setup_transaction->proposer, *public_key, base_address));
+					auto status = server->enable_link(asset, mediator::wallet_link(setup_transaction->manager, *encoded_public_key, base_address));
 					if (!status)
 						return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
 				}
 
-				auto status = server->enable_link(asset, mediator::wallet_link(setup_transaction->proposer, *public_key, address));
+				auto status = server->enable_link(asset, mediator::wallet_link(setup_transaction->manager, *encoded_public_key, address));
 				if (!status)
 					return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
 			}
 
 			return expects_promise_rt<void>(expectation::met);
 		}
-		void depository_account_finalization::set_witness(const uint256_t& new_depository_account_hash, const algorithm::composition::cpubkey new_mpc_public_key)
+		void depository_account_finalization::set_witness(const uint256_t& new_depository_account_hash, const algorithm::composition::cpubkey new_public_key)
 		{
-			VI_ASSERT(new_mpc_public_key, "mpc public key should be set");
+			VI_ASSERT(new_public_key, "public key should be set");
 			depository_account_hash = new_depository_account_hash;
-			memcpy(mpc_public_key, new_mpc_public_key, sizeof(mpc_public_key));
+			memcpy(public_key, new_public_key, sizeof(public_key));
 		}
 		bool depository_account_finalization::store_body(format::stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			algorithm::composition::cpubkey null = { 0 };
 			auto params = nss::server_node::get()->get_chainparams(asset);
-			size_t mpc_public_key_size = params ? algorithm::composition::size_of_public_key(params->composition) : sizeof(mpc_public_key);
-			stream->write_string(std::string_view((char*)mpc_public_key, memcmp(mpc_public_key, null, mpc_public_key_size) == 0 ? 0 : mpc_public_key_size));
+			size_t public_key_size = params ? algorithm::composition::size_of_public_key(params->composition) : sizeof(public_key);
+			stream->write_string(std::string_view((char*)public_key, memcmp(public_key, null, public_key_size) == 0 ? 0 : public_key_size));
 			stream->write_integer(depository_account_hash);
 			return true;
 		}
 		bool depository_account_finalization::load_body(format::stream& stream)
 		{
-			string mpc_public_key_assembly;
+			string public_key_assembly;
 			auto params = nss::server_node::get()->get_chainparams(asset);
-			size_t mpc_public_key_size = params ? algorithm::composition::size_of_public_key(params->composition) : sizeof(mpc_public_key);
-			if (!stream.read_string(stream.read_type(), &mpc_public_key_assembly) || !algorithm::encoding::decode_uint_blob(mpc_public_key_assembly, mpc_public_key, mpc_public_key_size))
+			size_t public_key_size = params ? algorithm::composition::size_of_public_key(params->composition) : sizeof(public_key);
+			if (!stream.read_string(stream.read_type(), &public_key_assembly) || !algorithm::encoding::decode_uint_blob(public_key_assembly, public_key, public_key_size))
 				return false;
 
 			if (!stream.read_integer(stream.read_type(), &depository_account_hash))
@@ -1657,7 +1737,7 @@ namespace tangent
 				return false;
 
 			auto* setup_transaction = (depository_account*)*setup->transaction;
-			parties.insert(algorithm::pubkeyhash_t(setup_transaction->proposer));
+			parties.insert(algorithm::pubkeyhash_t(setup_transaction->manager));
 			parties.insert(algorithm::pubkeyhash_t(setup->receipt.from));
 			return true;
 		}
@@ -1671,7 +1751,7 @@ namespace tangent
 			auto params = nss::server_node::get()->get_chainparams(asset);
 			schema* data = ledger::consensus_transaction::as_schema().reset();
 			data->set("depository_account_hash", depository_account_hash > 0 ? var::string(algorithm::encoding::encode_0xhex256(depository_account_hash)) : var::null());
-			data->set("mpc_public_key", var::string(format::util::encode_0xhex(std::string_view((char*)mpc_public_key, params ? algorithm::composition::size_of_public_key(params->composition) : sizeof(mpc_public_key)))));
+			data->set("public_key", var::string(format::util::encode_0xhex(std::string_view((char*)public_key, params ? algorithm::composition::size_of_public_key(params->composition) : sizeof(public_key)))));
 			return data;
 		}
 		uint32_t depository_account_finalization::as_type() const
@@ -1698,14 +1778,14 @@ namespace tangent
 
 		expects_lr<void> depository_withdrawal::validate(uint64_t block_number) const
 		{
-			if (is_proposer_null())
-				return layer_exception("invalid proposer");
+			if (!memcmp(from_manager, to_manager, sizeof(to_manager)))
+				return layer_exception("invalid from/to manager");
 
 			auto* chain = nss::server_node::get()->get_chainparams(asset);
 			if (!chain)
 				return layer_exception("invalid operation");
 
-			if (is_migration_proposer_null())
+			if (is_to_manager_null())
 			{
 				if (to.empty())
 					return layer_exception("invalid to");
@@ -1725,14 +1805,8 @@ namespace tangent
 					addresses.insert(item.first);
 				}
 			}
-			else
-			{
-				if (!to.empty())
-					return layer_exception("invalid to");
-
-				if (!memcmp(proposer, migration_proposer, sizeof(migration_proposer)))
-					return layer_exception("invalid migration proposer");
-			}
+			else if (!to.empty())
+				return layer_exception("invalid to");
 
 			return ledger::transaction::validate(block_number);
 		}
@@ -1742,62 +1816,63 @@ namespace tangent
 			if (!validation)
 				return validation.error();
 
-			auto depository_policy = context->get_depository_policy(asset, proposer);
+			auto attestation_requirement = context->verify_validator_attestation(asset, from_manager);
+			if (!attestation_requirement)
+				return attestation_requirement.error();
+
+			auto depository_policy = context->get_depository_policy(asset, from_manager);
 			if (!depository_policy)
 				return depository_policy.error();
 			else if (!depository_policy->accepts_withdrawal_requests)
-				return layer_exception("proposer's depository forbids withdrawals");
+				return layer_exception("depository forbids withdrawals");
 			else if (only_if_not_in_queue && depository_policy->queue_transaction_hash > 0)
-				return layer_exception("proposer's depository is in use - withdrawal will be queued");
+				return layer_exception("depository is in use - withdrawal will be queued");
 
-			if (!is_migration_proposer_null())
+			if (!is_to_manager_null())
 			{
-				if (memcmp(context->receipt.from, proposer, sizeof(algorithm::pubkeyhash)) != 0)
-					return layer_exception("invalid migration sender");
+				if (memcmp(context->receipt.from, from_manager, sizeof(algorithm::pubkeyhash)) != 0)
+					return layer_exception("invalid transaction origin");
 
-				auto to_depository = context->get_depository_policy(asset, migration_proposer);
-				if (!to_depository)
-					return depository_policy.error();
-				else if (!depository_policy->accepts_account_requests || !depository_policy->accepts_withdrawal_requests)
-					return layer_exception("invalid migration depository");
+				attestation_requirement = context->verify_validator_attestation(asset, to_manager);
+				if (!attestation_requirement)
+					return attestation_requirement.error();
 
-				auto account = find_migration_account(context, asset, proposer, migration_proposer);
+				auto account = find_receiving_account(context, asset, from_manager, to_manager);
 				if (!account)
 					return account.error();
 
-				auto registration = context->apply_depository_policy_queue(asset, proposer, context->receipt.transaction_hash);
+				auto registration = context->apply_depository_policy_queue(asset, from_manager, context->receipt.transaction_hash);
 				if (!registration)
 					return registration.error();
 
 				return expectation::met;
 			}
 
-			auto token_value = get_total_value(context);
-			auto base_asset = algorithm::asset::base_id_of(asset);
-			auto base_fee_value = asset == base_asset ? get_fee_value(context, nullptr, token_value) : get_fee_value(context, nullptr, decimal::zero());
-			auto& base_value = asset == base_asset ? std::max(base_fee_value, token_value) : base_fee_value;
-			if (base_asset != asset && base_value.is_positive())
+			auto fee_asset = algorithm::asset::base_id_of(asset);
+			auto fee_value = get_fee_value(context, nullptr);
+			if (fee_asset != asset && fee_value.is_positive())
 			{
-				auto balance_requirement = context->verify_transfer_balance(base_asset, base_value);
+				auto balance_requirement = context->verify_transfer_balance(fee_asset, fee_value);
 				if (!balance_requirement)
 					return balance_requirement.error();
 
-				auto depository = context->get_depository_balance(base_asset, proposer);
-				if (!depository || depository->supply < base_value)
-					return layer_exception("proposer's " + algorithm::asset::handle_of(base_asset) + " balance is insufficient to cover base withdrawal value (value: " + base_value.to_string() + ")");
+				auto depository = context->get_depository_balance(fee_asset, from_manager);
+				if (!depository || depository->supply < fee_value)
+					return layer_exception(algorithm::asset::handle_of(fee_asset) + " balance is insufficient to cover base withdrawal value (value: " + fee_value.to_string() + ")");
 			}
 
+			auto token_value = get_token_value(context);
 			auto balance_requirement = context->verify_transfer_balance(asset, token_value);
 			if (!balance_requirement)
 				return balance_requirement;
 
-			auto depository = context->get_depository_balance(asset, proposer);
+			auto depository = context->get_depository_balance(asset, from_manager);
 			if (!depository || depository->supply < token_value)
-				return layer_exception("proposer's " + algorithm::asset::handle_of(asset) + " balance is insufficient to cover token withdrawal value (value: " + token_value.to_string() + ")");
+				return layer_exception(algorithm::asset::handle_of(asset) + " balance is insufficient to cover token withdrawal value (value: " + token_value.to_string() + ")");
 
 			for (auto& item : to)
 			{
-				auto collision = context->get_witness_account(base_asset, item.first, 0);
+				auto collision = context->get_witness_account(fee_asset, item.first, 0);
 				if (collision && (!collision->is_routing_account() || memcmp(collision->owner, context->receipt.from, sizeof(collision->owner)) != 0))
 					return layer_exception("invalid to address (not owned by sender)");
 				else if (!collision)
@@ -1806,25 +1881,18 @@ namespace tangent
 					return collision.error();
 			}
 
-			if (base_value.is_positive() || base_fee_value.is_positive())
+			if (fee_asset != asset)
 			{
-				auto base_transfer = context->apply_transfer(base_asset, context->receipt.from, -base_fee_value, base_value - base_fee_value);
-				if (!base_transfer)
-					return base_transfer.error();
-
-				base_transfer = context->apply_transfer(base_asset, proposer, base_fee_value, decimal::zero());
-				if (!base_transfer)
-					return base_transfer.error();
+				auto fee_transfer = context->apply_transfer(fee_asset, context->receipt.from, decimal::zero(), fee_value);
+				if (!fee_transfer)
+					return fee_transfer.error();
 			}
 
-			if (base_asset != asset && token_value.is_positive())
-			{
-				auto token_transfer = context->apply_transfer(asset, context->receipt.from, decimal::zero(), token_value);
-				if (!token_transfer)
-					return token_transfer.error();
-			}
+			auto token_transfer = context->apply_transfer(asset, context->receipt.from, decimal::zero(), token_value);
+			if (!token_transfer)
+				return token_transfer.error();
 
-			auto registration = context->apply_depository_policy_queue(asset, proposer, context->receipt.transaction_hash);
+			auto registration = context->apply_depository_policy_queue(asset, from_manager, context->receipt.transaction_hash);
 			if (!registration)
 				return registration.error();
 
@@ -1832,32 +1900,31 @@ namespace tangent
 		}
 		expects_promise_rt<void> depository_withdrawal::dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const
 		{
-			if (!dispatcher->is_on(proposer))
+			if (!dispatcher->is_running_on(from_manager))
 				return expects_promise_rt<void>(expectation::met);
 
 			if (context->get_witness_event(context->receipt.transaction_hash))
 				return expects_promise_rt<void>(expectation::met);
 
-			auto depository_policy = context->get_depository_policy(asset, proposer);
+			auto depository_policy = context->get_depository_policy(asset, from_manager);
 			if (depository_policy && depository_policy->queue_transaction_hash != context->receipt.transaction_hash)
 				return expects_promise_rt<void>(remote_exception::retry());
 
 			vector<mediator::value_transfer> transfers;
-			if (!is_migration_proposer_null())
+			if (!is_to_manager_null())
 			{
-				auto account = find_migration_account(context, asset, proposer, migration_proposer);
+				auto account = find_receiving_account(context, asset, from_manager, to_manager);
 				if (!account)
 					return expects_promise_rt<void>(remote_exception(std::move(account.error().message())));
 
-				auto total_value = get_total_value(context);
-				transfers.push_back(mediator::value_transfer(asset, account->addresses.begin()->second, decimal(total_value)));
+				transfers.push_back(mediator::value_transfer(asset, account->addresses.begin()->second, get_token_value(context)));
 			}
 			else
 			{
-				auto base_asset = algorithm::asset::base_id_of(asset);
-				auto base_fee_value = asset == base_asset ? get_fee_value(context, nullptr, get_total_value(context)) : get_fee_value(context, nullptr, decimal::zero());
+				auto fee_asset = algorithm::asset::base_id_of(asset);
+				auto fee_value = get_fee_value(context, nullptr);
 				for (auto& item : to)
-					transfers.push_back(mediator::value_transfer(asset, item.first, decimal(asset == base_asset ? item.second - base_fee_value : item.second)));
+					transfers.push_back(mediator::value_transfer(asset, item.first, decimal(fee_asset == asset ? item.second - fee_value : item.second)));
 			}
 
 			return coasync<expects_rt<void>>([this, context, dispatcher, transfers = std::move(transfers)]() mutable -> expects_promise_rt<void>
@@ -1865,43 +1932,43 @@ namespace tangent
 				auto* server = nss::server_node::get();
 				auto* chain = server->get_chainparams(asset);
 				auto cache = dispatcher->load_cache(context);
-				auto mpc_prepared = expects_rt<mediator::prepared_transaction>(mediator::prepared_transaction());
-				auto mpc_signers = ordered_set<algorithm::pubkeyhash_t>();
-				auto mpc_signature = ordered_map<uint8_t, algorithm::composition::cpubsig_t>();
+				auto group_prepared = expects_rt<mediator::prepared_transaction>(mediator::prepared_transaction());
+				auto group_signers = ordered_set<algorithm::pubkeyhash_t>();
+				auto group_signature = ordered_map<uint8_t, algorithm::composition::cpubsig_t>();
 				if (cache && !chain->requires_transaction_expiration)
 				{
-					format::stream mpc_prepared_message = format::stream::decode(cache->get_var(0).get_blob());
-					if (!mpc_prepared->load_payload(mpc_prepared_message))
-						mpc_prepared = expects_rt<mediator::prepared_transaction>(remote_exception::retry());
+					format::stream group_prepared_message = format::stream::decode(cache->get_var(0).get_blob());
+					if (!group_prepared->load_payload(group_prepared_message))
+						group_prepared = expects_rt<mediator::prepared_transaction>(remote_exception::retry());
 
 					uint8_t split = cache->get_var(1).get_integer();
 					for (size_t i = 2; i < split; i++)
 					{
 						auto* item = cache->get(i);
 						if (item != nullptr)
-							mpc_signature[(uint8_t)item->get_var(0).get_integer()] = algorithm::composition::cpubsig_t(codec::hex_decode(item->get_var(1).get_blob()));
+							group_signature[(uint8_t)item->get_var(0).get_integer()] = algorithm::composition::cpubsig_t(codec::hex_decode(item->get_var(1).get_blob()));
 					}
 					for (size_t i = split; i < cache->size(); i++)
-						mpc_signers.insert(algorithm::pubkeyhash_t(codec::hex_decode(cache->get_var(i).get_blob())));
+						group_signers.insert(algorithm::pubkeyhash_t(codec::hex_decode(cache->get_var(i).get_blob())));
 				}
 				else
-					mpc_prepared = expects_rt<mediator::prepared_transaction>(remote_exception::retry());
+					group_prepared = expects_rt<mediator::prepared_transaction>(remote_exception::retry());
 
-				if (!mpc_prepared)
-					mpc_prepared = coawait(resolver::prepare_transaction(asset, mediator::wallet_link::from_owner(proposer), transfers));
+				if (!group_prepared)
+					group_prepared = coawait(resolver::prepare_transaction(asset, mediator::wallet_link::from_owner(from_manager), transfers));
 
-				if (!mpc_prepared)
+				if (!group_prepared)
 				{
-					if (mpc_prepared.error().is_retry() || mpc_prepared.error().is_shutdown())
-						coreturn expects_rt<void>(mpc_prepared.error());
+					if (group_prepared.error().is_retry() || group_prepared.error().is_shutdown())
+						coreturn expects_rt<void>(group_prepared.error());
 
 					auto* transaction = memory::init<depository_withdrawal_finalization>();
 					transaction->asset = asset;
-					transaction->set_failure_witness(mpc_prepared.what(), context->receipt.transaction_hash);
+					transaction->set_failure_witness(group_prepared.what(), context->receipt.transaction_hash);
 					dispatcher->emit_transaction(transaction);
-					coreturn expects_rt<void>(mpc_prepared.error());
+					coreturn expects_rt<void>(group_prepared.error());
 				}
-				else if (mpc_prepared->inputs.size() > std::numeric_limits<uint8_t>::max())
+				else if (group_prepared->inputs.size() > std::numeric_limits<uint8_t>::max())
 				{
 					auto error = remote_exception("too many prepared inputs");
 					auto* transaction = memory::init<depository_withdrawal_finalization>();
@@ -1911,33 +1978,33 @@ namespace tangent
 					coreturn expects_rt<void>(std::move(error));
 				}
 
-				auto mpc = accumulate_prepared_mpc(context, this, *mpc_prepared);
-				if (!mpc)
-					coreturn remote_exception(std::move(mpc.error().message()));
+				auto group = accumulate_prepared_group(context, this, *group_prepared);
+				if (!group)
+					coreturn remote_exception(std::move(group.error().message()));
 
-				for (auto& share : mpc_signers)
-					mpc->erase(share);
+				for (auto& share : group_signers)
+					group->erase(share);
 
-				bool mpc_fully_signed = true;
-				for (auto& share : *mpc)
+				bool group_fully_signed = true;
+				for (auto& share : *group)
 				{
-					auto result = coawait(dispatcher->calculate_mpc_signature(context, share, *mpc_prepared, mpc_signature));
+					auto result = coawait(dispatcher->calculate_group_signature(context, share, *group_prepared, group_signature));
 					if (!result && (result.error().is_retry() || result.error().is_shutdown()))
 					{
-						mpc_fully_signed = false;
+						group_fully_signed = false;
 						continue;
 					}
 					else if (!result)
 						coreturn result.error();
 
-					mpc_signers.insert(share);
+					group_signers.insert(share);
 				}
 
-				if (mpc_fully_signed)
+				if (group_fully_signed)
 				{
-					for (auto& [input_index, input_signature] : mpc_signature)
+					for (auto& [input_index, input_signature] : group_signature)
 					{
-						auto& input = mpc_prepared->inputs[input_index];
+						auto& input = group_prepared->inputs[input_index];
 						auto status = algorithm::composition::accumulate_signature(input.alg, input.message.data(), input.message.size(), input.public_key, nullptr, input_signature.data);
 						if (!status)
 							coreturn remote_exception(std::move(status.error().message()));
@@ -1945,24 +2012,24 @@ namespace tangent
 						memcpy(input.signature, input_signature.data, sizeof(input_signature.data));
 					}
 
-					auto mpc_finalized = coawait(resolver::finalize_and_broadcast_transaction(asset, context->receipt.transaction_hash, std::move(*mpc_prepared), dispatcher));
-					if (!mpc_finalized)
+					auto group_finalized = coawait(resolver::finalize_and_broadcast_transaction(asset, context->receipt.transaction_hash, std::move(*group_prepared), dispatcher));
+					if (!group_finalized)
 					{
-						if (!mpc_finalized.error().is_retry() && !mpc_finalized.error().is_shutdown())
+						if (!group_finalized.error().is_retry() && !group_finalized.error().is_shutdown())
 						{
 							auto* transaction = memory::init<depository_withdrawal_finalization>();
 							transaction->asset = asset;
-							transaction->set_failure_witness(mpc_finalized.what(), context->receipt.transaction_hash);
+							transaction->set_failure_witness(group_finalized.what(), context->receipt.transaction_hash);
 							dispatcher->emit_transaction(transaction);
 							dispatcher->store_cache(context, nullptr);
 						}
-						coreturn mpc_finalized.error();
+						coreturn group_finalized.error();
 					}
 					else
 					{
 						auto* transaction = memory::init<depository_withdrawal_finalization>();
 						transaction->asset = asset;
-						transaction->set_success_witness(mpc_finalized->hashdata, mpc_finalized->calldata, context->receipt.transaction_hash);
+						transaction->set_success_witness(group_finalized->hashdata, group_finalized->calldata, context->receipt.transaction_hash);
 						dispatcher->emit_transaction(transaction);
 						dispatcher->store_cache(context, nullptr);
 						coreturn expectation::met;
@@ -1973,18 +2040,18 @@ namespace tangent
 					if (chain->requires_transaction_expiration)
 						coreturn remote_exception::retry();
 
-					format::stream mpc_prepared_message;
-					mpc_prepared->store_payload(&mpc_prepared_message);
+					format::stream group_prepared_message;
+					group_prepared->store_payload(&group_prepared_message);
 
 					cache = var::set::array();
-					cache->push(var::string(mpc_prepared_message.encode()));
-					for (auto& mpc_share : mpc_signature)
+					cache->push(var::string(group_prepared_message.encode()));
+					for (auto& group_share : group_signature)
 					{
 						auto* item = cache->push(var::set::array());
-						item->push(var::integer(mpc_share.first));
-						item->push(var::string(codec::hex_encode(mpc_share.second.optimized_view())));
+						item->push(var::integer(group_share.first));
+						item->push(var::string(codec::hex_encode(group_share.second.optimized_view())));
 					}
-					for (auto& share : mpc_signers)
+					for (auto& share : group_signers)
 						cache->push(var::string(codec::hex_encode(share.optimized_view())));
 					dispatcher->store_cache(context, std::move(cache));
 					coreturn remote_exception::retry();
@@ -1996,8 +2063,8 @@ namespace tangent
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			algorithm::pubkeyhash null = { 0 };
 			stream->write_boolean(only_if_not_in_queue);
-			stream->write_string(std::string_view((char*)proposer, memcmp(proposer, null, sizeof(null)) == 0 ? 0 : sizeof(proposer)));
-			stream->write_string(std::string_view((char*)migration_proposer, memcmp(migration_proposer, null, sizeof(null)) == 0 ? 0 : sizeof(migration_proposer)));
+			stream->write_string(std::string_view((char*)from_manager, memcmp(from_manager, null, sizeof(null)) == 0 ? 0 : sizeof(from_manager)));
+			stream->write_string(std::string_view((char*)to_manager, memcmp(to_manager, null, sizeof(null)) == 0 ? 0 : sizeof(to_manager)));
 			stream->write_integer((uint16_t)to.size());
 			for (auto& item : to)
 			{
@@ -2011,12 +2078,12 @@ namespace tangent
 			if (!stream.read_boolean(stream.read_type(), &only_if_not_in_queue))
 				return false;
 
-			string proposer_assembly;
-			if (!stream.read_string(stream.read_type(), &proposer_assembly) || !algorithm::encoding::decode_uint_blob(proposer_assembly, proposer, sizeof(proposer)))
+			string from_manager_assembly;
+			if (!stream.read_string(stream.read_type(), &from_manager_assembly) || !algorithm::encoding::decode_uint_blob(from_manager_assembly, from_manager, sizeof(from_manager)))
 				return false;
 
-			string migration_proposer_assembly;
-			if (!stream.read_string(stream.read_type(), &migration_proposer_assembly) || !algorithm::encoding::decode_uint_blob(migration_proposer_assembly, migration_proposer, sizeof(migration_proposer)))
+			string to_manager_assembly;
+			if (!stream.read_string(stream.read_type(), &to_manager_assembly) || !algorithm::encoding::decode_uint_blob(to_manager_assembly, to_manager, sizeof(to_manager)))
 				return false;
 
 			uint16_t to_size;
@@ -2040,8 +2107,8 @@ namespace tangent
 		}
 		bool depository_withdrawal::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
 		{
-			if (!is_proposer_null())
-				parties.insert(algorithm::pubkeyhash_t(proposer));
+			parties.insert(algorithm::pubkeyhash_t(from_manager));
+			parties.insert(algorithm::pubkeyhash_t(to_manager));
 			return true;
 		}
 		void depository_withdrawal::set_to(const std::string_view& address, const decimal& value)
@@ -2056,38 +2123,42 @@ namespace tangent
 			}
 			to.push_back(std::make_pair(string(address), decimal(value)));
 		}
-		void depository_withdrawal::set_proposer(const algorithm::pubkeyhash new_proposer, const algorithm::pubkeyhash new_migration_proposer)
+		void depository_withdrawal::set_from_manager(const algorithm::pubkeyhash new_manager)
 		{
 			algorithm::pubkeyhash null = { 0 };
-			if (!new_proposer)
-				memcpy(proposer, null, sizeof(algorithm::pubkeyhash));
+			if (!new_manager)
+				memcpy(from_manager, null, sizeof(algorithm::pubkeyhash));
 			else
-				memcpy(proposer, new_proposer, sizeof(algorithm::pubkeyhash));
-			if (!new_migration_proposer)
-				memcpy(migration_proposer, null, sizeof(algorithm::pubkeyhash));
+				memcpy(from_manager, new_manager, sizeof(algorithm::pubkeyhash));
+		}
+		void depository_withdrawal::set_to_manager(const algorithm::pubkeyhash new_manager)
+		{
+			algorithm::pubkeyhash null = { 0 };
+			if (!new_manager)
+				memcpy(to_manager, null, sizeof(algorithm::pubkeyhash));
 			else
-				memcpy(migration_proposer, new_migration_proposer, sizeof(algorithm::pubkeyhash));
+				memcpy(to_manager, new_manager, sizeof(algorithm::pubkeyhash));
 		}
-		bool depository_withdrawal::is_proposer_null() const
+		bool depository_withdrawal::is_from_manager_null() const
 		{
 			algorithm::pubkeyhash null = { 0 };
-			return memcmp(proposer, null, sizeof(null)) == 0;
+			return memcmp(from_manager, null, sizeof(null)) == 0;
 		}
-		bool depository_withdrawal::is_migration_proposer_null() const
+		bool depository_withdrawal::is_to_manager_null() const
 		{
 			algorithm::pubkeyhash null = { 0 };
-			return memcmp(migration_proposer, null, sizeof(null)) == 0;
+			return memcmp(to_manager, null, sizeof(null)) == 0;
 		}
 		bool depository_withdrawal::is_dispatchable() const
 		{
 			return true;
 		}
-		decimal depository_withdrawal::get_total_value(const ledger::transaction_context* context) const
+		decimal depository_withdrawal::get_token_value(const ledger::transaction_context* context) const
 		{
 			decimal value = 0.0;
-			if (!is_migration_proposer_null())
+			if (!is_to_manager_null())
 			{
-				auto depository = context->get_depository_balance(asset, proposer);
+				auto depository = context->get_depository_balance(asset, from_manager);
 				if (depository)
 					value += depository->supply;
 			}
@@ -2098,18 +2169,25 @@ namespace tangent
 			}
 			return value;
 		}
-		decimal depository_withdrawal::get_fee_value(const ledger::transaction_context* context, const algorithm::pubkeyhash from, const decimal& total_value) const
+		decimal depository_withdrawal::get_fee_value(const ledger::transaction_context* context, const algorithm::pubkeyhash from) const
 		{
-			bool charges = is_migration_proposer_null() && memcmp(from ? from : context->receipt.from, proposer, sizeof(algorithm::pubkeyhash)) != 0;
-			auto base_asset = algorithm::asset::base_id_of(asset);
-			auto base_reward = charges ? context->get_depository_reward(base_asset, proposer) : expects_lr<states::depository_reward>(layer_exception());
-			auto fee_value = (base_reward ? base_reward->calculate_outgoing_fee(total_value) : decimal::zero());
-			return fee_value;
+			if (!is_to_manager_null() || !memcmp(from ? from : context->receipt.from, from_manager, sizeof(algorithm::pubkeyhash)))
+				return decimal::zero();
+
+			auto reward = context->get_depository_reward(algorithm::asset::base_id_of(asset), from_manager);
+			if (!reward)
+				return decimal::zero();
+
+			return reward->outgoing_fee;
 		}
 		uptr<schema> depository_withdrawal::as_schema() const
 		{
 			schema* data = ledger::transaction::as_schema().reset();
-			if (is_migration_proposer_null())
+			if (from_manager != nullptr)
+				data->set("from_manager", algorithm::signing::serialize_address(from_manager));
+			if (to_manager != nullptr)
+				data->set("to_manager", algorithm::signing::serialize_address(to_manager));
+			if (!to.empty())
 			{
 				auto* to_data = data->set("to", var::set::array());
 				for (auto& item : to)
@@ -2118,12 +2196,6 @@ namespace tangent
 					coin_data->set("address", var::string(item.first));
 					coin_data->set("value", var::decimal(item.second));
 				}
-				data->set("proposer", algorithm::signing::serialize_address(proposer));
-			}
-			else
-			{
-				data->set("from_proposer", algorithm::signing::serialize_address(proposer));
-				data->set("to_proposer", algorithm::signing::serialize_address(migration_proposer));
 			}
 			data->set("only_if_not_in_queue", var::boolean(only_if_not_in_queue));
 			return data;
@@ -2227,10 +2299,12 @@ namespace tangent
 
 			if (target_output->second.is_negative())
 			{
-				algorithm::pubkeyhash null = { 0 };
-				auto token_value = transaction->get_total_value(context);
+				algorithm::pubkeyhash from = { 0 };
+				if (!transaction->recover_hash(from))
+					return layer_exception("failed to recover withdrawal sender");
+
 				auto base_asset = algorithm::asset::base_id_of(transaction->asset);
-				auto base_fee_value = transaction->asset == base_asset ? transaction->get_fee_value(context, null, token_value) : transaction->get_fee_value(context, null, decimal::zero());
+				auto base_fee_value = transaction->asset == base_asset ? transaction->get_fee_value(context, from) : transaction->get_fee_value(context, from);
 				target_output->second += base_fee_value;
 				if (target_output->second.is_negative())
 					return layer_exception("prepared transaction inout not valid");
@@ -2242,41 +2316,41 @@ namespace tangent
 				if (!witness || !witness->is_depository_account())
 					return layer_exception("input refers to an address that does not exist or is not depository address");
 
-				auto account = context->get_depository_account(transaction->asset, witness->proposer, witness->owner);
+				auto account = context->get_depository_account(transaction->asset, witness->manager, witness->owner);
 				if (!account)
 					return layer_exception("input refers to an account that does not have a linked depository");
 			}
 
 			return expectation::met;
 		}
-		expects_lr<ordered_set<algorithm::pubkeyhash_t>> depository_withdrawal::accumulate_prepared_mpc(const ledger::transaction_context* context, const depository_withdrawal* transaction, const mediator::prepared_transaction& prepared)
+		expects_lr<ordered_set<algorithm::pubkeyhash_t>> depository_withdrawal::accumulate_prepared_group(const ledger::transaction_context* context, const depository_withdrawal* transaction, const mediator::prepared_transaction& prepared)
 		{
-			ordered_set<algorithm::pubkeyhash_t> mpc;
+			ordered_set<algorithm::pubkeyhash_t> group;
 			for (auto& input : prepared.inputs)
 			{
 				auto witness = context->get_witness_account_tagged(transaction->asset, input.utxo.link.address, 0);
 				if (!witness)
 					return witness.error();
 
-				auto account = context->get_depository_account(transaction->asset, witness->proposer, witness->owner);
+				auto account = context->get_depository_account(transaction->asset, witness->manager, witness->owner);
 				if (!account)
 					return account.error();
 
-				mpc.insert(account->mpc.begin(), account->mpc.end());
+				group.insert(account->group.begin(), account->group.end());
 			}
-			return expects_lr<ordered_set<algorithm::pubkeyhash_t>>(std::move(mpc));
+			return expects_lr<ordered_set<algorithm::pubkeyhash_t>>(std::move(group));
 		}
-		expects_lr<states::witness_account> depository_withdrawal::find_migration_account(const ledger::transaction_context* context, const algorithm::asset_id& asset, const algorithm::pubkeyhash from_proposer, const algorithm::pubkeyhash to_proposer)
+		expects_lr<states::witness_account> depository_withdrawal::find_receiving_account(const ledger::transaction_context* context, const algorithm::asset_id& asset, const algorithm::pubkeyhash from_manager, const algorithm::pubkeyhash to_manager)
 		{
 			auto base_asset = algorithm::asset::base_id_of(asset);
 			size_t offset = 0, count = 8;
 			while (true)
 			{
-				auto candidates = context->get_witness_accounts_by_purpose(to_proposer, states::witness_account::account_type::depository, offset, count);
+				auto candidates = context->get_witness_accounts_by_purpose(to_manager, states::witness_account::account_type::depository, offset, count);
 				if (!candidates)
 					return candidates.error();
 
-				auto candidate = std::find_if(candidates->begin(), candidates->end(), [&](const states::witness_account& v) { return v.asset == base_asset && !memcmp(to_proposer, v.proposer, sizeof(v.proposer)); });
+				auto candidate = std::find_if(candidates->begin(), candidates->end(), [&](const states::witness_account& v) { return v.asset == base_asset && !memcmp(to_manager, v.manager, sizeof(v.manager)); });
 				if (candidate != candidates->end())
 					return *candidate;
 
@@ -2288,11 +2362,11 @@ namespace tangent
 			offset = 0;
 			while (true)
 			{
-				auto candidates = context->get_witness_accounts_by_purpose(from_proposer, states::witness_account::account_type::depository, offset, count);
+				auto candidates = context->get_witness_accounts_by_purpose(from_manager, states::witness_account::account_type::depository, offset, count);
 				if (!candidates)
 					return candidates.error();
 
-				auto candidate = std::find_if(candidates->begin(), candidates->end(), [&](const states::witness_account& v) { return v.asset == base_asset && !memcmp(to_proposer, v.proposer, sizeof(v.proposer)); });
+				auto candidate = std::find_if(candidates->begin(), candidates->end(), [&](const states::witness_account& v) { return v.asset == base_asset && !memcmp(to_manager, v.manager, sizeof(v.manager)); });
 				if (candidate != candidates->end())
 					return *candidate;
 
@@ -2301,7 +2375,7 @@ namespace tangent
 					break;
 			}
 
-			return layer_exception("depository migration account (to) not found");
+			return layer_exception("receiving depository account (to) not found");
 		}
 
 		expects_lr<void> depository_withdrawal_finalization::validate(uint64_t block_number) const
@@ -2328,37 +2402,30 @@ namespace tangent
 				return layer_exception("parent transaction not found");
 
 			auto* parent_transaction = (depository_withdrawal*)*parent->transaction;
-			if (memcmp(parent_transaction->proposer, context->receipt.from, sizeof(algorithm::pubkeyhash)) != 0)
+			if (memcmp(parent_transaction->from_manager, context->receipt.from, sizeof(algorithm::pubkeyhash)) != 0)
 				return layer_exception("parent transaction not valid");
 
 			auto event = context->apply_witness_event(depository_withdrawal_hash, context->receipt.transaction_hash);
 			if (!event)
 				return event.error();
 
-			auto finalization = context->apply_depository_policy_queue(asset, parent_transaction->proposer, 0);
+			auto finalization = context->apply_depository_policy_queue(asset, parent_transaction->from_manager, 0);
 			if (!finalization)
 				return finalization.error();
 
-			if (!transaction_id.empty() || !parent_transaction->is_migration_proposer_null())
-				return expectation::met;
-
-			auto token_value = parent_transaction->get_total_value(context);
-			auto base_asset = algorithm::asset::base_id_of(asset);
-			auto base_fee_value = asset == base_asset ? parent_transaction->get_fee_value(context, parent->receipt.from, token_value) : parent_transaction->get_fee_value(context, parent->receipt.from, decimal::zero());
-			auto& base_value = asset == base_asset ? std::max(base_fee_value, token_value) : base_fee_value;
-			if (base_value.is_positive() || base_fee_value.is_positive())
+			bool revert_transaction = transaction_id.empty() || !error_message.empty();
+			if (revert_transaction)
 			{
-				auto base_transfer = context->apply_transfer(base_asset, parent->receipt.from, base_fee_value, base_fee_value - base_value);
-				if (!base_transfer)
-					return base_transfer.error();
+				auto fee_asset = algorithm::asset::base_id_of(asset);
+				if (fee_asset != asset)
+				{
+					auto fee_value = parent_transaction->get_fee_value(context, nullptr);
+					auto fee_transfer = context->apply_transfer(asset, parent->receipt.from, decimal::zero(), -fee_value);
+					if (!fee_transfer)
+						return fee_transfer.error();
+				}
 
-				base_transfer = context->apply_transfer(base_asset, parent_transaction->proposer, -base_fee_value, decimal::zero());
-				if (!base_transfer)
-					return base_transfer.error();
-			}
-
-			if (base_asset != asset && token_value.is_positive())
-			{
+				auto token_value = parent_transaction->get_token_value(context);
 				auto token_transfer = context->apply_transfer(asset, parent->receipt.from, decimal::zero(), -token_value);
 				if (!token_transfer)
 					return token_transfer.error();
@@ -2496,78 +2563,123 @@ namespace tangent
 			if (!chain)
 				return layer_exception("invalid chain");
 
-			decimal change = 0.0;
 			transition operations;
-			ordered_set<algorithm::pubkeyhash_t> routers;
+			ordered_set<algorithm::pubkeyhash_t> depositories, routers;
 			for (auto& input : assertion->inputs)
 			{
 				auto source = context->get_witness_account(asset, input.link.address, 0);
-				if (source)
+				if (!source)
+					continue;
+
+				if (source->is_depository_account())
 				{
-					if (source->is_depository_account())
-					{
-						auto source_proposer = algorithm::pubkeyhash_t(source->proposer);
-						operations.depositories[source_proposer][input.get_asset(asset)].balance -= input.value;
-						for (auto& token : input.tokens)
-							operations.depositories[source_proposer][token.get_asset(asset)].balance -= token.value;
-					}
-					else if (source->is_routing_account())
-						routers.insert(algorithm::pubkeyhash_t(source->owner));
+					auto from_depository = algorithm::pubkeyhash_t(source->manager);
+					auto& depository = operations.depositories[from_depository][input.get_asset(asset)];
+					depository.balance -= input.value;
+					for (auto& token : input.tokens)
+						operations.depositories[from_depository][token.get_asset(asset)].balance -= token.value;
+
+					auto account = context->get_depository_account(asset, from_depository.data, source->owner);
+					if (account)
+						depository.participants.insert(account->group.begin(), account->group.end());
+					depositories.insert(from_depository);
 				}
-				else
-					change -= input.value;
+				else if (source->is_routing_account())
+					routers.insert(algorithm::pubkeyhash_t(source->owner));
 			}
 
-			bool depository_to_depository = !change.is_negative() && routers.empty();
+			bool has_incoming_reward = false, has_outgoing_reward = false;
 			for (auto& output : assertion->outputs)
 			{
 				auto source = context->get_witness_account(asset, output.link.address, 0);
-				if (source)
+				if (!source)
+					continue;
+
+				auto output_asset = output.get_asset(asset);
+				if (source->is_depository_account())
 				{
-					if (source->is_depository_account())
+					auto to_depository = algorithm::pubkeyhash_t(source->manager);
+					auto& depository = operations.depositories[to_depository];
+					depository[output_asset].balance += output.value;
+					for (auto& token : output.tokens)
+						depository[token.get_asset(asset)].balance += token.value;
+
+					if (depositories.empty())
 					{
-						auto source_proposer = algorithm::pubkeyhash_t(source->proposer);
-						operations.depositories[source_proposer][output.get_asset(asset)].balance += output.value;
-						for (auto& token : output.tokens)
-							operations.depositories[source_proposer][token.get_asset(asset)].balance += token.value;
-
-						if (!depository_to_depository)
+						auto to_account = routers.empty() ? algorithm::pubkeyhash_t(source->owner) : *routers.begin();
+						operations.transfers[to_account][output_asset].supply += output.value;
+						if (!has_incoming_reward && !to_depository.equals(to_account.data))
 						{
-							auto source_owner = routers.empty() ? algorithm::pubkeyhash_t(source->owner) : *routers.begin();
-							operations.transfers[source_owner][output.get_asset(asset)].supply += output.value;
-
-							auto reward = context->get_depository_reward(asset, source->proposer);
-							if (reward && reward->has_incoming_fee())
+							auto reward = context->get_depository_reward(asset, to_depository.data);
+							if (reward && reward->incoming_fee.is_positive())
 							{
-								auto fee = reward->calculate_incoming_fee(output.value);
-								operations.transfers[source_owner][output.get_asset(asset)].supply -= fee;
-								operations.transfers[source_proposer][output.get_asset(asset)].supply += fee;
+								operations.transfers[to_account][asset].supply -= reward->incoming_fee;
+								depository[asset].incoming_fee += reward->incoming_fee;
+								has_incoming_reward = true;
 							}
 						}
 					}
-					else if (source->is_routing_account())
+				}
+				else if (source->is_routing_account())
+				{
+					auto from_account = routers.empty() ? algorithm::pubkeyhash_t(source->owner) : *routers.begin();
+					auto& from_transfers = operations.transfers[from_account];
+					auto& balance = from_transfers[output_asset];
+					balance.supply -= output.value;
+					balance.reserve -= output.value;
+					for (auto& token : output.tokens)
 					{
-						auto source_owner = routers.empty() ? algorithm::pubkeyhash_t(source->owner) : *routers.begin();
-						auto& source_owner_transfer = operations.transfers[source_owner];
-						auto& balance = source_owner_transfer[output.get_asset(asset)];
-						balance.supply -= output.value;
-						balance.reserve -= output.value;
-						for (auto& token : output.tokens)
+						balance = from_transfers[token.get_asset(asset)];
+						balance.supply -= token.value;
+						balance.reserve -= token.value;
+					}
+
+					if (!depositories.empty())
+					{
+						auto from_depository = *depositories.begin();
+						if (!has_outgoing_reward && !from_depository.equals(from_account.data))
 						{
-							balance = source_owner_transfer[token.get_asset(asset)];
-							balance.supply -= token.value;
-							balance.reserve -= token.value;
+							auto reward = context->get_depository_reward(asset, from_depository.data);
+							if (reward && reward->outgoing_fee.is_positive())
+							{
+								balance.supply -= reward->outgoing_fee;
+								balance.reserve -= reward->outgoing_fee;
+								operations.depositories[from_depository][asset].outgoing_fee += reward->outgoing_fee;
+								has_outgoing_reward = true;
+							}
 						}
 					}
-					else
-						change += output.value;
 				}
-				else
-					change += output.value;
 			}
 
 			if (operations.transfers.empty() && operations.depositories.empty())
 				return layer_exception("invalid transaction");
+
+			ordered_set<algorithm::pubkeyhash_t> attesters;
+			auto random = expects_lr<algorithm::wesolowski::distribution>(layer_exception());
+			const evaluation_branch* best_branch = nullptr;
+			if (has_incoming_reward || has_outgoing_reward)
+			{
+				best_branch = get_best_branch(context, nullptr);
+				for (auto& branch : output_hashes)
+				{
+					if (best_branch == &branch.second)
+						continue;
+
+					for (auto& signature : branch.second.signatures)
+					{
+						algorithm::pubkeyhash_t attester;
+						if (!algorithm::signing::recover_hash(get_branch_image(branch.first), attester.data, signature.data))
+							return layer_exception("invalid attestation signature");
+
+						attesters.insert(attester);
+					}
+				}
+
+				random = context->calculate_random(assertion->as_hash());
+				if (!random)
+					return random.error();
+			}
 
 			for (auto& [owner, transfers] : operations.transfers)
 			{
@@ -2594,7 +2706,7 @@ namespace tangent
 						return transfer.error();
 				}
 			}
-
+			
 			for (auto& [owner, transfers] : operations.depositories)
 			{
 				for (auto& [transfer_asset, transfer] : transfers)
@@ -2604,12 +2716,80 @@ namespace tangent
 						auto balance = context->get_depository_balance(transfer_asset, owner.data);
 						auto supply = (balance ? balance->supply : decimal::zero()) + transfer.balance;
 						if (supply.is_negative())
-							transfer.balance = -(balance ? balance->supply : decimal::zero());
+							transfer.balance = (balance ? -balance->supply : decimal::zero());
 					}
 
 					auto depository = context->apply_depository_balance(transfer_asset, owner.data, transfer.balance);
 					if (!depository)
 						return depository.error();
+					
+					if (transfer.incoming_fee.is_positive())
+					{
+						auto depository_fee = transfer.incoming_fee * (1.0 - protocol::now().policy.attestation_fee_rate);
+						if (depository_fee.is_positive())
+						{
+							auto attestation = context->apply_validator_attestation(transfer_asset, owner.data, depository_fee, true);
+							if (!attestation)
+								return attestation.error();
+						}
+
+						if (!best_branch)
+							best_branch = get_best_branch(context, nullptr);
+
+						auto attestation_fee = transfer.incoming_fee * protocol::now().policy.attestation_fee_rate;
+						if (attestation_fee.is_positive() && !best_branch->signatures.empty())
+						{
+							algorithm::pubkeyhash winner;
+							if (!recover_hash(winner, best_branch->message.hash(), (size_t)(uint64_t)(random->derive() % uint256_t(best_branch->signatures.size()))))
+								return layer_exception("invalid attestation signature");
+
+							auto attestation = context->apply_validator_attestation(transfer_asset, winner, attestation_fee, true);
+							if (!attestation)
+								return attestation.error();
+						}
+
+						decimal attestation_compensation = decimal::zero();
+						for (auto& loser_attester : attesters)
+						{
+							auto prev_attestation = context->get_validator_attestation(transfer_asset, loser_attester.data);
+							auto next_attestation = context->apply_validator_attestation(transfer_asset, loser_attester.data, -transfer.incoming_fee);
+							if (!next_attestation)
+								return next_attestation.error();
+
+							attestation_compensation += prev_attestation->stake - (next_attestation && !next_attestation->stake.is_nan() ? next_attestation->stake : decimal::nan());
+						}
+
+						if (attestation_compensation.is_positive())
+						{
+							auto attestation = context->apply_validator_attestation(transfer_asset, owner.data, depository_fee, true);
+							if (!attestation)
+								return attestation.error();
+						}
+					}
+
+					if (transfer.outgoing_fee.is_positive())
+					{
+						auto depository_fee = transfer.outgoing_fee * (1.0 - protocol::now().policy.participation_fee_rate);
+						if (depository_fee.is_positive())
+						{
+							auto attestation = context->apply_validator_attestation(transfer_asset, owner.data, depository_fee, true);
+							if (!attestation)
+								return attestation.error();
+						}
+
+						auto participation_fee = transfer.outgoing_fee * protocol::now().policy.attestation_fee_rate;
+						if (participation_fee.is_positive() && !transfer.participants.empty())
+						{
+							size_t index = (size_t)(uint64_t)(random->derive() % uint256_t(transfer.participants.size()));
+							auto winner = transfer.participants.begin();
+							for (size_t i = 0; i < index; i++)
+								++winner;
+
+							auto participation = context->apply_validator_participation(transfer_asset, winner->data, participation_fee, 0, true);
+							if (!participation)
+								return participation.error();
+						}
+					}
 				}
 			}
 
@@ -2660,7 +2840,7 @@ namespace tangent
 		}
 		option<mediator::computed_transaction> depository_transaction::get_assertion(const ledger::transaction_context* context) const
 		{
-			auto* best_branch = get_best_branch(context);
+			auto* best_branch = get_best_branch(context, nullptr);
 			if (!best_branch)
 				return optional::none;
 
@@ -2704,22 +2884,16 @@ namespace tangent
 
 		expects_lr<void> depository_adjustment::validate(uint64_t block_number) const
 		{
-			if (incoming_absolute_fee.is_nan() || incoming_absolute_fee.is_negative())
-				return layer_exception("invalid incoming absolute fee");
+			if (incoming_fee.is_nan() || incoming_fee.is_negative())
+				return layer_exception("invalid incoming fee");
 
-			if (incoming_relative_fee.is_nan() || incoming_relative_fee.is_negative() || incoming_relative_fee > 1.0)
-				return layer_exception("invalid incoming relative fee");
+			if (outgoing_fee.is_nan() || outgoing_fee.is_negative())
+				return layer_exception("invalid outgoing fee");
 
-			if (outgoing_absolute_fee.is_nan() || outgoing_absolute_fee.is_negative())
-				return layer_exception("invalid outgoing absolute fee");
-
-			if (outgoing_relative_fee.is_nan() || outgoing_relative_fee.is_negative() || outgoing_relative_fee > 1.0)
-				return layer_exception("invalid outgoing relative fee");
-
-			if (security_level > 0 && security_level < protocol::now().policy.depository_committee_min_size)
+			if (security_level > 0 && security_level < protocol::now().policy.participation_min_per_account)
 				return layer_exception("invalid security level");
 
-			if (security_level > 0 && security_level > protocol::now().policy.depository_committee_max_size)
+			if (security_level > 0 && security_level > protocol::now().policy.participation_max_per_account)
 				return layer_exception("invalid security level");
 
 			return ledger::transaction::validate(block_number);
@@ -2730,11 +2904,11 @@ namespace tangent
 			if (!validation)
 				return validation.error();
 
-			auto work_requirement = context->verify_account_work(context->receipt.from);
-			if (!work_requirement)
-				return work_requirement;
+			auto attestation_requirement = context->verify_validator_attestation(asset, context->receipt.from);
+			if (!attestation_requirement)
+				return attestation_requirement;
 
-			auto reward = context->apply_depository_reward(algorithm::asset::base_id_of(asset), context->receipt.from, incoming_absolute_fee, incoming_relative_fee, outgoing_absolute_fee, outgoing_relative_fee);
+			auto reward = context->apply_depository_reward(algorithm::asset::base_id_of(asset), context->receipt.from, incoming_fee, outgoing_fee);
 			if (!reward)
 				return reward.error();
 
@@ -2758,10 +2932,8 @@ namespace tangent
 		bool depository_adjustment::store_body(format::stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_decimal(incoming_absolute_fee);
-			stream->write_decimal(incoming_relative_fee);
-			stream->write_decimal(outgoing_absolute_fee);
-			stream->write_decimal(outgoing_relative_fee);
+			stream->write_decimal(incoming_fee);
+			stream->write_decimal(outgoing_fee);
 			stream->write_integer(security_level);
 			stream->write_boolean(accepts_account_requests);
 			stream->write_boolean(accepts_withdrawal_requests);
@@ -2769,16 +2941,10 @@ namespace tangent
 		}
 		bool depository_adjustment::load_body(format::stream& stream)
 		{
-			if (!stream.read_decimal(stream.read_type(), &incoming_absolute_fee))
+			if (!stream.read_decimal(stream.read_type(), &incoming_fee))
 				return false;
 
-			if (!stream.read_decimal(stream.read_type(), &incoming_relative_fee))
-				return false;
-
-			if (!stream.read_decimal(stream.read_type(), &outgoing_absolute_fee))
-				return false;
-
-			if (!stream.read_decimal(stream.read_type(), &outgoing_relative_fee))
+			if (!stream.read_decimal(stream.read_type(), &outgoing_fee))
 				return false;
 
 			if (!stream.read_integer(stream.read_type(), &security_level))
@@ -2792,15 +2958,10 @@ namespace tangent
 
 			return true;
 		}
-		void depository_adjustment::set_incoming_fee(const decimal& absolute_fee, const decimal& relative_fee)
+		void depository_adjustment::set_reward(const decimal& new_incoming_fee, const decimal& new_outgoing_fee)
 		{
-			incoming_absolute_fee = absolute_fee;
-			incoming_relative_fee = relative_fee;
-		}
-		void depository_adjustment::set_outgoing_fee(const decimal& absolute_fee, const decimal& relative_fee)
-		{
-			outgoing_absolute_fee = absolute_fee;
-			outgoing_relative_fee = relative_fee;
+			incoming_fee = new_incoming_fee;
+			outgoing_fee = new_outgoing_fee;
 		}
 		void depository_adjustment::set_security(uint8_t new_security_level, bool new_accepts_account_requests, bool new_accepts_withdrawal_requests)
 		{
@@ -2811,10 +2972,8 @@ namespace tangent
 		uptr<schema> depository_adjustment::as_schema() const
 		{
 			schema* data = ledger::transaction::as_schema().reset();
-			data->set("incoming_absolute_fee", var::decimal(incoming_absolute_fee));
-			data->set("incoming_relative_fee", var::decimal(incoming_relative_fee));
-			data->set("outgoing_absolute_fee", var::decimal(outgoing_absolute_fee));
-			data->set("outgoing_relative_fee", var::decimal(outgoing_relative_fee));
+			data->set("incoming_fee", var::decimal(incoming_fee));
+			data->set("outgoing_fee", var::decimal(outgoing_fee));
 			data->set("security_level", var::integer(security_level));
 			data->set("accepts_account_requests", var::number(accepts_account_requests));
 			data->set("accepts_withdrawal_requests", var::number(accepts_withdrawal_requests));
@@ -2842,132 +3001,132 @@ namespace tangent
 			return "depository_adjustment";
 		}
 
-		expects_lr<void> depository_migration::validate(uint64_t block_number) const
+		expects_lr<void> depository_regrouping::validate(uint64_t block_number) const
 		{
-			if (migrations.empty())
-				return layer_exception("no migrations found");
+			if (participants.empty())
+				return layer_exception("no participants found");
 
 			algorithm::pubkeyhash null = { 0 };
-			for (auto& [hash, migration] : migrations)
+			for (auto& [hash, account] : participants)
 			{
-				if (!algorithm::asset::is_valid(migration.asset) || !algorithm::asset::token_of(migration.asset).empty())
-					return layer_exception("invalid migration asset");
+				if (!algorithm::asset::is_valid(account.asset) || !algorithm::asset::token_of(account.asset).empty())
+					return layer_exception("invalid account asset");
 
-				if (!memcmp(migration.proposer, null, sizeof(null)))
-					return layer_exception("invalid migration proposer");
+				if (!memcmp(account.manager, null, sizeof(null)))
+					return layer_exception("invalid account manager");
 
-				if (!memcmp(migration.owner, null, sizeof(null)))
-					return layer_exception("invalid migration owner");
+				if (!memcmp(account.owner, null, sizeof(null)))
+					return layer_exception("invalid account owner");
 
-				if (hash != migration.hash())
-					return layer_exception("invalid migration hash");
+				if (hash != account.hash())
+					return layer_exception("invalid account hash");
 			}
 
 			return ledger::transaction::validate(block_number);
 		}
-		expects_lr<void> depository_migration::execute(ledger::transaction_context* context) const
+		expects_lr<void> depository_regrouping::execute(ledger::transaction_context* context) const
 		{
 			auto validation = transaction::execute(context);
 			if (!validation)
 				return validation.error();
 
 			ordered_set<algorithm::pubkeyhash_t> exclusion;
-			auto migrating_proposer = algorithm::pubkeyhash_t(context->receipt.from);
-			for (auto& [hash, migration] : migrations)
+			auto migrating_manager = algorithm::pubkeyhash_t(context->receipt.from);
+			for (auto& [hash, account] : participants)
 			{
-				auto account = context->get_depository_account(migration.asset, migration.proposer, migration.owner);
-				if (!account)
-					return account.error();
-				else if (account->mpc.find(migrating_proposer) == account->mpc.end())
-					return layer_exception("migration of other mpc member is forbidden");
+				auto target = context->get_depository_account(account.asset, account.manager, account.owner);
+				if (!target)
+					return target.error();
+				else if (target->group.find(migrating_manager) == target->group.end())
+					return layer_exception("regroup of other group member is forbidden");
 
-				exclusion.insert(account->mpc.begin(), account->mpc.end());
+				exclusion.insert(target->group.begin(), target->group.end());
 			}
 
-			auto committee = context->calculate_sharing_committee(exclusion, 1);
+			auto committee = context->calculate_participants(asset, exclusion, 1);
 			if (!committee)
 				return committee.error();
 
 			auto& work = committee->front();
-			auto event = context->emit_event<depository_migration>({ format::variable(std::string_view((char*)work.owner, sizeof(work.owner))) });
+			auto event = context->emit_event<depository_regrouping>({ format::variable(std::string_view((char*)work.owner, sizeof(work.owner))) });
 			if (!event)
 				return event;
 
 			return expectation::met;
 		}
-		expects_promise_rt<void> depository_migration::dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const
+		expects_promise_rt<void> depository_regrouping::dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const
 		{
 			if (context->get_witness_event(context->receipt.transaction_hash))
 				return expects_promise_rt<void>(expectation::met);
 
-			auto new_proposer = get_new_proposer(context->receipt);
-			if (!dispatcher->is_on(new_proposer.data))
+			auto new_manager = get_new_manager(context->receipt);
+			if (!dispatcher->is_running_on(new_manager.data))
 				return expects_promise_rt<void>(expectation::met);
 
-			auto* transaction = memory::init<depository_migration_preparation>();
+			auto* transaction = memory::init<depository_regrouping_preparation>();
 			transaction->asset = asset;
-			transaction->depository_migration_hash = context->receipt.transaction_hash;
+			transaction->depository_regrouping_hash = context->receipt.transaction_hash;
 
 			algorithm::seckey cipher_secret_key;
-			algorithm::signing::derive_cipher_keypair(dispatcher->get_wallet()->secret_key, transaction->depository_migration_hash, cipher_secret_key, transaction->cipher_public_key);
+			algorithm::signing::derive_cipher_keypair(dispatcher->get_wallet()->secret_key, transaction->depository_regrouping_hash, cipher_secret_key, transaction->cipher_public_key);
 			dispatcher->emit_transaction(transaction);
 			return expects_promise_rt<void>(expectation::met);
 		}
-		bool depository_migration::store_body(format::stream* stream) const
+		bool depository_regrouping::store_body(format::stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_integer((uint16_t)migrations.size());
-			for (auto& [hash, migration] : migrations)
+			stream->write_integer((uint16_t)participants.size());
+			for (auto& [hash, account] : participants)
 			{
-				stream->write_integer(migration.asset);
-				stream->write_string(algorithm::pubkeyhash_t(migration.proposer).optimized_view());
-				stream->write_string(algorithm::pubkeyhash_t(migration.owner).optimized_view());
+				stream->write_integer(account.asset);
+				stream->write_string(algorithm::pubkeyhash_t(account.manager).optimized_view());
+				stream->write_string(algorithm::pubkeyhash_t(account.owner).optimized_view());
 			}
 			return true;
 		}
-		bool depository_migration::load_body(format::stream& stream)
+		bool depository_regrouping::load_body(format::stream& stream)
 		{
-			uint16_t migrations_size;
-			if (!stream.read_integer(stream.read_type(), &migrations_size))
+			uint16_t participants_size;
+			if (!stream.read_integer(stream.read_type(), &participants_size))
 				return false;
 
-			for (uint16_t i = 0; i < migrations_size; i++)
+			for (uint16_t i = 0; i < participants_size; i++)
 			{
-				mpc_migration migration;
-				if (!stream.read_integer(stream.read_type(), &migration.asset))
+				participant account;
+				if (!stream.read_integer(stream.read_type(), &account.asset))
 					return false;
 
-				string proposer_assembly;
-				if (!stream.read_string(stream.read_type(), &proposer_assembly) || !algorithm::encoding::decode_uint_blob(proposer_assembly, migration.proposer, sizeof(migration.proposer)))
+				string manager_assembly;
+				if (!stream.read_string(stream.read_type(), &manager_assembly) || !algorithm::encoding::decode_uint_blob(manager_assembly, account.manager, sizeof(account.manager)))
 					return false;
 
 				string owner_assembly;
-				if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, migration.owner, sizeof(migration.owner)))
+				if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, account.owner, sizeof(account.owner)))
 					return false;
 
-				migrations[migration.hash()] = std::move(migration);
+				participants[account.hash()] = std::move(account);
 			}
 
 			return true;
 		}
-		void depository_migration::migrate(const algorithm::asset_id& asset, const algorithm::pubkeyhash proposer, const algorithm::pubkeyhash owner)
+		void depository_regrouping::migrate(const algorithm::asset_id& asset, const algorithm::pubkeyhash manager, const algorithm::pubkeyhash owner)
 		{
-			VI_ASSERT(proposer != nullptr, "proposer should be set");
+			VI_ASSERT(manager != nullptr, "manager should be set");
 			VI_ASSERT(owner != nullptr, "owner should be set");
-			mpc_migration migration;
-			migration.asset = asset;
-			memcpy(migration.proposer, proposer, sizeof(migration.proposer));
-			memcpy(migration.owner, owner, sizeof(migration.owner));
-			migrations[migration.hash()] = std::move(migration);
+			participant account;
+			account.asset = asset;
+			memcpy(account.manager, manager, sizeof(account.manager));
+			memcpy(account.owner, owner, sizeof(account.owner));
+			participants[account.hash()] = std::move(account);
 		}
-		bool depository_migration::is_dispatchable() const
+		bool depository_regrouping::is_dispatchable() const
 		{
 			return true;
 		}
-		algorithm::pubkeyhash_t depository_migration::get_new_proposer(const ledger::receipt& receipt) const
+		algorithm::pubkeyhash_t depository_regrouping::get_new_manager(const ledger::receipt& receipt) const
 		{
 			algorithm::pubkeyhash_t result;
-			auto* event = receipt.find_event<depository_migration>();
+			auto* event = receipt.find_event<depository_regrouping>();
 			if (event != nullptr)
 			{
 				if (!event->empty() && event->front().as_string().size() == sizeof(algorithm::pubkeyhash))
@@ -2975,45 +3134,45 @@ namespace tangent
 			}
 			return result;
 		}
-		uptr<schema> depository_migration::as_schema() const
+		uptr<schema> depository_regrouping::as_schema() const
 		{
 			schema* data = ledger::transaction::as_schema().reset();
-			auto* migrations_data = data->set("migrations", var::set::array());
-			for (auto& [hash, migration] : migrations)
+			auto* participants_data = data->set("participants", var::set::array());
+			for (auto& [hash, account] : participants)
 			{
-				auto* migration_data = migrations_data->push(var::set::object());
-				migration_data->set("asset", algorithm::asset::serialize(migration.asset));
-				migration_data->set("proposer", algorithm::signing::serialize_address(migration.proposer));
-				migration_data->set("owner", algorithm::signing::serialize_address(migration.owner));
+				auto* account_data = participants_data->push(var::set::object());
+				account_data->set("asset", algorithm::asset::serialize(account.asset));
+				account_data->set("manager", algorithm::signing::serialize_address(account.manager));
+				account_data->set("owner", algorithm::signing::serialize_address(account.owner));
 			}
 			return data;
 		}
-		uint32_t depository_migration::as_type() const
+		uint32_t depository_regrouping::as_type() const
 		{
 			return as_instance_type();
 		}
-		std::string_view depository_migration::as_typename() const
+		std::string_view depository_regrouping::as_typename() const
 		{
 			return as_instance_typename();
 		}
-		uint256_t depository_migration::get_gas_estimate() const
+		uint256_t depository_regrouping::get_gas_estimate() const
 		{
-			return ledger::gas_util::get_gas_estimate<depository_migration, 64>();
+			return ledger::gas_util::get_gas_estimate<depository_regrouping, 64>();
 		}
-		uint32_t depository_migration::as_instance_type()
+		uint32_t depository_regrouping::as_instance_type()
 		{
 			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
 			return hash;
 		}
-		std::string_view depository_migration::as_instance_typename()
+		std::string_view depository_regrouping::as_instance_typename()
 		{
-			return "depository_migration";
+			return "depository_regrouping";
 		}
 
-		expects_lr<void> depository_migration_preparation::validate(uint64_t block_number) const
+		expects_lr<void> depository_regrouping_preparation::validate(uint64_t block_number) const
 		{
-			if (!depository_migration_hash)
-				return layer_exception("invalid migration transaction");
+			if (!depository_regrouping_hash)
+				return layer_exception("invalid regroup transaction");
 
 			algorithm::pubkey null = { 0 };
 			if (!memcmp(cipher_public_key, null, sizeof(null)))
@@ -3021,42 +3180,42 @@ namespace tangent
 
 			return ledger::consensus_transaction::validate(block_number);
 		}
-		expects_lr<void> depository_migration_preparation::execute(ledger::transaction_context* context) const
+		expects_lr<void> depository_regrouping_preparation::execute(ledger::transaction_context* context) const
 		{
 			auto validation = consensus_transaction::execute(context);
 			if (!validation)
 				return validation.error();
 
-			auto event = context->apply_witness_event(depository_migration_hash, context->receipt.transaction_hash);
+			auto event = context->apply_witness_event(depository_regrouping_hash, context->receipt.transaction_hash);
 			if (!event)
 				return event.error();
 
 			return expectation::met;
 		}
-		expects_promise_rt<void> depository_migration_preparation::dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const
+		expects_promise_rt<void> depository_regrouping_preparation::dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const
 		{
 			if (context->get_witness_event(context->receipt.transaction_hash))
 				return expects_promise_rt<void>(expectation::met);
 
-			auto setup = context->get_block_transaction<depository_migration>(depository_migration_hash);
+			auto setup = context->get_block_transaction<depository_regrouping>(depository_regrouping_hash);
 			if (!setup)
 				return expects_promise_rt<void>(remote_exception(std::move(setup.error().message())));
-			else if (!dispatcher->is_on(setup->receipt.from))
+			else if (!dispatcher->is_running_on(setup->receipt.from))
 				return expects_promise_rt<void>(expectation::met);
 
-			uptr<depository_migration_commitment> transaction = memory::init<depository_migration_commitment>();
+			uptr<depository_regrouping_commitment> transaction = memory::init<depository_regrouping_commitment>();
 			transaction->asset = asset;
-			transaction->depository_migration_preparation_hash = context->receipt.transaction_hash;
+			transaction->depository_regrouping_preparation_hash = context->receipt.transaction_hash;
 
-			auto* setup_transaction = (depository_migration*)*setup->transaction;
-			auto old_proposer = dispatcher->get_wallet();
-			for (auto& [hash, migration] : setup_transaction->migrations)
+			auto* setup_transaction = (depository_regrouping*)*setup->transaction;
+			auto old_manager = dispatcher->get_wallet();
+			for (auto& [hash, account] : setup_transaction->participants)
 			{
-				auto mpc_seed = dispatcher->calculate_or_get_mpc_seed(migration.asset, migration.proposer, migration.owner);
-				if (!mpc_seed)
-					return expects_promise_rt<void>(remote_exception(std::move(mpc_seed.error().message())));
+				auto share = dispatcher->recover_group_share(account.asset, account.manager, account.owner);
+				if (!share)
+					return expects_promise_rt<void>(remote_exception(std::move(share.error().message())));
 
-				auto status = transaction->transfer(hash, *mpc_seed, cipher_public_key, old_proposer->secret_key);
+				auto status = transaction->transfer(hash, *share, cipher_public_key, old_manager->secret_key);
 				if (!status)
 					return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
 			}
@@ -3064,16 +3223,16 @@ namespace tangent
 			dispatcher->emit_transaction(transaction.reset());
 			return expects_promise_rt<void>(expectation::met);
 		}
-		bool depository_migration_preparation::store_body(format::stream* stream) const
+		bool depository_regrouping_preparation::store_body(format::stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_integer(depository_migration_hash);
+			stream->write_integer(depository_regrouping_hash);
 			stream->write_string(algorithm::pubkey_t(cipher_public_key).optimized_view());
 			return true;
 		}
-		bool depository_migration_preparation::load_body(format::stream& stream)
+		bool depository_regrouping_preparation::load_body(format::stream& stream)
 		{
-			if (!stream.read_integer(stream.read_type(), &depository_migration_hash))
+			if (!stream.read_integer(stream.read_type(), &depository_regrouping_hash))
 				return false;
 
 			string cipher_public_key_assembly;
@@ -3082,303 +3241,308 @@ namespace tangent
 
 			return true;
 		}
-		bool depository_migration_preparation::is_dispatchable() const
+		bool depository_regrouping_preparation::is_dispatchable() const
 		{
 			return true;
 		}
-		uptr<schema> depository_migration_preparation::as_schema() const
+		uptr<schema> depository_regrouping_preparation::as_schema() const
 		{
 			schema* data = ledger::consensus_transaction::as_schema().reset();
-			data->set("depository_migration_hash", var::string(algorithm::encoding::encode_0xhex256(depository_migration_hash)));
+			data->set("depository_regrouping_hash", var::string(algorithm::encoding::encode_0xhex256(depository_regrouping_hash)));
 			data->set("cipher_public_key", var::string(format::util::encode_0xhex(std::string_view((char*)cipher_public_key, sizeof(cipher_public_key)))));
 			return data;
 		}
-		uint32_t depository_migration_preparation::as_type() const
+		uint32_t depository_regrouping_preparation::as_type() const
 		{
 			return as_instance_type();
 		}
-		std::string_view depository_migration_preparation::as_typename() const
+		std::string_view depository_regrouping_preparation::as_typename() const
 		{
 			return as_instance_typename();
 		}
-		uint256_t depository_migration_preparation::get_gas_estimate() const
+		uint256_t depository_regrouping_preparation::get_gas_estimate() const
 		{
-			return ledger::gas_util::get_gas_estimate<depository_migration_preparation, 64>();
+			return ledger::gas_util::get_gas_estimate<depository_regrouping_preparation, 64>();
 		}
-		uint32_t depository_migration_preparation::as_instance_type()
+		uint32_t depository_regrouping_preparation::as_instance_type()
 		{
 			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
 			return hash;
 		}
-		std::string_view depository_migration_preparation::as_instance_typename()
+		std::string_view depository_regrouping_preparation::as_instance_typename()
 		{
-			return "depository_migration_preparation";
+			return "depository_regrouping_preparation";
 		}
 
-		expects_lr<void> depository_migration_commitment::validate(uint64_t block_number) const
+		expects_lr<void> depository_regrouping_commitment::validate(uint64_t block_number) const
 		{
-			if (!depository_migration_preparation_hash)
-				return layer_exception("invalid depository migration transaction");
+			if (!depository_regrouping_preparation_hash)
+				return layer_exception("invalid depository regroup transaction");
 
-			if (encrypted_migrations.empty())
-				return layer_exception("no migrations found");
+			if (encrypted_shares.empty())
+				return layer_exception("no participants found");
 
 			algorithm::pubkeyhash null = { 0 };
-			for (auto& [hash, encrypted_mpc_seed] : encrypted_migrations)
+			for (auto& [hash, encrypted_share] : encrypted_shares)
 			{
-				if (!hash || encrypted_mpc_seed.empty())
-					return layer_exception("invalid migration");
+				if (!hash || encrypted_share.empty())
+					return layer_exception("invalid share");
 			}
 
 			return ledger::consensus_transaction::validate(block_number);
 		}
-		expects_lr<void> depository_migration_commitment::execute(ledger::transaction_context* context) const
+		expects_lr<void> depository_regrouping_commitment::execute(ledger::transaction_context* context) const
 		{
 			auto validation = consensus_transaction::execute(context);
 			if (!validation)
 				return validation.error();
 
-			auto preparation = context->get_block_transaction<depository_migration_preparation>(depository_migration_preparation_hash);
+			auto preparation = context->get_block_transaction<depository_regrouping_preparation>(depository_regrouping_preparation_hash);
 			if (!preparation)
 				return preparation.error();
 
-			auto* preparation_transaction = (depository_migration_preparation*)*preparation->transaction;
-			auto setup = context->get_block_transaction<depository_migration>(preparation_transaction->depository_migration_hash);
+			auto* preparation_transaction = (depository_regrouping_preparation*)*preparation->transaction;
+			auto setup = context->get_block_transaction<depository_regrouping>(preparation_transaction->depository_regrouping_hash);
 			if (!setup)
 				return setup.error();
 			else if (memcmp(setup->receipt.from, context->receipt.from, sizeof(context->receipt.from)) != 0)
 				return layer_exception("invalid setup transaction");
 
-			auto event = context->apply_witness_event(depository_migration_preparation_hash, context->receipt.transaction_hash);
+			auto event = context->apply_witness_event(depository_regrouping_preparation_hash, context->receipt.transaction_hash);
 			if (!event)
 				return event.error();
 
-			auto* setup_transaction = (depository_migration*)*setup->transaction;
-			if (setup_transaction->migrations.size() != encrypted_migrations.size())
-				return layer_exception("invalid migration size");
+			auto* setup_transaction = (depository_regrouping*)*setup->transaction;
+			if (setup_transaction->participants.size() != encrypted_shares.size())
+				return layer_exception("invalid participants size");
 
-			auto new_proposer = setup_transaction->get_new_proposer(setup->receipt);
-			if (!new_proposer.equals(preparation->receipt.from))
+			auto new_manager = setup_transaction->get_new_manager(setup->receipt);
+			if (!new_manager.equals(preparation->receipt.from))
 				return layer_exception("invalid preparation transaction");
 
 			return expectation::met;
 		}
-		expects_promise_rt<void> depository_migration_commitment::dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const
+		expects_promise_rt<void> depository_regrouping_commitment::dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const
 		{
 			if (context->get_witness_event(context->receipt.transaction_hash))
 				return expects_promise_rt<void>(expectation::met);
 
-			auto preparation = context->get_block_transaction<depository_migration_preparation>(depository_migration_preparation_hash);
+			auto preparation = context->get_block_transaction<depository_regrouping_preparation>(depository_regrouping_preparation_hash);
 			if (!preparation)
 				return expects_promise_rt<void>(remote_exception(std::move(preparation.error().message())));
 
-			if (!dispatcher->is_on(preparation->receipt.from))
+			if (!dispatcher->is_running_on(preparation->receipt.from))
 				return expects_promise_rt<void>(expectation::met);
 
-			auto* preparation_transaction = (depository_migration_preparation*)*preparation->transaction;
-			auto setup = context->get_block_transaction<depository_migration>(preparation_transaction->depository_migration_hash);
+			auto* preparation_transaction = (depository_regrouping_preparation*)*preparation->transaction;
+			auto setup = context->get_block_transaction<depository_regrouping>(preparation_transaction->depository_regrouping_hash);
 			if (!setup)
 				return expects_promise_rt<void>(remote_exception(std::move(setup.error().message())));
 
 			algorithm::seckey cipher_secret_key;
 			algorithm::pubkey cipher_public_key;
-			algorithm::signing::derive_cipher_keypair(dispatcher->get_wallet()->secret_key, preparation_transaction->depository_migration_hash, cipher_secret_key, cipher_public_key);
+			algorithm::signing::derive_cipher_keypair(dispatcher->get_wallet()->secret_key, preparation_transaction->depository_regrouping_hash, cipher_secret_key, cipher_public_key);
 
 			bool exchange_successful = true;
-			auto* setup_transaction = (depository_migration*)*setup->transaction;
-			for (auto& [hash, encrypted_mpc_seed] : encrypted_migrations)
+			auto* setup_transaction = (depository_regrouping*)*setup->transaction;
+			for (auto& [hash, encrypted_share] : encrypted_shares)
 			{
-				auto it = setup_transaction->migrations.find(hash);
-				if (it != setup_transaction->migrations.end())
+				auto it = setup_transaction->participants.find(hash);
+				if (it != setup_transaction->participants.end())
 				{
-					auto& migration = it->second;
-					auto decrypted_mpc_seed = algorithm::signing::private_decrypt(cipher_secret_key, cipher_public_key, encrypted_mpc_seed);
-					if (decrypted_mpc_seed && decrypted_mpc_seed->size() == sizeof(uint256_t))
+					auto decrypted_share = algorithm::signing::private_decrypt(cipher_secret_key, cipher_public_key, encrypted_share);
+					if (decrypted_share && decrypted_share->size() == sizeof(uint256_t))
 					{
-						uint256_t mpc_seed;
-						algorithm::encoding::encode_uint256((uint8_t*)decrypted_mpc_seed->data(), mpc_seed);
-						if (dispatcher->apply_mpc_seed(migration.asset, migration.proposer, migration.owner, mpc_seed))
+						uint256_t share;
+						algorithm::encoding::encode_uint256((uint8_t*)decrypted_share->data(), share);
+
+						auto& account = it->second;
+						if (dispatcher->apply_group_share(account.asset, account.manager, account.owner, share))
 							continue;
 					}
 				}
 				exchange_successful = false;
 			}
 
-			auto* transaction = memory::init<depository_migration_finalization>();
+			auto* transaction = memory::init<depository_regrouping_finalization>();
 			transaction->asset = asset;
-			transaction->depository_migration_commitment_hash = context->receipt.transaction_hash;
+			transaction->depository_regrouping_commitment_hash = context->receipt.transaction_hash;
 			transaction->successful = exchange_successful;
 			transaction->set_estimate_gas(decimal::zero());
 			dispatcher->emit_transaction(transaction);
 			return expects_promise_rt<void>(expectation::met);
 		}
-		expects_lr<void> depository_migration_commitment::transfer(const uint256_t& account_hash, const uint256_t& mpc_seed, const algorithm::pubkey new_proposer_cipher_public_key, const algorithm::seckey old_proposer_secret_key)
+		expects_lr<void> depository_regrouping_commitment::transfer(const uint256_t& account_hash, const uint256_t& share, const algorithm::pubkey new_manager_cipher_public_key, const algorithm::seckey old_manager_secret_key)
 		{
-			VI_ASSERT(new_proposer_cipher_public_key != nullptr, "new proposer cipher public key should be set");
-			VI_ASSERT(old_proposer_secret_key != nullptr, "old proposer secret key should be set");
+			VI_ASSERT(new_manager_cipher_public_key != nullptr, "new manager cipher public key should be set");
+			VI_ASSERT(old_manager_secret_key != nullptr, "old manager secret key should be set");
 			format::stream entropy;
-			entropy.write_integer(depository_migration_preparation_hash);
-			entropy.write_integer(algorithm::hashing::hash256i(algorithm::seckey_t(old_proposer_secret_key).view()));
+			entropy.write_integer(depository_regrouping_preparation_hash);
+			entropy.write_integer(algorithm::hashing::hash256i(algorithm::seckey_t(old_manager_secret_key).view()));
 
-			uint8_t mpc_seed_data[32];
-			algorithm::encoding::decode_uint256(mpc_seed, mpc_seed_data);
-			auto encrypted_mpc_seed = algorithm::signing::public_encrypt(new_proposer_cipher_public_key, std::string_view((char*)mpc_seed_data, sizeof(mpc_seed_data)), entropy.data);
-			if (!encrypted_mpc_seed)
-				return layer_exception("failed to encrypt an mpc seed");
+			uint8_t share_data[32];
+			algorithm::encoding::decode_uint256(share, share_data);
+			auto encrypted_share = algorithm::signing::public_encrypt(new_manager_cipher_public_key, std::string_view((char*)share_data, sizeof(share_data)), entropy.data);
+			if (!encrypted_share)
+				return layer_exception("failed to encrypt a share");
 
-			encrypted_migrations[account_hash] = std::move(*encrypted_mpc_seed);
+			encrypted_shares[account_hash] = std::move(*encrypted_share);
 			return expectation::met;
 		}
-		bool depository_migration_commitment::store_body(format::stream* stream) const
+		bool depository_regrouping_commitment::store_body(format::stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_integer(depository_migration_preparation_hash);
-			stream->write_integer((uint16_t)encrypted_migrations.size());
-			for (auto& [hash, encrypted_mpc_seed] : encrypted_migrations)
+			stream->write_integer(depository_regrouping_preparation_hash);
+			stream->write_integer((uint16_t)encrypted_shares.size());
+			for (auto& [hash, encrypted_share] : encrypted_shares)
 			{
 				stream->write_integer(hash);
-				stream->write_string(encrypted_mpc_seed);
+				stream->write_string(encrypted_share);
 			}
 			return true;
 		}
-		bool depository_migration_commitment::load_body(format::stream& stream)
+		bool depository_regrouping_commitment::load_body(format::stream& stream)
 		{
-			if (!stream.read_integer(stream.read_type(), &depository_migration_preparation_hash))
+			if (!stream.read_integer(stream.read_type(), &depository_regrouping_preparation_hash))
 				return false;
 
-			uint16_t encrypted_migrations_size;
-			if (!stream.read_integer(stream.read_type(), &encrypted_migrations_size))
+			uint16_t encrypted_shares_size;
+			if (!stream.read_integer(stream.read_type(), &encrypted_shares_size))
 				return false;
 
-			for (uint16_t i = 0; i < encrypted_migrations_size; i++)
+			for (uint16_t i = 0; i < encrypted_shares_size; i++)
 			{
 				uint256_t hash;
 				if (!stream.read_integer(stream.read_type(), &hash))
 					return false;
 
-				string encrypted_mpc_seed;
-				if (!stream.read_string(stream.read_type(), &encrypted_mpc_seed))
+				string encrypted_share;
+				if (!stream.read_string(stream.read_type(), &encrypted_share))
 					return false;
 
-				encrypted_migrations[hash] = std::move(encrypted_mpc_seed);
+				encrypted_shares[hash] = std::move(encrypted_share);
 			}
 
 			return true;
 		}
-		bool depository_migration_commitment::is_dispatchable() const
+		bool depository_regrouping_commitment::is_dispatchable() const
 		{
 			return true;
 		}
-		uptr<schema> depository_migration_commitment::as_schema() const
+		uptr<schema> depository_regrouping_commitment::as_schema() const
 		{
 			schema* data = ledger::consensus_transaction::as_schema().reset();
-			data->set("depository_migration_preparation_hash", var::string(algorithm::encoding::encode_0xhex256(depository_migration_preparation_hash)));
-			auto* migrations_data = data->set("encrypted_migrations", var::set::array());
-			for (auto& [hash, encrypted_mpc_seed] : encrypted_migrations)
+			data->set("depository_regrouping_preparation_hash", var::string(algorithm::encoding::encode_0xhex256(depository_regrouping_preparation_hash)));
+			auto* encrypted_shares_data = data->set("encrypted_shares", var::set::array());
+			for (auto& [hash, encrypted_share] : encrypted_shares)
 			{
-				auto* migration_data = migrations_data->push(var::set::object());
-				migration_data->set("account_hash", var::string(algorithm::encoding::encode_0xhex256(hash)));
-				migration_data->set("encrypted_mpc_seed", var::string(format::util::encode_0xhex(encrypted_mpc_seed)));
+				auto* encrypted_share_data = encrypted_shares_data->push(var::set::object());
+				encrypted_share_data->set("account_hash", var::string(algorithm::encoding::encode_0xhex256(hash)));
+				encrypted_share_data->set("encrypted_share", var::string(format::util::encode_0xhex(encrypted_share)));
 			}
 			return data;
 		}
-		uint32_t depository_migration_commitment::as_type() const
+		uint32_t depository_regrouping_commitment::as_type() const
 		{
 			return as_instance_type();
 		}
-		std::string_view depository_migration_commitment::as_typename() const
+		std::string_view depository_regrouping_commitment::as_typename() const
 		{
 			return as_instance_typename();
 		}
-		uint256_t depository_migration_commitment::get_gas_estimate() const
+		uint256_t depository_regrouping_commitment::get_gas_estimate() const
 		{
-			return ledger::gas_util::get_gas_estimate<depository_migration_commitment, 64>();
+			return ledger::gas_util::get_gas_estimate<depository_regrouping_commitment, 64>();
 		}
-		uint32_t depository_migration_commitment::as_instance_type()
+		uint32_t depository_regrouping_commitment::as_instance_type()
 		{
 			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
 			return hash;
 		}
-		std::string_view depository_migration_commitment::as_instance_typename()
+		std::string_view depository_regrouping_commitment::as_instance_typename()
 		{
-			return "depository_migration_commitment";
+			return "depository_regrouping_commitment";
 		}
 
-		expects_lr<void> depository_migration_finalization::validate(uint64_t block_number) const
+		expects_lr<void> depository_regrouping_finalization::validate(uint64_t block_number) const
 		{
-			if (!depository_migration_commitment_hash)
-				return layer_exception("invalid depository migration transaction");
+			if (!depository_regrouping_commitment_hash)
+				return layer_exception("invalid depository regroup transaction");
 
 			return ledger::consensus_transaction::validate(block_number);
 		}
-		expects_lr<void> depository_migration_finalization::execute(ledger::transaction_context* context) const
+		expects_lr<void> depository_regrouping_finalization::execute(ledger::transaction_context* context) const
 		{
 			auto validation = consensus_transaction::execute(context);
 			if (!validation)
 				return validation.error();
 
-			auto event = context->apply_witness_event(depository_migration_commitment_hash, context->receipt.transaction_hash);
+			auto event = context->apply_witness_event(depository_regrouping_commitment_hash, context->receipt.transaction_hash);
 			if (!event)
 				return event.error();
 
 			if (!successful)
 				return expectation::met;
 
-			auto certification = context->get_block_transaction<depository_migration_commitment>(depository_migration_commitment_hash);
+			auto certification = context->get_block_transaction<depository_regrouping_commitment>(depository_regrouping_commitment_hash);
 			if (!certification)
 				return certification.error();
 
-			auto* commitment_transaction = (depository_migration_commitment*)*certification->transaction;
-			auto preparation = context->get_block_transaction<depository_migration_preparation>(commitment_transaction->depository_migration_preparation_hash);
+			auto* commitment_transaction = (depository_regrouping_commitment*)*certification->transaction;
+			auto preparation = context->get_block_transaction<depository_regrouping_preparation>(commitment_transaction->depository_regrouping_preparation_hash);
 			if (!preparation)
 				return preparation.error();
 			else if (memcmp(preparation->receipt.from, context->receipt.from, sizeof(context->receipt.from)) != 0)
 				return layer_exception("invalid preparation transaction");
 
-			auto* preparation_transaction = (depository_migration_preparation*)*preparation->transaction;
-			auto setup = context->get_block_transaction<depository_migration>(preparation_transaction->depository_migration_hash);
+			auto* preparation_transaction = (depository_regrouping_preparation*)*preparation->transaction;
+			auto setup = context->get_block_transaction<depository_regrouping>(preparation_transaction->depository_regrouping_hash);
 			if (!setup)
 				return setup.error();
 
-			auto* setup_transaction = (depository_migration*)*setup->transaction;
-			if (setup_transaction->migrations.size() != commitment_transaction->encrypted_migrations.size())
-				return layer_exception("invalid migration size");
+			auto* setup_transaction = (depository_regrouping*)*setup->transaction;
+			if (setup_transaction->participants.size() != commitment_transaction->encrypted_shares.size())
+				return layer_exception("invalid participants size");
 
-			auto new_proposer = setup_transaction->get_new_proposer(setup->receipt);
-			if (!new_proposer.equals(preparation->receipt.from))
+			auto new_manager = setup_transaction->get_new_manager(setup->receipt);
+			if (!new_manager.equals(preparation->receipt.from))
 				return layer_exception("invalid preparation transaction");
 
-			auto old_proposer = algorithm::pubkeyhash_t(setup->receipt.from);
-			for (auto& [hash, encrypted_mpc_seed] : commitment_transaction->encrypted_migrations)
+			auto old_manager = algorithm::pubkeyhash_t(setup->receipt.from);
+			for (auto& [hash, encrypted_share] : commitment_transaction->encrypted_shares)
 			{
-				auto it = setup_transaction->migrations.find(hash);
-				if (it == setup_transaction->migrations.end())
-					return layer_exception("invalid migration");
+				auto it = setup_transaction->participants.find(hash);
+				if (it == setup_transaction->participants.end())
+					return layer_exception("invalid account hash");
 
-				auto& migration = it->second;
-				auto account = context->get_depository_account(migration.asset, migration.proposer, migration.owner);
-				if (!account)
-					return account.error();
+				auto& account = it->second;
+				auto target = context->get_depository_account(account.asset, account.manager, account.owner);
+				if (!target)
+					return target.error();
 
-				account->mpc.erase(old_proposer);
-				account->mpc.insert(new_proposer);
-				account = context->apply_depository_account(migration.asset, migration.proposer, migration.owner, account->mpc_public_key, std::move(account->mpc));
-				if (!account)
-					return account.error();
+				auto status = context->apply_validator_participation(asset, old_manager.data, decimal::zero(), -1);
+				if (!status)
+					return status.error();
+
+				target->group.erase(old_manager);
+				target->group.insert(new_manager);
+				target = context->apply_depository_account(account.asset, account.manager, account.owner, target->public_key, std::move(target->group));
+				if (!target)
+					return target.error();
 			}
 
 			return expectation::met;
 		}
-		bool depository_migration_finalization::store_body(format::stream* stream) const
+		bool depository_regrouping_finalization::store_body(format::stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_integer(depository_migration_commitment_hash);
+			stream->write_integer(depository_regrouping_commitment_hash);
 			stream->write_boolean(successful);
 			return true;
 		}
-		bool depository_migration_finalization::load_body(format::stream& stream)
+		bool depository_regrouping_finalization::load_body(format::stream& stream)
 		{
-			if (!stream.read_integer(stream.read_type(), &depository_migration_commitment_hash))
+			if (!stream.read_integer(stream.read_type(), &depository_regrouping_commitment_hash))
 				return false;
 
 			if (!stream.read_boolean(stream.read_type(), &successful))
@@ -3386,33 +3550,33 @@ namespace tangent
 
 			return true;
 		}
-		uptr<schema> depository_migration_finalization::as_schema() const
+		uptr<schema> depository_regrouping_finalization::as_schema() const
 		{
 			schema* data = ledger::consensus_transaction::as_schema().reset();
-			data->set("depository_migration_commitment_hash", var::string(algorithm::encoding::encode_0xhex256(depository_migration_commitment_hash)));
+			data->set("depository_regrouping_commitment_hash", var::string(algorithm::encoding::encode_0xhex256(depository_regrouping_commitment_hash)));
 			data->set("successful", var::boolean(successful));
 			return data;
 		}
-		uint32_t depository_migration_finalization::as_type() const
+		uint32_t depository_regrouping_finalization::as_type() const
 		{
 			return as_instance_type();
 		}
-		std::string_view depository_migration_finalization::as_typename() const
+		std::string_view depository_regrouping_finalization::as_typename() const
 		{
 			return as_instance_typename();
 		}
-		uint256_t depository_migration_finalization::get_gas_estimate() const
+		uint256_t depository_regrouping_finalization::get_gas_estimate() const
 		{
-			return ledger::gas_util::get_gas_estimate<depository_migration_finalization, 64>();
+			return ledger::gas_util::get_gas_estimate<depository_regrouping_finalization, 64>();
 		}
-		uint32_t depository_migration_finalization::as_instance_type()
+		uint32_t depository_regrouping_finalization::as_instance_type()
 		{
 			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
 			return hash;
 		}
-		std::string_view depository_migration_finalization::as_instance_typename()
+		std::string_view depository_regrouping_finalization::as_instance_typename()
 		{
-			return "depository_migration_finalization";
+			return "depository_regrouping_finalization";
 		}
 
 		ledger::transaction* resolver::from_stream(format::stream& stream)
@@ -3450,14 +3614,14 @@ namespace tangent
 				return memory::init<depository_transaction>();
 			else if (hash == depository_adjustment::as_instance_type())
 				return memory::init<depository_adjustment>();
-			else if (hash == depository_migration::as_instance_type())
-				return memory::init<depository_migration>();
-			else if (hash == depository_migration_preparation::as_instance_type())
-				return memory::init<depository_migration_preparation>();
-			else if (hash == depository_migration_commitment::as_instance_type())
-				return memory::init<depository_migration_commitment>();
-			else if (hash == depository_migration_finalization::as_instance_type())
-				return memory::init<depository_migration_finalization>();
+			else if (hash == depository_regrouping::as_instance_type())
+				return memory::init<depository_regrouping>();
+			else if (hash == depository_regrouping_preparation::as_instance_type())
+				return memory::init<depository_regrouping_preparation>();
+			else if (hash == depository_regrouping_commitment::as_instance_type())
+				return memory::init<depository_regrouping_commitment>();
+			else if (hash == depository_regrouping_finalization::as_instance_type())
+				return memory::init<depository_regrouping_finalization>();
 			return nullptr;
 		}
 		ledger::transaction* resolver::from_copy(const ledger::transaction* base)
@@ -3487,14 +3651,14 @@ namespace tangent
 				return memory::init<depository_transaction>(*(const depository_transaction*)base);
 			else if (hash == depository_adjustment::as_instance_type())
 				return memory::init<depository_adjustment>(*(const depository_adjustment*)base);
-			else if (hash == depository_migration::as_instance_type())
-				return memory::init<depository_migration>(*(const depository_migration*)base);
-			else if (hash == depository_migration_preparation::as_instance_type())
-				return memory::init<depository_migration_preparation>(*(const depository_migration_preparation*)base);
-			else if (hash == depository_migration_commitment::as_instance_type())
-				return memory::init<depository_migration_commitment>(*(const depository_migration_commitment*)base);
-			else if (hash == depository_migration_finalization::as_instance_type())
-				return memory::init<depository_migration_finalization>(*(const depository_migration_finalization*)base);
+			else if (hash == depository_regrouping::as_instance_type())
+				return memory::init<depository_regrouping>(*(const depository_regrouping*)base);
+			else if (hash == depository_regrouping_preparation::as_instance_type())
+				return memory::init<depository_regrouping_preparation>(*(const depository_regrouping_preparation*)base);
+			else if (hash == depository_regrouping_commitment::as_instance_type())
+				return memory::init<depository_regrouping_commitment>(*(const depository_regrouping_commitment*)base);
+			else if (hash == depository_regrouping_finalization::as_instance_type())
+				return memory::init<depository_regrouping_finalization>(*(const depository_regrouping_finalization*)base);
 			return nullptr;
 		}
 		expects_promise_rt<mediator::prepared_transaction> resolver::prepare_transaction(const algorithm::asset_id& asset, const mediator::wallet_link& from_link, const vector<mediator::value_transfer>& to, option<mediator::computed_fee>&& fee)

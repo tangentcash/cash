@@ -546,7 +546,7 @@ namespace tangent
 		promise<void> server_node::propose_transaction_logs(const algorithm::asset_id& asset, const mediator::chain_supervisor_options& options, mediator::transaction_logs&& logs)
 		{
 			umutex<std::recursive_mutex> unique(sync.account);
-			auto account_sequence = validator.wallet.get_latest_sequence().or_else(1);
+			auto account_nonce = validator.wallet.get_latest_nonce().or_else(0);
 			unique.unlock();
 
 			auto context = ledger::transaction_context();
@@ -559,8 +559,8 @@ namespace tangent
 					{
 						uptr<transactions::depository_transaction> transaction = memory::init<transactions::depository_transaction>();
 						transaction->set_witness(receipt);
-						if (propose_transaction(nullptr, std::move(*transaction), account_sequence))
-							++account_sequence;
+						if (accept_unsigned_transaction(nullptr, std::move(*transaction), account_nonce))
+							++account_nonce;
 					}
 					else if (protocol::now().user.p2p.logging)
 						VI_INFO("[p2p] %s observer transaction %s approved", algorithm::asset::name_of(asset).c_str(), receipt.transaction_id.c_str());
@@ -653,7 +653,7 @@ namespace tangent
 				discovery.count = mempool.get_validators_count().or_else(0);
 			return status;
 		}
-		expects_lr<void> server_node::propose_transaction(relay* from, uptr<ledger::transaction>&& candidate_tx, uint64_t account_sequence, uint256_t* output_hash)
+		expects_lr<void> server_node::build_transaction(ledger::transaction* candidate_tx, uint64_t account_nonce, uint256_t* output_hash)
 		{
 			auto mempool = storages::mempoolstate(__func__);
 			auto bandwidth = mempool.get_bandwidth_by_owner(validator.wallet.public_key_hash, candidate_tx->get_type());
@@ -666,25 +666,30 @@ namespace tangent
 				candidate_tx->set_optimal_gas(decimal::zero());
 
 			auto purpose = candidate_tx->as_typename();
-			if (candidate_tx->sign(validator.wallet.secret_key, account_sequence, decimal::zero()))
-			{
-				if (output_hash != nullptr)
-					*output_hash = candidate_tx->as_hash();
+			if (!candidate_tx->sign(validator.wallet.secret_key, account_nonce, decimal::zero()))
+				return layer_exception("transaction sign failed");
 
-				auto status = accept_transaction(from, std::move(candidate_tx), account_sequence);
-				if (protocol::now().user.p2p.logging && !status)
-					VI_ERR("[p2p] transaction %s %.*s error: %s", algorithm::encoding::encode_0xhex256(candidate_tx->as_hash()).c_str(), (int)purpose.size(), purpose.data(), status.error().what());
-				else if (protocol::now().user.p2p.logging)
-					VI_INFO("[p2p] transaction %s %.*s accepted", algorithm::encoding::encode_0xhex256(candidate_tx->as_hash()).c_str(), (int)purpose.size(), purpose.data());
-				return status;
-			}
-			else
+			if (output_hash != nullptr)
+				*output_hash = candidate_tx->as_hash();
+
+			return expectation::met;
+		}
+		expects_lr<void> server_node::accept_unsigned_transaction(relay* from, uptr<ledger::transaction>&& candidate_tx, uint64_t account_nonce, uint256_t* output_hash)
+		{
+			auto status = build_transaction(*candidate_tx, account_nonce, output_hash);
+			if (status)
+				status = accept_transaction(from, std::move(candidate_tx), account_nonce);
+
+			auto purpose = candidate_tx->as_typename();
+			if (status)
 			{
-				auto status = layer_exception("transaction sign failed");
 				if (protocol::now().user.p2p.logging)
-					VI_ERR("[p2p] transaction %s %.*s error: %s", algorithm::encoding::encode_0xhex256(candidate_tx->as_hash()).c_str(), (int)purpose.size(), purpose.data(), status.what());
-				return status;
+					VI_INFO("[p2p] transaction %s %.*s accepted", algorithm::encoding::encode_0xhex256(candidate_tx->as_hash()).c_str(), (int)purpose.size(), purpose.data());
 			}
+			else if (protocol::now().user.p2p.logging)
+				VI_ERR("[p2p] transaction %s %.*s error: %s", algorithm::encoding::encode_0xhex256(candidate_tx->as_hash()).c_str(), (int)purpose.size(), purpose.data(), status.what());
+
+			return status;
 		}
 		expects_lr<void> server_node::accept_transaction(relay* from, uptr<ledger::transaction>&& candidate_tx, bool validate_execution)
 		{
@@ -722,7 +727,7 @@ namespace tangent
 				temp_block.number = std::numeric_limits<int64_t>::max() - 1;
 
 				ledger::evaluation_context temp_environment;
-				memcpy(temp_environment.proposer.public_key_hash, validator.wallet.public_key_hash, sizeof(algorithm::pubkeyhash));
+				memcpy(temp_environment.validator.public_key_hash, validator.wallet.public_key_hash, sizeof(algorithm::pubkeyhash));
 
 				ledger::block_work cache;
 				size_t transaction_size = candidate_tx->as_message().data.size();
@@ -1088,6 +1093,7 @@ namespace tangent
 				validator.node = std::move(main_validator->first);
 			}
 
+			fill_validator_services();
 			validator.node.ports.p2p = protocol::now().user.p2p.port;
 			validator.node.ports.nds = protocol::now().user.nds.port;
 			validator.node.ports.rpc = protocol::now().user.rpc.port;
@@ -1095,8 +1101,7 @@ namespace tangent
 			validator.node.services.has_discovery = protocol::now().user.nds.server;
 			validator.node.services.has_synchronization = protocol::now().user.nss.server;
 			validator.node.services.has_interfaces = protocol::now().user.rpc.server;
-			validator.node.services.has_proposer = protocol::now().user.p2p.proposer;
-			validator.node.services.has_publicity = protocol::now().user.rpc.user_username.empty();
+			validator.node.services.has_querying = protocol::now().user.rpc.user_username.empty();
 			validator.node.services.has_streaming = protocol::now().user.rpc.web_sockets;
 			apply_validator(mempool, validator.node, validator.wallet).expect("failed to save trusted validator");
 
@@ -1131,8 +1136,8 @@ namespace tangent
 			bind_multicallable(&methods::propose_block_hash);
 			bind_multicallable(&methods::propose_transaction);
 			bind_multicallable(&methods::propose_transaction_hash);
-			bind_multicallable(&dispatch_context::calculate_mpc_public_key_rpc);
-			bind_multicallable(&dispatch_context::calculate_mpc_signature_rpc);
+			bind_multicallable(&dispatch_context::calculate_group_public_key_remote);
+			bind_multicallable(&dispatch_context::calculate_group_signature_remote);
 			clear_mempool(false);
 			accept();
 
@@ -1197,7 +1202,7 @@ namespace tangent
 		}
 		bool server_node::clear_mempool(bool wait)
 		{
-			if (!protocol::now().user.p2p.proposer || is_syncing())
+			if (!validator.node.services.has_production || is_syncing())
 				return false;
 
 			return control_sys.timeout_if_none("clear_mempool", wait ? (protocol::now().user.storage.transaction_timeout * 1000) : 0, [this]()
@@ -1210,81 +1215,69 @@ namespace tangent
 		}
 		bool server_node::accept_mempool()
 		{
-			if (!protocol::now().user.p2p.proposer || is_syncing())
+			if (!validator.node.services.has_production || is_syncing())
 				return false;
 
 			return control_sys.timeout_if_none("accept_mempool", 0, [this]()
 			{
-			retry:
-				if (mempool.activation_block && (!*mempool.activation_block || *mempool.activation_block <= storages::chainstate(__func__).get_latest_block_number().or_else(0)))
+				auto priority = environment.priority(validator.wallet.public_key_hash, validator.wallet.secret_key);
+				if (!priority)
 				{
-					if (*mempool.activation_block != 0)
-						mempool.activation_block = 0;
-
-					auto priority = environment.priority(validator.wallet.public_key_hash, validator.wallet.secret_key);
-					if (!priority)
+					auto chain = storages::chainstate(__func__);
+					auto tip = chain.get_latest_block_header();
+					if (tip)
 					{
-						auto chain = storages::chainstate(__func__);
-						auto tip = chain.get_latest_block_header();
-						if (tip)
+						int64_t delta = (int64_t)protocol::now().time.now() - tip->time;
+						if (delta < 0 || (uint64_t)delta < protocol::now().policy.consensus_recovery_time)
 						{
-							int64_t delta = (int64_t)protocol::now().time.now() - tip->time;
-							if (delta < 0 || (uint64_t)delta < protocol::now().policy.consensus_recovery_time)
-							{
-								control_sys.clear_timeout("accept_mempool");
-								return;
-							}
+							control_sys.clear_timeout("accept_mempool");
+							return;
 						}
 					}
+				}
 
-					size_t offset = 0, count = 512;
-					auto mempool = storages::mempoolstate(__func__);
-					while (is_active())
+				size_t offset = 0, count = 512;
+				auto mempool = storages::mempoolstate(__func__);
+				while (is_active())
+				{
+					auto candidates = mempool.get_transactions(offset, count);
+					offset += candidates ? environment.apply(std::move(*candidates)) : 0;
+					if (count != (candidates ? candidates->size() : 0))
+						break;
+				}
+
+				if (is_active() && !environment.incoming.empty())
+				{
+					if (protocol::now().user.p2p.logging)
 					{
-						auto candidates = mempool.get_transactions(offset, count);
-						offset += candidates ? environment.apply(std::move(*candidates)) : 0;
-						if (count != (candidates ? candidates->size() : 0))
-							break;
+						if (priority)
+							VI_INFO("[p2p] mempool chain extension evaluation (txns: %" PRIu64 ", priority: %" PRIu64 ")", (uint64_t)environment.incoming.size(), *priority);
+						else
+							VI_INFO("[p2p] mempool chain extension evaluation (txns: %" PRIu64 ", priority: recovery)", (uint64_t)environment.incoming.size());
 					}
 
-					if (is_active() && !environment.incoming.empty())
+					string errors;
+					auto evaluation = environment.evaluate(&errors);
+					evaluation.report("mempool proposal evaluation failed");
+					if (evaluation)
 					{
-						if (protocol::now().user.p2p.logging)
-						{
-							if (priority)
-								VI_INFO("[p2p] mempool chain extension evaluation (txns: %" PRIu64 ", priority: %" PRIu64 ")", (uint64_t)environment.incoming.size(), *priority);
-							else
-								VI_INFO("[p2p] mempool chain extension evaluation (txns: %" PRIu64 ", priority: recovery)", (uint64_t)environment.incoming.size());
-						}
+						auto solution = environment.solve(*evaluation);
+						solution.report("mempool proposal solution failed");
+						if (solution)
+							accept_block(nullptr, std::move(*evaluation), 0);
+					}
 
-						string errors;
-						auto evaluation = environment.evaluate(&errors);
-						evaluation.report("mempool proposal evaluation failed");
+					if (!errors.empty())
+					{
 						if (evaluation)
-						{
-							auto solution = environment.solve(*evaluation);
-							solution.report("mempool proposal solution failed");
-							if (solution)
-								accept_block(nullptr, std::move(*evaluation), 0);
-						}
-
-						if (!errors.empty())
-						{
-							if (evaluation)
-								VI_WARN("[p2p] mempool block %s acceptable evaluation error: %s", algorithm::encoding::encode_0xhex256(evaluation->as_hash()).c_str(), errors.c_str());
-							else
-								VI_ERR("[p2p] mempool block evaluation error: %s", errors.c_str());
-						}
+							VI_WARN("[p2p] mempool block %s acceptable evaluation error: %s", algorithm::encoding::encode_0xhex256(evaluation->as_hash()).c_str(), errors.c_str());
+						else
+							VI_ERR("[p2p] mempool block evaluation error: %s", errors.c_str());
 					}
-					else if (is_active())
-						environment.cleanup().report("mempool cleanup failed");
 				}
-				else if (!mempool.activation_block)
-				{
-					auto work = ledger::transaction_context().get_account_work(validator.wallet.public_key_hash);
-					mempool.activation_block = work ? work->get_closest_proposal_block_number() - 1 : std::numeric_limits<uint64_t>::max();
-					goto retry;
-				}
+				else if (is_active())
+					environment.cleanup().report("mempool cleanup failed");
+
 				control_sys.clear_timeout("accept_mempool");
 			});
 		}
@@ -1302,14 +1295,14 @@ namespace tangent
 					if (!sendable_transactions.empty())
 					{
 						umutex<std::recursive_mutex> unique(sync.account);
-						auto account_sequence = validator.wallet.get_latest_sequence().or_else(1);
+						auto account_nonce = validator.wallet.get_latest_nonce().or_else(0);
 						unique.unlock();
 
 						control_sys.lock_timeout("accept_mempool");
 						for (auto& transaction : sendable_transactions)
 						{
-							if (propose_transaction(nullptr, std::move(transaction), account_sequence))
-								++account_sequence;
+							if (accept_unsigned_transaction(nullptr, std::move(transaction), account_nonce))
+								++account_nonce;
 						}
 
 						dispatcher->checkpoint().report("dispatcher checkpoint error");
@@ -1567,17 +1560,11 @@ namespace tangent
 			auto purpose = transaction.transaction->as_typename();
 			if (type == transactions::certification::as_instance_type())
 			{
-				mempool.activation_block = optional::none;
 				if (transaction.receipt.successful)
 				{
 					if (protocol::now().user.p2p.logging)
-					{
-						auto work = ledger::transaction_context().get_account_work(validator.wallet.public_key_hash);
-						bool online = work && work->is_matching(states::account_flags::online);
-						VI_INFO("[p2p] transaction %s %.*s finalized (%s%s%s)",
-							algorithm::encoding::encode_0xhex256(transaction.transaction->as_hash()).c_str(), (int)purpose.size(), purpose.data(),
-							online ? (work->is_online() ? "online" : "submit again") : "offline", online ? " after block " : "", online ? to_string(work->get_closest_proposal_block_number() - 1).c_str() : "");
-					}
+						VI_INFO("[p2p] transaction %s %.*s finalized", algorithm::encoding::encode_0xhex256(transaction.transaction->as_hash()).c_str(), (int)purpose.size(), purpose.data());
+					fill_validator_services();
 					accept_mempool();
 				}
 				else if (protocol::now().user.p2p.logging)
@@ -1651,6 +1638,59 @@ namespace tangent
 				}
 				default:
 					return false;
+			}
+		}
+		void server_node::fill_validator_services()
+		{
+			auto context = ledger::transaction_context();
+			auto production = context.get_validator_production(validator.wallet.public_key_hash);
+			validator.node.services.has_production = production && production->active;
+			validator.node.services.has_participation = false;
+			validator.node.services.has_attestation = false;
+
+			size_t count = 64;
+			size_t offset = 0;
+			while (true)
+			{
+				auto participations = context.get_validator_participations(validator.wallet.public_key_hash, offset, count);
+				if (!participations || participations->empty())
+					break;
+
+				for (auto& participation : *participations)
+				{
+					validator.node.services.has_participation = participation.is_active();
+					if (validator.node.services.has_participation)
+					{
+						participations->clear();
+						break;
+					}
+				}
+
+				offset += participations->size();
+				if (participations->size() < count)
+					break;
+			}
+
+			offset = 0;
+			while (true)
+			{
+				auto attestations = context.get_validator_attestations(validator.wallet.public_key_hash, offset, count);
+				if (!attestations || attestations->empty())
+					break;
+
+				for (auto& attestation : *attestations)
+				{
+					validator.node.services.has_attestation = attestation.is_active();
+					if (validator.node.services.has_attestation)
+					{
+						attestations->clear();
+						break;
+					}
+				}
+
+				offset += attestations->size();
+				if (attestations->size() < count)
+					break;
 			}
 		}
 		bool server_node::is_active()
@@ -2281,21 +2321,21 @@ namespace tangent
 		{
 			return &server->validator.wallet;
 		}
-		expects_promise_rt<void> dispatch_context::calculate_mpc_public_key(const ledger::transaction_context* context, const algorithm::pubkeyhash_t& share, algorithm::composition::cpubkey_t& inout)
+		expects_promise_rt<void> dispatch_context::calculate_group_public_key(const ledger::transaction_context* context, const algorithm::pubkeyhash_t& validator, algorithm::composition::cpubkey_t& inout)
 		{
 			auto* depository_account = (transactions::depository_account*)context->transaction;
-			if (is_on(share.data))
+			if (is_running_on(validator.data))
 			{
 				auto* chain = nss::server_node::get()->get_chainparams(depository_account->asset);
 				if (!chain)
 					return expects_promise_rt<void>(remote_exception("invalid operation"));
 
-				auto seed = calculate_or_get_mpc_seed(depository_account->asset, depository_account->proposer, context->receipt.from);
-				if (!seed)
-					return expects_promise_rt<void>(remote_exception(std::move(seed.error().message())));
+				auto share = recover_group_share(depository_account->asset, depository_account->manager, context->receipt.from);
+				if (!share)
+					return expects_promise_rt<void>(remote_exception(std::move(share.error().message())));
 
 				algorithm::composition::keypair keypair;
-				auto status = algorithm::composition::derive_keypair(chain->composition, *seed, &keypair);
+				auto status = algorithm::composition::derive_keypair(chain->composition, *share, &keypair);
 				if (!status)
 					return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
 
@@ -2306,8 +2346,8 @@ namespace tangent
 				return expects_promise_rt<void>(expectation::met);
 			}
 
-			auto args = format::variables({ format::variable(share.optimized_view()), format::variable(context->receipt.block_number), format::variable(context->receipt.transaction_hash), format::variable(inout.optimized_view()) });
-			return server->call_responsive(&calculate_mpc_public_key_rpc, std::move(args), protocol::now().user.p2p.response_timeout, std::bind(&deserialize_procedure_response, context->receipt.transaction_hash, share, std::placeholders::_1)).then<expects_rt<void>>([&inout](expects_rt<format::variables>&& result) -> expects_rt<void>
+			auto args = format::variables({ format::variable(validator.optimized_view()), format::variable(context->receipt.block_number), format::variable(context->receipt.transaction_hash), format::variable(inout.optimized_view()) });
+			return server->call_responsive(&calculate_group_public_key_remote, std::move(args), protocol::now().user.p2p.response_timeout, std::bind(&deserialize_procedure_response, context->receipt.transaction_hash, validator, std::placeholders::_1)).then<expects_rt<void>>([&inout](expects_rt<format::variables>&& result) -> expects_rt<void>
 			{
 				if ((result && result->at(2).as_boolean()) || (!result && (result.error().is_retry() || result.error().is_shutdown())))
 					return remote_exception::retry();
@@ -2316,15 +2356,15 @@ namespace tangent
 
 				inout = result->size() > 3 ? algorithm::composition::cpubkey_t(result->at(3).as_blob()) : algorithm::composition::cpubkey_t();
 				if (inout.empty())
-					return remote_exception("mpc public key remote computation error");
+					return remote_exception("group public key remote computation error");
 
 				return expectation::met;
 			});
 		}
-		expects_promise_rt<void> dispatch_context::calculate_mpc_signature(const ledger::transaction_context* context, const algorithm::pubkeyhash_t& share, const mediator::prepared_transaction& prepared, ordered_map<uint8_t, algorithm::composition::cpubsig_t>& inout)
+		expects_promise_rt<void> dispatch_context::calculate_group_signature(const ledger::transaction_context* context, const algorithm::pubkeyhash_t& validator, const mediator::prepared_transaction& prepared, ordered_map<uint8_t, algorithm::composition::cpubsig_t>& inout)
 		{
 			auto* depository_withdrawal = (transactions::depository_withdrawal*)context->transaction;
-			if (is_on(share.data))
+			if (is_running_on(validator.data))
 			{
 				auto validation = transactions::depository_withdrawal::validate_prepared_transaction(context, depository_withdrawal, prepared);
 				if (!validation)
@@ -2337,16 +2377,16 @@ namespace tangent
 					if (!witness)
 						return expects_promise_rt<void>(remote_exception(std::move(witness.error().message())));
 
-					auto account = context->get_depository_account(depository_withdrawal->asset, witness->proposer, witness->owner);
-					if (!account || account->mpc.find(share) == account->mpc.end())
+					auto account = context->get_depository_account(depository_withdrawal->asset, witness->manager, witness->owner);
+					if (!account || account->group.find(validator) == account->group.end())
 						continue;
 
-					auto seed = calculate_or_get_mpc_seed(account->asset, account->proposer, account->owner);
-					if (!seed)
-						return expects_promise_rt<void>(remote_exception(std::move(seed.error().message())));
+					auto share = recover_group_share(account->asset, account->manager, account->owner);
+					if (!share)
+						return expects_promise_rt<void>(remote_exception(std::move(share.error().message())));
 
 					algorithm::composition::keypair keypair;
-					auto status = algorithm::composition::derive_keypair(input.alg, *seed, &keypair);
+					auto status = algorithm::composition::derive_keypair(input.alg, *share, &keypair);
 					if (!status)
 						return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
 
@@ -2360,7 +2400,7 @@ namespace tangent
 			if (!prepared.store(&prepared_message))
 				return expects_promise_rt<void>(remote_exception("prepared transaction serialization error"));
 
-			auto args = format::variables({ format::variable(share.optimized_view()), format::variable(context->receipt.block_number), format::variable(context->receipt.transaction_hash), format::variable(prepared_message.data) });
+			auto args = format::variables({ format::variable(validator.optimized_view()), format::variable(context->receipt.block_number), format::variable(context->receipt.transaction_hash), format::variable(prepared_message.data) });
 			for (size_t i = 0; i < prepared.inputs.size(); i++)
 			{
 				auto& input = prepared.inputs[i];
@@ -2368,15 +2408,15 @@ namespace tangent
 				if (!witness)
 					return expects_promise_rt<void>(remote_exception(std::move(witness.error().message())));
 
-				auto account = context->get_depository_account(depository_withdrawal->asset, witness->proposer, witness->owner);
-				if (!account || account->mpc.find(share) == account->mpc.end())
+				auto account = context->get_depository_account(depository_withdrawal->asset, witness->manager, witness->owner);
+				if (!account || account->group.find(validator) == account->group.end())
 					continue;
 
 				args.push_back(format::variable((uint8_t)i));
 				args.push_back(format::variable(inout[(uint8_t)i].optimized_view()));
 			}
 
-			return server->call_responsive(&calculate_mpc_signature_rpc, std::move(args), protocol::now().user.p2p.response_timeout, std::bind(&deserialize_procedure_response, context->receipt.transaction_hash, share, std::placeholders::_1)).then<expects_rt<void>>([&inout](expects_rt<format::variables>&& result) -> expects_rt<void>
+			return server->call_responsive(&calculate_group_signature_remote, std::move(args), protocol::now().user.p2p.response_timeout, std::bind(&deserialize_procedure_response, context->receipt.transaction_hash, validator, std::placeholders::_1)).then<expects_rt<void>>([&inout](expects_rt<format::variables>&& result) -> expects_rt<void>
 			{
 				if ((result && result->at(2).as_boolean()) || (!result && (result.error().is_retry() || result.error().is_shutdown())))
 					return remote_exception::retry();
@@ -2388,110 +2428,110 @@ namespace tangent
 					auto input_index = (*result)[i + 0].as_uint8();
 					auto input_signature = algorithm::composition::cpubsig_t((*result)[i + 1].as_blob());
 					if (input_signature.empty() || inout.find(input_index) == inout.end())
-						return remote_exception("mpc signature remote computation error");
+						return remote_exception("group signature remote computation error");
 
 					inout[input_index] = input_signature;
 				}
 				return expectation::met;
 			});
 		}
-		promise<void> dispatch_context::calculate_mpc_public_key_rpc(server_node* relayer, uref<relay>&& from, procedure&& message)
+		promise<void> dispatch_context::calculate_group_public_key_remote(server_node* relayer, uref<relay>&& from, procedure&& message)
 		{
 			if (message.args.size() != 4)
 				return methods::returning::abort(relayer, *from, __func__, "invalid arguments");
 
 			bool requires_retry = false;
-			auto proposer = algorithm::pubkeyhash_t(message.args[0].as_blob());
+			auto validator = algorithm::pubkeyhash_t(message.args[0].as_blob());
 			auto block_number = message.args[1].as_uint64();
 			auto depository_account_hash = message.args[2].as_uint256();
 			auto chainstate = storages::chainstate(__func__);
 			if (chainstate.get_latest_block_number().or_else(1) < block_number)
 			{
 				requires_retry = true;
-				if (!proposer.equals(relayer->validator.wallet.public_key_hash))
+				if (!validator.equals(relayer->validator.wallet.public_key_hash))
 				{
-					relayer->multicall(*from, &calculate_mpc_public_key_rpc, std::move(message.args));
-					return methods::returning::ok(*from, __func__, "mpc public key requested");
+					relayer->multicall(*from, &calculate_group_public_key_remote, std::move(message.args));
+					return methods::returning::ok(*from, __func__, "group public key requested");
 				}
-			abort_mpc:
+			abort_group:
 				procedure response;
 				response.method = protocol::now().message.packet_magic;
 				response.args = serialize_procedure_response(relayer->validator.wallet.secret_key, { format::variable(depository_account_hash), format::variable(requires_retry) });
 				relayer->multicall(nullptr, std::move(response));
-				return methods::returning::ok(*from, __func__, "mpc public key computation error");
+				return methods::returning::ok(*from, __func__, "group public key computation error");
 			}
 
 			auto context = ledger::transaction_context();
 			auto depository_account = context.get_block_transaction<transactions::depository_account>(depository_account_hash);
 			if (!depository_account)
 			{
-				if (!proposer.equals(relayer->validator.wallet.public_key_hash))
+				if (!validator.equals(relayer->validator.wallet.public_key_hash))
 					return methods::returning::abort(relayer, *from, __func__, "invalid request");
-				goto abort_mpc;
+				goto abort_group;
 			}
-			else if (!proposer.equals(relayer->validator.wallet.public_key_hash))
+			else if (!validator.equals(relayer->validator.wallet.public_key_hash))
 			{
-				relayer->multicall(*from, &calculate_mpc_public_key_rpc, std::move(message.args));
-				return methods::returning::ok(*from, __func__, "mpc public key requested");
+				relayer->multicall(*from, &calculate_group_public_key_remote, std::move(message.args));
+				return methods::returning::ok(*from, __func__, "group public key requested");
 			}
 
 			auto* depository_account_transaction = (transactions::depository_account*)*depository_account->transaction;
 			auto* chain = nss::server_node::get()->get_chainparams(depository_account_transaction->asset);
 			if (!chain)
-				goto abort_mpc;
+				goto abort_group;
 
 			auto dispatcher = dispatch_context(relayer);
-			auto seed = dispatcher.calculate_or_get_mpc_seed(depository_account_transaction->asset, depository_account_transaction->proposer, depository_account->receipt.from);
-			if (!seed)
-				goto abort_mpc;
+			auto share = dispatcher.recover_group_share(depository_account_transaction->asset, depository_account_transaction->manager, depository_account->receipt.from);
+			if (!share)
+				goto abort_group;
 
 			algorithm::composition::keypair keypair;
-			if (!algorithm::composition::derive_keypair(chain->composition, *seed, &keypair))
-				goto abort_mpc;
+			if (!algorithm::composition::derive_keypair(chain->composition, *share, &keypair))
+				goto abort_group;
 
-			auto mpc_public_key = algorithm::composition::cpubkey_t(message.args[3].as_blob());
-			if (!algorithm::composition::accumulate_public_key(chain->composition, keypair.secret_key, mpc_public_key.data))
-				goto abort_mpc;
+			auto group_public_key = algorithm::composition::cpubkey_t(message.args[3].as_blob());
+			if (!algorithm::composition::accumulate_public_key(chain->composition, keypair.secret_key, group_public_key.data))
+				goto abort_group;
 
 			procedure response;
 			response.method = protocol::now().message.packet_magic;
-			response.args = serialize_procedure_response(relayer->validator.wallet.secret_key, { format::variable(depository_account_hash), format::variable(requires_retry), format::variable(mpc_public_key.optimized_view()) });
+			response.args = serialize_procedure_response(relayer->validator.wallet.secret_key, { format::variable(depository_account_hash), format::variable(requires_retry), format::variable(group_public_key.optimized_view()) });
 			relayer->multicall(nullptr, std::move(response));
-			return methods::returning::ok(*from, __func__, "mpc public key proposed");
+			return methods::returning::ok(*from, __func__, "group public key proposed");
 		}
-		promise<void> dispatch_context::calculate_mpc_signature_rpc(server_node* relayer, uref<relay>&& from, procedure&& message)
+		promise<void> dispatch_context::calculate_group_signature_remote(server_node* relayer, uref<relay>&& from, procedure&& message)
 		{
 			if (message.args.size() < 6)
 				return methods::returning::abort(relayer, *from, __func__, "invalid arguments");
 
 			bool requires_retry = false;
 			auto chainstate = storages::chainstate(__func__);
-			auto proposer = algorithm::pubkeyhash_t(message.args[0].as_string());
+			auto validator = algorithm::pubkeyhash_t(message.args[0].as_string());
 			auto block_number = message.args[1].as_uint64();
 			auto depository_withdrawal_hash = message.args[2].as_uint256();
 			if (chainstate.get_latest_block_number().or_else(1) < block_number)
 			{
 				requires_retry = true;
-				if (!proposer.equals(relayer->validator.wallet.public_key_hash))
+				if (!validator.equals(relayer->validator.wallet.public_key_hash))
 				{
-					relayer->multicall(*from, &calculate_mpc_signature_rpc, std::move(message.args));
-					return methods::returning::ok(*from, __func__, "mpc signature requested (no checkup forward)");
+					relayer->multicall(*from, &calculate_group_signature_remote, std::move(message.args));
+					return methods::returning::ok(*from, __func__, "group signature requested (no checkup forward)");
 				}
-			abort_mpc:
+			abort_group:
 				procedure response;
 				response.method = protocol::now().message.packet_magic;
 				response.args = serialize_procedure_response(relayer->validator.wallet.secret_key, { format::variable(depository_withdrawal_hash), format::variable(requires_retry) });
 				relayer->multicall(nullptr, std::move(response));
-				return methods::returning::ok(*from, __func__, "mpc signature computation error");
+				return methods::returning::ok(*from, __func__, "group signature computation error");
 			}
 
 			auto context = ledger::transaction_context();
 			auto depository_withdrawal = context.get_block_transaction<transactions::depository_withdrawal>(depository_withdrawal_hash);
 			if (!depository_withdrawal)
 			{
-				if (!proposer.equals(relayer->validator.wallet.public_key_hash))
+				if (!validator.equals(relayer->validator.wallet.public_key_hash))
 					return methods::returning::abort(relayer, *from, __func__, "invalid request");
-				goto abort_mpc;
+				goto abort_group;
 			}
 
 			auto prepared_message = format::stream(message.args[3].as_string());
@@ -2502,48 +2542,48 @@ namespace tangent
 			auto* depository_withdrawal_transaction = (transactions::depository_withdrawal*)*depository_withdrawal->transaction;
 			auto validation = transactions::depository_withdrawal::validate_prepared_transaction(&context, depository_withdrawal_transaction, prepared);
 			if (!validation)
-				return methods::returning::abort(relayer, *from, __func__, "mpc validation error");
+				return methods::returning::abort(relayer, *from, __func__, "group validation error");
 
-			if (!proposer.equals(relayer->validator.wallet.public_key_hash))
+			if (!validator.equals(relayer->validator.wallet.public_key_hash))
 			{
-				relayer->multicall(*from, &calculate_mpc_signature_rpc, std::move(message.args));
-				return methods::returning::ok(*from, __func__, "mpc signature requested");
+				relayer->multicall(*from, &calculate_group_signature_remote, std::move(message.args));
+				return methods::returning::ok(*from, __func__, "group signature requested");
 			}
 
 			auto dispatcher = dispatch_context(relayer);
 			auto* server = nss::server_node::get();
-			ordered_map<uint8_t, algorithm::composition::cpubsig_t> mpc_signature;
+			ordered_map<uint8_t, algorithm::composition::cpubsig_t> group_signature;
 			for (size_t i = 4; i < message.args.size(); i++)
 			{
 				auto input_index = message.args[i + 0].as_uint8();
-				mpc_signature[input_index] = algorithm::composition::cpubsig_t(message.args[i + 1].as_blob());
+				group_signature[input_index] = algorithm::composition::cpubsig_t(message.args[i + 1].as_blob());
 				if (input_index > prepared.inputs.size())
-					goto abort_mpc;
+					goto abort_group;
 
 				auto& input = prepared.inputs[input_index];
 				auto witness = context.get_witness_account_tagged(depository_withdrawal_transaction->asset, input.utxo.link.address, 0);
 				if (!witness)
-					goto abort_mpc;
+					goto abort_group;
 
-				auto account = context.get_depository_account(depository_withdrawal_transaction->asset, witness->proposer, witness->owner);
-				if (!account || account->mpc.find(relayer->validator.wallet.public_key_hash) == account->mpc.end())
-					goto abort_mpc;
+				auto account = context.get_depository_account(depository_withdrawal_transaction->asset, witness->manager, witness->owner);
+				if (!account || account->group.find(relayer->validator.wallet.public_key_hash) == account->group.end())
+					goto abort_group;
 
-				auto seed = dispatcher.calculate_or_get_mpc_seed(account->asset, account->proposer, account->owner);
-				if (!seed)
-					goto abort_mpc;
+				auto share = dispatcher.recover_group_share(account->asset, account->manager, account->owner);
+				if (!share)
+					goto abort_group;
 
 				algorithm::composition::keypair keypair;
-				if (!algorithm::composition::derive_keypair(input.alg, *seed, &keypair))
-					goto abort_mpc;
+				if (!algorithm::composition::derive_keypair(input.alg, *share, &keypair))
+					goto abort_group;
 
-				if (!algorithm::composition::accumulate_signature(input.alg, input.message.data(), input.message.size(), input.public_key, keypair.secret_key, mpc_signature[input_index].data))
-					goto abort_mpc;
+				if (!algorithm::composition::accumulate_signature(input.alg, input.message.data(), input.message.size(), input.public_key, keypair.secret_key, group_signature[input_index].data))
+					goto abort_group;
 			}
 
 			format::variables args = { format::variable(depository_withdrawal_hash), format::variable(requires_retry) };
-			args.reserve(args.size() + mpc_signature.size() * 2);
-			for (auto& [input_index, input_signature] : mpc_signature)
+			args.reserve(args.size() + group_signature.size() * 2);
+			for (auto& [input_index, input_signature] : group_signature)
 			{
 				args.push_back(format::variable(input_index));
 				args.push_back(format::variable(input_signature.optimized_view()));
@@ -2553,18 +2593,18 @@ namespace tangent
 			response.method = protocol::now().message.packet_magic;
 			response.args = serialize_procedure_response(relayer->validator.wallet.secret_key, std::move(args));
 			relayer->multicall(nullptr, std::move(response));
-			return methods::returning::ok(*from, __func__, "mpc signature proposed");
+			return methods::returning::ok(*from, __func__, "group signature proposed");
 		}
 
-		local_dispatch_context::local_dispatch_context(const vector<ledger::wallet>& new_proposers)
+		local_dispatch_context::local_dispatch_context(const vector<ledger::wallet>& new_validators)
 		{
-			for (auto& target : new_proposers)
-				proposers[algorithm::pubkeyhash_t(target.public_key_hash)] = target;
-			proposer = proposers.find(algorithm::pubkeyhash_t(new_proposers.front().public_key_hash));
+			for (auto& target : new_validators)
+				validators[algorithm::pubkeyhash_t(target.public_key_hash)] = target;
+			validator = validators.find(algorithm::pubkeyhash_t(new_validators.front().public_key_hash));
 		}
-		local_dispatch_context::local_dispatch_context(const local_dispatch_context& other) noexcept : ledger::dispatch_context(other), proposers(other.proposers)
+		local_dispatch_context::local_dispatch_context(const local_dispatch_context& other) noexcept : ledger::dispatch_context(other), validators(other.validators)
 		{
-			proposer = proposers.find(other.proposer->first);
+			validator = validators.find(other.validator->first);
 		}
 		local_dispatch_context& local_dispatch_context::operator=(const local_dispatch_context& other) noexcept
 		{
@@ -2574,24 +2614,24 @@ namespace tangent
 			auto& base_this = *(ledger::dispatch_context*)this;
 			auto& base_other = *(const ledger::dispatch_context*)&other;
 			base_this = base_other;
-			proposers = other.proposers;
-			proposer = proposers.find(other.proposer->first);
+			validators = other.validators;
+			validator = validators.find(other.validator->first);
 			return *this;
 		}
 		const ledger::wallet* local_dispatch_context::get_wallet() const
 		{
-			return &proposer->second;
+			return &validator->second;
 		}
-		void local_dispatch_context::set_running_proposer(const algorithm::pubkeyhash owner)
+		void local_dispatch_context::set_running_validator(const algorithm::pubkeyhash owner)
 		{
-			auto it = proposers.find(algorithm::pubkeyhash_t(owner));
-			if (it != proposers.end())
-				proposer = it;
+			auto it = validators.find(algorithm::pubkeyhash_t(owner));
+			if (it != validators.end())
+				validator = it;
 		}
-		expects_promise_rt<void> local_dispatch_context::calculate_mpc_public_key(const ledger::transaction_context* context, const algorithm::pubkeyhash_t& share, algorithm::composition::cpubkey_t& inout)
+		expects_promise_rt<void> local_dispatch_context::calculate_group_public_key(const ledger::transaction_context* context, const algorithm::pubkeyhash_t& validator, algorithm::composition::cpubkey_t& inout)
 		{
-			auto wallet = proposers.find(share);
-			if (wallet == proposers.end())
+			auto wallet = validators.find(validator);
+			if (wallet == validators.end())
 				return expects_promise_rt<void>(remote_exception("invalid operation"));
 
 			auto* depository_account = (transactions::depository_account*)context->transaction;
@@ -2599,12 +2639,12 @@ namespace tangent
 			if (!chain)
 				return expects_promise_rt<void>(remote_exception("invalid operation"));
 
-			auto seed = calculate_or_get_mpc_seed(depository_account->asset, depository_account->proposer, context->receipt.from);
-			if (!seed)
-				return expects_promise_rt<void>(remote_exception(std::move(seed.error().message())));
+			auto share = recover_group_share(depository_account->asset, depository_account->manager, context->receipt.from);
+			if (!share)
+				return expects_promise_rt<void>(remote_exception(std::move(share.error().message())));
 
 			algorithm::composition::keypair keypair;
-			auto status = algorithm::composition::derive_keypair(chain->composition, *seed, &keypair);
+			auto status = algorithm::composition::derive_keypair(chain->composition, *share, &keypair);
 			if (!status)
 				return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
 
@@ -2614,10 +2654,10 @@ namespace tangent
 
 			return expects_promise_rt<void>(expectation::met);
 		}
-		expects_promise_rt<void> local_dispatch_context::calculate_mpc_signature(const ledger::transaction_context* context, const algorithm::pubkeyhash_t& share, const mediator::prepared_transaction& prepared, ordered_map<uint8_t, algorithm::composition::cpubsig_t>& inout)
+		expects_promise_rt<void> local_dispatch_context::calculate_group_signature(const ledger::transaction_context* context, const algorithm::pubkeyhash_t& validator, const mediator::prepared_transaction& prepared, ordered_map<uint8_t, algorithm::composition::cpubsig_t>& inout)
 		{
-			auto wallet = proposers.find(share);
-			if (wallet == proposers.end())
+			auto wallet = validators.find(validator);
+			if (wallet == validators.end())
 				return expects_promise_rt<void>(remote_exception("invalid operation"));
 
 			auto* depository_withdrawal = (transactions::depository_withdrawal*)context->transaction;
@@ -2632,16 +2672,16 @@ namespace tangent
 				if (!witness)
 					return expects_promise_rt<void>(remote_exception(std::move(witness.error().message())));
 
-				auto account = context->get_depository_account(depository_withdrawal->asset, witness->proposer, witness->owner);
-				if (!account || account->mpc.find(share) == account->mpc.end())
+				auto account = context->get_depository_account(depository_withdrawal->asset, witness->manager, witness->owner);
+				if (!account || account->group.find(validator) == account->group.end())
 					continue;
 
-				auto seed = calculate_or_get_mpc_seed(account->asset, account->proposer, account->owner);
-				if (!seed)
-					return expects_promise_rt<void>(remote_exception(std::move(seed.error().message())));
+				auto share = recover_group_share(account->asset, account->manager, account->owner);
+				if (!share)
+					return expects_promise_rt<void>(remote_exception(std::move(share.error().message())));
 
 				algorithm::composition::keypair keypair;
-				auto status = algorithm::composition::derive_keypair(input.alg, *seed, &keypair);
+				auto status = algorithm::composition::derive_keypair(input.alg, *share, &keypair);
 				if (!status)
 					return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
 

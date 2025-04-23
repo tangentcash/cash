@@ -111,10 +111,14 @@ namespace tangent
 				services |= (uint32_t)node_services::interfaces;
 			if (value.services.has_synchronization)
 				services |= (uint32_t)node_services::synchronization;
-			if (value.services.has_proposer)
-				services |= (uint32_t)node_services::proposer;
-			if (value.services.has_publicity)
-				services |= (uint32_t)node_services::publicity;
+			if (value.services.has_production)
+				services |= (uint32_t)node_services::production;
+			if (value.services.has_participation)
+				services |= (uint32_t)node_services::participation;
+			if (value.services.has_attestation)
+				services |= (uint32_t)node_services::attestation;
+			if (value.services.has_querying)
+				services |= (uint32_t)node_services::querying;
 			if (value.services.has_streaming)
 				services |= (uint32_t)node_services::streaming;
 
@@ -338,10 +342,10 @@ namespace tangent
 				case ledger::transaction_level::delegation:
 				{
 					auto bandwidth = get_bandwidth_by_owner(owner, type);
-					if (!bandwidth->congested || bandwidth->sequence >= value.sequence)
+					if (!bandwidth->congested || bandwidth->nonce >= value.nonce)
 						break;
 					else if (!value.gas_price.is_positive())
-						return expects_lr<void>(layer_exception(stringify::text("wait for finalization of or replace previous delegation transaction (queue: %" PRIu64 ", sequence: %" PRIu64 ")", (uint64_t)bandwidth->count, bandwidth->sequence)));
+						return expects_lr<void>(layer_exception(stringify::text("wait for finalization of or replace previous delegation transaction (queue: %" PRIu64 ", nonce: %" PRIu64 ")", (uint64_t)bandwidth->count, bandwidth->nonce)));
 
 					preference = queue();
 					break;
@@ -349,10 +353,10 @@ namespace tangent
 				case ledger::transaction_level::consensus:
 				{
 					auto bandwidth = get_bandwidth_by_owner(owner, type);
-					if (!bandwidth->congested || bandwidth->sequence >= value.sequence)
+					if (!bandwidth->congested || bandwidth->nonce >= value.nonce)
 						break;
 					else if (!value.gas_price.is_positive())
-						return expects_lr<void>(layer_exception(stringify::text("wait for finalization of or replace previous consensus transaction (queue: %" PRIu64 ", sequence: %" PRIu64 ")", (uint64_t)bandwidth->count, bandwidth->sequence)));
+						return expects_lr<void>(layer_exception(stringify::text("wait for finalization of or replace previous consensus transaction (queue: %" PRIu64 ", nonce: %" PRIu64 ")", (uint64_t)bandwidth->count, bandwidth->nonce)));
 
 					preference = queue();
 					break;
@@ -415,7 +419,7 @@ namespace tangent
 			map.push_back(group > 0 ? var::set::binary(group_hash, sizeof(group_hash)) : var::set::null());
 			map.push_back(var::set::binary(owner, sizeof(owner)));
 			map.push_back(var::set::binary(asset, sizeof(asset)));
-			map.push_back(var::set::integer(value.sequence));
+			map.push_back(var::set::integer(value.nonce));
 			map.push_back(preference.is_nan() ? var::set::null() : var::set::integer(preference.to_uint64()));
 			map.push_back(var::set::integer((int64_t)type));
 			map.push_back(var::set::integer(time(nullptr)));
@@ -424,8 +428,8 @@ namespace tangent
 			map.push_back(var::set::binary(owner, sizeof(owner)));
 
 			auto cursor = emplace_query(label, __func__,
-				"INSERT OR REPLACE INTO transactions (hash, group_hash, owner, asset, sequence, preference, type, time, price, message) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
-				"WITH epochs AS (SELECT rowid, ROW_NUMBER() OVER (ORDER BY sequence) AS epoch FROM transactions WHERE owner = ?) UPDATE transactions SET epoch = epochs.epoch FROM epochs WHERE transactions.rowid = epochs.rowid", &map);
+				"INSERT OR REPLACE INTO transactions (hash, group_hash, owner, asset, nonce, preference, type, time, price, message) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
+				"WITH epochs AS (SELECT rowid, ROW_NUMBER() OVER (ORDER BY nonce) AS epoch FROM transactions WHERE owner = ?) UPDATE transactions SET epoch = epochs.epoch FROM epochs WHERE transactions.rowid = epochs.rowid", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(error_of(cursor)));
 
@@ -502,10 +506,10 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> mempoolstate::apply_mpc_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash proposer, const algorithm::pubkeyhash owner, const uint256_t& seed)
+		expects_lr<void> mempoolstate::apply_group_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash manager, const algorithm::pubkeyhash owner, const uint256_t& share)
 		{
-			uint8_t seed_data[32];
-			algorithm::encoding::decode_uint256(seed, seed_data);
+			uint8_t share_data[32];
+			algorithm::encoding::decode_uint256(share, share_data);
 
 			uint8_t asset_data[32];
 			algorithm::encoding::decode_uint256(asset, asset_data);
@@ -513,16 +517,16 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::binary(asset_data, sizeof(asset_data)));
 			map.push_back(var::set::binary(owner, sizeof(algorithm::pubkeyhash)));
-			map.push_back(var::set::binary(proposer, sizeof(algorithm::pubkeyhash)));
-			map.push_back(var::set::binary(seed_data, sizeof(seed_data)));
+			map.push_back(var::set::binary(manager, sizeof(algorithm::pubkeyhash)));
+			map.push_back(var::set::binary(share_data, sizeof(share_data)));
 
-			auto cursor = emplace_query(label, __func__, "INSERT OR REPLACE INTO mpc (asset, owner, proposer, hash) VALUES (?, ?, ?, ?);", &map);
+			auto cursor = emplace_query(label, __func__, "INSERT OR REPLACE INTO groups (asset, owner, manager, hash) VALUES (?, ?, ?, ?);", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(error_of(cursor)));
 
 			return expectation::met;
 		}
-		expects_lr<uint256_t> mempoolstate::get_or_apply_mpc_account_seed(const algorithm::asset_id& asset, const algorithm::pubkeyhash proposer, const algorithm::pubkeyhash owner, const uint256_t& entropy)
+		expects_lr<uint256_t> mempoolstate::get_or_apply_group_account_share(const algorithm::asset_id& asset, const algorithm::pubkeyhash manager, const algorithm::pubkeyhash owner, const uint256_t& entropy)
 		{
 			uint8_t asset_data[32];
 			algorithm::encoding::decode_uint256(asset, asset_data);
@@ -530,9 +534,9 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::binary(asset_data, sizeof(asset_data)));
 			map.push_back(var::set::binary(owner, sizeof(algorithm::pubkeyhash)));
-			map.push_back(var::set::binary(proposer, sizeof(algorithm::pubkeyhash)));
+			map.push_back(var::set::binary(manager, sizeof(algorithm::pubkeyhash)));
 
-			auto cursor = emplace_query(label, __func__, "SELECT hash FROM mpc WHERE asset = ? AND owner = ? AND proposer = ?", &map);
+			auto cursor = emplace_query(label, __func__, "SELECT hash FROM groups WHERE asset = ? AND owner = ? AND manager = ?", &map);
 			if (cursor && !cursor->error_or_empty())
 			{
 				auto seed_data = (*cursor)["hash"].get().get_blob();
@@ -545,27 +549,27 @@ namespace tangent
 			}
 			else
 			{
-				format::stream seed;
-				seed.write_integer(asset);
-				seed.write_string(algorithm::pubkeyhash_t(owner).optimized_view());
-				seed.write_string(algorithm::pubkeyhash_t(proposer).optimized_view());
-				seed.write_integer(entropy);
-				auto result = apply_mpc_account(asset, proposer, owner, seed.hash());
+				format::stream share;
+				share.write_integer(asset);
+				share.write_string(algorithm::pubkeyhash_t(owner).optimized_view());
+				share.write_string(algorithm::pubkeyhash_t(manager).optimized_view());
+				share.write_integer(entropy);
+				auto result = apply_group_account(asset, manager, owner, share.hash());
 				if (!result)
 					return result.error();
 
-				return seed.hash();
+				return share.hash();
 			}
 		}
-		expects_lr<vector<states::depository_account>> mempoolstate::get_mpc_accounts(const algorithm::pubkeyhash proposer, size_t offset, size_t count)
+		expects_lr<vector<states::depository_account>> mempoolstate::get_group_accounts(const algorithm::pubkeyhash manager, size_t offset, size_t count)
 		{
 			schema_list map;
-			if (proposer != nullptr)
-				map.push_back(var::set::binary(proposer, sizeof(algorithm::pubkeyhash)));
+			if (manager != nullptr)
+				map.push_back(var::set::binary(manager, sizeof(algorithm::pubkeyhash)));
 			map.push_back(var::set::integer(count));
 			map.push_back(var::set::integer(offset));
 
-			auto cursor = emplace_query(label, __func__, proposer != nullptr ? "SELECT asset, owner FROM mpc WHERE proposer = ? LIMIT ? OFFSET ?" : "SELECT asset, proposer, owner FROM mpc LIMIT ? OFFSET ?", &map);
+			auto cursor = emplace_query(label, __func__, manager != nullptr ? "SELECT asset, owner FROM groups WHERE manager = ? LIMIT ? OFFSET ?" : "SELECT asset, manager, owner FROM groups LIMIT ? OFFSET ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<states::depository_account>>(layer_exception(error_of(cursor)));
 
@@ -581,8 +585,8 @@ namespace tangent
 				algorithm::encoding::encode_uint256((uint8_t*)asset_data.data(), asset);
 
 				auto owner = algorithm::pubkeyhash_t(row["owner"].get().get_blob());
-				auto subproposer = algorithm::pubkeyhash_t(row["proposer"].get().get_blob());
-				auto account = context.get_depository_account(asset, proposer ? proposer : subproposer.data, owner.data);
+				auto submanager = algorithm::pubkeyhash_t(row["manager"].get().get_blob());
+				auto account = context.get_depository_account(asset, manager ? manager : submanager.data, owner.data);
 				if (account)
 					result.push_back(std::move(*account));
 			}
@@ -594,13 +598,13 @@ namespace tangent
 			map.push_back(var::set::binary(owner, sizeof(algorithm::pubkeyhash)));
 			map.push_back(var::set::integer((int64_t)type));
 
-			auto cursor = emplace_query(label, __func__, "SELECT COUNT(1) AS counter, max(sequence) AS sequence FROM transactions WHERE owner = ? AND type = ?", &map);
+			auto cursor = emplace_query(label, __func__, "SELECT COUNT(1) AS counter, max(nonce) AS nonce FROM transactions WHERE owner = ? AND type = ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<account_bandwidth>(layer_exception(error_of(cursor)));
 
 			account_bandwidth result;
 			result.count = cursor->empty() ? 0 : (size_t)(*cursor)["counter"].get().get_integer();
-			result.sequence = cursor->empty() ? 1 : (size_t)(*cursor)["sequence"].get().get_integer();
+			result.nonce = cursor->empty() ? 1 : (size_t)(*cursor)["nonce"].get().get_integer();
 			switch (type)
 			{
 				case tangent::ledger::transaction_level::functional:
@@ -635,29 +639,29 @@ namespace tangent
 
 			return !cursor->empty();
 		}
-		expects_lr<uint64_t> mempoolstate::get_lowest_transaction_sequence(const algorithm::pubkeyhash owner)
+		expects_lr<uint64_t> mempoolstate::get_lowest_transaction_nonce(const algorithm::pubkeyhash owner)
 		{
 			schema_list map;
 			map.push_back(var::set::binary(owner, sizeof(algorithm::pubkeyhash)));
 
-			auto cursor = emplace_query(label, __func__, "SELECT MIN(sequence) AS sequence FROM transactions WHERE owner = ?", &map);
+			auto cursor = emplace_query(label, __func__, "SELECT MIN(nonce) AS nonce FROM transactions WHERE owner = ?", &map);
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<uint64_t>(layer_exception(error_of(cursor)));
 
-			uint64_t sequence = (*cursor)["sequence"].get().get_integer();
-			return sequence;
+			uint64_t nonce = (*cursor)["nonce"].get().get_integer();
+			return nonce;
 		}
-		expects_lr<uint64_t> mempoolstate::get_highest_transaction_sequence(const algorithm::pubkeyhash owner)
+		expects_lr<uint64_t> mempoolstate::get_highest_transaction_nonce(const algorithm::pubkeyhash owner)
 		{
 			schema_list map;
 			map.push_back(var::set::binary(owner, sizeof(algorithm::pubkeyhash)));
 
-			auto cursor = emplace_query(label, __func__, "SELECT max(sequence) AS sequence FROM transactions WHERE owner = ?", &map);
+			auto cursor = emplace_query(label, __func__, "SELECT max(nonce) AS nonce FROM transactions WHERE owner = ?", &map);
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<uint64_t>(layer_exception(error_of(cursor)));
 
-			uint64_t sequence = (*cursor)["sequence"].get().get_integer();
-			return sequence;
+			uint64_t nonce = (*cursor)["nonce"].get().get_integer();
+			return nonce;
 		}
 		expects_lr<uptr<ledger::transaction>> mempoolstate::get_transaction_by_hash(const uint256_t& transaction_hash)
 		{
@@ -716,7 +720,7 @@ namespace tangent
 			map.push_back(var::set::integer(count));
 			map.push_back(var::set::integer(offset));
 
-			auto cursor = emplace_query(label, __func__, "SELECT message FROM transactions WHERE owner = ? ORDER BY sequence $? LIMIT ? OFFSET ?", &map);
+			auto cursor = emplace_query(label, __func__, "SELECT message FROM transactions WHERE owner = ? ORDER BY nonce $? LIMIT ? OFFSET ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<uptr<ledger::transaction>>>(layer_exception(error_of(cursor)));
 
@@ -836,22 +840,22 @@ namespace tangent
 					address BINARY NOT NULL,
 					PRIMARY KEY (address)
 				) WITHOUT ROWID;
-				CREATE TABLE IF NOT EXISTS mpc
+				CREATE TABLE IF NOT EXISTS groups
 				(
 					asset BINARY(32) NOT NULL,
 					owner BINARY(20) NOT NULL,
-					proposer BINARY(20) NOT NULL,
+					manager BINARY(20) NOT NULL,
 					hash BINARY(32) NOT NULL,
-					PRIMARY KEY (asset, owner, proposer)
+					PRIMARY KEY (asset, owner, manager)
 				) WITHOUT ROWID;
-				CREATE INDEX IF NOT EXISTS mpc_proposer ON mpc (proposer);
+				CREATE INDEX IF NOT EXISTS groups_manager ON groups (manager);
 				CREATE TABLE IF NOT EXISTS transactions
 				(
 					hash BINARY(32) NOT NULL,
 					group_hash BINARY(32) DEFAULT NULL,
 					owner BINARY(20) NOT NULL,
 					asset BINARY(32) NOT NULL,
-					sequence BIGINT NOT NULL,
+					nonce BIGINT NOT NULL,
 					epoch INTEGER DEFAULT 0,
 					preference INTEGER DEFAULT NULL,
 					type INTEGER NOT NULL,
@@ -861,7 +865,7 @@ namespace tangent
 					PRIMARY KEY (hash)
 				);
 				CREATE INDEX IF NOT EXISTS transactions_group_hash ON transactions (group_hash);
-				CREATE INDEX IF NOT EXISTS transactions_owner_sequence ON transactions (owner, sequence);
+				CREATE INDEX IF NOT EXISTS transactions_owner_nonce ON transactions (owner, nonce);
 				CREATE INDEX IF NOT EXISTS transactions_asset_preference ON transactions (asset ASC, preference DESC);
 				CREATE INDEX IF NOT EXISTS transactions_epoch_preference ON transactions (epoch ASC, preference DESC););
 

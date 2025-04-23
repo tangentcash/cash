@@ -1076,6 +1076,15 @@ namespace tangent
 		{
 			return hash256i((uint8_t*)data.data(), data.size());
 		}
+		uint64_t hashing::erd64(const uint256_t& entropy, uint64_t order)
+		{
+			const double lamda = 9.0;
+			const double exponent = std::exp(-lamda);
+			const double base = (double)(uint64_t)(entropy % std::numeric_limits<uint32_t>::max()) / (double)std::numeric_limits<uint32_t>::max();
+			const double factor = std::min(1.0, std::max(0.0, -std::log(1.0 - (1.0 - exponent) * base) / lamda));
+			const uint64_t index = (uint64_t)(factor * (double)order) % order;
+			return index;
+		}
 
 		asset_id asset::id_of_handle(const std::string_view& handle)
 		{
@@ -1883,6 +1892,9 @@ namespace tangent
 
 		uint256_t merkle_tree::path::calculate_root(uint256_t hash) const
 		{
+			if (single)
+				return hash;
+
 			size_t offset = index;
 			for (size_t i = 0; i < nodes.size(); i++)
 			{
@@ -1905,7 +1917,7 @@ namespace tangent
 		}
 		bool merkle_tree::path::empty()
 		{
-			return nodes.empty();
+			return nodes.empty() && !single;
 		}
 
 		merkle_tree::merkle_tree()
@@ -1962,6 +1974,7 @@ namespace tangent
 
 			size_t index = it - begin;
 			branch.index = index;
+			branch.single = (nodes.size() == 1);
 
 			for (size_t size = hashes, node = 0; size > 1; size = (size + 1) / 2)
 			{

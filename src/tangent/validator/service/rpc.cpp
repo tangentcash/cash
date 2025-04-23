@@ -12,13 +12,13 @@ namespace tangent
 	{
 		static expects_lr<string> as_index(const std::string_view& type, const format::variable& value1, const format::variable& value2)
 		{
-			if (type == states::account_sequence::as_instance_typename())
+			if (type == states::account_nonce::as_instance_typename())
 			{
 				algorithm::pubkeyhash owner;
 				if (!algorithm::signing::decode_address(value1.as_string(), owner))
 					return layer_exception("invalid address");
 
-				return states::account_sequence::as_instance_index(owner);
+				return states::account_nonce::as_instance_index(owner);
 			}
 
 			if (type == states::account_program::as_instance_typename())
@@ -52,24 +52,6 @@ namespace tangent
 		}
 		static expects_lr<string> as_column(const std::string_view& type, const format::variable& value)
 		{
-			if (type == states::account_work::as_instance_typename())
-			{
-				algorithm::pubkeyhash owner;
-				if (!algorithm::signing::decode_address(value.as_string(), owner))
-					return layer_exception("invalid address");
-
-				return states::account_work::as_instance_column(owner);
-			}
-
-			if (type == states::account_observer::as_instance_typename())
-			{
-				algorithm::pubkeyhash owner;
-				if (!algorithm::signing::decode_address(value.as_string(), owner))
-					return layer_exception("invalid address");
-
-				return states::account_observer::as_instance_column(owner);
-			}
-
 			if (type == states::account_balance::as_instance_typename())
 			{
 				algorithm::pubkeyhash owner;
@@ -77,6 +59,33 @@ namespace tangent
 					return layer_exception("invalid address");
 
 				return states::account_balance::as_instance_column(owner);
+			}
+
+			if (type == states::validator_production::as_instance_typename())
+			{
+				algorithm::pubkeyhash owner;
+				if (!algorithm::signing::decode_address(value.as_string(), owner))
+					return layer_exception("invalid address");
+
+				return states::validator_production::as_instance_column(owner);
+			}
+
+			if (type == states::validator_participation::as_instance_typename())
+			{
+				algorithm::pubkeyhash owner;
+				if (!algorithm::signing::decode_address(value.as_string(), owner))
+					return layer_exception("invalid address");
+
+				return states::validator_participation::as_instance_column(owner);
+			}
+
+			if (type == states::validator_attestation::as_instance_typename())
+			{
+				algorithm::pubkeyhash owner;
+				if (!algorithm::signing::decode_address(value.as_string(), owner))
+					return layer_exception("invalid address");
+
+				return states::validator_attestation::as_instance_column(owner);
 			}
 
 			if (type == states::depository_reward::as_instance_typename())
@@ -108,11 +117,11 @@ namespace tangent
 
 			if (type == states::depository_account::as_instance_typename())
 			{
-				algorithm::pubkeyhash proposer;
-				if (!algorithm::signing::decode_address(value.as_string(), proposer))
+				algorithm::pubkeyhash manager;
+				if (!algorithm::signing::decode_address(value.as_string(), manager))
 					return layer_exception("invalid address");
 
-				return states::depository_account::as_instance_column(proposer);
+				return states::depository_account::as_instance_column(manager);
 			}
 
 			if (type == states::witness_account::as_instance_typename())
@@ -128,14 +137,17 @@ namespace tangent
 		}
 		static expects_lr<string> as_row(const std::string_view& type, const format::variable& value)
 		{
-			if (type == states::account_work::as_instance_typename())
-				return states::account_work::as_instance_row();
-
-			if (type == states::account_observer::as_instance_typename())
-				return states::account_observer::as_instance_row(algorithm::asset::id_of_handle(value.as_string()));
-
 			if (type == states::account_balance::as_instance_typename())
 				return states::account_balance::as_instance_row(algorithm::asset::id_of_handle(value.as_string()));
+
+			if (type == states::validator_production::as_instance_typename())
+				return states::validator_production::as_instance_row();
+
+			if (type == states::validator_participation::as_instance_typename())
+				return states::validator_participation::as_instance_row(algorithm::asset::id_of_handle(value.as_string()));
+
+			if (type == states::validator_attestation::as_instance_typename())
+				return states::validator_attestation::as_instance_row(algorithm::asset::id_of_handle(value.as_string()));
 
 			if (type == states::depository_reward::as_instance_typename())
 				return states::depository_reward::as_instance_row(algorithm::asset::id_of_handle(value.as_string()));
@@ -324,27 +336,30 @@ namespace tangent
 			bind(0 | access_type::r, "chainstate", "getmultiformbystride", 2, 3, "string type, any row, uint64? offset", "multiform", "get multiform by type and stride", std::bind(&server_node::chainstate_get_multiform_by_row, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getmultiformbystridequery", 7, 7, "string type, any row, string weight_condition = '>' | '>=' | '=' | '<>' | '<=' | '<', int64 weight_value, int8 weight_order, uint64 offset, uint64 count", "multiform", "get filtered multiform by type stride", std::bind(&server_node::chainstate_get_multiforms_by_row, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getmultiformscountbystride", 4, 4, "string type, any row, string weight_condition = '>' | '>=' | '=' | '<>' | '<=' | '<', int64 weight_value", "uint64", "get filtered multiform count by type and stride", std::bind(&server_node::chainstate_get_multiforms_count_by_row, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getaccountsequence", 1, 1, "string address", "uint64", "get account sequence by address", std::bind(&server_node::chainstate_get_account_sequence, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getaccountwork", 1, 1, "string address", "multiform", "get account work by address", std::bind(&server_node::chainstate_get_account_work, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getbestaccountworkers", 3, 3, "uint64 commitment, uint64 offset, uint64 count", "multiform[]", "get best block proposers (zero commitment = offline proposers, non-zero commitment = online proposers threshold)", std::bind(&server_node::chainstate_get_best_account_workers, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getaccountobserver", 2, 2, "string asset, string address", "multiform", "get account observer by address and asset", std::bind(&server_node::chainstate_get_account_observer, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getaccountobservers", 3, 3, "string address, uint64 offset, uint64 count", "multiform[]", "get account observers by address", std::bind(&server_node::chainstate_get_account_observers, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getbestaccountobservers", 3, 3, "string asset, bool commitment, uint64 offset, uint64 count", "multiform[]", "get best account observers (zero commitment = offline observers, non-zero commitment = online observers threshold)", std::bind(&server_node::chainstate_get_best_account_observers, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getaccountnonce", 1, 1, "string address", "uint64", "get account nonce by address", std::bind(&server_node::chainstate_get_account_nonce, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getaccountprogram", 1, 1, "string address", "uniform", "get account program hashcode by address", std::bind(&server_node::chainstate_get_account_program, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getaccountstorage", 2, 2, "string address, string location", "uniform", "get account storage by address and location", std::bind(&server_node::chainstate_get_account_storage, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getaccountbalance", 2, 2, "string address, string asset", "multiform", "get account balance by address and asset", std::bind(&server_node::chainstate_get_account_balance, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getaccountbalances", 3, 3, "string address, uint64 offset, uint64 count", "multiform[]", "get account balances by address", std::bind(&server_node::chainstate_get_account_balances, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getvalidatorproduction", 1, 1, "string address", "multiform", "get validator production by address", std::bind(&server_node::chainstate_get_validator_production, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getbestvalidatorproducers", 3, 3, "uint64 commitment, uint64 offset, uint64 count", "multiform[]", "get best validator producers (zero commitment = offline, non-zero commitment = online threshold)", std::bind(&server_node::chainstate_get_best_validator_producers, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getvalidatorparticipation", 2, 2, "string asset, string address", "multiform", "get validator participation by address and asset", std::bind(&server_node::chainstate_get_validator_participation, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getvalidatorparticipations", 3, 3, "string address, uint64 offset, uint64 count", "multiform[]", "get validator participations by address", std::bind(&server_node::chainstate_get_validator_participations, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getbestvalidatorparticipation", 3, 3, "string asset, bool commitment, uint64 offset, uint64 count", "multiform[]", "get best validator participations (zero commitment = offline, non-zero commitment = online threshold)", std::bind(&server_node::chainstate_get_best_validator_participations, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getvalidatorattestation", 2, 2, "string asset, string address", "multiform", "get validator attestation by address and asset", std::bind(&server_node::chainstate_get_validator_attestation, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getvalidatorattestations", 3, 3, "string address, uint64 offset, uint64 count", "multiform[]", "get validator attestations by address", std::bind(&server_node::chainstate_get_validator_attestations, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getbestvalidatorattestation", 3, 3, "string asset, bool commitment, uint64 offset, uint64 count", "multiform[]", "get best validator attestations (zero commitment = offline, non-zero commitment = online threshold)", std::bind(&server_node::chainstate_get_best_validator_attestations, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getdepositoryreward", 2, 2, "string address, string asset", "multiform", "get depository reward by address and asset", std::bind(&server_node::chainstate_get_depository_reward, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getdepositoryrewards", 3, 3, "string address, uint64 offset, uint64 count", "multiform[]", "get depository rewards by address", std::bind(&server_node::chainstate_get_depository_rewards, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getbestdepositoryrewards", 3, 3, "string asset, uint64 offset, uint64 count", "multiform[]", "get accounts with best rewards", std::bind(&server_node::chainstate_get_best_depository_rewards, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getbestdepositoryrewardsforselection", 3, 3, "string asset, uint64 offset, uint64 count", "{ depository: multiform?, reward: multiform }[]", "get accounts with best rewards with additional proposer info", std::bind(&server_node::chainstate_get_best_depository_rewards_for_selection, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getbestdepositoryrewardsforselection", 3, 3, "string asset, uint64 offset, uint64 count", "{ depository: multiform?, reward: multiform }[]", "get accounts with best rewards with additional manager info", std::bind(&server_node::chainstate_get_best_depository_rewards_for_selection, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getdepositorypolicy", 2, 2, "string address, string asset", "uint64", "get depository policy by address and asset", std::bind(&server_node::chainstate_get_depository_policy, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getdepositoryaccount", 3, 3, "string asset, string proposer_address, string owner_address", "multiform", "get depository account by proposer and owner addresses and asset", std::bind(&server_node::chainstate_get_depository_account, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getdepositoryaccounts", 3, 3, "string proposer_address", "multiform[]", "get depository accounts by proposer", std::bind(&server_node::chainstate_get_depository_accounts, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getaccountbalance", 2, 2, "string address, string asset", "multiform", "get account balance by address and asset", std::bind(&server_node::chainstate_get_account_balance, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getaccountbalances", 3, 3, "string address, uint64 offset, uint64 count", "multiform[]", "get account balances by address", std::bind(&server_node::chainstate_get_account_balances, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getdepositoryaccount", 3, 3, "string asset, string manager_address, string owner_address", "multiform", "get depository account by manager and owner addresses and asset", std::bind(&server_node::chainstate_get_depository_account, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getdepositoryaccounts", 3, 3, "string manager_address", "multiform[]", "get depository accounts by manager", std::bind(&server_node::chainstate_get_depository_accounts, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getdepositorybalance", 2, 2, "string address, string asset", "multiform", "get depository balance by address and asset", std::bind(&server_node::chainstate_get_depository_balance, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getdepositorybalances", 3, 3, "string address, uint64 offset, uint64 count", "multiform[]", "get depository balances by address", std::bind(&server_node::chainstate_get_depository_balances, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getbestdepositorybalances", 3, 3, "string asset, uint64 offset, uint64 count", "multiform[]", "get accounts with best depository", std::bind(&server_node::chainstate_get_best_depository_balances, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getbestdepositorybalancesforselection", 3, 3, "string asset, uint64 offset, uint64 count", "{ depository: multiform, reward: multiform? }[]", "get accounts with best depository with additional proposer info", std::bind(&server_node::chainstate_get_best_depository_balances_for_selection, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getbestdepositorybalancesforselection", 3, 3, "string asset, uint64 offset, uint64 count", "{ depository: multiform, reward: multiform? }[]", "get accounts with best depository with additional manager info", std::bind(&server_node::chainstate_get_best_depository_balances_for_selection, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getwitnessprogram", 1, 1, "string hashcode", "uniform", "get witness program by hashcode (512bit number)", std::bind(&server_node::chainstate_get_witness_program, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getwitnessevent", 1, 1, "uint256 transaction_hash", "uniform", "get witness event by transaction hash", std::bind(&server_node::chainstate_get_witness_event, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getwitnessaccount", 3, 3, "string address, string asset, string wallet_address", "multiform", "get witness address by owner address, asset, wallet address", std::bind(&server_node::chainstate_get_witness_account, this, std::placeholders::_1, std::placeholders::_2));
@@ -354,14 +369,14 @@ namespace tangent
 			bind(0 | access_type::r, "mempoolstate", "getclosestnode", 0, 1, "uint64? offset", "validator", "get closest node info", std::bind(&server_node::mempoolstate_get_closest_node, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getclosestnodecount", 0, 0, "", "uint64", "get closest node count", std::bind(&server_node::mempoolstate_get_closest_node_counter, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getnode", 1, 1, "string uri_address", "validator", "get associated node info by ip address", std::bind(&server_node::mempoolstate_get_node, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "mempoolstate", "getaddresses", 2, 3, "uint64 offset, uint64 count, string? services = 'consensus' | 'discovery' | 'synchronization' | 'interface' | 'proposer' | 'public' | 'streaming'", "string[]", "get best node ip addresses with optional comma separated list of services", std::bind(&server_node::mempoolstate_get_addresses, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "mempoolstate", "getaddresses", 2, 3, "uint64 offset, uint64 count, string? services = 'consensus' | 'discovery' | 'synchronization' | 'interface' | 'production' | 'participation' | 'attestation' | 'querying' | 'streaming'", "string[]", "get best node ip addresses with optional comma separated list of services", std::bind(&server_node::mempoolstate_get_addresses, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getgasprice", 1, 3, "string asset, double? percentile = 0.5, bool? mempool_only", "decimal", "get gas price from percentile of pending transactions", std::bind(&server_node::mempoolstate_get_gas_price, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getassetprice", 2, 3, "string asset_from, string asset_to, double? percentile = 0.5", "decimal", "get gas asset from percentile of pending transactions", std::bind(&server_node::mempoolstate_get_asset_price, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getoptimaltransactiongas", 1, 1, "string hex_message", "uint256", "execute transaction with block gas limit and return ceil of spent gas", std::bind(&server_node::mempoolstate_get_optimal_transaction_gas, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getestimatetransactiongas", 1, 1, "string hex_message", "uint256", "get rough estimate of required gas limit than could be considerably lower or higher than actual required gas limit", std::bind(&server_node::mempoolstate_get_estimate_transaction_gas, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getmempooltransactionbyhash", 1, 1, "uint256 hash", "txn", "get mempool transaction by hash", std::bind(&server_node::mempoolstate_get_transaction_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getrawmempooltransactionbyhash", 1, 1, "uint256 hash", "string", "get raw mempool transaction by hash", std::bind(&server_node::mempoolstate_get_raw_transaction_by_hash, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "mempoolstate", "getnextaccountsequence", 1, 1, "string owner_address", "{ min: uint64, max: uint64 }", "get account sequence for next transaction by owner", std::bind(&server_node::mempoolstate_get_next_account_sequence, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "mempoolstate", "getnextaccountnonce", 1, 1, "string owner_address", "{ min: uint64, max: uint64 }", "get account nonce for next transaction by owner", std::bind(&server_node::mempoolstate_get_next_account_nonce, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getmempooltransactions", 2, 3, "uint64 offset, uint64 count, uint8? unrolling", "uint256[] | txn[]", "get mempool transactions", std::bind(&server_node::mempoolstate_get_transactions, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getmempooltransactionsbyowner", 3, 5, "const string address, uint64 offset, uint64 count, uint8? direction = 1, uint8? unrolling", "uint256[] | txn[]", "get mempool transactions by signing address", std::bind(&server_node::mempoolstate_get_transactions_by_owner, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getmempoolattestationtransactions", 3, 4, "uint256 hash, uint64 offset, uint64 count, uint8? unrolling", "uint256[] | txn[]", "get mempool attestation transactions", std::bind(&server_node::mempoolstate_get_attestation_transactions, this, std::placeholders::_1, std::placeholders::_2));
@@ -374,17 +389,18 @@ namespace tangent
 			bind(access_type::w | access_type::a, "mempoolstate", "rejecttransaction", 1, 1, "uint256 hash", "void", "remove mempool transaction by hash", std::bind(&server_node::mempoolstate_reject_transaction, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "mempoolstate", "addnode", 1, 1, "string uri_address", "void", "add node ip address to trial addresses", std::bind(&server_node::mempoolstate_add_node, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "mempoolstate", "clearnode", 1, 1, "string uri_address", "void", "remove associated node info by ip address", std::bind(&server_node::mempoolstate_clear_node, this, std::placeholders::_1, std::placeholders::_2));
+			bind(access_type::r | access_type::a, "validatorstate", "getsigneraddress", 0, 0, "", "string", "get validator address", std::bind(&server_node::validatorstate_get_signer_address, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::r | access_type::a, "validatorstate", "verify", 2, 3, "uint64 number, uint64 count, bool? validate", "uint256[]", "verify chain and possibly re-execute each block", std::bind(&server_node::validatorstate_verify, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "validatorstate", "prune", 2, 2, "string types = 'statetrie' | 'blocktrie' | 'transactiontrie', uint64 number", "void", "prune chainstate data using pruning level (types is '|' separated list)", std::bind(&server_node::validatorstate_prune, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "validatorstate", "revert", 1, 2, "uint64 number, bool? keep_reverted_transactions", "{ new_tip_block_number: uint64, old_tip_block_number: uint64, mempool_transactions: uint64, block_delta: int64, transaction_delta: int64, state_delta: int64, is_fork: bool }", "revert chainstate to block number and possibly send removed transactions to mempool", std::bind(&server_node::validatorstate_revert, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "validatorstate", "reorganize", 0, 0, "", "{ new_tip_block_number: uint64, old_tip_block_number: uint64, mempool_transactions: uint64, block_delta: int64, transaction_delta: int64, state_delta: int64, is_fork: bool }", "reorganize current chain which re-executes every saved block from genesis to tip and re-calculates the final chain state (helpful for corrupted state recovery or pruning checkpoint size change without re-downloading full block history)", std::bind(&server_node::validatorstate_reorganize, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "validatorstate", "acceptnode", 0, 1, "string? uri_address", "void", "try to accept and connect to a node possibly by ip address", std::bind(&server_node::validatorstate_accept_node, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "validatorstate", "rejectnode", 1, 1, "string uri_address", "void", "reject and disconnect from a node by ip address", std::bind(&server_node::validatorstate_reject_node, this, std::placeholders::_1, std::placeholders::_2));
-			bind(access_type::w | access_type::a, "proposerstate", "submitblock", 0, 0, "", "void", "try to propose a block from mempool transactions", std::bind(&server_node::proposerstate_submit_block, this, std::placeholders::_1, std::placeholders::_2));
-			bind(access_type::w | access_type::a, "proposerstate", "submitcommitmenttransaction", 3, 4, "string asset, bool online, bool? proposer, string? observers", "uint256", "submit commitment transaction that enables/disables block proposer and/or blockchain observer(s) defined by a comma separated list of asset handles", std::bind(&server_node::proposerstate_submit_commitment_transaction, this, std::placeholders::_1, std::placeholders::_2));
-			bind(access_type::w | access_type::a, "proposerstate", "submitdepositoryadjustment", 8, 8, "string asset, decimal incoming_absolute_fee, decimal incoming_realtive_fee, decimal outgoing_absolute_fee, decimal outgoing_realtive_fee, uint8 committee_size, bool accept_account_requests, bool accept_withdrawal_requests", "uint256", "adjust depository fee policy", std::bind(&server_node::proposerstate_submit_depository_adjustment, this, std::placeholders::_1, std::placeholders::_2));
-			bind(access_type::w | access_type::a, "proposerstate", "submitdepositorympcmigration", 1, 2, "string asset, string? proposer_address", "uint256", "send mpc share to another proposer (possibly filtered by proposer address)", std::bind(&server_node::proposerstate_submit_depository_mpc_migration, this, std::placeholders::_1, std::placeholders::_2));
-			bind(access_type::w | access_type::a, "proposerstate", "submitdepositorycustodymigration", 2, 2, "string asset, string proposer_address", "uint256", "send custodial funds to another depository wallet", std::bind(&server_node::proposerstate_submit_depository_custody_migration, this, std::placeholders::_1, std::placeholders::_2));
+			bind(access_type::w | access_type::a, "validatorstate", "submitblock", 0, 0, "", "void", "try to propose a block from mempool transactions", std::bind(&server_node::validatorstate_submit_block, this, std::placeholders::_1, std::placeholders::_2));
+			bind(access_type::r | access_type::a, "validatorstate", "buildcertificationtransaction", 4, 4, "string asset, string block_production = 'enable' | 'standby' | 'disable', map<string, decimal | null> participation, map<string, decimal | null> attestation", "{ hash: uint256, data: string }", "built a transaction for validator adjustment that enables/disables block production, allocates/deallocates group participation(s) and attestation stakes (asset handle <-> stake value map)", std::bind(&server_node::validatorstate_build_certification_transaction, this, std::placeholders::_1, std::placeholders::_2));
+			bind(access_type::r | access_type::a, "validatorstate", "builddepositoryadjustmenttransaction", 6, 6, "string asset, decimal incoming_fee, decimal outgoing_fee, uint8 security_level, bool accept_account_requests, bool accept_withdrawal_requests", "{ hash: uint256, data: string }", "build a transaction for depository adjustment that sets rewards, security and functionality", std::bind(&server_node::validatorstate_build_depository_adjustment_transaction, this, std::placeholders::_1, std::placeholders::_2));
+			bind(access_type::r | access_type::a, "validatorstate", "builddepositoryregroupingtransaction", 1, 1, "string asset", "{ hash: uint256, data: string }", "build a transaction to send participations to another validator (for participation unstaking)", std::bind(&server_node::validatorstate_build_depository_regrouping_transaction, this, std::placeholders::_1, std::placeholders::_2));
+			bind(access_type::r | access_type::a, "validatorstate", "builddepositorywithdrawaltransaction", 2, 2, "string asset, string manager_address", "{ hash: uint256, data: string }", "build a transaction to send custody to another validator (for attestation unstaking)", std::bind(&server_node::validatorstate_build_depository_withdrawal_transaction, this, std::placeholders::_1, std::placeholders::_2));
 		}
 		void server_node::shutdown()
 		{
@@ -596,7 +612,7 @@ namespace tangent
 				{
 					case var_type::object:
 					case var_type::array:
-						args.push_back(format::variable(param));
+						args.push_back(format::variable(schema::to_json(param)));
 						break;
 					case var_type::string:
 					case var_type::binary:
@@ -624,7 +640,7 @@ namespace tangent
 					case var_type::undefined:
 					case var_type::pointer:
 					default:
-						args.push_back(format::variable((schema*)nullptr));
+						args.push_back(format::variable((uint8_t)0));
 						break;
 				}
 			}
@@ -1545,8 +1561,8 @@ namespace tangent
 			transaction.set_gas(decimal::zero(), ledger::block::get_gas_limit());
 
 			auto context = ledger::transaction_context();
-			auto sequence = context.get_account_sequence(from);
-			transaction.sequence = sequence ? sequence->sequence : 1;
+			auto nonce = context.get_account_nonce(from);
+			transaction.nonce = nonce ? nonce->nonce : 1;
 
 			auto script = ledger::script_program_trace(&transaction, from, tracing);
 			auto execution = script.trace_call(transaction.function, transaction.args, tracing ? -1 : 0);
@@ -1810,94 +1826,16 @@ namespace tangent
 
 			return server_response().success(algorithm::encoding::serialize_uint256(*count));
 		}
-		server_response server_node::chainstate_get_account_sequence(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_account_nonce(http::connection* base, format::variables&& args)
 		{
 			algorithm::pubkeyhash owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
 			auto chain = storages::chainstate(__func__);
-			auto state = chain.get_uniform_by_index(nullptr, states::account_sequence::as_instance_index(owner), 0);
-			auto* value = (states::account_sequence*)(state ? **state : nullptr);
-			return server_response().success(algorithm::encoding::serialize_uint256(value ? value->sequence : 1));
-		}
-		server_response server_node::chainstate_get_account_work(http::connection* base, format::variables&& args)
-		{
-			algorithm::pubkeyhash owner;
-			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
-				return server_response().error(error_codes::bad_params, "account address not valid");
-
-			auto chain = storages::chainstate(__func__);
-			auto state = chain.get_multiform_by_composition(nullptr, states::account_work::as_instance_column(owner), states::account_work::as_instance_row(), 0);
-			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
-		}
-		server_response server_node::chainstate_get_best_account_workers(http::connection* base, format::variables&& args)
-		{
-			uint64_t commitment = args[0].as_uint64();
-			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
-			if (!count || count > protocol::now().user.rpc.page_size)
-				return server_response().error(error_codes::bad_params, "count not valid");
-
-			auto filter = commitment > 0 ? storages::factor_filter::greater_equal(commitment - 1, -1) : storages::factor_filter::equal(-1, -1);
-			auto chain = storages::chainstate(__func__);
-			auto list = chain.get_multiforms_by_row_filter(nullptr, states::account_work::as_instance_row(), filter, 0, storages::factor_range_window(offset, count));
-			if (!list)
-				return server_response().error(error_codes::not_found, "data not found");
-
-			uptr<schema> data = var::set::array();
-			for (auto& item : *list)
-				data->push(item->as_schema().reset());
-			return server_response().success(std::move(data));
-		}
-		server_response server_node::chainstate_get_account_observer(http::connection* base, format::variables&& args)
-		{
-			algorithm::pubkeyhash owner;
-			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
-			if (!algorithm::signing::decode_address(args[1].as_string(), owner))
-				return server_response().error(error_codes::bad_params, "account address not valid");
-
-			auto chain = storages::chainstate(__func__);
-			auto state = chain.get_multiform_by_composition(nullptr, states::account_observer::as_instance_column(owner), states::account_observer::as_instance_row(asset), 0);
-			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
-		}
-		server_response server_node::chainstate_get_account_observers(http::connection* base, format::variables&& args)
-		{
-			algorithm::pubkeyhash owner;
-			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
-				return server_response().error(error_codes::bad_params, "account address not valid");
-
-			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
-			if (!count || count > protocol::now().user.rpc.page_size)
-				return server_response().error(error_codes::bad_params, "count not valid");
-
-			auto chain = storages::chainstate(__func__);
-			auto list = chain.get_multiforms_by_column(nullptr, states::account_observer::as_instance_column(owner), 0, offset, count);
-			if (!list)
-				return server_response().error(error_codes::not_found, "data not found");
-
-			uptr<schema> data = var::set::array();
-			for (auto& item : *list)
-				data->push(item->as_schema().reset());
-			return server_response().success(std::move(data));
-		}
-		server_response server_node::chainstate_get_best_account_observers(http::connection* base, format::variables&& args)
-		{
-			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
-			bool commitment = args[1].as_boolean();
-			uint64_t offset = args[2].as_uint64(), count = args[3].as_uint64();
-			if (!count || count > protocol::now().user.rpc.page_size)
-				return server_response().error(error_codes::bad_params, "count not valid");
-
-			auto filter = storages::factor_filter::equal(commitment ? 1 : -1, -1);
-			auto chain = storages::chainstate(__func__);
-			auto list = chain.get_multiforms_by_row_filter(nullptr, states::account_observer::as_instance_row(asset), filter, 0, storages::factor_range_window(offset, count));
-			if (!list)
-				return server_response().error(error_codes::not_found, "data not found");
-
-			uptr<schema> data = var::set::array();
-			for (auto& item : *list)
-				data->push(item->as_schema().reset());
-			return server_response().success(std::move(data));
+			auto state = chain.get_uniform_by_index(nullptr, states::account_nonce::as_instance_index(owner), 0);
+			auto* value = (states::account_nonce*)(state ? **state : nullptr);
+			return server_response().success(algorithm::encoding::serialize_uint256(value ? value->nonce : 1));
 		}
 		server_response server_node::chainstate_get_account_program(http::connection* base, format::variables&& args)
 		{
@@ -1918,6 +1856,165 @@ namespace tangent
 			auto chain = storages::chainstate(__func__);
 			auto state = chain.get_uniform_by_index(nullptr, states::account_storage::as_instance_index(owner, args[1].as_string()), 0);
 			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
+		}
+		server_response server_node::chainstate_get_account_balance(http::connection* base, format::variables&& args)
+		{
+			algorithm::pubkeyhash owner;
+			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
+				return server_response().error(error_codes::bad_params, "account address not valid");
+
+			auto chain = storages::chainstate(__func__);
+			auto asset = algorithm::asset::id_of_handle(args[1].as_string());
+			auto state = chain.get_multiform_by_composition(nullptr, states::account_balance::as_instance_column(owner), states::account_balance::as_instance_row(asset), 0);
+			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
+		}
+		server_response server_node::chainstate_get_account_balances(http::connection* base, format::variables&& args)
+		{
+			algorithm::pubkeyhash owner;
+			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
+				return server_response().error(error_codes::bad_params, "account address not valid");
+
+			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
+			if (!count || count > protocol::now().user.rpc.page_size)
+				return server_response().error(error_codes::bad_params, "count not valid");
+
+			auto chain = storages::chainstate(__func__);
+			auto list = chain.get_multiforms_by_column(nullptr, states::account_balance::as_instance_column(owner), 0, offset, count);
+			if (!list)
+				return server_response().error(error_codes::not_found, "data not found");
+
+			uptr<schema> data = var::set::array();
+			for (auto& item : *list)
+				data->push(item->as_schema().reset());
+			return server_response().success(std::move(data));
+		}
+		server_response server_node::chainstate_get_validator_production(http::connection* base, format::variables&& args)
+		{
+			algorithm::pubkeyhash owner;
+			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
+				return server_response().error(error_codes::bad_params, "account address not valid");
+
+			auto chain = storages::chainstate(__func__);
+			auto state = chain.get_multiform_by_composition(nullptr, states::validator_production::as_instance_column(owner), states::validator_production::as_instance_row(), 0);
+			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
+		}
+		server_response server_node::chainstate_get_best_validator_producers(http::connection* base, format::variables&& args)
+		{
+			uint64_t commitment = args[0].as_uint64();
+			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
+			if (!count || count > protocol::now().user.rpc.page_size)
+				return server_response().error(error_codes::bad_params, "count not valid");
+
+			auto filter = commitment > 0 ? storages::factor_filter::greater_equal(commitment - 1, -1) : storages::factor_filter::equal(-1, -1);
+			auto chain = storages::chainstate(__func__);
+			auto list = chain.get_multiforms_by_row_filter(nullptr, states::validator_production::as_instance_row(), filter, 0, storages::factor_range_window(offset, count));
+			if (!list)
+				return server_response().error(error_codes::not_found, "data not found");
+
+			uptr<schema> data = var::set::array();
+			for (auto& item : *list)
+				data->push(item->as_schema().reset());
+			return server_response().success(std::move(data));
+		}
+		server_response server_node::chainstate_get_validator_participation(http::connection* base, format::variables&& args)
+		{
+			algorithm::pubkeyhash owner;
+			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
+			if (!algorithm::signing::decode_address(args[1].as_string(), owner))
+				return server_response().error(error_codes::bad_params, "account address not valid");
+
+			auto chain = storages::chainstate(__func__);
+			auto state = chain.get_multiform_by_composition(nullptr, states::validator_participation::as_instance_column(owner), states::validator_participation::as_instance_row(asset), 0);
+			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
+		}
+		server_response server_node::chainstate_get_validator_participations(http::connection* base, format::variables&& args)
+		{
+			algorithm::pubkeyhash owner;
+			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
+				return server_response().error(error_codes::bad_params, "account address not valid");
+
+			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
+			if (!count || count > protocol::now().user.rpc.page_size)
+				return server_response().error(error_codes::bad_params, "count not valid");
+
+			auto chain = storages::chainstate(__func__);
+			auto list = chain.get_multiforms_by_column(nullptr, states::validator_participation::as_instance_column(owner), 0, offset, count);
+			if (!list)
+				return server_response().error(error_codes::not_found, "data not found");
+
+			uptr<schema> data = var::set::array();
+			for (auto& item : *list)
+				data->push(item->as_schema().reset());
+			return server_response().success(std::move(data));
+		}
+		server_response server_node::chainstate_get_best_validator_participations(http::connection* base, format::variables&& args)
+		{
+			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
+			bool commitment = args[1].as_boolean();
+			uint64_t offset = args[2].as_uint64(), count = args[3].as_uint64();
+			if (!count || count > protocol::now().user.rpc.page_size)
+				return server_response().error(error_codes::bad_params, "count not valid");
+
+			auto filter = storages::factor_filter::equal(commitment ? 0 : -1, -1);
+			auto chain = storages::chainstate(__func__);
+			auto list = chain.get_multiforms_by_row_filter(nullptr, states::validator_participation::as_instance_row(asset), filter, 0, storages::factor_range_window(offset, count));
+			if (!list)
+				return server_response().error(error_codes::not_found, "data not found");
+
+			uptr<schema> data = var::set::array();
+			for (auto& item : *list)
+				data->push(item->as_schema().reset());
+			return server_response().success(std::move(data));
+		}
+		server_response server_node::chainstate_get_validator_attestation(http::connection* base, format::variables&& args)
+		{
+			algorithm::pubkeyhash owner;
+			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
+			if (!algorithm::signing::decode_address(args[1].as_string(), owner))
+				return server_response().error(error_codes::bad_params, "account address not valid");
+
+			auto chain = storages::chainstate(__func__);
+			auto state = chain.get_multiform_by_composition(nullptr, states::validator_attestation::as_instance_column(owner), states::validator_attestation::as_instance_row(asset), 0);
+			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
+		}
+		server_response server_node::chainstate_get_validator_attestations(http::connection* base, format::variables&& args)
+		{
+			algorithm::pubkeyhash owner;
+			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
+				return server_response().error(error_codes::bad_params, "account address not valid");
+
+			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
+			if (!count || count > protocol::now().user.rpc.page_size)
+				return server_response().error(error_codes::bad_params, "count not valid");
+
+			auto chain = storages::chainstate(__func__);
+			auto list = chain.get_multiforms_by_column(nullptr, states::validator_attestation::as_instance_column(owner), 0, offset, count);
+			if (!list)
+				return server_response().error(error_codes::not_found, "data not found");
+
+			uptr<schema> data = var::set::array();
+			for (auto& item : *list)
+				data->push(item->as_schema().reset());
+			return server_response().success(std::move(data));
+		}
+		server_response server_node::chainstate_get_best_validator_attestations(http::connection* base, format::variables&& args)
+		{
+			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
+			bool commitment = args[1].as_boolean();
+			uint64_t offset = args[2].as_uint64(), count = args[3].as_uint64();
+			if (!count || count > protocol::now().user.rpc.page_size)
+				return server_response().error(error_codes::bad_params, "count not valid");
+
+			auto filter = storages::factor_filter::equal(commitment ? 0 : -1, -1);
+			auto chain = storages::chainstate(__func__);
+			auto list = chain.get_multiforms_by_row_filter(nullptr, states::validator_attestation::as_instance_row(asset), filter, 0, storages::factor_range_window(offset, count));
+			if (!list)
+				return server_response().error(error_codes::not_found, "data not found");
+
+			uptr<schema> data = var::set::array();
+			for (auto& item : *list)
+				data->push(item->as_schema().reset());
+			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_depository_reward(http::connection* base, format::variables&& args)
 		{
@@ -1981,18 +2078,18 @@ namespace tangent
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
-			auto work_stride = states::account_work::as_instance_row();
+			auto attestation_stride = states::validator_attestation::as_instance_row(asset);
 			auto policy_stride = states::depository_policy::as_instance_row(asset);
 			auto balance_stride = states::depository_balance::as_instance_row(asset);
 			uptr<schema> data = var::set::array();
 			for (auto& item : *list)
 			{
 				auto* reward_state = (states::depository_reward*)*item;
-				auto work_state = chain.get_multiform_by_composition(nullptr, states::account_work::as_instance_column(reward_state->owner), work_stride, 0);
+				auto attestation_state = chain.get_multiform_by_composition(nullptr, states::validator_attestation::as_instance_column(reward_state->owner), attestation_stride, 0);
 				auto policy_state = chain.get_multiform_by_composition(nullptr, states::depository_policy::as_instance_column(reward_state->owner), policy_stride, 0);
 				auto balance_state = chain.get_multiform_by_composition(nullptr, states::depository_balance::as_instance_column(reward_state->owner), balance_stride, 0);
 				auto* next = data->push(var::set::object());
-				next->set("work", work_state ? (*work_state)->as_schema().reset() : var::set::null());
+				next->set("attestation", attestation_state ? (*attestation_state)->as_schema().reset() : var::set::null());
 				next->set("balance", balance_state ? (*balance_state)->as_schema().reset() : var::set::null());
 				next->set("policy", policy_state ? (*policy_state)->as_schema().reset() : var::set::null());
 				next->set("reward", reward_state->as_schema().reset());
@@ -2040,37 +2137,6 @@ namespace tangent
 			auto filter = storages::factor_filter::greater_equal(0, -1);
 			auto chain = storages::chainstate(__func__);
 			auto list = chain.get_multiforms_by_column_filter(nullptr, states::depository_account::as_instance_column(proposer), filter, 0, storages::factor_range_window(offset, count));
-			if (!list)
-				return server_response().error(error_codes::not_found, "data not found");
-
-			uptr<schema> data = var::set::array();
-			for (auto& item : *list)
-				data->push(item->as_schema().reset());
-			return server_response().success(std::move(data));
-		}
-		server_response server_node::chainstate_get_account_balance(http::connection* base, format::variables&& args)
-		{
-			algorithm::pubkeyhash owner;
-			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
-				return server_response().error(error_codes::bad_params, "account address not valid");
-
-			auto chain = storages::chainstate(__func__);
-			auto asset = algorithm::asset::id_of_handle(args[1].as_string());
-			auto state = chain.get_multiform_by_composition(nullptr, states::account_balance::as_instance_column(owner), states::account_balance::as_instance_row(asset), 0);
-			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
-		}
-		server_response server_node::chainstate_get_account_balances(http::connection* base, format::variables&& args)
-		{
-			algorithm::pubkeyhash owner;
-			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
-				return server_response().error(error_codes::bad_params, "account address not valid");
-
-			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
-			if (!count || count > protocol::now().user.rpc.page_size)
-				return server_response().error(error_codes::bad_params, "count not valid");
-
-			auto chain = storages::chainstate(__func__);
-			auto list = chain.get_multiforms_by_column(nullptr, states::account_balance::as_instance_column(owner), 0, offset, count);
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
@@ -2141,18 +2207,18 @@ namespace tangent
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
-			auto work_stride = states::account_work::as_instance_row();
+			auto attestation_stride = states::validator_attestation::as_instance_row(asset);
 			auto policy_stride = states::depository_policy::as_instance_row(asset);
 			auto reward_stride = states::depository_reward::as_instance_row(asset);
 			uptr<schema> data = var::set::array();
 			for (auto& item : *list)
 			{
 				auto* balance_state = (states::depository_balance*)*item;
-				auto work_state = chain.get_multiform_by_composition(nullptr, states::account_work::as_instance_column(balance_state->owner), work_stride, 0);
+				auto attestation_state = chain.get_multiform_by_composition(nullptr, states::validator_attestation::as_instance_column(balance_state->owner), attestation_stride, 0);
 				auto policy_state = chain.get_multiform_by_composition(nullptr, states::depository_policy::as_instance_column(balance_state->owner), policy_stride, 0);
 				auto reward_state = chain.get_multiform_by_composition(nullptr, states::depository_reward::as_instance_column(balance_state->owner), reward_stride, 0);
 				auto* next = data->push(var::set::object());
-				next->set("work", work_state ? (*work_state)->as_schema().reset() : var::set::null());
+				next->set("attestation", attestation_state ? (*attestation_state)->as_schema().reset() : var::set::null());
 				next->set("balance", balance_state->as_schema().reset());
 				next->set("policy", policy_state ? (*policy_state)->as_schema().reset() : var::set::null());
 				next->set("reward", reward_state ? (*reward_state)->as_schema().reset() : var::set::null());
@@ -2325,10 +2391,14 @@ namespace tangent
 						services |= (uint32_t)storages::node_services::synchronization;
 					else if (service == "interface")
 						services |= (uint32_t)storages::node_services::interfaces;
-					else if (service == "proposer")
-						services |= (uint32_t)storages::node_services::proposer;
-					else if (service == "public")
-						services |= (uint32_t)storages::node_services::publicity;
+					else if (service == "production")
+						services |= (uint32_t)storages::node_services::production;
+					else if (service == "participation")
+						services |= (uint32_t)storages::node_services::participation;
+					else if (service == "attestation")
+						services |= (uint32_t)storages::node_services::attestation;
+					else if (service == "querying")
+						services |= (uint32_t)storages::node_services::querying;
 					else if (service == "streaming")
 						services |= (uint32_t)storages::node_services::streaming;
 				}
@@ -2449,7 +2519,7 @@ namespace tangent
 
 			return server_response().success(var::set::string((*transaction)->as_message().encode()));
 		}
-		server_response server_node::mempoolstate_get_next_account_sequence(http::connection* base, format::variables&& args)
+		server_response server_node::mempoolstate_get_next_account_nonce(http::connection* base, format::variables&& args)
 		{
 			algorithm::pubkeyhash owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -2457,16 +2527,16 @@ namespace tangent
 
 			auto mempool = storages::mempoolstate(__func__);
 			auto chain = storages::chainstate(__func__);
-			auto state = chain.get_uniform_by_index(nullptr, states::account_sequence::as_instance_index(owner), 0);
-			auto* value = (states::account_sequence*)(state ? **state : nullptr);
-			auto lowest = mempool.get_lowest_transaction_sequence(owner);
-			auto highest = mempool.get_highest_transaction_sequence(owner);
+			auto state = chain.get_uniform_by_index(nullptr, states::account_nonce::as_instance_index(owner), 0);
+			auto* value = (states::account_nonce*)(state ? **state : nullptr);
+			auto lowest = mempool.get_lowest_transaction_nonce(owner);
+			auto highest = mempool.get_highest_transaction_nonce(owner);
 			if (!lowest)
-				lowest = value ? value->sequence : 0;
+				lowest = value ? value->nonce : 0;
 			if (!highest)
-				highest = value ? value->sequence : 0;
-			else if (value != nullptr && *highest < value->sequence)
-				highest = value->sequence;
+				highest = value ? value->nonce : 0;
+			else if (value != nullptr && *highest < value->nonce)
+				highest = value->nonce;
 			else
 				highest = *highest + 0;
 
@@ -2588,7 +2658,7 @@ namespace tangent
 
 			auto context = ledger::transaction_context();
 			auto* aggregation = (ledger::attestation_transaction*)*transaction;
-			auto branch = aggregation->get_best_branch(&context);
+			auto branch = aggregation->get_best_branch(&context, nullptr);
 			if (!branch)
 				return server_response().error(error_codes::not_found, "transaction consensus is not computable");
 
@@ -2811,6 +2881,13 @@ namespace tangent
 			}
 			return server_response().success(std::move(data));
 		}
+		server_response server_node::validatorstate_get_signer_address(http::connection* base, format::variables&& args)
+		{
+			if (!validator)
+				return server_response().error(error_codes::bad_request, "validator node disabled");
+
+			return server_response().success(algorithm::signing::serialize_address(validator->validator.wallet.public_key_hash));
+		}
 		server_response server_node::validatorstate_status(http::connection* base, format::variables&& args)
 		{
 			if (!validator)
@@ -2822,49 +2899,46 @@ namespace tangent
 			uptr<schema> data = var::set::object();
 			if (protocol::now().user.p2p.server)
 			{
-				auto* P2P = data->set("p2p", var::set::object());
-				P2P->set("port", var::integer(protocol::now().user.p2p.port));
-				P2P->set("time_offset", var::integer(protocol::now().user.p2p.time_offset));
-				P2P->set("cursor_size", var::integer(protocol::now().user.p2p.cursor_size));
-				P2P->set("max_inbound_connection", var::integer(protocol::now().user.p2p.max_inbound_connections));
-				P2P->set("max_outbound_connection", var::integer(protocol::now().user.p2p.max_outbound_connections));
-				P2P->set("proposer", var::boolean(protocol::now().user.p2p.proposer));
+				auto* p2p = data->set("p2p", var::set::object());
+				p2p->set("port", var::integer(protocol::now().user.p2p.port));
+				p2p->set("time_offset", var::integer(protocol::now().user.p2p.time_offset));
+				p2p->set("cursor_size", var::integer(protocol::now().user.p2p.cursor_size));
+				p2p->set("max_inbound_connection", var::integer(protocol::now().user.p2p.max_inbound_connections));
+				p2p->set("max_outbound_connection", var::integer(protocol::now().user.p2p.max_outbound_connections));
 			}
 
 			if (protocol::now().user.rpc.server)
 			{
-				auto* RPC = data->set("rpc", var::set::object());
-				RPC->set("port", var::integer(protocol::now().user.rpc.port));
-				RPC->set("admin_restriction", var::boolean(!protocol::now().user.rpc.admin_username.empty()));
-				RPC->set("user_restriction", var::boolean(!protocol::now().user.rpc.user_username.empty()));
-				RPC->set("cursor_size", var::integer(protocol::now().user.rpc.cursor_size));
-				RPC->set("page_size", var::integer(protocol::now().user.rpc.page_size));
-				RPC->set("websockets", var::boolean(protocol::now().user.rpc.web_sockets));
-				if (protocol::now().user.rpc.messaging && validator != nullptr)
-					RPC->set("public_key", var::string(validator->validator.wallet.get_public_key()));
+				auto* rpc = data->set("rpc", var::set::object());
+				rpc->set("port", var::integer(protocol::now().user.rpc.port));
+				rpc->set("admin_restriction", var::boolean(!protocol::now().user.rpc.admin_username.empty()));
+				rpc->set("user_restriction", var::boolean(!protocol::now().user.rpc.user_username.empty()));
+				rpc->set("cursor_size", var::integer(protocol::now().user.rpc.cursor_size));
+				rpc->set("page_size", var::integer(protocol::now().user.rpc.page_size));
+				rpc->set("websockets", var::boolean(protocol::now().user.rpc.web_sockets));
 			}
 
 			if (protocol::now().user.nds.server)
 			{
-				auto* NDS = data->set("nds", var::set::object());
-				NDS->set("port", var::integer(protocol::now().user.nds.port));
-				NDS->set("cursor_size", var::integer(protocol::now().user.nds.cursor_size));
+				auto* nds = data->set("nds", var::set::object());
+				nds->set("port", var::integer(protocol::now().user.nds.port));
+				nds->set("cursor_size", var::integer(protocol::now().user.nds.cursor_size));
 			}
 
 			if (protocol::now().user.nss.server)
 			{
-				auto* NSS = data->set("nss", var::set::object());
-				NSS->set("block_relay_multiplier", var::integer(protocol::now().user.nss.block_replay_multiplier));
-				NSS->set("relaying_timeout", var::integer(protocol::now().user.nss.relaying_timeout));
-				NSS->set("relaying_retry_timeout", var::integer(protocol::now().user.nss.relaying_retry_timeout));
-				NSS->set("fee_estimation_seconds", var::integer(protocol::now().user.nss.fee_estimation_seconds));
-				auto array = NSS->set("nodes", var::set::array());
+				auto* nss = data->set("nss", var::set::object());
+				nss->set("block_relay_multiplier", var::integer(protocol::now().user.nss.block_replay_multiplier));
+				nss->set("relaying_timeout", var::integer(protocol::now().user.nss.relaying_timeout));
+				nss->set("relaying_retry_timeout", var::integer(protocol::now().user.nss.relaying_retry_timeout));
+				nss->set("fee_estimation_seconds", var::integer(protocol::now().user.nss.fee_estimation_seconds));
+				auto array = nss->set("nodes", var::set::array());
 				for (auto& asset : nss::server_node::get()->get_assets())
 					array->push(algorithm::asset::serialize(asset));
 			}
 
-			auto* TCP = data->set("tcp", var::set::object());
-			TCP->set("timeout", var::integer(protocol::now().user.tcp.timeout));
+			auto* tcp = data->set("tcp", var::set::object());
+			tcp->set("timeout", var::integer(protocol::now().user.tcp.timeout));
 
 			auto* storage = data->set("storage", var::set::object());
 			storage->set("checkpoint_size", var::integer(protocol::now().user.storage.checkpoint_size));
@@ -2921,7 +2995,7 @@ namespace tangent
 					data->set("network", var::set::string("regtest"));
 					break;
 				default:
-					data->set("network", var::set::string("unspecified"));
+					data->set("network", var::set::null());
 					break;
 			}
 
@@ -2929,7 +3003,7 @@ namespace tangent
 			data->set("checkpoint", algorithm::encoding::serialize_uint256(chain.get_checkpoint_block_number().or_else(0)));
 			return server_response().success(data.reset());
 		}
-		server_response server_node::proposerstate_submit_block(http::connection* base, format::variables&& args)
+		server_response server_node::validatorstate_submit_block(http::connection* base, format::variables&& args)
 		{
 			if (!validator)
 				return server_response().error(error_codes::bad_request, "validator node disabled");
@@ -2937,143 +3011,165 @@ namespace tangent
 			validator->accept_mempool();
 			return server_response().success(var::set::null());
 		}
-		server_response server_node::proposerstate_submit_commitment_transaction(http::connection* base, format::variables&& args)
+		server_response server_node::validatorstate_build_certification_transaction(http::connection* base, format::variables&& args)
 		{
 			if (!validator)
 				return server_response().error(error_codes::bad_request, "validator node disabled");
 
-			bool online = args[1].as_boolean();
-			auto context = ledger::transaction_context();
-			auto work = context.get_account_work(validator->validator.wallet.public_key_hash);
-			auto transaction = memory::init<transactions::certification>();
+			uptr<transactions::certification> transaction = memory::init<transactions::certification>();
 			transaction->asset = algorithm::asset::id_of_handle(args[0].as_string());
-			if (args.size() > 2 ? args[2].as_boolean() : false)
+
+			auto validator_production = args[1].as_string();
+			if (validator_production == "enable")
+				transaction->enable_block_production();
+			else if (validator_production == "disable")
+				transaction->disable_block_production();
+			else
+				transaction->standby_on_block_production();
+
+			auto validator_participations = schema::from_json(args[2].as_string());
+			if (validator_participations)
 			{
-				if (online)
+				for (auto& status : validator_participations->get_childs())
 				{
-					if (!work || !work->is_online())
-						transaction->set_online();
+					auto asset = algorithm::asset::id_of_handle(status->key);
+					auto stake = status->value.get_decimal();
+					if (stake.is_positive())
+						transaction->allocate_participation_stake(asset, stake);
+					else if (stake.is_negative())
+						transaction->deallocate_participation_stake(asset, -stake);
+					else if (stake.is_nan())
+						transaction->disable_participation(asset);
+					else
+						transaction->standby_on_participation(asset);
 				}
-				else if (work && work->is_matching(states::account_flags::online))
-					transaction->set_offline();
+				memory::release(*validator_participations);
 			}
 
-			if (args.size() > 3)
+			auto validator_attestations = schema::from_json(args[3].as_string());
+			if (validator_attestations)
 			{
-				auto assets = nss::server_node::get()->get_assets();
-				auto observers = context.get_account_observers(validator->validator.wallet.public_key_hash, 0, assets.size()).or_else(vector<states::account_observer>());
-				for (auto& id : stringify::split(args[3].as_string(), ','))
+				for (auto& status : validator_attestations->get_childs())
 				{
-					auto asset = algorithm::asset::id_of_handle(stringify::trim(id));
-					auto it = std::find_if(observers.begin(), observers.end(), [&](const states::account_observer& item) { return item.asset == asset; });
-					if (online)
-					{
-						if (it == observers.end() || !it->observing)
-							transaction->set_online(asset);
-					}
-					else if (it != observers.end() && it->observing)
-						transaction->set_offline(asset);
+					auto asset = algorithm::asset::id_of_handle(status->key);
+					auto stake = status->value.get_decimal();
+					if (stake.is_positive())
+						transaction->allocate_attestation_stake(asset, stake);
+					else if (stake.is_negative())
+						transaction->deallocate_attestation_stake(asset, -stake);
+					else if (stake.is_nan())
+						transaction->disable_attestation(asset);
+					else
+						transaction->standby_on_attestation(asset);
 				}
+				memory::release(*validator_attestations);
 			}
 
 			umutex<std::recursive_mutex> unique(validator->sync.account);
-			auto account_sequence = validator->validator.wallet.get_latest_sequence().or_else(1);
+			auto account_nonce = validator->validator.wallet.get_latest_nonce().or_else(0);
 			unique.unlock();
 
-			uint256_t candidate_hash = 0;
-			auto status = validator->propose_transaction(nullptr, transaction, account_sequence, &candidate_hash);
+			uint256_t transaction_hash = 0;
+			auto status = validator->build_transaction(*transaction, account_nonce, &transaction_hash);
 			if (!status)
 				return server_response().error(error_codes::bad_params, status.error().message());
 
-			return server_response().success(var::set::string(algorithm::encoding::encode_0xhex256(candidate_hash)));
+			schema* result = var::set::object();
+			result->set("hash", var::string(algorithm::encoding::encode_0xhex256(transaction_hash)));
+			result->set("data", var::string(transaction->as_message().encode()));
+			return server_response().success(result);
 		}
-		server_response server_node::proposerstate_submit_depository_adjustment(http::connection* base, format::variables&& args)
+		server_response server_node::validatorstate_build_depository_adjustment_transaction(http::connection* base, format::variables&& args)
 		{
 			if (!validator)
 				return server_response().error(error_codes::bad_request, "validator node disabled");
 
-			auto transaction = memory::init<transactions::depository_adjustment>();
+			uptr<transactions::depository_adjustment> transaction = memory::init<transactions::depository_adjustment>();
 			transaction->asset = algorithm::asset::id_of_handle(args[0].as_string());
-			transaction->set_incoming_fee(args[1].as_decimal(), args[2].as_decimal());
-			transaction->set_outgoing_fee(args[3].as_decimal(), args[4].as_decimal());
-			transaction->set_security(args[5].as_uint8(), args[6].as_boolean(), args[7].as_boolean());
+			transaction->set_reward(args[1].as_decimal(), args[2].as_decimal());
+			transaction->set_security(args[3].as_uint8(), args[4].as_boolean(), args[5].as_boolean());
 
 			umutex<std::recursive_mutex> unique(validator->sync.account);
-			auto account_sequence = validator->validator.wallet.get_latest_sequence().or_else(1);
+			auto account_nonce = validator->validator.wallet.get_latest_nonce().or_else(0);
 			unique.unlock();
 
-			uint256_t candidate_hash = 0;
-			auto status = validator->propose_transaction(nullptr, transaction, account_sequence, &candidate_hash);
+			uint256_t transaction_hash = 0;
+			auto status = validator->build_transaction(*transaction, account_nonce, &transaction_hash);
 			if (!status)
 				return server_response().error(error_codes::bad_params, status.error().message());
 
-			return server_response().success(var::set::string(algorithm::encoding::encode_0xhex256(candidate_hash)));
+			schema* result = var::set::object();
+			result->set("hash", var::string(algorithm::encoding::encode_0xhex256(transaction_hash)));
+			result->set("data", var::string(transaction->as_message().encode()));
+			return server_response().success(result);
 		}
-		server_response server_node::proposerstate_submit_depository_mpc_migration(http::connection* base, format::variables&& args)
+		server_response server_node::validatorstate_build_depository_regrouping_transaction(http::connection* base, format::variables&& args)
 		{
 			if (!validator)
 				return server_response().error(error_codes::bad_request, "validator node disabled");
 
-			uptr<transactions::depository_migration> transaction = memory::init<transactions::depository_migration>();
+			uptr<transactions::depository_regrouping> transaction = memory::init<transactions::depository_regrouping>();
 			transaction->asset = algorithm::asset::id_of_handle(args[0].as_string());
-
-			algorithm::pubkeyhash_t proposer;
-			if (!algorithm::signing::decode_address(args[1].as_string(), proposer.data))
-				proposer = algorithm::pubkeyhash_t();
 
 			auto mempool = storages::mempoolstate(__func__);
-			size_t offset = 0;
-			size_t count = 64;
+			size_t offset = 0, count = 64;
 			while (true)
 			{
-				auto accounts = mempool.get_mpc_accounts(proposer.empty() ? nullptr : proposer.data, offset, count);
+				auto accounts = mempool.get_group_accounts(nullptr, offset, count);
 				if (!accounts)
 					return server_response().error(error_codes::bad_request, accounts.error().message());
 
 				offset += accounts->size();
 				for (auto& account : *accounts)
-					transaction->migrate(account.asset, account.proposer, account.owner);
+					transaction->migrate(account.asset, account.manager, account.owner);
 				if (accounts->empty())
 					break;
 			}
 
-			if (transaction->migrations.empty())
-				return server_response().error(error_codes::bad_request, "there are no candidate mpc migrations");
+			if (transaction->participants.empty())
+				return server_response().error(error_codes::bad_request, "there are no candidate group migrations");
 
 			umutex<std::recursive_mutex> unique(validator->sync.account);
-			auto account_sequence = validator->validator.wallet.get_latest_sequence().or_else(1);
+			auto account_nonce = validator->validator.wallet.get_latest_nonce().or_else(0);
 			unique.unlock();
 
-			uint256_t candidate_hash = 0;
-			auto status = validator->propose_transaction(nullptr, transaction.reset(), account_sequence, &candidate_hash);
+			uint256_t transaction_hash = 0;
+			auto status = validator->build_transaction(*transaction, account_nonce, &transaction_hash);
 			if (!status)
 				return server_response().error(error_codes::bad_params, status.error().message());
 
-			return server_response().success(var::set::string(algorithm::encoding::encode_0xhex256(candidate_hash)));
+			schema* result = var::set::object();
+			result->set("hash", var::string(algorithm::encoding::encode_0xhex256(transaction_hash)));
+			result->set("data", var::string(transaction->as_message().encode()));
+			return server_response().success(result);
 		}
-		server_response server_node::proposerstate_submit_depository_custody_migration(http::connection* base, format::variables&& args)
+		server_response server_node::validatorstate_build_depository_withdrawal_transaction(http::connection* base, format::variables&& args)
 		{
 			if (!validator)
 				return server_response().error(error_codes::bad_request, "validator node disabled");
 
-			algorithm::pubkeyhash owner;
-			if (!algorithm::signing::decode_address(args[1].as_string(), owner))
+			algorithm::pubkeyhash to_manager;
+			if (!algorithm::signing::decode_address(args[1].as_string(), to_manager))
 				return server_response().error(error_codes::bad_params, "invalid address");
 
-			auto transaction = memory::init<transactions::depository_withdrawal>();
+			uptr<transactions::depository_withdrawal> transaction = memory::init<transactions::depository_withdrawal>();
 			transaction->asset = algorithm::asset::id_of_handle(args[0].as_string());
-			transaction->set_proposer(validator->validator.wallet.public_key_hash, owner);
+			transaction->set_from_manager(validator->validator.wallet.public_key_hash);
+			transaction->set_to_manager(to_manager);
 
 			umutex<std::recursive_mutex> unique(validator->sync.account);
-			auto account_sequence = validator->validator.wallet.get_latest_sequence().or_else(1);
+			auto account_nonce = validator->validator.wallet.get_latest_nonce().or_else(0);
 			unique.unlock();
 
-			uint256_t candidate_hash = 0;
-			auto status = validator->propose_transaction(nullptr, transaction, account_sequence, &candidate_hash);
+			uint256_t transaction_hash = 0;
+			auto status = validator->build_transaction(*transaction, account_nonce, &transaction_hash);
 			if (!status)
 				return server_response().error(error_codes::bad_params, status.error().message());
 
-			return server_response().success(var::set::string(algorithm::encoding::encode_0xhex256(candidate_hash)));
+			schema* result = var::set::object();
+			result->set("hash", var::string(algorithm::encoding::encode_0xhex256(transaction_hash)));
+			result->set("data", var::string(transaction->as_message().encode()));
+			return server_response().success(result);
 		}
 	}
 }

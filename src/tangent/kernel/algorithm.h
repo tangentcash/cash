@@ -200,6 +200,7 @@ namespace tangent
 			static string hash512(const uint8_t* buffer, size_t size);
 			static uint256_t hash256i(const uint8_t* buffer, size_t size);
 			static uint256_t hash256i(const std::string_view& data);
+			static uint64_t erd64(const uint256_t& seed, uint64_t order);
 		};
 
 		class asset
@@ -284,6 +285,7 @@ namespace tangent
 			private:
 				vector<uint256_t> nodes;
 				size_t index = 0;
+				bool single = false;
 
 			public:
 				hash_function hasher = &hashing::sha256ci;

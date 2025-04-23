@@ -31,7 +31,7 @@ namespace tangent
 			string get_secret_key() const;
 			string get_public_key() const;
 			string get_address() const;
-			expects_lr<uint64_t> get_latest_sequence() const;
+			expects_lr<uint64_t> get_latest_nonce() const;
 			uptr<schema> as_schema() const override;
 			uptr<schema> as_public_schema() const;
 			uint32_t as_type() const override;
@@ -68,8 +68,10 @@ namespace tangent
 				bool has_discovery = false;
 				bool has_interfaces = false;
 				bool has_synchronization = false;
-				bool has_proposer = false;
-				bool has_publicity = false;
+				bool has_production = false;
+				bool has_participation = false;
+				bool has_attestation = false;
+				bool has_querying = false;
 				bool has_streaming = false;
 			} services;
 

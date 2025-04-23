@@ -14,8 +14,8 @@ namespace tangent
 			else if (block_number > expiry_number)
 				return layer_exception("asset is no longer supported");
 
-			if (sequence >= std::numeric_limits<uint64_t>::max() - 1)
-				return layer_exception("invalid sequence");
+			if (nonce >= std::numeric_limits<uint64_t>::max() - 1)
+				return layer_exception("invalid nonce");
 
 			if (!gas_limit)
 				return layer_exception("gas limit requirement not met (min: 1)");
@@ -37,9 +37,9 @@ namespace tangent
 		}
 		expects_lr<void> transaction::execute(transaction_context* context) const
 		{
-			auto sequence_requirement = context->verify_account_sequence();
-			if (!sequence_requirement)
-				return sequence_requirement;
+			auto nonce_requirement = context->verify_account_nonce();
+			if (!nonce_requirement)
+				return nonce_requirement;
 
 			return context->verify_gas_transfer_balance();
 		}
@@ -53,7 +53,7 @@ namespace tangent
 			stream->write_integer(asset);
 			stream->write_decimal(gas_price);
 			stream->write_integer(gas_limit);
-			stream->write_integer(sequence);
+			stream->write_integer(nonce);
 			stream->write_boolean(conservative);
 			return store_body(stream);
 		}
@@ -68,7 +68,7 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &gas_limit))
 				return false;
 
-			if (!stream.read_integer(stream.read_type(), &sequence))
+			if (!stream.read_integer(stream.read_type(), &nonce))
 				return false;
 
 			if (!stream.read_boolean(stream.read_type(), &conservative))
@@ -88,15 +88,15 @@ namespace tangent
 		{
 			return authentic::sign(secret_key);
 		}
-		bool transaction::sign(const algorithm::seckey secret_key, uint64_t new_sequence)
+		bool transaction::sign(const algorithm::seckey secret_key, uint64_t new_nonce)
 		{
-			sequence = new_sequence;
+			nonce = new_nonce;
 			return sign(secret_key);
 		}
-		bool transaction::sign(const algorithm::seckey secret_key, uint64_t new_sequence, const decimal& price)
+		bool transaction::sign(const algorithm::seckey secret_key, uint64_t new_nonce, const decimal& price)
 		{
 			set_estimate_gas(price);
-			if (!sign(secret_key, new_sequence))
+			if (!sign(secret_key, new_nonce))
 				return false;
 
 			auto optimal_gas = ledger::transaction_context::calculate_tx_gas(this);
@@ -176,7 +176,7 @@ namespace tangent
 			data->set("type", var::string(as_typename()));
 			data->set("category", var::string(category));
 			data->set("asset", algorithm::asset::serialize(asset));
-			data->set("sequence", var::integer(sequence));
+			data->set("nonce", var::integer(nonce));
 			data->set("gas_price", var::decimal(gas_price));
 			data->set("gas_limit", algorithm::encoding::serialize_uint256(gas_limit));
 			return data;
@@ -184,7 +184,7 @@ namespace tangent
 
 		expects_lr<void> delegation_transaction::execute(transaction_context* context) const
 		{
-			return context->verify_account_sequence();
+			return context->verify_account_nonce();
 		}
 		bool delegation_transaction::store_payload(format::stream* stream) const
 		{
@@ -192,7 +192,7 @@ namespace tangent
 			stream->write_integer(asset);
 			stream->write_decimal(gas_price);
 			stream->write_integer(gas_limit);
-			stream->write_integer(sequence);
+			stream->write_integer(nonce);
 			return store_body(stream);
 		}
 		bool delegation_transaction::load_payload(format::stream& stream)
@@ -206,7 +206,7 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &gas_limit))
 				return false;
 
-			if (!stream.read_integer(stream.read_type(), &sequence))
+			if (!stream.read_integer(stream.read_type(), &nonce))
 				return false;
 
 			conservative = false;
@@ -219,11 +219,7 @@ namespace tangent
 
 		expects_lr<void> consensus_transaction::execute(transaction_context* context) const
 		{
-			auto sequence_requirement = context->verify_account_sequence();
-			if (!sequence_requirement)
-				return sequence_requirement;
-
-			return context->verify_account_work(context->receipt.from);
+			return context->verify_account_nonce();
 		}
 		bool consensus_transaction::store_payload(format::stream* stream) const
 		{
@@ -231,7 +227,7 @@ namespace tangent
 			stream->write_integer(asset);
 			stream->write_decimal(gas_price);
 			stream->write_integer(gas_limit);
-			stream->write_integer(sequence);
+			stream->write_integer(nonce);
 			return store_body(stream);
 		}
 		bool consensus_transaction::load_payload(format::stream& stream)
@@ -245,7 +241,7 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &gas_limit))
 				return false;
 
-			if (!stream.read_integer(stream.read_type(), &sequence))
+			if (!stream.read_integer(stream.read_type(), &nonce))
 				return false;
 
 			conservative = false;
@@ -264,8 +260,8 @@ namespace tangent
 			else if (block_number > expiry_number)
 				return layer_exception("asset is no longer supported");
 
-			if (sequence != 0)
-				return layer_exception("invalid sequence (neq: 0)");
+			if (nonce != 0)
+				return layer_exception("invalid nonce (neq: 0)");
 
 			if (conservative)
 				return layer_exception("transaction should not be conservative");
@@ -299,9 +295,9 @@ namespace tangent
 				size_t signature_index = 0;
 				for (auto& signature : branch.second.signatures)
 				{
-					algorithm::pubkeyhash proposer = { 0 }, null = { 0 };
-					if (!recover_hash(proposer, branch.first, signature_index++) || !memcmp(proposer, null, sizeof(null)))
-						return layer_exception(stringify::text("invalid attestation proposer (branch: %i, signature: %i)", (int)branch_index, (int)signature_index));
+					algorithm::pubkeyhash attester = { 0 }, null = { 0 };
+					if (!recover_hash(attester, branch.first, signature_index++) || !memcmp(attester, null, sizeof(null)))
+						return layer_exception(stringify::text("invalid attester (branch: %i, signature: %i)", (int)branch_index, (int)signature_index));
 				}
 			}
 
@@ -319,17 +315,17 @@ namespace tangent
 				size_t signature_index = 0;
 				for (auto& signature : branch.second.signatures)
 				{
-					algorithm::pubkeyhash proposer = { 0 };
-					if (!recover_hash(proposer, branch.first, signature_index++))
-						return layer_exception(stringify::text("invalid attestation proposer (branch: %i, signature: %i)", (int)branch_index, (int)signature_index));
+					algorithm::pubkeyhash attester = { 0 };
+					if (!recover_hash(attester, branch.first, signature_index++))
+						return layer_exception(stringify::text("invalid attester (branch: %i, signature: %i)", (int)branch_index, (int)signature_index));
 
-					auto status = context->verify_account_work(proposer);
-					if (!status)
-						return status;
+					auto attestation_requirement = context->verify_validator_attestation(asset, attester);
+					if (!attestation_requirement)
+						return layer_exception(stringify::text("%s (branch: %i, signature: %i)", attestation_requirement.what().c_str(), (int)branch_index, (int)signature_index));
 				}
 			}
 
-			return context->verify_account_work(context->receipt.from);
+			return expectation::met;
 		}
 		bool attestation_transaction::merge(const transaction_context* context, const attestation_transaction& other)
 		{
@@ -342,10 +338,10 @@ namespace tangent
 			if (!other.recover_hash(owner) || !memcmp(owner, null, sizeof(null)))
 				return false;
 
-			unordered_set<algorithm::pubkeyhash_t> proposers;
+			unordered_set<algorithm::pubkeyhash_t> attesters;
 			auto branches = std::move(output_hashes);
-			auto* branch_a = get_best_branch(context);
-			auto* branch_b = other.get_best_branch(context);
+			auto* branch_a = get_best_branch(context, nullptr);
+			auto* branch_b = other.get_best_branch(context, nullptr);
 			size_t branch_length_a = (branch_a ? branch_a->signatures.size() : 0);
 			size_t branch_length_b = (branch_b ? branch_b->signatures.size() : 0);
 			if (branch_length_a < branch_length_b)
@@ -361,35 +357,25 @@ namespace tangent
 
 			for (auto& branch : output_hashes)
 			{
-				format::stream aggregate_message;
-				aggregate_message.write_integer(asset);
-				aggregate_message.write_integer(input_hash);
-				aggregate_message.write_integer(branch.first);
-
-				uint256_t aggregate_message_hash = aggregate_message.hash();
+				uint256_t aggregate_message_hash = get_branch_image(branch.first);
 				for (auto& signature : branch.second.signatures)
 				{
-					algorithm::pubkeyhash proposer = { 0 };
-					if (algorithm::signing::recover_hash(aggregate_message_hash, proposer, signature.data))
-						proposers.insert(algorithm::pubkeyhash_t(proposer));
+					algorithm::pubkeyhash attester = { 0 };
+					if (algorithm::signing::recover_hash(aggregate_message_hash, attester, signature.data))
+						attesters.insert(algorithm::pubkeyhash_t(attester));
 				}
 			}
 
 			for (auto& branch : other.output_hashes)
 			{
-				format::stream aggregate_message;
-				aggregate_message.write_integer(asset);
-				aggregate_message.write_integer(input_hash);
-				aggregate_message.write_integer(branch.first);
-
-				uint256_t aggregate_message_hash = aggregate_message.hash();
+				uint256_t aggregate_message_hash = other.get_branch_image(branch.first);
 				auto& fork = output_hashes[branch.first];
 				for (auto& signature : branch.second.signatures)
 				{
-					algorithm::pubkeyhash_t proposer;
-					if (algorithm::signing::recover_hash(aggregate_message_hash, proposer.data, signature.data) && proposers.find(proposer) == proposers.end())
+					algorithm::pubkeyhash_t attester;
+					if (algorithm::signing::recover_hash(aggregate_message_hash, attester.data, signature.data) && attesters.find(attester) == attesters.end())
 					{
-						proposers.insert(proposer);
+						attesters.insert(attester);
 						fork.signatures.insert(signature);
 					}
 				}
@@ -403,7 +389,7 @@ namespace tangent
 			stream->write_integer(asset);
 			stream->write_decimal(gas_price);
 			stream->write_integer(gas_limit);
-			stream->write_integer(sequence);
+			stream->write_integer(nonce);
 			stream->write_integer(input_hash);
 			stream->write_integer((uint16_t)output_hashes.size());
 			for (auto& branch : output_hashes)
@@ -426,7 +412,7 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &gas_limit))
 				return false;
 
-			if (!stream.read_integer(stream.read_type(), &sequence))
+			if (!stream.read_integer(stream.read_type(), &nonce))
 				return false;
 
 			if (!stream.read_integer(stream.read_type(), &input_hash))
@@ -468,33 +454,28 @@ namespace tangent
 		}
 		bool attestation_transaction::sign(const algorithm::seckey secret_key)
 		{
-			sequence = 0;
+			nonce = 0;
 			conservative = false;
 			memset(signature, 0, sizeof(signature));
 			if (output_hashes.size() > 1)
 				return false;
 
-			auto genesis_branch = output_hashes.begin();
-			format::stream aggregate_message;
-			aggregate_message.write_integer(asset);
-			aggregate_message.write_integer(input_hash);
-			aggregate_message.write_integer(genesis_branch->first);
-
+			auto best_branch = output_hashes.begin();
 			algorithm::recpubsig aggregate_signature;
-			if (!algorithm::signing::sign(aggregate_message.hash(), secret_key, aggregate_signature))
+			if (!algorithm::signing::sign(get_branch_image(best_branch->first), secret_key, aggregate_signature))
 				return false;
 
-			genesis_branch->second.signatures.insert(algorithm::recpubsig_t(aggregate_signature));
+			best_branch->second.signatures.insert(algorithm::recpubsig_t(aggregate_signature));
 			return true;
 		}
-		bool attestation_transaction::sign(const algorithm::seckey secret_key, uint64_t new_sequence)
+		bool attestation_transaction::sign(const algorithm::seckey secret_key, uint64_t new_nonce)
 		{
 			return sign(secret_key);
 		}
-		bool attestation_transaction::sign(const algorithm::seckey secret_key, uint64_t new_sequence, const decimal& price)
+		bool attestation_transaction::sign(const algorithm::seckey secret_key, uint64_t new_nonce, const decimal& price)
 		{
 			set_estimate_gas(price);
-			if (!sign(secret_key, new_sequence))
+			if (!sign(secret_key, new_nonce))
 				return false;
 
 			size_t transaction_size1 = as_message().data.size();
@@ -531,11 +512,7 @@ namespace tangent
 			for (size_t i = 0; i < index; i++)
 				++signature;
 
-			format::stream message;
-			message.write_integer(asset);
-			message.write_integer(input_hash);
-			message.write_integer(output_hash);
-			return algorithm::signing::verify(message.hash(), public_key, signature->data);
+			return algorithm::signing::verify(get_branch_image(output_hash), public_key, signature->data);
 		}
 		bool attestation_transaction::recover(algorithm::pubkey public_key) const
 		{
@@ -564,11 +541,7 @@ namespace tangent
 			for (size_t i = 0; i < index; i++)
 				++signature;
 
-			format::stream message;
-			message.write_integer(asset);
-			message.write_integer(input_hash);
-			message.write_integer(output_hash);
-			return algorithm::signing::recover(message.hash(), public_key, signature->data);
+			return algorithm::signing::recover(get_branch_image(output_hash), public_key, signature->data);
 		}
 		bool attestation_transaction::recover_hash(algorithm::pubkeyhash public_key_hash) const
 		{
@@ -597,11 +570,7 @@ namespace tangent
 			for (size_t i = 0; i < index; i++)
 				++signature;
 
-			format::stream message;
-			message.write_integer(asset);
-			message.write_integer(input_hash);
-			message.write_integer(output_hash);
-			return algorithm::signing::recover_hash(message.hash(), public_key_hash, signature->data);
+			return algorithm::signing::recover_hash(get_branch_image(output_hash), public_key_hash, signature->data);
 		}
 		bool attestation_transaction::is_signature_null() const
 		{
@@ -623,11 +592,11 @@ namespace tangent
 			{
 				format::stream message;
 				auto blob = string(sizeof(algorithm::recpubsig), '0');
-				size_t size = (size_t)protocol::now().policy.attesters_committee_size;
-				message.write_integer((uint16_t)output_hashes.size());
+				size_t max_signatures = (size_t)protocol::now().policy.attestation_max_per_transaction * output_hashes.size();
 				message.write_string(string(sizeof(mediator::computed_transaction) * 10, '0'));
-				message.write_integer((uint16_t)size);
-				for (size_t i = 0; i < size; i++)
+				message.write_integer((uint16_t)output_hashes.size());
+				message.write_integer((uint16_t)max_signatures);
+				for (size_t i = 0; i < max_signatures; i++)
 					message.write_string(blob);
 
 				set_gas(price, *optimal_gas + message.data.size() * (uint64_t)gas_cost::write_byte);
@@ -635,81 +604,75 @@ namespace tangent
 			else
 				set_gas(price, get_gas_estimate());
 		}
-		void attestation_transaction::set_consensus(const uint256_t& output_hash)
-		{
-			auto it = output_hashes.find(output_hash);
-			if (it == output_hashes.end())
-				return output_hashes.clear();
-
-			auto value = std::move(it->second);
-			output_hashes.clear();
-			output_hashes[output_hash] = std::move(value);
-		}
 		void attestation_transaction::set_statement(const uint256_t& new_input_hash, const format::stream& output_message)
 		{
 			output_hashes.clear();
 			output_hashes[output_message.hash()].message = output_message;
 			input_hash = new_input_hash;
 		}
-		const attestation_transaction::evaluation_branch* attestation_transaction::get_best_branch(const transaction_context* context) const
+		void attestation_transaction::set_best_branch(const uint256_t& output_hash)
+		{
+			auto best = output_hashes.find(output_hash);
+			for (auto it = output_hashes.begin(); it != output_hashes.end(); it++)
+			{
+				if (it != best)
+					it->second.message.clear();
+			}
+		}
+		const attestation_transaction::evaluation_branch* attestation_transaction::get_best_branch(const transaction_context* context, ordered_map<algorithm::asset_id, size_t>* aggregators) const
 		{
 			if (!context)
 				return output_hashes.size() == 1 ? &output_hashes.begin()->second : nullptr;
 
-			uint256_t best_branch_work = 0;
-			const evaluation_branch* best_branch = nullptr;
-			auto& policy = protocol::now().policy;
-			for (auto& branch : output_hashes)
-			{
-				format::stream aggregate_message;
-				aggregate_message.write_integer(asset);
-				aggregate_message.write_integer(input_hash);
-				aggregate_message.write_integer(branch.first);
-
-				uint256_t aggregate_message_hash = aggregate_message.hash();
-				uint256_t branch_work = 0, work_limit = uint256_t::max() / uint256_t(branch.second.signatures.size());
-				for (auto& signature : branch.second.signatures)
-				{
-					algorithm::pubkeyhash proposer = { 0 };
-					if (!algorithm::signing::recover_hash(aggregate_message_hash, proposer, signature.data))
-						continue;
-
-					auto work = context->get_account_work(proposer);
-					branch_work += std::min(work ? work->get_gas_use() : uint256_t(0), work_limit);
-				}
-
-				if (branch_work > best_branch_work)
-				{
-					best_branch = &branch.second;
-					best_branch_work = branch_work;
-				}
-			}
-			return best_branch;
-		}
-		const attestation_transaction::evaluation_branch* attestation_transaction::get_final_branch(transaction_context* context, ordered_map<algorithm::asset_id, size_t>* aggregators) const
-		{
-			auto* branch = get_best_branch(context);
-			if (!branch || branch->signatures.empty())
-				return nullptr;
-
-			size_t possible_committee = 0;
+			size_t required_signatures = 0;
 			if (aggregators != nullptr)
 			{
 				auto it = aggregators->find(asset);
 				if (it == aggregators->end())
-					possible_committee = (*aggregators)[asset] = context->calculate_attestation_committee_size(asset).or_else(0);
+					required_signatures = (*aggregators)[asset] = context->calculate_attesters_size(asset).or_else(0);
 				else
-					possible_committee = it->second;
+					required_signatures = it->second;
 			}
-			else
-				possible_committee = context->calculate_attestation_committee_size(asset).or_else(0);
 
-			size_t committee = std::min(possible_committee, protocol::now().policy.attesters_committee_size);
-			double progress = committee > 0 ? ((double)branch->signatures.size() / (double)committee) : 0.0;
-			if (progress < protocol::now().policy.attestation_threshold)
-				return nullptr;
+			decimal best_branch_stake = -1.0;
+			const evaluation_branch* best_branch = nullptr;
+			auto& policy = protocol::now().policy;
+			for (auto& branch : output_hashes)
+			{
+				size_t required_branch_signatures = std::min(required_signatures, protocol::now().policy.attestation_max_per_transaction);
+				double current_branch_threshold = required_branch_signatures > 0 ? ((double)branch.second.signatures.size() / (double)required_branch_signatures) : 0.0;
+				if ((aggregators != nullptr && current_branch_threshold < protocol::now().policy.attestation_consensus_threshold) || branch.second.message.data.empty())
+					continue;
 
-			return branch;
+				decimal branch_stake = decimal::zero();
+				uint256_t aggregate_message_hash = get_branch_image(branch.first);
+				for (auto& signature : branch.second.signatures)
+				{
+					algorithm::pubkeyhash attester = { 0 };
+					if (algorithm::signing::recover_hash(aggregate_message_hash, attester, signature.data))
+					{
+						auto attestation = context->get_validator_attestation(asset, attester);
+						if (attestation)
+							branch_stake += attestation->stake;
+					}
+				}
+
+				if (branch_stake > best_branch_stake)
+				{
+					best_branch = &branch.second;
+					best_branch_stake = branch_stake;
+				}
+			}
+
+			return best_branch;
+		}
+		uint256_t attestation_transaction::get_branch_image(const uint256_t& output_hash) const
+		{
+			format::stream message;
+			message.write_integer(asset);
+			message.write_integer(input_hash);
+			message.write_integer(output_hash);
+			return message.hash();
 		}
 		uint256_t attestation_transaction::as_group_hash() const
 		{
@@ -1000,7 +963,7 @@ namespace tangent
 
 			auto& policy = protocol::now().policy;
 			uint256_t alignment = 16;
-			uint256_t committee = policy.consensus_committee_size;
+			uint256_t committee = policy.production_max_per_block;
 			uint256_t multiplier = priority >= committee ? 0 : math64u::pow3(committee - priority);
 			uint256_t work = (multiplier * gas_use) / gas_limit;
 			return work - (work % alignment) + alignment;
@@ -1008,7 +971,7 @@ namespace tangent
 		uint256_t gas_util::get_operational_gas_estimate(size_t bytes, size_t operations)
 		{
 			algorithm::pubkeyhash owner = { 1 };
-			static size_t limit = states::account_sequence(owner, 1, 1).as_message().data.size();
+			static size_t limit = states::account_nonce(owner, 1, 1).as_message().data.size();
 			bytes += limit * operations;
 			return get_storage_gas_estimate(bytes, bytes);
 		}

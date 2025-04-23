@@ -127,19 +127,25 @@ namespace tangent
 
 		struct certification final : ledger::transaction
 		{
-			ordered_map<algorithm::asset_id, bool> observers;
-			option<bool> online = optional::none;
+			ordered_map<algorithm::asset_id, decimal> participation_stakes;
+			ordered_map<algorithm::asset_id, decimal> attestation_stakes;
+			option<bool> production = optional::none;
 
 			expects_lr<void> validate(uint64_t block_number) const override;
 			expects_lr<void> execute(ledger::transaction_context* context) const override;
 			bool store_body(format::stream* stream) const override;
 			bool load_body(format::stream& stream) override;
-			void set_online();
-			void set_online(const algorithm::asset_id& asset);
-			void set_offline();
-			void set_offline(const algorithm::asset_id& asset);
-			void set_standby();
-			void set_standby(const algorithm::asset_id& asset);
+			void enable_block_production();
+			void disable_block_production();
+			void standby_on_block_production();
+			void allocate_participation_stake(const algorithm::asset_id& asset, const decimal& value);
+			void deallocate_participation_stake(const algorithm::asset_id& asset, const decimal& value);
+			void disable_participation(const algorithm::asset_id& asset);
+			void standby_on_participation(const algorithm::asset_id& asset);
+			void allocate_attestation_stake(const algorithm::asset_id& asset, const decimal& value);
+			void deallocate_attestation_stake(const algorithm::asset_id& asset, const decimal& value);
+			void disable_attestation(const algorithm::asset_id& asset);
+			void standby_on_attestation(const algorithm::asset_id& asset);
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
@@ -167,7 +173,7 @@ namespace tangent
 
 		struct depository_account final : ledger::delegation_transaction
 		{
-			algorithm::pubkeyhash proposer = { 0 };
+			algorithm::pubkeyhash manager = { 0 };
 
 			expects_lr<void> validate(uint64_t block_number) const override;
 			expects_lr<void> execute(ledger::transaction_context* context) const override;
@@ -175,10 +181,10 @@ namespace tangent
 			bool store_body(format::stream* stream) const override;
 			bool load_body(format::stream& stream) override;
 			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const override;
-			void set_proposer(const algorithm::pubkeyhash new_proposer);
-			bool is_proposer_null() const;
+			void set_manager(const algorithm::pubkeyhash new_manager);
+			bool is_manager_null() const;
 			bool is_dispatchable() const override;
-			ordered_set<algorithm::pubkeyhash_t> get_mpc(const ledger::receipt& receipt) const;
+			ordered_set<algorithm::pubkeyhash_t> get_group(const ledger::receipt& receipt) const;
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
@@ -189,13 +195,13 @@ namespace tangent
 
 		struct depository_account_finalization final : ledger::consensus_transaction
 		{
-			algorithm::composition::cpubkey mpc_public_key = { 0 };
+			algorithm::composition::cpubkey public_key = { 0 };
 			uint256_t depository_account_hash = 0;
 
 			expects_lr<void> validate(uint64_t block_number) const override;
 			expects_lr<void> execute(ledger::transaction_context* context) const override;
 			expects_promise_rt<void> dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const override;
-			void set_witness(const uint256_t& new_depository_account_hash, const algorithm::composition::cpubkey new_mpc_public_key);
+			void set_witness(const uint256_t& new_depository_account_hash, const algorithm::composition::cpubkey new_public_key);
 			bool store_body(format::stream* stream) const override;
 			bool load_body(format::stream& stream) override;
 			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const override;
@@ -211,8 +217,8 @@ namespace tangent
 		struct depository_withdrawal final : ledger::transaction
 		{
 			vector<std::pair<string, decimal>> to;
-			algorithm::pubkeyhash proposer = { 0 };
-			algorithm::pubkeyhash migration_proposer = { 0 };
+			algorithm::pubkeyhash from_manager = { 0 };
+			algorithm::pubkeyhash to_manager = { 0 };
 			bool only_if_not_in_queue = true;
 
 			expects_lr<void> validate(uint64_t block_number) const override;
@@ -222,12 +228,13 @@ namespace tangent
 			bool load_body(format::stream& stream) override;
 			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const override;
 			void set_to(const std::string_view& address, const decimal& value);
-			void set_proposer(const algorithm::pubkeyhash new_proposer, const algorithm::pubkeyhash new_migration_proposer = nullptr);
-			bool is_proposer_null() const;
-			bool is_migration_proposer_null() const;
+			void set_from_manager(const algorithm::pubkeyhash new_manager);
+			void set_to_manager(const algorithm::pubkeyhash new_manager);
+			bool is_from_manager_null() const;
+			bool is_to_manager_null() const;
 			bool is_dispatchable() const override;
-			decimal get_total_value(const ledger::transaction_context* context) const;
-			decimal get_fee_value(const ledger::transaction_context* context, const algorithm::pubkeyhash from, const decimal& total_value) const;
+			decimal get_token_value(const ledger::transaction_context* context) const;
+			decimal get_fee_value(const ledger::transaction_context* context, const algorithm::pubkeyhash from) const;
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
@@ -235,8 +242,8 @@ namespace tangent
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
 			static expects_lr<void> validate_prepared_transaction(const ledger::transaction_context* context, const depository_withdrawal* transaction, const mediator::prepared_transaction& prepared);
-			static expects_lr<ordered_set<algorithm::pubkeyhash_t>> accumulate_prepared_mpc(const ledger::transaction_context* context, const depository_withdrawal* transaction, const mediator::prepared_transaction& prepared);
-			static expects_lr<states::witness_account> find_migration_account(const ledger::transaction_context* context, const algorithm::asset_id& asset, const algorithm::pubkeyhash from_proposer, const algorithm::pubkeyhash to_proposer);
+			static expects_lr<ordered_set<algorithm::pubkeyhash_t>> accumulate_prepared_group(const ledger::transaction_context* context, const depository_withdrawal* transaction, const mediator::prepared_transaction& prepared);
+			static expects_lr<states::witness_account> find_receiving_account(const ledger::transaction_context* context, const algorithm::asset_id& asset, const algorithm::pubkeyhash from_manager, const algorithm::pubkeyhash to_manager);
 		};
 
 		struct depository_withdrawal_finalization final : ledger::consensus_transaction
@@ -265,7 +272,10 @@ namespace tangent
 		{
 			struct depository_transfer
 			{
+				ordered_set<algorithm::pubkeyhash_t> participants;
 				decimal balance = decimal::zero();
+				decimal incoming_fee = decimal::zero();
+				decimal outgoing_fee = decimal::zero();
 			};
 
 			struct balance_transfer
@@ -298,10 +308,8 @@ namespace tangent
 
 		struct depository_adjustment final : ledger::transaction
 		{
-			decimal incoming_absolute_fee = decimal::zero();
-			decimal incoming_relative_fee = decimal::zero();
-			decimal outgoing_absolute_fee = decimal::zero();
-			decimal outgoing_relative_fee = decimal::zero();
+			decimal incoming_fee = decimal::zero();
+			decimal outgoing_fee = decimal::zero();
 			uint8_t security_level = 0;
 			bool accepts_account_requests = true;
 			bool accepts_withdrawal_requests = true;
@@ -310,8 +318,7 @@ namespace tangent
 			expects_lr<void> execute(ledger::transaction_context* context) const override;
 			bool store_body(format::stream* stream) const override;
 			bool load_body(format::stream& stream) override;
-			void set_incoming_fee(const decimal& absolute_fee, const decimal& relative_fee);
-			void set_outgoing_fee(const decimal& absolute_fee, const decimal& relative_fee);
+			void set_reward(const decimal& new_incoming_fee, const decimal& new_outgoing_fee);
 			void set_security(uint8_t new_security_level, bool new_accepts_account_requests, bool new_accepts_withdrawal_requests);
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
@@ -321,34 +328,34 @@ namespace tangent
 			static std::string_view as_instance_typename();
 		};
 
-		struct depository_migration final : ledger::transaction
+		struct depository_regrouping final : ledger::transaction
 		{
-			struct mpc_migration
+			struct participant
 			{
 				algorithm::asset_id asset = 0;
-				algorithm::pubkeyhash proposer = { 0 };
+				algorithm::pubkeyhash manager = { 0 };
 				algorithm::pubkeyhash owner = { 0 };
 
 				uint256_t hash() const
 				{
 					format::stream message;
 					message.write_integer(asset);
-					message.write_string(algorithm::pubkeyhash_t(proposer).optimized_view());
+					message.write_string(algorithm::pubkeyhash_t(manager).optimized_view());
 					message.write_string(algorithm::pubkeyhash_t(owner).optimized_view());
 					return message.hash();
 				}
 			};
 
-			ordered_map<uint256_t, mpc_migration> migrations;
+			ordered_map<uint256_t, participant> participants;
 
 			expects_lr<void> validate(uint64_t block_number) const override;
 			expects_lr<void> execute(ledger::transaction_context* context) const override;
 			expects_promise_rt<void> dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const override;
 			bool store_body(format::stream* stream) const override;
 			bool load_body(format::stream& stream) override;
-			void migrate(const algorithm::asset_id& asset, const algorithm::pubkeyhash proposer, const algorithm::pubkeyhash owner);
+			void migrate(const algorithm::asset_id& asset, const algorithm::pubkeyhash manager, const algorithm::pubkeyhash owner);
 			bool is_dispatchable() const override;
-			algorithm::pubkeyhash_t get_new_proposer(const ledger::receipt& receipt) const;
+			algorithm::pubkeyhash_t get_new_manager(const ledger::receipt& receipt) const;
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
@@ -357,10 +364,10 @@ namespace tangent
 			static std::string_view as_instance_typename();
 		};
 
-		struct depository_migration_preparation final : ledger::consensus_transaction
+		struct depository_regrouping_preparation final : ledger::consensus_transaction
 		{
 			algorithm::pubkey cipher_public_key = { 0 };
-			uint256_t depository_migration_hash = 0;
+			uint256_t depository_regrouping_hash = 0;
 
 			expects_lr<void> validate(uint64_t block_number) const override;
 			expects_lr<void> execute(ledger::transaction_context* context) const override;
@@ -376,15 +383,15 @@ namespace tangent
 			static std::string_view as_instance_typename();
 		};
 
-		struct depository_migration_commitment final : ledger::consensus_transaction
+		struct depository_regrouping_commitment final : ledger::consensus_transaction
 		{
-			ordered_map<uint256_t, string> encrypted_migrations;
-			uint256_t depository_migration_preparation_hash = 0;
+			ordered_map<uint256_t, string> encrypted_shares;
+			uint256_t depository_regrouping_preparation_hash = 0;
 
 			expects_lr<void> validate(uint64_t block_number) const override;
 			expects_lr<void> execute(ledger::transaction_context* context) const override;
 			expects_promise_rt<void> dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const override;
-			expects_lr<void> transfer(const uint256_t& account_hash, const uint256_t& mpc_seed, const algorithm::pubkey new_proposer_cipher_public_key, const algorithm::seckey old_proposer_secret_key);
+			expects_lr<void> transfer(const uint256_t& account_hash, const uint256_t& share, const algorithm::pubkey new_manager_cipher_public_key, const algorithm::seckey old_manager_secret_key);
 			bool store_body(format::stream* stream) const override;
 			bool load_body(format::stream& stream) override;
 			bool is_dispatchable() const override;
@@ -396,9 +403,9 @@ namespace tangent
 			static std::string_view as_instance_typename();
 		};
 
-		struct depository_migration_finalization final : ledger::consensus_transaction
+		struct depository_regrouping_finalization final : ledger::consensus_transaction
 		{
-			uint256_t depository_migration_commitment_hash = 0;
+			uint256_t depository_regrouping_commitment_hash = 0;
 			bool successful = true;
 
 			expects_lr<void> validate(uint64_t block_number) const override;

@@ -544,10 +544,6 @@ namespace tangent
 			if (value != nullptr && value->value.is(var_type::integer))
 				user.p2p.cursor_size = value->value.get_integer();
 
-			value = config->fetch("p2p.proposer");
-			if (value != nullptr && value->value.is(var_type::boolean))
-				user.p2p.proposer = value->value.get_boolean();
-
 			value = config->fetch("p2p.server");
 			if (value != nullptr && value->value.is(var_type::boolean))
 				user.p2p.server = value->value.get_boolean();
@@ -587,10 +583,6 @@ namespace tangent
 			value = config->fetch("rpc.page_size");
 			if (value != nullptr && value->value.is(var_type::integer))
 				user.rpc.page_size = value->value.get_integer();
-
-			value = config->fetch("rpc.messaging");
-			if (value != nullptr && value->value.is(var_type::boolean))
-				user.rpc.messaging = value->value.get_boolean();
 
 			value = config->fetch("rpc.websockets");
 			if (value != nullptr && value->value.is(var_type::boolean))
@@ -809,10 +801,11 @@ namespace tangent
 				account.secret_key_version = 0xD;
 				account.public_key_version = 0xC;
 				account.address_version = 0x6;
-				policy.depository_committee_min_size = 1;
-				policy.account_gas_work_required = 0.0;
 				policy.consensus_proof_time = 30;
 				policy.transaction_throughput = 21000;
+				policy.production_work_required = 0.0;
+				policy.participation_min_per_account = 1;
+				policy.participation_std_per_account = 2;
 				break;
 			case tangent::network_type::testnet:
 				message.packet_magic = 0xf815c95c;
