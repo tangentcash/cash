@@ -1520,7 +1520,7 @@ namespace tangent
 
 			algorithm::wesolowski::distribution distribution;
 			distribution.signature = message.data;
-			distribution.value = algorithm::hashing::hash256i(*crypto::hash_raw(digests::sha512(), distribution.signature));
+			distribution.value = algorithm::hashing::hash256i(*crypto::hash(digests::sha512(), distribution.signature));
 			return distribution;
 		}
 		expects_lr<size_t> transaction_context::calculate_attesters_size(const algorithm::asset_id& asset) const

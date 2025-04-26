@@ -64,7 +64,7 @@ namespace tangent
 			}
 			static void tx_append_hash(vector<uint8_t>& tx, const std::string_view& data)
 			{
-				string hash = *crypto::hash_raw(digests::sha256(), data);
+				string hash = *crypto::hash(digests::sha256(), data);
 				tx_append(tx, (uint8_t*)hash.data(), hash.size());
 			}
 			static void tx_append_op_create_account(vector<uint8_t>& tx, StellarCreateAccountOp& data)
@@ -156,7 +156,7 @@ namespace tangent
 				tx.reserve(8192);
 				tx_append_transaction_signature_payload(tx, transaction, accounts, payments);
 
-				string hash = *crypto::hash_raw(digests::sha256(), string((char*)tx.data(), tx.size()));
+				string hash = *crypto::hash(digests::sha256(), string((char*)tx.data(), tx.size()));
 				tx.resize(hash.size());
 				memcpy(tx.data(), hash.data(), hash.size());
 				return tx;

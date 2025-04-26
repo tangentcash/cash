@@ -280,22 +280,22 @@ namespace tangent
 	string vectorstate::init()
 	{
 		auto data = *crypto::random_bytes(KEY_SIZE);
-		auto checksum = *crypto::hash_raw(digests::sha256(), data);
+		auto checksum = *crypto::hash(digests::sha256(), data);
 		return data + checksum;
 	}
 	void vectorstate::use(network_type type, const std::string_view& data)
 	{
 		VI_PANIC(data.size() == KEY_SIZE + 32, "invalid key size");
-		VI_PANIC(*crypto::hash_raw(digests::sha256(), data.substr(0, KEY_SIZE)) == data.substr(KEY_SIZE), "invalid key checksum");
+		VI_PANIC(*crypto::hash(digests::sha256(), data.substr(0, KEY_SIZE)) == data.substr(KEY_SIZE), "invalid key checksum");
 		string blob = to_string((uint8_t)type) + string(data);
 		for (size_t i = 0; i < data.size(); i++)
-			blob = *crypto::hash_raw(digests::sha256(), blob);
+			blob = *crypto::hash(digests::sha256(), blob);
 		key = secret_box::secure(blob);
 	}
 	expects_lr<string> vectorstate::encrypt_blob(const std::string_view& data) const
 	{
 		auto front = *crypto::random_bytes(KEY_FRONT), back = *crypto::random_bytes(KEY_BACK);
-		auto salt = crypto::hash_raw(digests::sha256(), front + back);
+		auto salt = crypto::hash(digests::sha256(), front + back);
 		auto result = crypto::encrypt(ciphers::aes_256_cbc(), data, key, secret_box::view(*salt));
 		if (!result)
 			return layer_exception(std::move(result.error().message()));
@@ -310,7 +310,7 @@ namespace tangent
 			return layer_exception("invalid blob");
 
 		auto front = data.substr(0, KEY_FRONT), back = data.substr(data.size() - KEY_BACK);
-		auto salt = crypto::hash_raw(digests::sha256(), string(front) + string(back));
+		auto salt = crypto::hash(digests::sha256(), string(front) + string(back));
 		auto result = crypto::decrypt(ciphers::aes_256_cbc(), data.substr(KEY_FRONT, data.size() - KEY_FRONT - KEY_BACK), key, secret_box::view(*salt));
 		if (!result)
 			return layer_exception(std::move(result.error().message()));

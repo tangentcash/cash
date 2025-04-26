@@ -61,7 +61,7 @@ namespace tangent
 				}
 
 				string raw_transaction_data = copy<string>(transaction.raw_data().SerializeAsString());
-				string raw_transaction_id = *crypto::hash_raw(digests::sha256(), raw_transaction_data);
+				string raw_transaction_id = *crypto::hash(digests::sha256(), raw_transaction_data);
 				uptr<schema> transaction_object = var::set::object();
 				transaction_object->set("visible", var::boolean(false));
 				transaction_object->set("txID", var::string(codec::hex_encode(raw_transaction_id)));
