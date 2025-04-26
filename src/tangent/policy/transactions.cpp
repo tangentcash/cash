@@ -1601,7 +1601,7 @@ namespace tangent
 			if (!chain || !params)
 				return layer_exception("invalid operation");
 
-			auto duplicate = context->get_depository_account(asset, setup_transaction->manager, context->receipt.from);
+			auto duplicate = context->get_depository_account(asset, setup_transaction->manager, setup->receipt.from);
 			if (duplicate)
 				return layer_exception("depository account already exists");
 
