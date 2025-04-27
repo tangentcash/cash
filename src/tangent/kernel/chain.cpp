@@ -277,13 +277,13 @@ namespace tangent
 		return target_path;
 	}
 
-	string vectorstate::init()
+	string keystate::init()
 	{
 		auto data = *crypto::random_bytes(KEY_SIZE);
 		auto checksum = *crypto::hash(digests::sha256(), data);
 		return data + checksum;
 	}
-	void vectorstate::use(network_type type, const std::string_view& data)
+	void keystate::use(network_type type, const std::string_view& data)
 	{
 		VI_PANIC(data.size() == KEY_SIZE + 32, "invalid key size");
 		VI_PANIC(*crypto::hash(digests::sha256(), data.substr(0, KEY_SIZE)) == data.substr(KEY_SIZE), "invalid key checksum");
@@ -292,7 +292,7 @@ namespace tangent
 			blob = *crypto::hash(digests::sha256(), blob);
 		key = secret_box::secure(blob);
 	}
-	expects_lr<string> vectorstate::encrypt_blob(const std::string_view& data) const
+	expects_lr<string> keystate::encrypt(const std::string_view& data) const
 	{
 		auto front = *crypto::random_bytes(KEY_FRONT), back = *crypto::random_bytes(KEY_BACK);
 		auto salt = crypto::hash(digests::sha256(), front + back);
@@ -304,7 +304,7 @@ namespace tangent
 		result->append(back);
 		return *result;
 	}
-	expects_lr<string> vectorstate::decrypt_blob(const std::string_view& data) const
+	expects_lr<string> keystate::decrypt(const std::string_view& data) const
 	{
 		if (data.size() <= KEY_FRONT + KEY_BACK)
 			return layer_exception("invalid blob");
@@ -316,19 +316,6 @@ namespace tangent
 			return layer_exception(std::move(result.error().message()));
 
 		return *result;
-	}
-	expects_lr<string> vectorstate::encrypt_key(const secret_box& data) const
-	{
-		auto value = data.expose<2048>();
-		return encrypt_blob(value.view);
-	}
-	expects_lr<secret_box> vectorstate::decrypt_key(const std::string_view& data) const
-	{
-		auto result = decrypt_blob(data);
-		if (!result)
-			return result.error();
-
-		return secret_box::secure(*result);
 	}
 
 	string timepoint::adjust(const socket_address& address, int64_t milliseconds_delta)
@@ -464,9 +451,9 @@ namespace tangent
 					user.network = network_type::regtest;
 			}
 
-			value = config->get("vectorstate");
+			value = config->get("keystate");
 			if (value != nullptr && value->value.is(var_type::string))
-				user.vectorstate = value->value.get_blob();
+				user.keystate = value->value.get_blob();
 
 			value = config->get("nodes");
 			if (value != nullptr && value->value.get_type() == var_type::array)
@@ -776,20 +763,25 @@ namespace tangent
 		instance = this;
 		if (config)
 		{
-			auto vectorstate_base = database.resolve(user.network, user.storage.directory) + user.vectorstate;
-			auto vectorstate_path = os::path::resolve(os::path::resolve(vectorstate_base, *library, true).or_else(user.vectorstate)).or_else(user.vectorstate);
-			auto vectorstate_file = os::file::read_as_string(vectorstate_path);
-			if (!vectorstate_file)
+			auto keystate_base = user.storage.directory;
+			if (!stringify::ends_with(keystate_base, "/"))
+				keystate_base.append(1, VI_SPLITTER).append(user.keystate);
+			else
+				keystate_base.append(user.keystate);
+
+			auto keystate_path = os::path::resolve(os::path::resolve(keystate_base, *library, true).or_else(user.keystate)).or_else(user.keystate);
+			auto keystate_file = os::file::read_as_string(keystate_path);
+			if (!keystate_file)
 			{
-				vectorstate_file = key.init();
-				VI_PANIC(location(vectorstate_path).protocol == "file", "cannot save vectorstate into %s", vectorstate_path.c_str());
-				os::directory::patch(os::path::get_directory(vectorstate_path)).expect("cannot save vectorstate into " + vectorstate_path);
-				os::file::write(vectorstate_path, (uint8_t*)vectorstate_file->data(), vectorstate_file->size()).expect("cannot save vectorstate into " + vectorstate_path);
+				keystate_file = box.init();
+				VI_PANIC(location(keystate_path).protocol == "file", "cannot save keystate into %s", keystate_path.c_str());
+				os::directory::patch(os::path::get_directory(keystate_path)).expect("cannot save keystate into " + keystate_path);
+				os::file::write(keystate_path, (uint8_t*)keystate_file->data(), keystate_file->size()).expect("cannot save keystate into " + keystate_path);
 			}
-			key.use(user.network, *vectorstate_file);
+			box.use(user.network, *keystate_file);
 		}
 		else
-			key.use(user.network, key.init());
+			box.use(user.network, box.init());
 
 		switch (user.network)
 		{

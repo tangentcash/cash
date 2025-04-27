@@ -211,13 +211,10 @@ namespace tangent
 			server_response validatorstate_reject_node(http::connection* base, format::variables&& args);
 			server_response validatorstate_get_node(http::connection* base, format::variables&& args);
 			server_response validatorstate_get_blockchains(http::connection* base, format::variables&& args);
-			server_response validatorstate_get_signer_address(http::connection* base, format::variables&& args);
+			server_response validatorstate_get_participations(http::connection* base, format::variables&& args);
+			server_response validatorstate_get_wallet(http::connection* base, format::variables&& args);
 			server_response validatorstate_status(http::connection* base, format::variables&& args);
 			server_response validatorstate_submit_block(http::connection* base, format::variables&& args);
-			server_response validatorstate_build_certification_transaction(http::connection* base, format::variables&& args);
-			server_response validatorstate_build_depository_adjustment_transaction(http::connection* base, format::variables&& args);
-			server_response validatorstate_build_depository_regrouping_transaction(http::connection* base, format::variables&& args);
-			server_response validatorstate_build_depository_withdrawal_transaction(http::connection* base, format::variables&& args);
 		};
 	}
 }

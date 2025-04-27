@@ -40,9 +40,10 @@ namespace tangent
 				message.clear();
 			return message;
 		}
-		format::stream uniform::as_payload() const
+		format::stream uniform::as_signable() const
 		{
 			format::stream message;
+			message.write_integer(as_type());
 			if (!store_payload(&message))
 				message.clear();
 			return message;
@@ -76,35 +77,19 @@ namespace tangent
 		}
 		bool authentic::sign(const algorithm::seckey secret_key)
 		{
-			format::stream message;
-			if (!store_payload(&message))
-				return false;
-
-			return algorithm::signing::sign(message.hash(), secret_key, signature);
+			return algorithm::signing::sign(as_signable().hash(), secret_key, signature);
 		}
 		bool authentic::verify(const algorithm::pubkey public_key) const
 		{
-			format::stream message;
-			if (!store_payload(&message))
-				return false;
-
-			return algorithm::signing::verify(message.hash(), public_key, signature);
+			return algorithm::signing::verify(as_signable().hash(), public_key, signature);
 		}
 		bool authentic::recover(algorithm::pubkey public_key) const
 		{
-			format::stream message;
-			if (!store_payload(&message))
-				return false;
-
-			return algorithm::signing::recover(message.hash(), public_key, signature);
+			return algorithm::signing::recover(as_signable().hash(), public_key, signature);
 		}
 		bool authentic::recover_hash(algorithm::pubkeyhash public_key_hash) const
 		{
-			format::stream message;
-			if (!store_payload(&message))
-				return false;
-
-			return algorithm::signing::recover_hash(message.hash(), public_key_hash, signature);
+			return algorithm::signing::recover_hash(as_signable().hash(), public_key_hash, signature);
 		}
 		void authentic::set_signature(const algorithm::recpubsig new_value)
 		{
@@ -132,9 +117,10 @@ namespace tangent
 				message.clear();
 			return message;
 		}
-		format::stream authentic::as_payload() const
+		format::stream authentic::as_signable() const
 		{
 			format::stream message;
+			message.write_integer(as_type());
 			if (!store_payload(&message))
 				message.clear();
 			return message;

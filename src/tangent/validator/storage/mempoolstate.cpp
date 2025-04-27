@@ -95,11 +95,11 @@ namespace tangent
 			}
 			else
 			{
-				auto blob = protocol::now().key.encrypt_blob(wallet_message.data);
-				if (!blob)
-					return blob.error();
+				auto encrypted_message = protocol::now().box.encrypt(wallet_message.data);
+				if (!encrypted_message)
+					return encrypted_message.error();
 
-				wallet_message.data = std::move(*blob);
+				wallet_message.data = std::move(*encrypted_message);
 			}
 
 			uint32_t services = 0;
@@ -155,9 +155,9 @@ namespace tangent
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<std::pair<ledger::validator, ledger::wallet>>(layer_exception(error_of(cursor)));
 
-			auto blob = protocol::now().key.decrypt_blob((*cursor)["wallet_message"].get().get_blob());
-			if (!blob)
-				return blob.error();
+			auto decrypted_message = protocol::now().box.decrypt((*cursor)["wallet_message"].get().get_blob());
+			if (!decrypted_message)
+				return decrypted_message.error();
 
 			ledger::validator node;
 			format::stream edge_message = format::stream((*cursor)["validator_message"].get().get_blob());
@@ -165,7 +165,7 @@ namespace tangent
 				return expects_lr<std::pair<ledger::validator, ledger::wallet>>(layer_exception("validator deserialization error"));
 
 			ledger::wallet wallet;
-			format::stream wallet_message = format::stream(std::move(*blob));
+			format::stream wallet_message = format::stream(std::move(*decrypted_message));
 			if (!wallet.load(wallet_message))
 				return expects_lr<std::pair<ledger::validator, ledger::wallet>>(layer_exception("wallet deserialization error"));
 
@@ -317,8 +317,8 @@ namespace tangent
 			if (!value.store(&message))
 				return expects_lr<void>(layer_exception("transaction serialization error"));
 
-			algorithm::pubkeyhash owner;
-			if (!value.recover_hash(owner))
+			algorithm::pubkeyhash owner = { 0 };
+			if (value.is_recoverable() && !value.recover_hash(owner))
 				return expects_lr<void>(layer_exception("transaction owner recovery error"));
 
 			uint256_t group = 0;
@@ -514,13 +514,17 @@ namespace tangent
 			uint8_t asset_data[32];
 			algorithm::encoding::decode_uint256(asset, asset_data);
 
+			auto encrypted_share = protocol::now().box.encrypt(std::string_view((char*)share_data, sizeof(share_data)));
+			if (!encrypted_share)
+				return encrypted_share.error();
+
 			schema_list map;
 			map.push_back(var::set::binary(asset_data, sizeof(asset_data)));
 			map.push_back(var::set::binary(owner, sizeof(algorithm::pubkeyhash)));
 			map.push_back(var::set::binary(manager, sizeof(algorithm::pubkeyhash)));
-			map.push_back(var::set::binary(share_data, sizeof(share_data)));
+			map.push_back(var::set::binary(*encrypted_share));
 
-			auto cursor = emplace_query(label, __func__, "INSERT OR REPLACE INTO groups (asset, owner, manager, hash) VALUES (?, ?, ?, ?);", &map);
+			auto cursor = emplace_query(label, __func__, "INSERT OR REPLACE INTO groups (asset, owner, manager, share) VALUES (?, ?, ?, ?);", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(error_of(cursor)));
 
@@ -536,16 +540,19 @@ namespace tangent
 			map.push_back(var::set::binary(owner, sizeof(algorithm::pubkeyhash)));
 			map.push_back(var::set::binary(manager, sizeof(algorithm::pubkeyhash)));
 
-			auto cursor = emplace_query(label, __func__, "SELECT hash FROM groups WHERE asset = ? AND owner = ? AND manager = ?", &map);
+			auto cursor = emplace_query(label, __func__, "SELECT share FROM groups WHERE asset = ? AND owner = ? AND manager = ?", &map);
 			if (cursor && !cursor->error_or_empty())
 			{
-				auto seed_data = (*cursor)["hash"].get().get_blob();
-				if (seed_data.size() != 32)
-					return expects_lr<uint256_t>(layer_exception("bad seed"));
+				auto encrypted_share = (*cursor)["share"].get().get_blob();
+				auto decrypted_share = protocol::now().box.decrypt(encrypted_share);
+				if (!decrypted_share)
+					return decrypted_share.error();
+				else if (decrypted_share->size() != 32)
+					return expects_lr<uint256_t>(layer_exception("bad share"));
 
-				uint256_t seed = 0;
-				algorithm::encoding::encode_uint256((uint8_t*)seed_data.data(), seed);
-				return seed;
+				uint256_t share = 0;
+				algorithm::encoding::encode_uint256((uint8_t*)decrypted_share->data(), share);
+				return share;
 			}
 			else
 			{
@@ -845,7 +852,7 @@ namespace tangent
 					asset BINARY(32) NOT NULL,
 					owner BINARY(20) NOT NULL,
 					manager BINARY(20) NOT NULL,
-					hash BINARY(32) NOT NULL,
+					share BINARY NOT NULL,
 					PRIMARY KEY (asset, owner, manager)
 				) WITHOUT ROWID;
 				CREATE INDEX IF NOT EXISTS groups_manager ON groups (manager);

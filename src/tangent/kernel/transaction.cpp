@@ -140,6 +140,11 @@ namespace tangent
 		{
 			return false;
 		}
+		bool transaction::is_recoverable() const
+		{
+			auto level = get_type();
+			return level != transaction_level::attestation;
+		}
 		algorithm::asset_id transaction::get_gas_asset() const
 		{
 			return algorithm::asset::base_id_of(asset);
@@ -334,10 +339,6 @@ namespace tangent
 			else if (input_hash > 0 && other.input_hash != input_hash)
 				return false;
 
-			algorithm::pubkeyhash null = { 0 }, owner = { 0 };
-			if (!other.recover_hash(owner) || !memcmp(owner, null, sizeof(null)))
-				return false;
-
 			unordered_set<algorithm::pubkeyhash_t> attesters;
 			auto branches = std::move(output_hashes);
 			auto* branch_a = get_best_branch(context, nullptr);
@@ -361,8 +362,10 @@ namespace tangent
 				for (auto& signature : branch.second.signatures)
 				{
 					algorithm::pubkeyhash attester = { 0 };
-					if (algorithm::signing::recover_hash(aggregate_message_hash, attester, signature.data))
-						attesters.insert(algorithm::pubkeyhash_t(attester));
+					if (!algorithm::signing::recover_hash(aggregate_message_hash, attester, signature.data))
+						return false;
+
+					attesters.insert(algorithm::pubkeyhash_t(attester));
 				}
 			}
 
@@ -373,7 +376,10 @@ namespace tangent
 				for (auto& signature : branch.second.signatures)
 				{
 					algorithm::pubkeyhash_t attester;
-					if (algorithm::signing::recover_hash(aggregate_message_hash, attester.data, signature.data) && attesters.find(attester) == attesters.end())
+					if (!algorithm::signing::recover_hash(aggregate_message_hash, attester.data, signature.data))
+						return false;
+
+					if (attesters.find(attester) == attesters.end())
 					{
 						attesters.insert(attester);
 						fork.signatures.insert(signature);
@@ -516,16 +522,7 @@ namespace tangent
 		}
 		bool attestation_transaction::recover(algorithm::pubkey public_key) const
 		{
-			for (auto& branch : output_hashes)
-			{
-				size_t signature_index = 0;
-				for (auto& candidate : branch.second.signatures)
-				{
-					if (recover(public_key, branch.first, signature_index++))
-						return true;
-				}
-			}
-
+			memset(public_key, 0, sizeof(algorithm::pubkey));
 			return false;
 		}
 		bool attestation_transaction::recover(algorithm::pubkey public_key, const uint256_t& output_hash, size_t index) const
@@ -545,16 +542,7 @@ namespace tangent
 		}
 		bool attestation_transaction::recover_hash(algorithm::pubkeyhash public_key_hash) const
 		{
-			for (auto& branch : output_hashes)
-			{
-				size_t signature_index = 0;
-				for (auto& candidate : branch.second.signatures)
-				{
-					if (recover_hash(public_key_hash, branch.first, signature_index++))
-						return true;
-				}
-			}
-
+			memset(public_key_hash, 0, sizeof(algorithm::pubkeyhash));
 			return false;
 		}
 		bool attestation_transaction::recover_hash(algorithm::pubkeyhash public_key_hash, const uint256_t& output_hash, size_t index) const
@@ -698,6 +686,10 @@ namespace tangent
 					signatures->push(var::string(format::util::encode_0xhex(signature.view())));
 			}
 			return data;
+		}
+		format::stream attestation_transaction::as_signable() const
+		{
+			return format::stream();
 		}
 
 		bool receipt::store_payload(format::stream* stream) const

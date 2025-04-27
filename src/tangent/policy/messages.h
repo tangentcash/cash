@@ -21,7 +21,7 @@ namespace tangent
 			virtual std::string_view as_typename() const = 0;
 			virtual uptr<schema> as_schema() const = 0;
 			virtual format::stream as_message() const;
-			virtual format::stream as_payload() const;
+			virtual format::stream as_signable() const;
 		};
 
 		struct authentic
@@ -46,7 +46,7 @@ namespace tangent
 			virtual std::string_view as_typename() const = 0;
 			virtual uptr<schema> as_schema() const = 0;
 			virtual format::stream as_message() const;
-			virtual format::stream as_payload() const;
+			virtual format::stream as_signable() const;
 		};
 	}
 }

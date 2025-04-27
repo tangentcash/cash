@@ -19,7 +19,7 @@ namespace tangent
 			bool verify_public_key() const;
 			bool verify_address() const;
 			bool verify(const messages::authentic& message) const;
-			bool recovers(messages::authentic& message) const;
+			bool recovers(const messages::authentic& message) const;
 			bool sign(messages::authentic& message) const;
 			bool store_payload(format::stream* stream) const override;
 			bool load_payload(format::stream& stream) override;

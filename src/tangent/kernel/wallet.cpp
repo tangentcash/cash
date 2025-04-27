@@ -75,7 +75,7 @@ namespace tangent
 		{
 			return has_public_key() && message.verify(public_key);
 		}
-		bool wallet::recovers(messages::authentic& message) const
+		bool wallet::recovers(const messages::authentic& message) const
 		{
 			algorithm::pubkeyhash recover_public_key_hash;
 			return message.recover_hash(recover_public_key_hash) && memcmp(recover_public_key_hash, public_key_hash, sizeof(public_key_hash)) == 0;

@@ -1915,7 +1915,14 @@ namespace tangent
 			{
 				auto account = find_receiving_account(context, asset, from_manager, to_manager);
 				if (!account)
-					return expects_promise_rt<void>(remote_exception(std::move(account.error().message())));
+				{
+					auto error = remote_exception(std::move(account.error().message()));
+					auto* transaction = memory::init<depository_withdrawal_finalization>();
+					transaction->asset = asset;
+					transaction->set_failure_witness(error.what(), context->receipt.transaction_hash);
+					dispatcher->emit_transaction(transaction);
+					return expects_promise_rt<void>(std::move(error));
+				}
 
 				transfers.push_back(mediator::value_transfer(asset, account->addresses.begin()->second, get_token_value(context)));
 			}
@@ -1975,12 +1982,21 @@ namespace tangent
 					transaction->asset = asset;
 					transaction->set_failure_witness(error.what(), context->receipt.transaction_hash);
 					dispatcher->emit_transaction(transaction);
+					dispatcher->store_cache(context, nullptr);
 					coreturn expects_rt<void>(std::move(error));
 				}
 
 				auto group = accumulate_prepared_group(context, this, *group_prepared);
 				if (!group)
-					coreturn remote_exception(std::move(group.error().message()));
+				{
+					auto error = remote_exception(std::move(group.error().message()));
+					auto* transaction = memory::init<depository_withdrawal_finalization>();
+					transaction->asset = asset;
+					transaction->set_failure_witness(error.what(), context->receipt.transaction_hash);
+					dispatcher->emit_transaction(transaction);
+					dispatcher->store_cache(context, nullptr);
+					coreturn expects_rt<void>(std::move(error));
+				}
 
 				for (auto& share : group_signers)
 					group->erase(share);
@@ -1995,7 +2011,15 @@ namespace tangent
 						continue;
 					}
 					else if (!result)
-						coreturn result.error();
+					{
+						auto error = std::move(result.error());
+						auto* transaction = memory::init<depository_withdrawal_finalization>();
+						transaction->asset = asset;
+						transaction->set_failure_witness(error.what(), context->receipt.transaction_hash);
+						dispatcher->emit_transaction(transaction);
+						dispatcher->store_cache(context, nullptr);
+						coreturn expects_rt<void>(std::move(error));
+					}
 
 					group_signers.insert(share);
 				}
@@ -2007,7 +2031,15 @@ namespace tangent
 						auto& input = group_prepared->inputs[input_index];
 						auto status = algorithm::composition::accumulate_signature(input.alg, input.message.data(), input.message.size(), input.public_key, nullptr, input_signature.data);
 						if (!status)
-							coreturn remote_exception(std::move(status.error().message()));
+						{
+							auto error = remote_exception(std::move(status.error().message()));
+							auto* transaction = memory::init<depository_withdrawal_finalization>();
+							transaction->asset = asset;
+							transaction->set_failure_witness(error.what(), context->receipt.transaction_hash);
+							dispatcher->emit_transaction(transaction);
+							dispatcher->store_cache(context, nullptr);
+							coreturn expects_rt<void>(std::move(error));
+						}
 
 						memcpy(input.signature, input_signature.data, sizeof(input_signature.data));
 					}
@@ -2975,8 +3007,8 @@ namespace tangent
 			data->set("incoming_fee", var::decimal(incoming_fee));
 			data->set("outgoing_fee", var::decimal(outgoing_fee));
 			data->set("security_level", var::integer(security_level));
-			data->set("accepts_account_requests", var::number(accepts_account_requests));
-			data->set("accepts_withdrawal_requests", var::number(accepts_withdrawal_requests));
+			data->set("accepts_account_requests", var::boolean(accepts_account_requests));
+			data->set("accepts_withdrawal_requests", var::boolean(accepts_withdrawal_requests));
 			return data;
 		}
 		uint32_t depository_adjustment::as_type() const

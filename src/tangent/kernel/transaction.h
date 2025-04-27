@@ -53,6 +53,7 @@ namespace tangent
 			virtual bool is_payable() const;
 			virtual bool is_consensus() const;
 			virtual bool is_dispatchable() const;
+			virtual bool is_recoverable() const;
 			virtual algorithm::asset_id get_gas_asset() const;
 			virtual transaction_level get_type() const;
 			virtual uptr<schema> as_schema() const override;
@@ -110,6 +111,7 @@ namespace tangent
 			virtual uint256_t get_branch_image(const uint256_t& output_hash) const;
 			virtual uint256_t as_group_hash() const;
 			virtual uptr<schema> as_schema() const override;
+			virtual format::stream as_signable() const override;
 			transaction_level get_type() const override;
 		};
 

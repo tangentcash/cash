@@ -418,52 +418,28 @@ namespace tangent
 		}
 		bool block_header::sign(const algorithm::seckey secret_key)
 		{
-			format::stream message;
-			if (!block_header::store_payload(&message))
-				return false;
-
-			return algorithm::signing::sign(message.hash(), secret_key, signature);
+			return algorithm::signing::sign(block_header::as_signable().hash(), secret_key, signature);
 		}
 		bool block_header::solve(const algorithm::seckey secret_key)
 		{
-			format::stream message;
-			if (!store_payload_wesolowski(&message))
-				return false;
-
-			wesolowski = algorithm::wesolowski::evaluate(target, message.data);
+			wesolowski = algorithm::wesolowski::evaluate(target, as_solution().data);
 			return !wesolowski.empty();
 		}
 		bool block_header::verify(const algorithm::pubkey public_key) const
 		{
-			format::stream message;
-			if (!block_header::store_payload(&message))
-				return false;
-
-			return algorithm::signing::verify(message.hash(), public_key, signature);
+			return algorithm::signing::verify(block_header::as_signable().hash(), public_key, signature);
 		}
 		bool block_header::recover(algorithm::pubkey public_key) const
 		{
-			format::stream message;
-			if (!block_header::store_payload(&message))
-				return false;
-
-			return algorithm::signing::recover(message.hash(), public_key, signature);
+			return algorithm::signing::recover(block_header::as_signable().hash(), public_key, signature);
 		}
 		bool block_header::recover_hash(algorithm::pubkeyhash public_key_hash) const
 		{
-			format::stream message;
-			if (!block_header::store_payload(&message))
-				return false;
-
-			return algorithm::signing::recover_hash(message.hash(), public_key_hash, signature);
+			return algorithm::signing::recover_hash(block_header::as_signable().hash(), public_key_hash, signature);
 		}
 		bool block_header::verify_wesolowski() const
 		{
-			format::stream message;
-			if (!store_payload_wesolowski(&message))
-				return false;
-
-			return algorithm::wesolowski::verify(target, message.data, wesolowski);
+			return algorithm::wesolowski::verify(target, as_solution().data, wesolowski);
 		}
 		void block_header::set_parent_block(const block_header* parent_block)
 		{
@@ -596,6 +572,22 @@ namespace tangent
 				witness_data->set("number", algorithm::encoding::serialize_uint256(item.second));
 			}
 			return data;
+		}
+		format::stream block_header::as_signable() const
+		{
+			format::stream message;
+			message.write_integer(as_type());
+			if (!block_header::store_payload(&message))
+				message.clear();
+			return message;
+		}
+		format::stream block_header::as_solution() const
+		{
+			format::stream message;
+			message.write_integer(as_type());
+			if (!block_header::store_payload_wesolowski(&message))
+				message.clear();
+			return message;
 		}
 		uint256_t block_header::as_hash(bool renew) const
 		{
@@ -1781,9 +1773,9 @@ namespace tangent
 			if (!result)
 				return result.error();
 
-			if (!value.is_nan() && !value.is_zero())
+			decimal delta = (new_state.stake.is_nan() ? decimal::zero() : new_state.stake) - (prev_state_stake.is_nan() ? decimal::zero() : prev_state_stake);
+			if (!delta.is_zero_or_nan())
 			{
-				auto delta = new_state.stake.is_nan() ? -prev_state_stake : value;
 				auto transfer = apply_transfer(asset, owner, is_reward ? delta : decimal::zero(), delta);
 				if (!transfer)
 					return transfer.error();
@@ -1804,9 +1796,9 @@ namespace tangent
 			if (!result)
 				return result.error();
 
-			if (!value.is_nan() && !value.is_zero())
+			decimal delta = (new_state.stake.is_nan() ? decimal::zero() : new_state.stake) - (prev_state_stake.is_nan() ? decimal::zero() : prev_state_stake);
+			if (!delta.is_zero_or_nan())
 			{
-				auto delta = new_state.stake.is_nan() ? -prev_state_stake : value;
 				auto transfer = apply_transfer(asset, owner, is_reward ? delta : decimal::zero(), delta);
 				if (!transfer)
 					return transfer.error();
@@ -2371,8 +2363,8 @@ namespace tangent
 		expects_lr<uint256_t> transaction_context::calculate_tx_gas(const ledger::transaction* transaction)
 		{
 			VI_ASSERT(transaction != nullptr, "transaction should be set");
-			algorithm::pubkeyhash owner;
-			if (!transaction->recover_hash(owner))
+			algorithm::pubkeyhash owner = { 0 };
+			if (transaction->is_recoverable() && !transaction->recover_hash(owner))
 				return layer_exception("invalid signature");
 
 			auto* reference = (ledger::transaction*)transaction;
@@ -2420,8 +2412,8 @@ namespace tangent
 		expects_lr<void> transaction_context::validate_tx(const ledger::transaction* new_transaction, const uint256_t& new_transaction_hash, algorithm::pubkeyhash owner)
 		{
 			VI_ASSERT(new_transaction && owner, "transaction and owner should be set");
-			algorithm::pubkeyhash null = { 0 };
-			if (!algorithm::signing::recover_hash(new_transaction_hash, owner, new_transaction->signature) || !memcmp(owner, null, sizeof(null)))
+			memset(owner, 0, sizeof(algorithm::pubkeyhash));
+			if (new_transaction->is_recoverable() && !algorithm::signing::recover_hash(new_transaction_hash, owner, new_transaction->signature))
 				return layer_exception("invalid signature");
 
 			auto chain = storages::chainstate(__func__);
@@ -2458,7 +2450,8 @@ namespace tangent
 			if ((flags & (uint8_t)execution_flags::only_successful) && !context.receipt.successful)
 				return execution.error();
 
-			if (!(flags & (uint8_t)execution_flags::skip_sequencing) && context.transaction->get_type() != transaction_level::attestation)
+			algorithm::pubkeyhash null = { 0 };
+			if (!(flags & (uint8_t)execution_flags::skip_sequencing) && memcmp(context.receipt.from, null, sizeof(null)) != 0)
 			{
 				auto info = context.apply_account_nonce(context.receipt.from, context.transaction->nonce + 1);
 				if (!info)
@@ -2761,7 +2754,7 @@ namespace tangent
 			algorithm::pubkeyhash null = { 0 };
 			for (auto& item : subqueue)
 			{
-				if (!memcmp(item.owner, null, sizeof(null)))
+				if (item.candidate->is_recoverable() && !memcmp(item.owner, null, sizeof(null)))
 				{
 					outgoing.push_back(item.hash);
 					continue;

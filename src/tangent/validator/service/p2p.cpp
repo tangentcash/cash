@@ -545,10 +545,6 @@ namespace tangent
 		}
 		promise<void> server_node::propose_transaction_logs(const algorithm::asset_id& asset, const mediator::chain_supervisor_options& options, mediator::transaction_logs&& logs)
 		{
-			umutex<std::recursive_mutex> unique(sync.account);
-			auto account_nonce = validator.wallet.get_latest_nonce().or_else(0);
-			unique.unlock();
-
 			auto context = ledger::transaction_context();
 			for (auto& receipt : logs.transactions)
 			{
@@ -557,10 +553,9 @@ namespace tangent
 					auto collision = context.get_witness_transaction(asset, receipt.transaction_id);
 					if (!collision)
 					{
-						uptr<transactions::depository_transaction> transaction = memory::init<transactions::depository_transaction>();
+						auto transaction = uptr<transactions::depository_transaction>(memory::init<transactions::depository_transaction>());
 						transaction->set_witness(receipt);
-						if (accept_unsigned_transaction(nullptr, std::move(*transaction), account_nonce))
-							++account_nonce;
+						accept_unsigned_transaction(nullptr, std::move(*transaction), nullptr);
 					}
 					else if (protocol::now().user.p2p.logging)
 						VI_INFO("[p2p] %s observer transaction %s approved", algorithm::asset::name_of(asset).c_str(), receipt.transaction_id.c_str());
@@ -653,7 +648,7 @@ namespace tangent
 				discovery.count = mempool.get_validators_count().or_else(0);
 			return status;
 		}
-		expects_lr<void> server_node::build_transaction(ledger::transaction* candidate_tx, uint64_t account_nonce, uint256_t* output_hash)
+		expects_lr<void> server_node::accept_unsigned_transaction(relay* from, uptr<ledger::transaction>&& candidate_tx, uint64_t* account_nonce, uint256_t* output_hash)
 		{
 			auto mempool = storages::mempoolstate(__func__);
 			auto bandwidth = mempool.get_bandwidth_by_owner(validator.wallet.public_key_hash, candidate_tx->get_type());
@@ -665,29 +660,24 @@ namespace tangent
 			else
 				candidate_tx->set_optimal_gas(decimal::zero());
 
-			auto purpose = candidate_tx->as_typename();
-			if (!candidate_tx->sign(validator.wallet.secret_key, account_nonce, decimal::zero()))
-				return layer_exception("transaction sign failed");
+			if (!candidate_tx->sign(validator.wallet.secret_key, account_nonce ? *account_nonce : 0, decimal::zero()))
+			{
+				auto purpose = candidate_tx->as_typename();
+				if (protocol::now().user.p2p.logging)
+					VI_ERR("[p2p] transaction %s %.*s error: authentification error", algorithm::encoding::encode_0xhex256(candidate_tx->as_hash()).c_str(), (int)purpose.size(), purpose.data());
+
+				return layer_exception("authentification error");
+			}
+
+			auto status = accept_transaction(from, std::move(candidate_tx), true);
+			if (!status)
+				return status;
+
+			if (account_nonce != nullptr && *account_nonce == candidate_tx->nonce)
+				++(*account_nonce);
 
 			if (output_hash != nullptr)
 				*output_hash = candidate_tx->as_hash();
-
-			return expectation::met;
-		}
-		expects_lr<void> server_node::accept_unsigned_transaction(relay* from, uptr<ledger::transaction>&& candidate_tx, uint64_t account_nonce, uint256_t* output_hash)
-		{
-			auto status = build_transaction(*candidate_tx, account_nonce, output_hash);
-			if (status)
-				status = accept_transaction(from, std::move(candidate_tx), account_nonce);
-
-			auto purpose = candidate_tx->as_typename();
-			if (status)
-			{
-				if (protocol::now().user.p2p.logging)
-					VI_INFO("[p2p] transaction %s %.*s accepted", algorithm::encoding::encode_0xhex256(candidate_tx->as_hash()).c_str(), (int)purpose.size(), purpose.data());
-			}
-			else if (protocol::now().user.p2p.logging)
-				VI_ERR("[p2p] transaction %s %.*s error: %s", algorithm::encoding::encode_0xhex256(candidate_tx->as_hash()).c_str(), (int)purpose.size(), purpose.data(), status.what().c_str());
 
 			return status;
 		}
@@ -703,8 +693,8 @@ namespace tangent
 				return expectation::met;
 			}
 
-			algorithm::pubkeyhash owner;
-			if (!candidate_tx->recover_hash(owner))
+			algorithm::pubkeyhash owner = { 0 };
+			if (candidate_tx->is_recoverable() && !candidate_tx->recover_hash(owner))
 			{
 				if (protocol::now().user.p2p.logging)
 					VI_WARN("[p2p] transaction %s %.*s validation failed: invalid signature", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data());
@@ -1296,14 +1286,9 @@ namespace tangent
 					{
 						umutex<std::recursive_mutex> unique(sync.account);
 						auto account_nonce = validator.wallet.get_latest_nonce().or_else(0);
-						unique.unlock();
-
 						control_sys.lock_timeout("accept_mempool");
 						for (auto& transaction : sendable_transactions)
-						{
-							if (accept_unsigned_transaction(nullptr, std::move(transaction), account_nonce))
-								++account_nonce;
-						}
+							accept_unsigned_transaction(nullptr, std::move(transaction), &account_nonce);
 
 						dispatcher->checkpoint().report("dispatcher checkpoint error");
 						if (control_sys.unlock_timeout("accept_mempool"))
@@ -2394,6 +2379,8 @@ namespace tangent
 					if (!status)
 						return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
 				}
+
+				return expects_promise_rt<void>(expectation::met);
 			}
 
 			format::stream prepared_message;

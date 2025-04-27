@@ -389,7 +389,8 @@ namespace tangent
 			bind(access_type::w | access_type::a, "mempoolstate", "rejecttransaction", 1, 1, "uint256 hash", "void", "remove mempool transaction by hash", std::bind(&server_node::mempoolstate_reject_transaction, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "mempoolstate", "addnode", 1, 1, "string uri_address", "void", "add node ip address to trial addresses", std::bind(&server_node::mempoolstate_add_node, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "mempoolstate", "clearnode", 1, 1, "string uri_address", "void", "remove associated node info by ip address", std::bind(&server_node::mempoolstate_clear_node, this, std::placeholders::_1, std::placeholders::_2));
-			bind(access_type::r | access_type::a, "validatorstate", "getsigneraddress", 0, 0, "", "string", "get validator address", std::bind(&server_node::validatorstate_get_signer_address, this, std::placeholders::_1, std::placeholders::_2));
+			bind(access_type::r | access_type::a, "validatorstate", "getwallet", 0, 0, "", "wallet", "get validator wallet", std::bind(&server_node::validatorstate_get_wallet, this, std::placeholders::_1, std::placeholders::_2));
+			bind(access_type::r | access_type::a, "validatorstate", "getparticipations", 0, 0, "", "multiform[]", "get validator participations (for regrouping transaction)", std::bind(&server_node::validatorstate_get_participations, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::r | access_type::a, "validatorstate", "verify", 2, 3, "uint64 number, uint64 count, bool? validate", "uint256[]", "verify chain and possibly re-execute each block", std::bind(&server_node::validatorstate_verify, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "validatorstate", "prune", 2, 2, "string types = 'statetrie' | 'blocktrie' | 'transactiontrie', uint64 number", "void", "prune chainstate data using pruning level (types is '|' separated list)", std::bind(&server_node::validatorstate_prune, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "validatorstate", "revert", 1, 2, "uint64 number, bool? keep_reverted_transactions", "{ new_tip_block_number: uint64, old_tip_block_number: uint64, mempool_transactions: uint64, block_delta: int64, transaction_delta: int64, state_delta: int64, is_fork: bool }", "revert chainstate to block number and possibly send removed transactions to mempool", std::bind(&server_node::validatorstate_revert, this, std::placeholders::_1, std::placeholders::_2));
@@ -397,10 +398,6 @@ namespace tangent
 			bind(access_type::w | access_type::a, "validatorstate", "acceptnode", 0, 1, "string? uri_address", "void", "try to accept and connect to a node possibly by ip address", std::bind(&server_node::validatorstate_accept_node, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "validatorstate", "rejectnode", 1, 1, "string uri_address", "void", "reject and disconnect from a node by ip address", std::bind(&server_node::validatorstate_reject_node, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "validatorstate", "submitblock", 0, 0, "", "void", "try to propose a block from mempool transactions", std::bind(&server_node::validatorstate_submit_block, this, std::placeholders::_1, std::placeholders::_2));
-			bind(access_type::r | access_type::a, "validatorstate", "buildcertificationtransaction", 4, 4, "string asset, string block_production = 'enable' | 'standby' | 'disable', map<string, decimal | null> participation, map<string, decimal | null> attestation", "{ hash: uint256, data: string }", "built a transaction for validator adjustment that enables/disables block production, allocates/deallocates group participation(s) and attestation stakes (asset handle <-> stake value map)", std::bind(&server_node::validatorstate_build_certification_transaction, this, std::placeholders::_1, std::placeholders::_2));
-			bind(access_type::r | access_type::a, "validatorstate", "builddepositoryadjustmenttransaction", 6, 6, "string asset, decimal incoming_fee, decimal outgoing_fee, uint8 security_level, bool accept_account_requests, bool accept_withdrawal_requests", "{ hash: uint256, data: string }", "build a transaction for depository adjustment that sets rewards, security and functionality", std::bind(&server_node::validatorstate_build_depository_adjustment_transaction, this, std::placeholders::_1, std::placeholders::_2));
-			bind(access_type::r | access_type::a, "validatorstate", "builddepositoryregroupingtransaction", 1, 1, "string asset", "{ hash: uint256, data: string }", "build a transaction to send participations to another validator (for participation unstaking)", std::bind(&server_node::validatorstate_build_depository_regrouping_transaction, this, std::placeholders::_1, std::placeholders::_2));
-			bind(access_type::r | access_type::a, "validatorstate", "builddepositorywithdrawaltransaction", 2, 2, "string asset, string manager_address", "{ hash: uint256, data: string }", "build a transaction to send custody to another validator (for attestation unstaking)", std::bind(&server_node::validatorstate_build_depository_withdrawal_transaction, this, std::placeholders::_1, std::placeholders::_2));
 		}
 		void server_node::shutdown()
 		{
@@ -822,10 +819,11 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "invalid message");
 
 			algorithm::pubkeyhash owner = { 0 }, null = { 0 };
-			bool successful = candidate_tx->recover_hash(owner);
+			bool recoverable = candidate_tx->recover_hash(owner);
 			uptr<schema> result = var::set::object();
 			result->set("transaction", candidate_tx->as_schema().reset());
-			result->set("signer_address", successful ? algorithm::signing::serialize_address(owner) : var::set::null());
+			result->set("signer_message", recoverable ? var::string(candidate_tx->as_signable().encode()) : var::null());
+			result->set("signer_address", recoverable ? algorithm::signing::serialize_address(owner) : var::set::null());
 			return server_response().success(std::move(result));
 		}
 		server_response server_node::utility_help(http::connection* base, format::variables&& args)
@@ -2881,12 +2879,32 @@ namespace tangent
 			}
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::validatorstate_get_signer_address(http::connection* base, format::variables&& args)
+		server_response server_node::validatorstate_get_participations(http::connection* base, format::variables&& args)
+		{
+			auto result = uptr<schema>(var::set::array());
+			auto mempool = storages::mempoolstate(__func__);
+			size_t offset = 0, count = 64;
+			while (true)
+			{
+				auto accounts = mempool.get_group_accounts(nullptr, offset, count);
+				if (!accounts)
+					return server_response().error(error_codes::bad_request, accounts.error().message());
+
+				offset += accounts->size();
+				for (auto& account : *accounts)
+					result->push(account.as_schema().reset());
+				if (accounts->empty())
+					break;
+			}
+
+			return server_response().success(std::move(result));
+		}
+		server_response server_node::validatorstate_get_wallet(http::connection* base, format::variables&& args)
 		{
 			if (!validator)
 				return server_response().error(error_codes::bad_request, "validator node disabled");
 
-			return server_response().success(algorithm::signing::serialize_address(validator->validator.wallet.public_key_hash));
+			return server_response().success(validator->validator.wallet.as_schema());
 		}
 		server_response server_node::validatorstate_status(http::connection* base, format::variables&& args)
 		{
@@ -3010,166 +3028,6 @@ namespace tangent
 
 			validator->accept_mempool();
 			return server_response().success(var::set::null());
-		}
-		server_response server_node::validatorstate_build_certification_transaction(http::connection* base, format::variables&& args)
-		{
-			if (!validator)
-				return server_response().error(error_codes::bad_request, "validator node disabled");
-
-			uptr<transactions::certification> transaction = memory::init<transactions::certification>();
-			transaction->asset = algorithm::asset::id_of_handle(args[0].as_string());
-
-			auto validator_production = args[1].as_string();
-			if (validator_production == "enable")
-				transaction->enable_block_production();
-			else if (validator_production == "disable")
-				transaction->disable_block_production();
-			else
-				transaction->standby_on_block_production();
-
-			auto validator_participations = schema::from_json(args[2].as_string());
-			if (validator_participations)
-			{
-				for (auto& status : validator_participations->get_childs())
-				{
-					auto asset = algorithm::asset::id_of_handle(status->key);
-					auto stake = status->value.get_decimal();
-					if (stake.is_positive())
-						transaction->allocate_participation_stake(asset, stake);
-					else if (stake.is_negative())
-						transaction->deallocate_participation_stake(asset, -stake);
-					else if (stake.is_nan())
-						transaction->disable_participation(asset);
-					else
-						transaction->standby_on_participation(asset);
-				}
-				memory::release(*validator_participations);
-			}
-
-			auto validator_attestations = schema::from_json(args[3].as_string());
-			if (validator_attestations)
-			{
-				for (auto& status : validator_attestations->get_childs())
-				{
-					auto asset = algorithm::asset::id_of_handle(status->key);
-					auto stake = status->value.get_decimal();
-					if (stake.is_positive())
-						transaction->allocate_attestation_stake(asset, stake);
-					else if (stake.is_negative())
-						transaction->deallocate_attestation_stake(asset, -stake);
-					else if (stake.is_nan())
-						transaction->disable_attestation(asset);
-					else
-						transaction->standby_on_attestation(asset);
-				}
-				memory::release(*validator_attestations);
-			}
-
-			umutex<std::recursive_mutex> unique(validator->sync.account);
-			auto account_nonce = validator->validator.wallet.get_latest_nonce().or_else(0);
-			unique.unlock();
-
-			uint256_t transaction_hash = 0;
-			auto status = validator->build_transaction(*transaction, account_nonce, &transaction_hash);
-			if (!status)
-				return server_response().error(error_codes::bad_params, status.error().message());
-
-			schema* result = var::set::object();
-			result->set("hash", var::string(algorithm::encoding::encode_0xhex256(transaction_hash)));
-			result->set("data", var::string(transaction->as_message().encode()));
-			return server_response().success(result);
-		}
-		server_response server_node::validatorstate_build_depository_adjustment_transaction(http::connection* base, format::variables&& args)
-		{
-			if (!validator)
-				return server_response().error(error_codes::bad_request, "validator node disabled");
-
-			uptr<transactions::depository_adjustment> transaction = memory::init<transactions::depository_adjustment>();
-			transaction->asset = algorithm::asset::id_of_handle(args[0].as_string());
-			transaction->set_reward(args[1].as_decimal(), args[2].as_decimal());
-			transaction->set_security(args[3].as_uint8(), args[4].as_boolean(), args[5].as_boolean());
-
-			umutex<std::recursive_mutex> unique(validator->sync.account);
-			auto account_nonce = validator->validator.wallet.get_latest_nonce().or_else(0);
-			unique.unlock();
-
-			uint256_t transaction_hash = 0;
-			auto status = validator->build_transaction(*transaction, account_nonce, &transaction_hash);
-			if (!status)
-				return server_response().error(error_codes::bad_params, status.error().message());
-
-			schema* result = var::set::object();
-			result->set("hash", var::string(algorithm::encoding::encode_0xhex256(transaction_hash)));
-			result->set("data", var::string(transaction->as_message().encode()));
-			return server_response().success(result);
-		}
-		server_response server_node::validatorstate_build_depository_regrouping_transaction(http::connection* base, format::variables&& args)
-		{
-			if (!validator)
-				return server_response().error(error_codes::bad_request, "validator node disabled");
-
-			uptr<transactions::depository_regrouping> transaction = memory::init<transactions::depository_regrouping>();
-			transaction->asset = algorithm::asset::id_of_handle(args[0].as_string());
-
-			auto mempool = storages::mempoolstate(__func__);
-			size_t offset = 0, count = 64;
-			while (true)
-			{
-				auto accounts = mempool.get_group_accounts(nullptr, offset, count);
-				if (!accounts)
-					return server_response().error(error_codes::bad_request, accounts.error().message());
-
-				offset += accounts->size();
-				for (auto& account : *accounts)
-					transaction->migrate(account.asset, account.manager, account.owner);
-				if (accounts->empty())
-					break;
-			}
-
-			if (transaction->participants.empty())
-				return server_response().error(error_codes::bad_request, "there are no candidate group migrations");
-
-			umutex<std::recursive_mutex> unique(validator->sync.account);
-			auto account_nonce = validator->validator.wallet.get_latest_nonce().or_else(0);
-			unique.unlock();
-
-			uint256_t transaction_hash = 0;
-			auto status = validator->build_transaction(*transaction, account_nonce, &transaction_hash);
-			if (!status)
-				return server_response().error(error_codes::bad_params, status.error().message());
-
-			schema* result = var::set::object();
-			result->set("hash", var::string(algorithm::encoding::encode_0xhex256(transaction_hash)));
-			result->set("data", var::string(transaction->as_message().encode()));
-			return server_response().success(result);
-		}
-		server_response server_node::validatorstate_build_depository_withdrawal_transaction(http::connection* base, format::variables&& args)
-		{
-			if (!validator)
-				return server_response().error(error_codes::bad_request, "validator node disabled");
-
-			algorithm::pubkeyhash to_manager;
-			if (!algorithm::signing::decode_address(args[1].as_string(), to_manager))
-				return server_response().error(error_codes::bad_params, "invalid address");
-
-			uptr<transactions::depository_withdrawal> transaction = memory::init<transactions::depository_withdrawal>();
-			transaction->asset = algorithm::asset::id_of_handle(args[0].as_string());
-			transaction->set_from_manager(validator->validator.wallet.public_key_hash);
-			transaction->set_to_manager(to_manager);
-
-			umutex<std::recursive_mutex> unique(validator->sync.account);
-			auto account_nonce = validator->validator.wallet.get_latest_nonce().or_else(0);
-			unique.unlock();
-
-			uint256_t transaction_hash = 0;
-			auto status = validator->build_transaction(*transaction, account_nonce, &transaction_hash);
-			if (!status)
-				return server_response().error(error_codes::bad_params, status.error().message());
-
-			schema* result = var::set::object();
-			result->set("hash", var::string(algorithm::encoding::encode_0xhex256(transaction_hash)));
-			result->set("data", var::string(transaction->as_message().encode()));
-			return server_response().success(result);
 		}
 	}
 }

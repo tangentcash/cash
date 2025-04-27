@@ -118,7 +118,7 @@ namespace tangent
         uint64_t now_cpu() const;
     };
 
-    class vectorstate
+    class keystate
     {
     private:
         secret_box key;
@@ -126,10 +126,8 @@ namespace tangent
     public:
         string init();
         void use(network_type type, const std::string_view& data);
-        expects_lr<string> encrypt_blob(const std::string_view& data) const;
-        expects_lr<string> decrypt_blob(const std::string_view& data) const;
-        expects_lr<string> encrypt_key(const secret_box& data) const;
-        expects_lr<secret_box> decrypt_key(const std::string_view& data) const;
+        expects_lr<string> encrypt(const std::string_view& data) const;
+        expects_lr<string> decrypt(const std::string_view& data) const;
     };
 
     class protocol : public reference<protocol>
@@ -234,7 +232,7 @@ namespace tangent
             unordered_set<string> nodes;
             unordered_set<string> seeds;
             network_type network = network_type::mainnet;
-            string vectorstate = "./vectorstate.bsk";
+            string keystate = "./keystate.sk";
         } user;
         struct protocol_messaging_config
         {
@@ -293,7 +291,7 @@ namespace tangent
 
     public:
         repository database;
-        vectorstate key;
+        keystate box;
         timepoint time;
 
     public:

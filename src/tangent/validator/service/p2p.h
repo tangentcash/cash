@@ -199,8 +199,7 @@ namespace tangent
 			promise<option<socket_address>> find_node_from_mempool(option<socket_address>&& error_address, bool allow_seeding);
 			promise<option<socket_address>> find_node_from_seeding();
 			promise<void> propose_transaction_logs(const algorithm::asset_id& asset, const mediator::chain_supervisor_options& options, mediator::transaction_logs&& logs);
-			expects_lr<void> build_transaction(ledger::transaction* candidate_tx, uint64_t account_nonce, uint256_t* output_hash = nullptr);
-			expects_lr<void> accept_unsigned_transaction(relay* from, uptr<ledger::transaction>&& candidate_tx, uint64_t account_nonce, uint256_t* output_hash = nullptr);
+			expects_lr<void> accept_unsigned_transaction(relay* from, uptr<ledger::transaction>&& candidate_tx, uint64_t* account_nonce, uint256_t* output_hash = nullptr);
 			expects_lr<void> accept_transaction(relay* from, uptr<ledger::transaction>&& candidate_tx, bool validate_execution = false);
 			expects_lr<void> broadcast_transaction(relay* from, uptr<ledger::transaction>&& candidate_tx, const algorithm::pubkeyhash owner);
 			void bind_callable(receive_function function);

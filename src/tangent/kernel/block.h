@@ -152,6 +152,8 @@ namespace tangent
 			virtual uint64_t get_proof_time() const;
 			virtual uint256_t as_hash(bool renew = false) const override;
 			virtual uptr<schema> as_schema() const override;
+			virtual format::stream as_signable() const override;
+			virtual format::stream as_solution() const;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
