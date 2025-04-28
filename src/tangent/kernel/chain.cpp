@@ -24,7 +24,6 @@ namespace tangent
 		switch (type)
 		{
 			case tangent::storage_optimization::speed:
-				options.random_access_max_buffer_size = 1024 * 1024 * 48;
 				options.writable_file_max_buffer_size = 1024 * 1024 * 48;
 				options.avoid_unnecessary_blocking_io = true;
 				break;

@@ -73,7 +73,7 @@ namespace tangent
 			inline void destroy()
 			{
 				if (vm != nullptr && type != nullptr && address != nullptr)
-					vm->release_object(address, typeinfo(type));
+					vm->release_object(address, type);
 			}
 		};
 
@@ -156,38 +156,38 @@ namespace tangent
 		{
 			switch (value_type_id)
 			{
-				case (int)type_id::voidf:
+				case (int)type_id::void_t:
 					return layer_exception("store not supported for void type");
-				case (int)type_id::boolf:
+				case (int)type_id::bool_t:
 					stream->write_boolean(*(bool*)value);
 					return expectation::met;
-				case (int)type_id::int8:
-				case (int)type_id::uint8:
+				case (int)type_id::int8_t:
+				case (int)type_id::uint8_t:
 					stream->write_integer(*(uint8_t*)value);
 					return expectation::met;
-				case (int)type_id::int16:
-				case (int)type_id::uint16:
+				case (int)type_id::int16_t:
+				case (int)type_id::uint16_t:
 					stream->write_integer(*(uint16_t*)value);
 					return expectation::met;
-				case (int)type_id::int32:
-				case (int)type_id::uint32:
+				case (int)type_id::int32_t:
+				case (int)type_id::uint32_t:
 					stream->write_integer(*(uint32_t*)value);
 					return expectation::met;
-				case (int)type_id::int64:
-				case (int)type_id::uint64:
+				case (int)type_id::int64_t:
+				case (int)type_id::uint64_t:
 					stream->write_integer(*(uint64_t*)value);
 					return expectation::met;
-				case (int)type_id::floatf:
+				case (int)type_id::float_t:
 					stream->write_decimal(decimal(*(float*)value));
 					return expectation::met;
-				case (int)type_id::doublef:
+				case (int)type_id::double_t:
 					stream->write_decimal(decimal(*(double*)value));
 					return expectation::met;
 				default:
 				{
 					auto type = script_host::get()->get_vm()->get_type_info_by_id(value_type_id);
 					auto name = type.is_valid() ? type.get_name() : std::string_view();
-					value = value_type_id & (int)vitex::scripting::type_id::objhandle ? *(void**)value : value;
+					value = value_type_id & (int)vitex::scripting::type_id::handle_t ? *(void**)value : value;
 					if (name == SCRIPT_CLASS_STRINGVIEW)
 					{
 						stream->write_string(*(std::string_view*)value);
@@ -218,7 +218,7 @@ namespace tangent
 						stream->write_decimal(*(decimal*)value);
 						return expectation::met;
 					}
-					else if (value_type_id & (int)vitex::scripting::type_id::scriptobject)
+					else if (value_type_id & (int)vitex::scripting::type_id::script_object_t)
 					{
 						auto object = script_object((asIScriptObject*)value);
 						size_t properties = object.get_properties_count();
@@ -240,38 +240,38 @@ namespace tangent
 		{
 			switch (value_type_id)
 			{
-				case (int)type_id::voidf:
+				case (int)type_id::void_t:
 					return layer_exception("store not supported for void type");
-				case (int)type_id::boolf:
+				case (int)type_id::bool_t:
 					stream->value = var::boolean(*(bool*)value);
 					return expectation::met;
-				case (int)type_id::int8:
-				case (int)type_id::uint8:
+				case (int)type_id::int8_t:
+				case (int)type_id::uint8_t:
 					stream->value = var::integer(*(uint8_t*)value);
 					return expectation::met;
-				case (int)type_id::int16:
-				case (int)type_id::uint16:
+				case (int)type_id::int16_t:
+				case (int)type_id::uint16_t:
 					stream->value = var::integer(*(uint16_t*)value);
 					return expectation::met;
-				case (int)type_id::int32:
-				case (int)type_id::uint32:
+				case (int)type_id::int32_t:
+				case (int)type_id::uint32_t:
 					stream->value = var::integer(*(uint32_t*)value);
 					return expectation::met;
-				case (int)type_id::int64:
-				case (int)type_id::uint64:
+				case (int)type_id::int64_t:
+				case (int)type_id::uint64_t:
 					stream->value = var::integer(*(uint64_t*)value);
 					return expectation::met;
-				case (int)type_id::floatf:
+				case (int)type_id::float_t:
 					stream->value = var::number(*(float*)value);
 					return expectation::met;
-				case (int)type_id::doublef:
+				case (int)type_id::double_t:
 					stream->value = var::number(*(double*)value);
 					return expectation::met;
 				default:
 				{
 					auto type = script_host::get()->get_vm()->get_type_info_by_id(value_type_id);
 					auto name = type.is_valid() ? type.get_name() : std::string_view();
-					value = value_type_id & (int)vitex::scripting::type_id::objhandle ? *(void**)value : value;
+					value = value_type_id & (int)vitex::scripting::type_id::handle_t ? *(void**)value : value;
 					if (name == SCRIPT_CLASS_STRINGVIEW)
 					{
 						stream->value = var::string(*(std::string_view*)value);
@@ -303,7 +303,7 @@ namespace tangent
 						stream->value = var::decimal(*(decimal*)value);
 						return expectation::met;
 					}
-					else if (value_type_id & (int)vitex::scripting::type_id::scriptobject)
+					else if (value_type_id & (int)vitex::scripting::type_id::script_object_t)
 					{
 						auto object = script_object((asIScriptObject*)value);
 						size_t properties = object.get_properties_count();
@@ -326,33 +326,33 @@ namespace tangent
 		{
 			switch (value_type_id)
 			{
-				case (int)type_id::voidf:
+				case (int)type_id::void_t:
 					return layer_exception("load not supported for void type");
-				case (int)type_id::boolf:
+				case (int)type_id::bool_t:
 					if (!stream.read_boolean(stream.read_type(), (bool*)value))
 						return layer_exception("load failed for bool type");
 					return expectation::met;
-				case (int)type_id::int8:
-				case (int)type_id::uint8:
+				case (int)type_id::int8_t:
+				case (int)type_id::uint8_t:
 					if (!stream.read_integer(stream.read_type(), (uint8_t*)value))
 						return layer_exception("load failed for uint8 type");
 					return expectation::met;
-				case (int)type_id::int16:
-				case (int)type_id::uint16:
+				case (int)type_id::int16_t:
+				case (int)type_id::uint16_t:
 					if (!stream.read_integer(stream.read_type(), (uint16_t*)value))
 						return layer_exception("load failed for uint16 type");
 					return expectation::met;
-				case (int)type_id::int32:
-				case (int)type_id::uint32:
+				case (int)type_id::int32_t:
+				case (int)type_id::uint32_t:
 					if (!stream.read_integer(stream.read_type(), (uint32_t*)value))
 						return layer_exception("load failed for uint32 type");
 					return expectation::met;
-				case (int)type_id::int64:
-				case (int)type_id::uint64:
+				case (int)type_id::int64_t:
+				case (int)type_id::uint64_t:
 					if (!stream.read_integer(stream.read_type(), (uint64_t*)value))
 						return layer_exception("load failed for uint64 type");
 					return expectation::met;
-				case (int)type_id::floatf:
+				case (int)type_id::float_t:
 				{
 					decimal wrapper;
 					if (!stream.read_decimal(stream.read_type(), &wrapper))
@@ -361,7 +361,7 @@ namespace tangent
 					*(float*)value = wrapper.to_float();
 					return expectation::met;
 				}
-				case (int)type_id::doublef:
+				case (int)type_id::double_t:
 				{
 					decimal wrapper;
 					if (!stream.read_decimal(stream.read_type(), &wrapper))
@@ -376,7 +376,7 @@ namespace tangent
 					auto* vm = script_host::get()->get_vm();
 					auto type = vm->get_type_info_by_id(value_type_id);
 					auto name = type.is_valid() ? type.get_name() : std::string_view();
-					if (value_type_id & (int)vitex::scripting::type_id::objhandle && !*(void**)value)
+					if (value_type_id & (int)vitex::scripting::type_id::handle_t && !*(void**)value)
 					{
 						void* address = vm->create_object(type);
 						if (!address)
@@ -438,7 +438,7 @@ namespace tangent
 						unique.address = nullptr;
 						return expectation::met;
 					}
-					else if (value_type_id & (int)vitex::scripting::type_id::scriptobject)
+					else if (value_type_id & (int)vitex::scripting::type_id::script_object_t)
 					{
 						auto object = script_object((asIScriptObject*)value);
 						size_t properties = object.get_properties_count();
@@ -462,31 +462,31 @@ namespace tangent
 		{
 			switch (value_type_id)
 			{
-				case (int)type_id::voidf:
+				case (int)type_id::void_t:
 					return layer_exception("load not supported for void type");
-				case (int)type_id::boolf:
+				case (int)type_id::bool_t:
 					*(bool*)value = stream->value.get_boolean();
 					return expectation::met;
-				case (int)type_id::int8:
-				case (int)type_id::uint8:
+				case (int)type_id::int8_t:
+				case (int)type_id::uint8_t:
 					*(uint8_t*)value = (uint8_t)stream->value.get_integer();
 					return expectation::met;
-				case (int)type_id::int16:
-				case (int)type_id::uint16:
+				case (int)type_id::int16_t:
+				case (int)type_id::uint16_t:
 					*(uint16_t*)value = (uint16_t)stream->value.get_integer();
 					return expectation::met;
-				case (int)type_id::int32:
-				case (int)type_id::uint32:
+				case (int)type_id::int32_t:
+				case (int)type_id::uint32_t:
 					*(uint32_t*)value = (uint32_t)stream->value.get_integer();
 					return expectation::met;
-				case (int)type_id::int64:
-				case (int)type_id::uint64:
+				case (int)type_id::int64_t:
+				case (int)type_id::uint64_t:
 					*(uint64_t*)value = (uint64_t)stream->value.get_integer();
 					return expectation::met;
-				case (int)type_id::floatf:
+				case (int)type_id::float_t:
 					*(float*)value = (float)stream->value.get_number();
 					return expectation::met;
-				case (int)type_id::doublef:
+				case (int)type_id::double_t:
 					*(double*)value = (double)stream->value.get_number();
 					return expectation::met;
 				default:
@@ -495,7 +495,7 @@ namespace tangent
 					auto* vm = script_host::get()->get_vm();
 					auto type = vm->get_type_info_by_id(value_type_id);
 					auto name = type.is_valid() ? type.get_name() : std::string_view();
-					if (value_type_id & (int)vitex::scripting::type_id::objhandle && !*(void**)value)
+					if (value_type_id & (int)vitex::scripting::type_id::handle_t && !*(void**)value)
 					{
 						void* address = vm->create_object(type);
 						if (!address)
@@ -546,7 +546,7 @@ namespace tangent
 						unique.address = nullptr;
 						return expectation::met;
 					}
-					else if (value_type_id & (int)vitex::scripting::type_id::scriptobject)
+					else if (value_type_id & (int)vitex::scripting::type_id::script_object_t)
 					{
 						auto object = script_object((asIScriptObject*)value);
 						size_t properties = object.get_properties_count();
@@ -604,7 +604,7 @@ namespace tangent
 			address->set_method("string to_string() const", &script_address::to_string);
 			address->set_method("uint256 to_uint256() const", &script_address::to_uint256);
 			address->set_method("bool is_null() const", &script_address::is_null);
-			address->set_operator_ex(operators::equals, (uint32_t)position::constant, "bool", "const address&in", &script_address::equals);
+			address->set_operator_extern(operators::equals_t, (uint32_t)position::constant, "bool", "const address&in", &script_address::equals);
 
 			auto program = vm->set_interface_class<script_program>(SCRIPT_CLASS_PROGRAM);
 			program->set_method("bool call(const address&in, const string_view&in, const ?&in, ?&out)", &script_program::call_mutable_function);
@@ -1051,29 +1051,29 @@ namespace tangent
 
 					switch (type_id)
 					{
-						case (int)type_id::boolf:
+						case (int)type_id::bool_t:
 							frames.emplace_back([i, index, &args](immediate_context* coroutine) { coroutine->set_arg8(i, (uint8_t)args[index].as_boolean()); });
 							break;
-						case (int)type_id::int8:
-						case (int)type_id::uint8:
+						case (int)type_id::int8_t:
+						case (int)type_id::uint8_t:
 							frames.emplace_back([i, index, &args](immediate_context* coroutine) { coroutine->set_arg8(i, (uint8_t)args[index].as_uint8()); });
 							break;
-						case (int)type_id::int16:
-						case (int)type_id::uint16:
+						case (int)type_id::int16_t:
+						case (int)type_id::uint16_t:
 							frames.emplace_back([i, index, &args](immediate_context* coroutine) { coroutine->set_arg16(i, (uint16_t)args[index].as_uint16()); });
 							break;
-						case (int)type_id::int32:
-						case (int)type_id::uint32:
+						case (int)type_id::int32_t:
+						case (int)type_id::uint32_t:
 							frames.emplace_back([i, index, &args](immediate_context* coroutine) { coroutine->set_arg32(i, (uint32_t)args[index].as_uint32()); });
 							break;
-						case (int)type_id::int64:
-						case (int)type_id::uint64:
+						case (int)type_id::int64_t:
+						case (int)type_id::uint64_t:
 							frames.emplace_back([i, index, &args](immediate_context* coroutine) { coroutine->set_arg64(i, (uint64_t)args[index].as_uint64()); });
 							break;
-						case (int)type_id::floatf:
+						case (int)type_id::float_t:
 							frames.emplace_back([i, index, &args](immediate_context* coroutine) { coroutine->set_arg_float(i, (float)args[index].as_float()); });
 							break;
-						case (int)type_id::doublef:
+						case (int)type_id::double_t:
 							frames.emplace_back([i, index, &args](immediate_context* coroutine) { coroutine->set_arg_double(i, (double)args[index].as_double()); });
 							break;
 						default:
@@ -1082,17 +1082,17 @@ namespace tangent
 							auto& value = args[index];
 							format::stream stream;
 							format::variables_util::serialize_flat_into({ value }, &stream);
-							auto status = script_marshalling::load(stream, (void*)&address, type_id | (int)vitex::scripting::type_id::objhandle);
+							auto status = script_marshalling::load(stream, (void*)&address, type_id | (int)vitex::scripting::type_id::handle_t);
 							if (!status)
 							{
 								stream = format::stream::decode(value.as_string());
-								status = script_marshalling::load(stream, (void*)&address, type_id | (int)vitex::scripting::type_id::objhandle);
+								status = script_marshalling::load(stream, (void*)&address, type_id | (int)vitex::scripting::type_id::handle_t);
 								if (!status)
 									return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound to program (%s)", entrypoint.get_decl().data(), i, status.error().what()));
 							}
 
 							auto object = uscript_object(vm, type.get_type_info(), address);
-							frames.emplace_back([i, type_id, object = std::move(object)](immediate_context* coroutine) mutable { coroutine->set_arg_object(i, type_id & (int)vitex::scripting::type_id::objhandle ? (void*)&object.address : (void*)object.address); });
+							frames.emplace_back([i, type_id, object = std::move(object)](immediate_context* coroutine) mutable { coroutine->set_arg_object(i, type_id & (int)vitex::scripting::type_id::handle_t ? (void*)&object.address : (void*)object.address); });
 							break;
 						}
 					}
@@ -1103,7 +1103,7 @@ namespace tangent
 						return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound to program", entrypoint.get_decl().data()));
 
 					bool is_const = mutability == 0;
-					if (mutability != -1 && is_const != (!!(flags & (size_t)modifiers::constf)))
+					if (mutability != -1 && is_const != (!!(flags & (size_t)modifiers::constant)))
 						return layer_exception(stringify::text("illegal call to function \"%s\": mutability not preserved", entrypoint.get_decl().data()));
 
 					frames.emplace_back([i, index, &args, this](immediate_context* coroutine) { coroutine->set_arg_object(i, (script_program*)this); });
