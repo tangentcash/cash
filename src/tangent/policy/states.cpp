@@ -88,7 +88,6 @@ namespace tangent
 		string account_nonce::as_instance_index(const algorithm::pubkeyhash owner)
 		{
 			format::stream stream;
-			stream.write_typeless(as_instance_type());
 			stream.write_typeless((char*)owner, (uint8_t)sizeof(algorithm::pubkeyhash));
 			return std::move(stream.data);
 		}
@@ -165,7 +164,6 @@ namespace tangent
 		string account_program::as_instance_index(const algorithm::pubkeyhash owner)
 		{
 			format::stream stream;
-			stream.write_typeless(as_instance_type());
 			stream.write_typeless((char*)owner, (uint8_t)sizeof(algorithm::pubkeyhash));
 			return std::move(stream.data);
 		}
@@ -251,7 +249,6 @@ namespace tangent
 		{
 			auto data = format::util::is_hex_encoding(location) ? codec::hex_decode(location) : string(location);
 			format::stream stream;
-			stream.write_typeless(as_instance_type());
 			stream.write_typeless((char*)owner, (uint8_t)sizeof(algorithm::pubkeyhash));
 			stream.write_typeless((char*)data.data(), (uint8_t)data.size());
 			return std::move(stream.data);
@@ -379,14 +376,12 @@ namespace tangent
 		string account_balance::as_instance_column(const algorithm::pubkeyhash owner)
 		{
 			format::stream stream;
-			stream.write_typeless(as_instance_type());
 			stream.write_typeless((char*)owner, (uint8_t)sizeof(algorithm::pubkeyhash));
 			return std::move(stream.data);
 		}
 		string account_balance::as_instance_row(const algorithm::asset_id& asset)
 		{
 			format::stream stream;
-			stream.write_typeless(as_instance_type());
 			stream.write_typeless(asset);
 			return std::move(stream.data);
 		}
@@ -488,15 +483,12 @@ namespace tangent
 		string validator_production::as_instance_column(const algorithm::pubkeyhash owner)
 		{
 			format::stream stream;
-			stream.write_typeless(as_instance_type());
 			stream.write_typeless((char*)owner, (uint8_t)sizeof(algorithm::pubkeyhash));
 			return std::move(stream.data);
 		}
 		string validator_production::as_instance_row()
 		{
-			format::stream stream;
-			stream.write_typeless(as_instance_type());
-			return std::move(stream.data);
+			return string();
 		}
 		uint256_t validator_production::get_gas_required(const ledger::block_header* block_header, const uint256_t& gas_use)
 		{
@@ -624,14 +616,12 @@ namespace tangent
 		string validator_participation::as_instance_column(const algorithm::pubkeyhash owner)
 		{
 			format::stream stream;
-			stream.write_typeless(as_instance_type());
 			stream.write_typeless((char*)owner, (uint8_t)sizeof(algorithm::pubkeyhash));
 			return std::move(stream.data);
 		}
 		string validator_participation::as_instance_row(const algorithm::asset_id& asset)
 		{
 			format::stream stream;
-			stream.write_typeless(as_instance_type());
 			stream.write_typeless(asset);
 			return std::move(stream.data);
 		}
@@ -740,14 +730,12 @@ namespace tangent
 		string validator_attestation::as_instance_column(const algorithm::pubkeyhash owner)
 		{
 			format::stream stream;
-			stream.write_typeless(as_instance_type());
 			stream.write_typeless((char*)owner, (uint8_t)sizeof(algorithm::pubkeyhash));
 			return std::move(stream.data);
 		}
 		string validator_attestation::as_instance_row(const algorithm::asset_id& asset)
 		{
 			format::stream stream;
-			stream.write_typeless(as_instance_type());
 			stream.write_typeless(asset);
 			return std::move(stream.data);
 		}
@@ -866,14 +854,12 @@ namespace tangent
 		string depository_reward::as_instance_column(const algorithm::pubkeyhash owner)
 		{
 			format::stream stream;
-			stream.write_typeless(as_instance_type());
 			stream.write_typeless((char*)owner, (uint8_t)sizeof(algorithm::pubkeyhash));
 			return std::move(stream.data);
 		}
 		string depository_reward::as_instance_row(const algorithm::asset_id& asset)
 		{
 			format::stream stream;
-			stream.write_typeless(as_instance_type());
 			stream.write_typeless(asset);
 			return std::move(stream.data);
 		}
@@ -977,14 +963,12 @@ namespace tangent
 		string depository_balance::as_instance_column(const algorithm::pubkeyhash owner)
 		{
 			format::stream stream;
-			stream.write_typeless(as_instance_type());
 			stream.write_typeless((char*)owner, (uint8_t)sizeof(algorithm::pubkeyhash));
 			return std::move(stream.data);
 		}
 		string depository_balance::as_instance_row(const algorithm::asset_id& asset)
 		{ 
 			format::stream stream;
-			stream.write_typeless(as_instance_type());
 			stream.write_typeless(asset);
 			return std::move(stream.data);
 		}
@@ -1092,7 +1076,7 @@ namespace tangent
 		}
 		int64_t depository_policy::as_factor() const
 		{
-			return std::max<uint64_t>(1, accounts_under_management) * security_level;
+			return std::max<uint64_t>(1, accounts_under_management) * (uint64_t)security_level * (uint64_t)accepts_account_requests * (uint64_t)accepts_withdrawal_requests;
 		}
 		string depository_policy::as_column() const
 		{
@@ -1114,14 +1098,12 @@ namespace tangent
 		string depository_policy::as_instance_column(const algorithm::pubkeyhash owner)
 		{
 			format::stream stream;
-			stream.write_typeless(as_instance_type());
 			stream.write_typeless((char*)owner, (uint8_t)sizeof(algorithm::pubkeyhash));
 			return std::move(stream.data);
 		}
 		string depository_policy::as_instance_row(const algorithm::asset_id& asset)
 		{
 			format::stream stream;
-			stream.write_typeless(as_instance_type());
 			stream.write_typeless(asset);
 			return std::move(stream.data);
 		}
@@ -1283,14 +1265,12 @@ namespace tangent
 		string depository_account::as_instance_column(const algorithm::pubkeyhash manager)
 		{
 			format::stream stream;
-			stream.write_typeless(as_instance_type());
 			stream.write_typeless((char*)manager, (uint8_t)sizeof(algorithm::pubkeyhash));
 			return std::move(stream.data);
 		}
 		string depository_account::as_instance_row(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner)
 		{
 			format::stream stream;
-			stream.write_typeless(as_instance_type());
 			stream.write_typeless((char*)owner, (uint8_t)sizeof(algorithm::pubkeyhash));
 			stream.write_typeless(asset);
 			return std::move(stream.data);
@@ -1370,7 +1350,6 @@ namespace tangent
 		{
 			auto data = format::util::is_hex_encoding(hashcode) ? codec::hex_decode(hashcode) : string(hashcode);
 			format::stream stream;
-			stream.write_typeless(as_instance_type());
 			stream.write_typeless(data.data(), (uint8_t)data.size());
 			return std::move(stream.data);
 		}
@@ -1442,7 +1421,6 @@ namespace tangent
 		string witness_event::as_instance_index(const uint256_t& transaction_hash)
 		{
 			format::stream stream;
-			stream.write_typeless(as_instance_type());
 			stream.write_typeless(transaction_hash);
 			return std::move(stream.data);
 		}
@@ -1622,7 +1600,6 @@ namespace tangent
 		string witness_account::as_instance_column(const algorithm::pubkeyhash owner)
 		{
 			format::stream stream;
-			stream.write_typeless(as_instance_type());
 			stream.write_typeless((char*)owner, (uint8_t)sizeof(algorithm::pubkeyhash));
 			return std::move(stream.data);
 		}
@@ -1630,9 +1607,8 @@ namespace tangent
 		{
 			auto location = nss::server_node::get()->decode_address(asset, address).or_else(string(address));
 			format::stream stream;
-			stream.write_typeless(as_instance_type());
-			stream.write_typeless(location.data(), (uint8_t)location.size());
 			stream.write_typeless(asset);
+			stream.write_typeless(location.data(), (uint8_t)location.size());
 			return std::move(stream.data);
 		}
 
@@ -1702,7 +1678,6 @@ namespace tangent
 		{
 			auto id = format::util::is_hex_encoding(transaction_id) ? codec::hex_decode(transaction_id) : string(transaction_id);
 			format::stream stream;
-			stream.write_typeless(as_instance_type());
 			stream.write_typeless(asset);
 			stream.write_typeless(id.data(), (uint8_t)id.size());
 			return std::move(stream.data);
@@ -1786,25 +1761,30 @@ namespace tangent
 				return memory::init<witness_transaction>(*(const witness_transaction*)base);
 			return nullptr;
 		}
-		unordered_set<uint32_t> resolver::get_hashes()
+		unordered_set<uint32_t> resolver::get_uniform_types()
 		{
-			unordered_set<uint32_t> hashes;
-			hashes.insert(account_nonce::as_instance_type());
-			hashes.insert(account_program::as_instance_type());
-			hashes.insert(account_storage::as_instance_type());
-			hashes.insert(account_balance::as_instance_type());
-			hashes.insert(validator_production::as_instance_type());
-			hashes.insert(validator_participation::as_instance_type());
-			hashes.insert(validator_attestation::as_instance_type());
-			hashes.insert(depository_reward::as_instance_type());
-			hashes.insert(depository_balance::as_instance_type());
-			hashes.insert(depository_policy::as_instance_type());
-			hashes.insert(depository_account::as_instance_type());
-			hashes.insert(witness_program::as_instance_type());
-			hashes.insert(witness_event::as_instance_type());
-			hashes.insert(witness_account::as_instance_type());
-			hashes.insert(witness_transaction::as_instance_type());
-			return hashes;
+			unordered_set<uint32_t> types;
+			types.insert(account_nonce::as_instance_type());
+			types.insert(account_program::as_instance_type());
+			types.insert(account_storage::as_instance_type());
+			types.insert(witness_program::as_instance_type());
+			types.insert(witness_event::as_instance_type());
+			types.insert(witness_transaction::as_instance_type());
+			return types;
+		}
+		unordered_set<uint32_t> resolver::get_multiform_types()
+		{
+			unordered_set<uint32_t> types;
+			types.insert(account_balance::as_instance_type());
+			types.insert(validator_production::as_instance_type());
+			types.insert(validator_participation::as_instance_type());
+			types.insert(validator_attestation::as_instance_type());
+			types.insert(depository_reward::as_instance_type());
+			types.insert(depository_balance::as_instance_type());
+			types.insert(depository_policy::as_instance_type());
+			types.insert(depository_account::as_instance_type());
+			types.insert(witness_account::as_instance_type());
+			return types;
 		}
 	}
 }

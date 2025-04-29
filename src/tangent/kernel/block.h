@@ -63,10 +63,10 @@ namespace tangent
 			block_work(block_work&&) noexcept = default;
 			block_work& operator= (const block_work& other);
 			block_work& operator= (block_work&&) noexcept = default;
-			option<uptr<state>> find_uniform(const std::string_view& index) const;
-			option<uptr<state>> find_multiform(const std::string_view& column, const std::string_view& row) const;
-			void clear_uniform(const std::string_view& index);
-			void clear_multiform(const std::string_view& column, const std::string_view& row);
+			option<uptr<state>> find_uniform(uint32_t type, const std::string_view& index) const;
+			option<uptr<state>> find_multiform(uint32_t type, const std::string_view& column, const std::string_view& row) const;
+			void clear_uniform(uint32_t type, const std::string_view& index);
+			void clear_multiform(uint32_t type, const std::string_view& column, const std::string_view& row);
 			void copy_any(state* value);
 			void move_any(uptr<state>&& value);
 			const state_work& at(work_commitment level) const;
@@ -146,7 +146,7 @@ namespace tangent
 			virtual int8_t get_relative_order(const block_header& other) const;
 			virtual uint256_t get_slot_gas_use() const;
 			virtual uint256_t get_slot_gas_target() const;
-			virtual uint64_t get_slot_duration() const;
+			virtual uint64_t get_slot_duration_target() const;
 			virtual uint64_t get_slot_length() const;
 			virtual uint64_t get_duration() const;
 			virtual uint64_t get_proof_time() const;

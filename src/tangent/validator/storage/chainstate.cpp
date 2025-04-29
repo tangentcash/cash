@@ -37,6 +37,15 @@ namespace tangent
 			const ledger::uniform* context;
 		};
 
+		struct uniform_writer
+		{
+			vector<uniform_blob> blobs;
+			sqlite::tstatement* commit_uniform_index_data;
+			sqlite::tstatement* commit_uniform_data;
+			sqlite::tstatement* commit_uniformtrie_data;
+			sqlite::connection* storage;
+		};
+
 		struct multiform_blob
 		{
 			format::stream message;
@@ -44,6 +53,16 @@ namespace tangent
 			string row;
 			int64_t factor;
 			const ledger::multiform* context;
+		};
+
+		struct multiform_writer
+		{
+			vector<multiform_blob> blobs;
+			sqlite::tstatement* commit_multiform_column_data;
+			sqlite::tstatement* commit_multiform_row_data;
+			sqlite::tstatement* commit_multiform_data;
+			sqlite::tstatement* commit_multiformtrie_data;
+			sqlite::connection* storage;
 		};
 
 		static void finalize_checksum(messages::uniform& message, const variant& column)
@@ -80,28 +99,24 @@ namespace tangent
 			memcpy(label.data() + 1, hash, sizeof(uint8_t) * 32);
 			return label;
 		}
-		static string get_uniform_label(const std::string_view& index, uint64_t number)
+		static string get_uniform_label(uint32_t type, const std::string_view& index, uint64_t number)
 		{
-			string label;
-			label.resize(1 + index.size());
-			label.front() = BLOB_UNIFORM;
-			memcpy(label.data() + 1, index.data(), index.size());
-
-			uint64_t numeric = os::hw::to_endianness(os::hw::endian::little, number);
-			label.append(std::string_view((char*)&numeric, sizeof(numeric)));
-			return label;
+			format::stream message;
+			message.data.append(1, BLOB_UNIFORM);
+			message.write_typeless(type);
+			message.write_typeless(number);
+			message.write_typeless(index.data(), (uint32_t)index.size());
+			return message.data;
 		}
-		static string get_multiform_label(const std::string_view& column, const std::string_view& row, uint64_t number)
+		static string get_multiform_label(uint32_t type, const std::string_view& column, const std::string_view& row, uint64_t number)
 		{
-			string label;
-			label.resize(1 + column.size() + row.size());
-			label.front() = BLOB_MULTIFORM;
-			memcpy(label.data() + 1, column.data(), column.size());
-			memcpy(label.data() + 1 + column.size(), row.data(), row.size());
-
-			uint64_t numeric = os::hw::to_endianness(os::hw::endian::little, number);
-			label.append(std::string_view((char*)&numeric, sizeof(numeric)));
-			return label;
+			format::stream message;
+			message.data.append(1, BLOB_UNIFORM);
+			message.write_typeless(type);
+			message.write_typeless(number);
+			message.write_typeless(column.data(), (uint32_t)column.size());
+			message.write_typeless(row.data(), (uint32_t)row.size());
+			return message.data;
 		}
 
 		void account_cache::clear_locations()
@@ -141,55 +156,66 @@ namespace tangent
 			indices.clear();
 			blocks.clear();
 		}
-		void uniform_cache::clear_uniform_location(const std::string_view& index)
+		void uniform_cache::clear_uniform_location(uint32_t type, const std::string_view& index)
 		{
 			umutex<std::mutex> unique(mutex);
-			auto index_iterator = indices.find(key_lookup_cast(index));
+			auto index_iterator = indices.find(key_of_indices(type, index));
 			if (index_iterator != indices.end())
 				indices.erase(index_iterator);
 		}
-		void uniform_cache::clear_block_location(const std::string_view& index)
+		void uniform_cache::clear_block_location(uint32_t type, const std::string_view& index)
 		{
 			umutex<std::mutex> unique(mutex);
-			auto index_iterator = indices.find(key_lookup_cast(index));
+			auto index_iterator = indices.find(key_of_indices(type, index));
 			if (index_iterator != indices.end())
-				blocks.erase(index_iterator->second);
+				blocks.erase(key_of_blocks(type, index_iterator->second));
 		}
-		void uniform_cache::set_index_location(const std::string_view& index, uint64_t index_location)
+		void uniform_cache::set_index_location(uint32_t type, const std::string_view& index, uint64_t index_location)
 		{
-			auto size = protocol::now().user.storage.location_cache_size;
-			string target_index = string(index);
 			umutex<std::mutex> unique(mutex);
-			if (indices.size() >= size)
+			if (indices.size() >= protocol::now().user.storage.location_cache_size)
 				indices.clear();
-			indices[target_index] = index_location;
+			indices[key_of_indices(type, index)] = index_location;
 		}
-		void uniform_cache::set_block_location(uint64_t index_location, uint64_t block_number)
+		void uniform_cache::set_block_location(uint32_t type, uint64_t index_location, uint64_t block_number)
 		{
-			auto size = protocol::now().user.storage.location_cache_size;
 			umutex<std::mutex> unique(mutex);
-			if (blocks.size() >= size)
+			if (blocks.size() >= protocol::now().user.storage.location_cache_size)
 				blocks.clear();
 
-			blocks[index_location] = block_number;
+			blocks[key_of_blocks(type, index_location)] = block_number;
 		}
-		option<uint64_t> uniform_cache::get_index_location(const std::string_view& index)
+		option<uint64_t> uniform_cache::get_index_location(uint32_t type, const std::string_view& index)
 		{
 			umutex<std::mutex> unique(mutex);
-			auto it = indices.find(index);
+			auto it = indices.find(key_of_indices(type, index));
 			if (it == indices.end())
 				return optional::none;
 
 			return it->second;
 		}
-		option<uint64_t> uniform_cache::get_block_location(uint64_t index_location)
+		option<uint64_t> uniform_cache::get_block_location(uint32_t type, uint64_t index_location)
 		{
 			umutex<std::mutex> unique(mutex);
-			auto it = blocks.find(index_location);
+			auto it = blocks.find(key_of_blocks(type, index_location));
 			if (it == blocks.end())
 				return optional::none;
 
 			return it->second;
+		}
+		string uniform_cache::key_of_indices(uint32_t type, const std::string_view& index)
+		{
+			format::stream message;
+			message.write_typeless(type);
+			message.write_typeless(index.data(), (uint32_t)index.size());
+			return message.data;
+		}
+		string uniform_cache::key_of_blocks(uint32_t type, uint64_t location)
+		{
+			format::stream message;
+			message.write_typeless(type);
+			message.write_typeless(location);
+			return message.data;
 		}
 
 		void multiform_cache::clear_locations()
@@ -199,103 +225,104 @@ namespace tangent
 			rows.clear();
 			blocks.clear();
 		}
-		void multiform_cache::clear_multiform_location(const std::string_view& column, const std::string_view& row)
+		void multiform_cache::clear_multiform_location(uint32_t type, const std::string_view& column, const std::string_view& row)
 		{
 			umutex<std::mutex> unique(mutex);
-			auto column_iterator = columns.find(key_lookup_cast(column));
+			auto column_iterator = columns.find(key_of_columns(type, column));
 			if (column_iterator != columns.end())
 				columns.erase(column_iterator);
 
-			auto row_iterator = rows.find(key_lookup_cast(row));
+			auto row_iterator = rows.find(key_of_rows(type, row));
 			if (row_iterator != rows.end())
 				rows.erase(row_iterator);
 		}
-		void multiform_cache::clear_block_location(const std::string_view& column, const std::string_view& row)
+		void multiform_cache::clear_block_location(uint32_t type, const std::string_view& column, const std::string_view& row)
 		{
 			umutex<std::mutex> unique(mutex);
-			auto column_location = columns.find(key_lookup_cast(column));
-			auto row_location = rows.find(key_lookup_cast(row));
+			auto column_location = columns.find(key_of_columns(type, column));
+			auto row_location = rows.find(key_of_rows(type, row));
 			if (column_location != columns.end() && row_location != rows.end())
-			{
-				uint128_t location;
-				memcpy((char*)&location + sizeof(uint64_t) * 0, &column_location->second, sizeof(uint64_t));
-				memcpy((char*)&location + sizeof(uint64_t) * 1, &row_location->second, sizeof(uint64_t));
-				blocks.erase(location);
-			}
+				blocks.erase(key_of_blocks(type, column_location->second, row_location->second));
 		}
-		void multiform_cache::set_multiform_location(const std::string_view& column, const std::string_view& row, uint64_t column_location, uint64_t row_location)
+		void multiform_cache::set_multiform_location(uint32_t type, const std::string_view& column, const std::string_view& row, uint64_t column_location, uint64_t row_location)
 		{
-			auto size = protocol::now().user.storage.location_cache_size;
-			string target_column = string(column);
-			string target_row = string(row);
 			umutex<std::mutex> unique(mutex);
-			if (columns.size() >= size)
+			if (columns.size() >= protocol::now().user.storage.location_cache_size)
 				columns.clear();
-			if (rows.size() >= size)
+			if (rows.size() >= protocol::now().user.storage.location_cache_size)
 				rows.clear();
-			columns[target_column] = column_location;
-			rows[target_row] = row_location;
+			columns[key_of_columns(type, column)] = column_location;
+			rows[key_of_rows(type, row)] = row_location;
 		}
-		void multiform_cache::set_column_location(const std::string_view& column, uint64_t location)
+		void multiform_cache::set_column_location(uint32_t type, const std::string_view& column, uint64_t location)
 		{
-			auto size = protocol::now().user.storage.location_cache_size;
-			string target = string(column);
 			umutex<std::mutex> unique(mutex);
-			if (columns.size() >= size)
+			if (columns.size() >= protocol::now().user.storage.location_cache_size)
 				columns.clear();
-			columns[target] = location;
+			columns[key_of_columns(type, column)] = location;
 		}
-		void multiform_cache::set_row_location(const std::string_view& row, uint64_t location)
+		void multiform_cache::set_row_location(uint32_t type, const std::string_view& row, uint64_t location)
 		{
-			auto size = protocol::now().user.storage.location_cache_size;
-			string target = string(row);
 			umutex<std::mutex> unique(mutex);
-			if (rows.size() >= size)
+			if (rows.size() >= protocol::now().user.storage.location_cache_size)
 				rows.clear();
-			rows[target] = location;
+			rows[key_of_rows(type, row)] = location;
 		}
-		void multiform_cache::set_block_location(uint64_t column_location, uint64_t row_location, uint64_t block_number)
+		void multiform_cache::set_block_location(uint32_t type, uint64_t column_location, uint64_t row_location, uint64_t block_number)
 		{
-			auto size = protocol::now().user.storage.location_cache_size;
 			umutex<std::mutex> unique(mutex);
-			if (blocks.size() >= size)
+			if (blocks.size() >= protocol::now().user.storage.location_cache_size)
 				blocks.clear();
-
-			uint128_t location;
-			memcpy((char*)&location + sizeof(uint64_t) * 0, &column_location, sizeof(uint64_t));
-			memcpy((char*)&location + sizeof(uint64_t) * 1, &row_location, sizeof(uint64_t));
-			blocks[location] = block_number;
+			blocks[key_of_blocks(type, column_location, row_location)] = block_number;
 		}
-		option<uint64_t> multiform_cache::get_column_location(const std::string_view& column)
+		option<uint64_t> multiform_cache::get_column_location(uint32_t type, const std::string_view& column)
 		{
 			umutex<std::mutex> unique(mutex);
-			auto it = columns.find(column);
+			auto it = columns.find(key_of_columns(type, column));
 			if (it == columns.end())
 				return optional::none;
 
 			return it->second;
 		}
-		option<uint64_t> multiform_cache::get_row_location(const std::string_view& row)
+		option<uint64_t> multiform_cache::get_row_location(uint32_t type, const std::string_view& row)
 		{
 			umutex<std::mutex> unique(mutex);
-			auto it = rows.find(row);
+			auto it = rows.find(key_of_rows(type, row));
 			if (it == rows.end())
 				return optional::none;
 
 			return it->second;
 		}
-		option<uint64_t> multiform_cache::get_block_location(uint64_t column_location, uint64_t row_location)
+		option<uint64_t> multiform_cache::get_block_location(uint32_t type, uint64_t column_location, uint64_t row_location)
 		{
-			uint128_t location;
-			memcpy((char*)&location + sizeof(uint64_t) * 0, &column_location, sizeof(uint64_t));
-			memcpy((char*)&location + sizeof(uint64_t) * 1, &row_location, sizeof(uint64_t));
-
 			umutex<std::mutex> unique(mutex);
-			auto it = blocks.find(location);
+			auto it = blocks.find(key_of_blocks(type, column_location, row_location));
 			if (it == blocks.end())
 				return optional::none;
 
 			return it->second;
+		}
+		string multiform_cache::key_of_columns(uint32_t type, const std::string_view& column)
+		{
+			format::stream message;
+			message.write_typeless(type);
+			message.write_typeless(column.data(), (uint32_t)column.size());
+			return message.data;
+		}
+		string multiform_cache::key_of_rows(uint32_t type, const std::string_view& row)
+		{
+			format::stream message;
+			message.write_typeless(type);
+			message.write_typeless(row.data(), (uint32_t)row.size());
+			return message.data;
+		}
+		string multiform_cache::key_of_blocks(uint32_t type, uint64_t column_location, uint64_t row_location)
+		{
+			format::stream message;
+			message.write_typeless(type);
+			message.write_typeless(column_location);
+			message.write_typeless(row_location);
+			return message.data;
 		}
 
 		std::string_view factor_filter::as_condition() const
@@ -344,55 +371,47 @@ namespace tangent
 			if (!borrows)
 			{
 				blob_storage_of("chainblob");
-				blockdata = index_storage_of("chainindex", "blockdata");
-				accountdata = index_storage_of("chainindex", "accountdata");
-				txdata = index_storage_of("chainindex", "txdata");
-				partydata = index_storage_of("chainindex", "partydata");
-				aliasdata = index_storage_of("chainindex", "aliasdata");
-				uniformdata = index_storage_of("chainindex", "uniformdata");
-				multiformdata = index_storage_of("chainindex", "multiformdata");
 				latest_chainstate = this;
 			}
 			else
-			{
 				blob = latest_chainstate->blob;
-				blockdata = *latest_chainstate->blockdata;
-				accountdata = *latest_chainstate->accountdata;
-				txdata = *latest_chainstate->txdata;
-				partydata = *latest_chainstate->partydata;
-				aliasdata = *latest_chainstate->aliasdata;
-				uniformdata = *latest_chainstate->uniformdata;
-				multiformdata = *latest_chainstate->multiformdata;
-			}
 		}
 		chainstate::~chainstate() noexcept
 		{
-			unload_index_of(std::move(blockdata), borrows);
-			unload_index_of(std::move(accountdata), borrows);
-			unload_index_of(std::move(txdata), borrows);
-			unload_index_of(std::move(partydata), borrows);
-			unload_index_of(std::move(aliasdata), borrows);
-			unload_index_of(std::move(uniformdata), borrows);
-			unload_index_of(std::move(multiformdata), borrows);
+			unload_index_of(std::move(storages.blockdata), borrows);
+			unload_index_of(std::move(storages.accountdata), borrows);
+			unload_index_of(std::move(storages.txdata), borrows);
+			unload_index_of(std::move(storages.partydata), borrows);
+			unload_index_of(std::move(storages.aliasdata), borrows);
+			for (auto& [type, data] : storages.uniformdata)
+				unload_index_of(std::move(data), borrows);
+			for (auto& [type, data] : storages.multiformdata)
+				unload_index_of(std::move(data), borrows);
 			if (latest_chainstate == this)
 				latest_chainstate = nullptr;
 		}
 		expects_lr<void> chainstate::reorganize(int64_t* blocktrie, int64_t* transactiontrie, int64_t* statetrie)
 		{
-			auto cursor = query(*uniformdata, label, __func__,
-				"DELETE FROM uniformtries;"
-				"DELETE FROM uniforms;"
-				"DELETE FROM indices;");
-			if (!cursor || cursor->error())
-				return expects_lr<void>(layer_exception(error_of(cursor)));
+			for (auto& [type, uniformdata] : get_uniformdata_max())
+			{
+				auto cursor = query(*uniformdata, label, __func__,
+					"DELETE FROM uniformtries;"
+					"DELETE FROM uniforms;"
+					"DELETE FROM indices;");
+				if (!cursor || cursor->error())
+					return expects_lr<void>(layer_exception(error_of(cursor)));
+			}
 
-			cursor = query(*multiformdata, label, __func__,
-				"DELETE FROM multiformtries;"
-				"DELETE FROM multiforms;"
-				"DELETE FROM columns;"
-				"DELETE FROM rows;");
-			if (!cursor || cursor->error())
-				return expects_lr<void>(layer_exception(error_of(cursor)));
+			for (auto& [type, multiformdata] : get_multiformdata_max())
+			{
+				auto cursor = query(*multiformdata, label, __func__,
+					"DELETE FROM multiformtries;"
+					"DELETE FROM multiforms;"
+					"DELETE FROM columns;"
+					"DELETE FROM rows;");
+				if (!cursor || cursor->error())
+					return expects_lr<void>(layer_exception(error_of(cursor)));
+			}
 
 			uint64_t current_number = 1;
 			uint64_t checkpoint_number = get_checkpoint_block_number().or_else(0);
@@ -436,7 +455,7 @@ namespace tangent
 			map.push_back(var::set::integer(block_number));
 			map.push_back(var::set::integer(block_number));
 
-			auto cursor = emplace_query(*blockdata, label, __func__,
+			auto cursor = emplace_query(get_blockdata(), label, __func__,
 				"DELETE FROM blocks WHERE block_number > ? RETURNING block_hash;"
 				"DELETE FROM checkpoints WHERE block_number > ?;", &map);
 			if (!cursor || cursor->error())
@@ -454,7 +473,7 @@ namespace tangent
 			map.clear();
 			map.push_back(var::set::integer(block_number));
 
-			cursor = emplace_query(*txdata, label, __func__, "DELETE FROM transactions WHERE block_number > ? RETURNING transaction_hash", &map);
+			cursor = emplace_query(get_txdata(), label, __func__, "DELETE FROM transactions WHERE block_number > ? RETURNING transaction_hash", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(error_of(cursor)));
 
@@ -471,43 +490,49 @@ namespace tangent
 			map.clear();
 			map.push_back(var::set::integer(block_number));
 
-			cursor = emplace_query(*accountdata, label, __func__, "DELETE FROM accounts WHERE block_number > ?", &map);
+			cursor = emplace_query(get_accountdata(), label, __func__, "DELETE FROM accounts WHERE block_number > ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(error_of(cursor)));
 
-			cursor = emplace_query(*partydata, label, __func__, "DELETE FROM parties WHERE block_number > ?", &map);
+			cursor = emplace_query(get_partydata(), label, __func__, "DELETE FROM parties WHERE block_number > ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(error_of(cursor)));
 
-			cursor = emplace_query(*aliasdata, label, __func__, "DELETE FROM aliases WHERE block_number > ?", &map);
+			cursor = emplace_query(get_aliasdata(), label, __func__, "DELETE FROM aliases WHERE block_number > ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(error_of(cursor)));
 
-			map.clear();
-			map.push_back(var::set::integer(block_number));
-			map.push_back(var::set::integer(block_number));
-			map.push_back(var::set::integer(block_number));
+			for (auto& [type, uniformdata] : get_uniformdata_max())
+			{
+				map.clear();
+				map.push_back(var::set::integer(block_number));
+				map.push_back(var::set::integer(block_number));
+				map.push_back(var::set::integer(block_number));
 
-			cursor = emplace_query(*uniformdata, label, __func__,
-				"DELETE FROM uniformtries WHERE block_number > ?;"
-				"INSERT OR REPLACE INTO uniforms (index_number, block_number) SELECT index_number, max(block_number) FROM uniformtries WHERE block_number <= ? GROUP BY index_number;"
-				"DELETE FROM indices WHERE block_number > ?;", &map);
-			if (!cursor || cursor->error())
-				return expects_lr<void>(layer_exception(error_of(cursor)));
+				cursor = emplace_query(*uniformdata, label, __func__,
+					"DELETE FROM uniformtries WHERE block_number > ?;"
+					"INSERT OR REPLACE INTO uniforms (index_number, block_number) SELECT index_number, max(block_number) FROM uniformtries WHERE block_number <= ? GROUP BY index_number;"
+					"DELETE FROM indices WHERE block_number > ?;", &map);
+				if (!cursor || cursor->error())
+					return expects_lr<void>(layer_exception(error_of(cursor)));
+			}
 
-			map.clear();
-			map.push_back(var::set::integer(block_number));
-			map.push_back(var::set::integer(block_number));
-			map.push_back(var::set::integer(block_number));
-			map.push_back(var::set::integer(block_number));
+			for (auto& [type, multiformdata] : get_multiformdata_max())
+			{
+				map.clear();
+				map.push_back(var::set::integer(block_number));
+				map.push_back(var::set::integer(block_number));
+				map.push_back(var::set::integer(block_number));
+				map.push_back(var::set::integer(block_number));
 
-			cursor = emplace_query(*multiformdata, label, __func__,
-				"DELETE FROM multiformtries WHERE block_number > ?;"
-				"INSERT OR REPLACE INTO multiforms (column_number, row_number, factor, block_number) SELECT column_number, row_number, factor, max(block_number) FROM multiformtries WHERE block_number <= ? GROUP BY column_number, row_number;"
-				"DELETE FROM columns WHERE block_number > ?;"
-				"DELETE FROM rows WHERE block_number > ?;", &map);
-			if (!cursor || cursor->error())
-				return expects_lr<void>(layer_exception(error_of(cursor)));
+				cursor = emplace_query(*multiformdata, label, __func__,
+					"DELETE FROM multiformtries WHERE block_number > ?;"
+					"INSERT OR REPLACE INTO multiforms (column_number, row_number, factor, block_number) SELECT column_number, row_number, factor, max(block_number) FROM multiformtries WHERE block_number <= ? GROUP BY column_number, row_number;"
+					"DELETE FROM columns WHERE block_number > ?;"
+					"DELETE FROM rows WHERE block_number > ?;", &map);
+				if (!cursor || cursor->error())
+					return expects_lr<void>(layer_exception(error_of(cursor)));
+			}
 
 			account_cache::get()->clear_locations();
 			uniform_cache::get()->clear_locations();
@@ -544,7 +569,7 @@ namespace tangent
 					schema_list map;
 					map.push_back(var::set::string(*sqlite::utils::inline_array(std::move(hashes))));
 
-					auto cursor = emplace_query(*txdata, label, __func__, "UPDATE transactions SET dispatch_queue = NULL WHERE transaction_hash IN ($?)", &map);
+					auto cursor = emplace_query(get_txdata(), label, __func__, "UPDATE transactions SET dispatch_queue = NULL WHERE transaction_hash IN ($?)", &map);
 					if (!cursor || cursor->error())
 						return expects_lr<void>(layer_exception(error_of(cursor)));
 				}
@@ -564,7 +589,7 @@ namespace tangent
 				map.push_back(var::set::integer(std::max<uint64_t>(1, (1000 * protocol::now().user.storage.transaction_dispatch_repeat_interval / protocol::now().policy.consensus_proof_time))));
 				map.push_back(var::set::string(*sqlite::utils::inline_array(std::move(hashes))));
 
-				auto cursor = emplace_query(*txdata, label, __func__, "UPDATE transactions SET dispatch_queue = dispatch_queue + ? WHERE transaction_hash IN ($?)", &map);
+				auto cursor = emplace_query(get_txdata(), label, __func__, "UPDATE transactions SET dispatch_queue = dispatch_queue + ? WHERE transaction_hash IN ($?)", &map);
 				if (!cursor || cursor->error())
 					return expects_lr<void>(layer_exception(error_of(cursor)));
 			}
@@ -586,7 +611,7 @@ namespace tangent
 				{
 					map.back()->value = var::integer(offset);
 
-					auto cursor = emplace_query(*blockdata, label, __func__, "SELECT block_hash FROM blocks WHERE block_number < ? LIMIT ? OFFSET ?", &map);
+					auto cursor = emplace_query(get_blockdata(), label, __func__, "SELECT block_hash FROM blocks WHERE block_number < ? LIMIT ? OFFSET ?", &map);
 					if (!cursor || cursor->error())
 						return expects_lr<void>(layer_exception(error_of(cursor)));
 
@@ -604,7 +629,7 @@ namespace tangent
 						break;
 				}
 
-				auto cursor = emplace_query(*blockdata, label, __func__, "DELETE FROM blocks WHERE block_number < ?", &map);
+				auto cursor = emplace_query(get_blockdata(), label, __func__, "DELETE FROM blocks WHERE block_number < ?", &map);
 				if (!cursor || cursor->error())
 					return expects_lr<void>(layer_exception(error_of(cursor)));
 			}
@@ -622,7 +647,7 @@ namespace tangent
 				{
 					map.back()->value = var::integer(offset);
 
-					auto cursor = emplace_query(*txdata, label, __func__, "SELECT transaction_hash FROM transactions WHERE block_number < ? LIMIT ? OFFSET ?", &map);
+					auto cursor = emplace_query(get_txdata(), label, __func__, "SELECT transaction_hash FROM transactions WHERE block_number < ? LIMIT ? OFFSET ?", &map);
 					if (!cursor || cursor->error())
 						return expects_lr<void>(layer_exception(error_of(cursor)));
 
@@ -641,7 +666,7 @@ namespace tangent
 						break;
 				}
 
-				auto cursor = emplace_query(*txdata, label, __func__, "DELETE FROM transactions WHERE block_number < ?", &map);
+				auto cursor = emplace_query(get_txdata(), label, __func__, "DELETE FROM transactions WHERE block_number < ?", &map);
 				if (!cursor || cursor->error())
 					return expects_lr<void>(layer_exception(error_of(cursor)));
 			}
@@ -649,100 +674,111 @@ namespace tangent
 			size_t statetrie = 0;
 			if (types & (uint32_t)pruning::statetrie)
 			{
-				size_t offset = 0, count = 1024;
-				schema_list map;
-				map.push_back(var::set::integer(block_number));
-				map.push_back(var::set::integer(count));
-				map.push_back(var::set::integer(offset));
-
-				while (true)
+				for (auto& [type, uniformdata] : get_uniformdata_max())
 				{
-					map.back()->value = var::integer(offset);
+					size_t offset = 0, count = 1024;
+					schema_list map;
+					map.push_back(var::set::integer(block_number));
+					map.push_back(var::set::integer(count));
+					map.push_back(var::set::integer(offset));
 
-					auto cursor = emplace_query(*uniformdata, label, __func__,
-						"SELECT"
-						" (COALESCE((SELECT TRUE FROM uniforms WHERE uniforms.index_number = uniformtries.index_number AND uniforms.block_number = uniformtries.block_number), FALSE)) AS latest,"
-						" (SELECT index_hash FROM indices WHERE indices.index_number = uniformtries.index_number) AS index_hash,"
-						" block_number "
-						"FROM uniformtries WHERE block_number < ? LIMIT ? OFFSET ?", &map);
+					while (true)
+					{
+						map.back()->value = var::integer(offset);
+
+						auto cursor = emplace_query(*uniformdata, label, __func__,
+							"SELECT"
+							" (COALESCE((SELECT TRUE FROM uniforms WHERE uniforms.index_number = uniformtries.index_number AND uniforms.block_number = uniformtries.block_number), FALSE)) AS latest,"
+							" (SELECT index_hash FROM indices WHERE indices.index_number = uniformtries.index_number) AS index_hash,"
+							" block_number "
+							"FROM uniformtries WHERE block_number < ? LIMIT ? OFFSET ?", &map);
+						if (!cursor || cursor->error())
+							return expects_lr<void>(layer_exception(error_of(cursor)));
+
+						std::atomic<size_t> skips = 0;
+						auto response = cursor->first();
+						parallel::wail_all(parallel::for_each_sequential(response.begin(), response.end(), response.size(), ELEMENTS_FEW, [&](sqlite::row row)
+						{
+							bool latest = row["latest"].get().get_boolean();
+							if (latest)
+							{
+								++skips;
+								return;
+							}
+
+							string index = row["index_hash"].get().get_blob();
+							uint64_t number = row["block_number"].get().get_integer();
+							store(label, __func__, get_uniform_label(type, index, number), std::string_view());
+						}));
+
+						size_t results = cursor->first().size();
+						offset += results;
+						statetrie += results - skips;
+						if (results < count)
+							break;
+					}
+
+					auto cursor = emplace_query(*uniformdata, label, __func__, "DELETE FROM uniformtries WHERE block_number < ?", &map);
 					if (!cursor || cursor->error())
 						return expects_lr<void>(layer_exception(error_of(cursor)));
-
-					std::atomic<size_t> skips = 0;
-					auto response = cursor->first();
-					parallel::wail_all(parallel::for_each_sequential(response.begin(), response.end(), response.size(), ELEMENTS_FEW, [&](sqlite::row row)
-					{
-						bool latest = row["latest"].get().get_boolean();
-						if (latest)
-						{
-							++skips;
-							return;
-						}
-
-						string index = row["index_hash"].get().get_blob();
-						uint64_t number = row["block_number"].get().get_integer();
-						store(label, __func__, get_uniform_label(index, number), std::string_view());
-					}));
-
-					size_t results = cursor->first().size();
-					offset += results;
-					statetrie += results - skips;
-					if (results < count)
-						break;
 				}
 
-				auto cursor = emplace_query(*uniformdata, label, __func__, "DELETE FROM uniformtries WHERE block_number < ?", &map);
-				if (!cursor || cursor->error())
-					return expects_lr<void>(layer_exception(error_of(cursor)));
-
-				map.back()->value = var::integer(offset = 0);
-				while (true)
+				for (auto& [type, multiformdata] : get_multiformdata_max())
 				{
-					map.back()->value = var::integer(offset);
+					size_t offset = 0, count = 1024;
+					schema_list map;
+					map.push_back(var::set::integer(block_number));
+					map.push_back(var::set::integer(count));
+					map.push_back(var::set::integer(offset));
 
-					auto cursor = emplace_query(*multiformdata, label, __func__,
-						"SELECT"
-						" (COALESCE((SELECT TRUE FROM multiforms WHERE multiforms.column_number = multiformtries.column_number AND multiforms.row_number = multiformtries.row_number AND multiforms.block_number = multiformtries.block_number), FALSE)) AS latest,"
-						" (SELECT column_hash FROM columns WHERE columns.column_number = multiformtries.column_number) AS column_hash,"
-						" (SELECT row_hash FROM rows WHERE rows.row_number = multiformtries.row_number) AS row_hash,"
-						" block_number "
-						"FROM multiformtries WHERE block_number < ? LIMIT ? OFFSET ?", &map);
+					while (true)
+					{
+						map.back()->value = var::integer(offset);
+
+						auto cursor = emplace_query(*multiformdata, label, __func__,
+							"SELECT"
+							" (COALESCE((SELECT TRUE FROM multiforms WHERE multiforms.column_number = multiformtries.column_number AND multiforms.row_number = multiformtries.row_number AND multiforms.block_number = multiformtries.block_number), FALSE)) AS latest,"
+							" (SELECT column_hash FROM columns WHERE columns.column_number = multiformtries.column_number) AS column_hash,"
+							" (SELECT row_hash FROM rows WHERE rows.row_number = multiformtries.row_number) AS row_hash,"
+							" block_number "
+							"FROM multiformtries WHERE block_number < ? LIMIT ? OFFSET ?", &map);
+						if (!cursor || cursor->error())
+							return expects_lr<void>(layer_exception(error_of(cursor)));
+
+						std::atomic<size_t> skips = 0;
+						auto response = cursor->first();
+						parallel::wail_all(parallel::for_each_sequential(response.begin(), response.end(), response.size(), ELEMENTS_FEW, [&](sqlite::row next)
+						{
+							bool latest = next["latest"].get().get_boolean();
+							if (latest)
+							{
+								++skips;
+								return;
+							}
+
+							string column = next["column_hash"].get().get_blob();
+							string row = next["row_hash"].get().get_blob();
+							uint64_t number = next["block_number"].get().get_integer();
+							store(label, __func__, get_multiform_label(type, column, row, number), std::string_view());
+						}));
+
+						size_t results = cursor->first().size();
+						offset += results;
+						statetrie += results - skips;
+						if (results < count)
+							break;
+					}
+
+					auto cursor = emplace_query(*multiformdata, label, __func__, "DELETE FROM multiformtries WHERE block_number < ?", &map);
 					if (!cursor || cursor->error())
 						return expects_lr<void>(layer_exception(error_of(cursor)));
-
-					std::atomic<size_t> skips = 0;
-					auto response = cursor->first();
-					parallel::wail_all(parallel::for_each_sequential(response.begin(), response.end(), response.size(), ELEMENTS_FEW, [&](sqlite::row next)
-					{
-						bool latest = next["latest"].get().get_boolean();
-						if (latest)
-						{
-							++skips;
-							return;
-						}
-
-						string column = next["column_hash"].get().get_blob();
-						string row = next["row_hash"].get().get_blob();
-						uint64_t number = next["block_number"].get().get_integer();
-						store(label, __func__, get_multiform_label(column, row, number), std::string_view());
-					}));
-
-					size_t results = cursor->first().size();
-					offset += results;
-					statetrie += results - skips;
-					if (results < count)
-						break;
 				}
-
-				cursor = emplace_query(*multiformdata, label, __func__, "DELETE FROM multiformtries WHERE block_number < ?", &map);
-				if (!cursor || cursor->error())
-					return expects_lr<void>(layer_exception(error_of(cursor)));
 			}
 
 			schema_list map;
 			map.push_back(var::set::integer(block_number));
 
-			auto cursor = emplace_query(*blockdata, label, __func__, "INSERT OR IGNORE INTO checkpoints (block_number) VALUES (?)", &map);
+			auto cursor = emplace_query(get_blockdata(), label, __func__, "INSERT OR IGNORE INTO checkpoints (block_number) VALUES (?)", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(error_of(cursor)));
 
@@ -770,91 +806,116 @@ namespace tangent
 				map.push_back(var::set::integer(value.number));
 				map.push_back(var::set::binary(hash, sizeof(hash)));
 
-				auto cursor = emplace_query(*blockdata, label, __func__, "INSERT INTO blocks (block_number, block_hash) VALUES (?, ?)", &map);
+				auto cursor = emplace_query(get_blockdata(), label, __func__, "INSERT INTO blocks (block_number, block_hash) VALUES (?, ?)", &map);
 				if (!cursor || cursor->error())
 					return expects_lr<void>(layer_exception(error_of(cursor)));
 			}
 
-			auto commit_transaction_data = reorganization ? sqlite::expects_db<sqlite::tstatement*>(nullptr) : txdata->prepare_statement("INSERT INTO transactions (transaction_number, transaction_hash, dispatch_queue, block_number, block_nonce) VALUES (?, ?, ?, ?, ?)", nullptr);
+			auto commit_transaction_data = reorganization ? sqlite::expects_db<sqlite::tstatement*>(nullptr) : get_txdata()->prepare_statement("INSERT INTO transactions (transaction_number, transaction_hash, dispatch_queue, block_number, block_nonce) VALUES (?, ?, ?, ?, ?)", nullptr);
 			if (!commit_transaction_data)
 				return expects_lr<void>(layer_exception(std::move(commit_transaction_data.error().message())));
 
-			auto commit_account_data = reorganization ? sqlite::expects_db<sqlite::tstatement*>(nullptr) : accountdata->prepare_statement("INSERT OR IGNORE INTO accounts (account_number, account_hash, block_number) SELECT (SELECT COALESCE(max(account_number), 0) + 1 FROM accounts), ?, ? ON CONFLICT DO UPDATE SET block_number = block_number RETURNING account_number", nullptr);
+			auto commit_account_data = reorganization ? sqlite::expects_db<sqlite::tstatement*>(nullptr) : get_accountdata()->prepare_statement("INSERT OR IGNORE INTO accounts (account_number, account_hash, block_number) SELECT (SELECT COALESCE(max(account_number), 0) + 1 FROM accounts), ?, ? ON CONFLICT DO UPDATE SET block_number = block_number RETURNING account_number", nullptr);
 			if (!commit_account_data)
 				return expects_lr<void>(layer_exception(std::move(commit_account_data.error().message())));
 
-			auto commit_party_data = reorganization ? sqlite::expects_db<sqlite::tstatement*>(nullptr) : partydata->prepare_statement("INSERT OR IGNORE INTO parties (transaction_number, transaction_account_number, block_number) VALUES (?, ?, ?)", nullptr);
+			auto commit_party_data = reorganization ? sqlite::expects_db<sqlite::tstatement*>(nullptr) : get_partydata()->prepare_statement("INSERT OR IGNORE INTO parties (transaction_number, transaction_account_number, block_number) VALUES (?, ?, ?)", nullptr);
 			if (!commit_party_data)
 				return expects_lr<void>(layer_exception(std::move(commit_party_data.error().message())));
 
-			auto commit_alias_data = reorganization ? sqlite::expects_db<sqlite::tstatement*>(nullptr) : aliasdata->prepare_statement("INSERT INTO aliases (transaction_number, transaction_hash, block_number) VALUES (?, ?, ?)", nullptr);
+			auto commit_alias_data = reorganization ? sqlite::expects_db<sqlite::tstatement*>(nullptr) : get_aliasdata()->prepare_statement("INSERT INTO aliases (transaction_number, transaction_hash, block_number) VALUES (?, ?, ?)", nullptr);
 			if (!commit_alias_data)
 				return expects_lr<void>(layer_exception(std::move(commit_alias_data.error().message())));
 
-			auto commit_uniform_index_data = uniformdata->prepare_statement("INSERT OR IGNORE INTO indices (index_number, index_hash, block_number) SELECT (SELECT COALESCE(max(index_number), 0) + 1 FROM indices), ?, ? ON CONFLICT DO UPDATE SET block_number = block_number RETURNING index_number", nullptr);
-			if (!commit_uniform_index_data)
-				return expects_lr<void>(layer_exception(std::move(commit_uniform_index_data.error().message())));
-
-			auto commit_uniform_data = uniformdata->prepare_statement("INSERT OR REPLACE INTO uniforms (index_number, block_number) VALUES (?, ?)", nullptr);
-			if (!commit_uniform_data)
-				return expects_lr<void>(layer_exception(std::move(commit_uniform_data.error().message())));
-
-			auto commit_uniformtrie_data = uniformdata->prepare_statement("INSERT OR REPLACE INTO uniformtries (index_number, block_number) VALUES (?, ?)", nullptr);
-			if (!commit_uniformtrie_data)
-				return expects_lr<void>(layer_exception(std::move(commit_uniformtrie_data.error().message())));
-
-			auto commit_multiform_column_data = multiformdata->prepare_statement("INSERT OR IGNORE INTO columns (column_number, column_hash, block_number) SELECT (SELECT COALESCE(max(column_number), 0) + 1 FROM columns), ?, ? ON CONFLICT DO UPDATE SET block_number = block_number RETURNING column_number", nullptr);
-			if (!commit_multiform_column_data)
-				return expects_lr<void>(layer_exception(std::move(commit_multiform_column_data.error().message())));
-
-			auto commit_multiform_row_data = multiformdata->prepare_statement("INSERT OR IGNORE INTO rows (row_number, row_hash, block_number) SELECT (SELECT COALESCE(max(row_number), 0) + 1 FROM rows), ?, ? ON CONFLICT DO UPDATE SET block_number = block_number RETURNING row_number", nullptr);
-			if (!commit_multiform_row_data)
-				return expects_lr<void>(layer_exception(std::move(commit_multiform_row_data.error().message())));
-
-			auto commit_multiform_data = multiformdata->prepare_statement("INSERT OR REPLACE INTO multiforms (column_number, row_number, block_number, factor) VALUES (?, ?, ?, ?)", nullptr);
-			if (!commit_multiform_data)
-				return expects_lr<void>(layer_exception(std::move(commit_multiform_data.error().message())));
-
-			auto commit_multiformtrie_data = multiformdata->prepare_statement("INSERT OR REPLACE INTO multiformtries (column_number, row_number, block_number, factor) VALUES (?, ?, ?, ?)", nullptr);
-			if (!commit_multiformtrie_data)
-				return expects_lr<void>(layer_exception(std::move(commit_multiformtrie_data.error().message())));
-
 			auto& states = value.states.at(ledger::work_commitment::finalized);
-			auto state = states.begin();
-			vector<uniform_blob> uniforms;
-			vector<multiform_blob> multiforms;
-			uniforms.reserve(states.size());
-			multiforms.reserve(states.size());
-			for (size_t i = 0; i < states.size(); i++, state++)
+			unordered_map<uint32_t, uniform_writer> uniform_writers;
+			for (auto& [type, uniformdata] : get_uniformdata_max())
 			{
-				switch (state->second->as_level())
+				vector<uniform_blob> blobs;
+				blobs.reserve(states.size());
+				for (auto& [location, state] : states)
 				{
-					case ledger::state_level::uniform:
+					if (state->as_level() == ledger::state_level::uniform && state->as_type() == type)
 					{
 						uniform_blob blob;
-						blob.context = (ledger::uniform*)*state->second;
-						uniforms.emplace_back(std::move(blob));
-						break;
+						blob.context = (ledger::uniform*)*state;
+						blobs.emplace_back(std::move(blob));
 					}
-					case ledger::state_level::multiform:
-					{
-						multiform_blob blob;
-						blob.context = (ledger::multiform*)*state->second;
-						multiforms.emplace_back(std::move(blob));
-						break;
-					}
-					default:
-						return expects_lr<void>(layer_exception("state level is not valid"));
 				}
+
+				if (blobs.empty())
+					continue;
+
+				auto commit_uniform_index_data = uniformdata->prepare_statement("INSERT OR IGNORE INTO indices (index_number, index_hash, block_number) SELECT (SELECT COALESCE(max(index_number), 0) + 1 FROM indices), ?, ? ON CONFLICT DO UPDATE SET block_number = block_number RETURNING index_number", nullptr);
+				if (!commit_uniform_index_data)
+					return expects_lr<void>(layer_exception(std::move(commit_uniform_index_data.error().message())));
+
+				auto commit_uniform_data = uniformdata->prepare_statement("INSERT OR REPLACE INTO uniforms (index_number, block_number) VALUES (?, ?)", nullptr);
+				if (!commit_uniform_data)
+					return expects_lr<void>(layer_exception(std::move(commit_uniform_data.error().message())));
+
+				auto commit_uniformtrie_data = uniformdata->prepare_statement("INSERT OR REPLACE INTO uniformtries (index_number, block_number) VALUES (?, ?)", nullptr);
+				if (!commit_uniformtrie_data)
+					return expects_lr<void>(layer_exception(std::move(commit_uniformtrie_data.error().message())));
+
+				uniform_writer& writer = uniform_writers[type];
+				writer.commit_uniform_index_data = *commit_uniform_index_data;
+				writer.commit_uniform_data = *commit_uniform_data;
+				writer.commit_uniformtrie_data = *commit_uniformtrie_data;
+				writer.storage = *uniformdata;
+				writer.blobs = std::move(blobs);
 			}
 
-			vector<promise<void>> queue1;
+			unordered_map<uint32_t, multiform_writer> multiform_writers;
+			for (auto& [type, multiformdata] : get_multiformdata_max())
+			{
+				vector<multiform_blob> blobs;
+				blobs.reserve(states.size());
+				for (auto& [location, state] : states)
+				{
+					if (state->as_level() == ledger::state_level::multiform && state->as_type() == type)
+					{
+						multiform_blob blob;
+						blob.context = (ledger::multiform*)*state;
+						blobs.emplace_back(std::move(blob));
+					}
+				}
+
+				if (blobs.empty())
+					continue;
+
+				auto commit_multiform_column_data = multiformdata->prepare_statement("INSERT OR IGNORE INTO columns (column_number, column_hash, block_number) SELECT (SELECT COALESCE(max(column_number), 0) + 1 FROM columns), ?, ? ON CONFLICT DO UPDATE SET block_number = block_number RETURNING column_number", nullptr);
+				if (!commit_multiform_column_data)
+					return expects_lr<void>(layer_exception(std::move(commit_multiform_column_data.error().message())));
+
+				auto commit_multiform_row_data = multiformdata->prepare_statement("INSERT OR IGNORE INTO rows (row_number, row_hash, block_number) SELECT (SELECT COALESCE(max(row_number), 0) + 1 FROM rows), ?, ? ON CONFLICT DO UPDATE SET block_number = block_number RETURNING row_number", nullptr);
+				if (!commit_multiform_row_data)
+					return expects_lr<void>(layer_exception(std::move(commit_multiform_row_data.error().message())));
+
+				auto commit_multiform_data = multiformdata->prepare_statement("INSERT OR REPLACE INTO multiforms (column_number, row_number, block_number, factor) VALUES (?, ?, ?, ?)", nullptr);
+				if (!commit_multiform_data)
+					return expects_lr<void>(layer_exception(std::move(commit_multiform_data.error().message())));
+
+				auto commit_multiformtrie_data = multiformdata->prepare_statement("INSERT OR REPLACE INTO multiformtries (column_number, row_number, block_number, factor) VALUES (?, ?, ?, ?)", nullptr);
+				if (!commit_multiformtrie_data)
+					return expects_lr<void>(layer_exception(std::move(commit_multiformtrie_data.error().message())));
+
+				multiform_writer& writer = multiform_writers[type];
+				writer.commit_multiform_column_data = *commit_multiform_column_data;
+				writer.commit_multiform_row_data = *commit_multiform_row_data;
+				writer.commit_multiform_data = *commit_multiform_data;
+				writer.commit_multiformtrie_data = *commit_multiformtrie_data;
+				writer.storage = *multiformdata;
+				writer.blobs = std::move(blobs);
+			}
+
+			vector<promise<void>> queue;
 			vector<transaction_blob> transactions;
 			bool transaction_to_account_index = protocol::now().user.storage.transaction_to_account_index;
 			bool transaction_to_rollup_index = protocol::now().user.storage.transaction_to_rollup_index;
 			if (!reorganization)
 			{
-				auto cursor = query(*txdata, label, __func__, "SELECT max(transaction_number) AS counter FROM transactions");
+				auto cursor = query(get_txdata(), label, __func__, "SELECT max(transaction_number) AS counter FROM transactions");
 				if (!cursor || cursor->error_or_empty())
 					return expects_lr<void>(layer_exception(error_of(cursor)));
 
@@ -867,7 +928,8 @@ namespace tangent
 					blob.block_nonce = (uint64_t)i;
 					blob.context = &value.transactions[i];
 				}
-				queue1 = parallel::for_each(transactions.begin(), transactions.end(), ELEMENTS_FEW, [&](transaction_blob& item)
+				
+				for (auto& task : parallel::for_each(transactions.begin(), transactions.end(), ELEMENTS_FEW, [&](transaction_blob& item)
 				{
 					item.receipt_message.data.reserve(1024);
 					item.context->transaction->store(&item.transaction_message);
@@ -894,25 +956,33 @@ namespace tangent
 							item.aliases.push_back(alias);
 						}
 					}
-				});
+				}))
+					queue.emplace_back(std::move(task));
 			}
 
-			auto queue2 = parallel::for_each(uniforms.begin(), uniforms.end(), ELEMENTS_FEW, [&](uniform_blob& item)
+			for (auto& [type, writer] : uniform_writers)
 			{
-				item.index = item.context->as_index();
-				item.context->store(&item.message);
-			});
-			auto queue3 = parallel::for_each(multiforms.begin(), multiforms.end(), ELEMENTS_FEW, [&](multiform_blob& item)
-			{
-				item.column = item.context->as_column();
-				item.row = item.context->as_row();
-				item.factor = item.context->as_factor();
-				item.context->store(&item.message);
-			});
-			parallel::wail_all(std::move(queue1));
-			parallel::wail_all(std::move(queue2));
-			parallel::wail_all(std::move(queue3));
+				for (auto& task : parallel::for_each(writer.blobs.begin(), writer.blobs.end(), ELEMENTS_FEW, [&](uniform_blob& item)
+				{
+					item.index = item.context->as_index();
+					item.context->store(&item.message);
+				}))
+					queue.emplace_back(std::move(task));
+			}
 
+			for (auto& [type, writer] : multiform_writers)
+			{
+				for (auto& task : parallel::for_each(writer.blobs.begin(), writer.blobs.end(), ELEMENTS_FEW, [&](multiform_blob& item)
+				{
+					item.column = item.context->as_column();
+					item.row = item.context->as_row();
+					item.factor = item.context->as_factor();
+					item.context->store(&item.message);
+				}))
+					queue.emplace_back(std::move(task));
+			}
+
+			parallel::wail_all(std::move(queue));
 			if (!reorganization)
 			{
 				auto* cache_a = account_cache::get();
@@ -924,123 +994,145 @@ namespace tangent
 			}
 
 			auto* cache_u = uniform_cache::get();
-			for (auto& item : uniforms)
-				cache_u->clear_block_location(item.index);
+			for (auto& [type, writer] : uniform_writers)
+			{
+				for (auto& item : writer.blobs)
+					cache_u->clear_block_location(type, item.index);
+			}
 
-			for (auto& item : uniforms)
-				cache_u->clear_uniform_location(item.index);
+			for (auto& [type, writer] : uniform_writers)
+			{
+				for (auto& item : writer.blobs)
+					cache_u->clear_uniform_location(type, item.index);
+			}
 
 			auto* cache_m = multiform_cache::get();
-			for (auto& item : multiforms)
-				cache_m->clear_block_location(item.column, item.row);
-
-			for (auto& item : multiforms)
-				cache_m->clear_multiform_location(item.column, item.row);
-
-			vector<promise<expects_lr<void>>> queue4;
-			queue4.emplace_back(cotask<expects_lr<void>>([&]() -> expects_lr<void>
+			for (auto& [type, writer] : multiform_writers)
 			{
-				sqlite::expects_db<sqlite::cursor> cursor = sqlite::database_exception(string());
-				for (auto& item : uniforms)
-				{
-					auto* statement = *commit_uniform_index_data;
-					uniformdata->bind_blob(statement, 0, item.index);
-					uniformdata->bind_int64(statement, 1, value.number);
-
-					cursor = prepared_query(*uniformdata, label, __func__, statement);
-					if (!cursor || cursor->error_or_empty())
-						return layer_exception(cursor->empty() ? "uniform index not linked" : error_of(cursor));
-
-					uint64_t index_number = cursor->first().front().get_column(0).get().get_integer();
-					statement = *commit_uniform_data;
-					uniformdata->bind_int64(statement, 0, index_number);
-					uniformdata->bind_int64(statement, 1, value.number);
-
-					cursor = prepared_query(*uniformdata, label, __func__, statement);
-					if (!cursor || cursor->error())
-						return layer_exception(error_of(cursor));
-
-					statement = *commit_uniformtrie_data;
-					uniformdata->bind_int64(statement, 0, index_number);
-					uniformdata->bind_int64(statement, 1, value.number);
-
-					cursor = prepared_query(*uniformdata, label, __func__, statement);
-					if (!cursor || cursor->error())
-						return layer_exception(error_of(cursor));
-				}
-				return expectation::met;
-			}, false));
-			queue4.emplace_back(cotask<expects_lr<void>>([&]() -> expects_lr<void>
+				for (auto& item : writer.blobs)
+					cache_m->clear_block_location(type, item.column, item.row);
+			}
+			
+			for (auto& [type, writer] : multiform_writers)
 			{
-				sqlite::expects_db<sqlite::cursor> cursor = sqlite::database_exception(string());
-				for (auto& item : multiforms)
-				{
-					auto* multiformment = *commit_multiform_column_data;
-					multiformdata->bind_blob(multiformment, 0, item.column);
-					multiformdata->bind_int64(multiformment, 1, value.number);
+				for (auto& item : writer.blobs)
+					cache_m->clear_multiform_location(type, item.column, item.row);
+			}
 
-					cursor = prepared_query(*multiformdata, label, __func__, multiformment);
-					if (!cursor || cursor->error_or_empty())
-						return layer_exception(cursor->empty() ? "multiform column not linked" : error_of(cursor));
-
-					multiformment = *commit_multiform_row_data;
-					multiformdata->bind_blob(multiformment, 0, item.row);
-					multiformdata->bind_int64(multiformment, 1, value.number);
-
-					uint64_t column_number = cursor->first().front().get_column(0).get().get_integer();
-					cursor = prepared_query(*multiformdata, label, __func__, multiformment);
-					if (!cursor || cursor->error_or_empty())
-						return layer_exception(cursor->empty() ? "multiform row not linked" : error_of(cursor));
-
-					uint64_t row_number = cursor->first().front().get_column(0).get().get_integer();
-					multiformment = *commit_multiform_data;
-					multiformdata->bind_int64(multiformment, 0, column_number);
-					multiformdata->bind_int64(multiformment, 1, row_number);
-					multiformdata->bind_int64(multiformment, 2, value.number);
-					multiformdata->bind_int64(multiformment, 3, item.factor);
-
-					cursor = prepared_query(*multiformdata, label, __func__, multiformment);
-					if (!cursor || cursor->error())
-						return layer_exception(error_of(cursor));
-
-					multiformment = *commit_multiformtrie_data;
-					multiformdata->bind_int64(multiformment, 0, column_number);
-					multiformdata->bind_int64(multiformment, 1, row_number);
-					multiformdata->bind_int64(multiformment, 2, value.number);
-					multiformdata->bind_int64(multiformment, 3, item.factor);
-
-					cursor = prepared_query(*multiformdata, label, __func__, multiformment);
-					if (!cursor || cursor->error())
-						return layer_exception(error_of(cursor));
-				}
-				return expectation::met;
-			}, false));
-			queue4.emplace_back(cotask<expects_lr<void>>([&]() -> expects_lr<void>
+			vector<promise<expects_lr<void>>> expectation_queue;
+			expectation_queue.reserve(8 + uniform_writers.size() * 2 + multiform_writers.size() * 2);
+			for (auto& writer : uniform_writers)
 			{
-				sqlite::expects_db<void> status = expectation::met;
-				for (auto& item : uniforms)
+				expectation_queue.emplace_back(cotask<expects_lr<void>>([&]() -> expects_lr<void>
 				{
-					status = store(label, __func__, get_uniform_label(item.index, value.number), item.message.data);
-					if (!status)
-						return layer_exception(error_of(status));
-				}
-				return expectation::met;
-			}, false));
-			queue4.emplace_back(cotask<expects_lr<void>>([&]() -> expects_lr<void>
+					sqlite::expects_db<sqlite::cursor> cursor = sqlite::database_exception(string());
+					auto* uniformdata = writer.second.storage;
+					for (auto& item : writer.second.blobs)
+					{
+						auto* statement = writer.second.commit_uniform_index_data;
+						uniformdata->bind_blob(statement, 0, item.index);
+						uniformdata->bind_int64(statement, 1, value.number);
+
+						cursor = prepared_query(uniformdata, label, __func__, statement);
+						if (!cursor || cursor->error_or_empty())
+							return layer_exception(cursor->empty() ? "uniform index not linked" : error_of(cursor));
+
+						uint64_t index_number = cursor->first().front().get_column(0).get().get_integer();
+						statement = writer.second.commit_uniform_data;
+						uniformdata->bind_int64(statement, 0, index_number);
+						uniformdata->bind_int64(statement, 1, value.number);
+
+						cursor = prepared_query(uniformdata, label, __func__, statement);
+						if (!cursor || cursor->error())
+							return layer_exception(error_of(cursor));
+
+						statement = writer.second.commit_uniformtrie_data;
+						uniformdata->bind_int64(statement, 0, index_number);
+						uniformdata->bind_int64(statement, 1, value.number);
+
+						cursor = prepared_query(uniformdata, label, __func__, statement);
+						if (!cursor || cursor->error())
+							return layer_exception(error_of(cursor));
+					}
+					return expectation::met;
+				}, false));
+				expectation_queue.emplace_back(cotask<expects_lr<void>>([&]() -> expects_lr<void>
+				{
+					sqlite::expects_db<void> status = expectation::met;
+					for (auto& item : writer.second.blobs)
+					{
+						status = store(label, __func__, get_uniform_label(writer.first, item.index, value.number), item.message.data);
+						if (!status)
+							return layer_exception(error_of(status));
+					}
+					return expectation::met;
+				}, false));
+			}
+			for (auto& writer : multiform_writers)
 			{
-				sqlite::expects_db<void> status = expectation::met;
-				for (auto& item : multiforms)
+				expectation_queue.emplace_back(cotask<expects_lr<void>>([&]() -> expects_lr<void>
 				{
-					status = store(label, __func__, get_multiform_label(item.column, item.row, value.number), item.message.data);
-					if (!status)
-						return layer_exception(error_of(status));
-				}
-				return expectation::met;
-			}, false));
+					sqlite::expects_db<sqlite::cursor> cursor = sqlite::database_exception(string());
+					auto* multiformdata = writer.second.storage;
+					for (auto& item : writer.second.blobs)
+					{
+						auto* statement = writer.second.commit_multiform_column_data;
+						multiformdata->bind_blob(statement, 0, item.column);
+						multiformdata->bind_int64(statement, 1, value.number);
+
+						cursor = prepared_query(multiformdata, label, __func__, statement);
+						if (!cursor || cursor->error_or_empty())
+							return layer_exception(cursor->empty() ? "multiform column not linked" : error_of(cursor));
+
+						statement = writer.second.commit_multiform_row_data;
+						multiformdata->bind_blob(statement, 0, item.row);
+						multiformdata->bind_int64(statement, 1, value.number);
+
+						uint64_t column_number = cursor->first().front().get_column(0).get().get_integer();
+						cursor = prepared_query(multiformdata, label, __func__, statement);
+						if (!cursor || cursor->error_or_empty())
+							return layer_exception(cursor->empty() ? "multiform row not linked" : error_of(cursor));
+
+						uint64_t row_number = cursor->first().front().get_column(0).get().get_integer();
+						statement = writer.second.commit_multiform_data;
+						multiformdata->bind_int64(statement, 0, column_number);
+						multiformdata->bind_int64(statement, 1, row_number);
+						multiformdata->bind_int64(statement, 2, value.number);
+						multiformdata->bind_int64(statement, 3, item.factor);
+
+						cursor = prepared_query(multiformdata, label, __func__, statement);
+						if (!cursor || cursor->error())
+							return layer_exception(error_of(cursor));
+
+						statement = writer.second.commit_multiformtrie_data;
+						multiformdata->bind_int64(statement, 0, column_number);
+						multiformdata->bind_int64(statement, 1, row_number);
+						multiformdata->bind_int64(statement, 2, value.number);
+						multiformdata->bind_int64(statement, 3, item.factor);
+
+						cursor = prepared_query(multiformdata, label, __func__, statement);
+						if (!cursor || cursor->error())
+							return layer_exception(error_of(cursor));
+					}
+					return expectation::met;
+				}, false));
+				expectation_queue.emplace_back(cotask<expects_lr<void>>([&]() -> expects_lr<void>
+				{
+					sqlite::expects_db<void> status = expectation::met;
+					for (auto& item : writer.second.blobs)
+					{
+						status = store(label, __func__, get_multiform_label(writer.first, item.column, item.row, value.number), item.message.data);
+						if (!status)
+							return layer_exception(error_of(status));
+					}
+					return expectation::met;
+				}, false));
+			}
 			if (!reorganization)
 			{
-				queue4.emplace_back(cotask<expects_lr<void>>([&]() -> expects_lr<void>
+				expectation_queue.emplace_back(cotask<expects_lr<void>>([&]() -> expects_lr<void>
 				{
+					auto* txdata = get_txdata();
 					auto* statement = *commit_transaction_data;
 					sqlite::expects_db<sqlite::cursor> cursor = sqlite::database_exception(string());
 					for (auto& data : transactions)
@@ -1054,13 +1146,13 @@ namespace tangent
 						txdata->bind_int64(statement, 3, value.number);
 						txdata->bind_int64(statement, 4, data.block_nonce);
 
-						cursor = prepared_query(*txdata, label, __func__, statement);
+						cursor = prepared_query(get_txdata(), label, __func__, statement);
 						if (!cursor || cursor->error())
 							return layer_exception(error_of(cursor));
 					}
 					return expectation::met;
 				}, false));
-				queue4.emplace_back(cotask<expects_lr<void>>([&]() -> expects_lr<void>
+				expectation_queue.emplace_back(cotask<expects_lr<void>>([&]() -> expects_lr<void>
 				{
 					sqlite::expects_db<void> status = expectation::met;
 					for (auto& data : transactions)
@@ -1077,8 +1169,10 @@ namespace tangent
 				}, false));
 				if (transaction_to_account_index)
 				{
-					queue4.emplace_back(cotask<expects_lr<void>>([&]() -> expects_lr<void>
+					expectation_queue.emplace_back(cotask<expects_lr<void>>([&]() -> expects_lr<void>
 					{
+						auto* accountdata = get_accountdata();
+						auto* partydata = get_partydata();
 						sqlite::expects_db<sqlite::cursor> cursor = sqlite::database_exception(string());
 						for (auto& data : transactions)
 						{
@@ -1088,7 +1182,7 @@ namespace tangent
 								accountdata->bind_blob(statement, 0, party.view());
 								accountdata->bind_int64(statement, 1, value.number);
 
-								cursor = prepared_query(*accountdata, label, __func__, statement);
+								cursor = prepared_query(get_accountdata(), label, __func__, statement);
 								if (!cursor || cursor->error_or_empty())
 									return layer_exception(cursor->empty() ? "account not linked" : error_of(cursor));
 
@@ -1098,7 +1192,7 @@ namespace tangent
 								partydata->bind_int64(statement, 1, account_number);
 								partydata->bind_int64(statement, 2, value.number);
 
-								cursor = prepared_query(*partydata, label, __func__, statement);
+								cursor = prepared_query(get_partydata(), label, __func__, statement);
 								if (!cursor || cursor->error())
 									return layer_exception(error_of(cursor));
 							}
@@ -1108,8 +1202,9 @@ namespace tangent
 				}
 				if (transaction_to_rollup_index)
 				{
-					queue4.emplace_back(cotask<expects_lr<void>>([&]() -> expects_lr<void>
+					expectation_queue.emplace_back(cotask<expects_lr<void>>([&]() -> expects_lr<void>
 					{
+						auto* aliasdata = get_aliasdata();
 						auto* statement = *commit_alias_data;
 						sqlite::expects_db<sqlite::cursor> cursor = sqlite::database_exception(string());
 						for (auto& data : transactions)
@@ -1120,7 +1215,7 @@ namespace tangent
 								aliasdata->bind_blob(statement, 1, std::string_view((char*)alias.transaction_hash, sizeof(alias.transaction_hash)));
 								aliasdata->bind_int64(statement, 2, value.number);
 
-								cursor = prepared_query(*aliasdata, label, __func__, statement);
+								cursor = prepared_query(get_aliasdata(), label, __func__, statement);
 								if (!cursor || cursor->error())
 									return layer_exception(error_of(cursor));
 							}
@@ -1130,7 +1225,7 @@ namespace tangent
 				}
 			}
 
-			for (auto& status : parallel::inline_wait_all(std::move(queue4)))
+			for (auto& status : parallel::inline_wait_all(std::move(expectation_queue)))
 			{
 				if (!status)
 					return status;
@@ -1150,111 +1245,144 @@ namespace tangent
 
 			return prune(protocol::now().user.storage.prune_aggressively ? (uint32_t)pruning::blocktrie | (uint32_t)pruning::transactiontrie | (uint32_t)pruning::statetrie : (uint32_t)pruning::statetrie, value.number);
 		}
-		expects_lr<size_t> chainstate::resolve_block_transactions(ledger::block& value, bool fully, size_t offset, size_t count)
+		expects_lr<void> chainstate::resolve_block_transactions(vector<ledger::block_transaction>& result, uint64_t block_number, bool fully, size_t chunk)
 		{
 			schema_list map;
-			map.push_back(var::set::integer(value.number));
-			map.push_back(var::set::integer(count));
-			map.push_back(var::set::integer(offset));
+			map.push_back(var::set::integer(block_number));
+			map.push_back(var::set::integer(chunk));
+			map.push_back(var::set::integer(0));
 
-			auto cursor = emplace_query(*txdata, label, __func__, "SELECT transaction_hash FROM transactions WHERE block_number = ? ORDER BY block_nonce LIMIT ? OFFSET ?", &map);
-			if (!cursor || cursor->error())
-				return expects_lr<size_t>(layer_exception(error_of(cursor)));
-
-			auto& response = cursor->first();
-			size_t size = response.size(), stride = value.transactions.size();
-			value.transactions.resize(value.transactions.size() + size);
-			parallel::wail_all(parallel::for_loop(size, ELEMENTS_FEW, [&](size_t i)
+			size_t offset = 0;
+			while (true)
 			{
-				auto row = response[i];
-				auto& next = value.transactions[i + stride];
-				auto transaction_hash = row["transaction_hash"].get();
-				format::stream transaction_message = format::stream(load(label, __func__, get_transaction_label(transaction_hash.get_binary())).or_else(string()));
-				next.transaction = transactions::resolver::from_stream(transaction_message);
-				if (next.transaction && next.transaction->load(transaction_message))
+				auto cursor = emplace_query(get_txdata(), label, __func__, "SELECT transaction_hash FROM transactions WHERE block_number = ? ORDER BY block_nonce LIMIT ? OFFSET ?", &map);
+				if (!cursor || cursor->error())
+					return expects_lr<void>(layer_exception(error_of(cursor)));
+
+				auto& response = cursor->first();
+				size_t size = response.size();
+				if (!size)
+					break;
+
+				size_t stride = result.size();
+				result.resize(result.size() + size);
+				parallel::wail_all(parallel::for_loop(size, ELEMENTS_FEW, [&](size_t i)
 				{
-					if (fully)
+					auto row = response[i];
+					auto& next = result[i + stride];
+					auto transaction_hash = row["transaction_hash"].get();
+					format::stream transaction_message = format::stream(load(label, __func__, get_transaction_label(transaction_hash.get_binary())).or_else(string()));
+					next.transaction = transactions::resolver::from_stream(transaction_message);
+					if (next.transaction && next.transaction->load(transaction_message))
 					{
-						format::stream receipt_message = format::stream(load(label, __func__, get_receipt_label(transaction_hash.get_binary())).or_else(string()));
-						if (next.receipt.load(receipt_message))
+						if (fully)
+						{
+							format::stream receipt_message = format::stream(load(label, __func__, get_receipt_label(transaction_hash.get_binary())).or_else(string()));
+							if (next.receipt.load(receipt_message))
+								finalize_checksum(**next.transaction, transaction_hash);
+						}
+						else
 							finalize_checksum(**next.transaction, transaction_hash);
 					}
-					else
-						finalize_checksum(**next.transaction, transaction_hash);
-				}
-			}));
+				}));
 
-			auto it = std::remove_if(value.transactions.begin(), value.transactions.end(), [](const ledger::block_transaction& a) { return !a.transaction; });
-			if (it != value.transactions.end())
-				value.transactions.erase(it);
-			return size;
+				offset += size;
+				map[2]->value = var::integer(offset);
+				if (size < chunk)
+					break;
+			}
+
+			auto it = std::remove_if(result.begin(), result.end(), [](const ledger::block_transaction& a) { return !a.transaction; });
+			if (it != result.end())
+				result.erase(it);
+
+			return expectation::met;
 		}
-		expects_lr<size_t> chainstate::resolve_block_statetrie(ledger::block& value, size_t offset, size_t count)
+		expects_lr<void> chainstate::resolve_block_statetrie(ledger::block_work& result, uint64_t block_number, size_t chunk)
 		{
 			schema_list map;
-			map.push_back(var::set::integer(value.number));
-			map.push_back(var::set::integer(count));
-			map.push_back(var::set::integer(offset));
+			map.push_back(var::set::integer(block_number));
+			map.push_back(var::set::integer(chunk));
+			map.push_back(var::set::integer(0));
 
-			auto cursor1 = emplace_query(*uniformdata, label, __func__, "SELECT (SELECT index_hash FROM indices WHERE indices.index_number = uniformtries.index_number) AS index_hash FROM uniformtries WHERE block_number = ? LIMIT ? OFFSET ?", &map);
-			if (!cursor1 || cursor1->error())
-				return expects_lr<size_t>(layer_exception(error_of(cursor1)));
-
-			auto cursor2 = emplace_query(*multiformdata, label, __func__, "SELECT (SELECT column_hash FROM columns WHERE columns.column_number = multiformtries.column_number) AS column_hash, (SELECT row_hash FROM rows WHERE rows.row_number = multiformtries.row_number) AS row_hash FROM multiformtries WHERE block_number = ? LIMIT ? OFFSET ?", &map);
-			if (!cursor2 || cursor2->error())
-				return expects_lr<size_t>(layer_exception(error_of(cursor2)));
-
-			size_t size1 = 0;
-			if (!cursor1->empty())
+			for (auto& [type, uniformdata] : get_uniformdata_max())
 			{
-				auto& response = cursor1->first();
-				size1 = response.size();
-				for (size_t i = 0; i < size1; i++)
+				size_t offset = 0;
+				map[2]->value = var::integer(offset);
+				while (true)
 				{
-					auto row = response[i];
-					format::stream message = format::stream(load(label, __func__, get_uniform_label(row["index_hash"].get().get_blob(), value.number)).or_else(string()));
-					uptr<ledger::state> next_state = states::resolver::from_stream(message);
-					if (next_state && next_state->load(message))
-						value.states.move_any(std::move(next_state));
+					auto cursor = emplace_query(*uniformdata, label, __func__, "SELECT (SELECT index_hash FROM indices WHERE indices.index_number = uniformtries.index_number) AS index_hash FROM uniformtries WHERE block_number = ? LIMIT ? OFFSET ?", &map);
+					if (!cursor || cursor->error())
+						return expects_lr<void>(layer_exception(error_of(cursor)));
+
+					auto& response = cursor->first();
+					size_t size = response.size();
+					for (size_t i = 0; i < size; i++)
+					{
+						auto row = response[i];
+						format::stream message = format::stream(load(label, __func__, get_uniform_label(type, row["index_hash"].get().get_blob(), block_number)).or_else(string()));
+						uptr<ledger::state> next_state = states::resolver::from_stream(message);
+						if (next_state && next_state->load(message))
+							result.move_any(std::move(next_state));
+					}
+
+					offset += size;
+					map[2]->value = var::integer(offset);
+					if (size < chunk)
+						break;
 				}
 			}
 
-			size_t size2 = 0;
-			if (!cursor2->empty())
+			for (auto& [type, multiformdata] : get_multiformdata_max())
 			{
-				auto& response = cursor2->first();
-				size2 = response.size();
-				for (size_t i = 0; i < size2; i++)
+				size_t offset = 0;
+				map[2]->value = var::integer(offset);
+				while (true)
 				{
-					auto row = response[i];
-					format::stream message = format::stream(load(label, __func__, get_multiform_label(row["column_hash"].get().get_blob(), row["row_hash"].get().get_blob(), value.number)).or_else(string()));
-					uptr<ledger::state> next_state = states::resolver::from_stream(message);
-					if (next_state && next_state->load(message))
-						value.states.move_any(std::move(next_state));
+					auto cursor = emplace_query(*multiformdata, label, __func__, "SELECT (SELECT column_hash FROM columns WHERE columns.column_number = multiformtries.column_number) AS column_hash, (SELECT row_hash FROM rows WHERE rows.row_number = multiformtries.row_number) AS row_hash FROM multiformtries WHERE block_number = ? LIMIT ? OFFSET ?", &map);
+					if (!cursor || cursor->error())
+						return expects_lr<void>(layer_exception(error_of(cursor)));
+
+					auto& response = cursor->first();
+					size_t size = response.size();
+					for (size_t i = 0; i < size; i++)
+					{
+						auto row = response[i];
+						format::stream message = format::stream(load(label, __func__, get_multiform_label(type, row["column_hash"].get().get_blob(), row["row_hash"].get().get_blob(), block_number)).or_else(string()));
+						uptr<ledger::state> next_state = states::resolver::from_stream(message);
+						if (next_state && next_state->load(message))
+							result.move_any(std::move(next_state));
+					}
+
+					offset += size;
+					map[2]->value = var::integer(offset);
+					if (size < chunk)
+						break;
 				}
 			}
 
-			value.states.commit();
-			return size1 + size2;
+			result.commit();
+			return expectation::met;
 		}
-		expects_lr<chainstate::uniform_location> chainstate::resolve_uniform_location(const std::string_view& index, bool latest)
+		expects_lr<chainstate::uniform_location> chainstate::resolve_uniform_location(uint32_t type, const std::string_view& index, bool latest)
 		{
 			auto cache = uniform_cache::get();
-			auto index_location = cache->get_index_location(index);
-			auto block_location = latest && index_location ? cache->get_block_location(*index_location) : option<uint64_t>(optional::none);
+			auto index_location = cache->get_index_location(type, index);
+			auto block_location = latest && index_location ? cache->get_block_location(type, *index_location) : option<uint64_t>(optional::none);
 			if (!index_location)
 			{
+				auto uniformdata = get_uniformdata(type);
 				auto find_index = uniformdata->prepare_statement("SELECT index_number FROM indices WHERE index_hash = ?", nullptr);
 				if (!find_index)
 					return expects_lr<uniform_location>(layer_exception(std::move(find_index.error().message())));
 
 				uniformdata->bind_blob(*find_index, 0, index);
-				auto cursor = prepared_query(*uniformdata, label, __func__, *find_index);
+				auto cursor = prepared_query(uniformdata, label, __func__, *find_index);
 				if (!cursor || cursor->error())
 					return expects_lr<uniform_location>(layer_exception(error_of(cursor)));
 
 				index_location = (*cursor)["index_number"].get().get_integer();
-				cache->set_index_location(index, *index_location);
+				cache->set_index_location(type, index, *index_location);
 			}
 
 			uniform_location location;
@@ -1262,22 +1390,23 @@ namespace tangent
 			location.block = block_location && *block_location > 0 ? std::move(block_location) : option<uint64_t>(optional::none);
 			return location;
 		}
-		expects_lr<chainstate::multiform_location> chainstate::resolve_multiform_location(const option<std::string_view>& column, const option<std::string_view>& row, bool latest)
+		expects_lr<chainstate::multiform_location> chainstate::resolve_multiform_location(uint32_t type, const option<std::string_view>& column, const option<std::string_view>& row, bool latest)
 		{
 			VI_ASSERT(column || row, "column or row should be set");
 			auto cache = multiform_cache::get();
 			bool update_column = false, update_row = false;
-			auto column_location = column ? cache->get_column_location(*column) : option<uint64_t>(optional::none);
-			auto row_location = row ? cache->get_row_location(*row) : option<uint64_t>(optional::none);
-			auto block_location = latest && column_location && row_location ? cache->get_block_location(*column_location, *row_location) : option<uint64_t>(optional::none);
+			auto column_location = column ? cache->get_column_location(type, *column) : option<uint64_t>(optional::none);
+			auto row_location = row ? cache->get_row_location(type, *row) : option<uint64_t>(optional::none);
+			auto block_location = latest && column_location && row_location ? cache->get_block_location(type, *column_location, *row_location) : option<uint64_t>(optional::none);
 			if (column && !column_location)
 			{
+				auto multiformdata = get_multiformdata(type);
 				auto find_column = multiformdata->prepare_statement("SELECT column_number FROM columns WHERE column_hash = ?", nullptr);
 				if (!find_column)
 					return expects_lr<multiform_location>(layer_exception(std::move(find_column.error().message())));
 
 				multiformdata->bind_blob(*find_column, 0, *column);
-				auto cursor = prepared_query(*multiformdata, label, __func__, *find_column);
+				auto cursor = prepared_query(multiformdata, label, __func__, *find_column);
 				if (!cursor || cursor->error())
 					return expects_lr<multiform_location>(layer_exception(error_of(cursor)));
 
@@ -1287,12 +1416,13 @@ namespace tangent
 
 			if (row && !row_location)
 			{
+				auto multiformdata = get_multiformdata(type);
 				auto find_row = multiformdata->prepare_statement("SELECT row_number FROM rows WHERE row_hash = ?", nullptr);
 				if (!find_row)
 					return expects_lr<multiform_location>(layer_exception(std::move(find_row.error().message())));
 
 				multiformdata->bind_blob(*find_row, 0, *row);
-				auto cursor = prepared_query(*multiformdata, label, __func__, *find_row);
+				auto cursor = prepared_query(multiformdata, label, __func__, *find_row);
 				if (!cursor || cursor->error())
 					return expects_lr<multiform_location>(layer_exception(error_of(cursor)));
 
@@ -1305,21 +1435,21 @@ namespace tangent
 				if (!column_location.or_else(0) || !row_location.or_else(0))
 					return layer_exception("multiform location not found");
 				else if (update_column || update_row)
-					cache->set_multiform_location(*column, *row, *column_location, *row_location);
+					cache->set_multiform_location(type, *column, *row, *column_location, *row_location);
 			}
 			else if (column)
 			{
 				if (!column_location.or_else(0))
 					return layer_exception("multiform column not found");
 				else if (update_column)
-					cache->set_column_location(*column, *column_location);
+					cache->set_column_location(type, *column, *column_location);
 			}
 			else if (row)
 			{
 				if (!row_location.or_else(0))
 					return layer_exception("multiform row not found");
 				else if (update_row)
-					cache->set_row_location(*row, *row_location);
+					cache->set_row_location(type, *row, *row_location);
 			}
 
 			multiform_location location;
@@ -1341,12 +1471,13 @@ namespace tangent
 				return account_number_cache.or_else(0);
 			}
 
+			auto* accountdata = get_accountdata();
 			auto find_account = accountdata->prepare_statement("SELECT account_number FROM accounts WHERE account_hash = ?", nullptr);
 			if (!find_account)
 				return expects_lr<uint64_t>(layer_exception(std::move(find_account.error().message())));
 
 			accountdata->bind_blob(*find_account, 0, std::string_view((char*)account, sizeof(algorithm::pubkeyhash)));
-			auto cursor = prepared_query(*accountdata, label, __func__, *find_account);
+			auto cursor = prepared_query(get_accountdata(), label, __func__, *find_account);
 			if (!cursor || cursor->error())
 				return expects_lr<uint64_t>(layer_exception(error_of(cursor)));
 
@@ -1359,7 +1490,7 @@ namespace tangent
 		}
 		expects_lr<uint64_t> chainstate::get_checkpoint_block_number()
 		{
-			auto cursor = query(*blockdata, label, __func__, "SELECT max(block_number) AS block_number FROM checkpoints");
+			auto cursor = query(get_blockdata(), label, __func__, "SELECT max(block_number) AS block_number FROM checkpoints");
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<uint64_t>(layer_exception(error_of(cursor)));
 
@@ -1367,7 +1498,7 @@ namespace tangent
 		}
 		expects_lr<uint64_t> chainstate::get_latest_block_number()
 		{
-			auto cursor = query(*blockdata, label, __func__, "SELECT block_number FROM blocks ORDER BY block_number DESC LIMIT 1");
+			auto cursor = query(get_blockdata(), label, __func__, "SELECT block_number FROM blocks ORDER BY block_number DESC LIMIT 1");
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<uint64_t>(layer_exception(error_of(cursor)));
 
@@ -1382,7 +1513,7 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::binary(hash, sizeof(hash)));
 
-			auto cursor = emplace_query(*blockdata, label, __func__, "SELECT block_number FROM blocks WHERE block_hash = ?", &map);
+			auto cursor = emplace_query(get_blockdata(), label, __func__, "SELECT block_number FROM blocks WHERE block_hash = ?", &map);
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<uint64_t>(layer_exception(error_of(cursor)));
 
@@ -1393,7 +1524,7 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::integer(block_number));
 
-			auto cursor = emplace_query(*blockdata, label, __func__, "SELECT block_hash FROM blocks WHERE block_number = ?", &map);
+			auto cursor = emplace_query(get_blockdata(), label, __func__, "SELECT block_hash FROM blocks WHERE block_number = ?", &map);
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<uint256_t>(layer_exception(error_of(cursor)));
 
@@ -1420,7 +1551,7 @@ namespace tangent
 				map.push_back(var::set::integer(count));
 				map.push_back(var::set::integer(offset));
 
-				auto cursor = emplace_query(*txdata, label, __func__, "SELECT transaction_hash FROM transactions WHERE block_number = ? ORDER BY block_nonce LIMIT ? OFFSET ?", &map);
+				auto cursor = emplace_query(get_txdata(), label, __func__, "SELECT transaction_hash FROM transactions WHERE block_number = ? ORDER BY block_nonce LIMIT ? OFFSET ?", &map);
 				if (!cursor || cursor->error())
 					return expects_lr<decimal>(layer_exception(error_of(cursor)));
 
@@ -1471,7 +1602,7 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::integer(block_number));
 
-			auto cursor = emplace_query(*blockdata, label, __func__, "SELECT block_hash FROM blocks WHERE block_number = ?", &map);
+			auto cursor = emplace_query(get_blockdata(), label, __func__, "SELECT block_hash FROM blocks WHERE block_number = ?", &map);
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<ledger::block>(layer_exception(error_of(cursor)));
 
@@ -1482,30 +1613,18 @@ namespace tangent
 				return expects_lr<ledger::block>(layer_exception("block header deserialization error"));
 
 			ledger::block result = ledger::block(header);
-			size_t offset = 0;
-			while ((details & (uint32_t)block_details::transactions || details & (uint32_t)block_details::block_transactions) && chunk > 0)
+			if ((details & (uint32_t)block_details::transactions || details & (uint32_t)block_details::block_transactions) && chunk > 0)
 			{
-				auto size = resolve_block_transactions(result, details & (uint32_t)block_details::block_transactions, offset, chunk);
-				if (!size)
-					return size.error();
-
-				offset += *size;
-				if (*size < chunk)
-					break;
+				auto resolve = resolve_block_transactions(result.transactions, result.number, details & (uint32_t)block_details::block_transactions, chunk);
+				if (!resolve)
+					return resolve.error();
 			}
-
-			offset = 0;
-			while (details & (uint32_t)block_details::states && chunk > 0)
+			if (details & (uint32_t)block_details::states && chunk > 0)
 			{
-				auto size = resolve_block_statetrie(result, offset, chunk);
-				if (!size)
-					return size.error();
-
-				offset += *size;
-				if (*size < chunk)
-					break;
+				auto resolve = resolve_block_statetrie(result.states, result.number, chunk);
+				if (!resolve)
+					return resolve.error();
 			}
-
 			finalize_checksum(header, block_hash);
 			return result;
 		}
@@ -1520,36 +1639,24 @@ namespace tangent
 				return expects_lr<ledger::block>(layer_exception("block header deserialization error"));
 
 			ledger::block result = ledger::block(header);
-			size_t offset = 0;
-			while ((details & (uint32_t)block_details::transactions || details & (uint32_t)block_details::block_transactions) && chunk > 0)
+			if ((details & (uint32_t)block_details::transactions || details & (uint32_t)block_details::block_transactions) && chunk > 0)
 			{
-				auto size = resolve_block_transactions(result, details & (uint32_t)block_details::block_transactions, offset, chunk);
-				if (!size)
-					return size.error();
-
-				offset += *size;
-				if (*size < chunk)
-					break;
+				auto resolve = resolve_block_transactions(result.transactions, result.number, details & (uint32_t)block_details::block_transactions, chunk);
+				if (!resolve)
+					return resolve.error();
 			}
-
-			offset = 0;
-			while (details & (uint32_t)block_details::states && chunk > 0)
+			if (details & (uint32_t)block_details::states && chunk > 0)
 			{
-				auto size = resolve_block_statetrie(result, offset, chunk);
-				if (!size)
-					return size.error();
-
-				offset += *size;
-				if (*size < chunk)
-					break;
+				auto resolve = resolve_block_statetrie(result.states, result.number, chunk);
+				if (!resolve)
+					return resolve.error();
 			}
-
 			finalize_checksum(header, var::binary(hash, sizeof(hash)));
 			return result;
 		}
 		expects_lr<ledger::block> chainstate::get_latest_block(size_t chunk, uint32_t details)
 		{
-			auto cursor = query(*blockdata, label, __func__, "SELECT block_hash FROM blocks ORDER BY block_number DESC LIMIT 1");
+			auto cursor = query(get_blockdata(), label, __func__, "SELECT block_hash FROM blocks ORDER BY block_number DESC LIMIT 1");
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<ledger::block>(layer_exception(error_of(cursor)));
 
@@ -1560,30 +1667,18 @@ namespace tangent
 				return expects_lr<ledger::block>(layer_exception("block header deserialization error"));
 
 			ledger::block result = ledger::block(header);
-			size_t offset = 0;
-			while ((details & (uint32_t)block_details::transactions || details & (uint32_t)block_details::block_transactions) && chunk > 0)
+			if ((details & (uint32_t)block_details::transactions || details & (uint32_t)block_details::block_transactions) && chunk > 0)
 			{
-				auto size = resolve_block_transactions(result, details & (uint32_t)block_details::block_transactions, offset, chunk);
-				if (!size)
-					return size.error();
-
-				offset += *size;
-				if (*size < chunk)
-					break;
+				auto resolve = resolve_block_transactions(result.transactions, result.number, details & (uint32_t)block_details::block_transactions, chunk);
+				if (!resolve)
+					return resolve.error();
 			}
-
-			offset = 0;
-			while (details & (uint32_t)block_details::states && chunk > 0)
+			if (details & (uint32_t)block_details::states && chunk > 0)
 			{
-				auto size = resolve_block_statetrie(result, offset, chunk);
-				if (!size)
-					return size.error();
-
-				offset += *size;
-				if (*size < chunk)
-					break;
+				auto resolve = resolve_block_statetrie(result.states, result.number, chunk);
+				if (!resolve)
+					return resolve.error();
 			}
-
 			finalize_checksum(header, block_hash);
 			return result;
 		}
@@ -1592,7 +1687,7 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::integer(block_number));
 
-			auto cursor = emplace_query(*blockdata, label, __func__, "SELECT block_hash FROM blocks WHERE block_number = ?", &map);
+			auto cursor = emplace_query(get_blockdata(), label, __func__, "SELECT block_hash FROM blocks WHERE block_number = ?", &map);
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<ledger::block_header>(layer_exception(error_of(cursor)));
 
@@ -1620,7 +1715,7 @@ namespace tangent
 		}
 		expects_lr<ledger::block_header> chainstate::get_latest_block_header()
 		{
-			auto cursor = query(*blockdata, label, __func__, "SELECT block_hash FROM blocks ORDER BY block_number DESC LIMIT 1");
+			auto cursor = query(get_blockdata(), label, __func__, "SELECT block_hash FROM blocks ORDER BY block_number DESC LIMIT 1");
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<ledger::block_header>(layer_exception(error_of(cursor)));
 
@@ -1645,7 +1740,7 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::integer(block_number));
 
-			auto cursor = emplace_query(*txdata, label, __func__, "SELECT transaction_hash FROM transactions WHERE block_number = ? ORDER BY block_nonce;", &map);
+			auto cursor = emplace_query(get_txdata(), label, __func__, "SELECT transaction_hash FROM transactions WHERE block_number = ? ORDER BY block_nonce;", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<ledger::block_proof>(layer_exception(error_of(cursor)));
 
@@ -1668,29 +1763,38 @@ namespace tangent
 				}
 			}));
 
-			auto cursor1 = emplace_query(*uniformdata, label, __func__, "SELECT (SELECT index_hash FROM indices WHERE indices.index_number = uniformtries.index_number) AS index_hash FROM uniformtries WHERE block_number = ?", &map);
-			if (!cursor1 || cursor1->error())
-				return expects_lr<ledger::block_proof>(layer_exception(error_of(cursor1)));
-
-			auto cursor2 = emplace_query(*multiformdata, label, __func__, "SELECT (SELECT column_hash FROM columns WHERE columns.column_number = multiformtries.column_number) AS column_hash, (SELECT row_hash FROM rows WHERE rows.row_number = multiformtries.row_number) AS row_hash FROM multiformtries WHERE block_number = ?", &map);
-			if (!cursor2 || cursor2->error())
-				return expects_lr<ledger::block_proof>(layer_exception(error_of(cursor2)));
-
-			auto response1 = cursor1->first();
-			auto response2 = cursor2->first();
-			size_t size1 = response1.size();
-			size_t size2 = response2.size();
-			value.states.resize(size1 + size2);
-			auto task_queue1 = parallel::for_loop(size, ELEMENTS_FEW, [&](size_t i)
+			for (auto& [type, uniformdata] : get_uniformdata_max())
 			{
-				value.states[i] = format::stream(load(label, __func__, get_uniform_label(response1[i]["index_hash"].get().get_blob(), block_number)).or_else(string())).hash();
-			});
-			auto task_queue2 = parallel::for_loop(size, ELEMENTS_FEW, [&](size_t i)
+				cursor = emplace_query(*uniformdata, label, __func__, "SELECT (SELECT index_hash FROM indices WHERE indices.index_number = uniformtries.index_number) AS index_hash FROM uniformtries WHERE block_number = ?", &map);
+				if (!cursor || cursor->error())
+					return expects_lr<ledger::block_proof>(layer_exception(error_of(cursor)));
+
+				auto subresponse = cursor->first();
+				auto stride = value.states.size();
+				auto count = subresponse.size();
+				value.states.resize(stride + count);
+				parallel::wail_all(parallel::for_loop(count, ELEMENTS_FEW, [&](size_t i)
+				{
+					value.states[stride + i] = format::stream(load(label, __func__, get_uniform_label(type, subresponse[i]["index_hash"].get().get_blob(), block_number)).or_else(string())).hash();
+				}));
+			}
+
+			for (auto& [type, multiformdata] : get_multiformdata_max())
 			{
-				value.states[i + size1] = format::stream(load(label, __func__, get_uniform_label(response2[i]["index_hash"].get().get_blob(), block_number)).or_else(string())).hash();
-			});
-			parallel::wail_all(std::move(task_queue1));
-			parallel::wail_all(std::move(task_queue2));
+				cursor = emplace_query(*multiformdata, label, __func__, "SELECT (SELECT column_hash FROM columns WHERE columns.column_number = multiformtries.column_number) AS column_hash, (SELECT row_hash FROM rows WHERE rows.row_number = multiformtries.row_number) AS row_hash FROM multiformtries WHERE block_number = ?", &map);
+				if (!cursor || cursor->error())
+					return expects_lr<ledger::block_proof>(layer_exception(error_of(cursor)));
+
+				auto subresponse = cursor->first();
+				auto stride = value.states.size();
+				auto count = subresponse.size();
+				value.states.resize(stride + count);
+				parallel::wail_all(parallel::for_loop(count, ELEMENTS_FEW, [&](size_t i)
+				{
+					value.states[stride + i] = format::stream(load(label, __func__, get_multiform_label(type, subresponse[i]["column_hash"].get().get_blob(), subresponse[i]["row_hash"].get().get_blob(), block_number)).or_else(string())).hash();
+				}));
+			}
+
 			return value;
 		}
 		expects_lr<ledger::block_proof> chainstate::get_block_proof_by_hash(const uint256_t& block_hash)
@@ -1709,7 +1813,7 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::integer(block_number));
 
-			auto cursor = emplace_query(*txdata, label, __func__, "SELECT transaction_hash FROM transactions WHERE block_number = ? ORDER BY block_nonce", &map);
+			auto cursor = emplace_query(get_txdata(), label, __func__, "SELECT transaction_hash FROM transactions WHERE block_number = ? ORDER BY block_nonce", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<uint256_t>>(layer_exception(error_of(cursor)));
 
@@ -1737,36 +1841,39 @@ namespace tangent
 			if (!block_number)
 				return layer_exception("invalid block number");
 
+			vector<uint256_t> result;
 			schema_list map;
 			map.push_back(var::set::integer(block_number));
 
-			auto cursor1 = emplace_query(*uniformdata, label, __func__, "SELECT (SELECT index_hash FROM indices WHERE indices.index_number = uniformtries.index_number) AS index_hash FROM uniformtries WHERE block_number = ?", &map);
-			if (!cursor1 || cursor1->error())
-				return expects_lr<vector<uint256_t>>(layer_exception(error_of(cursor1)));
-
-			auto cursor2 = emplace_query(*multiformdata, label, __func__, "SELECT (SELECT column_hash FROM columns WHERE columns.column_number = multiformtries.column_number) AS column_hash, (SELECT row_hash FROM rows WHERE rows.row_number = multiformtries.row_number) AS row_hash FROM multiformtries WHERE block_number = ?", &map);
-			if (!cursor2 || cursor2->error())
-				return expects_lr<vector<uint256_t>>(layer_exception(error_of(cursor2)));
-
-			vector<uint256_t> result;
-			for (auto& response : *cursor1)
+			for (auto& [type, uniformdata] : get_uniformdata_max())
 			{
-				size_t size = response.size();
-				result.resize(result.size() + size);
-				parallel::wail_all(parallel::for_loop(size, ELEMENTS_FEW, [&](size_t i)
+				auto cursor = emplace_query(*uniformdata, label, __func__, "SELECT (SELECT index_hash FROM indices WHERE indices.index_number = uniformtries.index_number) AS index_hash FROM uniformtries WHERE block_number = ?", &map);
+				if (!cursor || cursor->error())
+					return expects_lr<vector<uint256_t>>(layer_exception(error_of(cursor)));
+
+				auto subresponse = cursor->first();
+				auto stride = result.size();
+				auto count = subresponse.size();
+				result.resize(stride + count);
+				parallel::wail_all(parallel::for_loop(count, ELEMENTS_FEW, [&](size_t i)
 				{
-					result[i] = format::stream(load(label, __func__, get_uniform_label(response[i]["index_hash"].get().get_blob(), block_number)).or_else(string())).hash();
+					result[stride + i] = format::stream(load(label, __func__, get_uniform_label(type, subresponse[i]["index_hash"].get().get_blob(), block_number)).or_else(string())).hash();
 				}));
 			}
-			for (auto& response : *cursor2)
+
+			for (auto& [type, multiformdata] : get_multiformdata_max())
 			{
-				size_t size = response.size();
-				size_t offset = result.size();
-				result.resize(result.size() + size);
-				parallel::wail_all(parallel::for_loop(size, ELEMENTS_FEW, [&](size_t i)
+				auto cursor = emplace_query(*multiformdata, label, __func__, "SELECT (SELECT column_hash FROM columns WHERE columns.column_number = multiformtries.column_number) AS column_hash, (SELECT row_hash FROM rows WHERE rows.row_number = multiformtries.row_number) AS row_hash FROM multiformtries WHERE block_number = ?", &map);
+				if (!cursor || cursor->error())
+					return expects_lr<vector<uint256_t>>(layer_exception(error_of(cursor)));
+
+				auto subresponse = cursor->first();
+				auto stride = result.size();
+				auto count = subresponse.size();
+				result.resize(stride + count);
+				parallel::wail_all(parallel::for_loop(count, ELEMENTS_FEW, [&](size_t i)
 				{
-					auto row = response[i];
-					result[i + offset] = format::stream(load(label, __func__, get_multiform_label(row["column_hash"].get().get_blob(), row["row_hash"].get().get_blob(), block_number)).or_else(string())).hash();
+					result[stride + i] = format::stream(load(label, __func__, get_multiform_label(type, subresponse[i]["column_hash"].get().get_blob(), subresponse[i]["row_hash"].get().get_blob(), block_number)).or_else(string())).hash();
 				}));
 			}
 
@@ -1782,7 +1889,7 @@ namespace tangent
 			map.push_back(var::set::integer(block_number));
 			map.push_back(var::set::integer(block_number + count));
 
-			auto cursor = emplace_query(*blockdata, label, __func__, "SELECT block_hash FROM blocks WHERE block_number BETWEEN ? AND ? ORDER BY block_number DESC", &map);
+			auto cursor = emplace_query(get_blockdata(), label, __func__, "SELECT block_hash FROM blocks WHERE block_number BETWEEN ? AND ? ORDER BY block_number DESC", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<uint256_t>>(layer_exception(error_of(cursor)));
 
@@ -1814,7 +1921,7 @@ namespace tangent
 			map.push_back(var::set::integer(block_number));
 			map.push_back(var::set::integer(block_number + count));
 
-			auto cursor = emplace_query(*blockdata, label, __func__, "SELECT block_hash FROM blocks WHERE block_number BETWEEN ? AND ? ORDER BY block_number DESC", &map);
+			auto cursor = emplace_query(get_blockdata(), label, __func__, "SELECT block_hash FROM blocks WHERE block_number BETWEEN ? AND ? ORDER BY block_number DESC", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<ledger::block_header>>(layer_exception(error_of(cursor)));
 
@@ -1833,49 +1940,14 @@ namespace tangent
 
 			return result;
 		}
-		expects_lr<ledger::state_work> chainstate::get_block_statetrie_by_number(uint64_t block_number, size_t offset, size_t count)
+		expects_lr<ledger::state_work> chainstate::get_block_statetrie_by_number(uint64_t block_number, size_t chunk)
 		{
-			schema_list map;
-			map.push_back(var::set::integer(block_number));
-			map.push_back(var::set::integer(count));
-			map.push_back(var::set::integer(offset));
+			ledger::block_work result;
+			auto resolve = resolve_block_statetrie(result, block_number, chunk);
+			if (!resolve)
+				return resolve.error();
 
-			auto cursor1 = emplace_query(*uniformdata, label, __func__, "SELECT (SELECT index_hash FROM indices WHERE indices.index_number = uniformtries.index_number) AS index_hash FROM uniformtries WHERE block_number = ? LIMIT ? OFFSET ?", &map);
-			if (!cursor1 || cursor1->error())
-				return expects_lr<ledger::state_work>(layer_exception(error_of(cursor1)));
-
-			auto cursor2 = emplace_query(*multiformdata, label, __func__, "SELECT (SELECT column_hash FROM columns WHERE columns.column_number = multiformtries.column_number) AS column_hash, (SELECT row_hash FROM rows WHERE rows.row_number = multiformtries.row_number) AS row_hash FROM multiformtries WHERE block_number = ? LIMIT ? OFFSET ?", &map);
-			if (!cursor2 || cursor2->error())
-				return expects_lr<ledger::state_work>(layer_exception(error_of(cursor2)));
-
-			auto result = expects_lr<ledger::state_work>(ledger::state_work());
-			if (!cursor1->empty())
-			{
-				auto& response = cursor1->first();
-				size_t size = response.size();
-				for (size_t i = 0; i < size; i++)
-				{
-					auto row = response[i];
-					auto message = format::stream(load(label, __func__, get_uniform_label(row["index_hash"].get().get_blob(), block_number)).or_else(string()));
-					uptr<ledger::state> next_state = states::resolver::from_stream(message);
-					if (next_state && next_state->load(message))
-						(*result)[next_state->as_composite()] = std::move(next_state);
-				}
-			}
-			if (!cursor2->empty())
-			{
-				auto& response = cursor2->first();
-				size_t size = response.size();
-				for (size_t i = 0; i < size; i++)
-				{
-					auto row = response[i];
-					auto message = format::stream(load(label, __func__, get_multiform_label(row["column_hash"].get().get_blob(), row["row_hash"].get().get_blob(), block_number)).or_else(string()));
-					uptr<ledger::state> next_state = states::resolver::from_stream(message);
-					if (next_state && next_state->load(message))
-						(*result)[next_state->as_composite()] = std::move(next_state);
-				}
-			}
-			return result;
+			return expects_lr<ledger::state_work>(std::move(result.map[(size_t)ledger::work_commitment::finalized]));
 		}
 		expects_lr<vector<uptr<ledger::transaction>>> chainstate::get_transactions_by_number(uint64_t block_number, size_t offset, size_t count)
 		{
@@ -1884,7 +1956,7 @@ namespace tangent
 			map.push_back(var::set::integer(count));
 			map.push_back(var::set::integer(offset));
 
-			auto cursor = emplace_query(*txdata, label, __func__, "SELECT transaction_hash FROM transactions WHERE block_number = ? ORDER BY block_nonce LIMIT ? OFFSET ?", &map);
+			auto cursor = emplace_query(get_txdata(), label, __func__, "SELECT transaction_hash FROM transactions WHERE block_number = ? ORDER BY block_nonce LIMIT ? OFFSET ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<uptr<ledger::transaction>>>(layer_exception(error_of(cursor)));
 
@@ -1922,7 +1994,7 @@ namespace tangent
 			map.push_back(var::set::integer(count));
 			map.push_back(var::set::integer(offset));
 
-			auto cursor = emplace_query(*partydata, label, __func__, "SELECT transaction_number FROM parties WHERE transaction_account_number = ? AND block_number <= ? ORDER BY transaction_number $? LIMIT ? OFFSET ?", &map);
+			auto cursor = emplace_query(get_partydata(), label, __func__, "SELECT transaction_number FROM parties WHERE transaction_account_number = ? AND block_number <= ? ORDER BY transaction_number $? LIMIT ? OFFSET ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<uptr<ledger::transaction>>>(layer_exception(error_of(cursor)));
 			else if (cursor->empty())
@@ -1935,7 +2007,7 @@ namespace tangent
 			dynamic_query.append(") ORDER BY transaction_number ");
 			dynamic_query.append(direction < 0 ? "DESC" : "ASC");
 
-			cursor = query(*txdata, label, __func__, dynamic_query);
+			cursor = query(get_txdata(), label, __func__, dynamic_query);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<uptr<ledger::transaction>>>(layer_exception(error_of(cursor)));
 
@@ -1967,7 +2039,7 @@ namespace tangent
 			map.push_back(var::set::integer(count));
 			map.push_back(var::set::integer(offset));
 
-			auto cursor = emplace_query(*txdata, label, __func__, "SELECT transaction_hash FROM transactions WHERE block_number = ? ORDER BY block_nonce LIMIT ? OFFSET ?", &map);
+			auto cursor = emplace_query(get_txdata(), label, __func__, "SELECT transaction_hash FROM transactions WHERE block_number = ? ORDER BY block_nonce LIMIT ? OFFSET ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<ledger::block_transaction>>(layer_exception(error_of(cursor)));
 
@@ -2006,7 +2078,7 @@ namespace tangent
 			map.push_back(var::set::integer(count));
 			map.push_back(var::set::integer(offset));
 
-			auto cursor = emplace_query(*partydata, label, __func__, "SELECT transaction_number FROM parties WHERE transaction_account_number = ? AND block_number <= ? ORDER BY transaction_number $? LIMIT ? OFFSET ?", &map);
+			auto cursor = emplace_query(get_partydata(), label, __func__, "SELECT transaction_number FROM parties WHERE transaction_account_number = ? AND block_number <= ? ORDER BY transaction_number $? LIMIT ? OFFSET ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<ledger::block_transaction>>(layer_exception(error_of(cursor)));
 			else if (cursor->empty())
@@ -2019,7 +2091,7 @@ namespace tangent
 			dynamic_query.append(") ORDER BY transaction_number ");
 			dynamic_query.append(direction < 0 ? "DESC" : "ASC");
 
-			cursor = query(*txdata, label, __func__, dynamic_query);
+			cursor = query(get_txdata(), label, __func__, dynamic_query);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<ledger::block_transaction>>(layer_exception(error_of(cursor)));
 
@@ -2052,7 +2124,7 @@ namespace tangent
 			map.push_back(var::set::integer(count));
 			map.push_back(var::set::integer(offset));
 
-			auto cursor = emplace_query(*txdata, label, __func__, "SELECT transaction_hash FROM transactions WHERE block_number = ? ORDER BY block_nonce LIMIT ? OFFSET ?", &map);
+			auto cursor = emplace_query(get_txdata(), label, __func__, "SELECT transaction_hash FROM transactions WHERE block_number = ? ORDER BY block_nonce LIMIT ? OFFSET ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<ledger::receipt>>(layer_exception(error_of(cursor)));
 
@@ -2080,7 +2152,7 @@ namespace tangent
 			map.push_back(var::set::integer(count));
 			map.push_back(var::set::integer(offset));
 
-			auto cursor = emplace_query(*txdata, label, __func__, "SELECT transaction_hash FROM transactions WHERE dispatch_queue IS NOT NULL AND dispatch_queue <= ? ORDER BY block_nonce LIMIT ? OFFSET ?", &map);
+			auto cursor = emplace_query(get_txdata(), label, __func__, "SELECT transaction_hash FROM transactions WHERE dispatch_queue IS NOT NULL AND dispatch_queue <= ? ORDER BY block_nonce LIMIT ? OFFSET ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<ledger::block_transaction>>(layer_exception(error_of(cursor)));
 
@@ -2114,7 +2186,7 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::binary(hash, sizeof(hash)));
 
-			auto cursor = emplace_query(*aliasdata, label, __func__, "SELECT transaction_number FROM aliases WHERE transaction_hash = ?", &map);
+			auto cursor = emplace_query(get_aliasdata(), label, __func__, "SELECT transaction_number FROM aliases WHERE transaction_hash = ?", &map);
 			string dynamic_query = "SELECT transaction_hash FROM transactions WHERE transaction_hash = ?";
 			if (cursor && !cursor->error_or_empty())
 			{
@@ -2125,7 +2197,7 @@ namespace tangent
 				dynamic_query.push_back(')');
 			}
 
-			cursor = emplace_query(*txdata, label, __func__, dynamic_query, &map);
+			cursor = emplace_query(get_txdata(), label, __func__, dynamic_query, &map);
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<uptr<ledger::transaction>>(layer_exception(error_of(cursor)));
 
@@ -2146,7 +2218,7 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::binary(hash, sizeof(hash)));
 
-			auto cursor = emplace_query(*aliasdata, label, __func__, "SELECT transaction_number FROM aliases WHERE transaction_hash = ?", &map);
+			auto cursor = emplace_query(get_aliasdata(), label, __func__, "SELECT transaction_number FROM aliases WHERE transaction_hash = ?", &map);
 			string dynamic_query = "SELECT transaction_hash FROM transactions WHERE transaction_hash = ?";
 			if (cursor && !cursor->error_or_empty())
 			{
@@ -2157,7 +2229,7 @@ namespace tangent
 				dynamic_query.push_back(')');
 			}
 
-			cursor = emplace_query(*txdata, label, __func__, dynamic_query, &map);
+			cursor = emplace_query(get_txdata(), label, __func__, dynamic_query, &map);
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<ledger::block_transaction>(layer_exception(error_of(cursor)));
 
@@ -2184,31 +2256,32 @@ namespace tangent
 
 			return value;
 		}
-		expects_lr<uptr<ledger::state>> chainstate::get_uniform_by_index(const ledger::block_mutation* delta, const std::string_view& index, uint64_t block_number)
+		expects_lr<uptr<ledger::state>> chainstate::get_uniform_by_index(uint32_t type, const ledger::block_mutation* delta, const std::string_view& index, uint64_t block_number)
 		{
 			if (delta != nullptr)
 			{
 				if (delta->outgoing != nullptr)
 				{
-					auto candidate = delta->outgoing->find_uniform(index);
+					auto candidate = delta->outgoing->find_uniform(type, index);
 					if (candidate)
 						return std::move(*candidate);
 				}
 
 				if (delta->incoming != nullptr)
 				{
-					auto candidate = delta->incoming->find_uniform(index);
+					auto candidate = delta->incoming->find_uniform(type, index);
 					if (candidate)
 						return std::move(*candidate);
 				}
 			}
 
-			auto location = resolve_uniform_location(index, !block_number);
+			auto location = resolve_uniform_location(type, index, !block_number);
 			if (!location)
 				return location.error();
 
 			if (!location->block)
 			{
+				auto* uniformdata = get_uniformdata(type);
 				auto find_state = uniformdata->prepare_statement(!block_number ?
 					"SELECT block_number FROM uniforms WHERE index_number = ?" :
 					"SELECT block_number FROM uniformtries WHERE index_number = ? AND block_number < ? ORDER BY block_number DESC LIMIT 1", nullptr);
@@ -2219,31 +2292,31 @@ namespace tangent
 				if (block_number > 0)
 					uniformdata->bind_int64(*find_state, 1, block_number);
 
-				auto cursor = prepared_query(*uniformdata, label, __func__, *find_state);
+				auto cursor = prepared_query(uniformdata, label, __func__, *find_state);
 				if (!cursor || cursor->empty())
 				{
 					if (delta != nullptr && delta->incoming != nullptr)
-						((ledger::block_mutation*)delta)->incoming->clear_uniform(index);
+						((ledger::block_mutation*)delta)->incoming->clear_uniform(type, index);
 					return expects_lr<uptr<ledger::state>>(layer_exception(error_of(cursor)));
 				}
 				else if (cursor->empty())
 				{
 					if (delta != nullptr && delta->incoming != nullptr)
-						((ledger::block_mutation*)delta)->incoming->clear_uniform(index);
+						((ledger::block_mutation*)delta)->incoming->clear_uniform(type, index);
 					return expects_lr<uptr<ledger::state>>(layer_exception("uniform not found"));
 				}
 
 				auto cache = uniform_cache::get();
 				location->block = (*cursor)["block_number"].get().get_integer();
-				cache->set_block_location(location->index.or_else(0), location->block.or_else(0));
+				cache->set_block_location(type, location->index.or_else(0), location->block.or_else(0));
 			}
 
-			format::stream message = format::stream(load(label, __func__, get_uniform_label(index, location->block.or_else(0))).or_else(string()));
+			format::stream message = format::stream(load(label, __func__, get_uniform_label(type, index, location->block.or_else(0))).or_else(string()));
 			uptr<ledger::state> value = states::resolver::from_stream(message);
 			if (!value || !value->load(message))
 			{
 				if (delta != nullptr && delta->incoming != nullptr)
-					((ledger::block_mutation*)delta)->incoming->clear_uniform(index);
+					((ledger::block_mutation*)delta)->incoming->clear_uniform(type, index);
 				return expects_lr<uptr<ledger::state>>(layer_exception("uniform deserialization error"));
 			}
 
@@ -2251,31 +2324,32 @@ namespace tangent
 				((ledger::block_mutation*)delta)->incoming->copy_any(*value);
 			return value;
 		}
-		expects_lr<uptr<ledger::state>> chainstate::get_multiform_by_composition(const ledger::block_mutation* delta, const std::string_view& column, const std::string_view& row, uint64_t block_number)
+		expects_lr<uptr<ledger::state>> chainstate::get_multiform_by_composition(uint32_t type, const ledger::block_mutation* delta, const std::string_view& column, const std::string_view& row, uint64_t block_number)
 		{
 			if (delta != nullptr)
 			{
 				if (delta->outgoing != nullptr)
 				{
-					auto candidate = delta->outgoing->find_multiform(column, row);
+					auto candidate = delta->outgoing->find_multiform(type, column, row);
 					if (candidate)
 						return std::move(*candidate);
 				}
 
 				if (delta->incoming != nullptr)
 				{
-					auto candidate = delta->incoming->find_multiform(column, row);
+					auto candidate = delta->incoming->find_multiform(type, column, row);
 					if (candidate)
 						return std::move(*candidate);
 				}
 			}
 
-			auto location = resolve_multiform_location(column, row, !block_number);
+			auto location = resolve_multiform_location(type, column, row, !block_number);
 			if (!location)
 				return location.error();
 
 			if (!location->block)
 			{
+				auto* multiformdata = get_multiformdata(type);
 				auto find_state = multiformdata->prepare_statement(!block_number ?
 					"SELECT block_number FROM multiforms WHERE column_number = ? AND row_number = ?" :
 					"SELECT block_number FROM multiformtries WHERE column_number = ? AND row_number = ? AND block_number < ? ORDER BY block_number DESC LIMIT 1", nullptr);
@@ -2287,31 +2361,31 @@ namespace tangent
 				if (block_number > 0)
 					multiformdata->bind_int64(*find_state, 2, block_number);
 
-				auto cursor = prepared_query(*multiformdata, label, __func__, *find_state);
+				auto cursor = prepared_query(multiformdata, label, __func__, *find_state);
 				if (!cursor || cursor->empty())
 				{
 					if (delta != nullptr && delta->incoming != nullptr)
-						((ledger::block_mutation*)delta)->incoming->clear_multiform(column, row);
+						((ledger::block_mutation*)delta)->incoming->clear_multiform(type, column, row);
 					return expects_lr<uptr<ledger::state>>(layer_exception(error_of(cursor)));
 				}
 				else if (cursor->empty())
 				{
 					if (delta != nullptr && delta->incoming != nullptr)
-						((ledger::block_mutation*)delta)->incoming->clear_multiform(column, row);
+						((ledger::block_mutation*)delta)->incoming->clear_multiform(type, column, row);
 					return expects_lr<uptr<ledger::state>>(layer_exception("multiform not found"));
 				}
 
 				auto cache = multiform_cache::get();
 				location->block = (*cursor)["block_number"].get().get_integer();
-				cache->set_block_location(location->column.or_else(0), location->row.or_else(0), location->block.or_else(0));
+				cache->set_block_location(type, location->column.or_else(0), location->row.or_else(0), location->block.or_else(0));
 			}
 
-			format::stream message = format::stream(load(label, __func__, get_multiform_label(column, row, location->block.or_else(0))).or_else(string()));
+			format::stream message = format::stream(load(label, __func__, get_multiform_label(type, column, row, location->block.or_else(0))).or_else(string()));
 			uptr<ledger::state> value = states::resolver::from_stream(message);
 			if (!value || !value->load(message))
 			{
 				if (delta != nullptr && delta->incoming != nullptr)
-					((ledger::block_mutation*)delta)->incoming->clear_multiform(column, row);
+					((ledger::block_mutation*)delta)->incoming->clear_multiform(type, column, row);
 				return expects_lr<uptr<ledger::state>>(layer_exception("multiform deserialization error"));
 			}
 
@@ -2319,9 +2393,9 @@ namespace tangent
 				((ledger::block_mutation*)delta)->incoming->copy_any(*value);
 			return value;
 		}
-		expects_lr<uptr<ledger::state>> chainstate::get_multiform_by_column(const ledger::block_mutation* delta, const std::string_view& column, uint64_t block_number, size_t offset)
+		expects_lr<uptr<ledger::state>> chainstate::get_multiform_by_column(uint32_t type, const ledger::block_mutation* delta, const std::string_view& column, uint64_t block_number, size_t offset)
 		{
-			auto location = resolve_multiform_location(column, optional::none, false);
+			auto location = resolve_multiform_location(type, column, optional::none, false);
 			if (!location)
 				return location.error();
 
@@ -2331,7 +2405,7 @@ namespace tangent
 				map.push_back(var::set::integer(block_number));
 			map.push_back(var::set::integer(offset));
 
-			auto cursor = emplace_query(*multiformdata, label, __func__, !block_number ?
+			auto cursor = emplace_query(get_multiformdata(type), label, __func__, !block_number ?
 				"SELECT (SELECT row_hash FROM rows WHERE rows.row_number = multiforms.row_number) AS row_hash, block_number FROM multiforms WHERE column_number = ? ORDER BY row_number LIMIT 1 OFFSET ?" :
 				"SELECT (SELECT row_hash FROM rows WHERE rows.row_number = multiformtries.row_number) AS row_hash, max(block_number) AS block_number FROM multiformtries WHERE column_number = ? AND block_number < ? GROUP BY row_number ORDER BY row_number LIMIT 1 OFFSET ?", &map);
 			if (!cursor || cursor->error())
@@ -2339,12 +2413,12 @@ namespace tangent
 			else if (cursor->empty())
 				return expects_lr<uptr<ledger::state>>(layer_exception("multiform not found"));
 
-			format::stream message = format::stream(load(label, __func__, get_multiform_label(column, (*cursor)["row_hash"].get().get_blob(), (*cursor)["block_number"].get().get_integer())).or_else(string()));
+			format::stream message = format::stream(load(label, __func__, get_multiform_label(type, column, (*cursor)["row_hash"].get().get_blob(), (*cursor)["block_number"].get().get_integer())).or_else(string()));
 			uptr<ledger::state> value = states::resolver::from_stream(message);
 			if (!value || !value->load(message))
 			{
 				if (value && delta != nullptr && delta->incoming != nullptr)
-					((ledger::block_mutation*)delta)->incoming->clear_multiform(column, ((ledger::multiform*)*value)->as_row());
+					((ledger::block_mutation*)delta)->incoming->clear_multiform(type, column, ((ledger::multiform*)*value)->as_row());
 				return expects_lr<uptr<ledger::state>>(layer_exception("multiform deserialization error"));
 			}
 
@@ -2352,9 +2426,9 @@ namespace tangent
 				((ledger::block_mutation*)delta)->incoming->copy_any(*value);
 			return value;
 		}
-		expects_lr<uptr<ledger::state>> chainstate::get_multiform_by_row(const ledger::block_mutation* delta, const std::string_view& row, uint64_t block_number, size_t offset)
+		expects_lr<uptr<ledger::state>> chainstate::get_multiform_by_row(uint32_t type, const ledger::block_mutation* delta, const std::string_view& row, uint64_t block_number, size_t offset)
 		{
-			auto location = resolve_multiform_location(optional::none, row, false);
+			auto location = resolve_multiform_location(type, optional::none, row, false);
 			if (!location)
 				return location.error();
 
@@ -2364,7 +2438,7 @@ namespace tangent
 				map.push_back(var::set::integer(block_number));
 			map.push_back(var::set::integer(offset));
 
-			auto cursor = emplace_query(*multiformdata, label, __func__, !block_number ?
+			auto cursor = emplace_query(get_multiformdata(type), label, __func__, !block_number ?
 				"SELECT (SELECT column_hash FROM columns WHERE columns.column_number = multiforms.column_number) AS column_hash, block_number FROM multiforms WHERE row_number = ? ORDER BY column_number LIMIT 1 OFFSET ?" :
 				"SELECT (SELECT column_hash FROM columns WHERE columns.column_number = multiformtries.column_number) AS column_hash, max(block_number) AS block_number FROM multiformtries WHERE row_number = ? AND block_number < ? GROUP BY column_number ORDER BY column_number LIMIT 1 OFFSET ?", &map);
 			if (!cursor || cursor->error())
@@ -2372,12 +2446,12 @@ namespace tangent
 			else if (cursor->empty())
 				return expects_lr<uptr<ledger::state>>(layer_exception("multiform not found"));
 
-			format::stream message = format::stream(load(label, __func__, get_multiform_label((*cursor)["column_hash"].get().get_blob(), row, (*cursor)["block_number"].get().get_integer())).or_else(string()));
+			format::stream message = format::stream(load(label, __func__, get_multiform_label(type, (*cursor)["column_hash"].get().get_blob(), row, (*cursor)["block_number"].get().get_integer())).or_else(string()));
 			uptr<ledger::state> value = states::resolver::from_stream(message);
 			if (!value || !value->load(message))
 			{
 				if (value && delta != nullptr && delta->incoming != nullptr)
-					((ledger::block_mutation*)delta)->incoming->clear_multiform(((ledger::multiform*)*value)->as_column(), row);
+					((ledger::block_mutation*)delta)->incoming->clear_multiform(type, ((ledger::multiform*)*value)->as_column(), row);
 				return expects_lr<uptr<ledger::state>>(layer_exception("multiform deserialization error"));
 			}
 
@@ -2385,9 +2459,9 @@ namespace tangent
 				((ledger::block_mutation*)delta)->incoming->copy_any(*value);
 			return value;
 		}
-		expects_lr<vector<uptr<ledger::state>>> chainstate::get_multiforms_by_column(const ledger::block_mutation* delta, const std::string_view& column, uint64_t block_number, size_t offset, size_t count)
+		expects_lr<vector<uptr<ledger::state>>> chainstate::get_multiforms_by_column(uint32_t type, const ledger::block_mutation* delta, const std::string_view& column, uint64_t block_number, size_t offset, size_t count)
 		{
-			auto location = resolve_multiform_location(column, optional::none, false);
+			auto location = resolve_multiform_location(type, column, optional::none, false);
 			if (!location)
 				return expects_lr<vector<uptr<ledger::state>>>(vector<uptr<ledger::state>>());
 
@@ -2398,7 +2472,7 @@ namespace tangent
 			map.push_back(var::set::integer(count));
 			map.push_back(var::set::integer(offset));
 
-			auto cursor = emplace_query(*multiformdata, label, __func__, !block_number ?
+			auto cursor = emplace_query(get_multiformdata(type), label, __func__, !block_number ?
 				"SELECT (SELECT row_hash FROM rows WHERE rows.row_number = multiforms.row_number) AS row_hash, block_number FROM multiforms WHERE column_number = ? ORDER BY row_number LIMIT ? OFFSET ?" :
 				"SELECT (SELECT row_hash FROM rows WHERE rows.row_number = multiformtries.row_number) AS row_hash, max(block_number) AS block_number FROM multiformtries WHERE column_number = ? AND block_number < ? GROUP BY row_number ORDER BY row_number LIMIT ? OFFSET ?", &map);
 			if (!cursor || cursor->error())
@@ -2410,12 +2484,12 @@ namespace tangent
 			for (size_t i = 0; i < size; i++)
 			{
 				auto next = response[i];
-				format::stream message = format::stream(load(label, __func__, get_multiform_label(column, next["row_hash"].get().get_blob(), next["block_number"].get().get_integer())).or_else(string()));
+				format::stream message = format::stream(load(label, __func__, get_multiform_label(type, column, next["row_hash"].get().get_blob(), next["block_number"].get().get_integer())).or_else(string()));
 				uptr<ledger::state> next_state = states::resolver::from_stream(message);
 				if (!next_state || !next_state->load(message))
 				{
 					if (next_state && delta != nullptr && delta->incoming != nullptr)
-						((ledger::block_mutation*)delta)->incoming->clear_multiform(column, ((ledger::multiform*)*next_state)->as_row());
+						((ledger::block_mutation*)delta)->incoming->clear_multiform(type, column, ((ledger::multiform*)*next_state)->as_row());
 					continue;
 				}
 				else if (delta != nullptr && delta->incoming != nullptr)
@@ -2425,9 +2499,9 @@ namespace tangent
 
 			return values;
 		}
-		expects_lr<vector<uptr<ledger::state>>> chainstate::get_multiforms_by_column_filter(const ledger::block_mutation* delta, const std::string_view& column, const factor_filter& filter, uint64_t block_number, const factor_window& window)
+		expects_lr<vector<uptr<ledger::state>>> chainstate::get_multiforms_by_column_filter(uint32_t type, const ledger::block_mutation* delta, const std::string_view& column, const factor_filter& filter, uint64_t block_number, const factor_window& window)
 		{
-			auto location = resolve_multiform_location(column, optional::none, false);
+			auto location = resolve_multiform_location(type, column, optional::none, false);
 			if (!location)
 				return expects_lr<vector<uptr<ledger::state>>>(vector<uptr<ledger::state>>());
 
@@ -2467,7 +2541,7 @@ namespace tangent
 					"SELECT (SELECT row_hash FROM rows WHERE rows.row_number = sq.row_number) AS row_hash, block_number FROM (SELECT ROW_NUMBER() OVER (ORDER BY factor $?, row_number ASC) AS id, row_number, block_number FROM (SELECT column_number, row_number, factor, max(block_number) AS block_number FROM multiformtries WHERE column_number = ? AND block_number < ? GROUP BY row_number) AS queryforms WHERE factor $? ?) AS sq WHERE sq.id IN ($?)";
 			}
 
-			auto cursor = emplace_query(*multiformdata, label, __func__, pattern, &map);
+			auto cursor = emplace_query(get_multiformdata(type), label, __func__, pattern, &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<uptr<ledger::state>>>(layer_exception(error_of(cursor)));
 
@@ -2477,12 +2551,12 @@ namespace tangent
 			for (size_t i = 0; i < size; i++)
 			{
 				auto next = response[i];
-				format::stream message = format::stream(load(label, __func__, get_multiform_label(column, next["row_hash"].get().get_blob(), next["block_number"].get().get_integer())).or_else(string()));
+				format::stream message = format::stream(load(label, __func__, get_multiform_label(type, column, next["row_hash"].get().get_blob(), next["block_number"].get().get_integer())).or_else(string()));
 				uptr<ledger::state> next_state = states::resolver::from_stream(message);
 				if (!next_state || !next_state->load(message))
 				{
 					if (next_state && delta != nullptr && delta->incoming != nullptr)
-						((ledger::block_mutation*)delta)->incoming->clear_multiform(column, ((ledger::multiform*)*next_state)->as_row());
+						((ledger::block_mutation*)delta)->incoming->clear_multiform(type, column, ((ledger::multiform*)*next_state)->as_row());
 					continue;
 				}
 				else if (delta != nullptr && delta->incoming != nullptr)
@@ -2492,9 +2566,9 @@ namespace tangent
 
 			return values;
 		}
-		expects_lr<vector<uptr<ledger::state>>> chainstate::get_multiforms_by_row(const ledger::block_mutation* delta, const std::string_view& row, uint64_t block_number, size_t offset, size_t count)
+		expects_lr<vector<uptr<ledger::state>>> chainstate::get_multiforms_by_row(uint32_t type, const ledger::block_mutation* delta, const std::string_view& row, uint64_t block_number, size_t offset, size_t count)
 		{
-			auto location = resolve_multiform_location(optional::none, row, false);
+			auto location = resolve_multiform_location(type, optional::none, row, false);
 			if (!location)
 				return expects_lr<vector<uptr<ledger::state>>>(vector<uptr<ledger::state>>());
 
@@ -2505,7 +2579,7 @@ namespace tangent
 			map.push_back(var::set::integer(count));
 			map.push_back(var::set::integer(offset));
 
-			auto cursor = emplace_query(*multiformdata, label, __func__, !block_number ?
+			auto cursor = emplace_query(get_multiformdata(type), label, __func__, !block_number ?
 				"SELECT (SELECT column_hash FROM columns WHERE columns.column_number = multiforms.column_number) AS column_hash, block_number FROM multiforms WHERE row_number = ? ORDER BY column_number LIMIT ? OFFSET ?" :
 				"SELECT (SELECT column_hash FROM columns WHERE columns.column_number = multiformtries.column_number) AS column_hash, max(block_number) AS block_number FROM multiformtries WHERE row_number = ? AND block_number < ? GROUP BY column_number ORDER BY column_number LIMIT ? OFFSET ?", &map);
 			if (!cursor || cursor->error())
@@ -2517,12 +2591,12 @@ namespace tangent
 			for (size_t i = 0; i < size; i++)
 			{
 				auto next = response[i];
-				format::stream message = format::stream(load(label, __func__, get_multiform_label(next["column_hash"].get().get_blob(), row, next["block_number"].get().get_integer())).or_else(string()));
+				format::stream message = format::stream(load(label, __func__, get_multiform_label(type, next["column_hash"].get().get_blob(), row, next["block_number"].get().get_integer())).or_else(string()));
 				uptr<ledger::state> next_state = states::resolver::from_stream(message);
 				if (!next_state || !next_state->load(message))
 				{
 					if (next_state && delta != nullptr && delta->incoming != nullptr)
-						((ledger::block_mutation*)delta)->incoming->clear_multiform(((ledger::multiform*)*next_state)->as_column(), row);
+						((ledger::block_mutation*)delta)->incoming->clear_multiform(type, ((ledger::multiform*)*next_state)->as_column(), row);
 					continue;
 				}
 				else if (delta != nullptr && delta->incoming != nullptr)
@@ -2532,9 +2606,9 @@ namespace tangent
 
 			return values;
 		}
-		expects_lr<vector<uptr<ledger::state>>> chainstate::get_multiforms_by_row_filter(const ledger::block_mutation* delta, const std::string_view& row, const factor_filter& filter, uint64_t block_number, const factor_window& window)
+		expects_lr<vector<uptr<ledger::state>>> chainstate::get_multiforms_by_row_filter(uint32_t type, const ledger::block_mutation* delta, const std::string_view& row, const factor_filter& filter, uint64_t block_number, const factor_window& window)
 		{
-			auto location = resolve_multiform_location(optional::none, row, false);
+			auto location = resolve_multiform_location(type, optional::none, row, false);
 			if (!location)
 				return expects_lr<vector<uptr<ledger::state>>>(vector<uptr<ledger::state>>());
 
@@ -2574,7 +2648,7 @@ namespace tangent
 					"SELECT (SELECT column_hash FROM columns WHERE columns.column_number = sq.column_number) AS column_hash, block_number FROM (SELECT ROW_NUMBER() OVER (ORDER BY factor $?, column_number ASC) AS id, column_number, block_number FROM (SELECT column_number, row_number, factor, max(block_number) AS block_number FROM multiformtries WHERE row_number = ? AND block_number < ? GROUP BY column_number) AS queryforms WHERE factor $? ?) AS sq WHERE sq.id IN ($?) ORDER BY sq.id ASC";
 			}
 
-			auto cursor = emplace_query(*multiformdata, label, __func__, pattern, &map);
+			auto cursor = emplace_query(get_multiformdata(type), label, __func__, pattern, &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<uptr<ledger::state>>>(layer_exception(error_of(cursor)));
 
@@ -2584,12 +2658,12 @@ namespace tangent
 			for (size_t i = 0; i < size; i++)
 			{
 				auto next = response[i];
-				format::stream message = format::stream(load(label, __func__, get_multiform_label(next["column_hash"].get().get_blob(), row, next["block_number"].get().get_integer())).or_else(string()));
+				format::stream message = format::stream(load(label, __func__, get_multiform_label(type, next["column_hash"].get().get_blob(), row, next["block_number"].get().get_integer())).or_else(string()));
 				uptr<ledger::state> next_state = states::resolver::from_stream(message);
 				if (!next_state || !next_state->load(message))
 				{
 					if (next_state && delta != nullptr && delta->incoming != nullptr)
-						((ledger::block_mutation*)delta)->incoming->clear_multiform(((ledger::multiform*)*next_state)->as_column(), row);
+						((ledger::block_mutation*)delta)->incoming->clear_multiform(type, ((ledger::multiform*)*next_state)->as_column(), row);
 					continue;
 				}
 				else if (delta != nullptr && delta->incoming != nullptr)
@@ -2599,9 +2673,9 @@ namespace tangent
 
 			return values;
 		}
-		expects_lr<size_t> chainstate::get_multiforms_count_by_column(const std::string_view& column, uint64_t block_number)
+		expects_lr<size_t> chainstate::get_multiforms_count_by_column(uint32_t type, const std::string_view& column, uint64_t block_number)
 		{
-			auto location = resolve_multiform_location(column, optional::none, false);
+			auto location = resolve_multiform_location(type, column, optional::none, false);
 			if (!location)
 				return location.error();
 
@@ -2610,16 +2684,16 @@ namespace tangent
 			if (block_number > 0)
 				map.push_back(var::set::integer(block_number));
 
-			auto cursor = emplace_query(*multiformdata, label, __func__, !block_number ? "SELECT COUNT(1) AS multiform_count FROM multiforms WHERE column_number = ?" : "SELECT COUNT(1) AS multiform_count FROM (SELECT max(block_number) FROM multiformtries WHERE column_number = ? AND block_number < ? GROUP BY row_number)", &map);
+			auto cursor = emplace_query(get_multiformdata(type), label, __func__, !block_number ? "SELECT COUNT(1) AS multiform_count FROM multiforms WHERE column_number = ?" : "SELECT COUNT(1) AS multiform_count FROM (SELECT max(block_number) FROM multiformtries WHERE column_number = ? AND block_number < ? GROUP BY row_number)", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<size_t>(layer_exception(error_of(cursor)));
 
 			size_t count = (*cursor)["multiform_count"].get().get_integer();
 			return expects_lr<size_t>(count);
 		}
-		expects_lr<size_t> chainstate::get_multiforms_count_by_column_filter(const std::string_view& column, const factor_filter& filter, uint64_t block_number)
+		expects_lr<size_t> chainstate::get_multiforms_count_by_column_filter(uint32_t type, const std::string_view& column, const factor_filter& filter, uint64_t block_number)
 		{
-			auto location = resolve_multiform_location(column, optional::none, false);
+			auto location = resolve_multiform_location(type, column, optional::none, false);
 			if (!location)
 				return location.error();
 
@@ -2630,16 +2704,16 @@ namespace tangent
 			map.push_back(var::set::string(filter.as_condition()));
 			map.push_back(var::set::integer(filter.value));
 
-			auto cursor = emplace_query(*multiformdata, label, __func__, !block_number ? "SELECT COUNT(1) AS multiform_count FROM multiforms WHERE column_number = ? AND factor $? ?" : "SELECT COUNT(1) AS multiform_count FROM (SELECT factor, max(block_number) FROM multiformtries WHERE column_number = ? AND block_number < ? GROUP BY row_number) WHERE factor $? ?", &map);
+			auto cursor = emplace_query(get_multiformdata(type), label, __func__, !block_number ? "SELECT COUNT(1) AS multiform_count FROM multiforms WHERE column_number = ? AND factor $? ?" : "SELECT COUNT(1) AS multiform_count FROM (SELECT factor, max(block_number) FROM multiformtries WHERE column_number = ? AND block_number < ? GROUP BY row_number) WHERE factor $? ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<size_t>(layer_exception(error_of(cursor)));
 
 			size_t count = (*cursor)["multiform_count"].get().get_integer();
 			return expects_lr<size_t>(count);
 		}
-		expects_lr<size_t> chainstate::get_multiforms_count_by_row(const std::string_view& row, uint64_t block_number)
+		expects_lr<size_t> chainstate::get_multiforms_count_by_row(uint32_t type, const std::string_view& row, uint64_t block_number)
 		{
-			auto location = resolve_multiform_location(optional::none, row, false);
+			auto location = resolve_multiform_location(type, optional::none, row, false);
 			if (!location)
 				return location.error();
 
@@ -2648,16 +2722,16 @@ namespace tangent
 			if (block_number > 0)
 				map.push_back(var::set::integer(block_number));
 
-			auto cursor = emplace_query(*multiformdata, label, __func__, !block_number ? "SELECT COUNT(1) AS multiform_count FROM multiforms WHERE row_number = ?" : "SELECT COUNT(1) AS multiform_count FROM (SELECT max(block_number) FROM multiformtries WHERE row_number = ? AND block_number < ? GROUP BY column_number)", &map);
+			auto cursor = emplace_query(get_multiformdata(type), label, __func__, !block_number ? "SELECT COUNT(1) AS multiform_count FROM multiforms WHERE row_number = ?" : "SELECT COUNT(1) AS multiform_count FROM (SELECT max(block_number) FROM multiformtries WHERE row_number = ? AND block_number < ? GROUP BY column_number)", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<size_t>(layer_exception(error_of(cursor)));
 
 			size_t count = (*cursor)["multiform_count"].get().get_integer();
 			return expects_lr<size_t>(count);
 		}
-		expects_lr<size_t> chainstate::get_multiforms_count_by_row_filter(const std::string_view& row, const factor_filter& filter, uint64_t block_number)
+		expects_lr<size_t> chainstate::get_multiforms_count_by_row_filter(uint32_t type, const std::string_view& row, const factor_filter& filter, uint64_t block_number)
 		{
-			auto location = resolve_multiform_location(optional::none, row, false);
+			auto location = resolve_multiform_location(type, optional::none, row, false);
 			if (!location)
 				return location.error();
 
@@ -2668,12 +2742,131 @@ namespace tangent
 			map.push_back(var::set::string(filter.as_condition()));
 			map.push_back(var::set::integer(filter.value));
 
-			auto cursor = emplace_query(*multiformdata, label, __func__, !block_number ? "SELECT COUNT(1) AS multiform_count FROM multiforms WHERE row_number = ? AND factor $? ?" : "SELECT COUNT(1) AS multiform_count FROM (SELECT factor, max(block_number) FROM multiformtries WHERE row_number = ? AND block_number < ? GROUP BY column_number) WHERE factor $? ?", &map);
+			auto cursor = emplace_query(get_multiformdata(type), label, __func__, !block_number ? "SELECT COUNT(1) AS multiform_count FROM multiforms WHERE row_number = ? AND factor $? ?" : "SELECT COUNT(1) AS multiform_count FROM (SELECT factor, max(block_number) FROM multiformtries WHERE row_number = ? AND block_number < ? GROUP BY column_number) WHERE factor $? ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<size_t>(layer_exception(error_of(cursor)));
 
 			size_t count = (*cursor)["multiform_count"].get().get_integer();
 			return expects_lr<size_t>(count);
+		}
+		sqlite::connection* chainstate::get_blockdata()
+		{
+			if (!storages.blockdata)
+			{
+				if (borrows)
+					storages.blockdata = *latest_chainstate->storages.blockdata;
+				if (!storages.blockdata)
+				{
+					storages.blockdata = index_storage_of("chainindex", "blockdata");
+					if (borrows)
+						latest_chainstate->storages.blockdata = *storages.blockdata;
+				}
+			}
+			return *storages.blockdata;
+		}
+		sqlite::connection* chainstate::get_accountdata()
+		{
+			if (!storages.accountdata)
+			{
+				if (borrows)
+					storages.accountdata = *latest_chainstate->storages.accountdata;
+				if (!storages.accountdata)
+				{
+					storages.accountdata = index_storage_of("chainindex", "accountdata");
+					if (borrows)
+						latest_chainstate->storages.accountdata = *storages.accountdata;
+				}
+			}
+			return *storages.accountdata;
+		}
+		sqlite::connection* chainstate::get_txdata()
+		{
+			if (!storages.txdata)
+			{
+				if (borrows)
+					storages.txdata = *latest_chainstate->storages.txdata;
+				if (!storages.txdata)
+				{
+					storages.txdata = index_storage_of("chainindex", "txdata");
+					if (borrows)
+						latest_chainstate->storages.txdata = *storages.txdata;
+				}
+			}
+			return *storages.txdata;
+		}
+		sqlite::connection* chainstate::get_partydata()
+		{
+			if (!storages.partydata)
+			{
+				if (borrows)
+					storages.partydata = *latest_chainstate->storages.partydata;
+				if (!storages.partydata)
+				{
+					storages.partydata = index_storage_of("chainindex", "partydata");
+					if (borrows)
+						latest_chainstate->storages.partydata = *storages.partydata;
+				}
+			}
+			return *storages.partydata;
+		}
+		sqlite::connection* chainstate::get_aliasdata()
+		{
+			if (!storages.aliasdata)
+			{
+				if (borrows)
+					storages.aliasdata = *latest_chainstate->storages.aliasdata;
+				if (!storages.aliasdata)
+				{
+					storages.aliasdata = index_storage_of("chainindex", "aliasdata");
+					if (borrows)
+						latest_chainstate->storages.aliasdata = *storages.aliasdata;
+				}
+			}
+			return *storages.aliasdata;
+		}
+		sqlite::connection* chainstate::get_uniformdata(uint32_t type)
+		{
+			auto& data = storages.uniformdata[type];
+			if (!data)
+			{
+				if (borrows)
+					data = *latest_chainstate->storages.uniformdata[type];
+				if (!data)
+				{
+					data = index_storage_of("chainindex", stringify::text("uniformdata.0x%x", type));
+					if (borrows)
+						latest_chainstate->storages.uniformdata[type] = *data;
+				}
+			}
+			return *data;
+		}
+		unordered_map<uint32_t, uptr<sqlite::connection>>& chainstate::get_uniformdata_max()
+		{
+			for (uint32_t type : states::resolver::get_uniform_types())
+				get_uniformdata(type);
+			return storages.uniformdata;
+		}
+		sqlite::connection* chainstate::get_multiformdata(uint32_t type)
+		{
+			auto& data = storages.multiformdata[type];
+			if (!data)
+			{
+				if (borrows)
+					data = *latest_chainstate->storages.multiformdata[type];
+				if (!data)
+				{
+					data = index_storage_of("chainindex", stringify::text("multiformdata.0x%x", type));
+					if (borrows)
+						latest_chainstate->storages.multiformdata[type] = *data;
+				}
+			}
+			return *data;
+		}
+		unordered_map<uint32_t, uptr<sqlite::connection>>& chainstate::get_multiformdata_max()
+		{
+			for (uint32_t type : states::resolver::get_multiform_types())
+				get_multiformdata(type);
+			return storages.multiformdata;
 		}
 		void chainstate::clear_indexer_cache()
 		{
@@ -2684,13 +2877,16 @@ namespace tangent
 		vector<sqlite::connection*> chainstate::get_index_storages()
 		{
 			vector<sqlite::connection*> index;
-			index.push_back(*blockdata);
-			index.push_back(*accountdata);
-			index.push_back(*txdata);
-			index.push_back(*partydata);
-			index.push_back(*aliasdata);
-			index.push_back(*uniformdata);
-			index.push_back(*multiformdata);
+			index.reserve(32);
+			index.push_back(get_blockdata());
+			index.push_back(get_accountdata());
+			index.push_back(get_txdata());
+			index.push_back(get_partydata());
+			index.push_back(get_aliasdata());
+			for (auto& [type, uniformdata] : get_uniformdata_max())
+				index.push_back(*uniformdata);
+			for (auto& [type, multiformdata] : get_multiformdata_max())
+				index.push_back(*multiformdata);
 			return index;
 		}
 		bool chainstate::reconstruct_index_storage(sqlite::connection* storage, const std::string_view& name)
@@ -2765,7 +2961,7 @@ namespace tangent
 					) WITHOUT ROWID;
 					CREATE INDEX IF NOT EXISTS aliases_block_number ON aliases (block_number);));
 			}
-			else if (name == "uniformdata")
+			else if (stringify::starts_with(name, "uniformdata"))
 			{
 				command = VI_STRINGIFY((
 					CREATE TABLE IF NOT EXISTS indices
@@ -2792,7 +2988,7 @@ namespace tangent
 					) WITHOUT ROWID;
 					CREATE INDEX IF NOT EXISTS uniformtries_block_number ON uniformtries (block_number);));
 			}
-			else if (name == "multiformdata")
+			else if (stringify::starts_with(name, "multiformdata"))
 			{
 				command = VI_STRINGIFY((
 					CREATE TABLE IF NOT EXISTS columns

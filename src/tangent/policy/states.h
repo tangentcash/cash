@@ -377,7 +377,8 @@ namespace tangent
 			static ledger::state* from_stream(format::stream& stream);
 			static ledger::state* from_type(uint32_t hash);
 			static ledger::state* from_copy(const ledger::state* base);
-			static unordered_set<uint32_t> get_hashes();
+			static unordered_set<uint32_t> get_uniform_types();
+			static unordered_set<uint32_t> get_multiform_types();
 		};
 	}
 }

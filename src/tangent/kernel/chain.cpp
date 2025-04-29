@@ -721,9 +721,10 @@ namespace tangent
 				user.nss.options->unlink();
 		}
 
+		auto database_path = database.resolve(user.network, user.storage.directory);
 		if (!user.logs.state.empty())
 		{
-			auto log_base = database.resolve(user.network, user.storage.directory) + user.logs.state;
+			auto log_base = database_path + user.logs.state;
 			auto log_path = os::path::resolve(os::path::resolve(log_base, *library, true).or_else(user.logs.state)).or_else(user.logs.state);
 			stringify::eval_envs(log_path, os::path::get_directory(log_path.c_str()), vitex::network::utils::get_host_ip_addresses());
 			os::directory::patch(os::path::get_directory(log_path.c_str()));
@@ -737,7 +738,7 @@ namespace tangent
 
 		if (!user.logs.message.empty())
 		{
-			auto log_base = database.resolve(user.network, user.storage.directory) + user.logs.message;
+			auto log_base = database_path + user.logs.message;
 			auto log_path = os::path::resolve(os::path::resolve(log_base, *library, true).or_else(user.logs.message)).or_else(user.logs.message);
 			stringify::eval_envs(log_path, os::path::get_directory(log_path.c_str()), vitex::network::utils::get_host_ip_addresses());
 			os::directory::patch(os::path::get_directory(log_path.c_str()));
@@ -747,7 +748,7 @@ namespace tangent
 
 		if (!user.logs.data.empty())
 		{
-			auto log_base = database.resolve(user.network, user.storage.directory) + user.logs.data;
+			auto log_base = database_path + user.logs.data;
 			auto log_path = os::path::resolve(os::path::resolve(log_base, *library, true).or_else(user.logs.data)).or_else(user.logs.data);
 			stringify::eval_envs(log_path, os::path::get_directory(log_path.c_str()), vitex::network::utils::get_host_ip_addresses());
 			os::directory::patch(os::path::get_directory(log_path.c_str()));

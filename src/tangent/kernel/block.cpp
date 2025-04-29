@@ -95,9 +95,9 @@ namespace tangent
 			}
 			return *this;
 		}
-		option<uptr<state>> block_work::find_uniform(const std::string_view& index) const
+		option<uptr<state>> block_work::find_uniform(uint32_t type, const std::string_view& index) const
 		{
-			auto composite = uniform::as_instance_composite(index);
+			auto composite = uniform::as_instance_composite(type, index);
 			for (size_t i = 0; i < (size_t)work_commitment::__count__; i++)
 			{
 				auto& mapping = map[i];
@@ -105,11 +105,11 @@ namespace tangent
 				if (it != mapping.end())
 					return it->second ? option<uptr<state>>(states::resolver::from_copy(*it->second)) : option<uptr<state>>(nullptr);
 			}
-			return parent_work ? parent_work->find_uniform(index) : option<uptr<state>>(optional::none);
+			return parent_work ? parent_work->find_uniform(type, index) : option<uptr<state>>(optional::none);
 		}
-		option<uptr<state>> block_work::find_multiform(const std::string_view& column, const std::string_view& row) const
+		option<uptr<state>> block_work::find_multiform(uint32_t type, const std::string_view& column, const std::string_view& row) const
 		{
-			auto composite = multiform::as_instance_composite(column, row);
+			auto composite = multiform::as_instance_composite(type, column, row);
 			for (size_t i = 0; i < (size_t)work_commitment::__count__; i++)
 			{
 				auto& mapping = map[i];
@@ -117,15 +117,15 @@ namespace tangent
 				if (it != mapping.end())
 					return it->second ? option<uptr<state>>(states::resolver::from_copy(*it->second)) : option<uptr<state>>(nullptr);
 			}
-			return parent_work ? parent_work->find_multiform(column, row) : option<uptr<state>>(optional::none);
+			return parent_work ? parent_work->find_multiform(type, column, row) : option<uptr<state>>(optional::none);
 		}
-		void block_work::clear_uniform(const std::string_view& index)
+		void block_work::clear_uniform(uint32_t type, const std::string_view& index)
 		{
-			map[(size_t)work_commitment::pending][uniform::as_instance_composite(index)].destroy();
+			map[(size_t)work_commitment::pending][uniform::as_instance_composite(type, index)].destroy();
 		}
-		void block_work::clear_multiform(const std::string_view& column, const std::string_view& row)
+		void block_work::clear_multiform(uint32_t type, const std::string_view& column, const std::string_view& row)
 		{
-			map[(size_t)work_commitment::pending][multiform::as_instance_composite(column, row)].destroy();
+			map[(size_t)work_commitment::pending][multiform::as_instance_composite(type, column, row)].destroy();
 		}
 		void block_work::copy_any(state* value)
 		{
@@ -516,7 +516,7 @@ namespace tangent
 		{
 			return slot_gas_target / get_slot_length();
 		}
-		uint64_t block_header::get_slot_duration() const
+		uint64_t block_header::get_slot_duration_target() const
 		{
 			return (slot_duration + get_duration()) / get_slot_length();
 		}
@@ -553,7 +553,8 @@ namespace tangent
 			data->set("gas_limit", algorithm::encoding::serialize_uint256(gas_limit));
 			data->set("slot_gas_use", algorithm::encoding::serialize_uint256(get_slot_gas_use()));
 			data->set("slot_gas_target", algorithm::encoding::serialize_uint256(get_slot_gas_target()));
-			data->set("slot_duration", algorithm::encoding::serialize_uint256(get_slot_duration()));
+			data->set("slot_duration", algorithm::encoding::serialize_uint256(slot_duration));
+			data->set("slot_duration_target", algorithm::encoding::serialize_uint256(get_slot_duration_target()));
 			data->set("slot_length", algorithm::encoding::serialize_uint256(get_slot_length()));
 			data->set("proposal_time", algorithm::encoding::serialize_uint256(time));
 			data->set("approval_time", algorithm::encoding::serialize_uint256(get_proof_time()));
@@ -632,7 +633,7 @@ namespace tangent
 
 			block_header::set_parent_block(parent_block);
 			auto position = std::find_if(environment->producers.begin(), environment->producers.end(), [&environment](const states::validator_production& a) { return !memcmp(a.owner, environment->validator.public_key_hash, sizeof(environment->validator.public_key_hash)); });
-			auto prev_duration = parent_block ? parent_block->get_slot_duration() : (uint64_t)((double)protocol::now().policy.consensus_proof_time * protocol::now().policy.genesis_slot_time_bump);
+			auto prev_duration = parent_block ? parent_block->get_slot_duration_target() : (uint64_t)((double)protocol::now().policy.consensus_proof_time * protocol::now().policy.genesis_slot_time_bump);
 			auto prev_target = parent_block ? parent_block->target : algorithm::wesolowski::get_default();
 			if (parent_block && parent_block->recovery)
 				prev_target = algorithm::wesolowski::bump(target, 1.0 / protocol::now().policy.consensus_recovery_bump);
@@ -710,7 +711,7 @@ namespace tangent
 				if (!recovery)
 					return layer_exception("invalid producer election");
 
-				auto prev_duration = parent_block ? parent_block->get_slot_duration() : (uint64_t)((double)protocol::now().policy.consensus_proof_time * protocol::now().policy.genesis_slot_time_bump);
+				auto prev_duration = parent_block ? parent_block->get_slot_duration_target() : (uint64_t)((double)protocol::now().policy.consensus_proof_time * protocol::now().policy.genesis_slot_time_bump);
 				auto prev_target = parent_block ? parent_block->target : algorithm::wesolowski::get_default();
 				if (parent_block && parent_block->recovery)
 					prev_target = algorithm::wesolowski::bump(target, 1.0 / protocol::now().policy.consensus_recovery_bump);
@@ -1354,7 +1355,7 @@ namespace tangent
 				case state_level::uniform:
 				{
 					auto* state = (uniform*)next;
-					auto prev = chain.get_uniform_by_index(&delta, state->as_index(), get_validation_nonce());
+					auto prev = chain.get_uniform_by_index(state->as_type(), &delta, state->as_index(), get_validation_nonce());
 					auto status = state->transition(this, prev ? **prev : nullptr);
 					if (!status)
 						return status;
@@ -1363,7 +1364,7 @@ namespace tangent
 				case state_level::multiform:
 				{
 					auto* state = (multiform*)next;
-					auto prev = chain.get_multiform_by_composition(&delta, state->as_column(), state->as_row(), get_validation_nonce());
+					auto prev = chain.get_multiform_by_composition(state->as_type(), &delta, state->as_column(), state->as_row(), get_validation_nonce());
 					auto status = state->transition(this, prev ? **prev : nullptr);
 					if (!status)
 						return status;
@@ -1520,7 +1521,7 @@ namespace tangent
 			auto nonce = get_validation_nonce();
 			auto chain = storages::chainstate(__func__);
 			auto filter = storages::factor_filter::greater_equal(0, -1);
-			return chain.get_multiforms_count_by_row_filter(states::validator_attestation::as_instance_row(asset), filter, nonce);
+			return chain.get_multiforms_count_by_row_filter(states::validator_attestation::as_instance_type(), states::validator_attestation::as_instance_row(asset), filter, nonce);
 		}
 		expects_lr<vector<states::validator_production>> transaction_context::calculate_producers(size_t target_size)
 		{
@@ -1532,7 +1533,7 @@ namespace tangent
 			auto chain = storages::chainstate(__func__);
 			auto filter = storages::factor_filter::greater_equal(0, -1);
 			auto window = storages::factor_index_window();
-			auto pool = chain.get_multiforms_count_by_row_filter(states::validator_production::as_instance_row(), filter, nonce).or_else(0);
+			auto pool = chain.get_multiforms_count_by_row_filter(states::validator_production::as_instance_type(), states::validator_production::as_instance_row(), filter, nonce).or_else(0);
 			auto size = std::min(target_size, pool);
 			auto indices = ordered_set<uint64_t>();
 			while (indices.size() < size)
@@ -1545,7 +1546,7 @@ namespace tangent
 				}
 			}
 
-			auto results = chain.get_multiforms_by_row_filter(&delta, states::validator_production::as_instance_row(), filter, nonce, window);
+			auto results = chain.get_multiforms_by_row_filter(states::validator_production::as_instance_type(), &delta, states::validator_production::as_instance_row(), filter, nonce, window);
 			if (!results || results->empty())
 				return layer_exception("committee threshold not met");
 
@@ -1571,7 +1572,7 @@ namespace tangent
 			auto nonce = get_validation_nonce();
 			auto chain = storages::chainstate(__func__);
 			auto filter = storages::factor_filter::greater_equal(0, -1);
-			auto pool = chain.get_multiforms_count_by_row_filter(states::validator_participation::as_instance_row(asset), filter, nonce).or_else(0);
+			auto pool = chain.get_multiforms_count_by_row_filter(states::validator_participation::as_instance_type(), states::validator_participation::as_instance_row(asset), filter, nonce).or_else(0);
 			if (pool < target_size)
 				return layer_exception("committee threshold not met");
 
@@ -1595,7 +1596,7 @@ namespace tangent
 					}
 				}
 
-				auto results = chain.get_multiforms_by_row_filter(&delta, states::validator_participation::as_instance_row(asset), filter, nonce, window);
+				auto results = chain.get_multiforms_by_row_filter(states::validator_participation::as_instance_type(), &delta, states::validator_participation::as_instance_row(asset), filter, nonce, window);
 				if (!results || results->empty())
 					break;
 
@@ -1991,7 +1992,7 @@ namespace tangent
 		{
 			VI_ASSERT(owner != nullptr, "owner should be set");
 			auto chain = storages::chainstate(__func__);
-			auto state = chain.get_uniform_by_index(&delta, states::account_nonce::as_instance_index(owner), get_validation_nonce());
+			auto state = chain.get_uniform_by_index(states::account_nonce::as_instance_type(), &delta, states::account_nonce::as_instance_index(owner), get_validation_nonce());
 			if (!state)
 				return state.error();
 
@@ -2005,7 +2006,7 @@ namespace tangent
 		{
 			VI_ASSERT(owner != nullptr, "owner should be set");
 			auto chain = storages::chainstate(__func__);
-			auto state = chain.get_uniform_by_index(&delta, states::account_program::as_instance_index(owner), get_validation_nonce());
+			auto state = chain.get_uniform_by_index(states::account_program::as_instance_type(), &delta, states::account_program::as_instance_index(owner), get_validation_nonce());
 			if (!state)
 				return state.error();
 
@@ -2019,7 +2020,7 @@ namespace tangent
 		{
 			VI_ASSERT(owner != nullptr, "owner should be set");
 			auto chain = storages::chainstate(__func__);
-			auto state = chain.get_uniform_by_index(&delta, states::account_storage::as_instance_index(owner, location), get_validation_nonce());
+			auto state = chain.get_uniform_by_index(states::account_storage::as_instance_type(), &delta, states::account_storage::as_instance_index(owner, location), get_validation_nonce());
 			if (!state)
 				return state.error();
 
@@ -2033,7 +2034,7 @@ namespace tangent
 		{
 			VI_ASSERT(owner != nullptr, "owner should be set");
 			auto chain = storages::chainstate(__func__);
-			auto state = chain.get_multiform_by_composition(&delta, states::account_balance::as_instance_column(owner), states::account_balance::as_instance_row(asset), get_validation_nonce());
+			auto state = chain.get_multiform_by_composition(states::account_balance::as_instance_type(), &delta, states::account_balance::as_instance_column(owner), states::account_balance::as_instance_row(asset), get_validation_nonce());
 			if (!state)
 				return state.error();
 
@@ -2048,7 +2049,7 @@ namespace tangent
 			VI_ASSERT(owner != nullptr, "owner should be set");
 			algorithm::pubkeyhash null = { 0 };
 			auto chain = storages::chainstate(__func__);
-			auto state = chain.get_multiform_by_composition(&delta, states::validator_production::as_instance_column(owner), states::validator_production::as_instance_row(), get_validation_nonce());
+			auto state = chain.get_multiform_by_composition(states::validator_production::as_instance_type(), &delta, states::validator_production::as_instance_column(owner), states::validator_production::as_instance_row(), get_validation_nonce());
 			if (!state)
 				return state.error();
 
@@ -2063,7 +2064,7 @@ namespace tangent
 			VI_ASSERT(owner != nullptr, "owner should be set");
 			algorithm::pubkeyhash null = { 0 };
 			auto chain = storages::chainstate(__func__);
-			auto state = chain.get_multiform_by_composition(&delta, states::validator_participation::as_instance_column(owner), states::validator_participation::as_instance_row(asset), get_validation_nonce());
+			auto state = chain.get_multiform_by_composition(states::validator_participation::as_instance_type(), &delta, states::validator_participation::as_instance_column(owner), states::validator_participation::as_instance_row(asset), get_validation_nonce());
 			if (!state)
 				return state.error();
 
@@ -2076,7 +2077,7 @@ namespace tangent
 		expects_lr<vector<states::validator_participation>> transaction_context::get_validator_participations(const algorithm::pubkeyhash owner, size_t offset, size_t count) const
 		{
 			auto chain = storages::chainstate(__func__);
-			auto states = chain.get_multiforms_by_column(&delta, states::validator_participation::as_instance_column(owner), get_validation_nonce(), offset, count);
+			auto states = chain.get_multiforms_by_column(states::validator_participation::as_instance_type(), &delta, states::validator_participation::as_instance_column(owner), get_validation_nonce(), offset, count);
 			if (!states)
 				return states.error();
 
@@ -2098,7 +2099,7 @@ namespace tangent
 			VI_ASSERT(owner != nullptr, "owner should be set");
 			algorithm::pubkeyhash null = { 0 };
 			auto chain = storages::chainstate(__func__);
-			auto state = chain.get_multiform_by_composition(&delta, states::validator_attestation::as_instance_column(owner), states::validator_attestation::as_instance_row(asset), get_validation_nonce());
+			auto state = chain.get_multiform_by_composition(states::validator_attestation::as_instance_type(), &delta, states::validator_attestation::as_instance_column(owner), states::validator_attestation::as_instance_row(asset), get_validation_nonce());
 			if (!state)
 				return state.error();
 
@@ -2111,7 +2112,7 @@ namespace tangent
 		expects_lr<vector<states::validator_attestation>> transaction_context::get_validator_attestations(const algorithm::pubkeyhash owner, size_t offset, size_t count) const
 		{
 			auto chain = storages::chainstate(__func__);
-			auto states = chain.get_multiforms_by_column(&delta, states::validator_attestation::as_instance_column(owner), get_validation_nonce(), offset, count);
+			auto states = chain.get_multiforms_by_column(states::validator_attestation::as_instance_type(), &delta, states::validator_attestation::as_instance_column(owner), get_validation_nonce(), offset, count);
 			if (!states)
 				return states.error();
 
@@ -2132,7 +2133,7 @@ namespace tangent
 		{
 			VI_ASSERT(owner != nullptr, "owner should be set");
 			auto chain = storages::chainstate(__func__);
-			auto state = chain.get_multiform_by_composition(&delta, states::depository_reward::as_instance_column(owner), states::depository_reward::as_instance_row(asset), get_validation_nonce());
+			auto state = chain.get_multiform_by_composition(states::depository_reward::as_instance_type(), &delta, states::depository_reward::as_instance_column(owner), states::depository_reward::as_instance_row(asset), get_validation_nonce());
 			if (!state)
 				return state.error();
 
@@ -2146,7 +2147,7 @@ namespace tangent
 		{
 			VI_ASSERT(owner != nullptr, "owner should be set");
 			auto chain = storages::chainstate(__func__);
-			auto state = chain.get_multiform_by_composition(&delta, states::depository_balance::as_instance_column(owner), states::depository_balance::as_instance_row(asset), get_validation_nonce());
+			auto state = chain.get_multiform_by_composition(states::depository_balance::as_instance_type(), &delta, states::depository_balance::as_instance_column(owner), states::depository_balance::as_instance_row(asset), get_validation_nonce());
 			if (!state)
 				return state.error();
 
@@ -2160,7 +2161,7 @@ namespace tangent
 		{
 			VI_ASSERT(owner != nullptr, "owner should be set");
 			auto chain = storages::chainstate(__func__);
-			auto state = chain.get_multiform_by_composition(&delta, states::depository_policy::as_instance_column(owner), states::depository_policy::as_instance_row(asset), get_validation_nonce());
+			auto state = chain.get_multiform_by_composition(states::depository_policy::as_instance_type(), &delta, states::depository_policy::as_instance_column(owner), states::depository_policy::as_instance_row(asset), get_validation_nonce());
 			if (!state)
 				return state.error();
 
@@ -2173,7 +2174,7 @@ namespace tangent
 		expects_lr<vector<states::depository_account>> transaction_context::get_depository_accounts(const algorithm::pubkeyhash manager, size_t offset, size_t count) const
 		{
 			auto chain = storages::chainstate(__func__);
-			auto states = chain.get_multiforms_by_column(&delta, states::depository_account::as_instance_column(manager), get_validation_nonce(), offset, count);
+			auto states = chain.get_multiforms_by_column(states::depository_account::as_instance_type(), &delta, states::depository_account::as_instance_column(manager), get_validation_nonce(), offset, count);
 			if (!states)
 				return states.error();
 
@@ -2193,7 +2194,7 @@ namespace tangent
 		expects_lr<states::depository_account> transaction_context::get_depository_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash manager, const algorithm::pubkeyhash owner) const
 		{
 			auto chain = storages::chainstate(__func__);
-			auto state = chain.get_multiform_by_composition(&delta, states::depository_account::as_instance_column(manager), states::depository_account::as_instance_row(asset, owner), get_validation_nonce());
+			auto state = chain.get_multiform_by_composition(states::depository_account::as_instance_type(), &delta, states::depository_account::as_instance_column(manager), states::depository_account::as_instance_row(asset, owner), get_validation_nonce());
 			if (!state)
 				return state.error();
 
@@ -2206,7 +2207,7 @@ namespace tangent
 		expects_lr<states::witness_program> transaction_context::get_witness_program(const std::string_view& program_hashcode) const
 		{
 			auto chain = storages::chainstate(__func__);
-			auto state = chain.get_uniform_by_index(&delta, states::witness_program::as_instance_index(program_hashcode), get_validation_nonce());
+			auto state = chain.get_uniform_by_index(states::witness_program::as_instance_type(), &delta, states::witness_program::as_instance_index(program_hashcode), get_validation_nonce());
 			if (!state)
 				return state.error();
 
@@ -2219,7 +2220,7 @@ namespace tangent
 		expects_lr<states::witness_event> transaction_context::get_witness_event(const uint256_t& parent_transaction_hash) const
 		{
 			auto chain = storages::chainstate(__func__);
-			auto state = chain.get_uniform_by_index(&delta, states::witness_event::as_instance_index(parent_transaction_hash), get_validation_nonce());
+			auto state = chain.get_uniform_by_index(states::witness_event::as_instance_type(), &delta, states::witness_event::as_instance_index(parent_transaction_hash), get_validation_nonce());
 			if (!state)
 				return state.error();
 
@@ -2232,7 +2233,7 @@ namespace tangent
 		expects_lr<vector<states::witness_account>> transaction_context::get_witness_accounts(const algorithm::pubkeyhash owner, size_t offset, size_t count) const
 		{
 			auto chain = storages::chainstate(__func__);
-			auto states = chain.get_multiforms_by_column(&delta, states::witness_account::as_instance_column(owner), get_validation_nonce(), offset, count);
+			auto states = chain.get_multiforms_by_column(states::witness_account::as_instance_type(), &delta, states::witness_account::as_instance_column(owner), get_validation_nonce(), offset, count);
 			if (!states)
 				return states.error();
 
@@ -2253,7 +2254,7 @@ namespace tangent
 		{
 			auto chain = storages::chainstate(__func__);
 			auto filter = storages::factor_filter::equal((int64_t)purpose, 1);
-			auto states = chain.get_multiforms_by_column_filter(&delta, states::witness_account::as_instance_column(owner), filter, get_validation_nonce(), storages::factor_range_window(offset, count));
+			auto states = chain.get_multiforms_by_column_filter(states::witness_account::as_instance_type(), &delta, states::witness_account::as_instance_column(owner), filter, get_validation_nonce(), storages::factor_range_window(offset, count));
 			if (!states)
 				return states.error();
 
@@ -2273,7 +2274,7 @@ namespace tangent
 		expects_lr<states::witness_account> transaction_context::get_witness_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const std::string_view& address) const
 		{
 			auto chain = storages::chainstate(__func__);
-			auto state = chain.get_multiform_by_composition(&delta, states::witness_account::as_instance_column(owner), states::witness_account::as_instance_row(asset, address), get_validation_nonce());
+			auto state = chain.get_multiform_by_composition(states::witness_account::as_instance_type(), &delta, states::witness_account::as_instance_column(owner), states::witness_account::as_instance_row(asset, address), get_validation_nonce());
 			if (!state)
 				return state.error();
 
@@ -2286,7 +2287,7 @@ namespace tangent
 		expects_lr<states::witness_account> transaction_context::get_witness_account(const algorithm::asset_id& asset, const std::string_view& address, size_t offset) const
 		{
 			auto chain = storages::chainstate(__func__);
-			auto state = chain.get_multiform_by_row(&delta, states::witness_account::as_instance_row(asset, address), get_validation_nonce(), offset);
+			auto state = chain.get_multiform_by_row(states::witness_account::as_instance_type(), &delta, states::witness_account::as_instance_row(asset, address), get_validation_nonce(), offset);
 			if (!state)
 				return state.error();
 
@@ -2306,7 +2307,7 @@ namespace tangent
 		expects_lr<states::witness_transaction> transaction_context::get_witness_transaction(const algorithm::asset_id& asset, const std::string_view& transaction_id) const
 		{
 			auto chain = storages::chainstate(__func__);
-			auto state = chain.get_uniform_by_index(&delta, states::witness_transaction::as_instance_index(asset, transaction_id), get_validation_nonce());
+			auto state = chain.get_uniform_by_index(states::witness_transaction::as_instance_type(), &delta, states::witness_transaction::as_instance_index(asset, transaction_id), get_validation_nonce());
 			if (!state)
 				return state.error();
 

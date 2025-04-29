@@ -178,6 +178,8 @@ namespace tangent
 			server_response chainstate_get_depository_balances(http::connection* base, format::variables&& args);
 			server_response chainstate_get_best_depository_balances(http::connection* base, format::variables&& args);
 			server_response chainstate_get_best_depository_balances_for_selection(http::connection* base, format::variables&& args);
+			server_response chainstate_get_best_depository_policies(http::connection* base, format::variables&& args);
+			server_response chainstate_get_best_depository_policies_for_selection(http::connection* base, format::variables&& args);
 			server_response chainstate_get_witness_program(http::connection* base, format::variables&& args);
 			server_response chainstate_get_witness_event(http::connection* base, format::variables&& args);
 			server_response chainstate_get_witness_account(http::connection* base, format::variables&& args);

@@ -905,13 +905,14 @@ namespace tangent
 		}
 		string uniform::as_composite() const
 		{
-			return as_instance_composite(as_index());
+			return as_instance_composite(as_type(), as_index());
 		}
-		string uniform::as_instance_composite(const std::string_view& index)
+		string uniform::as_instance_composite(uint32_t type, const std::string_view& index)
 		{
-			auto composite = string(1 + index.size(), 1);
-			memcpy(composite.data() + 1, index.data(), index.size());
-			return composite;
+			format::stream message;
+			message.write_typeless(type);
+			message.write_typeless(index.data(), (uint32_t)index.size());
+			return message.data;
 		}
 
 		multiform::multiform(uint64_t new_block_number, uint64_t new_block_nonce) : state(new_block_number, new_block_nonce)
@@ -938,14 +939,15 @@ namespace tangent
 		}
 		string multiform::as_composite() const
 		{
-			return as_instance_composite(as_column(), as_row());
+			return as_instance_composite(as_type(), as_column(), as_row());
 		}
-		string multiform::as_instance_composite(const std::string_view& column, const std::string_view& row)
+		string multiform::as_instance_composite(uint32_t type, const std::string_view& column, const std::string_view& row)
 		{
-			auto composite = string(1 + column.size() + row.size(), 2);
-			memcpy(composite.data() + 1, column.data(), column.size());
-			memcpy(composite.data() + 1 + column.size(), row.data(), row.size());
-			return composite;
+			format::stream message;
+			message.write_typeless(type);
+			message.write_typeless(column.data(), (uint32_t)column.size());
+			message.write_typeless(row.data(), (uint32_t)row.size());
+			return message.data;
 		}
 
 		uint256_t gas_util::get_gas_work(const uint128_t& difficulty, const uint256_t& gas_use, const uint256_t& gas_limit, uint64_t priority)

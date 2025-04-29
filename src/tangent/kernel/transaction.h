@@ -199,7 +199,7 @@ namespace tangent
 			virtual state_level as_level() const override;
 			virtual string as_composite() const override;
 			virtual string as_index() const = 0;
-			static string as_instance_composite(const std::string_view& index);
+			static string as_instance_composite(uint32_t type, const std::string_view& index);
 		};
 
 		struct multiform : state
@@ -212,7 +212,7 @@ namespace tangent
 			virtual string as_column() const = 0;
 			virtual string as_row() const = 0;
 			virtual int64_t as_factor() const = 0;
-			static string as_instance_composite(const std::string_view& column, const std::string_view& row);
+			static string as_instance_composite(uint32_t type, const std::string_view& column, const std::string_view& row);
 		};
 
 		class gas_util

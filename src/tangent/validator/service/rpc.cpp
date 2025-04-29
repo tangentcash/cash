@@ -10,171 +10,176 @@ namespace tangent
 {
 	namespace rpc
 	{
-		static expects_lr<string> as_index(const std::string_view& type, const format::variable& value1, const format::variable& value2)
+		struct uniform_location
+		{
+			string index;
+			uint32_t type;
+
+			uniform_location(uint32_t new_type, string&& new_index) : type(new_type), index(std::move(new_index))
+			{
+			}
+		};
+
+		struct multiform_location
+		{
+			string row;
+			string column;
+			uint32_t type;
+
+			multiform_location(uint32_t new_type, string&& new_row, string&& new_column) : type(new_type), row(std::move(new_row)), column(std::move(new_column))
+			{
+			}
+		};
+
+		static expects_lr<uniform_location> as_uniform_location(const std::string_view& type, const format::variable& index)
 		{
 			if (type == states::account_nonce::as_instance_typename())
 			{
 				algorithm::pubkeyhash owner;
-				if (!algorithm::signing::decode_address(value1.as_string(), owner))
+				if (!algorithm::signing::decode_address(index.as_string(), owner))
 					return layer_exception("invalid address");
 
-				return states::account_nonce::as_instance_index(owner);
+				return uniform_location(states::account_nonce::as_instance_type(), states::account_nonce::as_instance_index(owner));
 			}
 
 			if (type == states::account_program::as_instance_typename())
 			{
 				algorithm::pubkeyhash owner;
-				if (!algorithm::signing::decode_address(value1.as_string(), owner))
+				if (!algorithm::signing::decode_address(index.as_string(), owner))
 					return layer_exception("invalid address");
 
-				return states::account_program::as_instance_index(owner);
+				return uniform_location(states::account_program::as_instance_type(), states::account_program::as_instance_index(owner));
 			}
 
 			if (type == states::account_storage::as_instance_typename())
 			{
-				algorithm::pubkeyhash owner;
-				if (!algorithm::signing::decode_address(value1.as_string(), owner))
-					return layer_exception("invalid address");
+				auto data = index.as_schema();
+				if (!data)
+					return layer_exception("invalid value, expected { address: string, location: string }");
 
-				return states::account_storage::as_instance_index(owner, value2.as_string());
+				auto owner_address = data->get_var("address").get_blob();
+				auto location = data->get_var("location").get_blob();
+				algorithm::pubkeyhash owner = { 0 };
+				if (!algorithm::signing::decode_address(owner_address, owner))
+					return layer_exception("invalid address");
+				
+				return uniform_location(states::account_storage::as_instance_type(), states::account_storage::as_instance_index(owner, location));
 			}
 
 			if (type == states::witness_program::as_instance_typename())
-				return states::witness_program::as_instance_index(value1.as_string());
+				return uniform_location(states::witness_program::as_instance_type(), states::witness_program::as_instance_index(index.as_string()));
 
 			if (type == states::witness_event::as_instance_typename())
-				return states::witness_event::as_instance_index(value1.as_uint256());
+				return uniform_location(states::witness_event::as_instance_type(), states::witness_event::as_instance_index(index.as_uint256()));
 
 			if (type == states::witness_transaction::as_instance_typename())
-				return states::witness_transaction::as_instance_index(algorithm::asset::id_of_handle(value1.as_string()), value2.as_string());
+			{
+				auto data = index.as_schema();
+				if (!data)
+					return layer_exception("invalid value, expected { asset: string, transaction_id: string }");
+
+				auto id = data->get_var("asset").get_blob();
+				auto transaction_id = data->get_var("transaction_id").get_blob();
+				return uniform_location(states::witness_transaction::as_instance_type(), states::witness_transaction::as_instance_index(algorithm::asset::id_of_handle(id), transaction_id));
+			}
 
 			return layer_exception("invalid uniform type");
 		}
-		static expects_lr<string> as_column(const std::string_view& type, const format::variable& value)
+		static expects_lr<multiform_location> as_multiform_location(const std::string_view& type, const format::variable& column, const format::variable& row)
 		{
 			if (type == states::account_balance::as_instance_typename())
 			{
-				algorithm::pubkeyhash owner;
-				if (!algorithm::signing::decode_address(value.as_string(), owner))
+				algorithm::pubkeyhash owner = { 0 };
+				if (column.type_of() != format::viewable::invalid && !algorithm::signing::decode_address(column.as_string(), owner))
 					return layer_exception("invalid address");
 
-				return states::account_balance::as_instance_column(owner);
+				return multiform_location(states::account_balance::as_instance_type(), states::account_balance::as_instance_row(algorithm::asset::id_of_handle(row.as_string())), states::account_balance::as_instance_column(owner));
 			}
 
 			if (type == states::validator_production::as_instance_typename())
 			{
-				algorithm::pubkeyhash owner;
-				if (!algorithm::signing::decode_address(value.as_string(), owner))
+				algorithm::pubkeyhash owner = { 0 };
+				if (column.type_of() != format::viewable::invalid && !algorithm::signing::decode_address(column.as_string(), owner))
 					return layer_exception("invalid address");
 
-				return states::validator_production::as_instance_column(owner);
+				return multiform_location(states::validator_production::as_instance_type(), states::validator_production::as_instance_row(), states::validator_production::as_instance_column(owner));
 			}
 
 			if (type == states::validator_participation::as_instance_typename())
 			{
-				algorithm::pubkeyhash owner;
-				if (!algorithm::signing::decode_address(value.as_string(), owner))
+				algorithm::pubkeyhash owner = { 0 };
+				if (column.type_of() != format::viewable::invalid && !algorithm::signing::decode_address(column.as_string(), owner))
 					return layer_exception("invalid address");
 
-				return states::validator_participation::as_instance_column(owner);
+				return multiform_location(states::validator_participation::as_instance_type(), states::validator_participation::as_instance_row(algorithm::asset::id_of_handle(row.as_string())), states::validator_participation::as_instance_column(owner));
 			}
 
 			if (type == states::validator_attestation::as_instance_typename())
 			{
-				algorithm::pubkeyhash owner;
-				if (!algorithm::signing::decode_address(value.as_string(), owner))
+				algorithm::pubkeyhash owner = { 0 };
+				if (column.type_of() != format::viewable::invalid && !algorithm::signing::decode_address(column.as_string(), owner))
 					return layer_exception("invalid address");
 
-				return states::validator_attestation::as_instance_column(owner);
+				return multiform_location(states::validator_attestation::as_instance_type(), states::validator_attestation::as_instance_row(algorithm::asset::id_of_handle(row.as_string())), states::validator_attestation::as_instance_column(owner));
 			}
 
 			if (type == states::depository_reward::as_instance_typename())
 			{
-				algorithm::pubkeyhash owner;
-				if (!algorithm::signing::decode_address(value.as_string(), owner))
+				algorithm::pubkeyhash owner = { 0 };
+				if (column.type_of() != format::viewable::invalid && !algorithm::signing::decode_address(column.as_string(), owner))
 					return layer_exception("invalid address");
 
-				return states::depository_reward::as_instance_column(owner);
+				return multiform_location(states::depository_reward::as_instance_type(), states::depository_reward::as_instance_row(algorithm::asset::id_of_handle(row.as_string())), states::depository_reward::as_instance_column(owner));
 			}
 
 			if (type == states::depository_balance::as_instance_typename())
 			{
-				algorithm::pubkeyhash owner;
-				if (!algorithm::signing::decode_address(value.as_string(), owner))
+				algorithm::pubkeyhash owner = { 0 };
+				if (column.type_of() != format::viewable::invalid && !algorithm::signing::decode_address(column.as_string(), owner))
 					return layer_exception("invalid address");
 
-				return states::depository_balance::as_instance_column(owner);
+				return multiform_location(states::depository_balance::as_instance_type(), states::depository_balance::as_instance_row(algorithm::asset::id_of_handle(row.as_string())), states::depository_balance::as_instance_column(owner));
 			}
 
 			if (type == states::depository_policy::as_instance_typename())
 			{
-				algorithm::pubkeyhash owner;
-				if (!algorithm::signing::decode_address(value.as_string(), owner))
+				algorithm::pubkeyhash owner = { 0 };
+				if (column.type_of() != format::viewable::invalid && !algorithm::signing::decode_address(column.as_string(), owner))
 					return layer_exception("invalid address");
 
-				return states::depository_policy::as_instance_column(owner);
+				return multiform_location(states::depository_policy::as_instance_type(), states::depository_policy::as_instance_row(algorithm::asset::id_of_handle(row.as_string())), states::depository_policy::as_instance_column(owner));
 			}
 
 			if (type == states::depository_account::as_instance_typename())
 			{
-				algorithm::pubkeyhash manager;
-				if (!algorithm::signing::decode_address(value.as_string(), manager))
+				auto data = row.type_of() != format::viewable::invalid ? row.as_schema() : uptr(var::set::object());
+				if (!data)
+					return layer_exception("invalid value, expected { asset: string, address: string }");
+
+				algorithm::pubkeyhash manager = { 0 };
+				if (column.type_of() != format::viewable::invalid && !algorithm::signing::decode_address(column.as_string(), manager))
 					return layer_exception("invalid address");
 
-				return states::depository_account::as_instance_column(manager);
+				auto id = data->get_var("asset").get_blob();
+				auto owner_address = data->get_var("owner").get_blob();
+				algorithm::pubkeyhash owner = { 0 };
+				if (!algorithm::signing::decode_address(owner_address, owner))
+					return layer_exception("invalid address");
+
+				return multiform_location(states::depository_account::as_instance_type(), states::depository_account::as_instance_row(algorithm::asset::id_of_handle(id), owner), states::depository_account::as_instance_column(manager));
 			}
 
 			if (type == states::witness_account::as_instance_typename())
 			{
-				algorithm::pubkeyhash owner;
-				if (!algorithm::signing::decode_address(value.as_string(), owner))
+				auto data = row.type_of() != format::viewable::invalid ? row.as_schema() : uptr(var::set::object());
+				if (!data)
+					return layer_exception("invalid value, expected { asset: string, address: string }");
+
+				algorithm::pubkeyhash owner = { 0 };
+				if (column.type_of() != format::viewable::invalid && !algorithm::signing::decode_address(column.as_string(), owner))
 					return layer_exception("invalid address");
 
-				return states::witness_account::as_instance_column(owner);
-			}
-
-			return layer_exception("invalid multiform type");
-		}
-		static expects_lr<string> as_row(const std::string_view& type, const format::variable& value)
-		{
-			if (type == states::account_balance::as_instance_typename())
-				return states::account_balance::as_instance_row(algorithm::asset::id_of_handle(value.as_string()));
-
-			if (type == states::validator_production::as_instance_typename())
-				return states::validator_production::as_instance_row();
-
-			if (type == states::validator_participation::as_instance_typename())
-				return states::validator_participation::as_instance_row(algorithm::asset::id_of_handle(value.as_string()));
-
-			if (type == states::validator_attestation::as_instance_typename())
-				return states::validator_attestation::as_instance_row(algorithm::asset::id_of_handle(value.as_string()));
-
-			if (type == states::depository_reward::as_instance_typename())
-				return states::depository_reward::as_instance_row(algorithm::asset::id_of_handle(value.as_string()));
-
-			if (type == states::depository_balance::as_instance_typename())
-				return states::depository_balance::as_instance_row(algorithm::asset::id_of_handle(value.as_string()));
-
-			if (type == states::depository_policy::as_instance_typename())
-				return states::depository_policy::as_instance_row(algorithm::asset::id_of_handle(value.as_string()));
-
-			if (type == states::depository_account::as_instance_typename())
-			{
-				auto data = value.as_schema();
-				if (!data)
-					return layer_exception("invalid value, expected { asset: string, address: string }");
-
-				auto owner = algorithm::pubkeyhash_t(data->get_var("owner").get_blob());
-				return states::depository_account::as_instance_row(algorithm::asset::id_of_handle(data->get_var("asset").get_blob()), owner.data);
-			}
-
-			if (type == states::witness_account::as_instance_typename())
-			{
-				auto data = value.as_schema();
-				if (!data)
-					return layer_exception("invalid value, expected { asset: string, address: string }");
-
-				return states::witness_account::as_instance_row(algorithm::asset::id_of_handle(data->get_var("asset").get_blob()), data->get_var("address").get_blob());
+				return multiform_location(states::depository_account::as_instance_type(), states::witness_account::as_instance_row(algorithm::asset::id_of_handle(data->get_var("asset").get_blob()), data->get_var("address").get_blob()), states::witness_account::as_instance_column(owner));
 			}
 
 			return layer_exception("invalid multiform type");
@@ -329,13 +334,13 @@ namespace tangent
 			bind(0 | access_type::r, "chainstate", "getblockgaspricebynumber", 2, 3, "uint64 number, string asset, double? percentile = 0.5", "decimal", "get gas price from percentile of block transactions by number", std::bind(&server_node::chainstate_get_block_gas_price_by_number, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getblockassetpricebyhash", 3, 4, "uint256 hash, string asset_from, string asset_to, double? percentile = 0.5", "decimal", "get gas asset from percentile of block transactions by hash", std::bind(&server_node::chainstate_get_block_asset_price_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getblockassetpricebynumber", 3, 4, "uint64 number, string asset_from, string asset_to, double? percentile = 0.5", "decimal", "get gas asset from percentile of block transactions by number", std::bind(&server_node::chainstate_get_block_asset_price_by_number, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getuniformbyindex", 2, 3, "string type, any argument1, any? argument2", "uniform", "get uniform by type, address and stride", std::bind(&server_node::chainstate_get_multiform_by_composition, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getmultiformbycomposition", 3, 3, "string type, any column, any row", "multiform", "get multiform by type, address and stride", std::bind(&server_node::chainstate_get_multiform_by_composition, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getmultiformbyaddress", 2, 3, "string type, any column, uint64? offset", "multiform", "get multiform by type and address", std::bind(&server_node::chainstate_get_multiform_by_column, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getmultiformsbyaddress", 4, 4, "string type, any column, uint64 offset, uint64 count", "multiform[]", "get filtered multiform by type and address", std::bind(&server_node::chainstate_get_multiforms_by_column, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getmultiformbystride", 2, 3, "string type, any row, uint64? offset", "multiform", "get multiform by type and stride", std::bind(&server_node::chainstate_get_multiform_by_row, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getmultiformbystridequery", 7, 7, "string type, any row, string weight_condition = '>' | '>=' | '=' | '<>' | '<=' | '<', int64 weight_value, int8 weight_order, uint64 offset, uint64 count", "multiform", "get filtered multiform by type stride", std::bind(&server_node::chainstate_get_multiforms_by_row, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getmultiformscountbystride", 4, 4, "string type, any row, string weight_condition = '>' | '>=' | '=' | '<>' | '<=' | '<', int64 weight_value", "uint64", "get filtered multiform count by type and stride", std::bind(&server_node::chainstate_get_multiforms_count_by_row, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getuniformbyindex", 2, 2, "string type, any index", "uniform", "get uniform by type and index", std::bind(&server_node::chainstate_get_uniform_by_index, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getmultiformbycomposition", 3, 3, "string type, any column, any row", "multiform", "get multiform by type, column and row", std::bind(&server_node::chainstate_get_multiform_by_composition, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getmultiformbycolumn", 2, 3, "string type, any column, uint64? offset", "multiform", "get multiform by type and column", std::bind(&server_node::chainstate_get_multiform_by_column, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getmultiformsbycolumn", 4, 4, "string type, any column, uint64 offset, uint64 count", "multiform[]", "get filtered multiform by type and column", std::bind(&server_node::chainstate_get_multiforms_by_column, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getmultiformbyrow", 2, 3, "string type, any row, uint64? offset", "multiform", "get multiform by type and row", std::bind(&server_node::chainstate_get_multiform_by_row, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getmultiformbyrowquery", 7, 7, "string type, any row, string weight_condition = '>' | '>=' | '=' | '<>' | '<=' | '<', int64 weight_value, int8 weight_order, uint64 offset, uint64 count", "multiform", "get filtered multiform by type row", std::bind(&server_node::chainstate_get_multiforms_by_row, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getmultiformscountbyrow", 4, 4, "string type, any row, string weight_condition = '>' | '>=' | '=' | '<>' | '<=' | '<', int64 weight_value", "uint64", "get filtered multiform count by type and row", std::bind(&server_node::chainstate_get_multiforms_count_by_row, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getaccountnonce", 1, 1, "string address", "uint64", "get account nonce by address", std::bind(&server_node::chainstate_get_account_nonce, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getaccountprogram", 1, 1, "string address", "uniform", "get account program hashcode by address", std::bind(&server_node::chainstate_get_account_program, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getaccountstorage", 2, 2, "string address, string location", "uniform", "get account storage by address and location", std::bind(&server_node::chainstate_get_account_storage, this, std::placeholders::_1, std::placeholders::_2));
@@ -358,8 +363,10 @@ namespace tangent
 			bind(0 | access_type::r, "chainstate", "getdepositoryaccounts", 3, 3, "string manager_address", "multiform[]", "get depository accounts by manager", std::bind(&server_node::chainstate_get_depository_accounts, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getdepositorybalance", 2, 2, "string address, string asset", "multiform", "get depository balance by address and asset", std::bind(&server_node::chainstate_get_depository_balance, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getdepositorybalances", 3, 3, "string address, uint64 offset, uint64 count", "multiform[]", "get depository balances by address", std::bind(&server_node::chainstate_get_depository_balances, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getbestdepositorybalances", 3, 3, "string asset, uint64 offset, uint64 count", "multiform[]", "get accounts with best depository", std::bind(&server_node::chainstate_get_best_depository_balances, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getbestdepositorybalancesforselection", 3, 3, "string asset, uint64 offset, uint64 count", "{ depository: multiform, reward: multiform? }[]", "get accounts with best depository with additional manager info", std::bind(&server_node::chainstate_get_best_depository_balances_for_selection, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getbestdepositorybalances", 3, 3, "string asset, uint64 offset, uint64 count", "multiform[]", "get accounts with best depository balance", std::bind(&server_node::chainstate_get_best_depository_balances, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getbestdepositorybalancesforselection", 3, 3, "string asset, uint64 offset, uint64 count", "{ depository: multiform, reward: multiform? }[]", "get accounts with best depository balance with additional manager info", std::bind(&server_node::chainstate_get_best_depository_balances_for_selection, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getbestdepositorypolicies", 3, 3, "string asset, uint64 offset, uint64 count", "multiform[]", "get accounts with best depository security", std::bind(&server_node::chainstate_get_best_depository_policies, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getbestdepositorypoliciesforselection", 3, 3, "string asset, uint64 offset, uint64 count", "{ depository: multiform, reward: multiform? }[]", "get accounts with best depository security with additional manager info", std::bind(&server_node::chainstate_get_best_depository_policies_for_selection, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getwitnessprogram", 1, 1, "string hashcode", "uniform", "get witness program by hashcode (512bit number)", std::bind(&server_node::chainstate_get_witness_program, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getwitnessevent", 1, 1, "uint256 transaction_hash", "uniform", "get witness event by transaction hash", std::bind(&server_node::chainstate_get_witness_event, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getwitnessaccount", 3, 3, "string address, string asset, string wallet_address", "multiform", "get witness address by owner address, asset, wallet address", std::bind(&server_node::chainstate_get_witness_account, this, std::placeholders::_1, std::placeholders::_2));
@@ -1603,18 +1610,13 @@ namespace tangent
 				if (!block_number)
 					return server_response().error(error_codes::not_found, "block not found");
 
-				uptr<schema> data = var::set::array();
-				while (true)
-				{
-					auto list = chain.get_block_statetrie_by_number(*block_number, data->size(), protocol::now().user.rpc.cursor_size);
-					if (!list)
-						return server_response().error(error_codes::not_found, "block not found");
+				auto list = chain.get_block_statetrie_by_number(*block_number, protocol::now().user.rpc.cursor_size);
+				if (!list)
+					return server_response().error(error_codes::not_found, "block not found");
 
-					for (auto& item : *list)
-						data->push(item.second->as_schema().reset());
-					if (list->size() < protocol::now().user.rpc.cursor_size)
-						break;
-				}
+				uptr<schema> data = var::set::array();
+				for (auto& item : *list)
+					data->push(item.second->as_schema().reset());
 
 				return server_response().success(std::move(data));
 			}
@@ -1637,18 +1639,13 @@ namespace tangent
 			}
 			else
 			{
-				uptr<schema> data = var::set::array();
-				while (true)
-				{
-					auto list = chain.get_block_statetrie_by_number(number, data->size(), protocol::now().user.rpc.cursor_size);
-					if (!list)
-						return server_response().error(error_codes::not_found, "block not found");
+				auto list = chain.get_block_statetrie_by_number(number, protocol::now().user.rpc.cursor_size);
+				if (!list)
+					return server_response().error(error_codes::not_found, "block not found");
 
-					for (auto& item : *list)
-						data->push(item.second->as_schema().reset());
-					if (list->size() < protocol::now().user.rpc.cursor_size)
-						break;
-				}
+				uptr<schema> data = var::set::array();
+				for (auto& item : *list)
+					data->push(item.second->as_schema().reset());
 
 				return server_response().success(std::move(data));
 			}
@@ -1713,12 +1710,12 @@ namespace tangent
 		}
 		server_response server_node::chainstate_get_uniform_by_index(http::connection* base, format::variables&& args)
 		{
-			auto index = as_index(args[0].as_string(), args[1], args.size() > 2 ? args[2] : format::variable());
-			if (!index)
-				return server_response().error(error_codes::bad_params, "index not valid: " + index.error().message());
+			auto location = as_uniform_location(args[0].as_string(), args[1]);
+			if (!location)
+				return server_response().error(error_codes::bad_params, "location not valid: " + location.error().message());
 
 			auto chain = storages::chainstate(__func__);
-			auto uniform = chain.get_uniform_by_index(nullptr, *index, 0);
+			auto uniform = chain.get_uniform_by_index(location->type, nullptr, location->index, 0);
 			if (!uniform)
 				return server_response().error(error_codes::not_found, "uniform not found");
 
@@ -1726,16 +1723,12 @@ namespace tangent
 		}
 		server_response server_node::chainstate_get_multiform_by_composition(http::connection* base, format::variables&& args)
 		{
-			auto column = as_column(args[0].as_string(), args[1]);
-			if (!column)
-				return server_response().error(error_codes::bad_params, "column not valid: " + column.error().message());
-
-			auto row = as_row(args[0].as_string(), args[2]);
-			if (!row)
-				return server_response().error(error_codes::bad_params, "row not valid: " + row.error().message());
+			auto location = as_multiform_location(args[0].as_string(), args[1], args[2]);
+			if (!location)
+				return server_response().error(error_codes::bad_params, "location not valid: " + location.error().message());
 
 			auto chain = storages::chainstate(__func__);
-			auto multiform = chain.get_multiform_by_composition(nullptr, *column, *row, 0);
+			auto multiform = chain.get_multiform_by_composition(location->type, nullptr, location->column, location->row, 0);
 			if (!multiform)
 				return server_response().error(error_codes::not_found, "multiform not found");
 
@@ -1743,13 +1736,13 @@ namespace tangent
 		}
 		server_response server_node::chainstate_get_multiform_by_column(http::connection* base, format::variables&& args)
 		{
-			auto column = as_column(args[0].as_string(), args[1]);
-			if (!column)
-				return server_response().error(error_codes::bad_params, "column not valid: " + column.error().message());
+			auto location = as_multiform_location(args[0].as_string(), args[1], format::variable());
+			if (!location)
+				return server_response().error(error_codes::bad_params, "location not valid: " + location.error().message());
 
 			size_t offset = args.size() > 2 ? args[2].as_uint64() : 0;
 			auto chain = storages::chainstate(__func__);
-			auto multiform = chain.get_multiform_by_column(nullptr, *column, 0, offset);
+			auto multiform = chain.get_multiform_by_column(location->type, nullptr, location->column, 0, offset);
 			if (!multiform)
 				return server_response().error(error_codes::not_found, "multiform not found");
 
@@ -1757,16 +1750,16 @@ namespace tangent
 		}
 		server_response server_node::chainstate_get_multiforms_by_column(http::connection* base, format::variables&& args)
 		{
-			auto column = as_column(args[0].as_string(), args[1]);
-			if (!column)
-				return server_response().error(error_codes::bad_params, "column not valid: " + column.error().message());
+			auto location = as_multiform_location(args[0].as_string(), args[1], format::variable());
+			if (!location)
+				return server_response().error(error_codes::bad_params, "location not valid: " + location.error().message());
 
 			uint64_t offset = args[2].as_uint64(), count = args[3].as_uint64();
 			if (!count || count > protocol::now().user.rpc.page_size)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto chain = storages::chainstate(__func__);
-			auto list = chain.get_multiforms_by_column(nullptr, *column, 0, offset, count);
+			auto list = chain.get_multiforms_by_column(location->type, nullptr, location->column, 0, offset, count);
 			if (!list)
 				return server_response().error(error_codes::not_found, "multiform not found");
 
@@ -1777,13 +1770,13 @@ namespace tangent
 		}
 		server_response server_node::chainstate_get_multiform_by_row(http::connection* base, format::variables&& args)
 		{
-			auto row = as_row(args[0].as_string(), args[1]);
-			if (!row)
-				return server_response().error(error_codes::bad_params, "row not valid: " + row.error().message());
+			auto location = as_multiform_location(args[0].as_string(), format::variable(), args[1]);
+			if (!location)
+				return server_response().error(error_codes::bad_params, "location not valid: " + location.error().message());
 
 			size_t offset = args.size() > 2 ? args[2].as_uint64() : 0;
 			auto chain = storages::chainstate(__func__);
-			auto multiform = chain.get_multiform_by_row(nullptr, *row, 0, offset);
+			auto multiform = chain.get_multiform_by_row(location->type, nullptr, location->row, 0, offset);
 			if (!multiform)
 				return server_response().error(error_codes::not_found, "multiform not found");
 
@@ -1791,9 +1784,9 @@ namespace tangent
 		}
 		server_response server_node::chainstate_get_multiforms_by_row(http::connection* base, format::variables&& args)
 		{
-			auto row = as_row(args[0].as_string(), args[1]);
-			if (!row)
-				return server_response().error(error_codes::bad_params, "row not valid: " + row.error().message());
+			auto location = as_multiform_location(args[0].as_string(), format::variable(), args[1]);
+			if (!location)
+				return server_response().error(error_codes::bad_params, "location not valid: " + location.error().message());
 
 			uint64_t offset = args[5].as_uint64(), count = args[6].as_uint64();
 			if (!count || count > protocol::now().user.rpc.page_size)
@@ -1801,7 +1794,7 @@ namespace tangent
 
 			auto filter = storages::factor_filter::from(args[2].as_string(), args[3].as_decimal().to_int64(), args[4].as_decimal().to_int8());
 			auto chain = storages::chainstate(__func__);
-			auto list = chain.get_multiforms_by_row_filter(nullptr, *row, filter, 0, storages::factor_range_window(offset, count));
+			auto list = chain.get_multiforms_by_row_filter(location->type, nullptr, location->row, filter, 0, storages::factor_range_window(offset, count));
 			if (!list)
 				return server_response().error(error_codes::not_found, "multiform not found");
 
@@ -1812,13 +1805,13 @@ namespace tangent
 		}
 		server_response server_node::chainstate_get_multiforms_count_by_row(http::connection* base, format::variables&& args)
 		{
-			auto row = as_row(args[0].as_string(), args[1]);
-			if (!row)
-				return server_response().error(error_codes::bad_params, "row not valid: " + row.error().message());
+			auto location = as_multiform_location(args[0].as_string(), format::variable(), args[1]);
+			if (!location)
+				return server_response().error(error_codes::bad_params, "location not valid: " + location.error().message());
 
 			auto filter = storages::factor_filter::from(args[2].as_string(), args[3].as_decimal().to_int64(), 0);
 			auto chain = storages::chainstate(__func__);
-			auto count = chain.get_multiforms_count_by_row_filter(*row, filter, 0);
+			auto count = chain.get_multiforms_count_by_row_filter(location->type, location->row, filter, 0);
 			if (!count)
 				return server_response().error(error_codes::not_found, "count not found");
 
@@ -1831,7 +1824,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
 			auto chain = storages::chainstate(__func__);
-			auto state = chain.get_uniform_by_index(nullptr, states::account_nonce::as_instance_index(owner), 0);
+			auto state = chain.get_uniform_by_index(states::account_nonce::as_instance_type(), nullptr, states::account_nonce::as_instance_index(owner), 0);
 			auto* value = (states::account_nonce*)(state ? **state : nullptr);
 			return server_response().success(algorithm::encoding::serialize_uint256(value ? value->nonce : 1));
 		}
@@ -1842,7 +1835,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
 			auto chain = storages::chainstate(__func__);
-			auto state = chain.get_uniform_by_index(nullptr, states::account_program::as_instance_index(owner), 0);
+			auto state = chain.get_uniform_by_index(states::account_program::as_instance_type(), nullptr, states::account_program::as_instance_index(owner), 0);
 			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
 		}
 		server_response server_node::chainstate_get_account_storage(http::connection* base, format::variables&& args)
@@ -1852,7 +1845,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
 			auto chain = storages::chainstate(__func__);
-			auto state = chain.get_uniform_by_index(nullptr, states::account_storage::as_instance_index(owner, args[1].as_string()), 0);
+			auto state = chain.get_uniform_by_index(states::account_storage::as_instance_type(), nullptr, states::account_storage::as_instance_index(owner, args[1].as_string()), 0);
 			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
 		}
 		server_response server_node::chainstate_get_account_balance(http::connection* base, format::variables&& args)
@@ -1863,7 +1856,7 @@ namespace tangent
 
 			auto chain = storages::chainstate(__func__);
 			auto asset = algorithm::asset::id_of_handle(args[1].as_string());
-			auto state = chain.get_multiform_by_composition(nullptr, states::account_balance::as_instance_column(owner), states::account_balance::as_instance_row(asset), 0);
+			auto state = chain.get_multiform_by_composition(states::account_balance::as_instance_type(), nullptr, states::account_balance::as_instance_column(owner), states::account_balance::as_instance_row(asset), 0);
 			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
 		}
 		server_response server_node::chainstate_get_account_balances(http::connection* base, format::variables&& args)
@@ -1877,7 +1870,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto chain = storages::chainstate(__func__);
-			auto list = chain.get_multiforms_by_column(nullptr, states::account_balance::as_instance_column(owner), 0, offset, count);
+			auto list = chain.get_multiforms_by_column(states::account_balance::as_instance_type(), nullptr, states::account_balance::as_instance_column(owner), 0, offset, count);
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
@@ -1893,7 +1886,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
 			auto chain = storages::chainstate(__func__);
-			auto state = chain.get_multiform_by_composition(nullptr, states::validator_production::as_instance_column(owner), states::validator_production::as_instance_row(), 0);
+			auto state = chain.get_multiform_by_composition(states::validator_production::as_instance_type(), nullptr, states::validator_production::as_instance_column(owner), states::validator_production::as_instance_row(), 0);
 			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
 		}
 		server_response server_node::chainstate_get_best_validator_producers(http::connection* base, format::variables&& args)
@@ -1905,7 +1898,7 @@ namespace tangent
 
 			auto filter = commitment > 0 ? storages::factor_filter::greater_equal(commitment - 1, -1) : storages::factor_filter::equal(-1, -1);
 			auto chain = storages::chainstate(__func__);
-			auto list = chain.get_multiforms_by_row_filter(nullptr, states::validator_production::as_instance_row(), filter, 0, storages::factor_range_window(offset, count));
+			auto list = chain.get_multiforms_by_row_filter(states::validator_production::as_instance_type(), nullptr, states::validator_production::as_instance_row(), filter, 0, storages::factor_range_window(offset, count));
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
@@ -1922,7 +1915,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
 			auto chain = storages::chainstate(__func__);
-			auto state = chain.get_multiform_by_composition(nullptr, states::validator_participation::as_instance_column(owner), states::validator_participation::as_instance_row(asset), 0);
+			auto state = chain.get_multiform_by_composition(states::validator_participation::as_instance_type(), nullptr, states::validator_participation::as_instance_column(owner), states::validator_participation::as_instance_row(asset), 0);
 			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
 		}
 		server_response server_node::chainstate_get_validator_participations(http::connection* base, format::variables&& args)
@@ -1936,7 +1929,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto chain = storages::chainstate(__func__);
-			auto list = chain.get_multiforms_by_column(nullptr, states::validator_participation::as_instance_column(owner), 0, offset, count);
+			auto list = chain.get_multiforms_by_column(states::validator_participation::as_instance_type(), nullptr, states::validator_participation::as_instance_column(owner), 0, offset, count);
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
@@ -1955,7 +1948,7 @@ namespace tangent
 
 			auto filter = storages::factor_filter::equal(commitment ? 0 : -1, -1);
 			auto chain = storages::chainstate(__func__);
-			auto list = chain.get_multiforms_by_row_filter(nullptr, states::validator_participation::as_instance_row(asset), filter, 0, storages::factor_range_window(offset, count));
+			auto list = chain.get_multiforms_by_row_filter(states::validator_participation::as_instance_type(), nullptr, states::validator_participation::as_instance_row(asset), filter, 0, storages::factor_range_window(offset, count));
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
@@ -1972,7 +1965,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
 			auto chain = storages::chainstate(__func__);
-			auto state = chain.get_multiform_by_composition(nullptr, states::validator_attestation::as_instance_column(owner), states::validator_attestation::as_instance_row(asset), 0);
+			auto state = chain.get_multiform_by_composition(states::validator_attestation::as_instance_type(), nullptr, states::validator_attestation::as_instance_column(owner), states::validator_attestation::as_instance_row(asset), 0);
 			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
 		}
 		server_response server_node::chainstate_get_validator_attestations(http::connection* base, format::variables&& args)
@@ -1986,7 +1979,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto chain = storages::chainstate(__func__);
-			auto list = chain.get_multiforms_by_column(nullptr, states::validator_attestation::as_instance_column(owner), 0, offset, count);
+			auto list = chain.get_multiforms_by_column(states::validator_attestation::as_instance_type(), nullptr, states::validator_attestation::as_instance_column(owner), 0, offset, count);
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
@@ -2005,7 +1998,7 @@ namespace tangent
 
 			auto filter = storages::factor_filter::equal(commitment ? 0 : -1, -1);
 			auto chain = storages::chainstate(__func__);
-			auto list = chain.get_multiforms_by_row_filter(nullptr, states::validator_attestation::as_instance_row(asset), filter, 0, storages::factor_range_window(offset, count));
+			auto list = chain.get_multiforms_by_row_filter(states::validator_attestation::as_instance_type(), nullptr, states::validator_attestation::as_instance_row(asset), filter, 0, storages::factor_range_window(offset, count));
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
@@ -2022,7 +2015,7 @@ namespace tangent
 
 			auto chain = storages::chainstate(__func__);
 			auto asset = algorithm::asset::id_of_handle(args[1].as_string());
-			auto state = chain.get_multiform_by_composition(nullptr, states::depository_reward::as_instance_column(owner), states::depository_reward::as_instance_row(asset), 0);
+			auto state = chain.get_multiform_by_composition(states::depository_reward::as_instance_type(), nullptr, states::depository_reward::as_instance_column(owner), states::depository_reward::as_instance_row(asset), 0);
 			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
 		}
 		server_response server_node::chainstate_get_depository_rewards(http::connection* base, format::variables&& args)
@@ -2036,7 +2029,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto chain = storages::chainstate(__func__);
-			auto list = chain.get_multiforms_by_column(nullptr, states::depository_reward::as_instance_column(owner), 0, offset, count);
+			auto list = chain.get_multiforms_by_column(states::depository_reward::as_instance_type(), nullptr, states::depository_reward::as_instance_column(owner), 0, offset, count);
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
@@ -2054,7 +2047,7 @@ namespace tangent
 
 			auto filter = storages::factor_filter::greater_equal(0, -1);
 			auto chain = storages::chainstate(__func__);
-			auto list = chain.get_multiforms_by_row_filter(nullptr, states::depository_reward::as_instance_row(asset), filter, 0, storages::factor_range_window(offset, count));
+			auto list = chain.get_multiforms_by_row_filter(states::depository_reward::as_instance_type(), nullptr, states::depository_reward::as_instance_row(asset), filter, 0, storages::factor_range_window(offset, count));
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
@@ -2072,7 +2065,7 @@ namespace tangent
 
 			auto filter = storages::factor_filter::greater_equal(0, -1);
 			auto chain = storages::chainstate(__func__);
-			auto list = chain.get_multiforms_by_row_filter(nullptr, states::depository_reward::as_instance_row(asset), filter, 0, storages::factor_range_window(offset, count));
+			auto list = chain.get_multiforms_by_row_filter(states::depository_reward::as_instance_type(), nullptr, states::depository_reward::as_instance_row(asset), filter, 0, storages::factor_range_window(offset, count));
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
@@ -2083,9 +2076,9 @@ namespace tangent
 			for (auto& item : *list)
 			{
 				auto* reward_state = (states::depository_reward*)*item;
-				auto attestation_state = chain.get_multiform_by_composition(nullptr, states::validator_attestation::as_instance_column(reward_state->owner), attestation_stride, 0);
-				auto policy_state = chain.get_multiform_by_composition(nullptr, states::depository_policy::as_instance_column(reward_state->owner), policy_stride, 0);
-				auto balance_state = chain.get_multiform_by_composition(nullptr, states::depository_balance::as_instance_column(reward_state->owner), balance_stride, 0);
+				auto attestation_state = chain.get_multiform_by_composition(states::validator_attestation::as_instance_type(), nullptr, states::validator_attestation::as_instance_column(reward_state->owner), attestation_stride, 0);
+				auto policy_state = chain.get_multiform_by_composition(states::depository_policy::as_instance_type(), nullptr, states::depository_policy::as_instance_column(reward_state->owner), policy_stride, 0);
+				auto balance_state = chain.get_multiform_by_composition(states::depository_balance::as_instance_type(), nullptr, states::depository_balance::as_instance_column(reward_state->owner), balance_stride, 0);
 				auto* next = data->push(var::set::object());
 				next->set("attestation", attestation_state ? (*attestation_state)->as_schema().reset() : var::set::null());
 				next->set("balance", balance_state ? (*balance_state)->as_schema().reset() : var::set::null());
@@ -2102,7 +2095,7 @@ namespace tangent
 
 			auto chain = storages::chainstate(__func__);
 			auto asset = algorithm::asset::id_of_handle(args[1].as_string());
-			auto state = chain.get_multiform_by_composition(nullptr, states::depository_policy::as_instance_column(owner), states::depository_policy::as_instance_row(asset), 0);
+			auto state = chain.get_multiform_by_composition(states::depository_policy::as_instance_type(), nullptr, states::depository_policy::as_instance_column(owner), states::depository_policy::as_instance_row(asset), 0);
 			auto* value = (states::depository_policy*)(state ? **state : nullptr);
 			return server_response().success(value ? value->as_schema().reset() : nullptr);
 		}
@@ -2118,7 +2111,7 @@ namespace tangent
 
 			auto chain = storages::chainstate(__func__);
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
-			auto state = chain.get_multiform_by_composition(nullptr, states::depository_account::as_instance_column(proposer), states::depository_account::as_instance_row(asset, owner), 0);
+			auto state = chain.get_multiform_by_composition(states::depository_account::as_instance_type(), nullptr, states::depository_account::as_instance_column(proposer), states::depository_account::as_instance_row(asset, owner), 0);
 			auto* value = (states::depository_account*)(state ? **state : nullptr);
 			return server_response().success(value ? value->as_schema().reset() : nullptr);
 		}
@@ -2134,7 +2127,7 @@ namespace tangent
 
 			auto filter = storages::factor_filter::greater_equal(0, -1);
 			auto chain = storages::chainstate(__func__);
-			auto list = chain.get_multiforms_by_column_filter(nullptr, states::depository_account::as_instance_column(proposer), filter, 0, storages::factor_range_window(offset, count));
+			auto list = chain.get_multiforms_by_column_filter(states::depository_account::as_instance_type(), nullptr, states::depository_account::as_instance_column(proposer), filter, 0, storages::factor_range_window(offset, count));
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
@@ -2151,7 +2144,7 @@ namespace tangent
 
 			auto chain = storages::chainstate(__func__);
 			auto asset = algorithm::asset::id_of_handle(args[1].as_string());
-			auto state = chain.get_multiform_by_composition(nullptr, states::depository_balance::as_instance_column(owner), states::depository_balance::as_instance_row(asset), 0);
+			auto state = chain.get_multiform_by_composition(states::depository_balance::as_instance_type(), nullptr, states::depository_balance::as_instance_column(owner), states::depository_balance::as_instance_row(asset), 0);
 			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
 		}
 		server_response server_node::chainstate_get_depository_balances(http::connection* base, format::variables&& args)
@@ -2165,7 +2158,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto chain = storages::chainstate(__func__);
-			auto list = chain.get_multiforms_by_column(nullptr, states::depository_balance::as_instance_column(owner), 0, offset, count);
+			auto list = chain.get_multiforms_by_column(states::depository_balance::as_instance_type(), nullptr, states::depository_balance::as_instance_column(owner), 0, offset, count);
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
@@ -2183,7 +2176,7 @@ namespace tangent
 
 			auto filter = storages::factor_filter::greater_equal(0, -1);
 			auto chain = storages::chainstate(__func__);
-			auto list = chain.get_multiforms_by_row_filter(nullptr, states::depository_balance::as_instance_row(asset), filter, 0, storages::factor_range_window(offset, count));
+			auto list = chain.get_multiforms_by_row_filter(states::depository_balance::as_instance_type(), nullptr, states::depository_balance::as_instance_row(asset), filter, 0, storages::factor_range_window(offset, count));
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
@@ -2201,7 +2194,7 @@ namespace tangent
 
 			auto filter = storages::factor_filter::greater_equal(0, -1);
 			auto chain = storages::chainstate(__func__);
-			auto list = chain.get_multiforms_by_row_filter(nullptr, states::depository_balance::as_instance_row(asset), filter, 0, storages::factor_range_window(offset, count));
+			auto list = chain.get_multiforms_by_row_filter(states::depository_balance::as_instance_type(), nullptr, states::depository_balance::as_instance_row(asset), filter, 0, storages::factor_range_window(offset, count));
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
@@ -2212,9 +2205,9 @@ namespace tangent
 			for (auto& item : *list)
 			{
 				auto* balance_state = (states::depository_balance*)*item;
-				auto attestation_state = chain.get_multiform_by_composition(nullptr, states::validator_attestation::as_instance_column(balance_state->owner), attestation_stride, 0);
-				auto policy_state = chain.get_multiform_by_composition(nullptr, states::depository_policy::as_instance_column(balance_state->owner), policy_stride, 0);
-				auto reward_state = chain.get_multiform_by_composition(nullptr, states::depository_reward::as_instance_column(balance_state->owner), reward_stride, 0);
+				auto attestation_state = chain.get_multiform_by_composition(states::validator_attestation::as_instance_type(), nullptr, states::validator_attestation::as_instance_column(balance_state->owner), attestation_stride, 0);
+				auto policy_state = chain.get_multiform_by_composition(states::depository_policy::as_instance_type(), nullptr, states::depository_policy::as_instance_column(balance_state->owner), policy_stride, 0);
+				auto reward_state = chain.get_multiform_by_composition(states::depository_reward::as_instance_type(), nullptr, states::depository_reward::as_instance_column(balance_state->owner), reward_stride, 0);
 				auto* next = data->push(var::set::object());
 				next->set("attestation", attestation_state ? (*attestation_state)->as_schema().reset() : var::set::null());
 				next->set("balance", balance_state->as_schema().reset());
@@ -2223,10 +2216,59 @@ namespace tangent
 			}
 			return server_response().success(std::move(data));
 		}
+		server_response server_node::chainstate_get_best_depository_policies(http::connection* base, format::variables&& args)
+		{
+			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
+			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
+			if (!count || count > protocol::now().user.rpc.page_size)
+				return server_response().error(error_codes::bad_params, "count not valid");
+
+			auto filter = storages::factor_filter::greater(0, -1);
+			auto chain = storages::chainstate(__func__);
+			auto list = chain.get_multiforms_by_row_filter(states::depository_policy::as_instance_type(), nullptr, states::depository_policy::as_instance_row(asset), filter, 0, storages::factor_range_window(offset, count));
+			if (!list)
+				return server_response().error(error_codes::not_found, "data not found");
+
+			uptr<schema> data = var::set::array();
+			for (auto& item : *list)
+				data->push(item->as_schema().reset());
+			return server_response().success(std::move(data));
+		}
+		server_response server_node::chainstate_get_best_depository_policies_for_selection(http::connection* base, format::variables&& args)
+		{
+			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
+			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
+			if (!count || count > protocol::now().user.rpc.page_size)
+				return server_response().error(error_codes::bad_params, "count not valid");
+
+			auto filter = storages::factor_filter::greater(0, -1);
+			auto chain = storages::chainstate(__func__);
+			auto list = chain.get_multiforms_by_row_filter(states::depository_policy::as_instance_type(), nullptr, states::depository_policy::as_instance_row(asset), filter, 0, storages::factor_range_window(offset, count));
+			if (!list)
+				return server_response().error(error_codes::not_found, "data not found");
+
+			auto attestation_stride = states::validator_attestation::as_instance_row(asset);
+			auto balance_stride = states::depository_balance::as_instance_row(asset);
+			auto reward_stride = states::depository_reward::as_instance_row(asset);
+			uptr<schema> data = var::set::array();
+			for (auto& item : *list)
+			{
+				auto* policy_state = (states::depository_policy*)*item;
+				auto attestation_state = chain.get_multiform_by_composition(states::validator_attestation::as_instance_type(), nullptr, states::validator_attestation::as_instance_column(policy_state->owner), attestation_stride, 0);
+				auto balance_state = chain.get_multiform_by_composition(states::depository_balance::as_instance_type(), nullptr, states::depository_balance::as_instance_column(policy_state->owner), balance_stride, 0);
+				auto reward_state = chain.get_multiform_by_composition(states::depository_reward::as_instance_type(), nullptr, states::depository_reward::as_instance_column(policy_state->owner), reward_stride, 0);
+				auto* next = data->push(var::set::object());
+				next->set("attestation", attestation_state ? (*attestation_state)->as_schema().reset() : var::set::null());
+				next->set("balance", balance_state ? (*balance_state)->as_schema().reset() : var::set::null());
+				next->set("policy", policy_state->as_schema().reset());
+				next->set("reward", reward_state ? (*reward_state)->as_schema().reset() : var::set::null());
+			}
+			return server_response().success(std::move(data));
+		}
 		server_response server_node::chainstate_get_witness_program(http::connection* base, format::variables&& args)
 		{
 			auto chain = storages::chainstate(__func__);
-			auto state = chain.get_uniform_by_index(nullptr, states::witness_program::as_instance_index(args[0].as_string()), 0);
+			auto state = chain.get_uniform_by_index(states::witness_program::as_instance_type(), nullptr, states::witness_program::as_instance_index(args[0].as_string()), 0);
 			if (!state)
 				return server_response().success(var::set::null());
 
@@ -2238,7 +2280,7 @@ namespace tangent
 		server_response server_node::chainstate_get_witness_event(http::connection* base, format::variables&& args)
 		{
 			auto chain = storages::chainstate(__func__);
-			auto state = chain.get_uniform_by_index(nullptr, states::witness_event::as_instance_index(args[0].as_uint256()), 0);
+			auto state = chain.get_uniform_by_index(states::witness_event::as_instance_type(), nullptr, states::witness_event::as_instance_index(args[0].as_uint256()), 0);
 			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
 		}
 		server_response server_node::chainstate_get_witness_account(http::connection* base, format::variables&& args)
@@ -2249,7 +2291,7 @@ namespace tangent
 
 			auto asset = algorithm::asset::id_of_handle(args[1].as_string());
 			auto chain = storages::chainstate(__func__);
-			auto state = chain.get_multiform_by_composition(nullptr, states::witness_account::as_instance_column(owner), states::witness_account::as_instance_row(asset, args[2].as_string()), 0);
+			auto state = chain.get_multiform_by_composition(states::witness_account::as_instance_type(), nullptr, states::witness_account::as_instance_column(owner), states::witness_account::as_instance_row(asset, args[2].as_string()), 0);
 			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
 		}
 		server_response server_node::chainstate_get_witness_accounts(http::connection* base, format::variables&& args)
@@ -2263,7 +2305,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto chain = storages::chainstate(__func__);
-			auto list = chain.get_multiforms_by_column(nullptr, states::witness_account::as_instance_column(owner), 0, offset, count);
+			auto list = chain.get_multiforms_by_column(states::witness_account::as_instance_type(), nullptr, states::witness_account::as_instance_column(owner), 0, offset, count);
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
@@ -2295,7 +2337,7 @@ namespace tangent
 
 			auto chain = storages::chainstate(__func__);
 			auto filter = storages::factor_filter::equal((int64_t)purpose, 1);
-			auto list = chain.get_multiforms_by_column_filter(nullptr, states::witness_account::as_instance_column(owner), filter, 0, storages::factor_range_window(offset, count));
+			auto list = chain.get_multiforms_by_column_filter(states::witness_account::as_instance_type(), nullptr, states::witness_account::as_instance_column(owner), filter, 0, storages::factor_range_window(offset, count));
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
@@ -2308,7 +2350,7 @@ namespace tangent
 		{
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
 			auto chain = storages::chainstate(__func__);
-			auto state = chain.get_uniform_by_index(nullptr, states::witness_transaction::as_instance_index(asset, args[1].as_string()), 0);
+			auto state = chain.get_uniform_by_index(states::witness_transaction::as_instance_type(), nullptr, states::witness_transaction::as_instance_index(asset, args[1].as_string()), 0);
 			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
 		}
 		server_response server_node::mempoolstate_add_node(http::connection* base, format::variables&& args)
@@ -2525,7 +2567,7 @@ namespace tangent
 
 			auto mempool = storages::mempoolstate(__func__);
 			auto chain = storages::chainstate(__func__);
-			auto state = chain.get_uniform_by_index(nullptr, states::account_nonce::as_instance_index(owner), 0);
+			auto state = chain.get_uniform_by_index(states::account_nonce::as_instance_type(), nullptr, states::account_nonce::as_instance_index(owner), 0);
 			auto* value = (states::account_nonce*)(state ? **state : nullptr);
 			auto lowest = mempool.get_lowest_transaction_nonce(owner);
 			auto highest = mempool.get_highest_transaction_nonce(owner);

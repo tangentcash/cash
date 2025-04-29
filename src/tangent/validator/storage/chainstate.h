@@ -50,19 +50,23 @@ namespace tangent
 		{
 		private:
 			unordered_map<string, uint64_t> indices;
-			unordered_map<uint64_t, uint64_t> blocks;
+			unordered_map<string, uint64_t> blocks;
 			std::mutex mutex;
 
 		public:
 			uniform_cache() = default;
 			virtual ~uniform_cache() = default;
 			void clear_locations();
-			void clear_uniform_location(const std::string_view& index);
-			void clear_block_location(const std::string_view& index);
-			void set_index_location(const std::string_view& index, uint64_t location);
-			void set_block_location(uint64_t location, uint64_t block_number);
-			option<uint64_t> get_index_location(const std::string_view& index);
-			option<uint64_t> get_block_location(uint64_t location);
+			void clear_uniform_location(uint32_t type, const std::string_view& index);
+			void clear_block_location(uint32_t type, const std::string_view& index);
+			void set_index_location(uint32_t type, const std::string_view& index, uint64_t location);
+			void set_block_location(uint32_t type, uint64_t location, uint64_t block_number);
+			option<uint64_t> get_index_location(uint32_t type, const std::string_view& index);
+			option<uint64_t> get_block_location(uint32_t type, uint64_t location);
+
+		private:
+			string key_of_indices(uint32_t type, const std::string_view& index);
+			string key_of_blocks(uint32_t type, uint64_t location);
 		};
 
 		class multiform_cache : public singleton<multiform_cache>
@@ -70,22 +74,27 @@ namespace tangent
 		private:
 			unordered_map<string, uint64_t> columns;
 			unordered_map<string, uint64_t> rows;
-			unordered_map<uint128_t, uint64_t> blocks;
+			unordered_map<string, uint64_t> blocks;
 			std::mutex mutex;
 
 		public:
 			multiform_cache() = default;
 			virtual ~multiform_cache() = default;
 			void clear_locations();
-			void clear_multiform_location(const std::string_view& column, const std::string_view& row);
-			void clear_block_location(const std::string_view& column, const std::string_view& row);
-			void set_multiform_location(const std::string_view& column, const std::string_view& row, uint64_t column_location, uint64_t row_location);
-			void set_column_location(const std::string_view& column, uint64_t location);
-			void set_row_location(const std::string_view& row, uint64_t location);
-			void set_block_location(uint64_t column_location, uint64_t row_location, uint64_t block_number);
-			option<uint64_t> get_column_location(const std::string_view& column);
-			option<uint64_t> get_row_location(const std::string_view& row);
-			option<uint64_t> get_block_location(uint64_t column_location, uint64_t row_location);
+			void clear_multiform_location(uint32_t type, const std::string_view& column, const std::string_view& row);
+			void clear_block_location(uint32_t type, const std::string_view& column, const std::string_view& row);
+			void set_multiform_location(uint32_t type, const std::string_view& column, const std::string_view& row, uint64_t column_location, uint64_t row_location);
+			void set_column_location(uint32_t type, const std::string_view& column, uint64_t location);
+			void set_row_location(uint32_t type, const std::string_view& row, uint64_t location);
+			void set_block_location(uint32_t type, uint64_t column_location, uint64_t row_location, uint64_t block_number);
+			option<uint64_t> get_column_location(uint32_t type, const std::string_view& column);
+			option<uint64_t> get_row_location(uint32_t type, const std::string_view& row);
+			option<uint64_t> get_block_location(uint32_t type, uint64_t column_location, uint64_t row_location);
+
+		private:
+			string key_of_columns(uint32_t type, const std::string_view& column);
+			string key_of_rows(uint32_t type, const std::string_view& row);
+			string key_of_blocks(uint32_t type, uint64_t column_location, uint64_t row_location);
 		};
 
 		struct factor_filter
@@ -159,13 +168,18 @@ namespace tangent
 			};
 
 		private:
-			uptr<sqlite::connection> blockdata;
-			uptr<sqlite::connection> accountdata;
-			uptr<sqlite::connection> txdata;
-			uptr<sqlite::connection> partydata;
-			uptr<sqlite::connection> aliasdata;
-			uptr<sqlite::connection> uniformdata;
-			uptr<sqlite::connection> multiformdata;
+			struct
+			{
+				unordered_map<uint32_t, uptr<sqlite::connection>> uniformdata;
+				unordered_map<uint32_t, uptr<sqlite::connection>> multiformdata;
+				uptr<sqlite::connection> blockdata;
+				uptr<sqlite::connection> accountdata;
+				uptr<sqlite::connection> txdata;
+				uptr<sqlite::connection> partydata;
+				uptr<sqlite::connection> aliasdata;
+			} storages;
+
+		private:
 			std::string_view label;
 			bool borrows;
 
@@ -195,7 +209,7 @@ namespace tangent
 			expects_lr<vector<uint256_t>> get_block_statetrie_hashset(uint64_t block_number);
 			expects_lr<vector<uint256_t>> get_block_hashset(uint64_t block_number, size_t count);
 			expects_lr<vector<ledger::block_header>> get_block_headers(uint64_t block_number, size_t count);
-			expects_lr<ledger::state_work> get_block_statetrie_by_number(uint64_t block_number, size_t offset, size_t count);
+			expects_lr<ledger::state_work> get_block_statetrie_by_number(uint64_t block_number, size_t chunk = ELEMENTS_MANY);
 			expects_lr<vector<uptr<ledger::transaction>>> get_transactions_by_number(uint64_t block_number, size_t offset, size_t count);
 			expects_lr<vector<uptr<ledger::transaction>>> get_transactions_by_owner(uint64_t block_number, const algorithm::pubkeyhash owner, int8_t direction, size_t offset, size_t count);
 			expects_lr<vector<ledger::block_transaction>> get_block_transactions_by_number(uint64_t block_number, size_t offset, size_t count);
@@ -205,26 +219,35 @@ namespace tangent
 			expects_lr<uptr<ledger::transaction>> get_transaction_by_hash(const uint256_t& transaction_hash);
 			expects_lr<ledger::block_transaction> get_block_transaction_by_hash(const uint256_t& transaction_hash);
 			expects_lr<ledger::receipt> get_receipt_by_transaction_hash(const uint256_t& transaction_hash);
-			expects_lr<uptr<ledger::state>> get_uniform_by_index(const ledger::block_mutation* delta, const std::string_view& index, uint64_t block_number);
-			expects_lr<uptr<ledger::state>> get_multiform_by_composition(const ledger::block_mutation* delta, const std::string_view& column, const std::string_view& row, uint64_t block_number);
-			expects_lr<uptr<ledger::state>> get_multiform_by_column(const ledger::block_mutation* delta, const std::string_view& column, uint64_t block_number, size_t offset);
-			expects_lr<uptr<ledger::state>> get_multiform_by_row(const ledger::block_mutation* delta, const std::string_view& row, uint64_t block_number, size_t offset);
-			expects_lr<vector<uptr<ledger::state>>> get_multiforms_by_column(const ledger::block_mutation* delta, const std::string_view& column, uint64_t block_number, size_t offset, size_t count);
-			expects_lr<vector<uptr<ledger::state>>> get_multiforms_by_column_filter(const ledger::block_mutation* delta, const std::string_view& column, const factor_filter& filter, uint64_t block_number, const factor_window& window);
-			expects_lr<vector<uptr<ledger::state>>> get_multiforms_by_row(const ledger::block_mutation* delta, const std::string_view& row, uint64_t block_number, size_t offset, size_t count);
-			expects_lr<vector<uptr<ledger::state>>> get_multiforms_by_row_filter(const ledger::block_mutation* delta, const std::string_view& row, const factor_filter& filter, uint64_t block_number, const factor_window& window);
-			expects_lr<size_t> get_multiforms_count_by_column(const std::string_view& row, uint64_t block_number);
-			expects_lr<size_t> get_multiforms_count_by_column_filter(const std::string_view& row, const factor_filter& filter, uint64_t block_number);
-			expects_lr<size_t> get_multiforms_count_by_row(const std::string_view& row, uint64_t block_number);
-			expects_lr<size_t> get_multiforms_count_by_row_filter(const std::string_view& row, const factor_filter& filter, uint64_t block_number);
+			expects_lr<uptr<ledger::state>> get_uniform_by_index(uint32_t type, const ledger::block_mutation* delta, const std::string_view& index, uint64_t block_number);
+			expects_lr<uptr<ledger::state>> get_multiform_by_composition(uint32_t type, const ledger::block_mutation* delta, const std::string_view& column, const std::string_view& row, uint64_t block_number);
+			expects_lr<uptr<ledger::state>> get_multiform_by_column(uint32_t type, const ledger::block_mutation* delta, const std::string_view& column, uint64_t block_number, size_t offset);
+			expects_lr<uptr<ledger::state>> get_multiform_by_row(uint32_t type, const ledger::block_mutation* delta, const std::string_view& row, uint64_t block_number, size_t offset);
+			expects_lr<vector<uptr<ledger::state>>> get_multiforms_by_column(uint32_t type, const ledger::block_mutation* delta, const std::string_view& column, uint64_t block_number, size_t offset, size_t count);
+			expects_lr<vector<uptr<ledger::state>>> get_multiforms_by_column_filter(uint32_t type, const ledger::block_mutation* delta, const std::string_view& column, const factor_filter& filter, uint64_t block_number, const factor_window& window);
+			expects_lr<vector<uptr<ledger::state>>> get_multiforms_by_row(uint32_t type, const ledger::block_mutation* delta, const std::string_view& row, uint64_t block_number, size_t offset, size_t count);
+			expects_lr<vector<uptr<ledger::state>>> get_multiforms_by_row_filter(uint32_t type, const ledger::block_mutation* delta, const std::string_view& row, const factor_filter& filter, uint64_t block_number, const factor_window& window);
+			expects_lr<size_t> get_multiforms_count_by_column(uint32_t type, const std::string_view& row, uint64_t block_number);
+			expects_lr<size_t> get_multiforms_count_by_column_filter(uint32_t type, const std::string_view& row, const factor_filter& filter, uint64_t block_number);
+			expects_lr<size_t> get_multiforms_count_by_row(uint32_t type, const std::string_view& row, uint64_t block_number);
+			expects_lr<size_t> get_multiforms_count_by_row_filter(uint32_t type, const std::string_view& row, const factor_filter& filter, uint64_t block_number);
 			void clear_indexer_cache();
 
 		private:
-			expects_lr<size_t> resolve_block_transactions(ledger::block& value, bool fully, size_t offset, size_t count);
-			expects_lr<size_t> resolve_block_statetrie(ledger::block& value, size_t offset, size_t count);
-			expects_lr<uniform_location> resolve_uniform_location(const std::string_view& index, bool latest);
-			expects_lr<multiform_location> resolve_multiform_location(const option<std::string_view>& column, const option<std::string_view>& row, bool latest);
+			expects_lr<void> resolve_block_transactions(vector<ledger::block_transaction>& result, uint64_t block_number, bool fully, size_t chunk);
+			expects_lr<void> resolve_block_statetrie(ledger::block_work& result, uint64_t block_number, size_t chunk);
+			expects_lr<uniform_location> resolve_uniform_location(uint32_t type, const std::string_view& index, bool latest);
+			expects_lr<multiform_location> resolve_multiform_location(uint32_t type, const option<std::string_view>& column, const option<std::string_view>& row, bool latest);
 			expects_lr<uint64_t> resolve_account_location(const algorithm::pubkeyhash account);
+			sqlite::connection* get_blockdata();
+			sqlite::connection* get_accountdata();
+			sqlite::connection* get_txdata();
+			sqlite::connection* get_partydata();
+			sqlite::connection* get_aliasdata();
+			sqlite::connection* get_uniformdata(uint32_t type);
+			unordered_map<uint32_t, uptr<sqlite::connection>>& get_uniformdata_max();
+			sqlite::connection* get_multiformdata(uint32_t type);
+			unordered_map<uint32_t, uptr<sqlite::connection>>& get_multiformdata_max();
 
 		protected:
 			vector<sqlite::connection*> get_index_storages() override;

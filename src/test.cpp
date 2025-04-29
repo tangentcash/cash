@@ -1529,10 +1529,10 @@ public:
 			TEST_BLOCK(&generators::account_program_deployment, "0x241cf5b101da20e5ab15b33b0b5962db49580cb7f9ab7771788f7be1625422e3", 11);
 			TEST_BLOCK(&generators::account_program_invocation, "0xd8cb0e13e3bae9e97493a65108bac8b335d9c2c50fd5f748a3fc8fd21f4ef28f", 12);
 			TEST_BLOCK(&generators::depository_regrouping, "0x0116910b3a878d2be6749686670f1962c7d983ff52e2eaafc7607781bd521ca2", 13);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_1, "0x0f46652ed8c45b0a36ba53fc3d49bceadc95c3bacec8f9c2ca60857e1131b082", 17);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0x79e256d1eeb00339eac75651eae7eb74974d411915b4d36185c352c04d63a2b0", 19);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0x202926f6c9a949eaaf60659dd78e1aa7f9b55821f20b709b62a4eaa22120a2ef", 21);
-			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2), "0x273b6135a649b87aaef05359dd4138d92e3bac791cf1e57c50fee77c41fb38f7", 23);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_1, "0x9d3d9913dc5b48a12b856917c72a602186c53d35fcc5a569f695ab1a41c44e1a", 17);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0xfbb5de33965e56bd53a4c2629791570bec64082c7db101c40f16e654a7fa308c", 19);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0x4aaa9fb35a35f146449dee4fb1eb55d62b8a1671b625dac2523cae333ae69199", 21);
+			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2), "0x7d9f4030626686cf53f4b6368e77dadca262b3a01a65d88a3a09dc809b99e42a", 23);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else
@@ -1928,16 +1928,19 @@ public:
 				if (!algorithm::signing::decode_address(args[2], owner))
 					goto not_valid;
 
+				uint32_t type = 0;
 				auto index = string();
 				auto column = string();
 				auto row = string();
 				auto& state = args[1];
 				if (state == "nonce")
 				{
+					type = states::account_nonce::as_instance_type();
 					index = states::account_nonce::as_instance_index(owner);
 				}
 				else if (state == "program")
 				{
+					type = states::account_program::as_instance_type();
 					index = states::account_program::as_instance_index(owner);
 				}
 				else if (state == "storage")
@@ -1945,6 +1948,7 @@ public:
 					if (args.size() < 4)
 						goto not_valid;
 
+					type = states::account_storage::as_instance_type();
 					index = states::account_storage::as_instance_index(owner, codec::hex_decode(args[3]));
 				}
 				else if (state == "balance")
@@ -1952,11 +1956,12 @@ public:
 					if (args.size() < 4)
 						goto not_valid;
 
+					type = states::account_balance::as_instance_type();
 					column = states::account_balance::as_instance_column(owner);
 					row = states::account_balance::as_instance_row(algorithm::asset::id_of_handle(args[3]));
 				}
 
-				auto response = index.empty() ? chain.get_multiform_by_composition(nullptr, column, row, 0) : chain.get_uniform_by_index(nullptr, index, 0);
+				auto response = index.empty() ? chain.get_multiform_by_composition(type, nullptr, column, row, 0) : chain.get_uniform_by_index(type, nullptr, index, 0);
 				if (!response || !*response)
 					goto not_found;
 
@@ -1973,12 +1978,14 @@ public:
 				if (!algorithm::signing::decode_address(args[2], owner))
 					goto not_valid;
 
+				uint32_t type = 0;
 				auto index = string();
 				auto column = string();
 				auto row = string();
 				auto& state = args[1];
 				if (state == "production")
 				{
+					type = states::validator_production::as_instance_type();
 					column = states::validator_production::as_instance_column(owner);
 					row = states::validator_production::as_instance_row();
 				}
@@ -1987,6 +1994,7 @@ public:
 					if (args.size() < 4)
 						goto not_valid;
 
+					type = states::validator_participation::as_instance_type();
 					column = states::validator_participation::as_instance_column(owner);
 					row = states::validator_participation::as_instance_row(algorithm::asset::id_of_handle(args[3]));
 				}
@@ -1995,11 +2003,12 @@ public:
 					if (args.size() < 4)
 						goto not_valid;
 
+					type = states::validator_attestation::as_instance_type();
 					column = states::validator_attestation::as_instance_column(owner);
 					row = states::validator_attestation::as_instance_row(algorithm::asset::id_of_handle(args[3]));
 				}
 
-				auto response = index.empty() ? chain.get_multiform_by_composition(nullptr, column, row, 0) : chain.get_uniform_by_index(nullptr, index, 0);
+				auto response = index.empty() ? chain.get_multiform_by_composition(type, nullptr, column, row, 0) : chain.get_uniform_by_index(type, nullptr, index, 0);
 				if (!response || !*response)
 					goto not_found;
 
@@ -2016,6 +2025,7 @@ public:
 				if (!algorithm::signing::decode_address(args[2], owner))
 					goto not_valid;
 
+				uint32_t type = 0;
 				auto index = string();
 				auto column = string();
 				auto row = string();
@@ -2025,6 +2035,7 @@ public:
 					if (args.size() < 4)
 						goto not_valid;
 
+					type = states::depository_reward::as_instance_type();
 					column = states::depository_reward::as_instance_column(owner);
 					row = states::depository_reward::as_instance_row(algorithm::asset::id_of_handle(args[3]));
 				}
@@ -2033,6 +2044,7 @@ public:
 					if (args.size() < 4)
 						goto not_valid;
 
+					type = states::depository_balance::as_instance_type();
 					column = states::depository_balance::as_instance_column(owner);
 					row = states::depository_balance::as_instance_row(algorithm::asset::id_of_handle(args[3]));
 				}
@@ -2041,6 +2053,7 @@ public:
 					if (args.size() < 4)
 						goto not_valid;
 
+					type = states::depository_policy::as_instance_type();
 					column = states::depository_policy::as_instance_column(owner);
 					row = states::depository_policy::as_instance_row(algorithm::asset::id_of_handle(args[3]));
 				}
@@ -2053,11 +2066,12 @@ public:
 					if (!algorithm::signing::decode_address(args[3], subject))
 						goto not_valid;
 
+					type = states::depository_account::as_instance_type();
 					column = states::depository_account::as_instance_column(owner);
 					row = states::depository_account::as_instance_row(algorithm::asset::id_of_handle(args[4]), subject);
 				}
 
-				auto response = index.empty() ? chain.get_multiform_by_composition(nullptr, column, row, 0) : chain.get_uniform_by_index(nullptr, index, 0);
+				auto response = index.empty() ? chain.get_multiform_by_composition(type, nullptr, column, row, 0) : chain.get_uniform_by_index(type, nullptr, index, 0);
 				if (!response || !*response)
 					goto not_found;
 
@@ -2070,6 +2084,7 @@ public:
 				if (args.size() < 2)
 					goto not_valid;
 
+				uint32_t type = 0;
 				auto index = string();
 				auto column = string();
 				auto row = string();
@@ -2079,6 +2094,7 @@ public:
 					if (args.size() < 3)
 						goto not_valid;
 
+					type = states::witness_program::as_instance_type();
 					index = states::witness_program::as_instance_index(args[2]);
 				}
 				else if (state == "event")
@@ -2086,8 +2102,8 @@ public:
 					if (args.size() < 3)
 						goto not_valid;
 
-					auto hash = uint256_t(args[2], 16);
-					index = states::witness_event::as_instance_index(hash);
+					type = states::witness_event::as_instance_type();
+					index = states::witness_event::as_instance_index(algorithm::encoding::decode_0xhex256(args[2]));
 				}
 				else if (state == "account")
 				{
@@ -2098,6 +2114,7 @@ public:
 					if (!algorithm::signing::decode_address(args[2], owner))
 						goto not_valid;
 
+					type = states::witness_account::as_instance_type();
 					column = states::witness_account::as_instance_column(owner);
 					row = states::witness_account::as_instance_row(algorithm::asset::id_of_handle(args[3]), args[4]);
 				}
@@ -2106,10 +2123,11 @@ public:
 					if (args.size() < 4)
 						goto not_valid;
 
+					type = states::witness_transaction::as_instance_type();
 					index = states::witness_transaction::as_instance_index(algorithm::asset::id_of_handle(args[2]), args[3]);
 				}
 
-				auto response = index.empty() ? chain.get_multiform_by_composition(nullptr, column, row, 0) : chain.get_uniform_by_index(nullptr, index, 0);
+				auto response = index.empty() ? chain.get_multiform_by_composition(type, nullptr, column, row, 0) : chain.get_uniform_by_index(type, nullptr, index, 0);
 				if (!response || !*response)
 					goto not_found;
 
@@ -2512,7 +2530,7 @@ public:
 				"222fc360affb804ad2c34bba2269b36a64a86f017d05a9a60b237e8587bfc52b",
 				{ mediator::value_transfer(depository_transaction->asset, "mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", decimal(incoming_quantity)) },
 				{ mediator::value_transfer(depository_transaction->asset, user1_depository_address->addresses.begin()->second, decimal(incoming_quantity)) });
-			VI_PANIC(depository_transaction->sign(user1.secret_key, user1_nonce++), "claim not signed");
+			VI_PANIC(depository_transaction->sign(user1.secret_key), "claim not signed");
 
 			auto genesis = vector<uptr<ledger::transaction>>();
 			genesis.push_back(depository_transaction);
@@ -2551,7 +2569,7 @@ public:
 				"222fc360affb804ad2c34bba2269b36a64a86f017d05a9a60b237e8587bfc52b",
 				{ mediator::value_transfer(depository_transaction->asset, "mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", decimal(incoming_quantity)) },
 				{ mediator::value_transfer(depository_transaction->asset, user1_depository_address->addresses.begin()->second, decimal(incoming_quantity)) });
-			VI_PANIC(depository_transaction->sign(user1.secret_key, user1_nonce++), "claim not signed");
+			VI_PANIC(depository_transaction->sign(user1.secret_key), "claim not signed");
 
 			auto genesis = vector<uptr<ledger::transaction>>();
 			genesis.push_back(depository_transaction);
@@ -2611,7 +2629,7 @@ public:
 				"222fc360affb804ad2c34bba2269b36a64a86f017d05a9a60b237e8587bfc52b",
 				{ mediator::value_transfer(depository_transaction->asset, "mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", decimal(incoming_quantity)) },
 				{ mediator::value_transfer(depository_transaction->asset, user1_depository_address->addresses.begin()->second, decimal(incoming_quantity)) });
-			VI_PANIC(depository_transaction->sign(user1.secret_key, user1_nonce++), "claim not signed");
+			VI_PANIC(depository_transaction->sign(user1.secret_key), "claim not signed");
 
 			auto genesis = vector<uptr<ledger::transaction>>();
 			genesis.push_back(depository_transaction);
@@ -2671,7 +2689,7 @@ public:
 
 		return 0;
 	}
-	/* test case runner for regressuib testing */
+	/* test case runner for regression testing */
 	static int regression(int argc, char* argv[])
 	{
 		VI_PANIC(argc > 1, "config path argument is required");

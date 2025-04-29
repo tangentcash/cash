@@ -192,7 +192,7 @@ namespace tangent
 		{
 			auto mempool = storages::mempoolstate(__func__);
 			auto chain = storages::chainstate(__func__);
-			auto state = chain.get_uniform_by_index(nullptr, states::account_nonce::as_instance_index(public_key_hash), 0);
+			auto state = chain.get_uniform_by_index(states::account_nonce::as_instance_type(), nullptr, states::account_nonce::as_instance_index(public_key_hash), 0);
 			uint64_t pending_nonce = mempool.get_highest_transaction_nonce(public_key_hash).or_else(0);
 			uint64_t finalized_nonce = (state ? ((states::account_nonce*)**state)->nonce : 0);
 			return std::max(finalized_nonce, pending_nonce);
