@@ -616,9 +616,14 @@ namespace tangent
 		{
 			return "block";
 		}
+		uint64_t block_header::get_transaction_limit()
+		{
+			static uint64_t limit = (uint64_t)std::ceil((double)protocol::now().policy.consensus_proof_time * (double)protocol::now().policy.transaction_throughput / 1000.0);
+			return limit;
+		}
 		uint256_t block_header::get_gas_limit()
 		{
-			static uint256_t limit = transactions::transfer().get_gas_estimate() * (uint64_t)std::ceil((double)protocol::now().policy.consensus_proof_time * (double)protocol::now().policy.transaction_throughput / 1000.0);
+			static uint256_t limit = gas_util::get_gas_estimate<transactions::transfer, 64>() * get_transaction_limit();
 			return limit;
 		}
 
@@ -1440,12 +1445,28 @@ namespace tangent
 
 			return expectation::met;
 		}
+		expects_lr<void> transaction_context::verify_account_delegation(const algorithm::pubkeyhash owner) const
+		{
+			if (!transaction || !block)
+				return layer_exception("invalid transaction or block");
+
+			auto state = get_account_delegation(owner);
+			if (!state)
+				return expectation::met;
+
+			uint64_t target_block_number = state->get_delegation_zeroing_block(block->number);
+			if (target_block_number > block->number)
+				return layer_exception("account is over delegated (retry at block: " + to_string(target_block_number) + ")");
+
+			return expectation::met;
+		}
 		expects_lr<void> transaction_context::verify_gas_transfer_balance() const
 		{
 			if (!transaction)
 				return layer_exception("invalid transaction");
 
-			if (!transaction->gas_price.is_positive())
+			bool gas_calculation = block != nullptr && block->number == std::numeric_limits<int64_t>::max() - 1;
+			if (gas_calculation || !transaction->gas_price.is_positive())
 				return expectation::met;
 
 			auto asset = transaction->get_gas_asset();
@@ -1627,7 +1648,7 @@ namespace tangent
 			states::account_nonce new_state = states::account_nonce(owner, block);
 			new_state.nonce = nonce;
 
-			auto status = store(&new_state, false);
+			auto status = store(&new_state);
 			if (!status)
 				return status.error();
 
@@ -1653,6 +1674,17 @@ namespace tangent
 			auto result = store(&new_state);
 			if (!result)
 				return result.error();
+
+			return new_state;
+		}
+		expects_lr<states::account_delegation> transaction_context::apply_account_delegation(const algorithm::pubkeyhash owner, uint32_t delegations)
+		{
+			states::account_delegation new_state = states::account_delegation(owner, block);
+			new_state.delegations = delegations;
+
+			auto status = store(&new_state);
+			if (!status)
+				return status.error();
 
 			return new_state;
 		}
@@ -2030,6 +2062,20 @@ namespace tangent
 
 			return states::account_storage(std::move(*(states::account_storage*)**state));
 		}
+		expects_lr<states::account_delegation> transaction_context::get_account_delegation(const algorithm::pubkeyhash owner) const
+		{
+			VI_ASSERT(owner != nullptr, "owner should be set");
+			auto chain = storages::chainstate(__func__);
+			auto state = chain.get_uniform_by_index(states::account_delegation::as_instance_type(), &delta, states::account_delegation::as_instance_index(owner), get_validation_nonce());
+			if (!state)
+				return state.error();
+
+			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
+			if (!status)
+				return status.error();
+
+			return states::account_delegation(std::move(*(states::account_delegation*)**state));
+		}
 		expects_lr<states::account_balance> transaction_context::get_account_balance(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner) const
 		{
 			VI_ASSERT(owner != nullptr, "owner should be set");
@@ -2398,7 +2444,7 @@ namespace tangent
 			}
 
 			size_t transaction_size = transaction->as_message().data.size();
-			auto execution = transaction_context::execute_tx(&temp_block, &temp_environment, transaction, transaction->as_hash(), owner, cache, transaction_size, (uint8_t)transaction_context::execution_flags::skip_sequencing);
+			auto execution = transaction_context::execute_tx(&temp_block, &temp_environment, transaction, transaction->as_hash(), owner, cache, transaction_size, (transaction->conservative && false ? 0 : (uint8_t)execution_flags::only_successful) | (uint8_t)execution_flags::gas_calculation);
 			if (!execution)
 			{
 				revert_transaction();
@@ -2452,11 +2498,12 @@ namespace tangent
 				return execution.error();
 
 			algorithm::pubkeyhash null = { 0 };
-			if (!(flags & (uint8_t)execution_flags::skip_sequencing) && memcmp(context.receipt.from, null, sizeof(null)) != 0)
+			if (memcmp(context.receipt.from, null, sizeof(null)) != 0)
 			{
-				auto info = context.apply_account_nonce(context.receipt.from, context.transaction->nonce + 1);
-				if (!info)
-					return info.error();
+				auto nonce = (flags & (uint8_t)execution_flags::gas_calculation ? context.get_account_nonce(context.receipt.from).or_else(states::account_nonce(nullptr, nullptr)).nonce : context.transaction->nonce);
+				auto sequencing = context.apply_account_nonce(context.receipt.from, nonce + 1);
+				if (!sequencing)
+					return sequencing.error();
 			}
 
 			context.receipt.relative_gas_paid = context.transaction->gas_price.is_positive() ? context.receipt.relative_gas_use : 0;

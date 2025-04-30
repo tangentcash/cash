@@ -157,6 +157,7 @@ namespace tangent
 			server_response chainstate_get_account_nonce(http::connection* base, format::variables&& args);
 			server_response chainstate_get_account_program(http::connection* base, format::variables&& args);
 			server_response chainstate_get_account_storage(http::connection* base, format::variables&& args);
+			server_response chainstate_get_account_delegation(http::connection* base, format::variables&& args);
 			server_response chainstate_get_account_balance(http::connection* base, format::variables&& args);
 			server_response chainstate_get_account_balances(http::connection* base, format::variables&& args);
 			server_response chainstate_get_validator_production(http::connection* base, format::variables&& args);
@@ -195,7 +196,6 @@ namespace tangent
 			server_response mempoolstate_get_gas_price(http::connection* base, format::variables&& args);
 			server_response mempoolstate_get_asset_price(http::connection* base, format::variables&& args);
 			server_response mempoolstate_get_optimal_transaction_gas(http::connection* base, format::variables&& args);
-			server_response mempoolstate_get_estimate_transaction_gas(http::connection* base, format::variables&& args);
 			server_response mempoolstate_submit_transaction(http::connection* base, format::variables&& args, ledger::transaction* prebuilt);
 			server_response mempoolstate_reject_transaction(http::connection* base, format::variables&& args);
 			server_response mempoolstate_get_transaction_by_hash(http::connection* base, format::variables&& args);

@@ -158,10 +158,6 @@ namespace tangent
 		{
 			return as_instance_typename();
 		}
-		uint256_t transfer::get_gas_estimate() const
-		{
-			return ledger::gas_util::get_gas_estimate<transfer, 64>();
-		}
 		uint32_t transfer::as_instance_type()
 		{
 			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
@@ -414,10 +410,6 @@ namespace tangent
 		{
 			return as_instance_typename();
 		}
-		uint256_t deployment::get_gas_estimate() const
-		{
-			return ledger::gas_util::get_gas_estimate<deployment, 128>();
-		}
 		uint32_t deployment::as_instance_type()
 		{
 			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
@@ -551,10 +543,6 @@ namespace tangent
 		std::string_view invocation::as_typename() const
 		{
 			return as_instance_typename();
-		}
-		uint256_t invocation::get_gas_estimate() const
-		{
-			return ledger::gas_util::get_gas_estimate<invocation, 128>();
 		}
 		uint32_t invocation::as_instance_type()
 		{
@@ -965,16 +953,6 @@ namespace tangent
 		{
 			return as_instance_typename();
 		}
-		uint256_t rollup::get_gas_estimate() const
-		{
-			uint256_t gas_requirement = ledger::gas_util::get_gas_estimate<rollup, 8>();
-			for (auto& group : transactions)
-			{
-				for (auto& transaction : group.second)
-					gas_requirement += transaction->gas_limit;
-			}
-			return gas_requirement;
-		}
 		uint32_t rollup::as_instance_type()
 		{
 			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
@@ -988,19 +966,23 @@ namespace tangent
 		{
 			if (!transaction.asset)
 				transaction.asset = asset;
-			transaction.conservative = false;
 			transaction.gas_price = decimal::nan();
-			if (!transaction.gas_limit)
-				transaction.gas_limit = transaction.get_gas_estimate();
+			transaction.conservative = false;
 		}
 		bool rollup::sign_child(ledger::transaction& transaction, const algorithm::seckey secret_key, const algorithm::asset_id& asset, uint16_t index)
 		{
+			if (!transaction.gas_limit)
+			{
+				setup_child(transaction, asset);
+				if (!transaction.sign(secret_key, transaction.nonce, decimal::zero()))
+					return false;
+			}
+
 			format::stream message;
 			message.write_integer(rollup::as_instance_type());
 			message.write_integer(asset);
 			message.write_integer(index);
 			setup_child(transaction, asset);
-
 			if (!transaction.store_payload(&message))
 				return false;
 
@@ -1223,10 +1205,6 @@ namespace tangent
 		{
 			return as_instance_typename();
 		}
-		uint256_t certification::get_gas_estimate() const
-		{
-			return ledger::gas_util::get_gas_estimate<certification, 64>();
-		}
 		uint32_t certification::as_instance_type()
 		{
 			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
@@ -1259,6 +1237,16 @@ namespace tangent
 			auto* chain = nss::server_node::get()->get_chain(asset);
 			if (!chain)
 				return layer_exception("invalid operation");
+
+			auto attestation_requirement = context->verify_validator_attestation(asset, manager);
+			if (!attestation_requirement)
+				return attestation_requirement.error();
+
+			auto depository_policy = context->get_depository_policy(asset, manager);
+			if (!depository_policy)
+				return depository_policy.error();
+			else if (!depository_policy->accepts_account_requests)
+				return layer_exception("depository forbids account requests");
 
 			auto public_key_hash = chain->decode_address(address);
 			if (!public_key_hash)
@@ -1305,10 +1293,6 @@ namespace tangent
 		{
 			return as_instance_typename();
 		}
-		uint256_t routing_account::get_gas_estimate() const
-		{
-			return ledger::gas_util::get_gas_estimate<routing_account, 128>();
-		}
 		uint32_t routing_account::as_instance_type()
 		{
 			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
@@ -1323,10 +1307,6 @@ namespace tangent
 		{
 			if (!algorithm::asset::token_of(asset).empty())
 				return layer_exception("invalid asset");
-
-			algorithm::pubkeyhash null = { 0 };
-			if (memcmp(manager, null, sizeof(null)) == 0)
-				return layer_exception("invalid manager");
 
 			return ledger::delegation_transaction::validate(block_number);
 		}
@@ -1348,7 +1328,7 @@ namespace tangent
 			if (!depository_policy)
 				return depository_policy.error();
 			else if (!depository_policy->accepts_account_requests)
-				return layer_exception("depository forbids account creations");
+				return layer_exception("depository forbids account requests");
 
 			auto duplicate = context->get_depository_account(asset, manager, context->receipt.from);
 			if (duplicate)
@@ -1490,16 +1470,10 @@ namespace tangent
 		bool depository_account::store_body(format::stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			algorithm::pubkeyhash null = { 0 };
-			stream->write_string(std::string_view((char*)manager, memcmp(manager, null, sizeof(null)) == 0 ? 0 : sizeof(manager)));
 			return true;
 		}
 		bool depository_account::load_body(format::stream& stream)
 		{
-			string manager_assembly;
-			if (!stream.read_string(stream.read_type(), &manager_assembly) || !algorithm::encoding::decode_uint_blob(manager_assembly, manager, sizeof(manager)))
-				return false;
-
 			return true;
 		}
 		bool depository_account::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
@@ -1508,21 +1482,6 @@ namespace tangent
 			parties.insert(algorithm::pubkeyhash_t(manager));
 			parties.insert(group.begin(), group.end());
 			return true;
-		}
-		void depository_account::set_manager(const algorithm::pubkeyhash new_manager)
-		{
-			if (!new_manager)
-			{
-				algorithm::pubkeyhash null = { 0 };
-				memcpy(manager, null, sizeof(algorithm::pubkeyhash));
-			}
-			else
-				memcpy(manager, new_manager, sizeof(algorithm::pubkeyhash));
-		}
-		bool depository_account::is_manager_null() const
-		{
-			algorithm::pubkeyhash null = { 0 };
-			return memcmp(manager, null, sizeof(null)) == 0;
 		}
 		bool depository_account::is_dispatchable() const
 		{
@@ -1538,12 +1497,6 @@ namespace tangent
 			}
 			return result;
 		}
-		uptr<schema> depository_account::as_schema() const
-		{
-			schema* data = ledger::delegation_transaction::as_schema().reset();
-			data->set("manager", algorithm::signing::serialize_address(manager));
-			return data;
-		}
 		uint32_t depository_account::as_type() const
 		{
 			return as_instance_type();
@@ -1551,10 +1504,6 @@ namespace tangent
 		std::string_view depository_account::as_typename() const
 		{
 			return as_instance_typename();
-		}
-		uint256_t depository_account::get_gas_estimate() const
-		{
-			return ledger::gas_util::get_gas_estimate<depository_account, 16>();
 		}
 		uint32_t depository_account::as_instance_type()
 		{
@@ -1762,10 +1711,6 @@ namespace tangent
 		{
 			return as_instance_typename();
 		}
-		uint256_t depository_account_finalization::get_gas_estimate() const
-		{
-			return ledger::gas_util::get_gas_estimate<depository_account_finalization, 128>();
-		}
 		uint32_t depository_account_finalization::as_instance_type()
 		{
 			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
@@ -1824,7 +1769,7 @@ namespace tangent
 			if (!depository_policy)
 				return depository_policy.error();
 			else if (!depository_policy->accepts_withdrawal_requests)
-				return layer_exception("depository forbids withdrawals");
+				return layer_exception("depository forbids withdrawal requests");
 			else if (only_if_not_in_queue && depository_policy->queue_transaction_hash > 0)
 				return layer_exception("depository is in use - withdrawal will be queued");
 
@@ -2240,10 +2185,6 @@ namespace tangent
 		{
 			return as_instance_typename();
 		}
-		uint256_t depository_withdrawal::get_gas_estimate() const
-		{
-			return ledger::gas_util::get_gas_estimate<depository_withdrawal, 36>();
-		}
 		uint32_t depository_withdrawal::as_instance_type()
 		{
 			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
@@ -2532,10 +2473,6 @@ namespace tangent
 		std::string_view depository_withdrawal_finalization::as_typename() const
 		{
 			return as_instance_typename();
-		}
-		uint256_t depository_withdrawal_finalization::get_gas_estimate() const
-		{
-			return ledger::gas_util::get_gas_estimate<depository_withdrawal_finalization, 32>();
 		}
 		uint32_t depository_withdrawal_finalization::as_instance_type()
 		{
@@ -2900,10 +2837,6 @@ namespace tangent
 		{
 			return as_instance_typename();
 		}
-		uint256_t depository_transaction::get_gas_estimate() const
-		{
-			return ledger::gas_util::get_gas_estimate<depository_transaction, 144>();
-		}
 		uint32_t depository_transaction::as_instance_type()
 		{
 			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
@@ -3018,10 +2951,6 @@ namespace tangent
 		std::string_view depository_adjustment::as_typename() const
 		{
 			return as_instance_typename();
-		}
-		uint256_t depository_adjustment::get_gas_estimate() const
-		{
-			return ledger::gas_util::get_gas_estimate<depository_adjustment, 20>();
 		}
 		uint32_t depository_adjustment::as_instance_type()
 		{
@@ -3187,10 +3116,6 @@ namespace tangent
 		{
 			return as_instance_typename();
 		}
-		uint256_t depository_regrouping::get_gas_estimate() const
-		{
-			return ledger::gas_util::get_gas_estimate<depository_regrouping, 64>();
-		}
 		uint32_t depository_regrouping::as_instance_type()
 		{
 			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
@@ -3291,10 +3216,6 @@ namespace tangent
 		std::string_view depository_regrouping_preparation::as_typename() const
 		{
 			return as_instance_typename();
-		}
-		uint256_t depository_regrouping_preparation::get_gas_estimate() const
-		{
-			return ledger::gas_util::get_gas_estimate<depository_regrouping_preparation, 64>();
 		}
 		uint32_t depository_regrouping_preparation::as_instance_type()
 		{
@@ -3400,7 +3321,6 @@ namespace tangent
 			transaction->asset = asset;
 			transaction->depository_regrouping_commitment_hash = context->receipt.transaction_hash;
 			transaction->successful = exchange_successful;
-			transaction->set_estimate_gas(decimal::zero());
 			dispatcher->emit_transaction(transaction);
 			return expects_promise_rt<void>(expectation::met);
 		}
@@ -3481,10 +3401,6 @@ namespace tangent
 		std::string_view depository_regrouping_commitment::as_typename() const
 		{
 			return as_instance_typename();
-		}
-		uint256_t depository_regrouping_commitment::get_gas_estimate() const
-		{
-			return ledger::gas_util::get_gas_estimate<depository_regrouping_commitment, 64>();
 		}
 		uint32_t depository_regrouping_commitment::as_instance_type()
 		{
@@ -3596,10 +3512,6 @@ namespace tangent
 		std::string_view depository_regrouping_finalization::as_typename() const
 		{
 			return as_instance_typename();
-		}
-		uint256_t depository_regrouping_finalization::get_gas_estimate() const
-		{
-			return ledger::gas_util::get_gas_estimate<depository_regrouping_finalization, 64>();
 		}
 		uint32_t depository_regrouping_finalization::as_instance_type()
 		{
@@ -3762,7 +3674,6 @@ namespace tangent
 			{
 				auto* transaction = memory::init<depository_transaction>();
 				transaction->asset = asset;
-				transaction->set_estimate_gas(decimal::zero());
 				transaction->set_witness(fake_finalized.as_computed());
 				dispatcher->emit_transaction(transaction);
 			}

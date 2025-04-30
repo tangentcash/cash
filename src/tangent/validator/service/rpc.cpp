@@ -62,8 +62,17 @@ namespace tangent
 				algorithm::pubkeyhash owner = { 0 };
 				if (!algorithm::signing::decode_address(owner_address, owner))
 					return layer_exception("invalid address");
-				
+
 				return uniform_location(states::account_storage::as_instance_type(), states::account_storage::as_instance_index(owner, location));
+			}
+
+			if (type == states::account_delegation::as_instance_typename())
+			{
+				algorithm::pubkeyhash owner;
+				if (!algorithm::signing::decode_address(index.as_string(), owner))
+					return layer_exception("invalid address");
+
+				return uniform_location(states::account_delegation::as_instance_type(), states::account_delegation::as_instance_index(owner));
 			}
 
 			if (type == states::witness_program::as_instance_typename())
@@ -344,6 +353,7 @@ namespace tangent
 			bind(0 | access_type::r, "chainstate", "getaccountnonce", 1, 1, "string address", "uint64", "get account nonce by address", std::bind(&server_node::chainstate_get_account_nonce, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getaccountprogram", 1, 1, "string address", "uniform", "get account program hashcode by address", std::bind(&server_node::chainstate_get_account_program, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getaccountstorage", 2, 2, "string address, string location", "uniform", "get account storage by address and location", std::bind(&server_node::chainstate_get_account_storage, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getaccountdelegation", 1, 1, "string address", "uniform", "get account delegation by address", std::bind(&server_node::chainstate_get_account_delegation, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getaccountbalance", 2, 2, "string address, string asset", "multiform", "get account balance by address and asset", std::bind(&server_node::chainstate_get_account_balance, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getaccountbalances", 3, 3, "string address, uint64 offset, uint64 count", "multiform[]", "get account balances by address", std::bind(&server_node::chainstate_get_account_balances, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getvalidatorproduction", 1, 1, "string address", "multiform", "get validator production by address", std::bind(&server_node::chainstate_get_validator_production, this, std::placeholders::_1, std::placeholders::_2));
@@ -380,7 +390,6 @@ namespace tangent
 			bind(0 | access_type::r, "mempoolstate", "getgasprice", 1, 3, "string asset, double? percentile = 0.5, bool? mempool_only", "decimal", "get gas price from percentile of pending transactions", std::bind(&server_node::mempoolstate_get_gas_price, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getassetprice", 2, 3, "string asset_from, string asset_to, double? percentile = 0.5", "decimal", "get gas asset from percentile of pending transactions", std::bind(&server_node::mempoolstate_get_asset_price, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getoptimaltransactiongas", 1, 1, "string hex_message", "uint256", "execute transaction with block gas limit and return ceil of spent gas", std::bind(&server_node::mempoolstate_get_optimal_transaction_gas, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "mempoolstate", "getestimatetransactiongas", 1, 1, "string hex_message", "uint256", "get rough estimate of required gas limit than could be considerably lower or higher than actual required gas limit", std::bind(&server_node::mempoolstate_get_estimate_transaction_gas, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getmempooltransactionbyhash", 1, 1, "uint256 hash", "txn", "get mempool transaction by hash", std::bind(&server_node::mempoolstate_get_transaction_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getrawmempooltransactionbyhash", 1, 1, "uint256 hash", "string", "get raw mempool transaction by hash", std::bind(&server_node::mempoolstate_get_raw_transaction_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getnextaccountnonce", 1, 1, "string owner_address", "{ min: uint64, max: uint64 }", "get account nonce for next transaction by owner", std::bind(&server_node::mempoolstate_get_next_account_nonce, this, std::placeholders::_1, std::placeholders::_2));
@@ -1848,6 +1857,25 @@ namespace tangent
 			auto state = chain.get_uniform_by_index(states::account_storage::as_instance_type(), nullptr, states::account_storage::as_instance_index(owner, args[1].as_string()), 0);
 			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
 		}
+		server_response server_node::chainstate_get_account_delegation(http::connection* base, format::variables&& args)
+		{
+			algorithm::pubkeyhash owner;
+			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
+				return server_response().error(error_codes::bad_params, "account address not valid");
+
+			auto chain = storages::chainstate(__func__);
+			auto state = chain.get_uniform_by_index(states::account_delegation::as_instance_type(), nullptr, states::account_delegation::as_instance_index(owner), 0);
+			auto* value = (states::account_delegation*)(state ? **state : nullptr);
+			auto result = value ? value->as_schema().reset() : var::set::null();
+			if (value != nullptr)
+			{
+				uint64_t block_number = chain.get_latest_block_number().or_else(value->block_number);
+				uint64_t zeroing_block_number = value->get_delegation_zeroing_block(block_number);
+				result->set("zeroing_block_number", var::integer(zeroing_block_number));
+				result->set("requires_zeroing", var::boolean(block_number < zeroing_block_number));
+			}
+			return server_response().success(result);
+		}
 		server_response server_node::chainstate_get_account_balance(http::connection* base, format::variables&& args)
 		{
 			algorithm::pubkeyhash owner;
@@ -2488,15 +2516,6 @@ namespace tangent
 				return server_response().error(error_codes::not_found, "asset price not found");
 
 			return server_response().success(var::set::decimal(*price));
-		}
-		server_response server_node::mempoolstate_get_estimate_transaction_gas(http::connection* base, format::variables&& args)
-		{
-			format::stream message = format::stream::decode(args[0].as_blob());
-			uptr<ledger::transaction> candidate_tx = transactions::resolver::from_stream(message);
-			if (!candidate_tx || !candidate_tx->load(message))
-				return server_response().error(error_codes::bad_params, "invalid message");
-
-			return server_response().success(algorithm::encoding::serialize_uint256(candidate_tx->get_gas_estimate()));
 		}
 		server_response server_node::mempoolstate_get_optimal_transaction_gas(http::connection* base, format::variables&& args)
 		{

@@ -67,6 +67,27 @@ namespace tangent
 			static string as_instance_index(const algorithm::pubkeyhash owner, const std::string_view& location);
 		};
 
+		struct account_delegation final : ledger::uniform
+		{
+			algorithm::pubkeyhash owner = { 0 };
+			uint32_t delegations = 0;
+
+			account_delegation(const algorithm::pubkeyhash new_owner, uint64_t new_block_number, uint64_t new_block_nonce);
+			account_delegation(const algorithm::pubkeyhash new_owner, const ledger::block_header* new_block_header);
+			expects_lr<void> transition(const ledger::transaction_context* context, const ledger::state* prev_state) override;
+			bool store_payload(format::stream* stream) const override;
+			bool load_payload(format::stream& stream) override;
+			bool is_owner_null() const;
+			uint64_t get_delegation_zeroing_block(uint64_t current_block_number) const;
+			uptr<schema> as_schema() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			string as_index() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
+			static string as_instance_index(const algorithm::pubkeyhash owner);
+		};
+
 		struct account_balance final : ledger::multiform
 		{
 			algorithm::pubkeyhash owner = { 0 };

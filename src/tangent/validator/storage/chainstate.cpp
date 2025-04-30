@@ -1035,7 +1035,7 @@ namespace tangent
 
 						cursor = prepared_query(uniformdata, label, __func__, statement);
 						if (!cursor || cursor->error_or_empty())
-							return layer_exception(cursor->empty() ? "uniform index not linked" : error_of(cursor));
+							return layer_exception(cursor->empty() ? "uniform state index not linked" : error_of(cursor));
 
 						uint64_t index_number = cursor->first().front().get_column(0).get().get_integer();
 						statement = writer.second.commit_uniform_data;
@@ -1082,7 +1082,7 @@ namespace tangent
 
 						cursor = prepared_query(multiformdata, label, __func__, statement);
 						if (!cursor || cursor->error_or_empty())
-							return layer_exception(cursor->empty() ? "multiform column not linked" : error_of(cursor));
+							return layer_exception(cursor->empty() ? "multiform state column not linked" : error_of(cursor));
 
 						statement = writer.second.commit_multiform_row_data;
 						multiformdata->bind_blob(statement, 0, item.row);
@@ -1091,7 +1091,7 @@ namespace tangent
 						uint64_t column_number = cursor->first().front().get_column(0).get().get_integer();
 						cursor = prepared_query(multiformdata, label, __func__, statement);
 						if (!cursor || cursor->error_or_empty())
-							return layer_exception(cursor->empty() ? "multiform row not linked" : error_of(cursor));
+							return layer_exception(cursor->empty() ? "multiform state row not linked" : error_of(cursor));
 
 						uint64_t row_number = cursor->first().front().get_column(0).get().get_integer();
 						statement = writer.second.commit_multiform_data;
@@ -1433,21 +1433,21 @@ namespace tangent
 			if (column && row)
 			{
 				if (!column_location.or_else(0) || !row_location.or_else(0))
-					return layer_exception("multiform location not found");
+					return layer_exception("multiform state location not found");
 				else if (update_column || update_row)
 					cache->set_multiform_location(type, *column, *row, *column_location, *row_location);
 			}
 			else if (column)
 			{
 				if (!column_location.or_else(0))
-					return layer_exception("multiform column not found");
+					return layer_exception("multiform state column not found");
 				else if (update_column)
 					cache->set_column_location(type, *column, *column_location);
 			}
 			else if (row)
 			{
 				if (!row_location.or_else(0))
-					return layer_exception("multiform row not found");
+					return layer_exception("multiform state row not found");
 				else if (update_row)
 					cache->set_row_location(type, *row, *row_location);
 			}
@@ -2293,7 +2293,7 @@ namespace tangent
 					uniformdata->bind_int64(*find_state, 1, block_number);
 
 				auto cursor = prepared_query(uniformdata, label, __func__, *find_state);
-				if (!cursor || cursor->empty())
+				if (!cursor)
 				{
 					if (delta != nullptr && delta->incoming != nullptr)
 						((ledger::block_mutation*)delta)->incoming->clear_uniform(type, index);
@@ -2303,7 +2303,7 @@ namespace tangent
 				{
 					if (delta != nullptr && delta->incoming != nullptr)
 						((ledger::block_mutation*)delta)->incoming->clear_uniform(type, index);
-					return expects_lr<uptr<ledger::state>>(layer_exception("uniform not found"));
+					return expects_lr<uptr<ledger::state>>(layer_exception("uniform state not found"));
 				}
 
 				auto cache = uniform_cache::get();
@@ -2317,7 +2317,7 @@ namespace tangent
 			{
 				if (delta != nullptr && delta->incoming != nullptr)
 					((ledger::block_mutation*)delta)->incoming->clear_uniform(type, index);
-				return expects_lr<uptr<ledger::state>>(layer_exception("uniform deserialization error"));
+				return expects_lr<uptr<ledger::state>>(layer_exception("uniform state deserialization error"));
 			}
 
 			if (delta != nullptr && delta->incoming != nullptr)
@@ -2362,7 +2362,7 @@ namespace tangent
 					multiformdata->bind_int64(*find_state, 2, block_number);
 
 				auto cursor = prepared_query(multiformdata, label, __func__, *find_state);
-				if (!cursor || cursor->empty())
+				if (!cursor)
 				{
 					if (delta != nullptr && delta->incoming != nullptr)
 						((ledger::block_mutation*)delta)->incoming->clear_multiform(type, column, row);
@@ -2372,7 +2372,7 @@ namespace tangent
 				{
 					if (delta != nullptr && delta->incoming != nullptr)
 						((ledger::block_mutation*)delta)->incoming->clear_multiform(type, column, row);
-					return expects_lr<uptr<ledger::state>>(layer_exception("multiform not found"));
+					return expects_lr<uptr<ledger::state>>(layer_exception("multiform state not found"));
 				}
 
 				auto cache = multiform_cache::get();
@@ -2386,7 +2386,7 @@ namespace tangent
 			{
 				if (delta != nullptr && delta->incoming != nullptr)
 					((ledger::block_mutation*)delta)->incoming->clear_multiform(type, column, row);
-				return expects_lr<uptr<ledger::state>>(layer_exception("multiform deserialization error"));
+				return expects_lr<uptr<ledger::state>>(layer_exception("multiform state deserialization error"));
 			}
 
 			if (delta != nullptr && delta->incoming != nullptr)
@@ -2411,7 +2411,7 @@ namespace tangent
 			if (!cursor || cursor->error())
 				return expects_lr<uptr<ledger::state>>(layer_exception(error_of(cursor)));
 			else if (cursor->empty())
-				return expects_lr<uptr<ledger::state>>(layer_exception("multiform not found"));
+				return expects_lr<uptr<ledger::state>>(layer_exception("multiform state not found"));
 
 			format::stream message = format::stream(load(label, __func__, get_multiform_label(type, column, (*cursor)["row_hash"].get().get_blob(), (*cursor)["block_number"].get().get_integer())).or_else(string()));
 			uptr<ledger::state> value = states::resolver::from_stream(message);
@@ -2419,7 +2419,7 @@ namespace tangent
 			{
 				if (value && delta != nullptr && delta->incoming != nullptr)
 					((ledger::block_mutation*)delta)->incoming->clear_multiform(type, column, ((ledger::multiform*)*value)->as_row());
-				return expects_lr<uptr<ledger::state>>(layer_exception("multiform deserialization error"));
+				return expects_lr<uptr<ledger::state>>(layer_exception("multiform state state deserialization error"));
 			}
 
 			if (delta != nullptr && delta->incoming != nullptr)
@@ -2444,7 +2444,7 @@ namespace tangent
 			if (!cursor || cursor->error())
 				return expects_lr<uptr<ledger::state>>(layer_exception(error_of(cursor)));
 			else if (cursor->empty())
-				return expects_lr<uptr<ledger::state>>(layer_exception("multiform not found"));
+				return expects_lr<uptr<ledger::state>>(layer_exception("multiform state not found"));
 
 			format::stream message = format::stream(load(label, __func__, get_multiform_label(type, (*cursor)["column_hash"].get().get_blob(), row, (*cursor)["block_number"].get().get_integer())).or_else(string()));
 			uptr<ledger::state> value = states::resolver::from_stream(message);
@@ -2452,7 +2452,7 @@ namespace tangent
 			{
 				if (value && delta != nullptr && delta->incoming != nullptr)
 					((ledger::block_mutation*)delta)->incoming->clear_multiform(type, ((ledger::multiform*)*value)->as_column(), row);
-				return expects_lr<uptr<ledger::state>>(layer_exception("multiform deserialization error"));
+				return expects_lr<uptr<ledger::state>>(layer_exception("multiform state deserialization error"));
 			}
 
 			if (delta != nullptr && delta->incoming != nullptr)

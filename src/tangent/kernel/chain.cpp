@@ -793,11 +793,12 @@ namespace tangent
 				account.secret_key_version = 0xD;
 				account.public_key_version = 0xC;
 				account.address_version = 0x6;
-				policy.consensus_proof_time = 30;
-				policy.transaction_throughput = 21000;
+				policy.consensus_proof_time = 220;
+				policy.transaction_throughput = 9500;
 				policy.production_work_required = 0.0;
 				policy.participation_min_per_account = 1;
 				policy.participation_std_per_account = 2;
+				policy.delegations_max_per_account = std::numeric_limits<uint32_t>::max();
 				break;
 			case tangent::network_type::testnet:
 				message.packet_magic = 0xf815c95c;

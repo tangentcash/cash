@@ -30,8 +30,8 @@ namespace tangent
 			if (is_signature_null())
 				return layer_exception("invalid signature");
 
-			if (conservative && get_type() != transaction_level::functional)
-				return layer_exception("only functional transaction can be conservative");
+			if (conservative && get_type() != transaction_level::functional && gas_price.is_zero())
+				return layer_exception("only free functional transaction can be conservative");
 
 			return expectation::met;
 		}
@@ -95,7 +95,7 @@ namespace tangent
 		}
 		bool transaction::sign(const algorithm::seckey secret_key, uint64_t new_nonce, const decimal& price)
 		{
-			set_estimate_gas(price);
+			set_gas(price, block::get_gas_limit());
 			if (!sign(secret_key, new_nonce))
 				return false;
 
@@ -106,16 +106,14 @@ namespace tangent
 			gas_limit = *optimal_gas;
 			return sign(secret_key);
 		}
-		void transaction::set_optimal_gas(const decimal& price)
+		expects_lr<void> transaction::set_optimal_gas(const decimal& price)
 		{
 			auto optimal_gas = ledger::transaction_context::calculate_tx_gas(this);
 			if (!optimal_gas)
-				optimal_gas = get_gas_estimate();
+				return optimal_gas.error();
+			
 			set_gas(price, *optimal_gas);
-		}
-		void transaction::set_estimate_gas(const decimal& price)
-		{
-			set_gas(price, get_gas_estimate());
+			return expectation::met;
 		}
 		void transaction::set_gas(const decimal& price, const uint256_t& limit)
 		{
@@ -187,17 +185,42 @@ namespace tangent
 			return data;
 		}
 
+		expects_lr<void> delegation_transaction::validate(uint64_t block_number) const
+		{
+			algorithm::pubkeyhash null = { 0 };
+			if (memcmp(manager, null, sizeof(null)) == 0)
+				return layer_exception("invalid manager");
+
+			return ledger::transaction::validate(block_number);
+		}
 		expects_lr<void> delegation_transaction::execute(transaction_context* context) const
 		{
-			return context->verify_account_nonce();
+			auto nonce_requirement = context->verify_account_nonce();
+			if (!nonce_requirement)
+				return nonce_requirement;
+
+			if (!is_delegation())
+				return expectation::met;
+
+			auto delegation_requirement = context->verify_account_delegation(manager);
+			if (!delegation_requirement)
+				return delegation_requirement;
+
+			auto delegation = context->apply_account_delegation(manager, 1);
+			if (!delegation)
+				return delegation.error();
+
+			return expectation::met;
 		}
 		bool delegation_transaction::store_payload(format::stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
+			algorithm::pubkeyhash null = { 0 };
 			stream->write_integer(asset);
 			stream->write_decimal(gas_price);
 			stream->write_integer(gas_limit);
 			stream->write_integer(nonce);
+			stream->write_string(std::string_view((char*)manager, memcmp(manager, null, sizeof(null)) == 0 ? 0 : sizeof(manager)));
 			return store_body(stream);
 		}
 		bool delegation_transaction::load_payload(format::stream& stream)
@@ -214,8 +237,37 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &nonce))
 				return false;
 
+			string manager_assembly;
+			if (!stream.read_string(stream.read_type(), &manager_assembly) || !algorithm::encoding::decode_uint_blob(manager_assembly, manager, sizeof(manager)))
+				return false;
+
 			conservative = false;
 			return load_body(stream);
+		}
+		void delegation_transaction::set_manager(const algorithm::pubkeyhash new_manager)
+		{
+			if (!new_manager)
+			{
+				algorithm::pubkeyhash null = { 0 };
+				memcpy(manager, null, sizeof(algorithm::pubkeyhash));
+			}
+			else
+				memcpy(manager, new_manager, sizeof(algorithm::pubkeyhash));
+		}
+		bool delegation_transaction::is_manager_null() const
+		{
+			algorithm::pubkeyhash null = { 0 };
+			return memcmp(manager, null, sizeof(null)) == 0;
+		}
+		bool delegation_transaction::is_delegation() const
+		{
+			return !gas_price.is_positive();
+		}
+		uptr<schema> delegation_transaction::as_schema() const
+		{
+			schema* data = ledger::transaction::as_schema().reset();
+			data->set("manager", algorithm::signing::serialize_address(manager));
+			return data;
 		}
 		transaction_level delegation_transaction::get_type() const
 		{
@@ -480,11 +532,10 @@ namespace tangent
 		}
 		bool attestation_transaction::sign(const algorithm::seckey secret_key, uint64_t new_nonce, const decimal& price)
 		{
-			set_estimate_gas(price);
+			set_gas(price, block::get_gas_limit());
 			if (!sign(secret_key, new_nonce))
 				return false;
 
-			size_t transaction_size1 = as_message().data.size();
 			auto optimal_gas = ledger::transaction_context::calculate_tx_gas(this);
 			if (!optimal_gas || gas_limit == *optimal_gas)
 				return true;
@@ -573,24 +624,14 @@ namespace tangent
 			}
 			return memcmp(signature, null, sizeof(null)) == 0;
 		}
-		void attestation_transaction::set_optimal_gas(const decimal& price)
+		expects_lr<void> attestation_transaction::set_optimal_gas(const decimal& price)
 		{
 			auto optimal_gas = ledger::transaction_context::calculate_tx_gas(this);
-			if (optimal_gas)
-			{
-				format::stream message;
-				auto blob = string(sizeof(algorithm::recpubsig), '0');
-				size_t max_signatures = (size_t)protocol::now().policy.attestation_max_per_transaction * output_hashes.size();
-				message.write_string(string(sizeof(mediator::computed_transaction) * 10, '0'));
-				message.write_integer((uint16_t)output_hashes.size());
-				message.write_integer((uint16_t)max_signatures);
-				for (size_t i = 0; i < max_signatures; i++)
-					message.write_string(blob);
+			if (!optimal_gas)
+				return optimal_gas.error();
 
-				set_gas(price, *optimal_gas + message.data.size() * (uint64_t)gas_cost::write_byte);
-			}
-			else
-				set_gas(price, get_gas_estimate());
+			set_gas(price, *optimal_gas);
+			return expectation::met;
 		}
 		void attestation_transaction::set_statement(const uint256_t& new_input_hash, const format::stream& output_message)
 		{

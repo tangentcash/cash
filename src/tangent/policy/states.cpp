@@ -26,10 +26,8 @@ namespace tangent
 			if (!prev || nonce == std::numeric_limits<uint64_t>::max())
 				return expectation::met;
 
-			if (prev->nonce >= nonce)
-				return layer_exception("nonce lower than " + to_string(prev->nonce));
-			else if (nonce - prev->nonce > 1)
-				return layer_exception("nonce skips " + to_string(nonce - prev->nonce) + " steps");
+			if (prev->nonce >= nonce || nonce - prev->nonce > 1)
+				return layer_exception("invalid nonce (received: " + to_string(nonce) + ", expected: " + to_string(prev->nonce + 1) + ")");
 
 			return expectation::met;
 		}
@@ -251,6 +249,109 @@ namespace tangent
 			format::stream stream;
 			stream.write_typeless((char*)owner, (uint8_t)sizeof(algorithm::pubkeyhash));
 			stream.write_typeless((char*)data.data(), (uint8_t)data.size());
+			return std::move(stream.data);
+		}
+
+		account_delegation::account_delegation(const algorithm::pubkeyhash new_owner, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::uniform(new_block_number, new_block_nonce), delegations(0)
+		{
+			if (new_owner)
+				memcpy(owner, new_owner, sizeof(owner));
+		}
+		account_delegation::account_delegation(const algorithm::pubkeyhash new_owner, const ledger::block_header* new_block_header) : ledger::uniform(new_block_header), delegations(0)
+		{
+			if (new_owner)
+				memcpy(owner, new_owner, sizeof(owner));
+		}
+		expects_lr<void> account_delegation::transition(const ledger::transaction_context* context, const ledger::state* prev_state)
+		{
+			if (is_owner_null())
+				return layer_exception("invalid state owner");
+
+			auto* prev = (account_delegation*)prev_state;
+			uint64_t prev_block_number = block_number;
+			if (prev != nullptr)
+			{
+				delegations += prev->delegations;
+				prev_block_number = prev->block_number;
+			}
+
+			if (delegations > protocol::now().policy.delegations_max_per_account)
+			{
+				uint64_t blocks_required = protocol::now().policy.delegations_zeroing_time / protocol::now().policy.consensus_proof_time;
+				uint64_t blocks_passed = block_number - prev_block_number;
+				if (blocks_passed < blocks_required)
+					return layer_exception("account is over delegated");
+
+				delegations = 0;
+			}
+
+			return expectation::met;
+		}
+		bool account_delegation::store_payload(format::stream* stream) const
+		{
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			algorithm::pubkeyhash null = { 0 };
+			stream->write_string(std::string_view((char*)owner, memcmp(owner, null, sizeof(null)) == 0 ? 0 : sizeof(owner)));
+			stream->write_integer(delegations);
+			return true;
+		}
+		bool account_delegation::load_payload(format::stream& stream)
+		{
+			string owner_assembly;
+			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner, sizeof(owner)))
+				return false;
+
+			if (!stream.read_integer(stream.read_type(), &delegations))
+				return false;
+
+			return true;
+		}
+		bool account_delegation::is_owner_null() const
+		{
+			algorithm::pubkeyhash null = { 0 };
+			return !memcmp(owner, null, sizeof(null));
+		}
+		uint64_t account_delegation::get_delegation_zeroing_block(uint64_t current_block_number) const
+		{
+			if (delegations + 1 <= protocol::now().policy.delegations_max_per_account)
+				return block_number;
+
+			uint64_t blocks_required = protocol::now().policy.delegations_zeroing_time / protocol::now().policy.consensus_proof_time;
+			uint64_t blocks_passed = current_block_number > block_number ? current_block_number - block_number : 0;
+			return blocks_passed < blocks_required ? current_block_number + (blocks_required - blocks_passed) : current_block_number;
+		}
+		uptr<schema> account_delegation::as_schema() const
+		{
+			schema* data = ledger::uniform::as_schema().reset();
+			data->set("owner", algorithm::signing::serialize_address(owner));
+			data->set("delegations", algorithm::encoding::serialize_uint256(delegations));
+			return data;
+		}
+		uint32_t account_delegation::as_type() const
+		{
+			return as_instance_type();
+		}
+		std::string_view account_delegation::as_typename() const
+		{
+			return as_instance_typename();
+		}
+		string account_delegation::as_index() const
+		{
+			return as_instance_index(owner);
+		}
+		uint32_t account_delegation::as_instance_type()
+		{
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
+		}
+		std::string_view account_delegation::as_instance_typename()
+		{
+			return "account_delegation";
+		}
+		string account_delegation::as_instance_index(const algorithm::pubkeyhash owner)
+		{
+			format::stream stream;
+			stream.write_typeless((char*)owner, (uint8_t)sizeof(algorithm::pubkeyhash));
 			return std::move(stream.data);
 		}
 
@@ -1700,6 +1801,8 @@ namespace tangent
 				return memory::init<account_program>(nullptr, nullptr);
 			else if (hash == account_storage::as_instance_type())
 				return memory::init<account_storage>(nullptr, nullptr);
+			else if (hash == account_delegation::as_instance_type())
+				return memory::init<account_delegation>(nullptr, nullptr);
 			else if (hash == account_balance::as_instance_type())
 				return memory::init<account_balance>(nullptr, nullptr);
 			else if (hash == validator_production::as_instance_type())
@@ -1735,6 +1838,8 @@ namespace tangent
 				return memory::init<account_program>(*(const account_program*)base);
 			else if (hash == account_storage::as_instance_type())
 				return memory::init<account_storage>(*(const account_storage*)base);
+			else if (hash == account_delegation::as_instance_type())
+				return memory::init<account_delegation>(*(const account_delegation*)base);
 			else if (hash == account_balance::as_instance_type())
 				return memory::init<account_balance>(*(const account_balance*)base);
 			else if (hash == validator_production::as_instance_type())
@@ -1767,6 +1872,7 @@ namespace tangent
 			types.insert(account_nonce::as_instance_type());
 			types.insert(account_program::as_instance_type());
 			types.insert(account_storage::as_instance_type());
+			types.insert(account_delegation::as_instance_type());
 			types.insert(witness_program::as_instance_type());
 			types.insert(witness_event::as_instance_type());
 			types.insert(witness_transaction::as_instance_type());

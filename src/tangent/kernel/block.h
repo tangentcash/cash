@@ -158,6 +158,7 @@ namespace tangent
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
+			static uint64_t get_transaction_limit();
 			static uint256_t get_gas_limit();
 		};
 
@@ -232,7 +233,7 @@ namespace tangent
 			enum class execution_flags : uint8_t
 			{
 				only_successful = 1 << 0,
-				skip_sequencing = 1 << 1
+				gas_calculation = 1 << 1
 			};
 
 			enum class production_type : uint8_t
@@ -268,6 +269,7 @@ namespace tangent
 			expects_lr<void> burn_gas();
 			expects_lr<void> burn_gas(const uint256_t& value);
 			expects_lr<void> verify_account_nonce() const;
+			expects_lr<void> verify_account_delegation(const algorithm::pubkeyhash owner) const;
 			expects_lr<void> verify_gas_transfer_balance() const;
 			expects_lr<void> verify_transfer_balance(const algorithm::asset_id& asset, const decimal& value) const;
 			expects_lr<void> verify_validator_production(const algorithm::pubkeyhash owner) const;
@@ -276,9 +278,10 @@ namespace tangent
 			expects_lr<size_t> calculate_attesters_size(const algorithm::asset_id& asset) const;
 			expects_lr<vector<states::validator_production>> calculate_producers(size_t target_size);
 			expects_lr<vector<states::validator_participation>> calculate_participants(const algorithm::asset_id& asset, ordered_set<algorithm::pubkeyhash_t>& exclusion, size_t target_size);
-			expects_lr<states::account_nonce> apply_account_nonce(const algorithm::pubkeyhash owner, uint64_t sequence);
+			expects_lr<states::account_nonce> apply_account_nonce(const algorithm::pubkeyhash owner, uint64_t nonce);
 			expects_lr<states::account_program> apply_account_program(const algorithm::pubkeyhash owner, const std::string_view& program_hashcode);
 			expects_lr<states::account_storage> apply_account_storage(const algorithm::pubkeyhash owner, const std::string_view& location, const std::string_view& storage);
+			expects_lr<states::account_delegation> apply_account_delegation(const algorithm::pubkeyhash owner, uint32_t delegations);
 			expects_lr<states::account_balance> apply_transfer(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const decimal& supply, const decimal& reserve);
 			expects_lr<states::account_balance> apply_payment(const algorithm::asset_id& asset, const algorithm::pubkeyhash from, const algorithm::pubkeyhash to, const decimal& value);
 			expects_lr<states::account_balance> apply_funding(const algorithm::asset_id& asset, const algorithm::pubkeyhash from, const algorithm::pubkeyhash to, const decimal& value);
@@ -300,6 +303,7 @@ namespace tangent
 			expects_lr<states::account_nonce> get_account_nonce(const algorithm::pubkeyhash owner) const;
 			expects_lr<states::account_program> get_account_program(const algorithm::pubkeyhash owner) const;
 			expects_lr<states::account_storage> get_account_storage(const algorithm::pubkeyhash owner, const std::string_view& location) const;
+			expects_lr<states::account_delegation> get_account_delegation(const algorithm::pubkeyhash owner) const;
 			expects_lr<states::account_balance> get_account_balance(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner) const;
 			expects_lr<states::validator_production> get_validator_production(const algorithm::pubkeyhash owner) const;
 			expects_lr<states::validator_participation> get_validator_participation(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner) const;

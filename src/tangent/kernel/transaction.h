@@ -46,8 +46,7 @@ namespace tangent
 			virtual bool sign(const algorithm::seckey secret_key) override;
 			virtual bool sign(const algorithm::seckey secret_key, uint64_t new_nonce);
 			virtual bool sign(const algorithm::seckey secret_key, uint64_t new_nonce, const decimal& price);
-			virtual void set_optimal_gas(const decimal& price);
-			virtual void set_estimate_gas(const decimal& price);
+			virtual expects_lr<void> set_optimal_gas(const decimal& price);
 			virtual void set_gas(const decimal& price, const uint256_t& limit);
 			virtual void set_asset(const std::string_view& blockchain, const std::string_view& token = std::string_view(), const std::string_view& contract_address = std::string_view());
 			virtual bool is_payable() const;
@@ -59,14 +58,20 @@ namespace tangent
 			virtual uptr<schema> as_schema() const override;
 			virtual uint32_t as_type() const override = 0;
 			virtual std::string_view as_typename() const override = 0;
-			virtual uint256_t get_gas_estimate() const = 0;
 		};
 
 		struct delegation_transaction : transaction
 		{
+			algorithm::pubkeyhash manager = { 0 };
+
+			virtual expects_lr<void> validate(uint64_t block_number) const override;
 			virtual expects_lr<void> execute(transaction_context* context) const override;
 			virtual bool store_payload(format::stream* stream) const override;
 			virtual bool load_payload(format::stream& stream) override;
+			virtual void set_manager(const algorithm::pubkeyhash new_manager);
+			virtual bool is_manager_null() const;
+			virtual bool is_delegation() const;
+			virtual uptr<schema> as_schema() const override;
 			transaction_level get_type() const override;
 		};
 
@@ -104,7 +109,7 @@ namespace tangent
 			virtual bool recover_hash(algorithm::pubkeyhash public_key_hash) const override;
 			virtual bool recover_hash(algorithm::pubkeyhash public_key_hash, const uint256_t& output_hash, size_t index) const;
 			virtual bool is_signature_null() const override;
-			virtual void set_optimal_gas(const decimal& price) override;
+			virtual expects_lr<void> set_optimal_gas(const decimal& price) override;
 			virtual void set_statement(const uint256_t& new_input_hash, const format::stream& output_message);
 			virtual void set_best_branch(const uint256_t& output_hash);
 			virtual const evaluation_branch* get_best_branch(const transaction_context* context, ordered_map<algorithm::asset_id, size_t>* aggregators) const;

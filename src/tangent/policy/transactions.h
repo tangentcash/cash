@@ -33,7 +33,6 @@ namespace tangent
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
-			uint256_t get_gas_estimate() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
 		};
@@ -65,7 +64,6 @@ namespace tangent
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
-			uint256_t get_gas_estimate() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
 		};
@@ -88,7 +86,6 @@ namespace tangent
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
-			uint256_t get_gas_estimate() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
 		};
@@ -118,7 +115,6 @@ namespace tangent
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
-			uint256_t get_gas_estimate() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
 			static void setup_child(ledger::transaction& transaction, const algorithm::asset_id& asset);
@@ -149,7 +145,6 @@ namespace tangent
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
-			uint256_t get_gas_estimate() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
 		};
@@ -166,29 +161,22 @@ namespace tangent
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
-			uint256_t get_gas_estimate() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
 		};
 
 		struct depository_account final : ledger::delegation_transaction
 		{
-			algorithm::pubkeyhash manager = { 0 };
-
 			expects_lr<void> validate(uint64_t block_number) const override;
 			expects_lr<void> execute(ledger::transaction_context* context) const override;
 			expects_promise_rt<void> dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const override;
 			bool store_body(format::stream* stream) const override;
 			bool load_body(format::stream& stream) override;
 			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const override;
-			void set_manager(const algorithm::pubkeyhash new_manager);
-			bool is_manager_null() const;
 			bool is_dispatchable() const override;
 			ordered_set<algorithm::pubkeyhash_t> get_group(const ledger::receipt& receipt) const;
-			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
-			uint256_t get_gas_estimate() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
 		};
@@ -209,7 +197,6 @@ namespace tangent
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
-			uint256_t get_gas_estimate() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
 		};
@@ -238,7 +225,6 @@ namespace tangent
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
-			uint256_t get_gas_estimate() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
 			static expects_lr<void> validate_prepared_transaction(const ledger::transaction_context* context, const depository_withdrawal* transaction, const mediator::prepared_transaction& prepared);
@@ -263,7 +249,6 @@ namespace tangent
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
-			uint256_t get_gas_estimate() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
 		};
@@ -301,7 +286,6 @@ namespace tangent
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
-			uint256_t get_gas_estimate() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
 		};
@@ -323,7 +307,6 @@ namespace tangent
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
-			uint256_t get_gas_estimate() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
 		};
@@ -359,7 +342,6 @@ namespace tangent
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
-			uint256_t get_gas_estimate() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
 		};
@@ -378,7 +360,6 @@ namespace tangent
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
-			uint256_t get_gas_estimate() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
 		};
@@ -398,7 +379,6 @@ namespace tangent
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
-			uint256_t get_gas_estimate() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
 		};
@@ -415,7 +395,6 @@ namespace tangent
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
-			uint256_t get_gas_estimate() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
 		};
