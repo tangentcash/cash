@@ -261,6 +261,8 @@ namespace tangent
 
 		server_node::server_node(p2p::server_node* new_validator) noexcept : control_sys("rpc-node"), node(new http::server()), validator(new_validator)
 		{
+			if (validator != nullptr)
+				validator->add_ref();
 		}
 		server_node::~server_node() noexcept
 		{
