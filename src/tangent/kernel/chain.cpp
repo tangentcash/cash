@@ -660,13 +660,17 @@ namespace tangent
 			if (value != nullptr && value->value.is(var_type::integer))
 				user.storage.checkpoint_size = value->value.get_integer();
 
+			value = config->fetch("storage.transaction_dispatch_repeat_interval");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.storage.transaction_dispatch_repeat_interval = value->value.get_integer();
+
 			value = config->fetch("storage.transaction_timeout");
 			if (value != nullptr && value->value.is(var_type::integer))
 				user.storage.transaction_timeout = value->value.get_integer();
 
-			value = config->fetch("storage.transaction_dispatch_repeat_interval");
+			value = config->fetch("storage.mempool_transaction_limit");
 			if (value != nullptr && value->value.is(var_type::integer))
-				user.storage.transaction_dispatch_repeat_interval = value->value.get_integer();
+				user.storage.mempool_transaction_limit = value->value.get_integer();
 
 			value = config->fetch("storage.location_cache_size");
 			if (value != nullptr && value->value.is(var_type::integer))
@@ -795,7 +799,6 @@ namespace tangent
 				account.address_version = 0x6;
 				policy.consensus_proof_time = 220;
 				policy.transaction_throughput = 9500;
-				policy.production_work_required = 0.0;
 				policy.participation_min_per_account = 1;
 				policy.participation_std_per_account = 2;
 				policy.delegations_max_per_account = std::numeric_limits<uint32_t>::max();

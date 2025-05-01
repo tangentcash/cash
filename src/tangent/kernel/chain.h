@@ -207,6 +207,7 @@ namespace tangent
                 storage_optimization optimization = storage_optimization::speed;
                 uint64_t transaction_dispatch_repeat_interval = 600;
                 uint64_t transaction_timeout = 86400;
+                uint64_t mempool_transaction_limit = 10000000;
                 uint64_t checkpoint_size = 64;
                 uint64_t location_cache_size = 500000;
                 uint64_t script_cache_size = 8192;
@@ -269,7 +270,6 @@ namespace tangent
             uint64_t parallel_attestation_limit = 256;
             uint32_t delegations_max_per_account = 6;
             uint32_t delegations_zeroing_time = 64000;
-            double production_work_required = 1000.0;
             double participation_stake_threshold = 0.20;
             double participation_fee_rate = 0.30;
             double attestation_consensus_threshold = 0.66;

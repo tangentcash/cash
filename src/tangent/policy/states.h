@@ -117,6 +117,7 @@ namespace tangent
 		struct validator_production final : ledger::multiform
 		{
 			algorithm::pubkeyhash owner = { 0 };
+			ordered_map<algorithm::asset_id, decimal> stakes;
 			uint256_t gas = 0;
 			bool active = false;
 
@@ -125,7 +126,6 @@ namespace tangent
 			expects_lr<void> transition(const ledger::transaction_context* context, const ledger::state* prev_state) override;
 			bool store_payload(format::stream* stream) const override;
 			bool load_payload(format::stream& stream) override;
-			bool is_eligible(const ledger::block_header* block_header) const;
 			bool is_owner_null() const;
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
@@ -137,7 +137,6 @@ namespace tangent
 			static std::string_view as_instance_typename();
 			static string as_instance_column(const algorithm::pubkeyhash owner);
 			static string as_instance_row();
-			static uint256_t get_gas_required(const ledger::block_header* block_header, const uint256_t& gas_use);
 		};
 
 		struct validator_participation final : ledger::multiform

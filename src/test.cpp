@@ -51,7 +51,7 @@ public:
 	class generators
 	{
 	public:
-		static void account_transfer(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
+		static void account_transfer_stage_1(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
 		{
 			auto& [user1, user1_nonce] = users[0];
 			auto& [user2, user2_nonce] = users[1];
@@ -62,20 +62,34 @@ public:
 			transfer_ethereum->set_to(user2.public_key_hash, 0.3);
 			transfer_ethereum->set_to(user2.public_key_hash, 0.4);
 			transfer_ethereum->set_to(user2.public_key_hash, 0.5);
-			VI_PANIC(transfer_ethereum->sign(user1.secret_key, user1_nonce++, std::string_view("0.00000001")), "transfer not signed");
+			VI_PANIC(transfer_ethereum->sign(user1.secret_key, user1_nonce++, decimal::zero()), "transfer not signed");
 			transactions.push_back(transfer_ethereum);
 
 			auto* transfer_ripple = memory::init<transactions::transfer>();
 			transfer_ripple->set_asset("XRP");
 			transfer_ripple->set_to(user2.public_key_hash, 10.0);
-			VI_PANIC(transfer_ripple->sign(user1.secret_key, user1_nonce++, std::string_view("0.000068")), "transfer not signed");
+			VI_PANIC(transfer_ripple->sign(user1.secret_key, user1_nonce++, decimal::zero()), "transfer not signed");
 			transactions.push_back(transfer_ripple);
 
 			auto* transfer_bitcoin = memory::init<transactions::transfer>();
 			transfer_bitcoin->set_asset("BTC");
 			transfer_bitcoin->set_to(user2.public_key_hash, 0.1);
-			VI_PANIC(transfer_bitcoin->sign(user1.secret_key, user1_nonce++, std::string_view("0.0000000005")), "transfer not signed");
+			VI_PANIC(transfer_bitcoin->sign(user1.secret_key, user1_nonce++, decimal::zero()), "transfer not signed");
 			transactions.push_back(transfer_bitcoin);
+		}
+		static void account_transfer_stage_2(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
+		{
+			auto& [user1, user1_nonce] = users[0];
+			auto& [user2, user2_nonce] = users[1];
+			auto* transfer_ethereum = memory::init<transactions::transfer>();
+			transfer_ethereum->set_asset("ETH");
+			transfer_ethereum->set_to(user1.public_key_hash, 0.01);
+			transfer_ethereum->set_to(user1.public_key_hash, 0.02);
+			transfer_ethereum->set_to(user1.public_key_hash, 0.03);
+			transfer_ethereum->set_to(user1.public_key_hash, 0.04);
+			transfer_ethereum->set_to(user1.public_key_hash, 0.05);
+			VI_PANIC(transfer_ethereum->sign(user2.secret_key, user2_nonce++, std::string_view("0.00000001")), "transfer not signed");
+			transactions.push_back(transfer_ethereum);
 		}
 		static void account_transfer_to_account(vector<uptr<ledger::transaction>>& transactions, vector<account>& users, size_t user_id, const algorithm::asset_id& asset, const std::string_view& address, const decimal& value)
 		{
@@ -1485,22 +1499,23 @@ public:
 				account(ledger::wallet::from_seed("000000"), 0),
 				account(ledger::wallet::from_seed("000002"), 0)
 			};
-			TEST_BLOCK(&generators::validator_registration_full, "0x1b417fce26a126fd89f31c2219a6afc31cf8fa9ca0712d84cecc56e8dbb6da55", 1);
-			TEST_BLOCK(std::bind(&generators::validator_enable_validator, std::placeholders::_1, std::placeholders::_2, 2), "0x51e1bf1e51c3ef9c65d7b6fe32bd7ca474fb80461588faaf50a866164c0813a2", 2);
-			TEST_BLOCK(&generators::depository_registration_full, "0x42752ddc8231136904c826aed8ba43cce77d2268b2457fae2111b770af016462", 3);
-			TEST_BLOCK(&generators::depository_routing_registration_full, "0xa7b4d130471d565c5b5855a643a2c13cb85edf5f4e4540389c1e07ffde88677f", 4);
-			TEST_BLOCK(&generators::depository_account_registration_full, "0xfe6597086ce9bc8981a5b0d24c820517a94deb61021282b89953e877e532c55c", 5);
-			TEST_BLOCK(&generators::depository_transaction_registration_full, "0xf3705b3a271108c711b98555bc2b6c4871c8979b2ebcc6f2f16c813db3275616", 7);
-			TEST_BLOCK(&generators::account_transfer, "0xb2fa2c476277d2055a1d6bf1dcb5645298bbf3ac3a66fb4d444d7fddfb4e1c3a", 8);
-			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), users[2].wallet.get_address(), 0.05), "0xa5c17ba1064b57d65200e908e07f35c6e249a1d021486d32c493558404ddc4a6", 9);
-			TEST_BLOCK(&generators::account_transaction_rollup, "0x9b6cf5f635f7ef3db6fec388cc474c727f35b8431f8c1a1439bdf52e9cd4edf5", 10);
-			TEST_BLOCK(&generators::account_program_deployment, "0x921eb1e08bcd0ae9b1ac4342b35cafa6d1caa163cc7538972bffcc6f276351d3", 11);
-			TEST_BLOCK(&generators::account_program_invocation, "0x2e0d5e8cc6f09d64b79cbfc2224ea3fcdfd4eca8611770309c713f104afdd26b", 12);
-			TEST_BLOCK(&generators::depository_regrouping, "0x954f0f28df2fe90dbeeb03f81fc6edaffe405172e51a2ad8f6a290c13dc009e6", 13);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_1, "0xdb9a931a0cb5ca8105ba7be3fd4b917e2001deaaa868650f359fb966b4d2d044", 17);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0x0b7ec546abb6fdb5826994b3cf0260a138de7b204c6058b4f987e5f18bb8091f", 19);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0x7737b7c0fd162495483cd3f10b5bcbb70a641d1639d7d58dcdbb18a45ba11951", 21);
-			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2), "0x44abfe11664678d33880ef60961150609677b3fbb974def0c243fa7ef5901cad", 23);
+			TEST_BLOCK(&generators::validator_registration_full, "0x8181f634fd4996e5b671d4110ef02ffa30f494fc161fd7b6937f223f0d0cfad3", 1);
+			TEST_BLOCK(std::bind(&generators::validator_enable_validator, std::placeholders::_1, std::placeholders::_2, 2), "0xc5dc4ffb5d876bb641e34950f883295e7fc2c32515b9478ddac683b6fbd7979b", 2);
+			TEST_BLOCK(&generators::depository_registration_full, "0x79bf630166dadd6f55bf31716bac229a1a336c5c614c7979249f99f269d2faff", 3);
+			TEST_BLOCK(&generators::depository_routing_registration_full, "0x7dbfb4c153f176c5f921a8d274e1751b202a70f5a4d9e6a80ce071134afc0b91", 4);
+			TEST_BLOCK(&generators::depository_account_registration_full, "0x17165b96f1746b88204f00b9bcf16ab873198ae93ebf40e3492b17d5532daf2d", 5);
+			TEST_BLOCK(&generators::depository_transaction_registration_full, "0x9f2990bb032a0dcf4b3b5b80d4ed6cf978812dc5e90db3d97b22918410f176ff", 7);
+			TEST_BLOCK(&generators::account_transfer_stage_1, "0xca6036a1e5430b458ff06c68eeef48b3f9344cc0b2dc000f3799079b5177c10b", 8);
+			TEST_BLOCK(&generators::account_transfer_stage_2, "0x29690df65210e981b7562a1ca38b735694e5f2f0a41747ea409ab0488dec298a", 9);
+			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), users[2].wallet.get_address(), 0.05), "0x07999a66a51f52a5cbc76a4367ca5a16960da3f4f1a3dc8bab303b0120a70f07", 10);
+			TEST_BLOCK(&generators::account_transaction_rollup, "0xf607ce83fd86cc6d3679128be1898b0771736fa86950b1950bfcb05d30a75c53", 11);
+			TEST_BLOCK(&generators::account_program_deployment, "0x2fb512a105a64d55a696d9849ead35675729eea83cdffc2928b56de94c486810", 12);
+			TEST_BLOCK(&generators::account_program_invocation, "0xc064894ef928927303decc9719b84fe84726dc459941582c073b57752cdb2cd7", 13);
+			TEST_BLOCK(&generators::depository_regrouping, "0xda6105d30cf0b1070f84ada7670082640aedcbcc63f1a6bdff83fe2145fa0a56", 14);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_1, "0x9252d3602b202f5b46bbf4c5355398905124856d1be96d5749adc180f35355f1", 18);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0xfe26a9f9804f7e2a74e94790737f3d23f390251823912d82565f90a66b5b3ca6", 20);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0x5ed264fd0963177d667853896bc75dd878e024c09af00530a003b0a83d35eb5c", 22);
+			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2), "0x09c9ee9f1b39d36eb9f266420d80227516fe636adbef4b2b74fb5ccefa07c1c2", 24);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else
@@ -1517,12 +1532,12 @@ public:
 			{
 				account(ledger::wallet::from_seed("000000"), 0)
 			};
-			TEST_BLOCK(&generators::validator_registration_partial, "0x9d5d8e1f0b1885d79fc8e01a28e5e4e33b2e1d0e6ecf486afbc2271721b751c1", 1);
-			TEST_BLOCK(&generators::depository_registration_partial, "0x05f52e1a7db15bdeadda396a58d3c115ea2809ca7a44dcf3a49bf76fd01e1f91", 2);
-			TEST_BLOCK(&generators::depository_routing_registration_partial, "0xacd6ab3d437ddd6ca03b5be181db8dce74fbdcd2a14021e9801df4404d9160f5", 3);
-			TEST_BLOCK(&generators::depository_account_registration_partial, "0xf2d6feebeed0d17359a4a264cdfecdf199f7374a6008dced787465d3220d6e3d", 4);
-			TEST_BLOCK(&generators::depository_transaction_registration_partial, "0xc0ccc26437c43de14863838e66d151dce9eaaad2ef1220ebd4eae0ed0f943fcc", 6);
-			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), "tcrt1x8x997r2vkll54hj5f7a2nve0n6xh3v8rpmtq36", 0.1), "0x7d66a44531fca898d156db833929c2348bae1322b2beee4f75c97594d612c5a3", 7);
+			TEST_BLOCK(&generators::validator_registration_partial, "0x28124e461cf7737f58130938a910be71cdec4965b33deab659df22730ded9545", 1);
+			TEST_BLOCK(&generators::depository_registration_partial, "0x31529c6ef883f5a231edc7183fa1dc27dd8009411a4e0870d3539c0460f8010e", 2);
+			TEST_BLOCK(&generators::depository_routing_registration_partial, "0xf781616f82bcf6be37d6b5cfa2ae4951e81995c7bbd72ef73902eff3b3155bcb", 3);
+			TEST_BLOCK(&generators::depository_account_registration_partial, "0x4ee6c03fe7735423f88ebcc550499149afcaab240e9a82cdf63246a6d55804ed", 4);
+			TEST_BLOCK(&generators::depository_transaction_registration_partial, "0xdb119d608a9d38918210ec12f36f5f5043937da79d6894d3b74978ec525ea71a", 6);
+			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), "tcrt1x8x997r2vkll54hj5f7a2nve0n6xh3v8rpmtq36", 0.1), "0x32b65fbc1e1da86d7f6540aa08143863afae9eebfec9542497a4eba162995819", 7);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else

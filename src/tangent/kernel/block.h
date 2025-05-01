@@ -111,8 +111,6 @@ namespace tangent
 			uint256_t gas_use = 0;
 			uint256_t gas_limit = 0;
 			uint256_t absolute_work = 0;
-			uint256_t slot_gas_use = 0;
-			uint256_t slot_gas_target = 0;
 			uint256_t slot_duration = 0;
 			uint8_t recovery = 0;
 			uint64_t time = 0;
@@ -144,8 +142,6 @@ namespace tangent
 			virtual void set_witness_requirement(const algorithm::asset_id& asset, uint64_t block_number);
 			virtual uint64_t get_witness_requirement(const algorithm::asset_id& asset) const;
 			virtual int8_t get_relative_order(const block_header& other) const;
-			virtual uint256_t get_slot_gas_use() const;
-			virtual uint256_t get_slot_gas_target() const;
 			virtual uint64_t get_slot_duration_target() const;
 			virtual uint64_t get_slot_length() const;
 			virtual uint64_t get_duration() const;
@@ -272,7 +268,6 @@ namespace tangent
 			expects_lr<void> verify_account_delegation(const algorithm::pubkeyhash owner) const;
 			expects_lr<void> verify_gas_transfer_balance() const;
 			expects_lr<void> verify_transfer_balance(const algorithm::asset_id& asset, const decimal& value) const;
-			expects_lr<void> verify_validator_production(const algorithm::pubkeyhash owner) const;
 			expects_lr<void> verify_validator_attestation(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner) const;
 			expects_lr<algorithm::wesolowski::distribution> calculate_random(const uint256_t& seed);
 			expects_lr<size_t> calculate_attesters_size(const algorithm::asset_id& asset) const;
@@ -283,9 +278,9 @@ namespace tangent
 			expects_lr<states::account_storage> apply_account_storage(const algorithm::pubkeyhash owner, const std::string_view& location, const std::string_view& storage);
 			expects_lr<states::account_delegation> apply_account_delegation(const algorithm::pubkeyhash owner, uint32_t delegations);
 			expects_lr<states::account_balance> apply_transfer(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const decimal& supply, const decimal& reserve);
+			expects_lr<states::account_balance> apply_fee_transfer(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const decimal& value);
 			expects_lr<states::account_balance> apply_payment(const algorithm::asset_id& asset, const algorithm::pubkeyhash from, const algorithm::pubkeyhash to, const decimal& value);
-			expects_lr<states::account_balance> apply_funding(const algorithm::asset_id& asset, const algorithm::pubkeyhash from, const algorithm::pubkeyhash to, const decimal& value);
-			expects_lr<states::validator_production> apply_validator_production(const algorithm::pubkeyhash owner, production_type action, const uint256_t& gas);
+			expects_lr<states::validator_production> apply_validator_production(const algorithm::pubkeyhash owner, production_type action, const uint256_t& gas, const ordered_map<algorithm::asset_id, decimal>& stakes);
 			expects_lr<states::validator_participation> apply_validator_participation(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const decimal& value, int64_t participations, bool is_reward = false);
 			expects_lr<states::validator_attestation> apply_validator_attestation(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const decimal& value, bool is_reward = false);
 			expects_lr<states::depository_reward> apply_depository_reward(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const decimal& incoming_fee, const decimal& outgoing_fee);

@@ -831,6 +831,7 @@ namespace tangent
 		}
 		bool mempoolstate::reconstruct_storage()
 		{
+			const uint64_t max_mempool_size = protocol::now().user.storage.mempool_transaction_limit;
 			string command = VI_STRINGIFY(
 				CREATE TABLE IF NOT EXISTS validators
 				(
@@ -874,7 +875,11 @@ namespace tangent
 				CREATE INDEX IF NOT EXISTS transactions_group_hash ON transactions (group_hash);
 				CREATE INDEX IF NOT EXISTS transactions_owner_nonce ON transactions (owner, nonce);
 				CREATE INDEX IF NOT EXISTS transactions_asset_preference ON transactions (asset ASC, preference DESC);
-				CREATE INDEX IF NOT EXISTS transactions_epoch_preference ON transactions (epoch ASC, preference DESC););
+				CREATE INDEX IF NOT EXISTS transactions_epoch_preference ON transactions (epoch ASC, preference DESC);
+				CREATE TRIGGER IF NOT EXISTS transactions_capacity BEFORE INSERT ON transactions BEGIN
+					DELETE FROM transactions WHERE hash = (SELECT hash FROM transactions ORDER BY epoch DESC, preference ASC NULLS LAST) AND (SELECT COUNT(1) FROM transactions) >= max_mempool_size;
+				END;);
+			stringify::replace(command, "max_mempool_size", to_string(max_mempool_size));
 
 			auto cursor = query(label, __func__, command);
 			return (cursor && !cursor->error());

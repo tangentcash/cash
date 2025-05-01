@@ -503,8 +503,23 @@ namespace tangent
 				return layer_exception("invalid state owner");
 
 			auto* prev = (validator_production*)prev_state;
-			if (!prev && gas > 0)
-				active = true;
+			active = active || (!prev && gas > 0);
+
+			for (auto& [asset, stake] : stakes)
+			{
+				if (!algorithm::asset::is_valid(asset))
+					return layer_exception("invalid asset");
+
+				if (stake.is_nan() || stake.is_negative())
+					return layer_exception("invalid stake");
+
+				if (prev != nullptr)
+				{
+					auto prev_stake = prev->stakes.find(asset);
+					if (prev_stake != prev->stakes.end() && prev_stake->second > stake)
+						return layer_exception("next stake is lower than previous stake");
+				}
+			}
 
 			return expectation::met;
 		}
@@ -515,6 +530,12 @@ namespace tangent
 			stream->write_string(std::string_view((char*)owner, memcmp(owner, null, sizeof(null)) == 0 ? 0 : sizeof(owner)));
 			stream->write_boolean(active);
 			stream->write_integer(gas);
+			stream->write_integer((uint16_t)stakes.size());
+			for (auto& [asset, stake] : stakes)
+			{
+				stream->write_integer(asset);
+				stream->write_decimal(stake);
+			}
 			return true;
 		}
 		bool validator_production::load_payload(format::stream& stream)
@@ -529,11 +550,24 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &gas))
 				return false;
 
+			uint16_t stakes_size;
+			if (!stream.read_integer(stream.read_type(), &stakes_size))
+				return false;
+
+			for (uint16_t i = 0; i < stakes_size; i++)
+			{
+				algorithm::asset_id asset;
+				if (!stream.read_integer(stream.read_type(), &asset))
+					return false;
+
+				decimal stake;
+				if (!stream.read_decimal(stream.read_type(), &stake))
+					return false;
+
+				stakes[asset] = std::move(stake);
+			}
+
 			return true;
-		}
-		bool validator_production::is_eligible(const ledger::block_header* block_header) const
-		{
-			return !get_gas_required(block_header, gas);
 		}
 		bool validator_production::is_owner_null() const
 		{
@@ -546,6 +580,13 @@ namespace tangent
 			data->set("owner", algorithm::signing::serialize_address(owner));
 			data->set("gas", algorithm::encoding::serialize_uint256(gas));
 			data->set("active", var::boolean(active));
+			schema* stakes_data = data->set("stakes", var::set::array());
+			for (auto& [asset, stake] : stakes)
+			{
+				schema* stake_data = stakes_data->push(var::set::object());
+				stake_data->set("asset", algorithm::asset::serialize(asset));
+				stake_data->set("stake", var::decimal(stake));
+			}
 			return data;
 		}
 		uint32_t validator_production::as_type() const
@@ -590,19 +631,6 @@ namespace tangent
 		string validator_production::as_instance_row()
 		{
 			return string();
-		}
-		uint256_t validator_production::get_gas_required(const ledger::block_header* block_header, const uint256_t& gas_use)
-		{
-			auto& config = protocol::now();
-			auto total_gas_limit = ledger::block_header::get_gas_limit();
-			auto requirement = block_header ? block_header->get_slot_gas_target() : uint256_t(0);
-			auto utility = (block_header ? total_gas_limit.to_decimal() / block_header->get_slot_gas_use().to_decimal() : 1);
-			if (utility.is_nan())
-				utility = decimal::zero();
-
-			auto multiplier = requirement.to_decimal() * utility * config.policy.production_work_required;
-			requirement = uint256_t(multiplier.truncate(0).to_string(), 10);
-			return requirement > gas_use ? requirement - gas_use : uint256_t(0);
 		}
 
 		validator_participation::validator_participation(const algorithm::pubkeyhash new_owner, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::multiform(new_block_number, new_block_nonce)

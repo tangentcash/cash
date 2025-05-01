@@ -1018,15 +1018,8 @@ namespace tangent
 
 			if (production)
 			{
-				if (*production)
-				{
-					auto status = context->verify_validator_production(context->receipt.from);
-					if (!status)
-						return status;
-				}
-
 				auto type = *production ? ledger::transaction_context::production_type::mint_gas_and_activate : ledger::transaction_context::production_type::burn_gas_and_deactivate;
-				auto status = context->apply_validator_production(context->receipt.from, type, 0);
+				auto status = context->apply_validator_production(context->receipt.from, type, 0, { });
 				if (!status)
 					return status.error();
 			}

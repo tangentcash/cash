@@ -266,12 +266,6 @@ namespace tangent
 				return layer_exception("invalid absolute gas work");
 
 			uint256_t cumulative = get_slot_length() > 1 ? uint256_t(1) : uint256_t(0);
-			if (slot_gas_use != ((parent_block ? parent_block->slot_gas_use : uint256_t(0)) * cumulative + gas_use))
-				return layer_exception("invalid slot gas use");
-
-			if (slot_gas_target != ((parent_block ? parent_block->slot_gas_target : uint256_t(0)) * cumulative + (transaction_count > 0 ? gas_use / transaction_count : uint256_t(0))))
-				return layer_exception("invalid slot gas target");
-
 			if (slot_duration != ((parent_block ? parent_block->slot_duration + parent_block->get_duration() : uint256_t(0)) * cumulative))
 				return layer_exception("invalid slot duration");
 
@@ -294,8 +288,6 @@ namespace tangent
 			stream->write_integer(gas_use);
 			stream->write_integer(gas_limit);
 			stream->write_integer(absolute_work);
-			stream->write_integer(slot_gas_use);
-			stream->write_integer(slot_gas_target);
 			stream->write_integer(slot_duration);
 			stream->write_integer(target.length);
 			stream->write_integer(target.bits);
@@ -336,12 +328,6 @@ namespace tangent
 				return false;
 
 			if (!stream.read_integer(stream.read_type(), &absolute_work))
-				return false;
-
-			if (!stream.read_integer(stream.read_type(), &slot_gas_use))
-				return false;
-
-			if (!stream.read_integer(stream.read_type(), &slot_gas_target))
 				return false;
 
 			if (!stream.read_integer(stream.read_type(), &slot_duration))
@@ -508,14 +494,6 @@ namespace tangent
 
 			return hash_a > hash_b ? -1 : 1;
 		}
-		uint256_t block_header::get_slot_gas_use() const
-		{
-			return slot_gas_use / get_slot_length();
-		}
-		uint256_t block_header::get_slot_gas_target() const
-		{
-			return slot_gas_target / get_slot_length();
-		}
 		uint64_t block_header::get_slot_duration_target() const
 		{
 			return (slot_duration + get_duration()) / get_slot_length();
@@ -550,9 +528,7 @@ namespace tangent
 			data->set("absolute_work", algorithm::encoding::serialize_uint256(absolute_work));
 			data->set("difficulty", algorithm::encoding::serialize_uint256(target.difficulty()));
 			data->set("gas_use", algorithm::encoding::serialize_uint256(gas_use));
-			data->set("gas_limit", algorithm::encoding::serialize_uint256(gas_limit));
-			data->set("slot_gas_use", algorithm::encoding::serialize_uint256(get_slot_gas_use()));
-			data->set("slot_gas_target", algorithm::encoding::serialize_uint256(get_slot_gas_target()));
+			data->set("gas_limit", algorithm::encoding::serialize_uint256(gas_limit));\
 			data->set("slot_duration", algorithm::encoding::serialize_uint256(slot_duration));
 			data->set("slot_duration_target", algorithm::encoding::serialize_uint256(get_slot_duration_target()));
 			data->set("slot_length", algorithm::encoding::serialize_uint256(get_slot_length()));
@@ -649,15 +625,21 @@ namespace tangent
 			if (recovery)
 				target = algorithm::wesolowski::bump(target, protocol::now().policy.consensus_recovery_bump);
 
-			block_work cache;
+			block_work work;
+			ordered_map<algorithm::asset_id, decimal> fees;
 			for (auto& item : environment->incoming)
 			{
-				auto execution = transaction_context::execute_tx(this, environment, *item.candidate, item.hash, item.owner, cache, item.size, item.candidate->conservative ? 0 : (uint8_t)transaction_context::execution_flags::only_successful);
+				auto execution = transaction_context::execute_tx(this, environment, *item.candidate, item.hash, item.owner, work, item.size, item.candidate->conservative ? 0 : (uint8_t)transaction_context::execution_flags::only_successful);
 				if (execution)
 				{
 					auto& blob = transactions.emplace_back();
 					blob.transaction = std::move(item.candidate);
 					blob.receipt = std::move(execution->receipt);
+					if (blob.receipt.relative_gas_paid > 0)
+					{
+						auto& fee = fees[blob.transaction->get_gas_asset()];
+						fee = (fee.is_nan() ? decimal::zero() : fee) + blob.transaction->gas_price * blob.receipt.relative_gas_paid.to_decimal();
+					}
 					states.commit();
 				}
 				else
@@ -678,6 +660,8 @@ namespace tangent
 				return layer_exception(string(*errors));
 			}
 
+			bool has_fees = !fees.empty();
+
 			size_t participants = (size_t)(priority + 1);
 			for (size_t i = 0; i < participants; i++)
 			{
@@ -685,13 +669,13 @@ namespace tangent
 				bool winner = (i == priority);
 				if (winner)
 				{
-					auto work = environment->validation.context.apply_validator_production(participant.owner, transaction_context::production_type::mint_gas, gas_use);
+					auto work = environment->validation.context.apply_validator_production(participant.owner, transaction_context::production_type::mint_gas, gas_use, fees);
 					if (!work)
 						return work.error();
 				}
 				else
 				{
-					auto work = environment->validation.context.apply_validator_production(participant.owner, transaction_context::production_type::burn_gas_and_deactivate, gas_use * (protocol::now().policy.production_max_per_block - i));
+					auto work = environment->validation.context.apply_validator_production(participant.owner, transaction_context::production_type::burn_gas_and_deactivate, gas_use * (protocol::now().policy.production_max_per_block - i), { });
 					if (!work)
 						return work.error();
 				}
@@ -1038,8 +1022,6 @@ namespace tangent
 
 			uint256_t cumulative = get_slot_length() > 1 ? 1 : 0;
 			absolute_work = (parent_block ? parent_block->absolute_work : uint256_t(0)) + gas_util::get_gas_work(target.difficulty(), gas_use, gas_limit, priority);
-			slot_gas_use = (parent_block ? parent_block->slot_gas_use : uint256_t(0)) * cumulative + gas_use;
-			slot_gas_target = (parent_block ? parent_block->slot_gas_target : uint256_t(0)) * cumulative + (transactions.size() > 0 ? gas_use / transactions.size() : uint256_t(0));
 			slot_duration = (parent_block ? parent_block->slot_duration + parent_block->get_duration() : uint256_t(0)) * cumulative;
 			transaction_count = (uint32_t)transactions.size();
 			state_count = (uint32_t)state_tree.size();
@@ -1493,19 +1475,6 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> transaction_context::verify_validator_production(const algorithm::pubkeyhash owner) const
-		{
-			if (!environment)
-				return layer_exception("invalid evaluation context");
-
-			auto production = get_validator_production(owner);
-			uint256_t gas_production = production ? production->gas : uint256_t(0);
-			uint256_t gas_requirement = states::validator_production::get_gas_required(block, gas_production);
-			if (gas_requirement > 0)
-				return layer_exception("validator gas is insufficient (gas: " + gas_production.to_string() + ", value: " + gas_requirement.to_string() + ")");
-
-			return expectation::met;
-		}
 		expects_lr<void> transaction_context::verify_validator_attestation(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner) const
 		{
 			if (!environment)
@@ -1705,6 +1674,24 @@ namespace tangent
 
 			return new_state;
 		}
+		expects_lr<states::account_balance> transaction_context::apply_fee_transfer(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const decimal& value)
+		{
+			states::account_balance new_state = states::account_balance(owner, block);
+			new_state.asset = asset;
+			new_state.supply = -value;
+			if (environment != nullptr && !memcmp(environment->validator.public_key_hash, owner, sizeof(algorithm::pubkeyhash)))
+				return new_state;
+
+			auto status = store(&new_state, false);
+			if (!status)
+				return status.error();
+
+			status = emit_event<states::account_balance>({ format::variable(asset), format::variable(std::string_view((char*)owner, sizeof(algorithm::pubkeyhash))), format::variable(-value) }, false);
+			if (!status)
+				return status.error();
+
+			return new_state;
+		}
 		expects_lr<states::account_balance> transaction_context::apply_payment(const algorithm::asset_id& asset, const algorithm::pubkeyhash from, const algorithm::pubkeyhash to, const decimal& value)
 		{
 			states::account_balance new_state1 = states::account_balance(from, block);
@@ -1731,66 +1718,73 @@ namespace tangent
 
 			return new_state1;
 		}
-		expects_lr<states::account_balance> transaction_context::apply_funding(const algorithm::asset_id& asset, const algorithm::pubkeyhash from, const algorithm::pubkeyhash to, const decimal& value)
+		expects_lr<states::validator_production> transaction_context::apply_validator_production(const algorithm::pubkeyhash owner, production_type action, const uint256_t& gas, const ordered_map<algorithm::asset_id, decimal>& stakes)
 		{
-			states::account_balance new_state1 = states::account_balance(from, block);
-			new_state1.asset = asset;
-			new_state1.supply = -value;
-			if (!memcmp(from, to, sizeof(algorithm::pubkeyhash)))
-				return new_state1;
-
-			auto status = store(&new_state1, false);
-			if (!status)
-				return status.error();
-
-			states::account_balance new_state2 = states::account_balance(to, block);
-			new_state2.asset = asset;
-			new_state2.supply = value;
-
-			status = store(&new_state2, false);
-			if (!status)
-				return status.error();
-
-			status = emit_event<states::account_balance>({ format::variable(asset), format::variable(std::string_view((char*)from, sizeof(algorithm::pubkeyhash))), format::variable(std::string_view((char*)to, sizeof(algorithm::pubkeyhash))), format::variable(value) }, false);
-			if (!status)
-				return status.error();
-
-			return new_state1;
-		}
-		expects_lr<states::validator_production> transaction_context::apply_validator_production(const algorithm::pubkeyhash owner, production_type action, const uint256_t& gas)
-		{
-			states::validator_production new_state = states::validator_production(owner, block);
-			new_state.gas = (action == production_type::mint_gas || action == production_type::mint_gas_and_activate ? gas : 0);
-			new_state.active = (action == production_type::mint_gas_and_activate);
-
-			auto prev_state = get_validator_production(owner);
-			if (prev_state)
+			switch (action)
 			{
-				switch (action)
+				case production_type::burn_gas:
+				case production_type::burn_gas_and_deactivate:
 				{
-					case production_type::burn_gas:
-						new_state.gas = (prev_state->gas >= gas ? prev_state->gas - gas : 0);
-						new_state.active = prev_state->active;
-						break;
-					case production_type::burn_gas_and_deactivate:
-						new_state.gas = (prev_state->gas >= gas ? prev_state->gas - gas : 0);
-						new_state.active = false;
-						break;
-					case production_type::mint_gas:
-					case production_type::mint_gas_and_activate:
-						new_state.gas = (prev_state->gas + gas < prev_state->gas ? uint256_t::max() : (prev_state->gas + gas));
-						new_state.active = prev_state->active || (action == production_type::mint_gas_and_activate);
-						break;
-					default:
-						return layer_exception("invalid production action");
+					if (!stakes.empty())
+						return layer_exception("unstaking is either all or none");
+
+					auto new_state = get_validator_production(owner).or_else(states::validator_production(owner, block));
+					auto new_gas = new_state.gas - gas;
+					new_state.gas = new_gas > new_state.gas ? 0 : new_gas;
+					new_state.active = action == production_type::burn_gas_and_deactivate ? false : new_state.active;
+					if (action == production_type::burn_gas_and_deactivate && !new_state.stakes.empty())
+					{
+						new_state.gas /= 2;
+						if (!new_state.gas)
+							return layer_exception("not enough gas to perform unstaking");
+
+						for (auto& [asset, stake] : new_state.stakes)
+						{
+							if (stake.is_positive())
+							{
+								auto transfer = apply_transfer(asset, owner, decimal::zero(), -stake);
+								if (!transfer)
+									return transfer.error();
+							}
+						}
+						new_state.stakes.clear();
+					}
+
+					auto result = store(&new_state);
+					if (!result)
+						return result.error();
+
+					return new_state;
 				}
+				case production_type::mint_gas:
+				case production_type::mint_gas_and_activate:
+				{
+					auto new_state = get_validator_production(owner).or_else(states::validator_production(owner, block));
+					auto new_gas = new_state.gas + gas;
+					new_state.gas = new_gas < new_state.gas ? 0 : new_gas;
+					new_state.active = (action == production_type::mint_gas_and_activate) || new_state.active;
+
+					for (auto& [asset, stake] : stakes)
+					{
+						auto& prev_stake = new_state.stakes[asset];
+						prev_stake = (prev_stake.is_nan() ? decimal::zero() : prev_stake) + stake;
+						if (stake.is_positive())
+						{
+							auto transfer = apply_transfer(asset, owner, stake, stake);
+							if (!transfer)
+								return transfer.error();
+						}
+					}
+
+					auto result = store(&new_state);
+					if (!result)
+						return result.error();
+
+					return new_state;
+				}
+				default:
+					return layer_exception("invalid production action");
 			}
-
-			auto result = store(&new_state);
-			if (!result)
-				return result.error();
-
-			return new_state;
 		}
 		expects_lr<states::validator_participation> transaction_context::apply_validator_participation(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const decimal& value, int64_t participations, bool is_reward)
 		{
@@ -2506,12 +2500,12 @@ namespace tangent
 					return sequencing.error();
 			}
 
-			context.receipt.relative_gas_paid = context.transaction->gas_price.is_positive() ? context.receipt.relative_gas_use : 0;
-			if (context.receipt.relative_gas_paid > 0 && memcmp(context.environment->validator.public_key_hash, context.receipt.from, sizeof(context.receipt.from)) != 0)
+			context.receipt.relative_gas_paid = memcmp(context.environment->validator.public_key_hash, context.receipt.from, sizeof(context.receipt.from)) != 0 && context.transaction->gas_price.is_positive() ? context.receipt.relative_gas_use : 0;
+			if (context.receipt.relative_gas_paid > 0)
 			{
-				auto funding = context.apply_funding(context.transaction->get_gas_asset(), context.receipt.from, context.environment->validator.public_key_hash, context.transaction->gas_price * context.receipt.relative_gas_paid.to_decimal());
-				if (!funding)
-					return funding.error();
+				auto fee = context.apply_fee_transfer(context.transaction->get_gas_asset(), context.receipt.from, context.transaction->gas_price * context.receipt.relative_gas_paid.to_decimal());
+				if (!fee)
+					return fee.error();
 			}
 
 			if (context.receipt.successful)
