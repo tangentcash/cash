@@ -660,8 +660,6 @@ namespace tangent
 				return layer_exception(string(*errors));
 			}
 
-			bool has_fees = !fees.empty();
-
 			size_t participants = (size_t)(priority + 1);
 			for (size_t i = 0; i < participants; i++)
 			{
@@ -1968,10 +1966,10 @@ namespace tangent
 			for (auto& address : addresses)
 			{
 				auto hash = chain->decode_address(address.second);
-				if (hash)
-					segments[*hash][address.first] = address.second;
-				else
-					segments[address.second][address.first] = address.second;
+				if (!hash)
+					return layer_exception(stringify::text("error applying \"%s\" address: %s", address.second.c_str(), hash.error().message().c_str()));
+
+				segments[*hash][address.first] = address.second;
 			}
 
 			states::witness_account new_state = states::witness_account(nullptr, nullptr);

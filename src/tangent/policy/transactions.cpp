@@ -1208,94 +1208,6 @@ namespace tangent
 			return "certification";
 		}
 
-		expects_lr<void> routing_account::validate(uint64_t block_number) const
-		{
-			if (!algorithm::asset::token_of(asset).empty())
-				return layer_exception("invalid asset");
-
-			if (address.empty())
-				return layer_exception("invalid address");
-
-			return expectation::met;
-		}
-		expects_lr<void> routing_account::execute(ledger::transaction_context* context) const
-		{
-			auto validation = delegation_transaction::execute(context);
-			if (!validation)
-				return validation.error();
-
-			if (!algorithm::asset::token_of(asset).empty())
-				return layer_exception("invalid asset");
-
-			auto* chain = nss::server_node::get()->get_chain(asset);
-			if (!chain)
-				return layer_exception("invalid operation");
-
-			auto attestation_requirement = context->verify_validator_attestation(asset, manager);
-			if (!attestation_requirement)
-				return attestation_requirement.error();
-
-			auto depository_policy = context->get_depository_policy(asset, manager);
-			if (!depository_policy)
-				return depository_policy.error();
-			else if (!depository_policy->accepts_account_requests)
-				return layer_exception("depository forbids account requests");
-
-			auto public_key_hash = chain->decode_address(address);
-			if (!public_key_hash)
-				return public_key_hash.error();
-
-			auto collision = context->get_witness_account(asset, address, 0);
-			if (collision)
-				return layer_exception("account address " + address + " taken");
-
-			auto status = context->apply_witness_routing_account(asset, context->receipt.from, { { (uint8_t)1, string(address) } });
-			if (!status)
-				return status.error();
-
-			return expectation::met;
-		}
-		bool routing_account::store_body(format::stream* stream) const
-		{
-			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_string(address);
-			return true;
-		}
-		bool routing_account::load_body(format::stream& stream)
-		{
-			if (!stream.read_string(stream.read_type(), &address))
-				return false;
-
-			return true;
-		}
-		void routing_account::set_address(const std::string_view& new_address)
-		{
-			address = new_address;
-		}
-		uptr<schema> routing_account::as_schema() const
-		{
-			schema* data = ledger::delegation_transaction::as_schema().reset();
-			data->set("address", var::string(address));
-			return data;
-		}
-		uint32_t routing_account::as_type() const
-		{
-			return as_instance_type();
-		}
-		std::string_view routing_account::as_typename() const
-		{
-			return as_instance_typename();
-		}
-		uint32_t routing_account::as_instance_type()
-		{
-			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
-			return hash;
-		}
-		std::string_view routing_account::as_instance_typename()
-		{
-			return "routing_account";
-		}
-
 		expects_lr<void> depository_account::validate(uint64_t block_number) const
 		{
 			if (!algorithm::asset::token_of(asset).empty())
@@ -1323,17 +1235,43 @@ namespace tangent
 			else if (!depository_policy->accepts_account_requests)
 				return layer_exception("depository forbids account requests");
 
+			bool routing_address_application = false;
+			if (!routing_address.empty())
+			{
+				auto collision = context->get_witness_account(asset, routing_address, 0);
+				if (collision && (!collision->is_routing_account() || memcmp(collision->owner, context->receipt.from, sizeof(context->receipt.from)) != 0))
+					return layer_exception("routing account address " + routing_address + " taken");
+
+				if (!collision)
+				{
+					auto status = context->apply_witness_routing_account(asset, context->receipt.from, { { (uint8_t)1, string(routing_address) } });
+					if (!status)
+						return status.error();
+
+					routing_address_application = true;
+				}
+			}
+
 			auto duplicate = context->get_depository_account(asset, manager, context->receipt.from);
 			if (duplicate)
-				return layer_exception("depository account already exists");
+			{
+				if (!routing_address_application)
+					return layer_exception("depository account already exists");
+
+				return expectation::met;
+			}
 
 			switch (chain->routing)
 			{
 				case mediator::routing_policy::account:
 				{
-					if (depository_policy->accounts_under_management > 0)
+					if (!depository_policy->accounts_under_management)
+						break;
+
+					if (!routing_address_application)
 						return layer_exception("too many accounts for a depository");
-					break;
+
+					return expectation::met;
 				}
 				case mediator::routing_policy::memo:
 				{
@@ -1373,7 +1311,12 @@ namespace tangent
 					break;
 				}
 				case mediator::routing_policy::utxo:
+				{
+					auto duplicate = context->get_depository_account(asset, manager, context->receipt.from);
+					if (duplicate)
+						return layer_exception("depository account already exists");
 					break;
+				}
 				default:
 					return layer_exception("invalid operation");
 			}
@@ -1463,10 +1406,14 @@ namespace tangent
 		bool depository_account::store_body(format::stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_string(routing_address);
 			return true;
 		}
 		bool depository_account::load_body(format::stream& stream)
 		{
+			if (!stream.read_string(stream.read_type(), &routing_address))
+				return false;
+
 			return true;
 		}
 		bool depository_account::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
@@ -1479,6 +1426,10 @@ namespace tangent
 		bool depository_account::is_dispatchable() const
 		{
 			return true;
+		}
+		void depository_account::set_routing_address(const std::string_view& new_address)
+		{
+			routing_address = new_address;
 		}
 		ordered_set<algorithm::pubkeyhash_t> depository_account::get_group(const ledger::receipt& receipt) const
 		{
@@ -3461,7 +3412,7 @@ namespace tangent
 				if (!target)
 					return target.error();
 
-				auto status = context->apply_validator_participation(asset, old_manager.data, decimal::zero(), -1);
+				auto status = context->apply_validator_participation(account.asset, old_manager.data, decimal::zero(), -1);
 				if (!status)
 					return status.error();
 
@@ -3537,8 +3488,6 @@ namespace tangent
 				return memory::init<rollup>();
 			else if (hash == certification::as_instance_type())
 				return memory::init<certification>();
-			else if (hash == routing_account::as_instance_type())
-				return memory::init<routing_account>();
 			else if (hash == depository_account::as_instance_type())
 				return memory::init<depository_account>();
 			else if (hash == depository_account_finalization::as_instance_type())
@@ -3574,8 +3523,6 @@ namespace tangent
 				return memory::init<rollup>(*(const rollup*)base);
 			else if (hash == certification::as_instance_type())
 				return memory::init<certification>(*(const certification*)base);
-			else if (hash == routing_account::as_instance_type())
-				return memory::init<routing_account>(*(const routing_account*)base);
 			else if (hash == depository_account::as_instance_type())
 				return memory::init<depository_account>(*(const depository_account*)base);
 			else if (hash == depository_account_finalization::as_instance_type())
@@ -3667,6 +3614,7 @@ namespace tangent
 			{
 				auto* transaction = memory::init<depository_transaction>();
 				transaction->asset = asset;
+				transaction->set_gas(decimal::zero(), 0);
 				transaction->set_witness(fake_finalized.as_computed());
 				dispatcher->emit_transaction(transaction);
 			}

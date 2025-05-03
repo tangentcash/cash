@@ -2526,8 +2526,11 @@ namespace tangent
 			if (!candidate_tx || !candidate_tx->load(message))
 				return server_response().error(error_codes::bad_params, "invalid message");
 
-			candidate_tx->set_optimal_gas(candidate_tx->gas_price);
-			return server_response().success(algorithm::encoding::serialize_uint256(candidate_tx->gas_limit));
+			auto gas_limit = ledger::transaction_context::calculate_tx_gas(*candidate_tx);
+			if (!gas_limit)
+				return server_response().error(error_codes::bad_params, gas_limit.error().message());
+
+			return server_response().success(algorithm::encoding::serialize_uint256(*gas_limit));
 		}
 		server_response server_node::mempoolstate_submit_transaction(http::connection* base, format::variables&& args, ledger::transaction* prebuilt)
 		{
