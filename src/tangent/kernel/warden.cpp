@@ -1,10 +1,10 @@
-#include "mediator.h"
+#include "warden.h"
 #include "../validator/service/nss.h"
 #include <sstream>
 
 namespace tangent
 {
-	namespace mediator
+	namespace warden
 	{
 		wallet_link::wallet_link(const algorithm::pubkeyhash new_owner, const std::string_view& new_public_key, const std::string_view& new_address) : address(new_address), public_key(new_public_key)
 		{
@@ -119,7 +119,7 @@ namespace tangent
 		}
 		std::string_view wallet_link::as_instance_typename()
 		{
-			return "mediator_wallet_link";
+			return "warden_wallet_link";
 		}
 		wallet_link wallet_link::from_owner(const algorithm::pubkeyhash new_owner)
 		{
@@ -375,13 +375,14 @@ namespace tangent
 		}
 		std::string_view coin_utxo::as_instance_typename()
 		{
-			return "mediator_coin_utxo";
+			return "warden_coin_utxo";
 		}
 
 		bool computed_transaction::store_payload(format::stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_integer(block_id);
+			stream->write_integer(block_id.execution);
+			stream->write_integer(block_id.finalization);
 			stream->write_string_raw(transaction_id);
 			stream->write_integer((uint32_t)inputs.size());
 			for (auto& item : inputs)
@@ -401,7 +402,10 @@ namespace tangent
 		}
 		bool computed_transaction::load_payload(format::stream& stream)
 		{
-			if (!stream.read_integer(stream.read_type(), &block_id))
+			if (!stream.read_integer(stream.read_type(), &block_id.execution))
+				return false;
+
+			if (!stream.read_integer(stream.read_type(), &block_id.finalization))
 				return false;
 
 			if (!stream.read_string(stream.read_type(), &transaction_id))
@@ -485,20 +489,18 @@ namespace tangent
 		{
 			auto* server = nss::server_node::get();
 			auto* chain = server->get_chain(asset);
-			if (!chain)
+			if (!chain || block_id.finalization < block_id.execution)
 				return false;
 
-			auto latest_block_id = server->get_latest_known_block_height(asset).or_else(0);
-			if (latest_block_id < block_id)
-				return block_id >= chain->get_chainparams().sync_latency;
-
-			return latest_block_id - block_id >= chain->get_chainparams().sync_latency;
+			return block_id.finalization - block_id.execution >= chain->get_chainparams().sync_latency;
 		}
 		uptr<schema> computed_transaction::as_schema() const
 		{
 			schema* data = var::set::object();
+			schema* block_data = data->set("block_id", var::set::array());
+			block_data->push(algorithm::encoding::serialize_uint256(block_id.execution));
+			block_data->push(algorithm::encoding::serialize_uint256(block_id.finalization));
 			data->set("transaction_id", var::string(transaction_id));
-			data->set("block_id", algorithm::encoding::serialize_uint256(block_id));
 			schema* input_data = data->set("inputs", var::array());
 			for (auto& input : inputs)
 				input_data->push(input.as_schema().reset());
@@ -522,7 +524,7 @@ namespace tangent
 		}
 		std::string_view computed_transaction::as_instance_typename()
 		{
-			return "mediator_computed_transaction";
+			return "warden_computed_transaction";
 		}
 
 		prepared_transaction& prepared_transaction::requires_input(algorithm::composition::type new_alg, const algorithm::composition::cpubkey new_public_key, uint8_t* new_message, size_t new_message_size, coin_utxo&& input)
@@ -753,7 +755,7 @@ namespace tangent
 		}
 		std::string_view prepared_transaction::as_instance_typename()
 		{
-			return "mediator_prepared_transaction";
+			return "warden_prepared_transaction";
 		}
 
 		finalized_transaction::finalized_transaction(prepared_transaction&& new_prepared, string&& new_calldata, string&& new_hashdata, uint64_t new_locktime) : prepared(std::move(new_prepared)), calldata(std::move(new_calldata)), hashdata(std::move(new_hashdata)), locktime(new_locktime)
@@ -794,7 +796,7 @@ namespace tangent
 		{
 			computed_transaction computed;
 			computed.transaction_id = hashdata;
-			computed.block_id = locktime;
+			computed.block_id.execution = locktime;
 			computed.outputs = prepared.outputs;
 			computed.inputs.reserve(prepared.inputs.size());
 			for (auto& input : prepared.inputs)
@@ -826,7 +828,7 @@ namespace tangent
 		}
 		std::string_view finalized_transaction::as_instance_typename()
 		{
-			return "mediator_finalized_transaction";
+			return "warden_finalized_transaction";
 		}
 
 		decimal computed_fee::get_max_fee() const
@@ -1308,7 +1310,7 @@ namespace tangent
 		{
 			string_stream message;
 			string method = reporter.method;
-			message << "observer::" << reporter.type << "::" << stringify::to_lower(method) << " error: ";
+			message << "warden::" << reporter.type << "::" << stringify::to_lower(method) << " error: ";
 			if (error_message.empty())
 				message << "no response";
 			else

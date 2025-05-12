@@ -1,10 +1,10 @@
-#ifndef TAN_MEDIATOR_FORKS_ETHEREUM_H
-#define TAN_MEDIATOR_FORKS_ETHEREUM_H
+#ifndef TAN_WARDEN_FORKS_ETHEREUM_H
+#define TAN_WARDEN_FORKS_ETHEREUM_H
 #include "../ethereum.h"
 
 namespace tangent
 {
-    namespace mediator
+    namespace warden
     {
         namespace backends
         {

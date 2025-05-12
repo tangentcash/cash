@@ -1,5 +1,5 @@
 #include "nss.h"
-#include "../storage/mediatorstate.h"
+#include "../storage/wardenstate.h"
 #include "../backend/bitcoin.h"
 #include "../backend/forks/bitcoin.h"
 #include "../backend/cardano.h"
@@ -32,14 +32,14 @@ namespace tangent
 				return true;
 			};
 		}
-		static vector<mediator::value_transfer> normalize_value(mediator::relay_backend* implementation, const vector<mediator::value_transfer>& to)
+		static vector<warden::value_transfer> normalize_value(warden::relay_backend* implementation, const vector<warden::value_transfer>& to)
 		{
 			auto result = to;
 			for (auto& next : result)
 				next.value = implementation->to_value(next.value);
 			return result;
 		}
-		static mediator::computed_fee normalize_value(mediator::relay_backend* implementation, const mediator::computed_fee& fee)
+		static warden::computed_fee normalize_value(warden::relay_backend* implementation, const warden::computed_fee& fee)
 		{
 			auto result = fee;
 			result.fee.fee_rate = implementation->to_value(result.fee.fee_rate);
@@ -47,7 +47,7 @@ namespace tangent
 			result.gas.gas_price = implementation->to_value(result.gas.gas_price);
 			return result;
 		}
-		static decimal normalize_value(mediator::relay_backend* implementation, const decimal& value)
+		static decimal normalize_value(warden::relay_backend* implementation, const decimal& value)
 		{
 			return implementation->to_value(value);
 		}
@@ -114,26 +114,26 @@ namespace tangent
 
 									auto rps = child->get_var("rps").get_number();
 									if (add_multi_node(asset, std::move(urls), rps) && protocol::now().user.nss.logging)
-										VI_INFO("[observer] %s server %i urls added (rps: %.2f)", algorithm::asset::name_of(asset).c_str(), (int)urls.size(), rps);
+										VI_INFO("[warden] %s server %i urls added (rps: %.2f)", algorithm::asset::name_of(asset).c_str(), (int)urls.size(), rps);
 									else if (protocol::now().user.nss.logging)
-										VI_ERR("[observer] failed to add %s server %i urls", algorithm::asset::name_of(asset).c_str(), (int)urls.size());
+										VI_ERR("[warden] failed to add %s server %i urls", algorithm::asset::name_of(asset).c_str(), (int)urls.size());
 								}
 								else if (child->value.is(var_type::array))
 								{
 									auto url = child->size() > 0 ? child->get(0)->value.get_string() : child->value.get_string();
 									auto rps = child->size() > 1 ? child->get(1)->value.get_number() : 0.0;
 									if (add_node(asset, url, rps) && protocol::now().user.nss.logging)
-										VI_INFO("[observer] %s server url \"%.*s\" added (rps: %.2f)", algorithm::asset::name_of(asset).c_str(), (int)url.size(), url.data(), rps);
+										VI_INFO("[warden] %s server url \"%.*s\" added (rps: %.2f)", algorithm::asset::name_of(asset).c_str(), (int)url.size(), url.data(), rps);
 									else if (protocol::now().user.nss.logging)
-										VI_ERR("[observer] failed to add %s server url: \"%.*s\"", algorithm::asset::name_of(asset).c_str(), (int)url.size(), url.data());
+										VI_ERR("[warden] failed to add %s server url: \"%.*s\"", algorithm::asset::name_of(asset).c_str(), (int)url.size(), url.data());
 								}
 								else
 								{
 									auto url = child->value.get_string();
 									if (add_node(asset, url, 0.0) && protocol::now().user.nss.logging)
-										VI_INFO("[observer] %s server url \"%.*s\" added", algorithm::asset::name_of(asset).c_str(), (int)url.size(), url.data());
+										VI_INFO("[warden] %s server url \"%.*s\" added", algorithm::asset::name_of(asset).c_str(), (int)url.size(), url.data());
 									else if (protocol::now().user.nss.logging)
-										VI_ERR("[observer] failed to add %s server url: \"%.*s\"", algorithm::asset::name_of(asset).c_str(), (int)url.size(), url.data());
+										VI_ERR("[warden] failed to add %s server url: \"%.*s\"", algorithm::asset::name_of(asset).c_str(), (int)url.size(), url.data());
 								}
 							}
 						}
@@ -174,7 +174,7 @@ namespace tangent
 		{
 			return http::fetch(location, method, options);
 		}
-		expects_promise_rt<schema*> server_node::execute_rpc(const algorithm::asset_id& asset, const std::string_view& method, schema_list&& args, mediator::cache_policy cache)
+		expects_promise_rt<schema*> server_node::execute_rpc(const algorithm::asset_id& asset, const std::string_view& method, schema_list&& args, warden::cache_policy cache)
 		{
 			if (!algorithm::asset::is_valid(asset))
 				coreturn expects_rt<schema*>(remote_exception("asset not found"));
@@ -210,25 +210,25 @@ namespace tangent
 
 			coreturn coawait(implementation->get_block_transactions(block_height, block_hash));
 		}
-		expects_promise_rt<mediator::transaction_logs> server_node::link_transactions(const algorithm::asset_id& asset, mediator::chain_supervisor_options* options)
+		expects_promise_rt<warden::transaction_logs> server_node::link_transactions(const algorithm::asset_id& asset, warden::chain_supervisor_options* options)
 		{
 			if (!algorithm::asset::is_valid(asset))
-				coreturn expects_rt<mediator::transaction_logs>(remote_exception("asset not found"));
+				coreturn expects_rt<warden::transaction_logs>(remote_exception("asset not found"));
 
 			if (!options)
-				coreturn expects_rt<mediator::transaction_logs>(remote_exception("options not found"));
+				coreturn expects_rt<warden::transaction_logs>(remote_exception("options not found"));
 
 			auto* implementation = get_chain(asset);
 			if (!implementation)
-				coreturn expects_rt<mediator::transaction_logs>(remote_exception("chain not found"));
+				coreturn expects_rt<warden::transaction_logs>(remote_exception("chain not found"));
 
 			auto* provider = get_node(asset);
 			if (!provider)
-				coreturn expects_rt<mediator::transaction_logs>(remote_exception("node not found"));
+				coreturn expects_rt<warden::transaction_logs>(remote_exception("node not found"));
 
 			bool is_dry_run = !options->has_latest_block_height();
-			storages::mediatorstate state = storages::mediatorstate(__func__, asset);
-			implementation->interact = [options](mediator::server_relay* service) { options->state.interactions.insert(service); };
+			storages::wardenstate state = storages::wardenstate(__func__, asset);
+			implementation->interact = [options](warden::server_relay* service) { options->state.interactions.insert(service); };
 			options->state.interactions.clear();
 
 			auto tip_checkpoint = uptr<schema>(state.get_property("TIP:CHECKPOINT"));
@@ -252,20 +252,20 @@ namespace tangent
 			retry:
 				auto latest_block_height = coawait(implementation->get_latest_block_height());
 				if (!latest_block_height)
-					coreturn expects_rt<mediator::transaction_logs>(std::move(latest_block_height.error()));
+					coreturn expects_rt<warden::transaction_logs>(std::move(latest_block_height.error()));
 				options->set_checkpoint_to_block(*latest_block_height);
 			}
 
 			if (!options->has_next_block_height())
 			{
 				if (is_dry_run)
-					coreturn expects_rt<mediator::transaction_logs>(mediator::transaction_logs());
+					coreturn expects_rt<warden::transaction_logs>(warden::transaction_logs());
 				else if (!coawait(provider->yield_for_discovery(options)))
-					coreturn expects_rt<mediator::transaction_logs>(remote_exception::retry());
+					coreturn expects_rt<warden::transaction_logs>(remote_exception::retry());
 				goto retry;
 			}
 
-			mediator::transaction_logs logs;
+			warden::transaction_logs logs;
 			logs.block_height = tip_override ? (uint64_t)tip_override->value.get_integer() : options->get_next_block_height();
 			logs.block_hash = to_string(logs.block_height);
 
@@ -287,20 +287,20 @@ namespace tangent
 			if (tip_override)
 				state.set_property("TIP:OVERRIDE", nullptr);
 
-			auto* utxo_implementation = mediator::relay_backend_utxo::from_relay(implementation);
+			auto* utxo_implementation = warden::relay_backend_utxo::from_relay(implementation);
 			auto* server = nss::server_node::get();
 			unordered_set<string> transaction_ids;
 			for (auto& new_transaction : logs.transactions)
 			{
-				new_transaction.block_id = logs.block_height;
+				new_transaction.block_id.execution = logs.block_height;
 				server->normalize_transaction_id(asset, &new_transaction.transaction_id);
-				state.add_computed_transaction(new_transaction, logs.block_height);
+				state.add_computed_transaction(new_transaction);
 				transaction_ids.insert(algorithm::asset::handle_of(asset) + ":" + new_transaction.transaction_id);
 				if (utxo_implementation != nullptr)
 					utxo_implementation->update_utxo(new_transaction);
 			}
 
-			auto approvals = state.approve_computed_transactions(logs.block_height, implementation->get_chainparams().sync_latency);
+			auto approvals = state.finalize_computed_transactions(logs.block_height, implementation->get_chainparams().sync_latency);
 			if (approvals && !approvals->empty())
 			{
 				logs.transactions.reserve(logs.transactions.size() + approvals->size());
@@ -311,53 +311,53 @@ namespace tangent
 				}
 			}
 
-			coreturn expects_rt<mediator::transaction_logs>(std::move(logs));
+			coreturn expects_rt<warden::transaction_logs>(std::move(logs));
 		}
-		expects_promise_rt<mediator::computed_transaction> server_node::link_transaction(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, schema* transaction_data)
+		expects_promise_rt<warden::computed_transaction> server_node::link_transaction(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, schema* transaction_data)
 		{
 			if (!algorithm::asset::is_valid(asset))
-				coreturn expects_rt<mediator::computed_transaction>(remote_exception("asset not found"));
+				coreturn expects_rt<warden::computed_transaction>(remote_exception("asset not found"));
 
 			if (!block_height)
-				coreturn expects_rt<mediator::computed_transaction>(remote_exception("txs not found"));
+				coreturn expects_rt<warden::computed_transaction>(remote_exception("txs not found"));
 
 			auto* implementation = get_chain(asset);
 			if (!implementation)
-				coreturn expects_rt<mediator::computed_transaction>(remote_exception("chain not found"));
+				coreturn expects_rt<warden::computed_transaction>(remote_exception("chain not found"));
 
 			coreturn coawait(implementation->link_transaction(block_height, block_hash, transaction_data));
 		}
-		expects_promise_rt<mediator::computed_fee> server_node::estimate_fee(const algorithm::asset_id& asset, const std::string_view& from_address, const vector<mediator::value_transfer>& to, const mediator::fee_supervisor_options& options)
+		expects_promise_rt<warden::computed_fee> server_node::estimate_fee(const algorithm::asset_id& asset, const std::string_view& from_address, const vector<warden::value_transfer>& to, const warden::fee_supervisor_options& options)
 		{
 			if (!algorithm::asset::is_valid(asset) || !options.max_blocks || !options.max_transactions)
-				coreturn expects_rt<mediator::computed_fee>(remote_exception("asset not found"));
+				coreturn expects_rt<warden::computed_fee>(remote_exception("asset not found"));
 
 			if (stringify::is_empty_or_whitespace(from_address))
-				coreturn expects_rt<mediator::computed_fee>(remote_exception("from address not found"));
+				coreturn expects_rt<warden::computed_fee>(remote_exception("from address not found"));
 
 			auto* implementation = get_chain(asset);
 			if (!implementation)
-				coreturn expects_rt<mediator::computed_fee>(remote_exception("chain not found"));
+				coreturn expects_rt<warden::computed_fee>(remote_exception("chain not found"));
 
 			auto normalized_to = normalize_value(implementation, to);
 			if (normalized_to.empty())
-				coreturn expects_rt<mediator::computed_fee>(remote_exception("to address not found"));
+				coreturn expects_rt<warden::computed_fee>(remote_exception("to address not found"));
 
 			auto blockchain = algorithm::asset::blockchain_of(asset);
 			for (auto& next : normalized_to)
 			{
 				if (!next.is_valid())
-					coreturn expects_rt<mediator::computed_fee>(remote_exception("receiver address not valid"));
+					coreturn expects_rt<warden::computed_fee>(remote_exception("receiver address not valid"));
 
 				if (algorithm::asset::blockchain_of(next.asset) != blockchain)
-					coreturn expects_rt<mediator::computed_fee>(remote_exception("receiver asset not valid"));
+					coreturn expects_rt<warden::computed_fee>(remote_exception("receiver asset not valid"));
 
 				if (implementation->get_chainparams().supports_token_transfer.empty() && !algorithm::asset::token_of(next.asset).empty())
-					coreturn expects_rt<mediator::computed_fee>(remote_exception("receiver asset not valid"));
+					coreturn expects_rt<warden::computed_fee>(remote_exception("receiver asset not valid"));
 			}
 
 			if (!implementation->get_chainparams().supports_bulk_transfer && normalized_to.size() > 1)
-				coreturn expects_rt<mediator::computed_fee>(remote_exception("only one receiver allowed"));
+				coreturn expects_rt<warden::computed_fee>(remote_exception("only one receiver allowed"));
 
 			int64_t time = ::time(nullptr);
 			string fee_key = stringify::text("%s:%i", algorithm::asset::blockchain_of(asset).c_str(), normalized_to.size());
@@ -365,18 +365,18 @@ namespace tangent
 				umutex<std::recursive_mutex> unique(control_sys.sync);
 				auto it = fees.find(fee_key);
 				if (it != fees.end() && it->second.second >= time)
-					coreturn expects_rt<mediator::computed_fee>(it->second.first);
+					coreturn expects_rt<warden::computed_fee>(it->second.first);
 			}
 
 			auto estimate = coawait(implementation->estimate_fee(from_address, normalized_to, options));
 			if (!estimate)
-				coreturn expects_rt<mediator::computed_fee>(std::move(estimate.error()));
+				coreturn expects_rt<warden::computed_fee>(std::move(estimate.error()));
 
 			umutex<std::recursive_mutex> unique(control_sys.sync);
 			fees[fee_key] = std::make_pair(*estimate, time + (int64_t)protocol::now().user.nss.fee_estimation_seconds);
 			coreturn estimate;
 		}
-		expects_promise_rt<decimal> server_node::calculate_balance(const algorithm::asset_id& asset, const mediator::wallet_link& link)
+		expects_promise_rt<decimal> server_node::calculate_balance(const algorithm::asset_id& asset, const warden::wallet_link& link)
 		{
 			if (!algorithm::asset::is_valid(asset))
 				coreturn expects_rt<decimal>(remote_exception("asset not found"));
@@ -391,7 +391,7 @@ namespace tangent
 
 			coreturn coawait(implementation->calculate_balance(asset, *normalized_link));
 		}
-		expects_promise_rt<void> server_node::broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, const mediator::finalized_transaction& finalized)
+		expects_promise_rt<void> server_node::broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, const warden::finalized_transaction& finalized)
 		{
 			if (!algorithm::asset::is_valid(asset))
 				coreturn expects_rt<void>(remote_exception("asset not found"));
@@ -406,9 +406,10 @@ namespace tangent
 			auto* server = nss::server_node::get();
 			auto new_transaction = finalized.as_computed();
 			server->normalize_transaction_id(asset, &new_transaction.transaction_id);
-			new_transaction.block_id = 0;
+			new_transaction.block_id.execution = 0;
+			new_transaction.block_id.finalization = 0;
 
-			storages::mediatorstate state = storages::mediatorstate(__func__, asset);
+			storages::wardenstate state = storages::wardenstate(__func__, asset);
 			auto duplicate_transaction = state.get_computed_transaction(new_transaction.transaction_id, external_id);
 			if (duplicate_transaction)
 				coreturn expects_rt<void>(expectation::met);
@@ -421,54 +422,54 @@ namespace tangent
 			if (!result)
 				coreturn result;
 
-			auto* utxo_implementation = mediator::relay_backend_utxo::from_relay(implementation);
+			auto* utxo_implementation = warden::relay_backend_utxo::from_relay(implementation);
 			if (utxo_implementation != nullptr)
 				utxo_implementation->update_utxo(finalized.prepared);
 
 			coreturn result;
 		}
-		expects_promise_rt<mediator::prepared_transaction> server_node::prepare_transaction(const algorithm::asset_id& asset, const mediator::wallet_link& from_link, const vector<mediator::value_transfer>& to, option<mediator::computed_fee>&& fee)
+		expects_promise_rt<warden::prepared_transaction> server_node::prepare_transaction(const algorithm::asset_id& asset, const warden::wallet_link& from_link, const vector<warden::value_transfer>& to, option<warden::computed_fee>&& fee)
 		{
 			if (!algorithm::asset::is_valid(asset))
-				coreturn expects_rt<mediator::prepared_transaction>(remote_exception("asset not found"));
+				coreturn expects_rt<warden::prepared_transaction>(remote_exception("asset not found"));
 
 			auto* implementation = get_chain(asset);
 			if (!implementation)
-				coreturn expects_rt<mediator::prepared_transaction>(remote_exception("chain not found"));
+				coreturn expects_rt<warden::prepared_transaction>(remote_exception("chain not found"));
 
 			auto normalized_to = normalize_value(implementation, to);
 			if (normalized_to.empty())
-				coreturn expects_rt<mediator::prepared_transaction>(remote_exception("to address not found"));
+				coreturn expects_rt<warden::prepared_transaction>(remote_exception("to address not found"));
 
 			auto blockchain = algorithm::asset::blockchain_of(asset);
 			for (auto& next : normalized_to)
 			{
 				if (!next.is_valid())
-					coreturn expects_rt<mediator::prepared_transaction>(remote_exception("receiver address not valid"));
+					coreturn expects_rt<warden::prepared_transaction>(remote_exception("receiver address not valid"));
 
 				if (algorithm::asset::blockchain_of(next.asset) != blockchain)
-					coreturn expects_rt<mediator::prepared_transaction>(remote_exception("receiver asset not valid"));
+					coreturn expects_rt<warden::prepared_transaction>(remote_exception("receiver asset not valid"));
 
 				if (implementation->get_chainparams().supports_token_transfer.empty() && !algorithm::asset::token_of(next.asset).empty())
-					coreturn expects_rt<mediator::prepared_transaction>(remote_exception("receiver asset not valid"));
+					coreturn expects_rt<warden::prepared_transaction>(remote_exception("receiver asset not valid"));
 			}
 
 			if (fee && !fee->is_valid())
-				coreturn expects_rt<mediator::prepared_transaction>(remote_exception("fee not valid"));
+				coreturn expects_rt<warden::prepared_transaction>(remote_exception("fee not valid"));
 
 			auto normalized_from_link = normalize_link(asset, from_link);
 			if (!normalized_from_link)
-				coreturn expects_rt<mediator::prepared_transaction>(remote_exception(std::move(normalized_from_link.error().message())));
+				coreturn expects_rt<warden::prepared_transaction>(remote_exception(std::move(normalized_from_link.error().message())));
 
 			if (!implementation->get_chainparams().supports_bulk_transfer && normalized_to.size() > 1)
-				coreturn expects_rt<mediator::prepared_transaction>(remote_exception("only one receiver allowed"));
+				coreturn expects_rt<warden::prepared_transaction>(remote_exception("only one receiver allowed"));
 
-			mediator::computed_fee normalized_fee = mediator::computed_fee();
+			warden::computed_fee normalized_fee = warden::computed_fee();
 			if (!fee)
 			{
 				auto estimated_fee = coawait(estimate_fee(asset, normalized_from_link->address, normalized_to));
 				if (!estimated_fee)
-					coreturn expects_rt<mediator::prepared_transaction>(std::move(estimated_fee.error()));
+					coreturn expects_rt<warden::prepared_transaction>(std::move(estimated_fee.error()));
 				normalized_fee = normalize_value(implementation, *estimated_fee);
 			}
 			else
@@ -476,18 +477,18 @@ namespace tangent
 
 			decimal fee_value = normalized_fee.get_max_fee();
 			if (!fee_value.is_positive())
-				coreturn expects_rt<mediator::prepared_transaction>(remote_exception(stringify::text("fee not valid: %s", fee_value.to_string().c_str())));
+				coreturn expects_rt<warden::prepared_transaction>(remote_exception(stringify::text("fee not valid: %s", fee_value.to_string().c_str())));
 
 			coreturn coawait(implementation->prepare_transaction(*normalized_from_link, normalized_to, normalized_fee));
 		}
-		expects_lr<mediator::finalized_transaction> server_node::finalize_transaction(const algorithm::asset_id& asset, mediator::prepared_transaction&& prepared)
+		expects_lr<warden::finalized_transaction> server_node::finalize_transaction(const algorithm::asset_id& asset, warden::prepared_transaction&& prepared)
 		{
 			if (!algorithm::asset::is_valid(asset))
 				return layer_exception("asset not found");
 
 			auto status = prepared.as_status();
-			if (status != mediator::prepared_transaction::status::requires_finalization)
-				return layer_exception(status == mediator::prepared_transaction::status::invalid ? "transaction is not valid for finalization" : "transaction does not require finalization");
+			if (status != warden::prepared_transaction::status::requires_finalization)
+				return layer_exception(status == warden::prepared_transaction::status::invalid ? "transaction is not valid for finalization" : "transaction does not require finalization");
 
 			auto* implementation = get_chain(asset);
 			if (!implementation)
@@ -757,7 +758,7 @@ namespace tangent
 			if (!algorithm::asset::is_valid(asset))
 				return expects_lr<void>(layer_exception("asset not found"));
 
-			storages::mediatorstate state = storages::mediatorstate(__func__, asset);
+			storages::wardenstate state = storages::wardenstate(__func__, asset);
 			return state.set_property("TIP:OVERRIDE", var::set::integer(block_height));
 		}
 		expects_lr<void> server_node::enable_contract_address(const algorithm::asset_id& asset, const std::string_view& contract_address)
@@ -772,7 +773,7 @@ namespace tangent
 			if (!implementation)
 				return expects_lr<void>(layer_exception("chain not found"));
 
-			storages::mediatorstate state = storages::mediatorstate(__func__, asset);
+			storages::wardenstate state = storages::wardenstate(__func__, asset);
 			auto key = algorithm::asset::token_of(asset);
 			auto value = state.get_property(key);
 			if (!value)
@@ -790,7 +791,7 @@ namespace tangent
 			value->push(var::set::string(address));
 			return state.set_property(key, *value);
 		}
-		expects_lr<void> server_node::enable_link(const algorithm::asset_id& asset, const mediator::wallet_link& link)
+		expects_lr<void> server_node::enable_link(const algorithm::asset_id& asset, const warden::wallet_link& link)
 		{
 			if (!algorithm::asset::is_valid(asset))
 				return expects_lr<void>(layer_exception("asset not found"));
@@ -811,7 +812,7 @@ namespace tangent
 			if (!status)
 				return status;
 
-			storages::mediatorstate state = storages::mediatorstate(__func__, asset);
+			storages::wardenstate state = storages::wardenstate(__func__, asset);
 			auto candidate_link = state.get_link(copy.address);
 			if (candidate_link && candidate_link->as_hash() == copy.as_hash())
 				return expectation::met;
@@ -830,7 +831,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> server_node::disable_link(const algorithm::asset_id& asset, const mediator::wallet_link& link)
+		expects_lr<void> server_node::disable_link(const algorithm::asset_id& asset, const warden::wallet_link& link)
 		{
 			if (!algorithm::asset::is_valid(asset))
 				return expects_lr<void>(layer_exception("asset not found"));
@@ -851,30 +852,30 @@ namespace tangent
 			if (!status)
 				return status;
 
-			storages::mediatorstate state = storages::mediatorstate(__func__, asset);
+			storages::wardenstate state = storages::wardenstate(__func__, asset);
 			return state.clear_link(copy);
 		}
-		expects_lr<mediator::wallet_link> server_node::normalize_link(const algorithm::asset_id& asset, const mediator::wallet_link& link)
+		expects_lr<warden::wallet_link> server_node::normalize_link(const algorithm::asset_id& asset, const warden::wallet_link& link)
 		{
 			if (link.has_address())
 			{
 				auto result = get_links_by_addresses(asset, { link.address });
 				if (result && !result->empty())
-					return expects_lr<mediator::wallet_link>(std::move(result->begin()->second));
+					return expects_lr<warden::wallet_link>(std::move(result->begin()->second));
 			}
 
 			if (link.has_public_key())
 			{
 				auto result = get_links_by_public_keys(asset, { link.public_key });
 				if (result && !result->empty())
-					return expects_lr<mediator::wallet_link>(std::move(result->begin()->second));
+					return expects_lr<warden::wallet_link>(std::move(result->begin()->second));
 			}
 
 			if (link.has_owner())
 			{
 				auto result = get_links_by_owner(asset, link.owner, 0, 1);
 				if (result && !result->empty())
-					return expects_lr<mediator::wallet_link>(std::move(result->begin()->second));
+					return expects_lr<warden::wallet_link>(std::move(result->begin()->second));
 			}
 
 			return layer_exception("link not found");
@@ -885,7 +886,7 @@ namespace tangent
 				return expects_lr<uint64_t>(layer_exception("asset not found"));
 
 			uint64_t block_height = 0;
-			storages::mediatorstate state = storages::mediatorstate(__func__, asset);
+			storages::wardenstate state = storages::wardenstate(__func__, asset);
 			auto latest_block_height = uptr<schema>(state.get_property("TIP:LATEST"));
 			if (latest_block_height)
 			{
@@ -907,54 +908,54 @@ namespace tangent
 
 			return expects_lr<uint64_t>(block_height);
 		}
-		expects_lr<mediator::wallet_link> server_node::get_link(const algorithm::asset_id& asset, const std::string_view& address)
+		expects_lr<warden::wallet_link> server_node::get_link(const algorithm::asset_id& asset, const std::string_view& address)
 		{
-			storages::mediatorstate state = storages::mediatorstate(__func__, asset);
+			storages::wardenstate state = storages::wardenstate(__func__, asset);
 			return state.get_link(address);
 		}
-		expects_lr<unordered_map<string, mediator::wallet_link>> server_node::get_links_by_owner(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, size_t offset, size_t count)
+		expects_lr<unordered_map<string, warden::wallet_link>> server_node::get_links_by_owner(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, size_t offset, size_t count)
 		{
-			storages::mediatorstate state = storages::mediatorstate(__func__, asset);
+			storages::wardenstate state = storages::wardenstate(__func__, asset);
 			return state.get_links_by_owner(owner, offset, count);
 		}
-		expects_lr<unordered_map<string, mediator::wallet_link>> server_node::get_links_by_public_keys(const algorithm::asset_id& asset, const unordered_set<string>& public_keys)
+		expects_lr<unordered_map<string, warden::wallet_link>> server_node::get_links_by_public_keys(const algorithm::asset_id& asset, const unordered_set<string>& public_keys)
 		{
-			storages::mediatorstate state = storages::mediatorstate(__func__, asset);
+			storages::wardenstate state = storages::wardenstate(__func__, asset);
 			return state.get_links_by_public_keys(public_keys);
 		}
-		expects_lr<unordered_map<string, mediator::wallet_link>> server_node::get_links_by_addresses(const algorithm::asset_id& asset, const unordered_set<string>& addresses)
+		expects_lr<unordered_map<string, warden::wallet_link>> server_node::get_links_by_addresses(const algorithm::asset_id& asset, const unordered_set<string>& addresses)
 		{
-			storages::mediatorstate state = storages::mediatorstate(__func__, asset);
+			storages::wardenstate state = storages::wardenstate(__func__, asset);
 			return state.get_links_by_addresses(addresses);
 		}
-		expects_lr<void> server_node::add_utxo(const algorithm::asset_id& asset, const mediator::coin_utxo& value)
+		expects_lr<void> server_node::add_utxo(const algorithm::asset_id& asset, const warden::coin_utxo& value)
 		{
-			storages::mediatorstate state = storages::mediatorstate(__func__, asset);
+			storages::wardenstate state = storages::wardenstate(__func__, asset);
 			return state.add_utxo(value);
 		}
 		expects_lr<void> server_node::remove_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index)
 		{
-			storages::mediatorstate state = storages::mediatorstate(__func__, asset);
+			storages::wardenstate state = storages::wardenstate(__func__, asset);
 			return state.remove_utxo(transaction_id, index);
 		}
-		expects_lr<mediator::coin_utxo> server_node::get_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index)
+		expects_lr<warden::coin_utxo> server_node::get_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index)
 		{
-			storages::mediatorstate state = storages::mediatorstate(__func__, asset);
+			storages::wardenstate state = storages::wardenstate(__func__, asset);
 			return state.get_utxo(transaction_id, index);
 		}
-		expects_lr<vector<mediator::coin_utxo>> server_node::get_utxos(const algorithm::asset_id& asset, const mediator::wallet_link& link, size_t offset, size_t count)
+		expects_lr<vector<warden::coin_utxo>> server_node::get_utxos(const algorithm::asset_id& asset, const warden::wallet_link& link, size_t offset, size_t count)
 		{
-			storages::mediatorstate state = storages::mediatorstate(__func__, asset);
+			storages::wardenstate state = storages::wardenstate(__func__, asset);
 			return state.get_utxos(link, offset, count);
 		}
-		expects_lr<schema*> server_node::load_cache(const algorithm::asset_id& asset, mediator::cache_policy policy, const std::string_view& key)
+		expects_lr<schema*> server_node::load_cache(const algorithm::asset_id& asset, warden::cache_policy policy, const std::string_view& key)
 		{
-			storages::mediatorstate state = storages::mediatorstate(__func__, asset);
+			storages::wardenstate state = storages::wardenstate(__func__, asset);
 			return state.get_cache(policy, key);
 		}
-		expects_lr<void> server_node::store_cache(const algorithm::asset_id& asset, mediator::cache_policy policy, const std::string_view& key, uptr<schema>&& value)
+		expects_lr<void> server_node::store_cache(const algorithm::asset_id& asset, warden::cache_policy policy, const std::string_view& key, uptr<schema>&& value)
 		{
-			storages::mediatorstate state = storages::mediatorstate(__func__, asset);
+			storages::wardenstate state = storages::wardenstate(__func__, asset);
 			return state.set_cache(policy, key, std::move(value));
 		}
 		option<string> server_node::get_contract_address(const algorithm::asset_id& asset)
@@ -964,7 +965,7 @@ namespace tangent
 
 			auto blockchain = algorithm::asset::blockchain_of(asset);
 			auto token = algorithm::asset::token_of(asset);
-			storages::mediatorstate state = storages::mediatorstate(__func__, asset);
+			storages::wardenstate state = storages::wardenstate(__func__, asset);
 			auto value = uptr<schema>(state.get_property(token));
 			if (!value || value->empty())
 				return optional::none;
@@ -980,10 +981,10 @@ namespace tangent
 
 			return value->get(0)->value.get_blob();
 		}
-		unordered_map<algorithm::asset_id, mediator::relay_backend::chainparams> server_node::get_chains()
+		unordered_map<algorithm::asset_id, warden::relay_backend::chainparams> server_node::get_chains()
 		{
 			umutex<std::recursive_mutex> unique(control_sys.sync);
-			unordered_map<algorithm::asset_id, mediator::relay_backend::chainparams> result;
+			unordered_map<algorithm::asset_id, warden::relay_backend::chainparams> result;
 			result.reserve(chains.size());
 			for (auto& next : chains)
 				result[algorithm::asset::id_of(next.first)] = next.second->get_chainparams();
@@ -996,35 +997,35 @@ namespace tangent
 
 			registrations =
 			{
-				{ "ARB", chain<mediator::backends::arbitrum>(this) },
-				{ "AVAX", chain<mediator::backends::avalanche>(this) },
-				{ "BTC", chain<mediator::backends::bitcoin>(this) },
-				{ "BCH", chain<mediator::backends::bitcoin_cash>(this) },
-				{ "BTG", chain<mediator::backends::bitcoin_gold>(this) },
-				{ "BSC", chain<mediator::backends::binance_smart_chain>(this) },
-				{ "BSV", chain<mediator::backends::bitcoin_sv>(this) },
-				{ "ADA", chain<mediator::backends::cardano>(this) },
-				{ "CELO", chain<mediator::backends::celo>(this) },
-				{ "DASH", chain<mediator::backends::dash>(this) },
-				{ "DGB", chain<mediator::backends::digibyte>(this) },
-				{ "DOGE", chain<mediator::backends::dogecoin>(this) },
-				{ "ETH", chain<mediator::backends::ethereum>(this) },
-				{ "ETC", chain<mediator::backends::ethereum_classic>(this) },
-				{ "FTM", chain<mediator::backends::fantom>(this) },
-				{ "FUSE", chain<mediator::backends::fuse>(this) },
-				{ "ONE", chain<mediator::backends::harmony>(this) },
-				{ "LTC", chain<mediator::backends::litecoin>(this) },
-				{ "GLMR", chain<mediator::backends::moonbeam>(this) },
-				{ "OP", chain<mediator::backends::optimism>(this) },
-				{ "MATIC", chain<mediator::backends::polygon>(this) },
-				{ "XRP", chain<mediator::backends::ripple>(this) },
-				{ "XEC", chain<mediator::backends::ecash>(this) },
-				{ "RIF", chain<mediator::backends::rootstock>(this) },
-				{ "SOL", chain<mediator::backends::solana>(this) },
-				{ "XLM", chain<mediator::backends::stellar>(this) },
-				{ "TRX", chain<mediator::backends::tron>(this) },
-				{ "ZEC", chain<mediator::backends::zcash>(this) },
-				{ "XMR", chain<mediator::backends::monero>(this) },
+				{ "ARB", chain<warden::backends::arbitrum>(this) },
+				{ "AVAX", chain<warden::backends::avalanche>(this) },
+				{ "BTC", chain<warden::backends::bitcoin>(this) },
+				{ "BCH", chain<warden::backends::bitcoin_cash>(this) },
+				{ "BTG", chain<warden::backends::bitcoin_gold>(this) },
+				{ "BSC", chain<warden::backends::binance_smart_chain>(this) },
+				{ "BSV", chain<warden::backends::bitcoin_sv>(this) },
+				{ "ADA", chain<warden::backends::cardano>(this) },
+				{ "CELO", chain<warden::backends::celo>(this) },
+				{ "DASH", chain<warden::backends::dash>(this) },
+				{ "DGB", chain<warden::backends::digibyte>(this) },
+				{ "DOGE", chain<warden::backends::dogecoin>(this) },
+				{ "ETH", chain<warden::backends::ethereum>(this) },
+				{ "ETC", chain<warden::backends::ethereum_classic>(this) },
+				{ "FTM", chain<warden::backends::fantom>(this) },
+				{ "FUSE", chain<warden::backends::fuse>(this) },
+				{ "ONE", chain<warden::backends::harmony>(this) },
+				{ "LTC", chain<warden::backends::litecoin>(this) },
+				{ "GLMR", chain<warden::backends::moonbeam>(this) },
+				{ "OP", chain<warden::backends::optimism>(this) },
+				{ "MATIC", chain<warden::backends::polygon>(this) },
+				{ "XRP", chain<warden::backends::ripple>(this) },
+				{ "XEC", chain<warden::backends::ecash>(this) },
+				{ "RIF", chain<warden::backends::rootstock>(this) },
+				{ "SOL", chain<warden::backends::solana>(this) },
+				{ "XLM", chain<warden::backends::stellar>(this) },
+				{ "TRX", chain<warden::backends::tron>(this) },
+				{ "ZEC", chain<warden::backends::zcash>(this) },
+				{ "XMR", chain<warden::backends::monero>(this) },
 			};
 			return registrations;
 		}
@@ -1046,7 +1047,7 @@ namespace tangent
 			}
 			return currencies;
 		}
-		vector<uptr<mediator::server_relay>>* server_node::get_nodes(const algorithm::asset_id& asset)
+		vector<uptr<warden::server_relay>>* server_node::get_nodes(const algorithm::asset_id& asset)
 		{
 			umutex<std::recursive_mutex> unique(control_sys.sync);
 			auto it = nodes.find(algorithm::asset::blockchain_of(asset));
@@ -1055,7 +1056,7 @@ namespace tangent
 
 			return &it->second;
 		}
-		const mediator::relay_backend::chainparams* server_node::get_chainparams(const algorithm::asset_id& asset)
+		const warden::relay_backend::chainparams* server_node::get_chainparams(const algorithm::asset_id& asset)
 		{
 			umutex<std::recursive_mutex> unique(control_sys.sync);
 			auto it = chains.find(algorithm::asset::blockchain_of(asset));
@@ -1067,19 +1068,19 @@ namespace tangent
 
 			return nullptr;
 		}
-		mediator::server_relay* server_node::add_node(const algorithm::asset_id& asset, const std::string_view& url, double rps)
+		warden::server_relay* server_node::add_node(const algorithm::asset_id& asset, const std::string_view& url, double rps)
 		{
-			mediator::server_relay* instance = new mediator::server_relay({ { "auto", string(url) } }, rps);
+			warden::server_relay* instance = new warden::server_relay({ { "auto", string(url) } }, rps);
 			add_node_instance(asset, instance);
 			return instance;
 		}
-		mediator::server_relay* server_node::add_multi_node(const algorithm::asset_id& asset, unordered_map<string, string>&& urls, double rps)
+		warden::server_relay* server_node::add_multi_node(const algorithm::asset_id& asset, unordered_map<string, string>&& urls, double rps)
 		{
-			mediator::server_relay* instance = new mediator::server_relay(std::move(urls), rps);
+			warden::server_relay* instance = new warden::server_relay(std::move(urls), rps);
 			add_node_instance(asset, instance);
 			return instance;
 		}
-		mediator::server_relay* server_node::get_node(const algorithm::asset_id& asset)
+		warden::server_relay* server_node::get_node(const algorithm::asset_id& asset)
 		{
 			umutex<std::recursive_mutex> unique(control_sys.sync);
 			auto it = nodes.find(algorithm::asset::blockchain_of(asset));
@@ -1092,7 +1093,7 @@ namespace tangent
 			size_t index = ((size_t)math<size_t>::random()) % it->second.size();
 			return *it->second[index];
 		}
-		mediator::relay_backend* server_node::get_chain(const algorithm::asset_id& asset)
+		warden::relay_backend* server_node::get_chain(const algorithm::asset_id& asset)
 		{
 			umutex<std::recursive_mutex> unique(control_sys.sync);
 			auto it = chains.find(algorithm::asset::blockchain_of(asset));
@@ -1135,7 +1136,7 @@ namespace tangent
 			entrypoint.shutdown = std::bind(&server_node::shutdown, this);
 			return entrypoint;
 		}
-		mediator::multichain_supervisor_options& server_node::get_options()
+		warden::multichain_supervisor_options& server_node::get_options()
 		{
 			return options;
 		}
@@ -1151,12 +1152,12 @@ namespace tangent
 			else
 				callbacks.erase(string(name));
 		}
-		void server_node::add_node_instance(const algorithm::asset_id& asset, mediator::server_relay* instance)
+		void server_node::add_node_instance(const algorithm::asset_id& asset, warden::server_relay* instance)
 		{
 			umutex<std::recursive_mutex> unique(control_sys.sync);
 			nodes[algorithm::asset::blockchain_of(asset)].push_back(instance);
 		}
-		void server_node::add_chain_instance(const algorithm::asset_id& asset, mediator::relay_backend* instance)
+		void server_node::add_chain_instance(const algorithm::asset_id& asset, warden::relay_backend* instance)
 		{
 			umutex<std::recursive_mutex> unique(control_sys.sync);
 			chains[algorithm::asset::blockchain_of(asset)] = instance;
@@ -1171,19 +1172,19 @@ namespace tangent
 			else if (listener->cooldown_id != INVALID_TASK_ID)
 			{
 				if (protocol::now().user.nss.logging)
-					VI_INFO("[observer] %s server data collection: re-queued", algorithm::asset::name_of(listener->asset).c_str());
+					VI_INFO("[warden] %s server data collection: re-queued", algorithm::asset::name_of(listener->asset).c_str());
 				listener->cooldown_id = INVALID_TASK_ID;
 			}
 			else if (listener->is_dry_run)
 			{
 				if (protocol::now().user.nss.logging)
-					VI_INFO("[observer] %s server data collection: queued", algorithm::asset::name_of(listener->asset).c_str());
+					VI_INFO("[warden] %s server data collection: queued", algorithm::asset::name_of(listener->asset).c_str());
 				listener->is_dry_run = false;
 			}
 			else if (listener->options.will_wait_for_transactions())
 			{
 				if (protocol::now().user.nss.logging)
-					VI_INFO("[observer] %s server data collection: waiting for updates in %is (total: %is)",
+					VI_INFO("[warden] %s server data collection: waiting for updates in %is (total: %is)",
 					algorithm::asset::name_of(listener->asset).c_str(),
 					(int)(listener->options.polling_frequency_ms / 1000),
 					(int)(listener->options.state.latest_time_awaited / 1000));
@@ -1198,7 +1199,7 @@ namespace tangent
 					if (info.error().is_retry())
 					{
 						if (protocol::now().user.nss.logging)
-							VI_INFO("[observer] %s server data collection: finalized", algorithm::asset::name_of(listener->asset).c_str());
+							VI_INFO("[warden] %s server data collection: finalized", algorithm::asset::name_of(listener->asset).c_str());
 
 						call_transaction_listener(listener);
 						coreturn_void;
@@ -1209,7 +1210,7 @@ namespace tangent
 					{
 						control_sys.timeout_if_none("transactions_" + algorithm::asset::blockchain_of(listener->asset), options.retry_waiting_time_ms, [this, listener]() { call_transaction_listener(listener); });
 						if (protocol::now().user.nss.logging)
-							VI_ERR("[observer] %s server data collection: waiting for connection (%s)", algorithm::asset::name_of(listener->asset).c_str(), info.error().what());
+							VI_ERR("[warden] %s server data collection: waiting for connection (%s)", algorithm::asset::name_of(listener->asset).c_str(), info.error().what());
 					}
 					else
 						listener->is_dead = true;
@@ -1220,7 +1221,7 @@ namespace tangent
 					if (!info->block_hash.empty())
 					{
 						if (protocol::now().user.nss.logging)
-							VI_INFO("[observer] %s block %s accepted (height: %i, progress: %.2f%%, txns: 0)",
+							VI_INFO("[warden] %s block %s accepted (height: %i, progress: %.2f%%, txns: 0)",
 							algorithm::asset::name_of(listener->asset).c_str(),
 							info->block_hash.c_str(),
 							(int)info->block_height,
@@ -1234,7 +1235,7 @@ namespace tangent
 					coreturn_void;
 				}
 				else if (protocol::now().user.nss.logging)
-					VI_INFO("[observer] %s block %s accepted (height: %i, progress: %.2f%%, txns: %i)",
+					VI_INFO("[warden] %s block %s accepted (height: %i, progress: %.2f%%, txns: %i)",
 					algorithm::asset::name_of(listener->asset).c_str(),
 					info->block_hash.c_str(),
 					(int)info->block_height,
@@ -1266,7 +1267,7 @@ namespace tangent
 						if (transfer_logs.back() == '\n')
 							transfer_logs.erase(transfer_logs.end() - 1);
 
-						VI_INFO("[observer] %s", transfer_logs.c_str());
+						VI_INFO("[warden] %s", transfer_logs.c_str());
 					}
 				}
 
@@ -1304,8 +1305,8 @@ namespace tangent
 				listener->asset = algorithm::asset::id_of(blockchain);
 				listeners.emplace_back(listener);
 
-				auto& suboptions = *(mediator::supervisor_options*)&listener->options;
-				suboptions = *(mediator::supervisor_options*)&options;
+				auto& suboptions = *(warden::supervisor_options*)&listener->options;
+				suboptions = *(warden::supervisor_options*)&options;
 
 				auto it = options.specifics.find(blockchain);
 				if (it != options.specifics.end())
@@ -1348,7 +1349,7 @@ namespace tangent
 			auto target = chains.find(algorithm::asset::blockchain_of(asset));
 			return target != chains.end();
 		}
-		bool server_node::has_observer(const algorithm::asset_id& asset)
+		bool server_node::has_warden(const algorithm::asset_id& asset)
 		{
 			return get_chain(asset) != nullptr && get_node(asset) != nullptr;
 		}

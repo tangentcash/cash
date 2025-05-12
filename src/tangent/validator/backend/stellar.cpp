@@ -14,7 +14,7 @@ extern "C"
 
 namespace tangent
 {
-	namespace mediator
+	namespace warden
 	{
 		namespace backends
 		{
@@ -270,7 +270,7 @@ namespace tangent
 
 				netdata.composition = algorithm::composition::type::ed25519;
 				netdata.routing = routing_policy::memo;
-				netdata.sync_latency = 1;
+				netdata.sync_latency = 0;
 				netdata.divisibility = decimal(10000000).truncate(protocol::now().message.precision);
 				netdata.supports_token_transfer.clear();
 				netdata.supports_bulk_transfer = true;
@@ -436,7 +436,6 @@ namespace tangent
 
 				computed_transaction tx;
 				tx.transaction_id = tx_hash;
-				tx.block_id = block_height;
 
 				auto total_value = base_value + fee_value;
 				auto target_from_link = discovery->find(from);
@@ -623,7 +622,7 @@ namespace tangent
 				}
 				coreturn expects_rt<prepared_transaction>(std::move(result));
 			}
-			expects_lr<finalized_transaction> stellar::finalize_transaction(mediator::prepared_transaction&& prepared)
+			expects_lr<finalized_transaction> stellar::finalize_transaction(warden::prepared_transaction&& prepared)
 			{
 				if (prepared.abi.size() < 3)
 					return layer_exception("invalid prepared abi");
@@ -748,12 +747,12 @@ namespace tangent
 			{
 				auto result = encode_public_key(public_key_hash.substr(0, 32));
 				if (result)
-					result = mediator::address_util::encode_tag_address(*result, public_key_hash.substr(32));
+					result = warden::address_util::encode_tag_address(*result, public_key_hash.substr(32));
 				return result;
 			}
 			expects_lr<string> stellar::decode_address(const std::string_view& address)
 			{
-				auto [base_address, tag] = mediator::address_util::decode_tag_address(address);
+				auto [base_address, tag] = warden::address_util::decode_tag_address(address);
 				auto result = decode_public_key(base_address);
 				if (result)
 					result->append(tag);

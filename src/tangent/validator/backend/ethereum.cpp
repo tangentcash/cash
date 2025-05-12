@@ -16,7 +16,7 @@ extern "C"
 
 namespace tangent
 {
-	namespace mediator
+	namespace warden
 	{
 		namespace backends
 		{
@@ -306,7 +306,7 @@ namespace tangent
 			{
 				netdata.composition = algorithm::composition::type::secp256k1;
 				netdata.routing = routing_policy::account;
-				netdata.sync_latency = 15;
+				netdata.sync_latency = 80;
 				netdata.divisibility = decimal("1000000000000000000").truncate(protocol::now().message.precision);
 				netdata.supports_token_transfer = "erc20";
 				netdata.supports_bulk_transfer = false;
@@ -498,7 +498,6 @@ namespace tangent
 
 				computed_transaction result;
 				result.transaction_id = tx_hash;
-				result.block_id = block_height;
 				
 				unordered_map<string, unordered_map<algorithm::asset_id, decimal>> inputs;
 				unordered_map<string, unordered_map<algorithm::asset_id, decimal>> outputs;
@@ -805,7 +804,7 @@ namespace tangent
 				result.requires_abi(format::variable(transaction.gas_limit));
 				coreturn expects_rt<prepared_transaction>(std::move(result));
 			}
-			expects_lr<finalized_transaction> ethereum::finalize_transaction(mediator::prepared_transaction&& prepared)
+			expects_lr<finalized_transaction> ethereum::finalize_transaction(warden::prepared_transaction&& prepared)
 			{
 				if (prepared.abi.size() != 8)
 					return layer_exception("invalid prepared abi");

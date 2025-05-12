@@ -1263,7 +1263,7 @@ namespace tangent
 
 			switch (chain->routing)
 			{
-				case mediator::routing_policy::account:
+				case warden::routing_policy::account:
 				{
 					if (!depository_policy->accounts_under_management)
 						break;
@@ -1273,7 +1273,7 @@ namespace tangent
 
 					return expectation::met;
 				}
-				case mediator::routing_policy::memo:
+				case warden::routing_policy::memo:
 				{
 					size_t offset = 0, count = 64;
 					while (depository_policy->accounts_under_management > 0)
@@ -1287,7 +1287,7 @@ namespace tangent
 						{
 							uint64_t address_index = depository_policy->accounts_under_management + 1;
 							for (auto& address : candidate->addresses)
-								address.second = mediator::address_util::encode_tag_address(address.second, to_string(address_index));
+								address.second = warden::address_util::encode_tag_address(address.second, to_string(address_index));
 
 							auto depository_policy_status = context->apply_depository_policy_account(asset, manager, 1);
 							if (!depository_policy_status)
@@ -1310,7 +1310,7 @@ namespace tangent
 					}
 					break;
 				}
-				case mediator::routing_policy::utxo:
+				case warden::routing_policy::utxo:
 				{
 					auto duplicate = context->get_depository_account(asset, manager, context->receipt.from);
 					if (duplicate)
@@ -1512,17 +1512,17 @@ namespace tangent
 
 			switch (params->routing)
 			{
-				case mediator::routing_policy::account:
+				case warden::routing_policy::account:
 				{
 					if (depository_policy->accounts_under_management > 0)
 						return layer_exception("too many accounts for a depository");
 					break;
 				}
-				case mediator::routing_policy::memo:
+				case warden::routing_policy::memo:
 				{
 					uint64_t address_index = depository_policy->accounts_under_management + 1;
 					for (auto& address : *addresses)
-						address.second = mediator::address_util::encode_tag_address(address.second, to_string(address_index));
+						address.second = warden::address_util::encode_tag_address(address.second, to_string(address_index));
 					break;
 				}
 				default:
@@ -1579,15 +1579,15 @@ namespace tangent
 			auto* setup_transaction = (depository_account*)*setup->transaction;
 			for (auto& address : addresses)
 			{
-				auto [base_address, tag] = mediator::address_util::decode_tag_address(address);
+				auto [base_address, tag] = warden::address_util::decode_tag_address(address);
 				if (base_address != address)
 				{
-					auto status = server->enable_link(asset, mediator::wallet_link(setup_transaction->manager, *encoded_public_key, base_address));
+					auto status = server->enable_link(asset, warden::wallet_link(setup_transaction->manager, *encoded_public_key, base_address));
 					if (!status)
 						return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
 				}
 
-				auto status = server->enable_link(asset, mediator::wallet_link(setup_transaction->manager, *encoded_public_key, address));
+				auto status = server->enable_link(asset, warden::wallet_link(setup_transaction->manager, *encoded_public_key, address));
 				if (!status)
 					return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
 			}
@@ -1799,7 +1799,7 @@ namespace tangent
 			if (depository_policy && depository_policy->queue_transaction_hash != context->receipt.transaction_hash)
 				return expects_promise_rt<void>(remote_exception::retry());
 
-			vector<mediator::value_transfer> transfers;
+			vector<warden::value_transfer> transfers;
 			if (!is_to_manager_null())
 			{
 				auto account = find_receiving_account(context, asset, from_manager, to_manager);
@@ -1813,14 +1813,14 @@ namespace tangent
 					return expects_promise_rt<void>(std::move(error));
 				}
 
-				transfers.push_back(mediator::value_transfer(asset, account->addresses.begin()->second, get_token_value(context)));
+				transfers.push_back(warden::value_transfer(asset, account->addresses.begin()->second, get_token_value(context)));
 			}
 			else
 			{
 				auto fee_asset = algorithm::asset::base_id_of(asset);
 				auto fee_value = get_fee_value(context, nullptr);
 				for (auto& item : to)
-					transfers.push_back(mediator::value_transfer(asset, item.first, decimal(fee_asset == asset ? item.second - fee_value : item.second)));
+					transfers.push_back(warden::value_transfer(asset, item.first, decimal(fee_asset == asset ? item.second - fee_value : item.second)));
 			}
 
 			return coasync<expects_rt<void>>([this, context, dispatcher, transfers = std::move(transfers)]() mutable -> expects_promise_rt<void>
@@ -1828,14 +1828,14 @@ namespace tangent
 				auto* server = nss::server_node::get();
 				auto* chain = server->get_chainparams(asset);
 				auto cache = dispatcher->load_cache(context);
-				auto group_prepared = expects_rt<mediator::prepared_transaction>(mediator::prepared_transaction());
+				auto group_prepared = expects_rt<warden::prepared_transaction>(warden::prepared_transaction());
 				auto group_signers = ordered_set<algorithm::pubkeyhash_t>();
 				auto group_signature = ordered_map<uint8_t, algorithm::composition::cpubsig_t>();
 				if (cache && !chain->requires_transaction_expiration)
 				{
 					format::stream group_prepared_message = format::stream::decode(cache->get_var(0).get_blob());
 					if (!group_prepared->load_payload(group_prepared_message))
-						group_prepared = expects_rt<mediator::prepared_transaction>(remote_exception::retry());
+						group_prepared = expects_rt<warden::prepared_transaction>(remote_exception::retry());
 
 					uint8_t split = cache->get_var(1).get_integer();
 					for (size_t i = 2; i < split; i++)
@@ -1848,10 +1848,10 @@ namespace tangent
 						group_signers.insert(algorithm::pubkeyhash_t(codec::hex_decode(cache->get_var(i).get_blob())));
 				}
 				else
-					group_prepared = expects_rt<mediator::prepared_transaction>(remote_exception::retry());
+					group_prepared = expects_rt<warden::prepared_transaction>(remote_exception::retry());
 
 				if (!group_prepared)
-					group_prepared = coawait(resolver::prepare_transaction(asset, mediator::wallet_link::from_owner(from_manager), transfers));
+					group_prepared = coawait(resolver::prepare_transaction(asset, warden::wallet_link::from_owner(from_manager), transfers));
 
 				if (!group_prepared)
 				{
@@ -2138,9 +2138,9 @@ namespace tangent
 		{
 			return "depository_withdrawal";
 		}
-		expects_lr<void> depository_withdrawal::validate_prepared_transaction(const ledger::transaction_context* context, const depository_withdrawal* transaction, const mediator::prepared_transaction& prepared)
+		expects_lr<void> depository_withdrawal::validate_prepared_transaction(const ledger::transaction_context* context, const depository_withdrawal* transaction, const warden::prepared_transaction& prepared)
 		{
-			if (prepared.as_status() == mediator::prepared_transaction::status::invalid)
+			if (prepared.as_status() == warden::prepared_transaction::status::invalid)
 				return layer_exception("invalid prepared transaction");
 
 			auto blockchain = algorithm::asset::blockchain_of(transaction->asset);
@@ -2240,7 +2240,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<ordered_set<algorithm::pubkeyhash_t>> depository_withdrawal::accumulate_prepared_group(const ledger::transaction_context* context, const depository_withdrawal* transaction, const mediator::prepared_transaction& prepared)
+		expects_lr<ordered_set<algorithm::pubkeyhash_t>> depository_withdrawal::accumulate_prepared_group(const ledger::transaction_context* context, const depository_withdrawal* transaction, const warden::prepared_transaction& prepared)
 		{
 			ordered_set<algorithm::pubkeyhash_t> group;
 			for (auto& input : prepared.inputs)
@@ -2438,7 +2438,11 @@ namespace tangent
 				return layer_exception("invalid assertion");
 
 			if (!assertion->is_mature(asset))
-				return layer_exception("invalid assertion status");
+				return layer_exception("transaction is not mature enough");
+
+			auto chain = nss::server_node::get()->get_chainparams(asset);
+			if (!chain)
+				return layer_exception("invalid operation");
 
 			auto blockchain = algorithm::asset::blockchain_of(asset);
 			if (!assertion->is_valid())
@@ -2710,7 +2714,7 @@ namespace tangent
 			if (!witness)
 				return witness.error();
 
-			return context->emit_witness(asset, assertion->block_id);
+			return context->emit_witness(asset, std::max(assertion->block_id.execution, assertion->block_id.finalization));
 		}
 		bool depository_transaction::store_body(format::stream* stream) const
 		{
@@ -2734,24 +2738,46 @@ namespace tangent
 			}
 			return true;
 		}
-		void depository_transaction::set_witness(uint64_t block_id, const std::string_view& transaction_id, const vector<mediator::value_transfer>& inputs, const vector<mediator::value_transfer>& outputs)
+		void depository_transaction::set_pending_witness(uint64_t block_id, const std::string_view& transaction_id, const vector<warden::value_transfer>& inputs, const vector<warden::value_transfer>& outputs)
 		{
-			mediator::computed_transaction witness;
+			warden::computed_transaction witness;
 			witness.transaction_id = transaction_id;
-			witness.block_id = block_id;
+			witness.block_id.execution = block_id;
 			witness.inputs.reserve(inputs.size());
 			witness.outputs.reserve(outputs.size());
 			for (auto& input : inputs)
-				witness.inputs.push_back(mediator::coin_utxo(mediator::wallet_link::from_address(input.address), { { input.asset, input.value } }));
+				witness.inputs.push_back(warden::coin_utxo(warden::wallet_link::from_address(input.address), { { input.asset, input.value } }));
 			for (auto& output : outputs)
-				witness.outputs.push_back(mediator::coin_utxo(mediator::wallet_link::from_address(output.address), { { output.asset, output.value } }));
-			set_witness(witness);
+				witness.outputs.push_back(warden::coin_utxo(warden::wallet_link::from_address(output.address), { { output.asset, output.value } }));
+			set_computed_witness(witness);
 		}
-		void depository_transaction::set_witness(const mediator::computed_transaction& witness)
+		void depository_transaction::set_finalized_witness(uint64_t block_id, const std::string_view& transaction_id, const vector<warden::value_transfer>& inputs, const vector<warden::value_transfer>& outputs)
 		{
-			set_statement(algorithm::hashing::hash256i(witness.transaction_id), witness.as_message());
+			auto* chain = nss::server_node::get()->get_chainparams(asset);
+			warden::computed_transaction witness;
+			witness.transaction_id = transaction_id;
+			witness.block_id.execution = block_id;
+			witness.block_id.finalization = block_id;
+			witness.inputs.reserve(inputs.size());
+			witness.outputs.reserve(outputs.size());
+			for (auto& input : inputs)
+				witness.inputs.push_back(warden::coin_utxo(warden::wallet_link::from_address(input.address), { { input.asset, input.value } }));
+			for (auto& output : outputs)
+				witness.outputs.push_back(warden::coin_utxo(warden::wallet_link::from_address(output.address), { { output.asset, output.value } }));
+			set_computed_witness(witness);
 		}
-		option<mediator::computed_transaction> depository_transaction::get_assertion(const ledger::transaction_context* context) const
+		void depository_transaction::set_computed_witness(const warden::computed_transaction& witness)
+		{
+			auto copy = witness;
+			if (copy.block_id.finalization > 0)
+			{
+				auto* chain = nss::server_node::get()->get_chainparams(asset);
+				if (chain != nullptr)
+					copy.block_id.finalization = copy.block_id.execution + chain->sync_latency;
+			}
+			set_statement(algorithm::hashing::hash256i(copy.transaction_id), copy.as_message());
+		}
+		option<warden::computed_transaction> depository_transaction::get_assertion(const ledger::transaction_context* context) const
 		{
 			auto* best_branch = get_best_branch(context, nullptr);
 			if (!best_branch)
@@ -2760,7 +2786,7 @@ namespace tangent
 			auto message = best_branch->message;
 			message.seek = 0;
 
-			mediator::computed_transaction assertion;
+			warden::computed_transaction assertion;
 			if (!assertion.load(message))
 				return optional::none;
 
@@ -3545,7 +3571,7 @@ namespace tangent
 				return memory::init<depository_regrouping_finalization>(*(const depository_regrouping_finalization*)base);
 			return nullptr;
 		}
-		expects_promise_rt<mediator::prepared_transaction> resolver::prepare_transaction(const algorithm::asset_id& asset, const mediator::wallet_link& from_link, const vector<mediator::value_transfer>& to, option<mediator::computed_fee>&& fee)
+		expects_promise_rt<warden::prepared_transaction> resolver::prepare_transaction(const algorithm::asset_id& asset, const warden::wallet_link& from_link, const vector<warden::value_transfer>& to, option<warden::computed_fee>&& fee)
 		{
 			auto* server = nss::server_node::get();
 			if (!protocol::now().is(network_type::regtest) || server->has_support(asset))
@@ -3553,19 +3579,19 @@ namespace tangent
 
 			auto chain = server->get_chainparams(asset);
 			if (!chain)
-				return expects_promise_rt<mediator::prepared_transaction>(remote_exception("invalid operation"));
+				return expects_promise_rt<warden::prepared_transaction>(remote_exception("invalid operation"));
 
 			auto from = server->normalize_link(asset, from_link);
 			if (!from)
-				return expects_promise_rt<mediator::prepared_transaction>(remote_exception(std::move(from.error().message())));
+				return expects_promise_rt<warden::prepared_transaction>(remote_exception(std::move(from.error().message())));
 
 			auto message = format::stream();
 			if (!from->store_payload(&message))
-				return expects_promise_rt<mediator::prepared_transaction>(remote_exception("serialization error"));
+				return expects_promise_rt<warden::prepared_transaction>(remote_exception("serialization error"));
 
 			auto public_key = server->to_composite_public_key(asset, from->public_key);
 			if (!public_key)
-				return expects_promise_rt<mediator::prepared_transaction>(remote_exception(std::move(public_key.error().message())));
+				return expects_promise_rt<warden::prepared_transaction>(remote_exception(std::move(public_key.error().message())));
 
 			auto transfers = unordered_map<algorithm::asset_id, decimal>();
 			for (auto& transfer : to)
@@ -3580,45 +3606,48 @@ namespace tangent
 			uint8_t message_hash[32];
 			algorithm::encoding::decode_uint256(message.hash(), message_hash);
 
-			mediator::prepared_transaction fake_prepared;
+			warden::prepared_transaction fake_prepared;
 			fake_prepared.requires_account_input(chain->composition, std::move(*from), public_key->data, message_hash, sizeof(message_hash), std::move(transfers));
 			for (auto& transfer : to)
 				fake_prepared.requires_account_output(transfer.address, { { transfer.asset, transfer.value } });
 			
-			return expects_promise_rt<mediator::prepared_transaction>(std::move(fake_prepared));
+			return expects_promise_rt<warden::prepared_transaction>(std::move(fake_prepared));
 		}
-		expects_promise_rt<mediator::finalized_transaction> resolver::finalize_and_broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, mediator::prepared_transaction&& prepared, ledger::dispatch_context* dispatcher)
+		expects_promise_rt<warden::finalized_transaction> resolver::finalize_and_broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, warden::prepared_transaction&& prepared, ledger::dispatch_context* dispatcher)
 		{
 			auto* server = nss::server_node::get();
 			if (!protocol::now().is(network_type::regtest) || server->has_support(asset))
 			{
 				auto finalization = server->finalize_transaction(asset, std::move(prepared));
 				if (!finalization)
-					return expects_promise_rt<mediator::finalized_transaction>(remote_exception(std::move(finalization.error().message())));
+					return expects_promise_rt<warden::finalized_transaction>(remote_exception(std::move(finalization.error().message())));
 
 				auto finalized = std::move(*finalization);
-				return server->broadcast_transaction(asset, external_id, finalized).then<expects_rt<mediator::finalized_transaction>>([finalized](expects_rt<void>&& status) mutable -> expects_rt<mediator::finalized_transaction>
+				return server->broadcast_transaction(asset, external_id, finalized).then<expects_rt<warden::finalized_transaction>>([finalized](expects_rt<void>&& status) mutable -> expects_rt<warden::finalized_transaction>
 				{
 					if (!status)
-						return expects_rt<mediator::finalized_transaction>(status.error());
+						return expects_rt<warden::finalized_transaction>(status.error());
 
-					return expects_rt<mediator::finalized_transaction>(std::move(finalized));
+					return expects_rt<warden::finalized_transaction>(std::move(finalized));
 				});
 			}
 
 			auto transaction_id = algorithm::encoding::encode_0xhex256(algorithm::hashing::hash256i(external_id.to_string()));
-			auto block_id = algorithm::hashing::hash256i(transaction_id) % std::numeric_limits<uint64_t>::max();
-			auto fake_finalized = mediator::finalized_transaction(std::move(prepared), string(), std::move(transaction_id), block_id);
+			auto block_id = algorithm::hashing::hash256i(transaction_id) % std::numeric_limits<uint32_t>::max();
+			auto fake_finalized = warden::finalized_transaction(std::move(prepared), string(), std::move(transaction_id), block_id);
 			fake_finalized.calldata = fake_finalized.as_message().encode();
 			if (dispatcher != nullptr)
 			{
+				auto fake_computed = fake_finalized.as_computed();
+				fake_computed.block_id.finalization = fake_computed.block_id.execution;
+
 				auto* transaction = memory::init<depository_transaction>();
 				transaction->asset = asset;
 				transaction->set_gas(decimal::zero(), 0);
-				transaction->set_witness(fake_finalized.as_computed());
+				transaction->set_computed_witness(fake_computed);
 				dispatcher->emit_transaction(transaction);
 			}
-			return expects_promise_rt<mediator::finalized_transaction>(std::move(fake_finalized));
+			return expects_promise_rt<warden::finalized_transaction>(std::move(fake_finalized));
 		}
 	}
 }

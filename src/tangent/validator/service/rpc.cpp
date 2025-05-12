@@ -400,7 +400,7 @@ namespace tangent
 			bind(0 | access_type::r, "mempoolstate", "getmempoolattestationtransactions", 3, 4, "uint256 hash, uint64 offset, uint64 count, uint8? unrolling", "uint256[] | txn[]", "get mempool attestation transactions", std::bind(&server_node::mempoolstate_get_attestation_transactions, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getmempoolattestation", 1, 1, "uint256 hash", "{ branch: uint256, threshold: double, progress: double, committee: uint64, reached: boolean }", "get mempool attestation transaction consensus state", std::bind(&server_node::mempoolstate_get_attestation, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "validatorstate", "getnode", 1, 1, "string uri_address", "validator", "get a node by ip address", std::bind(&server_node::validatorstate_get_node, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "validatorstate", "getblockchains", 0, 0, "", "observer::asset", "get supported blockchains", std::bind(&server_node::validatorstate_get_blockchains, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "validatorstate", "getblockchains", 0, 0, "", "warden::asset", "get supported blockchains", std::bind(&server_node::validatorstate_get_blockchains, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "validatorstate", "status", 0, 0, "", "validator::status", "get validator status", std::bind(&server_node::validatorstate_status, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::r | access_type::a, "chainstate", "tracecall", 4, 32, "string asset, string from_address, string to_address, string function, ...", "program_trace", "trace execution of mutable / immutable function of program assigned to to_address", std::bind(&server_node::chainstate_trace_call, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::r, "mempoolstate", "submittransaction", 1, 2, "string hex_message, bool? validate", "uint256", "try to accept and relay a mempool transaction from raw data and possibly validate over latest chainstate", std::bind(&server_node::mempoolstate_submit_transaction, this, std::placeholders::_1, std::placeholders::_2, nullptr));
@@ -2925,13 +2925,13 @@ namespace tangent
 				}
 				switch (asset.second.routing)
 				{
-					case tangent::mediator::routing_policy::account:
+					case tangent::warden::routing_policy::account:
 						next->set("routing_policy", var::string("account"));
 						break;
-					case tangent::mediator::routing_policy::memo:
+					case tangent::warden::routing_policy::memo:
 						next->set("routing_policy", var::string("memo"));
 						break;
-					case tangent::mediator::routing_policy::utxo:
+					case tangent::warden::routing_policy::utxo:
 						next->set("routing_policy", var::string("utxo"));
 						break;
 					default:

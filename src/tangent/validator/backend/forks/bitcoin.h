@@ -1,10 +1,10 @@
-#ifndef TAN_MEDIATOR_FORKS_BITCOIN_H
-#define TAN_MEDIATOR_FORKS_BITCOIN_H
+#ifndef TAN_WARDEN_FORKS_BITCOIN_H
+#define TAN_WARDEN_FORKS_BITCOIN_H
 #include "../bitcoin.h"
 
 namespace tangent
 {
-	namespace mediator
+	namespace warden
 	{
 		namespace backends
 		{

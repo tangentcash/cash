@@ -1,6 +1,6 @@
-#ifndef TAN_MEDIATOR_BITCOIN_H
-#define TAN_MEDIATOR_BITCOIN_H
-#include "../../kernel/mediator.h"
+#ifndef TAN_WARDEN_BITCOIN_H
+#define TAN_WARDEN_BITCOIN_H
+#include "../../kernel/warden.h"
 
 struct btc_tx_;
 struct btc_chainparams_;
@@ -8,7 +8,7 @@ struct cstring;
 
 namespace tangent
 {
-	namespace mediator
+	namespace warden
 	{
 		namespace backends
 		{

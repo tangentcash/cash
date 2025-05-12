@@ -1,6 +1,5 @@
 #include "transaction.h"
 #include "block.h"
-#include "mediator.h"
 
 namespace tangent
 {

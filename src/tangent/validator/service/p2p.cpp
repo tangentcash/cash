@@ -543,25 +543,20 @@ namespace tangent
 				coreturn find_node_from_mempool(optional::none, false);
 			});
 		}
-		promise<void> server_node::propose_transaction_logs(const algorithm::asset_id& asset, const mediator::chain_supervisor_options& options, mediator::transaction_logs&& logs)
+		promise<void> server_node::propose_transaction_logs(const algorithm::asset_id& asset, const warden::chain_supervisor_options& options, warden::transaction_logs&& logs)
 		{
 			auto context = ledger::transaction_context();
 			for (auto& receipt : logs.transactions)
 			{
-				if (receipt.is_mature(asset))
+				auto collision = context.get_witness_transaction(asset, receipt.transaction_id);
+				if (!collision)
 				{
-					auto collision = context.get_witness_transaction(asset, receipt.transaction_id);
-					if (!collision)
-					{
-						auto transaction = uptr<transactions::depository_transaction>(memory::init<transactions::depository_transaction>());
-						transaction->set_witness(receipt);
-						accept_unsigned_transaction(nullptr, std::move(*transaction), nullptr);
-					}
-					else if (protocol::now().user.p2p.logging)
-						VI_INFO("[p2p] %s observer transaction %s approved", algorithm::asset::name_of(asset).c_str(), receipt.transaction_id.c_str());
+					auto transaction = uptr<transactions::depository_transaction>(memory::init<transactions::depository_transaction>());
+					transaction->set_computed_witness(receipt);
+					accept_unsigned_transaction(nullptr, std::move(*transaction), nullptr);
+					if (protocol::now().user.p2p.logging)
+						VI_INFO("[p2p] %s warden transaction %s noted (status: %s)", algorithm::asset::name_of(asset).c_str(), receipt.transaction_id.c_str(), receipt.is_mature(asset) ? "finalized" : "pending");
 				}
-				else if (protocol::now().user.p2p.logging)
-					VI_INFO("[p2p] %s observer transaction %s queued", algorithm::asset::name_of(asset).c_str(), receipt.transaction_id.c_str());
 			}
 			return promise<void>::null();
 		}
@@ -2346,7 +2341,7 @@ namespace tangent
 				return expectation::met;
 			});
 		}
-		expects_promise_rt<void> dispatch_context::calculate_group_signature(const ledger::transaction_context* context, const algorithm::pubkeyhash_t& validator, const mediator::prepared_transaction& prepared, ordered_map<uint8_t, algorithm::composition::cpubsig_t>& inout)
+		expects_promise_rt<void> dispatch_context::calculate_group_signature(const ledger::transaction_context* context, const algorithm::pubkeyhash_t& validator, const warden::prepared_transaction& prepared, ordered_map<uint8_t, algorithm::composition::cpubsig_t>& inout)
 		{
 			auto* depository_withdrawal = (transactions::depository_withdrawal*)context->transaction;
 			if (is_running_on(validator.data))
@@ -2522,7 +2517,7 @@ namespace tangent
 			}
 
 			auto prepared_message = format::stream(message.args[3].as_string());
-			auto prepared = mediator::prepared_transaction();
+			auto prepared = warden::prepared_transaction();
 			if (!prepared.load(prepared_message))
 				return methods::returning::abort(relayer, *from, __func__, "invalid arguments");
 
@@ -2641,7 +2636,7 @@ namespace tangent
 
 			return expects_promise_rt<void>(expectation::met);
 		}
-		expects_promise_rt<void> local_dispatch_context::calculate_group_signature(const ledger::transaction_context* context, const algorithm::pubkeyhash_t& validator, const mediator::prepared_transaction& prepared, ordered_map<uint8_t, algorithm::composition::cpubsig_t>& inout)
+		expects_promise_rt<void> local_dispatch_context::calculate_group_signature(const ledger::transaction_context* context, const algorithm::pubkeyhash_t& validator, const warden::prepared_transaction& prepared, ordered_map<uint8_t, algorithm::composition::cpubsig_t>& inout)
 		{
 			auto wallet = validators.find(validator);
 			if (wallet == validators.end())

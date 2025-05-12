@@ -17,7 +17,7 @@ extern "C"
 
 namespace tangent
 {
-	namespace mediator
+	namespace warden
 	{
 		namespace backends
 		{
@@ -186,7 +186,7 @@ namespace tangent
 				btc_ecc_start();
 				netdata.composition = algorithm::composition::type::secp256k1;
 				netdata.routing = routing_policy::utxo;
-				netdata.sync_latency = 2;
+				netdata.sync_latency = 6;
 				netdata.divisibility = decimal(100000000).truncate(protocol::now().message.precision);
 				netdata.supports_token_transfer.clear();
 				netdata.supports_bulk_transfer = true;
@@ -304,7 +304,6 @@ namespace tangent
 
 				computed_transaction tx;
 				tx.transaction_id = transaction_data->get_var("txid").get_blob();
-				tx.block_id = block_height;
 
 				bool is_coinbase = false;
 				if (tx_inputs != nullptr)
@@ -496,7 +495,7 @@ namespace tangent
 
 				coreturn expects_rt<prepared_transaction>(std::move(result));
 			}
-			expects_lr<finalized_transaction> bitcoin::finalize_transaction(mediator::prepared_transaction&& prepared)
+			expects_lr<finalized_transaction> bitcoin::finalize_transaction(warden::prepared_transaction&& prepared)
 			{
 				btc_tx_context context;
 				for (auto& output : prepared.outputs)

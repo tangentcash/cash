@@ -1,11 +1,11 @@
-#ifndef TAN_MEDIATOR_H
-#define TAN_MEDIATOR_H
+#ifndef TAN_WARDEN_H
+#define TAN_WARDEN_H
 #include "../policy/messages.h"
 #include "../layer/control.h"
 
 namespace tangent
 {
-	namespace mediator
+	namespace warden
 	{
 		enum
 		{
@@ -128,10 +128,14 @@ namespace tangent
 
 		struct computed_transaction : messages::uniform
 		{
+			struct
+			{
+				uint64_t execution = 0;
+				uint64_t finalization = 0;
+			} block_id;
 			vector<coin_utxo> inputs;
 			vector<coin_utxo> outputs;
 			string transaction_id;
-			uint64_t block_id = 0;
 
 			computed_transaction() = default;
 			bool store_payload(format::stream* stream) const override;
@@ -372,7 +376,7 @@ namespace tangent
 			virtual expects_promise_rt<decimal> calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link) = 0;
 			virtual expects_promise_rt<void> broadcast_transaction(const finalized_transaction& finalized) = 0;
 			virtual expects_promise_rt<prepared_transaction> prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee) = 0;
-			virtual expects_lr<finalized_transaction> finalize_transaction(mediator::prepared_transaction&& prepared) = 0;
+			virtual expects_lr<finalized_transaction> finalize_transaction(prepared_transaction&& prepared) = 0;
 			virtual expects_lr<secret_box> encode_secret_key(const secret_box& secret_key) = 0;
 			virtual expects_lr<secret_box> decode_secret_key(const secret_box& secret_key) = 0;
 			virtual expects_lr<string> encode_public_key(const std::string_view& public_key) = 0;

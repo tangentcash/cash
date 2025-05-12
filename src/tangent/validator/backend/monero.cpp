@@ -48,7 +48,7 @@ extern "C"
 
 namespace tangent
 {
-	namespace mediator
+	namespace warden
 	{
 		namespace backends
 		{
@@ -85,7 +85,7 @@ namespace tangent
 			{
 				netdata.composition = algorithm::composition::type::ed25519_clsag;
 				netdata.routing = routing_policy::utxo;
-				netdata.sync_latency = 11;
+				netdata.sync_latency = 10;
 				netdata.divisibility = decimal(1000000000000).truncate(protocol::now().message.precision);
 				netdata.supports_token_transfer.clear();
 				netdata.supports_bulk_transfer = true;
@@ -228,7 +228,6 @@ namespace tangent
 
 				computed_transaction result;
 				result.transaction_id = info.hash;
-				result.block_id = block_height;
 
 				bool is_coinbase = false;
 				for (size_t i = 0; i < inputs.size(); i++)

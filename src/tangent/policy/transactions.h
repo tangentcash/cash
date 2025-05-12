@@ -1,7 +1,7 @@
 #ifndef TAN_POLICY_TRANSACTIONS_H
 #define TAN_POLICY_TRANSACTIONS_H
 #include "states.h"
-#include "../kernel/mediator.h"
+#include "../kernel/warden.h"
 
 namespace tangent
 {
@@ -214,8 +214,8 @@ namespace tangent
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
-			static expects_lr<void> validate_prepared_transaction(const ledger::transaction_context* context, const depository_withdrawal* transaction, const mediator::prepared_transaction& prepared);
-			static expects_lr<ordered_set<algorithm::pubkeyhash_t>> accumulate_prepared_group(const ledger::transaction_context* context, const depository_withdrawal* transaction, const mediator::prepared_transaction& prepared);
+			static expects_lr<void> validate_prepared_transaction(const ledger::transaction_context* context, const depository_withdrawal* transaction, const warden::prepared_transaction& prepared);
+			static expects_lr<ordered_set<algorithm::pubkeyhash_t>> accumulate_prepared_group(const ledger::transaction_context* context, const depository_withdrawal* transaction, const warden::prepared_transaction& prepared);
 			static expects_lr<states::witness_account> find_receiving_account(const ledger::transaction_context* context, const algorithm::asset_id& asset, const algorithm::pubkeyhash from_manager, const algorithm::pubkeyhash to_manager);
 		};
 
@@ -267,9 +267,10 @@ namespace tangent
 			bool store_body(format::stream* stream) const override;
 			bool load_body(format::stream& stream) override;
 			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const override;
-			void set_witness(uint64_t block_id, const std::string_view& transaction_id, const vector<mediator::value_transfer>& inputs, const vector<mediator::value_transfer>& outputs);
-			void set_witness(const mediator::computed_transaction& witness);
-			option<mediator::computed_transaction> get_assertion(const ledger::transaction_context* context) const;
+			void set_pending_witness(uint64_t block_id, const std::string_view& transaction_id, const vector<warden::value_transfer>& inputs, const vector<warden::value_transfer>& outputs);
+			void set_finalized_witness(uint64_t block_id, const std::string_view& transaction_id, const vector<warden::value_transfer>& inputs, const vector<warden::value_transfer>& outputs);
+			void set_computed_witness(const warden::computed_transaction& witness);
+			option<warden::computed_transaction> get_assertion(const ledger::transaction_context* context) const;
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
@@ -392,8 +393,8 @@ namespace tangent
 			static ledger::transaction* from_stream(format::stream& stream);
 			static ledger::transaction* from_type(uint32_t hash);
 			static ledger::transaction* from_copy(const ledger::transaction* base);
-			static expects_promise_rt<mediator::prepared_transaction> prepare_transaction(const algorithm::asset_id& asset, const mediator::wallet_link& from_link, const vector<mediator::value_transfer>& to, option<mediator::computed_fee>&& fee = optional::none);
-			static expects_promise_rt<mediator::finalized_transaction> finalize_and_broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, mediator::prepared_transaction&& prepared, ledger::dispatch_context* dispatcher);
+			static expects_promise_rt<warden::prepared_transaction> prepare_transaction(const algorithm::asset_id& asset, const warden::wallet_link& from_link, const vector<warden::value_transfer>& to, option<warden::computed_fee>&& fee = optional::none);
+			static expects_promise_rt<warden::finalized_transaction> finalize_and_broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, warden::prepared_transaction&& prepared, ledger::dispatch_context* dispatcher);
 		};
 	}
 }

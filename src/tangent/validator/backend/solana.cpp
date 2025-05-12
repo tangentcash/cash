@@ -13,7 +13,7 @@ extern "C"
 
 namespace tangent
 {
-	namespace mediator
+	namespace warden
 	{
 		namespace backends
 		{
@@ -64,7 +64,7 @@ namespace tangent
 			{
 				netdata.composition = algorithm::composition::type::ed25519;
 				netdata.routing = routing_policy::account;
-				netdata.sync_latency = 31;
+				netdata.sync_latency = 30;
 				netdata.divisibility = decimal(1000000000).truncate(protocol::now().message.precision);
 				netdata.supports_token_transfer = "spl";
 				netdata.supports_bulk_transfer = false;
@@ -166,7 +166,6 @@ namespace tangent
 
 				computed_transaction tx;
 				tx.transaction_id = signature;
-				tx.block_id = block_height;
 
 				unordered_map<string, unordered_map<algorithm::asset_id, decimal>> inputs;
 				unordered_map<string, unordered_map<algorithm::asset_id, decimal>> outputs;
@@ -479,7 +478,7 @@ namespace tangent
 				result.requires_abi(format::variable(transaction.recent_block_hash));
 				coreturn expects_rt<prepared_transaction>(std::move(result));
 			}
-			expects_lr<finalized_transaction> solana::finalize_transaction(mediator::prepared_transaction&& prepared)
+			expects_lr<finalized_transaction> solana::finalize_transaction(warden::prepared_transaction&& prepared)
 			{
 				if (prepared.abi.size() != 5)
 					return layer_exception("invalid prepared abi");

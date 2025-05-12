@@ -2339,7 +2339,7 @@ namespace tangent
 		{
 			auto result = get_witness_account(asset, address, offset);
 			if (!result)
-				result = get_witness_account(asset, mediator::address_util::encode_tag_address(address, "0"), offset);
+				result = get_witness_account(asset, warden::address_util::encode_tag_address(address, "0"), offset);
 			return result;
 		}
 		expects_lr<states::witness_transaction> transaction_context::get_witness_transaction(const algorithm::asset_id& asset, const std::string_view& transaction_id) const
@@ -2701,15 +2701,15 @@ namespace tangent
 		{
 			auto* server = nss::server_node::get();
 			auto location = stringify::text("dispatch_%s", algorithm::encoding::encode_0xhex256(context->receipt.transaction_hash).c_str());
-			auto result = server->load_cache(context->transaction->asset, mediator::cache_policy::lifetime_cache, location);
+			auto result = server->load_cache(context->transaction->asset, warden::cache_policy::lifetime_cache, location);
 			if (result && *result)
-				server->store_cache(context->transaction->asset, mediator::cache_policy::lifetime_cache, location, nullptr);
+				server->store_cache(context->transaction->asset, warden::cache_policy::lifetime_cache, location, nullptr);
 			return uptr<schema>(result.or_else(nullptr));
 		}
 		void dispatch_context::store_cache(const transaction_context* context, uptr<schema>&& value) const
 		{
 			auto location = stringify::text("dispatch_%s", algorithm::encoding::encode_0xhex256(context->receipt.transaction_hash).c_str());
-			nss::server_node::get()->store_cache(context->transaction->asset, mediator::cache_policy::lifetime_cache, location, std::move(value));
+			nss::server_node::get()->store_cache(context->transaction->asset, warden::cache_policy::lifetime_cache, location, std::move(value));
 		}
 
 		option<uint64_t> evaluation_context::priority(const algorithm::pubkeyhash public_key_hash, const algorithm::seckey secret_key, option<block_header*>&& parent_block)

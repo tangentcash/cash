@@ -5,7 +5,7 @@
 
 namespace tangent
 {
-	namespace mediator
+	namespace warden
 	{
 		struct prepared_transaction;
 	}
@@ -365,7 +365,7 @@ namespace tangent
 			virtual expects_lr<uint256_t> apply_group_share(const algorithm::asset_id& asset, const algorithm::pubkeyhash validator, const algorithm::pubkeyhash owner, const uint256_t& share);
 			virtual expects_lr<uint256_t> recover_group_share(const algorithm::asset_id& asset, const algorithm::pubkeyhash validator, const algorithm::pubkeyhash owner) const;
 			virtual expects_promise_rt<void> calculate_group_public_key(const transaction_context* context, const algorithm::pubkeyhash_t& validator, algorithm::composition::cpubkey_t& inout) = 0;
-			virtual expects_promise_rt<void> calculate_group_signature(const transaction_context* context, const algorithm::pubkeyhash_t& validator, const mediator::prepared_transaction& prepared, ordered_map<uint8_t, algorithm::composition::cpubsig_t>& inout) = 0;
+			virtual expects_promise_rt<void> calculate_group_signature(const transaction_context* context, const algorithm::pubkeyhash_t& validator, const warden::prepared_transaction& prepared, ordered_map<uint8_t, algorithm::composition::cpubsig_t>& inout) = 0;
 			virtual expects_lr<void> checkpoint();
 			virtual promise<void> dispatch_async(const block_header& target);
 			virtual void dispatch_sync(const block_header& target);

@@ -10,7 +10,7 @@ extern "C"
 
 namespace tangent
 {
-	namespace mediator
+	namespace warden
 	{
 		namespace backends
 		{
@@ -31,7 +31,7 @@ namespace tangent
 			{
 				netdata.composition = algorithm::composition::type::ed25519;
 				netdata.routing = routing_policy::utxo;
-				netdata.sync_latency = 12;
+				netdata.sync_latency = 30;
 				netdata.divisibility = decimal(1000000).truncate(protocol::now().message.precision);
 				netdata.supports_token_transfer = "native";
 				netdata.supports_bulk_transfer = true;
@@ -121,7 +121,6 @@ namespace tangent
 
 				computed_transaction tx;
 				tx.transaction_id = transaction_data->fetch_var("transaction_identifier.hash").get_blob();
-				tx.block_id = block_height;
 
 				for (auto& tx_operation : operations_data->get_childs())
 				{
@@ -476,7 +475,7 @@ namespace tangent
 					coreturn expects_rt<prepared_transaction>(remote_exception("tx serialization error"));
 				}
 			}
-			expects_lr<finalized_transaction> cardano::finalize_transaction(mediator::prepared_transaction&& prepared)
+			expects_lr<finalized_transaction> cardano::finalize_transaction(warden::prepared_transaction&& prepared)
 			{
 				if (prepared.abi.size() != 1)
 					return layer_exception("invalid prepared abi");

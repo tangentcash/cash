@@ -2,7 +2,7 @@
 #define TAN_LAYER_P2P_H
 #include "../../kernel/block.h"
 #include "../../kernel/wallet.h"
-#include "../../kernel/mediator.h"
+#include "../../kernel/warden.h"
 
 namespace tangent
 {
@@ -198,7 +198,7 @@ namespace tangent
 			expects_promise_rt<format::variables> call_responsive(receive_function function, format::variables&& args, uint64_t timeout_ms, response_callback&& callback);
 			promise<option<socket_address>> find_node_from_mempool(option<socket_address>&& error_address, bool allow_seeding);
 			promise<option<socket_address>> find_node_from_seeding();
-			promise<void> propose_transaction_logs(const algorithm::asset_id& asset, const mediator::chain_supervisor_options& options, mediator::transaction_logs&& logs);
+			promise<void> propose_transaction_logs(const algorithm::asset_id& asset, const warden::chain_supervisor_options& options, warden::transaction_logs&& logs);
 			expects_lr<void> accept_unsigned_transaction(relay* from, uptr<ledger::transaction>&& candidate_tx, uint64_t* account_nonce, uint256_t* output_hash = nullptr);
 			expects_lr<void> accept_transaction(relay* from, uptr<ledger::transaction>&& candidate_tx, bool validate_execution = false);
 			expects_lr<void> broadcast_transaction(relay* from, uptr<ledger::transaction>&& candidate_tx, const algorithm::pubkeyhash owner);
@@ -305,7 +305,7 @@ namespace tangent
 			dispatch_context& operator=(const dispatch_context& other) noexcept;
 			dispatch_context& operator=(dispatch_context&&) noexcept = default;
 			expects_promise_rt<void> calculate_group_public_key(const ledger::transaction_context* context, const algorithm::pubkeyhash_t& validator, algorithm::composition::cpubkey_t& inout) override;
-			expects_promise_rt<void> calculate_group_signature(const ledger::transaction_context* context, const algorithm::pubkeyhash_t& validator, const mediator::prepared_transaction& prepared, ordered_map<uint8_t, algorithm::composition::cpubsig_t>& inout) override;
+			expects_promise_rt<void> calculate_group_signature(const ledger::transaction_context* context, const algorithm::pubkeyhash_t& validator, const warden::prepared_transaction& prepared, ordered_map<uint8_t, algorithm::composition::cpubsig_t>& inout) override;
 			const ledger::wallet* get_wallet() const override;
 
 		public:
@@ -327,7 +327,7 @@ namespace tangent
 			local_dispatch_context& operator=(local_dispatch_context&&) noexcept = default;
 			void set_running_validator(const algorithm::pubkeyhash owner);
 			expects_promise_rt<void> calculate_group_public_key(const ledger::transaction_context* context, const algorithm::pubkeyhash_t& validator, algorithm::composition::cpubkey_t& inout) override;
-			expects_promise_rt<void> calculate_group_signature(const ledger::transaction_context* context, const algorithm::pubkeyhash_t& validator, const mediator::prepared_transaction& prepared, ordered_map<uint8_t, algorithm::composition::cpubsig_t>& inout) override;
+			expects_promise_rt<void> calculate_group_signature(const ledger::transaction_context* context, const algorithm::pubkeyhash_t& validator, const warden::prepared_transaction& prepared, ordered_map<uint8_t, algorithm::composition::cpubsig_t>& inout) override;
 			const ledger::wallet* get_wallet() const override;
 		};
 

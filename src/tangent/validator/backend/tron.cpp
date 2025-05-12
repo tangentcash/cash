@@ -14,7 +14,7 @@ extern "C"
 
 namespace tangent
 {
-	namespace mediator
+	namespace warden
 	{
 		namespace backends
 		{
@@ -126,7 +126,7 @@ namespace tangent
 			{
 				netdata.composition = algorithm::composition::type::secp256k1;
 				netdata.routing = routing_policy::account;
-				netdata.sync_latency = 15;
+				netdata.sync_latency = 20;
 				netdata.divisibility = decimal(1000000).truncate(protocol::now().message.precision);
 				netdata.supports_token_transfer = "trc20";
 				netdata.supports_bulk_transfer = false;
@@ -294,7 +294,7 @@ namespace tangent
 				result.requires_abi(format::variable(divisibility));
 				coreturn expects_rt<prepared_transaction>(std::move(result));
 			}
-			expects_lr<finalized_transaction> tron::finalize_transaction(mediator::prepared_transaction&& prepared)
+			expects_lr<finalized_transaction> tron::finalize_transaction(warden::prepared_transaction&& prepared)
 			{
 				if (prepared.abi.size() != 6)
 					return layer_exception("invalid prepared abi");
