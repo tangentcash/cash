@@ -423,7 +423,7 @@ namespace tangent
 				return;
 
 			if (protocol::now().user.p2p.logging)
-				VI_INFO("[rpc] rpc node shutdown requested");
+				VI_INFO("[rpc] rpc node shutdown");
 
 			node->unlisten(false);
 		}
@@ -3061,9 +3061,9 @@ namespace tangent
 			for (auto& fork : validator->forks)
 			{
 				schema* item = forks->push(var::set::object());
-				item->set("branch_hash", var::string(algorithm::encoding::encode_0xhex256(fork.first)));
-				item->set("tip_hash", algorithm::encoding::serialize_uint256(fork.second.as_hash()));
-				item->set("tip_number", algorithm::encoding::serialize_uint256(fork.second.number));
+				item->set("fork_hash", var::string(algorithm::encoding::encode_0xhex256(fork.first)));
+				item->set("tip_hash", algorithm::encoding::serialize_uint256(fork.second.header.as_hash()));
+				item->set("tip_number", algorithm::encoding::serialize_uint256(fork.second.header.number));
 				item->set("progress", var::number(validator->get_sync_progress(fork.first, block_header ? block_header->number : 0)));
 			}
 

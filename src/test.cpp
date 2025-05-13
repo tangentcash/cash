@@ -2471,7 +2471,7 @@ public:
 			checkpoint(std::move(genesis), users);
 
 			auto receiver = ledger::wallet::from_seed("000002");
-			for (size_t i = 0; i < block_count; i++)
+			auto generate = [&]() -> vector<uptr<ledger::transaction>>
 			{
 				vector<uptr<ledger::transaction>> transactions;
 				transactions.resize(transaction_count);
@@ -2486,8 +2486,16 @@ public:
 					VI_PANIC(transaction->sign(user1.secret_key, user1_nonce++), "transfer not signed");
 					item = transaction;
 				}));
-				std::sort(transactions.begin(), transactions.end(), [](const uptr<ledger::transaction>& a, const uptr<ledger::transaction>& b) { return a->nonce < b->nonce; });
+				VI_SORT(transactions.begin(), transactions.end(), [](const uptr<ledger::transaction>& a, const uptr<ledger::transaction>& b) { return a->nonce < b->nonce; });
+				return transactions;
+			};
+
+			auto transactions = generate();
+			for (size_t i = 0; i < block_count; i++)
+			{
+				auto next_transactions = cotask<vector<uptr<ledger::transaction>>>([&]() { return generate(); });
 				checkpoint(std::move(transactions), users);
+				transactions = std::move(next_transactions.get());
 			}
 		}
 		else if (entropy == 1)
@@ -2529,7 +2537,7 @@ public:
 			genesis.push_back(transfer);
 			checkpoint(std::move(genesis), users);
 
-			for (size_t i = 0; i < block_count; i++)
+			auto generate = [&]() -> vector<uptr<ledger::transaction>>
 			{
 				vector<uptr<ledger::transaction>> transactions;
 				transactions.resize(transaction_count);
@@ -2546,8 +2554,16 @@ public:
 					VI_PANIC(transaction->sign(sender.wallet.secret_key, sender.nonce++), "transfer not signed");
 					item = transaction;
 				}));
-				std::sort(transactions.begin(), transactions.end(), [](const uptr<ledger::transaction>& a, const uptr<ledger::transaction>& b) { return a->nonce < b->nonce; });
+				VI_SORT(transactions.begin(), transactions.end(), [](const uptr<ledger::transaction>& a, const uptr<ledger::transaction>& b) { return a->nonce < b->nonce; });
+				return transactions;
+			};
+
+			auto transactions = generate();
+			for (size_t i = 0; i < block_count; i++)
+			{
+				auto next_transactions = cotask<vector<uptr<ledger::transaction>>>([&]() { return generate(); });
 				checkpoint(std::move(transactions), users);
+				transactions = std::move(next_transactions.get());
 			}
 		}
 		else
@@ -2583,7 +2599,7 @@ public:
 			genesis.push_back(transfer);
 			checkpoint(std::move(genesis), users);
 
-			for (size_t i = 0; i < block_count; i++)
+			auto generate = [&]() -> vector<uptr<ledger::transaction>>
 			{
 				vector<uptr<ledger::transaction>> transactions;
 				transactions.resize(transaction_count);
@@ -2602,8 +2618,16 @@ public:
 					VI_PANIC(transaction->sign(sender.wallet.secret_key, sender.nonce++), "transfer not signed");
 					item = transaction;
 				}));
-				std::sort(transactions.begin(), transactions.end(), [](const uptr<ledger::transaction>& a, const uptr<ledger::transaction>& b) { return a->nonce < b->nonce; });
+				VI_SORT(transactions.begin(), transactions.end(), [](const uptr<ledger::transaction>& a, const uptr<ledger::transaction>& b) { return a->nonce < b->nonce; });
+				return transactions;
+			};
+
+			auto transactions = generate();
+			for (size_t i = 0; i < block_count; i++)
+			{
+				auto next_transactions = cotask<vector<uptr<ledger::transaction>>>([&]() { return generate(); });
 				checkpoint(std::move(transactions), users);
+				transactions = std::move(next_transactions.get());
 			}
 		}
 

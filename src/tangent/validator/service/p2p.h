@@ -139,6 +139,19 @@ namespace tangent
 		public:
 			using receive_function = promise<void>(*)(server_node*, uref<relay>&&, procedure&&);
 
+			struct fork_header
+			{
+				ledger::block_header header;
+				task_id timeout = INVALID_TASK_ID;
+				uref<relay> state;
+			};
+
+			enum class fork_head
+			{
+				append,
+				replace
+			};
+
 		public:
 			struct
 			{
@@ -190,7 +203,7 @@ namespace tangent
 
 		public:
 			ledger::evaluation_context environment;
-			unordered_map<uint256_t, ledger::block_header> forks;
+			unordered_map<uint256_t, fork_header> forks;
 
 		public:
 			server_node() noexcept;
@@ -212,8 +225,10 @@ namespace tangent
 			void shutdown();
 			void reject(relay* state);
 			void clear_pending_tip();
-			void accept_fork_tip(const uint256_t& fork_tip, const uint256_t& candidate_hash, ledger::block_header&& fork_tip_block);
+			void enqueue_pending_tip(const uint256_t& candidate_hash, ledger::block&& candidate_block);
 			void accept_pending_tip();
+			void clear_pending_fork(relay* state);
+			void accept_pending_fork(relay* state, fork_head head, const uint256_t& candidate_hash, ledger::block_header&& candidate_block);
 			bool clear_mempool(bool wait);
 			bool accept_mempool();
 			bool accept_dispatchpool(const ledger::block_header& tip);

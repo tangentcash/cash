@@ -237,7 +237,7 @@ namespace tangent
 	}
 	void service_control::shutdown(int signal) noexcept
 	{
-		VI_INFO("[srvctl] service shutdown requested (signal code = %i, state = OK)", signal);
+		VI_INFO("[srvctl] service shutdown (signal code = %i, state = OK)", signal);
 		instance = nullptr;
 		if (signal != os::process::get_signal_id(signal_code::SIG_INT) && signal != os::process::get_signal_id(signal_code::SIG_TERM))
 			exit_code = 0x1;
@@ -247,7 +247,7 @@ namespace tangent
 	}
 	void service_control::abort(int signal) noexcept
 	{
-		std::cout << "[srvctl] PANIC! service termination requested (signal code " << signal << ", state = unrecoverable, mode = abort):\n" << error_handling::get_stack_trace(0) << std::endl;
+		std::cout << "[srvctl] PANIC! service termination (signal code " << signal << ", state = unrecoverable, mode = abort):\n" << error_handling::get_stack_trace(0) << std::endl;
 		instance = nullptr;
 		os::process::abort();
 	}
@@ -267,7 +267,7 @@ namespace tangent
 			policy.threads[((size_t)difficulty::timeout)] = 1;
 		}
 
-		VI_INFO("[srvctl] service launch requested (services: %i)", (int)services.size());
+		VI_INFO("[srvctl] service launch (services: %i)", (int)services.size());
 		for (auto& service : services)
 			service.startup();
 

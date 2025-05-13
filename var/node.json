@@ -1,25 +1,25 @@
 {
-    "network": "regtest",
-    "vectorstate": "./vectorstate.bsk",
+    "network": "mainnet",
+    "keystate": "./keystate.sk",
     "nodes": [],
     "seeds": [],
     "logs": {
-        "state": "",
-        "message": "",
-        "data": "",
+        "state": null,
+        "message": null,
+        "data": null,
         "archive_size": 8388608,
         "archive_repack_interval": 1800
     },
     "p2p": {
         "address": "0.0.0.0",
         "port": 18418,
-        "time_offset": 30000,
+        "time_offset": 300000,
         "max_inbound_connections": 32,
         "max_outbound_connections": 8,
         "inventory_size": 8192,
         "rediscovery_timeout": 120000,
+        "response_timeout": 48000,
         "cursor_size": 2048,
-        "proposer": true,
         "server": true,
         "logging": true
     },
@@ -32,7 +32,6 @@
         "user_password": null,
         "cursor_size": 512,
         "page_size": 64,
-        "messaging": true,
         "websockets": false,
         "server": false,
         "logging": true
@@ -41,7 +40,6 @@
         "address": "0.0.0.0",
         "port": 18420,
         "cursor_size": 512,
-        "page_size": 64,
         "server": false,
         "logging": true
     },
@@ -49,24 +47,35 @@
         "block_replay_multiplier": 4,
         "relaying_timeout": 30000,
         "relaying_retry_timeout": 300,
-        "cache_short_size": 16384,
-        "cache_extended_size": 65536,
+        "cache1_size": 32768,
+        "cache2_size": 131072,
         "fee_estimation_seconds": 600,
         "withdrawal_time": 300000,
         "server": false,
         "logging": true,
-        "strategy": {
-            "retry_timeout": 30000,
-            "polling_frequency": 70000,
-            "block_confirmations": 0
-        },
-        "protocols": {
-            "BTC": {
-                "peers": ["http://admin:pass@127.0.0.1:8332"],
-                "server": {
-                    "delay": 0,
-                    "tip": null,
-                    "props": null
+        "options": {
+            "strategy": {
+                "retry_timeout": 30000,
+                "polling_frequency": 70000,
+                "block_confirmations": 0
+            },
+            "protocols": {
+                "BTC": {
+                    "peers": [
+                        "http://admin:pass@127.0.0.1:8332",
+                        ["http://admin:pass@127.0.0.1:8332", 2],
+                        {
+                            "jrpc": "http://admin:pass@127.0.0.1:8332",
+                            "rest": "http://admin:pass@127.0.0.1:8332",
+                            "http": "http://admin:pass@127.0.0.1:8332",
+                            "rps": 2
+                        }
+                    ],
+                    "server": {
+                        "props": ["p2pk", "p2sh_p2wpkh", "p2pkh", "p2wsh_p2pkh", "p2wpkh", "p2tr"],
+                        "tip": null,
+                        "delay": 0
+                    }
                 }
             }
         }
@@ -78,9 +87,10 @@
     "storage": {
         "directory": "./",
         "optimization": "speed",
+        "checkpoint_size": 64,
         "transaction_dispatch_repeat_interval": 600,
         "transaction_timeout": 86400,
-        "checkpoint_size": 64,
+        "mempool_transaction_limit": 10000000,
         "location_cache_size": 500000,
         "script_cache_size": 8192,
         "blob_cache_size": 134217728,

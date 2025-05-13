@@ -1324,7 +1324,7 @@ namespace tangent
 				return;
 
 			if (protocol::now().user.nss.logging)
-				VI_INFO("[nss] nss node shutdown requested");
+				VI_INFO("[nss] nss node shutdown");
 
 			umutex<std::recursive_mutex> unique(control_sys.sync);
 			for (auto& nodes : nodes)

@@ -158,7 +158,7 @@ namespace tangent
                 uint32_t max_outbound_connections = 8;
                 uint32_t inventory_size = 8192;
                 uint32_t rediscovery_timeout = 120000;
-                uint64_t response_timeout = 120000;
+                uint64_t response_timeout = 48000;
                 bool server = true;
                 bool logging = true;
             } p2p;

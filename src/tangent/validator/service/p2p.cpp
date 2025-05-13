@@ -423,6 +423,7 @@ namespace tangent
 				auto node_id = codec::hex_encode(std::string_view((char*)this, sizeof(this)));
 				nss::server_node::get()->add_transaction_callback(node_id, nullptr);
 			}
+			clear_pending_fork(nullptr);
 			clear_pending_tip();
 		}
 		expects_promise_rt<format::variables> server_node::call_responsive(receive_function function, format::variables&& args, uint64_t timeout_ms, response_callback&& callback)
@@ -475,7 +476,7 @@ namespace tangent
 					goto retry_trial_address;
 
 				if (protocol::now().user.p2p.logging)
-					VI_INFO("[p2p] peer %s:%i channel try: possibly candidate node", next_trial_address->get_ip_address().or_else(string("[bad_address]")).c_str(), (int)next_trial_address->get_ip_port().or_else(0));
+					VI_DEBUG("[p2p] peer %s:%i channel try: possibly candidate node", next_trial_address->get_ip_address().or_else(string("[bad_address]")).c_str(), (int)next_trial_address->get_ip_port().or_else(0));
 
 				return promise<option<socket_address>>(std::move(*next_trial_address));
 			}
@@ -494,7 +495,7 @@ namespace tangent
 			}
 
 			if (protocol::now().user.p2p.logging)
-				VI_INFO("[p2p] peer %s:%i channel try: previosly connected node", next_validator->address.get_ip_address().or_else(string("[bad_address]")).c_str(), (int)next_validator->address.get_ip_port().or_else(0));
+				VI_DEBUG("[p2p] peer %s:%i channel try: previosly connected node", next_validator->address.get_ip_address().or_else(string("[bad_address]")).c_str(), (int)next_validator->address.get_ip_port().or_else(0));
 
 			return promise<option<socket_address>>(std::move(next_validator->address));
 		}
@@ -555,7 +556,7 @@ namespace tangent
 					transaction->set_computed_witness(receipt);
 					accept_unsigned_transaction(nullptr, std::move(*transaction), nullptr);
 					if (protocol::now().user.p2p.logging)
-						VI_INFO("[p2p] %s warden transaction %s noted (status: %s)", algorithm::asset::name_of(asset).c_str(), receipt.transaction_id.c_str(), receipt.is_mature(asset) ? "finalized" : "pending");
+						VI_INFO("[p2p] %s warden transaction %s accepted (status: %s)", algorithm::asset::name_of(asset).c_str(), receipt.transaction_id.c_str(), receipt.is_mature(asset) ? "finalized" : "pending");
 				}
 			}
 			return promise<void>::null();
@@ -748,7 +749,7 @@ namespace tangent
 
 			size_t multicalls = from ? multicall(from, &methods::propose_transaction_hash, { format::variable(candidate_hash) }) : multicall(nullptr, &methods::propose_transaction, { format::variable(candidate_tx->as_message().data) });
 			if (multicalls > 0 && protocol::now().user.p2p.logging)
-				VI_INFO("[p2p] transaction %s %.*s broadcasted to %i nodes", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), (int)multicalls);
+				VI_DEBUG("[p2p] transaction %s %.*s broadcasted to %i nodes", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), (int)multicalls);
 
 			accept_mempool();
 			return expectation::met;
@@ -991,6 +992,7 @@ namespace tangent
 				return;
 
 			uref<relay> state = it->second;
+			clear_pending_fork(*state);
 			state->add_ref();
 
 			nodes.erase(it);
@@ -1136,7 +1138,7 @@ namespace tangent
 			if (is_active() || protocol::now().user.p2p.server || protocol::now().user.p2p.max_outbound_connections)
 			{
 				if (protocol::now().user.p2p.logging)
-					VI_INFO("[p2p] p2p node shutdown requested");
+					VI_INFO("[p2p] p2p node shutdown");
 			}
 
 			if (is_active())
@@ -1158,17 +1160,12 @@ namespace tangent
 				pending_tip.timeout = INVALID_TASK_ID;
 			}
 		}
-		void server_node::accept_fork_tip(const uint256_t& fork_tip, const uint256_t& candidate_hash, ledger::block_header&& fork_tip_block)
+		void server_node::enqueue_pending_tip(const uint256_t& candidate_hash, ledger::block&& candidate_block)
 		{
-			if (!fork_tip)
-				return;
-
-			forks.clear();
-			if (fork_tip != candidate_hash)
-			{
-				forks[fork_tip] = std::move(fork_tip_block);
-				mempool.dirty = true;
-			}
+			clear_pending_tip();
+			pending_tip.block = std::move(candidate_block);
+			pending_tip.hash = candidate_hash;
+			pending_tip.timeout = schedule::get()->set_timeout(protocol::now().policy.consensus_proof_time, std::bind(&server_node::accept_pending_tip, this));
 		}
 		void server_node::accept_pending_tip()
 		{
@@ -1184,6 +1181,52 @@ namespace tangent
 				}
 			}
 			clear_pending_tip();
+		}
+		void server_node::clear_pending_fork(relay* state)
+		{
+			auto* queue = schedule::get();
+			umutex<std::recursive_mutex> unique(sync.block);
+			if (state != nullptr)
+			{
+				for (auto it = forks.cbegin(); it != forks.cend();)
+				{
+					if (state == *it->second.state)
+					{
+						if (it->second.timeout != INVALID_TASK_ID)
+							queue->clear_timeout(it->second.timeout);
+						it = forks.erase(it);
+					}
+					else
+						++it;
+				}
+			}
+			else
+			{
+				for (auto& fork : forks)
+				{
+					if (fork.second.timeout != INVALID_TASK_ID)
+						queue->clear_timeout(fork.second.timeout);
+				}
+				forks.clear();
+			}
+		}
+		void server_node::accept_pending_fork(relay* state, fork_head head, const uint256_t& candidate_hash, ledger::block_header&& candidate_block)
+		{
+			if (!state || !candidate_hash)
+				return;
+
+			if (head == fork_head::replace)
+				clear_pending_fork(nullptr);
+
+			umutex<std::recursive_mutex> unique(sync.block);
+			auto& fork = forks[candidate_hash];
+			if (fork.timeout != INVALID_TASK_ID)
+				schedule::get()->clear_timeout(fork.timeout);
+			fork.header = candidate_block;
+			fork.state = state;
+			fork.state->add_ref();
+			fork.timeout = schedule::get()->set_timeout(protocol::now().user.p2p.response_timeout, std::bind(&server_node::clear_pending_fork, this, state));
+			mempool.dirty = true;
 		}
 		bool server_node::clear_mempool(bool wait)
 		{
@@ -1319,8 +1362,9 @@ namespace tangent
 				return true;
 			}
 
+			bool fork_branch = fork_tip > 0;
 			auto fork_tip_block = ledger::block_header();
-			if (fork_tip > 0)
+			if (fork_branch)
 			{
 				umutex<std::recursive_mutex> unique(sync.block);
 				auto it = forks.find(fork_tip);
@@ -1330,17 +1374,17 @@ namespace tangent
 						VI_WARN("[p2p] block %s branch averted: fork reverted", algorithm::encoding::encode_0xhex256(candidate_hash).c_str());
 					return false;
 				}
-				fork_tip_block = it->second;
+				fork_tip_block = it->second.header;
 			}
 
-			auto tip_block = fork_tip > 0 ? expects_lr<ledger::block_header>(fork_tip_block) : chain.get_latest_block_header();
+			auto tip_block = fork_branch ? expects_lr<ledger::block_header>(fork_tip_block) : chain.get_latest_block_header();
 			auto tip_hash = tip_block ? tip_block->as_hash() : (uint256_t)0;
 			auto best_tip_work = tip_block ? tip_block->absolute_work : (uint256_t)0;
 			auto parent_block = tip_hash == candidate_block.parent_hash ? tip_block : chain.get_block_header_by_hash(candidate_block.parent_hash);
 			auto parent_hash = parent_block ? parent_block->as_hash() : (uint256_t)0;
 			int64_t branch_length = (int64_t)candidate_block.number - (int64_t)(tip_block ? tip_block->number : 0);
-			branch_length = fork_tip > 0 ? abs(branch_length) : branch_length;
-			if (branch_length < 0 || (!fork_tip && candidate_block.absolute_work < best_tip_work))
+			branch_length = fork_branch ? abs(branch_length) : branch_length;
+			if (branch_length < 0 || (!fork_branch && candidate_block.absolute_work < best_tip_work))
 			{
 				/*
 													  <+> - <+> - <+> = ignore (weaker branch)
@@ -1377,7 +1421,7 @@ namespace tangent
 				bool has_better_tip = forks.empty();
 				for (auto& fork_candidate_tip : forks)
 				{
-					if (fork_candidate_tip.second < candidate_block)
+					if (fork_candidate_tip.second.header < candidate_block)
 					{
 						has_better_tip = true;
 						break;
@@ -1398,7 +1442,7 @@ namespace tangent
 						if (forks.find(candidate_hash) != forks.end())
 							VI_INFO("[p2p] block %s new best branch confirmed", algorithm::encoding::encode_0xhex256(candidate_hash).c_str());
 						else
-							VI_WARN("[p2p] block %s branch averted: not preferred orpan branch", algorithm::encoding::encode_0xhex256(candidate_hash).c_str());
+							VI_WARN("[p2p] block %s branch averted: not preferred orphan branch", algorithm::encoding::encode_0xhex256(candidate_hash).c_str());
 					}
 					return false;
 				}
@@ -1410,8 +1454,7 @@ namespace tangent
 														  \
 														   <+> = possibly orphan
 				*/
-				forks[candidate_hash] = candidate_block;
-				mempool.dirty = true;
+				accept_pending_fork(from, fork_head::append, candidate_hash, ledger::block_header(candidate_block));
 				unique.unlock();
 				if (!tip_block)
 					call(from, &methods::request_fork_block, { format::variable(candidate_hash), format::variable(uint256_t(0)), format::variable((uint64_t)1) });
@@ -1448,7 +1491,7 @@ namespace tangent
 			}
 
 			umutex<std::recursive_mutex> unique(sync.block);
-			if (!fork_tip && candidate_block.priority != 0 && (branch_length == 0 || branch_length == 1))
+			if (!fork_branch && candidate_block.priority != 0 && (branch_length == 0 || branch_length == 1))
 			{
 				/*
 					<+> - <+> - <+> - <+> - <+> - <+> = extension (non-zero priority, possible fork, wait for zero priority block)
@@ -1469,15 +1512,15 @@ namespace tangent
 					}
 				}
 
-				pending_tip.block = std::move(candidate_block);
-				pending_tip.hash = candidate_hash;
-				pending_tip.timeout = schedule::get()->set_timeout(protocol::now().policy.consensus_proof_time, std::bind(&server_node::accept_pending_tip, this));
-
-				size_t multicalls = from ? multicall(from, &methods::propose_block_hash, { format::variable(pending_tip.hash) }) : multicall(from, &methods::propose_block, { format::variable(pending_tip.block->as_message().data) });
+				size_t multicalls = from ? multicall(from, &methods::propose_block_hash, { format::variable(candidate_hash) }) : multicall(from, &methods::propose_block, { format::variable(candidate_block.as_message().data) });
 				if (multicalls > 0 && protocol::now().user.p2p.logging)
-					VI_INFO("[p2p] block %s broadcasted to %i nodes (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)multicalls, candidate_block.number);
+					VI_DEBUG("[p2p] block %s broadcasted to %i nodes (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)multicalls, candidate_block.number);
 
-				accept_fork_tip(fork_tip, candidate_hash, std::move(fork_tip_block));
+				enqueue_pending_tip(candidate_hash, std::move(candidate_block));
+				if (fork_tip != candidate_hash)
+					accept_pending_fork(from, fork_head::replace, fork_tip, std::move(fork_tip_block));
+				else
+					clear_pending_fork(nullptr);
 			}
 			else
 			{
@@ -1491,11 +1534,15 @@ namespace tangent
 
 				size_t multicalls = from ? multicall(from, &methods::propose_block_hash, { format::variable(candidate_hash) }) : multicall(from, &methods::propose_block, { format::variable(candidate_block.as_message().data) });
 				if (multicalls > 0 && protocol::now().user.p2p.logging)
-					VI_INFO("[p2p] block %s broadcasted to %i nodes (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)multicalls, candidate_block.number);
+					VI_DEBUG("[p2p] block %s broadcasted to %i nodes (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)multicalls, candidate_block.number);
 
-				accept_fork_tip(fork_tip, candidate_hash, std::move(fork_tip_block));
-				accept_dispatchpool(candidate_block);
 				clear_pending_tip();
+				if (fork_tip != candidate_hash)
+					accept_pending_fork(from, fork_head::replace, fork_tip, std::move(fork_tip_block));
+				else
+					clear_pending_fork(nullptr);
+
+				accept_dispatchpool(candidate_block);
 				if (from != nullptr && mempool.dirty && !is_syncing())
 				{
 					call(from, &methods::request_mempool, { format::variable((uint64_t)0) });
@@ -1689,7 +1736,7 @@ namespace tangent
 
 			umutex<std::recursive_mutex> unique(sync.block);
 			auto it = forks.find(fork_tip);
-			return it != forks.end() ? (current_number <= it->second.number ? (double)current_number / (double)it->second.number : 1.0) : 1.0;
+			return it != forks.end() ? (current_number <= it->second.header.number ? (double)current_number / (double)it->second.header.number : 1.0) : 1.0;
 		}
 		const unordered_map<void*, relay*>& server_node::get_nodes() const
 		{
@@ -2074,7 +2121,10 @@ namespace tangent
 			ledger::block tip;
 			format::stream block_message = format::stream(message.args.back().as_blob());
 			if (!tip.load(block_message) || !relayer->accept_block(*from, std::move(tip), fork_hash))
-				return returning::error(relayer, *from, __func__, "block rejected");
+			{
+				relayer->clear_pending_fork(*from);
+				return returning::abort(relayer, *from, __func__, "fork block rejected");
+			}
 
 			relayer->call(*from, &methods::request_fork_block, { format::variable(fork_hash), format::variable(uint256_t(0)), format::variable(tip.number + 1) });
 			return returning::ok(*from, __func__, "new fork block accepted");

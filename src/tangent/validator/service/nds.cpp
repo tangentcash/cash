@@ -34,7 +34,7 @@ namespace tangent
 				return;
 
 			if (protocol::now().user.nds.logging)
-				VI_INFO("[nds] nds node shutdown requested");
+				VI_INFO("[nds] nds node shutdown");
 
 			node->unlisten(false);
 		}
