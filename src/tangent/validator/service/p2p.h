@@ -215,6 +215,7 @@ namespace tangent
 			expects_lr<void> accept_unsigned_transaction(relay* from, uptr<ledger::transaction>&& candidate_tx, uint64_t* account_nonce, uint256_t* output_hash = nullptr);
 			expects_lr<void> accept_transaction(relay* from, uptr<ledger::transaction>&& candidate_tx, bool validate_execution = false);
 			expects_lr<void> broadcast_transaction(relay* from, uptr<ledger::transaction>&& candidate_tx, const algorithm::pubkeyhash owner);
+			expects_lr<void> accept_validator_wallet(option<ledger::wallet>&& wallet);
 			void bind_callable(receive_function function);
 			void bind_multicallable(receive_function function);
 			bool call(relay* state, receive_function function, format::variables&& args);

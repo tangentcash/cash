@@ -407,6 +407,7 @@ namespace tangent
 			bind(access_type::w | access_type::a, "mempoolstate", "rejecttransaction", 1, 1, "uint256 hash", "void", "remove mempool transaction by hash", std::bind(&server_node::mempoolstate_reject_transaction, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "mempoolstate", "addnode", 1, 1, "string uri_address", "void", "add node ip address to trial addresses", std::bind(&server_node::mempoolstate_add_node, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "mempoolstate", "clearnode", 1, 1, "string uri_address", "void", "remove associated node info by ip address", std::bind(&server_node::mempoolstate_clear_node, this, std::placeholders::_1, std::placeholders::_2));
+			bind(access_type::r | access_type::a, "validatorstate", "setwallet", 2, 2, "string type = 'mnemonic' | 'seed' | 'key', string entropy", "wallet", "set validator wallet from mnemonic phrase, seed value or secret key", std::bind(&server_node::validatorstate_set_wallet, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::r | access_type::a, "validatorstate", "getwallet", 0, 0, "", "wallet", "get validator wallet", std::bind(&server_node::validatorstate_get_wallet, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::r | access_type::a, "validatorstate", "getparticipations", 0, 0, "", "multiform[]", "get validator participations (for regrouping transaction)", std::bind(&server_node::validatorstate_get_participations, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::r | access_type::a, "validatorstate", "verify", 2, 3, "uint64 number, uint64 count, bool? validate", "uint256[]", "verify chain and possibly re-execute each block", std::bind(&server_node::validatorstate_verify, this, std::placeholders::_1, std::placeholders::_2));
@@ -2971,6 +2972,36 @@ namespace tangent
 				return server_response().error(error_codes::bad_request, "validator node disabled");
 
 			return server_response().success(validator->validator.wallet.as_schema());
+		}
+		server_response server_node::validatorstate_set_wallet(http::connection* base, format::variables&& args)
+		{
+			if (!validator)
+				return server_response().error(error_codes::bad_request, "validator node disabled");
+
+			auto wallet = ledger::wallet();
+			auto type = args[0].as_string();
+			auto entropy = args[1].as_string();
+			if (type == "key")
+			{
+				algorithm::seckey secret_key;
+				if (!algorithm::signing::decode_secret_key(entropy, secret_key))
+					return server_response().error(error_codes::bad_request, "invalid secret key");
+			}
+			else if (type == "mnemonic")
+			{
+				if (!algorithm::signing::verify_mnemonic(entropy))
+					return server_response().error(error_codes::bad_request, "invalid mnemonic");
+
+				wallet = ledger::wallet::from_mnemonic(entropy);
+			}
+			else if (type == "seed")
+				wallet = ledger::wallet::from_seed(format::util::decode_0xhex(entropy));
+
+			auto result = validator->accept_validator_wallet(wallet);
+			if (!result)
+				return server_response().error(error_codes::bad_request, result.error().message());
+
+			return server_response().success(wallet.as_schema());
 		}
 		server_response server_node::validatorstate_status(http::connection* base, format::variables&& args)
 		{

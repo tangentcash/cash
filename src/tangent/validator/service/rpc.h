@@ -215,6 +215,7 @@ namespace tangent
 			server_response validatorstate_get_blockchains(http::connection* base, format::variables&& args);
 			server_response validatorstate_get_participations(http::connection* base, format::variables&& args);
 			server_response validatorstate_get_wallet(http::connection* base, format::variables&& args);
+			server_response validatorstate_set_wallet(http::connection* base, format::variables&& args);
 			server_response validatorstate_status(http::connection* base, format::variables&& args);
 			server_response validatorstate_submit_block(http::connection* base, format::variables&& args);
 		};

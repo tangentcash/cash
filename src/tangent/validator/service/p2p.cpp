@@ -754,6 +754,40 @@ namespace tangent
 			accept_mempool();
 			return expectation::met;
 		}
+		expects_lr<void> server_node::accept_validator_wallet(option<ledger::wallet>&& wallet)
+		{
+			umutex<std::recursive_mutex> unique(exclusive);
+			auto mempool = storages::mempoolstate(__func__);
+			auto main_validator = mempool.get_validator_by_ownership(0);
+			if (!main_validator)
+			{
+				validator.node.address = socket_address(protocol::now().user.p2p.address, protocol::now().user.p2p.port);
+				if (wallet)
+					validator.wallet = std::move(*wallet);
+				else
+					validator.wallet = ledger::wallet::from_seed(*crypto::random_bytes(512));
+			}
+			else
+			{
+				validator.node = std::move(main_validator->first);
+				if (wallet)
+					validator.wallet = std::move(*wallet);
+				else
+					validator.wallet = std::move(main_validator->second);
+			}
+
+			fill_validator_services();
+			validator.node.ports.p2p = protocol::now().user.p2p.port;
+			validator.node.ports.nds = protocol::now().user.nds.port;
+			validator.node.ports.rpc = protocol::now().user.rpc.port;
+			validator.node.services.has_consensus = protocol::now().user.p2p.server;
+			validator.node.services.has_discovery = protocol::now().user.nds.server;
+			validator.node.services.has_synchronization = protocol::now().user.nss.server;
+			validator.node.services.has_interfaces = protocol::now().user.rpc.server;
+			validator.node.services.has_querying = protocol::now().user.rpc.user_username.empty();
+			validator.node.services.has_streaming = protocol::now().user.rpc.web_sockets;
+			return apply_validator(mempool, validator.node, validator.wallet);
+		}
 		void server_node::bind_callable(receive_function function)
 		{
 			uint32_t method_index = method_address + (uint32_t)in_methods.size();
@@ -1065,36 +1099,13 @@ namespace tangent
 			else if (protocol::now().user.p2p.max_outbound_connections > 0 && protocol::now().user.p2p.logging)
 				VI_INFO("[p2p] p2p node listen (type: out)");
 
-			auto mempool = storages::mempoolstate(__func__);
-			discovery.count = mempool.get_validators_count().or_else(0);
-
-			auto main_validator = mempool.get_validator_by_ownership(0);
-			if (!main_validator)
-			{
-				validator.wallet = ledger::wallet::from_seed(*crypto::random_bytes(512));
-				validator.node.address = socket_address(protocol::now().user.p2p.address, protocol::now().user.p2p.port);
-			}
-			else
-			{
-				validator.wallet = std::move(main_validator->second);
-				validator.node = std::move(main_validator->first);
-			}
-
-			fill_validator_services();
-			validator.node.ports.p2p = protocol::now().user.p2p.port;
-			validator.node.ports.nds = protocol::now().user.nds.port;
-			validator.node.ports.rpc = protocol::now().user.rpc.port;
-			validator.node.services.has_consensus = protocol::now().user.p2p.server;
-			validator.node.services.has_discovery = protocol::now().user.nds.server;
-			validator.node.services.has_synchronization = protocol::now().user.nss.server;
-			validator.node.services.has_interfaces = protocol::now().user.rpc.server;
-			validator.node.services.has_querying = protocol::now().user.rpc.user_username.empty();
-			validator.node.services.has_streaming = protocol::now().user.rpc.web_sockets;
-			apply_validator(mempool, validator.node, validator.wallet).expect("failed to save trusted validator");
-
 			auto node_id = codec::hex_encode(std::string_view((char*)this, sizeof(this)));
 			nss::server_node::get()->add_transaction_callback(node_id, std::bind(&server_node::propose_transaction_logs, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
 			console::get()->add_colorization("CHECKPOINT SYNC DONE", std_color::white, std_color::dark_green);
+
+			auto mempool = storages::mempoolstate(__func__);
+			discovery.count = mempool.get_validators_count().or_else(0);
+			accept_validator_wallet(optional::none).expect("failed to save trusted validator");
 
 			for (auto& node : protocol::now().user.nodes)
 			{
