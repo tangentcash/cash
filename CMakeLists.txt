@@ -33,10 +33,9 @@ foreach(ITEM IN ITEMS ${SOURCE})
     source_group("${ITEM_GROUP}" FILES "${ITEM}")
 endforeach()
 
-set(TAN_LIBRARY OFF CACHE BOOL "Enable validator tests")
-set(TAN_TEST OFF CACHE BOOL "Enable validator tests")
-if (NOT TAN_LIBRARY)
-    if (TAN_TEST)
+set(TAN_BUILD "server" CACHE STRING "Build target: \"server\" | \"client\" | \"test\"")
+if (${TAN_BUILD} STREQUAL "server" OR ${TAN_BUILD} STREQUAL "test")
+    if (${TAN_BUILD} STREQUAL "test")
         list(FILTER SOURCE EXCLUDE REGEX "src/main")
     else()
         list(FILTER SOURCE EXCLUDE REGEX "src/test")
@@ -52,15 +51,17 @@ if (NOT TAN_LIBRARY)
     if (MSVC)
         set(CMAKE_EXE_LINKER_FLAGS "/ENTRY:mainCRTStartup /SUBSYSTEM:CONSOLE")
     endif()
-else()
+elseif (${TAN_BUILD} STREQUAL "client")
     list(FILTER SOURCE EXCLUDE REGEX "src/(main|test)")
-    add_library(tangentcash SHARED ${SOURCE})
+    add_library(tangentcash ${SOURCE})
     set_target_properties(tangentcash PROPERTIES
-            CXX_STANDARD ${VI_CXX}
-            CXX_STANDARD_REQUIRED ON
-            CXX_EXTENSIONS OFF
-            VERSION ${PROJECT_VERSION}
-            SOVERSION ${PROJECT_VERSION})
+        CXX_STANDARD ${VI_CXX}
+        CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS OFF
+        VERSION ${PROJECT_VERSION}
+        SOVERSION ${PROJECT_VERSION})
+else()
+  message(FATAL_ERROR "Invalid build target. Expected type: \"server\", \"client\" or \"test\"")
 endif()
 
 target_precompile_headers(tangentcash PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${CMAKE_CURRENT_LIST_DIR}/src/tangent/kernel/chain.h>)
