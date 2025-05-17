@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.10)
 
-set(VI_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/deps/vitex CACHE STRING "Vitex directory")
+set(VI_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/deps/vitex CACHE STRING "Directory: vitex")
 set(VI_BINDINGS OFF CACHE BOOL "-")
 set(VI_MONGOC OFF CACHE BOOL "-")
 set(VI_POSTGRESQL OFF CACHE BOOL "-")
