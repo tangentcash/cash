@@ -48,15 +48,20 @@ namespace tangent
 
 		struct script_address
 		{
-			algorithm::pubkeyhash hash = { 0 };
+			algorithm::subpubkeyhash_t hash;
 
 			script_address();
 			script_address(const algorithm::pubkeyhash owner);
 			script_address(const std::string_view& address);
-			script_address(const uint256_t& numeric);
+			script_address(const uint256_t& owner_data);
+			script_address(const uint256_t& owner_data, const uint256_t& derivation_data);
+			script_address to_address() const;
+			script_address to_subaddress_from_hash(const uint256_t& derivation_data) const;
+			script_address to_subaddress_from_data(const std::string_view& derivation_data) const;
 			string to_string() const;
-			uint256_t to_uint256() const;
-			bool is_null() const;
+			uint256_t to_public_key_hash() const;
+			uint256_t to_derivation_hash() const;
+			bool empty() const;
 			static bool equals(const script_address& a, const script_address& b);
 		};
 

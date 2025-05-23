@@ -31,6 +31,8 @@ namespace tangent
 			string get_secret_key() const;
 			string get_public_key() const;
 			string get_address() const;
+			string get_subaddress(const algorithm::pubkeyhash derivation_hash) const;
+			string get_subaddress(const std::string_view& derivation_data) const;
 			expects_lr<uint64_t> get_latest_nonce() const;
 			uptr<schema> as_schema() const override;
 			uptr<schema> as_public_schema() const;

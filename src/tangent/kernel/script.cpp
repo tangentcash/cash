@@ -195,7 +195,7 @@ namespace tangent
 					}
 					else if (name == SCRIPT_CLASS_ADDRESS)
 					{
-						stream->write_string(format::util::encode_0xhex(std::string_view((char*)((script_address*)value)->hash, sizeof(algorithm::pubkeyhash))));
+						stream->write_string(((script_address*)value)->hash.optimized_view());
 						return expectation::met;
 					}
 					else if (name == SCRIPT_CLASS_STRING)
@@ -279,7 +279,7 @@ namespace tangent
 					}
 					else if (name == SCRIPT_CLASS_ADDRESS)
 					{
-						uptr<schema> data = algorithm::signing::serialize_address(((script_address*)value)->hash);
+						uptr<schema> data = algorithm::signing::serialize_subaddress(((script_address*)value)->hash.data);
 						stream->value = std::move(data->value);
 						return expectation::met;
 					}
@@ -395,13 +395,13 @@ namespace tangent
 							return layer_exception("load failed for address type");
 
 						data = format::util::is_hex_encoding(data) ? format::util::decode_0xhex(data) : data;
-						if (data.size() != sizeof(algorithm::pubkeyhash))
+						if (data.size() > sizeof(algorithm::subpubkeyhash))
 						{
-							if (!algorithm::signing::decode_address(data, ((script_address*)value)->hash))
+							if (!algorithm::signing::decode_subaddress(data, ((script_address*)value)->hash.data))
 								return layer_exception("load failed for address type");
 						}
 						else
-							memcpy(((script_address*)value)->hash, data.data(), data.size());
+							((script_address*)value)->hash = algorithm::subpubkeyhash_t(data);
 
 						unique.address = nullptr;
 						return expectation::met;
@@ -511,13 +511,13 @@ namespace tangent
 					{
 						string data = stream->value.get_blob();
 						data = format::util::is_hex_encoding(data) ? format::util::decode_0xhex(data) : data;
-						if (data.size() != sizeof(algorithm::pubkeyhash))
+						if (data.size() > sizeof(algorithm::subpubkeyhash))
 						{
-							if (!algorithm::signing::decode_address(data, ((script_address*)value)->hash))
+							if (!algorithm::signing::decode_subaddress(data, ((script_address*)value)->hash.data))
 								return layer_exception("load failed for address type");
 						}
 						else
-							memcpy(((script_address*)value)->hash, data.data(), data.size());
+							((script_address*)value)->hash = algorithm::subpubkeyhash_t(data);
 
 						unique.address = nullptr;
 						return expectation::met;
@@ -601,9 +601,14 @@ namespace tangent
 			address->set_constructor<script_address>("void f()");
 			address->set_constructor<script_address, const std::string_view&>("void f(const string_view&in)");
 			address->set_constructor<script_address, const uint256_t&>("void f(const uint256&in)");
+			address->set_constructor<script_address, const uint256_t&, const uint256_t&>("void f(const uint256&in, const uint256&in)");
+			address->set_method("address to_address() const", &script_address::to_address);
+			address->set_method("address to_subaddress_from_hash(const uint256&in) const", &script_address::to_subaddress_from_hash);
+			address->set_method("address to_subaddress_from_data(const string_view&in) const", &script_address::to_subaddress_from_data);
 			address->set_method("string to_string() const", &script_address::to_string);
-			address->set_method("uint256 to_uint256() const", &script_address::to_uint256);
-			address->set_method("bool is_null() const", &script_address::is_null);
+			address->set_method("uint256 to_public_key_hash() const", &script_address::to_public_key_hash);
+			address->set_method("uint256 to_derivation_hash() const", &script_address::to_derivation_hash);
+			address->set_method("bool empty() const", &script_address::empty);
 			address->set_operator_extern(operators::equals_t, (uint32_t)position::constant, "bool", "const address&in", &script_address::equals);
 
 			auto program = vm->set_interface_class<script_program>(SCRIPT_CLASS_PROGRAM);
@@ -794,41 +799,77 @@ namespace tangent
 		script_address::script_address(const algorithm::pubkeyhash owner)
 		{
 			if (owner != nullptr)
-				memcpy(hash, owner, sizeof(hash));
+				hash = algorithm::encoding::to_subaddress(owner);
 		}
 		script_address::script_address(const std::string_view& address)
 		{
-			algorithm::signing::decode_address(address, hash);
+			algorithm::signing::decode_subaddress(address, hash.data);
 		}
-		script_address::script_address(const uint256_t& numeric)
+		script_address::script_address(const uint256_t& owner_data)
 		{
-			uint8_t data[32];
-			algorithm::encoding::decode_uint256(numeric, data);
-			memcpy(hash, data, sizeof(hash));
+			uint8_t owner_raw_data[32];
+			algorithm::encoding::decode_uint256(owner_data, owner_raw_data);
+			hash = algorithm::encoding::to_subaddress(owner_raw_data);
+		}
+		script_address::script_address(const uint256_t& owner_data, const uint256_t& derivation_data)
+		{
+			uint8_t owner_raw_data[32], derivation_raw_data[32];
+			algorithm::encoding::decode_uint256(owner_data, owner_raw_data);
+			algorithm::encoding::decode_uint256(derivation_data, derivation_raw_data);
+			hash = algorithm::encoding::to_subaddress(owner_raw_data, derivation_raw_data);
+		}
+		script_address script_address::to_address() const
+		{
+			auto result = script_address();
+			result.hash = algorithm::encoding::to_subaddress(hash.data);
+			return result;
+		}
+		script_address script_address::to_subaddress_from_hash(const uint256_t& derivation_data) const
+		{
+			uint8_t derivation_raw_data[32];
+			algorithm::encoding::decode_uint256(derivation_data, derivation_raw_data);
+
+			auto result = script_address();
+			result.hash = algorithm::encoding::to_subaddress(hash.data, derivation_raw_data);
+			return result;
+		}
+		script_address script_address::to_subaddress_from_data(const std::string_view& derivation_data) const
+		{
+			auto result = script_address();
+			result.hash = algorithm::encoding::to_subaddress(hash.data, derivation_data);
+			return result;
 		}
 		string script_address::to_string() const
 		{
 			string address;
-			algorithm::signing::encode_address(hash, address);
+			algorithm::signing::encode_subaddress(hash.data, address);
 			return address;
 		}
-		uint256_t script_address::to_uint256() const
+		uint256_t script_address::to_public_key_hash() const
 		{
 			uint8_t data[32] = { 0 };
-			memcpy(data, hash, sizeof(hash));
+			memcpy(data, hash.data, sizeof(algorithm::pubkeyhash));
 
 			uint256_t numeric = 0;
 			algorithm::encoding::encode_uint256(data, numeric);
 			return numeric;
 		}
-		bool script_address::is_null() const
+		uint256_t script_address::to_derivation_hash() const
 		{
-			algorithm::pubkeyhash null = { 0 };
-			return !memcmp(hash, null, sizeof(null));
+			uint8_t data[32] = { 0 };
+			memcpy(data, hash.data + sizeof(algorithm::pubkeyhash), sizeof(algorithm::pubkeyhash));
+
+			uint256_t numeric = 0;
+			algorithm::encoding::encode_uint256(data, numeric);
+			return numeric;
+		}
+		bool script_address::empty() const
+		{
+			return hash.empty();
 		}
 		bool script_address::equals(const script_address& a, const script_address& b)
 		{
-			return !memcmp(a.hash, b.hash, sizeof(a.hash));
+			return a.hash.equals(b.hash.data);
 		}
 
 		script_program::script_program(ledger::transaction_context* new_context) : distribution(optional::none), context(new_context)
@@ -939,7 +980,7 @@ namespace tangent
 			if (function_name.empty())
 				return layer_exception(stringify::text("illegal subcall to %s program: illegal operation", target.to_string().c_str()));
 
-			auto link = context->get_account_program(target.hash);
+			auto link = context->get_account_program(target.hash.data);
 			if (!link)
 				return layer_exception(stringify::text("illegal subcall to %s program on function \"%.*s\": illegal operation", target.to_string().c_str(), (int)function_name.size(), function_name.data()));
 
@@ -999,7 +1040,7 @@ namespace tangent
 			receipt.generation_time = protocol::now().time.now();
 			receipt.absolute_gas_use = context->block->gas_use;
 			receipt.block_number = context->block->number;
-			memcpy(receipt.from, to().hash, sizeof(receipt.from));
+			memcpy(receipt.from, to().hash.data, sizeof(receipt.from));
 
 			auto next = transaction_context(context->block, context->environment, &transaction, std::move(receipt));
 			auto* prev = context;
@@ -1183,7 +1224,7 @@ namespace tangent
 		}
 		bool script_program::store_by_address(const script_address& location, const void* object_value, int object_type_id)
 		{
-			string data = string((char*)location.hash, sizeof(location.hash));
+			string data = string((char*)location.hash.data, sizeof(algorithm::pubkeyhash));
 			return store_by_location(data, object_value, object_type_id);
 		}
 		bool script_program::store_by_location(const std::string_view& location, const void* object_value, int object_type_id)
@@ -1207,7 +1248,7 @@ namespace tangent
 				return false;
 			}
 
-			auto data = context->apply_account_storage(to().hash, location, stream.data);
+			auto data = context->apply_account_storage(to().hash.data, location, stream.data);
 			if (!data)
 			{
 				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_STORAGE, data.error().message()));
@@ -1226,7 +1267,7 @@ namespace tangent
 		}
 		bool script_program::load_from_by_address(const script_address& target, const script_address& location, void* object_value, int object_type_id) const
 		{
-			string data = string((char*)location.hash, sizeof(location.hash));
+			string data = string((char*)location.hash.data, sizeof(algorithm::pubkeyhash));
 			return load_from_by_location(target, data, object_value, object_type_id);
 		}
 		bool script_program::load_from_by_location(const script_address& target, const std::string_view& location, void* object_value, int object_type_id) const
@@ -1242,7 +1283,7 @@ namespace tangent
 				return false;
 			}
 
-			auto data = context->get_account_storage(target.hash, location);
+			auto data = context->get_account_storage(target.hash.data, location);
 			if (!data || data->storage.empty())
 				return false;
 
@@ -1258,7 +1299,7 @@ namespace tangent
 		}
 		bool script_program::emit_by_address(const script_address& location, const void* object_value, int object_type_id)
 		{
-			string data = string((char*)location.hash, sizeof(location.hash));
+			string data = string((char*)location.hash.data, sizeof(algorithm::pubkeyhash));
 			return emit_by_location(data, object_value, object_type_id);
 		}
 		bool script_program::emit_by_location(const std::string_view& location, const void* object_value, int object_type_id)
@@ -1419,7 +1460,7 @@ namespace tangent
 		}
 		expects_lr<void> script_program_trace::trace_call(const std::string_view& function, const format::variables& args, int8_t mutability)
 		{
-			auto index = environment.validation.context.get_account_program(to().hash);
+			auto index = environment.validation.context.get_account_program(to().hash.data);
 			if (!index)
 				return layer_exception("program not assigned to address");
 
@@ -1494,8 +1535,8 @@ namespace tangent
 			schema* data = var::set::object();
 			data->set("block_hash", var::string(algorithm::encoding::encode_0xhex256(block.number > 0 ? block.as_hash() : uint256_t(0))));
 			data->set("transaction_hash", var::string(algorithm::encoding::encode_0xhex256(context->receipt.transaction_hash)));
-			data->set("from", algorithm::signing::serialize_address(((script_program_trace*)this)->from().hash));
-			data->set("to", algorithm::signing::serialize_address(((script_program_trace*)this)->to().hash));
+			data->set("from", algorithm::signing::serialize_subaddress(((script_program_trace*)this)->from().hash.data));
+			data->set("to", algorithm::signing::serialize_subaddress(((script_program_trace*)this)->to().hash.data));
 			data->set("gas", algorithm::encoding::serialize_uint256(context->receipt.relative_gas_use));
 			data->set("time", algorithm::encoding::serialize_uint256(context->receipt.finalization_time - context->receipt.generation_time));
 			data->set("successful", var::boolean(context->receipt.successful));

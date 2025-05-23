@@ -111,6 +111,8 @@ namespace tangent
 			void dispatch_accept_transaction(const uint256_t& hash, const ledger::transaction* transaction, const algorithm::pubkeyhash owner);
 			server_response web_socket_subscribe(http::connection* base, format::variables&& args);
 			server_response web_socket_unsubscribe(http::connection* base, format::variables&& args);
+			server_response utility_transform_address_from_hash(http::connection* base, format::variables&& args);
+			server_response utility_transform_address_from_data(http::connection* base, format::variables&& args);
 			server_response utility_encode_address(http::connection* base, format::variables&& args);
 			server_response utility_decode_address(http::connection* base, format::variables&& args);
 			server_response utility_decode_message(http::connection* base, format::variables&& args);

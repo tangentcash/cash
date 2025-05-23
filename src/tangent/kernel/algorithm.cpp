@@ -819,9 +819,18 @@ namespace tangent
 		}
 		bool signing::decode_address(const std::string_view& address, pubkeyhash public_key_hash)
 		{
-			VI_ASSERT(public_key_hash != nullptr && stringify::is_cstring(address), "public key hash and address should be set");
+			subpubkeyhash result;
+			if (!decode_subaddress(address, result))
+				return false;
+
+			memcpy(public_key_hash, result, sizeof(pubkeyhash));
+			return true;
+		}
+		bool signing::decode_subaddress(const std::string_view& address, subpubkeyhash sub_public_key_hash)
+		{
+			VI_ASSERT(sub_public_key_hash != nullptr && stringify::is_cstring(address), "public key hash, derivation hash and address should be set");
 			auto& account = protocol::now().account;
-			uint8_t decoded[40];
+			uint8_t decoded[60];
 			size_t decoded_size = sizeof(decoded);
 			int version = 0;
 
@@ -829,19 +838,43 @@ namespace tangent
 				return false;
 			else if (version != (int)account.address_version)
 				return false;
-			else if (decoded_size != sizeof(pubkeyhash))
+			else if (decoded_size != sizeof(pubkeyhash) && decoded_size != sizeof(pubkeyhash) * 2)
 				return false;
 
-			memcpy(public_key_hash, decoded, sizeof(pubkeyhash));
+			if (decoded_size == sizeof(pubkeyhash) * 2)
+			{
+				for (size_t i = 0; i < sizeof(pubkeyhash); i++)
+					decoded[i] ^= decoded[i + sizeof(pubkeyhash)];
+			}
+
+			memset(sub_public_key_hash, 0, sizeof(subpubkeyhash));
+			memcpy(sub_public_key_hash, decoded, decoded_size);
 			return true;
 		}
 		bool signing::encode_address(const pubkeyhash public_key_hash, string& address)
 		{
 			VI_ASSERT(public_key_hash != nullptr, "public key hash should be set");
+			subpubkeyhash result = { 0 };
+			memcpy(result, public_key_hash, sizeof(pubkeyhash));
+			return encode_subaddress(result, address);
+		}
+		bool signing::encode_subaddress(const subpubkeyhash sub_public_key_hash, string& address)
+		{
+			VI_ASSERT(sub_public_key_hash != nullptr, "sub public key hash should be set");
 			auto& account = protocol::now().account;
 			char encoded[128];
+			pubkeyhash null = { 0 };
+			if (memcmp(sub_public_key_hash + sizeof(pubkeyhash), null, sizeof(null)) != 0)
+			{
+				uint8_t data[sizeof(subpubkeyhash)];
+				memcpy(data, sub_public_key_hash, sizeof(subpubkeyhash));
+				for (size_t i = 0; i < sizeof(pubkeyhash); i++)
+					data[i] ^= sub_public_key_hash[i + sizeof(pubkeyhash)];
 
-			if (segwit::encode(encoded, account.address_prefix.c_str(), (int)account.address_version, public_key_hash, sizeof(pubkeyhash)) != 1)
+				if (segwit::encode(encoded, account.address_prefix.c_str(), (int)account.address_version, data, sizeof(data)) != 1)
+					return false;
+			}
+			else if (segwit::encode(encoded, account.address_prefix.c_str(), (int)account.address_version, sub_public_key_hash, sizeof(pubkeyhash)) != 1)
 				return false;
 
 			size_t size = strnlen(encoded, sizeof(encoded));
@@ -875,15 +908,34 @@ namespace tangent
 		}
 		schema* signing::serialize_address(const pubkeyhash public_key_hash)
 		{
+			pubkeyhash derivation_hash = { 0 };
+			return serialize_subaddress(public_key_hash, derivation_hash);
+		}
+		schema* signing::serialize_subaddress(const subpubkeyhash sub_public_key_hash)
+		{
+			return serialize_subaddress(sub_public_key_hash, sub_public_key_hash + sizeof(pubkeyhash));
+		}
+		schema* signing::serialize_subaddress(const pubkeyhash public_key_hash, const pubkeyhash derivation_hash)
+		{
 			pubkeyhash null = { 0 };
 			if (!memcmp(public_key_hash, null, sizeof(null)))
 				return var::set::null();
 
+			subpubkeyhash sub_public_key_hash;
+			memcpy(sub_public_key_hash, public_key_hash, sizeof(pubkeyhash));
+			memcpy(sub_public_key_hash + sizeof(pubkeyhash), derivation_hash, sizeof(pubkeyhash));
+
 			string data;
-			if (!encode_address(public_key_hash, data))
+			if (!encode_subaddress(sub_public_key_hash, data))
 				return var::set::null();
 
 			return var::set::string(data);
+		}
+		schema* signing::serialize_subaddress(const pubkeyhash public_key_hash, const std::string_view& derivation_data)
+		{
+			pubkeyhash derivation_hash;
+			hashing::hash160((uint8_t*)derivation_data.data(), derivation_data.size(), derivation_hash);
+			return serialize_subaddress(public_key_hash, derivation_hash);
 		}
 		secp256k1_context* signing::get_context()
 		{
@@ -895,11 +947,10 @@ namespace tangent
 		bool encoding::decode_uint_blob(const string& value, uint8_t* data, size_t data_size)
 		{
 			VI_ASSERT(data != nullptr, "data should be set");
-			if (value.size() != data_size)
-			{
+			if (value.size() < data_size)
 				memset(data, 0, data_size);
-				return value.empty();
-			}
+			else if (value.size() > data_size)
+				return false;
 
 			memcpy(data, value.data(), value.size());
 			return true;
@@ -981,6 +1032,27 @@ namespace tangent
 				return uint128_t(0);
 
 			return uint128_t(data[0] == '0' && data[1] == 'x' ? data.substr(2) : data, 16);
+		}
+		subpubkeyhash_t encoding::to_subaddress(const pubkeyhash public_key_hash, const pubkeyhash derivation_hash)
+		{
+			subpubkeyhash_t result = subpubkeyhash_t(public_key_hash, sizeof(pubkeyhash));
+			if (!result.empty() && derivation_hash != nullptr)
+				memcpy(result.data + sizeof(pubkeyhash), derivation_hash, sizeof(pubkeyhash));
+			return result;
+		}
+		subpubkeyhash_t encoding::to_subaddress(const pubkeyhash public_key_hash, const std::string_view& derivation_data)
+		{
+			pubkeyhash derivation_hash;
+			hashing::hash160((uint8_t*)derivation_data.data(), derivation_data.size(), derivation_hash);
+			return to_subaddress(public_key_hash, derivation_hash);
+		}
+		pubkeyhash_t encoding::to_address(const subpubkeyhash sub_public_key_hash)
+		{
+			return pubkeyhash_t(sub_public_key_hash);
+		}
+		pubkeyhash_t encoding::to_derivation(const subpubkeyhash sub_public_key_hash)
+		{
+			return pubkeyhash_t(sub_public_key_hash ? sub_public_key_hash + sizeof(algorithm::pubkeyhash) : nullptr);
 		}
 		uint32_t encoding::type_of(const std::string_view& name)
 		{

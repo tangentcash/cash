@@ -310,10 +310,12 @@ namespace tangent
 
 			bind(0, "websocket", "subscribe", 1, 3, "string addresses, bool? blocks, bool? transactions", "uint64", "Subscribe to streams of incoming blocks and transactions optionally include blocks and transactions relevant to comma separated address list", std::bind(&server_node::web_socket_subscribe, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0, "websocket", "unsubscribe", 1, 1, "", "void", "Unsubscribe from all streams", std::bind(&server_node::web_socket_unsubscribe, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0, "utility", "encodeaddress", 1, 1, "string hex_address", "string", "encode hex address", std::bind(&server_node::utility_encode_address, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0, "utility", "decodeaddress", 1, 1, "string address", "string", "decode address", std::bind(&server_node::utility_decode_address, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0, "utility", "transformaddressfromhash", 2, 2, "string address, string derivation_hash_hex", "string", "calculate subaddress from derivation hash", std::bind(&server_node::utility_transform_address_from_hash, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0, "utility", "transformaddressfromdata", 2, 2, "string address, string derivation_data", "string", "calculate subaddress from derivation data", std::bind(&server_node::utility_transform_address_from_data, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0, "utility", "encodeaddress", 1, 1, "string public_key_hash", "string", "encode public key hash", std::bind(&server_node::utility_encode_address, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0, "utility", "decodeaddress", 1, 1, "string address", "{ public_key_hash: string,  }", "decode address", std::bind(&server_node::utility_decode_address, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0, "utility", "decodemessage", 1, 1, "string message", "any[]", "decode message", std::bind(&server_node::utility_decode_message, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0, "utility", "decodetransaction", 1, 1, "string hex_message", "{ transaction: txn, signer_address: string }", "decode transaction message and convert to object", std::bind(&server_node::utility_decode_transaction, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0, "utility", "decodetransaction", 1, 1, "string message_hex", "{ transaction: txn, signer_address: string }", "decode transaction message and convert to object", std::bind(&server_node::utility_decode_transaction, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0, "utility", "help", 0, 0, "", "{ declaration: string, method: string, description: string }[]", "get reference of all methods", std::bind(&server_node::utility_help, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "blockstate", "getblocks", 2, 2, "uint64 number, uint64 count", "uint256[]", "get block hashes", std::bind(&server_node::blockstate_get_blocks, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "blockstate", "getblockcheckpointhash", 0, 0, "", "uint256", "get block checkpoint hash", std::bind(&server_node::blockstate_get_block_checkpoint_hash, this, std::placeholders::_1, std::placeholders::_2));
@@ -391,7 +393,7 @@ namespace tangent
 			bind(0 | access_type::r, "mempoolstate", "getaddresses", 2, 3, "uint64 offset, uint64 count, string? services = 'consensus' | 'discovery' | 'synchronization' | 'interface' | 'production' | 'participation' | 'attestation' | 'querying' | 'streaming'", "string[]", "get best node ip addresses with optional comma separated list of services", std::bind(&server_node::mempoolstate_get_addresses, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getgasprice", 1, 3, "string asset, double? percentile = 0.5, bool? mempool_only", "decimal", "get gas price from percentile of pending transactions", std::bind(&server_node::mempoolstate_get_gas_price, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getassetprice", 2, 3, "string asset_from, string asset_to, double? percentile = 0.5", "decimal", "get gas asset from percentile of pending transactions", std::bind(&server_node::mempoolstate_get_asset_price, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "mempoolstate", "getoptimaltransactiongas", 1, 1, "string hex_message", "uint256", "execute transaction with block gas limit and return ceil of spent gas", std::bind(&server_node::mempoolstate_get_optimal_transaction_gas, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "mempoolstate", "getoptimaltransactiongas", 1, 1, "string message_hex", "uint256", "execute transaction with block gas limit and return ceil of spent gas", std::bind(&server_node::mempoolstate_get_optimal_transaction_gas, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getmempooltransactionbyhash", 1, 1, "uint256 hash", "txn", "get mempool transaction by hash", std::bind(&server_node::mempoolstate_get_transaction_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getrawmempooltransactionbyhash", 1, 1, "uint256 hash", "string", "get raw mempool transaction by hash", std::bind(&server_node::mempoolstate_get_raw_transaction_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getnextaccountnonce", 1, 1, "string owner_address", "{ min: uint64, max: uint64 }", "get account nonce for next transaction by owner", std::bind(&server_node::mempoolstate_get_next_account_nonce, this, std::placeholders::_1, std::placeholders::_2));
@@ -403,7 +405,7 @@ namespace tangent
 			bind(0 | access_type::r, "validatorstate", "getblockchains", 0, 0, "", "warden::asset", "get supported blockchains", std::bind(&server_node::validatorstate_get_blockchains, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "validatorstate", "status", 0, 0, "", "validator::status", "get validator status", std::bind(&server_node::validatorstate_status, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::r | access_type::a, "chainstate", "tracecall", 4, 32, "string asset, string from_address, string to_address, string function, ...", "program_trace", "trace execution of mutable / immutable function of program assigned to to_address", std::bind(&server_node::chainstate_trace_call, this, std::placeholders::_1, std::placeholders::_2));
-			bind(access_type::w | access_type::r, "mempoolstate", "submittransaction", 1, 2, "string hex_message, bool? validate", "uint256", "try to accept and relay a mempool transaction from raw data and possibly validate over latest chainstate", std::bind(&server_node::mempoolstate_submit_transaction, this, std::placeholders::_1, std::placeholders::_2, nullptr));
+			bind(access_type::w | access_type::r, "mempoolstate", "submittransaction", 1, 2, "string message_hex, bool? validate", "uint256", "try to accept and relay a mempool transaction from raw data and possibly validate over latest chainstate", std::bind(&server_node::mempoolstate_submit_transaction, this, std::placeholders::_1, std::placeholders::_2, nullptr));
 			bind(access_type::w | access_type::a, "mempoolstate", "rejecttransaction", 1, 1, "uint256 hash", "void", "remove mempool transaction by hash", std::bind(&server_node::mempoolstate_reject_transaction, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "mempoolstate", "addnode", 1, 1, "string uri_address", "void", "add node ip address to trial addresses", std::bind(&server_node::mempoolstate_add_node, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "mempoolstate", "clearnode", 1, 1, "string uri_address", "void", "remove associated node info by ip address", std::bind(&server_node::mempoolstate_clear_node, this, std::placeholders::_1, std::placeholders::_2));
@@ -803,23 +805,55 @@ namespace tangent
 			unique.unlock();
 			return server_response().success(var::set::null());
 		}
+		server_response server_node::utility_transform_address_from_hash(http::connection* base, format::variables&& args)
+		{
+			algorithm::pubkeyhash data;
+			if (!algorithm::signing::decode_address(args[0].as_string(), data))
+				return server_response().error(error_codes::bad_params, "address not valid");
+
+			auto derivation_data = format::util::decode_0xhex(args[1].as_string());
+			if (derivation_data.size() > sizeof(algorithm::pubkeyhash))
+				return server_response().error(error_codes::bad_params, "derivation not valid");
+
+			auto derivation_hash = algorithm::pubkeyhash_t(derivation_data);
+			return server_response().success(algorithm::signing::serialize_subaddress(data, derivation_hash.data));
+		}
+		server_response server_node::utility_transform_address_from_data(http::connection* base, format::variables&& args)
+		{
+			algorithm::pubkeyhash data;
+			if (!algorithm::signing::decode_address(args[0].as_string(), data))
+				return server_response().error(error_codes::bad_params, "address not valid");
+
+			return server_response().success(algorithm::signing::serialize_subaddress(data, args[1].as_string()));
+		}
 		server_response server_node::utility_encode_address(http::connection* base, format::variables&& args)
 		{
 			auto owner = format::util::decode_0xhex(args[0].as_string());
-			if (owner.size() != sizeof(algorithm::pubkeyhash))
-				return server_response().error(error_codes::bad_params, "raw address not valid");
+			if (owner.size() == sizeof(algorithm::subpubkeyhash))
+			{
+				string address;
+				algorithm::signing::encode_subaddress((uint8_t*)owner.data(), address);
+				return server_response().success(var::set::string(address));
+			}
+			else if (owner.size() == sizeof(algorithm::pubkeyhash))
+			{
+				string address;
+				algorithm::signing::encode_address((uint8_t*)owner.data(), address);
+				return server_response().success(var::set::string(address));
+			}
 
-			string address;
-			algorithm::signing::encode_address((uint8_t*)owner.data(), address);
-			return server_response().success(var::set::string(address));
+			return server_response().error(error_codes::bad_params, "raw address not valid");
 		}
 		server_response server_node::utility_decode_address(http::connection* base, format::variables&& args)
 		{
-			algorithm::pubkeyhash owner;
-			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
+			algorithm::subpubkeyhash data;
+			if (!algorithm::signing::decode_subaddress(args[0].as_string(), data))
 				return server_response().error(error_codes::bad_params, "address not valid");
 
-			return server_response().success(var::set::string(format::util::encode_0xhex(std::string_view((char*)owner, sizeof(owner)))));
+			auto* result = var::set::object();
+			result->set("public_key_hash", var::string(format::util::encode_0xhex(std::string_view((char*)data, sizeof(algorithm::pubkeyhash)))));
+			result->set("derivation_hash", var::string(format::util::encode_0xhex(std::string_view((char*)data + sizeof(algorithm::pubkeyhash), sizeof(algorithm::pubkeyhash)))));
+			return server_response().success(result);
 		}
 		server_response server_node::utility_decode_message(http::connection* base, format::variables&& args)
 		{
@@ -1562,8 +1596,8 @@ namespace tangent
 			if (!algorithm::signing::decode_address(args[1].as_string(), from))
 				return server_response().error(error_codes::bad_params, "from account address not valid");
 
-			algorithm::pubkeyhash to;
-			if (!algorithm::signing::decode_address(args[2].as_string(), to))
+			algorithm::subpubkeyhash to;
+			if (!algorithm::signing::decode_subaddress(args[2].as_string(), to))
 				return server_response().error(error_codes::bad_params, "to account address not valid");
 
 			format::variables values;

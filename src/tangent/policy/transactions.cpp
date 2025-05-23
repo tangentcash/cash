@@ -9,12 +9,12 @@ namespace tangent
 	{
 		expects_lr<void> transfer::validate(uint64_t block_number) const
 		{
-			if (transfers.empty())
+			if (to.empty())
 				return layer_exception("no transfers");
 
-			for (auto& transfer : transfers)
+			for (auto& [owner, value] : to)
 			{
-				if (!transfer.value.is_positive())
+				if (!value.is_positive())
 					return layer_exception("invalid value");
 			}
 
@@ -26,12 +26,12 @@ namespace tangent
 			if (!validation)
 				return validation.error();
 
-			for (auto& transfer : transfers)
+			for (auto& [owner, value] : to)
 			{
-				if (memcmp(context->receipt.from, transfer.to, sizeof(algorithm::pubkeyhash)) == 0)
+				if (memcmp(context->receipt.from, owner.data, sizeof(algorithm::pubkeyhash)) == 0)
 					return layer_exception("invalid receiver");
 
-				auto payment = context->apply_payment(asset, context->receipt.from, transfer.to, transfer.value);
+				auto payment = context->apply_payment(asset, context->receipt.from, owner.data, value);
 				if (!payment)
 					return payment.error();
 			}
@@ -42,22 +42,20 @@ namespace tangent
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			algorithm::pubkeyhash null = { 0 };
-			if (transfers.size() > 1)
+			if (to.size() > 1)
 			{
-				stream->write_integer((uint16_t)transfers.size());
-				for (auto& transfer : transfers)
+				stream->write_integer((uint16_t)to.size());
+				for (auto& [owner, value] : to)
 				{
-					stream->write_string(transfer.memo);
-					stream->write_decimal(transfer.value);
-					stream->write_string(std::string_view((char*)transfer.to, memcmp(transfer.to, null, sizeof(null)) == 0 ? 0 : sizeof(transfer.to)));
+					stream->write_string(owner.optimized_view());
+					stream->write_decimal(value);
 				}
 			}
-			else if (!transfers.empty())
+			else if (!to.empty())
 			{
-				auto& transfer = transfers.front();
-				stream->write_string(transfer.memo);
-				stream->write_decimal(transfer.value);
-				stream->write_string(std::string_view((char*)transfer.to, memcmp(transfer.to, null, sizeof(null)) == 0 ? 0 : sizeof(transfer.to)));	
+				auto& [owner, value] = to.front();
+				stream->write_string(owner.optimized_view());
+				stream->write_decimal(value);
 			}
 
 			return true;
@@ -67,18 +65,17 @@ namespace tangent
 			auto type = stream.read_type();
 			if (format::util::is_string(type))
 			{
-				batch transfer;
-				if (!stream.read_string(type, &transfer.memo))
+				string owner_assembly;
+				algorithm::subpubkeyhash_t owner;
+				if (!stream.read_string(type, &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner.data, sizeof(owner.data)))
 					return false;
 
-				if (!stream.read_decimal(stream.read_type(), &transfer.value))
+				decimal value;
+				if (!stream.read_decimal(stream.read_type(), &value))
 					return false;
 
-				string to_assembly;
-				if (!stream.read_string(stream.read_type(), &to_assembly) || !algorithm::encoding::decode_uint_blob(to_assembly, transfer.to, sizeof(transfer.to)))
-					return false;
-
-				transfers.push_back(std::move(transfer));
+				to.clear();
+				to.push_back(std::make_pair(owner, std::move(value)));
 			}
 			else if (type != format::viewable::invalid)
 			{
@@ -86,22 +83,20 @@ namespace tangent
 				if (!stream.read_integer(type, &transfers_size))
 					return false;
 
-				transfers.clear();
-				transfers.reserve(transfers_size);
+				to.clear();
+				to.reserve(transfers_size);
 				for (uint16_t i = 0; i < transfers_size; i++)
 				{
-					batch transfer;
-					if (!stream.read_string(stream.read_type(), &transfer.memo))
+					string owner_assembly;
+					algorithm::subpubkeyhash_t owner;
+					if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner.data, sizeof(owner.data)))
 						return false;
 
-					if (!stream.read_decimal(stream.read_type(), &transfer.value))
+					decimal value;
+					if (!stream.read_decimal(stream.read_type(), &value))
 						return false;
 
-					string to_assembly;
-					if (!stream.read_string(stream.read_type(), &to_assembly) || !algorithm::encoding::decode_uint_blob(to_assembly, transfer.to, sizeof(transfer.to)))
-						return false;
-
-					transfers.push_back(std::move(transfer));
+					to.push_back(std::make_pair(owner, std::move(value)));
 				}
 			}
 
@@ -109,44 +104,32 @@ namespace tangent
 		}
 		bool transfer::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
 		{
-			for (auto& transfer : transfers)
-				parties.insert(algorithm::pubkeyhash_t(transfer.to));
+			for (auto& [owner, value] : to)
+				parties.insert(algorithm::pubkeyhash_t(owner.data));
 			return true;
 		}
-		void transfer::set_to(const algorithm::pubkeyhash new_to, const decimal& new_value, const std::string_view& new_memo)
+		void transfer::set_to(const algorithm::subpubkeyhash_t& new_to, const decimal& new_value)
 		{
-			batch transfer;
-			transfer.value = new_value;
-			transfer.memo = new_memo;
-			if (!new_to)
-			{
-				algorithm::pubkeyhash null = { 0 };
-				memcpy(transfer.to, null, sizeof(algorithm::pubkeyhash));
-			}
-			else
-				memcpy(transfer.to, new_to, sizeof(algorithm::pubkeyhash));
-			transfers.push_back(std::move(transfer));
+			to.push_back(std::make_pair(new_to, new_value));
 		}
 		bool transfer::is_to_null() const
 		{
-			algorithm::pubkeyhash null = { 0 };
-			for (auto& transfer : transfers)
+			for (auto& [owner, value] : to)
 			{
-				if (memcmp(transfer.to, null, sizeof(null)) == 0)
+				if (owner.empty())
 					return true;
 			}
-			return transfers.empty();
+			return to.empty();
 		}
 		uptr<schema> transfer::as_schema() const
 		{
 			schema* data = ledger::transaction::as_schema().reset();
-			auto* transfers_data = data->set("transfers", var::set::array());
-			for (auto& transfer : transfers)
+			auto* transfers_data = data->set("to", var::set::array());
+			for (auto& [owner, value] : to)
 			{
 				auto* transfer_data = transfers_data->push(var::set::object());
-				transfer_data->set("to", algorithm::signing::serialize_address(transfer.to));
-				transfer_data->set("value", var::decimal(transfer.value));
-				transfer_data->set("memo", transfer.memo.empty() ? var::null() : var::string(transfer.memo));
+				transfer_data->set("to", algorithm::signing::serialize_subaddress(owner.data));
+				transfer_data->set("value", var::decimal(value));
 			}
 			return data;
 		}
@@ -505,22 +488,16 @@ namespace tangent
 			parties.insert(algorithm::pubkeyhash_t(to));
 			return true;
 		}
-		void invocation::set_calldata(const algorithm::pubkeyhash new_to, const std::string_view& new_function, format::variables&& new_args)
+		void invocation::set_calldata(const algorithm::subpubkeyhash_t& new_to, const std::string_view& new_function, format::variables&& new_args)
 		{
 			set_calldata(new_to, 0, new_function, std::move(new_args));
 		}
-		void invocation::set_calldata(const algorithm::pubkeyhash new_to, uint32_t new_hashcode, const std::string_view& new_function, format::variables&& new_args)
+		void invocation::set_calldata(const algorithm::subpubkeyhash_t& new_to, uint32_t new_hashcode, const std::string_view& new_function, format::variables&& new_args)
 		{
 			args = std::move(new_args);
 			function = new_function;
 			hashcode = new_hashcode;
-			if (!new_to)
-			{
-				algorithm::pubkeyhash null = { 0 };
-				memcpy(to, null, sizeof(algorithm::pubkeyhash));
-			}
-			else
-				memcpy(to, new_to, sizeof(algorithm::pubkeyhash));
+			memcpy(to, new_to.data, sizeof(algorithm::subpubkeyhash));
 		}
 		bool invocation::is_to_null() const
 		{
@@ -530,7 +507,7 @@ namespace tangent
 		uptr<schema> invocation::as_schema() const
 		{
 			schema* data = ledger::transaction::as_schema().reset();
-			data->set("to", algorithm::signing::serialize_address(to));
+			data->set("to", algorithm::signing::serialize_subaddress(to));
 			data->set("hashcode", var::integer(hashcode));
 			data->set("function", var::string(function));
 			data->set("args", format::variables_util::serialize(args));

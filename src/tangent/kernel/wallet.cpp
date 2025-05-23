@@ -188,6 +188,26 @@ namespace tangent
 			algorithm::signing::encode_address(public_key_hash, value);
 			return value;
 		}
+		string wallet::get_subaddress(const algorithm::pubkeyhash derivation_hash) const
+		{
+			string value;
+			if (!has_public_key_hash())
+				return value;
+
+			auto subaddress = algorithm::encoding::to_subaddress(public_key_hash, derivation_hash);
+			algorithm::signing::encode_subaddress(subaddress.data, value);
+			return value;
+		}
+		string wallet::get_subaddress(const std::string_view& derivation_data) const
+		{
+			string value;
+			if (!has_public_key_hash())
+				return value;
+
+			auto subaddress = algorithm::encoding::to_subaddress(public_key_hash, derivation_data);
+			algorithm::signing::encode_subaddress(subaddress.data, value);
+			return value;
+		}
 		expects_lr<uint64_t> wallet::get_latest_nonce() const
 		{
 			auto mempool = storages::mempoolstate(__func__);

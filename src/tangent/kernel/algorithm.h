@@ -15,6 +15,7 @@ namespace tangent
 		using seckey = uint8_t[32];
 		using pubkey = uint8_t[33];
 		using pubkeyhash = uint8_t[20];
+		using subpubkeyhash = uint8_t[40];
 		typedef uint256_t(*hash_function)(const uint256_t&, const uint256_t&);
 
 		template <typename t, size_t s>
@@ -27,6 +28,11 @@ namespace tangent
 			{
 				if (new_data != nullptr)
 					memcpy(data, new_data, sizeof(data));
+			}
+			storage_type(const t* new_data, size_t new_size)
+			{
+				if (new_data != nullptr)
+					memcpy(data, new_data, std::min(new_size, sizeof(data)));
 			}
 			storage_type(const std::string_view& new_data)
 			{
@@ -51,7 +57,12 @@ namespace tangent
 			}
 			std::string_view optimized_view() const
 			{
-				return empty() ? std::string_view("", 0) : std::string_view((char*)data, sizeof(data));
+				size_t size = s;
+				auto* ptr = data + size;
+				while (size > 0 && !*(--ptr))
+					--size;
+
+				return std::string_view((char*)data, size);
 			}
 			bool operator== (const storage_type& other) const
 			{
@@ -69,6 +80,13 @@ namespace tangent
 				return false;
 			}
 		};
+
+		using pubsig_t = storage_type<uint8_t, sizeof(pubsig)>;
+		using recpubsig_t = storage_type<uint8_t, sizeof(recpubsig)>;
+		using seckey_t = storage_type<uint8_t, sizeof(seckey)>;
+		using pubkey_t = storage_type<uint8_t, sizeof(pubkey)>;
+		using pubkeyhash_t = storage_type<uint8_t, sizeof(pubkeyhash)>;
+		using subpubkeyhash_t = storage_type<uint8_t, sizeof(subpubkeyhash)>;
 
 		class wesolowski
 		{
@@ -161,10 +179,15 @@ namespace tangent
 			static bool decode_public_key(const std::string_view& value, pubkey public_key);
 			static bool encode_public_key(const pubkey public_key, string& value);
 			static bool decode_address(const std::string_view& address, pubkeyhash public_key_hash);
+			static bool decode_subaddress(const std::string_view& address, subpubkeyhash sub_public_key_hash);
 			static bool encode_address(const pubkeyhash public_key_hash, string& address);
+			static bool encode_subaddress(const subpubkeyhash sub_public_key_hash, string& address);
 			static schema* serialize_secret_key(const seckey secret_key);
 			static schema* serialize_public_key(const pubkey public_key);
 			static schema* serialize_address(const pubkeyhash public_key_hash);
+			static schema* serialize_subaddress(const subpubkeyhash sub_public_key_hash);
+			static schema* serialize_subaddress(const pubkeyhash public_key_hash, const pubkeyhash derivation_hash);
+			static schema* serialize_subaddress(const pubkeyhash public_key_hash, const std::string_view& derivation_data);
 			static secp256k1_context* get_context();
 		};
 
@@ -180,6 +203,10 @@ namespace tangent
 			static uint256_t decode_0xhex256(const std::string_view& data);
 			static string encode_0xhex128(const uint128_t& data);
 			static uint128_t decode_0xhex128(const std::string_view& data);
+			static subpubkeyhash_t to_subaddress(const pubkeyhash public_key_hash, const pubkeyhash derivation_hash = nullptr);
+			static subpubkeyhash_t to_subaddress(const pubkeyhash public_key_hash, const std::string_view& derivation_data);
+			static pubkeyhash_t to_address(const subpubkeyhash sub_public_key_hash);
+			static pubkeyhash_t to_derivation(const subpubkeyhash sub_public_key_hash);
 			static uint32_t type_of(const std::string_view& name);
 			static schema* serialize_uint256(const uint256_t& data);
 		};
@@ -323,12 +350,6 @@ namespace tangent
 			size_t get_complexity() const;
 			bool is_calculated() const;
 		};
-
-		using pubsig_t = storage_type<uint8_t, sizeof(pubsig)>;
-		using recpubsig_t = storage_type<uint8_t, sizeof(recpubsig)>;
-		using seckey_t = storage_type<uint8_t, sizeof(seckey)>;
-		using pubkey_t = storage_type<uint8_t, sizeof(pubkey)>;
-		using pubkeyhash_t = storage_type<uint8_t, sizeof(pubkeyhash)>;
 	}
 }
 
