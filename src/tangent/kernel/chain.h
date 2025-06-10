@@ -130,7 +130,7 @@ namespace tangent
         expects_lr<string> decrypt(const std::string_view& data) const;
     };
 
-    class protocol : public reference<protocol>
+    class protocol
     {
     private:
         static protocol* instance;
