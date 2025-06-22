@@ -71,7 +71,9 @@ namespace tangent
 			ledger::transaction_context* context;
 
 			script_program(ledger::transaction_context* new_context);
-			virtual expects_lr<void> initialize(compiler* compiler, const format::variables& args);
+			virtual expects_lr<void> construct(compiler* compiler, const format::variables& args);
+			virtual expects_lr<void> destruct(compiler* compiler);
+			virtual expects_lr<void> destruct(const function& entrypoint);
 			virtual expects_lr<void> mutable_call(compiler* compiler, const std::string_view& function, const format::variables& args);
 			virtual expects_lr<void> immutable_call(compiler* compiler, const std::string_view& function, const format::variables& args);
 			virtual bool dispatch_instruction(virtual_machine* vm, immediate_context* coroutine, uint32_t* program_data, size_t program_counter, byte_code_label& opcode);
@@ -85,7 +87,10 @@ namespace tangent
 			virtual bool load_from_by_location(const script_address& target, const std::string_view& location, void* object_value, int object_type_id) const;
 			virtual bool emit_by_address(const script_address& location, const void* object_value, int object_type_id);
 			virtual bool emit_by_location(const std::string_view& location, const void* object_value, int object_type_id);
+			virtual bool transfer(const script_address& target, const uint256_t& asset, const decimal& value);
+			virtual bool destroy();
 			virtual uint256_t random();
+			virtual decimal value() const;
 			virtual script_address from() const;
 			virtual script_address to() const;
 			virtual string blockchain() const;
@@ -106,7 +111,7 @@ namespace tangent
 			virtual uint64_t block_number() const;
 
 		protected:
-			virtual expects_lr<void> execute(compiler* compiler, const std::string_view& function, const format::variables& args, int8_t mutability, std::function<expects_lr<void>(void*, int)>&& return_callback);
+			virtual expects_lr<void> execute(const function& entrypoint, const format::variables& args, int8_t mutability, std::function<expects_lr<void>(void*, int)>&& return_callback);
 			virtual expects_lr<void> subexecute(const script_address& target, const std::string_view& function, void* input_value, int input_type_id, void* output_value, int output_type_id, int8_t mutability) const;
 			virtual expects_lr<vector<std::function<void(immediate_context*)>>> load_arguments(const function& entrypoint, const format::variables& args, int8_t mutability) const;
 			virtual void load_coroutine(immediate_context* coroutine, vector<script_frame>& frames);

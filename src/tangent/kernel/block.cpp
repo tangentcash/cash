@@ -2038,7 +2038,11 @@ namespace tangent
 			if (!status)
 				return status.error();
 
-			return states::account_program(std::move(*(states::account_program*)**state));
+			auto& result = *(states::account_program*)**state;
+			if (result.hashcode.empty())
+				return layer_exception("program is detached");
+
+			return states::account_program(std::move(result));
 		}
 		expects_lr<states::account_storage> transaction_context::get_account_storage(const algorithm::pubkeyhash owner, const std::string_view& location) const
 		{

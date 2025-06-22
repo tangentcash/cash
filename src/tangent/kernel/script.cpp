@@ -16,10 +16,12 @@ extern "C"
 #define SCRIPT_CLASS_UINT128 "uint128"
 #define SCRIPT_CLASS_UINT256 "uint256"
 #define SCRIPT_CLASS_DECIMAL "decimal"
+#define SCRIPT_CLASS_ARRAY "array"
 #define SCRIPT_EXCEPTION_ARGUMENT "argument_error"
 #define SCRIPT_EXCEPTION_STORAGE "storage_error"
 #define SCRIPT_EXCEPTION_EXECUTION "execution_error"
-#define SCRIPT_FUNCTION_INITIALIZE "initialize"
+#define SCRIPT_FUNCTION_CONSTRUCTOR "constructor"
+#define SCRIPT_FUNCTION_DESTRUCTOR "destructor"
 
 namespace tangent
 {
@@ -88,16 +90,16 @@ namespace tangent
 		{
 			return algorithm::hashing::hash160((uint8_t*)data.data(), data.size());
 		}
-		static string erecover160(const uint256_t& hash, const std::string_view& signature)
+		static script_address erecover160(const uint256_t& hash, const std::string_view& signature)
 		{
 			if (signature.size() != sizeof(algorithm::recpubsig))
-				return string();
+				return script_address();
 
 			algorithm::pubkeyhash public_key_hash = { 0 }, null = { 0 };
 			if (!algorithm::signing::recover_hash(hash, public_key_hash, (uint8_t*)signature.data()) || !memcmp(public_key_hash, null, sizeof(null)))
-				return string();
+				return script_address();
 
-			return string((char*)public_key_hash, sizeof(public_key_hash));
+			return script_address(public_key_hash);
 		}
 		static string erecover256(const uint256_t& hash, const std::string_view& signature)
 		{
@@ -136,13 +138,13 @@ namespace tangent
 		{
 			return algorithm::hashing::hash512((uint8_t*)data.data(), data.size());
 		}
-		static string encode_bytes(const uint256_t& value)
+		static string encode_bytes256(const uint256_t& value)
 		{
 			uint8_t data[32];
 			algorithm::encoding::decode_uint256(value, data);
 			return string((char*)data, sizeof(data));
 		}
-		static uint256_t decode_bytes(const std::string_view& value)
+		static uint256_t decode_bytes256(const std::string_view& value)
 		{
 			uint8_t data[32];
 			memcpy(data, value.data(), std::min(sizeof(data), value.size()));
@@ -150,6 +152,36 @@ namespace tangent
 			uint256_t buffer;
 			algorithm::encoding::encode_uint256(data, buffer);
 			return buffer;
+		}
+		static string wbytes(const std::string_view& value)
+		{
+			format::stream message;
+			message.write_string(value);
+			return message.data;
+		}
+		static string wrbytes(const std::string_view& value)
+		{
+			format::stream message;
+			message.write_string_raw(value);
+			return message.data;
+		}
+		static string wdecimal(const decimal& value)
+		{
+			format::stream message;
+			message.write_decimal(value);
+			return message.data;
+		}
+		static string wboolean(bool value)
+		{
+			format::stream message;
+			message.write_boolean(value);
+			return message.data;
+		}
+		static string wuint256(const uint256_t& value)
+		{
+			format::stream message;
+			message.write_integer(value);
+			return message.data;
 		}
 
 		expects_lr<void> script_marshalling::store(format::stream* stream, void* value, int value_type_id)
@@ -216,6 +248,21 @@ namespace tangent
 					else if (name == SCRIPT_CLASS_DECIMAL)
 					{
 						stream->write_decimal(*(decimal*)value);
+						return expectation::met;
+					}
+					else if (name == SCRIPT_CLASS_ARRAY)
+					{
+						auto* array = (bindings::array*)value;
+						uint32_t size = (uint32_t)array->size();
+						int type_id = array->get_element_type_id();
+						stream->write_integer(size);
+						for (uint32_t i = 0; i < size; i++)
+						{
+							void* address = array->at(i);
+							auto status = store(stream, address, type_id);
+							if (!status)
+								return status;
+						}
 						return expectation::met;
 					}
 					else if (value_type_id & (int)vitex::scripting::type_id::script_object_t)
@@ -301,6 +348,21 @@ namespace tangent
 					else if (name == SCRIPT_CLASS_DECIMAL)
 					{
 						stream->value = var::decimal(*(decimal*)value);
+						return expectation::met;
+					}
+					else if (name == SCRIPT_CLASS_ARRAY)
+					{
+						auto* array = (bindings::array*)value;
+						uint32_t size = (uint32_t)array->size();
+						int type_id = array->get_element_type_id();
+						stream->value = var::array();
+						for (uint32_t i = 0; i < size; i++)
+						{
+							void* address = array->at(i);
+							auto status = store(stream->push(var::undefined()), address, type_id);
+							if (!status)
+								return status;
+						}
 						return expectation::met;
 					}
 					else if (value_type_id & (int)vitex::scripting::type_id::script_object_t)
@@ -438,6 +500,27 @@ namespace tangent
 						unique.address = nullptr;
 						return expectation::met;
 					}
+					else if (name == SCRIPT_CLASS_ARRAY)
+					{
+						uint32_t size;
+						if (!stream.read_integer(stream.read_type(), &size))
+							return layer_exception("load failed for uint32 type");
+
+						auto* array = (bindings::array*)value;
+						int type_id = array->get_element_type_id();
+						array->clear();
+						array->resize(size);
+						for (uint32_t i = 0; i < size; i++)
+						{
+							void* address = array->at(i);
+							auto status = load(stream, address, type_id);
+							if (!status)
+								return status;
+						}
+
+						unique.address = nullptr;
+						return expectation::met;
+					}
 					else if (value_type_id & (int)vitex::scripting::type_id::script_object_t)
 					{
 						auto object = script_object((asIScriptObject*)value);
@@ -546,6 +629,28 @@ namespace tangent
 						unique.address = nullptr;
 						return expectation::met;
 					}
+					else if (name == SCRIPT_CLASS_ARRAY)
+					{
+						uint32_t size = (uint32_t)stream->size();
+						auto* array = (bindings::array*)value;
+						int type_id = array->get_element_type_id();
+						array->clear();
+						array->resize(size);
+						for (uint32_t i = 0; i < size; i++)
+						{
+							void* address = array->at(i);
+							auto* substream = stream->get(i);
+							if (!substream)
+								return layer_exception(stringify::text("load failed for %s type while searching for %i index", i));
+
+							auto status = load(substream, address, type_id);
+							if (!status)
+								return status;
+						}
+
+						unique.address = nullptr;
+						return expectation::met;
+					}
 					else if (value_type_id & (int)vitex::scripting::type_id::script_object_t)
 					{
 						auto object = script_object((asIScriptObject*)value);
@@ -622,6 +727,7 @@ namespace tangent
 			program->set_method("bool load_from(const address&in, const string_view&in, ?&out) const", &script_program::load_by_location);
 			program->set_method("bool emit(const address&in, const ?&in)", &script_program::emit_by_address);
 			program->set_method("bool emit(const string_view&in, const ?&in)", &script_program::emit_by_location);
+			program->set_method("bool transfer(const address&in, const uint256&in, const decimal&in)", &script_program::transfer);
 			program->set_method("uint256 random()", &script_program::random);
 			program->set_method("address from() const", &script_program::from);
 			program->set_method("address to() const", &script_program::to);
@@ -648,15 +754,20 @@ namespace tangent
 			vm->end_namespace();
 
 			vm->begin_namespace("byte_utils");
-			vm->set_function("string encode256(const uint256&in)", &encode_bytes);
-			vm->set_function("uint256 decode256(const string_view&in)", &decode_bytes);
+			vm->set_function("string encode256(const uint256&in)", &encode_bytes256);
+			vm->set_function("uint256 decode256(const string_view&in)", &decode_bytes256);
+			vm->set_function("string wbytes(const string_view&in)", &wbytes);
+			vm->set_function("string wrbytes(const string_view&in)", &wrbytes);
+			vm->set_function("string wdecimal(const decimal&in)", &wdecimal);
+			vm->set_function("string wboolean(bool&)", &wboolean);
+			vm->set_function("string wuint256(const uint256&in)", &wuint256);
 			vm->end_namespace();
 
 			vm->begin_namespace("hash_utils");
 			vm->set_function("string crc32(const string_view&in)", &crc32);
 			vm->set_function("string ripemd160(const string_view&in)", &ripe_md160);
-			vm->set_function("string erecover160(const string_view&in, const string_view&in)", &erecover160);
-			vm->set_function("string erecover256(const string_view&in, const string_view&in)", &erecover256);
+			vm->set_function("address erecover160(const uint256&in, const string_view&in)", &erecover160);
+			vm->set_function("string erecover256(const uint256&in, const string_view&in)", &erecover256);
 			vm->set_function("string blake2b256(const string_view&in)", &blake2b256);
 			vm->set_function("string keccak256(const string_view&in)", &keccak256);
 			vm->set_function("string keccak512(const string_view&in)", &keccak512);
@@ -876,37 +987,52 @@ namespace tangent
 		{
 			VI_ASSERT(context != nullptr, "transaction context should be set");
 		}
-		expects_lr<void> script_program::initialize(compiler* compiler, const format::variables& args)
+		expects_lr<void> script_program::construct(compiler* compiler, const format::variables& args)
 		{
-			return execute(compiler, std::string_view(), args, 1, nullptr);
+			return execute(compiler->get_module().get_function_by_name(SCRIPT_FUNCTION_CONSTRUCTOR), args, 1, nullptr);
+		}
+		expects_lr<void> script_program::destruct(compiler* compiler)
+		{
+			return destruct(compiler->get_module().get_function_by_name(SCRIPT_FUNCTION_DESTRUCTOR));
+		}
+		expects_lr<void> script_program::destruct(const function& entrypoint)
+		{
+			auto destruction = execute(entrypoint, { }, 1, nullptr);
+			if (!destruction)
+				return destruction;
+
+			auto wipe = context->apply_account_program(to().hash.data, std::string_view());
+			if (!wipe)
+				return wipe.error();
+
+			return expectation::met;
 		}
 		expects_lr<void> script_program::mutable_call(compiler* compiler, const std::string_view& function_name, const format::variables& args)
 		{
 			if (function_name.empty())
 				return layer_exception("illegal call to function: function not found");
 
-			return execute(compiler, function_name, args, -1, nullptr);
+			return execute(compiler->get_module().get_function_by_name(function_name), args, -1, nullptr);
 		}
 		expects_lr<void> script_program::immutable_call(compiler* compiler, const std::string_view& function_name, const format::variables& args)
 		{
 			if (function_name.empty())
 				return layer_exception("illegal call to function: function not found");
-
-			return execute(compiler, function_name, args, 0, nullptr);
+			
+			return execute(compiler->get_module().get_function_by_name(function_name), args, 0, nullptr);
 		}
-		expects_lr<void> script_program::execute(compiler* compiler, const std::string_view& function_name, const format::variables& args, int8_t mutability, std::function<expects_lr<void>(void*, int)>&& return_callback)
+		expects_lr<void> script_program::execute(const function& entrypoint, const format::variables& args, int8_t mutability, std::function<expects_lr<void>(void*, int)>&& return_callback)
 		{
-			if (!function_name.empty() && (function_name == SCRIPT_FUNCTION_INITIALIZE || stringify::starts_with(function_name, "_")))
-				return layer_exception(stringify::text("illegal call to function \"%.*s\": illegal operation", (int)function_name.size(), function_name.data()));
-
-			function entrypoint = compiler->get_module().get_function_by_name(function_name.empty() ? SCRIPT_FUNCTION_INITIALIZE : function_name);
+			auto function_name = entrypoint.get_name();
 			if (!entrypoint.is_valid())
 			{
-				if (function_name.empty())
+				if (mutability == 1)
 					return expectation::met;
 
 				return layer_exception(stringify::text("illegal call to function \"%.*s\": function not found", (int)function_name.size(), function_name.data()));
 			}
+			else if (mutability != 1 && (function_name == SCRIPT_FUNCTION_CONSTRUCTOR || function_name == SCRIPT_FUNCTION_DESTRUCTOR || stringify::starts_with(function_name, "_")))
+				return layer_exception(stringify::text("illegal call to function \"%.*s\": illegal operation", (int)function_name.size(), function_name.data()));
 
 			auto binders = load_arguments(entrypoint, args, mutability);
 			if (!binders)
@@ -1047,7 +1173,7 @@ namespace tangent
 			auto* main = (script_program*)this;
 			main->context = &next;
 
-			auto execution = main->execute(*compiler, function_name, transaction.args, mutability, [&target, &function_name, output_value, output_type_id](void* address, int type_id) -> expects_lr<void>
+			auto execution = main->execute(compiler->get_module().get_function_by_name(function_name), transaction.args, mutability, [&target, &function_name, output_value, output_type_id](void* address, int type_id) -> expects_lr<void>
 			{
 				format::stream stream;
 				auto serialization = script_marshalling::store(&stream, address, type_id);
@@ -1341,6 +1467,40 @@ namespace tangent
 
 			return true;
 		}
+		bool script_program::transfer(const script_address& target, const uint256_t& asset, const decimal& value)
+		{
+			if (!value.is_positive())
+			{
+				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "transfer value must be positive"));
+				return false;
+			}
+
+			auto sender = to();
+			auto payment = context->apply_payment(asset, sender.hash.data, target.hash.data, value);
+			if (!payment)
+			{
+				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_EXECUTION, payment.error().message()));
+				return false;
+			}
+
+			return true;
+		}
+		bool script_program::destroy()
+		{
+			auto* caller = immediate_context::get();
+			if (!caller)
+				return false;
+
+			auto entrypoint = caller->get_function().get_module().get_function_by_name(SCRIPT_FUNCTION_DESTRUCTOR);
+			auto destruction = destruct(entrypoint);
+			if (!destruction)
+			{
+				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_EXECUTION, destruction.error().message()));
+				return false;
+			}
+
+			return true;
+		}
 		uint256_t script_program::random()
 		{
 			if (!distribution)
@@ -1354,6 +1514,22 @@ namespace tangent
 				distribution = std::move(*candidate);
 			}
 			return distribution->derive();
+		}
+		decimal script_program::value() const
+		{
+			uint32_t type = context->transaction->as_type();
+			if (type == transactions::transfer::as_instance_type())
+			{
+				auto target = to();
+				auto total = decimal::zero();
+				for (auto& [owner, value] : ((transactions::transfer*)context->transaction)->to)
+				{
+					if (owner.equals(target.hash.data))
+						total += value;
+				}
+				return total;
+			}
+			return decimal::zero();
 		}
 		script_address script_program::from() const
 		{
@@ -1491,7 +1667,7 @@ namespace tangent
 				}
 			}
 
-			auto execution = execute(*compiler, function, args, mutability, [this](void* address, int type_id) -> expects_lr<void>
+			auto execution = execute(compiler->get_module().get_function_by_name(function), args, mutability, [this](void* address, int type_id) -> expects_lr<void>
 			{
 				returning = var::set::object();
 				auto serialization = script_marshalling::store(*returning, address, type_id);

@@ -268,7 +268,7 @@ namespace tangent
 			}
 
 			auto script = ledger::script_program(context);
-			auto execution = script.initialize(*compiler, args);
+			auto execution = script.construct(*compiler, args);
 			host->deallocate(std::move(compiler));
 			return execution;
 		}
