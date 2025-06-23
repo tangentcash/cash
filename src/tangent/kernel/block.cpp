@@ -1632,11 +1632,24 @@ namespace tangent
 
 			return new_state;
 		}
-		expects_lr<states::account_storage> transaction_context::apply_account_storage(const algorithm::pubkeyhash owner, const std::string_view& location, const std::string_view& storage)
+		expects_lr<states::account_uniform> transaction_context::apply_account_uniform(const algorithm::pubkeyhash owner, const std::string_view& index, const std::string_view& data)
 		{
-			states::account_storage new_state = states::account_storage(owner, block);
-			new_state.location = location;
-			new_state.storage = storage;
+			states::account_uniform new_state = states::account_uniform(owner, block);
+			new_state.index = index;
+			new_state.data = data;
+
+			auto result = store(&new_state);
+			if (!result)
+				return result.error();
+
+			return new_state;
+		}
+		expects_lr<states::account_multiform> transaction_context::apply_account_multiform(const algorithm::pubkeyhash owner, const std::string_view& column, const std::string_view& row, const std::string_view& data)
+		{
+			states::account_multiform new_state = states::account_multiform(owner, block);
+			new_state.column = column;
+			new_state.row = row;
+			new_state.data = data;
 
 			auto result = store(&new_state);
 			if (!result)
@@ -2044,11 +2057,11 @@ namespace tangent
 
 			return states::account_program(std::move(result));
 		}
-		expects_lr<states::account_storage> transaction_context::get_account_storage(const algorithm::pubkeyhash owner, const std::string_view& location) const
+		expects_lr<states::account_uniform> transaction_context::get_account_uniform(const algorithm::pubkeyhash owner, const std::string_view& index) const
 		{
 			VI_ASSERT(owner != nullptr, "owner should be set");
 			auto chain = storages::chainstate(__func__);
-			auto state = chain.get_uniform_by_index(states::account_storage::as_instance_type(), &delta, states::account_storage::as_instance_index(owner, location), get_validation_nonce());
+			auto state = chain.get_uniform_by_index(states::account_uniform::as_instance_type(), &delta, states::account_uniform::as_instance_index(owner, index), get_validation_nonce());
 			if (!state)
 				return state.error();
 
@@ -2056,7 +2069,41 @@ namespace tangent
 			if (!status)
 				return status.error();
 
-			return states::account_storage(std::move(*(states::account_storage*)**state));
+			return states::account_uniform(std::move(*(states::account_uniform*)**state));
+		}
+		expects_lr<states::account_multiform> transaction_context::get_account_multiform(const algorithm::pubkeyhash owner, const std::string_view& column, const std::string_view& row) const
+		{
+			VI_ASSERT(owner != nullptr, "owner should be set");
+			auto chain = storages::chainstate(__func__);
+			auto state = chain.get_multiform_by_composition(states::account_multiform::as_instance_type(), &delta, states::account_multiform::as_instance_column(owner, column), states::account_multiform::as_instance_row(row), get_validation_nonce());
+			if (!state)
+				return state.error();
+
+			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
+			if (!status)
+				return status.error();
+
+			return states::account_multiform(std::move(*(states::account_multiform*)**state));
+		}
+		expects_lr<vector<states::account_multiform>> transaction_context::get_account_multiforms(const algorithm::pubkeyhash owner, const std::string_view& column, size_t offset, size_t count) const
+		{
+			auto chain = storages::chainstate(__func__);
+			auto states = chain.get_multiforms_by_column(states::account_multiform::as_instance_type(), &delta, states::account_multiform::as_instance_column(owner, column), get_validation_nonce(), offset, count);
+			if (!states)
+				return states.error();
+
+			if (!states->empty())
+			{
+				auto status = ((transaction_context*)this)->load(*states->front(), chain.query_used());
+				if (!status)
+					return status.error();
+			}
+
+			vector<states::account_multiform> addresses;
+			addresses.reserve(states->size());
+			for (auto& state : *states)
+				addresses.emplace_back(std::move(*(states::account_multiform*)*state));
+			return addresses;
 		}
 		expects_lr<states::account_delegation> transaction_context::get_account_delegation(const algorithm::pubkeyhash owner) const
 		{

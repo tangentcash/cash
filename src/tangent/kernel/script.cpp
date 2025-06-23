@@ -9,6 +9,7 @@ extern "C"
 #include "../internal/sha2.h"
 #include "../internal/sha3.h"
 }
+#define SCRIPT_TAG_PROGRAM 1944
 #define SCRIPT_CLASS_ADDRESS "address"
 #define SCRIPT_CLASS_PROGRAM "program"
 #define SCRIPT_CLASS_STRINGVIEW "string_view"
@@ -17,6 +18,7 @@ extern "C"
 #define SCRIPT_CLASS_UINT256 "uint256"
 #define SCRIPT_CLASS_DECIMAL "decimal"
 #define SCRIPT_CLASS_ARRAY "array"
+#define SCRIPT_EXCEPTION_REQUIREMENT "requirement_error"
 #define SCRIPT_EXCEPTION_ARGUMENT "argument_error"
 #define SCRIPT_EXCEPTION_STORAGE "storage_error"
 #define SCRIPT_EXCEPTION_EXECUTION "execution_error"
@@ -79,6 +81,231 @@ namespace tangent
 			}
 		};
 
+		static void script_address_send(script_address& to, script_program* program, const uint256_t& asset, const decimal& value)
+		{
+			if (!program)
+				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "program is required"));
+
+			program->send(to, asset, value);
+		}
+		static void script_address_call_mutable_function(asIScriptGeneric* generic)
+		{
+			generic_context inout = generic_context(generic);
+			auto* program = inout.get_arg_object<script_program>(0);
+			if (!program)
+				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "program is required"));
+
+			auto& target = *(script_address*)inout.get_object_address();
+			auto& function = *inout.get_arg_object<std::string_view>(1);
+			void* input_value = inout.get_arg_address(2);
+			int input_type_id = inout.get_arg_type_id(2);
+			void* output_value = inout.get_address_of_return_location();
+			int output_type_id = inout.get_return_type_id();
+			program->call_mutable_function(target, function, input_value, input_type_id, output_value, output_type_id);
+		}
+		static void script_address_call_immutable_function(asIScriptGeneric* generic)
+		{
+			generic_context inout = generic_context(generic);
+			auto* program = inout.get_arg_object<const script_program>(0);
+			if (!program)
+				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "program is required"));
+
+			auto& target = *(script_address*)inout.get_object_address();
+			auto& function = *inout.get_arg_object<std::string_view>(1);
+			void* input_value = inout.get_arg_address(2);
+			int input_type_id = inout.get_arg_type_id(2);
+			void* output_value = inout.get_address_of_return_location();
+			int output_type_id = inout.get_return_type_id();
+			program->call_immutable_function(target, function, input_value, input_type_id, output_value, output_type_id);
+		}
+		static void log_emit(script_program* program, const void* event_value, int event_type_id, void* object_value, int object_type_id)
+		{
+			if (!program)
+				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "program is required"));
+
+			program->emit_event(event_value, event_type_id, object_value, object_type_id);
+		}
+		static void uniform_store(script_program* program, const void* index_value, int index_type_id, void* object_value, int object_type_id)
+		{
+			if (!program)
+				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "program is required"));
+
+			program->store_uniform(index_value, index_type_id, object_value, object_type_id);
+		}
+		static bool uniform_load(const script_program* program, const void* index_value, int index_type_id, void* object_value, int object_type_id)
+		{
+			if (!program)
+			{
+				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "program is required"));
+				return false;
+			}
+
+			return program->load_uniform(index_value, index_type_id, object_value, object_type_id, false);
+		}
+		static void uniform_from(asIScriptGeneric* generic)
+		{
+			generic_context inout = generic_context(generic);
+			auto* program = inout.get_arg_object<const script_program>(0);
+			if (!program)
+				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "program is required"));
+
+			void* index_value = inout.get_arg_address(1);
+			int index_type_id = inout.get_arg_type_id(1);
+			void* object_value = inout.get_address_of_return_location();
+			int object_type_id = inout.get_return_type_id();
+			program->load_uniform(index_value, index_type_id, object_value, object_type_id, true);
+		}
+		static void multiform_store(script_program* program, const void* column_value, int column_type_id, const void* row_value, int row_type_id, void* object_value, int object_type_id)
+		{
+			if (!program)
+				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "program is required"));
+
+			program->store_multiform(column_value, column_type_id, row_value, row_type_id, object_value, object_type_id);
+		}
+		static bool multiform_load_composition(const script_program* program, const void* column_value, int column_type_id, const void* row_value, int row_type_id, void* object_value, int object_type_id)
+		{
+			if (!program)
+			{
+				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "program is required"));
+				return false;
+			}
+
+			return program->load_multiform_by_composition(column_value, column_type_id, row_value, row_type_id, object_value, object_type_id, false);
+		}
+		static bool multiform_load_column(const script_program* program, const void* column_value, int column_type_id, size_t offset, void* object_value, int object_type_id)
+		{
+			if (!program)
+			{
+				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "program is required"));
+				return false;
+			}
+
+			return program->load_multiform_by_column(column_value, column_type_id, object_value, object_type_id, offset, false);
+		}
+		static void multiform_from_composition(asIScriptGeneric* generic)
+		{
+			generic_context inout = generic_context(generic);
+			auto* program = inout.get_arg_object<const script_program>(0);
+			if (!program)
+				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "program is required"));
+
+			void* column_value = inout.get_arg_address(1);
+			int column_type_id = inout.get_arg_type_id(1);
+			void* row_value = inout.get_arg_address(2);
+			int row_type_id = inout.get_arg_type_id(2);
+			void* object_value = inout.get_address_of_return_location();
+			int object_type_id = inout.get_return_type_id();
+			program->load_multiform_by_composition(column_value, column_type_id, row_value, row_type_id, object_value, object_type_id, true);
+		}
+		static void multiform_from_column(asIScriptGeneric* generic)
+		{
+			generic_context inout = generic_context(generic);
+			auto* program = inout.get_arg_object<const script_program>(0);
+			if (!program)
+				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "program is required"));
+
+			void* column_value = inout.get_arg_address(1);
+			int column_type_id = inout.get_arg_type_id(1);
+			size_t offset = inout.get_arg_dword(2);
+			void* object_value = inout.get_address_of_return_location();
+			int object_type_id = inout.get_return_type_id();
+			program->load_multiform_by_column(column_value, column_type_id, object_value, object_type_id, offset, true);
+		}
+		static uint256_t block_parent_hash()
+		{
+			auto* program = script_program::get();
+			return program ? program->parent_block_hash() : 0;
+		}
+		static uint256_t block_gas_left()
+		{
+			auto* program = script_program::get();
+			return program ? program->block_gas_left() : 0;
+		}
+		static uint256_t block_gas_use()
+		{
+			auto* program = script_program::get();
+			return program ? program->block_gas_use() : 0;
+		}
+		static uint256_t block_gas_limit()
+		{
+			auto* program = script_program::get();
+			return program ? program->block_gas_limit() : 0;
+		}
+		static uint128_t block_difficulty()
+		{
+			auto* program = script_program::get();
+			return program ? program->block_difficulty() : 0;
+		}
+		static uint64_t block_time()
+		{
+			auto* program = script_program::get();
+			return program ? program->block_time() : 0;
+		}
+		static uint64_t block_priority()
+		{
+			auto* program = script_program::get();
+			return program ? program->block_priority() : 0;
+		}
+		static uint64_t block_number()
+		{
+			auto* program = script_program::get();
+			return program ? program->block_number() : 0;
+		}
+		static decimal tx_value()
+		{
+			auto* program = script_program::get();
+			return program ? program->value() : decimal::zero();
+		}
+		static script_address tx_from()
+		{
+			auto* program = script_program::get();
+			return program ? program->from() : script_address();
+		}
+		static script_address tx_to()
+		{
+			auto* program = script_program::get();
+			return program ? program->to() : script_address();
+		}
+		static string tx_blockchain()
+		{
+			auto* program = script_program::get();
+			return program ? program->blockchain() : string();
+		}
+		static string tx_token()
+		{
+			auto* program = script_program::get();
+			return program ? program->token() : string();
+		}
+		static string tx_contract()
+		{
+			auto* program = script_program::get();
+			return program ? program->contract() : string();
+		}
+		static decimal tx_gas_price()
+		{
+			auto* program = script_program::get();
+			return program ? program->gas_price() : decimal::zero();
+		}
+		static uint256_t tx_gas_left()
+		{
+			auto* program = script_program::get();
+			return program ? program->gas_left() : 0;
+		}
+		static uint256_t tx_gas_use()
+		{
+			auto* program = script_program::get();
+			return program ? program->gas_use() : 0;
+		}
+		static uint256_t tx_gas_limit()
+		{
+			auto* program = script_program::get();
+			return program ? program->gas_limit() : 0;
+		}
+		static uint256_t tx_asset()
+		{
+			auto* program = script_program::get();
+			return program ? program->asset() : 0;
+		}
 		static string crc32(const std::string_view& data)
 		{
 			uint8_t buffer[32];
@@ -153,13 +380,13 @@ namespace tangent
 			algorithm::encoding::encode_uint256(data, buffer);
 			return buffer;
 		}
-		static string wbytes(const std::string_view& value)
+		static string wstring(const std::string_view& value)
 		{
 			format::stream message;
 			message.write_string(value);
 			return message.data;
 		}
-		static string wrbytes(const std::string_view& value)
+		static string wbytes(const std::string_view& value)
 		{
 			format::stream message;
 			message.write_string_raw(value);
@@ -183,13 +410,31 @@ namespace tangent
 			message.write_integer(value);
 			return message.data;
 		}
-
-		expects_lr<void> script_marshalling::store(format::stream* stream, void* value, int value_type_id)
+		static uint256_t random(script_program* program)
 		{
+			if (!program)
+			{
+				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "program is required"));
+				return 0;
+			}
+
+			return program->random();
+		}
+		static void require(bool condition, const std::string_view& message)
+		{
+			if (!condition)
+				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_REQUIREMENT, message.empty() ? "requirement not met" : message));
+		}
+
+		expects_lr<void> script_marshalling::store(format::stream* stream, const void* value, int value_type_id)
+		{
+			if (!value)
+				return expectation::met;
+
 			switch (value_type_id)
 			{
 				case (int)type_id::void_t:
-					return layer_exception("store not supported for void type");
+					return expectation::met;
 				case (int)type_id::bool_t:
 					stream->write_boolean(*(bool*)value);
 					return expectation::met;
@@ -283,12 +528,15 @@ namespace tangent
 				}
 			}
 		}
-		expects_lr<void> script_marshalling::store(schema* stream, void* value, int value_type_id)
+		expects_lr<void> script_marshalling::store(schema* stream, const void* value, int value_type_id)
 		{
+			if (!value)
+				return expectation::met;
+
 			switch (value_type_id)
 			{
 				case (int)type_id::void_t:
-					return layer_exception("store not supported for void type");
+					return expectation::met;
 				case (int)type_id::bool_t:
 					stream->value = var::boolean(*(bool*)value);
 					return expectation::met;
@@ -386,10 +634,13 @@ namespace tangent
 		}
 		expects_lr<void> script_marshalling::load(format::stream& stream, void* value, int value_type_id)
 		{
+			if (!value)
+				return layer_exception("load failed for null type");
+
 			switch (value_type_id)
 			{
 				case (int)type_id::void_t:
-					return layer_exception("load not supported for void type");
+					return expectation::met;
 				case (int)type_id::bool_t:
 					if (!stream.read_boolean(stream.read_type(), (bool*)value))
 						return layer_exception("load failed for bool type");
@@ -543,10 +794,13 @@ namespace tangent
 		}
 		expects_lr<void> script_marshalling::load(schema* stream, void* value, int value_type_id)
 		{
+			if (!value)
+				return layer_exception("load failed for null type");
+
 			switch (value_type_id)
 			{
 				case (int)type_id::void_t:
-					return layer_exception("load not supported for void type");
+					return expectation::met;
 				case (int)type_id::bool_t:
 					*(bool*)value = stream->value.get_boolean();
 					return expectation::met;
@@ -702,6 +956,7 @@ namespace tangent
 			bindings::registry::import_uint128(*vm);
 			bindings::registry::import_uint256(*vm);
 
+			auto program = vm->set_interface_class<script_program>(SCRIPT_CLASS_PROGRAM);
 			auto address = vm->set_pod<script_address>(SCRIPT_CLASS_ADDRESS);
 			address->set_constructor<script_address>("void f()");
 			address->set_constructor<script_address, const std::string_view&>("void f(const string_view&in)");
@@ -714,56 +969,65 @@ namespace tangent
 			address->set_method("uint256 to_public_key_hash() const", &script_address::to_public_key_hash);
 			address->set_method("uint256 to_derivation_hash() const", &script_address::to_derivation_hash);
 			address->set_method("bool empty() const", &script_address::empty);
+			address->set_method_extern("void send(program@, const uint256&in, const decimal&in)", &script_address_send);
+			address->set_method_extern("t call<t>(program@, const string_view&in, const ?&in)", &script_address_call_mutable_function);
+			address->set_method_extern("t call<t>(const program@, const string_view&in, const ?&in) const", &script_address_call_immutable_function);
 			address->set_operator_extern(operators::equals_t, (uint32_t)position::constant, "bool", "const address&in", &script_address::equals);
 
-			auto program = vm->set_interface_class<script_program>(SCRIPT_CLASS_PROGRAM);
-			program->set_method("bool call(const address&in, const string_view&in, const ?&in, ?&out)", &script_program::call_mutable_function);
-			program->set_method("bool call(const address&in, const string_view&in, const ?&in, ?&out) const", &script_program::call_immutable_function);
-			program->set_method("bool store(const address&in, const ?&in)", &script_program::store_by_address);
-			program->set_method("bool store(const string_view&in, const ?&in)", &script_program::store_by_location);
-			program->set_method("bool load(const address&in, ?&out) const", &script_program::load_by_address);
-			program->set_method("bool load(const string_view&in, ?&out) const", &script_program::load_by_location);
-			program->set_method("bool load_from(const address&in, const address&in, ?&out) const", &script_program::load_by_address);
-			program->set_method("bool load_from(const address&in, const string_view&in, ?&out) const", &script_program::load_by_location);
-			program->set_method("bool emit(const address&in, const ?&in)", &script_program::emit_by_address);
-			program->set_method("bool emit(const string_view&in, const ?&in)", &script_program::emit_by_location);
-			program->set_method("bool transfer(const address&in, const uint256&in, const decimal&in)", &script_program::transfer);
-			program->set_method("uint256 random()", &script_program::random);
-			program->set_method("address from() const", &script_program::from);
-			program->set_method("address to() const", &script_program::to);
-			program->set_method("string blockchain() const", &script_program::blockchain);
-			program->set_method("string token() const", &script_program::token);
-			program->set_method("string contract() const", &script_program::contract);
-			program->set_method("decimal gas_price() const", &script_program::gas_price);
-			program->set_method("uint256 gas_use() const", &script_program::gas_use);
-			program->set_method("uint256 gas_limit() const", &script_program::gas_limit);
-			program->set_method("uint256 asset() const", &script_program::asset);
-			program->set_method("uint256 parent_block_hash() const", &script_program::parent_block_hash);
-			program->set_method("uint256 block_gas_use() const", &script_program::block_gas_use);
-			program->set_method("uint256 block_gas_limit() const", &script_program::block_gas_limit);
-			program->set_method("uint128 block_difficulty() const", &script_program::block_difficulty);
-			program->set_method("uint64 block_time() const", &script_program::block_time);
-			program->set_method("uint64 block_priority() const", &script_program::block_priority);
-			program->set_method("uint64 block_number() const", &script_program::block_number);
-
-			vm->begin_namespace("asset_utils");
-			vm->set_function("uint256 to_asset(const string_view&in, const string_view&in = string_view(), const string_view&in = string_view())", &algorithm::asset::id_of);
-			vm->set_function("string to_blockchain(const uint256&in)", &algorithm::asset::blockchain_of);
-			vm->set_function("string to_token(const uint256&in)", &algorithm::asset::token_of);
-			vm->set_function("string to_contract(const uint256&in)", &algorithm::asset::checksum_of);
+			vm->begin_namespace("log");
+			vm->set_function("void emit(program@, const ?&in, const ?&in)", &log_emit);
 			vm->end_namespace();
 
-			vm->begin_namespace("byte_utils");
+			vm->begin_namespace("uniform");
+			vm->set_function("void store(program@, const ?&in, const ?&in)", &uniform_store);
+			vm->set_function("void load(const program@, const ?&in, ?&out)", &uniform_load);
+			vm->set_function("t from<t>(const program@, const ?&in)", &uniform_from);
+			vm->end_namespace();
+
+			vm->begin_namespace("multiform");
+			vm->set_function("void store(program@, const ?&in, const ?&in, const ?&in)", &multiform_store);
+			vm->set_function("void load(const program@, const ?&in, const ?&in, ?&out)", &multiform_load_composition);
+			vm->set_function("void load_index(const program@, const ?&in, usize, ?&out)", &multiform_load_column);
+			vm->set_function("t from<t>(const program@, const ?&in, const ?&in)", &multiform_from_composition);
+			vm->set_function("t from_index<t>(const program@, const ?&in, usize)", &multiform_from_column);
+			vm->end_namespace();
+
+			vm->begin_namespace("block");
+			vm->set_function("uint256 parent_hash()", &block_parent_hash);
+			vm->set_function("uint256 gas_use()", &block_gas_use);
+			vm->set_function("uint256 gas_limit()", &block_gas_limit);
+			vm->set_function("uint128 difficulty()", &block_difficulty);
+			vm->set_function("uint64 time()", &block_time);
+			vm->set_function("uint64 priority()", &block_priority);
+			vm->set_function("uint64 number()", &block_number);
+			vm->end_namespace();
+
+			vm->begin_namespace("tx");
+			vm->set_function("decimal value()", &tx_value);
+			vm->set_function("address from()", &tx_from);
+			vm->set_function("address to()", &tx_to);
+			vm->set_function("string blockchain()", &tx_blockchain);
+			vm->set_function("string token()", &tx_token);
+			vm->set_function("string contract()", &tx_contract);
+			vm->set_function("decimal gas_price()", &tx_gas_price);
+			vm->set_function("uint256 gas_use()", &tx_gas_use);
+			vm->set_function("uint256 gas_limit()", &tx_gas_limit);
+			vm->set_function("uint256 asset()", &tx_asset);
+			vm->end_namespace();
+
+			vm->begin_namespace("alg");
+			vm->set_function("uint256 random256(program@)", &random);
+			vm->set_function("uint256 asset_handle(const string_view&in, const string_view&in = string_view(), const string_view&in = string_view())", &algorithm::asset::id_of);
+			vm->set_function("string asset_blockchain(const uint256&in)", &algorithm::asset::blockchain_of);
+			vm->set_function("string asset_token(const uint256&in)", &algorithm::asset::token_of);
+			vm->set_function("string asset_contract(const uint256&in)", &algorithm::asset::checksum_of);
 			vm->set_function("string encode256(const uint256&in)", &encode_bytes256);
 			vm->set_function("uint256 decode256(const string_view&in)", &decode_bytes256);
+			vm->set_function("string wstring(const string_view&in)", &wstring);
 			vm->set_function("string wbytes(const string_view&in)", &wbytes);
-			vm->set_function("string wrbytes(const string_view&in)", &wrbytes);
 			vm->set_function("string wdecimal(const decimal&in)", &wdecimal);
 			vm->set_function("string wboolean(bool&)", &wboolean);
 			vm->set_function("string wuint256(const uint256&in)", &wuint256);
-			vm->end_namespace();
-
-			vm->begin_namespace("hash_utils");
 			vm->set_function("string crc32(const string_view&in)", &crc32);
 			vm->set_function("string ripemd160(const string_view&in)", &ripe_md160);
 			vm->set_function("address erecover160(const uint256&in, const string_view&in)", &erecover160);
@@ -774,6 +1038,8 @@ namespace tangent
 			vm->set_function("string sha256(const string_view&in)", &sha256);
 			vm->set_function("string sha512(const string_view&in)", &sha512);
 			vm->end_namespace();
+
+			vm->set_function("void require(bool, const string_view&in = string_view())", &require);
 		}
 		script_host::~script_host() noexcept
 		{
@@ -1031,7 +1297,7 @@ namespace tangent
 
 				return layer_exception(stringify::text("illegal call to function \"%.*s\": function not found", (int)function_name.size(), function_name.data()));
 			}
-			else if (mutability != 1 && (function_name == SCRIPT_FUNCTION_CONSTRUCTOR || function_name == SCRIPT_FUNCTION_DESTRUCTOR || stringify::starts_with(function_name, "_")))
+			else if (mutability != 1 && (function_name == SCRIPT_FUNCTION_CONSTRUCTOR || function_name == SCRIPT_FUNCTION_DESTRUCTOR))
 				return layer_exception(stringify::text("illegal call to function \"%.*s\": illegal operation", (int)function_name.size(), function_name.data()));
 
 			auto binders = load_arguments(entrypoint, args, mutability);
@@ -1041,6 +1307,9 @@ namespace tangent
 			auto* vm = entrypoint.get_vm();
 			auto* caller = immediate_context::get();
 			auto* coroutine = caller ? caller : vm->request_context();
+			auto* prev_program = coroutine->get_user_data(SCRIPT_TAG_PROGRAM);
+			coroutine->set_user_data(this, SCRIPT_TAG_PROGRAM);
+
 			auto execution = expects_vm<vitex::scripting::execution>(vitex::scripting::execution::error);
 			auto resolver = expects_lr<void>(layer_exception());
 			auto resolve = [this, &resolver, &entrypoint, &return_callback](immediate_context* coroutine)
@@ -1061,7 +1330,7 @@ namespace tangent
 						if (format::variables_util::deserialize_flat_from(stream, &returns))
 						{
 							auto type = script_host::get()->get_vm()->get_type_info_by_id(type_id);
-							auto name = type.is_valid() ? type.get_name() : std::string_view("primitive");
+							auto name = type.is_valid() ? type.get_name() : std::string_view("?");
 							auto status = context->emit_event(algorithm::hashing::hash32d(name), std::move(returns));
 							if (!status)
 								resolver = std::move(status);
@@ -1090,6 +1359,7 @@ namespace tangent
 				execution = coroutine->execute_subcall(entrypoint, [&binders](immediate_context* coroutine) { for (auto& bind : *binders) bind(coroutine); }, resolve);
 
 			auto exception = bindings::exception::get_exception_at(coroutine);
+			coroutine->set_user_data(prev_program, SCRIPT_TAG_PROGRAM);
 			if (!execution || (execution && *execution != execution::finished) || !exception.empty())
 			{
 				if (caller != coroutine)
@@ -1278,6 +1548,19 @@ namespace tangent
 			}
 			return std::move(frames);
 		}
+		bool script_program::dispatch_instruction(virtual_machine* vm, immediate_context* coroutine, uint32_t* program_data, size_t program_counter, byte_code_label& opcode)
+		{
+			auto gas = (size_t)(opcode.offset_of_arg2 + opcode.size_of_arg2) * (size_t)gas_cost::opcode;
+			auto status = context->burn_gas(gas);
+			if (status)
+				return true;
+
+			coroutine = coroutine ? coroutine : immediate_context::get();
+			if (coroutine != nullptr)
+				coroutine->set_exception(bindings::exception::pointer(SCRIPT_EXCEPTION_EXECUTION, status.error().message()).to_exception_string(), false);
+
+			return false;
+		}
 		void script_program::load_coroutine(immediate_context* coroutine, vector<script_frame>& frames)
 		{
 			script_frame current_frame; size_t current_depth = coroutine->get_callstack_size();
@@ -1313,193 +1596,193 @@ namespace tangent
 
 			latest_frame.pointer = current_frame.pointer;
 		}
-		bool script_program::dispatch_instruction(virtual_machine* vm, immediate_context* coroutine, uint32_t* program_data, size_t program_counter, byte_code_label& opcode)
-		{
-			auto gas = (size_t)(opcode.offset_of_arg2 + opcode.size_of_arg2) * (size_t)gas_cost::opcode;
-			auto status = context->burn_gas(gas);
-			if (status)
-				return true;
-
-			coroutine = coroutine ? coroutine : immediate_context::get();
-			if (coroutine != nullptr)
-				coroutine->set_exception(bindings::exception::pointer(SCRIPT_EXCEPTION_EXECUTION, status.error().message()).to_exception_string(), false);
-
-			return false;
-		}
-		bool script_program::call_mutable_function(const script_address& target, const std::string_view& function, void* input_value, int input_type_id, void* output_value, int output_type_id)
+		void script_program::call_mutable_function(const script_address& target, const std::string_view& function, void* input_value, int input_type_id, void* output_value, int output_type_id)
 		{
 			auto execution = subexecute(target, function, input_value, input_type_id, output_value, output_type_id, -1);
 			if (!execution)
-			{
-				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_EXECUTION, execution.error().message()));
-				return false;
-			}
-
-			return true;
+				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_EXECUTION, execution.error().message()));
 		}
-		bool script_program::call_immutable_function(const script_address& target, const std::string_view& function, void* input_value, int input_type_id, void* output_value, int output_type_id) const
+		void script_program::call_immutable_function(const script_address& target, const std::string_view& function, void* input_value, int input_type_id, void* output_value, int output_type_id) const
 		{
 			auto execution = subexecute(target, function, input_value, input_type_id, output_value, output_type_id, 0);
 			if (!execution)
-			{
-				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_EXECUTION, execution.error().message()));
-				return false;
-			}
-
-			return true;
+				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_EXECUTION, execution.error().message()));
 		}
-		bool script_program::store_by_address(const script_address& location, const void* object_value, int object_type_id)
+		void script_program::store_uniform(const void* index_value, int index_type_id, const void* object_value, int object_type_id)
 		{
-			string data = string((char*)location.hash.data, sizeof(algorithm::pubkeyhash));
-			return store_by_location(data, object_value, object_type_id);
-		}
-		bool script_program::store_by_location(const std::string_view& location, const void* object_value, int object_type_id)
-		{
-			if (!object_value)
-			{
-				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "store not supported for null value"));
-				return false;
-			}
-			else if (location.size() > std::numeric_limits<uint8_t>::max())
-			{
-				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "store location max length is 256 bytes"));
-				return false;
-			}
+			format::stream index;
+			auto status = script_marshalling::store(&index, index_value, index_type_id);
+			if (!status)
+				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, status.error().message()));
 
 			format::stream stream;
-			auto status = script_marshalling::store(&stream, (void*)object_value, object_type_id);
+			status = script_marshalling::store(&stream, (void*)object_value, object_type_id);
+			if (!status)
+				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, status.error().message()));
+
+			auto data = context->apply_account_uniform(to().hash.data, index.data, stream.data);
+			if (!data)
+				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_STORAGE, data.error().message()));
+		}
+		bool script_program::load_uniform(const void* index_value, int index_type_id, void* object_value, int object_type_id, bool throw_on_error) const
+		{
+			format::stream index;
+			auto status = script_marshalling::store(&index, index_value, index_type_id);
 			if (!status)
 			{
 				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, status.error().message()));
 				return false;
 			}
 
-			auto data = context->apply_account_storage(to().hash.data, location, stream.data);
-			if (!data)
+			auto data = context->get_account_uniform(to().hash.data, index.data);
+			if (!data || data->data.empty())
 			{
-				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_STORAGE, data.error().message()));
+				if (throw_on_error)
+					bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_STORAGE, "index is not in use"));
 				return false;
 			}
 
-			return true;
-		}
-		bool script_program::load_by_address(const script_address& location, void* object_value, int object_type_id) const
-		{
-			return load_from_by_address(to(), location, object_value, object_type_id);
-		}
-		bool script_program::load_by_location(const std::string_view& location, void* object_value, int object_type_id) const
-		{
-			return load_from_by_location(to(), location, object_value, object_type_id);
-		}
-		bool script_program::load_from_by_address(const script_address& target, const script_address& location, void* object_value, int object_type_id) const
-		{
-			string data = string((char*)location.hash.data, sizeof(algorithm::pubkeyhash));
-			return load_from_by_location(target, data, object_value, object_type_id);
-		}
-		bool script_program::load_from_by_location(const script_address& target, const std::string_view& location, void* object_value, int object_type_id) const
-		{
-			if (!object_value)
-			{
-				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "load not supported for null value"));
-				return false;
-			}
-			else if (location.size() > std::numeric_limits<uint8_t>::max())
-			{
-				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "load location max length is 256 bytes"));
-				return false;
-			}
-
-			auto data = context->get_account_storage(target.hash.data, location);
-			if (!data || data->storage.empty())
-				return false;
-
-			format::stream stream = format::stream(data->storage);
+			format::stream stream = format::stream(data->data);
 			auto status = script_marshalling::load(stream, object_value, object_type_id);
 			if (!status)
 			{
-				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, status.error().message()));
+				if (throw_on_error)
+					bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_STORAGE, "index is not in use"));
 				return false;
 			}
 
 			return true;
 		}
-		bool script_program::emit_by_address(const script_address& location, const void* object_value, int object_type_id)
+		void script_program::store_multiform(const void* column_value, int column_type_id, const void* row_value, int row_type_id, const void* object_value, int object_type_id)
 		{
-			string data = string((char*)location.hash.data, sizeof(algorithm::pubkeyhash));
-			return emit_by_location(data, object_value, object_type_id);
-		}
-		bool script_program::emit_by_location(const std::string_view& location, const void* object_value, int object_type_id)
-		{
-			if (!object_value)
-			{
-				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "emit not supported for null value"));
-				return false;
-			}
-			else if (location.size() > std::numeric_limits<uint8_t>::max())
-			{
-				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "emit location max length is 256 bytes"));
-				return false;
-			}
+			format::stream column;
+			auto status = script_marshalling::store(&column, column_value, column_type_id);
+			if (!status)
+				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, status.error().message()));
+
+			format::stream row;
+			auto status = script_marshalling::store(&column, row_value, row_type_id);
+			if (!status)
+				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, status.error().message()));
 
 			format::stream stream;
-			auto status = script_marshalling::store(&stream, (void*)object_value, object_type_id);
+			status = script_marshalling::store(&stream, (void*)object_value, object_type_id);
+			if (!status)
+				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, status.error().message()));
+
+			auto data = context->apply_account_multiform(to().hash.data, column.data, row.data, stream.data);
+			if (!data)
+				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_STORAGE, data.error().message()));
+		}
+		bool script_program::load_multiform_by_composition(const void* column_value, int column_type_id, const void* row_value, int row_type_id, void* object_value, int object_type_id, bool throw_on_error) const
+		{
+			format::stream column;
+			auto status = script_marshalling::store(&column, column_value, column_type_id);
 			if (!status)
 			{
 				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, status.error().message()));
 				return false;
 			}
 
+			format::stream row;
+			auto status = script_marshalling::store(&column, row_value, row_type_id);
+			if (!status)
+			{
+				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, status.error().message()));
+				return false;
+			}
+
+			auto data = context->get_account_multiform(to().hash.data, column.data, row.data);
+			if (!data || data->data.empty())
+			{
+				if (throw_on_error)
+					bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_STORAGE, "index is not in use"));
+				return false;
+			}
+
+			format::stream stream = format::stream(data->data);
+			auto status = script_marshalling::load(stream, object_value, object_type_id);
+			if (!status)
+			{
+				if (throw_on_error)
+					bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_STORAGE, "index is not in use"));
+				return false;
+			}
+
+			return true;
+		}
+		bool script_program::load_multiform_by_column(const void* column_value, int column_type_id, void* object_value, int object_type_id, size_t offset, bool throw_on_error) const
+		{
+			format::stream column;
+			auto status = script_marshalling::store(&column, column_value, column_type_id);
+			if (!status)
+			{
+				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, status.error().message()));
+				return false;
+			}
+
+			auto data = context->get_account_multiforms(to().hash.data, column.data, offset, 1);
+			if (!data || data->empty())
+			{
+				if (throw_on_error)
+					bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_STORAGE, "index is not in use"));
+				return false;
+			}
+
+			format::stream stream = format::stream(data->front().data);
+			auto status = script_marshalling::load(stream, object_value, object_type_id);
+			if (!status && throw_on_error)
+			{
+				if (throw_on_error)
+					bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_STORAGE, "index is not in use"));
+				return false;
+			}
+
+			return true;
+		}
+		void script_program::emit_event(const void* event_value, int event_type_id, const void* object_value, int object_type_id)
+		{
+			format::stream location;
+			auto status = script_marshalling::store(&location, event_value, event_type_id);
+			if (!status)
+				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, status.error().message()));
+			else if (location.data.size() > std::numeric_limits<uint8_t>::max())
+				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "store location max length is 256 bytes"));
+
+			format::stream stream;
+			auto status = script_marshalling::store(&stream, (void*)object_value, object_type_id);
+			if (!status)
+				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, status.error().message()));
+
 			format::variables returns;
 			if (!format::variables_util::deserialize_flat_from(stream, &returns))
-			{
-				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "emit value conversion error"));
-				return false;
-			}
+				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "emit value conversion error"));
 
 			auto type = script_host::get()->get_vm()->get_type_info_by_id(object_type_id);
-			auto name = type.is_valid() ? type.get_name() : std::string_view("primitive");
+			auto name = type.is_valid() ? type.get_name() : std::string_view("?");
 			auto data = context->emit_event(algorithm::hashing::hash32d(name), std::move(returns));
 			if (!data)
-			{
-				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_STORAGE, data.error().message()));
-				return false;
-			}
-
-			return true;
+				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_STORAGE, data.error().message()));
 		}
-		bool script_program::transfer(const script_address& target, const uint256_t& asset, const decimal& value)
+		void script_program::send(const script_address& target, const uint256_t& asset, const decimal& value)
 		{
 			if (!value.is_positive())
-			{
-				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "transfer value must be positive"));
-				return false;
-			}
+				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "transfer value must be positive"));
 
-			auto sender = to();
-			auto payment = context->apply_payment(asset, sender.hash.data, target.hash.data, value);
+			auto payment = context->apply_payment(asset, to().hash.data, target.hash.data, value);
 			if (!payment)
-			{
-				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_EXECUTION, payment.error().message()));
-				return false;
-			}
-
-			return true;
+				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_EXECUTION, payment.error().message()));
 		}
-		bool script_program::destroy()
+		void script_program::destroy()
 		{
 			auto* caller = immediate_context::get();
-			if (!caller)
-				return false;
-
-			auto entrypoint = caller->get_function().get_module().get_function_by_name(SCRIPT_FUNCTION_DESTRUCTOR);
-			auto destruction = destruct(entrypoint);
-			if (!destruction)
+			if (caller != nullptr)
 			{
-				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_EXECUTION, destruction.error().message()));
-				return false;
+				auto entrypoint = caller->get_function().get_module().get_function_by_name(SCRIPT_FUNCTION_DESTRUCTOR);
+				auto destruction = destruct(entrypoint);
+				if (!destruction)
+					return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_EXECUTION, destruction.error().message()));
 			}
-
-			return true;
 		}
 		uint256_t script_program::random()
 		{
@@ -1612,6 +1895,10 @@ namespace tangent
 		uint64_t script_program::block_number() const
 		{
 			return context->block->number;
+		}
+		script_program* script_program::get(immediate_context* coroutine)
+		{
+			return coroutine ? (script_program*)coroutine->get_user_data(SCRIPT_TAG_PROGRAM) : nullptr;
 		}
 
 		script_program_trace::script_program_trace(ledger::transaction* transaction, const algorithm::pubkeyhash from, bool tracing) : script_program(&environment.validation.context), debugging(tracing)

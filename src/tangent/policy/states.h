@@ -46,14 +46,14 @@ namespace tangent
 			static string as_instance_index(const algorithm::pubkeyhash owner);
 		};
 
-		struct account_storage final : ledger::uniform
+		struct account_uniform final : ledger::uniform
 		{
 			algorithm::pubkeyhash owner = { 0 };
-			string location;
-			string storage;
+			string index;
+			string data;
 
-			account_storage(const algorithm::pubkeyhash new_owner, uint64_t new_block_number, uint64_t new_block_nonce);
-			account_storage(const algorithm::pubkeyhash new_owner, const ledger::block_header* new_block_header);
+			account_uniform(const algorithm::pubkeyhash new_owner, uint64_t new_block_number, uint64_t new_block_nonce);
+			account_uniform(const algorithm::pubkeyhash new_owner, const ledger::block_header* new_block_header);
 			expects_lr<void> transition(const ledger::transaction_context* context, const ledger::state* prev_state) override;
 			bool store_payload(format::stream* stream) const override;
 			bool load_payload(format::stream& stream) override;
@@ -64,7 +64,32 @@ namespace tangent
 			string as_index() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
-			static string as_instance_index(const algorithm::pubkeyhash owner, const std::string_view& location);
+			static string as_instance_index(const algorithm::pubkeyhash owner, const std::string_view& index);
+		};
+
+		struct account_multiform final : ledger::multiform
+		{
+			algorithm::pubkeyhash owner = { 0 };
+			string column;
+			string row;
+			string data;
+
+			account_multiform(const algorithm::pubkeyhash new_owner, uint64_t new_block_number, uint64_t new_block_nonce);
+			account_multiform(const algorithm::pubkeyhash new_owner, const ledger::block_header* new_block_header);
+			expects_lr<void> transition(const ledger::transaction_context* context, const ledger::state* prev_state) override;
+			bool store_payload(format::stream* stream) const override;
+			bool load_payload(format::stream& stream) override;
+			bool is_owner_null() const;
+			uptr<schema> as_schema() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			string as_column() const override;
+			string as_row() const override;
+			int64_t as_factor() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
+			static string as_instance_column(const algorithm::pubkeyhash owner, const std::string_view& column);
+			static string as_instance_row(const std::string_view& row);
 		};
 
 		struct account_delegation final : ledger::uniform

@@ -275,7 +275,8 @@ namespace tangent
 			expects_lr<vector<states::validator_participation>> calculate_participants(const algorithm::asset_id& asset, ordered_set<algorithm::pubkeyhash_t>& exclusion, size_t target_size);
 			expects_lr<states::account_nonce> apply_account_nonce(const algorithm::pubkeyhash owner, uint64_t nonce);
 			expects_lr<states::account_program> apply_account_program(const algorithm::pubkeyhash owner, const std::string_view& program_hashcode);
-			expects_lr<states::account_storage> apply_account_storage(const algorithm::pubkeyhash owner, const std::string_view& location, const std::string_view& storage);
+			expects_lr<states::account_uniform> apply_account_uniform(const algorithm::pubkeyhash owner, const std::string_view& index, const std::string_view& data);
+			expects_lr<states::account_multiform> apply_account_multiform(const algorithm::pubkeyhash owner, const std::string_view& column, const std::string_view& row, const std::string_view& data);
 			expects_lr<states::account_delegation> apply_account_delegation(const algorithm::pubkeyhash owner, uint32_t delegations);
 			expects_lr<states::account_balance> apply_transfer(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const decimal& supply, const decimal& reserve);
 			expects_lr<states::account_balance> apply_fee_transfer(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const decimal& value);
@@ -297,7 +298,9 @@ namespace tangent
 			expects_lr<states::witness_transaction> apply_witness_transaction(const algorithm::asset_id& asset, const std::string_view& transaction_id);
 			expects_lr<states::account_nonce> get_account_nonce(const algorithm::pubkeyhash owner) const;
 			expects_lr<states::account_program> get_account_program(const algorithm::pubkeyhash owner) const;
-			expects_lr<states::account_storage> get_account_storage(const algorithm::pubkeyhash owner, const std::string_view& location) const;
+			expects_lr<states::account_uniform> get_account_uniform(const algorithm::pubkeyhash owner, const std::string_view& index) const;
+			expects_lr<states::account_multiform> get_account_multiform(const algorithm::pubkeyhash owner, const std::string_view& column, const std::string_view& row) const;
+			expects_lr<vector<states::account_multiform>> get_account_multiforms(const algorithm::pubkeyhash owner, const std::string_view& column, size_t offset, size_t count) const;
 			expects_lr<states::account_delegation> get_account_delegation(const algorithm::pubkeyhash owner) const;
 			expects_lr<states::account_balance> get_account_balance(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner) const;
 			expects_lr<states::validator_production> get_validator_production(const algorithm::pubkeyhash owner) const;

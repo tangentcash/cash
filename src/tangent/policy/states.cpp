@@ -166,90 +166,198 @@ namespace tangent
 			return std::move(stream.data);
 		}
 
-		account_storage::account_storage(const algorithm::pubkeyhash new_owner, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::uniform(new_block_number, new_block_nonce)
+		account_uniform::account_uniform(const algorithm::pubkeyhash new_owner, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::uniform(new_block_number, new_block_nonce)
 		{
 			if (new_owner)
 				memcpy(owner, new_owner, sizeof(owner));
 		}
-		account_storage::account_storage(const algorithm::pubkeyhash new_owner, const ledger::block_header* new_block_header) : ledger::uniform(new_block_header)
+		account_uniform::account_uniform(const algorithm::pubkeyhash new_owner, const ledger::block_header* new_block_header) : ledger::uniform(new_block_header)
 		{
 			if (new_owner)
 				memcpy(owner, new_owner, sizeof(owner));
 		}
-		expects_lr<void> account_storage::transition(const ledger::transaction_context* context, const ledger::state* prev_state)
+		expects_lr<void> account_uniform::transition(const ledger::transaction_context* context, const ledger::state* prev_state)
 		{
 			if (is_owner_null())
 				return layer_exception("invalid state owner");
 
-			if (location.size() > std::numeric_limits<uint8_t>::max())
-				return layer_exception("invalid state location");
+			if (index.size() > std::numeric_limits<uint8_t>::max())
+				return layer_exception("invalid state index");
+
+			if (data.empty())
+				return layer_exception("invalid state data");
 
 			return expectation::met;
 		}
-		bool account_storage::store_payload(format::stream* stream) const
+		bool account_uniform::store_payload(format::stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			algorithm::pubkeyhash null = { 0 };
 			stream->write_string(std::string_view((char*)owner, memcmp(owner, null, sizeof(null)) == 0 ? 0 : sizeof(owner)));
-			stream->write_string(location);
-			stream->write_string(storage);
+			stream->write_string(index);
+			stream->write_string(data);
 			return true;
 		}
-		bool account_storage::load_payload(format::stream& stream)
+		bool account_uniform::load_payload(format::stream& stream)
 		{
 			string owner_assembly;
 			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner, sizeof(owner)))
 				return false;
 
-			if (!stream.read_string(stream.read_type(), &location))
+			if (!stream.read_string(stream.read_type(), &index))
 				return false;
 
-			if (!stream.read_string(stream.read_type(), &storage))
+			if (!stream.read_string(stream.read_type(), &data))
 				return false;
 
 			return true;
 		}
-		bool account_storage::is_owner_null() const
+		bool account_uniform::is_owner_null() const
 		{
 			algorithm::pubkeyhash null = { 0 };
 			return !memcmp(owner, null, sizeof(null));
 		}
-		uptr<schema> account_storage::as_schema() const
+		uptr<schema> account_uniform::as_schema() const
 		{
 			schema* data = ledger::uniform::as_schema().reset();
 			data->set("owner", algorithm::signing::serialize_address(owner));
-			data->set("location", var::string(format::util::encode_0xhex(location)));
-			data->set("storage", var::string(format::util::encode_0xhex(storage)));
+			data->set("index", var::string(format::util::encode_0xhex(index)));
+			data->set("data", var::string(format::util::encode_0xhex(this->data)));
 			return data;
 		}
-		uint32_t account_storage::as_type() const
+		uint32_t account_uniform::as_type() const
 		{
 			return as_instance_type();
 		}
-		std::string_view account_storage::as_typename() const
+		std::string_view account_uniform::as_typename() const
 		{
 			return as_instance_typename();
 		}
-		string account_storage::as_index() const
+		string account_uniform::as_index() const
 		{
-			return as_instance_index(owner, location);
+			return as_instance_index(owner, index);
 		}
-		uint32_t account_storage::as_instance_type()
+		uint32_t account_uniform::as_instance_type()
 		{
 			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
 			return hash;
 		}
-		std::string_view account_storage::as_instance_typename()
+		std::string_view account_uniform::as_instance_typename()
 		{
-			return "account_storage";
+			return "account_uniform";
 		}
-		string account_storage::as_instance_index(const algorithm::pubkeyhash owner, const std::string_view& location)
+		string account_uniform::as_instance_index(const algorithm::pubkeyhash owner, const std::string_view& index)
 		{
-			auto data = format::util::is_hex_encoding(location) ? codec::hex_decode(location) : string(location);
+			auto data = format::util::is_hex_encoding(index) ? codec::hex_decode(index) : string(index);
 			format::stream stream;
 			stream.write_typeless((char*)owner, (uint8_t)sizeof(algorithm::pubkeyhash));
 			stream.write_typeless((char*)data.data(), (uint8_t)data.size());
 			return std::move(stream.data);
+		}
+
+		account_multiform::account_multiform(const algorithm::pubkeyhash new_owner, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::multiform(new_block_number, new_block_nonce)
+		{
+			if (new_owner)
+				memcpy(owner, new_owner, sizeof(owner));
+		}
+		account_multiform::account_multiform(const algorithm::pubkeyhash new_owner, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header)
+		{
+			if (new_owner)
+				memcpy(owner, new_owner, sizeof(owner));
+		}
+		expects_lr<void> account_multiform::transition(const ledger::transaction_context* context, const ledger::state* prev_state)
+		{
+			if (is_owner_null())
+				return layer_exception("invalid state owner");
+
+			if (column.size() > std::numeric_limits<uint8_t>::max())
+				return layer_exception("invalid state column");
+
+			if (row.size() > std::numeric_limits<uint8_t>::max())
+				return layer_exception("invalid state row");
+
+			if (data.empty())
+				return layer_exception("invalid state data");
+
+			return expectation::met;
+		}
+		bool account_multiform::store_payload(format::stream* stream) const
+		{
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			algorithm::pubkeyhash null = { 0 };
+			stream->write_string(std::string_view((char*)owner, memcmp(owner, null, sizeof(null)) == 0 ? 0 : sizeof(owner)));
+			stream->write_string(column);
+			stream->write_string(row);
+			stream->write_string(data);
+			return true;
+		}
+		bool account_multiform::load_payload(format::stream& stream)
+		{
+			string owner_assembly;
+			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner, sizeof(owner)))
+				return false;
+
+			if (!stream.read_string(stream.read_type(), &column))
+				return false;
+
+			if (!stream.read_string(stream.read_type(), &row))
+				return false;
+
+			if (!stream.read_string(stream.read_type(), &data))
+				return false;
+
+			return true;
+		}
+		bool account_multiform::is_owner_null() const
+		{
+			algorithm::pubkeyhash null = { 0 };
+			return !memcmp(owner, null, sizeof(null));
+		}
+		uptr<schema> account_multiform::as_schema() const
+		{
+			schema* data = ledger::multiform::as_schema().reset();
+			data->set("owner", algorithm::signing::serialize_address(owner));
+			data->set("column", var::string(format::util::encode_0xhex(column)));
+			data->set("row", var::string(format::util::encode_0xhex(row)));
+			data->set("data", var::string(format::util::encode_0xhex(this->data)));
+			return data;
+		}
+		uint32_t account_multiform::as_type() const
+		{
+			return as_instance_type();
+		}
+		std::string_view account_multiform::as_typename() const
+		{
+			return as_instance_typename();
+		}
+		string account_multiform::as_column() const
+		{
+			return as_instance_column(owner, column);
+		}
+		string account_multiform::as_row() const
+		{
+			return as_instance_row(row);
+		}
+		uint32_t account_multiform::as_instance_type()
+		{
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
+		}
+		std::string_view account_multiform::as_instance_typename()
+		{
+			return "account_multiform";
+		}
+		string account_multiform::as_instance_column(const algorithm::pubkeyhash owner, const std::string_view& column)
+		{
+			auto data = format::util::is_hex_encoding(column) ? codec::hex_decode(column) : string(column);
+			format::stream stream;
+			stream.write_typeless((char*)owner, (uint8_t)sizeof(algorithm::pubkeyhash));
+			stream.write_typeless((char*)data.data(), (uint8_t)data.size());
+			return std::move(stream.data);
+		}
+		string account_multiform::as_instance_row(const std::string_view& row)
+		{
+			return format::util::is_hex_encoding(row) ? codec::hex_decode(row) : string(row);
 		}
 
 		account_delegation::account_delegation(const algorithm::pubkeyhash new_owner, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::uniform(new_block_number, new_block_nonce), delegations(0)
@@ -1827,8 +1935,10 @@ namespace tangent
 				return memory::init<account_nonce>(nullptr, nullptr);
 			else if (hash == account_program::as_instance_type())
 				return memory::init<account_program>(nullptr, nullptr);
-			else if (hash == account_storage::as_instance_type())
-				return memory::init<account_storage>(nullptr, nullptr);
+			else if (hash == account_uniform::as_instance_type())
+				return memory::init<account_uniform>(nullptr, nullptr);
+			else if (hash == account_multiform::as_instance_type())
+				return memory::init<account_multiform>(nullptr, nullptr);
 			else if (hash == account_delegation::as_instance_type())
 				return memory::init<account_delegation>(nullptr, nullptr);
 			else if (hash == account_balance::as_instance_type())
@@ -1864,8 +1974,10 @@ namespace tangent
 				return memory::init<account_nonce>(*(const account_nonce*)base);
 			else if (hash == account_program::as_instance_type())
 				return memory::init<account_program>(*(const account_program*)base);
-			else if (hash == account_storage::as_instance_type())
-				return memory::init<account_storage>(*(const account_storage*)base);
+			else if (hash == account_uniform::as_instance_type())
+				return memory::init<account_uniform>(*(const account_uniform*)base);
+			else if (hash == account_multiform::as_instance_type())
+				return memory::init<account_multiform>(*(const account_multiform*)base);
 			else if (hash == account_delegation::as_instance_type())
 				return memory::init<account_delegation>(*(const account_delegation*)base);
 			else if (hash == account_balance::as_instance_type())
@@ -1899,7 +2011,7 @@ namespace tangent
 			unordered_set<uint32_t> types;
 			types.insert(account_nonce::as_instance_type());
 			types.insert(account_program::as_instance_type());
-			types.insert(account_storage::as_instance_type());
+			types.insert(account_uniform::as_instance_type());
 			types.insert(account_delegation::as_instance_type());
 			types.insert(witness_program::as_instance_type());
 			types.insert(witness_event::as_instance_type());
@@ -1909,6 +2021,7 @@ namespace tangent
 		unordered_set<uint32_t> resolver::get_multiform_types()
 		{
 			unordered_set<uint32_t> types;
+			types.insert(account_multiform::as_instance_type());
 			types.insert(account_balance::as_instance_type());
 			types.insert(validator_production::as_instance_type());
 			types.insert(validator_participation::as_instance_type());

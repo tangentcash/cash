@@ -11,8 +11,8 @@ namespace tangent
 		class script_marshalling
 		{
 		public:
-			static expects_lr<void> store(format::stream* stream, void* value, int value_type_id);
-			static expects_lr<void> store(schema* stream, void* value, int value_type_id);
+			static expects_lr<void> store(format::stream* stream, const void* value, int value_type_id);
+			static expects_lr<void> store(schema* stream, const void* value, int value_type_id);
 			static expects_lr<void> load(format::stream& stream, void* value, int value_type_id);
 			static expects_lr<void> load(schema* stream, void* value, int value_type_id);
 		};
@@ -77,18 +77,16 @@ namespace tangent
 			virtual expects_lr<void> mutable_call(compiler* compiler, const std::string_view& function, const format::variables& args);
 			virtual expects_lr<void> immutable_call(compiler* compiler, const std::string_view& function, const format::variables& args);
 			virtual bool dispatch_instruction(virtual_machine* vm, immediate_context* coroutine, uint32_t* program_data, size_t program_counter, byte_code_label& opcode);
-			virtual bool call_mutable_function(const script_address& target, const std::string_view& function, void* input_value, int input_type_id, void* output_value, int output_type_id);
-			virtual bool call_immutable_function(const script_address& target, const std::string_view& function, void* input_value, int input_type_id, void* output_value, int output_type_id) const;
-			virtual bool store_by_address(const script_address& location, const void* object_value, int object_type_id);
-			virtual bool store_by_location(const std::string_view& location, const void* object_value, int object_type_id);
-			virtual bool load_by_address(const script_address& location, void* object_value, int object_type_id) const;
-			virtual bool load_by_location(const std::string_view& location, void* object_value, int object_type_id) const;
-			virtual bool load_from_by_address(const script_address& target, const script_address& location, void* object_value, int object_type_id) const;
-			virtual bool load_from_by_location(const script_address& target, const std::string_view& location, void* object_value, int object_type_id) const;
-			virtual bool emit_by_address(const script_address& location, const void* object_value, int object_type_id);
-			virtual bool emit_by_location(const std::string_view& location, const void* object_value, int object_type_id);
-			virtual bool transfer(const script_address& target, const uint256_t& asset, const decimal& value);
-			virtual bool destroy();
+			virtual void call_mutable_function(const script_address& target, const std::string_view& function, void* input_value, int input_type_id, void* output_value, int output_type_id);
+			virtual void call_immutable_function(const script_address& target, const std::string_view& function, void* input_value, int input_type_id, void* output_value, int output_type_id) const;
+			virtual void store_uniform(const void* index_value, int index_type_id, const void* object_value, int object_type_id);
+			virtual bool load_uniform(const void* index_value, int index_type_id, void* object_value, int object_type_id, bool throw_on_error) const;
+			virtual void store_multiform(const void* column_value, int column_type_id, const void* row_value, int row_type_id, const void* object_value, int object_type_id);
+			virtual bool load_multiform_by_composition(const void* column_value, int column_type_id, const void* row_value, int row_type_id, void* object_value, int object_type_id, bool throw_on_error) const;
+			virtual bool load_multiform_by_column(const void* column_value, int column_type_id, void* object_value, int object_type_id, size_t offset, bool throw_on_error) const;
+			virtual void emit_event(const void* event_value, int event_type_id, const void* object_value, int object_type_id);
+			virtual void send(const script_address& target, const uint256_t& asset, const decimal& value);
+			virtual void destroy();
 			virtual uint256_t random();
 			virtual decimal value() const;
 			virtual script_address from() const;
@@ -115,6 +113,9 @@ namespace tangent
 			virtual expects_lr<void> subexecute(const script_address& target, const std::string_view& function, void* input_value, int input_type_id, void* output_value, int output_type_id, int8_t mutability) const;
 			virtual expects_lr<vector<std::function<void(immediate_context*)>>> load_arguments(const function& entrypoint, const format::variables& args, int8_t mutability) const;
 			virtual void load_coroutine(immediate_context* coroutine, vector<script_frame>& frames);
+
+		public:
+			static script_program* get(immediate_context* coroutine = immediate_context::get());
 		};
 
 		struct script_program_trace : script_program
