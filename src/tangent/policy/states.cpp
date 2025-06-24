@@ -338,6 +338,10 @@ namespace tangent
 		{
 			return as_instance_row(row);
 		}
+		int64_t account_multiform::as_factor() const
+		{
+			return 0;
+		}
 		uint32_t account_multiform::as_instance_type()
 		{
 			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());

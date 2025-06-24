@@ -22,8 +22,8 @@ extern "C"
 #define SCRIPT_EXCEPTION_ARGUMENT "argument_error"
 #define SCRIPT_EXCEPTION_STORAGE "storage_error"
 #define SCRIPT_EXCEPTION_EXECUTION "execution_error"
-#define SCRIPT_FUNCTION_CONSTRUCTOR "constructor"
-#define SCRIPT_FUNCTION_DESTRUCTOR "destructor"
+#define SCRIPT_FUNCTION_CONSTRUCTOR "construct"
+#define SCRIPT_FUNCTION_DESTRUCTOR "destruct"
 
 namespace tangent
 {
@@ -100,7 +100,7 @@ namespace tangent
 			void* input_value = inout.get_arg_address(2);
 			int input_type_id = inout.get_arg_type_id(2);
 			void* output_value = inout.get_address_of_return_location();
-			int output_type_id = inout.get_return_type_id();
+			int output_type_id = inout.get_return_addressable_type_id();
 			program->call_mutable_function(target, function, input_value, input_type_id, output_value, output_type_id);
 		}
 		static void script_address_call_immutable_function(asIScriptGeneric* generic)
@@ -115,7 +115,7 @@ namespace tangent
 			void* input_value = inout.get_arg_address(2);
 			int input_type_id = inout.get_arg_type_id(2);
 			void* output_value = inout.get_address_of_return_location();
-			int output_type_id = inout.get_return_type_id();
+			int output_type_id = inout.get_return_addressable_type_id();
 			program->call_immutable_function(target, function, input_value, input_type_id, output_value, output_type_id);
 		}
 		static void log_emit(script_program* program, const void* event_value, int event_type_id, void* object_value, int object_type_id)
@@ -152,7 +152,7 @@ namespace tangent
 			void* index_value = inout.get_arg_address(1);
 			int index_type_id = inout.get_arg_type_id(1);
 			void* object_value = inout.get_address_of_return_location();
-			int object_type_id = inout.get_return_type_id();
+			int object_type_id = inout.get_return_addressable_type_id();
 			program->load_uniform(index_value, index_type_id, object_value, object_type_id, true);
 		}
 		static void multiform_store(script_program* program, const void* column_value, int column_type_id, const void* row_value, int row_type_id, void* object_value, int object_type_id)
@@ -194,7 +194,7 @@ namespace tangent
 			void* row_value = inout.get_arg_address(2);
 			int row_type_id = inout.get_arg_type_id(2);
 			void* object_value = inout.get_address_of_return_location();
-			int object_type_id = inout.get_return_type_id();
+			int object_type_id = inout.get_return_addressable_type_id();
 			program->load_multiform_by_composition(column_value, column_type_id, row_value, row_type_id, object_value, object_type_id, true);
 		}
 		static void multiform_from_column(asIScriptGeneric* generic)
@@ -208,7 +208,7 @@ namespace tangent
 			int column_type_id = inout.get_arg_type_id(1);
 			size_t offset = inout.get_arg_dword(2);
 			void* object_value = inout.get_address_of_return_location();
-			int object_type_id = inout.get_return_type_id();
+			int object_type_id = inout.get_return_addressable_type_id();
 			program->load_multiform_by_column(column_value, column_type_id, object_value, object_type_id, offset, true);
 		}
 		static uint256_t block_parent_hash()
@@ -524,6 +524,11 @@ namespace tangent
 						}
 						return expectation::met;
 					}
+					else if (value_type_id & (int)vitex::scripting::type_id::mask_seqnbr_t)
+					{
+						stream->write_integer((uint32_t)*(int*)value);
+						return expectation::met;
+					}
 					return layer_exception(stringify::text("store not supported for %s type", name.data()));
 				}
 			}
@@ -626,6 +631,11 @@ namespace tangent
 							if (!status)
 								return status;
 						}
+						return expectation::met;
+					}
+					else if (value_type_id & (int)vitex::scripting::type_id::mask_seqnbr_t)
+					{
+						stream->value = var::integer(*(int*)value);
 						return expectation::met;
 					}
 					return layer_exception(stringify::text("store not supported for %s type", name.data()));
@@ -788,6 +798,12 @@ namespace tangent
 						unique.address = nullptr;
 						return expectation::met;
 					}
+					else if (value_type_id & (int)vitex::scripting::type_id::mask_seqnbr_t)
+					{
+						if (!stream.read_integer(stream.read_type(), (uint32_t*)value))
+							return layer_exception("load failed for uint32 type");
+						return expectation::met;
+					}
 					return layer_exception(stringify::text("load not supported for %s type", name.data()));
 				}
 			}
@@ -926,6 +942,11 @@ namespace tangent
 						unique.address = nullptr;
 						return expectation::met;
 					}
+					else if (value_type_id & (int)vitex::scripting::type_id::mask_seqnbr_t)
+					{
+						*(uint32_t*)value = (uint32_t)stream->value.get_integer();
+						return expectation::met;
+					}
 					return layer_exception(stringify::text("load not supported for %s type", name.data()));
 				}
 			}
@@ -970,8 +991,8 @@ namespace tangent
 			address->set_method("uint256 to_derivation_hash() const", &script_address::to_derivation_hash);
 			address->set_method("bool empty() const", &script_address::empty);
 			address->set_method_extern("void send(program@, const uint256&in, const decimal&in)", &script_address_send);
-			address->set_method_extern("t call<t>(program@, const string_view&in, const ?&in)", &script_address_call_mutable_function);
-			address->set_method_extern("t call<t>(const program@, const string_view&in, const ?&in) const", &script_address_call_immutable_function);
+			address->set_method_extern("t rw_call<t>(program@, const string_view&in, const ?&in)", &script_address_call_mutable_function, convention::generic_call);
+			address->set_method_extern("t call<t>(program@ const, const string_view&in, const ?&in) const", &script_address_call_immutable_function, convention::generic_call);
 			address->set_operator_extern(operators::equals_t, (uint32_t)position::constant, "bool", "const address&in", &script_address::equals);
 
 			vm->begin_namespace("log");
@@ -980,16 +1001,16 @@ namespace tangent
 
 			vm->begin_namespace("uniform");
 			vm->set_function("void store(program@, const ?&in, const ?&in)", &uniform_store);
-			vm->set_function("void load(const program@, const ?&in, ?&out)", &uniform_load);
-			vm->set_function("t from<t>(const program@, const ?&in)", &uniform_from);
+			vm->set_function("void load(program@ const, const ?&in, ?&out)", &uniform_load);
+			vm->set_function("t from<t>(program@ const, const ?&in)", &uniform_from, convention::generic_call);
 			vm->end_namespace();
 
 			vm->begin_namespace("multiform");
 			vm->set_function("void store(program@, const ?&in, const ?&in, const ?&in)", &multiform_store);
-			vm->set_function("void load(const program@, const ?&in, const ?&in, ?&out)", &multiform_load_composition);
-			vm->set_function("void load_index(const program@, const ?&in, usize, ?&out)", &multiform_load_column);
-			vm->set_function("t from<t>(const program@, const ?&in, const ?&in)", &multiform_from_composition);
-			vm->set_function("t from_index<t>(const program@, const ?&in, usize)", &multiform_from_column);
+			vm->set_function("void load(program@ const, const ?&in, const ?&in, ?&out)", &multiform_load_composition);
+			vm->set_function("void load_index(program@ const, const ?&in, usize, ?&out)", &multiform_load_column);
+			vm->set_function("t from<t>(program@ const, const ?&in, const ?&in)", &multiform_from_composition, convention::generic_call);
+			vm->set_function("t from_index<t>(program@ const, const ?&in, usize)", &multiform_from_column, convention::generic_call);
 			vm->end_namespace();
 
 			vm->begin_namespace("block");
@@ -1026,7 +1047,7 @@ namespace tangent
 			vm->set_function("string wstring(const string_view&in)", &wstring);
 			vm->set_function("string wbytes(const string_view&in)", &wbytes);
 			vm->set_function("string wdecimal(const decimal&in)", &wdecimal);
-			vm->set_function("string wboolean(bool&)", &wboolean);
+			vm->set_function("string wboolean(bool)", &wboolean);
 			vm->set_function("string wuint256(const uint256&in)", &wuint256);
 			vm->set_function("string crc32(const string_view&in)", &crc32);
 			vm->set_function("string ripemd160(const string_view&in)", &ripe_md160);
@@ -1273,31 +1294,34 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> script_program::mutable_call(compiler* compiler, const std::string_view& function_name, const format::variables& args)
+		expects_lr<void> script_program::mutable_call(compiler* compiler, const std::string_view& function_decl, const format::variables& args)
 		{
-			if (function_name.empty())
+			if (function_decl.empty())
 				return layer_exception("illegal call to function: function not found");
 
-			return execute(compiler->get_module().get_function_by_name(function_name), args, -1, nullptr);
+			return execute(compiler->get_module().get_function_by_name(function_decl), args, -1, nullptr);
 		}
-		expects_lr<void> script_program::immutable_call(compiler* compiler, const std::string_view& function_name, const format::variables& args)
+		expects_lr<void> script_program::immutable_call(compiler* compiler, const std::string_view& function_decl, const format::variables& args)
 		{
-			if (function_name.empty())
+			if (function_decl.empty())
 				return layer_exception("illegal call to function: function not found");
 			
-			return execute(compiler->get_module().get_function_by_name(function_name), args, 0, nullptr);
+			return execute(compiler->get_module().get_function_by_name(function_decl), args, 0, nullptr);
 		}
 		expects_lr<void> script_program::execute(const function& entrypoint, const format::variables& args, int8_t mutability, std::function<expects_lr<void>(void*, int)>&& return_callback)
 		{
-			auto function_name = entrypoint.get_name();
 			if (!entrypoint.is_valid())
 			{
 				if (mutability == 1)
 					return expectation::met;
 
-				return layer_exception(stringify::text("illegal call to function \"%.*s\": function not found", (int)function_name.size(), function_name.data()));
+				return layer_exception("illegal call to function: null function");
 			}
-			else if (mutability != 1 && (function_name == SCRIPT_FUNCTION_CONSTRUCTOR || function_name == SCRIPT_FUNCTION_DESTRUCTOR))
+
+			auto function_name = entrypoint.get_name();
+			if (mutability != 1 && (function_name == SCRIPT_FUNCTION_CONSTRUCTOR || function_name == SCRIPT_FUNCTION_DESTRUCTOR))
+				return layer_exception(stringify::text("illegal call to function \"%.*s\": illegal operation", (int)function_name.size(), function_name.data()));
+			else if (!entrypoint.get_namespace().empty())
 				return layer_exception(stringify::text("illegal call to function \"%.*s\": illegal operation", (int)function_name.size(), function_name.data()));
 
 			auto binders = load_arguments(entrypoint, args, mutability);
@@ -1371,14 +1395,14 @@ namespace tangent
 				vm->return_context(coroutine);
 			return resolver;
 		}
-		expects_lr<void> script_program::subexecute(const script_address& target, const std::string_view& function_name, void* input_value, int input_type_id, void* output_value, int output_type_id, int8_t mutability) const
+		expects_lr<void> script_program::subexecute(const script_address& target, const std::string_view& function_decl, void* input_value, int input_type_id, void* output_value, int output_type_id, int8_t mutability) const
 		{
-			if (function_name.empty())
+			if (function_decl.empty())
 				return layer_exception(stringify::text("illegal subcall to %s program: illegal operation", target.to_string().c_str()));
 
 			auto link = context->get_account_program(target.hash.data);
 			if (!link)
-				return layer_exception(stringify::text("illegal subcall to %s program on function \"%.*s\": illegal operation", target.to_string().c_str(), (int)function_name.size(), function_name.data()));
+				return layer_exception(stringify::text("illegal subcall to %s program on function \"%.*s\": illegal operation", target.to_string().c_str(), (int)function_decl.size(), function_decl.data()));
 
 			auto* host = ledger::script_host::get();
 			auto compiler = host->allocate();
@@ -1388,21 +1412,21 @@ namespace tangent
 				if (!program)
 				{
 					host->deallocate(std::move(compiler));
-					return layer_exception(stringify::text("illegal subcall to %s program on function \"%.*s\": %s", target.to_string().c_str(), (int)function_name.size(), function_name.data(), program.error().what()));
+					return layer_exception(stringify::text("illegal subcall to %s program on function \"%.*s\": %s", target.to_string().c_str(), (int)function_decl.size(), function_decl.data(), program.error().what()));
 				}
 
 				auto code = program->as_code();
 				if (!code)
 				{
 					host->deallocate(std::move(compiler));
-					return layer_exception(stringify::text("illegal subcall to %s program on function \"%.*s\": %s", target.to_string().c_str(), (int)function_name.size(), function_name.data(), code.error().what()));
+					return layer_exception(stringify::text("illegal subcall to %s program on function \"%.*s\": %s", target.to_string().c_str(), (int)function_decl.size(), function_decl.data(), code.error().what()));
 				}
 
 				auto compilation = host->compile(*compiler, link->hashcode, *code);
 				if (!compilation)
 				{
 					host->deallocate(std::move(compiler));
-					return layer_exception(stringify::text("illegal subcall to %s program on function \"%.*s\": %s", target.to_string().c_str(), (int)function_name.size(), function_name.data(), compilation.error().what()));
+					return layer_exception(stringify::text("illegal subcall to %s program on function \"%.*s\": %s", target.to_string().c_str(), (int)function_decl.size(), function_decl.data(), compilation.error().what()));
 				}
 			}
 
@@ -1414,19 +1438,19 @@ namespace tangent
 				if (!serialization)
 				{
 					host->deallocate(std::move(compiler));
-					return layer_exception(stringify::text("illegal subcall to %s program on function \"%.*s\": %s", target.to_string().c_str(), (int)function_name.size(), function_name.data(), serialization.error().what()));
+					return layer_exception(stringify::text("illegal subcall to %s program on function \"%.*s\": %s", target.to_string().c_str(), (int)function_decl.size(), function_decl.data(), serialization.error().what()));
 				}
 
 				if (!format::variables_util::deserialize_flat_from(stream, &args))
 				{
 					host->deallocate(std::move(compiler));
-					return layer_exception(stringify::text("illegal subcall to %s program on function \"%.*s\": argument serialization error", target.to_string().c_str(), (int)function_name.size(), function_name.data()));
+					return layer_exception(stringify::text("illegal subcall to %s program on function \"%.*s\": argument serialization error", target.to_string().c_str(), (int)function_decl.size(), function_decl.data()));
 				}
 			}
 
 			auto transaction = transactions::invocation();
 			transaction.set_asset("ETH");
-			transaction.set_calldata(target.hash, algorithm::hashing::hash32d(link->hashcode), function_name, std::move(args));
+			transaction.set_calldata(target.hash, algorithm::hashing::hash32d(link->hashcode), function_decl, std::move(args));
 			transaction.gas_price = context->transaction->gas_price;
 			transaction.gas_limit = context->get_gas_left();
 			transaction.nonce = 0;
@@ -1443,16 +1467,16 @@ namespace tangent
 			auto* main = (script_program*)this;
 			main->context = &next;
 
-			auto execution = main->execute(compiler->get_module().get_function_by_name(function_name), transaction.args, mutability, [&target, &function_name, output_value, output_type_id](void* address, int type_id) -> expects_lr<void>
+			auto execution = main->execute(compiler->get_module().get_function_by_decl(function_decl), transaction.args, mutability, [&target, &function_decl, output_value, output_type_id](void* address, int type_id) -> expects_lr<void>
 			{
 				format::stream stream;
 				auto serialization = script_marshalling::store(&stream, address, type_id);
 				if (!serialization)
-					return layer_exception(stringify::text("illegal subcall to %s program on function \"%.*s\": return serialization error", target.to_string().c_str(), (int)function_name.size(), function_name.data()));
+					return layer_exception(stringify::text("illegal subcall to %s program on function \"%.*s\": return serialization error", target.to_string().c_str(), (int)function_decl.size(), function_decl.data()));
 
 				serialization = script_marshalling::load(stream, output_value, output_type_id);
 				if (!serialization)
-					return layer_exception(stringify::text("illegal subcall to %s program on function \"%.*s\": %s", target.to_string().c_str(), (int)function_name.size(), function_name.data(), serialization.error().what()));
+					return layer_exception(stringify::text("illegal subcall to %s program on function \"%.*s\": %s", target.to_string().c_str(), (int)function_decl.size(), function_decl.data(), serialization.error().what()));
 
 				return expectation::met;
 			});
@@ -1596,15 +1620,15 @@ namespace tangent
 
 			latest_frame.pointer = current_frame.pointer;
 		}
-		void script_program::call_mutable_function(const script_address& target, const std::string_view& function, void* input_value, int input_type_id, void* output_value, int output_type_id)
+		void script_program::call_mutable_function(const script_address& target, const std::string_view& function_decl, void* input_value, int input_type_id, void* output_value, int output_type_id)
 		{
-			auto execution = subexecute(target, function, input_value, input_type_id, output_value, output_type_id, -1);
+			auto execution = subexecute(target, function_decl, input_value, input_type_id, output_value, output_type_id, -1);
 			if (!execution)
 				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_EXECUTION, execution.error().message()));
 		}
-		void script_program::call_immutable_function(const script_address& target, const std::string_view& function, void* input_value, int input_type_id, void* output_value, int output_type_id) const
+		void script_program::call_immutable_function(const script_address& target, const std::string_view& function_decl, void* input_value, int input_type_id, void* output_value, int output_type_id) const
 		{
-			auto execution = subexecute(target, function, input_value, input_type_id, output_value, output_type_id, 0);
+			auto execution = subexecute(target, function_decl, input_value, input_type_id, output_value, output_type_id, 0);
 			if (!execution)
 				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_EXECUTION, execution.error().message()));
 		}
@@ -1643,7 +1667,7 @@ namespace tangent
 			}
 
 			format::stream stream = format::stream(data->data);
-			auto status = script_marshalling::load(stream, object_value, object_type_id);
+			status = script_marshalling::load(stream, object_value, object_type_id);
 			if (!status)
 			{
 				if (throw_on_error)
@@ -1661,7 +1685,7 @@ namespace tangent
 				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, status.error().message()));
 
 			format::stream row;
-			auto status = script_marshalling::store(&column, row_value, row_type_id);
+			status = script_marshalling::store(&column, row_value, row_type_id);
 			if (!status)
 				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, status.error().message()));
 
@@ -1685,7 +1709,7 @@ namespace tangent
 			}
 
 			format::stream row;
-			auto status = script_marshalling::store(&column, row_value, row_type_id);
+			status = script_marshalling::store(&column, row_value, row_type_id);
 			if (!status)
 			{
 				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, status.error().message()));
@@ -1701,7 +1725,7 @@ namespace tangent
 			}
 
 			format::stream stream = format::stream(data->data);
-			auto status = script_marshalling::load(stream, object_value, object_type_id);
+			status = script_marshalling::load(stream, object_value, object_type_id);
 			if (!status)
 			{
 				if (throw_on_error)
@@ -1730,7 +1754,7 @@ namespace tangent
 			}
 
 			format::stream stream = format::stream(data->front().data);
-			auto status = script_marshalling::load(stream, object_value, object_type_id);
+			status = script_marshalling::load(stream, object_value, object_type_id);
 			if (!status && throw_on_error)
 			{
 				if (throw_on_error)
@@ -1750,7 +1774,7 @@ namespace tangent
 				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "store location max length is 256 bytes"));
 
 			format::stream stream;
-			auto status = script_marshalling::store(&stream, (void*)object_value, object_type_id);
+			status = script_marshalling::store(&stream, (void*)object_value, object_type_id);
 			if (!status)
 				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, status.error().message()));
 

@@ -159,7 +159,12 @@ public:
 		{
 			auto& [user1, user1_nonce] = users[0];
 			ledger::wallet token_contract = ledger::wallet::from_seed(string("token") + string((char*)user1.secret_key, sizeof(user1.secret_key)));
-			std::string_view token_program = VI_STRINGIFY(
+			std::string_view token_program = VI_STRINGIFY((
+				enum contract_field
+			{
+				info
+			}
+
 			class token_info
 			{
 				address owner;
@@ -169,12 +174,6 @@ public:
 				uint256 supply = 0;
 			}
 
-			class token_balance
-			{
-				address owner;
-				uint256 value = 0;
-			}
-
 			class token_transfer
 			{
 				address from;
@@ -182,142 +181,107 @@ public:
 				uint256 value = 0;
 			}
 
-			token_info initialize(program@ p, const uint256 & in value)
+			token_info construct(program@ p, const uint256 & in value)
 			{
 				token_info token;
-				token.owner = p.from();
-				token.name = "Fiat Token";
-				token.symbol = "F";
+				token.owner = tx::from();
+				token.name = "Test Token";
+				token.symbol = "TT";
 				token.decimals = 2;
 				token.supply = value;
 
-				token_balance output;
-				output.owner = token.owner;
-				output.value = value;
-
-				p.store(p.to(), token);
-				p.store(output.owner, output);
+				uniform::store(@p, contract_field::info, token);
+				uniform::store(@p, token.owner, value);
 				return token;
 			}
 			token_transfer transfer(program@ p, const address & in to, const uint256 & in value)
 			{
-				address from = p.from();
-				token_balance input;
-				if (!p.load(from, input))
-					input.owner = from;
+				address from = tx::from();
+				uint256 input = 0, output = 0;
+				uniform::load(@p, from, input);
+				uniform::load(@p, to, output);
 
-				token_balance output;
-				if (!p.load(to, output))
-					output.owner = to;
-
-				uint256 from_delta = input.value - value;
-				if (from_delta > input.value)
-					throw exception_ptr("logical_error", "from balance will underflow (" + input.value.to_string() + " < " + value.to_string() + ")");
-
-				uint256 to_delta = output.value + value;
-				if (to_delta < output.value)
-					throw exception_ptr("argument_error", "to balance will overflow (" + output.value.to_string() + " + " + value.to_string() + " > uint256_max)");
-
-				input.value = from_delta;
-				output.value = to_delta;
-				p.store(input.owner, input);
-				p.store(output.owner, output);
+				uint256 from_delta = input - value, to_delta = output + value;
+				require(from_delta <= input, "from balance will underflow (" + input.to_string() + " < " + value.to_string() + ")");
+				require(to_delta >= output, "to balance will overflow (" + output.to_string() + " + " + value.to_string() + " > uint256_max)");
+				uniform::store(@p, from, from_delta);
+				uniform::store(@p, to, to_delta);
 
 				token_transfer event;
-				event.from = input.owner;
-				event.to = output.owner;
+				event.from = from;
+				event.to = to;
 				event.value = value;
 				return event;
 			}
 			uint256 mint(program@ p, const uint256 & in value)
 			{
-				token_info token;
-				if (!p.load(p.to(), token) || token.owner != p.from())
-					throw exception_ptr("logical_error", "from does not own the token");
+				token_info token = uniform::from<token_info>(@p, contract_field::info);
+				require(token.owner == tx::from(), "from does not own the token");
 
-				token_balance output;
-				if (!p.load(token.owner, output))
-					output.owner = token.owner;
+				uint256 output = 0;
+				uniform::load(@p, token.owner, output);
 
 				uint256 supply_delta = token.supply + value;
-				if (supply_delta < token.supply)
-					throw exception_ptr("argument_error", "token supply will overflow (" + output.value.to_string() + " + " + value.to_string() + " > uint256_max)");
-
-				uint256 to_delta = output.value + value;
-				if (to_delta < output.value)
-					throw exception_ptr("argument_error", "owner balance will overflow (" + output.value.to_string() + " + " + value.to_string() + " > uint256_max)");
+				uint256 to_delta = output + value;
+				require(supply_delta >= token.supply, "token supply will overflow (" + output.to_string() + " + " + value.to_string() + " > uint256_max)");
+				require(to_delta >= output, "owner balance will overflow (" + output.to_string() + " + " + value.to_string() + " > uint256_max)");
 
 				token.supply = supply_delta;
-				output.value = to_delta;
-				p.store(p.to(), token);
-				p.store(output.owner, output);
-				return output.value;
+				uniform::store(@p, contract_field::info, token);
+				uniform::store(@p, token.owner, to_delta);
+				return to_delta;
 			}
 			uint256 burn(program@ p, const uint256 & in value)
 			{
-				token_info token;
-				if (!p.load(p.to(), token) || token.owner != p.from())
-					throw exception_ptr("logical_error", "from does not own the token");
+				token_info token = uniform::from<token_info>(@p, contract_field::info);
+				require(token.owner == tx::from(), "from does not own the token");
 
-				token_balance output;
-				if (!p.load(token.owner, output))
-					output.owner = token.owner;
+				uint256 output = 0;
+				uniform::load(@p, token.owner, output);
 
 				uint256 supply_delta = token.supply - value;
-				if (supply_delta > token.supply)
-					throw exception_ptr("logical_error", "token supply will underflow (" + token.supply.to_string() + " < " + value.to_string() + ")");
-
-				uint256 to_delta = output.value - value;
-				if (to_delta > output.value)
-					throw exception_ptr("argument_error", "owner balance will underflow (" + output.value.to_string() + " < " + value.to_string() + ")");
+				uint256 to_delta = output - value;
+				require(supply_delta <= token.supply, "token supply will underflow (" + token.supply.to_string() + " < " + value.to_string() + ")");
+				require(to_delta <= output, "owner balance will underflow (" + output.to_string() + " < " + value.to_string() + ")");
 
 				token.supply = supply_delta;
-				output.value = to_delta;
-				p.store(p.to(), token);
-				p.store(output.owner, output);
-				return output.value;
+				uniform::store(@p, contract_field::info, token);
+				uniform::store(@p, token.owner, to_delta);
+				return to_delta;
 			}
 			uint256 balance_of(program@ const p, const address & in owner)
 			{
-				token_balance output;
-				if (!p.load(owner, output))
-					output.owner = owner;
-				return output.value;
+				uint256 output = 0;
+				uniform::load(@p, owner, output);
+				return output;
 			}
 			token_info info(program@ const p)
 			{
-				token_info token;
-				if (!p.load(p.to(), token))
-					throw exception_ptr("logical_error", "token info not found");
-
-				return token;
-			});
+				return uniform::from<token_info>(@p, contract_field::info);
+			}));
 
 			auto* deployment_ethereum1 = memory::init<transactions::deployment>();
 			deployment_ethereum1->set_asset("ETH");
-			deployment_ethereum1->set_program_calldata(token_program, { format::variable(1000000u) });
+			deployment_ethereum1->set_program_calldata(token_program.substr(1, token_program.size() - 2), { format::variable(1000000u) });
 			deployment_ethereum1->sign_location(token_contract.secret_key);
 			VI_PANIC(deployment_ethereum1->sign(user1.secret_key, user1_nonce++, decimal::zero()), "deployment not signed");
 			transactions.push_back(deployment_ethereum1);
 
 			ledger::wallet bridge_contract = ledger::wallet::from_seed(string("bridge") + string((char*)user1.secret_key, sizeof(user1.secret_key)));
-			std::string_view bridge_program = VI_STRINGIFY(
-			class token_balance
+			std::string_view bridge_program = VI_STRINGIFY((
+				void construct(program@ p, const address & in token_address)
 			{
-				address owner;
-				uint256 value = 0;
+				uniform::store(@p, uint8(0), token_address);
 			}
-
-			uint256 my_balance(program@ const p)
+			uint256 balance_of_test_token(program@ const p)
 			{
-				uint256 from_balance = 0;
-				p.call("%s", "balance_of", p.from(), from_balance);
-				return from_balance;
-			});
+				address token_address = uniform::from<address>(@p, uint8(0));
+				return token_address.call<uint256>(@p, "uint256 balance_of(program@ const, const address&in)", tx::from());
+			}));
 
 			auto* deployment_ethereum2 = memory::init<transactions::deployment>();
 			deployment_ethereum2->set_asset("ETH");
-			deployment_ethereum2->set_program_calldata(stringify::text(bridge_program.data(), token_contract.get_address().c_str()), { });
+			deployment_ethereum2->set_program_calldata(bridge_program.substr(1, bridge_program.size() - 2), { format::variable(token_contract.get_address()) });
 			deployment_ethereum2->sign_location(bridge_contract.secret_key);
 			VI_PANIC(deployment_ethereum2->sign(user1.secret_key, user1_nonce++, decimal::zero()), "deployment not signed");
 			transactions.push_back(deployment_ethereum2);
@@ -333,10 +297,16 @@ public:
 			VI_PANIC(invocation_ethereum1->sign(user1.secret_key, user1_nonce++, decimal::zero()), "invocation not signed");
 			transactions.push_back(invocation_ethereum1);
 
+			auto* invocation_ethereum2 = memory::init<transactions::invocation>();
+			invocation_ethereum2->set_asset("ETH");
+			invocation_ethereum2->set_calldata(algorithm::encoding::to_subaddress(token_contract.public_key_hash), "info", { });
+			VI_PANIC(invocation_ethereum2->sign(user1.secret_key, user1_nonce++, decimal::zero()), "invocation not signed");
+			transactions.push_back(invocation_ethereum2);
+
 			ledger::wallet bridge_contract = ledger::wallet::from_seed(string("bridge") + string((char*)user1.secret_key, sizeof(user1.secret_key)));
 			auto* invocation_bitcoin = memory::init<transactions::invocation>();
 			invocation_bitcoin->set_asset("BTC");
-			invocation_bitcoin->set_calldata(algorithm::encoding::to_subaddress(bridge_contract.public_key_hash, "123456"), "my_balance", { });
+			invocation_bitcoin->set_calldata(algorithm::encoding::to_subaddress(bridge_contract.public_key_hash, "123456"), "balance_of_test_token", { });
 			VI_PANIC(invocation_bitcoin->sign(user1.secret_key, user1_nonce++, decimal::zero()), "invocation not signed");
 			transactions.push_back(invocation_bitcoin);
 		}
@@ -724,7 +694,8 @@ public:
 		new_serialization_comparison<ledger::block_proof>(*data, ledger::block_header(), (ledger::block_header*)nullptr);
 		new_serialization_comparison<states::account_nonce>(*data, owner, block_number++, block_nonce++);
 		new_serialization_comparison<states::account_program>(*data, owner, block_number++, block_nonce++);
-		new_serialization_comparison<states::account_storage>(*data, owner, block_number++, block_nonce++);
+		new_serialization_comparison<states::account_uniform>(*data, owner, block_number++, block_nonce++);
+		new_serialization_comparison<states::account_multiform>(*data, owner, block_number++, block_nonce++);
 		new_serialization_comparison<states::account_balance>(*data, owner, block_number++, block_nonce++);
 		new_serialization_comparison<states::validator_production>(*data, owner, block_number++, block_nonce++);
 		new_serialization_comparison<states::validator_participation>(*data, owner, block_number++, block_nonce++);
@@ -1358,7 +1329,7 @@ public:
 			prepared.requires_abi(format::variable(string()));
 			prepared.requires_abi(format::variable(string("DQ6H97iaf92qFZAWFSu57x74i47L4MJL5vjfun8pMrCj")));
 			validate_transaction(asset, wallet, prepared, "transfer", "2WdkL4bmuDPUcfPRuL8r5XxJi3CkA6d2rzVe8voUUduLDvrAqNMDrtQHtVvoMxd9XiV5utj1KiJxQWRxwPcur1GULgPy25pWqKFTqqJ8XYA4Wsutq2VzGo3YBUecKC9HYtQnmMiufpQeYChj91geaimZPvhaBgvVF58bHKchWHJiuywGNq8PHhsaDemprtxk12uyswZBmMiSLifE6EATx8bjXgXTbMWyytYM2Xz6u7Hh1D6Jna5D2uKSuVBF2nQuzuspgGyk4qWVfCUP5CNhBn5B6sjGFeEuF575GAQo");
-			
+
 			auto token_asset = algorithm::asset::id_of("SOL", "9YaGkvrR1fjXSAm7LTcQYXZiZfub2EuWvVxBmRSHcwHZ", "9YaGkvrR1fjXSAm7LTcQYXZiZfub2EuWvVxBmRSHcwHZ");
 			signable_link = warden::wallet_link(user.public_key_hash, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
 			signable_message = codec::hex_decode("0x80010001042a994a958414a9dac047fd32001847954f89f464433cb04266fde37d6aff1544437b32d02edb961d6ffba969407c441a127befb1fe6885fa40f3d9e1dd7f9306d36dc35d5d43cb85d730bbf57899cb2266076f149fdf00b5491b69d1ad764df306ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a95abee248b8b08441f683b2e58d6b7c62bfa977bb775f0ef37facee593d0b1269010303010200090350a505000000000000");
@@ -1484,13 +1455,13 @@ public:
 			TEST_BLOCK(&generators::account_transfer_stage_2, "0xd79a8afed9cb6008060c05f796d018bd8af03868ac8b6cc9a20f2d8d62146124", 8);
 			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), users[2].wallet.get_address(), 0.05), "0x3aa029a9e62da37c061dee31f494641e43e56a3d790fe04305529fd800c47fc2", 9);
 			TEST_BLOCK(&generators::account_transaction_rollup, "0x343d704a821cfaa7ebdde3c49cc5e7840e1a9771713b66706bc9e150795259b0", 10);
-			TEST_BLOCK(&generators::account_program_deployment, "0x83f8cf672c4dfe134342e37e61bba21cf2e0d749c7dbddb3b76f973772263c3e", 11);
-			TEST_BLOCK(&generators::account_program_invocation, "0xee350499baba071c3d94cb4e9d97104e3dffefd458119e71982079398b071d54", 12);
-			TEST_BLOCK(&generators::depository_regrouping, "0x09cf36aac067132b9aac6963bcc68e968bc638e043879cdf9504c69ac4568252", 13);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_1, "0xa227f9b39fce0af5f3dbbb4267091f2f577981851ba1e5b53ee09dba2f825402", 17);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0x7900b7abd58b6b068eba3008fda16aca36eff136c78e5d53252f9637ed235ab0", 19);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0x31736092e1bb3b9983992d6361f1f2b8f1b48eb9499013489b7b592cd1165556", 21);
-			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2), "0xbbf181d4e5fd45f76f100907240bac8922d464ecfe16c68b2f5604e1aa11551f", 23);
+			TEST_BLOCK(&generators::account_program_deployment, "0xc3d66f79ba2ac3a3924147577d8f3ac6e13bb87e66b3507b7c5f2c7ea7baabe9", 11);
+			TEST_BLOCK(&generators::account_program_invocation, "0x91ba721cfc8d08c45bb22327c63fd5875c049c8d170f16f7a3e29dc99ab6549d", 12);
+			TEST_BLOCK(&generators::depository_regrouping, "0xaef94b72b6ca6b2f1ab1eba85c2f107d3917cc93795bccae962f2aaed1558853", 13);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_1, "0x2b87ff3e6cc03bcb7823dd039f80fac2ea31720a9a5189d64b208cead9603b44", 17);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0xfbf9a38dce8577afc298de57f63d8c19ea42142ff38e75efff2b473ac05dba22", 19);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0xc4ef4db40909e6ef0269726c03cc86d59320b5be247705fead68d62e2e2a4fe8", 21);
+			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2), "0xebe3e8560c8e37b8c6ff310f488830cb934b3578b631a89a9ebc099894b35992", 23);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else
@@ -1829,7 +1800,7 @@ public:
 					algorithm::composition::accumulate_signature(input.alg, input.message.data(), input.message.size(), input.public_key, wallet.secret_key, input.signature).expect("signature accumulation error");
 					algorithm::composition::accumulate_signature(input.alg, input.message.data(), input.message.size(), input.public_key, nullptr, input.signature).expect("signature finalization error");
 				}
-				
+
 				auto finalized_transaction = server->finalize_transaction(asset, std::move(*prepared_transaction));
 				term->jwrite_line(*finalized_transaction->as_schema());
 				coawait(server->broadcast_transaction(asset, uint256_t(codec::hex_encode(*crypto::random_bytes(32)), 16), *finalized_transaction)).expect("transaction broadcast error");
@@ -1897,13 +1868,22 @@ public:
 					type = states::account_program::as_instance_type();
 					index = states::account_program::as_instance_index(owner);
 				}
-				else if (state == "storage")
+				else if (state == "uniform")
 				{
 					if (args.size() < 4)
 						goto not_valid;
 
-					type = states::account_storage::as_instance_type();
-					index = states::account_storage::as_instance_index(owner, codec::hex_decode(args[3]));
+					type = states::account_uniform::as_instance_type();
+					index = states::account_uniform::as_instance_index(owner, codec::hex_decode(args[3]));
+				}
+				else if (state == "multiform")
+				{
+					if (args.size() < 5)
+						goto not_valid;
+
+					type = states::account_multiform::as_instance_type();
+					column = states::account_multiform::as_instance_column(owner, codec::hex_decode(args[3]));
+					row = states::account_multiform::as_instance_row(codec::hex_decode(args[4]));
 				}
 				else if (state == "delegation")
 				{
@@ -2742,5 +2722,5 @@ public:
 
 int main(int argc, char* argv[])
 {
-	return apps::consensus(argc, argv);
+	return apps::regression(argc, argv);
 }

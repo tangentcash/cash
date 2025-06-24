@@ -158,7 +158,9 @@ namespace tangent
 			server_response chainstate_get_multiforms_count_by_row(http::connection* base, format::variables&& args);
 			server_response chainstate_get_account_nonce(http::connection* base, format::variables&& args);
 			server_response chainstate_get_account_program(http::connection* base, format::variables&& args);
-			server_response chainstate_get_account_storage(http::connection* base, format::variables&& args);
+			server_response chainstate_get_account_uniform(http::connection* base, format::variables&& args);
+			server_response chainstate_get_account_multiform(http::connection* base, format::variables&& args);
+			server_response chainstate_get_account_multiforms(http::connection* base, format::variables&& args);
 			server_response chainstate_get_account_delegation(http::connection* base, format::variables&& args);
 			server_response chainstate_get_account_balance(http::connection* base, format::variables&& args);
 			server_response chainstate_get_account_balances(http::connection* base, format::variables&& args);

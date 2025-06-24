@@ -74,11 +74,11 @@ namespace tangent
 			virtual expects_lr<void> construct(compiler* compiler, const format::variables& args);
 			virtual expects_lr<void> destruct(compiler* compiler);
 			virtual expects_lr<void> destruct(const function& entrypoint);
-			virtual expects_lr<void> mutable_call(compiler* compiler, const std::string_view& function, const format::variables& args);
-			virtual expects_lr<void> immutable_call(compiler* compiler, const std::string_view& function, const format::variables& args);
+			virtual expects_lr<void> mutable_call(compiler* compiler, const std::string_view& function_decl, const format::variables& args);
+			virtual expects_lr<void> immutable_call(compiler* compiler, const std::string_view& function_decl, const format::variables& args);
 			virtual bool dispatch_instruction(virtual_machine* vm, immediate_context* coroutine, uint32_t* program_data, size_t program_counter, byte_code_label& opcode);
-			virtual void call_mutable_function(const script_address& target, const std::string_view& function, void* input_value, int input_type_id, void* output_value, int output_type_id);
-			virtual void call_immutable_function(const script_address& target, const std::string_view& function, void* input_value, int input_type_id, void* output_value, int output_type_id) const;
+			virtual void call_mutable_function(const script_address& target, const std::string_view& function_decl, void* input_value, int input_type_id, void* output_value, int output_type_id);
+			virtual void call_immutable_function(const script_address& target, const std::string_view& function_decl, void* input_value, int input_type_id, void* output_value, int output_type_id) const;
 			virtual void store_uniform(const void* index_value, int index_type_id, const void* object_value, int object_type_id);
 			virtual bool load_uniform(const void* index_value, int index_type_id, void* object_value, int object_type_id, bool throw_on_error) const;
 			virtual void store_multiform(const void* column_value, int column_type_id, const void* row_value, int row_type_id, const void* object_value, int object_type_id);
@@ -110,7 +110,7 @@ namespace tangent
 
 		protected:
 			virtual expects_lr<void> execute(const function& entrypoint, const format::variables& args, int8_t mutability, std::function<expects_lr<void>(void*, int)>&& return_callback);
-			virtual expects_lr<void> subexecute(const script_address& target, const std::string_view& function, void* input_value, int input_type_id, void* output_value, int output_type_id, int8_t mutability) const;
+			virtual expects_lr<void> subexecute(const script_address& target, const std::string_view& function_decl, void* input_value, int input_type_id, void* output_value, int output_type_id, int8_t mutability) const;
 			virtual expects_lr<vector<std::function<void(immediate_context*)>>> load_arguments(const function& entrypoint, const format::variables& args, int8_t mutability) const;
 			virtual void load_coroutine(immediate_context* coroutine, vector<script_frame>& frames);
 

@@ -51,19 +51,19 @@ namespace tangent
 				return uniform_location(states::account_program::as_instance_type(), states::account_program::as_instance_index(owner));
 			}
 
-			if (type == states::account_storage::as_instance_typename())
+			if (type == states::account_uniform::as_instance_typename())
 			{
 				auto data = index.as_schema();
 				if (!data)
-					return layer_exception("invalid value, expected { address: string, location: string }");
+					return layer_exception("invalid value, expected { address: string, index: string }");
 
 				auto owner_address = data->get_var("address").get_blob();
-				auto location = data->get_var("location").get_blob();
+				auto index = data->get_var("index").get_blob();
 				algorithm::pubkeyhash owner = { 0 };
 				if (!algorithm::signing::decode_address(owner_address, owner))
 					return layer_exception("invalid address");
 
-				return uniform_location(states::account_storage::as_instance_type(), states::account_storage::as_instance_index(owner, location));
+				return uniform_location(states::account_uniform::as_instance_type(), states::account_uniform::as_instance_index(owner, index));
 			}
 
 			if (type == states::account_delegation::as_instance_typename())
@@ -96,6 +96,21 @@ namespace tangent
 		}
 		static expects_lr<multiform_location> as_multiform_location(const std::string_view& type, const format::variable& column, const format::variable& row)
 		{
+			if (type == states::account_multiform::as_instance_typename())
+			{
+				auto data = column.as_schema();
+				if (!data)
+					return layer_exception("invalid column value, expected { address: string, column: string }");
+
+				auto owner_address = data->get_var("address").get_blob();
+				auto column_value = data->get_var("column").get_blob();
+				algorithm::pubkeyhash owner = { 0 };
+				if (!algorithm::signing::decode_address(owner_address, owner))
+					return layer_exception("invalid address");
+
+				return multiform_location(states::account_multiform::as_instance_type(), states::account_multiform::as_instance_row(row.as_string()), states::account_multiform::as_instance_column(owner, column_value));
+			}
+
 			if (type == states::account_balance::as_instance_typename())
 			{
 				algorithm::pubkeyhash owner = { 0 };
@@ -356,7 +371,9 @@ namespace tangent
 			bind(0 | access_type::r, "chainstate", "getmultiformscountbyrow", 4, 4, "string type, any row, string weight_condition = '>' | '>=' | '=' | '<>' | '<=' | '<', int64 weight_value", "uint64", "get filtered multiform count by type and row", std::bind(&server_node::chainstate_get_multiforms_count_by_row, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getaccountnonce", 1, 1, "string address", "uint64", "get account nonce by address", std::bind(&server_node::chainstate_get_account_nonce, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getaccountprogram", 1, 1, "string address", "uniform", "get account program hashcode by address", std::bind(&server_node::chainstate_get_account_program, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getaccountstorage", 2, 2, "string address, string location", "uniform", "get account storage by address and location", std::bind(&server_node::chainstate_get_account_storage, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getaccountuniform", 2, 2, "string address, string index", "uniform", "get account storage by address and index", std::bind(&server_node::chainstate_get_account_uniform, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getaccountmultiform", 3, 3, "string address, string column, string row", "multiform", "get account storage by address, column and row", std::bind(&server_node::chainstate_get_account_multiform, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getaccountmultiforms", 4, 4, "string address, string column, uint64 offset, uint64 count", "multiform[]", "get account storage by address and column", std::bind(&server_node::chainstate_get_account_multiforms, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getaccountdelegation", 1, 1, "string address", "uniform", "get account delegation by address", std::bind(&server_node::chainstate_get_account_delegation, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getaccountbalance", 2, 2, "string address, string asset", "multiform", "get account balance by address and asset", std::bind(&server_node::chainstate_get_account_balance, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getaccountbalances", 3, 3, "string address, uint64 offset, uint64 count", "multiform[]", "get account balances by address", std::bind(&server_node::chainstate_get_account_balances, this, std::placeholders::_1, std::placeholders::_2));
@@ -1884,15 +1901,45 @@ namespace tangent
 			auto state = chain.get_uniform_by_index(states::account_program::as_instance_type(), nullptr, states::account_program::as_instance_index(owner), 0);
 			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
 		}
-		server_response server_node::chainstate_get_account_storage(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_account_uniform(http::connection* base, format::variables&& args)
 		{
 			algorithm::pubkeyhash owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
 			auto chain = storages::chainstate(__func__);
-			auto state = chain.get_uniform_by_index(states::account_storage::as_instance_type(), nullptr, states::account_storage::as_instance_index(owner, args[1].as_string()), 0);
+			auto state = chain.get_uniform_by_index(states::account_uniform::as_instance_type(), nullptr, states::account_uniform::as_instance_index(owner, args[1].as_string()), 0);
 			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
+		}
+		server_response server_node::chainstate_get_account_multiform(http::connection* base, format::variables&& args)
+		{
+			algorithm::pubkeyhash owner;
+			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
+				return server_response().error(error_codes::bad_params, "account address not valid");
+
+			auto chain = storages::chainstate(__func__);
+			auto state = chain.get_multiform_by_composition(states::account_multiform::as_instance_type(), nullptr, states::account_multiform::as_instance_column(owner, args[1].as_string()), states::account_multiform::as_instance_row(args[2].as_string()), 0);
+			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
+		}
+		server_response server_node::chainstate_get_account_multiforms(http::connection* base, format::variables&& args)
+		{
+			algorithm::pubkeyhash owner;
+			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
+				return server_response().error(error_codes::bad_params, "account address not valid");
+
+			uint64_t offset = args[2].as_uint64(), count = args[3].as_uint64();
+			if (!count || count > protocol::now().user.rpc.page_size)
+				return server_response().error(error_codes::bad_params, "count not valid");
+
+			auto chain = storages::chainstate(__func__);
+			auto list = chain.get_multiforms_by_column(states::account_multiform::as_instance_type(), nullptr, states::account_multiform::as_instance_column(owner, args[1].as_string()), 0, offset, count);
+			if (!list)
+				return server_response().error(error_codes::not_found, "data not found");
+
+			uptr<schema> data = var::set::array();
+			for (auto& item : *list)
+				data->push(item->as_schema().reset());
+			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_account_delegation(http::connection* base, format::variables&& args)
 		{
