@@ -715,9 +715,9 @@ namespace tangent
 				ledger::evaluation_context temp_environment;
 				memcpy(temp_environment.validator.public_key_hash, validator.wallet.public_key_hash, sizeof(algorithm::pubkeyhash));
 
-				ledger::block_work cache;
+				ledger::block_changelog temp_changelog;
 				size_t transaction_size = candidate_tx->as_message().data.size();
-				auto validation = ledger::transaction_context::execute_tx(&temp_block, &temp_environment, *candidate_tx, candidate_hash, owner, cache, transaction_size, (uint8_t)ledger::transaction_context::execution_flags::only_successful);
+				auto validation = ledger::transaction_context::execute_tx(&temp_environment, &temp_block, &temp_changelog, *candidate_tx, candidate_hash, owner, transaction_size, (uint8_t)ledger::transaction_context::execution_flags::only_successful);
 				if (!validation)
 				{
 					if (protocol::now().user.p2p.logging)
@@ -1163,32 +1163,32 @@ namespace tangent
 		}
 		void server_node::clear_pending_tip()
 		{
-			pending_tip.hash = 0;
-			pending_tip.block = optional::none;
-			if (pending_tip.timeout != INVALID_TASK_ID)
+			pending.hash = 0;
+			pending.evaluation = optional::none;
+			if (pending.timeout != INVALID_TASK_ID)
 			{
-				schedule::get()->clear_timeout(pending_tip.timeout);
-				pending_tip.timeout = INVALID_TASK_ID;
+				schedule::get()->clear_timeout(pending.timeout);
+				pending.timeout = INVALID_TASK_ID;
 			}
 		}
-		void server_node::enqueue_pending_tip(const uint256_t& candidate_hash, ledger::block&& candidate_block)
+		void server_node::enqueue_pending_tip(const uint256_t& candidate_hash, ledger::block_evaluation&& candidate)
 		{
 			clear_pending_tip();
-			pending_tip.block = std::move(candidate_block);
-			pending_tip.hash = candidate_hash;
-			pending_tip.timeout = schedule::get()->set_timeout(protocol::now().policy.consensus_proof_time, std::bind(&server_node::accept_pending_tip, this));
+			pending.evaluation = std::move(candidate);
+			pending.hash = candidate_hash;
+			pending.timeout = schedule::get()->set_timeout(protocol::now().policy.consensus_proof_time, std::bind(&server_node::accept_pending_tip, this));
 		}
 		void server_node::accept_pending_tip()
 		{
 			umutex<std::recursive_mutex> unique(sync.block);
-			if (pending_tip.block)
+			if (pending.evaluation)
 			{
 				auto chain = storages::chainstate(__func__);
 				auto tip_block = chain.get_latest_block_header();
-				if (!tip_block || *tip_block < *pending_tip.block)
+				if (!tip_block || *tip_block < pending.evaluation->block)
 				{
-					if (accept_block_candidate(*pending_tip.block, pending_tip.hash, 0))
-						accept_dispatchpool(*pending_tip.block);
+					if (accept_block_candidate(*pending.evaluation, pending.hash, 0))
+						accept_dispatchpool(pending.evaluation->block);
 				}
 			}
 			clear_pending_tip();
@@ -1300,19 +1300,13 @@ namespace tangent
 					evaluation.report("mempool proposal evaluation failed");
 					if (evaluation)
 					{
-						auto solution = environment.solve(*evaluation);
+						auto solution = environment.solve(evaluation->block);
 						solution.report("mempool proposal solution failed");
 						if (solution)
 							accept_block(nullptr, std::move(*evaluation), 0);
 					}
-
 					if (!errors.empty())
-					{
-						if (evaluation)
-							VI_WARN("[p2p] mempool block %s acceptable evaluation error: %s", algorithm::encoding::encode_0xhex256(evaluation->as_hash()).c_str(), errors.c_str());
-						else
-							VI_ERR("[p2p] mempool block evaluation error: %s", errors.c_str());
-					}
+						VI_ERR("[p2p] mempool block evaluation error: %s", errors.c_str());
 				}
 				else if (is_active())
 					environment.cleanup().report("mempool cleanup failed");
@@ -1354,10 +1348,10 @@ namespace tangent
 				});
 			});
 		}
-		bool server_node::accept_block(relay* from, ledger::block&& candidate_block, const uint256_t& fork_tip)
+		bool server_node::accept_block(relay* from, ledger::block_evaluation&& candidate, const uint256_t& fork_tip)
 		{
-			uint256_t candidate_hash = candidate_block.as_hash();
-			auto verification = from ? candidate_block.verify_validity(nullptr) : environment.verify(candidate_block);
+			uint256_t candidate_hash = candidate.block.as_hash();
+			auto verification = from ? candidate.block.verify_validity(nullptr) : environment.verify(candidate.block, &candidate.state);
 			if (!verification)
 			{
 				if (protocol::now().user.p2p.logging)
@@ -1391,11 +1385,11 @@ namespace tangent
 			auto tip_block = fork_branch ? expects_lr<ledger::block_header>(fork_tip_block) : chain.get_latest_block_header();
 			auto tip_hash = tip_block ? tip_block->as_hash() : (uint256_t)0;
 			auto best_tip_work = tip_block ? tip_block->absolute_work : (uint256_t)0;
-			auto parent_block = tip_hash == candidate_block.parent_hash ? tip_block : chain.get_block_header_by_hash(candidate_block.parent_hash);
+			auto parent_block = tip_hash == candidate.block.parent_hash ? tip_block : chain.get_block_header_by_hash(candidate.block.parent_hash);
 			auto parent_hash = parent_block ? parent_block->as_hash() : (uint256_t)0;
-			int64_t branch_length = (int64_t)candidate_block.number - (int64_t)(tip_block ? tip_block->number : 0);
+			int64_t branch_length = (int64_t)candidate.block.number - (int64_t)(tip_block ? tip_block->number : 0);
 			branch_length = fork_branch ? abs(branch_length) : branch_length;
-			if (branch_length < 0 || (!fork_branch && candidate_block.absolute_work < best_tip_work))
+			if (branch_length < 0 || (!fork_branch && candidate.block.absolute_work < best_tip_work))
 			{
 				/*
 													  <+> - <+> - <+> = ignore (weaker branch)
@@ -1408,7 +1402,7 @@ namespace tangent
 					VI_WARN("[p2p] block %s branch averted: not preferred %s (length: %" PRIi64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), branch_length < 0 ? "branch" : "difficulty", branch_length);
 				return false;
 			}
-			else if (branch_length == 0 && tip_block && tip_hash != candidate_hash && candidate_block < *tip_block)
+			else if (branch_length == 0 && tip_block && tip_hash != candidate_hash && candidate.block < *tip_block)
 			{
 				/*
 													  <+> = ignore (weaker branch)
@@ -1419,7 +1413,7 @@ namespace tangent
 					VI_WARN("[p2p] block %s branch averted: not preferred difficulty", algorithm::encoding::encode_0xhex256(candidate_hash).c_str());
 				return false;
 			}
-			else if (!parent_block && candidate_block.number > 1)
+			else if (!parent_block && candidate.block.number > 1)
 			{
 				if (!from)
 				{
@@ -1432,7 +1426,7 @@ namespace tangent
 				bool has_better_tip = forks.empty();
 				for (auto& fork_candidate_tip : forks)
 				{
-					if (fork_candidate_tip.second.header < candidate_block)
+					if (fork_candidate_tip.second.header < candidate.block)
 					{
 						has_better_tip = true;
 						break;
@@ -1465,7 +1459,7 @@ namespace tangent
 														  \
 														   <+> = possibly orphan
 				*/
-				accept_pending_fork(from, fork_head::append, candidate_hash, ledger::block_header(candidate_block));
+				accept_pending_fork(from, fork_head::append, candidate_hash, ledger::block_header(candidate.block));
 				unique.unlock();
 				if (!tip_block)
 					call(from, &methods::request_fork_block, { format::variable(candidate_hash), format::variable(uint256_t(0)), format::variable((uint64_t)1) });
@@ -1473,26 +1467,23 @@ namespace tangent
 					call(from, &methods::find_fork_collision, { format::variable(candidate_hash), format::variable(tip_block->number) });
 
 				if (protocol::now().user.p2p.logging)
-					VI_INFO("[p2p] block %s new best branch found (height: %" PRIu64 ", distance: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), candidate_block.number, std::abs((int64_t)(tip_block ? tip_block->number : 0) - (int64_t)candidate_block.number));
+					VI_INFO("[p2p] block %s new best branch found (height: %" PRIu64 ", distance: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), candidate.block.number, std::abs((int64_t)(tip_block ? tip_block->number : 0) - (int64_t)candidate.block.number));
 				return true;
 			}
 
 			if (from != nullptr)
 			{
-				ledger::block evaluated_block;
-				auto validation = candidate_block.validate(parent_block.address(), &evaluated_block);
+				auto validation = candidate.block.validate(parent_block.address(), &candidate);
 				if (!validation)
 				{
 					if (protocol::now().user.p2p.logging)
 						VI_WARN("[p2p] block %s branch averted: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), validation.error().what());
 					return false;
 				}
-
-				candidate_block = std::move(evaluated_block);
 			}
 			else
 			{
-				auto integrity = candidate_block.verify_integrity(parent_block.address());
+				auto integrity = candidate.block.verify_integrity(parent_block.address(), &candidate.state);
 				if (!integrity)
 				{
 					if (protocol::now().user.p2p.logging)
@@ -1502,20 +1493,20 @@ namespace tangent
 			}
 
 			umutex<std::recursive_mutex> unique(sync.block);
-			if (!fork_branch && candidate_block.priority != 0 && (branch_length == 0 || branch_length == 1))
+			if (!fork_branch && candidate.block.priority != 0 && (branch_length == 0 || branch_length == 1))
 			{
 				/*
 					<+> - <+> - <+> - <+> - <+> - <+> = extension (non-zero priority, possible fork, wait for zero priority block)
 				*/
-				if (pending_tip.block)
+				if (pending.evaluation)
 				{
-					if (pending_tip.hash == candidate_hash)
+					if (pending.hash == candidate_hash)
 					{
 						if (protocol::now().user.p2p.logging)
 							VI_INFO("[p2p] block %s branch confirmed", algorithm::encoding::encode_0xhex256(candidate_hash).c_str());
 						return true;
 					}
-					else if (candidate_block < *pending_tip.block)
+					else if (candidate.block < pending.evaluation->block)
 					{
 						if (protocol::now().user.p2p.logging)
 							VI_WARN("[p2p] block %s branch averted: not preferred priority", algorithm::encoding::encode_0xhex256(candidate_hash).c_str());
@@ -1523,11 +1514,11 @@ namespace tangent
 					}
 				}
 
-				size_t multicalls = from ? multicall(from, &methods::propose_block_hash, { format::variable(candidate_hash) }) : multicall(from, &methods::propose_block, { format::variable(candidate_block.as_message().data) });
+				size_t multicalls = from ? multicall(from, &methods::propose_block_hash, { format::variable(candidate_hash) }) : multicall(from, &methods::propose_block, { format::variable(candidate.block.as_message().data) });
 				if (multicalls > 0 && protocol::now().user.p2p.logging)
-					VI_DEBUG("[p2p] block %s broadcasted to %i nodes (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)multicalls, candidate_block.number);
+					VI_DEBUG("[p2p] block %s broadcasted to %i nodes (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)multicalls, candidate.block.number);
 
-				enqueue_pending_tip(candidate_hash, std::move(candidate_block));
+				enqueue_pending_tip(candidate_hash, std::move(candidate));
 				if (fork_tip != candidate_hash)
 					accept_pending_fork(from, fork_head::replace, fork_tip, std::move(fork_tip_block));
 				else
@@ -1540,12 +1531,12 @@ namespace tangent
 											   \
 												<+> - <+> = possible reorganization
 				*/
-				if (!accept_block_candidate(candidate_block, candidate_hash, fork_tip))
+				if (!accept_block_candidate(candidate, candidate_hash, fork_tip))
 					return false;
 
-				size_t multicalls = from ? multicall(from, &methods::propose_block_hash, { format::variable(candidate_hash) }) : multicall(from, &methods::propose_block, { format::variable(candidate_block.as_message().data) });
+				size_t multicalls = from ? multicall(from, &methods::propose_block_hash, { format::variable(candidate_hash) }) : multicall(from, &methods::propose_block, { format::variable(candidate.block.as_message().data) });
 				if (multicalls > 0 && protocol::now().user.p2p.logging)
-					VI_DEBUG("[p2p] block %s broadcasted to %i nodes (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)multicalls, candidate_block.number);
+					VI_DEBUG("[p2p] block %s broadcasted to %i nodes (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)multicalls, candidate.block.number);
 
 				clear_pending_tip();
 				if (fork_tip != candidate_hash)
@@ -1553,7 +1544,7 @@ namespace tangent
 				else
 					clear_pending_fork(nullptr);
 
-				accept_dispatchpool(candidate_block);
+				accept_dispatchpool(candidate.block);
 				if (from != nullptr && mempool.dirty && !is_syncing())
 				{
 					call(from, &methods::request_mempool, { format::variable((uint64_t)0) });
@@ -1563,9 +1554,9 @@ namespace tangent
 
 			return true;
 		}
-		bool server_node::accept_block_candidate(const ledger::block& candidate_block, const uint256_t& candidate_hash, const uint256_t& fork_tip)
+		bool server_node::accept_block_candidate(const ledger::block_evaluation& candidate, const uint256_t& candidate_hash, const uint256_t& fork_tip)
 		{
-			auto mutation = candidate_block.checkpoint();
+			auto mutation = candidate.checkpoint();
 			if (!mutation)
 			{
 				if (protocol::now().user.p2p.logging)
@@ -1575,19 +1566,19 @@ namespace tangent
 
 			if (protocol::now().user.p2p.logging)
 			{
-				double progress = get_sync_progress(fork_tip, candidate_block.number);
+				double progress = get_sync_progress(fork_tip, candidate.block.number);
 				if (mutation->is_fork)
 					VI_INFO("[p2p] block %s chain forked (height: %" PRIu64 ", mempool: %" PRIu64 ", block-delta: " PRIi64 ", transaction-delta: " PRIi64 ", state-delta: " PRIi64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), mutation->old_tip_block_number, mutation->mempool_transactions, mutation->block_delta, mutation->transaction_delta, mutation->state_delta);
-				VI_INFO("[p2p] block %s chain %s (height: %" PRIu64 ", sync: %.2f%%, priority: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), mutation->is_fork ? "shortened" : "extended", candidate_block.number, 100.0 * progress, candidate_block.priority);
+				VI_INFO("[p2p] block %s chain %s (height: %" PRIu64 ", sync: %.2f%%, priority: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), mutation->is_fork ? "shortened" : "extended", candidate.block.number, 100.0 * progress, candidate.block.priority);
 			}
 
 			if (events.accept_block)
-				events.accept_block(candidate_hash, candidate_block, *mutation);
+				events.accept_block(candidate_hash, candidate.block, *mutation);
 
-			for (auto& transaction : candidate_block.transactions)
+			for (auto& transaction : candidate.block.transactions)
 			{
 				if (!memcmp(transaction.receipt.from, validator.wallet.public_key_hash, sizeof(algorithm::pubkeyhash)))
-					accept_proposal_transaction(candidate_block, transaction);
+					accept_proposal_transaction(candidate.block, transaction);
 			}
 
 			return true;
@@ -2129,15 +2120,22 @@ namespace tangent
 			if (!fork_hash)
 				return returning::abort(relayer, *from, __func__, "invalid fork");
 
-			ledger::block tip;
+			ledger::block_evaluation tip;
 			format::stream block_message = format::stream(message.args.back().as_blob());
-			if (!tip.load(block_message) || !relayer->accept_block(*from, std::move(tip), fork_hash))
+			if (!tip.block.load(block_message))
 			{
 				relayer->clear_pending_fork(*from);
 				return returning::abort(relayer, *from, __func__, "fork block rejected");
 			}
 
-			relayer->call(*from, &methods::request_fork_block, { format::variable(fork_hash), format::variable(uint256_t(0)), format::variable(tip.number + 1) });
+			auto next_block_number = tip.block.number + 1;
+			if (!relayer->accept_block(*from, std::move(tip), fork_hash))
+			{
+				relayer->clear_pending_fork(*from);
+				return returning::abort(relayer, *from, __func__, "fork block rejected");
+			}
+
+			relayer->call(*from, &methods::request_fork_block, { format::variable(fork_hash), format::variable(uint256_t(0)), format::variable(next_block_number) });
 			return returning::ok(*from, __func__, "new fork block accepted");
 		}
 		promise<void> methods::request_block(server_node* relayer, uref<relay>&& from, procedure&& message)
@@ -2163,9 +2161,9 @@ namespace tangent
 			if (message.args.size() != 1)
 				return returning::abort(relayer, *from, __func__, "invalid arguments");
 
-			ledger::block candidate;
+			ledger::block_evaluation candidate;
 			format::stream block_message = format::stream(message.args.front().as_blob());
-			if (!candidate.load(block_message) || !relayer->accept_block(*from, std::move(candidate), 0))
+			if (!candidate.block.load(block_message) || !relayer->accept_block(*from, std::move(candidate), 0))
 				return returning::error(relayer, *from, __func__, "block rejected");
 
 			return returning::ok(*from, __func__, "block accepted");

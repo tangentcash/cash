@@ -37,22 +37,23 @@ namespace tangent
 				program = 0x33,
 				hashcode = 0x66
 			};
-			algorithm::recpubsig location = { 0 };
+			algorithm::recpubsig to = { 0 };
 			format::variables args;
 			string calldata;
+			decimal value;
 
 			expects_lr<void> validate(uint64_t block_number) const override;
 			expects_lr<void> execute(ledger::transaction_context* context) const override;
 			bool store_body(format::stream* stream) const override;
 			bool load_body(format::stream& stream) override;
 			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const override;
-			bool sign_location(const algorithm::seckey secret_key);
-			bool verify_location(const algorithm::pubkey public_key) const;
-			bool recover_location(algorithm::pubkeyhash public_key_hash) const;
-			bool is_location_null() const;
-			void set_location(const algorithm::recpubsig new_value);
-			void set_program_calldata(const std::string_view& new_calldata, format::variables&& new_args);
-			void set_hashcode_calldata(const std::string_view& new_calldata, format::variables&& new_args);
+			bool sign_program(const algorithm::seckey secret_key);
+			bool verify_program(const algorithm::pubkey public_key) const;
+			bool recover_program(algorithm::pubkeyhash public_key_hash) const;
+			bool is_to_null() const;
+			void set_to(const algorithm::recpubsig new_value);
+			void set_program_calldata(const decimal& new_value, const std::string_view& new_calldata, format::variables&& new_args);
+			void set_hashcode_calldata(const decimal& new_value, const std::string_view& new_calldata, format::variables&& new_args);
 			option<calldata_type> get_calldata_type() const;
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;

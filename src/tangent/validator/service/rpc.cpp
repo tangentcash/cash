@@ -355,7 +355,7 @@ namespace tangent
 			bind(0 | access_type::r, "txnstate", "gettransactionbyhash", 1, 2, "uint256 hash, uint8? unrolling = 0", "txn | block::txn", "get transaction by hash", std::bind(&server_node::txnstate_get_transaction_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "txnstate", "getrawtransactionbyhash", 1, 1, "uint256 hash", "string", "get raw transaction by hash", std::bind(&server_node::txnstate_get_raw_transaction_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "txnstate", "getreceiptbytransactionhash", 1, 1, "uint256 hash", "receipt", "get receipt by transaction hash", std::bind(&server_node::txnstate_get_receipt_by_transaction_hash, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "immutablecall", 4, 32, "string asset, string from_address, string to_address, string function, ...", "program_trace", "execute of immutable function of program assigned to to_address", std::bind(&server_node::chainstate_immutable_call, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "immutablecall", 5, 32, "string asset, string from_address, string to_address, decimal value, string function, ...", "program_trace", "execute of immutable function of program assigned to to_address", std::bind(&server_node::chainstate_immutable_call, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getblockstatesbyhash", 1, 2, "uint256 hash, uint8? unrolling = 0", "uint256[] | (uniform|multiform)[]", "get block states by hash", std::bind(&server_node::chainstate_get_block_states_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getblockstatesbynumber", 1, 2, "uint64 number, uint8? unrolling = 0", "uint256[] | (uniform|multiform)[]", "get block states by number", std::bind(&server_node::chainstate_get_block_states_by_number, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getblockgaspricebyhash", 2, 3, "uint256 hash, string asset, double? percentile = 0.5", "decimal", "get gas price from percentile of block transactions by hash", std::bind(&server_node::chainstate_get_block_gas_price_by_hash, this, std::placeholders::_1, std::placeholders::_2));
@@ -421,7 +421,7 @@ namespace tangent
 			bind(0 | access_type::r, "validatorstate", "getnode", 1, 1, "string uri_address", "validator", "get a node by ip address", std::bind(&server_node::validatorstate_get_node, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "validatorstate", "getblockchains", 0, 0, "", "warden::asset", "get supported blockchains", std::bind(&server_node::validatorstate_get_blockchains, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "validatorstate", "status", 0, 0, "", "validator::status", "get validator status", std::bind(&server_node::validatorstate_status, this, std::placeholders::_1, std::placeholders::_2));
-			bind(access_type::r | access_type::a, "chainstate", "tracecall", 4, 32, "string asset, string from_address, string to_address, string function, ...", "program_trace", "trace execution of mutable / immutable function of program assigned to to_address", std::bind(&server_node::chainstate_trace_call, this, std::placeholders::_1, std::placeholders::_2));
+			bind(access_type::r | access_type::a, "chainstate", "tracecall", 4, 32, "string asset, string from_address, string to_address, decimal value, string function, ...", "program_trace", "trace execution of mutable / immutable function of program assigned to to_address", std::bind(&server_node::chainstate_trace_call, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::r, "mempoolstate", "submittransaction", 1, 2, "string message_hex, bool? validate", "uint256", "try to accept and relay a mempool transaction from raw data and possibly validate over latest chainstate", std::bind(&server_node::mempoolstate_submit_transaction, this, std::placeholders::_1, std::placeholders::_2, nullptr));
 			bind(access_type::w | access_type::a, "mempoolstate", "rejecttransaction", 1, 1, "uint256 hash", "void", "remove mempool transaction by hash", std::bind(&server_node::mempoolstate_reject_transaction, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "mempoolstate", "addnode", 1, 1, "string uri_address", "void", "add node ip address to trial addresses", std::bind(&server_node::mempoolstate_add_node, this, std::placeholders::_1, std::placeholders::_2));
@@ -430,7 +430,7 @@ namespace tangent
 			bind(access_type::r | access_type::a, "validatorstate", "getwallet", 0, 0, "", "wallet", "get validator wallet", std::bind(&server_node::validatorstate_get_wallet, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::r | access_type::a, "validatorstate", "getparticipations", 0, 0, "", "multiform[]", "get validator participations (for regrouping transaction)", std::bind(&server_node::validatorstate_get_participations, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::r | access_type::a, "validatorstate", "verify", 2, 3, "uint64 number, uint64 count, bool? validate", "uint256[]", "verify chain and possibly re-execute each block", std::bind(&server_node::validatorstate_verify, this, std::placeholders::_1, std::placeholders::_2));
-			bind(access_type::w | access_type::a, "validatorstate", "prune", 2, 2, "string types = 'statetrie' | 'blocktrie' | 'transactiontrie', uint64 number", "void", "prune chainstate data using pruning level (types is '|' separated list)", std::bind(&server_node::validatorstate_prune, this, std::placeholders::_1, std::placeholders::_2));
+			bind(access_type::w | access_type::a, "validatorstate", "prune", 2, 2, "string types = 'state' | 'blocktrie' | 'transactiontrie', uint64 number", "void", "prune chainstate data using pruning level (types is '|' separated list)", std::bind(&server_node::validatorstate_prune, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "validatorstate", "revert", 1, 2, "uint64 number, bool? keep_reverted_transactions", "{ new_tip_block_number: uint64, old_tip_block_number: uint64, mempool_transactions: uint64, block_delta: int64, transaction_delta: int64, state_delta: int64, is_fork: bool }", "revert chainstate to block number and possibly send removed transactions to mempool", std::bind(&server_node::validatorstate_revert, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "validatorstate", "reorganize", 0, 0, "", "{ new_tip_block_number: uint64, old_tip_block_number: uint64, mempool_transactions: uint64, block_delta: int64, transaction_delta: int64, state_delta: int64, is_fork: bool }", "reorganize current chain which re-executes every saved block from genesis to tip and re-calculates the final chain state (helpful for corrupted state recovery or pruning checkpoint size change without re-downloading full block history)", std::bind(&server_node::validatorstate_reorganize, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "validatorstate", "acceptnode", 0, 1, "string? uri_address", "void", "try to accept and connect to a node possibly by ip address", std::bind(&server_node::validatorstate_accept_node, this, std::placeholders::_1, std::placeholders::_2));
@@ -1618,14 +1618,14 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "to account address not valid");
 
 			format::variables values;
-			values.reserve(args.size() - 4);
-			for (size_t i = 4; i < args.size(); i++)
+			values.reserve(args.size() - 5);
+			for (size_t i = 5; i < args.size(); i++)
 				values.push_back(args[i]);
 
 			transactions::invocation transaction;
 			transaction.asset = algorithm::asset::id_of_handle(args[0].as_string());
 			transaction.signature[0] = 0xFF;
-			transaction.set_calldata(to, args[3].as_string(), std::move(values));
+			transaction.set_calldata(to, args[3].as_decimal(), args[4].as_string(), std::move(values));
 			transaction.set_gas(decimal::zero(), ledger::block::get_gas_limit());
 
 			auto context = ledger::transaction_context();
@@ -1673,12 +1673,12 @@ namespace tangent
 				if (!block_number)
 					return server_response().error(error_codes::not_found, "block not found");
 
-				auto list = chain.get_block_statetrie_by_number(*block_number, protocol::now().user.rpc.cursor_size);
+				auto list = chain.get_block_state_by_number(*block_number, protocol::now().user.rpc.cursor_size);
 				if (!list)
 					return server_response().error(error_codes::not_found, "block not found");
 
 				uptr<schema> data = var::set::array();
-				for (auto& item : *list)
+				for (auto& item : list->at(ledger::work_state::finalized))
 					data->push(item.second->as_schema().reset());
 
 				return server_response().success(std::move(data));
@@ -1702,12 +1702,12 @@ namespace tangent
 			}
 			else
 			{
-				auto list = chain.get_block_statetrie_by_number(number, protocol::now().user.rpc.cursor_size);
+				auto list = chain.get_block_state_by_number(number, protocol::now().user.rpc.cursor_size);
 				if (!list)
 					return server_response().error(error_codes::not_found, "block not found");
 
 				uptr<schema> data = var::set::array();
-				for (auto& item : *list)
+				for (auto& item : list->at(ledger::work_state::finalized))
 					data->push(item.second->as_schema().reset());
 
 				return server_response().success(std::move(data));
@@ -2818,12 +2818,12 @@ namespace tangent
 			uint32_t types = 0;
 			for (auto& subtype : stringify::split(args[0].as_string(), '|'))
 			{
-				if (subtype == "blocktrie")
-					types |= (uint32_t)storages::pruning::blocktrie;
-				else if (subtype == "transactiontrie")
-					types |= (uint32_t)storages::pruning::transactiontrie;
-				else if (subtype == "statetrie")
-					types |= (uint32_t)storages::pruning::statetrie;
+				if (subtype == "block")
+					types |= (uint32_t)storages::pruning::block;
+				else if (subtype == "transaction")
+					types |= (uint32_t)storages::pruning::transaction;
+				else if (subtype == "state")
+					types |= (uint32_t)storages::pruning::state;
 			}
 
 			if (types == 0)
@@ -2844,7 +2844,14 @@ namespace tangent
 			if (!block)
 				return server_response().error(error_codes::not_found, "block not found");
 
-			auto checkpoint = block->checkpoint(args.size() > 1 ? args[1].as_boolean() : false);
+			auto state = chain.get_block_state_by_number(args[0].as_uint64());
+			if (!state)
+				return server_response().error(error_codes::not_found, "block state not found");
+
+			ledger::block_evaluation evaluation;
+			evaluation.block = std::move(*block);
+			evaluation.state = std::move(*state);
+			auto checkpoint = evaluation.checkpoint(args.size() > 1 ? args[1].as_boolean() : false);
 			if (!checkpoint)
 				return server_response().error(error_codes::bad_params, checkpoint.error().message());
 
@@ -2912,7 +2919,8 @@ namespace tangent
 					if (!verification)
 						return server_response().error(error_codes::not_found, "block " + to_string(current_number) + " validity verification failed: " + verification.error().message());
 
-					verification = next->verify_integrity(parent_block.address());
+					auto state = chain.get_block_state_by_number(next->number);
+					verification = next->verify_integrity(parent_block.address(), state.address());
 					if (!verification)
 						return server_response().error(error_codes::not_found, "block " + to_string(current_number) + " integrity verification failed: " + verification.error().message());
 				}
@@ -3142,12 +3150,12 @@ namespace tangent
 			storage->set("transaction_to_rollup_index", var::boolean(protocol::now().user.storage.transaction_to_rollup_index));
 			storage->set("full_sync_available", var::boolean(!protocol::now().user.storage.prune_aggressively));
 
-			if (validator->pending_tip.hash > 0 && validator->pending_tip.block)
+			if (validator->pending.hash > 0 && validator->pending.evaluation)
 			{
 				schema* tip = data->set("tip", var::object());
-				tip->set("hash", var::string(algorithm::encoding::encode_0xhex256(validator->pending_tip.hash)));
-				tip->set("number", algorithm::encoding::serialize_uint256(validator->pending_tip.block->number));
-				tip->set("sync", var::number(validator->get_sync_progress(validator->pending_tip.hash, block_header ? block_header->number : 0)));
+				tip->set("hash", var::string(algorithm::encoding::encode_0xhex256(validator->pending.hash)));
+				tip->set("number", algorithm::encoding::serialize_uint256(validator->pending.evaluation->block.number));
+				tip->set("sync", var::number(validator->get_sync_progress(validator->pending.hash, block_header ? block_header->number : 0)));
 			}
 			else if (block_header)
 			{

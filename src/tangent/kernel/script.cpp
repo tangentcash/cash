@@ -125,12 +125,19 @@ namespace tangent
 
 			program->emit_event(event_value, event_type_id, object_value, object_type_id);
 		}
-		static void uniform_store(script_program* program, const void* index_value, int index_type_id, void* object_value, int object_type_id)
+		static void uniform_set(script_program* program, const void* index_value, int index_type_id, void* object_value, int object_type_id)
 		{
 			if (!program)
 				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "program is required"));
 
 			program->store_uniform(index_value, index_type_id, object_value, object_type_id);
+		}
+		static void uniform_unset(script_program* program, const void* index_value, int index_type_id)
+		{
+			if (!program)
+				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "program is required"));
+
+			program->store_uniform(index_value, index_type_id, nullptr, (int)type_id::void_t);
 		}
 		static bool uniform_load(const script_program* program, const void* index_value, int index_type_id, void* object_value, int object_type_id)
 		{
@@ -142,7 +149,7 @@ namespace tangent
 
 			return program->load_uniform(index_value, index_type_id, object_value, object_type_id, false);
 		}
-		static void uniform_from(asIScriptGeneric* generic)
+		static void uniform_get(asIScriptGeneric* generic)
 		{
 			generic_context inout = generic_context(generic);
 			auto* program = inout.get_arg_object<const script_program>(0);
@@ -155,14 +162,21 @@ namespace tangent
 			int object_type_id = inout.get_return_addressable_type_id();
 			program->load_uniform(index_value, index_type_id, object_value, object_type_id, true);
 		}
-		static void multiform_store(script_program* program, const void* column_value, int column_type_id, const void* row_value, int row_type_id, void* object_value, int object_type_id)
+		static void multiform_set(script_program* program, const void* column_value, int column_type_id, const void* row_value, int row_type_id, void* object_value, int object_type_id)
 		{
 			if (!program)
 				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "program is required"));
 
 			program->store_multiform(column_value, column_type_id, row_value, row_type_id, object_value, object_type_id);
 		}
-		static bool multiform_load_composition(const script_program* program, const void* column_value, int column_type_id, const void* row_value, int row_type_id, void* object_value, int object_type_id)
+		static void multiform_unset(script_program* program, const void* column_value, int column_type_id, const void* row_value, int row_type_id)
+		{
+			if (!program)
+				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "program is required"));
+
+			program->store_multiform(column_value, column_type_id, row_value, row_type_id, nullptr, (int)type_id::void_t);
+		}
+		static bool multiform_load(const script_program* program, const void* column_value, int column_type_id, const void* row_value, int row_type_id, void* object_value, int object_type_id)
 		{
 			if (!program)
 			{
@@ -172,7 +186,7 @@ namespace tangent
 
 			return program->load_multiform_by_composition(column_value, column_type_id, row_value, row_type_id, object_value, object_type_id, false);
 		}
-		static bool multiform_load_column(const script_program* program, const void* column_value, int column_type_id, size_t offset, void* object_value, int object_type_id)
+		static bool multiform_load_at(const script_program* program, const void* column_value, int column_type_id, size_t offset, void* object_value, int object_type_id)
 		{
 			if (!program)
 			{
@@ -182,7 +196,7 @@ namespace tangent
 
 			return program->load_multiform_by_column(column_value, column_type_id, object_value, object_type_id, offset, false);
 		}
-		static void multiform_from_composition(asIScriptGeneric* generic)
+		static void multiform_get(asIScriptGeneric* generic)
 		{
 			generic_context inout = generic_context(generic);
 			auto* program = inout.get_arg_object<const script_program>(0);
@@ -197,7 +211,7 @@ namespace tangent
 			int object_type_id = inout.get_return_addressable_type_id();
 			program->load_multiform_by_composition(column_value, column_type_id, row_value, row_type_id, object_value, object_type_id, true);
 		}
-		static void multiform_from_column(asIScriptGeneric* generic)
+		static void multiform_get_at(asIScriptGeneric* generic)
 		{
 			generic_context inout = generic_context(generic);
 			auto* program = inout.get_arg_object<const script_program>(0);
@@ -1000,17 +1014,19 @@ namespace tangent
 			vm->end_namespace();
 
 			vm->begin_namespace("uniform");
-			vm->set_function("void store(program@, const ?&in, const ?&in)", &uniform_store);
+			vm->set_function("void set(program@, const ?&in, const ?&in)", &uniform_set);
+			vm->set_function("void unset(program@, const ?&in)", &uniform_unset);
 			vm->set_function("void load(program@ const, const ?&in, ?&out)", &uniform_load);
-			vm->set_function("t from<t>(program@ const, const ?&in)", &uniform_from, convention::generic_call);
+			vm->set_function("t get<t>(program@ const, const ?&in)", &uniform_get, convention::generic_call);
 			vm->end_namespace();
 
 			vm->begin_namespace("multiform");
-			vm->set_function("void store(program@, const ?&in, const ?&in, const ?&in)", &multiform_store);
-			vm->set_function("void load(program@ const, const ?&in, const ?&in, ?&out)", &multiform_load_composition);
-			vm->set_function("void load_index(program@ const, const ?&in, usize, ?&out)", &multiform_load_column);
-			vm->set_function("t from<t>(program@ const, const ?&in, const ?&in)", &multiform_from_composition, convention::generic_call);
-			vm->set_function("t from_index<t>(program@ const, const ?&in, usize)", &multiform_from_column, convention::generic_call);
+			vm->set_function("void set(program@, const ?&in, const ?&in, const ?&in)", &multiform_set);
+			vm->set_function("void unset(program@, const ?&in, const ?&in)", &multiform_unset);
+			vm->set_function("void load(program@ const, const ?&in, const ?&in, ?&out)", &multiform_load);
+			vm->set_function("void load_at(program@ const, const ?&in, usize, ?&out)", &multiform_load_at);
+			vm->set_function("t get<t>(program@ const, const ?&in, const ?&in)", &multiform_get, convention::generic_call);
+			vm->set_function("t get_at<t>(program@ const, const ?&in, usize)", &multiform_get_at, convention::generic_call);
 			vm->end_namespace();
 
 			vm->begin_namespace("block");
@@ -1462,7 +1478,7 @@ namespace tangent
 			receipt.block_number = context->block->number;
 			memcpy(receipt.from, to().hash.data, sizeof(receipt.from));
 
-			auto next = transaction_context(context->block, context->environment, &transaction, std::move(receipt));
+			auto next = transaction_context(context->environment, context->block, context->changelog, &transaction, std::move(receipt));
 			auto* prev = context;
 			auto* main = (script_program*)this;
 			main->context = &next;
@@ -1745,17 +1761,17 @@ namespace tangent
 				return false;
 			}
 
-			auto data = context->get_account_multiforms(to().hash.data, column.data, offset, 1);
-			if (!data || data->empty())
+			auto data = context->get_account_multiform_by_column(to().hash.data, column.data, offset);
+			if (!data || data->data.empty())
 			{
 				if (throw_on_error)
 					bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_STORAGE, "index is not in use"));
 				return false;
 			}
 
-			format::stream stream = format::stream(data->front().data);
+			format::stream stream = format::stream(data->data);
 			status = script_marshalling::load(stream, object_value, object_type_id);
-			if (!status && throw_on_error)
+			if (!status)
 			{
 				if (throw_on_error)
 					bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_STORAGE, "index is not in use"));
@@ -1825,6 +1841,8 @@ namespace tangent
 		decimal script_program::value() const
 		{
 			uint32_t type = context->transaction->as_type();
+			if (type == transactions::deployment::as_instance_type())
+				return ((transactions::deployment*)context->transaction)->value;
 			if (type == transactions::invocation::as_instance_type())
 				return ((transactions::invocation*)context->transaction)->value;
 			return decimal::zero();
@@ -1839,7 +1857,7 @@ namespace tangent
 			if (type == transactions::deployment::as_instance_type())
 			{
 				algorithm::pubkeyhash owner;
-				if (((transactions::deployment*)context->transaction)->recover_location(owner))
+				if (((transactions::deployment*)context->transaction)->recover_program(owner))
 					return script_address(owner);
 			}
 			else if (type == transactions::invocation::as_instance_type())
@@ -1934,7 +1952,7 @@ namespace tangent
 
 			memset(environment.validator.public_key_hash, 0xFF, sizeof(algorithm::pubkeyhash));
 			memset(environment.validator.secret_key, 0xFF, sizeof(algorithm::seckey));
-			environment.validation.context = transaction_context(&block, &environment, transaction, std::move(receipt));
+			environment.validation.context = transaction_context(&environment, &block, &environment.validation.changelog, transaction, std::move(receipt));
 		}
 		expects_lr<void> script_program_trace::trace_call(const std::string_view& function, const format::variables& args, int8_t mutability)
 		{
@@ -2029,10 +2047,10 @@ namespace tangent
 					event_data->set("args", format::variables_util::serialize(item.second));
 				}
 			}
-			if (!context->delta.outgoing->at(work_commitment::pending).empty())
+			if (!context->changelog->outgoing.at(work_state::pending).empty())
 			{
-				auto* states_data = data->set("states", var::set::array());
-				for (auto& item : context->delta.outgoing->at(work_commitment::pending))
+				auto* states_data = data->set("changelog", var::set::array());
+				for (auto& item : context->changelog->outgoing.at(work_state::pending))
 					states_data->push(item.second->as_schema().reset());
 			}
 			if (!instructions.empty())

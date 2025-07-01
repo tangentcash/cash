@@ -153,14 +153,17 @@ namespace tangent
 
 		expects_lr<void> deployment::validate(uint64_t block_number) const
 		{
-			if (is_location_null())
-				return layer_exception("invalid location");
+			if (is_to_null())
+				return layer_exception("invalid to");
 
 			auto type = get_calldata_type();
 			if (!type)
 				return layer_exception("invalid calldata type");
 			else if (*type == calldata_type::hashcode && calldata.size() != 65)
 				return layer_exception("invalid hashcode calldata");
+
+			if (value.is_nan() || value.is_negative())
+				return layer_exception("invalid value");
 
 			return ledger::transaction::validate(block_number);
 		}
@@ -171,8 +174,8 @@ namespace tangent
 				return validation.error();
 
 			algorithm::pubkeyhash owner;
-			if (!recover_location(owner))
-				return layer_exception("invalid location");
+			if (!recover_program(owner))
+				return layer_exception("invalid to");
 
 			auto data = std::string_view(calldata).substr(1);
 			auto type = get_calldata_type().or_else(calldata_type::hashcode);
@@ -267,6 +270,16 @@ namespace tangent
 				return nonce.error();
 			}
 
+			if (value.is_positive())
+			{
+				if (memcmp(context->receipt.from, owner, sizeof(algorithm::pubkeyhash)) == 0)
+					return layer_exception("invalid payment");
+
+				auto payment = context->apply_payment(asset, context->receipt.from, owner, value);
+				if (!payment)
+					return payment.error();
+			}
+
 			auto script = ledger::script_program(context);
 			auto execution = script.construct(*compiler, args);
 			host->deallocate(std::move(compiler));
@@ -276,7 +289,8 @@ namespace tangent
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_string(calldata);
-			stream->write_string(std::string_view((char*)location, sizeof(location)));
+			stream->write_string(std::string_view((char*)to, sizeof(to)));
+			stream->write_decimal(value);
 			return format::variables_util::serialize_merge_into(args, stream);
 		}
 		bool deployment::load_body(format::stream& stream)
@@ -284,61 +298,66 @@ namespace tangent
 			if (!stream.read_string(stream.read_type(), &calldata))
 				return false;
 
-			string location_assembly;
-			if (!stream.read_string(stream.read_type(), &location_assembly) || location_assembly.size() != sizeof(algorithm::recpubsig))
+			string to_assembly;
+			if (!stream.read_string(stream.read_type(), &to_assembly) || to_assembly.size() != sizeof(algorithm::recpubsig))
+				return false;
+
+			if (!stream.read_decimal(stream.read_type(), &value))
 				return false;
 
 			args.clear();
-			memcpy(location, location_assembly.data(), location_assembly.size());
+			memcpy(to, to_assembly.data(), to_assembly.size());
 			return format::variables_util::deserialize_merge_from(stream, &args);
 		}
 		bool deployment::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
 		{
 			algorithm::pubkeyhash owner;
-			if (recover_location(owner))
+			if (recover_program(owner))
 				parties.insert(algorithm::pubkeyhash_t(owner));
 			return true;
 		}
-		bool deployment::sign_location(const algorithm::seckey secret_key)
+		bool deployment::sign_program(const algorithm::seckey secret_key)
 		{
 			format::stream message;
 			format::variables_util::serialize_merge_into(args, &message);
 			message.write_string(calldata);
-			return algorithm::signing::sign(algorithm::signing::message_hash(message.data), secret_key, location);
+			return algorithm::signing::sign(algorithm::signing::message_hash(message.data), secret_key, to);
 		}
-		bool deployment::verify_location(const algorithm::pubkey public_key) const
+		bool deployment::verify_program(const algorithm::pubkey public_key) const
 		{
 			format::stream message;
 			format::variables_util::serialize_merge_into(args, &message);
 			message.write_string(calldata);
-			return algorithm::signing::verify(algorithm::signing::message_hash(message.data), public_key, location);
+			return algorithm::signing::verify(algorithm::signing::message_hash(message.data), public_key, to);
 		}
-		bool deployment::recover_location(algorithm::pubkeyhash public_key_hash) const
+		bool deployment::recover_program(algorithm::pubkeyhash public_key_hash) const
 		{
 			format::stream message;
 			format::variables_util::serialize_merge_into(args, &message);
 			message.write_string(calldata);
-			return algorithm::signing::recover_hash(algorithm::signing::message_hash(message.data), public_key_hash, location);
+			return algorithm::signing::recover_hash(algorithm::signing::message_hash(message.data), public_key_hash, to);
 		}
-		bool deployment::is_location_null() const
+		bool deployment::is_to_null() const
 		{
 			algorithm::recpubsig null = { 0 };
-			return memcmp(location, null, sizeof(null)) == 0;
+			return memcmp(to, null, sizeof(null)) == 0;
 		}
-		void deployment::set_location(const algorithm::recpubsig new_value)
+		void deployment::set_to(const algorithm::recpubsig new_value)
 		{
 			VI_ASSERT(new_value != nullptr, "new value should be set");
-			memcpy(location, new_value, sizeof(algorithm::recpubsig));
+			memcpy(to, new_value, sizeof(algorithm::recpubsig));
 		}
-		void deployment::set_program_calldata(const std::string_view& new_calldata, format::variables&& new_args)
+		void deployment::set_program_calldata(const decimal& new_value, const std::string_view& new_calldata, format::variables&& new_args)
 		{
+			value = new_value;
 			args = std::move(new_args);
 			calldata.clear();
 			calldata.assign(1, (char)calldata_type::program);
 			calldata.append(ledger::script_host::get()->pack(new_calldata).or_else(string()));
 		}
-		void deployment::set_hashcode_calldata(const std::string_view& new_calldata, format::variables&& new_args)
+		void deployment::set_hashcode_calldata(const decimal& new_value, const std::string_view& new_calldata, format::variables&& new_args)
 		{
+			value = new_value;
 			args = std::move(new_args);
 			calldata.clear();
 			calldata.assign(1, (char)calldata_type::hashcode);
@@ -362,7 +381,7 @@ namespace tangent
 		uptr<schema> deployment::as_schema() const
 		{
 			algorithm::pubkeyhash owner;
-			recover_location(owner);
+			recover_program(owner);
 
 			std::string_view name;
 			switch (get_calldata_type().or_else((calldata_type)(uint8_t)0))
@@ -378,8 +397,9 @@ namespace tangent
 			}
 
 			schema* data = ledger::transaction::as_schema().reset();
-			data->set("location_signature", var::string(format::util::encode_0xhex(std::string_view((char*)location, sizeof(location)))));
-			data->set("location_address", algorithm::signing::serialize_address(owner));
+			data->set("proof", var::string(format::util::encode_0xhex(std::string_view((char*)to, sizeof(to)))));
+			data->set("to", algorithm::signing::serialize_address(owner));
+			data->set("value", var::decimal(value));
 			data->set("deployment", name.empty() ? var::null() : var::string(name));
 			data->set("calldata", var::string(format::util::encode_0xhex(calldata)));
 			data->set("args", format::variables_util::serialize(args));
@@ -639,7 +659,7 @@ namespace tangent
 					return layer_exception("sub-transaction " + algorithm::encoding::encode_0xhex256(transaction->as_hash()) + " validation failed: invalid signature");
 
 				transaction->gas_price = decimal::zero();
-				auto execution = ledger::transaction_context::execute_tx((ledger::block*)context->block, context->environment, transaction, transaction->as_hash(), owner, *context->delta.incoming, transaction->as_message().data.size(), (uint8_t)ledger::transaction_context::execution_flags::only_successful);
+				auto execution = ledger::transaction_context::execute_tx(context->environment, (ledger::block*)context->block, context->changelog, transaction, transaction->as_hash(), owner, transaction->as_message().data.size(), (uint8_t)ledger::transaction_context::execution_flags::only_successful);
 				transaction->gas_price = decimal::nan();
 				relative_gas_use += execution->receipt.relative_gas_use;
 				if (!execution)
@@ -676,7 +696,7 @@ namespace tangent
 							continue;
 
 						auto& target_transaction = *resolved_transaction;
-						auto status = coawait(ledger::transaction_context::dispatch_tx(&target_transaction, dispatcher));
+						auto status = coawait(ledger::transaction_context::dispatch_tx(dispatcher, &target_transaction));
 						if (!status && status.error().is_retry() || status.error().is_shutdown())
 							coreturn status;
 						else if (!status)
@@ -2826,7 +2846,7 @@ namespace tangent
 			if (!reward)
 				return reward.error();
 
-			auto depository = context->get_depository_policy(asset, context->receipt.from).or_else(states::depository_policy(nullptr, nullptr));
+			auto depository = context->get_depository_policy(asset, context->receipt.from).or_else(states::depository_policy(context->receipt.from, asset, nullptr));
 			if (depository.accepts_withdrawal_requests != accepts_withdrawal_requests && !accepts_withdrawal_requests)
 			{
 				auto balance = context->get_depository_balance(asset, context->receipt.from);

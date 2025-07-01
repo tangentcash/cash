@@ -187,11 +187,15 @@ namespace tangent
 			virtual expects_lr<void> transition(const transaction_context* context, const state* prev_state) = 0;
 			virtual bool store(format::stream* stream) const override;
 			virtual bool load(format::stream& stream) override;
+			virtual bool store_optimized(format::stream* stream) const;
+			virtual bool load_optimized(format::stream& stream);
 			virtual bool store_payload(format::stream* stream) const override = 0;
 			virtual bool load_payload(format::stream& stream) override = 0;
-			virtual state_level as_level() const = 0;
-			virtual string as_composite() const = 0;
+			virtual bool store_data(format::stream* stream) const = 0;
+			virtual bool load_data(format::stream& stream) = 0;
+			virtual bool is_permanent() const;
 			virtual uptr<schema> as_schema() const override = 0;
+			virtual state_level as_level() const = 0;
 			virtual uint32_t as_type() const override = 0;
 			virtual std::string_view as_typename() const override = 0;
 		};
@@ -200,24 +204,30 @@ namespace tangent
 		{
 			uniform(uint64_t new_block_number, uint64_t new_block_nonce);
 			uniform(const block_header* new_block_header);
+			virtual bool store_payload(format::stream* stream) const override;
+			virtual bool load_payload(format::stream& stream) override;
+			virtual bool store_index(format::stream* stream) const = 0;
+			virtual bool load_index(format::stream& stream) = 0;
 			virtual uptr<schema> as_schema() const override;
 			virtual state_level as_level() const override;
-			virtual string as_composite() const override;
-			virtual string as_index() const = 0;
-			static string as_instance_composite(uint32_t type, const std::string_view& index);
+			virtual string as_index() const;
 		};
 
 		struct multiform : state
 		{
 			multiform(uint64_t new_block_number, uint64_t new_block_nonce);
 			multiform(const block_header* new_block_header);
+			virtual bool store_payload(format::stream* stream) const override;
+			virtual bool load_payload(format::stream& stream) override;
+			virtual bool store_column(format::stream* stream) const = 0;
+			virtual bool load_column(format::stream& stream) = 0;
+			virtual bool store_row(format::stream* stream) const = 0;
+			virtual bool load_row(format::stream& stream) = 0;
 			virtual uptr<schema> as_schema() const override;
 			virtual state_level as_level() const override;
-			virtual string as_composite() const override;
-			virtual string as_column() const = 0;
-			virtual string as_row() const = 0;
+			virtual string as_column() const;
+			virtual string as_row() const;
 			virtual int64_t as_factor() const = 0;
-			static string as_instance_composite(uint32_t type, const std::string_view& column, const std::string_view& row);
 		};
 
 		class gas_util

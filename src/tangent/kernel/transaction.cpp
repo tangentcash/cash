@@ -922,12 +922,55 @@ namespace tangent
 
 			return true;
 		}
+		bool state::store_optimized(format::stream* stream) const
+		{
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_integer(as_type());
+			stream->write_integer(block_number);
+			stream->write_integer(block_nonce);
+			return store_data(stream);
+		}
+		bool state::load_optimized(format::stream& stream)
+		{
+			uint32_t type;
+			if (!stream.read_integer(stream.read_type(), &type) || type != as_type())
+				return false;
+
+			if (!stream.read_integer(stream.read_type(), &block_number))
+				return false;
+
+			if (!stream.read_integer(stream.read_type(), &block_nonce))
+				return false;
+
+			if (!load_data(stream))
+				return false;
+
+			return true;
+		}
+		bool state::is_permanent() const
+		{
+			return false;
+		}
 
 		uniform::uniform(uint64_t new_block_number, uint64_t new_block_nonce) : state(new_block_number, new_block_nonce)
 		{
 		}
 		uniform::uniform(const block_header* new_block_header) : state(new_block_header)
 		{
+		}
+		bool uniform::store_payload(format::stream* stream) const
+		{
+			if (!store_index(stream))
+				return false;
+
+			return store_data(stream);
+		}
+		bool uniform::load_payload(format::stream& stream)
+		{
+			if (!load_index(stream))
+				return false;
+
+			return load_data(stream);
 		}
 		uptr<schema> uniform::as_schema() const
 		{
@@ -943,15 +986,10 @@ namespace tangent
 		{
 			return state_level::uniform;
 		}
-		string uniform::as_composite() const
-		{
-			return as_instance_composite(as_type(), as_index());
-		}
-		string uniform::as_instance_composite(uint32_t type, const std::string_view& index)
+		string uniform::as_index() const
 		{
 			format::stream message;
-			message.write_typeless(type);
-			message.write_typeless(index.data(), (uint32_t)index.size());
+			store_index(&message);
 			return message.data;
 		}
 
@@ -960,6 +998,26 @@ namespace tangent
 		}
 		multiform::multiform(const block_header* new_block_header) : state(new_block_header)
 		{
+		}
+		bool multiform::store_payload(format::stream* stream) const
+		{
+			if (!store_column(stream))
+				return false;
+
+			if (!store_row(stream))
+				return false;
+
+			return store_data(stream);
+		}
+		bool multiform::load_payload(format::stream& stream)
+		{
+			if (!load_column(stream))
+				return false;
+
+			if (!load_row(stream))
+				return false;
+
+			return load_data(stream);
 		}
 		uptr<schema> multiform::as_schema() const
 		{
@@ -977,16 +1035,16 @@ namespace tangent
 		{
 			return state_level::multiform;
 		}
-		string multiform::as_composite() const
-		{
-			return as_instance_composite(as_type(), as_column(), as_row());
-		}
-		string multiform::as_instance_composite(uint32_t type, const std::string_view& column, const std::string_view& row)
+		string multiform::as_column() const
 		{
 			format::stream message;
-			message.write_typeless(type);
-			message.write_typeless(column.data(), (uint32_t)column.size());
-			message.write_typeless(row.data(), (uint32_t)row.size());
+			store_column(&message);
+			return message.data;
+		}
+		string multiform::as_row() const
+		{
+			format::stream message;
+			store_row(&message);
 			return message.data;
 		}
 

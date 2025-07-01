@@ -15,9 +15,8 @@ namespace tangent
 		struct block;
 		struct block_header;
 		struct block_proof;
+		struct block_evaluation;
 		struct evaluation_context;
-
-		typedef ordered_map<string, uptr<ledger::state>> state_work;
 
 		enum class gas_cost
 		{
@@ -26,7 +25,7 @@ namespace tangent
 			opcode = 1
 		};
 
-		enum class work_commitment
+		enum class work_state
 		{
 			pending,
 			finalized,
@@ -53,39 +52,44 @@ namespace tangent
 			static std::string_view as_instance_typename();
 		};
 
-		struct block_work
+		struct block_state
 		{
-			state_work map[(size_t)work_commitment::__count__];
-			const block_work* parent_work = nullptr;
+			ordered_map<string, uptr<ledger::state>> map[(size_t)work_state::__count__];
+			const block_state* parent_work = nullptr;
 
-			block_work() = default;
-			block_work(const block_work& other);
-			block_work(block_work&&) noexcept = default;
-			block_work& operator= (const block_work& other);
-			block_work& operator= (block_work&&) noexcept = default;
-			option<uptr<state>> find_uniform(uint32_t type, const std::string_view& index) const;
-			option<uptr<state>> find_multiform(uint32_t type, const std::string_view& column, const std::string_view& row) const;
-			void clear_uniform(uint32_t type, const std::string_view& index);
-			void clear_multiform(uint32_t type, const std::string_view& column, const std::string_view& row);
-			void copy_any(state* value);
-			void move_any(uptr<state>&& value);
-			const state_work& at(work_commitment level) const;
-			state_work& clear();
-			state_work& rollback();
-			state_work& commit();
+			block_state() = default;
+			block_state(const block_state& other);
+			block_state(block_state&&) noexcept = default;
+			block_state& operator= (const block_state& other);
+			block_state& operator= (block_state&&) noexcept = default;
+			option<uptr<state>> find(uint32_t type, const std::string_view& index) const;
+			option<uptr<state>> find(uint32_t type, const std::string_view& column, const std::string_view& row) const;
+			void erase(uint32_t type, const std::string_view& index);
+			void erase(uint32_t type, const std::string_view& column, const std::string_view& row);
+			void copy(state* value);
+			void move(uptr<state>&& value);
+			string index_of(state* value) const;
+			string index_of(uint32_t type, const std::string_view& index) const;
+			string index_of(uint32_t type, const std::string_view& column, const std::string_view& row) const;
+			const ordered_map<string, uptr<ledger::state>>& at(work_state level) const;
+			ordered_map<string, uptr<ledger::state>>& clear();
+			ordered_map<string, uptr<ledger::state>>& revert();
+			ordered_map<string, uptr<ledger::state>>& commit();
 		};
 
-		struct block_mutation
+		struct block_changelog
 		{
-			block_work cache;
-			block_work* outgoing;
-			block_work* incoming;
+			block_state outgoing;
+			block_state incoming;
 
-			block_mutation() noexcept;
-			block_mutation(const block_mutation& other) noexcept;
-			block_mutation(block_mutation&& other) noexcept;
-			block_mutation& operator=(const block_mutation& other) noexcept;
-			block_mutation& operator=(block_mutation&& other) noexcept;
+			block_changelog() noexcept;
+			block_changelog(const block_changelog& other) noexcept;
+			block_changelog(block_changelog&& other) noexcept;
+			block_changelog& operator=(const block_changelog& other) noexcept;
+			block_changelog& operator=(block_changelog&& other) noexcept;
+			void clear();
+			void revert();
+			void commit();
 		};
 
 		struct block_checkpoint
@@ -161,7 +165,6 @@ namespace tangent
 		struct block final : block_header
 		{
 			vector<block_transaction> transactions;
-			block_work states;
 
 			block() = default;
 			block(const block_header& other);
@@ -170,22 +173,19 @@ namespace tangent
 			virtual ~block() override = default;
 			block& operator=(const block&) = default;
 			block& operator=(block&&) = default;
-			expects_lr<void> evaluate(const block_header* parent_block, evaluation_context* environment, string* errors = nullptr);
-			expects_lr<void> validate(const block_header* parent_block, block* evaluated_block = nullptr) const;
-			expects_lr<void> verify_integrity(const block_header* parent_block) const;
-			expects_lr<block_checkpoint> checkpoint(bool keep_reverted_transactions = true) const;
+			expects_lr<block_state> evaluate(const block_header* parent_block, evaluation_context* environment, string* errors = nullptr);
+			expects_lr<void> validate(const block_header* parent_block, block_evaluation* evaluated_result = nullptr) const;
+			expects_lr<void> verify_integrity(const block_header* parent_block, const block_state* state) const;
 			bool store_payload(format::stream* stream) const override;
 			bool load_payload(format::stream& stream) override;
 			bool store_header_payload(format::stream* stream) const;
 			bool load_header_payload(format::stream& stream);
 			bool store_body_payload(format::stream* stream) const;
 			bool load_body_payload(format::stream& stream);
-			void recalculate(const block_header* parent_block);
-			void inherit_work(const block* parent_block);
-			void inherit_work(const block_work* parent_work);
+			void recalculate(const block_header* parent_block, const block_state* state);
 			uptr<schema> as_schema() const override;
 			block_header as_header() const;
-			block_proof as_proof(const block_header* parent_block) const;
+			block_proof as_proof(const block_header* parent_block, const block_state* state) const;
 			uint256_t as_hash(bool renew = false) const override;
 		};
 
@@ -223,6 +223,14 @@ namespace tangent
 			static std::string_view as_instance_typename();
 		};
 
+		struct block_evaluation
+		{
+			block block;
+			block_state state;
+
+			expects_lr<block_checkpoint> checkpoint(bool keep_reverted_transactions = true) const;
+		};
+
 		struct transaction_context
 		{
 		public:
@@ -244,16 +252,13 @@ namespace tangent
 			ordered_map<algorithm::asset_id, uint64_t> witnesses;
 			const evaluation_context* environment;
 			const ledger::transaction* transaction;
+			ledger::block_changelog* changelog;
 			ledger::block_header* block;
 			ledger::receipt receipt;
-			block_mutation delta;
 
 		public:
 			transaction_context();
-			transaction_context(ledger::block* new_block);
-			transaction_context(ledger::block_header* new_block_header);
-			transaction_context(ledger::block* new_block, const ledger::evaluation_context* new_environment, const ledger::transaction* new_transaction, ledger::receipt&& new_receipt);
-			transaction_context(ledger::block_header* new_block_header, const ledger::evaluation_context* new_environment, const ledger::transaction* new_transaction, ledger::receipt&& new_receipt);
+			transaction_context(const ledger::evaluation_context* new_environment, ledger::block_header* new_block_header, block_changelog* new_changelog, const ledger::transaction* new_transaction, ledger::receipt&& new_receipt);
 			transaction_context(const transaction_context& other);
 			transaction_context(transaction_context&&) = default;
 			transaction_context& operator=(const transaction_context& other);
@@ -300,7 +305,7 @@ namespace tangent
 			expects_lr<states::account_program> get_account_program(const algorithm::pubkeyhash owner) const;
 			expects_lr<states::account_uniform> get_account_uniform(const algorithm::pubkeyhash owner, const std::string_view& index) const;
 			expects_lr<states::account_multiform> get_account_multiform(const algorithm::pubkeyhash owner, const std::string_view& column, const std::string_view& row) const;
-			expects_lr<vector<states::account_multiform>> get_account_multiforms(const algorithm::pubkeyhash owner, const std::string_view& column, size_t offset, size_t count) const;
+			expects_lr<states::account_multiform> get_account_multiform_by_column(const algorithm::pubkeyhash owner, const std::string_view& column, size_t offset) const;
 			expects_lr<states::account_delegation> get_account_delegation(const algorithm::pubkeyhash owner) const;
 			expects_lr<states::account_balance> get_account_balance(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner) const;
 			expects_lr<states::validator_production> get_validator_production(const algorithm::pubkeyhash owner) const;
@@ -349,8 +354,8 @@ namespace tangent
 		public:
 			static expects_lr<uint256_t> calculate_tx_gas(const ledger::transaction* transaction);
 			static expects_lr<void> validate_tx(const ledger::transaction* new_transaction, const uint256_t& new_transaction_hash, algorithm::pubkeyhash owner);
-			static expects_lr<transaction_context> execute_tx(ledger::block* new_block, const ledger::evaluation_context* new_environment, const ledger::transaction* new_transaction, const uint256_t& new_transaction_hash, const algorithm::pubkeyhash owner, block_work& cache, size_t transaction_size, uint8_t flags);
-			static expects_promise_rt<void> dispatch_tx(ledger::block_transaction* transaction, dispatch_context* dispatcher);
+			static expects_lr<transaction_context> execute_tx(const ledger::evaluation_context* new_environment, ledger::block* new_block, block_changelog* changelog, const ledger::transaction* new_transaction, const uint256_t& new_transaction_hash, const algorithm::pubkeyhash owner, size_t transaction_size, uint8_t flags);
+			static expects_promise_rt<void> dispatch_tx(dispatch_context* dispatcher, ledger::block_transaction* transaction);
 		};
 
 		struct dispatch_context
@@ -403,7 +408,7 @@ namespace tangent
 			{
 				transaction_context context;
 				uint256_t cumulative_gas = 0;
-				block_work cache;
+				block_changelog changelog;
 				bool tip = false;
 			} validation;
 			struct validator_context
@@ -421,9 +426,9 @@ namespace tangent
 			option<uint64_t> priority(const algorithm::pubkeyhash public_key_hash, const algorithm::seckey secret_key, option<block_header*>&& parent_block = optional::none);
 			size_t apply(vector<uptr<transaction>>&& candidates);
 			transaction_info& include(uptr<transaction>&& candidate);
-			expects_lr<block> evaluate(string* errors = nullptr);
+			expects_lr<block_evaluation> evaluate(string* errors = nullptr);
 			expects_lr<void> solve(block& candidate);
-			expects_lr<void> verify(const block& candidate);
+			expects_lr<void> verify(const block& candidate, const block_state* state);
 			expects_lr<void> precompute(block& candidate);
 			expects_lr<void> cleanup();
 

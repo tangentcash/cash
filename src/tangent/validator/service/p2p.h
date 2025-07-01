@@ -155,10 +155,10 @@ namespace tangent
 		public:
 			struct
 			{
-				option<ledger::block> block = optional::none;
+				option<ledger::block_evaluation> evaluation = optional::none;
 				uint256_t hash = 0;
 				task_id timeout = INVALID_TASK_ID;
-			} pending_tip;
+			} pending;
 
 			struct
 			{
@@ -226,14 +226,14 @@ namespace tangent
 			void shutdown();
 			void reject(relay* state);
 			void clear_pending_tip();
-			void enqueue_pending_tip(const uint256_t& candidate_hash, ledger::block&& candidate_block);
+			void enqueue_pending_tip(const uint256_t& candidate_hash, ledger::block_evaluation&& candidate);
 			void accept_pending_tip();
 			void clear_pending_fork(relay* state);
 			void accept_pending_fork(relay* state, fork_head head, const uint256_t& candidate_hash, ledger::block_header&& candidate_block);
 			bool clear_mempool(bool wait);
 			bool accept_mempool();
 			bool accept_dispatchpool(const ledger::block_header& tip);
-			bool accept_block(relay* from, ledger::block&& candidate_block, const uint256_t& fork_tip);
+			bool accept_block(relay* from, ledger::block_evaluation&& candidate, const uint256_t& fork_tip);
 			bool accept(option<socket_address>&& address = optional::none);
 			relay* find(const socket_address& address);
 			size_t size_of(node_type type);
@@ -256,7 +256,7 @@ namespace tangent
 			relay* find_node_by_instance(void* instance);
 			int32_t connect_outbound_node(const socket_address& address);
 			void fill_validator_services();
-			bool accept_block_candidate(const ledger::block& candidate_block, const uint256_t& candidate_hash, const uint256_t& fork_tip);
+			bool accept_block_candidate(const ledger::block_evaluation& candidate, const uint256_t& candidate_hash, const uint256_t& fork_tip);
 			bool accept_proposal_transaction(const ledger::block& checkpoint_block, const ledger::block_transaction& transaction);
 			bool receive_outbound_node(option<socket_address>&& error_address);
 			bool push_next_procedure(relay* state);
