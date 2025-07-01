@@ -66,15 +66,14 @@ namespace tangent
 			algorithm::subpubkeyhash to = { 0 };
 			format::variables args;
 			string function;
-			uint32_t hashcode = 0;
+			decimal value;
 
 			expects_lr<void> validate(uint64_t block_number) const override;
 			expects_lr<void> execute(ledger::transaction_context* context) const override;
 			bool store_body(format::stream* stream) const override;
 			bool load_body(format::stream& stream) override;
 			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const override;
-			void set_calldata(const algorithm::subpubkeyhash_t& new_to, const std::string_view& new_function, format::variables&& new_args);
-			void set_calldata(const algorithm::subpubkeyhash_t& new_to, uint32_t new_hashcode, const std::string_view& new_function, format::variables&& new_args);
+			void set_calldata(const algorithm::subpubkeyhash_t& new_to, const decimal& new_value, const std::string_view& new_function, format::variables&& new_args);
 			bool is_to_null() const;
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;

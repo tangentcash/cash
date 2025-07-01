@@ -1825,17 +1825,8 @@ namespace tangent
 		decimal script_program::value() const
 		{
 			uint32_t type = context->transaction->as_type();
-			if (type == transactions::transfer::as_instance_type())
-			{
-				auto target = to();
-				auto total = decimal::zero();
-				for (auto& [owner, value] : ((transactions::transfer*)context->transaction)->to)
-				{
-					if (owner.equals(target.hash.data))
-						total += value;
-				}
-				return total;
-			}
+			if (type == transactions::invocation::as_instance_type())
+				return ((transactions::invocation*)context->transaction)->value;
 			return decimal::zero();
 		}
 		script_address script_program::from() const

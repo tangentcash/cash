@@ -29,7 +29,7 @@ namespace tangent
 			for (auto& [owner, value] : to)
 			{
 				if (memcmp(context->receipt.from, owner.data, sizeof(algorithm::pubkeyhash)) == 0)
-					return layer_exception("invalid receiver");
+					return layer_exception("invalid payment");
 
 				auto payment = context->apply_payment(asset, context->receipt.from, owner.data, value);
 				if (!payment)
@@ -408,6 +408,9 @@ namespace tangent
 			if (function.empty())
 				return layer_exception("invalid function invocation");
 
+			if (value.is_nan() || value.is_negative())
+				return layer_exception("invalid value");
+
 			return ledger::transaction::validate(block_number);
 		}
 		expects_lr<void> invocation::execute(ledger::transaction_context* context) const
@@ -419,13 +422,6 @@ namespace tangent
 			auto index = context->get_account_program(to);
 			if (!index)
 				return layer_exception("program is not assigned");
-
-			if (hashcode > 0)
-			{
-				uint32_t basecode = algorithm::hashing::hash32d(index->hashcode);
-				if (hashcode != basecode)
-					return layer_exception(stringify::text("program hashcode does not match (%i != %i)", hashcode, basecode));
-			}
 
 			auto* host = ledger::script_host::get();
 			auto& hashcode = index->hashcode;
@@ -454,6 +450,16 @@ namespace tangent
 				}
 			}
 
+			if (value.is_positive())
+			{
+				if (memcmp(context->receipt.from, to, sizeof(algorithm::pubkeyhash)) == 0)
+					return layer_exception("invalid payment");
+
+				auto payment = context->apply_payment(asset, context->receipt.from, to, value);
+				if (!payment)
+					return payment.error();
+			}
+
 			auto script = ledger::script_program(context);
 			auto execution = script.mutable_call(*compiler, function, args);
 			host->deallocate(std::move(compiler));
@@ -463,21 +469,21 @@ namespace tangent
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			algorithm::pubkeyhash null = { 0 };
-			stream->write_integer(hashcode);
 			stream->write_string(std::string_view((char*)to, memcmp(to, null, sizeof(null)) == 0 ? 0 : sizeof(to)));
 			stream->write_string(function);
+			stream->write_decimal(value);
 			return format::variables_util::serialize_merge_into(args, stream);
 		}
 		bool invocation::load_body(format::stream& stream)
 		{
-			if (!stream.read_integer(stream.read_type(), &hashcode))
-				return false;
-
 			string to_assembly;
 			if (!stream.read_string(stream.read_type(), &to_assembly) || !algorithm::encoding::decode_uint_blob(to_assembly, to, sizeof(to)))
 				return false;
 
 			if (!stream.read_string(stream.read_type(), &function))
+				return false;
+
+			if (!stream.read_decimal(stream.read_type(), &value))
 				return false;
 
 			args.clear();
@@ -488,15 +494,11 @@ namespace tangent
 			parties.insert(algorithm::pubkeyhash_t(to));
 			return true;
 		}
-		void invocation::set_calldata(const algorithm::subpubkeyhash_t& new_to, const std::string_view& new_function, format::variables&& new_args)
-		{
-			set_calldata(new_to, 0, new_function, std::move(new_args));
-		}
-		void invocation::set_calldata(const algorithm::subpubkeyhash_t& new_to, uint32_t new_hashcode, const std::string_view& new_function, format::variables&& new_args)
+		void invocation::set_calldata(const algorithm::subpubkeyhash_t& new_to, const decimal& new_value, const std::string_view& new_function, format::variables&& new_args)
 		{
 			args = std::move(new_args);
 			function = new_function;
-			hashcode = new_hashcode;
+			value = new_value;
 			memcpy(to, new_to.data, sizeof(algorithm::subpubkeyhash));
 		}
 		bool invocation::is_to_null() const
@@ -508,7 +510,7 @@ namespace tangent
 		{
 			schema* data = ledger::transaction::as_schema().reset();
 			data->set("to", algorithm::signing::serialize_subaddress(to));
-			data->set("hashcode", var::integer(hashcode));
+			data->set("value", var::decimal(value));
 			data->set("function", var::string(function));
 			data->set("args", format::variables_util::serialize(args));
 			return data;
