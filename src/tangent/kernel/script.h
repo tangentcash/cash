@@ -118,7 +118,7 @@ namespace tangent
 		protected:
 			virtual expects_lr<void> execute(script_call mutability, const function& entrypoint, const format::variables& args, std::function<expects_lr<void>(void*, int)>&& return_callback);
 			virtual expects_lr<void> subexecute(const script_address& target, script_call mutability, const std::string_view& function_decl, void* input_value, int input_type_id, void* output_value, int output_type_id) const;
-			virtual expects_lr<vector<std::function<void(immediate_context*)>>> load_arguments(script_call mutability, const function& entrypoint, const format::variables& args) const;
+			virtual expects_lr<vector<std::function<void(immediate_context*)>>> load_arguments(script_call* mutability, const function& entrypoint, const format::variables& args) const;
 			virtual void load_coroutine(immediate_context* coroutine, vector<script_frame>& frames);
 
 		public:

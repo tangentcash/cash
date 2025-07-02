@@ -1633,7 +1633,7 @@ namespace tangent
 			transaction.nonce = nonce ? nonce->nonce : 1;
 
 			auto script = ledger::script_program_trace(&transaction, from, tracing);
-			auto execution = script.trace_call(transaction.function, transaction.args, tracing ? -1 : 0);
+			auto execution = script.trace_call(tracing ? ledger::script_call::default_call : ledger::script_call::immutable_call, transaction.function, transaction.args);
 			if (!execution)
 				return server_response().error(error_codes::bad_params, execution.error().message());
 

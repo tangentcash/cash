@@ -229,6 +229,7 @@ namespace tangent
 			block_state state;
 
 			expects_lr<block_checkpoint> checkpoint(bool keep_reverted_transactions = true) const;
+			uptr<schema> as_schema() const;
 		};
 
 		struct transaction_context

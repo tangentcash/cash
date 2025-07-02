@@ -169,14 +169,9 @@ public:
 			auto& [user1, user1_nonce] = users[0];
 			ledger::wallet token_contract = ledger::wallet::from_seed(string("token") + string((char*)user1.secret_key, sizeof(user1.secret_key)));
 			std::string_view token_program = VI_STRINGIFY((
-			enum contract_field
+			class token_storage
 			{
-				info
-			}
-
-			class token_info
-			{
-				address owner;
+				address account;
 				string name;
 				string symbol;
 				uint8 decimals = 0;
@@ -190,31 +185,29 @@ public:
 				uint256 value = 0;
 			}
 
-			token_info construct(program@ p, const uint256 & in value)
+			token_storage construct(instrset::rwptr@, const uint256&in value)
 			{
-				token_info token;
-				token.owner = tx::from();
+				token_storage token;
+				token.account = tx::from();
 				token.name = "Test Token";
 				token.symbol = "TT";
 				token.decimals = 2;
 				token.supply = value;
 
-				uniform::set(@p, contract_field::info, token);
-				uniform::set(@p, token.owner, value);
+				uniform::set(uint8(0), token);
+				uniform::set_if(token.account, value, value > 0);
 				return token;
 			}
-			token_transfer transfer(program@ p, const address & in to, const uint256 & in value)
+			token_transfer transfer(instrset::rwptr@, const address&in to, const uint256&in value)
 			{
 				address from = tx::from();
-				uint256 input = 0, output = 0;
-				uniform::load(@p, from, input);
-				uniform::load(@p, to, output);
-
+				uint256 input = balance_of(null, from);
+				uint256 output = balance_of(null, to);
 				uint256 from_delta = input - value, to_delta = output + value;
-				require(from_delta <= input, "from balance will underflow (" + input.to_string() + " < " + value.to_string() + ")");
-				require(to_delta >= output, "to balance will overflow (" + output.to_string() + " + " + value.to_string() + " > uint256_max)");
-				uniform::set(@p, from, from_delta);
-				uniform::set(@p, to, to_delta);
+				require(from_delta <= input, from.to_string() + ": illegal operation - insufficient balance");
+				require(to_delta >= output, to.to_string() + ": illegal operation - balance overflow");
+				uniform::set_if(from, from_delta, from_delta > 0);
+				uniform::set_if(to, to_delta, to_delta > 0);
 
 				token_transfer event;
 				event.from = from;
@@ -222,51 +215,47 @@ public:
 				event.value = value;
 				return event;
 			}
-			uint256 mint(program@ p, const uint256 & in value)
+			uint256 mint(instrset::rwptr@, const uint256&in value)
 			{
-				token_info token = uniform::get<token_info>(@p, contract_field::info);
-				require(token.owner == tx::from(), "from does not own the token");
+				token_storage token = info(null);
+				require(token.account == tx::from(), "illegal operation - operation not permitted");
 
-				uint256 output = 0;
-				uniform::load(@p, token.owner, output);
-
+				uint256 output = balance_of(null, token.account);
 				uint256 supply_delta = token.supply + value;
 				uint256 to_delta = output + value;
-				require(supply_delta >= token.supply, "token supply will overflow (" + output.to_string() + " + " + value.to_string() + " > uint256_max)");
-				require(to_delta >= output, "owner balance will overflow (" + output.to_string() + " + " + value.to_string() + " > uint256_max)");
+				require(supply_delta >= token.supply, tx::to().to_string() + ": illegal operation - token supply overflow");
+				require(to_delta >= output, token.account.to_string() + ": illegal operation - balance overflow");
 
 				token.supply = supply_delta;
-				uniform::set(@p, contract_field::info, token);
-				uniform::set(@p, token.owner, to_delta);
+				uniform::set(uint8(0), token);
+				uniform::set_if(token.account, to_delta, to_delta > 0);
 				return to_delta;
 			}
-			uint256 burn(program@ p, const uint256 & in value)
+			uint256 burn(instrset::rwptr@, const uint256&in value)
 			{
-				token_info token = uniform::get<token_info>(@p, contract_field::info);
-				require(token.owner == tx::from(), "from does not own the token");
+				token_storage token = info(null);
+				require(token.account == tx::from(), "illegal operation - operation not permitted");
 
-				uint256 output = 0;
-				uniform::load(@p, token.owner, output);
-
+				uint256 output = balance_of(null, token.account);
 				uint256 supply_delta = token.supply - value;
 				uint256 to_delta = output - value;
 				require(supply_delta <= token.supply, "token supply will underflow (" + token.supply.to_string() + " < " + value.to_string() + ")");
-				require(to_delta <= output, "owner balance will underflow (" + output.to_string() + " < " + value.to_string() + ")");
+				require(to_delta <= output, "account balance will underflow (" + output.to_string() + " < " + value.to_string() + ")");
 
 				token.supply = supply_delta;
-				uniform::set(@p, contract_field::info, token);
-				uniform::set(@p, token.owner, to_delta);
+				uniform::set(uint8(0), token);
+				uniform::set_if(token.account, to_delta, to_delta > 0);
 				return to_delta;
 			}
-			uint256 balance_of(program@ const p, const address & in owner)
+			uint256 balance_of(instrset::rptr@, const address&in account)
 			{
 				uint256 output = 0;
-				uniform::load(@p, owner, output);
+				uniform::load(account, output);
 				return output;
 			}
-			token_info info(program@ const p)
+			token_storage info(instrset::rptr@)
 			{
-				return uniform::get<token_info>(@p, contract_field::info);
+				return uniform::get<token_storage>(uint8(0));
 			}));
 
 			auto* deployment_ethereum1 = memory::init<transactions::deployment>();
@@ -278,14 +267,14 @@ public:
 
 			ledger::wallet bridge_contract = ledger::wallet::from_seed(string("bridge") + string((char*)user1.secret_key, sizeof(user1.secret_key)));
 			std::string_view bridge_program = VI_STRINGIFY((
-			void construct(program@ p, const address & in token_address)
+			void construct(instrset::rwptr@, const address&in token_account)
 			{
-				uniform::set(@p, uint8(0), token_address);
+				uniform::set(uint8(0), token_account);
 			}
-			uint256 balance_of_test_token(program@ const p)
+			uint256 balance_of_test_token(instrset::rptr@)
 			{
-				address token_address = uniform::get<address>(@p, uint8(0));
-				return token_address.call<uint256>(@p, "uint256 balance_of(program@ const, const address&in)", tx::from());
+				address token_account = uniform::get<address>(uint8(0));
+				return token_account.call<uint256>("uint256 balance_of(instrset::rptr@, const address&in)", tx::from());
 			}));
 
 			auto* deployment_ethereum2 = memory::init<transactions::deployment>();
@@ -1465,13 +1454,13 @@ public:
 			TEST_BLOCK(&generators::account_transfer_stage_2, "0x455043564667a3d7a234bbbd6c1c08711ed4b0c9cfa25dfd575ea7236f82de33", 8);
 			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), users[2].wallet.get_address(), 0.05), "0x5bcd3a13492010c76930adf30d36a83547e9e04d2747979f73e414d92e65df6c", 9);
 			TEST_BLOCK(&generators::account_transaction_rollup, "0xc653217aa953ac1d57519d55bb81ce1d63dc6e3c00e0fa16cb106cf7ef2e6187", 10);
-			TEST_BLOCK(&generators::account_program_deployment, "0xde22dbbdb117024727cbe6fa454265877b17c7a8d3e6bfe4bbf2029c45662ff0", 11);
-			TEST_BLOCK(&generators::account_program_invocation, "0xe45c3c14509a7be1260c56cd47bcf05fbcef517524f3426fa7e44c5ea1d42d8d", 12);
-			TEST_BLOCK(&generators::depository_regrouping, "0x53cd5bc07a75bd888bfb32a6d7b80a7467d8c08077874d7891b62a5e3ae53fda", 13);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_1, "0x0c5ad7866cdc1af2fa7049be164d1025522362645015a9f3fd646e386cd7b90f", 17);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0x933d8ecdcd14722f40c906aeb49be216042a34066970a4104a60db053a95f9a8", 19);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0xf4f31d8263278cbe26fd96699b3e872a037d84f53a863749129521842ab7361a", 21);
-			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2), "0xe16a15d4e20f29572be3601e38347532c41a5c18fe623514e199bf5dc86a0f99", 23);
+			TEST_BLOCK(&generators::account_program_deployment, "0x70a5cc8a7500d7823f059d07d812eb2dc1c60e10175391209f653f114497e034", 11);
+			TEST_BLOCK(&generators::account_program_invocation, "0x683e427f5a6fd76e44b6f2d0760b56b974c14b344b0a47508c8ef959630a4f28", 12);
+			TEST_BLOCK(&generators::depository_regrouping, "0x724d23c92d22e60f609da9707d461d7d51eb09ab3bbb22607b2caec0d21d9b21", 13);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_1, "0xcded70f27ae87493f0d4c5ae96b42b084aeea9e1b57d7977a770de47137c1d83", 17);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0xb3c5d0c3b5523bac9d2e8091265e7f11578f30296c35d5d52dcff49129fafcc3", 19);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0xa89ec867e05979c3c31d42c444456afbb95a892f3b93396285106ee1c1b79632", 21);
+			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2), "0xf9d7b7e86dec0fcbc900e581dfcea033c62dc294cfd9d946520208ccbbcc6ada", 23);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else
@@ -1673,7 +1662,7 @@ public:
 		transactions = vector<uptr<ledger::transaction>>();
 		proposal.checkpoint().expect("block checkpoint failed");
 		if (results != nullptr)
-			results->push(proposal.block.as_schema().reset());
+			results->push(proposal.as_schema().reset());
 
 		vector<ledger::wallet> validators;
 		validators.reserve(users.size());

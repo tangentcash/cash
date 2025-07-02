@@ -696,8 +696,9 @@ namespace tangent
 			{
 				if (!errors)
 					return layer_exception("block does not have any valid transaction");
+				else if (errors->empty())
+					errors->append("\n  block does not have any valid transactions");
 
-				errors->append("\n  block does not have any valid transactions");
 				return layer_exception(string(*errors));
 			}
 
@@ -1295,6 +1296,14 @@ namespace tangent
 				mempool.remove_transactions(finalized_transactions).report("mempool cleanup failed");
 			}
 			return mutation;
+		}
+		uptr<schema> block_evaluation::as_schema() const
+		{
+			auto data = block.as_schema();
+			auto* states_data = data->set("state", var::set::array());
+			for (auto& item : state.at(work_state::finalized))
+				states_data->push(item.second->as_schema().reset());
+			return data;
 		}
 
 		transaction_context::transaction_context() : environment(nullptr), transaction(nullptr), changelog(nullptr), block(nullptr)

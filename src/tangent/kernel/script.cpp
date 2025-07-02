@@ -957,6 +957,11 @@ namespace tangent
 			bindings::registry::import_uint128(*vm);
 			bindings::registry::import_uint256(*vm);
 
+			vm->begin_namespace(SCRIPT_NAMESPACE_INSTRSET);
+			auto instrset_rwptr = vm->set_interface_class<script_program>(SCRIPT_CLASS_RWPTR);
+			auto instrset_rptr = vm->set_interface_class<script_program>(SCRIPT_CLASS_RPTR);
+			vm->end_namespace();
+
 			auto address = vm->set_pod<script_address>(SCRIPT_CLASS_ADDRESS);
 			address->set_constructor<script_address>("void f()");
 			address->set_constructor<script_address, const std::string_view&>("void f(const string_view&in)");
@@ -1300,7 +1305,7 @@ namespace tangent
 				return layer_exception("illegal call to function: null function");
 			}
 
-			auto binders = load_arguments(mutability, entrypoint, args);
+			auto binders = load_arguments(&mutability, entrypoint, args);
 			if (!binders)
 				return binders.error();
 
@@ -1353,6 +1358,7 @@ namespace tangent
 			if (caller != coroutine)
 			{
 				vector<script_frame> frames;
+				coroutine->set_exception_callback([](immediate_context*) { });
 				coroutine->set_line_callback(std::bind(&script_program::load_coroutine, this, std::placeholders::_1, frames));
 				execution = coroutine->execute_inline_call(entrypoint, [&binders](immediate_context* coroutine) { for (auto& bind : *binders) bind(coroutine); });
 				resolve(coroutine);
@@ -1367,7 +1373,13 @@ namespace tangent
 			{
 				if (caller != coroutine)
 					vm->return_context(coroutine);
-				return layer_exception(exception.empty() ? (execution ? "execution error" : execution.error().message()) : exception.what());
+				if (exception.empty())
+					return layer_exception(execution ? "execution error" : execution.error().message());
+
+				string error_message = stringify::text("(%s) ", exception.get_type().c_str());
+				error_message.append(exception.get_text());
+				error_message.append(exception.origin);
+				return layer_exception(std::move(error_message));
 			}
 
 			if (caller != coroutine)
@@ -1466,13 +1478,14 @@ namespace tangent
 			host->deallocate(std::move(compiler));
 			return execution;
 		}
-		expects_lr<vector<std::function<void(immediate_context*)>>> script_program::load_arguments(script_call mutability, const function& entrypoint, const format::variables& args) const
+		expects_lr<vector<std::function<void(immediate_context*)>>> script_program::load_arguments(script_call* mutability, const function& entrypoint, const format::variables& args) const
 		{
+			VI_ASSERT(mutability != nullptr, "mutability should be set");
 			auto function_name = entrypoint.get_name();
 			if (!entrypoint.get_namespace().empty())
 				return layer_exception(stringify::text("illegal call to function \"%.*s\": illegal operation", (int)function_name.size(), function_name.data()));
 
-			if (mutability != script_call::default_call && (function_name == SCRIPT_FUNCTION_CONSTRUCTOR || function_name == SCRIPT_FUNCTION_DESTRUCTOR))
+			if (*mutability != script_call::default_call && (function_name == SCRIPT_FUNCTION_CONSTRUCTOR || function_name == SCRIPT_FUNCTION_DESTRUCTOR))
 				return layer_exception(stringify::text("illegal call to function \"%.*s\": illegal operation", (int)function_name.size(), function_name.data()));
 
 			auto* vm = entrypoint.get_vm();
@@ -1546,19 +1559,28 @@ namespace tangent
 				}
 				else
 				{
-					switch (mutability)
+					if (!type.is_valid() || type.get_namespace() != SCRIPT_NAMESPACE_INSTRSET)
+						return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound to any instruction set", entrypoint.get_decl().data(), (int)i));
+
+					auto required_mutability = *mutability == script_call::default_call ? script_call::mutable_call : *mutability;
+					if (type.get_name() == SCRIPT_CLASS_RWPTR)
+						*mutability = script_call::mutable_call;
+					else if (type.get_name() == SCRIPT_CLASS_RPTR)
+						*mutability = script_call::immutable_call;
+					else
+						*mutability = script_call::default_call;
+
+					switch (*mutability)
 					{
-						case tangent::ledger::script_call::default_call:
-						case tangent::ledger::script_call::mutable_call:
-							if (!type.is_valid() || type.get_namespace() != SCRIPT_NAMESPACE_INSTRSET || type.get_name() != SCRIPT_CLASS_RWPTR)
-								return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound to (rw) instruction set", entrypoint.get_decl().data(), (int)i));
+						case script_call::mutable_call:
+							if (required_mutability == script_call::immutable_call)
+								return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound to required instruction set (" SCRIPT_CLASS_RPTR ")", entrypoint.get_decl().data(), (int)i));
 							break;
-						case tangent::ledger::script_call::immutable_call:
-							if (!type.is_valid() || type.get_namespace() != SCRIPT_NAMESPACE_INSTRSET || type.get_name() != SCRIPT_CLASS_RPTR)
-								return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound to (r) instruction set", entrypoint.get_decl().data(), (int)i));
+						case script_call::immutable_call:
 							break;
+						case script_call::default_call:
 						default:
-							return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound to unknown instruction set", entrypoint.get_decl().data(), (int)i));
+							return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound to required instruction set (" SCRIPT_CLASS_RWPTR " or " SCRIPT_CLASS_RPTR ")", entrypoint.get_decl().data(), (int)i));
 					}
 					frames.emplace_back([i, index, &args, this](immediate_context* coroutine) { coroutine->set_arg_object(i, (script_program*)this); });
 				}
