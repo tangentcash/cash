@@ -8,6 +8,13 @@ namespace tangent
 {
 	namespace ledger
 	{
+		enum class script_call
+		{
+			default_call,
+			mutable_call,
+			immutable_call
+		};
+
 		class script_marshalling
 		{
 		public:
@@ -77,15 +84,15 @@ namespace tangent
 			virtual expects_lr<void> mutable_call(compiler* compiler, const std::string_view& function_decl, const format::variables& args);
 			virtual expects_lr<void> immutable_call(compiler* compiler, const std::string_view& function_decl, const format::variables& args);
 			virtual bool dispatch_instruction(virtual_machine* vm, immediate_context* coroutine, uint32_t* program_data, size_t program_counter, byte_code_label& opcode);
-			virtual void call_mutable_function(const script_address& target, const std::string_view& function_decl, void* input_value, int input_type_id, void* output_value, int output_type_id);
-			virtual void call_immutable_function(const script_address& target, const std::string_view& function_decl, void* input_value, int input_type_id, void* output_value, int output_type_id) const;
+			virtual void internal_call(const script_address& target, const std::string_view& function_decl, void* input_value, int input_type_id, void* output_value, int output_type_id);
+			virtual void internal_call(const script_address& target, const std::string_view& function_decl, void* input_value, int input_type_id, void* output_value, int output_type_id) const;
 			virtual void store_uniform(const void* index_value, int index_type_id, const void* object_value, int object_type_id);
 			virtual bool load_uniform(const void* index_value, int index_type_id, void* object_value, int object_type_id, bool throw_on_error) const;
 			virtual void store_multiform(const void* column_value, int column_type_id, const void* row_value, int row_type_id, const void* object_value, int object_type_id);
 			virtual bool load_multiform_by_composition(const void* column_value, int column_type_id, const void* row_value, int row_type_id, void* object_value, int object_type_id, bool throw_on_error) const;
-			virtual bool load_multiform_by_column(const void* column_value, int column_type_id, void* object_value, int object_type_id, size_t offset, bool throw_on_error) const;
+			virtual bool load_multiform_by_column(const void* column_value, int column_type_id, void* row_value, int row_type_id, void* object_value, int object_type_id, size_t offset, bool throw_on_error) const;
 			virtual void emit_event(const void* event_value, int event_type_id, const void* object_value, int object_type_id);
-			virtual void send(const script_address& target, const uint256_t& asset, const decimal& value);
+			virtual void pay(const script_address& target, const uint256_t& asset, const decimal& value);
 			virtual void destroy();
 			virtual uint256_t random();
 			virtual decimal value() const;
@@ -109,13 +116,16 @@ namespace tangent
 			virtual uint64_t block_number() const;
 
 		protected:
-			virtual expects_lr<void> execute(const function& entrypoint, const format::variables& args, int8_t mutability, std::function<expects_lr<void>(void*, int)>&& return_callback);
-			virtual expects_lr<void> subexecute(const script_address& target, const std::string_view& function_decl, void* input_value, int input_type_id, void* output_value, int output_type_id, int8_t mutability) const;
-			virtual expects_lr<vector<std::function<void(immediate_context*)>>> load_arguments(const function& entrypoint, const format::variables& args, int8_t mutability) const;
+			virtual expects_lr<void> execute(script_call mutability, const function& entrypoint, const format::variables& args, std::function<expects_lr<void>(void*, int)>&& return_callback);
+			virtual expects_lr<void> subexecute(const script_address& target, script_call mutability, const std::string_view& function_decl, void* input_value, int input_type_id, void* output_value, int output_type_id) const;
+			virtual expects_lr<vector<std::function<void(immediate_context*)>>> load_arguments(script_call mutability, const function& entrypoint, const format::variables& args) const;
 			virtual void load_coroutine(immediate_context* coroutine, vector<script_frame>& frames);
 
 		public:
-			static script_program* get(immediate_context* coroutine = immediate_context::get());
+			static script_program* fetch_mutable(immediate_context* coroutine = immediate_context::get());
+			static const script_program* fetch_immutable(immediate_context* coroutine = immediate_context::get());
+			static script_program* fetch_mutable_or_throw(immediate_context* coroutine = immediate_context::get());
+			static const script_program* fetch_immutable_or_throw(immediate_context* coroutine = immediate_context::get());
 		};
 
 		struct script_program_trace : script_program
@@ -127,7 +137,7 @@ namespace tangent
 			bool debugging;
 
 			script_program_trace(ledger::transaction* transaction, const algorithm::pubkeyhash from, bool tracing);
-			expects_lr<void> trace_call(const std::string_view& function, const format::variables& args, int8_t mutability);
+			expects_lr<void> trace_call(script_call mutability, const std::string_view& function_decl, const format::variables& args);
 			bool dispatch_instruction(virtual_machine* vm, immediate_context* coroutine, uint32_t* program_data, size_t program_counter, byte_code_label& opcode) override;
 			uptr<schema> as_schema() const;
 		};

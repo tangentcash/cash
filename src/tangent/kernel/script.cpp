@@ -9,9 +9,12 @@ extern "C"
 #include "../internal/sha2.h"
 #include "../internal/sha3.h"
 }
-#define SCRIPT_TAG_PROGRAM 1944
+#define SCRIPT_TAG_MUTABLE_PROGRAM 19190
+#define SCRIPT_TAG_IMMUTABLE_PROGRAM 19191
+#define SCRIPT_NAMESPACE_INSTRSET "instrset"
+#define SCRIPT_CLASS_RWPTR "rwptr"
+#define SCRIPT_CLASS_RPTR "rptr"
 #define SCRIPT_CLASS_ADDRESS "address"
-#define SCRIPT_CLASS_PROGRAM "program"
 #define SCRIPT_CLASS_STRINGVIEW "string_view"
 #define SCRIPT_CLASS_STRING "string"
 #define SCRIPT_CLASS_UINT128 "uint128"
@@ -81,243 +84,211 @@ namespace tangent
 			}
 		};
 
-		static void script_address_send(script_address& to, script_program* program, const uint256_t& asset, const decimal& value)
+		static void script_address_pay(script_address& to, const uint256_t& asset, const decimal& value)
 		{
-			if (!program)
-				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "program is required"));
-
-			program->send(to, asset, value);
+			auto* program = script_program::fetch_mutable_or_throw();
+			if (program != nullptr)
+				program->pay(to, asset, value);
 		}
 		static void script_address_call_mutable_function(asIScriptGeneric* generic)
 		{
 			generic_context inout = generic_context(generic);
-			auto* program = inout.get_arg_object<script_program>(0);
-			if (!program)
-				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "program is required"));
-
 			auto& target = *(script_address*)inout.get_object_address();
-			auto& function = *inout.get_arg_object<std::string_view>(1);
-			void* input_value = inout.get_arg_address(2);
-			int input_type_id = inout.get_arg_type_id(2);
+			auto& function = *inout.get_arg_object<std::string_view>(0);
+			void* input_value = inout.get_arg_address(1);
+			int input_type_id = inout.get_arg_type_id(1);
 			void* output_value = inout.get_address_of_return_location();
 			int output_type_id = inout.get_return_addressable_type_id();
-			program->call_mutable_function(target, function, input_value, input_type_id, output_value, output_type_id);
-		}
-		static void script_address_call_immutable_function(asIScriptGeneric* generic)
-		{
-			generic_context inout = generic_context(generic);
-			auto* program = inout.get_arg_object<const script_program>(0);
-			if (!program)
-				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "program is required"));
 
-			auto& target = *(script_address*)inout.get_object_address();
-			auto& function = *inout.get_arg_object<std::string_view>(1);
-			void* input_value = inout.get_arg_address(2);
-			int input_type_id = inout.get_arg_type_id(2);
-			void* output_value = inout.get_address_of_return_location();
-			int output_type_id = inout.get_return_addressable_type_id();
-			program->call_immutable_function(target, function, input_value, input_type_id, output_value, output_type_id);
-		}
-		static void log_emit(script_program* program, const void* event_value, int event_type_id, void* object_value, int object_type_id)
-		{
-			if (!program)
-				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "program is required"));
+			auto* program = script_program::fetch_mutable();
+			if (program != nullptr)
+				return program->internal_call(target, function, input_value, input_type_id, output_value, output_type_id);
 
-			program->emit_event(event_value, event_type_id, object_value, object_type_id);
+			auto* immutable_program = script_program::fetch_immutable_or_throw();
+			if (immutable_program != nullptr)
+				return immutable_program->internal_call(target, function, input_value, input_type_id, output_value, output_type_id);
 		}
-		static void uniform_set(script_program* program, const void* index_value, int index_type_id, void* object_value, int object_type_id)
+		static void log_emit(const void* event_value, int event_type_id, void* object_value, int object_type_id)
 		{
-			if (!program)
-				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "program is required"));
-
-			program->store_uniform(index_value, index_type_id, object_value, object_type_id);
+			auto* program = script_program::fetch_mutable_or_throw();
+			if (program != nullptr)
+				program->emit_event(event_value, event_type_id, object_value, object_type_id);
 		}
-		static void uniform_unset(script_program* program, const void* index_value, int index_type_id)
+		static void uniform_set(const void* index_value, int index_type_id, void* object_value, int object_type_id)
 		{
-			if (!program)
-				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "program is required"));
-
-			program->store_uniform(index_value, index_type_id, nullptr, (int)type_id::void_t);
+			auto* program = script_program::fetch_mutable_or_throw();
+			if (program != nullptr)
+				program->store_uniform(index_value, index_type_id, object_value, object_type_id);
 		}
-		static bool uniform_load(const script_program* program, const void* index_value, int index_type_id, void* object_value, int object_type_id)
+		static void uniform_unset(const void* index_value, int index_type_id)
 		{
-			if (!program)
-			{
-				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "program is required"));
-				return false;
-			}
-
-			return program->load_uniform(index_value, index_type_id, object_value, object_type_id, false);
+			auto* program = script_program::fetch_mutable_or_throw();
+			if (program != nullptr)
+				program->store_uniform(index_value, index_type_id, nullptr, (int)type_id::void_t);
+		}
+		static void uniform_set_if(const void* index_value, int index_type_id, void* object_value, int object_type_id, bool condition)
+		{
+			if (condition)
+				uniform_set(index_value, index_type_id, object_value, object_type_id);
+			else
+				uniform_unset(index_value, index_type_id);
+		}
+		static bool uniform_load(const void* index_value, int index_type_id, void* object_value, int object_type_id)
+		{
+			auto* program = script_program::fetch_immutable_or_throw();
+			return program ? program->load_uniform(index_value, index_type_id, object_value, object_type_id, false) : false;
 		}
 		static void uniform_get(asIScriptGeneric* generic)
 		{
 			generic_context inout = generic_context(generic);
-			auto* program = inout.get_arg_object<const script_program>(0);
-			if (!program)
-				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "program is required"));
-
-			void* index_value = inout.get_arg_address(1);
-			int index_type_id = inout.get_arg_type_id(1);
+			void* index_value = inout.get_arg_address(0);
+			int index_type_id = inout.get_arg_type_id(0);
 			void* object_value = inout.get_address_of_return_location();
 			int object_type_id = inout.get_return_addressable_type_id();
-			program->load_uniform(index_value, index_type_id, object_value, object_type_id, true);
+			auto* program = script_program::fetch_immutable_or_throw();
+			if (program != nullptr)
+				program->load_uniform(index_value, index_type_id, object_value, object_type_id, true);
 		}
-		static void multiform_set(script_program* program, const void* column_value, int column_type_id, const void* row_value, int row_type_id, void* object_value, int object_type_id)
+		static void multiform_set(const void* column_value, int column_type_id, const void* row_value, int row_type_id, void* object_value, int object_type_id)
 		{
-			if (!program)
-				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "program is required"));
-
-			program->store_multiform(column_value, column_type_id, row_value, row_type_id, object_value, object_type_id);
+			auto* program = script_program::fetch_mutable_or_throw();
+			if (program != nullptr)
+				program->store_multiform(column_value, column_type_id, row_value, row_type_id, object_value, object_type_id);
 		}
-		static void multiform_unset(script_program* program, const void* column_value, int column_type_id, const void* row_value, int row_type_id)
+		static void multiform_unset(const void* column_value, int column_type_id, const void* row_value, int row_type_id)
 		{
-			if (!program)
-				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "program is required"));
-
-			program->store_multiform(column_value, column_type_id, row_value, row_type_id, nullptr, (int)type_id::void_t);
+			auto* program = script_program::fetch_mutable_or_throw();
+			if (program != nullptr)
+				program->store_multiform(column_value, column_type_id, row_value, row_type_id, nullptr, (int)type_id::void_t);
 		}
-		static bool multiform_load(const script_program* program, const void* column_value, int column_type_id, const void* row_value, int row_type_id, void* object_value, int object_type_id)
+		static void multiform_set_if(const void* column_value, int column_type_id, const void* row_value, int row_type_id, void* object_value, int object_type_id, bool condition)
 		{
-			if (!program)
-			{
-				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "program is required"));
-				return false;
-			}
-
-			return program->load_multiform_by_composition(column_value, column_type_id, row_value, row_type_id, object_value, object_type_id, false);
+			if (condition)
+				multiform_set(column_value, column_type_id, row_value, row_type_id, object_value, object_type_id);
+			else
+				multiform_unset(column_value, column_type_id, row_value, row_type_id);
 		}
-		static bool multiform_load_at(const script_program* program, const void* column_value, int column_type_id, size_t offset, void* object_value, int object_type_id)
+		static bool multiform_load(const void* column_value, int column_type_id, const void* row_value, int row_type_id, void* object_value, int object_type_id)
 		{
-			if (!program)
-			{
-				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "program is required"));
-				return false;
-			}
-
-			return program->load_multiform_by_column(column_value, column_type_id, object_value, object_type_id, offset, false);
+			auto* program = script_program::fetch_immutable_or_throw();
+			return program ? program->load_multiform_by_composition(column_value, column_type_id, row_value, row_type_id, object_value, object_type_id, false) : false;
+		}
+		static bool multiform_load_at(const void* column_value, int column_type_id, size_t offset, void* row_value, int row_type_id, void* object_value, int object_type_id)
+		{
+			auto* program = script_program::fetch_immutable_or_throw();
+			return program ? program->load_multiform_by_column(column_value, column_type_id, row_value, row_type_id, object_value, object_type_id, offset, false) : false;
 		}
 		static void multiform_get(asIScriptGeneric* generic)
 		{
 			generic_context inout = generic_context(generic);
-			auto* program = inout.get_arg_object<const script_program>(0);
-			if (!program)
-				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "program is required"));
-
-			void* column_value = inout.get_arg_address(1);
-			int column_type_id = inout.get_arg_type_id(1);
-			void* row_value = inout.get_arg_address(2);
-			int row_type_id = inout.get_arg_type_id(2);
+			void* column_value = inout.get_arg_address(0);
+			int column_type_id = inout.get_arg_type_id(0);
+			void* row_value = inout.get_arg_address(1);
+			int row_type_id = inout.get_arg_type_id(1);
 			void* object_value = inout.get_address_of_return_location();
 			int object_type_id = inout.get_return_addressable_type_id();
-			program->load_multiform_by_composition(column_value, column_type_id, row_value, row_type_id, object_value, object_type_id, true);
-		}
-		static void multiform_get_at(asIScriptGeneric* generic)
-		{
-			generic_context inout = generic_context(generic);
-			auto* program = inout.get_arg_object<const script_program>(0);
-			if (!program)
-				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "program is required"));
-
-			void* column_value = inout.get_arg_address(1);
-			int column_type_id = inout.get_arg_type_id(1);
-			size_t offset = inout.get_arg_dword(2);
-			void* object_value = inout.get_address_of_return_location();
-			int object_type_id = inout.get_return_addressable_type_id();
-			program->load_multiform_by_column(column_value, column_type_id, object_value, object_type_id, offset, true);
+			auto* program = script_program::fetch_immutable_or_throw();
+			if (program != nullptr)
+				program->load_multiform_by_composition(column_value, column_type_id, row_value, row_type_id, object_value, object_type_id, true);
 		}
 		static uint256_t block_parent_hash()
 		{
-			auto* program = script_program::get();
+			auto* program = script_program::fetch_immutable_or_throw();
 			return program ? program->parent_block_hash() : 0;
 		}
 		static uint256_t block_gas_left()
 		{
-			auto* program = script_program::get();
+			auto* program = script_program::fetch_immutable_or_throw();
 			return program ? program->block_gas_left() : 0;
 		}
 		static uint256_t block_gas_use()
 		{
-			auto* program = script_program::get();
+			auto* program = script_program::fetch_immutable_or_throw();
 			return program ? program->block_gas_use() : 0;
 		}
 		static uint256_t block_gas_limit()
 		{
-			auto* program = script_program::get();
+			auto* program = script_program::fetch_immutable_or_throw();
 			return program ? program->block_gas_limit() : 0;
 		}
 		static uint128_t block_difficulty()
 		{
-			auto* program = script_program::get();
+			auto* program = script_program::fetch_immutable_or_throw();
 			return program ? program->block_difficulty() : 0;
 		}
 		static uint64_t block_time()
 		{
-			auto* program = script_program::get();
+			auto* program = script_program::fetch_immutable_or_throw();
 			return program ? program->block_time() : 0;
 		}
 		static uint64_t block_priority()
 		{
-			auto* program = script_program::get();
+			auto* program = script_program::fetch_immutable_or_throw();
 			return program ? program->block_priority() : 0;
 		}
 		static uint64_t block_number()
 		{
-			auto* program = script_program::get();
+			auto* program = script_program::fetch_immutable_or_throw();
 			return program ? program->block_number() : 0;
 		}
 		static decimal tx_value()
 		{
-			auto* program = script_program::get();
+			auto* program = script_program::fetch_immutable_or_throw();
 			return program ? program->value() : decimal::zero();
+		}
+		static bool tx_paid()
+		{
+			auto* program = script_program::fetch_immutable_or_throw();
+			return program ? program->value().is_positive() : false;
 		}
 		static script_address tx_from()
 		{
-			auto* program = script_program::get();
+			auto* program = script_program::fetch_immutable_or_throw();
 			return program ? program->from() : script_address();
 		}
 		static script_address tx_to()
 		{
-			auto* program = script_program::get();
+			auto* program = script_program::fetch_immutable_or_throw();
 			return program ? program->to() : script_address();
 		}
 		static string tx_blockchain()
 		{
-			auto* program = script_program::get();
+			auto* program = script_program::fetch_immutable_or_throw();
 			return program ? program->blockchain() : string();
 		}
 		static string tx_token()
 		{
-			auto* program = script_program::get();
+			auto* program = script_program::fetch_immutable_or_throw();
 			return program ? program->token() : string();
 		}
 		static string tx_contract()
 		{
-			auto* program = script_program::get();
+			auto* program = script_program::fetch_immutable_or_throw();
 			return program ? program->contract() : string();
 		}
 		static decimal tx_gas_price()
 		{
-			auto* program = script_program::get();
+			auto* program = script_program::fetch_immutable_or_throw();
 			return program ? program->gas_price() : decimal::zero();
 		}
 		static uint256_t tx_gas_left()
 		{
-			auto* program = script_program::get();
+			auto* program = script_program::fetch_immutable_or_throw();
 			return program ? program->gas_left() : 0;
 		}
 		static uint256_t tx_gas_use()
 		{
-			auto* program = script_program::get();
+			auto* program = script_program::fetch_immutable_or_throw();
 			return program ? program->gas_use() : 0;
 		}
 		static uint256_t tx_gas_limit()
 		{
-			auto* program = script_program::get();
+			auto* program = script_program::fetch_immutable_or_throw();
 			return program ? program->gas_limit() : 0;
 		}
 		static uint256_t tx_asset()
 		{
-			auto* program = script_program::get();
+			auto* program = script_program::fetch_immutable_or_throw();
 			return program ? program->asset() : 0;
 		}
 		static string crc32(const std::string_view& data)
@@ -424,15 +395,10 @@ namespace tangent
 			message.write_integer(value);
 			return message.data;
 		}
-		static uint256_t random(script_program* program)
+		static uint256_t random()
 		{
-			if (!program)
-			{
-				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "program is required"));
-				return 0;
-			}
-
-			return program->random();
+			auto* program = script_program::fetch_mutable_or_throw();
+			return program ? program->random() : 0;
 		}
 		static void require(bool condition, const std::string_view& message)
 		{
@@ -991,7 +957,6 @@ namespace tangent
 			bindings::registry::import_uint128(*vm);
 			bindings::registry::import_uint256(*vm);
 
-			auto program = vm->set_interface_class<script_program>(SCRIPT_CLASS_PROGRAM);
 			auto address = vm->set_pod<script_address>(SCRIPT_CLASS_ADDRESS);
 			address->set_constructor<script_address>("void f()");
 			address->set_constructor<script_address, const std::string_view&>("void f(const string_view&in)");
@@ -1004,29 +969,29 @@ namespace tangent
 			address->set_method("uint256 to_public_key_hash() const", &script_address::to_public_key_hash);
 			address->set_method("uint256 to_derivation_hash() const", &script_address::to_derivation_hash);
 			address->set_method("bool empty() const", &script_address::empty);
-			address->set_method_extern("void send(program@, const uint256&in, const decimal&in)", &script_address_send);
-			address->set_method_extern("t rw_call<t>(program@, const string_view&in, const ?&in)", &script_address_call_mutable_function, convention::generic_call);
-			address->set_method_extern("t call<t>(program@ const, const string_view&in, const ?&in) const", &script_address_call_immutable_function, convention::generic_call);
+			address->set_method_extern("void pay(const uint256&in, const decimal&in)", &script_address_pay);
+			address->set_method_extern("t call<t>(const string_view&in, const ?&in)", &script_address_call_mutable_function, convention::generic_call);
 			address->set_operator_extern(operators::equals_t, (uint32_t)position::constant, "bool", "const address&in", &script_address::equals);
 
 			vm->begin_namespace("log");
-			vm->set_function("void emit(program@, const ?&in, const ?&in)", &log_emit);
+			vm->set_function("void emit(const ?&in, const ?&in)", &log_emit);
 			vm->end_namespace();
 
 			vm->begin_namespace("uniform");
-			vm->set_function("void set(program@, const ?&in, const ?&in)", &uniform_set);
-			vm->set_function("void unset(program@, const ?&in)", &uniform_unset);
-			vm->set_function("void load(program@ const, const ?&in, ?&out)", &uniform_load);
-			vm->set_function("t get<t>(program@ const, const ?&in)", &uniform_get, convention::generic_call);
+			vm->set_function("void set(const ?&in, const ?&in)", &uniform_set);
+			vm->set_function("void set_if(const ?&in, const ?&in, bool)", &uniform_set_if);
+			vm->set_function("void unset(const ?&in)", &uniform_unset);
+			vm->set_function("bool load(const ?&in, ?&out)", &uniform_load);
+			vm->set_function("t get<t>(const ?&in)", &uniform_get, convention::generic_call);
 			vm->end_namespace();
 
 			vm->begin_namespace("multiform");
-			vm->set_function("void set(program@, const ?&in, const ?&in, const ?&in)", &multiform_set);
-			vm->set_function("void unset(program@, const ?&in, const ?&in)", &multiform_unset);
-			vm->set_function("void load(program@ const, const ?&in, const ?&in, ?&out)", &multiform_load);
-			vm->set_function("void load_at(program@ const, const ?&in, usize, ?&out)", &multiform_load_at);
-			vm->set_function("t get<t>(program@ const, const ?&in, const ?&in)", &multiform_get, convention::generic_call);
-			vm->set_function("t get_at<t>(program@ const, const ?&in, usize)", &multiform_get_at, convention::generic_call);
+			vm->set_function("void set(const ?&in, const ?&in, const ?&in)", &multiform_set);
+			vm->set_function("void set_if(const ?&in, const ?&in, const ?&in, bool)", &multiform_set_if);
+			vm->set_function("void unset(const ?&in, const ?&in)", &multiform_unset);
+			vm->set_function("bool load(const ?&in, const ?&in, ?&out)", &multiform_load);
+			vm->set_function("bool load_at(const ?&in, usize, ?&out, ?&out)", &multiform_load_at);
+			vm->set_function("t get<t>(const ?&in, const ?&in)", &multiform_get, convention::generic_call);
 			vm->end_namespace();
 
 			vm->begin_namespace("block");
@@ -1040,6 +1005,7 @@ namespace tangent
 			vm->end_namespace();
 
 			vm->begin_namespace("tx");
+			vm->set_function("bool paid()", &tx_paid);
 			vm->set_function("decimal value()", &tx_value);
 			vm->set_function("address from()", &tx_from);
 			vm->set_function("address to()", &tx_to);
@@ -1053,7 +1019,7 @@ namespace tangent
 			vm->end_namespace();
 
 			vm->begin_namespace("alg");
-			vm->set_function("uint256 random256(program@)", &random);
+			vm->set_function("uint256 random256()", &random);
 			vm->set_function("uint256 asset_handle(const string_view&in, const string_view&in = string_view(), const string_view&in = string_view())", &algorithm::asset::id_of);
 			vm->set_function("string asset_blockchain(const uint256&in)", &algorithm::asset::blockchain_of);
 			vm->set_function("string asset_token(const uint256&in)", &algorithm::asset::token_of);
@@ -1292,7 +1258,7 @@ namespace tangent
 		}
 		expects_lr<void> script_program::construct(compiler* compiler, const format::variables& args)
 		{
-			return execute(compiler->get_module().get_function_by_name(SCRIPT_FUNCTION_CONSTRUCTOR), args, 1, nullptr);
+			return execute(script_call::default_call, compiler->get_module().get_function_by_name(SCRIPT_FUNCTION_CONSTRUCTOR), args, nullptr);
 		}
 		expects_lr<void> script_program::destruct(compiler* compiler)
 		{
@@ -1300,7 +1266,7 @@ namespace tangent
 		}
 		expects_lr<void> script_program::destruct(const function& entrypoint)
 		{
-			auto destruction = execute(entrypoint, { }, 1, nullptr);
+			auto destruction = execute(script_call::default_call, entrypoint, { }, nullptr);
 			if (!destruction)
 				return destruction;
 
@@ -1315,40 +1281,36 @@ namespace tangent
 			if (function_decl.empty())
 				return layer_exception("illegal call to function: function not found");
 
-			return execute(compiler->get_module().get_function_by_name(function_decl), args, -1, nullptr);
+			return execute(script_call::mutable_call, compiler->get_module().get_function_by_name(function_decl), args, nullptr);
 		}
 		expects_lr<void> script_program::immutable_call(compiler* compiler, const std::string_view& function_decl, const format::variables& args)
 		{
 			if (function_decl.empty())
 				return layer_exception("illegal call to function: function not found");
 			
-			return execute(compiler->get_module().get_function_by_name(function_decl), args, 0, nullptr);
+			return execute(script_call::immutable_call, compiler->get_module().get_function_by_name(function_decl), args, nullptr);
 		}
-		expects_lr<void> script_program::execute(const function& entrypoint, const format::variables& args, int8_t mutability, std::function<expects_lr<void>(void*, int)>&& return_callback)
+		expects_lr<void> script_program::execute(script_call mutability, const function& entrypoint, const format::variables& args, std::function<expects_lr<void>(void*, int)>&& return_callback)
 		{
 			if (!entrypoint.is_valid())
 			{
-				if (mutability == 1)
+				if (mutability == script_call::default_call)
 					return expectation::met;
 
 				return layer_exception("illegal call to function: null function");
 			}
 
-			auto function_name = entrypoint.get_name();
-			if (mutability != 1 && (function_name == SCRIPT_FUNCTION_CONSTRUCTOR || function_name == SCRIPT_FUNCTION_DESTRUCTOR))
-				return layer_exception(stringify::text("illegal call to function \"%.*s\": illegal operation", (int)function_name.size(), function_name.data()));
-			else if (!entrypoint.get_namespace().empty())
-				return layer_exception(stringify::text("illegal call to function \"%.*s\": illegal operation", (int)function_name.size(), function_name.data()));
-
-			auto binders = load_arguments(entrypoint, args, mutability);
+			auto binders = load_arguments(mutability, entrypoint, args);
 			if (!binders)
 				return binders.error();
 
 			auto* vm = entrypoint.get_vm();
 			auto* caller = immediate_context::get();
 			auto* coroutine = caller ? caller : vm->request_context();
-			auto* prev_program = coroutine->get_user_data(SCRIPT_TAG_PROGRAM);
-			coroutine->set_user_data(this, SCRIPT_TAG_PROGRAM);
+			auto* prev_mutable_program = coroutine->get_user_data(SCRIPT_TAG_MUTABLE_PROGRAM);
+			auto* prev_immutable_program = coroutine->get_user_data(SCRIPT_TAG_IMMUTABLE_PROGRAM);
+			coroutine->set_user_data(mutability == script_call::mutable_call ? this : nullptr, SCRIPT_TAG_MUTABLE_PROGRAM);
+			coroutine->set_user_data(this, SCRIPT_TAG_IMMUTABLE_PROGRAM);
 
 			auto execution = expects_vm<vitex::scripting::execution>(vitex::scripting::execution::error);
 			auto resolver = expects_lr<void>(layer_exception());
@@ -1399,7 +1361,8 @@ namespace tangent
 				execution = coroutine->execute_subcall(entrypoint, [&binders](immediate_context* coroutine) { for (auto& bind : *binders) bind(coroutine); }, resolve);
 
 			auto exception = bindings::exception::get_exception_at(coroutine);
-			coroutine->set_user_data(prev_program, SCRIPT_TAG_PROGRAM);
+			coroutine->set_user_data(prev_mutable_program, SCRIPT_TAG_MUTABLE_PROGRAM);
+			coroutine->set_user_data(prev_immutable_program, SCRIPT_TAG_IMMUTABLE_PROGRAM);
 			if (!execution || (execution && *execution != execution::finished) || !exception.empty())
 			{
 				if (caller != coroutine)
@@ -1411,7 +1374,7 @@ namespace tangent
 				vm->return_context(coroutine);
 			return resolver;
 		}
-		expects_lr<void> script_program::subexecute(const script_address& target, const std::string_view& function_decl, void* input_value, int input_type_id, void* output_value, int output_type_id, int8_t mutability) const
+		expects_lr<void> script_program::subexecute(const script_address& target, script_call mutability, const std::string_view& function_decl, void* input_value, int input_type_id, void* output_value, int output_type_id) const
 		{
 			if (function_decl.empty())
 				return layer_exception(stringify::text("illegal subcall to %s program: illegal operation", target.to_string().c_str()));
@@ -1483,7 +1446,7 @@ namespace tangent
 			auto* main = (script_program*)this;
 			main->context = &next;
 
-			auto execution = main->execute(compiler->get_module().get_function_by_decl(function_decl), transaction.args, mutability, [&target, &function_decl, output_value, output_type_id](void* address, int type_id) -> expects_lr<void>
+			auto execution = main->execute(mutability, compiler->get_module().get_function_by_decl(function_decl), transaction.args, [&target, &function_decl, output_value, output_type_id](void* address, int type_id) -> expects_lr<void>
 			{
 				format::stream stream;
 				auto serialization = script_marshalling::store(&stream, address, type_id);
@@ -1503,8 +1466,15 @@ namespace tangent
 			host->deallocate(std::move(compiler));
 			return execution;
 		}
-		expects_lr<vector<std::function<void(immediate_context*)>>> script_program::load_arguments(const function& entrypoint, const format::variables& args, int8_t mutability) const
+		expects_lr<vector<std::function<void(immediate_context*)>>> script_program::load_arguments(script_call mutability, const function& entrypoint, const format::variables& args) const
 		{
+			auto function_name = entrypoint.get_name();
+			if (!entrypoint.get_namespace().empty())
+				return layer_exception(stringify::text("illegal call to function \"%.*s\": illegal operation", (int)function_name.size(), function_name.data()));
+
+			if (mutability != script_call::default_call && (function_name == SCRIPT_FUNCTION_CONSTRUCTOR || function_name == SCRIPT_FUNCTION_DESTRUCTOR))
+				return layer_exception(stringify::text("illegal call to function \"%.*s\": illegal operation", (int)function_name.size(), function_name.data()));
+
 			auto* vm = entrypoint.get_vm();
 			size_t args_count = entrypoint.get_args_count();
 			if (args_count != args.size() + 1)
@@ -1517,14 +1487,14 @@ namespace tangent
 			{
 				int type_id; size_t flags;
 				if (!entrypoint.get_arg(i, &type_id, &flags))
-					return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound", entrypoint.get_decl().data(), i));
+					return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound", entrypoint.get_decl().data(), (int)i));
 
 				size_t index = i - 1;
 				auto type = vm->get_type_info_by_id(type_id);
 				if (i > 0)
 				{
 					if (index >= args.size())
-						return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound", entrypoint.get_decl().data(), i));
+						return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound", entrypoint.get_decl().data(), (int)i));
 
 					switch (type_id)
 					{
@@ -1576,13 +1546,20 @@ namespace tangent
 				}
 				else
 				{
-					if (!type.is_valid() || type.get_name() != SCRIPT_CLASS_PROGRAM)
-						return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound to program", entrypoint.get_decl().data()));
-
-					bool is_const = mutability == 0;
-					if (mutability != -1 && is_const != (!!(flags & (size_t)modifiers::constant)))
-						return layer_exception(stringify::text("illegal call to function \"%s\": mutability not preserved", entrypoint.get_decl().data()));
-
+					switch (mutability)
+					{
+						case tangent::ledger::script_call::default_call:
+						case tangent::ledger::script_call::mutable_call:
+							if (!type.is_valid() || type.get_namespace() != SCRIPT_NAMESPACE_INSTRSET || type.get_name() != SCRIPT_CLASS_RWPTR)
+								return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound to (rw) instruction set", entrypoint.get_decl().data(), (int)i));
+							break;
+						case tangent::ledger::script_call::immutable_call:
+							if (!type.is_valid() || type.get_namespace() != SCRIPT_NAMESPACE_INSTRSET || type.get_name() != SCRIPT_CLASS_RPTR)
+								return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound to (r) instruction set", entrypoint.get_decl().data(), (int)i));
+							break;
+						default:
+							return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound to unknown instruction set", entrypoint.get_decl().data(), (int)i));
+					}
 					frames.emplace_back([i, index, &args, this](immediate_context* coroutine) { coroutine->set_arg_object(i, (script_program*)this); });
 				}
 			}
@@ -1636,15 +1613,15 @@ namespace tangent
 
 			latest_frame.pointer = current_frame.pointer;
 		}
-		void script_program::call_mutable_function(const script_address& target, const std::string_view& function_decl, void* input_value, int input_type_id, void* output_value, int output_type_id)
+		void script_program::internal_call(const script_address& target, const std::string_view& function_decl, void* input_value, int input_type_id, void* output_value, int output_type_id)
 		{
-			auto execution = subexecute(target, function_decl, input_value, input_type_id, output_value, output_type_id, -1);
+			auto execution = subexecute(target, script_call::mutable_call, function_decl, input_value, input_type_id, output_value, output_type_id);
 			if (!execution)
 				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_EXECUTION, execution.error().message()));
 		}
-		void script_program::call_immutable_function(const script_address& target, const std::string_view& function_decl, void* input_value, int input_type_id, void* output_value, int output_type_id) const
+		void script_program::internal_call(const script_address& target, const std::string_view& function_decl, void* input_value, int input_type_id, void* output_value, int output_type_id) const
 		{
-			auto execution = subexecute(target, function_decl, input_value, input_type_id, output_value, output_type_id, 0);
+			auto execution = subexecute(target, script_call::immutable_call, function_decl, input_value, input_type_id, output_value, output_type_id);
 			if (!execution)
 				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_EXECUTION, execution.error().message()));
 		}
@@ -1751,7 +1728,7 @@ namespace tangent
 
 			return true;
 		}
-		bool script_program::load_multiform_by_column(const void* column_value, int column_type_id, void* object_value, int object_type_id, size_t offset, bool throw_on_error) const
+		bool script_program::load_multiform_by_column(const void* column_value, int column_type_id, void* row_value, int row_type_id, void* object_value, int object_type_id, size_t offset, bool throw_on_error) const
 		{
 			format::stream column;
 			auto status = script_marshalling::store(&column, column_value, column_type_id);
@@ -1769,7 +1746,16 @@ namespace tangent
 				return false;
 			}
 
-			format::stream stream = format::stream(data->data);
+			format::stream stream = format::stream(data->row);
+			status = script_marshalling::load(stream, row_value, row_type_id);
+			if (!status)
+			{
+				if (throw_on_error)
+					bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_STORAGE, "index is not in use"));
+				return false;
+			}
+
+			stream = format::stream(data->data);
 			status = script_marshalling::load(stream, object_value, object_type_id);
 			if (!status)
 			{
@@ -1804,10 +1790,10 @@ namespace tangent
 			if (!data)
 				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_STORAGE, data.error().message()));
 		}
-		void script_program::send(const script_address& target, const uint256_t& asset, const decimal& value)
+		void script_program::pay(const script_address& target, const uint256_t& asset, const decimal& value)
 		{
 			if (!value.is_positive())
-				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "transfer value must be positive"));
+				return;
 
 			auto payment = context->apply_payment(asset, to().hash.data, target.hash.data, value);
 			if (!payment)
@@ -1929,9 +1915,29 @@ namespace tangent
 		{
 			return context->block->number;
 		}
-		script_program* script_program::get(immediate_context* coroutine)
+		script_program* script_program::fetch_mutable(immediate_context* coroutine)
 		{
-			return coroutine ? (script_program*)coroutine->get_user_data(SCRIPT_TAG_PROGRAM) : nullptr;
+			return coroutine ? (script_program*)coroutine->get_user_data(SCRIPT_TAG_MUTABLE_PROGRAM) : nullptr;
+		}
+		const script_program* script_program::fetch_immutable(immediate_context* coroutine)
+		{
+			return coroutine ? (const script_program*)coroutine->get_user_data(SCRIPT_TAG_IMMUTABLE_PROGRAM) : nullptr;
+		}
+		script_program* script_program::fetch_mutable_or_throw(immediate_context* coroutine)
+		{
+			auto* result = fetch_mutable(coroutine);
+			if (!result)
+				bindings::exception::throw_ptr_at(coroutine, bindings::exception::pointer(SCRIPT_EXCEPTION_EXECUTION, "contract is required to be mutable"));
+
+			return result;
+		}
+		const script_program* script_program::fetch_immutable_or_throw(immediate_context* coroutine)
+		{
+			auto* result = fetch_immutable(coroutine);
+			if (!result)
+				bindings::exception::throw_ptr_at(coroutine, bindings::exception::pointer(SCRIPT_EXCEPTION_EXECUTION, "contract is required to be immutable"));
+
+			return result;
 		}
 
 		script_program_trace::script_program_trace(ledger::transaction* transaction, const algorithm::pubkeyhash from, bool tracing) : script_program(&environment.validation.context), debugging(tracing)
@@ -1954,7 +1960,7 @@ namespace tangent
 			memset(environment.validator.secret_key, 0xFF, sizeof(algorithm::seckey));
 			environment.validation.context = transaction_context(&environment, &block, &environment.validation.changelog, transaction, std::move(receipt));
 		}
-		expects_lr<void> script_program_trace::trace_call(const std::string_view& function, const format::variables& args, int8_t mutability)
+		expects_lr<void> script_program_trace::trace_call(script_call mutability, const std::string_view& function_decl, const format::variables& args)
 		{
 			auto index = environment.validation.context.get_account_program(to().hash.data);
 			if (!index)
@@ -1987,7 +1993,7 @@ namespace tangent
 				}
 			}
 
-			auto execution = execute(compiler->get_module().get_function_by_name(function), args, mutability, [this](void* address, int type_id) -> expects_lr<void>
+			auto execution = execute(mutability, compiler->get_module().get_function_by_decl(function_decl), args, [this](void* address, int type_id) -> expects_lr<void>
 			{
 				returning = var::set::object();
 				auto serialization = script_marshalling::store(*returning, address, type_id);
