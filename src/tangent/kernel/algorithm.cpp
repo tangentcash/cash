@@ -537,7 +537,7 @@ namespace tangent
 			message.write_typeless((char*)signer_public_key_hash, (uint32_t)sizeof(pubkeyhash));
 			message.write_typeless((char*)sender_public_key_hash, (uint32_t)sizeof(pubkeyhash));
 
-			auto [high, low] = permit_nonce_range();
+			auto [low, high] = permit_nonce_range();
 			uint256_t hash = ((message.hash() - low) % (high - low + 1)) + low;
 			return (uint64_t)hash;
 		}

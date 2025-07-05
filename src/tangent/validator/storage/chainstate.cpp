@@ -2267,6 +2267,7 @@ namespace tangent
 				dynamic_query.pop_back();
 				dynamic_query.push_back(')');
 			}
+			dynamic_query.append(" ORDER BY transaction_number DESC LIMIT 1");
 
 			cursor = emplace_query(get_txdata(), label, __func__, dynamic_query, &map);
 			if (!cursor || cursor->error_or_empty())
@@ -2299,6 +2300,7 @@ namespace tangent
 				dynamic_query.pop_back();
 				dynamic_query.push_back(')');
 			}
+			dynamic_query.append(" ORDER BY transaction_number DESC LIMIT 1");
 
 			cursor = emplace_query(get_txdata(), label, __func__, dynamic_query, &map);
 			if (!cursor || cursor->error_or_empty())
@@ -2960,8 +2962,8 @@ namespace tangent
 			if (name == "blockdata")
 			{
 				command = VI_STRINGIFY((
-					CREATE TABLE IF NOT EXISTS blocks
-					(
+				CREATE TABLE IF NOT EXISTS blocks
+				(
 					block_number BIGINT NOT NULL,
 					block_hash BINARY(32) NOT NULL,
 					PRIMARY KEY(block_hash)
@@ -2976,8 +2978,8 @@ namespace tangent
 			else if (name == "accountdata")
 			{
 				command = VI_STRINGIFY((
-					CREATE TABLE IF NOT EXISTS accounts
-					(
+				CREATE TABLE IF NOT EXISTS accounts
+				(
 					account_number BIGINT NOT NULL,
 					account_hash BINARY(20) NOT NULL,
 					block_number BIGINT NOT NULL,
@@ -2989,8 +2991,8 @@ namespace tangent
 			else if (name == "txdata")
 			{
 				command = VI_STRINGIFY((
-					CREATE TABLE IF NOT EXISTS transactions
-					(
+				CREATE TABLE IF NOT EXISTS transactions
+				(
 					transaction_number BIGINT NOT NULL,
 					transaction_hash BINARY(32) NOT NULL,
 					dispatch_queue BIGINT DEFAULT NULL,
@@ -3005,8 +3007,8 @@ namespace tangent
 			else if (name == "partydata")
 			{
 				command = VI_STRINGIFY((
-					CREATE TABLE IF NOT EXISTS parties
-					(
+				CREATE TABLE IF NOT EXISTS parties
+				(
 					transaction_number BIGINT NOT NULL,
 					transaction_account_number BIGINT NOT NULL,
 					block_number BIGINT NOT NULL,
@@ -3017,8 +3019,8 @@ namespace tangent
 			else if (name == "aliasdata")
 			{
 				command = VI_STRINGIFY((
-					CREATE TABLE IF NOT EXISTS aliases
-					(
+				CREATE TABLE IF NOT EXISTS aliases
+				(
 					transaction_number BIGINT NOT NULL,
 					transaction_hash BINARY(32) NOT NULL,
 					block_number BIGINT NOT NULL,
@@ -3029,8 +3031,8 @@ namespace tangent
 			else if (stringify::starts_with(name, "uniformdata"))
 			{
 				command = VI_STRINGIFY((
-					CREATE TABLE IF NOT EXISTS indices
-					(
+				CREATE TABLE IF NOT EXISTS indices
+				(
 					index_number BIGINT NOT NULL,
 					index_hash BINARY NOT NULL,
 					block_number BIGINT NOT NULL,
@@ -3057,8 +3059,8 @@ namespace tangent
 			else if (stringify::starts_with(name, "multiformdata"))
 			{
 				command = VI_STRINGIFY((
-					CREATE TABLE IF NOT EXISTS columns
-					(
+				CREATE TABLE IF NOT EXISTS columns
+				(
 					column_number BIGINT NOT NULL,
 					column_hash BINARY NOT NULL,
 					block_number BIGINT NOT NULL,

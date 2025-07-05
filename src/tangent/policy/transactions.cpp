@@ -781,16 +781,17 @@ namespace tangent
 			uint256_t relative_gas_use = context->receipt.relative_gas_use;
 			std::sort(queue.begin(), queue.end(), [](const std::pair<ledger::transaction*, uint16_t>& a, const std::pair<ledger::transaction*, uint16_t>& b)
 			{
-				return a.first->nonce < b.first->nonce;
+				return a.first->nonce != b.first->nonce ? a.first->nonce < b.first->nonce : a.second < b.second;
 			});
 
 			algorithm::pubkeyhash null = { 0 };
+			auto sequencer = algorithm::pubkeyhash_t(context->receipt.from);
 			for (auto& [transaction, index] : queue)
 			{
 				format::stream message;
 				message.write_integer(rollup::as_instance_type());
-				message.write_integer(asset);
-				message.write_integer(index);
+				message.write_string(sequencer.optimized_view());
+				message.write_integer(transaction->as_type());
 				if (!transaction->store_payload(&message))
 					return layer_exception("sub-transaction " + algorithm::encoding::encode_0xhex256(transaction->as_hash()) + " validation failed: invalid payload");
 
@@ -809,11 +810,11 @@ namespace tangent
 				transaction->gas_price = decimal::zero();
 				auto execution = ledger::transaction_context::execute_tx(context->environment, (ledger::block*)context->block, context->changelog, transaction, transaction->as_hash(), owner, transaction->as_message().data.size(), behaviour_flags);
 				transaction->gas_price = decimal::nan();
-				relative_gas_use += execution->receipt.relative_gas_use;
 				if (!execution)
 					return layer_exception("sub-transaction " + algorithm::encoding::encode_0xhex256(transaction->as_hash()) + " execution failed: " + execution.error().message());
 
-				auto report = context->emit_event<rollup>({ format::variable(execution->receipt.transaction_hash), format::variable(execution->receipt.relative_gas_use), format::variable(execution->receipt.relative_gas_paid) });
+				relative_gas_use += execution->receipt.relative_gas_use;
+				auto report = context->emit_event<rollup>({ format::variable(execution->receipt.transaction_hash), format::variable(index), format::variable(execution->receipt.relative_gas_use), format::variable(execution->receipt.relative_gas_paid) });
 				if (!report)
 					return layer_exception("sub-transaction " + algorithm::encoding::encode_0xhex256(transaction->as_hash()) + " event merge failed: " + report.error().message());
 
@@ -965,21 +966,18 @@ namespace tangent
 			transactions[next->asset].push_back(next);
 			return true;
 		}
-		bool rollup::import_transaction_and_sign(ledger::transaction& transaction, const algorithm::seckey secret_key, uint64_t nonce)
+		bool rollup::import_transaction_and_sign(ledger::transaction& transaction, const algorithm::pubkeyhash sequencer, const algorithm::seckey secret_key, uint64_t nonce)
 		{
-			if (nonce > 0)
-				transaction.nonce = nonce;
-
-			auto it = transactions.find(transaction.asset ? transaction.asset : asset);
-			auto order = it != transactions.end() ? it->second.size() : 0;
 			normalize_transaction(transaction, asset);
+			transaction.nonce = nonce > 0 ? nonce : transaction.nonce;
 			if (!transaction.gas_limit && !transaction.sign(secret_key, transaction.nonce, decimal::zero()))
 				return false;
 
 			format::stream message;
 			message.write_integer(rollup::as_instance_type());
-			message.write_integer(asset);
-			message.write_integer(order);
+			message.write_string(algorithm::pubkeyhash_t(sequencer).optimized_view());
+			message.write_integer(transaction.as_type());
+			normalize_transaction(transaction, asset);
 			if (!transaction.store_payload(&message))
 				return false;
 

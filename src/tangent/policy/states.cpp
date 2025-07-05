@@ -110,9 +110,6 @@ namespace tangent
 			if (is_owner_null())
 				return layer_exception("invalid state owner");
 
-			if (permits.find(algorithm::pubkeyhash_t(owner)) != permits.end())
-				return layer_exception("self permit is not allowed");
-
 			for (auto& permit : permits)
 			{
 				if (permit.empty())

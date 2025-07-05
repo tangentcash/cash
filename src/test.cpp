@@ -112,6 +112,16 @@ public:
 			VI_PANIC(transfer_asset->sign(user1.secret_key, user1_nonce++, decimal::zero()), "transfer not signed");
 			transactions.push_back(transfer_asset);
 		}
+		static void account_transaction_permit(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
+		{
+			auto& [user1, user1_nonce] = users[0];
+			auto& [user2, user2_nonce] = users[1];
+			auto* permit_for_user2 = memory::init<transactions::permit>();
+			permit_for_user2->set_asset("ETH");
+			permit_for_user2->approve(algorithm::encoding::to_subaddress(user2.public_key_hash));
+			VI_PANIC(permit_for_user2->sign(user1.secret_key, user1_nonce++, decimal::zero()), "permit not signed");
+			transactions.push_back(permit_for_user2);
+		}
 		static void account_transaction_rollup(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
 		{
 			auto& [user1, user1_nonce] = users[0];
@@ -121,48 +131,62 @@ public:
 
 			auto transfer_ethereum1 = transactions::transfer();
 			transfer_ethereum1.set_to(algorithm::encoding::to_subaddress(user2.public_key_hash), 0.1);
-			VI_PANIC(multi_asset_rollup->merge(transfer_ethereum1, user1.secret_key, user1_nonce++), "transfer not signed");
+			VI_PANIC(multi_asset_rollup->import_transaction_and_sign(transfer_ethereum1, user1.public_key_hash, user1.secret_key, user1_nonce++), "transfer not signed");
 
 			auto transfer_ethereum2 = transactions::transfer();
 			transfer_ethereum2.set_to(algorithm::encoding::to_subaddress(user2.public_key_hash), 0.2);
-			VI_PANIC(multi_asset_rollup->merge(transfer_ethereum2, user1.secret_key, user1_nonce++), "transfer not signed");
+			VI_PANIC(multi_asset_rollup->import_transaction_and_sign(transfer_ethereum2, user1.public_key_hash, user1.secret_key, user1_nonce++), "transfer not signed");
 
 			auto transfer_ethereum3 = transactions::transfer();
 			transfer_ethereum3.set_to(algorithm::encoding::to_subaddress(user1.public_key_hash), 0.2);
-			VI_PANIC(multi_asset_rollup->merge(transfer_ethereum3, user2.secret_key, user2_nonce++), "transfer not signed");
+			VI_PANIC(multi_asset_rollup->import_transaction_and_sign(transfer_ethereum3, user1.public_key_hash, user2.secret_key, user2_nonce++), "transfer not signed");
 
 			auto transfer_ripple1 = transactions::transfer();
 			transfer_ripple1.set_asset("XRP");
 			transfer_ripple1.set_to(algorithm::encoding::to_subaddress(user2.public_key_hash), 1);
-			VI_PANIC(multi_asset_rollup->merge(transfer_ripple1, user1.secret_key, user1_nonce++), "transfer not signed");
+			VI_PANIC(multi_asset_rollup->import_transaction_and_sign(transfer_ripple1, user1.public_key_hash, user1.secret_key, user1_nonce++), "transfer not signed");
 
 			auto transfer_ripple2 = transactions::transfer();
 			transfer_ripple2.set_asset("XRP");
 			transfer_ripple2.set_to(algorithm::encoding::to_subaddress(user2.public_key_hash), 2);
-			VI_PANIC(multi_asset_rollup->merge(transfer_ripple2, user1.secret_key, user1_nonce++), "transfer not signed");
+			VI_PANIC(multi_asset_rollup->import_transaction_and_sign(transfer_ripple2, user1.public_key_hash, user1.secret_key, user1_nonce++), "transfer not signed");
 
 			auto transfer_ripple3 = transactions::transfer();
 			transfer_ripple3.set_asset("XRP");
 			transfer_ripple3.set_to(algorithm::encoding::to_subaddress(user1.public_key_hash), 2);
-			VI_PANIC(multi_asset_rollup->merge(transfer_ripple3, user2.secret_key, user2_nonce++), "transfer not signed");
+			VI_PANIC(multi_asset_rollup->import_transaction_and_sign(transfer_ripple3, user1.public_key_hash, user2.secret_key, user2_nonce++), "transfer not signed");
 
 			auto transfer_bitcoin1 = transactions::transfer();
 			transfer_bitcoin1.set_asset("BTC");
 			transfer_bitcoin1.set_to(algorithm::encoding::to_subaddress(user2.public_key_hash), 0.001);
-			VI_PANIC(multi_asset_rollup->merge(transfer_bitcoin1, user1.secret_key, user1_nonce++), "transfer not signed");
+			VI_PANIC(multi_asset_rollup->import_transaction_and_sign(transfer_bitcoin1, user1.public_key_hash, user1.secret_key, user1_nonce++), "transfer not signed");
 
 			auto transfer_bitcoin2 = transactions::transfer();
 			transfer_bitcoin2.set_asset("BTC");
 			transfer_bitcoin2.set_to(algorithm::encoding::to_subaddress(user2.public_key_hash), 0.002);
-			VI_PANIC(multi_asset_rollup->merge(transfer_bitcoin2, user1.secret_key, user1_nonce++), "transfer not signed");
+			VI_PANIC(multi_asset_rollup->import_transaction_and_sign(transfer_bitcoin2, user1.public_key_hash, user1.secret_key, user1_nonce++), "transfer not signed");
 
 			auto transfer_bitcoin3 = transactions::transfer();
 			transfer_bitcoin3.set_asset("BTC");
 			transfer_bitcoin3.set_to(algorithm::encoding::to_subaddress(user1.public_key_hash), 0.002);
-			VI_PANIC(multi_asset_rollup->merge(transfer_bitcoin3, user2.secret_key, user2_nonce++), "transfer not signed");
+			VI_PANIC(multi_asset_rollup->import_transaction_and_sign(transfer_bitcoin3, user1.public_key_hash, user2.secret_key, user2_nonce++), "transfer not signed");
 
 			VI_PANIC(multi_asset_rollup->sign(user1.secret_key, user1_nonce++, decimal::zero()), "rollup not signed");
 			transactions.push_back(multi_asset_rollup);
+
+			auto* replayable_rollup = memory::init<transactions::rollup>();
+			replayable_rollup->set_asset("ETH");
+
+			auto replayable_ethereum_transfer = transactions::transfer();
+			replayable_ethereum_transfer.nonce = algorithm::signing::permit_nonce(user1.public_key_hash, user2.public_key_hash);
+			replayable_ethereum_transfer.set_to(algorithm::encoding::to_subaddress(user2.public_key_hash), 0.005);
+			VI_PANIC(replayable_rollup->import_transaction_and_sign(replayable_ethereum_transfer, user2.public_key_hash, user1.secret_key), "transfer not signed");
+
+			auto& replayable_ethereum_transfer_copy = replayable_ethereum_transfer;
+			VI_PANIC(replayable_rollup->import_transaction(replayable_ethereum_transfer_copy), "transfer not imported");
+
+			VI_PANIC(replayable_rollup->sign(user2.secret_key, user2_nonce++, decimal::zero()), "rollup not signed");
+			transactions.push_back(replayable_rollup);
 		}
 		static void account_program_deployment(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
 		{
@@ -692,6 +716,7 @@ public:
 		new_serialization_comparison<ledger::block>(*data);
 		new_serialization_comparison<ledger::block_proof>(*data, ledger::block_header(), (ledger::block_header*)nullptr);
 		new_serialization_comparison<states::account_nonce>(*data, owner, block_number++, block_nonce++);
+		new_serialization_comparison<states::account_permit>(*data, owner, block_number++, block_nonce++);
 		new_serialization_comparison<states::account_program>(*data, owner, block_number++, block_nonce++);
 		new_serialization_comparison<states::account_uniform>(*data, owner, std::string_view(), block_number++, block_nonce++);
 		new_serialization_comparison<states::account_multiform>(*data, owner, std::string_view(), std::string_view(), block_number++, block_nonce++);
@@ -708,6 +733,7 @@ public:
 		new_serialization_comparison<states::witness_account>(*data, owner, asset, address_map(), block_number++, block_nonce++);
 		new_serialization_comparison<states::witness_transaction>(*data, asset, std::string_view(), block_number++, block_nonce++);
 		new_serialization_comparison<transactions::transfer>(*data);
+		new_serialization_comparison<transactions::permit>(*data);
 		new_serialization_comparison<transactions::deployment>(*data);
 		new_serialization_comparison<transactions::invocation>(*data);
 		new_serialization_comparison<transactions::rollup>(*data);
@@ -1453,14 +1479,15 @@ public:
 			TEST_BLOCK(&generators::account_transfer_stage_1, "0x5a026823416520bf8596ed0886976000e82d5a8ea8a1d287285be7a1d72d5b86", 7);
 			TEST_BLOCK(&generators::account_transfer_stage_2, "0x455043564667a3d7a234bbbd6c1c08711ed4b0c9cfa25dfd575ea7236f82de33", 8);
 			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), users[2].wallet.get_address(), 0.05), "0x5bcd3a13492010c76930adf30d36a83547e9e04d2747979f73e414d92e65df6c", 9);
-			TEST_BLOCK(&generators::account_transaction_rollup, "0xc653217aa953ac1d57519d55bb81ce1d63dc6e3c00e0fa16cb106cf7ef2e6187", 10);
-			TEST_BLOCK(&generators::account_program_deployment, "0x70a5cc8a7500d7823f059d07d812eb2dc1c60e10175391209f653f114497e034", 11);
-			TEST_BLOCK(&generators::account_program_invocation, "0x683e427f5a6fd76e44b6f2d0760b56b974c14b344b0a47508c8ef959630a4f28", 12);
-			TEST_BLOCK(&generators::depository_regrouping, "0x724d23c92d22e60f609da9707d461d7d51eb09ab3bbb22607b2caec0d21d9b21", 13);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_1, "0xcded70f27ae87493f0d4c5ae96b42b084aeea9e1b57d7977a770de47137c1d83", 17);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0xb3c5d0c3b5523bac9d2e8091265e7f11578f30296c35d5d52dcff49129fafcc3", 19);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0xa89ec867e05979c3c31d42c444456afbb95a892f3b93396285106ee1c1b79632", 21);
-			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2), "0xf9d7b7e86dec0fcbc900e581dfcea033c62dc294cfd9d946520208ccbbcc6ada", 23);
+			TEST_BLOCK(&generators::account_transaction_permit, "0x239e650f72c62813ab4c8334cd0f44231cd29e801b963cedab75f4c3b023122c", 10);
+			TEST_BLOCK(&generators::account_transaction_rollup, "0x9faf81906a6556d2cc983eb94ce2cb75c857e32e0633b443c36a8e9892812f3b", 11);
+			TEST_BLOCK(&generators::account_program_deployment, "0xd584abe025b0cc01b37cbe2327e15cb888468149aa050db317166a7102771511", 12);
+			TEST_BLOCK(&generators::account_program_invocation, "0x6bfa8dd25dcc4c995c6882be36860f1e93b1515693c6aa32ec57914041a7272d", 13);
+			TEST_BLOCK(&generators::depository_regrouping, "0x5a585988c134a60b7def12276beb8ca29e4d619c1e130b98487b37d0f31ce8f7", 14);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_1, "0x0c64364167a0aff353f2071b58d6a965cdb8552f8837913132962569c651adfa", 18);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0x4d64a9917d839fe44dc07a836dd6ba787a106cf9187953052eeab54c815d2e15", 20);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0x1329c104b471b0ab141b40590c83aaa492d259ed415dfe5c73e75fd0bab70c28", 22);
+			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2), "0xc716b458db800e117d0436e1b749ae3823dab58bc9f59e3b3c5228fb23a1f709", 24);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else
@@ -1862,6 +1889,11 @@ public:
 				{
 					type = states::account_nonce::as_instance_type();
 					index = states::account_nonce::as_instance_index(owner);
+				}
+				else if (state == "permit")
+				{
+					type = states::account_permit::as_instance_type();
+					index = states::account_permit::as_instance_index(owner);
 				}
 				else if (state == "program")
 				{
