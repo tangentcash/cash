@@ -121,45 +121,45 @@ public:
 
 			auto transfer_ethereum1 = transactions::transfer();
 			transfer_ethereum1.set_to(algorithm::encoding::to_subaddress(user2.public_key_hash), 0.1);
-			VI_PANIC(multi_asset_rollup->import_transaction_and_sign(transfer_ethereum1, user1.public_key_hash, user1.secret_key, user1_nonce++), "transfer not signed");
+			VI_PANIC(multi_asset_rollup->import_internal_transaction(transfer_ethereum1, user1.secret_key), "transfer not signed");
 
 			auto transfer_ethereum2 = transactions::transfer();
 			transfer_ethereum2.set_to(algorithm::encoding::to_subaddress(user2.public_key_hash), 0.2);
-			VI_PANIC(multi_asset_rollup->import_transaction_and_sign(transfer_ethereum2, user1.public_key_hash, user1.secret_key, user1_nonce++), "transfer not signed");
+			VI_PANIC(multi_asset_rollup->import_internal_transaction(transfer_ethereum2, user1.secret_key), "transfer not signed");
 
 			auto transfer_ethereum3 = transactions::transfer();
 			transfer_ethereum3.set_to(algorithm::encoding::to_subaddress(user1.public_key_hash), 0.2);
-			VI_PANIC(multi_asset_rollup->import_transaction_and_sign(transfer_ethereum3, user1.public_key_hash, user2.secret_key, user2_nonce++), "transfer not signed");
+			VI_PANIC(multi_asset_rollup->import_external_transaction(transfer_ethereum3, user2.secret_key, user2_nonce++), "transfer not signed");
 
 			auto transfer_ripple1 = transactions::transfer();
 			transfer_ripple1.set_asset("XRP");
 			transfer_ripple1.set_to(algorithm::encoding::to_subaddress(user2.public_key_hash), 1);
-			VI_PANIC(multi_asset_rollup->import_transaction_and_sign(transfer_ripple1, user1.public_key_hash, user1.secret_key, user1_nonce++), "transfer not signed");
+			VI_PANIC(multi_asset_rollup->import_internal_transaction(transfer_ripple1, user1.secret_key), "transfer not signed");
 
 			auto transfer_ripple2 = transactions::transfer();
 			transfer_ripple2.set_asset("XRP");
 			transfer_ripple2.set_to(algorithm::encoding::to_subaddress(user2.public_key_hash), 2);
-			VI_PANIC(multi_asset_rollup->import_transaction_and_sign(transfer_ripple2, user1.public_key_hash, user1.secret_key, user1_nonce++), "transfer not signed");
+			VI_PANIC(multi_asset_rollup->import_internal_transaction(transfer_ripple2, user1.secret_key), "transfer not signed");
 
 			auto transfer_ripple3 = transactions::transfer();
 			transfer_ripple3.set_asset("XRP");
 			transfer_ripple3.set_to(algorithm::encoding::to_subaddress(user1.public_key_hash), 2);
-			VI_PANIC(multi_asset_rollup->import_transaction_and_sign(transfer_ripple3, user1.public_key_hash, user2.secret_key, user2_nonce++), "transfer not signed");
+			VI_PANIC(multi_asset_rollup->import_external_transaction(transfer_ripple3, user2.secret_key, user2_nonce++), "transfer not signed");
 
 			auto transfer_bitcoin1 = transactions::transfer();
 			transfer_bitcoin1.set_asset("BTC");
 			transfer_bitcoin1.set_to(algorithm::encoding::to_subaddress(user2.public_key_hash), 0.001);
-			VI_PANIC(multi_asset_rollup->import_transaction_and_sign(transfer_bitcoin1, user1.public_key_hash, user1.secret_key, user1_nonce++), "transfer not signed");
+			VI_PANIC(multi_asset_rollup->import_internal_transaction(transfer_bitcoin1, user1.secret_key), "transfer not signed");
 
 			auto transfer_bitcoin2 = transactions::transfer();
 			transfer_bitcoin2.set_asset("BTC");
 			transfer_bitcoin2.set_to(algorithm::encoding::to_subaddress(user2.public_key_hash), 0.002);
-			VI_PANIC(multi_asset_rollup->import_transaction_and_sign(transfer_bitcoin2, user1.public_key_hash, user1.secret_key, user1_nonce++), "transfer not signed");
+			VI_PANIC(multi_asset_rollup->import_internal_transaction(transfer_bitcoin2, user1.secret_key), "transfer not signed");
 
 			auto transfer_bitcoin3 = transactions::transfer();
 			transfer_bitcoin3.set_asset("BTC");
 			transfer_bitcoin3.set_to(algorithm::encoding::to_subaddress(user1.public_key_hash), 0.002);
-			VI_PANIC(multi_asset_rollup->import_transaction_and_sign(transfer_bitcoin3, user1.public_key_hash, user2.secret_key, user2_nonce++), "transfer not signed");
+			VI_PANIC(multi_asset_rollup->import_external_transaction(transfer_bitcoin3, user2.secret_key, user2_nonce++), "transfer not signed");
 
 			VI_PANIC(multi_asset_rollup->sign(user1.secret_key, user1_nonce++, decimal::zero()), "rollup not signed");
 			transactions.push_back(multi_asset_rollup);
@@ -1453,14 +1453,14 @@ public:
 			TEST_BLOCK(&generators::account_transfer_stage_1, "0x5a026823416520bf8596ed0886976000e82d5a8ea8a1d287285be7a1d72d5b86", 7);
 			TEST_BLOCK(&generators::account_transfer_stage_2, "0x455043564667a3d7a234bbbd6c1c08711ed4b0c9cfa25dfd575ea7236f82de33", 8);
 			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), users[2].wallet.get_address(), 0.05), "0x5bcd3a13492010c76930adf30d36a83547e9e04d2747979f73e414d92e65df6c", 9);
-			TEST_BLOCK(&generators::account_transaction_rollup, "0x9faf81906a6556d2cc983eb94ce2cb75c857e32e0633b443c36a8e9892812f3b", 11);
-			TEST_BLOCK(&generators::account_program_deployment, "0xd584abe025b0cc01b37cbe2327e15cb888468149aa050db317166a7102771511", 12);
-			TEST_BLOCK(&generators::account_program_invocation, "0x6bfa8dd25dcc4c995c6882be36860f1e93b1515693c6aa32ec57914041a7272d", 13);
-			TEST_BLOCK(&generators::depository_regrouping, "0x5a585988c134a60b7def12276beb8ca29e4d619c1e130b98487b37d0f31ce8f7", 14);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_1, "0x0c64364167a0aff353f2071b58d6a965cdb8552f8837913132962569c651adfa", 18);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0x4d64a9917d839fe44dc07a836dd6ba787a106cf9187953052eeab54c815d2e15", 20);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0x1329c104b471b0ab141b40590c83aaa492d259ed415dfe5c73e75fd0bab70c28", 22);
-			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2), "0xc716b458db800e117d0436e1b749ae3823dab58bc9f59e3b3c5228fb23a1f709", 24);
+			TEST_BLOCK(&generators::account_transaction_rollup, "0x0b07dcea12550ff433deafda4579542df39e616294578874fd9d241f672e8621", 10);
+			TEST_BLOCK(&generators::account_program_deployment, "0x7f08aabe930803ba6e6d051174f1e85576444d52cf4b5d06441fe208d0ae94c9", 11);
+			TEST_BLOCK(&generators::account_program_invocation, "0x330fa22fd5d9b55846d4286cea6521b1df883f0dbeee1e2ded5814b4c2220f43", 12);
+			TEST_BLOCK(&generators::depository_regrouping, "0x51e19f91477f9b39b2689b46c5cdb7496f3850eaf9752dc5ac81fda9428cf6ca", 13);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_1, "0xe933e285533d38a936adc0cad0b9cb77c95ec5cace534733737f0ab5c53e4d8f", 17);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0x1451c17019ae682916d07bdfed39947a3e3c4a8e6d1e179e15fc97ffc1e39f44", 19);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0x117fb17b608bfcaaa5ff19ca008c1aba6a69a162262a0b2ae930441aa1a90d59", 21);
+			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2), "0xbe8fdaa51d8c05534ed613cd3afa334cef55338a8d9da82d3de8c4e243efe716", 23);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else

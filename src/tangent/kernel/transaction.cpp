@@ -174,7 +174,7 @@ namespace tangent
 
 			schema* data = var::set::object();
 			data->set("hash", var::string(algorithm::encoding::encode_0xhex256(as_hash())));
-			data->set("signature", var::string(format::util::encode_0xhex(std::string_view((char*)signature, sizeof(signature)))));
+			data->set("signature", is_signature_null() ? var::null() : var::string(format::util::encode_0xhex(std::string_view((char*)signature, sizeof(signature)))));
 			data->set("type", var::string(as_typename()));
 			data->set("category", var::string(category));
 			data->set("asset", algorithm::asset::serialize(asset));

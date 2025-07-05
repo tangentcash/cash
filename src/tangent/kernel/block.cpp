@@ -559,8 +559,8 @@ namespace tangent
 			algorithm::pubkeyhash producer = { 0 };
 			bool has_producer = recover_hash(producer);
 			schema* data = var::set::object();
-			data->set("wesolowski", var::string(format::util::encode_0xhex(wesolowski)));
-			data->set("signature", var::string(format::util::encode_0xhex(std::string_view((char*)signature, sizeof(signature)))));
+			data->set("wesolowski", wesolowski.empty() ? var::null() : var::string(format::util::encode_0xhex(wesolowski)));
+			data->set("signature", is_signature_null() ? var::null() : var::string(format::util::encode_0xhex(std::string_view((char*)signature, sizeof(signature)))));
 			data->set("producer", has_producer ? algorithm::signing::serialize_address(producer) : var::set::null());
 			data->set("hash", var::string(algorithm::encoding::encode_0xhex256(as_hash())));
 			data->set("parent_hash", var::string(algorithm::encoding::encode_0xhex256(parent_hash)));
@@ -671,7 +671,7 @@ namespace tangent
 			ordered_map<algorithm::asset_id, decimal> fees;
 			for (auto& item : environment->incoming)
 			{
-				auto execution = transaction_context::execute_tx(environment, this, &changelog, *item.candidate, item.hash, item.owner, item.size, item.candidate->conservative ? 0 : (uint8_t)transaction_context::behaviour::pedantic);
+				auto execution = transaction_context::execute_tx(environment, this, &changelog, *item.candidate, item.hash, item.owner, item.size, item.candidate->conservative ? 0 : (uint8_t)transaction_context::execution_mode::pedantic);
 				if (execution)
 				{
 					auto& blob = transactions.emplace_back();
@@ -1438,8 +1438,9 @@ namespace tangent
 			if (!transaction)
 				return layer_exception("invalid transaction");
 
+			bool replayable = (execution_flags & (uint8_t)execution_mode::evaluation) || (execution_flags & (uint8_t)execution_mode::replayable);
 			auto state = get_account_nonce(receipt.from);
-			if (state && state->nonce > transaction->nonce)
+			if (state && state->nonce > transaction->nonce && !replayable)
 				return layer_exception("nonce is invalid (now: " + to_string(state->nonce) + ")");
 
 			return expectation::met;
@@ -2483,7 +2484,7 @@ namespace tangent
 
 			ledger::block_changelog temp_changelog;
 			size_t transaction_size = transaction->as_message().data.size();
-			auto execution = transaction_context::execute_tx(&temp_environment, &temp_block, &temp_changelog, transaction, transaction->as_hash(), owner, transaction_size, (transaction->conservative ? 0 : (uint8_t)behaviour::pedantic) | (uint8_t)behaviour::evaluation);
+			auto execution = transaction_context::execute_tx(&temp_environment, &temp_block, &temp_changelog, transaction, transaction->as_hash(), owner, transaction_size, (transaction->conservative ? 0 : (uint8_t)execution_mode::pedantic) | (uint8_t)execution_mode::evaluation);
 			if (!execution)
 			{
 				revert_transaction();
@@ -2505,7 +2506,7 @@ namespace tangent
 			auto chain = storages::chainstate(__func__);
 			return new_transaction->validate(chain.get_latest_block_number().or_else(1));
 		}
-		expects_lr<transaction_context> transaction_context::execute_tx(const ledger::evaluation_context* new_environment, ledger::block* new_block, block_changelog* changelog, const ledger::transaction* new_transaction, const uint256_t& new_transaction_hash, const algorithm::pubkeyhash owner, size_t transaction_size, uint8_t behaviour_flags)
+		expects_lr<transaction_context> transaction_context::execute_tx(const ledger::evaluation_context* new_environment, ledger::block* new_block, block_changelog* changelog, const ledger::transaction* new_transaction, const uint256_t& new_transaction_hash, const algorithm::pubkeyhash owner, size_t transaction_size, uint8_t execution_flags)
 		{
 			VI_ASSERT(new_environment && new_block && new_transaction && owner, "block, env, transaction and owner should be set");
 			ledger::receipt new_receipt;
@@ -2520,6 +2521,8 @@ namespace tangent
 				return validation.error();
 
 			auto context = transaction_context(new_environment, new_block, changelog, new_transaction, std::move(new_receipt));
+			context.execution_flags = execution_flags;
+
 			auto deployment = context.burn_gas(transaction_size * (size_t)gas_cost::write_byte);
 			if (!deployment)
 				return deployment.error();
@@ -2531,13 +2534,13 @@ namespace tangent
 				context.changelog->outgoing.revert();
 			if (discard)
 				context.receipt.events.clear();
-			if ((behaviour_flags & (uint8_t)behaviour::pedantic) && !context.receipt.successful)
+			if ((context.execution_flags & (uint8_t)execution_mode::pedantic) && !context.receipt.successful)
 				return execution.error();
 
 			algorithm::pubkeyhash null = { 0 };
-			if (memcmp(context.receipt.from, null, sizeof(null)) != 0 && !(behaviour_flags & (uint8_t)behaviour::replayable))
+			if (memcmp(context.receipt.from, null, sizeof(null)) != 0 && !(context.execution_flags & (uint8_t)execution_mode::replayable))
 			{
-				auto nonce = (behaviour_flags & (uint8_t)behaviour::evaluation ? context.get_account_nonce(context.receipt.from).or_else(states::account_nonce(nullptr, nullptr)).nonce : context.transaction->nonce);
+				auto nonce = (context.execution_flags & (uint8_t)execution_mode::evaluation ? context.get_account_nonce(context.receipt.from).or_else(states::account_nonce(nullptr, nullptr)).nonce : context.transaction->nonce);
 				auto sequencing = context.apply_account_nonce(context.receipt.from, nonce + 1);
 				if (!sequencing)
 					return sequencing.error();
@@ -2559,6 +2562,7 @@ namespace tangent
 			else
 				context.emit_event(0, { format::variable(execution.what()) }, false);
 
+			context.execution_flags = 0;
 			context.receipt.finalization_time = protocol::now().time.now();
 			context.block->gas_use += context.receipt.relative_gas_use;
 			context.block->gas_limit += context.transaction->gas_limit;

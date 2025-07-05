@@ -100,7 +100,8 @@ namespace tangent
 			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const override;
 			bool recover_aliases(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<uint256_t>& aliases) const override;
 			bool import_transaction(const ledger::transaction& transaction);
-			bool import_transaction_and_sign(ledger::transaction& transaction, const algorithm::pubkeyhash sequencer, const algorithm::seckey secret_key, uint64_t nonce = 0);
+			bool import_internal_transaction(ledger::transaction& transaction, const algorithm::seckey secret_key);
+			bool import_external_transaction(ledger::transaction& transaction, const algorithm::seckey secret_key, uint64_t nonce);
 			bool is_dispatchable() const override;
 			expects_lr<ledger::block_transaction> resolve_block_transaction(const ledger::receipt& receipt, const uint256_t& transaction_hash) const;
 			const ledger::transaction* resolve_transaction(const uint256_t& transaction_hash) const;

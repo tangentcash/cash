@@ -235,7 +235,7 @@ namespace tangent
 		struct transaction_context
 		{
 		public:
-			enum class behaviour : uint8_t
+			enum class execution_mode : uint8_t
 			{
 				pedantic = 1 << 0,
 				evaluation = 1 << 1,
@@ -249,6 +249,9 @@ namespace tangent
 				mint_gas,
 				mint_gas_and_activate
 			};
+
+		private:
+			uint8_t execution_flags;
 
 		public:
 			ordered_map<algorithm::asset_id, uint64_t> witnesses;
@@ -356,7 +359,7 @@ namespace tangent
 		public:
 			static expects_lr<uint256_t> calculate_tx_gas(const ledger::transaction* transaction);
 			static expects_lr<void> validate_tx(const ledger::transaction* new_transaction, const uint256_t& new_transaction_hash, algorithm::pubkeyhash owner);
-			static expects_lr<transaction_context> execute_tx(const ledger::evaluation_context* new_environment, ledger::block* new_block, block_changelog* changelog, const ledger::transaction* new_transaction, const uint256_t& new_transaction_hash, const algorithm::pubkeyhash owner, size_t transaction_size, uint8_t behaviour_flags);
+			static expects_lr<transaction_context> execute_tx(const ledger::evaluation_context* new_environment, ledger::block* new_block, block_changelog* changelog, const ledger::transaction* new_transaction, const uint256_t& new_transaction_hash, const algorithm::pubkeyhash owner, size_t transaction_size, uint8_t execution_flags);
 			static expects_promise_rt<void> dispatch_tx(dispatch_context* dispatcher, ledger::block_transaction* transaction);
 		};
 
