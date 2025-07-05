@@ -525,6 +525,22 @@ namespace tangent
 			message.write_typeless(signable_message.data(), (uint32_t)signable_message.size());
 			return message.hash();
 		}
+		std::pair<uint64_t, uint64_t> signing::permit_nonce_range()
+		{
+			return std::make_pair((uint64_t)std::numeric_limits<uint32_t>::max(), std::numeric_limits<uint64_t>::max());
+		}
+		uint64_t signing::permit_nonce(const pubkeyhash signer_public_key_hash, const pubkeyhash sender_public_key_hash)
+		{
+			VI_ASSERT(signer_public_key_hash != nullptr, "signer public key hash should be set");
+			VI_ASSERT(sender_public_key_hash != nullptr, "sender public key hash key should be set");
+			format::stream message;
+			message.write_typeless((char*)signer_public_key_hash, (uint32_t)sizeof(pubkeyhash));
+			message.write_typeless((char*)sender_public_key_hash, (uint32_t)sizeof(pubkeyhash));
+
+			auto [high, low] = permit_nonce_range();
+			uint256_t hash = ((message.hash() - low) % (high - low + 1)) + low;
+			return (uint64_t)hash;
+		}
 		string signing::mnemonicgen(uint16_t strength)
 		{
 			char buffer[256] = { 0 };

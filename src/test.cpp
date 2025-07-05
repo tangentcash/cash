@@ -194,8 +194,8 @@ public:
 				token.decimals = 2;
 				token.supply = value;
 
-				uniform::set(uint8(0), token);
-				uniform::set_if(token.account, value, value > 0);
+				kvm::set(uint8(0), token);
+				kvm::set_if(token.account, value, value > 0);
 				return token;
 			}
 			token_transfer transfer(instrset::rwptr@, const address&in to, const uint256&in value)
@@ -206,8 +206,8 @@ public:
 				uint256 from_delta = input - value, to_delta = output + value;
 				require(from_delta <= input, from.to_string() + ": illegal operation - insufficient balance");
 				require(to_delta >= output, to.to_string() + ": illegal operation - balance overflow");
-				uniform::set_if(from, from_delta, from_delta > 0);
-				uniform::set_if(to, to_delta, to_delta > 0);
+				kvm::set_if(from, from_delta, from_delta > 0);
+				kvm::set_if(to, to_delta, to_delta > 0);
 
 				token_transfer event;
 				event.from = from;
@@ -227,8 +227,8 @@ public:
 				require(to_delta >= output, token.account.to_string() + ": illegal operation - balance overflow");
 
 				token.supply = supply_delta;
-				uniform::set(uint8(0), token);
-				uniform::set_if(token.account, to_delta, to_delta > 0);
+				kvm::set(uint8(0), token);
+				kvm::set_if(token.account, to_delta, to_delta > 0);
 				return to_delta;
 			}
 			uint256 burn(instrset::rwptr@, const uint256&in value)
@@ -243,19 +243,19 @@ public:
 				require(to_delta <= output, "account balance will underflow (" + output.to_string() + " < " + value.to_string() + ")");
 
 				token.supply = supply_delta;
-				uniform::set(uint8(0), token);
-				uniform::set_if(token.account, to_delta, to_delta > 0);
+				kvm::set(uint8(0), token);
+				kvm::set_if(token.account, to_delta, to_delta > 0);
 				return to_delta;
 			}
 			uint256 balance_of(instrset::rptr@, const address&in account)
 			{
 				uint256 output = 0;
-				uniform::load(account, output);
+				kvm::load(account, output);
 				return output;
 			}
 			token_storage info(instrset::rptr@)
 			{
-				return uniform::get<token_storage>(uint8(0));
+				return kvm::get<token_storage>(uint8(0));
 			}));
 
 			auto* deployment_ethereum1 = memory::init<transactions::deployment>();
@@ -269,11 +269,11 @@ public:
 			std::string_view bridge_program = VI_STRINGIFY((
 			void construct(instrset::rwptr@, const address&in token_account)
 			{
-				uniform::set(uint8(0), token_account);
+				kvm::set(uint8(0), token_account);
 			}
 			uint256 balance_of_test_token(instrset::rptr@)
 			{
-				address token_account = uniform::get<address>(uint8(0));
+				address token_account = kvm::get<address>(uint8(0));
 				return token_account.call<uint256>("uint256 balance_of(instrset::rptr@, const address&in)", tx::from());
 			}));
 

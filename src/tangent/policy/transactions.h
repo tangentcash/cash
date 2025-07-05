@@ -30,6 +30,29 @@ namespace tangent
 			static std::string_view as_instance_typename();
 		};
 
+		struct permit final : ledger::transaction
+		{
+			enum class decision : uint8_t
+			{
+				approve = 0x11,
+				revoke = 0x22
+			};
+			vector<std::pair<algorithm::subpubkeyhash_t, decision>> permits;
+
+			expects_lr<void> validate(uint64_t block_number) const override;
+			expects_lr<void> execute(ledger::transaction_context* context) const override;
+			bool store_body(format::stream* stream) const override;
+			bool load_body(format::stream& stream) override;
+			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const override;
+			void approve(const algorithm::subpubkeyhash_t& subject);
+			void revoke(const algorithm::subpubkeyhash_t& subject);
+			uptr<schema> as_schema() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
+		};
+
 		struct deployment final : ledger::transaction
 		{
 			enum class calldata_type : uint8_t
@@ -99,9 +122,8 @@ namespace tangent
 			bool load_body(format::stream& stream) override;
 			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const override;
 			bool recover_aliases(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<uint256_t>& aliases) const override;
-			bool merge(const ledger::transaction& transaction);
-			bool merge(ledger::transaction& transaction, const algorithm::seckey secret_key);
-			bool merge(ledger::transaction& transaction, const algorithm::seckey secret_key, uint64_t sequence);
+			bool import_transaction(const ledger::transaction& transaction);
+			bool import_transaction_and_sign(ledger::transaction& transaction, const algorithm::seckey secret_key, uint64_t nonce = 0);
 			bool is_dispatchable() const override;
 			expects_lr<ledger::block_transaction> resolve_block_transaction(const ledger::receipt& receipt, const uint256_t& transaction_hash) const;
 			const ledger::transaction* resolve_transaction(const uint256_t& transaction_hash) const;
@@ -110,8 +132,7 @@ namespace tangent
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
-			static void setup_child(ledger::transaction& transaction, const algorithm::asset_id& asset);
-			static bool sign_child(ledger::transaction& transaction, const algorithm::seckey secret_key, const algorithm::asset_id& asset, uint16_t index);
+			static void normalize_transaction(ledger::transaction& transaction, const algorithm::asset_id& asset);
 		};
 
 		struct certification final : ledger::transaction

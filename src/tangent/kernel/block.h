@@ -235,10 +235,11 @@ namespace tangent
 		struct transaction_context
 		{
 		public:
-			enum class execution_flags : uint8_t
+			enum class behaviour : uint8_t
 			{
-				only_successful = 1 << 0,
-				gas_calculation = 1 << 1
+				pedantic = 1 << 0,
+				evaluation = 1 << 1,
+				replayable = 1 << 2
 			};
 
 			enum class production_type : uint8_t
@@ -280,6 +281,7 @@ namespace tangent
 			expects_lr<vector<states::validator_production>> calculate_producers(size_t target_size);
 			expects_lr<vector<states::validator_participation>> calculate_participants(const algorithm::asset_id& asset, ordered_set<algorithm::pubkeyhash_t>& exclusion, size_t target_size);
 			expects_lr<states::account_nonce> apply_account_nonce(const algorithm::pubkeyhash owner, uint64_t nonce);
+			expects_lr<states::account_permit> apply_account_permit(const algorithm::pubkeyhash owner, const ordered_set<algorithm::pubkeyhash_t>& additions, const ordered_set<algorithm::pubkeyhash_t>& deletions);
 			expects_lr<states::account_program> apply_account_program(const algorithm::pubkeyhash owner, const std::string_view& program_hashcode);
 			expects_lr<states::account_uniform> apply_account_uniform(const algorithm::pubkeyhash owner, const std::string_view& index, const std::string_view& data);
 			expects_lr<states::account_multiform> apply_account_multiform(const algorithm::pubkeyhash owner, const std::string_view& column, const std::string_view& row, const std::string_view& data);
@@ -303,6 +305,7 @@ namespace tangent
 			expects_lr<states::witness_account> apply_witness_depository_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const algorithm::pubkeyhash manager, const address_map& addresses, bool active = true);
 			expects_lr<states::witness_transaction> apply_witness_transaction(const algorithm::asset_id& asset, const std::string_view& transaction_id);
 			expects_lr<states::account_nonce> get_account_nonce(const algorithm::pubkeyhash owner) const;
+			expects_lr<states::account_permit> get_account_permit(const algorithm::pubkeyhash owner) const;
 			expects_lr<states::account_program> get_account_program(const algorithm::pubkeyhash owner) const;
 			expects_lr<states::account_uniform> get_account_uniform(const algorithm::pubkeyhash owner, const std::string_view& index) const;
 			expects_lr<states::account_multiform> get_account_multiform(const algorithm::pubkeyhash owner, const std::string_view& column, const std::string_view& row) const;
@@ -355,7 +358,7 @@ namespace tangent
 		public:
 			static expects_lr<uint256_t> calculate_tx_gas(const ledger::transaction* transaction);
 			static expects_lr<void> validate_tx(const ledger::transaction* new_transaction, const uint256_t& new_transaction_hash, algorithm::pubkeyhash owner);
-			static expects_lr<transaction_context> execute_tx(const ledger::evaluation_context* new_environment, ledger::block* new_block, block_changelog* changelog, const ledger::transaction* new_transaction, const uint256_t& new_transaction_hash, const algorithm::pubkeyhash owner, size_t transaction_size, uint8_t flags);
+			static expects_lr<transaction_context> execute_tx(const ledger::evaluation_context* new_environment, ledger::block* new_block, block_changelog* changelog, const ledger::transaction* new_transaction, const uint256_t& new_transaction_hash, const algorithm::pubkeyhash owner, size_t transaction_size, uint8_t behaviour_flags);
 			static expects_promise_rt<void> dispatch_tx(dispatch_context* dispatcher, ledger::block_transaction* transaction);
 		};
 

@@ -717,7 +717,7 @@ namespace tangent
 
 				ledger::block_changelog temp_changelog;
 				size_t transaction_size = candidate_tx->as_message().data.size();
-				auto validation = ledger::transaction_context::execute_tx(&temp_environment, &temp_block, &temp_changelog, *candidate_tx, candidate_hash, owner, transaction_size, (uint8_t)ledger::transaction_context::execution_flags::only_successful);
+				auto validation = ledger::transaction_context::execute_tx(&temp_environment, &temp_block, &temp_changelog, *candidate_tx, candidate_hash, owner, transaction_size, (uint8_t)ledger::transaction_context::behaviour::pedantic);
 				if (!validation)
 				{
 					if (protocol::now().user.p2p.logging)

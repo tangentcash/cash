@@ -88,9 +88,11 @@ namespace tangent
 			virtual void internal_call(const script_address& target, const std::string_view& function_decl, void* input_value, int input_type_id, void* output_value, int output_type_id) const;
 			virtual void store_uniform(const void* index_value, int index_type_id, const void* object_value, int object_type_id);
 			virtual bool load_uniform(const void* index_value, int index_type_id, void* object_value, int object_type_id, bool throw_on_error) const;
+			virtual bool has_uniform(const void* index_value, int index_type_id) const;
 			virtual void store_multiform(const void* column_value, int column_type_id, const void* row_value, int row_type_id, const void* object_value, int object_type_id);
 			virtual bool load_multiform_by_composition(const void* column_value, int column_type_id, const void* row_value, int row_type_id, void* object_value, int object_type_id, bool throw_on_error) const;
 			virtual bool load_multiform_by_column(const void* column_value, int column_type_id, void* row_value, int row_type_id, void* object_value, int object_type_id, size_t offset, bool throw_on_error) const;
+			virtual bool has_multiform(const void* column_value, int column_type_id, const void* row_value, int row_type_id) const;
 			virtual void emit_event(const void* event_value, int event_type_id, const void* object_value, int object_type_id);
 			virtual void pay(const script_address& target, const uint256_t& asset, const decimal& value);
 			virtual void destroy();

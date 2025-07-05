@@ -133,6 +133,11 @@ namespace tangent
 			else
 				uniform_unset(index_value, index_type_id);
 		}
+		static bool uniform_has(const void* index_value, int index_type_id)
+		{
+			auto* program = script_program::fetch_immutable_or_throw();
+			return program ? program->has_uniform(index_value, index_type_id) : false;
+		}
 		static bool uniform_load(const void* index_value, int index_type_id, void* object_value, int object_type_id)
 		{
 			auto* program = script_program::fetch_immutable_or_throw();
@@ -177,6 +182,11 @@ namespace tangent
 		{
 			auto* program = script_program::fetch_immutable_or_throw();
 			return program ? program->load_multiform_by_column(column_value, column_type_id, row_value, row_type_id, object_value, object_type_id, offset, false) : false;
+		}
+		static bool multiform_has(const void* column_value, int column_type_id, const void* row_value, int row_type_id)
+		{
+			auto* program = script_program::fetch_immutable_or_throw();
+			return program ? program->has_multiform(column_value, column_type_id, row_value, row_type_id) : false;
 		}
 		static void multiform_get(asIScriptGeneric* generic)
 		{
@@ -982,7 +992,7 @@ namespace tangent
 			vm->set_function("void emit(const ?&in, const ?&in)", &log_emit);
 			vm->end_namespace();
 
-			vm->begin_namespace("uniform");
+			vm->begin_namespace("kvm");
 			vm->set_function("void set(const ?&in, const ?&in)", &uniform_set);
 			vm->set_function("void set_if(const ?&in, const ?&in, bool)", &uniform_set_if);
 			vm->set_function("void unset(const ?&in)", &uniform_unset);
@@ -990,7 +1000,7 @@ namespace tangent
 			vm->set_function("t get<t>(const ?&in)", &uniform_get, convention::generic_call);
 			vm->end_namespace();
 
-			vm->begin_namespace("multiform");
+			vm->begin_namespace("nkvm");
 			vm->set_function("void set(const ?&in, const ?&in, const ?&in)", &multiform_set);
 			vm->set_function("void set_if(const ?&in, const ?&in, const ?&in, bool)", &multiform_set_if);
 			vm->set_function("void unset(const ?&in, const ?&in)", &multiform_unset);
@@ -1677,7 +1687,7 @@ namespace tangent
 			if (!data || data->data.empty())
 			{
 				if (throw_on_error)
-					bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_STORAGE, "index is not in use"));
+					bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_STORAGE, "program variable missing"));
 				return false;
 			}
 
@@ -1686,11 +1696,24 @@ namespace tangent
 			if (!status)
 			{
 				if (throw_on_error)
-					bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_STORAGE, "index is not in use"));
+					bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_STORAGE, "program variable corrupted"));
 				return false;
 			}
 
 			return true;
+		}
+		bool script_program::has_uniform(const void* index_value, int index_type_id) const
+		{
+			format::stream index;
+			auto status = script_marshalling::store(&index, index_value, index_type_id);
+			if (!status)
+			{
+				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, status.error().message()));
+				return false;
+			}
+
+			auto data = context->get_account_uniform(to().hash.data, index.data);
+			return data && !data->data.empty();
 		}
 		void script_program::store_multiform(const void* column_value, int column_type_id, const void* row_value, int row_type_id, const void* object_value, int object_type_id)
 		{
@@ -1735,7 +1758,7 @@ namespace tangent
 			if (!data || data->data.empty())
 			{
 				if (throw_on_error)
-					bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_STORAGE, "index is not in use"));
+					bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_STORAGE, "program variable missing"));
 				return false;
 			}
 
@@ -1744,7 +1767,7 @@ namespace tangent
 			if (!status)
 			{
 				if (throw_on_error)
-					bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_STORAGE, "index is not in use"));
+					bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_STORAGE, "program variable corrupted"));
 				return false;
 			}
 
@@ -1764,7 +1787,7 @@ namespace tangent
 			if (!data || data->data.empty())
 			{
 				if (throw_on_error)
-					bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_STORAGE, "index is not in use"));
+					bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_STORAGE, "program variable missing"));
 				return false;
 			}
 
@@ -1773,7 +1796,7 @@ namespace tangent
 			if (!status)
 			{
 				if (throw_on_error)
-					bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_STORAGE, "index is not in use"));
+					bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_STORAGE, "program variable corrupted"));
 				return false;
 			}
 
@@ -1782,11 +1805,32 @@ namespace tangent
 			if (!status)
 			{
 				if (throw_on_error)
-					bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_STORAGE, "index is not in use"));
+					bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_STORAGE, "program variable corrupted"));
 				return false;
 			}
 
 			return true;
+		}
+		bool script_program::has_multiform(const void* column_value, int column_type_id, const void* row_value, int row_type_id) const
+		{
+			format::stream column;
+			auto status = script_marshalling::store(&column, column_value, column_type_id);
+			if (!status)
+			{
+				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, status.error().message()));
+				return false;
+			}
+
+			format::stream row;
+			status = script_marshalling::store(&column, row_value, row_type_id);
+			if (!status)
+			{
+				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, status.error().message()));
+				return false;
+			}
+
+			auto data = context->get_account_multiform(to().hash.data, column.data, row.data);
+			return data && !data->data.empty();
 		}
 		void script_program::emit_event(const void* event_value, int event_type_id, const void* object_value, int object_type_id)
 		{

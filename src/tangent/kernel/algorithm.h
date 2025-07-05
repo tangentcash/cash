@@ -155,6 +155,8 @@ namespace tangent
 		public:
 			static void initialize();
 			static void deinitialize();
+			static std::pair<uint64_t, uint64_t> permit_nonce_range();
+			static uint64_t permit_nonce(const pubkeyhash signer_public_key_hash, const pubkeyhash sender_public_key_hash);
 			static uint256_t message_hash(const std::string_view& signable_message);
 			static string mnemonicgen(uint16_t strength = 256);
 			static void keygen(seckey secret_key);

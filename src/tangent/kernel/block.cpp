@@ -671,7 +671,7 @@ namespace tangent
 			ordered_map<algorithm::asset_id, decimal> fees;
 			for (auto& item : environment->incoming)
 			{
-				auto execution = transaction_context::execute_tx(environment, this, &changelog, *item.candidate, item.hash, item.owner, item.size, item.candidate->conservative ? 0 : (uint8_t)transaction_context::execution_flags::only_successful);
+				auto execution = transaction_context::execute_tx(environment, this, &changelog, *item.candidate, item.hash, item.owner, item.size, item.candidate->conservative ? 0 : (uint8_t)transaction_context::behaviour::pedantic);
 				if (execution)
 				{
 					auto& blob = transactions.emplace_back();
@@ -1640,6 +1640,19 @@ namespace tangent
 
 			return new_state;
 		}
+		expects_lr<states::account_permit> transaction_context::apply_account_permit(const algorithm::pubkeyhash owner, const ordered_set<algorithm::pubkeyhash_t>& additions, const ordered_set<algorithm::pubkeyhash_t>& deletions)
+		{
+			states::account_permit new_state = get_account_permit(owner).or_else(states::account_permit(owner, block));
+			new_state.permits.insert(additions.begin(), additions.end());
+			for (auto& target : deletions)
+				new_state.permits.erase(target);
+
+			auto status = store(&new_state);
+			if (!status)
+				return status.error();
+
+			return new_state;
+		}
 		expects_lr<states::account_program> transaction_context::apply_account_program(const algorithm::pubkeyhash owner, const std::string_view& program_hashcode)
 		{
 			states::account_program new_state = states::account_program(owner, block);
@@ -2040,6 +2053,20 @@ namespace tangent
 				return status.error();
 
 			return states::account_nonce(std::move(*(states::account_nonce*)**state));
+		}
+		expects_lr<states::account_permit> transaction_context::get_account_permit(const algorithm::pubkeyhash owner) const
+		{
+			VI_ASSERT(owner != nullptr, "owner should be set");
+			auto chain = storages::chainstate(__func__);
+			auto state = chain.get_uniform_by_index(states::account_permit::as_instance_type(), changelog, states::account_permit::as_instance_index(owner), get_validation_nonce());
+			if (!state)
+				return state.error();
+
+			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
+			if (!status)
+				return status.error();
+
+			return states::account_permit(std::move(*(states::account_permit*)**state));
 		}
 		expects_lr<states::account_program> transaction_context::get_account_program(const algorithm::pubkeyhash owner) const
 		{
@@ -2483,7 +2510,7 @@ namespace tangent
 
 			ledger::block_changelog temp_changelog;
 			size_t transaction_size = transaction->as_message().data.size();
-			auto execution = transaction_context::execute_tx(&temp_environment, &temp_block, &temp_changelog, transaction, transaction->as_hash(), owner, transaction_size, (transaction->conservative && false ? 0 : (uint8_t)execution_flags::only_successful) | (uint8_t)execution_flags::gas_calculation);
+			auto execution = transaction_context::execute_tx(&temp_environment, &temp_block, &temp_changelog, transaction, transaction->as_hash(), owner, transaction_size, (transaction->conservative ? 0 : (uint8_t)behaviour::pedantic) | (uint8_t)behaviour::evaluation);
 			if (!execution)
 			{
 				revert_transaction();
@@ -2505,7 +2532,7 @@ namespace tangent
 			auto chain = storages::chainstate(__func__);
 			return new_transaction->validate(chain.get_latest_block_number().or_else(1));
 		}
-		expects_lr<transaction_context> transaction_context::execute_tx(const ledger::evaluation_context* new_environment, ledger::block* new_block, block_changelog* changelog, const ledger::transaction* new_transaction, const uint256_t& new_transaction_hash, const algorithm::pubkeyhash owner, size_t transaction_size, uint8_t flags)
+		expects_lr<transaction_context> transaction_context::execute_tx(const ledger::evaluation_context* new_environment, ledger::block* new_block, block_changelog* changelog, const ledger::transaction* new_transaction, const uint256_t& new_transaction_hash, const algorithm::pubkeyhash owner, size_t transaction_size, uint8_t behaviour_flags)
 		{
 			VI_ASSERT(new_environment && new_block && new_transaction && owner, "block, env, transaction and owner should be set");
 			ledger::receipt new_receipt;
@@ -2531,13 +2558,13 @@ namespace tangent
 				context.changelog->outgoing.revert();
 			if (discard)
 				context.receipt.events.clear();
-			if ((flags & (uint8_t)execution_flags::only_successful) && !context.receipt.successful)
+			if ((behaviour_flags & (uint8_t)behaviour::pedantic) && !context.receipt.successful)
 				return execution.error();
 
 			algorithm::pubkeyhash null = { 0 };
-			if (memcmp(context.receipt.from, null, sizeof(null)) != 0)
+			if (memcmp(context.receipt.from, null, sizeof(null)) != 0 && !(behaviour_flags & (uint8_t)behaviour::replayable))
 			{
-				auto nonce = (flags & (uint8_t)execution_flags::gas_calculation ? context.get_account_nonce(context.receipt.from).or_else(states::account_nonce(nullptr, nullptr)).nonce : context.transaction->nonce);
+				auto nonce = (behaviour_flags & (uint8_t)behaviour::evaluation ? context.get_account_nonce(context.receipt.from).or_else(states::account_nonce(nullptr, nullptr)).nonce : context.transaction->nonce);
 				auto sequencing = context.apply_account_nonce(context.receipt.from, nonce + 1);
 				if (!sequencing)
 					return sequencing.error();
