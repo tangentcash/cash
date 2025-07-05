@@ -201,6 +201,160 @@ namespace tangent
 			if (program != nullptr)
 				program->load_multiform_by_composition(column_value, column_type_id, row_value, row_type_id, object_value, object_type_id, true);
 		}
+		static void math_min(asIScriptGeneric* generic)
+		{
+			generic_context inout = generic_context(generic);
+			int left_type_id = inout.get_arg_type_id(0);
+			int right_type_id = inout.get_arg_type_id(1);
+			int result_type_id = inout.get_return_addressable_type_id();
+			if (left_type_id != right_type_id || left_type_id != result_type_id)
+				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_EXECUTION, "template type mismatch"));
+
+			void* left_value = inout.get_arg_address(0);
+			void* right_value = inout.get_arg_address(1);
+			switch (result_type_id)
+			{
+				case (int)type_id::int8_t:
+					inout.set_return_byte((uint8_t)std::min<int8_t>(*(int8_t*)left_value, *(int8_t*)right_value));
+					break;
+				case (int)type_id::bool_t:
+				case (int)type_id::uint8_t:
+					inout.set_return_byte(std::min<uint8_t>(*(uint8_t*)left_value, *(uint8_t*)right_value));
+					break;
+				case (int)type_id::int16_t:
+					inout.set_return_word((uint16_t)std::min<int16_t>(*(int16_t*)left_value, *(int16_t*)right_value));
+					break;
+				case (int)type_id::uint16_t:
+					inout.set_return_word(std::min<uint16_t>(*(uint16_t*)left_value, *(uint16_t*)right_value));
+					break;
+				case (int)type_id::int32_t:
+					inout.set_return_dword((uint32_t)std::min<int32_t>(*(int32_t*)left_value, *(int32_t*)right_value));
+					break;
+				case (int)type_id::uint32_t:
+					inout.set_return_dword(std::min<uint32_t>(*(uint32_t*)left_value, *(uint32_t*)right_value));
+					break;
+				case (int)type_id::int64_t:
+					inout.set_return_qword((uint64_t)std::min<int64_t>(*(int64_t*)left_value, *(int64_t*)right_value));
+					break;
+				case (int)type_id::uint64_t:
+					inout.set_return_qword(std::min<uint64_t>(*(uint64_t*)left_value, *(uint64_t*)right_value));
+					break;
+				case (int)type_id::float_t:
+					inout.set_return_float(std::min<float>(*(float*)left_value, *(float*)right_value));
+					break;
+				case (int)type_id::double_t:
+					inout.set_return_double(std::min<double>(*(double*)left_value, *(double*)right_value));
+					break;
+				default:
+				{
+					auto type = script_host::get()->get_vm()->get_type_info_by_id(result_type_id);
+					auto name = type.is_valid() ? type.get_name() : std::string_view();
+					left_value = left_type_id & (int)vitex::scripting::type_id::handle_t ? *(void**)left_value : left_value;
+					right_value = right_type_id & (int)vitex::scripting::type_id::handle_t ? *(void**)right_value : right_value;
+					if (name == SCRIPT_CLASS_UINT128)
+					{
+						uint128_t& object_value = *(uint128_t*)inout.get_address_of_return_location();
+						object_value = std::min<uint128_t>(*(uint128_t*)left_value, *(uint128_t*)right_value);
+						break;
+					}
+					else if (name == SCRIPT_CLASS_UINT256)
+					{
+						uint256_t& object_value = *(uint256_t*)inout.get_address_of_return_location();
+						object_value = std::min<uint256_t>(*(uint256_t*)left_value, *(uint256_t*)right_value);
+						break;
+					}
+					else if (name == SCRIPT_CLASS_DECIMAL)
+					{
+						decimal& object_value = *(decimal*)inout.get_address_of_return_location();
+						object_value = std::min<decimal>(*(decimal*)left_value, *(decimal*)right_value);
+						break;
+					}
+					else if (result_type_id & (int)vitex::scripting::type_id::mask_seqnbr_t)
+					{
+						inout.set_return_dword((uint32_t)std::min<int32_t>(*(int32_t*)left_value, *(int32_t*)right_value));
+						break;
+					}
+					return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_EXECUTION, "template type must be arithmetic"));
+				}
+			}
+		}
+		static void math_max(asIScriptGeneric* generic)
+		{
+			generic_context inout = generic_context(generic);
+			int left_type_id = inout.get_arg_type_id(0);
+			int right_type_id = inout.get_arg_type_id(1);
+			int result_type_id = inout.get_return_addressable_type_id();
+			if (left_type_id != right_type_id || left_type_id != result_type_id)
+				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_EXECUTION, "template type mismatch"));
+
+			void* left_value = inout.get_arg_address(0);
+			void* right_value = inout.get_arg_address(1);
+			switch (result_type_id)
+			{
+				case (int)type_id::int8_t:
+					inout.set_return_byte((uint8_t)std::max<int8_t>(*(int8_t*)left_value, *(int8_t*)right_value));
+					break;
+				case (int)type_id::bool_t:
+				case (int)type_id::uint8_t:
+					inout.set_return_byte(std::max<uint8_t>(*(uint8_t*)left_value, *(uint8_t*)right_value));
+					break;
+				case (int)type_id::int16_t:
+					inout.set_return_word((uint16_t)std::max<int16_t>(*(int16_t*)left_value, *(int16_t*)right_value));
+					break;
+				case (int)type_id::uint16_t:
+					inout.set_return_word(std::max<uint16_t>(*(uint16_t*)left_value, *(uint16_t*)right_value));
+					break;
+				case (int)type_id::int32_t:
+					inout.set_return_dword((uint32_t)std::max<int32_t>(*(int32_t*)left_value, *(int32_t*)right_value));
+					break;
+				case (int)type_id::uint32_t:
+					inout.set_return_dword(std::max<uint32_t>(*(uint32_t*)left_value, *(uint32_t*)right_value));
+					break;
+				case (int)type_id::int64_t:
+					inout.set_return_qword((uint64_t)std::max<int64_t>(*(int64_t*)left_value, *(int64_t*)right_value));
+					break;
+				case (int)type_id::uint64_t:
+					inout.set_return_qword(std::max<uint64_t>(*(uint64_t*)left_value, *(uint64_t*)right_value));
+					break;
+				case (int)type_id::float_t:
+					inout.set_return_float(std::max<float>(*(float*)left_value, *(float*)right_value));
+					break;
+				case (int)type_id::double_t:
+					inout.set_return_double(std::max<double>(*(double*)left_value, *(double*)right_value));
+					break;
+				default:
+				{
+					auto type = script_host::get()->get_vm()->get_type_info_by_id(result_type_id);
+					auto name = type.is_valid() ? type.get_name() : std::string_view();
+					left_value = left_type_id & (int)vitex::scripting::type_id::handle_t ? *(void**)left_value : left_value;
+					right_value = right_type_id & (int)vitex::scripting::type_id::handle_t ? *(void**)right_value : right_value;
+					if (name == SCRIPT_CLASS_UINT128)
+					{
+						uint128_t& object_value = *(uint128_t*)inout.get_address_of_return_location();
+						object_value = std::max<uint128_t>(*(uint128_t*)left_value, *(uint128_t*)right_value);
+						break;
+					}
+					else if (name == SCRIPT_CLASS_UINT256)
+					{
+						uint256_t& object_value = *(uint256_t*)inout.get_address_of_return_location();
+						object_value = std::max<uint256_t>(*(uint256_t*)left_value, *(uint256_t*)right_value);
+						break;
+					}
+					else if (name == SCRIPT_CLASS_DECIMAL)
+					{
+						decimal& object_value = *(decimal*)inout.get_address_of_return_location();
+						object_value = std::max<decimal>(*(decimal*)left_value, *(decimal*)right_value);
+						break;
+					}
+					else if (result_type_id & (int)vitex::scripting::type_id::mask_seqnbr_t)
+					{
+						inout.set_return_dword((uint32_t)std::max<int32_t>(*(int32_t*)left_value, *(int32_t*)right_value));
+						break;
+					}
+					return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_EXECUTION, "template type must be arithmetic"));
+				}
+			}
+		}
 		static uint256_t block_parent_hash()
 		{
 			auto* program = script_program::fetch_immutable_or_throw();
@@ -955,6 +1109,7 @@ namespace tangent
 			vm->set_library_property(library_features::promise_no_constructor, 1);
 			vm->set_library_property(library_features::promise_no_callbacks, 1);
 			vm->set_library_property(library_features::ctypes_no_pointer_cast, 1);
+			vm->set_library_property(library_features::decimal_default_precision, (size_t)protocol::now().message.precision);
 			vm->set_property(features::disallow_global_vars, 1);
 			vm->set_ts_imports(false);
 			vm->set_cache(false);
@@ -1055,6 +1210,11 @@ namespace tangent
 			vm->set_function("string keccak512(const string_view&in)", &keccak512);
 			vm->set_function("string sha256(const string_view&in)", &sha256);
 			vm->set_function("string sha512(const string_view&in)", &sha512);
+			vm->end_namespace();
+
+			vm->begin_namespace("math");
+			vm->set_function("t min<t>(const t&in, const t&in)", &math_min, convention::generic_call);
+			vm->set_function("t max<t>(const t&in, const t&in)", &math_max, convention::generic_call);
 			vm->end_namespace();
 
 			vm->set_function("void require(bool, const string_view&in = string_view())", &require);

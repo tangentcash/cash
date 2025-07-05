@@ -1640,19 +1640,6 @@ namespace tangent
 
 			return new_state;
 		}
-		expects_lr<states::account_permit> transaction_context::apply_account_permit(const algorithm::pubkeyhash owner, const ordered_set<algorithm::pubkeyhash_t>& additions, const ordered_set<algorithm::pubkeyhash_t>& deletions)
-		{
-			states::account_permit new_state = get_account_permit(owner).or_else(states::account_permit(owner, block));
-			new_state.permits.insert(additions.begin(), additions.end());
-			for (auto& target : deletions)
-				new_state.permits.erase(target);
-
-			auto status = store(&new_state);
-			if (!status)
-				return status.error();
-
-			return new_state;
-		}
 		expects_lr<states::account_program> transaction_context::apply_account_program(const algorithm::pubkeyhash owner, const std::string_view& program_hashcode)
 		{
 			states::account_program new_state = states::account_program(owner, block);
@@ -2053,20 +2040,6 @@ namespace tangent
 				return status.error();
 
 			return states::account_nonce(std::move(*(states::account_nonce*)**state));
-		}
-		expects_lr<states::account_permit> transaction_context::get_account_permit(const algorithm::pubkeyhash owner) const
-		{
-			VI_ASSERT(owner != nullptr, "owner should be set");
-			auto chain = storages::chainstate(__func__);
-			auto state = chain.get_uniform_by_index(states::account_permit::as_instance_type(), changelog, states::account_permit::as_instance_index(owner), get_validation_nonce());
-			if (!state)
-				return state.error();
-
-			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
-			if (!status)
-				return status.error();
-
-			return states::account_permit(std::move(*(states::account_permit*)**state));
 		}
 		expects_lr<states::account_program> transaction_context::get_account_program(const algorithm::pubkeyhash owner) const
 		{

@@ -95,109 +95,6 @@ namespace tangent
 			return message.data;
 		}
 
-		account_permit::account_permit(const algorithm::pubkeyhash new_owner, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::uniform(new_block_number, new_block_nonce)
-		{
-			if (new_owner)
-				memcpy(owner, new_owner, sizeof(owner));
-		}
-		account_permit::account_permit(const algorithm::pubkeyhash new_owner, const ledger::block_header* new_block_header) : ledger::uniform(new_block_header)
-		{
-			if (new_owner)
-				memcpy(owner, new_owner, sizeof(owner));
-		}
-		expects_lr<void> account_permit::transition(const ledger::transaction_context* context, const ledger::state* prev_state)
-		{
-			if (is_owner_null())
-				return layer_exception("invalid state owner");
-
-			for (auto& permit : permits)
-			{
-				if (permit.empty())
-					return layer_exception("invalid permit");
-			}
-
-			return expectation::met;
-		}
-		bool account_permit::store_index(format::stream* stream) const
-		{
-			VI_ASSERT(stream != nullptr, "stream should be set");
-			algorithm::pubkeyhash null = { 0 };
-			stream->write_string(std::string_view((char*)owner, memcmp(owner, null, sizeof(null)) == 0 ? 0 : sizeof(owner)));
-			return true;
-		}
-		bool account_permit::load_index(format::stream& stream)
-		{
-			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner, sizeof(owner)))
-				return false;
-
-			return true;
-		}
-		bool account_permit::store_data(format::stream* stream) const
-		{
-			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_integer((uint16_t)permits.size());
-			for (auto& permit : permits)
-				stream->write_string(permit.optimized_view());
-			return true;
-		}
-		bool account_permit::load_data(format::stream& stream)
-		{
-			uint16_t permits_size;
-			if (!stream.read_integer(stream.read_type(), &permits_size))
-				return false;
-
-			permits.clear();
-			for (uint16_t i = 0; i < permits_size; i++)
-			{
-				string permit_assembly;
-				algorithm::pubkeyhash_t permit;
-				if (!stream.read_string(stream.read_type(), &permit_assembly) || !algorithm::encoding::decode_uint_blob(permit_assembly, permit.data, sizeof(permit.data)))
-					return false;
-
-				permits.insert(permit);
-			}
-
-			return true;
-		}
-		bool account_permit::is_owner_null() const
-		{
-			algorithm::pubkeyhash null = { 0 };
-			return !memcmp(owner, null, sizeof(null));
-		}
-		uptr<schema> account_permit::as_schema() const
-		{
-			schema* data = ledger::uniform::as_schema().reset();
-			data->set("owner", algorithm::signing::serialize_address(owner));
-			auto* permits_data = data->set("permits", var::set::array());
-			for (auto& permit : permits)
-				permits_data->push(algorithm::signing::serialize_address(permit.data));
-			return data;
-		}
-		uint32_t account_permit::as_type() const
-		{
-			return as_instance_type();
-		}
-		std::string_view account_permit::as_typename() const
-		{
-			return as_instance_typename();
-		}
-		uint32_t account_permit::as_instance_type()
-		{
-			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
-			return hash;
-		}
-		std::string_view account_permit::as_instance_typename()
-		{
-			return "account_permit";
-		}
-		string account_permit::as_instance_index(const algorithm::pubkeyhash owner)
-		{
-			format::stream message;
-			account_permit(owner, nullptr).store_index(&message);
-			return message.data;
-		}
-
 		account_program::account_program(const algorithm::pubkeyhash new_owner, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::uniform(new_block_number, new_block_nonce)
 		{
 			if (new_owner)
@@ -2189,8 +2086,6 @@ namespace tangent
 		{
 			if (hash == account_nonce::as_instance_type())
 				return memory::init<account_nonce>(nullptr, nullptr);
-			else if (hash == account_permit::as_instance_type())
-				return memory::init<account_permit>(nullptr, nullptr);
 			else if (hash == account_program::as_instance_type())
 				return memory::init<account_program>(nullptr, nullptr);
 			else if (hash == account_uniform::as_instance_type())
@@ -2230,8 +2125,6 @@ namespace tangent
 			uint32_t hash = base->as_type();
 			if (hash == account_nonce::as_instance_type())
 				return memory::init<account_nonce>(*(const account_nonce*)base);
-			else if (hash == account_permit::as_instance_type())
-				return memory::init<account_permit>(*(const account_permit*)base);
 			else if (hash == account_program::as_instance_type())
 				return memory::init<account_program>(*(const account_program*)base);
 			else if (hash == account_uniform::as_instance_type())
@@ -2319,7 +2212,6 @@ namespace tangent
 		{
 			unordered_set<uint32_t> types;
 			types.insert(account_nonce::as_instance_type());
-			types.insert(account_permit::as_instance_type());
 			types.insert(account_program::as_instance_type());
 			types.insert(account_uniform::as_instance_type());
 			types.insert(account_delegation::as_instance_type());

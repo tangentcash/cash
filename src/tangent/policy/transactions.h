@@ -30,29 +30,6 @@ namespace tangent
 			static std::string_view as_instance_typename();
 		};
 
-		struct permit final : ledger::transaction
-		{
-			enum class decision : uint8_t
-			{
-				approve = 0x11,
-				revoke = 0x22
-			};
-			vector<std::pair<algorithm::subpubkeyhash_t, decision>> permits;
-
-			expects_lr<void> validate(uint64_t block_number) const override;
-			expects_lr<void> execute(ledger::transaction_context* context) const override;
-			bool store_body(format::stream* stream) const override;
-			bool load_body(format::stream& stream) override;
-			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const override;
-			void approve(const algorithm::subpubkeyhash_t& subject);
-			void revoke(const algorithm::subpubkeyhash_t& subject);
-			uptr<schema> as_schema() const override;
-			uint32_t as_type() const override;
-			std::string_view as_typename() const override;
-			static uint32_t as_instance_type();
-			static std::string_view as_instance_typename();
-		};
-
 		struct deployment final : ledger::transaction
 		{
 			enum class calldata_type : uint8_t

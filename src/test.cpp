@@ -112,16 +112,6 @@ public:
 			VI_PANIC(transfer_asset->sign(user1.secret_key, user1_nonce++, decimal::zero()), "transfer not signed");
 			transactions.push_back(transfer_asset);
 		}
-		static void account_transaction_permit(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
-		{
-			auto& [user1, user1_nonce] = users[0];
-			auto& [user2, user2_nonce] = users[1];
-			auto* permit_for_user2 = memory::init<transactions::permit>();
-			permit_for_user2->set_asset("ETH");
-			permit_for_user2->approve(algorithm::encoding::to_subaddress(user2.public_key_hash));
-			VI_PANIC(permit_for_user2->sign(user1.secret_key, user1_nonce++, decimal::zero()), "permit not signed");
-			transactions.push_back(permit_for_user2);
-		}
 		static void account_transaction_rollup(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
 		{
 			auto& [user1, user1_nonce] = users[0];
@@ -173,20 +163,6 @@ public:
 
 			VI_PANIC(multi_asset_rollup->sign(user1.secret_key, user1_nonce++, decimal::zero()), "rollup not signed");
 			transactions.push_back(multi_asset_rollup);
-
-			auto* replayable_rollup = memory::init<transactions::rollup>();
-			replayable_rollup->set_asset("ETH");
-
-			auto replayable_ethereum_transfer = transactions::transfer();
-			replayable_ethereum_transfer.nonce = algorithm::signing::permit_nonce(user1.public_key_hash, user2.public_key_hash);
-			replayable_ethereum_transfer.set_to(algorithm::encoding::to_subaddress(user2.public_key_hash), 0.005);
-			VI_PANIC(replayable_rollup->import_transaction_and_sign(replayable_ethereum_transfer, user2.public_key_hash, user1.secret_key), "transfer not signed");
-
-			auto& replayable_ethereum_transfer_copy = replayable_ethereum_transfer;
-			VI_PANIC(replayable_rollup->import_transaction(replayable_ethereum_transfer_copy), "transfer not imported");
-
-			VI_PANIC(replayable_rollup->sign(user2.secret_key, user2_nonce++, decimal::zero()), "rollup not signed");
-			transactions.push_back(replayable_rollup);
 		}
 		static void account_program_deployment(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
 		{
@@ -716,7 +692,6 @@ public:
 		new_serialization_comparison<ledger::block>(*data);
 		new_serialization_comparison<ledger::block_proof>(*data, ledger::block_header(), (ledger::block_header*)nullptr);
 		new_serialization_comparison<states::account_nonce>(*data, owner, block_number++, block_nonce++);
-		new_serialization_comparison<states::account_permit>(*data, owner, block_number++, block_nonce++);
 		new_serialization_comparison<states::account_program>(*data, owner, block_number++, block_nonce++);
 		new_serialization_comparison<states::account_uniform>(*data, owner, std::string_view(), block_number++, block_nonce++);
 		new_serialization_comparison<states::account_multiform>(*data, owner, std::string_view(), std::string_view(), block_number++, block_nonce++);
@@ -733,7 +708,6 @@ public:
 		new_serialization_comparison<states::witness_account>(*data, owner, asset, address_map(), block_number++, block_nonce++);
 		new_serialization_comparison<states::witness_transaction>(*data, asset, std::string_view(), block_number++, block_nonce++);
 		new_serialization_comparison<transactions::transfer>(*data);
-		new_serialization_comparison<transactions::permit>(*data);
 		new_serialization_comparison<transactions::deployment>(*data);
 		new_serialization_comparison<transactions::invocation>(*data);
 		new_serialization_comparison<transactions::rollup>(*data);
@@ -1479,7 +1453,6 @@ public:
 			TEST_BLOCK(&generators::account_transfer_stage_1, "0x5a026823416520bf8596ed0886976000e82d5a8ea8a1d287285be7a1d72d5b86", 7);
 			TEST_BLOCK(&generators::account_transfer_stage_2, "0x455043564667a3d7a234bbbd6c1c08711ed4b0c9cfa25dfd575ea7236f82de33", 8);
 			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), users[2].wallet.get_address(), 0.05), "0x5bcd3a13492010c76930adf30d36a83547e9e04d2747979f73e414d92e65df6c", 9);
-			TEST_BLOCK(&generators::account_transaction_permit, "0x239e650f72c62813ab4c8334cd0f44231cd29e801b963cedab75f4c3b023122c", 10);
 			TEST_BLOCK(&generators::account_transaction_rollup, "0x9faf81906a6556d2cc983eb94ce2cb75c857e32e0633b443c36a8e9892812f3b", 11);
 			TEST_BLOCK(&generators::account_program_deployment, "0xd584abe025b0cc01b37cbe2327e15cb888468149aa050db317166a7102771511", 12);
 			TEST_BLOCK(&generators::account_program_invocation, "0x6bfa8dd25dcc4c995c6882be36860f1e93b1515693c6aa32ec57914041a7272d", 13);
@@ -1889,11 +1862,6 @@ public:
 				{
 					type = states::account_nonce::as_instance_type();
 					index = states::account_nonce::as_instance_index(owner);
-				}
-				else if (state == "permit")
-				{
-					type = states::account_permit::as_instance_type();
-					index = states::account_permit::as_instance_index(owner);
 				}
 				else if (state == "program")
 				{

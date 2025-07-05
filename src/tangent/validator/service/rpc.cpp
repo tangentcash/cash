@@ -42,15 +42,6 @@ namespace tangent
 				return uniform_location(states::account_nonce::as_instance_type(), states::account_nonce::as_instance_index(owner));
 			}
 
-			if (type == states::account_permit::as_instance_typename())
-			{
-				algorithm::pubkeyhash owner;
-				if (!algorithm::signing::decode_address(index.as_string(), owner))
-					return layer_exception("invalid address");
-
-				return uniform_location(states::account_permit::as_instance_type(), states::account_permit::as_instance_index(owner));
-			}
-
 			if (type == states::account_program::as_instance_typename())
 			{
 				algorithm::pubkeyhash owner;
@@ -379,7 +370,6 @@ namespace tangent
 			bind(0 | access_type::r, "chainstate", "getmultiformbyrowquery", 7, 7, "string type, any row, string weight_condition = '>' | '>=' | '=' | '<>' | '<=' | '<', int64 weight_value, int8 weight_order, uint64 offset, uint64 count", "multiform", "get filtered multiform by type row", std::bind(&server_node::chainstate_get_multiforms_by_row, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getmultiformscountbyrow", 4, 4, "string type, any row, string weight_condition = '>' | '>=' | '=' | '<>' | '<=' | '<', int64 weight_value", "uint64", "get filtered multiform count by type and row", std::bind(&server_node::chainstate_get_multiforms_count_by_row, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getaccountnonce", 1, 1, "string address", "uint64", "get account nonce by address", std::bind(&server_node::chainstate_get_account_nonce, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getaccountpermit", 1, 1, "string address", "uniform", "get account permits by address", std::bind(&server_node::chainstate_get_account_permit, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getaccountprogram", 1, 1, "string address", "uniform", "get account program hashcode by address", std::bind(&server_node::chainstate_get_account_program, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getaccountuniform", 2, 2, "string address, string index", "uniform", "get account storage by address and index", std::bind(&server_node::chainstate_get_account_uniform, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getaccountmultiform", 3, 3, "string address, string column, string row", "multiform", "get account storage by address, column and row", std::bind(&server_node::chainstate_get_account_multiform, this, std::placeholders::_1, std::placeholders::_2));
@@ -1900,17 +1890,6 @@ namespace tangent
 			auto state = chain.get_uniform_by_index(states::account_nonce::as_instance_type(), nullptr, states::account_nonce::as_instance_index(owner), 0);
 			auto* value = (states::account_nonce*)(state ? **state : nullptr);
 			return server_response().success(algorithm::encoding::serialize_uint256(value ? value->nonce : 1));
-		}
-		server_response server_node::chainstate_get_account_permit(http::connection* base, format::variables&& args)
-		{
-			algorithm::pubkeyhash owner;
-			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
-				return server_response().error(error_codes::bad_params, "account address not valid");
-
-			auto chain = storages::chainstate(__func__);
-			auto state = chain.get_uniform_by_index(states::account_permit::as_instance_type(), nullptr, states::account_permit::as_instance_index(owner), 0);
-			auto* value = (states::account_permit*)(state ? **state : nullptr);
-			return server_response().success(value ? value->as_schema().reset() : var::set::null());
 		}
 		server_response server_node::chainstate_get_account_program(http::connection* base, format::variables&& args)
 		{

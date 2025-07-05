@@ -27,27 +27,6 @@ namespace tangent
 			static string as_instance_index(const algorithm::pubkeyhash owner);
 		};
 
-		struct account_permit final : ledger::uniform
-		{
-			algorithm::pubkeyhash owner = { 0 };
-			ordered_set<algorithm::pubkeyhash_t> permits;
-
-			account_permit(const algorithm::pubkeyhash new_owner, uint64_t new_block_number, uint64_t new_block_nonce);
-			account_permit(const algorithm::pubkeyhash new_owner, const ledger::block_header* new_block_header);
-			expects_lr<void> transition(const ledger::transaction_context* context, const ledger::state* prev_state) override;
-			bool store_index(format::stream* stream) const override;
-			bool load_index(format::stream& stream) override;
-			bool store_data(format::stream* stream) const override;
-			bool load_data(format::stream& stream) override;
-			bool is_owner_null() const;
-			uptr<schema> as_schema() const override;
-			uint32_t as_type() const override;
-			std::string_view as_typename() const override;
-			static uint32_t as_instance_type();
-			static std::string_view as_instance_typename();
-			static string as_instance_index(const algorithm::pubkeyhash owner);
-		};
-
 		struct account_program final : ledger::uniform
 		{
 			algorithm::pubkeyhash owner = { 0 };

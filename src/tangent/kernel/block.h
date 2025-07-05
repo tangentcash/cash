@@ -281,7 +281,6 @@ namespace tangent
 			expects_lr<vector<states::validator_production>> calculate_producers(size_t target_size);
 			expects_lr<vector<states::validator_participation>> calculate_participants(const algorithm::asset_id& asset, ordered_set<algorithm::pubkeyhash_t>& exclusion, size_t target_size);
 			expects_lr<states::account_nonce> apply_account_nonce(const algorithm::pubkeyhash owner, uint64_t nonce);
-			expects_lr<states::account_permit> apply_account_permit(const algorithm::pubkeyhash owner, const ordered_set<algorithm::pubkeyhash_t>& additions, const ordered_set<algorithm::pubkeyhash_t>& deletions);
 			expects_lr<states::account_program> apply_account_program(const algorithm::pubkeyhash owner, const std::string_view& program_hashcode);
 			expects_lr<states::account_uniform> apply_account_uniform(const algorithm::pubkeyhash owner, const std::string_view& index, const std::string_view& data);
 			expects_lr<states::account_multiform> apply_account_multiform(const algorithm::pubkeyhash owner, const std::string_view& column, const std::string_view& row, const std::string_view& data);
@@ -305,7 +304,6 @@ namespace tangent
 			expects_lr<states::witness_account> apply_witness_depository_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const algorithm::pubkeyhash manager, const address_map& addresses, bool active = true);
 			expects_lr<states::witness_transaction> apply_witness_transaction(const algorithm::asset_id& asset, const std::string_view& transaction_id);
 			expects_lr<states::account_nonce> get_account_nonce(const algorithm::pubkeyhash owner) const;
-			expects_lr<states::account_permit> get_account_permit(const algorithm::pubkeyhash owner) const;
 			expects_lr<states::account_program> get_account_program(const algorithm::pubkeyhash owner) const;
 			expects_lr<states::account_uniform> get_account_uniform(const algorithm::pubkeyhash owner, const std::string_view& index) const;
 			expects_lr<states::account_multiform> get_account_multiform(const algorithm::pubkeyhash owner, const std::string_view& column, const std::string_view& row) const;

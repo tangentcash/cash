@@ -151,145 +151,6 @@ namespace tangent
 			return "transfer";
 		}
 
-		expects_lr<void> permit::validate(uint64_t block_number) const
-		{
-			if (permits.empty())
-				return layer_exception("no permits");
-
-			ordered_set<algorithm::pubkeyhash_t> subjects;
-			for (auto& [owner, action] : permits)
-			{
-				auto subject = algorithm::pubkeyhash_t(owner.data);
-				if (owner.empty())
-					return layer_exception("invalid permit subject");
-				else if (action != decision::approve && action != decision::revoke)
-					return layer_exception("invalid permit action");
-				else if (subjects.find(subject) != subjects.end())
-					return layer_exception("duplication permit subject");
-				subjects.insert(subject);
-			}
-
-			return ledger::transaction::validate(block_number);
-		}
-		expects_lr<void> permit::execute(ledger::transaction_context* context) const
-		{
-			auto validation = transaction::execute(context);
-			if (!validation)
-				return validation.error();
-
-			ordered_set<algorithm::pubkeyhash_t> additions, deletions;
-			for (auto& [owner, action] : permits)
-			{
-				if (memcmp(context->receipt.from, owner.data, sizeof(algorithm::pubkeyhash)) == 0)
-					return layer_exception("invalid permit subject");
-
-				switch (action)
-				{
-					case decision::approve:
-						additions.insert(algorithm::pubkeyhash_t(owner.data));
-						break;
-					case decision::revoke:
-						deletions.insert(algorithm::pubkeyhash_t(owner.data));
-						break;
-					default:
-						return layer_exception("invalid permit action");
-				}
-			}
-
-			auto result = context->apply_account_permit(context->receipt.from, additions, deletions);
-			if (!result)
-				return result.error();
-
-			return expectation::met;
-		}
-		bool permit::store_body(format::stream* stream) const
-		{
-			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_integer((uint16_t)permits.size());
-			for (auto& [owner, action] : permits)
-			{
-				stream->write_string(owner.optimized_view());
-				stream->write_integer((uint8_t)action);
-			}
-
-			return true;
-		}
-		bool permit::load_body(format::stream& stream)
-		{
-			uint16_t permits_size;
-			if (!stream.read_integer(stream.read_type(), &permits_size))
-				return false;
-
-			permits.clear();
-			permits.reserve(permits_size);
-			for (uint16_t i = 0; i < permits_size; i++)
-			{
-				string owner_assembly;
-				algorithm::subpubkeyhash_t owner;
-				if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner.data, sizeof(owner.data)))
-					return false;
-
-				decision action;
-				if (!stream.read_integer(stream.read_type(), (uint8_t*)&action))
-					return false;
-
-				permits.push_back(std::make_pair(owner, action));
-			}
-			return true;
-		}
-		bool permit::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
-		{
-			for (auto& [owner, action] : permits)
-				parties.insert(algorithm::pubkeyhash_t(owner.data));
-			return true;
-		}
-		void permit::approve(const algorithm::subpubkeyhash_t& subject)
-		{
-			permits.push_back(std::make_pair(subject, decision::approve));
-		}
-		void permit::revoke(const algorithm::subpubkeyhash_t& subject)
-		{
-			permits.push_back(std::make_pair(subject, decision::revoke));
-		}
-		uptr<schema> permit::as_schema() const
-		{
-			schema* data = ledger::transaction::as_schema().reset();
-			auto* approve_data = data->set("approve", var::set::array());
-			auto* revoke_data = data->set("revoke", var::set::array());
-			for (auto& [owner, action] : permits)
-			{
-				switch (action)
-				{
-					case decision::approve:
-						approve_data->push(algorithm::signing::serialize_subaddress(owner.data));
-						break;
-					case decision::revoke:
-						revoke_data->push(algorithm::signing::serialize_subaddress(owner.data));
-						break;
-					default:
-						break;
-				}
-			}
-			return data;
-		}
-		uint32_t permit::as_type() const
-		{
-			return as_instance_type();
-		}
-		std::string_view permit::as_typename() const
-		{
-			return as_instance_typename();
-		}
-		uint32_t permit::as_instance_type()
-		{
-			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
-			return hash;
-		}
-		std::string_view permit::as_instance_typename()
-		{
-			return "permit";
-		}
-
 		expects_lr<void> deployment::validate(uint64_t block_number) const
 		{
 			if (is_to_null())
@@ -775,7 +636,8 @@ namespace tangent
 					queue.push_back(std::make_pair(*transaction, index++));
 			}
 
-			auto [min_permit_nonce, max_permit_nonce] = algorithm::signing::permit_nonce_range();
+			algorithm::pubkeyhash null = { 0 };
+			algorithm::pubkeyhash_t sequencer = algorithm::pubkeyhash_t(context->receipt.from);
 			uint256_t absolute_gas_limit = context->block->gas_limit;
 			uint256_t absolute_gas_use = context->block->gas_use;
 			uint256_t relative_gas_use = context->receipt.relative_gas_use;
@@ -784,31 +646,19 @@ namespace tangent
 				return a.first->nonce != b.first->nonce ? a.first->nonce < b.first->nonce : a.second < b.second;
 			});
 
-			algorithm::pubkeyhash null = { 0 };
-			auto sequencer = algorithm::pubkeyhash_t(context->receipt.from);
 			for (auto& [transaction, index] : queue)
 			{
 				format::stream message;
 				message.write_integer(rollup::as_instance_type());
 				message.write_string(sequencer.optimized_view());
-				message.write_integer(transaction->as_type());
-				if (!transaction->store_payload(&message))
-					return layer_exception("sub-transaction " + algorithm::encoding::encode_0xhex256(transaction->as_hash()) + " validation failed: invalid payload");
+				message.data.append(transaction->as_signable().data);
 
 				algorithm::pubkeyhash owner;
 				if (!algorithm::signing::recover_hash(message.hash(), owner, transaction->signature) || !memcmp(owner, null, sizeof(null)))
 					return layer_exception("sub-transaction " + algorithm::encoding::encode_0xhex256(transaction->as_hash()) + " validation failed: invalid signature");
 
-				uint8_t behaviour_flags = (uint8_t)ledger::transaction_context::behaviour::pedantic;
-				if (transaction->nonce >= min_permit_nonce && transaction->nonce == algorithm::signing::permit_nonce(owner, context->receipt.from))
-				{
-					auto permit = context->get_account_permit(owner);
-					if (permit && permit->permits.find(algorithm::pubkeyhash_t(context->receipt.from)) != permit->permits.end())
-						behaviour_flags |= (uint8_t)ledger::transaction_context::behaviour::replayable;
-				}
-
 				transaction->gas_price = decimal::zero();
-				auto execution = ledger::transaction_context::execute_tx(context->environment, (ledger::block*)context->block, context->changelog, transaction, transaction->as_hash(), owner, transaction->as_message().data.size(), behaviour_flags);
+				auto execution = ledger::transaction_context::execute_tx(context->environment, (ledger::block*)context->block, context->changelog, transaction, transaction->as_hash(), owner, transaction->as_message().data.size(), (uint8_t)ledger::transaction_context::behaviour::pedantic);
 				transaction->gas_price = decimal::nan();
 				if (!execution)
 					return layer_exception("sub-transaction " + algorithm::encoding::encode_0xhex256(transaction->as_hash()) + " execution failed: " + execution.error().message());
@@ -968,19 +818,20 @@ namespace tangent
 		}
 		bool rollup::import_transaction_and_sign(ledger::transaction& transaction, const algorithm::pubkeyhash sequencer, const algorithm::seckey secret_key, uint64_t nonce)
 		{
-			normalize_transaction(transaction, asset);
 			transaction.nonce = nonce > 0 ? nonce : transaction.nonce;
-			if (!transaction.gas_limit && !transaction.sign(secret_key, transaction.nonce, decimal::zero()))
-				return false;
+			normalize_transaction(transaction, asset);
+			if (!transaction.gas_limit)
+			{
+				bool approved = transaction.sign(secret_key, transaction.nonce, decimal::zero());
+				normalize_transaction(transaction, asset);
+				if (!approved)
+					return false;
+			}
 
 			format::stream message;
 			message.write_integer(rollup::as_instance_type());
 			message.write_string(algorithm::pubkeyhash_t(sequencer).optimized_view());
-			message.write_integer(transaction.as_type());
-			normalize_transaction(transaction, asset);
-			if (!transaction.store_payload(&message))
-				return false;
-
+			message.data.append(transaction.as_signable().data);
 			if (!algorithm::signing::sign(message.hash(), secret_key, transaction.signature))
 				return false;
 
@@ -3644,8 +3495,6 @@ namespace tangent
 		{
 			if (hash == transfer::as_instance_type())
 				return memory::init<transfer>();
-			else if (hash == permit::as_instance_type())
-				return memory::init<permit>();
 			else if (hash == deployment::as_instance_type())
 				return memory::init<deployment>();
 			else if (hash == invocation::as_instance_type())
@@ -3681,8 +3530,6 @@ namespace tangent
 			uint32_t hash = base->as_type();
 			if (hash == transfer::as_instance_type())
 				return memory::init<transfer>(*(const transfer*)base);
-			else if (hash == permit::as_instance_type())
-				return memory::init<permit>(*(const permit*)base);
 			else if (hash == deployment::as_instance_type())
 				return memory::init<deployment>(*(const deployment*)base);
 			else if (hash == invocation::as_instance_type())
