@@ -405,6 +405,11 @@ namespace tangent
 			auto* program = script_program::fetch_immutable_or_throw();
 			return program ? program->value().is_positive() : false;
 		}
+		static script_address tx_call_signer_of(const std::string_view& signature, uint8_t argument_index)
+		{
+			auto* program = script_program::fetch_immutable_or_throw();
+			return program ? program->call_signer_of(signature, argument_index) : script_address();
+		}
 		static script_address tx_from()
 		{
 			auto* program = script_program::fetch_immutable_or_throw();
@@ -477,7 +482,7 @@ namespace tangent
 
 			return script_address(public_key_hash);
 		}
-		static string erecover256(const uint256_t& hash, const std::string_view& signature)
+		static string erecover264(const uint256_t& hash, const std::string_view& signature)
 		{
 			if (signature.size() != sizeof(algorithm::recpubsig))
 				return string();
@@ -1176,9 +1181,10 @@ namespace tangent
 
 			vm->begin_namespace("tx");
 			vm->set_function("bool paid()", &tx_paid);
-			vm->set_function("decimal value()", &tx_value);
+			vm->set_function("address call_signer_of(const string_view&in, uint8 = 255)", &tx_call_signer_of);
 			vm->set_function("address from()", &tx_from);
 			vm->set_function("address to()", &tx_to);
+			vm->set_function("decimal value()", &tx_value);
 			vm->set_function("string blockchain()", &tx_blockchain);
 			vm->set_function("string token()", &tx_token);
 			vm->set_function("string contract()", &tx_contract);
@@ -1204,7 +1210,7 @@ namespace tangent
 			vm->set_function("string crc32(const string_view&in)", &crc32);
 			vm->set_function("string ripemd160(const string_view&in)", &ripe_md160);
 			vm->set_function("address erecover160(const uint256&in, const string_view&in)", &erecover160);
-			vm->set_function("string erecover256(const uint256&in, const string_view&in)", &erecover256);
+			vm->set_function("string erecover264(const uint256&in, const string_view&in)", &erecover264);
 			vm->set_function("string blake2b256(const string_view&in)", &blake2b256);
 			vm->set_function("string keccak256(const string_view&in)", &keccak256);
 			vm->set_function("string keccak512(const string_view&in)", &keccak512);
@@ -1427,7 +1433,7 @@ namespace tangent
 			return a.hash.equals(b.hash.data);
 		}
 
-		script_program::script_program(ledger::transaction_context* new_context) : distribution(optional::none), context(new_context)
+		script_program::script_program(ledger::transaction_context* new_context) : context(new_context)
 		{
 			VI_ASSERT(context != nullptr, "transaction context should be set");
 		}
@@ -1609,9 +1615,9 @@ namespace tangent
 				}
 			}
 
-			auto transaction = transactions::invocation();
+			auto transaction = transactions::call();
 			transaction.set_asset("ETH");
-			transaction.set_calldata(target.hash, algorithm::hashing::hash32d(link->hashcode), function_decl, std::move(args));
+			transaction.program_call(target.hash, algorithm::hashing::hash32d(link->hashcode), function_decl, std::move(args));
 			transaction.gas_price = context->transaction->gas_price;
 			transaction.gas_limit = context->get_gas_left();
 			transaction.nonce = 0;
@@ -2038,7 +2044,7 @@ namespace tangent
 		}
 		uint256_t script_program::random()
 		{
-			if (!distribution)
+			if (!cache.distribution)
 			{
 				auto candidate = context->calculate_random(context->get_gas_use());
 				if (!candidate)
@@ -2046,18 +2052,9 @@ namespace tangent
 					bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_EXECUTION, candidate.error().message()));
 					return 0;
 				}
-				distribution = std::move(*candidate);
+				cache.distribution = std::move(*candidate);
 			}
-			return distribution->derive();
-		}
-		decimal script_program::value() const
-		{
-			uint32_t type = context->transaction->as_type();
-			if (type == transactions::deployment::as_instance_type())
-				return ((transactions::deployment*)context->transaction)->value;
-			if (type == transactions::invocation::as_instance_type())
-				return ((transactions::invocation*)context->transaction)->value;
-			return decimal::zero();
+			return cache.distribution->derive();
 		}
 		script_address script_program::from() const
 		{
@@ -2066,16 +2063,56 @@ namespace tangent
 		script_address script_program::to() const
 		{
 			uint32_t type = context->transaction->as_type();
-			if (type == transactions::deployment::as_instance_type())
-			{
-				algorithm::pubkeyhash owner;
-				if (((transactions::deployment*)context->transaction)->recover_program(owner))
-					return script_address(owner);
-			}
-			else if (type == transactions::invocation::as_instance_type())
-				return script_address(((transactions::invocation*)context->transaction)->to);
+			if (type == transactions::call::as_instance_type())
+				return script_address(((transactions::call*)context->transaction)->callable);
 
 			return script_address(context->receipt.from);
+		}
+		script_address script_program::call_signer_of(const std::string_view& signature, uint8_t argument_index) const
+		{
+			auto* args = arguments();
+			if (!args)
+				return script_address();
+
+			if (argument_index >= args->size() && argument_index != std::numeric_limits<uint8_t>::max())
+			{
+				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_EXECUTION, "index out of bounds"));
+				return script_address();
+			}
+
+			auto message_args = *args;
+			if (argument_index != std::numeric_limits<uint8_t>::max())
+				message_args.erase(message_args.begin() + argument_index);
+			else
+				message_args.pop_back();
+
+			format::stream message;
+			message.write_string(algorithm::pubkeyhash_t(from().hash.data).optimized_view());
+			message.write_string(algorithm::pubkeyhash_t(to().hash.data).optimized_view());
+			message.write_string(declaration());
+			message.write_decimal(value());
+			if (!format::variables_util::serialize_flat_into(message_args, &message))
+			{
+				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_EXECUTION, "argument serialization error"));
+				return script_address();
+			}
+
+			algorithm::pubkeyhash output;
+			algorithm::recpubsig_t input = algorithm::recpubsig_t(signature);
+			if (!algorithm::signing::recover_hash(message.hash(), output, input.data))
+			{
+				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_EXECUTION, "signature validation error"));
+				return script_address();
+			}
+
+			return script_address(output);
+		}
+		decimal script_program::value() const
+		{
+			uint32_t type = context->transaction->as_type();
+			if (type == transactions::call::as_instance_type())
+				return ((transactions::call*)context->transaction)->value;
+			return decimal::zero();
 		}
 		string script_program::blockchain() const
 		{
@@ -2088,6 +2125,13 @@ namespace tangent
 		string script_program::contract() const
 		{
 			return algorithm::asset::checksum_of(context->transaction->asset);
+		}
+		string script_program::declaration() const
+		{
+			uint32_t type = context->transaction->as_type();
+			if (type == transactions::call::as_instance_type())
+				return ((transactions::call*)context->transaction)->function;
+			return string();
 		}
 		decimal script_program::gas_price() const
 		{
@@ -2140,6 +2184,21 @@ namespace tangent
 		uint64_t script_program::block_number() const
 		{
 			return context->block->number;
+		}
+		const format::variables* script_program::arguments() const
+		{
+			uint32_t type = context->transaction->as_type();
+			if (type == transactions::upgrade::as_instance_type())
+			{
+				auto& args = ((transactions::upgrade*)context->transaction)->args;
+				return &args;
+			}
+			else if (type == transactions::call::as_instance_type())
+			{
+				auto& args = ((transactions::call*)context->transaction)->args;
+				return &args;
+			}
+			return nullptr;
 		}
 		script_program* script_program::fetch_mutable(immediate_context* coroutine)
 		{

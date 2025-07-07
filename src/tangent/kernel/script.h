@@ -74,7 +74,11 @@ namespace tangent
 
 		struct script_program
 		{
-			option<algorithm::wesolowski::distribution> distribution;
+			struct
+			{
+				option<algorithm::wesolowski::distribution> distribution = optional::none;
+				option<algorithm::pubkeyhash_t> agent = optional::none;
+			} cache;
 			ledger::transaction_context* context;
 
 			script_program(ledger::transaction_context* new_context);
@@ -97,12 +101,14 @@ namespace tangent
 			virtual void pay(const script_address& target, const uint256_t& asset, const decimal& value);
 			virtual void destroy();
 			virtual uint256_t random();
-			virtual decimal value() const;
+			virtual script_address call_signer_of(const std::string_view& signature, uint8_t argument_index = std::numeric_limits<uint8_t>::max()) const;
 			virtual script_address from() const;
 			virtual script_address to() const;
+			virtual decimal value() const;
 			virtual string blockchain() const;
 			virtual string token() const;
 			virtual string contract() const;
+			virtual string declaration() const;
 			virtual decimal gas_price() const;
 			virtual uint256_t gas_left() const;
 			virtual uint256_t gas_use() const;
@@ -116,6 +122,7 @@ namespace tangent
 			virtual uint64_t block_time() const;
 			virtual uint64_t block_priority() const;
 			virtual uint64_t block_number() const;
+			virtual const format::variables* arguments() const;
 
 		protected:
 			virtual expects_lr<void> execute(script_call mutability, const function& entrypoint, const format::variables& args, std::function<expects_lr<void>(void*, int)>&& return_callback);

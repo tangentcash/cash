@@ -151,41 +151,31 @@ namespace tangent
 			return "transfer";
 		}
 
-		expects_lr<void> deployment::validate(uint64_t block_number) const
+		expects_lr<void> upgrade::validate(uint64_t block_number) const
 		{
-			if (is_to_null())
-				return layer_exception("invalid to");
-
-			auto type = get_calldata_type();
+			auto type = get_data_type();
 			if (!type)
-				return layer_exception("invalid calldata type");
-			else if (*type == calldata_type::hashcode && calldata.size() != 65)
-				return layer_exception("invalid hashcode calldata");
-
-			if (value.is_nan() || value.is_negative())
-				return layer_exception("invalid value");
+				return layer_exception("invalid data type");
+			else if (*type == data_type::hashcode && data.size() != 65)
+				return layer_exception("invalid hashcode data");
 
 			return ledger::transaction::validate(block_number);
 		}
-		expects_lr<void> deployment::execute(ledger::transaction_context* context) const
+		expects_lr<void> upgrade::execute(ledger::transaction_context* context) const
 		{
 			auto validation = transaction::execute(context);
 			if (!validation)
 				return validation.error();
 
-			algorithm::pubkeyhash owner;
-			if (!recover_program(owner))
-				return layer_exception("invalid to");
-
-			auto data = std::string_view(calldata).substr(1);
-			auto type = get_calldata_type().or_else(calldata_type::hashcode);
+			auto storage = std::string_view(data).substr(1);
+			auto type = get_data_type().or_else(data_type::hashcode);
 			auto* host = ledger::script_host::get();
 			auto compiler = host->allocate();
 			switch (type)
 			{
-				case calldata_type::program:
+				case data_type::program:
 				{
-					auto code = host->unpack(data);
+					auto code = host->unpack(storage);
 					if (!code)
 						return code.error();
 
@@ -203,7 +193,7 @@ namespace tangent
 					auto collision = context->get_witness_program(hashcode);
 					if (!collision)
 					{
-						auto status = context->apply_witness_program(data);
+						auto status = context->apply_witness_program(storage);
 						if (!status)
 						{
 							host->deallocate(std::move(compiler));
@@ -216,7 +206,7 @@ namespace tangent
 						return layer_exception("program hashcode collision");
 					}
 
-					auto status = context->apply_account_program(owner, hashcode);
+					auto status = context->apply_account_program(context->receipt.from, hashcode);
 					if (!status)
 					{
 						host->deallocate(std::move(compiler));
@@ -224,11 +214,11 @@ namespace tangent
 					}
 					break;
 				}
-				case calldata_type::hashcode:
+				case data_type::hashcode:
 				{
-					if (!host->precompile(*compiler, data))
+					if (!host->precompile(*compiler, storage))
 					{
-						auto program = context->get_witness_program(data);
+						auto program = context->get_witness_program(storage);
 						if (!program)
 						{
 							host->deallocate(std::move(compiler));
@@ -242,7 +232,7 @@ namespace tangent
 							return code.error();
 						}
 
-						auto compilation = host->compile(*compiler, data, *code);
+						auto compilation = host->compile(*compiler, storage, *code);
 						if (!compilation)
 						{
 							host->deallocate(std::move(compiler));
@@ -250,7 +240,7 @@ namespace tangent
 						}
 					}
 
-					auto status = context->apply_account_program(owner, data);
+					auto status = context->apply_account_program(context->receipt.from, storage);
 					if (!status)
 					{
 						host->deallocate(std::move(compiler));
@@ -260,24 +250,14 @@ namespace tangent
 				}
 				default:
 					host->deallocate(std::move(compiler));
-					return layer_exception("invalid calldata type");
+					return layer_exception("invalid data type");
 			}
 
-			auto nonce = context->apply_account_nonce(owner, std::numeric_limits<uint64_t>::max());
+			auto nonce = context->apply_account_nonce(context->receipt.from, std::numeric_limits<uint64_t>::max());
 			if (!nonce)
 			{
 				host->deallocate(std::move(compiler));
 				return nonce.error();
-			}
-
-			if (value.is_positive())
-			{
-				if (memcmp(context->receipt.from, owner, sizeof(algorithm::pubkeyhash)) == 0)
-					return layer_exception("invalid payment");
-
-				auto payment = context->apply_payment(asset, context->receipt.from, owner, value);
-				if (!payment)
-					return payment.error();
 			}
 
 			auto script = ledger::script_program(context);
@@ -285,111 +265,76 @@ namespace tangent
 			host->deallocate(std::move(compiler));
 			return execution;
 		}
-		bool deployment::store_body(format::stream* stream) const
+		bool upgrade::store_body(format::stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_string(calldata);
-			stream->write_string(std::string_view((char*)to, sizeof(to)));
-			stream->write_decimal(value);
+			stream->write_string(data);
 			return format::variables_util::serialize_merge_into(args, stream);
 		}
-		bool deployment::load_body(format::stream& stream)
+		bool upgrade::load_body(format::stream& stream)
 		{
-			if (!stream.read_string(stream.read_type(), &calldata))
-				return false;
-
-			string to_assembly;
-			if (!stream.read_string(stream.read_type(), &to_assembly) || to_assembly.size() != sizeof(algorithm::recpubsig))
-				return false;
-
-			if (!stream.read_decimal(stream.read_type(), &value))
+			if (!stream.read_string(stream.read_type(), &data))
 				return false;
 
 			args.clear();
-			memcpy(to, to_assembly.data(), to_assembly.size());
 			return format::variables_util::deserialize_merge_from(stream, &args);
 		}
-		bool deployment::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
+		bool upgrade::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
 		{
-			algorithm::pubkeyhash owner;
-			if (recover_program(owner))
-				parties.insert(algorithm::pubkeyhash_t(owner));
+			size_t offset = 0;
+			const format::variables* event = receipt.find_event<states::account_balance>();
+			while (event != nullptr)
+			{
+				auto from = event->size() > 1 ? event->at(1).as_string() : std::string_view();
+				if (from.size() == sizeof(algorithm::pubkeyhash))
+					parties.insert(algorithm::pubkeyhash_t(from));
+
+				auto to = event->size() > 2 ? event->at(2).as_string() : std::string_view();
+				if (to.size() == sizeof(algorithm::pubkeyhash))
+					parties.insert(algorithm::pubkeyhash_t(to));
+
+				event = receipt.find_event<states::account_balance>(++offset);
+			}
 			return true;
 		}
-		bool deployment::sign_program(const algorithm::seckey secret_key)
+		void upgrade::from_program(const std::string_view& new_data, format::variables&& new_args)
 		{
-			format::stream message;
-			format::variables_util::serialize_merge_into(args, &message);
-			message.write_string(calldata);
-			return algorithm::signing::sign(algorithm::signing::message_hash(message.data), secret_key, to);
-		}
-		bool deployment::verify_program(const algorithm::pubkey public_key) const
-		{
-			format::stream message;
-			format::variables_util::serialize_merge_into(args, &message);
-			message.write_string(calldata);
-			return algorithm::signing::verify(algorithm::signing::message_hash(message.data), public_key, to);
-		}
-		bool deployment::recover_program(algorithm::pubkeyhash public_key_hash) const
-		{
-			format::stream message;
-			format::variables_util::serialize_merge_into(args, &message);
-			message.write_string(calldata);
-			return algorithm::signing::recover_hash(algorithm::signing::message_hash(message.data), public_key_hash, to);
-		}
-		bool deployment::is_to_null() const
-		{
-			algorithm::recpubsig null = { 0 };
-			return memcmp(to, null, sizeof(null)) == 0;
-		}
-		void deployment::set_to(const algorithm::recpubsig new_value)
-		{
-			VI_ASSERT(new_value != nullptr, "new value should be set");
-			memcpy(to, new_value, sizeof(algorithm::recpubsig));
-		}
-		void deployment::set_program_calldata(const decimal& new_value, const std::string_view& new_calldata, format::variables&& new_args)
-		{
-			value = new_value;
 			args = std::move(new_args);
-			calldata.clear();
-			calldata.assign(1, (char)calldata_type::program);
-			calldata.append(ledger::script_host::get()->pack(new_calldata).or_else(string()));
+			data.clear();
+			data.assign(1, (char)data_type::program);
+			data.append(ledger::script_host::get()->pack(new_data).or_else(string()));
 		}
-		void deployment::set_hashcode_calldata(const decimal& new_value, const std::string_view& new_calldata, format::variables&& new_args)
+		void upgrade::from_hashcode(const std::string_view& new_data, format::variables&& new_args)
 		{
-			value = new_value;
 			args = std::move(new_args);
-			calldata.clear();
-			calldata.assign(1, (char)calldata_type::hashcode);
-			calldata.append(new_calldata.substr(0, 64));
+			data.clear();
+			data.assign(1, (char)data_type::hashcode);
+			data.append(new_data.substr(0, 64));
 		}
-		option<deployment::calldata_type> deployment::get_calldata_type() const
+		option<upgrade::data_type> upgrade::get_data_type() const
 		{
-			if (calldata.empty())
+			if (data.empty())
 				return optional::none;
 
-			calldata_type type = (calldata_type)(uint8_t)calldata.front();
+			data_type type = (data_type)(uint8_t)data.front();
 			switch (type)
 			{
-				case calldata_type::program:
-				case calldata_type::hashcode:
+				case data_type::program:
+				case data_type::hashcode:
 					return type;
 				default:
 					return optional::none;
 			}
 		}
-		uptr<schema> deployment::as_schema() const
+		uptr<schema> upgrade::as_schema() const
 		{
-			algorithm::pubkeyhash owner;
-			recover_program(owner);
-
 			std::string_view name;
-			switch (get_calldata_type().or_else((calldata_type)(uint8_t)0))
+			switch (get_data_type().or_else((data_type)(uint8_t)0))
 			{
-				case calldata_type::program:
+				case data_type::program:
 					name = "program";
 					break;
-				case calldata_type::hashcode:
+				case data_type::hashcode:
 					name = "hashcode";
 					break;
 				default:
@@ -397,49 +342,46 @@ namespace tangent
 			}
 
 			schema* data = ledger::transaction::as_schema().reset();
-			data->set("proof", var::string(format::util::encode_0xhex(std::string_view((char*)to, sizeof(to)))));
-			data->set("to", algorithm::signing::serialize_address(owner));
-			data->set("value", var::decimal(value));
-			data->set("deployment", name.empty() ? var::null() : var::string(name));
-			data->set("calldata", var::string(format::util::encode_0xhex(calldata)));
+			data->set("from", name.empty() ? var::null() : var::string(name));
+			data->set("data", var::string(format::util::encode_0xhex(this->data)));
 			data->set("args", format::variables_util::serialize(args));
 			return data;
 		}
-		uint32_t deployment::as_type() const
+		uint32_t upgrade::as_type() const
 		{
 			return as_instance_type();
 		}
-		std::string_view deployment::as_typename() const
+		std::string_view upgrade::as_typename() const
 		{
 			return as_instance_typename();
 		}
-		uint32_t deployment::as_instance_type()
+		uint32_t upgrade::as_instance_type()
 		{
 			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
 			return hash;
 		}
-		std::string_view deployment::as_instance_typename()
+		std::string_view upgrade::as_instance_typename()
 		{
-			return "deployment";
+			return "upgrade";
 		}
 
-		expects_lr<void> invocation::validate(uint64_t block_number) const
+		expects_lr<void> call::validate(uint64_t block_number) const
 		{
 			if (function.empty())
-				return layer_exception("invalid function invocation");
+				return layer_exception("invalid function call");
 
 			if (value.is_nan() || value.is_negative())
 				return layer_exception("invalid value");
 
 			return ledger::transaction::validate(block_number);
 		}
-		expects_lr<void> invocation::execute(ledger::transaction_context* context) const
+		expects_lr<void> call::execute(ledger::transaction_context* context) const
 		{
 			auto validation = transaction::execute(context);
 			if (!validation)
 				return validation.error();
 
-			auto index = context->get_account_program(to);
+			auto index = context->get_account_program(callable);
 			if (!index)
 				return layer_exception("program is not assigned");
 
@@ -472,10 +414,10 @@ namespace tangent
 
 			if (value.is_positive())
 			{
-				if (memcmp(context->receipt.from, to, sizeof(algorithm::pubkeyhash)) == 0)
+				if (memcmp(context->receipt.from, callable, sizeof(algorithm::pubkeyhash)) == 0)
 					return layer_exception("invalid payment");
 
-				auto payment = context->apply_payment(asset, context->receipt.from, to, value);
+				auto payment = context->apply_payment(asset, context->receipt.from, callable, value);
 				if (!payment)
 					return payment.error();
 			}
@@ -485,19 +427,18 @@ namespace tangent
 			host->deallocate(std::move(compiler));
 			return execution;
 		}
-		bool invocation::store_body(format::stream* stream) const
+		bool call::store_body(format::stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			algorithm::pubkeyhash null = { 0 };
-			stream->write_string(std::string_view((char*)to, memcmp(to, null, sizeof(null)) == 0 ? 0 : sizeof(to)));
+			stream->write_string(algorithm::subpubkeyhash_t(callable).optimized_view());
 			stream->write_string(function);
 			stream->write_decimal(value);
 			return format::variables_util::serialize_merge_into(args, stream);
 		}
-		bool invocation::load_body(format::stream& stream)
+		bool call::load_body(format::stream& stream)
 		{
-			string to_assembly;
-			if (!stream.read_string(stream.read_type(), &to_assembly) || !algorithm::encoding::decode_uint_blob(to_assembly, to, sizeof(to)))
+			string callable_assembly;
+			if (!stream.read_string(stream.read_type(), &callable_assembly) || !algorithm::encoding::decode_uint_blob(callable_assembly, callable, sizeof(callable)))
 				return false;
 
 			if (!stream.read_string(stream.read_type(), &function))
@@ -509,48 +450,72 @@ namespace tangent
 			args.clear();
 			return format::variables_util::deserialize_merge_from(stream, &args);
 		}
-		bool invocation::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
+		bool call::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
 		{
-			parties.insert(algorithm::pubkeyhash_t(to));
+			size_t offset = 0;
+			const format::variables* event = receipt.find_event<states::account_balance>();
+			while (event != nullptr)
+			{
+				auto from = event->size() > 1 ? event->at(1).as_string() : std::string_view();
+				if (from.size() == sizeof(algorithm::pubkeyhash))
+					parties.insert(algorithm::pubkeyhash_t(from));
+
+				auto to = event->size() > 2 ? event->at(2).as_string() : std::string_view();
+				if (to.size() == sizeof(algorithm::pubkeyhash))
+					parties.insert(algorithm::pubkeyhash_t(to));
+
+				event = receipt.find_event<states::account_balance>(++offset);
+			}
+
+			parties.insert(algorithm::pubkeyhash_t(callable));
 			return true;
 		}
-		void invocation::set_calldata(const algorithm::subpubkeyhash_t& new_to, const decimal& new_value, const std::string_view& new_function, format::variables&& new_args)
+		void call::program_call(const algorithm::subpubkeyhash_t& new_callable, const decimal& new_value, const std::string_view& new_function, format::variables&& new_args)
 		{
 			args = std::move(new_args);
 			function = new_function;
 			value = new_value;
-			memcpy(to, new_to.data, sizeof(algorithm::subpubkeyhash));
+			memcpy(callable, new_callable.data, sizeof(algorithm::subpubkeyhash));
 		}
-		bool invocation::is_to_null() const
+		bool call::is_callable_null() const
 		{
-			algorithm::pubkeyhash null = { 0 };
-			return memcmp(to, null, sizeof(null)) == 0;
+			algorithm::subpubkeyhash null = { 0 };
+			return memcmp(callable, null, sizeof(null)) == 0;
 		}
-		uptr<schema> invocation::as_schema() const
+		uptr<schema> call::as_schema() const
 		{
 			schema* data = ledger::transaction::as_schema().reset();
-			data->set("to", algorithm::signing::serialize_subaddress(to));
+			data->set("callable", algorithm::signing::serialize_subaddress(callable));
 			data->set("value", var::decimal(value));
 			data->set("function", var::string(function));
 			data->set("args", format::variables_util::serialize(args));
 			return data;
 		}
-		uint32_t invocation::as_type() const
+		format::stream call::as_trustline_message() const
+		{
+			format::stream message;
+			message.write_string(algorithm::subpubkeyhash_t().optimized_view());
+			message.write_string(function);
+			message.write_decimal(value);
+			format::variables_util::serialize_flat_into(args, &message);
+			return message;
+		}
+		uint32_t call::as_type() const
 		{
 			return as_instance_type();
 		}
-		std::string_view invocation::as_typename() const
+		std::string_view call::as_typename() const
 		{
 			return as_instance_typename();
 		}
-		uint32_t invocation::as_instance_type()
+		uint32_t call::as_instance_type()
 		{
 			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
 			return hash;
 		}
-		std::string_view invocation::as_instance_typename()
+		std::string_view call::as_instance_typename()
 		{
-			return "invocation";
+			return "call";
 		}
 
 		rollup::rollup(const rollup& other)
@@ -829,9 +794,7 @@ namespace tangent
 			{
 				for (auto& transaction : group.second)
 				{
-					bool internal_transaction = transaction->is_signature_null();
-					if (!internal_transaction)
-						aliases.insert(transaction->as_hash());
+					aliases.insert(transaction->as_hash());
 					transaction->recover_aliases(context, receipt, aliases);
 				}
 			}
@@ -3535,10 +3498,10 @@ namespace tangent
 		{
 			if (hash == transfer::as_instance_type())
 				return memory::init<transfer>();
-			else if (hash == deployment::as_instance_type())
-				return memory::init<deployment>();
-			else if (hash == invocation::as_instance_type())
-				return memory::init<invocation>();
+			else if (hash == upgrade::as_instance_type())
+				return memory::init<upgrade>();
+			else if (hash == call::as_instance_type())
+				return memory::init<call>();
 			else if (hash == rollup::as_instance_type())
 				return memory::init<rollup>();
 			else if (hash == certification::as_instance_type())
@@ -3570,10 +3533,10 @@ namespace tangent
 			uint32_t hash = base->as_type();
 			if (hash == transfer::as_instance_type())
 				return memory::init<transfer>(*(const transfer*)base);
-			else if (hash == deployment::as_instance_type())
-				return memory::init<deployment>(*(const deployment*)base);
-			else if (hash == invocation::as_instance_type())
-				return memory::init<invocation>(*(const invocation*)base);
+			else if (hash == upgrade::as_instance_type())
+				return memory::init<upgrade>(*(const upgrade*)base);
+			else if (hash == call::as_instance_type())
+				return memory::init<call>(*(const call*)base);
 			else if (hash == rollup::as_instance_type())
 				return memory::init<rollup>(*(const rollup*)base);
 			else if (hash == certification::as_instance_type())

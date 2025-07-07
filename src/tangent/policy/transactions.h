@@ -30,31 +30,24 @@ namespace tangent
 			static std::string_view as_instance_typename();
 		};
 
-		struct deployment final : ledger::transaction
+		struct upgrade final : ledger::transaction
 		{
-			enum class calldata_type : uint8_t
+			enum class data_type : uint8_t
 			{
 				program = 0x33,
 				hashcode = 0x66
 			};
-			algorithm::recpubsig to = { 0 };
 			format::variables args;
-			string calldata;
-			decimal value;
+			string data;
 
 			expects_lr<void> validate(uint64_t block_number) const override;
 			expects_lr<void> execute(ledger::transaction_context* context) const override;
 			bool store_body(format::stream* stream) const override;
 			bool load_body(format::stream& stream) override;
 			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const override;
-			bool sign_program(const algorithm::seckey secret_key);
-			bool verify_program(const algorithm::pubkey public_key) const;
-			bool recover_program(algorithm::pubkeyhash public_key_hash) const;
-			bool is_to_null() const;
-			void set_to(const algorithm::recpubsig new_value);
-			void set_program_calldata(const decimal& new_value, const std::string_view& new_calldata, format::variables&& new_args);
-			void set_hashcode_calldata(const decimal& new_value, const std::string_view& new_calldata, format::variables&& new_args);
-			option<calldata_type> get_calldata_type() const;
+			void from_program(const std::string_view& new_data, format::variables&& new_args);
+			void from_hashcode(const std::string_view& new_data, format::variables&& new_args);
+			option<data_type> get_data_type() const;
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
@@ -62,9 +55,9 @@ namespace tangent
 			static std::string_view as_instance_typename();
 		};
 
-		struct invocation final : ledger::transaction
+		struct call final : ledger::transaction
 		{
-			algorithm::subpubkeyhash to = { 0 };
+			algorithm::subpubkeyhash callable = { 0 };
 			format::variables args;
 			string function;
 			decimal value;
@@ -74,9 +67,10 @@ namespace tangent
 			bool store_body(format::stream* stream) const override;
 			bool load_body(format::stream& stream) override;
 			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const override;
-			void set_calldata(const algorithm::subpubkeyhash_t& new_to, const decimal& new_value, const std::string_view& new_function, format::variables&& new_args);
-			bool is_to_null() const;
+			void program_call(const algorithm::subpubkeyhash_t& new_callable, const decimal& new_value, const std::string_view& new_function, format::variables&& new_args);
+			bool is_callable_null() const;
 			uptr<schema> as_schema() const override;
+			format::stream as_trustline_message() const;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();

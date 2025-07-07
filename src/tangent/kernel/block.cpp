@@ -2523,9 +2523,9 @@ namespace tangent
 			auto context = transaction_context(new_environment, new_block, changelog, new_transaction, std::move(new_receipt));
 			context.execution_flags = execution_flags;
 
-			auto deployment = context.burn_gas(transaction_size * (size_t)gas_cost::write_byte);
-			if (!deployment)
-				return deployment.error();
+			auto storage = context.burn_gas(transaction_size * (size_t)gas_cost::write_byte);
+			if (!storage)
+				return storage.error();
 
 			bool discard = (context.receipt.events.size() == 1 && context.receipt.events.front().first == 0 && context.receipt.events.front().second.size() == 1);
 			auto execution = discard ? expects_lr<void>(layer_exception(context.receipt.events.front().second.front().as_blob())) : context.transaction->execute(&context);

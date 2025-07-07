@@ -1622,10 +1622,10 @@ namespace tangent
 			for (size_t i = 5; i < args.size(); i++)
 				values.push_back(args[i]);
 
-			transactions::invocation transaction;
+			transactions::call transaction;
 			transaction.asset = algorithm::asset::id_of_handle(args[0].as_string());
 			transaction.signature[0] = 0xFF;
-			transaction.set_calldata(to, args[3].as_decimal(), args[4].as_string(), std::move(values));
+			transaction.program_call(to, args[3].as_decimal(), args[4].as_string(), std::move(values));
 			transaction.set_gas(decimal::zero(), ledger::block::get_gas_limit());
 
 			auto context = ledger::transaction_context();
