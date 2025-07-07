@@ -164,7 +164,7 @@ public:
 			VI_PANIC(multi_asset_rollup->sign(user1.secret_key, user1_nonce++, decimal::zero()), "rollup not signed");
 			transactions.push_back(multi_asset_rollup);
 		}
-		static void account_program_deployment(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
+		static void account_upgrade(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
 		{
 			auto& [user1, user1_nonce] = users[0];
 			ledger::wallet token_contract = ledger::wallet::from_seed(string("token") + string((char*)user1.secret_key, sizeof(user1.secret_key)));
@@ -185,10 +185,10 @@ public:
 				uint256 value = 0;
 			}
 
-			token_storage construct(instrset::rwptr@, const uint256&in value)
+			token_storage construct(instrset::rwptr@, const address&in admin, const uint256&in value)
 			{
 				token_storage token;
-				token.account = tx::from();
+				token.account = admin;
 				token.name = "Test Token";
 				token.symbol = "TT";
 				token.decimals = 2;
@@ -256,15 +256,7 @@ public:
 			token_storage info(instrset::rptr@)
 			{
 				return kvm::get<token_storage>(uint8(0));
-			}));
-
-			auto* deployment_ethereum1 = memory::init<transactions::deployment>();
-			deployment_ethereum1->set_asset("ETH");
-			deployment_ethereum1->set_program_calldata(decimal::zero(), token_program.substr(1, token_program.size() - 2), { format::variable(1000000u) });
-			deployment_ethereum1->sign_program(token_contract.secret_key);
-			VI_PANIC(deployment_ethereum1->sign(user1.secret_key, user1_nonce++, decimal::zero()), "deployment not signed");
-			transactions.push_back(deployment_ethereum1);
-
+			}));		
 			ledger::wallet bridge_contract = ledger::wallet::from_seed(string("bridge") + string((char*)user1.secret_key, sizeof(user1.secret_key)));
 			std::string_view bridge_program = VI_STRINGIFY((
 			void construct(instrset::rwptr@, const address&in token_account)
@@ -277,36 +269,41 @@ public:
 				return token_account.call<uint256>("uint256 balance_of(instrset::rptr@, const address&in)", tx::from());
 			}));
 
-			auto* deployment_ethereum2 = memory::init<transactions::deployment>();
-			deployment_ethereum2->set_asset("ETH");
-			deployment_ethereum2->set_program_calldata(decimal::zero(), bridge_program.substr(1, bridge_program.size() - 2), { format::variable(token_contract.get_address()) });
-			deployment_ethereum2->sign_program(bridge_contract.secret_key);
-			VI_PANIC(deployment_ethereum2->sign(user1.secret_key, user1_nonce++, decimal::zero()), "deployment not signed");
-			transactions.push_back(deployment_ethereum2);
+			auto* upgrade_ethereum1 = memory::init<transactions::upgrade>();
+			upgrade_ethereum1->set_asset("ETH");
+			upgrade_ethereum1->from_program(token_program.substr(1, token_program.size() - 2), { format::variable(user1.get_address()), format::variable(1000000u) });
+			VI_PANIC(upgrade_ethereum1->sign(token_contract.secret_key, 1, decimal::zero()), "upgrade not signed");
+			transactions.push_back(upgrade_ethereum1);
+
+			auto* upgrade_ethereum2 = memory::init<transactions::upgrade>();
+			upgrade_ethereum2->set_asset("ETH");
+			upgrade_ethereum2->from_program(bridge_program.substr(1, bridge_program.size() - 2), { format::variable(token_contract.get_address()) });
+			VI_PANIC(upgrade_ethereum2->sign(bridge_contract.secret_key, 1, decimal::zero()), "upgrade not signed");
+			transactions.push_back(upgrade_ethereum2);
 		}
-		static void account_program_invocation(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
+		static void account_call(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
 		{
 			auto& [user1, user1_nonce] = users[0];
 			auto& [user2, user2_nonce] = users[1];
 			ledger::wallet token_contract = ledger::wallet::from_seed(string("token") + string((char*)user1.secret_key, sizeof(user1.secret_key)));
-			auto* invocation_ethereum1 = memory::init<transactions::invocation>();
-			invocation_ethereum1->set_asset("ETH");
-			invocation_ethereum1->set_calldata(algorithm::encoding::to_subaddress(token_contract.public_key_hash), decimal::zero(), "transfer", { format::variable(std::string_view((char*)user2.public_key_hash, sizeof(user2.public_key_hash))), format::variable(250000u) });
-			VI_PANIC(invocation_ethereum1->sign(user1.secret_key, user1_nonce++, decimal::zero()), "invocation not signed");
-			transactions.push_back(invocation_ethereum1);
-
-			auto* invocation_ethereum2 = memory::init<transactions::invocation>();
-			invocation_ethereum2->set_asset("ETH");
-			invocation_ethereum2->set_calldata(algorithm::encoding::to_subaddress(token_contract.public_key_hash), decimal::zero(), "info", { });
-			VI_PANIC(invocation_ethereum2->sign(user1.secret_key, user1_nonce++, decimal::zero()), "invocation not signed");
-			transactions.push_back(invocation_ethereum2);
-
 			ledger::wallet bridge_contract = ledger::wallet::from_seed(string("bridge") + string((char*)user1.secret_key, sizeof(user1.secret_key)));
-			auto* invocation_bitcoin = memory::init<transactions::invocation>();
-			invocation_bitcoin->set_asset("BTC");
-			invocation_bitcoin->set_calldata(algorithm::encoding::to_subaddress(bridge_contract.public_key_hash, "123456"), decimal::zero(), "balance_of_test_token", { });
-			VI_PANIC(invocation_bitcoin->sign(user1.secret_key, user1_nonce++, decimal::zero()), "invocation not signed");
-			transactions.push_back(invocation_bitcoin);
+			auto* call_ethereum1 = memory::init<transactions::call>();
+			call_ethereum1->set_asset("ETH");
+			call_ethereum1->program_call(algorithm::encoding::to_subaddress(token_contract.public_key_hash), decimal::zero(), "transfer", { format::variable(std::string_view((char*)user2.public_key_hash, sizeof(user2.public_key_hash))), format::variable(250000u) });
+			VI_PANIC(call_ethereum1->sign(user1.secret_key, user1_nonce++, decimal::zero()), "call not signed");
+			transactions.push_back(call_ethereum1);
+
+			auto* call_ethereum2 = memory::init<transactions::call>();
+			call_ethereum2->set_asset("ETH");
+			call_ethereum2->program_call(algorithm::encoding::to_subaddress(token_contract.public_key_hash), decimal::zero(), "info", { });
+			VI_PANIC(call_ethereum2->sign(user1.secret_key, user1_nonce++, decimal::zero()), "call not signed");
+			transactions.push_back(call_ethereum2);
+
+			auto* call_bitcoin = memory::init<transactions::call>();
+			call_bitcoin->set_asset("BTC");
+			call_bitcoin->program_call(algorithm::encoding::to_subaddress(bridge_contract.public_key_hash, "123456"), decimal::zero(), "balance_of_test_token", { });
+			VI_PANIC(call_bitcoin->sign(user1.secret_key, user1_nonce++, decimal::zero()), "call not signed");
+			transactions.push_back(call_bitcoin);
 		}
 		static void validator_registration_full(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
 		{
@@ -708,8 +705,8 @@ public:
 		new_serialization_comparison<states::witness_account>(*data, owner, asset, address_map(), block_number++, block_nonce++);
 		new_serialization_comparison<states::witness_transaction>(*data, asset, std::string_view(), block_number++, block_nonce++);
 		new_serialization_comparison<transactions::transfer>(*data);
-		new_serialization_comparison<transactions::deployment>(*data);
-		new_serialization_comparison<transactions::invocation>(*data);
+		new_serialization_comparison<transactions::upgrade>(*data);
+		new_serialization_comparison<transactions::call>(*data);
 		new_serialization_comparison<transactions::rollup>(*data);
 		new_serialization_comparison<transactions::certification>(*data);
 		new_serialization_comparison<transactions::depository_account>(*data);
@@ -1454,13 +1451,13 @@ public:
 			TEST_BLOCK(&generators::account_transfer_stage_2, "0x455043564667a3d7a234bbbd6c1c08711ed4b0c9cfa25dfd575ea7236f82de33", 8);
 			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), users[2].wallet.get_address(), 0.05), "0x5bcd3a13492010c76930adf30d36a83547e9e04d2747979f73e414d92e65df6c", 9);
 			TEST_BLOCK(&generators::account_transaction_rollup, "0x0b07dcea12550ff433deafda4579542df39e616294578874fd9d241f672e8621", 10);
-			TEST_BLOCK(&generators::account_program_deployment, "0x7f08aabe930803ba6e6d051174f1e85576444d52cf4b5d06441fe208d0ae94c9", 11);
-			TEST_BLOCK(&generators::account_program_invocation, "0x330fa22fd5d9b55846d4286cea6521b1df883f0dbeee1e2ded5814b4c2220f43", 12);
-			TEST_BLOCK(&generators::depository_regrouping, "0x51e19f91477f9b39b2689b46c5cdb7496f3850eaf9752dc5ac81fda9428cf6ca", 13);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_1, "0xe933e285533d38a936adc0cad0b9cb77c95ec5cace534733737f0ab5c53e4d8f", 17);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0x1451c17019ae682916d07bdfed39947a3e3c4a8e6d1e179e15fc97ffc1e39f44", 19);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0x117fb17b608bfcaaa5ff19ca008c1aba6a69a162262a0b2ae930441aa1a90d59", 21);
-			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2), "0xbe8fdaa51d8c05534ed613cd3afa334cef55338a8d9da82d3de8c4e243efe716", 23);
+			TEST_BLOCK(&generators::account_upgrade, "0x1a2d8dda0a53cf7d95f8c0c6265680fe8e974e11e5e0596980159684506403d1", 11);
+			TEST_BLOCK(&generators::account_call, "0xb4ac9fd93337370b8e15cb37547a43392910e14c3ffeae8c3b269e697b4a7f24", 12);
+			TEST_BLOCK(&generators::depository_regrouping, "0x5e7a6bb9875a0e3b87821def4167c29203be304c0f3eb72e8105868a596e2230", 13);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_1, "0x44b369cd7a5353b7c22958304195e535ba982840d0d240617f5c585633a58516", 17);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0x02b05755b2770baf638c366d45694e4a18f38201f11d6bbab2eb14218ab6ecf2", 19);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0x6d715bdf5b2bffb4685e855f54ea4da6aee5643396049cbcb673405916877739", 21);
+			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2), "0xb670be7a913514ef1d3af83fb5fc55e36babaaff025418de6c7d6fa7288e006a", 23);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else

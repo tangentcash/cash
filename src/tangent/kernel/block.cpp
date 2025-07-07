@@ -1638,6 +1638,8 @@ namespace tangent
 			auto status = store(&new_state);
 			if (!status)
 				return status.error();
+			else if (!memcmp(receipt.from, owner, sizeof(algorithm::pubkeyhash)))
+				execution_flags |= (uint8_t)execution_mode::replayable;
 
 			return new_state;
 		}
@@ -2541,9 +2543,9 @@ namespace tangent
 			if (memcmp(context.receipt.from, null, sizeof(null)) != 0 && !(context.execution_flags & (uint8_t)execution_mode::replayable))
 			{
 				auto nonce = (context.execution_flags & (uint8_t)execution_mode::evaluation ? context.get_account_nonce(context.receipt.from).or_else(states::account_nonce(nullptr, nullptr)).nonce : context.transaction->nonce);
-				auto sequencing = context.apply_account_nonce(context.receipt.from, nonce + 1);
-				if (!sequencing)
-					return sequencing.error();
+				auto change = context.apply_account_nonce(context.receipt.from, nonce + 1);
+				if (!change)
+					return change.error();
 			}
 
 			context.receipt.relative_gas_paid = memcmp(context.environment->validator.public_key_hash, context.receipt.from, sizeof(context.receipt.from)) != 0 && context.transaction->gas_price.is_positive() ? context.receipt.relative_gas_use : 0;

@@ -1462,14 +1462,18 @@ namespace tangent
 			if (function_decl.empty())
 				return layer_exception("illegal call to function: function not found");
 
-			return execute(script_call::mutable_call, compiler->get_module().get_function_by_name(function_decl), args, nullptr);
+			auto module = compiler->get_module();
+			auto candidate = module.get_function_by_name(function_decl);
+			return execute(script_call::mutable_call, candidate.is_valid() ? candidate : module.get_function_by_decl(function_decl), args, nullptr);
 		}
 		expects_lr<void> script_program::immutable_call(compiler* compiler, const std::string_view& function_decl, const format::variables& args)
 		{
 			if (function_decl.empty())
 				return layer_exception("illegal call to function: function not found");
-			
-			return execute(script_call::immutable_call, compiler->get_module().get_function_by_name(function_decl), args, nullptr);
+
+			auto module = compiler->get_module();
+			auto candidate = module.get_function_by_name(function_decl);
+			return execute(script_call::immutable_call, candidate.is_valid() ? candidate : module.get_function_by_decl(function_decl), args, nullptr);
 		}
 		expects_lr<void> script_program::execute(script_call mutability, const function& entrypoint, const format::variables& args, std::function<expects_lr<void>(void*, int)>&& return_callback)
 		{
