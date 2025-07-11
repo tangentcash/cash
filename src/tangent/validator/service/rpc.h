@@ -140,9 +140,7 @@ namespace tangent
 			server_response txnstate_get_transaction_by_hash(http::connection* base, format::variables&& args);
 			server_response txnstate_get_raw_transaction_by_hash(http::connection* base, format::variables&& args);
 			server_response txnstate_get_receipt_by_transaction_hash(http::connection* base, format::variables&& args);
-			server_response chainstate_call(format::variables&& args, bool tracing);
-			server_response chainstate_immutable_call(http::connection* base, format::variables&& args);
-			server_response chainstate_trace_call(http::connection* base, format::variables&& args);
+			server_response chainstate_call(http::connection* base, format::variables&& args);
 			server_response chainstate_get_block_states_by_hash(http::connection* base, format::variables&& args);
 			server_response chainstate_get_block_states_by_number(http::connection* base, format::variables&& args);
 			server_response chainstate_get_block_gas_price_by_hash(http::connection* base, format::variables&& args);

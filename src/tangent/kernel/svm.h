@@ -10,7 +10,7 @@ namespace tangent
 	{
 		enum class svm_call
 		{
-			default_call,
+			system_call,
 			mutable_call,
 			immutable_call
 		};
@@ -37,7 +37,7 @@ namespace tangent
 			virtual ~svm_host() noexcept override;
 			uptr<compiler> allocate();
 			void deallocate(uptr<compiler>&& compiler);
-			expects_lr<void> compile(compiler* compiler, const std::string_view& program_hashcode, const std::string_view& unpacked_program_code);
+			expects_lr<void> compile(compiler* compiler, const std::string_view& program_hashcode, const std::string_view& program_name, const std::string_view& unpacked_program_code);
 			bool precompile(compiler* compiler, const std::string_view& program_hashcode);
 			string hashcode(const std::string_view& unpacked_program_code);
 			expects_lr<string> pack(const std::string_view& unpacked_program_code);

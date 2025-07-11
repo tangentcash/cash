@@ -129,13 +129,13 @@ namespace tangent
 		if (!status.ok())
 		{
 			if (protocol::now().user.storage.logging)
-				VI_ERR("[blobdb] wal append error: %s (location: %s)", status.ToString().c_str(), address.c_str());
+				VI_ERR("wal append error: %s (location: %s)", status.ToString().c_str(), address.c_str());
 
 			return nullptr;
 		}
 
 		if (protocol::now().user.storage.logging)
-			VI_DEBUG("[blobdb] wal append on %s (handle: 0x%" PRIXPTR ")", address.c_str(), (uintptr_t)result);
+			VI_DEBUG("wal append on %s (handle: 0x%" PRIXPTR ")", address.c_str(), (uintptr_t)result);
 
 		blobs[address] = result;
 		return result;
@@ -164,7 +164,7 @@ namespace tangent
 		if (!status)
 		{
 			if (protocol::now().user.storage.logging)
-				VI_ERR("[indexdb] wal append error: %s (location: %s)", status.error().what(), address.c_str());
+				VI_ERR("wal append error: %s (location: %s)", status.error().what(), address.c_str());
 
 			return result;
 		}
@@ -176,7 +176,7 @@ namespace tangent
 			initializer(*result);
 
 		if (protocol::now().user.storage.logging)
-			VI_DEBUG("[indexdb] wal append on %s (handle: 0x%" PRIXPTR ")", address.c_str(), (uintptr_t)*result);
+			VI_DEBUG("wal append on %s (handle: 0x%" PRIXPTR ")", address.c_str(), (uintptr_t)*result);
 
 		return result;
 	}
@@ -215,9 +215,9 @@ namespace tangent
 			if (protocol::now().user.storage.logging)
 			{
 				if (status.ok())
-					VI_DEBUG("[blobdb] wal checkpoint on %s", handle.first.c_str());
+					VI_DEBUG("wal checkpoint on %s", handle.first.c_str());
 				else
-					VI_ERR("[blobdb] wal checkpoint error on: %s (location: %s)", status.ToString().c_str(), handle.first.c_str());
+					VI_ERR("wal checkpoint error on: %s (location: %s)", status.ToString().c_str(), handle.first.c_str());
 			}
 		}
 #endif
@@ -231,7 +231,7 @@ namespace tangent
 			if (protocol::now().user.storage.logging)
 			{
 				for (auto& state : states)
-					VI_DEBUG("[indexdb] wal checkpoint on %s (db: %s, fc: %i, fs: %i, stat: %i)", queue.first.c_str(), state.database.empty() ? "all" : state.database.c_str(), state.frames_count, state.frames_size, state.status);
+					VI_DEBUG("wal checkpoint on %s (db: %s, fc: %i, fs: %i, stat: %i)", queue.first.c_str(), state.database.empty() ? "all" : state.database.c_str(), state.frames_count, state.frames_size, state.status);
 			}
 		}
 	}
@@ -412,14 +412,13 @@ namespace tangent
 
 		auto library = os::directory::get_module();
 		if (!path.empty())
-		{
 			path = os::path::resolve(path, *library, true).or_else(string(path));
-			error_handling::set_flag(log_option::pretty, true);
-			error_handling::set_flag(log_option::dated, true);
-			error_handling::set_flag(log_option::active, true);
-			os::directory::set_working(library->c_str());
-			console::get()->attach();
-		}
+
+		error_handling::set_flag(log_option::pretty, true);
+		error_handling::set_flag(log_option::dated, true);
+		error_handling::set_flag(log_option::active, true);
+		os::directory::set_working(library->c_str());
+		console::get()->attach();
 
 		auto config = uptr<schema>(path.empty() ? (schema*)nullptr : schema::from_json(os::file::read_as_string(path).or_else(string())));
 		if (!environment.args.empty())

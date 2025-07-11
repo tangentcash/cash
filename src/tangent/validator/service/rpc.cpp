@@ -215,7 +215,7 @@ namespace tangent
 				auto* params = request->get("params");
 				string method = request->get_var("method").get_blob();
 				string id = request->get_var("id").get_blob();
-				VI_INFO("[rpc] peer %s call %s: %s (params: %" PRIu64 ", time: %" PRId64 " ms)",
+				VI_INFO("peer %s call %s: %s (params: %" PRIu64 ", time: %" PRId64 " ms)",
 					base->get_peer_ip_address().or_else("[bad_address]").c_str(),
 					method.empty() ? "[bad_method]" : method.c_str(),
 					response.error_message.empty() ? (response.data ? (response.data->value.is_object() ? stringify::text("%" PRIu64 " rows", (uint64_t)response.data->size()).c_str() : "[value]") : "[null]") : response.error_message.c_str(),
@@ -321,7 +321,7 @@ namespace tangent
 			}
 
 			if (protocol::now().user.p2p.logging)
-				VI_INFO("[rpc] rpc node listen (location: %s:%i)", protocol::now().user.rpc.address.c_str(), (int)protocol::now().user.rpc.port);
+				VI_INFO("rpc node listen (location: %s:%i)", protocol::now().user.rpc.address.c_str(), (int)protocol::now().user.rpc.port);
 
 			bind(0, "websocket", "subscribe", 1, 3, "string addresses, bool? blocks, bool? transactions", "uint64", "Subscribe to streams of incoming blocks and transactions optionally include blocks and transactions relevant to comma separated address list", std::bind(&server_node::web_socket_subscribe, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0, "websocket", "unsubscribe", 1, 1, "", "void", "Unsubscribe from all streams", std::bind(&server_node::web_socket_unsubscribe, this, std::placeholders::_1, std::placeholders::_2));
@@ -355,7 +355,7 @@ namespace tangent
 			bind(0 | access_type::r, "txnstate", "gettransactionbyhash", 1, 2, "uint256 hash, uint8? unrolling = 0", "txn | block::txn", "get transaction by hash", std::bind(&server_node::txnstate_get_transaction_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "txnstate", "getrawtransactionbyhash", 1, 1, "uint256 hash", "string", "get raw transaction by hash", std::bind(&server_node::txnstate_get_raw_transaction_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "txnstate", "getreceiptbytransactionhash", 1, 1, "uint256 hash", "receipt", "get receipt by transaction hash", std::bind(&server_node::txnstate_get_receipt_by_transaction_hash, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "immutablecall", 5, 32, "string asset, string from_address, string to_address, decimal value, string function, ...", "program_trace", "execute of immutable function of program assigned to to_address", std::bind(&server_node::chainstate_immutable_call, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "call", 5, 32, "string asset, string from_address, string to_address, decimal value, string function, ...", "program_trace", "execute of immutable function of program assigned to to_address", std::bind(&server_node::chainstate_call, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getblockstatesbyhash", 1, 2, "uint256 hash, uint8? unrolling = 0", "uint256[] | (uniform|multiform)[]", "get block states by hash", std::bind(&server_node::chainstate_get_block_states_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getblockstatesbynumber", 1, 2, "uint64 number, uint8? unrolling = 0", "uint256[] | (uniform|multiform)[]", "get block states by number", std::bind(&server_node::chainstate_get_block_states_by_number, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getblockgaspricebyhash", 2, 3, "uint256 hash, string asset, double? percentile = 0.5", "decimal", "get gas price from percentile of block transactions by hash", std::bind(&server_node::chainstate_get_block_gas_price_by_hash, this, std::placeholders::_1, std::placeholders::_2));
@@ -421,7 +421,6 @@ namespace tangent
 			bind(0 | access_type::r, "validatorstate", "getnode", 1, 1, "string uri_address", "validator", "get a node by ip address", std::bind(&server_node::validatorstate_get_node, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "validatorstate", "getblockchains", 0, 0, "", "warden::asset", "get supported blockchains", std::bind(&server_node::validatorstate_get_blockchains, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "validatorstate", "status", 0, 0, "", "validator::status", "get validator status", std::bind(&server_node::validatorstate_status, this, std::placeholders::_1, std::placeholders::_2));
-			bind(access_type::r | access_type::a, "chainstate", "tracecall", 4, 32, "string asset, string from_address, string to_address, decimal value, string function, ...", "program_trace", "trace execution of mutable / immutable function of program assigned to to_address", std::bind(&server_node::chainstate_trace_call, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::r, "mempoolstate", "submittransaction", 1, 2, "string message_hex, bool? validate", "uint256", "try to accept and relay a mempool transaction from raw data and possibly validate over latest chainstate", std::bind(&server_node::mempoolstate_submit_transaction, this, std::placeholders::_1, std::placeholders::_2, nullptr));
 			bind(access_type::w | access_type::a, "mempoolstate", "rejecttransaction", 1, 1, "uint256 hash", "void", "remove mempool transaction by hash", std::bind(&server_node::mempoolstate_reject_transaction, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "mempoolstate", "addnode", 1, 1, "string uri_address", "void", "add node ip address to trial addresses", std::bind(&server_node::mempoolstate_add_node, this, std::placeholders::_1, std::placeholders::_2));
@@ -443,7 +442,7 @@ namespace tangent
 				return;
 
 			if (protocol::now().user.p2p.logging)
-				VI_INFO("[rpc] rpc node shutdown");
+				VI_INFO("rpc node shutdown");
 
 			node->unlisten(false);
 		}
@@ -1609,7 +1608,7 @@ namespace tangent
 
 			return server_response().success(receipt->as_schema());
 		}
-		server_response server_node::chainstate_call(format::variables&& args, bool tracing)
+		server_response server_node::chainstate_call(http::connection* base, format::variables&& args)
 		{
 			algorithm::pubkeyhash from;
 			if (!algorithm::signing::decode_address(args[1].as_string(), from))
@@ -1627,27 +1626,16 @@ namespace tangent
 			transactions::call transaction;
 			transaction.asset = algorithm::asset::id_of_handle(args[0].as_string());
 			transaction.signature[0] = 0xFF;
+			transaction.nonce = std::max<size_t>(1, ledger::transaction_context().get_account_nonce(from).or_else(states::account_nonce(nullptr, nullptr)).nonce);
 			transaction.program_call(to, args[3].as_decimal(), args[4].as_string(), std::move(values));
 			transaction.set_gas(decimal::zero(), ledger::block::get_gas_limit());
 
-			auto context = ledger::transaction_context();
-			auto nonce = context.get_account_nonce(from);
-			transaction.nonce = nonce ? nonce->nonce : 1;
-
-			auto script = ledger::svm_program_trace(&transaction, from, tracing);
-			auto execution = script.trace_call(tracing ? ledger::svm_call::default_call : ledger::svm_call::immutable_call, transaction.function, transaction.args);
+			auto script = ledger::svm_program_trace(&transaction, from, false);
+			auto execution = script.trace_call(ledger::svm_call::immutable_call, transaction.function, transaction.args);
 			if (!execution)
 				return server_response().error(error_codes::bad_params, execution.error().message());
 
 			return server_response().success(script.as_schema());
-		}
-		server_response server_node::chainstate_immutable_call(http::connection* base, format::variables&& args)
-		{
-			return chainstate_call(std::move(args), false);
-		}
-		server_response server_node::chainstate_trace_call(http::connection* base, format::variables&& args)
-		{
-			return chainstate_call(std::move(args), true);
 		}
 		server_response server_node::chainstate_get_block_states_by_hash(http::connection* base, format::variables&& args)
 		{

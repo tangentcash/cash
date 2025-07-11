@@ -26,7 +26,7 @@ namespace tangent
 			node->listen().expect("listen queue error");
 
 			if (protocol::now().user.nds.logging)
-				VI_INFO("[nds] nds node listen (location: %s:%i)", protocol::now().user.nds.address.c_str(), (int)protocol::now().user.nds.port);
+				VI_INFO("nds node listen (location: %s:%i)", protocol::now().user.nds.address.c_str(), (int)protocol::now().user.nds.port);
 		}
 		void server_node::shutdown()
 		{
@@ -34,7 +34,7 @@ namespace tangent
 				return;
 
 			if (protocol::now().user.nds.logging)
-				VI_INFO("[nds] nds node shutdown");
+				VI_INFO("nds node shutdown");
 
 			node->unlisten(false);
 		}
@@ -103,7 +103,7 @@ namespace tangent
 			if (!count || count > protocol::now().user.nds.cursor_size)
 			{
 				if (protocol::now().user.nds.logging)
-					VI_WARN("[nds] peer %s discovery failed: bad arguments (time: %" PRId64 " ms, args: %s)", base->get_peer_ip_address().or_else("[bad_address]").c_str(), date_time().milliseconds() - base->info.start, base->request.query.c_str());
+					VI_WARN("peer %s discovery failed: bad arguments (time: %" PRId64 " ms, args: %s)", base->get_peer_ip_address().or_else("[bad_address]").c_str(), date_time().milliseconds() - base->info.start, base->request.query.c_str());
 
 				return base->abort(400, "Bad page size. count must not exceed %" PRIu64 " elements.", protocol::now().user.nds.cursor_size);
 			}
@@ -133,13 +133,13 @@ namespace tangent
 			if (!seeds || seeds->empty())
 			{
 				if (protocol::now().user.nds.logging)
-					VI_INFO("[nds] peer %s discovery: no nodes returned (time: %" PRId64 " ms, args: %s)", base->get_peer_ip_address().or_else("[bad_address]").c_str(), date_time().milliseconds() - base->info.start, base->request.query.c_str());
+					VI_INFO("peer %s discovery: no nodes returned (time: %" PRId64 " ms, args: %s)", base->get_peer_ip_address().or_else("[bad_address]").c_str(), date_time().milliseconds() - base->info.start, base->request.query.c_str());
 
 				return base->abort(404, "No nodes found.");
 			}
 
 			if (protocol::now().user.nds.logging)
-				VI_INFO("[nds] peer %s discovery: %i nodes returned (time: %" PRId64 " ms, args: %s)", base->get_peer_ip_address().or_else("[bad_address]").c_str(), (int)seeds->size(), date_time().milliseconds() - base->info.start, base->request.query.c_str());
+				VI_INFO("peer %s discovery: %i nodes returned (time: %" PRId64 " ms, args: %s)", base->get_peer_ip_address().or_else("[bad_address]").c_str(), (int)seeds->size(), date_time().milliseconds() - base->info.start, base->request.query.c_str());
 
 			uptr<schema> data = var::set::array();
 			for (auto& seed : *seeds)

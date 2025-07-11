@@ -461,7 +461,7 @@ namespace tangent
 				}
 
 				if (protocol::now().user.p2p.logging)
-					VI_WARN("[p2p] peer %s:%i channel skip: host not reachable", error_address->get_ip_address().or_else("[bad_address]").c_str(), (int)error_address->get_ip_port().or_else(0));
+					VI_WARN("peer %s:%i channel skip: host not reachable", error_address->get_ip_address().or_else("[bad_address]").c_str(), (int)error_address->get_ip_port().or_else(0));
 			}
 		retry_validator:
 			auto next_validator = mempool.get_validator_by_preference(discovery.offset);
@@ -476,7 +476,7 @@ namespace tangent
 					goto retry_trial_address;
 
 				if (protocol::now().user.p2p.logging)
-					VI_DEBUG("[p2p] peer %s:%i channel try: possibly candidate node", next_trial_address->get_ip_address().or_else(string("[bad_address]")).c_str(), (int)next_trial_address->get_ip_port().or_else(0));
+					VI_DEBUG("peer %s:%i channel try: possibly candidate node", next_trial_address->get_ip_address().or_else(string("[bad_address]")).c_str(), (int)next_trial_address->get_ip_port().or_else(0));
 
 				return promise<option<socket_address>>(std::move(*next_trial_address));
 			}
@@ -495,7 +495,7 @@ namespace tangent
 			}
 
 			if (protocol::now().user.p2p.logging)
-				VI_DEBUG("[p2p] peer %s:%i channel try: previosly connected node", next_validator->address.get_ip_address().or_else(string("[bad_address]")).c_str(), (int)next_validator->address.get_ip_port().or_else(0));
+				VI_DEBUG("peer %s:%i channel try: previosly connected node", next_validator->address.get_ip_address().or_else(string("[bad_address]")).c_str(), (int)next_validator->address.get_ip_port().or_else(0));
 
 			return promise<option<socket_address>>(std::move(next_validator->address));
 		}
@@ -535,9 +535,9 @@ namespace tangent
 					if (protocol::now().user.p2p.logging)
 					{
 						if (results != std::numeric_limits<size_t>::max())
-							VI_INFO("[p2p] seed %s %sresults found (addresses: %" PRIu64 ")", seed.c_str(), results > 0 ? "" : "no ", (uint64_t)results);
+							VI_INFO("seed %s %sresults found (addresses: %" PRIu64 ")", seed.c_str(), results > 0 ? "" : "no ", (uint64_t)results);
 						else
-							VI_WARN("[p2p] seed %s no results found: bad seed", seed.c_str());
+							VI_WARN("seed %s no results found: bad seed", seed.c_str());
 					}
 				}
 
@@ -556,7 +556,7 @@ namespace tangent
 					transaction->set_computed_witness(receipt);
 					accept_unsigned_transaction(nullptr, std::move(*transaction), nullptr);
 					if (protocol::now().user.p2p.logging)
-						VI_INFO("[p2p] %s warden transaction %s accepted (status: %s)", algorithm::asset::name_of(asset).c_str(), receipt.transaction_id.c_str(), receipt.is_mature(asset) ? "finalized" : "pending");
+						VI_INFO("%s warden transaction %s accepted (status: %s)", algorithm::asset::name_of(asset).c_str(), receipt.transaction_id.c_str(), receipt.is_mature(asset) ? "finalized" : "pending");
 				}
 			}
 			return promise<void>::null();
@@ -580,7 +580,7 @@ namespace tangent
 				discovery.offset = 0;
 
 			if (protocol::now().user.p2p.logging)
-				VI_INFO("[p2p] validator %s channel shutdown (%s %s)", from->peer_address().c_str(), routing::node_type_of(*from).data(), from->peer_service().c_str());
+				VI_INFO("validator %s channel shutdown (%s %s)", from->peer_address().c_str(), routing::node_type_of(*from).data(), from->peer_service().c_str());
 
 			return methods::returning::ok(*from, __func__, "approve shutdown");
 		}
@@ -660,7 +660,7 @@ namespace tangent
 			{
 				auto purpose = candidate_tx->as_typename();
 				if (protocol::now().user.p2p.logging)
-					VI_ERR("[p2p] transaction %s %.*s error: authentification error", algorithm::encoding::encode_0xhex256(candidate_tx->as_hash()).c_str(), (int)purpose.size(), purpose.data());
+					VI_ERR("transaction %s %.*s error: authentification error", algorithm::encoding::encode_0xhex256(candidate_tx->as_hash()).c_str(), (int)purpose.size(), purpose.data());
 
 				return layer_exception("authentification error");
 			}
@@ -685,7 +685,7 @@ namespace tangent
 			if (chain.get_transaction_by_hash(candidate_hash))
 			{
 				if (protocol::now().user.p2p.logging)
-					VI_INFO("[p2p] transaction %s %.*s accepted", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data());
+					VI_INFO("transaction %s %.*s accepted", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data());
 				return expectation::met;
 			}
 
@@ -693,7 +693,7 @@ namespace tangent
 			if (candidate_tx->is_recoverable() && !candidate_tx->recover_hash(owner))
 			{
 				if (protocol::now().user.p2p.logging)
-					VI_WARN("[p2p] transaction %s %.*s validation failed: invalid signature", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data());
+					VI_WARN("transaction %s %.*s validation failed: invalid signature", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data());
 				return layer_exception("signature key recovery failed");
 			}
 
@@ -702,7 +702,7 @@ namespace tangent
 			if (!validation)
 			{
 				if (protocol::now().user.p2p.logging)
-					VI_WARN("[p2p] transaction %s %.*s validation failed: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), validation.error().what());
+					VI_WARN("transaction %s %.*s validation failed: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), validation.error().what());
 				return validation.error();
 			}
 
@@ -721,7 +721,7 @@ namespace tangent
 				if (!validation)
 				{
 					if (protocol::now().user.p2p.logging)
-						VI_WARN("[p2p] transaction %s %.*s pre-execution failed: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), validation.error().what());
+						VI_WARN("transaction %s %.*s pre-execution failed: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), validation.error().what());
 					return validation.error();
 				}
 			}
@@ -737,19 +737,19 @@ namespace tangent
 			if (!action)
 			{
 				if (protocol::now().user.p2p.logging)
-					VI_WARN("[p2p] transaction %s %.*s mempool rejection: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), action.error().what());
+					VI_WARN("transaction %s %.*s mempool rejection: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), action.error().what());
 				return action.error();
 			}
 
 			if (protocol::now().user.p2p.logging)
-				VI_INFO("[p2p] transaction %s %.*s accepted", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data());
+				VI_INFO("transaction %s %.*s accepted", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data());
 
 			if (events.accept_transaction)
 				events.accept_transaction(candidate_hash, *candidate_tx, owner);
 
 			size_t multicalls = from ? multicall(from, &methods::propose_transaction_hash, { format::variable(candidate_hash) }) : multicall(nullptr, &methods::propose_transaction, { format::variable(candidate_tx->as_message().data) });
 			if (multicalls > 0 && protocol::now().user.p2p.logging)
-				VI_DEBUG("[p2p] transaction %s %.*s broadcasted to %i nodes", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), (int)multicalls);
+				VI_DEBUG("transaction %s %.*s broadcasted to %i nodes", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), (int)multicalls);
 
 			accept_mempool();
 			return expectation::met;
@@ -1094,10 +1094,10 @@ namespace tangent
 				VI_PANIC(binding_status, "server binding error: %s", binding_status.error().what());
 
 				if (protocol::now().user.p2p.logging)
-					VI_INFO("[p2p] p2p node listen (location: %s:%i, type: %s)", protocol::now().user.p2p.address.c_str(), (int)protocol::now().user.p2p.port, protocol::now().user.p2p.max_outbound_connections > 0 ? "in-out" : "in");
+					VI_INFO("p2p node listen (location: %s:%i, type: %s)", protocol::now().user.p2p.address.c_str(), (int)protocol::now().user.p2p.port, protocol::now().user.p2p.max_outbound_connections > 0 ? "in-out" : "in");
 			}
 			else if (protocol::now().user.p2p.max_outbound_connections > 0 && protocol::now().user.p2p.logging)
-				VI_INFO("[p2p] p2p node listen (type: out)");
+				VI_INFO("p2p node listen (type: out)");
 
 			auto node_id = codec::hex_encode(std::string_view((char*)this, sizeof(this)));
 			nss::server_node::get()->add_transaction_callback(node_id, std::bind(&server_node::propose_transaction_logs, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
@@ -1113,7 +1113,7 @@ namespace tangent
 				if (!endpoint.is_valid() || routing::is_address_reserved(endpoint.address))
 				{
 					if (protocol::now().user.p2p.logging)
-						VI_ERR("[p2p] pre-configured node \"%s\" connection failed: url not valid", node.c_str());
+						VI_ERR("pre-configured node \"%s\" connection failed: url not valid", node.c_str());
 				}
 				else
 					mempool.apply_trial_address(endpoint.address);
@@ -1149,7 +1149,7 @@ namespace tangent
 			if (is_active() || protocol::now().user.p2p.server || protocol::now().user.p2p.max_outbound_connections)
 			{
 				if (protocol::now().user.p2p.logging)
-					VI_INFO("[p2p] p2p node shutdown");
+					VI_INFO("p2p node shutdown");
 			}
 
 			if (is_active())
@@ -1290,9 +1290,9 @@ namespace tangent
 					if (protocol::now().user.p2p.logging)
 					{
 						if (priority)
-							VI_INFO("[p2p] mempool chain extension evaluation (txns: %" PRIu64 ", priority: %" PRIu64 ")", (uint64_t)environment.incoming.size(), *priority);
+							VI_INFO("mempool chain extension evaluation (txns: %" PRIu64 ", priority: %" PRIu64 ")", (uint64_t)environment.incoming.size(), *priority);
 						else
-							VI_INFO("[p2p] mempool chain extension evaluation (txns: %" PRIu64 ", priority: recovery)", (uint64_t)environment.incoming.size());
+							VI_INFO("mempool chain extension evaluation (txns: %" PRIu64 ", priority: recovery)", (uint64_t)environment.incoming.size());
 					}
 
 					string errors;
@@ -1306,7 +1306,7 @@ namespace tangent
 							accept_block(nullptr, std::move(*evaluation), 0);
 					}
 					if (!errors.empty())
-						VI_ERR("[p2p] mempool block evaluation error: %s", errors.c_str());
+						VI_ERR("mempool block evaluation error: %s", errors.c_str());
 				}
 				else if (is_active())
 					environment.cleanup().report("mempool cleanup failed");
@@ -1355,7 +1355,7 @@ namespace tangent
 			if (!verification)
 			{
 				if (protocol::now().user.p2p.logging)
-					VI_WARN("[p2p] block %s branch averted: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), verification.error().what());
+					VI_WARN("block %s branch averted: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), verification.error().what());
 				return false;
 			}
 
@@ -1363,7 +1363,7 @@ namespace tangent
 			if (chain.get_block_header_by_hash(candidate_hash))
 			{
 				if (protocol::now().user.p2p.logging)
-					VI_INFO("[p2p] block %s branch confirmed", algorithm::encoding::encode_0xhex256(candidate_hash).c_str());
+					VI_INFO("block %s branch confirmed", algorithm::encoding::encode_0xhex256(candidate_hash).c_str());
 				return true;
 			}
 
@@ -1376,7 +1376,7 @@ namespace tangent
 				if (it == forks.end())
 				{
 					if (protocol::now().user.p2p.logging)
-						VI_WARN("[p2p] block %s branch averted: fork reverted", algorithm::encoding::encode_0xhex256(candidate_hash).c_str());
+						VI_WARN("block %s branch averted: fork reverted", algorithm::encoding::encode_0xhex256(candidate_hash).c_str());
 					return false;
 				}
 				fork_tip_block = it->second.header;
@@ -1399,7 +1399,7 @@ namespace tangent
 												<+> = ignore (smaller branch)
 				*/
 				if (protocol::now().user.p2p.logging)
-					VI_WARN("[p2p] block %s branch averted: not preferred %s (length: %" PRIi64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), branch_length < 0 ? "branch" : "difficulty", branch_length);
+					VI_WARN("block %s branch averted: not preferred %s (length: %" PRIi64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), branch_length < 0 ? "branch" : "difficulty", branch_length);
 				return false;
 			}
 			else if (branch_length == 0 && tip_block && tip_hash != candidate_hash && candidate.block < *tip_block)
@@ -1410,7 +1410,7 @@ namespace tangent
 					<+> - <+> - <+> - <+> - <+> - <+> - <+>
 				*/
 				if (protocol::now().user.p2p.logging)
-					VI_WARN("[p2p] block %s branch averted: not preferred difficulty", algorithm::encoding::encode_0xhex256(candidate_hash).c_str());
+					VI_WARN("block %s branch averted: not preferred difficulty", algorithm::encoding::encode_0xhex256(candidate_hash).c_str());
 				return false;
 			}
 			else if (!parent_block && candidate.block.number > 1)
@@ -1418,7 +1418,7 @@ namespace tangent
 				if (!from)
 				{
 					if (protocol::now().user.p2p.logging)
-						VI_WARN("[p2p] block %s branch averted: not preferred candidate", algorithm::encoding::encode_0xhex256(candidate_hash).c_str());
+						VI_WARN("block %s branch averted: not preferred candidate", algorithm::encoding::encode_0xhex256(candidate_hash).c_str());
 					return false;
 				}
 
@@ -1445,9 +1445,9 @@ namespace tangent
 					if (protocol::now().user.p2p.logging)
 					{
 						if (forks.find(candidate_hash) != forks.end())
-							VI_INFO("[p2p] block %s new best branch confirmed", algorithm::encoding::encode_0xhex256(candidate_hash).c_str());
+							VI_INFO("block %s new best branch confirmed", algorithm::encoding::encode_0xhex256(candidate_hash).c_str());
 						else
-							VI_WARN("[p2p] block %s branch averted: not preferred orphan branch", algorithm::encoding::encode_0xhex256(candidate_hash).c_str());
+							VI_WARN("block %s branch averted: not preferred orphan branch", algorithm::encoding::encode_0xhex256(candidate_hash).c_str());
 					}
 					return false;
 				}
@@ -1467,7 +1467,7 @@ namespace tangent
 					call(from, &methods::find_fork_collision, { format::variable(candidate_hash), format::variable(tip_block->number) });
 
 				if (protocol::now().user.p2p.logging)
-					VI_INFO("[p2p] block %s new best branch found (height: %" PRIu64 ", distance: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), candidate.block.number, std::abs((int64_t)(tip_block ? tip_block->number : 0) - (int64_t)candidate.block.number));
+					VI_INFO("block %s new best branch found (height: %" PRIu64 ", distance: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), candidate.block.number, std::abs((int64_t)(tip_block ? tip_block->number : 0) - (int64_t)candidate.block.number));
 				return true;
 			}
 
@@ -1477,7 +1477,7 @@ namespace tangent
 				if (!validation)
 				{
 					if (protocol::now().user.p2p.logging)
-						VI_WARN("[p2p] block %s branch averted: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), validation.error().what());
+						VI_WARN("block %s branch averted: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), validation.error().what());
 					return false;
 				}
 			}
@@ -1487,7 +1487,7 @@ namespace tangent
 				if (!integrity)
 				{
 					if (protocol::now().user.p2p.logging)
-						VI_WARN("[p2p] block %s branch averted: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), integrity.error().what());
+						VI_WARN("block %s branch averted: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), integrity.error().what());
 					return false;
 				}
 			}
@@ -1503,20 +1503,20 @@ namespace tangent
 					if (pending.hash == candidate_hash)
 					{
 						if (protocol::now().user.p2p.logging)
-							VI_INFO("[p2p] block %s branch confirmed", algorithm::encoding::encode_0xhex256(candidate_hash).c_str());
+							VI_INFO("block %s branch confirmed", algorithm::encoding::encode_0xhex256(candidate_hash).c_str());
 						return true;
 					}
 					else if (candidate.block < pending.evaluation->block)
 					{
 						if (protocol::now().user.p2p.logging)
-							VI_WARN("[p2p] block %s branch averted: not preferred priority", algorithm::encoding::encode_0xhex256(candidate_hash).c_str());
+							VI_WARN("block %s branch averted: not preferred priority", algorithm::encoding::encode_0xhex256(candidate_hash).c_str());
 						return false;
 					}
 				}
 
 				size_t multicalls = from ? multicall(from, &methods::propose_block_hash, { format::variable(candidate_hash) }) : multicall(from, &methods::propose_block, { format::variable(candidate.block.as_message().data) });
 				if (multicalls > 0 && protocol::now().user.p2p.logging)
-					VI_DEBUG("[p2p] block %s broadcasted to %i nodes (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)multicalls, candidate.block.number);
+					VI_DEBUG("block %s broadcasted to %i nodes (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)multicalls, candidate.block.number);
 
 				enqueue_pending_tip(candidate_hash, std::move(candidate));
 				if (fork_tip != candidate_hash)
@@ -1536,7 +1536,7 @@ namespace tangent
 
 				size_t multicalls = from ? multicall(from, &methods::propose_block_hash, { format::variable(candidate_hash) }) : multicall(from, &methods::propose_block, { format::variable(candidate.block.as_message().data) });
 				if (multicalls > 0 && protocol::now().user.p2p.logging)
-					VI_DEBUG("[p2p] block %s broadcasted to %i nodes (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)multicalls, candidate.block.number);
+					VI_DEBUG("block %s broadcasted to %i nodes (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)multicalls, candidate.block.number);
 
 				clear_pending_tip();
 				if (fork_tip != candidate_hash)
@@ -1560,7 +1560,7 @@ namespace tangent
 			if (!mutation)
 			{
 				if (protocol::now().user.p2p.logging)
-					VI_WARN("[p2p] block %s checkpoint failed: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), mutation.error().what());
+					VI_WARN("block %s checkpoint failed: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), mutation.error().what());
 				return false;
 			}
 
@@ -1568,8 +1568,8 @@ namespace tangent
 			{
 				double progress = get_sync_progress(fork_tip, candidate.block.number);
 				if (mutation->is_fork)
-					VI_INFO("[p2p] block %s chain forked (height: %" PRIu64 ", mempool: %" PRIu64 ", block-delta: " PRIi64 ", transaction-delta: " PRIi64 ", state-delta: " PRIi64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), mutation->old_tip_block_number, mutation->mempool_transactions, mutation->block_delta, mutation->transaction_delta, mutation->state_delta);
-				VI_INFO("[p2p] block %s chain %s (height: %" PRIu64 ", sync: %.2f%%, priority: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), mutation->is_fork ? "shortened" : "extended", candidate.block.number, 100.0 * progress, candidate.block.priority);
+					VI_INFO("block %s chain forked (height: %" PRIu64 ", mempool: %" PRIu64 ", block-delta: " PRIi64 ", transaction-delta: " PRIi64 ", state-delta: " PRIi64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), mutation->old_tip_block_number, mutation->mempool_transactions, mutation->block_delta, mutation->transaction_delta, mutation->state_delta);
+				VI_INFO("block %s chain %s (height: %" PRIu64 ", sync: %.2f%%, priority: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), mutation->is_fork ? "shortened" : "extended", candidate.block.number, 100.0 * progress, candidate.block.priority);
 			}
 
 			if (events.accept_block)
@@ -1592,19 +1592,19 @@ namespace tangent
 				if (transaction.receipt.successful)
 				{
 					if (protocol::now().user.p2p.logging)
-						VI_INFO("[p2p] transaction %s %.*s finalized", algorithm::encoding::encode_0xhex256(transaction.transaction->as_hash()).c_str(), (int)purpose.size(), purpose.data());
+						VI_INFO("transaction %s %.*s finalized", algorithm::encoding::encode_0xhex256(transaction.transaction->as_hash()).c_str(), (int)purpose.size(), purpose.data());
 					fill_validator_services();
 					accept_mempool();
 				}
 				else if (protocol::now().user.p2p.logging)
-					VI_ERR("[p2p] transaction %s %.*s error: %s", algorithm::encoding::encode_0xhex256(transaction.transaction->as_hash()).c_str(), (int)purpose.size(), purpose.data(), transaction.receipt.get_error_messages().or_else(string("execution error")).c_str());
+					VI_ERR("transaction %s %.*s error: %s", algorithm::encoding::encode_0xhex256(transaction.transaction->as_hash()).c_str(), (int)purpose.size(), purpose.data(), transaction.receipt.get_error_messages().or_else(string("execution error")).c_str());
 			}
 			else if (protocol::now().user.p2p.logging)
 			{
 				if (transaction.receipt.successful)
-					VI_INFO("[p2p] transaction %s %.*s finalized", algorithm::encoding::encode_0xhex256(transaction.transaction->as_hash()).c_str(), (int)purpose.size(), purpose.data());
+					VI_INFO("transaction %s %.*s finalized", algorithm::encoding::encode_0xhex256(transaction.transaction->as_hash()).c_str(), (int)purpose.size(), purpose.data());
 				else
-					VI_ERR("[p2p] transaction %s %.*s error: %s", algorithm::encoding::encode_0xhex256(transaction.transaction->as_hash()).c_str(), (int)purpose.size(), purpose.data(), transaction.receipt.get_error_messages().or_else(string("execution error")).c_str());
+					VI_ERR("transaction %s %.*s error: %s", algorithm::encoding::encode_0xhex256(transaction.transaction->as_hash()).c_str(), (int)purpose.size(), purpose.data(), transaction.receipt.get_error_messages().or_else(string("execution error")).c_str());
 			}
 			return true;
 		}
@@ -1846,7 +1846,7 @@ namespace tangent
 
 			relayer->reject(from);
 			if (protocol::now().user.p2p.logging)
-				VI_DEBUG("[p2p] validator %s call \"%s\" abort: %.*s (%s %s)", from->peer_address().c_str(), function, (int)message.size(), message.data(), routing::node_type_of(from).data(), from->peer_service().c_str());
+				VI_DEBUG("validator %s call \"%s\" abort: %.*s (%s %s)", from->peer_address().c_str(), function, (int)message.size(), message.data(), routing::node_type_of(from).data(), from->peer_service().c_str());
 
 			return promise<void>::null();
 		}
@@ -1860,7 +1860,7 @@ namespace tangent
 			}
 
 			if (protocol::now().user.p2p.logging)
-				VI_DEBUG("[p2p] validator %s call \"%s\" error: %.*s (%s %s)", from->peer_address().c_str(), function, (int)message.size(), message.data(), routing::node_type_of(from).data(), from->peer_service().c_str());
+				VI_DEBUG("validator %s call \"%s\" error: %.*s (%s %s)", from->peer_address().c_str(), function, (int)message.size(), message.data(), routing::node_type_of(from).data(), from->peer_service().c_str());
 
 			return promise<void>::null();
 		}
@@ -1871,7 +1871,7 @@ namespace tangent
 				++peer_validator->availability.calls;
 
 			if (protocol::now().user.p2p.logging)
-				VI_DEBUG("[p2p] validator %s call \"%s\" OK: %.*s (%s %s)", from->peer_address().c_str(), function, (int)message.size(), message.data(), routing::node_type_of(from).data(), from->peer_service().c_str());
+				VI_DEBUG("validator %s call \"%s\" OK: %.*s (%s %s)", from->peer_address().c_str(), function, (int)message.size(), message.data(), routing::node_type_of(from).data(), from->peer_service().c_str());
 
 			return promise<void>::null();
 		}
@@ -1935,7 +1935,7 @@ namespace tangent
 			uint64_t varying_peer_time = peer_time + (peer_validator->availability.latency + latency_time) / 2;
 			protocol.time.adjust(peer_validator->address, (int64_t)server_time - (int64_t)varying_peer_time);
 			if (protocol::now().user.p2p.logging)
-				VI_INFO("[p2p] validator %s channel accept (%s %s)", from->peer_address().c_str(), routing::node_type_of(*from).data(), from->peer_service().c_str());
+				VI_INFO("validator %s channel accept (%s %s)", from->peer_address().c_str(), routing::node_type_of(*from).data(), from->peer_service().c_str());
 
 			auto mempool = storages::mempoolstate(__func__);
 			auto nodes = mempool.get_validator_addresses(0, protocol::now().user.p2p.cursor_size);

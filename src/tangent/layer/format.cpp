@@ -508,6 +508,28 @@ namespace tangent
 		{
 			return sizeof(tag::string) - 1;
 		}
+		variable variable::from(const std::string_view& any)
+		{
+			if (stringify::has_integer(any))
+				return variable(uint256_t(any, 10));
+			else if (stringify::has_number(any))
+				return variable(decimal(any));
+			else if (any == "true")
+				return variable(true);
+			else if (any == "false")
+				return variable(false);
+
+			if (util::is_hex_encoding(any))
+			{
+				auto numeric = stringify::starts_with(any, "0x") ? any.substr(2) : any;
+				if (numeric.size() <= 64)
+					return variable(uint256_t(numeric, 16));
+
+				return variable(util::decode_0xhex(numeric));
+			}
+
+			return variable(any);
+		}
 
 		bool variables_util::is_ascii_encoding(const std::string_view& data)
 		{

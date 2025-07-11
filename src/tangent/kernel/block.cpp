@@ -144,19 +144,27 @@ namespace tangent
 		{
 			map[(size_t)work_state::pending][index_of(type, column, row)].destroy();
 		}
-		void block_state::copy(state* value)
+		bool block_state::copy(state* value)
 		{
-			if (value)
-			{
-				auto copy = states::resolver::from_copy(value);
-				if (copy)
-					map[(size_t)work_state::pending][index_of(value)] = copy;
-			}
+			if (!value)
+				return false;
+
+			auto copy = states::resolver::from_copy(value);
+			if (!copy)
+				return false;
+
+			auto& prev = map[(size_t)work_state::pending][index_of(value)];
+			bool newest = !prev;
+			prev = copy;
+			return newest;
 		}
-		void block_state::move(uptr<state>&& value)
+		bool block_state::move(uptr<state>&& value)
 		{
 			auto location = index_of(*value);
-			map[(size_t)work_state::pending][location] = std::move(value);
+			auto& prev = map[(size_t)work_state::pending][location];
+			bool newest = !prev;
+			prev = std::move(value);
+			return newest;
 		}
 		string block_state::index_of(state* value) const
 		{
@@ -1252,7 +1260,7 @@ namespace tangent
 					}
 
 					if (protocol::now().user.storage.logging)
-						VI_INFO("[checkpoint] revert chain to block %s (height: %" PRIu64 ", mempool: +%" PRIu64 ", blocktrie: %" PRIi64 ", transactiontrie: %" PRIi64 ", statetrie: %" PRIi64 ")", algorithm::encoding::encode_0xhex256(block.as_hash()).c_str(), mutation.new_tip_block_number, mutation.mempool_transactions, mutation.block_delta, mutation.transaction_delta, mutation.state_delta);
+						VI_INFO("revert chain to block %s (height: %" PRIu64 ", mempool: +%" PRIu64 ", blocktrie: %" PRIi64 ", transactiontrie: %" PRIi64 ", statetrie: %" PRIi64 ")", algorithm::encoding::encode_0xhex256(block.as_hash()).c_str(), mutation.new_tip_block_number, mutation.mempool_transactions, mutation.block_delta, mutation.transaction_delta, mutation.state_delta);
 
 status = chain.checkpoint(*this);
 if (!status)
@@ -1282,7 +1290,7 @@ mempool.tx_commit("mempoolwork", "apply").report("mempool commit failed");
 					}
 
 					if (protocol::now().user.storage.logging)
-						VI_INFO("[checkpoint] revert chain to block %s (height: %" PRIu64 ", blocktrie: %" PRIi64 ", transactiontrie: %" PRIi64 ", statetrie: %" PRIi64 ")", algorithm::encoding::encode_0xhex256(block.as_hash()).c_str(), mutation.new_tip_block_number, mutation.block_delta, mutation.transaction_delta, mutation.state_delta);
+						VI_INFO("revert chain to block %s (height: %" PRIu64 ", blocktrie: %" PRIi64 ", transactiontrie: %" PRIi64 ", statetrie: %" PRIi64 ")", algorithm::encoding::encode_0xhex256(block.as_hash()).c_str(), mutation.new_tip_block_number, mutation.block_delta, mutation.transaction_delta, mutation.state_delta);
 
 					status = chain.checkpoint(*this);
 					if (!status)
@@ -1407,14 +1415,14 @@ mempool.tx_commit("mempoolwork", "apply").report("mempool commit failed");
 					return layer_exception("invalid state level");
 			}
 
-			if (paid)
+			bool written = changelog->outgoing.copy(next);
+			if (written && paid)
 			{
 				auto status = burn_gas(next->as_message().data.size() * (size_t)gas_cost::write_byte);
 				if (!status)
 					return status;
 			}
 
-			changelog->outgoing.copy(next);
 			return expectation::met;
 		}
 		expects_lr<void> transaction_context::emit_witness(const algorithm::asset_id& asset, uint64_t block_number)

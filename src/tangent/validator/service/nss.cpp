@@ -114,26 +114,26 @@ namespace tangent
 
 									auto rps = child->get_var("rps").get_number();
 									if (add_multi_node(asset, std::move(urls), rps) && protocol::now().user.nss.logging)
-										VI_INFO("[warden] %s server %i urls added (rps: %.2f)", algorithm::asset::name_of(asset).c_str(), (int)urls.size(), rps);
+										VI_INFO("%s server %i urls added (rps: %.2f)", algorithm::asset::name_of(asset).c_str(), (int)urls.size(), rps);
 									else if (protocol::now().user.nss.logging)
-										VI_ERR("[warden] failed to add %s server %i urls", algorithm::asset::name_of(asset).c_str(), (int)urls.size());
+										VI_ERR("failed to add %s server %i urls", algorithm::asset::name_of(asset).c_str(), (int)urls.size());
 								}
 								else if (child->value.is(var_type::array))
 								{
 									auto url = child->size() > 0 ? child->get(0)->value.get_string() : child->value.get_string();
 									auto rps = child->size() > 1 ? child->get(1)->value.get_number() : 0.0;
 									if (add_node(asset, url, rps) && protocol::now().user.nss.logging)
-										VI_INFO("[warden] %s server url \"%.*s\" added (rps: %.2f)", algorithm::asset::name_of(asset).c_str(), (int)url.size(), url.data(), rps);
+										VI_INFO("%s server url \"%.*s\" added (rps: %.2f)", algorithm::asset::name_of(asset).c_str(), (int)url.size(), url.data(), rps);
 									else if (protocol::now().user.nss.logging)
-										VI_ERR("[warden] failed to add %s server url: \"%.*s\"", algorithm::asset::name_of(asset).c_str(), (int)url.size(), url.data());
+										VI_ERR("failed to add %s server url: \"%.*s\"", algorithm::asset::name_of(asset).c_str(), (int)url.size(), url.data());
 								}
 								else
 								{
 									auto url = child->value.get_string();
 									if (add_node(asset, url, 0.0) && protocol::now().user.nss.logging)
-										VI_INFO("[warden] %s server url \"%.*s\" added", algorithm::asset::name_of(asset).c_str(), (int)url.size(), url.data());
+										VI_INFO("%s server url \"%.*s\" added", algorithm::asset::name_of(asset).c_str(), (int)url.size(), url.data());
 									else if (protocol::now().user.nss.logging)
-										VI_ERR("[warden] failed to add %s server url: \"%.*s\"", algorithm::asset::name_of(asset).c_str(), (int)url.size(), url.data());
+										VI_ERR("failed to add %s server url: \"%.*s\"", algorithm::asset::name_of(asset).c_str(), (int)url.size(), url.data());
 								}
 							}
 						}
@@ -1172,19 +1172,19 @@ namespace tangent
 			else if (listener->cooldown_id != INVALID_TASK_ID)
 			{
 				if (protocol::now().user.nss.logging)
-					VI_INFO("[warden] %s server data collection: re-queued", algorithm::asset::name_of(listener->asset).c_str());
+					VI_INFO("%s server data collection: re-queued", algorithm::asset::name_of(listener->asset).c_str());
 				listener->cooldown_id = INVALID_TASK_ID;
 			}
 			else if (listener->is_dry_run)
 			{
 				if (protocol::now().user.nss.logging)
-					VI_INFO("[warden] %s server data collection: queued", algorithm::asset::name_of(listener->asset).c_str());
+					VI_INFO("%s server data collection: queued", algorithm::asset::name_of(listener->asset).c_str());
 				listener->is_dry_run = false;
 			}
 			else if (listener->options.will_wait_for_transactions())
 			{
 				if (protocol::now().user.nss.logging)
-					VI_INFO("[warden] %s server data collection: waiting for updates in %is (total: %is)",
+					VI_INFO("%s server data collection: waiting for updates in %is (total: %is)",
 					algorithm::asset::name_of(listener->asset).c_str(),
 					(int)(listener->options.polling_frequency_ms / 1000),
 					(int)(listener->options.state.latest_time_awaited / 1000));
@@ -1199,7 +1199,7 @@ namespace tangent
 					if (info.error().is_retry())
 					{
 						if (protocol::now().user.nss.logging)
-							VI_INFO("[warden] %s server data collection: finalized", algorithm::asset::name_of(listener->asset).c_str());
+							VI_INFO("%s server data collection: finalized", algorithm::asset::name_of(listener->asset).c_str());
 
 						call_transaction_listener(listener);
 						coreturn_void;
@@ -1210,7 +1210,7 @@ namespace tangent
 					{
 						control_sys.timeout_if_none("transactions_" + algorithm::asset::blockchain_of(listener->asset), options.retry_waiting_time_ms, [this, listener]() { call_transaction_listener(listener); });
 						if (protocol::now().user.nss.logging)
-							VI_ERR("[warden] %s server data collection: waiting for connection (%s)", algorithm::asset::name_of(listener->asset).c_str(), info.error().what());
+							VI_ERR("%s server data collection: waiting for connection (%s)", algorithm::asset::name_of(listener->asset).c_str(), info.error().what());
 					}
 					else
 						listener->is_dead = true;
@@ -1221,7 +1221,7 @@ namespace tangent
 					if (!info->block_hash.empty())
 					{
 						if (protocol::now().user.nss.logging)
-							VI_INFO("[warden] %s block %s accepted (height: %i, progress: %.2f%%, txns: 0)",
+							VI_INFO("%s block %s accepted (height: %i, progress: %.2f%%, txns: 0)",
 							algorithm::asset::name_of(listener->asset).c_str(),
 							info->block_hash.c_str(),
 							(int)info->block_height,
@@ -1235,7 +1235,7 @@ namespace tangent
 					coreturn_void;
 				}
 				else if (protocol::now().user.nss.logging)
-					VI_INFO("[warden] %s block %s accepted (height: %i, progress: %.2f%%, txns: %i)",
+					VI_INFO("%s block %s accepted (height: %i, progress: %.2f%%, txns: %i)",
 					algorithm::asset::name_of(listener->asset).c_str(),
 					info->block_hash.c_str(),
 					(int)info->block_height,
@@ -1267,7 +1267,7 @@ namespace tangent
 						if (transfer_logs.back() == '\n')
 							transfer_logs.erase(transfer_logs.end() - 1);
 
-						VI_INFO("[warden] %s", transfer_logs.c_str());
+						VI_INFO("%s", transfer_logs.c_str());
 					}
 				}
 
@@ -1287,7 +1287,7 @@ namespace tangent
 				return;
 
 			if (protocol::now().user.nss.logging)
-				VI_INFO("[nss] nss node startup");
+				VI_INFO("nss node startup");
 
 			unordered_set<string> blockchains;
 			blockchains.reserve(nodes.size());
@@ -1324,7 +1324,7 @@ namespace tangent
 				return;
 
 			if (protocol::now().user.nss.logging)
-				VI_INFO("[nss] nss node shutdown");
+				VI_INFO("nss node shutdown");
 
 			umutex<std::recursive_mutex> unique(control_sys.sync);
 			for (auto& nodes : nodes)

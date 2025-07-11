@@ -48,7 +48,7 @@ namespace tangent
 #ifdef _DEBUG
 			string error = error_of(cursor);
 			if (!error.empty() && protocol::now().user.storage.logging)
-				VI_ERR("[indexdb] operation %.*s::%.*s error (transaction begin): %s", (int)label.size(), label.data(), (int)operation.size(), operation.data(), error.c_str());
+				VI_ERR("operation %.*s::%.*s error (transaction begin): %s", (int)label.size(), label.data(), (int)operation.size(), operation.data(), error.c_str());
 #endif
 			++queries; ++thread_queries;
 			transaction = *cursor;
@@ -64,7 +64,7 @@ namespace tangent
 #ifdef _DEBUG
 			string error = error_of(cursor);
 			if (!error.empty() && protocol::now().user.storage.logging)
-				VI_ERR("[indexdb] operation %.*s::%.*s error (transaction commit): %s", (int)label.size(), label.data(), (int)operation.size(), operation.data(), error.c_str());
+				VI_ERR("operation %.*s::%.*s error (transaction commit): %s", (int)label.size(), label.data(), (int)operation.size(), operation.data(), error.c_str());
 #endif
 			++queries; ++thread_queries;
 			transaction = nullptr;
@@ -80,7 +80,7 @@ namespace tangent
 #ifdef _DEBUG
 			string error = error_of(cursor);
 			if (!error.empty() && protocol::now().user.storage.logging)
-				VI_ERR("[indexdb] operation %.*s::%.*s error (transaction rollback): %s", (int)label.size(), label.data(), (int)operation.size(), operation.data(), error.c_str());
+				VI_ERR("operation %.*s::%.*s error (transaction rollback): %s", (int)label.size(), label.data(), (int)operation.size(), operation.data(), error.c_str());
 #endif
 			++queries; ++thread_queries;
 			transaction = nullptr;
@@ -93,7 +93,7 @@ namespace tangent
 #ifdef _DEBUG
 			string error = error_of(cursor);
 			if (!error.empty() && protocol::now().user.storage.logging)
-				VI_ERR("[indexdb] operation %.*s::%.*s failed: %s", (int)label.size(), label.data(), (int)operation.size(), operation.data(), error.c_str());
+				VI_ERR("operation %.*s::%.*s failed: %s", (int)label.size(), label.data(), (int)operation.size(), operation.data(), error.c_str());
 #endif
 			++queries; ++thread_queries;
 			return cursor;
@@ -105,7 +105,7 @@ namespace tangent
 #ifdef _DEBUG
 			string error = error_of(cursor);
 			if (!error.empty() && protocol::now().user.storage.logging)
-				VI_ERR("[indexdb] operation %.*s::%.*s failed: %s", (int)label.size(), label.data(), (int)operation.size(), operation.data(), error.c_str());
+				VI_ERR("operation %.*s::%.*s failed: %s", (int)label.size(), label.data(), (int)operation.size(), operation.data(), error.c_str());
 #endif
 			++queries; ++thread_queries;
 			return cursor;
@@ -255,7 +255,7 @@ namespace tangent
 #ifdef _DEBUG
 			string error = error_of(cursor);
 			if (!error.empty() && protocol::now().user.storage.logging)
-				VI_ERR("[indexdb] operation %.*s::%.*s error (transaction begin): %s", (int)label.size(), label.data(), (int)operation.size(), operation.data(), error.c_str());
+				VI_ERR("operation %.*s::%.*s error (transaction begin): %s", (int)label.size(), label.data(), (int)operation.size(), operation.data(), error.c_str());
 #endif
 			++queries; ++thread_queries;
 			return cursor;
@@ -267,7 +267,7 @@ namespace tangent
 #ifdef _DEBUG
 			string error = error_of(cursor);
 			if (!error.empty() && protocol::now().user.storage.logging)
-				VI_ERR("[indexdb] operation %.*s::%.*s error (transaction commit): %s", (int)label.size(), label.data(), (int)operation.size(), operation.data(), error.c_str());
+				VI_ERR("operation %.*s::%.*s error (transaction commit): %s", (int)label.size(), label.data(), (int)operation.size(), operation.data(), error.c_str());
 #endif
 			++queries; ++thread_queries;
 			return cursor;
@@ -279,7 +279,7 @@ namespace tangent
 #ifdef _DEBUG
 			string error = error_of(cursor);
 			if (!error.empty() && protocol::now().user.storage.logging)
-				VI_ERR("[indexdb] operation %.*s::%.*s error (transaction rollback): %s", (int)label.size(), label.data(), (int)operation.size(), operation.data(), error.c_str());
+				VI_ERR("operation %.*s::%.*s error (transaction rollback): %s", (int)label.size(), label.data(), (int)operation.size(), operation.data(), error.c_str());
 #endif
 			++queries; ++thread_queries;
 			return cursor;
@@ -291,7 +291,7 @@ namespace tangent
 #ifdef _DEBUG
 			string error = error_of(cursor);
 			if (!error.empty() && protocol::now().user.storage.logging)
-				VI_ERR("[indexdb] operation %.*s::%.*s failed: %s", (int)label.size(), label.data(), (int)operation.size(), operation.data(), error.c_str());
+				VI_ERR("operation %.*s::%.*s failed: %s", (int)label.size(), label.data(), (int)operation.size(), operation.data(), error.c_str());
 #endif
 			++queries; ++thread_queries;
 			return cursor;
@@ -303,7 +303,7 @@ namespace tangent
 #ifdef _DEBUG
 			string error = error_of(cursor);
 			if (!error.empty() && protocol::now().user.storage.logging)
-				VI_ERR("[indexdb] operation %.*s::%.*s failed: %s", (int)label.size(), label.data(), (int)operation.size(), operation.data(), error.c_str());
+				VI_ERR("operation %.*s::%.*s failed: %s", (int)label.size(), label.data(), (int)operation.size(), operation.data(), error.c_str());
 #endif
 			++queries; ++thread_queries;
 			return cursor;
@@ -315,7 +315,7 @@ namespace tangent
 #ifdef _DEBUG
 			string error = error_of(cursor);
 			if (!error.empty() && protocol::now().user.storage.logging)
-				VI_ERR("[indexdb] operation %.*s::%.*s failed: %s", (int)label.size(), label.data(), (int)operation.size(), operation.data(), error.c_str());
+				VI_ERR("operation %.*s::%.*s failed: %s", (int)label.size(), label.data(), (int)operation.size(), operation.data(), error.c_str());
 #endif
 			++queries; ++thread_queries;
 			return cursor;
@@ -331,7 +331,7 @@ namespace tangent
 			{
 				auto message = status.ToString();
 				if (!status.IsNotFound() && protocol::now().user.storage.logging)
-					VI_ERR("[blobdb] operation %.*s::%.*s failed: %s", (int)label.size(), label.data(), (int)operation.size(), operation.data(), message.c_str());
+					VI_ERR("operation %.*s::%.*s failed: %s", (int)label.size(), label.data(), (int)operation.size(), operation.data(), message.c_str());
 				return sqlite::expects_db<string>(sqlite::database_exception(string(message.begin(), message.end())));
 			}
 
@@ -351,7 +351,7 @@ namespace tangent
 			{
 				auto message = status.ToString();
 				if (!status.IsNotFound() && protocol::now().user.storage.logging)
-					VI_ERR("[blobdb] operation %.*s::%.*s failed: %s", (int)label.size(), label.data(), (int)operation.size(), operation.data(), message.c_str());
+					VI_ERR("operation %.*s::%.*s failed: %s", (int)label.size(), label.data(), (int)operation.size(), operation.data(), message.c_str());
 				return sqlite::database_exception(string(message.begin(), message.end()));
 			}
 

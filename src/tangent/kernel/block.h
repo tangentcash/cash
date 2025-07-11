@@ -84,8 +84,8 @@ namespace tangent
 			option<uptr<state>> find(uint32_t type, const std::string_view& column, const std::string_view& row) const;
 			void erase(uint32_t type, const std::string_view& index);
 			void erase(uint32_t type, const std::string_view& column, const std::string_view& row);
-			void copy(state* value);
-			void move(uptr<state>&& value);
+			bool copy(state* value);
+			bool move(uptr<state>&& value);
 			string index_of(state* value) const;
 			string index_of(uint32_t type, const std::string_view& index) const;
 			string index_of(uint32_t type, const std::string_view& column, const std::string_view& row) const;

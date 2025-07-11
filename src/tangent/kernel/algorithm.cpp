@@ -1273,8 +1273,8 @@ namespace tangent
 		{
 			string handle = handle_of(value);
 			std::string_view view = std::string_view(handle);
-			size_t indices = view.rfind(':');
-			std::string_view checksum = indices != std::string::npos && indices + 1 < view.size() ? view.substr(indices + 1) : std::string_view();
+			size_t indices[2] = { view.find(':'), view.rfind(':') };
+			std::string_view checksum = indices[1] != std::string::npos && indices[1] + 1 < view.size() && indices[0] < indices[1] ? view.substr(indices[1] + 1) : std::string_view();
 			return string(checksum);
 		}
 		string asset::name_of(const asset_id& value)
@@ -1284,9 +1284,10 @@ namespace tangent
 			if (!specification.empty())
 			{
 				auto checksum = checksum_of(value);
-				name = specification + " on " + name;
 				if (!checksum.empty())
-					name += " (" + checksum + ")";
+					name = specification + " (" + name + "/" + checksum + ")";
+				else
+					name = specification + " (" + name + ")";
 			}
 			return name;
 		}

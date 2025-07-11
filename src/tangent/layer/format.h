@@ -71,6 +71,9 @@ namespace tangent
 
 		private:
 			static size_t get_max_small_string_size();
+
+		public:
+			static variable from(const std::string_view& any);
 		};
 
 		class variables_util

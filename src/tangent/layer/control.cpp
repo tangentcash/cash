@@ -56,18 +56,18 @@ namespace tangent
 		umutex<std::recursive_mutex> unique(sync);
 		if (!active)
 		{
-			VI_DEBUG("[sysctl] cancel %.*s lock on %.*s service: shutdown", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
+			VI_DEBUG("cancel %.*s lock on %.*s service: shutdown", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
 			return false;
 		}
 
 		VI_ASSERT(timers != nullptr, "timers should be initialized");
 		if (timers->find(key_lookup_cast(name)) == timers->end())
-			VI_DEBUG("[sysctl] OK spawn %.*s locked task on %.*s service (mode = lock-timeout)", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
+			VI_DEBUG("OK spawn %.*s locked task on %.*s service (mode = lock-timeout)", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
 
 		auto& timer = (*timers)[string(name)];
 		if (timer != INVALID_TASK_ID)
 		{
-			VI_DEBUG("[sysctl] cancel %.*s lock on %.*s service: in use", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
+			VI_DEBUG("cancel %.*s lock on %.*s service: in use", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
 			return false;
 		}
 
@@ -79,14 +79,14 @@ namespace tangent
 		umutex<std::recursive_mutex> unique(sync);
 		if (!active)
 		{
-			VI_DEBUG("[sysctl] cancel %.*s unlock on %.*s service: shutdown", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
+			VI_DEBUG("cancel %.*s unlock on %.*s service: shutdown", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
 			return false;
 		}
 
 		VI_ASSERT(timers != nullptr, "timers should be initialized");
 		if (timers->find(key_lookup_cast(name)) == timers->end())
 		{
-			VI_DEBUG("[sysctl] cancel %.*s unlock on %.*s service: not locked", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
+			VI_DEBUG("cancel %.*s unlock on %.*s service: not locked", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
 			return false;
 		}
 
@@ -100,13 +100,13 @@ namespace tangent
 		umutex<std::recursive_mutex> unique(sync);
 		if (!active)
 		{
-			VI_DEBUG("[sysctl] cancel %.*s interval on %.*s service: shutdown", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
+			VI_DEBUG("cancel %.*s interval on %.*s service: shutdown", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
 			return false;
 		}
 
 		VI_ASSERT(timers != nullptr, "timers should be initialized");
 		if (timers->find(key_lookup_cast(name)) == timers->end())
-			VI_DEBUG("[sysctl] OK spawn %.*s task on %.*s service (mode = interval, delay = %" PRIu64 " ms)", (int)name.size(), name.data(), (int)service_name.size(), service_name.data(), ms);
+			VI_DEBUG("OK spawn %.*s task on %.*s service (mode = interval, delay = %" PRIu64 " ms)", (int)name.size(), name.data(), (int)service_name.size(), service_name.data(), ms);
 
 		auto& timer = (*timers)[string(name)];
 		if (timer != INVALID_TASK_ID || timer == LOCKED_TASK_ID)
@@ -116,7 +116,7 @@ namespace tangent
 		if (timer != INVALID_TASK_ID)
 			return true;
 
-		VI_DEBUG("[sysctl] cancel %.*s interval on %.*s service: inactive", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
+		VI_DEBUG("cancel %.*s interval on %.*s service: inactive", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
 		return false;
 	}
 	bool system_control::timeout_if_none(const std::string_view& name, uint64_t ms, task_callback&& callback) noexcept
@@ -124,13 +124,13 @@ namespace tangent
 		umutex<std::recursive_mutex> unique(sync);
 		if (!active)
 		{
-			VI_DEBUG("[sysctl] cancel %.*s timeout on %.*s service: shutdown", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
+			VI_DEBUG("cancel %.*s timeout on %.*s service: shutdown", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
 			return false;
 		}
 
 		VI_ASSERT(timers != nullptr, "timers should be initialized");
 		if (timers->find(key_lookup_cast(name)) == timers->end())
-			VI_DEBUG("[sysctl] OK spawn %.*s task on %.*s service (mode = timeout, delay = %" PRIu64 " ms)", (int)name.size(), name.data(), (int)service_name.size(), service_name.data(), ms);
+			VI_DEBUG("OK spawn %.*s task on %.*s service (mode = timeout, delay = %" PRIu64 " ms)", (int)name.size(), name.data(), (int)service_name.size(), service_name.data(), ms);
 
 		auto& timer = (*timers)[string(name)];
 		if (timer != INVALID_TASK_ID || timer == LOCKED_TASK_ID)
@@ -140,7 +140,7 @@ namespace tangent
 		if (timer != INVALID_TASK_ID)
 			return true;
 
-		VI_DEBUG("[sysctl] cancel %.*s timeout on %.*s service: inactive", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
+		VI_DEBUG("cancel %.*s timeout on %.*s service: inactive", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
 		return false;
 	}
 	bool system_control::upsert_timeout(const std::string_view& name, uint64_t ms, task_callback&& callback) noexcept
@@ -148,13 +148,13 @@ namespace tangent
 		umutex<std::recursive_mutex> unique(sync);
 		if (!active)
 		{
-			VI_DEBUG("[sysctl] cancel %.*s timeout on %.*s service: shutdown", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
+			VI_DEBUG("cancel %.*s timeout on %.*s service: shutdown", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
 			return false;
 		}
 
 		VI_ASSERT(timers != nullptr, "timers should be initialized");
 		if (timers->find(key_lookup_cast(name)) == timers->end())
-			VI_DEBUG("[sysctl] OK spawn %.*s task on %.*s service (mode = upsert-timeout, delay = %" PRIu64 " ms)", (int)name.size(), name.data(), (int)service_name.size(), service_name.data(), ms);
+			VI_DEBUG("OK spawn %.*s task on %.*s service (mode = upsert-timeout, delay = %" PRIu64 " ms)", (int)name.size(), name.data(), (int)service_name.size(), service_name.data(), ms);
 
 		auto& timer = (*timers)[string(name)];
 		if (timer == LOCKED_TASK_ID)
@@ -164,7 +164,7 @@ namespace tangent
 		if (timer != INVALID_TASK_ID)
 			return true;
 
-		VI_DEBUG("[sysctl] cancel %.*s timeout on %.*s service: inactive", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
+		VI_DEBUG("cancel %.*s timeout on %.*s service: inactive", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
 		return false;
 	}
 	bool system_control::clear_timeout(const std::string_view& name, bool clear_scheduled) noexcept
@@ -208,7 +208,7 @@ namespace tangent
 			return true;
 
 		if (!timers->empty())
-			VI_DEBUG("[sysctl] OK clear timers on %.*s service (timers = %" PRIu64 ")", (int)service_name.size(), service_name.data(), (uint64_t)timers->size());
+			VI_DEBUG("OK clear timers on %.*s service (timers = %" PRIu64 ")", (int)service_name.size(), service_name.data(), (uint64_t)timers->size());
 		for (auto& timer_id : *timers)
 			queue->clear_timeout(timer_id.second);
 
@@ -237,7 +237,7 @@ namespace tangent
 	}
 	void service_control::shutdown(int signal) noexcept
 	{
-		VI_INFO("[srvctl] service shutdown (signal code = %i, state = OK)", signal);
+		VI_INFO("service shutdown (signal code = %i, state = OK)", signal);
 		instance = nullptr;
 		if (signal != os::process::get_signal_id(signal_code::SIG_INT) && signal != os::process::get_signal_id(signal_code::SIG_TERM))
 			exit_code = 0x1;
@@ -267,7 +267,7 @@ namespace tangent
 			policy.threads[((size_t)difficulty::timeout)] = 1;
 		}
 
-		VI_INFO("[srvctl] service launch (services: %i)", (int)services.size());
+		VI_INFO("service launch (services: %i)", (int)services.size());
 		for (auto& service : services)
 			service.startup();
 

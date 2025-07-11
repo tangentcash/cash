@@ -104,7 +104,7 @@ namespace tangent
 			if (program != nullptr)
 				program->pay(to, asset, value);
 		}
-		static void svm_address_call_mutable_function(asIScriptGeneric* generic)
+		static void svm_address_call(asIScriptGeneric* generic)
 		{
 			generic_context inout = generic_context(generic);
 			auto& target = *(svm_address*)inout.get_object_address();
@@ -396,6 +396,144 @@ namespace tangent
 				}
 			}
 		}
+		static void math_pow(asIScriptGeneric* generic)
+		{
+			generic_context inout = generic_context(generic);
+			int left_type_id = inout.get_arg_type_id(0);
+			int right_type_id = inout.get_arg_type_id(1);
+			int result_type_id = inout.get_return_addressable_type_id();
+			if (left_type_id != right_type_id || left_type_id != result_type_id)
+				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_EXECUTION, "template type mismatch"));
+
+			void* left_value = inout.get_arg_address(0);
+			void* right_value = inout.get_arg_address(1);
+			switch (result_type_id)
+			{
+				case (int)type_id::int8_t:
+					inout.set_return_byte((uint8_t)std::pow<int8_t>(*(int8_t*)left_value, *(int8_t*)right_value));
+					break;
+				case (int)type_id::bool_t:
+				case (int)type_id::uint8_t:
+					inout.set_return_byte((uint8_t)std::pow<uint8_t>(*(uint8_t*)left_value, *(uint8_t*)right_value));
+					break;
+				case (int)type_id::int16_t:
+					inout.set_return_word((uint16_t)std::pow<int16_t>(*(int16_t*)left_value, *(int16_t*)right_value));
+					break;
+				case (int)type_id::uint16_t:
+					inout.set_return_word((uint16_t)std::pow<uint16_t>(*(uint16_t*)left_value, *(uint16_t*)right_value));
+					break;
+				case (int)type_id::int32_t:
+					inout.set_return_dword((uint32_t)std::pow<int32_t>(*(int32_t*)left_value, *(int32_t*)right_value));
+					break;
+				case (int)type_id::uint32_t:
+					inout.set_return_dword((uint32_t)std::pow<uint32_t>(*(uint32_t*)left_value, *(uint32_t*)right_value));
+					break;
+				case (int)type_id::int64_t:
+					inout.set_return_qword((uint64_t)std::pow<int64_t>(*(int64_t*)left_value, *(int64_t*)right_value));
+					break;
+				case (int)type_id::uint64_t:
+					inout.set_return_qword((uint64_t)std::pow<uint64_t>(*(uint64_t*)left_value, *(uint64_t*)right_value));
+					break;
+				case (int)type_id::float_t:
+					inout.set_return_float(std::pow<float>(*(float*)left_value, *(float*)right_value));
+					break;
+				case (int)type_id::double_t:
+					inout.set_return_double(std::pow<double>(*(double*)left_value, *(double*)right_value));
+					break;
+				default:
+				{
+					auto type = svm_host::get()->get_vm()->get_type_info_by_id(result_type_id);
+					auto name = type.is_valid() ? type.get_name() : std::string_view();
+					left_value = left_type_id & (int)vitex::scripting::type_id::handle_t ? *(void**)left_value : left_value;
+					right_value = right_type_id & (int)vitex::scripting::type_id::handle_t ? *(void**)right_value : right_value;
+					if (result_type_id & (int)vitex::scripting::type_id::mask_seqnbr_t)
+					{
+						inout.set_return_dword((uint32_t)std::pow<int32_t>(*(int32_t*)left_value, *(int32_t*)right_value));
+						break;
+					}
+					return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_EXECUTION, "template type must be arithmetic and trivial"));
+				}
+			}
+		}
+		static void math_lerp(asIScriptGeneric* generic)
+		{
+			generic_context inout = generic_context(generic);
+			int left_type_id = inout.get_arg_type_id(0);
+			int right_type_id = inout.get_arg_type_id(1);
+			int delta_type_id = inout.get_arg_type_id(1);
+			int result_type_id = inout.get_return_addressable_type_id();
+			if (left_type_id != right_type_id || left_type_id != result_type_id || left_type_id != delta_type_id)
+				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_EXECUTION, "template type mismatch"));
+
+			void* left_value = inout.get_arg_address(0);
+			void* right_value = inout.get_arg_address(1);
+			void* delta_value = inout.get_arg_address(1);
+			switch (result_type_id)
+			{
+				case (int)type_id::int8_t:
+					inout.set_return_byte((uint8_t)math<int8_t>::lerp(*(int8_t*)left_value, *(int8_t*)right_value, *(int8_t*)delta_value));
+					break;
+				case (int)type_id::bool_t:
+				case (int)type_id::uint8_t:
+					inout.set_return_byte(math<uint8_t>::lerp(*(uint8_t*)left_value, *(uint8_t*)right_value, *(int8_t*)delta_value));
+					break;
+				case (int)type_id::int16_t:
+					inout.set_return_word((uint16_t)math<int16_t>::lerp(*(int16_t*)left_value, *(int16_t*)right_value, *(int16_t*)delta_value));
+					break;
+				case (int)type_id::uint16_t:
+					inout.set_return_word(math<uint16_t>::lerp(*(uint16_t*)left_value, *(uint16_t*)right_value, *(uint16_t*)delta_value));
+					break;
+				case (int)type_id::int32_t:
+					inout.set_return_dword((uint32_t)math<int32_t>::lerp(*(int32_t*)left_value, *(int32_t*)right_value, *(int32_t*)delta_value));
+					break;
+				case (int)type_id::uint32_t:
+					inout.set_return_dword(math<uint32_t>::lerp(*(uint32_t*)left_value, *(uint32_t*)right_value, *(uint32_t*)delta_value));
+					break;
+				case (int)type_id::int64_t:
+					inout.set_return_qword((uint64_t)math<int64_t>::lerp(*(int64_t*)left_value, *(int64_t*)right_value, *(int64_t*)delta_value));
+					break;
+				case (int)type_id::uint64_t:
+					inout.set_return_qword(math<uint64_t>::lerp(*(uint64_t*)left_value, *(uint64_t*)right_value, *(uint64_t*)delta_value));
+					break;
+				case (int)type_id::float_t:
+					inout.set_return_float(math<float>::lerp(*(float*)left_value, *(float*)right_value, *(double*)delta_value));
+					break;
+				case (int)type_id::double_t:
+					inout.set_return_double(math<double>::lerp(*(double*)left_value, *(double*)right_value, *(double*)delta_value));
+					break;
+				default:
+				{
+					auto type = svm_host::get()->get_vm()->get_type_info_by_id(result_type_id);
+					auto name = type.is_valid() ? type.get_name() : std::string_view();
+					left_value = left_type_id & (int)vitex::scripting::type_id::handle_t ? *(void**)left_value : left_value;
+					right_value = right_type_id & (int)vitex::scripting::type_id::handle_t ? *(void**)right_value : right_value;
+					if (name == SCRIPT_CLASS_UINT128)
+					{
+						uint128_t& object_value = *(uint128_t*)inout.get_address_of_return_location();
+						object_value = math<uint128_t>::lerp(*(uint128_t*)left_value, *(uint128_t*)right_value, *(uint128_t*)delta_value);
+						break;
+					}
+					else if (name == SCRIPT_CLASS_UINT256)
+					{
+						uint256_t& object_value = *(uint256_t*)inout.get_address_of_return_location();
+						object_value = math<uint256_t>::lerp(*(uint256_t*)left_value, *(uint256_t*)right_value, *(uint256_t*)delta_value);
+						break;
+					}
+					else if (name == SCRIPT_CLASS_DECIMAL)
+					{
+						decimal& object_value = *(decimal*)inout.get_address_of_return_location();
+						object_value = math<decimal>::lerp(*(decimal*)left_value, *(decimal*)right_value, *(decimal*)delta_value);
+						break;
+					}
+					else if (result_type_id & (int)vitex::scripting::type_id::mask_seqnbr_t)
+					{
+						inout.set_return_dword((uint32_t)math<int32_t>::lerp(*(int32_t*)left_value, *(int32_t*)right_value, *(int32_t*)delta_value));
+						break;
+					}
+					return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_EXECUTION, "template type must be arithmetic"));
+				}
+			}
+		}
 		static uint256_t block_parent_hash()
 		{
 			auto* program = svm_program::fetch_immutable_or_throw();
@@ -425,6 +563,12 @@ namespace tangent
 		{
 			auto* program = svm_program::fetch_immutable_or_throw();
 			return program ? program->block_time() : 0;
+		}
+		static uint64_t block_time_between(uint64_t block_number_a, uint64_t block_number_b)
+		{
+			uint64_t left = std::min(block_number_a, block_number_b);
+			uint64_t right = std::max(block_number_a, block_number_b);
+			return (right - left) * protocol::now().policy.consensus_proof_time / 1000;
 		}
 		static uint64_t block_priority()
 		{
@@ -1206,8 +1350,8 @@ namespace tangent
 			address->set_method("uint256 to_public_key_hash() const", &svm_address::to_public_key_hash);
 			address->set_method("uint256 to_derivation_hash() const", &svm_address::to_derivation_hash);
 			address->set_method("bool empty() const", &svm_address::empty);
-			address->set_method_extern("void pay(const uint256&in, const decimal&in)", &svm_address_pay);
-			address->set_method_extern("t call<t>(const string_view&in, const ?&in)", &svm_address_call_mutable_function, convention::generic_call);
+			address->set_method_extern("void pay(const uint256&in, const decimal&in) const", &svm_address_pay);
+			address->set_method_extern("t call<t>(const string_view&in, const ?&in) const", &svm_address_call, convention::generic_call);
 			address->set_operator_extern(operators::equals_t, (uint32_t)position::constant, "bool", "const address&in", &svm_address::equals);
 
 			auto abi = vm->set_struct_trivial<svm_abi>(SCRIPT_CLASS_ABI);
@@ -1306,6 +1450,7 @@ namespace tangent
 			vm->set_function("uint256 gas_limit()", &block_gas_limit);
 			vm->set_function("uint128 difficulty()", &block_difficulty);
 			vm->set_function("uint64 time()", &block_time);
+			vm->set_function("uint64 time_between(uint64, uint64)", &block_time_between);
 			vm->set_function("uint64 priority()", &block_priority);
 			vm->set_function("uint64 number()", &block_number);
 			vm->end_namespace();
@@ -1361,6 +1506,8 @@ namespace tangent
 			vm->begin_namespace("math");
 			vm->set_function("t min<t>(const t&in, const t&in)", &math_min, convention::generic_call);
 			vm->set_function("t max<t>(const t&in, const t&in)", &math_max, convention::generic_call);
+			vm->set_function("t pow<t>(const t&in, const t&in)", &math_pow, convention::generic_call);
+			vm->set_function("t lerp<t>(const t&in, const t&in, const t&in)", &math_lerp, convention::generic_call);
 			vm->end_namespace();
 
 			vm->set_function("void require(bool, const string_view&in = string_view())", &require);
@@ -1394,46 +1541,33 @@ namespace tangent
 			compiler->unlink_module();
 			compilers.push(std::move(compiler));
 		}
-		expects_lr<void> svm_host::compile(compiler* compiler, const std::string_view& program_hashcode, const std::string_view& unpacked_program_code)
+		expects_lr<void> svm_host::compile(compiler* compiler, const std::string_view& program_hashcode, const std::string_view& program_name, const std::string_view& unpacked_program_code)
 		{
 			VI_ASSERT(compiler != nullptr, "compiler should not be null");
-			string messages, id = string(program_hashcode), scope = format::util::encode_0xhex(program_hashcode);
-			vm->set_compile_callback(scope, [&messages](const std::string_view& message) { messages.append(message).append("\r\n"); });
+			string messages, id = string(program_hashcode);
+			vm->set_compile_callback(program_name, [&messages](const std::string_view& message) { messages.append(message).append("\r\n"); });
 
-			auto preparation = compiler->prepare(scope, true);
+			auto preparation = compiler->prepare(program_name, true);
 			if (!preparation)
 			{
-				messages.append("ERR preparation failed: " + preparation.error().message() + "\r\n");
+				messages.append("svm preparation: " + preparation.error().message() + "\r\n");
 			error:
-				vm->set_compile_callback(scope, nullptr);
+				vm->set_compile_callback(program_name, nullptr);
 				return layer_exception(std::move(messages));
 			}
 
-			auto injection = compiler->load_code(scope, unpacked_program_code);
+			auto injection = compiler->load_code(program_name, unpacked_program_code);
 			if (!injection)
 			{
-				messages.append("ERR injection failed: " + injection.error().message() + "\r\n");
+				messages.append("svm generation: " + injection.error().message() + "\r\n");
 				goto error;
 			}
 
 			auto compilation = compiler->compile_sync();
 			if (!compilation)
 			{
-				messages.append("ERR compilation failed: " + compilation.error().message() + "\r\n");
+				messages.append("svm compilation: " + compilation.error().message() + "\r\n");
 				goto error;
-			}
-
-			unordered_set<string> mapping;
-			auto library = compiler->get_module();
-			size_t functions = library.get_function_count();
-			for (size_t i = 0; i < functions; i++)
-			{
-				auto function = library.get_function_by_index(i);
-				string name = string(function.get_name());
-				if (mapping.find(name) != mapping.end())
-					return layer_exception(stringify::text("program function %s is ambiguous", name.c_str()));
-
-				mapping.insert(name);
 			}
 
 			umutex<std::mutex> unique(mutex);
@@ -1880,7 +2014,7 @@ namespace tangent
 		}
 		expects_lr<void> svm_program::construct(compiler* compiler, const format::variables& args)
 		{
-			return execute(svm_call::default_call, compiler->get_module().get_function_by_name(SCRIPT_FUNCTION_CONSTRUCTOR), args, nullptr);
+			return execute(svm_call::system_call, compiler->get_module().get_function_by_name(SCRIPT_FUNCTION_CONSTRUCTOR), args, nullptr);
 		}
 		expects_lr<void> svm_program::destruct(compiler* compiler)
 		{
@@ -1888,7 +2022,7 @@ namespace tangent
 		}
 		expects_lr<void> svm_program::destruct(const function& entrypoint)
 		{
-			auto destruction = execute(svm_call::default_call, entrypoint, { }, nullptr);
+			auto destruction = execute(svm_call::system_call, entrypoint, { }, nullptr);
 			if (!destruction)
 				return destruction;
 
@@ -1920,7 +2054,7 @@ namespace tangent
 		{
 			if (!entrypoint.is_valid())
 			{
-				if (mutability == svm_call::default_call)
+				if (mutability == svm_call::system_call)
 					return expectation::met;
 
 				return layer_exception("illegal call to function: null function");
@@ -1935,7 +2069,7 @@ namespace tangent
 			auto* coroutine = caller ? caller : vm->request_context();
 			auto* prev_mutable_program = coroutine->get_user_data(SCRIPT_TAG_MUTABLE_PROGRAM);
 			auto* prev_immutable_program = coroutine->get_user_data(SCRIPT_TAG_IMMUTABLE_PROGRAM);
-			coroutine->set_user_data(mutability == svm_call::mutable_call ? this : nullptr, SCRIPT_TAG_MUTABLE_PROGRAM);
+			coroutine->set_user_data(mutability == svm_call::mutable_call ? (caller ? prev_mutable_program : this) : nullptr, SCRIPT_TAG_MUTABLE_PROGRAM);
 			coroutine->set_user_data(this, SCRIPT_TAG_IMMUTABLE_PROGRAM);
 
 			auto execution = expects_vm<vitex::scripting::execution>(vitex::scripting::execution::error);
@@ -2035,7 +2169,7 @@ namespace tangent
 					return layer_exception(stringify::text("illegal subcall to %s program on function \"%.*s\": %s", target.to_string().c_str(), (int)function_decl.size(), function_decl.data(), code.error().what()));
 				}
 
-				auto compilation = host->compile(*compiler, link->hashcode, *code);
+				auto compilation = host->compile(*compiler, link->hashcode, format::util::encode_0xhex(link->hashcode), *code);
 				if (!compilation)
 				{
 					host->deallocate(std::move(compiler));
@@ -2063,8 +2197,8 @@ namespace tangent
 			}
 
 			auto transaction = transactions::call();
-			transaction.set_asset("ETH");
 			transaction.program_call(target.hash, algorithm::hashing::hash32d(link->hashcode), function_decl, std::move(args));
+			transaction.asset = context->transaction->asset;
 			transaction.gas_price = context->transaction->gas_price;
 			transaction.gas_limit = context->get_gas_left();
 			transaction.nonce = 0;
@@ -2109,7 +2243,7 @@ namespace tangent
 			if (!entrypoint.get_namespace().empty())
 				return layer_exception(stringify::text("illegal call to function \"%.*s\": illegal operation", (int)function_name.size(), function_name.data()));
 
-			if (*mutability != svm_call::default_call && (function_name == SCRIPT_FUNCTION_CONSTRUCTOR || function_name == SCRIPT_FUNCTION_DESTRUCTOR))
+			if (*mutability != svm_call::system_call && (function_name == SCRIPT_FUNCTION_CONSTRUCTOR || function_name == SCRIPT_FUNCTION_DESTRUCTOR))
 				return layer_exception(stringify::text("illegal call to function \"%.*s\": illegal operation", (int)function_name.size(), function_name.data()));
 
 			auto* vm = entrypoint.get_vm();
@@ -2189,13 +2323,13 @@ namespace tangent
 					if (!type.is_valid() || type.get_namespace() != SCRIPT_NAMESPACE_INSTRSET)
 						return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound to any instruction set", entrypoint.get_decl().data(), (int)i));
 
-					auto required_mutability = *mutability == svm_call::default_call ? svm_call::mutable_call : *mutability;
+					auto required_mutability = *mutability == svm_call::system_call ? svm_call::mutable_call : *mutability;
 					if (type.get_name() == SCRIPT_CLASS_RWPTR)
 						*mutability = svm_call::mutable_call;
 					else if (type.get_name() == SCRIPT_CLASS_RPTR)
 						*mutability = svm_call::immutable_call;
 					else
-						*mutability = svm_call::default_call;
+						*mutability = svm_call::system_call;
 
 					switch (*mutability)
 					{
@@ -2205,7 +2339,7 @@ namespace tangent
 							break;
 						case svm_call::immutable_call:
 							break;
-						case svm_call::default_call:
+						case svm_call::system_call:
 						default:
 							return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound to required instruction set (" SCRIPT_CLASS_RWPTR " or " SCRIPT_CLASS_RPTR ")", entrypoint.get_decl().data(), (int)i));
 					}
@@ -2701,7 +2835,7 @@ namespace tangent
 					return code.error();
 				}
 
-				auto compilation = host->compile(*compiler, hashcode, *code);
+				auto compilation = host->compile(*compiler, hashcode, format::util::encode_0xhex(hashcode), *code);
 				if (!compilation)
 				{
 					host->deallocate(std::move(compiler));

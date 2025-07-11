@@ -182,7 +182,7 @@ namespace tangent
 					auto hashcode = host->hashcode(*code);
 					if (!host->precompile(*compiler, hashcode))
 					{
-						auto compilation = host->compile(*compiler, hashcode, *code);
+						auto compilation = host->compile(*compiler, hashcode, format::util::encode_0xhex(hashcode), *code);
 						if (!compilation)
 						{
 							host->deallocate(std::move(compiler));
@@ -232,7 +232,7 @@ namespace tangent
 							return code.error();
 						}
 
-						auto compilation = host->compile(*compiler, storage, *code);
+						auto compilation = host->compile(*compiler, storage, format::util::encode_0xhex(storage), *code);
 						if (!compilation)
 						{
 							host->deallocate(std::move(compiler));
@@ -404,7 +404,7 @@ namespace tangent
 					return code.error();
 				}
 
-				auto compilation = host->compile(*compiler, hashcode, *code);
+				auto compilation = host->compile(*compiler, hashcode, format::util::encode_0xhex(hashcode), *code);
 				if (!compilation)
 				{
 					host->deallocate(std::move(compiler));

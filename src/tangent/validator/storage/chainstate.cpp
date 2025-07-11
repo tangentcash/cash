@@ -482,7 +482,7 @@ namespace tangent
 					return layer_exception("block " + to_string(current_number) + " checkpoint failed: " + finalization.error().message());
 
 				if (protocol::now().user.storage.logging)
-					VI_INFO("[chainstate] reorganization checkpoint at block number %" PRIu64 " (state_delta: +%i)", current_number, evaluation.block.state_count);
+					VI_INFO("reorganization checkpoint at block number %" PRIu64 " (state_delta: +%i)", current_number, evaluation.block.state_count);
 
 				parent_block = evaluation.block;
 				++current_number;
@@ -830,7 +830,7 @@ namespace tangent
 				return expects_lr<void>(layer_exception(error_of(cursor)));
 
 			if (protocol::now().user.storage.logging)
-				VI_INFO("[chainstate] pruning checkpoint at block number %" PRIu64 " (block_delta: -%" PRIu64 ", transaction_delta: -%" PRIu64 ", state_delta: -%" PRIu64 ")", block_number, (uint64_t)block_delta, (uint64_t)transaction_delta, (uint64_t)state_delta);
+				VI_INFO("pruning checkpoint at block number %" PRIu64 " (block_delta: -%" PRIu64 ", transaction_delta: -%" PRIu64 ", state_delta: -%" PRIu64 ")", block_number, (uint64_t)block_delta, (uint64_t)transaction_delta, (uint64_t)state_delta);
 
 			return expectation::met;
 		}
