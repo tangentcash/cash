@@ -1,5 +1,5 @@
 #include "chain.h"
-#include "script.h"
+#include "svm.h"
 #include "../validator/storage/chainstate.h"
 #include "../validator/service/nss.h"
 #ifdef TAN_ROCKSDB
@@ -168,9 +168,11 @@ namespace tangent
 
 			return result;
 		}
-		else if (!result->query(index_storage_configuration(protocol::now().user.storage.optimization, protocol::now().user.storage.index_page_size, protocol::now().user.storage.index_cache_size)))
+		
+		if (!result->query(index_storage_configuration(protocol::now().user.storage.optimization, protocol::now().user.storage.index_page_size, protocol::now().user.storage.index_cache_size)))
 			return result;
-		else if (initializer)
+
+		if (initializer)
 			initializer(*result);
 
 		if (protocol::now().user.storage.logging)
@@ -403,11 +405,10 @@ namespace tangent
 		resource = os::file::open_archive(path, protocol::now().user.logs.archive_size).or_else(nullptr);
 	}
 
-	protocol::protocol(int argc, char** argv)
+	protocol::protocol(const inline_args& environment)
 	{
-		auto environment = argc > 0 && argv != nullptr ? os::process::parse_args(argc, argv, (size_t)args_format::key_value) : inline_args();
 		if (!environment.params.empty())
-			path = std::move(environment.params.back());
+			path = environment.params.back();
 
 		auto library = os::directory::get_module();
 		if (!path.empty())
@@ -676,9 +677,9 @@ namespace tangent
 			if (value != nullptr && value->value.is(var_type::integer))
 				user.storage.location_cache_size = value->value.get_integer();
 
-			value = config->fetch("storage.script_cache_size");
+			value = config->fetch("storage.svm_cache_size");
 			if (value != nullptr && value->value.is(var_type::integer))
-				user.storage.script_cache_size = value->value.get_integer();
+				user.storage.svm_cache_size = value->value.get_integer();
 
 			value = config->fetch("storage.blob_cache_size");
 			if (value != nullptr && value->value.is(var_type::integer))
@@ -829,7 +830,7 @@ namespace tangent
 		storages::uniform_cache::cleanup_instance();
 		storages::multiform_cache::cleanup_instance();
 		nss::server_node::cleanup_instance();
-		ledger::script_host::cleanup_instance();
+		ledger::svm_host::cleanup_instance();
 		algorithm::signing::deinitialize();
 		error_handling::set_callback(nullptr);
 		if (instance == this)

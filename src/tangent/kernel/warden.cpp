@@ -11,7 +11,7 @@ namespace tangent
 			if (new_owner != nullptr)
 				memcpy(owner, new_owner, sizeof(owner));
 		}
-		bool wallet_link::store_payload(format::stream* stream) const
+		bool wallet_link::store_payload(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			algorithm::pubkeyhash null = { 0 };
@@ -20,7 +20,7 @@ namespace tangent
 			stream->write_string(std::string_view((char*)owner, memcmp(owner, null, sizeof(null)) == 0 ? 0 : sizeof(owner)));
 			return true;
 		}
-		bool wallet_link::load_payload(format::stream& stream)
+		bool wallet_link::load_payload(format::ro_stream& stream)
 		{
 			if (!stream.read_string(stream.read_type(), &public_key))
 				return false;
@@ -232,7 +232,7 @@ namespace tangent
 
 			return optional::none;
 		}
-		bool coin_utxo::store_payload(format::stream* stream) const
+		bool coin_utxo::store_payload(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			if (!link.store_payload(stream))
@@ -251,7 +251,7 @@ namespace tangent
 			}
 			return true;
 		}
-		bool coin_utxo::load_payload(format::stream& stream)
+		bool coin_utxo::load_payload(format::ro_stream& stream)
 		{
 			if (!link.load_payload(stream))
 				return false;
@@ -378,7 +378,7 @@ namespace tangent
 			return "warden_coin_utxo";
 		}
 
-		bool computed_transaction::store_payload(format::stream* stream) const
+		bool computed_transaction::store_payload(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer(block_id.execution);
@@ -400,7 +400,7 @@ namespace tangent
 
 			return true;
 		}
-		bool computed_transaction::load_payload(format::stream& stream)
+		bool computed_transaction::load_payload(format::ro_stream& stream)
 		{
 			if (!stream.read_integer(stream.read_type(), &block_id.execution))
 				return false;
@@ -570,7 +570,7 @@ namespace tangent
 
 			return *ptr >= abi.size() ? nullptr : &abi[(*ptr)++];
 		}
-		bool prepared_transaction::store_payload(format::stream* stream) const
+		bool prepared_transaction::store_payload(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			algorithm::pubkeyhash pkh_null = { 0 };
@@ -596,7 +596,7 @@ namespace tangent
 
 			return format::variables_util::serialize_merge_into(abi, stream);
 		}
-		bool prepared_transaction::load_payload(format::stream& stream)
+		bool prepared_transaction::load_payload(format::ro_stream& stream)
 		{
 			uint32_t inputs_size;
 			if (!stream.read_integer(stream.read_type(), &inputs_size))
@@ -761,7 +761,7 @@ namespace tangent
 		finalized_transaction::finalized_transaction(prepared_transaction&& new_prepared, string&& new_calldata, string&& new_hashdata, uint64_t new_locktime) : prepared(std::move(new_prepared)), calldata(std::move(new_calldata)), hashdata(std::move(new_hashdata)), locktime(new_locktime)
 		{
 		}
-		bool finalized_transaction::store_payload(format::stream* stream) const
+		bool finalized_transaction::store_payload(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			if (!prepared.store_payload(stream))
@@ -772,7 +772,7 @@ namespace tangent
 			stream->write_integer(locktime);
 			return true;
 		}
-		bool finalized_transaction::load_payload(format::stream& stream)
+		bool finalized_transaction::load_payload(format::ro_stream& stream)
 		{
 			if (!prepared.load_payload(stream))
 				return false;

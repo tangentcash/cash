@@ -77,17 +77,17 @@ namespace tangent
 		{
 		public:
 			static bool is_ascii_encoding(const std::string_view& data);
-			static bool deserialize_flat_from(stream& stream, variables* result);
-			static bool serialize_flat_into(const variables& data, stream* result);
-			static bool deserialize_merge_from(stream& stream, variables* result);
-			static bool serialize_merge_into(const variables& data, stream* result);
+			static bool deserialize_flat_from(ro_stream& stream, variables* result);
+			static bool serialize_flat_into(const variables& data, wo_stream* result);
+			static bool deserialize_merge_from(ro_stream& stream, variables* result);
+			static bool serialize_merge_into(const variables& data, wo_stream* result);
 			static string as_constant(const variables& data);
 			static string as_constant_json(const variables& data, size_t spaces = 2);
 			static schema* serialize(const variables& data);
 
 		private:
-			static bool deserialize_from(stream& stream, variables* result, bool merging);
-			static bool serialize_into(const variables& data, stream* result, bool merging);
+			static bool deserialize_from(ro_stream& stream, variables* result, bool merging);
+			static bool serialize_into(const variables& data, wo_stream* result, bool merging);
 		};
 	}
 }

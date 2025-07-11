@@ -20,8 +20,8 @@ namespace tangent
 		struct transaction_blob
 		{
 			uint8_t transaction_hash[32];
-			format::stream transaction_message;
-			format::stream receipt_message;
+			format::wo_stream transaction_message;
+			format::wo_stream receipt_message;
 			uint64_t transaction_number;
 			uint64_t block_nonce;
 			bool dispatchable;
@@ -32,7 +32,7 @@ namespace tangent
 
 		struct uniform_blob
 		{
-			format::stream message;
+			format::wo_stream message;
 			string index;
 			bool storage_required;
 			const ledger::uniform* context;
@@ -50,10 +50,11 @@ namespace tangent
 
 		struct multiform_blob
 		{
-			format::stream message;
+			format::wo_stream message;
 			string column;
 			string row;
-			int64_t factor;
+			uint8_t rank[32];
+			size_t rank_size;
 			bool storage_required;
 			const ledger::multiform* context;
 		};
@@ -85,7 +86,7 @@ namespace tangent
 			if (!state)
 				return nullptr;
 
-			auto message = format::stream(optimized_blob);
+			auto message = format::ro_stream(optimized_blob);
 			if (!optimized_blob.empty() && !state->load_optimized(message))
 				return nullptr;
 
@@ -93,7 +94,7 @@ namespace tangent
 			{
 				case ledger::state_level::uniform:
 				{
-					message = format::stream(index_or_column);
+					message = format::ro_stream(index_or_column);
 					if (!index_or_column.empty() && !((ledger::uniform*)*state)->load_index(message))
 						return nullptr;
 
@@ -101,11 +102,11 @@ namespace tangent
 				}
 				case ledger::state_level::multiform:
 				{
-					message = format::stream(index_or_column);
+					message = format::ro_stream(index_or_column);
 					if (!index_or_column.empty() && !((ledger::multiform*)*state)->load_column(message))
 						return nullptr;
 
-					message = format::stream(row_or_none);
+					message = format::ro_stream(row_or_none);
 					if (!row_or_none.empty() && !((ledger::multiform*)*state)->load_row(message))
 						return nullptr;
 
@@ -141,7 +142,7 @@ namespace tangent
 		}
 		static string get_uniform_label(uint32_t type, const std::string_view& index, uint64_t number)
 		{
-			format::stream message;
+			format::wo_stream message;
 			message.data.append(1, BLOB_UNIFORM);
 			message.write_typeless(type);
 			message.write_typeless(number);
@@ -150,7 +151,7 @@ namespace tangent
 		}
 		static string get_multiform_label(uint32_t type, const std::string_view& column, const std::string_view& row, uint64_t number)
 		{
-			format::stream message;
+			format::wo_stream message;
 			message.data.append(1, BLOB_UNIFORM);
 			message.write_typeless(type);
 			message.write_typeless(number);
@@ -245,14 +246,14 @@ namespace tangent
 		}
 		string uniform_cache::key_of_indices(uint32_t type, const std::string_view& index)
 		{
-			format::stream message;
+			format::wo_stream message;
 			message.write_typeless(type);
 			message.write_typeless(index.data(), (uint32_t)index.size());
 			return message.data;
 		}
 		string uniform_cache::key_of_blocks(uint32_t type, uint64_t location)
 		{
-			format::stream message;
+			format::wo_stream message;
 			message.write_typeless(type);
 			message.write_typeless(location);
 			return message.data;
@@ -344,28 +345,34 @@ namespace tangent
 		}
 		string multiform_cache::key_of_columns(uint32_t type, const std::string_view& column)
 		{
-			format::stream message;
+			format::wo_stream message;
 			message.write_typeless(type);
 			message.write_typeless(column.data(), (uint32_t)column.size());
 			return message.data;
 		}
 		string multiform_cache::key_of_rows(uint32_t type, const std::string_view& row)
 		{
-			format::stream message;
+			format::wo_stream message;
 			message.write_typeless(type);
 			message.write_typeless(row.data(), (uint32_t)row.size());
 			return message.data;
 		}
 		string multiform_cache::key_of_blocks(uint32_t type, uint64_t column_location, uint64_t row_location)
 		{
-			format::stream message;
+			format::wo_stream message;
 			message.write_typeless(type);
 			message.write_typeless(column_location);
 			message.write_typeless(row_location);
 			return message.data;
 		}
 
-		std::string_view factor_filter::as_condition() const
+		string result_filter::as_value() const
+		{
+			uint8_t data[32]; size_t data_size;
+			algorithm::encoding::optimized_decode_uint256(value, data, &data_size);
+			return string((char*)data, data_size);
+		}
+		std::string_view result_filter::as_condition() const
 		{
 			switch (condition)
 			{
@@ -384,11 +391,11 @@ namespace tangent
 					return "=";
 			}
 		}
-		std::string_view factor_filter::as_order() const
+		std::string_view result_filter::as_order() const
 		{
 			return order <= 0 ? "DESC" : "ASC";
 		}
-		factor_filter factor_filter::from(const std::string_view& query, int64_t value, int8_t order)
+		result_filter result_filter::from(const std::string_view& query, const uint256_t& value, int8_t order)
 		{
 			if (query == "gt" || query == ">")
 				return greater(value, order);
@@ -567,7 +574,7 @@ namespace tangent
 
 				cursor = emplace_query(*multiformdata, label, __func__,
 					"DELETE FROM snapshots WHERE block_number > ?;"
-					"INSERT OR REPLACE INTO multiforms (column_number, row_number, factor, block_number) SELECT column_number, row_number, factor, block_number FROM (SELECT column_number, row_number, factor, hidden, MAX(block_number) AS block_number FROM snapshots WHERE block_number <= ? GROUP BY column_number, row_number) WHERE hidden = FALSE;"
+					"INSERT OR REPLACE INTO multiforms (column_number, row_number, rank, block_number) SELECT column_number, row_number, rank, block_number FROM (SELECT column_number, row_number, rank, hidden, MAX(block_number) AS block_number FROM snapshots WHERE block_number <= ? GROUP BY column_number, row_number) WHERE hidden = FALSE;"
 					"DELETE FROM columns WHERE block_number > ?;"
 					"DELETE FROM rows WHERE block_number > ?;", &map);
 				if (!cursor || cursor->error())
@@ -831,7 +838,7 @@ namespace tangent
 		{
 			if (!reorganization)
 			{
-				format::stream block_header_message;
+				format::wo_stream block_header_message;
 				if (!evaluation.block.as_header().store(&block_header_message))
 					return expects_lr<void>(layer_exception("block header serialization error"));
 
@@ -941,11 +948,11 @@ namespace tangent
 				if (!commit_multiform_row_data)
 					return expects_lr<void>(layer_exception(std::move(commit_multiform_row_data.error().message())));
 
-				auto commit_multiform_data = multiformdata->prepare_statement("INSERT OR REPLACE INTO multiforms (column_number, row_number, block_number, factor) VALUES (?, ?, ?, ?)", nullptr);
+				auto commit_multiform_data = multiformdata->prepare_statement("INSERT OR REPLACE INTO multiforms (column_number, row_number, block_number, rank) VALUES (?, ?, ?, ?)", nullptr);
 				if (!commit_multiform_data)
 					return expects_lr<void>(layer_exception(std::move(commit_multiform_data.error().message())));
 
-				auto commit_snapshot_data = multiformdata->prepare_statement("INSERT OR REPLACE INTO snapshots (column_number, row_number, block_number, factor, hidden) VALUES (?, ?, ?, ?, ?)", nullptr);
+				auto commit_snapshot_data = multiformdata->prepare_statement("INSERT OR REPLACE INTO snapshots (column_number, row_number, block_number, rank, hidden) VALUES (?, ?, ?, ?, ?)", nullptr);
 				if (!commit_snapshot_data)
 					return expects_lr<void>(layer_exception(std::move(commit_snapshot_data.error().message())));
 
@@ -1030,9 +1037,9 @@ namespace tangent
 				{
 					item.column = item.context->as_column();
 					item.row = item.context->as_row();
-					item.factor = item.context->as_factor();
 					item.storage_required = states::resolver::is_non_default(item.context, state_cache[parallel::get_thread_index() % state_cache.size()]);
 					item.context->store_optimized(&item.message);
+					algorithm::encoding::optimized_decode_uint256(item.context->as_rank(), item.rank, &item.rank_size);
 				}))
 					queue.emplace_back(std::move(task));
 			}
@@ -1167,7 +1174,7 @@ namespace tangent
 							multiformdata->bind_int64(statement, 0, column_number);
 							multiformdata->bind_int64(statement, 1, row_number);
 							multiformdata->bind_int64(statement, 2, evaluation.block.number);
-							multiformdata->bind_int64(statement, 3, item.factor);
+							multiformdata->bind_blob(statement, 3, std::string_view((char*)item.rank, item.rank_size));
 						}
 						else
 						{
@@ -1184,7 +1191,7 @@ namespace tangent
 						multiformdata->bind_int64(statement, 0, column_number);
 						multiformdata->bind_int64(statement, 1, row_number);
 						multiformdata->bind_int64(statement, 2, evaluation.block.number);
-						multiformdata->bind_int64(statement, 3, item.factor);
+						multiformdata->bind_blob(statement, 3, std::string_view((char*)item.rank, item.rank_size));
 						multiformdata->bind_boolean(statement, 4, !item.storage_required);
 
 						cursor = prepared_query(multiformdata, label, __func__, statement);
@@ -1351,14 +1358,16 @@ namespace tangent
 					auto row = response[i];
 					auto& next = result[i + stride];
 					auto transaction_hash = row["transaction_hash"].get();
-					format::stream transaction_message = format::stream(load(label, __func__, get_transaction_label(transaction_hash.get_binary())).or_else(string()));
+					auto transaction_blob = load(label, __func__, get_transaction_label(transaction_hash.get_binary())).or_else(string());
+					auto transaction_message = format::ro_stream(transaction_blob);
 					next.transaction = transactions::resolver::from_stream(transaction_message);
 					if (next.transaction && next.transaction->load(transaction_message))
 					{
 						if (fully)
 						{
-							format::stream receipt_message = format::stream(load(label, __func__, get_receipt_label(transaction_hash.get_binary())).or_else(string()));
-							if (next.receipt.load(receipt_message))
+							transaction_blob = load(label, __func__, get_receipt_label(transaction_hash.get_binary())).or_else(string());
+							transaction_message = format::ro_stream(transaction_blob);
+							if (next.receipt.load(transaction_message))
 								finalize_checksum(**next.transaction, transaction_hash);
 						}
 						else
@@ -1577,7 +1586,8 @@ namespace tangent
 					auto row = response[i];
 					auto& next = gas_prices[stride + i];
 					auto transaction_hash = row["transaction_hash"].get();
-					format::stream message = format::stream(load(label, __func__, get_transaction_label(transaction_hash.get_binary())).or_else(string()));
+					auto transaction_blob = load(label, __func__, get_transaction_label(transaction_hash.get_binary())).or_else(string());
+					auto message = format::ro_stream(transaction_blob);
 					uptr<ledger::transaction> value = transactions::resolver::from_stream(message);
 					if (value && value->load(message) && value->asset == asset)
 						next = std::move(value->gas_price);
@@ -1622,7 +1632,8 @@ namespace tangent
 
 			ledger::block_header header;
 			auto block_hash = (*cursor)["block_hash"].get();
-			format::stream message = format::stream(load(label, __func__, get_block_label(block_hash.get_binary())).or_else(string()));
+			auto block_blob = load(label, __func__, get_block_label(block_hash.get_binary())).or_else(string());
+			auto message = format::ro_stream(block_blob);
 			if (!header.load(message))
 				return expects_lr<ledger::block>(layer_exception("block header deserialization error"));
 
@@ -1642,7 +1653,8 @@ namespace tangent
 			algorithm::encoding::decode_uint256(block_hash, hash);
 
 			ledger::block_header header;
-			format::stream message = format::stream(load(label, __func__, get_block_label(hash)).or_else(string()));
+			auto block_blob = load(label, __func__, get_block_label(hash)).or_else(string());
+			auto message = format::ro_stream(block_blob);
 			if (!header.load(message))
 				return expects_lr<ledger::block>(layer_exception("block header deserialization error"));
 
@@ -1664,7 +1676,8 @@ namespace tangent
 
 			ledger::block_header header;
 			auto block_hash = (*cursor)["block_hash"].get();
-			format::stream message = format::stream(load(label, __func__, get_block_label(block_hash.get_binary())).or_else(string()));
+			auto block_blob = load(label, __func__, get_block_label(block_hash.get_binary())).or_else(string());
+			auto message = format::ro_stream(block_blob);
 			if (!header.load(message))
 				return expects_lr<ledger::block>(layer_exception("block header deserialization error"));
 
@@ -1689,7 +1702,8 @@ namespace tangent
 
 			ledger::block_header header;
 			auto block_hash = (*cursor)["block_hash"].get();
-			format::stream message = format::stream(load(label, __func__, get_block_label(block_hash.get_binary())).or_else(string()));
+			auto block_blob = load(label, __func__, get_block_label(block_hash.get_binary())).or_else(string());
+			auto message = format::ro_stream(block_blob);
 			if (!header.load(message))
 				return expects_lr<ledger::block_header>(layer_exception("block header deserialization error"));
 
@@ -1702,7 +1716,8 @@ namespace tangent
 			algorithm::encoding::decode_uint256(block_hash, hash);
 
 			ledger::block_header header;
-			format::stream message = format::stream(load(label, __func__, get_block_label(hash)).or_else(string()));
+			auto block_blob = load(label, __func__, get_block_label(hash)).or_else(string());
+			auto message = format::ro_stream(block_blob);
 			if (!header.load(message))
 				return expects_lr<ledger::block_header>(layer_exception("block header deserialization error"));
 
@@ -1717,7 +1732,8 @@ namespace tangent
 
 			ledger::block_header header;
 			auto block_hash = (*cursor)["block_hash"].get();
-			format::stream message = format::stream(load(label, __func__, get_block_label(block_hash.get_binary())).or_else(string()));
+			auto block_blob = load(label, __func__, get_block_label(block_hash.get_binary())).or_else(string());
+			auto message = format::ro_stream(block_blob);
 			if (!header.load(message))
 				return expects_lr<ledger::block_header>(layer_exception("block header deserialization error"));
 
@@ -1750,7 +1766,8 @@ namespace tangent
 				if (transaction_hash.size() == sizeof(uint256_t))
 				{
 					algorithm::encoding::encode_uint256((uint8_t*)transaction_hash.data(), value.transactions[i]);
-					value.receipts[i] = format::stream(load(label, __func__, get_receipt_label((uint8_t*)transaction_hash.data())).or_else(string())).hash();
+					auto transaction_blob = load(label, __func__, get_receipt_label((uint8_t*)transaction_hash.data())).or_else(string());
+					value.receipts[i] = format::ro_stream(transaction_blob).hash();
 				}
 				else
 				{
@@ -1943,7 +1960,8 @@ namespace tangent
 				parallel::wail_all(parallel::for_loop(size, ELEMENTS_FEW, [&](size_t i)
 				{
 					auto block_hash = response[i]["block_hash"].get();
-					format::stream message = format::stream(load(label, __func__, get_block_label(block_hash.get_binary())).or_else(string()));
+					auto block_blob = load(label, __func__, get_block_label(block_hash.get_binary())).or_else(string());
+					auto message = format::ro_stream(block_blob);
 					result[i].load(message);
 				}));
 			}
@@ -2041,7 +2059,8 @@ namespace tangent
 				auto row = response[i];
 				auto& value = values[i];
 				auto transaction_hash = row["transaction_hash"].get();
-				format::stream message = format::stream(load(label, __func__, get_transaction_label(transaction_hash.get_binary())).or_else(string()));
+				auto transaction_blob = load(label, __func__, get_transaction_label(transaction_hash.get_binary())).or_else(string());
+				auto message = format::ro_stream(transaction_blob);
 				value = transactions::resolver::from_stream(message);
 				if (value && value->load(message))
 					finalize_checksum(**value, transaction_hash);
@@ -2092,7 +2111,8 @@ namespace tangent
 				auto row = response[i];
 				auto& value = values[i];
 				auto transaction_hash = row["transaction_hash"].get();
-				format::stream message = format::stream(load(label, __func__, get_transaction_label(transaction_hash.get_binary())).or_else(string()));
+				auto transaction_blob = load(label, __func__, get_transaction_label(transaction_hash.get_binary())).or_else(string());
+				auto message = format::ro_stream(transaction_blob);
 				value = transactions::resolver::from_stream(message);
 				if (value && value->load(message))
 					finalize_checksum(**value, transaction_hash);
@@ -2124,8 +2144,10 @@ namespace tangent
 				auto row = response[i];
 				auto& value = values[i];
 				auto transaction_hash = row["transaction_hash"].get();
-				format::stream transaction_message = format::stream(load(label, __func__, get_transaction_label(transaction_hash.get_binary())).or_else(string()));
-				format::stream receipt_message = format::stream(load(label, __func__, get_receipt_label(transaction_hash.get_binary())).or_else(string()));
+				auto transaction_blob = load(label, __func__, get_transaction_label(transaction_hash.get_binary())).or_else(string());
+				auto receipt_blob = load(label, __func__, get_receipt_label(transaction_hash.get_binary())).or_else(string());
+				auto transaction_message = format::ro_stream(transaction_blob);
+				auto receipt_message = format::ro_stream(receipt_blob);
 				value.transaction = transactions::resolver::from_stream(transaction_message);
 				if (value.transaction && value.transaction->load(transaction_message) && value.receipt.load(receipt_message))
 					finalize_checksum(**value.transaction, transaction_hash);
@@ -2176,8 +2198,10 @@ namespace tangent
 				auto row = response[i];
 				auto& value = values[i];
 				auto transaction_hash = row["transaction_hash"].get();
-				format::stream transaction_message = format::stream(load(label, __func__, get_transaction_label(transaction_hash.get_binary())).or_else(string()));
-				format::stream receipt_message = format::stream(load(label, __func__, get_receipt_label(transaction_hash.get_binary())).or_else(string()));
+				auto transaction_blob = load(label, __func__, get_transaction_label(transaction_hash.get_binary())).or_else(string());
+				auto receipt_blob = load(label, __func__, get_receipt_label(transaction_hash.get_binary())).or_else(string());
+				auto transaction_message = format::ro_stream(transaction_blob);
+				auto receipt_message = format::ro_stream(receipt_blob);
 				value.transaction = transactions::resolver::from_stream(transaction_message);
 				if (value.transaction && value.transaction->load(transaction_message) && value.receipt.load(receipt_message))
 					finalize_checksum(**value.transaction, transaction_hash);
@@ -2209,7 +2233,8 @@ namespace tangent
 				auto row = response[i];
 				ledger::receipt value;
 				auto transaction_hash = row["transaction_hash"].get();
-				format::stream message = format::stream(load(label, __func__, get_receipt_label(transaction_hash.get_binary())).or_else(string()));
+				auto receipt_blob = load(label, __func__, get_receipt_label(transaction_hash.get_binary())).or_else(string());
+				auto message = format::ro_stream(receipt_blob);
 				if (value.load(message))
 					values.emplace_back(std::move(value));
 			}
@@ -2237,8 +2262,10 @@ namespace tangent
 				auto row = response[i];
 				auto& value = values[i];
 				auto transaction_hash = row["transaction_hash"].get();
-				format::stream transaction_message = format::stream(load(label, __func__, get_transaction_label(transaction_hash.get_binary())).or_else(string()));
-				format::stream receipt_message = format::stream(load(label, __func__, get_receipt_label(transaction_hash.get_binary())).or_else(string()));
+				auto transaction_blob = load(label, __func__, get_transaction_label(transaction_hash.get_binary())).or_else(string());
+				auto receipt_blob = load(label, __func__, get_receipt_label(transaction_hash.get_binary())).or_else(string());
+				auto transaction_message = format::ro_stream(transaction_blob);
+				auto receipt_message = format::ro_stream(receipt_blob);
 				value.transaction = transactions::resolver::from_stream(transaction_message);
 				if (value.transaction && value.transaction->load(transaction_message) && value.receipt.load(receipt_message))
 					finalize_checksum(**value.transaction, transaction_hash);
@@ -2274,9 +2301,10 @@ namespace tangent
 				return expects_lr<uptr<ledger::transaction>>(layer_exception(error_of(cursor)));
 
 			auto parent_transaction_hash = (*cursor)["transaction_hash"].get();
-			format::stream message = format::stream(load(label, __func__, get_transaction_label(parent_transaction_hash.get_binary())).or_else(string()));
-			uptr<ledger::transaction> value = transactions::resolver::from_stream(message);
-			if (!value || !value->load(message))
+			auto transaction_blob = load(label, __func__, get_transaction_label(parent_transaction_hash.get_binary())).or_else(string());
+			auto transaction_message = format::ro_stream(transaction_blob);
+			uptr<ledger::transaction> value = transactions::resolver::from_stream(transaction_message);
+			if (!value || !value->load(transaction_message))
 				return expects_lr<uptr<ledger::transaction>>(layer_exception("transaction deserialization error"));
 
 			finalize_checksum(**value, parent_transaction_hash);
@@ -2307,8 +2335,10 @@ namespace tangent
 				return expects_lr<ledger::block_transaction>(layer_exception(error_of(cursor)));
 
 			auto parent_transaction_hash = (*cursor)["transaction_hash"].get();
-			format::stream transaction_message = format::stream(load(label, __func__, get_transaction_label(parent_transaction_hash.get_binary())).or_else(string()));
-			format::stream receipt_message = format::stream(load(label, __func__, get_receipt_label(parent_transaction_hash.get_binary())).or_else(string()));
+			auto transaction_blob = load(label, __func__, get_transaction_label(parent_transaction_hash.get_binary())).or_else(string());
+			auto receipt_blob = load(label, __func__, get_receipt_label(parent_transaction_hash.get_binary())).or_else(string());
+			auto transaction_message = format::ro_stream(transaction_blob);
+			auto receipt_message = format::ro_stream(receipt_blob);
 			ledger::block_transaction value;
 			value.transaction = transactions::resolver::from_stream(transaction_message);
 			if (!value.transaction || !value.transaction->load(transaction_message) || !value.receipt.load(receipt_message))
@@ -2323,13 +2353,14 @@ namespace tangent
 			algorithm::encoding::decode_uint256(transaction_hash, hash);
 
 			ledger::receipt value;
-			format::stream message = format::stream(load(label, __func__, get_receipt_label(hash)).or_else(string()));
-			if (!value.load(message))
+			auto receipt_blob = load(label, __func__, get_receipt_label(hash)).or_else(string());
+			auto receipt_message = format::ro_stream(receipt_blob);
+			if (!value.load(receipt_message))
 				return expects_lr<ledger::receipt>(layer_exception("receipt deserialization error"));
 
 			return value;
 		}
-		expects_lr<uptr<ledger::state>> chainstate::get_uniform_by_index(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& index, uint64_t block_number)
+		expects_lr<uptr<ledger::state>> chainstate::get_uniform(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& index, uint64_t block_number)
 		{
 			if (changelog != nullptr)
 			{
@@ -2391,7 +2422,7 @@ namespace tangent
 				((ledger::block_changelog*)changelog)->incoming.copy(*value);
 			return value;
 		}
-		expects_lr<uptr<ledger::state>> chainstate::get_multiform_by_composition(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& column, const std::string_view& row, uint64_t block_number)
+		expects_lr<uptr<ledger::state>> chainstate::get_multiform(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& column, const std::string_view& row, uint64_t block_number)
 		{
 			if (changelog != nullptr)
 			{
@@ -2475,13 +2506,24 @@ namespace tangent
 				return expects_lr<uptr<ledger::state>>(layer_exception("multiform state not found"));
 
 			auto row = (*cursor)["row_hash"].get().get_blob();
+			if (changelog != nullptr)
+			{
+				auto candidate = changelog->outgoing.find(type, column, row);
+				if (candidate)
+					return std::move(*candidate);
+
+				candidate = changelog->incoming.find(type, column, row);
+				if (candidate)
+					return std::move(*candidate);
+			}
+
 			auto blob = load(label, __func__, get_multiform_label(type, column, row, (*cursor)["block_number"].get().get_integer())).or_else(string());
 			auto value = state_from_blob(type, column, row, blob);
 			if (!value)
 			{
 				if (value && changelog != nullptr)
 					((ledger::block_changelog*)changelog)->incoming.erase(type, column, ((ledger::multiform*)*value)->as_row());
-				return expects_lr<uptr<ledger::state>>(layer_exception("multiform state state deserialization error"));
+				return expects_lr<uptr<ledger::state>>(layer_exception("multiform state deserialization error"));
 			}
 
 			if (changelog != nullptr)
@@ -2509,6 +2551,17 @@ namespace tangent
 				return expects_lr<uptr<ledger::state>>(layer_exception("multiform state not found"));
 
 			auto column = (*cursor)["column_hash"].get().get_blob();
+			if (changelog != nullptr)
+			{
+				auto candidate = changelog->outgoing.find(type, column, row);
+				if (candidate)
+					return std::move(*candidate);
+
+				candidate = changelog->incoming.find(type, column, row);
+				if (candidate)
+					return std::move(*candidate);
+			}
+
 			auto blob = load(label, __func__, get_multiform_label(type, column, row, (*cursor)["block_number"].get().get_integer())).or_else(string());
 			auto value = state_from_blob(type, column, row, blob);
 			if (!value)
@@ -2548,6 +2601,23 @@ namespace tangent
 			{
 				auto next = response[i];
 				auto row = next["row_hash"].get().get_blob();
+				if (changelog != nullptr)
+				{
+					auto candidate = changelog->outgoing.find(type, column, row);
+					if (candidate)
+					{
+						values.push_back(std::move(*candidate));
+						continue;
+					}
+
+					candidate = changelog->incoming.find(type, column, row);
+					if (candidate)
+					{
+						values.push_back(std::move(*candidate));
+						continue;
+					}
+				}
+
 				auto blob = load(label, __func__, get_multiform_label(type, column, row, next["block_number"].get().get_integer())).or_else(string());
 				auto next_state = state_from_blob(type, column, row, blob);
 				if (!next_state)
@@ -2563,33 +2633,33 @@ namespace tangent
 
 			return values;
 		}
-		expects_lr<vector<uptr<ledger::state>>> chainstate::get_multiforms_by_column_filter(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& column, const factor_filter& filter, uint64_t block_number, const factor_window& window)
+		expects_lr<vector<uptr<ledger::state>>> chainstate::get_multiforms_by_column_filter(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& column, const result_filter& filter, uint64_t block_number, const result_window& window)
 		{
 			auto location = resolve_multiform_location(type, column, optional::none, false);
 			if (!location)
 				return expects_lr<vector<uptr<ledger::state>>>(vector<uptr<ledger::state>>());
 
 			schema_list map; string pattern;
-			if (window.type() == factor_range_window::instance_type())
+			if (window.type() == result_range_window::instance_type())
 			{
-				auto& range = *(factor_range_window*)&window;
+				auto& range = *(result_range_window*)&window;
 				map.push_back(var::set::integer(location->column.or_else(0)));
 				if (block_number > 0)
 					map.push_back(var::set::integer(block_number));
 				map.push_back(var::set::string(filter.as_condition()));
-				map.push_back(var::set::integer(filter.value));
+				map.push_back(var::set::binary(filter.as_value()));
 				map.push_back(var::set::string(filter.as_order()));
 				map.push_back(var::set::integer(range.count));
 				map.push_back(var::set::integer(range.offset));
 
 				pattern = !block_number ?
-					"SELECT (SELECT row_hash FROM rows WHERE rows.row_number = multiforms.row_number) AS row_hash, block_number FROM multiforms WHERE column_number = ? AND factor $? ? ORDER BY factor $?, row_number ASC LIMIT ? OFFSET ?" :
-					"SELECT (SELECT row_hash FROM rows WHERE rows.row_number = queryforms.row_number) AS row_hash, block_number FROM (SELECT column_number, row_number, factor, hidden, MAX(block_number) AS block_number FROM snapshots WHERE column_number = ? AND block_number < ? GROUP BY row_number) AS queryforms WHERE hidden = FALSE AND factor $? ? ORDER BY factor $?, row_number ASC LIMIT ? OFFSET ?";
+					"SELECT (SELECT row_hash FROM rows WHERE rows.row_number = multiforms.row_number) AS row_hash, block_number FROM multiforms WHERE column_number = ? AND rank $? ? ORDER BY rank $?, row_number ASC LIMIT ? OFFSET ?" :
+					"SELECT (SELECT row_hash FROM rows WHERE rows.row_number = queryforms.row_number) AS row_hash, block_number FROM (SELECT column_number, row_number, rank, hidden, MAX(block_number) AS block_number FROM snapshots WHERE column_number = ? AND block_number < ? GROUP BY row_number) AS queryforms WHERE hidden = FALSE AND rank $? ? ORDER BY rank $?, row_number ASC LIMIT ? OFFSET ?";
 			}
-			else if (window.type() == factor_index_window::instance_type())
+			else if (window.type() == result_index_window::instance_type())
 			{
 				string indices;
-				for (auto& item : ((factor_index_window*)&window)->indices)
+				for (auto& item : ((result_index_window*)&window)->indices)
 					indices += to_string(item + 1) + ",";
 
 				map.push_back(var::set::string(filter.as_order()));
@@ -2597,12 +2667,12 @@ namespace tangent
 				if (block_number > 0)
 					map.push_back(var::set::integer(block_number));
 				map.push_back(var::set::string(filter.as_condition()));
-				map.push_back(var::set::integer(filter.value));
+				map.push_back(var::set::binary(filter.as_value()));
 				map.push_back(var::set::string(indices.substr(0, indices.size() - 1)));
 
 				pattern = !block_number ?
-					"SELECT (SELECT row_hash FROM rows WHERE rows.row_number = sq.row_number) AS row_hash, block_number FROM (SELECT ROW_NUMBER() OVER (ORDER BY factor $?, row_number ASC) AS id, row_number, block_number FROM multiforms WHERE column_number = ? AND factor $? ?) AS sq WHERE sq.id IN ($?)" :
-					"SELECT * FROM (SELECT (SELECT row_hash FROM rows WHERE rows.row_number = sq.row_number) AS row_hash, block_number FROM (SELECT ROW_NUMBER() OVER (ORDER BY factor $?, row_number ASC) AS id, row_number, block_number FROM (SELECT column_number, row_number, factor, hidden, MAX(block_number) AS block_number FROM snapshots WHERE column_number = ? AND block_number < ? GROUP BY row_number) AS queryforms WHERE hidden = FALSE AND factor $? ?) AS sq WHERE sq.id IN ($?)";
+					"SELECT (SELECT row_hash FROM rows WHERE rows.row_number = sq.row_number) AS row_hash, block_number FROM (SELECT ROW_NUMBER() OVER (ORDER BY rank $?, row_number ASC) AS id, row_number, block_number FROM multiforms WHERE column_number = ? AND rank $? ?) AS sq WHERE sq.id IN ($?)" :
+					"SELECT * FROM (SELECT (SELECT row_hash FROM rows WHERE rows.row_number = sq.row_number) AS row_hash, block_number FROM (SELECT ROW_NUMBER() OVER (ORDER BY rank $?, row_number ASC) AS id, row_number, block_number FROM (SELECT column_number, row_number, rank, hidden, MAX(block_number) AS block_number FROM snapshots WHERE column_number = ? AND block_number < ? GROUP BY row_number) AS queryforms WHERE hidden = FALSE AND rank $? ?) AS sq WHERE sq.id IN ($?)";
 			}
 
 			auto cursor = emplace_query(get_multiformdata(type), label, __func__, pattern, &map);
@@ -2616,6 +2686,23 @@ namespace tangent
 			{
 				auto next = response[i];
 				auto row = next["row_hash"].get().get_blob();
+				if (changelog != nullptr)
+				{
+					auto candidate = changelog->outgoing.find(type, column, row);
+					if (candidate)
+					{
+						values.push_back(std::move(*candidate));
+						continue;
+					}
+
+					candidate = changelog->incoming.find(type, column, row);
+					if (candidate)
+					{
+						values.push_back(std::move(*candidate));
+						continue;
+					}
+				}
+
 				auto blob = load(label, __func__, get_multiform_label(type, column, row, next["block_number"].get().get_integer())).or_else(string());
 				auto next_state = state_from_blob(type, column, row, blob);
 				if (!next_state)
@@ -2657,6 +2744,23 @@ namespace tangent
 			{
 				auto next = response[i];
 				auto column = next["column_hash"].get().get_blob();
+				if (changelog != nullptr)
+				{
+					auto candidate = changelog->outgoing.find(type, column, row);
+					if (candidate)
+					{
+						values.push_back(std::move(*candidate));
+						continue;
+					}
+
+					candidate = changelog->incoming.find(type, column, row);
+					if (candidate)
+					{
+						values.push_back(std::move(*candidate));
+						continue;
+					}
+				}
+
 				auto blob = load(label, __func__, get_multiform_label(type, column, row, next["block_number"].get().get_integer())).or_else(string());
 				auto next_state = state_from_blob(type, column, row, blob);
 				if (!next_state)
@@ -2672,33 +2776,33 @@ namespace tangent
 
 			return values;
 		}
-		expects_lr<vector<uptr<ledger::state>>> chainstate::get_multiforms_by_row_filter(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& row, const factor_filter& filter, uint64_t block_number, const factor_window& window)
+		expects_lr<vector<uptr<ledger::state>>> chainstate::get_multiforms_by_row_filter(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& row, const result_filter& filter, uint64_t block_number, const result_window& window)
 		{
 			auto location = resolve_multiform_location(type, optional::none, row, false);
 			if (!location)
 				return expects_lr<vector<uptr<ledger::state>>>(vector<uptr<ledger::state>>());
 
 			schema_list map; string pattern;
-			if (window.type() == factor_range_window::instance_type())
+			if (window.type() == result_range_window::instance_type())
 			{
-				auto& range = *(factor_range_window*)&window;
+				auto& range = *(result_range_window*)&window;
 				map.push_back(var::set::integer(location->row.or_else(0)));
 				if (block_number > 0)
 					map.push_back(var::set::integer(block_number));
 				map.push_back(var::set::string(filter.as_condition()));
-				map.push_back(var::set::integer(filter.value));
+				map.push_back(var::set::binary(filter.as_value()));
 				map.push_back(var::set::string(filter.as_order()));
 				map.push_back(var::set::integer(range.count));
 				map.push_back(var::set::integer(range.offset));
 
 				pattern = !block_number ?
-					"SELECT (SELECT column_hash FROM columns WHERE columns.column_number = multiforms.column_number) AS column_hash, block_number FROM multiforms WHERE row_number = ? AND factor $? ? ORDER BY factor $?, column_number ASC LIMIT ? OFFSET ?" :
-					"SELECT (SELECT column_hash FROM columns WHERE columns.column_number = queryforms.column_number) AS column_hash, block_number FROM (SELECT column_number, row_number, factor, hidden, MAX(block_number) AS block_number FROM snapshots WHERE row_number = ? AND block_number < ? GROUP BY column_number) AS queryforms WHERE hidden = FALSE AND factor $? ? ORDER BY factor $?, column_number ASC LIMIT ? OFFSET ?";
+					"SELECT (SELECT column_hash FROM columns WHERE columns.column_number = multiforms.column_number) AS column_hash, block_number FROM multiforms WHERE row_number = ? AND rank $? ? ORDER BY rank $?, column_number ASC LIMIT ? OFFSET ?" :
+					"SELECT (SELECT column_hash FROM columns WHERE columns.column_number = queryforms.column_number) AS column_hash, block_number FROM (SELECT column_number, row_number, rank, hidden, MAX(block_number) AS block_number FROM snapshots WHERE row_number = ? AND block_number < ? GROUP BY column_number) AS queryforms WHERE hidden = FALSE AND rank $? ? ORDER BY rank $?, column_number ASC LIMIT ? OFFSET ?";
 			}
-			else if (window.type() == factor_index_window::instance_type())
+			else if (window.type() == result_index_window::instance_type())
 			{
 				string indices;
-				for (auto& item : ((factor_index_window*)&window)->indices)
+				for (auto& item : ((result_index_window*)&window)->indices)
 					indices += to_string(item + 1) + ",";
 
 				map.push_back(var::set::string(filter.as_order()));
@@ -2706,12 +2810,12 @@ namespace tangent
 				if (block_number > 0)
 					map.push_back(var::set::integer(block_number));
 				map.push_back(var::set::string(filter.as_condition()));
-				map.push_back(var::set::integer(filter.value));
+				map.push_back(var::set::binary(filter.as_value()));
 				map.push_back(var::set::string(indices.substr(0, indices.size() - 1)));
 
 				pattern = !block_number ?
-					"SELECT (SELECT column_hash FROM columns WHERE columns.column_number = sq.column_number) AS column_hash, block_number FROM (SELECT ROW_NUMBER() OVER (ORDER BY factor $?, column_number ASC) AS id, column_number, block_number FROM multiforms WHERE row_number = ? AND factor $? ?) AS sq WHERE sq.id IN ($?) ORDER BY sq.id ASC" :
-					"SELECT (SELECT column_hash FROM columns WHERE columns.column_number = sq.column_number) AS column_hash, block_number FROM (SELECT ROW_NUMBER() OVER (ORDER BY factor $?, column_number ASC) AS id, column_number, block_number FROM (SELECT column_number, row_number, factor, hidden, MAX(block_number) AS block_number FROM snapshots WHERE row_number = ? AND block_number < ? GROUP BY column_number) AS queryforms WHERE hidden = FALSE AND factor $? ?) AS sq WHERE sq.id IN ($?) ORDER BY sq.id ASC";
+					"SELECT (SELECT column_hash FROM columns WHERE columns.column_number = sq.column_number) AS column_hash, block_number FROM (SELECT ROW_NUMBER() OVER (ORDER BY rank $?, column_number ASC) AS id, column_number, block_number FROM multiforms WHERE row_number = ? AND rank $? ?) AS sq WHERE sq.id IN ($?) ORDER BY sq.id ASC" :
+					"SELECT (SELECT column_hash FROM columns WHERE columns.column_number = sq.column_number) AS column_hash, block_number FROM (SELECT ROW_NUMBER() OVER (ORDER BY rank $?, column_number ASC) AS id, column_number, block_number FROM (SELECT column_number, row_number, rank, hidden, MAX(block_number) AS block_number FROM snapshots WHERE row_number = ? AND block_number < ? GROUP BY column_number) AS queryforms WHERE hidden = FALSE AND rank $? ?) AS sq WHERE sq.id IN ($?) ORDER BY sq.id ASC";
 			}
 
 			auto cursor = emplace_query(get_multiformdata(type), label, __func__, pattern, &map);
@@ -2725,6 +2829,23 @@ namespace tangent
 			{
 				auto next = response[i];
 				auto column = next["column_hash"].get().get_blob();
+				if (changelog != nullptr)
+				{
+					auto candidate = changelog->outgoing.find(type, column, row);
+					if (candidate)
+					{
+						values.push_back(std::move(*candidate));
+						continue;
+					}
+
+					candidate = changelog->incoming.find(type, column, row);
+					if (candidate)
+					{
+						values.push_back(std::move(*candidate));
+						continue;
+					}
+				}
+
 				auto blob = load(label, __func__, get_multiform_label(type, column, row, next["block_number"].get().get_integer())).or_else(string());
 				auto next_state = state_from_blob(type, column, row, blob);
 				if (!next_state)
@@ -2758,7 +2879,7 @@ namespace tangent
 			size_t count = (*cursor)["multiform_count"].get().get_integer();
 			return expects_lr<size_t>(count);
 		}
-		expects_lr<size_t> chainstate::get_multiforms_count_by_column_filter(uint32_t type, const std::string_view& column, const factor_filter& filter, uint64_t block_number)
+		expects_lr<size_t> chainstate::get_multiforms_count_by_column_filter(uint32_t type, const std::string_view& column, const result_filter& filter, uint64_t block_number)
 		{
 			auto location = resolve_multiform_location(type, column, optional::none, false);
 			if (!location)
@@ -2769,9 +2890,9 @@ namespace tangent
 			if (block_number > 0)
 				map.push_back(var::set::integer(block_number));
 			map.push_back(var::set::string(filter.as_condition()));
-			map.push_back(var::set::integer(filter.value));
+			map.push_back(var::set::binary(filter.as_value()));
 
-			auto cursor = emplace_query(get_multiformdata(type), label, __func__, !block_number ? "SELECT COUNT(1) AS multiform_count FROM multiforms WHERE column_number = ? AND factor $? ?" : "SELECT COUNT(1) AS multiform_count FROM (SELECT factor, hidden, MAX(block_number) FROM snapshots WHERE column_number = ? AND block_number < ? GROUP BY row_number) WHERE hidden = FALSE AND factor $? ?", &map);
+			auto cursor = emplace_query(get_multiformdata(type), label, __func__, !block_number ? "SELECT COUNT(1) AS multiform_count FROM multiforms WHERE column_number = ? AND rank $? ?" : "SELECT COUNT(1) AS multiform_count FROM (SELECT rank, hidden, MAX(block_number) FROM snapshots WHERE column_number = ? AND block_number < ? GROUP BY row_number) WHERE hidden = FALSE AND rank $? ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<size_t>(layer_exception(error_of(cursor)));
 
@@ -2796,7 +2917,7 @@ namespace tangent
 			size_t count = (*cursor)["multiform_count"].get().get_integer();
 			return expects_lr<size_t>(count);
 		}
-		expects_lr<size_t> chainstate::get_multiforms_count_by_row_filter(uint32_t type, const std::string_view& row, const factor_filter& filter, uint64_t block_number)
+		expects_lr<size_t> chainstate::get_multiforms_count_by_row_filter(uint32_t type, const std::string_view& row, const result_filter& filter, uint64_t block_number)
 		{
 			auto location = resolve_multiform_location(type, optional::none, row, false);
 			if (!location)
@@ -2807,9 +2928,9 @@ namespace tangent
 			if (block_number > 0)
 				map.push_back(var::set::integer(block_number));
 			map.push_back(var::set::string(filter.as_condition()));
-			map.push_back(var::set::integer(filter.value));
+			map.push_back(var::set::binary(filter.as_value()));
 
-			auto cursor = emplace_query(get_multiformdata(type), label, __func__, !block_number ? "SELECT COUNT(1) AS multiform_count FROM multiforms WHERE row_number = ? AND factor $? ?" : "SELECT COUNT(1) AS multiform_count FROM (SELECT factor, hidden, MAX(block_number) FROM snapshots WHERE row_number = ? AND block_number < ? GROUP BY column_number) WHERE hidden = FALSE AND factor $? ?", &map);
+			auto cursor = emplace_query(get_multiformdata(type), label, __func__, !block_number ? "SELECT COUNT(1) AS multiform_count FROM multiforms WHERE row_number = ? AND rank $? ?" : "SELECT COUNT(1) AS multiform_count FROM (SELECT rank, hidden, MAX(block_number) FROM snapshots WHERE row_number = ? AND block_number < ? GROUP BY column_number) WHERE hidden = FALSE AND rank $? ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<size_t>(layer_exception(error_of(cursor)));
 
@@ -2965,7 +3086,7 @@ namespace tangent
 				CREATE TABLE IF NOT EXISTS blocks
 				(
 					block_number BIGINT NOT NULL,
-					block_hash BINARY(32) NOT NULL,
+					block_hash BLOB(32) NOT NULL,
 					PRIMARY KEY(block_hash)
 				) WITHOUT ROWID;
 				CREATE UNIQUE INDEX IF NOT EXISTS blocks_block_number ON blocks(block_number);
@@ -2981,7 +3102,7 @@ namespace tangent
 				CREATE TABLE IF NOT EXISTS accounts
 				(
 					account_number BIGINT NOT NULL,
-					account_hash BINARY(20) NOT NULL,
+					account_hash BLOB(20) NOT NULL,
 					block_number BIGINT NOT NULL,
 					PRIMARY KEY(account_number)
 				) WITHOUT ROWID;
@@ -2994,7 +3115,7 @@ namespace tangent
 				CREATE TABLE IF NOT EXISTS transactions
 				(
 					transaction_number BIGINT NOT NULL,
-					transaction_hash BINARY(32) NOT NULL,
+					transaction_hash BLOB(32) NOT NULL,
 					dispatch_queue BIGINT DEFAULT NULL,
 					block_number BIGINT NOT NULL,
 					block_nonce BIGINT NOT NULL,
@@ -3022,7 +3143,7 @@ namespace tangent
 				CREATE TABLE IF NOT EXISTS aliases
 				(
 					transaction_number BIGINT NOT NULL,
-					transaction_hash BINARY(32) NOT NULL,
+					transaction_hash BLOB(32) NOT NULL,
 					block_number BIGINT NOT NULL,
 					PRIMARY KEY(transaction_hash, transaction_number)
 				) WITHOUT ROWID;
@@ -3034,7 +3155,7 @@ namespace tangent
 				CREATE TABLE IF NOT EXISTS indices
 				(
 					index_number BIGINT NOT NULL,
-					index_hash BINARY NOT NULL,
+					index_hash BLOB NOT NULL,
 					block_number BIGINT NOT NULL,
 					PRIMARY KEY(index_number)
 				) WITHOUT ROWID;
@@ -3062,7 +3183,7 @@ namespace tangent
 				CREATE TABLE IF NOT EXISTS columns
 				(
 					column_number BIGINT NOT NULL,
-					column_hash BINARY NOT NULL,
+					column_hash BLOB NOT NULL,
 					block_number BIGINT NOT NULL,
 					PRIMARY KEY(column_number)
 				) WITHOUT ROWID;
@@ -3071,7 +3192,7 @@ namespace tangent
 				CREATE TABLE IF NOT EXISTS rows
 				(
 					row_number BIGINT NOT NULL,
-					row_hash BINARY NOT NULL,
+					row_hash BLOB NOT NULL,
 					block_number BIGINT NOT NULL,
 					PRIMARY KEY(row_number)
 				) WITHOUT ROWID;
@@ -3081,18 +3202,18 @@ namespace tangent
 				(
 					column_number BIGINT NOT NULL,
 					row_number BIGINT NOT NULL,
-					factor BIGINT NOT NULL,
+					rank BLOB(32) NOT NULL,
 					block_number BIGINT NOT NULL,
 					PRIMARY KEY(column_number, row_number)
 				) WITHOUT ROWID;
 				CREATE INDEX IF NOT EXISTS multiforms_row_number_column_number ON multiforms(row_number, column_number);
-				CREATE INDEX IF NOT EXISTS multiforms_row_number_factor ON multiforms(row_number, factor);
+				CREATE INDEX IF NOT EXISTS multiforms_row_number_rank ON multiforms(row_number, rank);
 				CREATE INDEX IF NOT EXISTS multiforms_block_number ON multiforms(block_number);
 				CREATE TABLE IF NOT EXISTS snapshots
 				(
 					column_number BIGINT NOT NULL,
 					row_number BIGINT NOT NULL,
-					factor BIGINT NOT NULL,
+					rank BLOB(32) NOT NULL,
 					block_number BIGINT NOT NULL,
 					hidden BOOLEAN NOT NULL,
 					PRIMARY KEY(column_number, row_number, block_number)

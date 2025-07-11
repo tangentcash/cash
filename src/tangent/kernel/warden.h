@@ -48,8 +48,8 @@ namespace tangent
 
 			wallet_link() = default;
 			wallet_link(const algorithm::pubkeyhash new_owner, const std::string_view& new_public_key, const std::string_view& new_address);
-			bool store_payload(format::stream* stream) const override;
-			bool load_payload(format::stream& stream) override;
+			bool store_payload(format::wo_stream* stream) const override;
+			bool load_payload(format::ro_stream& stream) override;
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
@@ -113,8 +113,8 @@ namespace tangent
 			coin_utxo(wallet_link&& new_link, const std::string_view& new_transaction_id, uint64_t new_index, decimal&& new_value);
 			void apply_token_value(const std::string_view& contract_address, const std::string_view& symbol, const decimal& value, uint8_t decimals);
 			option<decimal> get_token_value(const std::string_view& contract_address);
-			bool store_payload(format::stream* stream) const override;
-			bool load_payload(format::stream& stream) override;
+			bool store_payload(format::wo_stream* stream) const override;
+			bool load_payload(format::ro_stream& stream) override;
 			bool is_account() const;
 			bool is_valid_input() const;
 			bool is_valid_output() const;
@@ -138,8 +138,8 @@ namespace tangent
 			string transaction_id;
 
 			computed_transaction() = default;
-			bool store_payload(format::stream* stream) const override;
-			bool load_payload(format::stream& stream) override;
+			bool store_payload(format::wo_stream* stream) const override;
+			bool load_payload(format::ro_stream& stream) override;
 			bool is_valid() const;
 			bool is_mature(const algorithm::asset_id& asset) const;
 			uptr<schema> as_schema() const override;
@@ -178,8 +178,8 @@ namespace tangent
 			prepared_transaction& requires_account_output(const std::string_view& to_address, unordered_map<algorithm::asset_id, decimal>&& output);
 			prepared_transaction& requires_abi(format::variable&& value);
 			format::variable* load_abi(size_t* ptr);
-			bool store_payload(format::stream* stream) const override;
-			bool load_payload(format::stream& stream) override;
+			bool store_payload(format::wo_stream* stream) const override;
+			bool load_payload(format::ro_stream& stream) override;
 			bool is_accumulation_required(size_t input_index) const;
 			status as_status() const;
 			uptr<schema> as_schema() const override;
@@ -198,8 +198,8 @@ namespace tangent
 
 			finalized_transaction() = default;
 			finalized_transaction(prepared_transaction&& new_prepared, string&& new_calldata, string&& new_hashdata, uint64_t new_locktime = 0);
-			bool store_payload(format::stream* stream) const override;
-			bool load_payload(format::stream& stream) override;
+			bool store_payload(format::wo_stream* stream) const override;
+			bool load_payload(format::ro_stream& stream) override;
 			bool is_valid() const;
 			computed_transaction as_computed() const;
 			uptr<schema> as_schema() const override;

@@ -84,7 +84,7 @@ namespace tangent
 		{
 			return has_secret_key() && message.sign(secret_key);
 		}
-		bool wallet::store_payload(format::stream* stream) const
+		bool wallet::store_payload(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_string(std::string_view((char*)secret_key, has_secret_key() ? sizeof(secret_key) : 0));
@@ -92,7 +92,7 @@ namespace tangent
 			stream->write_string(std::string_view((char*)public_key_hash, has_public_key_hash() ? sizeof(public_key_hash) : 0));
 			return true;
 		}
-		bool wallet::load_payload(format::stream& stream)
+		bool wallet::load_payload(format::ro_stream& stream)
 		{
 			string secret_key_assembly; memset(secret_key, 0, sizeof(secret_key));
 			if (!stream.read_string(stream.read_type(), &secret_key_assembly))
@@ -212,7 +212,7 @@ namespace tangent
 		{
 			auto mempool = storages::mempoolstate(__func__);
 			auto chain = storages::chainstate(__func__);
-			auto state = chain.get_uniform_by_index(states::account_nonce::as_instance_type(), nullptr, states::account_nonce::as_instance_index(public_key_hash), 0);
+			auto state = chain.get_uniform(states::account_nonce::as_instance_type(), nullptr, states::account_nonce::as_instance_index(public_key_hash), 0);
 			uint64_t pending_nonce = mempool.get_highest_transaction_nonce(public_key_hash).or_else(0);
 			uint64_t finalized_nonce = (state ? ((states::account_nonce*)**state)->nonce : 0);
 			return std::max(finalized_nonce, pending_nonce);
@@ -288,7 +288,7 @@ namespace tangent
 			return result;
 		}
 
-		bool validator::store_payload(format::stream* stream) const
+		bool validator::store_payload(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_string(address.get_ip_address().or_else(string()));
@@ -311,7 +311,7 @@ namespace tangent
 			stream->write_boolean(services.has_streaming);
 			return true;
 		}
-		bool validator::load_payload(format::stream& stream)
+		bool validator::load_payload(format::ro_stream& stream)
 		{
 			string ip_address;
 			if (!stream.read_string(stream.read_type(), &ip_address))

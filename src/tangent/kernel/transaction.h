@@ -37,10 +37,10 @@ namespace tangent
 			virtual expects_lr<void> validate(uint64_t block_number) const;
 			virtual expects_lr<void> execute(transaction_context* context) const;
 			virtual expects_promise_rt<void> dispatch(const transaction_context* context, dispatch_context* dispatcher) const;
-			virtual bool store_payload(format::stream* stream) const override;
-			virtual bool load_payload(format::stream& stream) override;
-			virtual bool store_body(format::stream* stream) const = 0;
-			virtual bool load_body(format::stream& stream) = 0;
+			virtual bool store_payload(format::wo_stream* stream) const override;
+			virtual bool load_payload(format::ro_stream& stream) override;
+			virtual bool store_body(format::wo_stream* stream) const = 0;
+			virtual bool load_body(format::ro_stream& stream) = 0;
 			virtual bool recover_many(const transaction_context* context, const receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const;
 			virtual bool recover_aliases(const transaction_context* context, const receipt& receipt, ordered_set<uint256_t>& aliases) const;
 			virtual bool sign(const algorithm::seckey secret_key) override;
@@ -66,8 +66,8 @@ namespace tangent
 
 			virtual expects_lr<void> validate(uint64_t block_number) const override;
 			virtual expects_lr<void> execute(transaction_context* context) const override;
-			virtual bool store_payload(format::stream* stream) const override;
-			virtual bool load_payload(format::stream& stream) override;
+			virtual bool store_payload(format::wo_stream* stream) const override;
+			virtual bool load_payload(format::ro_stream& stream) override;
 			virtual void set_manager(const algorithm::pubkeyhash new_manager);
 			virtual bool is_manager_null() const;
 			virtual bool is_delegation() const;
@@ -78,8 +78,8 @@ namespace tangent
 		struct consensus_transaction : transaction
 		{
 			virtual expects_lr<void> execute(transaction_context* context) const override;
-			virtual bool store_payload(format::stream* stream) const override;
-			virtual bool load_payload(format::stream& stream) override;
+			virtual bool store_payload(format::wo_stream* stream) const override;
+			virtual bool load_payload(format::ro_stream& stream) override;
 			transaction_level get_type() const override;
 		};
 
@@ -88,7 +88,7 @@ namespace tangent
 			struct evaluation_branch
 			{
 				ordered_set<algorithm::recpubsig_t> signatures;
-				format::stream message;
+				format::wo_stream message;
 			};
 
 			ordered_map<uint256_t, evaluation_branch> output_hashes;
@@ -97,8 +97,8 @@ namespace tangent
 			virtual expects_lr<void> validate(uint64_t block_number) const override;
 			virtual expects_lr<void> execute(transaction_context* context) const override;
 			virtual bool merge(const transaction_context* context, const attestation_transaction& other);
-			virtual bool store_payload(format::stream* stream) const override;
-			virtual bool load_payload(format::stream& stream) override;
+			virtual bool store_payload(format::wo_stream* stream) const override;
+			virtual bool load_payload(format::ro_stream& stream) override;
 			virtual bool sign(const algorithm::seckey secret_key) override;
 			virtual bool sign(const algorithm::seckey secret_key, uint64_t new_nonce) override;
 			virtual bool sign(const algorithm::seckey secret_key, uint64_t new_nonce, const decimal& price) override;
@@ -110,13 +110,13 @@ namespace tangent
 			virtual bool recover_hash(algorithm::pubkeyhash public_key_hash, const uint256_t& output_hash, size_t index) const;
 			virtual bool is_signature_null() const override;
 			virtual expects_lr<void> set_optimal_gas(const decimal& price) override;
-			virtual void set_statement(const uint256_t& new_input_hash, const format::stream& output_message);
+			virtual void set_statement(const uint256_t& new_input_hash, const format::wo_stream& output_message);
 			virtual void set_best_branch(const uint256_t& output_hash);
 			virtual const evaluation_branch* get_best_branch(const transaction_context* context, ordered_map<algorithm::asset_id, size_t>* aggregators) const;
 			virtual uint256_t get_branch_image(const uint256_t& output_hash) const;
 			virtual uint256_t as_group_hash() const;
 			virtual uptr<schema> as_schema() const override;
-			virtual format::stream as_signable() const override;
+			virtual format::wo_stream as_signable() const override;
 			transaction_level get_type() const override;
 		};
 
@@ -133,8 +133,8 @@ namespace tangent
 			uint64_t block_number = 0;
 			bool successful = false;
 
-			bool store_payload(format::stream* stream) const override;
-			bool load_payload(format::stream& stream) override;
+			bool store_payload(format::wo_stream* stream) const override;
+			bool load_payload(format::ro_stream& stream) override;
 			bool is_from_null() const;
 			void emit_event(uint32_t type, format::variables&& values);
 			const format::variables* find_event(uint32_t type, size_t offset = 0) const;
@@ -185,14 +185,14 @@ namespace tangent
 			state(const block_header* new_block_header);
 			virtual ~state() = default;
 			virtual expects_lr<void> transition(const transaction_context* context, const state* prev_state) = 0;
-			virtual bool store(format::stream* stream) const override;
-			virtual bool load(format::stream& stream) override;
-			virtual bool store_optimized(format::stream* stream) const;
-			virtual bool load_optimized(format::stream& stream);
-			virtual bool store_payload(format::stream* stream) const override = 0;
-			virtual bool load_payload(format::stream& stream) override = 0;
-			virtual bool store_data(format::stream* stream) const = 0;
-			virtual bool load_data(format::stream& stream) = 0;
+			virtual bool store(format::wo_stream* stream) const override;
+			virtual bool load(format::ro_stream& stream) override;
+			virtual bool store_optimized(format::wo_stream* stream) const;
+			virtual bool load_optimized(format::ro_stream& stream);
+			virtual bool store_payload(format::wo_stream* stream) const override = 0;
+			virtual bool load_payload(format::ro_stream& stream) override = 0;
+			virtual bool store_data(format::wo_stream* stream) const = 0;
+			virtual bool load_data(format::ro_stream& stream) = 0;
 			virtual bool is_permanent() const;
 			virtual uptr<schema> as_schema() const override = 0;
 			virtual state_level as_level() const = 0;
@@ -204,10 +204,10 @@ namespace tangent
 		{
 			uniform(uint64_t new_block_number, uint64_t new_block_nonce);
 			uniform(const block_header* new_block_header);
-			virtual bool store_payload(format::stream* stream) const override;
-			virtual bool load_payload(format::stream& stream) override;
-			virtual bool store_index(format::stream* stream) const = 0;
-			virtual bool load_index(format::stream& stream) = 0;
+			virtual bool store_payload(format::wo_stream* stream) const override;
+			virtual bool load_payload(format::ro_stream& stream) override;
+			virtual bool store_index(format::wo_stream* stream) const = 0;
+			virtual bool load_index(format::ro_stream& stream) = 0;
 			virtual uptr<schema> as_schema() const override;
 			virtual state_level as_level() const override;
 			virtual string as_index() const;
@@ -217,17 +217,17 @@ namespace tangent
 		{
 			multiform(uint64_t new_block_number, uint64_t new_block_nonce);
 			multiform(const block_header* new_block_header);
-			virtual bool store_payload(format::stream* stream) const override;
-			virtual bool load_payload(format::stream& stream) override;
-			virtual bool store_column(format::stream* stream) const = 0;
-			virtual bool load_column(format::stream& stream) = 0;
-			virtual bool store_row(format::stream* stream) const = 0;
-			virtual bool load_row(format::stream& stream) = 0;
+			virtual bool store_payload(format::wo_stream* stream) const override;
+			virtual bool load_payload(format::ro_stream& stream) override;
+			virtual bool store_column(format::wo_stream* stream) const = 0;
+			virtual bool load_column(format::ro_stream& stream) = 0;
+			virtual bool store_row(format::wo_stream* stream) const = 0;
+			virtual bool load_row(format::ro_stream& stream) = 0;
 			virtual uptr<schema> as_schema() const override;
 			virtual state_level as_level() const override;
 			virtual string as_column() const;
 			virtual string as_row() const;
-			virtual int64_t as_factor() const = 0;
+			virtual uint256_t as_rank() const = 0;
 		};
 
 		class gas_util

@@ -52,11 +52,11 @@ namespace tangent
 		}
 		expects_lr<void> wardenstate::add_utxo(const warden::coin_utxo& value)
 		{
-			format::stream message;
+			format::wo_stream message;
 			if (!value.store(&message))
 				return expects_lr<void>(layer_exception("utxo serialization error"));
 
-			format::stream transaction_id_index;
+			format::wo_stream transaction_id_index;
 			transaction_id_index.write_string(value.transaction_id);
 			transaction_id_index.write_integer(value.index);
 
@@ -76,7 +76,7 @@ namespace tangent
 		}
 		expects_lr<void> wardenstate::remove_utxo(const std::string_view& transaction_id, uint64_t index)
 		{
-			format::stream transaction_id_index;
+			format::wo_stream transaction_id_index;
 			transaction_id_index.write_string(transaction_id);
 			transaction_id_index.write_integer(index);
 
@@ -91,7 +91,7 @@ namespace tangent
 		}
 		expects_lr<warden::coin_utxo> wardenstate::get_stxo(const std::string_view& transaction_id, uint64_t index)
 		{
-			format::stream transaction_id_index;
+			format::wo_stream transaction_id_index;
 			transaction_id_index.write_string(transaction_id);
 			transaction_id_index.write_integer(index);
 
@@ -103,7 +103,8 @@ namespace tangent
 				return expects_lr<warden::coin_utxo>(layer_exception(error_of(cursor)));
 
 			warden::coin_utxo value;
-			format::stream message = format::stream((*cursor)["message"].get().get_blob());
+			auto blob = (*cursor)["message"].get().get_blob();
+			auto message = format::ro_stream(blob);
 			if (!value.load(message))
 				return expects_lr<warden::coin_utxo>(layer_exception("utxo deserialization error"));
 
@@ -111,7 +112,7 @@ namespace tangent
 		}
 		expects_lr<warden::coin_utxo> wardenstate::get_utxo(const std::string_view& transaction_id, uint64_t index)
 		{
-			format::stream transaction_id_index;
+			format::wo_stream transaction_id_index;
 			transaction_id_index.write_string(transaction_id);
 			transaction_id_index.write_integer(index);
 
@@ -123,7 +124,8 @@ namespace tangent
 				return expects_lr<warden::coin_utxo>(layer_exception(error_of(cursor)));
 
 			warden::coin_utxo value;
-			format::stream message = format::stream((*cursor)["message"].get().get_blob());
+			auto blob = (*cursor)["message"].get().get_blob();
+			auto message = format::ro_stream(blob);
 			if (!value.load(message))
 				return expects_lr<warden::coin_utxo>(layer_exception("utxo deserialization error"));
 
@@ -153,7 +155,8 @@ namespace tangent
 			for (size_t i = 0; i < size; i++)
 			{
 				warden::coin_utxo value;
-				format::stream message = format::stream(response[i]["message"].get().get_blob());
+				auto blob = response[i]["message"].get().get_blob();
+				auto message = format::ro_stream(blob);
 				if (value.load(message))
 					values.emplace_back(std::move(value));
 			}
@@ -162,7 +165,7 @@ namespace tangent
 		}
 		expects_lr<void> wardenstate::add_computed_transaction(const warden::computed_transaction& value)
 		{
-			format::stream message;
+			format::wo_stream message;
 			if (!value.store(&message))
 				return expects_lr<void>(layer_exception("witness transaction serialization error"));
 
@@ -180,7 +183,7 @@ namespace tangent
 		}
 		expects_lr<void> wardenstate::add_finalized_transaction(const warden::computed_transaction& value, const uint256_t& external_id)
 		{
-			format::stream message;
+			format::wo_stream message;
 			if (!value.store(&message))
 				return expects_lr<void>(layer_exception("witness transaction serialization error"));
 
@@ -214,7 +217,8 @@ namespace tangent
 				return expects_lr<warden::computed_transaction>(layer_exception(error_of(cursor)));
 
 			warden::computed_transaction value;
-			format::stream message = format::stream((*cursor)["message"].get().get_blob());
+			auto blob = (*cursor)["message"].get().get_blob();
+			auto message = format::ro_stream(blob);
 			if (!value.load(message))
 				return expects_lr<warden::computed_transaction>(layer_exception("witness transaction deserialization error"));
 
@@ -242,7 +246,8 @@ namespace tangent
 			for (size_t i = 0; i < size; i++)
 			{
 				warden::computed_transaction value;
-				format::stream message = format::stream(response[i]["message"].get().get_blob());
+				auto blob = response[i]["message"].get().get_blob();
+				auto message = format::ro_stream(blob);
 				if (!value.load(message))
 					continue;
 
@@ -273,7 +278,7 @@ namespace tangent
 			if (value)
 			{
 				auto buffer = schema::to_jsonb(*value);
-				format::stream message;
+				format::wo_stream message;
 				message.write_string(std::string_view(buffer.begin(), buffer.end()));
 				map.push_back(var::set::binary(message.compress()));
 
@@ -300,7 +305,8 @@ namespace tangent
 				return expects_lr<schema*>(layer_exception(error_of(cursor)));
 
 			string buffer;
-			format::stream message = format::stream::decompress((*cursor)["message"].get().get_string());
+			auto blob = format::util::decompress_stream((*cursor)["message"].get().get_string());
+			auto message = format::ro_stream(blob);
 			if (!message.read_string(message.read_type(), &buffer))
 				return expects_lr<schema*>(layer_exception("state value deserialization error"));
 			
@@ -317,7 +323,7 @@ namespace tangent
 			if (value)
 			{
 				auto buffer = schema::to_jsonb(*value);
-				format::stream message;
+				format::wo_stream message;
 				message.write_string(std::string_view(buffer.begin(), buffer.end()));
 				map.push_back(var::set::binary(message.compress()));
 
@@ -344,7 +350,8 @@ namespace tangent
 				return expects_lr<schema*>(layer_exception(error_of(cursor)));
 
 			string buffer;
-			format::stream message = format::stream::decompress((*cursor)["message"].get().get_string());
+			auto blob = format::util::decompress_stream((*cursor)["message"].get().get_string());
+			auto message = format::ro_stream(blob);
 			if (!message.read_string(message.read_type(), &buffer))
 				return expects_lr<schema*>(layer_exception("cache value deserialization error"));
 
@@ -522,12 +529,12 @@ namespace tangent
 			string command = VI_STRINGIFY(
 				CREATE TABLE IF NOT EXISTS coins
 				(
-					transaction_id_index BINARY NOT NULL,
-					owner BINARY(20) NOT NULL,
+					transaction_id_index BLOB NOT NULL,
+					owner BLOB(20) NOT NULL,
 					public_key TEXT NOT NULL,
 					address TEXT NOT NULL,
 					spent BOOLEAN NOT NULL,
-					message BINARY NOT NULL,
+					message BLOB NOT NULL,
   					PRIMARY KEY (transaction_id_index)
 				) WITHOUT ROWID;
 				CREATE INDEX IF NOT EXISTS coins_spent_owner ON coins (spent, owner);
@@ -536,20 +543,20 @@ namespace tangent
 				CREATE TABLE IF NOT EXISTS transactions
 				(
 					transaction_id TEXT NOT NULL,
-					external_id BINARY DEFAULT NULL,
+					external_id BLOB DEFAULT NULL,
 					block_id BIGINT NOT NULL,
 					finalized BOOLEAN NOT NULL,
-					message BINARY NOT NULL,
+					message BLOB NOT NULL,
   					PRIMARY KEY (transaction_id)
 				) WITHOUT ROWID;
 				CREATE INDEX IF NOT EXISTS transactions_block_id_finalized ON transactions (block_id, finalized);
 				CREATE TABLE IF NOT EXISTS links
 				(
-					owner BINARY(20) NOT NULL,
+					owner BLOB(20) NOT NULL,
 					public_key TEXT NOT NULL,
 					address TEXT NOT NULL,
-					typeless_public_key BINARY NOT NULL,
-					typeless_address BINARY NOT NULL,
+					typeless_public_key BLOB NOT NULL,
+					typeless_address BLOB NOT NULL,
 					PRIMARY KEY (owner, typeless_public_key, typeless_address)
 				) WITHOUT ROWID;
 				CREATE INDEX IF NOT EXISTS links_typeless_public_key ON links (typeless_public_key);
@@ -557,20 +564,20 @@ namespace tangent
 				CREATE TABLE IF NOT EXISTS properties
 				(
 					key TEXT NOT NULL,
-					message BINARY NOT NULL,
+					message BLOB NOT NULL,
   					PRIMARY KEY (key)
 				) WITHOUT ROWID;
 				CREATE TABLE IF NOT EXISTS cache0
 				(
-					key BINARY NOT NULL,
-					message BINARY NOT NULL,
+					key BLOB NOT NULL,
+					message BLOB NOT NULL,
   					PRIMARY KEY (key)
 				) WITHOUT ROWID;
 				CREATE TABLE IF NOT EXISTS cache1
 				(
 					id INTEGER PRIMARY KEY,
-					key BINARY NOT NULL,
-					message BINARY NOT NULL,
+					key BLOB NOT NULL,
+					message BLOB NOT NULL,
 					UNIQUE (key)
 				);
 				CREATE TRIGGER IF NOT EXISTS cache1_capacity AFTER INSERT ON cache1 BEGIN
@@ -579,8 +586,8 @@ namespace tangent
 				CREATE TABLE IF NOT EXISTS cache2
 				(
 					id INTEGER PRIMARY KEY,
-					key BINARY NOT NULL,
-					message BINARY NOT NULL,
+					key BLOB NOT NULL,
+					message BLOB NOT NULL,
 					UNIQUE (key)
 				);
 				CREATE TRIGGER IF NOT EXISTS cache2_capacity AFTER INSERT ON cache2 BEGIN

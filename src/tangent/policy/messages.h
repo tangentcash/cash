@@ -12,16 +12,16 @@ namespace tangent
 
 			uniform();
 			virtual ~uniform() = default;
-			virtual bool store(format::stream* stream) const;
-			virtual bool load(format::stream& stream);
-			virtual bool store_payload(format::stream* stream) const = 0;
-			virtual bool load_payload(format::stream& stream) = 0;
+			virtual bool store(format::wo_stream* stream) const;
+			virtual bool load(format::ro_stream& stream);
+			virtual bool store_payload(format::wo_stream* stream) const = 0;
+			virtual bool load_payload(format::ro_stream& stream) = 0;
 			virtual uint256_t as_hash(bool renew = false) const;
 			virtual uint32_t as_type() const = 0;
 			virtual std::string_view as_typename() const = 0;
 			virtual uptr<schema> as_schema() const = 0;
-			virtual format::stream as_message() const;
-			virtual format::stream as_signable() const;
+			virtual format::wo_stream as_message() const;
+			virtual format::wo_stream as_signable() const;
 		};
 
 		struct authentic
@@ -31,10 +31,10 @@ namespace tangent
 
 			authentic();
 			virtual ~authentic() = default;
-			virtual bool store(format::stream* stream) const;
-			virtual bool load(format::stream& stream);
-			virtual bool store_payload(format::stream* stream) const = 0;
-			virtual bool load_payload(format::stream& stream) = 0;
+			virtual bool store(format::wo_stream* stream) const;
+			virtual bool load(format::ro_stream& stream);
+			virtual bool store_payload(format::wo_stream* stream) const = 0;
+			virtual bool load_payload(format::ro_stream& stream) = 0;
 			virtual bool sign(const algorithm::seckey secret_key);
 			virtual bool verify(const algorithm::pubkey public_key) const;
 			virtual bool recover(algorithm::pubkey public_key) const;
@@ -45,8 +45,8 @@ namespace tangent
 			virtual uint32_t as_type() const = 0;
 			virtual std::string_view as_typename() const = 0;
 			virtual uptr<schema> as_schema() const = 0;
-			virtual format::stream as_message() const;
-			virtual format::stream as_signable() const;
+			virtual format::wo_stream as_message() const;
+			virtual format::wo_stream as_signable() const;
 		};
 	}
 }

@@ -116,7 +116,7 @@ namespace tangent
 			}
 			string serialize() const
 			{
-				format::stream stream;
+				format::wo_stream stream;
 				stream.write_integer(t);
 				stream.write_string(gmp::export0(p));
 				stream.write_string(gmp::export0(l));
@@ -128,7 +128,7 @@ namespace tangent
 			static option<gmp_signature> deserialize(const std::string_view& sig)
 			{
 				gmp_signature result;
-				format::stream stream = format::stream(sig);
+				format::ro_stream stream = format::ro_stream(sig);
 				if (!stream.read_integer(stream.read_type(), &result.t))
 					return optional::none;
 
@@ -177,10 +177,10 @@ namespace tangent
 			return hashing::hash256i(std::string_view(data, sizeof(data)));
 		}
 
-		wesolowski::distribution wesolowski::random(const parameters& alg, const format::stream& seed)
+		wesolowski::distribution wesolowski::random(const parameters& alg, const std::string_view& seed)
 		{
 			distribution result;
-			result.signature = evaluate(alg, seed.data);
+			result.signature = evaluate(alg, seed);
 			result.value = hashing::hash256i(*crypto::hash(digests::sha512(), result.signature));
 			return result;
 		}
@@ -416,7 +416,7 @@ namespace tangent
 
 		uint256_t nakamoto::evaluate(const uint256_t& nonce, const std::string_view& message)
 		{
-			format::stream stream;
+			format::wo_stream stream;
 			serialize(stream, nonce, message);
 			return stream.hash();
 		}
@@ -429,7 +429,7 @@ namespace tangent
 
 			return solution == evaluate(nonce, message);
 		}
-		void nakamoto::serialize(format::stream& stream, const uint256_t& nonce, const std::string_view& message)
+		void nakamoto::serialize(format::wo_stream& stream, const uint256_t& nonce, const std::string_view& message)
 		{
 			stream.clear();
 			stream.write_typeless(message);
@@ -520,7 +520,7 @@ namespace tangent
 		}
 		uint256_t signing::message_hash(const std::string_view& signable_message)
 		{
-			format::stream message;
+			format::wo_stream message;
 			message.write_typeless(protocol::now().account.message_magic);
 			message.write_typeless(signable_message.data(), (uint32_t)signable_message.size());
 			return message.hash();
@@ -684,7 +684,7 @@ namespace tangent
 			VI_ASSERT(secret_key != nullptr, "secret key should be set");
 			VI_ASSERT(cipher_secret_key != nullptr, "cipher secret key should be set");
 			VI_ASSERT(cipher_public_key != nullptr, "cipher public key should be set");
-			format::stream message;
+			format::wo_stream message;
 			message.write_typeless((char*)secret_key, (uint32_t)sizeof(seckey));
 			message.write_typeless(nonce);
 
@@ -977,6 +977,25 @@ namespace tangent
 			};
 			memcpy((char*)data, array, sizeof(array));
 		}
+		void encoding::optimized_encode_uint128(const std::string_view& value, uint128_t& data)
+		{
+			uint8_t intermediate[sizeof(uint128_t)] = { 0 };
+			memcpy(intermediate, value.data(), std::min(value.size(), sizeof(intermediate)));
+			encode_uint128(intermediate, data);
+		}
+		void encoding::optimized_decode_uint128(const uint128_t& value, uint8_t data[16], size_t* data_size)
+		{
+			uint8_t intermediate[sizeof(uint128_t)];
+			decode_uint128(value, intermediate);
+
+			uint8_t index = sizeof(uint128_t), bytes = 0;
+			while (index > 0 && intermediate[--index] > 0)
+				++bytes;
+
+			memcpy(data, intermediate + (sizeof(uint128_t) - bytes), bytes);
+			if (data_size != nullptr)
+				*data_size = bytes;
+		}
 		void encoding::encode_uint256(const uint8_t value[32], uint256_t& data)
 		{
 			VI_ASSERT(value != nullptr, "value should be set");
@@ -1006,6 +1025,25 @@ namespace tangent
 				os::hw::to_endianness(os::hw::endian::big, value.low().low())
 			};
 			memcpy((char*)data, array, sizeof(array));
+		}
+		void encoding::optimized_encode_uint256(const std::string_view& value, uint256_t& data)
+		{
+			uint8_t intermediate[sizeof(uint256_t)] = { 0 };
+			memcpy(intermediate, value.data(), std::min(value.size(), sizeof(intermediate)));
+			encode_uint256(intermediate, data);
+		}
+		void encoding::optimized_decode_uint256(const uint256_t& value, uint8_t data[32], size_t* data_size)
+		{
+			uint8_t intermediate[sizeof(uint256_t)];
+			decode_uint256(value, intermediate);
+
+			uint8_t index = sizeof(uint256_t), bytes = 0;
+			while (index > 0 && intermediate[--index] > 0)
+				++bytes;
+
+			memcpy(data, intermediate + (sizeof(uint256_t) - bytes), bytes);
+			if (data_size != nullptr)
+				*data_size = bytes;
 		}
 		string encoding::encode_0xhex256(const uint256_t& value)
 		{
@@ -1244,7 +1282,12 @@ namespace tangent
 			auto name = blockchain_of(value);
 			auto specification = token_of(value);
 			if (!specification.empty())
+			{
+				auto checksum = checksum_of(value);
 				name = specification + " on " + name;
+				if (!checksum.empty())
+					name += " (" + checksum + ")";
+			}
 			return name;
 		}
 		bool asset::is_valid(const asset_id& value)

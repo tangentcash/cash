@@ -513,23 +513,23 @@ namespace tangent
 		{
 			return !std::any_of(data.begin(), data.end(), [](char v) { return static_cast<unsigned char>(v) > 127; });
 		}
-		bool variables_util::deserialize_flat_from(stream& stream, variables* result)
+		bool variables_util::deserialize_flat_from(ro_stream& stream, variables* result)
 		{
 			return deserialize_from(stream, result, false);
 		}
-		bool variables_util::serialize_flat_into(const variables& data, stream* result)
+		bool variables_util::serialize_flat_into(const variables& data, wo_stream* result)
 		{
 			return serialize_into(data, result, false);
 		}
-		bool variables_util::deserialize_merge_from(stream& stream, variables* result)
+		bool variables_util::deserialize_merge_from(ro_stream& stream, variables* result)
 		{
 			return deserialize_from(stream, result, true);
 		}
-		bool variables_util::serialize_merge_into(const variables& data, stream* result)
+		bool variables_util::serialize_merge_into(const variables& data, wo_stream* result)
 		{
 			return serialize_into(data, result, true);
 		}
-		bool variables_util::deserialize_from(stream& stream, variables* result, bool merging)
+		bool variables_util::deserialize_from(ro_stream& stream, variables* result, bool merging)
 		{
 			VI_ASSERT(result != nullptr, "result should be set");
 			uint16_t size = std::numeric_limits<uint16_t>::max();
@@ -606,7 +606,7 @@ namespace tangent
 			}
 			return true;
 		}
-		bool variables_util::serialize_into(const variables& data, stream* result, bool merging)
+		bool variables_util::serialize_into(const variables& data, wo_stream* result, bool merging)
 		{
 			if (data.size() > std::numeric_limits<uint16_t>::max())
 				return false;

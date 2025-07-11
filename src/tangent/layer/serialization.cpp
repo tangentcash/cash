@@ -19,16 +19,219 @@ namespace tangent
 			return uint256_t(numeric);
 		}
 
-		stream::stream() : checksum(0), seek(0)
+		wo_stream::wo_stream() : checksum(0)
 		{
 		}
-		stream::stream(const std::string_view& new_data) : data(new_data), checksum(0), seek(0)
+		wo_stream::wo_stream(const std::string_view& new_data) : data(new_data), checksum(0)
 		{
 		}
-		stream::stream(string&& new_data) : data(std::move(new_data)), checksum(0), seek(0)
+		wo_stream::wo_stream(string&& new_data) : data(std::move(new_data)), checksum(0)
 		{
 		}
-		size_t stream::read(void* value, uint32_t size)
+		wo_stream& wo_stream::clear()
+		{
+			data.clear();
+			checksum = 0;
+			return *this;
+		}
+		void wo_stream::write(const void* value, uint32_t size)
+		{
+			if (size > 0 && value != nullptr)
+			{
+				size_t index = data.size();
+				data.resize(data.size() + (size_t)size);
+				memcpy((char*)data.data() + index, value, (size_t)size);
+				checksum = 0;
+			}
+		}
+		wo_stream& wo_stream::write_string(const std::string_view& value)
+		{
+			if (util::is_hex_encoding(value))
+			{
+				string source = codec::hex_decode(value);
+				if (source.size() > util::get_max_string_size())
+				{
+					uint8_t type = (uint8_t)util::get_string_type(source, true);
+					uint32_t size = std::min<uint32_t>(protocol::now().message.max_message_size, (uint32_t)source.size());
+					write(&type, sizeof(uint8_t));
+					write_integer(size);
+					write(source.data(), size);
+				}
+				else
+				{
+					uint8_t type = (uint8_t)util::get_string_type(source, true);
+					uint8_t size = util::get_string_size((viewable)type);
+					write(&type, sizeof(uint8_t));
+					write(source.data(), size);
+				}
+			}
+			else if (value.size() > util::get_max_string_size())
+			{
+				uint32_t size = std::min<uint32_t>(protocol::now().message.max_message_size, (uint32_t)value.size());
+				uint8_t type = (uint8_t)util::get_string_type(value, false);
+				write(&type, sizeof(uint8_t));
+				write_integer(size);
+				write(value.data(), size);
+			}
+			else
+			{
+				uint8_t type = (uint8_t)util::get_string_type(value, false);
+				uint8_t size = util::get_string_size((viewable)type);
+				write(&type, sizeof(uint8_t));
+				write(value.data(), size);
+			}
+			return *this;
+		}
+		wo_stream& wo_stream::write_string_raw(const std::string_view& value)
+		{
+			if (value.size() > util::get_max_string_size())
+			{
+				uint32_t size = std::min<uint32_t>(protocol::now().message.max_message_size, (uint32_t)value.size());
+				uint8_t type = (uint8_t)util::get_string_type(value, false);
+				write(&type, sizeof(uint8_t));
+				write_integer(size);
+				write(value.data(), size);
+			}
+			else
+			{
+				uint8_t type = (uint8_t)util::get_string_type(value, false);
+				uint8_t size = util::get_string_size((viewable)type);
+				write(&type, sizeof(uint8_t));
+				write(value.data(), size);
+			}
+			return *this;
+		}
+		wo_stream& wo_stream::write_decimal(const decimal& value)
+		{
+			if (value.is_nan())
+			{
+				uint8_t type = (uint8_t)viewable::decimal_nan;
+				write(&type, sizeof(uint8_t));
+				return *this;
+			}
+			else if (value.is_zero())
+			{
+				uint8_t type = (uint8_t)viewable::decimal_zero;
+				write(&type, sizeof(uint8_t));
+				return *this;
+			}
+
+			string numeric = value.numeric();
+			uint16_t decimals = value.decimal_places();
+			int8_t position = value.position();
+			uint8_t type = (uint8_t)(decimals > 0 ? (position < 0 ? viewable::decimal_neg2 : viewable::decimal_pos2) : (position < 0 ? viewable::decimal_neg1 : viewable::decimal_pos1));
+			std::reverse(numeric.begin() + decimals, numeric.end());
+
+			auto left = std::string_view(numeric).substr(decimals);
+			write(&type, sizeof(uint8_t));
+			write_integer(contextual_parse_uint256(left));
+			if (decimals > 0)
+			{
+				auto right = std::string_view(numeric).substr(0, decimals);
+				write_integer(contextual_parse_uint256(right));
+			}
+			return *this;
+		}
+		wo_stream& wo_stream::write_integer(const uint256_t& value)
+		{
+			uint8_t type = (uint8_t)util::get_integer_type(value);
+			uint8_t size = util::get_integer_size((viewable)type);
+			write(&type, sizeof(uint8_t));
+
+			uint64_t array[4];
+			if (size > sizeof(uint64_t) * 0)
+			{
+				array[0] = os::hw::to_endianness(os::hw::endian::little, value.low().low());
+				if (size > sizeof(uint64_t) * 1)
+				{
+					array[1] = os::hw::to_endianness(os::hw::endian::little, value.low().high());
+					if (size > sizeof(uint64_t) * 2)
+					{
+						array[2] = os::hw::to_endianness(os::hw::endian::little, value.high().low());
+						if (size > sizeof(uint64_t) * 3)
+							array[3] = os::hw::to_endianness(os::hw::endian::little, value.high().high());
+					}
+				}
+			}
+			write(array, size);
+			return *this;
+		}
+		wo_stream& wo_stream::write_boolean(bool value)
+		{
+			uint8_t type = (uint8_t)(value ? viewable::true_type : viewable::false_type);
+			write(&type, sizeof(uint8_t));
+			return *this;
+		}
+		wo_stream& wo_stream::write_typeless(const uint256_t& value)
+		{
+			uint8_t size = util::get_integer_size(util::get_integer_type(value));
+			uint64_t array[4];
+			if (size > sizeof(uint64_t) * 0)
+			{
+				array[0] = os::hw::to_endianness(os::hw::endian::little, value.low().low());
+				if (size > sizeof(uint64_t) * 1)
+				{
+					array[1] = os::hw::to_endianness(os::hw::endian::little, value.low().high());
+					if (size > sizeof(uint64_t) * 2)
+					{
+						array[2] = os::hw::to_endianness(os::hw::endian::little, value.high().low());
+						if (size > sizeof(uint64_t) * 3)
+							array[3] = os::hw::to_endianness(os::hw::endian::little, value.high().high());
+					}
+				}
+			}
+			write(array, size);
+			return *this;
+		}
+		wo_stream& wo_stream::write_typeless(const char* data, uint8_t size)
+		{
+			write(data, size);
+			return *this;
+		}
+		wo_stream& wo_stream::write_typeless(const char* data, uint32_t size)
+		{
+			write(data, size);
+			return *this;
+		}
+		string wo_stream::compress() const
+		{
+			auto status = codec::compress(data, compression::best_compression);
+			return status ? *status : data;
+		}
+		string wo_stream::encode() const
+		{
+			return util::encode_0xhex(data);
+		}
+		uint256_t wo_stream::hash(bool renew) const
+		{
+			if (renew || !checksum)
+				((wo_stream*)this)->checksum = algorithm::hashing::hash256i(data);
+			return checksum;
+		}
+		ro_stream wo_stream::ro() const
+		{
+			return ro_stream(data);
+		}
+
+		ro_stream::ro_stream() : checksum(0), seek(0)
+		{
+		}
+		ro_stream::ro_stream(const std::string_view& new_data) : data(new_data), checksum(0), seek(0)
+		{
+		}
+		ro_stream& ro_stream::rewind(size_t offset)
+		{
+			seek = (offset <= data.size() ? offset : data.size());
+			return *this;
+		}
+		ro_stream& ro_stream::clear()
+		{
+			data = std::string_view();
+			checksum = 0;
+			seek = 0;
+			return *this;
+		}
+		size_t ro_stream::read(void* value, uint32_t size)
 		{
 			if (!value || !size || size + seek > data.size())
 				return 0;
@@ -37,17 +240,17 @@ namespace tangent
 			seek += size;
 			return size;
 		}
-		viewable stream::read_type()
+		viewable ro_stream::read_type()
 		{
 			viewable type = viewable::invalid;
 			return read_type(&type) ? type : viewable::invalid;
 		}
-		bool stream::read_type(viewable* value)
+		bool ro_stream::read_type(viewable* value)
 		{
 			VI_ASSERT(value != nullptr, "value should be set");
 			return read(value, sizeof(uint8_t)) == sizeof(uint8_t);
 		}
-		bool stream::read_string(viewable type, string* value)
+		bool ro_stream::read_string(viewable type, string* value)
 		{
 			VI_ASSERT(value != nullptr, "value should be set");
 			if (util::is_string(type))
@@ -87,7 +290,7 @@ namespace tangent
 					return false;
 			}
 		}
-		bool stream::read_decimal(viewable type, decimal* value)
+		bool ro_stream::read_decimal(viewable type, decimal* value)
 		{
 			VI_ASSERT(value != nullptr, "value should be set");
 			viewable subtype;
@@ -128,7 +331,7 @@ namespace tangent
 				*value = decimal(numeric);
 			return true;
 		}
-		bool stream::read_integer(viewable type, uint8_t* value)
+		bool ro_stream::read_integer(viewable type, uint8_t* value)
 		{
 			VI_ASSERT(value != nullptr, "value should be set");
 			uint256_t base;
@@ -138,7 +341,7 @@ namespace tangent
 			*value = (uint8_t)base;
 			return true;
 		}
-		bool stream::read_integer(viewable type, uint16_t* value)
+		bool ro_stream::read_integer(viewable type, uint16_t* value)
 		{
 			VI_ASSERT(value != nullptr, "value should be set");
 			uint256_t base;
@@ -148,7 +351,7 @@ namespace tangent
 			*value = (uint16_t)base;
 			return true;
 		}
-		bool stream::read_integer(viewable type, uint32_t* value)
+		bool ro_stream::read_integer(viewable type, uint32_t* value)
 		{
 			VI_ASSERT(value != nullptr, "value should be set");
 			uint256_t base;
@@ -158,7 +361,7 @@ namespace tangent
 			*value = (uint32_t)base;
 			return true;
 		}
-		bool stream::read_integer(viewable type, uint64_t* value)
+		bool ro_stream::read_integer(viewable type, uint64_t* value)
 		{
 			VI_ASSERT(value != nullptr, "value should be set");
 			uint256_t base;
@@ -168,7 +371,7 @@ namespace tangent
 			*value = (uint64_t)base;
 			return true;
 		}
-		bool stream::read_integer(viewable type, uint128_t* value)
+		bool ro_stream::read_integer(viewable type, uint128_t* value)
 		{
 			VI_ASSERT(value != nullptr, "value should be set");
 			uint256_t base;
@@ -178,7 +381,7 @@ namespace tangent
 			*value = (uint128_t)base;
 			return true;
 		}
-		bool stream::read_integer(viewable type, uint256_t* value)
+		bool ro_stream::read_integer(viewable type, uint256_t* value)
 		{
 			VI_ASSERT(value != nullptr, "value should be set");
 			if (!util::is_integer(type))
@@ -203,7 +406,7 @@ namespace tangent
 			memcpy((uint64_t*)&bits3, &array[3], sizeof(uint64_t));
 			return true;
 		}
-		bool stream::read_boolean(viewable type, bool* value)
+		bool ro_stream::read_boolean(viewable type, bool* value)
 		{
 			VI_ASSERT(value != nullptr, "value should be set");
 			if (type != viewable::true_type && type != viewable::false_type)
@@ -212,207 +415,33 @@ namespace tangent
 			*value = (type == viewable::true_type);
 			return true;
 		}
-		stream& stream::clear()
-		{
-			data.clear();
-			checksum = 0;
-			seek = 0;
-			return *this;
-		}
-		stream& stream::rewind(size_t offset)
-		{
-			seek = (offset <= data.size() ? offset : data.size());
-			return *this;
-		}
-		void stream::write(const void* value, uint32_t size)
-		{
-			if (size > 0 && value != nullptr)
-			{
-				size_t index = data.size();
-				data.resize(data.size() + (size_t)size);
-				memcpy((char*)data.data() + index, value, (size_t)size);
-				checksum = 0;
-			}
-		}
-		stream& stream::write_string(const std::string_view& value)
-		{
-			if (util::is_hex_encoding(value))
-			{
-				string source = codec::hex_decode(value);
-				if (source.size() > util::get_max_string_size())
-				{
-					uint8_t type = (uint8_t)util::get_string_type(source, true);
-					uint32_t size = std::min<uint32_t>(protocol::now().message.max_message_size, (uint32_t)source.size());
-					write(&type, sizeof(uint8_t));
-					write_integer(size);
-					write(source.data(), size);
-				}
-				else
-				{
-					uint8_t type = (uint8_t)util::get_string_type(source, true);
-					uint8_t size = util::get_string_size((viewable)type);
-					write(&type, sizeof(uint8_t));
-					write(source.data(), size);
-				}
-			}
-			else if (value.size() > util::get_max_string_size())
-			{
-				uint32_t size = std::min<uint32_t>(protocol::now().message.max_message_size, (uint32_t)value.size());
-				uint8_t type = (uint8_t)util::get_string_type(value, false);
-				write(&type, sizeof(uint8_t));
-				write_integer(size);
-				write(value.data(), size);
-			}
-			else
-			{
-				uint8_t type = (uint8_t)util::get_string_type(value, false);
-				uint8_t size = util::get_string_size((viewable)type);
-				write(&type, sizeof(uint8_t));
-				write(value.data(), size);
-			}
-			return *this;
-		}
-		stream& stream::write_string_raw(const std::string_view& value)
-		{
-			if (value.size() > util::get_max_string_size())
-			{
-				uint32_t size = std::min<uint32_t>(protocol::now().message.max_message_size, (uint32_t)value.size());
-				uint8_t type = (uint8_t)util::get_string_type(value, false);
-				write(&type, sizeof(uint8_t));
-				write_integer(size);
-				write(value.data(), size);
-			}
-			else
-			{
-				uint8_t type = (uint8_t)util::get_string_type(value, false);
-				uint8_t size = util::get_string_size((viewable)type);
-				write(&type, sizeof(uint8_t));
-				write(value.data(), size);
-			}
-			return *this;
-		}
-		stream& stream::write_decimal(const decimal& value)
-		{
-			if (value.is_nan())
-			{
-				uint8_t type = (uint8_t)viewable::decimal_nan;
-				write(&type, sizeof(uint8_t));
-				return *this;
-			}
-			else if (value.is_zero())
-			{
-				uint8_t type = (uint8_t)viewable::decimal_zero;
-				write(&type, sizeof(uint8_t));
-				return *this;
-			}
-
-			string numeric = value.numeric();
-			uint16_t decimals = value.decimal_places();
-			int8_t position = value.position();
-			uint8_t type = (uint8_t)(decimals > 0 ? (position < 0 ? viewable::decimal_neg2 : viewable::decimal_pos2) : (position < 0 ? viewable::decimal_neg1 : viewable::decimal_pos1));
-			std::reverse(numeric.begin() + decimals, numeric.end());
-
-			auto left = std::string_view(numeric).substr(decimals);
-			write(&type, sizeof(uint8_t));
-			write_integer(contextual_parse_uint256(left));
-			if (decimals > 0)
-			{
-				auto right = std::string_view(numeric).substr(0, decimals);
-				write_integer(contextual_parse_uint256(right));
-			}
-			return *this;
-		}
-		stream& stream::write_integer(const uint256_t& value)
-		{
-			uint8_t type = (uint8_t)util::get_integer_type(value);
-			uint8_t size = util::get_integer_size((viewable)type);
-			write(&type, sizeof(uint8_t));
-
-			uint64_t array[4];
-			if (size > sizeof(uint64_t) * 0)
-			{
-				array[0] = os::hw::to_endianness(os::hw::endian::little, value.low().low());
-				if (size > sizeof(uint64_t) * 1)
-				{
-					array[1] = os::hw::to_endianness(os::hw::endian::little, value.low().high());
-					if (size > sizeof(uint64_t) * 2)
-					{
-						array[2] = os::hw::to_endianness(os::hw::endian::little, value.high().low());
-						if (size > sizeof(uint64_t) * 3)
-							array[3] = os::hw::to_endianness(os::hw::endian::little, value.high().high());
-					}
-				}
-			}
-			write(array, size);
-			return *this;
-		}
-		stream& stream::write_boolean(bool value)
-		{
-			uint8_t type = (uint8_t)(value ? viewable::true_type : viewable::false_type);
-			write(&type, sizeof(uint8_t));
-			return *this;
-		}
-		stream& stream::write_typeless(const uint256_t& value)
-		{
-			uint8_t size = util::get_integer_size(util::get_integer_type(value));
-			uint64_t array[4];
-			if (size > sizeof(uint64_t) * 0)
-			{
-				array[0] = os::hw::to_endianness(os::hw::endian::little, value.low().low());
-				if (size > sizeof(uint64_t) * 1)
-				{
-					array[1] = os::hw::to_endianness(os::hw::endian::little, value.low().high());
-					if (size > sizeof(uint64_t) * 2)
-					{
-						array[2] = os::hw::to_endianness(os::hw::endian::little, value.high().low());
-						if (size > sizeof(uint64_t) * 3)
-							array[3] = os::hw::to_endianness(os::hw::endian::little, value.high().high());
-					}
-				}
-			}
-			write(array, size);
-			return *this;
-		}
-		stream& stream::write_typeless(const char* data, uint8_t size)
-		{
-			write(data, size);
-			return *this;
-		}
-		stream& stream::write_typeless(const char* data, uint32_t size)
-		{
-			write(data, size);
-			return *this;
-		}
-		bool stream::is_eof() const
+		bool ro_stream::is_eof() const
 		{
 			return seek >= data.size();
 		}
-		string stream::compress() const
-		{
-			auto status = codec::compress(data, compression::best_compression);
-			return status ? *status : data;
-		}
-		string stream::encode() const
-		{
-			return util::encode_0xhex(data);
-		}
-		uint256_t stream::hash(bool renew) const
+		uint256_t ro_stream::hash(bool renew) const
 		{
 			if (renew || !checksum)
-				((stream*)this)->checksum = algorithm::hashing::hash256i(data);
+				((ro_stream*)this)->checksum = algorithm::hashing::hash256i(data);
 			return checksum;
 		}
-		stream stream::decompress(const std::string_view& data)
+		wo_stream ro_stream::wo() const
+		{
+			return wo_stream(data);
+		}
+
+		string util::decompress_stream(const std::string_view& data)
 		{
 			auto raw = util::is_hex_encoding(data) ? util::decode_0xhex(data) : string(data);
 			auto status = codec::decompress(raw);
-			return stream(status ? *status : raw);
+			if (status)
+				raw = std::move(*status);
+			return raw;
 		}
-		stream stream::decode(const std::string_view& data)
+		string util::decode_stream(const std::string_view& data)
 		{
-			return util::is_hex_encoding(data) ? stream(util::decode_0xhex(data)) : stream(data);
+			return util::is_hex_encoding(data) ? util::decode_0xhex(data) : string(data);
 		}
-
 		string util::encode_0xhex(const std::string_view& data)
 		{
 			return assign_0xhex(codec::hex_encode(data));

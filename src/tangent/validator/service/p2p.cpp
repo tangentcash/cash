@@ -24,7 +24,7 @@ namespace tangent
 		}
 		static format::variables serialize_procedure_response(const algorithm::seckey secret_key, format::variables&& args)
 		{
-			format::stream buffer;
+			format::wo_stream buffer;
 			format::variables_util::serialize_flat_into(args, &buffer);
 
 			algorithm::recpubsig signature;
@@ -45,7 +45,7 @@ namespace tangent
 			if (message_transaction_hash != target_transaction_hash)
 				return false;
 
-			format::stream buffer;
+			format::wo_stream buffer;
 			if (!format::variables_util::serialize_flat_into(format::variables(message.args.begin() + 1, message.args.end()), &buffer))
 				return false;
 
@@ -57,7 +57,7 @@ namespace tangent
 		bool procedure::serialize_into(string* result)
 		{
 			VI_ASSERT(result != nullptr, "result should be set");
-			format::stream stream;
+			format::wo_stream stream;
 			if (!format::variables_util::serialize_flat_into(args, &stream))
 				return false;
 
@@ -127,7 +127,7 @@ namespace tangent
 			if (os::hw::to_endianness(os::hw::endian::little, body_checksum) != checksum)
 				return false;
 
-			format::stream stream = format::stream(std::move(body));
+			format::ro_stream stream = format::ro_stream(body);
 			return format::variables_util::deserialize_flat_from(stream, &args);
 		}
 		bool procedure::deserialize_from_stream(string& message, const uint8_t* buffer, size_t size)
@@ -1881,7 +1881,7 @@ namespace tangent
 				return returning::abort(relayer, *from, __func__, "invalid arguments");
 
 			uptr<ledger::validator> peer_validator = memory::init<ledger::validator>();
-			format::stream validator_message = format::stream(message.args.front().as_blob());
+			format::ro_stream validator_message = format::ro_stream(message.args.front().as_string());
 			uint64_t peer_time = message.args.back().as_uint64();
 			uint64_t server_time = protocol::now().time.now_cpu();
 			uint64_t latency_time = peer_time > server_time ? peer_time - server_time : server_time - peer_time;
@@ -1909,7 +1909,7 @@ namespace tangent
 				return returning::abort(relayer, *from, __func__, "invalid arguments");
 
 			ledger::validator self_validator;
-			format::stream validator_message = format::stream(message.args[0].as_blob());
+			format::ro_stream validator_message = format::ro_stream(message.args[0].as_string());
 			if (!self_validator.load(validator_message))
 				return returning::abort(relayer, *from, __func__, "invalid message");
 			else if (!self_validator.is_valid())
@@ -1969,7 +1969,7 @@ namespace tangent
 			if (!block)
 				return returning::ok(*from, __func__, "no tip found");
 
-			format::stream block_message = block->as_message();
+			format::wo_stream block_message = block->as_message();
 			relayer->call(*from, &methods::propose_block, { format::variable(block_message.data) });
 			return returning::ok(*from, __func__, "new tip proposed");
 		}
@@ -2039,9 +2039,8 @@ namespace tangent
 			if (message.args.size() < 3)
 				return returning::error(relayer, *from, __func__, "fork collision not found");
 
-			format::stream block_message;
+			format::ro_stream block_message = format::ro_stream(message.args[2].as_string());
 			ledger::block_header child_header;
-			block_message.data = message.args[2].as_string();
 			if (!child_header.load(block_message))
 				return returning::abort(relayer, *from, __func__, "invalid fork block header");
 
@@ -2090,7 +2089,7 @@ namespace tangent
 				auto block = chain.get_block_by_hash(block_hash, BLOCK_RATE_NORMAL, BLOCK_DATA_CONSENSUS);
 				if (block)
 				{
-					format::stream block_message = block->as_message();
+					format::wo_stream block_message = block->as_message();
 					relayer->call(*from, &methods::propose_fork_block, { format::variable(fork_hash), format::variable(block_message.data) });
 					return returning::ok(*from, __func__, "new fork block proposed");
 				}
@@ -2103,7 +2102,7 @@ namespace tangent
 				auto block = chain.get_block_by_number(block_number, BLOCK_RATE_NORMAL, BLOCK_DATA_CONSENSUS);
 				if (block)
 				{
-					format::stream block_message = block->as_message();
+					format::wo_stream block_message = block->as_message();
 					relayer->call(*from, &methods::propose_fork_block, { format::variable(fork_hash), format::variable(block_message.data) });
 					return returning::ok(*from, __func__, "new fork block proposed");
 				}
@@ -2121,7 +2120,7 @@ namespace tangent
 				return returning::abort(relayer, *from, __func__, "invalid fork");
 
 			ledger::block_evaluation tip;
-			format::stream block_message = format::stream(message.args.back().as_blob());
+			format::ro_stream block_message = format::ro_stream(message.args.back().as_string());
 			if (!tip.block.load(block_message))
 			{
 				relayer->clear_pending_fork(*from);
@@ -2152,7 +2151,7 @@ namespace tangent
 			if (!block)
 				return returning::ok(*from, __func__, "block not found");
 
-			format::stream block_message = block->as_message();
+			format::wo_stream block_message = block->as_message();
 			relayer->call(*from, &methods::propose_block, { format::variable(block_message.data) });
 			return returning::ok(*from, __func__, "block proposed");
 		}
@@ -2162,7 +2161,7 @@ namespace tangent
 				return returning::abort(relayer, *from, __func__, "invalid arguments");
 
 			ledger::block_evaluation candidate;
-			format::stream block_message = format::stream(message.args.front().as_blob());
+			format::ro_stream block_message = format::ro_stream(message.args.front().as_string());
 			if (!candidate.block.load(block_message) || !relayer->accept_block(*from, std::move(candidate), 0))
 				return returning::error(relayer, *from, __func__, "block rejected");
 
@@ -2203,7 +2202,7 @@ namespace tangent
 					return returning::ok(*from, __func__, "transaction not found");
 			}
 
-			format::stream transaction_message = (*transaction)->as_message();
+			format::wo_stream transaction_message = (*transaction)->as_message();
 			relayer->call(*from, &methods::propose_transaction, { format::variable(transaction_message.data) });
 			return returning::ok(*from, __func__, "transaction proposed");
 		}
@@ -2212,7 +2211,7 @@ namespace tangent
 			if (message.args.size() != 1)
 				return returning::abort(relayer, *from, __func__, "invalid arguments");
 
-			format::stream transaction_message = format::stream(message.args.front().as_blob());
+			format::ro_stream transaction_message = format::ro_stream(message.args.front().as_string());
 			uptr<ledger::transaction> candidate = tangent::transactions::resolver::from_stream(transaction_message);
 			if (!candidate)
 				return returning::error(relayer, *from, __func__, "invalid transaction");
@@ -2437,7 +2436,7 @@ namespace tangent
 				return expects_promise_rt<void>(expectation::met);
 			}
 
-			format::stream prepared_message;
+			format::wo_stream prepared_message;
 			if (!prepared.store(&prepared_message))
 				return expects_promise_rt<void>(remote_exception("prepared transaction serialization error"));
 
@@ -2575,7 +2574,7 @@ namespace tangent
 				goto abort_group;
 			}
 
-			auto prepared_message = format::stream(message.args[3].as_string());
+			auto prepared_message = format::ro_stream(message.args[3].as_string());
 			auto prepared = warden::prepared_transaction();
 			if (!prepared.load(prepared_message))
 				return methods::returning::abort(relayer, *from, __func__, "invalid arguments");

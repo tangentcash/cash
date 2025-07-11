@@ -46,7 +46,7 @@ namespace tangent
 		{
 			return expects_promise_rt<void>(remote_exception("invalid operation"));
 		}
-		bool transaction::store_payload(format::stream* stream) const
+		bool transaction::store_payload(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer(asset);
@@ -56,7 +56,7 @@ namespace tangent
 			stream->write_boolean(conservative);
 			return store_body(stream);
 		}
-		bool transaction::load_payload(format::stream& stream)
+		bool transaction::load_payload(format::ro_stream& stream)
 		{
 			if (!stream.read_integer(stream.read_type(), &asset))
 				return false;
@@ -211,7 +211,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		bool delegation_transaction::store_payload(format::stream* stream) const
+		bool delegation_transaction::store_payload(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			algorithm::pubkeyhash null = { 0 };
@@ -222,7 +222,7 @@ namespace tangent
 			stream->write_string(std::string_view((char*)manager, memcmp(manager, null, sizeof(null)) == 0 ? 0 : sizeof(manager)));
 			return store_body(stream);
 		}
-		bool delegation_transaction::load_payload(format::stream& stream)
+		bool delegation_transaction::load_payload(format::ro_stream& stream)
 		{
 			if (!stream.read_integer(stream.read_type(), &asset))
 				return false;
@@ -277,7 +277,7 @@ namespace tangent
 		{
 			return context->verify_account_nonce();
 		}
-		bool consensus_transaction::store_payload(format::stream* stream) const
+		bool consensus_transaction::store_payload(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer(asset);
@@ -286,7 +286,7 @@ namespace tangent
 			stream->write_integer(nonce);
 			return store_body(stream);
 		}
-		bool consensus_transaction::load_payload(format::stream& stream)
+		bool consensus_transaction::load_payload(format::ro_stream& stream)
 		{
 			if (!stream.read_integer(stream.read_type(), &asset))
 				return false;
@@ -440,7 +440,7 @@ namespace tangent
 
 			return true;
 		}
-		bool attestation_transaction::store_payload(format::stream* stream) const
+		bool attestation_transaction::store_payload(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer(asset);
@@ -458,7 +458,7 @@ namespace tangent
 			}
 			return store_body(stream);
 		}
-		bool attestation_transaction::load_payload(format::stream& stream)
+		bool attestation_transaction::load_payload(format::ro_stream& stream)
 		{
 			if (!stream.read_integer(stream.read_type(), &asset))
 				return false;
@@ -482,7 +482,7 @@ namespace tangent
 			output_hashes.clear();
 			for (uint16_t i = 0; i < output_hashes_size; i++)
 			{
-				format::stream message;
+				format::wo_stream message;
 				if (!stream.read_string(stream.read_type(), &message.data))
 					return false;
 
@@ -632,7 +632,7 @@ namespace tangent
 			set_gas(price, *optimal_gas);
 			return expectation::met;
 		}
-		void attestation_transaction::set_statement(const uint256_t& new_input_hash, const format::stream& output_message)
+		void attestation_transaction::set_statement(const uint256_t& new_input_hash, const format::wo_stream& output_message)
 		{
 			output_hashes.clear();
 			output_hashes[output_message.hash()].message = output_message;
@@ -696,7 +696,7 @@ namespace tangent
 		}
 		uint256_t attestation_transaction::get_branch_image(const uint256_t& output_hash) const
 		{
-			format::stream message;
+			format::wo_stream message;
 			message.write_integer(asset);
 			message.write_integer(input_hash);
 			message.write_integer(output_hash);
@@ -704,7 +704,7 @@ namespace tangent
 		}
 		uint256_t attestation_transaction::as_group_hash() const
 		{
-			format::stream message;
+			format::wo_stream message;
 			message.write_integer(asset);
 			message.write_integer(input_hash);
 			return message.hash();
@@ -727,12 +727,12 @@ namespace tangent
 			}
 			return data;
 		}
-		format::stream attestation_transaction::as_signable() const
+		format::wo_stream attestation_transaction::as_signable() const
 		{
-			return format::stream();
+			return format::wo_stream();
 		}
 
-		bool receipt::store_payload(format::stream* stream) const
+		bool receipt::store_payload(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer(transaction_hash);
@@ -753,7 +753,7 @@ namespace tangent
 			}
 			return true;
 		}
-		bool receipt::load_payload(format::stream& stream)
+		bool receipt::load_payload(format::ro_stream& stream)
 		{
 			if (!stream.read_integer(stream.read_type(), &transaction_hash))
 				return false;
@@ -897,7 +897,7 @@ namespace tangent
 		state::state(const block_header* new_block_header) : block_number(new_block_header ? new_block_header->number : 0), block_nonce(new_block_header ? new_block_header->mutation_count : 0)
 		{
 		}
-		bool state::store(format::stream* stream) const
+		bool state::store(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer(as_type());
@@ -905,7 +905,7 @@ namespace tangent
 			stream->write_integer(block_nonce);
 			return store_payload(stream);
 		}
-		bool state::load(format::stream& stream)
+		bool state::load(format::ro_stream& stream)
 		{
 			uint32_t type;
 			if (!stream.read_integer(stream.read_type(), &type) || type != as_type())
@@ -922,7 +922,7 @@ namespace tangent
 
 			return true;
 		}
-		bool state::store_optimized(format::stream* stream) const
+		bool state::store_optimized(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer(as_type());
@@ -930,7 +930,7 @@ namespace tangent
 			stream->write_integer(block_nonce);
 			return store_data(stream);
 		}
-		bool state::load_optimized(format::stream& stream)
+		bool state::load_optimized(format::ro_stream& stream)
 		{
 			uint32_t type;
 			if (!stream.read_integer(stream.read_type(), &type) || type != as_type())
@@ -958,14 +958,14 @@ namespace tangent
 		uniform::uniform(const block_header* new_block_header) : state(new_block_header)
 		{
 		}
-		bool uniform::store_payload(format::stream* stream) const
+		bool uniform::store_payload(format::wo_stream* stream) const
 		{
 			if (!store_index(stream))
 				return false;
 
 			return store_data(stream);
 		}
-		bool uniform::load_payload(format::stream& stream)
+		bool uniform::load_payload(format::ro_stream& stream)
 		{
 			if (!load_index(stream))
 				return false;
@@ -988,7 +988,7 @@ namespace tangent
 		}
 		string uniform::as_index() const
 		{
-			format::stream message;
+			format::wo_stream message;
 			store_index(&message);
 			return message.data;
 		}
@@ -999,7 +999,7 @@ namespace tangent
 		multiform::multiform(const block_header* new_block_header) : state(new_block_header)
 		{
 		}
-		bool multiform::store_payload(format::stream* stream) const
+		bool multiform::store_payload(format::wo_stream* stream) const
 		{
 			if (!store_column(stream))
 				return false;
@@ -1009,7 +1009,7 @@ namespace tangent
 
 			return store_data(stream);
 		}
-		bool multiform::load_payload(format::stream& stream)
+		bool multiform::load_payload(format::ro_stream& stream)
 		{
 			if (!load_column(stream))
 				return false;
@@ -1026,7 +1026,7 @@ namespace tangent
 			data->set("type", var::string(as_typename()));
 			data->set("column", var::string(format::util::encode_0xhex(as_column())));
 			data->set("row", var::string(format::util::encode_0xhex(as_row())));
-			data->set("factor", var::integer(as_factor()));
+			data->set("rank", algorithm::encoding::serialize_uint256(as_rank()));
 			data->set("block_number", algorithm::encoding::serialize_uint256(block_number));
 			data->set("block_nonce", algorithm::encoding::serialize_uint256(block_nonce));
 			return data;
@@ -1037,13 +1037,13 @@ namespace tangent
 		}
 		string multiform::as_column() const
 		{
-			format::stream message;
+			format::wo_stream message;
 			store_column(&message);
 			return message.data;
 		}
 		string multiform::as_row() const
 		{
-			format::stream message;
+			format::wo_stream message;
 			store_row(&message);
 			return message.data;
 		}

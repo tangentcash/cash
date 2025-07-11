@@ -18,10 +18,28 @@ namespace tangent
 		struct block_evaluation;
 		struct evaluation_context;
 
+		enum class filter_comparator
+		{
+			greater,
+			greater_equal,
+			equal,
+			not_equal,
+			less,
+			less_equal
+		};
+
+		enum class filter_order
+		{
+			ascending,
+			descending
+		};
+
 		enum class gas_cost
 		{
 			write_byte = 24,
 			read_byte = 3,
+			query_byte = 12,
+			bulk_query_byte = 1,
 			opcode = 1
 		};
 
@@ -43,8 +61,8 @@ namespace tangent
 			block_transaction(const block_transaction& other);
 			block_transaction& operator= (block_transaction&&) noexcept = default;
 			block_transaction& operator= (const block_transaction& other);
-			bool store_payload(format::stream* stream) const override;
-			bool load_payload(format::stream& stream) override;
+			bool store_payload(format::wo_stream* stream) const override;
+			bool load_payload(format::ro_stream& stream) override;
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
@@ -132,10 +150,10 @@ namespace tangent
 			virtual bool operator==(const block_header& other) const;
 			virtual bool operator!=(const block_header& other) const;
 			virtual expects_lr<void> verify_validity(const block_header* parent_block) const;
-			virtual bool store_payload_wesolowski(format::stream* stream) const;
-			virtual bool load_payload_wesolowski(format::stream& stream);
-			virtual bool store_payload(format::stream* stream) const override;
-			virtual bool load_payload(format::stream& stream) override;
+			virtual bool store_payload_wesolowski(format::wo_stream* stream) const;
+			virtual bool load_payload_wesolowski(format::ro_stream& stream);
+			virtual bool store_payload(format::wo_stream* stream) const override;
+			virtual bool load_payload(format::ro_stream& stream) override;
 			virtual bool sign(const algorithm::seckey secret_key) override;
 			virtual bool solve(const algorithm::seckey secret_key);
 			virtual bool verify(const algorithm::pubkey public_key) const override;
@@ -152,8 +170,8 @@ namespace tangent
 			virtual uint64_t get_proof_time() const;
 			virtual uint256_t as_hash(bool renew = false) const override;
 			virtual uptr<schema> as_schema() const override;
-			virtual format::stream as_signable() const override;
-			virtual format::stream as_solution() const;
+			virtual format::wo_stream as_signable() const override;
+			virtual format::wo_stream as_solution() const;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
@@ -176,12 +194,12 @@ namespace tangent
 			expects_lr<block_state> evaluate(const block_header* parent_block, evaluation_context* environment, string* errors = nullptr);
 			expects_lr<void> validate(const block_header* parent_block, block_evaluation* evaluated_result = nullptr) const;
 			expects_lr<void> verify_integrity(const block_header* parent_block, const block_state* state) const;
-			bool store_payload(format::stream* stream) const override;
-			bool load_payload(format::stream& stream) override;
-			bool store_header_payload(format::stream* stream) const;
-			bool load_header_payload(format::stream& stream);
-			bool store_body_payload(format::stream* stream) const;
-			bool load_body_payload(format::stream& stream);
+			bool store_payload(format::wo_stream* stream) const override;
+			bool load_payload(format::ro_stream& stream) override;
+			bool store_header_payload(format::wo_stream* stream) const;
+			bool load_header_payload(format::ro_stream& stream);
+			bool store_body_payload(format::wo_stream* stream) const;
+			bool load_body_payload(format::ro_stream& stream);
 			void recalculate(const block_header* parent_block, const block_state* state);
 			uptr<schema> as_schema() const override;
 			block_header as_header() const;
@@ -208,8 +226,8 @@ namespace tangent
 			option<algorithm::merkle_tree::path> find_transaction(const uint256_t& hash);
 			option<algorithm::merkle_tree::path> find_receipt(const uint256_t& hash);
 			option<algorithm::merkle_tree::path> find_state(const uint256_t& hash);
-			bool store_payload(format::stream* stream) const override;
-			bool load_payload(format::stream& stream) override;
+			bool store_payload(format::wo_stream* stream) const override;
+			bool load_payload(format::ro_stream& stream) override;
 			bool has_transaction(const uint256_t& hash);
 			bool has_receipt(const uint256_t& hash);
 			bool has_state(const uint256_t& hash);
@@ -268,10 +286,11 @@ namespace tangent
 			transaction_context(transaction_context&&) = default;
 			transaction_context& operator=(const transaction_context& other);
 			transaction_context& operator=(transaction_context&&) = default;
-			expects_lr<void> load(state* value, bool paid = true);
-			expects_lr<void> store(state* value, bool paid = true);
+			expects_lr<void> load(state* value, bool paid);
+			expects_lr<void> query_load(state* value, size_t results, bool paid);
+			expects_lr<void> store(state* value, bool paid);
 			expects_lr<void> emit_witness(const algorithm::asset_id& asset, uint64_t block_number);
-			expects_lr<void> emit_event(uint32_t type, format::variables&& values, bool paid = true);
+			expects_lr<void> emit_event(uint32_t type, format::variables&& values, bool paid);
 			expects_lr<void> burn_gas();
 			expects_lr<void> burn_gas(const uint256_t& value);
 			expects_lr<void> verify_account_nonce() const;
@@ -286,7 +305,7 @@ namespace tangent
 			expects_lr<states::account_nonce> apply_account_nonce(const algorithm::pubkeyhash owner, uint64_t nonce);
 			expects_lr<states::account_program> apply_account_program(const algorithm::pubkeyhash owner, const std::string_view& program_hashcode);
 			expects_lr<states::account_uniform> apply_account_uniform(const algorithm::pubkeyhash owner, const std::string_view& index, const std::string_view& data);
-			expects_lr<states::account_multiform> apply_account_multiform(const algorithm::pubkeyhash owner, const std::string_view& column, const std::string_view& row, const std::string_view& data);
+			expects_lr<states::account_multiform> apply_account_multiform(const algorithm::pubkeyhash owner, const std::string_view& column, const std::string_view& row, const std::string_view& data, const uint256_t& filter);
 			expects_lr<states::account_delegation> apply_account_delegation(const algorithm::pubkeyhash owner, uint32_t delegations);
 			expects_lr<states::account_balance> apply_transfer(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const decimal& supply, const decimal& reserve);
 			expects_lr<states::account_balance> apply_fee_transfer(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const decimal& value);
@@ -310,7 +329,10 @@ namespace tangent
 			expects_lr<states::account_program> get_account_program(const algorithm::pubkeyhash owner) const;
 			expects_lr<states::account_uniform> get_account_uniform(const algorithm::pubkeyhash owner, const std::string_view& index) const;
 			expects_lr<states::account_multiform> get_account_multiform(const algorithm::pubkeyhash owner, const std::string_view& column, const std::string_view& row) const;
-			expects_lr<states::account_multiform> get_account_multiform_by_column(const algorithm::pubkeyhash owner, const std::string_view& column, size_t offset) const;
+			expects_lr<vector<uptr<states::account_multiform>>> get_account_multiforms_by_column(const algorithm::pubkeyhash owner, const std::string_view& column, size_t offset, size_t count) const;
+			expects_lr<vector<uptr<states::account_multiform>>> get_account_multiforms_by_column_filter(const algorithm::pubkeyhash owner, const std::string_view& column, const filter_comparator& comparator, const uint256_t& filter_value, filter_order order, size_t offset, size_t count) const;
+			expects_lr<vector<uptr<states::account_multiform>>> get_account_multiforms_by_row(const algorithm::pubkeyhash owner, const std::string_view& row, size_t offset, size_t count) const;
+			expects_lr<vector<uptr<states::account_multiform>>> get_account_multiforms_by_row_filter(const algorithm::pubkeyhash owner, const std::string_view& row, const filter_comparator& comparator, const uint256_t& filter_value, filter_order order, size_t offset, size_t count) const;
 			expects_lr<states::account_delegation> get_account_delegation(const algorithm::pubkeyhash owner) const;
 			expects_lr<states::account_balance> get_account_balance(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner) const;
 			expects_lr<states::validator_production> get_validator_production(const algorithm::pubkeyhash owner) const;

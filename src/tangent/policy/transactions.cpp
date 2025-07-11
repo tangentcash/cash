@@ -1,6 +1,6 @@
 #include "transactions.h"
 #include "../kernel/block.h"
-#include "../kernel/script.h"
+#include "../kernel/svm.h"
 #include "../validator/service/nss.h"
 
 namespace tangent
@@ -38,7 +38,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		bool transfer::store_body(format::stream* stream) const
+		bool transfer::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			algorithm::pubkeyhash null = { 0 };
@@ -60,7 +60,7 @@ namespace tangent
 
 			return true;
 		}
-		bool transfer::load_body(format::stream& stream)
+		bool transfer::load_body(format::ro_stream& stream)
 		{
 			auto type = stream.read_type();
 			if (format::util::is_string(type))
@@ -169,7 +169,7 @@ namespace tangent
 
 			auto storage = std::string_view(data).substr(1);
 			auto type = get_data_type().or_else(data_type::hashcode);
-			auto* host = ledger::script_host::get();
+			auto* host = ledger::svm_host::get();
 			auto compiler = host->allocate();
 			switch (type)
 			{
@@ -260,18 +260,18 @@ namespace tangent
 				return nonce.error();
 			}
 
-			auto script = ledger::script_program(context);
+			auto script = ledger::svm_program(context);
 			auto execution = script.construct(*compiler, args);
 			host->deallocate(std::move(compiler));
 			return execution;
 		}
-		bool upgrade::store_body(format::stream* stream) const
+		bool upgrade::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_string(data);
 			return format::variables_util::serialize_merge_into(args, stream);
 		}
-		bool upgrade::load_body(format::stream& stream)
+		bool upgrade::load_body(format::ro_stream& stream)
 		{
 			if (!stream.read_string(stream.read_type(), &data))
 				return false;
@@ -302,7 +302,7 @@ namespace tangent
 			args = std::move(new_args);
 			data.clear();
 			data.assign(1, (char)data_type::program);
-			data.append(ledger::script_host::get()->pack(new_data).or_else(string()));
+			data.append(ledger::svm_host::get()->pack(new_data).or_else(string()));
 		}
 		void upgrade::from_hashcode(const std::string_view& new_data, format::variables&& new_args)
 		{
@@ -385,7 +385,7 @@ namespace tangent
 			if (!index)
 				return layer_exception("program is not assigned");
 
-			auto* host = ledger::script_host::get();
+			auto* host = ledger::svm_host::get();
 			auto& hashcode = index->hashcode;
 			auto compiler = host->allocate();
 			if (!host->precompile(*compiler, hashcode))
@@ -422,12 +422,12 @@ namespace tangent
 					return payment.error();
 			}
 
-			auto script = ledger::script_program(context);
+			auto script = ledger::svm_program(context);
 			auto execution = script.mutable_call(*compiler, function, args);
 			host->deallocate(std::move(compiler));
 			return execution;
 		}
-		bool call::store_body(format::stream* stream) const
+		bool call::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_string(algorithm::subpubkeyhash_t(callable).optimized_view());
@@ -435,7 +435,7 @@ namespace tangent
 			stream->write_decimal(value);
 			return format::variables_util::serialize_merge_into(args, stream);
 		}
-		bool call::load_body(format::stream& stream)
+		bool call::load_body(format::ro_stream& stream)
 		{
 			string callable_assembly;
 			if (!stream.read_string(stream.read_type(), &callable_assembly) || !algorithm::encoding::decode_uint_blob(callable_assembly, callable, sizeof(callable)))
@@ -490,15 +490,6 @@ namespace tangent
 			data->set("function", var::string(function));
 			data->set("args", format::variables_util::serialize(args));
 			return data;
-		}
-		format::stream call::as_trustline_message() const
-		{
-			format::stream message;
-			message.write_string(algorithm::subpubkeyhash_t().optimized_view());
-			message.write_string(function);
-			message.write_decimal(value);
-			format::variables_util::serialize_flat_into(args, &message);
-			return message;
 		}
 		uint32_t call::as_type() const
 		{
@@ -686,7 +677,7 @@ namespace tangent
 				coreturn remote_exception(std::move(error_message));
 			});
 		}
-		bool rollup::store_body(format::stream* stream) const
+		bool rollup::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer((uint16_t)transactions.size());
@@ -712,7 +703,7 @@ namespace tangent
 
 			return true;
 		}
-		bool rollup::load_body(format::stream& stream)
+		bool rollup::load_body(format::ro_stream& stream)
 		{
 			transactions.clear();
 			uint16_t groups_count;
@@ -1043,7 +1034,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		bool certification::store_body(format::stream* stream) const
+		bool certification::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer((uint8_t)(production ? (*production ? 1 : 0) : 2));
@@ -1061,7 +1052,7 @@ namespace tangent
 			}
 			return true;
 		}
-		bool certification::load_body(format::stream& stream)
+		bool certification::load_body(format::ro_stream& stream)
 		{
 			uint8_t production_status;
 			if (!stream.read_integer(stream.read_type(), &production_status))
@@ -1395,13 +1386,13 @@ namespace tangent
 				}
 			});
 		}
-		bool depository_account::store_body(format::stream* stream) const
+		bool depository_account::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_string(routing_address);
 			return true;
 		}
-		bool depository_account::load_body(format::stream& stream)
+		bool depository_account::load_body(format::ro_stream& stream)
 		{
 			if (!stream.read_string(stream.read_type(), &routing_address))
 				return false;
@@ -1592,7 +1583,7 @@ namespace tangent
 			depository_account_hash = new_depository_account_hash;
 			memcpy(public_key, new_public_key, sizeof(public_key));
 		}
-		bool depository_account_finalization::store_body(format::stream* stream) const
+		bool depository_account_finalization::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			algorithm::composition::cpubkey null = { 0 };
@@ -1602,7 +1593,7 @@ namespace tangent
 			stream->write_integer(depository_account_hash);
 			return true;
 		}
-		bool depository_account_finalization::load_body(format::stream& stream)
+		bool depository_account_finalization::load_body(format::ro_stream& stream)
 		{
 			string public_key_assembly;
 			auto params = nss::server_node::get()->get_chainparams(asset);
@@ -1825,7 +1816,8 @@ namespace tangent
 				auto group_signature = ordered_map<uint8_t, algorithm::composition::cpubsig_t>();
 				if (cache && !chain->requires_transaction_expiration)
 				{
-					format::stream group_prepared_message = format::stream::decode(cache->get_var(0).get_blob());
+					auto cache_message = format::util::decode_stream(cache->get_var(0).get_blob());
+					auto group_prepared_message = format::ro_stream(cache_message);
 					if (!group_prepared->load_payload(group_prepared_message))
 						group_prepared = expects_rt<warden::prepared_transaction>(remote_exception::retry());
 
@@ -1953,7 +1945,7 @@ namespace tangent
 					if (chain->requires_transaction_expiration)
 						coreturn remote_exception::retry();
 
-					format::stream group_prepared_message;
+					format::wo_stream group_prepared_message;
 					group_prepared->store_payload(&group_prepared_message);
 
 					cache = var::set::array();
@@ -1971,7 +1963,7 @@ namespace tangent
 				}
 			});
 		}
-		bool depository_withdrawal::store_body(format::stream* stream) const
+		bool depository_withdrawal::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			algorithm::pubkeyhash null = { 0 };
@@ -1986,7 +1978,7 @@ namespace tangent
 			}
 			return true;
 		}
-		bool depository_withdrawal::load_body(format::stream& stream)
+		bool depository_withdrawal::load_body(format::ro_stream& stream)
 		{
 			if (!stream.read_boolean(stream.read_type(), &only_if_not_in_queue))
 				return false;
@@ -2342,7 +2334,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		bool depository_withdrawal_finalization::store_body(format::stream* stream) const
+		bool depository_withdrawal_finalization::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer(depository_withdrawal_hash);
@@ -2351,7 +2343,7 @@ namespace tangent
 			stream->write_string(error_message);
 			return true;
 		}
-		bool depository_withdrawal_finalization::load_body(format::stream& stream)
+		bool depository_withdrawal_finalization::load_body(format::ro_stream& stream)
 		{
 			if (!stream.read_integer(stream.read_type(), &depository_withdrawal_hash))
 				return false;
@@ -2708,11 +2700,11 @@ namespace tangent
 
 			return context->emit_witness(asset, std::max(assertion->block_id.execution, assertion->block_id.finalization));
 		}
-		bool depository_transaction::store_body(format::stream* stream) const
+		bool depository_transaction::store_body(format::wo_stream* stream) const
 		{
 			return true;
 		}
-		bool depository_transaction::load_body(format::stream& stream)
+		bool depository_transaction::load_body(format::ro_stream& stream)
 		{
 			return true;
 		}
@@ -2775,9 +2767,7 @@ namespace tangent
 			if (!best_branch)
 				return optional::none;
 
-			auto message = best_branch->message;
-			message.seek = 0;
-
+			auto message = best_branch->message.ro();
 			warden::computed_transaction assertion;
 			if (!assertion.load(message))
 				return optional::none;
@@ -2856,7 +2846,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		bool depository_adjustment::store_body(format::stream* stream) const
+		bool depository_adjustment::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_decimal(incoming_fee);
@@ -2866,7 +2856,7 @@ namespace tangent
 			stream->write_boolean(accepts_withdrawal_requests);
 			return true;
 		}
-		bool depository_adjustment::load_body(format::stream& stream)
+		bool depository_adjustment::load_body(format::ro_stream& stream)
 		{
 			if (!stream.read_decimal(stream.read_type(), &incoming_fee))
 				return false;
@@ -2995,7 +2985,7 @@ namespace tangent
 			dispatcher->emit_transaction(transaction);
 			return expects_promise_rt<void>(expectation::met);
 		}
-		bool depository_regrouping::store_body(format::stream* stream) const
+		bool depository_regrouping::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer((uint16_t)participants.size());
@@ -3007,7 +2997,7 @@ namespace tangent
 			}
 			return true;
 		}
-		bool depository_regrouping::load_body(format::stream& stream)
+		bool depository_regrouping::load_body(format::ro_stream& stream)
 		{
 			uint16_t participants_size;
 			if (!stream.read_integer(stream.read_type(), &participants_size))
@@ -3142,14 +3132,14 @@ namespace tangent
 			dispatcher->emit_transaction(transaction.reset());
 			return expects_promise_rt<void>(expectation::met);
 		}
-		bool depository_regrouping_preparation::store_body(format::stream* stream) const
+		bool depository_regrouping_preparation::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer(depository_regrouping_hash);
 			stream->write_string(algorithm::pubkey_t(cipher_public_key).optimized_view());
 			return true;
 		}
-		bool depository_regrouping_preparation::load_body(format::stream& stream)
+		bool depository_regrouping_preparation::load_body(format::ro_stream& stream)
 		{
 			if (!stream.read_integer(stream.read_type(), &depository_regrouping_hash))
 				return false;
@@ -3290,7 +3280,7 @@ namespace tangent
 		{
 			VI_ASSERT(new_manager_cipher_public_key != nullptr, "new manager cipher public key should be set");
 			VI_ASSERT(old_manager_secret_key != nullptr, "old manager secret key should be set");
-			format::stream entropy;
+			format::wo_stream entropy;
 			entropy.write_integer(depository_regrouping_preparation_hash);
 			entropy.write_integer(algorithm::hashing::hash256i(algorithm::seckey_t(old_manager_secret_key).view()));
 
@@ -3303,7 +3293,7 @@ namespace tangent
 			encrypted_shares[account_hash] = std::move(*encrypted_share);
 			return expectation::met;
 		}
-		bool depository_regrouping_commitment::store_body(format::stream* stream) const
+		bool depository_regrouping_commitment::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer(depository_regrouping_preparation_hash);
@@ -3315,7 +3305,7 @@ namespace tangent
 			}
 			return true;
 		}
-		bool depository_regrouping_commitment::load_body(format::stream& stream)
+		bool depository_regrouping_commitment::load_body(format::ro_stream& stream)
 		{
 			if (!stream.read_integer(stream.read_type(), &depository_regrouping_preparation_hash))
 				return false;
@@ -3434,6 +3424,10 @@ namespace tangent
 				if (!status)
 					return status.error();
 
+				status = context->apply_validator_participation(account.asset, new_manager.data, decimal::zero(), 1);
+				if (!status)
+					return status.error();
+
 				target->group.erase(old_manager);
 				target->group.insert(new_manager);
 				target = context->apply_depository_account(account.asset, account.manager, account.owner, target->public_key, std::move(target->group));
@@ -3443,14 +3437,14 @@ namespace tangent
 
 			return expectation::met;
 		}
-		bool depository_regrouping_finalization::store_body(format::stream* stream) const
+		bool depository_regrouping_finalization::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer(depository_regrouping_commitment_hash);
 			stream->write_boolean(successful);
 			return true;
 		}
-		bool depository_regrouping_finalization::load_body(format::stream& stream)
+		bool depository_regrouping_finalization::load_body(format::ro_stream& stream)
 		{
 			if (!stream.read_integer(stream.read_type(), &depository_regrouping_commitment_hash))
 				return false;
@@ -3485,7 +3479,7 @@ namespace tangent
 			return "depository_regrouping_finalization";
 		}
 
-		ledger::transaction* resolver::from_stream(format::stream& stream)
+		ledger::transaction* resolver::from_stream(format::ro_stream& stream)
 		{
 			uint32_t type; size_t seek = stream.seek;
 			if (!stream.read_integer(stream.read_type(), &type))
@@ -3577,7 +3571,7 @@ namespace tangent
 			if (!from)
 				return expects_promise_rt<warden::prepared_transaction>(remote_exception(std::move(from.error().message())));
 
-			auto message = format::stream();
+			auto message = format::wo_stream();
 			if (!from->store_payload(&message))
 				return expects_promise_rt<warden::prepared_transaction>(remote_exception("serialization error"));
 

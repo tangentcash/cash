@@ -149,8 +149,8 @@ namespace tangent
 			server_response chainstate_get_block_gas_price_by_number(http::connection* base, format::variables&& args);
 			server_response chainstate_get_block_asset_price_by_hash(http::connection* base, format::variables&& args);
 			server_response chainstate_get_block_asset_price_by_number(http::connection* base, format::variables&& args);
-			server_response chainstate_get_uniform_by_index(http::connection* base, format::variables&& args);
-			server_response chainstate_get_multiform_by_composition(http::connection* base, format::variables&& args);
+			server_response chainstate_get_uniform(http::connection* base, format::variables&& args);
+			server_response chainstate_get_multiform(http::connection* base, format::variables&& args);
 			server_response chainstate_get_multiform_by_column(http::connection* base, format::variables&& args);
 			server_response chainstate_get_multiforms_by_column(http::connection* base, format::variables&& args);
 			server_response chainstate_get_multiform_by_row(http::connection* base, format::variables&& args);

@@ -210,7 +210,7 @@ namespace tangent
                 uint64_t mempool_transaction_limit = 10000000;
                 uint64_t checkpoint_size = 64;
                 uint64_t location_cache_size = 500000;
-                uint64_t script_cache_size = 8192;
+                uint64_t svm_cache_size = 8192;
                 uint64_t blob_cache_size = 134217728;
                 uint64_t index_page_size = 65536;
                 int64_t index_cache_size = -2000;
@@ -279,7 +279,6 @@ namespace tangent
             double consensus_difficulty_max_decrease = 0.75;
             double consensus_recovery_bump = 36.0;
             double genesis_slot_time_bump = 0.2;
-            double weight_multiplier = 10000.0;
         } policy;
 
     private:
@@ -297,7 +296,7 @@ namespace tangent
         timepoint time;
 
     public:
-        protocol(int argc = 0, char** argv = nullptr);
+        protocol(const inline_args& environment);
         virtual ~protocol();
         bool is(network_type type) const;
         logger& state_log();

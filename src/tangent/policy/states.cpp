@@ -1,6 +1,6 @@
 #include "states.h"
 #include "../kernel/block.h"
-#include "../kernel/script.h"
+#include "../kernel/svm.h"
 #include "../validator/service/nss.h"
 
 namespace tangent
@@ -31,14 +31,14 @@ namespace tangent
 
 			return expectation::met;
 		}
-		bool account_nonce::store_index(format::stream* stream) const
+		bool account_nonce::store_index(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			algorithm::pubkeyhash null = { 0 };
 			stream->write_string(std::string_view((char*)owner, memcmp(owner, null, sizeof(null)) == 0 ? 0 : sizeof(owner)));
 			return true;
 		}
-		bool account_nonce::load_index(format::stream& stream)
+		bool account_nonce::load_index(format::ro_stream& stream)
 		{
 			string owner_assembly;
 			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner, sizeof(owner)))
@@ -46,13 +46,13 @@ namespace tangent
 
 			return true;
 		}
-		bool account_nonce::store_data(format::stream* stream) const
+		bool account_nonce::store_data(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer(nonce);
 			return true;
 		}
-		bool account_nonce::load_data(format::stream& stream)
+		bool account_nonce::load_data(format::ro_stream& stream)
 		{
 			if (!stream.read_integer(stream.read_type(), &nonce))
 				return false;
@@ -90,7 +90,7 @@ namespace tangent
 		}
 		string account_nonce::as_instance_index(const algorithm::pubkeyhash owner)
 		{
-			format::stream message;
+			format::wo_stream message;
 			account_nonce(owner, nullptr).store_index(&message);
 			return message.data;
 		}
@@ -112,14 +112,14 @@ namespace tangent
 
 			return expectation::met;
 		}
-		bool account_program::store_index(format::stream* stream) const
+		bool account_program::store_index(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			algorithm::pubkeyhash null = { 0 };
 			stream->write_string(std::string_view((char*)owner, memcmp(owner, null, sizeof(null)) == 0 ? 0 : sizeof(owner)));
 			return true;
 		}
-		bool account_program::load_index(format::stream& stream)
+		bool account_program::load_index(format::ro_stream& stream)
 		{
 			string owner_assembly;
 			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner, sizeof(owner)))
@@ -127,13 +127,13 @@ namespace tangent
 
 			return true;
 		}
-		bool account_program::store_data(format::stream* stream) const
+		bool account_program::store_data(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_string(hashcode);
 			return true;
 		}
-		bool account_program::load_data(format::stream& stream)
+		bool account_program::load_data(format::ro_stream& stream)
 		{
 			if (!stream.read_string(stream.read_type(), &hashcode))
 				return false;
@@ -171,7 +171,7 @@ namespace tangent
 		}
 		string account_program::as_instance_index(const algorithm::pubkeyhash owner)
 		{
-			format::stream message;
+			format::wo_stream message;
 			account_program(owner, nullptr).store_index(&message);
 			return message.data;
 		}
@@ -199,7 +199,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		bool account_uniform::store_index(format::stream* stream) const
+		bool account_uniform::store_index(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			algorithm::pubkeyhash null = { 0 };
@@ -207,7 +207,7 @@ namespace tangent
 			stream->write_string(index);
 			return true;
 		}
-		bool account_uniform::load_index(format::stream& stream)
+		bool account_uniform::load_index(format::ro_stream& stream)
 		{
 			string owner_assembly;
 			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner, sizeof(owner)))
@@ -218,13 +218,13 @@ namespace tangent
 
 			return true;
 		}
-		bool account_uniform::store_data(format::stream* stream) const
+		bool account_uniform::store_data(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_string(data);
 			return true;
 		}
-		bool account_uniform::load_data(format::stream& stream)
+		bool account_uniform::load_data(format::ro_stream& stream)
 		{
 			if (!stream.read_string(stream.read_type(), &data))
 				return false;
@@ -263,17 +263,17 @@ namespace tangent
 		}
 		string account_uniform::as_instance_index(const algorithm::pubkeyhash owner, const std::string_view& index)
 		{
-			format::stream message;
+			format::wo_stream message;
 			account_uniform(owner, index, nullptr).store_index(&message);
 			return message.data;
 		}
 
-		account_multiform::account_multiform(const algorithm::pubkeyhash new_owner, const std::string_view& new_column, const std::string_view& new_row, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::multiform(new_block_number, new_block_nonce), column(new_column), row(new_row)
+		account_multiform::account_multiform(const algorithm::pubkeyhash new_owner, const std::string_view& new_column, const std::string_view& new_row, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::multiform(new_block_number, new_block_nonce), column(new_column), row(new_row), filter(0)
 		{
 			if (new_owner)
 				memcpy(owner, new_owner, sizeof(owner));
 		}
-		account_multiform::account_multiform(const algorithm::pubkeyhash new_owner, const std::string_view& new_column, const std::string_view& new_row, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header), column(new_column), row(new_row)
+		account_multiform::account_multiform(const algorithm::pubkeyhash new_owner, const std::string_view& new_column, const std::string_view& new_row, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header), column(new_column), row(new_row), filter(0)
 		{
 			if (new_owner)
 				memcpy(owner, new_owner, sizeof(owner));
@@ -294,7 +294,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		bool account_multiform::store_column(format::stream* stream) const
+		bool account_multiform::store_column(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			algorithm::pubkeyhash null = { 0 };
@@ -302,7 +302,7 @@ namespace tangent
 			stream->write_string(column);
 			return true;
 		}
-		bool account_multiform::load_column(format::stream& stream)
+		bool account_multiform::load_column(format::ro_stream& stream)
 		{
 			string owner_assembly;
 			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner, sizeof(owner)))
@@ -313,27 +313,37 @@ namespace tangent
 
 			return true;
 		}
-		bool account_multiform::store_row(format::stream* stream) const
+		bool account_multiform::store_row(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
+			algorithm::pubkeyhash null = { 0 };
+			stream->write_string(std::string_view((char*)owner, memcmp(owner, null, sizeof(null)) == 0 ? 0 : sizeof(owner)));
 			stream->write_string(row);
 			return true;
 		}
-		bool account_multiform::load_row(format::stream& stream)
+		bool account_multiform::load_row(format::ro_stream& stream)
 		{
+			string owner_assembly;
+			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner, sizeof(owner)))
+				return false;
+
 			if (!stream.read_string(stream.read_type(), &row))
 				return false;
 
 			return true;
 		}
-		bool account_multiform::store_data(format::stream* stream) const
+		bool account_multiform::store_data(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_integer(filter);
 			stream->write_string(data);
 			return true;
 		}
-		bool account_multiform::load_data(format::stream& stream)
+		bool account_multiform::load_data(format::ro_stream& stream)
 		{
+			if (!stream.read_integer(stream.read_type(), &filter))
+				return false;
+
 			if (!stream.read_string(stream.read_type(), &data))
 				return false;
 
@@ -361,9 +371,9 @@ namespace tangent
 		{
 			return as_instance_typename();
 		}
-		int64_t account_multiform::as_factor() const
+		uint256_t account_multiform::as_rank() const
 		{
-			return 0;
+			return filter;
 		}
 		uint32_t account_multiform::as_instance_type()
 		{
@@ -376,14 +386,14 @@ namespace tangent
 		}
 		string account_multiform::as_instance_column(const algorithm::pubkeyhash owner, const std::string_view& column)
 		{
-			format::stream message;
+			format::wo_stream message;
 			account_multiform(owner, column, std::string_view(), nullptr).store_column(&message);
 			return message.data;
 		}
-		string account_multiform::as_instance_row(const std::string_view& row)
+		string account_multiform::as_instance_row(const algorithm::pubkeyhash owner, const std::string_view& row)
 		{
-			format::stream message;
-			account_multiform(nullptr, std::string_view(), row, nullptr).store_row(&message);
+			format::wo_stream message;
+			account_multiform(owner, std::string_view(), row, nullptr).store_row(&message);
 			return message.data;
 		}
 
@@ -422,14 +432,14 @@ namespace tangent
 
 			return expectation::met;
 		}
-		bool account_delegation::store_index(format::stream* stream) const
+		bool account_delegation::store_index(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			algorithm::pubkeyhash null = { 0 };
 			stream->write_string(std::string_view((char*)owner, memcmp(owner, null, sizeof(null)) == 0 ? 0 : sizeof(owner)));
 			return true;
 		}
-		bool account_delegation::load_index(format::stream& stream)
+		bool account_delegation::load_index(format::ro_stream& stream)
 		{
 			string owner_assembly;
 			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner, sizeof(owner)))
@@ -437,13 +447,13 @@ namespace tangent
 
 			return true;
 		}
-		bool account_delegation::store_data(format::stream* stream) const
+		bool account_delegation::store_data(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer(delegations);
 			return true;
 		}
-		bool account_delegation::load_data(format::stream& stream)
+		bool account_delegation::load_data(format::ro_stream& stream)
 		{
 			if (!stream.read_integer(stream.read_type(), &delegations))
 				return false;
@@ -490,7 +500,7 @@ namespace tangent
 		}
 		string account_delegation::as_instance_index(const algorithm::pubkeyhash owner)
 		{
-			format::stream message;
+			format::wo_stream message;
 			account_delegation(owner, nullptr).store_index(&message);
 			return message.data;
 		}
@@ -530,14 +540,14 @@ namespace tangent
 
 			return expectation::met;
 		}
-		bool account_balance::store_column(format::stream* stream) const
+		bool account_balance::store_column(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			algorithm::pubkeyhash null = { 0 };
 			stream->write_string(std::string_view((char*)owner, memcmp(owner, null, sizeof(null)) == 0 ? 0 : sizeof(owner)));
 			return true;
 		}
-		bool account_balance::load_column(format::stream& stream)
+		bool account_balance::load_column(format::ro_stream& stream)
 		{
 			string owner_assembly;
 			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner, sizeof(owner)))
@@ -545,27 +555,27 @@ namespace tangent
 
 			return true;
 		}
-		bool account_balance::store_row(format::stream* stream) const
+		bool account_balance::store_row(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer(asset);
 			return true;
 		}
-		bool account_balance::load_row(format::stream& stream)
+		bool account_balance::load_row(format::ro_stream& stream)
 		{
 			if (!stream.read_integer(stream.read_type(), &asset))
 				return false;
 
 			return true;
 		}
-		bool account_balance::store_data(format::stream* stream) const
+		bool account_balance::store_data(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_decimal(supply);
 			stream->write_decimal(reserve);
 			return true;
 		}
-		bool account_balance::load_data(format::stream& stream)
+		bool account_balance::load_data(format::ro_stream& stream)
 		{
 			if (!stream.read_decimal(stream.read_type(), &supply))
 				return false;
@@ -609,11 +619,11 @@ namespace tangent
 		{
 			return as_instance_typename();
 		}
-		int64_t account_balance::as_factor() const
+		uint256_t account_balance::as_rank() const
 		{
-			auto balance = get_balance();
-			balance *= protocol::now().policy.weight_multiplier;
-			return balance.to_uint64();
+			auto value = get_balance();
+			value *= (uint64_t)std::pow<uint64_t>(10, protocol::now().message.precision);
+			return uint256_t(value.truncate(0).to_string(), 10);
 		}
 		uint32_t account_balance::as_instance_type()
 		{
@@ -626,13 +636,13 @@ namespace tangent
 		}
 		string account_balance::as_instance_column(const algorithm::pubkeyhash owner)
 		{
-			format::stream message;
+			format::wo_stream message;
 			account_balance(owner, 0, nullptr).store_column(&message);
 			return message.data;
 		}
 		string account_balance::as_instance_row(const algorithm::asset_id& asset)
 		{
-			format::stream message;
+			format::wo_stream message;
 			account_balance(nullptr, asset, nullptr).store_row(&message);
 			return message.data;
 		}
@@ -673,14 +683,14 @@ namespace tangent
 
 			return expectation::met;
 		}
-		bool validator_production::store_column(format::stream* stream) const
+		bool validator_production::store_column(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			algorithm::pubkeyhash null = { 0 };
 			stream->write_string(std::string_view((char*)owner, memcmp(owner, null, sizeof(null)) == 0 ? 0 : sizeof(owner)));
 			return true;
 		}
-		bool validator_production::load_column(format::stream& stream)
+		bool validator_production::load_column(format::ro_stream& stream)
 		{
 			string owner_assembly;
 			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner, sizeof(owner)))
@@ -688,15 +698,15 @@ namespace tangent
 
 			return true;
 		}
-		bool validator_production::store_row(format::stream* stream) const
+		bool validator_production::store_row(format::wo_stream* stream) const
 		{
 			return true;
 		}
-		bool validator_production::load_row(format::stream& stream)
+		bool validator_production::load_row(format::ro_stream& stream)
 		{
 			return true;
 		}
-		bool validator_production::store_data(format::stream* stream) const
+		bool validator_production::store_data(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_boolean(active);
@@ -709,7 +719,7 @@ namespace tangent
 			}
 			return true;
 		}
-		bool validator_production::load_data(format::stream& stream)
+		bool validator_production::load_data(format::ro_stream& stream)
 		{
 			if (!stream.read_boolean(stream.read_type(), &active))
 				return false;
@@ -764,13 +774,12 @@ namespace tangent
 		{
 			return as_instance_typename();
 		}
-		int64_t validator_production::as_factor() const
+		uint256_t validator_production::as_rank() const
 		{
 			if (!active)
-				return -1;
+				return 0;
 
-			auto value = gas / 100;
-			return value > std::numeric_limits<int64_t>::max() ? std::numeric_limits<int64_t>::max() : (int64_t)(uint64_t)value;
+			return gas + 1;
 		}
 		uint32_t validator_production::as_instance_type()
 		{
@@ -783,13 +792,13 @@ namespace tangent
 		}
 		string validator_production::as_instance_column(const algorithm::pubkeyhash owner)
 		{
-			format::stream message;
+			format::wo_stream message;
 			validator_production(owner, nullptr).store_column(&message);
 			return message.data;
 		}
 		string validator_production::as_instance_row()
 		{
-			format::stream message;
+			format::wo_stream message;
 			validator_production(nullptr, nullptr).store_row(&message);
 			return message.data;
 		}
@@ -823,14 +832,14 @@ namespace tangent
 
 			return expectation::met;
 		}
-		bool validator_participation::store_column(format::stream* stream) const
+		bool validator_participation::store_column(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			algorithm::pubkeyhash null = { 0 };
 			stream->write_string(std::string_view((char*)owner, memcmp(owner, null, sizeof(null)) == 0 ? 0 : sizeof(owner)));
 			return true;
 		}
-		bool validator_participation::load_column(format::stream& stream)
+		bool validator_participation::load_column(format::ro_stream& stream)
 		{
 			string owner_assembly;
 			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner, sizeof(owner)))
@@ -838,27 +847,27 @@ namespace tangent
 
 			return true;
 		}
-		bool validator_participation::store_row(format::stream* stream) const
+		bool validator_participation::store_row(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer(asset);
 			return true;
 		}
-		bool validator_participation::load_row(format::stream& stream)
+		bool validator_participation::load_row(format::ro_stream& stream)
 		{
 			if (!stream.read_integer(stream.read_type(), &asset))
 				return false;
 
 			return true;
 		}
-		bool validator_participation::store_data(format::stream* stream) const
+		bool validator_participation::store_data(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer(participations);
 			stream->write_decimal(stake);
 			return true;
 		}
-		bool validator_participation::load_data(format::stream& stream)
+		bool validator_participation::load_data(format::ro_stream& stream)
 		{
 			if (!stream.read_integer(stream.read_type(), &participations))
 				return false;
@@ -895,14 +904,14 @@ namespace tangent
 		{
 			return as_instance_typename();
 		}
-		int64_t validator_participation::as_factor() const
+		uint256_t validator_participation::as_rank() const
 		{
 			if (!is_active())
-				return -1;
+				return 0;
 
 			auto value = stake;
-			value *= protocol::now().policy.weight_multiplier;
-			return value.to_uint64();
+			value *= (uint64_t)std::pow<uint64_t>(10, protocol::now().message.precision);
+			return uint256_t(value.truncate(0).to_string(), 10) + 1;
 		}
 		uint32_t validator_participation::as_instance_type()
 		{
@@ -915,13 +924,13 @@ namespace tangent
 		}
 		string validator_participation::as_instance_column(const algorithm::pubkeyhash owner)
 		{
-			format::stream message;
+			format::wo_stream message;
 			validator_participation(owner, 0, nullptr).store_column(&message);
 			return message.data;
 		}
 		string validator_participation::as_instance_row(const algorithm::asset_id& asset)
 		{
-			format::stream message;
+			format::wo_stream message;
 			validator_participation(nullptr, asset, nullptr).store_row(&message);
 			return message.data;
 		}
@@ -952,14 +961,14 @@ namespace tangent
 
 			return expectation::met;
 		}
-		bool validator_attestation::store_column(format::stream* stream) const
+		bool validator_attestation::store_column(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			algorithm::pubkeyhash null = { 0 };
 			stream->write_string(std::string_view((char*)owner, memcmp(owner, null, sizeof(null)) == 0 ? 0 : sizeof(owner)));
 			return true;
 		}
-		bool validator_attestation::load_column(format::stream& stream)
+		bool validator_attestation::load_column(format::ro_stream& stream)
 		{
 			string owner_assembly;
 			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner, sizeof(owner)))
@@ -967,26 +976,26 @@ namespace tangent
 
 			return true;
 		}
-		bool validator_attestation::store_row(format::stream* stream) const
+		bool validator_attestation::store_row(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer(asset);
 			return true;
 		}
-		bool validator_attestation::load_row(format::stream& stream)
+		bool validator_attestation::load_row(format::ro_stream& stream)
 		{
 			if (!stream.read_integer(stream.read_type(), &asset))
 				return false;
 
 			return true;
 		}
-		bool validator_attestation::store_data(format::stream* stream) const
+		bool validator_attestation::store_data(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_decimal(stake);
 			return true;
 		}
-		bool validator_attestation::load_data(format::stream& stream)
+		bool validator_attestation::load_data(format::ro_stream& stream)
 		{
 			if (!stream.read_decimal(stream.read_type(), &stake))
 				return false;
@@ -1019,14 +1028,14 @@ namespace tangent
 		{
 			return as_instance_typename();
 		}
-		int64_t validator_attestation::as_factor() const
+		uint256_t validator_attestation::as_rank() const
 		{
 			if (!is_active())
-				return -1;
+				return 0;
 
 			auto value = stake;
-			value *= protocol::now().policy.weight_multiplier;
-			return value.to_uint64();
+			value *= (uint64_t)std::pow<uint64_t>(10, protocol::now().message.precision);
+			return uint256_t(value.truncate(0).to_string(), 10) + 1;
 		}
 		uint32_t validator_attestation::as_instance_type()
 		{
@@ -1039,13 +1048,13 @@ namespace tangent
 		}
 		string validator_attestation::as_instance_column(const algorithm::pubkeyhash owner)
 		{
-			format::stream message;
+			format::wo_stream message;
 			validator_attestation(owner, 0, nullptr).store_column(&message);
 			return message.data;
 		}
 		string validator_attestation::as_instance_row(const algorithm::asset_id& asset)
 		{
-			format::stream message;
+			format::wo_stream message;
 			validator_attestation(nullptr, asset, nullptr).store_row(&message);
 			return message.data;
 		}
@@ -1089,14 +1098,14 @@ namespace tangent
 
 			return expectation::met;
 		}
-		bool depository_reward::store_column(format::stream* stream) const
+		bool depository_reward::store_column(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			algorithm::pubkeyhash null = { 0 };
 			stream->write_string(std::string_view((char*)owner, memcmp(owner, null, sizeof(null)) == 0 ? 0 : sizeof(owner)));
 			return true;
 		}
-		bool depository_reward::load_column(format::stream& stream)
+		bool depository_reward::load_column(format::ro_stream& stream)
 		{
 			string owner_assembly;
 			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner, sizeof(owner)))
@@ -1104,27 +1113,27 @@ namespace tangent
 
 			return true;
 		}
-		bool depository_reward::store_row(format::stream* stream) const
+		bool depository_reward::store_row(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer(asset);
 			return true;
 		}
-		bool depository_reward::load_row(format::stream& stream)
+		bool depository_reward::load_row(format::ro_stream& stream)
 		{
 			if (!stream.read_integer(stream.read_type(), &asset))
 				return false;
 
 			return true;
 		}
-		bool depository_reward::store_data(format::stream* stream) const
+		bool depository_reward::store_data(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_decimal(incoming_fee);
 			stream->write_decimal(outgoing_fee);
 			return true;
 		}
-		bool depository_reward::load_data(format::stream& stream)
+		bool depository_reward::load_data(format::ro_stream& stream)
 		{
 			if (!stream.read_decimal(stream.read_type(), &incoming_fee))
 				return false;
@@ -1156,11 +1165,11 @@ namespace tangent
 		{
 			return as_instance_typename();
 		}
-		int64_t depository_reward::as_factor() const
+		uint256_t depository_reward::as_rank() const
 		{
-			decimal value = incoming_fee + outgoing_fee;
-			value *= protocol::now().policy.weight_multiplier;
-			return std::numeric_limits<int64_t>::max() - value.to_int64();
+			auto value = incoming_fee + outgoing_fee;
+			value *= (uint64_t)std::pow<uint64_t>(10, protocol::now().message.precision);
+			return uint256_t(value.truncate(0).to_string(), 10);
 		}
 		uint32_t depository_reward::as_instance_type()
 		{
@@ -1173,13 +1182,13 @@ namespace tangent
 		}
 		string depository_reward::as_instance_column(const algorithm::pubkeyhash owner)
 		{
-			format::stream message;
+			format::wo_stream message;
 			depository_reward(owner, 0, nullptr).store_column(&message);
 			return message.data;
 		}
 		string depository_reward::as_instance_row(const algorithm::asset_id& asset)
 		{
-			format::stream message;
+			format::wo_stream message;
 			depository_reward(nullptr, asset, nullptr).store_row(&message);
 			return message.data;
 		}
@@ -1213,14 +1222,14 @@ namespace tangent
 
 			return expectation::met;
 		}
-		bool depository_balance::store_column(format::stream* stream) const
+		bool depository_balance::store_column(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			algorithm::pubkeyhash null = { 0 };
 			stream->write_string(std::string_view((char*)owner, memcmp(owner, null, sizeof(null)) == 0 ? 0 : sizeof(owner)));
 			return true;
 		}
-		bool depository_balance::load_column(format::stream& stream)
+		bool depository_balance::load_column(format::ro_stream& stream)
 		{
 			string owner_assembly;
 			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner, sizeof(owner)))
@@ -1228,26 +1237,26 @@ namespace tangent
 
 			return true;
 		}
-		bool depository_balance::store_row(format::stream* stream) const
+		bool depository_balance::store_row(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer(asset);
 			return true;
 		}
-		bool depository_balance::load_row(format::stream& stream)
+		bool depository_balance::load_row(format::ro_stream& stream)
 		{
 			if (!stream.read_integer(stream.read_type(), &asset))
 				return false;
 
 			return true;
 		}
-		bool depository_balance::store_data(format::stream* stream) const
+		bool depository_balance::store_data(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_decimal(supply);
 			return true;
 		}
-		bool depository_balance::load_data(format::stream& stream)
+		bool depository_balance::load_data(format::ro_stream& stream)
 		{
 			if (!stream.read_decimal(stream.read_type(), &supply))
 				return false;
@@ -1275,11 +1284,11 @@ namespace tangent
 		{
 			return as_instance_typename();
 		}
-		int64_t depository_balance::as_factor() const
+		uint256_t depository_balance::as_rank() const
 		{
 			auto value = supply;
-			value *= protocol::now().policy.weight_multiplier;
-			return value.to_uint64();
+			value *= (uint64_t)std::pow<uint64_t>(10, protocol::now().message.precision);
+			return uint256_t(value.truncate(0).to_string(), 10);
 		}
 		uint32_t depository_balance::as_instance_type()
 		{
@@ -1292,13 +1301,13 @@ namespace tangent
 		}
 		string depository_balance::as_instance_column(const algorithm::pubkeyhash owner)
 		{
-			format::stream message;
+			format::wo_stream message;
 			depository_balance(owner, 0, nullptr).store_column(&message);
 			return message.data;
 		}
 		string depository_balance::as_instance_row(const algorithm::asset_id& asset)
 		{
-			format::stream message;
+			format::wo_stream message;
 			depository_balance(nullptr, asset, nullptr).store_row(&message);
 			return message.data;
 		}
@@ -1340,14 +1349,14 @@ namespace tangent
 
 			return expectation::met;
 		}
-		bool depository_policy::store_column(format::stream* stream) const
+		bool depository_policy::store_column(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			algorithm::pubkeyhash null = { 0 };
 			stream->write_string(std::string_view((char*)owner, memcmp(owner, null, sizeof(null)) == 0 ? 0 : sizeof(owner)));
 			return true;
 		}
-		bool depository_policy::load_column(format::stream& stream)
+		bool depository_policy::load_column(format::ro_stream& stream)
 		{
 			string owner_assembly;
 			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner, sizeof(owner)))
@@ -1355,20 +1364,20 @@ namespace tangent
 
 			return true;
 		}
-		bool depository_policy::store_row(format::stream* stream) const
+		bool depository_policy::store_row(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer(asset);
 			return true;
 		}
-		bool depository_policy::load_row(format::stream& stream)
+		bool depository_policy::load_row(format::ro_stream& stream)
 		{
 			if (!stream.read_integer(stream.read_type(), &asset))
 				return false;
 
 			return true;
 		}
-		bool depository_policy::store_data(format::stream* stream) const
+		bool depository_policy::store_data(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer(queue_transaction_hash);
@@ -1378,7 +1387,7 @@ namespace tangent
 			stream->write_boolean(accepts_withdrawal_requests);
 			return true;
 		}
-		bool depository_policy::load_data(format::stream& stream)
+		bool depository_policy::load_data(format::ro_stream& stream)
 		{
 			if (!stream.read_integer(stream.read_type(), &queue_transaction_hash))
 				return false;
@@ -1422,9 +1431,9 @@ namespace tangent
 		{
 			return as_instance_typename();
 		}
-		int64_t depository_policy::as_factor() const
+		uint256_t depository_policy::as_rank() const
 		{
-			return std::max<uint64_t>(1, accounts_under_management) * (uint64_t)security_level * (uint64_t)accepts_account_requests * (uint64_t)accepts_withdrawal_requests;
+			return (uint64_t)std::pow<uint64_t>(std::max<uint64_t>(1, accounts_under_management), (uint64_t)security_level) * (uint64_t)accepts_account_requests * (uint64_t)accepts_withdrawal_requests;
 		}
 		uint32_t depository_policy::as_instance_type()
 		{
@@ -1437,13 +1446,13 @@ namespace tangent
 		}
 		string depository_policy::as_instance_column(const algorithm::pubkeyhash owner)
 		{
-			format::stream message;
+			format::wo_stream message;
 			depository_policy(owner, 0, nullptr).store_column(&message);
 			return message.data;
 		}
 		string depository_policy::as_instance_row(const algorithm::asset_id& asset)
 		{
-			format::stream message;
+			format::wo_stream message;
 			depository_policy(nullptr, asset, nullptr).store_row(&message);
 			return message.data;
 		}
@@ -1483,14 +1492,14 @@ namespace tangent
 
 			return expectation::met;
 		}
-		bool depository_account::store_column(format::stream* stream) const
+		bool depository_account::store_column(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			algorithm::pubkeyhash null = { 0 };
 			stream->write_string(std::string_view((char*)manager, memcmp(manager, null, sizeof(null)) == 0 ? 0 : sizeof(manager)));
 			return true;
 		}
-		bool depository_account::load_column(format::stream& stream)
+		bool depository_account::load_column(format::ro_stream& stream)
 		{
 			string manager_assembly;
 			if (!stream.read_string(stream.read_type(), &manager_assembly) || !algorithm::encoding::decode_uint_blob(manager_assembly, manager, sizeof(manager)))
@@ -1498,7 +1507,7 @@ namespace tangent
 
 			return true;
 		}
-		bool depository_account::store_row(format::stream* stream) const
+		bool depository_account::store_row(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			algorithm::pubkeyhash null = { 0 };
@@ -1506,7 +1515,7 @@ namespace tangent
 			stream->write_string(std::string_view((char*)owner, memcmp(owner, null, sizeof(null)) == 0 ? 0 : sizeof(owner)));
 			return true;
 		}
-		bool depository_account::load_row(format::stream& stream)
+		bool depository_account::load_row(format::ro_stream& stream)
 		{
 			if (!stream.read_integer(stream.read_type(), &asset))
 				return false;
@@ -1517,7 +1526,7 @@ namespace tangent
 
 			return true;
 		}
-		bool depository_account::store_data(format::stream* stream) const
+		bool depository_account::store_data(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			algorithm::composition::cpubkey null = { 0 };
@@ -1527,7 +1536,7 @@ namespace tangent
 				stream->write_string(item.optimized_view());
 			return true;
 		}
-		bool depository_account::load_data(format::stream& stream)
+		bool depository_account::load_data(format::ro_stream& stream)
 		{
 			string public_key_assembly;
 			if (!stream.read_string(stream.read_type(), &public_key_assembly) || !algorithm::encoding::decode_uint_blob(public_key_assembly, public_key, sizeof(public_key)))
@@ -1597,7 +1606,7 @@ namespace tangent
 		{
 			return as_instance_typename();
 		}
-		int64_t depository_account::as_factor() const
+		uint256_t depository_account::as_rank() const
 		{
 			return 0;
 		}
@@ -1612,13 +1621,13 @@ namespace tangent
 		}
 		string depository_account::as_instance_column(const algorithm::pubkeyhash manager)
 		{
-			format::stream message;
+			format::wo_stream message;
 			depository_account(manager, 0, nullptr, nullptr).store_column(&message);
 			return message.data;
 		}
 		string depository_account::as_instance_row(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner)
 		{
-			format::stream message;
+			format::wo_stream message;
 			depository_account(nullptr, asset, owner, nullptr).store_row(&message);
 			return message.data;
 		}
@@ -1646,26 +1655,26 @@ namespace tangent
 
 			return expectation::met;
 		}
-		bool witness_program::store_index(format::stream* stream) const
+		bool witness_program::store_index(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_string(hashcode);
 			return true;
 		}
-		bool witness_program::load_index(format::stream& stream)
+		bool witness_program::load_index(format::ro_stream& stream)
 		{
 			if (!stream.read_string(stream.read_type(), &hashcode))
 				return false;
 
 			return true;
 		}
-		bool witness_program::store_data(format::stream* stream) const
+		bool witness_program::store_data(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_string(storage);
 			return true;
 		}
-		bool witness_program::load_data(format::stream& stream)
+		bool witness_program::load_data(format::ro_stream& stream)
 		{
 			if (!stream.read_string(stream.read_type(), &storage))
 				return false;
@@ -1689,7 +1698,7 @@ namespace tangent
 		}
 		expects_lr<string> witness_program::as_code() const
 		{
-			return ledger::script_host::get()->unpack(storage);
+			return ledger::svm_host::get()->unpack(storage);
 		}
 		uint32_t witness_program::as_instance_type()
 		{
@@ -1702,13 +1711,13 @@ namespace tangent
 		}
 		string witness_program::as_instance_index(const std::string_view& hashcode)
 		{
-			format::stream message;
+			format::wo_stream message;
 			witness_program(hashcode, nullptr).store_index(&message);
 			return message.data;
 		}
 		string witness_program::as_instance_packed_hashcode(const std::string_view& storage)
 		{
-			auto code = ledger::script_host::get()->unpack(storage);
+			auto code = ledger::svm_host::get()->unpack(storage);
 			if (!code)
 				return string();
 
@@ -1716,7 +1725,7 @@ namespace tangent
 		}
 		string witness_program::as_instance_unpacked_hashcode(const std::string_view& storage)
 		{
-			return ledger::script_host::get()->hashcode(storage);
+			return ledger::svm_host::get()->hashcode(storage);
 		}
 
 		witness_event::witness_event(const uint256_t& new_parent_transaction_hash, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::uniform(new_block_number, new_block_nonce), parent_transaction_hash(new_parent_transaction_hash)
@@ -1738,26 +1747,26 @@ namespace tangent
 
 			return expectation::met;
 		}
-		bool witness_event::store_index(format::stream* stream) const
+		bool witness_event::store_index(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer(parent_transaction_hash);
 			return true;
 		}
-		bool witness_event::load_index(format::stream& stream)
+		bool witness_event::load_index(format::ro_stream& stream)
 		{
 			if (!stream.read_integer(stream.read_type(), &parent_transaction_hash))
 				return false;
 
 			return true;
 		}
-		bool witness_event::store_data(format::stream* stream) const
+		bool witness_event::store_data(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer(child_transaction_hash);
 			return true;
 		}
-		bool witness_event::load_data(format::stream& stream)
+		bool witness_event::load_data(format::ro_stream& stream)
 		{
 			if (!stream.read_integer(stream.read_type(), &child_transaction_hash))
 				return false;
@@ -1790,7 +1799,7 @@ namespace tangent
 		}
 		string witness_event::as_instance_index(const uint256_t& transaction_hash)
 		{
-			format::stream message;
+			format::wo_stream message;
 			witness_event(transaction_hash, nullptr).store_index(&message);
 			return message.data;
 		}
@@ -1825,14 +1834,14 @@ namespace tangent
 
 			return expectation::met;
 		}
-		bool witness_account::store_column(format::stream* stream) const
+		bool witness_account::store_column(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			algorithm::pubkeyhash null = { 0 };
 			stream->write_string(std::string_view((char*)owner, memcmp(owner, null, sizeof(null)) == 0 ? 0 : sizeof(owner)));
 			return true;
 		}
-		bool witness_account::load_column(format::stream& stream)
+		bool witness_account::load_column(format::ro_stream& stream)
 		{
 			string owner_assembly;
 			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner, sizeof(owner)))
@@ -1840,7 +1849,7 @@ namespace tangent
 
 			return true;
 		}
-		bool witness_account::store_row(format::stream* stream) const
+		bool witness_account::store_row(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			auto location = addresses.empty() ? string() : nss::server_node::get()->decode_address(asset, addresses.begin()->second).or_else(string(addresses.begin()->second));
@@ -1848,7 +1857,7 @@ namespace tangent
 			stream->write_string(location);
 			return true;
 		}
-		bool witness_account::load_row(format::stream& stream)
+		bool witness_account::load_row(format::ro_stream& stream)
 		{
 			if (!stream.read_integer(stream.read_type(), &asset))
 				return false;
@@ -1859,7 +1868,7 @@ namespace tangent
 
 			return true;
 		}
-		bool witness_account::store_data(format::stream* stream) const
+		bool witness_account::store_data(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			algorithm::pubkeyhash null = { 0 };
@@ -1873,7 +1882,7 @@ namespace tangent
 			}
 			return true;
 		}
-		bool witness_account::load_data(format::stream& stream)
+		bool witness_account::load_data(format::ro_stream& stream)
 		{
 			if (!stream.read_boolean(stream.read_type(), &active))
 				return false;
@@ -1970,9 +1979,9 @@ namespace tangent
 		{
 			return as_instance_typename();
 		}
-		int64_t witness_account::as_factor() const
+		uint256_t witness_account::as_rank() const
 		{
-			return (int64_t)get_type();
+			return (uint64_t)get_type();
 		}
 		uint32_t witness_account::as_instance_type()
 		{
@@ -1985,13 +1994,13 @@ namespace tangent
 		}
 		string witness_account::as_instance_column(const algorithm::pubkeyhash owner)
 		{
-			format::stream message;
+			format::wo_stream message;
 			witness_account(owner, 0, { }, nullptr).store_column(&message);
 			return message.data;
 		}
 		string witness_account::as_instance_row(const algorithm::asset_id& asset, const std::string_view& address)
 		{
-			format::stream message;
+			format::wo_stream message;
 			witness_account(nullptr, asset, { { (uint8_t)0, string(address) } }, nullptr).store_row(&message);
 			return message.data;
 		}
@@ -2013,14 +2022,14 @@ namespace tangent
 
 			return expectation::met;
 		}
-		bool witness_transaction::store_index(format::stream* stream) const
+		bool witness_transaction::store_index(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer(asset);
 			stream->write_string(transaction_id);
 			return true;
 		}
-		bool witness_transaction::load_index(format::stream& stream)
+		bool witness_transaction::load_index(format::ro_stream& stream)
 		{
 			if (!stream.read_integer(stream.read_type(), &asset))
 				return false;
@@ -2030,11 +2039,11 @@ namespace tangent
 
 			return true;
 		}
-		bool witness_transaction::store_data(format::stream* stream) const
+		bool witness_transaction::store_data(format::wo_stream* stream) const
 		{
 			return true;
 		}
-		bool witness_transaction::load_data(format::stream& stream)
+		bool witness_transaction::load_data(format::ro_stream& stream)
 		{
 			return true;
 		}
@@ -2068,12 +2077,12 @@ namespace tangent
 		}
 		string witness_transaction::as_instance_index(const algorithm::asset_id& asset, const std::string_view& transaction_id)
 		{
-			format::stream message;
+			format::wo_stream message;
 			witness_transaction(asset, transaction_id, nullptr).store_index(&message);
 			return message.data;
 		}
 
-		ledger::state* resolver::from_stream(format::stream& stream)
+		ledger::state* resolver::from_stream(format::ro_stream& stream)
 		{
 			uint32_t type; size_t seek = stream.seek;
 			if (!stream.read_integer(stream.read_type(), &type))
@@ -2179,8 +2188,12 @@ namespace tangent
 					if (!non_unique)
 						return false;
 
-					format::stream index_message;
-					if (!maybe_unique->store_index(&index_message) || !non_unique->load_index(index_message))
+					format::wo_stream index_message;
+					if (!maybe_unique->store_index(&index_message))
+						return false;
+
+					auto reader = index_message.ro();
+					if (!non_unique->load_index(reader))
 						return false;
 
 					bool truly_unique = maybe_unique->as_hash() != non_unique->as_hash(true);
@@ -2193,12 +2206,20 @@ namespace tangent
 					if (!non_unique)
 						return false;
 
-					format::stream column_message;
-					if (!maybe_unique->store_column(&column_message) || !non_unique->load_column(column_message))
+					format::wo_stream column_message;
+					if (!maybe_unique->store_column(&column_message))
 						return false;
 
-					format::stream row_message;
-					if (!maybe_unique->store_row(&row_message) || !non_unique->load_row(row_message))
+					auto reader = column_message.ro();
+					if (!non_unique->load_column(reader))
+						return false;
+
+					format::wo_stream row_message;
+					if (!maybe_unique->store_row(&row_message))
+						return false;
+
+					reader = row_message.ro();
+					if (!non_unique->load_row(reader))
 						return false;
 
 					bool truly_unique = maybe_unique->as_hash() != non_unique->as_hash(true);

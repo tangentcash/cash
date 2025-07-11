@@ -97,34 +97,35 @@ namespace tangent
 			string key_of_blocks(uint32_t type, uint64_t column_location, uint64_t row_location);
 		};
 
-		struct factor_filter
+		struct result_filter
 		{
 			position_condition condition = position_condition::equal;
-			int64_t value = 0;
+			uint256_t value = 0;
 			int8_t order = 0;
 
+			string as_value() const;
 			std::string_view as_condition() const;
 			std::string_view as_order() const;
-			static factor_filter from(const std::string_view& query, int64_t value, int8_t order);
-			static factor_filter greater(int64_t value, int8_t order) { return { position_condition::greater, value, order }; }
-			static factor_filter greater_equal(int64_t value, int8_t order) { return { position_condition::greater_equal, value, order }; }
-			static factor_filter equal(int64_t value, int8_t order) { return { position_condition::equal, value, order }; }
-			static factor_filter not_equal(int64_t value, int8_t order) { return { position_condition::not_equal, value, order }; }
-			static factor_filter less(int64_t value, int8_t order) { return { position_condition::less, value, order }; }
-			static factor_filter less_equal(int64_t value, int8_t order) { return { position_condition::less_equal, value, order }; }
+			static result_filter from(const std::string_view& query, const uint256_t& value, int8_t order);
+			static result_filter greater(const uint256_t& value, int8_t order) { return { position_condition::greater, value, order }; }
+			static result_filter greater_equal(const uint256_t& value, int8_t order) { return { position_condition::greater_equal, value, order }; }
+			static result_filter equal(const uint256_t& value, int8_t order) { return { position_condition::equal, value, order }; }
+			static result_filter not_equal(const uint256_t& value, int8_t order) { return { position_condition::not_equal, value, order }; }
+			static result_filter less(const uint256_t& value, int8_t order) { return { position_condition::less, value, order }; }
+			static result_filter less_equal(const uint256_t& value, int8_t order) { return { position_condition::less_equal, value, order }; }
 		};
 
-		struct factor_window
+		struct result_window
 		{
 			virtual uint8_t type() const = 0;
 		};
 
-		struct factor_range_window final : factor_window
+		struct result_range_window final : result_window
 		{
 			size_t offset;
 			size_t count;
 
-			factor_range_window(size_t new_offset, size_t new_count) : offset(new_offset), count(new_count)
+			result_range_window(size_t new_offset, size_t new_count) : offset(new_offset), count(new_count)
 			{
 			}
 			uint8_t type() const override
@@ -137,7 +138,7 @@ namespace tangent
 			}
 		};
 
-		struct factor_index_window final : factor_window
+		struct result_index_window final : result_window
 		{
 			vector<uint64_t> indices;
 
@@ -219,18 +220,18 @@ namespace tangent
 			expects_lr<uptr<ledger::transaction>> get_transaction_by_hash(const uint256_t& transaction_hash);
 			expects_lr<ledger::block_transaction> get_block_transaction_by_hash(const uint256_t& transaction_hash);
 			expects_lr<ledger::receipt> get_receipt_by_transaction_hash(const uint256_t& transaction_hash);
-			expects_lr<uptr<ledger::state>> get_uniform_by_index(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& index, uint64_t block_number);
-			expects_lr<uptr<ledger::state>> get_multiform_by_composition(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& column, const std::string_view& row, uint64_t block_number);
+			expects_lr<uptr<ledger::state>> get_uniform(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& index, uint64_t block_number);
+			expects_lr<uptr<ledger::state>> get_multiform(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& column, const std::string_view& row, uint64_t block_number);
 			expects_lr<uptr<ledger::state>> get_multiform_by_column(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& column, uint64_t block_number, size_t offset);
 			expects_lr<uptr<ledger::state>> get_multiform_by_row(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& row, uint64_t block_number, size_t offset);
 			expects_lr<vector<uptr<ledger::state>>> get_multiforms_by_column(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& column, uint64_t block_number, size_t offset, size_t count);
-			expects_lr<vector<uptr<ledger::state>>> get_multiforms_by_column_filter(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& column, const factor_filter& filter, uint64_t block_number, const factor_window& window);
+			expects_lr<vector<uptr<ledger::state>>> get_multiforms_by_column_filter(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& column, const result_filter& filter, uint64_t block_number, const result_window& window);
 			expects_lr<vector<uptr<ledger::state>>> get_multiforms_by_row(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& row, uint64_t block_number, size_t offset, size_t count);
-			expects_lr<vector<uptr<ledger::state>>> get_multiforms_by_row_filter(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& row, const factor_filter& filter, uint64_t block_number, const factor_window& window);
+			expects_lr<vector<uptr<ledger::state>>> get_multiforms_by_row_filter(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& row, const result_filter& filter, uint64_t block_number, const result_window& window);
 			expects_lr<size_t> get_multiforms_count_by_column(uint32_t type, const std::string_view& row, uint64_t block_number);
-			expects_lr<size_t> get_multiforms_count_by_column_filter(uint32_t type, const std::string_view& row, const factor_filter& filter, uint64_t block_number);
+			expects_lr<size_t> get_multiforms_count_by_column_filter(uint32_t type, const std::string_view& row, const result_filter& filter, uint64_t block_number);
 			expects_lr<size_t> get_multiforms_count_by_row(uint32_t type, const std::string_view& row, uint64_t block_number);
-			expects_lr<size_t> get_multiforms_count_by_row_filter(uint32_t type, const std::string_view& row, const factor_filter& filter, uint64_t block_number);
+			expects_lr<size_t> get_multiforms_count_by_row_filter(uint32_t type, const std::string_view& row, const result_filter& filter, uint64_t block_number);
 			void clear_indexer_cache();
 
 		private:

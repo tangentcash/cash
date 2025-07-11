@@ -21,8 +21,8 @@ namespace tangent
 			bool verify(const messages::authentic& message) const;
 			bool recovers(const messages::authentic& message) const;
 			bool sign(messages::authentic& message) const;
-			bool store_payload(format::stream* stream) const override;
-			bool load_payload(format::stream& stream) override;
+			bool store_payload(format::wo_stream* stream) const override;
+			bool load_payload(format::ro_stream& stream) override;
 			bool has_secret_key() const;
 			bool has_public_key() const;
 			bool has_public_key_hash() const;
@@ -79,8 +79,8 @@ namespace tangent
 
 			socket_address address;
 
-			bool store_payload(format::stream* stream) const override;
-			bool load_payload(format::stream& stream) override;
+			bool store_payload(format::wo_stream* stream) const override;
+			bool load_payload(format::ro_stream& stream) override;
 			bool is_valid() const;
 			uint64_t get_preference() const;
 			uptr<schema> as_schema() const override;

@@ -5,10 +5,12 @@
 
 using namespace tangent;
 
-int main(int argc, char* argv[])
+int svm(const inline_args& args)
 {
-	vitex::runtime scope;
-	protocol params = protocol(argc, argv);
+	/* TODO: svm program debugger and packer */
+}
+int server(const inline_args& args)
+{
 	nds::server_node discovery;
 	p2p::server_node consensus;
 	nss::server_node& synchronization = *nss::server_node::get();
@@ -20,4 +22,11 @@ int main(int argc, char* argv[])
 	control.bind(synchronization.get_entrypoint());
 	control.bind(interfaces.get_entrypoint());
 	return control.launch();
+}
+int main(int argc, char* argv[])
+{
+	vitex::runtime scope;
+	inline_args environment = os::process::parse_args(argc, argv, (size_t)args_format::key_value);
+	protocol params = protocol(environment);
+	return environment.has("svm") ? svm(environment) : server(environment);
 }

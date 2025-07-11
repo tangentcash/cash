@@ -1,6 +1,6 @@
 #include "tangent/kernel/block.h"
 #include "tangent/kernel/wallet.h"
-#include "tangent/kernel/script.h"
+#include "tangent/kernel/svm.h"
 #include "tangent/policy/transactions.h"
 #include "tangent/validator/storage/chainstate.h"
 #include "tangent/validator/storage/mempoolstate.h"
@@ -194,8 +194,8 @@ public:
 				token.decimals = 2;
 				token.supply = value;
 
-				kvm::set(uint8(0), token);
-				kvm::set_if(token.account, value, value > 0);
+				sv::set(uint8(0), token);
+				sv::set_if(token.account, value, value > 0);
 				return token;
 			}
 			token_transfer transfer(instrset::rwptr@, const address&in to, const uint256&in value)
@@ -206,8 +206,8 @@ public:
 				uint256 from_delta = input - value, to_delta = output + value;
 				require(from_delta <= input, from.to_string() + ": illegal operation - insufficient balance");
 				require(to_delta >= output, to.to_string() + ": illegal operation - balance overflow");
-				kvm::set_if(from, from_delta, from_delta > 0);
-				kvm::set_if(to, to_delta, to_delta > 0);
+				sv::set_if(from, from_delta, from_delta > 0);
+				sv::set_if(to, to_delta, to_delta > 0);
 
 				token_transfer event;
 				event.from = from;
@@ -227,8 +227,8 @@ public:
 				require(to_delta >= output, token.account.to_string() + ": illegal operation - balance overflow");
 
 				token.supply = supply_delta;
-				kvm::set(uint8(0), token);
-				kvm::set_if(token.account, to_delta, to_delta > 0);
+				sv::set(uint8(0), token);
+				sv::set_if(token.account, to_delta, to_delta > 0);
 				return to_delta;
 			}
 			uint256 burn(instrset::rwptr@, const uint256&in value)
@@ -243,29 +243,29 @@ public:
 				require(to_delta <= output, "account balance will underflow (" + output.to_string() + " < " + value.to_string() + ")");
 
 				token.supply = supply_delta;
-				kvm::set(uint8(0), token);
-				kvm::set_if(token.account, to_delta, to_delta > 0);
+				sv::set(uint8(0), token);
+				sv::set_if(token.account, to_delta, to_delta > 0);
 				return to_delta;
 			}
 			uint256 balance_of(instrset::rptr@, const address&in account)
 			{
 				uint256 output = 0;
-				kvm::load(account, output);
+				sv::at(account, output);
 				return output;
 			}
 			token_storage info(instrset::rptr@)
 			{
-				return kvm::get<token_storage>(uint8(0));
+				return sv::as<token_storage>(uint8(0));
 			}));		
 			ledger::wallet bridge_contract = ledger::wallet::from_seed(string("bridge") + string((char*)user1.secret_key, sizeof(user1.secret_key)));
 			std::string_view bridge_program = VI_STRINGIFY((
 			void construct(instrset::rwptr@, const address&in token_account)
 			{
-				kvm::set(uint8(0), token_account);
+				sv::set(uint8(0), token_account);
 			}
 			uint256 balance_of_test_token(instrset::rptr@)
 			{
-				address token_account = kvm::get<address>(uint8(0));
+				address token_account = sv::as<address>(uint8(0));
 				return token_account.call<uint256>("uint256 balance_of(instrset::rptr@, const address&in)", tx::from());
 			}));
 
@@ -348,33 +348,47 @@ public:
 			VI_PANIC(certification_user1->sign(user1.secret_key, user1_nonce++, decimal::zero()), "certification not signed");
 			transactions.push_back(certification_user1);
 		}
-		static void validator_enable_validator(vector<uptr<ledger::transaction>>& transactions, vector<account>& users, size_t user_id)
+		static void validator_enable_validator(vector<uptr<ledger::transaction>>& transactions, vector<account>& users, size_t user_id, bool block_production, bool tx_attestation, bool mpc_participation)
 		{
 			auto& [user1, user1_nonce] = users[user_id];
 			auto* certification_user1 = memory::init<transactions::certification>();
 			certification_user1->set_asset("BTC");
-			certification_user1->enable_block_production();
-			certification_user1->allocate_attestation_stake(algorithm::asset::id_of("ETH"), decimal::zero());
-			certification_user1->allocate_attestation_stake(algorithm::asset::id_of("XRP"), decimal::zero());
-			certification_user1->allocate_attestation_stake(algorithm::asset::id_of("BTC"), decimal::zero());
-			certification_user1->allocate_participation_stake(algorithm::asset::id_of("ETH"), decimal::zero());
-			certification_user1->allocate_participation_stake(algorithm::asset::id_of("XRP"), decimal::zero());
-			certification_user1->allocate_participation_stake(algorithm::asset::id_of("BTC"), decimal::zero());
+			if (block_production)
+				certification_user1->enable_block_production();
+			if (tx_attestation)
+			{
+				certification_user1->allocate_attestation_stake(algorithm::asset::id_of("ETH"), decimal::zero());
+				certification_user1->allocate_attestation_stake(algorithm::asset::id_of("XRP"), decimal::zero());
+				certification_user1->allocate_attestation_stake(algorithm::asset::id_of("BTC"), decimal::zero());
+			}
+			if (mpc_participation)
+			{
+				certification_user1->allocate_participation_stake(algorithm::asset::id_of("ETH"), decimal::zero());
+				certification_user1->allocate_participation_stake(algorithm::asset::id_of("XRP"), decimal::zero());
+				certification_user1->allocate_participation_stake(algorithm::asset::id_of("BTC"), decimal::zero());
+			}
 			VI_PANIC(certification_user1->sign(user1.secret_key, user1_nonce++, decimal::zero()), "certification not signed");
 			transactions.push_back(certification_user1);
 		}
-		static void validator_disable_validator(vector<uptr<ledger::transaction>>& transactions, vector<account>& users, size_t user_id)
+		static void validator_disable_validator(vector<uptr<ledger::transaction>>& transactions, vector<account>& users, size_t user_id, bool block_production, bool tx_attestation, bool mpc_participation)
 		{
 			auto& [user1, user1_nonce] = users[user_id];
 			auto* certification_user1 = memory::init<transactions::certification>();
 			certification_user1->set_asset("BTC");
-			certification_user1->disable_block_production();
-			certification_user1->disable_attestation(algorithm::asset::id_of("ETH"));
-			certification_user1->disable_attestation(algorithm::asset::id_of("XRP"));
-			certification_user1->disable_attestation(algorithm::asset::id_of("BTC"));
-			certification_user1->disable_participation(algorithm::asset::id_of("ETH"));
-			certification_user1->disable_participation(algorithm::asset::id_of("XRP"));
-			certification_user1->disable_participation(algorithm::asset::id_of("BTC"));
+			if (block_production)
+				certification_user1->disable_block_production();
+			if (tx_attestation)
+			{
+				certification_user1->disable_attestation(algorithm::asset::id_of("ETH"));
+				certification_user1->disable_attestation(algorithm::asset::id_of("XRP"));
+				certification_user1->disable_attestation(algorithm::asset::id_of("BTC"));
+			}
+			if (mpc_participation)
+			{
+				certification_user1->disable_participation(algorithm::asset::id_of("ETH"));
+				certification_user1->disable_participation(algorithm::asset::id_of("XRP"));
+				certification_user1->disable_participation(algorithm::asset::id_of("BTC"));
+			}
 			VI_PANIC(certification_user1->sign(user1.secret_key, user1_nonce++, decimal::zero()), "certification not signed");
 			transactions.push_back(certification_user1);
 		}
@@ -914,15 +928,16 @@ public:
 		VI_PANIC(tx.sign(users[0].wallet.secret_key, users[0].nonce++), "transfer not signed");
 
 		auto tx_blob = tx.as_message().data;
-		auto tx_body = format::stream(tx_blob);
+		auto tx_body = format::ro_stream(tx_blob);
 		auto tx_copy = uptr<ledger::transaction>(transactions::resolver::from_stream(tx_body));
 		auto tx_info = tx.as_schema();
 		algorithm::pubkeyhash recover_public_key_hash = { 0 };
 		tx_info->set("raw_data", var::string(format::util::encode_0xhex(tx_blob)));
 
 		auto stream = tx.as_message();
+		auto reader = stream.ro();
 		format::variables vars;
-		format::variables_util::deserialize_flat_from(stream, &vars);
+		format::variables_util::deserialize_flat_from(reader, &vars);
 		tx_info->set("var_data", format::variables_util::serialize(vars));
 		tx_info->set("asset_id", algorithm::asset::serialize(algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7")));
 		term->jwrite_line(*tx_info);
@@ -1443,21 +1458,22 @@ public:
 				account(ledger::wallet::from_seed("000002"), 0)
 			};
 			TEST_BLOCK(&generators::validator_registration_full, "0x455300fb979507333ab6948b6ad65f9864424f9fd7d485ca908d4e74675dc0b6", 1);
-			TEST_BLOCK(std::bind(&generators::validator_enable_validator, std::placeholders::_1, std::placeholders::_2, 2), "0x5859c9178dca229ce29899eb106bfbb140cddc2854a59337d8c9a285af2cd866", 2);
-			TEST_BLOCK(&generators::depository_registration_full, "0xdb92550c9b9e44aff1fe2a51cf4646933e345969d972a0c9c70dc21bd868830d", 3);
-			TEST_BLOCK(&generators::depository_account_registration_full, "0x0cecdbcc61df13d1e31b30417d32a7d0c170884be78fc8febc23e6ee411de345", 4);
-			TEST_BLOCK(&generators::depository_transaction_registration_full, "0xcbd22637a94da2acaabd5338fcb5143751ecc5660283da092153c8758a5b222f", 6);
-			TEST_BLOCK(&generators::account_transfer_stage_1, "0x5a026823416520bf8596ed0886976000e82d5a8ea8a1d287285be7a1d72d5b86", 7);
-			TEST_BLOCK(&generators::account_transfer_stage_2, "0x455043564667a3d7a234bbbd6c1c08711ed4b0c9cfa25dfd575ea7236f82de33", 8);
-			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), users[2].wallet.get_address(), 0.05), "0x5bcd3a13492010c76930adf30d36a83547e9e04d2747979f73e414d92e65df6c", 9);
-			TEST_BLOCK(&generators::account_transaction_rollup, "0x0b07dcea12550ff433deafda4579542df39e616294578874fd9d241f672e8621", 10);
-			TEST_BLOCK(&generators::account_upgrade, "0x1a2d8dda0a53cf7d95f8c0c6265680fe8e974e11e5e0596980159684506403d1", 11);
-			TEST_BLOCK(&generators::account_call, "0xb4ac9fd93337370b8e15cb37547a43392910e14c3ffeae8c3b269e697b4a7f24", 12);
-			TEST_BLOCK(&generators::depository_regrouping, "0x5e7a6bb9875a0e3b87821def4167c29203be304c0f3eb72e8105868a596e2230", 13);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_1, "0x44b369cd7a5353b7c22958304195e535ba982840d0d240617f5c585633a58516", 17);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0x02b05755b2770baf638c366d45694e4a18f38201f11d6bbab2eb14218ab6ecf2", 19);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0x6d715bdf5b2bffb4685e855f54ea4da6aee5643396049cbcb673405916877739", 21);
-			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2), "0xb670be7a913514ef1d3af83fb5fc55e36babaaff025418de6c7d6fa7288e006a", 23);
+			TEST_BLOCK(std::bind(&generators::validator_enable_validator, std::placeholders::_1, std::placeholders::_2, 2, true, true, false), "0xef355aabeb7f79d4b2bbe4fa903f4e5e110a869f0a1b34c31772bf55a7f41fe9", 2);
+			TEST_BLOCK(&generators::depository_registration_full, "0xa7b81ff61e86001f44a13c373633579c8ac90cf63424990717ef3c647a6f0319", 3);
+			TEST_BLOCK(&generators::depository_account_registration_full, "0x0f347a024372ab0c811affe5dd8fa090d740bc162303a809f6695633d5ae7fc1", 4);
+			TEST_BLOCK(&generators::depository_transaction_registration_full, "0xf682e7772282b4b799a4d0b850f3e7dc640fe537a62e26961f8ff7b7edc0a20e", 6);
+			TEST_BLOCK(&generators::account_transfer_stage_1, "0xf4167dcee18dec262f9e2d12725e3a4a94c44ea09b6b763471b6b19a404131a2", 7);
+			TEST_BLOCK(&generators::account_transfer_stage_2, "0x0b1a9a3514a1eca7a46d5fd270e180c1852595a11ebab703d2ec5947cafccba2", 8);
+			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), users[2].wallet.get_address(), 0.05), "0xc816b19bb661e31102d76073c55c58d4645a63bbb77422d9d3b970a1ca67d0b9", 9);
+			TEST_BLOCK(&generators::account_transaction_rollup, "0xd5aee4e173ab91670a0459a2b6e01e6bf8aca004784b2dc6faf83f89ec64f82c", 10);
+			TEST_BLOCK(&generators::account_upgrade, "0xeb48076d3ceb2f2011c24728f16d116b1eb6606ac07c108893579b4fba52c3cb", 11);
+			TEST_BLOCK(&generators::account_call, "0x56ec4fafec6c687ddd2b914e5736a79620fad78e3811ef9b3d206a807054c351", 12);
+			TEST_BLOCK(std::bind(&generators::validator_enable_validator, std::placeholders::_1, std::placeholders::_2, 2, true, true, true), "0x1b284b5b82d8c3deed88da2ebe8dfc2f40a12387b0810b8cdbb3e998a83cfc21", 13);
+			TEST_BLOCK(&generators::depository_regrouping, "0xc78d4a4160cb3c0345aeb314989e2d1bf8e44ff2a1fd9c0e72019b26ab157d10", 14);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_1, "0x49dae3476fd68e3948520c569f39d316aa519c71472a0262d723165bb26f8fad", 18);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0x8f9dcb68919b0ecafe1730cc9e5a7cb3b4293dbd2081578cfb34d479e7ddd962", 20);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0xaf718162221adcbecc9ac8e59fce5a368e27364eb19cee659238394263ed3088", 22);
+			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2, true, true, false), "0xc6af695c0e4fe71da9be46bb5f077d4288af1c1be989a41c86679b7fed26109e", 24);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else
@@ -1589,13 +1605,14 @@ public:
 	template <typename t, typename... args>
 	static void new_serialization_comparison(schema* data, args... arguments)
 	{
-		t instance = t(arguments...); format::stream message;
+		t instance = t(arguments...); format::wo_stream message;
 		VI_PANIC(instance.store(&message), "failed to store a message");
 
 		t instance_copy = t(arguments...);
-		VI_PANIC(instance_copy.load(message.rewind()), "failed to load a message");
+		auto reader = message.ro();
+		VI_PANIC(instance_copy.load(reader), "failed to load a message");
 
-		format::stream message_copy;
+		format::wo_stream message_copy;
 		VI_PANIC(instance_copy.store(&message_copy), "failed to store a message");
 		VI_PANIC(message_copy.data == message.data, "serialization inconsistency found");
 
@@ -1720,7 +1737,7 @@ public:
 		vitex::runtime scope;
 		std::string_view config = argv[1];
 		std::string_view number = config.substr(config.find('-') + 1);
-		protocol params = protocol(argc, argv);
+		protocol params = protocol(os::process::parse_args(argc, argv, (size_t)args_format::key_value));
 		uint32_t index = from_string<uint32_t>(number.substr(0, number.find_first_not_of("0123456789"))).or_else(1);
 
 		ledger::wallet wallet = ledger::wallet::from_seed(stringify::text("00000%i", index - 1));
@@ -1760,7 +1777,7 @@ public:
 	{
 		VI_PANIC(argc > 1, "config path argument is required");
 		vitex::runtime scope;
-		protocol params = protocol(argc, argv);
+		protocol params = protocol(os::process::parse_args(argc, argv, (size_t)args_format::key_value));
 		params.user.nss.server = true;
 
 		auto* term = console::get();
@@ -1826,7 +1843,7 @@ public:
 	{
 		VI_PANIC(argc > 1, "config path argument is required");
 		vitex::runtime scope;
-		protocol params = protocol(argc, argv);
+		protocol params = protocol(os::process::parse_args(argc, argv, (size_t)args_format::key_value));
 
 		auto* term = console::get();
 		term->show();
@@ -1880,7 +1897,7 @@ public:
 
 					type = states::account_multiform::as_instance_type();
 					column = states::account_multiform::as_instance_column(owner, codec::hex_decode(args[3]));
-					row = states::account_multiform::as_instance_row(codec::hex_decode(args[4]));
+					row = states::account_multiform::as_instance_row(owner, codec::hex_decode(args[4]));
 				}
 				else if (state == "delegation")
 				{
@@ -1897,7 +1914,7 @@ public:
 					row = states::account_balance::as_instance_row(algorithm::asset::id_of_handle(args[3]));
 				}
 
-				auto response = index.empty() ? chain.get_multiform_by_composition(type, nullptr, column, row, 0) : chain.get_uniform_by_index(type, nullptr, index, 0);
+				auto response = index.empty() ? chain.get_multiform(type, nullptr, column, row, 0) : chain.get_uniform(type, nullptr, index, 0);
 				if (!response || !*response)
 					goto not_found;
 
@@ -1944,7 +1961,7 @@ public:
 					row = states::validator_attestation::as_instance_row(algorithm::asset::id_of_handle(args[3]));
 				}
 
-				auto response = index.empty() ? chain.get_multiform_by_composition(type, nullptr, column, row, 0) : chain.get_uniform_by_index(type, nullptr, index, 0);
+				auto response = index.empty() ? chain.get_multiform(type, nullptr, column, row, 0) : chain.get_uniform(type, nullptr, index, 0);
 				if (!response || !*response)
 					goto not_found;
 
@@ -2007,7 +2024,7 @@ public:
 					row = states::depository_account::as_instance_row(algorithm::asset::id_of_handle(args[4]), subject);
 				}
 
-				auto response = index.empty() ? chain.get_multiform_by_composition(type, nullptr, column, row, 0) : chain.get_uniform_by_index(type, nullptr, index, 0);
+				auto response = index.empty() ? chain.get_multiform(type, nullptr, column, row, 0) : chain.get_uniform(type, nullptr, index, 0);
 				if (!response || !*response)
 					goto not_found;
 
@@ -2063,7 +2080,7 @@ public:
 					index = states::witness_transaction::as_instance_index(algorithm::asset::id_of_handle(args[2]), args[3]);
 				}
 
-				auto response = index.empty() ? chain.get_multiform_by_composition(type, nullptr, column, row, 0) : chain.get_uniform_by_index(type, nullptr, index, 0);
+				auto response = index.empty() ? chain.get_multiform(type, nullptr, column, row, 0) : chain.get_uniform(type, nullptr, index, 0);
 				if (!response || !*response)
 					goto not_found;
 
@@ -2390,7 +2407,7 @@ public:
 					goto not_valid;
 
 				format::variables data;
-				format::stream message = format::stream(args[1]);
+				format::ro_stream message = format::ro_stream(args[1]);
 				format::variables_util::deserialize_flat_from(message, &data);
 				term->write_line(format::variables_util::as_constant_json(data));
 				continue;
@@ -2421,7 +2438,7 @@ public:
 	{
 		VI_PANIC(argc > 1, "config path argument is required");
 		vitex::runtime scope;
-		protocol params = protocol(argc, argv);
+		protocol params = protocol(os::process::parse_args(argc, argv, (size_t)args_format::key_value));
 
 		auto* term = console::get();
 		term->show();
@@ -2660,7 +2677,7 @@ public:
 	{
 		VI_PANIC(argc > 1, "config path argument is required");
 		vitex::runtime scope;
-		protocol params = protocol(argc, argv);
+		protocol params = protocol(os::process::parse_args(argc, argv, (size_t)args_format::key_value));
 
 		auto* term = console::get();
 		term->show();

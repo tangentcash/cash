@@ -13,14 +13,14 @@ namespace tangent
 		}
 		static string address_to_message(const socket_address& address)
 		{
-			format::stream message;
+			format::wo_stream message;
 			message.write_string(address.get_ip_address().or_else("[bad_address]"));
 			message.write_integer(address.get_ip_port().or_else(0));
 			return message.data;
 		}
 		static option<socket_address> message_to_address(const std::string_view& data)
 		{
-			format::stream message(data);
+			format::ro_stream message(data);
 			string ip_address;
 			if (!message.read_string(message.read_type(), &ip_address))
 				return optional::none;
@@ -73,11 +73,11 @@ namespace tangent
 		}
 		expects_lr<void> mempoolstate::apply_validator(const ledger::validator& value, option<ledger::wallet>&& wallet)
 		{
-			format::stream edge_message;
-			if (!value.store(&edge_message))
+			format::wo_stream validator_message;
+			if (!value.store(&validator_message))
 				return expects_lr<void>(layer_exception("validator serialization error"));
 
-			format::stream wallet_message;
+			format::wo_stream wallet_message;
 			if (wallet && !wallet->store(&wallet_message))
 				return expects_lr<void>(layer_exception("wallet serialization error"));
 
@@ -126,7 +126,7 @@ namespace tangent
 			map.push_back(var::set::binary(address_to_message(value.address)));
 			map.push_back(var::set::integer(value.get_preference()));
 			map.push_back(var::set::integer(services));
-			map.push_back(var::set::binary(edge_message.data));
+			map.push_back(var::set::binary(validator_message.data));
 			map.push_back(wallet ? var::set::binary(wallet_message.data) : var::set::null());
 
 			auto cursor = emplace_query(label, __func__, "INSERT OR REPLACE INTO validators (address, preference, services, validator_message, wallet_message) VALUES (?, ?, ?, ?, ?)", &map);
@@ -160,12 +160,13 @@ namespace tangent
 				return decrypted_message.error();
 
 			ledger::validator node;
-			format::stream edge_message = format::stream((*cursor)["validator_message"].get().get_blob());
-			if (!node.load(edge_message))
+			auto validator_blob = (*cursor)["validator_message"].get().get_blob();
+			auto validator_message = format::ro_stream(validator_blob);
+			if (!node.load(validator_message))
 				return expects_lr<std::pair<ledger::validator, ledger::wallet>>(layer_exception("validator deserialization error"));
 
 			ledger::wallet wallet;
-			format::stream wallet_message = format::stream(std::move(*decrypted_message));
+			format::ro_stream wallet_message = format::ro_stream(*decrypted_message);
 			if (!wallet.load(wallet_message))
 				return expects_lr<std::pair<ledger::validator, ledger::wallet>>(layer_exception("wallet deserialization error"));
 
@@ -181,7 +182,8 @@ namespace tangent
 				return expects_lr<ledger::validator>(layer_exception(error_of(cursor)));
 
 			ledger::validator value;
-			format::stream message = format::stream((*cursor)["validator_message"].get().get_blob());
+			auto validator_blob = (*cursor)["validator_message"].get().get_blob();
+			auto message = format::ro_stream(validator_blob);
 			if (!value.load(message))
 				return expects_lr<ledger::validator>(layer_exception("validator deserialization error"));
 
@@ -197,7 +199,8 @@ namespace tangent
 				return expects_lr<ledger::validator>(layer_exception(error_of(cursor)));
 
 			ledger::validator value;
-			format::stream message = format::stream((*cursor)["validator_message"].get().get_blob());
+			auto validator_blob = (*cursor)["validator_message"].get().get_blob();
+			auto message = format::ro_stream(validator_blob);
 			if (!value.load(message))
 				return expects_lr<ledger::validator>(layer_exception("validator deserialization error"));
 
@@ -221,7 +224,8 @@ namespace tangent
 			for (size_t i = 0; i < size; i++)
 			{
 				ledger::validator value;
-				format::stream message = format::stream(response[i]["validator_message"].get().get_blob());
+				auto validator_blob = response[i]["validator_message"].get().get_blob();
+				auto message = format::ro_stream(validator_blob);
 				if (value.load(message))
 					result.push_back(std::move(value.address));
 			}
@@ -245,7 +249,8 @@ namespace tangent
 			for (size_t i = 0; i < size; i++)
 			{
 				ledger::validator value;
-				format::stream message = format::stream(response[i]["validator_message"].get().get_blob());
+				auto validator_blob = response[i]["validator_message"].get().get_blob();
+				auto message = format::ro_stream(validator_blob);
 				if (value.load(message))
 					result.push_back(std::move(value.address));
 			}
@@ -313,7 +318,7 @@ namespace tangent
 		}
 		expects_lr<void> mempoolstate::add_transaction(ledger::transaction& value, bool resurrection)
 		{
-			format::stream message;
+			format::wo_stream message;
 			if (!value.store(&message))
 				return expects_lr<void>(layer_exception("transaction serialization error"));
 
@@ -556,7 +561,7 @@ namespace tangent
 			}
 			else
 			{
-				format::stream share;
+				format::wo_stream share;
 				share.write_integer(asset);
 				share.write_string(algorithm::pubkeyhash_t(owner).optimized_view());
 				share.write_string(algorithm::pubkeyhash_t(manager).optimized_view());
@@ -682,7 +687,8 @@ namespace tangent
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<uptr<ledger::transaction>>(layer_exception(error_of(cursor)));
 
-			format::stream message = format::stream((*cursor)["message"].get().get_blob());
+			auto blob = (*cursor)["message"].get().get_blob();
+			auto message = format::ro_stream(blob);
 			uptr<ledger::transaction> value = transactions::resolver::from_stream(message);
 			if (!value || !value->load(message))
 				return expects_lr<uptr<ledger::transaction>>(layer_exception("transaction deserialization error"));
@@ -708,7 +714,8 @@ namespace tangent
 			for (size_t i = 0; i < size; i++)
 			{
 				auto row = response[i];
-				format::stream message = format::stream(row["message"].get().get_blob());
+				auto blob = row["message"].get().get_blob();
+				auto message = format::ro_stream(blob);
 				uptr<ledger::transaction> value = transactions::resolver::from_stream(message);
 				if (value && value->load(message))
 				{
@@ -739,7 +746,8 @@ namespace tangent
 			for (size_t i = 0; i < size; i++)
 			{
 				auto row = response[i];
-				format::stream message = format::stream(row["message"].get().get_blob());
+				auto blob = row["message"].get().get_blob();
+				auto message = format::ro_stream(blob);
 				uptr<ledger::transaction> value = transactions::resolver::from_stream(message);
 				if (value && value->load(message))
 				{
@@ -772,7 +780,8 @@ namespace tangent
 			for (size_t i = 0; i < size; i++)
 			{
 				auto row = response[i];
-				format::stream message = format::stream(row["message"].get().get_blob());
+				auto blob = row["message"].get().get_blob();
+				auto message = format::ro_stream(blob);
 				uptr<ledger::transaction> value = transactions::resolver::from_stream(message);
 				if (value && value->load(message))
 				{
@@ -835,41 +844,41 @@ namespace tangent
 			string command = VI_STRINGIFY(
 				CREATE TABLE IF NOT EXISTS validators
 				(
-					address BINARY NOT NULL,
+					address BLOB NOT NULL,
 					preference INTEGER NOT NULL,
 					services INTEGER NOT NULL,
-					validator_message BINARY NOT NULL,
-					wallet_message BINARY DEFAULT NULL,
+					validator_message BLOB NOT NULL,
+					wallet_message BLOB DEFAULT NULL,
 					PRIMARY KEY (address)
 				) WITHOUT ROWID;
 				CREATE INDEX IF NOT EXISTS validators_wallet_message_preference ON validators (wallet_message IS NULL, preference);
 				CREATE TABLE IF NOT EXISTS seeds
 				(
-					address BINARY NOT NULL,
+					address BLOB NOT NULL,
 					PRIMARY KEY (address)
 				) WITHOUT ROWID;
 				CREATE TABLE IF NOT EXISTS groups
 				(
-					asset BINARY(32) NOT NULL,
-					owner BINARY(20) NOT NULL,
-					manager BINARY(20) NOT NULL,
-					share BINARY NOT NULL,
+					asset BLOB(32) NOT NULL,
+					owner BLOB(20) NOT NULL,
+					manager BLOB(20) NOT NULL,
+					share BLOB NOT NULL,
 					PRIMARY KEY (asset, owner, manager)
 				) WITHOUT ROWID;
 				CREATE INDEX IF NOT EXISTS groups_manager ON groups (manager);
 				CREATE TABLE IF NOT EXISTS transactions
 				(
-					hash BINARY(32) NOT NULL,
-					group_hash BINARY(32) DEFAULT NULL,
-					owner BINARY(20) NOT NULL,
-					asset BINARY(32) NOT NULL,
+					hash BLOB(32) NOT NULL,
+					group_hash BLOB(32) DEFAULT NULL,
+					owner BLOB(20) NOT NULL,
+					asset BLOB(32) NOT NULL,
 					nonce BIGINT NOT NULL,
 					epoch INTEGER DEFAULT 0,
 					preference INTEGER DEFAULT NULL,
 					type INTEGER NOT NULL,
 					time INTEGER NOT NULL,
 					price TEXT NOT NULL,
-					message BINARY NOT NULL,
+					message BLOB NOT NULL,
 					PRIMARY KEY (hash)
 				);
 				CREATE INDEX IF NOT EXISTS transactions_group_hash ON transactions (group_hash);

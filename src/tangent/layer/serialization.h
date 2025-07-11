@@ -8,6 +8,8 @@ namespace tangent
 	{
 		typedef vector<struct variable> variables;
 
+		struct ro_stream;
+
 		enum class viewable : uint8_t
 		{
 			decimal_nan,
@@ -29,29 +31,50 @@ namespace tangent
 			invalid = 255
 		};
 
-		struct stream
+		struct wo_stream
 		{
 			string data;
 			uint256_t checksum;
+
+			wo_stream();
+			explicit wo_stream(const std::string_view& new_data);
+			explicit wo_stream(string&& new_data);
+			wo_stream(const wo_stream&) = default;
+			wo_stream(wo_stream&&) noexcept = default;
+			wo_stream& operator= (const wo_stream&) = default;
+			wo_stream& operator= (wo_stream&&) noexcept = default;
+			wo_stream& clear();
+			wo_stream& write_string(const std::string_view& value);
+			wo_stream& write_string_raw(const std::string_view& value);
+			wo_stream& write_decimal(const decimal& value);
+			wo_stream& write_integer(const uint256_t& value);
+			wo_stream& write_boolean(bool value);
+			wo_stream& write_typeless(const uint256_t& value);
+			wo_stream& write_typeless(const char* data, uint8_t size);
+			wo_stream& write_typeless(const char* data, uint32_t size);
+			string compress() const;
+			string encode() const;
+			uint256_t hash(bool renew = false) const;
+			ro_stream ro() const;
+
+		private:
+			void write(const void* value, uint32_t size);
+		};
+
+		struct ro_stream
+		{
+			std::string_view data;
+			uint256_t checksum;
 			size_t seek;
 
-			stream();
-			explicit stream(const std::string_view& new_data);
-			explicit stream(string&& new_data);
-			stream(const stream&) = default;
-			stream(stream&&) noexcept = default;
-			stream& operator= (const stream&) = default;
-			stream& operator= (stream&&) noexcept = default;
-			stream& clear();
-			stream& rewind(size_t offset = 0);
-			stream& write_string(const std::string_view& value);
-			stream& write_string_raw(const std::string_view& value);
-			stream& write_decimal(const decimal& value);
-			stream& write_integer(const uint256_t& value);
-			stream& write_boolean(bool value);
-			stream& write_typeless(const uint256_t& value);
-			stream& write_typeless(const char* data, uint8_t size);
-			stream& write_typeless(const char* data, uint32_t size);
+			ro_stream();
+			explicit ro_stream(const std::string_view& new_data);
+			ro_stream(const ro_stream&) = default;
+			ro_stream(ro_stream&&) noexcept = default;
+			ro_stream& operator= (const ro_stream&) = default;
+			ro_stream& operator= (ro_stream&&) noexcept = default;
+			ro_stream& rewind(size_t offset = 0);
+			ro_stream& clear();
 			viewable read_type();
 			bool read_type(viewable* value);
 			bool read_string(viewable type, string* value);
@@ -64,22 +87,18 @@ namespace tangent
 			bool read_integer(viewable type, uint256_t* value);
 			bool read_boolean(viewable type, bool* value);
 			bool is_eof() const;
-			string compress() const;
-			string encode() const;
 			uint256_t hash(bool renew = false) const;
+			wo_stream wo() const;
 
 		private:
-			void write(const void* value, uint32_t size);
 			size_t read(void* value, uint32_t size);
-
-		public:
-			static stream decompress(const std::string_view& data);
-			static stream decode(const std::string_view& data);
 		};
 
 		class util
 		{
 		public:
+			static string decompress_stream(const std::string_view& data);
+			static string decode_stream(const std::string_view& data);
 			static string encode_0xhex(const std::string_view& data);
 			static string decode_0xhex(const std::string_view& data);
 			static string assign_0xhex(const std::string_view& data);

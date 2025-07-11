@@ -117,7 +117,7 @@ namespace tangent
 			static parameters default_alg;
 
 		public:
-			static distribution random(const parameters& alg, const format::stream& seed);
+			static distribution random(const parameters& alg, const std::string_view& seed);
 			static parameters calibrate(uint64_t confidence, uint64_t target_time = protocol::now().policy.consensus_proof_time);
 			static parameters adjust(const parameters& prev_alg, uint64_t prev_time, uint64_t target_index);
 			static parameters bump(const parameters& alg, double bump);
@@ -136,7 +136,7 @@ namespace tangent
 		public:
 			static uint256_t evaluate(const uint256_t& nonce, const std::string_view& message);
 			static bool verify(const uint256_t& nonce, const std::string_view& message, const uint256_t& target, const uint256_t& solution);
-			static void serialize(format::stream& stream, const uint256_t& nonce, const std::string_view& message);
+			static void serialize(format::wo_stream& stream, const uint256_t& nonce, const std::string_view& message);
 		};
 
 		class segwit
@@ -197,8 +197,12 @@ namespace tangent
 			static bool decode_uint_blob(const string& value, uint8_t* data, size_t data_size);
 			static void encode_uint128(const uint8_t value[16], uint128_t& data);
 			static void decode_uint128(const uint128_t& value, uint8_t data[16]);
+			static void optimized_encode_uint128(const std::string_view& value, uint128_t& data);
+			static void optimized_decode_uint128(const uint128_t& value, uint8_t data[16], size_t* data_size);
 			static void encode_uint256(const uint8_t value[32], uint256_t& data);
 			static void decode_uint256(const uint256_t& value, uint8_t data[32]);
+			static void optimized_encode_uint256(const std::string_view& value, uint256_t& data);
+			static void optimized_decode_uint256(const uint256_t& value, uint8_t data[32], size_t* data_size);
 			static string encode_0xhex256(const uint256_t& data);
 			static uint256_t decode_0xhex256(const std::string_view& data);
 			static string encode_0xhex128(const uint128_t& data);

@@ -805,7 +805,7 @@ namespace tangent
 						if (i + size >= buffer.size())
 							break;
 
-						format::stream message = format::stream(buffer.substr(i + 1, size));
+						format::ro_stream message = format::ro_stream(buffer.substr(i + 1, size));
 						if (!message.data.empty())
 						{
 							string key_offset_indices; auto type = message.read_type();
