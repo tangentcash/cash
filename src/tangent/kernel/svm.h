@@ -162,8 +162,6 @@ namespace tangent
 
 			svm_program(ledger::transaction_context* new_context);
 			virtual expects_lr<void> construct(compiler* compiler, const format::variables& args);
-			virtual expects_lr<void> destruct(compiler* compiler);
-			virtual expects_lr<void> destruct(const function& entrypoint);
 			virtual expects_lr<void> mutable_call(compiler* compiler, const std::string_view& function_decl, const format::variables& args);
 			virtual expects_lr<void> immutable_call(compiler* compiler, const std::string_view& function_decl, const format::variables& args);
 			virtual bool dispatch_instruction(virtual_machine* vm, immediate_context* coroutine, uint32_t* program_data, size_t program_counter, byte_code_label& opcode);
@@ -177,7 +175,6 @@ namespace tangent
 			virtual bool has_multiform(const void* column_value, int column_type_id, const void* row_value, int row_type_id) const;
 			virtual void emit_event(const void* object_value, int object_type_id);
 			virtual void pay(const svm_address& target, const uint256_t& asset, const decimal& value);
-			virtual void destroy();
 			virtual svm_multiform_column_cursor multiform_column_cursor(const void* column_value, int column_type_id, size_t count) const;
 			virtual svm_multiform_column_filter_cursor multiform_column_filter_cursor(const void* column_value, int column_type_id, const svm_multiform_filter& filter, size_t count) const;
 			virtual svm_multiform_row_cursor multiform_row_cursor(const void* row_value, int row_type_id, size_t count) const;
@@ -223,12 +220,13 @@ namespace tangent
 		{
 			uptr<schema> returning;
 			vector<string> instructions;
-			evaluation_context environment;
 			ledger::block block;
+			evaluation_context* environment;
 			bool debugging;
 
-			svm_program_trace(ledger::transaction* transaction, const algorithm::pubkeyhash from, bool tracing);
+			svm_program_trace(evaluation_context* new_environment, ledger::transaction* transaction, const algorithm::pubkeyhash from, bool tracing);
 			expects_lr<void> trace_call(svm_call mutability, const std::string_view& function_decl, const format::variables& args);
+			expects_lr<void> trace_call(compiler* prebuilt, svm_call mutability, const std::string_view& function_decl, const format::variables& args);
 			bool dispatch_instruction(virtual_machine* vm, immediate_context* coroutine, uint32_t* program_data, size_t program_counter, byte_code_label& opcode) override;
 			uptr<schema> as_schema() const;
 		};

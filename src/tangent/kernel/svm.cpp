@@ -34,7 +34,6 @@ extern "C"
 #define SCRIPT_EXCEPTION_STORAGE "storage_error"
 #define SCRIPT_EXCEPTION_EXECUTION "execution_error"
 #define SCRIPT_FUNCTION_CONSTRUCTOR "construct"
-#define SCRIPT_FUNCTION_DESTRUCTOR "destruct"
 
 namespace tangent
 {
@@ -2016,22 +2015,6 @@ namespace tangent
 		{
 			return execute(svm_call::system_call, compiler->get_module().get_function_by_name(SCRIPT_FUNCTION_CONSTRUCTOR), args, nullptr);
 		}
-		expects_lr<void> svm_program::destruct(compiler* compiler)
-		{
-			return destruct(compiler->get_module().get_function_by_name(SCRIPT_FUNCTION_DESTRUCTOR));
-		}
-		expects_lr<void> svm_program::destruct(const function& entrypoint)
-		{
-			auto destruction = execute(svm_call::system_call, entrypoint, { }, nullptr);
-			if (!destruction)
-				return destruction;
-
-			auto wipe = context->apply_account_program(to().hash.data, std::string_view());
-			if (!wipe)
-				return wipe.error();
-
-			return expectation::met;
-		}
 		expects_lr<void> svm_program::mutable_call(compiler* compiler, const std::string_view& function_decl, const format::variables& args)
 		{
 			if (function_decl.empty())
@@ -2069,7 +2052,7 @@ namespace tangent
 			auto* coroutine = caller ? caller : vm->request_context();
 			auto* prev_mutable_program = coroutine->get_user_data(SCRIPT_TAG_MUTABLE_PROGRAM);
 			auto* prev_immutable_program = coroutine->get_user_data(SCRIPT_TAG_IMMUTABLE_PROGRAM);
-			coroutine->set_user_data(mutability == svm_call::mutable_call ? (caller ? prev_mutable_program : this) : nullptr, SCRIPT_TAG_MUTABLE_PROGRAM);
+			coroutine->set_user_data(mutability == svm_call::system_call || mutability == svm_call::mutable_call ? (caller ? prev_mutable_program : this) : nullptr, SCRIPT_TAG_MUTABLE_PROGRAM);
 			coroutine->set_user_data(this, SCRIPT_TAG_IMMUTABLE_PROGRAM);
 
 			auto execution = expects_vm<vitex::scripting::execution>(vitex::scripting::execution::error);
@@ -2243,7 +2226,7 @@ namespace tangent
 			if (!entrypoint.get_namespace().empty())
 				return layer_exception(stringify::text("illegal call to function \"%.*s\": illegal operation", (int)function_name.size(), function_name.data()));
 
-			if (*mutability != svm_call::system_call && (function_name == SCRIPT_FUNCTION_CONSTRUCTOR || function_name == SCRIPT_FUNCTION_DESTRUCTOR))
+			if (function_name == SCRIPT_FUNCTION_CONSTRUCTOR && *mutability != svm_call::system_call)
 				return layer_exception(stringify::text("illegal call to function \"%.*s\": illegal operation", (int)function_name.size(), function_name.data()));
 
 			auto* vm = entrypoint.get_vm();
@@ -2256,8 +2239,8 @@ namespace tangent
 
 			for (size_t i = 0; i < args_count; i++)
 			{
-				int type_id; size_t flags;
-				if (!entrypoint.get_arg(i, &type_id, &flags))
+				int type_id;
+				if (!entrypoint.get_arg(i, &type_id))
 					return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound", entrypoint.get_decl().data(), (int)i));
 
 				size_t index = i - 1;
@@ -2306,7 +2289,7 @@ namespace tangent
 							if (!status)
 							{
 								auto reader_message = format::util::decode_stream(value.as_string());
-								reader = format::ro_stream(reader_message);
+								reader = format::ro_stream(reader_message); address = nullptr;
 								status = svm_marshalling::load(reader, (void*)&address, type_id | (int)vitex::scripting::type_id::handle_t);
 								if (!status)
 									return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound to program (%s)", entrypoint.get_decl().data(), i, status.error().what()));
@@ -2323,25 +2306,15 @@ namespace tangent
 					if (!type.is_valid() || type.get_namespace() != SCRIPT_NAMESPACE_INSTRSET)
 						return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound to any instruction set", entrypoint.get_decl().data(), (int)i));
 
-					auto required_mutability = *mutability == svm_call::system_call ? svm_call::mutable_call : *mutability;
 					if (type.get_name() == SCRIPT_CLASS_RWPTR)
-						*mutability = svm_call::mutable_call;
-					else if (type.get_name() == SCRIPT_CLASS_RPTR)
-						*mutability = svm_call::immutable_call;
-					else
-						*mutability = svm_call::system_call;
-
-					switch (*mutability)
 					{
-						case svm_call::mutable_call:
-							if (required_mutability == svm_call::immutable_call)
-								return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound to required instruction set (" SCRIPT_CLASS_RPTR ")", entrypoint.get_decl().data(), (int)i));
-							break;
-						case svm_call::immutable_call:
-							break;
-						case svm_call::system_call:
-						default:
-							return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound to required instruction set (" SCRIPT_CLASS_RWPTR " or " SCRIPT_CLASS_RPTR ")", entrypoint.get_decl().data(), (int)i));
+						if (*mutability != svm_call::system_call && *mutability == svm_call::mutable_call)
+							return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound to required instruction set (" SCRIPT_CLASS_RWPTR ")", entrypoint.get_decl().data(), (int)i));
+					}
+					else if (type.get_name() != SCRIPT_CLASS_RPTR)
+					{
+						auto name = type.get_name();
+						return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound to required instruction set (" SCRIPT_CLASS_RWPTR " or " SCRIPT_CLASS_RPTR ") - \"%s\" type", entrypoint.get_decl().data(), (int)i, name.data()));
 					}
 					frames.emplace_back([i, index, &args, this](immediate_context* coroutine) { coroutine->set_arg_object(i, (svm_program*)this); });
 				}
@@ -2583,17 +2556,6 @@ namespace tangent
 			if (!payment)
 				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_EXECUTION, payment.error().message()));
 		}
-		void svm_program::destroy()
-		{
-			auto* caller = immediate_context::get();
-			if (caller != nullptr)
-			{
-				auto entrypoint = caller->get_function().get_module().get_function_by_name(SCRIPT_FUNCTION_DESTRUCTOR);
-				auto destruction = destruct(entrypoint);
-				if (!destruction)
-					return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_EXECUTION, destruction.error().message()));
-			}
-		}
 		svm_multiform_column_cursor svm_program::multiform_column_cursor(const void* column_value, int column_type_id, size_t count) const
 		{
 			svm_multiform_column_cursor result;
@@ -2790,29 +2752,28 @@ namespace tangent
 			return result;
 		}
 
-		svm_program_trace::svm_program_trace(ledger::transaction* transaction, const algorithm::pubkeyhash from, bool tracing) : svm_program(&environment.validation.context), debugging(tracing)
+		svm_program_trace::svm_program_trace(evaluation_context* new_environment, ledger::transaction* transaction, const algorithm::pubkeyhash from, bool tracing) : svm_program(new_environment ? &new_environment->validation.context : nullptr), environment(new_environment), debugging(tracing)
 		{
-			VI_ASSERT(transaction != nullptr && from != nullptr, "transaction and from should be set");
-
+			VI_ASSERT(new_environment != nullptr && transaction != nullptr && from != nullptr, "env, transaction and from should be set");
 			auto chain = storages::chainstate(__func__);
 			auto tip = chain.get_latest_block_header();
 			if (tip)
-				environment.tip = std::move(*tip);
+				environment->tip = std::move(*tip);
 
 			ledger::receipt receipt;
-			block.set_parent_block(environment.tip.address());
+			block.set_parent_block(environment->tip.address());
 			receipt.transaction_hash = transaction->as_hash();
 			receipt.generation_time = protocol::now().time.now();
 			receipt.block_number = block.number + 1;
 			memcpy(receipt.from, from, sizeof(algorithm::pubkeyhash));
 
-			memset(environment.validator.public_key_hash, 0xFF, sizeof(algorithm::pubkeyhash));
-			memset(environment.validator.secret_key, 0xFF, sizeof(algorithm::seckey));
-			environment.validation.context = transaction_context(&environment, &block, &environment.validation.changelog, transaction, std::move(receipt));
+			memset(environment->validator.public_key_hash, 0xFF, sizeof(algorithm::pubkeyhash));
+			memset(environment->validator.secret_key, 0xFF, sizeof(algorithm::seckey));
+			environment->validation.context = transaction_context(environment, &block, &environment->validation.changelog, transaction, std::move(receipt));
 		}
 		expects_lr<void> svm_program_trace::trace_call(svm_call mutability, const std::string_view& function_decl, const format::variables& args)
 		{
-			auto index = environment.validation.context.get_account_program(to().hash.data);
+			auto index = environment->validation.context.get_account_program(to().hash.data);
 			if (!index)
 				return layer_exception("program not assigned to address");
 
@@ -2821,7 +2782,7 @@ namespace tangent
 			auto compiler = host->allocate();
 			if (!host->precompile(*compiler, hashcode))
 			{
-				auto program = environment.validation.context.get_witness_program(hashcode);
+				auto program = environment->validation.context.get_witness_program(hashcode);
 				if (!program)
 				{
 					host->deallocate(std::move(compiler));
@@ -2843,7 +2804,17 @@ namespace tangent
 				}
 			}
 
-			auto execution = execute(mutability, compiler->get_module().get_function_by_decl(function_decl), args, [this](void* address, int type_id) -> expects_lr<void>
+			auto execution = trace_call(*compiler, mutability, function_decl, args);
+			host->deallocate(std::move(compiler));
+			return execution;
+		}
+		expects_lr<void> svm_program_trace::trace_call(compiler* prebuilt, svm_call mutability, const std::string_view& function_decl, const format::variables& args)
+		{
+			auto function = prebuilt->get_module().get_function_by_decl(function_decl);
+			if (!function.is_valid())
+				function = prebuilt->get_module().get_function_by_name(function_decl);
+
+			auto execution = execute(mutability, function, args, [this](void* address, int type_id) -> expects_lr<void>
 			{
 				returning = var::set::object();
 				auto serialization = svm_marshalling::store(*returning, address, type_id);
@@ -2859,8 +2830,6 @@ namespace tangent
 			context->receipt.finalization_time = protocol::now().time.now();
 			if (!context->receipt.successful)
 				context->emit_event(0, { format::variable(execution.what()) }, false);
-
-			host->deallocate(std::move(compiler));
 			return execution;
 		}
 		bool svm_program_trace::dispatch_instruction(virtual_machine* vm, immediate_context* coroutine, uint32_t* program_data, size_t program_counter, byte_code_label& opcode)
