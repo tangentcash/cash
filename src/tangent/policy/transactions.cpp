@@ -2314,8 +2314,8 @@ namespace tangent
 			if (!finalization)
 				return finalization.error();
 
-			bool revert_transaction = transaction_id.empty() || !error_message.empty();
-			if (revert_transaction)
+			bool revert_withdrawal_side_effects = (transaction_id.empty() || !error_message.empty()) && parent_transaction->is_to_manager_null();
+			if (revert_withdrawal_side_effects)
 			{
 				auto fee_asset = algorithm::asset::base_id_of(asset);
 				if (fee_asset != asset)

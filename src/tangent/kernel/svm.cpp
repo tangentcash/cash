@@ -2308,7 +2308,7 @@ namespace tangent
 
 					if (type.get_name() == SCRIPT_CLASS_RWPTR)
 					{
-						if (*mutability != svm_call::system_call && *mutability == svm_call::mutable_call)
+						if (*mutability != svm_call::system_call && *mutability != svm_call::mutable_call)
 							return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound to required instruction set (" SCRIPT_CLASS_RWPTR ")", entrypoint.get_decl().data(), (int)i));
 					}
 					else if (type.get_name() != SCRIPT_CLASS_RPTR)
@@ -2872,11 +2872,11 @@ namespace tangent
 					event_data->set("args", format::variables_util::serialize(item.second));
 				}
 			}
-			if (!context->changelog->outgoing.at(work_state::pending).empty())
+			if (!context->changelog->outgoing.pending.empty())
 			{
 				auto* states_data = data->set("changelog", var::set::array());
-				for (auto& item : context->changelog->outgoing.at(work_state::pending))
-					states_data->push(item.second->as_schema().reset());
+				for (auto& [index, change] : context->changelog->outgoing.pending)
+					states_data->push(change.as_schema().reset());
 			}
 			if (!instructions.empty())
 			{

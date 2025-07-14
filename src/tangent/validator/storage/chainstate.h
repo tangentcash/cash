@@ -31,6 +31,21 @@ namespace tangent
 			state = 1 << 2
 		};
 
+		struct block_pair
+		{
+			uint64_t number;
+			bool hidden;
+
+			block_pair() = default;
+			block_pair(const block_pair&) = default;
+			block_pair(block_pair&&) noexcept = default;
+			block_pair(uint64_t new_number, bool new_hidden) : number(new_number), hidden(new_hidden)
+			{
+			}
+			block_pair& operator=(const block_pair&) = default;
+			block_pair& operator=(block_pair&&) noexcept = default;
+		};
+
 		class account_cache : public singleton<account_cache>
 		{
 		private:
@@ -50,7 +65,7 @@ namespace tangent
 		{
 		private:
 			unordered_map<string, uint64_t> indices;
-			unordered_map<string, uint64_t> blocks;
+			unordered_map<string, block_pair> blocks;
 			std::mutex mutex;
 
 		public:
@@ -60,9 +75,9 @@ namespace tangent
 			void clear_uniform_location(uint32_t type, const std::string_view& index);
 			void clear_block_location(uint32_t type, const std::string_view& index);
 			void set_index_location(uint32_t type, const std::string_view& index, uint64_t location);
-			void set_block_location(uint32_t type, uint64_t location, uint64_t block_number);
+			void set_block_location(uint32_t type, uint64_t location, uint64_t block_number, bool hidden);
 			option<uint64_t> get_index_location(uint32_t type, const std::string_view& index);
-			option<uint64_t> get_block_location(uint32_t type, uint64_t location);
+			option<block_pair> get_block_location(uint32_t type, uint64_t location);
 
 		private:
 			string key_of_indices(uint32_t type, const std::string_view& index);
@@ -74,7 +89,7 @@ namespace tangent
 		private:
 			unordered_map<string, uint64_t> columns;
 			unordered_map<string, uint64_t> rows;
-			unordered_map<string, uint64_t> blocks;
+			unordered_map<string, block_pair> blocks;
 			std::mutex mutex;
 
 		public:
@@ -86,10 +101,10 @@ namespace tangent
 			void set_multiform_location(uint32_t type, const std::string_view& column, const std::string_view& row, uint64_t column_location, uint64_t row_location);
 			void set_column_location(uint32_t type, const std::string_view& column, uint64_t location);
 			void set_row_location(uint32_t type, const std::string_view& row, uint64_t location);
-			void set_block_location(uint32_t type, uint64_t column_location, uint64_t row_location, uint64_t block_number);
+			void set_block_location(uint32_t type, uint64_t column_location, uint64_t row_location, uint64_t block_number, bool hidden);
 			option<uint64_t> get_column_location(uint32_t type, const std::string_view& column);
 			option<uint64_t> get_row_location(uint32_t type, const std::string_view& row);
-			option<uint64_t> get_block_location(uint32_t type, uint64_t column_location, uint64_t row_location);
+			option<block_pair> get_block_location(uint32_t type, uint64_t column_location, uint64_t row_location);
 
 		private:
 			string key_of_columns(uint32_t type, const std::string_view& column);
@@ -152,32 +167,45 @@ namespace tangent
 			}
 		};
 
-		struct chainstate : ledger::permanent_storage
+		struct chainstate final : ledger::permanent_storage
 		{
 		private:
 			struct uniform_location
 			{
 				option<uint64_t> index = optional::none;
-				option<uint64_t> block = optional::none;
+				option<block_pair> block = optional::none;
 			};
 
 			struct multiform_location
 			{
 				option<uint64_t> column = optional::none;
 				option<uint64_t> row = optional::none;
-				option<uint64_t> block = optional::none;
+				option<block_pair> block = optional::none;
+			};
+
+			struct multiform_changelog
+			{
+				sqlite::connection* storage = nullptr;
+				bool requires_rollback = false;
+
+				multiform_changelog() = default;
+				multiform_changelog(const multiform_changelog&) = delete;
+				multiform_changelog(multiform_changelog&& other) noexcept;
+				~multiform_changelog() noexcept;
+				multiform_changelog& operator=(const multiform_changelog&) = delete;
+				multiform_changelog& operator=(multiform_changelog&& other) noexcept;
 			};
 
 		private:
 			struct
 			{
-				unordered_map<uint32_t, uptr<sqlite::connection>> uniformdata;
-				unordered_map<uint32_t, uptr<sqlite::connection>> multiformdata;
-				uptr<sqlite::connection> blockdata;
-				uptr<sqlite::connection> accountdata;
-				uptr<sqlite::connection> txdata;
-				uptr<sqlite::connection> partydata;
-				uptr<sqlite::connection> aliasdata;
+				unordered_map<uint32_t, uptr<sqlite::connection>> uniform;
+				unordered_map<uint32_t, uptr<sqlite::connection>> multiform;
+				uptr<sqlite::connection> block;
+				uptr<sqlite::connection> account;
+				uptr<sqlite::connection> tx;
+				uptr<sqlite::connection> party;
+				uptr<sqlite::connection> alias;
 			} storages;
 
 		private:
@@ -222,35 +250,36 @@ namespace tangent
 			expects_lr<ledger::receipt> get_receipt_by_transaction_hash(const uint256_t& transaction_hash);
 			expects_lr<uptr<ledger::state>> get_uniform(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& index, uint64_t block_number);
 			expects_lr<uptr<ledger::state>> get_multiform(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& column, const std::string_view& row, uint64_t block_number);
-			expects_lr<uptr<ledger::state>> get_multiform_by_column(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& column, uint64_t block_number, size_t offset);
-			expects_lr<uptr<ledger::state>> get_multiform_by_row(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& row, uint64_t block_number, size_t offset);
 			expects_lr<vector<uptr<ledger::state>>> get_multiforms_by_column(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& column, uint64_t block_number, size_t offset, size_t count);
 			expects_lr<vector<uptr<ledger::state>>> get_multiforms_by_column_filter(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& column, const result_filter& filter, uint64_t block_number, const result_window& window);
 			expects_lr<vector<uptr<ledger::state>>> get_multiforms_by_row(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& row, uint64_t block_number, size_t offset, size_t count);
 			expects_lr<vector<uptr<ledger::state>>> get_multiforms_by_row_filter(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& row, const result_filter& filter, uint64_t block_number, const result_window& window);
-			expects_lr<size_t> get_multiforms_count_by_column(uint32_t type, const std::string_view& row, uint64_t block_number);
-			expects_lr<size_t> get_multiforms_count_by_column_filter(uint32_t type, const std::string_view& row, const result_filter& filter, uint64_t block_number);
-			expects_lr<size_t> get_multiforms_count_by_row(uint32_t type, const std::string_view& row, uint64_t block_number);
-			expects_lr<size_t> get_multiforms_count_by_row_filter(uint32_t type, const std::string_view& row, const result_filter& filter, uint64_t block_number);
+			expects_lr<size_t> get_multiforms_count_by_column(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& column, uint64_t block_number);
+			expects_lr<size_t> get_multiforms_count_by_column_filter(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& column, const result_filter& filter, uint64_t block_number);
+			expects_lr<size_t> get_multiforms_count_by_row(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& row, uint64_t block_number);
+			expects_lr<size_t> get_multiforms_count_by_row_filter(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& row, const result_filter& filter, uint64_t block_number);
 			void clear_indexer_cache();
-
+			
 		private:
+			sqlite::expects_db<string> load(const std::string_view& label, const std::string_view& operation, const std::string_view& key) override;
+			sqlite::expects_db<void> store(const std::string_view& label, const std::string_view& operation, const std::string_view& key, const std::string_view& value) override;
+			sqlite::expects_db<void> clear(const std::string_view& label, const std::string_view& operation, const std::string_view& table_ids) override;
 			expects_lr<void> resolve_block_transactions(vector<ledger::block_transaction>& result, uint64_t block_number, bool fully, size_t chunk);
 			expects_lr<uniform_location> resolve_uniform_location(uint32_t type, const std::string_view& index, bool latest);
 			expects_lr<multiform_location> resolve_multiform_location(uint32_t type, const option<std::string_view>& column, const option<std::string_view>& row, bool latest);
 			expects_lr<uint64_t> resolve_account_location(const algorithm::pubkeyhash account);
-			sqlite::connection* get_blockdata();
-			sqlite::connection* get_accountdata();
-			sqlite::connection* get_txdata();
-			sqlite::connection* get_partydata();
-			sqlite::connection* get_aliasdata();
-			sqlite::connection* get_uniformdata(uint32_t type);
-			unordered_map<uint32_t, uptr<sqlite::connection>>& get_uniformdata_max();
-			sqlite::connection* get_multiformdata(uint32_t type);
-			unordered_map<uint32_t, uptr<sqlite::connection>>& get_multiformdata_max();
-
-		protected:
+			sqlite::connection* get_block_storage();
+			sqlite::connection* get_account_storage();
+			sqlite::connection* get_tx_storage();
+			sqlite::connection* get_party_storage();
+			sqlite::connection* get_alias_storage();
+			sqlite::connection* get_uniform_storage(uint32_t type);
+			unordered_map<uint32_t, uptr<sqlite::connection>>& get_uniform_storage_max();
+			sqlite::connection* get_multiform_storage(uint32_t type);
+			expects_lr<multiform_changelog> get_multiform_changelog_storage(uint32_t type, const ledger::block_changelog* changelog, const option<std::string_view>& column, const option<std::string_view>& row, uint64_t block_number);
+			unordered_map<uint32_t, uptr<sqlite::connection>>& get_multiform_storage_max();
 			vector<sqlite::connection*> get_index_storages() override;
+			void preload_blob_storage();
 			bool reconstruct_index_storage(sqlite::connection* storage, const std::string_view& name) override;
 		};
 	}

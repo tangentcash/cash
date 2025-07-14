@@ -415,6 +415,7 @@ namespace tangent
 			bool is_depository_account() const;
 			bool is_owner_null() const;
 			bool is_manager_null() const;
+			bool is_permanent() const override;
 			account_type get_type() const;
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
@@ -453,9 +454,10 @@ namespace tangent
 			static ledger::state* from_stream(format::ro_stream& stream);
 			static ledger::state* from_type(uint32_t hash);
 			static ledger::state* from_copy(const ledger::state* base);
-			static bool is_non_default(const ledger::state* base, uptr<ledger::state>& default_base);
-			static unordered_set<uint32_t> get_uniform_types();
-			static unordered_set<uint32_t> get_multiform_types();
+			static void value_copy(uint32_t hash, const ledger::state* from, ledger::state* to);
+			static bool will_delete(const ledger::state* base, uptr<ledger::state>& cache);
+			static std::array<uint32_t, 7> get_uniform_types();
+			static std::array<uint32_t, 10> get_multiform_types();
 		};
 	}
 }

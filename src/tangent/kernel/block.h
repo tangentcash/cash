@@ -36,18 +36,13 @@ namespace tangent
 
 		enum class gas_cost
 		{
-			write_byte = 24,
-			read_byte = 3,
-			query_byte = 12,
-			bulk_query_byte = 1,
+			write_tx_byte = 48,
+			write_byte = 32,
+			erase_byte = 2,
+			read_byte = 4,
+			query_byte = 24,
+			bulk_query_byte = 4,
 			opcode = 1
-		};
-
-		enum class work_state
-		{
-			pending,
-			finalized,
-			__count__
 		};
 
 		struct block_transaction final : messages::uniform
@@ -72,8 +67,23 @@ namespace tangent
 
 		struct block_state
 		{
-			ordered_map<string, uptr<ledger::state>> map[(size_t)work_state::__count__];
-			const block_state* parent_work = nullptr;
+			struct state_change
+			{
+				uptr<ledger::state> state;
+				bool erase;
+
+				state_change() noexcept;
+				state_change(uptr<ledger::state>&& new_state, bool new_erase) noexcept;
+				state_change(const state_change& other) noexcept;
+				state_change(state_change&& other) noexcept;
+				state_change& operator=(const state_change& other) noexcept;
+				state_change& operator=(state_change&& other) noexcept;
+				uptr<schema> as_schema() const;
+				bool empty() const;
+			};
+
+			ordered_map<string, state_change> finalized;
+			ordered_map<string, state_change> pending;
 
 			block_state() = default;
 			block_state(const block_state& other);
@@ -84,15 +94,13 @@ namespace tangent
 			option<uptr<state>> find(uint32_t type, const std::string_view& column, const std::string_view& row) const;
 			void erase(uint32_t type, const std::string_view& index);
 			void erase(uint32_t type, const std::string_view& column, const std::string_view& row);
-			bool copy(state* value);
-			bool move(uptr<state>&& value);
+			bool push(state* value, bool will_delete);
+			bool emplace(uptr<state>&& value, bool will_delete);
 			string index_of(state* value) const;
 			string index_of(uint32_t type, const std::string_view& index) const;
 			string index_of(uint32_t type, const std::string_view& column, const std::string_view& row) const;
-			const ordered_map<string, uptr<ledger::state>>& at(work_state level) const;
-			ordered_map<string, uptr<ledger::state>>& clear();
-			ordered_map<string, uptr<ledger::state>>& revert();
-			ordered_map<string, uptr<ledger::state>>& commit();
+			void revert(bool fully = false);
+			void commit();
 		};
 
 		struct block_changelog
@@ -231,9 +239,9 @@ namespace tangent
 			bool has_transaction(const uint256_t& hash);
 			bool has_receipt(const uint256_t& hash);
 			bool has_state(const uint256_t& hash);
-			algorithm::merkle_tree& get_transactions_tree();
-			algorithm::merkle_tree& get_receipts_tree();
-			algorithm::merkle_tree& get_states_tree();
+			algorithm::merkle_tree& get_transaction_tree();
+			algorithm::merkle_tree& get_receipt_tree();
+			algorithm::merkle_tree& get_state_tree();
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;

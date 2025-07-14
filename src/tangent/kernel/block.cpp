@@ -88,83 +88,126 @@ namespace tangent
 			return "block_transaction";
 		}
 
-		block_state::block_state(const block_state& other) : parent_work(other.parent_work)
+		block_state::state_change::state_change() noexcept : erase(false)
 		{
-			for (size_t i = 0; i < (size_t)work_state::__count__; i++)
-			{
-				auto& mapping = map[i];
-				for (auto& item : other.map[i])
-					mapping[item.first] = item.second ? states::resolver::from_copy(*item.second) : nullptr;
-			}
+		}
+		block_state::state_change::state_change(uptr<ledger::state>&& new_state, bool new_erase) noexcept : state(std::move(new_state)), erase(new_erase)
+		{
+		}
+		block_state::state_change::state_change(const state_change& other) noexcept : state(other.state ? states::resolver::from_copy(*other.state) : nullptr), erase(other.erase)
+		{
+		}
+		block_state::state_change::state_change(state_change&& other) noexcept : state(std::move(other.state)), erase(other.erase)
+		{
+		}
+		block_state::state_change& block_state::state_change::operator=(const state_change& other) noexcept
+		{
+			if (this == &other)
+				return *this;
+
+			state = other.state ? states::resolver::from_copy(*other.state) : nullptr;
+			erase = other.erase;
+			return *this;
+		}
+		block_state::state_change& block_state::state_change::operator=(state_change&& other) noexcept
+		{
+			if (this == &other)
+				return *this;
+
+			state = std::move(other.state);
+			erase = other.erase;
+			return *this;
+		}
+		uptr<schema> block_state::state_change::as_schema() const
+		{
+			VI_ASSERT(state, "state should be set");
+			auto result = state->as_schema();
+			result->set("block_purge", var::boolean(erase));
+			return result;
+		}
+		bool block_state::state_change::empty() const
+		{
+			return !state || erase;
+		}
+
+		block_state::block_state(const block_state& other)
+		{
+			for (auto& [index, change] : other.finalized)
+				finalized[index] = change;
+			for (auto& [index, change] : other.pending)
+				pending[index] = change;
 		}
 		block_state& block_state::operator= (const block_state& other)
 		{
 			if (&other == this)
 				return *this;
 
-			parent_work = other.parent_work;
-			for (size_t i = 0; i < (size_t)work_state::__count__; i++)
-			{
-				auto& mapping = map[i];
-				mapping.clear();
-				for (auto& item : other.map[i])
-					mapping[item.first] = item.second ? states::resolver::from_copy(*item.second) : nullptr;
-			}
+			finalized.clear();
+			pending.clear();
+			for (auto& [index, change] : other.finalized)
+				finalized[index] = change;
+			for (auto& [index, change] : other.pending)
+				pending[index] = change;
 			return *this;
 		}
 		option<uptr<state>> block_state::find(uint32_t type, const std::string_view& index) const
 		{
 			auto location = index_of(type, index);
-			for (size_t i = 0; i < (size_t)work_state::__count__; i++)
-			{
-				auto& mapping = map[i];
-				auto it = mapping.find(location);
-				if (it != mapping.end())
-					return it->second ? option<uptr<state>>(states::resolver::from_copy(*it->second)) : option<uptr<state>>(nullptr);
-			}
-			return parent_work ? parent_work->find(type, index) : option<uptr<state>>(optional::none);
+			auto it = finalized.find(location);
+			if (it != finalized.end())
+				return it->second.empty() ? option<uptr<state>>(nullptr) : option<uptr<state>>(states::resolver::from_copy(*it->second.state));
+
+			it = pending.find(location);
+			if (it != pending.end())
+				return it->second.empty() ? option<uptr<state>>(nullptr) : option<uptr<state>>(states::resolver::from_copy(*it->second.state));
+
+			return option<uptr<state>>(optional::none);
 		}
 		option<uptr<state>> block_state::find(uint32_t type, const std::string_view& column, const std::string_view& row) const
 		{
 			auto location = index_of(type, column, row);
-			for (size_t i = 0; i < (size_t)work_state::__count__; i++)
-			{
-				auto& mapping = map[i];
-				auto it = mapping.find(location);
-				if (it != mapping.end())
-					return it->second ? option<uptr<state>>(states::resolver::from_copy(*it->second)) : option<uptr<state>>(nullptr);
-			}
-			return parent_work ? parent_work->find(type, column, row) : option<uptr<state>>(optional::none);
+			auto it = finalized.find(location);
+			if (it != finalized.end())
+				return it->second.empty() ? option<uptr<state>>(nullptr) : option<uptr<state>>(states::resolver::from_copy(*it->second.state));
+
+			it = pending.find(location);
+			if (it != pending.end())
+				return it->second.empty() ? option<uptr<state>>(nullptr) : option<uptr<state>>(states::resolver::from_copy(*it->second.state));
+
+			return option<uptr<state>>(optional::none);
 		}
 		void block_state::erase(uint32_t type, const std::string_view& index)
 		{
-			map[(size_t)work_state::pending][index_of(type, index)].destroy();
+			auto& change = pending[index_of(type, index)];
+			change.state.destroy();
+			change.erase = true;
 		}
 		void block_state::erase(uint32_t type, const std::string_view& column, const std::string_view& row)
 		{
-			map[(size_t)work_state::pending][index_of(type, column, row)].destroy();
+			auto& change = pending[index_of(type, column, row)];
+			change.state.destroy();
+			change.erase = true;
 		}
-		bool block_state::copy(state* value)
+		bool block_state::push(state* value, bool will_delete)
 		{
-			if (!value)
-				return false;
-
+			VI_ASSERT(value != nullptr, "value should be set");
 			auto copy = states::resolver::from_copy(value);
 			if (!copy)
 				return false;
 
-			auto& prev = map[(size_t)work_state::pending][index_of(value)];
-			bool newest = !prev;
-			prev = copy;
-			return newest;
+			auto& change = pending[index_of(value)];
+			change.state = copy;
+			change.erase = will_delete;
+			return true;
 		}
-		bool block_state::move(uptr<state>&& value)
+		bool block_state::emplace(uptr<state>&& value, bool will_delete)
 		{
+			VI_ASSERT(value, "value should be set");
 			auto location = index_of(*value);
-			auto& prev = map[(size_t)work_state::pending][location];
-			bool newest = !prev;
-			prev = std::move(value);
-			return newest;
+			auto& change = pending[location];
+			change.state = std::move(value);
+			change.erase = will_delete;
+			return true;
 		}
 		string block_state::index_of(state* value) const
 		{
@@ -200,37 +243,17 @@ namespace tangent
 			message.write_typeless(row.data(), (uint32_t)row.size());
 			return message.data;
 		}
-		const ordered_map<string, uptr<ledger::state>>& block_state::at(work_state level) const
+		void block_state::revert(bool fully)
 		{
-			switch (level)
-			{
-				case tangent::ledger::work_state::pending:
-				case tangent::ledger::work_state::finalized:
-					return map[(size_t)level];
-				default:
-					return map[(size_t)work_state::finalized];
-			}
+			pending.clear();
+			if (fully)
+				finalized.clear();
 		}
-		ordered_map<string, uptr<ledger::state>>& block_state::clear()
+		void block_state::commit()
 		{
-			map[(size_t)work_state::pending].clear();
-			map[(size_t)work_state::finalized].clear();
-			return map[(size_t)work_state::finalized];
-		}
-		ordered_map<string, uptr<ledger::state>>& block_state::revert()
-		{
-			map[(size_t)work_state::pending].clear();
-			return map[(size_t)work_state::finalized];
-		}
-		ordered_map<string, uptr<ledger::state>>& block_state::commit()
-		{
-			for (auto& item : map[(size_t)work_state::pending])
-			{
-				if (item.second)
-					map[(size_t)work_state::finalized][item.first] = std::move(item.second);
-			}
-			map[(size_t)work_state::pending].clear();
-			return map[(size_t)work_state::finalized];
+			for (auto& [index, change] : pending)
+				finalized[index] = std::move(change);
+			pending.clear();
 		}
 
 		block_changelog::block_changelog() noexcept
@@ -262,8 +285,8 @@ namespace tangent
 		}
 		void block_changelog::clear()
 		{
-			outgoing.clear();
-			incoming.clear();
+			outgoing.revert(true);
+			incoming.revert(true);
 		}
 		void block_changelog::revert()
 		{
@@ -686,14 +709,14 @@ namespace tangent
 			if (parent_block && parent_block->recovery)
 				prev_target = algorithm::wesolowski::bump(target, 1.0 / protocol::now().policy.consensus_recovery_bump);
 
+			auto changelog = block_changelog();
+			auto fees = ordered_map<algorithm::asset_id, decimal>();
 			recovery = (position == environment->producers.end() ? 1 : 0);
 			priority = recovery ? 0 : (uint64_t)std::distance(environment->producers.begin(), position);
 			target = algorithm::wesolowski::adjust(prev_target, prev_duration, number);
 			if (recovery)
 				target = algorithm::wesolowski::bump(target, protocol::now().policy.consensus_recovery_bump);
 
-			block_changelog changelog;
-			ordered_map<algorithm::asset_id, decimal> fees;
 			for (auto& item : environment->incoming)
 			{
 				auto execution = transaction_context::execute_tx(environment, this, &changelog, *item.candidate, item.hash, item.owner, item.size, item.candidate->conservative ? 0 : (uint8_t)transaction_context::execution_mode::pedantic);
@@ -832,7 +855,7 @@ namespace tangent
 		{
 			if (transactions.empty() || transaction_count != (uint32_t)transactions.size())
 				return layer_exception("invalid transactions count");
-			else if (!state_count && (state != nullptr && state_count != (uint32_t)state->at(work_state::finalized).size()))
+			else if (!state_count && (state != nullptr && state_count != (uint32_t)state->finalized.size()))
 				return layer_exception("invalid states count");
 
 			if (!parent_block && number > 1)
@@ -853,8 +876,8 @@ namespace tangent
 			if (state != nullptr)
 			{
 				tree = (parent_block ? parent_block->state_root : uint256_t(0));
-				for (auto& item : state->at(work_state::finalized))
-					tree.push(item.second->as_hash());
+				for (auto& [index, change] : state->finalized)
+					tree.push(change.state->as_hash());
 				if (tree.calculate_root() != state_root)
 					return layer_exception("invalid states merkle tree root");
 			}
@@ -922,8 +945,7 @@ namespace tangent
 			auto task_queue1 = parallel::for_each(transactions.begin(), transactions.end(), ELEMENTS_FEW, [](block_transaction& item) { item.receipt.as_hash(); });
 			if (state != nullptr)
 			{
-				auto& state_tree = state->at(work_state::finalized);
-				auto task_queue2 = parallel::for_each_sequential(state_tree.begin(), state_tree.end(), state_tree.size(), ELEMENTS_FEW, [](const std::pair<const string, uptr<ledger::state>>& item) { item.second->as_hash(); });
+				auto task_queue2 = parallel::for_each_sequential(state->finalized.begin(), state->finalized.end(), state->finalized.size(), ELEMENTS_FEW, [](const std::pair<const string, block_state::state_change>& item) { item.second.state->as_hash(); });
 				parallel::wail_all(std::move(task_queue2));
 			}
 			parallel::wail_all(std::move(task_queue1));
@@ -940,12 +962,11 @@ namespace tangent
 
 			if (state)
 			{
-				auto& state_tree = state->at(work_state::finalized);
 				tree = (parent_block ? parent_block->state_root : uint256_t(0));
-				for (auto& item : state_tree)
-					tree.push(item.second->as_hash());
+				for (auto& [index, change] : state->finalized)
+					tree.push(change.state->as_hash());
 				state_root = tree.calculate_root();
-				state_count = (uint32_t)state_tree.size();
+				state_count = (uint32_t)state->finalized.size();
 			}
 
 			uint256_t cumulative = get_slot_length() > 1 ? 1 : 0;
@@ -977,9 +998,9 @@ namespace tangent
 			}
 			if (state != nullptr)
 			{
-				proof.states.reserve(state->at(work_state::finalized).size());
-				for (auto& item : state->at(work_state::finalized))
-					proof.states.push_back(item.second->as_hash());
+				proof.states.reserve(state->finalized.size());
+				for (auto& [index, change] : state->finalized)
+					proof.states.push_back(change.state->as_hash());
 			}
 			return proof;
 		}
@@ -999,7 +1020,7 @@ namespace tangent
 		}
 		option<algorithm::merkle_tree::path> block_proof::find_transaction(const uint256_t& hash)
 		{
-			auto path = get_transactions_tree().calculate_path(hash);
+			auto path = get_transaction_tree().calculate_path(hash);
 			if (path.empty())
 				return optional::none;
 
@@ -1007,7 +1028,7 @@ namespace tangent
 		}
 		option<algorithm::merkle_tree::path> block_proof::find_receipt(const uint256_t& hash)
 		{
-			auto path = get_receipts_tree().calculate_path(hash);
+			auto path = get_receipt_tree().calculate_path(hash);
 			if (path.empty())
 				return optional::none;
 
@@ -1015,7 +1036,7 @@ namespace tangent
 		}
 		option<algorithm::merkle_tree::path> block_proof::find_state(const uint256_t& hash)
 		{
-			auto path = get_states_tree().calculate_path(hash);
+			auto path = get_state_tree().calculate_path(hash);
 			if (path.empty())
 				return optional::none;
 
@@ -1102,7 +1123,7 @@ namespace tangent
 			auto path = find_state(hash);
 			return path && path->calculate_root(hash) == state_root;
 		}
-		algorithm::merkle_tree& block_proof::get_transactions_tree()
+		algorithm::merkle_tree& block_proof::get_transaction_tree()
 		{
 			if (!internal.transactions_tree.is_calculated() || internal.transactions_tree.get_tree().size() < transactions.size())
 			{
@@ -1111,7 +1132,7 @@ namespace tangent
 			}
 			return internal.transactions_tree.calculate();
 		}
-		algorithm::merkle_tree& block_proof::get_receipts_tree()
+		algorithm::merkle_tree& block_proof::get_receipt_tree()
 		{
 			if (!internal.receipts_tree.is_calculated() || internal.receipts_tree.get_tree().size() < receipts.size())
 			{
@@ -1120,7 +1141,7 @@ namespace tangent
 			}
 			return internal.receipts_tree.calculate();
 		}
-		algorithm::merkle_tree& block_proof::get_states_tree()
+		algorithm::merkle_tree& block_proof::get_state_tree()
 		{
 			if (!internal.states_tree.is_calculated() || internal.states_tree.get_tree().size() < states.size())
 			{
@@ -1196,7 +1217,7 @@ namespace tangent
 		expects_lr<block_checkpoint> block_evaluation::checkpoint(bool keep_reverted_transactions) const
 		{
 			auto chain = storages::chainstate(__func__);
-			auto chain_session = chain.multi_tx_begin("chainwork", "apply", sqlite::isolation::placeholder);
+			auto chain_session = chain.multi_tx_begin("chainstate", __func__, sqlite::isolation::default_isolation);
 			if (!chain_session)
 				return layer_exception(std::move(chain_session.error().message()));
 
@@ -1217,10 +1238,10 @@ namespace tangent
 				if (keep_reverted_transactions)
 				{
 					auto mempool = storages::mempoolstate(__func__);
-					auto mempool_session = mempool.tx_begin("mempoolwork", "apply", sqlite::isolation::placeholder);
+					auto mempool_session = mempool.tx_begin("mempoolstate", __func__, sqlite::isolation::default_isolation);
 					if (!mempool_session)
 					{
-						chain.multi_tx_rollback("chainwork", "apply");
+						chain.multi_tx_rollback("chainstate", __func__);
 						return layer_exception(std::move(mempool_session.error().message()));
 					}
 
@@ -1254,38 +1275,38 @@ namespace tangent
 					auto status = chain.revert(mutation.new_tip_block_number - 1, &mutation.block_delta, &mutation.transaction_delta, &mutation.state_delta);
 					if (!status)
 					{
-						chain.multi_tx_rollback("chainwork", "apply");
-						mempool.tx_rollback("mempoolwork", "apply");
+						chain.multi_tx_rollback("chainstate", __func__);
+						mempool.tx_rollback("mempoolstate", __func__);
 						return status.error();
 					}
 
 					if (protocol::now().user.storage.logging)
 						VI_INFO("revert chain to block %s (height: %" PRIu64 ", mempool: +%" PRIu64 ", blocktrie: %" PRIi64 ", transactiontrie: %" PRIi64 ", statetrie: %" PRIi64 ")", algorithm::encoding::encode_0xhex256(block.as_hash()).c_str(), mutation.new_tip_block_number, mutation.mempool_transactions, mutation.block_delta, mutation.transaction_delta, mutation.state_delta);
 
-status = chain.checkpoint(*this);
-if (!status)
-{
-	chain.multi_tx_rollback("chainwork", "apply");
-	mempool.tx_rollback("mempoolwork", "apply");
-	return status.error();
-}
+					status = chain.checkpoint(*this);
+					if (!status)
+					{
+						chain.multi_tx_rollback("chainstate", __func__);
+						mempool.tx_rollback("mempoolstate", __func__);
+						return status.error();
+					}
 
-auto result = chain.multi_tx_commit("chainwork", "apply");
-if (!result)
-{
-	mempool.tx_rollback("mempoolwork", "apply");
-	return layer_exception(std::move(result.error().message()));
-}
+					auto result = chain.multi_tx_commit("chainstate", __func__);
+					if (!result)
+					{
+						mempool.tx_rollback("mempoolstate", __func__);
+						return layer_exception(std::move(result.error().message()));
+					}
 
-mempool.remove_transactions(finalized_transactions).report("mempool cleanup failed");
-mempool.tx_commit("mempoolwork", "apply").report("mempool commit failed");
+					mempool.remove_transactions(finalized_transactions).report("mempool cleanup failed");
+					mempool.tx_commit("mempoolstate", __func__).report("mempool commit failed");
 				}
 				else
 				{
 					auto status = chain.revert(mutation.new_tip_block_number - 1, &mutation.block_delta, &mutation.transaction_delta, &mutation.state_delta);
 					if (!status)
 					{
-						chain.multi_tx_rollback("chainwork", "apply");
+						chain.multi_tx_rollback("chainstate", __func__);
 						return status.error();
 					}
 
@@ -1295,11 +1316,11 @@ mempool.tx_commit("mempoolwork", "apply").report("mempool commit failed");
 					status = chain.checkpoint(*this);
 					if (!status)
 					{
-						chain.multi_tx_rollback("chainwork", "apply");
+						chain.multi_tx_rollback("chainstate", __func__);
 						return status.error();
 					}
 
-					auto result = chain.multi_tx_commit("chainwork", "apply");
+					auto result = chain.multi_tx_commit("chainstate", __func__);
 					if (!result)
 						return layer_exception(std::move(result.error().message()));
 				}
@@ -1309,11 +1330,11 @@ mempool.tx_commit("mempoolwork", "apply").report("mempool commit failed");
 				auto status = chain.checkpoint(*this);
 				if (!status)
 				{
-					chain.multi_tx_rollback("chainwork", "apply");
+					chain.multi_tx_rollback("chainstate", __func__);
 					return status.error();
 				}
 
-				auto result = chain.multi_tx_commit("chainwork", "apply");
+				auto result = chain.multi_tx_commit("chainstate", __func__);
 				if (!result)
 					return layer_exception(std::move(result.error().message()));
 
@@ -1326,8 +1347,8 @@ mempool.tx_commit("mempoolwork", "apply").report("mempool commit failed");
 		{
 			auto data = block.as_schema();
 			auto* states_data = data->set("state", var::set::array());
-			for (auto& item : state.at(work_state::finalized))
-				states_data->push(item.second->as_schema().reset());
+			for (auto& [index, change] : state.finalized)
+				states_data->push(change.state->as_schema().reset());
 			return data;
 		}
 
@@ -1391,22 +1412,22 @@ mempool.tx_commit("mempoolwork", "apply").report("mempool commit failed");
 				return layer_exception("invalid state changelog");
 
 			auto chain = storages::chainstate(__func__);
+			auto prev = uptr<ledger::state>();
+			auto type = next->as_type();
 			switch (next->as_level())
 			{
 				case state_level::uniform:
 				{
-					auto* state = (uniform*)next;
-					auto prev = chain.get_uniform(state->as_type(), changelog, state->as_index(), get_validation_nonce());
-					auto status = state->transition(this, prev ? **prev : nullptr);
+					prev = chain.get_uniform(type, changelog, ((uniform*)next)->as_index(), get_validation_nonce()).or_else(nullptr);
+					auto status = next->transition(this, *prev);
 					if (!status)
 						return status;
 					break;
 				}
 				case state_level::multiform:
 				{
-					auto* state = (multiform*)next;
-					auto prev = chain.get_multiform(state->as_type(), changelog, state->as_column(), state->as_row(), get_validation_nonce());
-					auto status = state->transition(this, prev ? **prev : nullptr);
+					prev = chain.get_multiform(type, changelog, ((multiform*)next)->as_column(), ((multiform*)next)->as_row(), get_validation_nonce()).or_else(nullptr);
+					auto status = next->transition(this, *prev);
 					if (!status)
 						return status;
 					break;
@@ -1415,15 +1436,17 @@ mempool.tx_commit("mempoolwork", "apply").report("mempool commit failed");
 					return layer_exception("invalid state level");
 			}
 
-			bool written = changelog->outgoing.copy(next);
-			if (written && paid)
-			{
-				auto status = burn_gas(next->as_message().data.size() * (size_t)gas_cost::write_byte);
-				if (!status)
-					return status;
-			}
+			if (!prev)
+				prev = states::resolver::from_type(type);
 
-			return expectation::met;
+			bool will_delete = states::resolver::will_delete(next, prev);
+			states::resolver::value_copy(type, next, *prev);
+			changelog->outgoing.emplace(std::move(prev), will_delete);
+			if (!paid)
+				return expectation::met;
+
+			size_t size = next->as_message().data.size();
+			return burn_gas(size * (size_t)(will_delete ? gas_cost::erase_byte : gas_cost::write_byte));
 		}
 		expects_lr<void> transaction_context::emit_witness(const algorithm::asset_id& asset, uint64_t block_number)
 		{
@@ -1566,7 +1589,7 @@ mempool.tx_commit("mempoolwork", "apply").report("mempool commit failed");
 			auto nonce = get_validation_nonce();
 			auto chain = storages::chainstate(__func__);
 			auto filter = storages::result_filter::greater(0, -1);
-			return chain.get_multiforms_count_by_row_filter(states::validator_attestation::as_instance_type(), states::validator_attestation::as_instance_row(asset), filter, nonce);
+			return chain.get_multiforms_count_by_row_filter(states::validator_attestation::as_instance_type(), changelog, states::validator_attestation::as_instance_row(asset), filter, nonce);
 		}
 		expects_lr<vector<states::validator_production>> transaction_context::calculate_producers(size_t target_size)
 		{
@@ -1578,7 +1601,7 @@ mempool.tx_commit("mempoolwork", "apply").report("mempool commit failed");
 			auto chain = storages::chainstate(__func__);
 			auto filter = storages::result_filter::greater(0, -1);
 			auto window = storages::result_index_window();
-			auto pool = chain.get_multiforms_count_by_row_filter(states::validator_production::as_instance_type(), states::validator_production::as_instance_row(), filter, nonce).or_else(0);
+			auto pool = chain.get_multiforms_count_by_row_filter(states::validator_production::as_instance_type(), changelog, states::validator_production::as_instance_row(), filter, nonce).or_else(0);
 			auto size = std::min(target_size, pool);
 			auto indices = ordered_set<uint64_t>();
 			while (indices.size() < size)
@@ -1621,7 +1644,7 @@ mempool.tx_commit("mempoolwork", "apply").report("mempool commit failed");
 			auto nonce = get_validation_nonce();
 			auto chain = storages::chainstate(__func__);
 			auto filter = storages::result_filter::greater(0, -1);
-			auto pool = chain.get_multiforms_count_by_row_filter(states::validator_participation::as_instance_type(), states::validator_participation::as_instance_row(asset), filter, nonce).or_else(0);
+			auto pool = chain.get_multiforms_count_by_row_filter(states::validator_participation::as_instance_type(), changelog, states::validator_participation::as_instance_row(asset), filter, nonce).or_else(0);
 			if (pool < target_size)
 				return layer_exception("committee threshold not met");
 
@@ -1871,10 +1894,10 @@ mempool.tx_commit("mempoolwork", "apply").report("mempool commit failed");
 			if (!result)
 				return result.error();
 
-			decimal changelog = (new_state.stake.is_nan() ? decimal::zero() : new_state.stake) - (prev_state_stake.is_nan() ? decimal::zero() : prev_state_stake);
-			if (!changelog.is_zero_or_nan())
+			decimal delta = (new_state.stake.is_nan() ? decimal::zero() : new_state.stake) - (prev_state_stake.is_nan() ? decimal::zero() : prev_state_stake);
+			if (!delta.is_zero_or_nan())
 			{
-				auto transfer = apply_transfer(asset, owner, is_reward ? changelog : decimal::zero(), changelog);
+				auto transfer = apply_transfer(asset, owner, is_reward ? delta : decimal::zero(), delta);
 				if (!transfer)
 					return transfer.error();
 			}
@@ -1893,10 +1916,10 @@ mempool.tx_commit("mempoolwork", "apply").report("mempool commit failed");
 			if (!result)
 				return result.error();
 
-			decimal changelog = (new_state.stake.is_nan() ? decimal::zero() : new_state.stake) - (prev_state_stake.is_nan() ? decimal::zero() : prev_state_stake);
-			if (!changelog.is_zero_or_nan())
+			decimal delta = (new_state.stake.is_nan() ? decimal::zero() : new_state.stake) - (prev_state_stake.is_nan() ? decimal::zero() : prev_state_stake);
+			if (!delta.is_zero_or_nan())
 			{
-				auto transfer = apply_transfer(asset, owner, is_reward ? changelog : decimal::zero(), changelog);
+				auto transfer = apply_transfer(asset, owner, is_reward ? delta : decimal::zero(), delta);
 				if (!transfer)
 					return transfer.error();
 			}
@@ -2500,15 +2523,17 @@ mempool.tx_commit("mempoolwork", "apply").report("mempool commit failed");
 		expects_lr<states::witness_account> transaction_context::get_witness_account(const algorithm::asset_id& asset, const std::string_view& address, size_t offset) const
 		{
 			auto chain = storages::chainstate(__func__);
-			auto state = chain.get_multiform_by_row(states::witness_account::as_instance_type(), changelog, states::witness_account::as_instance_row(asset, address), get_validation_nonce(), offset);
-			if (!state)
-				return state.error();
+			auto states = chain.get_multiforms_by_row(states::witness_account::as_instance_type(), changelog, states::witness_account::as_instance_row(asset, address), get_validation_nonce(), offset, 1);
+			if (!states)
+				return states.error();
+			else if (states->empty())
+				return layer_exception("state not found");
 
-			auto status = ((transaction_context*)this)->query_load(**state, 1, chain.query_used());
+			auto status = ((transaction_context*)this)->query_load(*states->front(), 1, chain.query_used());
 			if (!status)
 				return status.error();
 
-			return states::witness_account(std::move(*(states::witness_account*)**state));
+			return states::witness_account(std::move(*(states::witness_account*)*states->front()));
 		}
 		expects_lr<states::witness_account> transaction_context::get_witness_account_tagged(const algorithm::asset_id& asset, const std::string_view& address, size_t offset) const
 		{
@@ -2650,7 +2675,7 @@ mempool.tx_commit("mempoolwork", "apply").report("mempool commit failed");
 			auto context = transaction_context(new_environment, new_block, changelog, new_transaction, std::move(new_receipt));
 			context.execution_flags = execution_flags;
 
-			auto storage = context.burn_gas(transaction_size * (size_t)gas_cost::write_byte);
+			auto storage = context.burn_gas(transaction_size * (size_t)gas_cost::write_tx_byte);
 			if (!storage)
 				return storage.error();
 
@@ -2690,9 +2715,9 @@ mempool.tx_commit("mempoolwork", "apply").report("mempool commit failed");
 				context.emit_event(0, { format::variable(execution.what()) }, false);
 
 			context.execution_flags = 0;
-			context.receipt.finalization_time = protocol::now().time.now();
 			context.block->gas_use += context.receipt.relative_gas_use;
 			context.block->gas_limit += context.transaction->gas_limit;
+			context.receipt.finalization_time = protocol::now().time.now();
 			return expects_lr<transaction_context>(std::move(context));
 		}
 		expects_promise_rt<void> transaction_context::dispatch_tx(dispatch_context* dispatcher, ledger::block_transaction* transaction)

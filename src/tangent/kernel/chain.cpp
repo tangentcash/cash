@@ -137,6 +137,13 @@ namespace tangent
 		if (protocol::now().user.storage.logging)
 			VI_DEBUG("wal append on %s (handle: 0x%" PRIXPTR ")", address.c_str(), (uintptr_t)result);
 
+		auto threads = os::hw::get_quantity_info().physical;
+		auto options = result->GetOptions();
+		if (protocol::now().user.storage.compaction_threads_ratio > 0.0)
+			options.env->SetBackgroundThreads((int)std::max(std::ceil(threads * protocol::now().user.storage.compaction_threads_ratio), 1.0), rocksdb::Env::Priority::LOW);
+		if (protocol::now().user.storage.flush_threads_ratio > 0.0)
+			options.env->SetBackgroundThreads((int)std::max(std::ceil(threads * protocol::now().user.storage.flush_threads_ratio), 1.0), rocksdb::Env::Priority::HIGH);
+
 		blobs[address] = result;
 		return result;
 #else

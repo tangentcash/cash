@@ -820,7 +820,10 @@ namespace tangent
 
 			auto* prev = (validator_participation*)prev_state;
 			if (prev)
-				stake += prev->stake;
+			{
+				if (!stake.is_nan() && prev->stake > stake)
+					return layer_exception("next stake is lower than previous stake");
+			}
 			else if (!algorithm::asset::is_valid(asset) || !algorithm::asset::token_of(asset).empty())
 				return layer_exception("invalid asset");
 
@@ -952,7 +955,10 @@ namespace tangent
 
 			auto* prev = (validator_attestation*)prev_state;
 			if (prev)
-				stake += prev->stake;
+			{
+				if (!stake.is_nan() && prev->stake > stake)
+					return layer_exception("next stake is lower than previous stake");
+			}
 			else if (!algorithm::asset::is_valid(asset) || !algorithm::asset::token_of(asset).empty())
 				return layer_exception("invalid asset");
 
@@ -1871,14 +1877,16 @@ namespace tangent
 		bool witness_account::store_data(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
+			auto* server = nss::server_node::get();
 			algorithm::pubkeyhash null = { 0 };
 			stream->write_boolean(active);
 			stream->write_string(std::string_view((char*)manager, memcmp(manager, null, sizeof(null)) == 0 ? 0 : sizeof(manager)));
 			stream->write_integer((uint8_t)addresses.size());
 			for (auto& address : addresses)
 			{
+				auto raw_address = server->decode_address(asset, address.second);
 				stream->write_integer(address.first);
-				stream->write_string(address.second);
+				stream->write_string(raw_address ? *raw_address : address.second);
 			}
 			return true;
 		}
@@ -1895,6 +1903,7 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &addresses_size))
 				return false;
 
+			auto* server = nss::server_node::get();
 			addresses.clear();
 			for (uint8_t i = 0; i < addresses_size; i++)
 			{
@@ -1906,7 +1915,11 @@ namespace tangent
 				if (!stream.read_string(stream.read_type(), &address))
 					return false;
 
-				addresses[version] = std::move(address);
+				auto encoded_address = server->encode_address(asset, address);
+				if (encoded_address)
+					addresses[version] = std::move(*encoded_address);
+				else
+					addresses[version] = std::move(address);
 			}
 
 			return true;
@@ -1936,6 +1949,10 @@ namespace tangent
 		{
 			algorithm::pubkeyhash null = { 0 };
 			return !memcmp(manager, null, sizeof(null));
+		}
+		bool witness_account::is_permanent() const
+		{
+			return true;
 		}
 		witness_account::account_type witness_account::get_type() const
 		{
@@ -2131,130 +2148,140 @@ namespace tangent
 		}
 		ledger::state* resolver::from_copy(const ledger::state* base)
 		{
+			VI_ASSERT(base != nullptr, "base should be set");
 			uint32_t hash = base->as_type();
-			if (hash == account_nonce::as_instance_type())
-				return memory::init<account_nonce>(*(const account_nonce*)base);
-			else if (hash == account_program::as_instance_type())
-				return memory::init<account_program>(*(const account_program*)base);
-			else if (hash == account_uniform::as_instance_type())
-				return memory::init<account_uniform>(*(const account_uniform*)base);
-			else if (hash == account_multiform::as_instance_type())
-				return memory::init<account_multiform>(*(const account_multiform*)base);
-			else if (hash == account_delegation::as_instance_type())
-				return memory::init<account_delegation>(*(const account_delegation*)base);
-			else if (hash == account_balance::as_instance_type())
-				return memory::init<account_balance>(*(const account_balance*)base);
-			else if (hash == validator_production::as_instance_type())
-				return memory::init<validator_production>(*(const validator_production*)base);
-			else if (hash == validator_participation::as_instance_type())
-				return memory::init<validator_participation>(*(const validator_participation*)base);
-			else if (hash == validator_attestation::as_instance_type())
-				return memory::init<validator_attestation>(*(const validator_attestation*)base);
-			else if (hash == depository_reward::as_instance_type())
-				return memory::init<depository_reward>(*(const depository_reward*)base);
-			else if (hash == depository_balance::as_instance_type())
-				return memory::init<depository_balance>(*(const depository_balance*)base);
-			else if (hash == depository_policy::as_instance_type())
-				return memory::init<depository_policy>(*(const depository_policy*)base);
-			else if (hash == depository_account::as_instance_type())
-				return memory::init<depository_account>(*(const depository_account*)base);
-			else if (hash == witness_program::as_instance_type())
-				return memory::init<witness_program>(*(const witness_program*)base);
-			else if (hash == witness_event::as_instance_type())
-				return memory::init<witness_event>(*(const witness_event*)base);
-			else if (hash == witness_account::as_instance_type())
-				return memory::init<witness_account>(*(const witness_account*)base);
-			else if (hash == witness_transaction::as_instance_type())
-				return memory::init<witness_transaction>(*(const witness_transaction*)base);
-			return nullptr;
+			auto* result = from_type(hash);
+			if (result)
+				value_copy(hash, base, result);
+			return result;
 		}
-		bool resolver::is_non_default(const ledger::state* base, uptr<ledger::state>& default_base)
+		void resolver::value_copy(uint32_t hash, const ledger::state* from, ledger::state* to)
 		{
-			if (!base)
+			VI_ASSERT(to != nullptr, "to should be set");
+			if (hash == account_nonce::as_instance_type())
+				*(account_nonce*)to = from ? account_nonce(*(const account_nonce*)from) : account_nonce(nullptr, nullptr);
+			else if (hash == account_program::as_instance_type())
+				*(account_program*)to = from ? account_program(*(const account_program*)from) : account_program(nullptr, nullptr);
+			else if (hash == account_uniform::as_instance_type())
+				*(account_uniform*)to = from ? account_uniform(*(const account_uniform*)from) : account_uniform(nullptr, std::string_view(), nullptr);
+			else if (hash == account_multiform::as_instance_type())
+				*(account_multiform*)to = from ? account_multiform(*(const account_multiform*)from) : account_multiform(nullptr, std::string_view(), std::string_view(), nullptr);
+			else if (hash == account_delegation::as_instance_type())
+				*(account_delegation*)to = from ? account_delegation(*(const account_delegation*)from) : account_delegation(nullptr, nullptr);
+			else if (hash == account_balance::as_instance_type())
+				*(account_balance*)to = from ? account_balance(*(const account_balance*)from) : account_balance(nullptr, 0, nullptr);
+			else if (hash == validator_production::as_instance_type())
+				*(validator_production*)to = from ? validator_production(*(const validator_production*)from) : validator_production(nullptr, nullptr);
+			else if (hash == validator_participation::as_instance_type())
+				*(validator_participation*)to = from ? validator_participation(*(const validator_participation*)from) : validator_participation(nullptr, 0, nullptr);
+			else if (hash == validator_attestation::as_instance_type())
+				*(validator_attestation*)to = from ? validator_attestation(*(const validator_attestation*)from) : validator_attestation(nullptr, 0, nullptr);
+			else if (hash == depository_reward::as_instance_type())
+				*(depository_reward*)to = from ? depository_reward(*(const depository_reward*)from) : depository_reward(nullptr, 0, nullptr);
+			else if (hash == depository_balance::as_instance_type())
+				*(depository_balance*)to = from ? depository_balance(*(const depository_balance*)from) : depository_balance(nullptr, 0, nullptr);
+			else if (hash == depository_policy::as_instance_type())
+				*(depository_policy*)to = from ? depository_policy(*(const depository_policy*)from) : depository_policy(nullptr, 0, nullptr);
+			else if (hash == depository_account::as_instance_type())
+				*(depository_account*)to = from ? depository_account(*(const depository_account*)from) : depository_account(nullptr, 0, nullptr, nullptr);
+			else if (hash == witness_program::as_instance_type())
+				*(witness_program*)to = from ? witness_program(*(const witness_program*)from) : witness_program(std::string_view(), nullptr);
+			else if (hash == witness_event::as_instance_type())
+				*(witness_event*)to = from ? witness_event(*(const witness_event*)from) : witness_event(0, nullptr);
+			else if (hash == witness_account::as_instance_type())
+				*(witness_account*)to = from ? witness_account(*(const witness_account*)from) : witness_account(nullptr, 0, address_map(), nullptr);
+			else if (hash == witness_transaction::as_instance_type())
+				*(witness_transaction*)to = from ? witness_transaction(*(const witness_transaction*)from) : witness_transaction(0, std::string_view(), nullptr);
+		}
+		bool resolver::will_delete(const ledger::state* base, uptr<ledger::state>& cache)
+		{
+			VI_ASSERT(base != nullptr, "base should be set");
+			if (base->is_permanent())
 				return false;
-			else if (base->is_permanent())
-				return true;
-			else if (!default_base)
-				default_base = from_type(base->as_type());
+			
+			if (cache)
+				value_copy(base->as_type(), nullptr, *cache);
+			else
+				cache = from_type(base->as_type());
 
-			default_base->block_number = base->block_number;
-			default_base->block_nonce = base->block_nonce;
+			cache->block_number = base->block_number;
+			cache->block_nonce = base->block_nonce;
 			switch (base->as_level())
 			{
 				case ledger::state_level::uniform:
 				{
 					auto maybe_unique = (ledger::uniform*)base;
-					auto non_unique = (ledger::uniform*)*default_base;
+					auto non_unique = (ledger::uniform*)*cache;
 					if (!non_unique)
-						return false;
+						return true;
 
-					format::wo_stream index_message;
-					if (!maybe_unique->store_index(&index_message))
-						return false;
+					format::wo_stream writer;
+					if (!maybe_unique->store_index(&writer))
+						return true;
 
-					auto reader = index_message.ro();
+					auto reader = writer.ro();
 					if (!non_unique->load_index(reader))
-						return false;
+						return true;
 
-					bool truly_unique = maybe_unique->as_hash() != non_unique->as_hash(true);
-					return truly_unique;
+					return maybe_unique->as_hash() == non_unique->as_hash(true);
 				}
 				case ledger::state_level::multiform:
 				{
 					auto maybe_unique = (ledger::multiform*)base;
-					auto non_unique = (ledger::multiform*)*default_base;
+					auto non_unique = (ledger::multiform*)*cache;
 					if (!non_unique)
-						return false;
+						return true;
 
-					format::wo_stream column_message;
-					if (!maybe_unique->store_column(&column_message))
-						return false;
+					format::wo_stream writer;
+					if (!maybe_unique->store_column(&writer))
+						return true;
 
-					auto reader = column_message.ro();
+					auto reader = writer.ro();
 					if (!non_unique->load_column(reader))
-						return false;
+						return true;
 
-					format::wo_stream row_message;
-					if (!maybe_unique->store_row(&row_message))
-						return false;
+					writer.clear();
+					if (!maybe_unique->store_row(&writer))
+						return true;
 
-					reader = row_message.ro();
+					reader = writer.ro();
 					if (!non_unique->load_row(reader))
-						return false;
+						return true;
 
-					bool truly_unique = maybe_unique->as_hash() != non_unique->as_hash(true);
-					return truly_unique;
+					return maybe_unique->as_hash() == non_unique->as_hash(true);
 				}
 				default:
-					return false;
+					return true;
 			}
 		}
-		unordered_set<uint32_t> resolver::get_uniform_types()
+		std::array<uint32_t, 7> resolver::get_uniform_types()
 		{
-			unordered_set<uint32_t> types;
-			types.insert(account_nonce::as_instance_type());
-			types.insert(account_program::as_instance_type());
-			types.insert(account_uniform::as_instance_type());
-			types.insert(account_delegation::as_instance_type());
-			types.insert(witness_program::as_instance_type());
-			types.insert(witness_event::as_instance_type());
-			types.insert(witness_transaction::as_instance_type());
-			return types;
+			return
+			{
+				account_nonce::as_instance_type(),
+				account_program::as_instance_type(),
+				account_uniform::as_instance_type(),
+				account_delegation::as_instance_type(),
+				witness_program::as_instance_type(),
+				witness_event::as_instance_type(),
+				witness_transaction::as_instance_type(),
+			};
 		}
-		unordered_set<uint32_t> resolver::get_multiform_types()
+		std::array<uint32_t, 10> resolver::get_multiform_types()
 		{
-			unordered_set<uint32_t> types;
-			types.insert(account_multiform::as_instance_type());
-			types.insert(account_balance::as_instance_type());
-			types.insert(validator_production::as_instance_type());
-			types.insert(validator_participation::as_instance_type());
-			types.insert(validator_attestation::as_instance_type());
-			types.insert(depository_reward::as_instance_type());
-			types.insert(depository_balance::as_instance_type());
-			types.insert(depository_policy::as_instance_type());
-			types.insert(depository_account::as_instance_type());
-			types.insert(witness_account::as_instance_type());
-			return types;
+			return
+			{
+				account_multiform::as_instance_type(),
+				account_balance::as_instance_type(),
+				validator_production::as_instance_type(),
+				validator_participation::as_instance_type(),
+				validator_attestation::as_instance_type(),
+				depository_reward::as_instance_type(),
+				depository_balance::as_instance_type(),
+				depository_policy::as_instance_type(),
+				depository_account::as_instance_type(),
+				witness_account::as_instance_type(),
+			};
 		}
 	}
 }

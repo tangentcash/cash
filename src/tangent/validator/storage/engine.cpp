@@ -431,14 +431,6 @@ namespace tangent
 		{
 			blob = protocol::change().database.load_blob(path);
 			VI_PANIC(blob, "blob storage connection error (path = %.*s)", (int)path.size(), path.data());
-#ifdef TAN_ROCKSDB
-			auto threads = os::hw::get_quantity_info().physical;
-			auto options = blob->GetOptions();
-			if (protocol::now().user.storage.compaction_threads_ratio > 0.0)
-				options.env->SetBackgroundThreads((int)std::max(std::ceil(threads * protocol::now().user.storage.compaction_threads_ratio), 1.0), rocksdb::Env::Priority::LOW);
-			if (protocol::now().user.storage.flush_threads_ratio > 0.0)
-				options.env->SetBackgroundThreads((int)std::max(std::ceil(threads * protocol::now().user.storage.flush_threads_ratio), 1.0), rocksdb::Env::Priority::HIGH);
-#endif
 		}
 		void permanent_storage::unload_index_of(uptr<sqlite::connection>&& storage, bool borrows)
 		{

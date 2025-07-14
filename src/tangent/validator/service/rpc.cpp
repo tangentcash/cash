@@ -323,8 +323,8 @@ namespace tangent
 			if (protocol::now().user.p2p.logging)
 				VI_INFO("rpc node listen (location: %s:%i)", protocol::now().user.rpc.address.c_str(), (int)protocol::now().user.rpc.port);
 
-			bind(0, "websocket", "subscribe", 1, 3, "string addresses, bool? blocks, bool? transactions", "uint64", "Subscribe to streams of incoming blocks and transactions optionally include blocks and transactions relevant to comma separated address list", std::bind(&server_node::web_socket_subscribe, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0, "websocket", "unsubscribe", 1, 1, "", "void", "Unsubscribe from all streams", std::bind(&server_node::web_socket_unsubscribe, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0, "websocket", "subscribe", 1, 3, "string addresses, bool? blocks, bool? transactions", "uint64", "subscribe to streams of incoming blocks and transactions optionally include blocks and transactions relevant to comma separated address list", std::bind(&server_node::web_socket_subscribe, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0, "websocket", "unsubscribe", 1, 1, "", "void", "unsubscribe from all streams", std::bind(&server_node::web_socket_unsubscribe, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0, "utility", "transformaddressfromhash", 2, 2, "string address, string derivation_hash_hex", "string", "calculate subaddress from derivation hash", std::bind(&server_node::utility_transform_address_from_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0, "utility", "transformaddressfromdata", 2, 2, "string address, string derivation_data", "string", "calculate subaddress from derivation data", std::bind(&server_node::utility_transform_address_from_data, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0, "utility", "encodeaddress", 1, 1, "string public_key_hash", "string", "encode public key hash", std::bind(&server_node::utility_encode_address, this, std::placeholders::_1, std::placeholders::_2));
@@ -356,19 +356,22 @@ namespace tangent
 			bind(0 | access_type::r, "txnstate", "getrawtransactionbyhash", 1, 1, "uint256 hash", "string", "get raw transaction by hash", std::bind(&server_node::txnstate_get_raw_transaction_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "txnstate", "getreceiptbytransactionhash", 1, 1, "uint256 hash", "receipt", "get receipt by transaction hash", std::bind(&server_node::txnstate_get_receipt_by_transaction_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "call", 5, 32, "string asset, string from_address, string to_address, decimal value, string function, ...", "program_trace", "execute of immutable function of program assigned to to_address", std::bind(&server_node::chainstate_call, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getblockstatesbyhash", 1, 2, "uint256 hash, uint8? unrolling = 0", "uint256[] | (uniform|multiform)[]", "get block states by hash", std::bind(&server_node::chainstate_get_block_states_by_hash, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getblockstatesbynumber", 1, 2, "uint64 number, uint8? unrolling = 0", "uint256[] | (uniform|multiform)[]", "get block states by number", std::bind(&server_node::chainstate_get_block_states_by_number, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getblockstatebyhash", 1, 2, "uint256 hash, uint8? unrolling = 0", "uint256[] | (uniform|multiform)[]", "get block state by hash", std::bind(&server_node::chainstate_get_block_state_by_hash, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getblockstatebynumber", 1, 2, "uint64 number, uint8? unrolling = 0", "uint256[] | (uniform|multiform)[]", "get block state by number", std::bind(&server_node::chainstate_get_block_state_by_number, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getblockgaspricebyhash", 2, 3, "uint256 hash, string asset, double? percentile = 0.5", "decimal", "get gas price from percentile of block transactions by hash", std::bind(&server_node::chainstate_get_block_gas_price_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getblockgaspricebynumber", 2, 3, "uint64 number, string asset, double? percentile = 0.5", "decimal", "get gas price from percentile of block transactions by number", std::bind(&server_node::chainstate_get_block_gas_price_by_number, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getblockassetpricebyhash", 3, 4, "uint256 hash, string asset_from, string asset_to, double? percentile = 0.5", "decimal", "get gas asset from percentile of block transactions by hash", std::bind(&server_node::chainstate_get_block_asset_price_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getblockassetpricebynumber", 3, 4, "uint64 number, string asset_from, string asset_to, double? percentile = 0.5", "decimal", "get gas asset from percentile of block transactions by number", std::bind(&server_node::chainstate_get_block_asset_price_by_number, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getuniformbyindex", 2, 2, "string type, any index", "uniform", "get uniform by type and index", std::bind(&server_node::chainstate_get_uniform, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getmultiformbycomposition", 3, 3, "string type, any column, any row", "multiform", "get multiform by type, column and row", std::bind(&server_node::chainstate_get_multiform, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getmultiformbycolumn", 2, 3, "string type, any column, uint64? offset", "multiform", "get multiform by type and column", std::bind(&server_node::chainstate_get_multiform_by_column, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getmultiformsbycolumn", 4, 4, "string type, any column, uint64 offset, uint64 count", "multiform[]", "get filtered multiform by type and column", std::bind(&server_node::chainstate_get_multiforms_by_column, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getmultiformbyrow", 2, 3, "string type, any row, uint64? offset", "multiform", "get multiform by type and row", std::bind(&server_node::chainstate_get_multiform_by_row, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getmultiformbyrowquery", 7, 7, "string type, any row, string weight_condition = '>' | '>=' | '=' | '<>' | '<=' | '<', uint256 weight_value, int8 weight_order, uint64 offset, uint64 count", "multiform", "get filtered multiform by type row", std::bind(&server_node::chainstate_get_multiforms_by_row, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getmultiformscountbyrow", 4, 4, "string type, any row, string weight_condition = '>' | '>=' | '=' | '<>' | '<=' | '<', uint256 weight_value", "uint64", "get filtered multiform count by type and row", std::bind(&server_node::chainstate_get_multiforms_count_by_row, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getuniform", 2, 2, "string type, any index", "uniform", "get uniform by type and index", std::bind(&server_node::chainstate_get_uniform, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getmultiform", 3, 3, "string type, any column, any row", "multiform", "get multiform by type, column and row", std::bind(&server_node::chainstate_get_multiform, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getmultiformsbycolumn", 4, 4, "string type, any column, uint64 offset, uint64 count", "multiform[]", "get multiform by type and column", std::bind(&server_node::chainstate_get_multiforms_by_column, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getmultiformsbycolumnfilter", 7, 7, "string type, any column, string rank_condition = '>' | '>=' | '=' | '<>' | '<=' | '<', uint256 rank_value, int8 rank_order, uint64 offset, uint64 count", "multiform[]", "get multiform by type, column and rank", std::bind(&server_node::chainstate_get_multiforms_by_column_filter, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getmultiformsbyrow", 4, 4, "string type, any row, uint64 offset, uint64 count", "multiform[]", "get multiform by type and row", std::bind(&server_node::chainstate_get_multiforms_by_row, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getmultiformsbyrowfilter", 7, 7, "string type, any row, string rank_condition = '>' | '>=' | '=' | '<>' | '<=' | '<', uint256 rank_value, int8 rank_order, uint64 offset, uint64 count", "multiform[]", "get multiform by type, row and rank", std::bind(&server_node::chainstate_get_multiforms_by_row_filter, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getmultiformscountbycolumn", 2, 2, "string type, any column", "uint64", "get multiform count by type and column", std::bind(&server_node::chainstate_get_multiforms_count_by_column, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getmultiformscountbycolumnfilter", 4, 4, "string type, any column, string rank_condition = '>' | '>=' | '=' | '<>' | '<=' | '<', uint256 rank_value", "uint64", "get multiform count by type, column and rank", std::bind(&server_node::chainstate_get_multiforms_count_by_column_filter, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getmultiformscountbyrow", 2, 2, "string type, any row", "uint64", "get multiform count by type and row", std::bind(&server_node::chainstate_get_multiforms_count_by_row, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getmultiformscountbyrowfilter", 4, 4, "string type, any row, string rank_condition = '>' | '>=' | '=' | '<>' | '<=' | '<', uint256 rank_value", "uint64", "get multiform count by type, row and rank", std::bind(&server_node::chainstate_get_multiforms_count_by_row_filter, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getaccountnonce", 1, 1, "string address", "uint64", "get account nonce by address", std::bind(&server_node::chainstate_get_account_nonce, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getaccountprogram", 1, 1, "string address", "uniform", "get account program hashcode by address", std::bind(&server_node::chainstate_get_account_program, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getaccountuniform", 2, 2, "string address, string index", "uniform", "get account storage by address and index", std::bind(&server_node::chainstate_get_account_uniform, this, std::placeholders::_1, std::placeholders::_2));
@@ -1201,11 +1204,11 @@ namespace tangent
 			bool receipts = args[2].as_boolean();
 			bool states = args[3].as_boolean();
 			if (transactions)
-				block_proof->get_transactions_tree();
+				block_proof->get_transaction_tree();
 			if (receipts)
-				block_proof->get_receipts_tree();
+				block_proof->get_receipt_tree();
 			if (states)
-				block_proof->get_states_tree();
+				block_proof->get_state_tree();
 
 			auto data = block_proof->as_schema();
 			if (!transactions)
@@ -1236,11 +1239,11 @@ namespace tangent
 			bool receipts = args[2].as_boolean();
 			bool states = args[3].as_boolean();
 			if (transactions)
-				block_proof->get_transactions_tree();
+				block_proof->get_transaction_tree();
 			if (receipts)
-				block_proof->get_receipts_tree();
+				block_proof->get_receipt_tree();
 			if (states)
-				block_proof->get_states_tree();
+				block_proof->get_state_tree();
 
 			auto data = block_proof->as_schema();
 			if (!transactions)
@@ -1638,7 +1641,7 @@ namespace tangent
 
 			return server_response().success(script.as_schema());
 		}
-		server_response server_node::chainstate_get_block_states_by_hash(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_block_state_by_hash(http::connection* base, format::variables&& args)
 		{
 			uint256_t hash = args[0].as_uint256();
 			uint8_t unrolling = args.size() > 1 ? args[1].as_uint8() : 0;
@@ -1669,13 +1672,13 @@ namespace tangent
 					return server_response().error(error_codes::not_found, "block not found");
 
 				uptr<schema> data = var::set::array();
-				for (auto& item : list->at(ledger::work_state::finalized))
-					data->push(item.second->as_schema().reset());
+				for (auto& [index, change] : list->finalized)
+					data->push(change.as_schema().reset());
 
 				return server_response().success(std::move(data));
 			}
 		}
-		server_response server_node::chainstate_get_block_states_by_number(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_block_state_by_number(http::connection* base, format::variables&& args)
 		{
 			uint64_t number = args[0].as_uint64();
 			uint8_t unrolling = args.size() > 1 ? args[1].as_uint8() : 0;
@@ -1698,8 +1701,8 @@ namespace tangent
 					return server_response().error(error_codes::not_found, "block not found");
 
 				uptr<schema> data = var::set::array();
-				for (auto& item : list->at(ledger::work_state::finalized))
-					data->push(item.second->as_schema().reset());
+				for (auto& [index, change] : list->finalized)
+					data->push(change.as_schema().reset());
 
 				return server_response().success(std::move(data));
 			}
@@ -1788,20 +1791,6 @@ namespace tangent
 
 			return server_response().success((*multiform)->as_schema());
 		}
-		server_response server_node::chainstate_get_multiform_by_column(http::connection* base, format::variables&& args)
-		{
-			auto location = as_multiform_location(args[0].as_string(), args[1], format::variable());
-			if (!location)
-				return server_response().error(error_codes::bad_params, "location not valid: " + location.error().message());
-
-			size_t offset = args.size() > 2 ? args[2].as_uint64() : 0;
-			auto chain = storages::chainstate(__func__);
-			auto multiform = chain.get_multiform_by_column(location->type, nullptr, location->column, 0, offset);
-			if (!multiform)
-				return server_response().error(error_codes::not_found, "multiform not found");
-
-			return server_response().success((*multiform)->as_schema());
-		}
 		server_response server_node::chainstate_get_multiforms_by_column(http::connection* base, format::variables&& args)
 		{
 			auto location = as_multiform_location(args[0].as_string(), args[1], format::variable());
@@ -1822,21 +1811,48 @@ namespace tangent
 				data->push(item->as_schema().reset());
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::chainstate_get_multiform_by_row(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_multiforms_by_column_filter(http::connection* base, format::variables&& args)
+		{
+			auto location = as_multiform_location(args[0].as_string(), args[1], format::variable());
+			if (!location)
+				return server_response().error(error_codes::bad_params, "location not valid: " + location.error().message());
+
+			uint64_t offset = args[5].as_uint64(), count = args[6].as_uint64();
+			if (!count || count > protocol::now().user.rpc.page_size)
+				return server_response().error(error_codes::bad_params, "count not valid");
+
+			auto filter = storages::result_filter::from(args[2].as_string(), args[3].as_uint256(), args[4].as_decimal().to_int8());
+			auto chain = storages::chainstate(__func__);
+			auto list = chain.get_multiforms_by_column(location->type, nullptr, location->column, 0, offset, count);
+			if (!list)
+				return server_response().error(error_codes::not_found, "multiform not found");
+
+			uptr<schema> data = var::set::array();
+			for (auto& item : *list)
+				data->push(item->as_schema().reset());
+			return server_response().success(std::move(data));
+		}
+		server_response server_node::chainstate_get_multiforms_by_row(http::connection* base, format::variables&& args)
 		{
 			auto location = as_multiform_location(args[0].as_string(), format::variable(), args[1]);
 			if (!location)
 				return server_response().error(error_codes::bad_params, "location not valid: " + location.error().message());
 
-			size_t offset = args.size() > 2 ? args[2].as_uint64() : 0;
+			uint64_t offset = args[2].as_uint64(), count = args[3].as_uint64();
+			if (!count || count > protocol::now().user.rpc.page_size)
+				return server_response().error(error_codes::bad_params, "count not valid");
+
 			auto chain = storages::chainstate(__func__);
-			auto multiform = chain.get_multiform_by_row(location->type, nullptr, location->row, 0, offset);
-			if (!multiform)
+			auto list = chain.get_multiforms_by_row(location->type, nullptr, location->row, 0, offset, count);
+			if (!list)
 				return server_response().error(error_codes::not_found, "multiform not found");
 
-			return server_response().success((*multiform)->as_schema());
+			uptr<schema> data = var::set::array();
+			for (auto& item : *list)
+				data->push(item->as_schema().reset());
+			return server_response().success(std::move(data));
 		}
-		server_response server_node::chainstate_get_multiforms_by_row(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_multiforms_by_row_filter(http::connection* base, format::variables&& args)
 		{
 			auto location = as_multiform_location(args[0].as_string(), format::variable(), args[1]);
 			if (!location)
@@ -1857,7 +1873,47 @@ namespace tangent
 				data->push(item->as_schema().reset());
 			return server_response().success(std::move(data));
 		}
+		server_response server_node::chainstate_get_multiforms_count_by_column(http::connection* base, format::variables&& args)
+		{
+			auto location = as_multiform_location(args[0].as_string(), args[1], format::variable());
+			if (!location)
+				return server_response().error(error_codes::bad_params, "location not valid: " + location.error().message());
+
+			auto chain = storages::chainstate(__func__);
+			auto count = chain.get_multiforms_count_by_column(location->type, nullptr, location->column, 0);
+			if (!count)
+				return server_response().error(error_codes::not_found, "count not found");
+
+			return server_response().success(algorithm::encoding::serialize_uint256(*count));
+		}
+		server_response server_node::chainstate_get_multiforms_count_by_column_filter(http::connection* base, format::variables&& args)
+		{
+			auto location = as_multiform_location(args[0].as_string(), args[1], format::variable());
+			if (!location)
+				return server_response().error(error_codes::bad_params, "location not valid: " + location.error().message());
+
+			auto filter = storages::result_filter::from(args[2].as_string(), args[3].as_uint256(), 0);
+			auto chain = storages::chainstate(__func__);
+			auto count = chain.get_multiforms_count_by_column_filter(location->type, nullptr, location->column, filter, 0);
+			if (!count)
+				return server_response().error(error_codes::not_found, "count not found");
+
+			return server_response().success(algorithm::encoding::serialize_uint256(*count));
+		}
 		server_response server_node::chainstate_get_multiforms_count_by_row(http::connection* base, format::variables&& args)
+		{
+			auto location = as_multiform_location(args[0].as_string(), format::variable(), args[1]);
+			if (!location)
+				return server_response().error(error_codes::bad_params, "location not valid: " + location.error().message());
+
+			auto chain = storages::chainstate(__func__);
+			auto count = chain.get_multiforms_count_by_row(location->type, nullptr, location->row, 0);
+			if (!count)
+				return server_response().error(error_codes::not_found, "count not found");
+
+			return server_response().success(algorithm::encoding::serialize_uint256(*count));
+		}
+		server_response server_node::chainstate_get_multiforms_count_by_row_filter(http::connection* base, format::variables&& args)
 		{
 			auto location = as_multiform_location(args[0].as_string(), format::variable(), args[1]);
 			if (!location)
@@ -1865,7 +1921,7 @@ namespace tangent
 
 			auto filter = storages::result_filter::from(args[2].as_string(), args[3].as_uint256(), 0);
 			auto chain = storages::chainstate(__func__);
-			auto count = chain.get_multiforms_count_by_row_filter(location->type, location->row, filter, 0);
+			auto count = chain.get_multiforms_count_by_row_filter(location->type, nullptr, location->row, filter, 0);
 			if (!count)
 				return server_response().error(error_codes::not_found, "count not found");
 
