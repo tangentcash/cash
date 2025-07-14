@@ -502,7 +502,7 @@ int svm(const inline_args& environment)
 
 	return 0;
 }
-int server(const inline_args& environment)
+int node(const inline_args& environment)
 {
 	auto params = protocol(environment);
 	nds::server_node discovery;
@@ -521,5 +521,5 @@ int main(int argc, char* argv[])
 {
 	vitex::runtime scope;
 	inline_args environment = os::process::parse_args(argc, argv, (size_t)args_format::key_value);
-	return !environment.params.empty() && environment.params.front() == "svm" ? svm(environment) : server(environment);
+	return !environment.params.empty() && environment.params.front() == "svm" ? svm(environment) : node(environment);
 }
