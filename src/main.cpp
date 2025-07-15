@@ -4,21 +4,22 @@
 #include "tangent/validator/service/rpc.h"
 #include "tangent/kernel/svm.h"
 #include "tangent/policy/transactions.h"
+#include <vitex/bindings.h>
 #include <regex>
 
 using namespace tangent;
 
-enum class svm_assemble
-{
-	abi_raw,
-	abi_hex,
-	code
-};
-
 struct svm_context
 {
+	enum class assembler
+	{
+		abi_raw,
+		abi_hex,
+		code
+	};
 	struct
 	{
+		uptr<compiler> compiler;
 		string path;
 		string log;
 	} program;
@@ -27,7 +28,6 @@ struct svm_context
 	algorithm::subpubkeyhash_t from;
 	algorithm::subpubkeyhash_t to;
 	algorithm::asset_id payable;
-	uptr<compiler> compiler;
 	decimal pay;
 
 	svm_context() : payable(0), pay(decimal::zero())
@@ -43,12 +43,11 @@ struct svm_context
 		vm->set_ts_imports(true);
 		vm->set_preserve_source_code(true);
 		vm->set_compiler_features(compiler_features);
-		compiler = host->allocate();
 	}
 	~svm_context()
 	{
 		auto* host = ledger::svm_host::get();
-		host->deallocate(std::move(compiler));
+		host->deallocate(std::move(program.compiler));
 	}
 	expects_lr<void> compile(const std::string_view& new_path)
 	{
@@ -63,7 +62,7 @@ struct svm_context
 		program.log.clear();
 
 		auto hash = algorithm::hashing::hash512((uint8_t*)file->data(), file->size());
-		auto result = host->compile(*compiler, hash, new_path, *file);
+		auto result = host->compile(*program.compiler, hash, new_path, *file);
 		vm->set_compiler_error_callback(nullptr);
 		if (!result)
 			return result.error();
@@ -71,7 +70,7 @@ struct svm_context
 		program.path = new_path;
 		return expectation::met;
 	}
-	expects_lr<void> assemble(svm_assemble type, const std::string_view& new_path)
+	expects_lr<void> assemble(assembler type, const std::string_view& new_path)
 	{
 		auto* host = ledger::svm_host::get();
 		auto* vm = host->get_vm();
@@ -89,13 +88,13 @@ struct svm_context
 		if (!listing.empty())
 			listing.erase(listing.size() - 2, 2);
 
-		if (type == svm_assemble::abi_raw || type == svm_assemble::abi_hex)
+		if (type == assembler::abi_raw || type == assembler::abi_hex)
 		{
 			auto result = host->pack(listing);
 			if (!result)
 				return result.error();
 
-			if (type == svm_assemble::abi_hex)
+			if (type == assembler::abi_hex)
 				listing = format::util::encode_0xhex(*result);
 			else
 				listing = std::move(*result);
@@ -107,7 +106,7 @@ struct svm_context
 
 		return expectation::met;
 	}
-	expects_lr<uptr<schema>> call(const std::string_view& function, format::variables&& args)
+	expects_lr<uptr<schema>> call(const std::string_view& function, format::variables&& args, bool attach_debugger_context)
 	{
 		if (program.path.empty())
 			return layer_exception("program not bound");
@@ -121,14 +120,11 @@ struct svm_context
 		if (!payable)
 			return layer_exception("payable asset not valid");
 
-		transactions::call transaction;
-		transaction.asset = payable;
-		transaction.signature[0] = 0xFF;
-		transaction.nonce = std::max<size_t>(1, ledger::transaction_context().get_account_nonce(from.data).or_else(states::account_nonce(nullptr, nullptr)).nonce);
-		transaction.program_call(to, pay, function, std::move(args));
-		transaction.set_gas(decimal::zero(), ledger::block::get_gas_limit());
+		auto script = ledger::svm_program_trace(&environment);
+		auto assignment = script.assign_transaction(payable, from.data, to, pay, function, args);
+		if (!assignment)
+			return assignment.error();
 
-		auto script = ledger::svm_program_trace(&environment, &transaction, from.data, true);
 		for (auto& [account, balances] : balances)
 		{
 			for (auto& [asset, value] : balances)
@@ -142,7 +138,19 @@ struct svm_context
 			}
 		}
 
-		auto execution = script.trace_call(*compiler, ledger::svm_call::system_call, transaction.function, transaction.args);
+		auto* vm = program.compiler->get_vm();
+		if (attach_debugger_context)
+		{
+			debugger_context* debugger = new debugger_context();
+			bindings::registry().bind_stringifiers(debugger);
+			debugger->set_interrupt_callback([](bool is_interrupted) { console::get()->write_line(is_interrupted ? "program execution interrupted" : "resuming program execution"); });
+			vm->set_debugger(debugger);
+		}
+
+		auto execution = script.call_compiled(*program.compiler, ledger::svm_call::system_call, function, args);
+		if (attach_debugger_context)
+			vm->set_debugger(nullptr);
+
 		if (!execution)
 			return execution.error();
 
@@ -152,8 +160,17 @@ struct svm_context
 	}
 	void reset()
 	{
-		environment = ledger::evaluation_context();
+		auto* host = ledger::svm_host::get();
+		host->deallocate(std::move(program.compiler));
+		program.compiler = host->allocate();
+		program.path.clear();
+		program.log.clear();
 		balances.clear();
+		environment = ledger::evaluation_context();
+		from = algorithm::subpubkeyhash_t();
+		to = algorithm::subpubkeyhash_t();
+		payable = 0;
+		pay = decimal::zero();
 	}
 	bool bound() const
 	{
@@ -163,36 +180,19 @@ struct svm_context
 
 int svm(const inline_args& environment)
 {
-	auto directory = *os::directory::get_working();
 	auto params = protocol(environment);
 	auto context = svm_context();
 	auto* terminal = console::get();
 	auto results = uptr<schema>();
-	auto say = [&](const std::string_view& line) { terminal->colorize(std_color::light_gray, line); terminal->write_char('\n'); };
+	auto directory = *os::directory::get_working();
 	error_handling::set_flag(log_option::dated, false);
 
-	static bool active = true;
-	os::process::bind_signal(signal_code::SIG_INT, [](int) { active = false; });
-	os::process::bind_signal(signal_code::SIG_TERM, [](int) { active = false; });
-	say("type \"help\" for more information.");
-	while (active)
+	auto ok = [&](const std::string_view& line) -> bool { terminal->colorize(std_color::light_gray, line); terminal->write_char('\n'); return true; };
+	auto err = [&](const std::string_view& line) -> bool { terminal->colorize(std_color::light_gray, line); terminal->write_char('\n'); return false; };
+	auto command_execute = [&](vector<string>& args, const std::string_view& directory) -> bool
 	{
-		terminal->write("> ");
-		auto command = terminal->read(1024);
-		if (stringify::trim(command).empty())
-			continue;
-
-		vector<string> args;
-		static std::regex pattern("[^\\s\"\']+|\"([^\"]*)\"|\'([^\']*)'");
-		for (auto it = std::sregex_iterator(command.begin(), command.end(), pattern); it != std::sregex_iterator(); ++it)
-		{
-			auto result = copy<string, std::string>(it->str());
-			stringify::trim(result);
-			if (result.size() >= 2 && result.front() == '\"' && result.back() == '\"')
-				result = result.substr(1, result.size() - 2);
-			if (!result.empty())
-				args.push_back(std::move(result));
-		}
+		if (args.empty())
+			return true;
 
 		auto& method = args[0];
 		if (method == "from")
@@ -202,23 +202,21 @@ int svm(const inline_args& environment)
 				if (args[1] != "?")
 				{
 					if (!algorithm::signing::decode_subaddress(args[1], context.from.data))
-					{
-						say("not a valid address");
-						continue;
-					}
+						return err("not a valid address");
 				}
 				else
-					crypto::fill_random_bytes(context.from.data, sizeof(context.from.data));
+				{
+					memset(context.from.data, 0, sizeof(context.from.data));
+					crypto::fill_random_bytes(context.from.data, sizeof(algorithm::pubkeyhash));
+				}
 			}
-			
-			if (!context.from.empty())
-			{
-				string address;
-				algorithm::signing::encode_subaddress(context.from.data, address);
-				say(address);
-			}
-			else
-				say("null");
+
+			if (context.from.empty())
+				return ok("null");
+
+			string address;
+			algorithm::signing::encode_subaddress(context.from.data, address);
+			return ok(address);
 		}
 		else if (method == "to")
 		{
@@ -227,23 +225,21 @@ int svm(const inline_args& environment)
 				if (args[1] != "?")
 				{
 					if (!algorithm::signing::decode_subaddress(args[1], context.to.data))
-					{
-						say("not a valid address");
-						continue;
-					}
+						return err("not a valid address");
 				}
 				else
-					crypto::fill_random_bytes(context.to.data, sizeof(context.to.data));
+				{
+					memset(context.to.data, 0, sizeof(context.to.data));
+					crypto::fill_random_bytes(context.to.data, sizeof(algorithm::pubkeyhash));
+				}
 			}
 
-			if (!context.to.empty())
-			{
-				string address;
-				algorithm::signing::encode_subaddress(context.to.data, address);
-				say(address);
-			}
-			else
-				say("null");
+			if (context.to.empty())
+				return ok("null");
+
+			string address;
+			algorithm::signing::encode_subaddress(context.to.data, address);
+			return ok(address);
 		}
 		else if (method == "payable")
 		{
@@ -251,14 +247,11 @@ int svm(const inline_args& environment)
 			{
 				auto asset = algorithm::asset::id_of(stringify::to_upper(args[1]), args.size() > 2 ? stringify::to_upper(args[2]) : std::string_view(), args.size() > 3 ? stringify::to_upper(args[3]) : std::string_view());
 				if (!asset || !algorithm::asset::is_valid(asset))
-				{
-					say("not a valid asset");
-					continue;
-				}
+					return err("not a valid asset");
 				context.payable = asset;
 			}
 
-			say(context.payable > 0 ? algorithm::asset::name_of(context.payable) : "null");
+			return ok(context.payable > 0 ? algorithm::asset::name_of(context.payable) : "null");
 		}
 		else if (method == "pay")
 		{
@@ -266,14 +259,11 @@ int svm(const inline_args& environment)
 			{
 				decimal value = decimal(args[1]);
 				if (value.is_nan() || value.is_negative())
-				{
-					say("not a valid decimal value");
-					continue;
-				}
+					return err("not a valid decimal value");
 				context.pay = std::move(value);
 			}
 
-			say(context.pay.to_string());
+			return ok(context.pay.to_string());
 		}
 		else if (method == "fund")
 		{
@@ -281,17 +271,11 @@ int svm(const inline_args& environment)
 			{
 				decimal value = decimal(args[1]);
 				if (value.is_nan() || value.is_negative())
-				{
-					say("not a valid decimal value");
-					continue;
-				}
+					return err("not a valid decimal value");
 
 				auto asset = algorithm::asset::id_of(stringify::to_upper(args[2]), args.size() > 3 ? stringify::to_upper(args[3]) : std::string_view(), args.size() > 4 ? stringify::to_upper(args[4]) : std::string_view());
 				if (!asset || !algorithm::asset::is_valid(asset))
-				{
-					say("not a valid asset");
-					continue;
-				}
+					return err("not a valid asset");
 
 				if (value.is_positive())
 					context.balances[context.to][asset] = std::move(value);
@@ -306,71 +290,55 @@ int svm(const inline_args& environment)
 					string address = "null";
 					if (!account.empty())
 						algorithm::signing::encode_subaddress(account.data, address);
-					say(address + ": " + value.to_string() + " " + algorithm::asset::name_of(asset));
+					ok(address + ": " + value.to_string() + " " + algorithm::asset::name_of(asset));
 				}
 			}
+			return true;
 		}
 		else if (method == "compile")
 		{
 			if (args.size() < 2)
-			{
-				say("not a valid path");
-				continue;
-			}
+				return err("not a valid path");
 
 			auto path = os::path::resolve(args[1], directory, true);
 			if (!path)
-			{
-				say(path.what());
-				continue;
-			}
+				return err(path.what());
 
 			auto result = context.compile(*path);
 			if (!result)
-			{
-				terminal->colorize(std_color::light_gray, result.what());
-				continue;
-			}
+				return err(result.what());
+
+			return true;
 		}
 		else if (method == "assemble")
 		{
 			if (args.size() < 3)
-			{
-				say("not a valid type");
-				continue;
-			}
+				return err("not a valid type");
 
 			if (!context.bound())
-			{
-				say("no program bound");
-				continue;
-			}
+				return err("no program bound");
 
 			auto type = args[1];
 			if (type != "abi" && type != "0x/abi" && type != "code")
-			{
-				say("not a valid type");
-				continue;
-			}
+				return err("not a valid type");
 
 			auto path = os::path::resolve(args[2], directory, true);
 			if (!path)
-			{
-				say(path.what());
-				continue;
-			}
+				return err(path.what());
 
-			svm_assemble svm_type;
+			svm_context::assembler svm_type;
 			if (type == "abi")
-				svm_type = svm_assemble::abi_raw;
+				svm_type = svm_context::assembler::abi_raw;
 			else if (type == "0x/abi")
-				svm_type = svm_assemble::abi_hex;
-			else if (type == "code")
-				svm_type = svm_assemble::code;
+				svm_type = svm_context::assembler::abi_hex;
+			else if (true || type == "code")
+				svm_type = svm_context::assembler::code;
 
 			auto result = context.assemble(svm_type, *path);
 			if (!result)
-				say(result.what());
+				return err(result.what());
+
+			return true;
 		}
 		else if (method == "pack")
 		{
@@ -380,31 +348,24 @@ int svm(const inline_args& environment)
 				function_args.push_back(format::variable::from(args[i]));
 
 			format::wo_stream message;
-			if (format::variables_util::serialize_flat_into(function_args, &message))
-				say(message.encode());
-			else
-				say("null");
+			return ok(format::variables_util::serialize_flat_into(function_args, &message) ? message.encode() : "null");
 		}
 		else if (method == "unpack")
 		{
 			auto input = format::util::decode_stream(args[1]);
 			format::variables function_args;
 			format::ro_stream message = format::ro_stream(input);
-			if (format::variables_util::deserialize_flat_from(message, &function_args))
-			{
-				uptr<schema> data = format::variables_util::serialize(function_args);
-				terminal->jwrite_line(*data);
-			}
-			else
-				say("null");
+			if (!format::variables_util::deserialize_flat_from(message, &function_args))
+				return ok("null");
+
+			uptr<schema> data = format::variables_util::serialize(function_args);
+			terminal->jwrite_line(*data);
+			return true;
 		}
 		else if (method == "call")
 		{
 			if (args.size() < 2)
-			{
-				say("no function declaration");
-				continue;
-			}
+				return err("no function declaration");
 
 			auto& function_decl = args[1];
 			format::variables function_args;
@@ -412,20 +373,52 @@ int svm(const inline_args& environment)
 			for (size_t i = 2; i < args.size(); i++)
 				function_args.push_back(format::variable::from(args[i]));
 
-			auto result = context.call(function_decl, std::move(function_args));
+			auto result = context.call(function_decl, std::move(function_args), false);
 			if (!result)
-			{
-				say(result.what());
-				continue;
-			}
+				return err(result.what());
 
 			results = std::move(*result);
-			say(results->get_var("successful").get_boolean() ? "OK" : "reverted");
+			if (results)
+			{
+				terminal->jwrite_line(results->get("returns"));
+				return true;
+			}
+			else if (results->get_var("successful").get_boolean())
+				return ok("program execution finished");
+			
+			return err("program execution reverted");
+		}
+		else if (method == "debug")
+		{
+			if (args.size() < 2)
+				return err("no function declaration");
+
+			auto& function_decl = args[1];
+			format::variables function_args;
+			function_args.reserve(args.size() - 2);
+			for (size_t i = 2; i < args.size(); i++)
+				function_args.push_back(format::variable::from(args[i]));
+
+			auto result = context.call(function_decl, std::move(function_args), true);
+			if (!result)
+				return err(result.what());
+
+			results = std::move(*result);
+			if (results)
+			{
+				terminal->jwrite_line(results->get("returns"));
+				return true;
+			}
+			else if (results->get_var("successful").get_boolean())
+				return ok("program execution finished");
+
+			return err("program execution reverted");
 		}
 		else if (method == "result")
 		{
 			if (results)
 				terminal->jwrite_line(results->get("returns"));
+			return true;
 		}
 		else if (method == "log")
 		{
@@ -438,18 +431,20 @@ int svm(const inline_args& environment)
 					for (auto& event : events->get_childs())
 					{
 						auto hash = event->get_var("event").get_integer();
-						say(stringify::text("%03d event 0x%x:", (int)++index, (int)hash));
+						ok(stringify::text("%03d event 0x%x:", (int)++index, (int)hash));
 						terminal->jwrite_line(event->get("args"));
 					}
 				}
 			}
+			return true;
 		}
 		else if (method == "changelog")
 		{
 			if (results)
 				terminal->jwrite_line(results->get("changelog"));
+			return true;
 		}
-		else if (method == "sasm")
+		else if (method == "asm")
 		{
 			if (results)
 			{
@@ -457,29 +452,145 @@ int svm(const inline_args& environment)
 				if (instructions)
 				{
 					for (auto& instruction : instructions->get_childs())
-						say(instruction->value.get_string());
+						ok(instruction->value.get_string());
 				}
 			}
+			return true;
 		}
 		else if (method == "report")
 		{
 			if (results)
 				terminal->jwrite_line(*results);
+			return true;
 		}
 		else if (method == "reset")
 		{
 			context.reset();
-			say("state wiped");
+			return ok("state wiped");
 		}
 		else if (method == "clear")
 		{
 			terminal->clear();
-			say("type \"help\" for more information.");
+			return true;
+		}
+		return true;
+	};
+	auto command_assemble = [&](string& command) -> bool
+	{
+		if (stringify::trim(command).empty())
+			return true;
+
+		vector<string> args;
+		static std::regex pattern("[^\\s\"\']+|\"([^\"]*)\"|\'([^\']*)'");
+		for (auto it = std::sregex_iterator(command.begin(), command.end(), pattern); it != std::sregex_iterator(); ++it)
+		{
+			auto result = copy<string, std::string>(it->str());
+			stringify::trim(result);
+			if (result.size() >= 2 && result.front() == '\"' && result.back() == '\"')
+				result = result.substr(1, result.size() - 2);
+			if (!result.empty())
+				args.push_back(std::move(result));
+		}
+
+		if (args.empty())
+			return true;
+
+		auto& method = args[0];
+		if (method == "execp")
+		{
+			if (args.size() < 2)
+				return err("not a valid path");
+
+			auto path = os::path::resolve(args[1], directory, true);
+			if (!path)
+				return err(path.what());
+
+			auto file = os::file::read_as_string(*path);
+			if (!file)
+				return err(file.what());
+
+			auto possible_plan = schema::from_json(*file);
+			if (!possible_plan)
+				return err(possible_plan.what());
+
+			auto plan = uptr<schema>(possible_plan);
+			if (!plan->value.is(var_type::array))
+				return err("not a valid array");
+
+			auto path_directory = os::path::get_directory(*path);
+			auto pack = [](const variant& value) -> string { return value.is(var_type::boolean) ? (value.get_boolean() ? "true" : "false") : value.get_blob(); };
+			for (size_t i = 0; i < plan->size(); i++)
+			{
+				auto* subcommand = plan->get(i);
+				auto method = subcommand->get_var(0).get_blob();
+				if (method != "subplan")
+					continue;
+
+				auto subpath = os::path::resolve(subcommand->get_var(1).get_blob(), path_directory, true);
+				if (!subpath)
+					return err("subplan path error: " + subpath.what());
+
+				auto subfile = os::file::read_as_string(*path);
+				if (!subfile)
+					return err("subplan file error: " + subfile.what());
+
+				auto possible_subplan = schema::from_json(*subfile);
+				if (!possible_subplan)
+					return err("subplan data error: " + possible_subplan.what());
+
+				auto subplan = uptr<schema>(possible_subplan);
+				if (!subplan->value.is(var_type::array))
+					return err("subplan data error: not a valid array");
+
+				auto& from_childs = subplan->get_childs();
+				auto& to_childs = plan->get_childs();
+				for (auto& subsubcommand : from_childs)
+					subsubcommand->attach(*plan);
+
+				size_t size = from_childs.size();
+				plan->pop(i);
+				to_childs.insert(to_childs.begin() + i, from_childs.begin(), from_childs.end());
+				i += size;
+			}
+
+			for (auto& subcommand : plan->get_childs())
+			{
+				vector<string> args;
+				for (auto& subargument : subcommand->get_childs())
+				{
+					if (subargument->value.is_object())
+					{
+						format::variables function_args;
+						function_args.reserve(subargument->size());
+						for (auto& subsubargument : subargument->get_childs())
+							function_args.push_back(format::variable::from(pack(subsubargument->value)));
+
+						format::wo_stream message;
+						if (format::variables_util::serialize_flat_into(function_args, &message))
+							args.push_back(message.encode());
+						else
+							args.push_back(string());
+					}
+					else
+						args.push_back(pack(subargument->value));
+				}
+
+				string compiled_command = "> ";
+				for (auto& argument : args)
+					compiled_command.append(argument).append(1, ' ');
+				if (!compiled_command.empty())
+					compiled_command.pop_back();
+
+				ok(compiled_command);
+				if (!command_execute(args, path_directory))
+					return false;
+			}
+			return true;
 		}
 		else if (method == "help")
 		{
-			say(
-				"-------- svm compiler and debugger functionality --------\n"
+			ok(
+				"--------- svm compiler and debugger functionality ---------\n"
 				"from [address?|?]                                        -- get/set caller address (if ? then random)\n"
 				"to [address?|?]                                          -- get/set contract address (if ? then random)\n"
 				"payable [blockchain?] [token?] [contract_address?]       -- get/set paying asset\n"
@@ -490,17 +601,46 @@ int svm(const inline_args& environment)
 				"pack [args?]...                                          -- pack many args into one (for non-trivial function args)\n"
 				"unpack [stream]                                          -- unpack stream to many args\n"
 				"call [declaration] [args?]...                            -- call a function in a used program\n"
+				"debug [declaration] [args?]...                           -- call a function in a used program with debugger attached\n"
 				"result                                                   -- get call result log\n"
 				"log                                                      -- get call event log\n"
 				"changelog                                                -- get call state changes log\n"
-				"sasm                                                     -- get call svm asm instruction listing\n"
+				"asm                                                      -- get call svm asm instruction listing\n"
 				"report                                                   -- get call full report\n"
 				"reset                                                    -- reset contract state\n"
-				"clear                                                    -- clear console output\n");
+				"clear                                                    -- clear console output\n"
+				"---------------- environment functionality ----------------\n"
+				"execp [path]                                             -- run predefined execution plan (json file of format: [[\"method\", value_or_object_or_array_args...], ...])\n"
+				"help                                                     -- show this message\n"
+				"\n"
+				"********* node configuration parameters may apply *********\n");
+			return true;
 		}
-	}
+		return command_execute(args, directory);
+	};
 
-	return 0;
+	if (environment.params.size() <= 1 + (params.custom() ? 1 : 0))
+	{
+		ok("type \"help\" for more information.");
+		string command;
+		while (true)
+		{
+			terminal->write("> ");
+			if (!terminal->read_line(command, 1024))
+				break;
+			if (!command.empty())
+				command_assemble(command);
+		}
+		return 0;
+	}
+	else
+	{
+		auto args = environment.params;
+		args.erase(args.begin());
+		if (params.custom())
+			args.pop_back();
+		return command_execute(args, directory) ? 0 : 1;
+	}
 }
 int node(const inline_args& environment)
 {

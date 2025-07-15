@@ -518,16 +518,6 @@ namespace tangent
 				return variable(true);
 			else if (any == "false")
 				return variable(false);
-
-			if (util::is_hex_encoding(any))
-			{
-				auto numeric = stringify::starts_with(any, "0x") ? any.substr(2) : any;
-				if (numeric.size() <= 64)
-					return variable(uint256_t(numeric, 16));
-
-				return variable(util::decode_0xhex(numeric));
-			}
-
 			return variable(any);
 		}
 

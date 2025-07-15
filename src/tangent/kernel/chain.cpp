@@ -731,6 +731,8 @@ namespace tangent
 			if (user.nss.options)
 				user.nss.options->unlink();
 		}
+		else
+			path.clear();
 
 		auto database_path = database.resolve(user.network, user.storage.directory);
 		if (!user.logs.state.empty())
@@ -845,6 +847,10 @@ namespace tangent
 	bool protocol::is(network_type type) const
 	{
 		return user.network == type;
+	}
+	bool protocol::custom() const
+	{
+		return !path.empty();
 	}
 	protocol::logger& protocol::state_log()
 	{

@@ -779,6 +779,23 @@ namespace tangent
 			if (!condition)
 				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_REQUIREMENT, message.empty() ? "requirement not met" : message));
 		}
+		static bool read_decimal_or_integer(format::ro_stream& stream, format::viewable type, decimal* value)
+		{
+			if (!format::util::is_integer(type))
+				return stream.read_decimal(type, value);
+
+			uint256_t value256;
+			if (!stream.read_integer(type, &value256))
+				return false;
+
+			*value = value256.to_decimal();
+			return true;
+		}
+		static size_t gas_cost_of(const byte_code_label& opcode)
+		{
+			auto gas = (size_t)(opcode.offset_of_arg2 + opcode.size_of_arg2) * (size_t)gas_cost::opcode;
+			return gas;
+		}
 
 		expects_lr<void> svm_marshalling::store(format::wo_stream* stream, const void* value, int value_type_id)
 		{
@@ -1032,7 +1049,7 @@ namespace tangent
 				case (int)type_id::float_t:
 				{
 					decimal wrapper;
-					if (!stream.read_decimal(stream.read_type(), &wrapper))
+					if (!read_decimal_or_integer(stream, stream.read_type(), &wrapper))
 						return layer_exception("load failed for float type");
 
 					*(float*)value = wrapper.to_float();
@@ -1041,7 +1058,7 @@ namespace tangent
 				case (int)type_id::double_t:
 				{
 					decimal wrapper;
-					if (!stream.read_decimal(stream.read_type(), &wrapper))
+					if (!read_decimal_or_integer(stream, stream.read_type(), &wrapper))
 						return layer_exception("load failed for double type");
 
 					*(double*)value = wrapper.to_double();
@@ -1109,7 +1126,7 @@ namespace tangent
 					}
 					else if (name == SCRIPT_CLASS_DECIMAL)
 					{
-						if (!stream.read_decimal(stream.read_type(), (decimal*)value))
+						if (!read_decimal_or_integer(stream, stream.read_type(), (decimal*)value))
 							return layer_exception("load failed for decimal type");
 
 						unique.address = nullptr;
@@ -1322,6 +1339,7 @@ namespace tangent
 			vm->set_library_property(library_features::decimal_default_precision, (size_t)protocol::now().message.precision);
 			vm->set_property(features::disallow_global_vars, 1);
 			vm->set_ts_imports(false);
+			vm->set_full_stack_tracing(false);
 			vm->set_cache(false);
 
 			bindings::registry::import_ctypes(*vm);
@@ -1763,7 +1781,7 @@ namespace tangent
 		}
 		bool svm_abi::rdecimal(decimal& value)
 		{
-			return input.read_decimal(input.read_type(), &value);
+			return read_decimal_or_integer(input, input.read_type(), &value);
 		}
 		bool svm_abi::rboolean(bool& value)
 		{
@@ -2323,7 +2341,7 @@ namespace tangent
 		}
 		bool svm_program::dispatch_instruction(virtual_machine* vm, immediate_context* coroutine, uint32_t* program_data, size_t program_counter, byte_code_label& opcode)
 		{
-			auto gas = (size_t)(opcode.offset_of_arg2 + opcode.size_of_arg2) * (size_t)gas_cost::opcode;
+			auto gas = gas_cost_of(opcode);
 			auto status = context->burn_gas(gas);
 			if (status)
 				return true;
@@ -2752,9 +2770,24 @@ namespace tangent
 			return result;
 		}
 
-		svm_program_trace::svm_program_trace(evaluation_context* new_environment, ledger::transaction* transaction, const algorithm::pubkeyhash from, bool tracing) : svm_program(new_environment ? &new_environment->validation.context : nullptr), environment(new_environment), debugging(tracing)
+		svm_program_trace::svm_program_trace(evaluation_context* new_environment) : svm_program(new_environment ? &new_environment->validation.context : nullptr), environment(new_environment)
 		{
-			VI_ASSERT(new_environment != nullptr && transaction != nullptr && from != nullptr, "env, transaction and from should be set");
+			VI_ASSERT(new_environment != nullptr, "env should be set");
+		}
+		expects_lr<void> svm_program_trace::assign_transaction(const algorithm::asset_id& asset, const algorithm::pubkeyhash from, const algorithm::subpubkeyhash_t& to, const decimal& value, const std::string_view& function_decl, const format::variables& args)
+		{
+			VI_ASSERT(from != nullptr, "from should be set");
+			transactions::call transaction;
+			transaction.asset = asset;
+			transaction.signature[0] = 0xFF;
+			transaction.nonce = std::max<size_t>(1, environment->validation.context.get_account_nonce(from).or_else(states::account_nonce(nullptr, nullptr)).nonce);
+			transaction.program_call(to, value, function_decl, format::variables(args));
+			transaction.set_gas(decimal::zero(), ledger::block::get_gas_limit());
+			return assign_transaction(from, memory::init<transactions::call>(std::move(transaction)));
+		}
+		expects_lr<void> svm_program_trace::assign_transaction(const algorithm::pubkeyhash from, uptr<ledger::transaction>&& transaction)
+		{
+			VI_ASSERT(from != nullptr && transaction, "from and transaction should be set");
 			auto chain = storages::chainstate(__func__);
 			auto tip = chain.get_latest_block_header();
 			if (tip)
@@ -2767,52 +2800,66 @@ namespace tangent
 			receipt.block_number = block.number + 1;
 			memcpy(receipt.from, from, sizeof(algorithm::pubkeyhash));
 
+			contextual = std::move(transaction);
 			memset(environment->validator.public_key_hash, 0xFF, sizeof(algorithm::pubkeyhash));
 			memset(environment->validator.secret_key, 0xFF, sizeof(algorithm::seckey));
-			environment->validation.context = transaction_context(environment, &block, &environment->validation.changelog, transaction, std::move(receipt));
+			environment->validation.context = transaction_context(environment, &block, &environment->validation.changelog, *contextual, std::move(receipt));
+			return expectation::met;
 		}
-		expects_lr<void> svm_program_trace::trace_call(svm_call mutability, const std::string_view& function_decl, const format::variables& args)
+		expects_lr<uptr<compiler>> svm_program_trace::compile_transaction()
 		{
+			VI_ASSERT(contextual, "transaction should be assigned");
 			auto index = environment->validation.context.get_account_program(to().hash.data);
 			if (!index)
 				return layer_exception("program not assigned to address");
 
 			auto* host = ledger::svm_host::get();
 			auto& hashcode = index->hashcode;
-			auto compiler = host->allocate();
-			if (!host->precompile(*compiler, hashcode))
+			auto result = host->allocate();
+			if (host->precompile(*result, hashcode))
+				return expects_lr<uptr<compiler>>(std::move(result));
+
+			auto program = environment->validation.context.get_witness_program(hashcode);
+			if (!program)
 			{
-				auto program = environment->validation.context.get_witness_program(hashcode);
-				if (!program)
-				{
-					host->deallocate(std::move(compiler));
-					return layer_exception("program not stored to address");
-				}
-
-				auto code = program->as_code();
-				if (!code)
-				{
-					host->deallocate(std::move(compiler));
-					return code.error();
-				}
-
-				auto compilation = host->compile(*compiler, hashcode, format::util::encode_0xhex(hashcode), *code);
-				if (!compilation)
-				{
-					host->deallocate(std::move(compiler));
-					return compilation.error();
-				}
+				host->deallocate(std::move(result));
+				return layer_exception("program not stored to address");
 			}
 
-			auto execution = trace_call(*compiler, mutability, function_decl, args);
-			host->deallocate(std::move(compiler));
+			auto code = program->as_code();
+			if (!code)
+			{
+				host->deallocate(std::move(result));
+				return code.error();
+			}
+
+			auto compilation = host->compile(*result, hashcode, format::util::encode_0xhex(hashcode), *code);
+			if (!compilation)
+			{
+				host->deallocate(std::move(result));
+				return compilation.error();
+			}
+
+			return expects_lr<uptr<compiler>>(std::move(result));
+		}
+		expects_lr<void> svm_program_trace::compile_and_call(svm_call mutability, const std::string_view& function_decl, const format::variables& args)
+		{
+			auto compiler = compile_transaction();
+			if (!compiler)
+				return compiler.error();
+
+			auto execution = call_compiled(**compiler, mutability, function_decl, args);
+			svm_host::get()->deallocate(std::move(*compiler));
 			return execution;
 		}
-		expects_lr<void> svm_program_trace::trace_call(compiler* prebuilt, svm_call mutability, const std::string_view& function_decl, const format::variables& args)
+		expects_lr<void> svm_program_trace::call_compiled(compiler* module, svm_call mutability, const std::string_view& function_decl, const format::variables& args)
 		{
-			auto function = prebuilt->get_module().get_function_by_decl(function_decl);
+			VI_ASSERT(contextual, "transaction should be assigned");
+			auto function = module->get_module().get_function_by_decl(function_decl);
 			if (!function.is_valid())
-				function = prebuilt->get_module().get_function_by_name(function_decl);
+				function = module->get_module().get_function_by_name(function_decl);
+			if (!function.is_valid())
+				return layer_exception("illegal call to function: null function");
 
 			auto execution = execute(mutability, function, args, [this](void* address, int type_id) -> expects_lr<void>
 			{
@@ -2834,21 +2881,18 @@ namespace tangent
 		}
 		bool svm_program_trace::dispatch_instruction(virtual_machine* vm, immediate_context* coroutine, uint32_t* program_data, size_t program_counter, byte_code_label& opcode)
 		{
-			if (debugging)
-			{
-				string_stream stream;
-				debugger_context::byte_code_label_to_text(stream, vm, program_data, program_counter, false, true);
+			string_stream stream;
+			debugger_context::byte_code_label_to_text(stream, vm, program_data, program_counter, false, true);
 
-				string instruction = stream.str();
-				stringify::trim(instruction);
+			string instruction = stream.str();
+			stringify::trim(instruction);
 #if VI_64
-				instruction.erase(2, 8);
+			instruction.erase(2, 8);
 #endif
-				auto gas = (size_t)(opcode.offset_of_arg2 + opcode.size_of_arg2) * (size_t)gas_cost::opcode;
-				instruction.append(instruction.find('%') != std::string::npos ? ", %gc:" : " %gc:");
-				instruction.append(to_string(gas));
-				instructions.push_back(std::move(instruction));
-			}
+			auto gas = gas_cost_of(opcode);
+			instruction.append(instruction.find('%') != std::string::npos ? ", %gas:" : " %gas:");
+			instruction.append(to_string(gas));
+			instructions.push_back(std::move(instruction));
 			return svm_program::dispatch_instruction(vm, coroutine, program_data, program_counter, opcode);
 		}
 		uptr<schema> svm_program_trace::as_schema() const

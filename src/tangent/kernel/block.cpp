@@ -122,7 +122,7 @@ namespace tangent
 		{
 			VI_ASSERT(state, "state should be set");
 			auto result = state->as_schema();
-			result->set("block_purge", var::boolean(erase));
+			result->set("__erase__", var::boolean(erase));
 			return result;
 		}
 		bool block_state::state_change::empty() const

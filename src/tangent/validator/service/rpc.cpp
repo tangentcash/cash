@@ -1621,21 +1621,19 @@ namespace tangent
 			if (!algorithm::signing::decode_subaddress(args[2].as_string(), to))
 				return server_response().error(error_codes::bad_params, "to account address not valid");
 
-			format::variables values;
-			values.reserve(args.size() - 5);
+			format::variables function_args;
+			function_args.reserve(args.size() - 5);
 			for (size_t i = 5; i < args.size(); i++)
-				values.push_back(args[i]);
+				function_args.push_back(args[i]);
 
+			auto function = args[4].as_string();
 			auto environment = ledger::evaluation_context();
-			transactions::call transaction;
-			transaction.asset = algorithm::asset::id_of_handle(args[0].as_string());
-			transaction.signature[0] = 0xFF;
-			transaction.nonce = std::max<size_t>(1, environment.validation.context.get_account_nonce(from).or_else(states::account_nonce(nullptr, nullptr)).nonce);
-			transaction.program_call(to, args[3].as_decimal(), args[4].as_string(), std::move(values));
-			transaction.set_gas(decimal::zero(), ledger::block::get_gas_limit());
+			auto script = ledger::svm_program_trace(&environment);
+			auto assignment = script.assign_transaction(algorithm::asset::id_of_handle(args[0].as_string()), from, to, args[3].as_decimal(), function, function_args);
+			if (!assignment)
+				return server_response().error(error_codes::bad_params, assignment.error().message());
 
-			auto script = ledger::svm_program_trace(&environment, &transaction, from, false);
-			auto execution = script.trace_call(ledger::svm_call::immutable_call, transaction.function, transaction.args);
+			auto execution = script.compile_and_call(ledger::svm_call::immutable_call, function, function_args);
 			if (!execution)
 				return server_response().error(error_codes::bad_params, execution.error().message());
 

@@ -218,15 +218,18 @@ namespace tangent
 
 		struct svm_program_trace : svm_program
 		{
+			evaluation_context* environment;
+			uptr<transaction> contextual;
 			uptr<schema> returning;
 			vector<string> instructions;
 			ledger::block block;
-			evaluation_context* environment;
-			bool debugging;
 
-			svm_program_trace(evaluation_context* new_environment, ledger::transaction* transaction, const algorithm::pubkeyhash from, bool tracing);
-			expects_lr<void> trace_call(svm_call mutability, const std::string_view& function_decl, const format::variables& args);
-			expects_lr<void> trace_call(compiler* prebuilt, svm_call mutability, const std::string_view& function_decl, const format::variables& args);
+			svm_program_trace(evaluation_context* new_environment);
+			expects_lr<void> assign_transaction(const algorithm::asset_id& asset, const algorithm::pubkeyhash from, const algorithm::subpubkeyhash_t& to, const decimal& value, const std::string_view& function_decl, const format::variables& args);
+			expects_lr<void> assign_transaction(const algorithm::pubkeyhash from, uptr<ledger::transaction>&& transaction);
+			expects_lr<uptr<compiler>> compile_transaction();
+			expects_lr<void> compile_and_call(svm_call mutability, const std::string_view& function_decl, const format::variables& args);
+			expects_lr<void> call_compiled(compiler* module, svm_call mutability, const std::string_view& function_decl, const format::variables& args);
 			bool dispatch_instruction(virtual_machine* vm, immediate_context* coroutine, uint32_t* program_data, size_t program_counter, byte_code_label& opcode) override;
 			uptr<schema> as_schema() const;
 		};

@@ -299,6 +299,7 @@ namespace tangent
         protocol(const inline_args& environment);
         virtual ~protocol();
         bool is(network_type type) const;
+        bool custom() const;
         logger& state_log();
         logger& message_log();
         logger& data_log();
