@@ -961,12 +961,14 @@ namespace tangent
 					}
 					else if (name == SCRIPT_CLASS_UINT128)
 					{
-						stream->value = var::decimal_string(((uint128_t*)value)->to_string());
+						auto serializable = uptr<schema>(algorithm::encoding::serialize_uint256(*(uint128_t*)value));
+						stream->value = std::move(serializable->value);
 						return expectation::met;
 					}
 					else if (name == SCRIPT_CLASS_UINT256)
 					{
-						stream->value = var::decimal_string(((uint256_t*)value)->to_string());
+						auto serializable = uptr<schema>(algorithm::encoding::serialize_uint256(*(uint256_t*)value));
+						stream->value = std::move(serializable->value);
 						return expectation::met;
 					}
 					else if (name == SCRIPT_CLASS_DECIMAL)
@@ -993,6 +995,7 @@ namespace tangent
 					{
 						auto object = script_object((asIScriptObject*)value);
 						size_t properties = object.get_properties_count();
+						stream->value = var::object();
 						for (size_t i = 0; i < properties; i++)
 						{
 							std::string_view name = object.get_property_name(i);
@@ -1070,7 +1073,7 @@ namespace tangent
 					auto* vm = svm_host::get()->get_vm();
 					auto type = vm->get_type_info_by_id(value_type_id);
 					auto name = type.is_valid() ? type.get_name() : std::string_view();
-					if (value_type_id & (int)vitex::scripting::type_id::handle_t && !*(void**)value)
+					if (value_type_id & (int)vitex::scripting::type_id::handle_t && !(type.flags() & (size_t)object_behaviours::enumerator) && !*(void**)value)
 					{
 						void* address = vm->create_object(type);
 						if (!address)
@@ -1219,7 +1222,7 @@ namespace tangent
 					auto* vm = svm_host::get()->get_vm();
 					auto type = vm->get_type_info_by_id(value_type_id);
 					auto name = type.is_valid() ? type.get_name() : std::string_view();
-					if (value_type_id & (int)vitex::scripting::type_id::handle_t && !*(void**)value)
+					if (value_type_id & (int)vitex::scripting::type_id::handle_t && !(type.flags() & (size_t)object_behaviours::enumerator) && !*(void**)value)
 					{
 						void* address = vm->create_object(type);
 						if (!address)
@@ -1421,22 +1424,22 @@ namespace tangent
 			multiform_filter->set_property("order order", &svm_multiform_filter::order);
 			multiform_filter->set_property("uint256 value", &svm_multiform_filter::value);
 			auto multiform_column_cursor = vm->set_struct_trivial<svm_multiform_column_cursor>(SCRIPT_CLASS_COLUMN_CURSOR);
-			multiform_column_cursor->set_constructor<svm_multiform_filter>("void f()");
+			multiform_column_cursor->set_constructor<svm_multiform_column_cursor>("void f()");
 			multiform_column_cursor->set_method("bool at(usize, ?&out) const", &svm_multiform_column_cursor::at1);
 			multiform_column_cursor->set_method("bool at(usize, ?&out, ?&out) const", &svm_multiform_column_cursor::at2);
 			multiform_column_cursor->set_method("bool at(usize, ?&out, ?&out, uint256&out) const", &svm_multiform_column_cursor::at3);
-			auto multiform_column_filter_cursor = vm->set_struct_trivial<svm_multiform_column_cursor>(SCRIPT_CLASS_COLUMN_FILTER_CURSOR);
-			multiform_column_filter_cursor->set_constructor<svm_multiform_filter>("void f()");
+			auto multiform_column_filter_cursor = vm->set_struct_trivial<svm_multiform_column_filter_cursor>(SCRIPT_CLASS_COLUMN_FILTER_CURSOR);
+			multiform_column_filter_cursor->set_constructor<svm_multiform_column_filter_cursor>("void f()");
 			multiform_column_filter_cursor->set_method("bool at(usize, ?&out) const", &svm_multiform_column_filter_cursor::at1);
 			multiform_column_filter_cursor->set_method("bool at(usize, ?&out, ?&out) const", &svm_multiform_column_filter_cursor::at2);
 			multiform_column_filter_cursor->set_method("bool at(usize, ?&out, ?&out, uint256&out) const", &svm_multiform_column_filter_cursor::at3);
 			auto multiform_row_cursor = vm->set_struct_trivial<svm_multiform_row_cursor>(SCRIPT_CLASS_ROW_CURSOR);
-			multiform_row_cursor->set_constructor<svm_multiform_filter>("void f()");
+			multiform_row_cursor->set_constructor<svm_multiform_row_cursor>("void f()");
 			multiform_row_cursor->set_method("bool at(usize, ?&out) const", &svm_multiform_row_cursor::at1);
 			multiform_row_cursor->set_method("bool at(usize, ?&out, ?&out) const", &svm_multiform_row_cursor::at2);
 			multiform_row_cursor->set_method("bool at(usize, ?&out, ?&out, uint256&out) const", &svm_multiform_row_cursor::at3);
-			auto multiform_row_filter_cursor = vm->set_struct_trivial<svm_multiform_row_cursor>(SCRIPT_CLASS_ROW_FILTER_CURSOR);
-			multiform_row_filter_cursor->set_constructor<svm_multiform_filter>("void f()");
+			auto multiform_row_filter_cursor = vm->set_struct_trivial<svm_multiform_row_filter_cursor>(SCRIPT_CLASS_ROW_FILTER_CURSOR);
+			multiform_row_filter_cursor->set_constructor<svm_multiform_row_filter_cursor>("void f()");
 			multiform_row_filter_cursor->set_method("bool at(usize, ?&out) const", &svm_multiform_row_filter_cursor::at1);
 			multiform_row_filter_cursor->set_method("bool at(usize, ?&out, ?&out) const", &svm_multiform_row_filter_cursor::at2);
 			multiform_row_filter_cursor->set_method("bool at(usize, ?&out, ?&out, uint256&out) const", &svm_multiform_row_filter_cursor::at3);
@@ -2115,7 +2118,7 @@ namespace tangent
 			if (caller != coroutine)
 			{
 				vector<svm_frame> frames;
-				coroutine->set_exception_callback([](immediate_context*) { });
+				coroutine->set_exception_callback(std::bind(&svm_program::load_exception, this, std::placeholders::_1));
 				coroutine->set_line_callback(std::bind(&svm_program::load_coroutine, this, std::placeholders::_1, frames));
 				execution = coroutine->execute_inline_call(entrypoint, [&binders](immediate_context* coroutine) { for (auto& bind : *binders) bind(coroutine); });
 				resolve(coroutine);
@@ -2268,6 +2271,9 @@ namespace tangent
 					if (index >= args.size())
 						return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound", entrypoint.get_decl().data(), (int)i));
 
+					if (type.flags() & (size_t)object_behaviours::enumerator)
+						type_id = (int)type_id::int32_t;
+
 					switch (type_id)
 					{
 						case (int)type_id::bool_t:
@@ -2352,6 +2358,9 @@ namespace tangent
 
 			return false;
 		}
+		void svm_program::load_exception(immediate_context* coroutine)
+		{
+		}
 		void svm_program::load_coroutine(immediate_context* coroutine, vector<svm_frame>& frames)
 		{
 			svm_frame current_frame; size_t current_depth = coroutine->get_callstack_size();
@@ -2372,20 +2381,21 @@ namespace tangent
 			if (frames.empty() || !frames.back().byte_code)
 				return;
 
-			auto& latest_frame = frames.back();
+			auto& last_frame = frames.back();
 			auto* vm = coroutine->get_vm();
-			size_t start = std::min<size_t>(latest_frame.byte_code_size - 1, current_frame.pointer > latest_frame.pointer ? latest_frame.pointer : current_frame.pointer);
-			size_t count = (current_frame.pointer > latest_frame.pointer ? current_frame.pointer - latest_frame.pointer : latest_frame.pointer - current_frame.pointer);
-			size_t end = std::min<size_t>(latest_frame.byte_code_size, start + std::max<size_t>(1, count));
+			bool step = last_frame.call.get_function() != current_frame.call.get_function();
+			size_t start = step ? 0 : std::min<size_t>(last_frame.byte_code_size, current_frame.pointer > last_frame.pointer ? last_frame.pointer : current_frame.pointer);
+			size_t count = step ? current_frame.pointer : (current_frame.pointer > last_frame.pointer ? current_frame.pointer - last_frame.pointer : last_frame.pointer - current_frame.pointer);
+			size_t end = std::min<size_t>(last_frame.byte_code_size, start + count);
 			while (start < end)
 			{
-				auto opcode = virtual_machine::get_byte_code_info((uint8_t) * (latest_frame.byte_code + start));
+				auto* pointer = (uint8_t*)(last_frame.byte_code + start);
+				auto opcode = virtual_machine::get_byte_code_info(*pointer);
 				start += opcode.size;
-				if (!dispatch_instruction(vm, coroutine, latest_frame.byte_code, start, opcode))
+				if (!dispatch_instruction(vm, coroutine, last_frame.byte_code, start, opcode))
 					return;
 			}
-
-			latest_frame.pointer = current_frame.pointer;
+			last_frame.pointer = current_frame.pointer;
 		}
 		void svm_program::internal_call(const svm_address& target, const std::string_view& function_decl, void* input_value, int input_type_id, void* output_value, int output_type_id)
 		{
@@ -2410,6 +2420,13 @@ namespace tangent
 			status = svm_marshalling::store(&stream, (void*)object_value, object_type_id);
 			if (!status)
 				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, status.error().message()));
+
+			if (!object_value || object_type_id == (int)type_id::void_t)
+			{
+				auto requires_erase = context->get_account_uniform(to().hash.data, index.data);
+				if (!requires_erase)
+					return;
+			}
 
 			auto data = context->apply_account_uniform(to().hash.data, index.data, stream.data);
 			if (!data)
@@ -2473,6 +2490,13 @@ namespace tangent
 			status = svm_marshalling::store(&stream, (void*)object_value, object_type_id);
 			if (!status)
 				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, status.error().message()));
+
+			if (!object_value || object_type_id == (int)type_id::void_t)
+			{
+				auto requires_erase = context->get_account_multiform(to().hash.data, column.data, row.data);
+				if (!requires_erase)
+					return;
+			}
 
 			auto data = context->apply_account_multiform(to().hash.data, column.data, row.data, stream.data, filter_value);
 			if (!data)
@@ -2547,23 +2571,34 @@ namespace tangent
 			auto data = context->get_account_multiform(to().hash.data, column.data, row.data);
 			return data && !data->data.empty();
 		}
-		void svm_program::emit_event(const void* object_value, int object_type_id)
+		bool svm_program::emit_event(const void* object_value, int object_type_id)
 		{
 			format::wo_stream stream;
 			auto status = svm_marshalling::store(&stream, (void*)object_value, object_type_id);
 			if (!status)
-				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, status.error().message()));
+			{
+				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, status.error().message()));
+				return false;
+			}
 
 			auto reader = stream.ro();
 			format::variables returns;
 			if (!format::variables_util::deserialize_flat_from(reader, &returns))
-				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "emit value conversion error"));
+			{
+				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, "emit value conversion error"));
+				return false;
+			}
 
 			auto type = svm_host::get()->get_vm()->get_type_info_by_id(object_type_id);
 			auto name = type.is_valid() ? type.get_name() : std::string_view("?");
 			auto data = context->emit_event(algorithm::hashing::hash32d(name), std::move(returns), true);
 			if (!data)
-				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_STORAGE, data.error().message()));
+			{
+				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_STORAGE, data.error().message()));
+				return false;
+			}
+
+			return true;
 		}
 		void svm_program::pay(const svm_address& target, const uint256_t& asset, const decimal& value)
 		{
@@ -2879,6 +2914,38 @@ namespace tangent
 				context->emit_event(0, { format::variable(execution.what()) }, false);
 			return execution;
 		}
+		void svm_program_trace::load_exception(immediate_context* coroutine)
+		{
+			auto* vm = coroutine->get_vm();
+			if (vm->has_debugger())
+				vm->get_debugger()->exception_callback(coroutine->get_context());
+		}
+		void svm_program_trace::load_coroutine(immediate_context* coroutine, vector<svm_frame>& frames)
+		{
+			auto* vm = coroutine->get_vm();
+			if (vm->has_debugger())
+				vm->get_debugger()->line_callback(coroutine->get_context());
+			return svm_program::load_coroutine(coroutine, frames);
+		}
+		bool svm_program_trace::emit_event(const void* object_value, int object_type_id)
+		{
+			if (!svm_program::emit_event(object_value, object_type_id))
+				return false;
+
+			if (!events)
+				events = var::set::array();
+
+			auto type = svm_host::get()->get_vm()->get_type_info_by_id(object_type_id).get_name();
+			auto* event = events->push(var::set::object());
+			event->set("type", var::integer(context->receipt.events.back().first));
+			event->set("name", type.empty() ? var::null() : var::string(type));
+
+			auto serialization = svm_marshalling::store(event->set("data", var::set::object()), object_value, object_type_id);
+			if (!serialization)
+				event->set("data", format::variables_util::serialize(context->receipt.events.back().second));
+
+			return true;
+		}
 		bool svm_program_trace::dispatch_instruction(virtual_machine* vm, immediate_context* coroutine, uint32_t* program_data, size_t program_counter, byte_code_label& opcode)
 		{
 			string_stream stream;
@@ -2906,16 +2973,7 @@ namespace tangent
 			data->set("time", algorithm::encoding::serialize_uint256(context->receipt.finalization_time - context->receipt.generation_time));
 			data->set("successful", var::boolean(context->receipt.successful));
 			data->set("returns", returning ? returning->copy() : var::set::null());
-			if (!context->receipt.events.empty())
-			{
-				auto* events_data = data->set("events", var::set::array());
-				for (auto& item : context->receipt.events)
-				{
-					auto* event_data = events_data->push(var::set::object());
-					event_data->set("event", var::integer(item.first));
-					event_data->set("args", format::variables_util::serialize(item.second));
-				}
-			}
+			data->set("events", events ? events->copy() : var::set::null());
 			if (!context->changelog->outgoing.pending.empty())
 			{
 				auto* states_data = data->set("changelog", var::set::array());

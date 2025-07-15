@@ -173,7 +173,7 @@ namespace tangent
 			virtual void store_multiform(const void* column_value, int column_type_id, const void* row_value, int row_type_id, const void* object_value, int object_type_id, const uint256_t& filter_value);
 			virtual bool load_multiform(const void* column_value, int column_type_id, const void* row_value, int row_type_id, void* object_value, int object_type_id, uint256_t* filter_value, bool throw_on_error) const;
 			virtual bool has_multiform(const void* column_value, int column_type_id, const void* row_value, int row_type_id) const;
-			virtual void emit_event(const void* object_value, int object_type_id);
+			virtual bool emit_event(const void* object_value, int object_type_id);
 			virtual void pay(const svm_address& target, const uint256_t& asset, const decimal& value);
 			virtual svm_multiform_column_cursor multiform_column_cursor(const void* column_value, int column_type_id, size_t count) const;
 			virtual svm_multiform_column_filter_cursor multiform_column_filter_cursor(const void* column_value, int column_type_id, const svm_multiform_filter& filter, size_t count) const;
@@ -207,6 +207,7 @@ namespace tangent
 			virtual expects_lr<void> execute(svm_call mutability, const function& entrypoint, const format::variables& args, std::function<expects_lr<void>(void*, int)>&& return_callback);
 			virtual expects_lr<void> subexecute(const svm_address& target, svm_call mutability, const std::string_view& function_decl, void* input_value, int input_type_id, void* output_value, int output_type_id) const;
 			virtual expects_lr<vector<std::function<void(immediate_context*)>>> load_arguments(svm_call* mutability, const function& entrypoint, const format::variables& args) const;
+			virtual void load_exception(immediate_context* coroutine);
 			virtual void load_coroutine(immediate_context* coroutine, vector<svm_frame>& frames);
 
 		public:
@@ -220,6 +221,7 @@ namespace tangent
 		{
 			evaluation_context* environment;
 			uptr<transaction> contextual;
+			uptr<schema> events;
 			uptr<schema> returning;
 			vector<string> instructions;
 			ledger::block block;
@@ -230,8 +232,13 @@ namespace tangent
 			expects_lr<uptr<compiler>> compile_transaction();
 			expects_lr<void> compile_and_call(svm_call mutability, const std::string_view& function_decl, const format::variables& args);
 			expects_lr<void> call_compiled(compiler* module, svm_call mutability, const std::string_view& function_decl, const format::variables& args);
+			bool emit_event(const void* object_value, int object_type_id) override;
 			bool dispatch_instruction(virtual_machine* vm, immediate_context* coroutine, uint32_t* program_data, size_t program_counter, byte_code_label& opcode) override;
 			uptr<schema> as_schema() const;
+
+		protected:
+			void load_exception(immediate_context* coroutine) override;
+			void load_coroutine(immediate_context* coroutine, vector<svm_frame>& frames) override;
 		};
 	}
 }

@@ -42,7 +42,7 @@ namespace tangent
 			read_byte = 4,
 			query_byte = 24,
 			bulk_query_byte = 4,
-			opcode = 1
+			opcode = 2
 		};
 
 		struct block_transaction final : messages::uniform

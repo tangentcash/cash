@@ -41,8 +41,10 @@ struct svm_context
 		auto* host = ledger::svm_host::get();
 		auto* vm = host->get_vm();
 		vm->set_ts_imports(true);
+		vm->set_ts_imports_concat_mode(true);
 		vm->set_preserve_source_code(true);
 		vm->set_compiler_features(compiler_features);
+		program.compiler = host->allocate();
 	}
 	~svm_context()
 	{
@@ -143,6 +145,25 @@ struct svm_context
 		{
 			debugger_context* debugger = new debugger_context();
 			bindings::registry().bind_stringifiers(debugger);
+			debugger->add_to_string_callback("address", [](string& indent, int depth, void* object, int type_id)
+			{
+				ledger::svm_address& source = *(ledger::svm_address*)object;
+				return source.to_string() + " (address)";
+			});
+			debugger->add_to_string_callback("abi", [](string& indent, int depth, void* object, int type_id)
+			{
+				ledger::svm_abi& source = *(ledger::svm_abi*)object;
+				return source.output.encode() + " (abi)";
+			});
+			debugger->add_to_string_callback("uint256", [](string& indent, int depth, void* object, int type_id)
+			{
+				uint256_t& source = *(uint256_t*)object;
+				if (algorithm::asset::is_valid(source))
+					return source.to_string() + " (uint256; " + algorithm::asset::name_of(source) + " as asset)";
+
+				return source.to_string() + " (uint256)";
+			});
+			bindings::registry::import_any(vm);
 			debugger->set_interrupt_callback([](bool is_interrupted) { console::get()->write_line(is_interrupted ? "program execution interrupted" : "resuming program execution"); });
 			vm->set_debugger(debugger);
 		}
@@ -245,7 +266,7 @@ int svm(const inline_args& environment)
 		{
 			if (args.size() > 1)
 			{
-				auto asset = algorithm::asset::id_of(stringify::to_upper(args[1]), args.size() > 2 ? stringify::to_upper(args[2]) : std::string_view(), args.size() > 3 ? stringify::to_upper(args[3]) : std::string_view());
+				auto asset = algorithm::asset::id_of(stringify::to_upper(args[1]), args.size() > 2 ? stringify::to_upper(args[2]) : std::string_view(), args.size() > 3 ? args[3] : std::string_view());
 				if (!asset || !algorithm::asset::is_valid(asset))
 					return err("not a valid asset");
 				context.payable = asset;
@@ -430,9 +451,10 @@ int svm(const inline_args& environment)
 					size_t index = 0;
 					for (auto& event : events->get_childs())
 					{
-						auto hash = event->get_var("event").get_integer();
-						ok(stringify::text("%03d event 0x%x:", (int)++index, (int)hash));
-						terminal->jwrite_line(event->get("args"));
+						auto hash = event->get_var("type").get_integer();
+						auto name = event->get_var("name").get_blob();
+						ok(stringify::text("%03d event 0x%x (%s):", (int)++index, (int)hash, name.c_str()));
+						terminal->jwrite_line(event->get("data"));
 					}
 				}
 			}
@@ -440,8 +462,17 @@ int svm(const inline_args& environment)
 		}
 		else if (method == "changelog")
 		{
-			if (results)
-				terminal->jwrite_line(results->get("changelog"));
+			uptr<schema> changelog = var::set::object();
+			auto* erase = changelog->set("erase", var::set::object());
+			auto* upsert = changelog->set("upsert", var::set::object());
+			for (auto& [index, change] : context.environment.validation.changelog.outgoing.finalized)
+			{
+				if (change.erase)
+					erase->set(format::util::encode_0xhex(index), change.state->as_schema().reset());
+				else
+					upsert->set(format::util::encode_0xhex(index), change.state->as_schema().reset());
+			}
+			terminal->jwrite_line(*changelog);
 			return true;
 		}
 		else if (method == "asm")
@@ -453,6 +484,7 @@ int svm(const inline_args& environment)
 				{
 					for (auto& instruction : instructions->get_childs())
 						ok(instruction->value.get_string());
+					ok(stringify::text("%i instructions; %s gas units", (int)instructions->size(), results->get_var("gas").get_blob().c_str()));
 				}
 			}
 			return true;
@@ -509,67 +541,78 @@ int svm(const inline_args& environment)
 			if (!file)
 				return err(file.what());
 
-			auto possible_plan = schema::from_json(*file);
-			if (!possible_plan)
-				return err(possible_plan.what());
+			auto possible_execp = schema::from_json(*file);
+			if (!possible_execp)
+				return err(possible_execp.what());
 
-			auto plan = uptr<schema>(possible_plan);
-			if (!plan->value.is(var_type::array))
+			auto execp = uptr<schema>(possible_execp);
+			if (!execp->value.is(var_type::array))
 				return err("not a valid array");
 
 			auto path_directory = os::path::get_directory(*path);
 			auto pack = [](const variant& value) -> string { return value.is(var_type::boolean) ? (value.get_boolean() ? "true" : "false") : value.get_blob(); };
-			for (size_t i = 0; i < plan->size(); i++)
+			for (size_t i = 0; i < execp->size(); i++)
 			{
-				auto* subcommand = plan->get(i);
+				auto* subcommand = execp->get(i);
 				auto method = subcommand->get_var(0).get_blob();
-				if (method != "subplan")
+				if (method != "execp")
 					continue;
 
 				auto subpath = os::path::resolve(subcommand->get_var(1).get_blob(), path_directory, true);
 				if (!subpath)
-					return err("subplan path error: " + subpath.what());
+					return err("internal execp path error: " + subpath.what());
 
-				auto subfile = os::file::read_as_string(*path);
+				auto subfile = os::file::read_as_string(*subpath);
 				if (!subfile)
-					return err("subplan file error: " + subfile.what());
+					return err("internal execp file error: " + subfile.what());
 
-				auto possible_subplan = schema::from_json(*subfile);
-				if (!possible_subplan)
-					return err("subplan data error: " + possible_subplan.what());
+				auto possible_execp = schema::from_json(*subfile);
+				if (!possible_execp)
+					return err("internal execp data error: " + possible_execp.what());
 
-				auto subplan = uptr<schema>(possible_subplan);
-				if (!subplan->value.is(var_type::array))
-					return err("subplan data error: not a valid array");
+				auto subexecp = uptr<schema>(possible_execp);
+				if (!subexecp->value.is(var_type::array))
+					return err("internal execp data error: not a valid array");
 
-				auto& from_childs = subplan->get_childs();
-				auto& to_childs = plan->get_childs();
-				for (auto& subsubcommand : from_childs)
-					subsubcommand->attach(*plan);
-
-				size_t size = from_childs.size();
-				plan->pop(i);
-				to_childs.insert(to_childs.begin() + i, from_childs.begin(), from_childs.end());
-				i += size;
+				auto& from_childs = subexecp->get_childs();
+				auto& to_childs = execp->get_childs();
+				execp->pop(i);
+				while (!from_childs.empty())
+				{
+					auto* front = from_childs.front();
+					front->attach(*execp);
+					to_childs.insert(to_childs.begin() + i, front);
+					++i;
+				}
 			}
 
-			for (auto& subcommand : plan->get_childs())
+			for (auto& subcommand : execp->get_childs())
 			{
 				vector<string> args;
 				for (auto& subargument : subcommand->get_childs())
 				{
 					if (subargument->value.is_object())
 					{
-						format::variables function_args;
-						function_args.reserve(subargument->size());
-						for (auto& subsubargument : subargument->get_childs())
-							function_args.push_back(format::variable::from(pack(subsubargument->value)));
-
-						format::wo_stream message;
-						if (format::variables_util::serialize_flat_into(function_args, &message))
-							args.push_back(message.encode());
+						if (subargument->has("$asset"))
+						{
+							auto blockchain = subargument->fetch_var("$asset.0").get_blob();
+							auto token = subargument->fetch_var("$asset.1").get_blob();
+							auto contract_address = subargument->fetch_var("$asset.2").get_blob();
+							args.push_back(algorithm::asset::id_of(blockchain, token, contract_address).to_string());
+						}
 						else
-							args.push_back(string());
+						{
+							format::variables function_args;
+							function_args.reserve(subargument->size());
+							for (auto& subsubargument : subargument->get_childs())
+								function_args.push_back(format::variable::from(pack(subsubargument->value)));
+
+							format::wo_stream message;
+							if (format::variables_util::serialize_flat_into(function_args, &message))
+								args.push_back(message.encode());
+							else
+								args.push_back(string());
+						}			
 					}
 					else
 						args.push_back(pack(subargument->value));
@@ -590,12 +633,33 @@ int svm(const inline_args& environment)
 		else if (method == "help")
 		{
 			ok(
+				"------------ state-tree virtual machine (svm) -------------\n"
+				"This tool may be used to debug the smart contracts before\n"
+				"deployment. SVM here does not require non-zero balance\n"
+				"to send assets to smart contracts. Everything is virtual\n"
+				"and will not be written to current chain state. However,\n"
+				"SVM will use current chain state (if any) as a base to\n"
+				"execute smart contracts on top of. You may fund one or\n"
+				"more accounts before running smart contract code as well\n"
+				"as pay to smart contract without funding before hand. The\n"
+				"state will be incremental, each call to smart contract will\n"
+				"use and update current virtual state. This can be leveraged\n"
+				"while debugging more complex execution scenarious requiring\n"
+				"more than one consecutive update to smart contract state.\n"
+				"Standard debugger is also included and can be used to view\n"
+				"the state of the smart contract program. Highly verbose.\n"
+				"This tool supports execution plans which are useful for\n"
+				"creating the test cases using (execp) that are a chain of\n"
+				"commands which will be executed until one of them fails or\n"
+				"until all of them are successfully finalized. Because state\n"
+				"is built upon current chain state, it is possible to test\n"
+				"the smart contracts virtually on the mainnet blockchain\n"
 				"--------- svm compiler and debugger functionality ---------\n"
 				"from [address?|?]                                        -- get/set caller address (if ? then random)\n"
 				"to [address?|?]                                          -- get/set contract address (if ? then random)\n"
 				"payable [blockchain?] [token?] [contract_address?]       -- get/set paying asset\n"
 				"pay [value?]                                             -- get/set paying value\n"
-				"fund [value?] [blockchain?] [token?] [contract_address?] -- get/set test balance of contract address\n"
+				"fund [value?] [blockchain?] [token?] [contract_address?] -- get/set test balance of address\n"
 				"compile [path]                                           -- compile and use program\n"
 				"assemble [type:abi|0x/abi|code] [path]                   -- assemble and save used program\n"
 				"pack [args?]...                                          -- pack many args into one (for non-trivial function args)\n"
@@ -610,10 +674,10 @@ int svm(const inline_args& environment)
 				"reset                                                    -- reset contract state\n"
 				"clear                                                    -- clear console output\n"
 				"---------------- environment functionality ----------------\n"
-				"execp [path]                                             -- run predefined execution plan (json file of format: [[\"method\", value_or_object_or_array_args...], ...])\n"
+				"execp [path]                                             -- run predefined execution plan (json file of format: [[\"method\", value_or_object_or_array_args?...], ...])\n"
 				"help                                                     -- show this message\n"
 				"\n"
-				"********* node configuration parameters may apply *********\n");
+				"********* node configuration arguments applicable *********\n");
 			return true;
 		}
 		return command_execute(args, directory);

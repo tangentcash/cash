@@ -194,7 +194,7 @@ namespace tangent
 			if (index.size() > std::numeric_limits<uint8_t>::max())
 				return layer_exception("invalid state index");
 
-			if (data.empty())
+			if (data.size() > BLOB_SIZE * 4)
 				return layer_exception("invalid state data");
 
 			return expectation::met;
@@ -289,7 +289,7 @@ namespace tangent
 			if (row.size() > std::numeric_limits<uint8_t>::max())
 				return layer_exception("invalid state row");
 
-			if (data.empty())
+			if (data.size() > BLOB_SIZE * 4)
 				return layer_exception("invalid state data");
 
 			return expectation::met;
