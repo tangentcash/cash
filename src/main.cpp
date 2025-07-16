@@ -4,33 +4,48 @@
 #include "tangent/validator/service/rpc.h"
 #include "tangent/kernel/svm.h"
 #include "tangent/policy/transactions.h"
+#include "tangent/validator/storage/chainstate.h"
 #include <vitex/bindings.h>
+#include <sstream>
 #include <regex>
 
 using namespace tangent;
 
-struct svm_context
+enum class svm_assembler
 {
-	enum class assembler
-	{
-		abi_raw,
-		abi_hex,
-		code
-	};
+	abi_raw,
+	abi_hex,
+	code
+};
+
+struct svm_context : ledger::svm_program
+{
 	struct
 	{
-		uptr<compiler> compiler;
+		ordered_map<algorithm::subpubkeyhash_t, ordered_map<algorithm::asset_id, decimal>> balances;
+		algorithm::subpubkeyhash_t from;
+		algorithm::subpubkeyhash_t to;
+		algorithm::asset_id payable = 0;
+		decimal pay = decimal::zero();
+	} state;
+	struct
+	{
 		string path;
 		string log;
+		uint8_t trap = 0;
 	} program;
-	ordered_map<algorithm::subpubkeyhash_t, ordered_map<algorithm::asset_id, decimal>> balances;
-	ledger::evaluation_context environment;
-	algorithm::subpubkeyhash_t from;
-	algorithm::subpubkeyhash_t to;
-	algorithm::asset_id payable;
-	decimal pay;
+	struct
+	{
+		ledger::evaluation_context environment;
+		uptr<transactions::call> contextual;
+		uptr<compiler> compiler;
+		uptr<schema> events;
+		uptr<schema> returning;
+		vector<string> instructions;
+		ledger::block block;
+	} svmc;
 
-	svm_context() : payable(0), pay(decimal::zero())
+	svm_context() : svm_program(&svmc.environment.validation.context)
 	{
 		preprocessor::desc compiler_features;
 		compiler_features.conditions = true;
@@ -44,12 +59,135 @@ struct svm_context
 		vm->set_ts_imports_concat_mode(true);
 		vm->set_preserve_source_code(true);
 		vm->set_compiler_features(compiler_features);
-		program.compiler = host->allocate();
+		svmc.compiler = host->allocate();
 	}
 	~svm_context()
 	{
 		auto* host = ledger::svm_host::get();
-		host->deallocate(std::move(program.compiler));
+		host->deallocate(std::move(svmc.compiler));
+	}
+	expects_lr<void> assign_transaction(const algorithm::asset_id& asset, const algorithm::pubkeyhash from, const algorithm::subpubkeyhash_t& to, const decimal& value, const std::string_view& function_decl, const format::variables& args)
+	{
+		VI_ASSERT(from != nullptr, "from should be set");
+		uptr<transactions::call> transaction = memory::init<transactions::call>();
+		transaction->asset = asset;
+		transaction->signature[0] = 0xFF;
+		transaction->nonce = std::max<size_t>(1, svmc.environment.validation.context.get_account_nonce(from).or_else(states::account_nonce(nullptr, nullptr)).nonce);
+		transaction->program_call(to, value, function_decl, format::variables(args));
+		transaction->set_gas(decimal::zero(), ledger::block::get_gas_limit());
+
+		auto chain = storages::chainstate(__func__);
+		auto tip = chain.get_latest_block_header();
+		if (tip)
+			svmc.environment.tip = std::move(*tip);
+
+		ledger::receipt receipt;
+		svmc.block.set_parent_block(svmc.environment.tip.address());
+		receipt.transaction_hash = transaction->as_hash();
+		receipt.generation_time = protocol::now().time.now();
+		receipt.block_number = svmc.block.number + 1;
+		memcpy(receipt.from, from, sizeof(algorithm::pubkeyhash));
+
+		svmc.contextual = std::move(transaction);
+		svmc.environment.validation.context = ledger::transaction_context(&svmc.environment, &svmc.block, &svmc.environment.validation.changelog, *svmc.contextual, std::move(receipt));
+		memset(svmc.environment.validator.public_key_hash, 0xFF, sizeof(algorithm::pubkeyhash));
+		memset(svmc.environment.validator.secret_key, 0xFF, sizeof(algorithm::seckey));
+		return expectation::met;
+	}
+	expects_lr<uptr<compiler>> compile_transaction()
+	{
+		VI_ASSERT(svmc.contextual, "transaction should be assigned");
+		auto index = svmc.environment.validation.context.get_account_program(to().hash.data);
+		if (!index)
+			return layer_exception("program not assigned to address");
+
+		auto* host = ledger::svm_host::get();
+		auto& hashcode = index->hashcode;
+		auto result = host->allocate();
+		if (host->precompile(*result, hashcode))
+			return expects_lr<uptr<compiler>>(std::move(result));
+
+		auto program = svmc.environment.validation.context.get_witness_program(hashcode);
+		if (!program)
+		{
+			host->deallocate(std::move(result));
+			return layer_exception("program not stored to address");
+		}
+
+		auto code = program->as_code();
+		if (!code)
+		{
+			host->deallocate(std::move(result));
+			return code.error();
+		}
+
+		auto compilation = host->compile(*result, hashcode, format::util::encode_0xhex(hashcode), *code);
+		if (!compilation)
+		{
+			host->deallocate(std::move(result));
+			return compilation.error();
+		}
+
+		return expects_lr<uptr<compiler>>(std::move(result));
+	}
+	expects_lr<void> call_transaction(compiler* module, ledger::svm_call mutability, const std::string_view& function_decl, const format::variables& args)
+	{
+		VI_ASSERT(svmc.contextual, "transaction should be assigned");
+		auto function = module->get_module().get_function_by_decl(function_decl);
+		if (!function.is_valid())
+			function = module->get_module().get_function_by_name(function_decl);
+		if (!function.is_valid())
+			return layer_exception("illegal call to function: null function");
+
+		svmc.instructions.clear();
+		auto execution = execute(mutability, function, args, [this](void* address, int type_id) -> expects_lr<void>
+		{
+			svmc.returning = var::set::object();
+			auto serialization = ledger::svm_marshalling::store(*svmc.returning, address, type_id);
+			if (!serialization)
+			{
+				svmc.returning.destroy();
+				return layer_exception("return value error: " + serialization.error().message());
+			}
+
+			return expectation::met;
+		});
+		context->receipt.successful = !!execution;
+		context->receipt.finalization_time = protocol::now().time.now();
+		if (!context->receipt.successful)
+			context->emit_event(0, { format::variable(execution.what()) }, false);
+
+		uptr<schema> log = var::set::array();
+		for (auto& [event, args] : context->receipt.events)
+		{
+			if (svmc.events)
+			{
+				bool replacement = false;
+				for (size_t i = 0; i < svmc.events->size(); i++)
+				{
+					auto* target = svmc.events->get(i);
+					auto* type = target->get("type");
+					if (!type || (uint32_t)type->value.get_integer() != event)
+						continue;
+
+					target->pop("index");
+					log->push(target);
+					replacement = true;
+				}
+				if (replacement)
+					continue;
+			}
+
+			uptr<ledger::state> temp = states::resolver::from_type(event);
+			auto* next = svmc.events->push(var::set::object());
+			next->set("type", var::integer(event));
+			next->set("args", format::variables_util::serialize(args));
+			next->set(temp ? temp->as_typename() : "__internal__", var::null());
+		}
+
+		if (!log->empty())
+			svmc.events = std::move(log);
+		return execution;
 	}
 	expects_lr<void> compile(const std::string_view& new_path)
 	{
@@ -64,15 +202,17 @@ struct svm_context
 		program.log.clear();
 
 		auto hash = algorithm::hashing::hash512((uint8_t*)file->data(), file->size());
-		auto result = host->compile(*program.compiler, hash, new_path, *file);
+		auto result = host->compile(*svmc.compiler, hash, new_path, *file);
 		vm->set_compiler_error_callback(nullptr);
-		if (!result)
+		if (!program.log.empty())
+			return layer_exception(string(program.log));
+		else if (!result)
 			return result.error();
 
 		program.path = new_path;
 		return expectation::met;
 	}
-	expects_lr<void> assemble(assembler type, const std::string_view& new_path)
+	expects_lr<void> assemble(svm_assembler type, const std::string_view& new_path)
 	{
 		auto* host = ledger::svm_host::get();
 		auto* vm = host->get_vm();
@@ -90,13 +230,13 @@ struct svm_context
 		if (!listing.empty())
 			listing.erase(listing.size() - 2, 2);
 
-		if (type == assembler::abi_raw || type == assembler::abi_hex)
+		if (type == svm_assembler::abi_raw || type == svm_assembler::abi_hex)
 		{
 			auto result = host->pack(listing);
 			if (!result)
 				return result.error();
 
-			if (type == assembler::abi_hex)
+			if (type == svm_assembler::abi_hex)
 				listing = format::util::encode_0xhex(*result);
 			else
 				listing = std::move(*result);
@@ -108,39 +248,49 @@ struct svm_context
 
 		return expectation::met;
 	}
-	expects_lr<uptr<schema>> call(const std::string_view& function, format::variables&& args, bool attach_debugger_context)
+	expects_lr<void> call(const std::string_view& function, format::variables&& args, bool attach_debugger_context)
 	{
 		if (program.path.empty())
 			return layer_exception("program not bound");
 
-		if (from.empty())
+		if (state.from.empty())
 			return layer_exception("caller address not valid");
 
-		if (to.empty())
+		if (state.to.empty())
 			return layer_exception("contract address not valid");
 
-		if (!payable)
+		if (!state.payable)
 			return layer_exception("payable asset not valid");
 
-		auto script = ledger::svm_program_trace(&environment);
-		auto assignment = script.assign_transaction(payable, from.data, to, pay, function, args);
+		auto assignment = assign_transaction(state.payable, state.from.data, state.to, state.pay, function, args);
 		if (!assignment)
 			return assignment.error();
 
-		for (auto& [account, balances] : balances)
+		for (auto& [account, balances] : state.balances)
 		{
 			for (auto& [asset, value] : balances)
 			{
+				auto prev_balance = context->get_account_balance(asset, account.data);
+				if (prev_balance && prev_balance->get_balance() >= value)
+					continue;
+
 				auto balance = states::account_balance(account.data, asset, nullptr);
 				balance.supply = value;
 
-				auto status = script.context->store(&balance, false);
+				auto status = context->store(&balance, false);
 				if (!status)
 					return status.error();
 			}
 		}
 
-		auto* vm = program.compiler->get_vm();
+		if (state.pay.is_positive())
+		{
+			auto payment = context->apply_payment(state.payable, state.from.data, state.to.data, state.pay);
+			if (!payment)
+				return payment.error();
+		}
+
+		auto* vm = svmc.compiler->get_vm();
 		if (attach_debugger_context)
 		{
 			debugger_context* debugger = new debugger_context();
@@ -168,34 +318,84 @@ struct svm_context
 			vm->set_debugger(debugger);
 		}
 
-		auto execution = script.call_compiled(*program.compiler, ledger::svm_call::system_call, function, args);
+		auto execution = call_transaction(*svmc.compiler, ledger::svm_call::system_call, function, args);
 		if (attach_debugger_context)
 			vm->set_debugger(nullptr);
 
 		if (!execution)
 			return execution.error();
 
-		auto result = script.as_schema();
-		environment.validation.changelog.commit();
-		return expects_lr<uptr<schema>>(std::move(result));
+		svmc.environment.validation.changelog.commit();
+		state.balances.clear();
+		return expectation::met;
+	}
+	void load_exception(immediate_context* coroutine)
+	{
+		auto* vm = coroutine->get_vm();
+		if (vm->has_debugger())
+			vm->get_debugger()->exception_callback(coroutine->get_context());
+	}
+	void load_coroutine(immediate_context* coroutine, vector<ledger::svm_frame>& frames)
+	{
+		auto* vm = coroutine->get_vm();
+		if (vm->has_debugger())
+			vm->get_debugger()->line_callback(coroutine->get_context());
+		return svm_program::load_coroutine(coroutine, frames);
 	}
 	void reset()
 	{
 		auto* host = ledger::svm_host::get();
-		host->deallocate(std::move(program.compiler));
-		program.compiler = host->allocate();
+		host->deallocate(std::move(svmc.compiler));
+		state.balances.clear();
+		state.from = algorithm::subpubkeyhash_t();
+		state.to = algorithm::subpubkeyhash_t();
+		state.payable = 0;
+		state.pay = decimal::zero();
 		program.path.clear();
 		program.log.clear();
-		balances.clear();
-		environment = ledger::evaluation_context();
-		from = algorithm::subpubkeyhash_t();
-		to = algorithm::subpubkeyhash_t();
-		payable = 0;
-		pay = decimal::zero();
+		program.trap = 0;
+		svmc.compiler = host->allocate();
+		svmc.environment = ledger::evaluation_context();
+		svmc.contextual = uptr<transactions::call>();
+		svmc.events = uptr<schema>();
+		svmc.returning = uptr<schema>();
+		svmc.instructions.clear();
+		svmc.block = ledger::block();
 	}
 	bool bound() const
 	{
 		return !program.path.empty();
+	}
+	bool emit_event(const void* object_value, int object_type_id)
+	{
+		if (!svm_program::emit_event(object_value, object_type_id))
+			return false;
+
+		if (!svmc.events)
+			svmc.events = var::set::array();
+
+		auto type = ledger::svm_host::get()->get_vm()->get_type_info_by_id(object_type_id).get_name();
+		auto* event = svmc.events->push(var::set::object());
+		event->set("type", var::integer(context->receipt.events.back().first));
+		event->set("args", format::variables_util::serialize(context->receipt.events.back().second));
+		ledger::svm_marshalling::store(event->set(type.empty() ? "__internal__" : type, var::null()), object_value, object_type_id);
+		return true;
+	}
+	bool dispatch_instruction(virtual_machine* vm, immediate_context* coroutine, uint32_t* program_data, size_t program_counter, byte_code_label& opcode)
+	{
+		string_stream stream;
+		debugger_context::byte_code_label_to_text(stream, vm, program_data, program_counter, false, true);
+
+		string instruction = stream.str();
+		stringify::trim(instruction);
+#if VI_64
+		instruction.erase(2, 8);
+#endif
+		auto gas = ledger::svm_frame::gas_cost_of(opcode);
+		instruction.append(instruction.find('%') != std::string::npos ? ", %gas:" : " %gas:");
+		instruction.append(to_string(gas));
+		svmc.instructions.push_back(std::move(instruction));
+		return svm_program::dispatch_instruction(vm, coroutine, program_data, program_counter, opcode);
 	}
 };
 
@@ -204,7 +404,6 @@ int svm(const inline_args& environment)
 	auto params = protocol(environment);
 	auto context = svm_context();
 	auto* terminal = console::get();
-	auto results = uptr<schema>();
 	auto directory = *os::directory::get_working();
 	error_handling::set_flag(log_option::dated, false);
 
@@ -222,21 +421,21 @@ int svm(const inline_args& environment)
 			{
 				if (args[1] != "?")
 				{
-					if (!algorithm::signing::decode_subaddress(args[1], context.from.data))
+					if (!algorithm::signing::decode_subaddress(args[1], context.state.from.data))
 						return err("not a valid address");
 				}
 				else
 				{
-					memset(context.from.data, 0, sizeof(context.from.data));
-					crypto::fill_random_bytes(context.from.data, sizeof(algorithm::pubkeyhash));
+					memset(context.state.from.data, 0, sizeof(context.state.from.data));
+					crypto::fill_random_bytes(context.state.from.data, sizeof(algorithm::pubkeyhash));
 				}
 			}
 
-			if (context.from.empty())
+			if (context.state.from.empty())
 				return ok("null");
 
 			string address;
-			algorithm::signing::encode_subaddress(context.from.data, address);
+			algorithm::signing::encode_subaddress(context.state.from.data, address);
 			return ok(address);
 		}
 		else if (method == "to")
@@ -245,21 +444,21 @@ int svm(const inline_args& environment)
 			{
 				if (args[1] != "?")
 				{
-					if (!algorithm::signing::decode_subaddress(args[1], context.to.data))
+					if (!algorithm::signing::decode_subaddress(args[1], context.state.to.data))
 						return err("not a valid address");
 				}
 				else
 				{
-					memset(context.to.data, 0, sizeof(context.to.data));
-					crypto::fill_random_bytes(context.to.data, sizeof(algorithm::pubkeyhash));
+					memset(context.state.to.data, 0, sizeof(context.state.to.data));
+					crypto::fill_random_bytes(context.state.to.data, sizeof(algorithm::pubkeyhash));
 				}
 			}
 
-			if (context.to.empty())
+			if (context.state.to.empty())
 				return ok("null");
 
 			string address;
-			algorithm::signing::encode_subaddress(context.to.data, address);
+			algorithm::signing::encode_subaddress(context.state.to.data, address);
 			return ok(address);
 		}
 		else if (method == "payable")
@@ -269,10 +468,10 @@ int svm(const inline_args& environment)
 				auto asset = algorithm::asset::id_of(stringify::to_upper(args[1]), args.size() > 2 ? stringify::to_upper(args[2]) : std::string_view(), args.size() > 3 ? args[3] : std::string_view());
 				if (!asset || !algorithm::asset::is_valid(asset))
 					return err("not a valid asset");
-				context.payable = asset;
+				context.state.payable = asset;
 			}
 
-			return ok(context.payable > 0 ? algorithm::asset::name_of(context.payable) : "null");
+			return ok(context.state.payable > 0 ? algorithm::asset::name_of(context.state.payable) : "null");
 		}
 		else if (method == "pay")
 		{
@@ -281,30 +480,26 @@ int svm(const inline_args& environment)
 				decimal value = decimal(args[1]);
 				if (value.is_nan() || value.is_negative())
 					return err("not a valid decimal value");
-				context.pay = std::move(value);
+				context.state.pay = std::move(value);
 			}
 
-			return ok(context.pay.to_string());
+			return ok(context.state.pay.to_string());
 		}
 		else if (method == "fund")
 		{
-			if (args.size() >= 3)
+			if (args.size() >= 2 && context.state.payable > 0)
 			{
 				decimal value = decimal(args[1]);
 				if (value.is_nan() || value.is_negative())
 					return err("not a valid decimal value");
 
-				auto asset = algorithm::asset::id_of(stringify::to_upper(args[2]), args.size() > 3 ? stringify::to_upper(args[3]) : std::string_view(), args.size() > 4 ? stringify::to_upper(args[4]) : std::string_view());
-				if (!asset || !algorithm::asset::is_valid(asset))
-					return err("not a valid asset");
-
 				if (value.is_positive())
-					context.balances[context.to][asset] = std::move(value);
+					context.state.balances[context.state.from][context.state.payable] = std::move(value);
 				else
-					context.balances[context.to].erase(asset);
+					context.state.balances[context.state.from].erase(context.state.payable);
 			}
 
-			for (auto& [account, balances] : context.balances)
+			for (auto& [account, balances] : context.state.balances)
 			{
 				for (auto& [asset, value] : balances)
 				{
@@ -347,13 +542,13 @@ int svm(const inline_args& environment)
 			if (!path)
 				return err(path.what());
 
-			svm_context::assembler svm_type;
+			svm_assembler svm_type;
 			if (type == "abi")
-				svm_type = svm_context::assembler::abi_raw;
+				svm_type = svm_assembler::abi_raw;
 			else if (type == "0x/abi")
-				svm_type = svm_context::assembler::abi_hex;
+				svm_type = svm_assembler::abi_hex;
 			else if (true || type == "code")
-				svm_type = svm_context::assembler::code;
+				svm_type = svm_assembler::code;
 
 			auto result = context.assemble(svm_type, *path);
 			if (!result)
@@ -398,13 +593,12 @@ int svm(const inline_args& environment)
 			if (!result)
 				return err(result.what());
 
-			results = std::move(*result);
-			if (results)
+			if (context.svmc.returning)
 			{
-				terminal->jwrite_line(results->get("returns"));
+				terminal->jwrite_line(*context.svmc.returning);
 				return true;
 			}
-			else if (results->get_var("successful").get_boolean())
+			else if (context.svmc.environment.validation.context.receipt.successful)
 				return ok("program execution finished");
 			
 			return err("program execution reverted");
@@ -424,40 +618,26 @@ int svm(const inline_args& environment)
 			if (!result)
 				return err(result.what());
 
-			results = std::move(*result);
-			if (results)
+			if (context.svmc.returning)
 			{
-				terminal->jwrite_line(results->get("returns"));
+				terminal->jwrite_line(*context.svmc.returning);
 				return true;
 			}
-			else if (results->get_var("successful").get_boolean())
+			else if (context.svmc.environment.validation.context.receipt.successful)
 				return ok("program execution finished");
 
 			return err("program execution reverted");
 		}
 		else if (method == "result")
 		{
-			if (results)
-				terminal->jwrite_line(results->get("returns"));
+			if (context.svmc.returning)
+				terminal->jwrite_line(*context.svmc.returning);
 			return true;
 		}
 		else if (method == "log")
 		{
-			if (results)
-			{
-				auto events = results->get("events");
-				if (events)
-				{
-					size_t index = 0;
-					for (auto& event : events->get_childs())
-					{
-						auto hash = event->get_var("type").get_integer();
-						auto name = event->get_var("name").get_blob();
-						ok(stringify::text("%03d event 0x%x (%s):", (int)++index, (int)hash, name.c_str()));
-						terminal->jwrite_line(event->get("data"));
-					}
-				}
-			}
+			if (context.svmc.events)
+				terminal->jwrite_line(*context.svmc.events);
 			return true;
 		}
 		else if (method == "changelog")
@@ -465,7 +645,7 @@ int svm(const inline_args& environment)
 			uptr<schema> changelog = var::set::object();
 			auto* erase = changelog->set("erase", var::set::object());
 			auto* upsert = changelog->set("upsert", var::set::object());
-			for (auto& [index, change] : context.environment.validation.changelog.outgoing.finalized)
+			for (auto& [index, change] : context.svmc.environment.validation.changelog.outgoing.finalized)
 			{
 				if (change.erase)
 					erase->set(format::util::encode_0xhex(index), change.state->as_schema().reset());
@@ -477,28 +657,37 @@ int svm(const inline_args& environment)
 		}
 		else if (method == "asm")
 		{
-			if (results)
-			{
-				auto instructions = results->get("instructions");
-				if (instructions)
-				{
-					for (auto& instruction : instructions->get_childs())
-						ok(instruction->value.get_string());
-					ok(stringify::text("%i instructions; %s gas units", (int)instructions->size(), results->get_var("gas").get_blob().c_str()));
-				}
-			}
-			return true;
-		}
-		else if (method == "report")
-		{
-			if (results)
-				terminal->jwrite_line(*results);
+			for (auto& instruction : context.svmc.instructions)
+				ok(instruction);
+			ok(stringify::text("%i instructions; %s gas units", (int)context.svmc.instructions.size(), context.svmc.environment.validation.context.receipt.relative_gas_use.to_string().c_str()));
 			return true;
 		}
 		else if (method == "reset")
 		{
 			context.reset();
 			return ok("state wiped");
+		}
+		else if (method == "trap")
+		{
+			if (args.size() > 1)
+			{
+				uint8_t trap = 255;
+				if (args[1] == "off")
+					trap = 0;
+				else if (args[1] == "err")
+					trap = 1;
+				else if (args[1] == "all")
+					trap = 2;
+				if (trap == 255)
+					return err("trap type not found");
+
+				context.program.trap = trap;
+			}
+
+			if (context.program.trap == 0)
+				return ok("execp trap disabled");
+
+			return ok(context.program.trap == 1 ? "execp trap on error" : "execp trap on finish");
 		}
 		else if (method == "clear")
 		{
@@ -647,7 +836,7 @@ int svm(const inline_args& environment)
 				"while debugging more complex execution scenarious requiring\n"
 				"more than one consecutive update to smart contract state.\n"
 				"Standard debugger is also included and can be used to view\n"
-				"the state of the smart contract program. Highly verbose.\n"
+				"the state of the smart contract  Highly verbose.\n"
 				"This tool supports execution plans which are useful for\n"
 				"creating the test cases using (execp) that are a chain of\n"
 				"commands which will be executed until one of them fails or\n"
@@ -657,9 +846,9 @@ int svm(const inline_args& environment)
 				"--------- svm compiler and debugger functionality ---------\n"
 				"from [address?|?]                                        -- get/set caller address (if ? then random)\n"
 				"to [address?|?]                                          -- get/set contract address (if ? then random)\n"
-				"payable [blockchain?] [token?] [contract_address?]       -- get/set paying asset\n"
-				"pay [value?]                                             -- get/set paying value\n"
-				"fund [value?] [blockchain?] [token?] [contract_address?] -- get/set test balance of address\n"
+				"payable [blockchain?] [token?] [contract_address?]       -- get/set caller address paying asset\n"
+				"fund [value?]                                            -- get/set caller address balance\n"
+				"pay [value?]                                             -- get/set caller address paying value\n"
 				"compile [path]                                           -- compile and use program\n"
 				"assemble [type:abi|0x/abi|code] [path]                   -- assemble and save used program\n"
 				"pack [args?]...                                          -- pack many args into one (for non-trivial function args)\n"
@@ -670,8 +859,8 @@ int svm(const inline_args& environment)
 				"log                                                      -- get call event log\n"
 				"changelog                                                -- get call state changes log\n"
 				"asm                                                      -- get call svm asm instruction listing\n"
-				"report                                                   -- get call full report\n"
 				"reset                                                    -- reset contract state\n"
+				"trap [off|err|all]                                       -- enable command interpreter if execp has finished (all) or failed (err)"
 				"clear                                                    -- clear console output\n"
 				"---------------- environment functionality ----------------\n"
 				"execp [path]                                             -- run predefined execution plan (json file of format: [[\"method\", value_or_object_or_array_args?...], ...])\n"
@@ -685,6 +874,7 @@ int svm(const inline_args& environment)
 
 	if (environment.params.size() <= 1 + (params.custom() ? 1 : 0))
 	{
+	interpreter:
 		ok("type \"help\" for more information.");
 		string command;
 		while (true)
@@ -695,16 +885,21 @@ int svm(const inline_args& environment)
 			if (!command.empty())
 				command_assemble(command);
 		}
-		return 0;
 	}
 	else
 	{
-		auto args = environment.params;
-		args.erase(args.begin());
-		if (params.custom())
-			args.pop_back();
-		return command_execute(args, directory) ? 0 : 1;
+		string command;
+		for (size_t i = 1; i < environment.params.size() - (params.custom() ? 1 : 0); i++)
+			command.append(environment.params[i]).append(1, ' ');
+
+		bool result = command_assemble(command);
+		if (context.program.trap > 1 || (!result && context.program.trap == 1))
+			goto interpreter;
+
+		if (!result)
+			return 1;
 	}
+	return 0;
 }
 int node(const inline_args& environment)
 {

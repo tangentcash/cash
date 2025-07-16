@@ -1447,11 +1447,11 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<chainstate::uniform_location> chainstate::resolve_uniform_location(uint32_t type, const std::string_view& index, bool latest)
+		expects_lr<chainstate::uniform_location> chainstate::resolve_uniform_location(uint32_t type, const std::string_view& index, uint8_t resolver_flags)
 		{
 			auto cache = uniform_cache::get();
 			auto index_location = cache->get_index_location(type, index);
-			auto block_location = latest && index_location ? cache->get_block_location(type, *index_location) : option<block_pair>(optional::none);
+			auto block_location = (resolver_flags & (uint8_t)resolver::find_exact_match) && index_location ? cache->get_block_location(type, *index_location) : option<block_pair>(optional::none);
 			if (!index_location)
 			{
 				auto uniform_storage = get_uniform_storage(type);
@@ -1465,7 +1465,8 @@ namespace tangent
 					return expects_lr<uniform_location>(layer_exception(error_of(cursor)));
 
 				index_location = (*cursor)["index_number"].get().get_integer();
-				cache->set_index_location(type, index, *index_location);
+				if (!(resolver_flags & (uint8_t)resolver::disable_cache))
+					cache->set_index_location(type, index, *index_location);
 			}
 
 			uniform_location location;
@@ -1473,14 +1474,14 @@ namespace tangent
 			location.block = block_location && block_location->number > 0 ? std::move(block_location) : option<block_pair>(optional::none);
 			return location;
 		}
-		expects_lr<chainstate::multiform_location> chainstate::resolve_multiform_location(uint32_t type, const option<std::string_view>& column, const option<std::string_view>& row, bool latest)
+		expects_lr<chainstate::multiform_location> chainstate::resolve_multiform_location(uint32_t type, const option<std::string_view>& column, const option<std::string_view>& row, uint8_t resolver_flags)
 		{
 			VI_ASSERT(column || row, "column or row should be set");
 			auto cache = multiform_cache::get();
 			bool update_column = false, update_row = false;
 			auto column_location = column ? cache->get_column_location(type, *column) : option<uint64_t>(optional::none);
 			auto row_location = row ? cache->get_row_location(type, *row) : option<uint64_t>(optional::none);
-			auto block_location = latest && column_location && row_location ? cache->get_block_location(type, *column_location, *row_location) : option<block_pair>(optional::none);
+			auto block_location = (resolver_flags & (uint8_t)resolver::find_exact_match) && column_location && row_location ? cache->get_block_location(type, *column_location, *row_location) : option<block_pair>(optional::none);
 			if (column && !column_location)
 			{
 				auto multiform_storage = get_multiform_storage(type);
@@ -1494,7 +1495,8 @@ namespace tangent
 					return expects_lr<multiform_location>(layer_exception(error_of(cursor)));
 
 				column_location = (*cursor)["column_number"].get().get_integer();
-				update_column = true;
+				if (!(resolver_flags & (uint8_t)resolver::disable_cache))
+					update_column = true;
 			}
 
 			if (row && !row_location)
@@ -1510,7 +1512,8 @@ namespace tangent
 					return expects_lr<multiform_location>(layer_exception(error_of(cursor)));
 
 				row_location = (*cursor)["row_number"].get().get_integer();
-				update_row = true;
+				if (!(resolver_flags & (uint8_t)resolver::disable_cache))
+					update_row = true;
 			}
 
 			if (column && row)
@@ -2435,7 +2438,7 @@ namespace tangent
 					return std::move(*candidate);
 			}
 
-			auto location = resolve_uniform_location(type, index, !block_number);
+			auto location = resolve_uniform_location(type, index, block_number > 0 ? 0 : (uint8_t)resolver::find_exact_match);
 			if (!location)
 				return location.error();
 
@@ -2497,7 +2500,7 @@ namespace tangent
 					return std::move(*candidate);
 			}
 
-			auto location = resolve_multiform_location(type, column, row, !block_number);
+			auto location = resolve_multiform_location(type, column, row, block_number > 0 ? 0 : (uint8_t)resolver::find_exact_match);
 			if (!location)
 				return location.error();
 
@@ -2553,7 +2556,7 @@ namespace tangent
 			if (!multiform)
 				return multiform.error();
 
-			auto location = resolve_multiform_location(type, column, optional::none, false);
+			auto location = resolve_multiform_location(type, column, optional::none, multiform->requires_rollback ? (uint8_t)resolver::disable_cache : 0);
 			if (!location)
 				return expects_lr<vector<uptr<ledger::state>>>(vector<uptr<ledger::state>>());
 
@@ -2615,7 +2618,7 @@ namespace tangent
 			if (!multiform)
 				return multiform.error();
 
-			auto location = resolve_multiform_location(type, column, optional::none, false);
+			auto location = resolve_multiform_location(type, column, optional::none, multiform->requires_rollback ? (uint8_t)resolver::disable_cache : 0);
 			if (!location)
 				return expects_lr<vector<uptr<ledger::state>>>(vector<uptr<ledger::state>>());
 
@@ -2704,7 +2707,7 @@ namespace tangent
 			if (!multiform)
 				return multiform.error();
 
-			auto location = resolve_multiform_location(type, optional::none, row, false);
+			auto location = resolve_multiform_location(type, optional::none, row, multiform->requires_rollback ? (uint8_t)resolver::disable_cache : 0);
 			if (!location)
 				return expects_lr<vector<uptr<ledger::state>>>(vector<uptr<ledger::state>>());
 
@@ -2766,7 +2769,7 @@ namespace tangent
 			if (!multiform)
 				return multiform.error();
 
-			auto location = resolve_multiform_location(type, optional::none, row, false);
+			auto location = resolve_multiform_location(type, optional::none, row, multiform->requires_rollback ? (uint8_t)resolver::disable_cache : 0);
 			if (!location)
 				return expects_lr<vector<uptr<ledger::state>>>(vector<uptr<ledger::state>>());
 
@@ -2855,7 +2858,7 @@ namespace tangent
 			if (!multiform)
 				return multiform.error();
 
-			auto location = resolve_multiform_location(type, column, optional::none, false);
+			auto location = resolve_multiform_location(type, column, optional::none, multiform->requires_rollback ? (uint8_t)resolver::disable_cache : 0);
 			if (!location)
 				return location.error();
 
@@ -2877,7 +2880,7 @@ namespace tangent
 			if (!multiform)
 				return multiform.error();
 
-			auto location = resolve_multiform_location(type, column, optional::none, false);
+			auto location = resolve_multiform_location(type, column, optional::none, multiform->requires_rollback ? (uint8_t)resolver::disable_cache : 0);
 			if (!location)
 				return location.error();
 
@@ -2901,7 +2904,7 @@ namespace tangent
 			if (!multiform)
 				return multiform.error();
 
-			auto location = resolve_multiform_location(type, optional::none, row, false);
+			auto location = resolve_multiform_location(type, optional::none, row, multiform->requires_rollback ? (uint8_t)resolver::disable_cache : 0);
 			if (!location)
 				return location.error();
 
@@ -2923,7 +2926,7 @@ namespace tangent
 			if (!multiform)
 				return multiform.error();
 
-			auto location = resolve_multiform_location(type, optional::none, row, false);
+			auto location = resolve_multiform_location(type, optional::none, row, multiform->requires_rollback ? (uint8_t)resolver::disable_cache : 0);
 			if (!location)
 				return location.error();
 
@@ -3100,7 +3103,7 @@ namespace tangent
 			{
 				auto* statement = writer.commit_multiform_column_data;
 				writer.storage->bind_blob(statement, 0, item.column);
-				writer.storage->bind_int64(statement, 1, block_number);
+				writer.storage->bind_int64(statement, 1, 0);
 
 				cursor = prepared_query(writer.storage, label, __func__, statement);
 				if (!cursor || cursor->error_or_empty())
@@ -3108,7 +3111,7 @@ namespace tangent
 
 				statement = writer.commit_multiform_row_data;
 				writer.storage->bind_blob(statement, 0, item.row);
-				writer.storage->bind_int64(statement, 1, block_number);
+				writer.storage->bind_int64(statement, 1, 0);
 
 				uint64_t column_number = cursor->first().front().get_column(0).get().get_integer();
 				cursor = prepared_query(writer.storage, label, __func__, statement);
@@ -3122,7 +3125,7 @@ namespace tangent
 					statement = writer.commit_snapshot_data;
 					writer.storage->bind_int64(statement, 0, column_number);
 					writer.storage->bind_int64(statement, 1, row_number);
-					writer.storage->bind_int64(statement, 2, block_number);
+					writer.storage->bind_int64(statement, 2, 0);
 					writer.storage->bind_blob(statement, 3, std::string_view((char*)item.rank, item.rank_size));
 					writer.storage->bind_boolean(statement, 4, item.change->erase);
 				}

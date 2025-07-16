@@ -988,11 +988,12 @@ namespace tangent
 			uint8_t intermediate[sizeof(uint128_t)];
 			decode_uint128(value, intermediate);
 
-			uint8_t index = sizeof(uint128_t), bytes = 0;
-			while (index > 0 && intermediate[--index] > 0)
-				++bytes;
+			uint8_t index = 0;
+			while (index < sizeof(uint128_t) && !intermediate[index])
+				++index;
 
-			memcpy(data, intermediate + (sizeof(uint128_t) - bytes), bytes);
+			size_t bytes = sizeof(uint128_t) - index;
+			memcpy(data, intermediate + index, bytes);
 			if (data_size != nullptr)
 				*data_size = bytes;
 		}
@@ -1037,11 +1038,12 @@ namespace tangent
 			uint8_t intermediate[sizeof(uint256_t)];
 			decode_uint256(value, intermediate);
 
-			uint8_t index = sizeof(uint256_t), bytes = 0;
-			while (index > 0 && intermediate[--index] > 0)
-				++bytes;
+			uint8_t index = 0;
+			while (index < sizeof(uint256_t) && !intermediate[index])
+				++index;
 
-			memcpy(data, intermediate + (sizeof(uint256_t) - bytes), bytes);
+			size_t bytes = sizeof(uint256_t) - index;
+			memcpy(data, intermediate + index, bytes);
 			if (data_size != nullptr)
 				*data_size = bytes;
 		}

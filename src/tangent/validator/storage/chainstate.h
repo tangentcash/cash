@@ -170,6 +170,12 @@ namespace tangent
 		struct chainstate final : ledger::permanent_storage
 		{
 		private:
+			enum class resolver : uint8_t
+			{
+				find_exact_match = (1 << 0),
+				disable_cache = (1 << 1)
+			};
+
 			struct uniform_location
 			{
 				option<uint64_t> index = optional::none;
@@ -265,8 +271,8 @@ namespace tangent
 			sqlite::expects_db<void> store(const std::string_view& label, const std::string_view& operation, const std::string_view& key, const std::string_view& value) override;
 			sqlite::expects_db<void> clear(const std::string_view& label, const std::string_view& operation, const std::string_view& table_ids) override;
 			expects_lr<void> resolve_block_transactions(vector<ledger::block_transaction>& result, uint64_t block_number, bool fully, size_t chunk);
-			expects_lr<uniform_location> resolve_uniform_location(uint32_t type, const std::string_view& index, bool latest);
-			expects_lr<multiform_location> resolve_multiform_location(uint32_t type, const option<std::string_view>& column, const option<std::string_view>& row, bool latest);
+			expects_lr<uniform_location> resolve_uniform_location(uint32_t type, const std::string_view& index, uint8_t resolver_flags);
+			expects_lr<multiform_location> resolve_multiform_location(uint32_t type, const option<std::string_view>& column, const option<std::string_view>& row, uint8_t resolver_flags);
 			expects_lr<uint64_t> resolve_account_location(const algorithm::pubkeyhash account);
 			sqlite::connection* get_block_storage();
 			sqlite::connection* get_account_storage();

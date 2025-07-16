@@ -1626,18 +1626,96 @@ namespace tangent
 			for (size_t i = 5; i < args.size(); i++)
 				function_args.push_back(args[i]);
 
-			auto function = args[4].as_string();
 			auto environment = ledger::evaluation_context();
-			auto script = ledger::svm_program_trace(&environment);
-			auto assignment = script.assign_transaction(algorithm::asset::id_of_handle(args[0].as_string()), from, to, args[3].as_decimal(), function, function_args);
-			if (!assignment)
-				return server_response().error(error_codes::bad_params, assignment.error().message());
+			auto index = environment.validation.context.get_account_program(to);
+			if (!index)
+				return server_response().error(error_codes::bad_params, "to account has no program hash");
 
-			auto execution = script.compile_and_call(ledger::svm_call::immutable_call, function, function_args);
+			auto* host = ledger::svm_host::get();
+			auto& hashcode = index->hashcode;
+			auto compiler = host->allocate();
+			if (!host->precompile(*compiler, hashcode))
+			{
+				auto program = environment.validation.context.get_witness_program(hashcode);
+				if (!program)
+				{
+					host->deallocate(std::move(compiler));
+					return server_response().error(error_codes::bad_params, "to account has no program storage");
+				}
+
+				auto code = program->as_code();
+				if (!code)
+				{
+					host->deallocate(std::move(compiler));
+					return server_response().error(error_codes::bad_params, code.error().message());
+				}
+
+				auto compilation = host->compile(*compiler, hashcode, format::util::encode_0xhex(hashcode), *code);
+				if (!compilation)
+				{
+					host->deallocate(std::move(compiler));
+					return server_response().error(error_codes::bad_params, compilation.error().message());
+				}
+			}
+
+			auto function = args[4].as_string();
+			auto module = compiler->get_module();
+			auto entrypoint = module.get_function_by_decl(function);
+			if (!entrypoint.is_valid())
+				entrypoint = module.get_function_by_name(function);
+			if (!entrypoint.is_valid())
+				return server_response().error(error_codes::bad_params, "to account has no such function");
+
+			transactions::call transaction;
+			transaction.asset = algorithm::asset::id_of_handle(args[0].as_string());
+			transaction.signature[0] = 0xFF;
+			transaction.nonce = std::max<size_t>(1, environment.validation.context.get_account_nonce(from).or_else(states::account_nonce(nullptr, nullptr)).nonce);
+			transaction.program_call(to, args[3].as_decimal(), function, std::move(function_args));
+			transaction.set_gas(decimal::zero(), ledger::block::get_gas_limit());
+
+			auto chain = storages::chainstate(__func__);
+			auto tip = chain.get_latest_block_header();
+			if (tip)
+				environment.tip = std::move(*tip);
+
+			auto block = ledger::block();
+			block.set_parent_block(environment.tip.address());
+
+			auto receipt = ledger::receipt();
+			receipt.transaction_hash = transaction.as_hash();
+			receipt.generation_time = protocol::now().time.now();
+			receipt.block_number = block.number + 1;
+			memcpy(receipt.from, from, sizeof(algorithm::pubkeyhash));
+
+			environment.validation.context = ledger::transaction_context(&environment, &block, &environment.validation.changelog, &transaction, std::move(receipt));
+			memset(environment.validator.public_key_hash, 0xFF, sizeof(algorithm::pubkeyhash));
+			memset(environment.validator.secret_key, 0xFF, sizeof(algorithm::seckey));
+
+			auto returning = uptr<schema>();
+			auto script = ledger::svm_program(&environment.validation.context);
+			auto execution = script.execute(ledger::svm_call::immutable_call, entrypoint, args, [&](void* address, int type_id) -> expects_lr<void>
+			{
+				returning = var::set::object();
+				auto serialization = ledger::svm_marshalling::store(*returning, address, type_id);
+				if (!serialization)
+				{
+					returning.destroy();
+					return layer_exception("return value error: " + serialization.error().message());
+				}
+				return expectation::met;
+			});
 			if (!execution)
 				return server_response().error(error_codes::bad_params, execution.error().message());
 
-			return server_response().success(script.as_schema());
+			environment.validation.context.receipt.successful = !!execution;
+			environment.validation.context.receipt.finalization_time = protocol::now().time.now();
+			if (!environment.validation.context.receipt.successful)
+				environment.validation.context.emit_event(0, { format::variable(execution.what()) }, false);
+
+			auto data = environment.validation.context.receipt.as_schema();
+			data->set("to", algorithm::signing::serialize_subaddress(script.to().hash.data));
+			data->set("result", returning ? returning->copy() : var::set::null());
+			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_block_state_by_hash(http::connection* base, format::variables&& args)
 		{

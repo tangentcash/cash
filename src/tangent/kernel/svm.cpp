@@ -2,7 +2,6 @@
 #include "../policy/transactions.h"
 #include "../validator/storage/chainstate.h"
 #include <vitex/bindings.h>
-#include <sstream>
 extern "C"
 {
 #include "../internal/sha2.h"
@@ -91,12 +90,30 @@ namespace tangent
 			}
 		};
 
-		static svm_multiform_filter svm_multiform_greater(const uint256_t& value, ledger::filter_order order) { return { ledger::filter_comparator::greater, order, value }; }
-		static svm_multiform_filter svm_multiform_greater_equal(const uint256_t& value, ledger::filter_order order) { return { ledger::filter_comparator::greater_equal, order, value }; }
-		static svm_multiform_filter svm_multiform_equal(const uint256_t& value, ledger::filter_order order) { return { ledger::filter_comparator::equal, order, value }; }
-		static svm_multiform_filter svm_multiform_not_equal(const uint256_t& value, ledger::filter_order order) { return { ledger::filter_comparator::not_equal, order, value }; }
-		static svm_multiform_filter svm_multiform_less(const uint256_t& value, ledger::filter_order order) { return { ledger::filter_comparator::less, order, value }; }
-		static svm_multiform_filter svm_multiform_less_equal(const uint256_t& value, ledger::filter_order order) { return { ledger::filter_comparator::less_equal, order, value }; }
+		static svm_multiform_filter svm_multiform_greater(const uint256_t& value, ledger::filter_order order)
+		{
+			return { ledger::filter_comparator::greater, order, value };
+		}
+		static svm_multiform_filter svm_multiform_greater_equal(const uint256_t& value, ledger::filter_order order)
+		{
+			return { ledger::filter_comparator::greater_equal, order, value };
+		}
+		static svm_multiform_filter svm_multiform_equal(const uint256_t& value, ledger::filter_order order)
+		{
+			return { ledger::filter_comparator::equal, order, value };
+		}
+		static svm_multiform_filter svm_multiform_not_equal(const uint256_t& value, ledger::filter_order order)
+		{
+			return { ledger::filter_comparator::not_equal, order, value };
+		}
+		static svm_multiform_filter svm_multiform_less(const uint256_t& value, ledger::filter_order order)
+		{
+			return { ledger::filter_comparator::less, order, value };
+		}
+		static svm_multiform_filter svm_multiform_less_equal(const uint256_t& value, ledger::filter_order order)
+		{
+			return { ledger::filter_comparator::less_equal, order, value };
+		}
 		static void svm_address_pay(svm_address& to, const uint256_t& asset, const decimal& value)
 		{
 			auto* program = svm_program::fetch_mutable_or_throw();
@@ -167,7 +184,7 @@ namespace tangent
 			if (program != nullptr)
 				program->load_uniform(index_value, index_type_id, object_value, object_type_id, true);
 		}
-		static void multiform_set_2(const void* column_value, int column_type_id, const void* row_value, int row_type_id, void* object_value, int object_type_id, int64_t filter_value)
+		static void multiform_set_2(const void* column_value, int column_type_id, const void* row_value, int row_type_id, void* object_value, int object_type_id, const uint256_t& filter_value)
 		{
 			auto* program = svm_program::fetch_mutable_or_throw();
 			if (program != nullptr)
@@ -183,7 +200,7 @@ namespace tangent
 			if (program != nullptr)
 				program->store_multiform(column_value, column_type_id, row_value, row_type_id, nullptr, (int)type_id::void_t, 0);
 		}
-		static void multiform_set_if_2(const void* column_value, int column_type_id, const void* row_value, int row_type_id, void* object_value, int object_type_id, int64_t filter_value, bool condition)
+		static void multiform_set_if_2(const void* column_value, int column_type_id, const void* row_value, int row_type_id, void* object_value, int object_type_id, const uint256_t& filter_value, bool condition)
 		{
 			if (condition)
 				multiform_set_2(column_value, column_type_id, row_value, row_type_id, object_value, object_type_id, filter_value);
@@ -293,20 +310,17 @@ namespace tangent
 					right_value = right_type_id & (int)vitex::scripting::type_id::handle_t ? *(void**)right_value : right_value;
 					if (name == SCRIPT_CLASS_UINT128)
 					{
-						uint128_t& object_value = *(uint128_t*)inout.get_address_of_return_location();
-						object_value = std::min<uint128_t>(*(uint128_t*)left_value, *(uint128_t*)right_value);
+						new (inout.get_address_of_return_location()) uint128_t(std::min<uint128_t>(*(uint128_t*)left_value, *(uint128_t*)right_value));
 						break;
 					}
 					else if (name == SCRIPT_CLASS_UINT256)
 					{
-						uint256_t& object_value = *(uint256_t*)inout.get_address_of_return_location();
-						object_value = std::min<uint256_t>(*(uint256_t*)left_value, *(uint256_t*)right_value);
+						new (inout.get_address_of_return_location()) uint256_t(std::min<uint256_t>(*(uint256_t*)left_value, *(uint256_t*)right_value));
 						break;
 					}
 					else if (name == SCRIPT_CLASS_DECIMAL)
 					{
-						decimal& object_value = *(decimal*)inout.get_address_of_return_location();
-						object_value = std::min<decimal>(*(decimal*)left_value, *(decimal*)right_value);
+						new (inout.get_address_of_return_location()) decimal(std::min<decimal>(*(decimal*)left_value, *(decimal*)right_value));
 						break;
 					}
 					else if (result_type_id & (int)vitex::scripting::type_id::mask_seqnbr_t)
@@ -370,20 +384,18 @@ namespace tangent
 					right_value = right_type_id & (int)vitex::scripting::type_id::handle_t ? *(void**)right_value : right_value;
 					if (name == SCRIPT_CLASS_UINT128)
 					{
-						uint128_t& object_value = *(uint128_t*)inout.get_address_of_return_location();
-						object_value = std::max<uint128_t>(*(uint128_t*)left_value, *(uint128_t*)right_value);
+						new (inout.get_address_of_return_location()) uint128_t(std::max<uint128_t>(*(uint128_t*)left_value, *(uint128_t*)right_value));
 						break;
 					}
 					else if (name == SCRIPT_CLASS_UINT256)
 					{
-						uint256_t& object_value = *(uint256_t*)inout.get_address_of_return_location();
-						object_value = std::max<uint256_t>(*(uint256_t*)left_value, *(uint256_t*)right_value);
+						new (inout.get_address_of_return_location()) uint256_t(std::max<uint256_t>(*(uint256_t*)left_value, *(uint256_t*)right_value));
 						break;
 					}
 					else if (name == SCRIPT_CLASS_DECIMAL)
 					{
-						decimal& object_value = *(decimal*)inout.get_address_of_return_location();
-						object_value = std::max<decimal>(*(decimal*)left_value, *(decimal*)right_value);
+						decimal* ptr = (decimal*)inout.get_address_of_return_location();
+						new (inout.get_address_of_return_location()) decimal(std::max<decimal>(*(decimal*)left_value, *(decimal*)right_value));
 						break;
 					}
 					else if (result_type_id & (int)vitex::scripting::type_id::mask_seqnbr_t)
@@ -508,20 +520,17 @@ namespace tangent
 					right_value = right_type_id & (int)vitex::scripting::type_id::handle_t ? *(void**)right_value : right_value;
 					if (name == SCRIPT_CLASS_UINT128)
 					{
-						uint128_t& object_value = *(uint128_t*)inout.get_address_of_return_location();
-						object_value = math<uint128_t>::lerp(*(uint128_t*)left_value, *(uint128_t*)right_value, *(uint128_t*)delta_value);
+						new (inout.get_address_of_return_location()) uint128_t(math<uint128_t>::lerp(*(uint128_t*)left_value, *(uint128_t*)right_value, *(uint128_t*)delta_value));
 						break;
 					}
 					else if (name == SCRIPT_CLASS_UINT256)
 					{
-						uint256_t& object_value = *(uint256_t*)inout.get_address_of_return_location();
-						object_value = math<uint256_t>::lerp(*(uint256_t*)left_value, *(uint256_t*)right_value, *(uint256_t*)delta_value);
+						new (inout.get_address_of_return_location()) uint256_t(math<uint256_t>::lerp(*(uint256_t*)left_value, *(uint256_t*)right_value, *(uint256_t*)delta_value));
 						break;
 					}
 					else if (name == SCRIPT_CLASS_DECIMAL)
 					{
-						decimal& object_value = *(decimal*)inout.get_address_of_return_location();
-						object_value = math<decimal>::lerp(*(decimal*)left_value, *(decimal*)right_value, *(decimal*)delta_value);
+						new (inout.get_address_of_return_location()) decimal(math<decimal>::lerp(*(decimal*)left_value, *(decimal*)right_value, *(decimal*)delta_value));
 						break;
 					}
 					else if (result_type_id & (int)vitex::scripting::type_id::mask_seqnbr_t)
@@ -761,11 +770,10 @@ namespace tangent
 			auto copy = value;
 			copy *= (uint64_t)std::pow<uint64_t>(10, protocol::now().message.precision);
 
-			auto max = uint256_t::max();
-			if (copy > max.to_decimal())
-				return max;
-
-			return uint256_t(copy.truncate(0).to_string(), 10);
+			auto result = uint256_t::max();
+			if (copy < result.to_decimal())
+				result = uint256_t(copy.truncate(0).to_string(), 10);
+			return result;
 		}
 		static decimal asset_value_to_decimal(const uint256_t& value)
 		{
@@ -790,11 +798,6 @@ namespace tangent
 
 			*value = value256.to_decimal();
 			return true;
-		}
-		static size_t gas_cost_of(const byte_code_label& opcode)
-		{
-			auto gas = (size_t)(opcode.offset_of_arg2 + opcode.size_of_arg2) * (size_t)gas_cost::opcode;
-			return gas;
 		}
 
 		expects_lr<void> svm_marshalling::store(format::wo_stream* stream, const void* value, int value_type_id)
@@ -1340,7 +1343,47 @@ namespace tangent
 			vm->set_library_property(library_features::promise_no_callbacks, 1);
 			vm->set_library_property(library_features::ctypes_no_pointer_cast, 1);
 			vm->set_library_property(library_features::decimal_default_precision, (size_t)protocol::now().message.precision);
+			vm->set_property(features::allow_unsafe_references, 0);
+			vm->set_property(features::optimize_bytecode, 1);
+			vm->set_property(features::copy_script_sections, 1);
+			vm->set_property(features::max_stack_size, 1024 * 64);
+			vm->set_property(features::use_character_literals, 1);
+			vm->set_property(features::allow_multiline_strings, 0);
+			vm->set_property(features::allow_implicit_handle_types, 0);
+			vm->set_property(features::build_without_line_cues, 0);
+			vm->set_property(features::init_global_vars_after_build, 0);
+			vm->set_property(features::require_enum_scope, 0);
+			vm->set_property(features::script_scanner, 1);
+			vm->set_property(features::include_jit_instructions, 0);
+			vm->set_property(features::string_encoding, 0);
+			vm->set_property(features::property_accessor_mode, 0);
+			vm->set_property(features::expand_def_array_to_impl, 1);
+			vm->set_property(features::auto_garbage_collect, 1);
 			vm->set_property(features::disallow_global_vars, 1);
+			vm->set_property(features::always_impl_default_construct, 0);
+			vm->set_property(features::compiler_warnings, 2);
+			vm->set_property(features::disallow_value_assign_for_ref_type, 0);
+			vm->set_property(features::alter_syntax_named_args, 0);
+			vm->set_property(features::disable_integer_division, 0);
+			vm->set_property(features::disallow_empty_list_elements, 1);
+			vm->set_property(features::private_prop_as_protected, 0);
+			vm->set_property(features::allow_unicode_identifiers, 0);
+			vm->set_property(features::heredoc_trim_mode, 1);
+			vm->set_property(features::max_nested_calls, 128);
+			vm->set_property(features::generic_call_mode, 1);
+			vm->set_property(features::init_stack_size, 4096);
+			vm->set_property(features::init_call_stack_size, 10);
+			vm->set_property(features::max_call_stack_size, 256);
+			vm->set_property(features::ignore_duplicate_shared_int, 0);
+			vm->set_property(features::no_debug_output, 0);
+			vm->set_property(features::disable_script_class_gc, 0);
+			vm->set_property(features::jit_interface_version, 1);
+			vm->set_property(features::always_impl_default_copy, 0);
+			vm->set_property(features::always_impl_default_copy_construct, 0);
+			vm->set_property(features::member_init_mode, 0);
+			vm->set_property(features::bool_conversion_mode, 0);
+			vm->set_property(features::foreach_support, 0);
+			vm->set_auto_type_restriction(true);
 			vm->set_ts_imports(false);
 			vm->set_full_stack_tracing(false);
 			vm->set_cache(false);
@@ -1646,6 +1689,12 @@ namespace tangent
 		virtual_machine* svm_host::get_vm()
 		{
 			return *vm;
+		}
+
+		size_t svm_frame::gas_cost_of(const byte_code_label& opcode)
+		{
+			auto gas = (size_t)(opcode.offset_of_arg2 + opcode.size_of_arg2) * (size_t)gas_cost::opcode;
+			return gas;
 		}
 
 		svm_address::svm_address()
@@ -2320,7 +2369,7 @@ namespace tangent
 							}
 
 							auto object = uscript_object(vm, type.get_type_info(), address);
-							frames.emplace_back([i, type_id, object = std::move(object)](immediate_context* coroutine) mutable { coroutine->set_arg_object(i, type_id & (int)vitex::scripting::type_id::handle_t ? (void*)&object.address : (void*)object.address); });
+							frames.emplace_back([i, type_id, object = std::move(object)](immediate_context* coroutine) mutable { coroutine->set_arg_object(i, (void*)object.address); });
 							break;
 						}
 					}
@@ -2347,7 +2396,7 @@ namespace tangent
 		}
 		bool svm_program::dispatch_instruction(virtual_machine* vm, immediate_context* coroutine, uint32_t* program_data, size_t program_counter, byte_code_label& opcode)
 		{
-			auto gas = gas_cost_of(opcode);
+			auto gas = svm_frame::gas_cost_of(opcode);
 			auto status = context->burn_gas(gas);
 			if (status)
 				return true;
@@ -2482,7 +2531,7 @@ namespace tangent
 				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, status.error().message()));
 
 			format::wo_stream row;
-			status = svm_marshalling::store(&column, row_value, row_type_id);
+			status = svm_marshalling::store(&row, row_value, row_type_id);
 			if (!status)
 				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, status.error().message()));
 
@@ -2521,7 +2570,7 @@ namespace tangent
 			}
 
 			format::wo_stream row;
-			status = svm_marshalling::store(&column, row_value, row_type_id);
+			status = svm_marshalling::store(&row, row_value, row_type_id);
 			if (!status)
 			{
 				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, status.error().message()));
@@ -2561,7 +2610,7 @@ namespace tangent
 			}
 
 			format::wo_stream row;
-			status = svm_marshalling::store(&column, row_value, row_type_id);
+			status = svm_marshalling::store(&row, row_value, row_type_id);
 			if (!status)
 			{
 				bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_ARGUMENT, status.error().message()));
@@ -2803,190 +2852,6 @@ namespace tangent
 				bindings::exception::throw_ptr_at(coroutine, bindings::exception::pointer(SCRIPT_EXCEPTION_EXECUTION, "contract is required to be immutable"));
 
 			return result;
-		}
-
-		svm_program_trace::svm_program_trace(evaluation_context* new_environment) : svm_program(new_environment ? &new_environment->validation.context : nullptr), environment(new_environment)
-		{
-			VI_ASSERT(new_environment != nullptr, "env should be set");
-		}
-		expects_lr<void> svm_program_trace::assign_transaction(const algorithm::asset_id& asset, const algorithm::pubkeyhash from, const algorithm::subpubkeyhash_t& to, const decimal& value, const std::string_view& function_decl, const format::variables& args)
-		{
-			VI_ASSERT(from != nullptr, "from should be set");
-			transactions::call transaction;
-			transaction.asset = asset;
-			transaction.signature[0] = 0xFF;
-			transaction.nonce = std::max<size_t>(1, environment->validation.context.get_account_nonce(from).or_else(states::account_nonce(nullptr, nullptr)).nonce);
-			transaction.program_call(to, value, function_decl, format::variables(args));
-			transaction.set_gas(decimal::zero(), ledger::block::get_gas_limit());
-			return assign_transaction(from, memory::init<transactions::call>(std::move(transaction)));
-		}
-		expects_lr<void> svm_program_trace::assign_transaction(const algorithm::pubkeyhash from, uptr<ledger::transaction>&& transaction)
-		{
-			VI_ASSERT(from != nullptr && transaction, "from and transaction should be set");
-			auto chain = storages::chainstate(__func__);
-			auto tip = chain.get_latest_block_header();
-			if (tip)
-				environment->tip = std::move(*tip);
-
-			ledger::receipt receipt;
-			block.set_parent_block(environment->tip.address());
-			receipt.transaction_hash = transaction->as_hash();
-			receipt.generation_time = protocol::now().time.now();
-			receipt.block_number = block.number + 1;
-			memcpy(receipt.from, from, sizeof(algorithm::pubkeyhash));
-
-			contextual = std::move(transaction);
-			memset(environment->validator.public_key_hash, 0xFF, sizeof(algorithm::pubkeyhash));
-			memset(environment->validator.secret_key, 0xFF, sizeof(algorithm::seckey));
-			environment->validation.context = transaction_context(environment, &block, &environment->validation.changelog, *contextual, std::move(receipt));
-			return expectation::met;
-		}
-		expects_lr<uptr<compiler>> svm_program_trace::compile_transaction()
-		{
-			VI_ASSERT(contextual, "transaction should be assigned");
-			auto index = environment->validation.context.get_account_program(to().hash.data);
-			if (!index)
-				return layer_exception("program not assigned to address");
-
-			auto* host = ledger::svm_host::get();
-			auto& hashcode = index->hashcode;
-			auto result = host->allocate();
-			if (host->precompile(*result, hashcode))
-				return expects_lr<uptr<compiler>>(std::move(result));
-
-			auto program = environment->validation.context.get_witness_program(hashcode);
-			if (!program)
-			{
-				host->deallocate(std::move(result));
-				return layer_exception("program not stored to address");
-			}
-
-			auto code = program->as_code();
-			if (!code)
-			{
-				host->deallocate(std::move(result));
-				return code.error();
-			}
-
-			auto compilation = host->compile(*result, hashcode, format::util::encode_0xhex(hashcode), *code);
-			if (!compilation)
-			{
-				host->deallocate(std::move(result));
-				return compilation.error();
-			}
-
-			return expects_lr<uptr<compiler>>(std::move(result));
-		}
-		expects_lr<void> svm_program_trace::compile_and_call(svm_call mutability, const std::string_view& function_decl, const format::variables& args)
-		{
-			auto compiler = compile_transaction();
-			if (!compiler)
-				return compiler.error();
-
-			auto execution = call_compiled(**compiler, mutability, function_decl, args);
-			svm_host::get()->deallocate(std::move(*compiler));
-			return execution;
-		}
-		expects_lr<void> svm_program_trace::call_compiled(compiler* module, svm_call mutability, const std::string_view& function_decl, const format::variables& args)
-		{
-			VI_ASSERT(contextual, "transaction should be assigned");
-			auto function = module->get_module().get_function_by_decl(function_decl);
-			if (!function.is_valid())
-				function = module->get_module().get_function_by_name(function_decl);
-			if (!function.is_valid())
-				return layer_exception("illegal call to function: null function");
-
-			auto execution = execute(mutability, function, args, [this](void* address, int type_id) -> expects_lr<void>
-			{
-				returning = var::set::object();
-				auto serialization = svm_marshalling::store(*returning, address, type_id);
-				if (!serialization)
-				{
-					returning.destroy();
-					return layer_exception("return value error: " + serialization.error().message());
-				}
-
-				return expectation::met;
-			});
-			context->receipt.successful = !!execution;
-			context->receipt.finalization_time = protocol::now().time.now();
-			if (!context->receipt.successful)
-				context->emit_event(0, { format::variable(execution.what()) }, false);
-			return execution;
-		}
-		void svm_program_trace::load_exception(immediate_context* coroutine)
-		{
-			auto* vm = coroutine->get_vm();
-			if (vm->has_debugger())
-				vm->get_debugger()->exception_callback(coroutine->get_context());
-		}
-		void svm_program_trace::load_coroutine(immediate_context* coroutine, vector<svm_frame>& frames)
-		{
-			auto* vm = coroutine->get_vm();
-			if (vm->has_debugger())
-				vm->get_debugger()->line_callback(coroutine->get_context());
-			return svm_program::load_coroutine(coroutine, frames);
-		}
-		bool svm_program_trace::emit_event(const void* object_value, int object_type_id)
-		{
-			if (!svm_program::emit_event(object_value, object_type_id))
-				return false;
-
-			if (!events)
-				events = var::set::array();
-
-			auto type = svm_host::get()->get_vm()->get_type_info_by_id(object_type_id).get_name();
-			auto* event = events->push(var::set::object());
-			event->set("type", var::integer(context->receipt.events.back().first));
-			event->set("name", type.empty() ? var::null() : var::string(type));
-
-			auto serialization = svm_marshalling::store(event->set("data", var::set::object()), object_value, object_type_id);
-			if (!serialization)
-				event->set("data", format::variables_util::serialize(context->receipt.events.back().second));
-
-			return true;
-		}
-		bool svm_program_trace::dispatch_instruction(virtual_machine* vm, immediate_context* coroutine, uint32_t* program_data, size_t program_counter, byte_code_label& opcode)
-		{
-			string_stream stream;
-			debugger_context::byte_code_label_to_text(stream, vm, program_data, program_counter, false, true);
-
-			string instruction = stream.str();
-			stringify::trim(instruction);
-#if VI_64
-			instruction.erase(2, 8);
-#endif
-			auto gas = gas_cost_of(opcode);
-			instruction.append(instruction.find('%') != std::string::npos ? ", %gas:" : " %gas:");
-			instruction.append(to_string(gas));
-			instructions.push_back(std::move(instruction));
-			return svm_program::dispatch_instruction(vm, coroutine, program_data, program_counter, opcode);
-		}
-		uptr<schema> svm_program_trace::as_schema() const
-		{
-			schema* data = var::set::object();
-			data->set("block_hash", var::string(algorithm::encoding::encode_0xhex256(block.number > 0 ? block.as_hash() : uint256_t(0))));
-			data->set("transaction_hash", var::string(algorithm::encoding::encode_0xhex256(context->receipt.transaction_hash)));
-			data->set("from", algorithm::signing::serialize_subaddress(((svm_program_trace*)this)->from().hash.data));
-			data->set("to", algorithm::signing::serialize_subaddress(((svm_program_trace*)this)->to().hash.data));
-			data->set("gas", algorithm::encoding::serialize_uint256(context->receipt.relative_gas_use));
-			data->set("time", algorithm::encoding::serialize_uint256(context->receipt.finalization_time - context->receipt.generation_time));
-			data->set("successful", var::boolean(context->receipt.successful));
-			data->set("returns", returning ? returning->copy() : var::set::null());
-			data->set("events", events ? events->copy() : var::set::null());
-			if (!context->changelog->outgoing.pending.empty())
-			{
-				auto* states_data = data->set("changelog", var::set::array());
-				for (auto& [index, change] : context->changelog->outgoing.pending)
-					states_data->push(change.as_schema().reset());
-			}
-			if (!instructions.empty())
-			{
-				auto* instructions_data = data->set("instructions", var::set::array());
-				for (auto& item : instructions)
-					instructions_data->push(var::string(item));
-			}
-			return data;
 		}
 	}
 }

@@ -51,6 +51,8 @@ namespace tangent
 			size_t byte_code_size = 0;
 			uint32_t* byte_code = nullptr;
 			uint32_t pointer = 0;
+
+			static size_t gas_cost_of(const byte_code_label& opcode);
 		};
 
 		struct svm_address
@@ -164,6 +166,7 @@ namespace tangent
 			virtual expects_lr<void> construct(compiler* compiler, const format::variables& args);
 			virtual expects_lr<void> mutable_call(compiler* compiler, const std::string_view& function_decl, const format::variables& args);
 			virtual expects_lr<void> immutable_call(compiler* compiler, const std::string_view& function_decl, const format::variables& args);
+			virtual expects_lr<void> execute(svm_call mutability, const function& entrypoint, const format::variables& args, std::function<expects_lr<void>(void*, int)>&& return_callback);
 			virtual bool dispatch_instruction(virtual_machine* vm, immediate_context* coroutine, uint32_t* program_data, size_t program_counter, byte_code_label& opcode);
 			virtual void internal_call(const svm_address& target, const std::string_view& function_decl, void* input_value, int input_type_id, void* output_value, int output_type_id);
 			virtual void internal_call(const svm_address& target, const std::string_view& function_decl, void* input_value, int input_type_id, void* output_value, int output_type_id) const;
@@ -204,7 +207,6 @@ namespace tangent
 			virtual const format::variables* arguments() const;
 
 		protected:
-			virtual expects_lr<void> execute(svm_call mutability, const function& entrypoint, const format::variables& args, std::function<expects_lr<void>(void*, int)>&& return_callback);
 			virtual expects_lr<void> subexecute(const svm_address& target, svm_call mutability, const std::string_view& function_decl, void* input_value, int input_type_id, void* output_value, int output_type_id) const;
 			virtual expects_lr<vector<std::function<void(immediate_context*)>>> load_arguments(svm_call* mutability, const function& entrypoint, const format::variables& args) const;
 			virtual void load_exception(immediate_context* coroutine);
@@ -215,30 +217,6 @@ namespace tangent
 			static const svm_program* fetch_immutable(immediate_context* coroutine = immediate_context::get());
 			static svm_program* fetch_mutable_or_throw(immediate_context* coroutine = immediate_context::get());
 			static const svm_program* fetch_immutable_or_throw(immediate_context* coroutine = immediate_context::get());
-		};
-
-		struct svm_program_trace : svm_program
-		{
-			evaluation_context* environment;
-			uptr<transaction> contextual;
-			uptr<schema> events;
-			uptr<schema> returning;
-			vector<string> instructions;
-			ledger::block block;
-
-			svm_program_trace(evaluation_context* new_environment);
-			expects_lr<void> assign_transaction(const algorithm::asset_id& asset, const algorithm::pubkeyhash from, const algorithm::subpubkeyhash_t& to, const decimal& value, const std::string_view& function_decl, const format::variables& args);
-			expects_lr<void> assign_transaction(const algorithm::pubkeyhash from, uptr<ledger::transaction>&& transaction);
-			expects_lr<uptr<compiler>> compile_transaction();
-			expects_lr<void> compile_and_call(svm_call mutability, const std::string_view& function_decl, const format::variables& args);
-			expects_lr<void> call_compiled(compiler* module, svm_call mutability, const std::string_view& function_decl, const format::variables& args);
-			bool emit_event(const void* object_value, int object_type_id) override;
-			bool dispatch_instruction(virtual_machine* vm, immediate_context* coroutine, uint32_t* program_data, size_t program_counter, byte_code_label& opcode) override;
-			uptr<schema> as_schema() const;
-
-		protected:
-			void load_exception(immediate_context* coroutine) override;
-			void load_coroutine(immediate_context* coroutine, vector<svm_frame>& frames) override;
 		};
 	}
 }
