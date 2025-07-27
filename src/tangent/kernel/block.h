@@ -217,31 +217,21 @@ namespace tangent
 
 		struct block_proof final : messages::uniform
 		{
-			struct internal_state
-			{
-				algorithm::merkle_tree transactions_tree;
-				algorithm::merkle_tree receipts_tree;
-				algorithm::merkle_tree states_tree;
-			} internal;
-			vector<uint256_t> transactions;
-			vector<uint256_t> receipts;
-			vector<uint256_t> states;
+			algorithm::merkle_tree transaction_tree;
+			algorithm::merkle_tree receipt_tree;
+			algorithm::merkle_tree state_tree;
 			uint256_t transaction_root = 0;
 			uint256_t receipt_root = 0;
 			uint256_t state_root = 0;
 
-			block_proof(const block_header& from_block, const block_header* from_parent_block);
-			option<algorithm::merkle_tree::path> find_transaction(const uint256_t& hash);
-			option<algorithm::merkle_tree::path> find_receipt(const uint256_t& hash);
-			option<algorithm::merkle_tree::path> find_state(const uint256_t& hash);
+			option<algorithm::merkle_tree::branch_path> find_transaction(const uint256_t& hash);
+			option<algorithm::merkle_tree::branch_path> find_receipt(const uint256_t& hash);
+			option<algorithm::merkle_tree::branch_path> find_state(const uint256_t& hash);
 			bool store_payload(format::wo_stream* stream) const override;
 			bool load_payload(format::ro_stream& stream) override;
 			bool has_transaction(const uint256_t& hash);
 			bool has_receipt(const uint256_t& hash);
 			bool has_state(const uint256_t& hash);
-			algorithm::merkle_tree& get_transaction_tree();
-			algorithm::merkle_tree& get_receipt_tree();
-			algorithm::merkle_tree& get_state_tree();
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
@@ -319,6 +309,7 @@ namespace tangent
 			expects_lr<states::account_balance> apply_fee_transfer(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const decimal& value);
 			expects_lr<states::account_balance> apply_payment(const algorithm::asset_id& asset, const algorithm::pubkeyhash from, const algorithm::pubkeyhash to, const decimal& value);
 			expects_lr<states::validator_production> apply_validator_production(const algorithm::pubkeyhash owner, production_type action, const uint256_t& gas, const ordered_map<algorithm::asset_id, decimal>& stakes);
+			expects_lr<states::validator_production> apply_validator_production_transfer(const algorithm::pubkeyhash owner, const uint256_t& mint_gas, const uint256_t& burn_gas);
 			expects_lr<states::validator_participation> apply_validator_participation(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const decimal& value, int64_t participations, bool is_reward = false);
 			expects_lr<states::validator_attestation> apply_validator_attestation(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const decimal& value, bool is_reward = false);
 			expects_lr<states::depository_reward> apply_depository_reward(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const decimal& incoming_fee, const decimal& outgoing_fee);

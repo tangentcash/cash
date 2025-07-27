@@ -308,51 +308,22 @@ namespace tangent
 
 		struct merkle_tree
 		{
-		public:
-			struct path
+			struct branch_path
 			{
-				friend merkle_tree;
-
-			private:
-				vector<uint256_t> nodes;
+				vector<uint256_t> branch;
 				size_t index = 0;
-				bool single = false;
 
-			public:
-				hash_function hasher = &hashing::sha256ci;
-
-			public:
-				uint256_t calculate_root(uint256_t hash) const;
-				vector<uint256_t>& get_branch();
-				const vector<uint256_t>& get_branch() const;
-				size_t get_index() const;
-				bool empty();
+				uint256_t root(uint256_t hash, const hash_function hasher = &hashing::sha256ci) const;
+				bool empty() const;
 			};
 
-		private:
 			vector<uint256_t> nodes;
-			size_t hashes = 0;
+			size_t pivot = 0;
 
-		public:
-			hash_function hasher = &hashing::sha256ci;
-
-		public:
-			merkle_tree();
-			merkle_tree(const uint256_t& prev_merkle_root);
-			merkle_tree(const merkle_tree&) = default;
-			merkle_tree(merkle_tree&&) = default;
-			merkle_tree& operator=(const merkle_tree&) = default;
-			merkle_tree& operator=(merkle_tree&&) = default;
-			merkle_tree& shift(const uint256_t& hash);
-			merkle_tree& push(const uint256_t& hash);
-			merkle_tree& reset();
-			merkle_tree& calculate();
-			path calculate_path(const uint256_t& hash);
-			uint256_t calculate_root();
-			const vector<uint256_t>& get_tree();
-			const vector<uint256_t>& get_tree() const;
-			size_t get_complexity() const;
-			bool is_calculated() const;
+			branch_path path(const uint256_t& hash) const;
+			uint256_t root() const;
+			size_t size() const;
+			static merkle_tree from(vector<uint256_t>&& elements, const hash_function hasher = &hashing::sha256ci);
 		};
 	}
 }

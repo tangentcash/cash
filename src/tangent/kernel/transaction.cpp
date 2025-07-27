@@ -977,9 +977,9 @@ namespace tangent
 			schema* data = var::set::object();
 			data->set("hash", var::string(algorithm::encoding::encode_0xhex256(as_hash())));
 			data->set("type", var::string(as_typename()));
-			data->set("index", var::string(format::util::encode_0xhex(as_index())));
 			data->set("block_number", algorithm::encoding::serialize_uint256(block_number));
-			data->set("block_nonce", algorithm::encoding::serialize_uint256(block_nonce));
+			data->set("block_nonce", block_nonce > 0 ? algorithm::encoding::serialize_uint256(block_nonce) : var::set::null());
+			data->set("index", var::string(format::util::encode_0xhex(as_index())));
 			return data;
 		}
 		state_level uniform::as_level() const
@@ -1024,11 +1024,11 @@ namespace tangent
 			schema* data = var::set::object();
 			data->set("hash", var::string(algorithm::encoding::encode_0xhex256(as_hash())));
 			data->set("type", var::string(as_typename()));
+			data->set("block_number", algorithm::encoding::serialize_uint256(block_number));
+			data->set("block_nonce", block_nonce > 0 ? algorithm::encoding::serialize_uint256(block_nonce) : var::set::null());
 			data->set("column", var::string(format::util::encode_0xhex(as_column())));
 			data->set("row", var::string(format::util::encode_0xhex(as_row())));
 			data->set("rank", algorithm::encoding::serialize_uint256(as_rank()));
-			data->set("block_number", algorithm::encoding::serialize_uint256(block_number));
-			data->set("block_nonce", algorithm::encoding::serialize_uint256(block_nonce));
 			return data;
 		}
 		state_level multiform::as_level() const

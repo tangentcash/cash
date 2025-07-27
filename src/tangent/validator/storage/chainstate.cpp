@@ -155,7 +155,7 @@ namespace tangent
 			if (column.size() == sizeof(uint256_t))
 				algorithm::encoding::encode_uint256(column.get_binary(), message.checksum);
 		}
-		static uptr<ledger::state> state_from_blob(uint32_t type, const std::string_view& index_or_column, const std::string_view& row_or_none, const std::string_view& optimized_blob)
+		static uptr<ledger::state> state_from_blob(uint64_t block_number, uint32_t type, const std::string_view& index_or_column, const std::string_view& row_or_none, const std::string_view& optimized_blob)
 		{
 			auto state = uptr<ledger::state>(states::resolver::from_type(type));
 			if (!state)
@@ -173,6 +173,12 @@ namespace tangent
 					if (!optimized_blob.empty() && !state->load_optimized(message))
 						return nullptr;
 
+					if (!state->block_number)
+					{
+						state->block_number = block_number;
+						state->block_nonce = 0;
+					}
+
 					return state;
 				}
 				case ledger::state_level::multiform:
@@ -188,6 +194,12 @@ namespace tangent
 					message = format::ro_stream(optimized_blob);
 					if (!optimized_blob.empty() && !state->load_optimized(message))
 						return nullptr;
+
+					if (!state->block_number)
+					{
+						state->block_number = block_number;
+						state->block_nonce = 0;
+					}
 
 					return state;
 				}
@@ -1809,8 +1821,18 @@ namespace tangent
 			if (!child_block)
 				return child_block.error();
 
+			ledger::block_proof proof;
+			proof.transaction_root = child_block->transaction_root;
+			proof.receipt_root = child_block->receipt_root;
+			proof.state_root = child_block->state_root;
+
 			auto parent_block = get_block_header_by_number(child_block->number - 1);
-			ledger::block_proof value = ledger::block_proof(*child_block, parent_block.address());
+			if (parent_block)
+			{
+				proof.transaction_tree.nodes.push_back(parent_block->transaction_root);
+				proof.receipt_tree.nodes.push_back(parent_block->receipt_root);
+				proof.state_tree.nodes.push_back(parent_block->state_root);
+			}
 
 			schema_list map;
 			map.push_back(var::set::integer(block_number));
@@ -1821,21 +1843,22 @@ namespace tangent
 
 			auto& response = cursor->first();
 			size_t size = response.size();
-			value.transactions.resize(size);
-			value.receipts.resize(size);
+			size_t stride = proof.transaction_tree.nodes.size();
+			proof.transaction_tree.nodes.resize(stride + size);
+			proof.receipt_tree.nodes.resize(stride + size);
 			parallel::wail_all(parallel::for_loop(size, ELEMENTS_FEW, [&](size_t i)
 			{
 				auto transaction_hash = response[i]["transaction_hash"].get().get_blob();
 				if (transaction_hash.size() == sizeof(uint256_t))
 				{
-					algorithm::encoding::encode_uint256((uint8_t*)transaction_hash.data(), value.transactions[i]);
+					algorithm::encoding::encode_uint256((uint8_t*)transaction_hash.data(), proof.transaction_tree.nodes[stride + i]);
 					auto transaction_blob = load(label, __func__, get_receipt_label((uint8_t*)transaction_hash.data())).or_else(string());
-					value.receipts[i] = format::ro_stream(transaction_blob).hash();
+					proof.receipt_tree.nodes[stride + i] = format::ro_stream(transaction_blob).hash();
 				}
 				else
 				{
-					value.transactions[i] = 0;
-					value.receipts[i] = 0;
+					proof.transaction_tree.nodes[stride + i] = 0;
+					proof.receipt_tree.nodes[stride + i] = 0;
 				}
 			}));
 
@@ -1846,15 +1869,15 @@ namespace tangent
 					return expects_lr<ledger::block_proof>(layer_exception(error_of(cursor)));
 
 				auto subresponse = cursor->first();
-				auto stride = value.states.size();
+				auto substride = proof.state_tree.nodes.size();
 				auto count = subresponse.size();
-				value.states.resize(stride + count);
+				proof.state_tree.nodes.resize(substride + count);
 				parallel::wail_all(parallel::for_loop(count, ELEMENTS_FEW, [&](size_t i)
 				{
 					auto index = subresponse[i]["index_hash"].get().get_blob();
 					auto blob = load(label, __func__, get_uniform_label(type, index, block_number)).or_else(string());
-					auto state = state_from_blob(type, index, std::string_view(), blob);
-					value.states[stride + i] = state ? state->as_hash() : uint256_t(0);
+					auto state = state_from_blob(block_number, type, index, std::string_view(), blob);
+					proof.state_tree.nodes[substride + i] = state ? state->as_hash() : uint256_t(0);
 				}));
 			}
 
@@ -1865,20 +1888,23 @@ namespace tangent
 					return expects_lr<ledger::block_proof>(layer_exception(error_of(cursor)));
 
 				auto subresponse = cursor->first();
-				auto stride = value.states.size();
+				auto stride = proof.state_tree.nodes.size();
 				auto count = subresponse.size();
-				value.states.resize(stride + count);
+				proof.state_tree.nodes.resize(stride + count);
 				parallel::wail_all(parallel::for_loop(count, ELEMENTS_FEW, [&](size_t i)
 				{
 					auto column = subresponse[i]["column_hash"].get().get_blob();
 					auto row = subresponse[i]["row_hash"].get().get_blob();
 					auto blob = load(label, __func__, get_multiform_label(type, column, row, block_number)).or_else(string());
-					auto state = state_from_blob(type, column, row, blob);
-					value.states[stride + i] = state ? state->as_hash() : uint256_t(0);
+					auto state = state_from_blob(block_number, type, column, row, blob);
+					proof.state_tree.nodes[stride + i] = state ? state->as_hash() : uint256_t(0);
 				}));
 			}
 
-			return value;
+			proof.transaction_tree = algorithm::merkle_tree::from(std::move(proof.transaction_tree.nodes));
+			proof.receipt_tree = algorithm::merkle_tree::from(std::move(proof.receipt_tree.nodes));
+			proof.state_tree = algorithm::merkle_tree::from(std::move(proof.state_tree.nodes));
+			return proof;
 		}
 		expects_lr<ledger::block_proof> chainstate::get_block_proof_by_hash(const uint256_t& block_hash)
 		{
@@ -1942,7 +1968,7 @@ namespace tangent
 				{
 					auto index = subresponse[i]["index_hash"].get().get_blob();
 					auto blob = load(label, __func__, get_uniform_label(type, index, block_number)).or_else(string());
-					auto state = state_from_blob(type, index, std::string_view(), blob);
+					auto state = state_from_blob(block_number, type, index, std::string_view(), blob);
 					result[stride + i] = state ? state->as_hash() : uint256_t(0);
 				}));
 			}
@@ -1962,7 +1988,7 @@ namespace tangent
 					auto column = subresponse[i]["column_hash"].get().get_blob();
 					auto row = subresponse[i]["row_hash"].get().get_blob();
 					auto blob = load(label, __func__, get_multiform_label(type, column, row, block_number)).or_else(string());
-					auto state = state_from_blob(type, column, row, blob);
+					auto state = state_from_blob(block_number, type, column, row, blob);
 					result[stride + i] = state ? state->as_hash() : uint256_t(0);
 				}));
 			}
@@ -2057,7 +2083,7 @@ namespace tangent
 						auto index = next["index_hash"].get().get_blob();
 						auto hidden = next["hidden"].get().get_boolean();
 						auto blob = load(label, __func__, get_uniform_label(type, index, block_number)).or_else(string());
-						auto next_state = state_from_blob(type, index, std::string_view(), blob);
+						auto next_state = state_from_blob(block_number, type, index, std::string_view(), blob);
 						if (next_state)
 							result.emplace(std::move(next_state), hidden);
 					}
@@ -2088,7 +2114,7 @@ namespace tangent
 						auto row = next["row_hash"].get().get_blob();
 						auto hidden = next["hidden"].get().get_boolean();
 						auto blob = load(label, __func__, get_multiform_label(type, column, row, block_number)).or_else(string());
-						auto next_state = state_from_blob(type, column, row, blob);
+						auto next_state = state_from_blob(block_number, type, column, row, blob);
 						if (next_state)
 							result.emplace(std::move(next_state), hidden);
 					}
@@ -2475,7 +2501,7 @@ namespace tangent
 			}
 
 			auto blob = load(label, __func__, get_uniform_label(type, index, location->block->number)).or_else(string());
-			auto value = state_from_blob(type, index, std::string_view(), blob);
+			auto value = state_from_blob(location->block->number, type, index, std::string_view(), blob);
 			if (!value)
 			{
 				if (changelog != nullptr)
@@ -2538,7 +2564,7 @@ namespace tangent
 			}
 
 			auto blob = load(label, __func__, get_multiform_label(type, column, row, location->block->number)).or_else(string());
-			auto value = state_from_blob(type, column, row, blob);
+			auto value = state_from_blob(location->block->number, type, column, row, blob);
 			if (!value)
 			{
 				if (changelog != nullptr)
@@ -2597,8 +2623,9 @@ namespace tangent
 					}
 				}
 
-				auto blob = load(label, __func__, get_multiform_label(type, column, row, next["block_number"].get().get_integer())).or_else(string());
-				auto next_state = state_from_blob(type, column, row, blob);
+				auto state_block_number = next["block_number"].get().get_integer();
+				auto blob = load(label, __func__, get_multiform_label(type, column, row, state_block_number)).or_else(string());
+				auto next_state = state_from_blob(state_block_number, type, column, row, blob);
 				if (!next_state)
 				{
 					if (next_state && changelog != nullptr)
@@ -2686,8 +2713,9 @@ namespace tangent
 					}
 				}
 
-				auto blob = load(label, __func__, get_multiform_label(type, column, row, next["block_number"].get().get_integer())).or_else(string());
-				auto next_state = state_from_blob(type, column, row, blob);
+				auto state_block_number = next["block_number"].get().get_integer();
+				auto blob = load(label, __func__, get_multiform_label(type, column, row, state_block_number)).or_else(string());
+				auto next_state = state_from_blob(state_block_number, type, column, row, blob);
 				if (!next_state)
 				{
 					if (next_state && changelog != nullptr)
@@ -2748,8 +2776,9 @@ namespace tangent
 					}
 				}
 
-				auto blob = load(label, __func__, get_multiform_label(type, column, row, next["block_number"].get().get_integer())).or_else(string());
-				auto next_state = state_from_blob(type, column, row, blob);
+				auto state_block_number = next["block_number"].get().get_integer();
+				auto blob = load(label, __func__, get_multiform_label(type, column, row, state_block_number)).or_else(string());
+				auto next_state = state_from_blob(state_block_number, type, column, row, blob);
 				if (!next_state)
 				{
 					if (next_state && changelog != nullptr)
@@ -2837,8 +2866,9 @@ namespace tangent
 					}
 				}
 
-				auto blob = load(label, __func__, get_multiform_label(type, column, row, next["block_number"].get().get_integer())).or_else(string());
-				auto next_state = state_from_blob(type, column, row, blob);
+				auto state_block_number = next["block_number"].get().get_integer();
+				auto blob = load(label, __func__, get_multiform_label(type, column, row, state_block_number)).or_else(string());
+				auto next_state = state_from_blob(state_block_number, type, column, row, blob);
 				if (!next_state)
 				{
 					if (next_state && changelog != nullptr)

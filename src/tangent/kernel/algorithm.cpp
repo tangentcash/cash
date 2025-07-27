@@ -2011,124 +2011,76 @@ namespace tangent
 			convert_to_secret_key_ed25519(scalar);
 		}
 
-		uint256_t merkle_tree::path::calculate_root(uint256_t hash) const
+		uint256_t merkle_tree::branch_path::root(uint256_t hash, const hash_function hasher) const
 		{
-			if (single)
-				return hash;
-
-			size_t offset = index;
-			for (size_t i = 0; i < nodes.size(); i++)
+			VI_ASSERT(hasher != nullptr, "hash function should be set");
+			if (index != std::numeric_limits<size_t>::max())
 			{
-				hash = (offset & 1 ? hasher(nodes[i], hash) : hasher(hash, nodes[i]));
-				offset >>= 1;
+				size_t offset = index;
+				for (size_t i = 0; i < branch.size(); i++)
+				{
+					hash = (offset & 1 ? hasher(branch[i], hash) : hasher(hash, branch[i]));
+					offset >>= 1;
+				}
 			}
 			return hash;
 		}
-		vector<uint256_t>& merkle_tree::path::get_branch()
+		bool merkle_tree::branch_path::empty() const
 		{
-			return nodes;
-		}
-		const vector<uint256_t>& merkle_tree::path::get_branch() const
-		{
-			return nodes;
-		}
-		size_t merkle_tree::path::get_index() const
-		{
-			return index;
-		}
-		bool merkle_tree::path::empty()
-		{
-			return nodes.empty() && !single;
+			return branch.empty() && index != std::numeric_limits<size_t>::max();
 		}
 
-		merkle_tree::merkle_tree()
+		merkle_tree::branch_path merkle_tree::path(const uint256_t& hash) const
 		{
-		}
-		merkle_tree::merkle_tree(const uint256_t& prev_merkle_root)
-		{
-			if (prev_merkle_root > 0)
-				push(prev_merkle_root);
-		}
-		merkle_tree& merkle_tree::shift(const uint256_t& hash)
-		{
-			nodes.insert(nodes.begin(), hash);
-			++hashes;
-			return *this;
-		}
-		merkle_tree& merkle_tree::push(const uint256_t& hash)
-		{
-			nodes.push_back(hash);
-			++hashes;
-			return *this;
-		}
-		merkle_tree& merkle_tree::reset()
-		{
-			nodes.clear();
-			hashes = 0;
-			return *this;
-		}
-		merkle_tree& merkle_tree::calculate()
-		{
-			VI_ASSERT(hasher != nullptr, "hash function should be set");
-			if (is_calculated())
-				return *this;
-
-			std::sort(nodes.begin(), nodes.end());
-			for (size_t size = hashes, node = 0; size > 1; size = (size + 1) / 2)
-			{
-				for (size_t offset = 0; offset < size; offset += 2)
-					nodes.push_back(hasher(nodes[node + offset], nodes[node + std::min(offset + 1, size - 1)]));
-				node += size;
-			}
-			return *this;
-		}
-		merkle_tree::path merkle_tree::calculate_path(const uint256_t& hash)
-		{
-			path branch;
-			branch.hasher = hasher;
-			calculate();
-
-			auto begin = nodes.begin(), end = nodes.begin() + hashes;
-			auto it = std::lower_bound(nodes.begin(), nodes.begin() + hashes, hash);
+			branch_path result;
+			auto begin = nodes.begin(), end = nodes.begin() + pivot;
+			auto it = std::lower_bound(nodes.begin(), nodes.begin() + pivot, hash);
 			if (it == end)
-				return branch;
+				return result;
 
-			size_t index = it - begin;
-			branch.index = index;
-			branch.single = (nodes.size() == 1);
-
-			for (size_t size = hashes, node = 0; size > 1; size = (size + 1) / 2)
+			if (nodes.size() > 1)
 			{
-				branch.nodes.push_back(nodes[node + std::min(index ^ 1, size - 1)]);
-				index >>= 1;
-				node += size;
+				size_t index = it - begin;
+				result.index = index;
+				for (size_t size = pivot, node = 0; size > 1; size = (size + 1) / 2)
+				{
+					result.branch.push_back(nodes[node + std::min(index ^ 1, size - 1)]);
+					index >>= 1;
+					node += size;
+				}
 			}
+			else
+				result.index = std::numeric_limits<size_t>::max();
 
-			return branch;
+			return result;
 		}
-		uint256_t merkle_tree::calculate_root()
+		uint256_t merkle_tree::root() const
 		{
-			calculate();
 			return nodes.empty() ? uint256_t(0) : nodes.back();
 		}
-		const vector<uint256_t>& merkle_tree::get_tree()
+		size_t merkle_tree::size() const
 		{
-			if (!is_calculated())
-				calculate();
+			return pivot > nodes.size() ? 0 : pivot;
+		}
+		merkle_tree merkle_tree::from(vector<uint256_t>&& elements, const hash_function hasher)
+		{
+			VI_ASSERT(hasher != nullptr, "hash function should be set");
+			merkle_tree result;
+			result.nodes = std::move(elements);
+			result.pivot = result.nodes.size();
 
-			return nodes;
-		}
-		const vector<uint256_t>& merkle_tree::get_tree() const
-		{
-			return nodes;
-		}
-		size_t merkle_tree::get_complexity() const
-		{
-			return hashes;
-		}
-		bool merkle_tree::is_calculated() const
-		{
-			return !hashes || hashes < nodes.size();
+			std::sort(result.nodes.begin(), result.nodes.end());
+			if (result.nodes.size() > 1)
+			{
+				for (size_t size = result.pivot, node = 0; size > 1; size = (size + 1) / 2)
+				{
+					for (size_t offset = 0; offset < size; offset += 2)
+						result.nodes.push_back(hasher(result.nodes[node + offset], result.nodes[node + std::min(offset + 1, size - 1)]));
+					node += size;
+				}
+			}
+
+			return result;
 		}
 	}
 }

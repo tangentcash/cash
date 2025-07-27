@@ -1203,13 +1203,6 @@ namespace tangent
 			bool transactions = args[1].as_boolean();
 			bool receipts = args[2].as_boolean();
 			bool states = args[3].as_boolean();
-			if (transactions)
-				block_proof->get_transaction_tree();
-			if (receipts)
-				block_proof->get_receipt_tree();
-			if (states)
-				block_proof->get_state_tree();
-
 			auto data = block_proof->as_schema();
 			if (!transactions)
 				data->pop("transactions");
@@ -1238,13 +1231,6 @@ namespace tangent
 			bool transactions = args[1].as_boolean();
 			bool receipts = args[2].as_boolean();
 			bool states = args[3].as_boolean();
-			if (transactions)
-				block_proof->get_transaction_tree();
-			if (receipts)
-				block_proof->get_receipt_tree();
-			if (states)
-				block_proof->get_state_tree();
-
 			auto data = block_proof->as_schema();
 			if (!transactions)
 				data->pop("transactions");

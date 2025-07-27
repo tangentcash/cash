@@ -750,20 +750,23 @@ namespace tangent
 				return layer_exception(string(*errors));
 			}
 
-			size_t participants = (size_t)(priority + 1);
+			auto context = transaction_context(environment, this, &changelog, nullptr, { });
+			auto participants = (size_t)(priority + 1);
 			for (size_t i = 0; i < participants; i++)
 			{
 				auto& participant = environment->producers[i];
-				bool winner = (i == priority);
-				if (winner)
+				bool winner_participant = (i == priority);
+				if (winner_participant)
 				{
-					auto work = environment->validation.context.apply_validator_production(participant.owner, transaction_context::production_type::mint_gas, gas_use, fees);
+					auto gas_reward = std::max<uint256_t>(gas_use / (protocol::now().policy.production_max_per_block - i), (uint64_t)gas_cost::write_tx_byte);
+					auto work = context.apply_validator_production(participant.owner, transaction_context::production_type::mint_gas, gas_reward, fees);
 					if (!work)
 						return work.error();
 				}
 				else
 				{
-					auto work = environment->validation.context.apply_validator_production(participant.owner, transaction_context::production_type::burn_gas_and_deactivate, gas_use * (protocol::now().policy.production_max_per_block - i), { });
+					auto gas_penalty = gas_use * (protocol::now().policy.production_max_per_block - i);
+					auto work = context.apply_validator_production(participant.owner, transaction_context::production_type::burn_gas_and_deactivate, gas_penalty, { });
 					if (!work)
 						return work.error();
 				}
@@ -861,25 +864,34 @@ namespace tangent
 			if (!parent_block && number > 1)
 				return expectation::met;
 
-			algorithm::merkle_tree tree = (parent_block ? parent_block->transaction_root : uint256_t(0));
+			vector<uint256_t> transaction_tree;
+			transaction_tree.reserve(transactions.size() + 1);
+			if (parent_block != nullptr)
+				transaction_tree.push_back(parent_block->transaction_root);
 			for (auto& item : transactions)
-				tree.push(item.receipt.transaction_hash);
-			if (tree.calculate_root() != transaction_root)
-				return layer_exception("invalid transactions merkle tree root");
+				transaction_tree.push_back(item.receipt.transaction_hash);
+			if (algorithm::merkle_tree::from(std::move(transaction_tree)).root() != transaction_root)
+				return layer_exception("invalid transaction merkle tree root");
 
-			tree = (parent_block ? parent_block->receipt_root : uint256_t(0));
+			vector<uint256_t> receipt_tree;
+			receipt_tree.reserve(transactions.size() + 1);
+			if (parent_block != nullptr)
+				receipt_tree.push_back(parent_block->receipt_root);
 			for (auto& item : transactions)
-				tree.push(item.receipt.as_hash());
-			if (tree.calculate_root() != receipt_root)
-				return layer_exception("invalid receipts merkle tree root");
+				receipt_tree.push_back(item.receipt.as_hash());
+			if (algorithm::merkle_tree::from(std::move(receipt_tree)).root() != receipt_root)
+				return layer_exception("invalid receipt merkle tree root");
 
 			if (state != nullptr)
 			{
-				tree = (parent_block ? parent_block->state_root : uint256_t(0));
+				vector<uint256_t> state_tree;
+				state_tree.reserve(state->finalized.size() + 1);
+				if (parent_block != nullptr)
+					state_tree.push_back(parent_block->state_root);
 				for (auto& [index, change] : state->finalized)
-					tree.push(change.state->as_hash());
-				if (tree.calculate_root() != state_root)
-					return layer_exception("invalid states merkle tree root");
+					state_tree.push_back(change.state->as_hash());
+				if (algorithm::merkle_tree::from(std::move(state_tree)).root() != state_root)
+					return layer_exception("invalid state merkle tree root");
 			}
 
 			return expectation::met;
@@ -950,22 +962,31 @@ namespace tangent
 			}
 			parallel::wail_all(std::move(task_queue1));
 
-			algorithm::merkle_tree tree = (parent_block ? parent_block->transaction_root : uint256_t(0));
+			vector<uint256_t> transaction_tree;
+			transaction_tree.reserve(transactions.size() + 1);
+			if (parent_block != nullptr)
+				transaction_tree.push_back(parent_block->transaction_root);
 			for (auto& item : transactions)
-				tree.push(item.receipt.transaction_hash);
-			transaction_root = tree.calculate_root();
+				transaction_tree.push_back(item.receipt.transaction_hash);
+			transaction_root = algorithm::merkle_tree::from(std::move(transaction_tree)).root();
 
-			tree = (parent_block ? parent_block->receipt_root : uint256_t(0));
+			vector<uint256_t> receipt_tree;
+			receipt_tree.reserve(transactions.size() + 1);
+			if (parent_block != nullptr)
+				receipt_tree.push_back(parent_block->receipt_root);
 			for (auto& item : transactions)
-				tree.push(item.receipt.as_hash());
-			receipt_root = tree.calculate_root();
+				receipt_tree.push_back(item.receipt.as_hash());
+			receipt_root = algorithm::merkle_tree::from(std::move(receipt_tree)).root();
 
-			if (state)
+			if (state != nullptr)
 			{
-				tree = (parent_block ? parent_block->state_root : uint256_t(0));
+				vector<uint256_t> state_tree;
+				state_tree.reserve(state->finalized.size() + 1);
+				if (parent_block != nullptr)
+					state_tree.push_back(parent_block->state_root);
 				for (auto& [index, change] : state->finalized)
-					tree.push(change.state->as_hash());
-				state_root = tree.calculate_root();
+					state_tree.push_back(change.state->as_hash());
+				state_root = algorithm::merkle_tree::from(std::move(state_tree)).root();
 				state_count = (uint32_t)state->finalized.size();
 			}
 
@@ -988,20 +1009,33 @@ namespace tangent
 		}
 		block_proof block::as_proof(const block_header* parent_block, const block_state* state) const
 		{
-			auto proof = block_proof(*this, parent_block);
-			proof.transactions.reserve(transactions.size());
-			proof.receipts.reserve(transactions.size());
+			auto proof = block_proof();
+			proof.transaction_root = transaction_root;
+			proof.receipt_root = receipt_root;
+			proof.state_root = state_root;
+			proof.transaction_tree.nodes.reserve(transactions.size() + 1);
+			proof.receipt_tree.nodes.reserve(transactions.size() + 1);
+			proof.state_tree.nodes.reserve(state ? state->finalized.size() + 1 : 0);
+			if (parent_block != nullptr)
+			{
+				proof.transaction_tree.nodes.push_back(parent_block->transaction_root);
+				proof.receipt_tree.nodes.push_back(parent_block->receipt_root);
+			}
 			for (auto& item : transactions)
 			{
-				proof.transactions.push_back(item.receipt.transaction_hash);
-				proof.receipts.push_back(item.receipt.as_hash());
+				proof.transaction_tree.nodes.push_back(item.receipt.transaction_hash);
+				proof.receipt_tree.nodes.push_back(item.receipt.as_hash());
 			}
 			if (state != nullptr)
 			{
-				proof.states.reserve(state->finalized.size());
+				if (parent_block != nullptr)
+					proof.state_tree.nodes.push_back(parent_block->state_root);
 				for (auto& [index, change] : state->finalized)
-					proof.states.push_back(change.state->as_hash());
+					proof.state_tree.nodes.push_back(change.state->as_hash());
 			}
+			proof.transaction_tree = algorithm::merkle_tree::from(std::move(proof.transaction_tree.nodes));
+			proof.receipt_tree = algorithm::merkle_tree::from(std::move(proof.receipt_tree.nodes));
+			proof.state_tree = algorithm::merkle_tree::from(std::move(proof.state_tree.nodes));
 			return proof;
 		}
 		uint256_t block::as_hash(bool renew) const
@@ -1009,34 +1043,25 @@ namespace tangent
 			return as_header().as_hash(renew);
 		}
 
-		block_proof::block_proof(const block_header& from_block, const block_header* from_parent_block)
+		option<algorithm::merkle_tree::branch_path> block_proof::find_transaction(const uint256_t& hash)
 		{
-			internal.transactions_tree = algorithm::merkle_tree(from_parent_block ? from_parent_block->transaction_root : uint256_t(0));
-			internal.receipts_tree = algorithm::merkle_tree(from_parent_block ? from_parent_block->receipt_root : uint256_t(0));
-			internal.states_tree = algorithm::merkle_tree(from_parent_block ? from_parent_block->state_root : uint256_t(0));
-			transaction_root = from_block.transaction_root;
-			receipt_root = from_block.receipt_root;
-			state_root = from_block.state_root;
-		}
-		option<algorithm::merkle_tree::path> block_proof::find_transaction(const uint256_t& hash)
-		{
-			auto path = get_transaction_tree().calculate_path(hash);
+			auto path = transaction_tree.path(hash);
 			if (path.empty())
 				return optional::none;
 
 			return path;
 		}
-		option<algorithm::merkle_tree::path> block_proof::find_receipt(const uint256_t& hash)
+		option<algorithm::merkle_tree::branch_path> block_proof::find_receipt(const uint256_t& hash)
 		{
-			auto path = get_receipt_tree().calculate_path(hash);
+			auto path = receipt_tree.path(hash);
 			if (path.empty())
 				return optional::none;
 
 			return path;
 		}
-		option<algorithm::merkle_tree::path> block_proof::find_state(const uint256_t& hash)
+		option<algorithm::merkle_tree::branch_path> block_proof::find_state(const uint256_t& hash)
 		{
-			auto path = get_state_tree().calculate_path(hash);
+			auto path = state_tree.path(hash);
 			if (path.empty())
 				return optional::none;
 
@@ -1046,19 +1071,19 @@ namespace tangent
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer(transaction_root);
-			stream->write_integer((uint32_t)transactions.size());
-			for (auto& item : transactions)
-				stream->write_integer(item);
+			stream->write_integer((uint32_t)transaction_tree.size());
+			for (size_t i = 0; i < transaction_tree.size(); i++)
+				stream->write_integer(transaction_tree.nodes[i]);
 
 			stream->write_integer(receipt_root);
-			stream->write_integer((uint32_t)receipts.size());
-			for (auto& item : receipts)
-				stream->write_integer(item);
+			stream->write_integer((uint32_t)receipt_tree.size());
+			for (size_t i = 0; i < receipt_tree.size(); i++)
+				stream->write_integer(receipt_tree.nodes[i]);
 
 			stream->write_integer(state_root);
-			stream->write_integer((uint32_t)states.size());
-			for (auto& item : states)
-				stream->write_integer(item);
+			stream->write_integer((uint32_t)state_tree.size());
+			for (size_t i = 0; i < state_tree.size(); i++)
+				stream->write_integer(state_tree.nodes[i]);
 
 			return true;
 		}
@@ -1071,13 +1096,14 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &transactions_size))
 				return false;
 
-			transactions.resize(transactions_size);
+			transaction_tree.nodes.resize(transactions_size);
 			for (size_t i = 0; i < transactions_size; i++)
 			{
-				if (!stream.read_integer(stream.read_type(), &transactions[i]))
+				if (!stream.read_integer(stream.read_type(), &transaction_tree.nodes[i]))
 					return false;
 			}
 
+			transaction_tree = algorithm::merkle_tree::from(std::move(transaction_tree.nodes));
 			if (!stream.read_integer(stream.read_type(), &receipt_root))
 				return false;
 
@@ -1085,13 +1111,14 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &receipts_size))
 				return false;
 
-			receipts.resize(receipts_size);
+			receipt_tree.nodes.resize(receipts_size);
 			for (size_t i = 0; i < receipts_size; i++)
 			{
-				if (!stream.read_integer(stream.read_type(), &receipts[i]))
+				if (!stream.read_integer(stream.read_type(), &receipt_tree.nodes[i]))
 					return false;
 			}
 
+			receipt_tree = algorithm::merkle_tree::from(std::move(receipt_tree.nodes));
 			if (!stream.read_integer(stream.read_type(), &state_root))
 				return false;
 
@@ -1099,101 +1126,54 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &states_size))
 				return false;
 
-			states.resize(states_size);
+			state_tree.nodes.resize(states_size);
 			for (size_t i = 0; i < states_size; i++)
 			{
-				if (!stream.read_integer(stream.read_type(), &states[i]))
+				if (!stream.read_integer(stream.read_type(), &state_tree.nodes[i]))
 					return false;
 			}
 
+			state_tree = algorithm::merkle_tree::from(std::move(state_tree.nodes));
 			return true;
 		}
 		bool block_proof::has_transaction(const uint256_t& hash)
 		{
 			auto path = find_transaction(hash);
-			return path && path->calculate_root(hash) == transaction_root;
+			return path && path->root(hash) == transaction_root;
 		}
 		bool block_proof::has_receipt(const uint256_t& hash)
 		{
 			auto path = find_receipt(hash);
-			return path && path->calculate_root(hash) == receipt_root;
+			return path && path->root(hash) == receipt_root;
 		}
 		bool block_proof::has_state(const uint256_t& hash)
 		{
 			auto path = find_state(hash);
-			return path && path->calculate_root(hash) == state_root;
-		}
-		algorithm::merkle_tree& block_proof::get_transaction_tree()
-		{
-			if (!internal.transactions_tree.is_calculated() || internal.transactions_tree.get_tree().size() < transactions.size())
-			{
-				for (auto& item : transactions)
-					internal.transactions_tree.push(item);
-			}
-			return internal.transactions_tree.calculate();
-		}
-		algorithm::merkle_tree& block_proof::get_receipt_tree()
-		{
-			if (!internal.receipts_tree.is_calculated() || internal.receipts_tree.get_tree().size() < receipts.size())
-			{
-				for (auto& item : receipts)
-					internal.receipts_tree.push(item);
-			}
-			return internal.receipts_tree.calculate();
-		}
-		algorithm::merkle_tree& block_proof::get_state_tree()
-		{
-			if (!internal.states_tree.is_calculated() || internal.states_tree.get_tree().size() < states.size())
-			{
-				for (auto& item : states)
-					internal.states_tree.push(item);
-			}
-			return internal.states_tree.calculate();
+			return path && path->root(hash) == state_root;
 		}
 		uptr<schema> block_proof::as_schema() const
 		{
 			schema* data = var::set::object();
 			auto* transactions_data = data->set("transactions", var::set::object());
-			auto* transactions_hashes = transactions_data->set("hashes", var::set::array());
-			auto* transactions_tree = transactions_data->set("tree", var::set::array());
+			auto* transactions_tree_data = transactions_data->set("tree", var::set::array());
 			transactions_data->set("root", var::string(algorithm::encoding::encode_0xhex256(transaction_root)));
-			if (internal.transactions_tree.get_tree().empty())
-			{
-				for (auto& item : transactions)
-					transactions_hashes->push(var::string(algorithm::encoding::encode_0xhex256(item)));
-			}
-			else
-				transactions_hashes->value = var::integer(transactions.size());
-			for (auto& item : internal.transactions_tree.get_tree())
-				transactions_tree->push(var::string(algorithm::encoding::encode_0xhex256(item)));
+			transactions_data->set("pivot", var::integer(transaction_tree.pivot));
+			for (auto& item : transaction_tree.nodes)
+				transactions_tree_data->push(var::string(algorithm::encoding::encode_0xhex256(item)));
 
 			auto* receipts_data = data->set("receipts", var::set::object());
-			auto* receipts_hashes = receipts_data->set("hashes", var::set::array());
-			auto* receipts_tree = receipts_data->set("tree", var::set::array());
+			auto* receipts_tree_data = receipts_data->set("tree", var::set::array());
 			receipts_data->set("root", var::string(algorithm::encoding::encode_0xhex256(receipt_root)));
-			if (internal.receipts_tree.get_tree().empty())
-			{
-				for (auto& item : receipts)
-					receipts_hashes->push(var::string(algorithm::encoding::encode_0xhex256(item)));
-			}
-			else
-				receipts_hashes->value = var::integer(receipts.size());
-			for (auto& item : internal.receipts_tree.get_tree())
-				receipts_tree->push(var::string(algorithm::encoding::encode_0xhex256(item)));
+			receipts_data->set("pivot", var::integer(receipt_tree.pivot));
+			for (auto& item : receipt_tree.nodes)
+				receipts_tree_data->push(var::string(algorithm::encoding::encode_0xhex256(item)));
 
 			auto* states_data = data->set("states", var::set::object());
-			auto* states_hashes = states_data->set("hashes", var::set::array());
-			auto* states_tree = states_data->set("tree", var::set::array());
+			auto* states_tree_data = states_data->set("tree", var::set::array());
 			states_data->set("root", var::string(algorithm::encoding::encode_0xhex256(state_root)));
-			if (internal.states_tree.get_tree().empty())
-			{
-				for (auto& item : states)
-					states_hashes->push(var::string(algorithm::encoding::encode_0xhex256(item)));
-			}
-			else
-				states_hashes->value = var::integer(states.size());
-			for (auto& item : internal.states_tree.get_tree())
-				states_tree->push(var::string(algorithm::encoding::encode_0xhex256(item)));
+			states_data->set("pivot", var::integer(state_tree.pivot));
+			for (auto& item : state_tree.nodes)
+				states_tree_data->push(var::string(algorithm::encoding::encode_0xhex256(item)));
 			return data;
 		}
 		uint32_t block_proof::as_type() const
@@ -1346,7 +1326,7 @@ namespace tangent
 		uptr<schema> block_evaluation::as_schema() const
 		{
 			auto data = block.as_schema();
-			auto* states_data = data->set("state", var::set::array());
+			auto* states_data = data->set("changelog", var::set::array());
 			for (auto& [index, change] : state.finalized)
 				states_data->push(change.state->as_schema().reset());
 			return data;
@@ -1400,10 +1380,11 @@ namespace tangent
 			if (!next)
 				return layer_exception("invalid state");
 
+			next->checksum = 0;
 			if (block != nullptr)
 			{
 				next->block_number = block->number;
-				next->block_nonce = block->mutation_count++;
+				next->block_nonce = ++block->mutation_count;
 			}
 
 			if (!next->block_number)
@@ -1440,6 +1421,12 @@ namespace tangent
 				prev = states::resolver::from_type(type);
 
 			bool will_delete = states::resolver::will_delete(next, prev);
+			if (will_delete)
+			{
+				next->block_nonce = 0;
+				next->checksum = 0;
+			}
+
 			states::resolver::value_copy(type, next, *prev);
 			changelog->outgoing.emplace(std::move(prev), will_delete);
 			if (!paid)
@@ -1881,6 +1868,39 @@ namespace tangent
 					return layer_exception("invalid production action");
 			}
 		}
+		expects_lr<states::validator_production> transaction_context::apply_validator_production_transfer(const algorithm::pubkeyhash owner, const uint256_t& mint_gas, const uint256_t& burn_gas)
+		{
+			if (mint_gas && burn_gas)
+				return layer_exception("invalid production action");
+
+			if (burn_gas)
+			{
+				auto production = get_validator_production(owner);
+				if (!production)
+					return production.error();
+
+				if (production->gas < burn_gas)
+					return layer_exception("ran out of gas while refueling");
+
+				auto result = apply_validator_production(owner, production_type::burn_gas, burn_gas, { });
+				if (result)
+				{
+					auto status = emit_event<states::validator_production>({ format::variable(std::string_view((char*)owner, sizeof(algorithm::pubkeyhash))), format::variable(false), format::variable(burn_gas) });
+					if (!status)
+						return status.error();
+				}
+				return result;
+			}
+
+			auto result = apply_validator_production(owner, production_type::mint_gas, mint_gas, { });
+			if (result)
+			{
+				auto status = emit_event<states::validator_production>({ format::variable(std::string_view((char*)owner, sizeof(algorithm::pubkeyhash))), format::variable(true), format::variable(mint_gas) });
+				if (!status)
+					return status.error();
+			}
+			return result;
+		}
 		expects_lr<states::validator_participation> transaction_context::apply_validator_participation(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const decimal& value, int64_t participations, bool is_reward)
 		{
 			states::validator_participation new_state = get_validator_participation(asset, owner).or_else(states::validator_participation(owner, asset, block));
@@ -2105,7 +2125,7 @@ namespace tangent
 			auto chain = storages::chainstate(__func__);
 			auto state = chain.get_uniform(states::account_nonce::as_instance_type(), changelog, states::account_nonce::as_instance_index(owner), get_validation_nonce());
 			if (!state)
-				return state.error();
+				return layer_exception("account nonce required but not applicable (" + state.what() + ")");
 
 			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
 			if (!status)
@@ -2119,7 +2139,7 @@ namespace tangent
 			auto chain = storages::chainstate(__func__);
 			auto state = chain.get_uniform(states::account_program::as_instance_type(), changelog, states::account_program::as_instance_index(owner), get_validation_nonce());
 			if (!state)
-				return state.error();
+				return layer_exception("account program required but not applicable (" + state.what() + ")");
 
 			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
 			if (!status)
@@ -2137,7 +2157,7 @@ namespace tangent
 			auto chain = storages::chainstate(__func__);
 			auto state = chain.get_uniform(states::account_uniform::as_instance_type(), changelog, states::account_uniform::as_instance_index(owner, index), get_validation_nonce());
 			if (!state)
-				return state.error();
+				return layer_exception("account uniform required but not applicable (" + state.what() + ")");
 
 			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
 			if (!status)
@@ -2151,7 +2171,7 @@ namespace tangent
 			auto chain = storages::chainstate(__func__);
 			auto state = chain.get_multiform(states::account_multiform::as_instance_type(), changelog, states::account_multiform::as_instance_column(owner, column), states::account_multiform::as_instance_row(owner, row), get_validation_nonce());
 			if (!state)
-				return state.error();
+				return layer_exception("account multiform required but not applicable (" + state.what() + ")");
 
 			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
 			if (!status)
@@ -2165,9 +2185,7 @@ namespace tangent
 			auto chain = storages::chainstate(__func__);
 			auto states = chain.get_multiforms_by_column(states::account_multiform::as_instance_type(), changelog, states::account_multiform::as_instance_column(owner, column), get_validation_nonce(), offset, count);
 			if (!states)
-				return states.error();
-			else if (states->empty())
-				return layer_exception("multiform not found");
+				return layer_exception("account multiform(s) required but not applicable (" + states.what() + ")");
 
 			vector<uptr<states::account_multiform>> results;
 			results.reserve(states->size());
@@ -2192,9 +2210,7 @@ namespace tangent
 			auto chain = storages::chainstate(__func__);
 			auto states = chain.get_multiforms_by_column_filter(states::account_multiform::as_instance_type(), changelog, states::account_multiform::as_instance_column(owner, column), filter, get_validation_nonce(), storages::result_range_window(offset, count));
 			if (!states)
-				return states.error();
-			else if (states->empty())
-				return layer_exception("multiform not found");
+				return layer_exception("account multiform(s) required but not applicable (" + states.what() + ")");
 
 			vector<uptr<states::account_multiform>> results;
 			results.reserve(states->size());
@@ -2214,9 +2230,7 @@ namespace tangent
 			auto chain = storages::chainstate(__func__);
 			auto states = chain.get_multiforms_by_row(states::account_multiform::as_instance_type(), changelog, states::account_multiform::as_instance_row(owner, row), get_validation_nonce(), offset, count);
 			if (!states)
-				return states.error();
-			else if (states->empty())
-				return layer_exception("multiform not found");
+				return layer_exception("account multiform(s) required but not applicable (" + states.what() + ")");
 
 			vector<uptr<states::account_multiform>> results;
 			results.reserve(states->size());
@@ -2241,9 +2255,7 @@ namespace tangent
 			auto chain = storages::chainstate(__func__);
 			auto states = chain.get_multiforms_by_row_filter(states::account_multiform::as_instance_type(), changelog, states::account_multiform::as_instance_row(owner, row), filter, get_validation_nonce(), storages::result_range_window(offset, count));
 			if (!states)
-				return states.error();
-			else if (states->empty())
-				return layer_exception("multiform not found");
+				return layer_exception("account multiform(s) required but not applicable (" + states.what() + ")");
 
 			vector<uptr<states::account_multiform>> results;
 			results.reserve(states->size());
@@ -2263,7 +2275,7 @@ namespace tangent
 			auto chain = storages::chainstate(__func__);
 			auto state = chain.get_uniform(states::account_delegation::as_instance_type(), changelog, states::account_delegation::as_instance_index(owner), get_validation_nonce());
 			if (!state)
-				return state.error();
+				return layer_exception("account delegation required but not applicable (" + state.what() + ")");
 
 			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
 			if (!status)
@@ -2277,7 +2289,7 @@ namespace tangent
 			auto chain = storages::chainstate(__func__);
 			auto state = chain.get_multiform(states::account_balance::as_instance_type(), changelog, states::account_balance::as_instance_column(owner), states::account_balance::as_instance_row(asset), get_validation_nonce());
 			if (!state)
-				return state.error();
+				return layer_exception("account balance required but not found (" + state.what() + ")");
 
 			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
 			if (!status)
@@ -2292,7 +2304,7 @@ namespace tangent
 			auto chain = storages::chainstate(__func__);
 			auto state = chain.get_multiform(states::validator_production::as_instance_type(), changelog, states::validator_production::as_instance_column(owner), states::validator_production::as_instance_row(), get_validation_nonce());
 			if (!state)
-				return state.error();
+				return layer_exception("validator production required but not applicable (" + state.what() + ")");
 
 			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
 			if (!status)
@@ -2307,7 +2319,7 @@ namespace tangent
 			auto chain = storages::chainstate(__func__);
 			auto state = chain.get_multiform(states::validator_participation::as_instance_type(), changelog, states::validator_participation::as_instance_column(owner), states::validator_participation::as_instance_row(asset), get_validation_nonce());
 			if (!state)
-				return state.error();
+				return layer_exception("validator participation required but not applicable (" + state.what() + ")");
 
 			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
 			if (!status)
@@ -2320,7 +2332,7 @@ namespace tangent
 			auto chain = storages::chainstate(__func__);
 			auto states = chain.get_multiforms_by_column(states::validator_participation::as_instance_type(), changelog, states::validator_participation::as_instance_column(owner), get_validation_nonce(), offset, count);
 			if (!states)
-				return states.error();
+				return layer_exception("validator participation(s) required but not applicable (" + states.what() + ")");
 
 			vector<states::validator_participation> addresses;
 			addresses.reserve(states->size());
@@ -2341,7 +2353,7 @@ namespace tangent
 			auto chain = storages::chainstate(__func__);
 			auto state = chain.get_multiform(states::validator_attestation::as_instance_type(), changelog, states::validator_attestation::as_instance_column(owner), states::validator_attestation::as_instance_row(asset), get_validation_nonce());
 			if (!state)
-				return state.error();
+				return layer_exception("validator attestation required but not applicable (" + state.what() + ")");
 
 			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
 			if (!status)
@@ -2354,7 +2366,7 @@ namespace tangent
 			auto chain = storages::chainstate(__func__);
 			auto states = chain.get_multiforms_by_column(states::validator_attestation::as_instance_type(), changelog, states::validator_attestation::as_instance_column(owner), get_validation_nonce(), offset, count);
 			if (!states)
-				return states.error();
+				return layer_exception("validator attestation(s) required but not applicable (" + states.what() + ")");
 
 			vector<states::validator_attestation> addresses;
 			addresses.reserve(states->size());
@@ -2374,7 +2386,7 @@ namespace tangent
 			auto chain = storages::chainstate(__func__);
 			auto state = chain.get_multiform(states::depository_reward::as_instance_type(), changelog, states::depository_reward::as_instance_column(owner), states::depository_reward::as_instance_row(asset), get_validation_nonce());
 			if (!state)
-				return state.error();
+				return layer_exception("depository reward required but not applicable (" + state.what() + ")");
 
 			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
 			if (!status)
@@ -2388,7 +2400,7 @@ namespace tangent
 			auto chain = storages::chainstate(__func__);
 			auto state = chain.get_multiform(states::depository_balance::as_instance_type(), changelog, states::depository_balance::as_instance_column(owner), states::depository_balance::as_instance_row(asset), get_validation_nonce());
 			if (!state)
-				return state.error();
+				return layer_exception("depository balance required but not applicable (" + state.what() + ")");
 
 			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
 			if (!status)
@@ -2402,7 +2414,7 @@ namespace tangent
 			auto chain = storages::chainstate(__func__);
 			auto state = chain.get_multiform(states::depository_policy::as_instance_type(), changelog, states::depository_policy::as_instance_column(owner), states::depository_policy::as_instance_row(asset), get_validation_nonce());
 			if (!state)
-				return state.error();
+				return layer_exception("depository policy required but not applicable (" + state.what() + ")");
 
 			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
 			if (!status)
@@ -2415,7 +2427,7 @@ namespace tangent
 			auto chain = storages::chainstate(__func__);
 			auto states = chain.get_multiforms_by_column(states::depository_account::as_instance_type(), changelog, states::depository_account::as_instance_column(manager), get_validation_nonce(), offset, count);
 			if (!states)
-				return states.error();
+				return layer_exception("depository account(s) required but not applicable (" + states.what() + ")");
 
 			vector<states::depository_account> addresses;
 			addresses.reserve(states->size());
@@ -2434,7 +2446,7 @@ namespace tangent
 			auto chain = storages::chainstate(__func__);
 			auto state = chain.get_multiform(states::depository_account::as_instance_type(), changelog, states::depository_account::as_instance_column(manager), states::depository_account::as_instance_row(asset, owner), get_validation_nonce());
 			if (!state)
-				return state.error();
+				return layer_exception("depository account required but not applicable (" + state.what() + ")");
 
 			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
 			if (!status)
@@ -2447,7 +2459,7 @@ namespace tangent
 			auto chain = storages::chainstate(__func__);
 			auto state = chain.get_uniform(states::witness_program::as_instance_type(), changelog, states::witness_program::as_instance_index(program_hashcode), get_validation_nonce());
 			if (!state)
-				return state.error();
+				return layer_exception("witness program required but not applicable (" + state.what() + ")");
 
 			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
 			if (!status)
@@ -2460,7 +2472,7 @@ namespace tangent
 			auto chain = storages::chainstate(__func__);
 			auto state = chain.get_uniform(states::witness_event::as_instance_type(), changelog, states::witness_event::as_instance_index(parent_transaction_hash), get_validation_nonce());
 			if (!state)
-				return state.error();
+				return layer_exception("witness event required but not applicable (" + state.what() + ")");
 
 			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
 			if (!status)
@@ -2473,7 +2485,7 @@ namespace tangent
 			auto chain = storages::chainstate(__func__);
 			auto states = chain.get_multiforms_by_column(states::witness_account::as_instance_type(), changelog, states::witness_account::as_instance_column(owner), get_validation_nonce(), offset, count);
 			if (!states)
-				return states.error();
+				return layer_exception("witness account(s) required but not applicable (" + states.what() + ")");
 
 			vector<states::witness_account> addresses;
 			addresses.reserve(states->size());
@@ -2493,7 +2505,7 @@ namespace tangent
 			auto filter = storages::result_filter::equal((uint64_t)purpose, 1);
 			auto states = chain.get_multiforms_by_column_filter(states::witness_account::as_instance_type(), changelog, states::witness_account::as_instance_column(owner), filter, get_validation_nonce(), storages::result_range_window(offset, count));
 			if (!states)
-				return states.error();
+				return layer_exception("witness account(s) required but not applicable (" + states.what() + ")");
 
 			vector<states::witness_account> addresses;
 			addresses.reserve(states->size());
@@ -2512,7 +2524,7 @@ namespace tangent
 			auto chain = storages::chainstate(__func__);
 			auto state = chain.get_multiform(states::witness_account::as_instance_type(), changelog, states::witness_account::as_instance_column(owner), states::witness_account::as_instance_row(asset, address), get_validation_nonce());
 			if (!state)
-				return state.error();
+				return layer_exception("witness account required but not applicable (" + state.what() + ")");
 
 			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
 			if (!status)
@@ -2525,9 +2537,9 @@ namespace tangent
 			auto chain = storages::chainstate(__func__);
 			auto states = chain.get_multiforms_by_row(states::witness_account::as_instance_type(), changelog, states::witness_account::as_instance_row(asset, address), get_validation_nonce(), offset, 1);
 			if (!states)
-				return states.error();
+				return layer_exception("witness account required but not applicable (" + states.what() + ")");
 			else if (states->empty())
-				return layer_exception("state not found");
+				return layer_exception("witness account required but not applicable (empty list)");
 
 			auto status = ((transaction_context*)this)->query_load(*states->front(), 1, chain.query_used());
 			if (!status)
@@ -2547,7 +2559,7 @@ namespace tangent
 			auto chain = storages::chainstate(__func__);
 			auto state = chain.get_uniform(states::witness_transaction::as_instance_type(), changelog, states::witness_transaction::as_instance_index(asset, transaction_id), get_validation_nonce());
 			if (!state)
-				return state.error();
+				return layer_exception("witness transaction required but not applicable (" + state.what() + ")");
 
 			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
 			if (!status)

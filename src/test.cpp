@@ -112,6 +112,27 @@ public:
 			VI_PANIC(transfer_asset->sign(user1.secret_key, user1_nonce++, decimal::zero()), "transfer not signed");
 			transactions.push_back(transfer_asset);
 		}
+		static void account_refuel(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
+		{
+			auto& [user1, user1_nonce] = users[0];
+			auto& [user2, user2_nonce] = users[1];
+			auto context = ledger::transaction_context();
+			auto user1_production = context.get_validator_production(user1.public_key_hash).or_else(states::validator_production(user1.public_key_hash, nullptr));
+			auto user2_production = context.get_validator_production(user2.public_key_hash).or_else(states::validator_production(user2.public_key_hash, nullptr));
+			auto* refuel = memory::init<transactions::refuel>();
+			refuel->set_asset("ETH");
+			if (user1_production.gas > user2_production.gas)
+			{
+				refuel->set_to(algorithm::encoding::to_subaddress(user2.public_key_hash), std::max<uint256_t>(1, user1_production.gas / 8));
+				VI_PANIC(refuel->sign(user1.secret_key, user1_nonce++, decimal::zero()), "refuel not signed");
+			}
+			else
+			{
+				refuel->set_to(algorithm::encoding::to_subaddress(user1.public_key_hash), std::max<uint256_t>(1, user2_production.gas / 8));
+				VI_PANIC(refuel->sign(user2.secret_key, user2_nonce++, decimal::zero()), "refuel not signed");
+			}
+			transactions.push_back(refuel);
+		}
 		static void account_transaction_rollup(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
 		{
 			auto& [user1, user1_nonce] = users[0];
@@ -701,7 +722,7 @@ public:
 		new_serialization_comparison<ledger::block_transaction>(*data);
 		new_serialization_comparison<ledger::block_header>(*data);
 		new_serialization_comparison<ledger::block>(*data);
-		new_serialization_comparison<ledger::block_proof>(*data, ledger::block_header(), (ledger::block_header*)nullptr);
+		new_serialization_comparison<ledger::block_proof>(*data);
 		new_serialization_comparison<states::account_nonce>(*data, owner, block_number++, block_nonce++);
 		new_serialization_comparison<states::account_program>(*data, owner, block_number++, block_nonce++);
 		new_serialization_comparison<states::account_uniform>(*data, owner, std::string_view(), block_number++, block_nonce++);
@@ -719,6 +740,7 @@ public:
 		new_serialization_comparison<states::witness_account>(*data, owner, asset, address_map(), block_number++, block_nonce++);
 		new_serialization_comparison<states::witness_transaction>(*data, asset, std::string_view(), block_number++, block_nonce++);
 		new_serialization_comparison<transactions::transfer>(*data);
+		new_serialization_comparison<transactions::refuel>(*data);
 		new_serialization_comparison<transactions::upgrade>(*data);
 		new_serialization_comparison<transactions::call>(*data);
 		new_serialization_comparison<transactions::rollup>(*data);
@@ -953,44 +975,45 @@ public:
 		const size_t hashes = 16;
 		uint256_t prev = algorithm::hashing::hash256i(*crypto::random_bytes(16));
 		uint256_t next = algorithm::hashing::hash256i(*crypto::random_bytes(16));
-		algorithm::merkle_tree tree = prev;
+		vector<uint256_t> hashset;
+		hashset.reserve(hashes + 1);
+		hashset.push_back(prev);
 		for (size_t i = 0; i < hashes; i++)
 		{
 			uint8_t hash[32];
 			algorithm::encoding::decode_uint256(next, hash);
 
-			tree.push(next);
+			hashset.push_back(next);
 			next = algorithm::hashing::hash256i(std::string_view((char*)hash, sizeof(hash)));
 		}
 
-		auto& nodes = tree.get_tree();
-		uint256_t target = nodes[math64u::random(1, hashes + 1)];
-		term->fwrite_line("merkle tree (nodes = %i, target = %s):", (int)nodes.size(), algorithm::encoding::encode_0xhex256(target).c_str());
-		for (size_t i = 0; i < nodes.size(); i++)
-			term->write_line("  " + algorithm::encoding::encode_0xhex256(nodes[i]));
+		auto tree = algorithm::merkle_tree::from(std::move(hashset));
+		uint256_t target = tree.nodes[math64u::random(1, hashes + 1)];
+		term->fwrite_line("merkle tree (nodes = %i, target = %s):", (int)tree.nodes.size(), algorithm::encoding::encode_0xhex256(target).c_str());
+		for (size_t i = 0; i < tree.nodes.size(); i++)
+			term->write_line("  " + algorithm::encoding::encode_0xhex256(tree.nodes[i]));
 
-		auto path = tree.calculate_path(target);
-		auto proposed_root = path.calculate_root(target);
-		auto actual_root = tree.calculate_root();
-		auto& branch = path.get_branch();
-		branch.insert(branch.begin(), target);
-		branch.push_back(proposed_root);
+		auto path = tree.path(target);
+		auto proposed_root = path.root(target);
+		auto actual_root = tree.root();
+		path.branch.insert(path.branch.begin(), target);
+		path.branch.push_back(proposed_root);
 
-		term->fwrite_line("merkle tree path (index in tree = %i, nodes = %i):", (int)path.get_index(), (int)branch.size());
-		for (size_t i = 0; i < branch.size(); i++)
-			term->write_line("  " + algorithm::encoding::encode_0xhex256(branch[i]));
+		term->fwrite_line("merkle tree path (index in tree = %i, nodes = %i):", (int)path.index, (int)path.branch.size());
+		for (size_t i = 0; i < path.branch.size(); i++)
+			term->write_line("  " + algorithm::encoding::encode_0xhex256(path.branch[i]));
 
-		term->fwrite_line("merkle tree (complexity = %i, nodes = %i, verification = %s):", (int)tree.get_complexity(), (int)nodes.size(), proposed_root == actual_root ? "passed" : "failed");
-		for (size_t i = 0; i < nodes.size(); i++)
+		term->fwrite_line("merkle tree (complexity = %i, nodes = %i, verification = %s):", (int)tree.size(), (int)tree.nodes.size(), proposed_root == actual_root ? "passed" : "failed");
+		for (size_t i = 0; i < tree.nodes.size(); i++)
 		{
-			auto it = std::find(branch.begin(), branch.end(), nodes[i]);
-			if (it != branch.end())
+			auto it = std::find(path.branch.begin(), path.branch.end(), tree.nodes[i]);
+			if (it != path.branch.end())
 			{
-				size_t depth = it - branch.begin() + 1;
-				term->write_line("  " + string(depth, '>') + string(1 + branch.size() - depth, ' ') + algorithm::encoding::encode_0xhex256(nodes[i]));
+				size_t depth = it - path.branch.begin() + 1;
+				term->write_line("  " + string(depth, '>') + string(1 + path.branch.size() - depth, ' ') + algorithm::encoding::encode_0xhex256(tree.nodes[i]));
 			}
 			else
-				term->write_line("  " + string(1 + branch.size(), ' ') + algorithm::encoding::encode_0xhex256(nodes[i]));
+				term->write_line("  " + string(1 + path.branch.size(), ' ') + algorithm::encoding::encode_0xhex256(tree.nodes[i]));
 		}
 		VI_PANIC(proposed_root == actual_root, "cryptographic error");
 	}
@@ -1457,23 +1480,24 @@ public:
 				account(ledger::wallet::from_seed("000000"), 0),
 				account(ledger::wallet::from_seed("000002"), 0)
 			};
-			TEST_BLOCK(&generators::validator_registration_full, "0x455300fb979507333ab6948b6ad65f9864424f9fd7d485ca908d4e74675dc0b6", 1);
-			TEST_BLOCK(std::bind(&generators::validator_enable_validator, std::placeholders::_1, std::placeholders::_2, 2, true, true, false), "0xef355aabeb7f79d4b2bbe4fa903f4e5e110a869f0a1b34c31772bf55a7f41fe9", 2);
-			TEST_BLOCK(&generators::depository_registration_full, "0xa7b81ff61e86001f44a13c373633579c8ac90cf63424990717ef3c647a6f0319", 3);
-			TEST_BLOCK(&generators::depository_account_registration_full, "0xfdf257196388c4a13306a57b36d027264dac52b0d16cca1f5def21fda195eec2", 4);
-			TEST_BLOCK(&generators::depository_transaction_registration_full, "0xa2d227546084797f2baec9c2a8fc1743b2c6cc9d4f1f0a319700988660512824", 6);
-			TEST_BLOCK(&generators::account_transfer_stage_1, "0x6e19d8392f2b7d8bd85a632d7e873d65981b0a55c23dd098725a0bc2dc5789e6", 7);
-			TEST_BLOCK(&generators::account_transfer_stage_2, "0x31311604106b40bd49f9d5f2faf16d7cb247b2a41e5f83ed00f354b70c92f355", 8);
-			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), users[2].wallet.get_address(), 0.05), "0x12eeb7b453e84ceb321628d20be557c2f2015e6051f6976a8a084907536f8fd4", 9);
-			TEST_BLOCK(&generators::account_transaction_rollup, "0xa947585e34ec025a8d78d4d65dd798555fa73b5c22d9602b0968518df9070488", 10);
-			TEST_BLOCK(&generators::account_upgrade, "0x2ec7c3ec2c3513495f153e600d6e2902ac0a2bc9c66640db01046fd3023f5621", 11);
-			TEST_BLOCK(&generators::account_call, "0xaee02efd9d4489516e983fa30876e7009f39926708d095e75bc3503057d6d2e6", 12);
-			TEST_BLOCK(std::bind(&generators::validator_enable_validator, std::placeholders::_1, std::placeholders::_2, 2, true, true, true), "0x4edc1a076cfd3c8477f2256b51557ce344ee531c5ed7cf92e0510b4db57f994d", 13);
-			TEST_BLOCK(&generators::depository_regrouping, "0x49e28b0c9369f511e60bceb09ef4715966c68f4a71d1cfd17301b846dc1804ca", 14);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_1, "0x860eeb9814e5a973933f2bb34456a5e7ff8123d0c80e19a6d3ed6bd104ac94cd", 18);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0x3969d306b94682b32fe5bc7205b03e91b8a1f1be9c2a70ea086c3816f5cb59c0", 20);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0x0d433375cbb0ede0182b64d444cab905d17fdfa5c9078b1b989672e6497b1d91", 22);
-			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2, true, true, false), "0x25d78d77d53e25f2eb1e0de5a56417915aae170752e58f5ad8731f6cf53df2a2", 24);
+			TEST_BLOCK(&generators::validator_registration_full, "0x91352729198cabaeb6961bb906fffae24ae0e2a8033fec874c796ff6813d3f0e", 1);
+			TEST_BLOCK(std::bind(&generators::validator_enable_validator, std::placeholders::_1, std::placeholders::_2, 2, true, true, false), "0xb2399cf43347308db40ced9b6c513dcc52c68963fb05bd1a0ee0be0111f39cdd", 2);
+			TEST_BLOCK(&generators::depository_registration_full, "0x8b3e29373eadd9df7fddc083082b3931946fd4c68b50572e993caf187586b715", 3);
+			TEST_BLOCK(&generators::depository_account_registration_full, "0x8fbdde8e6a6ffc32800dbae88d29146430c36d9c787811b74cffccaa8f5670b2", 4);
+			TEST_BLOCK(&generators::depository_transaction_registration_full, "0xc51730d6fb8d3cf8c49b67a8535322881fa58a7117fe0a4e55549dc6ebc0b0b3", 6);
+			TEST_BLOCK(&generators::account_transfer_stage_1, "0x09cbd5ef497deb449ca16cb8b1be9b924feda5f2b98d7ff507350426a3c7f6c8", 7);
+			TEST_BLOCK(&generators::account_transfer_stage_2, "0xacbf9810f0d3f0c66e49b453fcbca4ce80060d8c5734dd7b423206316ebdc108", 8);
+			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), users[2].wallet.get_address(), 0.05), "0xe4c1793deed49a277ae01fb6ea4b960b4a9cf0644b438cad50788658c17d9a2e", 9);
+			TEST_BLOCK(&generators::account_refuel, "0x408887cf67ac78dda93c591bef36c2c582d0f25058de3f3f1af5af1c1e54c4da", 10);
+			TEST_BLOCK(&generators::account_upgrade, "0x9e2609e8766457f8a65e7b48ba4c9d9154a29d5f1ba73148660f294339fd15be", 11);
+			TEST_BLOCK(&generators::account_call, "0x60636dacdb26a685a39503c354d01e0c44dfbc8c9eb7368e419c0e5f2d40a91c", 12);
+			TEST_BLOCK(&generators::account_transaction_rollup, "0x289a5faaad85640a3097bf817dbc95cd3e85da156b49b27abb86b0544c78935a", 13);
+			TEST_BLOCK(std::bind(&generators::validator_enable_validator, std::placeholders::_1, std::placeholders::_2, 2, true, true, true), "0x7e483c81ed2c1311e06e9c5c9fca64e245b2725e577520e45965665b16f7aa29", 14);
+			TEST_BLOCK(&generators::depository_regrouping, "0xa17dccda34994ae7f1327a4854bcfaa5172472e4963ff7c4dfb419637a516069", 15);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_1, "0x53ea807755213f434aeafa76ef56bcbe6a39cdcae2bd70fae5c4849ea1d4e076", 19);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0x60afa873f5e1dc2c3391827d2915f7fc470874d64acc0a5ad4c72644365eb208", 21);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0xb054881cd3ac612b6a6cf782946039d25e99e850561d00b1e9c8d62e08d32e19", 23);
+			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2, true, true, false), "0x2097736074c9cdbd39f681df9c2d46bee7174a2b14791881af9fa7e21a81c899", 25);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else
@@ -1490,11 +1514,11 @@ public:
 			{
 				account(ledger::wallet::from_seed("000000"), 0)
 			};
-			TEST_BLOCK(&generators::validator_registration_partial, "0xdb92d9af9979338b30c84c659562b682ce991863ed1330e56fab4fcb7a962d16", 1);
-			TEST_BLOCK(&generators::depository_registration_partial, "0xee9d3dda7455fb9b70e9653cd045d6ab3bec5f41cb50bda9cc04a4c671fb6c3d", 2);
-			TEST_BLOCK(&generators::depository_account_registration_partial, "0xe70d60412c15b46636a99cff4ab30c870a58dc1a7bb7344bb879a1f83b6ea92b", 3);
-			TEST_BLOCK(&generators::depository_transaction_registration_partial, "0x7ef898b361ea6d8cef817a2b5a835a99081406d282fc880914f62a685ef12087", 5);
-			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), "tcrt1xrwrv9zmn30f965xczdrgupyp62jr0pq3er4ndnk39cpvtzaucjyqyltwmesfhtrvf56rk9", 0.1), "0xcfb78db5defcdebb72fb6ae72669dd1be5274b2f4f842fb853c4f699bdaeb17c", 6);
+			TEST_BLOCK(&generators::validator_registration_partial, "0xf43d99b8de15f605303743ac240618b5d71b2da386cf7708d6ba986ba8d58daa", 1);
+			TEST_BLOCK(&generators::depository_registration_partial, "0x0c48b86d378d8611239609c8fc777e039660facb2892d84e0348fd0af96a1a2d", 2);
+			TEST_BLOCK(&generators::depository_account_registration_partial, "0x6af9d1c074e9bec1f0fb378070ebd745cde0c7970b548edbad760f3211e5e4c7", 3);
+			TEST_BLOCK(&generators::depository_transaction_registration_partial, "0xcec7785ed40c52c53d89594925bf7128c4b762eecb67363737e124f05d35e42e", 5);
+			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), "tcrt1xrwrv9zmn30f965xczdrgupyp62jr0pq3er4ndnk39cpvtzaucjyqyltwmesfhtrvf56rk9", 0.1), "0x2457e8bca52fe456221a46ca04f0c1e624c8ef333305ef5a61a80baaecbc64d7", 6);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else
@@ -1527,10 +1551,29 @@ public:
 			{
 				result->set("status", var::string("block validation test failed"));
 				result->set("detail", var::string(validation.error().message()));
-				break;
+				term->jwrite_line(*data);
+				VI_PANIC(false, "block verification failed");
 			}
 
 			auto proof = next->as_proof(parent_block.address(), &evaluation.state);
+			if (next->transaction_root != proof.transaction_tree.root())
+			{
+				term->jwrite_line(*data);
+				VI_PANIC(false, "block verification failed - transaction merkle root deviation");
+			}
+
+			if (next->receipt_root != proof.receipt_tree.root())
+			{
+				term->jwrite_line(*data);
+				VI_PANIC(false, "block verification failed - receipt merkle root deviation");
+			}
+
+			if (next->state_root != proof.state_tree.root())
+			{
+				term->jwrite_line(*data);
+				VI_PANIC(false, "block verification failed - state merkle root deviation");
+			}
+
 			for (auto& tx : next->transactions)
 			{
 				if (!proof.has_transaction(tx.receipt.transaction_hash))
@@ -2259,7 +2302,7 @@ public:
 				auto response3 = chain.get_block_state_hashset(response1->number);
 				if (response3)
 				{
-					auto* hashes = data->set("state", var::set::array());
+					auto* hashes = data->set("changelog", var::set::array());
 					for (auto& item : *response3)
 						hashes->push(var::string(algorithm::encoding::encode_0xhex256(item)));
 				}
@@ -2311,15 +2354,22 @@ public:
 
 					auto target = *data;
 					auto evaluation = ledger::block_evaluation();
-					auto validation = validate ? next->validate(parent_block.address()) : expects_lr<void>(expectation::met);
-					auto validity = next->verify_validity(parent_block.address());
-					auto integrity = next->verify_integrity(parent_block.address(), validate ? &evaluation.state : nullptr);
-					auto proof = next->as_proof(parent_block.address(), validate ? &evaluation.state : nullptr);
-					auto block_info = next->as_schema();
+					evaluation.block = std::move(*next);
+
+					auto changelog = chain.get_block_state_by_number(evaluation.block.number);
+					if (changelog)
+						evaluation.state = std::move(*changelog);
+
+					auto evaluation1 = ledger::block_evaluation();
+					auto validation = validate ? evaluation.block.validate(parent_block.address(), &evaluation1) : expects_lr<void>(expectation::met);
+					auto validity = evaluation.block.verify_validity(parent_block.address());
+					auto integrity = evaluation.block.verify_integrity(parent_block.address(), validate ? &evaluation.state : nullptr);
+					auto proof = evaluation.block.as_proof(parent_block.address(), validate ? &evaluation.state : nullptr);
+					auto block_info = evaluation.as_schema();
 					size_t tx_index = 0;
 					for (auto& item : block_info->get("transactions")->get_childs())
 					{
-						auto& tx = next->transactions[tx_index++];
+						auto& tx = evaluation.block.transactions[tx_index++];
 						auto* tx_info = item->get("transaction");
 						auto* claim_info = item->get("receipt");
 						tx_info->set("merkle_test", var::string(proof.has_transaction(tx.receipt.transaction_hash) ? "passed" : "failed"));
@@ -2328,7 +2378,7 @@ public:
 
 					if (validate)
 					{
-						for (auto& item : block_info->get("state")->get_childs())
+						for (auto& item : block_info->get("changelog")->get_childs())
 							item->set("merkle_test", var::string(proof.has_state(algorithm::encoding::decode_0xhex256(item->get_var("hash").get_blob())) ? "passed" : "failed"));
 					}
 
