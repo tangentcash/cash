@@ -523,11 +523,11 @@ namespace tangent
 
 			value = config->fetch("p2p.inventory_size");
 			if (value != nullptr && value->value.is(var_type::integer))
-				user.p2p.inventory_size = value->value.get_integer();
+				user.p2p.inventory_size = (uint32_t)value->value.get_integer();
 
 			value = config->fetch("p2p.rediscovery_timeout");
 			if (value != nullptr && value->value.is(var_type::integer))
-				user.p2p.rediscovery_timeout = value->value.get_integer();
+				user.p2p.rediscovery_timeout = (uint32_t)value->value.get_integer();
 
 			value = config->fetch("p2p.response_timeout");
 			if (value != nullptr && value->value.is(var_type::integer))

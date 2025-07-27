@@ -176,13 +176,14 @@ namespace tangent
 			virtual void store_multiform(const void* column_value, int column_type_id, const void* row_value, int row_type_id, const void* object_value, int object_type_id, const uint256_t& filter_value);
 			virtual bool load_multiform(const void* column_value, int column_type_id, const void* row_value, int row_type_id, void* object_value, int object_type_id, uint256_t* filter_value, bool throw_on_error) const;
 			virtual bool has_multiform(const void* column_value, int column_type_id, const void* row_value, int row_type_id) const;
-			virtual bool emit_event(const void* object_value, int object_type_id);
+            virtual bool emit_event(const void* object_value, int object_type_id);
 			virtual void pay(const svm_address& target, const uint256_t& asset, const decimal& value);
 			virtual svm_multiform_column_cursor multiform_column_cursor(const void* column_value, int column_type_id, size_t count) const;
 			virtual svm_multiform_column_filter_cursor multiform_column_filter_cursor(const void* column_value, int column_type_id, const svm_multiform_filter& filter, size_t count) const;
 			virtual svm_multiform_row_cursor multiform_row_cursor(const void* row_value, int row_type_id, size_t count) const;
 			virtual svm_multiform_row_filter_cursor multiform_row_filter_cursor(const void* row_value, int row_type_id, const svm_multiform_filter& filter, size_t count) const;
-			virtual uint256_t random();
+            virtual svm_call mutability_of(const function& entrypoint) const;
+            virtual uint256_t random();
 			virtual svm_address from() const;
 			virtual svm_address to() const;
 			virtual decimal value() const;

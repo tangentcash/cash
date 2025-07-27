@@ -575,16 +575,16 @@ static void fe2_mul(fe2 h, const fe2 f, const fe2 g) {
   /* |h0| <= 2^25; from now on fits into int32 unchanged */
   /* |h1| <= 1.01*2^24 */
 
-  h[0] = h0;
-  h[1] = h1;
-  h[2] = h2;
-  h[3] = h3;
-  h[4] = h4;
-  h[5] = h5;
-  h[6] = h6;
-  h[7] = h7;
-  h[8] = h8;
-  h[9] = h9;
+  h[0] = (int32_t)h0;
+  h[1] = (int32_t)h1;
+  h[2] = (int32_t)h2;
+  h[3] = (int32_t)h3;
+  h[4] = (int32_t)h4;
+  h[5] = (int32_t)h5;
+  h[6] = (int32_t)h6;
+  h[7] = (int32_t)h7;
+  h[8] = (int32_t)h8;
+  h[9] = (int32_t)h9;
 }
 
 /* From fe2_neg.c */
@@ -768,16 +768,16 @@ static void fe2_sq(fe2 h, const fe2 f) {
 
   carry0 = (h0 + (int64_t) (1<<25)) >> 26; h1 += carry0; h0 -= carry0 << 26;
 
-  h[0] = h0;
-  h[1] = h1;
-  h[2] = h2;
-  h[3] = h3;
-  h[4] = h4;
-  h[5] = h5;
-  h[6] = h6;
-  h[7] = h7;
-  h[8] = h8;
-  h[9] = h9;
+  h[0] = (int32_t)h0;
+  h[1] = (int32_t)h1;
+  h[2] = (int32_t)h2;
+  h[3] = (int32_t)h3;
+  h[4] = (int32_t)h4;
+  h[5] = (int32_t)h5;
+  h[6] = (int32_t)h6;
+  h[7] = (int32_t)h7;
+  h[8] = (int32_t)h8;
+  h[9] = (int32_t)h9;
 }
 
 /* From fe2_sq2.c */
@@ -927,16 +927,16 @@ static void fe2_sq2(fe2 h, const fe2 f) {
 
   carry0 = (h0 + (int64_t) (1<<25)) >> 26; h1 += carry0; h0 -= carry0 << 26;
 
-  h[0] = h0;
-  h[1] = h1;
-  h[2] = h2;
-  h[3] = h3;
-  h[4] = h4;
-  h[5] = h5;
-  h[6] = h6;
-  h[7] = h7;
-  h[8] = h8;
-  h[9] = h9;
+  h[0] = (int32_t)h0;
+  h[1] = (int32_t)h1;
+  h[2] = (int32_t)h2;
+  h[3] = (int32_t)h3;
+  h[4] = (int32_t)h4;
+  h[5] = (int32_t)h5;
+  h[6] = (int32_t)h6;
+  h[7] = (int32_t)h7;
+  h[8] = (int32_t)h8;
+  h[9] = (int32_t)h9;
 }
 
 /* From fe2_sub.c */
@@ -1278,16 +1278,16 @@ int ge_frombytes_vartime(ge_p3 *h, const unsigned char *s) {
   carry6 = (h6 + (int64_t) (1<<25)) >> 26; h7 += carry6; h6 -= carry6 << 26;
   carry8 = (h8 + (int64_t) (1<<25)) >> 26; h9 += carry8; h8 -= carry8 << 26;
 
-  h->Y[0] = h0;
-  h->Y[1] = h1;
-  h->Y[2] = h2;
-  h->Y[3] = h3;
-  h->Y[4] = h4;
-  h->Y[5] = h5;
-  h->Y[6] = h6;
-  h->Y[7] = h7;
-  h->Y[8] = h8;
-  h->Y[9] = h9;
+  h->Y[0] = (int32_t)h0;
+  h->Y[1] = (int32_t)h1;
+  h->Y[2] = (int32_t)h2;
+  h->Y[3] = (int32_t)h3;
+  h->Y[4] = (int32_t)h4;
+  h->Y[5] = (int32_t)h5;
+  h->Y[6] = (int32_t)h6;
+  h->Y[7] = (int32_t)h7;
+  h->Y[8] = (int32_t)h8;
+  h->Y[9] = (int32_t)h9;
 
   /* End fe2_frombytes.c */
 
@@ -2083,16 +2083,16 @@ void ge_fromfe2_frombytes_vartime(ge_p2 *r, const unsigned char *s) {
   carry6 = (h6 + (int64_t) (1<<25)) >> 26; h7 += carry6; h6 -= carry6 << 26;
   carry8 = (h8 + (int64_t) (1<<25)) >> 26; h9 += carry8; h8 -= carry8 << 26;
 
-  u[0] = h0;
-  u[1] = h1;
-  u[2] = h2;
-  u[3] = h3;
-  u[4] = h4;
-  u[5] = h5;
-  u[6] = h6;
-  u[7] = h7;
-  u[8] = h8;
-  u[9] = h9;
+  u[0] = (int32_t)h0;
+  u[1] = (int32_t)h1;
+  u[2] = (int32_t)h2;
+  u[3] = (int32_t)h3;
+  u[4] = (int32_t)h4;
+  u[5] = (int32_t)h5;
+  u[6] = (int32_t)h6;
+  u[7] = (int32_t)h7;
+  u[8] = (int32_t)h8;
+  u[9] = (int32_t)h9;
 
   /* End fe2_frombytes.c */
 
@@ -2907,7 +2907,7 @@ int sc_check(const unsigned char *s) {
   int64_t s5 = load2_4(s + 20);
   int64_t s6 = load2_4(s + 24);
   int64_t s7 = load2_4(s + 28);
-  return (signum(1559614444 - s0) + (signum(1477600026 - s1) << 1) + (signum(2734136534 - s2) << 2) + (signum(350157278 - s3) << 3) + (signum(-s4) << 4) + (signum(-s5) << 5) + (signum(-s6) << 6) + (signum(268435456 - s7) << 7)) >> 8;
+  return (int)((signum(1559614444 - s0) + (signum(1477600026 - s1) << 1) + (signum(2734136534 - s2) << 2) + (signum(350157278 - s3) << 3) + (signum(-s4) << 4) + (signum(-s5) << 5) + (signum(-s6) << 6) + (signum(268435456 - s7) << 7)) >> 8);
 }
 
 int sc_isnonzero(const unsigned char *s) {

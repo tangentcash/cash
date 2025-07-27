@@ -1455,7 +1455,7 @@ namespace tangent
 				return value;
 
 			decimal normalized = decimal(value);
-			normalized.truncate(get_chainparams().divisibility.to_string().size() - 1);
+			normalized.truncate((uint32_t)get_chainparams().divisibility.to_string().size() - 1);
 			return normalized;
 		}
 		uint256_t relay_backend::to_baseline_value(const decimal& value) const

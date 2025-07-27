@@ -39,8 +39,9 @@ struct svm_context : ledger::svm_program
 		ledger::evaluation_context environment;
 		uptr<transactions::call> contextual;
 		uptr<compiler> compiler;
-		uptr<schema> events;
 		uptr<schema> returning;
+        uptr<schema> log;
+        unordered_map<size_t, uptr<schema>> events;
 		vector<string> instructions;
 		ledger::block block;
 	} svmc;
@@ -130,17 +131,12 @@ struct svm_context : ledger::svm_program
 
 		return expects_lr<uptr<compiler>>(std::move(result));
 	}
-	expects_lr<void> call_transaction(compiler* module, ledger::svm_call mutability, const std::string_view& function_decl, const format::variables& args)
+	expects_lr<void> call_transaction(compiler* module, ledger::svm_call mutability, const function& entrypoint, const format::variables& args)
 	{
 		VI_ASSERT(svmc.contextual, "transaction should be assigned");
-		auto function = module->get_module().get_function_by_decl(function_decl);
-		if (!function.is_valid())
-			function = module->get_module().get_function_by_name(function_decl);
-		if (!function.is_valid())
-			return layer_exception("illegal call to function: null function");
-
+        svmc.events.clear();
 		svmc.instructions.clear();
-		auto execution = execute(mutability, function, args, [this](void* address, int type_id) -> expects_lr<void>
+        auto execution = execute(mutability, entrypoint, args, [this](void* address, int type_id) -> expects_lr<void>
 		{
 			svmc.returning = var::set::object();
 			auto serialization = ledger::svm_marshalling::store(*svmc.returning, address, type_id);
@@ -157,36 +153,21 @@ struct svm_context : ledger::svm_program
 		if (!context->receipt.successful)
 			context->emit_event(0, { format::variable(execution.what()) }, false);
 
-		uptr<schema> log = var::set::array();
+        svmc.log = var::set::array();
 		for (auto& [event, args] : context->receipt.events)
 		{
-			if (svmc.events)
-			{
-				bool replacement = false;
-				for (size_t i = 0; i < svmc.events->size(); i++)
-				{
-					auto* target = svmc.events->get(i);
-					auto* type = target->get("type");
-					if (!type || (uint32_t)type->value.get_integer() != event)
-						continue;
-
-					target->pop("index");
-					log->push(target);
-					replacement = true;
-				}
-				if (replacement)
-					continue;
-			}
-
-			uptr<ledger::state> temp = states::resolver::from_type(event);
-			auto* next = svmc.events->push(var::set::object());
+            auto target = svmc.events.find(svmc.log->size());
+			auto* next = svmc.log->push(var::set::object());
 			next->set("type", var::integer(event));
-			next->set("args", format::variables_util::serialize(args));
-			next->set(temp ? temp->as_typename() : "__internal__", var::null());
+            if (target == svmc.events.end())
+            {
+                uptr<ledger::state> temp = states::resolver::from_type(event);
+                next->set(temp ? temp->as_typename() : "__internal__", serialize_event_args(args));
+            }
+            else
+                next->set(target->second->key, target->second.reset());
 		}
-
-		if (!log->empty())
-			svmc.events = std::move(log);
+        
 		return execution;
 	}
 	expects_lr<void> compile(const std::string_view& new_path)
@@ -261,34 +242,44 @@ struct svm_context : ledger::svm_program
 
 		if (!state.payable)
 			return layer_exception("payable asset not valid");
+        
+        auto entrypoint = svmc.compiler->get_module().get_function_by_decl(function);
+        if (!entrypoint.is_valid())
+            entrypoint = svmc.compiler->get_module().get_function_by_name(function);
+        if (!entrypoint.is_valid())
+            return layer_exception("illegal call to function: null function");
 
 		auto assignment = assign_transaction(state.payable, state.from.data, state.to, state.pay, function, args);
 		if (!assignment)
 			return assignment.error();
+        
+        auto read_only = mutability_of(entrypoint) == ledger::svm_call::immutable_call;
+        if (!read_only)
+        {
+            for (auto& [account, balances] : state.balances)
+            {
+                for (auto& [asset, value] : balances)
+                {
+                    auto prev_balance = context->get_account_balance(asset, account.data);
+                    if (prev_balance && prev_balance->get_balance() >= value)
+                        continue;
 
-		for (auto& [account, balances] : state.balances)
-		{
-			for (auto& [asset, value] : balances)
-			{
-				auto prev_balance = context->get_account_balance(asset, account.data);
-				if (prev_balance && prev_balance->get_balance() >= value)
-					continue;
+                    auto balance = states::account_balance(account.data, asset, nullptr);
+                    balance.supply = value;
 
-				auto balance = states::account_balance(account.data, asset, nullptr);
-				balance.supply = value;
+                    auto status = context->store(&balance, false);
+                    if (!status)
+                        return status.error();
+                }
+            }
 
-				auto status = context->store(&balance, false);
-				if (!status)
-					return status.error();
-			}
-		}
-
-		if (state.pay.is_positive())
-		{
-			auto payment = context->apply_payment(state.payable, state.from.data, state.to.data, state.pay);
-			if (!payment)
-				return payment.error();
-		}
+            if (state.pay.is_positive())
+            {
+                auto payment = context->apply_payment(state.payable, state.from.data, state.to.data, state.pay);
+                if (!payment)
+                    return payment.error();
+            }
+        }
 
 		auto* vm = svmc.compiler->get_vm();
 		if (attach_debugger_context)
@@ -318,7 +309,7 @@ struct svm_context : ledger::svm_program
 			vm->set_debugger(debugger);
 		}
 
-		auto execution = call_transaction(*svmc.compiler, ledger::svm_call::system_call, function, args);
+        auto execution = call_transaction(*svmc.compiler, ledger::svm_call::system_call, entrypoint, args);
 		if (attach_debugger_context)
 			vm->set_debugger(nullptr);
 
@@ -357,8 +348,9 @@ struct svm_context : ledger::svm_program
 		svmc.compiler = host->allocate();
 		svmc.environment = ledger::evaluation_context();
 		svmc.contextual = uptr<transactions::call>();
-		svmc.events = uptr<schema>();
 		svmc.returning = uptr<schema>();
+        svmc.log = uptr<schema>();
+        svmc.events.clear();
 		svmc.instructions.clear();
 		svmc.block = ledger::block();
 	}
@@ -368,17 +360,14 @@ struct svm_context : ledger::svm_program
 	}
 	bool emit_event(const void* object_value, int object_type_id)
 	{
-		if (!svm_program::emit_event(object_value, object_type_id))
+        if (!svm_program::emit_event(object_value, object_type_id) || context->receipt.events.empty())
 			return false;
 
-		if (!svmc.events)
-			svmc.events = var::set::array();
-
-		auto type = ledger::svm_host::get()->get_vm()->get_type_info_by_id(object_type_id).get_name();
-		auto* event = svmc.events->push(var::set::object());
-		event->set("type", var::integer(context->receipt.events.back().first));
-		event->set("args", format::variables_util::serialize(context->receipt.events.back().second));
-		ledger::svm_marshalling::store(event->set(type.empty() ? "__internal__" : type, var::null()), object_value, object_type_id);
+        auto data = uptr<schema>(var::set::object());
+        data->key = ledger::svm_host::get()->get_vm()->get_type_info_by_id(object_type_id).get_name();
+        if (ledger::svm_marshalling::store(*data, object_value, object_type_id))
+            svmc.events[context->receipt.events.size() - 1] = std::move(data);
+        
 		return true;
 	}
 	bool dispatch_instruction(virtual_machine* vm, immediate_context* coroutine, uint32_t* program_data, size_t program_counter, byte_code_label& opcode)
@@ -387,16 +376,29 @@ struct svm_context : ledger::svm_program
 		debugger_context::byte_code_label_to_text(stream, vm, program_data, program_counter, false, true);
 
 		string instruction = stream.str();
-		stringify::trim(instruction);
-#if VI_64
-		instruction.erase(2, 8);
-#endif
+        stringify::trim(instruction);
+        
 		auto gas = ledger::svm_frame::gas_cost_of(opcode);
 		instruction.append(instruction.find('%') != std::string::npos ? ", %gas:" : " %gas:");
 		instruction.append(to_string(gas));
 		svmc.instructions.push_back(std::move(instruction));
 		return svm_program::dispatch_instruction(vm, coroutine, program_data, program_counter, opcode);
 	}
+    schema* serialize_event_args(const format::variables& value) const
+    {
+        format::variables copy = value;
+        for (auto& item : copy)
+        {
+            auto data = item.as_string();
+            if (data.size() == sizeof(algorithm::pubkeyhash) && !format::variables_util::is_ascii_encoding(data))
+            {
+                string address;
+                algorithm::signing::encode_address((uint8_t*)data.data(), address);
+                item = format::variable(address);
+            }
+        }
+        return format::variables_util::serialize(copy);
+    }
 };
 
 int svm(const inline_args& environment)
@@ -511,6 +513,23 @@ int svm(const inline_args& environment)
 			}
 			return true;
 		}
+        else if (method == "pay_funded")
+        {
+            if (args.size() > 1)
+            {
+                decimal value = decimal(args[1]);
+                if (value.is_nan() || value.is_negative())
+                    return err("not a valid decimal value");
+                
+                if (value.is_positive())
+                    context.state.balances[context.state.from][context.state.payable] = value;
+                else
+                    context.state.balances[context.state.from].erase(context.state.payable);
+                context.state.pay = std::move(value);
+            }
+
+            return ok(context.state.pay.to_string());
+        }
 		else if (method == "compile")
 		{
 			if (args.size() < 2)
@@ -566,6 +585,18 @@ int svm(const inline_args& environment)
 			format::wo_stream message;
 			return ok(format::variables_util::serialize_flat_into(function_args, &message) ? message.encode() : "null");
 		}
+        else if (method == "pack256")
+        {
+            if (args.size() < 2)
+                return err("integer required (r10)");
+            
+            uint8_t data[32];
+            auto value = uint256_t(args[1], 10);
+            algorithm::encoding::decode_uint256(value, data);
+
+            size_t size = value.bytes();
+            return ok(format::util::encode_0xhex(std::string_view((char*)data + (sizeof(data) - size), size)));
+        }
 		else if (method == "unpack")
 		{
 			auto input = format::util::decode_stream(args[1]);
@@ -578,6 +609,13 @@ int svm(const inline_args& environment)
 			terminal->jwrite_line(*data);
 			return true;
 		}
+        else if (method == "unpack256")
+        {
+            if (args.size() < 2)
+                return err("integer required (r16)");
+            
+            return ok(uint256_t(args[1], 16).to_string());
+        }
 		else if (method == "call")
 		{
 			if (args.size() < 2)
@@ -598,10 +636,13 @@ int svm(const inline_args& environment)
 				terminal->jwrite_line(*context.svmc.returning);
 				return true;
 			}
-			else if (context.svmc.environment.validation.context.receipt.successful)
-				return ok("program execution finished");
-			
-			return err("program execution reverted");
+            
+            bool success = context.svmc.environment.validation.context.receipt.successful;
+            terminal->write_color(std_color::white, success ? std_color::dark_green : std_color::red);
+            terminal->write(success ? "OK transaction succeeded" : "ERR transaction reverted");
+            terminal->clear_color();
+            terminal->write("\n\n");
+            return success;
 		}
 		else if (method == "debug")
 		{
@@ -623,10 +664,13 @@ int svm(const inline_args& environment)
 				terminal->jwrite_line(*context.svmc.returning);
 				return true;
 			}
-			else if (context.svmc.environment.validation.context.receipt.successful)
-				return ok("program execution finished");
-
-			return err("program execution reverted");
+            
+            bool success = context.svmc.environment.validation.context.receipt.successful;
+            terminal->write_color(std_color::white, success ? std_color::dark_green : std_color::red);
+            terminal->write(success ? "OK transaction succeeded" : "ERR transaction reverted");
+            terminal->clear_color();
+            terminal->write("\n\n");
+            return success;
 		}
 		else if (method == "result")
 		{
@@ -636,8 +680,8 @@ int svm(const inline_args& environment)
 		}
 		else if (method == "log")
 		{
-			if (context.svmc.events)
-				terminal->jwrite_line(*context.svmc.events);
+			if (context.svmc.log)
+				terminal->jwrite_line(*context.svmc.log);
 			return true;
 		}
 		else if (method == "changelog")
@@ -849,18 +893,21 @@ int svm(const inline_args& environment)
 				"payable [blockchain?] [token?] [contract_address?]       -- get/set caller address paying asset\n"
 				"fund [value?]                                            -- get/set caller address balance\n"
 				"pay [value?]                                             -- get/set caller address paying value\n"
+                "pay_funded [value?]                                      -- combination of fund then pay\n"
 				"compile [path]                                           -- compile and use program\n"
 				"assemble [type:abi|0x/abi|code] [path]                   -- assemble and save used program\n"
 				"pack [args?]...                                          -- pack many args into one (for non-trivial function args)\n"
+                "pack256 [integer]...                                     -- pack a decimal uint256 into a hex number\n"
 				"unpack [stream]                                          -- unpack stream to many args\n"
-				"call [declaration] [args?]...                            -- call a function in a used program\n"
+                "unpack256 [integer]...                                   -- unpack hex uint256 into a decimal number\n"
+                "call [declaration] [args?]...                            -- call a function in a used program\n"
 				"debug [declaration] [args?]...                           -- call a function in a used program with debugger attached\n"
 				"result                                                   -- get call result log\n"
 				"log                                                      -- get call event log\n"
 				"changelog                                                -- get call state changes log\n"
 				"asm                                                      -- get call svm asm instruction listing\n"
 				"reset                                                    -- reset contract state\n"
-				"trap [off|err|all]                                       -- enable command interpreter if execp has finished (all) or failed (err)"
+				"trap [off|err|all]                                       -- enable command interpreter if execp has finished (all) or failed (err)\n"
 				"clear                                                    -- clear console output\n"
 				"---------------- environment functionality ----------------\n"
 				"execp [path]                                             -- run predefined execution plan (json file of format: [[\"method\", value_or_object_or_array_args?...], ...])\n"

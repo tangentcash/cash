@@ -356,7 +356,7 @@ namespace tangent
 		{
 			return type == node_type::outbound ? (outbound_node*)instance : nullptr;
 		}
-		socket* relay::as_socket()
+        vitex::network::socket* relay::as_socket()
 		{
 			switch (type)
 			{

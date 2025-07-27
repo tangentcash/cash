@@ -171,7 +171,7 @@ void bn_read_uint32(uint32_t in_number, bignum256 *out_number) {
 void bn_read_uint64(uint64_t in_number, bignum256 *out_number) {
   out_number->val[0] = in_number & BN_LIMB_MASK;
   out_number->val[1] = (in_number >>= BN_BITS_PER_LIMB) & BN_LIMB_MASK;
-  out_number->val[2] = in_number >> BN_BITS_PER_LIMB;
+  out_number->val[2] = (uint32_t)(in_number >> BN_BITS_PER_LIMB);
   for (uint32_t i = 3; i < BN_LIMBS; i++) out_number->val[i] = 0;
 }
 
@@ -579,7 +579,7 @@ void bn_multiply_long(const bignum256 *k, const bignum256 *x,
     // acc < 2**35 == 2**(64 - BITS_PER_LIMB)
   }
 
-  res[2 * BN_LIMBS - 1] = acc;
+  res[2 * BN_LIMBS - 1] = (uint32_t)acc;
 }
 
 // Auxiliary function for bn_multiply
@@ -962,7 +962,7 @@ void bn_divide_base(bignum256 *x, const bignum256 *prime) {
     // acc == x[:i + 1] + m * prime[:i + 1] >> BITS_PER_LIMB * (i + 1)
   }
 
-  x->val[BN_LIMBS - 1] = acc;
+  x->val[BN_LIMBS - 1] = (uint32_t)acc;
 
   assert(acc >> BN_BITS_PER_LIMB == 0);
 

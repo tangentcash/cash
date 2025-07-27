@@ -406,8 +406,10 @@ int eth_abi_uint32(struct eth_abi *abi, uint32_t *d) {
   }
 
   if (abi->m == ETH_ABI_DECODE) {
-    ethc_abi_buf_pr32(*d, cframebuf, cframebuf->offset);
+    uint64_t tmp_d = (uint64_t)*d;
+    ethc_abi_buf_pr32(tmp_d, cframebuf, cframebuf->offset);
     cframebuf->offset += ETH_ABI_WORD_SIZE;
+    *d = (uint32_t)tmp_d;
     return 1;
   }
 
@@ -512,8 +514,10 @@ int eth_abi_int32(struct eth_abi *abi, int32_t *d) {
   }
 
   if (abi->m == ETH_ABI_DECODE) {
-    ethc_abi_buf_pr32(*d, cframebuf, cframebuf->offset);
+    int64_t tmp_d = (int64_t)*d;
+    ethc_abi_buf_pr32(tmp_d, cframebuf, cframebuf->offset);
     cframebuf->offset += ETH_ABI_WORD_SIZE;
+    *d = (int32_t)tmp_d;
     return 1;
   }
 

@@ -225,7 +225,7 @@ void btc_key_get_taproot_tweak(const btc_pubkey* pubkey, const uint256 leaf_hash
     if (leaf_hash)
         btc_controlblock_append_leafscripthash(control_block, leaf_hash);
 
-    btc_tagged_hash(BTC_TAG_TAP_TWEAK, control_block->str, control_block->len, hash256);
+    btc_tagged_hash(BTC_TAG_TAP_TWEAK, (const uint8_t*)control_block->str, control_block->len, hash256);
     cstr_free(control_block, true);
 }
 

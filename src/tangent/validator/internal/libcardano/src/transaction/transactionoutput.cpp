@@ -334,7 +334,7 @@ uint32_t const &TransactionsOutputs::getBodyMapcountbit() const{
 
 std::vector<uint8_t> const & TransactionsOutputs::getCborMultiassets(){
     cbor.clearCbor();
-    int policyID_count = static_cast<uint64_t>(capsula[0][0]);
+    int policyID_count = (int)static_cast<uint64_t>(capsula[0][0]);
     if(policyID_count != 0){ // si no esta vacio se procede con el resto
     uint8_t *ptr_policyID = capsula[0].data();
     ptr_policyID++; //salta la primera posicion

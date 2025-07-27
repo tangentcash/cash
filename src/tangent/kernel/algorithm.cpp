@@ -1798,8 +1798,9 @@ namespace tangent
 
 							uint8_t bip340_challenge[] = "BIP0340/challenge";
 							secp256k1_context* context = signing::get_context();
-							secp256k1_tagged_sha256(context, e_hash, bip340_challenge, sizeof(bip340_challenge) - 1, e_data, sizeof(e_data));
-
+							if (secp256k1_tagged_sha256(context, e_hash, bip340_challenge, sizeof(bip340_challenge) - 1, e_data, sizeof(e_data)) != 1)
+                                return layer_exception("bad message");
+                            
 							bignum256 e;
 							bn_read_be(e_hash, &e);
 							bn_mod(&e, &curve->order);
@@ -1921,7 +1922,9 @@ namespace tangent
 
 					secp256k1_context* context = signing::get_context();
 					secp256k1_xonly_pubkey final_public_key_ext;
-					secp256k1_xonly_pubkey_parse(context, &final_public_key_ext, final_public_key);
+					if (secp256k1_xonly_pubkey_parse(context, &final_public_key_ext, final_public_key) != 1)
+                        return layer_exception("final public key parsing failed");
+                        
 					if (secp256k1_schnorrsig_verify(context, final_signature, message_hash, sizeof(message_hash), &final_public_key_ext) != 1)
 						return layer_exception("final signature verification failed");
 

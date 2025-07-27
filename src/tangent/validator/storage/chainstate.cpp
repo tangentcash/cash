@@ -1854,7 +1854,7 @@ namespace tangent
 					auto index = subresponse[i]["index_hash"].get().get_blob();
 					auto blob = load(label, __func__, get_uniform_label(type, index, block_number)).or_else(string());
 					auto state = state_from_blob(type, index, std::string_view(), blob);
-					value.states[stride + i] = state ? state->as_hash() : 0;
+					value.states[stride + i] = state ? state->as_hash() : uint256_t(0);
 				}));
 			}
 
@@ -1874,7 +1874,7 @@ namespace tangent
 					auto row = subresponse[i]["row_hash"].get().get_blob();
 					auto blob = load(label, __func__, get_multiform_label(type, column, row, block_number)).or_else(string());
 					auto state = state_from_blob(type, column, row, blob);
-					value.states[stride + i] = state ? state->as_hash() : 0;
+					value.states[stride + i] = state ? state->as_hash() : uint256_t(0);
 				}));
 			}
 
@@ -1943,7 +1943,7 @@ namespace tangent
 					auto index = subresponse[i]["index_hash"].get().get_blob();
 					auto blob = load(label, __func__, get_uniform_label(type, index, block_number)).or_else(string());
 					auto state = state_from_blob(type, index, std::string_view(), blob);
-					result[stride + i] = state ? state->as_hash() : 0;
+					result[stride + i] = state ? state->as_hash() : uint256_t(0);
 				}));
 			}
 
@@ -1963,7 +1963,7 @@ namespace tangent
 					auto row = subresponse[i]["row_hash"].get().get_blob();
 					auto blob = load(label, __func__, get_multiform_label(type, column, row, block_number)).or_else(string());
 					auto state = state_from_blob(type, column, row, blob);
-					result[stride + i] = state ? state->as_hash() : 0;
+					result[stride + i] = state ? state->as_hash() : uint256_t(0);
 				}));
 			}
 

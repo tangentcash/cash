@@ -664,7 +664,7 @@ namespace tangent
 
 						auto& target_transaction = *resolved_transaction;
 						auto status = coawait(ledger::transaction_context::dispatch_tx(dispatcher, &target_transaction));
-						if (!status && status.error().is_retry() || status.error().is_shutdown())
+						if (!status && (status.error().is_retry() || status.error().is_shutdown()))
 							coreturn status;
 						else if (!status)
 							error_message += "sub-transaction " + algorithm::encoding::encode_0xhex256(transaction->as_hash()) + " dispatch failed: " + status.error().message() + "\n";
@@ -2088,10 +2088,9 @@ namespace tangent
 		uptr<schema> depository_withdrawal::as_schema() const
 		{
 			schema* data = ledger::transaction::as_schema().reset();
-			if (from_manager != nullptr)
-				data->set("from_manager", algorithm::signing::serialize_address(from_manager));
-			if (to_manager != nullptr)
-				data->set("to_manager", algorithm::signing::serialize_address(to_manager));
+            data->set("from_manager", algorithm::signing::serialize_address(from_manager));
+            data->set("to_manager", algorithm::signing::serialize_address(to_manager));
+            data->set("only_if_not_in_queue", var::boolean(only_if_not_in_queue));
 			if (!to.empty())
 			{
 				auto* to_data = data->set("to", var::set::array());
@@ -2102,7 +2101,6 @@ namespace tangent
 					coin_data->set("value", var::decimal(item.second));
 				}
 			}
-			data->set("only_if_not_in_queue", var::boolean(only_if_not_in_queue));
 			return data;
 		}
 		uint32_t depository_withdrawal::as_type() const
@@ -2602,9 +2600,9 @@ namespace tangent
 							reserve_delta = -(balance ? balance->reserve : decimal::zero());
 					}
 
-					auto transfer = context->apply_transfer(transfer_asset, owner.data, supply_delta, reserve_delta);
-					if (!transfer)
-						return transfer.error();
+					auto delta_transfer = context->apply_transfer(transfer_asset, owner.data, supply_delta, reserve_delta);
+					if (!delta_transfer)
+						return delta_transfer.error();
 				}
 			}
 

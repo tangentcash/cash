@@ -144,7 +144,7 @@ namespace tangent
 					{
 						uint8_t transaction_type = 0x02;
 						uint256_t max_fee_per_gas = gas_base_price > 0 ? gas_base_price : gas_price;
-						uint256_t max_priority_fee_per_gas = gas_base_price > 0 ? gas_price - gas_base_price : 0;
+						uint256_t max_priority_fee_per_gas = gas_base_price > 0 ? gas_price - gas_base_price : uint256_t((uint8_t)0);
 						eth_rlp_uint8(&buffer, &transaction_type);
 						eth_rlp_array(&buffer);
 						eth_rlp_uint256(&buffer, &chain_id);

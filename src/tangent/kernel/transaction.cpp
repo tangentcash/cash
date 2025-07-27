@@ -667,7 +667,7 @@ namespace tangent
 			auto& policy = protocol::now().policy;
 			for (auto& branch : output_hashes)
 			{
-				size_t required_branch_signatures = std::min(required_signatures, protocol::now().policy.attestation_max_per_transaction);
+				size_t required_branch_signatures = std::min<size_t>(required_signatures, protocol::now().policy.attestation_max_per_transaction);
 				double current_branch_threshold = required_branch_signatures > 0 ? ((double)branch.second.signatures.size() / (double)required_branch_signatures) : 0.0;
 				if ((aggregators != nullptr && current_branch_threshold < protocol::now().policy.attestation_consensus_threshold) || branch.second.message.data.empty())
 					continue;

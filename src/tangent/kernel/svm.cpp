@@ -138,6 +138,11 @@ namespace tangent
 			if (immutable_program != nullptr)
 				return immutable_program->internal_call(target, function, input_value, input_type_id, output_value, output_type_id);
 		}
+        static decimal svm_address_balance_of(svm_address& target, const uint256_t& asset)
+        {
+            auto* program = svm_program::fetch_immutable_or_throw();
+            return program ? program->context->get_account_balance(asset, target.hash.data).or_else(states::account_balance(nullptr, asset, nullptr)).get_balance() : decimal::zero();
+        }
 		static void log_emit(void* object_value, int object_type_id)
 		{
 			auto* program = svm_program::fetch_mutable_or_throw();
@@ -421,35 +426,35 @@ namespace tangent
 			switch (result_type_id)
 			{
 				case (int)type_id::int8_t:
-					inout.set_return_byte((uint8_t)std::pow<int8_t>(*(int8_t*)left_value, *(int8_t*)right_value));
+					inout.set_return_byte((uint8_t)std::pow((double)*(int8_t*)left_value, (double)*(int8_t*)right_value));
 					break;
 				case (int)type_id::bool_t:
 				case (int)type_id::uint8_t:
-					inout.set_return_byte((uint8_t)std::pow<uint8_t>(*(uint8_t*)left_value, *(uint8_t*)right_value));
+					inout.set_return_byte((uint8_t)std::pow((double)*(uint8_t*)left_value, (double)*(uint8_t*)right_value));
 					break;
 				case (int)type_id::int16_t:
-					inout.set_return_word((uint16_t)std::pow<int16_t>(*(int16_t*)left_value, *(int16_t*)right_value));
+					inout.set_return_word((uint16_t)std::pow((double)*(int16_t*)left_value, (double)*(int16_t*)right_value));
 					break;
 				case (int)type_id::uint16_t:
-					inout.set_return_word((uint16_t)std::pow<uint16_t>(*(uint16_t*)left_value, *(uint16_t*)right_value));
+					inout.set_return_word((uint16_t)std::pow((double)*(uint16_t*)left_value, (double)*(uint16_t*)right_value));
 					break;
 				case (int)type_id::int32_t:
-					inout.set_return_dword((uint32_t)std::pow<int32_t>(*(int32_t*)left_value, *(int32_t*)right_value));
+					inout.set_return_dword((uint32_t)std::pow((double)*(int32_t*)left_value, (double)*(int32_t*)right_value));
 					break;
 				case (int)type_id::uint32_t:
-					inout.set_return_dword((uint32_t)std::pow<uint32_t>(*(uint32_t*)left_value, *(uint32_t*)right_value));
+					inout.set_return_dword((uint32_t)std::pow((double)*(uint32_t*)left_value, (double)*(uint32_t*)right_value));
 					break;
 				case (int)type_id::int64_t:
-					inout.set_return_qword((uint64_t)std::pow<int64_t>(*(int64_t*)left_value, *(int64_t*)right_value));
+					inout.set_return_qword((uint64_t)std::pow((double)*(int64_t*)left_value, (double)*(int64_t*)right_value));
 					break;
 				case (int)type_id::uint64_t:
-					inout.set_return_qword((uint64_t)std::pow<uint64_t>(*(uint64_t*)left_value, *(uint64_t*)right_value));
+					inout.set_return_qword((uint64_t)std::pow((double)*(uint64_t*)left_value, (double)*(uint64_t*)right_value));
 					break;
 				case (int)type_id::float_t:
-					inout.set_return_float(std::pow<float>(*(float*)left_value, *(float*)right_value));
+					inout.set_return_float(std::pow(*(float*)left_value, *(float*)right_value));
 					break;
 				case (int)type_id::double_t:
-					inout.set_return_double(std::pow<double>(*(double*)left_value, *(double*)right_value));
+					inout.set_return_double(std::pow(*(double*)left_value, *(double*)right_value));
 					break;
 				default:
 				{
@@ -459,7 +464,7 @@ namespace tangent
 					right_value = right_type_id & (int)vitex::scripting::type_id::handle_t ? *(void**)right_value : right_value;
 					if (result_type_id & (int)vitex::scripting::type_id::mask_seqnbr_t)
 					{
-						inout.set_return_dword((uint32_t)std::pow<int32_t>(*(int32_t*)left_value, *(int32_t*)right_value));
+						inout.set_return_dword((uint32_t)std::pow((double)*(int32_t*)left_value, (double)*(int32_t*)right_value));
 						break;
 					}
 					return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_EXECUTION, "template type must be arithmetic and trivial"));
@@ -471,46 +476,46 @@ namespace tangent
 			generic_context inout = generic_context(generic);
 			int left_type_id = inout.get_arg_type_id(0);
 			int right_type_id = inout.get_arg_type_id(1);
-			int delta_type_id = inout.get_arg_type_id(1);
+			int delta_type_id = inout.get_arg_type_id(2);
 			int result_type_id = inout.get_return_addressable_type_id();
 			if (left_type_id != right_type_id || left_type_id != result_type_id || left_type_id != delta_type_id)
 				return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_EXECUTION, "template type mismatch"));
 
 			void* left_value = inout.get_arg_address(0);
 			void* right_value = inout.get_arg_address(1);
-			void* delta_value = inout.get_arg_address(1);
+			void* delta_value = inout.get_arg_address(2);
 			switch (result_type_id)
 			{
 				case (int)type_id::int8_t:
-					inout.set_return_byte((uint8_t)math<int8_t>::lerp(*(int8_t*)left_value, *(int8_t*)right_value, *(int8_t*)delta_value));
+					inout.set_return_byte((uint8_t)math<int8_t>::strong_lerp(*(int8_t*)left_value, *(int8_t*)right_value, *(int8_t*)delta_value));
 					break;
 				case (int)type_id::bool_t:
 				case (int)type_id::uint8_t:
-					inout.set_return_byte(math<uint8_t>::lerp(*(uint8_t*)left_value, *(uint8_t*)right_value, *(int8_t*)delta_value));
+					inout.set_return_byte(math<uint8_t>::strong_lerp(*(uint8_t*)left_value, *(uint8_t*)right_value, *(int8_t*)delta_value));
 					break;
 				case (int)type_id::int16_t:
-					inout.set_return_word((uint16_t)math<int16_t>::lerp(*(int16_t*)left_value, *(int16_t*)right_value, *(int16_t*)delta_value));
+					inout.set_return_word((uint16_t)math<int16_t>::strong_lerp(*(int16_t*)left_value, *(int16_t*)right_value, *(int16_t*)delta_value));
 					break;
 				case (int)type_id::uint16_t:
-					inout.set_return_word(math<uint16_t>::lerp(*(uint16_t*)left_value, *(uint16_t*)right_value, *(uint16_t*)delta_value));
+					inout.set_return_word(math<uint16_t>::strong_lerp(*(uint16_t*)left_value, *(uint16_t*)right_value, *(uint16_t*)delta_value));
 					break;
 				case (int)type_id::int32_t:
-					inout.set_return_dword((uint32_t)math<int32_t>::lerp(*(int32_t*)left_value, *(int32_t*)right_value, *(int32_t*)delta_value));
+					inout.set_return_dword((uint32_t)math<int32_t>::strong_lerp(*(int32_t*)left_value, *(int32_t*)right_value, *(int32_t*)delta_value));
 					break;
 				case (int)type_id::uint32_t:
-					inout.set_return_dword(math<uint32_t>::lerp(*(uint32_t*)left_value, *(uint32_t*)right_value, *(uint32_t*)delta_value));
+					inout.set_return_dword(math<uint32_t>::strong_lerp(*(uint32_t*)left_value, *(uint32_t*)right_value, *(uint32_t*)delta_value));
 					break;
 				case (int)type_id::int64_t:
-					inout.set_return_qword((uint64_t)math<int64_t>::lerp(*(int64_t*)left_value, *(int64_t*)right_value, *(int64_t*)delta_value));
+					inout.set_return_qword((uint64_t)math<int64_t>::strong_lerp(*(int64_t*)left_value, *(int64_t*)right_value, *(int64_t*)delta_value));
 					break;
 				case (int)type_id::uint64_t:
-					inout.set_return_qword(math<uint64_t>::lerp(*(uint64_t*)left_value, *(uint64_t*)right_value, *(uint64_t*)delta_value));
+					inout.set_return_qword(math<uint64_t>::strong_lerp(*(uint64_t*)left_value, *(uint64_t*)right_value, *(uint64_t*)delta_value));
 					break;
 				case (int)type_id::float_t:
-					inout.set_return_float(math<float>::lerp(*(float*)left_value, *(float*)right_value, *(double*)delta_value));
+					inout.set_return_float(math<float>::strong_lerp(*(float*)left_value, *(float*)right_value, *(double*)delta_value));
 					break;
 				case (int)type_id::double_t:
-					inout.set_return_double(math<double>::lerp(*(double*)left_value, *(double*)right_value, *(double*)delta_value));
+					inout.set_return_double(math<double>::strong_lerp(*(double*)left_value, *(double*)right_value, *(double*)delta_value));
 					break;
 				default:
 				{
@@ -520,22 +525,22 @@ namespace tangent
 					right_value = right_type_id & (int)vitex::scripting::type_id::handle_t ? *(void**)right_value : right_value;
 					if (name == SCRIPT_CLASS_UINT128)
 					{
-						new (inout.get_address_of_return_location()) uint128_t(math<uint128_t>::lerp(*(uint128_t*)left_value, *(uint128_t*)right_value, *(uint128_t*)delta_value));
+						new (inout.get_address_of_return_location()) uint128_t(math<uint128_t>::strong_lerp(*(uint128_t*)left_value, *(uint128_t*)right_value, *(uint128_t*)delta_value));
 						break;
 					}
 					else if (name == SCRIPT_CLASS_UINT256)
 					{
-						new (inout.get_address_of_return_location()) uint256_t(math<uint256_t>::lerp(*(uint256_t*)left_value, *(uint256_t*)right_value, *(uint256_t*)delta_value));
+						new (inout.get_address_of_return_location()) uint256_t(math<uint256_t>::strong_lerp(*(uint256_t*)left_value, *(uint256_t*)right_value, *(uint256_t*)delta_value));
 						break;
 					}
 					else if (name == SCRIPT_CLASS_DECIMAL)
 					{
-						new (inout.get_address_of_return_location()) decimal(math<decimal>::lerp(*(decimal*)left_value, *(decimal*)right_value, *(decimal*)delta_value));
+						new (inout.get_address_of_return_location()) decimal(math<decimal>::strong_lerp(*(decimal*)left_value, *(decimal*)right_value, *(decimal*)delta_value));
 						break;
 					}
 					else if (result_type_id & (int)vitex::scripting::type_id::mask_seqnbr_t)
 					{
-						inout.set_return_dword((uint32_t)math<int32_t>::lerp(*(int32_t*)left_value, *(int32_t*)right_value, *(int32_t*)delta_value));
+						inout.set_return_dword((uint32_t)math<int32_t>::strong_lerp(*(int32_t*)left_value, *(int32_t*)right_value, *(int32_t*)delta_value));
 						break;
 					}
 					return bindings::exception::throw_ptr(bindings::exception::pointer(SCRIPT_EXCEPTION_EXECUTION, "template type must be arithmetic"));
@@ -545,27 +550,27 @@ namespace tangent
 		static uint256_t block_parent_hash()
 		{
 			auto* program = svm_program::fetch_immutable_or_throw();
-			return program ? program->parent_block_hash() : 0;
+			return program ? program->parent_block_hash() : uint256_t((uint8_t)0);
 		}
 		static uint256_t block_gas_left()
 		{
 			auto* program = svm_program::fetch_immutable_or_throw();
-			return program ? program->block_gas_left() : 0;
+			return program ? program->block_gas_left() : uint256_t((uint8_t)0);
 		}
 		static uint256_t block_gas_use()
 		{
 			auto* program = svm_program::fetch_immutable_or_throw();
-			return program ? program->block_gas_use() : 0;
+			return program ? program->block_gas_use() : uint256_t((uint8_t)0);
 		}
 		static uint256_t block_gas_limit()
 		{
 			auto* program = svm_program::fetch_immutable_or_throw();
-			return program ? program->block_gas_limit() : 0;
+			return program ? program->block_gas_limit() : uint256_t((uint8_t)0);
 		}
 		static uint128_t block_difficulty()
 		{
 			auto* program = svm_program::fetch_immutable_or_throw();
-			return program ? program->block_difficulty() : 0;
+			return program ? program->block_difficulty() : uint128_t((uint8_t)0);
 		}
 		static uint64_t block_time()
 		{
@@ -631,22 +636,22 @@ namespace tangent
 		static uint256_t tx_gas_left()
 		{
 			auto* program = svm_program::fetch_immutable_or_throw();
-			return program ? program->gas_left() : 0;
+			return program ? program->gas_left() : uint256_t((uint8_t)0);
 		}
 		static uint256_t tx_gas_use()
 		{
 			auto* program = svm_program::fetch_immutable_or_throw();
-			return program ? program->gas_use() : 0;
+			return program ? program->gas_use() : uint256_t((uint8_t)0);
 		}
 		static uint256_t tx_gas_limit()
 		{
 			auto* program = svm_program::fetch_immutable_or_throw();
-			return program ? program->gas_limit() : 0;
+			return program ? program->gas_limit() : uint256_t((uint8_t)0);
 		}
 		static uint256_t tx_asset()
 		{
 			auto* program = svm_program::fetch_immutable_or_throw();
-			return program ? program->asset() : 0;
+			return program ? program->asset() : uint256_t((uint8_t)0);
 		}
 		static string crc32(const std::string_view& data)
 		{
@@ -745,7 +750,7 @@ namespace tangent
 		static uint256_t random()
 		{
 			auto* program = svm_program::fetch_mutable_or_throw();
-			return program ? program->random() : 0;
+			return program ? program->random() : uint256_t((uint8_t)0);
 		}
 		static uint256_t asset_value_from_decimal(const decimal& value)
 		{
@@ -1342,7 +1347,7 @@ namespace tangent
 			vm->set_library_property(library_features::promise_no_constructor, 1);
 			vm->set_library_property(library_features::promise_no_callbacks, 1);
 			vm->set_library_property(library_features::ctypes_no_pointer_cast, 1);
-			vm->set_library_property(library_features::decimal_default_precision, (size_t)protocol::now().message.precision);
+			vm->set_library_property(library_features::decimal_target_precision, (size_t)protocol::now().message.precision);
 			vm->set_property(features::allow_unsafe_references, 0);
 			vm->set_property(features::optimize_bytecode, 1);
 			vm->set_property(features::copy_script_sections, 1);
@@ -1415,6 +1420,7 @@ namespace tangent
 			address->set_method("bool empty() const", &svm_address::empty);
 			address->set_method_extern("void pay(const uint256&in, const decimal&in) const", &svm_address_pay);
 			address->set_method_extern("t call<t>(const string_view&in, const ?&in) const", &svm_address_call, convention::generic_call);
+            address->set_method_extern("decimal balance_of(const uint256&in) const", &svm_address_balance_of);
 			address->set_operator_extern(operators::equals_t, (uint32_t)position::constant, "bool", "const address&in", &svm_address::equals);
 
 			auto abi = vm->set_struct_trivial<svm_abi>(SCRIPT_CLASS_ABI);
@@ -2380,15 +2386,19 @@ namespace tangent
 						return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound to any instruction set", entrypoint.get_decl().data(), (int)i));
 
 					if (type.get_name() == SCRIPT_CLASS_RWPTR)
-					{
-						if (*mutability != svm_call::system_call && *mutability != svm_call::mutable_call)
-							return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound to required instruction set (" SCRIPT_CLASS_RWPTR ")", entrypoint.get_decl().data(), (int)i));
-					}
+                    {
+                        if (*mutability != svm_call::system_call && *mutability != svm_call::mutable_call)
+                            return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound to required instruction set (" SCRIPT_CLASS_RWPTR ")", entrypoint.get_decl().data(), (int)i));
+                        
+                        *mutability = svm_call::mutable_call;
+                    }
 					else if (type.get_name() != SCRIPT_CLASS_RPTR)
 					{
 						auto name = type.get_name();
 						return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound to required instruction set (" SCRIPT_CLASS_RWPTR " or " SCRIPT_CLASS_RPTR ") - \"%s\" type", entrypoint.get_decl().data(), (int)i, name.data()));
 					}
+                    else
+                        *mutability = svm_call::immutable_call;
 					frames.emplace_back([i, index, &args, this](immediate_context* coroutine) { coroutine->set_arg_object(i, (svm_program*)this); });
 				}
 			}
@@ -2704,7 +2714,20 @@ namespace tangent
 
 			return result;
 		}
-		uint256_t svm_program::random()
+        svm_call svm_program::mutability_of(const function& entrypoint) const
+        {
+            int type_id;
+            if (entrypoint.get_arg(0, &type_id))
+            {
+                auto* vm = entrypoint.get_vm();
+                auto type = vm->get_type_info_by_id(type_id);
+                auto name = type.get_name();
+                if (name == SCRIPT_CLASS_RWPTR)
+                    return svm_call::mutable_call;
+            }
+            return svm_call::immutable_call;
+        }
+        uint256_t svm_program::random()
 		{
 			if (!cache.distribution)
 			{

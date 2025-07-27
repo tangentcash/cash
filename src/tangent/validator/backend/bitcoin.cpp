@@ -1073,7 +1073,7 @@ namespace tangent
 				btc_tx_in* input = btc_tx_in_new();
 				memcpy(input->prevout.hash, raw_transaction_id.c_str(), sizeof(input->prevout.hash));
 				input->script_sig = cstr_new_sz(128);
-				input->prevout.n = output.index;
+				input->prevout.n = (uint32_t)output.index;
 				vector_add(context.state->vin, input);
 				return expectation::met;
 			}

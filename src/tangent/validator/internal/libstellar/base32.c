@@ -58,7 +58,7 @@ int xbase32_decode_character(char encoded, const char *alphabet) {
     const char *occurrence = strchr(alphabet, encoded);
 
     if (occurrence) {
-        return occurrence - alphabet;
+        return (int)(occurrence - alphabet);
     } else {
         return -1;
     }

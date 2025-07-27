@@ -517,7 +517,7 @@ btc_bool btc_script_get_leafscripthash(const cstring* script_in, uint256 leafhas
     ser_bytes(leaf_script, &leaf_version, 1);
     ser_varlen(leaf_script, (uint32_t)script_in->len);
     ser_bytes(leaf_script, script_in->str, script_in->len);
-    btc_tagged_hash(BTC_TAG_TAP_LEAF, leaf_script->str, leaf_script->len, leafhash);
+    btc_tagged_hash(BTC_TAG_TAP_LEAF, (const uint8_t*)leaf_script->str, leaf_script->len, leafhash);
     cstr_free(leaf_script, true);
     return true;
 }

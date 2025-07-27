@@ -153,12 +153,12 @@ namespace tangent
 		option<uptr<state>> block_state::find(uint32_t type, const std::string_view& index) const
 		{
 			auto location = index_of(type, index);
-			auto it = finalized.find(location);
-			if (it != finalized.end())
+			auto it = pending.find(location);
+			if (it != pending.end())
 				return it->second.empty() ? option<uptr<state>>(nullptr) : option<uptr<state>>(states::resolver::from_copy(*it->second.state));
 
-			it = pending.find(location);
-			if (it != pending.end())
+			it = finalized.find(location);
+			if (it != finalized.end())
 				return it->second.empty() ? option<uptr<state>>(nullptr) : option<uptr<state>>(states::resolver::from_copy(*it->second.state));
 
 			return option<uptr<state>>(optional::none);
@@ -166,12 +166,12 @@ namespace tangent
 		option<uptr<state>> block_state::find(uint32_t type, const std::string_view& column, const std::string_view& row) const
 		{
 			auto location = index_of(type, column, row);
-			auto it = finalized.find(location);
-			if (it != finalized.end())
+			auto it = pending.find(location);
+			if (it != pending.end())
 				return it->second.empty() ? option<uptr<state>>(nullptr) : option<uptr<state>>(states::resolver::from_copy(*it->second.state));
 
-			it = pending.find(location);
-			if (it != pending.end())
+			it = finalized.find(location);
+			if (it != finalized.end())
 				return it->second.empty() ? option<uptr<state>>(nullptr) : option<uptr<state>>(states::resolver::from_copy(*it->second.state));
 
 			return option<uptr<state>>(optional::none);
@@ -1825,7 +1825,7 @@ namespace tangent
 
 					auto new_state = get_validator_production(owner).or_else(states::validator_production(owner, block));
 					auto new_gas = new_state.gas - gas;
-					new_state.gas = new_gas > new_state.gas ? 0 : new_gas;
+					new_state.gas = new_gas > new_state.gas ? uint256_t(0) : new_gas;
 					new_state.active = action == production_type::burn_gas_and_deactivate ? false : new_state.active;
 					if (action == production_type::burn_gas_and_deactivate && !new_state.stakes.empty())
 					{
@@ -1856,7 +1856,7 @@ namespace tangent
 				{
 					auto new_state = get_validator_production(owner).or_else(states::validator_production(owner, block));
 					auto new_gas = new_state.gas + gas;
-					new_state.gas = new_gas < new_state.gas ? 0 : new_gas;
+					new_state.gas = new_gas < new_state.gas ? uint256_t(0) : new_gas;
 					new_state.active = (action == production_type::mint_gas_and_activate) || new_state.active;
 
 					for (auto& [asset, stake] : stakes)
@@ -2698,7 +2698,7 @@ namespace tangent
 					return change.error();
 			}
 
-			context.receipt.relative_gas_paid = memcmp(context.environment->validator.public_key_hash, context.receipt.from, sizeof(context.receipt.from)) != 0 && context.transaction->gas_price.is_positive() ? context.receipt.relative_gas_use : 0;
+			context.receipt.relative_gas_paid = memcmp(context.environment->validator.public_key_hash, context.receipt.from, sizeof(context.receipt.from)) != 0 && context.transaction->gas_price.is_positive() ? context.receipt.relative_gas_use : uint256_t(0);
 			if (context.receipt.relative_gas_paid > 0)
 			{
 				auto fee = context.apply_fee_transfer(context.transaction->get_gas_asset(), context.receipt.from, context.transaction->gas_price * context.receipt.relative_gas_paid.to_decimal());

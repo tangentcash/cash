@@ -102,7 +102,7 @@ namespace tangent
 			size_t outgoing_size();
 			inbound_node* as_inbound_node();
 			outbound_node* as_outbound_node();
-			socket* as_socket();
+            vitex::network::socket* as_socket();
 			void* as_instance();
 			uptr<schema> as_schema() const;
 			template <typename t>

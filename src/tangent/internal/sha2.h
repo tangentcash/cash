@@ -78,7 +78,7 @@ typedef struct _SHA512_CTX {
 #define REVERSE32(w,x)	{ \
 	uint32_t tmp = (w); \
 	tmp = (tmp >> 16) | (tmp << 16); \
-	(x) = ((tmp & 0xff00ff00UL) >> 8) | ((tmp & 0x00ff00ffUL) << 8); \
+	(x) = ((tmp & 0xff00ff00UL) >> 8) | (uint32_t)((tmp & 0x00ff00ffUL) << 8); \
 }
 #define REVERSE64(w,x)	{ \
 	uint64_t tmp = (w); \

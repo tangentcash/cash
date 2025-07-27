@@ -593,7 +593,7 @@ btc_bool btc_tx_sighash(const btc_tx* tx_to, const enum btc_sig_version sigversi
 
 			btc_tx_prevout_hash(tx_tmp, hash_prevouts, false);
 			btc_tx_vin_amount_hash(tx_tmp, vin_stack->amounts, hash_amounts, false);
-			btc_tx_vin_script_hash(tx_tmp, vin_stack->scripts, hash_scripts, false);
+			btc_tx_vin_script_hash(tx_tmp, (const cstring* const*)vin_stack->scripts, hash_scripts, false);
 			btc_tx_sequence_hash(tx_tmp, hash_sequence, false);
 			ser_u256(s, hash_prevouts);
 			ser_u256(s, hash_amounts);
@@ -830,7 +830,7 @@ btc_bool btc_tx_sighash(const btc_tx* tx_to, const enum btc_sig_version sigversi
 	else
 	{
 		char tag[] = "TapSighash";
-		btc_ecc_tagged_sha256((const uint8_t*)s->str, s->len, tag, sizeof(tag) - 1, hash);
+		btc_ecc_tagged_sha256((const uint8_t*)s->str, s->len, (const uint8_t*)tag, sizeof(tag) - 1, hash);
 	}
 	cstr_free(s, true);
 out:
