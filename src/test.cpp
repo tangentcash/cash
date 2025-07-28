@@ -1518,7 +1518,7 @@ public:
 			TEST_BLOCK(&generators::depository_registration_partial, "0x0c48b86d378d8611239609c8fc777e039660facb2892d84e0348fd0af96a1a2d", 2);
 			TEST_BLOCK(&generators::depository_account_registration_partial, "0x6af9d1c074e9bec1f0fb378070ebd745cde0c7970b548edbad760f3211e5e4c7", 3);
 			TEST_BLOCK(&generators::depository_transaction_registration_partial, "0xcec7785ed40c52c53d89594925bf7128c4b762eecb67363737e124f05d35e42e", 5);
-			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), "tcrt1xrwrv9zmn30f965xczdrgupyp62jr0pq3er4ndnk39cpvtzaucjyqyltwmesfhtrvf56rk9", 0.1), "0x2457e8bca52fe456221a46ca04f0c1e624c8ef333305ef5a61a80baaecbc64d7", 6);
+			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 0.1), "0x5b4712822170d8a109464eadef094642153ce8dd56bc93a36bcf00bf7abf924c", 6);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else
@@ -2789,5 +2789,5 @@ public:
 
 int main(int argc, char* argv[])
 {
-	return apps::regression(argc, argv);
+	return apps::consensus(argc, argv);
 }
