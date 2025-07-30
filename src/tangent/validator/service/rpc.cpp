@@ -802,7 +802,7 @@ namespace tangent
 			for (auto& address : stringify::split(args[0].as_string(), ','))
 			{
 				algorithm::pubkeyhash owner;
-				if (!algorithm::signing::decode_address(address, owner))
+				if (!algorithm::signing::decode_address(stringify::trim(address), owner))
 					return server_response().error(error_codes::bad_params, "address[" + to_string(address_index) + "] not valid");
 
 				listener.addresses.insert(algorithm::pubkeyhash_t(owner));
@@ -2927,8 +2927,9 @@ namespace tangent
 		server_response server_node::validatorstate_prune(http::connection* base, format::variables&& args)
 		{
 			uint32_t types = 0;
-			for (auto& subtype : stringify::split(args[0].as_string(), '|'))
+			for (auto& subtype : stringify::split(args[0].as_string(), ','))
 			{
+				subtype = stringify::trim(subtype);
 				if (subtype == "block")
 					types |= (uint32_t)storages::pruning::block;
 				else if (subtype == "transaction")
