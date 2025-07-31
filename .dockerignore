@@ -1,0 +1,9 @@
+.git
+bin
+var
+.gitignore
+.gitmodules
+Dockerfile
+LICENSE
+README.md
+vcpkg.json

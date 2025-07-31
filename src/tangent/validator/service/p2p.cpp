@@ -1388,7 +1388,7 @@ namespace tangent
 			auto parent_block = tip_hash == candidate.block.parent_hash ? tip_block : chain.get_block_header_by_hash(candidate.block.parent_hash);
 			auto parent_hash = parent_block ? parent_block->as_hash() : (uint256_t)0;
 			int64_t branch_length = (int64_t)candidate.block.number - (int64_t)(tip_block ? tip_block->number : 0);
-			branch_length = fork_branch ? abs(branch_length) : branch_length;
+			branch_length = fork_branch ? std::abs(branch_length) : branch_length;
 			if (branch_length < 0 || (!fork_branch && candidate.block.absolute_work < best_tip_work))
 			{
 				/*

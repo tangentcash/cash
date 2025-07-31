@@ -2085,7 +2085,6 @@ namespace tangent
 
 		svm_program::svm_program(ledger::transaction_context* new_context) : context(new_context)
 		{
-			VI_ASSERT(context != nullptr, "transaction context should be set");
 		}
 		expects_lr<void> svm_program::construct(compiler* compiler, const format::variables& args)
 		{

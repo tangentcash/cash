@@ -121,6 +121,9 @@ if (GPROTOBUF_LOCATION)
 		else()
 			target_link_libraries(tangentcash PRIVATE protobuf::libprotoc protobuf::libprotobuf protobuf::libprotobuf-lite)
 		endif()
+		if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+			set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fclang-abi-compat=17")
+		endif()
 		message(STATUS "Load library @protobuf - OK")
 		protobuf_generate(TARGET tangentcash LANGUAGE cpp
 			IMPORT_DIRS "${PROJECT_SOURCE_DIR}/src/tangent/validator/internal/libtron"

@@ -79,40 +79,46 @@ namespace tangent
 			mpz_t n;
 			uint64_t t;
 
-			gmp_signature()
+			gmp_signature() : t(0)
 			{
 				mpz_init(p);
 				mpz_init(l);
 				mpz_init(y);
 				mpz_init(n);
 			}
-			gmp_signature(const gmp_signature&) = delete;
-			gmp_signature(gmp_signature&& other) noexcept
+			gmp_signature(const gmp_signature& other) : t(other.t)
 			{
-				memcpy(this, &other, sizeof(other));
-				memset(&other, 0, sizeof(other));
+				mpz_init_set(p, other.p);
+				mpz_init_set(l, other.l);
+				mpz_init_set(y, other.y);
+				mpz_init_set(n, other.n);
+			}
+			gmp_signature(gmp_signature&& other) : gmp_signature(*(const gmp_signature*)&other)
+			{
 			}
 			~gmp_signature()
 			{
-				if (p)
-					mpz_clear(p);
-				if (l)
-					mpz_clear(l);
-				if (y)
-					mpz_clear(y);
-				if (n)
-					mpz_clear(n);
+				mpz_clear(p);
+				mpz_clear(l);
+				mpz_clear(y);
+				mpz_clear(n);
 			}
-			gmp_signature& operator= (const gmp_signature&) = delete;
-			gmp_signature& operator= (gmp_signature&& other) noexcept
+			gmp_signature& operator= (const gmp_signature& other)
 			{
 				if (this == &other)
 					return *this;
 
 				this->~gmp_signature();
-				memcpy(this, &other, sizeof(other));
-				memset(&other, 0, sizeof(other));
+				mpz_init_set(p, other.p);
+				mpz_init_set(l, other.l);
+				mpz_init_set(y, other.y);
+				mpz_init_set(n, other.n);
+				t = other.t;
 				return *this;
+			}
+			gmp_signature& operator= (gmp_signature&& other)
+			{
+				return *this = *(const gmp_signature*)&other;
 			}
 			string serialize() const
 			{
@@ -127,29 +133,29 @@ namespace tangent
 			}
 			static option<gmp_signature> deserialize(const std::string_view& sig)
 			{
-				gmp_signature result;
+				option<gmp_signature> result = gmp_signature();
 				format::ro_stream stream = format::ro_stream(sig);
-				if (!stream.read_integer(stream.read_type(), &result.t))
+				if (!stream.read_integer(stream.read_type(), &result->t))
 					return optional::none;
 
 				string numeric;
 				if (!stream.read_string(stream.read_type(), &numeric))
 					return optional::none;
 
-				gmp::import0((uint8_t*)numeric.data(), numeric.size(), result.p);
+				gmp::import0((uint8_t*)numeric.data(), numeric.size(), result->p);
 				if (!stream.read_string(stream.read_type(), &numeric))
 					return optional::none;
 
-				gmp::import0((uint8_t*)numeric.data(), numeric.size(), result.l);
+				gmp::import0((uint8_t*)numeric.data(), numeric.size(), result->l);
 				if (!stream.read_string(stream.read_type(), &numeric))
 					return optional::none;
 
-				gmp::import0((uint8_t*)numeric.data(), numeric.size(), result.y);
+				gmp::import0((uint8_t*)numeric.data(), numeric.size(), result->y);
 				if (!stream.read_string(stream.read_type(), &numeric))
 					return optional::none;
 
 				uint64_t checksum, seek = stream.seek;
-				gmp::import0((uint8_t*)numeric.data(), numeric.size(), result.n);
+				gmp::import0((uint8_t*)numeric.data(), numeric.size(), result->n);
 				if (!stream.read_integer(stream.read_type(), &checksum))
 					return optional::none;
 

@@ -46,7 +46,7 @@ struct svm_context : ledger::svm_program
 		ledger::block block;
 	} svmc;
 
-	svm_context() : svm_program(&svmc.environment.validation.context)
+	svm_context() : svm_program(nullptr)
 	{
 		preprocessor::desc compiler_features;
 		compiler_features.conditions = true;
@@ -61,6 +61,7 @@ struct svm_context : ledger::svm_program
 		vm->set_preserve_source_code(true);
 		vm->set_compiler_features(compiler_features);
 		svmc.compiler = host->allocate();
+		context = &svmc.environment.validation.context;
 	}
 	~svm_context()
 	{
@@ -769,8 +770,9 @@ int svm(const inline_args& environment)
 			return true;
 
 		vector<string> args;
+		auto command_copy = copy<std::string>(command);
 		static std::regex pattern("[^\\s\"\']+|\"([^\"]*)\"|\'([^\']*)'");
-		for (auto it = std::sregex_iterator(command.begin(), command.end(), pattern); it != std::sregex_iterator(); ++it)
+		for (auto it = std::sregex_iterator(command_copy.begin(), command_copy.end(), pattern); it != std::sregex_iterator(); ++it)
 		{
 			auto result = copy<string, std::string>(it->str());
 			stringify::trim(result);
