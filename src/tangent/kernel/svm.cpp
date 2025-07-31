@@ -1899,7 +1899,7 @@ namespace tangent
 			if (it == cache.end())
 			{
 				auto results = program->context->get_account_multiforms_by_column(program->to().hash.data, column.data, offset, count);
-				if (!results)
+				if (!results || results->empty())
 					return false;
 
 				size_t index = offset;
@@ -1950,7 +1950,7 @@ namespace tangent
 			if (it == cache.end())
 			{
 				auto results = program->context->get_account_multiforms_by_column_filter(program->to().hash.data, column.data, filter.comparator, filter.value, filter.order, offset, count);
-				if (!results)
+				if (!results || results->empty())
 					return false;
 
 				size_t index = offset;
@@ -2001,7 +2001,7 @@ namespace tangent
 			if (it == cache.end())
 			{
 				auto results = program->context->get_account_multiforms_by_row(program->to().hash.data, row.data, offset, count);
-				if (!results)
+				if (!results || results->empty())
 					return false;
 
 				size_t index = offset;
@@ -2052,7 +2052,7 @@ namespace tangent
 			if (it == cache.end())
 			{
 				auto results = program->context->get_account_multiforms_by_row_filter(program->to().hash.data, row.data, filter.comparator, filter.value, filter.order, offset, count);
-				if (!results)
+				if (!results || results->empty())
 					return false;
 
 				size_t index = offset;

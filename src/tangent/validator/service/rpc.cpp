@@ -697,7 +697,7 @@ namespace tangent
 			});
 			return true;
 		}
-		void server_node::dispatch_accept_block(const uint256_t& hash, const ledger::block& block, const ledger::block_checkpoint& checkpoint)
+		void server_node::dispatch_accept_block(const uint256_t& block_hash, const ledger::block& block, const ledger::block_checkpoint& checkpoint)
 		{
 			umutex<std::mutex> unique(mutex);
 			if (listeners.empty())
@@ -737,18 +737,22 @@ namespace tangent
 			if (web_sockets.empty())
 				return;
 
-			cospawn([hash, web_sockets = std::move(web_sockets)]() mutable
+			uint64_t block_number = block.number;
+			cospawn([block_hash, block_number, web_sockets = std::move(web_sockets)]() mutable
 			{
 				auto notification = var::set::object();
 				notification->set("type", var::string("block"));
-				notification->set("result", var::string(algorithm::encoding::encode_0xhex256(hash)));
+
+				auto result = notification->set("result");
+				result->set("hash", var::string(algorithm::encoding::encode_0xhex256(block_hash)));
+				result->set("number", var::integer(block_number));
 
 				auto response = schema::to_json(*server_response().notification(notification).transform(nullptr));
 				for (auto& web_socket : web_sockets)
 					web_socket->send(response, http::web_socket_op::text, nullptr);
 			});
 		}
-		void server_node::dispatch_accept_transaction(const uint256_t& hash, const ledger::transaction* transaction, const algorithm::pubkeyhash owner)
+		void server_node::dispatch_accept_transaction(const uint256_t& transaction_hash, const ledger::transaction* transaction, const algorithm::pubkeyhash owner)
 		{
 			umutex<std::mutex> unique(mutex);
 			if (listeners.empty())
@@ -768,11 +772,13 @@ namespace tangent
 			if (web_sockets.empty())
 				return;
 
-			cospawn([hash, web_sockets = std::move(web_sockets)]() mutable
+			cospawn([transaction_hash, web_sockets = std::move(web_sockets)]() mutable
 			{
 				auto notification = var::set::object();
 				notification->set("type", var::string("transaction"));
-				notification->set("result", var::string(algorithm::encoding::encode_0xhex256(hash)));
+
+				auto result = notification->set("result");
+				result->set("hash", var::string(algorithm::encoding::encode_0xhex256(transaction_hash)));
 
 				auto response = schema::to_json(*server_response().notification(notification).transform(nullptr));
 				for (auto& web_socket : web_sockets)

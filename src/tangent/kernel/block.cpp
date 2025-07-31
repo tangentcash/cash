@@ -259,20 +259,12 @@ namespace tangent
 		block_changelog::block_changelog() noexcept
 		{
 		}
-		block_changelog::block_changelog(const block_changelog& other) noexcept : outgoing(other.outgoing), incoming(other.incoming)
-		{
-		}
 		block_changelog::block_changelog(block_changelog&& other) noexcept : outgoing(std::move(other.outgoing)), incoming(std::move(other.incoming))
 		{
 		}
-		block_changelog& block_changelog::operator=(const block_changelog& other) noexcept
+		block_changelog::~block_changelog() noexcept
 		{
-			if (this == &other)
-				return *this;
-
-			outgoing = other.outgoing;
-			incoming = other.incoming;
-			return *this;
+			clear_temporary_state();
 		}
 		block_changelog& block_changelog::operator=(block_changelog&& other) noexcept
 		{
@@ -283,10 +275,16 @@ namespace tangent
 			incoming = std::move(other.incoming);
 			return *this;
 		}
+		void block_changelog::clear_temporary_state()
+		{
+			auto chain = storages::chainstate(__func__);
+			chain.clear_temporary_state(this);
+		}
 		void block_changelog::clear()
 		{
 			outgoing.revert(true);
 			incoming.revert(true);
+			clear_temporary_state();
 		}
 		void block_changelog::revert()
 		{
@@ -709,7 +707,6 @@ namespace tangent
 			if (parent_block && parent_block->recovery)
 				prev_target = algorithm::wesolowski::bump(target, 1.0 / protocol::now().policy.consensus_recovery_bump);
 
-			auto changelog = block_changelog();
 			auto fees = ordered_map<algorithm::asset_id, decimal>();
 			recovery = (position == environment->producers.end() ? 1 : 0);
 			priority = recovery ? 0 : (uint64_t)std::distance(environment->producers.begin(), position);
@@ -717,6 +714,7 @@ namespace tangent
 			if (recovery)
 				target = algorithm::wesolowski::bump(target, protocol::now().policy.consensus_recovery_bump);
 
+			auto changelog = block_changelog();
 			for (auto& item : environment->incoming)
 			{
 				auto execution = transaction_context::execute_tx(environment, this, &changelog, *item.candidate, item.hash, item.owner, item.size, item.candidate->conservative ? 0 : (uint8_t)transaction_context::execution_mode::pedantic);
@@ -738,6 +736,7 @@ namespace tangent
 						errors->append(stringify::text("\n  in transaction %s execution error: %s", algorithm::encoding::encode_0xhex256(item.hash).c_str(), execution.error().what()));
 					environment->outgoing.push_back(item.hash);
 				}
+				changelog.clear_temporary_state();
 			}
 
 			if (transactions.empty())

@@ -189,17 +189,10 @@ namespace tangent
 				option<block_pair> block = optional::none;
 			};
 
-			struct multiform_changelog
+			struct temporary_state_resolution
 			{
-				sqlite::connection* storage = nullptr;
-				bool requires_rollback = false;
-
-				multiform_changelog() = default;
-				multiform_changelog(const multiform_changelog&) = delete;
-				multiform_changelog(multiform_changelog&& other) noexcept;
-				~multiform_changelog() noexcept;
-				multiform_changelog& operator=(const multiform_changelog&) = delete;
-				multiform_changelog& operator=(multiform_changelog&& other) noexcept;
+				sqlite::connection* storage;
+				bool in_use;
 			};
 
 		private:
@@ -256,20 +249,22 @@ namespace tangent
 			expects_lr<ledger::receipt> get_receipt_by_transaction_hash(const uint256_t& transaction_hash);
 			expects_lr<uptr<ledger::state>> get_uniform(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& index, uint64_t block_number);
 			expects_lr<uptr<ledger::state>> get_multiform(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& column, const std::string_view& row, uint64_t block_number);
-			expects_lr<vector<uptr<ledger::state>>> get_multiforms_by_column(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& column, uint64_t block_number, size_t offset, size_t count);
-			expects_lr<vector<uptr<ledger::state>>> get_multiforms_by_column_filter(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& column, const result_filter& filter, uint64_t block_number, const result_window& window);
-			expects_lr<vector<uptr<ledger::state>>> get_multiforms_by_row(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& row, uint64_t block_number, size_t offset, size_t count);
-			expects_lr<vector<uptr<ledger::state>>> get_multiforms_by_row_filter(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& row, const result_filter& filter, uint64_t block_number, const result_window& window);
-			expects_lr<size_t> get_multiforms_count_by_column(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& column, uint64_t block_number);
-			expects_lr<size_t> get_multiforms_count_by_column_filter(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& column, const result_filter& filter, uint64_t block_number);
-			expects_lr<size_t> get_multiforms_count_by_row(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& row, uint64_t block_number);
-			expects_lr<size_t> get_multiforms_count_by_row_filter(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& row, const result_filter& filter, uint64_t block_number);
+			expects_lr<vector<uptr<ledger::state>>> get_multiforms_by_column(uint32_t type, ledger::block_changelog* changelog, const std::string_view& column, uint64_t block_number, size_t offset, size_t count);
+			expects_lr<vector<uptr<ledger::state>>> get_multiforms_by_column_filter(uint32_t type, ledger::block_changelog* changelog, const std::string_view& column, const result_filter& filter, uint64_t block_number, const result_window& window);
+			expects_lr<vector<uptr<ledger::state>>> get_multiforms_by_row(uint32_t type, ledger::block_changelog* changelog, const std::string_view& row, uint64_t block_number, size_t offset, size_t count);
+			expects_lr<vector<uptr<ledger::state>>> get_multiforms_by_row_filter(uint32_t type, ledger::block_changelog* changelog, const std::string_view& row, const result_filter& filter, uint64_t block_number, const result_window& window);
+			expects_lr<size_t> get_multiforms_count_by_column(uint32_t type, ledger::block_changelog* changelog, const std::string_view& column, uint64_t block_number);
+			expects_lr<size_t> get_multiforms_count_by_column_filter(uint32_t type, ledger::block_changelog* changelog, const std::string_view& column, const result_filter& filter, uint64_t block_number);
+			expects_lr<size_t> get_multiforms_count_by_row(uint32_t type, ledger::block_changelog* changelog, const std::string_view& row, uint64_t block_number);
+			expects_lr<size_t> get_multiforms_count_by_row_filter(uint32_t type, ledger::block_changelog* changelog, const std::string_view& row, const result_filter& filter, uint64_t block_number);
+			expects_lr<void> clear_temporary_state(ledger::block_changelog* changelog);
 			void clear_indexer_cache();
 			
 		private:
 			sqlite::expects_db<string> load(const std::string_view& label, const std::string_view& operation, const std::string_view& key) override;
 			sqlite::expects_db<void> store(const std::string_view& label, const std::string_view& operation, const std::string_view& key, const std::string_view& value) override;
 			sqlite::expects_db<void> clear(const std::string_view& label, const std::string_view& operation, const std::string_view& table_ids) override;
+			expects_lr<temporary_state_resolution> resolve_temporary_state(uint32_t type, ledger::block_changelog* changelog, const option<std::string_view>& column, const option<std::string_view>& row, uint64_t block_number);
 			expects_lr<void> resolve_block_transactions(vector<ledger::block_transaction>& result, uint64_t block_number, bool fully, size_t chunk);
 			expects_lr<uniform_location> resolve_uniform_location(uint32_t type, const std::string_view& index, uint8_t resolver_flags);
 			expects_lr<multiform_location> resolve_multiform_location(uint32_t type, const option<std::string_view>& column, const option<std::string_view>& row, uint8_t resolver_flags);
@@ -282,7 +277,6 @@ namespace tangent
 			sqlite::connection* get_uniform_storage(uint32_t type);
 			unordered_map<uint32_t, uptr<sqlite::connection>>& get_uniform_storage_max();
 			sqlite::connection* get_multiform_storage(uint32_t type);
-			expects_lr<multiform_changelog> get_multiform_changelog_storage(uint32_t type, const ledger::block_changelog* changelog, const option<std::string_view>& column, const option<std::string_view>& row, uint64_t block_number);
 			unordered_map<uint32_t, uptr<sqlite::connection>>& get_multiform_storage_max();
 			vector<sqlite::connection*> get_index_storages() override;
 			void preload_blob_storage();

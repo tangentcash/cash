@@ -165,7 +165,10 @@ struct svm_context : ledger::svm_program
                 next->set(temp ? temp->as_typename() : "__internal__", serialize_event_args(args));
             }
             else
-                next->set(target->second->key, target->second.reset());
+			{
+				auto key = target->second->key;
+                next->set(key, target->second.reset());
+			}
 		}
         
 		return execution;
@@ -307,11 +310,15 @@ struct svm_context : ledger::svm_program
 			bindings::registry::import_any(vm);
 			debugger->set_interrupt_callback([](bool is_interrupted) { console::get()->write_line(is_interrupted ? "program execution interrupted" : "resuming program execution"); });
 			vm->set_debugger(debugger);
+			interrupter(true);
 		}
 
         auto execution = call_transaction(*svmc.compiler, ledger::svm_call::system_call, entrypoint, args);
 		if (attach_debugger_context)
+		{
+			interrupter(false);
 			vm->set_debugger(nullptr);
+		}
 
 		if (!execution)
 			return execution.error();
@@ -372,16 +379,19 @@ struct svm_context : ledger::svm_program
 	}
 	bool dispatch_instruction(virtual_machine* vm, immediate_context* coroutine, uint32_t* program_data, size_t program_counter, byte_code_label& opcode)
 	{
-		string_stream stream;
-		debugger_context::byte_code_label_to_text(stream, vm, program_data, program_counter, false, true);
+		if (vm->get_debugger() != nullptr)
+		{
+			string_stream stream;
+			debugger_context::byte_code_label_to_text(stream, vm, program_data, program_counter, false, true);
 
-		string instruction = stream.str();
-        stringify::trim(instruction);
-        
-		auto gas = ledger::svm_frame::gas_cost_of(opcode);
-		instruction.append(instruction.find('%') != std::string::npos ? ", %gas:" : " %gas:");
-		instruction.append(to_string(gas));
-		svmc.instructions.push_back(std::move(instruction));
+			string instruction = stream.str();
+			stringify::trim(instruction);
+
+			auto gas = ledger::svm_frame::gas_cost_of(opcode);
+			instruction.append(instruction.find('%') != std::string::npos ? ", %gas:" : " %gas:");
+			instruction.append(to_string(gas));
+			svmc.instructions.push_back(std::move(instruction));
+		}
 		return svm_program::dispatch_instruction(vm, coroutine, program_data, program_counter, opcode);
 	}
     schema* serialize_event_args(const format::variables& value) const
@@ -399,6 +409,17 @@ struct svm_context : ledger::svm_program
         }
         return format::variables_util::serialize(copy);
     }
+	static void interrupter(bool bind)
+	{
+		os::process::bind_signal(signal_code::SIG_INT, bind ? [](int)
+		{
+			auto* vm = ledger::svm_host::get()->get_vm();
+			if (vm->get_debugger() && vm->get_debugger()->interrupt())
+				interrupter(true);
+			else
+				exit(1);
+		} : nullptr);
+	}
 };
 
 int svm(const inline_args& environment)
@@ -627,6 +648,7 @@ int svm(const inline_args& environment)
 			for (size_t i = 2; i < args.size(); i++)
 				function_args.push_back(format::variable::from(args[i]));
 
+			auto time = date_time().milliseconds();
 			auto result = context.call(function_decl, std::move(function_args), false);
 			if (!result)
 				return err(result.what());
@@ -639,7 +661,7 @@ int svm(const inline_args& environment)
             
             bool success = context.svmc.environment.validation.context.receipt.successful;
             terminal->write_color(std_color::white, success ? std_color::dark_green : std_color::red);
-            terminal->write(success ? "OK transaction succeeded" : "ERR transaction reverted");
+            terminal->fwrite("%s in %" PRIu64 " ms", success ? "OK finalize transaction" : "ERR revert transaction", (uint64_t)(date_time().milliseconds() - time));
             terminal->clear_color();
             terminal->write("\n\n");
             return success;
@@ -655,6 +677,7 @@ int svm(const inline_args& environment)
 			for (size_t i = 2; i < args.size(); i++)
 				function_args.push_back(format::variable::from(args[i]));
 
+			auto time = date_time().milliseconds();
 			auto result = context.call(function_decl, std::move(function_args), true);
 			if (!result)
 				return err(result.what());
@@ -667,7 +690,7 @@ int svm(const inline_args& environment)
             
             bool success = context.svmc.environment.validation.context.receipt.successful;
             terminal->write_color(std_color::white, success ? std_color::dark_green : std_color::red);
-            terminal->write(success ? "OK transaction succeeded" : "ERR transaction reverted");
+			terminal->fwrite("%s in %" PRIu64 " ms", success ? "OK finalize transaction" : "ERR revert transaction", (uint64_t)(date_time().milliseconds() - time));
             terminal->clear_color();
             terminal->write("\n\n");
             return success;
@@ -905,7 +928,7 @@ int svm(const inline_args& environment)
 				"result                                                   -- get call result log\n"
 				"log                                                      -- get call event log\n"
 				"changelog                                                -- get call state changes log\n"
-				"asm                                                      -- get call svm asm instruction listing\n"
+				"asm                                                      -- get call svm asm instruction listing (applicable for \"debug\" calls)\n"
 				"reset                                                    -- reset contract state\n"
 				"trap [off|err|all]                                       -- enable command interpreter if execp has finished (all) or failed (err)\n"
 				"clear                                                    -- clear console output\n"
@@ -913,7 +936,7 @@ int svm(const inline_args& environment)
 				"execp [path]                                             -- run predefined execution plan (json file of format: [[\"method\", value_or_object_or_array_args?...], ...])\n"
 				"help                                                     -- show this message\n"
 				"\n"
-				"********* node configuration arguments applicable *********\n");
+				"********* node configuration arguments applicable *********");
 			return true;
 		}
 		return command_execute(args, directory);

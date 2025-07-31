@@ -105,14 +105,21 @@ namespace tangent
 
 		struct block_changelog
 		{
+			struct
+			{
+				unordered_map<uint32_t, void*> topics;
+				unordered_map<string, string> effects;
+			} temporary_state;
 			block_state outgoing;
 			block_state incoming;
 
 			block_changelog() noexcept;
-			block_changelog(const block_changelog& other) noexcept;
+			block_changelog(const block_changelog&) = delete;
 			block_changelog(block_changelog&& other) noexcept;
-			block_changelog& operator=(const block_changelog& other) noexcept;
+			block_changelog& operator=(const block_changelog&) = delete;
 			block_changelog& operator=(block_changelog&& other) noexcept;
+			~block_changelog() noexcept;
+			void clear_temporary_state();
 			void clear();
 			void revert();
 			void commit();
