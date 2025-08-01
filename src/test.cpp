@@ -2789,5 +2789,5 @@ public:
 
 int main(int argc, char* argv[])
 {
-	return apps::regression(argc, argv);
+	return apps::consensus(argc, argv);
 }

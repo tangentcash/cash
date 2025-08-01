@@ -428,6 +428,7 @@ namespace tangent
 		os::directory::set_working(library->c_str());
 		console::get()->attach();
 
+		auto overriding_account = string();
 		auto config = uptr<schema>(path.empty() ? (schema*)nullptr : schema::from_json(os::file::read_as_string(path).or_else(string())));
 		if (!environment.args.empty())
 		{
@@ -548,24 +549,7 @@ namespace tangent
 
 			value = config->fetch("p2p.account");
 			if (value != nullptr && value->value.is(var_type::string))
-			{
-				auto input = value->value.get_string();
-				auto apply = [&](const ledger::wallet& target)
-				{
-					ledger::validator node;
-					node.address = socket_address(user.p2p.address, user.p2p.port);
-
-					auto mempool = storages::mempoolstate(__func__);
-					mempool.apply_validator(node, target);
-				};
-				algorithm::seckey secret_key;
-				if (algorithm::signing::decode_secret_key(input, secret_key) && algorithm::signing::verify_secret_key(secret_key))
-					apply(ledger::wallet::from_secret_key(secret_key));
-				else if (algorithm::signing::verify_mnemonic(input))
-					apply(ledger::wallet::from_mnemonic(input));
-				else if (format::util::is_hex_encoding(input))
-					apply(ledger::wallet::from_seed(codec::hex_decode(input)));
-			}
+				overriding_account = value->value.get_blob();
 
 			value = config->fetch("rpc.address");
 			if (value != nullptr && value->value.is(var_type::string))
@@ -757,20 +741,14 @@ namespace tangent
 			path.clear();
 
 		if (user.keystate.empty())
-		{
-#ifdef VI_MICROSOFT
 			user.keystate = "./keystate.sk";
-#else
-			user.keystate = "/var/lib/tangentcash/keystate.sk";
-#endif
-		}
 
 		if (user.storage.directory.empty())
 		{
 #ifdef VI_MICROSOFT
-			user.keystate = "./";
+			user.storage.directory = "./";
 #else
-			user.keystate = "/var/lib/tangentcash/";
+			user.storage.directory = "/var/lib/tangentcash/";
 #endif
 		}
 
@@ -826,13 +804,7 @@ namespace tangent
 		instance = this;
 		if (config)
 		{
-			auto keystate_base = user.storage.directory;
-			if (!stringify::ends_with(keystate_base, "/"))
-				keystate_base.append(1, VI_SPLITTER).append(user.keystate);
-			else
-				keystate_base.append(user.keystate);
-
-			auto keystate_path = os::path::resolve(os::path::resolve(keystate_base, *library, true).or_else(user.keystate)).or_else(user.keystate);
+			auto keystate_path = os::path::resolve(user.keystate, user.storage.directory, true).or_else(user.keystate);
 			auto keystate_file = os::file::read_as_string(keystate_path);
 			if (!keystate_file)
 			{
@@ -880,6 +852,26 @@ namespace tangent
 
 		uplinks::link_instance();
 		algorithm::signing::initialize();
+		if (overriding_account.empty())
+			return;
+
+		auto apply = [&](const ledger::wallet& target)
+		{
+			ledger::validator node;
+			node.address = socket_address(user.p2p.address, user.p2p.port);
+
+			auto mempool = storages::mempoolstate(__func__);
+			mempool.apply_validator(node, target);
+		};
+		algorithm::seckey secret_key;
+		if (algorithm::signing::decode_secret_key(overriding_account, secret_key) && algorithm::signing::verify_secret_key(secret_key))
+			apply(ledger::wallet::from_secret_key(secret_key));
+		else if (algorithm::signing::verify_mnemonic(overriding_account))
+			apply(ledger::wallet::from_mnemonic(overriding_account));
+		else if (format::util::is_hex_encoding(overriding_account))
+			apply(ledger::wallet::from_seed(codec::hex_decode(overriding_account)));
+		else
+			VI_PANIC(false, "p2p account must be either a word mnemonic, hex seed or an encoded secret key");
 	}
 	protocol::~protocol()
 	{
