@@ -24,8 +24,7 @@ file(GLOB_RECURSE SOURCE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.h*
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.hpp*
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.inc*
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/*.table*
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/*.proto*)
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/*.table*)
 foreach(ITEM IN ITEMS ${SOURCE})
     get_filename_component(ITEM_PATH "${ITEM}" PATH)
     string(REPLACE "${PROJECT_SOURCE_DIR}" "" ITEM_GROUP "${ITEM_PATH}")

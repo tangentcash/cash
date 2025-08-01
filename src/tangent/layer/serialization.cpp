@@ -165,6 +165,10 @@ namespace tangent
 		wo_stream& wo_stream::write_typeless(const uint256_t& value)
 		{
 			uint8_t size = util::get_integer_size(util::get_integer_type(value));
+			return write_typeless(value, util::get_integer_size(util::get_integer_type(value)));
+		}
+		wo_stream& wo_stream::write_typeless(const uint256_t& value, size_t size)
+		{
 			uint64_t array[4];
 			if (size > sizeof(uint64_t) * 0)
 			{
@@ -180,17 +184,12 @@ namespace tangent
 					}
 				}
 			}
-			write(array, size);
+			write(array, (uint32_t)std::min(sizeof(value), size));
 			return *this;
 		}
-		wo_stream& wo_stream::write_typeless(const char* data, uint8_t size)
+		wo_stream& wo_stream::write_typeless(const void* data, size_t size)
 		{
-			write(data, size);
-			return *this;
-		}
-		wo_stream& wo_stream::write_typeless(const char* data, uint32_t size)
-		{
-			write(data, size);
+			write(data, (uint32_t)size);
 			return *this;
 		}
 		string wo_stream::compress() const

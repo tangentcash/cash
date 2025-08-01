@@ -232,15 +232,15 @@ namespace tangent
 		{
 			format::wo_stream message;
 			message.write_typeless(type);
-			message.write_typeless(index.data(), (uint32_t)index.size());
+			message.write_typeless(index.data(), index.size());
 			return message.data;
 		}
 		string block_state::index_of(uint32_t type, const std::string_view& column, const std::string_view& row) const
 		{
 			format::wo_stream message;
 			message.write_typeless(type);
-			message.write_typeless(column.data(), (uint32_t)column.size());
-			message.write_typeless(row.data(), (uint32_t)row.size());
+			message.write_typeless(column.data(), column.size());
+			message.write_typeless(row.data(), row.size());
 			return message.data;
 		}
 		void block_state::revert(bool fully)

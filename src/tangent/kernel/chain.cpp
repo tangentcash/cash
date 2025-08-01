@@ -1,6 +1,7 @@
 #include "chain.h"
 #include "svm.h"
 #include "../validator/storage/chainstate.h"
+#include "../validator/storage/mempoolstate.h"
 #include "../validator/service/nss.h"
 #ifdef TAN_ROCKSDB
 #include "rocksdb/db.h"
@@ -481,17 +482,17 @@ namespace tangent
 				}
 			}
 
-			value = config->fetch("logs.state");
+			value = config->fetch("logs.info");
 			if (value != nullptr && value->value.is(var_type::string))
-				user.logs.state = value->value.get_blob();
+				user.logs.info_path = value->value.get_blob();
 
-			value = config->fetch("logs.message");
+			value = config->fetch("logs.error");
 			if (value != nullptr && value->value.is(var_type::string))
-				user.logs.message = value->value.get_blob();
+				user.logs.error_path = value->value.get_blob();
 
-			value = config->fetch("logs.data");
+			value = config->fetch("logs.query");
 			if (value != nullptr && value->value.is(var_type::string))
-				user.logs.data = value->value.get_blob();
+				user.logs.query_path = value->value.get_blob();
 
 			value = config->fetch("logs.archive_size");
 			if (value != nullptr && value->value.is(var_type::integer))
@@ -544,6 +545,27 @@ namespace tangent
 			value = config->fetch("p2p.logging");
 			if (value != nullptr && value->value.is(var_type::boolean))
 				user.p2p.logging = value->value.get_boolean();
+
+			value = config->fetch("p2p.account");
+			if (value != nullptr && value->value.is(var_type::string))
+			{
+				auto input = value->value.get_string();
+				auto apply = [&](const ledger::wallet& target)
+				{
+					ledger::validator node;
+					node.address = socket_address(user.p2p.address, user.p2p.port);
+
+					auto mempool = storages::mempoolstate(__func__);
+					mempool.apply_validator(node, target);
+				};
+				algorithm::seckey secret_key;
+				if (algorithm::signing::decode_secret_key(input, secret_key) && algorithm::signing::verify_secret_key(secret_key))
+					apply(ledger::wallet::from_secret_key(secret_key));
+				else if (algorithm::signing::verify_mnemonic(input))
+					apply(ledger::wallet::from_mnemonic(input));
+				else if (format::util::is_hex_encoding(input))
+					apply(ledger::wallet::from_seed(codec::hex_decode(input)));
+			}
 
 			value = config->fetch("rpc.address");
 			if (value != nullptr && value->value.is(var_type::string))
@@ -734,43 +756,71 @@ namespace tangent
 		else
 			path.clear();
 
+		if (user.keystate.empty())
+		{
+#ifdef VI_MICROSOFT
+			user.keystate = "./keystate.sk";
+#else
+			user.keystate = "/var/lib/tangentcash/keystate.sk";
+#endif
+		}
+
+		if (user.storage.directory.empty())
+		{
+#ifdef VI_MICROSOFT
+			user.keystate = "./";
+#else
+			user.keystate = "/var/lib/tangentcash/";
+#endif
+		}
+
 		auto database_path = database.resolve(user.network, user.storage.directory);
-		if (!user.logs.state.empty())
+		if (!user.logs.info_path.empty())
 		{
-			auto log_base = database_path + user.logs.state;
-			auto log_path = os::path::resolve(os::path::resolve(log_base, *library, true).or_else(user.logs.state)).or_else(user.logs.state);
+			auto log_base = database_path + user.logs.info_path;
+			auto log_path = os::path::resolve(os::path::resolve(log_base, *library, true).or_else(user.logs.info_path)).or_else(user.logs.info_path);
+			stringify::eval_envs(log_path, os::path::get_directory(log_path.c_str()), vitex::network::utils::get_host_ip_addresses());
+			os::directory::patch(os::path::get_directory(log_path.c_str()));
+			if (!log_path.empty())
+				logs.info.resource = os::file::open_archive(log_path, user.logs.archive_size).or_else(nullptr);
+		}
+
+		if (!user.logs.error_path.empty())
+		{
+			auto log_base = database_path + user.logs.error_path;
+			auto log_path = os::path::resolve(os::path::resolve(log_base, *library, true).or_else(user.logs.error_path)).or_else(user.logs.error_path);
+			stringify::eval_envs(log_path, os::path::get_directory(log_path.c_str()), vitex::network::utils::get_host_ip_addresses());
+			os::directory::patch(os::path::get_directory(log_path.c_str()));
+			if (!log_path.empty())
+				logs.error.resource = os::file::open_archive(log_path, user.logs.archive_size).or_else(nullptr);
+		}
+
+		if (!user.logs.query_path.empty())
+		{
+			auto log_base = database_path + user.logs.query_path;
+			auto log_path = os::path::resolve(os::path::resolve(log_base, *library, true).or_else(user.logs.query_path)).or_else(user.logs.query_path);
 			stringify::eval_envs(log_path, os::path::get_directory(log_path.c_str()), vitex::network::utils::get_host_ip_addresses());
 			os::directory::patch(os::path::get_directory(log_path.c_str()));
 			if (!log_path.empty())
 			{
-				logs.state.resource = os::file::open_archive(log_path, user.logs.archive_size).or_else(nullptr);
-				if (logs.state.resource)
-					error_handling::set_callback([this](error_handling::details& data) { logs.state.output(error_handling::get_message_text(data)); });
+				logs.query.resource = os::file::open_archive(log_path, user.logs.archive_size).or_else(nullptr);
+				if (logs.query.resource)
+					sqlite::driver::get()->set_query_log([this](const std::string_view& data) { logs.query.output(data); });
 			}
 		}
 
-		if (!user.logs.message.empty())
+		if (logs.info.resource || logs.error.resource)
 		{
-			auto log_base = database_path + user.logs.message;
-			auto log_path = os::path::resolve(os::path::resolve(log_base, *library, true).or_else(user.logs.message)).or_else(user.logs.message);
-			stringify::eval_envs(log_path, os::path::get_directory(log_path.c_str()), vitex::network::utils::get_host_ip_addresses());
-			os::directory::patch(os::path::get_directory(log_path.c_str()));
-			if (!log_path.empty())
-				logs.message.resource = os::file::open_archive(log_path, user.logs.archive_size).or_else(nullptr);
-		}
-
-		if (!user.logs.data.empty())
-		{
-			auto log_base = database_path + user.logs.data;
-			auto log_path = os::path::resolve(os::path::resolve(log_base, *library, true).or_else(user.logs.data)).or_else(user.logs.data);
-			stringify::eval_envs(log_path, os::path::get_directory(log_path.c_str()), vitex::network::utils::get_host_ip_addresses());
-			os::directory::patch(os::path::get_directory(log_path.c_str()));
-			if (!log_path.empty())
+			error_handling::set_callback([this](error_handling::details& data)
 			{
-				logs.data.resource = os::file::open_archive(log_path, user.logs.archive_size).or_else(nullptr);
-				if (logs.data.resource)
-					sqlite::driver::get()->set_query_log([this](const std::string_view& data) { logs.data.output(string(data)); });
-			}
+				if (data.type.level == log_level::error || data.type.level == log_level::warning || data.type.fatal)
+				{
+					if (logs.error.resource)
+						logs.error.output(error_handling::get_message_text(data));
+				}
+				else if (logs.info.resource)
+					logs.info.output(error_handling::get_message_text(data));
+			});
 		}
 
 		instance = this;
@@ -851,18 +901,6 @@ namespace tangent
 	bool protocol::custom() const
 	{
 		return !path.empty();
-	}
-	protocol::logger& protocol::state_log()
-	{
-		return logs.state;
-	}
-	protocol::logger& protocol::message_log()
-	{
-		return logs.message;
-	}
-	protocol::logger& protocol::data_log()
-	{
-		return logs.data;
 	}
 	bool protocol::bound()
 	{

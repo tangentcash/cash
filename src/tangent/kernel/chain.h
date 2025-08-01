@@ -203,7 +203,7 @@ namespace tangent
             } tcp;
             struct
             {
-                string directory = "./";
+                string directory;
                 storage_optimization optimization = storage_optimization::speed;
                 uint64_t transaction_dispatch_repeat_interval = 600;
                 uint64_t transaction_timeout = 86400;
@@ -224,16 +224,16 @@ namespace tangent
             } storage;
             struct
             {
-                string state;
-                string message;
-                string data;
+                string info_path;
+                string error_path;
+                string query_path;
                 uint64_t archive_size = 8 * 1024 * 1024;
                 uint64_t archive_repack_interval = 1800;
             } logs;
             unordered_set<string> nodes;
             unordered_set<string> seeds;
             network_type network = network_type::mainnet;
-            string keystate = "./keystate.sk";
+            string keystate;
         } user;
         struct protocol_messaging_config
         {
@@ -284,9 +284,9 @@ namespace tangent
     private:
         struct
         {
-            logger state;
-            logger message;
-            logger data;
+            logger info;
+            logger error;
+            logger query;
         } logs;
         string path;
 
@@ -300,9 +300,6 @@ namespace tangent
         virtual ~protocol();
         bool is(network_type type) const;
         bool custom() const;
-        logger& state_log();
-        logger& message_log();
-        logger& data_log();
 
     public:
         static bool bound();

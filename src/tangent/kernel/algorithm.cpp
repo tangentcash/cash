@@ -528,7 +528,7 @@ namespace tangent
 		{
 			format::wo_stream message;
 			message.write_typeless(protocol::now().account.message_magic);
-			message.write_typeless(signable_message.data(), (uint32_t)signable_message.size());
+			message.write_typeless(signable_message.data(), signable_message.size());
 			return message.hash();
 		}
 		string signing::mnemonicgen(uint16_t strength)
@@ -691,7 +691,7 @@ namespace tangent
 			VI_ASSERT(cipher_secret_key != nullptr, "cipher secret key should be set");
 			VI_ASSERT(cipher_public_key != nullptr, "cipher public key should be set");
 			format::wo_stream message;
-			message.write_typeless((char*)secret_key, (uint32_t)sizeof(seckey));
+			message.write_typeless(secret_key, sizeof(seckey));
 			message.write_typeless(nonce);
 
 			uint8_t seed[32];

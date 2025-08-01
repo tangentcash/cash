@@ -136,6 +136,13 @@ int eth_abi_free(struct eth_abi *abi) {
   if (abi == NULL)
     return -1;
 
+  if (abi->cframe)
+  {
+      if (abi->cframe->buf)
+          free(abi->cframe->buf->buf);
+      free(abi->cframe->buf);
+  }
+
   free(abi->cframe);
   abi->cframe = NULL;
   return 1;
@@ -272,6 +279,7 @@ int eth_abi_address(struct eth_abi *abi, char **addr) {
     memcpy(&(cframebuf->buf[cframebuf->offset + 12]), tmp, 20);
     cframebuf->offset += ETH_ABI_WORD_SIZE;
     cframebuf->len += ETH_ABI_WORD_SIZE;
+    free(tmp);
     return 1;
   }
 

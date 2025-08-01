@@ -109,8 +109,8 @@ namespace tangent
 							continue;
 						blob.column = blob.context->as_column();
 					}
-					blob.message.write_typeless(blob.column.c_str(), (uint32_t)blob.column.size());
-					blob.message.write_typeless(blob.row.c_str(), (uint32_t)blob.row.size());
+					blob.message.write_typeless(blob.column.c_str(), blob.column.size());
+					blob.message.write_typeless(blob.row.c_str(), blob.row.size());
 					blobs->emplace_back(std::move(blob));
 				}
 			};
@@ -239,7 +239,7 @@ namespace tangent
 			message.data.append(1, BLOB_UNIFORM);
 			message.write_typeless(type);
 			message.write_typeless(number);
-			message.write_typeless(index.data(), (uint32_t)index.size());
+			message.write_typeless(index.data(), index.size());
 			return message.data;
 		}
 		static string get_multiform_label(uint32_t type, const std::string_view& column, const std::string_view& row, uint64_t number)
@@ -248,8 +248,8 @@ namespace tangent
 			message.data.append(1, BLOB_UNIFORM);
 			message.write_typeless(type);
 			message.write_typeless(number);
-			message.write_typeless(column.data(), (uint32_t)column.size());
-			message.write_typeless(row.data(), (uint32_t)row.size());
+			message.write_typeless(column.data(), column.size());
+			message.write_typeless(row.data(), row.size());
 			return message.data;
 		}
 
@@ -341,7 +341,7 @@ namespace tangent
 		{
 			format::wo_stream message;
 			message.write_typeless(type);
-			message.write_typeless(index.data(), (uint32_t)index.size());
+			message.write_typeless(index.data(), index.size());
 			return message.data;
 		}
 		string uniform_cache::key_of_blocks(uint32_t type, uint64_t location)
@@ -440,14 +440,14 @@ namespace tangent
 		{
 			format::wo_stream message;
 			message.write_typeless(type);
-			message.write_typeless(column.data(), (uint32_t)column.size());
+			message.write_typeless(column.data(), column.size());
 			return message.data;
 		}
 		string multiform_cache::key_of_rows(uint32_t type, const std::string_view& row)
 		{
 			format::wo_stream message;
 			message.write_typeless(type);
-			message.write_typeless(row.data(), (uint32_t)row.size());
+			message.write_typeless(row.data(), row.size());
 			return message.data;
 		}
 		string multiform_cache::key_of_blocks(uint32_t type, uint64_t column_location, uint64_t row_location)

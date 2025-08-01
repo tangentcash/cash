@@ -50,8 +50,8 @@ namespace tangent
 			wo_stream& write_integer(const uint256_t& value);
 			wo_stream& write_boolean(bool value);
 			wo_stream& write_typeless(const uint256_t& value);
-			wo_stream& write_typeless(const char* data, uint8_t size);
-			wo_stream& write_typeless(const char* data, uint32_t size);
+			wo_stream& write_typeless(const uint256_t& value, size_t size);
+			wo_stream& write_typeless(const void* data, size_t size);
 			string compress() const;
 			string encode() const;
 			uint256_t hash(bool renew = false) const;

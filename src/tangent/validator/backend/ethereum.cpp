@@ -51,6 +51,7 @@ namespace tangent
 				mpz_t numeric;
 				mpz_init_set_str(numeric, value->to_string(16).c_str(), 16);
 				eth_abi_mpint(buffer, numeric);
+				mpz_clear(numeric);
 			}
 			void eth_abi_address336(eth_abi* buffer, const string* value)
 			{

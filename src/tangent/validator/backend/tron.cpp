@@ -4,7 +4,6 @@
 #include "../internal/libbitcoin/ecc_key.h"
 #include "../internal/libbitcoin/base58.h"
 #include "../internal/libbitcoin/utils.h"
-#include "../internal/libtron/TronInternal.pb.h"
 extern "C"
 {
 #include "../../internal/secp256k1.h"
@@ -24,43 +23,104 @@ namespace tangent
 				uptr<schema> transaction_data;
 			};
 
+			static void pb_varint(format::wo_stream& message, uint64_t value)
+			{
+				uint64_t bits = value & 0x7f;
+				value >>= 7;
+				while (value > 0)
+				{
+					uint8_t byte = (uint8_t)(0x80 | bits);
+					message.write_typeless(&byte, 1);
+					bits = value & 0x7f;
+					value >>= 7;
+				}
+				message.write_typeless(&bits, 1);
+			}
+			static void pb_bytes(format::wo_stream& message, uint32_t tag, const uint8_t* data, size_t data_size)
+			{
+				pb_varint(message, (tag << 3) | 2);
+				pb_varint(message, data_size);
+				message.write_typeless(data, data_size);
+			}
+			static void pb_bytes(format::wo_stream& message, uint32_t tag, const std::string_view& hex_data)
+			{
+				auto raw_data = codec::hex_decode(hex_data);
+				pb_bytes(message, tag, (uint8_t*)raw_data.data(), raw_data.size());
+			}
+			static void pb_int64(format::wo_stream& message, uint32_t tag, int64_t data)
+			{
+				uint64_t zigzag_data = (static_cast<uint64_t>(data) << 1) ^ static_cast<uint64_t>(data >> 63);
+				pb_varint(message, (tag << 3) | 0);
+				pb_varint(message, data < 0 ? zigzag_data : data);
+			}
+			static void pb_message(format::wo_stream& message, uint32_t tag, uint64_t type, const std::string_view& type_url, const format::wo_stream& data)
+			{
+				format::wo_stream content_message;
+				content_message.data.append(data.data);
+
+				format::wo_stream child_message;
+				pb_bytes(child_message, 1, (uint8_t*)type_url.data(), type_url.size());
+				pb_varint(child_message, (2 << 3) | 2);
+				pb_varint(child_message, content_message.data.size());
+				child_message.data.append(data.data);
+
+				format::wo_stream parent_message;
+				pb_int64(parent_message, 1, type);
+				pb_varint(parent_message, (2 << 3) | 2);
+				pb_varint(parent_message, child_message.data.size());
+				parent_message.data.append(child_message.data);
+
+				pb_varint(message, (tag << 3) | 2);
+				pb_varint(message, parent_message.data.size());
+				message.data.append(parent_message.data);
+			}
 			static trx_transaction tx_serialize(const tron::trx_tx_block_header_info& block_header, const std::string_view& contract_address, const string& from_address, const string& to_address, const uint256_t& value)
 			{
-				::protocol::Transaction transaction;
-				::protocol::Transaction_raw* raw_data = transaction.mutable_raw_data();
-				raw_data->set_ref_block_bytes(copy<std::string>(codec::hex_decode(block_header.ref_block_bytes)));
-				raw_data->set_ref_block_hash(copy<std::string>(codec::hex_decode(block_header.ref_block_hash)));
-				raw_data->set_expiration(block_header.expiration);
-				raw_data->set_timestamp(block_header.timestamp);
-				raw_data->set_fee_limit(150000000);
-
+				uint64_t contract_type;
+				std::string_view contract_type_name;
+				std::string_view contract_type_url;
+				string contract_abi = ethereum::sc_call::transfer(to_address, value);
+				format::wo_stream contract_message;
 				if (!contract_address.empty())
 				{
-					::protocol::TriggerSmartContract transfer;
-					transfer.set_data(copy<std::string>(ethereum::sc_call::transfer(to_address, value)));
-					transfer.set_token_id(0);
-					transfer.set_owner_address(copy<std::string>(codec::hex_decode(from_address)));
-					transfer.set_call_token_value(0);
-					transfer.set_call_value(0);
-					transfer.set_contract_address(copy<std::string>(codec::hex_decode(contract_address)));
-
-					::protocol::Transaction_Contract* contract = raw_data->add_contract();
-					contract->set_type(::protocol::Transaction_Contract_ContractType_TriggerSmartContract);
-					contract->mutable_parameter()->PackFrom(transfer);
+					contract_type = 31;
+					contract_type_name = "TriggerSmartContract";
+					contract_type_url = "type.googleapis.com/protocol.TriggerSmartContract";
+					if (!from_address.empty())
+						pb_bytes(contract_message, 1, from_address);
+					if (!contract_address.empty())
+						pb_bytes(contract_message, 2, contract_address);
+					if (!contract_abi.empty())
+						pb_bytes(contract_message, 4, (uint8_t*)contract_abi.data(), contract_abi.size());
 				}
 				else
 				{
-					::protocol::TransferContract transfer;
-					transfer.set_owner_address(copy<std::string>(codec::hex_decode(from_address)));
-					transfer.set_to_address(copy<std::string>(codec::hex_decode(to_address)));
-					transfer.set_amount((uint64_t)value);
-
-					::protocol::Transaction_Contract* contract = raw_data->add_contract();
-					contract->set_type(::protocol::Transaction_Contract_ContractType_TransferContract);
-					contract->mutable_parameter()->PackFrom(transfer);
+					contract_type = 1;
+					contract_type_name = "TransferContract";
+					contract_type_url = "type.googleapis.com/protocol.TransferContract";
+					if (!from_address.empty())
+						pb_bytes(contract_message, 1, from_address);
+					if (!to_address.empty())
+						pb_bytes(contract_message, 2, to_address);
+					if (value > 0)
+						pb_int64(contract_message, 3, (uint64_t)value);
 				}
 
-				string raw_transaction_data = copy<string>(transaction.raw_data().SerializeAsString());
+				const uint64_t fee_limit = 150000000;
+				format::wo_stream tx_message;
+				if (!block_header.ref_block_bytes.empty())
+					pb_bytes(tx_message, 1, block_header.ref_block_bytes);
+				if (!block_header.ref_block_hash.empty())
+					pb_bytes(tx_message, 4, block_header.ref_block_hash);
+				if (block_header.expiration != 0)
+					pb_int64(tx_message, 8, block_header.expiration);
+				pb_message(tx_message, 11, contract_type, contract_type_url, contract_message);
+				if (block_header.timestamp != 0)
+					pb_int64(tx_message, 14, block_header.timestamp);
+				if (fee_limit > 0)
+					pb_int64(tx_message, 18, fee_limit);
+				
+				string& raw_transaction_data = tx_message.data;
 				string raw_transaction_id = *crypto::hash(digests::sha256(), raw_transaction_data);
 				uptr<schema> transaction_object = var::set::object();
 				transaction_object->set("visible", var::boolean(false));
@@ -71,41 +131,28 @@ namespace tangent
 				schema* contract_object = raw_data_object->set("contract", var::set::array())->push(var::set::object());
 				schema* parameter_object = contract_object->set("parameter", var::set::object());
 				schema* value_object = parameter_object->set("value", var::set::object());
-				parameter_object->set("type_url", var::string(copy<string>(raw_data->contract().at(0).parameter().type_url())));
-				contract_object->set("type", var::string(copy<string>(::protocol::Transaction_Contract_ContractType_Name(raw_data->contract().at(0).type()))));
+				parameter_object->set("type_url", var::string(contract_type_url));
+				contract_object->set("type", var::string(contract_type_name));
 
 				if (!contract_address.empty())
 				{
-					::protocol::TriggerSmartContract contract;
-					raw_data->contract().at(0).parameter().UnpackTo(&contract);
-					value_object->set("data", var::string(codec::hex_encode(copy<string>(contract.data()))));
-					if (contract.token_id() > 0)
-						value_object->set("token_id", var::integer(contract.token_id()));
-					value_object->set("owner_address", var::string(codec::hex_encode(copy<string>(contract.owner_address()))));
-					if (contract.call_token_value() > 0)
-						value_object->set("call_token_value", var::integer(contract.call_token_value()));
-					if (contract.call_value() > 0)
-						value_object->set("call_value", var::integer(contract.call_value()));
-					value_object->set("contract_address", var::string(codec::hex_encode(copy<string>(contract.contract_address()))));
+					value_object->set("data", var::string(codec::hex_encode(contract_abi)));
+					value_object->set("owner_address", var::string(from_address));
+					value_object->set("contract_address", var::string(contract_address));
 				}
 				else
 				{
-					::protocol::TransferContract contract;
-					raw_data->contract().at(0).parameter().UnpackTo(&contract);
-					value_object->set("to_address", var::string(codec::hex_encode(copy<string>(contract.to_address()))));
-					value_object->set("owner_address", var::string(codec::hex_encode(copy<string>(contract.owner_address()))));
-					if (contract.amount() > 0)
-						value_object->set("amount", var::integer(contract.amount()));
+					value_object->set("to_address", var::string(to_address));
+					value_object->set("owner_address", var::string(from_address));
+					value_object->set("amount", var::integer((uint64_t)value));
 				}
 
-				raw_data_object->set("ref_block_bytes", var::string(codec::hex_encode(copy<string>(raw_data->ref_block_bytes()))));
-				raw_data_object->set("ref_block_hash", var::string(codec::hex_encode(copy<string>(raw_data->ref_block_hash()))));
-				if (raw_data->ref_block_num() > 0)
-					raw_data_object->set("ref_block_num", var::integer(raw_data->ref_block_num()));
-				raw_data_object->set("expiration", var::integer(raw_data->expiration()));
-				raw_data_object->set("timestamp", var::integer(raw_data->timestamp()));
-				if (raw_data->fee_limit() > 0)
-					raw_data_object->set("fee_limit", var::integer(raw_data->fee_limit()));
+				raw_data_object->set("ref_block_bytes", var::string(block_header.ref_block_bytes));
+				raw_data_object->set("ref_block_hash", var::string(block_header.ref_block_hash));
+				raw_data_object->set("expiration", var::integer(block_header.expiration));
+				raw_data_object->set("timestamp", var::integer(block_header.timestamp));
+				if (fee_limit > 0)
+					raw_data_object->set("fee_limit", var::integer(fee_limit));
 
 				trx_transaction result;
 				result.raw_transaction_id = std::move(raw_transaction_id);

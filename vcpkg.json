@@ -4,7 +4,6 @@
   "dependencies": [
     "secp256k1",
     "gmp",
-    "protobuf",
     "libsodium",
     "rocksdb",
     "sqlite3",
