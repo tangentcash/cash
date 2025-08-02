@@ -273,6 +273,13 @@ namespace tangent
 				mint_gas_and_activate
 			};
 
+			enum class stake_type : uint8_t
+			{
+				lock,
+				reward,
+				unlock
+			};
+
 		private:
 			uint8_t execution_flags;
 
@@ -317,8 +324,8 @@ namespace tangent
 			expects_lr<states::account_balance> apply_payment(const algorithm::asset_id& asset, const algorithm::pubkeyhash from, const algorithm::pubkeyhash to, const decimal& value);
 			expects_lr<states::validator_production> apply_validator_production(const algorithm::pubkeyhash owner, production_type action, const uint256_t& gas, const ordered_map<algorithm::asset_id, decimal>& stakes);
 			expects_lr<states::validator_production> apply_validator_production_transfer(const algorithm::pubkeyhash owner, const uint256_t& mint_gas, const uint256_t& burn_gas);
-			expects_lr<states::validator_participation> apply_validator_participation(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const decimal& value, int64_t participations, bool is_reward = false);
-			expects_lr<states::validator_attestation> apply_validator_attestation(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const decimal& value, bool is_reward = false);
+			expects_lr<states::validator_participation> apply_validator_participation(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, stake_type type, int64_t participations, const ordered_map<algorithm::asset_id, decimal>& stakes);
+			expects_lr<states::validator_attestation> apply_validator_attestation(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, stake_type type, const ordered_map<algorithm::asset_id, decimal>& stakes);
 			expects_lr<states::depository_reward> apply_depository_reward(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const decimal& incoming_fee, const decimal& outgoing_fee);
 			expects_lr<states::depository_balance> apply_depository_balance(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const decimal& supply);
 			expects_lr<states::depository_policy> apply_depository_policy_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, uint64_t new_accounts);

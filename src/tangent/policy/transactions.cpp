@@ -1161,25 +1161,63 @@ namespace tangent
 
 			for (auto& [asset, stake] : participation_stakes)
 			{
-				auto status = context->apply_validator_participation(asset, context->receipt.from, stake, 0);
+				if (!algorithm::asset::token_of(asset).empty())
+					continue;
+
+				auto type = stake.is_nan() || stake.is_negative() ? ledger::transaction_context::stake_type::unlock : ledger::transaction_context::stake_type::lock;
+				auto blockchain = algorithm::asset::blockchain_of(asset);
+				ordered_map<algorithm::asset_id, decimal> stakes;
+				for (auto& [token_asset, token_stake] : participation_stakes)
+				{
+					if (algorithm::asset::blockchain_of(token_asset) != blockchain)
+						continue;
+
+					auto subtype = stake.is_nan() || stake.is_negative() ? ledger::transaction_context::stake_type::unlock : ledger::transaction_context::stake_type::lock;
+					if (type != subtype)
+						return layer_exception("token stake action mismatch");
+
+					stakes[token_asset] = token_stake;
+				}
+
+				auto status = context->apply_validator_participation(asset, context->receipt.from, type, 0, stakes);
 				if (!status)
 					return status.error();
 			}
 
 			for (auto& [asset, stake] : attestation_stakes)
 			{
-				if (stake.is_nan() || stake.is_negative())
+				if (!algorithm::asset::token_of(asset).empty())
+					continue;
+
+				auto type = stake.is_nan() || stake.is_negative() ? ledger::transaction_context::stake_type::unlock : ledger::transaction_context::stake_type::lock;
+				if (type == ledger::transaction_context::stake_type::unlock)
 				{
 					auto depository = context->get_depository_policy(asset, context->receipt.from);
 					if (depository && (depository->accepts_account_requests || depository->accepts_withdrawal_requests))
 						return layer_exception(algorithm::asset::handle_of(asset) + " depository is still active");
-
-					auto balance = context->get_depository_balance(asset, context->receipt.from);
-					if (balance && balance->supply.is_positive())
-						return layer_exception(algorithm::asset::handle_of(asset) + " depository has custodial balance");
 				}
 
-				auto status = context->apply_validator_attestation(asset, context->receipt.from, stake);
+				auto blockchain = algorithm::asset::blockchain_of(asset);
+				ordered_map<algorithm::asset_id, decimal> stakes;
+				for (auto& [token_asset, token_stake] : attestation_stakes)
+				{
+					if (algorithm::asset::blockchain_of(token_asset) != blockchain)
+						continue;
+
+					auto subtype = stake.is_nan() || stake.is_negative() ? ledger::transaction_context::stake_type::unlock : ledger::transaction_context::stake_type::lock;
+					if (type != subtype)
+						return layer_exception("token stake action mismatch");
+
+					stakes[token_asset] = token_stake;
+					if (type == ledger::transaction_context::stake_type::lock)
+						continue;
+
+					auto balance = context->get_depository_balance(token_asset, context->receipt.from);
+					if (balance && balance->supply.is_positive())
+						return layer_exception(algorithm::asset::handle_of(token_asset) + " depository has custodial balance");
+				}
+
+				auto status = context->apply_validator_attestation(asset, context->receipt.from, type, stakes);
 				if (!status)
 					return status.error();
 			}
@@ -1671,7 +1709,7 @@ namespace tangent
 			auto group = setup_transaction->get_group(setup->receipt);
 			for (auto& participant : group)
 			{
-				auto status = context->apply_validator_participation(asset, participant.data, decimal::zero(), 1);
+				auto status = context->apply_validator_participation(asset, participant.data, ledger::transaction_context::stake_type::lock, 1, { });
 				if (!status)
 					return status.error();
 			}
@@ -1852,6 +1890,10 @@ namespace tangent
 			else if (only_if_not_in_queue && depository_policy->queue_transaction_hash > 0)
 				return layer_exception("depository is in use - withdrawal will be queued");
 
+			auto token_value = get_token_value(context);
+			if (!token_value.is_positive())
+				return layer_exception("zero value withdrawal not allowed");
+
 			if (!is_to_manager_null())
 			{
 				if (memcmp(context->receipt.from, from_manager, sizeof(algorithm::pubkeyhash)) != 0)
@@ -1885,7 +1927,6 @@ namespace tangent
 					return layer_exception(algorithm::asset::handle_of(fee_asset) + " balance is insufficient to cover base withdrawal value (value: " + fee_value.to_string() + ")");
 			}
 
-			auto token_value = get_token_value(context);
 			auto balance_requirement = context->verify_transfer_balance(asset, token_value);
 			if (!balance_requirement)
 				return balance_requirement;
@@ -1987,7 +2028,7 @@ namespace tangent
 					group_prepared = expects_rt<warden::prepared_transaction>(remote_exception::retry());
 
 				if (!group_prepared)
-					group_prepared = coawait(resolver::prepare_transaction(asset, warden::wallet_link::from_owner(from_manager), transfers));
+					group_prepared = coawait(resolver::prepare_transaction(algorithm::asset::base_id_of(asset), warden::wallet_link::from_owner(from_manager), transfers));
 
 				if (!group_prepared)
 				{
@@ -2069,7 +2110,7 @@ namespace tangent
 						memcpy(input.signature, input_signature.data, sizeof(input_signature.data));
 					}
 
-					auto group_finalized = coawait(resolver::finalize_and_broadcast_transaction(asset, context->receipt.transaction_hash, std::move(*group_prepared), dispatcher));
+					auto group_finalized = coawait(resolver::finalize_and_broadcast_transaction(algorithm::asset::base_id_of(asset), context->receipt.transaction_hash, std::move(*group_prepared), dispatcher));
 					if (!group_finalized)
 					{
 						if (!group_finalized.error().is_retry() && !group_finalized.error().is_shutdown())
@@ -2235,7 +2276,7 @@ namespace tangent
 			if (!reward)
 				return decimal::zero();
 
-			return reward->outgoing_fee;
+			return reward->outgoing_fee * to.size();
 		}
 		uptr<schema> depository_withdrawal::as_schema() const
 		{
@@ -2281,13 +2322,13 @@ namespace tangent
 			auto base_asset = algorithm::asset::base_id_of(transaction->asset);
 			for (auto& input : prepared.inputs)
 			{
-				if (input.utxo.is_account() && algorithm::asset::blockchain_of(input.utxo.get_asset(transaction->asset)) != blockchain)
+				if (input.utxo.is_account() && algorithm::asset::blockchain_of(input.utxo.get_asset(base_asset)) != blockchain)
 					return layer_exception("prepared input asset not valid");
 			}
 
 			for (auto& output : prepared.outputs)
 			{
-				if (output.is_account() && algorithm::asset::blockchain_of(output.get_asset(transaction->asset)) != blockchain)
+				if (output.is_account() && algorithm::asset::blockchain_of(output.get_asset(base_asset)) != blockchain)
 					return layer_exception("prepared output asset not valid");
 			}
 
@@ -2295,22 +2336,22 @@ namespace tangent
 			auto output_value = unordered_map<algorithm::asset_id, decimal>();
 			for (auto& input : prepared.inputs)
 			{
-				auto& value = input_value[input.utxo.get_asset(transaction->asset)];
+				auto& value = input_value[input.utxo.get_asset(base_asset)];
 				value = value.is_nan() ? input.utxo.value : (value + input.utxo.value);
 				for (auto& token : input.utxo.tokens)
 				{
-					auto& token_value = input_value[token.get_asset(transaction->asset)];
-					token_value = token_value.is_nan() ? input.utxo.value : (token_value + input.utxo.value);
+					auto& token_value = input_value[token.get_asset(base_asset)];
+					token_value = token_value.is_nan() ? token.value : (token_value + token.value);
 				}
 			}
 			for (auto& output : prepared.outputs)
 			{
-				auto& value = output_value[output.get_asset(transaction->asset)];
+				auto& value = output_value[output.get_asset(base_asset)];
 				value = value.is_nan() ? output.value : (value + output.value);
 				for (auto& token : output.tokens)
 				{
-					auto& token_value = output_value[token.get_asset(transaction->asset)];
-					token_value = token_value.is_nan() ? output.value : (token_value + output.value);
+					auto& token_value = output_value[token.get_asset(base_asset)];
+					token_value = token_value.is_nan() ? token.value : (token_value + token.value);
 				}
 			}
 			for (auto& output : output_value)
@@ -2329,7 +2370,7 @@ namespace tangent
 			for (auto& output : prepared.outputs)
 			{
 				auto presented_address = output.link.address;
-				auto status = server->normalize_address(transaction->asset, &presented_address);
+				auto status = server->normalize_address(base_asset, &presented_address);
 				if (!status)
 					return status.error();
 
@@ -2339,7 +2380,7 @@ namespace tangent
 			for (auto& transfer : transaction->to)
 			{
 				auto required_address = transfer.first;
-				auto status = server->normalize_address(transaction->asset, &required_address);
+				auto status = server->normalize_address(base_asset, &required_address);
 				if (!status)
 					return status.error();
 
@@ -2354,8 +2395,7 @@ namespace tangent
 				if (!transaction->recover_hash(from))
 					return layer_exception("failed to recover withdrawal sender");
 
-				auto base_asset = algorithm::asset::base_id_of(transaction->asset);
-				auto base_fee_value = transaction->asset == base_asset ? transaction->get_fee_value(context, from) : transaction->get_fee_value(context, from);
+				auto base_fee_value = transaction->asset == base_asset ? transaction->get_fee_value(context, from) : decimal::zero();
 				target_output->second += base_fee_value;
 				if (target_output->second.is_negative())
 					return layer_exception("prepared transaction inout not valid");
@@ -2363,11 +2403,11 @@ namespace tangent
 
 			for (auto& input : prepared.inputs)
 			{
-				auto witness = context->get_witness_account_tagged(transaction->asset, input.utxo.link.address, 0);
+				auto witness = context->get_witness_account_tagged(base_asset, input.utxo.link.address, 0);
 				if (!witness || !witness->is_depository_account())
 					return layer_exception("input refers to an address that does not exist or is not depository address");
 
-				auto account = context->get_depository_account(transaction->asset, witness->manager, witness->owner);
+				auto account = context->get_depository_account(base_asset, witness->manager, witness->owner);
 				if (!account)
 					return layer_exception("input refers to an account that does not have a linked depository");
 			}
@@ -2625,10 +2665,11 @@ namespace tangent
 				if (source->is_depository_account())
 				{
 					auto from_depository = algorithm::pubkeyhash_t(source->manager);
-					auto& depository = operations.depositories[from_depository][input.get_asset(asset)];
-					depository.balance -= input.value;
+					auto& depository = operations.depositories[from_depository];
+					if (input.value.is_positive())
+						depository.transfers[input.get_asset(asset)].balance -= input.value;
 					for (auto& token : input.tokens)
-						operations.depositories[from_depository][token.get_asset(asset)].balance -= token.value;
+						depository.transfers[token.get_asset(asset)].balance -= token.value;
 
 					auto account = context->get_depository_account(asset, from_depository.data, source->owner);
 					if (account)
@@ -2639,35 +2680,40 @@ namespace tangent
 					routers.insert(algorithm::pubkeyhash_t(source->owner));
 			}
 
-			bool has_incoming_reward = false, has_outgoing_reward = false;
 			for (auto& output : assertion->outputs)
 			{
 				auto source = context->get_witness_account(asset, output.link.address, 0);
 				if (!source)
 					continue;
 
-				auto output_asset = output.get_asset(asset);
 				if (source->is_depository_account())
 				{
 					auto to_depository = algorithm::pubkeyhash_t(source->manager);
 					auto& depository = operations.depositories[to_depository];
-					depository[output_asset].balance += output.value;
+					auto amounts = ordered_map<algorithm::asset_id, decimal>();
+					if (output.value.is_positive())
+						amounts[output.get_asset(asset)] = output.value;
 					for (auto& token : output.tokens)
-						depository[token.get_asset(asset)].balance += token.value;
+						amounts[token.get_asset(asset)] = token.value;
 
-					if (depositories.empty())
+					auto to_account = routers.empty() ? algorithm::pubkeyhash_t(source->owner) : *routers.begin();
+					for (auto& [token_asset, token_value] : amounts)
 					{
-						auto to_account = routers.empty() ? algorithm::pubkeyhash_t(source->owner) : *routers.begin();
-						operations.transfers[to_account][output_asset].supply += output.value;
-						if (!has_incoming_reward && !to_depository.equals(to_account.data))
+						auto& target_depository = depository.transfers[token_asset];
+						target_depository.balance += token_value;
+						if (!token_value.is_positive() || !depositories.empty())
+							continue;
+
+						auto& balance = operations.transfers[to_account][token_asset];
+						balance.supply += token_value;
+						if (to_depository.equals(to_account.data))
+							continue;
+
+						auto reward = context->get_depository_reward(token_asset, to_depository.data);
+						if (reward && reward->incoming_fee.is_positive())
 						{
-							auto reward = context->get_depository_reward(asset, to_depository.data);
-							if (reward && reward->incoming_fee.is_positive())
-							{
-								operations.transfers[to_account][asset].supply -= reward->incoming_fee;
-								depository[asset].incoming_fee += reward->incoming_fee;
-								has_incoming_reward = true;
-							}
+							balance.supply -= reward->incoming_fee;
+							target_depository.incoming_fee += reward->incoming_fee;
 						}
 					}
 				}
@@ -2675,29 +2721,28 @@ namespace tangent
 				{
 					auto from_account = routers.empty() ? algorithm::pubkeyhash_t(source->owner) : *routers.begin();
 					auto& from_transfers = operations.transfers[from_account];
-					auto& balance = from_transfers[output_asset];
-					balance.supply -= output.value;
-					balance.reserve -= output.value;
+					auto amounts = ordered_map<algorithm::asset_id, decimal>();
+					if (output.value.is_positive())
+						amounts[output.get_asset(asset)] = output.value;
 					for (auto& token : output.tokens)
-					{
-						balance = from_transfers[token.get_asset(asset)];
-						balance.supply -= token.value;
-						balance.reserve -= token.value;
-					}
+						amounts[token.get_asset(asset)] = token.value;
 
-					if (!depositories.empty())
+					for (auto& [token_asset, token_value] : amounts)
 					{
+						auto& balance = from_transfers[token_asset];
+						balance.supply -= token_value;
+						balance.reserve -= token_value;
+						if (!token_value.is_positive() || depositories.empty())
+							continue;
+
 						auto from_depository = *depositories.begin();
-						if (!has_outgoing_reward && !from_depository.equals(from_account.data))
+						auto reward = context->get_depository_reward(asset, from_depository.data);
+						if (reward && reward->outgoing_fee.is_positive())
 						{
-							auto reward = context->get_depository_reward(asset, from_depository.data);
-							if (reward && reward->outgoing_fee.is_positive())
-							{
-								balance.supply -= reward->outgoing_fee;
-								balance.reserve -= reward->outgoing_fee;
-								operations.depositories[from_depository][asset].outgoing_fee += reward->outgoing_fee;
-								has_outgoing_reward = true;
-							}
+							auto& base_balance = from_transfers[asset];
+							base_balance.supply -= reward->outgoing_fee;
+							base_balance.reserve -= reward->outgoing_fee;
+							operations.depositories[from_depository].transfers[asset].outgoing_fee += reward->outgoing_fee;
 						}
 					}
 				}
@@ -2706,30 +2751,21 @@ namespace tangent
 			if (operations.transfers.empty() && operations.depositories.empty())
 				return layer_exception("invalid transaction");
 
-			ordered_set<algorithm::pubkeyhash_t> attesters;
-			auto random = expects_lr<algorithm::wesolowski::distribution>(layer_exception());
-			const evaluation_branch* best_branch = nullptr;
-			if (has_incoming_reward || has_outgoing_reward)
+			ordered_set<algorithm::pubkeyhash_t> failing_attesters;
+			const evaluation_branch* best_branch = get_best_branch(context, nullptr);
+			for (auto& branch : output_hashes)
 			{
-				best_branch = get_best_branch(context, nullptr);
-				for (auto& branch : output_hashes)
+				if (best_branch == &branch.second)
+					continue;
+
+				for (auto& signature : branch.second.signatures)
 				{
-					if (best_branch == &branch.second)
-						continue;
+					algorithm::pubkeyhash_t attester;
+					if (!algorithm::signing::recover_hash(get_branch_image(branch.first), attester.data, signature.data))
+						return layer_exception("invalid attestation signature");
 
-					for (auto& signature : branch.second.signatures)
-					{
-						algorithm::pubkeyhash_t attester;
-						if (!algorithm::signing::recover_hash(get_branch_image(branch.first), attester.data, signature.data))
-							return layer_exception("invalid attestation signature");
-
-						attesters.insert(attester);
-					}
+					failing_attesters.insert(attester);
 				}
-
-				random = context->calculate_random(assertion->as_hash());
-				if (!random)
-					return random.error();
 			}
 
 			for (auto& [owner, transfers] : operations.transfers)
@@ -2747,20 +2783,23 @@ namespace tangent
 						auto supply = (balance ? balance->supply : decimal::zero()) + supply_delta;
 						auto reserve = (balance ? balance->reserve : decimal::zero()) + reserve_delta;
 						if (supply.is_negative())
-							supply_delta = -(balance ? balance->supply : decimal::zero());
+							supply_delta = (balance ? -balance->supply : decimal::zero());
 						if (reserve.is_negative())
-							reserve_delta = -(balance ? balance->reserve : decimal::zero());
+							reserve_delta = (balance ? -balance->reserve : decimal::zero());
 					}
 
-					auto delta_transfer = context->apply_transfer(transfer_asset, owner.data, supply_delta, reserve_delta);
-					if (!delta_transfer)
-						return delta_transfer.error();
+					if (!supply_delta.is_zero() || !reserve_delta.is_zero())
+					{
+						auto delta_transfer = context->apply_transfer(transfer_asset, owner.data, supply_delta, reserve_delta);
+						if (!delta_transfer)
+							return delta_transfer.error();
+					}
 				}
 			}
 
-			for (auto& [owner, transfers] : operations.depositories)
+			for (auto& [owner, batch] : operations.depositories)
 			{
-				for (auto& [transfer_asset, transfer] : transfers)
+				for (auto& [transfer_asset, transfer] : batch.transfers)
 				{
 					if (transfer.balance.is_negative())
 					{
@@ -2779,7 +2818,7 @@ namespace tangent
 						auto depository_fee = transfer.incoming_fee * (1.0 - protocol::now().policy.attestation_fee_rate);
 						if (depository_fee.is_positive())
 						{
-							auto attestation = context->apply_validator_attestation(transfer_asset, owner.data, depository_fee, true);
+							auto attestation = context->apply_validator_attestation(transfer_asset, owner.data, ledger::transaction_context::stake_type::reward, { { transfer_asset, depository_fee } });
 							if (!attestation)
 								return attestation.error();
 						}
@@ -2790,29 +2829,49 @@ namespace tangent
 						auto attestation_fee = transfer.incoming_fee * protocol::now().policy.attestation_fee_rate;
 						if (attestation_fee.is_positive() && !best_branch->signatures.empty())
 						{
-							algorithm::pubkeyhash winner;
-							if (!recover_hash(winner, best_branch->message.hash(), (size_t)(uint64_t)(random->derive() % uint256_t(best_branch->signatures.size()))))
-								return layer_exception("invalid attestation signature");
+							attestation_fee /= decimal(best_branch->signatures.size()).truncate(protocol::now().message.precision);
+							if (attestation_fee.is_positive())
+							{
+								for (size_t i = 0; i < best_branch->signatures.size(); i++)
+								{
+									algorithm::pubkeyhash target;
+									if (!recover_hash(target, best_branch->message.hash(), i))
+										return layer_exception("invalid attestation signature");
 
-							auto attestation = context->apply_validator_attestation(transfer_asset, winner, attestation_fee, true);
-							if (!attestation)
-								return attestation.error();
+									auto attestation = context->apply_validator_attestation(transfer_asset, target, ledger::transaction_context::stake_type::reward, { { transfer_asset, depository_fee } });
+									if (!attestation)
+										return attestation.error();
+								}
+							}
 						}
 
-						decimal attestation_compensation = decimal::zero();
-						for (auto& loser_attester : attesters)
+						ordered_map<algorithm::asset_id, decimal> attestation_compensation;
+						for (auto& attester : failing_attesters)
 						{
-							auto prev_attestation = context->get_validator_attestation(transfer_asset, loser_attester.data);
-							auto next_attestation = context->apply_validator_attestation(transfer_asset, loser_attester.data, -transfer.incoming_fee);
+							auto prev_attestation = context->get_validator_attestation(transfer_asset, attester.data);
+							if (!prev_attestation)
+								continue;
+
+							auto next_attestation = context->apply_validator_attestation(transfer_asset, attester.data, ledger::transaction_context::stake_type::lock, { { transfer_asset, -transfer.incoming_fee } });
 							if (!next_attestation)
 								return next_attestation.error();
 
-							attestation_compensation += prev_attestation->stake - (next_attestation && !next_attestation->stake.is_nan() ? next_attestation->stake : decimal::nan());
+							auto& prev_value = prev_attestation->stakes[transfer_asset];
+							auto& next_value = next_attestation->stakes[transfer_asset];
+							prev_value = prev_value.is_nan() ? decimal::zero() : prev_value;
+							next_value = next_value.is_nan() ? decimal::zero() : next_value;
+
+							auto compensation_adjustment = std::max(decimal::zero(), prev_value - next_value);
+							if (!compensation_adjustment.is_positive())
+								continue;
+
+							auto& compensation = attestation_compensation[transfer_asset];
+							compensation = std::max(decimal::zero(), prev_value - next_value);
 						}
 
-						if (attestation_compensation.is_positive())
+						if (!attestation_compensation.empty())
 						{
-							auto attestation = context->apply_validator_attestation(transfer_asset, owner.data, depository_fee, true);
+							auto attestation = context->apply_validator_attestation(transfer_asset, owner.data, ledger::transaction_context::stake_type::reward, attestation_compensation);
 							if (!attestation)
 								return attestation.error();
 						}
@@ -2823,22 +2882,24 @@ namespace tangent
 						auto depository_fee = transfer.outgoing_fee * (1.0 - protocol::now().policy.participation_fee_rate);
 						if (depository_fee.is_positive())
 						{
-							auto attestation = context->apply_validator_attestation(transfer_asset, owner.data, depository_fee, true);
+							auto attestation = context->apply_validator_attestation(transfer_asset, owner.data, ledger::transaction_context::stake_type::reward, { { transfer_asset, depository_fee } });
 							if (!attestation)
 								return attestation.error();
 						}
 
 						auto participation_fee = transfer.outgoing_fee * protocol::now().policy.attestation_fee_rate;
-						if (participation_fee.is_positive() && !transfer.participants.empty())
+						if (participation_fee.is_positive() && !batch.participants.empty())
 						{
-							size_t index = (size_t)(uint64_t)(random->derive() % uint256_t(transfer.participants.size()));
-							auto winner = transfer.participants.begin();
-							for (size_t i = 0; i < index; i++)
-								++winner;
-
-							auto participation = context->apply_validator_participation(transfer_asset, winner->data, participation_fee, 0, true);
-							if (!participation)
-								return participation.error();
+							participation_fee /= decimal(batch.participants.size()).truncate(protocol::now().message.precision);
+							if (participation_fee.is_positive())
+							{
+								for (auto& participant : batch.participants)
+								{
+									auto participation = context->apply_validator_participation(transfer_asset, participant.data, ledger::transaction_context::stake_type::reward, 0, { { transfer_asset, participation_fee } });
+									if (!participation)
+										return participation.error();
+								}
+							}
 						}
 					}
 				}
@@ -3570,11 +3631,11 @@ namespace tangent
 				if (!target)
 					return target.error();
 
-				auto status = context->apply_validator_participation(account.asset, old_manager.data, decimal::zero(), -1);
+				auto status = context->apply_validator_participation(account.asset, old_manager.data, ledger::transaction_context::stake_type::lock, -1, { });
 				if (!status)
 					return status.error();
 
-				status = context->apply_validator_participation(account.asset, new_manager.data, decimal::zero(), 1);
+				status = context->apply_validator_participation(account.asset, new_manager.data, ledger::transaction_context::stake_type::lock, 1, { });
 				if (!status)
 					return status.error();
 

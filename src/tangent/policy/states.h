@@ -179,7 +179,7 @@ namespace tangent
 		{
 			algorithm::asset_id asset;
 			algorithm::pubkeyhash owner = { 0 };
-			decimal stake = decimal::nan();
+			ordered_map<algorithm::asset_id, decimal> stakes;
 			uint64_t participations = 0;
 
 			validator_participation(const algorithm::pubkeyhash new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number, uint64_t new_block_nonce);
@@ -193,6 +193,7 @@ namespace tangent
 			bool load_data(format::ro_stream& stream) override;
 			bool is_owner_null() const;
 			bool is_active() const;
+			decimal get_ranked_stake() const;
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
@@ -207,7 +208,7 @@ namespace tangent
 		{
 			algorithm::asset_id asset;
 			algorithm::pubkeyhash owner = { 0 };
-			decimal stake = decimal::nan();
+			ordered_map<algorithm::asset_id, decimal> stakes;
 
 			validator_attestation(const algorithm::pubkeyhash new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number, uint64_t new_block_nonce);
 			validator_attestation(const algorithm::pubkeyhash new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header);
@@ -220,6 +221,7 @@ namespace tangent
 			bool load_data(format::ro_stream& stream) override;
 			bool is_owner_null() const;
 			bool is_active() const;
+			decimal get_ranked_stake() const;
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;

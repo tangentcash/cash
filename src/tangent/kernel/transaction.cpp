@@ -681,7 +681,7 @@ namespace tangent
 					{
 						auto attestation = context->get_validator_attestation(asset, attester);
 						if (attestation)
-							branch_stake += attestation->stake;
+							branch_stake += attestation->get_ranked_stake();
 					}
 				}
 

@@ -786,7 +786,11 @@ namespace tangent
 			validator.node.services.has_interfaces = protocol::now().user.rpc.server;
 			validator.node.services.has_querying = protocol::now().user.rpc.user_username.empty();
 			validator.node.services.has_streaming = protocol::now().user.rpc.web_sockets;
-			return apply_validator(mempool, validator.node, validator.wallet);
+			
+			auto result = apply_validator(mempool, validator.node, validator.wallet);
+			if (result)
+				VI_INFO("p2p using account: %s (validator)", validator.wallet.get_address().c_str());
+			return result;
 		}
 		void server_node::bind_callable(receive_function function)
 		{

@@ -1900,48 +1900,82 @@ namespace tangent
 			}
 			return result;
 		}
-		expects_lr<states::validator_participation> transaction_context::apply_validator_participation(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const decimal& value, int64_t participations, bool is_reward)
+		expects_lr<states::validator_participation> transaction_context::apply_validator_participation(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, stake_type type, int64_t participations, const ordered_map<algorithm::asset_id, decimal>& stakes)
 		{
 			states::validator_participation new_state = get_validator_participation(asset, owner).or_else(states::validator_participation(owner, asset, block));
-			decimal prev_state_stake = new_state.stake;
 			new_state.participations = participations >= 0 || new_state.participations >= (uint64_t)-participations ? (int64_t)new_state.participations + participations : 0;
-			new_state.stake = value.is_nan() ? decimal::nan() : (new_state.stake.is_nan() ? value : (new_state.stake + value));
-			if (new_state.stake.is_negative())
-				new_state.stake = decimal::nan();
+			for (auto& [token_asset, stake] : stakes)
+			{
+				auto change = stake;
+				auto& value = new_state.stakes[token_asset];
+				if (change.is_nan())
+				{
+					change = -value;
+					if (type != stake_type::unlock)
+						return layer_exception("invalid stake");
+				}
+
+				auto delta = change.is_positive() ? change : std::max((value.is_nan() ? decimal::zero() : -value), stake);
+				value = value.is_nan() ? change : (value + change);
+				if (!delta.is_zero_or_nan())
+				{
+					auto transfer = apply_transfer(asset, owner, type == stake_type::reward ? delta : decimal::zero(), delta);
+					if (!transfer)
+						return transfer.error();
+				}
+			}
+
+			auto it = new_state.stakes.begin();
+			while (it != new_state.stakes.end())
+			{
+				if (!it->second.is_positive() && (it->first != new_state.asset || type == stake_type::unlock))
+					it = new_state.stakes.erase(it);
+				else
+					++it;
+			}
 
 			auto result = store(&new_state, true);
 			if (!result)
 				return result.error();
-
-			decimal delta = (new_state.stake.is_nan() ? decimal::zero() : new_state.stake) - (prev_state_stake.is_nan() ? decimal::zero() : prev_state_stake);
-			if (!delta.is_zero_or_nan())
-			{
-				auto transfer = apply_transfer(asset, owner, is_reward ? delta : decimal::zero(), delta);
-				if (!transfer)
-					return transfer.error();
-			}
 
 			return new_state;
 		}
-		expects_lr<states::validator_attestation> transaction_context::apply_validator_attestation(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const decimal& value, bool is_reward)
+		expects_lr<states::validator_attestation> transaction_context::apply_validator_attestation(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, stake_type type, const ordered_map<algorithm::asset_id, decimal>& stakes)
 		{
 			states::validator_attestation new_state = get_validator_attestation(asset, owner).or_else(states::validator_attestation(owner, asset, block));
-			decimal prev_state_stake = new_state.stake;
-			new_state.stake = value.is_nan() ? decimal::nan() : (new_state.stake.is_nan() ? value : (new_state.stake + value));
-			if (new_state.stake.is_negative())
-				new_state.stake = decimal::nan();
+			for (auto& [token_asset, stake] : stakes)
+			{
+				auto change = stake;
+				auto& value = new_state.stakes[token_asset];
+				if (change.is_nan())
+				{
+					change = -value;
+					if (type != stake_type::unlock)
+						return layer_exception("invalid stake");
+				}
+
+				auto delta = change.is_positive() ? change : std::max((value.is_nan() ? decimal::zero() : -value), stake);
+				value = value.is_nan() ? change : (value + change);
+				if (!delta.is_zero_or_nan())
+				{
+					auto transfer = apply_transfer(asset, owner, type == stake_type::reward ? delta : decimal::zero(), delta);
+					if (!transfer)
+						return transfer.error();
+				}
+			}
+
+			auto it = new_state.stakes.begin();
+			while (it != new_state.stakes.end())
+			{
+				if (!it->second.is_positive() && (it->first != new_state.asset || type == stake_type::unlock))
+					it = new_state.stakes.erase(it);
+				else
+					++it;
+			}
 
 			auto result = store(&new_state, true);
 			if (!result)
 				return result.error();
-
-			decimal delta = (new_state.stake.is_nan() ? decimal::zero() : new_state.stake) - (prev_state_stake.is_nan() ? decimal::zero() : prev_state_stake);
-			if (!delta.is_zero_or_nan())
-			{
-				auto transfer = apply_transfer(asset, owner, is_reward ? delta : decimal::zero(), delta);
-				if (!transfer)
-					return transfer.error();
-			}
 
 			return new_state;
 		}

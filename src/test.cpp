@@ -25,11 +25,21 @@ public:
 		account(const ledger::wallet& new_wallet, uint64_t new_nonce) : wallet(new_wallet), nonce(new_nonce)
 		{
 		}
-		account(account&&) = default;
+		account(account&& other) noexcept : wallet(std::move(other.wallet)), nonce(other.nonce.load())
+		{
+		};
 		account(const account& other) : wallet(other.wallet), nonce(other.nonce.load())
 		{
 		}
-		account& operator= (account&&) = default;
+		account& operator= (account&& other) noexcept
+		{
+			if (&other == this)
+				return *this;
+
+			wallet = std::move(other.wallet);
+			nonce = other.nonce.load();
+			return *this;
+		}
 		account& operator= (const account& other)
 		{
 			if (&other == this)
@@ -417,26 +427,26 @@ public:
 		{
 			auto& [user1, user1_nonce] = users[0];
 			auto& [user2, user2_nonce] = users[1];
-			auto* depository_adjustment_ethereum1 = memory::init<transactions::depository_adjustment>();
-			depository_adjustment_ethereum1->set_asset("ETH");
-			depository_adjustment_ethereum1->set_reward(0.0012, 0.0012);
-			depository_adjustment_ethereum1->set_security(2, true, true);
-			VI_PANIC(depository_adjustment_ethereum1->sign(user2.secret_key, user2_nonce++, decimal::zero()), "depository adjustment not signed");
-			transactions.push_back(depository_adjustment_ethereum1);
-
 			auto* depository_adjustment_ethereum = memory::init<transactions::depository_adjustment>();
 			depository_adjustment_ethereum->set_asset("ETH");
-			depository_adjustment_ethereum->set_reward(0.0, 0.0);
+			depository_adjustment_ethereum->set_reward(0.0012, 0.0012);
 			depository_adjustment_ethereum->set_security(2, true, true);
-			VI_PANIC(depository_adjustment_ethereum->sign(user1.secret_key, user1_nonce++, decimal::zero()), "depository adjustment not signed");
+			VI_PANIC(depository_adjustment_ethereum->sign(user2.secret_key, user2_nonce++, decimal::zero()), "depository adjustment not signed");
 			transactions.push_back(depository_adjustment_ethereum);
 
-			auto* depository_adjustment_ripple = memory::init<transactions::depository_adjustment>();
-			depository_adjustment_ripple->set_asset("XRP");
-			depository_adjustment_ripple->set_reward(1.0, 1.0);
-			depository_adjustment_ripple->set_security(2, true, true);
-			VI_PANIC(depository_adjustment_ripple->sign(user2.secret_key, user2_nonce++, decimal::zero()), "depository adjustment not signed");
-			transactions.push_back(depository_adjustment_ripple);
+			auto* depository_adjustment_ripple1 = memory::init<transactions::depository_adjustment>();
+			depository_adjustment_ripple1->set_asset("XRP");
+			depository_adjustment_ripple1->set_reward(1.0, 1.0);
+			depository_adjustment_ripple1->set_security(2, true, true);
+			VI_PANIC(depository_adjustment_ripple1->sign(user2.secret_key, user2_nonce++, decimal::zero()), "depository adjustment not signed");
+			transactions.push_back(depository_adjustment_ripple1);
+
+			auto* depository_adjustment_ripple2 = memory::init<transactions::depository_adjustment>();
+			depository_adjustment_ripple2->set_asset("XRP");
+			depository_adjustment_ripple2->set_reward(0, 0);
+			depository_adjustment_ripple2->set_security(2, true, true);
+			VI_PANIC(depository_adjustment_ripple2->sign(user1.secret_key, user1_nonce++, decimal::zero()), "depository adjustment not signed");
+			transactions.push_back(depository_adjustment_ripple2);
 
 			auto* depository_adjustment_bitcoin = memory::init<transactions::depository_adjustment>();
 			depository_adjustment_bitcoin->set_asset("BTC");
@@ -454,30 +464,37 @@ public:
 			depository_adjustment_bitcoin->set_security(1, true, true);
 			VI_PANIC(depository_adjustment_bitcoin->sign(user1.secret_key, user1_nonce++, decimal::zero()), "depository adjustment not signed");
 			transactions.push_back(depository_adjustment_bitcoin);
+
+			auto* depository_adjustment_ethereum = memory::init<transactions::depository_adjustment>();
+			depository_adjustment_ethereum->set_asset("ETH");
+			depository_adjustment_ethereum->set_reward(0.0012, 0.0012);
+			depository_adjustment_ethereum->set_security(1, true, true);
+			VI_PANIC(depository_adjustment_ethereum->sign(user1.secret_key, user1_nonce++, decimal::zero()), "depository adjustment not signed");
+			transactions.push_back(depository_adjustment_ethereum);
 		}
 		static void depository_account_registration_full(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
 		{
 			auto& [user1, user1_nonce] = users[0];
 			auto& [user2, user2_nonce] = users[1];
-			auto* depository_account_ethereum1 = memory::init<transactions::depository_account>();
-			depository_account_ethereum1->set_asset("ETH");
-			depository_account_ethereum1->set_routing_address("0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5");
-			depository_account_ethereum1->set_manager(user1.public_key_hash);
-			VI_PANIC(depository_account_ethereum1->sign(user1.secret_key, user1_nonce++, decimal::zero()), "account not signed");
-			transactions.push_back(depository_account_ethereum1);
+			auto* depository_account_ethereum = memory::init<transactions::depository_account>();
+			depository_account_ethereum->set_asset("ETH");
+			depository_account_ethereum->set_routing_address("0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5");
+			depository_account_ethereum->set_manager(user2.public_key_hash);
+			VI_PANIC(depository_account_ethereum->sign(user1.secret_key, user1_nonce++, decimal::zero()), "account not signed");
+			transactions.push_back(depository_account_ethereum);
 
-			auto* depository_account_ethereum2 = memory::init<transactions::depository_account>();
-			depository_account_ethereum2->set_asset("ETH");
-			depository_account_ethereum2->set_manager(user2.public_key_hash);
-			VI_PANIC(depository_account_ethereum2->sign(user2.secret_key, user2_nonce++, decimal::zero()), "account not signed");
-			transactions.push_back(depository_account_ethereum2);
+			auto* depository_account_ripple1 = memory::init<transactions::depository_account>();
+			depository_account_ripple1->set_asset("XRP");
+			depository_account_ripple1->set_routing_address("rUBqz2JiRCT3gYZBnm28y5ME7e5UpSm2ok");
+			depository_account_ripple1->set_manager(user1.public_key_hash);
+			VI_PANIC(depository_account_ripple1->sign(user1.secret_key, user1_nonce++, decimal::zero()), "account not signed");
+			transactions.push_back(depository_account_ripple1);
 
-			auto* depository_account_ripple = memory::init<transactions::depository_account>();
-			depository_account_ripple->set_asset("XRP");
-			depository_account_ripple->set_routing_address("rUBqz2JiRCT3gYZBnm28y5ME7e5UpSm2ok");
-			depository_account_ripple->set_manager(user2.public_key_hash);
-			VI_PANIC(depository_account_ripple->sign(user1.secret_key, user1_nonce++, decimal::zero()), "account not signed");
-			transactions.push_back(depository_account_ripple);
+			auto* depository_account_ripple2 = memory::init<transactions::depository_account>();
+			depository_account_ripple2->set_asset("XRP");
+			depository_account_ripple2->set_manager(user2.public_key_hash);
+			VI_PANIC(depository_account_ripple2->sign(user2.secret_key, user2_nonce++, decimal::zero()), "account not signed");
+			transactions.push_back(depository_account_ripple2);
 
 			auto* depository_account_bitcoin = memory::init<transactions::depository_account>();
 			depository_account_bitcoin->set_asset("BTC");
@@ -495,6 +512,13 @@ public:
 			depository_account_bitcoin->set_manager(user1.public_key_hash);
 			VI_PANIC(depository_account_bitcoin->sign(user1.secret_key, user1_nonce++, decimal::zero()), "account not signed");
 			transactions.push_back(depository_account_bitcoin);
+
+			auto* depository_account_ethereum = memory::init<transactions::depository_account>();
+			depository_account_ethereum->set_asset("ETH");
+			depository_account_ethereum->set_routing_address("0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5");
+			depository_account_ethereum->set_manager(user1.public_key_hash);
+			VI_PANIC(depository_account_ethereum->sign(user1.secret_key, user1_nonce++, decimal::zero()), "account not signed");
+			transactions.push_back(depository_account_ethereum);
 		}
 		static void depository_transaction_registration_full(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
 		{
@@ -503,12 +527,21 @@ public:
 			auto context = ledger::transaction_context();
 			auto manager_addresses = *context.get_witness_accounts_by_purpose(user2.public_key_hash, states::witness_account::account_type::depository, 0, 128);
 			auto owner_addresses = *context.get_witness_accounts_by_purpose(user1.public_key_hash, states::witness_account::account_type::depository, 0, 128);
-			auto address_ethereum = std::find_if(manager_addresses.begin(), manager_addresses.end(), [](states::witness_account& item) { return item.asset == algorithm::asset::id_of("ETH"); });
-			auto address_ripple = std::find_if(owner_addresses.begin(), owner_addresses.end(), [](states::witness_account& item) { return item.asset == algorithm::asset::id_of("XRP"); });
+			auto address_ethereum = std::find_if(owner_addresses.begin(), owner_addresses.end(), [](states::witness_account& item) { return item.asset == algorithm::asset::id_of("ETH"); });
+			auto address_ripple = std::find_if(manager_addresses.begin(), manager_addresses.end(), [](states::witness_account& item) { return item.asset == algorithm::asset::id_of("XRP"); });
 			auto address_bitcoin = std::find_if(owner_addresses.begin(), owner_addresses.end(), [](states::witness_account& item) { return item.asset == algorithm::asset::id_of("BTC"); });
-			VI_PANIC(address_ethereum != manager_addresses.end(), "ethereum depository address not found");
-			VI_PANIC(address_ripple != owner_addresses.end(), "ripple depository address not found");
+			VI_PANIC(address_ethereum != owner_addresses.end(), "ethereum depository address not found");
+			VI_PANIC(address_ripple != manager_addresses.end(), "ripple depository address not found");
 			VI_PANIC(address_bitcoin != owner_addresses.end(), "bitcoin depository address not found");
+
+			auto token_asset = algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7");
+			auto* depository_transaction_ethereum_token = memory::init<transactions::depository_transaction>();
+			depository_transaction_ethereum_token->set_asset("ETH");
+			depository_transaction_ethereum_token->set_finalized_witness(22946911,
+				"0xce2d48c20305ee332c071a671142953af58ca5226fcbcc219cd0b2cc4c6fe34f",
+				{ warden::value_transfer(token_asset, "0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5", 100000) },
+				{ warden::value_transfer(token_asset, address_ethereum->addresses.begin()->second, 100000) });
+			transactions.push_back(depository_transaction_ethereum_token);
 
 			auto* depository_transaction_ethereum = memory::init<transactions::depository_transaction>();
 			depository_transaction_ethereum->set_asset("ETH");
@@ -540,15 +573,26 @@ public:
 			auto context = ledger::transaction_context();
 			auto owner_addresses = *context.get_witness_accounts_by_purpose(user1.public_key_hash, states::witness_account::account_type::depository, 0, 128);
 			auto address_bitcoin = std::find_if(owner_addresses.begin(), owner_addresses.end(), [](states::witness_account& item) { return item.asset == algorithm::asset::id_of("BTC"); });
+			auto address_ethereum = std::find_if(owner_addresses.begin(), owner_addresses.end(), [](states::witness_account& item) { return item.asset == algorithm::asset::id_of("ETH"); });
 			VI_PANIC(address_bitcoin != owner_addresses.end(), "bitcoin depository address not found");
+			VI_PANIC(address_ethereum != owner_addresses.end(), "ethereum depository address not found");
 
 			auto* depository_transaction_bitcoin = memory::init<transactions::depository_transaction>();
 			depository_transaction_bitcoin->set_asset("BTC");
 			depository_transaction_bitcoin->set_finalized_witness(846982,
 				"57638131d9af3033a5e20b753af254e1e8321b2039f16dfd222f6b1117b5c69d",
-				{ warden::value_transfer(depository_transaction_bitcoin->asset, "mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", 1.0) },
-				{ warden::value_transfer(depository_transaction_bitcoin->asset, address_bitcoin->addresses.begin()->second, 1.0) });
+				{ warden::value_transfer(depository_transaction_bitcoin->asset, "mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", 12.0) },
+				{ warden::value_transfer(depository_transaction_bitcoin->asset, address_bitcoin->addresses.begin()->second, 12.0) });
 			transactions.push_back(depository_transaction_bitcoin);
+
+			auto token_asset = algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7");
+			auto* depository_transaction_ethereum = memory::init<transactions::depository_transaction>();
+			depository_transaction_ethereum->set_asset("ETH");
+			depository_transaction_ethereum->set_finalized_witness(14977180,
+				"0x2bc2c98682f1b8fea2031e8f3f56494cd778da9d042da8439fb698d41bf061ea",
+				{ warden::value_transfer(token_asset, "0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5", 1000000) },
+				{ warden::value_transfer(token_asset, address_ethereum->addresses.begin()->second, 1000000) });
+			transactions.push_back(depository_transaction_ethereum);
 		}
 		static void depository_regrouping(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
 		{
@@ -576,7 +620,7 @@ public:
 			auto& [user1, user1_nonce] = users[0];
 			auto& [user2, user2_nonce] = users[1];
 			auto* depository_withdrawal_ethereum = memory::init<transactions::depository_withdrawal>();
-			depository_withdrawal_ethereum->set_asset("ETH");
+			depository_withdrawal_ethereum->set_asset("XRP");
 			depository_withdrawal_ethereum->set_from_manager(user2.public_key_hash);
 			depository_withdrawal_ethereum->set_to_manager(user1.public_key_hash);
 			VI_PANIC(depository_withdrawal_ethereum->sign(user2.secret_key, user2_nonce++, decimal::zero()), "depository migration not signed");
@@ -587,16 +631,28 @@ public:
 			auto& [user1, user1_nonce] = users[0];
 			auto& [user2, user2_nonce] = users[1];
 			auto context = ledger::transaction_context();
+			auto* withdrawal_ethereum_token = memory::init<transactions::depository_withdrawal>();
+			withdrawal_ethereum_token->set_asset("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7");
+			withdrawal_ethereum_token->set_from_manager(user2.public_key_hash);
+			withdrawal_ethereum_token->set_to("0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5", context.get_account_balance(algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7"), user1.public_key_hash).expect("user balance not valid").get_balance());
+			VI_PANIC(withdrawal_ethereum_token->sign(user1.secret_key, user1_nonce++, decimal::zero()), "withdrawal not signed");
+			transactions.push_back(withdrawal_ethereum_token);
+		}
+		static void depository_withdrawal_stage_3(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
+		{
+			auto& [user1, user1_nonce] = users[0];
+			auto& [user2, user2_nonce] = users[1];
+			auto context = ledger::transaction_context();
 			auto* withdrawal_ethereum = memory::init<transactions::depository_withdrawal>();
 			withdrawal_ethereum->set_asset("ETH");
-			withdrawal_ethereum->set_from_manager(user1.public_key_hash);
+			withdrawal_ethereum->set_from_manager(user2.public_key_hash);
 			withdrawal_ethereum->set_to("0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5", context.get_account_balance(algorithm::asset::id_of("ETH"), user1.public_key_hash).expect("user balance not valid").get_balance());
 			VI_PANIC(withdrawal_ethereum->sign(user1.secret_key, user1_nonce++, decimal::zero()), "withdrawal not signed");
 			transactions.push_back(withdrawal_ethereum);
 
 			auto* withdrawal_ripple = memory::init<transactions::depository_withdrawal>();
 			withdrawal_ripple->set_asset("XRP");
-			withdrawal_ripple->set_from_manager(user2.public_key_hash);
+			withdrawal_ripple->set_from_manager(user1.public_key_hash);
 			withdrawal_ripple->set_to("rUBqz2JiRCT3gYZBnm28y5ME7e5UpSm2ok", context.get_account_balance(algorithm::asset::id_of("XRP"), user1.public_key_hash).expect("user balance not valid").get_balance());
 			VI_PANIC(withdrawal_ripple->sign(user1.secret_key, user1_nonce++, decimal::zero()), "withdrawal not signed");
 			transactions.push_back(withdrawal_ripple);
@@ -608,21 +664,21 @@ public:
 			VI_PANIC(withdrawal_bitcoin->sign(user1.secret_key, user1_nonce++, decimal::zero()), "withdrawal not signed");
 			transactions.push_back(withdrawal_bitcoin);
 		}
-		static void depository_withdrawal_stage_3(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
+		static void depository_withdrawal_stage_4(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
 		{
 			auto& [user1, user1_nonce] = users[0];
 			auto& [user2, user2_nonce] = users[1];
 			auto context = ledger::transaction_context();
 			auto* withdrawal_ethereum = memory::init<transactions::depository_withdrawal>();
 			withdrawal_ethereum->set_asset("ETH");
-			withdrawal_ethereum->set_from_manager(user1.public_key_hash);
+			withdrawal_ethereum->set_from_manager(user2.public_key_hash);
 			withdrawal_ethereum->set_to("0x89a0181659bd280836A2d33F57e3B5Dfa1a823CE", context.get_account_balance(algorithm::asset::id_of("ETH"), user2.public_key_hash).expect("user balance not valid").get_balance());
 			VI_PANIC(withdrawal_ethereum->sign(user2.secret_key, user2_nonce++, decimal::zero()), "withdrawal not signed");
 			transactions.push_back(withdrawal_ethereum);
 
 			auto* withdrawal_ripple = memory::init<transactions::depository_withdrawal>();
 			withdrawal_ripple->set_asset("XRP");
-			withdrawal_ripple->set_from_manager(user2.public_key_hash);
+			withdrawal_ripple->set_from_manager(user1.public_key_hash);
 			withdrawal_ripple->set_to("rJGb4etn9GSwNHYVu7dNMbdiVgzqxaTSUG", context.get_account_balance(algorithm::asset::id_of("XRP"), user2.public_key_hash).expect("user balance not valid").get_balance());
 			VI_PANIC(withdrawal_ripple->sign(user2.secret_key, user2_nonce++, decimal::zero()), "withdrawal not signed");
 			transactions.push_back(withdrawal_ripple);
@@ -1480,24 +1536,25 @@ public:
 				account(ledger::wallet::from_seed("000000"), 0),
 				account(ledger::wallet::from_seed("000002"), 0)
 			};
-			TEST_BLOCK(&generators::validator_registration_full, "0x91352729198cabaeb6961bb906fffae24ae0e2a8033fec874c796ff6813d3f0e", 1);
-			TEST_BLOCK(std::bind(&generators::validator_enable_validator, std::placeholders::_1, std::placeholders::_2, 2, true, true, false), "0xb2399cf43347308db40ced9b6c513dcc52c68963fb05bd1a0ee0be0111f39cdd", 2);
-			TEST_BLOCK(&generators::depository_registration_full, "0x8b3e29373eadd9df7fddc083082b3931946fd4c68b50572e993caf187586b715", 3);
-			TEST_BLOCK(&generators::depository_account_registration_full, "0x8fbdde8e6a6ffc32800dbae88d29146430c36d9c787811b74cffccaa8f5670b2", 4);
-			TEST_BLOCK(&generators::depository_transaction_registration_full, "0xc51730d6fb8d3cf8c49b67a8535322881fa58a7117fe0a4e55549dc6ebc0b0b3", 6);
-			TEST_BLOCK(&generators::account_transfer_stage_1, "0x09cbd5ef497deb449ca16cb8b1be9b924feda5f2b98d7ff507350426a3c7f6c8", 7);
-			TEST_BLOCK(&generators::account_transfer_stage_2, "0xacbf9810f0d3f0c66e49b453fcbca4ce80060d8c5734dd7b423206316ebdc108", 8);
-			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), users[2].wallet.get_address(), 0.05), "0xe4c1793deed49a277ae01fb6ea4b960b4a9cf0644b438cad50788658c17d9a2e", 9);
-			TEST_BLOCK(&generators::account_refuel, "0x408887cf67ac78dda93c591bef36c2c582d0f25058de3f3f1af5af1c1e54c4da", 10);
-			TEST_BLOCK(&generators::account_upgrade, "0x9e2609e8766457f8a65e7b48ba4c9d9154a29d5f1ba73148660f294339fd15be", 11);
-			TEST_BLOCK(&generators::account_call, "0x60636dacdb26a685a39503c354d01e0c44dfbc8c9eb7368e419c0e5f2d40a91c", 12);
-			TEST_BLOCK(&generators::account_transaction_rollup, "0x289a5faaad85640a3097bf817dbc95cd3e85da156b49b27abb86b0544c78935a", 13);
-			TEST_BLOCK(std::bind(&generators::validator_enable_validator, std::placeholders::_1, std::placeholders::_2, 2, true, true, true), "0x7e483c81ed2c1311e06e9c5c9fca64e245b2725e577520e45965665b16f7aa29", 14);
-			TEST_BLOCK(&generators::depository_regrouping, "0xa17dccda34994ae7f1327a4854bcfaa5172472e4963ff7c4dfb419637a516069", 15);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_1, "0x53ea807755213f434aeafa76ef56bcbe6a39cdcae2bd70fae5c4849ea1d4e076", 19);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0x60afa873f5e1dc2c3391827d2915f7fc470874d64acc0a5ad4c72644365eb208", 21);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0xb054881cd3ac612b6a6cf782946039d25e99e850561d00b1e9c8d62e08d32e19", 23);
-			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2, true, true, false), "0x2097736074c9cdbd39f681df9c2d46bee7174a2b14791881af9fa7e21a81c899", 25);
+			TEST_BLOCK(&generators::validator_registration_full, "0x7932c00d5817794d7094ee605e2f515d5d094235d00472f13e41089f0963cfd0", 1);
+			TEST_BLOCK(std::bind(&generators::validator_enable_validator, std::placeholders::_1, std::placeholders::_2, 2, true, true, false), "0xbb8fb3b1862f7d6d8a3fd6404b8c1c56bbf55d5882cb651ae06102462234c435", 2);
+			TEST_BLOCK(&generators::depository_registration_full, "0xe05ecb95c384be60067f718a4628cd47d42254a8ae25982ad5730d9082b2fc1a", 3);
+			TEST_BLOCK(&generators::depository_account_registration_full, "0xa9480966d937df14422ec1a334eaf2736b2ee0058bc19f3475162c0f22d54d2d", 4);
+			TEST_BLOCK(&generators::depository_transaction_registration_full, "0xcc36d9e3f3d86b5f44ba5a576e19549ad03ae05172914f2d2f928a180ef9bcf7", 6);
+			TEST_BLOCK(&generators::account_transfer_stage_1, "0x6bf38e44b95ce4046c0705ed799e4a2b5963636be7d50733bca5b1858a1f0d59", 7);
+			TEST_BLOCK(&generators::account_transfer_stage_2, "0x5264b00fc186d77c564cce5b570eab768b461e1720bcc0f087340745e53fe731", 8);
+			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), users[2].wallet.get_address(), 0.05), "0x7e41b5bf2f4a9258970247f298bcc7690f963c21a5668f8aa4b687559c7ce1bc", 9);
+			TEST_BLOCK(&generators::account_refuel, "0xe193f9c4c4915cfb18482864959d54cd719eb9d35630a62adae900beacdedfd6", 10);
+			TEST_BLOCK(&generators::account_upgrade, "0xd2b8f1023f2c1fe3d57b23a6bccd4ba45e6ab64bd50d234e3c0d822510a21eb1", 11);
+			TEST_BLOCK(&generators::account_call, "0xbaf4619277d9d5946d98a84a7e45abae98b5c0488791fb12c127251e63100343", 12);
+			TEST_BLOCK(&generators::account_transaction_rollup, "0x416378ed71b5ec6f83d15f5b8c90df2a3e8f696663917e815b1cb98d9ca209e4", 13);
+			TEST_BLOCK(std::bind(&generators::validator_enable_validator, std::placeholders::_1, std::placeholders::_2, 2, true, true, true), "0x26eac84e6a8a160ea2c72b037ed7d08f1db08b383ec1ee0da30233d600ce1136", 14);
+			TEST_BLOCK(&generators::depository_regrouping, "0x6231fc2bfd3dba6397f5a4a799ba775e825e23c710a594a2ef6389e09a35cb0d", 15);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_1, "0xac04f944f99e6834c5ec20169418b47172c39dd81c077ab93038eaa255e574c7", 19);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0xb5ce2044d9fd5970321652f5cff8ccade59f850dedcb80b3baeca3f83b8bc987", 21);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0xae9585bbe6fac923a33471acbb8e9d5613cd48f96ec99a3b7d5a97f5b98b733a", 23);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_4, "0x79bf519509e769cc830ffadabc935b13f927385759a865a5f419bf0dd8ed9ea7", 25);
+			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2, true, true, false), "0x1dc2c8116f7e50864b2209c7a8ba5a38a69123c259a3823233ccd203081c30f4", 27);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else
@@ -1514,11 +1571,12 @@ public:
 			{
 				account(ledger::wallet::from_seed("000000"), 0)
 			};
-			TEST_BLOCK(&generators::validator_registration_partial, "0xf43d99b8de15f605303743ac240618b5d71b2da386cf7708d6ba986ba8d58daa", 1);
-			TEST_BLOCK(&generators::depository_registration_partial, "0x0c48b86d378d8611239609c8fc777e039660facb2892d84e0348fd0af96a1a2d", 2);
-			TEST_BLOCK(&generators::depository_account_registration_partial, "0x6af9d1c074e9bec1f0fb378070ebd745cde0c7970b548edbad760f3211e5e4c7", 3);
-			TEST_BLOCK(&generators::depository_transaction_registration_partial, "0xcec7785ed40c52c53d89594925bf7128c4b762eecb67363737e124f05d35e42e", 5);
-			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 0.1), "0x5b4712822170d8a109464eadef094642153ce8dd56bc93a36bcf00bf7abf924c", 6);
+			TEST_BLOCK(&generators::validator_registration_partial, "0x9c88b52c3b4f1b6d58a4bcc64a5790e53371f079a7d35c4309f2754419ba48c5", 1);
+			TEST_BLOCK(&generators::depository_registration_partial, "0x8a01dd6807ef7216ac3e96e7e2739afbd5183298ffafe6e3e76e8c7212dbcc5c", 2);
+			TEST_BLOCK(&generators::depository_account_registration_partial, "0xa1b06dd02c7e06fc31f9009569f2d8c70cbfc200514edf6f0f0ede7121454265", 3);
+			TEST_BLOCK(&generators::depository_transaction_registration_partial, "0x8d1a19df6bdfda28541ba87c4daaaef8f79383e72dcb424490e1a9286bc2a858", 5);
+			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 0.1), "0x03e3a50ffa3096f32adf8f4edb55db65286c737901966631c35e09551397c456", 6);
+			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 5000), "0x822fdf2c14f4556c645a0f047e4928eef60952482117f1b32a86234f37e6267f", 7);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else
@@ -1770,25 +1828,21 @@ public:
 	}
 };
 
-class apps
+class entrypoints
 {
 public:
 	/* nss, nds, p2p, rpc nodes */
-	static int consensus(int argc, char* argv[])
+	static int consensus(inline_args& args)
 	{
-		VI_PANIC(argc > 1, "config path argument is required");
-		vitex::runtime scope;
-		std::string_view config = argv[1];
-		std::string_view number = config.substr(config.find('-') + 1);
-		protocol params = protocol(os::process::parse_args(argc, argv, (size_t)args_format::key_value));
-		uint32_t index = from_string<uint32_t>(number.substr(0, number.find_first_not_of("0123456789"))).or_else(1);
-
-		ledger::wallet wallet = ledger::wallet::from_seed(stringify::text("00000%i", index - 1));
+		auto& params = protocol::now();
+		uint32_t test_account = from_string<uint32_t>(args.get("test-account")).expect("must provide a \"test-account\" flag (number)");
+		ledger::wallet wallet = ledger::wallet::from_seed(stringify::text("00000%i", test_account - 1));
 		ledger::validator node;
 		node.address = socket_address(params.user.p2p.address, params.user.p2p.port);
 
 		auto mempool = storages::mempoolstate(__func__);
 		mempool.apply_validator(node, wallet);
+		VI_INFO("test using account baseline: %s", wallet.get_address().c_str());
 
 		nds::server_node discovery;
 		p2p::server_node consensus;
@@ -1800,31 +1854,13 @@ public:
 		control.bind(consensus.get_entrypoint());
 		control.bind(synchronization.get_entrypoint());
 		control.bind(interfaces.get_entrypoint());
-
-		int exit_code = control.launch();
-		if (os::process::has_debugger())
-		{
-			auto* term = console::get();
-			term->write("\n");
-			term->write_color(std_color::white, std_color::dark_green);
-			term->fwrite("  CONSENSUS TEST FINISHED  ");
-			term->clear_color();
-			term->write("\n\n");
-			term->read_char();
-		}
-
-		return exit_code;
+		return control.launch();
 	}
 	/* warden node for debugging */
-	static int warden(int argc, char* argv[])
+	static int warden(inline_args& args)
 	{
-		VI_PANIC(argc > 1, "config path argument is required");
-		vitex::runtime scope;
-		protocol params = protocol(os::process::parse_args(argc, argv, (size_t)args_format::key_value));
+		auto& params = protocol::change();
 		params.user.nss.server = true;
-
-		auto* term = console::get();
-		term->show();
 
 		auto asset = algorithm::asset::id_of("XMR");
 		nss::server_node& synchronization = *nss::server_node::get();
@@ -1846,6 +1882,8 @@ public:
 			auto balance = coawait(server->calculate_balance(asset, link));
 			auto info = wallet.as_schema();
 			info->set("balance", var::string(balance ? balance->to_string().c_str() : "?"));
+
+			auto* term = console::get();
 			term->jwrite_line(*info);
 
 			if (false)
@@ -1865,32 +1903,14 @@ public:
 
 			coreturn_void;
 		});
-
 		int exit_code = control.launch();
 		test_case.wait();
-		if (os::process::has_debugger())
-		{
-			auto* term = console::get();
-			term->write("\n");
-			term->write_color(std_color::white, std_color::dark_green);
-			term->fwrite("  WARDEN TEST FINISHED  ");
-			term->clear_color();
-			term->write("\n\n");
-			term->read_char();
-		}
-
 		return exit_code;
 	}
 	/* simplest blockchain explorer for debugging */
-	static int explorer(int argc, char* argv[])
+	static int explorer(inline_args& args)
 	{
-		VI_PANIC(argc > 1, "config path argument is required");
-		vitex::runtime scope;
-		protocol params = protocol(os::process::parse_args(argc, argv, (size_t)args_format::key_value));
-
-		auto* term = console::get();
-		term->show();
-
+		auto term = console::get();
 		auto chain = storages::chainstate(__func__);
 		auto mempool = storages::mempoolstate(__func__);
 		while (true)
@@ -2470,29 +2490,12 @@ public:
 			continue;
 		}
 
-		if (os::process::has_debugger())
-		{
-			auto* term = console::get();
-			term->write("\n");
-			term->write_color(std_color::white, std_color::dark_green);
-			term->fwrite("  EXPLORER TEST FINISHED  ");
-			term->clear_color();
-			term->write("\n\n");
-			term->read_char();
-		}
-
 		return 0;
 	}
 	/* blockchain derived from partial coverage test with 1920 additional blocks filled with configurable entropy transactions (non-zero balance accounts, valid regtest chain, entropy 0 - low entropy, entropy 1 - medium entropy, entropy 2 - high entropy) */
-	static int benchmark(int argc, char* argv[], uint8_t entropy)
+	static int benchmark(inline_args& args)
 	{
-		VI_PANIC(argc > 1, "config path argument is required");
-		vitex::runtime scope;
-		protocol params = protocol(os::process::parse_args(argc, argv, (size_t)args_format::key_value));
-
 		auto* term = console::get();
-		term->show();
-
 		auto* queue = schedule::get();
 		queue->start(schedule::desc());
 
@@ -2531,7 +2534,8 @@ public:
 		gas_transaction.set_to(algorithm::encoding::to_subaddress(gas_wallet.public_key_hash), 0.1);
 		VI_PANIC(gas_transaction.sign(user1.secret_key, user1_nonce, decimal::zero()), "transfer not signed");
 
-		if (entropy == 0)
+		auto entropy = from_string<uint8_t>("test-entropy").expect("must provide a \"test-entropy\" flag (number in [1, 2, 3])");
+		if (entropy == 1)
 		{
 			const decimal outgoing_account_balance = starting_account_balance / decimal(block_count * (transaction_count + 64));
 			const decimal incoming_quantity = starting_account_balance;
@@ -2575,7 +2579,7 @@ public:
 				transactions = std::move(next_transactions.get());
 			}
 		}
-		else if (entropy == 1)
+		else if (entropy == 2)
 		{
 			const size_t sender_count = 16;
 			const size_t receiver_count = 32;
@@ -2643,7 +2647,7 @@ public:
 				transactions = std::move(next_transactions.get());
 			}
 		}
-		else
+		else if (entropy == 3)
 		{
 			const size_t sender_count = transaction_count;
 			const decimal outgoing_account_balance = starting_account_balance / decimal(block_count * (transaction_count + 64) * sender_count);
@@ -2709,29 +2713,11 @@ public:
 		}
 
 		queue->stop();
-		if (os::process::has_debugger())
-		{
-			auto* term = console::get();
-			term->write("\n");
-			term->write_color(std_color::white, std_color::dark_green);
-			term->fwrite("  BENCHMARK TEST FINISHED  ");
-			term->clear_color();
-			term->write("\n\n");
-			term->read_char();
-		}
-
 		return 0;
 	}
 	/* test case runner for regression testing */
-	static int regression(int argc, char* argv[])
+	static int regression(inline_args& args)
 	{
-		VI_PANIC(argc > 1, "config path argument is required");
-		vitex::runtime scope;
-		protocol params = protocol(os::process::parse_args(argc, argv, (size_t)args_format::key_value));
-
-		auto* term = console::get();
-		term->show();
-
 		size_t executions = 0;
 		vector<std::pair<std::string_view, std::function<void()>>> cases =
 		{
@@ -2755,6 +2741,8 @@ public:
 			{ "blockchain / verification", &tests::blockchain_verification },
 			{ "blockchain / gas estimation", &tests::blockchain_gas_estimation },
 		};
+
+		auto* term = console::get();
 		for (size_t i = 0; i < cases.size(); i++)
 		{
 			auto& condition = cases[i];
@@ -2772,22 +2760,42 @@ public:
 			term->clear_color();
 			term->write("\n\n");
 		}
-
-		if (os::process::has_debugger())
-		{
-			auto* term = console::get();
-			term->write_color(std_color::white, std_color::dark_green);
-			term->fwrite("  REGRESSION TEST FINISHED  ");
-			term->clear_color();
-			term->write("\n\n");
-			term->read_char();
-		}
-
 		return 0;
 	}
 };
 
 int main(int argc, char* argv[])
 {
-	return apps::consensus(argc, argv);
+	vitex::runtime scope;
+	inline_args args = os::process::parse_args(argc, argv, (size_t)args_format::key | (size_t)args_format::key_value);
+	protocol params = protocol(args);
+	auto* term = console::get();
+	term->show();
+
+	int bad_entrypoint_exit_code = 0x39cc8025;
+	int exit_code = bad_entrypoint_exit_code;
+	auto test = args.get("test");
+	if (test == "consensus")
+		exit_code = entrypoints::consensus(args);
+	else if (test == "warden")
+		exit_code = entrypoints::warden(args);
+	else if (test == "explorer")
+		exit_code = entrypoints::explorer(args);
+	else if (test == "benchmark")
+		exit_code = entrypoints::benchmark(args);
+	else if (test == "regression")
+		exit_code = entrypoints::regression(args);
+
+	VI_PANIC(exit_code != bad_entrypoint_exit_code, "must provide a \"test\" flag (string in [consensus, warden, explorer, benchmark, regression])");
+	if (os::process::has_debugger())
+	{
+		auto* term = console::get();
+		term->write("\n");
+		term->write_color(std_color::white, std_color::dark_green);
+		term->fwrite("  %s TEST PASS  ", stringify::to_upper(test).c_str());
+		term->clear_color();
+		term->write("\n\n");
+		term->read_char();
+	}
+	return exit_code;
 }

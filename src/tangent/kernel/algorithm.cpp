@@ -1212,7 +1212,7 @@ namespace tangent
 
 			uint256_t value;
 			encoding::encode_uint256(data, value);
-			return id_of(blockchain_of(value), token_of(value), checksum_of(value));
+			return value;
 		}
 		asset_id asset::id_of(const std::string_view& blockchain, const std::string_view& token, const std::string_view& contract_address)
 		{

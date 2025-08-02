@@ -247,10 +247,15 @@ namespace tangent
 		{
 			struct depository_transfer
 			{
-				ordered_set<algorithm::pubkeyhash_t> participants;
 				decimal balance = decimal::zero();
 				decimal incoming_fee = decimal::zero();
 				decimal outgoing_fee = decimal::zero();
+			};
+
+			struct depository_transfer_batch
+			{
+				ordered_set<algorithm::pubkeyhash_t> participants;
+				ordered_map<algorithm::asset_id, depository_transfer> transfers;
 			};
 
 			struct balance_transfer
@@ -261,7 +266,7 @@ namespace tangent
 
 			struct transition
 			{
-				ordered_map<algorithm::pubkeyhash_t, ordered_map<algorithm::asset_id, depository_transfer>> depositories;
+				ordered_map<algorithm::pubkeyhash_t, depository_transfer_batch> depositories;
 				ordered_map<algorithm::pubkeyhash_t, ordered_map<algorithm::asset_id, balance_transfer>> transfers;
 			};
 

@@ -991,6 +991,6 @@ int node(const inline_args& environment)
 int main(int argc, char* argv[])
 {
 	vitex::runtime scope;
-	inline_args environment = os::process::parse_args(argc, argv, (size_t)args_format::key_value);
+	inline_args environment = os::process::parse_args(argc, argv, (size_t)args_format::key | (size_t)args_format::key_value);
 	return !environment.params.empty() && environment.params.front() == "svm" ? svm(environment) : node(environment);
 }

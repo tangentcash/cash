@@ -803,12 +803,12 @@ namespace tangent
 			return message.data;
 		}
 
-		validator_participation::validator_participation(const algorithm::pubkeyhash new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::multiform(new_block_number, new_block_nonce), asset(new_asset)
+		validator_participation::validator_participation(const algorithm::pubkeyhash new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::multiform(new_block_number, new_block_nonce), asset(algorithm::asset::base_id_of(new_asset))
 		{
 			if (new_owner)
 				memcpy(owner, new_owner, sizeof(owner));
 		}
-		validator_participation::validator_participation(const algorithm::pubkeyhash new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header), asset(new_asset)
+		validator_participation::validator_participation(const algorithm::pubkeyhash new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header), asset(algorithm::asset::base_id_of(new_asset))
 		{
 			if (new_owner)
 				memcpy(owner, new_owner, sizeof(owner));
@@ -821,16 +821,30 @@ namespace tangent
 			auto* prev = (validator_participation*)prev_state;
 			if (prev)
 			{
-				if (!stake.is_nan() && prev->stake > stake)
-					return layer_exception("next stake is lower than previous stake");
+				for (auto& [token_asset, stake] : stakes)
+				{
+					auto prev_stake = prev->stakes.find(token_asset);
+					if (prev_stake != prev->stakes.end() && prev_stake->second > stake)
+						return layer_exception("next stake is lower than previous stake");
+				}
 			}
 			else if (!algorithm::asset::is_valid(asset) || !algorithm::asset::token_of(asset).empty())
 				return layer_exception("invalid asset");
 
-			if (stake.is_negative())
-				return layer_exception("ran out of stake value");
+			auto blockchain = algorithm::asset::blockchain_of(asset);
+			for (auto& [token_asset, stake] : stakes)
+			{
+				if (!algorithm::asset::is_valid(token_asset) || algorithm::asset::blockchain_of(token_asset) != blockchain)
+					return layer_exception("invalid asset");
 
-			if (stake.is_nan() && participations > 0)
+				if (!stake.is_positive())
+				{
+					if (!stake.is_zero() || !algorithm::asset::token_of(token_asset).empty())
+						return layer_exception("ran out of stake value");
+				}
+			}
+
+			if (stakes.empty() && participations > 0)
 				return layer_exception("regroup is required");
 
 			return expectation::met;
@@ -867,7 +881,12 @@ namespace tangent
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer(participations);
-			stream->write_decimal(stake);
+			stream->write_integer((uint16_t)stakes.size());
+			for (auto& [asset, stake] : stakes)
+			{
+				stream->write_integer(asset);
+				stream->write_decimal(stake);
+			}
 			return true;
 		}
 		bool validator_participation::load_data(format::ro_stream& stream)
@@ -875,8 +894,22 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &participations))
 				return false;
 
-			if (!stream.read_decimal(stream.read_type(), &stake))
+			uint16_t stakes_size;
+			if (!stream.read_integer(stream.read_type(), &stakes_size))
 				return false;
+
+			for (uint16_t i = 0; i < stakes_size; i++)
+			{
+				algorithm::asset_id asset;
+				if (!stream.read_integer(stream.read_type(), &asset))
+					return false;
+
+				decimal stake;
+				if (!stream.read_decimal(stream.read_type(), &stake))
+					return false;
+
+				stakes[asset] = std::move(stake);
+			}
 
 			return true;
 		}
@@ -887,16 +920,26 @@ namespace tangent
 		}
 		bool validator_participation::is_active() const
 		{
-			return !stake.is_nan();
+			return !stakes.empty() || participations > 0;
+		}
+		decimal validator_participation::get_ranked_stake() const
+		{
+			auto it = stakes.find(asset);
+			return it == stakes.end() ? decimal::zero() : it->second;
 		}
 		uptr<schema> validator_participation::as_schema() const
 		{
 			schema* data = ledger::multiform::as_schema().reset();
 			data->set("owner", algorithm::signing::serialize_address(owner));
 			data->set("asset", algorithm::asset::serialize(asset));
-			data->set("stake", var::decimal(stake));
 			data->set("participations", var::integer(participations));
-			data->set("active", var::boolean(is_active()));
+			schema* stakes_data = data->set("stakes", var::set::array());
+			for (auto& [asset, stake] : stakes)
+			{
+				schema* stake_data = stakes_data->push(var::set::object());
+				stake_data->set("asset", algorithm::asset::serialize(asset));
+				stake_data->set("stake", var::decimal(stake));
+			}
 			return data;
 		}
 		uint32_t validator_participation::as_type() const
@@ -912,7 +955,7 @@ namespace tangent
 			if (!is_active())
 				return 0;
 
-			auto value = stake;
+			auto value = get_ranked_stake();
 			value *= (uint64_t)std::pow<uint64_t>(10, protocol::now().message.precision);
 			return uint256_t(value.truncate(0).to_string(), 10) + 1;
 		}
@@ -938,12 +981,12 @@ namespace tangent
 			return message.data;
 		}
 
-		validator_attestation::validator_attestation(const algorithm::pubkeyhash new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::multiform(new_block_number, new_block_nonce), asset(new_asset)
+		validator_attestation::validator_attestation(const algorithm::pubkeyhash new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::multiform(new_block_number, new_block_nonce), asset(algorithm::asset::base_id_of(new_asset))
 		{
 			if (new_owner)
 				memcpy(owner, new_owner, sizeof(owner));
 		}
-		validator_attestation::validator_attestation(const algorithm::pubkeyhash new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header), asset(new_asset)
+		validator_attestation::validator_attestation(const algorithm::pubkeyhash new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header), asset(algorithm::asset::base_id_of(new_asset))
 		{
 			if (new_owner)
 				memcpy(owner, new_owner, sizeof(owner));
@@ -956,14 +999,28 @@ namespace tangent
 			auto* prev = (validator_attestation*)prev_state;
 			if (prev)
 			{
-				if (!stake.is_nan() && prev->stake > stake)
-					return layer_exception("next stake is lower than previous stake");
+				for (auto& [token_asset, stake] : stakes)
+				{
+					auto prev_stake = prev->stakes.find(token_asset);
+					if (prev_stake != prev->stakes.end() && prev_stake->second > stake)
+						return layer_exception("next stake is lower than previous stake");
+				}
 			}
 			else if (!algorithm::asset::is_valid(asset) || !algorithm::asset::token_of(asset).empty())
 				return layer_exception("invalid asset");
 
-			if (stake.is_negative())
-				return layer_exception("ran out of stake value");
+			auto blockchain = algorithm::asset::blockchain_of(asset);
+			for (auto& [token_asset, stake] : stakes)
+			{
+				if (!algorithm::asset::is_valid(token_asset) || algorithm::asset::blockchain_of(token_asset) != blockchain)
+					return layer_exception("invalid asset");
+
+				if (!stake.is_positive())
+				{
+					if (!stake.is_zero() || !algorithm::asset::token_of(token_asset).empty())
+						return layer_exception("ran out of stake value");
+				}
+			}
 
 			return expectation::met;
 		}
@@ -998,13 +1055,32 @@ namespace tangent
 		bool validator_attestation::store_data(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_decimal(stake);
+			stream->write_integer((uint16_t)stakes.size());
+			for (auto& [asset, stake] : stakes)
+			{
+				stream->write_integer(asset);
+				stream->write_decimal(stake);
+			}
 			return true;
 		}
 		bool validator_attestation::load_data(format::ro_stream& stream)
 		{
-			if (!stream.read_decimal(stream.read_type(), &stake))
+			uint16_t stakes_size;
+			if (!stream.read_integer(stream.read_type(), &stakes_size))
 				return false;
+
+			for (uint16_t i = 0; i < stakes_size; i++)
+			{
+				algorithm::asset_id asset;
+				if (!stream.read_integer(stream.read_type(), &asset))
+					return false;
+
+				decimal stake;
+				if (!stream.read_decimal(stream.read_type(), &stake))
+					return false;
+
+				stakes[asset] = std::move(stake);
+			}
 
 			return true;
 		}
@@ -1015,15 +1091,25 @@ namespace tangent
 		}
 		bool validator_attestation::is_active() const
 		{
-			return !stake.is_nan();
+			return !stakes.empty();
+		}
+		decimal validator_attestation::get_ranked_stake() const
+		{
+			auto it = stakes.find(asset);
+			return it == stakes.end() ? decimal::zero() : it->second;
 		}
 		uptr<schema> validator_attestation::as_schema() const
 		{
 			schema* data = ledger::multiform::as_schema().reset();
 			data->set("owner", algorithm::signing::serialize_address(owner));
 			data->set("asset", algorithm::asset::serialize(asset));
-			data->set("stake", var::decimal(stake));
-			data->set("active", var::boolean(is_active()));
+			schema* stakes_data = data->set("stakes", var::set::array());
+			for (auto& [asset, stake] : stakes)
+			{
+				schema* stake_data = stakes_data->push(var::set::object());
+				stake_data->set("asset", algorithm::asset::serialize(asset));
+				stake_data->set("stake", var::decimal(stake));
+			}
 			return data;
 		}
 		uint32_t validator_attestation::as_type() const
@@ -1039,7 +1125,7 @@ namespace tangent
 			if (!is_active())
 				return 0;
 
-			auto value = stake;
+			auto value = get_ranked_stake();
 			value *= (uint64_t)std::pow<uint64_t>(10, protocol::now().message.precision);
 			return uint256_t(value.truncate(0).to_string(), 10) + 1;
 		}
@@ -1089,7 +1175,7 @@ namespace tangent
 			auto* prev = (depository_reward*)prev_state;
 			if (!prev)
 			{
-				if (!algorithm::asset::is_valid(asset) || !algorithm::asset::token_of(asset).empty())
+				if (!algorithm::asset::is_valid(asset))
 					return layer_exception("invalid asset");
 
 				return expectation::met;
@@ -1217,7 +1303,7 @@ namespace tangent
 			auto* prev = (depository_balance*)prev_state;
 			if (!prev)
 			{
-				if (!algorithm::asset::is_valid(asset) || !algorithm::asset::token_of(asset).empty())
+				if (!algorithm::asset::is_valid(asset))
 					return layer_exception("invalid asset");
 			}
 			else
@@ -1318,12 +1404,12 @@ namespace tangent
 			return message.data;
 		}
 
-		depository_policy::depository_policy(const algorithm::pubkeyhash new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::multiform(new_block_number, new_block_nonce), asset(new_asset)
+		depository_policy::depository_policy(const algorithm::pubkeyhash new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::multiform(new_block_number, new_block_nonce), asset(algorithm::asset::base_id_of(new_asset))
 		{
 			if (new_owner)
 				memcpy(owner, new_owner, sizeof(owner));
 		}
-		depository_policy::depository_policy(const algorithm::pubkeyhash new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header), asset(new_asset)
+		depository_policy::depository_policy(const algorithm::pubkeyhash new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header), asset(algorithm::asset::base_id_of(new_asset))
 		{
 			if (new_owner)
 				memcpy(owner, new_owner, sizeof(owner));
@@ -1463,14 +1549,14 @@ namespace tangent
 			return message.data;
 		}
 
-		depository_account::depository_account(const algorithm::pubkeyhash new_manager, const algorithm::asset_id& new_asset, const algorithm::pubkeyhash new_owner, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::multiform(new_block_number, new_block_nonce), asset(new_asset)
+		depository_account::depository_account(const algorithm::pubkeyhash new_manager, const algorithm::asset_id& new_asset, const algorithm::pubkeyhash new_owner, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::multiform(new_block_number, new_block_nonce), asset(algorithm::asset::base_id_of(new_asset))
 		{
 			if (new_manager)
 				memcpy(manager, new_manager, sizeof(manager));
 			if (new_owner)
 				memcpy(owner, new_owner, sizeof(owner));
 		}
-		depository_account::depository_account(const algorithm::pubkeyhash new_manager, const algorithm::asset_id& new_asset, const algorithm::pubkeyhash new_owner, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header), asset(new_asset)
+		depository_account::depository_account(const algorithm::pubkeyhash new_manager, const algorithm::asset_id& new_asset, const algorithm::pubkeyhash new_owner, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header), asset(algorithm::asset::base_id_of(new_asset))
 		{
 			if (new_manager)
 				memcpy(manager, new_manager, sizeof(manager));
@@ -1483,7 +1569,7 @@ namespace tangent
 				return layer_exception("invalid state owner");
 
 			auto* prev = (depository_account*)prev_state;
-			if (!prev && !algorithm::asset::is_valid(asset))
+			if (!prev && (!algorithm::asset::is_valid(asset) || !algorithm::asset::token_of(asset).empty()))
 				return layer_exception("invalid asset");
 
 			algorithm::composition::cpubkey null = { 0 };
@@ -1810,12 +1896,12 @@ namespace tangent
 			return message.data;
 		}
 
-		witness_account::witness_account(const algorithm::pubkeyhash new_owner, const algorithm::asset_id& new_asset, const address_map& new_addresses, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::multiform(new_block_number, new_block_nonce), asset(new_asset), addresses(new_addresses)
+		witness_account::witness_account(const algorithm::pubkeyhash new_owner, const algorithm::asset_id& new_asset, const address_map& new_addresses, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::multiform(new_block_number, new_block_nonce), asset(algorithm::asset::base_id_of(new_asset)), addresses(new_addresses)
 		{
 			if (new_owner)
 				memcpy(owner, new_owner, sizeof(owner));
 		}
-		witness_account::witness_account(const algorithm::pubkeyhash new_owner, const algorithm::asset_id& new_asset, const address_map& new_addresses, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header), asset(new_asset), addresses(new_addresses)
+		witness_account::witness_account(const algorithm::pubkeyhash new_owner, const algorithm::asset_id& new_asset, const address_map& new_addresses, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header), asset(algorithm::asset::base_id_of(new_asset)), addresses(new_addresses)
 		{
 			if (new_owner)
 				memcpy(owner, new_owner, sizeof(owner));
@@ -1826,7 +1912,7 @@ namespace tangent
 				return layer_exception("invalid state owner");
 
 			auto* prev = (witness_account*)prev_state;
-			if (!prev && !algorithm::asset::is_valid(asset))
+			if (!prev && (!algorithm::asset::is_valid(asset) || !algorithm::asset::token_of(asset).empty()))
 				return layer_exception("invalid asset");
 
 			if (addresses.empty())
@@ -2022,16 +2108,16 @@ namespace tangent
 			return message.data;
 		}
 
-		witness_transaction::witness_transaction(const algorithm::asset_id& new_asset, const std::string_view& new_transaction_id, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::uniform(new_block_number, new_block_nonce), asset(new_asset), transaction_id(new_transaction_id)
+		witness_transaction::witness_transaction(const algorithm::asset_id& new_asset, const std::string_view& new_transaction_id, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::uniform(new_block_number, new_block_nonce), asset(algorithm::asset::base_id_of(new_asset)), transaction_id(new_transaction_id)
 		{
 		}
-		witness_transaction::witness_transaction(const algorithm::asset_id& new_asset, const std::string_view& new_transaction_id, const ledger::block_header* new_block_header) : ledger::uniform(new_block_header), asset(new_asset), transaction_id(new_transaction_id)
+		witness_transaction::witness_transaction(const algorithm::asset_id& new_asset, const std::string_view& new_transaction_id, const ledger::block_header* new_block_header) : ledger::uniform(new_block_header), asset(algorithm::asset::base_id_of(new_asset)), transaction_id(new_transaction_id)
 		{
 		}
 		expects_lr<void> witness_transaction::transition(const ledger::transaction_context* context, const ledger::state* prev_state)
 		{
 			auto* prev = (witness_account*)prev_state;
-			if (!prev && !algorithm::asset::is_valid(asset))
+			if (!prev && (!algorithm::asset::is_valid(asset) || !algorithm::asset::token_of(asset).empty()))
 				return layer_exception("invalid asset");
 
 			if (transaction_id.empty())
