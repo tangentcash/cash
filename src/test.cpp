@@ -2462,7 +2462,7 @@ public:
 		auto* queue = schedule::get();
 		queue->start(schedule::desc());
 
-		const size_t block_count = 1920;
+		const size_t block_count = 10;
 		const size_t transaction_count = (size_t)ledger::block::get_transaction_limit();
 		const decimal starting_account_balance = decimal(500).truncate(12);
 		auto checkpoint = [&](vector<uptr<ledger::transaction>>&& transactions, vector<tests::account>& users)
@@ -2497,7 +2497,7 @@ public:
 		gas_transaction.set_to(algorithm::encoding::to_subaddress(gas_wallet.public_key_hash), 0.1);
 		VI_PANIC(gas_transaction.sign(user1.secret_key, user1_nonce, decimal::zero()), "transfer not signed");
 
-		auto entropy = from_string<uint8_t>("test-entropy").expect("must provide a \"test-entropy\" flag (number in [1, 2, 3])");
+		auto entropy = from_string<uint8_t>(args.get("test-entropy")).expect("must provide a \"test-entropy\" flag (number in [1, 2, 3])");
 		if (entropy == 1)
 		{
 			const decimal outgoing_account_balance = starting_account_balance / decimal(block_count * (transaction_count + 64));
@@ -2673,6 +2673,13 @@ public:
 				checkpoint(std::move(transactions), users);
 				transactions = std::move(next_transactions.get());
 			}
+		}
+
+		auto tip_block = chain.get_latest_block();
+		if (tip_block)
+		{
+			auto block_message = tip_block->as_message();
+			term->fwrite_line("benchmark block size: ~%" PRIu64 " bytes", (uint64_t)(block_message.data.size() + 32));
 		}
 
 		queue->stop();

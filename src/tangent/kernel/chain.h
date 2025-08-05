@@ -261,7 +261,7 @@ namespace tangent
             uint64_t participation_max_per_account = 16;
             uint64_t attestation_max_per_transaction = 32;
             uint64_t consensus_proof_time = 6000;
-            uint64_t consensus_adjustment_time = 3600000;
+            uint64_t consensus_adjustment_time = 60000;
             uint64_t consensus_penalty_point_time = 600000;
             uint64_t transaction_throughput = 210;
             uint64_t parallel_delegation_limit = 32;
@@ -276,8 +276,8 @@ namespace tangent
             double attestation_consensus_threshold = 0.66;
             double attestation_fee_rate = 0.30;
             double depository_reward_max_increase = 0.05;
-            double consensus_difficulty_max_increase = 0.25;
-            double consensus_difficulty_max_decrease = 0.75;
+            double consensus_difficulty_max_increase = 2.00;
+            double consensus_difficulty_max_decrease = 0.80;
             double consensus_difficulty_bump_per_priority = 1.3625;
             double consensus_difficulty_bump_outside_priority = 90.0;
         } policy;

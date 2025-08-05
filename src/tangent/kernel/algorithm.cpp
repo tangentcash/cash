@@ -213,29 +213,21 @@ namespace tangent
 
 			parameters new_alg = prev_alg;
 			decimal adjustment = decimal(time_delta).truncate(protocol::now().message.precision) / prev_time;
-			if (adjustment > 1.0 + policy.consensus_difficulty_max_increase)
-				adjustment = 1.0 + policy.consensus_difficulty_max_increase;
+			if (adjustment > policy.consensus_difficulty_max_increase)
+				adjustment = policy.consensus_difficulty_max_increase;
 			else if (adjustment < policy.consensus_difficulty_max_decrease)
 				adjustment = policy.consensus_difficulty_max_decrease;
 
-			uint64_t pow_offset = (decimal(new_alg.ops) * adjustment).to_uint64();
-			if (new_alg.ops + pow_offset < new_alg.ops)
-				new_alg.ops = std::numeric_limits<uint64_t>::max();
-			else
-				new_alg.ops += pow_offset;
-
-			if (new_alg.ops < default_alg.ops)
-				new_alg.ops = default_alg.ops;
-
-			if (new_alg.bits != default_alg.bits)
-				new_alg.bits = default_alg.bits;
-
-			return (new_alg.difficulty() < default_alg.difficulty() ? default_alg : new_alg);
+			uint64_t ops_change = (decimal(new_alg.ops) * adjustment).to_uint64();
+			new_alg.bits = default_alg.bits;
+			new_alg.ops = std::max(new_alg.ops + ops_change >= new_alg.ops ? new_alg.ops + ops_change : std::numeric_limits<uint64_t>::max(), default_alg.ops);
+			return new_alg;
 		}
 		wesolowski::parameters wesolowski::scale(const parameters& alg, double multiplier)
 		{
 			parameters new_alg = alg;
-			new_alg.ops = std::min(std::max((decimal(new_alg.ops) * decimal(multiplier)).to_uint64(), new_alg.ops), protocol::now().policy.wesolowski_ops);
+			if (multiplier > 1.0)
+				new_alg.ops = std::max((decimal(new_alg.ops) * decimal(multiplier)).to_uint64(), std::max(new_alg.ops, protocol::now().policy.wesolowski_ops));
 			return new_alg;
 		}
 		string wesolowski::evaluate(const parameters& alg, const std::string_view& message)
