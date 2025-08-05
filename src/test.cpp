@@ -122,27 +122,6 @@ public:
 			VI_PANIC(transfer_asset->sign(user1.secret_key, user1_nonce++, decimal::zero()), "transfer not signed");
 			transactions.push_back(transfer_asset);
 		}
-		static void account_refuel(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
-		{
-			auto& [user1, user1_nonce] = users[0];
-			auto& [user2, user2_nonce] = users[1];
-			auto context = ledger::transaction_context();
-			auto user1_production = context.get_validator_production(user1.public_key_hash).or_else(states::validator_production(user1.public_key_hash, nullptr));
-			auto user2_production = context.get_validator_production(user2.public_key_hash).or_else(states::validator_production(user2.public_key_hash, nullptr));
-			auto* refuel = memory::init<transactions::refuel>();
-			refuel->set_asset("ETH");
-			if (user1_production.gas > user2_production.gas)
-			{
-				refuel->set_to(algorithm::encoding::to_subaddress(user2.public_key_hash), std::max<uint256_t>(1, user1_production.gas / 8));
-				VI_PANIC(refuel->sign(user1.secret_key, user1_nonce++, decimal::zero()), "refuel not signed");
-			}
-			else
-			{
-				refuel->set_to(algorithm::encoding::to_subaddress(user1.public_key_hash), std::max<uint256_t>(1, user2_production.gas / 8));
-				VI_PANIC(refuel->sign(user2.secret_key, user2_nonce++, decimal::zero()), "refuel not signed");
-			}
-			transactions.push_back(refuel);
-		}
 		static void account_transaction_rollup(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
 		{
 			auto& [user1, user1_nonce] = users[0];
@@ -796,7 +775,6 @@ public:
 		new_serialization_comparison<states::witness_account>(*data, owner, asset, address_map(), block_number++, block_nonce++);
 		new_serialization_comparison<states::witness_transaction>(*data, asset, std::string_view(), block_number++, block_nonce++);
 		new_serialization_comparison<transactions::transfer>(*data);
-		new_serialization_comparison<transactions::refuel>(*data);
 		new_serialization_comparison<transactions::upgrade>(*data);
 		new_serialization_comparison<transactions::call>(*data);
 		new_serialization_comparison<transactions::rollup>(*data);
@@ -815,48 +793,39 @@ public:
 		auto* term = console::get();
 		term->jwrite_line(*data);
 	}
-	/* prove and verify nakamoto POW */
-	static void cryptography_nakamoto()
-	{
-		auto* term = console::get();
-		term->capture_time();
-
-		auto message = "Hello, world!";
-		uint256_t target = uint256_t(1) << uint256_t(244);
-		uint256_t nonce = 0;
-		while (true)
-		{
-			auto solution = algorithm::nakamoto::evaluate(nonce, message);
-			if (algorithm::nakamoto::verify(nonce, message, target, solution))
-			{
-				uptr<schema> data = var::set::object();
-				data->set("solution", algorithm::encoding::serialize_uint256(solution));
-				data->set("nonce", algorithm::encoding::serialize_uint256(nonce));
-				data->set("milliseconds", var::set::number(term->get_captured_time()));
-
-				term->jwrite_line(*data);
-				break;
-			}
-			else
-				++nonce;
-		}
-	}
-	/* prove and verify wesolowski VDF signature */
+	/* prove and verify multiple (nearly) linearly more complex wesolowski vdf signatures */
 	static void cryptography_wesolowski()
 	{
 		auto* term = console::get();
-		term->capture_time();
-
 		auto message = "Hello, world!";
-		auto alg = algorithm::wesolowski::parameters(); alg.pow *= 12;
-		auto signature = algorithm::wesolowski::evaluate(alg, message);
-		bool proven = algorithm::wesolowski::verify(alg, message, signature);
-		uptr<schema> data = var::set::object();
-		data->set("solution", var::string(format::util::encode_0xhex(signature)));
-		data->set("milliseconds", var::set::number(term->get_captured_time()));
+		auto data = uptr<schema>(var::set::array());
+		auto prove_and_verify = [&](uint64_t ops)
+		{
+			auto alg = algorithm::wesolowski::parameters();
+			alg.ops = ops;
 
+			auto evaluation_time_point = date_time();
+			auto proof = algorithm::wesolowski::evaluate(alg, message);
+
+			auto evaluation_time = evaluation_time_point.elapsed();
+			auto verification_time_point = date_time();
+			bool proven = algorithm::wesolowski::verify(alg, message, proof);
+
+			auto verification_time = verification_time_point.elapsed();
+			auto* target = data->push(var::set::object());
+			target->set("proof", algorithm::wesolowski::serialize(alg, proof));
+			target->set("evaluation_time", var::integer(evaluation_time.milliseconds()));
+			target->set("verification_time", var::integer(verification_time.milliseconds()));
+			if (!proven)
+				term->jwrite_line(*data);
+			VI_PANIC(proven, "wesolowki proof is not valid");
+		};
+
+		uint64_t baseline = algorithm::wesolowski::parameters().ops;
+		prove_and_verify(baseline);
+		for (uint64_t i = 3; i < 7; i++)
+			prove_and_verify(baseline * (2ll << i));
 		term->jwrite_line(*data);
-		VI_PANIC(proven, "wesolowki proof is not valid");
 	}
 	/* cryptographic signatures */
 	static void cryptography_signatures()
@@ -1544,17 +1513,16 @@ public:
 			TEST_BLOCK(&generators::account_transfer_stage_1, "0x6bf38e44b95ce4046c0705ed799e4a2b5963636be7d50733bca5b1858a1f0d59", 7);
 			TEST_BLOCK(&generators::account_transfer_stage_2, "0x5264b00fc186d77c564cce5b570eab768b461e1720bcc0f087340745e53fe731", 8);
 			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), users[2].wallet.get_address(), 0.05), "0x7e41b5bf2f4a9258970247f298bcc7690f963c21a5668f8aa4b687559c7ce1bc", 9);
-			TEST_BLOCK(&generators::account_refuel, "0xe193f9c4c4915cfb18482864959d54cd719eb9d35630a62adae900beacdedfd6", 10);
-			TEST_BLOCK(&generators::account_upgrade, "0xd2b8f1023f2c1fe3d57b23a6bccd4ba45e6ab64bd50d234e3c0d822510a21eb1", 11);
-			TEST_BLOCK(&generators::account_call, "0xbaf4619277d9d5946d98a84a7e45abae98b5c0488791fb12c127251e63100343", 12);
-			TEST_BLOCK(&generators::account_transaction_rollup, "0x416378ed71b5ec6f83d15f5b8c90df2a3e8f696663917e815b1cb98d9ca209e4", 13);
-			TEST_BLOCK(std::bind(&generators::validator_enable_validator, std::placeholders::_1, std::placeholders::_2, 2, true, true, true), "0x26eac84e6a8a160ea2c72b037ed7d08f1db08b383ec1ee0da30233d600ce1136", 14);
-			TEST_BLOCK(&generators::depository_regrouping, "0x6231fc2bfd3dba6397f5a4a799ba775e825e23c710a594a2ef6389e09a35cb0d", 15);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_1, "0xac04f944f99e6834c5ec20169418b47172c39dd81c077ab93038eaa255e574c7", 19);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0xb5ce2044d9fd5970321652f5cff8ccade59f850dedcb80b3baeca3f83b8bc987", 21);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0xae9585bbe6fac923a33471acbb8e9d5613cd48f96ec99a3b7d5a97f5b98b733a", 23);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_4, "0x79bf519509e769cc830ffadabc935b13f927385759a865a5f419bf0dd8ed9ea7", 25);
-			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2, true, true, false), "0x1dc2c8116f7e50864b2209c7a8ba5a38a69123c259a3823233ccd203081c30f4", 27);
+			TEST_BLOCK(&generators::account_upgrade, "0xca30023b8a863a154d99562f3f0b592b38dcaaaf1f82fc1ef1a4905c0565c0fd", 10);
+			TEST_BLOCK(&generators::account_call, "0xe9d8fd5964cf2bb1c204a3ce9c9cb92874c2997f39246bb5a09d3bf7d284a94e", 11);
+			TEST_BLOCK(&generators::account_transaction_rollup, "0xb5ec6b73d4c2429771b45f36aac99ceee32eff8b91758bcdce45d4f466d4739a", 12);
+			TEST_BLOCK(std::bind(&generators::validator_enable_validator, std::placeholders::_1, std::placeholders::_2, 2, true, true, true), "0x5053a171396e851a1466ec65af53ce64e18ea4c3b1e96a7988cb2a8bf232fc25", 13);
+			TEST_BLOCK(&generators::depository_regrouping, "0x14a81b8f388564017840ad9c8fbc1b87d864e4a9ffc618e15b843b19c972e3d7", 14);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_1, "0xf3517bc13f909aacca342754c26e3625aeb740cec30bbca3ca0c672a3a8cbfc1", 18);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0xea3fc82c35e1379b9310fdd64f0756f1f24158fd334f862a092d766ae812d1cb", 20);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0x80aab8f1e9499d2e9e38355198887afa93ffc97c0b6db30010dc602700c386e3", 22);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_4, "0xdff835b9b6fe393b029b687db872ac3fdead67a062e97985ee436b2f3e8003ce", 24);
+			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2, true, true, false), "0xa3c99715b5e9138d3570bdf19938de85dcda8db84fa099c9e70abb9f90ed3f44", 26);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else
@@ -1742,7 +1710,7 @@ public:
 		uint64_t priority = std::numeric_limits<uint64_t>::max();
 		for (auto& user : users)
 		{
-			priority = environment.priority(user.wallet.public_key_hash, user.wallet.secret_key).or_else(std::numeric_limits<uint64_t>::max());
+			priority = environment.configure_priority_from_validator(user.wallet.public_key_hash, user.wallet.secret_key).or_else(std::numeric_limits<uint64_t>::max());
 			if (!priority)
 				break;
 		}
@@ -1761,18 +1729,13 @@ public:
 			}
 		}
 
-		if (!environment.apply(std::move(transactions)))
+		if (!environment.try_include_transactions(std::move(transactions)))
 			VI_PANIC(false, "empty block not allowed");
 
-		string errors;
-		auto evaluation = environment.evaluate(&errors);
-		if (!errors.empty())
-			VI_PANIC(false, "block evaluation error: %s", errors.c_str());
-
-		auto proposal = std::move(evaluation.expect("block evaluation failed"));
-		environment.solve(proposal.block).expect("block solution failed");
+		auto proposal = environment.evaluate_block(nullptr).expect("block evaluation failed");
+		environment.solve_evaluated_block(proposal.block).expect("block solution failed");
 		if (results != nullptr)
-			environment.verify(proposal.block, &proposal.state).expect("block verification failed");
+			environment.verify_solved_block(proposal.block, &proposal.state).expect("block verification failed");
 
 		transactions = vector<uptr<ledger::transaction>>();
 		proposal.checkpoint().expect("block checkpoint failed");
@@ -2724,8 +2687,7 @@ public:
 			{ "generic / integer serialization", &tests::generic_integer_serialization },
 			{ "generic / integer conversion", &tests::generic_integer_conversion },
 			{ "generic / message serialization", &tests::generic_message_serialization },
-			{ "cryptography / nakamoto pow 240bits", &tests::cryptography_nakamoto },
-			{ "cryptography / wesolowski pow 90x", &tests::cryptography_wesolowski },
+			{ "cryptography / wesolowski 2048bit", &tests::cryptography_wesolowski },
 			{ "cryptography / signatures", &tests::cryptography_signatures },
 			{ "cryptography / wallet", &tests::cryptography_wallet },
 			{ "cryptography / wallet encryption", &tests::cryptography_wallet_encryption },
@@ -2745,14 +2707,14 @@ public:
 		auto* term = console::get();
 		for (size_t i = 0; i < cases.size(); i++)
 		{
-			auto& condition = cases[i];
+			auto& [name, function] = cases[i];
 			term->write_color(std_color::black, std_color::yellow);
-			term->fwrite("  ===>  %s  <===  ", condition.first.data());
+			term->fwrite("  ===>  %s  <===  ", name.data());
 			term->clear_color();
 			term->write_char('\n');
 			term->capture_time();
 
-			condition.second();
+			function();
 
 			double time = term->get_captured_time();
 			term->write_color(std_color::white, std_color::dark_green);

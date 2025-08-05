@@ -151,158 +151,6 @@ namespace tangent
 			return "transfer";
 		}
 
-		expects_lr<void> refuel::validate(uint64_t block_number) const
-		{
-			if (to.empty())
-				return layer_exception("no refuels");
-
-			for (auto& [owner, value] : to)
-			{
-				if (!value)
-					return layer_exception("invalid value");
-			}
-
-			return ledger::transaction::validate(block_number);
-		}
-		expects_lr<void> refuel::execute(ledger::transaction_context* context) const
-		{
-			auto validation = transaction::execute(context);
-			if (!validation)
-				return validation.error();
-
-			uint256_t total_value = 0;
-			for (auto& [owner, value] : to)
-				total_value += value;
-
-			auto burn = context->apply_validator_production_transfer(context->receipt.from, 0, total_value);
-			if (!burn)
-				return burn.error();
-
-			for (auto& [owner, value] : to)
-			{
-				if (memcmp(context->receipt.from, owner.data, sizeof(algorithm::pubkeyhash)) == 0)
-					return layer_exception("invalid refuel");
-
-				auto mint = context->apply_validator_production_transfer(owner.data, value, 0);
-				if (!mint)
-					return mint.error();
-			}
-
-			return expectation::met;
-		}
-		bool refuel::store_body(format::wo_stream* stream) const
-		{
-			VI_ASSERT(stream != nullptr, "stream should be set");
-			algorithm::pubkeyhash null = { 0 };
-			if (to.size() > 1)
-			{
-				stream->write_integer((uint16_t)to.size());
-				for (auto& [owner, value] : to)
-				{
-					stream->write_string(owner.optimized_view());
-					stream->write_integer(value);
-				}
-			}
-			else if (!to.empty())
-			{
-				auto& [owner, value] = to.front();
-				stream->write_string(owner.optimized_view());
-				stream->write_integer(value);
-			}
-
-			return true;
-		}
-		bool refuel::load_body(format::ro_stream& stream)
-		{
-			auto type = stream.read_type();
-			if (format::util::is_string(type))
-			{
-				string owner_assembly;
-				algorithm::subpubkeyhash_t owner;
-				if (!stream.read_string(type, &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner.data, sizeof(owner.data)))
-					return false;
-
-				uint256_t value;
-				if (!stream.read_integer(stream.read_type(), &value))
-					return false;
-
-				to.clear();
-				to.push_back(std::make_pair(owner, std::move(value)));
-			}
-			else if (type != format::viewable::invalid)
-			{
-				uint16_t refuels_size;
-				if (!stream.read_integer(type, &refuels_size))
-					return false;
-
-				to.clear();
-				to.reserve(refuels_size);
-				for (uint16_t i = 0; i < refuels_size; i++)
-				{
-					string owner_assembly;
-					algorithm::subpubkeyhash_t owner;
-					if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner.data, sizeof(owner.data)))
-						return false;
-
-					uint256_t value;
-					if (!stream.read_integer(stream.read_type(), &value))
-						return false;
-
-					to.push_back(std::make_pair(owner, std::move(value)));
-				}
-			}
-
-			return true;
-		}
-		bool refuel::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
-		{
-			for (auto& [owner, value] : to)
-				parties.insert(algorithm::pubkeyhash_t(owner.data));
-			return true;
-		}
-		void refuel::set_to(const algorithm::subpubkeyhash_t& new_to, const uint256_t& new_value)
-		{
-			to.push_back(std::make_pair(new_to, new_value));
-		}
-		bool refuel::is_to_null() const
-		{
-			for (auto& [owner, value] : to)
-			{
-				if (owner.empty())
-					return true;
-			}
-			return to.empty();
-		}
-		uptr<schema> refuel::as_schema() const
-		{
-			schema* data = ledger::transaction::as_schema().reset();
-			auto* refuels_data = data->set("to", var::set::array());
-			for (auto& [owner, value] : to)
-			{
-				auto* refuel_data = refuels_data->push(var::set::object());
-				refuel_data->set("to", algorithm::signing::serialize_subaddress(owner.data));
-				refuel_data->set("value", algorithm::encoding::serialize_uint256(value));
-			}
-			return data;
-		}
-		uint32_t refuel::as_type() const
-		{
-			return as_instance_type();
-		}
-		std::string_view refuel::as_typename() const
-		{
-			return as_instance_typename();
-		}
-		uint32_t refuel::as_instance_type()
-		{
-			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
-			return hash;
-		}
-		std::string_view refuel::as_instance_typename()
-		{
-			return "refuel";
-		}
-
 		expects_lr<void> upgrade::validate(uint64_t block_number) const
 		{
 			auto type = get_data_type();
@@ -3703,8 +3551,6 @@ namespace tangent
 		{
 			if (hash == transfer::as_instance_type())
 				return memory::init<transfer>();
-			else if (hash == refuel::as_instance_type())
-				return memory::init<refuel>();
 			else if (hash == upgrade::as_instance_type())
 				return memory::init<upgrade>();
 			else if (hash == call::as_instance_type())
@@ -3740,8 +3586,6 @@ namespace tangent
 			uint32_t hash = base->as_type();
 			if (hash == transfer::as_instance_type())
 				return memory::init<transfer>(*(const transfer*)base);
-			else if (hash == refuel::as_instance_type())
-				return memory::init<refuel>(*(const refuel*)base);
 			else if (hash == upgrade::as_instance_type())
 				return memory::init<upgrade>(*(const upgrade*)base);
 			else if (hash == call::as_instance_type())

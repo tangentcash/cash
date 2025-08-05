@@ -3268,14 +3268,7 @@ namespace tangent
 			storage->set("transaction_to_rollup_index", var::boolean(protocol::now().user.storage.transaction_to_rollup_index));
 			storage->set("full_sync_available", var::boolean(!protocol::now().user.storage.prune_aggressively));
 
-			if (validator->pending.hash > 0 && validator->pending.evaluation)
-			{
-				schema* tip = data->set("tip", var::object());
-				tip->set("hash", var::string(algorithm::encoding::encode_0xhex256(validator->pending.hash)));
-				tip->set("number", algorithm::encoding::serialize_uint256(validator->pending.evaluation->block.number));
-				tip->set("sync", var::number(validator->get_sync_progress(validator->pending.hash, block_header ? block_header->number : 0)));
-			}
-			else if (block_header)
+			if (block_header)
 			{
 				auto block_hash = block_header->as_hash();
 				schema* tip = data->set("tip", var::object());
@@ -3330,7 +3323,7 @@ namespace tangent
 			if (!validator)
 				return server_response().error(error_codes::bad_request, "validator node disabled");
 
-			validator->accept_mempool();
+			validator->accept_mempool(0);
 			return server_response().success(var::set::null());
 		}
 	}

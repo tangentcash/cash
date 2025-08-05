@@ -424,7 +424,6 @@ namespace tangent
 				nss::server_node::get()->add_transaction_callback(node_id, nullptr);
 			}
 			clear_pending_fork(nullptr);
-			clear_pending_tip();
 		}
 		expects_promise_rt<format::variables> server_node::call_responsive(receive_function function, format::variables&& args, uint64_t timeout_ms, response_callback&& callback)
 		{
@@ -751,7 +750,7 @@ namespace tangent
 			if (multicalls > 0 && protocol::now().user.p2p.logging)
 				VI_DEBUG("transaction %s %.*s broadcasted to %i nodes", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), (int)multicalls);
 
-			accept_mempool();
+			accept_mempool(0);
 			return expectation::met;
 		}
 		expects_lr<void> server_node::accept_validator_wallet(option<ledger::wallet>&& wallet)
@@ -1165,38 +1164,6 @@ namespace tangent
 			if (socket != nullptr)
 				socket->shutdown(true);
 		}
-		void server_node::clear_pending_tip()
-		{
-			pending.hash = 0;
-			pending.evaluation = optional::none;
-			if (pending.timeout != INVALID_TASK_ID)
-			{
-				schedule::get()->clear_timeout(pending.timeout);
-				pending.timeout = INVALID_TASK_ID;
-			}
-		}
-		void server_node::enqueue_pending_tip(const uint256_t& candidate_hash, ledger::block_evaluation&& candidate)
-		{
-			clear_pending_tip();
-			pending.evaluation = std::move(candidate);
-			pending.hash = candidate_hash;
-			pending.timeout = schedule::get()->set_timeout(protocol::now().policy.consensus_proof_time, std::bind(&server_node::accept_pending_tip, this));
-		}
-		void server_node::accept_pending_tip()
-		{
-			umutex<std::recursive_mutex> unique(sync.block);
-			if (pending.evaluation)
-			{
-				auto chain = storages::chainstate(__func__);
-				auto tip_block = chain.get_latest_block_header();
-				if (!tip_block || *tip_block < pending.evaluation->block)
-				{
-					if (accept_block_candidate(*pending.evaluation, pending.hash, 0))
-						accept_dispatchpool(pending.evaluation->block);
-				}
-			}
-			clear_pending_tip();
-		}
 		void server_node::clear_pending_fork(relay* state)
 		{
 			auto* queue = schedule::get();
@@ -1256,26 +1223,40 @@ namespace tangent
 				clear_mempool(true);
 			});
 		}
-		bool server_node::accept_mempool()
+		bool server_node::accept_mempool(uint64_t timeout_ms)
 		{
 			if (!validator.node.services.has_production || is_syncing())
 				return false;
 
-			return control_sys.timeout_if_none("accept_mempool", 0, [this]()
+			if (mempool.waiting)
 			{
-				auto priority = environment.priority(validator.wallet.public_key_hash, validator.wallet.secret_key);
-				if (!priority)
+				mempool.waiting = false;
+				control_sys.clear_timeout("accept_mempool");
+			}
+
+			return control_sys.timeout_if_none("accept_mempool", timeout_ms, [this]()
+			{
+				auto chain = storages::chainstate(__func__);
+				auto tip = chain.get_latest_block_header();
+				auto priority = environment.configure_priority_from_validator(validator.wallet.public_key_hash, validator.wallet.secret_key, tip.address());
+				auto position = priority.or_else(protocol::now().policy.production_max_per_block);
+				auto baseline_solution_time = tip->get_slot_proof_duration_average();
+				auto current_node_solution_time = (uint64_t)((double)baseline_solution_time * algorithm::wesolowski::adjustment_scaling(position));
+				if (position > 0 && tip)
 				{
-					auto chain = storages::chainstate(__func__);
-					auto tip = chain.get_latest_block_header();
-					if (tip)
+					auto current_solution_time = (int64_t)protocol::now().time.now() - (int64_t)tip->generation_time;
+					for (uint64_t i = 0; i <= position; i++)
 					{
-						int64_t delta = (int64_t)protocol::now().time.now() - tip->time;
-						if (delta < 0 || (uint64_t)delta < protocol::now().policy.consensus_recovery_time)
+						auto other_node_solution_time = (int64_t)((double)baseline_solution_time * algorithm::wesolowski::adjustment_scaling(i));
+						if (current_solution_time < other_node_solution_time)
 						{
+							mempool.waiting = true;
 							control_sys.clear_timeout("accept_mempool");
+							accept_mempool(other_node_solution_time - current_solution_time);
 							return;
 						}
+						else if (i < position && protocol::now().user.p2p.logging)
+							VI_WARN("%" PRIu64 " mempool block producer%s failing (%" PRIu64 " until stepping in)", i + 1, i > 0 ? "s are" : " is", position - (i + 1));		
 					}
 				}
 
@@ -1284,7 +1265,7 @@ namespace tangent
 				while (is_active())
 				{
 					auto candidates = mempool.get_transactions(offset, count);
-					offset += candidates ? environment.apply(std::move(*candidates)) : 0;
+					offset += candidates ? environment.try_include_transactions(std::move(*candidates)) : 0;
 					if (count != (candidates ? candidates->size() : 0))
 						break;
 				}
@@ -1292,25 +1273,38 @@ namespace tangent
 				if (is_active() && !environment.incoming.empty())
 				{
 					if (protocol::now().user.p2p.logging)
-					{
-						if (priority)
-							VI_INFO("mempool chain extension evaluation (txns: %" PRIu64 ", priority: %" PRIu64 ")", (uint64_t)environment.incoming.size(), *priority);
-						else
-							VI_INFO("mempool chain extension evaluation (txns: %" PRIu64 ", priority: recovery)", (uint64_t)environment.incoming.size());
-					}
+						VI_INFO("evaluating mempool block (txns: %" PRIu64 ", position: %" PRIu64 ")", (uint64_t)environment.incoming.size(), position);
 
-					string errors;
-					auto evaluation = environment.evaluate(&errors);
-					evaluation.report("mempool proposal evaluation failed");
+					uint64_t replacements = 0;
+					auto evaluation = environment.evaluate_block([&]() -> uptr<ledger::transaction>
+					{
+						auto candidate = mempool.get_transactions(offset++, 1);
+						auto* transaction = candidate ? candidate->front().reset() : nullptr;
+						if (protocol::now().user.p2p.logging)
+							VI_INFO("replacing mempool block transaction (txns: %" PRIu64 ")", ++replacements);
+						return transaction;
+					});
+					evaluation.report("mempool block evaluation failed");
 					if (evaluation)
 					{
-						auto solution = environment.solve(evaluation->block);
-						solution.report("mempool proposal solution failed");
+						if (protocol::now().user.p2p.logging)
+							VI_INFO("solving mempool block (duration: < ~%" PRIu64 " sec.)", current_node_solution_time / 1000 + 1);
+
+						auto solution = environment.solve_evaluated_block(evaluation->block);
+						solution.report("mempool block solution failed");
 						if (solution)
-							accept_block(nullptr, std::move(*evaluation), 0);
+						{
+							if (evaluation->block.number > chain.get_latest_block_number().or_else(0))
+							{
+								if (protocol::now().user.p2p.logging)
+									VI_INFO("proposing mempool block (number: %" PRIu64", hash: %s)", evaluation->block.number, algorithm::encoding::encode_0xhex256(evaluation->block.as_hash()).c_str());
+
+								accept_block(nullptr, std::move(*evaluation), 0);
+							}
+							else if (protocol::now().user.p2p.logging)
+								VI_WARN("mempool block is solved but dismissed (number: %" PRIu64", hash: %s)", evaluation->block.number, algorithm::encoding::encode_0xhex256(evaluation->block.as_hash()).c_str());
+						}
 					}
-					if (!errors.empty())
-						VI_ERR("mempool block evaluation error: %s", errors.c_str());
 				}
 				else if (is_active())
 					environment.cleanup().report("mempool cleanup failed");
@@ -1339,12 +1333,12 @@ namespace tangent
 
 						dispatcher->checkpoint().report("dispatcher checkpoint error");
 						if (control_sys.unlock_timeout("accept_mempool"))
-							accept_mempool();
+							accept_mempool(0);
 					}
 					else
 					{
 						dispatcher->checkpoint().report("dispatcher checkpoint error");
-						accept_mempool();
+						accept_mempool(0);
 					}
 
 					control_sys.clear_timeout("accept_dispatchpool");
@@ -1355,7 +1349,7 @@ namespace tangent
 		bool server_node::accept_block(relay* from, ledger::block_evaluation&& candidate, const uint256_t& fork_tip)
 		{
 			uint256_t candidate_hash = candidate.block.as_hash();
-			auto verification = from ? candidate.block.verify_validity(nullptr) : environment.verify(candidate.block, &candidate.state);
+			auto verification = from ? candidate.block.verify_validity(nullptr) : environment.verify_solved_block(candidate.block, &candidate.state);
 			if (!verification)
 			{
 				if (protocol::now().user.p2p.logging)
@@ -1496,64 +1490,29 @@ namespace tangent
 				}
 			}
 
+			/*
+				<+> - <+> - <+> - <+> - <+> - <+> = possible extension
+											\
+											<+> - <+> = possible reorganization
+			*/
 			umutex<std::recursive_mutex> unique(sync.block);
-			if (!fork_branch && candidate.block.priority != 0 && (branch_length == 0 || branch_length == 1))
-			{
-				/*
-					<+> - <+> - <+> - <+> - <+> - <+> = extension (non-zero priority, possible fork, wait for zero priority block)
-				*/
-				if (pending.evaluation)
-				{
-					if (pending.hash == candidate_hash)
-					{
-						if (protocol::now().user.p2p.logging)
-							VI_INFO("block %s branch confirmed", algorithm::encoding::encode_0xhex256(candidate_hash).c_str());
-						return true;
-					}
-					else if (candidate.block < pending.evaluation->block)
-					{
-						if (protocol::now().user.p2p.logging)
-							VI_WARN("block %s branch averted: not preferred priority", algorithm::encoding::encode_0xhex256(candidate_hash).c_str());
-						return false;
-					}
-				}
+			if (!accept_block_candidate(candidate, candidate_hash, fork_tip))
+				return false;
 
-				size_t multicalls = from ? multicall(from, &methods::propose_block_hash, { format::variable(candidate_hash) }) : multicall(from, &methods::propose_block, { format::variable(candidate.block.as_message().data) });
-				if (multicalls > 0 && protocol::now().user.p2p.logging)
-					VI_DEBUG("block %s broadcasted to %i nodes (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)multicalls, candidate.block.number);
+			size_t multicalls = from ? multicall(from, &methods::propose_block_hash, { format::variable(candidate_hash) }) : multicall(from, &methods::propose_block, { format::variable(candidate.block.as_message().data) });
+			if (multicalls > 0 && protocol::now().user.p2p.logging)
+				VI_DEBUG("block %s broadcasted to %i nodes (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)multicalls, candidate.block.number);
 
-				enqueue_pending_tip(candidate_hash, std::move(candidate));
-				if (fork_tip != candidate_hash)
-					accept_pending_fork(from, fork_head::replace, fork_tip, std::move(fork_tip_block));
-				else
-					clear_pending_fork(nullptr);
-			}
+			if (fork_tip != candidate_hash)
+				accept_pending_fork(from, fork_head::replace, fork_tip, std::move(fork_tip_block));
 			else
+				clear_pending_fork(nullptr);
+
+			accept_dispatchpool(candidate.block);
+			if (from != nullptr && mempool.dirty && !is_syncing())
 			{
-				/*
-					<+> - <+> - <+> - <+> - <+> - <+> = possible extension
-											   \
-												<+> - <+> = possible reorganization
-				*/
-				if (!accept_block_candidate(candidate, candidate_hash, fork_tip))
-					return false;
-
-				size_t multicalls = from ? multicall(from, &methods::propose_block_hash, { format::variable(candidate_hash) }) : multicall(from, &methods::propose_block, { format::variable(candidate.block.as_message().data) });
-				if (multicalls > 0 && protocol::now().user.p2p.logging)
-					VI_DEBUG("block %s broadcasted to %i nodes (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)multicalls, candidate.block.number);
-
-				clear_pending_tip();
-				if (fork_tip != candidate_hash)
-					accept_pending_fork(from, fork_head::replace, fork_tip, std::move(fork_tip_block));
-				else
-					clear_pending_fork(nullptr);
-
-				accept_dispatchpool(candidate.block);
-				if (from != nullptr && mempool.dirty && !is_syncing())
-				{
-					call(from, &methods::request_mempool, { format::variable((uint64_t)0) });
-					mempool.dirty = false;
-				}
+				call(from, &methods::request_mempool, { format::variable((uint64_t)0) });
+				mempool.dirty = false;
 			}
 
 			return true;
@@ -1598,7 +1557,7 @@ namespace tangent
 					if (protocol::now().user.p2p.logging)
 						VI_INFO("transaction %s %.*s finalized", algorithm::encoding::encode_0xhex256(transaction.transaction->as_hash()).c_str(), (int)purpose.size(), purpose.data());
 					fill_validator_services();
-					accept_mempool();
+					accept_mempool(0);
 				}
 				else if (protocol::now().user.p2p.logging)
 					VI_ERR("transaction %s %.*s error: %s", algorithm::encoding::encode_0xhex256(transaction.transaction->as_hash()).c_str(), (int)purpose.size(), purpose.data(), transaction.receipt.get_error_messages().or_else(string("execution error")).c_str());

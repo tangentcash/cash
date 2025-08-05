@@ -96,11 +96,11 @@ namespace tangent
 		public:
 			struct parameters
 			{
-				uint32_t length = 512;
-				uint32_t bits = 256;
-				uint64_t pow = 131072;
+				uint16_t bits = 512;
+				uint64_t ops = 256;
 
 				uint128_t difficulty() const;
+				static parameters from_policy();
 			};
 
 			struct distribution
@@ -113,30 +113,18 @@ namespace tangent
 				uint256_t derive(const uint256_t& step) const;
 			};
 
-		private:
-			static parameters default_alg;
-
 		public:
 			static distribution random(const parameters& alg, const std::string_view& seed);
 			static parameters calibrate(uint64_t confidence, uint64_t target_time = protocol::now().policy.consensus_proof_time);
 			static parameters adjust(const parameters& prev_alg, uint64_t prev_time, uint64_t target_index);
-			static parameters bump(const parameters& alg, double bump);
+			static parameters scale(const parameters& alg, double multiplier);
 			static string evaluate(const parameters& alg, const std::string_view& message);
-			static bool verify(const parameters& alg, const std::string_view& message, const std::string_view& sig);
-			static int8_t compare(const std::string_view& sig1, const std::string_view& sig2);
-			static uint64_t locktime(const std::string_view& sig);
+			static bool verify(const parameters& alg, const std::string_view& message, const std::string_view& proof);
+			static int8_t compare(const std::string_view& proof1, const std::string_view& proof2);
 			static uint64_t adjustment_interval();
 			static uint64_t adjustment_index(uint64_t index);
-			static void set_default(const parameters& alg);
-			static const parameters& get_default();
-		};
-
-		class nakamoto
-		{
-		public:
-			static uint256_t evaluate(const uint256_t& nonce, const std::string_view& message);
-			static bool verify(const uint256_t& nonce, const std::string_view& message, const uint256_t& target, const uint256_t& solution);
-			static void serialize(format::wo_stream& stream, const uint256_t& nonce, const std::string_view& message);
+			static double adjustment_scaling(uint64_t index);
+			static schema* serialize(const parameters& alg, const std::string_view& proof);
 		};
 
 		class segwit

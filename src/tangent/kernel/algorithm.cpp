@@ -21,7 +21,7 @@ namespace tangent
 {
 	namespace algorithm
 	{
-		struct gmp
+		struct mpz
 		{
 			static void free(void* data, size_t size)
 			{
@@ -71,104 +71,79 @@ namespace tangent
 			}
 		};
 
-		struct gmp_signature
+		struct mpz_wesolowski
 		{
-			mpz_t p;
-			mpz_t l;
-			mpz_t y;
-			mpz_t n;
-			uint64_t t;
+			static void seed_init(mpz_t seed, gmp_randstate_t random, uint16_t bits, const std::string_view& message)
+			{
+				uint8_t mdata[64];
+				hashing::hash512((uint8_t*)message.data(), message.size(), mdata);
+				mpz::import0(mdata, sizeof(mdata), seed);
 
-			gmp_signature() : t(0)
-			{
-				mpz_init(p);
-				mpz_init(l);
-				mpz_init(y);
-				mpz_init(n);
+				mpz_t seed_p;
+				mpz_init(seed_p);
+				gmp_randseed(random, seed);
+				mpz_urandomb(seed, random, bits / 2);
+				mpz_nextprime(seed, seed_p);
+				mpz_clear(seed_p);
 			}
-			gmp_signature(const gmp_signature& other) : t(other.t)
+			static void order_init(mpz_t order, gmp_randstate_t random, uint16_t bits)
 			{
-				mpz_init_set(p, other.p);
-				mpz_init_set(l, other.l);
-				mpz_init_set(y, other.y);
-				mpz_init_set(n, other.n);
+				mpz_t order_p, order_q;
+				mpz_init(order_p);
+				mpz_init(order_q);
+				mpz_urandomb(order_p, random, bits / 2);
+				mpz_nextprime(order_p, order_p);
+				mpz_urandomb(order_q, random, bits / 2);
+				mpz_nextprime(order_q, order_q);
+				mpz_mul(order, order_p, order_q);
+				mpz_clear(order_p);
+				mpz_clear(order_q);
 			}
-			gmp_signature(gmp_signature&& other) : gmp_signature(*(const gmp_signature*)&other)
+			static void lambda_init(mpz_t lambda, gmp_randstate_t random, uint16_t bits)
 			{
+				mpz_t lambda_c;
+				mpz_init(lambda_c);
+				mpz_urandomb(lambda_c, random, bits / 2);
+				mpz_nextprime(lambda, lambda_c);
+				mpz_clear(lambda_c);
 			}
-			~gmp_signature()
-			{
-				mpz_clear(p);
-				mpz_clear(l);
-				mpz_clear(y);
-				mpz_clear(n);
-			}
-			gmp_signature& operator= (const gmp_signature& other)
-			{
-				if (this == &other)
-					return *this;
-
-				this->~gmp_signature();
-				mpz_init_set(p, other.p);
-				mpz_init_set(l, other.l);
-				mpz_init_set(y, other.y);
-				mpz_init_set(n, other.n);
-				t = other.t;
-				return *this;
-			}
-			gmp_signature& operator= (gmp_signature&& other)
-			{
-				return *this = *(const gmp_signature*)&other;
-			}
-			string serialize() const
+			static void serialize_proof(const mpz_t p, const mpz_t y, string* output)
 			{
 				format::wo_stream stream;
-				stream.write_integer(t);
-				stream.write_string(gmp::export0(p));
-				stream.write_string(gmp::export0(l));
-				stream.write_string(gmp::export0(y));
-				stream.write_string(gmp::export0(n));
-				stream.write_integer(hashing::sha64d(stream.data));
-				return stream.data;
+				stream.write_string(mpz::export0(p));
+				stream.write_string(mpz::export0(y));
+				output->assign(std::move(stream.data));
 			}
-			static option<gmp_signature> deserialize(const std::string_view& sig)
+			static bool deserialize_proof(mpz_t p, mpz_t y, const std::string_view& input)
 			{
-				option<gmp_signature> result = gmp_signature();
-				format::ro_stream stream = format::ro_stream(sig);
-				if (!stream.read_integer(stream.read_type(), &result->t))
-					return optional::none;
+				string input_p, input_y;
+				format::ro_stream stream = format::ro_stream(input);
+				if (!stream.read_string(stream.read_type(), &input_p))
+					return false;
 
-				string numeric;
-				if (!stream.read_string(stream.read_type(), &numeric))
-					return optional::none;
+				if (!stream.read_string(stream.read_type(), &input_y))
+					return false;
 
-				gmp::import0((uint8_t*)numeric.data(), numeric.size(), result->p);
-				if (!stream.read_string(stream.read_type(), &numeric))
-					return optional::none;
-
-				gmp::import0((uint8_t*)numeric.data(), numeric.size(), result->l);
-				if (!stream.read_string(stream.read_type(), &numeric))
-					return optional::none;
-
-				gmp::import0((uint8_t*)numeric.data(), numeric.size(), result->y);
-				if (!stream.read_string(stream.read_type(), &numeric))
-					return optional::none;
-
-				uint64_t checksum, seek = stream.seek;
-				gmp::import0((uint8_t*)numeric.data(), numeric.size(), result->n);
-				if (!stream.read_integer(stream.read_type(), &checksum))
-					return optional::none;
-
-				if (checksum != hashing::sha64d(std::string_view(stream.data.data(), seek)))
-					return optional::none;
-
-				return result;
+				mpz_init(p);
+				mpz_init(y);
+				mpz::import0((uint8_t*)input_p.data(), input_p.size(), p);
+				mpz::import0((uint8_t*)input_y.data(), input_y.size(), y);
+				return true;
 			}
 		};
 
 		uint128_t wesolowski::parameters::difficulty() const
 		{
-			return uint128_t(length) * uint128_t(bits) + uint128_t(pow);
+			uint128_t x = uint128_t(bits / 8);
+			uint128_t y = uint128_t(ops);
+			return x * x * x * y;
+		}
+		wesolowski::parameters wesolowski::parameters::from_policy()
+		{
+			parameters result;
+			result.bits = protocol::now().policy.wesolowski_bits;
+			result.ops = protocol::now().policy.wesolowski_ops;
+			return result;
 		}
 
 		uint256_t wesolowski::distribution::derive()
@@ -193,7 +168,7 @@ namespace tangent
 		wesolowski::parameters wesolowski::calibrate(uint64_t confidence, uint64_t target_time)
 		{
 			uint64_t target_nonce = confidence;
-			auto alg = default_alg;
+			auto alg = wesolowski::parameters::from_policy();
 			while (true)
 			{
 			retry:
@@ -219,6 +194,7 @@ namespace tangent
 		}
 		wesolowski::parameters wesolowski::adjust(const parameters& prev_alg, uint64_t prev_time, uint64_t target_index)
 		{
+			auto default_alg = wesolowski::parameters::from_policy();
 			if (target_index <= 1)
 				return default_alg;
 
@@ -242,164 +218,146 @@ namespace tangent
 			else if (adjustment < policy.consensus_difficulty_max_decrease)
 				adjustment = policy.consensus_difficulty_max_decrease;
 
-			uint64_t pow_offset = (decimal(new_alg.pow) * adjustment).to_uint64();
-			if (new_alg.pow + pow_offset < new_alg.pow)
-				new_alg.pow = std::numeric_limits<uint64_t>::max();
+			uint64_t pow_offset = (decimal(new_alg.ops) * adjustment).to_uint64();
+			if (new_alg.ops + pow_offset < new_alg.ops)
+				new_alg.ops = std::numeric_limits<uint64_t>::max();
 			else
-				new_alg.pow += pow_offset;
+				new_alg.ops += pow_offset;
 
-			if (new_alg.pow < default_alg.pow)
-				new_alg.pow = default_alg.pow;
+			if (new_alg.ops < default_alg.ops)
+				new_alg.ops = default_alg.ops;
+
+			if (new_alg.bits != default_alg.bits)
+				new_alg.bits = default_alg.bits;
 
 			return (new_alg.difficulty() < default_alg.difficulty() ? default_alg : new_alg);
 		}
-		wesolowski::parameters wesolowski::bump(const parameters& alg, double bump)
+		wesolowski::parameters wesolowski::scale(const parameters& alg, double multiplier)
 		{
 			parameters new_alg = alg;
-			uint64_t new_pow = (decimal(new_alg.pow) * decimal(bump)).to_uint64();
-			if (new_pow < new_alg.pow)
-				new_alg.pow = std::numeric_limits<uint64_t>::max();
-			else
-				new_alg.pow = new_pow;
-
-			if (new_alg.pow < default_alg.pow)
-				new_alg.pow = default_alg.pow;
-
-			return (new_alg.difficulty() < default_alg.difficulty() ? default_alg : new_alg);
+			new_alg.ops = std::min(std::max((decimal(new_alg.ops) * decimal(multiplier)).to_uint64(), new_alg.ops), protocol::now().policy.wesolowski_ops);
+			return new_alg;
 		}
 		string wesolowski::evaluate(const parameters& alg, const std::string_view& message)
 		{
-			uint8_t mdata[64];
-			hashing::hash512((uint8_t*)message.data(), message.size(), mdata);
+			mpz_t seed, order, lambda;
+			gmp_randstate_t random;
+			gmp_randinit_mt(random);
+			mpz_init(seed);
+			mpz_init(order);
+			mpz_init(lambda);
+			mpz_wesolowski::seed_init(seed, random, alg.bits, message);
+			mpz_wesolowski::order_init(order, random, alg.bits);
+			mpz_wesolowski::lambda_init(lambda, random, alg.bits);
+			gmp_randclear(random);
 
-			mpz_t v;
-			mpz_init(v);
-			gmp::import0(mdata, sizeof(mdata), v);
+			mpz_t exponent_y, exponent_p;
+			mpz_init(exponent_y);
+			mpz_init(exponent_p);
+			mpz_ui_pow_ui(exponent_y, 2, alg.ops);
+			mpz_fdiv_q(exponent_p, exponent_y, lambda);
+			mpz_clear(lambda);
 
-			gmp_signature signature;
-			gmp_randstate_t r;
-			gmp_randinit_mt(r);
-			gmp_randseed(r, v);
-
-			mpz_t p;
+			mpz_t p, y;
 			mpz_init(p);
-			mpz_urandomb(p, r, alg.length / 2);
-			mpz_nextprime(p, p);
+			mpz_init(y);
+			mpz_powm(y, seed, exponent_y, order);
+			mpz_powm(p, seed, exponent_p, order);
+			mpz_clear(seed);
+			mpz_clear(order);
+			mpz_clear(exponent_y);
+			mpz_clear(exponent_p);
 
-			mpz_t q;
-			mpz_init(q);
-			mpz_urandomb(q, r, alg.length / 2);
-			mpz_nextprime(q, q);
-			mpz_init(signature.n);
-			mpz_mul(signature.n, p, q);
+			string result;
+			mpz_wesolowski::serialize_proof(p, y, &result);
 			mpz_clear(p);
-			mpz_clear(q);
-
-			mpz_t e, c;
-			mpz_init(e);
-			mpz_ui_pow_ui(e, 2, alg.pow);
-			mpz_init(signature.y);
-			mpz_init(c);
-			mpz_urandomb(c, r, 2 * alg.bits);
-			mpz_nextprime(signature.l, c);
-			mpz_init(q);
-			mpz_powm(signature.y, v, e, signature.n);
-			mpz_fdiv_q(q, e, signature.l);
-			mpz_powm(signature.p, v, q, signature.n);
-			mpz_clear(q);
-			mpz_clear(e);
-			mpz_clear(c);
-			mpz_clear(v);
-			gmp_randclear(r);
-
-			signature.t = protocol::now().time.now();
-			return signature.serialize();
+			mpz_clear(y);
+			return result;
 		}
-		bool wesolowski::verify(const parameters& alg, const std::string_view& message, const std::string_view& sig)
+		bool wesolowski::verify(const parameters& alg, const std::string_view& message, const std::string_view& proof)
 		{
-			auto signature = gmp_signature::deserialize(sig);
-			if (!signature)
+			mpz_t p, y;
+			if (!mpz_wesolowski::deserialize_proof(p, y, proof))
 				return false;
 
-			uint8_t mdata[64];
-			hashing::hash512((uint8_t*)message.data(), message.size(), mdata);
+			mpz_t seed, order, lambda;
+			gmp_randstate_t random;
+			gmp_randinit_mt(random);
+			mpz_init(seed);
+			mpz_init(order);
+			mpz_init(lambda);
+			mpz_wesolowski::seed_init(seed, random, alg.bits, message);
+			mpz_wesolowski::order_init(order, random, alg.bits);
+			mpz_wesolowski::lambda_init(lambda, random, alg.bits);
+			gmp_randclear(random);
 
-			mpz_t v;
-			mpz_init(v);
-			gmp::import0(mdata, sizeof(mdata), v);
+			mpz_t exponent_order, exponent_seed, exponent_two, exponent;
+			mpz_init(exponent_order);
+			mpz_init(exponent_seed);
+			mpz_init(exponent_two);
+			mpz_init(exponent);
+			mpz_sub_ui(exponent_order, lambda, 1);
+			mpz_set_ui(exponent_seed, alg.ops);
+			mpz_set_ui(exponent_two, 2);
+			mpz_mod(exponent_seed, exponent_seed, exponent_order);
+			mpz_powm(exponent, exponent_two, exponent_seed, lambda);
+			mpz_clear(exponent_order);
+			mpz_clear(exponent_seed);
+			mpz_clear(exponent_two);
 
-			mpz_t p;
-			mpz_init(p);
-			mpz_sub_ui(p, signature->l, 1);
+			mpz_t y_target, y_multiplier;
+			mpz_init(y_target);
+			mpz_init(y_multiplier);
+			mpz_powm(y_target, p, lambda, order);
+			mpz_powm(y_multiplier, seed, exponent, order);
+			mpz_mul(y_target, y_target, y_multiplier);
+			mpz_mod(y_target, y_target, order);
+			mpz_clear(y_multiplier);
+			mpz_clear(exponent);
+			mpz_clear(seed);
+			mpz_clear(order);
+			mpz_clear(lambda);
 
-			mpz_t t;
-			mpz_init(t);
-			mpz_set_ui(t, alg.pow);
-			mpz_mod(t, t, p);
+			int diff = mpz_cmp(y_target, y);
+			mpz_clear(y_target);
 			mpz_clear(p);
-
-			mpz_t d;
-			mpz_init(d);
-			mpz_set_ui(d, 2);
-
-			mpz_t r;
-			mpz_init(r);
-			mpz_powm(r, d, t, signature->l);
-			mpz_clear(t);
-			mpz_clear(d);
-
-			mpz_t y, w;
-			mpz_init(y);
-			mpz_init(w);
-			mpz_powm(y, signature->p, signature->l, signature->n);
-			mpz_powm(w, v, r, signature->n);
-			mpz_mul(y, y, w);
-			mpz_mod(y, y, signature->n);
-			mpz_clear(r);
-			mpz_clear(w);
-			mpz_clear(v);
-
-			int diff = mpz_cmp(y, signature->y);
 			mpz_clear(y);
 			return diff == 0;
 		}
-		int8_t wesolowski::compare(const std::string_view& sig1, const std::string_view& sig2)
+		int8_t wesolowski::compare(const std::string_view& proof1, const std::string_view& proof2)
 		{
-			auto signature1 = gmp_signature::deserialize(sig1);
-			auto signature2 = gmp_signature::deserialize(sig2);
-			if (!signature1 || !signature2)
-				return signature1 ? 1 : -1;
+			int result = 0;
+			mpz_t p1_p, p1_y, p2_p, p2_y;
+			bool p1_valid = mpz_wesolowski::deserialize_proof(p1_p, p1_y, proof1);
+			bool p2_valid = mpz_wesolowski::deserialize_proof(p2_p, p2_y, proof2);
+			if (p1_valid && p2_valid)
+			{
+				int compare_y = mpz_cmp(p1_y, p2_y);
+				if (compare_y == 0)
+				{
+					int compare_p = mpz_cmp(p1_p, p2_p);
+					if (compare_p != 0)
+						result = compare_p;
+				}
+				else
+					result = compare_y;
+			}
+			else
+				result = p1_valid ? 1 : -1;
 
-			int compare_y = mpz_cmp(signature1->y, signature2->y);
-			if (compare_y != 0)
-				return (int8_t)compare_y;
+			if (p1_valid)
+			{
+				mpz_clear(p1_p);
+				mpz_clear(p1_y);
+			}
 
-			int compare_p = mpz_cmp(signature1->p, signature2->p);
-			if (compare_p != 0)
-				return (int8_t)compare_p;
+			if (p2_valid)
+			{
+				mpz_clear(p2_p);
+				mpz_clear(p2_y);
+			}
 
-			int compare_n = mpz_cmp(signature1->n, signature2->n);
-			if (compare_n != 0)
-				return (int8_t)compare_n;
-
-			int compare_l = mpz_cmp(signature1->l, signature2->l);
-			if (compare_l != 0)
-				return (int8_t)compare_l;
-
-			if (signature1->t < signature2->t)
-				return 1;
-			else if (signature1->t > signature2->t)
-				return -1;
-
-			return 0;
-		}
-		uint64_t wesolowski::locktime(const std::string_view& sig)
-		{
-			auto signature = gmp_signature::deserialize(sig);
-			if (!signature)
-				return 0;
-
-			return signature->t;
+			return (int8_t)result;
 		}
 		uint64_t wesolowski::adjustment_interval()
 		{
@@ -410,36 +368,33 @@ namespace tangent
 		{
 			return index - index % adjustment_interval();
 		}
-		void wesolowski::set_default(const parameters& alg)
+		double wesolowski::adjustment_scaling(uint64_t index)
 		{
-			default_alg = alg;
-		}
-		const wesolowski::parameters& wesolowski::get_default()
-		{
-			return default_alg;
-		}
-		wesolowski::parameters wesolowski::default_alg;
+			if (index == 0)
+				return 1.0;
 
-		uint256_t nakamoto::evaluate(const uint256_t& nonce, const std::string_view& message)
-		{
-			format::wo_stream stream;
-			serialize(stream, nonce, message);
-			return stream.hash();
-		}
-		bool nakamoto::verify(const uint256_t& nonce, const std::string_view& message, const uint256_t& target, const uint256_t& solution)
-		{
-			if (solution > target)
-				return false;
-			else if (nonce == uint256_t::max())
-				return false;
+			bool outside_priority = index >= protocol::now().policy.production_max_per_block;
+			if (outside_priority)
+				return protocol::now().policy.consensus_difficulty_bump_outside_priority;
 
-			return solution == evaluate(nonce, message);
+			return mathd::pow(protocol::now().policy.consensus_difficulty_bump_per_priority, index);
 		}
-		void nakamoto::serialize(format::wo_stream& stream, const uint256_t& nonce, const std::string_view& message)
+		schema* wesolowski::serialize(const parameters& alg, const std::string_view& signature)
 		{
-			stream.clear();
-			stream.write_typeless(message);
-			stream.write_typeless(nonce);
+			mpz_t p, y;
+			if (!mpz_wesolowski::deserialize_proof(p, y, signature))
+				return var::set::null();
+
+			auto* data = var::set::object();
+			data->set("p", var::string(format::util::encode_0xhex(mpz::export0(p))));
+			data->set("y", var::string(format::util::encode_0xhex(mpz::export0(y))));
+			data->set("difficulty", algorithm::encoding::serialize_uint256(alg.difficulty()));
+			data->set("bits", var::integer(alg.bits));
+			data->set("ops", var::integer(alg.ops));
+			data->set("size", var::integer(signature.size()));
+			mpz_clear(p);
+			mpz_clear(y);
+			return data;
 		}
 
 		int segwit::tweak(uint8_t* output, size_t* output_size, int32_t output_bits, const uint8_t* input, size_t input_size, int32_t input_bits, int32_t padding)

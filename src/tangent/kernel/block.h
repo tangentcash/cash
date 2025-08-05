@@ -18,6 +18,8 @@ namespace tangent
 		struct block_evaluation;
 		struct evaluation_context;
 
+		typedef std::function<uptr<transaction>()> replace_transaction_callback;
+
 		enum class filter_comparator
 		{
 			greater,
@@ -138,7 +140,7 @@ namespace tangent
 
 		struct block_header : messages::authentic
 		{
-			algorithm::wesolowski::digest wesolowski;
+			algorithm::wesolowski::digest proof;
 			algorithm::wesolowski::parameters target;
 			ordered_map<algorithm::asset_id, uint64_t> witnesses;
 			uint256_t parent_hash = 0;
@@ -149,8 +151,8 @@ namespace tangent
 			uint256_t gas_limit = 0;
 			uint256_t absolute_work = 0;
 			uint256_t slot_duration = 0;
-			uint8_t recovery = 0;
-			uint64_t time = 0;
+			uint64_t generation_time = 0;
+			uint64_t evaluation_time = 0;
 			uint64_t priority = 0;
 			uint64_t number = 0;
 			uint64_t mutation_count = 0;
@@ -165,8 +167,8 @@ namespace tangent
 			virtual bool operator==(const block_header& other) const;
 			virtual bool operator!=(const block_header& other) const;
 			virtual expects_lr<void> verify_validity(const block_header* parent_block) const;
-			virtual bool store_payload_wesolowski(format::wo_stream* stream) const;
-			virtual bool load_payload_wesolowski(format::ro_stream& stream);
+			virtual bool store_payload_proof(format::wo_stream* stream) const;
+			virtual bool load_payload_proof(format::ro_stream& stream);
 			virtual bool store_payload(format::wo_stream* stream) const override;
 			virtual bool load_payload(format::ro_stream& stream) override;
 			virtual bool sign(const algorithm::seckey secret_key) override;
@@ -174,15 +176,17 @@ namespace tangent
 			virtual bool verify(const algorithm::pubkey public_key) const override;
 			virtual bool recover(algorithm::pubkey public_key) const override;
 			virtual bool recover_hash(algorithm::pubkeyhash public_key_hash) const override;
-			virtual bool verify_wesolowski() const;
+			virtual bool verify_proof() const;
 			virtual void set_parent_block(const block_header* parent_block);
 			virtual void set_witness_requirement(const algorithm::asset_id& asset, uint64_t block_number);
 			virtual uint64_t get_witness_requirement(const algorithm::asset_id& asset) const;
 			virtual int8_t get_relative_order(const block_header& other) const;
-			virtual uint64_t get_slot_duration_target() const;
+			virtual uint64_t get_slot_proof_duration_average() const;
 			virtual uint64_t get_slot_length() const;
-			virtual uint64_t get_duration() const;
-			virtual uint64_t get_proof_time() const;
+			virtual uint64_t get_proof_duration() const;
+			virtual uint64_t get_proof_accounted_duration() const;
+			virtual double get_proof_difficulty_multiplier() const;
+			virtual algorithm::wesolowski::parameters get_proof_slot_target(const block_header* parent_block) const;
 			virtual uint256_t as_hash(bool renew = false) const override;
 			virtual uptr<schema> as_schema() const override;
 			virtual format::wo_stream as_signable() const override;
@@ -206,7 +210,7 @@ namespace tangent
 			virtual ~block() override = default;
 			block& operator=(const block&) = default;
 			block& operator=(block&&) = default;
-			expects_lr<block_state> evaluate(const block_header* parent_block, evaluation_context* environment, string* errors = nullptr);
+			expects_lr<block_state> evaluate(const block_header* parent_block, evaluation_context* environment, const replace_transaction_callback& callback);
 			expects_lr<void> validate(const block_header* parent_block, block_evaluation* evaluated_result = nullptr) const;
 			expects_lr<void> verify_integrity(const block_header* parent_block, const block_state* state) const;
 			bool store_payload(format::wo_stream* stream) const override;
@@ -323,7 +327,6 @@ namespace tangent
 			expects_lr<states::account_balance> apply_fee_transfer(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const decimal& value);
 			expects_lr<states::account_balance> apply_payment(const algorithm::asset_id& asset, const algorithm::pubkeyhash from, const algorithm::pubkeyhash to, const decimal& value);
 			expects_lr<states::validator_production> apply_validator_production(const algorithm::pubkeyhash owner, production_type action, const uint256_t& gas, const ordered_map<algorithm::asset_id, decimal>& stakes);
-			expects_lr<states::validator_production> apply_validator_production_transfer(const algorithm::pubkeyhash owner, const uint256_t& mint_gas, const uint256_t& burn_gas);
 			expects_lr<states::validator_participation> apply_validator_participation(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, stake_type type, int64_t participations, const ordered_map<algorithm::asset_id, decimal>& stakes);
 			expects_lr<states::validator_attestation> apply_validator_attestation(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, stake_type type, const ordered_map<algorithm::asset_id, decimal>& stakes);
 			expects_lr<states::depository_reward> apply_depository_reward(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const decimal& incoming_fee, const decimal& outgoing_fee);
@@ -431,6 +434,13 @@ namespace tangent
 
 		struct evaluation_context
 		{
+			enum class include_decision
+			{
+				include_in_block,
+				not_executable,
+				not_includable
+			};
+
 			struct transaction_info
 			{
 				uint256_t hash = 0;
@@ -444,10 +454,11 @@ namespace tangent
 				transaction_info& operator= (const transaction_info& other);
 				transaction_info& operator= (transaction_info&&) noexcept = default;
 			};
+
 			struct validation_info
 			{
 				transaction_context context;
-				uint256_t cumulative_gas = 0;
+				uint256_t current_gas_limit = 0;
 				block_changelog changelog;
 				bool tip = false;
 			} validation;
@@ -457,23 +468,23 @@ namespace tangent
 				algorithm::seckey secret_key = { 0 };
 			} validator;
 			option<block_header> tip = optional::none;
+			ordered_map<algorithm::pubkeyhash_t, uint64_t> nonces;
 			ordered_map<algorithm::asset_id, size_t> attesters;
 			vector<states::validator_production> producers;
 			vector<transaction_info> incoming;
 			vector<uint256_t> outgoing;
 			size_t precomputed = 0;
 
-			option<uint64_t> priority(const algorithm::pubkeyhash public_key_hash, const algorithm::seckey secret_key, option<block_header*>&& parent_block = optional::none);
-			size_t apply(vector<uptr<transaction>>&& candidates);
-			transaction_info& include(uptr<transaction>&& candidate);
-			expects_lr<block_evaluation> evaluate(string* errors = nullptr);
-			expects_lr<void> solve(block& candidate);
-			expects_lr<void> verify(const block& candidate, const block_state* state);
-			expects_lr<void> precompute(block& candidate);
+			option<uint64_t> configure_priority_from_validator(const algorithm::pubkeyhash public_key_hash, const algorithm::seckey secret_key, option<const block_header*>&& parent_block = optional::none);
+			size_t try_include_transactions(vector<uptr<transaction>>&& candidates);
+			transaction_info& force_include_transaction(uptr<transaction>&& candidate);
+			include_decision decide_on_inclusion(const transaction_info& candidate, const uint256_t& current_gas_limit, const uint256_t& max_gas_limit) const;
+			expects_lr<block_evaluation> evaluate_block(const replace_transaction_callback& callback);
+			expects_lr<void> solve_evaluated_block(block& candidate);
+			expects_lr<void> verify_solved_block(const block& candidate, const block_state* state);
 			expects_lr<void> cleanup();
-
-		private:
-			void precompute(vector<transaction_info>& candidates);
+			static transaction_info precompute_transaction_element(uptr<transaction>&& candidate);
+			static void precompute_transaction_list(vector<transaction_info>& candidates);
 		};
 	}
 }

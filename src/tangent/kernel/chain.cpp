@@ -833,6 +833,8 @@ namespace tangent
 				policy.participation_min_per_account = 1;
 				policy.participation_std_per_account = 2;
 				policy.delegations_max_per_account = std::numeric_limits<uint32_t>::max();
+				policy.wesolowski_bits = 512;
+				policy.wesolowski_ops = 8192;
 				break;
 			case tangent::network_type::testnet:
 				message.packet_magic = 0xf815c95c;

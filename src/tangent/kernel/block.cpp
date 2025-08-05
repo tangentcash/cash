@@ -326,25 +326,29 @@ namespace tangent
 			if (!number || (!parent_hash && number > 1) || (number == 1 && parent_hash > 0))
 				return layer_exception("invalid number");
 
-			uint128_t difficulty = target.difficulty();
-			if (wesolowski.empty() || difficulty < algorithm::wesolowski::get_default().difficulty())
-				return layer_exception("invalid wesolowski target");
-
 			if (!transaction_root || !receipt_root || !state_root)
 				return layer_exception("invalid transaction/receipt/state merkle tree root");
+
+			if (!transaction_count)
+				return layer_exception("invalid transaction count");
+
+			if (priority > protocol::now().policy.production_max_per_block)
+				return layer_exception("invalid priority");
+
+			uint128_t difficulty = target.difficulty();
+			auto required_target = algorithm::wesolowski::scale(get_proof_slot_target(parent_block), get_proof_difficulty_multiplier());
+			if (proof.empty() || difficulty != required_target.difficulty())
+				return layer_exception("invalid wesolowski target");
 
 			uint256_t gas_work = gas_util::get_gas_work(difficulty, gas_use, gas_limit, priority);
 			if (!gas_limit || gas_use > gas_limit || absolute_work < gas_work)
 				return layer_exception("invalid gas work");
 
-			if (!transaction_count)
-				return layer_exception("invalid transaction count");
-
 			algorithm::pubkeyhash public_key_hash = { 0 };
 			if (!recover_hash(public_key_hash))
 				return layer_exception("producer proof verification failed");
 
-			if (!verify_wesolowski())
+			if (!verify_proof())
 				return layer_exception("wesolowski proof verification failed");
 
 			if (!parent_block && number > 1)
@@ -354,7 +358,7 @@ namespace tangent
 				return layer_exception("invalid absolute gas work");
 
 			uint256_t cumulative = get_slot_length() > 1 ? uint256_t(1) : uint256_t(0);
-			if (slot_duration != ((parent_block ? parent_block->slot_duration + parent_block->get_duration() : uint256_t(0)) * cumulative))
+			if (slot_duration != ((parent_block ? parent_block->slot_duration + parent_block->get_proof_accounted_duration() : uint256_t(0)) * cumulative))
 				return layer_exception("invalid slot duration");
 
 			for (auto& witness : witnesses)
@@ -366,7 +370,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		bool block_header::store_payload_wesolowski(format::wo_stream* stream) const
+		bool block_header::store_payload_proof(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer(parent_hash);
@@ -377,11 +381,9 @@ namespace tangent
 			stream->write_integer(gas_limit);
 			stream->write_integer(absolute_work);
 			stream->write_integer(slot_duration);
-			stream->write_integer(target.length);
 			stream->write_integer(target.bits);
-			stream->write_integer(target.pow);
-			stream->write_integer(recovery);
-			stream->write_integer(time);
+			stream->write_integer(target.ops);
+			stream->write_integer(generation_time);
 			stream->write_integer(priority);
 			stream->write_integer(number);
 			stream->write_integer(mutation_count);
@@ -395,7 +397,7 @@ namespace tangent
 			}
 			return true;
 		}
-		bool block_header::load_payload_wesolowski(format::ro_stream& stream)
+		bool block_header::load_payload_proof(format::ro_stream& stream)
 		{
 			if (!stream.read_integer(stream.read_type(), &parent_hash))
 				return false;
@@ -421,19 +423,13 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &slot_duration))
 				return false;
 
-			if (!stream.read_integer(stream.read_type(), &target.length))
-				return false;
-
 			if (!stream.read_integer(stream.read_type(), &target.bits))
 				return false;
 
-			if (!stream.read_integer(stream.read_type(), &target.pow))
+			if (!stream.read_integer(stream.read_type(), &target.ops))
 				return false;
 
-			if (!stream.read_integer(stream.read_type(), &recovery))
-				return false;
-
-			if (!stream.read_integer(stream.read_type(), &time))
+			if (!stream.read_integer(stream.read_type(), &generation_time))
 				return false;
 
 			if (!stream.read_integer(stream.read_type(), &priority))
@@ -474,18 +470,22 @@ namespace tangent
 		bool block_header::store_payload(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			if (!store_payload_wesolowski(stream))
+			if (!store_payload_proof(stream))
 				return false;
 
-			stream->write_string(wesolowski);
+			stream->write_string(proof);
+			stream->write_integer(evaluation_time);
 			return true;
 		}
 		bool block_header::load_payload(format::ro_stream& stream)
 		{
-			if (!load_payload_wesolowski(stream))
+			if (!load_payload_proof(stream))
 				return false;
 
-			if (!stream.read_string(stream.read_type(), &wesolowski))
+			if (!stream.read_string(stream.read_type(), &proof))
+				return false;
+
+			if (!stream.read_integer(stream.read_type(), &evaluation_time))
 				return false;
 
 			return true;
@@ -496,8 +496,9 @@ namespace tangent
 		}
 		bool block_header::solve(const algorithm::seckey secret_key)
 		{
-			wesolowski = algorithm::wesolowski::evaluate(target, as_solution().data);
-			return !wesolowski.empty();
+			proof = algorithm::wesolowski::evaluate(target, as_solution().data);
+			evaluation_time = protocol::now().time.now();
+			return !proof.empty();
 		}
 		bool block_header::verify(const algorithm::pubkey public_key) const
 		{
@@ -511,15 +512,15 @@ namespace tangent
 		{
 			return algorithm::signing::recover_hash(block_header::as_signable().hash(), public_key_hash, signature);
 		}
-		bool block_header::verify_wesolowski() const
+		bool block_header::verify_proof() const
 		{
-			return algorithm::wesolowski::verify(target, as_solution().data, wesolowski);
+			return algorithm::wesolowski::verify(target, as_solution().data, proof);
 		}
 		void block_header::set_parent_block(const block_header* parent_block)
 		{
 			parent_hash = (parent_block ? parent_block->as_hash() : uint256_t(0));
 			number = (parent_block ? parent_block->number : 0) + 1;
-			time = protocol::now().time.now();
+			generation_time = protocol::now().time.now();
 		}
 		void block_header::set_witness_requirement(const algorithm::asset_id& asset, uint64_t block_number)
 		{
@@ -555,15 +556,12 @@ namespace tangent
 			if (absolute_work != other.absolute_work)
 				return absolute_work > other.absolute_work ? 1 : -1;
 
-			if (recovery != other.recovery)
-				return recovery < other.recovery ? 1 : -1;
-
 			uint128_t difficulty_a = target.difficulty();
 			uint128_t difficulty_b = other.target.difficulty();
 			if (difficulty_a != difficulty_b)
 				return difficulty_a > difficulty_b ? 1 : -1;
 
-			int8_t security = algorithm::wesolowski::compare(wesolowski, other.wesolowski);
+			int8_t security = algorithm::wesolowski::compare(proof, other.proof);
 			if (security != 0)
 				return security;
 
@@ -582,30 +580,42 @@ namespace tangent
 
 			return hash_a > hash_b ? -1 : 1;
 		}
-		uint64_t block_header::get_slot_duration_target() const
+		uint64_t block_header::get_slot_proof_duration_average() const
 		{
-			return (slot_duration + get_duration()) / get_slot_length();
+			return (slot_duration + get_proof_accounted_duration()) / get_slot_length();
 		}
 		uint64_t block_header::get_slot_length() const
 		{
 			auto interval = algorithm::wesolowski::adjustment_interval();
 			return number < interval ? number : ((number % interval) + 1);
 		}
-		uint64_t block_header::get_duration() const
+		uint64_t block_header::get_proof_duration() const
 		{
-			uint64_t proof_time = get_proof_time();
-			return proof_time > time ? proof_time - time : 0;
+			return evaluation_time > generation_time ? evaluation_time - generation_time : 0;
 		}
-		uint64_t block_header::get_proof_time() const
+		uint64_t block_header::get_proof_accounted_duration() const
 		{
-			return algorithm::wesolowski::locktime(wesolowski);
+			return priority > 0 ? (uint64_t)((double)get_proof_duration() / get_proof_difficulty_multiplier()) : get_proof_duration();
+		}
+		double block_header::get_proof_difficulty_multiplier() const
+		{
+			return algorithm::wesolowski::adjustment_scaling(priority);
+		}
+		algorithm::wesolowski::parameters block_header::get_proof_slot_target(const block_header* parent_block) const
+		{
+			auto prev_duration = parent_block ? parent_block->get_slot_proof_duration_average() : 0;
+			auto prev_target = parent_block ? parent_block->target : algorithm::wesolowski::parameters::from_policy();
+			if (parent_block && parent_block->priority > 0)
+				prev_target = algorithm::wesolowski::scale(target, 1.0 / parent_block->get_proof_difficulty_multiplier());
+
+			return algorithm::wesolowski::adjust(prev_target, prev_duration, number);
 		}
 		uptr<schema> block_header::as_schema() const
 		{
 			algorithm::pubkeyhash producer = { 0 };
 			bool has_producer = recover_hash(producer);
 			schema* data = var::set::object();
-			data->set("wesolowski", wesolowski.empty() ? var::null() : var::string(format::util::encode_0xhex(wesolowski)));
+			data->set("proof", proof.empty() ? var::null() : var::string(format::util::encode_0xhex(proof)));
 			data->set("signature", is_signature_null() ? var::null() : var::string(format::util::encode_0xhex(std::string_view((char*)signature, sizeof(signature)))));
 			data->set("producer", has_producer ? algorithm::signing::serialize_address(producer) : var::set::null());
 			data->set("hash", var::string(algorithm::encoding::encode_0xhex256(as_hash())));
@@ -614,18 +624,18 @@ namespace tangent
 			data->set("receipt_root", var::string(algorithm::encoding::encode_0xhex256(receipt_root)));
 			data->set("state_root", var::string(algorithm::encoding::encode_0xhex256(state_root)));
 			data->set("absolute_work", algorithm::encoding::serialize_uint256(absolute_work));
-			data->set("difficulty", algorithm::encoding::serialize_uint256(target.difficulty()));
 			data->set("gas_use", algorithm::encoding::serialize_uint256(gas_use));
-			data->set("gas_limit", algorithm::encoding::serialize_uint256(gas_limit)); \
-				data->set("slot_duration", algorithm::encoding::serialize_uint256(slot_duration));
-			data->set("slot_duration_target", algorithm::encoding::serialize_uint256(get_slot_duration_target()));
+			data->set("gas_limit", algorithm::encoding::serialize_uint256(gas_limit));
+			data->set("difficulty", algorithm::encoding::serialize_uint256(target.difficulty()));
+			data->set("difficulty_multiplier", var::number(get_proof_difficulty_multiplier()));
+			data->set("slot_duration", algorithm::encoding::serialize_uint256(slot_duration));
+			data->set("slot_duration_average", algorithm::encoding::serialize_uint256(get_slot_proof_duration_average()));
 			data->set("slot_length", algorithm::encoding::serialize_uint256(get_slot_length()));
-			data->set("proposal_time", algorithm::encoding::serialize_uint256(time));
-			data->set("approval_time", algorithm::encoding::serialize_uint256(get_proof_time()));
-			data->set("wesolowski_time", algorithm::encoding::serialize_uint256(get_duration()));
+			data->set("generation_time", algorithm::encoding::serialize_uint256(generation_time));
+			data->set("evaluation_time", algorithm::encoding::serialize_uint256(evaluation_time));
+			data->set("proof_duration", algorithm::encoding::serialize_uint256(get_proof_duration()));
 			data->set("priority", algorithm::encoding::serialize_uint256(priority));
 			data->set("number", algorithm::encoding::serialize_uint256(number));
-			data->set("recovery", algorithm::encoding::serialize_uint256(recovery));
 			data->set("mutation_count", algorithm::encoding::serialize_uint256(mutation_count));
 			data->set("transaction_count", algorithm::encoding::serialize_uint256(transaction_count));
 			data->set("state_count", algorithm::encoding::serialize_uint256(state_count));
@@ -650,7 +660,7 @@ namespace tangent
 		{
 			format::wo_stream message;
 			message.write_integer(as_type());
-			if (!block_header::store_payload_wesolowski(&message))
+			if (!block_header::store_payload_proof(&message))
 				message.clear();
 			return message;
 		}
@@ -694,7 +704,7 @@ namespace tangent
 		block::block(const block_header& other) : block_header(other)
 		{
 		}
-		expects_lr<block_state> block::evaluate(const block_header* parent_block, evaluation_context* environment, string* errors)
+		expects_lr<block_state> block::evaluate(const block_header* parent_block, evaluation_context* environment, const replace_transaction_callback& replace_transaction)
 		{
 			VI_ASSERT(environment != nullptr, "evaluation context should be set");
 			if (environment->incoming.empty())
@@ -702,22 +712,17 @@ namespace tangent
 
 			block_header::set_parent_block(parent_block);
 			auto position = std::find_if(environment->producers.begin(), environment->producers.end(), [&environment](const states::validator_production& a) { return !memcmp(a.owner, environment->validator.public_key_hash, sizeof(environment->validator.public_key_hash)); });
-			auto prev_duration = parent_block ? parent_block->get_slot_duration_target() : (uint64_t)((double)protocol::now().policy.consensus_proof_time * protocol::now().policy.genesis_slot_time_bump);
-			auto prev_target = parent_block ? parent_block->target : algorithm::wesolowski::get_default();
-			if (parent_block && parent_block->recovery)
-				prev_target = algorithm::wesolowski::bump(target, 1.0 / protocol::now().policy.consensus_recovery_bump);
-
 			auto fees = ordered_map<algorithm::asset_id, decimal>();
-			recovery = (position == environment->producers.end() ? 1 : 0);
-			priority = recovery ? 0 : (uint64_t)std::distance(environment->producers.begin(), position);
-			target = algorithm::wesolowski::adjust(prev_target, prev_duration, number);
-			if (recovery)
-				target = algorithm::wesolowski::bump(target, protocol::now().policy.consensus_recovery_bump);
+			priority = (uint64_t)(position == environment->producers.end() ? protocol::now().policy.production_max_per_block : std::distance(environment->producers.begin(), position));
+			target = algorithm::wesolowski::scale(get_proof_slot_target(parent_block), get_proof_difficulty_multiplier());
 
+			auto executionlog = string();
 			auto changelog = block_changelog();
 			for (auto& item : environment->incoming)
 			{
-				auto execution = transaction_context::execute_tx(environment, this, &changelog, *item.candidate, item.hash, item.owner, item.size, item.candidate->conservative ? 0 : (uint8_t)transaction_context::execution_mode::pedantic);
+			retry_replacement_transaction:
+				auto* candidate_transaction = *item.candidate;
+				auto execution = transaction_context::execute_tx(environment, this, &changelog, candidate_transaction, item.hash, item.owner, item.size, item.candidate->conservative ? 0 : (uint8_t)transaction_context::execution_mode::pedantic);
 				if (execution)
 				{
 					auto& blob = transactions.emplace_back();
@@ -732,21 +737,28 @@ namespace tangent
 				}
 				else
 				{
-					if (errors != nullptr)
-						errors->append(stringify::text("\n  in transaction %s execution error: %s", algorithm::encoding::encode_0xhex256(item.hash).c_str(), execution.error().what()));
 					environment->outgoing.push_back(item.hash);
+					executionlog.append(stringify::text("\n  in transaction %s execution error: %s", algorithm::encoding::encode_0xhex256(item.hash).c_str(), execution.error().what()));
+					while (candidate_transaction == *item.candidate && replace_transaction && !item.candidate->conservative)
+					{
+						auto replacement = environment->precompute_transaction_element(replace_transaction());
+						if (environment->decide_on_inclusion(replacement, gas_limit - item.candidate->gas_limit, block_header::get_gas_limit()) == evaluation_context::include_decision::include_in_block)
+						{
+							gas_limit = gas_limit - item.candidate->gas_limit + replacement.candidate->gas_limit;
+							item = std::move(replacement);
+						}
+					}
 				}
+
 				changelog.clear_temporary_state();
+				if (item.candidate && candidate_transaction != *item.candidate)
+					goto retry_replacement_transaction;
 			}
 
 			if (transactions.empty())
 			{
-				if (!errors)
-					return layer_exception("block does not have any valid transaction");
-				else if (errors->empty())
-					errors->append("\n  block does not have any valid transactions");
-
-				return layer_exception(string(*errors));
+				executionlog.append("\n  block does not have any valid transactions");
+				return layer_exception(std::move(stringify::trim(executionlog)));
 			}
 
 			auto context = transaction_context(environment, this, &changelog, nullptr, { });
@@ -785,19 +797,10 @@ namespace tangent
 				return layer_exception("invalid producer signature");
 
 			evaluation_context environment;
-			if (!environment.priority(producer, nullptr, option<block_header*>((block_header*)parent_block)))
+			if (!environment.configure_priority_from_validator(producer, nullptr, parent_block))
 			{
-				if (!recovery)
-					return layer_exception("invalid producer election");
-
-				auto prev_duration = parent_block ? parent_block->get_slot_duration_target() : (uint64_t)((double)protocol::now().policy.consensus_proof_time * protocol::now().policy.genesis_slot_time_bump);
-				auto prev_target = parent_block ? parent_block->target : algorithm::wesolowski::get_default();
-				if (parent_block && parent_block->recovery)
-					prev_target = algorithm::wesolowski::bump(target, 1.0 / protocol::now().policy.consensus_recovery_bump);
-
-				auto candidate_target = algorithm::wesolowski::bump(algorithm::wesolowski::adjust(prev_target, prev_duration, number), protocol::now().policy.consensus_recovery_bump);
-				if (target.difficulty() != candidate_target.difficulty())
-					return layer_exception("invalid producer election");
+				if (priority != (uint64_t)environment.producers.size())
+					return layer_exception("invalid producer priority");
 			}
 
 			unordered_map<uint256_t, std::pair<const block_transaction*, const evaluation_context::transaction_info*>> childs;
@@ -807,11 +810,11 @@ namespace tangent
 				if (!transaction.transaction)
 					return layer_exception("invalid transaction included in a block");
 
-				auto& info = environment.include(transactions::resolver::from_copy(*transaction.transaction));
+				auto& info = environment.force_include_transaction(transactions::resolver::from_copy(*transaction.transaction));
 				childs[transaction.receipt.transaction_hash] = std::make_pair(&transaction, (const evaluation_context::transaction_info*)&info);
 			}
 
-			auto evaluation = environment.evaluate();
+			auto evaluation = environment.evaluate_block(nullptr);
 			if (!evaluation)
 				return evaluation.error();
 
@@ -831,10 +834,11 @@ namespace tangent
 				transaction.receipt.checksum = 0;
 			}
 
-			memcpy(result.block.signature, signature, sizeof(signature));
-			result.block.wesolowski = wesolowski;
-			result.block.time = time;
+			result.block.proof = proof;
+			result.block.generation_time = generation_time;
+			result.block.evaluation_time = evaluation_time;
 			result.block.recalculate(parent_block, &result.state);
+			memcpy(result.block.signature, signature, sizeof(signature));
 
 			block_header input = *this, output = result.block;
 			if (input.as_message().data != output.as_message().data)
@@ -991,7 +995,7 @@ namespace tangent
 
 			uint256_t cumulative = get_slot_length() > 1 ? 1 : 0;
 			absolute_work = (parent_block ? parent_block->absolute_work : uint256_t(0)) + gas_util::get_gas_work(target.difficulty(), gas_use, gas_limit, priority);
-			slot_duration = (parent_block ? parent_block->slot_duration + parent_block->get_duration() : uint256_t(0)) * cumulative;
+			slot_duration = (parent_block ? parent_block->slot_duration + parent_block->get_proof_accounted_duration() : uint256_t(0)) * cumulative;
 			transaction_count = (uint32_t)transactions.size();
 		}
 		uptr<schema> block::as_schema() const
@@ -1557,7 +1561,6 @@ namespace tangent
 
 			format::wo_stream message;
 			message.write_typeless(block->number);
-			message.write_typeless(block->recovery);
 			message.write_typeless(block->priority);
 			message.write_typeless(block->target.difficulty());
 			message.write_typeless(block->mutation_count);
@@ -1590,10 +1593,21 @@ namespace tangent
 			auto pool = chain.get_multiforms_count_by_row_filter(states::validator_production::as_instance_type(), changelog, states::validator_production::as_instance_row(), filter, nonce).or_else(0);
 			auto size = std::min(target_size, pool);
 			auto indices = ordered_set<uint64_t>();
-			while (indices.size() < size)
+			if (pool > target_size)
 			{
-				uint64_t index = algorithm::hashing::erd64(random->derive(), size);
-				if (indices.find(index) == indices.end())
+				while (indices.size() < size)
+				{
+					uint64_t index = algorithm::hashing::erd64(random->derive(), size);
+					if (indices.find(index) == indices.end())
+					{
+						window.indices.push_back(index);
+						indices.insert(index);
+					}
+				}
+			}
+			else
+			{
+				for (uint64_t index = 0; index < (uint64_t)size; index++)
 				{
 					window.indices.push_back(index);
 					indices.insert(index);
@@ -1644,10 +1658,21 @@ namespace tangent
 			{
 				auto window = storages::result_index_window();
 				auto prefetch = std::min<size_t>(target_size, median_pool);
-				while (window.indices.size() < prefetch)
+				if (median_pool > target_size)
 				{
-					uint64_t index = algorithm::hashing::erd64(random->derive(), median_pool);
-					if (indices.find(index) == indices.end())
+					while (window.indices.size() < prefetch)
+					{
+						uint64_t index = algorithm::hashing::erd64(random->derive(), median_pool);
+						if (indices.find(index) == indices.end())
+						{
+							window.indices.push_back(index);
+							indices.insert(index);
+						}
+					}
+				}
+				else
+				{
+					for (uint64_t index = 0; index < (uint64_t)prefetch; index++)
 					{
 						window.indices.push_back(index);
 						indices.insert(index);
@@ -1866,39 +1891,6 @@ namespace tangent
 				default:
 					return layer_exception("invalid production action");
 			}
-		}
-		expects_lr<states::validator_production> transaction_context::apply_validator_production_transfer(const algorithm::pubkeyhash owner, const uint256_t& mint_gas, const uint256_t& burn_gas)
-		{
-			if (mint_gas && burn_gas)
-				return layer_exception("invalid production action");
-
-			if (burn_gas)
-			{
-				auto production = get_validator_production(owner);
-				if (!production)
-					return production.error();
-
-				if (production->gas < burn_gas)
-					return layer_exception("ran out of gas while refueling");
-
-				auto result = apply_validator_production(owner, production_type::burn_gas, burn_gas, { });
-				if (result)
-				{
-					auto status = emit_event<states::validator_production>({ format::variable(std::string_view((char*)owner, sizeof(algorithm::pubkeyhash))), format::variable(false), format::variable(burn_gas) });
-					if (!status)
-						return status.error();
-				}
-				return result;
-			}
-
-			auto result = apply_validator_production(owner, production_type::mint_gas, mint_gas, { });
-			if (result)
-			{
-				auto status = emit_event<states::validator_production>({ format::variable(std::string_view((char*)owner, sizeof(algorithm::pubkeyhash))), format::variable(true), format::variable(mint_gas) });
-				if (!status)
-					return status.error();
-			}
-			return result;
 		}
 		expects_lr<states::validator_participation> transaction_context::apply_validator_participation(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, stake_type type, int64_t participations, const ordered_map<algorithm::asset_id, decimal>& stakes)
 		{
@@ -2958,7 +2950,7 @@ namespace tangent
 			nss::server_node::get()->store_cache(context->transaction->asset, warden::cache_policy::lifetime_cache, location, std::move(value));
 		}
 
-		option<uint64_t> evaluation_context::priority(const algorithm::pubkeyhash public_key_hash, const algorithm::seckey secret_key, option<block_header*>&& parent_block)
+		option<uint64_t> evaluation_context::configure_priority_from_validator(const algorithm::pubkeyhash public_key_hash, const algorithm::seckey secret_key, option<const block_header*>&& parent_block)
 		{
 			if (!parent_block)
 			{
@@ -2988,7 +2980,7 @@ namespace tangent
 
 			validation.changelog.clear();
 			validation.context = ledger::transaction_context(this, tip.address(), &validation.changelog, nullptr, receipt());
-			validation.cumulative_gas = 0;
+			validation.current_gas_limit = 0;
 			precomputed = 0;
 			producers.clear();
 			attesters.clear();
@@ -3021,7 +3013,7 @@ namespace tangent
 
 			return std::distance(producers.begin(), position);
 		}
-		size_t evaluation_context::apply(vector<uptr<transaction>>&& candidates)
+		size_t evaluation_context::try_include_transactions(vector<uptr<transaction>>&& candidates)
 		{
 			vector<transaction_info> subqueue;
 			subqueue.reserve(candidates.size());
@@ -3031,79 +3023,81 @@ namespace tangent
 				auto& info = subqueue.emplace_back();
 				info.candidate = std::move(candidate);
 			}
+			precompute_transaction_list(subqueue);
 
-			auto total_gas_limit = block_header::get_gas_limit();
-			precompute(subqueue);
-
-			algorithm::pubkeyhash null = { 0 };
+			auto prev_incoming_size = incoming.size();
+			auto max_gas_limit = block_header::get_gas_limit();
+			auto current_gas_limit = uint256_t(0);
 			for (auto& item : subqueue)
 			{
-				if (item.candidate->is_recoverable() && !memcmp(item.owner, null, sizeof(null)))
+				auto decision = decide_on_inclusion(item, validation.current_gas_limit, max_gas_limit);
+				if (decision == include_decision::include_in_block)
 				{
-					outgoing.push_back(item.hash);
-					continue;
-				}
-
-				uint256_t new_cumulative_gas = validation.cumulative_gas + item.candidate->gas_limit;
-				if (new_cumulative_gas > total_gas_limit)
-					break;
-
-				bool applicable = false;
-				switch (item.candidate->get_type())
-				{
-					case transaction_level::attestation:
-					{
-						auto* candidate = ((attestation_transaction*)*item.candidate);
-						auto* branch = candidate->get_best_branch(&validation.context, &attesters);
-						if (!branch)
-							break;
-
-						candidate->set_best_branch(branch->message.hash());
-						applicable = true;
-						break;
-					}
-					default:
-					{
-						auto account_nonce = validation.context.get_account_nonce(item.owner);
-						uint64_t nonce_target = (account_nonce ? account_nonce->nonce : 0);
-						uint64_t nonce_delta = (nonce_target > item.candidate->nonce ? nonce_target - item.candidate->nonce : 0);
-						if (nonce_delta > 1)
-						{
-							outgoing.push_back(item.hash);
-							break;
-						}
-						else if (nonce_delta > 0)
-							break;
-
-						applicable = true;
-						break;
-					}
-				}
-
-				if (applicable)
-				{
-					validation.cumulative_gas = new_cumulative_gas;
+					auto& nonce = nonces[algorithm::pubkeyhash_t(item.owner)];
+					nonce = std::max(item.candidate->nonce + 1, nonce);
+					validation.current_gas_limit += item.candidate->gas_limit;
 					incoming.emplace_back(std::move(item));
 					++precomputed;
 				}
+				else if (decision == include_decision::not_executable)
+					outgoing.push_back(item.hash);
 			}
-			return candidates.size();
+			return prev_incoming_size - incoming.size();
 		}
-		evaluation_context::transaction_info& evaluation_context::include(uptr<transaction>&& candidate)
+		evaluation_context::transaction_info& evaluation_context::force_include_transaction(uptr<transaction>&& candidate)
 		{
+			VI_ASSERT(candidate, "candidate should be set");
 			auto& info = incoming.emplace_back();
 			info.candidate = std::move(candidate);
 			return info;
 		}
-		expects_lr<block_evaluation> evaluation_context::evaluate(string* errors)
+		evaluation_context::include_decision evaluation_context::decide_on_inclusion(const transaction_info& item, const uint256_t& current_gas_limit, const uint256_t& max_gas_limit) const
+		{
+			algorithm::pubkeyhash null = { 0 };
+			if (item.candidate->is_recoverable() && !memcmp(item.owner, null, sizeof(null)))
+				return include_decision::not_executable;
+
+			uint256_t new_gas_limit = current_gas_limit + item.candidate->gas_limit;
+			if (new_gas_limit < current_gas_limit || new_gas_limit > max_gas_limit)
+				return include_decision::not_includable;
+
+			switch (item.candidate->get_type())
+			{
+				case transaction_level::attestation:
+				{
+					auto* candidate = ((attestation_transaction*)*item.candidate);
+					auto* branch = candidate->get_best_branch(&validation.context, &((evaluation_context*)this)->attesters);
+					if (!branch)
+						return include_decision::not_includable;
+
+					candidate->set_best_branch(branch->message.hash());
+					return include_decision::include_in_block;
+				}
+				default:
+				{
+					auto existing_nonce = nonces.find(algorithm::pubkeyhash_t(item.owner));
+					auto account_nonce = validation.context.get_account_nonce(item.owner);
+					uint64_t nonce_target = (existing_nonce != nonces.end() ? existing_nonce->second : (account_nonce ? account_nonce->nonce : 0));
+					uint64_t nonce_delta = (nonce_target > item.candidate->nonce ? nonce_target - item.candidate->nonce : 0);
+					if (nonce_delta > 0)
+						return include_decision::not_includable;
+
+					return include_decision::include_in_block;
+				}
+			}
+		}
+		expects_lr<block_evaluation> evaluation_context::evaluate_block(const replace_transaction_callback& callback)
 		{
 			block_evaluation result;
-			auto status = precompute(result.block);
-			if (!status)
-				return status.error();
+			validation.context = transaction_context(this, &result.block, &validation.changelog, nullptr, receipt());
+			if (precomputed != incoming.size())
+			{
+				precompute_transaction_list(incoming);
+				precomputed = incoming.size();
+			}
 
 			auto chain = storages::chainstate(__func__);
-			auto evaluation = result.block.evaluate(tip.address(), this, errors);
+			auto evaluation = result.block.evaluate(tip.address(), this, callback);
 			cleanup().report("mempool cleanup failed");
 			if (!evaluation)
 				return evaluation.error();
@@ -3111,7 +3105,7 @@ namespace tangent
 			result.state = std::move(*evaluation);
 			return expects_lr<block_evaluation>(std::move(result));
 		}
-		expects_lr<void> evaluation_context::solve(block& candidate)
+		expects_lr<void> evaluation_context::solve_evaluated_block(block& candidate)
 		{
 			if (!candidate.solve(validator.secret_key))
 				return layer_exception("block proof evaluation failed");
@@ -3121,23 +3115,13 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> evaluation_context::verify(const block& candidate, const block_state* state)
+		expects_lr<void> evaluation_context::verify_solved_block(const block& candidate, const block_state* state)
 		{
 			auto validity = candidate.verify_validity(tip.address());
 			if (!validity)
 				return validity;
 
 			return candidate.verify_integrity(tip.address(), state);
-		}
-		expects_lr<void> evaluation_context::precompute(block& candidate)
-		{
-			validation.context = transaction_context(this, &candidate, &validation.changelog, nullptr, receipt());
-			if (precomputed != incoming.size())
-			{
-				precomputed = incoming.size();
-				precompute(incoming);
-			}
-			return expectation::met;
 		}
 		expects_lr<void> evaluation_context::cleanup()
 		{
@@ -3147,7 +3131,19 @@ namespace tangent
 			auto mempool = storages::mempoolstate(__func__);
 			return mempool.remove_transactions(outgoing);
 		}
-		void evaluation_context::precompute(vector<transaction_info>& candidates)
+		evaluation_context::transaction_info evaluation_context::precompute_transaction_element(uptr<transaction>&& candidate)
+		{
+			evaluation_context::transaction_info result;
+			result.candidate = std::move(candidate);
+			if (result.candidate)
+			{
+				result.hash = result.candidate->as_hash();
+				result.size = result.candidate->as_message().data.size();
+				result.candidate->recover_hash(result.owner);
+			}
+			return result;
+		}
+		void evaluation_context::precompute_transaction_list(vector<transaction_info>& candidates)
 		{
 			algorithm::pubkeyhash null = { 0 };
 			parallel::wail_all(parallel::for_each(candidates.begin(), candidates.end(), ELEMENTS_FEW, [&null](transaction_info& item)

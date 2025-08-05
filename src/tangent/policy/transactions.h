@@ -30,24 +30,6 @@ namespace tangent
 			static std::string_view as_instance_typename();
 		};
 
-		struct refuel final : ledger::transaction
-		{
-			vector<std::pair<algorithm::subpubkeyhash_t, uint256_t>> to;
-
-			expects_lr<void> validate(uint64_t block_number) const override;
-			expects_lr<void> execute(ledger::transaction_context* context) const override;
-			bool store_body(format::wo_stream* stream) const override;
-			bool load_body(format::ro_stream& stream) override;
-			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const override;
-			void set_to(const algorithm::subpubkeyhash_t& new_to, const uint256_t& new_value);
-			bool is_to_null() const;
-			uptr<schema> as_schema() const override;
-			uint32_t as_type() const override;
-			std::string_view as_typename() const override;
-			static uint32_t as_instance_type();
-			static std::string_view as_instance_typename();
-		};
-
 		struct upgrade final : ledger::transaction
 		{
 			enum class data_type : uint8_t

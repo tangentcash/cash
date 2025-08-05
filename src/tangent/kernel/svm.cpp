@@ -2825,7 +2825,7 @@ namespace tangent
 		}
 		uint64_t svm_program::block_time() const
 		{
-			uint64_t milliseconds = context->block->time - context->block->time % protocol::now().policy.consensus_proof_time;
+			uint64_t milliseconds = context->block->generation_time - context->block->generation_time % protocol::now().policy.consensus_proof_time;
 			return milliseconds / 1000;
 		}
 		uint64_t svm_program::block_priority() const

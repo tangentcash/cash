@@ -155,13 +155,6 @@ namespace tangent
 		public:
 			struct
 			{
-				option<ledger::block_evaluation> evaluation = optional::none;
-				uint256_t hash = 0;
-				task_id timeout = INVALID_TASK_ID;
-			} pending;
-
-			struct
-			{
 				ledger::wallet wallet;
 				ledger::validator node;
 			} validator;
@@ -188,7 +181,8 @@ namespace tangent
 		private:
 			struct
 			{
-				bool dirty = false;
+				std::atomic<bool> waiting = false;
+				std::atomic<bool> dirty = false;
 			} mempool;
 
 		private:
@@ -225,13 +219,10 @@ namespace tangent
 			void startup();
 			void shutdown();
 			void reject(relay* state);
-			void clear_pending_tip();
-			void enqueue_pending_tip(const uint256_t& candidate_hash, ledger::block_evaluation&& candidate);
-			void accept_pending_tip();
 			void clear_pending_fork(relay* state);
 			void accept_pending_fork(relay* state, fork_head head, const uint256_t& candidate_hash, ledger::block_header&& candidate_block);
 			bool clear_mempool(bool wait);
-			bool accept_mempool();
+			bool accept_mempool(uint64_t timeout_ms);
 			bool accept_dispatchpool(const ledger::block_header& tip);
 			bool accept_block(relay* from, ledger::block_evaluation&& candidate, const uint256_t& fork_tip);
 			bool accept(option<socket_address>&& address = optional::none);
