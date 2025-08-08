@@ -386,7 +386,6 @@ namespace tangent
 			else if (input_hash > 0 && other.input_hash != input_hash)
 				return false;
 
-			unordered_set<algorithm::pubkeyhash_t> attesters;
 			auto branches = std::move(output_hashes);
 			auto* branch_a = get_best_branch(context, nullptr);
 			auto* branch_b = other.get_best_branch(context, nullptr);
@@ -403,16 +402,18 @@ namespace tangent
 			if (gas_price < other.gas_price)
 				gas_price = other.gas_price;
 
+			unordered_map<algorithm::recpubsig_t, algorithm::pubkeyhash_t> signatures;
+			unordered_map<algorithm::pubkeyhash_t, size_t> attesters;
 			for (auto& branch : output_hashes)
 			{
 				uint256_t aggregate_message_hash = get_branch_image(branch.first);
 				for (auto& signature : branch.second.signatures)
 				{
-					algorithm::pubkeyhash attester = { 0 };
-					if (!algorithm::signing::recover_hash(aggregate_message_hash, attester, signature.data))
+					auto& attester = signatures[signature];
+					if (attester.empty() && !algorithm::signing::recover_hash(aggregate_message_hash, attester.data, signature.data))
 						return false;
 
-					attesters.insert(algorithm::pubkeyhash_t(attester));
+					++attesters[attester];
 				}
 			}
 
@@ -422,15 +423,32 @@ namespace tangent
 				auto& fork = output_hashes[branch.first];
 				for (auto& signature : branch.second.signatures)
 				{
-					algorithm::pubkeyhash_t attester;
-					if (!algorithm::signing::recover_hash(aggregate_message_hash, attester.data, signature.data))
+					auto& attester = signatures[signature];
+					if (attester.empty() && !algorithm::signing::recover_hash(aggregate_message_hash, attester.data, signature.data))
 						return false;
 
-					if (attesters.find(attester) == attesters.end())
+					++attesters[attester];
+					fork.signatures.insert(signature);
+				}
+			}
+
+			for (auto& [attester, votes] : attesters)
+			{
+				if (votes <= 1)
+					continue;
+
+				for (auto it = output_hashes.begin(); it != output_hashes.end();)
+				{
+					for (auto& [signature, conflicting_attester] : signatures)
 					{
-						attesters.insert(attester);
-						fork.signatures.insert(signature);
+						if (conflicting_attester == attester)
+							it->second.signatures.erase(signature);
 					}
+
+					if (it->second.signatures.empty())
+						it = output_hashes.erase(it);
+					else
+						++it;
 				}
 			}
 
@@ -637,11 +655,14 @@ namespace tangent
 		void attestation_transaction::set_best_branch(const uint256_t& output_hash)
 		{
 			auto best = output_hashes.find(output_hash);
-			for (auto it = output_hashes.begin(); it != output_hashes.end(); it++)
+			if (best != output_hashes.end())
 			{
-				if (it != best)
-					it->second.message.clear();
+				evaluation_branch target = std::move(best->second);
+				output_hashes.clear();
+				output_hashes[output_hash] = std::move(target);
 			}
+			else
+				output_hashes.clear();
 		}
 		const attestation_transaction::evaluation_branch* attestation_transaction::get_best_branch(const transaction_context* context, ordered_map<algorithm::asset_id, size_t>* aggregators) const
 		{
