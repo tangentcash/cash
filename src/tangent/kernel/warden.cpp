@@ -1477,6 +1477,17 @@ namespace tangent
 		{
 			return std::numeric_limits<uint64_t>::max();
 		}
+		bool relay_backend::has_token(const algorithm::asset_id& asset) const
+		{
+			return token_assets.contains(asset);
+		}
+		void relay_backend::apply_address_to_symbol_whitelist(const vector<std::pair<string, string>>& whitelist)
+		{
+			token_assets.clear();
+			auto blockchain = algorithm::asset::blockchain_of(native_asset);
+			for (auto& [contract_address, symbol] : whitelist)
+				token_assets.insert(algorithm::asset::id_of(blockchain, symbol, contract_address));
+		}
 
 		relay_backend_utxo::balance_query::balance_query(const decimal& new_min_native_value, const unordered_map<algorithm::asset_id, decimal>& new_min_token_values) : min_native_value(new_min_native_value), min_token_values(new_min_token_values)
 		{

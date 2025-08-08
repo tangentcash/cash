@@ -1255,7 +1255,8 @@ namespace tangent
 			if (stringify::is_empty_or_whitespace(blockchain))
 				return false;
 
-			if (!nss::server_node::get()->has_chain(value))
+			auto* chain = nss::server_node::get()->get_chain(value);
+			if (!chain)
 				return false;
 
 			auto token = token_of(value);
@@ -1263,7 +1264,10 @@ namespace tangent
 				return true;
 
 			auto checksum = checksum_of(value);
-			return !stringify::is_empty_or_whitespace(checksum);
+			if (stringify::is_empty_or_whitespace(checksum))
+				return false;
+
+			return chain->has_token(value);
 		}
 		uint64_t asset::expiry_of(const asset_id& value)
 		{

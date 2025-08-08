@@ -139,6 +139,9 @@ namespace tangent
 			expects_lr<void> call_transaction(compiler* module, ledger::svm_call mutability, const function& entrypoint, const format::variables& args)
 			{
 				VI_ASSERT(svmc.contextual, "transaction should be assigned");
+				if (entrypoint.get_name() == "construct")
+					context->receipt.emit_event<states::account_program>({ format::variable(std::string_view((char*)state.to.data, sizeof(algorithm::pubkeyhash))) });
+
 				svmc.events.clear();
 				svmc.instructions.clear();
 				auto execution = execute(mutability, entrypoint, args, [this](void* address, int type_id) -> expects_lr<void>

@@ -1254,9 +1254,7 @@ namespace tangent
 							control_sys.clear_timeout("accept_mempool");
 							accept_mempool(other_node_solution_time - current_solution_time);
 							return;
-						}
-						else if (i < position && protocol::now().user.p2p.logging)
-							VI_WARN("%" PRIu64 " mempool block producer%s failing (%" PRIu64 " until stepping in)", i + 1, i > 0 ? "s are" : " is", position - (i + 1));		
+						}	
 					}
 				}
 

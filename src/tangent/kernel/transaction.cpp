@@ -142,10 +142,6 @@ namespace tangent
 			auto level = get_type();
 			return level != transaction_level::attestation;
 		}
-		algorithm::asset_id transaction::get_gas_asset() const
-		{
-			return algorithm::asset::base_id_of(asset);
-		}
 		transaction_level transaction::get_type() const
 		{
 			return transaction_level::functional;

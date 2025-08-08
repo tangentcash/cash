@@ -2750,6 +2750,10 @@ namespace tangent
 			if (type == transactions::call::as_instance_type())
 				return svm_address(algorithm::subpubkeyhash_t(((transactions::call*)context->transaction)->callable));
 
+			auto* event = context->receipt.find_event<states::account_program>();
+			if (event != nullptr && !event->empty() && event->at(0).as_string().size() == sizeof(algorithm::pubkeyhash))
+				return svm_address(algorithm::pubkeyhash_t(event->at(0).as_string()));
+
 			return svm_address(algorithm::pubkeyhash_t(context->receipt.from));
 		}
 		decimal svm_program::value() const

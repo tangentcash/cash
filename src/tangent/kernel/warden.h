@@ -357,6 +357,7 @@ namespace tangent
 			};
 
 		protected:
+			unordered_set<algorithm::asset_id> token_assets;
 			algorithm::asset_id native_asset;
 
 		public:
@@ -394,7 +395,11 @@ namespace tangent
 			virtual uint256_t to_baseline_value(const decimal& value) const;
 			virtual decimal from_baseline_value(const uint256_t& value) const;
 			virtual uint64_t get_retirement_block_number() const;
+			virtual bool has_token(const algorithm::asset_id& asset) const;
 			virtual const chainparams& get_chainparams() const = 0;
+
+		protected:
+			virtual void apply_address_to_symbol_whitelist(const vector<std::pair<string, string>>& whitelist);
 		};
 
 		class relay_backend_utxo : public relay_backend

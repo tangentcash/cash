@@ -166,13 +166,14 @@ public:
 			VI_PANIC(multi_asset_rollup->sign(user1.secret_key, user1_nonce++, decimal::zero()), "rollup not signed");
 			transactions.push_back(multi_asset_rollup);
 		}
-		static void account_upgrade(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
+		static void account_upgrade(vector<uptr<ledger::transaction>>& transactions, vector<account>& users, vector<algorithm::pubkeyhash_t>* contracts)
 		{
 			auto& [user1, user1_nonce] = users[0];
-			ledger::wallet token_contract = ledger::wallet::from_seed(string("token") + string((char*)user1.secret_key, sizeof(user1.secret_key)));
 			std::string_view token_program = VI_STRINGIFY((
 			class token_storage
 			{
+				address deployer;
+				address contract;
 				address account;
 				string name;
 				string symbol;
@@ -190,6 +191,8 @@ public:
 			token_storage construct(instrset::rwptr@, const address&in admin, const uint256&in value)
 			{
 				token_storage token;
+				token.deployer = tx::from();
+				token.contract = tx::to();
 				token.account = admin;
 				token.name = "Test Token";
 				token.symbol = "TT";
@@ -258,8 +261,7 @@ public:
 			token_storage info(instrset::rptr@)
 			{
 				return sv::as<token_storage>(uint8(0));
-			}));		
-			ledger::wallet bridge_contract = ledger::wallet::from_seed(string("bridge") + string((char*)user1.secret_key, sizeof(user1.secret_key)));
+			}));
 			std::string_view bridge_program = VI_STRINGIFY((
 			void construct(instrset::rwptr@, const address&in token_account)
 			{
@@ -274,36 +276,36 @@ public:
 			auto* upgrade_ethereum1 = memory::init<transactions::upgrade>();
 			upgrade_ethereum1->set_asset("ETH");
 			upgrade_ethereum1->from_program(token_program.substr(1, token_program.size() - 2), { format::variable(user1.get_address()), format::variable(1000000u) });
-			VI_PANIC(upgrade_ethereum1->sign(token_contract.secret_key, 1, decimal::zero()), "upgrade not signed");
+			VI_PANIC(upgrade_ethereum1->sign(user1.secret_key, user1_nonce++, decimal::zero()), "upgrade not signed");
 			transactions.push_back(upgrade_ethereum1);
+			contracts->push_back(upgrade_ethereum1->get_account(user1.public_key_hash));
 
 			auto* upgrade_ethereum2 = memory::init<transactions::upgrade>();
 			upgrade_ethereum2->set_asset("ETH");
-			upgrade_ethereum2->from_program(bridge_program.substr(1, bridge_program.size() - 2), { format::variable(token_contract.get_address()) });
-			VI_PANIC(upgrade_ethereum2->sign(bridge_contract.secret_key, 1, decimal::zero()), "upgrade not signed");
+			upgrade_ethereum2->from_program(bridge_program.substr(1, bridge_program.size() - 2), { format::variable(contracts->at(0).view()) });
+			VI_PANIC(upgrade_ethereum2->sign(user1.secret_key, user1_nonce++, decimal::zero()), "upgrade not signed");
 			transactions.push_back(upgrade_ethereum2);
+			contracts->push_back(upgrade_ethereum2->get_account(user1.public_key_hash));
 		}
-		static void account_call(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
+		static void account_call(vector<uptr<ledger::transaction>>& transactions, vector<account>& users, vector<algorithm::pubkeyhash_t>* contracts)
 		{
 			auto& [user1, user1_nonce] = users[0];
 			auto& [user2, user2_nonce] = users[1];
-			ledger::wallet token_contract = ledger::wallet::from_seed(string("token") + string((char*)user1.secret_key, sizeof(user1.secret_key)));
-			ledger::wallet bridge_contract = ledger::wallet::from_seed(string("bridge") + string((char*)user1.secret_key, sizeof(user1.secret_key)));
 			auto* call_ethereum1 = memory::init<transactions::call>();
 			call_ethereum1->set_asset("ETH");
-			call_ethereum1->program_call(algorithm::encoding::to_subaddress(token_contract.public_key_hash), decimal::zero(), "transfer", { format::variable(std::string_view((char*)user2.public_key_hash, sizeof(user2.public_key_hash))), format::variable(250000u) });
+			call_ethereum1->program_call(algorithm::encoding::to_subaddress(contracts->at(0).data), decimal::zero(), "transfer", { format::variable(std::string_view((char*)user2.public_key_hash, sizeof(user2.public_key_hash))), format::variable(250000u) });
 			VI_PANIC(call_ethereum1->sign(user1.secret_key, user1_nonce++, decimal::zero()), "call not signed");
 			transactions.push_back(call_ethereum1);
 
 			auto* call_ethereum2 = memory::init<transactions::call>();
 			call_ethereum2->set_asset("ETH");
-			call_ethereum2->program_call(algorithm::encoding::to_subaddress(token_contract.public_key_hash), decimal::zero(), "info", { });
+			call_ethereum2->program_call(algorithm::encoding::to_subaddress(contracts->at(0).data), decimal::zero(), "info", { });
 			VI_PANIC(call_ethereum2->sign(user1.secret_key, user1_nonce++, decimal::zero()), "call not signed");
 			transactions.push_back(call_ethereum2);
 
 			auto* call_bitcoin = memory::init<transactions::call>();
 			call_bitcoin->set_asset("BTC");
-			call_bitcoin->program_call(algorithm::encoding::to_subaddress(bridge_contract.public_key_hash, "123456"), decimal::zero(), "balance_of_test_token", { });
+			call_bitcoin->program_call(algorithm::encoding::to_subaddress(contracts->at(1).data, "123456"), decimal::zero(), "balance_of_test_token", { });
 			VI_PANIC(call_bitcoin->sign(user1.secret_key, user1_nonce++, decimal::zero()), "call not signed");
 			transactions.push_back(call_bitcoin);
 		}
@@ -1491,6 +1493,7 @@ public:
 		use_clean_state([&]()
 		{
 			uptr<schema> data = userdata ? nullptr : var::set::array();
+			vector<algorithm::pubkeyhash_t> contracts;
 			vector<account> users =
 			{
 				account(ledger::wallet::from_seed("000001"), 0),
@@ -1505,16 +1508,16 @@ public:
 			TEST_BLOCK(&generators::account_transfer_stage_1, "0x6bf38e44b95ce4046c0705ed799e4a2b5963636be7d50733bca5b1858a1f0d59", 7);
 			TEST_BLOCK(&generators::account_transfer_stage_2, "0x5264b00fc186d77c564cce5b570eab768b461e1720bcc0f087340745e53fe731", 8);
 			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), users[2].wallet.get_address(), 0.05), "0x7e41b5bf2f4a9258970247f298bcc7690f963c21a5668f8aa4b687559c7ce1bc", 9);
-			TEST_BLOCK(&generators::account_upgrade, "0xca30023b8a863a154d99562f3f0b592b38dcaaaf1f82fc1ef1a4905c0565c0fd", 10);
-			TEST_BLOCK(&generators::account_call, "0xe9d8fd5964cf2bb1c204a3ce9c9cb92874c2997f39246bb5a09d3bf7d284a94e", 11);
-			TEST_BLOCK(&generators::account_transaction_rollup, "0xb5ec6b73d4c2429771b45f36aac99ceee32eff8b91758bcdce45d4f466d4739a", 12);
-			TEST_BLOCK(std::bind(&generators::validator_enable_validator, std::placeholders::_1, std::placeholders::_2, 2, true, true, true), "0x5053a171396e851a1466ec65af53ce64e18ea4c3b1e96a7988cb2a8bf232fc25", 13);
-			TEST_BLOCK(&generators::depository_regrouping, "0x14a81b8f388564017840ad9c8fbc1b87d864e4a9ffc618e15b843b19c972e3d7", 14);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_1, "0xf3517bc13f909aacca342754c26e3625aeb740cec30bbca3ca0c672a3a8cbfc1", 18);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0xea3fc82c35e1379b9310fdd64f0756f1f24158fd334f862a092d766ae812d1cb", 20);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0x80aab8f1e9499d2e9e38355198887afa93ffc97c0b6db30010dc602700c386e3", 22);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_4, "0xdff835b9b6fe393b029b687db872ac3fdead67a062e97985ee436b2f3e8003ce", 24);
-			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2, true, true, false), "0xa3c99715b5e9138d3570bdf19938de85dcda8db84fa099c9e70abb9f90ed3f44", 26);
+			TEST_BLOCK(std::bind(&generators::account_upgrade, std::placeholders::_1, std::placeholders::_2, &contracts), "0x8cd4d126fc1d28756fc0df76c3e4fa606463a6a400382bae45f5a7e438a3fc39", 10);
+			TEST_BLOCK(std::bind(&generators::account_call, std::placeholders::_1, std::placeholders::_2, &contracts), "0x7a2b981c2c87df4f3391a19c78c023603a1b9b17a8ca8a4ce19d05ea00203ba8", 11);
+			TEST_BLOCK(&generators::account_transaction_rollup, "0x84c274411186057338ec93f6abfd1f464e0f087fd33243da593bc83aede73500", 12);
+			TEST_BLOCK(std::bind(&generators::validator_enable_validator, std::placeholders::_1, std::placeholders::_2, 2, true, true, true), "0x04cf5734833439cfc72b3e867859a8fde4e112c7c4a59584843ccbd547c64746", 13);
+			TEST_BLOCK(&generators::depository_regrouping, "0x33f31bd387dd4f89a490606a934f0be115f818daac0aadcbd2b2060216cecc57", 14);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_1, "0xf187396ef302584a3453a6baaaa45085a968ea7f5289ba753b25a86b84e1c651", 18);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0xd0e57ecab3101effd7fe5a56cbb5d2654923062d36400f3640635c90d4668399", 20);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0x826550ada280e68f7d9320984d505666b2eca378bc7679cb7dafcc8dba667acf", 22);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_4, "0xa63f4ef3099c45fe71dfa4846dc1bccaffc860656ded8672d7b68032ea8a4192", 24);
+			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2, true, true, false), "0xaed2ce160f80ada17ba12be21032ae1041b2ea12823c1dc69564fcd805e9a937", 26);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else

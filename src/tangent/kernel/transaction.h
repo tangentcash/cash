@@ -53,7 +53,6 @@ namespace tangent
 			virtual bool is_consensus() const;
 			virtual bool is_dispatchable() const;
 			virtual bool is_recoverable() const;
-			virtual algorithm::asset_id get_gas_asset() const;
 			virtual transaction_level get_type() const;
 			virtual uptr<schema> as_schema() const override;
 			virtual uint32_t as_type() const override = 0;

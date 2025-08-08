@@ -167,6 +167,7 @@ namespace tangent
 			if (!validation)
 				return validation.error();
 
+			auto account = get_account(context->receipt.from);
 			auto storage = std::string_view(data).substr(1);
 			auto type = get_data_type().or_else(data_type::hashcode);
 			auto* host = ledger::svm_host::get();
@@ -206,7 +207,7 @@ namespace tangent
 						return layer_exception("program hashcode collision");
 					}
 
-					auto status = context->apply_account_program(context->receipt.from, hashcode);
+					auto status = context->apply_account_program(account.data, hashcode);
 					if (!status)
 					{
 						host->deallocate(std::move(compiler));
@@ -240,7 +241,7 @@ namespace tangent
 						}
 					}
 
-					auto status = context->apply_account_program(context->receipt.from, storage);
+					auto status = context->apply_account_program(account.data, storage);
 					if (!status)
 					{
 						host->deallocate(std::move(compiler));
@@ -253,11 +254,11 @@ namespace tangent
 					return layer_exception("invalid data type");
 			}
 
-			auto nonce = context->apply_account_nonce(context->receipt.from, std::numeric_limits<uint64_t>::max());
-			if (!nonce)
+			auto event = context->emit_event<states::account_program>({ format::variable(account.view()) });
+			if (!event)
 			{
 				host->deallocate(std::move(compiler));
-				return nonce.error();
+				return event.error();
 			}
 
 			auto script = ledger::svm_program(context);
@@ -281,8 +282,12 @@ namespace tangent
 		}
 		bool upgrade::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
 		{
+			const format::variables* event = receipt.find_event<states::account_program>();
+			if (event != nullptr && !event->empty() && event->at(0).as_string().size() == sizeof(algorithm::pubkeyhash))
+				parties.insert(algorithm::pubkeyhash_t(event->at(0).as_string()));
+
 			size_t offset = 0;
-			const format::variables* event = receipt.find_event<states::account_balance>();
+			event = receipt.find_event<states::account_balance>();
 			while (event != nullptr)
 			{
 				auto from = event->size() > 1 ? event->at(1).as_string() : std::string_view();
@@ -310,6 +315,16 @@ namespace tangent
 			data.clear();
 			data.assign(1, (char)data_type::hashcode);
 			data.append(new_data.substr(0, 64));
+		}
+		algorithm::pubkeyhash_t upgrade::get_account(const algorithm::pubkeyhash from) const
+		{
+			VI_ASSERT(from != nullptr, "from should be set");
+			auto message = as_message();
+			message.write_typeless(from, sizeof(algorithm::pubkeyhash));
+
+			algorithm::pubkeyhash_t account;
+			algorithm::hashing::hash160((uint8_t*)message.data.data(), message.data.size(), account.data);
+			return account;
 		}
 		option<upgrade::data_type> upgrade::get_data_type() const
 		{

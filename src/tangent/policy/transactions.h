@@ -47,6 +47,7 @@ namespace tangent
 			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const override;
 			void from_program(const std::string_view& new_data, format::variables&& new_args);
 			void from_hashcode(const std::string_view& new_data, format::variables&& new_args);
+			algorithm::pubkeyhash_t get_account(const algorithm::pubkeyhash from) const;
 			option<data_type> get_data_type() const;
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;

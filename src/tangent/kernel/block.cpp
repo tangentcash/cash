@@ -730,7 +730,7 @@ namespace tangent
 					blob.receipt = std::move(execution->receipt);
 					if (blob.receipt.relative_gas_paid > 0)
 					{
-						auto& fee = fees[blob.transaction->get_gas_asset()];
+						auto& fee = fees[blob.transaction->asset];
 						fee = (fee.is_nan() ? decimal::zero() : fee) + blob.transaction->gas_price * blob.receipt.relative_gas_paid.to_decimal();
 					}
 					changelog.outgoing.commit();
@@ -1519,12 +1519,11 @@ namespace tangent
 			if (gas_calculation || !transaction->gas_price.is_positive())
 				return expectation::met;
 
-			auto asset = transaction->get_gas_asset();
-			auto state = get_account_balance(asset, receipt.from);
+			auto state = get_account_balance(transaction->asset, receipt.from);
 			decimal max_paid_value = transaction->gas_price * transaction->gas_limit.to_decimal();
 			decimal max_payable_value = state ? state->get_balance() : decimal::zero();
 			if (max_payable_value < max_paid_value)
-				return layer_exception(algorithm::asset::handle_of(asset) + " balance is insufficient (balance: " + max_payable_value.to_string() + ", value: " + max_paid_value.to_string() + ")");
+				return layer_exception(algorithm::asset::handle_of(transaction->asset) + " balance is insufficient (balance: " + max_payable_value.to_string() + ", value: " + max_paid_value.to_string() + ")");
 
 			return expectation::met;
 		}
@@ -2738,7 +2737,7 @@ namespace tangent
 			context.receipt.relative_gas_paid = memcmp(context.environment->validator.public_key_hash, context.receipt.from, sizeof(context.receipt.from)) != 0 && context.transaction->gas_price.is_positive() ? context.receipt.relative_gas_use : uint256_t(0);
 			if (context.receipt.relative_gas_paid > 0)
 			{
-				auto fee = context.apply_fee_transfer(context.transaction->get_gas_asset(), context.receipt.from, context.transaction->gas_price * context.receipt.relative_gas_paid.to_decimal());
+				auto fee = context.apply_fee_transfer(context.transaction->asset, context.receipt.from, context.transaction->gas_price * context.receipt.relative_gas_paid.to_decimal());
 				if (!fee)
 					return fee.error();
 			}
