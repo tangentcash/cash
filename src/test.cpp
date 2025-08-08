@@ -1,13 +1,5 @@
-#include "tangent/kernel/block.h"
-#include "tangent/kernel/wallet.h"
-#include "tangent/kernel/svm.h"
-#include "tangent/policy/transactions.h"
-#include "tangent/validator/storage/chainstate.h"
+#include "tangent/validator/entrypoints.hpp"
 #include "tangent/validator/storage/mempoolstate.h"
-#include "tangent/validator/service/rpc.h"
-#include "tangent/validator/service/p2p.h"
-#include "tangent/validator/service/nds.h"
-#include "tangent/validator/service/nss.h"
 #include <sstream>
 #define TEST_BLOCK(x, y, z) new_block_from_generator(*data, users, x, #x, y, z)
 
@@ -1791,7 +1783,7 @@ public:
 	}
 };
 
-class entrypoints
+class runners
 {
 public:
 	/* nss, nds, p2p, rpc nodes */
@@ -2745,17 +2737,21 @@ int main(int argc, char* argv[])
 	int exit_code = bad_entrypoint_exit_code;
 	auto test = args.get("test");
 	if (test == "consensus")
-		exit_code = entrypoints::consensus(args);
+		exit_code = runners::consensus(args);
 	else if (test == "warden")
-		exit_code = entrypoints::warden(args);
+		exit_code = runners::warden(args);
 	else if (test == "explorer")
-		exit_code = entrypoints::explorer(args);
+		exit_code = runners::explorer(args);
 	else if (test == "benchmark")
-		exit_code = entrypoints::benchmark(args);
+		exit_code = runners::benchmark(args);
 	else if (test == "regression")
-		exit_code = entrypoints::regression(args);
+		exit_code = runners::regression(args);
+	else if (test == "svm")
+		exit_code = entrypoints::svm(args);
+	else if (test == "node")
+		exit_code = entrypoints::node(args);
 
-	VI_PANIC(exit_code != bad_entrypoint_exit_code, "must provide a \"test\" flag (string in [consensus, warden, explorer, benchmark, regression])");
+	VI_PANIC(exit_code != bad_entrypoint_exit_code, "must provide a \"test\" flag (string in [consensus, warden, explorer, benchmark, regression] or in [svm, node])");
 	if (os::process::has_debugger())
 	{
 		auto* term = console::get();

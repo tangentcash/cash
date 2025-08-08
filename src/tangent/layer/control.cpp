@@ -281,6 +281,9 @@ namespace tangent
 			service.shutdown();
 
 		queue->stop();
+		if (multiplexer::has_instance())
+			multiplexer::get()->shutdown();
+
 		while (queue->dispatch());
 		return 0;
 	}
