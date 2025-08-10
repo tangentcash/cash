@@ -35,7 +35,7 @@ namespace tangent
 			switch (term)
 			{
 				case warden::wallet_link::search_term::owner:
-					return var::set::binary(link.owner, sizeof(link.owner));
+					return var::set::binary(link.owner.view());
 				case warden::wallet_link::search_term::public_key:
 					return var::set::binary(to_typeless(link.public_key));
 				case warden::wallet_link::search_term::address:
@@ -62,7 +62,7 @@ namespace tangent
 
 			schema_list map;
 			map.push_back(var::set::binary(transaction_id_index.data));
-			map.push_back(var::set::binary(std::string_view((char*)value.link.owner, sizeof(value.link.owner))));
+			map.push_back(var::set::binary(value.link.owner.view()));
 			map.push_back(var::set::string(value.link.public_key));
 			map.push_back(var::set::string(value.link.address));
 			map.push_back(var::set::boolean(false));
@@ -364,7 +364,7 @@ namespace tangent
 		expects_lr<void> wardenstate::set_link(const warden::wallet_link& value)
 		{
 			schema_list map;
-			map.push_back(var::set::binary(value.owner, sizeof(value.owner)));
+			map.push_back(var::set::binary(value.owner.view()));
 			map.push_back(var::set::string(value.public_key));
 			map.push_back(var::set::string(value.address));
 			map.push_back(var::set::binary(to_typeless(value.public_key)));
@@ -400,7 +400,7 @@ namespace tangent
 
 			warden::wallet_link value;
 			auto owner = (*cursor)["owner"].get().get_blob();
-			memcpy(value.owner, owner.data(), std::min(sizeof(value.owner), owner.size()));
+			value.owner = algorithm::pubkeyhash_t(owner);
 			value.public_key = (*cursor)["public_key"].get().get_blob();
 			value.address = (*cursor)["address"].get().get_blob();
 			return value;
@@ -434,7 +434,7 @@ namespace tangent
 				auto row = response[i];
 				warden::wallet_link value;
 				auto owner = row["owner"].get().get_blob();
-				memcpy(value.owner, owner.data(), std::min(sizeof(value.owner), owner.size()));
+				value.owner = algorithm::pubkeyhash_t(owner);
 				value.public_key = row["public_key"].get().get_blob();
 				value.address = row["address"].get().get_blob();
 				values[string(value.address)] = std::move(value);
@@ -471,7 +471,7 @@ namespace tangent
 				auto row = response[i];
 				warden::wallet_link value;
 				auto owner = row["owner"].get().get_blob();
-				memcpy(value.owner, owner.data(), std::min(sizeof(value.owner), owner.size()));
+				value.owner = algorithm::pubkeyhash_t(owner);
 				value.public_key = row["public_key"].get().get_blob();
 				value.address = row["address"].get().get_blob();
 				values[string(value.address)] = std::move(value);
@@ -479,15 +479,15 @@ namespace tangent
 
 			return values;
 		}
-		expects_lr<unordered_map<string, warden::wallet_link>> wardenstate::get_links_by_owner(const algorithm::pubkeyhash owner, size_t offset, size_t count)
+		expects_lr<unordered_map<string, warden::wallet_link>> wardenstate::get_links_by_owner(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count)
 		{
 			schema_list map;
-			if (owner != nullptr)
-				map.push_back(var::set::binary(owner, sizeof(algorithm::pubkeyhash)));
+			if (!owner.empty())
+				map.push_back(var::set::binary(owner.view()));
 			map.push_back(var::set::integer(count));
 			map.push_back(var::set::integer(offset));
 
-			auto cursor = emplace_query(label, __func__, owner ? "SELECT * FROM links WHERE owner = ? LIMIT ? OFFSET ?" : "SELECT * FROM links LIMIT ? OFFSET ?", &map);
+			auto cursor = emplace_query(label, __func__, !owner.empty() ? "SELECT * FROM links WHERE owner = ? LIMIT ? OFFSET ?" : "SELECT * FROM links LIMIT ? OFFSET ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<unordered_map<string, warden::wallet_link>>(layer_exception(error_of(cursor)));
 
@@ -501,7 +501,7 @@ namespace tangent
 				auto row = response[i];
 				warden::wallet_link value;
 				auto owner = row["owner"].get().get_blob();
-				memcpy(value.owner, owner.data(), std::min(sizeof(value.owner), owner.size()));
+				value.owner = algorithm::pubkeyhash_t(owner);
 				value.public_key = row["public_key"].get().get_blob();
 				value.address = row["address"].get().get_blob();
 				values[string(value.address)] = std::move(value);

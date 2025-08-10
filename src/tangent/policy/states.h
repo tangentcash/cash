@@ -8,78 +8,75 @@ namespace tangent
 	{
 		struct account_nonce final : ledger::uniform
 		{
-			algorithm::pubkeyhash owner = { 0 };
+			algorithm::pubkeyhash_t owner;
 			uint64_t nonce = 0;
 
-			account_nonce(const algorithm::pubkeyhash new_owner, uint64_t new_block_number, uint64_t new_block_nonce);
-			account_nonce(const algorithm::pubkeyhash new_owner, const ledger::block_header* new_block_header);
+			account_nonce(const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number, uint64_t new_block_nonce);
+			account_nonce(const algorithm::pubkeyhash_t& new_owner, const ledger::block_header* new_block_header);
 			expects_lr<void> transition(const ledger::transaction_context* context, const ledger::state* prev_state) override;
 			bool store_index(format::wo_stream* stream) const override;
 			bool load_index(format::ro_stream& stream) override;
 			bool store_data(format::wo_stream* stream) const override;
 			bool load_data(format::ro_stream& stream) override;
-			bool is_owner_null() const;
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
-			static string as_instance_index(const algorithm::pubkeyhash owner);
+			static string as_instance_index(const algorithm::pubkeyhash_t& owner);
 		};
 
 		struct account_program final : ledger::uniform
 		{
-			algorithm::pubkeyhash owner = { 0 };
+			algorithm::pubkeyhash_t owner;
 			string hashcode;
 
-			account_program(const algorithm::pubkeyhash new_owner, uint64_t new_block_number, uint64_t new_block_nonce);
-			account_program(const algorithm::pubkeyhash new_owner, const ledger::block_header* new_block_header);
+			account_program(const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number, uint64_t new_block_nonce);
+			account_program(const algorithm::pubkeyhash_t& new_owner, const ledger::block_header* new_block_header);
 			expects_lr<void> transition(const ledger::transaction_context* context, const ledger::state* prev_state) override;
 			bool store_index(format::wo_stream* stream) const override;
 			bool load_index(format::ro_stream& stream) override;
 			bool store_data(format::wo_stream* stream) const override;
 			bool load_data(format::ro_stream& stream) override;
-			bool is_owner_null() const;
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
-			static string as_instance_index(const algorithm::pubkeyhash owner);
+			static string as_instance_index(const algorithm::pubkeyhash_t& owner);
 		};
 
 		struct account_uniform final : ledger::uniform
 		{
-			algorithm::pubkeyhash owner = { 0 };
+			algorithm::pubkeyhash_t owner;
 			string index;
 			string data;
 
-			account_uniform(const algorithm::pubkeyhash new_owner, const std::string_view& new_index, uint64_t new_block_number, uint64_t new_block_nonce);
-			account_uniform(const algorithm::pubkeyhash new_owner, const std::string_view& new_index, const ledger::block_header* new_block_header);
+			account_uniform(const algorithm::pubkeyhash_t& new_owner, const std::string_view& new_index, uint64_t new_block_number, uint64_t new_block_nonce);
+			account_uniform(const algorithm::pubkeyhash_t& new_owner, const std::string_view& new_index, const ledger::block_header* new_block_header);
 			expects_lr<void> transition(const ledger::transaction_context* context, const ledger::state* prev_state) override;
 			bool store_index(format::wo_stream* stream) const override;
 			bool load_index(format::ro_stream& stream) override;
 			bool store_data(format::wo_stream* stream) const override;
 			bool load_data(format::ro_stream& stream) override;
-			bool is_owner_null() const;
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
-			static string as_instance_index(const algorithm::pubkeyhash owner, const std::string_view& index);
+			static string as_instance_index(const algorithm::pubkeyhash_t& owner, const std::string_view& index);
 		};
 
 		struct account_multiform final : ledger::multiform
 		{
-			algorithm::pubkeyhash owner = { 0 };
+			algorithm::pubkeyhash_t owner;
 			uint256_t filter;
 			string column;
 			string row;
 			string data;
 
-			account_multiform(const algorithm::pubkeyhash new_owner, const std::string_view& new_column, const std::string_view& new_row, uint64_t new_block_number, uint64_t new_block_nonce);
-			account_multiform(const algorithm::pubkeyhash new_owner, const std::string_view& new_column, const std::string_view& new_row, const ledger::block_header* new_block_header);
+			account_multiform(const algorithm::pubkeyhash_t& new_owner, const std::string_view& new_column, const std::string_view& new_row, uint64_t new_block_number, uint64_t new_block_nonce);
+			account_multiform(const algorithm::pubkeyhash_t& new_owner, const std::string_view& new_column, const std::string_view& new_row, const ledger::block_header* new_block_header);
 			expects_lr<void> transition(const ledger::transaction_context* context, const ledger::state* prev_state) override;
 			bool store_column(format::wo_stream* stream) const override;
 			bool load_column(format::ro_stream& stream) override;
@@ -87,48 +84,46 @@ namespace tangent
 			bool load_row(format::ro_stream& stream) override;
 			bool store_data(format::wo_stream* stream) const override;
 			bool load_data(format::ro_stream& stream) override;
-			bool is_owner_null() const;
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			uint256_t as_rank() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
-			static string as_instance_column(const algorithm::pubkeyhash owner, const std::string_view& column);
-			static string as_instance_row(const algorithm::pubkeyhash owner, const std::string_view& row);
+			static string as_instance_column(const algorithm::pubkeyhash_t& owner, const std::string_view& column);
+			static string as_instance_row(const algorithm::pubkeyhash_t& owner, const std::string_view& row);
 		};
 
 		struct account_delegation final : ledger::uniform
 		{
-			algorithm::pubkeyhash owner = { 0 };
+			algorithm::pubkeyhash_t owner;
 			uint32_t delegations = 0;
 
-			account_delegation(const algorithm::pubkeyhash new_owner, uint64_t new_block_number, uint64_t new_block_nonce);
-			account_delegation(const algorithm::pubkeyhash new_owner, const ledger::block_header* new_block_header);
+			account_delegation(const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number, uint64_t new_block_nonce);
+			account_delegation(const algorithm::pubkeyhash_t& new_owner, const ledger::block_header* new_block_header);
 			expects_lr<void> transition(const ledger::transaction_context* context, const ledger::state* prev_state) override;
 			bool store_index(format::wo_stream* stream) const override;
 			bool load_index(format::ro_stream& stream) override;
 			bool store_data(format::wo_stream* stream) const override;
 			bool load_data(format::ro_stream& stream) override;
-			bool is_owner_null() const;
 			uint64_t get_delegation_zeroing_block(uint64_t current_block_number) const;
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
-			static string as_instance_index(const algorithm::pubkeyhash owner);
+			static string as_instance_index(const algorithm::pubkeyhash_t& owner);
 		};
 
 		struct account_balance final : ledger::multiform
 		{
-			algorithm::pubkeyhash owner = { 0 };
+			algorithm::pubkeyhash_t owner;
 			algorithm::asset_id asset;
 			decimal supply = decimal::zero();
 			decimal reserve = decimal::zero();
 
-			account_balance(const algorithm::pubkeyhash new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number, uint64_t new_block_nonce);
-			account_balance(const algorithm::pubkeyhash new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header);
+			account_balance(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number, uint64_t new_block_nonce);
+			account_balance(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header);
 			expects_lr<void> transition(const ledger::transaction_context* context, const ledger::state* prev_state) override;
 			bool store_column(format::wo_stream* stream) const override;
 			bool load_column(format::ro_stream& stream) override;
@@ -136,7 +131,6 @@ namespace tangent
 			bool load_row(format::ro_stream& stream) override;
 			bool store_data(format::wo_stream* stream) const override;
 			bool load_data(format::ro_stream& stream) override;
-			bool is_owner_null() const;
 			decimal get_balance() const;
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
@@ -144,19 +138,19 @@ namespace tangent
 			uint256_t as_rank() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
-			static string as_instance_column(const algorithm::pubkeyhash owner);
+			static string as_instance_column(const algorithm::pubkeyhash_t& owner);
 			static string as_instance_row(const algorithm::asset_id& asset);
 		};
 
 		struct validator_production final : ledger::multiform
 		{
-			algorithm::pubkeyhash owner = { 0 };
+			algorithm::pubkeyhash_t owner;
 			ordered_map<algorithm::asset_id, decimal> stakes;
 			uint256_t gas = 0;
 			bool active = false;
 
-			validator_production(const algorithm::pubkeyhash new_owner, uint64_t new_block_number, uint64_t new_block_nonce);
-			validator_production(const algorithm::pubkeyhash new_owner, const ledger::block_header* new_block_header);
+			validator_production(const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number, uint64_t new_block_nonce);
+			validator_production(const algorithm::pubkeyhash_t& new_owner, const ledger::block_header* new_block_header);
 			expects_lr<void> transition(const ledger::transaction_context* context, const ledger::state* prev_state) override;
 			bool store_column(format::wo_stream* stream) const override;
 			bool load_column(format::ro_stream& stream) override;
@@ -164,26 +158,25 @@ namespace tangent
 			bool load_row(format::ro_stream& stream) override;
 			bool store_data(format::wo_stream* stream) const override;
 			bool load_data(format::ro_stream& stream) override;
-			bool is_owner_null() const;
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			uint256_t as_rank() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
-			static string as_instance_column(const algorithm::pubkeyhash owner);
+			static string as_instance_column(const algorithm::pubkeyhash_t& owner);
 			static string as_instance_row();
 		};
 
 		struct validator_participation final : ledger::multiform
 		{
 			algorithm::asset_id asset;
-			algorithm::pubkeyhash owner = { 0 };
+			algorithm::pubkeyhash_t owner;
 			ordered_map<algorithm::asset_id, decimal> stakes;
 			uint64_t participations = 0;
 
-			validator_participation(const algorithm::pubkeyhash new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number, uint64_t new_block_nonce);
-			validator_participation(const algorithm::pubkeyhash new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header);
+			validator_participation(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number, uint64_t new_block_nonce);
+			validator_participation(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header);
 			expects_lr<void> transition(const ledger::transaction_context* context, const ledger::state* prev_state) override;
 			bool store_column(format::wo_stream* stream) const override;
 			bool load_column(format::ro_stream& stream) override;
@@ -191,7 +184,6 @@ namespace tangent
 			bool load_row(format::ro_stream& stream) override;
 			bool store_data(format::wo_stream* stream) const override;
 			bool load_data(format::ro_stream& stream) override;
-			bool is_owner_null() const;
 			bool is_active() const;
 			decimal get_ranked_stake() const;
 			uptr<schema> as_schema() const override;
@@ -200,18 +192,18 @@ namespace tangent
 			uint256_t as_rank() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
-			static string as_instance_column(const algorithm::pubkeyhash owner);
+			static string as_instance_column(const algorithm::pubkeyhash_t& owner);
 			static string as_instance_row(const algorithm::asset_id& asset);
 		};
 
 		struct validator_attestation final : ledger::multiform
 		{
 			algorithm::asset_id asset;
-			algorithm::pubkeyhash owner = { 0 };
+			algorithm::pubkeyhash_t owner;
 			ordered_map<algorithm::asset_id, decimal> stakes;
 
-			validator_attestation(const algorithm::pubkeyhash new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number, uint64_t new_block_nonce);
-			validator_attestation(const algorithm::pubkeyhash new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header);
+			validator_attestation(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number, uint64_t new_block_nonce);
+			validator_attestation(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header);
 			expects_lr<void> transition(const ledger::transaction_context* context, const ledger::state* prev_state) override;
 			bool store_column(format::wo_stream* stream) const override;
 			bool load_column(format::ro_stream& stream) override;
@@ -219,7 +211,6 @@ namespace tangent
 			bool load_row(format::ro_stream& stream) override;
 			bool store_data(format::wo_stream* stream) const override;
 			bool load_data(format::ro_stream& stream) override;
-			bool is_owner_null() const;
 			bool is_active() const;
 			decimal get_ranked_stake() const;
 			uptr<schema> as_schema() const override;
@@ -228,19 +219,19 @@ namespace tangent
 			uint256_t as_rank() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
-			static string as_instance_column(const algorithm::pubkeyhash owner);
+			static string as_instance_column(const algorithm::pubkeyhash_t& owner);
 			static string as_instance_row(const algorithm::asset_id& asset);
 		};
 
 		struct depository_reward final : ledger::multiform
 		{
-			algorithm::pubkeyhash owner = { 0 };
+			algorithm::pubkeyhash_t owner;
 			algorithm::asset_id asset;
 			decimal incoming_fee = decimal::zero();
 			decimal outgoing_fee = decimal::zero();
 
-			depository_reward(const algorithm::pubkeyhash new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number, uint64_t new_block_nonce);
-			depository_reward(const algorithm::pubkeyhash new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header);
+			depository_reward(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number, uint64_t new_block_nonce);
+			depository_reward(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header);
 			expects_lr<void> transition(const ledger::transaction_context* context, const ledger::state* prev_state) override;
 			bool store_column(format::wo_stream* stream) const override;
 			bool load_column(format::ro_stream& stream) override;
@@ -248,25 +239,24 @@ namespace tangent
 			bool load_row(format::ro_stream& stream) override;
 			bool store_data(format::wo_stream* stream) const override;
 			bool load_data(format::ro_stream& stream) override;
-			bool is_owner_null() const;
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			uint256_t as_rank() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
-			static string as_instance_column(const algorithm::pubkeyhash owner);
+			static string as_instance_column(const algorithm::pubkeyhash_t& owner);
 			static string as_instance_row(const algorithm::asset_id& asset);
 		};
 
 		struct depository_balance final : ledger::multiform
 		{
-			algorithm::pubkeyhash owner = { 0 };
+			algorithm::pubkeyhash_t owner;
 			algorithm::asset_id asset;
-			decimal supply = decimal::zero();
+			ordered_map<algorithm::asset_id, decimal> balances;
 
-			depository_balance(const algorithm::pubkeyhash new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number, uint64_t new_block_nonce);
-			depository_balance(const algorithm::pubkeyhash new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header);
+			depository_balance(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number, uint64_t new_block_nonce);
+			depository_balance(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header);
 			expects_lr<void> transition(const ledger::transaction_context* context, const ledger::state* prev_state) override;
 			bool store_column(format::wo_stream* stream) const override;
 			bool load_column(format::ro_stream& stream) override;
@@ -274,20 +264,21 @@ namespace tangent
 			bool load_row(format::ro_stream& stream) override;
 			bool store_data(format::wo_stream* stream) const override;
 			bool load_data(format::ro_stream& stream) override;
-			bool is_owner_null() const;
+			decimal get_balance(const algorithm::asset_id& asset) const;
+			decimal get_ranked_balance() const;
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			uint256_t as_rank() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
-			static string as_instance_column(const algorithm::pubkeyhash owner);
+			static string as_instance_column(const algorithm::pubkeyhash_t& owner);
 			static string as_instance_row(const algorithm::asset_id& asset);
 		};
 
 		struct depository_policy final : ledger::multiform
 		{
-			algorithm::pubkeyhash owner = { 0 };
+			algorithm::pubkeyhash_t owner;
 			algorithm::asset_id asset;
 			uint256_t queue_transaction_hash = 0;
 			uint64_t accounts_under_management = 0;
@@ -295,8 +286,8 @@ namespace tangent
 			bool accepts_account_requests = false;
 			bool accepts_withdrawal_requests = false;
 
-			depository_policy(const algorithm::pubkeyhash new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number, uint64_t new_block_nonce);
-			depository_policy(const algorithm::pubkeyhash new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header);
+			depository_policy(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number, uint64_t new_block_nonce);
+			depository_policy(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header);
 			expects_lr<void> transition(const ledger::transaction_context* context, const ledger::state* prev_state) override;
 			bool store_column(format::wo_stream* stream) const override;
 			bool load_column(format::ro_stream& stream) override;
@@ -304,27 +295,26 @@ namespace tangent
 			bool load_row(format::ro_stream& stream) override;
 			bool store_data(format::wo_stream* stream) const override;
 			bool load_data(format::ro_stream& stream) override;
-			bool is_owner_null() const;
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			uint256_t as_rank() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
-			static string as_instance_column(const algorithm::pubkeyhash owner);
+			static string as_instance_column(const algorithm::pubkeyhash_t& owner);
 			static string as_instance_row(const algorithm::asset_id& asset);
 		};
 
 		struct depository_account final : ledger::multiform
 		{
 			ordered_set<algorithm::pubkeyhash_t> group;
-			algorithm::composition::cpubkey public_key = { 0 };
-			algorithm::pubkeyhash owner = { 0 };
-			algorithm::pubkeyhash manager = { 0 };
+			algorithm::composition::cpubkey_t public_key;
+			algorithm::pubkeyhash_t owner;
+			algorithm::pubkeyhash_t manager;
 			algorithm::asset_id asset;
 
-			depository_account(const algorithm::pubkeyhash new_manager, const algorithm::asset_id& new_asset, const algorithm::pubkeyhash new_owner, uint64_t new_block_number, uint64_t new_block_nonce);
-			depository_account(const algorithm::pubkeyhash new_manager, const algorithm::asset_id& new_asset, const algorithm::pubkeyhash new_owner, const ledger::block_header* new_block_header);
+			depository_account(const algorithm::pubkeyhash_t& new_manager, const algorithm::asset_id& new_asset, const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number, uint64_t new_block_nonce);
+			depository_account(const algorithm::pubkeyhash_t& new_manager, const algorithm::asset_id& new_asset, const algorithm::pubkeyhash_t& new_owner, const ledger::block_header* new_block_header);
 			expects_lr<void> transition(const ledger::transaction_context* context, const ledger::state* prev_state) override;
 			bool store_column(format::wo_stream* stream) const override;
 			bool load_column(format::ro_stream& stream) override;
@@ -332,17 +322,15 @@ namespace tangent
 			bool load_row(format::ro_stream& stream) override;
 			bool store_data(format::wo_stream* stream) const override;
 			bool load_data(format::ro_stream& stream) override;
-			void set_group(const algorithm::composition::cpubkey new_public_key, ordered_set<algorithm::pubkeyhash_t>&& new_group);
-			bool is_owner_null() const;
-			bool is_manager_null() const;
+			void set_group(const algorithm::composition::cpubkey_t& new_public_key, ordered_set<algorithm::pubkeyhash_t>&& new_group);
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			uint256_t as_rank() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
-			static string as_instance_column(const algorithm::pubkeyhash manager);
-			static string as_instance_row(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner);
+			static string as_instance_column(const algorithm::pubkeyhash_t& manager);
+			static string as_instance_row(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner);
 		};
 
 		struct witness_program final : ledger::uniform
@@ -397,14 +385,14 @@ namespace tangent
 				depository
 			};
 
-			algorithm::pubkeyhash owner = { 0 };
-			algorithm::pubkeyhash manager = { 0 };
+			algorithm::pubkeyhash_t owner;
+			algorithm::pubkeyhash_t manager;
 			algorithm::asset_id asset;
 			address_map addresses;
 			bool active = true;
 
-			witness_account(const algorithm::pubkeyhash new_owner, const algorithm::asset_id& new_asset, const address_map& new_addresses, uint64_t new_block_number, uint64_t new_block_nonce);
-			witness_account(const algorithm::pubkeyhash new_owner, const algorithm::asset_id& new_asset, const address_map& new_addresses, const ledger::block_header* new_block_header);
+			witness_account(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const address_map& new_addresses, uint64_t new_block_number, uint64_t new_block_nonce);
+			witness_account(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const address_map& new_addresses, const ledger::block_header* new_block_header);
 			expects_lr<void> transition(const ledger::transaction_context* context, const ledger::state* prev_state) override;
 			bool store_column(format::wo_stream* stream) const override;
 			bool load_column(format::ro_stream& stream) override;
@@ -415,8 +403,6 @@ namespace tangent
 			bool is_witness_account() const;
 			bool is_routing_account() const;
 			bool is_depository_account() const;
-			bool is_owner_null() const;
-			bool is_manager_null() const;
 			bool is_permanent() const override;
 			account_type get_type() const;
 			uptr<schema> as_schema() const override;
@@ -425,7 +411,7 @@ namespace tangent
 			uint256_t as_rank() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
-			static string as_instance_column(const algorithm::pubkeyhash owner);
+			static string as_instance_column(const algorithm::pubkeyhash_t& owner);
 			static string as_instance_row(const algorithm::asset_id& asset, const std::string_view& address);
 		};
 

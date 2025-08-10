@@ -344,7 +344,7 @@ namespace tangent
 			if (!gas_limit || gas_use > gas_limit || absolute_work < gas_work)
 				return layer_exception("invalid gas work");
 
-			algorithm::pubkeyhash public_key_hash = { 0 };
+			algorithm::pubkeyhash_t public_key_hash;
 			if (!recover_hash(public_key_hash))
 				return layer_exception("producer proof verification failed");
 
@@ -490,25 +490,25 @@ namespace tangent
 
 			return true;
 		}
-		bool block_header::sign(const algorithm::seckey secret_key)
+		bool block_header::sign(const algorithm::seckey_t& secret_key)
 		{
 			return algorithm::signing::sign(block_header::as_signable().hash(), secret_key, signature);
 		}
-		bool block_header::solve(const algorithm::seckey secret_key)
+		bool block_header::solve(const algorithm::seckey_t& secret_key)
 		{
 			proof = algorithm::wesolowski::evaluate(target, as_solution().data);
 			evaluation_time = protocol::now().time.now();
 			return !proof.empty();
 		}
-		bool block_header::verify(const algorithm::pubkey public_key) const
+		bool block_header::verify(const algorithm::pubkey_t& public_key) const
 		{
 			return algorithm::signing::verify(block_header::as_signable().hash(), public_key, signature);
 		}
-		bool block_header::recover(algorithm::pubkey public_key) const
+		bool block_header::recover(algorithm::pubkey_t& public_key) const
 		{
 			return algorithm::signing::recover(block_header::as_signable().hash(), public_key, signature);
 		}
-		bool block_header::recover_hash(algorithm::pubkeyhash public_key_hash) const
+		bool block_header::recover_hash(algorithm::pubkeyhash_t& public_key_hash) const
 		{
 			return algorithm::signing::recover_hash(block_header::as_signable().hash(), public_key_hash, signature);
 		}
@@ -612,12 +612,13 @@ namespace tangent
 		}
 		uptr<schema> block_header::as_schema() const
 		{
-			algorithm::pubkeyhash producer = { 0 };
-			bool has_producer = recover_hash(producer);
+			algorithm::pubkeyhash_t producer;
+			recover_hash(producer);
+
 			schema* data = var::set::object();
 			data->set("proof", proof.empty() ? var::null() : var::string(format::util::encode_0xhex(proof)));
-			data->set("signature", is_signature_null() ? var::null() : var::string(format::util::encode_0xhex(std::string_view((char*)signature, sizeof(signature)))));
-			data->set("producer", has_producer ? algorithm::signing::serialize_address(producer) : var::set::null());
+			data->set("signature", signature.empty() ? var::null() : var::string(format::util::encode_0xhex(signature.optimized_view())));
+			data->set("producer", algorithm::signing::serialize_address(producer));
 			data->set("hash", var::string(algorithm::encoding::encode_0xhex256(as_hash())));
 			data->set("parent_hash", var::string(algorithm::encoding::encode_0xhex256(parent_hash)));
 			data->set("transaction_root", var::string(algorithm::encoding::encode_0xhex256(transaction_root)));
@@ -711,7 +712,7 @@ namespace tangent
 				return layer_exception("empty block is not valid");
 
 			block_header::set_parent_block(parent_block);
-			auto position = std::find_if(environment->producers.begin(), environment->producers.end(), [&environment](const states::validator_production& a) { return !memcmp(a.owner, environment->validator.public_key_hash, sizeof(environment->validator.public_key_hash)); });
+			auto position = std::find_if(environment->producers.begin(), environment->producers.end(), [&environment](const states::validator_production& a) { return a.owner == environment->validator.public_key_hash; });
 			auto fees = ordered_map<algorithm::asset_id, decimal>();
 			priority = (uint64_t)(position == environment->producers.end() ? protocol::now().policy.production_max_per_block : std::distance(environment->producers.begin(), position));
 			target = algorithm::wesolowski::scale(get_proof_slot_target(parent_block), get_proof_difficulty_multiplier());
@@ -792,12 +793,12 @@ namespace tangent
 			if (parent_block && (parent_block->number != number - 1 || parent_block->as_hash() != parent_hash))
 				return layer_exception("invalid parent block");
 
-			algorithm::pubkeyhash producer = { 0 };
+			algorithm::pubkeyhash_t producer;
 			if (!recover_hash(producer))
 				return layer_exception("invalid producer signature");
 
 			evaluation_context environment;
-			if (!environment.configure_priority_from_validator(producer, nullptr, parent_block))
+			if (!environment.configure_priority_from_validator(producer, algorithm::seckey_t(), parent_block))
 			{
 				if (priority != (uint64_t)environment.producers.size())
 					return layer_exception("invalid producer priority");
@@ -826,7 +827,7 @@ namespace tangent
 					return layer_exception("transaction " + algorithm::encoding::encode_0xhex256(transaction.receipt.transaction_hash) + " not found in block");
 
 				auto& child = it->second;
-				if (memcmp(transaction.receipt.from, child.second->owner, sizeof(child.second->owner)) != 0)
+				if (transaction.receipt.from != child.second->owner != 0)
 					return layer_exception("transaction " + algorithm::encoding::encode_0xhex256(transaction.receipt.transaction_hash) + " public key recovery failed");
 
 				transaction.receipt.generation_time = child.first->receipt.generation_time;
@@ -837,8 +838,8 @@ namespace tangent
 			result.block.proof = proof;
 			result.block.generation_time = generation_time;
 			result.block.evaluation_time = evaluation_time;
+			result.block.signature = signature;
 			result.block.recalculate(parent_block, &result.state);
-			memcpy(result.block.signature, signature, sizeof(signature));
 
 			block_header input = *this, output = result.block;
 			if (input.as_message().data != output.as_message().data)
@@ -1495,7 +1496,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> transaction_context::verify_account_delegation(const algorithm::pubkeyhash owner) const
+		expects_lr<void> transaction_context::verify_account_delegation(const algorithm::pubkeyhash_t& owner) const
 		{
 			if (!transaction || !block)
 				return layer_exception("invalid transaction or block");
@@ -1542,7 +1543,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> transaction_context::verify_validator_attestation(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner) const
+		expects_lr<void> transaction_context::verify_validator_attestation(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const
 		{
 			if (!environment)
 				return layer_exception("invalid evaluation context");
@@ -1708,7 +1709,7 @@ namespace tangent
 
 			return committee;
 		}
-		expects_lr<states::account_nonce> transaction_context::apply_account_nonce(const algorithm::pubkeyhash owner, uint64_t nonce)
+		expects_lr<states::account_nonce> transaction_context::apply_account_nonce(const algorithm::pubkeyhash_t& owner, uint64_t nonce)
 		{
 			states::account_nonce new_state = states::account_nonce(owner, block);
 			new_state.nonce = nonce;
@@ -1716,12 +1717,12 @@ namespace tangent
 			auto status = store(&new_state, true);
 			if (!status)
 				return status.error();
-			else if (!memcmp(receipt.from, owner, sizeof(algorithm::pubkeyhash)))
+			else if (receipt.from == owner)
 				execution_flags |= (uint8_t)execution_mode::replayable;
 
 			return new_state;
 		}
-		expects_lr<states::account_program> transaction_context::apply_account_program(const algorithm::pubkeyhash owner, const std::string_view& program_hashcode)
+		expects_lr<states::account_program> transaction_context::apply_account_program(const algorithm::pubkeyhash_t& owner, const std::string_view& program_hashcode)
 		{
 			states::account_program new_state = states::account_program(owner, block);
 			new_state.hashcode = program_hashcode;
@@ -1732,7 +1733,7 @@ namespace tangent
 
 			return new_state;
 		}
-		expects_lr<states::account_uniform> transaction_context::apply_account_uniform(const algorithm::pubkeyhash owner, const std::string_view& index, const std::string_view& data)
+		expects_lr<states::account_uniform> transaction_context::apply_account_uniform(const algorithm::pubkeyhash_t& owner, const std::string_view& index, const std::string_view& data)
 		{
 			states::account_uniform new_state = states::account_uniform(owner, index, block);
 			new_state.data = data;
@@ -1743,7 +1744,7 @@ namespace tangent
 
 			return new_state;
 		}
-		expects_lr<states::account_multiform> transaction_context::apply_account_multiform(const algorithm::pubkeyhash owner, const std::string_view& column, const std::string_view& row, const std::string_view& data, const uint256_t& filter)
+		expects_lr<states::account_multiform> transaction_context::apply_account_multiform(const algorithm::pubkeyhash_t& owner, const std::string_view& column, const std::string_view& row, const std::string_view& data, const uint256_t& filter)
 		{
 			states::account_multiform new_state = states::account_multiform(owner, column, row, block);
 			new_state.data = data;
@@ -1755,7 +1756,7 @@ namespace tangent
 
 			return new_state;
 		}
-		expects_lr<states::account_delegation> transaction_context::apply_account_delegation(const algorithm::pubkeyhash owner, uint32_t delegations)
+		expects_lr<states::account_delegation> transaction_context::apply_account_delegation(const algorithm::pubkeyhash_t& owner, uint32_t delegations)
 		{
 			states::account_delegation new_state = states::account_delegation(owner, block);
 			new_state.delegations = delegations;
@@ -1766,7 +1767,7 @@ namespace tangent
 
 			return new_state;
 		}
-		expects_lr<states::account_balance> transaction_context::apply_transfer(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const decimal& supply, const decimal& reserve)
+		expects_lr<states::account_balance> transaction_context::apply_transfer(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const decimal& supply, const decimal& reserve)
 		{
 			states::account_balance new_state = states::account_balance(owner, asset, block);
 			new_state.supply = supply;
@@ -1776,35 +1777,36 @@ namespace tangent
 			if (!status)
 				return status.error();
 
-			status = emit_event<states::account_balance>({ format::variable(asset), format::variable(std::string_view((char*)owner, sizeof(algorithm::pubkeyhash))), format::variable(supply), format::variable(reserve) });
+			status = emit_event<states::account_balance>({ format::variable(asset), format::variable(owner.view()), format::variable(supply), format::variable(reserve) });
 			if (!status)
 				return status.error();
 
 			return new_state;
 		}
-		expects_lr<states::account_balance> transaction_context::apply_fee_transfer(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const decimal& value)
+		expects_lr<states::account_balance> transaction_context::apply_fee_transfer(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const decimal& value)
 		{
 			states::account_balance new_state = states::account_balance(owner, asset, block);
 			new_state.supply = -value;
-			if (environment != nullptr && !memcmp(environment->validator.public_key_hash, owner, sizeof(algorithm::pubkeyhash)))
+			if (environment != nullptr && environment->validator.public_key_hash == owner)
 				return new_state;
 
 			auto status = store(&new_state, false);
 			if (!status)
 				return status.error();
 
-			status = emit_event<states::account_balance>({ format::variable(asset), format::variable(std::string_view((char*)owner, sizeof(algorithm::pubkeyhash))), format::variable(-value) }, false);
+			status = emit_event<states::account_balance>({ format::variable(asset), format::variable(owner.view()), format::variable(-value) }, false);
 			if (!status)
 				return status.error();
 
 			return new_state;
 		}
-		expects_lr<states::account_balance> transaction_context::apply_payment(const algorithm::asset_id& asset, const algorithm::pubkeyhash from, const algorithm::pubkeyhash to, const decimal& value)
+		expects_lr<states::account_balance> transaction_context::apply_payment(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& from, const algorithm::pubkeyhash_t& to, const decimal& value)
 		{
+			if (from == to)
+				return get_account_balance(asset, from);
+
 			states::account_balance new_state1 = states::account_balance(from, asset, block);
 			new_state1.supply = -value;
-			if (!memcmp(from, to, sizeof(algorithm::pubkeyhash)))
-				return new_state1;
 
 			auto status = store(&new_state1, true);
 			if (!status)
@@ -1817,13 +1819,13 @@ namespace tangent
 			if (!status)
 				return status.error();
 
-			status = emit_event<states::account_balance>({ format::variable(asset), format::variable(std::string_view((char*)from, sizeof(algorithm::pubkeyhash))), format::variable(std::string_view((char*)to, sizeof(algorithm::pubkeyhash))), format::variable(value) });
+			status = emit_event<states::account_balance>({ format::variable(asset), format::variable(from.view()), format::variable(to.view()), format::variable(value) });
 			if (!status)
 				return status.error();
 
 			return new_state1;
 		}
-		expects_lr<states::validator_production> transaction_context::apply_validator_production(const algorithm::pubkeyhash owner, production_type action, const uint256_t& gas, const ordered_map<algorithm::asset_id, decimal>& stakes)
+		expects_lr<states::validator_production> transaction_context::apply_validator_production(const algorithm::pubkeyhash_t& owner, production_type action, const uint256_t& gas, const ordered_map<algorithm::asset_id, decimal>& stakes)
 		{
 			switch (action)
 			{
@@ -1891,7 +1893,7 @@ namespace tangent
 					return layer_exception("invalid production action");
 			}
 		}
-		expects_lr<states::validator_participation> transaction_context::apply_validator_participation(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, stake_type type, int64_t participations, const ordered_map<algorithm::asset_id, decimal>& stakes)
+		expects_lr<states::validator_participation> transaction_context::apply_validator_participation(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, stake_type type, int64_t participations, const ordered_map<algorithm::asset_id, decimal>& stakes)
 		{
 			states::validator_participation new_state = get_validator_participation(asset, owner).or_else(states::validator_participation(owner, asset, block));
 			new_state.participations = participations >= 0 || new_state.participations >= (uint64_t)-participations ? (int64_t)new_state.participations + participations : 0;
@@ -1931,7 +1933,7 @@ namespace tangent
 
 			return new_state;
 		}
-		expects_lr<states::validator_attestation> transaction_context::apply_validator_attestation(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, stake_type type, const ordered_map<algorithm::asset_id, decimal>& stakes)
+		expects_lr<states::validator_attestation> transaction_context::apply_validator_attestation(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, stake_type type, const ordered_map<algorithm::asset_id, decimal>& stakes)
 		{
 			states::validator_attestation new_state = get_validator_attestation(asset, owner).or_else(states::validator_attestation(owner, asset, block));
 			for (auto& [token_asset, stake] : stakes)
@@ -1970,7 +1972,7 @@ namespace tangent
 
 			return new_state;
 		}
-		expects_lr<states::depository_reward> transaction_context::apply_depository_reward(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const decimal& incoming_fee, const decimal& outgoing_fee)
+		expects_lr<states::depository_reward> transaction_context::apply_depository_reward(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const decimal& incoming_fee, const decimal& outgoing_fee)
 		{
 			states::depository_reward new_state = states::depository_reward(owner, asset, block);
 			new_state.incoming_fee = incoming_fee;
@@ -1982,22 +1984,25 @@ namespace tangent
 
 			return new_state;
 		}
-		expects_lr<states::depository_balance> transaction_context::apply_depository_balance(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const decimal& supply)
+		expects_lr<states::depository_balance> transaction_context::apply_depository_balance(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const ordered_map<algorithm::asset_id, decimal>& balances)
 		{
 			states::depository_balance new_state = states::depository_balance(owner, asset, block);
-			new_state.supply = supply;
+			new_state.balances = balances;
 
 			auto status = store(&new_state, true);
 			if (!status)
 				return status.error();
 
-			status = emit_event<states::depository_balance>({ format::variable(asset), format::variable(std::string_view((char*)owner, sizeof(algorithm::pubkeyhash))), format::variable(supply) });
-			if (!status)
-				return status.error();
+			for (auto& [token_asset, balance] : balances)
+			{
+				status = emit_event<states::depository_balance>({ format::variable(token_asset), format::variable(owner.view()), format::variable(balance) });
+				if (!status)
+					return status.error();
+			}
 
 			return new_state;
 		}
-		expects_lr<states::depository_policy> transaction_context::apply_depository_policy_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, uint64_t new_accounts)
+		expects_lr<states::depository_policy> transaction_context::apply_depository_policy_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, uint64_t new_accounts)
 		{
 			auto new_state = get_depository_policy(asset, owner).or_else(states::depository_policy(owner, asset, block));
 			new_state.accounts_under_management += new_accounts;
@@ -2006,13 +2011,13 @@ namespace tangent
 			if (!status)
 				return status.error();
 
-			status = emit_event<states::depository_policy>({ format::variable(asset), format::variable(std::string_view((char*)owner, sizeof(algorithm::pubkeyhash))), format::variable((uint8_t)0), format::variable(new_accounts) });
+			status = emit_event<states::depository_policy>({ format::variable(asset), format::variable(owner.view()), format::variable((uint8_t)0), format::variable(new_accounts) });
 			if (!status)
 				return status.error();
 
 			return new_state;
 		}
-		expects_lr<states::depository_policy> transaction_context::apply_depository_policy_queue(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const uint256_t& transaction_hash)
+		expects_lr<states::depository_policy> transaction_context::apply_depository_policy_queue(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const uint256_t& transaction_hash)
 		{
 			auto new_state = get_depository_policy(asset, owner).or_else(states::depository_policy(owner, asset, block));
 			new_state.queue_transaction_hash = transaction_hash;
@@ -2021,13 +2026,13 @@ namespace tangent
 			if (!status)
 				return status.error();
 
-			status = emit_event<states::depository_policy>({ format::variable(asset), format::variable(std::string_view((char*)owner, sizeof(algorithm::pubkeyhash))), format::variable((uint8_t)1), format::variable(transaction_hash) });
+			status = emit_event<states::depository_policy>({ format::variable(asset), format::variable(owner.view()), format::variable((uint8_t)1), format::variable(transaction_hash) });
 			if (!status)
 				return status.error();
 
 			return new_state;
 		}
-		expects_lr<states::depository_policy> transaction_context::apply_depository_policy(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, uint8_t security_level, bool accepts_account_requests, bool accepts_withdrawal_requests)
+		expects_lr<states::depository_policy> transaction_context::apply_depository_policy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, uint8_t security_level, bool accepts_account_requests, bool accepts_withdrawal_requests)
 		{
 			auto new_state = get_depository_policy(asset, owner).or_else(states::depository_policy(owner, asset, block));
 			new_state.security_level = security_level;
@@ -2038,13 +2043,13 @@ namespace tangent
 			if (!status)
 				return status.error();
 
-			status = emit_event<states::depository_policy>({ format::variable(asset), format::variable(std::string_view((char*)owner, sizeof(algorithm::pubkeyhash))), format::variable((uint8_t)2), format::variable(security_level), format::variable(accepts_account_requests), format::variable(accepts_withdrawal_requests) });
+			status = emit_event<states::depository_policy>({ format::variable(asset), format::variable(owner.view()), format::variable((uint8_t)2), format::variable(security_level), format::variable(accepts_account_requests), format::variable(accepts_withdrawal_requests) });
 			if (!status)
 				return status.error();
 
 			return new_state;
 		}
-		expects_lr<states::depository_account> transaction_context::apply_depository_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const algorithm::pubkeyhash manager, const algorithm::composition::cpubkey public_key, ordered_set<algorithm::pubkeyhash_t>&& group)
+		expects_lr<states::depository_account> transaction_context::apply_depository_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const algorithm::pubkeyhash_t& manager, const algorithm::composition::cpubkey_t& public_key, ordered_set<algorithm::pubkeyhash_t>&& group)
 		{
 			states::depository_account new_state = states::depository_account(manager, asset, owner, block);
 			new_state.set_group(public_key, std::move(group));
@@ -2078,15 +2083,15 @@ namespace tangent
 
 			return new_state;
 		}
-		expects_lr<states::witness_account> transaction_context::apply_witness_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const address_map& addresses)
+		expects_lr<states::witness_account> transaction_context::apply_witness_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const address_map& addresses)
 		{
-			return apply_witness_depository_account(asset, owner, nullptr, addresses, false);
+			return apply_witness_depository_account(asset, owner, algorithm::pubkeyhash_t(), addresses, false);
 		}
-		expects_lr<states::witness_account> transaction_context::apply_witness_routing_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const address_map& addresses)
+		expects_lr<states::witness_account> transaction_context::apply_witness_routing_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const address_map& addresses)
 		{
-			return apply_witness_depository_account(asset, owner, nullptr, addresses, true);
+			return apply_witness_depository_account(asset, owner, algorithm::pubkeyhash_t(), addresses, true);
 		}
-		expects_lr<states::witness_account> transaction_context::apply_witness_depository_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const algorithm::pubkeyhash manager, const address_map& addresses, bool active)
+		expects_lr<states::witness_account> transaction_context::apply_witness_depository_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const algorithm::pubkeyhash_t& manager, const address_map& addresses, bool active)
 		{
 			if (addresses.empty())
 				return layer_exception("invalid operation");
@@ -2105,13 +2110,12 @@ namespace tangent
 				segments[*hash][address.first] = address.second;
 			}
 
-			states::witness_account new_state = states::witness_account(nullptr, 0, { }, nullptr);
+			states::witness_account new_state = states::witness_account(algorithm::pubkeyhash_t(), 0, { }, nullptr);
 			for (auto& segment : segments)
 			{
 				new_state = states::witness_account(owner, asset, segment.second, block);
 				new_state.active = active;
-				if (manager != nullptr)
-					memcpy(new_state.manager, manager, sizeof(algorithm::pubkeyhash));
+				new_state.manager = manager;
 
 				auto status = store(&new_state, true);
 				if (!status)
@@ -2143,9 +2147,8 @@ namespace tangent
 
 			return new_state;
 		}
-		expects_lr<states::account_nonce> transaction_context::get_account_nonce(const algorithm::pubkeyhash owner) const
+		expects_lr<states::account_nonce> transaction_context::get_account_nonce(const algorithm::pubkeyhash_t& owner) const
 		{
-			VI_ASSERT(owner != nullptr, "owner should be set");
 			auto chain = storages::chainstate(__func__);
 			auto state = chain.get_uniform(states::account_nonce::as_instance_type(), changelog, states::account_nonce::as_instance_index(owner), get_validation_nonce());
 			if (!state)
@@ -2157,9 +2160,8 @@ namespace tangent
 
 			return states::account_nonce(std::move(*(states::account_nonce*)**state));
 		}
-		expects_lr<states::account_program> transaction_context::get_account_program(const algorithm::pubkeyhash owner) const
+		expects_lr<states::account_program> transaction_context::get_account_program(const algorithm::pubkeyhash_t& owner) const
 		{
-			VI_ASSERT(owner != nullptr, "owner should be set");
 			auto chain = storages::chainstate(__func__);
 			auto state = chain.get_uniform(states::account_program::as_instance_type(), changelog, states::account_program::as_instance_index(owner), get_validation_nonce());
 			if (!state)
@@ -2175,9 +2177,8 @@ namespace tangent
 
 			return states::account_program(std::move(result));
 		}
-		expects_lr<states::account_uniform> transaction_context::get_account_uniform(const algorithm::pubkeyhash owner, const std::string_view& index) const
+		expects_lr<states::account_uniform> transaction_context::get_account_uniform(const algorithm::pubkeyhash_t& owner, const std::string_view& index) const
 		{
-			VI_ASSERT(owner != nullptr, "owner should be set");
 			auto chain = storages::chainstate(__func__);
 			auto state = chain.get_uniform(states::account_uniform::as_instance_type(), changelog, states::account_uniform::as_instance_index(owner, index), get_validation_nonce());
 			if (!state)
@@ -2189,9 +2190,8 @@ namespace tangent
 
 			return states::account_uniform(std::move(*(states::account_uniform*)**state));
 		}
-		expects_lr<states::account_multiform> transaction_context::get_account_multiform(const algorithm::pubkeyhash owner, const std::string_view& column, const std::string_view& row) const
+		expects_lr<states::account_multiform> transaction_context::get_account_multiform(const algorithm::pubkeyhash_t& owner, const std::string_view& column, const std::string_view& row) const
 		{
-			VI_ASSERT(owner != nullptr, "owner should be set");
 			auto chain = storages::chainstate(__func__);
 			auto state = chain.get_multiform(states::account_multiform::as_instance_type(), changelog, states::account_multiform::as_instance_column(owner, column), states::account_multiform::as_instance_row(owner, row), get_validation_nonce());
 			if (!state)
@@ -2203,9 +2203,8 @@ namespace tangent
 
 			return states::account_multiform(std::move(*(states::account_multiform*)**state));
 		}
-		expects_lr<vector<uptr<states::account_multiform>>> transaction_context::get_account_multiforms_by_column(const algorithm::pubkeyhash owner, const std::string_view& column, size_t offset, size_t count) const
+		expects_lr<vector<uptr<states::account_multiform>>> transaction_context::get_account_multiforms_by_column(const algorithm::pubkeyhash_t& owner, const std::string_view& column, size_t offset, size_t count) const
 		{
-			VI_ASSERT(owner != nullptr, "owner should be set");
 			auto chain = storages::chainstate(__func__);
 			auto states = chain.get_multiforms_by_column(states::account_multiform::as_instance_type(), changelog, states::account_multiform::as_instance_column(owner, column), get_validation_nonce(), offset, count);
 			if (!states)
@@ -2223,9 +2222,8 @@ namespace tangent
 			}
 			return results;
 		}
-		expects_lr<vector<uptr<states::account_multiform>>> transaction_context::get_account_multiforms_by_column_filter(const algorithm::pubkeyhash owner, const std::string_view& column, const filter_comparator& comparator, const uint256_t& filter_value, filter_order order, size_t offset, size_t count) const
+		expects_lr<vector<uptr<states::account_multiform>>> transaction_context::get_account_multiforms_by_column_filter(const algorithm::pubkeyhash_t& owner, const std::string_view& column, const filter_comparator& comparator, const uint256_t& filter_value, filter_order order, size_t offset, size_t count) const
 		{
-			VI_ASSERT(owner != nullptr, "owner should be set");
 			auto filter = storages::result_filter();
 			filter.condition = to_position_condition(comparator);
 			filter.order = to_position_order(order);
@@ -2248,9 +2246,8 @@ namespace tangent
 			}
 			return results;
 		}
-		expects_lr<vector<uptr<states::account_multiform>>> transaction_context::get_account_multiforms_by_row(const algorithm::pubkeyhash owner, const std::string_view& row, size_t offset, size_t count) const
+		expects_lr<vector<uptr<states::account_multiform>>> transaction_context::get_account_multiforms_by_row(const algorithm::pubkeyhash_t& owner, const std::string_view& row, size_t offset, size_t count) const
 		{
-			VI_ASSERT(owner != nullptr, "owner should be set");
 			auto chain = storages::chainstate(__func__);
 			auto states = chain.get_multiforms_by_row(states::account_multiform::as_instance_type(), changelog, states::account_multiform::as_instance_row(owner, row), get_validation_nonce(), offset, count);
 			if (!states)
@@ -2268,9 +2265,8 @@ namespace tangent
 			}
 			return results;
 		}
-		expects_lr<vector<uptr<states::account_multiform>>> transaction_context::get_account_multiforms_by_row_filter(const algorithm::pubkeyhash owner, const std::string_view& row, const filter_comparator& comparator, const uint256_t& filter_value, filter_order order, size_t offset, size_t count) const
+		expects_lr<vector<uptr<states::account_multiform>>> transaction_context::get_account_multiforms_by_row_filter(const algorithm::pubkeyhash_t& owner, const std::string_view& row, const filter_comparator& comparator, const uint256_t& filter_value, filter_order order, size_t offset, size_t count) const
 		{
-			VI_ASSERT(owner != nullptr, "owner should be set");
 			auto filter = storages::result_filter();
 			filter.condition = to_position_condition(comparator);
 			filter.order = to_position_order(order);
@@ -2293,9 +2289,8 @@ namespace tangent
 			}
 			return results;
 		}
-		expects_lr<states::account_delegation> transaction_context::get_account_delegation(const algorithm::pubkeyhash owner) const
+		expects_lr<states::account_delegation> transaction_context::get_account_delegation(const algorithm::pubkeyhash_t& owner) const
 		{
-			VI_ASSERT(owner != nullptr, "owner should be set");
 			auto chain = storages::chainstate(__func__);
 			auto state = chain.get_uniform(states::account_delegation::as_instance_type(), changelog, states::account_delegation::as_instance_index(owner), get_validation_nonce());
 			if (!state)
@@ -2307,9 +2302,8 @@ namespace tangent
 
 			return states::account_delegation(std::move(*(states::account_delegation*)**state));
 		}
-		expects_lr<states::account_balance> transaction_context::get_account_balance(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner) const
+		expects_lr<states::account_balance> transaction_context::get_account_balance(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const
 		{
-			VI_ASSERT(owner != nullptr, "owner should be set");
 			auto chain = storages::chainstate(__func__);
 			auto state = chain.get_multiform(states::account_balance::as_instance_type(), changelog, states::account_balance::as_instance_column(owner), states::account_balance::as_instance_row(asset), get_validation_nonce());
 			if (!state)
@@ -2321,10 +2315,8 @@ namespace tangent
 
 			return states::account_balance(std::move(*(states::account_balance*)**state));
 		}
-		expects_lr<states::validator_production> transaction_context::get_validator_production(const algorithm::pubkeyhash owner) const
+		expects_lr<states::validator_production> transaction_context::get_validator_production(const algorithm::pubkeyhash_t& owner) const
 		{
-			VI_ASSERT(owner != nullptr, "owner should be set");
-			algorithm::pubkeyhash null = { 0 };
 			auto chain = storages::chainstate(__func__);
 			auto state = chain.get_multiform(states::validator_production::as_instance_type(), changelog, states::validator_production::as_instance_column(owner), states::validator_production::as_instance_row(), get_validation_nonce());
 			if (!state)
@@ -2336,10 +2328,8 @@ namespace tangent
 
 			return states::validator_production(std::move(*(states::validator_production*)**state));
 		}
-		expects_lr<states::validator_participation> transaction_context::get_validator_participation(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner) const
+		expects_lr<states::validator_participation> transaction_context::get_validator_participation(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const
 		{
-			VI_ASSERT(owner != nullptr, "owner should be set");
-			algorithm::pubkeyhash null = { 0 };
 			auto chain = storages::chainstate(__func__);
 			auto state = chain.get_multiform(states::validator_participation::as_instance_type(), changelog, states::validator_participation::as_instance_column(owner), states::validator_participation::as_instance_row(asset), get_validation_nonce());
 			if (!state)
@@ -2351,7 +2341,7 @@ namespace tangent
 
 			return states::validator_participation(std::move(*(states::validator_participation*)**state));
 		}
-		expects_lr<vector<states::validator_participation>> transaction_context::get_validator_participations(const algorithm::pubkeyhash owner, size_t offset, size_t count) const
+		expects_lr<vector<states::validator_participation>> transaction_context::get_validator_participations(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count) const
 		{
 			auto chain = storages::chainstate(__func__);
 			auto states = chain.get_multiforms_by_column(states::validator_participation::as_instance_type(), changelog, states::validator_participation::as_instance_column(owner), get_validation_nonce(), offset, count);
@@ -2370,10 +2360,8 @@ namespace tangent
 			}
 			return addresses;
 		}
-		expects_lr<states::validator_attestation> transaction_context::get_validator_attestation(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner) const
+		expects_lr<states::validator_attestation> transaction_context::get_validator_attestation(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const
 		{
-			VI_ASSERT(owner != nullptr, "owner should be set");
-			algorithm::pubkeyhash null = { 0 };
 			auto chain = storages::chainstate(__func__);
 			auto state = chain.get_multiform(states::validator_attestation::as_instance_type(), changelog, states::validator_attestation::as_instance_column(owner), states::validator_attestation::as_instance_row(asset), get_validation_nonce());
 			if (!state)
@@ -2385,7 +2373,7 @@ namespace tangent
 
 			return states::validator_attestation(std::move(*(states::validator_attestation*)**state));
 		}
-		expects_lr<vector<states::validator_attestation>> transaction_context::get_validator_attestations(const algorithm::pubkeyhash owner, size_t offset, size_t count) const
+		expects_lr<vector<states::validator_attestation>> transaction_context::get_validator_attestations(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count) const
 		{
 			auto chain = storages::chainstate(__func__);
 			auto states = chain.get_multiforms_by_column(states::validator_attestation::as_instance_type(), changelog, states::validator_attestation::as_instance_column(owner), get_validation_nonce(), offset, count);
@@ -2404,9 +2392,8 @@ namespace tangent
 			}
 			return addresses;
 		}
-		expects_lr<states::depository_reward> transaction_context::get_depository_reward(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner) const
+		expects_lr<states::depository_reward> transaction_context::get_depository_reward(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const
 		{
-			VI_ASSERT(owner != nullptr, "owner should be set");
 			auto chain = storages::chainstate(__func__);
 			auto state = chain.get_multiform(states::depository_reward::as_instance_type(), changelog, states::depository_reward::as_instance_column(owner), states::depository_reward::as_instance_row(asset), get_validation_nonce());
 			if (!state)
@@ -2418,9 +2405,8 @@ namespace tangent
 
 			return states::depository_reward(std::move(*(states::depository_reward*)**state));
 		}
-		expects_lr<states::depository_balance> transaction_context::get_depository_balance(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner) const
+		expects_lr<states::depository_balance> transaction_context::get_depository_balance(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const
 		{
-			VI_ASSERT(owner != nullptr, "owner should be set");
 			auto chain = storages::chainstate(__func__);
 			auto state = chain.get_multiform(states::depository_balance::as_instance_type(), changelog, states::depository_balance::as_instance_column(owner), states::depository_balance::as_instance_row(asset), get_validation_nonce());
 			if (!state)
@@ -2432,9 +2418,8 @@ namespace tangent
 
 			return states::depository_balance(std::move(*(states::depository_balance*)**state));
 		}
-		expects_lr<states::depository_policy> transaction_context::get_depository_policy(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner) const
+		expects_lr<states::depository_policy> transaction_context::get_depository_policy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const
 		{
-			VI_ASSERT(owner != nullptr, "owner should be set");
 			auto chain = storages::chainstate(__func__);
 			auto state = chain.get_multiform(states::depository_policy::as_instance_type(), changelog, states::depository_policy::as_instance_column(owner), states::depository_policy::as_instance_row(asset), get_validation_nonce());
 			if (!state)
@@ -2446,7 +2431,7 @@ namespace tangent
 
 			return states::depository_policy(std::move(*(states::depository_policy*)**state));
 		}
-		expects_lr<vector<states::depository_account>> transaction_context::get_depository_accounts(const algorithm::pubkeyhash manager, size_t offset, size_t count) const
+		expects_lr<vector<states::depository_account>> transaction_context::get_depository_accounts(const algorithm::pubkeyhash_t& manager, size_t offset, size_t count) const
 		{
 			auto chain = storages::chainstate(__func__);
 			auto states = chain.get_multiforms_by_column(states::depository_account::as_instance_type(), changelog, states::depository_account::as_instance_column(manager), get_validation_nonce(), offset, count);
@@ -2465,7 +2450,7 @@ namespace tangent
 			}
 			return addresses;
 		}
-		expects_lr<states::depository_account> transaction_context::get_depository_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash manager, const algorithm::pubkeyhash owner) const
+		expects_lr<states::depository_account> transaction_context::get_depository_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner) const
 		{
 			auto chain = storages::chainstate(__func__);
 			auto state = chain.get_multiform(states::depository_account::as_instance_type(), changelog, states::depository_account::as_instance_column(manager), states::depository_account::as_instance_row(asset, owner), get_validation_nonce());
@@ -2504,7 +2489,7 @@ namespace tangent
 
 			return states::witness_event(std::move(*(states::witness_event*)**state));
 		}
-		expects_lr<vector<states::witness_account>> transaction_context::get_witness_accounts(const algorithm::pubkeyhash owner, size_t offset, size_t count) const
+		expects_lr<vector<states::witness_account>> transaction_context::get_witness_accounts(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count) const
 		{
 			auto chain = storages::chainstate(__func__);
 			auto states = chain.get_multiforms_by_column(states::witness_account::as_instance_type(), changelog, states::witness_account::as_instance_column(owner), get_validation_nonce(), offset, count);
@@ -2523,7 +2508,7 @@ namespace tangent
 			}
 			return addresses;
 		}
-		expects_lr<vector<states::witness_account>> transaction_context::get_witness_accounts_by_purpose(const algorithm::pubkeyhash owner, states::witness_account::account_type purpose, size_t offset, size_t count) const
+		expects_lr<vector<states::witness_account>> transaction_context::get_witness_accounts_by_purpose(const algorithm::pubkeyhash_t& owner, states::witness_account::account_type purpose, size_t offset, size_t count) const
 		{
 			auto chain = storages::chainstate(__func__);
 			auto filter = storages::result_filter::equal((uint64_t)purpose, 1);
@@ -2543,7 +2528,7 @@ namespace tangent
 			}
 			return addresses;
 		}
-		expects_lr<states::witness_account> transaction_context::get_witness_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, const std::string_view& address) const
+		expects_lr<states::witness_account> transaction_context::get_witness_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const std::string_view& address) const
 		{
 			auto chain = storages::chainstate(__func__);
 			auto state = chain.get_multiform(states::witness_account::as_instance_type(), changelog, states::witness_account::as_instance_column(owner), states::witness_account::as_instance_row(asset, address), get_validation_nonce());
@@ -2638,7 +2623,7 @@ namespace tangent
 		expects_lr<uint256_t> transaction_context::calculate_tx_gas(const ledger::transaction* transaction)
 		{
 			VI_ASSERT(transaction != nullptr, "transaction should be set");
-			algorithm::pubkeyhash owner = { 0 };
+			algorithm::pubkeyhash_t owner;
 			if (transaction->is_recoverable() && !transaction->recover_hash(owner))
 				return layer_exception("invalid signature");
 
@@ -2659,9 +2644,8 @@ namespace tangent
 			ledger::block temp_block;
 			temp_block.number = std::numeric_limits<int64_t>::max() - 1;
 
-			algorithm::pubkeyhash public_key_hash = { 1 };
 			ledger::evaluation_context temp_environment;
-			memcpy(temp_environment.validator.public_key_hash, public_key_hash, sizeof(algorithm::pubkeyhash));
+			memset(temp_environment.validator.public_key_hash.data, 1, sizeof(algorithm::pubkeyhash_t));
 
 			auto validation = transaction->validate(temp_block.number);
 			if (!validation)
@@ -2684,25 +2668,25 @@ namespace tangent
 			gas -= gas % 1000;
 			return gas + 1000;
 		}
-		expects_lr<void> transaction_context::validate_tx(const ledger::transaction* new_transaction, const uint256_t& new_transaction_hash, algorithm::pubkeyhash owner)
+		expects_lr<void> transaction_context::validate_tx(const ledger::transaction* new_transaction, const uint256_t& new_transaction_hash, algorithm::pubkeyhash_t& owner)
 		{
-			VI_ASSERT(new_transaction && owner, "transaction and owner should be set");
-			memset(owner, 0, sizeof(algorithm::pubkeyhash));
+			VI_ASSERT(new_transaction, "transaction should be set");
+			owner.clear();
 			if (new_transaction->is_recoverable() && !algorithm::signing::recover_hash(new_transaction_hash, owner, new_transaction->signature))
 				return layer_exception("invalid signature");
 
 			auto chain = storages::chainstate(__func__);
 			return new_transaction->validate(chain.get_latest_block_number().or_else(1));
 		}
-		expects_lr<transaction_context> transaction_context::execute_tx(const ledger::evaluation_context* new_environment, ledger::block* new_block, block_changelog* changelog, const ledger::transaction* new_transaction, const uint256_t& new_transaction_hash, const algorithm::pubkeyhash owner, size_t transaction_size, uint8_t execution_flags)
+		expects_lr<transaction_context> transaction_context::execute_tx(const ledger::evaluation_context* new_environment, ledger::block* new_block, block_changelog* changelog, const ledger::transaction* new_transaction, const uint256_t& new_transaction_hash, const algorithm::pubkeyhash_t& owner, size_t transaction_size, uint8_t execution_flags)
 		{
-			VI_ASSERT(new_environment && new_block && new_transaction && owner, "block, env, transaction and owner should be set");
+			VI_ASSERT(new_environment && new_block && new_transaction, "block, env, transaction should be set");
 			ledger::receipt new_receipt;
 			new_receipt.transaction_hash = new_transaction_hash;
 			new_receipt.generation_time = protocol::now().time.now();
 			new_receipt.absolute_gas_use = new_block->gas_use;
 			new_receipt.block_number = new_block->number;
-			memcpy(new_receipt.from, owner, sizeof(new_receipt.from));
+			new_receipt.from = owner;
 
 			auto validation = new_transaction->validate(new_receipt.block_number);
 			if (!validation)
@@ -2725,16 +2709,15 @@ namespace tangent
 			if ((context.execution_flags & (uint8_t)execution_mode::pedantic) && !context.receipt.successful)
 				return execution.error();
 
-			algorithm::pubkeyhash null = { 0 };
-			if (memcmp(context.receipt.from, null, sizeof(null)) != 0 && !(context.execution_flags & (uint8_t)execution_mode::replayable))
+			if (!context.receipt.from.empty() && !(context.execution_flags & (uint8_t)execution_mode::replayable))
 			{
-				auto nonce = (context.execution_flags & (uint8_t)execution_mode::evaluation ? context.get_account_nonce(context.receipt.from).or_else(states::account_nonce(nullptr, nullptr)).nonce : context.transaction->nonce);
+				auto nonce = (context.execution_flags & (uint8_t)execution_mode::evaluation ? context.get_account_nonce(context.receipt.from).or_else(states::account_nonce(algorithm::pubkeyhash_t(), nullptr)).nonce : context.transaction->nonce);
 				auto change = context.apply_account_nonce(context.receipt.from, nonce + 1);
 				if (!change)
 					return change.error();
 			}
 
-			context.receipt.relative_gas_paid = memcmp(context.environment->validator.public_key_hash, context.receipt.from, sizeof(context.receipt.from)) != 0 && context.transaction->gas_price.is_positive() ? context.receipt.relative_gas_use : uint256_t(0);
+			context.receipt.relative_gas_paid = context.receipt.from != context.environment->validator.public_key_hash && context.transaction->gas_price.is_positive() ? context.receipt.relative_gas_use : uint256_t(0);
 			if (context.receipt.relative_gas_paid > 0)
 			{
 				auto fee = context.apply_fee_transfer(context.transaction->asset, context.receipt.from, context.transaction->gas_price * context.receipt.relative_gas_paid.to_decimal());
@@ -2774,11 +2757,10 @@ namespace tangent
 			});
 		}
 
-		evaluation_context::transaction_info::transaction_info(const transaction_info& other) : hash(other.hash), size(other.size)
+		evaluation_context::transaction_info::transaction_info(const transaction_info& other) : hash(other.hash), owner(other.owner), size(other.size)
 		{
 			auto* reference = (transaction_info*)&other;
 			candidate = reference->candidate.reset();
-			memcpy(owner, other.owner, sizeof(other.owner));
 		}
 		evaluation_context::transaction_info& evaluation_context::transaction_info::operator= (const transaction_info& other)
 		{
@@ -2787,9 +2769,9 @@ namespace tangent
 
 			auto* reference = (transaction_info*)&other;
 			hash = other.hash;
+			owner = other.owner;
 			size = other.size;
 			candidate = reference->candidate.reset();
-			memcpy(owner, other.owner, sizeof(other.owner));
 			return *this;
 		}
 
@@ -2819,7 +2801,7 @@ namespace tangent
 			}
 			return *this;
 		}
-		expects_lr<uint256_t> dispatch_context::apply_group_share(const algorithm::asset_id& asset, const algorithm::pubkeyhash validator, const algorithm::pubkeyhash owner, const uint256_t& share)
+		expects_lr<uint256_t> dispatch_context::apply_group_share(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& owner, const uint256_t& share)
 		{
 			auto mempool = storages::mempoolstate(__func__);
 			auto status = mempool.apply_group_account(asset, validator, owner, share);
@@ -2828,11 +2810,11 @@ namespace tangent
 
 			return share;
 		}
-		expects_lr<uint256_t> dispatch_context::recover_group_share(const algorithm::asset_id& asset, const algorithm::pubkeyhash validator, const algorithm::pubkeyhash owner) const
+		expects_lr<uint256_t> dispatch_context::recover_group_share(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& owner) const
 		{
 			auto* wallet = get_wallet();
 			auto mempool = storages::mempoolstate(__func__);
-			return mempool.get_or_apply_group_account_share(asset, validator, owner, algorithm::hashing::hash256i(std::string_view((char*)wallet->secret_key, sizeof(wallet->secret_key))));
+			return mempool.get_or_apply_group_account_share(asset, validator, owner, algorithm::hashing::hash256i(wallet->secret_key.view()));
 		}
 		expects_lr<void> dispatch_context::checkpoint()
 		{
@@ -2925,10 +2907,9 @@ namespace tangent
 				error.append(1, '\n');
 			error.append(stringify::text("in transaction %s dispatch reverted: %.*s", algorithm::encoding::encode_0xhex256(transaction_hash).c_str(), (int)error_message.size(), error_message.data()));
 		}
-		bool dispatch_context::is_running_on(const algorithm::pubkeyhash validator) const
+		bool dispatch_context::is_running_on(const algorithm::pubkeyhash_t& validator) const
 		{
-			VI_ASSERT(validator != nullptr, "validator should be set");
-			return !memcmp(validator, get_wallet()->public_key_hash, sizeof(algorithm::pubkeyhash));
+			return get_wallet()->public_key_hash == validator;
 		}
 		vector<uptr<transaction>>& dispatch_context::get_sendable_transactions()
 		{
@@ -2949,7 +2930,7 @@ namespace tangent
 			nss::server_node::get()->store_cache(context->transaction->asset, warden::cache_policy::lifetime_cache, location, std::move(value));
 		}
 
-		option<uint64_t> evaluation_context::configure_priority_from_validator(const algorithm::pubkeyhash public_key_hash, const algorithm::seckey secret_key, option<const block_header*>&& parent_block)
+		option<uint64_t> evaluation_context::configure_priority_from_validator(const algorithm::pubkeyhash_t& public_key_hash, const algorithm::seckey_t& secret_key, option<const block_header*>&& parent_block)
 		{
 			if (!parent_block)
 			{
@@ -2973,10 +2954,8 @@ namespace tangent
 				validation.tip = !latest;
 			}
 
-			memcpy(validator.public_key_hash, public_key_hash, sizeof(algorithm::pubkeyhash));
-			if (secret_key != nullptr)
-				memcpy(validator.secret_key, secret_key, sizeof(algorithm::seckey));
-
+			validator.public_key_hash = public_key_hash;
+			validator.secret_key = secret_key;
 			validation.changelog.clear();
 			validation.context = ledger::transaction_context(this, tip.address(), &validation.changelog, nullptr, receipt());
 			validation.current_gas_limit = 0;
@@ -3006,7 +2985,7 @@ namespace tangent
 			if (validation.context.block && !validation.tip)
 				--validation.context.block->number;
 
-			auto position = std::find_if(producers.begin(), producers.end(), [this](const states::validator_production& a) { return !memcmp(a.owner, validator.public_key_hash, sizeof(validator.public_key_hash)); });
+			auto position = std::find_if(producers.begin(), producers.end(), [this](const states::validator_production& a) { return a.owner == validator.public_key_hash; });
 			if (position == producers.end())
 				return optional::none;
 
@@ -3052,8 +3031,7 @@ namespace tangent
 		}
 		evaluation_context::include_decision evaluation_context::decide_on_inclusion(const transaction_info& item, const uint256_t& current_gas_limit, const uint256_t& max_gas_limit) const
 		{
-			algorithm::pubkeyhash null = { 0 };
-			if (item.candidate->is_recoverable() && !memcmp(item.owner, null, sizeof(null)))
+			if (item.candidate->is_recoverable() && item.owner.empty())
 				return include_decision::not_executable;
 
 			uint256_t new_gas_limit = current_gas_limit + item.candidate->gas_limit;
@@ -3144,11 +3122,10 @@ namespace tangent
 		}
 		void evaluation_context::precompute_transaction_list(vector<transaction_info>& candidates)
 		{
-			algorithm::pubkeyhash null = { 0 };
-			parallel::wail_all(parallel::for_each(candidates.begin(), candidates.end(), ELEMENTS_FEW, [&null](transaction_info& item)
+			parallel::wail_all(parallel::for_each(candidates.begin(), candidates.end(), ELEMENTS_FEW, [](transaction_info& item)
 			{
 				item.hash = item.candidate->as_hash();
-				if (memcmp(item.owner, null, sizeof(null)) != 0)
+				if (!item.owner.empty())
 					return;
 
 				item.size = item.candidate->as_message().data.size();

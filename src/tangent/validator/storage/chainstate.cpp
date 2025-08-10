@@ -258,23 +258,22 @@ namespace tangent
 			umutex<std::mutex> unique(mutex);
 			accounts.clear();
 		}
-		void account_cache::clear_account_location(const algorithm::pubkeyhash account)
+		void account_cache::clear_account_location(const algorithm::pubkeyhash_t& account)
 		{
 			umutex<std::mutex> unique(mutex);
-			auto it = accounts.find(key_lookup_cast(std::string_view((char*)account, sizeof(algorithm::pubkeyhash))));
+			auto it = accounts.find(account);
 			if (it != accounts.end() && !it->second)
 				accounts.erase(it);
 		}
-		void account_cache::set_account_location(const algorithm::pubkeyhash account, uint64_t location)
+		void account_cache::set_account_location(const algorithm::pubkeyhash_t& account, uint64_t location)
 		{
 			auto size = protocol::now().user.storage.location_cache_size;
-			string target = string((char*)account, sizeof(algorithm::pubkeyhash));
 			umutex<std::mutex> unique(mutex);
 			if (accounts.size() >= size)
 				accounts.clear();
-			accounts[target] = location;
+			accounts[account] = location;
 		}
-		option<uint64_t> account_cache::get_account_location(const std::string_view& account)
+		option<uint64_t> account_cache::get_account_location(const algorithm::pubkeyhash_t& account)
 		{
 			umutex<std::mutex> unique(mutex);
 			auto it = accounts.find(account);
@@ -1538,11 +1537,10 @@ namespace tangent
 			location.block = block_location && block_location->number > 0 ? std::move(block_location) : option<block_pair>(optional::none);
 			return location;
 		}
-		expects_lr<uint64_t> chainstate::resolve_account_location(const algorithm::pubkeyhash account)
+		expects_lr<uint64_t> chainstate::resolve_account_location(const algorithm::pubkeyhash_t& account)
 		{
-			VI_ASSERT(account, "account should be set");
 			auto cache = account_cache::get();
-			auto account_number_cache = cache->get_account_location(std::string_view((char*)account, sizeof(algorithm::pubkeyhash)));
+			auto account_number_cache = cache->get_account_location(account);
 			if (account_number_cache)
 			{
 				if (!*account_number_cache)
@@ -1556,7 +1554,7 @@ namespace tangent
 			if (!find_account)
 				return expects_lr<uint64_t>(layer_exception(std::move(find_account.error().message())));
 
-			accountdata->bind_blob(*find_account, 0, std::string_view((char*)account, sizeof(algorithm::pubkeyhash)));
+			accountdata->bind_blob(*find_account, 0, account.view());
 			auto cursor = prepared_query(get_account_storage(), label, __func__, *find_account);
 			if (!cursor || cursor->error())
 				return expects_lr<uint64_t>(layer_exception(error_of(cursor)));
@@ -2144,7 +2142,7 @@ namespace tangent
 				values.erase(it);
 			return values;
 		}
-		expects_lr<vector<uptr<ledger::transaction>>> chainstate::get_transactions_by_owner(uint64_t block_number, const algorithm::pubkeyhash owner, int8_t direction, size_t offset, size_t count)
+		expects_lr<vector<uptr<ledger::transaction>>> chainstate::get_transactions_by_owner(uint64_t block_number, const algorithm::pubkeyhash_t& owner, int8_t direction, size_t offset, size_t count)
 		{
 			auto location = resolve_account_location(owner);
 			if (!location)
@@ -2231,7 +2229,7 @@ namespace tangent
 				values.erase(it);
 			return values;
 		}
-		expects_lr<vector<ledger::block_transaction>> chainstate::get_block_transactions_by_owner(uint64_t block_number, const algorithm::pubkeyhash owner, int8_t direction, size_t offset, size_t count)
+		expects_lr<vector<ledger::block_transaction>> chainstate::get_block_transactions_by_owner(uint64_t block_number, const algorithm::pubkeyhash_t& owner, int8_t direction, size_t offset, size_t count)
 		{
 			auto location = resolve_account_location(owner);
 			if (!location)

@@ -849,7 +849,7 @@ namespace tangent
 				if (input.message.size() != hash.size() || memcmp(input.message.data(), hash.data(), hash.size()) != 0)
 					return layer_exception("invalid input message");
 
-				auto info = transaction.serialize_and_presign(type, input.signature);
+				auto info = transaction.serialize_and_presign(type, input.signature.data);
 				auto result = finalized_transaction(std::move(prepared), encode_0xhex(info.data), encode_0xhex(info.id));
 				if (!result.is_valid())
 					return layer_exception("tx serialization error");

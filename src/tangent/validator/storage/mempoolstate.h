@@ -67,16 +67,16 @@ namespace tangent
 			expects_lr<void> remove_transactions(const vector<uint256_t>& transaction_hashes);
 			expects_lr<void> remove_transactions(const unordered_set<uint256_t>& transaction_hashes);
 			expects_lr<void> expire_transactions();
-			expects_lr<void> apply_group_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash proposer, const algorithm::pubkeyhash owner, const uint256_t& share);
-			expects_lr<uint256_t> get_or_apply_group_account_share(const algorithm::asset_id& asset, const algorithm::pubkeyhash proposer, const algorithm::pubkeyhash owner, const uint256_t& entropy);
-			expects_lr<vector<states::depository_account>> get_group_accounts(const algorithm::pubkeyhash proposer, size_t offset, size_t count);
-			expects_lr<account_bandwidth> get_bandwidth_by_owner(const algorithm::pubkeyhash owner, ledger::transaction_level type);
+			expects_lr<void> apply_group_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& proposer, const algorithm::pubkeyhash_t& owner, const uint256_t& share);
+			expects_lr<uint256_t> get_or_apply_group_account_share(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& proposer, const algorithm::pubkeyhash_t& owner, const uint256_t& entropy);
+			expects_lr<vector<states::depository_account>> get_group_accounts(const algorithm::pubkeyhash_t& proposer, size_t offset, size_t count);
+			expects_lr<account_bandwidth> get_bandwidth_by_owner(const algorithm::pubkeyhash_t& owner, ledger::transaction_level type);
 			expects_lr<bool> has_transaction(const uint256_t& transaction_hash);
-			expects_lr<uint64_t> get_lowest_transaction_nonce(const algorithm::pubkeyhash owner);
-			expects_lr<uint64_t> get_highest_transaction_nonce(const algorithm::pubkeyhash owner);
+			expects_lr<uint64_t> get_lowest_transaction_nonce(const algorithm::pubkeyhash_t& owner);
+			expects_lr<uint64_t> get_highest_transaction_nonce(const algorithm::pubkeyhash_t& owner);
 			expects_lr<uptr<ledger::transaction>> get_transaction_by_hash(const uint256_t& transaction_hash);
 			expects_lr<vector<uptr<ledger::transaction>>> get_transactions(size_t offset, size_t count);
-			expects_lr<vector<uptr<ledger::transaction>>> get_transactions_by_owner(const algorithm::pubkeyhash owner, int8_t direction, size_t offset, size_t count);
+			expects_lr<vector<uptr<ledger::transaction>>> get_transactions_by_owner(const algorithm::pubkeyhash_t& owner, int8_t direction, size_t offset, size_t count);
 			expects_lr<vector<uptr<ledger::transaction>>> get_transactions_by_group(const uint256_t& group_hash, size_t offset, size_t count);
 			expects_lr<vector<uint256_t>> get_transaction_hashset(size_t offset, size_t count);
 

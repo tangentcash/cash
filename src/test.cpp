@@ -58,26 +58,26 @@ public:
 			auto& [user2, user2_nonce] = users[1];
 			auto* transfer_ethereum = memory::init<transactions::transfer>();
 			transfer_ethereum->set_asset("ETH");
-			transfer_ethereum->set_to(algorithm::encoding::to_subaddress(user2.public_key_hash), 0.1);
-			transfer_ethereum->set_to(algorithm::encoding::to_subaddress(user2.public_key_hash), 0.2);
-			transfer_ethereum->set_to(algorithm::encoding::to_subaddress(user2.public_key_hash), 0.3);
-			transfer_ethereum->set_to(algorithm::encoding::to_subaddress(user2.public_key_hash), 0.4);
-			transfer_ethereum->set_to(algorithm::encoding::to_subaddress(user2.public_key_hash), 0.5);
+			transfer_ethereum->set_to(user2.public_key_hash, 0.1);
+			transfer_ethereum->set_to(user2.public_key_hash, 0.2);
+			transfer_ethereum->set_to(user2.public_key_hash, 0.3);
+			transfer_ethereum->set_to(user2.public_key_hash, 0.4);
+			transfer_ethereum->set_to(user2.public_key_hash, 0.5);
 			VI_PANIC(transfer_ethereum->sign(user1.secret_key, user1_nonce++, decimal::zero()), "transfer not signed");
 			transactions.push_back(transfer_ethereum);
 
-			auto user_test = ledger::wallet::from_seed(std::string_view((char*)user1.secret_key, sizeof(user1.secret_key)));
+			auto user_test = ledger::wallet::from_seed(user1.secret_key.view());
 			auto* transfer_ripple = memory::init<transactions::transfer>();
 			transfer_ripple->set_asset("XRP");
-			transfer_ripple->set_to(algorithm::encoding::to_subaddress(user2.public_key_hash), 9.0);
-			transfer_ripple->set_to(algorithm::encoding::to_subaddress(user2.public_key_hash, user1.public_key_hash), 1.0);
-			transfer_ripple->set_to(algorithm::encoding::to_subaddress(user_test.public_key_hash), 5.0);
+			transfer_ripple->set_to(user2.public_key_hash, 9.0);
+			transfer_ripple->set_to(user2.public_key_hash, 1.0);
+			transfer_ripple->set_to(user_test.public_key_hash, 5.0);
 			VI_PANIC(transfer_ripple->sign(user1.secret_key, user1_nonce++, decimal::zero()), "transfer not signed");
 			transactions.push_back(transfer_ripple);
 
 			auto* transfer_bitcoin = memory::init<transactions::transfer>();
 			transfer_bitcoin->set_asset("BTC");
-			transfer_bitcoin->set_to(algorithm::encoding::to_subaddress(user2.public_key_hash), 0.1);
+			transfer_bitcoin->set_to(user2.public_key_hash, 0.1);
 			VI_PANIC(transfer_bitcoin->sign(user1.secret_key, user1_nonce++, decimal::zero()), "transfer not signed");
 			transactions.push_back(transfer_bitcoin);
 		}
@@ -87,30 +87,30 @@ public:
 			auto& [user2, user2_nonce] = users[1];
 			auto* transfer_ethereum = memory::init<transactions::transfer>();
 			transfer_ethereum->set_asset("ETH");
-			transfer_ethereum->set_to(algorithm::encoding::to_subaddress(user1.public_key_hash), 0.01);
-			transfer_ethereum->set_to(algorithm::encoding::to_subaddress(user1.public_key_hash), 0.02);
-			transfer_ethereum->set_to(algorithm::encoding::to_subaddress(user1.public_key_hash), 0.03);
-			transfer_ethereum->set_to(algorithm::encoding::to_subaddress(user1.public_key_hash), 0.04);
-			transfer_ethereum->set_to(algorithm::encoding::to_subaddress(user1.public_key_hash), 0.05);
+			transfer_ethereum->set_to(user1.public_key_hash, 0.01);
+			transfer_ethereum->set_to(user1.public_key_hash, 0.02);
+			transfer_ethereum->set_to(user1.public_key_hash, 0.03);
+			transfer_ethereum->set_to(user1.public_key_hash, 0.04);
+			transfer_ethereum->set_to(user1.public_key_hash, 0.05);
 			VI_PANIC(transfer_ethereum->sign(user2.secret_key, user2_nonce++, std::string_view("0.00000001")), "transfer not signed");
 			transactions.push_back(transfer_ethereum);
 
-			auto user_test = ledger::wallet::from_seed(std::string_view((char*)user1.secret_key, sizeof(user1.secret_key)));
+			auto user_test = ledger::wallet::from_seed(user1.secret_key.view());
 			auto* transfer_ripple = memory::init<transactions::transfer>();
 			transfer_ripple->set_asset("XRP");
-			transfer_ripple->set_to(algorithm::encoding::to_subaddress(user1.public_key_hash), 5.0);
+			transfer_ripple->set_to(user1.public_key_hash, 5.0);
 			VI_PANIC(transfer_ripple->sign(user_test.secret_key, 1, decimal::zero()), "transfer not signed");
 			transactions.push_back(transfer_ripple);
 		}
 		static void account_transfer_to_account(vector<uptr<ledger::transaction>>& transactions, vector<account>& users, size_t user_id, const algorithm::asset_id& asset, const std::string_view& address, const decimal& value)
 		{
 			auto& [user1, user1_nonce] = users[user_id];
-			algorithm::subpubkeyhash sub_public_key_hash;
-			algorithm::signing::decode_subaddress(address, sub_public_key_hash);
+			algorithm::pubkeyhash_t public_key_hash;
+			algorithm::signing::decode_address(address, public_key_hash);
 
 			auto* transfer_asset = memory::init<transactions::transfer>();
 			transfer_asset->asset = asset;
-			transfer_asset->set_to(sub_public_key_hash, value);
+			transfer_asset->set_to(public_key_hash, value);
 			VI_PANIC(transfer_asset->sign(user1.secret_key, user1_nonce++, decimal::zero()), "transfer not signed");
 			transactions.push_back(transfer_asset);
 		}
@@ -122,45 +122,45 @@ public:
 			multi_asset_rollup->set_asset("ETH");
 
 			auto transfer_ethereum1 = transactions::transfer();
-			transfer_ethereum1.set_to(algorithm::encoding::to_subaddress(user2.public_key_hash), 0.1);
+			transfer_ethereum1.set_to(user2.public_key_hash, 0.1);
 			VI_PANIC(multi_asset_rollup->import_internal_transaction(transfer_ethereum1, user1.secret_key), "transfer not signed");
 
 			auto transfer_ethereum2 = transactions::transfer();
-			transfer_ethereum2.set_to(algorithm::encoding::to_subaddress(user2.public_key_hash), 0.2);
+			transfer_ethereum2.set_to(user2.public_key_hash, 0.2);
 			VI_PANIC(multi_asset_rollup->import_internal_transaction(transfer_ethereum2, user1.secret_key), "transfer not signed");
 
 			auto transfer_ethereum3 = transactions::transfer();
-			transfer_ethereum3.set_to(algorithm::encoding::to_subaddress(user1.public_key_hash), 0.2);
+			transfer_ethereum3.set_to(user1.public_key_hash, 0.2);
 			VI_PANIC(multi_asset_rollup->import_external_transaction(transfer_ethereum3, user2.secret_key, user2_nonce++), "transfer not signed");
 
 			auto transfer_ripple1 = transactions::transfer();
 			transfer_ripple1.set_asset("XRP");
-			transfer_ripple1.set_to(algorithm::encoding::to_subaddress(user2.public_key_hash), 1);
+			transfer_ripple1.set_to(user2.public_key_hash, 1);
 			VI_PANIC(multi_asset_rollup->import_internal_transaction(transfer_ripple1, user1.secret_key), "transfer not signed");
 
 			auto transfer_ripple2 = transactions::transfer();
 			transfer_ripple2.set_asset("XRP");
-			transfer_ripple2.set_to(algorithm::encoding::to_subaddress(user2.public_key_hash), 2);
+			transfer_ripple2.set_to(user2.public_key_hash, 2);
 			VI_PANIC(multi_asset_rollup->import_internal_transaction(transfer_ripple2, user1.secret_key), "transfer not signed");
 
 			auto transfer_ripple3 = transactions::transfer();
 			transfer_ripple3.set_asset("XRP");
-			transfer_ripple3.set_to(algorithm::encoding::to_subaddress(user1.public_key_hash), 2);
+			transfer_ripple3.set_to(user1.public_key_hash, 2);
 			VI_PANIC(multi_asset_rollup->import_external_transaction(transfer_ripple3, user2.secret_key, user2_nonce++), "transfer not signed");
 
 			auto transfer_bitcoin1 = transactions::transfer();
 			transfer_bitcoin1.set_asset("BTC");
-			transfer_bitcoin1.set_to(algorithm::encoding::to_subaddress(user2.public_key_hash), 0.001);
+			transfer_bitcoin1.set_to(user2.public_key_hash, 0.001);
 			VI_PANIC(multi_asset_rollup->import_internal_transaction(transfer_bitcoin1, user1.secret_key), "transfer not signed");
 
 			auto transfer_bitcoin2 = transactions::transfer();
 			transfer_bitcoin2.set_asset("BTC");
-			transfer_bitcoin2.set_to(algorithm::encoding::to_subaddress(user2.public_key_hash), 0.002);
+			transfer_bitcoin2.set_to(user2.public_key_hash, 0.002);
 			VI_PANIC(multi_asset_rollup->import_internal_transaction(transfer_bitcoin2, user1.secret_key), "transfer not signed");
 
 			auto transfer_bitcoin3 = transactions::transfer();
 			transfer_bitcoin3.set_asset("BTC");
-			transfer_bitcoin3.set_to(algorithm::encoding::to_subaddress(user1.public_key_hash), 0.002);
+			transfer_bitcoin3.set_to(user1.public_key_hash, 0.002);
 			VI_PANIC(multi_asset_rollup->import_external_transaction(transfer_bitcoin3, user2.secret_key, user2_nonce++), "transfer not signed");
 
 			VI_PANIC(multi_asset_rollup->sign(user1.secret_key, user1_nonce++, decimal::zero()), "rollup not signed");
@@ -293,19 +293,19 @@ public:
 			auto& [user2, user2_nonce] = users[1];
 			auto* call_ethereum1 = memory::init<transactions::call>();
 			call_ethereum1->set_asset("ETH");
-			call_ethereum1->program_call(algorithm::encoding::to_subaddress(contracts->at(0).data), decimal::zero(), "transfer", { format::variable(std::string_view((char*)user2.public_key_hash, sizeof(user2.public_key_hash))), format::variable(250000u) });
+			call_ethereum1->program_call(contracts->at(0), decimal::zero(), "transfer", { format::variable(user2.public_key_hash.view()), format::variable(250000u) });
 			VI_PANIC(call_ethereum1->sign(user1.secret_key, user1_nonce++, decimal::zero()), "call not signed");
 			transactions.push_back(call_ethereum1);
 
 			auto* call_ethereum2 = memory::init<transactions::call>();
 			call_ethereum2->set_asset("ETH");
-			call_ethereum2->program_call(algorithm::encoding::to_subaddress(contracts->at(0).data), decimal::zero(), "info", { });
+			call_ethereum2->program_call(contracts->at(0), decimal::zero(), "info", { });
 			VI_PANIC(call_ethereum2->sign(user1.secret_key, user1_nonce++, decimal::zero()), "call not signed");
 			transactions.push_back(call_ethereum2);
 
 			auto* call_bitcoin = memory::init<transactions::call>();
 			call_bitcoin->set_asset("BTC");
-			call_bitcoin->program_call(algorithm::encoding::to_subaddress(contracts->at(1).data, "123456"), decimal::zero(), "balance_of_test_token", { });
+			call_bitcoin->program_call(contracts->at(1), decimal::zero(), "balance_of_test_token", { });
 			VI_PANIC(call_bitcoin->sign(user1.secret_key, user1_nonce++, decimal::zero()), "call not signed");
 			transactions.push_back(call_bitcoin);
 		}
@@ -571,7 +571,7 @@ public:
 		{
 			auto& [user2, user2_nonce] = users[1];
 			auto mempool = storages::mempoolstate(__func__);
-			auto accounts = mempool.get_group_accounts(nullptr, 0, 128);
+			auto accounts = mempool.get_group_accounts(algorithm::pubkeyhash_t(), 0, 128);
 			if (accounts && !accounts->empty())
 			{
 				auto user2_address = algorithm::pubkeyhash_t(user2.public_key_hash);
@@ -594,8 +594,7 @@ public:
 			auto& [user2, user2_nonce] = users[1];
 			auto* depository_withdrawal_ethereum = memory::init<transactions::depository_withdrawal>();
 			depository_withdrawal_ethereum->set_asset("XRP");
-			depository_withdrawal_ethereum->set_from_manager(user2.public_key_hash);
-			depository_withdrawal_ethereum->set_to_manager(user1.public_key_hash);
+			depository_withdrawal_ethereum->set_manager(user2.public_key_hash, user1.public_key_hash);
 			VI_PANIC(depository_withdrawal_ethereum->sign(user2.secret_key, user2_nonce++, decimal::zero()), "depository migration not signed");
 			transactions.push_back(depository_withdrawal_ethereum);
 		}
@@ -606,7 +605,7 @@ public:
 			auto context = ledger::transaction_context();
 			auto* withdrawal_ethereum_token = memory::init<transactions::depository_withdrawal>();
 			withdrawal_ethereum_token->set_asset("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7");
-			withdrawal_ethereum_token->set_from_manager(user2.public_key_hash);
+			withdrawal_ethereum_token->set_manager(user2.public_key_hash);
 			withdrawal_ethereum_token->set_to("0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5", context.get_account_balance(algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7"), user1.public_key_hash).expect("user balance not valid").get_balance());
 			VI_PANIC(withdrawal_ethereum_token->sign(user1.secret_key, user1_nonce++, decimal::zero()), "withdrawal not signed");
 			transactions.push_back(withdrawal_ethereum_token);
@@ -618,21 +617,21 @@ public:
 			auto context = ledger::transaction_context();
 			auto* withdrawal_ethereum = memory::init<transactions::depository_withdrawal>();
 			withdrawal_ethereum->set_asset("ETH");
-			withdrawal_ethereum->set_from_manager(user2.public_key_hash);
+			withdrawal_ethereum->set_manager(user2.public_key_hash);
 			withdrawal_ethereum->set_to("0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5", context.get_account_balance(algorithm::asset::id_of("ETH"), user1.public_key_hash).expect("user balance not valid").get_balance());
 			VI_PANIC(withdrawal_ethereum->sign(user1.secret_key, user1_nonce++, decimal::zero()), "withdrawal not signed");
 			transactions.push_back(withdrawal_ethereum);
 
 			auto* withdrawal_ripple = memory::init<transactions::depository_withdrawal>();
 			withdrawal_ripple->set_asset("XRP");
-			withdrawal_ripple->set_from_manager(user1.public_key_hash);
+			withdrawal_ripple->set_manager(user1.public_key_hash);
 			withdrawal_ripple->set_to("rUBqz2JiRCT3gYZBnm28y5ME7e5UpSm2ok", context.get_account_balance(algorithm::asset::id_of("XRP"), user1.public_key_hash).expect("user balance not valid").get_balance());
 			VI_PANIC(withdrawal_ripple->sign(user1.secret_key, user1_nonce++, decimal::zero()), "withdrawal not signed");
 			transactions.push_back(withdrawal_ripple);
 
 			auto* withdrawal_bitcoin = memory::init<transactions::depository_withdrawal>();
 			withdrawal_bitcoin->set_asset("BTC");
-			withdrawal_bitcoin->set_from_manager(user2.public_key_hash);
+			withdrawal_bitcoin->set_manager(user2.public_key_hash);
 			withdrawal_bitcoin->set_to("mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", context.get_account_balance(algorithm::asset::id_of("BTC"), user1.public_key_hash).expect("user balance not valid").get_balance());
 			VI_PANIC(withdrawal_bitcoin->sign(user1.secret_key, user1_nonce++, decimal::zero()), "withdrawal not signed");
 			transactions.push_back(withdrawal_bitcoin);
@@ -644,21 +643,21 @@ public:
 			auto context = ledger::transaction_context();
 			auto* withdrawal_ethereum = memory::init<transactions::depository_withdrawal>();
 			withdrawal_ethereum->set_asset("ETH");
-			withdrawal_ethereum->set_from_manager(user2.public_key_hash);
+			withdrawal_ethereum->set_manager(user2.public_key_hash);
 			withdrawal_ethereum->set_to("0x89a0181659bd280836A2d33F57e3B5Dfa1a823CE", context.get_account_balance(algorithm::asset::id_of("ETH"), user2.public_key_hash).expect("user balance not valid").get_balance());
 			VI_PANIC(withdrawal_ethereum->sign(user2.secret_key, user2_nonce++, decimal::zero()), "withdrawal not signed");
 			transactions.push_back(withdrawal_ethereum);
 
 			auto* withdrawal_ripple = memory::init<transactions::depository_withdrawal>();
 			withdrawal_ripple->set_asset("XRP");
-			withdrawal_ripple->set_from_manager(user1.public_key_hash);
+			withdrawal_ripple->set_manager(user1.public_key_hash);
 			withdrawal_ripple->set_to("rJGb4etn9GSwNHYVu7dNMbdiVgzqxaTSUG", context.get_account_balance(algorithm::asset::id_of("XRP"), user2.public_key_hash).expect("user balance not valid").get_balance());
 			VI_PANIC(withdrawal_ripple->sign(user2.secret_key, user2_nonce++, decimal::zero()), "withdrawal not signed");
 			transactions.push_back(withdrawal_ripple);
 
 			auto* withdrawal_bitcoin = memory::init<transactions::depository_withdrawal>();
 			withdrawal_bitcoin->set_asset("BTC");
-			withdrawal_bitcoin->set_from_manager(user2.public_key_hash);
+			withdrawal_bitcoin->set_manager(user2.public_key_hash);
 			withdrawal_bitcoin->set_to("bcrt1p2w7gkghj7arrjy4c45kh7450458hr8dv9pu9576lx08uuh4je7eqgskm9v", context.get_account_balance(algorithm::asset::id_of("BTC"), user2.public_key_hash).expect("user balance not valid").get_balance());
 			VI_PANIC(withdrawal_bitcoin->sign(user2.secret_key, user2_nonce++, decimal::zero()), "withdrawal not signed");
 			transactions.push_back(withdrawal_bitcoin);
@@ -734,8 +733,8 @@ public:
 	static void generic_message_serialization()
 	{
 		uptr<schema> data = var::set::object();
-		algorithm::pubkeyhash owner;
-		algorithm::hashing::hash160((uint8_t*)"publickeyhash", 13, owner);
+		algorithm::pubkeyhash_t owner;
+		algorithm::hashing::hash160((uint8_t*)"publickeyhash", 13, owner.data);
 		uint256_t asset = algorithm::asset::id_of("BTC");
 		uint64_t block_number = 1;
 		uint64_t block_nonce = 1;
@@ -826,9 +825,9 @@ public:
 	{
 		auto* term = console::get();
 		string mnemonic = "chimney clerk liberty defense gesture risk disorder switch raven chapter document admit win swing forward please clerk vague online coil material tone sibling intact";
-		algorithm::seckey secret_key;
-		algorithm::pubkey public_key;
-		algorithm::pubkeyhash public_key_hash;
+		algorithm::seckey_t secret_key;
+		algorithm::pubkey_t public_key;
+		algorithm::pubkeyhash_t public_key_hash;
 		algorithm::signing::derive_secret_key_from_mnemonic(mnemonic, secret_key);
 		algorithm::signing::derive_public_key(secret_key, public_key);
 		algorithm::signing::derive_public_key_hash(public_key, public_key_hash);
@@ -841,13 +840,13 @@ public:
 		string message = "Hello, world!";
 		uint256_t message_hash = algorithm::hashing::hash256i(message);
 		string encoded_message_hash = algorithm::encoding::encode_0xhex256(message_hash);
-		algorithm::recpubsig message_signature;
-		algorithm::pubkey recover_public_key;
-		algorithm::pubkeyhash recover_public_key_hash;
+		algorithm::hashsig_t message_signature;
+		algorithm::pubkey_t recover_public_key;
+		algorithm::pubkeyhash_t recover_public_key_hash;
 		bool verifies = algorithm::signing::sign(message_hash, secret_key, message_signature) && algorithm::signing::verify(message_hash, public_key, message_signature);
 		bool recovers_public_key = algorithm::signing::recover(message_hash, recover_public_key, message_signature);
 		bool recovers_public_key_hash = algorithm::signing::recover_hash(message_hash, recover_public_key_hash, message_signature);
-		string encoded_message_signature = format::util::encode_0xhex(std::string_view((char*)message_signature, sizeof(message_signature)));
+		string encoded_message_signature = format::util::encode_0xhex(message_signature.view());
 		string encoded_recover_public_key, encoded_recover_public_key_hash;
 		algorithm::signing::encode_public_key(recover_public_key, encoded_recover_public_key);
 		algorithm::signing::encode_address(recover_public_key_hash, encoded_recover_public_key_hash);
@@ -892,8 +891,8 @@ public:
 		auto nonce1 = uint256_t(110);
 		auto nonce2 = uint256_t(220);
 
-		algorithm::seckey cipher_secret_key1, cipher_secret_key2;
-		algorithm::pubkey cipher_public_key1, cipher_public_key2;
+		algorithm::seckey_t cipher_secret_key1, cipher_secret_key2;
+		algorithm::pubkey_t cipher_public_key1, cipher_public_key2;
 		algorithm::signing::derive_cipher_keypair(user1.secret_key, nonce1, cipher_secret_key1, cipher_public_key1);
 		algorithm::signing::derive_cipher_keypair(user2.secret_key, nonce2, cipher_secret_key2, cipher_public_key2);
 
@@ -908,47 +907,18 @@ public:
 		auto* user1_wallet_data = data->set("user1_wallet", user1.as_schema().reset());
 		auto* user1_wallet_message_data = user1_wallet_data->set("message");
 		user1_wallet_message_data->set("cipher_nonce", algorithm::encoding::serialize_uint256(nonce1));
-		user1_wallet_message_data->set("cipher_secret_key", var::string(format::util::encode_0xhex(std::string_view((char*)cipher_secret_key1, sizeof(cipher_secret_key1)))));
-		user1_wallet_message_data->set("cipher_public_key", var::string(format::util::encode_0xhex(std::string_view((char*)cipher_public_key1, sizeof(cipher_public_key1)))));
+		user1_wallet_message_data->set("cipher_secret_key", var::string(format::util::encode_0xhex(cipher_secret_key1.view())));
+		user1_wallet_message_data->set("cipher_public_key", var::string(format::util::encode_0xhex(cipher_public_key1.view())));
 		user1_wallet_message_data->set("ciphertext_to_user2_wallet", var::string(format::util::encode_0xhex(ciphertext1)));
 		user1_wallet_message_data->set("plaintext_from_user2_wallet", var::string(plaintext2));
 		auto* user2_wallet_data = data->set("user2_wallet", user2.as_schema().reset());
 		auto* user2_wallet_message_data = user2_wallet_data->set("message");
 		user2_wallet_message_data->set("cipher_nonce", algorithm::encoding::serialize_uint256(nonce2));
-		user2_wallet_message_data->set("cipher_secret_key", var::string(format::util::encode_0xhex(std::string_view((char*)cipher_secret_key2, sizeof(cipher_secret_key2)))));
-		user2_wallet_message_data->set("cipher_public_key", var::string(format::util::encode_0xhex(std::string_view((char*)cipher_public_key2, sizeof(cipher_public_key2)))));
+		user2_wallet_message_data->set("cipher_secret_key", var::string(format::util::encode_0xhex(cipher_secret_key2.view())));
+		user2_wallet_message_data->set("cipher_public_key", var::string(format::util::encode_0xhex(cipher_public_key2.view())));
 		user2_wallet_message_data->set("ciphertext_to_user2_wallet", var::string(format::util::encode_0xhex(ciphertext2)));
 		user2_wallet_message_data->set("plaintext_from_user2_wallet", var::string(plaintext1));
 		term->jwrite_line(*data);
-	}
-	/* wallet address cryptography */
-	static void cryptography_wallet_address()
-	{
-		auto* term = console::get();
-		auto wallet = ledger::wallet::from_seed();
-		auto test = ledger::wallet::from_seed("123456");
-		auto address = wallet.get_address();
-		auto subaddress_from_data = wallet.get_subaddress("123456");
-		auto subaddress_from_hash = wallet.get_subaddress(test.public_key_hash);
-
-		auto data = uptr(var::set::object());
-		data->set("address", algorithm::signing::serialize_address(wallet.public_key_hash));
-		data->set("subaddress_from_data", algorithm::signing::serialize_subaddress(wallet.public_key_hash, "123456"));
-		data->set("subaddress_from_hash", algorithm::signing::serialize_subaddress(wallet.public_key_hash, test.public_key_hash));
-		term->jwrite_line(*data);
-
-		algorithm::pubkeyhash public_key_hash;
-		algorithm::signing::decode_address(address, public_key_hash);
-
-		algorithm::pubkeyhash public_key_hash_from_data;
-		algorithm::signing::decode_address(subaddress_from_data, public_key_hash_from_data);
-
-		algorithm::pubkeyhash public_key_hash_from_hash;
-		algorithm::signing::decode_address(subaddress_from_hash, public_key_hash_from_hash);
-
-		VI_PANIC(!memcmp(wallet.public_key_hash, public_key_hash, sizeof(public_key_hash)) && algorithm::signing::verify_address(address), "bad address 1");
-		VI_PANIC(!memcmp(wallet.public_key_hash, public_key_hash_from_data, sizeof(public_key_hash_from_data)) && algorithm::signing::verify_address(subaddress_from_data), "bad address 2");
-		VI_PANIC(!memcmp(wallet.public_key_hash, public_key_hash_from_hash, sizeof(public_key_hash_from_hash)) && algorithm::signing::verify_address(subaddress_from_hash), "bad address 3");
 	}
 	/* transaction cryptography */
 	static void cryptography_transaction()
@@ -965,14 +935,14 @@ public:
 		auto tx = transactions::transfer();
 		tx.gas_limit = ledger::block::get_gas_limit();
 		tx.set_asset("ETH");
-		tx.set_to(algorithm::encoding::to_subaddress(users[1].wallet.public_key_hash), decimal("13.539899"));
+		tx.set_to(users[1].wallet.public_key_hash, decimal("13.539899"));
 		VI_PANIC(tx.sign(users[0].wallet.secret_key, users[0].nonce++), "transfer not signed");
 
 		auto tx_blob = tx.as_message().data;
 		auto tx_body = format::ro_stream(tx_blob);
 		auto tx_copy = uptr<ledger::transaction>(transactions::resolver::from_stream(tx_body));
 		auto tx_info = tx.as_schema();
-		algorithm::pubkeyhash recover_public_key_hash = { 0 };
+		algorithm::pubkeyhash_t recover_public_key_hash;
 		tx_info->set("raw_data", var::string(format::util::encode_0xhex(tx_blob)));
 
 		auto stream = tx.as_message();
@@ -983,7 +953,7 @@ public:
 		tx_info->set("asset_id", algorithm::asset::serialize(algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7")));
 		term->jwrite_line(*tx_info);
 
-		VI_PANIC(tx.recover_hash(recover_public_key_hash) && !memcmp(wallet.public_key_hash, recover_public_key_hash, sizeof(recover_public_key_hash)), "failed to recover the public key hash from signature");
+		VI_PANIC(tx.recover_hash(recover_public_key_hash) && wallet.public_key_hash == recover_public_key_hash, "failed to recover the public key hash from signature");
 		VI_PANIC(tx.verify(wallet.public_key), "failed to verify the signature");
 		VI_PANIC(tx_copy && tx_copy->load(tx_body) && tx_copy->as_message().data == tx_blob, "failed to serialize/deserialize the transaction");
 	}
@@ -1077,47 +1047,47 @@ public:
 				auto participant_data = uptr(var::set::object());
 				participant_data->set("participant_id", var::integer(i));
 				participant_data->set("share_seed", var::string(algorithm::encoding::encode_0xhex256(share.seed)));
-				participant_data->set("share_secret_key", var::string(format::util::encode_0xhex(std::string_view((char*)share.keypair.secret_key, seckey_size))));
-				participant_data->set("share_public_key", var::string(format::util::encode_0xhex(std::string_view((char*)share.keypair.public_key, pubkey_size))));
+				participant_data->set("share_secret_key", var::string(format::util::encode_0xhex(std::string_view((char*)share.keypair.secret_key.data, seckey_size))));
+				participant_data->set("share_public_key", var::string(format::util::encode_0xhex(std::string_view((char*)share.keypair.public_key.data, pubkey_size))));
 				term->jwrite_line(*participant_data);
 			}
 
-			algorithm::composition::cseckey mpc_secret_key = { 0 };
+			algorithm::composition::cseckey_t mpc_secret_key;
 			for (size_t i = 0; i < participants.size(); i++)
 			{
 				auto& share = participants[i];
 				algorithm::composition::accumulate_secret_key(alg, share.keypair.secret_key, mpc_secret_key).expect("failed to calculate cumulative secret key");
 			}
-			algorithm::composition::accumulate_secret_key(alg, nullptr, mpc_secret_key).expect("failed to finalize cumulative secret key");
+			algorithm::composition::accumulate_secret_key(alg, algorithm::composition::cseckey_t(), mpc_secret_key).expect("failed to finalize cumulative secret key");
 
-			algorithm::composition::cpubkey mpc_public_key = { 0 };
+			algorithm::composition::cpubkey_t mpc_public_key;
 			for (size_t i = 0; i < participants.size(); i++)
 			{
 				auto& share = participants[i];
 				algorithm::composition::accumulate_public_key(alg, share.keypair.secret_key, mpc_public_key).expect("failed to calculate cumulative public key");
 			}
-			algorithm::composition::accumulate_public_key(alg, nullptr, mpc_public_key).expect("failed to finalize cumulative public key");
+			algorithm::composition::accumulate_public_key(alg, algorithm::composition::cseckey_t(), mpc_public_key).expect("failed to finalize cumulative public key");
 
 			std::string_view message = "Hello, World!";
 			uint8_t message_hash[32];
 			algorithm::hashing::hash256((uint8_t*)message.data(), message.size(), message_hash);
 
-			algorithm::composition::cpubsig mpc_signature = { 0 };
+			algorithm::composition::chashsig_t mpc_signature;
 			for (size_t i = 0; i < participants.size(); i++)
 			{
 				auto& share = participants[i];
 				algorithm::composition::accumulate_signature(alg, message_hash, sizeof(message_hash), mpc_public_key, share.keypair.secret_key, mpc_signature).expect("failed to calculate cumulative signature");
 			}
-			algorithm::composition::accumulate_signature(alg, message_hash, sizeof(message_hash), mpc_public_key, nullptr, mpc_signature).expect("failed to finalize cumulative signature");
+			algorithm::composition::accumulate_signature(alg, message_hash, sizeof(message_hash), mpc_public_key, algorithm::composition::cseckey_t(), mpc_signature).expect("failed to finalize cumulative signature");
 
 			auto mpc_data = uptr(var::set::object());
 			mpc_data->set("message", var::string(message));
 			mpc_data->set("message_hash", var::string(format::util::encode_0xhex(std::string_view((char*)message_hash, sizeof(message_hash)))));
 			mpc_data->set("mpc_algorithm", var::string(alg_name));
 			mpc_data->set("mpc_participants", var::integer(participants.size()));
-			mpc_data->set("mpc_secret_key", var::string(format::util::encode_0xhex(std::string_view((char*)mpc_secret_key, seckey_size))));
-			mpc_data->set("mpc_public_key", var::string(format::util::encode_0xhex(std::string_view((char*)mpc_public_key, pubkey_size))));
-			mpc_data->set("mpc_signature", var::string(format::util::encode_0xhex(std::string_view((char*)mpc_signature, signature_size))));
+			mpc_data->set("mpc_secret_key", var::string(format::util::encode_0xhex(std::string_view((char*)mpc_secret_key.data, seckey_size))));
+			mpc_data->set("mpc_public_key", var::string(format::util::encode_0xhex(std::string_view((char*)mpc_public_key.data, pubkey_size))));
+			mpc_data->set("mpc_signature", var::string(format::util::encode_0xhex(std::string_view((char*)mpc_signature.data, signature_size))));
 			term->jwrite_line(*mpc_data);
 		}
 	}
@@ -1140,7 +1110,7 @@ public:
 			for (auto& input : prepared.inputs)
 			{
 				algorithm::composition::accumulate_signature(input.alg, input.message.data(), input.message.size(), input.public_key, wallet.secret_key, input.signature).expect("signature accumulation error");
-				algorithm::composition::accumulate_signature(input.alg, input.message.data(), input.message.size(), input.public_key, nullptr, input.signature).expect("signature finalization error");
+				algorithm::composition::accumulate_signature(input.alg, input.message.data(), input.message.size(), input.public_key, algorithm::composition::cseckey_t(), input.signature).expect("signature finalization error");
 			}
 
 			warden::finalized_transaction finalized = server->finalize_transaction(asset, std::move(prepared)).expect("prepared transaction finalization error");
@@ -1500,24 +1470,24 @@ public:
 				account(ledger::wallet::from_seed("000000"), 0),
 				account(ledger::wallet::from_seed("000002"), 0)
 			};
-			TEST_BLOCK(&generators::validator_registration_full, "0x7932c00d5817794d7094ee605e2f515d5d094235d00472f13e41089f0963cfd0", 1);
-			TEST_BLOCK(std::bind(&generators::validator_enable_validator, std::placeholders::_1, std::placeholders::_2, 2, true, true, false), "0xbb8fb3b1862f7d6d8a3fd6404b8c1c56bbf55d5882cb651ae06102462234c435", 2);
-			TEST_BLOCK(&generators::depository_registration_full, "0xe05ecb95c384be60067f718a4628cd47d42254a8ae25982ad5730d9082b2fc1a", 3);
-			TEST_BLOCK(&generators::depository_account_registration_full, "0xa9480966d937df14422ec1a334eaf2736b2ee0058bc19f3475162c0f22d54d2d", 4);
-			TEST_BLOCK(&generators::depository_transaction_registration_full, "0xcc36d9e3f3d86b5f44ba5a576e19549ad03ae05172914f2d2f928a180ef9bcf7", 6);
-			TEST_BLOCK(&generators::account_transfer_stage_1, "0x6bf38e44b95ce4046c0705ed799e4a2b5963636be7d50733bca5b1858a1f0d59", 7);
-			TEST_BLOCK(&generators::account_transfer_stage_2, "0x5264b00fc186d77c564cce5b570eab768b461e1720bcc0f087340745e53fe731", 8);
-			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), users[2].wallet.get_address(), 0.05), "0x7e41b5bf2f4a9258970247f298bcc7690f963c21a5668f8aa4b687559c7ce1bc", 9);
-			TEST_BLOCK(std::bind(&generators::account_upgrade, std::placeholders::_1, std::placeholders::_2, &contracts), "0x8cd4d126fc1d28756fc0df76c3e4fa606463a6a400382bae45f5a7e438a3fc39", 10);
-			TEST_BLOCK(std::bind(&generators::account_call, std::placeholders::_1, std::placeholders::_2, &contracts), "0x7a2b981c2c87df4f3391a19c78c023603a1b9b17a8ca8a4ce19d05ea00203ba8", 11);
-			TEST_BLOCK(&generators::account_transaction_rollup, "0x84c274411186057338ec93f6abfd1f464e0f087fd33243da593bc83aede73500", 12);
-			TEST_BLOCK(std::bind(&generators::validator_enable_validator, std::placeholders::_1, std::placeholders::_2, 2, true, true, true), "0x04cf5734833439cfc72b3e867859a8fde4e112c7c4a59584843ccbd547c64746", 13);
-			TEST_BLOCK(&generators::depository_regrouping, "0x33f31bd387dd4f89a490606a934f0be115f818daac0aadcbd2b2060216cecc57", 14);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_1, "0xf187396ef302584a3453a6baaaa45085a968ea7f5289ba753b25a86b84e1c651", 18);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0xd0e57ecab3101effd7fe5a56cbb5d2654923062d36400f3640635c90d4668399", 20);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0x826550ada280e68f7d9320984d505666b2eca378bc7679cb7dafcc8dba667acf", 22);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_4, "0xa63f4ef3099c45fe71dfa4846dc1bccaffc860656ded8672d7b68032ea8a4192", 24);
-			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2, true, true, false), "0xaed2ce160f80ada17ba12be21032ae1041b2ea12823c1dc69564fcd805e9a937", 26);
+			TEST_BLOCK(&generators::validator_registration_full, "0x73797cca76cdc7c15dee9cd5ffb1a35b6ba7274e7a5f98790d058bfc1f8762c2", 1);
+			TEST_BLOCK(std::bind(&generators::validator_enable_validator, std::placeholders::_1, std::placeholders::_2, 2, true, true, false), "0xd41ad4deda2a4b6bdc930741061d1cd6bb8fcabd73b65ea73395159fcea20085", 2);
+			TEST_BLOCK(&generators::depository_registration_full, "0xcef75d5dd403ea12794e1eb6f87607dd87393ad3d688fe72cf10247a5b3bb8f6", 3);
+			TEST_BLOCK(&generators::depository_account_registration_full, "0xad10c3a8697e4128622c3dbbe69037b1c0272c2da433d74b03ca40e1d34df6c2", 4);
+			TEST_BLOCK(&generators::depository_transaction_registration_full, "0xf60d44e4db194b38f5378848f625caab304ab6db8103436c65ea4d38c98f4617", 6);
+			TEST_BLOCK(&generators::account_transfer_stage_1, "0x5dab1e4f9d688c4c5aa70a97fd8f1120948e83cd9a64ed99dc43714b50231185", 7);
+			TEST_BLOCK(&generators::account_transfer_stage_2, "0x923357b7425ceebfd88dcc67c6ef7d75bc0a701df3c990c88d20fef701596c7a", 8);
+			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), users[2].wallet.get_address(), 0.05), "0xf3932a8d1ef1c885ea8700b324e163ac5d44e19e3c69920bfc8d0181b2e12d25", 9);
+			TEST_BLOCK(std::bind(&generators::account_upgrade, std::placeholders::_1, std::placeholders::_2, &contracts), "0x1eee5bf9877851dbe750240b1eb6c6d57064135f04eaf430bccfc98d3350e619", 10);
+			TEST_BLOCK(std::bind(&generators::account_call, std::placeholders::_1, std::placeholders::_2, &contracts), "0xf082688402f8de32769fac4b5d9b02680862b39c529ee7df114beec4b597a956", 11);
+			TEST_BLOCK(&generators::account_transaction_rollup, "0x2f9c98d9d5667aa73f3b90c16c0c8378b2e6c14aa7bbebfb046572170d8e22fb", 12);
+			TEST_BLOCK(std::bind(&generators::validator_enable_validator, std::placeholders::_1, std::placeholders::_2, 2, true, true, true), "0x9fa8d3e80dd30579fa8c15bdc25ceada846745a78dea133e6f5134fbb0cbe057", 13);
+			TEST_BLOCK(&generators::depository_regrouping, "0xccee4c60cf9919f12e1b25c65c0c5d21ca0c597ef9142034eee15f4baefa77f3", 14);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_1, "0x3366e7ee017d7ff53df483cbf475be9a90b0ff15c78aa961f5205bb149392583", 18);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0xfa071351b7da20b5a7f0a0ea5dcd85538a9f7e21c10249b7ea4ac969fa5c16f1", 20);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0x943fa05bf5a25e47b99c51e27328094d03b3dc3240544a03bbb6bd08b092ba8e", 22);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_4, "0x6a81f1b26ff53a6e2f50bcdd6b28ed2d5a76927a6abeb3b69c94be165943e73a", 24);
+			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2, true, true, false), "0x57f23f194a296666e7bde9a3fa4e8a620ab1a6f77109641025fe6a56a1a840b6", 26);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else
@@ -1536,10 +1506,10 @@ public:
 			};
 			TEST_BLOCK(&generators::validator_registration_partial, "0x9c88b52c3b4f1b6d58a4bcc64a5790e53371f079a7d35c4309f2754419ba48c5", 1);
 			TEST_BLOCK(&generators::depository_registration_partial, "0x8a01dd6807ef7216ac3e96e7e2739afbd5183298ffafe6e3e76e8c7212dbcc5c", 2);
-			TEST_BLOCK(&generators::depository_account_registration_partial, "0xa1b06dd02c7e06fc31f9009569f2d8c70cbfc200514edf6f0f0ede7121454265", 3);
-			TEST_BLOCK(&generators::depository_transaction_registration_partial, "0x8d1a19df6bdfda28541ba87c4daaaef8f79383e72dcb424490e1a9286bc2a858", 5);
-			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 0.1), "0x03e3a50ffa3096f32adf8f4edb55db65286c737901966631c35e09551397c456", 6);
-			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 5000), "0x822fdf2c14f4556c645a0f047e4928eef60952482117f1b32a86234f37e6267f", 7);
+			TEST_BLOCK(&generators::depository_account_registration_partial, "0x4cdbe7e32fefc1d3a8c6cabb8fc5b9705dc5726f95112c2e845e959682425603", 3);
+			TEST_BLOCK(&generators::depository_transaction_registration_partial, "0xeef72acf1d2d4fe1e884b91c6bd6efb63ae2f2f377f243a4d74f8df258df051c", 5);
+			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 0.1), "0x68caa4e22292ca7277d42f69f5490c97f926401c411acaa4778c4d2867d5b9f7", 6);
+			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 5000), "0x0547dbc78692c668714cf089c873546f10427b797dc30fb342a8833f318b9cb3", 7);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else
@@ -1642,11 +1612,11 @@ public:
 		auto* term = console::get();
 		term->capture_time();
 
-		algorithm::seckey from;
-		crypto::fill_random_bytes(from, sizeof(from));
+		algorithm::seckey_t from;
+		crypto::fill_random_bytes(from.data, sizeof(from));
 
-		algorithm::pubkeyhash to;
-		crypto::fill_random_bytes(to, sizeof(to));
+		algorithm::pubkeyhash_t to;
+		crypto::fill_random_bytes(to.data, sizeof(to));
 
 		auto transaction = transactions::certification();
 		transaction.set_asset("BTC");
@@ -1851,7 +1821,7 @@ public:
 				for (auto& input : prepared_transaction->inputs)
 				{
 					algorithm::composition::accumulate_signature(input.alg, input.message.data(), input.message.size(), input.public_key, wallet.secret_key, input.signature).expect("signature accumulation error");
-					algorithm::composition::accumulate_signature(input.alg, input.message.data(), input.message.size(), input.public_key, nullptr, input.signature).expect("signature finalization error");
+					algorithm::composition::accumulate_signature(input.alg, input.message.data(), input.message.size(), input.public_key, algorithm::composition::cseckey_t(), input.signature).expect("signature finalization error");
 				}
 
 				auto finalized_transaction = server->finalize_transaction(asset, std::move(*prepared_transaction));
@@ -1884,7 +1854,7 @@ public:
 				if (args.size() < 3)
 					goto not_valid;
 
-				algorithm::pubkeyhash owner = { 0 };
+				algorithm::pubkeyhash_t owner;
 				if (!algorithm::signing::decode_address(args[2], owner))
 					goto not_valid;
 
@@ -1948,7 +1918,7 @@ public:
 				if (args.size() < 3)
 					goto not_valid;
 
-				algorithm::pubkeyhash owner = { 0 };
+				algorithm::pubkeyhash_t owner;
 				if (!algorithm::signing::decode_address(args[2], owner))
 					goto not_valid;
 
@@ -1995,7 +1965,7 @@ public:
 				if (args.size() < 3)
 					goto not_valid;
 
-				algorithm::pubkeyhash owner = { 0 };
+				algorithm::pubkeyhash_t owner;
 				if (!algorithm::signing::decode_address(args[2], owner))
 					goto not_valid;
 
@@ -2036,7 +2006,7 @@ public:
 					if (args.size() < 5)
 						goto not_valid;
 
-					algorithm::pubkeyhash subject = { 0 };
+					algorithm::pubkeyhash_t subject;
 					if (!algorithm::signing::decode_address(args[3], subject))
 						goto not_valid;
 
@@ -2084,7 +2054,7 @@ public:
 					if (args.size() < 5)
 						goto not_valid;
 
-					algorithm::pubkeyhash owner = { 0 };
+					algorithm::pubkeyhash_t owner;
 					if (!algorithm::signing::decode_address(args[2], owner))
 						goto not_valid;
 
@@ -2180,7 +2150,7 @@ public:
 				if (args.size() < 2)
 					goto not_valid;
 
-				algorithm::pubkeyhash owner = { 0 };
+				algorithm::pubkeyhash_t owner;
 				if (!algorithm::signing::decode_address(args[1], owner))
 					goto not_valid;
 
@@ -2200,7 +2170,7 @@ public:
 				if (args.size() < 2)
 					goto not_valid;
 
-				algorithm::pubkeyhash owner = { 0 };
+				algorithm::pubkeyhash_t owner;
 				if (!algorithm::signing::decode_address(args[1], owner))
 					goto not_valid;
 
@@ -2489,7 +2459,7 @@ public:
 		auto gas_wallet = ledger::wallet::from_seed();
 		transactions::transfer gas_transaction;
 		gas_transaction.set_asset("BTC");
-		gas_transaction.set_to(algorithm::encoding::to_subaddress(gas_wallet.public_key_hash), 0.1);
+		gas_transaction.set_to(gas_wallet.public_key_hash, 0.1);
 		VI_PANIC(gas_transaction.sign(user1.secret_key, user1_nonce, decimal::zero()), "transfer not signed");
 
 		auto entropy = from_string<uint8_t>(args.get("test-entropy")).expect("must provide a \"test-entropy\" flag (number in [1, 2, 3])");
@@ -2521,7 +2491,7 @@ public:
 					auto* transaction = memory::init<transactions::transfer>();
 					transaction->set_asset("BTC");
 					transaction->set_gas(gas_transaction.gas_price, gas_transaction.gas_limit);
-					transaction->set_to(algorithm::encoding::to_subaddress(receiver.public_key_hash), decimal(outgoing_account_balance).truncate(12) * decimal(balance));
+					transaction->set_to(receiver.public_key_hash, decimal(outgoing_account_balance).truncate(12) * decimal(balance));
 					VI_PANIC(transaction->sign(user1.secret_key, user1_nonce++), "transfer not signed");
 					item = transaction;
 				}));
@@ -2568,7 +2538,7 @@ public:
 			auto* transfer = memory::init<transactions::transfer>();
 			transfer->set_asset("BTC");
 			for (auto& sender : senders)
-				transfer->set_to(algorithm::encoding::to_subaddress(sender.wallet.public_key_hash), starting_account_balance);
+				transfer->set_to(sender.wallet.public_key_hash, starting_account_balance);
 			transfer->set_gas(decimal::zero(), ledger::block::get_gas_limit());
 			VI_PANIC(transfer->sign(user1.secret_key, user1_nonce++), "transfer not signed");
 
@@ -2589,7 +2559,7 @@ public:
 					auto* transaction = memory::init<transactions::transfer>();
 					transaction->set_asset("BTC");
 					transaction->set_gas(gas_transaction.gas_price, gas_transaction.gas_limit);
-					transaction->set_to(algorithm::encoding::to_subaddress(receiver.wallet.public_key_hash), decimal(outgoing_account_balance).truncate(12) * decimal(balance));
+					transaction->set_to(receiver.wallet.public_key_hash, decimal(outgoing_account_balance).truncate(12) * decimal(balance));
 					VI_PANIC(transaction->sign(sender.wallet.secret_key, sender.nonce++), "transfer not signed");
 					item = transaction;
 				}));
@@ -2630,7 +2600,7 @@ public:
 			auto* transfer = memory::init<transactions::transfer>();
 			transfer->set_asset("BTC");
 			for (auto& sender : senders)
-				transfer->set_to(algorithm::encoding::to_subaddress(sender.wallet.public_key_hash), starting_account_balance);
+				transfer->set_to(sender.wallet.public_key_hash, starting_account_balance);
 			transfer->set_gas(decimal::zero(), ledger::block::get_gas_limit());
 			VI_PANIC(transfer->sign(user1.secret_key, user1_nonce++), "transfer not signed");
 
@@ -2653,7 +2623,7 @@ public:
 					auto* transaction = memory::init<transactions::transfer>();
 					transaction->set_asset("BTC");
 					transaction->set_gas(gas_transaction.gas_price, gas_transaction.gas_limit);
-					transaction->set_to(algorithm::encoding::to_subaddress(receiver), decimal(outgoing_account_balance).truncate(12) * decimal(balance));
+					transaction->set_to(receiver, decimal(outgoing_account_balance).truncate(12) * decimal(balance));
 					VI_PANIC(transaction->sign(sender.wallet.secret_key, sender.nonce++), "transfer not signed");
 					item = transaction;
 				}));
@@ -2693,7 +2663,6 @@ public:
 			{ "cryptography / signatures", &tests::cryptography_signatures },
 			{ "cryptography / wallet", &tests::cryptography_wallet },
 			{ "cryptography / wallet encryption", &tests::cryptography_wallet_encryption },
-			{ "cryptography / wallet address", &tests::cryptography_wallet_address },
 			{ "cryptography / transaction", &tests::cryptography_transaction },
 			{ "cryptography / merkle tree", &tests::cryptography_merkle_tree },
 			{ "cryptography / multichain wallet", &tests::cryptography_multichain_wallet },

@@ -7,14 +7,11 @@ namespace tangent
 {
 	namespace ledger
 	{
-		bool wallet::set_secret_key(const algorithm::seckey value)
+		bool wallet::set_secret_key(const algorithm::seckey_t& value)
 		{
-			memset(secret_key, 0, sizeof(secret_key));
-			memset(public_key, 0, sizeof(public_key));
-			memset(public_key_hash, 0, sizeof(public_key_hash));
-			if (value != nullptr)
-				memcpy(secret_key, value, sizeof(secret_key));
-
+			secret_key = value;
+			public_key.clear();
+			public_key_hash.clear();
 			if (!has_secret_key())
 				return false;
 
@@ -24,24 +21,19 @@ namespace tangent
 			algorithm::signing::derive_public_key_hash(public_key, public_key_hash);
 			return true;
 		}
-		void wallet::set_public_key(const algorithm::pubkey value)
+		void wallet::set_public_key(const algorithm::pubkey_t& value)
 		{
-			memset(secret_key, 0, sizeof(secret_key));
-			memset(public_key, 0, sizeof(public_key));
-			memset(public_key_hash, 0, sizeof(public_key_hash));
-			if (value != nullptr)
-				memcpy(public_key, value, sizeof(public_key));
-
+			secret_key.clear();
+			public_key = value;
+			public_key_hash.clear();
 			if (has_public_key())
 				algorithm::signing::derive_public_key_hash(public_key, public_key_hash);
 		}
-		void wallet::set_public_key_hash(const algorithm::pubkeyhash value)
+		void wallet::set_public_key_hash(const algorithm::pubkeyhash_t& value)
 		{
-			memset(secret_key, 0, sizeof(secret_key));
-			memset(public_key, 0, sizeof(public_key));
-			memset(public_key_hash, 0, sizeof(public_key_hash));
-			if (value != nullptr)
-				memcpy(public_key_hash, value, sizeof(public_key_hash));
+			secret_key.clear();
+			public_key.clear();
+			public_key_hash = value;
 		}
 		bool wallet::verify_secret_key() const
 		{
@@ -52,9 +44,9 @@ namespace tangent
 			if (!verify_secret_key())
 				return false;
 
-			algorithm::pubkey copy = { 0 };
+			algorithm::pubkey_t copy;
 			algorithm::signing::derive_public_key(secret_key, copy);
-			if (memcmp(public_key, copy, sizeof(copy)) != 0)
+			if (public_key != copy)
 				return false;
 
 			return has_public_key() && algorithm::signing::verify_public_key(public_key);
@@ -64,9 +56,9 @@ namespace tangent
 			if (!verify_public_key())
 				return false;
 
-			algorithm::pubkeyhash copy;
+			algorithm::pubkeyhash_t copy;
 			algorithm::signing::derive_public_key_hash(public_key, copy);
-			if (memcmp(public_key_hash, copy, sizeof(copy)) != 0)
+			if (public_key_hash != copy)
 				return false;
 
 			return has_public_key_hash() && algorithm::signing::verify_address(get_address());
@@ -77,8 +69,8 @@ namespace tangent
 		}
 		bool wallet::recovers(const messages::authentic& message) const
 		{
-			algorithm::pubkeyhash recover_public_key_hash;
-			return message.recover_hash(recover_public_key_hash) && memcmp(recover_public_key_hash, public_key_hash, sizeof(public_key_hash)) == 0;
+			algorithm::pubkeyhash_t recover_public_key_hash;
+			return message.recover_hash(recover_public_key_hash) && recover_public_key_hash == public_key_hash;
 		}
 		bool wallet::sign(messages::authentic& message) const
 		{
@@ -87,14 +79,14 @@ namespace tangent
 		bool wallet::store_payload(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_string(std::string_view((char*)secret_key, has_secret_key() ? sizeof(secret_key) : 0));
-			stream->write_string(std::string_view((char*)public_key, has_public_key() ? sizeof(public_key) : 0));
-			stream->write_string(std::string_view((char*)public_key_hash, has_public_key_hash() ? sizeof(public_key_hash) : 0));
+			stream->write_string(secret_key.optimized_view());
+			stream->write_string(public_key.optimized_view());
+			stream->write_string(public_key_hash.optimized_view());
 			return true;
 		}
 		bool wallet::load_payload(format::ro_stream& stream)
 		{
-			string secret_key_assembly; memset(secret_key, 0, sizeof(secret_key));
+			string secret_key_assembly; secret_key.clear();
 			if (!stream.read_string(stream.read_type(), &secret_key_assembly))
 				return false;
 
@@ -103,10 +95,10 @@ namespace tangent
 				if (secret_key_assembly.size() != sizeof(secret_key))
 					return false;
 
-				memcpy(secret_key, secret_key_assembly.data(), sizeof(secret_key));
+				memcpy(secret_key.data, secret_key_assembly.data(), sizeof(secret_key));
 			}
 
-			string public_key_assembly; memset(public_key, 0, sizeof(public_key));
+			string public_key_assembly; public_key.clear();
 			if (!stream.read_string(stream.read_type(), &public_key_assembly))
 				return false;
 
@@ -115,10 +107,10 @@ namespace tangent
 				if (public_key_assembly.size() != sizeof(public_key))
 					return false;
 
-				memcpy(public_key, public_key_assembly.data(), sizeof(public_key));
+				memcpy(public_key.data, public_key_assembly.data(), sizeof(public_key));
 			}
 
-			string public_key_hash_assembly; memset(public_key_hash, 0, sizeof(public_key_hash));
+			string public_key_hash_assembly; public_key_hash.clear();
 			if (!stream.read_string(stream.read_type(), &public_key_hash_assembly))
 				return false;
 
@@ -127,27 +119,24 @@ namespace tangent
 				if (public_key_hash_assembly.size() != sizeof(public_key_hash))
 					return false;
 
-				memcpy(public_key_hash, public_key_hash_assembly.data(), sizeof(public_key_hash));
+				memcpy(public_key_hash.data, public_key_hash_assembly.data(), sizeof(public_key_hash));
 			}
 
 			return true;
 		}
 		bool wallet::has_secret_key() const
 		{
-			algorithm::seckey null = { 0 };
-			return memcmp(secret_key, null, sizeof(null)) != 0;
+			return !secret_key.empty();
 		}
 		bool wallet::has_public_key() const
 		{
-			algorithm::pubkey null = { 0 };
-			return memcmp(public_key, null, sizeof(null)) != 0;
+			return !public_key.empty();
 		}
 		bool wallet::has_public_key_hash() const
 		{
-			algorithm::pubkeyhash null = { 0 };
-			return memcmp(public_key_hash, null, sizeof(null)) != 0;
+			return !public_key_hash.empty();
 		}
-		option<string> wallet::seal_message(const std::string_view& plaintext, const algorithm::pubkey cipher_public_key, const std::string_view& entropy) const
+		option<string> wallet::seal_message(const std::string_view& plaintext, const algorithm::pubkey_t& cipher_public_key, const std::string_view& entropy) const
 		{
 			return algorithm::signing::public_encrypt(cipher_public_key, plaintext, entropy);
 		}
@@ -156,8 +145,8 @@ namespace tangent
 			if (!has_secret_key())
 				return optional::none;
 
-			algorithm::seckey cipher_secret_key;
-			algorithm::pubkey cipher_public_key;
+			algorithm::seckey_t cipher_secret_key;
+			algorithm::pubkey_t cipher_public_key;
 			algorithm::signing::derive_cipher_keypair(secret_key, nonce, cipher_secret_key, cipher_public_key);
 			return algorithm::signing::private_decrypt(cipher_secret_key, cipher_public_key, ciphertext);
 		}
@@ -188,26 +177,6 @@ namespace tangent
 			algorithm::signing::encode_address(public_key_hash, value);
 			return value;
 		}
-		string wallet::get_subaddress(const algorithm::pubkeyhash derivation_hash) const
-		{
-			string value;
-			if (!has_public_key_hash())
-				return value;
-
-			auto subaddress = algorithm::encoding::to_subaddress(public_key_hash, derivation_hash);
-			algorithm::signing::encode_subaddress(subaddress.data, value);
-			return value;
-		}
-		string wallet::get_subaddress(const std::string_view& derivation_data) const
-		{
-			string value;
-			if (!has_public_key_hash())
-				return value;
-
-			auto subaddress = algorithm::encoding::to_subaddress(public_key_hash, derivation_data);
-			algorithm::signing::encode_subaddress(subaddress.data, value);
-			return value;
-		}
 		expects_lr<uint64_t> wallet::get_latest_nonce() const
 		{
 			auto mempool = storages::mempoolstate(__func__);
@@ -222,7 +191,7 @@ namespace tangent
 			schema* data = var::set::object();
 			data->set("secret_key", algorithm::signing::serialize_secret_key(secret_key));
 			data->set("public_key", algorithm::signing::serialize_public_key(public_key));
-			data->set("public_key_hash", var::string(format::util::encode_0xhex(std::string_view((char*)public_key_hash, sizeof(public_key_hash)))));
+			data->set("public_key_hash", var::string(format::util::encode_0xhex(public_key_hash.optimized_view())));
 			data->set("address", algorithm::signing::serialize_address(public_key_hash));
 			return data;
 		}
@@ -230,7 +199,7 @@ namespace tangent
 		{
 			schema* data = var::set::object();
 			data->set("public_key", algorithm::signing::serialize_public_key(public_key));
-			data->set("public_key_hash", var::string(format::util::encode_0xhex(std::string_view((char*)public_key_hash, sizeof(public_key_hash)))));
+			data->set("public_key_hash", var::string(format::util::encode_0xhex(public_key_hash.optimized_view())));
 			data->set("address", algorithm::signing::serialize_address(public_key_hash));
 			return data;
 		}
@@ -253,13 +222,13 @@ namespace tangent
 		}
 		wallet wallet::from_mnemonic(const std::string_view& mnemonic)
 		{
-			algorithm::seckey key;
+			algorithm::seckey_t key;
 			algorithm::signing::derive_secret_key_from_mnemonic(mnemonic, key);
 			return from_secret_key(key);
 		}
 		wallet wallet::from_seed(const std::string_view& seed)
 		{
-			algorithm::seckey key;
+			algorithm::seckey_t key;
 			if (seed.empty())
 			{
 				auto entropy = *crypto::random_bytes(64);
@@ -269,19 +238,19 @@ namespace tangent
 				algorithm::signing::derive_secret_key(seed, key);
 			return from_secret_key(key);
 		}
-		wallet wallet::from_secret_key(const algorithm::seckey key)
+		wallet wallet::from_secret_key(const algorithm::seckey_t& key)
 		{
 			wallet result;
 			result.set_secret_key(key);
 			return result;
 		}
-		wallet wallet::from_public_key(const algorithm::pubkey key)
+		wallet wallet::from_public_key(const algorithm::pubkey_t& key)
 		{
 			wallet result;
 			result.set_public_key(key);
 			return result;
 		}
-		wallet wallet::from_public_key_hash(const algorithm::pubkeyhash key)
+		wallet wallet::from_public_key_hash(const algorithm::pubkeyhash_t& key)
 		{
 			wallet result;
 			result.set_public_key_hash(key);

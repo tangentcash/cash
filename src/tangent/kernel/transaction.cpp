@@ -26,7 +26,7 @@ namespace tangent
 			if (gas_price.is_nan() || gas_price.is_negative())
 				return layer_exception("invalid gas price");
 
-			if (is_signature_null())
+			if (signature.empty())
 				return layer_exception("invalid signature");
 
 			if (conservative && get_type() != transaction_level::functional && gas_price.is_zero())
@@ -83,16 +83,16 @@ namespace tangent
 		{
 			return true;
 		}
-		bool transaction::sign(const algorithm::seckey secret_key)
+		bool transaction::sign(const algorithm::seckey_t& secret_key)
 		{
 			return authentic::sign(secret_key);
 		}
-		bool transaction::sign(const algorithm::seckey secret_key, uint64_t new_nonce)
+		bool transaction::sign(const algorithm::seckey_t& secret_key, uint64_t new_nonce)
 		{
 			nonce = new_nonce;
 			return sign(secret_key);
 		}
-		bool transaction::sign(const algorithm::seckey secret_key, uint64_t new_nonce, const decimal& price)
+		bool transaction::sign(const algorithm::seckey_t& secret_key, uint64_t new_nonce, const decimal& price)
 		{
 			set_gas(price, block::get_gas_limit());
 			if (!sign(secret_key, new_nonce))
@@ -170,7 +170,7 @@ namespace tangent
 
 			schema* data = var::set::object();
 			data->set("hash", var::string(algorithm::encoding::encode_0xhex256(as_hash())));
-			data->set("signature", is_signature_null() ? var::null() : var::string(format::util::encode_0xhex(std::string_view((char*)signature, sizeof(signature)))));
+			data->set("signature", signature.empty() ? var::null() : var::string(format::util::encode_0xhex(signature.view())));
 			data->set("type", var::string(as_typename()));
 			data->set("category", var::string(category));
 			data->set("asset", algorithm::asset::serialize(asset));
@@ -182,8 +182,7 @@ namespace tangent
 
 		expects_lr<void> delegation_transaction::validate(uint64_t block_number) const
 		{
-			algorithm::pubkeyhash null = { 0 };
-			if (memcmp(manager, null, sizeof(null)) == 0)
+			if (manager.empty())
 				return layer_exception("invalid manager");
 
 			return ledger::transaction::validate(block_number);
@@ -210,12 +209,11 @@ namespace tangent
 		bool delegation_transaction::store_payload(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			algorithm::pubkeyhash null = { 0 };
 			stream->write_integer(asset);
 			stream->write_decimal(gas_price);
 			stream->write_integer(gas_limit);
 			stream->write_integer(nonce);
-			stream->write_string(std::string_view((char*)manager, memcmp(manager, null, sizeof(null)) == 0 ? 0 : sizeof(manager)));
+			stream->write_string(manager.optimized_view());
 			return store_body(stream);
 		}
 		bool delegation_transaction::load_payload(format::ro_stream& stream)
@@ -233,26 +231,15 @@ namespace tangent
 				return false;
 
 			string manager_assembly;
-			if (!stream.read_string(stream.read_type(), &manager_assembly) || !algorithm::encoding::decode_uint_blob(manager_assembly, manager, sizeof(manager)))
+			if (!stream.read_string(stream.read_type(), &manager_assembly) || !algorithm::encoding::decode_uint_blob(manager_assembly, manager.data, sizeof(manager.data)))
 				return false;
 
 			conservative = false;
 			return load_body(stream);
 		}
-		void delegation_transaction::set_manager(const algorithm::pubkeyhash new_manager)
+		void delegation_transaction::set_manager(const algorithm::pubkeyhash_t& new_manager)
 		{
-			if (!new_manager)
-			{
-				algorithm::pubkeyhash null = { 0 };
-				memcpy(manager, null, sizeof(algorithm::pubkeyhash));
-			}
-			else
-				memcpy(manager, new_manager, sizeof(algorithm::pubkeyhash));
-		}
-		bool delegation_transaction::is_manager_null() const
-		{
-			algorithm::pubkeyhash null = { 0 };
-			return memcmp(manager, null, sizeof(null)) == 0;
+			manager = new_manager;
 		}
 		bool delegation_transaction::is_delegation() const
 		{
@@ -328,7 +315,7 @@ namespace tangent
 			if (gas_price.is_nan() || gas_price.is_negative())
 				return layer_exception("invalid gas price");
 
-			if (!is_signature_null())
+			if (!signature.empty())
 				return layer_exception("invalid signature");
 
 			if (!input_hash)
@@ -347,8 +334,8 @@ namespace tangent
 				size_t signature_index = 0;
 				for (auto& signature : branch.second.signatures)
 				{
-					algorithm::pubkeyhash attester = { 0 }, null = { 0 };
-					if (!recover_hash(attester, branch.first, signature_index++) || !memcmp(attester, null, sizeof(null)))
+					algorithm::pubkeyhash_t attester;
+					if (!recover_hash(attester, branch.first, signature_index++) || attester.empty())
 						return layer_exception(stringify::text("invalid attester (branch: %i, signature: %i)", (int)branch_index, (int)signature_index));
 				}
 			}
@@ -367,7 +354,7 @@ namespace tangent
 				size_t signature_index = 0;
 				for (auto& signature : branch.second.signatures)
 				{
-					algorithm::pubkeyhash attester = { 0 };
+					algorithm::pubkeyhash_t attester;
 					if (!recover_hash(attester, branch.first, signature_index++))
 						return layer_exception(stringify::text("invalid attester (branch: %i, signature: %i)", (int)branch_index, (int)signature_index));
 
@@ -402,7 +389,7 @@ namespace tangent
 			if (gas_price < other.gas_price)
 				gas_price = other.gas_price;
 
-			unordered_map<algorithm::recpubsig_t, algorithm::pubkeyhash_t> signatures;
+			unordered_map<algorithm::hashsig_t, algorithm::pubkeyhash_t> signatures;
 			unordered_map<algorithm::pubkeyhash_t, size_t> attesters;
 			for (auto& branch : output_hashes)
 			{
@@ -410,7 +397,7 @@ namespace tangent
 				for (auto& signature : branch.second.signatures)
 				{
 					auto& attester = signatures[signature];
-					if (attester.empty() && !algorithm::signing::recover_hash(aggregate_message_hash, attester.data, signature.data))
+					if (attester.empty() && !algorithm::signing::recover_hash(aggregate_message_hash, attester, signature))
 						return false;
 
 					++attesters[attester];
@@ -424,7 +411,7 @@ namespace tangent
 				for (auto& signature : branch.second.signatures)
 				{
 					auto& attester = signatures[signature];
-					if (attester.empty() && !algorithm::signing::recover_hash(aggregate_message_hash, attester.data, signature.data))
+					if (attester.empty() && !algorithm::signing::recover_hash(aggregate_message_hash, attester, signature))
 						return false;
 
 					++attesters[attester];
@@ -504,11 +491,11 @@ namespace tangent
 				if (!stream.read_integer(stream.read_type(), &signatures_size))
 					return false;
 
-				ordered_set<algorithm::recpubsig_t> signatures;
+				ordered_set<algorithm::hashsig_t> signatures;
 				for (uint16_t i = 0; i < signatures_size; i++)
 				{
 					string signature_assembly;
-					algorithm::recpubsig_t signature;
+					algorithm::hashsig_t signature;
 					if (!stream.read_string(stream.read_type(), &signature_assembly) || !algorithm::encoding::decode_uint_blob(signature_assembly, signature.data, sizeof(signature.data)))
 						return false;
 
@@ -523,27 +510,27 @@ namespace tangent
 			conservative = false;
 			return load_body(stream);
 		}
-		bool attestation_transaction::sign(const algorithm::seckey secret_key)
+		bool attestation_transaction::sign(const algorithm::seckey_t& secret_key)
 		{
 			nonce = 0;
 			conservative = false;
-			memset(signature, 0, sizeof(signature));
+			memset(signature.data, 0, sizeof(signature.data));
 			if (output_hashes.size() > 1)
 				return false;
 
 			auto best_branch = output_hashes.begin();
-			algorithm::recpubsig aggregate_signature;
+			algorithm::hashsig_t aggregate_signature;
 			if (!algorithm::signing::sign(get_branch_image(best_branch->first), secret_key, aggregate_signature))
 				return false;
 
-			best_branch->second.signatures.insert(algorithm::recpubsig_t(aggregate_signature));
+			best_branch->second.signatures.insert(aggregate_signature);
 			return true;
 		}
-		bool attestation_transaction::sign(const algorithm::seckey secret_key, uint64_t new_nonce)
+		bool attestation_transaction::sign(const algorithm::seckey_t& secret_key, uint64_t new_nonce)
 		{
 			return sign(secret_key);
 		}
-		bool attestation_transaction::sign(const algorithm::seckey secret_key, uint64_t new_nonce, const decimal& price)
+		bool attestation_transaction::sign(const algorithm::seckey_t& secret_key, uint64_t new_nonce, const decimal& price)
 		{
 			set_gas(price, block::get_gas_limit());
 			if (!sign(secret_key, new_nonce))
@@ -556,7 +543,7 @@ namespace tangent
 			gas_limit = *optimal_gas;
 			return sign(secret_key);
 		}
-		bool attestation_transaction::verify(const algorithm::pubkey public_key) const
+		bool attestation_transaction::verify(const algorithm::pubkey_t& public_key) const
 		{
 			for (auto& branch : output_hashes)
 			{
@@ -569,7 +556,7 @@ namespace tangent
 			}
 			return false;
 		}
-		bool attestation_transaction::verify(const algorithm::pubkey public_key, const uint256_t& output_hash, size_t index) const
+		bool attestation_transaction::verify(const algorithm::pubkey_t& public_key, const uint256_t& output_hash, size_t index) const
 		{
 			auto branch = output_hashes.find(output_hash);
 			if (branch == output_hashes.end())
@@ -584,12 +571,12 @@ namespace tangent
 
 			return algorithm::signing::verify(get_branch_image(output_hash), public_key, signature->data);
 		}
-		bool attestation_transaction::recover(algorithm::pubkey public_key) const
+		bool attestation_transaction::recover(algorithm::pubkey_t& public_key) const
 		{
-			memset(public_key, 0, sizeof(algorithm::pubkey));
+			public_key = algorithm::pubkey_t();
 			return false;
 		}
-		bool attestation_transaction::recover(algorithm::pubkey public_key, const uint256_t& output_hash, size_t index) const
+		bool attestation_transaction::recover(algorithm::pubkey_t& public_key, const uint256_t& output_hash, size_t index) const
 		{
 			auto branch = output_hashes.find(output_hash);
 			if (branch == output_hashes.end())
@@ -604,12 +591,12 @@ namespace tangent
 
 			return algorithm::signing::recover(get_branch_image(output_hash), public_key, signature->data);
 		}
-		bool attestation_transaction::recover_hash(algorithm::pubkeyhash public_key_hash) const
+		bool attestation_transaction::recover_hash(algorithm::pubkeyhash_t& public_key_hash) const
 		{
-			memset(public_key_hash, 0, sizeof(algorithm::pubkeyhash));
+			public_key_hash = algorithm::pubkeyhash_t();
 			return false;
 		}
-		bool attestation_transaction::recover_hash(algorithm::pubkeyhash public_key_hash, const uint256_t& output_hash, size_t index) const
+		bool attestation_transaction::recover_hash(algorithm::pubkeyhash_t& public_key_hash, const uint256_t& output_hash, size_t index) const
 		{
 			auto branch = output_hashes.find(output_hash);
 			if (branch == output_hashes.end())
@@ -623,19 +610,6 @@ namespace tangent
 				++signature;
 
 			return algorithm::signing::recover_hash(get_branch_image(output_hash), public_key_hash, signature->data);
-		}
-		bool attestation_transaction::is_signature_null() const
-		{
-			algorithm::recpubsig null = { 0 };
-			for (auto& branch : output_hashes)
-			{
-				for (auto& candidate : branch.second.signatures)
-				{
-					if (candidate.empty())
-						return true;
-				}
-			}
-			return memcmp(signature, null, sizeof(null)) == 0;
 		}
 		expects_lr<void> attestation_transaction::set_optimal_gas(const decimal& price)
 		{
@@ -693,8 +667,8 @@ namespace tangent
 				uint256_t aggregate_message_hash = get_branch_image(branch.first);
 				for (auto& signature : branch.second.signatures)
 				{
-					algorithm::pubkeyhash attester = { 0 };
-					if (algorithm::signing::recover_hash(aggregate_message_hash, attester, signature.data))
+					algorithm::pubkeyhash_t attester;
+					if (algorithm::signing::recover_hash(aggregate_message_hash, attester, signature))
 					{
 						auto attestation = context->get_validator_attestation(asset, attester);
 						if (attestation)
@@ -760,7 +734,7 @@ namespace tangent
 			stream->write_integer(finalization_time);
 			stream->write_integer(block_number);
 			stream->write_boolean(successful);
-			stream->write_string(std::string_view((char*)from, is_from_null() ? 0 : sizeof(from)));
+			stream->write_string(from.optimized_view());
 			stream->write_integer((uint16_t)events.size());
 			for (auto& item : events)
 			{
@@ -797,7 +771,7 @@ namespace tangent
 				return false;
 
 			string from_assembly;
-			if (!stream.read_string(stream.read_type(), &from_assembly) || !algorithm::encoding::decode_uint_blob(from_assembly, from, sizeof(from)))
+			if (!stream.read_string(stream.read_type(), &from_assembly) || !algorithm::encoding::decode_uint_blob(from_assembly, from.data, sizeof(from.data)))
 				return false;
 
 			uint16_t size;
@@ -820,11 +794,6 @@ namespace tangent
 			}
 
 			return true;
-		}
-		bool receipt::is_from_null() const
-		{
-			algorithm::pubkeyhash null = { 0 };
-			return memcmp(from, null, sizeof(null)) == 0;
 		}
 		void receipt::emit_event(uint32_t type, format::variables&& values)
 		{
@@ -1079,7 +1048,9 @@ namespace tangent
 		}
 		uint256_t gas_util::get_operational_gas_estimate(size_t bytes, size_t operations)
 		{
-			algorithm::pubkeyhash owner = { 1 };
+			algorithm::pubkeyhash_t owner;
+			memset(owner.data, 1, sizeof(owner));
+
 			static size_t limit = states::account_nonce(owner, 1, 1).as_message().data.size();
 			bytes += limit * operations;
 			return get_storage_gas_estimate(bytes, bytes);

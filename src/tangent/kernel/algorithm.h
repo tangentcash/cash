@@ -9,21 +9,13 @@ namespace tangent
 {
 	namespace algorithm
 	{
-		using asset_id = uint256_t;
-		using pubsig = uint8_t[64];
-		using recpubsig = uint8_t[65];
-		using seckey = uint8_t[32];
-		using pubkey = uint8_t[33];
-		using pubkeyhash = uint8_t[20];
-		using subpubkeyhash = uint8_t[40];
-		typedef uint256_t(*hash_function)(const uint256_t&, const uint256_t&);
-
 		template <typename t, size_t s>
 		struct storage_type
 		{
 			t data[s] = { 0 };
 
 			storage_type() = default;
+			storage_type(std::nullptr_t) = delete;
 			storage_type(const t new_data[s])
 			{
 				if (new_data != nullptr)
@@ -42,9 +34,13 @@ namespace tangent
 			storage_type(storage_type&&) noexcept = default;
 			storage_type& operator=(const storage_type&) = default;
 			storage_type& operator=(storage_type&&) noexcept = default;
-			bool equals(const t other[s]) const
+			void clear()
 			{
-				return !memcmp(other, data, sizeof(data));
+				memset(data, 0, sizeof(data));
+			}
+			bool equals(const storage_type& other) const
+			{
+				return !memcmp(other.data, data, sizeof(data));
 			}
 			bool empty() const
 			{
@@ -81,12 +77,12 @@ namespace tangent
 			}
 		};
 
-		using pubsig_t = storage_type<uint8_t, sizeof(pubsig)>;
-		using recpubsig_t = storage_type<uint8_t, sizeof(recpubsig)>;
-		using seckey_t = storage_type<uint8_t, sizeof(seckey)>;
-		using pubkey_t = storage_type<uint8_t, sizeof(pubkey)>;
-		using pubkeyhash_t = storage_type<uint8_t, sizeof(pubkeyhash)>;
-		using subpubkeyhash_t = storage_type<uint8_t, sizeof(subpubkeyhash)>;
+		using asset_id = uint256_t;
+		using hashsig_t = storage_type<uint8_t, 65>;
+		using seckey_t = storage_type<uint8_t, 32>;
+		using pubkey_t = storage_type<uint8_t, 33>;
+		using pubkeyhash_t = storage_type<uint8_t, 20>;
+		typedef uint256_t(*hash_function)(const uint256_t&, const uint256_t&);
 
 		class wesolowski
 		{
@@ -145,37 +141,32 @@ namespace tangent
 			static void deinitialize();
 			static uint256_t message_hash(const std::string_view& signable_message);
 			static string mnemonicgen(uint16_t strength = 256);
-			static void keygen(seckey secret_key);
-			static bool recover(const uint256_t& hash, pubkey public_key, const recpubsig signature);
-			static bool recover_hash(const uint256_t& hash, pubkeyhash public_key_hash, const recpubsig signature);
-			static bool sign(const uint256_t& hash, const seckey secret_key, recpubsig signature);
-			static bool verify(const uint256_t& hash, const pubkey public_key, const recpubsig signature);
+			static void keygen(seckey_t& secret_key);
+			static bool recover(const uint256_t& hash, pubkey_t& public_key, const hashsig_t& signature);
+			static bool recover_hash(const uint256_t& hash, pubkeyhash_t& public_key_hash, const hashsig_t& signature);
+			static bool sign(const uint256_t& hash, const seckey_t& secret_key, hashsig_t& signature);
+			static bool verify(const uint256_t& hash, const pubkey_t& public_key, const hashsig_t& signature);
 			static bool verify_mnemonic(const std::string_view& mnemonic);
-			static bool verify_secret_key(const seckey secret_key);
-			static bool verify_public_key(const pubkey public_key);
+			static bool verify_secret_key(const seckey_t& secret_key);
+			static bool verify_public_key(const pubkey_t& public_key);
 			static bool verify_address(const std::string_view& address);
 			static bool verify_sealed_message(const std::string_view& ciphertext);
-			static void derive_secret_key_from_mnemonic(const std::string_view& mnemonic, seckey secret_key);
-			static void derive_secret_key(const std::string_view& seed, seckey secret_key);
-			static bool derive_public_key(const seckey secret_key, pubkey public_key);
-			static void derive_public_key_hash(const pubkey public_key, pubkeyhash public_key_hash);
-			static void derive_cipher_keypair(const seckey secret_key, const uint256_t& nonce, seckey cipher_secret_key, pubkey cipher_public_key);
-			static option<string> public_encrypt(const pubkey cipher_public_key, const std::string_view& plaintext, const std::string_view& entropy);
-			static option<string> private_decrypt(const seckey cipher_secret_key, const pubkey cipher_public_key, const std::string_view& ciphertext);
-			static bool decode_secret_key(const std::string_view& value, seckey secret_key);
-			static bool encode_secret_key(const seckey secret_key, string& value);
-			static bool decode_public_key(const std::string_view& value, pubkey public_key);
-			static bool encode_public_key(const pubkey public_key, string& value);
-			static bool decode_address(const std::string_view& address, pubkeyhash public_key_hash);
-			static bool decode_subaddress(const std::string_view& address, subpubkeyhash sub_public_key_hash);
-			static bool encode_address(const pubkeyhash public_key_hash, string& address);
-			static bool encode_subaddress(const subpubkeyhash sub_public_key_hash, string& address);
-			static schema* serialize_secret_key(const seckey secret_key);
-			static schema* serialize_public_key(const pubkey public_key);
-			static schema* serialize_address(const pubkeyhash public_key_hash);
-			static schema* serialize_subaddress(const subpubkeyhash sub_public_key_hash);
-			static schema* serialize_subaddress(const pubkeyhash public_key_hash, const pubkeyhash derivation_hash);
-			static schema* serialize_subaddress(const pubkeyhash public_key_hash, const std::string_view& derivation_data);
+			static void derive_secret_key_from_mnemonic(const std::string_view& mnemonic, seckey_t& secret_key);
+			static void derive_secret_key(const std::string_view& seed, seckey_t& secret_key);
+			static bool derive_public_key(const seckey_t& secret_key, pubkey_t& public_key);
+			static void derive_public_key_hash(const pubkey_t& public_key, pubkeyhash_t& public_key_hash);
+			static void derive_cipher_keypair(const seckey_t& secret_key, const uint256_t& nonce, seckey_t& cipher_secret_key, pubkey_t& cipher_public_key);
+			static option<string> public_encrypt(const pubkey_t& cipher_public_key, const std::string_view& plaintext, const std::string_view& entropy);
+			static option<string> private_decrypt(const seckey_t& cipher_secret_key, const pubkey_t& cipher_public_key, const std::string_view& ciphertext);
+			static bool decode_secret_key(const std::string_view& value, seckey_t& secret_key);
+			static bool encode_secret_key(const seckey_t& secret_key, string& value);
+			static bool decode_public_key(const std::string_view& value, pubkey_t& public_key);
+			static bool encode_public_key(const pubkey_t& public_key, string& value);
+			static bool decode_address(const std::string_view& address, pubkeyhash_t& public_key_hash);
+			static bool encode_address(const pubkeyhash_t& public_key_hash, string& address);
+			static schema* serialize_secret_key(const seckey_t& secret_key);
+			static schema* serialize_public_key(const pubkey_t& public_key);
+			static schema* serialize_address(const pubkeyhash_t& public_key_hash);
 			static secp256k1_context* get_context();
 		};
 
@@ -195,10 +186,6 @@ namespace tangent
 			static uint256_t decode_0xhex256(const std::string_view& data);
 			static string encode_0xhex128(const uint128_t& data);
 			static uint128_t decode_0xhex128(const std::string_view& data);
-			static subpubkeyhash_t to_subaddress(const pubkeyhash public_key_hash, const pubkeyhash derivation_hash = nullptr);
-			static subpubkeyhash_t to_subaddress(const pubkeyhash public_key_hash, const std::string_view& derivation_data);
-			static pubkeyhash_t to_address(const subpubkeyhash sub_public_key_hash);
-			static pubkeyhash_t to_derivation(const subpubkeyhash sub_public_key_hash);
 			static uint32_t type_of(const std::string_view& name);
 			static schema* serialize_uint256(const uint256_t& data);
 		};
@@ -243,12 +230,9 @@ namespace tangent
 		class composition
 		{
 		public:
-			using cseckey = uint8_t[64];
-			using cpubkey = uint8_t[64];
-			using cpubsig = uint8_t[65];
-			using cseckey_t = storage_type<uint8_t, sizeof(cseckey)>;
-			using cpubkey_t = storage_type<uint8_t, sizeof(cpubkey)>;
-			using cpubsig_t = storage_type<uint8_t, sizeof(cpubsig)>;
+			using cseckey_t = storage_type<uint8_t, 64>;
+			using cpubkey_t = storage_type<uint8_t, 64>;
+			using chashsig_t = storage_type<uint8_t, 65>;
 
 		public:
 			enum class type : uint8_t
@@ -270,17 +254,17 @@ namespace tangent
 
 			struct keypair
 			{
-				cseckey secret_key = { 0 };
-				cpubkey public_key = { 0 };
+				cseckey_t secret_key;
+				cpubkey_t public_key;
 			};
 
 		public:
 			static expects_lr<void> derive_keypair(type alg, const uint256_t& seed, keypair* result);
-			static expects_lr<void> accumulate_secret_key(type alg, const cseckey share_secret_key, cseckey inout);
-			static expects_lr<void> accumulate_public_key(type alg, const cseckey share_secret_key, cpubkey inout);
-			static expects_lr<void> accumulate_signature(type alg, const uint8_t* message, size_t message_size, const cpubkey final_public_key, const cseckey share_secret_key, cpubsig inout);
-			static expects_lr<void> verify_signature(type alg, const uint8_t* message, size_t message_size, const cpubkey final_public_key, const cpubsig final_signature);
-			static stage stage_of(const uint8_t* share_secret_key, const uint8_t* inout, size_t inout_size);
+			static expects_lr<void> accumulate_secret_key(type alg, const cseckey_t& share_secret_key, cseckey_t& inout);
+			static expects_lr<void> accumulate_public_key(type alg, const cseckey_t& share_secret_key, cpubkey_t& inout);
+			static expects_lr<void> accumulate_signature(type alg, const uint8_t* message, size_t message_size, const cpubkey_t& final_public_key, const cseckey_t& share_secret_key, chashsig_t& inout);
+			static expects_lr<void> verify_signature(type alg, const uint8_t* message, size_t message_size, const cpubkey_t& final_public_key, const chashsig_t& final_signature);
+			static stage stage_of(const cseckey_t& share_secret_key, const uint8_t* inout, size_t inout_size);
 			static size_t size_of_secret_key(type alg, stage condition = stage::finalize);
 			static size_t size_of_public_key(type alg, stage condition = stage::finalize);
 			static size_t size_of_signature(type alg, stage condition = stage::finalize);
@@ -321,26 +305,13 @@ namespace vitex
 	namespace core
 	{
 		template <>
-		struct key_hasher<tangent::algorithm::pubsig_t>
+		struct key_hasher<tangent::algorithm::hashsig_t>
 		{
 			typedef float argument_type;
 			typedef size_t result_type;
 			using is_transparent = void;
 
-			inline result_type operator()(const tangent::algorithm::pubsig_t& value) const noexcept
-			{
-				return key_hasher<std::string_view>()(std::string_view((char*)value.data, sizeof(value.data)));
-			}
-		};
-
-		template <>
-		struct key_hasher<tangent::algorithm::recpubsig_t>
-		{
-			typedef float argument_type;
-			typedef size_t result_type;
-			using is_transparent = void;
-
-			inline result_type operator()(const tangent::algorithm::recpubsig_t& value) const noexcept
+			inline result_type operator()(const tangent::algorithm::hashsig_t& value) const noexcept
 			{
 				return key_hasher<std::string_view>()(std::string_view((char*)value.data, sizeof(value.data)));
 			}

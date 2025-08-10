@@ -56,8 +56,8 @@ namespace tangent
 		{
 			auto data = var::set::object();
 			data->set("seed", algorithm::encoding::serialize_uint256(seed));
-			data->set("secret_key", var::string(format::util::encode_0xhex(std::string_view((char*)secret_key, secret_key_size))));
-			data->set("public_key", var::string(format::util::encode_0xhex(std::string_view((char*)public_key, public_key_size))));
+			data->set("secret_key", var::string(format::util::encode_0xhex(std::string_view((char*)secret_key.data, secret_key_size))));
+			data->set("public_key", var::string(format::util::encode_0xhex(std::string_view((char*)public_key.data, public_key_size))));
 			data->set("encoded_secret_key", var::string(encoded_secret_key.heap()));
 			data->set("encoded_public_key", var::string(encoded_public_key));
 			auto* addresses_data = data->set("addresses", var::set::array());
@@ -524,18 +524,18 @@ namespace tangent
 				return status.error();
 
 			computed_wallet wallet;
-			memcpy(wallet.secret_key, keypair.secret_key, sizeof(wallet.secret_key));
-			memcpy(wallet.public_key, keypair.public_key, sizeof(wallet.public_key));
 			wallet.seed = seed;
+			wallet.secret_key = keypair.secret_key;
+			wallet.public_key = keypair.public_key;
 			wallet.encoded_seed = secret_box::secure(algorithm::encoding::encode_0xhex256(seed));
 			wallet.secret_key_size = algorithm::composition::size_of_secret_key(chain.composition);
 			wallet.public_key_size = algorithm::composition::size_of_public_key(chain.composition);
 
-			auto encoded_secret_key = implementation->encode_secret_key(secret_box::view(std::string_view((char*)wallet.secret_key, wallet.secret_key_size)));
+			auto encoded_secret_key = implementation->encode_secret_key(secret_box::view(std::string_view((char*)wallet.secret_key.data, wallet.secret_key_size)));
 			if (!encoded_secret_key)
 				return encoded_secret_key.error();
 
-			auto encoded_public_key = implementation->encode_public_key(std::string_view((char*)wallet.public_key, wallet.public_key_size));
+			auto encoded_public_key = implementation->encode_public_key(std::string_view((char*)wallet.public_key.data, wallet.public_key_size));
 			if (!encoded_public_key)
 				return encoded_public_key.error();
 
@@ -913,7 +913,7 @@ namespace tangent
 			storages::wardenstate state = storages::wardenstate(__func__, asset);
 			return state.get_link(address);
 		}
-		expects_lr<unordered_map<string, warden::wallet_link>> server_node::get_links_by_owner(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, size_t offset, size_t count)
+		expects_lr<unordered_map<string, warden::wallet_link>> server_node::get_links_by_owner(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, size_t offset, size_t count)
 		{
 			storages::wardenstate state = storages::wardenstate(__func__, asset);
 			return state.get_links_by_owner(owner, offset, count);

@@ -108,11 +108,9 @@ namespace tangent
 			void ws_disconnect(http::web_socket_frame* web_socket);
 			bool dispatch_response(http::connection* base, uptr<schema>&& requests, uptr<schema>&& responses, size_t index, std::function<void(http::connection*, uptr<schema>&&)>&& callback);
 			void dispatch_accept_block(const uint256_t& hash, const ledger::block& block, const ledger::block_checkpoint& checkpoint);
-			void dispatch_accept_transaction(const uint256_t& hash, const ledger::transaction* transaction, const algorithm::pubkeyhash owner);
+			void dispatch_accept_transaction(const uint256_t& hash, const ledger::transaction* transaction, const algorithm::pubkeyhash_t& owner);
 			server_response web_socket_subscribe(http::connection* base, format::variables&& args);
 			server_response web_socket_unsubscribe(http::connection* base, format::variables&& args);
-			server_response utility_transform_address_from_hash(http::connection* base, format::variables&& args);
-			server_response utility_transform_address_from_data(http::connection* base, format::variables&& args);
 			server_response utility_encode_address(http::connection* base, format::variables&& args);
 			server_response utility_decode_address(http::connection* base, format::variables&& args);
 			server_response utility_decode_message(http::connection* base, format::variables&& args);

@@ -690,7 +690,7 @@ namespace tangent
 					memset(&sign, 0, sizeof(sign));
 					sign.signature.size = (pb_size_t)std::min<size_t>(sizeof(sign.signature.bytes), algorithm::composition::size_of_signature(input.alg));
 					sign.public_key.size = (pb_size_t)std::min<size_t>(sizeof(sign.public_key.bytes), decoded_public_key_size);
-					memcpy(sign.signature.bytes, input.signature, sign.signature.size);
+					memcpy(sign.signature.bytes, input.signature.data, sign.signature.size);
 					memcpy(sign.public_key.bytes, decoded_public_key, sign.public_key.size);
 					sign.has_public_key = true;
 					sign.has_signature = true;

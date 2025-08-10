@@ -57,20 +57,14 @@ namespace tangent
 
 		struct svm_address
 		{
-			algorithm::subpubkeyhash_t hash;
+			algorithm::pubkeyhash_t hash;
 
 			svm_address();
 			svm_address(const algorithm::pubkeyhash_t& owner);
-			svm_address(const algorithm::subpubkeyhash_t& owner);
 			svm_address(const std::string_view& address);
 			svm_address(const uint256_t& owner_data);
-			svm_address(const uint256_t& owner_data, const uint256_t& derivation_data);
-			svm_address to_address() const;
-			svm_address to_subaddress_from_hash(const uint256_t& derivation_data) const;
-			svm_address to_subaddress_from_data(const std::string_view& derivation_data) const;
 			string to_string() const;
 			uint256_t to_public_key_hash() const;
-			uint256_t to_derivation_hash() const;
 			bool empty() const;
 			static bool equals(const svm_address& a, const svm_address& b);
 		};

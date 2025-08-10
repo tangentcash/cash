@@ -55,9 +55,8 @@ namespace tangent
 		bool authentic::store(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			algorithm::recpubsig null = { 0 };
 			stream->write_integer(as_type());
-			stream->write_string(std::string_view((char*)signature, memcmp(signature, null, sizeof(null)) != 0 ? sizeof(signature) : 0));
+			stream->write_string(signature.optimized_view());
 			return store_payload(stream);
 		}
 		bool authentic::load(format::ro_stream& stream)
@@ -67,7 +66,7 @@ namespace tangent
 				return false;
 
 			string signature_assembly;
-			if (!stream.read_string(stream.read_type(), &signature_assembly) || !algorithm::encoding::decode_uint_blob(signature_assembly, signature, sizeof(signature)))
+			if (!stream.read_string(stream.read_type(), &signature_assembly) || !algorithm::encoding::decode_uint_blob(signature_assembly, signature.data, sizeof(signature.data)))
 				return false;
 
 			if (!load_payload(stream))
@@ -75,31 +74,21 @@ namespace tangent
 
 			return true;
 		}
-		bool authentic::sign(const algorithm::seckey secret_key)
+		bool authentic::sign(const algorithm::seckey_t& secret_key)
 		{
 			return algorithm::signing::sign(as_signable().hash(), secret_key, signature);
 		}
-		bool authentic::verify(const algorithm::pubkey public_key) const
+		bool authentic::verify(const algorithm::pubkey_t& public_key) const
 		{
 			return algorithm::signing::verify(as_signable().hash(), public_key, signature);
 		}
-		bool authentic::recover(algorithm::pubkey public_key) const
+		bool authentic::recover(algorithm::pubkey_t& public_key) const
 		{
 			return algorithm::signing::recover(as_signable().hash(), public_key, signature);
 		}
-		bool authentic::recover_hash(algorithm::pubkeyhash public_key_hash) const
+		bool authentic::recover_hash(algorithm::pubkeyhash_t& public_key_hash) const
 		{
 			return algorithm::signing::recover_hash(as_signable().hash(), public_key_hash, signature);
-		}
-		void authentic::set_signature(const algorithm::recpubsig new_value)
-		{
-			VI_ASSERT(new_value != nullptr, "new value should be set");
-			memcpy(signature, new_value, sizeof(algorithm::recpubsig));
-		}
-		bool authentic::is_signature_null() const
-		{
-			algorithm::recpubsig null = { 0 };
-			return memcmp(signature, null, sizeof(null)) == 0;
 		}
 		uint256_t authentic::as_hash(bool renew) const
 		{

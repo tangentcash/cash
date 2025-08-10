@@ -6,18 +6,15 @@ namespace tangent
 {
 	namespace warden
 	{
-		wallet_link::wallet_link(const algorithm::pubkeyhash new_owner, const std::string_view& new_public_key, const std::string_view& new_address) : address(new_address), public_key(new_public_key)
+		wallet_link::wallet_link(const algorithm::pubkeyhash_t& new_owner, const std::string_view& new_public_key, const std::string_view& new_address) : owner(new_owner), address(new_address), public_key(new_public_key)
 		{
-			if (new_owner != nullptr)
-				memcpy(owner, new_owner, sizeof(owner));
 		}
 		bool wallet_link::store_payload(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			algorithm::pubkeyhash null = { 0 };
 			stream->write_string_raw(public_key);
 			stream->write_string_raw(address);
-			stream->write_string(std::string_view((char*)owner, memcmp(owner, null, sizeof(null)) == 0 ? 0 : sizeof(owner)));
+			stream->write_string(owner.optimized_view());
 			return true;
 		}
 		bool wallet_link::load_payload(format::ro_stream& stream)
@@ -29,7 +26,7 @@ namespace tangent
 				return false;
 
 			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner, sizeof(owner)))
+			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner.data, sizeof(owner)))
 				return false;
 
 			return true;
@@ -93,8 +90,7 @@ namespace tangent
 		}
 		bool wallet_link::has_owner() const
 		{
-			algorithm::pubkeyhash null = { 0 };
-			return memcmp(owner, null, sizeof(null)) != 0;
+			return !owner.empty();
 		}
 		bool wallet_link::has_public_key() const
 		{
@@ -121,17 +117,17 @@ namespace tangent
 		{
 			return "warden_wallet_link";
 		}
-		wallet_link wallet_link::from_owner(const algorithm::pubkeyhash new_owner)
+		wallet_link wallet_link::from_owner(const algorithm::pubkeyhash_t& new_owner)
 		{
 			return wallet_link(new_owner, std::string_view(), std::string_view());
 		}
 		wallet_link wallet_link::from_public_key(const std::string_view& new_public_key)
 		{
-			return wallet_link(nullptr, new_public_key, std::string_view());
+			return wallet_link(algorithm::pubkeyhash_t(), new_public_key, std::string_view());
 		}
 		wallet_link wallet_link::from_address(const std::string_view& new_address)
 		{
-			return wallet_link(nullptr, std::string_view(), new_address);
+			return wallet_link(algorithm::pubkeyhash_t(), std::string_view(), new_address);
 		}
 
 		value_transfer::value_transfer() : asset(0), value(decimal::nan())
@@ -527,20 +523,19 @@ namespace tangent
 			return "warden_computed_transaction";
 		}
 
-		prepared_transaction& prepared_transaction::requires_input(algorithm::composition::type new_alg, const algorithm::composition::cpubkey new_public_key, uint8_t* new_message, size_t new_message_size, coin_utxo&& input)
+		prepared_transaction& prepared_transaction::requires_input(algorithm::composition::type new_alg, const algorithm::composition::cpubkey_t& new_public_key, uint8_t* new_message, size_t new_message_size, coin_utxo&& input)
 		{
-			VI_ASSERT(new_public_key != nullptr, "public key should be set");
 			VI_ASSERT(new_message != nullptr, "message should be set");
 			signable_coin_utxo item;
 			item.utxo = std::move(input);
 			item.alg = new_alg;
+			item.public_key = new_public_key;
 			item.message.resize(new_message_size);
 			memcpy(item.message.data(), new_message, new_message_size);
-			memcpy(item.public_key, new_public_key, sizeof(item.public_key));
 			inputs.push_back(std::move(item));
 			return *this;
 		}
-		prepared_transaction& prepared_transaction::requires_account_input(algorithm::composition::type new_alg, wallet_link&& signer, const algorithm::composition::cpubkey new_public_key, uint8_t* new_message, size_t new_message_size, unordered_map<algorithm::asset_id, decimal>&& input)
+		prepared_transaction& prepared_transaction::requires_account_input(algorithm::composition::type new_alg, wallet_link&& signer, const algorithm::composition::cpubkey_t& new_public_key, uint8_t* new_message, size_t new_message_size, unordered_map<algorithm::asset_id, decimal>&& input)
 		{
 			coin_utxo item = coin_utxo(std::move(signer), std::move(input));
 			return requires_input(new_alg, new_public_key, new_message, new_message_size, std::move(item));
@@ -573,15 +568,12 @@ namespace tangent
 		bool prepared_transaction::store_payload(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			algorithm::pubkeyhash pkh_null = { 0 };
-			algorithm::composition::cpubkey cpk_null = { 0 };
-			algorithm::composition::cpubsig cps_null = { 0 };
 			stream->write_integer((uint32_t)inputs.size());
 			for (auto& item : inputs)
 			{
 				stream->write_integer((uint8_t)item.alg);
-				stream->write_string(std::string_view((char*)item.public_key, memcmp(item.public_key, cpk_null, sizeof(cpk_null)) ? 0 : algorithm::composition::size_of_public_key(item.alg)));
-				stream->write_string(std::string_view((char*)item.signature, memcmp(item.signature, cps_null, sizeof(cps_null)) ? 0 : algorithm::composition::size_of_signature(item.alg)));
+				stream->write_string(std::string_view((char*)item.public_key.data, item.public_key.empty() ? 0 : algorithm::composition::size_of_public_key(item.alg)));
+				stream->write_string(std::string_view((char*)item.signature.data, item.signature.empty() ? 0 : algorithm::composition::size_of_signature(item.alg)));
 				stream->write_string(std::string_view((char*)item.message.data(), item.message.size()));
 				if (!item.utxo.store_payload(stream))
 					return false;
@@ -611,11 +603,11 @@ namespace tangent
 					return false;
 
 				string public_key_assembly;
-				if (!stream.read_string(stream.read_type(), &public_key_assembly) || !algorithm::encoding::decode_uint_blob(public_key_assembly, next.public_key, algorithm::composition::size_of_public_key(next.alg)))
+				if (!stream.read_string(stream.read_type(), &public_key_assembly) || !algorithm::encoding::decode_uint_blob(public_key_assembly, next.public_key.data, algorithm::composition::size_of_public_key(next.alg)))
 					return false;
 
 				string signature_assembly;
-				if (!stream.read_string(stream.read_type(), &signature_assembly) || !algorithm::encoding::decode_uint_blob(signature_assembly, next.signature, algorithm::composition::size_of_signature(next.alg)))
+				if (!stream.read_string(stream.read_type(), &signature_assembly) || !algorithm::encoding::decode_uint_blob(signature_assembly, next.signature.data, algorithm::composition::size_of_signature(next.alg)))
 					return false;
 
 				string message_assembly;
@@ -652,20 +644,18 @@ namespace tangent
 		{
 			VI_ASSERT(input_index < inputs.size(), "input index outside of range");
 			auto& item = inputs[input_index];
-			algorithm::composition::cpubsig cps_null = { 0 };
 			size_t intermediate_size = algorithm::composition::size_of_signature(item.alg, algorithm::composition::stage::accumulate);
 			size_t final_size = algorithm::composition::size_of_signature(item.alg);
-			return !memcmp(item.signature, cps_null, sizeof(cps_null)) || !memcmp(item.signature + intermediate_size, cps_null + intermediate_size, final_size - intermediate_size);
+			return item.signature.empty() || algorithm::composition::chashsig_t(item.signature.data + intermediate_size, final_size - intermediate_size).empty();
 		}
 		prepared_transaction::status prepared_transaction::as_status() const
 		{
 			if (inputs.empty() || outputs.empty())
 				return status::invalid;
 
-			algorithm::composition::cpubkey null = { 0 };
 			for (auto& item : inputs)
 			{
-				if (item.alg == algorithm::composition::type::unknown || !memcmp(item.public_key, null, sizeof(null)) || item.message.empty() || !item.utxo.is_valid_input())
+				if (item.alg == algorithm::composition::type::unknown || item.public_key.empty() || item.message.empty() || !item.utxo.is_valid_input())
 					return status::invalid;
 			}
 
@@ -702,8 +692,6 @@ namespace tangent
 					break;
 			}
 
-			algorithm::composition::cpubkey null_cpk = { 0 };
-			algorithm::composition::cpubsig null_cps = { 0 };
 			schema* data = var::set::object();
 			schema* input_data = data->set("inputs", var::array());
 			for (auto& input : inputs)
@@ -728,8 +716,8 @@ namespace tangent
 						signer->set("type", var::null());
 						break;
 				}
-				signer->set("public_key", memcmp(input.public_key, null_cpk, sizeof(null_cpk)) ? var::string(format::util::encode_0xhex(std::string_view((char*)input.public_key, algorithm::composition::size_of_public_key(input.alg)))) : var::null());
-				signer->set("signature", memcmp(input.signature, null_cps, sizeof(null_cps)) ? var::string(format::util::encode_0xhex(std::string_view((char*)input.signature, algorithm::composition::size_of_signature(input.alg)))) : var::null());
+				signer->set("public_key", input.public_key.empty() ? var::null() : var::string(format::util::encode_0xhex(std::string_view((char*)input.public_key.data, algorithm::composition::size_of_public_key(input.alg)))));
+				signer->set("signature", input.signature.empty() ? var::null() : var::string(format::util::encode_0xhex(std::string_view((char*)input.signature.data, algorithm::composition::size_of_signature(input.alg)))));
 				signer->set("message", var::string(format::util::encode_0xhex(std::string_view((char*)input.message.data(), input.message.size()))));
 				signer->set("finalized", var::boolean(!is_accumulation_required(input_data->size() - 1)));
 			}
@@ -1431,7 +1419,7 @@ namespace tangent
 			auto result = ordered_map<string, wallet_link>(results->begin(), results->end());
 			return expects_lr<ordered_map<string, wallet_link>>(std::move(result));
 		}
-		expects_lr<ordered_map<string, wallet_link>> relay_backend::find_linked_addresses(const algorithm::pubkeyhash owner, size_t offset, size_t count)
+		expects_lr<ordered_map<string, wallet_link>> relay_backend::find_linked_addresses(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count)
 		{
 			auto* server = nss::server_node::get();
 			auto* implementation = server->get_chain(native_asset);

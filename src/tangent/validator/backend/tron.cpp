@@ -365,7 +365,7 @@ namespace tangent
 					return layer_exception("invalid input message");
 
 				uint8_t raw_signature[65];
-				memcpy(raw_signature, input.signature, sizeof(raw_signature));
+				memcpy(raw_signature, input.signature.data, sizeof(raw_signature));
 				if (raw_signature[64] > 0)
 					raw_signature[64] = 0x1c;
 				else

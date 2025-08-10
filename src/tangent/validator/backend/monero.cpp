@@ -249,7 +249,7 @@ namespace tangent
 
 				while (true)
 				{
-					auto links = find_linked_addresses(nullptr, offset, count);
+					auto links = find_linked_addresses(algorithm::pubkeyhash_t(), offset, count);
 					if (!links)
 						coreturn expects_rt<computed_transaction>(remote_exception(std::move(links.error().message())));
 

@@ -8,13 +8,13 @@ namespace tangent
 	{
 		struct wallet : messages::uniform
 		{
-			algorithm::seckey secret_key = { 0 };
-			algorithm::pubkey public_key = { 0 };
-			algorithm::pubkeyhash public_key_hash = { 0 };
+			algorithm::seckey_t secret_key;
+			algorithm::pubkey_t public_key;
+			algorithm::pubkeyhash_t public_key_hash;
 
-			bool set_secret_key(const algorithm::seckey value);
-			void set_public_key(const algorithm::pubkey value);
-			void set_public_key_hash(const algorithm::pubkeyhash value);
+			bool set_secret_key(const algorithm::seckey_t& value);
+			void set_public_key(const algorithm::pubkey_t& value);
+			void set_public_key_hash(const algorithm::pubkeyhash_t& value);
 			bool verify_secret_key() const;
 			bool verify_public_key() const;
 			bool verify_address() const;
@@ -26,13 +26,11 @@ namespace tangent
 			bool has_secret_key() const;
 			bool has_public_key() const;
 			bool has_public_key_hash() const;
-			option<string> seal_message(const std::string_view& plaintext, const algorithm::pubkey cipher_public_key, const std::string_view& entropy) const;
+			option<string> seal_message(const std::string_view& plaintext, const algorithm::pubkey_t& cipher_public_key, const std::string_view& entropy) const;
 			option<string> open_message(const uint256_t& nonce, const std::string_view& ciphertext) const;
 			string get_secret_key() const;
 			string get_public_key() const;
 			string get_address() const;
-			string get_subaddress(const algorithm::pubkeyhash derivation_hash) const;
-			string get_subaddress(const std::string_view& derivation_data) const;
 			expects_lr<uint64_t> get_latest_nonce() const;
 			uptr<schema> as_schema() const override;
 			uptr<schema> as_public_schema() const;
@@ -42,9 +40,9 @@ namespace tangent
 			static std::string_view as_instance_typename();
 			static wallet from_mnemonic(const std::string_view& mnemonic);
 			static wallet from_seed(const std::string_view& seed = std::string_view());
-			static wallet from_secret_key(const algorithm::seckey key);
-			static wallet from_public_key(const algorithm::pubkey key);
-			static wallet from_public_key_hash(const algorithm::pubkeyhash key);
+			static wallet from_secret_key(const algorithm::seckey_t& key);
+			static wallet from_public_key(const algorithm::pubkey_t& key);
+			static wallet from_public_key_hash(const algorithm::pubkeyhash_t& key);
 		};
 
 		struct validator final : messages::uniform

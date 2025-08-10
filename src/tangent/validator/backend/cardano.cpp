@@ -517,7 +517,7 @@ namespace tangent
 							return raw_public_key.error();
 
 						builder.Body.TransactionInput.addInput(copy<std::string>(input.utxo.transaction_id), input.utxo.index);
-						builder.addExtendedVerifyingKey((uint8_t*)raw_public_key->data(), input.signature);
+						builder.addExtendedVerifyingKey((uint8_t*)raw_public_key->data(), input.signature.data);
 					}
 					for (auto& output : prepared.outputs)
 					{

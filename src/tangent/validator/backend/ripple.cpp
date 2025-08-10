@@ -524,7 +524,7 @@ namespace tangent
 				buffer.signing_pub_key = input.utxo.link.public_key;
 				buffer.account = input.utxo.link.address;
 				buffer.destination = output_address;
-				buffer.txn_signature = codec::hex_encode(std::string_view((char*)input.signature, algorithm::composition::size_of_signature(input.alg)));
+				buffer.txn_signature = codec::hex_encode(std::string_view((char*)input.signature.data, algorithm::composition::size_of_signature(input.alg)));
 				if (!contract_address.empty())
 				{
 					if (output.tokens.empty())

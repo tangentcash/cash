@@ -22,17 +22,17 @@ namespace tangent
 			inventory.insert(hash);
 			return true;
 		}
-		static format::variables serialize_procedure_response(const algorithm::seckey secret_key, format::variables&& args)
+		static format::variables serialize_procedure_response(const algorithm::seckey_t& secret_key, format::variables&& args)
 		{
 			format::wo_stream buffer;
 			format::variables_util::serialize_flat_into(args, &buffer);
 
-			algorithm::recpubsig signature;
+			algorithm::hashsig_t signature;
 			algorithm::signing::sign(buffer.hash(), secret_key, signature);
 
 			format::variables result;
 			result.reserve(args.size() + 1);
-			result.push_back(format::variable(algorithm::recpubsig_t(signature).optimized_view()));
+			result.push_back(format::variable(signature.optimized_view()));
 			result.insert(result.end(), std::make_move_iterator(args.begin()), std::make_move_iterator(args.end()));
 			return result;
 		}
@@ -49,8 +49,8 @@ namespace tangent
 			if (!format::variables_util::serialize_flat_into(format::variables(message.args.begin() + 1, message.args.end()), &buffer))
 				return false;
 
-			algorithm::pubkeyhash message_owner;
-			algorithm::recpubsig_t signature = algorithm::recpubsig_t(message.args[0].as_blob());
+			algorithm::pubkeyhash_t message_owner;
+			algorithm::hashsig_t signature = algorithm::hashsig_t(message.args[0].as_blob());
 			return algorithm::signing::recover_hash(buffer.hash(), message_owner, signature.data) && target_owner.equals(message_owner);
 		}
 
@@ -688,7 +688,7 @@ namespace tangent
 				return expectation::met;
 			}
 
-			algorithm::pubkeyhash owner = { 0 };
+			algorithm::pubkeyhash_t owner;
 			if (candidate_tx->is_recoverable() && !candidate_tx->recover_hash(owner))
 			{
 				if (protocol::now().user.p2p.logging)
@@ -696,7 +696,7 @@ namespace tangent
 				return layer_exception("signature key recovery failed");
 			}
 
-			algorithm::pubkeyhash validation_owner;
+			algorithm::pubkeyhash_t validation_owner;
 			auto validation = ledger::transaction_context::validate_tx(*candidate_tx, candidate_hash, validation_owner);
 			if (!validation)
 			{
@@ -705,14 +705,14 @@ namespace tangent
 				return validation.error();
 			}
 
-			bool event = candidate_tx->is_consensus() && !memcmp(validator.wallet.public_key_hash, owner, sizeof(owner));
+			bool event = candidate_tx->is_consensus() && validator.wallet.public_key_hash == owner;
 			if (event || validate_execution)
 			{
 				ledger::block temp_block;
 				temp_block.number = std::numeric_limits<int64_t>::max() - 1;
 
 				ledger::evaluation_context temp_environment;
-				memcpy(temp_environment.validator.public_key_hash, validator.wallet.public_key_hash, sizeof(algorithm::pubkeyhash));
+				temp_environment.validator.public_key_hash = validator.wallet.public_key_hash;
 
 				ledger::block_changelog temp_changelog;
 				size_t transaction_size = candidate_tx->as_message().data.size();
@@ -727,7 +727,7 @@ namespace tangent
 
 			return broadcast_transaction(from, std::move(candidate_tx), owner);
 		}
-		expects_lr<void> server_node::broadcast_transaction(relay* from, uptr<ledger::transaction>&& candidate_tx, const algorithm::pubkeyhash owner)
+		expects_lr<void> server_node::broadcast_transaction(relay* from, uptr<ledger::transaction>&& candidate_tx, const algorithm::pubkeyhash_t& owner)
 		{
 			auto purpose = candidate_tx->as_typename();
 			auto candidate_hash = candidate_tx->as_hash();
@@ -1538,7 +1538,7 @@ namespace tangent
 
 			for (auto& transaction : candidate.block.transactions)
 			{
-				if (!memcmp(transaction.receipt.from, validator.wallet.public_key_hash, sizeof(algorithm::pubkeyhash)))
+				if (transaction.receipt.from == validator.wallet.public_key_hash)
 					accept_proposal_transaction(candidate.block, transaction);
 			}
 
@@ -2338,7 +2338,7 @@ namespace tangent
 				if (!status)
 					return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
 
-				status = algorithm::composition::accumulate_public_key(chain->composition, keypair.secret_key, inout.data);
+				status = algorithm::composition::accumulate_public_key(chain->composition, keypair.secret_key, inout);
 				if (!status)
 					return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
 
@@ -2360,7 +2360,7 @@ namespace tangent
 				return expectation::met;
 			});
 		}
-		expects_promise_rt<void> dispatch_context::calculate_group_signature(const ledger::transaction_context* context, const algorithm::pubkeyhash_t& validator, const warden::prepared_transaction& prepared, ordered_map<uint8_t, algorithm::composition::cpubsig_t>& inout)
+		expects_promise_rt<void> dispatch_context::calculate_group_signature(const ledger::transaction_context* context, const algorithm::pubkeyhash_t& validator, const warden::prepared_transaction& prepared, ordered_map<uint8_t, algorithm::composition::chashsig_t>& inout)
 		{
 			auto* depository_withdrawal = (transactions::depository_withdrawal*)context->transaction;
 			if (is_running_on(validator.data))
@@ -2389,7 +2389,7 @@ namespace tangent
 					if (!status)
 						return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
 
-					status = algorithm::composition::accumulate_signature(input.alg, input.message.data(), input.message.size(), input.public_key, keypair.secret_key, inout[(uint8_t)i].data);
+					status = algorithm::composition::accumulate_signature(input.alg, input.message.data(), input.message.size(), input.public_key, keypair.secret_key, inout[(uint8_t)i]);
 					if (!status)
 						return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
 				}
@@ -2427,7 +2427,7 @@ namespace tangent
 				for (size_t i = 3; i + 1 < result->size(); i += 2)
 				{
 					auto input_index = (*result)[i + 0].as_uint8();
-					auto input_signature = algorithm::composition::cpubsig_t((*result)[i + 1].as_blob());
+					auto input_signature = algorithm::composition::chashsig_t((*result)[i + 1].as_blob());
 					if (input_signature.empty() || inout.find(input_index) == inout.end())
 						return remote_exception("group signature remote computation error");
 
@@ -2491,7 +2491,7 @@ namespace tangent
 				goto abort_group;
 
 			auto group_public_key = algorithm::composition::cpubkey_t(message.args[3].as_blob());
-			if (!algorithm::composition::accumulate_public_key(chain->composition, keypair.secret_key, group_public_key.data))
+			if (!algorithm::composition::accumulate_public_key(chain->composition, keypair.secret_key, group_public_key))
 				goto abort_group;
 
 			procedure response;
@@ -2553,11 +2553,11 @@ namespace tangent
 
 			auto dispatcher = dispatch_context(relayer);
 			auto* server = nss::server_node::get();
-			ordered_map<uint8_t, algorithm::composition::cpubsig_t> group_signature;
+			ordered_map<uint8_t, algorithm::composition::chashsig_t> group_signature;
 			for (size_t i = 4; i < message.args.size(); i++)
 			{
 				auto input_index = message.args[i + 0].as_uint8();
-				group_signature[input_index] = algorithm::composition::cpubsig_t(message.args[i + 1].as_blob());
+				group_signature[input_index] = algorithm::composition::chashsig_t(message.args[i + 1].as_blob());
 				if (input_index > prepared.inputs.size())
 					goto abort_group;
 
@@ -2578,7 +2578,7 @@ namespace tangent
 				if (!algorithm::composition::derive_keypair(input.alg, *share, &keypair))
 					goto abort_group;
 
-				if (!algorithm::composition::accumulate_signature(input.alg, input.message.data(), input.message.size(), input.public_key, keypair.secret_key, group_signature[input_index].data))
+				if (!algorithm::composition::accumulate_signature(input.alg, input.message.data(), input.message.size(), input.public_key, keypair.secret_key, group_signature[input_index]))
 					goto abort_group;
 			}
 
@@ -2623,9 +2623,9 @@ namespace tangent
 		{
 			return &validator->second;
 		}
-		void local_dispatch_context::set_running_validator(const algorithm::pubkeyhash owner)
+		void local_dispatch_context::set_running_validator(const algorithm::pubkeyhash_t& owner)
 		{
-			auto it = validators.find(algorithm::pubkeyhash_t(owner));
+			auto it = validators.find(owner);
 			if (it != validators.end())
 				validator = it;
 		}
@@ -2649,13 +2649,13 @@ namespace tangent
 			if (!status)
 				return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
 
-			status = algorithm::composition::accumulate_public_key(chain->composition, keypair.secret_key, inout.data);
+			status = algorithm::composition::accumulate_public_key(chain->composition, keypair.secret_key, inout);
 			if (!status)
 				return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
 
 			return expects_promise_rt<void>(expectation::met);
 		}
-		expects_promise_rt<void> local_dispatch_context::calculate_group_signature(const ledger::transaction_context* context, const algorithm::pubkeyhash_t& validator, const warden::prepared_transaction& prepared, ordered_map<uint8_t, algorithm::composition::cpubsig_t>& inout)
+		expects_promise_rt<void> local_dispatch_context::calculate_group_signature(const ledger::transaction_context* context, const algorithm::pubkeyhash_t& validator, const warden::prepared_transaction& prepared, ordered_map<uint8_t, algorithm::composition::chashsig_t>& inout)
 		{
 			auto wallet = validators.find(validator);
 			if (wallet == validators.end())
@@ -2686,7 +2686,7 @@ namespace tangent
 				if (!status)
 					return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
 
-				status = algorithm::composition::accumulate_signature(input.alg, input.message.data(), input.message.size(), input.public_key, keypair.secret_key, inout[(uint8_t)i].data);
+				status = algorithm::composition::accumulate_signature(input.alg, input.message.data(), input.message.size(), input.public_key, keypair.secret_key, inout[(uint8_t)i]);
 				if (!status)
 					return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
 			}

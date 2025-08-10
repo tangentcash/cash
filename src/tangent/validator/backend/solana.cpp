@@ -500,7 +500,7 @@ namespace tangent
 					return layer_exception("invalid input message");
 
 				char transaction_id[256]; size_t transaction_id_size = sizeof(transaction_id);
-				if (!b58enc(transaction_id, &transaction_id_size, input.signature, algorithm::composition::size_of_signature(input.alg)))
+				if (!b58enc(transaction_id, &transaction_id_size, input.signature.data, algorithm::composition::size_of_signature(input.alg)))
 					return layer_exception("invalid signature");
 
 				vector<uint8_t> transaction_buffer = tx_result_serialize(message_buffer, input.signature, algorithm::composition::size_of_signature(input.alg));
@@ -771,12 +771,12 @@ namespace tangent
 				tx_append(message_buffer, (uint8_t*)&lookups, sizeof(lookups));
 				return message_buffer;
 			}
-			vector<uint8_t> solana::tx_result_serialize(const vector<uint8_t>& tx_buffer, const algorithm::composition::cpubsig signature, size_t signature_size)
+			vector<uint8_t> solana::tx_result_serialize(const vector<uint8_t>& tx_buffer, const algorithm::composition::chashsig_t& signature, size_t signature_size)
 			{
 				uint8_t signatures = 1;
 				vector<uint8_t> result_buffer;
 				tx_append(result_buffer, (uint8_t*)&signatures, sizeof(signatures));
-				tx_append(result_buffer, signature, signature_size);
+				tx_append(result_buffer, signature.data, signature_size);
 
 				size_t signature_buffer_size = result_buffer.size();
 				result_buffer.resize(signature_buffer_size + tx_buffer.size());

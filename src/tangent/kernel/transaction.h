@@ -43,9 +43,9 @@ namespace tangent
 			virtual bool load_body(format::ro_stream& stream) = 0;
 			virtual bool recover_many(const transaction_context* context, const receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const;
 			virtual bool recover_aliases(const transaction_context* context, const receipt& receipt, ordered_set<uint256_t>& aliases) const;
-			virtual bool sign(const algorithm::seckey secret_key) override;
-			virtual bool sign(const algorithm::seckey secret_key, uint64_t new_nonce);
-			virtual bool sign(const algorithm::seckey secret_key, uint64_t new_nonce, const decimal& price);
+			virtual bool sign(const algorithm::seckey_t& secret_key) override;
+			virtual bool sign(const algorithm::seckey_t& secret_key, uint64_t new_nonce);
+			virtual bool sign(const algorithm::seckey_t& secret_key, uint64_t new_nonce, const decimal& price);
 			virtual expects_lr<void> set_optimal_gas(const decimal& price);
 			virtual void set_gas(const decimal& price, const uint256_t& limit);
 			virtual void set_asset(const std::string_view& blockchain, const std::string_view& token = std::string_view(), const std::string_view& contract_address = std::string_view());
@@ -61,14 +61,13 @@ namespace tangent
 
 		struct delegation_transaction : transaction
 		{
-			algorithm::pubkeyhash manager = { 0 };
+			algorithm::pubkeyhash_t manager;
 
 			virtual expects_lr<void> validate(uint64_t block_number) const override;
 			virtual expects_lr<void> execute(transaction_context* context) const override;
 			virtual bool store_payload(format::wo_stream* stream) const override;
 			virtual bool load_payload(format::ro_stream& stream) override;
-			virtual void set_manager(const algorithm::pubkeyhash new_manager);
-			virtual bool is_manager_null() const;
+			virtual void set_manager(const algorithm::pubkeyhash_t& new_manager);
 			virtual bool is_delegation() const;
 			virtual uptr<schema> as_schema() const override;
 			transaction_level get_type() const override;
@@ -86,7 +85,7 @@ namespace tangent
 		{
 			struct evaluation_branch
 			{
-				ordered_set<algorithm::recpubsig_t> signatures;
+				ordered_set<algorithm::hashsig_t> signatures;
 				format::wo_stream message;
 			};
 
@@ -98,16 +97,15 @@ namespace tangent
 			virtual bool merge(const transaction_context* context, const attestation_transaction& other);
 			virtual bool store_payload(format::wo_stream* stream) const override;
 			virtual bool load_payload(format::ro_stream& stream) override;
-			virtual bool sign(const algorithm::seckey secret_key) override;
-			virtual bool sign(const algorithm::seckey secret_key, uint64_t new_nonce) override;
-			virtual bool sign(const algorithm::seckey secret_key, uint64_t new_nonce, const decimal& price) override;
-			virtual bool verify(const algorithm::pubkey public_key) const override;
-			virtual bool verify(const algorithm::pubkey public_key, const uint256_t& output_hash, size_t index) const;
-			virtual bool recover(algorithm::pubkey public_key) const override;
-			virtual bool recover(algorithm::pubkey public_key, const uint256_t& output_hash, size_t index) const;
-			virtual bool recover_hash(algorithm::pubkeyhash public_key_hash) const override;
-			virtual bool recover_hash(algorithm::pubkeyhash public_key_hash, const uint256_t& output_hash, size_t index) const;
-			virtual bool is_signature_null() const override;
+			virtual bool sign(const algorithm::seckey_t& secret_key) override;
+			virtual bool sign(const algorithm::seckey_t& secret_key, uint64_t new_nonce) override;
+			virtual bool sign(const algorithm::seckey_t& secret_key, uint64_t new_nonce, const decimal& price) override;
+			virtual bool verify(const algorithm::pubkey_t& public_key) const override;
+			virtual bool verify(const algorithm::pubkey_t& public_key, const uint256_t& output_hash, size_t index) const;
+			virtual bool recover(algorithm::pubkey_t& public_key) const override;
+			virtual bool recover(algorithm::pubkey_t& public_key, const uint256_t& output_hash, size_t index) const;
+			virtual bool recover_hash(algorithm::pubkeyhash_t& public_key_hash) const override;
+			virtual bool recover_hash(algorithm::pubkeyhash_t& public_key_hash, const uint256_t& output_hash, size_t index) const;
 			virtual expects_lr<void> set_optimal_gas(const decimal& price) override;
 			virtual void set_statement(const uint256_t& new_input_hash, const format::wo_stream& output_message);
 			virtual void set_best_branch(const uint256_t& output_hash);
@@ -122,7 +120,7 @@ namespace tangent
 		struct receipt final : messages::uniform
 		{
 			vector<std::pair<uint32_t, format::variables>> events;
-			algorithm::pubkeyhash from = { 0 };
+			algorithm::pubkeyhash_t from;
 			uint256_t transaction_hash = 0;
 			uint256_t absolute_gas_use = 0;
 			uint256_t relative_gas_use = 0;
@@ -134,7 +132,6 @@ namespace tangent
 
 			bool store_payload(format::wo_stream* stream) const override;
 			bool load_payload(format::ro_stream& stream) override;
-			bool is_from_null() const;
 			void emit_event(uint32_t type, format::variables&& values);
 			const format::variables* find_event(uint32_t type, size_t offset = 0) const;
 			const format::variables* reverse_find_event(uint32_t type, size_t offset = 0) const;

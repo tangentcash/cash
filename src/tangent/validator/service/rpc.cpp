@@ -35,7 +35,7 @@ namespace tangent
 		{
 			if (type == states::account_nonce::as_instance_typename())
 			{
-				algorithm::pubkeyhash owner;
+				algorithm::pubkeyhash_t owner;
 				if (!algorithm::signing::decode_address(index.as_string(), owner))
 					return layer_exception("invalid address");
 
@@ -44,7 +44,7 @@ namespace tangent
 
 			if (type == states::account_program::as_instance_typename())
 			{
-				algorithm::pubkeyhash owner;
+				algorithm::pubkeyhash_t owner;
 				if (!algorithm::signing::decode_address(index.as_string(), owner))
 					return layer_exception("invalid address");
 
@@ -59,7 +59,7 @@ namespace tangent
 
 				auto owner_address = data->get_var("address").get_blob();
 				auto index = data->get_var("index").get_blob();
-				algorithm::pubkeyhash owner = { 0 };
+				algorithm::pubkeyhash_t owner;
 				if (!algorithm::signing::decode_address(owner_address, owner))
 					return layer_exception("invalid address");
 
@@ -68,7 +68,7 @@ namespace tangent
 
 			if (type == states::account_delegation::as_instance_typename())
 			{
-				algorithm::pubkeyhash owner;
+				algorithm::pubkeyhash_t owner;
 				if (!algorithm::signing::decode_address(index.as_string(), owner))
 					return layer_exception("invalid address");
 
@@ -104,7 +104,7 @@ namespace tangent
 
 				auto owner_address = data->get_var("address").get_blob();
 				auto column_value = data->get_var("column").get_blob();
-				algorithm::pubkeyhash owner = { 0 };
+				algorithm::pubkeyhash_t owner;
 				if (!algorithm::signing::decode_address(owner_address, owner))
 					return layer_exception("invalid address");
 
@@ -113,7 +113,7 @@ namespace tangent
 
 			if (type == states::account_balance::as_instance_typename())
 			{
-				algorithm::pubkeyhash owner = { 0 };
+				algorithm::pubkeyhash_t owner;
 				if (column.type_of() != format::viewable::invalid && !algorithm::signing::decode_address(column.as_string(), owner))
 					return layer_exception("invalid address");
 
@@ -122,7 +122,7 @@ namespace tangent
 
 			if (type == states::validator_production::as_instance_typename())
 			{
-				algorithm::pubkeyhash owner = { 0 };
+				algorithm::pubkeyhash_t owner;
 				if (column.type_of() != format::viewable::invalid && !algorithm::signing::decode_address(column.as_string(), owner))
 					return layer_exception("invalid address");
 
@@ -131,7 +131,7 @@ namespace tangent
 
 			if (type == states::validator_participation::as_instance_typename())
 			{
-				algorithm::pubkeyhash owner = { 0 };
+				algorithm::pubkeyhash_t owner;
 				if (column.type_of() != format::viewable::invalid && !algorithm::signing::decode_address(column.as_string(), owner))
 					return layer_exception("invalid address");
 
@@ -140,7 +140,7 @@ namespace tangent
 
 			if (type == states::validator_attestation::as_instance_typename())
 			{
-				algorithm::pubkeyhash owner = { 0 };
+				algorithm::pubkeyhash_t owner;
 				if (column.type_of() != format::viewable::invalid && !algorithm::signing::decode_address(column.as_string(), owner))
 					return layer_exception("invalid address");
 
@@ -149,7 +149,7 @@ namespace tangent
 
 			if (type == states::depository_reward::as_instance_typename())
 			{
-				algorithm::pubkeyhash owner = { 0 };
+				algorithm::pubkeyhash_t owner;
 				if (column.type_of() != format::viewable::invalid && !algorithm::signing::decode_address(column.as_string(), owner))
 					return layer_exception("invalid address");
 
@@ -158,7 +158,7 @@ namespace tangent
 
 			if (type == states::depository_balance::as_instance_typename())
 			{
-				algorithm::pubkeyhash owner = { 0 };
+				algorithm::pubkeyhash_t owner;
 				if (column.type_of() != format::viewable::invalid && !algorithm::signing::decode_address(column.as_string(), owner))
 					return layer_exception("invalid address");
 
@@ -167,7 +167,7 @@ namespace tangent
 
 			if (type == states::depository_policy::as_instance_typename())
 			{
-				algorithm::pubkeyhash owner = { 0 };
+				algorithm::pubkeyhash_t owner;
 				if (column.type_of() != format::viewable::invalid && !algorithm::signing::decode_address(column.as_string(), owner))
 					return layer_exception("invalid address");
 
@@ -180,13 +180,13 @@ namespace tangent
 				if (!data)
 					return layer_exception("invalid value, expected { asset: string, address: string }");
 
-				algorithm::pubkeyhash manager = { 0 };
+				algorithm::pubkeyhash_t manager;
 				if (column.type_of() != format::viewable::invalid && !algorithm::signing::decode_address(column.as_string(), manager))
 					return layer_exception("invalid address");
 
 				auto id = data->get_var("asset").get_blob();
 				auto owner_address = data->get_var("owner").get_blob();
-				algorithm::pubkeyhash owner = { 0 };
+				algorithm::pubkeyhash_t owner;
 				if (!algorithm::signing::decode_address(owner_address, owner))
 					return layer_exception("invalid address");
 
@@ -199,7 +199,7 @@ namespace tangent
 				if (!data)
 					return layer_exception("invalid value, expected { asset: string, address: string }");
 
-				algorithm::pubkeyhash owner = { 0 };
+				algorithm::pubkeyhash_t owner;
 				if (column.type_of() != format::viewable::invalid && !algorithm::signing::decode_address(column.as_string(), owner))
 					return layer_exception("invalid address");
 
@@ -325,8 +325,6 @@ namespace tangent
 
 			bind(0, "websocket", "subscribe", 1, 3, "string addresses, bool? blocks, bool? transactions", "uint64", "subscribe to streams of incoming blocks and transactions optionally include blocks and transactions relevant to comma separated address list", std::bind(&server_node::web_socket_subscribe, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0, "websocket", "unsubscribe", 1, 1, "", "void", "unsubscribe from all streams", std::bind(&server_node::web_socket_unsubscribe, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0, "utility", "transformaddressfromhash", 2, 2, "string address, string derivation_hash_hex", "string", "calculate subaddress from derivation hash", std::bind(&server_node::utility_transform_address_from_hash, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0, "utility", "transformaddressfromdata", 2, 2, "string address, string derivation_data", "string", "calculate subaddress from derivation data", std::bind(&server_node::utility_transform_address_from_data, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0, "utility", "encodeaddress", 1, 1, "string public_key_hash", "string", "encode public key hash", std::bind(&server_node::utility_encode_address, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0, "utility", "decodeaddress", 1, 1, "string address", "{ public_key_hash: string,  }", "decode address", std::bind(&server_node::utility_decode_address, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0, "utility", "decodemessage", 1, 1, "string message", "any[]", "decode message", std::bind(&server_node::utility_decode_message, this, std::placeholders::_1, std::placeholders::_2));
@@ -752,7 +750,7 @@ namespace tangent
 					web_socket->send(response, http::web_socket_op::text, nullptr);
 			});
 		}
-		void server_node::dispatch_accept_transaction(const uint256_t& transaction_hash, const ledger::transaction* transaction, const algorithm::pubkeyhash owner)
+		void server_node::dispatch_accept_transaction(const uint256_t& transaction_hash, const ledger::transaction* transaction, const algorithm::pubkeyhash_t& owner)
 		{
 			umutex<std::mutex> unique(mutex);
 			if (listeners.empty())
@@ -807,7 +805,7 @@ namespace tangent
 			size_t address_index = 0;
 			for (auto& address : stringify::split(args[0].as_string(), ','))
 			{
-				algorithm::pubkeyhash owner;
+				algorithm::pubkeyhash_t owner;
 				if (!algorithm::signing::decode_address(stringify::trim(address), owner))
 					return server_response().error(error_codes::bad_params, "address[" + to_string(address_index) + "] not valid");
 
@@ -830,37 +828,10 @@ namespace tangent
 			unique.unlock();
 			return server_response().success(var::set::null());
 		}
-		server_response server_node::utility_transform_address_from_hash(http::connection* base, format::variables&& args)
-		{
-			algorithm::pubkeyhash data;
-			if (!algorithm::signing::decode_address(args[0].as_string(), data))
-				return server_response().error(error_codes::bad_params, "address not valid");
-
-			auto derivation_data = format::util::decode_0xhex(args[1].as_string());
-			if (derivation_data.size() > sizeof(algorithm::pubkeyhash))
-				return server_response().error(error_codes::bad_params, "derivation not valid");
-
-			auto derivation_hash = algorithm::pubkeyhash_t(derivation_data);
-			return server_response().success(algorithm::signing::serialize_subaddress(data, derivation_hash.data));
-		}
-		server_response server_node::utility_transform_address_from_data(http::connection* base, format::variables&& args)
-		{
-			algorithm::pubkeyhash data;
-			if (!algorithm::signing::decode_address(args[0].as_string(), data))
-				return server_response().error(error_codes::bad_params, "address not valid");
-
-			return server_response().success(algorithm::signing::serialize_subaddress(data, args[1].as_string()));
-		}
 		server_response server_node::utility_encode_address(http::connection* base, format::variables&& args)
 		{
 			auto owner = format::util::decode_0xhex(args[0].as_string());
-			if (owner.size() == sizeof(algorithm::subpubkeyhash))
-			{
-				string address;
-				algorithm::signing::encode_subaddress((uint8_t*)owner.data(), address);
-				return server_response().success(var::set::string(address));
-			}
-			else if (owner.size() == sizeof(algorithm::pubkeyhash))
+			if (owner.size() == sizeof(algorithm::pubkeyhash_t))
 			{
 				string address;
 				algorithm::signing::encode_address((uint8_t*)owner.data(), address);
@@ -871,14 +842,11 @@ namespace tangent
 		}
 		server_response server_node::utility_decode_address(http::connection* base, format::variables&& args)
 		{
-			algorithm::subpubkeyhash data;
-			if (!algorithm::signing::decode_subaddress(args[0].as_string(), data))
+			algorithm::pubkeyhash_t data;
+			if (!algorithm::signing::decode_address(args[0].as_string(), data))
 				return server_response().error(error_codes::bad_params, "address not valid");
 
-			auto* result = var::set::object();
-			result->set("public_key_hash", var::string(format::util::encode_0xhex(std::string_view((char*)data, sizeof(algorithm::pubkeyhash)))));
-			result->set("derivation_hash", var::string(format::util::encode_0xhex(std::string_view((char*)data + sizeof(algorithm::pubkeyhash), sizeof(algorithm::pubkeyhash)))));
-			return server_response().success(result);
+			return server_response().success(var::set::string(format::util::encode_0xhex(data.view())));
 		}
 		server_response server_node::utility_decode_message(http::connection* base, format::variables&& args)
 		{
@@ -898,7 +866,7 @@ namespace tangent
 			if (!candidate_tx || !candidate_tx->load(message))
 				return server_response().error(error_codes::bad_params, "invalid message");
 
-			algorithm::pubkeyhash owner = { 0 }, null = { 0 };
+			algorithm::pubkeyhash_t owner;
 			bool recoverable = candidate_tx->recover_hash(owner);
 			uptr<schema> result = var::set::object();
 			result->set("transaction", candidate_tx->as_schema().reset());
@@ -1516,7 +1484,7 @@ namespace tangent
 		}
 		server_response server_node::txnstate_get_transactions_by_owner(http::connection* base, format::variables&& args)
 		{
-			algorithm::pubkeyhash owner;
+			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "owner address not valid");
 
@@ -1605,12 +1573,12 @@ namespace tangent
 		}
 		server_response server_node::chainstate_call(http::connection* base, format::variables&& args)
 		{
-			algorithm::pubkeyhash from;
+			algorithm::pubkeyhash_t from;
 			if (!algorithm::signing::decode_address(args[1].as_string(), from))
 				return server_response().error(error_codes::bad_params, "from account address not valid");
 
-			algorithm::subpubkeyhash to;
-			if (!algorithm::signing::decode_subaddress(args[2].as_string(), to))
+			algorithm::pubkeyhash_t to;
+			if (!algorithm::signing::decode_address(args[2].as_string(), to))
 				return server_response().error(error_codes::bad_params, "to account address not valid");
 
 			format::variables function_args;
@@ -1660,8 +1628,8 @@ namespace tangent
 
 			transactions::call transaction;
 			transaction.asset = algorithm::asset::id_of_handle(args[0].as_string());
-			transaction.signature[0] = 0xFF;
-			transaction.nonce = std::max<size_t>(1, environment.validation.context.get_account_nonce(from).or_else(states::account_nonce(nullptr, nullptr)).nonce);
+			transaction.signature.data[0] = 0xFF;
+			transaction.nonce = std::max<size_t>(1, environment.validation.context.get_account_nonce(from).or_else(states::account_nonce(algorithm::pubkeyhash_t(), nullptr)).nonce);
 			transaction.program_call(to, args[3].as_decimal(), function, std::move(function_args));
 			transaction.set_gas(decimal::zero(), ledger::block::get_gas_limit());
 
@@ -1677,11 +1645,11 @@ namespace tangent
 			receipt.transaction_hash = transaction.as_hash();
 			receipt.generation_time = protocol::now().time.now();
 			receipt.block_number = block.number + 1;
-			memcpy(receipt.from, from, sizeof(algorithm::pubkeyhash));
+			receipt.from = from;
 
 			environment.validation.context = ledger::transaction_context(&environment, &block, &environment.validation.changelog, &transaction, std::move(receipt));
-			memset(environment.validator.public_key_hash, 0xFF, sizeof(algorithm::pubkeyhash));
-			memset(environment.validator.secret_key, 0xFF, sizeof(algorithm::seckey));
+			memset(environment.validator.public_key_hash.data, 0xFF, sizeof(algorithm::pubkeyhash_t));
+			memset(environment.validator.secret_key.data, 0xFF, sizeof(algorithm::seckey_t));
 
 			auto returning = uptr<schema>();
 			auto script = ledger::svm_program(&environment.validation.context);
@@ -1705,7 +1673,7 @@ namespace tangent
 				environment.validation.context.emit_event(0, { format::variable(execution.what()) }, false);
 
 			auto data = environment.validation.context.receipt.as_schema();
-			data->set("to", algorithm::signing::serialize_subaddress(script.to().hash.data));
+			data->set("to", algorithm::signing::serialize_address(script.to().hash));
 			data->set("result", returning ? returning->copy() : var::set::null());
 			return server_response().success(std::move(data));
 		}
@@ -1997,7 +1965,7 @@ namespace tangent
 		}
 		server_response server_node::chainstate_get_account_nonce(http::connection* base, format::variables&& args)
 		{
-			algorithm::pubkeyhash owner;
+			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
@@ -2008,7 +1976,7 @@ namespace tangent
 		}
 		server_response server_node::chainstate_get_account_program(http::connection* base, format::variables&& args)
 		{
-			algorithm::pubkeyhash owner;
+			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
@@ -2018,7 +1986,7 @@ namespace tangent
 		}
 		server_response server_node::chainstate_get_account_uniform(http::connection* base, format::variables&& args)
 		{
-			algorithm::pubkeyhash owner;
+			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
@@ -2028,7 +1996,7 @@ namespace tangent
 		}
 		server_response server_node::chainstate_get_account_multiform(http::connection* base, format::variables&& args)
 		{
-			algorithm::pubkeyhash owner;
+			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
@@ -2038,7 +2006,7 @@ namespace tangent
 		}
 		server_response server_node::chainstate_get_account_multiforms(http::connection* base, format::variables&& args)
 		{
-			algorithm::pubkeyhash owner;
+			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
@@ -2058,7 +2026,7 @@ namespace tangent
 		}
 		server_response server_node::chainstate_get_account_delegation(http::connection* base, format::variables&& args)
 		{
-			algorithm::pubkeyhash owner;
+			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
@@ -2077,7 +2045,7 @@ namespace tangent
 		}
 		server_response server_node::chainstate_get_account_balance(http::connection* base, format::variables&& args)
 		{
-			algorithm::pubkeyhash owner;
+			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
@@ -2088,7 +2056,7 @@ namespace tangent
 		}
 		server_response server_node::chainstate_get_account_balances(http::connection* base, format::variables&& args)
 		{
-			algorithm::pubkeyhash owner;
+			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
@@ -2108,7 +2076,7 @@ namespace tangent
 		}
 		server_response server_node::chainstate_get_validator_production(http::connection* base, format::variables&& args)
 		{
-			algorithm::pubkeyhash owner;
+			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
@@ -2136,7 +2104,7 @@ namespace tangent
 		}
 		server_response server_node::chainstate_get_validator_participation(http::connection* base, format::variables&& args)
 		{
-			algorithm::pubkeyhash owner;
+			algorithm::pubkeyhash_t owner;
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
 			if (!algorithm::signing::decode_address(args[1].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "account address not valid");
@@ -2147,7 +2115,7 @@ namespace tangent
 		}
 		server_response server_node::chainstate_get_validator_participations(http::connection* base, format::variables&& args)
 		{
-			algorithm::pubkeyhash owner;
+			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
@@ -2186,7 +2154,7 @@ namespace tangent
 		}
 		server_response server_node::chainstate_get_validator_attestation(http::connection* base, format::variables&& args)
 		{
-			algorithm::pubkeyhash owner;
+			algorithm::pubkeyhash_t owner;
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
 			if (!algorithm::signing::decode_address(args[1].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "account address not valid");
@@ -2197,7 +2165,7 @@ namespace tangent
 		}
 		server_response server_node::chainstate_get_validator_attestations(http::connection* base, format::variables&& args)
 		{
-			algorithm::pubkeyhash owner;
+			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
@@ -2236,7 +2204,7 @@ namespace tangent
 		}
 		server_response server_node::chainstate_get_depository_reward(http::connection* base, format::variables&& args)
 		{
-			algorithm::pubkeyhash owner;
+			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
@@ -2247,7 +2215,7 @@ namespace tangent
 		}
 		server_response server_node::chainstate_get_depository_rewards(http::connection* base, format::variables&& args)
 		{
-			algorithm::pubkeyhash owner;
+			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
@@ -2316,7 +2284,7 @@ namespace tangent
 		}
 		server_response server_node::chainstate_get_depository_policy(http::connection* base, format::variables&& args)
 		{
-			algorithm::pubkeyhash owner;
+			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
@@ -2328,11 +2296,11 @@ namespace tangent
 		}
 		server_response server_node::chainstate_get_depository_account(http::connection* base, format::variables&& args)
 		{
-			algorithm::pubkeyhash proposer;
+			algorithm::pubkeyhash_t proposer;
 			if (!algorithm::signing::decode_address(args[1].as_string(), proposer))
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
-			algorithm::pubkeyhash owner;
+			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[2].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
@@ -2348,7 +2316,7 @@ namespace tangent
 			if (!count || count > protocol::now().user.rpc.page_size)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
-			algorithm::pubkeyhash proposer;
+			algorithm::pubkeyhash_t proposer;
 			if (!algorithm::signing::decode_address(args[0].as_string(), proposer))
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
@@ -2365,7 +2333,7 @@ namespace tangent
 		}
 		server_response server_node::chainstate_get_depository_balance(http::connection* base, format::variables&& args)
 		{
-			algorithm::pubkeyhash owner;
+			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
@@ -2376,7 +2344,7 @@ namespace tangent
 		}
 		server_response server_node::chainstate_get_depository_balances(http::connection* base, format::variables&& args)
 		{
-			algorithm::pubkeyhash owner;
+			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
@@ -2512,7 +2480,7 @@ namespace tangent
 		}
 		server_response server_node::chainstate_get_witness_account(http::connection* base, format::variables&& args)
 		{
-			algorithm::pubkeyhash owner;
+			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
@@ -2523,7 +2491,7 @@ namespace tangent
 		}
 		server_response server_node::chainstate_get_witness_accounts(http::connection* base, format::variables&& args)
 		{
-			algorithm::pubkeyhash owner;
+			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
@@ -2543,7 +2511,7 @@ namespace tangent
 		}
 		server_response server_node::chainstate_get_witness_accounts_by_purpose(http::connection* base, format::variables&& args)
 		{
-			algorithm::pubkeyhash owner;
+			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
@@ -2784,7 +2752,7 @@ namespace tangent
 		}
 		server_response server_node::mempoolstate_get_next_account_nonce(http::connection* base, format::variables&& args)
 		{
-			algorithm::pubkeyhash owner;
+			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "owner address not valid");
 
@@ -2841,7 +2809,7 @@ namespace tangent
 		}
 		server_response server_node::mempoolstate_get_transactions_by_owner(http::connection* base, format::variables&& args)
 		{
-			algorithm::pubkeyhash owner;
+			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "owner address not valid");
 
@@ -3160,7 +3128,7 @@ namespace tangent
 			size_t offset = 0, count = 64;
 			while (true)
 			{
-				auto accounts = mempool.get_group_accounts(nullptr, offset, count);
+				auto accounts = mempool.get_group_accounts(algorithm::pubkeyhash_t(), offset, count);
 				if (!accounts)
 					return server_response().error(error_codes::bad_request, accounts.error().message());
 
@@ -3190,7 +3158,7 @@ namespace tangent
 			auto entropy = args[1].as_string();
 			if (type == "key")
 			{
-				algorithm::seckey secret_key;
+				algorithm::seckey_t secret_key;
 				if (!algorithm::signing::decode_secret_key(entropy, secret_key))
 					return server_response().error(error_codes::bad_request, "invalid secret key");
 			}

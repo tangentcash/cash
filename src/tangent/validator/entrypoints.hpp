@@ -26,9 +26,9 @@ namespace tangent
 		{
 			struct
 			{
-				ordered_map<algorithm::subpubkeyhash_t, ordered_map<algorithm::asset_id, decimal>> balances;
-				algorithm::subpubkeyhash_t from;
-				algorithm::subpubkeyhash_t to;
+				ordered_map<algorithm::pubkeyhash_t, ordered_map<algorithm::asset_id, decimal>> balances;
+				algorithm::pubkeyhash_t from;
+				algorithm::pubkeyhash_t to;
 				algorithm::asset_id payable = 0;
 				decimal pay = decimal::zero();
 			} state;
@@ -72,13 +72,12 @@ namespace tangent
 				auto* host = ledger::svm_host::get();
 				host->deallocate(std::move(svmc.compiler));
 			}
-			expects_lr<void> assign_transaction(const algorithm::asset_id& asset, const algorithm::pubkeyhash from, const algorithm::subpubkeyhash_t& to, const decimal& value, const std::string_view& function_decl, const format::variables& args)
+			expects_lr<void> assign_transaction(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& from, const algorithm::pubkeyhash_t& to, const decimal& value, const std::string_view& function_decl, const format::variables& args)
 			{
-				VI_ASSERT(from != nullptr, "from should be set");
 				uptr<transactions::call> transaction = memory::init<transactions::call>();
 				transaction->asset = asset;
-				transaction->signature[0] = 0xFF;
-				transaction->nonce = std::max<size_t>(1, svmc.environment.validation.context.get_account_nonce(from).or_else(states::account_nonce(nullptr, nullptr)).nonce);
+				transaction->signature.data[0] = 0xFF;
+				transaction->nonce = std::max<size_t>(1, svmc.environment.validation.context.get_account_nonce(from).or_else(states::account_nonce(algorithm::pubkeyhash_t(), nullptr)).nonce);
 				transaction->program_call(to, value, function_decl, format::variables(args));
 				transaction->set_gas(decimal::zero(), ledger::block::get_gas_limit());
 
@@ -92,12 +91,12 @@ namespace tangent
 				receipt.transaction_hash = transaction->as_hash();
 				receipt.generation_time = protocol::now().time.now();
 				receipt.block_number = svmc.block.number + 1;
-				memcpy(receipt.from, from, sizeof(algorithm::pubkeyhash));
+				receipt.from = from;
 
 				svmc.contextual = std::move(transaction);
 				svmc.environment.validation.context = ledger::transaction_context(&svmc.environment, &svmc.block, &svmc.environment.validation.changelog, *svmc.contextual, std::move(receipt));
-				memset(svmc.environment.validator.public_key_hash, 0xFF, sizeof(algorithm::pubkeyhash));
-				memset(svmc.environment.validator.secret_key, 0xFF, sizeof(algorithm::seckey));
+				memset(svmc.environment.validator.public_key_hash.data, 0xFF, sizeof(algorithm::pubkeyhash_t));
+				memset(svmc.environment.validator.secret_key.data, 0xFF, sizeof(algorithm::seckey_t));
 				return expectation::met;
 			}
 			expects_lr<uptr<compiler>> compile_transaction()
@@ -140,7 +139,7 @@ namespace tangent
 			{
 				VI_ASSERT(svmc.contextual, "transaction should be assigned");
 				if (entrypoint.get_name() == "construct")
-					context->receipt.emit_event<states::account_program>({ format::variable(std::string_view((char*)state.to.data, sizeof(algorithm::pubkeyhash))) });
+					context->receipt.emit_event<states::account_program>({ format::variable(state.to.view()) });
 
 				svmc.events.clear();
 				svmc.instructions.clear();
@@ -358,8 +357,8 @@ namespace tangent
 				auto* host = ledger::svm_host::get();
 				host->deallocate(std::move(svmc.compiler));
 				state.balances.clear();
-				state.from = algorithm::subpubkeyhash_t();
-				state.to = algorithm::subpubkeyhash_t();
+				state.from = algorithm::pubkeyhash_t();
+				state.to = algorithm::pubkeyhash_t();
 				state.payable = 0;
 				state.pay = decimal::zero();
 				program.path.clear();
@@ -413,7 +412,7 @@ namespace tangent
 				for (auto& item : copy)
 				{
 					auto data = item.as_string();
-					if (data.size() == sizeof(algorithm::pubkeyhash) && !format::variables_util::is_ascii_encoding(data))
+					if (data.size() == sizeof(algorithm::pubkeyhash_t) && !format::variables_util::is_ascii_encoding(data))
 					{
 						string address;
 						algorithm::signing::encode_address((uint8_t*)data.data(), address);
@@ -457,21 +456,18 @@ namespace tangent
 					{
 						if (args[1] != "?")
 						{
-							if (!algorithm::signing::decode_subaddress(args[1], context.state.from.data))
+							if (!algorithm::signing::decode_address(args[1], context.state.from))
 								return err("not a valid address");
 						}
 						else
-						{
-							memset(context.state.from.data, 0, sizeof(context.state.from.data));
-							crypto::fill_random_bytes(context.state.from.data, sizeof(algorithm::pubkeyhash));
-						}
+							crypto::fill_random_bytes(context.state.from.data, sizeof(algorithm::pubkeyhash_t));
 					}
 
 					if (context.state.from.empty())
 						return ok("null");
 
 					string address;
-					algorithm::signing::encode_subaddress(context.state.from.data, address);
+					algorithm::signing::encode_address(context.state.from, address);
 					return ok(address);
 				}
 				else if (method == "to")
@@ -480,21 +476,18 @@ namespace tangent
 					{
 						if (args[1] != "?")
 						{
-							if (!algorithm::signing::decode_subaddress(args[1], context.state.to.data))
+							if (!algorithm::signing::decode_address(args[1], context.state.to))
 								return err("not a valid address");
 						}
 						else
-						{
-							memset(context.state.to.data, 0, sizeof(context.state.to.data));
-							crypto::fill_random_bytes(context.state.to.data, sizeof(algorithm::pubkeyhash));
-						}
+							crypto::fill_random_bytes(context.state.to.data, sizeof(algorithm::pubkeyhash_t));
 					}
 
 					if (context.state.to.empty())
 						return ok("null");
 
 					string address;
-					algorithm::signing::encode_subaddress(context.state.to.data, address);
+					algorithm::signing::encode_address(context.state.to, address);
 					return ok(address);
 				}
 				else if (method == "payable")
@@ -541,7 +534,7 @@ namespace tangent
 						{
 							string address = "null";
 							if (!account.empty())
-								algorithm::signing::encode_subaddress(account.data, address);
+								algorithm::signing::encode_address(account, address);
 							ok(address + ": " + value.to_string() + " " + algorithm::asset::name_of(asset));
 						}
 					}

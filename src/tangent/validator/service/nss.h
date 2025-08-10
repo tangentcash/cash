@@ -21,8 +21,8 @@ namespace tangent
 		struct computed_wallet
 		{
 			uint256_t seed = 0;
-			algorithm::composition::cseckey secret_key = { 0 };
-			algorithm::composition::cpubkey public_key = { 0 };
+			algorithm::composition::cseckey_t secret_key;
+			algorithm::composition::cpubkey_t public_key;
 			address_map addresses;
 			address_map encoded_addresses;
 			secret_box encoded_seed;
@@ -86,7 +86,7 @@ namespace tangent
 			expects_lr<warden::wallet_link> get_link(const algorithm::asset_id& asset, const std::string_view& address);
 			expects_lr<unordered_map<string, warden::wallet_link>> get_links_by_public_keys(const algorithm::asset_id& asset, const unordered_set<string>& public_keys);
 			expects_lr<unordered_map<string, warden::wallet_link>> get_links_by_addresses(const algorithm::asset_id& asset, const unordered_set<string>& addresses);
-			expects_lr<unordered_map<string, warden::wallet_link>> get_links_by_owner(const algorithm::asset_id& asset, const algorithm::pubkeyhash owner, size_t offset, size_t count);
+			expects_lr<unordered_map<string, warden::wallet_link>> get_links_by_owner(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, size_t offset, size_t count);
 			expects_lr<void> add_utxo(const algorithm::asset_id& asset, const warden::coin_utxo& value);
 			expects_lr<void> remove_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index);
 			expects_lr<warden::coin_utxo> get_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index);

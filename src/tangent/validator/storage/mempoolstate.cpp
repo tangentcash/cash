@@ -322,7 +322,7 @@ namespace tangent
 			if (!value.store(&message))
 				return expects_lr<void>(layer_exception("transaction serialization error"));
 
-			algorithm::pubkeyhash owner = { 0 };
+			algorithm::pubkeyhash_t owner;
 			if (value.is_recoverable() && !value.recover_hash(owner))
 				return expects_lr<void>(layer_exception("transaction owner recovery error"));
 
@@ -422,7 +422,7 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::binary(hash, sizeof(hash)));
 			map.push_back(group > 0 ? var::set::binary(group_hash, sizeof(group_hash)) : var::set::null());
-			map.push_back(var::set::binary(owner, sizeof(owner)));
+			map.push_back(var::set::binary(owner.view()));
 			map.push_back(var::set::binary(asset, sizeof(asset)));
 			map.push_back(var::set::integer(value.nonce));
 			map.push_back(preference.is_nan() ? var::set::null() : var::set::integer(preference.to_uint64()));
@@ -430,7 +430,7 @@ namespace tangent
 			map.push_back(var::set::integer(time(nullptr)));
 			map.push_back(var::set::string(value.gas_price.to_string()));
 			map.push_back(var::set::binary(message.data));
-			map.push_back(var::set::binary(owner, sizeof(owner)));
+			map.push_back(var::set::binary(owner.view()));
 
 			auto cursor = emplace_query(label, __func__,
 				"INSERT OR REPLACE INTO transactions (hash, group_hash, owner, asset, nonce, preference, type, time, price, message) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
@@ -511,7 +511,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> mempoolstate::apply_group_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash manager, const algorithm::pubkeyhash owner, const uint256_t& share)
+		expects_lr<void> mempoolstate::apply_group_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner, const uint256_t& share)
 		{
 			uint8_t share_data[32];
 			algorithm::encoding::decode_uint256(share, share_data);
@@ -525,8 +525,8 @@ namespace tangent
 
 			schema_list map;
 			map.push_back(var::set::binary(asset_data, sizeof(asset_data)));
-			map.push_back(var::set::binary(owner, sizeof(algorithm::pubkeyhash)));
-			map.push_back(var::set::binary(manager, sizeof(algorithm::pubkeyhash)));
+			map.push_back(var::set::binary(owner.view()));
+			map.push_back(var::set::binary(manager.view()));
 			map.push_back(var::set::binary(*encrypted_share));
 
 			auto cursor = emplace_query(label, __func__, "INSERT OR REPLACE INTO groups (asset, owner, manager, share) VALUES (?, ?, ?, ?);", &map);
@@ -535,15 +535,15 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<uint256_t> mempoolstate::get_or_apply_group_account_share(const algorithm::asset_id& asset, const algorithm::pubkeyhash manager, const algorithm::pubkeyhash owner, const uint256_t& entropy)
+		expects_lr<uint256_t> mempoolstate::get_or_apply_group_account_share(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner, const uint256_t& entropy)
 		{
 			uint8_t asset_data[32];
 			algorithm::encoding::decode_uint256(asset, asset_data);
 
 			schema_list map;
 			map.push_back(var::set::binary(asset_data, sizeof(asset_data)));
-			map.push_back(var::set::binary(owner, sizeof(algorithm::pubkeyhash)));
-			map.push_back(var::set::binary(manager, sizeof(algorithm::pubkeyhash)));
+			map.push_back(var::set::binary(owner.view()));
+			map.push_back(var::set::binary(manager.view()));
 
 			auto cursor = emplace_query(label, __func__, "SELECT share FROM groups WHERE asset = ? AND owner = ? AND manager = ?", &map);
 			if (cursor && !cursor->error_or_empty())
@@ -573,15 +573,15 @@ namespace tangent
 				return share.hash();
 			}
 		}
-		expects_lr<vector<states::depository_account>> mempoolstate::get_group_accounts(const algorithm::pubkeyhash manager, size_t offset, size_t count)
+		expects_lr<vector<states::depository_account>> mempoolstate::get_group_accounts(const algorithm::pubkeyhash_t& manager, size_t offset, size_t count)
 		{
 			schema_list map;
-			if (manager != nullptr)
-				map.push_back(var::set::binary(manager, sizeof(algorithm::pubkeyhash)));
+			if (!manager.empty())
+				map.push_back(var::set::binary(manager.view()));
 			map.push_back(var::set::integer(count));
 			map.push_back(var::set::integer(offset));
 
-			auto cursor = emplace_query(label, __func__, manager != nullptr ? "SELECT asset, owner FROM groups WHERE manager = ? LIMIT ? OFFSET ?" : "SELECT asset, manager, owner FROM groups LIMIT ? OFFSET ?", &map);
+			auto cursor = emplace_query(label, __func__, !manager.empty() ? "SELECT asset, owner FROM groups WHERE manager = ? LIMIT ? OFFSET ?" : "SELECT asset, manager, owner FROM groups LIMIT ? OFFSET ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<states::depository_account>>(layer_exception(error_of(cursor)));
 
@@ -598,16 +598,16 @@ namespace tangent
 
 				auto owner = algorithm::pubkeyhash_t(row["owner"].get().get_blob());
 				auto submanager = algorithm::pubkeyhash_t(row["manager"].get().get_blob());
-				auto account = context.get_depository_account(asset, manager ? manager : submanager.data, owner.data);
+				auto account = context.get_depository_account(asset, !manager.empty()  ? manager : submanager.data, owner.data);
 				if (account)
 					result.push_back(std::move(*account));
 			}
 			return result;
 		}
-		expects_lr<account_bandwidth> mempoolstate::get_bandwidth_by_owner(const algorithm::pubkeyhash owner, ledger::transaction_level type)
+		expects_lr<account_bandwidth> mempoolstate::get_bandwidth_by_owner(const algorithm::pubkeyhash_t& owner, ledger::transaction_level type)
 		{
 			schema_list map;
-			map.push_back(var::set::binary(owner, sizeof(algorithm::pubkeyhash)));
+			map.push_back(var::set::binary(owner.view()));
 			map.push_back(var::set::integer((int64_t)type));
 
 			auto cursor = emplace_query(label, __func__, "SELECT COUNT(1) AS counter, max(nonce) AS nonce FROM transactions WHERE owner = ? AND type = ?", &map);
@@ -651,10 +651,10 @@ namespace tangent
 
 			return !cursor->empty();
 		}
-		expects_lr<uint64_t> mempoolstate::get_lowest_transaction_nonce(const algorithm::pubkeyhash owner)
+		expects_lr<uint64_t> mempoolstate::get_lowest_transaction_nonce(const algorithm::pubkeyhash_t& owner)
 		{
 			schema_list map;
-			map.push_back(var::set::binary(owner, sizeof(algorithm::pubkeyhash)));
+			map.push_back(var::set::binary(owner.view()));
 
 			auto cursor = emplace_query(label, __func__, "SELECT MIN(nonce) AS nonce FROM transactions WHERE owner = ?", &map);
 			if (!cursor || cursor->error_or_empty())
@@ -663,10 +663,10 @@ namespace tangent
 			uint64_t nonce = (*cursor)["nonce"].get().get_integer();
 			return nonce;
 		}
-		expects_lr<uint64_t> mempoolstate::get_highest_transaction_nonce(const algorithm::pubkeyhash owner)
+		expects_lr<uint64_t> mempoolstate::get_highest_transaction_nonce(const algorithm::pubkeyhash_t& owner)
 		{
 			schema_list map;
-			map.push_back(var::set::binary(owner, sizeof(algorithm::pubkeyhash)));
+			map.push_back(var::set::binary(owner.view()));
 
 			auto cursor = emplace_query(label, __func__, "SELECT max(nonce) AS nonce FROM transactions WHERE owner = ?", &map);
 			if (!cursor || cursor->error_or_empty())
@@ -726,10 +726,10 @@ namespace tangent
 
 			return values;
 		}
-		expects_lr<vector<uptr<ledger::transaction>>> mempoolstate::get_transactions_by_owner(const algorithm::pubkeyhash owner, int8_t direction, size_t offset, size_t count)
+		expects_lr<vector<uptr<ledger::transaction>>> mempoolstate::get_transactions_by_owner(const algorithm::pubkeyhash_t& owner, int8_t direction, size_t offset, size_t count)
 		{
 			schema_list map;
-			map.push_back(var::set::binary(owner, sizeof(algorithm::pubkeyhash)));
+			map.push_back(var::set::binary(owner.view()));
 			map.push_back(var::set::string(direction < 0 ? "DESC" : "ASC"));
 			map.push_back(var::set::integer(count));
 			map.push_back(var::set::integer(offset));

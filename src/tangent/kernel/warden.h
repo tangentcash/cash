@@ -42,12 +42,12 @@ namespace tangent
 				address
 			};
 
-			algorithm::pubkeyhash owner = { 0 };
+			algorithm::pubkeyhash_t owner;
 			string public_key;
 			string address;
 
 			wallet_link() = default;
-			wallet_link(const algorithm::pubkeyhash new_owner, const std::string_view& new_public_key, const std::string_view& new_address);
+			wallet_link(const algorithm::pubkeyhash_t& new_owner, const std::string_view& new_public_key, const std::string_view& new_address);
 			bool store_payload(format::wo_stream* stream) const override;
 			bool load_payload(format::ro_stream& stream) override;
 			uptr<schema> as_schema() const override;
@@ -64,7 +64,7 @@ namespace tangent
 			bool has_any() const;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
-			static wallet_link from_owner(const algorithm::pubkeyhash new_owner);
+			static wallet_link from_owner(const algorithm::pubkeyhash_t& new_owner);
 			static wallet_link from_public_key(const std::string_view& new_public_key);
 			static wallet_link from_address(const std::string_view& new_address);
 		};
@@ -160,8 +160,8 @@ namespace tangent
 
 			struct signable_coin_utxo
 			{
-				algorithm::composition::cpubkey public_key = { 0 };
-				algorithm::composition::cpubsig signature = { 0 };
+				algorithm::composition::cpubkey_t public_key;
+				algorithm::composition::chashsig_t signature;
 				algorithm::composition::type alg = algorithm::composition::type::unknown;
 				vector<uint8_t> message;
 				coin_utxo utxo;
@@ -172,8 +172,8 @@ namespace tangent
 			format::variables abi;
 
 			prepared_transaction() = default;
-			prepared_transaction& requires_input(algorithm::composition::type new_alg, const algorithm::composition::cpubkey new_public_key, uint8_t* new_message, size_t new_message_size, coin_utxo&& input);
-			prepared_transaction& requires_account_input(algorithm::composition::type new_alg, wallet_link&& new_link, const algorithm::composition::cpubkey new_public_key, uint8_t* new_message, size_t new_message_size, unordered_map<algorithm::asset_id, decimal>&& input);
+			prepared_transaction& requires_input(algorithm::composition::type new_alg, const algorithm::composition::cpubkey_t& new_public_key, uint8_t* new_message, size_t new_message_size, coin_utxo&& input);
+			prepared_transaction& requires_account_input(algorithm::composition::type new_alg, wallet_link&& new_link, const algorithm::composition::cpubkey_t& new_public_key, uint8_t* new_message, size_t new_message_size, unordered_map<algorithm::asset_id, decimal>&& input);
 			prepared_transaction& requires_output(coin_utxo&& output);
 			prepared_transaction& requires_account_output(const std::string_view& to_address, unordered_map<algorithm::asset_id, decimal>&& output);
 			prepared_transaction& requires_abi(format::variable&& value);
@@ -389,7 +389,7 @@ namespace tangent
 			virtual expects_lr<algorithm::composition::cpubkey_t> to_composite_public_key(const std::string_view& public_key);
 			virtual expects_lr<address_map> to_addresses(const std::string_view& public_key) = 0;
 			virtual expects_lr<ordered_map<string, wallet_link>> find_linked_addresses(const unordered_set<string>& addresses);
-			virtual expects_lr<ordered_map<string, wallet_link>> find_linked_addresses(const algorithm::pubkeyhash owner, size_t offset, size_t count);
+			virtual expects_lr<ordered_map<string, wallet_link>> find_linked_addresses(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count);
 			virtual expects_lr<void> verify_node_compatibility(server_relay* node);
 			virtual decimal to_value(const decimal& value) const;
 			virtual uint256_t to_baseline_value(const decimal& value) const;

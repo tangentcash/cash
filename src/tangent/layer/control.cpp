@@ -4,7 +4,7 @@
 
 namespace tangent
 {
-	system_endpoint::system_endpoint(const std::string_view& URI) : scheme(URI), secure(false)
+	system_endpoint::system_endpoint(const std::string_view& uri) : scheme(uri), secure(false)
 	{
 		if (scheme.hostname.empty())
 			return;

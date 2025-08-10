@@ -865,7 +865,7 @@ namespace tangent
 			auto mempool = storages::mempoolstate(__func__);
 			mempool.apply_validator(node, target);
 		};
-		algorithm::seckey secret_key;
+		algorithm::seckey_t secret_key;
 		if (algorithm::signing::decode_secret_key(overriding_account, secret_key) && algorithm::signing::verify_secret_key(secret_key))
 			apply(ledger::wallet::from_secret_key(secret_key));
 		else if (algorithm::signing::verify_mnemonic(overriding_account))

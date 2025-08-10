@@ -10,7 +10,7 @@ namespace tangent
 		socket_address address;
 		bool secure;
 
-		system_endpoint(const std::string_view& URI);
+		system_endpoint(const std::string_view& uri);
 		bool is_valid() const;
 		static string to_uri(const socket_address& address, const std::string_view& protocol = "tcp");
 	};
@@ -32,7 +32,6 @@ namespace tangent
 		bool activate() noexcept;
 		bool deactivate() noexcept;
 		bool is_active() noexcept;
-		bool is_busy() noexcept;
 	};
 
 	struct service_control

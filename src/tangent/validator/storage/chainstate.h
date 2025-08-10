@@ -49,16 +49,16 @@ namespace tangent
 		class account_cache : public singleton<account_cache>
 		{
 		private:
-			unordered_map<string, uint64_t> accounts;
+			unordered_map<algorithm::pubkeyhash_t, uint64_t> accounts;
 			std::mutex mutex;
 
 		public:
 			account_cache() = default;
 			virtual ~account_cache() = default;
 			void clear_locations();
-			void clear_account_location(const algorithm::pubkeyhash account);
-			void set_account_location(const algorithm::pubkeyhash account, uint64_t location);
-			option<uint64_t> get_account_location(const std::string_view& account);
+			void clear_account_location(const algorithm::pubkeyhash_t& account);
+			void set_account_location(const algorithm::pubkeyhash_t& account, uint64_t location);
+			option<uint64_t> get_account_location(const algorithm::pubkeyhash_t& account);
 		};
 
 		class uniform_cache : public singleton<uniform_cache>
@@ -239,9 +239,9 @@ namespace tangent
 			expects_lr<vector<ledger::block_header>> get_block_headers(uint64_t block_number, size_t count);
 			expects_lr<ledger::block_state> get_block_state_by_number(uint64_t block_number, size_t chunk = ELEMENTS_MANY);
 			expects_lr<vector<uptr<ledger::transaction>>> get_transactions_by_number(uint64_t block_number, size_t offset, size_t count);
-			expects_lr<vector<uptr<ledger::transaction>>> get_transactions_by_owner(uint64_t block_number, const algorithm::pubkeyhash owner, int8_t direction, size_t offset, size_t count);
+			expects_lr<vector<uptr<ledger::transaction>>> get_transactions_by_owner(uint64_t block_number, const algorithm::pubkeyhash_t& owner, int8_t direction, size_t offset, size_t count);
 			expects_lr<vector<ledger::block_transaction>> get_block_transactions_by_number(uint64_t block_number, size_t offset, size_t count);
-			expects_lr<vector<ledger::block_transaction>> get_block_transactions_by_owner(uint64_t block_number, const algorithm::pubkeyhash owner, int8_t direction, size_t offset, size_t count);
+			expects_lr<vector<ledger::block_transaction>> get_block_transactions_by_owner(uint64_t block_number, const algorithm::pubkeyhash_t& owner, int8_t direction, size_t offset, size_t count);
 			expects_lr<vector<ledger::receipt>> get_block_receipts_by_number(uint64_t block_number, size_t offset, size_t count);
 			expects_lr<vector<ledger::block_transaction>> get_pending_block_transactions(uint64_t block_number, size_t offset, size_t count);
 			expects_lr<uptr<ledger::transaction>> get_transaction_by_hash(const uint256_t& transaction_hash);
@@ -268,7 +268,7 @@ namespace tangent
 			expects_lr<void> resolve_block_transactions(vector<ledger::block_transaction>& result, uint64_t block_number, bool fully, size_t chunk);
 			expects_lr<uniform_location> resolve_uniform_location(uint32_t type, const std::string_view& index, uint8_t resolver_flags);
 			expects_lr<multiform_location> resolve_multiform_location(uint32_t type, const option<std::string_view>& column, const option<std::string_view>& row, uint8_t resolver_flags);
-			expects_lr<uint64_t> resolve_account_location(const algorithm::pubkeyhash account);
+			expects_lr<uint64_t> resolve_account_location(const algorithm::pubkeyhash_t& account);
 			sqlite::connection* get_block_storage();
 			sqlite::connection* get_account_storage();
 			sqlite::connection* get_tx_storage();

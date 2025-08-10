@@ -484,30 +484,28 @@ namespace tangent
 			mnemonic_generate((int)strength, buffer, (int)sizeof(buffer));
 			return string(buffer, strnlen(buffer, sizeof(buffer)));
 		}
-		void signing::keygen(seckey secret_key)
+		void signing::keygen(seckey_t& secret_key)
 		{
-			VI_ASSERT(secret_key != nullptr, "secret key should be set");
 			while (true)
 			{
-				if (!crypto::fill_random_bytes(secret_key, sizeof(seckey)))
+				if (!crypto::fill_random_bytes(secret_key.data, sizeof(seckey_t)))
 					break;
 				else if (verify_secret_key(secret_key))
 					break;
 			}
 		}
-		bool signing::recover(const uint256_t& hash, pubkey public_key, const recpubsig signature)
+		bool signing::recover(const uint256_t& hash, pubkey_t& public_key, const hashsig_t& signature)
 		{
-			VI_ASSERT(public_key != nullptr && signature != nullptr, "public key and signature should be set");
 			uint8_t recovery_id = 0;
-			size_t signature_size = sizeof(recpubsig);
+			size_t signature_size = sizeof(hashsig_t);
 			size_t recovery_offset = signature_size - sizeof(recovery_id);
-			memcpy(&recovery_id, signature + recovery_offset, sizeof(recovery_id));
+			memcpy(&recovery_id, signature.data + recovery_offset, sizeof(recovery_id));
 			if (recovery_id > 4)
 				return false;
 
 			secp256k1_context* context = get_context();
 			secp256k1_ecdsa_recoverable_signature recoverable_signature;
-			if (!secp256k1_ecdsa_recoverable_signature_parse_compact(context, &recoverable_signature, signature, recovery_id))
+			if (!secp256k1_ecdsa_recoverable_signature_parse_compact(context, &recoverable_signature, signature.data, recovery_id))
 				return false;
 
 			uint8_t data[32];
@@ -517,48 +515,45 @@ namespace tangent
 			if (secp256k1_ecdsa_recover(context, &recovered_public_key, &recoverable_signature, data) != 1)
 				return false;
 
-			size_t public_key_size = sizeof(pubkey);
-			return secp256k1_ec_pubkey_serialize(context, public_key, &public_key_size, &recovered_public_key, SECP256K1_EC_COMPRESSED) == 1;
+			size_t public_key_size = sizeof(pubkey_t);
+			return secp256k1_ec_pubkey_serialize(context, public_key.data, &public_key_size, &recovered_public_key, SECP256K1_EC_COMPRESSED) == 1;
 		}
-		bool signing::recover_hash(const uint256_t& hash, pubkeyhash public_key_hash, const recpubsig signature)
+		bool signing::recover_hash(const uint256_t& hash, pubkeyhash_t& public_key_hash, const hashsig_t& signature)
 		{
-			VI_ASSERT(public_key_hash != nullptr && signature != nullptr, "public key hash and signature should be set");
-			pubkey public_key;
+			pubkey_t public_key;
 			if (!recover(hash, public_key, signature))
 				return false;
 
 			derive_public_key_hash(public_key, public_key_hash);
 			return true;
 		}
-		bool signing::sign(const uint256_t& hash, const seckey secret_key, recpubsig signature)
+		bool signing::sign(const uint256_t& hash, const seckey_t& secret_key, hashsig_t& signature)
 		{
-			VI_ASSERT(secret_key != nullptr && signature != nullptr, "secret key and signature should be set");
 			uint8_t data[32];
 			encoding::decode_uint256(hash, data);
-			memset(signature, 0, sizeof(recpubsig));
+			memset(signature.data, 0, sizeof(hashsig_t));
 
 			secp256k1_context* context = get_context();
 			secp256k1_ecdsa_recoverable_signature recoverable_signature;
-			if (secp256k1_ecdsa_sign_recoverable(context, &recoverable_signature, data, secret_key, secp256k1_nonce_function_rfc6979, nullptr) != 1)
+			if (secp256k1_ecdsa_sign_recoverable(context, &recoverable_signature, data, secret_key.data, secp256k1_nonce_function_rfc6979, nullptr) != 1)
 				return false;
 
 			int recovery_id = 0;
-			if (secp256k1_ecdsa_recoverable_signature_serialize_compact(context, signature, &recovery_id, &recoverable_signature) != 1)
+			if (secp256k1_ecdsa_recoverable_signature_serialize_compact(context, signature.data, &recovery_id, &recoverable_signature) != 1)
 				return false;
 
-			signature[sizeof(recpubsig) - 1] = (uint8_t)recovery_id;
+			signature.data[sizeof(hashsig_t) - 1] = (uint8_t)recovery_id;
 			return true;
 		}
-		bool signing::verify(const uint256_t& hash, const pubkey public_key, const recpubsig signature)
+		bool signing::verify(const uint256_t& hash, const pubkey_t& public_key, const hashsig_t& signature)
 		{
-			VI_ASSERT(public_key != nullptr && signature != nullptr, "public key and signature should be set");
 			secp256k1_context* context = get_context();
 			secp256k1_ecdsa_signature compact_signature;
-			if (secp256k1_ecdsa_signature_parse_compact(context, &compact_signature, signature) != 1)
+			if (secp256k1_ecdsa_signature_parse_compact(context, &compact_signature, signature.data) != 1)
 				return false;
 
 			secp256k1_pubkey derived_public_key;
-			if (secp256k1_ec_pubkey_parse(context, &derived_public_key, public_key, sizeof(pubkey)) != 1)
+			if (secp256k1_ec_pubkey_parse(context, &derived_public_key, public_key.data, sizeof(pubkey_t)) != 1)
 				return false;
 
 			uint8_t data[32];
@@ -572,83 +567,72 @@ namespace tangent
 			string data = string(mnemonic);
 			return mnemonic_check(data.c_str()) == 1;
 		}
-		bool signing::verify_secret_key(const seckey secret_key)
+		bool signing::verify_secret_key(const seckey_t& secret_key)
 		{
-			VI_ASSERT(secret_key != nullptr, "secret key should be set");
 			secp256k1_context* context = get_context();
-			return secp256k1_ec_seckey_verify(context, secret_key) == 1;
+			return secp256k1_ec_seckey_verify(context, secret_key.data) == 1;
 		}
-		bool signing::verify_public_key(const pubkey public_key)
+		bool signing::verify_public_key(const pubkey_t& public_key)
 		{
-			VI_ASSERT(public_key != nullptr, "public key should be set");
 			secp256k1_pubkey derived_public_key;
 			secp256k1_context* context = get_context();
-			return secp256k1_ec_pubkey_parse(context, &derived_public_key, public_key, sizeof(pubkey)) == 1;
+			return secp256k1_ec_pubkey_parse(context, &derived_public_key, public_key.data, sizeof(pubkey_t)) == 1;
 		}
 		bool signing::verify_address(const std::string_view& address)
 		{
-			pubkeyhash public_key_hash;
+			pubkeyhash_t public_key_hash;
 			return decode_address(address, public_key_hash);
 		}
 		bool signing::verify_sealed_message(const std::string_view& ciphertext)
 		{
 			return ciphertext.size() > crypto_box_SEALBYTES;
 		}
-		void signing::derive_secret_key_from_mnemonic(const std::string_view& mnemonic, seckey secret_key)
+		void signing::derive_secret_key_from_mnemonic(const std::string_view& mnemonic, seckey_t& secret_key)
 		{
-			VI_ASSERT(secret_key != nullptr, "secret key should be set");
 			VI_ASSERT(stringify::is_cstring(mnemonic), "mnemonic should be set");
 			uint8_t seed[64] = { 0 };
 			mnemonic_to_seed(mnemonic.data(), "", seed, nullptr);
 			derive_secret_key(std::string_view((char*)seed, sizeof(seed)), secret_key);
 		}
-		void signing::derive_secret_key(const std::string_view& seed, seckey secret_key)
+		void signing::derive_secret_key(const std::string_view& seed, seckey_t& secret_key)
 		{
-			VI_ASSERT(secret_key != nullptr, "secret key should be set");
 			string derivation = string(seed);
 			while (true)
 			{
 				derivation = hashing::hash256((uint8_t*)derivation.data(), derivation.size());
-				memcpy(secret_key, derivation.data(), sizeof(seckey));
+				memcpy(secret_key.data, derivation.data(), sizeof(seckey_t));
 				if (verify_secret_key(secret_key))
 					break;
 			}
 		}
-		bool signing::derive_public_key(const seckey secret_key, pubkey public_key)
+		bool signing::derive_public_key(const seckey_t& secret_key, pubkey_t& public_key)
 		{
-			VI_ASSERT(secret_key != nullptr && public_key != nullptr, "secret key and public key should be set");
 			secp256k1_pubkey derived_public_key;
 			secp256k1_context* context = get_context();
-			memset(public_key, 0, sizeof(pubkey));
-			if (secp256k1_ec_pubkey_create(context, &derived_public_key, secret_key) != 1)
+			memset(public_key.data, 0, sizeof(pubkey_t));
+			if (secp256k1_ec_pubkey_create(context, &derived_public_key, secret_key.data) != 1)
 				return false;
 
-			size_t public_key_size = sizeof(pubkey);
-			return secp256k1_ec_pubkey_serialize(context, public_key, &public_key_size, &derived_public_key, SECP256K1_EC_COMPRESSED) == 1;
+			size_t public_key_size = sizeof(pubkey_t);
+			return secp256k1_ec_pubkey_serialize(context, public_key.data, &public_key_size, &derived_public_key, SECP256K1_EC_COMPRESSED) == 1;
 		}
-		void signing::derive_public_key_hash(const pubkey public_key, pubkeyhash public_key_hash)
+		void signing::derive_public_key_hash(const pubkey_t& public_key, pubkeyhash_t& public_key_hash)
 		{
-			VI_ASSERT(public_key != nullptr, "public key should be set");
-			VI_ASSERT(public_key_hash != nullptr, "public key hash should be set");
-			hashing::hash160(public_key, sizeof(pubkey), public_key_hash);
+			hashing::hash160(public_key.data, sizeof(pubkey_t), public_key_hash.data);
 		}
-		void signing::derive_cipher_keypair(const seckey secret_key, const uint256_t& nonce, seckey cipher_secret_key, pubkey cipher_public_key)
+		void signing::derive_cipher_keypair(const seckey_t& secret_key, const uint256_t& nonce, seckey_t& cipher_secret_key, pubkey_t& cipher_public_key)
 		{
-			VI_ASSERT(secret_key != nullptr, "secret key should be set");
-			VI_ASSERT(cipher_secret_key != nullptr, "cipher secret key should be set");
-			VI_ASSERT(cipher_public_key != nullptr, "cipher public key should be set");
 			format::wo_stream message;
-			message.write_typeless(secret_key, sizeof(seckey));
+			message.write_typeless(secret_key.data, sizeof(seckey_t));
 			message.write_typeless(nonce);
 
 			uint8_t seed[32];
 			encoding::decode_uint256(message.hash(), seed);
-			memset(cipher_public_key, 0, sizeof(pubkey));
-			crypto_box_seed_keypair(cipher_public_key, cipher_secret_key, seed);
+			memset(cipher_public_key.data, 0, sizeof(pubkey_t));
+			crypto_box_seed_keypair(cipher_public_key.data, cipher_secret_key.data, seed);
 		}
-		option<string> signing::public_encrypt(const pubkey cipher_public_key, const std::string_view& plaintext, const std::string_view& entropy)
+		option<string> signing::public_encrypt(const pubkey_t& cipher_public_key, const std::string_view& plaintext, const std::string_view& entropy)
 		{
-			VI_ASSERT(cipher_public_key != nullptr, "cipher public key should be set");
 			if (plaintext.empty())
 				return optional::none;
 
@@ -669,27 +653,25 @@ namespace tangent
 			crypto_generichash_state state;
 			crypto_generichash_init(&state, nullptr, 0, crypto_box_NONCEBYTES);
 			crypto_generichash_update(&state, ephemeral_public_key, crypto_box_PUBLICKEYBYTES);
-			crypto_generichash_update(&state, cipher_public_key, crypto_box_PUBLICKEYBYTES);
+			crypto_generichash_update(&state, cipher_public_key.data, crypto_box_PUBLICKEYBYTES);
 			crypto_generichash_final(&state, nonce, crypto_box_NONCEBYTES);
 
 			string ciphertext;
 			ciphertext.resize(crypto_box_SEALBYTES + body.size());
 			memcpy(ciphertext.data(), ephemeral_public_key, crypto_box_PUBLICKEYBYTES);
-			if (crypto_box_easy((uint8_t*)ciphertext.data() + crypto_box_PUBLICKEYBYTES, (uint8_t*)body.data(), body.size(), nonce, cipher_public_key, ephemeral_secret_key) != 0)
+			if (crypto_box_easy((uint8_t*)ciphertext.data() + crypto_box_PUBLICKEYBYTES, (uint8_t*)body.data(), body.size(), nonce, cipher_public_key.data, ephemeral_secret_key) != 0)
 				return optional::none;
 
 			return ciphertext;
 		}
-		option<string> signing::private_decrypt(const seckey cipher_secret_key, const pubkey cipher_public_key, const std::string_view& ciphertext)
+		option<string> signing::private_decrypt(const seckey_t& cipher_secret_key, const pubkey_t& cipher_public_key, const std::string_view& ciphertext)
 		{
-			VI_ASSERT(cipher_secret_key != nullptr, "cipher secret key should be set");
-			VI_ASSERT(cipher_public_key != nullptr, "cipher public key should be set");
 			if (ciphertext.size() <= crypto_box_SEALBYTES)
 				return optional::none;
 
 			string body;
 			body.resize(ciphertext.size() - crypto_box_SEALBYTES);
-			if (crypto_box_seal_open((uint8_t*)body.data(), (uint8_t*)ciphertext.data(), ciphertext.size(), cipher_public_key, cipher_secret_key) != 0)
+			if (crypto_box_seal_open((uint8_t*)body.data(), (uint8_t*)ciphertext.data(), ciphertext.size(), cipher_public_key.data, cipher_secret_key.data) != 0)
 				return optional::none;
 
 			if (body.size() < 96)
@@ -708,9 +690,8 @@ namespace tangent
 
 			return string(plaintext);
 		}
-		bool signing::decode_secret_key(const std::string_view& value, seckey secret_key)
+		bool signing::decode_secret_key(const std::string_view& value, seckey_t& secret_key)
 		{
-			VI_ASSERT(secret_key != nullptr && stringify::is_cstring(value), "secret key and value should be set");
 			auto& account = protocol::now().account;
 			uint8_t decoded[40];
 			size_t decoded_size = sizeof(decoded);
@@ -720,18 +701,17 @@ namespace tangent
 				return false;
 			else if (version != (int)account.secret_key_version)
 				return false;
-			else if (decoded_size != sizeof(seckey))
+			else if (decoded_size != sizeof(seckey_t))
 				return false;
 
-			memcpy(secret_key, decoded, sizeof(seckey));
+			memcpy(secret_key.data, decoded, sizeof(seckey_t));
 			return true;
 		}
-		bool signing::encode_secret_key(const seckey secret_key, string& value)
+		bool signing::encode_secret_key(const seckey_t& secret_key, string& value)
 		{
-			VI_ASSERT(secret_key != nullptr, "secret key should be set");
 			auto& account = protocol::now().account;
 			char encoded[128];
-			if (segwit::encode(encoded, account.secret_key_prefix.c_str(), (int)account.secret_key_version, secret_key, sizeof(seckey)) != 1)
+			if (segwit::encode(encoded, account.secret_key_prefix.c_str(), (int)account.secret_key_version, secret_key.data, sizeof(seckey_t)) != 1)
 				return false;
 
 			size_t size = strnlen(encoded, sizeof(encoded));
@@ -739,9 +719,8 @@ namespace tangent
 			memcpy(value.data(), encoded, size);
 			return true;
 		}
-		bool signing::decode_public_key(const std::string_view& value, pubkey public_key)
+		bool signing::decode_public_key(const std::string_view& value, pubkey_t& public_key)
 		{
-			VI_ASSERT(public_key != nullptr && stringify::is_cstring(value), "public key and value should be set");
 			auto& account = protocol::now().account;
 			uint8_t decoded[40];
 			size_t decoded_size = sizeof(decoded);
@@ -751,18 +730,17 @@ namespace tangent
 				return false;
 			else if (version != (int)account.public_key_version)
 				return false;
-			else if (decoded_size != sizeof(pubkey))
+			else if (decoded_size != sizeof(pubkey_t))
 				return false;
 
-			memcpy(public_key, decoded, sizeof(pubkey));
+			memcpy(public_key.data, decoded, sizeof(pubkey_t));
 			return true;
 		}
-		bool signing::encode_public_key(const pubkey public_key, string& value)
+		bool signing::encode_public_key(const pubkey_t& public_key, string& value)
 		{
-			VI_ASSERT(public_key != nullptr, "public key should be set");
 			auto& account = protocol::now().account;
 			char encoded[128];
-			if (segwit::encode(encoded, account.public_key_prefix.c_str(), (int)account.public_key_version, public_key, sizeof(pubkey)) != 1)
+			if (segwit::encode(encoded, account.public_key_prefix.c_str(), (int)account.public_key_version, public_key.data, sizeof(pubkey_t)) != 1)
 				return false;
 
 			size_t size = strnlen(encoded, sizeof(encoded));
@@ -770,18 +748,9 @@ namespace tangent
 			memcpy(value.data(), encoded, size);
 			return true;
 		}
-		bool signing::decode_address(const std::string_view& address, pubkeyhash public_key_hash)
+		bool signing::decode_address(const std::string_view& address, pubkeyhash_t& public_key_hash)
 		{
-			subpubkeyhash result;
-			if (!decode_subaddress(address, result))
-				return false;
-
-			memcpy(public_key_hash, result, sizeof(pubkeyhash));
-			return true;
-		}
-		bool signing::decode_subaddress(const std::string_view& address, subpubkeyhash sub_public_key_hash)
-		{
-			VI_ASSERT(sub_public_key_hash != nullptr && stringify::is_cstring(address), "public key hash, derivation hash and address should be set");
+			VI_ASSERT(stringify::is_cstring(address), "public key hash, derivation hash and address should be set");
 			auto& account = protocol::now().account;
 			uint8_t decoded[60];
 			size_t decoded_size = sizeof(decoded);
@@ -791,43 +760,17 @@ namespace tangent
 				return false;
 			else if (version != (int)account.address_version)
 				return false;
-			else if (decoded_size != sizeof(pubkeyhash) && decoded_size != sizeof(pubkeyhash) * 2)
+			else if (decoded_size != sizeof(pubkeyhash_t))
 				return false;
 
-			if (decoded_size == sizeof(pubkeyhash) * 2)
-			{
-				for (size_t i = 0; i < sizeof(pubkeyhash); i++)
-					decoded[i] ^= decoded[i + sizeof(pubkeyhash)];
-			}
-
-			memset(sub_public_key_hash, 0, sizeof(subpubkeyhash));
-			memcpy(sub_public_key_hash, decoded, decoded_size);
+			memcpy(public_key_hash.data, decoded, decoded_size);
 			return true;
 		}
-		bool signing::encode_address(const pubkeyhash public_key_hash, string& address)
+		bool signing::encode_address(const pubkeyhash_t& public_key_hash, string& address)
 		{
-			VI_ASSERT(public_key_hash != nullptr, "public key hash should be set");
-			subpubkeyhash result = { 0 };
-			memcpy(result, public_key_hash, sizeof(pubkeyhash));
-			return encode_subaddress(result, address);
-		}
-		bool signing::encode_subaddress(const subpubkeyhash sub_public_key_hash, string& address)
-		{
-			VI_ASSERT(sub_public_key_hash != nullptr, "sub public key hash should be set");
-			auto& account = protocol::now().account;
 			char encoded[128];
-			pubkeyhash null = { 0 };
-			if (memcmp(sub_public_key_hash + sizeof(pubkeyhash), null, sizeof(null)) != 0)
-			{
-				uint8_t data[sizeof(subpubkeyhash)];
-				memcpy(data, sub_public_key_hash, sizeof(subpubkeyhash));
-				for (size_t i = 0; i < sizeof(pubkeyhash); i++)
-					data[i] ^= sub_public_key_hash[i + sizeof(pubkeyhash)];
-
-				if (segwit::encode(encoded, account.address_prefix.c_str(), (int)account.address_version, data, sizeof(data)) != 1)
-					return false;
-			}
-			else if (segwit::encode(encoded, account.address_prefix.c_str(), (int)account.address_version, sub_public_key_hash, sizeof(pubkeyhash)) != 1)
+			auto& account = protocol::now().account;
+			if (segwit::encode(encoded, account.address_prefix.c_str(), (int)account.address_version, public_key_hash.data, sizeof(pubkeyhash_t)) != 1)
 				return false;
 
 			size_t size = strnlen(encoded, sizeof(encoded));
@@ -835,10 +778,9 @@ namespace tangent
 			memcpy(address.data(), encoded, size);
 			return true;
 		}
-		schema* signing::serialize_secret_key(const seckey secret_key)
+		schema* signing::serialize_secret_key(const seckey_t& secret_key)
 		{
-			seckey null = { 0 };
-			if (!memcmp(secret_key, null, sizeof(null)))
+			if (secret_key.empty())
 				return var::set::null();
 
 			string data;
@@ -847,10 +789,9 @@ namespace tangent
 
 			return var::set::string(data);
 		}
-		schema* signing::serialize_public_key(const pubkey public_key)
+		schema* signing::serialize_public_key(const pubkey_t& public_key)
 		{
-			pubkey null = { 0 };
-			if (!memcmp(public_key, null, sizeof(null)))
+			if (public_key.empty())
 				return var::set::null();
 
 			string data;
@@ -859,36 +800,16 @@ namespace tangent
 
 			return var::set::string(data);
 		}
-		schema* signing::serialize_address(const pubkeyhash public_key_hash)
+		schema* signing::serialize_address(const pubkeyhash_t& public_key_hash)
 		{
-			pubkeyhash derivation_hash = { 0 };
-			return serialize_subaddress(public_key_hash, derivation_hash);
-		}
-		schema* signing::serialize_subaddress(const subpubkeyhash sub_public_key_hash)
-		{
-			return serialize_subaddress(sub_public_key_hash, sub_public_key_hash + sizeof(pubkeyhash));
-		}
-		schema* signing::serialize_subaddress(const pubkeyhash public_key_hash, const pubkeyhash derivation_hash)
-		{
-			pubkeyhash null = { 0 };
-			if (!memcmp(public_key_hash, null, sizeof(null)))
+			if (public_key_hash.empty())
 				return var::set::null();
 
-			subpubkeyhash sub_public_key_hash;
-			memcpy(sub_public_key_hash, public_key_hash, sizeof(pubkeyhash));
-			memcpy(sub_public_key_hash + sizeof(pubkeyhash), derivation_hash, sizeof(pubkeyhash));
-
 			string data;
-			if (!encode_subaddress(sub_public_key_hash, data))
+			if (!encode_address(public_key_hash, data))
 				return var::set::null();
 
 			return var::set::string(data);
-		}
-		schema* signing::serialize_subaddress(const pubkeyhash public_key_hash, const std::string_view& derivation_data)
-		{
-			pubkeyhash derivation_hash;
-			hashing::hash160((uint8_t*)derivation_data.data(), derivation_data.size(), derivation_hash);
-			return serialize_subaddress(public_key_hash, derivation_hash);
 		}
 		secp256k1_context* signing::get_context()
 		{
@@ -1025,27 +946,6 @@ namespace tangent
 				return uint128_t(0);
 
 			return uint128_t(data[0] == '0' && data[1] == 'x' ? data.substr(2) : data, 16);
-		}
-		subpubkeyhash_t encoding::to_subaddress(const pubkeyhash public_key_hash, const pubkeyhash derivation_hash)
-		{
-			subpubkeyhash_t result = subpubkeyhash_t(public_key_hash, sizeof(pubkeyhash));
-			if (!result.empty() && derivation_hash != nullptr)
-				memcpy(result.data + sizeof(pubkeyhash), derivation_hash, sizeof(pubkeyhash));
-			return result;
-		}
-		subpubkeyhash_t encoding::to_subaddress(const pubkeyhash public_key_hash, const std::string_view& derivation_data)
-		{
-			pubkeyhash derivation_hash;
-			hashing::hash160((uint8_t*)derivation_data.data(), derivation_data.size(), derivation_hash);
-			return to_subaddress(public_key_hash, derivation_hash);
-		}
-		pubkeyhash_t encoding::to_address(const subpubkeyhash sub_public_key_hash)
-		{
-			return pubkeyhash_t(sub_public_key_hash);
-		}
-		pubkeyhash_t encoding::to_derivation(const subpubkeyhash sub_public_key_hash)
-		{
-			return pubkeyhash_t(sub_public_key_hash ? sub_public_key_hash + sizeof(algorithm::pubkeyhash) : nullptr);
 		}
 		uint32_t encoding::type_of(const std::string_view& name)
 		{
@@ -1313,25 +1213,25 @@ namespace tangent
 			VI_ASSERT(result != nullptr, "result should be set");
 			uint8_t seed_buffer[32];
 			encoding::decode_uint256(seed, seed_buffer);
-			hashing::hash512(seed_buffer, sizeof(seed_buffer), result->secret_key);
-			memset(result->public_key, 0, sizeof(cpubkey));
+			hashing::hash512(seed_buffer, sizeof(seed_buffer), result->secret_key.data);
+			memset(result->public_key.data, 0, sizeof(cpubkey_t));
 			switch (alg)
 			{
 				case type::ed25519:
 				{
-					keypair_utils::convert_to_scalar_ed25519(result->secret_key, result->secret_key);
-					ed25519_publickey_ext(result->secret_key, result->public_key);
-					memset(result->secret_key + 32, 0, 32);
-					memset(result->public_key + 32, 0, 32);
+					keypair_utils::convert_to_scalar_ed25519(result->secret_key.data, result->secret_key.data);
+					ed25519_publickey_ext(result->secret_key.data, result->public_key.data);
+					memset(result->secret_key.data + 32, 0, 32);
+					memset(result->public_key.data + 32, 0, 32);
 					return expectation::met;
 				}
 				case type::ed25519_clsag:
 				{
-					keypair_utils::convert_to_scalar_ed25519(result->secret_key, result->secret_key);
-					sc_reduce32(result->secret_key);
-					ed25519_publickey_ext(result->secret_key, result->public_key);
-					memset(result->secret_key + 32, 0, 32);
-					memset(result->public_key + 32, 0, 32);
+					keypair_utils::convert_to_scalar_ed25519(result->secret_key.data, result->secret_key.data);
+					sc_reduce32(result->secret_key.data);
+					ed25519_publickey_ext(result->secret_key.data, result->public_key.data);
+					memset(result->secret_key.data + 32, 0, 32);
+					memset(result->public_key.data + 32, 0, 32);
 					return expectation::met;
 				}
 				case type::secp256k1:
@@ -1340,11 +1240,11 @@ namespace tangent
 				{
 					secp256k1_context* context = signing::get_context();
 					secp256k1_pubkey extended_public_key;
-					while (secp256k1_ec_seckey_verify(context, result->secret_key) != 1 || secp256k1_ec_pubkey_create(context, &extended_public_key, result->secret_key) != 1)
-						hashing::hash512(result->secret_key, sizeof(cseckey), result->secret_key);
+					while (secp256k1_ec_seckey_verify(context, result->secret_key.data) != 1 || secp256k1_ec_pubkey_create(context, &extended_public_key, result->secret_key.data) != 1)
+						hashing::hash512(result->secret_key.data, sizeof(cseckey_t), result->secret_key.data);
 
 					size_t key_size = sizeof(extended_public_key);
-					if (secp256k1_ec_pubkey_serialize(context, result->public_key, &key_size, &extended_public_key, SECP256K1_EC_COMPRESSED) != 1)
+					if (secp256k1_ec_pubkey_serialize(context, result->public_key.data, &key_size, &extended_public_key, SECP256K1_EC_COMPRESSED) != 1)
 						return layer_exception("bad seed");
 
 					return expectation::met;
@@ -1353,10 +1253,9 @@ namespace tangent
 					return layer_exception("invalid composition algorithm");
 			}
 		}
-		expects_lr<void> composition::accumulate_secret_key(type alg, const cseckey share_secret_key, cseckey inout)
+		expects_lr<void> composition::accumulate_secret_key(type alg, const cseckey_t& share_secret_key, cseckey_t& inout)
 		{
-			VI_ASSERT(inout != nullptr, "inout secret key should be set");
-			const auto condition = stage_of(share_secret_key, inout, sizeof(cseckey));
+			const auto condition = stage_of(share_secret_key, inout.data, sizeof(cseckey_t));
 			switch (alg)
 			{
 				case type::ed25519:
@@ -1366,12 +1265,12 @@ namespace tangent
 					{
 						case stage::configure:
 						{
-							memcpy(inout, share_secret_key, sizeof(cseckey));
+							memcpy(inout.data, share_secret_key.data, sizeof(cseckey_t));
 							return expectation::met;
 						}
 						case stage::accumulate:
 						{
-							crypto_core_ed25519_scalar_mul(inout, inout, share_secret_key);
+							crypto_core_ed25519_scalar_mul(inout.data, inout.data, share_secret_key.data);
 							return expectation::met;
 						}
 						case stage::finalize:
@@ -1388,13 +1287,13 @@ namespace tangent
 					{
 						case stage::configure:
 						{
-							memcpy(inout, share_secret_key, sizeof(cseckey));
+							memcpy(inout.data, share_secret_key.data, sizeof(cseckey_t));
 							return expectation::met;
 						}
 						case stage::accumulate:
 						{
 							secp256k1_context* context = signing::get_context();
-							if (secp256k1_ec_seckey_tweak_mul(context, inout, share_secret_key) != 1)
+							if (secp256k1_ec_seckey_tweak_mul(context, inout.data, share_secret_key.data) != 1)
 								return layer_exception("bad share secret key");
 
 							return expectation::met;
@@ -1409,10 +1308,9 @@ namespace tangent
 					return layer_exception("invalid composition algorithm");
 			}
 		}
-		expects_lr<void> composition::accumulate_public_key(type alg, const cseckey share_secret_key, cpubkey inout)
+		expects_lr<void> composition::accumulate_public_key(type alg, const cseckey_t& share_secret_key, cpubkey_t& inout)
 		{
-			VI_ASSERT(inout != nullptr, "inout public key should be set");
-			const auto condition = stage_of(share_secret_key, inout, sizeof(cpubkey));
+			const auto condition = stage_of(share_secret_key, inout.data, sizeof(cpubkey_t));
 			switch (alg)
 			{
 				case type::ed25519:
@@ -1422,12 +1320,12 @@ namespace tangent
 					{
 						case stage::configure:
 						{
-							ed25519_publickey_ext(share_secret_key, inout);
+							ed25519_publickey_ext(share_secret_key.data, inout.data);
 							return expectation::met;
 						}
 						case stage::accumulate:
 						{
-							if (crypto_scalarmult_ed25519(inout, share_secret_key, inout) != 0)
+							if (crypto_scalarmult_ed25519(inout.data, share_secret_key.data, inout.data) != 0)
 								return layer_exception("bad share secret key");
 
 							return expectation::met;
@@ -1446,25 +1344,25 @@ namespace tangent
 					{
 						case stage::configure:
 						{
-							if (secp256k1_ec_pubkey_create(context, &result_public_key, share_secret_key) != 1)
+							if (secp256k1_ec_pubkey_create(context, &result_public_key, share_secret_key.data) != 1)
 								return layer_exception("bad share secret key");
 
 							size_t key_size = sizeof(result_public_key);
-							if (secp256k1_ec_pubkey_serialize(context, inout, &key_size, &result_public_key, SECP256K1_EC_COMPRESSED) != 1)
+							if (secp256k1_ec_pubkey_serialize(context, inout.data, &key_size, &result_public_key, SECP256K1_EC_COMPRESSED) != 1)
 								return layer_exception("bad share secret key");
 
 							return expectation::met;
 						}
 						case stage::accumulate:
 						{
-							if (secp256k1_ec_pubkey_parse(context, &result_public_key, inout, size_of_public_key(alg, stage::accumulate)) != 1)
+							if (secp256k1_ec_pubkey_parse(context, &result_public_key, inout.data, size_of_public_key(alg, stage::accumulate)) != 1)
 								return layer_exception("bad intermediate public key");
 
-							if (secp256k1_ec_pubkey_tweak_mul(context, &result_public_key, share_secret_key) != 1)
+							if (secp256k1_ec_pubkey_tweak_mul(context, &result_public_key, share_secret_key.data) != 1)
 								return layer_exception("bad share secret key");
 
 							size_t key_size = sizeof(result_public_key);
-							if (secp256k1_ec_pubkey_serialize(context, inout, &key_size, &result_public_key, SECP256K1_EC_COMPRESSED) != 1)
+							if (secp256k1_ec_pubkey_serialize(context, inout.data, &key_size, &result_public_key, SECP256K1_EC_COMPRESSED) != 1)
 								return layer_exception("bad share secret key");
 
 							return expectation::met;
@@ -1484,42 +1382,42 @@ namespace tangent
 					{
 						case stage::configure:
 						{
-							if (secp256k1_ec_pubkey_create(context, &result_public_key, share_secret_key) != 1)
+							if (secp256k1_ec_pubkey_create(context, &result_public_key, share_secret_key.data) != 1)
 								return layer_exception("bad share secret key");
 
 							size_t key_size = sizeof(result_public_key);
-							if (secp256k1_ec_pubkey_serialize(context, inout, &key_size, &result_public_key, SECP256K1_EC_COMPRESSED) != 1)
+							if (secp256k1_ec_pubkey_serialize(context, inout.data, &key_size, &result_public_key, SECP256K1_EC_COMPRESSED) != 1)
 								return layer_exception("bad share secret key");
 
 							return expectation::met;
 						}
 						case stage::accumulate:
 						{
-							if (secp256k1_ec_pubkey_parse(context, &result_public_key, inout, size_of_public_key(type::secp256k1, stage::accumulate)) != 1)
+							if (secp256k1_ec_pubkey_parse(context, &result_public_key, inout.data, size_of_public_key(type::secp256k1, stage::accumulate)) != 1)
 								return layer_exception("bad intermediate public key");
 							
-							if (secp256k1_ec_pubkey_tweak_mul(context, &result_public_key, share_secret_key) != 1)
+							if (secp256k1_ec_pubkey_tweak_mul(context, &result_public_key, share_secret_key.data) != 1)
 								return layer_exception("bad share secret key");
 
 							size_t key_size = sizeof(result_public_key);
-							if (secp256k1_ec_pubkey_serialize(context, inout, &key_size, &result_public_key, SECP256K1_EC_COMPRESSED) != 1)
+							if (secp256k1_ec_pubkey_serialize(context, inout.data, &key_size, &result_public_key, SECP256K1_EC_COMPRESSED) != 1)
 								return layer_exception("bad share secret key");
 
 							return expectation::met;
 						}
 						case stage::finalize:
 						{
-							if (secp256k1_ec_pubkey_parse(context, &result_public_key, inout, size_of_public_key(type::secp256k1, stage::accumulate)) != 1)
+							if (secp256k1_ec_pubkey_parse(context, &result_public_key, inout.data, size_of_public_key(type::secp256k1, stage::accumulate)) != 1)
 								return layer_exception("bad intermediate public key");
 
 							secp256k1_xonly_pubkey result_xonly_public_key;
 							if (secp256k1_xonly_pubkey_from_pubkey(context, &result_xonly_public_key, nullptr, &result_public_key) != 1)
 								return layer_exception("bad share secret key");
 
-							if (secp256k1_xonly_pubkey_serialize(context, inout, &result_xonly_public_key) != 1)
+							if (secp256k1_xonly_pubkey_serialize(context, inout.data, &result_xonly_public_key) != 1)
 								return layer_exception("bad share secret key");
 
-							inout[32] = 0;
+							inout.data[32] = 0;
 							return expectation::met;
 						}
 						default:
@@ -1530,12 +1428,10 @@ namespace tangent
 					return layer_exception("invalid composition algorithm");
 			}
 		}
-		expects_lr<void> composition::accumulate_signature(type alg, const uint8_t* message, size_t message_size, const cpubkey final_public_key, const cseckey share_secret_key, cpubsig inout)
+		expects_lr<void> composition::accumulate_signature(type alg, const uint8_t* message, size_t message_size, const cpubkey_t& final_public_key, const cseckey_t& share_secret_key, chashsig_t& inout)
 		{
-			VI_ASSERT(final_public_key != nullptr, "final public key should be set");
-			VI_ASSERT(inout != nullptr, "inout signature should be set");
 			VI_ASSERT(message != nullptr, "message should be set");
-			const auto condition = stage_of(share_secret_key, inout, sizeof(cpubsig));
+			const auto condition = stage_of(share_secret_key, inout.data, sizeof(chashsig_t));
 			switch (alg)
 			{
 				case type::ed25519:
@@ -1551,7 +1447,7 @@ namespace tangent
 							uint8_t nonce[64];
 							crypto_hash_sha512_state hash;
 							crypto_hash_sha512_init(&hash);
-							crypto_hash_sha512_update(&hash, final_public_key, size_of_public_key(alg, stage::finalize));
+							crypto_hash_sha512_update(&hash, final_public_key.data, size_of_public_key(alg, stage::finalize));
 							crypto_hash_sha512_update(&hash, message, message_size);
 							if (!bn_is_zero(&a))
 							{
@@ -1574,28 +1470,28 @@ namespace tangent
 								uint8_t hram[64];
 								crypto_hash_sha512_init(&hash);
 								crypto_hash_sha512_update(&hash, r, sizeof(r));
-								crypto_hash_sha512_update(&hash, final_public_key, size_of_public_key(alg, stage::finalize));
+								crypto_hash_sha512_update(&hash, final_public_key.data, size_of_public_key(alg, stage::finalize));
 								crypto_hash_sha512_update(&hash, message, message_size);
 								crypto_hash_sha512_final(&hash, hram);
 								crypto_core_ed25519_scalar_reduce(hram, hram);
-								crypto_core_ed25519_scalar_mul(inout, hram, share_secret_key);
+								crypto_core_ed25519_scalar_mul(inout.data, hram, share_secret_key.data);
 								return expectation::met;
 							}
 
 							uint8_t s[crypto_core_ed25519_SCALARBYTES];
-							crypto_core_ed25519_scalar_add(s, inout, nonce);
+							crypto_core_ed25519_scalar_add(s, inout.data, nonce);
 							if (!memcmp(zero, s, sizeof(s)))
 								return layer_exception("bad final signature");
 
-							memcpy(inout, r, sizeof(r));
-							memcpy(inout + sizeof(r), s, sizeof(s));
+							memcpy(inout.data, r, sizeof(r));
+							memcpy(inout.data + sizeof(r), s, sizeof(s));
 							return verify_signature(alg, message, message_size, final_public_key, inout);
 						}
 						case stage::accumulate:
 						{
 							uint8_t zero[crypto_core_ed25519_SCALARBYTES] = { 0 };
-							crypto_core_ed25519_scalar_mul(inout, inout, share_secret_key);
-							if (!memcmp(inout, zero, sizeof(zero)))
+							crypto_core_ed25519_scalar_mul(inout.data, inout.data, share_secret_key.data);
+							if (!memcmp(inout.data, zero, sizeof(zero)))
 								return layer_exception("bad share secret key");
 
 							return expectation::met;
@@ -1607,7 +1503,7 @@ namespace tangent
 				case type::ed25519_clsag:
 				{
 					/* Not implemented yet */
-					memset(inout, 0xcc, sizeof(cpubkey));
+					memset(inout.data, 0xcc, sizeof(cpubkey_t));
 					return expectation::met;
 				}
 				case type::secp256k1:
@@ -1625,7 +1521,7 @@ namespace tangent
 								memcpy(message_hash, message, sizeof(message_hash));
 
 							uint8_t ask[32], nonce[32]; uint32_t attempt = 0;
-							sha256_Raw(final_public_key, size_of_public_key(alg, stage::finalize), ask);
+							sha256_Raw(final_public_key.data, size_of_public_key(alg, stage::finalize), ask);
 						retry_secp256k1:
 							secp256k1_nonce_function_rfc6979(nonce, message_hash, ask, nullptr, nullptr, attempt);
 
@@ -1645,9 +1541,9 @@ namespace tangent
 							if (condition == stage::configure)
 							{
 								bignum256 s;
-								bn_read_be(share_secret_key, &s);
+								bn_read_be(share_secret_key.data, &s);
 								bn_multiply(&r.x, &s, &curve->order);
-								bn_write_be(&s, inout);
+								bn_write_be(&s, inout.data);
 								return expectation::met;
 							}
 
@@ -1657,7 +1553,7 @@ namespace tangent
 								return layer_exception("bad message");
 
 							bignum256 s;
-							bn_read_be(inout, &s);
+							bn_read_be(inout.data, &s);
 							bn_inverse(&k, &curve->order);
 							bn_addmod(&s, &z, &curve->order);
 							bn_multiply(&k, &s, &curve->order);
@@ -1667,12 +1563,12 @@ namespace tangent
 								bn_subtract(&curve->order, &s, &s);
 
 							auto* context = signing::get_context();
-							bn_write_be(&r.x, inout);
-							bn_write_be(&s, inout + 32);
+							bn_write_be(&r.x, inout.data);
+							bn_write_be(&s, inout.data + 32);
 							for (uint8_t recovery_id = 0; recovery_id < 4; recovery_id++)
 							{
 								secp256k1_ecdsa_recoverable_signature recoverable_signature;
-								if (secp256k1_ecdsa_recoverable_signature_parse_compact(context, &recoverable_signature, inout, recovery_id))
+								if (secp256k1_ecdsa_recoverable_signature_parse_compact(context, &recoverable_signature, inout.data, recovery_id))
 								{
 									secp256k1_pubkey recovered_public_key;
 									if (secp256k1_ecdsa_recover(context, &recovered_public_key, &recoverable_signature, message_hash) == 1)
@@ -1680,9 +1576,9 @@ namespace tangent
 										uint8_t public_key[33]; size_t public_key_size = sizeof(public_key);
 										if (secp256k1_ec_pubkey_serialize(context, public_key, &public_key_size, &recovered_public_key, SECP256K1_EC_COMPRESSED) == 1)
 										{
-											if (!memcmp(final_public_key, public_key, public_key_size))
+											if (!memcmp(final_public_key.data, public_key, public_key_size))
 											{
-												inout[sizeof(cpubsig) - 1] = recovery_id;
+												inout.data[sizeof(chashsig_t) - 1] = recovery_id;
 												return verify_signature(alg, message, message_size, final_public_key, inout);
 											}
 										}
@@ -1695,13 +1591,13 @@ namespace tangent
 						case stage::accumulate:
 						{
 							bignum256 s, p;
-							bn_read_be(inout, &s);
-							bn_read_be(share_secret_key, &p);
+							bn_read_be(inout.data, &s);
+							bn_read_be(share_secret_key.data, &p);
 							bn_multiply(&p, &s, &curve->order);
 							if (bn_is_zero(&s))
 								return layer_exception("bad share secret key");
 
-							bn_write_be(&s, inout);
+							bn_write_be(&s, inout.data);
 							return expectation::met;
 						}
 						default:
@@ -1726,13 +1622,13 @@ namespace tangent
 
 							uint8_t bip340_algo[] = "BIP0340/nonce";
 							uint8_t ask[32], nonce[32], anonce[32];
-							sha256_Raw(final_public_key, public_key_size, ask);
+							sha256_Raw(final_public_key.data, public_key_size, ask);
 
 							bignum256 a;
 							bn_read_uint32(0, &a);
 						retry_schnorr:
 							bn_write_be(&a, anonce);
-							secp256k1_nonce_function_bip340(nonce, message_hash, sizeof(message_hash), ask, final_public_key, bip340_algo, sizeof(bip340_algo) - 1, anonce);
+							secp256k1_nonce_function_bip340(nonce, message_hash, sizeof(message_hash), ask, final_public_key.data, bip340_algo, sizeof(bip340_algo) - 1, anonce);
 
 							bignum256 k = { 0 };
 							curve_point r = { 0 };
@@ -1750,7 +1646,7 @@ namespace tangent
 
 							uint8_t e_data[96], e_hash[32];
 							bn_write_be(&r.x, e_data);
-							memcpy(e_data + 32, final_public_key, public_key_size);
+							memcpy(e_data + 32, final_public_key.data, public_key_size);
 							memcpy(e_data + 64, message_hash, sizeof(message_hash));
 
 							uint8_t bip340_challenge[] = "BIP0340/challenge";
@@ -1767,18 +1663,18 @@ namespace tangent
 							if (condition == stage::configure)
 							{
 								bignum256 s;
-								bn_read_be(share_secret_key, &s);
+								bn_read_be(share_secret_key.data, &s);
 								bn_multiply(&e, &s, &curve->order);
-								bn_write_be(&s, inout);
+								bn_write_be(&s, inout.data);
 								return expectation::met;
 							}
 							
 							bignum256 s;
-							bn_read_be(inout, &s);
+							bn_read_be(inout.data, &s);
 							if (alg == type::schnorr_taproot)
 							{
 								bignum256 t;
-								bn_read_be(final_public_key + 32, &t);
+								bn_read_be(final_public_key.data + 32, &t);
 
 								bool is_taproot = !bn_is_zero(&t);
 								if (is_taproot)
@@ -1790,7 +1686,7 @@ namespace tangent
 								}
 							}
 
-							bool is_odd = final_public_key[32];
+							bool is_odd = final_public_key.data[32];
 							if (is_odd)
 							{
 								bn_multiply(&curve->order, &e, &curve->order);
@@ -1801,20 +1697,20 @@ namespace tangent
 							if (bn_is_zero(&s))
 								return layer_exception("bad final signature");
 
-							bn_write_be(&r.x, inout);
-							bn_write_be(&s, inout + 32);
+							bn_write_be(&r.x, inout.data);
+							bn_write_be(&s, inout.data + 32);
 							return verify_signature(alg, message, message_size, final_public_key, inout);
 						}
 						case stage::accumulate:
 						{
 							bignum256 s, p;
-							bn_read_be(inout, &s);
-							bn_read_be(share_secret_key, &p);
+							bn_read_be(inout.data, &s);
+							bn_read_be(share_secret_key.data, &p);
 							bn_multiply(&p, &s, &curve->order);
 							if (bn_is_zero(&s))
 								return layer_exception("bad share secret key");
 
-							bn_write_be(&s, inout);
+							bn_write_be(&s, inout.data);
 							return expectation::met;
 						}
 						default:
@@ -1827,16 +1723,14 @@ namespace tangent
 					return layer_exception("invalid composition algorithm");
 			}
 		}
-		expects_lr<void> composition::verify_signature(type alg, const uint8_t* message, size_t message_size, const cpubkey final_public_key, const cpubsig final_signature)
+		expects_lr<void> composition::verify_signature(type alg, const uint8_t* message, size_t message_size, const cpubkey_t& final_public_key, const chashsig_t& final_signature)
 		{
-			VI_ASSERT(final_public_key != nullptr, "final public key should be set");
-			VI_ASSERT(final_signature != nullptr, "final signature should be set");
 			VI_ASSERT(message != nullptr, "message should be set");
 			switch (alg)
 			{
 				case type::ed25519:
 				{
-					if (crypto_sign_verify_detached(final_signature, message, message_size, final_public_key) != 0)
+					if (crypto_sign_verify_detached(final_signature.data, message, message_size, final_public_key.data) != 0)
 						return layer_exception("final signature verification failed");
 
 					return expectation::met;
@@ -1858,9 +1752,9 @@ namespace tangent
 					secp256k1_pubkey final_public_key_ext;
 					secp256k1_ecdsa_signature compact_signature;
 					secp256k1_ecdsa_signature normalized_signature;
-					secp256k1_ecdsa_signature_parse_compact(context, &compact_signature, final_signature);
+					secp256k1_ecdsa_signature_parse_compact(context, &compact_signature, final_signature.data);
 					secp256k1_ecdsa_signature_normalize(context, &normalized_signature, &compact_signature);
-					if (secp256k1_ec_pubkey_parse(context, &final_public_key_ext, final_public_key, sizeof(pubkey)) == 1)
+					if (secp256k1_ec_pubkey_parse(context, &final_public_key_ext, final_public_key.data, sizeof(pubkey_t)) == 1)
 					{
 						if (secp256k1_ecdsa_verify(context, &normalized_signature, message_hash, &final_public_key_ext) == 1)
 							return expectation::met;
@@ -1879,10 +1773,10 @@ namespace tangent
 
 					secp256k1_context* context = signing::get_context();
 					secp256k1_xonly_pubkey final_public_key_ext;
-					if (secp256k1_xonly_pubkey_parse(context, &final_public_key_ext, final_public_key) != 1)
+					if (secp256k1_xonly_pubkey_parse(context, &final_public_key_ext, final_public_key.data) != 1)
                         return layer_exception("final public key parsing failed");
                         
-					if (secp256k1_schnorrsig_verify(context, final_signature, message_hash, sizeof(message_hash), &final_public_key_ext) != 1)
+					if (secp256k1_schnorrsig_verify(context, final_signature.data, message_hash, sizeof(message_hash), &final_public_key_ext) != 1)
 						return layer_exception("final signature verification failed");
 
 					return expectation::met;
@@ -1891,9 +1785,9 @@ namespace tangent
 					return layer_exception("invalid composition algorithm");
 			}
 		}
-		composition::stage composition::stage_of(const uint8_t* share_secret_key, const uint8_t* inout, size_t inout_size)
+		composition::stage composition::stage_of(const cseckey_t& share_secret_key, const uint8_t* inout, size_t inout_size)
 		{
-			if (!share_secret_key)
+			if (share_secret_key.empty())
 				return stage::finalize;
 
 			uint8_t null[96] = { 0 };

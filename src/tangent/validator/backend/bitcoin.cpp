@@ -941,7 +941,7 @@ namespace tangent
 				stack.amounts = context.values.data();
 
 				auto type = (btc_tx_out_type)context.types[index];
-				auto status = btc_tx_finalize_input(context.state, output.signature, algorithm::composition::size_of_signature(output.alg), &public_key, get_sig_hash_type(), type, &stack, (uint32_t)index);
+				auto status = btc_tx_finalize_input(context.state, output.signature.data, algorithm::composition::size_of_signature(output.alg), &public_key, get_sig_hash_type(), type, &stack, (uint32_t)index);
 				if (status != BTC_SIGN_FINALIZE_OK)
 					return layer_exception(btc_tx_sign_result_to_str(status));
 

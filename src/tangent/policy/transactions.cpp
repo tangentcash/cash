@@ -28,7 +28,7 @@ namespace tangent
 
 			for (auto& [owner, value] : to)
 			{
-				if (memcmp(context->receipt.from, owner.data, sizeof(algorithm::pubkeyhash)) == 0)
+				if (context->receipt.from == algorithm::pubkeyhash_t(owner.data))
 					return layer_exception("invalid payment");
 
 				auto payment = context->apply_payment(asset, context->receipt.from, owner.data, value);
@@ -41,7 +41,6 @@ namespace tangent
 		bool transfer::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			algorithm::pubkeyhash null = { 0 };
 			if (to.size() > 1)
 			{
 				stream->write_integer((uint16_t)to.size());
@@ -66,7 +65,7 @@ namespace tangent
 			if (format::util::is_string(type))
 			{
 				string owner_assembly;
-				algorithm::subpubkeyhash_t owner;
+				algorithm::pubkeyhash_t owner;
 				if (!stream.read_string(type, &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner.data, sizeof(owner.data)))
 					return false;
 
@@ -88,7 +87,7 @@ namespace tangent
 				for (uint16_t i = 0; i < transfers_size; i++)
 				{
 					string owner_assembly;
-					algorithm::subpubkeyhash_t owner;
+					algorithm::pubkeyhash_t owner;
 					if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner.data, sizeof(owner.data)))
 						return false;
 
@@ -108,18 +107,9 @@ namespace tangent
 				parties.insert(algorithm::pubkeyhash_t(owner.data));
 			return true;
 		}
-		void transfer::set_to(const algorithm::subpubkeyhash_t& new_to, const decimal& new_value)
+		void transfer::set_to(const algorithm::pubkeyhash_t& new_to, const decimal& new_value)
 		{
 			to.push_back(std::make_pair(new_to, new_value));
-		}
-		bool transfer::is_to_null() const
-		{
-			for (auto& [owner, value] : to)
-			{
-				if (owner.empty())
-					return true;
-			}
-			return to.empty();
 		}
 		uptr<schema> transfer::as_schema() const
 		{
@@ -128,7 +118,7 @@ namespace tangent
 			for (auto& [owner, value] : to)
 			{
 				auto* transfer_data = transfers_data->push(var::set::object());
-				transfer_data->set("to", algorithm::signing::serialize_subaddress(owner.data));
+				transfer_data->set("to", algorithm::signing::serialize_address(owner.data));
 				transfer_data->set("value", var::decimal(value));
 			}
 			return data;
@@ -283,7 +273,7 @@ namespace tangent
 		bool upgrade::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
 		{
 			const format::variables* event = receipt.find_event<states::account_program>();
-			if (event != nullptr && !event->empty() && event->at(0).as_string().size() == sizeof(algorithm::pubkeyhash))
+			if (event != nullptr && !event->empty() && event->at(0).as_string().size() == sizeof(algorithm::pubkeyhash_t))
 				parties.insert(algorithm::pubkeyhash_t(event->at(0).as_string()));
 
 			size_t offset = 0;
@@ -291,11 +281,11 @@ namespace tangent
 			while (event != nullptr)
 			{
 				auto from = event->size() > 1 ? event->at(1).as_string() : std::string_view();
-				if (from.size() == sizeof(algorithm::pubkeyhash))
+				if (from.size() == sizeof(algorithm::pubkeyhash_t))
 					parties.insert(algorithm::pubkeyhash_t(from));
 
 				auto to = event->size() > 2 ? event->at(2).as_string() : std::string_view();
-				if (to.size() == sizeof(algorithm::pubkeyhash))
+				if (to.size() == sizeof(algorithm::pubkeyhash_t))
 					parties.insert(algorithm::pubkeyhash_t(to));
 
 				event = receipt.find_event<states::account_balance>(++offset);
@@ -316,11 +306,10 @@ namespace tangent
 			data.assign(1, (char)data_type::hashcode);
 			data.append(new_data.substr(0, 64));
 		}
-		algorithm::pubkeyhash_t upgrade::get_account(const algorithm::pubkeyhash from) const
+		algorithm::pubkeyhash_t upgrade::get_account(const algorithm::pubkeyhash_t& from) const
 		{
-			VI_ASSERT(from != nullptr, "from should be set");
 			auto message = as_message();
-			message.write_typeless(from, sizeof(algorithm::pubkeyhash));
+			message.write_typeless(from.data, sizeof(algorithm::pubkeyhash_t));
 
 			algorithm::pubkeyhash_t account;
 			algorithm::hashing::hash160((uint8_t*)message.data.data(), message.data.size(), account.data);
@@ -429,7 +418,7 @@ namespace tangent
 
 			if (value.is_positive())
 			{
-				if (memcmp(context->receipt.from, callable, sizeof(algorithm::pubkeyhash)) == 0)
+				if (context->receipt.from == callable)
 					return layer_exception("invalid payment");
 
 				auto payment = context->apply_payment(asset, context->receipt.from, callable, value);
@@ -445,7 +434,7 @@ namespace tangent
 		bool call::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_string(algorithm::subpubkeyhash_t(callable).optimized_view());
+			stream->write_string(callable.optimized_view());
 			stream->write_string(function);
 			stream->write_decimal(value);
 			return format::variables_util::serialize_merge_into(args, stream);
@@ -453,7 +442,7 @@ namespace tangent
 		bool call::load_body(format::ro_stream& stream)
 		{
 			string callable_assembly;
-			if (!stream.read_string(stream.read_type(), &callable_assembly) || !algorithm::encoding::decode_uint_blob(callable_assembly, callable, sizeof(callable)))
+			if (!stream.read_string(stream.read_type(), &callable_assembly) || !algorithm::encoding::decode_uint_blob(callable_assembly, callable.data, sizeof(callable)))
 				return false;
 
 			if (!stream.read_string(stream.read_type(), &function))
@@ -472,11 +461,11 @@ namespace tangent
 			while (event != nullptr)
 			{
 				auto from = event->size() > 1 ? event->at(1).as_string() : std::string_view();
-				if (from.size() == sizeof(algorithm::pubkeyhash))
+				if (from.size() == sizeof(algorithm::pubkeyhash_t))
 					parties.insert(algorithm::pubkeyhash_t(from));
 
 				auto to = event->size() > 2 ? event->at(2).as_string() : std::string_view();
-				if (to.size() == sizeof(algorithm::pubkeyhash))
+				if (to.size() == sizeof(algorithm::pubkeyhash_t))
 					parties.insert(algorithm::pubkeyhash_t(to));
 
 				event = receipt.find_event<states::account_balance>(++offset);
@@ -485,22 +474,17 @@ namespace tangent
 			parties.insert(algorithm::pubkeyhash_t(callable));
 			return true;
 		}
-		void call::program_call(const algorithm::subpubkeyhash_t& new_callable, const decimal& new_value, const std::string_view& new_function, format::variables&& new_args)
+		void call::program_call(const algorithm::pubkeyhash_t& new_callable, const decimal& new_value, const std::string_view& new_function, format::variables&& new_args)
 		{
 			args = std::move(new_args);
 			function = new_function;
 			value = new_value;
-			memcpy(callable, new_callable.data, sizeof(algorithm::subpubkeyhash));
-		}
-		bool call::is_callable_null() const
-		{
-			algorithm::subpubkeyhash null = { 0 };
-			return memcmp(callable, null, sizeof(null)) == 0;
+			callable = new_callable;
 		}
 		uptr<schema> call::as_schema() const
 		{
 			schema* data = ledger::transaction::as_schema().reset();
-			data->set("callable", algorithm::signing::serialize_subaddress(callable));
+			data->set("callable", algorithm::signing::serialize_address(callable));
 			data->set("value", var::decimal(value));
 			data->set("function", var::string(function));
 			data->set("args", format::variables_util::serialize(args));
@@ -582,13 +566,13 @@ namespace tangent
 						return layer_exception("invalid sub-transaction data");
 
 					uint64_t transaction_nonce = transaction->nonce;
-					uint8_t transaction_code = transaction->signature[0];
+					uint8_t transaction_code = transaction->signature.data[0];
 					uint256_t transaction_hash = transaction->as_hash();
 					reference->gas_price = decimal::zero();
 					reference->nonce = 1;
-					reference->signature[0] = 0xFF;
+					reference->signature.data[0] = 0xFF;
 					auto validation = transaction->validate(block_number);
-					reference->signature[0] = transaction_code;
+					reference->signature.data[0] = transaction_code;
 					reference->nonce = transaction_nonce;
 					reference->gas_price = decimal::nan();
 					if (!validation)
@@ -613,7 +597,7 @@ namespace tangent
 					queue.push_back(std::make_pair(*transaction, index++));
 			}
 
-			algorithm::pubkeyhash null = { 0 }, owner = { 0 };
+			algorithm::pubkeyhash_t owner;
 			uint256_t absolute_gas_limit = context->block->gas_limit;
 			uint256_t absolute_gas_use = context->block->gas_use;
 			uint256_t relative_gas_use = context->receipt.relative_gas_use;
@@ -624,23 +608,23 @@ namespace tangent
 
 			for (auto& [transaction, index] : queue)
 			{
-				bool internal_transaction = transaction->is_signature_null();
+				bool internal_transaction = transaction->signature.empty();
 				uint64_t transaction_nonce = transaction->nonce;
-				uint8_t transaction_code = transaction->signature[0];
+				uint8_t transaction_code = transaction->signature.data[0];
 				uint8_t execution_flags = (uint8_t)ledger::transaction_context::execution_mode::pedantic;
 				if (internal_transaction)
 				{
 					transaction->nonce = nonce;
-					transaction->signature[0] = 0xFF;
+					transaction->signature.data[0] = 0xFF;
 					execution_flags |= (uint8_t)ledger::transaction_context::execution_mode::replayable;
-					memcpy(owner, context->receipt.from, sizeof(context->receipt.from));
+					owner = context->receipt.from;
 				}
-				else if (!transaction->recover_hash(owner) || !memcmp(owner, null, sizeof(null)))
+				else if (!transaction->recover_hash(owner) || owner.empty())
 					return layer_exception("sub-transaction " + algorithm::encoding::encode_0xhex256(transaction->as_hash()) + " validation failed: invalid signature");
 
 				transaction->gas_price = decimal::zero();
 				auto execution = ledger::transaction_context::execute_tx(context->environment, (ledger::block*)context->block, context->changelog, transaction, transaction->as_hash(), owner, transaction->as_message().data.size(), execution_flags);
-				transaction->signature[0] = transaction_code;
+				transaction->signature.data[0] = transaction_code;
 				transaction->nonce = transaction_nonce;
 				transaction->gas_price = decimal::nan();
 				if (!execution)
@@ -702,14 +686,14 @@ namespace tangent
 				stream->write_integer((uint32_t)group.second.size());
 				for (auto& transaction : group.second)
 				{
-					bool internal_transaction = transaction->is_signature_null();
+					bool internal_transaction = transaction->signature.empty();
 					stream->write_boolean(internal_transaction);
 					stream->write_integer(transaction->as_type());
 					stream->write_integer(transaction->gas_limit);
 					if (!internal_transaction)
 					{
 						stream->write_integer(transaction->nonce);
-						stream->write_string(std::string_view((char*)transaction->signature, sizeof(transaction->signature)));
+						stream->write_string(transaction->signature.view());
 					}
 					if (!transaction->store_body(stream))
 						return false;
@@ -758,14 +742,14 @@ namespace tangent
 						if (!stream.read_integer(stream.read_type(), &next->nonce))
 							return false;
 
-						if (!stream.read_string(stream.read_type(), &signature_assembly) || signature_assembly.size() != sizeof(algorithm::recpubsig))
+						if (!stream.read_string(stream.read_type(), &signature_assembly) || signature_assembly.size() != sizeof(algorithm::hashsig_t))
 							return false;
 
-						memcpy(next->signature, signature_assembly.data(), signature_assembly.size());
+						next->signature = algorithm::hashsig_t(signature_assembly);
 					}
 					else
 					{
-						memset(next->signature, 0, sizeof(next->signature));
+						next->signature.clear();
 						next->nonce = 0;
 					}
 
@@ -786,8 +770,8 @@ namespace tangent
 			{
 				for (auto& transaction : group.second)
 				{
-					bool internal_transaction = transaction->is_signature_null();
-					if (!internal_transaction && transaction->recover_hash(from.data))
+					bool internal_transaction = transaction->signature.empty();
+					if (!internal_transaction && transaction->recover_hash(from))
 						parties.insert(from);
 					transaction->recover_many(context, receipt, parties);
 				}
@@ -815,7 +799,7 @@ namespace tangent
 			transactions[next->asset].push_back(next);
 			return true;
 		}
-		bool rollup::import_internal_transaction(ledger::transaction& transaction, const algorithm::seckey secret_key)
+		bool rollup::import_internal_transaction(ledger::transaction& transaction, const algorithm::seckey_t& secret_key)
 		{
 			transaction.nonce = 0;
 			normalize_transaction(transaction, asset);
@@ -827,10 +811,10 @@ namespace tangent
 					return false;
 			}
 
-			memset(transaction.signature, 0, sizeof(transaction.signature));
+			transaction.signature.clear();
 			return import_transaction(transaction);
 		}
-		bool rollup::import_external_transaction(ledger::transaction& transaction, const algorithm::seckey secret_key, uint64_t nonce)
+		bool rollup::import_external_transaction(ledger::transaction& transaction, const algorithm::seckey_t& secret_key, uint64_t nonce)
 		{
 			transaction.nonce = nonce > 0 ? nonce : transaction.nonce;
 			normalize_transaction(transaction, asset);
@@ -1060,6 +1044,7 @@ namespace tangent
 						return layer_exception(algorithm::asset::handle_of(asset) + " depository is still active");
 				}
 
+				auto balance = context->get_depository_balance(asset, context->receipt.from);
 				auto blockchain = algorithm::asset::blockchain_of(asset);
 				ordered_map<algorithm::asset_id, decimal> stakes;
 				for (auto& [token_asset, token_stake] : attestation_stakes)
@@ -1075,8 +1060,7 @@ namespace tangent
 					if (type == ledger::transaction_context::stake_type::lock)
 						continue;
 
-					auto balance = context->get_depository_balance(token_asset, context->receipt.from);
-					if (balance && balance->supply.is_positive())
+					if (balance && balance->get_balance(token_asset).is_positive())
 						return layer_exception(algorithm::asset::handle_of(token_asset) + " depository has custodial balance");
 				}
 
@@ -1275,7 +1259,7 @@ namespace tangent
 			if (!routing_address.empty())
 			{
 				auto collision = context->get_witness_account(asset, routing_address, 0);
-				if (collision && (!collision->is_routing_account() || memcmp(collision->owner, context->receipt.from, sizeof(context->receipt.from)) != 0))
+				if (collision && (!collision->is_routing_account() || collision->owner != context->receipt.from))
 					return layer_exception("routing account address " + routing_address + " taken");
 
 				if (!collision)
@@ -1318,7 +1302,7 @@ namespace tangent
 						if (!candidates)
 							return candidates.error();
 
-						auto candidate = std::find_if(candidates->begin(), candidates->end(), [this](const states::witness_account& v) { return v.asset == asset && !memcmp(v.manager, manager, sizeof(manager)); });
+						auto candidate = std::find_if(candidates->begin(), candidates->end(), [this](const states::witness_account& v) { return v.asset == asset && v.manager == manager; });
 						if (candidate != candidates->end())
 						{
 							uint64_t address_index = depository_policy->accounts_under_management + 1;
@@ -1329,7 +1313,7 @@ namespace tangent
 							if (!depository_policy_status)
 								return depository_policy_status.error();
 
-							auto depository_account_status = context->apply_depository_account(asset, context->receipt.from, manager, nullptr, { });
+							auto depository_account_status = context->apply_depository_account(asset, context->receipt.from, manager, algorithm::composition::cpubkey_t(), { });
 							if (!depository_account_status)
 								return depository_account_status.error();
 
@@ -1364,7 +1348,7 @@ namespace tangent
 
 			for (auto& work : *committee)
 			{
-				auto event = context->emit_event<depository_account>({ format::variable(std::string_view((char*)work.owner, sizeof(work.owner))) });
+				auto event = context->emit_event<depository_account>({ format::variable(work.owner.view()) });
 				if (!event)
 					return event;
 			}
@@ -1417,7 +1401,7 @@ namespace tangent
 
 				if (group_fully_signed)
 				{
-					auto status = algorithm::composition::accumulate_public_key(chain->composition, nullptr, group_public_key.data);
+					auto status = algorithm::composition::accumulate_public_key(chain->composition, algorithm::composition::cseckey_t(), group_public_key);
 					if (!status)
 						coreturn remote_exception(std::move(status.error().message()));
 
@@ -1472,7 +1456,7 @@ namespace tangent
 			ordered_set<algorithm::pubkeyhash_t> result;
 			for (auto& event : receipt.find_events<depository_account>())
 			{
-				if (!event->empty() && event->front().as_string().size() == sizeof(algorithm::pubkeyhash))
+				if (!event->empty() && event->front().as_string().size() == sizeof(algorithm::pubkeyhash_t))
 					result.insert(algorithm::pubkeyhash_t(event->front().as_blob()));
 			}
 			return result;
@@ -1503,8 +1487,7 @@ namespace tangent
 			if (!depository_account_hash)
 				return layer_exception("invalid depository account hash");
 
-			algorithm::composition::cpubkey null = { 0 };
-			if (!memcmp(public_key, null, sizeof(null)))
+			if (public_key.empty())
 				return layer_exception("invalid public key");
 
 			return ledger::consensus_transaction::validate(block_number);
@@ -1534,7 +1517,7 @@ namespace tangent
 			if (duplicate)
 				return layer_exception("depository account already exists");
 
-			auto encoded_public_key = chain->encode_public_key(std::string_view((char*)public_key, algorithm::composition::size_of_public_key(params->composition)));
+			auto encoded_public_key = chain->encode_public_key(std::string_view((char*)public_key.data, algorithm::composition::size_of_public_key(params->composition)));
 			if (!encoded_public_key)
 				return encoded_public_key.error();
 
@@ -1608,7 +1591,7 @@ namespace tangent
 			if (!chain || !params)
 				return expects_promise_rt<void>(remote_exception("invalid operation"));
 
-			auto encoded_public_key = chain->encode_public_key(std::string_view((char*)public_key, algorithm::composition::size_of_public_key(params->composition)));
+			auto encoded_public_key = chain->encode_public_key(std::string_view((char*)public_key.data, algorithm::composition::size_of_public_key(params->composition)));
 			if (!encoded_public_key)
 				return expects_promise_rt<void>(remote_exception(std::move(encoded_public_key.error().message())));
 
@@ -1630,19 +1613,17 @@ namespace tangent
 
 			return expects_promise_rt<void>(expectation::met);
 		}
-		void depository_account_finalization::set_witness(const uint256_t& new_depository_account_hash, const algorithm::composition::cpubkey new_public_key)
+		void depository_account_finalization::set_witness(const uint256_t& new_depository_account_hash, const algorithm::composition::cpubkey_t& new_public_key)
 		{
-			VI_ASSERT(new_public_key, "public key should be set");
 			depository_account_hash = new_depository_account_hash;
-			memcpy(public_key, new_public_key, sizeof(public_key));
+			public_key = new_public_key;
 		}
 		bool depository_account_finalization::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			algorithm::composition::cpubkey null = { 0 };
 			auto params = nss::server_node::get()->get_chainparams(asset);
 			size_t public_key_size = params ? algorithm::composition::size_of_public_key(params->composition) : sizeof(public_key);
-			stream->write_string(std::string_view((char*)public_key, memcmp(public_key, null, public_key_size) == 0 ? 0 : public_key_size));
+			stream->write_string(std::string_view((char*)public_key.data, public_key.empty() ? 0 : public_key_size));
 			stream->write_integer(depository_account_hash);
 			return true;
 		}
@@ -1651,7 +1632,7 @@ namespace tangent
 			string public_key_assembly;
 			auto params = nss::server_node::get()->get_chainparams(asset);
 			size_t public_key_size = params ? algorithm::composition::size_of_public_key(params->composition) : sizeof(public_key);
-			if (!stream.read_string(stream.read_type(), &public_key_assembly) || !algorithm::encoding::decode_uint_blob(public_key_assembly, public_key, public_key_size))
+			if (!stream.read_string(stream.read_type(), &public_key_assembly) || !algorithm::encoding::decode_uint_blob(public_key_assembly, public_key.data, public_key_size))
 				return false;
 
 			if (!stream.read_integer(stream.read_type(), &depository_account_hash))
@@ -1680,7 +1661,7 @@ namespace tangent
 			auto params = nss::server_node::get()->get_chainparams(asset);
 			schema* data = ledger::consensus_transaction::as_schema().reset();
 			data->set("depository_account_hash", depository_account_hash > 0 ? var::string(algorithm::encoding::encode_0xhex256(depository_account_hash)) : var::null());
-			data->set("public_key", var::string(format::util::encode_0xhex(std::string_view((char*)public_key, params ? algorithm::composition::size_of_public_key(params->composition) : sizeof(public_key)))));
+			data->set("public_key", var::string(format::util::encode_0xhex(std::string_view((char*)public_key.data, params ? algorithm::composition::size_of_public_key(params->composition) : sizeof(public_key)))));
 			return data;
 		}
 		uint32_t depository_account_finalization::as_type() const
@@ -1703,14 +1684,14 @@ namespace tangent
 
 		expects_lr<void> depository_withdrawal::validate(uint64_t block_number) const
 		{
-			if (!memcmp(from_manager, to_manager, sizeof(to_manager)))
+			if (from_manager == to_manager)
 				return layer_exception("invalid from/to manager");
 
 			auto* chain = nss::server_node::get()->get_chainparams(asset);
 			if (!chain)
 				return layer_exception("invalid operation");
 
-			if (is_to_manager_null())
+			if (to_manager.empty())
 			{
 				if (to.empty())
 					return layer_exception("invalid to");
@@ -1757,9 +1738,9 @@ namespace tangent
 			if (!token_value.is_positive())
 				return layer_exception("zero value withdrawal not allowed");
 
-			if (!is_to_manager_null())
+			if (!to_manager.empty())
 			{
-				if (memcmp(context->receipt.from, from_manager, sizeof(algorithm::pubkeyhash)) != 0)
+				if (context->receipt.from != from_manager)
 					return layer_exception("invalid transaction origin");
 
 				attestation_requirement = context->verify_validator_attestation(asset, to_manager);
@@ -1778,7 +1759,7 @@ namespace tangent
 			}
 
 			auto fee_asset = algorithm::asset::base_id_of(asset);
-			auto fee_value = get_fee_value(context, nullptr);
+			auto fee_value = get_fee_value(context, algorithm::pubkeyhash_t());
 			if (fee_asset != asset && fee_value.is_positive())
 			{
 				auto balance_requirement = context->verify_transfer_balance(fee_asset, fee_value);
@@ -1786,7 +1767,7 @@ namespace tangent
 					return balance_requirement.error();
 
 				auto depository = context->get_depository_balance(fee_asset, from_manager);
-				if (!depository || depository->supply < fee_value)
+				if (!depository || depository->get_balance(fee_asset) < fee_value)
 					return layer_exception(algorithm::asset::handle_of(fee_asset) + " balance is insufficient to cover base withdrawal value (value: " + fee_value.to_string() + ")");
 			}
 
@@ -1795,13 +1776,13 @@ namespace tangent
 				return balance_requirement;
 
 			auto depository = context->get_depository_balance(asset, from_manager);
-			if (!depository || depository->supply < token_value)
+			if (!depository || depository->get_balance(asset) < token_value)
 				return layer_exception(algorithm::asset::handle_of(asset) + " balance is insufficient to cover token withdrawal value (value: " + token_value.to_string() + ")");
 
 			for (auto& item : to)
 			{
 				auto collision = context->get_witness_account(fee_asset, item.first, 0);
-				if (collision && (!collision->is_routing_account() || memcmp(collision->owner, context->receipt.from, sizeof(collision->owner)) != 0))
+				if (collision && (!collision->is_routing_account() || collision->owner != context->receipt.from))
 					return layer_exception("invalid to address (not owned by sender)");
 				else if (!collision)
 					collision = context->apply_witness_routing_account(asset, context->receipt.from, { { (uint8_t)1, string(item.first) } });
@@ -1839,7 +1820,7 @@ namespace tangent
 				return expects_promise_rt<void>(remote_exception::retry());
 
 			vector<warden::value_transfer> transfers;
-			if (!is_to_manager_null())
+			if (!to_manager.empty())
 			{
 				auto account = find_receiving_account(context, asset, from_manager, to_manager);
 				if (!account)
@@ -1857,7 +1838,7 @@ namespace tangent
 			else
 			{
 				auto fee_asset = algorithm::asset::base_id_of(asset);
-				auto fee_value = get_fee_value(context, nullptr);
+				auto fee_value = get_fee_value(context, algorithm::pubkeyhash_t());
 				for (auto& item : to)
 					transfers.push_back(warden::value_transfer(asset, item.first, decimal(fee_asset == asset ? item.second - fee_value : item.second)));
 			}
@@ -1869,7 +1850,7 @@ namespace tangent
 				auto cache = dispatcher->load_cache(context);
 				auto group_prepared = expects_rt<warden::prepared_transaction>(warden::prepared_transaction());
 				auto group_signers = ordered_set<algorithm::pubkeyhash_t>();
-				auto group_signature = ordered_map<uint8_t, algorithm::composition::cpubsig_t>();
+				auto group_signature = ordered_map<uint8_t, algorithm::composition::chashsig_t>();
 				if (cache && !chain->requires_transaction_expiration)
 				{
 					auto cache_message = format::util::decode_stream(cache->get_var(0).get_blob());
@@ -1882,7 +1863,7 @@ namespace tangent
 					{
 						auto* item = cache->get(i);
 						if (item != nullptr)
-							group_signature[(uint8_t)item->get_var(0).get_integer()] = algorithm::composition::cpubsig_t(codec::hex_decode(item->get_var(1).get_blob()));
+							group_signature[(uint8_t)item->get_var(0).get_integer()] = algorithm::composition::chashsig_t(codec::hex_decode(item->get_var(1).get_blob()));
 					}
 					for (size_t i = split; i < cache->size(); i++)
 						group_signers.insert(algorithm::pubkeyhash_t(codec::hex_decode(cache->get_var(i).get_blob())));
@@ -1958,7 +1939,7 @@ namespace tangent
 					for (auto& [input_index, input_signature] : group_signature)
 					{
 						auto& input = group_prepared->inputs[input_index];
-						auto status = algorithm::composition::accumulate_signature(input.alg, input.message.data(), input.message.size(), input.public_key, nullptr, input_signature.data);
+						auto status = algorithm::composition::accumulate_signature(input.alg, input.message.data(), input.message.size(), input.public_key, algorithm::composition::cseckey_t(), input_signature);
 						if (!status)
 						{
 							auto error = remote_exception(std::move(status.error().message()));
@@ -1969,8 +1950,7 @@ namespace tangent
 							dispatcher->store_cache(context, nullptr);
 							coreturn expects_rt<void>(std::move(error));
 						}
-
-						memcpy(input.signature, input_signature.data, sizeof(input_signature.data));
+						input.signature = input_signature;
 					}
 
 					auto group_finalized = coawait(resolver::finalize_and_broadcast_transaction(algorithm::asset::base_id_of(asset), context->receipt.transaction_hash, std::move(*group_prepared), dispatcher));
@@ -2022,10 +2002,9 @@ namespace tangent
 		bool depository_withdrawal::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			algorithm::pubkeyhash null = { 0 };
 			stream->write_boolean(only_if_not_in_queue);
-			stream->write_string(std::string_view((char*)from_manager, memcmp(from_manager, null, sizeof(null)) == 0 ? 0 : sizeof(from_manager)));
-			stream->write_string(std::string_view((char*)to_manager, memcmp(to_manager, null, sizeof(null)) == 0 ? 0 : sizeof(to_manager)));
+			stream->write_string(from_manager.optimized_view());
+			stream->write_string(to_manager.optimized_view());
 			stream->write_integer((uint16_t)to.size());
 			for (auto& item : to)
 			{
@@ -2040,11 +2019,11 @@ namespace tangent
 				return false;
 
 			string from_manager_assembly;
-			if (!stream.read_string(stream.read_type(), &from_manager_assembly) || !algorithm::encoding::decode_uint_blob(from_manager_assembly, from_manager, sizeof(from_manager)))
+			if (!stream.read_string(stream.read_type(), &from_manager_assembly) || !algorithm::encoding::decode_uint_blob(from_manager_assembly, from_manager.data, sizeof(from_manager)))
 				return false;
 
 			string to_manager_assembly;
-			if (!stream.read_string(stream.read_type(), &to_manager_assembly) || !algorithm::encoding::decode_uint_blob(to_manager_assembly, to_manager, sizeof(to_manager)))
+			if (!stream.read_string(stream.read_type(), &to_manager_assembly) || !algorithm::encoding::decode_uint_blob(to_manager_assembly, to_manager.data, sizeof(to_manager)))
 				return false;
 
 			uint16_t to_size;
@@ -2084,31 +2063,10 @@ namespace tangent
 			}
 			to.push_back(std::make_pair(string(address), decimal(value)));
 		}
-		void depository_withdrawal::set_from_manager(const algorithm::pubkeyhash new_manager)
+		void depository_withdrawal::set_manager(const algorithm::pubkeyhash_t& new_from_manager, const algorithm::pubkeyhash_t& new_to_manager)
 		{
-			algorithm::pubkeyhash null = { 0 };
-			if (!new_manager)
-				memcpy(from_manager, null, sizeof(algorithm::pubkeyhash));
-			else
-				memcpy(from_manager, new_manager, sizeof(algorithm::pubkeyhash));
-		}
-		void depository_withdrawal::set_to_manager(const algorithm::pubkeyhash new_manager)
-		{
-			algorithm::pubkeyhash null = { 0 };
-			if (!new_manager)
-				memcpy(to_manager, null, sizeof(algorithm::pubkeyhash));
-			else
-				memcpy(to_manager, new_manager, sizeof(algorithm::pubkeyhash));
-		}
-		bool depository_withdrawal::is_from_manager_null() const
-		{
-			algorithm::pubkeyhash null = { 0 };
-			return memcmp(from_manager, null, sizeof(null)) == 0;
-		}
-		bool depository_withdrawal::is_to_manager_null() const
-		{
-			algorithm::pubkeyhash null = { 0 };
-			return memcmp(to_manager, null, sizeof(null)) == 0;
+			from_manager = new_from_manager;
+			to_manager = new_to_manager;
 		}
 		bool depository_withdrawal::is_dispatchable() const
 		{
@@ -2117,11 +2075,11 @@ namespace tangent
 		decimal depository_withdrawal::get_token_value(const ledger::transaction_context* context) const
 		{
 			decimal value = 0.0;
-			if (!is_to_manager_null())
+			if (!to_manager.empty())
 			{
 				auto depository = context->get_depository_balance(asset, from_manager);
 				if (depository)
-					value += depository->supply;
+					value += depository->get_balance(asset);
 			}
 			else
 			{
@@ -2130,9 +2088,10 @@ namespace tangent
 			}
 			return value;
 		}
-		decimal depository_withdrawal::get_fee_value(const ledger::transaction_context* context, const algorithm::pubkeyhash from) const
+		decimal depository_withdrawal::get_fee_value(const ledger::transaction_context* context, const algorithm::pubkeyhash_t& from) const
 		{
-			if (!is_to_manager_null() || !memcmp(from ? from : context->receipt.from, from_manager, sizeof(algorithm::pubkeyhash)))
+			auto& from_target = from.empty() ? context->receipt.from : from;
+			if (!to_manager.empty() || from_target == from_manager)
 				return decimal::zero();
 
 			auto reward = context->get_depository_reward(algorithm::asset::base_id_of(asset), from_manager);
@@ -2254,7 +2213,7 @@ namespace tangent
 
 			if (target_output->second.is_negative())
 			{
-				algorithm::pubkeyhash from = { 0 };
+				algorithm::pubkeyhash_t from;
 				if (!transaction->recover_hash(from))
 					return layer_exception("failed to recover withdrawal sender");
 
@@ -2294,7 +2253,7 @@ namespace tangent
 			}
 			return expects_lr<ordered_set<algorithm::pubkeyhash_t>>(std::move(group));
 		}
-		expects_lr<states::witness_account> depository_withdrawal::find_receiving_account(const ledger::transaction_context* context, const algorithm::asset_id& asset, const algorithm::pubkeyhash from_manager, const algorithm::pubkeyhash to_manager)
+		expects_lr<states::witness_account> depository_withdrawal::find_receiving_account(const ledger::transaction_context* context, const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& from_manager, const algorithm::pubkeyhash_t& to_manager)
 		{
 			auto base_asset = algorithm::asset::base_id_of(asset);
 			size_t offset = 0, count = 8;
@@ -2304,7 +2263,7 @@ namespace tangent
 				if (!candidates)
 					return candidates.error();
 
-				auto candidate = std::find_if(candidates->begin(), candidates->end(), [&](const states::witness_account& v) { return v.asset == base_asset && !memcmp(to_manager, v.manager, sizeof(v.manager)); });
+				auto candidate = std::find_if(candidates->begin(), candidates->end(), [&](const states::witness_account& v) { return v.asset == base_asset && v.manager == to_manager; });
 				if (candidate != candidates->end())
 					return *candidate;
 
@@ -2320,7 +2279,7 @@ namespace tangent
 				if (!candidates)
 					return candidates.error();
 
-				auto candidate = std::find_if(candidates->begin(), candidates->end(), [&](const states::witness_account& v) { return v.asset == base_asset && !memcmp(to_manager, v.manager, sizeof(v.manager)); });
+				auto candidate = std::find_if(candidates->begin(), candidates->end(), [&](const states::witness_account& v) { return v.asset == base_asset && v.manager == to_manager; });
 				if (candidate != candidates->end())
 					return *candidate;
 
@@ -2356,7 +2315,7 @@ namespace tangent
 				return layer_exception("parent transaction not found");
 
 			auto* parent_transaction = (depository_withdrawal*)*parent->transaction;
-			if (memcmp(parent_transaction->from_manager, context->receipt.from, sizeof(algorithm::pubkeyhash)) != 0)
+			if (parent_transaction->from_manager != context->receipt.from)
 				return layer_exception("parent transaction not valid");
 
 			auto event = context->apply_witness_event(depository_withdrawal_hash, context->receipt.transaction_hash);
@@ -2367,13 +2326,13 @@ namespace tangent
 			if (!finalization)
 				return finalization.error();
 
-			bool revert_withdrawal_side_effects = (transaction_id.empty() || !error_message.empty()) && parent_transaction->is_to_manager_null();
+			bool revert_withdrawal_side_effects = (transaction_id.empty() || !error_message.empty()) && parent_transaction->to_manager.empty();
 			if (revert_withdrawal_side_effects)
 			{
 				auto fee_asset = algorithm::asset::base_id_of(asset);
 				if (fee_asset != asset)
 				{
-					auto fee_value = parent_transaction->get_fee_value(context, nullptr);
+					auto fee_value = parent_transaction->get_fee_value(context, algorithm::pubkeyhash_t());
 					auto fee_transfer = context->apply_transfer(asset, parent->receipt.from, decimal::zero(), -fee_value);
 					if (!fee_transfer)
 						return fee_transfer.error();
@@ -2624,7 +2583,7 @@ namespace tangent
 				for (auto& signature : branch.second.signatures)
 				{
 					algorithm::pubkeyhash_t attester;
-					if (!algorithm::signing::recover_hash(get_branch_image(branch.first), attester.data, signature.data))
+					if (!algorithm::signing::recover_hash(get_branch_image(branch.first), attester, signature))
 						return layer_exception("invalid attestation signature");
 
 					failing_attesters.insert(attester);
@@ -2667,12 +2626,12 @@ namespace tangent
 					if (transfer.balance.is_negative())
 					{
 						auto balance = context->get_depository_balance(transfer_asset, owner.data);
-						auto supply = (balance ? balance->supply : decimal::zero()) + transfer.balance;
+						auto supply = (balance ? balance->get_balance(transfer_asset) : decimal::zero()) + transfer.balance;
 						if (supply.is_negative())
-							transfer.balance = (balance ? -balance->supply : decimal::zero());
+							transfer.balance = (balance ? -balance->get_balance(transfer_asset) : decimal::zero());
 					}
 
-					auto depository = context->apply_depository_balance(transfer_asset, owner.data, transfer.balance);
+					auto depository = context->apply_depository_balance(transfer_asset, owner.data, { { transfer_asset, transfer.balance } });
 					if (!depository)
 						return depository.error();
 
@@ -2697,7 +2656,7 @@ namespace tangent
 							{
 								for (size_t i = 0; i < best_branch->signatures.size(); i++)
 								{
-									algorithm::pubkeyhash target;
+									algorithm::pubkeyhash_t target;
 									if (!recover_hash(target, best_branch->message.hash(), i))
 										return layer_exception("invalid attestation signature");
 
@@ -2786,12 +2745,12 @@ namespace tangent
 		{
 			for (auto& event : receipt.find_events<states::account_balance>())
 			{
-				if (event->size() >= 2 && event->at(1).as_string().size() == sizeof(algorithm::pubkeyhash))
+				if (event->size() >= 2 && event->at(1).as_string().size() == sizeof(algorithm::pubkeyhash_t))
 					parties.insert(algorithm::pubkeyhash_t(event->at(1).as_blob()));
 			}
 			for (auto& event : receipt.find_events<states::depository_balance>())
 			{
-				if (event->size() >= 2 && event->at(1).as_string().size() == sizeof(algorithm::pubkeyhash))
+				if (event->size() >= 2 && event->at(1).as_string().size() == sizeof(algorithm::pubkeyhash_t))
 					parties.insert(algorithm::pubkeyhash_t(event->at(1).as_blob()));
 			}
 			return true;
@@ -2907,7 +2866,7 @@ namespace tangent
 			if (depository.accepts_withdrawal_requests != accepts_withdrawal_requests && !accepts_withdrawal_requests)
 			{
 				auto balance = context->get_depository_balance(asset, context->receipt.from);
-				if (balance && balance->supply.is_positive())
+				if (balance && balance->get_balance(asset).is_positive())
 					return layer_exception("depository should not contain custodial funds before disabling withdrawals");
 			}
 
@@ -2993,16 +2952,15 @@ namespace tangent
 			if (participants.empty())
 				return layer_exception("no participants found");
 
-			algorithm::pubkeyhash null = { 0 };
 			for (auto& [hash, account] : participants)
 			{
 				if (!algorithm::asset::is_valid(account.asset) || !algorithm::asset::token_of(account.asset).empty())
 					return layer_exception("invalid account asset");
 
-				if (!memcmp(account.manager, null, sizeof(null)))
+				if (account.manager.empty())
 					return layer_exception("invalid account manager");
 
-				if (!memcmp(account.owner, null, sizeof(null)))
+				if (account.owner.empty())
 					return layer_exception("invalid account owner");
 
 				if (hash != account.hash())
@@ -3035,7 +2993,7 @@ namespace tangent
 				return committee.error();
 
 			auto& work = committee->front();
-			auto event = context->emit_event<depository_regrouping>({ format::variable(std::string_view((char*)work.owner, sizeof(work.owner))) });
+			auto event = context->emit_event<depository_regrouping>({ format::variable(work.owner.view()) });
 			if (!event)
 				return event;
 
@@ -3054,7 +3012,7 @@ namespace tangent
 			transaction->asset = asset;
 			transaction->depository_regrouping_hash = context->receipt.transaction_hash;
 
-			algorithm::seckey cipher_secret_key;
+			algorithm::seckey_t cipher_secret_key;
 			algorithm::signing::derive_cipher_keypair(dispatcher->get_wallet()->secret_key, transaction->depository_regrouping_hash, cipher_secret_key, transaction->cipher_public_key);
 			dispatcher->emit_transaction(transaction);
 			return expects_promise_rt<void>(expectation::met);
@@ -3084,11 +3042,11 @@ namespace tangent
 					return false;
 
 				string manager_assembly;
-				if (!stream.read_string(stream.read_type(), &manager_assembly) || !algorithm::encoding::decode_uint_blob(manager_assembly, account.manager, sizeof(account.manager)))
+				if (!stream.read_string(stream.read_type(), &manager_assembly) || !algorithm::encoding::decode_uint_blob(manager_assembly, account.manager.data, sizeof(account.manager)))
 					return false;
 
 				string owner_assembly;
-				if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, account.owner, sizeof(account.owner)))
+				if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, account.owner.data, sizeof(account.owner)))
 					return false;
 
 				participants[account.hash()] = std::move(account);
@@ -3096,14 +3054,12 @@ namespace tangent
 
 			return true;
 		}
-		void depository_regrouping::migrate(const algorithm::asset_id& asset, const algorithm::pubkeyhash manager, const algorithm::pubkeyhash owner)
+		void depository_regrouping::migrate(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner)
 		{
-			VI_ASSERT(manager != nullptr, "manager should be set");
-			VI_ASSERT(owner != nullptr, "owner should be set");
 			participant account;
 			account.asset = asset;
-			memcpy(account.manager, manager, sizeof(account.manager));
-			memcpy(account.owner, owner, sizeof(account.owner));
+			account.manager = manager;
+			account.owner = owner;
 			participants[account.hash()] = std::move(account);
 		}
 		bool depository_regrouping::is_dispatchable() const
@@ -3116,7 +3072,7 @@ namespace tangent
 			auto* event = receipt.find_event<depository_regrouping>();
 			if (event != nullptr)
 			{
-				if (!event->empty() && event->front().as_string().size() == sizeof(algorithm::pubkeyhash))
+				if (!event->empty() && event->front().as_string().size() == sizeof(algorithm::pubkeyhash_t))
 					result = algorithm::pubkeyhash_t(event->front().as_blob());
 			}
 			return result;
@@ -3157,8 +3113,7 @@ namespace tangent
 			if (!depository_regrouping_hash)
 				return layer_exception("invalid regroup transaction");
 
-			algorithm::pubkey null = { 0 };
-			if (!memcmp(cipher_public_key, null, sizeof(null)))
+			if (cipher_public_key.empty())
 				return layer_exception("invalid cipher public key");
 
 			return ledger::consensus_transaction::validate(block_number);
@@ -3219,7 +3174,7 @@ namespace tangent
 				return false;
 
 			string cipher_public_key_assembly;
-			if (!stream.read_string(stream.read_type(), &cipher_public_key_assembly) || !algorithm::encoding::decode_uint_blob(cipher_public_key_assembly, cipher_public_key, sizeof(cipher_public_key)))
+			if (!stream.read_string(stream.read_type(), &cipher_public_key_assembly) || !algorithm::encoding::decode_uint_blob(cipher_public_key_assembly, cipher_public_key.data, sizeof(cipher_public_key)))
 				return false;
 
 			return true;
@@ -3232,7 +3187,7 @@ namespace tangent
 		{
 			schema* data = ledger::consensus_transaction::as_schema().reset();
 			data->set("depository_regrouping_hash", var::string(algorithm::encoding::encode_0xhex256(depository_regrouping_hash)));
-			data->set("cipher_public_key", var::string(format::util::encode_0xhex(std::string_view((char*)cipher_public_key, sizeof(cipher_public_key)))));
+			data->set("cipher_public_key", var::string(format::util::encode_0xhex(cipher_public_key.optimized_view())));
 			return data;
 		}
 		uint32_t depository_regrouping_preparation::as_type() const
@@ -3261,7 +3216,6 @@ namespace tangent
 			if (encrypted_shares.empty())
 				return layer_exception("no participants found");
 
-			algorithm::pubkeyhash null = { 0 };
 			for (auto& [hash, encrypted_share] : encrypted_shares)
 			{
 				if (!hash || encrypted_share.empty())
@@ -3284,7 +3238,7 @@ namespace tangent
 			auto setup = context->get_block_transaction<depository_regrouping>(preparation_transaction->depository_regrouping_hash);
 			if (!setup)
 				return setup.error();
-			else if (memcmp(setup->receipt.from, context->receipt.from, sizeof(context->receipt.from)) != 0)
+			else if (setup->receipt.from != context->receipt.from)
 				return layer_exception("invalid setup transaction");
 
 			auto event = context->apply_witness_event(depository_regrouping_preparation_hash, context->receipt.transaction_hash);
@@ -3318,8 +3272,8 @@ namespace tangent
 			if (!setup)
 				return expects_promise_rt<void>(remote_exception(std::move(setup.error().message())));
 
-			algorithm::seckey cipher_secret_key;
-			algorithm::pubkey cipher_public_key;
+			algorithm::seckey_t cipher_secret_key;
+			algorithm::pubkey_t cipher_public_key;
 			algorithm::signing::derive_cipher_keypair(dispatcher->get_wallet()->secret_key, preparation_transaction->depository_regrouping_hash, cipher_secret_key, cipher_public_key);
 
 			bool exchange_successful = true;
@@ -3350,13 +3304,11 @@ namespace tangent
 			dispatcher->emit_transaction(transaction);
 			return expects_promise_rt<void>(expectation::met);
 		}
-		expects_lr<void> depository_regrouping_commitment::transfer(const uint256_t& account_hash, const uint256_t& share, const algorithm::pubkey new_manager_cipher_public_key, const algorithm::seckey old_manager_secret_key)
+		expects_lr<void> depository_regrouping_commitment::transfer(const uint256_t& account_hash, const uint256_t& share, const algorithm::pubkey_t& new_manager_cipher_public_key, const algorithm::seckey_t& old_manager_secret_key)
 		{
-			VI_ASSERT(new_manager_cipher_public_key != nullptr, "new manager cipher public key should be set");
-			VI_ASSERT(old_manager_secret_key != nullptr, "old manager secret key should be set");
 			format::wo_stream entropy;
 			entropy.write_integer(depository_regrouping_preparation_hash);
-			entropy.write_integer(algorithm::hashing::hash256i(algorithm::seckey_t(old_manager_secret_key).view()));
+			entropy.write_integer(algorithm::hashing::hash256i(old_manager_secret_key.view()));
 
 			uint8_t share_data[32];
 			algorithm::encoding::decode_uint256(share, share_data);
@@ -3466,7 +3418,7 @@ namespace tangent
 			auto preparation = context->get_block_transaction<depository_regrouping_preparation>(commitment_transaction->depository_regrouping_preparation_hash);
 			if (!preparation)
 				return preparation.error();
-			else if (memcmp(preparation->receipt.from, context->receipt.from, sizeof(context->receipt.from)) != 0)
+			else if (preparation->receipt.from != context->receipt.from)
 				return layer_exception("invalid preparation transaction");
 
 			auto* preparation_transaction = (depository_regrouping_preparation*)*preparation->transaction;

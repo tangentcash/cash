@@ -141,7 +141,7 @@ namespace tangent
         static decimal svm_address_balance_of(svm_address& target, const uint256_t& asset)
         {
             auto* program = svm_program::fetch_immutable_or_throw();
-            return program ? program->context->get_account_balance(asset, target.hash.data).or_else(states::account_balance(nullptr, asset, nullptr)).get_balance() : decimal::zero();
+            return program ? program->context->get_account_balance(asset, target.hash.data).or_else(states::account_balance(algorithm::pubkeyhash_t(), asset, nullptr)).get_balance() : decimal::zero();
         }
 		static void log_emit(void* object_value, int object_type_id)
 		{
@@ -666,25 +666,25 @@ namespace tangent
 		}
 		static svm_address erecover160(const uint256_t& hash, const std::string_view& signature)
 		{
-			if (signature.size() != sizeof(algorithm::recpubsig))
+			if (signature.size() != sizeof(algorithm::hashsig_t))
 				return svm_address();
 
-			algorithm::pubkeyhash public_key_hash = { 0 }, null = { 0 };
-			if (!algorithm::signing::recover_hash(hash, public_key_hash, (uint8_t*)signature.data()) || !memcmp(public_key_hash, null, sizeof(null)))
+			algorithm::pubkeyhash_t public_key_hash;
+			if (!algorithm::signing::recover_hash(hash, public_key_hash, (uint8_t*)signature.data()) || public_key_hash.empty())
 				return svm_address();
 
-			return svm_address(algorithm::pubkeyhash_t(public_key_hash));
+			return svm_address(public_key_hash);
 		}
 		static string erecover264(const uint256_t& hash, const std::string_view& signature)
 		{
-			if (signature.size() != sizeof(algorithm::recpubsig))
+			if (signature.size() != sizeof(algorithm::hashsig_t))
 				return string();
 
-			algorithm::pubkey public_key = { 0 }, null = { 0 };
-			if (!algorithm::signing::recover(hash, public_key, (uint8_t*)signature.data()) || !memcmp(public_key, null, sizeof(null)))
+			algorithm::pubkey_t public_key;
+			if (!algorithm::signing::recover(hash, public_key, (uint8_t*)signature.data()) || public_key.empty())
 				return string();
 
-			return string((char*)public_key, sizeof(public_key));
+			return string(public_key.view());
 		}
 		static uint256_t blake2b256(const std::string_view& data)
 		{
@@ -958,7 +958,7 @@ namespace tangent
 					}
 					else if (name == SCRIPT_CLASS_ADDRESS)
 					{
-						uptr<schema> data = algorithm::signing::serialize_subaddress(((svm_address*)value)->hash.data);
+						uptr<schema> data = algorithm::signing::serialize_address(((svm_address*)value)->hash);
 						stream->value = std::move(data->value);
 						return expectation::met;
 					}
@@ -1100,13 +1100,13 @@ namespace tangent
 							return layer_exception("load failed for address type");
 
 						data = format::util::is_hex_encoding(data) ? format::util::decode_0xhex(data) : data;
-						if (data.size() > sizeof(algorithm::subpubkeyhash))
+						if (data.size() > sizeof(algorithm::pubkeyhash_t))
 						{
-							if (!algorithm::signing::decode_subaddress(data, ((svm_address*)value)->hash.data))
+							if (!algorithm::signing::decode_address(data, ((svm_address*)value)->hash))
 								return layer_exception("load failed for address type");
 						}
 						else
-							((svm_address*)value)->hash = algorithm::subpubkeyhash_t(data);
+							((svm_address*)value)->hash = algorithm::pubkeyhash_t(data);
 
 						unique.address = nullptr;
 						return expectation::met;
@@ -1246,13 +1246,13 @@ namespace tangent
 					{
 						string data = stream->value.get_blob();
 						data = format::util::is_hex_encoding(data) ? format::util::decode_0xhex(data) : data;
-						if (data.size() > sizeof(algorithm::subpubkeyhash))
+						if (data.size() > sizeof(algorithm::pubkeyhash_t))
 						{
-							if (!algorithm::signing::decode_subaddress(data, ((svm_address*)value)->hash.data))
+							if (!algorithm::signing::decode_address(data, ((svm_address*)value)->hash))
 								return layer_exception("load failed for address type");
 						}
 						else
-							((svm_address*)value)->hash = algorithm::subpubkeyhash_t(data);
+							((svm_address*)value)->hash = algorithm::pubkeyhash_t(data);
 
 						unique.address = nullptr;
 						return expectation::met;
@@ -1410,13 +1410,8 @@ namespace tangent
 			address->set_constructor<svm_address>("void f()");
 			address->set_constructor<svm_address, const std::string_view&>("void f(const string_view&in)");
 			address->set_constructor<svm_address, const uint256_t&>("void f(const uint256&in)");
-			address->set_constructor<svm_address, const uint256_t&, const uint256_t&>("void f(const uint256&in, const uint256&in)");
-			address->set_method("address to_address() const", &svm_address::to_address);
-			address->set_method("address to_subaddress_from_hash(const uint256&in) const", &svm_address::to_subaddress_from_hash);
-			address->set_method("address to_subaddress_from_data(const string_view&in) const", &svm_address::to_subaddress_from_data);
 			address->set_method("string to_string() const", &svm_address::to_string);
 			address->set_method("uint256 to_public_key_hash() const", &svm_address::to_public_key_hash);
-			address->set_method("uint256 to_derivation_hash() const", &svm_address::to_derivation_hash);
 			address->set_method("bool empty() const", &svm_address::empty);
 			address->set_method_extern("void pay(const uint256&in, const decimal&in) const", &svm_address_pay);
 			address->set_method_extern("t call<t>(const string_view&in, const ?&in) const", &svm_address_call, convention::generic_call);
@@ -1706,71 +1701,29 @@ namespace tangent
 		svm_address::svm_address()
 		{
 		}
-		svm_address::svm_address(const algorithm::pubkeyhash_t& owner)
-		{
-			if (!owner.empty())
-				hash = algorithm::encoding::to_subaddress(owner.data);
-		}
-		svm_address::svm_address(const algorithm::subpubkeyhash_t& owner) : hash(owner)
+		svm_address::svm_address(const algorithm::pubkeyhash_t& owner) : hash(owner)
 		{
 		}
 		svm_address::svm_address(const std::string_view& address)
 		{
-			algorithm::signing::decode_subaddress(address, hash.data);
+			algorithm::signing::decode_address(address, hash);
 		}
 		svm_address::svm_address(const uint256_t& owner_data)
 		{
 			uint8_t owner_raw_data[32];
 			algorithm::encoding::decode_uint256(owner_data, owner_raw_data);
-			hash = algorithm::encoding::to_subaddress(owner_raw_data);
-		}
-		svm_address::svm_address(const uint256_t& owner_data, const uint256_t& derivation_data)
-		{
-			uint8_t owner_raw_data[32], derivation_raw_data[32];
-			algorithm::encoding::decode_uint256(owner_data, owner_raw_data);
-			algorithm::encoding::decode_uint256(derivation_data, derivation_raw_data);
-			hash = algorithm::encoding::to_subaddress(owner_raw_data, derivation_raw_data);
-		}
-		svm_address svm_address::to_address() const
-		{
-			auto result = svm_address();
-			result.hash = algorithm::encoding::to_subaddress(hash.data);
-			return result;
-		}
-		svm_address svm_address::to_subaddress_from_hash(const uint256_t& derivation_data) const
-		{
-			uint8_t derivation_raw_data[32];
-			algorithm::encoding::decode_uint256(derivation_data, derivation_raw_data);
-
-			auto result = svm_address();
-			result.hash = algorithm::encoding::to_subaddress(hash.data, derivation_raw_data);
-			return result;
-		}
-		svm_address svm_address::to_subaddress_from_data(const std::string_view& derivation_data) const
-		{
-			auto result = svm_address();
-			result.hash = algorithm::encoding::to_subaddress(hash.data, derivation_data);
-			return result;
+			memcpy(hash.data, owner_raw_data, sizeof(hash.data));
 		}
 		string svm_address::to_string() const
 		{
 			string address;
-			algorithm::signing::encode_subaddress(hash.data, address);
+			algorithm::signing::encode_address(hash, address);
 			return address;
 		}
 		uint256_t svm_address::to_public_key_hash() const
 		{
 			uint8_t data[32] = { 0 };
-			memcpy(data, hash.data, sizeof(algorithm::pubkeyhash));
-
-			uint256_t numeric = 0;
-			algorithm::encoding::encode_uint256(data, numeric);
-			return numeric;
-		}
-		uint256_t svm_address::to_derivation_hash() const
-		{
-			uint8_t data[32] = { 0 };
-			memcpy(data, hash.data + sizeof(algorithm::pubkeyhash), sizeof(algorithm::pubkeyhash));
+			memcpy(data, hash.data, sizeof(algorithm::pubkeyhash_t));
 
 			uint256_t numeric = 0;
 			algorithm::encoding::encode_uint256(data, numeric);
@@ -1851,7 +1804,7 @@ namespace tangent
 			if (!rstr(result))
 				return false;
 
-			algorithm::subpubkeyhash_t blob;
+			algorithm::pubkeyhash_t blob;
 			if (!algorithm::encoding::decode_uint_blob(result, blob.data, sizeof(blob.data)))
 				return false;
 
@@ -2266,7 +2219,7 @@ namespace tangent
 			receipt.generation_time = protocol::now().time.now();
 			receipt.absolute_gas_use = context->block->gas_use;
 			receipt.block_number = context->block->number;
-			memcpy(receipt.from, to().hash.data, sizeof(receipt.from));
+			receipt.from = to().hash.data;
 
 			auto next = transaction_context(context->environment, context->block, context->changelog, &transaction, std::move(receipt));
 			auto* prev = context;
@@ -2742,19 +2695,19 @@ namespace tangent
 		}
 		svm_address svm_program::from() const
 		{
-			return svm_address(algorithm::pubkeyhash_t(context->receipt.from));
+			return svm_address(context->receipt.from);
 		}
 		svm_address svm_program::to() const
 		{
 			uint32_t type = context->transaction->as_type();
 			if (type == transactions::call::as_instance_type())
-				return svm_address(algorithm::subpubkeyhash_t(((transactions::call*)context->transaction)->callable));
+				return svm_address(((transactions::call*)context->transaction)->callable);
 
 			auto* event = context->receipt.find_event<states::account_program>();
-			if (event != nullptr && !event->empty() && event->at(0).as_string().size() == sizeof(algorithm::pubkeyhash))
+			if (event != nullptr && !event->empty() && event->at(0).as_string().size() == sizeof(algorithm::pubkeyhash_t))
 				return svm_address(algorithm::pubkeyhash_t(event->at(0).as_string()));
 
-			return svm_address(algorithm::pubkeyhash_t(context->receipt.from));
+			return svm_address(context->receipt.from);
 		}
 		decimal svm_program::value() const
 		{
