@@ -1578,21 +1578,27 @@ namespace tangent
 		}
 		svm_host::~svm_host() noexcept
 		{
+			while (!compilers.empty())
+			{
+				auto& compiler = compilers.front();
+				compiler->unlink_module();
+				compilers.pop();
+			}
 			for (auto& link : modules)
 				library(link.second).discard();
 			modules.clear();
 		}
-		uptr<compiler> svm_host::allocate()
+		svm_compiler svm_host::allocate()
 		{
 			umutex<std::mutex> unique(mutex);
 			if (!compilers.empty())
 			{
 				auto compiler = std::move(compilers.front());
 				compilers.pop();
-				return compiler;
+				return compiler.reset();
 			}
 
-			uptr<compiler> compiler = vm->create_compiler();
+			auto* compiler = vm->create_compiler();
 			compiler->clear();
 			return compiler;
 		}
@@ -1617,6 +1623,7 @@ namespace tangent
 				messages.append("svm preparation: " + preparation.error().message() + "\r\n");
 			error:
 				vm->set_compile_callback(program_name, nullptr);
+				stringify::replace(messages, id, "svmc");
 				return layer_exception(std::move(messages));
 			}
 
@@ -2138,6 +2145,7 @@ namespace tangent
 			coroutine->set_user_data(prev_immutable_program, SCRIPT_TAG_IMMUTABLE_PROGRAM);
 			if (!execution || (execution && *execution != execution::finished) || !exception.empty())
 			{
+				auto name = entrypoint.get_module_name();
 				if (caller != coroutine)
 					vm->return_context(coroutine);
 				if (exception.empty())
@@ -2146,6 +2154,7 @@ namespace tangent
 				string error_message = stringify::text("(%s) ", exception.get_type().c_str());
 				error_message.append(exception.get_text());
 				error_message.append(exception.origin);
+				stringify::replace(error_message, name, "svmc");
 				return layer_exception(std::move(error_message));
 			}
 
@@ -2168,24 +2177,15 @@ namespace tangent
 			{
 				auto program = context->get_witness_program(link->hashcode);
 				if (!program)
-				{
-					host->deallocate(std::move(compiler));
 					return layer_exception(stringify::text("illegal subcall to %s program on function \"%.*s\": %s", target.to_string().c_str(), (int)function_decl.size(), function_decl.data(), program.error().what()));
-				}
 
 				auto code = program->as_code();
 				if (!code)
-				{
-					host->deallocate(std::move(compiler));
 					return layer_exception(stringify::text("illegal subcall to %s program on function \"%.*s\": %s", target.to_string().c_str(), (int)function_decl.size(), function_decl.data(), code.error().what()));
-				}
 
 				auto compilation = host->compile(*compiler, link->hashcode, format::util::encode_0xhex(link->hashcode), *code);
 				if (!compilation)
-				{
-					host->deallocate(std::move(compiler));
 					return layer_exception(stringify::text("illegal subcall to %s program on function \"%.*s\": %s", target.to_string().c_str(), (int)function_decl.size(), function_decl.data(), compilation.error().what()));
-				}
 			}
 
 			format::variables args;
@@ -2194,17 +2194,11 @@ namespace tangent
 				format::wo_stream stream;
 				auto serialization = svm_marshalling::store(&stream, input_value, input_type_id);
 				if (!serialization)
-				{
-					host->deallocate(std::move(compiler));
 					return layer_exception(stringify::text("illegal subcall to %s program on function \"%.*s\": %s", target.to_string().c_str(), (int)function_decl.size(), function_decl.data(), serialization.error().what()));
-				}
-
+		
 				auto reader = stream.ro();
 				if (!format::variables_util::deserialize_flat_from(reader, &args))
-				{
-					host->deallocate(std::move(compiler));
 					return layer_exception(stringify::text("illegal subcall to %s program on function \"%.*s\": argument serialization error", target.to_string().c_str(), (int)function_decl.size(), function_decl.data()));
-				}
 			}
 
 			auto transaction = transactions::call();
@@ -2244,7 +2238,6 @@ namespace tangent
 			prev->receipt.events.insert(prev->receipt.events.begin(), next.receipt.events.begin(), next.receipt.events.end());
 			prev->receipt.relative_gas_use += next.receipt.relative_gas_use;
 			main->context = prev;
-			host->deallocate(std::move(compiler));
 			return execution;
 		}
 		expects_lr<vector<std::function<void(immediate_context*)>>> svm_program::load_arguments(svm_call* mutability, const function& entrypoint, const format::variables& args) const
@@ -2702,10 +2695,8 @@ namespace tangent
 			uint32_t type = context->transaction->as_type();
 			if (type == transactions::call::as_instance_type())
 				return svm_address(((transactions::call*)context->transaction)->callable);
-
-			auto* event = context->receipt.find_event<states::account_program>();
-			if (event != nullptr && !event->empty() && event->at(0).as_string().size() == sizeof(algorithm::pubkeyhash_t))
-				return svm_address(algorithm::pubkeyhash_t(event->at(0).as_string()));
+			else if (type == transactions::upgrade::as_instance_type())
+				return svm_address(((transactions::upgrade*)context->transaction)->get_account());
 
 			return svm_address(context->receipt.from);
 		}

@@ -19,7 +19,8 @@ namespace tangent
 		{
 			code,
 			abi,
-			tx
+			tx_upgrade,
+			tx_call
 		};
 
 		struct svm_context : ledger::svm_program
@@ -41,8 +42,8 @@ namespace tangent
 			struct
 			{
 				ledger::evaluation_context environment;
+				ledger::svm_compiler compiler;
 				uptr<transactions::call> contextual;
-				uptr<compiler> compiler;
 				uptr<schema> returning;
 				uptr<schema> log;
 				unordered_map<size_t, uptr<schema>> events;
@@ -67,11 +68,7 @@ namespace tangent
 				svmc.compiler = host->allocate();
 				context = &svmc.environment.validation.context;
 			}
-			~svm_context()
-			{
-				auto* host = ledger::svm_host::get();
-				host->deallocate(std::move(svmc.compiler));
-			}
+			~svm_context() = default;
 			expects_lr<void> assign_transaction(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& from, const algorithm::pubkeyhash_t& to, const decimal& value, const std::string_view& function_decl, const format::variables& args)
 			{
 				uptr<transactions::call> transaction = memory::init<transactions::call>();
@@ -99,7 +96,7 @@ namespace tangent
 				memset(svmc.environment.validator.secret_key.data, 0xFF, sizeof(algorithm::seckey_t));
 				return expectation::met;
 			}
-			expects_lr<uptr<compiler>> compile_transaction()
+			expects_lr<ledger::svm_compiler> compile_transaction()
 			{
 				VI_ASSERT(svmc.contextual, "transaction should be assigned");
 				auto index = svmc.environment.validation.context.get_account_program(to().hash.data);
@@ -110,37 +107,25 @@ namespace tangent
 				auto& hashcode = index->hashcode;
 				auto result = host->allocate();
 				if (host->precompile(*result, hashcode))
-					return expects_lr<uptr<compiler>>(std::move(result));
+					return expects_lr<ledger::svm_compiler>(std::move(result));
 
 				auto program = svmc.environment.validation.context.get_witness_program(hashcode);
 				if (!program)
-				{
-					host->deallocate(std::move(result));
 					return layer_exception("program not stored to address");
-				}
 
 				auto code = program->as_code();
 				if (!code)
-				{
-					host->deallocate(std::move(result));
 					return code.error();
-				}
 
 				auto compilation = host->compile(*result, hashcode, format::util::encode_0xhex(hashcode), *code);
 				if (!compilation)
-				{
-					host->deallocate(std::move(result));
 					return compilation.error();
-				}
 
-				return expects_lr<uptr<compiler>>(std::move(result));
+				return expects_lr<ledger::svm_compiler>(std::move(result));
 			}
 			expects_lr<void> call_transaction(compiler* module, ledger::svm_call mutability, const function& entrypoint, const format::variables& args)
 			{
 				VI_ASSERT(svmc.contextual, "transaction should be assigned");
-				if (entrypoint.get_name() == "construct")
-					context->receipt.emit_event<states::account_program>({ format::variable(state.to.view()) });
-
 				svmc.events.clear();
 				svmc.instructions.clear();
 				auto execution = execute(mutability, entrypoint, args, [this](void* address, int type_id) -> expects_lr<void>
@@ -221,10 +206,24 @@ namespace tangent
 				if (!data.empty())
 					data.erase(data.size() - 2, 2);
 
-				if (type == svm_assembler::tx)
+				if (type == svm_assembler::tx_upgrade)
 				{
 					auto transaction = transactions::upgrade();
 					transaction.from_program(data, std::move(function_args));
+
+					auto message = transaction.as_message();
+					data = std::move(message.data);
+				}
+				else if (type == svm_assembler::tx_call)
+				{
+					if (function_args.empty())
+						return layer_exception("first argument of argument pack must be a function decl/name");
+
+					auto function_decl = function_args.front().as_blob();
+					function_args.erase(function_args.begin());
+
+					auto transaction = transactions::call();
+					transaction.program_call(state.to, state.pay, function_decl, std::move(function_args));
 
 					auto message = transaction.as_message();
 					data = std::move(message.data);
@@ -355,7 +354,6 @@ namespace tangent
 			void reset()
 			{
 				auto* host = ledger::svm_host::get();
-				host->deallocate(std::move(svmc.compiler));
 				state.balances.clear();
 				state.from = algorithm::pubkeyhash_t();
 				state.to = algorithm::pubkeyhash_t();
@@ -581,7 +579,7 @@ namespace tangent
 						return err("no program bound");
 
 					auto type = args[1];
-					if (type != "tx" && type != "abi" && type != "code")
+					if (type != "upgrade" && type != "call" && type != "abi" && type != "code")
 						return err("not a valid type");
 
 					auto path = os::path::resolve(args[2], directory, true);
@@ -589,8 +587,10 @@ namespace tangent
 						return err(path.what());
 
 					svm_assembler svm_type;
-					if (type == "tx")
-						svm_type = svm_assembler::tx;
+					if (type == "upgrade")
+						svm_type = svm_assembler::tx_upgrade;
+					else if (type == "call")
+						svm_type = svm_assembler::tx_call;
 					else if (type == "abi")
 						svm_type = svm_assembler::abi;
 					else if (true || type == "code")
@@ -930,7 +930,7 @@ namespace tangent
 						"pay [value?]                                             -- get/set caller address paying value\n"
 						"pay_funded [value?]                                      -- combination of fund then pay\n"
 						"compile [path]                                           -- compile and use program\n"
-						"assemble [type:tx|abi|code] [path] [packed-args?]        -- assemble current program (type=tx: assemble upgrade tx data with packed args)\n"
+						"assemble [type:upgrade|call|abi|code] [path] [args?]     -- assemble current program (type=upgrade_tx/call_tx: assemble upgrade tx data with packed args)\n"
 						"pack [args?]...                                          -- pack many args into one (for non-trivial function args)\n"
 						"pack256 [integer]...                                     -- pack a decimal uint256 into a hex number\n"
 						"unpack [stream]                                          -- unpack stream to many args\n"

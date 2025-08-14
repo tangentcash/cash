@@ -8,6 +8,8 @@ namespace tangent
 {
 	namespace ledger
 	{
+		class svm_compiler;
+
 		enum class svm_call
 		{
 			system_call,
@@ -35,7 +37,7 @@ namespace tangent
 		public:
 			svm_host() noexcept;
 			virtual ~svm_host() noexcept override;
-			uptr<compiler> allocate();
+			svm_compiler allocate();
 			void deallocate(uptr<compiler>&& compiler);
 			expects_lr<void> compile(compiler* compiler, const std::string_view& program_hashcode, const std::string_view& program_name, const std::string_view& unpacked_program_code);
 			bool precompile(compiler* compiler, const std::string_view& program_hashcode);
@@ -43,6 +45,94 @@ namespace tangent
 			expects_lr<string> pack(const std::string_view& unpacked_program_code);
 			expects_lr<string> unpack(const std::string_view& packed_program_code);
 			virtual_machine* get_vm();
+		};
+
+		class svm_compiler
+		{
+		private:
+			compiler* address;
+
+		public:
+			svm_compiler() noexcept : address(nullptr)
+			{
+			}
+			svm_compiler(compiler* new_address) noexcept : address(new_address)
+			{
+			}
+			svm_compiler(const svm_compiler&) noexcept = delete;
+			svm_compiler(svm_compiler&& other) noexcept : address(other.address)
+			{
+				other.address = nullptr;
+			}
+			~svm_compiler()
+			{
+				destroy();
+			}
+			svm_compiler& operator= (const svm_compiler&) noexcept = delete;
+			svm_compiler& operator= (svm_compiler&& other) noexcept
+			{
+				if (this == &other)
+					return *this;
+
+				destroy();
+				address = other.address;
+				other.address = nullptr;
+				return *this;
+			}
+			explicit operator bool() const
+			{
+				return address != nullptr;
+			}
+			inline compiler* operator-> ()
+			{
+				VI_ASSERT(address != nullptr, "unique null pointer access");
+				return address;
+			}
+			inline compiler* operator-> () const
+			{
+				VI_ASSERT(address != nullptr, "unique null pointer access");
+				return address;
+			}
+			inline compiler* operator* ()
+			{
+				return address;
+			}
+			inline compiler* operator* () const
+			{
+				return address;
+			}
+			inline compiler** out()
+			{
+				VI_ASSERT(!address, "pointer should be null when performing output update");
+				return &address;
+			}
+			inline compiler* const* in() const
+			{
+				return &address;
+			}
+			inline compiler* expect(const std::string_view& message)
+			{
+				VI_PANIC(address != nullptr, "%.*s CAUSING panic", (int)message.size(), message.data());
+				return address;
+			}
+			inline compiler* expect(const std::string_view& message) const
+			{
+				VI_PANIC(address != nullptr, "%.*s CAUSING panic", (int)message.size(), message.data());
+				return address;
+			}
+			inline compiler* reset()
+			{
+				compiler* result = address;
+				address = nullptr;
+				return result;
+			}
+			inline void destroy()
+			{
+				if (svm_host::has_instance())
+					svm_host::get()->deallocate(reset());
+				else
+					memory::release(address);
+			}
 		};
 
 		struct svm_frame

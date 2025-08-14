@@ -1283,7 +1283,7 @@ namespace tangent
 
 				return server_response().success(std::move(data));
 			}
-			else
+			else if (unrolling == 2)
 			{
 				auto block_number = chain.get_block_number_by_hash(hash);
 				if (!block_number)
@@ -1298,6 +1298,45 @@ namespace tangent
 
 					for (auto& item : *list)
 						data->push(item.as_schema().reset());
+					if (list->size() < protocol::now().user.rpc.cursor_size)
+						break;
+				}
+
+				return server_response().success(std::move(data));
+			}
+			else
+			{
+				auto block_number = chain.get_block_number_by_hash(hash);
+				if (!block_number)
+					return server_response().error(error_codes::not_found, "block not found");
+
+				auto parties = ordered_set<algorithm::pubkeyhash_t>();
+				auto aliases = ordered_set<uint256_t>();
+				auto context = ledger::transaction_context();
+				uptr<schema> data = var::set::array();
+				while (true)
+				{
+					auto list = chain.get_block_transactions_by_number(*block_number, data->size(), protocol::now().user.rpc.cursor_size);
+					if (!list)
+						return server_response().error(error_codes::not_found, "block not found");
+
+					for (auto& item : *list)
+					{
+						auto tx_data = item.as_schema();
+						auto affected_data = tx_data->set("affected", var::set::object());
+						auto accounts_data = affected_data->set("accounts", var::set::array());
+						auto aliases_data = affected_data->set("aliases", var::set::array());
+						item.transaction->recover_many(&context, item.receipt, parties);
+						item.transaction->recover_aliases(&context, item.receipt, aliases);
+						accounts_data->push(algorithm::signing::serialize_address(item.receipt.from));
+						for (auto& party : parties)
+							accounts_data->push(algorithm::signing::serialize_address(party));
+						for (auto& hash : aliases)
+							aliases_data->push(var::string(algorithm::encoding::encode_0xhex256(hash)));
+						data->push(tx_data.reset());
+						parties.clear();
+						aliases.clear();
+					}
 					if (list->size() < protocol::now().user.rpc.cursor_size)
 						break;
 				}
@@ -1338,7 +1377,7 @@ namespace tangent
 
 				return server_response().success(std::move(data));
 			}
-			else
+			else if (unrolling == 2)
 			{
 				uptr<schema> data = var::set::array();
 				while (true)
@@ -1349,6 +1388,41 @@ namespace tangent
 
 					for (auto& item : *list)
 						data->push(item.as_schema().reset());
+					if (list->size() < protocol::now().user.rpc.cursor_size)
+						break;
+				}
+
+				return server_response().success(std::move(data));
+			}
+			else
+			{
+				auto parties = ordered_set<algorithm::pubkeyhash_t>();
+				auto aliases = ordered_set<uint256_t>();
+				auto context = ledger::transaction_context();
+				uptr<schema> data = var::set::array();
+				while (true)
+				{
+					auto list = chain.get_block_transactions_by_number(number, data->size(), protocol::now().user.rpc.cursor_size);
+					if (!list)
+						return server_response().error(error_codes::not_found, "block not found");
+
+					for (auto& item : *list)
+					{
+						auto tx_data = item.as_schema();
+						auto affected_data = tx_data->set("affected", var::set::object());
+						auto accounts_data = affected_data->set("accounts", var::set::array());
+						auto aliases_data = affected_data->set("aliases", var::set::array());
+						item.transaction->recover_many(&context, item.receipt, parties);
+						item.transaction->recover_aliases(&context, item.receipt, aliases);
+						accounts_data->push(algorithm::signing::serialize_address(item.receipt.from));
+						for (auto& party : parties)
+							accounts_data->push(algorithm::signing::serialize_address(party));
+						for (auto& hash : aliases)
+							aliases_data->push(var::string(algorithm::encoding::encode_0xhex256(hash)));
+						data->push(tx_data.reset());
+						parties.clear();
+						aliases.clear();
+					}
 					if (list->size() < protocol::now().user.rpc.cursor_size)
 						break;
 				}
@@ -1598,24 +1672,15 @@ namespace tangent
 			{
 				auto program = environment.validation.context.get_witness_program(hashcode);
 				if (!program)
-				{
-					host->deallocate(std::move(compiler));
 					return server_response().error(error_codes::bad_params, "to account has no program storage");
-				}
 
 				auto code = program->as_code();
 				if (!code)
-				{
-					host->deallocate(std::move(compiler));
 					return server_response().error(error_codes::bad_params, code.error().message());
-				}
 
 				auto compilation = host->compile(*compiler, hashcode, format::util::encode_0xhex(hashcode), *code);
 				if (!compilation)
-				{
-					host->deallocate(std::move(compiler));
 					return server_response().error(error_codes::bad_params, compilation.error().message());
-				}
 			}
 
 			auto function = args[4].as_string();
@@ -1653,7 +1718,7 @@ namespace tangent
 
 			auto returning = uptr<schema>();
 			auto script = ledger::svm_program(&environment.validation.context);
-			auto execution = script.execute(ledger::svm_call::immutable_call, entrypoint, args, [&](void* address, int type_id) -> expects_lr<void>
+			auto execution = script.execute(ledger::svm_call::immutable_call, entrypoint, transaction.args, [&](void* address, int type_id) -> expects_lr<void>
 			{
 				returning = var::set::object();
 				auto serialization = ledger::svm_marshalling::store(*returning, address, type_id);

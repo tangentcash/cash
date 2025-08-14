@@ -278,14 +278,14 @@ public:
 			upgrade_ethereum1->from_program(token_program.substr(1, token_program.size() - 2), { format::variable(user1.get_address()), format::variable(1000000u) });
 			VI_PANIC(upgrade_ethereum1->sign(user1.secret_key, user1_nonce++, decimal::zero()), "upgrade not signed");
 			transactions.push_back(upgrade_ethereum1);
-			contracts->push_back(upgrade_ethereum1->get_account(user1.public_key_hash));
+			contracts->push_back(upgrade_ethereum1->get_account());
 
 			auto* upgrade_ethereum2 = memory::init<transactions::upgrade>();
 			upgrade_ethereum2->set_asset("ETH");
 			upgrade_ethereum2->from_program(bridge_program.substr(1, bridge_program.size() - 2), { format::variable(contracts->at(0).view()) });
 			VI_PANIC(upgrade_ethereum2->sign(user1.secret_key, user1_nonce++, decimal::zero()), "upgrade not signed");
 			transactions.push_back(upgrade_ethereum2);
-			contracts->push_back(upgrade_ethereum2->get_account(user1.public_key_hash));
+			contracts->push_back(upgrade_ethereum2->get_account());
 		}
 		static void account_call(vector<uptr<ledger::transaction>>& transactions, vector<account>& users, vector<algorithm::pubkeyhash_t>* contracts)
 		{
@@ -1478,16 +1478,16 @@ public:
 			TEST_BLOCK(&generators::account_transfer_stage_1, "0x5dab1e4f9d688c4c5aa70a97fd8f1120948e83cd9a64ed99dc43714b50231185", 7);
 			TEST_BLOCK(&generators::account_transfer_stage_2, "0x923357b7425ceebfd88dcc67c6ef7d75bc0a701df3c990c88d20fef701596c7a", 8);
 			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), users[2].wallet.get_address(), 0.05), "0xf3932a8d1ef1c885ea8700b324e163ac5d44e19e3c69920bfc8d0181b2e12d25", 9);
-			TEST_BLOCK(std::bind(&generators::account_upgrade, std::placeholders::_1, std::placeholders::_2, &contracts), "0x1eee5bf9877851dbe750240b1eb6c6d57064135f04eaf430bccfc98d3350e619", 10);
-			TEST_BLOCK(std::bind(&generators::account_call, std::placeholders::_1, std::placeholders::_2, &contracts), "0xf082688402f8de32769fac4b5d9b02680862b39c529ee7df114beec4b597a956", 11);
-			TEST_BLOCK(&generators::account_transaction_rollup, "0x2f9c98d9d5667aa73f3b90c16c0c8378b2e6c14aa7bbebfb046572170d8e22fb", 12);
-			TEST_BLOCK(std::bind(&generators::validator_enable_validator, std::placeholders::_1, std::placeholders::_2, 2, true, true, true), "0x9fa8d3e80dd30579fa8c15bdc25ceada846745a78dea133e6f5134fbb0cbe057", 13);
-			TEST_BLOCK(&generators::depository_regrouping, "0xccee4c60cf9919f12e1b25c65c0c5d21ca0c597ef9142034eee15f4baefa77f3", 14);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_1, "0x3366e7ee017d7ff53df483cbf475be9a90b0ff15c78aa961f5205bb149392583", 18);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0xfa071351b7da20b5a7f0a0ea5dcd85538a9f7e21c10249b7ea4ac969fa5c16f1", 20);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0x943fa05bf5a25e47b99c51e27328094d03b3dc3240544a03bbb6bd08b092ba8e", 22);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_4, "0x6a81f1b26ff53a6e2f50bcdd6b28ed2d5a76927a6abeb3b69c94be165943e73a", 24);
-			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2, true, true, false), "0x57f23f194a296666e7bde9a3fa4e8a620ab1a6f77109641025fe6a56a1a840b6", 26);
+			TEST_BLOCK(std::bind(&generators::account_upgrade, std::placeholders::_1, std::placeholders::_2, &contracts), "0xc2e4630eca9e6c7d5d558136ac81a274fa3557616b8285a1f5fe03f5bc2449d8", 10);
+			TEST_BLOCK(std::bind(&generators::account_call, std::placeholders::_1, std::placeholders::_2, &contracts), "0x4060df86e688b8f697bc37eb2955059934ed7659e93f41839d865dcef15dc63c", 11);
+			TEST_BLOCK(&generators::account_transaction_rollup, "0xcf31dd5baae7c4daf2af509d6dbcca62826f9778b3fee8a2b9bb772bdeaf8490", 12);
+			TEST_BLOCK(std::bind(&generators::validator_enable_validator, std::placeholders::_1, std::placeholders::_2, 2, true, true, true), "0x1f7da83da02e5bfd3e22be12a475c2e3c715650cd3fefed59c181bb4e8b3d8d3", 13);
+			TEST_BLOCK(&generators::depository_regrouping, "0xa60714d8ac4ff205486d4b5f1a740ce647e49a99b619e4aeb55953770988b6dd", 14);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_1, "0x889616a8a4d749270edb821963e820b6a0b13a49c234685e05822fa4e37b0134", 18);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0xaaf0ccc1975bf655f03eeaecc1344e2f56090958df8c1d77bf707eba9711da5c", 20);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0x2790e153c8a665c883a3f3fd32f8f14c864103a2334f8735134edb51dc070090", 22);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_4, "0x18d79f14127f9fc042bca13c3be5c81e09e404cc33ac96d4d750bcab52f86c98", 24);
+			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2, true, true, false), "0xdeed61c0ada9043606d7cd59c80ab1dc78dffd5eaa7db05b2fab067f1136bd56", 26);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else
