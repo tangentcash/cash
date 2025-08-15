@@ -187,7 +187,7 @@ namespace tangent
 			static string encode_0xhex128(const uint128_t& data);
 			static uint128_t decode_0xhex128(const std::string_view& data);
 			static uint32_t type_of(const std::string_view& name);
-			static schema* serialize_uint256(const uint256_t& data);
+			static schema* serialize_uint256(const uint256_t& data, bool always16 = false);
 		};
 
 		class hashing

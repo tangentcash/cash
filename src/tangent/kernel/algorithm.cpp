@@ -951,9 +951,9 @@ namespace tangent
 		{
 			return hashing::hash32d(name);
 		}
-		schema* encoding::serialize_uint256(const uint256_t& value)
+		schema* encoding::serialize_uint256(const uint256_t& value, bool always16)
 		{
-			if (value <= std::numeric_limits<int64_t>::max())
+			if (!always16 && value <= std::numeric_limits<int64_t>::max())
 				return var::set::integer((uint64_t)value);
 
 			uint8_t data[32];
@@ -1195,7 +1195,7 @@ namespace tangent
 		schema* asset::serialize(const asset_id& value)
 		{
 			schema* data = var::set::object();
-			data->set("id", encoding::serialize_uint256(value));
+			data->set("id", encoding::serialize_uint256(value, true));
 			string chain = blockchain_of(value);
 			if (!chain.empty())
 				data->set("chain", var::string(chain));
