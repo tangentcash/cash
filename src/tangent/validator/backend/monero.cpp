@@ -989,7 +989,7 @@ namespace tangent
 				size_t di_size = std::max<size_t>(1, di.bytes());
 				uint8_t derivation[64] = { 0 };
 				memcpy(derivation, derivation_key, 32);
-				algorithm::encoding::decode_uint256(di, derivation + 32);
+				di.encode(derivation + 32);
 				hash_to_scalar(derivation, 32 + di_size, derivation_scalar);
 			}
 			void monero::hash_to_scalar(const uint8_t* buffer, size_t buffer_size, uint8_t scalar[32])

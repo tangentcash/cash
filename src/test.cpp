@@ -677,8 +677,8 @@ public:
 			uint256_t value = algorithm::hashing::hash256i(*crypto::random_bytes(32));
 
 			uint8_t data1[32] = { 0 }; uint256_t value1 = 0;
-			algorithm::encoding::decode_uint256(value, data1);
-			algorithm::encoding::encode_uint256(data1, value1);
+			value.encode(data1);
+			value1.decode(data1);
 			VI_PANIC(value == value1, "uint256 serialization failed");
 		}
 
@@ -693,7 +693,7 @@ public:
 		for (size_t i = 0; i < samples; i++)
 		{
 			uint256_t number;
-			algorithm::encoding::encode_uint256((uint8_t*)crypto::random_bytes(32)->data(), number);
+			number.decode((uint8_t*)crypto::random_bytes(32)->data());
 
 			term->capture_time();
 			decimal test = number.to_decimal();
@@ -970,7 +970,7 @@ public:
 		for (size_t i = 0; i < hashes; i++)
 		{
 			uint8_t hash[32];
-			algorithm::encoding::decode_uint256(next, hash);
+			next.encode(hash);
 
 			hashset.push_back(next);
 			next = algorithm::hashing::hash256i(std::string_view((char*)hash, sizeof(hash)));
@@ -2705,7 +2705,7 @@ int main(int argc, char* argv[])
 	auto* term = console::get();
 	term->show();
 
-	int bad_entrypoint_exit_code = 0x39cc8025;
+	int bad_entrypoint_exit_code = 0x39ce8025;
 	int exit_code = bad_entrypoint_exit_code;
 	auto test = args.get("test");
 	if (test == "consensus")

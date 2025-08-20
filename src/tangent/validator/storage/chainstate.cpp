@@ -150,12 +150,12 @@ namespace tangent
 		static void finalize_checksum(messages::uniform& message, const variant& column)
 		{
 			if (column.size() == sizeof(uint256_t))
-				algorithm::encoding::encode_uint256(column.get_binary(), message.checksum);
+				message.checksum.decode(column.get_binary());
 		}
 		static void finalize_checksum(messages::authentic& message, const variant& column)
 		{
 			if (column.size() == sizeof(uint256_t))
-				algorithm::encoding::encode_uint256(column.get_binary(), message.checksum);
+				message.checksum.decode(column.get_binary());
 		}
 		static uptr<ledger::state> state_from_blob(uint64_t block_number, uint32_t type, const std::string_view& index_or_column, const std::string_view& row_or_none, const std::string_view& optimized_blob)
 		{
@@ -461,7 +461,7 @@ namespace tangent
 		string result_filter::as_value() const
 		{
 			uint8_t data[32]; size_t data_size;
-			algorithm::encoding::optimized_decode_uint256(value, data, &data_size);
+			value.encode_compact(data, &data_size);
 			return string((char*)data, data_size);
 		}
 		std::string_view result_filter::as_condition() const
@@ -696,7 +696,7 @@ namespace tangent
 						continue;
 
 					uint8_t hash[32];
-					algorithm::encoding::decode_uint256(item, hash);
+					item.encode(hash);
 					hashes->push(var::binary(hash, sizeof(hash)));
 				}
 
@@ -717,7 +717,7 @@ namespace tangent
 				for (auto& item : repeated_transaction_hashes)
 				{
 					uint8_t hash[32];
-					algorithm::encoding::decode_uint256(item, hash);
+					item.encode(hash);
 					hashes->push(var::binary(hash, sizeof(hash)));
 				}
 
@@ -932,7 +932,7 @@ namespace tangent
 					return expects_lr<void>(layer_exception("block header serialization error"));
 
 				uint8_t hash[32];
-				algorithm::encoding::decode_uint256(evaluation.block.as_hash(), hash);
+				evaluation.block.as_hash().encode(hash);
 
 				auto status = store(label, __func__, get_block_label(hash), block_header_message.data);
 				if (!status)
@@ -1050,7 +1050,7 @@ namespace tangent
 					item.context->transaction->store(&item.transaction_message);
 					item.context->receipt.store(&item.receipt_message);
 					item.dispatchable = item.context->transaction->is_dispatchable();
-					algorithm::encoding::decode_uint256(item.context->receipt.transaction_hash, item.transaction_hash);
+					item.context->receipt.transaction_hash.encode(item.transaction_hash);
 					if (transaction_to_account_index)
 					{
 						auto context = ledger::transaction_context();
@@ -1067,7 +1067,7 @@ namespace tangent
 						transaction_alias_blob alias;
 						for (auto& hash : aliases)
 						{
-							algorithm::encoding::decode_uint256(hash, alias.transaction_hash);
+							hash.encode(alias.transaction_hash);
 							item.aliases.push_back(alias);
 						}
 					}
@@ -1094,7 +1094,7 @@ namespace tangent
 					item.column = item.context->as_column();
 					item.row = item.context->as_row();
 					item.context->store_optimized(&item.message);
-					algorithm::encoding::optimized_decode_uint256(item.context->as_rank(), item.rank, &item.rank_size);
+					item.context->as_rank().encode_compact(item.rank, &item.rank_size);
 				}))
 					queue.emplace_back(std::move(task));
 			}
@@ -1586,7 +1586,7 @@ namespace tangent
 		expects_lr<uint64_t> chainstate::get_block_number_by_hash(const uint256_t& block_hash)
 		{
 			uint8_t hash[32];
-			algorithm::encoding::decode_uint256(block_hash, hash);
+			block_hash.encode(hash);
 
 			schema_list map;
 			map.push_back(var::set::binary(hash, sizeof(hash)));
@@ -1611,7 +1611,7 @@ namespace tangent
 				return expects_lr<uint256_t>(layer_exception("hash deserialization error"));
 
 			uint256_t result;
-			algorithm::encoding::encode_uint256((uint8_t*)hash.data(), result);
+			result.decode((uint8_t*)hash.data());
 			return result;
 		}
 		expects_lr<decimal> chainstate::get_block_gas_price(uint64_t block_number, const algorithm::asset_id& asset, double percentile)
@@ -1705,7 +1705,7 @@ namespace tangent
 		expects_lr<ledger::block> chainstate::get_block_by_hash(const uint256_t& block_hash, size_t chunk, uint32_t details)
 		{
 			uint8_t hash[32];
-			algorithm::encoding::decode_uint256(block_hash, hash);
+			block_hash.encode(hash);
 
 			ledger::block_header header;
 			auto block_blob = load(label, __func__, get_block_label(hash)).or_else(string());
@@ -1768,7 +1768,7 @@ namespace tangent
 		expects_lr<ledger::block_header> chainstate::get_block_header_by_hash(const uint256_t& block_hash)
 		{
 			uint8_t hash[32];
-			algorithm::encoding::decode_uint256(block_hash, hash);
+			block_hash.encode(hash);
 
 			ledger::block_header header;
 			auto block_blob = load(label, __func__, get_block_label(hash)).or_else(string());
@@ -1831,8 +1831,8 @@ namespace tangent
 				auto transaction_hash = response[i]["transaction_hash"].get().get_blob();
 				if (transaction_hash.size() == sizeof(uint256_t))
 				{
-					algorithm::encoding::encode_uint256((uint8_t*)transaction_hash.data(), proof.transaction_tree.nodes[stride + i]);
 					auto transaction_blob = load(label, __func__, get_receipt_label((uint8_t*)transaction_hash.data())).or_else(string());
+					proof.transaction_tree.nodes[stride + i].decode((uint8_t*)transaction_hash.data());
 					proof.receipt_tree.nodes[stride + i] = format::ro_stream(transaction_blob).hash();
 				}
 				else
@@ -1918,7 +1918,7 @@ namespace tangent
 						continue;
 
 					uint256_t out_hash;
-					algorithm::encoding::encode_uint256((uint8_t*)in_hash.data(), out_hash);
+					out_hash.decode((uint8_t*)in_hash.data());
 					result.push_back(out_hash);
 				}
 			}
@@ -2001,7 +2001,7 @@ namespace tangent
 						continue;
 
 					uint256_t out_hash;
-					algorithm::encoding::encode_uint256((uint8_t*)in_hash.data(), out_hash);
+					out_hash.decode((uint8_t*)in_hash.data());
 					result.push_back(out_hash);
 				}
 			}
@@ -2350,7 +2350,7 @@ namespace tangent
 		expects_lr<uptr<ledger::transaction>> chainstate::get_transaction_by_hash(const uint256_t& transaction_hash)
 		{
 			uint8_t hash[32];
-			algorithm::encoding::decode_uint256(transaction_hash, hash);
+			transaction_hash.encode(hash);
 
 			schema_list map;
 			map.push_back(var::set::binary(hash, sizeof(hash)));
@@ -2384,7 +2384,7 @@ namespace tangent
 		expects_lr<ledger::block_transaction> chainstate::get_block_transaction_by_hash(const uint256_t& transaction_hash)
 		{
 			uint8_t hash[32];
-			algorithm::encoding::decode_uint256(transaction_hash, hash);
+			transaction_hash.encode(hash);
 
 			schema_list map;
 			map.push_back(var::set::binary(hash, sizeof(hash)));
@@ -2421,7 +2421,7 @@ namespace tangent
 		expects_lr<ledger::receipt> chainstate::get_receipt_by_transaction_hash(const uint256_t& transaction_hash)
 		{
 			uint8_t hash[32];
-			algorithm::encoding::decode_uint256(transaction_hash, hash);
+			transaction_hash.encode(hash);
 
 			ledger::receipt value;
 			auto receipt_blob = load(label, __func__, get_receipt_label(hash)).or_else(string());
@@ -3029,7 +3029,7 @@ namespace tangent
 				uint64_t row_number = cursor->first().front().get_column(0).get().get_integer();
 				if (block_number > 0)
 				{
-					algorithm::encoding::optimized_decode_uint256(item.context->as_rank(), item.rank, &item.rank_size);
+					item.context->as_rank().encode_compact(item.rank, &item.rank_size);
 					statement = writer.commit_snapshot_data;
 					writer.storage->bind_int64(statement, 0, column_number);
 					writer.storage->bind_int64(statement, 1, row_number);
@@ -3045,7 +3045,7 @@ namespace tangent
 				}
 				else
 				{
-					algorithm::encoding::optimized_decode_uint256(item.context->as_rank(), item.rank, &item.rank_size);
+					item.context->as_rank().encode_compact(item.rank, &item.rank_size);
 					statement = writer.commit_multiform_data;
 					writer.storage->bind_int64(statement, 0, column_number);
 					writer.storage->bind_int64(statement, 1, row_number);

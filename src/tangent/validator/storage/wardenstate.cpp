@@ -188,7 +188,7 @@ namespace tangent
 				return expects_lr<void>(layer_exception("witness transaction serialization error"));
 
 			uint8_t hash[32];
-			algorithm::encoding::decode_uint256(external_id, hash);
+			external_id.encode(hash);
 
 			schema_list map;
 			map.push_back(external_id > 0 ? var::set::binary(hash, sizeof(hash)) : var::set::null());
@@ -206,7 +206,7 @@ namespace tangent
 		expects_lr<warden::computed_transaction> wardenstate::get_computed_transaction(const std::string_view& transaction_id, const uint256_t& external_id)
 		{
 			uint8_t hash[32];
-			algorithm::encoding::decode_uint256(external_id, hash);
+			external_id.encode(hash);
 
 			schema_list map;
 			map.push_back(var::set::string(transaction_id));

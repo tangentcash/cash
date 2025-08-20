@@ -509,19 +509,7 @@ namespace tangent
 		}
 		viewable util::get_integer_type(const uint256_t& data)
 		{
-			uint64_t array[4] =
-			{
-				os::hw::to_endianness(os::hw::endian::little, data.low().low()),
-				os::hw::to_endianness(os::hw::endian::little, data.low().high()),
-				os::hw::to_endianness(os::hw::endian::little, data.high().low()),
-				os::hw::to_endianness(os::hw::endian::little, data.high().high())
-			};
-			uint8_t bytes = sizeof(array);
-			char* inline_data = (char*)array;
-			while (bytes > 0 && !inline_data[bytes - 1])
-				--bytes;
-			uint8_t type = (uint8_t)viewable::uint_min + bytes;
-			return (viewable)type;
+			return (viewable)((uint8_t)viewable::uint_min + data.bytes());
 		}
 		uint8_t util::get_string_size(viewable type)
 		{

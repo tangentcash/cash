@@ -36,7 +36,7 @@ namespace tangent
 		bool account_nonce::load_index(format::ro_stream& stream)
 		{
 			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner.data, sizeof(owner)))
+			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.data, sizeof(owner)))
 				return false;
 
 			return true;
@@ -107,7 +107,7 @@ namespace tangent
 		bool account_program::load_index(format::ro_stream& stream)
 		{
 			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner.data, sizeof(owner)))
+			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.data, sizeof(owner)))
 				return false;
 
 			return true;
@@ -185,7 +185,7 @@ namespace tangent
 		bool account_uniform::load_index(format::ro_stream& stream)
 		{
 			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner.data, sizeof(owner)))
+			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.data, sizeof(owner)))
 				return false;
 
 			if (!stream.read_string(stream.read_type(), &index))
@@ -270,7 +270,7 @@ namespace tangent
 		bool account_multiform::load_column(format::ro_stream& stream)
 		{
 			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner.data, sizeof(owner)))
+			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.data, sizeof(owner)))
 				return false;
 
 			if (!stream.read_string(stream.read_type(), &column))
@@ -288,7 +288,7 @@ namespace tangent
 		bool account_multiform::load_row(format::ro_stream& stream)
 		{
 			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner.data, sizeof(owner)))
+			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.data, sizeof(owner)))
 				return false;
 
 			if (!stream.read_string(stream.read_type(), &row))
@@ -396,7 +396,7 @@ namespace tangent
 		bool account_delegation::load_index(format::ro_stream& stream)
 		{
 			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner.data, sizeof(owner)))
+			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.data, sizeof(owner)))
 				return false;
 
 			return true;
@@ -494,7 +494,7 @@ namespace tangent
 		bool account_balance::load_column(format::ro_stream& stream)
 		{
 			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner.data, sizeof(owner)))
+			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.data, sizeof(owner)))
 				return false;
 
 			return true;
@@ -627,7 +627,7 @@ namespace tangent
 		bool validator_production::load_column(format::ro_stream& stream)
 		{
 			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner.data, sizeof(owner)))
+			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.data, sizeof(owner)))
 				return false;
 
 			return true;
@@ -783,7 +783,7 @@ namespace tangent
 		bool validator_participation::load_column(format::ro_stream& stream)
 		{
 			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner.data, sizeof(owner)))
+			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.data, sizeof(owner)))
 				return false;
 
 			return true;
@@ -948,7 +948,7 @@ namespace tangent
 		bool validator_attestation::load_column(format::ro_stream& stream)
 		{
 			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner.data, sizeof(owner)))
+			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.data, sizeof(owner)))
 				return false;
 
 			return true;
@@ -1104,7 +1104,7 @@ namespace tangent
 		bool depository_reward::load_column(format::ro_stream& stream)
 		{
 			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner.data, sizeof(owner)))
+			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.data, sizeof(owner)))
 				return false;
 
 			return true;
@@ -1228,7 +1228,7 @@ namespace tangent
 		bool depository_balance::load_column(format::ro_stream& stream)
 		{
 			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner.data, sizeof(owner)))
+			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.data, sizeof(owner)))
 				return false;
 
 			return true;
@@ -1379,7 +1379,7 @@ namespace tangent
 		bool depository_policy::load_column(format::ro_stream& stream)
 		{
 			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner.data, sizeof(owner)))
+			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.data, sizeof(owner)))
 				return false;
 
 			return true;
@@ -1507,7 +1507,7 @@ namespace tangent
 		bool depository_account::load_column(format::ro_stream& stream)
 		{
 			string manager_assembly;
-			if (!stream.read_string(stream.read_type(), &manager_assembly) || !algorithm::encoding::decode_uint_blob(manager_assembly, manager.data, sizeof(manager)))
+			if (!stream.read_string(stream.read_type(), &manager_assembly) || !algorithm::encoding::decode_bytes(manager_assembly, manager.data, sizeof(manager)))
 				return false;
 
 			return true;
@@ -1525,7 +1525,7 @@ namespace tangent
 				return false;
 
 			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner.data, sizeof(owner)))
+			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.data, sizeof(owner)))
 				return false;
 
 			return true;
@@ -1542,7 +1542,7 @@ namespace tangent
 		bool depository_account::load_data(format::ro_stream& stream)
 		{
 			string public_key_assembly;
-			if (!stream.read_string(stream.read_type(), &public_key_assembly) || !algorithm::encoding::decode_uint_blob(public_key_assembly, public_key.data, sizeof(public_key)))
+			if (!stream.read_string(stream.read_type(), &public_key_assembly) || !algorithm::encoding::decode_bytes(public_key_assembly, public_key.data, sizeof(public_key)))
 				return false;
 
 			uint8_t group_size;
@@ -1554,7 +1554,7 @@ namespace tangent
 			{
 				string group_assembly;
 				algorithm::pubkeyhash_t group_hash;
-				if (!stream.read_string(stream.read_type(), &group_assembly) || !algorithm::encoding::decode_uint_blob(group_assembly, group_hash.data, sizeof(group_hash)))
+				if (!stream.read_string(stream.read_type(), &group_assembly) || !algorithm::encoding::decode_bytes(group_assembly, group_hash.data, sizeof(group_hash)))
 					return false;
 
 				group.insert(group_hash);
@@ -1822,7 +1822,7 @@ namespace tangent
 		bool witness_account::load_column(format::ro_stream& stream)
 		{
 			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner.data, sizeof(owner)))
+			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.data, sizeof(owner)))
 				return false;
 
 			return true;
@@ -1867,7 +1867,7 @@ namespace tangent
 				return false;
 
 			string manager_assembly;
-			if (!stream.read_string(stream.read_type(), &manager_assembly) || !algorithm::encoding::decode_uint_blob(manager_assembly, manager.data, sizeof(manager)))
+			if (!stream.read_string(stream.read_type(), &manager_assembly) || !algorithm::encoding::decode_bytes(manager_assembly, manager.data, sizeof(manager)))
 				return false;
 
 			uint8_t addresses_size;

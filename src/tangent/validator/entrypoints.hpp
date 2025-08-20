@@ -624,7 +624,7 @@ namespace tangent
 
 					uint8_t data[32];
 					auto value = uint256_t(args[1], 10);
-					algorithm::encoding::decode_uint256(value, data);
+					value.encode(data);
 
 					size_t size = value.bytes();
 					return ok(format::util::encode_0xhex(std::string_view((char*)data + (sizeof(data) - size), size)));

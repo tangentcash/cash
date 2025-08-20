@@ -657,7 +657,7 @@ namespace tangent
 		{
 			uint8_t buffer[32];
 			uint256_t value = algorithm::hashing::hash32d(data);
-			algorithm::encoding::decode_uint256(value, buffer);
+			value.encode(buffer);
 			return string((char*)buffer + (sizeof(uint256_t) - sizeof(uint32_t)), sizeof(uint32_t));
 		}
 		static string ripe_md160(const std::string_view& data)
@@ -699,7 +699,7 @@ namespace tangent
 			uint256_t value;
 			uint8_t buffer[SHA3_256_DIGEST_LENGTH];
 			sha256_Raw((uint8_t*)data.data(), data.size(), buffer);
-			algorithm::encoding::encode_uint256(buffer, value);
+			value.decode(buffer);
 			return value;
 		}
 		static string keccak256s(const std::string_view& data)
@@ -719,7 +719,7 @@ namespace tangent
 			uint256_t value;
 			uint8_t buffer[SHA3_256_DIGEST_LENGTH];
 			keccak_256((uint8_t*)data.data(), data.size(), buffer);
-			algorithm::encoding::encode_uint256(buffer, value);
+			value.decode(buffer);
 			return value;
 		}
 		static string sha256s(const std::string_view& data)
@@ -735,7 +735,7 @@ namespace tangent
 		static string encode_bytes256(const uint256_t& value)
 		{
 			uint8_t data[32];
-			algorithm::encoding::decode_uint256(value, data);
+			value.encode(data);
 			return string((char*)data, sizeof(data));
 		}
 		static uint256_t decode_bytes256(const std::string_view& value)
@@ -744,7 +744,7 @@ namespace tangent
 			memcpy(data, value.data(), std::min(sizeof(data), value.size()));
 
 			uint256_t buffer;
-			algorithm::encoding::encode_uint256(data, buffer);
+			buffer.decode(data);
 			return buffer;
 		}
 		static uint256_t random()
@@ -1718,7 +1718,7 @@ namespace tangent
 		svm_address::svm_address(const uint256_t& owner_data)
 		{
 			uint8_t owner_raw_data[32];
-			algorithm::encoding::decode_uint256(owner_data, owner_raw_data);
+			owner_data.encode(owner_raw_data);
 			memcpy(hash.data, owner_raw_data, sizeof(hash.data));
 		}
 		string svm_address::to_string() const
@@ -1733,7 +1733,7 @@ namespace tangent
 			memcpy(data, hash.data, sizeof(algorithm::pubkeyhash_t));
 
 			uint256_t numeric = 0;
-			algorithm::encoding::encode_uint256(data, numeric);
+			numeric.decode(data);
 			return numeric;
 		}
 		bool svm_address::empty() const
@@ -1812,7 +1812,7 @@ namespace tangent
 				return false;
 
 			algorithm::pubkeyhash_t blob;
-			if (!algorithm::encoding::decode_uint_blob(result, blob.data, sizeof(blob.data)))
+			if (!algorithm::encoding::decode_bytes(result, blob.data, sizeof(blob.data)))
 				return false;
 
 			value = svm_address(blob);

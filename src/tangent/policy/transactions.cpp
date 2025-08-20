@@ -66,7 +66,7 @@ namespace tangent
 			{
 				string owner_assembly;
 				algorithm::pubkeyhash_t owner;
-				if (!stream.read_string(type, &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner.data, sizeof(owner.data)))
+				if (!stream.read_string(type, &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.data, sizeof(owner.data)))
 					return false;
 
 				decimal value;
@@ -88,7 +88,7 @@ namespace tangent
 				{
 					string owner_assembly;
 					algorithm::pubkeyhash_t owner;
-					if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner.data, sizeof(owner.data)))
+					if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.data, sizeof(owner.data)))
 						return false;
 
 					decimal value;
@@ -396,7 +396,7 @@ namespace tangent
 		bool call::load_body(format::ro_stream& stream)
 		{
 			string callable_assembly;
-			if (!stream.read_string(stream.read_type(), &callable_assembly) || !algorithm::encoding::decode_uint_blob(callable_assembly, callable.data, sizeof(callable)))
+			if (!stream.read_string(stream.read_type(), &callable_assembly) || !algorithm::encoding::decode_bytes(callable_assembly, callable.data, sizeof(callable)))
 				return false;
 
 			if (!stream.read_string(stream.read_type(), &function))
@@ -1586,7 +1586,7 @@ namespace tangent
 			string public_key_assembly;
 			auto params = nss::server_node::get()->get_chainparams(asset);
 			size_t public_key_size = params ? algorithm::composition::size_of_public_key(params->composition) : sizeof(public_key);
-			if (!stream.read_string(stream.read_type(), &public_key_assembly) || !algorithm::encoding::decode_uint_blob(public_key_assembly, public_key.data, public_key_size))
+			if (!stream.read_string(stream.read_type(), &public_key_assembly) || !algorithm::encoding::decode_bytes(public_key_assembly, public_key.data, public_key_size))
 				return false;
 
 			if (!stream.read_integer(stream.read_type(), &depository_account_hash))
@@ -1973,11 +1973,11 @@ namespace tangent
 				return false;
 
 			string from_manager_assembly;
-			if (!stream.read_string(stream.read_type(), &from_manager_assembly) || !algorithm::encoding::decode_uint_blob(from_manager_assembly, from_manager.data, sizeof(from_manager)))
+			if (!stream.read_string(stream.read_type(), &from_manager_assembly) || !algorithm::encoding::decode_bytes(from_manager_assembly, from_manager.data, sizeof(from_manager)))
 				return false;
 
 			string to_manager_assembly;
-			if (!stream.read_string(stream.read_type(), &to_manager_assembly) || !algorithm::encoding::decode_uint_blob(to_manager_assembly, to_manager.data, sizeof(to_manager)))
+			if (!stream.read_string(stream.read_type(), &to_manager_assembly) || !algorithm::encoding::decode_bytes(to_manager_assembly, to_manager.data, sizeof(to_manager)))
 				return false;
 
 			uint16_t to_size;
@@ -2996,11 +2996,11 @@ namespace tangent
 					return false;
 
 				string manager_assembly;
-				if (!stream.read_string(stream.read_type(), &manager_assembly) || !algorithm::encoding::decode_uint_blob(manager_assembly, account.manager.data, sizeof(account.manager)))
+				if (!stream.read_string(stream.read_type(), &manager_assembly) || !algorithm::encoding::decode_bytes(manager_assembly, account.manager.data, sizeof(account.manager)))
 					return false;
 
 				string owner_assembly;
-				if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, account.owner.data, sizeof(account.owner)))
+				if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, account.owner.data, sizeof(account.owner)))
 					return false;
 
 				participants[account.hash()] = std::move(account);
@@ -3128,7 +3128,7 @@ namespace tangent
 				return false;
 
 			string cipher_public_key_assembly;
-			if (!stream.read_string(stream.read_type(), &cipher_public_key_assembly) || !algorithm::encoding::decode_uint_blob(cipher_public_key_assembly, cipher_public_key.data, sizeof(cipher_public_key)))
+			if (!stream.read_string(stream.read_type(), &cipher_public_key_assembly) || !algorithm::encoding::decode_bytes(cipher_public_key_assembly, cipher_public_key.data, sizeof(cipher_public_key)))
 				return false;
 
 			return true;
@@ -3241,7 +3241,7 @@ namespace tangent
 					if (decrypted_share && decrypted_share->size() == sizeof(uint256_t))
 					{
 						uint256_t share;
-						algorithm::encoding::encode_uint256((uint8_t*)decrypted_share->data(), share);
+						share.decode((uint8_t*)decrypted_share->data());
 
 						auto& account = it->second;
 						if (dispatcher->apply_group_share(account.asset, account.manager, account.owner, share))
@@ -3265,7 +3265,7 @@ namespace tangent
 			entropy.write_integer(algorithm::hashing::hash256i(old_manager_secret_key.view()));
 
 			uint8_t share_data[32];
-			algorithm::encoding::decode_uint256(share, share_data);
+			share.encode(share_data);
 			auto encrypted_share = algorithm::signing::public_encrypt(new_manager_cipher_public_key, std::string_view((char*)share_data, sizeof(share_data)), entropy.data);
 			if (!encrypted_share)
 				return layer_exception("failed to encrypt a share");
@@ -3570,7 +3570,7 @@ namespace tangent
 			}
 
 			uint8_t message_hash[32];
-			algorithm::encoding::decode_uint256(message.hash(), message_hash);
+			message.hash().encode(message_hash);
 
 			warden::prepared_transaction regtest_prepared;
 			regtest_prepared.requires_account_input(chain->composition, std::move(*from), public_key->data, message_hash, sizeof(message_hash), std::move(transfers));

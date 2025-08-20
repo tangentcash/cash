@@ -173,15 +173,7 @@ namespace tangent
 		class encoding
 		{
 		public:
-			static bool decode_uint_blob(const string& value, uint8_t* data, size_t data_size);
-			static void encode_uint128(const uint8_t value[16], uint128_t& data);
-			static void decode_uint128(const uint128_t& value, uint8_t data[16]);
-			static void optimized_encode_uint128(const std::string_view& value, uint128_t& data);
-			static void optimized_decode_uint128(const uint128_t& value, uint8_t data[16], size_t* data_size);
-			static void encode_uint256(const uint8_t value[32], uint256_t& data);
-			static void decode_uint256(const uint256_t& value, uint8_t data[32]);
-			static void optimized_encode_uint256(const std::string_view& value, uint256_t& data);
-			static void optimized_decode_uint256(const uint256_t& value, uint8_t data[32], size_t* data_size);
+			static bool decode_bytes(const string& value, uint8_t* data, size_t data_size);
 			static string encode_0xhex256(const uint256_t& data);
 			static uint256_t decode_0xhex256(const std::string_view& data);
 			static string encode_0xhex128(const uint128_t& data);

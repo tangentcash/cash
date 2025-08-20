@@ -231,7 +231,7 @@ namespace tangent
 				return false;
 
 			string manager_assembly;
-			if (!stream.read_string(stream.read_type(), &manager_assembly) || !algorithm::encoding::decode_uint_blob(manager_assembly, manager.data, sizeof(manager.data)))
+			if (!stream.read_string(stream.read_type(), &manager_assembly) || !algorithm::encoding::decode_bytes(manager_assembly, manager.data, sizeof(manager.data)))
 				return false;
 
 			conservative = false;
@@ -496,7 +496,7 @@ namespace tangent
 				{
 					string signature_assembly;
 					algorithm::hashsig_t signature;
-					if (!stream.read_string(stream.read_type(), &signature_assembly) || !algorithm::encoding::decode_uint_blob(signature_assembly, signature.data, sizeof(signature.data)))
+					if (!stream.read_string(stream.read_type(), &signature_assembly) || !algorithm::encoding::decode_bytes(signature_assembly, signature.data, sizeof(signature.data)))
 						return false;
 
 					signatures.insert(signature);
@@ -771,7 +771,7 @@ namespace tangent
 				return false;
 
 			string from_assembly;
-			if (!stream.read_string(stream.read_type(), &from_assembly) || !algorithm::encoding::decode_uint_blob(from_assembly, from.data, sizeof(from.data)))
+			if (!stream.read_string(stream.read_type(), &from_assembly) || !algorithm::encoding::decode_bytes(from_assembly, from.data, sizeof(from.data)))
 				return false;
 
 			uint16_t size;

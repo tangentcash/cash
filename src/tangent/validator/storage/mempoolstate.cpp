@@ -9,7 +9,7 @@ namespace tangent
 		static void finalize_checksum(messages::authentic& message, const variant& column)
 		{
 			if (column.size() == sizeof(uint256_t))
-				algorithm::encoding::encode_uint256(column.get_binary(), message.checksum);
+				message.checksum.decode(column.get_binary());
 		}
 		static string address_to_message(const socket_address& address)
 		{
@@ -290,8 +290,8 @@ namespace tangent
 			if (priority_percentile < 0.0 || priority_percentile > 1.0)
 				return expects_lr<decimal>(layer_exception("invalid priority percentile"));
 
-			uint8_t hash[16];
-			algorithm::encoding::decode_uint128(asset, hash);
+			uint8_t hash[32];
+			asset.encode(hash);
 
 			schema_list map;
 			map.push_back(var::set::binary(hash, sizeof(hash)));
@@ -411,13 +411,13 @@ namespace tangent
 			}
 
 			uint8_t hash[32];
-			algorithm::encoding::decode_uint256(value.as_hash(), hash);
+			value.as_hash().encode(hash);
 
 			uint8_t group_hash[32];
-			algorithm::encoding::decode_uint256(group, group_hash);
+			group.encode(group_hash);
 
-			uint8_t asset[16];
-			algorithm::encoding::decode_uint128(value.asset, asset);
+			uint8_t asset[32];
+			value.asset.encode(asset);
 
 			schema_list map;
 			map.push_back(var::set::binary(hash, sizeof(hash)));
@@ -443,7 +443,7 @@ namespace tangent
 		expects_lr<void> mempoolstate::remove_transactions_by_group(const uint256_t& group_hash)
 		{
 			uint8_t hash[32];
-			algorithm::encoding::decode_uint256(group_hash, hash);
+			group_hash.encode(hash);
 
 			schema_list map;
 			map.push_back(var::set::binary(hash, sizeof(hash)));
@@ -464,7 +464,7 @@ namespace tangent
 			for (auto& item : transaction_hashes)
 			{
 				uint8_t hash[32];
-				algorithm::encoding::decode_uint256(item, hash);
+				item.encode(hash);
 				hash_list->push(var::binary(hash, sizeof(hash)));
 			}
 
@@ -487,7 +487,7 @@ namespace tangent
 			for (auto& item : transaction_hashes)
 			{
 				uint8_t hash[32];
-				algorithm::encoding::decode_uint256(item, hash);
+				item.encode(hash);
 				hash_list->push(var::binary(hash, sizeof(hash)));
 			}
 
@@ -514,10 +514,10 @@ namespace tangent
 		expects_lr<void> mempoolstate::apply_group_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner, const uint256_t& share)
 		{
 			uint8_t share_data[32];
-			algorithm::encoding::decode_uint256(share, share_data);
+			share.encode(share_data);
 
 			uint8_t asset_data[32];
-			algorithm::encoding::decode_uint256(asset, asset_data);
+			asset.encode(asset_data);
 
 			auto encrypted_share = protocol::now().box.encrypt(std::string_view((char*)share_data, sizeof(share_data)));
 			if (!encrypted_share)
@@ -538,7 +538,7 @@ namespace tangent
 		expects_lr<uint256_t> mempoolstate::get_or_apply_group_account_share(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner, const uint256_t& entropy)
 		{
 			uint8_t asset_data[32];
-			algorithm::encoding::decode_uint256(asset, asset_data);
+			asset.encode(asset_data);
 
 			schema_list map;
 			map.push_back(var::set::binary(asset_data, sizeof(asset_data)));
@@ -556,7 +556,7 @@ namespace tangent
 					return expects_lr<uint256_t>(layer_exception("bad share"));
 
 				uint256_t share = 0;
-				algorithm::encoding::encode_uint256((uint8_t*)decrypted_share->data(), share);
+				share.decode((uint8_t*)decrypted_share->data());
 				return share;
 			}
 			else
@@ -594,7 +594,7 @@ namespace tangent
 					continue;
 
 				algorithm::asset_id asset;
-				algorithm::encoding::encode_uint256((uint8_t*)asset_data.data(), asset);
+				asset.decode((uint8_t*)asset_data.data());
 
 				auto owner = algorithm::pubkeyhash_t(row["owner"].get().get_blob());
 				auto submanager = algorithm::pubkeyhash_t(row["manager"].get().get_blob());
@@ -640,7 +640,7 @@ namespace tangent
 		expects_lr<bool> mempoolstate::has_transaction(const uint256_t& transaction_hash)
 		{
 			uint8_t hash[32];
-			algorithm::encoding::decode_uint256(transaction_hash, hash);
+			transaction_hash.encode(hash);
 
 			schema_list map;
 			map.push_back(var::set::binary(hash, sizeof(hash)));
@@ -678,7 +678,7 @@ namespace tangent
 		expects_lr<uptr<ledger::transaction>> mempoolstate::get_transaction_by_hash(const uint256_t& transaction_hash)
 		{
 			uint8_t hash[32];
-			algorithm::encoding::decode_uint256(transaction_hash, hash);
+			transaction_hash.encode(hash);
 
 			schema_list map;
 			map.push_back(var::set::binary(hash, sizeof(hash)));
@@ -761,7 +761,7 @@ namespace tangent
 		expects_lr<vector<uptr<ledger::transaction>>> mempoolstate::get_transactions_by_group(const uint256_t& group_hash, size_t offset, size_t count)
 		{
 			uint8_t hash[32];
-			algorithm::encoding::decode_uint256(group_hash, hash);
+			group_hash.encode(hash);
 
 			schema_list map;
 			map.push_back(var::set::binary(hash, sizeof(hash)));
@@ -816,7 +816,7 @@ namespace tangent
 					continue;
 
 				uint256_t out_hash;
-				algorithm::encoding::encode_uint256((uint8_t*)in_hash.data(), out_hash);
+				out_hash.decode((uint8_t*)in_hash.data());
 				result.push_back(out_hash);
 			}
 

@@ -26,7 +26,7 @@ namespace tangent
 				return false;
 
 			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_uint_blob(owner_assembly, owner.data, sizeof(owner)))
+			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.data, sizeof(owner)))
 				return false;
 
 			return true;
@@ -603,11 +603,11 @@ namespace tangent
 					return false;
 
 				string public_key_assembly;
-				if (!stream.read_string(stream.read_type(), &public_key_assembly) || !algorithm::encoding::decode_uint_blob(public_key_assembly, next.public_key.data, algorithm::composition::size_of_public_key(next.alg)))
+				if (!stream.read_string(stream.read_type(), &public_key_assembly) || !algorithm::encoding::decode_bytes(public_key_assembly, next.public_key.data, algorithm::composition::size_of_public_key(next.alg)))
 					return false;
 
 				string signature_assembly;
-				if (!stream.read_string(stream.read_type(), &signature_assembly) || !algorithm::encoding::decode_uint_blob(signature_assembly, next.signature.data, algorithm::composition::size_of_signature(next.alg)))
+				if (!stream.read_string(stream.read_type(), &signature_assembly) || !algorithm::encoding::decode_bytes(signature_assembly, next.signature.data, algorithm::composition::size_of_signature(next.alg)))
 					return false;
 
 				string message_assembly;

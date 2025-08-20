@@ -38,7 +38,7 @@ namespace tangent
 			static void import256(const uint256_t& data, mpz_t value)
 			{
 				uint8_t buffer[32];
-				encoding::decode_uint256(data, buffer);
+				data.encode(buffer);
 				mpz_import(value, sizeof(buffer), 1, 1, 1, 0, buffer);
 			}
 			static string export0(const mpz_t value)
@@ -58,7 +58,7 @@ namespace tangent
 				free(data, size);
 
 				uint256_t v;
-				encoding::encode_uint256(buffer, v);
+				v.decode(buffer);
 				return v;
 			}
 			static void export256(const mpz_t value, uint8_t buffer[32])
@@ -153,8 +153,8 @@ namespace tangent
 		uint256_t wesolowski::distribution::derive(const uint256_t& step) const
 		{
 			char data[sizeof(uint256_t) * 2] = { 0 };
-			encoding::decode_uint256(step, (uint8_t*)((char*)data + sizeof(uint256_t) * 0));
-			encoding::decode_uint256(value, (uint8_t*)((char*)data + sizeof(uint256_t) * 1));
+			step.encode((uint8_t*)((char*)data + sizeof(uint256_t) * 0));
+			value.encode((uint8_t*)((char*)data + sizeof(uint256_t) * 1));
 			return hashing::hash256i(std::string_view(data, sizeof(data)));
 		}
 
@@ -509,7 +509,7 @@ namespace tangent
 				return false;
 
 			uint8_t data[32];
-			encoding::decode_uint256(hash, data);
+			hash.encode(data);
 
 			secp256k1_pubkey recovered_public_key;
 			if (secp256k1_ecdsa_recover(context, &recovered_public_key, &recoverable_signature, data) != 1)
@@ -530,7 +530,7 @@ namespace tangent
 		bool signing::sign(const uint256_t& hash, const seckey_t& secret_key, hashsig_t& signature)
 		{
 			uint8_t data[32];
-			encoding::decode_uint256(hash, data);
+			hash.encode(data);
 			memset(signature.data, 0, sizeof(hashsig_t));
 
 			secp256k1_context* context = get_context();
@@ -559,7 +559,7 @@ namespace tangent
 			uint8_t data[32];
 			secp256k1_ecdsa_signature normalized_signature;
 			secp256k1_ecdsa_signature_normalize(context, &normalized_signature, &compact_signature);
-			encoding::decode_uint256(hash, data);
+			hash.encode(data);
 			return secp256k1_ecdsa_verify(context, &normalized_signature, data, &derived_public_key) == 1;
 		}
 		bool signing::verify_mnemonic(const std::string_view& mnemonic)
@@ -627,7 +627,7 @@ namespace tangent
 			message.write_typeless(nonce);
 
 			uint8_t seed[32];
-			encoding::decode_uint256(message.hash(), seed);
+			message.hash().encode(seed);
 			memset(cipher_public_key.data, 0, sizeof(pubkey_t));
 			crypto_box_seed_keypair(cipher_public_key.data, cipher_secret_key.data, seed);
 		}
@@ -818,7 +818,7 @@ namespace tangent
 		}
 		secp256k1_context* signing::shared_context = nullptr;
 
-		bool encoding::decode_uint_blob(const string& value, uint8_t* data, size_t data_size)
+		bool encoding::decode_bytes(const string& value, uint8_t* data, size_t data_size)
 		{
 			VI_ASSERT(data != nullptr, "data should be set");
 			if (value.size() < data_size)
@@ -829,102 +829,10 @@ namespace tangent
 			memcpy(data, value.data(), value.size());
 			return true;
 		}
-		void encoding::encode_uint128(const uint8_t value[16], uint128_t& data)
-		{
-			VI_ASSERT(value != nullptr, "value should be set");
-			uint64_t array[2] = { 0 };
-			memcpy(array, value, sizeof(array));
-			auto& bits0 = data.high();
-			auto& bits1 = data.low();
-			array[1] = os::hw::to_endianness(os::hw::endian::big, array[1]);
-			array[0] = os::hw::to_endianness(os::hw::endian::big, array[0]);
-			memcpy((uint64_t*)&bits0, &array[0], sizeof(uint64_t));
-			memcpy((uint64_t*)&bits1, &array[1], sizeof(uint64_t));
-		}
-		void encoding::decode_uint128(const uint128_t& value, uint8_t data[16])
-		{
-			VI_ASSERT(data != nullptr, "data should be set");
-			uint64_t array[2] =
-			{
-				os::hw::to_endianness(os::hw::endian::big, value.high()),
-				os::hw::to_endianness(os::hw::endian::big, value.low())
-			};
-			memcpy((char*)data, array, sizeof(array));
-		}
-		void encoding::optimized_encode_uint128(const std::string_view& value, uint128_t& data)
-		{
-			uint8_t intermediate[sizeof(uint128_t)] = { 0 };
-			memcpy(intermediate, value.data(), std::min(value.size(), sizeof(intermediate)));
-			encode_uint128(intermediate, data);
-		}
-		void encoding::optimized_decode_uint128(const uint128_t& value, uint8_t data[16], size_t* data_size)
-		{
-			uint8_t intermediate[sizeof(uint128_t)];
-			decode_uint128(value, intermediate);
-
-			uint8_t index = 0;
-			while (index < sizeof(uint128_t) && !intermediate[index])
-				++index;
-
-			size_t bytes = sizeof(uint128_t) - index;
-			memcpy(data, intermediate + index, bytes);
-			if (data_size != nullptr)
-				*data_size = bytes;
-		}
-		void encoding::encode_uint256(const uint8_t value[32], uint256_t& data)
-		{
-			VI_ASSERT(value != nullptr, "value should be set");
-			uint64_t array[4] = { 0 };
-			memcpy(array, value, sizeof(array));
-			auto& bits0 = data.high().high();
-			auto& bits1 = data.high().low();
-			auto& bits2 = data.low().high();
-			auto& bits3 = data.low().low();
-			array[0] = os::hw::to_endianness(os::hw::endian::big, array[0]);
-			array[1] = os::hw::to_endianness(os::hw::endian::big, array[1]);
-			array[2] = os::hw::to_endianness(os::hw::endian::big, array[2]);
-			array[3] = os::hw::to_endianness(os::hw::endian::big, array[3]);
-			memcpy((uint64_t*)&bits0, &array[0], sizeof(uint64_t));
-			memcpy((uint64_t*)&bits1, &array[1], sizeof(uint64_t));
-			memcpy((uint64_t*)&bits2, &array[2], sizeof(uint64_t));
-			memcpy((uint64_t*)&bits3, &array[3], sizeof(uint64_t));
-		}
-		void encoding::decode_uint256(const uint256_t& value, uint8_t data[32])
-		{
-			VI_ASSERT(data != nullptr, "data should be set");
-			uint64_t array[4] =
-			{
-				os::hw::to_endianness(os::hw::endian::big, value.high().high()),
-				os::hw::to_endianness(os::hw::endian::big, value.high().low()),
-				os::hw::to_endianness(os::hw::endian::big, value.low().high()),
-				os::hw::to_endianness(os::hw::endian::big, value.low().low())
-			};
-			memcpy((char*)data, array, sizeof(array));
-		}
-		void encoding::optimized_encode_uint256(const std::string_view& value, uint256_t& data)
-		{
-			uint8_t intermediate[sizeof(uint256_t)] = { 0 };
-			memcpy(intermediate, value.data(), std::min(value.size(), sizeof(intermediate)));
-			encode_uint256(intermediate, data);
-		}
-		void encoding::optimized_decode_uint256(const uint256_t& value, uint8_t data[32], size_t* data_size)
-		{
-			uint8_t intermediate[sizeof(uint256_t)];
-			decode_uint256(value, intermediate);
-
-			uint8_t index = 0;
-			while (index < sizeof(uint256_t) && !intermediate[index])
-				++index;
-
-			size_t bytes = sizeof(uint256_t) - index;
-			memcpy(data, intermediate + index, bytes);
-			if (data_size != nullptr)
-				*data_size = bytes;
-		}
 		string encoding::encode_0xhex256(const uint256_t& value)
 		{
 			uint8_t data[32];
-			decode_uint256(value, data);
+			value.encode(data);
 			return "0x" + codec::hex_encode(std::string_view((char*)data, sizeof(data)));
 		}
 		uint256_t encoding::decode_0xhex256(const std::string_view& data)
@@ -937,7 +845,7 @@ namespace tangent
 		string encoding::encode_0xhex128(const uint128_t& value)
 		{
 			uint8_t data[16];
-			decode_uint128(value, data);
+			value.encode(data);
 			return "0x" + codec::hex_encode(std::string_view((char*)data, sizeof(data)));
 		}
 		uint128_t encoding::decode_0xhex128(const std::string_view& data)
@@ -957,7 +865,7 @@ namespace tangent
 				return var::set::integer((uint64_t)value);
 
 			uint8_t data[32];
-			decode_uint256(value, data);
+			value.encode(data);
 
 			size_t size = value.bytes();
 			return var::set::string(format::util::encode_0xhex(std::string_view((char*)data + (sizeof(data) - size), size)));
@@ -966,8 +874,8 @@ namespace tangent
 		uint256_t hashing::sha256ci(const uint256_t& a, const uint256_t& b)
 		{
 			uint8_t combine_buffer[sizeof(uint256_t) * 2];
-			encoding::decode_uint256(a, combine_buffer + sizeof(uint256_t) * 0);
-			encoding::decode_uint256(b, combine_buffer + sizeof(uint256_t) * 1);
+			a.encode(combine_buffer + sizeof(uint256_t) * 0);
+			b.encode(combine_buffer + sizeof(uint256_t) * 1);
 			return hashing::hash256i(combine_buffer, sizeof(combine_buffer));
 		}
 		uint64_t hashing::sha64d(const uint8_t* buffer, size_t size)
@@ -1034,7 +942,7 @@ namespace tangent
 		{
 			uint256_t value;
 			auto hash = hash256(buffer, size);
-			encoding::encode_uint256((uint8_t*)hash.data(), value);
+			value.decode((uint8_t*)hash.data());
 			return value;
 		}
 		uint256_t hashing::hash256i(const std::string_view& data)
@@ -1058,7 +966,7 @@ namespace tangent
 			memcpy((char*)data + (sizeof(data) - size), handle.data(), size);
 
 			uint256_t value;
-			encoding::encode_uint256(data, value);
+			value.decode(data);
 			return value;
 		}
 		asset_id asset::id_of(const std::string_view& blockchain, const std::string_view& token, const std::string_view& contract_address)
@@ -1069,7 +977,7 @@ namespace tangent
 			memcpy((char*)data + (sizeof(data) - size), handle.data(), size);
 
 			uint256_t value;
-			encoding::encode_uint256(data, value);
+			value.decode(data);
 			return value;
 		}
 		asset_id asset::base_id_of(const asset_id& value)
@@ -1095,7 +1003,7 @@ namespace tangent
 		string asset::handle_of(const asset_id& value)
 		{
 			uint8_t data[33];
-			encoding::decode_uint256(value, data);
+			value.encode(data);
 
 			size_t offset = 0;
 			while (!data[offset] && offset + 1 < sizeof(data))
@@ -1212,7 +1120,7 @@ namespace tangent
 		{
 			VI_ASSERT(result != nullptr, "result should be set");
 			uint8_t seed_buffer[32];
-			encoding::decode_uint256(seed, seed_buffer);
+			seed.encode(seed_buffer);
 			hashing::hash512(seed_buffer, sizeof(seed_buffer), result->secret_key.data);
 			memset(result->public_key.data, 0, sizeof(cpubkey_t));
 			switch (alg)
