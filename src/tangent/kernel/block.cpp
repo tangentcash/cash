@@ -340,7 +340,7 @@ namespace tangent
 			if (proof.empty() || difficulty != required_target.difficulty())
 				return layer_exception("invalid wesolowski target");
 
-			uint256_t gas_work = gas_util::get_gas_work(difficulty, gas_use, gas_limit, priority);
+			uint256_t gas_work = get_gas_work(difficulty, gas_use, gas_limit, priority);
 			if (!gas_limit || gas_use > gas_limit || absolute_work < gas_work)
 				return layer_exception("invalid gas work");
 
@@ -698,8 +698,20 @@ namespace tangent
 		}
 		uint256_t block_header::get_gas_limit()
 		{
-			static uint256_t limit = gas_util::get_gas_estimate<transactions::transfer, 64>() * get_transaction_limit();
+			static uint256_t limit = protocol::now().policy.transaction_gas * get_transaction_limit();
 			return limit;
+		}
+		uint256_t block_header::get_gas_work(const uint128_t& difficulty, const uint256_t& gas_use, const uint256_t& gas_limit, uint64_t priority)
+		{
+			if (!gas_limit)
+				return 0;
+
+			auto& policy = protocol::now().policy;
+			uint256_t alignment = 16;
+			uint256_t committee = policy.production_max_per_block;
+			uint256_t multiplier = priority >= committee ? 0 : math64u::pow3(committee - priority);
+			uint256_t work = (multiplier * gas_use) / gas_limit;
+			return work - (work % alignment) + alignment;
 		}
 
 		block::block(const block_header& other) : block_header(other)
@@ -995,7 +1007,7 @@ namespace tangent
 			}
 
 			uint256_t cumulative = get_slot_length() > 1 ? 1 : 0;
-			absolute_work = (parent_block ? parent_block->absolute_work : uint256_t(0)) + gas_util::get_gas_work(target.difficulty(), gas_use, gas_limit, priority);
+			absolute_work = (parent_block ? parent_block->absolute_work : uint256_t(0)) + get_gas_work(target.difficulty(), gas_use, gas_limit, priority);
 			slot_duration = (parent_block ? parent_block->slot_duration + parent_block->get_proof_accounted_duration() : uint256_t(0)) * cumulative;
 			transaction_count = (uint32_t)transactions.size();
 		}

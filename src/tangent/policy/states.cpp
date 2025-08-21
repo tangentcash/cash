@@ -561,7 +561,7 @@ namespace tangent
 		uint256_t account_balance::as_rank() const
 		{
 			auto value = get_balance();
-			value *= (uint64_t)std::pow<uint64_t>(10, protocol::now().message.precision);
+			value *= (uint64_t)std::pow<uint64_t>(10, protocol::now().message.decimal_precision);
 			return uint256_t(value.truncate(0).to_string(), 10);
 		}
 		uint32_t account_balance::as_instance_type()
@@ -875,7 +875,7 @@ namespace tangent
 				return 0;
 
 			auto value = get_ranked_stake();
-			value *= (uint64_t)std::pow<uint64_t>(10, protocol::now().message.precision);
+			value *= (uint64_t)std::pow<uint64_t>(10, protocol::now().message.decimal_precision);
 			return uint256_t(value.truncate(0).to_string(), 10) + 1;
 		}
 		uint32_t validator_participation::as_instance_type()
@@ -1035,7 +1035,7 @@ namespace tangent
 				return 0;
 
 			auto value = get_ranked_stake();
-			value *= (uint64_t)std::pow<uint64_t>(10, protocol::now().message.precision);
+			value *= (uint64_t)std::pow<uint64_t>(10, protocol::now().message.decimal_precision);
 			return uint256_t(value.truncate(0).to_string(), 10) + 1;
 		}
 		uint32_t validator_attestation::as_instance_type()
@@ -1087,10 +1087,10 @@ namespace tangent
 			}
 
 			decimal threshold = 1.0 - protocol::now().policy.depository_reward_max_increase;
-			if (incoming_fee.is_positive() && prev->incoming_fee / decimal(incoming_fee).truncate(protocol::now().message.precision) < threshold)
+			if (incoming_fee.is_positive() && prev->incoming_fee / decimal(incoming_fee).truncate(protocol::now().message.decimal_precision) < threshold)
 				return layer_exception("incoming fee increase overflows step threshold");
 
-			if (outgoing_fee.is_positive() && prev->outgoing_fee / decimal(outgoing_fee).truncate(protocol::now().message.precision) < threshold)
+			if (outgoing_fee.is_positive() && prev->outgoing_fee / decimal(outgoing_fee).truncate(protocol::now().message.decimal_precision) < threshold)
 				return layer_exception("outgoing fee increase overflows step threshold");
 
 			return expectation::met;
@@ -1159,7 +1159,7 @@ namespace tangent
 		uint256_t depository_reward::as_rank() const
 		{
 			auto value = incoming_fee + outgoing_fee;
-			value *= (uint64_t)std::pow<uint64_t>(10, protocol::now().message.precision);
+			value *= (uint64_t)std::pow<uint64_t>(10, protocol::now().message.decimal_precision);
 			return uint256_t(value.truncate(0).to_string(), 10);
 		}
 		uint32_t depository_reward::as_instance_type()
@@ -1312,7 +1312,7 @@ namespace tangent
 		uint256_t depository_balance::as_rank() const
 		{
 			auto value = get_ranked_balance();
-			value *= (uint64_t)std::pow<uint64_t>(10, protocol::now().message.precision);
+			value *= (uint64_t)std::pow<uint64_t>(10, protocol::now().message.decimal_precision);
 			return uint256_t(value.truncate(0).to_string(), 10);
 		}
 		uint32_t depository_balance::as_instance_type()
@@ -1681,7 +1681,7 @@ namespace tangent
 		}
 		expects_lr<string> witness_program::as_code() const
 		{
-			return ledger::svm_host::get()->unpack(storage);
+			return ledger::svm_container::get()->unpack(storage);
 		}
 		uint32_t witness_program::as_instance_type()
 		{
@@ -1700,7 +1700,7 @@ namespace tangent
 		}
 		string witness_program::as_instance_packed_hashcode(const std::string_view& storage)
 		{
-			auto code = ledger::svm_host::get()->unpack(storage);
+			auto code = ledger::svm_container::get()->unpack(storage);
 			if (!code)
 				return string();
 
@@ -1708,7 +1708,7 @@ namespace tangent
 		}
 		string witness_program::as_instance_unpacked_hashcode(const std::string_view& storage)
 		{
-			return ledger::svm_host::get()->hashcode(storage);
+			return ledger::svm_container::get()->hashcode(storage);
 		}
 
 		witness_event::witness_event(const uint256_t& new_parent_transaction_hash, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::uniform(new_block_number, new_block_nonce), parent_transaction_hash(new_parent_transaction_hash)

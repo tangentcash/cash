@@ -174,7 +174,7 @@ namespace tangent
 				netdata.composition = algorithm::composition::type::secp256k1;
 				netdata.routing = routing_policy::account;
 				netdata.sync_latency = 20;
-				netdata.divisibility = decimal(1000000).truncate(protocol::now().message.precision);
+				netdata.divisibility = decimal(1000000).truncate(protocol::now().message.decimal_precision);
 				netdata.supports_token_transfer = "trc20";
 				netdata.supports_bulk_transfer = false;
 				netdata.requires_transaction_expiration = true;

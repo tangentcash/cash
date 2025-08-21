@@ -79,6 +79,7 @@ namespace tangent
 			bool read_type(viewable* value);
 			bool read_string(viewable type, string* value);
 			bool read_decimal(viewable type, decimal* value);
+			bool read_decimal_or_integer(format::viewable type, decimal* value);
 			bool read_integer(viewable type, uint8_t* value);
 			bool read_integer(viewable type, uint16_t* value);
 			bool read_integer(viewable type, uint32_t* value);

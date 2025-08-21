@@ -308,7 +308,7 @@ namespace tangent
 				netdata.composition = algorithm::composition::type::secp256k1;
 				netdata.routing = routing_policy::account;
 				netdata.sync_latency = 80;
-				netdata.divisibility = decimal("1000000000000000000").truncate(protocol::now().message.precision);
+				netdata.divisibility = decimal("1000000000000000000").truncate(protocol::now().message.decimal_precision);
 				netdata.supports_token_transfer = "erc20";
 				netdata.supports_bulk_transfer = false;
 				netdata.requires_transaction_expiration = false;
@@ -409,7 +409,7 @@ namespace tangent
 					coreturn expects_rt<decimal>(std::move(decimals.error()));
 
 				uint64_t divisibility = 1;
-				uint64_t value = std::min<uint64_t>((uint64_t)hex_to_uint256(decimals->value.get_blob()), protocol::now().message.precision);
+				uint64_t value = std::min<uint64_t>((uint64_t)hex_to_uint256(decimals->value.get_blob()), protocol::now().message.decimal_precision);
 				for (uint64_t i = 0; i < value; i++)
 					divisibility *= 10;
 				coreturn expects_rt<decimal>(decimal(divisibility));
@@ -1077,7 +1077,7 @@ namespace tangent
 			}
 			decimal ethereum::to_eth(const uint256_t& value, const decimal& divisibility)
 			{
-				return value.to_decimal() / decimal(divisibility).truncate(protocol::now().message.precision);
+				return value.to_decimal() / decimal(divisibility).truncate(protocol::now().message.decimal_precision);
 			}
 			decimal ethereum::get_divisibility_gwei()
 			{

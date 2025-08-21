@@ -44,7 +44,8 @@ namespace tangent
 			read_byte = 4,
 			query_byte = 24,
 			bulk_query_byte = 4,
-			opcode = 1
+			opcode = 1,
+			memory_block = 1
 		};
 
 		struct block_transaction final : messages::uniform
@@ -197,6 +198,7 @@ namespace tangent
 			static std::string_view as_instance_typename();
 			static uint64_t get_transaction_limit();
 			static uint256_t get_gas_limit();
+			static uint256_t get_gas_work(const uint128_t& difficulty, const uint256_t& gas_use, const uint256_t& gas_limit, uint64_t priority);
 		};
 
 		struct block final : block_header

@@ -153,7 +153,7 @@ namespace tangent
 		decimal coin_utxo::token_utxo::get_divisibility() const
 		{
 			decimal divisibility = decimals > 0 ? decimal("1" + string(decimals, '0')) : decimal(1);
-			return divisibility.truncate(protocol::now().message.precision);
+			return divisibility.truncate(protocol::now().message.decimal_precision);
 		}
 		algorithm::asset_id coin_utxo::token_utxo::get_asset(const algorithm::asset_id& base_asset) const
 		{

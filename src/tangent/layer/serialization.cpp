@@ -117,7 +117,7 @@ namespace tangent
 			}
 
 			string numeric = value.numeric();
-			uint16_t decimals = value.decimal_places();
+			uint16_t decimals = value.decimal_size();
 			int8_t position = value.position();
 			uint8_t type = (uint8_t)(decimals > 0 ? (position < 0 ? viewable::decimal_neg2 : viewable::decimal_pos2) : (position < 0 ? viewable::decimal_neg1 : viewable::decimal_pos1));
 			std::reverse(numeric.begin() + decimals, numeric.end());
@@ -328,6 +328,18 @@ namespace tangent
 				*value = decimal(std::string_view(numeric).substr(1));
 			else
 				*value = decimal(numeric);
+			return true;
+		}
+		bool ro_stream::read_decimal_or_integer(format::viewable type, decimal* value)
+		{
+			if (!format::util::is_integer(type))
+				return read_decimal(type, value);
+
+			uint256_t value256;
+			if (!read_integer(type, &value256))
+				return false;
+
+			*value = value256.to_decimal();
 			return true;
 		}
 		bool ro_stream::read_integer(viewable type, uint8_t* value)

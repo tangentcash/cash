@@ -882,7 +882,7 @@ namespace tangent
 		storages::uniform_cache::cleanup_instance();
 		storages::multiform_cache::cleanup_instance();
 		nss::server_node::cleanup_instance();
-		ledger::svm_host::cleanup_instance();
+		ledger::svm_container::cleanup_instance();
 		algorithm::signing::deinitialize();
 		error_handling::set_callback(nullptr);
 		if (instance == this)

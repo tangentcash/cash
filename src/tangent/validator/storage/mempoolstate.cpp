@@ -314,7 +314,7 @@ namespace tangent
 			if (!b)
 				return decimal::zero();
 
-			return *b / a->truncate(protocol::now().message.precision);
+			return *b / a->truncate(protocol::now().message.decimal_precision);
 		}
 		expects_lr<void> mempoolstate::add_transaction(ledger::transaction& value, bool resurrection)
 		{
@@ -333,7 +333,7 @@ namespace tangent
 			{
 				auto median_gas_price = get_gas_price(value.asset, fee_percentile(fee_priority::medium));
 				decimal delta_gas = median_gas_price && median_gas_price->is_positive() ? value.gas_price / *median_gas_price : 1.0;
-				decimal max_gas = delta_gas.is_positive() ? value.gas_price * value.gas_limit.to_decimal() / delta_gas.truncate(protocol::now().message.precision) : decimal::zero();
+				decimal max_gas = delta_gas.is_positive() ? value.gas_price * value.gas_limit.to_decimal() / delta_gas.truncate(protocol::now().message.decimal_precision) : decimal::zero();
 				decimal multiplier = 2 << 20;
 				return max_gas * multiplier;
 			};

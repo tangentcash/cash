@@ -241,7 +241,8 @@ namespace tangent
             uint32_t packet_magic = 0x73d308e9;
             uint32_t max_message_size = 0xffffff;
             uint32_t max_body_size = 1024 * 1024 * 32;
-            uint32_t precision = 18;
+            uint32_t decimal_precision = 18;
+            uint32_t integer_precision = 78;
         } message;
         struct protocol_account_config
         {
@@ -263,7 +264,8 @@ namespace tangent
             uint64_t consensus_proof_time = 6000;
             uint64_t consensus_adjustment_time = 60000;
             uint64_t consensus_penalty_point_time = 600000;
-            uint64_t transaction_throughput = 210;
+            uint64_t transaction_throughput = 200;
+            uint64_t transaction_gas = 50000;
             uint64_t parallel_delegation_limit = 32;
             uint64_t parallel_consensus_limit = 128;
             uint64_t parallel_attestation_limit = 256;

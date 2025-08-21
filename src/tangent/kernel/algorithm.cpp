@@ -212,7 +212,7 @@ namespace tangent
 				goto leave_as_is;
 
 			parameters new_alg = prev_alg;
-			decimal adjustment = decimal(time_delta).truncate(protocol::now().message.precision) / prev_time;
+			decimal adjustment = decimal(time_delta).truncate(protocol::now().message.decimal_precision) / prev_time;
 			if (adjustment > policy.consensus_difficulty_max_increase)
 				adjustment = policy.consensus_difficulty_max_increase;
 			else if (adjustment < policy.consensus_difficulty_max_decrease)
@@ -818,7 +818,7 @@ namespace tangent
 		}
 		secp256k1_context* signing::shared_context = nullptr;
 
-		bool encoding::decode_bytes(const string& value, uint8_t* data, size_t data_size)
+		bool encoding::decode_bytes(const std::string_view& value, uint8_t* data, size_t data_size)
 		{
 			VI_ASSERT(data != nullptr, "data should be set");
 			if (value.size() < data_size)

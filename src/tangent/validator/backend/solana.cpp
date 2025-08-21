@@ -65,7 +65,7 @@ namespace tangent
 				netdata.composition = algorithm::composition::type::ed25519;
 				netdata.routing = routing_policy::account;
 				netdata.sync_latency = 30;
-				netdata.divisibility = decimal(1000000000).truncate(protocol::now().message.precision);
+				netdata.divisibility = decimal(1000000000).truncate(protocol::now().message.decimal_precision);
 				netdata.supports_token_transfer = "spl";
 				netdata.supports_bulk_transfer = false;
 				netdata.requires_transaction_expiration = true;
@@ -263,14 +263,14 @@ namespace tangent
 							continue;
 
 						uint64_t subdivisions = 1;
-						uint64_t decimals = std::min<uint64_t>(balance->fetch_var("uiTokenAmount.decimals").get_integer(), protocol::now().message.precision);
+						uint64_t decimals = std::min<uint64_t>(balance->fetch_var("uiTokenAmount.decimals").get_integer(), protocol::now().message.decimal_precision);
 						for (uint64_t i = 0; i < decimals; i++)
 							subdivisions *= 10;
 
 						string mint = balance->get_var("mint").get_blob();
 						string owner = balance->get_var("owner").get_blob();
 						auto& change = prev_token_state[mint][owner];
-						value /= decimal(subdivisions).truncate(protocol::now().message.precision);
+						value /= decimal(subdivisions).truncate(protocol::now().message.decimal_precision);
 						change = change.is_nan() ? value : (change + value);
 					}
 				}
@@ -285,14 +285,14 @@ namespace tangent
 							continue;
 
 						uint64_t subdivisions = 1;
-						uint64_t decimals = std::min<uint64_t>(balance->fetch_var("uiTokenAmount.decimals").get_integer(), protocol::now().message.precision);
+						uint64_t decimals = std::min<uint64_t>(balance->fetch_var("uiTokenAmount.decimals").get_integer(), protocol::now().message.decimal_precision);
 						for (uint64_t i = 0; i < decimals; i++)
 							subdivisions *= 10;
 
 						string mint = balance->get_var("mint").get_blob();
 						string owner = balance->get_var("owner").get_blob();
 						auto& change = next_token_state[mint][owner];
-						value /= decimal(subdivisions).truncate(protocol::now().message.precision);
+						value /= decimal(subdivisions).truncate(protocol::now().message.decimal_precision);
 						change = change.is_nan() ? value : (value + change);
 					}
 				}
@@ -379,7 +379,7 @@ namespace tangent
 					if (!balance)
 						coreturn expects_rt<decimal>(std::move(balance.error()));
 
-					decimal value = balance->get_var("value").get_decimal().truncate(protocol::now().message.precision);
+					decimal value = balance->get_var("value").get_decimal().truncate(protocol::now().message.decimal_precision);
 					value /= netdata.divisibility;
 
 					memory::release(*balance);
@@ -641,7 +641,7 @@ namespace tangent
 				}
 
 				uint64_t subdivisions = 1;
-				uint64_t decimals = std::min<uint64_t>(info->get_var("decimals").get_integer(), protocol::now().message.precision);
+				uint64_t decimals = std::min<uint64_t>(info->get_var("decimals").get_integer(), protocol::now().message.decimal_precision);
 				for (uint64_t i = 0; i < decimals; i++)
 					subdivisions *= 10;
 
@@ -655,7 +655,7 @@ namespace tangent
 				token_account result;
 				result.program_id = std::move(program_id);
 				result.account = std::move(account);
-				result.divisibility = decimal(subdivisions).truncate(protocol::now().message.precision);
+				result.divisibility = decimal(subdivisions).truncate(protocol::now().message.decimal_precision);
 				result.balance = value / result.divisibility;
 				coreturn expects_rt<token_account>(std::move(result));
 			}

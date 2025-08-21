@@ -1665,10 +1665,10 @@ namespace tangent
 			if (!index)
 				return server_response().error(error_codes::bad_params, "to account has no program hash");
 
-			auto* host = ledger::svm_host::get();
+			auto* container = ledger::svm_container::get();
 			auto& hashcode = index->hashcode;
-			auto compiler = host->allocate();
-			if (!host->precompile(*compiler, hashcode))
+			auto compiler = container->allocate();
+			if (!container->precompile(*compiler, hashcode))
 			{
 				auto program = environment.validation.context.get_witness_program(hashcode);
 				if (!program)
@@ -1678,7 +1678,7 @@ namespace tangent
 				if (!code)
 					return server_response().error(error_codes::bad_params, code.error().message());
 
-				auto compilation = host->compile(*compiler, hashcode, format::util::encode_0xhex(hashcode), *code);
+				auto compilation = container->compile(*compiler, hashcode, format::util::encode_0xhex(hashcode), *code);
 				if (!compilation)
 					return server_response().error(error_codes::bad_params, compilation.error().message());
 			}
@@ -1738,7 +1738,7 @@ namespace tangent
 				environment.validation.context.emit_event(0, { format::variable(execution.what()) }, false);
 
 			auto data = environment.validation.context.receipt.as_schema();
-			data->set("to", algorithm::signing::serialize_address(script.to().hash));
+			data->set("to", algorithm::signing::serialize_address(script.callable()));
 			data->set("result", returning ? returning->copy() : var::set::null());
 			return server_response().success(std::move(data));
 		}

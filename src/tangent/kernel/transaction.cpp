@@ -1033,37 +1033,5 @@ namespace tangent
 			store_row(&message);
 			return message.data;
 		}
-
-		uint256_t gas_util::get_gas_work(const uint128_t& difficulty, const uint256_t& gas_use, const uint256_t& gas_limit, uint64_t priority)
-		{
-			if (!gas_limit)
-				return 0;
-
-			auto& policy = protocol::now().policy;
-			uint256_t alignment = 16;
-			uint256_t committee = policy.production_max_per_block;
-			uint256_t multiplier = priority >= committee ? 0 : math64u::pow3(committee - priority);
-			uint256_t work = (multiplier * gas_use) / gas_limit;
-			return work - (work % alignment) + alignment;
-		}
-		uint256_t gas_util::get_operational_gas_estimate(size_t bytes, size_t operations)
-		{
-			algorithm::pubkeyhash_t owner;
-			memset(owner.data, 1, sizeof(owner));
-
-			static size_t limit = states::account_nonce(owner, 1, 1).as_message().data.size();
-			bytes += limit * operations;
-			return get_storage_gas_estimate(bytes, bytes);
-		}
-		uint256_t gas_util::get_storage_gas_estimate(size_t bytes_in, size_t bytes_out)
-		{
-			const double heap_overhead = 2.0, format_overhead = 1.05;
-			bytes_in = (size_t)((double)bytes_in * format_overhead / heap_overhead);
-			bytes_out = (size_t)((double)bytes_out * format_overhead / heap_overhead);
-
-			uint256_t gas = bytes_in * (size_t)ledger::gas_cost::write_byte + bytes_out * (size_t)ledger::gas_cost::read_byte;
-			gas -= gas % 1000;
-			return gas + 1000;
-		}
 	}
 }

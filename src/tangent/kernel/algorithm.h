@@ -173,7 +173,7 @@ namespace tangent
 		class encoding
 		{
 		public:
-			static bool decode_bytes(const string& value, uint8_t* data, size_t data_size);
+			static bool decode_bytes(const std::string_view& value, uint8_t* data, size_t data_size);
 			static string encode_0xhex256(const uint256_t& data);
 			static uint256_t decode_0xhex256(const std::string_view& data);
 			static string encode_0xhex128(const uint128_t& data);

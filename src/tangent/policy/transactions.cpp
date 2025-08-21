@@ -160,20 +160,20 @@ namespace tangent
 			auto account = get_account();
 			auto storage = std::string_view(data).substr(1);
 			auto type = get_data_type().or_else(data_type::hashcode);
-			auto* host = ledger::svm_host::get();
-			auto compiler = host->allocate();
+			auto* container = ledger::svm_container::get();
+			auto compiler = container->allocate();
 			switch (type)
 			{
 				case data_type::program:
 				{
-					auto code = host->unpack(storage);
+					auto code = container->unpack(storage);
 					if (!code)
 						return code.error();
 
-					auto hashcode = host->hashcode(*code);
-					if (!host->precompile(*compiler, hashcode))
+					auto hashcode = container->hashcode(*code);
+					if (!container->precompile(*compiler, hashcode))
 					{
-						auto compilation = host->compile(*compiler, hashcode, format::util::encode_0xhex(hashcode), *code);
+						auto compilation = container->compile(*compiler, hashcode, format::util::encode_0xhex(hashcode), *code);
 						if (!compilation)
 							return compilation.error();
 					}
@@ -195,7 +195,7 @@ namespace tangent
 				}
 				case data_type::hashcode:
 				{
-					if (!host->precompile(*compiler, storage))
+					if (!container->precompile(*compiler, storage))
 					{
 						auto program = context->get_witness_program(storage);
 						if (!program)
@@ -205,7 +205,7 @@ namespace tangent
 						if (!code)
 							return code.error();
 
-						auto compilation = host->compile(*compiler, storage, format::util::encode_0xhex(storage), *code);
+						auto compilation = container->compile(*compiler, storage, format::util::encode_0xhex(storage), *code);
 						if (!compilation)
 							return compilation.error();
 					}
@@ -261,7 +261,7 @@ namespace tangent
 			args = std::move(new_args);
 			data.clear();
 			data.assign(1, (char)data_type::program);
-			data.append(ledger::svm_host::get()->pack(new_data).or_else(string()));
+			data.append(ledger::svm_container::get()->pack(new_data).or_else(string()));
 		}
 		void upgrade::from_hashcode(const std::string_view& new_data, format::variables&& new_args)
 		{
@@ -354,10 +354,10 @@ namespace tangent
 			if (!index)
 				return layer_exception("program is not assigned");
 
-			auto* host = ledger::svm_host::get();
+			auto* container = ledger::svm_container::get();
 			auto& hashcode = index->hashcode;
-			auto compiler = host->allocate();
-			if (!host->precompile(*compiler, hashcode))
+			auto compiler = container->allocate();
+			if (!container->precompile(*compiler, hashcode))
 			{
 				auto program = context->get_witness_program(hashcode);
 				if (!program)
@@ -367,7 +367,7 @@ namespace tangent
 				if (!code)
 					return code.error();
 
-				auto compilation = host->compile(*compiler, hashcode, format::util::encode_0xhex(hashcode), *code);
+				auto compilation = container->compile(*compiler, hashcode, format::util::encode_0xhex(hashcode), *code);
 				if (!compilation)
 					return compilation.error();
 			}
@@ -2605,7 +2605,7 @@ namespace tangent
 						auto attestation_fee = transfer.incoming_fee * protocol::now().policy.attestation_fee_rate;
 						if (attestation_fee.is_positive() && !best_branch->signatures.empty())
 						{
-							attestation_fee /= decimal(best_branch->signatures.size()).truncate(protocol::now().message.precision);
+							attestation_fee /= decimal(best_branch->signatures.size()).truncate(protocol::now().message.decimal_precision);
 							if (attestation_fee.is_positive())
 							{
 								for (size_t i = 0; i < best_branch->signatures.size(); i++)
@@ -2666,7 +2666,7 @@ namespace tangent
 						auto participation_fee = transfer.outgoing_fee * protocol::now().policy.attestation_fee_rate;
 						if (participation_fee.is_positive() && !batch.participants.empty())
 						{
-							participation_fee /= decimal(batch.participants.size()).truncate(protocol::now().message.precision);
+							participation_fee /= decimal(batch.participants.size()).truncate(protocol::now().message.decimal_precision);
 							if (participation_fee.is_positive())
 							{
 								for (auto& participant : batch.participants)

@@ -5,7 +5,7 @@
 #include "service/p2p.h"
 #include "service/rpc.h"
 #include "storage/chainstate.h"
-#include "../kernel/svm.h"
+#include "../kernel/svm_abi.h"
 #include "../policy/transactions.h"
 #include <vitex/bindings.h>
 #include <sstream>
@@ -15,6 +15,8 @@ namespace tangent
 {
 	namespace entrypoints
 	{
+		using namespace vitex::scripting;
+
 		enum class svm_assembler
 		{
 			code,
@@ -59,13 +61,13 @@ namespace tangent
 				compiler_features.includes = true;
 				compiler_features.pragmas = false;
 
-				auto* host = ledger::svm_host::get();
-				auto* vm = host->get_vm();
+				auto* container = ledger::svm_container::get();
+				auto* vm = container->get_vm();
 				vm->set_ts_imports(true);
 				vm->set_ts_imports_concat_mode(true);
 				vm->set_preserve_source_code(true);
 				vm->set_compiler_features(compiler_features);
-				svmc.compiler = host->allocate();
+				svmc.compiler = container->allocate();
 				context = &svmc.environment.validation.context;
 			}
 			~svm_context() = default;
@@ -99,14 +101,14 @@ namespace tangent
 			expects_lr<ledger::svm_compiler> compile_transaction()
 			{
 				VI_ASSERT(svmc.contextual, "transaction should be assigned");
-				auto index = svmc.environment.validation.context.get_account_program(to().hash.data);
+				auto index = svmc.environment.validation.context.get_account_program(callable());
 				if (!index)
 					return layer_exception("program not assigned to address");
 
-				auto* host = ledger::svm_host::get();
+				auto* container = ledger::svm_container::get();
 				auto& hashcode = index->hashcode;
-				auto result = host->allocate();
-				if (host->precompile(*result, hashcode))
+				auto result = container->allocate();
+				if (container->precompile(*result, hashcode))
 					return expects_lr<ledger::svm_compiler>(std::move(result));
 
 				auto program = svmc.environment.validation.context.get_witness_program(hashcode);
@@ -117,13 +119,13 @@ namespace tangent
 				if (!code)
 					return code.error();
 
-				auto compilation = host->compile(*result, hashcode, format::util::encode_0xhex(hashcode), *code);
+				auto compilation = container->compile(*result, hashcode, format::util::encode_0xhex(hashcode), *code);
 				if (!compilation)
 					return compilation.error();
 
 				return expects_lr<ledger::svm_compiler>(std::move(result));
 			}
-			expects_lr<void> call_transaction(compiler* module, ledger::svm_call mutability, const function& entrypoint, const format::variables& args)
+			expects_lr<void> call_transaction(ledger::svm_call mutability, const function& entrypoint, const format::variables& args)
 			{
 				VI_ASSERT(svmc.contextual, "transaction should be assigned");
 				svmc.events.clear();
@@ -171,14 +173,14 @@ namespace tangent
 				if (!file)
 					return layer_exception(file.what());
 
-				auto* host = ledger::svm_host::get();
-				auto* vm = host->get_vm();
+				auto* container = ledger::svm_container::get();
+				auto* vm = container->get_vm();
 				vm->set_compiler_error_callback([this](const std::string_view& message) { program.log.append(message).append("\r\n"); });
 				vm->clear_cache();
 				program.log.clear();
 
 				auto hash = algorithm::hashing::hash512((uint8_t*)file->data(), file->size());
-				auto result = host->compile(*svmc.compiler, hash, new_path, *file);
+				auto result = container->compile(*svmc.compiler, hash, new_path, *file);
 				vm->set_compiler_error_callback(nullptr);
 				if (!program.log.empty())
 					return layer_exception(string(program.log));
@@ -190,8 +192,8 @@ namespace tangent
 			}
 			expects_lr<void> assemble(svm_assembler type, const std::string_view& new_path, format::variables&& function_args)
 			{
-				auto* host = ledger::svm_host::get();
-				auto* vm = host->get_vm();
+				auto* container = ledger::svm_container::get();
+				auto* vm = container->get_vm();
 				if (vm->get_script_sections().empty())
 					return layer_exception("source code not found");
 
@@ -230,7 +232,7 @@ namespace tangent
 				}
 				else if (type == svm_assembler::abi)
 				{
-					auto result = host->pack(data);
+					auto result = container->pack(data);
 					if (!result)
 						return result.error();
 
@@ -299,16 +301,18 @@ namespace tangent
 				if (attach_debugger_context)
 				{
 					debugger_context* debugger = new debugger_context();
-					bindings::registry().bind_stringifiers(debugger);
-					debugger->add_to_string_callback("address", [](string& indent, int depth, void* object, int type_id)
+					debugger->add_to_string_callback("string", [](string& indent, int depth, void* object, int type_id)
 					{
-						ledger::svm_address& source = *(ledger::svm_address*)object;
-						return source.to_string() + " (address)";
+						string& source = *(string*)object;
+						string_stream stream;
+						stream << "\"" << source << "\"";
+						stream << " (string, " << source.size() << " chars)";
+						return stream.str();
 					});
-					debugger->add_to_string_callback("abi", [](string& indent, int depth, void* object, int type_id)
+					debugger->add_to_string_callback("uint128", [](string& indent, int depth, void* object, int type_id)
 					{
-						ledger::svm_abi& source = *(ledger::svm_abi*)object;
-						return source.output.encode() + " (abi)";
+						uint128& source = *(uint128*)object;
+						return source.to_string() + " (uint128)";
 					});
 					debugger->add_to_string_callback("uint256", [](string& indent, int depth, void* object, int type_id)
 					{
@@ -318,13 +322,70 @@ namespace tangent
 
 						return source.to_string() + " (uint256)";
 					});
+					debugger->add_to_string_callback("float768", [](string& indent, int depth, void* object, int type_id)
+					{
+						decimal& source = *(decimal*)object;
+						return source.to_string() + " (float768)";
+					});
+					debugger->add_to_string_callback("array", [debugger](string& indent, int depth, void* object, int type_id)
+					{
+						auto* source = (ledger::svm_abi::array_repr*)object;
+						int base_type_id = source->get_element_type_id();
+						uint32_t size = source->size();
+						string_stream stream;
+						stream << "0x" << (void*)source << " (array<t>, " << size << " elements)";
+
+						if (!depth || !size)
+							return stream.str();
+
+						if (size > 128)
+						{
+							stream << "\n";
+							indent.append("  ");
+							for (uint32_t i = 0; i < size; i++)
+							{
+								stream << indent << "[" << i << "]: " << debugger->to_string(indent, depth - 1, source->at(i), base_type_id);
+								if (i + 1 < size)
+									stream << "\n";
+							}
+							indent.erase(indent.end() - 2, indent.end());
+						}
+						else
+						{
+							stream << " [";
+							for (uint32_t i = 0; i < size; i++)
+							{
+								stream << debugger->to_string(indent, depth - 1, source->at(i), base_type_id);
+								if (i + 1 < size)
+									stream << ", ";
+							}
+							stream << "]";
+						}
+
+						return stream.str();
+					});
+					debugger->add_to_string_callback("address", [](string& indent, int depth, void* object, int type_id)
+					{
+						auto& source = *(ledger::svm_abi::address*)object;
+						return string(source.to_string().view()) + " (address)";
+					});
+					debugger->add_to_string_callback("abi", [](string& indent, int depth, void* object, int type_id)
+					{
+						auto& source = *(ledger::svm_abi::abi*)object;
+						return source.output.encode() + " (abi)";
+					});
+					debugger->add_to_string_callback("any", [debugger](string& indent, int depth, void* object, int type_id)
+					{
+						bindings::any* source = (bindings::any*)object;
+						return debugger->to_string(indent, depth - 1, source->get_address_of_object(), source->get_type_id());
+					});
 					bindings::registry::import_any(vm);
 					debugger->set_interrupt_callback([](bool is_interrupted) { console::get()->write_line(is_interrupted ? "program execution interrupted" : "resuming program execution"); });
 					vm->set_debugger(debugger);
 					interrupter(true);
 				}
 
-				auto execution = call_transaction(*svmc.compiler, ledger::svm_call::system_call, entrypoint, args);
+				auto execution = call_transaction(ledger::svm_call::system_call, entrypoint, args);
 				if (attach_debugger_context)
 				{
 					interrupter(false);
@@ -338,22 +399,51 @@ namespace tangent
 				state.balances.clear();
 				return expectation::met;
 			}
-			void load_exception(immediate_context* coroutine)
+			void dispatch_exception(immediate_context* coroutine) override
 			{
 				auto* vm = coroutine->get_vm();
 				if (vm->has_debugger())
 					vm->get_debugger()->exception_callback(coroutine->get_context());
 			}
-			void load_coroutine(immediate_context* coroutine, vector<ledger::svm_frame>& frames)
+			void dispatch_coroutine(immediate_context* coroutine, vector<ledger::svm_stackframe>& frames) override
 			{
 				auto* vm = coroutine->get_vm();
 				if (vm->has_debugger())
 					vm->get_debugger()->line_callback(coroutine->get_context());
-				return svm_program::load_coroutine(coroutine, frames);
+				return svm_program::dispatch_coroutine(coroutine, frames);
+			}
+			bool dispatch_instruction(virtual_machine* vm, immediate_context* coroutine, uint32_t* program_data, size_t program_counter, byte_code_label& opcode) override
+			{
+				if (vm->get_debugger() != nullptr)
+				{
+					string_stream stream;
+					debugger_context::byte_code_label_to_text(stream, vm, program_data, program_counter, false, true);
+
+					string instruction = stream.str();
+					stringify::trim(instruction);
+
+					auto gas = ledger::svm_stackframe::gas_cost_of(opcode);
+					instruction.append(instruction.find('%') != std::string::npos ? ", %gas:" : " %gas:");
+					instruction.append(to_string(gas));
+					svmc.instructions.push_back(std::move(instruction));
+				}
+				return svm_program::dispatch_instruction(vm, coroutine, program_data, program_counter, opcode);
+			}
+			bool emit_event(const void* object_value, int object_type_id) override
+			{
+				if (!ledger::svm_program::emit_event(object_value, object_type_id) || context->receipt.events.empty())
+					return false;
+
+				auto data = uptr<schema>(var::set::object());
+				data->key = ledger::svm_container::get()->get_vm()->get_type_info_by_id(object_type_id).get_name();
+				if (ledger::svm_marshalling::store(*data, object_value, object_type_id))
+					svmc.events[context->receipt.events.size() - 1] = std::move(data);
+
+				return true;
 			}
 			void reset()
 			{
-				auto* host = ledger::svm_host::get();
+				auto* container = ledger::svm_container::get();
 				state.balances.clear();
 				state.from = algorithm::pubkeyhash_t();
 				state.to = algorithm::pubkeyhash_t();
@@ -362,7 +452,7 @@ namespace tangent
 				program.path.clear();
 				program.log.clear();
 				program.trap = 0;
-				svmc.compiler = host->allocate();
+				svmc.compiler = container->allocate();
 				svmc.environment = ledger::evaluation_context();
 				svmc.contextual = uptr<transactions::call>();
 				svmc.returning = uptr<schema>();
@@ -374,35 +464,6 @@ namespace tangent
 			bool bound() const
 			{
 				return !program.path.empty();
-			}
-			bool emit_event(const void* object_value, int object_type_id)
-			{
-				if (!svm_program::emit_event(object_value, object_type_id) || context->receipt.events.empty())
-					return false;
-
-				auto data = uptr<schema>(var::set::object());
-				data->key = ledger::svm_host::get()->get_vm()->get_type_info_by_id(object_type_id).get_name();
-				if (ledger::svm_marshalling::store(*data, object_value, object_type_id))
-					svmc.events[context->receipt.events.size() - 1] = std::move(data);
-
-				return true;
-			}
-			bool dispatch_instruction(virtual_machine* vm, immediate_context* coroutine, uint32_t* program_data, size_t program_counter, byte_code_label& opcode)
-			{
-				if (vm->get_debugger() != nullptr)
-				{
-					string_stream stream;
-					debugger_context::byte_code_label_to_text(stream, vm, program_data, program_counter, false, true);
-
-					string instruction = stream.str();
-					stringify::trim(instruction);
-
-					auto gas = ledger::svm_frame::gas_cost_of(opcode);
-					instruction.append(instruction.find('%') != std::string::npos ? ", %gas:" : " %gas:");
-					instruction.append(to_string(gas));
-					svmc.instructions.push_back(std::move(instruction));
-				}
-				return svm_program::dispatch_instruction(vm, coroutine, program_data, program_counter, opcode);
 			}
 			schema* serialize_event_args(const format::variables& value) const
 			{
@@ -423,7 +484,7 @@ namespace tangent
 			{
 				os::process::bind_signal(signal_code::SIG_INT, bind ? [](int)
 				{
-					auto* vm = ledger::svm_host::get()->get_vm();
+					auto* vm = ledger::svm_container::get()->get_vm();
 					if (vm->get_debugger() && vm->get_debugger()->interrupt())
 						interrupter(true);
 					else

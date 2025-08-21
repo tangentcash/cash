@@ -32,7 +32,7 @@ namespace tangent
 				netdata.composition = algorithm::composition::type::ed25519;
 				netdata.routing = routing_policy::utxo;
 				netdata.sync_latency = 30;
-				netdata.divisibility = decimal(1000000).truncate(protocol::now().message.precision);
+				netdata.divisibility = decimal(1000000).truncate(protocol::now().message.decimal_precision);
 				netdata.supports_token_transfer = "native";
 				netdata.supports_bulk_transfer = true;
 				netdata.requires_transaction_expiration = false;
@@ -163,7 +163,7 @@ namespace tangent
 										auto token_asset = algorithm::asset::id_of(blockchain, symbol, contract_address);
 										uint8_t decimals = (uint8_t)item->fetch_var("currency.decimals").get_integer();
 										decimal divisibility = decimals > 0 ? decimal("1" + string(decimals, '0')) : decimal(1);
-										decimal token_value = math0::abs(item->get_var("value").get_decimal()) / divisibility.truncate(protocol::now().message.precision);
+										decimal token_value = math0::abs(item->get_var("value").get_decimal()) / divisibility.truncate(protocol::now().message.decimal_precision);
 										new_output.apply_token_value(contract_address, symbol, token_value, decimals);
 										nss::server_node::get()->enable_contract_address(token_asset, contract_address);
 									}
@@ -200,7 +200,7 @@ namespace tangent
 										auto token_asset = algorithm::asset::id_of(blockchain, symbol, contract_address);
 										uint8_t decimals = (uint8_t)item->fetch_var("currency.decimals").get_integer();
 										decimal divisibility = decimals > 0 ? decimal("1" + string(decimals, '0')) : decimal(1);
-										decimal token_value = math0::abs(item->get_var("value").get_decimal()) / divisibility.truncate(protocol::now().message.precision);
+										decimal token_value = math0::abs(item->get_var("value").get_decimal()) / divisibility.truncate(protocol::now().message.decimal_precision);
 										new_input.apply_token_value(contract_address, symbol, token_value, decimals);
 										nss::server_node::get()->enable_contract_address(token_asset, contract_address);
 									}

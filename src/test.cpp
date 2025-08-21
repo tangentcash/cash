@@ -1,6 +1,9 @@
 #include "tangent/validator/entrypoints.hpp"
 #include "tangent/validator/storage/mempoolstate.h"
+#include "tangent/kernel/svm_abi.h"
 #include <sstream>
+#include <cassert>
+#include <iostream>
 #define TEST_BLOCK(x, y, z) new_block_from_generator(*data, users, x, #x, y, z)
 
 using namespace tangent;
@@ -188,7 +191,7 @@ public:
 				uint256 value = 0;
 			}
 
-			token_storage construct(instrset::rwptr@, const address&in admin, const uint256&in value)
+			token_storage construct(instrset::rwptr@, const address & in admin, const uint256 & in value)
 			{
 				token_storage token;
 				token.deployer = tx::from();
@@ -203,14 +206,14 @@ public:
 				sv::set_if(token.account, value, value > 0);
 				return token;
 			}
-			token_transfer transfer(instrset::rwptr@, const address&in to, const uint256&in value)
+			token_transfer transfer(instrset::rwptr@, const address & in to, const uint256 & in value)
 			{
 				address from = tx::from();
 				uint256 input = balance_of(null, from);
 				uint256 output = balance_of(null, to);
 				uint256 from_delta = input - value, to_delta = output + value;
-				require(from_delta <= input, from.to_string() + ": illegal operation - insufficient balance");
-				require(to_delta >= output, to.to_string() + ": illegal operation - balance overflow");
+				require(from_delta <= input, string::from(from) + ": illegal operation - insufficient balance");
+				require(to_delta >= output, string::from(to) + ": illegal operation - balance overflow");
 				sv::set_if(from, from_delta, from_delta > 0);
 				sv::set_if(to, to_delta, to_delta > 0);
 
@@ -220,7 +223,7 @@ public:
 				event.value = value;
 				return event;
 			}
-			uint256 mint(instrset::rwptr@, const uint256&in value)
+			uint256 mint(instrset::rwptr@, const uint256 & in value)
 			{
 				token_storage token = info(null);
 				require(token.account == tx::from(), "illegal operation - operation not permitted");
@@ -228,15 +231,15 @@ public:
 				uint256 output = balance_of(null, token.account);
 				uint256 supply_delta = token.supply + value;
 				uint256 to_delta = output + value;
-				require(supply_delta >= token.supply, tx::to().to_string() + ": illegal operation - token supply overflow");
-				require(to_delta >= output, token.account.to_string() + ": illegal operation - balance overflow");
+				require(supply_delta >= token.supply, string::from(tx::to()) + ": illegal operation - token supply overflow");
+				require(to_delta >= output, string::from(token.account) + ": illegal operation - balance overflow");
 
 				token.supply = supply_delta;
 				sv::set(uint8(0), token);
 				sv::set_if(token.account, to_delta, to_delta > 0);
 				return to_delta;
 			}
-			uint256 burn(instrset::rwptr@, const uint256&in value)
+			uint256 burn(instrset::rwptr@, const uint256 & in value)
 			{
 				token_storage token = info(null);
 				require(token.account == tx::from(), "illegal operation - operation not permitted");
@@ -244,15 +247,15 @@ public:
 				uint256 output = balance_of(null, token.account);
 				uint256 supply_delta = token.supply - value;
 				uint256 to_delta = output - value;
-				require(supply_delta <= token.supply, "token supply will underflow (" + token.supply.to_string() + " < " + value.to_string() + ")");
-				require(to_delta <= output, "account balance will underflow (" + output.to_string() + " < " + value.to_string() + ")");
+				require(supply_delta <= token.supply, "token supply will underflow (" + string::from(token.supply) + " < " + string::from(value) + ")");
+				require(to_delta <= output, "account balance will underflow (" + string::from(output) + " < " + string::from(value) + ")");
 
 				token.supply = supply_delta;
 				sv::set(uint8(0), token);
 				sv::set_if(token.account, to_delta, to_delta > 0);
 				return to_delta;
 			}
-			uint256 balance_of(instrset::rptr@, const address&in account)
+			uint256 balance_of(instrset::rptr@, const address & in account)
 			{
 				uint256 output = 0;
 				sv::at(account, output);
@@ -1478,16 +1481,16 @@ public:
 			TEST_BLOCK(&generators::account_transfer_stage_1, "0x5dab1e4f9d688c4c5aa70a97fd8f1120948e83cd9a64ed99dc43714b50231185", 7);
 			TEST_BLOCK(&generators::account_transfer_stage_2, "0x923357b7425ceebfd88dcc67c6ef7d75bc0a701df3c990c88d20fef701596c7a", 8);
 			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), users[2].wallet.get_address(), 0.05), "0xf3932a8d1ef1c885ea8700b324e163ac5d44e19e3c69920bfc8d0181b2e12d25", 9);
-			TEST_BLOCK(std::bind(&generators::account_upgrade, std::placeholders::_1, std::placeholders::_2, &contracts), "0xc2e4630eca9e6c7d5d558136ac81a274fa3557616b8285a1f5fe03f5bc2449d8", 10);
-			TEST_BLOCK(std::bind(&generators::account_call, std::placeholders::_1, std::placeholders::_2, &contracts), "0x4060df86e688b8f697bc37eb2955059934ed7659e93f41839d865dcef15dc63c", 11);
-			TEST_BLOCK(&generators::account_transaction_rollup, "0xcf31dd5baae7c4daf2af509d6dbcca62826f9778b3fee8a2b9bb772bdeaf8490", 12);
-			TEST_BLOCK(std::bind(&generators::validator_enable_validator, std::placeholders::_1, std::placeholders::_2, 2, true, true, true), "0x1f7da83da02e5bfd3e22be12a475c2e3c715650cd3fefed59c181bb4e8b3d8d3", 13);
-			TEST_BLOCK(&generators::depository_regrouping, "0xa60714d8ac4ff205486d4b5f1a740ce647e49a99b619e4aeb55953770988b6dd", 14);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_1, "0x889616a8a4d749270edb821963e820b6a0b13a49c234685e05822fa4e37b0134", 18);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0xaaf0ccc1975bf655f03eeaecc1344e2f56090958df8c1d77bf707eba9711da5c", 20);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0x2790e153c8a665c883a3f3fd32f8f14c864103a2334f8735134edb51dc070090", 22);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_4, "0x18d79f14127f9fc042bca13c3be5c81e09e404cc33ac96d4d750bcab52f86c98", 24);
-			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2, true, true, false), "0xdeed61c0ada9043606d7cd59c80ab1dc78dffd5eaa7db05b2fab067f1136bd56", 26);
+			TEST_BLOCK(std::bind(&generators::account_upgrade, std::placeholders::_1, std::placeholders::_2, &contracts), "0x6eaf64cfe24758bb1582d758776852c6d11c20acfc16520ff1bc28765b3cc805", 10);
+			TEST_BLOCK(std::bind(&generators::account_call, std::placeholders::_1, std::placeholders::_2, &contracts), "0x8d8c30f8472b7765dc097f9636f827c5003ed0beb609ecda16417035fc06b006", 11);
+			TEST_BLOCK(&generators::account_transaction_rollup, "0x56460860d7602878777921bff6e7d2a534be1c5952056caf8e18683cebc7cb06", 12);
+			TEST_BLOCK(std::bind(&generators::validator_enable_validator, std::placeholders::_1, std::placeholders::_2, 2, true, true, true), "0xfc1de2d527c26ae1fcc0455bb83e3b6d641fd5ab56ab22780a6ac0d607b5239b", 13);
+			TEST_BLOCK(&generators::depository_regrouping, "0xe17e9a9fc3bfd731eb82e4575478f3d6c14df49a68322992827f03fb330a45b1", 14);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_1, "0x6ca5be4a2f0d0d17e52f60c44a172e1a610f592443b55e010f167a881f738743", 18);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0x8126db79487d8b1db270451c48257c999c1623c8fcbe02e905111529682166fd", 20);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0xc107564a33449c654bd6900218ab3d34205bb028f36ef4314fbb1de4fcf43a9e", 22);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_4, "0xe3cef5a52492532f0247e0982394bc8c568d813f6300583b3c3bc83f8e9bc799", 24);
+			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2, true, true, false), "0xace1d1d5aef86d88ee7f2a983d79151c415eededf16c199a42820251d16c0e0f", 26);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else
@@ -1630,7 +1633,8 @@ public:
 		VI_PANIC(transaction.sign(from, 1, decimal::zero()), "certification not signed");
 
 		uptr<schema> data = var::set::object();
-		data->set("transaction_gas_limit", algorithm::encoding::serialize_uint256(transaction.gas_limit));
+		data->set("certification_transaction_gas_limit", algorithm::encoding::serialize_uint256(transaction.gas_limit));
+		data->set("block_transaction_limit", algorithm::encoding::serialize_uint256(ledger::block::get_transaction_limit()));
 		data->set("block_gas_limit", algorithm::encoding::serialize_uint256(ledger::block::get_gas_limit()));
 		term->jwrite_line(*data);
 	}

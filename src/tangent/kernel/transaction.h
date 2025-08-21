@@ -225,20 +225,6 @@ namespace tangent
 			virtual string as_row() const;
 			virtual uint256_t as_rank() const = 0;
 		};
-
-		class gas_util
-		{
-		public:
-			static uint256_t get_gas_work(const uint128_t& difficulty, const uint256_t& gas_use, const uint256_t& gas_limit, uint64_t priority);
-			static uint256_t get_operational_gas_estimate(size_t size, size_t operations);
-			static uint256_t get_storage_gas_estimate(size_t bytes_in, size_t bytes_out);
-			template <typename t, size_t operations>
-			static uint256_t get_gas_estimate()
-			{
-				static uint256_t limit = get_operational_gas_estimate(t().as_message().data.size(), operations);
-				return limit;
-			}
-		};
 	}
 }
 #endif
