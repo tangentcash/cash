@@ -2978,48 +2978,46 @@ namespace tangent
 		}
 		expects_lr<chainstate::temporary_state_resolution> chainstate::resolve_temporary_state(uint32_t type, ledger::block_changelog* changelog, const option<std::string_view>& column, const option<std::string_view>& row, uint64_t block_number)
 		{
+			auto& multiform_storage = get_multiform_storage(type);
+			temporary_state_resolution result;
+			result.storage = &multiform_storage;
+			result.in_use = false;
 			if (!changelog)
-			{
-				auto& multiform_storage = get_multiform_storage(type);
-				temporary_state_resolution result;
-				result.storage = &multiform_storage;
-				result.in_use = false;
 				return result;
-			}
 
-			multiform_writer writer;
-			fill_multiform_writer_from_block_changelog(&writer.blobs, type, column, row, changelog);
-
+			auto uses = multiform_storage.uses();
 			auto storage = changelog->temporary_state.topics.find(type);
 			auto temporary = storage != changelog->temporary_state.topics.end();
-			auto& storage_ref = temporary ? *(ledger::storage_index_ptr*)storage->second : get_multiform_storage(type);
-			writer.storage = &storage_ref;
+			if (temporary)
+				multiform_storage = ledger::storage_index_ptr((sqlite::connection*)storage->second);
+			
+			multiform_writer writer;
+			fill_multiform_writer_from_block_changelog(&writer.blobs, type, column, row, changelog);
 			writer.blobs.erase(std::remove_if(writer.blobs.begin(), writer.blobs.end(), [&](const multiform_blob& value)
 			{
 				auto it = changelog->temporary_state.effects.find(value.message.data);
 				return it != changelog->temporary_state.effects.end() && it->second == std::string_view((char*)value.rank, value.rank_size);
 			}), writer.blobs.end());
-
-			temporary_state_resolution result;
-			result.storage = writer.storage;
 			result.in_use = temporary;
 			if (writer.blobs.empty())
+			{
+				multiform_storage.set_uses(uses);
 				return result;
+			}
 
-			uint32_t uses = writer.storage->uses();
-			auto status = fill_multiform_writer_from_storage(&writer, writer.storage);
+			auto status = fill_multiform_writer_from_storage(&writer, &multiform_storage);
 			if (!status)
 			{
-				writer.storage->set_uses(uses);
+				multiform_storage.set_uses(uses);
 				return status.error();
 			}
 
 			if (!temporary)
 			{
-				auto transaction = writer.storage->tx_begin(__func__, sqlite::isolation::default_isolation);
+				auto transaction = multiform_storage.tx_begin(__func__, sqlite::isolation::default_isolation);
 				if (!transaction)
 				{
-					writer.storage->set_uses(uses);
+					multiform_storage.set_uses(uses);
 					return layer_exception(ledger::storage_util::error_of(transaction));
 				}
 			}
@@ -3029,18 +3027,18 @@ namespace tangent
 			{
 				changelog->temporary_state.effects.clear();
 				changelog->temporary_state.topics.erase(type);
-				writer.storage->tx_rollback(__func__);
-				writer.storage->set_uses(uses);
+				multiform_storage.tx_rollback(__func__);
+				multiform_storage.set_uses(uses);
 			};
 
-			auto* storage_ptr = writer.storage->ptr();
+			auto* storage_ptr = multiform_storage.ptr();
 			for (auto& item : writer.blobs)
 			{
 				auto* statement = writer.commit_multiform_column_data;
 				storage_ptr->bind_blob(statement, 0, item.column);
 				storage_ptr->bind_int64(statement, 1, 0);
 
-				cursor = writer.storage->prepared_query(__func__, statement);
+				cursor = multiform_storage.prepared_query(__func__, statement);
 				if (!cursor || cursor->error_or_empty())
 				{
 					rollback_temporary_state();
@@ -3052,7 +3050,7 @@ namespace tangent
 				storage_ptr->bind_int64(statement, 1, 0);
 
 				uint64_t column_number = cursor->first().front().get_column(0).get().get_integer();
-				cursor = writer.storage->prepared_query(__func__, statement);
+				cursor = multiform_storage.prepared_query(__func__, statement);
 				if (!cursor || cursor->error_or_empty())
 				{
 					rollback_temporary_state();
@@ -3086,7 +3084,7 @@ namespace tangent
 					storage_ptr->bind_blob(statement, 3, std::string_view((char*)item.rank, item.rank_size));
 				}
 
-				cursor = writer.storage->prepared_query(__func__, statement);
+				cursor = multiform_storage.prepared_query(__func__, statement);
 				if (!cursor || cursor->error())
 				{
 					rollback_temporary_state();
@@ -3094,8 +3092,9 @@ namespace tangent
 				}
 			}
 
-			writer.storage->set_uses(uses);
-			changelog->temporary_state.topics[type] = writer.storage;
+			storage_ptr->add_ref();
+			multiform_storage.set_uses(uses);
+			changelog->temporary_state.topics[type] = storage_ptr;
 			for (auto& item : writer.blobs)
 				changelog->temporary_state.effects[item.message.data] = string((char*)item.rank, item.rank_size);
 
@@ -3105,16 +3104,14 @@ namespace tangent
 		{
 			VI_ASSERT(changelog != nullptr, "changelog should be set");
 			changelog->temporary_state.effects.clear();
-			if (!changelog->temporary_state.topics.empty())
+			if (changelog->temporary_state.topics.empty())
 				return expectation::met;
 
 			expects_lr<void> result = expectation::met;
 			for (auto& topic : changelog->temporary_state.topics)
 			{
-				auto* storage = (ledger::storage_index_ptr*)topic.second;
-				auto uses = storage->uses();
-				auto status = storage->tx_rollback(__func__);
-				storage->set_uses(uses);
+				auto storage = ledger::storage_index_ptr((sqlite::connection*)topic.second);
+				auto status = storage.tx_rollback(__func__);
 				if (!status)
 					result = layer_exception(ledger::storage_util::error_of(status));
 			}
