@@ -258,6 +258,7 @@ namespace tangent
 
 			struct secret_state
 			{
+				virtual ~secret_state() = default;
 				virtual expects_lr<void> derive_from_seed(const uint256_t& seed) = 0;
 				virtual expects_lr<void> derive_from_key(const cseckey_t& secret_key) = 0;
 				virtual expects_lr<void> finalize(cseckey_t* output) const = 0;
@@ -267,6 +268,7 @@ namespace tangent
 
 			struct public_state
 			{
+				virtual ~public_state() = default;
 				virtual expects_lr<void> derive_from_key(const cseckey_t& secret_key) = 0;
 				virtual expects_lr<void> finalize(cpubkey_t* output) const = 0;
 				virtual bool store(format::wo_stream* stream) const = 0;
@@ -275,6 +277,7 @@ namespace tangent
 
 			struct signature_state
 			{
+				virtual ~signature_state() = default;
 				virtual expects_lr<void> setup(const cpubkey_t& public_key, const uint8_t* message, size_t message_size, uint16_t participants) = 0;
 				virtual expects_lr<void> aggregate(const cseckey_t& secret_key) = 0;
 				virtual expects_lr<void> finalize(chashsig_t* output) const = 0;

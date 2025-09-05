@@ -159,12 +159,11 @@ namespace tangent
 		{
 			VI_PANIC(connection, "index connection required");
 		}
-		storage_index_ptr::storage_index_ptr(const storage_index_ptr& other) : connection(connection), invocations(0), transaction(false)
+		storage_index_ptr::storage_index_ptr(const storage_index_ptr& other) : connection(other.connection), invocations(0), transaction(false)
 		{
 		}
-		storage_index_ptr::storage_index_ptr(storage_index_ptr&& other) noexcept : connection(connection), invocations(other.invocations), transaction(other.transaction)
+		storage_index_ptr::storage_index_ptr(storage_index_ptr&& other) noexcept : connection(std::move(other.connection)), invocations(other.invocations), transaction(other.transaction)
 		{
-			other.connection = nullptr;
 			other.invocations = 0;
 			other.transaction = false;
 		}
@@ -190,10 +189,9 @@ namespace tangent
 				return *this;
 
 			this->~storage_index_ptr();
-			connection = other.connection;
+			connection = std::move(other.connection);
 			invocations = other.invocations;
 			transaction = other.transaction;
-			other.connection = nullptr;
 			other.invocations = 0;
 			other.transaction = false;
 			return *this;

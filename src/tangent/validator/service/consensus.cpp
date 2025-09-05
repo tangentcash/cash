@@ -642,7 +642,7 @@ namespace tangent
 			clear_pending_fork(nullptr);
 		retry:
 			{
-				vector<uptr<socket>> current_sockets;
+				vector<uptr<vitex::network::socket>> current_sockets;
 				current_sockets.reserve(pending_nodes.size());
 				for (auto& node : pending_nodes)
 				{
