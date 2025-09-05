@@ -90,15 +90,15 @@ namespace tangent
         friend class protocol;
 
     private:
-        unordered_map<string, single_queue<uptr<sqlite::connection>>> indices;
+        unordered_map<string, single_queue<uref<sqlite::connection>>> indices;
         unordered_map<string, rocksdb::DB*> blobs;
         std::mutex mutex;
         string target_path;
 
     public:
-        rocksdb::DB* load_blob(const std::string_view& location);
-        uptr<sqlite::connection> load_index(const std::string_view& location, std::function<void(sqlite::connection*)>&& initializer);
-        void unload_index(uptr<sqlite::connection>&& connection);
+        rocksdb::DB* pull_blob_ref(const std::string_view& location);
+        uref<sqlite::connection> pull_index(const std::string_view& location, std::function<void(sqlite::connection*)>&& initializer);
+        void push_index(uref<sqlite::connection>&& connection);
         void reset();
         void checkpoint();
         const string& resolve(network_type type, const std::string_view& path);
@@ -154,14 +154,15 @@ namespace tangent
                 uint16_t port = 18418;
                 uint64_t time_offset = 300000;
                 uint64_t cursor_size = 2048;
-                uint32_t max_inbound_connections = 32;
+                uint32_t max_inbound_connections = 24;
                 uint32_t max_outbound_connections = 8;
-                uint32_t inventory_size = 8192;
-                uint32_t rediscovery_timeout = 120000;
+                uint64_t inventory_timeout = 300000;
+                uint32_t inventory_size = 65536;
+                uint32_t topology_timeout = 120000;
                 uint64_t response_timeout = 48000;
                 bool server = true;
                 bool logging = true;
-            } p2p;
+            } consensus;
             struct
             {
                 string address = "0.0.0.0";
@@ -169,7 +170,7 @@ namespace tangent
                 uint64_t cursor_size = 512;
                 bool server = false;
                 bool logging = true;
-            } nds;
+            } discovery;
             struct
             {
                 uptr<schema> options;
@@ -181,7 +182,7 @@ namespace tangent
                 uint64_t fee_estimation_seconds = 600;
                 bool server = false;
                 bool logging = true;
-            } nss;
+            } oracle;
             struct
             {
                 string address = "0.0.0.0";
@@ -199,6 +200,7 @@ namespace tangent
             struct
             {
                 uint64_t timeout = 10000;
+                uint64_t mbps_per_socket = 24;
                 uint64_t tls_trusted_peers = 100;
             } tcp;
             struct
@@ -220,7 +222,7 @@ namespace tangent
                 bool prune_aggressively = false;
                 bool transaction_to_account_index = true;
                 bool transaction_to_rollup_index = true;
-                bool logging = true;
+                bool logging = false;
             } storage;
             struct
             {
@@ -229,9 +231,10 @@ namespace tangent
                 string query_path;
                 uint64_t archive_size = 8 * 1024 * 1024;
                 uint64_t archive_repack_interval = 1800;
+                bool control_logging = false;
             } logs;
-            unordered_set<string> nodes;
-            unordered_set<string> seeds;
+            unordered_set<string> known_nodes;
+            unordered_set<string> bootstrap_nodes;
             network_type network = network_type::mainnet;
             string keystate;
         } user;

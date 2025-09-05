@@ -83,7 +83,7 @@ namespace tangent
 				virtual expects_promise_rt<decimal> get_balance(const std::string_view& owner);
 				virtual expects_promise_rt<string> get_recent_block_hash();
 				virtual vector<uint8_t> tx_message_serialize(sol_transaction* tx_data);
-				virtual vector<uint8_t> tx_result_serialize(const vector<uint8_t>& message_buffer, const algorithm::composition::chashsig_t& signature, size_t signature_size);
+				virtual vector<uint8_t> tx_result_serialize(const vector<uint8_t>& message_buffer, const uint8_t* signature, size_t signature_size);
 				virtual const btc_chainparams_* get_chain();
 			};
 		}

@@ -1,4 +1,4 @@
-#include "nss.h"
+#include "oracle.h"
 #include "../storage/wardenstate.h"
 #include "../backend/bitcoin.h"
 #include "../backend/forks/bitcoin.h"
@@ -17,7 +17,7 @@ extern "C"
 
 namespace tangent
 {
-	namespace nss
+	namespace oracle
 	{
 		template <typename t>
 		static invocation_callback chain(server_node* server)
@@ -56,8 +56,8 @@ namespace tangent
 		{
 			auto data = var::set::object();
 			data->set("seed", algorithm::encoding::serialize_uint256(seed));
-			data->set("secret_key", var::string(format::util::encode_0xhex(std::string_view((char*)secret_key.data, secret_key_size))));
-			data->set("public_key", var::string(format::util::encode_0xhex(std::string_view((char*)public_key.data, public_key_size))));
+			data->set("secret_key", var::string(format::util::encode_0xhex(std::string_view((char*)secret_key.data(), secret_key.size()))));
+			data->set("public_key", var::string(format::util::encode_0xhex(std::string_view((char*)public_key.data(), public_key.size()))));
 			data->set("encoded_secret_key", var::string(encoded_secret_key.heap()));
 			data->set("encoded_public_key", var::string(encoded_public_key));
 			auto* addresses_data = data->set("addresses", var::set::array());
@@ -72,13 +72,13 @@ namespace tangent
 			return data;
 		}
 
-		server_node::server_node() noexcept : control_sys("nss-node")
+		server_node::server_node() noexcept : control_sys("oracle-node")
 		{
 			auto& chains = get_registrations();
 			for (auto& chain : chains)
 				chain.second(chain.first);
 
-			auto& config = protocol::now().user.nss.options;
+			auto& config = protocol::now().user.oracle.options;
 			if (config)
 			{
 				auto* retry_timeout = config->fetch("strategy.retry_timeout");
@@ -113,26 +113,26 @@ namespace tangent
 									urls.erase("rps");
 
 									auto rps = child->get_var("rps").get_number();
-									if (add_multi_node(asset, std::move(urls), rps) && protocol::now().user.nss.logging)
+									if (add_multi_node(asset, std::move(urls), rps) && protocol::now().user.oracle.logging)
 										VI_INFO("%s server %i urls added (rps: %.2f)", algorithm::asset::name_of(asset).c_str(), (int)urls.size(), rps);
-									else if (protocol::now().user.nss.logging)
+									else if (protocol::now().user.oracle.logging)
 										VI_ERR("failed to add %s server %i urls", algorithm::asset::name_of(asset).c_str(), (int)urls.size());
 								}
 								else if (child->value.is(var_type::array))
 								{
 									auto url = child->size() > 0 ? child->get(0)->value.get_string() : child->value.get_string();
 									auto rps = child->size() > 1 ? child->get(1)->value.get_number() : 0.0;
-									if (add_node(asset, url, rps) && protocol::now().user.nss.logging)
+									if (add_node(asset, url, rps) && protocol::now().user.oracle.logging)
 										VI_INFO("%s server url \"%.*s\" added (rps: %.2f)", algorithm::asset::name_of(asset).c_str(), (int)url.size(), url.data(), rps);
-									else if (protocol::now().user.nss.logging)
+									else if (protocol::now().user.oracle.logging)
 										VI_ERR("failed to add %s server url: \"%.*s\"", algorithm::asset::name_of(asset).c_str(), (int)url.size(), url.data());
 								}
 								else
 								{
 									auto url = child->value.get_string();
-									if (add_node(asset, url, 0.0) && protocol::now().user.nss.logging)
+									if (add_node(asset, url, 0.0) && protocol::now().user.oracle.logging)
 										VI_INFO("%s server url \"%.*s\" added", algorithm::asset::name_of(asset).c_str(), (int)url.size(), url.data());
-									else if (protocol::now().user.nss.logging)
+									else if (protocol::now().user.oracle.logging)
 										VI_ERR("failed to add %s server url: \"%.*s\"", algorithm::asset::name_of(asset).c_str(), (int)url.size(), url.data());
 								}
 							}
@@ -155,7 +155,7 @@ namespace tangent
 					}
 				}
 			}
-			if (protocol::now().user.nss.server && protocol::now().user.nss.logging)
+			if (protocol::now().user.oracle.server && protocol::now().user.oracle.logging)
 			{
 				auto* output = console::get();
 				output->add_colorization("spends", std_color::red);
@@ -226,25 +226,27 @@ namespace tangent
 			if (!provider)
 				coreturn expects_rt<warden::transaction_logs>(remote_exception("node not found"));
 
+			uptr<schema> tip_checkpoint, tip_latest, tip_override;
 			bool is_dry_run = !options->has_latest_block_height();
-			storages::wardenstate state = storages::wardenstate(__func__, asset);
 			implementation->interact = [options](warden::server_relay* service) { options->state.interactions.insert(service); };
 			options->state.interactions.clear();
-
-			auto tip_checkpoint = uptr<schema>(state.get_property("TIP:CHECKPOINT"));
-			if (tip_checkpoint)
-				options->set_checkpoint_from_block((uint64_t)std::max<int64_t>(1, tip_checkpoint->value.get_integer()) - 1);
-
-			auto tip_latest = uptr<schema>(state.get_property("TIP:LATEST"));
-			if (tip_latest && (uint64_t)tip_latest->value.get_integer() > options->state.latest_block_height)
-				options->set_checkpoint_from_block((uint64_t)tip_latest->value.get_integer());
-
-			auto tip_override = uptr<schema>(state.get_property("TIP:OVERRIDE"));
-			if (tip_override)
 			{
-				uint64_t tip = (uint64_t)tip_override->value.get_integer();
-				options->state.starting_block_height = tip;
-				options->set_checkpoint_from_block(tip);
+				storages::wardenstate state = storages::wardenstate(asset);
+				tip_checkpoint = uptr<schema>(state.get_property("TIP:CHECKPOINT"));
+				if (tip_checkpoint)
+					options->set_checkpoint_from_block((uint64_t)std::max<int64_t>(1, tip_checkpoint->value.get_integer()) - 1);
+
+				tip_latest = uptr<schema>(state.get_property("TIP:LATEST"));
+				if (tip_latest && (uint64_t)tip_latest->value.get_integer() > options->state.latest_block_height)
+					options->set_checkpoint_from_block((uint64_t)tip_latest->value.get_integer());
+
+				tip_override = uptr<schema>(state.get_property("TIP:OVERRIDE"));
+				if (tip_override)
+				{
+					uint64_t tip = (uint64_t)tip_override->value.get_integer();
+					options->state.starting_block_height = tip;
+					options->set_checkpoint_from_block(tip);
+				}
 			}
 
 			if (!options->has_current_block_height())
@@ -280,6 +282,7 @@ namespace tangent
 				}
 			}
 
+			storages::wardenstate state = storages::wardenstate(asset);
 			if (!tip_checkpoint || (uint64_t)tip_checkpoint->value.get_integer() != logs.block_height)
 				state.set_property("TIP:CHECKPOINT", var::set::integer(logs.block_height));
 			if (!tip_latest || (uint64_t)tip_latest->value.get_integer() != options->state.latest_block_height)
@@ -288,7 +291,7 @@ namespace tangent
 				state.set_property("TIP:OVERRIDE", nullptr);
 
 			auto* utxo_implementation = warden::relay_backend_utxo::from_relay(implementation);
-			auto* server = nss::server_node::get();
+			auto* server = server_node::get();
 			unordered_set<string> transaction_ids;
 			for (auto& new_transaction : logs.transactions)
 			{
@@ -373,7 +376,7 @@ namespace tangent
 				coreturn expects_rt<warden::computed_fee>(std::move(estimate.error()));
 
 			umutex<std::recursive_mutex> unique(control_sys.sync);
-			fees[fee_key] = std::make_pair(*estimate, time + (int64_t)protocol::now().user.nss.fee_estimation_seconds);
+			fees[fee_key] = std::make_pair(*estimate, time + (int64_t)protocol::now().user.oracle.fee_estimation_seconds);
 			coreturn estimate;
 		}
 		expects_promise_rt<decimal> server_node::calculate_balance(const algorithm::asset_id& asset, const warden::wallet_link& link)
@@ -403,20 +406,21 @@ namespace tangent
 			if (!implementation)
 				coreturn expects_rt<void>(remote_exception("chain not found"));
 
-			auto* server = nss::server_node::get();
+			auto* server = server_node::get();
 			auto new_transaction = finalized.as_computed();
 			server->normalize_transaction_id(asset, &new_transaction.transaction_id);
 			new_transaction.block_id.execution = 0;
 			new_transaction.block_id.finalization = 0;
+			{
+				storages::wardenstate state = storages::wardenstate(asset);
+				auto duplicate_transaction = state.get_computed_transaction(new_transaction.transaction_id, external_id);
+				if (duplicate_transaction)
+					coreturn expects_rt<void>(expectation::met);
 
-			storages::wardenstate state = storages::wardenstate(__func__, asset);
-			auto duplicate_transaction = state.get_computed_transaction(new_transaction.transaction_id, external_id);
-			if (duplicate_transaction)
-				coreturn expects_rt<void>(expectation::met);
-
-			auto status = state.add_finalized_transaction(new_transaction, external_id);
-			if (!status)
-				coreturn expects_rt<void>(remote_exception(std::move(status.error().message())));
+				auto status = state.add_finalized_transaction(new_transaction, external_id);
+				if (!status)
+					coreturn expects_rt<void>(remote_exception(std::move(status.error().message())));
+			}
 
 			auto result = coawait(implementation->broadcast_transaction(finalized));
 			if (!result)
@@ -517,25 +521,22 @@ namespace tangent
 			if (!implementation)
 				return expects_lr<computed_wallet>(layer_exception("chain not found"));
 
-			algorithm::composition::keypair keypair;
 			auto& chain = implementation->get_chainparams();
-			auto status = algorithm::composition::derive_keypair(chain.composition, seed, &keypair);
-			if (!status)
-				return status.error();
+			auto keypair = algorithm::composition::derive_keypair(chain.composition, seed);
+			if (!keypair)
+				return keypair.error();
 
 			computed_wallet wallet;
 			wallet.seed = seed;
-			wallet.secret_key = keypair.secret_key;
-			wallet.public_key = keypair.public_key;
+			wallet.secret_key = std::move(keypair->secret_key);
+			wallet.public_key = std::move(keypair->public_key);
 			wallet.encoded_seed = secret_box::secure(algorithm::encoding::encode_0xhex256(seed));
-			wallet.secret_key_size = algorithm::composition::size_of_secret_key(chain.composition);
-			wallet.public_key_size = algorithm::composition::size_of_public_key(chain.composition);
 
-			auto encoded_secret_key = implementation->encode_secret_key(secret_box::view(std::string_view((char*)wallet.secret_key.data, wallet.secret_key_size)));
+			auto encoded_secret_key = implementation->encode_secret_key(secret_box::view(std::string_view((char*)wallet.secret_key.data(), wallet.secret_key.size())));
 			if (!encoded_secret_key)
 				return encoded_secret_key.error();
 
-			auto encoded_public_key = implementation->encode_public_key(std::string_view((char*)wallet.public_key.data, wallet.public_key_size));
+			auto encoded_public_key = implementation->encode_public_key(std::string_view((char*)wallet.public_key.data(), wallet.public_key.size()));
 			if (!encoded_public_key)
 				return encoded_public_key.error();
 
@@ -758,7 +759,7 @@ namespace tangent
 			if (!algorithm::asset::is_valid(asset))
 				return expects_lr<void>(layer_exception("asset not found"));
 
-			storages::wardenstate state = storages::wardenstate(__func__, asset);
+			storages::wardenstate state = storages::wardenstate(asset);
 			return state.set_property("TIP:OVERRIDE", var::set::integer(block_height));
 		}
 		expects_lr<void> server_node::enable_contract_address(const algorithm::asset_id& asset, const std::string_view& contract_address)
@@ -773,7 +774,7 @@ namespace tangent
 			if (!implementation)
 				return expects_lr<void>(layer_exception("chain not found"));
 
-			storages::wardenstate state = storages::wardenstate(__func__, asset);
+			storages::wardenstate state = storages::wardenstate(asset);
 			auto key = algorithm::asset::token_of(asset);
 			auto value = state.get_property(key);
 			if (!value)
@@ -812,7 +813,7 @@ namespace tangent
 			if (!status)
 				return status;
 
-			storages::wardenstate state = storages::wardenstate(__func__, asset);
+			storages::wardenstate state = storages::wardenstate(asset);
 			auto candidate_link = state.get_link(copy.address);
 			if (candidate_link && candidate_link->as_hash() == copy.as_hash())
 				return expectation::met;
@@ -825,7 +826,7 @@ namespace tangent
 			if (!block_height || !*block_height)
 				return expectation::met;
 
-			uint64_t latency = implementation->get_chainparams().sync_latency * protocol::now().user.nss.block_replay_multiplier;
+			uint64_t latency = implementation->get_chainparams().sync_latency * protocol::now().user.oracle.block_replay_multiplier;
 			if (latency > 0)
 				scan_from_block_height(asset, latency >= *block_height ? 1 : *block_height - latency);
 
@@ -852,7 +853,7 @@ namespace tangent
 			if (!status)
 				return status;
 
-			storages::wardenstate state = storages::wardenstate(__func__, asset);
+			storages::wardenstate state = storages::wardenstate(asset);
 			return state.clear_link(copy);
 		}
 		expects_lr<warden::wallet_link> server_node::normalize_link(const algorithm::asset_id& asset, const warden::wallet_link& link)
@@ -886,7 +887,7 @@ namespace tangent
 				return expects_lr<uint64_t>(layer_exception("asset not found"));
 
 			uint64_t block_height = 0;
-			storages::wardenstate state = storages::wardenstate(__func__, asset);
+			storages::wardenstate state = storages::wardenstate(asset);
 			auto latest_block_height = uptr<schema>(state.get_property("TIP:LATEST"));
 			if (latest_block_height)
 			{
@@ -910,52 +911,52 @@ namespace tangent
 		}
 		expects_lr<warden::wallet_link> server_node::get_link(const algorithm::asset_id& asset, const std::string_view& address)
 		{
-			storages::wardenstate state = storages::wardenstate(__func__, asset);
+			storages::wardenstate state = storages::wardenstate(asset);
 			return state.get_link(address);
 		}
 		expects_lr<unordered_map<string, warden::wallet_link>> server_node::get_links_by_owner(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, size_t offset, size_t count)
 		{
-			storages::wardenstate state = storages::wardenstate(__func__, asset);
+			storages::wardenstate state = storages::wardenstate(asset);
 			return state.get_links_by_owner(owner, offset, count);
 		}
 		expects_lr<unordered_map<string, warden::wallet_link>> server_node::get_links_by_public_keys(const algorithm::asset_id& asset, const unordered_set<string>& public_keys)
 		{
-			storages::wardenstate state = storages::wardenstate(__func__, asset);
+			storages::wardenstate state = storages::wardenstate(asset);
 			return state.get_links_by_public_keys(public_keys);
 		}
 		expects_lr<unordered_map<string, warden::wallet_link>> server_node::get_links_by_addresses(const algorithm::asset_id& asset, const unordered_set<string>& addresses)
 		{
-			storages::wardenstate state = storages::wardenstate(__func__, asset);
+			storages::wardenstate state = storages::wardenstate(asset);
 			return state.get_links_by_addresses(addresses);
 		}
 		expects_lr<void> server_node::add_utxo(const algorithm::asset_id& asset, const warden::coin_utxo& value)
 		{
-			storages::wardenstate state = storages::wardenstate(__func__, asset);
+			storages::wardenstate state = storages::wardenstate(asset);
 			return state.add_utxo(value);
 		}
 		expects_lr<void> server_node::remove_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index)
 		{
-			storages::wardenstate state = storages::wardenstate(__func__, asset);
+			storages::wardenstate state = storages::wardenstate(asset);
 			return state.remove_utxo(transaction_id, index);
 		}
 		expects_lr<warden::coin_utxo> server_node::get_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index)
 		{
-			storages::wardenstate state = storages::wardenstate(__func__, asset);
+			storages::wardenstate state = storages::wardenstate(asset);
 			return state.get_utxo(transaction_id, index);
 		}
 		expects_lr<vector<warden::coin_utxo>> server_node::get_utxos(const algorithm::asset_id& asset, const warden::wallet_link& link, size_t offset, size_t count)
 		{
-			storages::wardenstate state = storages::wardenstate(__func__, asset);
+			storages::wardenstate state = storages::wardenstate(asset);
 			return state.get_utxos(link, offset, count);
 		}
 		expects_lr<schema*> server_node::load_cache(const algorithm::asset_id& asset, warden::cache_policy policy, const std::string_view& key)
 		{
-			storages::wardenstate state = storages::wardenstate(__func__, asset);
+			storages::wardenstate state = storages::wardenstate(asset);
 			return state.get_cache(policy, key);
 		}
 		expects_lr<void> server_node::store_cache(const algorithm::asset_id& asset, warden::cache_policy policy, const std::string_view& key, uptr<schema>&& value)
 		{
-			storages::wardenstate state = storages::wardenstate(__func__, asset);
+			storages::wardenstate state = storages::wardenstate(asset);
 			return state.set_cache(policy, key, std::move(value));
 		}
 		option<string> server_node::get_contract_address(const algorithm::asset_id& asset)
@@ -965,7 +966,7 @@ namespace tangent
 
 			auto blockchain = algorithm::asset::blockchain_of(asset);
 			auto token = algorithm::asset::token_of(asset);
-			storages::wardenstate state = storages::wardenstate(__func__, asset);
+			storages::wardenstate state = storages::wardenstate(asset);
 			auto value = uptr<schema>(state.get_property(token));
 			if (!value || value->empty())
 				return optional::none;
@@ -1128,7 +1129,7 @@ namespace tangent
 		}
 		service_control::service_node server_node::get_entrypoint()
 		{
-			if (!protocol::now().user.nss.server)
+			if (!protocol::now().user.oracle.server)
 				return service_control::service_node();
 
 			service_control::service_node entrypoint;
@@ -1171,19 +1172,19 @@ namespace tangent
 			}
 			else if (listener->cooldown_id != INVALID_TASK_ID)
 			{
-				if (protocol::now().user.nss.logging)
+				if (protocol::now().user.oracle.logging)
 					VI_INFO("%s server data collection: re-queued", algorithm::asset::name_of(listener->asset).c_str());
 				listener->cooldown_id = INVALID_TASK_ID;
 			}
 			else if (listener->is_dry_run)
 			{
-				if (protocol::now().user.nss.logging)
+				if (protocol::now().user.oracle.logging)
 					VI_INFO("%s server data collection: queued", algorithm::asset::name_of(listener->asset).c_str());
 				listener->is_dry_run = false;
 			}
 			else if (listener->options.will_wait_for_transactions())
 			{
-				if (protocol::now().user.nss.logging)
+				if (protocol::now().user.oracle.logging)
 					VI_INFO("%s server data collection: waiting for updates in %is (total: %is)",
 					algorithm::asset::name_of(listener->asset).c_str(),
 					(int)(listener->options.polling_frequency_ms / 1000),
@@ -1198,7 +1199,7 @@ namespace tangent
 				{
 					if (info.error().is_retry())
 					{
-						if (protocol::now().user.nss.logging)
+						if (protocol::now().user.oracle.logging)
 							VI_INFO("%s server data collection: finalized", algorithm::asset::name_of(listener->asset).c_str());
 
 						call_transaction_listener(listener);
@@ -1208,8 +1209,13 @@ namespace tangent
 					umutex<std::recursive_mutex> unique(control_sys.sync);
 					if (control_sys.is_active() && !listener->options.is_cancelled(listener->asset))
 					{
-						control_sys.timeout_if_none("transactions_" + algorithm::asset::blockchain_of(listener->asset), options.retry_waiting_time_ms, [this, listener]() { call_transaction_listener(listener); });
-						if (protocol::now().user.nss.logging)
+						auto id = "transactions_" + algorithm::asset::blockchain_of(listener->asset);
+						control_sys.timeout_if_none(id, options.retry_waiting_time_ms, [this, listener, id = std::move(id)]() mutable
+						{
+							control_sys.clear_timeout(id);
+							call_transaction_listener(listener);
+						});
+						if (protocol::now().user.oracle.logging)
 							VI_ERR("%s server data collection: waiting for connection (%s)", algorithm::asset::name_of(listener->asset).c_str(), info.error().what());
 					}
 					else
@@ -1220,7 +1226,7 @@ namespace tangent
 				{
 					if (!info->block_hash.empty())
 					{
-						if (protocol::now().user.nss.logging)
+						if (protocol::now().user.oracle.logging)
 							VI_INFO("%s block %s accepted (height: %i, progress: %.2f%%, txns: 0)",
 							algorithm::asset::name_of(listener->asset).c_str(),
 							info->block_hash.c_str(),
@@ -1229,12 +1235,12 @@ namespace tangent
 					}
 
 					for (auto& item : callbacks)
-						coawait(item.second(listener->asset, listener->options, std::move(*info)));
+						item.second(listener->asset, listener->options, std::move(*info)).report("failed to dispatch transaction logs");;
 
 					call_transaction_listener(listener);
 					coreturn_void;
 				}
-				else if (protocol::now().user.nss.logging)
+				else if (protocol::now().user.oracle.logging)
 					VI_INFO("%s block %s accepted (height: %i, progress: %.2f%%, txns: %i)",
 					algorithm::asset::name_of(listener->asset).c_str(),
 					info->block_hash.c_str(),
@@ -1242,7 +1248,7 @@ namespace tangent
 					listener->options.get_checkpoint_percentage(),
 					(int)info->transactions.size());
 
-				if (protocol::now().user.nss.logging)
+				if (protocol::now().user.oracle.logging)
 				{
 					for (auto& tx : info->transactions)
 					{
@@ -1272,7 +1278,7 @@ namespace tangent
 				}
 
 				for (auto& item : callbacks)
-					coawait(item.second(listener->asset, listener->options, std::move(*info)));
+					item.second(listener->asset, listener->options, std::move(*info)).report("failed to dispatch transaction logs");
 
 				call_transaction_listener(listener);
 				coreturn_void;
@@ -1281,13 +1287,13 @@ namespace tangent
 		}
 		void server_node::startup()
 		{
-			if (!protocol::now().user.nss.server)
+			if (!protocol::now().user.oracle.server)
 				return;
 			else if (!options.retry_waiting_time_ms || !control_sys.activate())
 				return;
 
-			if (protocol::now().user.nss.logging)
-				VI_INFO("nss node startup");
+			if (protocol::now().user.oracle.logging)
+				VI_INFO("oracle node startup");
 
 			unordered_set<string> blockchains;
 			blockchains.reserve(nodes.size());
@@ -1323,8 +1329,8 @@ namespace tangent
 			if (!control_sys.deactivate())
 				return;
 
-			if (protocol::now().user.nss.logging)
-				VI_INFO("nss node shutdown");
+			if (protocol::now().user.oracle.logging)
+				VI_INFO("oracle node shutdown");
 
 			umutex<std::recursive_mutex> unique(control_sys.sync);
 			for (auto& nodes : nodes)

@@ -1,6 +1,6 @@
 #include "block.h"
 #include "../policy/transactions.h"
-#include "../validator/service/nss.h"
+#include "../validator/service/oracle.h"
 #include "../validator/storage/mempoolstate.h"
 #include "../validator/storage/chainstate.h"
 
@@ -277,7 +277,7 @@ namespace tangent
 		}
 		void block_changelog::clear_temporary_state()
 		{
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			chain.clear_temporary_state(this);
 		}
 		void block_changelog::clear()
@@ -1212,10 +1212,15 @@ namespace tangent
 
 		expects_lr<block_checkpoint> block_evaluation::checkpoint(bool keep_reverted_transactions) const
 		{
-			auto chain = storages::chainstate(__func__);
-			auto chain_session = chain.multi_tx_begin("chainstate", __func__, sqlite::isolation::default_isolation);
-			if (!chain_session)
-				return layer_exception(std::move(chain_session.error().message()));
+			auto chain = storages::chainstate();
+			auto mempool = storages::mempoolstate();
+			auto& mempool_state = mempool.get_storage();
+			auto global_state = chain.get_multi_storage();
+			global_state.insert(&mempool_state);
+
+			auto isolation = storage_util::multi_tx_begin(__func__, sqlite::isolation::default_isolation, global_state);
+			if (!isolation)
+				return layer_exception(std::move(isolation.error().message()));
 
 			unordered_set<uint256_t> finalized_transactions;
 			finalized_transactions.reserve(block.transactions.size());
@@ -1233,14 +1238,6 @@ namespace tangent
 			{
 				if (keep_reverted_transactions)
 				{
-					auto mempool = storages::mempoolstate(__func__);
-					auto mempool_session = mempool.tx_begin("mempoolstate", __func__, sqlite::isolation::default_isolation);
-					if (!mempool_session)
-					{
-						chain.multi_tx_rollback("chainstate", __func__);
-						return layer_exception(std::move(mempool_session.error().message()));
-					}
-
 					uint64_t revert_number = mutation.old_tip_block_number;
 					while (revert_number >= mutation.new_tip_block_number)
 					{
@@ -1271,8 +1268,7 @@ namespace tangent
 					auto status = chain.revert(mutation.new_tip_block_number - 1, &mutation.block_delta, &mutation.transaction_delta, &mutation.state_delta);
 					if (!status)
 					{
-						chain.multi_tx_rollback("chainstate", __func__);
-						mempool.tx_rollback("mempoolstate", __func__);
+						storage_util::multi_tx_rollback(__func__, std::move(global_state)).report("global state rollback failed");
 						return status.error();
 					}
 
@@ -1282,27 +1278,21 @@ namespace tangent
 					status = chain.checkpoint(*this);
 					if (!status)
 					{
-						chain.multi_tx_rollback("chainstate", __func__);
-						mempool.tx_rollback("mempoolstate", __func__);
+						storage_util::multi_tx_rollback(__func__, std::move(global_state)).report("global state rollback failed");
 						return status.error();
 					}
 
-					auto result = chain.multi_tx_commit("chainstate", __func__);
-					if (!result)
-					{
-						mempool.tx_rollback("mempoolstate", __func__);
-						return layer_exception(std::move(result.error().message()));
-					}
-
 					mempool.remove_transactions(finalized_transactions).report("mempool cleanup failed");
-					mempool.tx_commit("mempoolstate", __func__).report("mempool commit failed");
+					auto result = storage_util::multi_tx_commit(__func__, std::move(global_state));
+					if (!result)
+						return layer_exception(std::move(result.error().message()));
 				}
 				else
 				{
 					auto status = chain.revert(mutation.new_tip_block_number - 1, &mutation.block_delta, &mutation.transaction_delta, &mutation.state_delta);
 					if (!status)
 					{
-						chain.multi_tx_rollback("chainstate", __func__);
+						storage_util::multi_tx_rollback(__func__, std::move(global_state)).report("global state rollback failed");
 						return status.error();
 					}
 
@@ -1312,11 +1302,11 @@ namespace tangent
 					status = chain.checkpoint(*this);
 					if (!status)
 					{
-						chain.multi_tx_rollback("chainstate", __func__);
+						storage_util::multi_tx_rollback(__func__, std::move(global_state)).report("global state rollback failed");
 						return status.error();
 					}
 
-					auto result = chain.multi_tx_commit("chainstate", __func__);
+					auto result = storage_util::multi_tx_commit(__func__, std::move(global_state));
 					if (!result)
 						return layer_exception(std::move(result.error().message()));
 				}
@@ -1326,16 +1316,14 @@ namespace tangent
 				auto status = chain.checkpoint(*this);
 				if (!status)
 				{
-					chain.multi_tx_rollback("chainstate", __func__);
+					storage_util::multi_tx_rollback(__func__, std::move(global_state)).report("global state rollback failed");
 					return status.error();
 				}
 
-				auto result = chain.multi_tx_commit("chainstate", __func__);
+				mempool.remove_transactions(finalized_transactions).report("mempool cleanup failed");
+				auto result = storage_util::multi_tx_commit(__func__, std::move(global_state));
 				if (!result)
 					return layer_exception(std::move(result.error().message()));
-
-				auto mempool = storages::mempoolstate(__func__);
-				mempool.remove_transactions(finalized_transactions).report("mempool cleanup failed");
 			}
 			return mutation;
 		}
@@ -1408,7 +1396,7 @@ namespace tangent
 			else if (!changelog)
 				return layer_exception("invalid state changelog");
 
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto prev = uptr<ledger::state>();
 			auto type = next->as_type();
 			switch (next->as_level())
@@ -1588,7 +1576,7 @@ namespace tangent
 		expects_lr<size_t> transaction_context::calculate_attesters_size(const algorithm::asset_id& asset) const
 		{
 			auto nonce = get_validation_nonce();
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto filter = storages::result_filter::greater(0, -1);
 			return chain.get_multiforms_count_by_row_filter(states::validator_attestation::as_instance_type(), changelog, states::validator_attestation::as_instance_row(asset), filter, nonce);
 		}
@@ -1599,7 +1587,7 @@ namespace tangent
 				return random.error();
 
 			auto nonce = get_validation_nonce();
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto filter = storages::result_filter::greater(0, -1);
 			auto window = storages::result_index_window();
 			auto pool = chain.get_multiforms_count_by_row_filter(states::validator_production::as_instance_type(), changelog, states::validator_production::as_instance_row(), filter, nonce).or_else(0);
@@ -1654,7 +1642,7 @@ namespace tangent
 				return random.error();
 
 			auto nonce = get_validation_nonce();
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto filter = storages::result_filter::greater(0, -1);
 			auto pool = chain.get_multiforms_count_by_row_filter(states::validator_participation::as_instance_type(), changelog, states::validator_participation::as_instance_row(asset), filter, nonce).or_else(0);
 			if (pool < target_size)
@@ -2108,7 +2096,7 @@ namespace tangent
 			if (addresses.empty())
 				return layer_exception("invalid operation");
 
-			auto* chain = nss::server_node::get()->get_chain(asset);
+			auto* chain = oracle::server_node::get()->get_chain(asset);
 			if (!chain)
 				return layer_exception("invalid operation");
 
@@ -2161,7 +2149,7 @@ namespace tangent
 		}
 		expects_lr<states::account_nonce> transaction_context::get_account_nonce(const algorithm::pubkeyhash_t& owner) const
 		{
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto state = chain.get_uniform(states::account_nonce::as_instance_type(), changelog, states::account_nonce::as_instance_index(owner), get_validation_nonce());
 			if (!state)
 				return layer_exception("account nonce required but not applicable (" + state.what() + ")");
@@ -2174,7 +2162,7 @@ namespace tangent
 		}
 		expects_lr<states::account_program> transaction_context::get_account_program(const algorithm::pubkeyhash_t& owner) const
 		{
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto state = chain.get_uniform(states::account_program::as_instance_type(), changelog, states::account_program::as_instance_index(owner), get_validation_nonce());
 			if (!state)
 				return layer_exception("account program required but not applicable (" + state.what() + ")");
@@ -2191,7 +2179,7 @@ namespace tangent
 		}
 		expects_lr<states::account_uniform> transaction_context::get_account_uniform(const algorithm::pubkeyhash_t& owner, const std::string_view& index) const
 		{
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto state = chain.get_uniform(states::account_uniform::as_instance_type(), changelog, states::account_uniform::as_instance_index(owner, index), get_validation_nonce());
 			if (!state)
 				return layer_exception("account uniform required but not applicable (" + state.what() + ")");
@@ -2204,7 +2192,7 @@ namespace tangent
 		}
 		expects_lr<states::account_multiform> transaction_context::get_account_multiform(const algorithm::pubkeyhash_t& owner, const std::string_view& column, const std::string_view& row) const
 		{
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto state = chain.get_multiform(states::account_multiform::as_instance_type(), changelog, states::account_multiform::as_instance_column(owner, column), states::account_multiform::as_instance_row(owner, row), get_validation_nonce());
 			if (!state)
 				return layer_exception("account multiform required but not applicable (" + state.what() + ")");
@@ -2217,7 +2205,7 @@ namespace tangent
 		}
 		expects_lr<vector<uptr<states::account_multiform>>> transaction_context::get_account_multiforms_by_column(const algorithm::pubkeyhash_t& owner, const std::string_view& column, size_t offset, size_t count) const
 		{
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto states = chain.get_multiforms_by_column(states::account_multiform::as_instance_type(), changelog, states::account_multiform::as_instance_column(owner, column), get_validation_nonce(), offset, count);
 			if (!states)
 				return layer_exception("account multiform(s) required but not applicable (" + states.what() + ")");
@@ -2241,7 +2229,7 @@ namespace tangent
 			filter.order = to_position_order(order);
 			filter.value = filter_value;
 
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto states = chain.get_multiforms_by_column_filter(states::account_multiform::as_instance_type(), changelog, states::account_multiform::as_instance_column(owner, column), filter, get_validation_nonce(), storages::result_range_window(offset, count));
 			if (!states)
 				return layer_exception("account multiform(s) required but not applicable (" + states.what() + ")");
@@ -2260,7 +2248,7 @@ namespace tangent
 		}
 		expects_lr<vector<uptr<states::account_multiform>>> transaction_context::get_account_multiforms_by_row(const algorithm::pubkeyhash_t& owner, const std::string_view& row, size_t offset, size_t count) const
 		{
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto states = chain.get_multiforms_by_row(states::account_multiform::as_instance_type(), changelog, states::account_multiform::as_instance_row(owner, row), get_validation_nonce(), offset, count);
 			if (!states)
 				return layer_exception("account multiform(s) required but not applicable (" + states.what() + ")");
@@ -2284,7 +2272,7 @@ namespace tangent
 			filter.order = to_position_order(order);
 			filter.value = filter_value;
 
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto states = chain.get_multiforms_by_row_filter(states::account_multiform::as_instance_type(), changelog, states::account_multiform::as_instance_row(owner, row), filter, get_validation_nonce(), storages::result_range_window(offset, count));
 			if (!states)
 				return layer_exception("account multiform(s) required but not applicable (" + states.what() + ")");
@@ -2303,7 +2291,7 @@ namespace tangent
 		}
 		expects_lr<states::account_delegation> transaction_context::get_account_delegation(const algorithm::pubkeyhash_t& owner) const
 		{
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto state = chain.get_uniform(states::account_delegation::as_instance_type(), changelog, states::account_delegation::as_instance_index(owner), get_validation_nonce());
 			if (!state)
 				return layer_exception("account delegation required but not applicable (" + state.what() + ")");
@@ -2316,7 +2304,7 @@ namespace tangent
 		}
 		expects_lr<states::account_balance> transaction_context::get_account_balance(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const
 		{
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto state = chain.get_multiform(states::account_balance::as_instance_type(), changelog, states::account_balance::as_instance_column(owner), states::account_balance::as_instance_row(asset), get_validation_nonce());
 			if (!state)
 				return layer_exception("account balance required but not found (" + state.what() + ")");
@@ -2329,7 +2317,7 @@ namespace tangent
 		}
 		expects_lr<states::validator_production> transaction_context::get_validator_production(const algorithm::pubkeyhash_t& owner) const
 		{
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto state = chain.get_multiform(states::validator_production::as_instance_type(), changelog, states::validator_production::as_instance_column(owner), states::validator_production::as_instance_row(), get_validation_nonce());
 			if (!state)
 				return layer_exception("validator production required but not applicable (" + state.what() + ")");
@@ -2342,7 +2330,7 @@ namespace tangent
 		}
 		expects_lr<states::validator_participation> transaction_context::get_validator_participation(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const
 		{
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto state = chain.get_multiform(states::validator_participation::as_instance_type(), changelog, states::validator_participation::as_instance_column(owner), states::validator_participation::as_instance_row(asset), get_validation_nonce());
 			if (!state)
 				return layer_exception("validator participation required but not applicable (" + state.what() + ")");
@@ -2355,7 +2343,7 @@ namespace tangent
 		}
 		expects_lr<vector<states::validator_participation>> transaction_context::get_validator_participations(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count) const
 		{
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto states = chain.get_multiforms_by_column(states::validator_participation::as_instance_type(), changelog, states::validator_participation::as_instance_column(owner), get_validation_nonce(), offset, count);
 			if (!states)
 				return layer_exception("validator participation(s) required but not applicable (" + states.what() + ")");
@@ -2374,7 +2362,7 @@ namespace tangent
 		}
 		expects_lr<states::validator_attestation> transaction_context::get_validator_attestation(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const
 		{
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto state = chain.get_multiform(states::validator_attestation::as_instance_type(), changelog, states::validator_attestation::as_instance_column(owner), states::validator_attestation::as_instance_row(asset), get_validation_nonce());
 			if (!state)
 				return layer_exception("validator attestation required but not applicable (" + state.what() + ")");
@@ -2387,7 +2375,7 @@ namespace tangent
 		}
 		expects_lr<vector<states::validator_attestation>> transaction_context::get_validator_attestations(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count) const
 		{
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto states = chain.get_multiforms_by_column(states::validator_attestation::as_instance_type(), changelog, states::validator_attestation::as_instance_column(owner), get_validation_nonce(), offset, count);
 			if (!states)
 				return layer_exception("validator attestation(s) required but not applicable (" + states.what() + ")");
@@ -2406,7 +2394,7 @@ namespace tangent
 		}
 		expects_lr<states::depository_reward> transaction_context::get_depository_reward(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const
 		{
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto state = chain.get_multiform(states::depository_reward::as_instance_type(), changelog, states::depository_reward::as_instance_column(owner), states::depository_reward::as_instance_row(asset), get_validation_nonce());
 			if (!state)
 				return layer_exception("depository reward required but not applicable (" + state.what() + ")");
@@ -2419,7 +2407,7 @@ namespace tangent
 		}
 		expects_lr<states::depository_balance> transaction_context::get_depository_balance(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const
 		{
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto state = chain.get_multiform(states::depository_balance::as_instance_type(), changelog, states::depository_balance::as_instance_column(owner), states::depository_balance::as_instance_row(asset), get_validation_nonce());
 			if (!state)
 				return layer_exception("depository balance required but not applicable (" + state.what() + ")");
@@ -2432,7 +2420,7 @@ namespace tangent
 		}
 		expects_lr<states::depository_policy> transaction_context::get_depository_policy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const
 		{
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto state = chain.get_multiform(states::depository_policy::as_instance_type(), changelog, states::depository_policy::as_instance_column(owner), states::depository_policy::as_instance_row(asset), get_validation_nonce());
 			if (!state)
 				return layer_exception("depository policy required but not applicable (" + state.what() + ")");
@@ -2445,7 +2433,7 @@ namespace tangent
 		}
 		expects_lr<vector<states::depository_account>> transaction_context::get_depository_accounts(const algorithm::pubkeyhash_t& manager, size_t offset, size_t count) const
 		{
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto states = chain.get_multiforms_by_column(states::depository_account::as_instance_type(), changelog, states::depository_account::as_instance_column(manager), get_validation_nonce(), offset, count);
 			if (!states)
 				return layer_exception("depository account(s) required but not applicable (" + states.what() + ")");
@@ -2464,7 +2452,7 @@ namespace tangent
 		}
 		expects_lr<states::depository_account> transaction_context::get_depository_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner) const
 		{
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto state = chain.get_multiform(states::depository_account::as_instance_type(), changelog, states::depository_account::as_instance_column(manager), states::depository_account::as_instance_row(asset, owner), get_validation_nonce());
 			if (!state)
 				return layer_exception("depository account required but not applicable (" + state.what() + ")");
@@ -2477,7 +2465,7 @@ namespace tangent
 		}
 		expects_lr<states::witness_program> transaction_context::get_witness_program(const std::string_view& program_hashcode) const
 		{
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto state = chain.get_uniform(states::witness_program::as_instance_type(), changelog, states::witness_program::as_instance_index(program_hashcode), get_validation_nonce());
 			if (!state)
 				return layer_exception("witness program required but not applicable (" + state.what() + ")");
@@ -2490,7 +2478,7 @@ namespace tangent
 		}
 		expects_lr<states::witness_event> transaction_context::get_witness_event(const uint256_t& parent_transaction_hash) const
 		{
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto state = chain.get_uniform(states::witness_event::as_instance_type(), changelog, states::witness_event::as_instance_index(parent_transaction_hash), get_validation_nonce());
 			if (!state)
 				return layer_exception("witness event required but not applicable (" + state.what() + ")");
@@ -2503,7 +2491,7 @@ namespace tangent
 		}
 		expects_lr<vector<states::witness_account>> transaction_context::get_witness_accounts(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count) const
 		{
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto states = chain.get_multiforms_by_column(states::witness_account::as_instance_type(), changelog, states::witness_account::as_instance_column(owner), get_validation_nonce(), offset, count);
 			if (!states)
 				return layer_exception("witness account(s) required but not applicable (" + states.what() + ")");
@@ -2522,7 +2510,7 @@ namespace tangent
 		}
 		expects_lr<vector<states::witness_account>> transaction_context::get_witness_accounts_by_purpose(const algorithm::pubkeyhash_t& owner, states::witness_account::account_type purpose, size_t offset, size_t count) const
 		{
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto filter = storages::result_filter::equal((uint64_t)purpose, 1);
 			auto states = chain.get_multiforms_by_column_filter(states::witness_account::as_instance_type(), changelog, states::witness_account::as_instance_column(owner), filter, get_validation_nonce(), storages::result_range_window(offset, count));
 			if (!states)
@@ -2542,7 +2530,7 @@ namespace tangent
 		}
 		expects_lr<states::witness_account> transaction_context::get_witness_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const std::string_view& address) const
 		{
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto state = chain.get_multiform(states::witness_account::as_instance_type(), changelog, states::witness_account::as_instance_column(owner), states::witness_account::as_instance_row(asset, address), get_validation_nonce());
 			if (!state)
 				return layer_exception("witness account required but not applicable (" + state.what() + ")");
@@ -2555,7 +2543,7 @@ namespace tangent
 		}
 		expects_lr<states::witness_account> transaction_context::get_witness_account(const algorithm::asset_id& asset, const std::string_view& address, size_t offset) const
 		{
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto states = chain.get_multiforms_by_row(states::witness_account::as_instance_type(), changelog, states::witness_account::as_instance_row(asset, address), get_validation_nonce(), offset, 1);
 			if (!states)
 				return layer_exception("witness account required but not applicable (" + states.what() + ")");
@@ -2577,7 +2565,7 @@ namespace tangent
 		}
 		expects_lr<states::witness_transaction> transaction_context::get_witness_transaction(const algorithm::asset_id& asset, const std::string_view& transaction_id) const
 		{
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto state = chain.get_uniform(states::witness_transaction::as_instance_type(), changelog, states::witness_transaction::as_instance_index(asset, transaction_id), get_validation_nonce());
 			if (!state)
 				return layer_exception("witness transaction required but not applicable (" + state.what() + ")");
@@ -2593,7 +2581,7 @@ namespace tangent
 			if (!transaction_hash)
 				return layer_exception("block transaction not found");
 
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto candidate = chain.get_block_transaction_by_hash(transaction_hash);
 			if (!candidate || !candidate->transaction || !candidate->receipt.successful)
 				return layer_exception("block transaction not found");
@@ -2687,7 +2675,7 @@ namespace tangent
 			if (new_transaction->is_recoverable() && !algorithm::signing::recover_hash(new_transaction_hash, owner, new_transaction->signature))
 				return layer_exception("invalid signature");
 
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			return new_transaction->validate(chain.get_latest_block_number().or_else(1));
 		}
 		expects_lr<transaction_context> transaction_context::execute_tx(const ledger::evaluation_context* new_environment, ledger::block* new_block, block_changelog* changelog, const ledger::transaction* new_transaction, const uint256_t& new_transaction_hash, const algorithm::pubkeyhash_t& owner, size_t transaction_size, uint8_t execution_flags)
@@ -2786,6 +2774,81 @@ namespace tangent
 			candidate = reference->candidate.reset();
 			return *this;
 		}
+		
+		bool dispatch_context::public_state::load_message(format::ro_stream& stream)
+		{
+			auto state = algorithm::composition::load_public_state(stream);
+			if (!state)
+				return false;
+
+			uint16_t participants_size;
+			if (!stream.read_integer(stream.read_type(), &participants_size))
+				return false;
+
+			ordered_set<algorithm::pubkeyhash_t> possible_participants;
+			for (uint16_t i = 0; i < participants_size; i++)
+			{
+				algorithm::pubkeyhash_t item; string intermediate;
+				if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, item.data, sizeof(item.data)))
+					return false;
+
+				possible_participants.insert(item);
+			}
+
+			aggregator = std::move(**state);
+			participants = std::move(possible_participants);
+			return true;
+		}
+		format::wo_stream dispatch_context::public_state::as_message() const
+		{
+			format::wo_stream result;
+			aggregator->store(&result);
+			result.write_integer((uint16_t)participants.size());
+			for (auto& participant : participants)
+				result.write_string(participant.optimized_view());
+			return result;
+		}
+
+		bool dispatch_context::signature_state::load_message_if_preferred(format::ro_stream& stream)
+		{
+			auto state = algorithm::composition::load_signature_state(stream);
+			if (!state || (aggregator && *state && !(*state)->prefer_over(**aggregator)))
+				return false;
+
+			warden::prepared_transaction possible_message;
+			if (!possible_message.load(stream))
+				return false;
+
+			uint16_t participants_size;
+			if (!stream.read_integer(stream.read_type(), &participants_size))
+				return false;
+
+			ordered_set<algorithm::pubkeyhash_t> possible_participants;
+			for (uint16_t i = 0; i < participants_size; i++)
+			{
+				algorithm::pubkeyhash_t item; string intermediate;
+				if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, item.data, sizeof(item.data)))
+					return false;
+
+				possible_participants.insert(item);
+			}
+
+			aggregator = std::move(**state);
+			participants = std::move(possible_participants);
+			message = memory::init<warden::prepared_transaction>(std::move(possible_message));
+			return true;
+		}
+		format::wo_stream dispatch_context::signature_state::as_message() const
+		{
+			VI_ASSERT(message, "message should be set");
+			format::wo_stream result;
+			aggregator->store(&result);
+			message->store(&result);
+			result.write_integer((uint16_t)participants.size());
+			for (auto& participant : participants)
+				result.write_string(participant.optimized_view());
+			return result;
+		}
 
 		dispatch_context::dispatch_context(const dispatch_context& other) noexcept : inputs(other.inputs)
 		{
@@ -2815,7 +2878,7 @@ namespace tangent
 		}
 		expects_lr<uint256_t> dispatch_context::apply_group_share(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& owner, const uint256_t& share)
 		{
-			auto mempool = storages::mempoolstate(__func__);
+			auto mempool = storages::mempoolstate();
 			auto status = mempool.apply_group_account(asset, validator, owner, share);
 			if (!status)
 				return status.error();
@@ -2825,12 +2888,12 @@ namespace tangent
 		expects_lr<uint256_t> dispatch_context::recover_group_share(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& owner) const
 		{
 			auto* wallet = get_wallet();
-			auto mempool = storages::mempoolstate(__func__);
+			auto mempool = storages::mempoolstate();
 			return mempool.get_or_apply_group_account_share(asset, validator, owner, algorithm::hashing::hash256i(wallet->secret_key.view()));
 		}
 		expects_lr<void> dispatch_context::checkpoint()
 		{
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			return chain.dispatch(inputs, repeaters);
 		}
 		promise<void> dispatch_context::dispatch_async(const block_header& target)
@@ -2841,8 +2904,7 @@ namespace tangent
 				size_t offset = 0, count = 512;
 				while (true)
 				{
-					auto chain = storages::chainstate(__func__);
-					auto candidates = chain.get_pending_block_transactions(block_number, offset, count);
+					auto candidates = storages::chainstate().get_pending_block_transactions(block_number, offset, count);
 					if (!candidates || candidates->empty())
 						break;
 
@@ -2870,7 +2932,7 @@ namespace tangent
 			size_t offset = 0, count = 512;
 			while (true)
 			{
-				auto chain = storages::chainstate(__func__);
+				auto chain = storages::chainstate();
 				auto candidates = chain.get_pending_block_transactions(target.number, offset, count);
 				if (!candidates || candidates->empty())
 					break;
@@ -2927,40 +2989,39 @@ namespace tangent
 		{
 			return outputs;
 		}
-		uptr<schema> dispatch_context::load_cache(const transaction_context* context) const
+		format::ro_stream dispatch_context::pull_cache(const transaction_context* context)
 		{
-			auto* server = nss::server_node::get();
-			auto location = stringify::text("dispatch_%s", algorithm::encoding::encode_0xhex256(context->receipt.transaction_hash).c_str());
-			auto result = server->load_cache(context->transaction->asset, warden::cache_policy::lifetime_cache, location);
-			if (result && *result)
-				server->store_cache(context->transaction->asset, warden::cache_policy::lifetime_cache, location, nullptr);
-			return uptr<schema>(result.or_else(nullptr));
+			auto* server = oracle::server_node::get();
+			auto location = stringify::text("dispatch_cache_%s", algorithm::encoding::encode_0xhex256(context->receipt.transaction_hash).c_str());
+			auto cache = server->load_cache(context->transaction->asset, warden::cache_policy::lifetime_cache, location);
+			server->store_cache(context->transaction->asset, warden::cache_policy::lifetime_cache, location, nullptr);
+			return format::ro_stream(cache ? cache->value.get_string() : std::string_view());
 		}
-		void dispatch_context::store_cache(const transaction_context* context, uptr<schema>&& value) const
+		void dispatch_context::push_cache(const transaction_context* context, const format::wo_stream& message) const
 		{
-			auto location = stringify::text("dispatch_%s", algorithm::encoding::encode_0xhex256(context->receipt.transaction_hash).c_str());
-			nss::server_node::get()->store_cache(context->transaction->asset, warden::cache_policy::lifetime_cache, location, std::move(value));
+			auto location = stringify::text("dispatch_cache_%s", algorithm::encoding::encode_0xhex256(context->receipt.transaction_hash).c_str());
+			oracle::server_node::get()->store_cache(context->transaction->asset, warden::cache_policy::lifetime_cache, location, var::set::string(message.data));
 		}
 
 		option<uint64_t> evaluation_context::configure_priority_from_validator(const algorithm::pubkeyhash_t& public_key_hash, const algorithm::seckey_t& secret_key, option<const block_header*>&& parent_block)
 		{
 			if (!parent_block)
 			{
-				auto chain = storages::chainstate(__func__);
+				auto chain = storages::chainstate();
 				auto latest = chain.get_latest_block_header();
 				tip = latest ? option<ledger::block_header>(std::move(*latest)) : option<ledger::block_header>(optional::none);
 				validation.tip = true;
 			}
 			else if (*parent_block != nullptr)
 			{
-				auto chain = storages::chainstate(__func__);
+				auto chain = storages::chainstate();
 				auto latest = chain.get_latest_block_number();
 				tip = **parent_block;
 				validation.tip = latest.or_else(tip->number) < (tip->number + 1);
 			}
 			else
 			{
-				auto chain = storages::chainstate(__func__);
+				auto chain = storages::chainstate();
 				auto latest = chain.get_latest_block_number();
 				tip = option<ledger::block_header>(optional::none);
 				validation.tip = !latest;
@@ -3085,7 +3146,7 @@ namespace tangent
 				precomputed = incoming.size();
 			}
 
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto evaluation = result.block.evaluate(tip.address(), this, callback);
 			cleanup().report("mempool cleanup failed");
 			if (!evaluation)
@@ -3117,7 +3178,7 @@ namespace tangent
 			if (outgoing.empty())
 				return expectation::met;
 
-			auto mempool = storages::mempoolstate(__func__);
+			auto mempool = storages::mempoolstate();
 			return mempool.remove_transactions(outgoing);
 		}
 		evaluation_context::transaction_info evaluation_context::precompute_transaction_element(uptr<transaction>&& candidate)

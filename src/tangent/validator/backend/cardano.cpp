@@ -1,5 +1,5 @@
 #include "cardano.h"
-#include "../service/nss.h"
+#include "../service/oracle.h"
 #include "../internal/libcardano/include/cardanoplusplus.h"
 #include "../internal/libcardano/include/cardanoplusplus/hash/bech32.hpp"
 extern "C"
@@ -165,7 +165,7 @@ namespace tangent
 										decimal divisibility = decimals > 0 ? decimal("1" + string(decimals, '0')) : decimal(1);
 										decimal token_value = math0::abs(item->get_var("value").get_decimal()) / divisibility.truncate(protocol::now().message.decimal_precision);
 										new_output.apply_token_value(contract_address, symbol, token_value, decimals);
-										nss::server_node::get()->enable_contract_address(token_asset, contract_address);
+										oracle::server_node::get()->enable_contract_address(token_asset, contract_address);
 									}
 								}
 							}
@@ -202,7 +202,7 @@ namespace tangent
 										decimal divisibility = decimals > 0 ? decimal("1" + string(decimals, '0')) : decimal(1);
 										decimal token_value = math0::abs(item->get_var("value").get_decimal()) / divisibility.truncate(protocol::now().message.decimal_precision);
 										new_input.apply_token_value(contract_address, symbol, token_value, decimals);
-										nss::server_node::get()->enable_contract_address(token_asset, contract_address);
+										oracle::server_node::get()->enable_contract_address(token_asset, contract_address);
 									}
 								}
 							}
@@ -460,8 +460,8 @@ namespace tangent
 						if (!signing_public_key)
 							coreturn expects_rt<prepared_transaction>(remote_exception(std::move(signing_public_key.error().message())));
 
-						auto public_key = algorithm::composition::cpubkey_t(*signing_public_key);
-						result.requires_input(algorithm::composition::type::ed25519, public_key.data, digest.Hash, sizeof(digest.Hash), std::move(input));
+						auto public_key = algorithm::composition::to_cstorage<algorithm::composition::cpubkey_t>(*signing_public_key);
+						result.requires_input(algorithm::composition::type::ed25519, public_key, digest.Hash, sizeof(digest.Hash), std::move(input));
 					}
 
 					coreturn expects_rt<prepared_transaction>(std::move(result));
@@ -516,8 +516,10 @@ namespace tangent
 						if (!raw_public_key)
 							return raw_public_key.error();
 
+						uint8_t signature[64] = { 0 };
+						memcpy(signature, input.signature.data(), std::min(sizeof(signature), input.signature.size()));
 						builder.Body.TransactionInput.addInput(copy<std::string>(input.utxo.transaction_id), input.utxo.index);
-						builder.addExtendedVerifyingKey((uint8_t*)raw_public_key->data(), input.signature.data);
+						builder.addExtendedVerifyingKey((uint8_t*)raw_public_key->data(), signature);
 					}
 					for (auto& output : prepared.outputs)
 					{

@@ -1,5 +1,6 @@
 #include "bitcoin.h"
-#include "../service/nss.h"
+#include "../service/oracle.h"
+#include "../../policy/compositions.h"
 #include "../internal/libbitcoincash/cashaddr.h"
 #include "../internal/libbitcoin/tool.h"
 #include "../internal/libbitcoin/chainparams.h"
@@ -478,16 +479,24 @@ namespace tangent
 							memcpy(&pubkey.pubkey, signing_public_key->data(), signing_public_key->size());
 							pubkey.compressed = signing_public_key->size() == BTC_ECKEY_COMPRESSED_LENGTH;
 
-							auto xonly_public_key_and_tweak = algorithm::composition::cpubkey_t();
-							btc_pubkey_get_taproot_pubkey(&pubkey, nullptr, xonly_public_key_and_tweak.data + 00);
-							btc_key_get_taproot_tweak(&pubkey, nullptr, xonly_public_key_and_tweak.data + 32);
-							result.requires_input(algorithm::composition::type::schnorr_taproot, xonly_public_key_and_tweak.data, (uint8_t*)hash->data(), hash->size(), std::move(input));
+							compositions::secp256k1_public_state::point_t public_key;
+							btc_pubkey_get_taproot_pubkey(&pubkey, nullptr, public_key.data + 1);
+							public_key.data[0] = pubkey.pubkey[0];
+
+							compositions::secp256k1_secret_state::scalar_t tweak;
+							btc_key_get_taproot_tweak(&pubkey, nullptr, tweak.data);
+
+							auto xonly_public_key_and_tweak = compositions::secp256k1_schnorr_signature_state::to_tweaked_public_key(public_key, tweak);
+							if (!xonly_public_key_and_tweak)
+								coreturn expects_rt<prepared_transaction>(remote_exception(std::move(xonly_public_key_and_tweak.error().message())));
+
+							result.requires_input(algorithm::composition::type::secp256k1_schnorr, *xonly_public_key_and_tweak, (uint8_t*)hash->data(), hash->size(), std::move(input));
 							break;
 						}
 						default:
 						{
-							auto public_key = algorithm::composition::cpubkey_t(*signing_public_key);
-							result.requires_input(algorithm::composition::type::secp256k1, public_key.data, (uint8_t*)hash->data(), hash->size(), std::move(input));
+							auto public_key = algorithm::composition::to_cstorage<algorithm::composition::cpubkey_t>(*signing_public_key);
+							result.requires_input(algorithm::composition::type::secp256k1, public_key, (uint8_t*)hash->data(), hash->size(), std::move(input));
 							break;
 						}
 					}
@@ -575,7 +584,7 @@ namespace tangent
 			expects_lr<string> bitcoin::encode_address(const std::string_view& public_key_hash)
 			{
 				auto* chain = get_chain();
-				auto* options = nss::server_node::get()->get_specifications(native_asset);
+				auto* options = oracle::server_node::get()->get_specifications(native_asset);
 				auto type = public_key_hash[0];
 				auto data = public_key_hash.substr(1);
 				size_t types = (size_t)get_address_type() | resolve_address_types(options);
@@ -733,7 +742,7 @@ namespace tangent
 			expects_lr<address_map> bitcoin::to_addresses(const std::string_view& from_public_key)
 			{
 				auto* chain = get_chain();
-				auto* options = nss::server_node::get()->get_specifications(native_asset);
+				auto* options = oracle::server_node::get()->get_specifications(native_asset);
 				bool is_taproot_public_key = false;
 				size_t types = (size_t)get_address_type() | resolve_address_types(options);
 				address_map addresses;
@@ -941,7 +950,7 @@ namespace tangent
 				stack.amounts = context.values.data();
 
 				auto type = (btc_tx_out_type)context.types[index];
-				auto status = btc_tx_finalize_input(context.state, output.signature.data, algorithm::composition::size_of_signature(output.alg), &public_key, get_sig_hash_type(), type, &stack, (uint32_t)index);
+				auto status = btc_tx_finalize_input(context.state, output.signature.data(), output.signature.size(), &public_key, get_sig_hash_type(), type, &stack, (uint32_t)index);
 				if (status != BTC_SIGN_FINALIZE_OK)
 					return layer_exception(btc_tx_sign_result_to_str(status));
 

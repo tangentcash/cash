@@ -1,5 +1,5 @@
 #include "solana.h"
-#include "../service/nss.h"
+#include "../service/oracle.h"
 #include "../internal/libbitcoin/bip32.h"
 #include "../internal/libbitcoin/tool.h"
 #include "../internal/libbitcoin/utils.h"
@@ -302,7 +302,7 @@ namespace tangent
 				{
 					auto symbol = coawait(get_token_symbol(contract_address));
 					auto token_asset = algorithm::asset::id_of(blockchain, symbol.or_else(contract_address), contract_address);
-					nss::server_node::get()->enable_contract_address(token_asset, contract_address);
+					oracle::server_node::get()->enable_contract_address(token_asset, contract_address);
 
 					auto& prev_balances = prev_token_state[contract_address];
 					for (auto& [owner, next_balance] : balances)
@@ -387,7 +387,7 @@ namespace tangent
 				}
 				else
 				{
-					auto contract_address = nss::server_node::get()->get_contract_address(asset);
+					auto contract_address = oracle::server_node::get()->get_contract_address(asset);
 					if (!contract_address)
 						coreturn expects_rt<decimal>(remote_exception("contract address not found"));
 
@@ -422,7 +422,7 @@ namespace tangent
 					coreturn expects_rt<prepared_transaction>(std::move(recent_block_hash.error()));
 
 				auto& output = to.front();
-				auto contract_address = nss::server_node::get()->get_contract_address(output.asset);
+				auto contract_address = oracle::server_node::get()->get_contract_address(output.asset);
 				option<token_account> from_token = optional::none;
 				option<token_account> to_token = optional::none;
 				decimal total_value = output.value;
@@ -464,12 +464,12 @@ namespace tangent
 				if (!signing_public_key)
 					coreturn expects_rt<prepared_transaction>(remote_exception(std::move(signing_public_key.error().message())));
 
-				auto public_key = algorithm::composition::cpubkey_t(*signing_public_key);
+				auto public_key = algorithm::composition::to_cstorage<algorithm::composition::cpubkey_t>(*signing_public_key);
 				prepared_transaction result;
 				if (contract_address)
-					result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key.data, message_buffer.data(), message_buffer.size(), { { output.asset, output.value }, { native_asset, fee_value } });
+					result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, message_buffer.data(), message_buffer.size(), { { output.asset, output.value }, { native_asset, fee_value } });
 				else
-					result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key.data, message_buffer.data(), message_buffer.size(), { { native_asset, output.value + fee_value } });
+					result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, message_buffer.data(), message_buffer.size(), { { native_asset, output.value + fee_value } });
 				result.requires_account_output(output.address, { { output.asset, output.value } });
 				result.requires_abi(format::variable(from_token ? from_token->divisibility : netdata.divisibility));
 				result.requires_abi(format::variable(transaction.token_program_address));
@@ -500,10 +500,10 @@ namespace tangent
 					return layer_exception("invalid input message");
 
 				char transaction_id[256]; size_t transaction_id_size = sizeof(transaction_id);
-				if (!b58enc(transaction_id, &transaction_id_size, input.signature.data, algorithm::composition::size_of_signature(input.alg)))
+				if (!b58enc(transaction_id, &transaction_id_size, input.signature.data(), input.signature.size()))
 					return layer_exception("invalid signature");
 
-				vector<uint8_t> transaction_buffer = tx_result_serialize(message_buffer, input.signature, algorithm::composition::size_of_signature(input.alg));
+				vector<uint8_t> transaction_buffer = tx_result_serialize(message_buffer, input.signature.data(), input.signature.size());
 				size_t transaction_data_size = transaction_buffer.size() * 4;
 				string transaction_data;
 				transaction_data.resize(transaction_data_size);
@@ -771,12 +771,12 @@ namespace tangent
 				tx_append(message_buffer, (uint8_t*)&lookups, sizeof(lookups));
 				return message_buffer;
 			}
-			vector<uint8_t> solana::tx_result_serialize(const vector<uint8_t>& tx_buffer, const algorithm::composition::chashsig_t& signature, size_t signature_size)
+			vector<uint8_t> solana::tx_result_serialize(const vector<uint8_t>& tx_buffer, const uint8_t* signature, size_t signature_size)
 			{
 				uint8_t signatures = 1;
 				vector<uint8_t> result_buffer;
 				tx_append(result_buffer, (uint8_t*)&signatures, sizeof(signatures));
-				tx_append(result_buffer, signature.data, signature_size);
+				tx_append(result_buffer, signature, signature_size);
 
 				size_t signature_buffer_size = result_buffer.size();
 				result_buffer.resize(signature_buffer_size + tx_buffer.size());

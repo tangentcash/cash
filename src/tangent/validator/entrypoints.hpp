@@ -1,8 +1,8 @@
 #ifndef TAN_VALIDATOR_ENTRYPOINTS_HPP
 #define TAN_VALIDATOR_ENTRYPOINTS_HPP
-#include "service/nss.h"
-#include "service/nds.h"
-#include "service/p2p.h"
+#include "service/consensus.h"
+#include "service/discovery.h"
+#include "service/oracle.h"
 #include "service/rpc.h"
 #include "storage/chainstate.h"
 #include "../kernel/svm_abi.h"
@@ -80,7 +80,7 @@ namespace tangent
 				transaction->program_call(to, value, function_decl, format::variables(args));
 				transaction->set_gas(decimal::zero(), ledger::block::get_gas_limit());
 
-				auto chain = storages::chainstate(__func__);
+				auto chain = storages::chainstate();
 				auto tip = chain.get_latest_block_header();
 				if (tip)
 					svmc.environment.tip = std::move(*tip);
@@ -1047,16 +1047,16 @@ namespace tangent
 		int node(const inline_args& environment)
 		{
 			auto params = protocol(environment);
-			nds::server_node discovery;
-			p2p::server_node consensus;
-			nss::server_node& synchronization = *nss::server_node::get();
-			rpc::server_node interfaces = rpc::server_node(&consensus);
+			consensus::server_node consensus_service;
+			discovery::server_node discovery_service;
+			oracle::server_node& oracle_service = *oracle::server_node::get();
+			rpc::server_node rpc_service = rpc::server_node(&consensus_service);
 
 			service_control control;
-			control.bind(discovery.get_entrypoint());
-			control.bind(consensus.get_entrypoint());
-			control.bind(synchronization.get_entrypoint());
-			control.bind(interfaces.get_entrypoint());
+			control.bind(discovery_service.get_entrypoint());
+			control.bind(consensus_service.get_entrypoint());
+			control.bind(oracle_service.get_entrypoint());
+			control.bind(rpc_service.get_entrypoint());
 			return control.launch();
 		}
 	}

@@ -7,6 +7,9 @@ namespace tangent
 {
 	namespace storages
 	{
+		typedef std::pair<ledger::node, ledger::wallet> node_pair;
+		typedef std::pair<algorithm::pubkeyhash_t, socket_address> node_location_pair;
+
 		enum class fee_priority
 		{
 			fastest,
@@ -25,13 +28,13 @@ namespace tangent
 		{
 			consensus = (1 << 0),
 			discovery = (1 << 1),
-			synchronization = (1 << 2),
-			interfaces = (1 << 3),
-			production = (1 << 4),
-			participation = (1 << 5),
-			attestation = (1 << 6),
-			querying = (1 << 7),
-			streaming = (1 << 8)
+			oracle = (1 << 2),
+			rpc = (1 << 3),
+			rpc_public_access = (1 << 4),
+			rpc_web_sockets = (1 << 5),
+			production = (1 << 6),
+			participation = (1 << 7),
+			attestation = (1 << 8)
 		};
 
 		struct account_bandwidth
@@ -41,25 +44,37 @@ namespace tangent
 			bool congested = false;
 		};
 
-		struct mempoolstate : ledger::mutable_storage
+		struct mempoolstate
 		{
 		private:
-			std::string_view label;
-			bool borrows;
-
+			ledger::storage_index_ptr local_storage;
+#ifndef NDEBUG
+			std::thread::id local_id;
+#endif
 		public:
-			mempoolstate(const std::string_view& new_label) noexcept;
-			virtual ~mempoolstate() noexcept override;
-			expects_lr<void> apply_trial_address(const socket_address& address);
-			expects_lr<void> apply_validator(const ledger::validator& node, option<ledger::wallet>&& wallet);
-			expects_lr<void> clear_validator(const socket_address& validator_address);
-			expects_lr<std::pair<ledger::validator, ledger::wallet>> get_validator_by_ownership(size_t offset);
-			expects_lr<ledger::validator> get_validator_by_address(const socket_address& validator_address);
-			expects_lr<ledger::validator> get_validator_by_preference(size_t offset);
-			expects_lr<vector<socket_address>> get_validator_addresses(size_t offset, size_t count, uint32_t services = 0);
-			expects_lr<vector<socket_address>> get_randomized_validator_addresses(size_t count, uint32_t services = 0);
-			expects_lr<socket_address> next_trial_address();
-			expects_lr<size_t> get_validators_count();
+			mempoolstate() noexcept;
+			mempoolstate(const mempoolstate&) = delete;
+			mempoolstate(mempoolstate&&) noexcept = delete;
+			mempoolstate& operator=(const mempoolstate&) = delete;
+			mempoolstate& operator=(mempoolstate&&) noexcept = delete;
+			~mempoolstate() noexcept;
+			expects_lr<void> apply_cooldown_node(const socket_address& address, uint64_t timeout);
+			expects_lr<void> apply_unknown_node(const socket_address& address);
+			expects_lr<void> apply_node(const node_pair& node);
+			expects_lr<void> apply_node_call(const socket_address& address, int8_t call_result, uint64_t call_latency, uint64_t cooldown_timeout);
+			expects_lr<void> clear_node(const algorithm::pubkeyhash_t& account);
+			expects_lr<void> clear_node(const socket_address& address);
+			expects_lr<node_pair> get_local_node();
+			expects_lr<node_pair> get_neighbor_node(size_t offset);
+			expects_lr<node_pair> get_better_node(const algorithm::pubkeyhash_t& account);
+			expects_lr<node_pair> get_node(const socket_address& address);
+			expects_lr<node_pair> get_node(const algorithm::pubkeyhash_t& account);
+			expects_lr<vector<node_location_pair>> get_neighbor_nodes_with(size_t offset, size_t count, uint32_t services = 0);
+			expects_lr<vector<node_location_pair>> get_random_nodes_with(size_t count, uint32_t services = 0);
+			expects_lr<socket_address> sample_unknown_node();
+			expects_lr<size_t> get_unknown_nodes_count();
+			expects_lr<size_t> get_nodes_count();
+			expects_lr<bool> has_cooldown_on_node(const socket_address& address);
 			expects_lr<decimal> get_gas_price(const algorithm::asset_id& asset, double priority_percentile);
 			expects_lr<decimal> get_asset_price(const algorithm::asset_id& price_of, const algorithm::asset_id& relative_to, double priority_percentile = 0.5);
 			expects_lr<void> add_transaction(ledger::transaction& value, bool resurrection);
@@ -79,12 +94,15 @@ namespace tangent
 			expects_lr<vector<uptr<ledger::transaction>>> get_transactions_by_owner(const algorithm::pubkeyhash_t& owner, int8_t direction, size_t offset, size_t count);
 			expects_lr<vector<uptr<ledger::transaction>>> get_transactions_by_group(const uint256_t& group_hash, size_t offset, size_t count);
 			expects_lr<vector<uint256_t>> get_transaction_hashset(size_t offset, size_t count);
+			ledger::storage_index_ptr& get_storage();
+			uint32_t get_queries() const;
+			bool query_used() const;
 
 		public:
 			static double fee_percentile(fee_priority priority);
 
-		protected:
-			bool reconstruct_storage() override;
+		private:
+			static bool make_schema(sqlite::connection* connection);
 		};
 	}
 }

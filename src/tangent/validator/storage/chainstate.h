@@ -167,7 +167,7 @@ namespace tangent
 			}
 		};
 
-		struct chainstate final : ledger::permanent_storage
+		struct chainstate final
 		{
 		private:
 			enum class resolver : uint8_t
@@ -191,29 +191,29 @@ namespace tangent
 
 			struct temporary_state_resolution
 			{
-				sqlite::connection* storage;
+				ledger::storage_index_ptr* storage;
 				bool in_use;
 			};
 
 		private:
-			struct
-			{
-				unordered_map<uint32_t, uptr<sqlite::connection>> uniform;
-				unordered_map<uint32_t, uptr<sqlite::connection>> multiform;
-				uptr<sqlite::connection> block;
-				uptr<sqlite::connection> account;
-				uptr<sqlite::connection> tx;
-				uptr<sqlite::connection> party;
-				uptr<sqlite::connection> alias;
-			} storages;
-
-		private:
-			std::string_view label;
-			bool borrows;
-
+			unordered_map<uint32_t, ledger::storage_index_ptr> uniform_local_storage;
+			unordered_map<uint32_t, ledger::storage_index_ptr> multiform_local_storage;
+			ledger::storage_index_ptr block_local_storage;
+			ledger::storage_index_ptr account_local_storage;
+			ledger::storage_index_ptr tx_local_storage;
+			ledger::storage_index_ptr party_local_storage;
+			ledger::storage_index_ptr alias_local_storage;
+			ledger::storage_blob_ptr blob_local_storage;
+#ifndef NDEBUG
+			std::thread::id local_id;
+#endif
 		public:
-			chainstate(const std::string_view& new_label) noexcept;
-			virtual ~chainstate() noexcept override;
+			chainstate() noexcept;
+			chainstate(const chainstate&) = delete;
+			chainstate(chainstate&&) noexcept = delete;
+			chainstate& operator=(const chainstate&) = delete;
+			chainstate& operator=(chainstate&&) noexcept = delete;
+			~chainstate() noexcept;
 			expects_lr<void> reorganize(int64_t* block_delta = nullptr, int64_t* transaction_delta = nullptr, int64_t* state_delta = nullptr);
 			expects_lr<void> revert(uint64_t block_number, int64_t* block_delta = nullptr, int64_t* transaction_delta = nullptr, int64_t* state_delta = nullptr);
 			expects_lr<void> dispatch(const vector<uint256_t>& finalized_transaction_hashes, const vector<uint256_t>& repeated_transaction_hashes);
@@ -257,30 +257,29 @@ namespace tangent
 			expects_lr<size_t> get_multiforms_count_by_column_filter(uint32_t type, ledger::block_changelog* changelog, const std::string_view& column, const result_filter& filter, uint64_t block_number);
 			expects_lr<size_t> get_multiforms_count_by_row(uint32_t type, ledger::block_changelog* changelog, const std::string_view& row, uint64_t block_number);
 			expects_lr<size_t> get_multiforms_count_by_row_filter(uint32_t type, ledger::block_changelog* changelog, const std::string_view& row, const result_filter& filter, uint64_t block_number);
-			expects_lr<void> clear_temporary_state(ledger::block_changelog* changelog);
-			void clear_indexer_cache();
-			
-		private:
-			sqlite::expects_db<string> load(const std::string_view& label, const std::string_view& operation, const std::string_view& key) override;
-			sqlite::expects_db<void> store(const std::string_view& label, const std::string_view& operation, const std::string_view& key, const std::string_view& value) override;
-			sqlite::expects_db<void> clear(const std::string_view& label, const std::string_view& operation, const std::string_view& table_ids) override;
 			expects_lr<temporary_state_resolution> resolve_temporary_state(uint32_t type, ledger::block_changelog* changelog, const option<std::string_view>& column, const option<std::string_view>& row, uint64_t block_number);
 			expects_lr<void> resolve_block_transactions(vector<ledger::block_transaction>& result, uint64_t block_number, bool fully, size_t chunk);
 			expects_lr<uniform_location> resolve_uniform_location(uint32_t type, const std::string_view& index, uint8_t resolver_flags);
 			expects_lr<multiform_location> resolve_multiform_location(uint32_t type, const option<std::string_view>& column, const option<std::string_view>& row, uint8_t resolver_flags);
 			expects_lr<uint64_t> resolve_account_location(const algorithm::pubkeyhash_t& account);
-			sqlite::connection* get_block_storage();
-			sqlite::connection* get_account_storage();
-			sqlite::connection* get_tx_storage();
-			sqlite::connection* get_party_storage();
-			sqlite::connection* get_alias_storage();
-			sqlite::connection* get_uniform_storage(uint32_t type);
-			unordered_map<uint32_t, uptr<sqlite::connection>>& get_uniform_storage_max();
-			sqlite::connection* get_multiform_storage(uint32_t type);
-			unordered_map<uint32_t, uptr<sqlite::connection>>& get_multiform_storage_max();
-			vector<sqlite::connection*> get_index_storages() override;
-			void preload_blob_storage();
-			bool reconstruct_index_storage(sqlite::connection* storage, const std::string_view& name) override;
+			expects_lr<void> clear_temporary_state(ledger::block_changelog* changelog);
+			ledger::storage_index_ptr& get_uniform_storage(uint32_t type);
+			ledger::storage_index_ptr& get_multiform_storage(uint32_t type);
+			ledger::storage_index_ptr& get_block_storage();
+			ledger::storage_index_ptr& get_account_storage();
+			ledger::storage_index_ptr& get_tx_storage();
+			ledger::storage_index_ptr& get_party_storage();
+			ledger::storage_index_ptr& get_alias_storage();
+			ledger::storage_blob_ptr& get_blob_storage();
+			unordered_map<uint32_t, ledger::storage_index_ptr>& get_uniform_multi_storage();
+			unordered_map<uint32_t, ledger::storage_index_ptr>& get_multiform_multi_storage();
+			ledger::storage_util::multi_storage_index_ptr get_multi_storage();
+			void clear_indexer_cache();
+			uint32_t get_queries() const;
+			bool query_used() const;
+
+		private:
+			static bool make_schema(sqlite::connection* connection, const std::string_view& name);
 		};
 	}
 }

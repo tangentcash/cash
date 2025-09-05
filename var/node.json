@@ -1,50 +1,33 @@
 {
     "network": "mainnet",
     "keystate": "./keystate.sk",
-    "nodes": [],
-    "seeds": [],
-    "logs": {
-        "info": null,
-        "error": null,
-        "query": null,
-        "archive_size": 8388608,
-        "archive_repack_interval": 1800
-    },
-    "p2p": {
+    "known_nodes": [],
+    "bootstrap_nodes": [
+        "https://discovery.tangent.cash"
+    ],
+    "consensus": {
         "address": "0.0.0.0",
         "port": 18418,
         "account": null,
         "time_offset": 300000,
-        "max_inbound_connections": 32,
+        "max_inbound_connections": 24,
         "max_outbound_connections": 8,
-        "inventory_size": 8192,
-        "rediscovery_timeout": 120000,
+        "inventory_timeout": 300000,
+        "inventory_size": 65536,
+        "topology_timeout": 120000,
         "response_timeout": 48000,
         "cursor_size": 2048,
         "server": true,
         "logging": true
     },
-    "rpc": {
-        "address": "0.0.0.0",
-        "port": 18419,
-        "admin_username": null,
-        "admin_password": null,
-        "user_username": null,
-        "user_password": null,
-        "cursor_size": 512,
-        "page_size": 64,
-        "websockets": false,
-        "server": false,
-        "logging": true
-    },
-    "nds": {
+    "discovery": {
         "address": "0.0.0.0",
         "port": 18420,
         "cursor_size": 512,
         "server": false,
         "logging": true
     },
-    "nss": {
+    "oracle": {
         "block_replay_multiplier": 4,
         "relaying_timeout": 30000,
         "relaying_retry_timeout": 300,
@@ -81,8 +64,22 @@
             }
         }
     },
+    "rpc": {
+        "address": "0.0.0.0",
+        "port": 18419,
+        "admin_username": null,
+        "admin_password": null,
+        "user_username": null,
+        "user_password": null,
+        "cursor_size": 512,
+        "page_size": 64,
+        "websockets": false,
+        "server": false,
+        "logging": true
+    },
     "tcp": {
         "tls_trusted_peers": 100,
+        "mbps_per_socket": 24,
         "timeout": 10000
     },
     "storage": {
@@ -103,6 +100,14 @@
         "prune_aggressively": false,
         "transaction_to_account_index": true,
         "transaction_to_rollup_index": true,
-        "logging": true
+        "logging": false
+    },
+    "logs": {
+        "info": null,
+        "error": null,
+        "query": null,
+        "archive_size": 8388608,
+        "archive_repack_interval": 1800,
+        "control_logging": false
     }
 }

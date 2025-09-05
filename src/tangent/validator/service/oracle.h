@@ -1,13 +1,13 @@
-#ifndef TAN_LAYER_NSS_H
-#define TAN_LAYER_NSS_H
+#ifndef TAN_LAYER_ORACLE_H
+#define TAN_LAYER_ORACLE_H
 #include "../../kernel/warden.h"
 
 namespace tangent
 {
-	namespace nss
+	namespace oracle
 	{
 		typedef std::function<bool(const std::string_view&)> invocation_callback;
-		typedef std::function<promise<void>(const algorithm::asset_id&, const warden::chain_supervisor_options&, warden::transaction_logs&&)> transaction_callback;
+		typedef std::function<expects_lr<void>(const algorithm::asset_id&, const warden::chain_supervisor_options&, warden::transaction_logs&&)> transaction_callback;
 
 		struct transaction_listener
 		{
@@ -28,8 +28,6 @@ namespace tangent
 			secret_box encoded_seed;
 			secret_box encoded_secret_key;
 			string encoded_public_key;
-			size_t secret_key_size = 0;
-			size_t public_key_size = 0;
 
 			uptr<schema> as_schema() const;
 		};

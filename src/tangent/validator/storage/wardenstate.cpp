@@ -1,11 +1,17 @@
 #include "wardenstate.h"
-#include "../service/nss.h"
 #undef NULL
 
 namespace tangent
 {
 	namespace storages
 	{
+		struct wardenstate_schema_ptr
+		{
+			algorithm::asset_id asset = 0;
+			sqlite::connection* connection = nullptr;
+			repository* database = nullptr;
+		};
+
 		static string to_typeless(const std::string_view& data)
 		{
 			if (format::util::is_hex_encoding(data))
@@ -45,10 +51,22 @@ namespace tangent
 			}
 		}
 
-		wardenstate::wardenstate(const std::string_view& new_label, const algorithm::asset_id& new_asset) noexcept : asset(new_asset), label(new_label)
+		static thread_local wardenstate* parent_wardenstate = nullptr;
+		wardenstate::wardenstate(const algorithm::asset_id& new_asset) noexcept : asset(new_asset)
 		{
-			string blockchain = algorithm::asset::blockchain_of(asset);
-			storage_of("wardenstate." + stringify::to_lower(blockchain) + "data");
+#ifndef NDEBUG
+			local_id = std::this_thread::get_id();
+#endif
+			if (!parent_wardenstate)
+				parent_wardenstate = this;
+		}
+		wardenstate::~wardenstate() noexcept
+		{
+#ifndef NDEBUG
+			VI_ASSERT(local_id == std::this_thread::get_id(), "mempoolstate thread must not change");
+#endif
+			if (parent_wardenstate == this)
+				parent_wardenstate = nullptr;
 		}
 		expects_lr<void> wardenstate::add_utxo(const warden::coin_utxo& value)
 		{
@@ -68,9 +86,9 @@ namespace tangent
 			map.push_back(var::set::boolean(false));
 			map.push_back(var::set::binary(message.data));
 			
-			auto cursor = emplace_query(label, __func__, "INSERT OR REPLACE INTO coins (transaction_id_index, owner, public_key, address, spent, message) VALUES (?, ?, ?, ?, ?, ?)", &map);
+			auto cursor = get_storage().emplace_query(__func__, "INSERT OR REPLACE INTO coins (transaction_id_index, owner, public_key, address, spent, message) VALUES (?, ?, ?, ?, ?, ?)", &map);
 			if (!cursor || cursor->error())
-				return expects_lr<void>(layer_exception(error_of(cursor)));
+				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			return expectation::met;
 		}
@@ -83,9 +101,9 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::binary(transaction_id_index.data));
 
-			auto cursor = emplace_query(label, __func__, "UPDATE coins SET spent = TRUE WHERE transaction_id_index = ?", &map);
+			auto cursor = get_storage().emplace_query(__func__, "UPDATE coins SET spent = TRUE WHERE transaction_id_index = ?", &map);
 			if (!cursor || cursor->error())
-				return expects_lr<void>(layer_exception(error_of(cursor)));
+				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			return expectation::met;
 		}
@@ -98,9 +116,9 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::binary(transaction_id_index.data));
 
-			auto cursor = emplace_query(label, __func__, "SELECT message FROM coins WHERE transaction_id_index = ?", &map);
+			auto cursor = get_storage().emplace_query(__func__, "SELECT message FROM coins WHERE transaction_id_index = ?", &map);
 			if (!cursor || cursor->error_or_empty())
-				return expects_lr<warden::coin_utxo>(layer_exception(error_of(cursor)));
+				return expects_lr<warden::coin_utxo>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			warden::coin_utxo value;
 			auto blob = (*cursor)["message"].get().get_blob();
@@ -119,9 +137,9 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::binary(transaction_id_index.data));
 
-			auto cursor = emplace_query(label, __func__, "SELECT message FROM coins WHERE transaction_id_index = ? AND spent = FALSE", &map);
+			auto cursor = get_storage().emplace_query(__func__, "SELECT message FROM coins WHERE transaction_id_index = ? AND spent = FALSE", &map);
 			if (!cursor || cursor->error_or_empty())
-				return expects_lr<warden::coin_utxo>(layer_exception(error_of(cursor)));
+				return expects_lr<warden::coin_utxo>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			warden::coin_utxo value;
 			auto blob = (*cursor)["message"].get().get_blob();
@@ -143,9 +161,9 @@ namespace tangent
 			map.push_back(var::set::integer(count));
 			map.push_back(var::set::integer(offset));
 
-			auto cursor = emplace_query(label, __func__, "SELECT message FROM coins WHERE spent = FALSE AND $? = ? LIMIT ? OFFSET ?", &map);
+			auto cursor = get_storage().emplace_query(__func__, "SELECT message FROM coins WHERE spent = FALSE AND $? = ? LIMIT ? OFFSET ?", &map);
 			if (!cursor || cursor->error())
-				return expects_lr<vector<warden::coin_utxo>>(layer_exception(error_of(cursor)));
+				return expects_lr<vector<warden::coin_utxo>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			auto& response = cursor->first();
 			size_t size = response.size();
@@ -175,9 +193,9 @@ namespace tangent
 			map.push_back(var::set::boolean(value.is_mature(asset)));
 			map.push_back(var::set::binary(message.data));
 
-			auto cursor = emplace_query(label, __func__, "INSERT INTO transactions (transaction_id, block_id, finalized, message) VALUES (?, ?, ?, ?) ON CONFLICT (transaction_id) DO UPDATE SET external_id = (CASE WHEN external_id IS NOT NULL THEN external_id ELSE EXCLUDED.external_id END), block_id = EXCLUDED.block_id, finalized = EXCLUDED.finalized, message = EXCLUDED.message", &map);
+			auto cursor = get_storage().emplace_query(__func__, "INSERT INTO transactions (transaction_id, block_id, finalized, message) VALUES (?, ?, ?, ?) ON CONFLICT (transaction_id) DO UPDATE SET external_id = (CASE WHEN external_id IS NOT NULL THEN external_id ELSE EXCLUDED.external_id END), block_id = EXCLUDED.block_id, finalized = EXCLUDED.finalized, message = EXCLUDED.message", &map);
 			if (!cursor || cursor->error())
-				return expects_lr<void>(layer_exception(error_of(cursor)));
+				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			return expectation::met;
 		}
@@ -197,9 +215,9 @@ namespace tangent
 			map.push_back(var::set::boolean(false));
 			map.push_back(var::set::binary(message.data));
 
-			auto cursor = emplace_query(label, __func__, "INSERT INTO transactions (external_id, transaction_id, block_id, finalized, message) VALUES (?, ?, ?, ?, ?) ON CONFLICT (transaction_id) DO UPDATE SET external_id = (CASE WHEN external_id IS NOT NULL THEN external_id ELSE EXCLUDED.external_id END), block_id = EXCLUDED.block_id, finalized = EXCLUDED.finalized, message = EXCLUDED.message", &map);
+			auto cursor = get_storage().emplace_query(__func__, "INSERT INTO transactions (external_id, transaction_id, block_id, finalized, message) VALUES (?, ?, ?, ?, ?) ON CONFLICT (transaction_id) DO UPDATE SET external_id = (CASE WHEN external_id IS NOT NULL THEN external_id ELSE EXCLUDED.external_id END), block_id = EXCLUDED.block_id, finalized = EXCLUDED.finalized, message = EXCLUDED.message", &map);
 			if (!cursor || cursor->error())
-				return expects_lr<void>(layer_exception(error_of(cursor)));
+				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			return expectation::met;
 		}
@@ -212,9 +230,9 @@ namespace tangent
 			map.push_back(var::set::string(transaction_id));
 			map.push_back(external_id > 0 ? var::set::binary(hash, sizeof(hash)) : var::set::null());
 
-			auto cursor = emplace_query(label, __func__, "SELECT message FROM transactions WHERE transaction_id = ? OR external_id = ?", &map);
+			auto cursor = get_storage().emplace_query(__func__, "SELECT message FROM transactions WHERE transaction_id = ? OR external_id = ?", &map);
 			if (!cursor || cursor->error_or_empty())
-				return expects_lr<warden::computed_transaction>(layer_exception(error_of(cursor)));
+				return expects_lr<warden::computed_transaction>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			warden::computed_transaction value;
 			auto blob = (*cursor)["message"].get().get_blob();
@@ -234,9 +252,9 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::integer(block_height - block_latency));
 
-			auto cursor = emplace_query(label, __func__, "SELECT message FROM transactions WHERE block_id <= ? AND finalized = FALSE", &map);
+			auto cursor = get_storage().emplace_query(__func__, "SELECT message FROM transactions WHERE block_id <= ? AND finalized = FALSE", &map);
 			if (!cursor || cursor->error())
-				return expects_lr<vector<warden::computed_transaction>>(layer_exception(error_of(cursor)));
+				return expects_lr<vector<warden::computed_transaction>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			auto& response = cursor->first();
 			size_t size = response.size();
@@ -282,15 +300,15 @@ namespace tangent
 				message.write_string(std::string_view(buffer.begin(), buffer.end()));
 				map.push_back(var::set::binary(message.compress()));
 
-				auto cursor = emplace_query(label, __func__, "INSERT OR REPLACE INTO properties (key, message) VALUES (?, ?)", &map);
+				auto cursor = get_storage().emplace_query(__func__, "INSERT OR REPLACE INTO properties (key, message) VALUES (?, ?)", &map);
 				if (!cursor || cursor->error())
-					return expects_lr<void>(layer_exception(error_of(cursor)));
+					return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 			}
 			else
 			{
-				auto cursor = emplace_query(label, __func__, "DELETE FROM properties WHERE key = ?", &map);
+				auto cursor = get_storage().emplace_query(__func__, "DELETE FROM properties WHERE key = ?", &map);
 				if (!cursor || cursor->error())
-					return expects_lr<void>(layer_exception(error_of(cursor)));
+					return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 			}
 
 			return expectation::met;
@@ -300,9 +318,9 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::string(algorithm::asset::blockchain_of(asset) + ":" + string(key)));
 
-			auto cursor = emplace_query(label, __func__, "SELECT message FROM properties WHERE key = ?", &map);
+			auto cursor = get_storage().emplace_query(__func__, "SELECT message FROM properties WHERE key = ?", &map);
 			if (!cursor || cursor->error_or_empty())
-				return expects_lr<schema*>(layer_exception(error_of(cursor)));
+				return expects_lr<schema*>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			string buffer;
 			auto blob = format::util::decompress_stream((*cursor)["message"].get().get_string());
@@ -327,15 +345,15 @@ namespace tangent
 				message.write_string(std::string_view(buffer.begin(), buffer.end()));
 				map.push_back(var::set::binary(message.compress()));
 
-				auto cursor = emplace_query(label, __func__, stringify::text("INSERT OR REPLACE INTO %s (key, message) VALUES (?, ?)", get_cache_location(policy).data()), &map);
+				auto cursor = get_storage().emplace_query(__func__, stringify::text("INSERT OR REPLACE INTO %s (key, message) VALUES (?, ?)", get_cache_location(policy).data()), &map);
 				if (!cursor || cursor->error())
-					return expects_lr<void>(layer_exception(error_of(cursor)));
+					return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 			}
 			else
 			{
-				auto cursor = emplace_query(label, __func__, stringify::text("DELETE FROM %s WHERE key = ?", get_cache_location(policy).data()), &map);
+				auto cursor = get_storage().emplace_query(__func__, stringify::text("DELETE FROM %s WHERE key = ?", get_cache_location(policy).data()), &map);
 				if (!cursor || cursor->error())
-					return expects_lr<void>(layer_exception(error_of(cursor)));
+					return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 			}
 
 			return expectation::met;
@@ -345,9 +363,9 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::binary(format::util::is_hex_encoding(key) ? codec::hex_decode(key) : string(key)));
 
-			auto cursor = emplace_query(label, __func__, stringify::text("SELECT message FROM %s WHERE key = ?", get_cache_location(policy).data()), &map);
+			auto cursor = get_storage().emplace_query(__func__, stringify::text("SELECT message FROM %s WHERE key = ?", get_cache_location(policy).data()), &map);
 			if (!cursor || cursor->error_or_empty())
-				return expects_lr<schema*>(layer_exception(error_of(cursor)));
+				return expects_lr<schema*>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			string buffer;
 			auto blob = format::util::decompress_stream((*cursor)["message"].get().get_string());
@@ -370,9 +388,9 @@ namespace tangent
 			map.push_back(var::set::binary(to_typeless(value.public_key)));
 			map.push_back(var::set::binary(to_typeless(value.address)));
 
-			auto cursor = emplace_query(label, __func__, "INSERT OR REPLACE INTO links (owner, public_key, address, typeless_public_key, typeless_address) VALUES (?, ?, ?, ?, ?)", &map);
+			auto cursor = get_storage().emplace_query(__func__, "INSERT OR REPLACE INTO links (owner, public_key, address, typeless_public_key, typeless_address) VALUES (?, ?, ?, ?, ?)", &map);
 			if (!cursor || cursor->error())
-				return expects_lr<void>(layer_exception(error_of(cursor)));
+				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			return expectation::met;
 		}
@@ -383,9 +401,9 @@ namespace tangent
 			map.push_back(var::set::string(load_link_field(term)));
 			map.push_back(load_link_value(term, value));
 
-			auto cursor = emplace_query(label, __func__, "DELETE FROM links WHERE $? = ?", &map);
+			auto cursor = get_storage().emplace_query(__func__, "DELETE FROM links WHERE $? = ?", &map);
 			if (!cursor || cursor->error())
-				return expects_lr<void>(layer_exception(error_of(cursor)));
+				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			return expectation::met;
 		}
@@ -394,9 +412,9 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::binary(to_typeless(address)));
 
-			auto cursor = emplace_query(label, __func__, "SELECT * FROM links WHERE typeless_address = ?", &map);
+			auto cursor = get_storage().emplace_query(__func__, "SELECT * FROM links WHERE typeless_address = ?", &map);
 			if (!cursor || cursor->error_or_empty())
-				return expects_lr<warden::wallet_link>(layer_exception(error_of(cursor)));
+				return expects_lr<warden::wallet_link>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			warden::wallet_link value;
 			auto owner = (*cursor)["owner"].get().get_blob();
@@ -420,9 +438,9 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::string(*sqlite::utils::inline_array(std::move(public_key_list))));
 
-			auto cursor = emplace_query(label, __func__, "SELECT * FROM links WHERE typeless_public_key IN ($?)", &map);
+			auto cursor = get_storage().emplace_query(__func__, "SELECT * FROM links WHERE typeless_public_key IN ($?)", &map);
 			if (!cursor || cursor->error())
-				return expects_lr<unordered_map<string, warden::wallet_link>>(layer_exception(error_of(cursor)));
+				return expects_lr<unordered_map<string, warden::wallet_link>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			auto& response = cursor->first();
 			size_t size = response.size();
@@ -457,9 +475,9 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::string(*sqlite::utils::inline_array(std::move(address_list))));
 
-			auto cursor = emplace_query(label, __func__, "SELECT * FROM links WHERE typeless_address IN ($?)", &map);
+			auto cursor = get_storage().emplace_query(__func__, "SELECT * FROM links WHERE typeless_address IN ($?)", &map);
 			if (!cursor || cursor->error())
-				return expects_lr<unordered_map<string, warden::wallet_link>>(layer_exception(error_of(cursor)));
+				return expects_lr<unordered_map<string, warden::wallet_link>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			auto& response = cursor->first();
 			size_t size = response.size();
@@ -487,9 +505,9 @@ namespace tangent
 			map.push_back(var::set::integer(count));
 			map.push_back(var::set::integer(offset));
 
-			auto cursor = emplace_query(label, __func__, !owner.empty() ? "SELECT * FROM links WHERE owner = ? LIMIT ? OFFSET ?" : "SELECT * FROM links LIMIT ? OFFSET ?", &map);
+			auto cursor = get_storage().emplace_query(__func__, !owner.empty() ? "SELECT * FROM links WHERE owner = ? LIMIT ? OFFSET ?" : "SELECT * FROM links LIMIT ? OFFSET ?", &map);
 			if (!cursor || cursor->error())
-				return expects_lr<unordered_map<string, warden::wallet_link>>(layer_exception(error_of(cursor)));
+				return expects_lr<unordered_map<string, warden::wallet_link>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			auto& response = cursor->first();
 			size_t size = response.size();
@@ -509,6 +527,19 @@ namespace tangent
 
 			return values;
 		}
+		ledger::storage_index_ptr& wardenstate::get_storage()
+		{
+			if (!local_storage.may_use())
+			{
+				if (!parent_wardenstate->local_storage.may_use() || parent_wardenstate->asset != asset)
+				{
+					string blockchain = algorithm::asset::blockchain_of(asset);
+					parent_wardenstate->local_storage = ledger::storage_index_ptr(ledger::storage_util::index_storage_of("wardenstate." + stringify::to_lower(blockchain) + "data", &wardenstate::make_schema));
+				}
+				local_storage = parent_wardenstate->local_storage;
+			}
+			return local_storage;
+		}
 		std::string_view wardenstate::get_cache_location(warden::cache_policy policy)
 		{
 			switch (policy)
@@ -522,81 +553,88 @@ namespace tangent
 					return "cache2";
 			}
 		}
-		bool wardenstate::reconstruct_storage()
+		uint32_t wardenstate::get_queries() const
 		{
-			const uint32_t max_cache1_capacity = protocol::now().user.nss.cache1_size;
-			const uint32_t max_cache2_capacity = protocol::now().user.nss.cache2_size;
+			return local_storage.uses();
+		}
+		bool wardenstate::query_used() const
+		{
+			return local_storage.in_use();
+		}
+		bool wardenstate::make_schema(sqlite::connection* connection)
+		{
 			string command = VI_STRINGIFY(
-				CREATE TABLE IF NOT EXISTS coins
-				(
-					transaction_id_index BLOB NOT NULL,
-					owner BLOB(20) NOT NULL,
-					public_key TEXT NOT NULL,
-					address TEXT NOT NULL,
-					spent BOOLEAN NOT NULL,
-					message BLOB NOT NULL,
-  					PRIMARY KEY (transaction_id_index)
-				) WITHOUT ROWID;
-				CREATE INDEX IF NOT EXISTS coins_spent_owner ON coins (spent, owner);
-				CREATE INDEX IF NOT EXISTS coins_spent_public_key ON coins (spent, public_key);
-				CREATE INDEX IF NOT EXISTS coins_spent_address ON coins (spent, address);
-				CREATE TABLE IF NOT EXISTS transactions
-				(
-					transaction_id TEXT NOT NULL,
-					external_id BLOB DEFAULT NULL,
-					block_id BIGINT NOT NULL,
-					finalized BOOLEAN NOT NULL,
-					message BLOB NOT NULL,
-  					PRIMARY KEY (transaction_id)
-				) WITHOUT ROWID;
-				CREATE INDEX IF NOT EXISTS transactions_block_id_finalized ON transactions (block_id, finalized);
-				CREATE TABLE IF NOT EXISTS links
-				(
-					owner BLOB(20) NOT NULL,
-					public_key TEXT NOT NULL,
-					address TEXT NOT NULL,
-					typeless_public_key BLOB NOT NULL,
-					typeless_address BLOB NOT NULL,
-					PRIMARY KEY (owner, typeless_public_key, typeless_address)
-				) WITHOUT ROWID;
-				CREATE INDEX IF NOT EXISTS links_typeless_public_key ON links (typeless_public_key);
-				CREATE INDEX IF NOT EXISTS links_typeless_address ON links (typeless_address);
-				CREATE TABLE IF NOT EXISTS properties
-				(
-					key TEXT NOT NULL,
-					message BLOB NOT NULL,
-  					PRIMARY KEY (key)
-				) WITHOUT ROWID;
-				CREATE TABLE IF NOT EXISTS cache0
-				(
-					key BLOB NOT NULL,
-					message BLOB NOT NULL,
-  					PRIMARY KEY (key)
-				) WITHOUT ROWID;
-				CREATE TABLE IF NOT EXISTS cache1
-				(
-					id INTEGER PRIMARY KEY,
-					key BLOB NOT NULL,
-					message BLOB NOT NULL,
-					UNIQUE (key)
-				);
-				CREATE TRIGGER IF NOT EXISTS cache1_capacity AFTER INSERT ON cache1 BEGIN
-					DELETE FROM cache1 WHERE id = (SELECT id FROM cache1 ORDER BY id ASC) AND (SELECT COUNT(1) FROM cache1) > max_cache1_capacity;
-				END;
-				CREATE TABLE IF NOT EXISTS cache2
-				(
-					id INTEGER PRIMARY KEY,
-					key BLOB NOT NULL,
-					message BLOB NOT NULL,
-					UNIQUE (key)
-				);
-				CREATE TRIGGER IF NOT EXISTS cache2_capacity AFTER INSERT ON cache2 BEGIN
-					DELETE FROM cache2 WHERE id = (SELECT id FROM cache2 ORDER BY id ASC) AND (SELECT COUNT(1) FROM cache2) > max_cache2_capacity;
-				END;);
-			stringify::replace(command, "max_cache1_capacity", to_string(max_cache1_capacity));
-			stringify::replace(command, "max_cache2_capacity", to_string(max_cache2_capacity));
+			CREATE TABLE IF NOT EXISTS coins
+			(
+				transaction_id_index BLOB NOT NULL,
+				owner BLOB(20) NOT NULL,
+				public_key TEXT NOT NULL,
+				address TEXT NOT NULL,
+				spent BOOLEAN NOT NULL,
+				message BLOB NOT NULL,
+  				PRIMARY KEY (transaction_id_index)
+			) WITHOUT ROWID;
+			CREATE INDEX IF NOT EXISTS coins_spent_owner ON coins (spent, owner);
+			CREATE INDEX IF NOT EXISTS coins_spent_public_key ON coins (spent, public_key);
+			CREATE INDEX IF NOT EXISTS coins_spent_address ON coins (spent, address);
+			CREATE TABLE IF NOT EXISTS transactions
+			(
+				transaction_id TEXT NOT NULL,
+				external_id BLOB DEFAULT NULL,
+				block_id BIGINT NOT NULL,
+				finalized BOOLEAN NOT NULL,
+				message BLOB NOT NULL,
+  				PRIMARY KEY (transaction_id)
+			) WITHOUT ROWID;
+			CREATE INDEX IF NOT EXISTS transactions_block_id_finalized ON transactions (block_id, finalized);
+			CREATE TABLE IF NOT EXISTS links
+			(
+				owner BLOB(20) NOT NULL,
+				public_key TEXT NOT NULL,
+				address TEXT NOT NULL,
+				typeless_public_key BLOB NOT NULL,
+				typeless_address BLOB NOT NULL,
+				PRIMARY KEY (owner, typeless_public_key, typeless_address)
+			) WITHOUT ROWID;
+			CREATE INDEX IF NOT EXISTS links_typeless_public_key ON links (typeless_public_key);
+			CREATE INDEX IF NOT EXISTS links_typeless_address ON links (typeless_address);
+			CREATE TABLE IF NOT EXISTS properties
+			(
+				key TEXT NOT NULL,
+				message BLOB NOT NULL,
+  				PRIMARY KEY (key)
+			) WITHOUT ROWID;
+			CREATE TABLE IF NOT EXISTS cache0
+			(
+				key BLOB NOT NULL,
+				message BLOB NOT NULL,
+  				PRIMARY KEY (key)
+			) WITHOUT ROWID;
+			CREATE TABLE IF NOT EXISTS cache1
+			(
+				id INTEGER PRIMARY KEY,
+				key BLOB NOT NULL,
+				message BLOB NOT NULL,
+				UNIQUE (key)
+			);
+			CREATE TRIGGER IF NOT EXISTS cache1_capacity AFTER INSERT ON cache1 BEGIN
+				DELETE FROM cache1 WHERE id = (SELECT id FROM cache1 ORDER BY id ASC) AND (SELECT COUNT(1) FROM cache1) > max_cache1_capacity;
+			END;
+			CREATE TABLE IF NOT EXISTS cache2
+			(
+				id INTEGER PRIMARY KEY,
+				key BLOB NOT NULL,
+				message BLOB NOT NULL,
+				UNIQUE (key)
+			);
+			CREATE TRIGGER IF NOT EXISTS cache2_capacity AFTER INSERT ON cache2 BEGIN
+				DELETE FROM cache2 WHERE id = (SELECT id FROM cache2 ORDER BY id ASC) AND (SELECT COUNT(1) FROM cache2) > max_cache2_capacity;
+			END;);
+			stringify::replace(command, "max_cache1_capacity", to_string(protocol::now().user.oracle.cache1_size));
+			stringify::replace(command, "max_cache2_capacity", to_string(protocol::now().user.oracle.cache2_size));
 
-			auto cursor = query(label, __func__, command);
+			auto cursor = connection->query(command);
+			cursor.report("wardenstate configuration failed");
 			return (cursor && !cursor->error());
 		}
 	}

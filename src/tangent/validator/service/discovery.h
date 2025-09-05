@@ -1,11 +1,11 @@
-#ifndef TAN_LAYER_NDS_H
-#define TAN_LAYER_NDS_H
+#ifndef TAN_LAYER_DISCOVERY_H
+#define TAN_LAYER_DISCOVERY_H
 #include "../../kernel/chain.h"
 #include "../../layer/control.h"
 
 namespace tangent
 {
-	namespace nds
+	namespace discovery
 	{
 		class server_node : public reference<server_node>
 		{

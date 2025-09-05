@@ -7,15 +7,21 @@ namespace tangent
 {
 	namespace storages
 	{
-		struct wardenstate : ledger::mutable_storage
+		struct wardenstate
 		{
 		private:
 			algorithm::asset_id asset;
-			std::string_view label;
-
+			ledger::storage_index_ptr local_storage;
+#ifndef NDEBUG
+			std::thread::id local_id;
+#endif
 		public:
-			wardenstate(const std::string_view& new_label, const algorithm::asset_id& new_asset) noexcept;
-			virtual ~wardenstate() noexcept = default;
+			wardenstate(const algorithm::asset_id& new_asset) noexcept;
+			wardenstate(const wardenstate&) = delete;
+			wardenstate(wardenstate&&) noexcept = delete;
+			wardenstate& operator=(const wardenstate&) = delete;
+			wardenstate& operator=(wardenstate&&) noexcept = delete;
+			~wardenstate() noexcept;
 			expects_lr<void> add_utxo(const warden::coin_utxo& value);
 			expects_lr<void> remove_utxo(const std::string_view& transaction_id, uint64_t index);
 			expects_lr<warden::coin_utxo> get_stxo(const std::string_view& transaction_id, uint64_t index);
@@ -35,12 +41,13 @@ namespace tangent
 			expects_lr<unordered_map<string, warden::wallet_link>> get_links_by_owner(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count);
 			expects_lr<unordered_map<string, warden::wallet_link>> get_links_by_public_keys(const unordered_set<string>& public_key);
 			expects_lr<unordered_map<string, warden::wallet_link>> get_links_by_addresses(const unordered_set<string>& addresses);
-
-		protected:
-			bool reconstruct_storage() override;
+			ledger::storage_index_ptr& get_storage();
+			uint32_t get_queries() const;
+			bool query_used() const;
 
 		private:
 			static std::string_view get_cache_location(warden::cache_policy policy);
+			static bool make_schema(sqlite::connection* connection);
 		};
 	}
 }

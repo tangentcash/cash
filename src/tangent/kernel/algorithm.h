@@ -30,6 +30,10 @@ namespace tangent
 			{
 				memcpy(data, new_data.data(), std::min(new_data.size(), sizeof(data)));
 			}
+			storage_type(const vector<uint8_t>& new_data)
+			{
+				memcpy(data, new_data.data(), std::min(new_data.size(), sizeof(data)));
+			}
 			storage_type(const storage_type&) = default;
 			storage_type(storage_type&&) noexcept = default;
 			storage_type& operator=(const storage_type&) = default;
@@ -46,6 +50,13 @@ namespace tangent
 			{
 				t null[s] = { 0 };
 				return !memcmp(data, null, sizeof(null));
+			}
+			vector<uint8_t> container() const
+			{
+				vector<uint8_t> result;
+				result.resize(s);
+				memcpy(result.data(), data, sizeof(data));
+				return result;
 			}
 			std::string_view view() const
 			{
@@ -150,14 +161,14 @@ namespace tangent
 			static bool verify_secret_key(const seckey_t& secret_key);
 			static bool verify_public_key(const pubkey_t& public_key);
 			static bool verify_address(const std::string_view& address);
-			static bool verify_sealed_message(const std::string_view& ciphertext);
+			static bool verify_encrypted_message(const std::string_view& ciphertext);
 			static void derive_secret_key_from_mnemonic(const std::string_view& mnemonic, seckey_t& secret_key);
-			static void derive_secret_key(const std::string_view& seed, seckey_t& secret_key);
+			static void derive_secret_key_from_parent(const seckey_t& secret_key, const uint256_t& entropy, seckey_t& child_secret_key);
+			static void derive_secret_key(const uint256_t& entropy, seckey_t& secret_key);
 			static bool derive_public_key(const seckey_t& secret_key, pubkey_t& public_key);
 			static void derive_public_key_hash(const pubkey_t& public_key, pubkeyhash_t& public_key_hash);
-			static void derive_cipher_keypair(const seckey_t& secret_key, const uint256_t& nonce, seckey_t& cipher_secret_key, pubkey_t& cipher_public_key);
-			static option<string> public_encrypt(const pubkey_t& cipher_public_key, const std::string_view& plaintext, const std::string_view& entropy);
-			static option<string> private_decrypt(const seckey_t& cipher_secret_key, const pubkey_t& cipher_public_key, const std::string_view& ciphertext);
+			static option<string> public_encrypt(const pubkey_t& public_key, const std::string_view& plaintext, const uint256_t& entropy);
+			static option<string> private_decrypt(const seckey_t& secret_key, const std::string_view& ciphertext);
 			static bool decode_secret_key(const std::string_view& value, seckey_t& secret_key);
 			static bool encode_secret_key(const seckey_t& secret_key, string& value);
 			static bool decode_public_key(const std::string_view& value, pubkey_t& public_key);
@@ -222,26 +233,55 @@ namespace tangent
 		class composition
 		{
 		public:
-			using cseckey_t = storage_type<uint8_t, 64>;
-			using cpubkey_t = storage_type<uint8_t, 64>;
-			using chashsig_t = storage_type<uint8_t, 65>;
+			using cseckey_t = vector<uint8_t>;
+			using cpubkey_t = vector<uint8_t>;
+			using chashsig_t = vector<uint8_t>;
 
 		public:
+			enum class phase : uint8_t
+			{
+				any_input_after_reset,
+				any_input,
+				chosen_input_after_reset,
+				chosen_input,
+				finalized
+			};
+
 			enum class type : uint8_t
 			{
 				unknown,
 				ed25519,
 				ed25519_clsag,
 				secp256k1,
-				schnorr,
-				schnorr_taproot
+				secp256k1_schnorr
 			};
 
-			enum class stage
+			struct secret_state
 			{
-				configure,
-				accumulate,
-				finalize
+				virtual expects_lr<void> derive_from_seed(const uint256_t& seed) = 0;
+				virtual expects_lr<void> derive_from_key(const cseckey_t& secret_key) = 0;
+				virtual expects_lr<void> finalize(cseckey_t* output) const = 0;
+				virtual bool store(format::wo_stream* stream) const = 0;
+				virtual bool load(format::ro_stream& stream) = 0;
+			};
+
+			struct public_state
+			{
+				virtual expects_lr<void> derive_from_key(const cseckey_t& secret_key) = 0;
+				virtual expects_lr<void> finalize(cpubkey_t* output) const = 0;
+				virtual bool store(format::wo_stream* stream) const = 0;
+				virtual bool load(format::ro_stream& stream) = 0;
+			};
+
+			struct signature_state
+			{
+				virtual expects_lr<void> setup(const cpubkey_t& public_key, const uint8_t* message, size_t message_size, uint16_t participants) = 0;
+				virtual expects_lr<void> aggregate(const cseckey_t& secret_key) = 0;
+				virtual expects_lr<void> finalize(chashsig_t* output) const = 0;
+				virtual phase next_phase() const = 0;
+				virtual bool store(format::wo_stream* stream) const = 0;
+				virtual bool load(format::ro_stream& stream) = 0;
+				virtual bool prefer_over(const signature_state& other) const = 0;
 			};
 
 			struct keypair
@@ -251,15 +291,27 @@ namespace tangent
 			};
 
 		public:
-			static expects_lr<void> derive_keypair(type alg, const uint256_t& seed, keypair* result);
-			static expects_lr<void> accumulate_secret_key(type alg, const cseckey_t& share_secret_key, cseckey_t& inout);
-			static expects_lr<void> accumulate_public_key(type alg, const cseckey_t& share_secret_key, cpubkey_t& inout);
-			static expects_lr<void> accumulate_signature(type alg, const uint8_t* message, size_t message_size, const cpubkey_t& final_public_key, const cseckey_t& share_secret_key, chashsig_t& inout);
-			static expects_lr<void> verify_signature(type alg, const uint8_t* message, size_t message_size, const cpubkey_t& final_public_key, const chashsig_t& final_signature);
-			static stage stage_of(const cseckey_t& share_secret_key, const uint8_t* inout, size_t inout_size);
-			static size_t size_of_secret_key(type alg, stage condition = stage::finalize);
-			static size_t size_of_public_key(type alg, stage condition = stage::finalize);
-			static size_t size_of_signature(type alg, stage condition = stage::finalize);
+			static expects_lr<keypair> derive_keypair(type alg, const uint256_t& seed);
+			static expects_lr<uptr<secret_state>> make_secret_state(type alg);
+			static expects_lr<uptr<secret_state>> load_secret_state(format::ro_stream& stream);
+			static expects_lr<void> store_secret_state(type alg, const secret_state* state, format::wo_stream* stream);
+			static expects_lr<uptr<public_state>> make_public_state(type alg);
+			static expects_lr<uptr<public_state>> load_public_state(format::ro_stream& stream);
+			static expects_lr<void> store_public_state(type alg, const public_state* state, format::wo_stream* stream);
+			static expects_lr<uptr<signature_state>> make_signature_state(type alg);
+			static expects_lr<uptr<signature_state>> make_signature_state(type alg, const cpubkey_t& public_key, const uint8_t* message, size_t message_size, uint16_t participants);
+			static expects_lr<uptr<signature_state>> load_signature_state(format::ro_stream& stream);
+			static expects_lr<void> store_signature_state(type alg, const signature_state* state, format::wo_stream* stream);
+
+		public:
+			template <typename T>
+			static T to_cstorage(const std::string_view& value)
+			{
+				T result;
+				result.resize(value.size());
+				memcpy(result.data(), value.data(), value.size());
+				return result;
+			}
 		};
 
 		class keypair_utils

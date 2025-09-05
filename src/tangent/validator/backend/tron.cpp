@@ -1,5 +1,5 @@
 #include "tron.h"
-#include "../service/nss.h"
+#include "../service/oracle.h"
 #include "../internal/libbitcoin/chainparams.h"
 #include "../internal/libbitcoin/ecc_key.h"
 #include "../internal/libbitcoin/base58.h"
@@ -214,7 +214,7 @@ namespace tangent
 			}
 			expects_promise_rt<decimal> tron::calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link)
 			{
-				auto contract_address = nss::server_node::get()->get_contract_address(for_asset);
+				auto contract_address = oracle::server_node::get()->get_contract_address(for_asset);
 				decimal divisibility = netdata.divisibility;
 				if (contract_address)
 				{
@@ -290,7 +290,7 @@ namespace tangent
 					coreturn expects_rt<prepared_transaction>(std::move(chain_id.error()));
 
 				auto& output = to.front();
-				auto contract_address = nss::server_node::get()->get_contract_address(output.asset);
+				auto contract_address = oracle::server_node::get()->get_contract_address(output.asset);
 				decimal fee_value = fee.get_max_fee();
 				decimal total_value = output.value;
 				if (contract_address)
@@ -329,9 +329,9 @@ namespace tangent
 				auto transaction = tx_serialize(*block_header, eth_contract_address, eth_from_address, eth_to_address, eth_value);
 				prepared_transaction result;
 				if (contract_address)
-					result.requires_account_input(algorithm::composition::type::secp256k1, wallet_link(from_link), public_key->data, (uint8_t*)transaction.raw_transaction_id.data(), transaction.raw_transaction_id.size(), { { output.asset, output.value }, { native_asset, fee_value } });
+					result.requires_account_input(algorithm::composition::type::secp256k1, wallet_link(from_link), *public_key, (uint8_t*)transaction.raw_transaction_id.data(), transaction.raw_transaction_id.size(), { { output.asset, output.value }, { native_asset, fee_value } });
 				else
-					result.requires_account_input(algorithm::composition::type::secp256k1, wallet_link(from_link), public_key->data, (uint8_t*)transaction.raw_transaction_id.data(), transaction.raw_transaction_id.size(), { { native_asset, output.value + fee_value } });
+					result.requires_account_input(algorithm::composition::type::secp256k1, wallet_link(from_link), *public_key, (uint8_t*)transaction.raw_transaction_id.data(), transaction.raw_transaction_id.size(), { { native_asset, output.value + fee_value } });
 				result.requires_account_output(output.address, { { output.asset, output.value } });
 				result.requires_abi(format::variable(contract_address.or_else(string())));
 				result.requires_abi(format::variable(block_header->ref_block_bytes));
@@ -365,7 +365,7 @@ namespace tangent
 					return layer_exception("invalid input message");
 
 				uint8_t raw_signature[65];
-				memcpy(raw_signature, input.signature.data, sizeof(raw_signature));
+				memcpy(raw_signature, input.signature.data(), std::min(input.signature.size(), sizeof(raw_signature)));
 				if (raw_signature[64] > 0)
 					raw_signature[64] = 0x1c;
 				else

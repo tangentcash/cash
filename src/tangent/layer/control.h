@@ -4,6 +4,8 @@
 
 namespace tangent
 {
+	struct system_control;
+
 	struct system_endpoint
 	{
 		location scheme;
@@ -15,9 +17,23 @@ namespace tangent
 		static string to_uri(const socket_address& address, const std::string_view& protocol = "tcp");
 	};
 
+	struct system_task
+	{
+		string id;
+		system_control* control;
+
+		system_task(string&& new_id, system_control* new_control);
+		system_task(const system_task&) = delete;
+		system_task(system_task&& other) noexcept;
+		~system_task() noexcept;
+		system_task& operator= (const system_task&) = delete;
+		system_task& operator= (system_task&& other) noexcept;
+	};
+
 	struct system_control
 	{
 		unordered_map<string, task_id>* timers;
+		unordered_map<string, bool>* tasks;
 		std::atomic<bool> active;
 		std::recursive_mutex sync;
 		std::string_view service_name;
@@ -25,12 +41,16 @@ namespace tangent
 		system_control(const std::string_view& label) noexcept;
 		bool lock_timeout(const std::string_view& name);
 		bool unlock_timeout(const std::string_view& name);
+		bool task_if_none(const std::string_view& name, std::function<void(system_task&&)>&& callback) noexcept;
+		bool async_task_if_none(const std::string_view& name, std::function<promise<void>()>&& callback) noexcept;
 		bool interval_if_none(const std::string_view& name, uint64_t ms, task_callback&& callback) noexcept;
 		bool timeout_if_none(const std::string_view& name, uint64_t ms, task_callback&& callback) noexcept;
 		bool upsert_timeout(const std::string_view& name, uint64_t ms, task_callback&& callback) noexcept;
 		bool clear_timeout(const std::string_view& name, bool clear_scheduled = false) noexcept;
+		bool clear_task(const std::string_view& name) noexcept;
 		bool activate() noexcept;
-		bool deactivate() noexcept;
+		bool deactivate(bool fully = true) noexcept;
+		bool has_task(const std::string_view& name) noexcept;
 		bool is_active() noexcept;
 	};
 

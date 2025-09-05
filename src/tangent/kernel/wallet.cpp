@@ -1,7 +1,7 @@
 #include "wallet.h"
 #include "../validator/storage/mempoolstate.h"
 #include "../validator/storage/chainstate.h"
-#include "../validator/service/p2p.h"
+#include "../validator/service/consensus.h"
 
 namespace tangent
 {
@@ -136,19 +136,25 @@ namespace tangent
 		{
 			return !public_key_hash.empty();
 		}
-		option<string> wallet::seal_message(const std::string_view& plaintext, const algorithm::pubkey_t& cipher_public_key, const std::string_view& entropy) const
+		option<string> wallet::seal_message(const std::string_view& plaintext, const algorithm::pubkey_t& recipient_public_key, const uint256_t& entropy) const
 		{
-			return algorithm::signing::public_encrypt(cipher_public_key, plaintext, entropy);
+			return algorithm::signing::public_encrypt(recipient_public_key, plaintext, entropy);
 		}
-		option<string> wallet::open_message(const uint256_t& nonce, const std::string_view& ciphertext) const
+		option<string> wallet::open_message(const std::string_view& ciphertext) const
 		{
 			if (!has_secret_key())
 				return optional::none;
 
-			algorithm::seckey_t cipher_secret_key;
-			algorithm::pubkey_t cipher_public_key;
-			algorithm::signing::derive_cipher_keypair(secret_key, nonce, cipher_secret_key, cipher_public_key);
-			return algorithm::signing::private_decrypt(cipher_secret_key, cipher_public_key, ciphertext);
+			return algorithm::signing::private_decrypt(secret_key, ciphertext);
+		}
+		option<string> wallet::open_message(const std::string_view& ciphertext, const uint256_t& entropy) const
+		{
+			if (!has_secret_key())
+				return optional::none;
+
+			algorithm::seckey_t child_secret_key;
+			algorithm::signing::derive_secret_key_from_parent(secret_key, entropy, child_secret_key);
+			return algorithm::signing::private_decrypt(child_secret_key, ciphertext);
 		}
 		string wallet::get_secret_key() const
 		{
@@ -179,8 +185,8 @@ namespace tangent
 		}
 		expects_lr<uint64_t> wallet::get_latest_nonce() const
 		{
-			auto mempool = storages::mempoolstate(__func__);
-			auto chain = storages::chainstate(__func__);
+			auto mempool = storages::mempoolstate();
+			auto chain = storages::chainstate();
 			auto state = chain.get_uniform(states::account_nonce::as_instance_type(), nullptr, states::account_nonce::as_instance_index(public_key_hash), 0);
 			uint64_t pending_nonce = mempool.get_highest_transaction_nonce(public_key_hash).or_else(0);
 			uint64_t finalized_nonce = (state ? ((states::account_nonce*)**state)->nonce : 0);
@@ -228,14 +234,12 @@ namespace tangent
 		}
 		wallet wallet::from_seed(const std::string_view& seed)
 		{
+			return from_entropy(algorithm::hashing::hash256i(seed.empty() ? *crypto::random_bytes(64) : seed));
+		}
+		wallet wallet::from_entropy(const uint256_t& entropy)
+		{
 			algorithm::seckey_t key;
-			if (seed.empty())
-			{
-				auto entropy = *crypto::random_bytes(64);
-				algorithm::signing::derive_secret_key(entropy, key);
-			}
-			else
-				algorithm::signing::derive_secret_key(seed, key);
+			algorithm::signing::derive_secret_key(entropy, key);
 			return from_secret_key(key);
 		}
 		wallet wallet::from_secret_key(const algorithm::seckey_t& key)
@@ -257,7 +261,7 @@ namespace tangent
 			return result;
 		}
 
-		bool validator::store_payload(format::wo_stream* stream) const
+		bool node::store_payload(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_string(address.get_ip_address().or_else(string()));
@@ -266,21 +270,21 @@ namespace tangent
 			stream->write_integer(availability.timestamp);
 			stream->write_integer(availability.calls);
 			stream->write_integer(availability.errors);
-			stream->write_integer(ports.p2p);
-			stream->write_integer(ports.nds);
+			stream->write_integer(ports.consensus);
+			stream->write_integer(ports.discovery);
 			stream->write_integer(ports.rpc);
 			stream->write_boolean(services.has_consensus);
 			stream->write_boolean(services.has_discovery);
-			stream->write_boolean(services.has_synchronization);
-			stream->write_boolean(services.has_interfaces);
+			stream->write_boolean(services.has_oracle);
+			stream->write_boolean(services.has_rpc);
+			stream->write_boolean(services.has_rpc_public_access);
+			stream->write_boolean(services.has_rpc_web_sockets);
 			stream->write_boolean(services.has_production);
 			stream->write_boolean(services.has_participation);
 			stream->write_boolean(services.has_attestation);
-			stream->write_boolean(services.has_querying);
-			stream->write_boolean(services.has_streaming);
 			return true;
 		}
-		bool validator::load_payload(format::ro_stream& stream)
+		bool node::load_payload(format::ro_stream& stream)
 		{
 			string ip_address;
 			if (!stream.read_string(stream.read_type(), &ip_address))
@@ -302,10 +306,10 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &availability.errors))
 				return false;
 
-			if (!stream.read_integer(stream.read_type(), &ports.p2p))
+			if (!stream.read_integer(stream.read_type(), &ports.consensus))
 				return false;
 
-			if (!stream.read_integer(stream.read_type(), &ports.nds))
+			if (!stream.read_integer(stream.read_type(), &ports.discovery))
 				return false;
 
 			if (!stream.read_integer(stream.read_type(), &ports.rpc))
@@ -317,10 +321,16 @@ namespace tangent
 			if (!stream.read_boolean(stream.read_type(), &services.has_discovery))
 				return false;
 
-			if (!stream.read_boolean(stream.read_type(), &services.has_synchronization))
+			if (!stream.read_boolean(stream.read_type(), &services.has_oracle))
 				return false;
 
-			if (!stream.read_boolean(stream.read_type(), &services.has_interfaces))
+			if (!stream.read_boolean(stream.read_type(), &services.has_rpc))
+				return false;
+
+			if (!stream.read_boolean(stream.read_type(), &services.has_rpc_public_access))
+				return false;
+
+			if (!stream.read_boolean(stream.read_type(), &services.has_rpc_web_sockets))
 				return false;
 
 			if (!stream.read_boolean(stream.read_type(), &services.has_production))
@@ -332,32 +342,27 @@ namespace tangent
 			if (!stream.read_boolean(stream.read_type(), &services.has_attestation))
 				return false;
 
-			if (!stream.read_boolean(stream.read_type(), &services.has_querying))
-				return false;
-
-			if (!stream.read_boolean(stream.read_type(), &services.has_streaming))
-				return false;
-
 			address = socket_address(ip_address, ip_port);
 			return true;
 		}
-		bool validator::is_valid() const
+		bool node::is_valid() const
 		{
 			if (!address.is_valid())
 				return false;
 
-			return !p2p::routing::is_address_reserved(address);
+			return !consensus::routing_util::is_address_reserved(address);
 		}
-		uint64_t validator::get_preference() const
+		uint64_t node::get_preference() const
 		{
-			double messages = (double)availability.calls;
-			double confidence = messages > 0.0 ? mathd::exp((double)(availability.calls < availability.errors ? 0 : availability.calls - availability.errors) / messages) : 0.0;
-			double uncertainty = messages > 0.0 ? mathd::exp((double)availability.errors / messages) : 0.0;
-			double preference = availability.latency > 0.0 ? 1000.0 / (double)availability.latency : 1000.0;
-			double score = (confidence - uncertainty) * preference + preference * 0.1;
-			return (uint64_t)(1000.0 * score);
+			const double min_step = 32.0, max_latency = 500.0;
+			double responses = std::max((double)availability.calls, min_step);
+			double errors = std::min(std::max((double)availability.errors, 0.0), responses);
+			double latency = mathd::exp(-availability.latency / max_latency);
+			double reliability = availability.calls > 0 ? 1.0 - errors / responses : 1;
+			double index = latency * 0.75 + reliability * 0.25;
+			return (uint64_t)(1000000.0 * index);
 		}
-		uptr<schema> validator::as_schema() const
+		uptr<schema> node::as_schema() const
 		{
 			schema* data = var::set::object();
 			data->set("address", var::string(address.get_ip_address().or_else("[bad_address]") + ":" + to_string(address.get_ip_port().or_else(0))));
@@ -369,38 +374,38 @@ namespace tangent
 			availability_data->set("errors", algorithm::encoding::serialize_uint256(availability.errors));
 
 			auto* ports_data = data->set("ports");
-			ports_data->set("p2p", var::integer(ports.p2p));
-			ports_data->set("nds", var::integer(ports.nds));
+			ports_data->set("consensus", var::integer(ports.consensus));
+			ports_data->set("discovery", var::integer(ports.discovery));
 			ports_data->set("rpc", var::integer(ports.rpc));
 
 			auto* services_data = data->set("services");
 			services_data->set("consensus", var::boolean(services.has_consensus));
 			services_data->set("discovery", var::boolean(services.has_discovery));
-			services_data->set("synchronization", var::boolean(services.has_synchronization));
-			services_data->set("interfaces", var::boolean(services.has_interfaces));
+			services_data->set("oracle", var::boolean(services.has_oracle));
+			services_data->set("rpc", var::boolean(services.has_rpc));
+			services_data->set("rpc_public_access", var::boolean(services.has_rpc_public_access));
+			services_data->set("rpc_web_sockets", var::boolean(services.has_rpc_web_sockets));
 			services_data->set("production", var::boolean(services.has_production));
 			services_data->set("participation", var::boolean(services.has_participation));
 			services_data->set("attestation", var::boolean(services.has_attestation));
-			services_data->set("querying", var::boolean(services.has_querying));
-			services_data->set("streaming", var::boolean(services.has_streaming));
 			return data;
 		}
-		uint32_t validator::as_type() const
+		uint32_t node::as_type() const
 		{
 			return as_instance_type();
 		}
-		std::string_view validator::as_typename() const
+		std::string_view node::as_typename() const
 		{
 			return as_instance_typename();
 		}
-		uint32_t validator::as_instance_type()
+		uint32_t node::as_instance_type()
 		{
 			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
 			return hash;
 		}
-		std::string_view validator::as_instance_typename()
+		std::string_view node::as_instance_typename()
 		{
-			return "validator";
+			return "node";
 		}
 	}
 }

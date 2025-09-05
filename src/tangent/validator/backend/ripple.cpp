@@ -1,5 +1,5 @@
 #include "ripple.h"
-#include "../service/nss.h"
+#include "../service/oracle.h"
 #include "../internal/libbitcoin/tool.h"
 #include "../internal/libbitcoin/bip32.h"
 #include "../internal/libbitcoin/ripemd160.h"
@@ -222,7 +222,7 @@ namespace tangent
 				account_token_info info;
 				info.balance = 0.0;
 
-				auto contract_address = nss::server_node::get()->get_contract_address(for_asset);
+				auto contract_address = oracle::server_node::get()->get_contract_address(for_asset);
 				size_t marker = 0, limit = 400;
 				while (contract_address && limit > 0)
 				{
@@ -341,7 +341,7 @@ namespace tangent
 					string issuer = amount->fetch_var("issuer").get_blob();
 					token_value = amount->get_var("value").get_decimal();
 					token_asset = algorithm::asset::id_of(algorithm::asset::blockchain_of(native_asset), token, issuer);
-					nss::server_node::get()->enable_contract_address(token_asset, issuer);
+					oracle::server_node::get()->enable_contract_address(token_asset, issuer);
 				}
 				else
 					base_value = from_drop(uint256_t(amount->value.get_blob()));
@@ -451,7 +451,7 @@ namespace tangent
 					coreturn expects_rt<prepared_transaction>(std::move(ledger_info.error()));
 
 				auto& output = to.front();
-				auto contract_address = nss::server_node::get()->get_contract_address(output.asset);
+				auto contract_address = oracle::server_node::get()->get_contract_address(output.asset);
 				decimal total_value = output.value;
 				decimal fee_value = fee.get_max_fee();
 				if (contract_address)
@@ -491,13 +491,13 @@ namespace tangent
 				if (!signing_public_key)
 					coreturn expects_rt<prepared_transaction>(remote_exception(std::move(signing_public_key.error().message())));
 
-				auto public_key = algorithm::composition::cpubkey_t(*signing_public_key);
+				auto public_key = algorithm::composition::to_cstorage<algorithm::composition::cpubkey_t>(*signing_public_key);
 				auto message = tx_serialize(&buffer, true);
 				prepared_transaction result;
 				if (contract_address)
-					result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key.data, message.data(), message.size(), { { output.asset, output.value }, { native_asset, fee_value } });
+					result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, message.data(), message.size(), { { output.asset, output.value }, { native_asset, fee_value } });
 				else
-					result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key.data, message.data(), message.size(), { { native_asset, output.value + fee_value } });
+					result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, message.data(), message.size(), { { native_asset, output.value + fee_value } });
 				result.requires_account_output(output.address, { { output.asset, output.value } });
 				result.requires_abi(format::variable(contract_address.or_else(string())));
 				result.requires_abi(format::variable(buffer.sequence));
@@ -524,7 +524,7 @@ namespace tangent
 				buffer.signing_pub_key = input.utxo.link.public_key;
 				buffer.account = input.utxo.link.address;
 				buffer.destination = output_address;
-				buffer.txn_signature = codec::hex_encode(std::string_view((char*)input.signature.data, algorithm::composition::size_of_signature(input.alg)));
+				buffer.txn_signature = codec::hex_encode(std::string_view((char*)input.signature.data(), input.signature.size()));
 				if (!contract_address.empty())
 				{
 					if (output.tokens.empty())

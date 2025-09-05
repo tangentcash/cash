@@ -1,11 +1,11 @@
-#include "nds.h"
+#include "discovery.h"
 #include "../storage/mempoolstate.h"
 
 namespace tangent
 {
-	namespace nds
+	namespace discovery
 	{
-		server_node::server_node() noexcept : control_sys("nds-node"), node(new http::server())
+		server_node::server_node() noexcept : control_sys("discovery-node"), node(new http::server())
 		{
 		}
 		server_node::~server_node() noexcept
@@ -13,11 +13,11 @@ namespace tangent
 		}
 		void server_node::startup()
 		{
-			if (!protocol::now().user.nds.server)
+			if (!protocol::now().user.discovery.server)
 				return;
 
 			http::map_router* router = new http::map_router();
-			router->listen(protocol::now().user.nds.address, to_string(protocol::now().user.nds.port)).expect("listener binding error");
+			router->listen(protocol::now().user.discovery.address, to_string(protocol::now().user.discovery.port)).expect("listener binding error");
 			router->get("/", std::bind(&server_node::dispatch, this, std::placeholders::_1));
 			router->base->callbacks.headers = std::bind(&server_node::headers, this, std::placeholders::_1, std::placeholders::_2);
 			router->base->callbacks.options = std::bind(&server_node::options, this, std::placeholders::_1);
@@ -25,16 +25,16 @@ namespace tangent
 			node->configure(router).expect("configuration error");
 			node->listen().expect("listen queue error");
 
-			if (protocol::now().user.nds.logging)
-				VI_INFO("nds node listen (location: %s:%i)", protocol::now().user.nds.address.c_str(), (int)protocol::now().user.nds.port);
+			if (protocol::now().user.discovery.logging)
+				VI_INFO("OK discovery node listen (location: %s:%i)", protocol::now().user.discovery.address.c_str(), (int)protocol::now().user.discovery.port);
 		}
 		void server_node::shutdown()
 		{
 			if (!is_active())
 				return;
 
-			if (protocol::now().user.nds.logging)
-				VI_INFO("nds node shutdown");
+			if (protocol::now().user.discovery.logging)
+				VI_INFO("OK discovery node shutdown");
 
 			node->unlisten(false);
 		}
@@ -90,22 +90,22 @@ namespace tangent
 
 			auto* consensus_argument = query.get("consensus");
 			auto* discovery_argument = query.get("discovery");
-			auto* synchronization_argument = query.get("synchronization");
-			auto* interface_argument = query.get("interface");
+			auto* oracle_argument = query.get("oracle");
+			auto* rpc_argument = query.get("rpc");
+			auto* rpc_public_access_argument = query.get("rpc_public_access");
+			auto* rpc_web_sockets_argument = query.get("rpc_web_sockets");
 			auto* production_argument = query.get("production");
 			auto* participation_argument = query.get("participation");
 			auto* attestation_argument = query.get("attestation");
-			auto* querying_argument = query.get("querying");
-			auto* streaming_argument = query.get("streaming");
 			auto* offset_argument = query.get("offset");
 			auto* count_argument = query.get("count");
-			uint64_t count = count_argument && count_argument->value.is(var_type::integer) ? count_argument->value.get_integer() : protocol::now().user.nds.cursor_size;
-			if (!count || count > protocol::now().user.nds.cursor_size)
+			uint64_t count = count_argument && count_argument->value.is(var_type::integer) ? count_argument->value.get_integer() : protocol::now().user.discovery.cursor_size;
+			if (!count || count > protocol::now().user.discovery.cursor_size)
 			{
-				if (protocol::now().user.nds.logging)
+				if (protocol::now().user.discovery.logging)
 					VI_WARN("peer %s discovery failed: bad arguments (time: %" PRId64 " ms, args: %s)", base->get_peer_ip_address().or_else("[bad_address]").c_str(), date_time().milliseconds() - base->info.start, base->request.query.c_str());
 
-				return base->abort(400, "Bad page size. count must not exceed %" PRIu64 " elements.", protocol::now().user.nds.cursor_size);
+				return base->abort(400, "Bad page size. count must not exceed %" PRIu64 " elements.", protocol::now().user.discovery.cursor_size);
 			}
 
 			uint32_t services = 0;
@@ -113,37 +113,37 @@ namespace tangent
 				services |= (uint32_t)storages::node_services::consensus;
 			if (discovery_argument != nullptr && discovery_argument->value.get_boolean())
 				services |= (uint32_t)storages::node_services::discovery;
-			if (synchronization_argument != nullptr && synchronization_argument->value.get_boolean())
-				services |= (uint32_t)storages::node_services::synchronization;
-			if (interface_argument != nullptr && interface_argument->value.get_boolean())
-				services |= (uint32_t)storages::node_services::interfaces;
+			if (oracle_argument != nullptr && oracle_argument->value.get_boolean())
+				services |= (uint32_t)storages::node_services::oracle;
+			if (rpc_argument != nullptr && rpc_argument->value.get_boolean())
+				services |= (uint32_t)storages::node_services::rpc;
+			if (rpc_public_access_argument != nullptr && rpc_public_access_argument->value.get_boolean())
+				services |= (uint32_t)storages::node_services::rpc_public_access;
+			if (rpc_web_sockets_argument != nullptr && rpc_web_sockets_argument->value.get_boolean())
+				services |= (uint32_t)storages::node_services::rpc_web_sockets;
 			if (production_argument != nullptr && production_argument->value.get_boolean())
 				services |= (uint32_t)storages::node_services::production;
 			if (participation_argument != nullptr && participation_argument->value.get_boolean())
 				services |= (uint32_t)storages::node_services::participation;
 			if (attestation_argument != nullptr && attestation_argument->value.get_boolean())
 				services |= (uint32_t)storages::node_services::attestation;
-			if (querying_argument != nullptr && querying_argument->value.get_boolean())
-				services |= (uint32_t)storages::node_services::querying;
-			if (streaming_argument != nullptr && streaming_argument->value.get_boolean())
-				services |= (uint32_t)storages::node_services::streaming;
 
-			auto mempool = storages::mempoolstate(__func__);
-			auto seeds = mempool.get_randomized_validator_addresses(count, services);
-			if (!seeds || seeds->empty())
+			auto mempool = storages::mempoolstate();
+			auto nodes = mempool.get_random_nodes_with(count, services);
+			if (!nodes || nodes->empty())
 			{
-				if (protocol::now().user.nds.logging)
+				if (protocol::now().user.discovery.logging)
 					VI_INFO("peer %s discovery: no nodes returned (time: %" PRId64 " ms, args: %s)", base->get_peer_ip_address().or_else("[bad_address]").c_str(), date_time().milliseconds() - base->info.start, base->request.query.c_str());
 
 				return base->abort(404, "No nodes found.");
 			}
 
-			if (protocol::now().user.nds.logging)
-				VI_INFO("peer %s discovery: %i nodes returned (time: %" PRId64 " ms, args: %s)", base->get_peer_ip_address().or_else("[bad_address]").c_str(), (int)seeds->size(), date_time().milliseconds() - base->info.start, base->request.query.c_str());
+			if (protocol::now().user.discovery.logging)
+				VI_INFO("peer %s discovery: %i nodes returned (time: %" PRId64 " ms, args: %s)", base->get_peer_ip_address().or_else("[bad_address]").c_str(), (int)nodes->size(), date_time().milliseconds() - base->info.start, base->request.query.c_str());
 
 			uptr<schema> data = var::set::array();
-			for (auto& seed : *seeds)
-				data->push(var::string(system_endpoint::to_uri(seed)));
+			for (auto& [account, address] : *nodes)
+				data->push(var::string(system_endpoint::to_uri(address)));
 
 			base->response.set_header("Content-Type", "application/json");
 			base->response.content.assign(schema::to_json(*data));
@@ -151,7 +151,7 @@ namespace tangent
 		}
 		service_control::service_node server_node::get_entrypoint()
 		{
-			if (!protocol::now().user.nds.server)
+			if (!protocol::now().user.discovery.server)
 				return service_control::service_node();
 
 			service_control::service_node entrypoint;

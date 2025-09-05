@@ -2,7 +2,7 @@
 #include "svm.h"
 #include "../validator/storage/chainstate.h"
 #include "../validator/storage/mempoolstate.h"
-#include "../validator/service/nss.h"
+#include "../validator/service/oracle.h"
 #ifdef TAN_ROCKSDB
 #include "rocksdb/db.h"
 #include "rocksdb/table.h"
@@ -113,7 +113,7 @@ namespace tangent
 		return remote_exception(-1);
 	}
 
-	rocksdb::DB* repository::load_blob(const std::string_view& location)
+	rocksdb::DB* repository::pull_blob_ref(const std::string_view& location)
 	{
 #ifdef TAN_ROCKSDB
 		umutex<std::mutex> unique(mutex);
@@ -151,13 +151,13 @@ namespace tangent
 		return nullptr;
 #endif
 	}
-	uptr<sqlite::connection> repository::load_index(const std::string_view& location, std::function<void(sqlite::connection*)>&& initializer)
+	uref<sqlite::connection> repository::pull_index(const std::string_view& location, std::function<void(sqlite::connection*)>&& initializer)
 	{
 		umutex<std::mutex> unique(mutex);
 		if (target_path.empty())
 			resolve(protocol::now().user.network, protocol::now().user.storage.directory);
 
-		uptr<sqlite::connection> result;
+		uref<sqlite::connection> result;
 		string address = stringify::text("file:///%s%.*s.db", target_path.c_str(), (int)location.size(), location.data());
 		auto& queue = indices[address];
 		if (!queue.empty())
@@ -176,7 +176,7 @@ namespace tangent
 
 			return result;
 		}
-		
+
 		if (!result->query(index_storage_configuration(protocol::now().user.storage.optimization, protocol::now().user.storage.index_page_size, protocol::now().user.storage.index_cache_size)))
 			return result;
 
@@ -188,9 +188,12 @@ namespace tangent
 
 		return result;
 	}
-	void repository::unload_index(uptr<sqlite::connection>&& value)
+	void repository::push_index(uref<sqlite::connection>&& value)
 	{
 		VI_ASSERT(value, "connection should be set");
+		if (value->get_ref_count() > 1)
+			return value.destroy();
+
 		umutex<std::mutex> unique(mutex);
 		auto& queue = indices[value->get_address()];
 		queue.push(std::move(value));
@@ -223,9 +226,9 @@ namespace tangent
 			if (protocol::now().user.storage.logging)
 			{
 				if (status.ok())
-					VI_DEBUG("wal checkpoint on %s", handle.first.c_str());
+					VI_INFO("blob storage checkpoint on %s", handle.first.c_str());
 				else
-					VI_ERR("wal checkpoint error on: %s (location: %s)", status.ToString().c_str(), handle.first.c_str());
+					VI_ERR("blob storage checkpoint error on: %s (location: %s)", status.ToString().c_str(), handle.first.c_str());
 			}
 		}
 #endif
@@ -239,7 +242,7 @@ namespace tangent
 			if (protocol::now().user.storage.logging)
 			{
 				for (auto& state : states)
-					VI_DEBUG("wal checkpoint on %s (db: %s, fc: %i, fs: %i, stat: %i)", queue.first.c_str(), state.database.empty() ? "all" : state.database.c_str(), state.frames_count, state.frames_size, state.status);
+					VI_INFO("index storage checkpoint on %s (db: %s, fc: %i, fs: %i, stat: %i)", queue.first.c_str(), state.database.empty() ? "all" : state.database.c_str(), state.frames_count, state.frames_size, state.status);
 			}
 		}
 	}
@@ -355,7 +358,7 @@ namespace tangent
 		for (auto& item : offsets)
 			time_offsets.push_back(std::make_pair(std::string_view(item.first), item.second));
 
-		auto& peer = protocol::now().user.p2p;
+		auto& peer = protocol::now().user.consensus;
 		std::sort(time_offsets.begin(), time_offsets.end(), [](const time_source& a, const time_source& b)
 		{
 			return a.second < b.second;
@@ -463,93 +466,129 @@ namespace tangent
 			if (value != nullptr && value->value.is(var_type::string))
 				user.keystate = value->value.get_blob();
 
-			value = config->get("nodes");
+			value = config->get("known_nodes");
 			if (value != nullptr && value->value.get_type() == var_type::array)
 			{
 				for (auto& seed : value->get_childs())
 				{
 					if (seed->value.is(var_type::string))
-						user.nodes.insert(seed->value.get_blob());
+						user.known_nodes.insert(seed->value.get_blob());
 				}
 			}
 
-			value = config->get("seeds");
+			value = config->get("bootstrap_nodes");
 			if (value != nullptr && value->value.get_type() == var_type::array)
 			{
 				for (auto& seed : value->get_childs())
 				{
 					if (seed->value.is(var_type::string))
-						user.seeds.insert(seed->value.get_blob());
+						user.bootstrap_nodes.insert(seed->value.get_blob());
 				}
 			}
 
-			value = config->fetch("logs.info");
+			value = config->fetch("consensus.address");
 			if (value != nullptr && value->value.is(var_type::string))
-				user.logs.info_path = value->value.get_blob();
+				user.consensus.address = value->value.get_blob();
 
-			value = config->fetch("logs.error");
-			if (value != nullptr && value->value.is(var_type::string))
-				user.logs.error_path = value->value.get_blob();
-
-			value = config->fetch("logs.query");
-			if (value != nullptr && value->value.is(var_type::string))
-				user.logs.query_path = value->value.get_blob();
-
-			value = config->fetch("logs.archive_size");
+			value = config->fetch("consensus.port");
 			if (value != nullptr && value->value.is(var_type::integer))
-				user.logs.archive_size = value->value.get_integer();
+				user.consensus.port = value->value.get_integer();
 
-			value = config->fetch("logs.archive_repack_interval");
+			value = config->fetch("consensus.time_offset");
 			if (value != nullptr && value->value.is(var_type::integer))
-				user.logs.archive_repack_interval = value->value.get_integer();
+				user.consensus.time_offset = value->value.get_integer();
 
-			value = config->fetch("p2p.address");
-			if (value != nullptr && value->value.is(var_type::string))
-				user.p2p.address = value->value.get_blob();
-
-			value = config->fetch("p2p.port");
+			value = config->fetch("consensus.max_inbound_connections");
 			if (value != nullptr && value->value.is(var_type::integer))
-				user.p2p.port = value->value.get_integer();
+				user.consensus.max_inbound_connections = (uint32_t)value->value.get_integer();
 
-			value = config->fetch("p2p.time_offset");
+			value = config->fetch("consensus.max_outbound_connections");
 			if (value != nullptr && value->value.is(var_type::integer))
-				user.p2p.time_offset = value->value.get_integer();
+				user.consensus.max_outbound_connections = (uint32_t)value->value.get_integer();
 
-			value = config->fetch("p2p.max_inbound_connections");
+			value = config->fetch("consensus.inventory_timeout");
 			if (value != nullptr && value->value.is(var_type::integer))
-				user.p2p.max_inbound_connections = (uint32_t)value->value.get_integer();
+				user.consensus.inventory_timeout = (uint64_t)value->value.get_integer();
 
-			value = config->fetch("p2p.max_outbound_connections");
+			value = config->fetch("consensus.inventory_size");
 			if (value != nullptr && value->value.is(var_type::integer))
-				user.p2p.max_outbound_connections = (uint32_t)value->value.get_integer();
+				user.consensus.inventory_size = (uint32_t)value->value.get_integer();
 
-			value = config->fetch("p2p.inventory_size");
+			value = config->fetch("consensus.topology_timeout");
 			if (value != nullptr && value->value.is(var_type::integer))
-				user.p2p.inventory_size = (uint32_t)value->value.get_integer();
+				user.consensus.topology_timeout = (uint32_t)value->value.get_integer();
 
-			value = config->fetch("p2p.rediscovery_timeout");
+			value = config->fetch("consensus.response_timeout");
 			if (value != nullptr && value->value.is(var_type::integer))
-				user.p2p.rediscovery_timeout = (uint32_t)value->value.get_integer();
+				user.consensus.response_timeout = value->value.get_integer();
 
-			value = config->fetch("p2p.response_timeout");
+			value = config->fetch("consensus.cursor_size");
 			if (value != nullptr && value->value.is(var_type::integer))
-				user.p2p.response_timeout = value->value.get_integer();
+				user.consensus.cursor_size = value->value.get_integer();
 
-			value = config->fetch("p2p.cursor_size");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.p2p.cursor_size = value->value.get_integer();
-
-			value = config->fetch("p2p.server");
+			value = config->fetch("consensus.server");
 			if (value != nullptr && value->value.is(var_type::boolean))
-				user.p2p.server = value->value.get_boolean();
+				user.consensus.server = value->value.get_boolean();
 
-			value = config->fetch("p2p.logging");
+			value = config->fetch("consensus.logging");
 			if (value != nullptr && value->value.is(var_type::boolean))
-				user.p2p.logging = value->value.get_boolean();
+				user.consensus.logging = value->value.get_boolean();
 
-			value = config->fetch("p2p.account");
+			value = config->fetch("consensus.account");
 			if (value != nullptr && value->value.is(var_type::string))
 				overriding_account = value->value.get_blob();
+
+			value = config->fetch("discovery.address");
+			if (value != nullptr && value->value.is(var_type::string))
+				user.discovery.address = value->value.get_blob();
+
+			value = config->fetch("discovery.port");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.discovery.port = value->value.get_integer();
+
+			value = config->fetch("discovery.cursor_size");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.discovery.cursor_size = value->value.get_integer();
+
+			value = config->fetch("discovery.server");
+			if (value != nullptr && value->value.is(var_type::boolean))
+				user.discovery.server = value->value.get_boolean();
+
+			value = config->fetch("discovery.logging");
+			if (value != nullptr && value->value.is(var_type::boolean))
+				user.discovery.logging = value->value.get_boolean();
+
+			value = config->fetch("oracle.block_replay_multiplier");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.oracle.block_replay_multiplier = value->value.get_integer();
+
+			value = config->fetch("oracle.relaying_timeout");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.oracle.relaying_timeout = value->value.get_integer();
+
+			value = config->fetch("oracle.relaying_retry_timeout");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.oracle.relaying_retry_timeout = value->value.get_integer();
+
+			value = config->fetch("oracle.cache1_size");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.oracle.cache1_size = (uint32_t)value->value.get_integer();
+
+			value = config->fetch("oracle.cache2_size");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.oracle.cache2_size = (uint32_t)value->value.get_integer();
+
+			value = config->fetch("oracle.fee_estimation_seconds");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.oracle.fee_estimation_seconds = value->value.get_integer();
+
+			value = config->fetch("oracle.server");
+			if (value != nullptr && value->value.is(var_type::boolean))
+				user.oracle.server = value->value.get_boolean();
+
+			value = config->fetch("oracle.logging");
+			if (value != nullptr && value->value.is(var_type::boolean))
+				user.oracle.logging = value->value.get_boolean();
 
 			value = config->fetch("rpc.address");
 			if (value != nullptr && value->value.is(var_type::string))
@@ -595,61 +634,13 @@ namespace tangent
 			if (value != nullptr && value->value.is(var_type::boolean))
 				user.rpc.logging = value->value.get_boolean();
 
-			value = config->fetch("nds.address");
-			if (value != nullptr && value->value.is(var_type::string))
-				user.nds.address = value->value.get_blob();
-
-			value = config->fetch("nds.port");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.nds.port = value->value.get_integer();
-
-			value = config->fetch("nds.cursor_size");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.nds.cursor_size = value->value.get_integer();
-
-			value = config->fetch("nds.server");
-			if (value != nullptr && value->value.is(var_type::boolean))
-				user.nds.server = value->value.get_boolean();
-
-			value = config->fetch("nds.logging");
-			if (value != nullptr && value->value.is(var_type::boolean))
-				user.nds.logging = value->value.get_boolean();
-
-			value = config->fetch("nss.block_replay_multiplier");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.nss.block_replay_multiplier = value->value.get_integer();
-
-			value = config->fetch("nss.relaying_timeout");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.nss.relaying_timeout = value->value.get_integer();
-
-			value = config->fetch("nss.relaying_retry_timeout");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.nss.relaying_retry_timeout = value->value.get_integer();
-
-			value = config->fetch("nss.cache1_size");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.nss.cache1_size = (uint32_t)value->value.get_integer();
-
-			value = config->fetch("nss.cache2_size");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.nss.cache2_size = (uint32_t)value->value.get_integer();
-
-			value = config->fetch("nss.fee_estimation_seconds");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.nss.fee_estimation_seconds = value->value.get_integer();
-
-			value = config->fetch("nss.server");
-			if (value != nullptr && value->value.is(var_type::boolean))
-				user.nss.server = value->value.get_boolean();
-
-			value = config->fetch("nss.logging");
-			if (value != nullptr && value->value.is(var_type::boolean))
-				user.nss.logging = value->value.get_boolean();
-
 			value = config->fetch("tcp.tls_trusted_peers");
 			if (value != nullptr && value->value.is(var_type::integer))
 				user.tcp.tls_trusted_peers = value->value.get_integer();
+
+			value = config->fetch("tcp.mbps_per_socket");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.tcp.mbps_per_socket = value->value.get_integer();
 
 			value = config->fetch("tcp.timeout");
 			if (value != nullptr && value->value.is(var_type::integer))
@@ -733,9 +724,33 @@ namespace tangent
 			if (value != nullptr && value->value.is(var_type::boolean))
 				user.storage.logging = value->value.get_boolean();
 
-			user.nss.options = config->get("nss");
-			if (user.nss.options)
-				user.nss.options->unlink();
+			value = config->fetch("logs.info");
+			if (value != nullptr && value->value.is(var_type::string))
+				user.logs.info_path = value->value.get_blob();
+
+			value = config->fetch("logs.error");
+			if (value != nullptr && value->value.is(var_type::string))
+				user.logs.error_path = value->value.get_blob();
+
+			value = config->fetch("logs.query");
+			if (value != nullptr && value->value.is(var_type::string))
+				user.logs.query_path = value->value.get_blob();
+
+			value = config->fetch("logs.archive_size");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.logs.archive_size = value->value.get_integer();
+
+			value = config->fetch("logs.archive_repack_interval");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.logs.archive_repack_interval = value->value.get_integer();
+
+			value = config->fetch("logs.control_logging");
+			if (value != nullptr && value->value.is(var_type::boolean))
+				user.logs.control_logging = value->value.get_boolean();
+
+			user.oracle.options = config->get("oracle");
+			if (user.oracle.options)
+				user.oracle.options->unlink();
 		}
 		else
 			path.clear();
@@ -857,13 +872,13 @@ namespace tangent
 		if (overriding_account.empty())
 			return;
 
-		auto apply = [&](const ledger::wallet& target)
+		auto apply = [&](const ledger::wallet& wallet)
 		{
-			ledger::validator node;
-			node.address = socket_address(user.p2p.address, user.p2p.port);
+			ledger::node node;
+			node.address = socket_address(user.consensus.address, user.consensus.port);
 
-			auto mempool = storages::mempoolstate(__func__);
-			mempool.apply_validator(node, target);
+			auto mempool = storages::mempoolstate();
+			mempool.apply_node(std::make_pair(node, wallet));
 		};
 		algorithm::seckey_t secret_key;
 		if (algorithm::signing::decode_secret_key(overriding_account, secret_key) && algorithm::signing::verify_secret_key(secret_key))
@@ -873,7 +888,7 @@ namespace tangent
 		else if (format::util::is_hex_encoding(overriding_account))
 			apply(ledger::wallet::from_seed(codec::hex_decode(overriding_account)));
 		else
-			VI_PANIC(false, "p2p account must be either a word mnemonic, hex seed or an encoded secret key");
+			VI_PANIC(false, "consensus account must be either a word mnemonic, hex seed or an encoded secret key");
 	}
 	protocol::~protocol()
 	{
@@ -881,7 +896,7 @@ namespace tangent
 		storages::account_cache::cleanup_instance();
 		storages::uniform_cache::cleanup_instance();
 		storages::multiform_cache::cleanup_instance();
-		nss::server_node::cleanup_instance();
+		oracle::server_node::cleanup_instance();
 		ledger::svm_container::cleanup_instance();
 		algorithm::signing::deinitialize();
 		error_handling::set_callback(nullptr);

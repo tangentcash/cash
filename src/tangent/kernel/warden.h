@@ -180,7 +180,7 @@ namespace tangent
 			format::variable* load_abi(size_t* ptr);
 			bool store_payload(format::wo_stream* stream) const override;
 			bool load_payload(format::ro_stream& stream) override;
-			bool is_accumulation_required(size_t input_index) const;
+			signable_coin_utxo* next_input_for_aggregation();
 			status as_status() const;
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;

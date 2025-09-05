@@ -1,7 +1,7 @@
 #include "transactions.h"
 #include "../kernel/block.h"
 #include "../kernel/svm.h"
-#include "../validator/service/nss.h"
+#include "../validator/service/oracle.h"
 
 namespace tangent
 {
@@ -1195,7 +1195,7 @@ namespace tangent
 			if (!validation)
 				return validation.error();
 
-			auto* chain = nss::server_node::get()->get_chainparams(asset);
+			auto* chain = oracle::server_node::get()->get_chainparams(asset);
 			if (!chain)
 				return layer_exception("invalid operation");
 
@@ -1320,61 +1320,55 @@ namespace tangent
 
 			return coasync<expects_rt<void>>([this, context, dispatcher]() -> expects_promise_rt<void>
 			{
-				auto* chain = nss::server_node::get()->get_chainparams(asset);
+				auto* chain = oracle::server_node::get()->get_chainparams(asset);
 				if (!chain)
 					coreturn remote_exception("invalid operation");
 
-				ordered_set<algorithm::pubkeyhash_t> group_signers;
-				algorithm::composition::cpubkey_t group_public_key;
-				auto cache = dispatcher->load_cache(context);
-				if (cache)
+				auto cache = dispatcher->pull_cache(context);
+				auto state = ledger::dispatch_context::public_state();
+				if (!state.load_message(cache))
 				{
-					group_public_key = algorithm::composition::cpubkey_t(codec::hex_decode(cache->get_var(0).get_blob()));
-					for (size_t i = 1; i < cache->size(); i++)
-						group_signers.insert(algorithm::pubkeyhash_t(codec::hex_decode(cache->get_var(i).get_blob())));
+					auto aggregator = algorithm::composition::make_public_state(chain->composition);
+					if (!aggregator)
+						coreturn remote_exception(std::move(aggregator.error().message()));
+
+					state.aggregator = std::move(*aggregator);
+					state.participants = get_group(context->receipt);
 				}
 
-				auto group = get_group(context->receipt);
-				for (auto& share : group_signers)
-					group.erase(share);
+				auto session = coawait(dispatcher->aggregate_validators(context->receipt.transaction_hash, state.participants));
+				if (!session)
+					coreturn session.error();
 
-				bool group_fully_signed = true;
-				for (auto& share : group)
+				ordered_set<algorithm::pubkeyhash_t> deferred_participants;
+				while (!state.participants.empty())
 				{
-					auto result = coawait(dispatcher->calculate_group_public_key(context, share.data, group_public_key));
+					auto result = coawait(dispatcher->aggregate_public_state(context, state, *state.participants.begin()));
 					if (!result && (result.error().is_retry() || result.error().is_shutdown()))
-					{
-						group_fully_signed = false;
-						continue;
-					}
+						deferred_participants.insert(*state.participants.begin());
 					else if (!result)
 						coreturn result.error();
 
-					group_signers.insert(share);
+					state.participants.erase(state.participants.begin());
 				}
 
-				if (group_fully_signed)
+				if (!deferred_participants.empty())
 				{
-					auto status = algorithm::composition::accumulate_public_key(chain->composition, algorithm::composition::cseckey_t(), group_public_key);
-					if (!status)
-						coreturn remote_exception(std::move(status.error().message()));
-
-					auto* transaction = memory::init<depository_account_finalization>();
-					transaction->asset = asset;
-					transaction->set_witness(context->receipt.transaction_hash, group_public_key.data);
-					dispatcher->emit_transaction(transaction);
-					dispatcher->store_cache(context, nullptr);
-					coreturn expectation::met;
-				}
-				else
-				{
-					cache = var::set::array();
-					cache->push(var::string(codec::hex_encode(group_public_key.optimized_view())));
-					for (auto& share : group_signers)
-						cache->push(var::string(codec::hex_encode(share.optimized_view())));
-					dispatcher->store_cache(context, std::move(cache));
+					state.participants = std::move(deferred_participants);
+					dispatcher->push_cache(context, state.as_message());
 					coreturn remote_exception::retry();
 				}
+
+				algorithm::composition::cpubkey_t aggregated_public_key;
+				auto status = state.aggregator->finalize(&aggregated_public_key);
+				if (!status)
+					coreturn remote_exception(std::move(status.error().message()));
+
+				auto* transaction = memory::init<depository_account_finalization>();
+				transaction->asset = asset;
+				transaction->set_witness(context->receipt.transaction_hash, aggregated_public_key);
+				dispatcher->emit_transaction(transaction);
+				coreturn expectation::met;
 			});
 		}
 		bool depository_account::store_body(format::wo_stream* stream) const
@@ -1461,7 +1455,7 @@ namespace tangent
 				return setup.error();
 
 			auto* setup_transaction = (depository_account*)*setup->transaction;
-			auto* server = nss::server_node::get();
+			auto* server = oracle::server_node::get();
 			auto* chain = server->get_chain(asset);
 			auto* params = server->get_chainparams(asset);
 			if (!chain || !params)
@@ -1471,7 +1465,7 @@ namespace tangent
 			if (duplicate)
 				return layer_exception("depository account already exists");
 
-			auto encoded_public_key = chain->encode_public_key(std::string_view((char*)public_key.data, algorithm::composition::size_of_public_key(params->composition)));
+			auto encoded_public_key = chain->encode_public_key(std::string_view((char*)public_key.data(), public_key.size()));
 			if (!encoded_public_key)
 				return encoded_public_key.error();
 
@@ -1539,13 +1533,13 @@ namespace tangent
 			if (addresses.empty())
 				return expects_promise_rt<void>(expectation::met);
 
-			auto* server = nss::server_node::get();
+			auto* server = oracle::server_node::get();
 			auto* chain = server->get_chain(asset);
 			auto* params = server->get_chainparams(asset);
 			if (!chain || !params)
 				return expects_promise_rt<void>(remote_exception("invalid operation"));
 
-			auto encoded_public_key = chain->encode_public_key(std::string_view((char*)public_key.data, algorithm::composition::size_of_public_key(params->composition)));
+			auto encoded_public_key = chain->encode_public_key(std::string_view((char*)public_key.data(), public_key.size()));
 			if (!encoded_public_key)
 				return expects_promise_rt<void>(remote_exception(std::move(encoded_public_key.error().message())));
 
@@ -1575,23 +1569,21 @@ namespace tangent
 		bool depository_account_finalization::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			auto params = nss::server_node::get()->get_chainparams(asset);
-			size_t public_key_size = params ? algorithm::composition::size_of_public_key(params->composition) : sizeof(public_key);
-			stream->write_string(std::string_view((char*)public_key.data, public_key.empty() ? 0 : public_key_size));
+			stream->write_string(std::string_view((char*)public_key.data(), public_key.size()));
 			stream->write_integer(depository_account_hash);
 			return true;
 		}
 		bool depository_account_finalization::load_body(format::ro_stream& stream)
 		{
 			string public_key_assembly;
-			auto params = nss::server_node::get()->get_chainparams(asset);
-			size_t public_key_size = params ? algorithm::composition::size_of_public_key(params->composition) : sizeof(public_key);
-			if (!stream.read_string(stream.read_type(), &public_key_assembly) || !algorithm::encoding::decode_bytes(public_key_assembly, public_key.data, public_key_size))
+			if (!stream.read_string(stream.read_type(), &public_key_assembly))
 				return false;
 
 			if (!stream.read_integer(stream.read_type(), &depository_account_hash))
 				return false;
 
+			public_key.resize(public_key_assembly.size());
+			memcpy(public_key.data(), public_key_assembly.data(), public_key_assembly.size());
 			return true;
 		}
 		bool depository_account_finalization::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
@@ -1612,10 +1604,10 @@ namespace tangent
 		uptr<schema> depository_account_finalization::as_schema() const
 		{
 			size_t index = 0;
-			auto params = nss::server_node::get()->get_chainparams(asset);
+			auto params = oracle::server_node::get()->get_chainparams(asset);
 			schema* data = ledger::consensus_transaction::as_schema().reset();
 			data->set("depository_account_hash", depository_account_hash > 0 ? var::string(algorithm::encoding::encode_0xhex256(depository_account_hash)) : var::null());
-			data->set("public_key", var::string(format::util::encode_0xhex(std::string_view((char*)public_key.data, params ? algorithm::composition::size_of_public_key(params->composition) : sizeof(public_key)))));
+			data->set("public_key", var::string(format::util::encode_0xhex(std::string_view((char*)public_key.data(), public_key.size()))));
 			return data;
 		}
 		uint32_t depository_account_finalization::as_type() const
@@ -1641,7 +1633,7 @@ namespace tangent
 			if (from_manager == to_manager)
 				return layer_exception("invalid from/to manager");
 
-			auto* chain = nss::server_node::get()->get_chainparams(asset);
+			auto* chain = oracle::server_node::get()->get_chainparams(asset);
 			if (!chain)
 				return layer_exception("invalid operation");
 
@@ -1799,158 +1791,115 @@ namespace tangent
 
 			return coasync<expects_rt<void>>([this, context, dispatcher, transfers = std::move(transfers)]() mutable -> expects_promise_rt<void>
 			{
-				auto* server = nss::server_node::get();
+				auto* server = oracle::server_node::get();
 				auto* chain = server->get_chainparams(asset);
-				auto cache = dispatcher->load_cache(context);
-				auto group_prepared = expects_rt<warden::prepared_transaction>(warden::prepared_transaction());
-				auto group_signers = ordered_set<algorithm::pubkeyhash_t>();
-				auto group_signature = ordered_map<uint8_t, algorithm::composition::chashsig_t>();
-				if (cache && !chain->requires_transaction_expiration)
+				auto cancel = [this, context, dispatcher](remote_exception&& error) -> expects_rt<void>
 				{
-					auto cache_message = format::util::decode_stream(cache->get_var(0).get_blob());
-					auto group_prepared_message = format::ro_stream(cache_message);
-					if (!group_prepared->load_payload(group_prepared_message))
-						group_prepared = expects_rt<warden::prepared_transaction>(remote_exception::retry());
-
-					uint8_t split = cache->get_var(1).get_integer();
-					for (size_t i = 2; i < split; i++)
-					{
-						auto* item = cache->get(i);
-						if (item != nullptr)
-							group_signature[(uint8_t)item->get_var(0).get_integer()] = algorithm::composition::chashsig_t(codec::hex_decode(item->get_var(1).get_blob()));
-					}
-					for (size_t i = split; i < cache->size(); i++)
-						group_signers.insert(algorithm::pubkeyhash_t(codec::hex_decode(cache->get_var(i).get_blob())));
-				}
-				else
-					group_prepared = expects_rt<warden::prepared_transaction>(remote_exception::retry());
-
-				if (!group_prepared)
-					group_prepared = coawait(resolver::prepare_transaction(algorithm::asset::base_id_of(asset), warden::wallet_link::from_owner(from_manager), transfers));
-
-				if (!group_prepared)
-				{
-					if (group_prepared.error().is_retry() || group_prepared.error().is_shutdown())
-						coreturn expects_rt<void>(group_prepared.error());
-
-					auto* transaction = memory::init<depository_withdrawal_finalization>();
-					transaction->asset = asset;
-					transaction->set_failure_witness(group_prepared.what(), context->receipt.transaction_hash);
-					dispatcher->emit_transaction(transaction);
-					coreturn expects_rt<void>(group_prepared.error());
-				}
-				else if (group_prepared->inputs.size() > std::numeric_limits<uint8_t>::max())
-				{
-					auto error = remote_exception("too many prepared inputs");
 					auto* transaction = memory::init<depository_withdrawal_finalization>();
 					transaction->asset = asset;
 					transaction->set_failure_witness(error.what(), context->receipt.transaction_hash);
 					dispatcher->emit_transaction(transaction);
-					dispatcher->store_cache(context, nullptr);
-					coreturn expects_rt<void>(std::move(error));
+					return expects_rt<void>(std::move(error));
+				};
+
+				auto cache = dispatcher->pull_cache(context);
+				auto state = ledger::dispatch_context::signature_state();
+				if (chain->requires_transaction_expiration || !state.load_message_if_preferred(cache))
+				{
+					auto message = coawait(resolver::prepare_transaction(algorithm::asset::base_id_of(asset), warden::wallet_link::from_owner(from_manager), transfers));
+					if (!message)
+						coreturn message.error().is_retry() || message.error().is_shutdown() ? expects_rt<void>(std::move(message.error())) : cancel(std::move(message.error()));
+					else if (message->inputs.size() > std::numeric_limits<uint8_t>::max())
+						coreturn cancel(remote_exception("too many prepared inputs"));
+
+					state.message = memory::init<warden::prepared_transaction>(std::move(*message));
 				}
 
-				auto group = accumulate_prepared_group(context, this, *group_prepared);
-				if (!group)
+				auto* input = state.message->next_input_for_aggregation();
+				while (input != nullptr)
 				{
-					auto error = remote_exception(std::move(group.error().message()));
-					auto* transaction = memory::init<depository_withdrawal_finalization>();
-					transaction->asset = asset;
-					transaction->set_failure_witness(error.what(), context->receipt.transaction_hash);
-					dispatcher->emit_transaction(transaction);
-					dispatcher->store_cache(context, nullptr);
-					coreturn expects_rt<void>(std::move(error));
-				}
+					auto witness = context->get_witness_account_tagged(asset, input->utxo.link.address, 0);
+					if (!witness)
+						coreturn cancel(remote_exception(std::move(witness.error().message())));
 
-				for (auto& share : group_signers)
-					group->erase(share);
+					auto account = context->get_depository_account(asset, witness->manager, witness->owner);
+					if (!account)
+						coreturn cancel(remote_exception(std::move(account.error().message())));
 
-				bool group_fully_signed = true;
-				for (auto& share : *group)
-				{
-					auto result = coawait(dispatcher->calculate_group_signature(context, share, *group_prepared, group_signature));
-					if (!result && (result.error().is_retry() || result.error().is_shutdown()))
+					auto session = coawait(dispatcher->aggregate_validators(context->receipt.transaction_hash, account->group));
+					if (!session)
+						coreturn session.error();
+
+					auto chosen = account->group.begin();
+					auto unavailable = ordered_set<algorithm::pubkeyhash_t>();
+					std::advance(chosen, (size_t)(algorithm::hashing::hash256i(input->message.data(), input->message.size()) % uint256_t(account->group.size())));
+					if (!state.aggregator)
 					{
-						group_fully_signed = false;
-						continue;
+						auto aggregator = algorithm::composition::make_signature_state(chain->composition, input->public_key, input->message.data(), input->message.size(), (uint16_t)account->group.size());
+						if (!aggregator)
+							coreturn cancel(remote_exception(std::move(aggregator.error().message())));
+
+						state.aggregator = std::move(*aggregator);
 					}
-					else if (!result)
-					{
-						auto error = std::move(result.error());
-						auto* transaction = memory::init<depository_withdrawal_finalization>();
-						transaction->asset = asset;
-						transaction->set_failure_witness(error.what(), context->receipt.transaction_hash);
-						dispatcher->emit_transaction(transaction);
-						dispatcher->store_cache(context, nullptr);
-						coreturn expects_rt<void>(std::move(error));
-					}
 
-					group_signers.insert(share);
-				}
-
-				if (group_fully_signed)
-				{
-					for (auto& [input_index, input_signature] : group_signature)
+					while (true)
 					{
-						auto& input = group_prepared->inputs[input_index];
-						auto status = algorithm::composition::accumulate_signature(input.alg, input.message.data(), input.message.size(), input.public_key, algorithm::composition::cseckey_t(), input_signature);
-						if (!status)
+						auto phase = state.aggregator->next_phase();
+						if (phase == algorithm::composition::phase::any_input_after_reset || phase == algorithm::composition::phase::chosen_input_after_reset)
+							state.participants = account->group;
+
+						bool uniform_input = phase == algorithm::composition::phase::any_input_after_reset || phase == algorithm::composition::phase::any_input;
+						bool chosen_input = phase == algorithm::composition::phase::chosen_input_after_reset || phase == algorithm::composition::phase::chosen_input;
+						auto it = (uniform_input ? state.participants.begin() : (chosen_input ? state.participants.find(*chosen) : state.participants.end()));
+						it = (!chosen_input && state.participants.size() > 1 && it != state.participants.end() && it->equals(*chosen) ? ++it : it);
+						if (it == state.participants.end())
+							break;
+
+						auto result = coawait(dispatcher->aggregate_signature_state(context, state, *it));
+						if (!result && (result.error().is_retry() || result.error().is_shutdown()))
 						{
-							auto error = remote_exception(std::move(status.error().message()));
-							auto* transaction = memory::init<depository_withdrawal_finalization>();
-							transaction->asset = asset;
-							transaction->set_failure_witness(error.what(), context->receipt.transaction_hash);
-							dispatcher->emit_transaction(transaction);
-							dispatcher->store_cache(context, nullptr);
-							coreturn expects_rt<void>(std::move(error));
+							unavailable.insert(*it);
+							if (chosen_input)
+							{
+								dispatcher->push_cache(context, state.as_message());
+								coreturn remote_exception::retry();
+							}
 						}
-						input.signature = input_signature;
+						else if (!result)
+							coreturn cancel(std::move(result.error()));
+
+						state.participants.erase(it);
 					}
 
-					auto group_finalized = coawait(resolver::finalize_and_broadcast_transaction(algorithm::asset::base_id_of(asset), context->receipt.transaction_hash, std::move(*group_prepared), dispatcher));
-					if (!group_finalized)
+					if (!unavailable.empty())
 					{
-						if (!group_finalized.error().is_retry() && !group_finalized.error().is_shutdown())
-						{
-							auto* transaction = memory::init<depository_withdrawal_finalization>();
-							transaction->asset = asset;
-							transaction->set_failure_witness(group_finalized.what(), context->receipt.transaction_hash);
-							dispatcher->emit_transaction(transaction);
-							dispatcher->store_cache(context, nullptr);
-						}
-						coreturn group_finalized.error();
-					}
-					else
-					{
-						auto* transaction = memory::init<depository_withdrawal_finalization>();
-						transaction->asset = asset;
-						transaction->set_success_witness(group_finalized->hashdata, group_finalized->calldata, context->receipt.transaction_hash);
-						dispatcher->emit_transaction(transaction);
-						dispatcher->store_cache(context, nullptr);
-						coreturn expectation::met;
-					}
-				}
-				else
-				{
-					if (chain->requires_transaction_expiration)
+						state.participants = std::move(unavailable);
+						dispatcher->push_cache(context, state.as_message());
 						coreturn remote_exception::retry();
-
-					format::wo_stream group_prepared_message;
-					group_prepared->store_payload(&group_prepared_message);
-
-					cache = var::set::array();
-					cache->push(var::string(group_prepared_message.encode()));
-					for (auto& group_share : group_signature)
-					{
-						auto* item = cache->push(var::set::array());
-						item->push(var::integer(group_share.first));
-						item->push(var::string(codec::hex_encode(group_share.second.optimized_view())));
 					}
-					for (auto& share : group_signers)
-						cache->push(var::string(codec::hex_encode(share.optimized_view())));
-					dispatcher->store_cache(context, std::move(cache));
+
+					auto finalization = state.aggregator->finalize(&input->signature);
+					if (!finalization)
+						coreturn cancel(remote_exception(std::move(finalization.error().message())));
+
+					input = state.message->next_input_for_aggregation();
+					state.aggregator.destroy();
+				}
+
+				auto finalization = coawait(resolver::finalize_and_broadcast_transaction(algorithm::asset::base_id_of(asset), context->receipt.transaction_hash, std::move(**state.message), dispatcher));
+				if (!finalization && (finalization.error().is_retry() || finalization.error().is_shutdown()))
+				{
+					dispatcher->push_cache(context, state.as_message());
 					coreturn remote_exception::retry();
 				}
+				else if (!finalization)
+					coreturn cancel(std::move(finalization.error()));
+
+				auto* transaction = memory::init<depository_withdrawal_finalization>();
+				transaction->asset = asset;
+				transaction->set_success_witness(finalization->hashdata, finalization->calldata, context->receipt.transaction_hash);
+				dispatcher->emit_transaction(transaction);
+				coreturn expectation::met;
 			});
 		}
 		bool depository_withdrawal::store_body(format::wo_stream* stream) const
@@ -2057,9 +2006,9 @@ namespace tangent
 		uptr<schema> depository_withdrawal::as_schema() const
 		{
 			schema* data = ledger::transaction::as_schema().reset();
-            data->set("from_manager", algorithm::signing::serialize_address(from_manager));
-            data->set("to_manager", algorithm::signing::serialize_address(to_manager));
-            data->set("only_if_not_in_queue", var::boolean(only_if_not_in_queue));
+			data->set("from_manager", algorithm::signing::serialize_address(from_manager));
+			data->set("to_manager", algorithm::signing::serialize_address(to_manager));
+			data->set("only_if_not_in_queue", var::boolean(only_if_not_in_queue));
 			if (!to.empty())
 			{
 				auto* to_data = data->set("to", var::set::array());
@@ -2141,7 +2090,7 @@ namespace tangent
 			if (target_output == output_value.end())
 				return layer_exception("prepared transaction inout not valid");
 
-			auto server = nss::server_node::get();
+			auto server = oracle::server_node::get();
 			auto presented_output_addresses = unordered_set<string>();
 			for (auto& output : prepared.outputs)
 			{
@@ -2189,23 +2138,6 @@ namespace tangent
 			}
 
 			return expectation::met;
-		}
-		expects_lr<ordered_set<algorithm::pubkeyhash_t>> depository_withdrawal::accumulate_prepared_group(const ledger::transaction_context* context, const depository_withdrawal* transaction, const warden::prepared_transaction& prepared)
-		{
-			ordered_set<algorithm::pubkeyhash_t> group;
-			for (auto& input : prepared.inputs)
-			{
-				auto witness = context->get_witness_account_tagged(transaction->asset, input.utxo.link.address, 0);
-				if (!witness)
-					return witness.error();
-
-				auto account = context->get_depository_account(transaction->asset, witness->manager, witness->owner);
-				if (!account)
-					return account.error();
-
-				group.insert(account->group.begin(), account->group.end());
-			}
-			return expects_lr<ordered_set<algorithm::pubkeyhash_t>>(std::move(group));
 		}
 		expects_lr<states::witness_account> depository_withdrawal::find_receiving_account(const ledger::transaction_context* context, const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& from_manager, const algorithm::pubkeyhash_t& to_manager)
 		{
@@ -2390,7 +2322,7 @@ namespace tangent
 			if (!assertion->is_mature(asset))
 				return layer_exception("transaction is not mature enough");
 
-			auto chain = nss::server_node::get()->get_chainparams(asset);
+			auto chain = oracle::server_node::get()->get_chainparams(asset);
 			if (!chain)
 				return layer_exception("invalid operation");
 
@@ -2426,7 +2358,7 @@ namespace tangent
 			if (collision)
 				return layer_exception("assertion " + assertion->transaction_id + " finalized");
 
-			auto* chain = nss::server_node::get()->get_chainparams(asset);
+			auto* chain = oracle::server_node::get()->get_chainparams(asset);
 			if (!chain)
 				return layer_exception("invalid chain");
 
@@ -2724,7 +2656,7 @@ namespace tangent
 		}
 		void depository_transaction::set_finalized_witness(uint64_t block_id, const std::string_view& transaction_id, const vector<warden::value_transfer>& inputs, const vector<warden::value_transfer>& outputs)
 		{
-			auto* chain = nss::server_node::get()->get_chainparams(asset);
+			auto* chain = oracle::server_node::get()->get_chainparams(asset);
 			warden::computed_transaction witness;
 			witness.transaction_id = transaction_id;
 			witness.block_id.execution = block_id;
@@ -2742,7 +2674,7 @@ namespace tangent
 			auto copy = witness;
 			if (copy.block_id.finalization > 0)
 			{
-				auto* chain = nss::server_node::get()->get_chainparams(asset);
+				auto* chain = oracle::server_node::get()->get_chainparams(asset);
 				if (chain != nullptr)
 					copy.block_id.finalization = copy.block_id.execution + chain->sync_latency;
 			}
@@ -2966,8 +2898,9 @@ namespace tangent
 			transaction->asset = asset;
 			transaction->depository_regrouping_hash = context->receipt.transaction_hash;
 
-			algorithm::seckey_t cipher_secret_key;
-			algorithm::signing::derive_cipher_keypair(dispatcher->get_wallet()->secret_key, transaction->depository_regrouping_hash, cipher_secret_key, transaction->cipher_public_key);
+			algorithm::seckey_t child_secret_key;
+			algorithm::signing::derive_secret_key_from_parent(dispatcher->get_wallet()->secret_key, transaction->depository_regrouping_hash, child_secret_key);
+			algorithm::signing::derive_public_key(child_secret_key, transaction->manager_public_key);
 			dispatcher->emit_transaction(transaction);
 			return expects_promise_rt<void>(expectation::met);
 		}
@@ -3067,8 +3000,8 @@ namespace tangent
 			if (!depository_regrouping_hash)
 				return layer_exception("invalid regroup transaction");
 
-			if (cipher_public_key.empty())
-				return layer_exception("invalid cipher public key");
+			if (manager_public_key.empty() || !algorithm::signing::verify_public_key(manager_public_key))
+				return layer_exception("invalid manager public key");
 
 			return ledger::consensus_transaction::validate(block_number);
 		}
@@ -3107,7 +3040,7 @@ namespace tangent
 				if (!share)
 					return expects_promise_rt<void>(remote_exception(std::move(share.error().message())));
 
-				auto status = transaction->transfer(hash, *share, cipher_public_key, old_manager->secret_key);
+				auto status = transaction->transfer(hash, *share, manager_public_key, old_manager->secret_key);
 				if (!status)
 					return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
 			}
@@ -3119,7 +3052,7 @@ namespace tangent
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer(depository_regrouping_hash);
-			stream->write_string(algorithm::pubkey_t(cipher_public_key).optimized_view());
+			stream->write_string(algorithm::pubkey_t(manager_public_key).optimized_view());
 			return true;
 		}
 		bool depository_regrouping_preparation::load_body(format::ro_stream& stream)
@@ -3127,8 +3060,8 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &depository_regrouping_hash))
 				return false;
 
-			string cipher_public_key_assembly;
-			if (!stream.read_string(stream.read_type(), &cipher_public_key_assembly) || !algorithm::encoding::decode_bytes(cipher_public_key_assembly, cipher_public_key.data, sizeof(cipher_public_key)))
+			string manager_public_key_assembly;
+			if (!stream.read_string(stream.read_type(), &manager_public_key_assembly) || !algorithm::encoding::decode_bytes(manager_public_key_assembly, manager_public_key.data, sizeof(manager_public_key)))
 				return false;
 
 			return true;
@@ -3141,7 +3074,7 @@ namespace tangent
 		{
 			schema* data = ledger::consensus_transaction::as_schema().reset();
 			data->set("depository_regrouping_hash", var::string(algorithm::encoding::encode_0xhex256(depository_regrouping_hash)));
-			data->set("cipher_public_key", var::string(format::util::encode_0xhex(cipher_public_key.optimized_view())));
+			data->set("manager_public_key", var::string(format::util::encode_0xhex(manager_public_key.optimized_view())));
 			return data;
 		}
 		uint32_t depository_regrouping_preparation::as_type() const
@@ -3226,9 +3159,8 @@ namespace tangent
 			if (!setup)
 				return expects_promise_rt<void>(remote_exception(std::move(setup.error().message())));
 
-			algorithm::seckey_t cipher_secret_key;
-			algorithm::pubkey_t cipher_public_key;
-			algorithm::signing::derive_cipher_keypair(dispatcher->get_wallet()->secret_key, preparation_transaction->depository_regrouping_hash, cipher_secret_key, cipher_public_key);
+			algorithm::seckey_t child_secret_key;
+			algorithm::signing::derive_secret_key_from_parent(dispatcher->get_wallet()->secret_key, preparation_transaction->depository_regrouping_hash, child_secret_key);
 
 			bool exchange_successful = true;
 			auto* setup_transaction = (depository_regrouping*)*setup->transaction;
@@ -3237,7 +3169,7 @@ namespace tangent
 				auto it = setup_transaction->participants.find(hash);
 				if (it != setup_transaction->participants.end())
 				{
-					auto decrypted_share = algorithm::signing::private_decrypt(cipher_secret_key, cipher_public_key, encrypted_share);
+					auto decrypted_share = algorithm::signing::private_decrypt(child_secret_key, encrypted_share);
 					if (decrypted_share && decrypted_share->size() == sizeof(uint256_t))
 					{
 						uint256_t share;
@@ -3258,7 +3190,7 @@ namespace tangent
 			dispatcher->emit_transaction(transaction);
 			return expects_promise_rt<void>(expectation::met);
 		}
-		expects_lr<void> depository_regrouping_commitment::transfer(const uint256_t& account_hash, const uint256_t& share, const algorithm::pubkey_t& new_manager_cipher_public_key, const algorithm::seckey_t& old_manager_secret_key)
+		expects_lr<void> depository_regrouping_commitment::transfer(const uint256_t& account_hash, const uint256_t& share, const algorithm::pubkey_t& new_manager_public_key, const algorithm::seckey_t& old_manager_secret_key)
 		{
 			format::wo_stream entropy;
 			entropy.write_integer(depository_regrouping_preparation_hash);
@@ -3266,7 +3198,7 @@ namespace tangent
 
 			uint8_t share_data[32];
 			share.encode(share_data);
-			auto encrypted_share = algorithm::signing::public_encrypt(new_manager_cipher_public_key, std::string_view((char*)share_data, sizeof(share_data)), entropy.data);
+			auto encrypted_share = algorithm::signing::public_encrypt(new_manager_public_key, std::string_view((char*)share_data, sizeof(share_data)), entropy.hash());
 			if (!encrypted_share)
 				return layer_exception("failed to encrypt a share");
 
@@ -3539,7 +3471,7 @@ namespace tangent
 		}
 		expects_promise_rt<warden::prepared_transaction> resolver::prepare_transaction(const algorithm::asset_id& asset, const warden::wallet_link& from_link, const vector<warden::value_transfer>& to, option<warden::computed_fee>&& fee)
 		{
-			auto* server = nss::server_node::get();
+			auto* server = oracle::server_node::get();
 			if (!protocol::now().is(network_type::regtest) || server->has_support(asset))
 				return server->prepare_transaction(asset, from_link, to, std::move(fee));
 
@@ -3573,7 +3505,7 @@ namespace tangent
 			message.hash().encode(message_hash);
 
 			warden::prepared_transaction regtest_prepared;
-			regtest_prepared.requires_account_input(chain->composition, std::move(*from), public_key->data, message_hash, sizeof(message_hash), std::move(transfers));
+			regtest_prepared.requires_account_input(chain->composition, std::move(*from), *public_key, message_hash, sizeof(message_hash), std::move(transfers));
 			for (auto& transfer : to)
 				regtest_prepared.requires_account_output(transfer.address, { { transfer.asset, transfer.value } });
 
@@ -3581,7 +3513,7 @@ namespace tangent
 		}
 		expects_promise_rt<warden::finalized_transaction> resolver::finalize_and_broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, warden::prepared_transaction&& prepared, ledger::dispatch_context* dispatcher)
 		{
-			auto* server = nss::server_node::get();
+			auto* server = oracle::server_node::get();
 			if (!protocol::now().is(network_type::regtest) || server->has_support(asset))
 			{
 				auto finalization = server->finalize_transaction(asset, std::move(prepared));

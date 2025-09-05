@@ -1,5 +1,5 @@
 #include "warden.h"
-#include "../validator/service/nss.h"
+#include "../validator/service/oracle.h"
 #include <sstream>
 
 namespace tangent
@@ -483,7 +483,7 @@ namespace tangent
 		}
 		bool computed_transaction::is_mature(const algorithm::asset_id& asset) const
 		{
-			auto* server = nss::server_node::get();
+			auto* server = oracle::server_node::get();
 			auto* chain = server->get_chain(asset);
 			if (!chain || block_id.finalization < block_id.execution)
 				return false;
@@ -572,8 +572,8 @@ namespace tangent
 			for (auto& item : inputs)
 			{
 				stream->write_integer((uint8_t)item.alg);
-				stream->write_string(std::string_view((char*)item.public_key.data, item.public_key.empty() ? 0 : algorithm::composition::size_of_public_key(item.alg)));
-				stream->write_string(std::string_view((char*)item.signature.data, item.signature.empty() ? 0 : algorithm::composition::size_of_signature(item.alg)));
+				stream->write_string(std::string_view((char*)item.public_key.data(), item.public_key.size()));
+				stream->write_string(std::string_view((char*)item.signature.data(), item.signature.size()));
 				stream->write_string(std::string_view((char*)item.message.data(), item.message.size()));
 				if (!item.utxo.store_payload(stream))
 					return false;
@@ -603,11 +603,11 @@ namespace tangent
 					return false;
 
 				string public_key_assembly;
-				if (!stream.read_string(stream.read_type(), &public_key_assembly) || !algorithm::encoding::decode_bytes(public_key_assembly, next.public_key.data, algorithm::composition::size_of_public_key(next.alg)))
+				if (!stream.read_string(stream.read_type(), &public_key_assembly) || !algorithm::encoding::decode_bytes(public_key_assembly, next.public_key.data(), next.public_key.size()))
 					return false;
 
 				string signature_assembly;
-				if (!stream.read_string(stream.read_type(), &signature_assembly) || !algorithm::encoding::decode_bytes(signature_assembly, next.signature.data, algorithm::composition::size_of_signature(next.alg)))
+				if (!stream.read_string(stream.read_type(), &signature_assembly) || !algorithm::encoding::decode_bytes(signature_assembly, next.signature.data(), next.signature.size()))
 					return false;
 
 				string message_assembly;
@@ -640,13 +640,14 @@ namespace tangent
 			abi.clear();
 			return format::variables_util::deserialize_merge_from(stream, &abi);
 		}
-		bool prepared_transaction::is_accumulation_required(size_t input_index) const
+		prepared_transaction::signable_coin_utxo* prepared_transaction::next_input_for_aggregation()
 		{
-			VI_ASSERT(input_index < inputs.size(), "input index outside of range");
-			auto& item = inputs[input_index];
-			size_t intermediate_size = algorithm::composition::size_of_signature(item.alg, algorithm::composition::stage::accumulate);
-			size_t final_size = algorithm::composition::size_of_signature(item.alg);
-			return item.signature.empty() || algorithm::composition::chashsig_t(item.signature.data + intermediate_size, final_size - intermediate_size).empty();
+			for (auto& item : inputs)
+			{
+				if (item.signature.empty())
+					return &item;
+			}
+			return nullptr;
 		}
 		prepared_transaction::status prepared_transaction::as_status() const
 		{
@@ -665,9 +666,9 @@ namespace tangent
 					return status::invalid;
 			}
 
-			for (size_t i = 0; i < inputs.size(); i++)
+			for (auto& item : inputs)
 			{
-				if (is_accumulation_required(i))
+				if (item.signature.empty())
 					return status::requires_signature;
 			}
 
@@ -703,23 +704,23 @@ namespace tangent
 					case algorithm::composition::type::ed25519:
 						signer->set("type", var::string("ed25519"));
 						break;
+					case algorithm::composition::type::ed25519_clsag:
+						signer->set("type", var::string("ed25519_clsag"));
+						break;
 					case algorithm::composition::type::secp256k1:
 						signer->set("type", var::string("secp256k1"));
 						break;
-					case algorithm::composition::type::schnorr:
-						signer->set("type", var::string("schnorr"));
-						break;
-					case algorithm::composition::type::schnorr_taproot:
-						signer->set("type", var::string("schnorr_taproot"));
+					case algorithm::composition::type::secp256k1_schnorr:
+						signer->set("type", var::string("secp256k1_schnorr"));
 						break;
 					default:
 						signer->set("type", var::null());
 						break;
 				}
-				signer->set("public_key", input.public_key.empty() ? var::null() : var::string(format::util::encode_0xhex(std::string_view((char*)input.public_key.data, algorithm::composition::size_of_public_key(input.alg)))));
-				signer->set("signature", input.signature.empty() ? var::null() : var::string(format::util::encode_0xhex(std::string_view((char*)input.signature.data, algorithm::composition::size_of_signature(input.alg)))));
+				signer->set("public_key", input.public_key.empty() ? var::null() : var::string(format::util::encode_0xhex(std::string_view((char*)input.public_key.data(), input.public_key.size()))));
+				signer->set("signature", input.signature.empty() ? var::null() : var::string(format::util::encode_0xhex(std::string_view((char*)input.signature.data(), input.signature.size()))));
 				signer->set("message", var::string(format::util::encode_0xhex(std::string_view((char*)input.message.data(), input.message.size()))));
-				signer->set("finalized", var::boolean(!is_accumulation_required(input_data->size() - 1)));
+				signer->set("finalized", var::boolean(!input.signature.empty()));
 			}
 			schema* output_data = data->set("outputs", var::array());
 			for (auto& output : outputs)
@@ -930,7 +931,7 @@ namespace tangent
 		}
 		bool chain_supervisor_options::is_cancelled(const algorithm::asset_id& asset)
 		{
-			auto* nodes = nss::server_node::get()->get_nodes(asset);
+			auto* nodes = oracle::server_node::get()->get_nodes(asset);
 			if (!nodes || nodes->empty())
 				return true;
 
@@ -1077,7 +1078,7 @@ namespace tangent
 			if (path.empty() && body.empty())
 				cache = cache_policy::no_cache;
 
-			auto* server = nss::server_node::get();
+			auto* server = oracle::server_node::get();
 			string message = string(path).append(body);
 			string hash = codec::hex_encode(algorithm::hashing::hash256((uint8_t*)message.data(), message.size()));
 			if (cache != cache_policy::no_cache && cache != cache_policy::no_cache_no_throttling)
@@ -1094,7 +1095,7 @@ namespace tangent
 				const double limit = 1000.0 / rps;
 				const uint64_t cooldown = (uint64_t)(limit - timeout);
 				uint64_t retry_timeout = cooldown;
-				if (timeout < limit && !coawait(yield_for_cooldown(retry_timeout, protocol::now().user.nss.relaying_timeout)))
+				if (timeout < limit && !coawait(yield_for_cooldown(retry_timeout, protocol::now().user.oracle.relaying_timeout)))
 					coreturn expects_rt<schema*>(remote_exception::retry());
 				else if (!allowed)
 					coreturn expects_rt<schema*>(remote_exception::shutdown());
@@ -1104,10 +1105,10 @@ namespace tangent
 			http::fetch_frame setup;
 			setup.max_size = 16 * 1024 * 1024;
 			setup.verify_peers = (uint32_t)protocol::now().user.tcp.tls_trusted_peers;
-			setup.timeout = protocol::now().user.nss.relaying_timeout;
+			setup.timeout = protocol::now().user.oracle.relaying_timeout;
 
 			uint64_t retry_responses = 0;
-			uint64_t retry_timeout = protocol::now().user.nss.relaying_retry_timeout;
+			uint64_t retry_timeout = protocol::now().user.oracle.relaying_retry_timeout;
 			if (!body.empty())
 			{
 				setup.set_header("Content-Type", type);
@@ -1190,7 +1191,7 @@ namespace tangent
 		}
 		expects_lr<void> server_relay::verify_compatibility(const algorithm::asset_id& asset)
 		{
-			auto* implementation = nss::server_node::get()->get_chain(asset);
+			auto* implementation = oracle::server_node::get()->get_chain(asset);
 			if (!implementation)
 				return expectation::met;
 
@@ -1315,7 +1316,7 @@ namespace tangent
 		}
 		expects_promise_rt<schema*> relay_backend::execute_rpc(const std::string_view& method, schema_list&& args, cache_policy cache, const std::string_view& path)
 		{
-			auto* nodes = nss::server_node::get()->get_nodes(native_asset);
+			auto* nodes = oracle::server_node::get()->get_nodes(native_asset);
 			if (!nodes || nodes->empty())
 				coreturn expects_rt<schema*>(remote_exception("node not found"));
 
@@ -1335,7 +1336,7 @@ namespace tangent
 		}
 		expects_promise_rt<schema*> relay_backend::execute_rpc3(const std::string_view& method, schema_args&& args, cache_policy cache, const std::string_view& path)
 		{
-			auto* nodes = nss::server_node::get()->get_nodes(native_asset);
+			auto* nodes = oracle::server_node::get()->get_nodes(native_asset);
 			if (!nodes || nodes->empty())
 				coreturn expects_rt<schema*>(remote_exception("node not found"));
 
@@ -1356,7 +1357,7 @@ namespace tangent
 		expects_promise_rt<schema*> relay_backend::execute_rest(const std::string_view& method, const std::string_view& path, schema* args, cache_policy cache)
 		{
 			uptr<schema> body = args;
-			auto* nodes = nss::server_node::get()->get_nodes(native_asset);
+			auto* nodes = oracle::server_node::get()->get_nodes(native_asset);
 			if (!nodes || nodes->empty())
 				coreturn expects_rt<schema*>(remote_exception("node not found"));
 
@@ -1376,7 +1377,7 @@ namespace tangent
 		}
 		expects_promise_rt<schema*> relay_backend::execute_http(const std::string_view& method, const std::string_view& path, const std::string_view& type, const std::string_view& body, cache_policy cache)
 		{
-			auto* nodes = nss::server_node::get()->get_nodes(native_asset);
+			auto* nodes = oracle::server_node::get()->get_nodes(native_asset);
 			if (!nodes || nodes->empty())
 				coreturn expects_rt<schema*>(remote_exception("node not found"));
 
@@ -1400,14 +1401,14 @@ namespace tangent
 			if (!result)
 				return result.error();
 
-			return expects_lr<algorithm::composition::cpubkey_t>(algorithm::composition::cpubkey_t(*result));
+			return expects_lr<algorithm::composition::cpubkey_t>(algorithm::composition::to_cstorage<algorithm::composition::cpubkey_t>(*result));
 		}
 		expects_lr<ordered_map<string, wallet_link>> relay_backend::find_linked_addresses(const unordered_set<string>& addresses)
 		{
 			if (addresses.empty())
 				return expects_lr<ordered_map<string, wallet_link>>(layer_exception("no addresses supplied"));
 
-			auto* server = nss::server_node::get();
+			auto* server = oracle::server_node::get();
 			auto* implementation = server->get_chain(native_asset);
 			if (!implementation)
 				return expects_lr<ordered_map<string, wallet_link>>(layer_exception("chain not found"));
@@ -1421,7 +1422,7 @@ namespace tangent
 		}
 		expects_lr<ordered_map<string, wallet_link>> relay_backend::find_linked_addresses(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count)
 		{
-			auto* server = nss::server_node::get();
+			auto* server = oracle::server_node::get();
 			auto* implementation = server->get_chain(native_asset);
 			if (!implementation)
 				return expects_lr<ordered_map<string, wallet_link>>(layer_exception("chain not found"));
@@ -1491,7 +1492,7 @@ namespace tangent
 			if (!outputs)
 				return expects_promise_rt<decimal>(std::move(balance));
 
-			auto contract_address = nss::server_node::get()->get_contract_address(for_asset);
+			auto contract_address = oracle::server_node::get()->get_contract_address(for_asset);
 			if (contract_address)
 			{
 				for (auto& output : *outputs)
@@ -1513,7 +1514,7 @@ namespace tangent
 		{
 			vector<coin_utxo> values;
 			decimal current_value = decimal::zero();
-			auto* server = nss::server_node::get();
+			auto* server = oracle::server_node::get();
 			auto continue_accumulation = [&]()
 			{
 				if (!query)
@@ -1566,7 +1567,7 @@ namespace tangent
 		}
 		expects_lr<coin_utxo> relay_backend_utxo::get_utxo(const std::string_view& transaction_id, uint64_t index)
 		{
-			return nss::server_node::get()->get_utxo(native_asset, transaction_id, index);
+			return oracle::server_node::get()->get_utxo(native_asset, transaction_id, index);
 		}
 		expects_lr<void> relay_backend_utxo::update_utxo(const prepared_transaction& prepared)
 		{
@@ -1605,7 +1606,7 @@ namespace tangent
 			if (output.transaction_id.empty() || output.index == std::numeric_limits<uint64_t>::max())
 				return expects_lr<void>(layer_exception("output must have a transaction id"));
 
-			auto* server = nss::server_node::get();
+			auto* server = oracle::server_node::get();
 			auto* implementation = server->get_chain(native_asset);
 			if (!implementation)
 				return expects_lr<void>(layer_exception("chain not found"));
@@ -1650,14 +1651,14 @@ namespace tangent
 			if (transaction_id.empty() || index == std::numeric_limits<uint64_t>::max())
 				return expects_lr<void>(layer_exception("output must have a transaction id"));
 
-			return nss::server_node::get()->remove_utxo(native_asset, transaction_id, index);
+			return oracle::server_node::get()->remove_utxo(native_asset, transaction_id, index);
 		}
 		decimal relay_backend_utxo::get_utxo_value(const vector<coin_utxo>& values, option<string>&& contract_address)
 		{
 			decimal value = 0.0;
 			if (contract_address)
 			{
-				auto* server = nss::server_node::get();
+				auto* server = oracle::server_node::get();
 				auto* implementation = server->get_chain(native_asset);
 				if (!implementation)
 					return value;
@@ -1672,7 +1673,7 @@ namespace tangent
 
 				for (auto& item : values)
 				{
-					auto* server = nss::server_node::get();
+					auto* server = oracle::server_node::get();
 					auto* implementation = server->get_chain(native_asset);
 					for (auto& token : item.tokens)
 					{

@@ -196,7 +196,6 @@ namespace tangent
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
 			static expects_lr<void> validate_prepared_transaction(const ledger::transaction_context* context, const depository_withdrawal* transaction, const warden::prepared_transaction& prepared);
-			static expects_lr<ordered_set<algorithm::pubkeyhash_t>> accumulate_prepared_group(const ledger::transaction_context* context, const depository_withdrawal* transaction, const warden::prepared_transaction& prepared);
 			static expects_lr<states::witness_account> find_receiving_account(const ledger::transaction_context* context, const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& from_manager, const algorithm::pubkeyhash_t& to_manager);
 		};
 
@@ -322,7 +321,7 @@ namespace tangent
 
 		struct depository_regrouping_preparation final : ledger::consensus_transaction
 		{
-			algorithm::pubkey_t cipher_public_key;
+			algorithm::pubkey_t manager_public_key;
 			uint256_t depository_regrouping_hash = 0;
 
 			expects_lr<void> validate(uint64_t block_number) const override;
@@ -346,7 +345,7 @@ namespace tangent
 			expects_lr<void> validate(uint64_t block_number) const override;
 			expects_lr<void> execute(ledger::transaction_context* context) const override;
 			expects_promise_rt<void> dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const override;
-			expects_lr<void> transfer(const uint256_t& account_hash, const uint256_t& share, const algorithm::pubkey_t& new_manager_cipher_public_key, const algorithm::seckey_t& old_manager_secret_key);
+			expects_lr<void> transfer(const uint256_t& account_hash, const uint256_t& share, const algorithm::pubkey_t& new_manager_public_key, const algorithm::seckey_t& old_manager_secret_key);
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
 			bool is_dispatchable() const override;

@@ -26,8 +26,9 @@ namespace tangent
 			bool has_secret_key() const;
 			bool has_public_key() const;
 			bool has_public_key_hash() const;
-			option<string> seal_message(const std::string_view& plaintext, const algorithm::pubkey_t& cipher_public_key, const std::string_view& entropy) const;
-			option<string> open_message(const uint256_t& nonce, const std::string_view& ciphertext) const;
+			option<string> seal_message(const std::string_view& plaintext, const algorithm::pubkey_t& recipient_public_key, const uint256_t& entropy) const;
+			option<string> open_message(const std::string_view& ciphertext) const;
+			option<string> open_message(const std::string_view& ciphertext, const uint256_t& entropy) const;
 			string get_secret_key() const;
 			string get_public_key() const;
 			string get_address() const;
@@ -40,12 +41,13 @@ namespace tangent
 			static std::string_view as_instance_typename();
 			static wallet from_mnemonic(const std::string_view& mnemonic);
 			static wallet from_seed(const std::string_view& seed = std::string_view());
+			static wallet from_entropy(const uint256_t& entropy);
 			static wallet from_secret_key(const algorithm::seckey_t& key);
 			static wallet from_public_key(const algorithm::pubkey_t& key);
 			static wallet from_public_key_hash(const algorithm::pubkeyhash_t& key);
 		};
 
-		struct validator final : messages::uniform
+		struct node final : messages::uniform
 		{
 			struct
 			{
@@ -57,8 +59,8 @@ namespace tangent
 
 			struct
 			{
-				uint16_t p2p = 0;
-				uint16_t nds = 0;
+				uint16_t consensus = 0;
+				uint16_t discovery = 0;
 				uint16_t rpc = 0;
 			} ports;
 
@@ -66,13 +68,13 @@ namespace tangent
 			{
 				bool has_consensus = false;
 				bool has_discovery = false;
-				bool has_interfaces = false;
-				bool has_synchronization = false;
+				bool has_oracle = false;
+				bool has_rpc = false;
+				bool has_rpc_public_access = false;
+				bool has_rpc_web_sockets = false;
 				bool has_production = false;
 				bool has_participation = false;
 				bool has_attestation = false;
-				bool has_querying = false;
-				bool has_streaming = false;
 			} services;
 
 			socket_address address;

@@ -1,7 +1,7 @@
 #include "states.h"
 #include "../kernel/block.h"
 #include "../kernel/svm.h"
-#include "../validator/service/nss.h"
+#include "../validator/service/oracle.h"
 
 namespace tangent
 {
@@ -1533,7 +1533,7 @@ namespace tangent
 		bool depository_account::store_data(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_string(public_key.optimized_view());
+			stream->write_string(std::string_view((char*)public_key.data(), public_key.size()));
 			stream->write_integer((uint8_t)group.size());
 			for (auto& item : group)
 				stream->write_string(item.optimized_view());
@@ -1542,7 +1542,7 @@ namespace tangent
 		bool depository_account::load_data(format::ro_stream& stream)
 		{
 			string public_key_assembly;
-			if (!stream.read_string(stream.read_type(), &public_key_assembly) || !algorithm::encoding::decode_bytes(public_key_assembly, public_key.data, sizeof(public_key)))
+			if (!stream.read_string(stream.read_type(), &public_key_assembly))
 				return false;
 
 			uint8_t group_size;
@@ -1560,6 +1560,8 @@ namespace tangent
 				group.insert(group_hash);
 			}
 
+			public_key.resize(public_key_assembly.size());
+			memcpy(public_key.data(), public_key_assembly.data(), public_key_assembly.size());
 			return true;
 		}
 		void depository_account::set_group(const algorithm::composition::cpubkey_t& new_public_key, ordered_set<algorithm::pubkeyhash_t>&& new_group)
@@ -1569,13 +1571,12 @@ namespace tangent
 		}
 		uptr<schema> depository_account::as_schema() const
 		{
-			auto* chain = nss::server_node::get()->get_chainparams(asset);
-			auto public_key_size = chain ? algorithm::composition::size_of_public_key(chain->composition) : sizeof(public_key);
+			auto* chain = oracle::server_node::get()->get_chainparams(asset);
 			schema* data = ledger::multiform::as_schema().reset();
 			data->set("owner", algorithm::signing::serialize_address(owner));
 			data->set("manager", algorithm::signing::serialize_address(manager));
 			data->set("asset", algorithm::asset::serialize(asset));
-			data->set("public_key", public_key.empty() ? var::null() : var::string(format::util::encode_0xhex(std::string_view((char*)public_key.data, public_key_size))));
+			data->set("public_key", public_key.empty() ? var::null() : var::string(format::util::encode_0xhex(std::string_view((char*)public_key.data(), public_key.size()))));
 			auto* group_data = data->set("group", var::array());
 			for (auto& item : group)
 				group_data->push(item.empty() ? var::set::null() : algorithm::signing::serialize_address(item.data));
@@ -1830,7 +1831,7 @@ namespace tangent
 		bool witness_account::store_row(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			auto location = addresses.empty() ? string() : nss::server_node::get()->decode_address(asset, addresses.begin()->second).or_else(string(addresses.begin()->second));
+			auto location = addresses.empty() ? string() : oracle::server_node::get()->decode_address(asset, addresses.begin()->second).or_else(string(addresses.begin()->second));
 			stream->write_integer(asset);
 			stream->write_string(location);
 			return true;
@@ -1849,7 +1850,7 @@ namespace tangent
 		bool witness_account::store_data(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			auto* server = nss::server_node::get();
+			auto* server = oracle::server_node::get();
 			stream->write_boolean(active);
 			stream->write_string(manager.optimized_view());
 			stream->write_integer((uint8_t)addresses.size());
@@ -1874,7 +1875,7 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &addresses_size))
 				return false;
 
-			auto* server = nss::server_node::get();
+			auto* server = oracle::server_node::get();
 			addresses.clear();
 			for (uint8_t i = 0; i < addresses_size; i++)
 			{

@@ -1,5 +1,5 @@
 #include "ethereum.h"
-#include "../service/nss.h"
+#include "../service/oracle.h"
 #include "../internal/libbitcoin/bip32.h"
 #include "../internal/libbitcoin/tool.h"
 #include "../internal/libbitcoin/utils.h"
@@ -560,7 +560,7 @@ namespace tangent
 							auto& token_input = inputs[from][token_asset], token_output = outputs[to][token_asset];
 							token_input = token_input.is_nan() ? token_value : (token_input + token_value);
 							token_output = token_output.is_nan() ? token_value : (token_output + token_value);
-							nss::server_node::get()->enable_contract_address(token_asset, contract_address);
+							oracle::server_node::get()->enable_contract_address(token_asset, contract_address);
 						}
 					}
 				}
@@ -631,7 +631,7 @@ namespace tangent
 				params->set("gasPrice", var::string(gas_price_estimate->value.get_blob()));
 				params->set("from", var::string(decode_non_eth_address(from_address)));
 
-				auto contract_address = nss::server_node::get()->get_contract_address(output.asset);
+				auto contract_address = oracle::server_node::get()->get_contract_address(output.asset);
 				decimal divisibility = netdata.divisibility;
 				if (contract_address)
 				{
@@ -680,7 +680,7 @@ namespace tangent
 			}
 			expects_promise_rt<decimal> ethereum::calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link)
 			{
-				auto contract_address = nss::server_node::get()->get_contract_address(for_asset);
+				auto contract_address = oracle::server_node::get()->get_contract_address(for_asset);
 				decimal divisibility = netdata.divisibility;
 				if (contract_address)
 				{
@@ -742,7 +742,7 @@ namespace tangent
 					coreturn expects_rt<prepared_transaction>(std::move(chain_id.error()));
 
 				auto& output = to.front();
-				auto contract_address = nss::server_node::get()->get_contract_address(output.asset);
+				auto contract_address = oracle::server_node::get()->get_contract_address(output.asset);
 				decimal fee_value = fee.get_max_fee();
 				decimal total_value = output.value;
 				if (contract_address)
@@ -796,9 +796,9 @@ namespace tangent
 				auto hash = transaction.hash(transaction.serialize(type));
 				prepared_transaction result;
 				if (contract_address)
-					result.requires_account_input(algorithm::composition::type::secp256k1, wallet_link(from_link), public_key->data, (uint8_t*)hash.data(), hash.size(), { { output.asset, output.value }, { native_asset, fee_value } });
+					result.requires_account_input(algorithm::composition::type::secp256k1, wallet_link(from_link), *public_key, (uint8_t*)hash.data(), hash.size(), { { output.asset, output.value }, { native_asset, fee_value } });
 				else
-					result.requires_account_input(algorithm::composition::type::secp256k1, wallet_link(from_link), public_key->data, (uint8_t*)hash.data(), hash.size(), { { native_asset, output.value + fee_value } });
+					result.requires_account_input(algorithm::composition::type::secp256k1, wallet_link(from_link), *public_key, (uint8_t*)hash.data(), hash.size(), { { native_asset, output.value + fee_value } });
 				result.requires_account_output(output.address, { { output.asset, output.value } });
 				result.requires_abi(format::variable(!!legacy.eip_155));
 				result.requires_abi(format::variable(contract_address.or_else(string())));
@@ -849,7 +849,7 @@ namespace tangent
 				if (input.message.size() != hash.size() || memcmp(input.message.data(), hash.data(), hash.size()) != 0)
 					return layer_exception("invalid input message");
 
-				auto info = transaction.serialize_and_presign(type, input.signature.data);
+				auto info = transaction.serialize_and_presign(type, input.signature.data());
 				auto result = finalized_transaction(std::move(prepared), encode_0xhex(info.data), encode_0xhex(info.id));
 				if (!result.is_valid())
 					return layer_exception("tx serialization error");
@@ -882,6 +882,8 @@ namespace tangent
 			{
 				if (public_key.size() == BTC_ECKEY_UNCOMPRESSED_LENGTH)
 					return format::util::encode_0xhex(public_key.substr(1));
+				else if (public_key.size() == BTC_ECKEY_UNCOMPRESSED_LENGTH - 1)
+					return format::util::encode_0xhex(public_key);
 				else if (public_key.size() == BTC_ECKEY_UNCOMPRESSED_LENGTH - 1)
 					return format::util::encode_0xhex(public_key);
 				else if (public_key.size() != BTC_ECKEY_COMPRESSED_LENGTH)
@@ -948,14 +950,15 @@ namespace tangent
 						return layer_exception("bad public key");
 
 					auto result = algorithm::composition::cpubkey_t();
-					size_t result_size = sizeof(result);
-					if (secp256k1_ec_pubkey_serialize(context, result.data, &result_size, &result_public_key, SECP256K1_EC_COMPRESSED) != 1)
+					result.resize(BTC_ECKEY_COMPRESSED_LENGTH);
+					size_t result_size = result.size();
+					if (secp256k1_ec_pubkey_serialize(context, result.data(), &result_size, &result_public_key, SECP256K1_EC_COMPRESSED) != 1)
 						return layer_exception("bad public key");
 
 					return expects_lr<algorithm::composition::cpubkey_t>(result);
 				}
 				else if (input->size() == BTC_ECKEY_COMPRESSED_LENGTH)
-					return expects_lr<algorithm::composition::cpubkey_t>(algorithm::composition::cpubkey_t(*input));
+					return expects_lr<algorithm::composition::cpubkey_t>(algorithm::composition::to_cstorage<algorithm::composition::cpubkey_t>(*input));
 
 				return layer_exception("bad public key");
 			}

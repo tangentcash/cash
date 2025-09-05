@@ -1,6 +1,6 @@
 #include "rpc.h"
-#include "p2p.h"
-#include "nss.h"
+#include "consensus.h"
+#include "oracle.h"
 #include "../../kernel/svm.h"
 #include "../../policy/transactions.h"
 #include "../storage/mempoolstate.h"
@@ -215,7 +215,7 @@ namespace tangent
 				auto* params = request->get("params");
 				string method = request->get_var("method").get_blob();
 				string id = request->get_var("id").get_blob();
-				VI_INFO("peer %s call %s: %s (params: %" PRIu64 ", time: %" PRId64 " ms)",
+				VI_INFO("rpc %s call %s: %s (params: %" PRIu64 ", time: %" PRId64 " ms)",
 					base->get_peer_ip_address().or_else("[bad_address]").c_str(),
 					method.empty() ? "[bad_method]" : method.c_str(),
 					response.error_message.empty() ? (response.data ? (response.data->value.is_object() ? stringify::text("%" PRIu64 " rows", (uint64_t)response.data->size()).c_str() : "[value]") : "[null]") : response.error_message.c_str(),
@@ -274,14 +274,14 @@ namespace tangent
 			return response;
 		}
 
-		server_node::server_node(p2p::server_node* new_validator) noexcept : control_sys("rpc-node"), node(new http::server()), validator(new_validator)
+		server_node::server_node(consensus::server_node* new_consensus_service) noexcept : control_sys("rpc-node"), node(new http::server()), consensus_service(new_consensus_service)
 		{
-			if (validator != nullptr)
-				validator->add_ref();
+			if (consensus_service)
+				consensus_service->add_ref();
 		}
 		server_node::~server_node() noexcept
 		{
-			memory::release(validator);
+			memory::release(consensus_service);
 		}
 		void server_node::startup()
 		{
@@ -298,7 +298,7 @@ namespace tangent
 			router->base->callbacks.headers = std::bind(&server_node::headers, this, std::placeholders::_1, std::placeholders::_2);
 			router->base->callbacks.options = std::bind(&server_node::options, this, std::placeholders::_1);
 			router->base->auth.type = "Basic";
-			router->base->auth.realm = "rpc.tan";
+			router->base->auth.realm = "rpc.tangent.cash";
 			router->temporary_directory.clear();
 			if (protocol::now().user.rpc.web_sockets)
 			{
@@ -310,18 +310,14 @@ namespace tangent
 
 			node->configure(router).expect("configuration error");
 			node->listen().expect("listen queue error");
-			if (validator != nullptr)
+			if (consensus_service && protocol::now().user.rpc.web_sockets)
 			{
-				validator->add_ref();
-				if (protocol::now().user.rpc.web_sockets)
-				{
-					validator->events.accept_block = std::bind(&server_node::dispatch_accept_block, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3);
-					validator->events.accept_transaction = std::bind(&server_node::dispatch_accept_transaction, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3);
-				}
+				consensus_service->events.accept_block = std::bind(&server_node::dispatch_accept_block, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3);
+				consensus_service->events.accept_transaction = std::bind(&server_node::dispatch_accept_transaction, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3);
 			}
 
-			if (protocol::now().user.p2p.logging)
-				VI_INFO("rpc node listen (location: %s:%i)", protocol::now().user.rpc.address.c_str(), (int)protocol::now().user.rpc.port);
+			if (protocol::now().user.consensus.logging)
+				VI_INFO("OK rpc node listen (location: %s:%i)", protocol::now().user.rpc.address.c_str(), (int)protocol::now().user.rpc.port);
 
 			bind(0, "websocket", "subscribe", 1, 3, "string addresses, bool? blocks, bool? transactions", "uint64", "subscribe to streams of incoming blocks and transactions optionally include blocks and transactions relevant to comma separated address list", std::bind(&server_node::web_socket_subscribe, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0, "websocket", "unsubscribe", 1, 1, "", "void", "unsubscribe from all streams", std::bind(&server_node::web_socket_unsubscribe, this, std::placeholders::_1, std::placeholders::_2));
@@ -408,7 +404,7 @@ namespace tangent
 			bind(0 | access_type::r, "mempoolstate", "getclosestnode", 0, 1, "uint64? offset", "validator", "get closest node info", std::bind(&server_node::mempoolstate_get_closest_node, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getclosestnodecount", 0, 0, "", "uint64", "get closest node count", std::bind(&server_node::mempoolstate_get_closest_node_counter, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getnode", 1, 1, "string uri_address", "validator", "get associated node info by ip address", std::bind(&server_node::mempoolstate_get_node, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "mempoolstate", "getaddresses", 2, 3, "uint64 offset, uint64 count, string? services = 'consensus' | 'discovery' | 'synchronization' | 'interface' | 'production' | 'participation' | 'attestation' | 'querying' | 'streaming'", "string[]", "get best node ip addresses with optional comma separated list of services", std::bind(&server_node::mempoolstate_get_addresses, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "mempoolstate", "getaddresses", 2, 3, "uint64 offset, uint64 count, string? services = 'consensus' | 'discovery' | 'oracle' | 'rpc' | 'rpc_public_access' | 'rpc_web_sockets' | 'production' | 'participation' | 'attestation'", "string[]", "get best node ip addresses with optional comma separated list of services", std::bind(&server_node::mempoolstate_get_addresses, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getgasprice", 1, 3, "string asset, double? percentile = 0.5, bool? mempool_only", "decimal", "get gas price from percentile of pending transactions", std::bind(&server_node::mempoolstate_get_gas_price, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getassetprice", 2, 3, "string asset_from, string asset_to, double? percentile = 0.5", "decimal", "get gas asset from percentile of pending transactions", std::bind(&server_node::mempoolstate_get_asset_price, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getoptimaltransactiongas", 1, 1, "string message_hex", "uint256", "execute transaction with block gas limit and return ceil of spent gas", std::bind(&server_node::mempoolstate_get_optimal_transaction_gas, this, std::placeholders::_1, std::placeholders::_2));
@@ -433,7 +429,7 @@ namespace tangent
 			bind(access_type::w | access_type::a, "validatorstate", "prune", 2, 2, "string types = 'state' | 'blocktrie' | 'transactiontrie', uint64 number", "void", "prune chainstate data using pruning level (types is '|' separated list)", std::bind(&server_node::validatorstate_prune, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "validatorstate", "revert", 1, 2, "uint64 number, bool? keep_reverted_transactions", "{ new_tip_block_number: uint64, old_tip_block_number: uint64, mempool_transactions: uint64, block_delta: int64, transaction_delta: int64, state_delta: int64, is_fork: bool }", "revert chainstate to block number and possibly send removed transactions to mempool", std::bind(&server_node::validatorstate_revert, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "validatorstate", "reorganize", 0, 0, "", "{ new_tip_block_number: uint64, old_tip_block_number: uint64, mempool_transactions: uint64, block_delta: int64, transaction_delta: int64, state_delta: int64, is_fork: bool }", "reorganize current chain which re-executes every saved block from genesis to tip and re-calculates the final chain state (helpful for corrupted state recovery or pruning checkpoint size change without re-downloading full block history)", std::bind(&server_node::validatorstate_reorganize, this, std::placeholders::_1, std::placeholders::_2));
-			bind(access_type::w | access_type::a, "validatorstate", "acceptnode", 0, 1, "string? uri_address", "void", "try to accept and connect to a node possibly by ip address", std::bind(&server_node::validatorstate_accept_node, this, std::placeholders::_1, std::placeholders::_2));
+			bind(access_type::w | access_type::a, "validatorstate", "acceptnode", 1, 1, "string uri_address", "void", "try to accept and connect to a node possibly by ip address", std::bind(&server_node::validatorstate_accept_node, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "validatorstate", "rejectnode", 1, 1, "string uri_address", "void", "reject and disconnect from a node by ip address", std::bind(&server_node::validatorstate_reject_node, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "validatorstate", "submitblock", 0, 0, "", "void", "try to propose a block from mempool transactions", std::bind(&server_node::validatorstate_submit_block, this, std::placeholders::_1, std::placeholders::_2));
 		}
@@ -442,8 +438,8 @@ namespace tangent
 			if (!is_active())
 				return;
 
-			if (protocol::now().user.p2p.logging)
-				VI_INFO("rpc node shutdown");
+			if (protocol::now().user.consensus.logging)
+				VI_INFO("OK rpc node shutdown");
 
 			node->unlisten(false);
 		}
@@ -930,7 +926,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			uint64_t number = args[0].as_uint64();
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto hashes = chain.get_block_hashset(number, count);
 			if (!hashes)
 				return server_response().error(error_codes::not_found, "blocks not found");
@@ -942,7 +938,7 @@ namespace tangent
 		}
 		server_response server_node::blockstate_get_block_checkpoint_hash(http::connection* base, format::variables&& args)
 		{
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto block_number = chain.get_checkpoint_block_number();
 			if (!block_number)
 				return server_response().error(error_codes::not_found, "checkpoint block not found");
@@ -955,7 +951,7 @@ namespace tangent
 		}
 		server_response server_node::blockstate_get_block_checkpoint_number(http::connection* base, format::variables&& args)
 		{
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto block_number = chain.get_checkpoint_block_number();
 			if (!block_number)
 				return server_response().error(error_codes::not_found, "checkpoint block not found");
@@ -964,7 +960,7 @@ namespace tangent
 		}
 		server_response server_node::blockstate_get_block_tip_hash(http::connection* base, format::variables&& args)
 		{
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto block_header = chain.get_latest_block_header();
 			if (!block_header)
 				return server_response().error(error_codes::not_found, "tip block not found");
@@ -973,7 +969,7 @@ namespace tangent
 		}
 		server_response server_node::blockstate_get_block_tip_number(http::connection* base, format::variables&& args)
 		{
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto block_number = chain.get_latest_block_number();
 			if (!block_number)
 				return server_response().error(error_codes::not_found, "tip block not found");
@@ -984,7 +980,7 @@ namespace tangent
 		{
 			uint256_t hash = args[0].as_uint256();
 			uint8_t unrolling = args.size() > 1 ? args[1].as_uint8() : 0;
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			if (unrolling == 0)
 			{
 				auto block_header = chain.get_block_header_by_hash(hash);
@@ -1067,7 +1063,7 @@ namespace tangent
 		{
 			uint64_t number = args[0].as_uint64();
 			uint8_t unrolling = args.size() > 1 ? args[1].as_uint8() : 0;
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			if (unrolling == 0)
 			{
 				auto block_header = chain.get_block_header_by_number(number);
@@ -1149,7 +1145,7 @@ namespace tangent
 		server_response server_node::blockstate_get_raw_block_by_hash(http::connection* base, format::variables&& args)
 		{
 			uint256_t hash = args[0].as_uint256();
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto block = chain.get_block_by_hash(hash);
 			if (!block)
 				return server_response().error(error_codes::not_found, "block not found");
@@ -1159,7 +1155,7 @@ namespace tangent
 		server_response server_node::blockstate_get_raw_block_by_number(http::connection* base, format::variables&& args)
 		{
 			uint64_t number = args[0].as_uint64();
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto block = chain.get_block_by_number(number);
 			if (!block)
 				return server_response().error(error_codes::not_found, "block not found");
@@ -1169,7 +1165,7 @@ namespace tangent
 		server_response server_node::blockstate_get_block_proof_by_hash(http::connection* base, format::variables&& args)
 		{
 			uint256_t hash = args[0].as_uint256();
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto block_proof = chain.get_block_proof_by_hash(hash);
 			if (!block_proof)
 				return server_response().error(error_codes::not_found, "block not found");
@@ -1197,7 +1193,7 @@ namespace tangent
 		server_response server_node::blockstate_get_block_proof_by_number(http::connection* base, format::variables&& args)
 		{
 			uint64_t number = args[0].as_uint64();
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto block_proof = chain.get_block_proof_by_number(number);
 			if (!block_proof)
 				return server_response().error(error_codes::not_found, "block not found");
@@ -1225,7 +1221,7 @@ namespace tangent
 		server_response server_node::blockstate_get_block_number_by_hash(http::connection* base, format::variables&& args)
 		{
 			uint64_t number = args[0].as_uint64();
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto block_hash = chain.get_block_hash_by_number(number);
 			if (!block_hash)
 				return server_response().error(error_codes::not_found, "block not found");
@@ -1235,7 +1231,7 @@ namespace tangent
 		server_response server_node::blockstate_get_block_hash_by_number(http::connection* base, format::variables&& args)
 		{
 			uint256_t hash = args[0].as_uint256();
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto block_number = chain.get_block_number_by_hash(hash);
 			if (!block_number)
 				return server_response().error(error_codes::not_found, "block not found");
@@ -1246,7 +1242,7 @@ namespace tangent
 		{
 			uint256_t hash = args[0].as_uint256();
 			uint8_t unrolling = args.size() > 1 ? args[1].as_uint8() : 0;
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			if (unrolling == 0)
 			{
 				auto block_number = chain.get_block_number_by_hash(hash);
@@ -1348,7 +1344,7 @@ namespace tangent
 		{
 			uint64_t number = args[0].as_uint64();
 			uint8_t unrolling = args.size() > 1 ? args[1].as_uint8() : 0;
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			if (unrolling == 0)
 			{
 				auto hashes = chain.get_block_transaction_hashset(number);
@@ -1434,7 +1430,7 @@ namespace tangent
 		{
 			uint256_t hash = args[0].as_uint256();
 			uint8_t unrolling = args.size() > 1 ? args[1].as_uint8() : 0;
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto block_number = chain.get_block_number_by_hash(hash);
 			if (!block_number)
 				return server_response().error(error_codes::not_found, "block not found");
@@ -1478,7 +1474,7 @@ namespace tangent
 		{
 			uint64_t number = args[0].as_uint64();
 			uint8_t unrolling = args.size() > 1 ? args[1].as_uint8() : 0;
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			if (unrolling == 0)
 			{
 				uptr<schema> data = var::set::array();
@@ -1521,7 +1517,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			uint8_t unrolling = args.size() > 2 ? args[2].as_uint8() : 0;
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			if (unrolling == 0)
 			{
 				auto list = chain.get_pending_block_transactions(std::numeric_limits<int64_t>::max(), offset, count);
@@ -1568,7 +1564,7 @@ namespace tangent
 
 			uint8_t direction = args.size() > 3 ? args[3].as_uint8() : 1;
 			uint8_t unrolling = args.size() > 4 ? args[4].as_uint8() : 0;
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			if (unrolling == 0)
 			{
 				uptr<schema> data = var::set::array();
@@ -1607,7 +1603,7 @@ namespace tangent
 		{
 			uint256_t hash = args[0].as_uint256();
 			uint8_t unrolling = args.size() > 1 ? args[1].as_uint8() : 0;
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			if (unrolling == 0)
 			{
 				auto transaction = chain.get_transaction_by_hash(hash);
@@ -1628,7 +1624,7 @@ namespace tangent
 		server_response server_node::txnstate_get_raw_transaction_by_hash(http::connection* base, format::variables&& args)
 		{
 			uint256_t hash = args[0].as_uint256();
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto transaction = chain.get_transaction_by_hash(hash);
 			if (!transaction)
 				return server_response().error(error_codes::not_found, "transaction not found");
@@ -1638,7 +1634,7 @@ namespace tangent
 		server_response server_node::txnstate_get_receipt_by_transaction_hash(http::connection* base, format::variables&& args)
 		{
 			uint256_t hash = args[0].as_uint256();
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto receipt = chain.get_receipt_by_transaction_hash(hash);
 			if (!receipt)
 				return server_response().error(error_codes::not_found, "receipt not found");
@@ -1698,7 +1694,7 @@ namespace tangent
 			transaction.program_call(to, args[3].as_decimal(), function, std::move(function_args));
 			transaction.set_gas(decimal::zero(), ledger::block::get_gas_limit());
 
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto tip = chain.get_latest_block_header();
 			if (tip)
 				environment.tip = std::move(*tip);
@@ -1746,7 +1742,7 @@ namespace tangent
 		{
 			uint256_t hash = args[0].as_uint256();
 			uint8_t unrolling = args.size() > 1 ? args[1].as_uint8() : 0;
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			if (unrolling == 0)
 			{
 				auto block_number = chain.get_block_number_by_hash(hash);
@@ -1783,7 +1779,7 @@ namespace tangent
 		{
 			uint64_t number = args[0].as_uint64();
 			uint8_t unrolling = args.size() > 1 ? args[1].as_uint8() : 0;
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			if (unrolling == 0)
 			{
 				auto hashes = chain.get_block_transaction_hashset(number);
@@ -1813,7 +1809,7 @@ namespace tangent
 			uint256_t hash = args[0].as_uint256();
 			algorithm::asset_id asset = algorithm::asset::id_of_handle(args[1].as_string());
 			double percentile = args.size() > 2 ? args[2].as_double() : 0.50;
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto block_number = chain.get_block_number_by_hash(hash);
 			if (!block_number)
 				return server_response().error(error_codes::not_found, "block not found");
@@ -1829,7 +1825,7 @@ namespace tangent
 			uint64_t number = args[0].as_uint64();
 			algorithm::asset_id asset = algorithm::asset::id_of_handle(args[1].as_string());
 			double percentile = args.size() > 2 ? args[2].as_double() : 0.50;
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto price = chain.get_block_gas_price(number, asset, percentile);
 			if (!price)
 				return server_response().error(error_codes::not_found, "gas price not found");
@@ -1842,7 +1838,7 @@ namespace tangent
 			algorithm::asset_id asset1 = algorithm::asset::id_of_handle(args[1].as_string());
 			algorithm::asset_id asset2 = algorithm::asset::id_of_handle(args[2].as_string());
 			double percentile = args.size() > 3 ? args[3].as_double() : 0.50;
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto block_number = chain.get_block_number_by_hash(hash);
 			if (!block_number)
 				return server_response().error(error_codes::not_found, "block not found");
@@ -1859,7 +1855,7 @@ namespace tangent
 			algorithm::asset_id asset1 = algorithm::asset::id_of_handle(args[1].as_string());
 			algorithm::asset_id asset2 = algorithm::asset::id_of_handle(args[2].as_string());
 			double percentile = args.size() > 3 ? args[3].as_double() : 0.50;
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto price = chain.get_block_asset_price(number, asset1, asset2, percentile);
 			if (!price)
 				return server_response().error(error_codes::not_found, "asset price not found");
@@ -1872,7 +1868,7 @@ namespace tangent
 			if (!location)
 				return server_response().error(error_codes::bad_params, "location not valid: " + location.error().message());
 
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto uniform = chain.get_uniform(location->type, nullptr, location->index, 0);
 			if (!uniform)
 				return server_response().error(error_codes::not_found, "uniform not found");
@@ -1885,7 +1881,7 @@ namespace tangent
 			if (!location)
 				return server_response().error(error_codes::bad_params, "location not valid: " + location.error().message());
 
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto multiform = chain.get_multiform(location->type, nullptr, location->column, location->row, 0);
 			if (!multiform)
 				return server_response().error(error_codes::not_found, "multiform not found");
@@ -1902,7 +1898,7 @@ namespace tangent
 			if (!count || count > protocol::now().user.rpc.page_size)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto list = chain.get_multiforms_by_column(location->type, nullptr, location->column, 0, offset, count);
 			if (!list)
 				return server_response().error(error_codes::not_found, "multiform not found");
@@ -1923,7 +1919,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto filter = storages::result_filter::from(args[2].as_string(), args[3].as_uint256(), args[4].as_decimal().to_int8());
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto list = chain.get_multiforms_by_column(location->type, nullptr, location->column, 0, offset, count);
 			if (!list)
 				return server_response().error(error_codes::not_found, "multiform not found");
@@ -1943,7 +1939,7 @@ namespace tangent
 			if (!count || count > protocol::now().user.rpc.page_size)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto list = chain.get_multiforms_by_row(location->type, nullptr, location->row, 0, offset, count);
 			if (!list)
 				return server_response().error(error_codes::not_found, "multiform not found");
@@ -1964,7 +1960,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto filter = storages::result_filter::from(args[2].as_string(), args[3].as_uint256(), args[4].as_decimal().to_int8());
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto list = chain.get_multiforms_by_row_filter(location->type, nullptr, location->row, filter, 0, storages::result_range_window(offset, count));
 			if (!list)
 				return server_response().error(error_codes::not_found, "multiform not found");
@@ -1980,7 +1976,7 @@ namespace tangent
 			if (!location)
 				return server_response().error(error_codes::bad_params, "location not valid: " + location.error().message());
 
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto count = chain.get_multiforms_count_by_column(location->type, nullptr, location->column, 0);
 			if (!count)
 				return server_response().error(error_codes::not_found, "count not found");
@@ -1994,7 +1990,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "location not valid: " + location.error().message());
 
 			auto filter = storages::result_filter::from(args[2].as_string(), args[3].as_uint256(), 0);
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto count = chain.get_multiforms_count_by_column_filter(location->type, nullptr, location->column, filter, 0);
 			if (!count)
 				return server_response().error(error_codes::not_found, "count not found");
@@ -2007,7 +2003,7 @@ namespace tangent
 			if (!location)
 				return server_response().error(error_codes::bad_params, "location not valid: " + location.error().message());
 
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto count = chain.get_multiforms_count_by_row(location->type, nullptr, location->row, 0);
 			if (!count)
 				return server_response().error(error_codes::not_found, "count not found");
@@ -2021,7 +2017,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "location not valid: " + location.error().message());
 
 			auto filter = storages::result_filter::from(args[2].as_string(), args[3].as_uint256(), 0);
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto count = chain.get_multiforms_count_by_row_filter(location->type, nullptr, location->row, filter, 0);
 			if (!count)
 				return server_response().error(error_codes::not_found, "count not found");
@@ -2034,7 +2030,7 @@ namespace tangent
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto state = chain.get_uniform(states::account_nonce::as_instance_type(), nullptr, states::account_nonce::as_instance_index(owner), 0);
 			auto* value = (states::account_nonce*)(state ? **state : nullptr);
 			return server_response().success(algorithm::encoding::serialize_uint256(value ? value->nonce : 1));
@@ -2045,7 +2041,7 @@ namespace tangent
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto state = chain.get_uniform(states::account_program::as_instance_type(), nullptr, states::account_program::as_instance_index(owner), 0);
 			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
 		}
@@ -2055,7 +2051,7 @@ namespace tangent
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto state = chain.get_uniform(states::account_uniform::as_instance_type(), nullptr, states::account_uniform::as_instance_index(owner, args[1].as_string()), 0);
 			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
 		}
@@ -2065,7 +2061,7 @@ namespace tangent
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto state = chain.get_multiform(states::account_multiform::as_instance_type(), nullptr, states::account_multiform::as_instance_column(owner, args[1].as_string()), states::account_multiform::as_instance_row(owner, args[2].as_string()), 0);
 			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
 		}
@@ -2079,7 +2075,7 @@ namespace tangent
 			if (!count || count > protocol::now().user.rpc.page_size)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto list = chain.get_multiforms_by_column(states::account_multiform::as_instance_type(), nullptr, states::account_multiform::as_instance_column(owner, args[1].as_string()), 0, offset, count);
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
@@ -2095,7 +2091,7 @@ namespace tangent
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto state = chain.get_uniform(states::account_delegation::as_instance_type(), nullptr, states::account_delegation::as_instance_index(owner), 0);
 			auto* value = (states::account_delegation*)(state ? **state : nullptr);
 			auto result = value ? value->as_schema().reset() : var::set::null();
@@ -2114,7 +2110,7 @@ namespace tangent
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto asset = algorithm::asset::id_of_handle(args[1].as_string());
 			auto state = chain.get_multiform(states::account_balance::as_instance_type(), nullptr, states::account_balance::as_instance_column(owner), states::account_balance::as_instance_row(asset), 0);
 			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
@@ -2129,7 +2125,7 @@ namespace tangent
 			if (!count || count > protocol::now().user.rpc.page_size)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto list = chain.get_multiforms_by_column(states::account_balance::as_instance_type(), nullptr, states::account_balance::as_instance_column(owner), 0, offset, count);
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
@@ -2145,7 +2141,7 @@ namespace tangent
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto state = chain.get_multiform(states::validator_production::as_instance_type(), nullptr, states::validator_production::as_instance_column(owner), states::validator_production::as_instance_row(), 0);
 			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
 		}
@@ -2157,7 +2153,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto filter = commitment > 0 ? storages::result_filter::greater_equal(commitment, -1) : storages::result_filter::equal(commitment, -1);
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto list = chain.get_multiforms_by_row_filter(states::validator_production::as_instance_type(), nullptr, states::validator_production::as_instance_row(), filter, 0, storages::result_range_window(offset, count));
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
@@ -2174,7 +2170,7 @@ namespace tangent
 			if (!algorithm::signing::decode_address(args[1].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto state = chain.get_multiform(states::validator_participation::as_instance_type(), nullptr, states::validator_participation::as_instance_column(owner), states::validator_participation::as_instance_row(asset), 0);
 			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
 		}
@@ -2188,7 +2184,7 @@ namespace tangent
 			if (!count || count > protocol::now().user.rpc.page_size)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto list = chain.get_multiforms_by_column(states::validator_participation::as_instance_type(), nullptr, states::validator_participation::as_instance_column(owner), 0, offset, count);
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
@@ -2207,7 +2203,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto filter = commitment > 0 ? storages::result_filter::greater_equal(commitment, -1) : storages::result_filter::equal(commitment, -1);
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto list = chain.get_multiforms_by_row_filter(states::validator_participation::as_instance_type(), nullptr, states::validator_participation::as_instance_row(asset), filter, 0, storages::result_range_window(offset, count));
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
@@ -2224,7 +2220,7 @@ namespace tangent
 			if (!algorithm::signing::decode_address(args[1].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto state = chain.get_multiform(states::validator_attestation::as_instance_type(), nullptr, states::validator_attestation::as_instance_column(owner), states::validator_attestation::as_instance_row(asset), 0);
 			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
 		}
@@ -2238,7 +2234,7 @@ namespace tangent
 			if (!count || count > protocol::now().user.rpc.page_size)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto list = chain.get_multiforms_by_column(states::validator_attestation::as_instance_type(), nullptr, states::validator_attestation::as_instance_column(owner), 0, offset, count);
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
@@ -2257,7 +2253,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto filter = commitment > 0 ? storages::result_filter::greater_equal(commitment, -1) : storages::result_filter::equal(commitment, -1);
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto list = chain.get_multiforms_by_row_filter(states::validator_attestation::as_instance_type(), nullptr, states::validator_attestation::as_instance_row(asset), filter, 0, storages::result_range_window(offset, count));
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
@@ -2273,7 +2269,7 @@ namespace tangent
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto asset = algorithm::asset::id_of_handle(args[1].as_string());
 			auto state = chain.get_multiform(states::depository_reward::as_instance_type(), nullptr, states::depository_reward::as_instance_column(owner), states::depository_reward::as_instance_row(asset), 0);
 			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
@@ -2288,7 +2284,7 @@ namespace tangent
 			if (!count || count > protocol::now().user.rpc.page_size)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto list = chain.get_multiforms_by_column(states::depository_reward::as_instance_type(), nullptr, states::depository_reward::as_instance_column(owner), 0, offset, count);
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
@@ -2306,7 +2302,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto filter = storages::result_filter::greater_equal(0, 1);
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto list = chain.get_multiforms_by_row_filter(states::depository_reward::as_instance_type(), nullptr, states::depository_reward::as_instance_row(asset), filter, 0, storages::result_range_window(offset, count));
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
@@ -2324,7 +2320,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto filter = storages::result_filter::greater_equal(0, 1);
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto list = chain.get_multiforms_by_row_filter(states::depository_reward::as_instance_type(), nullptr, states::depository_reward::as_instance_row(asset), filter, 0, storages::result_range_window(offset, count));
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
@@ -2353,7 +2349,7 @@ namespace tangent
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto asset = algorithm::asset::id_of_handle(args[1].as_string());
 			auto state = chain.get_multiform(states::depository_policy::as_instance_type(), nullptr, states::depository_policy::as_instance_column(owner), states::depository_policy::as_instance_row(asset), 0);
 			auto* value = (states::depository_policy*)(state ? **state : nullptr);
@@ -2369,7 +2365,7 @@ namespace tangent
 			if (!algorithm::signing::decode_address(args[2].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
 			auto state = chain.get_multiform(states::depository_account::as_instance_type(), nullptr, states::depository_account::as_instance_column(proposer), states::depository_account::as_instance_row(asset, owner), 0);
 			auto* value = (states::depository_account*)(state ? **state : nullptr);
@@ -2386,7 +2382,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
 			auto filter = storages::result_filter::greater_equal(0, -1);
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto list = chain.get_multiforms_by_column_filter(states::depository_account::as_instance_type(), nullptr, states::depository_account::as_instance_column(proposer), filter, 0, storages::result_range_window(offset, count));
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
@@ -2402,7 +2398,7 @@ namespace tangent
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto asset = algorithm::asset::id_of_handle(args[1].as_string());
 			auto state = chain.get_multiform(states::depository_balance::as_instance_type(), nullptr, states::depository_balance::as_instance_column(owner), states::depository_balance::as_instance_row(asset), 0);
 			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
@@ -2417,7 +2413,7 @@ namespace tangent
 			if (!count || count > protocol::now().user.rpc.page_size)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto list = chain.get_multiforms_by_column(states::depository_balance::as_instance_type(), nullptr, states::depository_balance::as_instance_column(owner), 0, offset, count);
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
@@ -2435,7 +2431,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto filter = storages::result_filter::greater_equal(0, -1);
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto list = chain.get_multiforms_by_row_filter(states::depository_balance::as_instance_type(), nullptr, states::depository_balance::as_instance_row(asset), filter, 0, storages::result_range_window(offset, count));
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
@@ -2453,7 +2449,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto filter = storages::result_filter::greater_equal(0, -1);
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto list = chain.get_multiforms_by_row_filter(states::depository_balance::as_instance_type(), nullptr, states::depository_balance::as_instance_row(asset), filter, 0, storages::result_range_window(offset, count));
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
@@ -2484,7 +2480,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto filter = storages::result_filter::greater(0, -1);
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto list = chain.get_multiforms_by_row_filter(states::depository_policy::as_instance_type(), nullptr, states::depository_policy::as_instance_row(asset), filter, 0, storages::result_range_window(offset, count));
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
@@ -2502,7 +2498,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto filter = storages::result_filter::greater(0, -1);
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto list = chain.get_multiforms_by_row_filter(states::depository_policy::as_instance_type(), nullptr, states::depository_policy::as_instance_row(asset), filter, 0, storages::result_range_window(offset, count));
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
@@ -2527,7 +2523,7 @@ namespace tangent
 		}
 		server_response server_node::chainstate_get_witness_program(http::connection* base, format::variables&& args)
 		{
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto state = chain.get_uniform(states::witness_program::as_instance_type(), nullptr, states::witness_program::as_instance_index(args[0].as_string()), 0);
 			if (!state)
 				return server_response().success(var::set::null());
@@ -2539,7 +2535,7 @@ namespace tangent
 		}
 		server_response server_node::chainstate_get_witness_event(http::connection* base, format::variables&& args)
 		{
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto state = chain.get_uniform(states::witness_event::as_instance_type(), nullptr, states::witness_event::as_instance_index(args[0].as_uint256()), 0);
 			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
 		}
@@ -2550,7 +2546,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
 			auto asset = algorithm::asset::id_of_handle(args[1].as_string());
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto state = chain.get_multiform(states::witness_account::as_instance_type(), nullptr, states::witness_account::as_instance_column(owner), states::witness_account::as_instance_row(asset, args[2].as_string()), 0);
 			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
 		}
@@ -2564,7 +2560,7 @@ namespace tangent
 			if (!count || count > protocol::now().user.rpc.page_size)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto list = chain.get_multiforms_by_column(states::witness_account::as_instance_type(), nullptr, states::witness_account::as_instance_column(owner), 0, offset, count);
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
@@ -2595,7 +2591,7 @@ namespace tangent
 			if (!count || count > protocol::now().user.rpc.page_size)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto filter = storages::result_filter::equal((int64_t)purpose, 1);
 			auto list = chain.get_multiforms_by_column_filter(states::witness_account::as_instance_type(), nullptr, states::witness_account::as_instance_column(owner), filter, 0, storages::result_range_window(offset, count));
 			if (!list)
@@ -2609,7 +2605,7 @@ namespace tangent
 		server_response server_node::chainstate_get_witness_transaction(http::connection* base, format::variables&& args)
 		{
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto state = chain.get_uniform(states::witness_transaction::as_instance_type(), nullptr, states::witness_transaction::as_instance_index(asset, args[1].as_string()), 0);
 			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
 		}
@@ -2619,8 +2615,8 @@ namespace tangent
 			if (!endpoint.is_valid())
 				return server_response().error(error_codes::bad_params, "address not valid");
 
-			auto mempool = storages::mempoolstate(__func__);
-			auto status = mempool.apply_trial_address(endpoint.address);
+			auto mempool = storages::mempoolstate();
+			auto status = mempool.apply_unknown_node(endpoint.address);
 			if (!status)
 				return server_response().error(error_codes::bad_request, status.error().message());
 
@@ -2632,8 +2628,8 @@ namespace tangent
 			if (!endpoint.is_valid())
 				return server_response().error(error_codes::bad_params, "address not valid");
 
-			auto mempool = storages::mempoolstate(__func__);
-			auto status = mempool.clear_validator(endpoint.address);
+			auto mempool = storages::mempoolstate();
+			auto status = mempool.clear_node(endpoint.address);
 			if (!status)
 				return server_response().error(error_codes::bad_request, status.error().message());
 
@@ -2642,17 +2638,20 @@ namespace tangent
 		server_response server_node::mempoolstate_get_closest_node(http::connection* base, format::variables&& args)
 		{
 			size_t offset = args.size() > 0 ? args[0].as_uint64() : 0;
-			auto mempool = storages::mempoolstate(__func__);
-			auto validator = mempool.get_validator_by_preference(offset);
+			auto mempool = storages::mempoolstate();
+			auto validator = mempool.get_neighbor_node(offset);
 			if (!validator)
 				return server_response().error(error_codes::bad_request, "node not found");
 
-			return server_response().success(validator->as_schema().reset());
+			auto result = uptr(var::set::object());
+			result->set("validator", validator->first.as_schema().reset());
+			result->set("wallet", validator->second.as_public_schema().reset());
+			return server_response().success(std::move(result));
 		}
 		server_response server_node::mempoolstate_get_closest_node_counter(http::connection* base, format::variables&& args)
 		{
-			auto mempool = storages::mempoolstate(__func__);
-			auto count = mempool.get_validators_count();
+			auto mempool = storages::mempoolstate();
+			auto count = mempool.get_nodes_count();
 			if (!count)
 				return server_response().error(error_codes::bad_request, "count not found");
 
@@ -2664,12 +2663,15 @@ namespace tangent
 			if (!endpoint.is_valid())
 				return server_response().error(error_codes::bad_params, "address not valid");
 
-			auto mempool = storages::mempoolstate(__func__);
-			auto validator = mempool.get_validator_by_address(endpoint.address);
+			auto mempool = storages::mempoolstate();
+			auto validator = mempool.get_node(endpoint.address);
 			if (!validator)
 				return server_response().error(error_codes::bad_request, "node not found");
 
-			return server_response().success(validator->as_schema().reset());
+			auto result = uptr(var::set::object());
+			result->set("validator", validator->first.as_schema().reset());
+			result->set("wallet", validator->second.as_public_schema().reset());
+			return server_response().success(std::move(result));
 		}
 		server_response server_node::mempoolstate_get_addresses(http::connection* base, format::variables&& args)
 		{
@@ -2687,31 +2689,31 @@ namespace tangent
 						services |= (uint32_t)storages::node_services::consensus;
 					else if (service == "discovery")
 						services |= (uint32_t)storages::node_services::discovery;
-					else if (service == "synchronization")
-						services |= (uint32_t)storages::node_services::synchronization;
-					else if (service == "interface")
-						services |= (uint32_t)storages::node_services::interfaces;
+					else if (service == "oracle")
+						services |= (uint32_t)storages::node_services::oracle;
+					else if (service == "rpc")
+						services |= (uint32_t)storages::node_services::rpc;
+					else if (service == "rpc_public_access")
+						services |= (uint32_t)storages::node_services::rpc_public_access;
+					else if (service == "rpc_web_sockets")
+						services |= (uint32_t)storages::node_services::rpc_web_sockets;
 					else if (service == "production")
 						services |= (uint32_t)storages::node_services::production;
 					else if (service == "participation")
 						services |= (uint32_t)storages::node_services::participation;
 					else if (service == "attestation")
 						services |= (uint32_t)storages::node_services::attestation;
-					else if (service == "querying")
-						services |= (uint32_t)storages::node_services::querying;
-					else if (service == "streaming")
-						services |= (uint32_t)storages::node_services::streaming;
 				}
 			}
 
-			auto mempool = storages::mempoolstate(__func__);
-			auto seeds = mempool.get_validator_addresses(offset, count, services);
-			if (!seeds)
+			auto mempool = storages::mempoolstate();
+			auto nodes = mempool.get_neighbor_nodes_with(offset, count, services);
+			if (!nodes)
 				return server_response().error(error_codes::bad_request, "node not found");
 
 			uptr<schema> data = var::set::array();
-			for (auto& seed : *seeds)
-				data->push(var::string(system_endpoint::to_uri(seed)));
+			for (auto& [account, address] : *nodes)
+				data->push(var::string(system_endpoint::to_uri(address)));
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::mempoolstate_get_gas_price(http::connection* base, format::variables&& args)
@@ -2719,11 +2721,11 @@ namespace tangent
 			algorithm::asset_id asset = algorithm::asset::id_of_handle(args[0].as_string());
 			double percentile = args.size() > 1 ? args[1].as_double() : 0.50;
 			bool mempool_only = args.size() > 2 ? args[2].as_boolean() : true;
-			auto mempool = storages::mempoolstate(__func__);
+			auto mempool = storages::mempoolstate();
 			auto price = mempool.get_gas_price(asset, percentile);
 			if (!price && !mempool_only)
 			{
-				auto chain = storages::chainstate(__func__);
+				auto chain = storages::chainstate();
 				auto number = chain.get_latest_block_number();
 				if (!number)
 					return server_response().error(error_codes::not_found, "gas price not found");
@@ -2742,7 +2744,7 @@ namespace tangent
 			algorithm::asset_id asset1 = algorithm::asset::id_of_handle(args[0].as_string());
 			algorithm::asset_id asset2 = algorithm::asset::id_of_handle(args[1].as_string());
 			double percentile = args.size() > 2 ? args[2].as_double() : 0.50;
-			auto mempool = storages::mempoolstate(__func__);
+			auto mempool = storages::mempoolstate();
 			auto price = mempool.get_asset_price(asset1, asset2, percentile);
 			if (!price)
 				return server_response().error(error_codes::not_found, "asset price not found");
@@ -2765,7 +2767,7 @@ namespace tangent
 		}
 		server_response server_node::mempoolstate_submit_transaction(http::connection* base, format::variables&& args, ledger::transaction* prebuilt)
 		{
-			if (!validator)
+			if (!consensus_service)
 				return server_response().error(error_codes::bad_request, "validator node disabled");
 
 			auto data = prebuilt ? string() : format::util::decode_stream(args[0].as_string());
@@ -2779,7 +2781,7 @@ namespace tangent
 
 			auto candidate_hash = candidate_tx->as_hash();
 			auto deep_validation = (args.size() > 1 ? args[1].as_boolean() : false);
-			auto status = validator->accept_transaction(nullptr, std::move(candidate_tx), deep_validation);
+			auto status = consensus_service->accept_transaction(nullptr, std::move(candidate_tx), deep_validation);
 			if (!status)
 				return server_response().error(error_codes::bad_request, status.error().message());
 
@@ -2788,7 +2790,7 @@ namespace tangent
 		server_response server_node::mempoolstate_reject_transaction(http::connection* base, format::variables&& args)
 		{
 			uint256_t hash = args[0].as_uint256();
-			auto mempool = storages::mempoolstate(__func__);
+			auto mempool = storages::mempoolstate();
 			auto status = mempool.remove_transactions(vector<uint256_t>({ hash }));
 			if (!status)
 				return server_response().error(error_codes::bad_request, status.error().message());
@@ -2798,7 +2800,7 @@ namespace tangent
 		server_response server_node::mempoolstate_get_transaction_by_hash(http::connection* base, format::variables&& args)
 		{
 			uint256_t hash = args[0].as_uint256();
-			auto mempool = storages::mempoolstate(__func__);
+			auto mempool = storages::mempoolstate();
 			auto transaction = mempool.get_transaction_by_hash(hash);
 			if (!transaction)
 				return server_response().error(error_codes::not_found, "transaction not found");
@@ -2808,7 +2810,7 @@ namespace tangent
 		server_response server_node::mempoolstate_get_raw_transaction_by_hash(http::connection* base, format::variables&& args)
 		{
 			uint256_t hash = args[0].as_uint256();
-			auto mempool = storages::mempoolstate(__func__);
+			auto mempool = storages::mempoolstate();
 			auto transaction = mempool.get_transaction_by_hash(hash);
 			if (!transaction)
 				return server_response().error(error_codes::not_found, "transaction not found");
@@ -2821,8 +2823,8 @@ namespace tangent
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "owner address not valid");
 
-			auto mempool = storages::mempoolstate(__func__);
-			auto chain = storages::chainstate(__func__);
+			auto mempool = storages::mempoolstate();
+			auto chain = storages::chainstate();
 			auto state = chain.get_uniform(states::account_nonce::as_instance_type(), nullptr, states::account_nonce::as_instance_index(owner), 0);
 			auto* value = (states::account_nonce*)(state ? **state : nullptr);
 			auto lowest = mempool.get_lowest_transaction_nonce(owner);
@@ -2848,7 +2850,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			uint8_t unrolling = args.size() > 2 ? args[2].as_uint8() : 0;
-			auto mempool = storages::mempoolstate(__func__);
+			auto mempool = storages::mempoolstate();
 			if (unrolling == 0)
 			{
 				uptr<schema> data = var::set::array();
@@ -2884,7 +2886,7 @@ namespace tangent
 
 			uint8_t direction = args.size() > 3 ? args[3].as_uint8() : 1;
 			uint8_t unrolling = args.size() > 4 ? args[4].as_uint8() : 0;
-			auto mempool = storages::mempoolstate(__func__);
+			auto mempool = storages::mempoolstate();
 			if (unrolling == 0)
 			{
 				uptr<schema> data = var::set::array();
@@ -2916,7 +2918,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			uint8_t unrolling = args.size() > 3 ? args[3].as_uint8() : 0;
-			auto mempool = storages::mempoolstate(__func__);
+			auto mempool = storages::mempoolstate();
 			if (unrolling == 0)
 			{
 				uptr<schema> data = var::set::array();
@@ -2943,7 +2945,7 @@ namespace tangent
 		server_response server_node::mempoolstate_get_attestation(http::connection* base, format::variables&& args)
 		{
 			uint256_t hash = args[0].as_uint256();
-			auto mempool = storages::mempoolstate(__func__);
+			auto mempool = storages::mempoolstate();
 			auto reference = mempool.get_transaction_by_hash(hash);
 			if (!reference)
 				return server_response().error(error_codes::not_found, "transaction not found");
@@ -2981,7 +2983,7 @@ namespace tangent
 				return server_response().error(error_codes::not_found, "invalid type");
 
 			uint64_t number = args[1].as_uint64();
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto status = chain.prune(types, number);
 			if (!status)
 				return server_response().error(error_codes::not_found, status.error().message());
@@ -2990,7 +2992,7 @@ namespace tangent
 		}
 		server_response server_node::validatorstate_revert(http::connection* base, format::variables&& args)
 		{
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto block = chain.get_block_by_number(args[0].as_uint64());
 			if (!block)
 				return server_response().error(error_codes::not_found, "block not found");
@@ -3018,7 +3020,7 @@ namespace tangent
 		}
 		server_response server_node::validatorstate_reorganize(http::connection* base, format::variables&& args)
 		{
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto checkpoint = ledger::block_checkpoint();
 			checkpoint.old_tip_block_number = chain.get_latest_block_number().or_else(0);
 			checkpoint.new_tip_block_number = checkpoint.old_tip_block_number;
@@ -3045,7 +3047,7 @@ namespace tangent
 			uint64_t current_number = args[0].as_uint64();
 			uint64_t target_number = current_number + count;
 			bool validate = args.size() > 2 ? args[2].as_boolean() : false;
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto checkpoint_number = chain.get_checkpoint_block_number().or_else(0);
 			auto tip_number = chain.get_latest_block_number().or_else(0);
 			auto parent_block = current_number > 1 ? chain.get_block_header_by_number(current_number - 1) : expects_lr<ledger::block_header>(layer_exception());
@@ -3084,64 +3086,61 @@ namespace tangent
 		}
 		server_response server_node::validatorstate_accept_node(http::connection* base, format::variables&& args)
 		{
-			if (!validator)
+			if (!consensus_service)
 				return server_response().error(error_codes::bad_request, "validator node disabled");
 
-			if (!args.empty())
-			{
-				auto endpoint = system_endpoint(args[0].as_string());
-				if (!endpoint.is_valid())
-					return server_response().error(error_codes::bad_params, "address not valid");
+			auto endpoint = system_endpoint(args[0].as_string());
+			if (!endpoint.is_valid())
+				return server_response().error(error_codes::bad_params, "address not valid");
 
-				if (!validator->accept(endpoint.address))
-					return server_response().error(error_codes::bad_request, "node not found");
-			}
-			else if (!validator->accept())
-				return server_response().error(error_codes::bad_request, "node not found");
+			auto result = consensus_service->connect_to_physical_node(endpoint.address).get();
+			if (!result)
+				return server_response().error(error_codes::bad_request, result.what());
 
 			return server_response().success(var::set::null());
 		}
 		server_response server_node::validatorstate_reject_node(http::connection* base, format::variables&& args)
 		{
-			if (!validator)
+			if (!consensus_service)
 				return server_response().error(error_codes::bad_request, "validator node disabled");
 
 			auto endpoint = system_endpoint(args[0].as_string());
 			if (!endpoint.is_valid())
 				return server_response().error(error_codes::bad_params, "address not valid");
 
-			umutex<std::recursive_mutex> unique(validator->get_mutex());
-			auto* node = validator->find(endpoint.address);
-			if (!node || node == (p2p::relay*)validator)
+			umutex<std::recursive_mutex> unique(consensus_service->get_mutex());
+			auto node = consensus_service->find_by_address(endpoint.address);
+			if (!node)
 				return server_response().error(error_codes::bad_request, "node not found");
 
-			auto* user = node->as_user<ledger::validator>();
-			validator->reject(node);
+			node->abort();
 			return server_response().success(var::set::null());
 		}
 		server_response server_node::validatorstate_get_node(http::connection* base, format::variables&& args)
 		{
-			if (!validator)
+			if (!consensus_service)
 				return server_response().error(error_codes::bad_request, "validator node disabled");
 
 			auto endpoint = system_endpoint(args[0].as_string());
 			if (!endpoint.is_valid())
 				return server_response().error(error_codes::bad_params, "address not valid");
 
-			umutex<std::recursive_mutex> unique(validator->get_mutex());
-			auto* node = validator->find(endpoint.address);
-			if (!node || node == (p2p::relay*)validator)
+			umutex<std::recursive_mutex> unique(consensus_service->get_mutex());
+			auto node = consensus_service->find_by_address(endpoint.address);
+			if (!node)
 				return server_response().error(error_codes::bad_request, "node not found");
 
-			auto* user = node->as_user<ledger::validator>();
-			auto data = user->as_schema();
-			data->set("network", node->as_schema().reset());
-			return server_response().success(data.reset());
+			auto* descriptor = node->as_descriptor();
+			auto result = uptr(var::set::object());
+			result->set("validator", descriptor ? descriptor->first.as_schema().reset() : var::set::null());
+			result->set("wallet", descriptor ? descriptor->second.as_public_schema().reset() : var::set::null());
+			result->set("network", node->as_schema().reset());
+			return server_response().success(std::move(result));
 		}
 		server_response server_node::validatorstate_get_blockchains(http::connection* base, format::variables&& args)
 		{
 			uptr<schema> data = var::set::array();
-			for (auto& asset : nss::server_node::get()->get_chains())
+			for (auto& asset : oracle::server_node::get()->get_chains())
 			{
 				auto* next = data->push(algorithm::asset::serialize(asset.first));
 				next->set("divisibility", var::decimal(asset.second.divisibility));
@@ -3151,14 +3150,14 @@ namespace tangent
 					case algorithm::composition::type::ed25519:
 						next->set("composition_policy", var::string("ed25519"));
 						break;
+					case algorithm::composition::type::ed25519_clsag:
+						next->set("composition_policy", var::string("ed25519_clsag"));
+						break;
 					case algorithm::composition::type::secp256k1:
 						next->set("composition_policy", var::string("secp256k1"));
 						break;
-					case algorithm::composition::type::schnorr:
-						next->set("composition_policy", var::string("schnorr"));
-						break;
-					case algorithm::composition::type::schnorr_taproot:
-						next->set("composition_policy", var::string("schnorr_taproot"));
+					case algorithm::composition::type::secp256k1_schnorr:
+						next->set("composition_policy", var::string("secp256k1_schnorr"));
 						break;
 					default:
 						next->set("composition_policy", var::null());
@@ -3189,7 +3188,7 @@ namespace tangent
 		server_response server_node::validatorstate_get_participations(http::connection* base, format::variables&& args)
 		{
 			auto result = uptr<schema>(var::set::array());
-			auto mempool = storages::mempoolstate(__func__);
+			auto mempool = storages::mempoolstate();
 			size_t offset = 0, count = 64;
 			while (true)
 			{
@@ -3208,14 +3207,15 @@ namespace tangent
 		}
 		server_response server_node::validatorstate_get_wallet(http::connection* base, format::variables&& args)
 		{
-			if (!validator)
+			if (!consensus_service)
 				return server_response().error(error_codes::bad_request, "validator node disabled");
 
-			return server_response().success(validator->validator.wallet.as_schema());
+			auto& [validator, wallet] = consensus_service->descriptor;
+			return server_response().success(wallet.as_schema());
 		}
 		server_response server_node::validatorstate_set_wallet(http::connection* base, format::variables&& args)
 		{
-			if (!validator)
+			if (!consensus_service)
 				return server_response().error(error_codes::bad_request, "validator node disabled");
 
 			auto wallet = ledger::wallet();
@@ -3237,7 +3237,7 @@ namespace tangent
 			else if (type == "seed")
 				wallet = ledger::wallet::from_seed(format::util::decode_0xhex(entropy));
 
-			auto result = validator->accept_validator_wallet(wallet);
+			auto result = consensus_service->accept_local_wallet(wallet);
 			if (!result)
 				return server_response().error(error_codes::bad_request, result.error().message());
 
@@ -3245,21 +3245,40 @@ namespace tangent
 		}
 		server_response server_node::validatorstate_status(http::connection* base, format::variables&& args)
 		{
-			if (!validator)
+			if (!consensus_service)
 				return server_response().error(error_codes::bad_request, "validator node disabled");
 
-			auto chain = storages::chainstate(__func__);
+			auto chain = storages::chainstate();
 			auto block_header = chain.get_latest_block_header();
-			umutex<std::recursive_mutex> unique(validator->get_mutex());
+			umutex<std::recursive_mutex> unique(consensus_service->get_mutex());
 			uptr<schema> data = var::set::object();
-			if (protocol::now().user.p2p.server)
+			if (protocol::now().user.consensus.server)
 			{
-				auto* p2p = data->set("p2p", var::set::object());
-				p2p->set("port", var::integer(protocol::now().user.p2p.port));
-				p2p->set("time_offset", var::integer(protocol::now().user.p2p.time_offset));
-				p2p->set("cursor_size", var::integer(protocol::now().user.p2p.cursor_size));
-				p2p->set("max_inbound_connection", var::integer(protocol::now().user.p2p.max_inbound_connections));
-				p2p->set("max_outbound_connection", var::integer(protocol::now().user.p2p.max_outbound_connections));
+				auto* consensus = data->set("consensus", var::set::object());
+				consensus->set("port", var::integer(protocol::now().user.consensus.port));
+				consensus->set("time_offset", var::integer(protocol::now().user.consensus.time_offset));
+				consensus->set("cursor_size", var::integer(protocol::now().user.consensus.cursor_size));
+				consensus->set("max_inbound_connection", var::integer(protocol::now().user.consensus.max_inbound_connections));
+				consensus->set("max_outbound_connection", var::integer(protocol::now().user.consensus.max_outbound_connections));
+			}
+
+			if (protocol::now().user.discovery.server)
+			{
+				auto* discovery = data->set("discovery", var::set::object());
+				discovery->set("port", var::integer(protocol::now().user.discovery.port));
+				discovery->set("cursor_size", var::integer(protocol::now().user.discovery.cursor_size));
+			}
+
+			if (protocol::now().user.oracle.server)
+			{
+				auto* oracle = data->set("oracle", var::set::object());
+				oracle->set("block_relay_multiplier", var::integer(protocol::now().user.oracle.block_replay_multiplier));
+				oracle->set("relaying_timeout", var::integer(protocol::now().user.oracle.relaying_timeout));
+				oracle->set("relaying_retry_timeout", var::integer(protocol::now().user.oracle.relaying_retry_timeout));
+				oracle->set("fee_estimation_seconds", var::integer(protocol::now().user.oracle.fee_estimation_seconds));
+				auto array = oracle->set("nodes", var::set::array());
+				for (auto& asset : oracle::server_node::get()->get_assets())
+					array->push(algorithm::asset::serialize(asset));
 			}
 
 			if (protocol::now().user.rpc.server)
@@ -3271,25 +3290,6 @@ namespace tangent
 				rpc->set("cursor_size", var::integer(protocol::now().user.rpc.cursor_size));
 				rpc->set("page_size", var::integer(protocol::now().user.rpc.page_size));
 				rpc->set("websockets", var::boolean(protocol::now().user.rpc.web_sockets));
-			}
-
-			if (protocol::now().user.nds.server)
-			{
-				auto* nds = data->set("nds", var::set::object());
-				nds->set("port", var::integer(protocol::now().user.nds.port));
-				nds->set("cursor_size", var::integer(protocol::now().user.nds.cursor_size));
-			}
-
-			if (protocol::now().user.nss.server)
-			{
-				auto* nss = data->set("nss", var::set::object());
-				nss->set("block_relay_multiplier", var::integer(protocol::now().user.nss.block_replay_multiplier));
-				nss->set("relaying_timeout", var::integer(protocol::now().user.nss.relaying_timeout));
-				nss->set("relaying_retry_timeout", var::integer(protocol::now().user.nss.relaying_retry_timeout));
-				nss->set("fee_estimation_seconds", var::integer(protocol::now().user.nss.fee_estimation_seconds));
-				auto array = nss->set("nodes", var::set::array());
-				for (auto& asset : nss::server_node::get()->get_assets())
-					array->push(algorithm::asset::serialize(asset));
 			}
 
 			auto* tcp = data->set("tcp", var::set::object());
@@ -3307,28 +3307,30 @@ namespace tangent
 				schema* tip = data->set("tip", var::object());
 				tip->set("hash", var::string(algorithm::encoding::encode_0xhex256(block_hash)));
 				tip->set("number", algorithm::encoding::serialize_uint256(block_header->number));
-				tip->set("sync", var::number(validator->get_sync_progress(block_hash, block_header ? block_header->number : 0)));
+				tip->set("sync", var::number(consensus_service->get_sync_progress(block_hash, block_header ? block_header->number : 0)));
 			}
 			else
 				data->set("tip", var::null());
 
 			auto* connections = data->set("connections", var::set::array());
-			for (auto& node : validator->get_nodes())
+			for (auto& node : consensus_service->get_nodes())
 			{
-				auto* user = node.second->as_user<ledger::validator>();
-				auto data = user->as_schema();
+				auto* descriptor = node.second->as_descriptor();
+				auto data = uptr(var::set::object());
+				data->set("validator", descriptor ? descriptor->first.as_schema().reset() : var::set::null());
+				data->set("wallet", descriptor ? descriptor->second.as_public_schema().reset() : var::set::null());
 				data->set("network", node.second->as_schema().reset());
 				connections->push(data.reset());
 			}
 
 			auto* forks = data->set("forks", var::set::array());
-			for (auto& fork : validator->forks)
+			for (auto& fork : consensus_service->forks)
 			{
 				schema* item = forks->push(var::set::object());
 				item->set("fork_hash", var::string(algorithm::encoding::encode_0xhex256(fork.first)));
 				item->set("tip_hash", algorithm::encoding::serialize_uint256(fork.second.header.as_hash()));
 				item->set("tip_number", algorithm::encoding::serialize_uint256(fork.second.header.number));
-				item->set("progress", var::number(validator->get_sync_progress(fork.first, block_header ? block_header->number : 0)));
+				item->set("progress", var::number(consensus_service->get_sync_progress(fork.first, block_header ? block_header->number : 0)));
 			}
 
 			switch (protocol::now().user.network)
@@ -3353,10 +3355,10 @@ namespace tangent
 		}
 		server_response server_node::validatorstate_submit_block(http::connection* base, format::variables&& args)
 		{
-			if (!validator)
+			if (!consensus_service)
 				return server_response().error(error_codes::bad_request, "validator node disabled");
 
-			validator->accept_mempool(0);
+			consensus_service->run_block_production();
 			return server_response().success(var::set::null());
 		}
 	}

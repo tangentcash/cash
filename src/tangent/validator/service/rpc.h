@@ -6,7 +6,7 @@
 
 namespace tangent
 {
-	namespace p2p
+	namespace consensus
 	{
 		class server_node;
 	}
@@ -83,13 +83,13 @@ namespace tangent
 
 		protected:
 			system_control control_sys;
+			consensus::server_node* consensus_service;
 			uptr<http::server> node;
-			p2p::server_node* validator;
 			string admin_token;
 			string user_token;
 
 		public:
-			server_node(p2p::server_node* new_validator) noexcept;
+			server_node(consensus::server_node* new_consensus_service) noexcept;
 			~server_node() noexcept;
 			void startup();
 			void shutdown();

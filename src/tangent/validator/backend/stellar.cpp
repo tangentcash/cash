@@ -1,5 +1,5 @@
 #include "stellar.h"
-#include "../service/nss.h"
+#include "../service/oracle.h"
 #include "../internal/libbitcoin/tool.h"
 #include "../internal/libbitcoin/chainparams.h"
 #include "../internal/libbitcoin/ecc.h"
@@ -405,7 +405,7 @@ namespace tangent
 						string token = transaction_data->get_var("asset_code").get_blob();
 						string issuer = transaction_data->get_var("asset_issuer").get_blob();
 						token_asset = algorithm::asset::id_of(algorithm::asset::blockchain_of(native_asset), token, issuer);
-						nss::server_node::get()->enable_contract_address(token_asset, issuer);
+						oracle::server_node::get()->enable_contract_address(token_asset, issuer);
 					}
 					else
 					{
@@ -486,7 +486,7 @@ namespace tangent
 				if (balance == account->balances.end())
 					coreturn expects_rt<decimal>(decimal::zero());
 
-				auto contract_address = nss::server_node::get()->get_contract_address(for_asset);
+				auto contract_address = oracle::server_node::get()->get_contract_address(for_asset);
 				if (contract_address && balance->second.info.issuer != *contract_address)
 					coreturn expects_rt<decimal>(decimal::zero());
 
@@ -557,7 +557,7 @@ namespace tangent
 					else
 						inputs[item.asset] = item.value;
 
-					auto contract_address = nss::server_node::get()->get_contract_address(item.asset);
+					auto contract_address = oracle::server_node::get()->get_contract_address(item.asset);
 					if (!*has_account)
 					{
 						StellarCreateAccountOp account = tx_create_account_prepared(item.address, from_link.address, (uint64_t)to_stroop(item.value), !!contract_address);
@@ -603,10 +603,10 @@ namespace tangent
 				if (!signing_public_key)
 					coreturn expects_rt<prepared_transaction>(remote_exception(std::move(signing_public_key.error().message())));
 
-				auto public_key = algorithm::composition::cpubkey_t(*signing_public_key);
+				auto public_key = algorithm::composition::to_cstorage<algorithm::composition::cpubkey_t>(*signing_public_key);
 				vector<uint8_t> raw_data = tx_data_from_signature(transaction, accounts, payments);
 				prepared_transaction result;
-				result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key.data, raw_data.data(), raw_data.size(), unordered_map<algorithm::asset_id, decimal>(inputs));
+				result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, raw_data.data(), raw_data.size(), unordered_map<algorithm::asset_id, decimal>(inputs));
 				for (auto& item : to)
 					result.requires_account_output(item.address, { { item.asset, item.value } });
 				result.requires_abi(format::variable(transaction.sequence_number));
@@ -665,7 +665,7 @@ namespace tangent
 
 					auto& value = item.tokens.empty() ? item.value : item.tokens.front().value;
 					auto asset = item.tokens.empty() ? item.get_asset(native_asset) : item.tokens.front().get_asset(native_asset);
-					auto contract_address = nss::server_node::get()->get_contract_address(asset);
+					auto contract_address = oracle::server_node::get()->get_contract_address(asset);
 					if (create_account_ptr->as_boolean())
 					{
 						StellarCreateAccountOp account = tx_create_account_prepared(item.link.address, input.utxo.link.address, (uint64_t)to_stroop(value), !!contract_address);
@@ -688,9 +688,9 @@ namespace tangent
 				{
 					StellarSignedTx sign;
 					memset(&sign, 0, sizeof(sign));
-					sign.signature.size = (pb_size_t)std::min<size_t>(sizeof(sign.signature.bytes), algorithm::composition::size_of_signature(input.alg));
+					sign.signature.size = (pb_size_t)std::min<size_t>(sizeof(sign.signature.bytes), input.signature.size());
 					sign.public_key.size = (pb_size_t)std::min<size_t>(sizeof(sign.public_key.bytes), decoded_public_key_size);
-					memcpy(sign.signature.bytes, input.signature.data, sign.signature.size);
+					memcpy(sign.signature.bytes, input.signature.data(), input.signature.size());
 					memcpy(sign.public_key.bytes, decoded_public_key, sign.public_key.size);
 					sign.has_public_key = true;
 					sign.has_signature = true;
