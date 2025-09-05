@@ -221,6 +221,14 @@ namespace tangent
 
 			return expectation::met;
 		}
+		expects_lr<void> mempoolstate::clear_cooldowns()
+		{
+			auto cursor = get_storage().query(__func__, "DELETE FROM cooldowns");
+			if (!cursor || cursor->error())
+				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+			return expectation::met;
+		}
 		expects_lr<node_pair> mempoolstate::get_local_node()
 		{
 			auto cursor = get_storage().query(__func__, "SELECT node_message, wallet_message FROM nodes WHERE preference IS NULL LIMIT 1");

@@ -2009,7 +2009,7 @@ namespace tangent
 				if (!solution)
 					return solution.report("mempool block solution failed");
 
-				if (evaluation->block.number <= chain.get_latest_block_number().or_else(0))
+				if (evaluation->block.number > chain.get_latest_block_number().or_else(0))
 				{
 					if (protocol::now().user.consensus.logging)
 						VI_INFO("proposing mempool block (number: %" PRIu64", hash: %s)", evaluation->block.number, algorithm::encoding::encode_0xhex256(evaluation->block.as_hash()).c_str());
@@ -2073,8 +2073,8 @@ namespace tangent
 			auto mempool = storages::mempoolstate();
 			auto node_id = codec::hex_encode(std::string_view((char*)this, sizeof(this)));
 			oracle::server_node::get()->add_transaction_callback(node_id, std::bind(&server_node::dispatch_transaction_logs, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
-			console::get()->add_colorization("CHECKPOINT SYNC DONE", std_color::white, std_color::dark_green);
 			accept_local_wallet(optional::none).expect("failed to save local node");
+			mempool.clear_cooldowns().report("failed to clear node cooldowns");
 
 			for (auto& node : protocol::now().user.known_nodes)
 			{
@@ -2085,10 +2085,7 @@ namespace tangent
 						VI_ERR("pre-configured node \"%s\" error: url not valid", node.c_str());
 				}
 				else
-				{
 					mempool.apply_unknown_node(endpoint.address);
-					mempool.apply_cooldown_node(endpoint.address, 0);
-				}
 			}
 
 			bind_event(METHOD_CALL(&server_node::notify_of_possibly_new_block_hash), std::bind(&server_node::notify_of_possibly_new_block_hash, this, std::placeholders::_2, std::placeholders::_3));

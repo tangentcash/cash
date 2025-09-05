@@ -64,6 +64,7 @@ namespace tangent
 			expects_lr<void> apply_node_call(const socket_address& address, int8_t call_result, uint64_t call_latency, uint64_t cooldown_timeout);
 			expects_lr<void> clear_node(const algorithm::pubkeyhash_t& account);
 			expects_lr<void> clear_node(const socket_address& address);
+			expects_lr<void> clear_cooldowns();
 			expects_lr<node_pair> get_local_node();
 			expects_lr<node_pair> get_neighbor_node(size_t offset);
 			expects_lr<node_pair> get_better_node(const algorithm::pubkeyhash_t& account);
