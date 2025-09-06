@@ -357,7 +357,7 @@ namespace tangent
 			const double min_step = 32.0, max_latency = 500.0;
 			double responses = std::max((double)availability.calls, min_step);
 			double errors = std::min(std::max((double)availability.errors, 0.0), responses);
-			double latency = mathd::exp(-availability.latency / max_latency);
+			double latency = mathd::exp(-(double)availability.latency / max_latency);
 			double reliability = availability.calls > 0 ? 1.0 - errors / responses : 1;
 			double index = latency * 0.75 + reliability * 0.25;
 			return (uint64_t)(1000000.0 * index);

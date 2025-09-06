@@ -16,6 +16,19 @@ namespace tangent
 {
 	namespace consensus
 	{
+		static option<socket_address> text_address_to_socket_address(const std::string_view& value)
+		{
+			auto ip_address = value.substr(0, value.find(':'));
+			auto ip_port = ip_address.size() + 1 <= value.size() ? value.substr(ip_address.size() + 1) : std::string_view();
+			auto address = socket_address(ip_address, from_string<uint16_t>(ip_port).or_else(0));
+			return address.is_valid() ? option<socket_address>(std::move(address)) : option<socket_address>(optional::none);
+		}
+		static option<string> socket_address_to_text_address(const socket_address& value)
+		{
+			auto ip_address = value.get_ip_address();
+			auto ip_port = value.get_ip_port();
+			return ip_address && ip_port ? option<string>(*ip_address + ":" + to_string(*ip_port)) : option<string>(optional::none);
+		}
 		static uint256_t handshake_proof(const ledger::node& node, uint64_t time)
 		{
 			format::wo_stream message;
@@ -59,8 +72,7 @@ namespace tangent
 		bool exchange::store_payload(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "result should be set");
-			stream->write_integer(send_time);
-			stream->write_integer(receive_time);
+			stream->write_integer(time);
 			stream->write_integer(method);
 			stream->write_integer(session);
 			stream->write_integer((uint8_t)type);
@@ -68,10 +80,7 @@ namespace tangent
 		}
 		bool exchange::load_payload(format::ro_stream& stream)
 		{
-			if (!stream.read_integer(stream.read_type(), &send_time))
-				return false;
-
-			if (!stream.read_integer(stream.read_type(), &receive_time))
+			if (!stream.read_integer(stream.read_type(), &time))
 				return false;
 
 			if (!stream.read_integer(stream.read_type(), &method))
@@ -157,9 +166,8 @@ namespace tangent
 		}
 		uint64_t exchange::calculate_latency()
 		{
-			if (receive_time == std::numeric_limits<uint64_t>::max())
-				receive_time = protocol::now().time.now_cpu();
-			return send_time < receive_time ? receive_time - send_time : 0; 
+			auto time_now = protocol::now().time.now_cpu();
+			return time > 0 && time_now > time ? time_now - time : 0;
 		}
 		uint32_t exchange::as_type() const
 		{
@@ -173,8 +181,7 @@ namespace tangent
 		{
 			schema* data = var::set::object();
 			data->set("method", var::integer(method));
-			data->set("send_time", var::integer(send_time));
-			data->set("receive_time", receive_time == std::numeric_limits<uint64_t>::max() ? var::null() : var::integer(receive_time));
+			data->set("send_time", var::integer(time));
 			data->set("session", session > 0 ? var::integer(session) : var::null());
 			data->set("type", var::string(type == side::query ? "query" : "event"));
 			data->set("args", format::variables_util::serialize(args));
@@ -373,7 +380,7 @@ namespace tangent
 			if (descriptor)
 			{
 				auto mempool = storages::mempoolstate();
-				mempool.apply_node_call(descriptor->first.address, call_result, call_latency, protocol::now().user.consensus.topology_timeout);
+				mempool.apply_node_quality(descriptor->first.address, call_result, call_latency, protocol::now().user.consensus.topology_timeout);
 			}
 		}
 		void relay::resolve_query(exchange&& packed_result)
@@ -906,11 +913,8 @@ namespace tangent
 			if (signature.empty())
 				return layer_exception("invalid signature");
 
-			auto destination = event.args[1].as_string();
-			auto ip_address = destination.substr(0, destination.find(':'));
-			auto ip_port = ip_address.size() + 1 <= destination.size() ? destination.substr(ip_address.size() + 1) : std::string_view();
-			auto address = socket_address(ip_address, from_string<uint16_t>(ip_port).or_else(0));
-			if (!address.is_valid() || routing_util::is_address_reserved(address))
+			auto address = text_address_to_socket_address(event.args[1].as_string());
+			if (!address || routing_util::is_address_reserved(*address))
 				return layer_exception("invalid address");
 
 			size_t accounts_size = event.args.size() - 2;
@@ -928,11 +932,11 @@ namespace tangent
 				return layer_exception("invalid accounts");
 
 			algorithm::pubkeyhash_t account;
-			if (!algorithm::signing::recover_hash(discovery_proof(address, accounts), account, signature))
+			if (!algorithm::signing::recover_hash(discovery_proof(*address, accounts), account, signature))
 				return layer_exception("invalid signature");
 
 			if (accounts.find(descriptor.second.public_key_hash) != accounts.end())
-				connect_to_physical_node(address, account);
+				connect_to_physical_node(*address, account);
 			if (accounts.size() > 1)
 				notify_all_except(std::move(state), METHOD_CALL(&server_node::reverse_connect_to_node_by_accounts), format::variables(event.args));
 			return expectation::met;
@@ -953,13 +957,16 @@ namespace tangent
 			else if (!algorithm::signing::recover_hash(handshake_proof(peer_node, peer_time), peer_wallet.public_key_hash, peer_signature))
 				return layer_exception("invalid signature");
 
+			auto mempool = storages::mempoolstate();
 			uint64_t peer_latency = peer_time > system_time ? peer_time - system_time : system_time - peer_time;
 			peer_node.availability.latency = peer_latency;
 			peer_node.address = socket_address(state->peer_address(), peer_node.address.get_ip_port().or_else(protocol::now().user.consensus.port));
 			if (!peer_node.is_valid() || peer_wallet.public_key_hash.empty() || peer_wallet.public_key_hash.equals(descriptor.second.public_key_hash))
+			{
+				mempool.clear_node(peer_descriptor.first.address);
 				return layer_exception("invalid node");
+			}
 
-			auto mempool = storages::mempoolstate();
 			apply_node(mempool, peer_descriptor).report("mempool peer node save failed");
 			state->initialize(std::move(peer_descriptor));
 			if (is_acknowledgement)
@@ -978,26 +985,32 @@ namespace tangent
 		}
 		expects_lr<format::variables> server_node::query_state(uref<relay>&& state, const exchange& event, bool is_acknowledgement)
 		{
-			if (event.args.size() < 2)
+			if (event.args.size() < 3)
 				return layer_exception("invalid arguments");
 
-			auto subevent = exchange(event);
-			subevent.args.resize(2);
+			auto mempool = storages::mempoolstate();
+			auto address = text_address_to_socket_address(event.args[0].as_string());
+			if (address && !routing_util::is_address_reserved(*address))
+			{
+				descriptor.first.address = std::move(*address);
+				apply_node(mempool, descriptor).report("mempool local node save failed");
+			}
 
-			auto status = notify_of_possibly_new_block_hash(uref(state), std::move(subevent));
+			auto block_handle = exchange();
+			block_handle.args.reserve(2);
+			block_handle.args.push_back(event.args[1]);
+			block_handle.args.push_back(event.args[2]);
+
+			auto status = notify_of_possibly_new_block_hash(uref(state), std::move(block_handle));
 			if (!status)
 				return status.error();
 
 			size_t new_nodes = 0;
-			auto mempool = storages::mempoolstate();
-			for (size_t i = 2; i < event.args.size(); i++)
+			for (size_t i = 3; i < event.args.size(); i++)
 			{
-				auto destination = event.args[i].as_string();
-				auto ip_address = destination.substr(0, destination.find(':'));
-				auto ip_port = ip_address.size() + 1 <= destination.size() ? destination.substr(ip_address.size() + 1) : std::string_view();
-				auto target = socket_address(ip_address, from_string<uint16_t>(ip_port).or_else(0));
-				if (target.is_valid() && !routing_util::is_address_reserved(target))
-					new_nodes += mempool.apply_unknown_node(target) ? 1 : 0;
+				auto address = text_address_to_socket_address(event.args[i].as_string());
+				if (address && !routing_util::is_address_reserved(*address))
+					new_nodes += mempool.apply_unknown_node(*address) ? 1 : 0;
 			}
 
 			if (new_nodes > 0)
@@ -1006,7 +1019,7 @@ namespace tangent
 			if (is_acknowledgement)
 				return format::variables();
 
-			return build_state_exchange();
+			return build_state_exchange(std::move(state));
 		}
 		expects_lr<format::variables> server_node::query_block_headers(uref<relay>&& state, const exchange& event)
 		{
@@ -1195,7 +1208,7 @@ namespace tangent
 				if (!unknown_node)
 					return layer_exception("no candidate found in mempool");
 
-				if (find_by_address(*unknown_node) || routing_util::is_address_reserved(*unknown_node) || mempool.has_cooldown_on_node(*unknown_node).or_else(false))
+				if (has_address(*unknown_node) || routing_util::is_address_reserved(*unknown_node) || mempool.has_cooldown_on_node(*unknown_node).or_else(false))
 					goto retry_unknown_node;
 
 				if (protocol::now().user.consensus.logging)
@@ -1203,7 +1216,7 @@ namespace tangent
 
 				return expects_lr<socket_address>(std::move(*unknown_node));
 			}
-			else if (find_by_address(known_node->first.address) || routing_util::is_address_reserved(known_node->first.address) || mempool.has_cooldown_on_node(known_node->first.address).or_else(false))
+			else if (has_address(known_node->first.address) || routing_util::is_address_reserved(known_node->first.address) || mempool.has_cooldown_on_node(known_node->first.address).or_else(false))
 			{
 				++offset;
 				goto retry_known_node;
@@ -1280,6 +1293,8 @@ namespace tangent
 			auto ip_address = address.get_ip_address();
 			if (!ip_address)
 				return expects_promise_rt<uref<relay>>(remote_exception("not a valid address"));
+			else if (has_address(address))
+				return expects_promise_rt<uref<relay>>(remote_exception("possible loopback"));
 
 			auto& peer = protocol::now().user.consensus;
 			umutex<std::recursive_mutex> unique(exclusive);
@@ -1332,7 +1347,7 @@ namespace tangent
 				if (!peer_descriptor || (required_account && !peer_descriptor->second.public_key_hash.equals(*required_account)))
 					coreturn abort(remote_exception("invalid descriptor"));
 				
-				auto subresult = coawait(query(uref(state), METHOD_CALL(&server_node::query_state), build_state_exchange(), protocol::now().user.tcp.timeout));
+				auto subresult = coawait(query(uref(state), METHOD_CALL(&server_node::query_state), build_state_exchange(uref(state)), protocol::now().user.tcp.timeout));
 				if (!subresult)
 					coreturn abort(remote_exception(std::move(subresult.error().message())));
 
@@ -1353,7 +1368,7 @@ namespace tangent
 				if (!result)
 				{
 					auto mempool = storages::mempoolstate();
-					mempool.apply_node_call(address, -1, protocol::now().user.tcp.timeout, protocol::now().user.consensus.topology_timeout);
+					mempool.apply_node_quality(address, -1, protocol::now().user.tcp.timeout, protocol::now().user.consensus.topology_timeout);
 					if (protocol::now().user.consensus.logging)
 						VI_WARN("node %s:%i handshake: %s", address.get_ip_address().or_else("[bad_address]").c_str(), (int)address.get_ip_port().or_else(0), result.what().c_str());
 				}
@@ -1598,26 +1613,27 @@ namespace tangent
 				events += *exception != *node.second ? notify(uref(node.second), method, format::variables(args)) ? 1 : 0 : 0;
 			return events;
 		}
-		format::variables server_node::build_state_exchange()
+		format::variables server_node::build_state_exchange(uref<relay>&& state)
 		{
-			auto mempool = storages::mempoolstate();
 			auto chain = storages::chainstate();
-			auto nodes = mempool.get_random_nodes_with(protocol::now().user.consensus.cursor_size);
 			auto tip = chain.get_latest_block_header();
-			format::variables args = { format::variable(tip ? tip->as_hash() : uint256_t(0)), format::variable(tip ? tip->number : 0) };
-			args.reserve(2 + (nodes ? nodes->size() : 0));
-			if (nodes && !nodes->empty())
+			auto* descriptor = state->as_descriptor();
+			auto address = descriptor ? socket_address_to_text_address(descriptor->first.address).or_else(string()) : string();
+			format::variables args =
 			{
-				for (auto& [account, address] : *nodes)
-				{
-					auto ip_address = address.get_ip_address();
-					auto ip_port = address.get_ip_port();
-					if (ip_address && ip_port)
-					{
-						string destination = *ip_address + ":" + to_string(*ip_port);
-						args.push_back(format::variable(destination));
-					}
-				}
+				format::variable(address),
+				format::variable(tip ? tip->as_hash() : uint256_t(0)),
+				format::variable(tip ? tip->number : 0)
+			};
+
+			auto mempool = storages::mempoolstate();
+			auto nodes = mempool.get_random_nodes_with(protocol::now().user.consensus.cursor_size).or_else(vector<storages::node_location_pair>());
+			args.reserve(2 + nodes.size());
+			for (auto& [account, address] : nodes)
+			{
+				auto text_address = socket_address_to_text_address(address);
+				if (text_address)
+					args.push_back(format::variable(*text_address));
 			}
 			return args;
 		}
@@ -1660,7 +1676,7 @@ namespace tangent
 					if (descriptor != nullptr)
 					{
 						auto mempool = storages::mempoolstate();
-						mempool.apply_node_call(descriptor->first.address, -1, message.calculate_latency(), protocol::now().user.consensus.topology_timeout);
+						mempool.apply_node_quality(descriptor->first.address, -1, message.calculate_latency(), protocol::now().user.consensus.topology_timeout);
 					}
 
 					return abort_node(uref(state));
@@ -1697,7 +1713,7 @@ namespace tangent
 					if (descriptor != nullptr)
 					{
 						auto mempool = storages::mempoolstate();
-						mempool.apply_node_call(descriptor->first.address, result ? 1 : -1, message.calculate_latency(), protocol::now().user.consensus.topology_timeout);
+						mempool.apply_node_quality(descriptor->first.address, result ? 1 : -1, message.calculate_latency(), protocol::now().user.consensus.topology_timeout);
 					}
 
 					if (result)
@@ -2535,6 +2551,28 @@ namespace tangent
 		std::recursive_mutex& server_node::get_mutex()
 		{
 			return exclusive;
+		}
+		bool server_node::has_address(const socket_address& address)
+		{
+			auto ip_address = address.get_ip_address();
+			if (!ip_address)
+				return false;
+
+			umutex<std::recursive_mutex> unique(exclusive);
+			for (auto& node : nodes)
+			{
+				auto& peer_address = node.second->peer_address();
+				if (peer_address == *ip_address)
+					return true;
+			}
+
+			for (auto& listener : listeners)
+			{
+				if (*listener->address.get_ip_address() == *ip_address)
+					return true;
+			}
+
+			return false;
 		}
 		uref<relay> server_node::find_by_address(const socket_address& address)
 		{

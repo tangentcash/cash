@@ -100,6 +100,7 @@ namespace tangent
 			if (!encrypted_wallet_message)
 				return encrypted_wallet_message.error();
 
+			auto address_message = address_to_message(node.address);
 			uint32_t services = 0;
 			if (node.services.has_consensus)
 				services |= (uint32_t)node_services::consensus;
@@ -121,48 +122,32 @@ namespace tangent
 				services |= (uint32_t)node_services::attestation;
 
 			schema_list map;
-			map.push_back(var::set::binary(address_to_message(node.address)));
-			map.push_back(var::set::binary(address_to_message(node.address)));
+			map.push_back(var::set::binary(address_message));
+			map.push_back(var::set::binary(address_message));
 			map.push_back(var::set::binary(wallet.public_key_hash.view()));
-			map.push_back(var::set::binary(address_to_message(node.address)));
+			map.push_back(var::set::binary(address_message));
 			map.push_back(var::set::binary(wallet.public_key_hash.view()));
-			if (wallet.has_secret_key())
-			{
-				map.push_back(var::set::integer(services));
-				map.push_back(var::set::binary(node_message.data));
-				map.push_back(var::set::binary(*encrypted_wallet_message));
+			map.push_back(wallet.has_secret_key() ? var::set::null() : var::set::integer(node.get_preference()));
+			map.push_back(var::set::integer(services));
+			map.push_back(var::set::binary(node_message.data));
+			map.push_back(var::set::binary(*encrypted_wallet_message));
 
-				auto cursor = get_storage().emplace_query(__func__,
-					"DELETE FROM cooldowns WHERE address = ?;"
-					"DELETE FROM nodes WHERE address = ? OR account = ? OR preference IS NULL;"
-					"INSERT OR REPLACE INTO nodes (address, account, services, node_message, wallet_message) VALUES (?, ?, ?, ?, ?)", &map);
-				if (!cursor || cursor->error())
-					return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
-			}
-			else
-			{
-				map.push_back(var::set::integer(node.get_preference()));
-				map.push_back(var::set::integer(services));
-				map.push_back(var::set::binary(node_message.data));
-				map.push_back(var::set::binary(*encrypted_wallet_message));
-
-				auto cursor = get_storage().emplace_query(__func__,
-					"DELETE FROM cooldowns WHERE address = ?;"
-					"DELETE FROM nodes WHERE address = ? OR account = ?;"
-					"INSERT OR REPLACE INTO nodes (address, account, preference, services, node_message, wallet_message) VALUES (?, ?, ?, ?, ?, ?)", &map);
-				if (!cursor || cursor->error())
-					return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
-			}
+			auto cursor = get_storage().emplace_query(__func__,
+				"DELETE FROM cooldowns WHERE address = ?;"
+				"DELETE FROM nodes WHERE address = ? OR account = ?;"
+				"INSERT OR REPLACE INTO nodes (address, account, quality, services, node_message, wallet_message) VALUES (?, ?, ?, ?, ?, ?)", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			return expectation::met;
 		}
-		expects_lr<void> mempoolstate::apply_node_call(const socket_address& node_address, int8_t call_result, uint64_t call_latency, uint64_t cooldown_timeout)
+		expects_lr<void> mempoolstate::apply_node_quality(const socket_address& node_address, int8_t call_result, uint64_t call_latency, uint64_t cooldown_timeout)
 		{
 			schema_list map;
 			map.push_back(var::set::binary(address_to_message(node_address)));
 
 			auto& storage = get_storage();
-			auto cursor = storage.emplace_query(__func__, "SELECT node_message FROM nodes WHERE address = ? AND preference IS NOT NULL", &map);
+			auto cursor = storage.emplace_query(__func__, "SELECT node_message FROM nodes WHERE address = ? AND quality IS NOT NULL", &map);
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -182,18 +167,17 @@ namespace tangent
 					++node.availability.errors;
 			}
 
+			auto address_message = address_to_message(node.address);
 			map.clear();
 			map.push_back(var::set::integer(node.get_preference()));
 			map.push_back(var::set::binary(node.as_message().data));
-			map.push_back(var::set::binary(address_to_message(node.address)));
-			map.push_back(var::set::binary(address_to_message(node.address)));
+			map.push_back(var::set::binary(address_message));
+			map.push_back(var::set::binary(address_message));
 			map.push_back(var::set::integer(protocol::now().time.now_cpu() + cooldown_timeout));
 
-			cursor = storage.emplace_query(__func__, call_result <= 0 ?
-				"UPDATE nodes SET preference = ? AND node_message = ? WHERE address = ?;" 
-				"INSERT OR REPLACE INTO cooldowns (address, expiration) VALUES (?, ?)" :
-				"UPDATE nodes SET preference = ? AND node_message = ? WHERE address = ?;"
-				"DELETE FROM cooldowns WHERE address = ?", &map);
+			string command = "UPDATE nodes SET quality = ?, node_message = ? WHERE address = ?;";
+			command.append(call_result <= 0 ? "INSERT OR REPLACE INTO cooldowns (address, expiration) VALUES (?, ?)" : "DELETE FROM cooldowns WHERE address = ?");
+			cursor = storage.emplace_query(__func__, command, &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -212,10 +196,16 @@ namespace tangent
 		}
 		expects_lr<void> mempoolstate::clear_node(const socket_address& node_address)
 		{
+			auto address_message = address_to_message(node_address);
 			schema_list map;
-			map.push_back(var::set::binary(address_to_message(node_address)));
+			map.push_back(var::set::binary(address_message));
+			map.push_back(var::set::binary(address_message));
+			map.push_back(var::set::binary(address_message));
 
-			auto cursor = get_storage().emplace_query(__func__, "DELETE FROM nodes WHERE address = ?", &map);
+			auto cursor = get_storage().emplace_query(__func__,
+				"DELETE FROM nodes WHERE address = ?;"
+				"DELETE FROM cooldowns WHERE address = ?;"
+				"DELETE FROM addresses WHERE address = ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -231,7 +221,7 @@ namespace tangent
 		}
 		expects_lr<node_pair> mempoolstate::get_local_node()
 		{
-			auto cursor = get_storage().query(__func__, "SELECT node_message, wallet_message FROM nodes WHERE preference IS NULL LIMIT 1");
+			auto cursor = get_storage().query(__func__, "SELECT node_message, wallet_message FROM nodes WHERE quality IS NULL LIMIT 1");
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<node_pair>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -257,7 +247,7 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::integer(offset));
 
-			auto cursor = get_storage().emplace_query(__func__, "SELECT node_message, wallet_message FROM nodes WHERE preference IS NOT NULL ORDER BY preference DESC LIMIT 1 OFFSET ?", &map);
+			auto cursor = get_storage().emplace_query(__func__, "SELECT node_message, wallet_message FROM nodes WHERE quality IS NOT NULL ORDER BY quality DESC LIMIT 1 OFFSET ?", &map);
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<node_pair>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -284,14 +274,14 @@ namespace tangent
 			map.push_back(var::set::binary(account.view()));
 
 			auto& storage = get_storage();
-			auto cursor = storage.emplace_query(__func__, "SELECT preference FROM nodes WHERE account = ?", &map);
+			auto cursor = storage.emplace_query(__func__, "SELECT quality FROM nodes WHERE account = ?", &map);
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<node_pair>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			map.clear();
-			map.push_back((*cursor)["preference"].get_inline());
+			map.push_back((*cursor)["quality"].get_inline());
 
-			cursor = storage.emplace_query(__func__, "SELECT node_message, wallet_message FROM nodes WHERE preference > ? AND ORDER BY preference DESC LIMIT 1 OFFSET ?", &map);
+			cursor = storage.emplace_query(__func__, "SELECT node_message, wallet_message FROM nodes WHERE quality > ? AND ORDER BY quality DESC LIMIT 1 OFFSET ?", &map);
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<node_pair>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -372,7 +362,7 @@ namespace tangent
 			map.push_back(var::set::integer(count));
 			map.push_back(var::set::integer(offset));
 
-			auto cursor = get_storage().emplace_query(__func__, stringify::text("SELECT account, address FROM nodes WHERE preference IS NOT NULL %s ORDER BY preference DESC LIMIT ? OFFSET ?", services > 0 ? "AND services & ? > 0" : ""), &map);
+			auto cursor = get_storage().emplace_query(__func__, stringify::text("SELECT account, address FROM nodes WHERE quality IS NOT NULL %s ORDER BY quality DESC LIMIT ? OFFSET ?", services > 0 ? "AND services & ? > 0" : ""), &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<node_location_pair>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -395,7 +385,7 @@ namespace tangent
 				map.push_back(var::set::integer(services));
 			map.push_back(var::set::integer(count));
 
-			auto cursor = get_storage().emplace_query(__func__, stringify::text("SELECT account, address FROM nodes WHERE preference IS NOT NULL %s ORDER BY random() LIMIT ?", services > 0 ? "AND services & ? > 0" : ""), &map);
+			auto cursor = get_storage().emplace_query(__func__, stringify::text("SELECT account, address FROM nodes WHERE quality IS NOT NULL %s ORDER BY random() LIMIT ?", services > 0 ? "AND services & ? > 0" : ""), &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<node_location_pair>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -442,7 +432,7 @@ namespace tangent
 		}
 		expects_lr<size_t> mempoolstate::get_nodes_count()
 		{
-			auto cursor = get_storage().query(__func__, "SELECT COUNT(1) AS counter FROM nodes WHERE preference IS NOT NULL");
+			auto cursor = get_storage().query(__func__, "SELECT COUNT(1) AS counter FROM nodes WHERE quality IS NOT NULL");
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<size_t>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -472,7 +462,7 @@ namespace tangent
 			map.push_back(var::set::binary(hash, sizeof(hash)));
 			map.push_back(var::set::number(1.0 - priority_percentile));
 
-			auto cursor = get_storage().emplace_query(__func__, "SELECT price FROM transactions WHERE asset = ? ORDER BY preference DESC NULLS FIRST LIMIT 1 OFFSET (SELECT CAST((COUNT(1) * ?) AS INT) FROM transactions)", &map);
+			auto cursor = get_storage().emplace_query(__func__, "SELECT price FROM transactions WHERE asset = ? ORDER BY quality DESC NULLS FIRST LIMIT 1 OFFSET (SELECT CAST((COUNT(1) * ?) AS INT) FROM transactions)", &map);
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<decimal>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -502,7 +492,7 @@ namespace tangent
 				return expects_lr<void>(layer_exception("transaction owner recovery error"));
 
 			uint256_t group = 0;
-			decimal preference = decimal::nan();
+			decimal quality = decimal::nan();
 			auto type = resurrection ? ledger::transaction_level::functional : value.get_type();
 			auto queue = [this, &value]() -> decimal
 			{
@@ -516,7 +506,7 @@ namespace tangent
 			{
 				case ledger::transaction_level::functional:
 				{
-					preference = queue();
+					quality = queue();
 					break;
 				}
 				case ledger::transaction_level::delegation:
@@ -527,7 +517,7 @@ namespace tangent
 					else if (!value.gas_price.is_positive())
 						return expects_lr<void>(layer_exception(stringify::text("wait for finalization of or replace previous delegation transaction (queue: %" PRIu64 ", nonce: %" PRIu64 ")", (uint64_t)bandwidth->count, bandwidth->nonce)));
 
-					preference = queue();
+					quality = queue();
 					break;
 				}
 				case ledger::transaction_level::consensus:
@@ -538,7 +528,7 @@ namespace tangent
 					else if (!value.gas_price.is_positive())
 						return expects_lr<void>(layer_exception(stringify::text("wait for finalization of or replace previous consensus transaction (queue: %" PRIu64 ", nonce: %" PRIu64 ")", (uint64_t)bandwidth->count, bandwidth->nonce)));
 
-					preference = queue();
+					quality = queue();
 					break;
 				}
 				case ledger::transaction_level::attestation:
@@ -571,7 +561,7 @@ namespace tangent
 					if (optimal_gas_limit && *optimal_gas_limit > attestation->gas_limit)
 						attestation->gas_limit = *optimal_gas_limit;
 
-					preference = queue();
+					quality = queue();
 					break;
 				}
 				default:
@@ -600,7 +590,7 @@ namespace tangent
 			map.push_back(var::set::binary(owner.view()));
 			map.push_back(var::set::binary(asset, sizeof(asset)));
 			map.push_back(var::set::integer(value.nonce));
-			map.push_back(preference.is_nan() ? var::set::null() : var::set::integer(preference.to_uint64()));
+			map.push_back(quality.is_nan() ? var::set::null() : var::set::integer(quality.to_uint64()));
 			map.push_back(var::set::integer((int64_t)type));
 			map.push_back(var::set::integer(time(nullptr)));
 			map.push_back(var::set::string(value.gas_price.to_string()));
@@ -608,7 +598,7 @@ namespace tangent
 			map.push_back(var::set::binary(owner.view()));
 
 			auto cursor = get_storage().emplace_query(__func__,
-				"INSERT OR REPLACE INTO transactions (hash, group_hash, owner, asset, nonce, preference, type, time, price, message) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
+				"INSERT OR REPLACE INTO transactions (hash, group_hash, owner, asset, nonce, quality, type, time, price, message) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
 				"WITH epochs AS (SELECT rowid, ROW_NUMBER() OVER (ORDER BY nonce) AS epoch FROM transactions WHERE owner = ?) UPDATE transactions SET epoch = epochs.epoch FROM epochs WHERE transactions.rowid = epochs.rowid", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
@@ -877,7 +867,7 @@ namespace tangent
 			map.push_back(var::set::integer(count));
 			map.push_back(var::set::integer(offset));
 
-			auto cursor = get_storage().emplace_query(__func__, "SELECT message FROM transactions ORDER BY epoch ASC, preference DESC NULLS FIRST LIMIT ? OFFSET ?", &map);
+			auto cursor = get_storage().emplace_query(__func__, "SELECT message FROM transactions ORDER BY epoch ASC, quality DESC NULLS FIRST LIMIT ? OFFSET ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<uptr<ledger::transaction>>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -1038,14 +1028,13 @@ namespace tangent
 			(
 				address BLOB NOT NULL,
 				account BLOB(20) NOT NULL,
-				preference INTEGER DEFAULT NULL,
+				quality INTEGER DEFAULT NULL,
 				services INTEGER NOT NULL,
 				node_message BLOB NOT NULL,
 				wallet_message BLOB NOT NULL,
 				PRIMARY KEY (address)
 				UNIQUE (account)
 			) WITHOUT ROWID;
-			CREATE INDEX IF NOT EXISTS nodes_preference ON nodes (preference DESC);
 			CREATE TABLE IF NOT EXISTS addresses
 			(
 				address BLOB NOT NULL,
@@ -1074,7 +1063,7 @@ namespace tangent
 				asset BLOB(32) NOT NULL,
 				nonce BIGINT NOT NULL,
 				epoch INTEGER DEFAULT 0,
-				preference INTEGER DEFAULT NULL,
+				quality INTEGER DEFAULT NULL,
 				type INTEGER NOT NULL,
 				time INTEGER NOT NULL,
 				price TEXT NOT NULL,
@@ -1083,10 +1072,10 @@ namespace tangent
 			);
 			CREATE INDEX IF NOT EXISTS transactions_group_hash ON transactions (group_hash);
 			CREATE INDEX IF NOT EXISTS transactions_owner_nonce ON transactions (owner, nonce);
-			CREATE INDEX IF NOT EXISTS transactions_asset_preference ON transactions (asset ASC, preference DESC);
-			CREATE INDEX IF NOT EXISTS transactions_epoch_preference ON transactions (epoch ASC, preference DESC);
+			CREATE INDEX IF NOT EXISTS transactions_asset_preference ON transactions (asset ASC, quality DESC);
+			CREATE INDEX IF NOT EXISTS transactions_epoch_preference ON transactions (epoch ASC, quality DESC);
 			CREATE TRIGGER IF NOT EXISTS transactions_capacity BEFORE INSERT ON transactions BEGIN
-				DELETE FROM transactions WHERE hash = (SELECT hash FROM transactions ORDER BY epoch DESC, preference ASC NULLS LAST) AND (SELECT COUNT(1) FROM transactions) >= max_mempool_size;
+				DELETE FROM transactions WHERE hash = (SELECT hash FROM transactions ORDER BY epoch DESC, quality ASC NULLS LAST) AND (SELECT COUNT(1) FROM transactions) >= max_mempool_size;
 			END;);
 			stringify::replace(command, "max_mempool_size", to_string(protocol::now().user.storage.mempool_transaction_limit));
 

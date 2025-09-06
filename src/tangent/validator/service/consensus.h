@@ -56,8 +56,7 @@ namespace tangent
 			};
 
 			format::variables args;
-			uint64_t send_time = 0;
-			uint64_t receive_time = std::numeric_limits<uint64_t>::max();
+			uint64_t time = protocol::now().time.now_cpu();
 			uint32_t method = 0;
 			uint32_t session = 0;
 			side type;
@@ -273,6 +272,7 @@ namespace tangent
 			void clear_pending_fork(relay* state);
 			void accept_pending_fork(uref<relay>&& state, fork_head head, const uint256_t& candidate_hash, ledger::block_header&& candidate_block);
 			bool accept_block(uref<relay>&& from, ledger::block_evaluation&& candidate, const uint256_t& fork_tip);
+			bool has_address(const socket_address& address);
 			uref<relay> find_by_address(const socket_address& address);
 			uref<relay> find_by_account(const algorithm::pubkeyhash_t& account);
 			size_t size_of(node_type type);
@@ -290,7 +290,7 @@ namespace tangent
 			expects_system<void> on_after_unlisten() override;
 			expects_lr<void> apply_node(storages::mempoolstate& mempool, relay_descriptor& descriptor);
 			uref<relay> find_node_by_instance(void* instance);
-			format::variables build_state_exchange();
+			format::variables build_state_exchange(uref<relay>&& state);
 			void fill_node_services();
 			bool accept_block_candidate(const ledger::block_evaluation& candidate, const uint256_t& candidate_hash, const uint256_t& fork_tip);
 			bool accept_proposal_transaction(const ledger::block& checkpoint_block, const ledger::block_transaction& transaction);
