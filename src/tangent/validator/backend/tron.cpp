@@ -179,6 +179,11 @@ namespace tangent
 				netdata.supports_bulk_transfer = false;
 				netdata.requires_transaction_expiration = true;
 				legacy.estimate_gas = 1;
+				apply_token_whitelist(
+				{
+					{ "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t", "USDT" },
+					{ "TLZSucJRjnqBKwvQz6n5hd29gbS4P7u7w8", "USDC" }
+				});
 			}
 			expects_promise_rt<tron::trx_tx_block_header_info> tron::get_block_header_for_tx()
 			{

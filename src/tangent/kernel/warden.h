@@ -341,6 +341,9 @@ namespace tangent
 		{
 			friend class datamaster;
 
+		protected:
+			typedef std::pair<string, string> contract_address_symbol_pair;
+
 		public:
 			typedef std::function<void(server_relay*)> interaction_callback;
 
@@ -357,8 +360,9 @@ namespace tangent
 			};
 
 		protected:
-			unordered_set<algorithm::asset_id> token_assets;
+			unordered_map<algorithm::asset_id, string> token_assets;
 			algorithm::asset_id native_asset;
+			bool allow_any_token;
 
 		public:
 			interaction_callback interact;
@@ -395,11 +399,14 @@ namespace tangent
 			virtual uint256_t to_baseline_value(const decimal& value) const;
 			virtual decimal from_baseline_value(const uint256_t& value) const;
 			virtual uint64_t get_retirement_block_number() const;
-			virtual bool has_token(const algorithm::asset_id& asset) const;
+			virtual ordered_map<string, algorithm::asset_id> get_supported_tokens();
+			virtual bool has_read_only_token_support() const;
+			virtual bool has_full_token_support_for_any_token() const;
+			virtual bool has_full_token_support(const algorithm::asset_id& asset) const;
 			virtual const chainparams& get_chainparams() const = 0;
 
 		protected:
-			virtual void apply_address_to_symbol_whitelist(const vector<std::pair<string, string>>& whitelist);
+			virtual void apply_token_whitelist(const vector<contract_address_symbol_pair>& whitelist);
 		};
 
 		class relay_backend_utxo : public relay_backend

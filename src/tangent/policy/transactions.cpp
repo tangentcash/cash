@@ -1637,6 +1637,9 @@ namespace tangent
 			if (!chain)
 				return layer_exception("invalid operation");
 
+			if (!algorithm::asset::is_fully_valid(asset))
+				return layer_exception("not a valid withdrawal asset");
+
 			if (to_manager.empty())
 			{
 				if (to.empty())
@@ -1658,7 +1661,7 @@ namespace tangent
 				}
 			}
 			else if (!to.empty())
-				return layer_exception("invalid to");
+				return layer_exception("invalid to");		
 
 			return ledger::transaction::validate(block_number);
 		}
@@ -2749,7 +2752,7 @@ namespace tangent
 				return reward.error();
 
 			auto depository = context->get_depository_policy(asset, context->receipt.from).or_else(states::depository_policy(context->receipt.from, asset, nullptr));
-			if (depository.accepts_withdrawal_requests != accepts_withdrawal_requests && !accepts_withdrawal_requests)
+			if (depository.accepts_withdrawal_requests != accepts_withdrawal_requests && !accepts_withdrawal_requests && algorithm::asset::is_fully_valid(asset))
 			{
 				auto balance = context->get_depository_balance(asset, context->receipt.from);
 				if (balance && balance->get_balance(asset).is_positive())
@@ -2840,7 +2843,7 @@ namespace tangent
 
 			for (auto& [hash, account] : participants)
 			{
-				if (!algorithm::asset::is_valid(account.asset) || !algorithm::asset::token_of(account.asset).empty())
+				if (!algorithm::asset::is_fully_valid(account.asset, true))
 					return layer_exception("invalid account asset");
 
 				if (account.manager.empty())

@@ -192,7 +192,7 @@ namespace tangent
 				netdata.routing = routing_policy::memo;
 				netdata.sync_latency = 0;
 				netdata.divisibility = decimal(1000000).truncate(protocol::now().message.decimal_precision);
-				netdata.supports_token_transfer.clear();
+				netdata.supports_token_transfer = "native";
 				netdata.supports_bulk_transfer = false;
 				netdata.requires_transaction_expiration = true;
 			}

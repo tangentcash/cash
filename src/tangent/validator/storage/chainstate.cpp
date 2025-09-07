@@ -640,9 +640,11 @@ namespace tangent
 				map.push_back(var::set::integer(block_number));
 				map.push_back(var::set::integer(block_number));
 				map.push_back(var::set::integer(block_number));
+				map.push_back(var::set::integer(block_number));
 
 				cursor = uniform_storage.emplace_query(__func__,
 					"DELETE FROM snapshots WHERE block_number > ?;"
+					"DELETE FROM uniforms WHERE block_number > ?;"
 					"INSERT OR REPLACE INTO uniforms (index_number, block_number) SELECT index_number, block_number FROM (SELECT index_number, hidden, MAX(block_number) AS block_number FROM snapshots WHERE block_number <= ? GROUP BY index_number) WHERE hidden = FALSE;"
 					"DELETE FROM indices WHERE block_number > ?;", &map);
 				if (!cursor || cursor->error())
@@ -656,9 +658,11 @@ namespace tangent
 				map.push_back(var::set::integer(block_number));
 				map.push_back(var::set::integer(block_number));
 				map.push_back(var::set::integer(block_number));
+				map.push_back(var::set::integer(block_number));
 
 				cursor = multiform_storage.emplace_query(__func__,
 					"DELETE FROM snapshots WHERE block_number > ?;"
+					"DELETE FROM multiforms WHERE block_number > ?;"
 					"INSERT OR REPLACE INTO multiforms (column_number, row_number, rank, block_number) SELECT column_number, row_number, rank, block_number FROM (SELECT column_number, row_number, rank, hidden, MAX(block_number) AS block_number FROM snapshots WHERE block_number <= ? GROUP BY column_number, row_number) WHERE hidden = FALSE;"
 					"DELETE FROM columns WHERE block_number > ?;"
 					"DELETE FROM rows WHERE block_number > ?;", &map);
@@ -1439,10 +1443,7 @@ namespace tangent
 					break;
 			}
 
-			auto it = std::remove_if(result.begin(), result.end(), [](const ledger::block_transaction& a) { return !a.transaction; });
-			if (it != result.end())
-				result.erase(it);
-
+			result.erase(std::remove_if(result.begin(), result.end(), [](const ledger::block_transaction& a) { return !a.transaction; }), result.end());
 			return expectation::met;
 		}
 		expects_lr<chainstate::uniform_location> chainstate::resolve_uniform_location(uint32_t type, const std::string_view& index, uint8_t resolver_flags)
@@ -1659,10 +1660,7 @@ namespace tangent
 					break;
 			}
 
-			auto it = std::remove_if(gas_prices.begin(), gas_prices.end(), [](const decimal& a) { return a.is_nan(); });
-			if (it != gas_prices.end())
-				gas_prices.erase(it);
-
+			gas_prices.erase(std::remove_if(gas_prices.begin(), gas_prices.end(), [](const decimal& a) { return a.is_nan(); }), gas_prices.end());
 			std::sort(gas_prices.begin(), gas_prices.end(), [](const decimal& a, const decimal& b) { return a > b; });
 			if (gas_prices.empty())
 				return expects_lr<decimal>(layer_exception("gas price not found"));
@@ -2148,9 +2146,7 @@ namespace tangent
 					finalize_checksum(**value, transaction_hash);
 			}));
 
-			auto it = std::remove_if(values.begin(), values.end(), [](const uptr<ledger::transaction>& a) { return !a; });
-			if (it != values.end())
-				values.erase(it);
+			values.erase(std::remove_if(values.begin(), values.end(), [](const uptr<ledger::transaction>& a) { return !a; }), values.end());
 			return values;
 		}
 		expects_lr<vector<uptr<ledger::transaction>>> chainstate::get_transactions_by_owner(uint64_t block_number, const algorithm::pubkeyhash_t& owner, int8_t direction, size_t offset, size_t count)
@@ -2201,9 +2197,7 @@ namespace tangent
 					finalize_checksum(**value, transaction_hash);
 			}));
 
-			auto it = std::remove_if(values.begin(), values.end(), [](const uptr<ledger::transaction>& a) { return !a; });
-			if (it != values.end())
-				values.erase(it);
+			values.erase(std::remove_if(values.begin(), values.end(), [](const uptr<ledger::transaction>& a) { return !a; }), values.end());
 			return values;
 		}
 		expects_lr<vector<ledger::block_transaction>> chainstate::get_block_transactions_by_number(uint64_t block_number, size_t offset, size_t count)
@@ -2237,9 +2231,7 @@ namespace tangent
 					finalize_checksum(**value.transaction, transaction_hash);
 			}));
 
-			auto it = std::remove_if(values.begin(), values.end(), [](const ledger::block_transaction& a) { return !a.transaction; });
-			if (it != values.end())
-				values.erase(it);
+			values.erase(std::remove_if(values.begin(), values.end(), [](const ledger::block_transaction& a) { return !a.transaction; }), values.end());
 			return values;
 		}
 		expects_lr<vector<ledger::block_transaction>> chainstate::get_block_transactions_by_owner(uint64_t block_number, const algorithm::pubkeyhash_t& owner, int8_t direction, size_t offset, size_t count)
@@ -2292,9 +2284,7 @@ namespace tangent
 					finalize_checksum(**value.transaction, transaction_hash);
 			}));
 
-			auto it = std::remove_if(values.begin(), values.end(), [](const ledger::block_transaction& a) { return !a.transaction; });
-			if (it != values.end())
-				values.erase(it);
+			values.erase(std::remove_if(values.begin(), values.end(), [](const ledger::block_transaction& a) { return !a.transaction; }), values.end());
 			return values;
 		}
 		expects_lr<vector<ledger::receipt>> chainstate::get_block_receipts_by_number(uint64_t block_number, size_t offset, size_t count)
@@ -2358,9 +2348,7 @@ namespace tangent
 					finalize_checksum(**value.transaction, transaction_hash);
 			}));
 
-			auto it = std::remove_if(values.begin(), values.end(), [](const ledger::block_transaction& a) { return !a.transaction; });
-			if (it != values.end())
-				values.erase(it);
+			values.erase(std::remove_if(values.begin(), values.end(), [](const ledger::block_transaction& a) { return !a.transaction; }), values.end());
 			return values;
 		}
 		expects_lr<uptr<ledger::transaction>> chainstate::get_transaction_by_hash(const uint256_t& transaction_hash)

@@ -471,7 +471,7 @@ namespace tangent
 				supply += prev->supply;
 				reserve += prev->reserve;
 			}
-			else if (!algorithm::asset::is_valid(asset))
+			else if (!algorithm::asset::is_read_only_valid(asset))
 				return layer_exception("invalid asset");
 
 			if (supply.is_nan() || supply.is_negative())
@@ -602,7 +602,7 @@ namespace tangent
 
 			for (auto& [asset, stake] : stakes)
 			{
-				if (!algorithm::asset::is_valid(asset))
+				if (!algorithm::asset::is_read_only_valid(asset))
 					return layer_exception("invalid asset");
 
 				if (stake.is_nan() || stake.is_negative())
@@ -753,13 +753,13 @@ namespace tangent
 						return layer_exception("next stake is lower than previous stake");
 				}
 			}
-			else if (!algorithm::asset::is_valid(asset) || !algorithm::asset::token_of(asset).empty())
+			else if (!algorithm::asset::is_read_only_valid(asset, true))
 				return layer_exception("invalid asset");
 
 			auto blockchain = algorithm::asset::blockchain_of(asset);
 			for (auto& [token_asset, stake] : stakes)
 			{
-				if (!algorithm::asset::is_valid(token_asset) || algorithm::asset::blockchain_of(token_asset) != blockchain)
+				if (!algorithm::asset::is_read_only_valid(token_asset) || algorithm::asset::blockchain_of(token_asset) != blockchain)
 					return layer_exception("invalid asset");
 
 				if (!stake.is_positive())
@@ -921,13 +921,13 @@ namespace tangent
 						return layer_exception("next stake is lower than previous stake");
 				}
 			}
-			else if (!algorithm::asset::is_valid(asset) || !algorithm::asset::token_of(asset).empty())
+			else if (!algorithm::asset::is_read_only_valid(asset, true))
 				return layer_exception("invalid asset");
 
 			auto blockchain = algorithm::asset::blockchain_of(asset);
 			for (auto& [token_asset, stake] : stakes)
 			{
-				if (!algorithm::asset::is_valid(token_asset) || algorithm::asset::blockchain_of(token_asset) != blockchain)
+				if (!algorithm::asset::is_read_only_valid(token_asset) || algorithm::asset::blockchain_of(token_asset) != blockchain)
 					return layer_exception("invalid asset");
 
 				if (!stake.is_positive())
@@ -1080,7 +1080,7 @@ namespace tangent
 			auto* prev = (depository_reward*)prev_state;
 			if (!prev)
 			{
-				if (!algorithm::asset::is_valid(asset))
+				if (!algorithm::asset::is_read_only_valid(asset))
 					return layer_exception("invalid asset");
 
 				return expectation::met;
@@ -1204,13 +1204,13 @@ namespace tangent
 					next_balance = next_balance.is_nan() ? prev_balance : (next_balance + prev_balance);
 				}
 			}
-			else if (!algorithm::asset::is_valid(asset) || !algorithm::asset::token_of(asset).empty())
+			else if (!algorithm::asset::is_read_only_valid(asset, true))
 				return layer_exception("invalid asset");
 
 			auto blockchain = algorithm::asset::blockchain_of(asset);
 			for (auto& [token_asset, balance] : balances)
 			{
-				if (!algorithm::asset::is_valid(token_asset) || algorithm::asset::blockchain_of(token_asset) != blockchain)
+				if (!algorithm::asset::is_read_only_valid(token_asset) || algorithm::asset::blockchain_of(token_asset) != blockchain)
 					return layer_exception("invalid asset");
 
 				if (!balance.is_positive() && !balance.is_zero())
@@ -1357,7 +1357,7 @@ namespace tangent
 				if (prev->queue_transaction_hash > 0 && queue_transaction_hash > 0 && prev->queue_transaction_hash != queue_transaction_hash)
 					return layer_exception("transaction queue head cannot be replaced with new transaction");
 			}
-			else if (!algorithm::asset::is_valid(asset) || !algorithm::asset::token_of(asset).empty())
+			else if (!algorithm::asset::is_read_only_valid(asset, true))
 				return layer_exception("invalid asset");
 
 			if (security_level > (uint8_t)protocol::now().policy.participation_max_per_account)
@@ -1484,7 +1484,7 @@ namespace tangent
 				return layer_exception("invalid state owner");
 
 			auto* prev = (depository_account*)prev_state;
-			if (!prev && (!algorithm::asset::is_valid(asset) || !algorithm::asset::token_of(asset).empty()))
+			if (!prev && !algorithm::asset::is_read_only_valid(asset, true))
 				return layer_exception("invalid asset");
 
 			if (!group.empty() && public_key.empty())
@@ -1800,7 +1800,7 @@ namespace tangent
 				return layer_exception("invalid state owner");
 
 			auto* prev = (witness_account*)prev_state;
-			if (!prev && (!algorithm::asset::is_valid(asset) || !algorithm::asset::token_of(asset).empty()))
+			if (!prev && !algorithm::asset::is_read_only_valid(asset, true))
 				return layer_exception("invalid asset");
 
 			if (addresses.empty())
@@ -1989,7 +1989,7 @@ namespace tangent
 		expects_lr<void> witness_transaction::transition(const ledger::transaction_context* context, const ledger::state* prev_state)
 		{
 			auto* prev = (witness_account*)prev_state;
-			if (!prev && (!algorithm::asset::is_valid(asset) || !algorithm::asset::token_of(asset).empty()))
+			if (!prev && !algorithm::asset::is_read_only_valid(asset, true))
 				return layer_exception("invalid asset");
 
 			if (transaction_id.empty())

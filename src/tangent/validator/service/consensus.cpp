@@ -1552,7 +1552,7 @@ namespace tangent
 		{
 			return coasync<expects_rt<void>>([this, state, fork_hash, block_hash, block_number]() -> expects_promise_rt<void>
 			{
-				uint64_t target_hash = block_hash;
+				uint256_t target_hash = block_hash;
 				uint64_t target_number = block_number;
 				while (true)
 				{
@@ -2317,7 +2317,7 @@ namespace tangent
 					find_pivot_and_replace_branch(uref(from), candidate_hash, tip_block->number);
 				else
 					replace_branch_pivot(uref(from), candidate_hash, 0, 1);
-
+				
 				if (protocol::now().user.consensus.logging)
 					VI_INFO("block %s new best branch found (height: %" PRIu64 ", distance: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), candidate.block.number, std::abs((int64_t)(tip_block ? tip_block->number : 0) - (int64_t)candidate.block.number));
 				return true;
@@ -2385,7 +2385,7 @@ namespace tangent
 			{
 				double progress = get_sync_progress(fork_tip, candidate.block.number);
 				if (mutation->is_fork)
-					VI_INFO("block %s chain forked (height: %" PRIu64 ", mempool: %" PRIu64 ", block-delta: " PRIi64 ", transaction-delta: " PRIi64 ", state-delta: " PRIi64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), mutation->old_tip_block_number, mutation->mempool_transactions, mutation->block_delta, mutation->transaction_delta, mutation->state_delta);
+					VI_INFO("block %s chain forked (height: %" PRIu64 ", mempool: %" PRIu64 ", block-delta: %" PRIi64 ", transaction-delta: %" PRIi64 ", state-delta: %" PRIi64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), mutation->old_tip_block_number, mutation->mempool_transactions, mutation->block_delta, mutation->transaction_delta, mutation->state_delta);
 				VI_INFO("block %s chain %s (height: %" PRIu64 ", sync: %.2f%%, priority: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), mutation->is_fork ? "shortened" : "extended", candidate.block.number, 100.0 * progress, candidate.block.priority);
 			}
 
