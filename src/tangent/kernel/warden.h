@@ -19,6 +19,13 @@ namespace tangent
 			utxo
 		};
 
+		enum class token_policy
+		{
+			none,
+			native,
+			program
+		};
+
 		enum class cache_policy
 		{
 			no_cache,
@@ -341,26 +348,23 @@ namespace tangent
 		{
 			friend class datamaster;
 
-		protected:
-			typedef std::pair<string, string> contract_address_symbol_pair;
-
 		public:
 			typedef std::function<void(server_relay*)> interaction_callback;
+			typedef std::pair<string, string> contract_address_symbol_pair;
 
 		public:
 			struct chainparams
 			{
 				algorithm::composition::type composition;
 				routing_policy routing;
+				token_policy tokenization;
 				uint64_t sync_latency;
 				decimal divisibility;
-				string supports_token_transfer;
 				bool supports_bulk_transfer;
 				bool requires_transaction_expiration;
 			};
 
 		protected:
-			unordered_map<algorithm::asset_id, string> token_assets;
 			algorithm::asset_id native_asset;
 			bool allow_any_token;
 
@@ -399,14 +403,7 @@ namespace tangent
 			virtual uint256_t to_baseline_value(const decimal& value) const;
 			virtual decimal from_baseline_value(const uint256_t& value) const;
 			virtual uint64_t get_retirement_block_number() const;
-			virtual ordered_map<string, algorithm::asset_id> get_supported_tokens();
-			virtual bool has_read_only_token_support() const;
-			virtual bool has_full_token_support_for_any_token() const;
-			virtual bool has_full_token_support(const algorithm::asset_id& asset) const;
 			virtual const chainparams& get_chainparams() const = 0;
-
-		protected:
-			virtual void apply_token_whitelist(const vector<contract_address_symbol_pair>& whitelist);
 		};
 
 		class relay_backend_utxo : public relay_backend

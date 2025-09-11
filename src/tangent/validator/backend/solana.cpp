@@ -64,9 +64,9 @@ namespace tangent
 			{
 				netdata.composition = algorithm::composition::type::ed25519;
 				netdata.routing = routing_policy::account;
+				netdata.tokenization = token_policy::native;
 				netdata.sync_latency = 30;
 				netdata.divisibility = decimal(1000000000).truncate(protocol::now().message.decimal_precision);
-				netdata.supports_token_transfer = "spl";
 				netdata.supports_bulk_transfer = false;
 				netdata.requires_transaction_expiration = true;
 			}

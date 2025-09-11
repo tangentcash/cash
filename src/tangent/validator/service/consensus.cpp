@@ -2405,7 +2405,7 @@ namespace tangent
 		{
 			uint32_t type = transaction.transaction->as_type();
 			auto purpose = transaction.transaction->as_typename();
-			if (type == transactions::certification::as_instance_type())
+			if (type == transactions::validator_adjustment::as_instance_type())
 			{
 				if (transaction.receipt.successful)
 				{

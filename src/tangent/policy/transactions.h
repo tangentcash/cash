@@ -105,7 +105,7 @@ namespace tangent
 			static void normalize_transaction(ledger::transaction& transaction, const algorithm::asset_id& asset);
 		};
 
-		struct certification final : ledger::transaction
+		struct validator_adjustment final : ledger::transaction
 		{
 			ordered_map<algorithm::asset_id, decimal> participation_stakes;
 			ordered_map<algorithm::asset_id, decimal> attestation_stakes;
@@ -265,6 +265,7 @@ namespace tangent
 
 		struct depository_adjustment final : ledger::transaction
 		{
+			ordered_map<string, string> whitelist;
 			decimal incoming_fee = decimal::zero();
 			decimal outgoing_fee = decimal::zero();
 			uint8_t security_level = 0;
@@ -277,6 +278,7 @@ namespace tangent
 			bool load_body(format::ro_stream& stream) override;
 			void set_reward(const decimal& new_incoming_fee, const decimal& new_outgoing_fee);
 			void set_security(uint8_t new_security_level, bool new_accepts_account_requests, bool new_accepts_withdrawal_requests);
+			void permanently_whitelist_token(const std::string_view& contract_address, const std::string_view& symbol);
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;

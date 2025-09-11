@@ -1081,25 +1081,7 @@ namespace tangent
 			}
 			return name;
 		}
-		bool asset::is_semantically_valid(const asset_id& value, bool require_no_token)
-		{
-			if (!value)
-				return false;
-
-			auto blockchain = blockchain_of(value);
-			if (stringify::is_empty_or_whitespace(blockchain))
-				return false;
-
-			auto token = token_of(value);
-			auto checksum = checksum_of(value);
-			bool is_token_empty = stringify::is_empty_or_whitespace(token);
-			bool is_checksum_empty = stringify::is_empty_or_whitespace(checksum);
-			if (is_token_empty != is_checksum_empty || (require_no_token && !is_token_empty))
-				return false;
-
-			return is_token_empty;
-		}
-		bool asset::is_read_only_valid(const asset_id& value, bool require_no_token)
+		bool asset::is_valid(const asset_id& value, bool require_no_token)
 		{
 			if (!value)
 				return false;
@@ -1119,29 +1101,19 @@ namespace tangent
 			if (is_token_empty != is_checksum_empty || (require_no_token && !is_token_empty))
 				return false;
 
-			return is_token_empty || chain->has_read_only_token_support();
+			return is_token_empty || chain->get_chainparams().tokenization != warden::token_policy::none;
 		}
-		bool asset::is_fully_valid(const asset_id& value, bool require_no_token)
+		bool asset::is_safe_to_use(const asset_id& value)
 		{
-			if (!value)
-				return false;
-
-			auto blockchain = blockchain_of(value);
-			if (stringify::is_empty_or_whitespace(blockchain))
-				return false;
-
 			auto* chain = oracle::server_node::get()->get_chain(value);
 			if (!chain)
 				return false;
 
 			auto token = token_of(value);
-			auto checksum = checksum_of(value);
-			bool is_token_empty = stringify::is_empty_or_whitespace(token);
-			bool is_checksum_empty = stringify::is_empty_or_whitespace(checksum);
-			if (is_token_empty != is_checksum_empty || (require_no_token && !is_token_empty))
-				return false;
+			if (stringify::is_empty_or_whitespace(token))
+				return true;
 
-			return is_token_empty || chain->has_full_token_support(value);
+			return chain->get_chainparams().tokenization != warden::token_policy::program;
 		}
 		uint64_t asset::expiry_of(const asset_id& value)
 		{

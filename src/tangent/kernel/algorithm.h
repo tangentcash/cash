@@ -225,9 +225,8 @@ namespace tangent
 			static string token_of(const asset_id& value);
 			static string checksum_of(const asset_id& value);
 			static string name_of(const asset_id& value);
-			static bool is_semantically_valid(const asset_id& value, bool require_no_token = false);
-			static bool is_read_only_valid(const asset_id& value, bool require_no_token = false);
-			static bool is_fully_valid(const asset_id& value, bool require_no_token = false);
+			static bool is_valid(const asset_id& value, bool require_no_token = false);
+			static bool is_safe_to_use(const asset_id& value);
 			static uint64_t expiry_of(const asset_id& value);
 			static schema* serialize(const asset_id& value);
 		};

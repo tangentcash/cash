@@ -1466,45 +1466,6 @@ namespace tangent
 		{
 			return std::numeric_limits<uint64_t>::max();
 		}
-		ordered_map<string, algorithm::asset_id> relay_backend::get_supported_tokens()
-		{
-			ordered_map<string, algorithm::asset_id> result;
-			for (auto& [token_asset, public_key_hash] : token_assets)
-			{
-				auto contract_address = encode_address(public_key_hash);
-				if (contract_address)
-					result.insert(std::make_pair(std::move(*contract_address), token_asset));
-			}
-			return result;
-		}
-		bool relay_backend::has_read_only_token_support() const
-		{
-			return !get_chainparams().supports_token_transfer.empty();
-		}
-		bool relay_backend::has_full_token_support_for_any_token() const
-		{
-			return has_read_only_token_support() && allow_any_token;
-		}
-		bool relay_backend::has_full_token_support(const algorithm::asset_id& asset) const
-		{
-			if (!has_read_only_token_support())
-				return false;
-
-			return allow_any_token || token_assets.contains(asset) || protocol::now().is(network_type::regtest);
-		}
-		void relay_backend::apply_token_whitelist(const vector<contract_address_symbol_pair>& whitelist)
-		{
-			token_assets.clear();
-			token_assets.reserve(whitelist.size());
-			allow_any_token = false;
-
-			auto blockchain = algorithm::asset::blockchain_of(native_asset);
-			for (auto& [contract_address, symbol] : whitelist)
-			{
-				auto public_key_hash = decode_address(contract_address).expect("invalid whitelist token contract address");
-				token_assets[algorithm::asset::id_of(blockchain, symbol, contract_address)] = std::move(public_key_hash);
-			}
-		}
 
 		relay_backend_utxo::balance_query::balance_query(const decimal& new_min_native_value, const unordered_map<algorithm::asset_id, decimal>& new_min_token_values) : min_native_value(new_min_native_value), min_token_values(new_min_token_values)
 		{

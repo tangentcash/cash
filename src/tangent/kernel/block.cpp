@@ -2032,12 +2032,13 @@ namespace tangent
 
 			return new_state;
 		}
-		expects_lr<states::depository_policy> transaction_context::apply_depository_policy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, uint8_t security_level, bool accepts_account_requests, bool accepts_withdrawal_requests)
+		expects_lr<states::depository_policy> transaction_context::apply_depository_policy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, uint8_t security_level, bool accepts_account_requests, bool accepts_withdrawal_requests, ordered_set<algorithm::asset_id>&& whitelist)
 		{
 			auto new_state = get_depository_policy(asset, owner).or_else(states::depository_policy(owner, asset, block));
 			new_state.security_level = security_level;
 			new_state.accepts_account_requests = accepts_account_requests;
 			new_state.accepts_withdrawal_requests = accepts_withdrawal_requests;
+			new_state.whitelist = std::move(whitelist);
 
 			auto status = store(&new_state, true);
 			if (!status)

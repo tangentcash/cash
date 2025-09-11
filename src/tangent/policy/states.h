@@ -280,6 +280,7 @@ namespace tangent
 		{
 			algorithm::pubkeyhash_t owner;
 			algorithm::asset_id asset;
+			ordered_set<algorithm::asset_id> whitelist;
 			uint256_t queue_transaction_hash = 0;
 			uint64_t accounts_under_management = 0;
 			uint8_t security_level = (uint8_t)protocol::now().policy.participation_std_per_account;
@@ -295,6 +296,7 @@ namespace tangent
 			bool load_row(format::ro_stream& stream) override;
 			bool store_data(format::wo_stream* stream) const override;
 			bool load_data(format::ro_stream& stream) override;
+			bool is_whitelisted(const algorithm::asset_id& asset) const;
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;

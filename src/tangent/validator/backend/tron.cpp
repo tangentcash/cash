@@ -119,7 +119,7 @@ namespace tangent
 					pb_int64(tx_message, 14, block_header.timestamp);
 				if (fee_limit > 0)
 					pb_int64(tx_message, 18, fee_limit);
-				
+
 				string& raw_transaction_data = tx_message.data;
 				string raw_transaction_id = *crypto::hash(digests::sha256(), raw_transaction_data);
 				uptr<schema> transaction_object = var::set::object();
@@ -173,17 +173,12 @@ namespace tangent
 			{
 				netdata.composition = algorithm::composition::type::secp256k1;
 				netdata.routing = routing_policy::account;
+				netdata.tokenization = token_policy::program;
 				netdata.sync_latency = 20;
 				netdata.divisibility = decimal(1000000).truncate(protocol::now().message.decimal_precision);
-				netdata.supports_token_transfer = "trc20";
 				netdata.supports_bulk_transfer = false;
 				netdata.requires_transaction_expiration = true;
 				legacy.estimate_gas = 1;
-				apply_token_whitelist(
-				{
-					{ "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t", "USDT" },
-					{ "TLZSucJRjnqBKwvQz6n5hd29gbS4P7u7w8", "USDC" }
-				});
 			}
 			expects_promise_rt<tron::trx_tx_block_header_info> tron::get_block_header_for_tx()
 			{

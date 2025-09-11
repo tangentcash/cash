@@ -307,16 +307,11 @@ namespace tangent
 			{
 				netdata.composition = algorithm::composition::type::secp256k1;
 				netdata.routing = routing_policy::account;
+				netdata.tokenization = token_policy::program;
 				netdata.sync_latency = 80;
 				netdata.divisibility = decimal("1000000000000000000").truncate(protocol::now().message.decimal_precision);
-				netdata.supports_token_transfer = "erc20";
 				netdata.supports_bulk_transfer = false;
 				netdata.requires_transaction_expiration = false;
-				apply_token_whitelist(
-				{
-					{ "0xdAC17F958D2ee523a2206206994597C13D831ec7", "USDT" },
-					{ "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", "USDC" }
-				});
 			}
 			expects_promise_rt<schema*> ethereum::get_transaction_receipt(const std::string_view& transaction_id)
 			{
@@ -504,7 +499,7 @@ namespace tangent
 
 				computed_transaction result;
 				result.transaction_id = tx_hash;
-				
+
 				unordered_map<string, unordered_map<algorithm::asset_id, decimal>> inputs;
 				unordered_map<string, unordered_map<algorithm::asset_id, decimal>> outputs;
 				if (total_value.is_positive())

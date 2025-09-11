@@ -416,7 +416,7 @@ namespace tangent
 			bind(0 | access_type::r, "mempoolstate", "getmempoolattestationtransactions", 3, 4, "uint256 hash, uint64 offset, uint64 count, uint8? unrolling", "uint256[] | txn[]", "get mempool attestation transactions", std::bind(&server_node::mempoolstate_get_attestation_transactions, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getmempoolattestation", 1, 1, "uint256 hash", "{ branch: uint256, threshold: double, progress: double, committee: uint64, reached: boolean }", "get mempool attestation transaction consensus state", std::bind(&server_node::mempoolstate_get_attestation, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "validatorstate", "getnode", 1, 1, "string uri_address", "validator", "get a node by ip address", std::bind(&server_node::validatorstate_get_node, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "validatorstate", "getblockchains", 0, 1, "bool? include_whitelists", "warden::asset_info[]", "get supported blockchains", std::bind(&server_node::validatorstate_get_blockchains, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "validatorstate", "getblockchains", 0, 0, "", "warden::asset_info[]", "get supported blockchains", std::bind(&server_node::validatorstate_get_blockchains, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "validatorstate", "status", 0, 0, "", "validator::status", "get validator status", std::bind(&server_node::validatorstate_status, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::r, "mempoolstate", "submittransaction", 1, 2, "string message_hex, bool? validate", "uint256", "try to accept and relay a mempool transaction from raw data and possibly validate over latest chainstate", std::bind(&server_node::mempoolstate_submit_transaction, this, std::placeholders::_1, std::placeholders::_2, nullptr));
 			bind(access_type::w | access_type::a, "mempoolstate", "rejecttransaction", 1, 1, "uint256 hash", "void", "remove mempool transaction by hash", std::bind(&server_node::mempoolstate_reject_transaction, this, std::placeholders::_1, std::placeholders::_2));
@@ -3139,7 +3139,6 @@ namespace tangent
 		}
 		server_response server_node::validatorstate_get_blockchains(http::connection* base, format::variables&& args)
 		{
-			auto include_whitelists = args.size() > 0 ? args[0].as_boolean() : false;
 			auto* server = oracle::server_node::get();
 			uptr<schema> data = var::set::array();
 			for (auto& asset : server->get_chains())
@@ -3147,6 +3146,8 @@ namespace tangent
 				auto* next = data->push(algorithm::asset::serialize(asset.first));
 				next->set("divisibility", var::decimal(asset.second.divisibility));
 				next->set("sync_latency", var::integer(asset.second.sync_latency));
+				next->set("slow_transfer", var::boolean(asset.second.requires_transaction_expiration));
+				next->set("bulk_transfer", var::boolean(asset.second.supports_bulk_transfer));
 				switch (asset.second.composition)
 				{
 					case algorithm::composition::type::ed25519:
@@ -3165,6 +3166,21 @@ namespace tangent
 						next->set("composition_policy", var::null());
 						break;
 				}
+				switch (asset.second.tokenization)
+				{
+					case tangent::warden::token_policy::none:
+						next->set("token_policy", var::string("none"));
+						break;
+					case tangent::warden::token_policy::native:
+						next->set("token_policy", var::string("native"));
+						break;
+					case tangent::warden::token_policy::program:
+						next->set("token_policy", var::string("program"));
+						break;
+					default:
+						next->set("token_policy", var::null());
+						break;
+				}
 				switch (asset.second.routing)
 				{
 					case tangent::warden::routing_policy::account:
@@ -3179,23 +3195,6 @@ namespace tangent
 					default:
 						next->set("routing_policy", var::null());
 						break;
-				}
-
-				auto* supports = next->set("supports");
-				supports->set("bulk_transfer", var::boolean(asset.second.supports_bulk_transfer));
-				supports->set("token_transfer", asset.second.supports_token_transfer.empty() ? var::boolean(false) : var::string(asset.second.supports_token_transfer));
-				if (include_whitelists)
-				{
-					auto* chain = server->get_chain(asset.first);
-					if (chain != nullptr && chain->has_read_only_token_support() && !chain->has_full_token_support_for_any_token())
-					{
-						auto* token_whitelist_data = supports->set("token_whitelist", var::set::array());
-						for (auto& [contract_address, token_asset] : chain->get_supported_tokens())
-						{
-							auto* token_whitelist_item_data = token_whitelist_data->push(algorithm::asset::serialize(token_asset));
-							token_whitelist_item_data->set("contract_address", var::string(contract_address));
-						}
-					}
 				}
 			}
 			return server_response().success(std::move(data));

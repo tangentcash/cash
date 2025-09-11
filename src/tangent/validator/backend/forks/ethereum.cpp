@@ -9,7 +9,6 @@ namespace tangent
 		{
 			arbitrum::arbitrum(const algorithm::asset_id& new_asset) noexcept : ethereum(new_asset)
 			{
-				apply_token_whitelist({ });
 			}
 			const btc_chainparams_* arbitrum::get_chain()
 			{
@@ -29,7 +28,6 @@ namespace tangent
 
 			avalanche::avalanche(const algorithm::asset_id& new_asset) noexcept : ethereum(new_asset)
 			{
-				apply_token_whitelist({ });
 			}
 			const btc_chainparams_* avalanche::get_chain()
 			{
@@ -49,7 +47,6 @@ namespace tangent
 
 			celo::celo(const algorithm::asset_id& new_asset) noexcept : ethereum(new_asset)
 			{
-				apply_token_whitelist({ });
 			}
 			const btc_chainparams_* celo::get_chain()
 			{
@@ -69,7 +66,6 @@ namespace tangent
 
 			ethereum_classic::ethereum_classic(const algorithm::asset_id& new_asset) noexcept : ethereum(new_asset)
 			{
-				apply_token_whitelist({ });
 			}
 			const btc_chainparams_* ethereum_classic::get_chain()
 			{
@@ -89,7 +85,6 @@ namespace tangent
 
 			fantom::fantom(const algorithm::asset_id& new_asset) noexcept : ethereum(new_asset)
 			{
-				apply_token_whitelist({ });
 			}
 			const btc_chainparams_* fantom::get_chain()
 			{
@@ -109,7 +104,6 @@ namespace tangent
 
 			fuse::fuse(const algorithm::asset_id& new_asset) noexcept : ethereum(new_asset)
 			{
-				apply_token_whitelist({ });
 			}
 			const btc_chainparams_* fuse::get_chain()
 			{
@@ -129,7 +123,6 @@ namespace tangent
 
 			harmony::harmony(const algorithm::asset_id& new_asset) noexcept : ethereum(new_asset)
 			{
-				apply_token_whitelist({ });
 			}
 			const btc_chainparams_* harmony::get_chain()
 			{
@@ -149,7 +142,6 @@ namespace tangent
 
 			moonbeam::moonbeam(const algorithm::asset_id& new_asset) noexcept : ethereum(new_asset)
 			{
-				apply_token_whitelist({ });
 			}
 			const btc_chainparams_* moonbeam::get_chain()
 			{
@@ -169,7 +161,6 @@ namespace tangent
 
 			optimism::optimism(const algorithm::asset_id& new_asset) noexcept : ethereum(new_asset)
 			{
-				apply_token_whitelist({ });
 			}
 			const btc_chainparams_* optimism::get_chain()
 			{
@@ -189,7 +180,6 @@ namespace tangent
 
 			polygon::polygon(const algorithm::asset_id& new_asset) noexcept : ethereum(new_asset)
 			{
-				apply_token_whitelist({ });
 			}
 			const btc_chainparams_* polygon::get_chain()
 			{
@@ -209,7 +199,6 @@ namespace tangent
 
 			rootstock::rootstock(const algorithm::asset_id& new_asset) noexcept : ethereum(new_asset)
 			{
-				apply_token_whitelist({ });
 			}
 			const btc_chainparams_* rootstock::get_chain()
 			{
@@ -229,8 +218,6 @@ namespace tangent
 
 			binance_smart_chain::binance_smart_chain(const algorithm::asset_id& new_asset) noexcept : ethereum(new_asset)
 			{
-				netdata.supports_token_transfer = "bep20";
-				apply_token_whitelist({ });
 			}
 			const btc_chainparams_* binance_smart_chain::get_chain()
 			{

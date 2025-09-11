@@ -925,10 +925,10 @@ namespace tangent
 			transaction.conservative = false;
 		}
 
-		expects_lr<void> certification::validate(uint64_t block_number) const
+		expects_lr<void> validator_adjustment::validate(uint64_t block_number) const
 		{
 			if (!production && participation_stakes.empty() && attestation_stakes.empty())
-				return layer_exception("invalid certification");
+				return layer_exception("invalid validator change");
 
 			for (auto& [asset, stake] : participation_stakes)
 			{
@@ -946,7 +946,7 @@ namespace tangent
 
 			return ledger::transaction::validate(block_number);
 		}
-		expects_lr<void> certification::execute(ledger::transaction_context* context) const
+		expects_lr<void> validator_adjustment::execute(ledger::transaction_context* context) const
 		{
 			auto validation = transaction::execute(context);
 			if (!validation)
@@ -991,12 +991,9 @@ namespace tangent
 					continue;
 
 				auto type = stake.is_nan() || stake.is_negative() ? ledger::transaction_context::stake_type::unlock : ledger::transaction_context::stake_type::lock;
-				if (type == ledger::transaction_context::stake_type::unlock)
-				{
-					auto depository = context->get_depository_policy(asset, context->receipt.from);
-					if (depository && (depository->accepts_account_requests || depository->accepts_withdrawal_requests))
-						return layer_exception(algorithm::asset::handle_of(asset) + " depository is still active");
-				}
+				auto depository = context->get_depository_policy(asset, context->receipt.from);
+				if (type == ledger::transaction_context::stake_type::unlock && depository && (depository->accepts_account_requests || depository->accepts_withdrawal_requests))
+					return layer_exception(algorithm::asset::handle_of(asset) + " depository is still active");
 
 				auto balance = context->get_depository_balance(asset, context->receipt.from);
 				auto blockchain = algorithm::asset::blockchain_of(asset);
@@ -1014,7 +1011,7 @@ namespace tangent
 					if (type == ledger::transaction_context::stake_type::lock)
 						continue;
 
-					if (balance && balance->get_balance(token_asset).is_positive())
+					if (depository && balance && depository->is_whitelisted(token_asset) && balance->get_balance(token_asset).is_positive())
 						return layer_exception(algorithm::asset::handle_of(token_asset) + " depository has custodial balance");
 				}
 
@@ -1025,7 +1022,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		bool certification::store_body(format::wo_stream* stream) const
+		bool validator_adjustment::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer((uint8_t)(production ? (*production ? 1 : 0) : 2));
@@ -1043,7 +1040,7 @@ namespace tangent
 			}
 			return true;
 		}
-		bool certification::load_body(format::ro_stream& stream)
+		bool validator_adjustment::load_body(format::ro_stream& stream)
 		{
 			uint8_t production_status;
 			if (!stream.read_integer(stream.read_type(), &production_status))
@@ -1094,55 +1091,55 @@ namespace tangent
 
 			return true;
 		}
-		void certification::enable_block_production()
+		void validator_adjustment::enable_block_production()
 		{
 			production = true;
 		}
-		void certification::disable_block_production()
+		void validator_adjustment::disable_block_production()
 		{
 			production = false;
 		}
-		void certification::standby_on_block_production()
+		void validator_adjustment::standby_on_block_production()
 		{
 			production = optional::none;
 		}
-		void certification::allocate_participation_stake(const algorithm::asset_id& asset, const decimal& value)
+		void validator_adjustment::allocate_participation_stake(const algorithm::asset_id& asset, const decimal& value)
 		{
 			if (value >= 0.0)
 				participation_stakes[asset] = value;
 		}
-		void certification::deallocate_participation_stake(const algorithm::asset_id& asset, const decimal& value)
+		void validator_adjustment::deallocate_participation_stake(const algorithm::asset_id& asset, const decimal& value)
 		{
 			if (value.is_positive())
 				participation_stakes[asset] = -value;
 		}
-		void certification::disable_participation(const algorithm::asset_id& asset)
+		void validator_adjustment::disable_participation(const algorithm::asset_id& asset)
 		{
 			participation_stakes[asset] = decimal::nan();
 		}
-		void certification::standby_on_participation(const algorithm::asset_id& asset)
+		void validator_adjustment::standby_on_participation(const algorithm::asset_id& asset)
 		{
 			participation_stakes.erase(asset);
 		}
-		void certification::allocate_attestation_stake(const algorithm::asset_id& asset, const decimal& value)
+		void validator_adjustment::allocate_attestation_stake(const algorithm::asset_id& asset, const decimal& value)
 		{
 			if (value >= 0.0)
 				attestation_stakes[asset] = value;
 		}
-		void certification::deallocate_attestation_stake(const algorithm::asset_id& asset, const decimal& value)
+		void validator_adjustment::deallocate_attestation_stake(const algorithm::asset_id& asset, const decimal& value)
 		{
 			if (value.is_positive())
 				attestation_stakes[asset] = -value;
 		}
-		void certification::disable_attestation(const algorithm::asset_id& asset)
+		void validator_adjustment::disable_attestation(const algorithm::asset_id& asset)
 		{
 			attestation_stakes[asset] = decimal::nan();
 		}
-		void certification::standby_on_attestation(const algorithm::asset_id& asset)
+		void validator_adjustment::standby_on_attestation(const algorithm::asset_id& asset)
 		{
 			attestation_stakes.erase(asset);
 		}
-		uptr<schema> certification::as_schema() const
+		uptr<schema> validator_adjustment::as_schema() const
 		{
 			schema* data = ledger::transaction::as_schema().reset();
 			data->set("block_production", var::integer(production ? (*production ? 1 : 0) : -1));
@@ -1164,22 +1161,22 @@ namespace tangent
 			}
 			return data;
 		}
-		uint32_t certification::as_type() const
+		uint32_t validator_adjustment::as_type() const
 		{
 			return as_instance_type();
 		}
-		std::string_view certification::as_typename() const
+		std::string_view validator_adjustment::as_typename() const
 		{
 			return as_instance_typename();
 		}
-		uint32_t certification::as_instance_type()
+		uint32_t validator_adjustment::as_instance_type()
 		{
 			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
 			return hash;
 		}
-		std::string_view certification::as_instance_typename()
+		std::string_view validator_adjustment::as_instance_typename()
 		{
-			return "certification";
+			return "validator_adjustment";
 		}
 
 		expects_lr<void> depository_account::validate(uint64_t block_number) const
@@ -1637,7 +1634,7 @@ namespace tangent
 			if (!chain)
 				return layer_exception("invalid operation");
 
-			if (!algorithm::asset::is_fully_valid(asset))
+			if (!algorithm::asset::is_valid(asset))
 				return layer_exception("not a valid withdrawal asset");
 
 			if (to_manager.empty())
@@ -1680,6 +1677,8 @@ namespace tangent
 				return depository_policy.error();
 			else if (!depository_policy->accepts_withdrawal_requests)
 				return layer_exception("depository forbids withdrawal requests");
+			else if (!depository_policy->is_whitelisted(asset))
+				return layer_exception("depository forbids withdrawal requests for " + algorithm::asset::name_of(asset) + " (not whitelisted)");
 			else if (only_if_not_in_queue && depository_policy->queue_transaction_hash > 0)
 				return layer_exception("depository is in use - withdrawal will be queued");
 
@@ -2050,14 +2049,28 @@ namespace tangent
 			auto base_asset = algorithm::asset::base_id_of(transaction->asset);
 			for (auto& input : prepared.inputs)
 			{
-				if (input.utxo.is_account() && algorithm::asset::blockchain_of(input.utxo.get_asset(base_asset)) != blockchain)
+				auto input_asset = input.utxo.get_asset(base_asset);
+				if (!algorithm::asset::is_valid(input_asset) || algorithm::asset::blockchain_of(input_asset) != blockchain)
 					return layer_exception("prepared input asset not valid");
+
+				for (auto& input_token : input.utxo.tokens)
+				{
+					if (!algorithm::asset::is_valid(input_token.get_asset(base_asset)))
+						return layer_exception("invalid input token asset");
+				}
 			}
 
 			for (auto& output : prepared.outputs)
 			{
-				if (output.is_account() && algorithm::asset::blockchain_of(output.get_asset(base_asset)) != blockchain)
-					return layer_exception("prepared output asset not valid");
+				auto output_asset = output.get_asset(base_asset);
+				if (!algorithm::asset::is_valid(output_asset) || algorithm::asset::blockchain_of(output_asset) != blockchain)
+					return layer_exception("invalid output asset");
+
+				for (auto& output_token : output.tokens)
+				{
+					if (!algorithm::asset::is_valid(output_token.get_asset(base_asset)))
+						return layer_exception("invalid output token asset");
+				}
 			}
 
 			auto input_value = unordered_map<algorithm::asset_id, decimal>();
@@ -2735,6 +2748,23 @@ namespace tangent
 			if (security_level > 0 && security_level > protocol::now().policy.participation_max_per_account)
 				return layer_exception("invalid security level");
 
+			if (!whitelist.empty())
+			{
+				auto* chain = oracle::server_node::get()->get_chainparams(asset);
+				if (chain->tokenization != warden::token_policy::program)
+					return layer_exception("whitelist not applicable for asset's token policy");
+
+				for (auto& [contract_address, symbol] : whitelist)
+				{
+					if (contract_address.empty() || symbol.empty())
+						return layer_exception("invalid whitelist token");
+
+					auto raw_contract_address = oracle::server_node::get()->decode_address(asset, contract_address);
+					if (!raw_contract_address)
+						return raw_contract_address.error();
+				}
+			}
+
 			return ledger::transaction::validate(block_number);
 		}
 		expects_lr<void> depository_adjustment::execute(ledger::transaction_context* context) const
@@ -2751,17 +2781,29 @@ namespace tangent
 			if (!reward)
 				return reward.error();
 
+			auto blockchain = algorithm::asset::blockchain_of(asset);
+			auto allowances = ordered_set<algorithm::asset_id>();
+			for (auto& [contract_address, symbol] : whitelist)
+				allowances.insert(algorithm::asset::id_of(blockchain, symbol, contract_address));
+
 			auto depository = context->get_depository_policy(asset, context->receipt.from).or_else(states::depository_policy(context->receipt.from, asset, nullptr));
-			if (depository.accepts_withdrawal_requests != accepts_withdrawal_requests && !accepts_withdrawal_requests && algorithm::asset::is_fully_valid(asset))
+			if (depository.accepts_withdrawal_requests != accepts_withdrawal_requests && !accepts_withdrawal_requests)
 			{
 				auto balance = context->get_depository_balance(asset, context->receipt.from);
-				if (balance && balance->get_balance(asset).is_positive())
-					return layer_exception("depository should not contain custodial funds before disabling withdrawals");
+				if (balance)
+				{
+					depository.whitelist.insert(allowances.begin(), allowances.end());
+					for (auto& [token_asset, token_value] : balance->balances)
+					{
+						if (depository.is_whitelisted(token_asset) && token_value.is_positive())
+							return layer_exception("depository should not contain custodial funds before disabling withdrawals");
+					}
+				}
 			}
 
 			if ((security_level > 0 && security_level != depository.security_level) || depository.accepts_account_requests != accepts_account_requests || depository.accepts_withdrawal_requests != accepts_withdrawal_requests)
 			{
-				auto policy = context->apply_depository_policy(asset, context->receipt.from, security_level, accepts_account_requests, accepts_withdrawal_requests);
+				auto policy = context->apply_depository_policy(asset, context->receipt.from, security_level, accepts_account_requests, accepts_withdrawal_requests, std::move(allowances));
 				if (!policy)
 					return policy.error();
 			}
@@ -2776,6 +2818,12 @@ namespace tangent
 			stream->write_integer(security_level);
 			stream->write_boolean(accepts_account_requests);
 			stream->write_boolean(accepts_withdrawal_requests);
+			stream->write_integer((uint16_t)whitelist.size());
+			for (auto& [contract_address, symbol] : whitelist)
+			{
+				stream->write_string(contract_address);
+				stream->write_string(symbol);
+			}
 			return true;
 		}
 		bool depository_adjustment::load_body(format::ro_stream& stream)
@@ -2795,6 +2843,23 @@ namespace tangent
 			if (!stream.read_boolean(stream.read_type(), &accepts_withdrawal_requests))
 				return false;
 
+			uint16_t whitelist_size;
+			if (!stream.read_integer(stream.read_type(), &whitelist_size))
+				return false;
+
+			whitelist.clear();
+			for (uint16_t i = 0; i < whitelist_size; i++)
+			{
+				string contract_address, symbol;
+				if (!stream.read_string(stream.read_type(), &contract_address))
+					return false;
+
+				if (!stream.read_string(stream.read_type(), &symbol))
+					return false;
+
+				whitelist[contract_address] = std::move(symbol);
+			}
+
 			return true;
 		}
 		void depository_adjustment::set_reward(const decimal& new_incoming_fee, const decimal& new_outgoing_fee)
@@ -2808,6 +2873,10 @@ namespace tangent
 			accepts_account_requests = new_accepts_account_requests;
 			accepts_withdrawal_requests = new_accepts_withdrawal_requests;
 		}
+		void depository_adjustment::permanently_whitelist_token(const std::string_view& contract_address, const std::string_view& symbol)
+		{
+			whitelist[string(contract_address)] = symbol;
+		}
 		uptr<schema> depository_adjustment::as_schema() const
 		{
 			schema* data = ledger::transaction::as_schema().reset();
@@ -2816,6 +2885,19 @@ namespace tangent
 			data->set("security_level", var::integer(security_level));
 			data->set("accepts_account_requests", var::boolean(accepts_account_requests));
 			data->set("accepts_withdrawal_requests", var::boolean(accepts_withdrawal_requests));
+
+			auto* whitelist_data = data->set("whitelist", var::set::array());
+			if (!whitelist.empty())
+			{
+				auto blockchain = algorithm::asset::blockchain_of(asset);
+				for (auto& [contract_address, symbol] : whitelist)
+				{
+					auto* whitelist_item = whitelist_data->push(var::set::object());
+					whitelist_item->set("asset", algorithm::asset::serialize(algorithm::asset::id_of(blockchain, symbol, contract_address)));
+					whitelist_item->set("contract_address", var::string(contract_address));
+				}
+			}
+
 			return data;
 		}
 		uint32_t depository_adjustment::as_type() const
@@ -2843,7 +2925,7 @@ namespace tangent
 
 			for (auto& [hash, account] : participants)
 			{
-				if (!algorithm::asset::is_fully_valid(account.asset, true))
+				if (!algorithm::asset::is_valid(account.asset, true))
 					return layer_exception("invalid account asset");
 
 				if (account.manager.empty())
@@ -3299,11 +3381,11 @@ namespace tangent
 			if (!successful)
 				return expectation::met;
 
-			auto certification = context->get_block_transaction<depository_regrouping_commitment>(depository_regrouping_commitment_hash);
-			if (!certification)
-				return certification.error();
+			auto commitment = context->get_block_transaction<depository_regrouping_commitment>(depository_regrouping_commitment_hash);
+			if (!commitment)
+				return commitment.error();
 
-			auto* commitment_transaction = (depository_regrouping_commitment*)*certification->transaction;
+			auto* commitment_transaction = (depository_regrouping_commitment*)*commitment->transaction;
 			auto preparation = context->get_block_transaction<depository_regrouping_preparation>(commitment_transaction->depository_regrouping_preparation_hash);
 			if (!preparation)
 				return preparation.error();
@@ -3413,8 +3495,8 @@ namespace tangent
 				return memory::init<call>();
 			else if (hash == rollup::as_instance_type())
 				return memory::init<rollup>();
-			else if (hash == certification::as_instance_type())
-				return memory::init<certification>();
+			else if (hash == validator_adjustment::as_instance_type())
+				return memory::init<validator_adjustment>();
 			else if (hash == depository_account::as_instance_type())
 				return memory::init<depository_account>();
 			else if (hash == depository_account_finalization::as_instance_type())
@@ -3448,8 +3530,8 @@ namespace tangent
 				return memory::init<call>(*(const call*)base);
 			else if (hash == rollup::as_instance_type())
 				return memory::init<rollup>(*(const rollup*)base);
-			else if (hash == certification::as_instance_type())
-				return memory::init<certification>(*(const certification*)base);
+			else if (hash == validator_adjustment::as_instance_type())
+				return memory::init<validator_adjustment>(*(const validator_adjustment*)base);
 			else if (hash == depository_account::as_instance_type())
 				return memory::init<depository_account>(*(const depository_account*)base);
 			else if (hash == depository_account_finalization::as_instance_type())
