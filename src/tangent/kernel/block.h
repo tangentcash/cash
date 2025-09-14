@@ -41,9 +41,9 @@ namespace tangent
 			write_tx_byte = 48,
 			write_byte = 32,
 			erase_byte = 2,
-			read_byte = 4,
-			query_byte = 24,
-			bulk_query_byte = 4,
+			read_byte = 1,
+			query_byte = 8,
+			bulk_query_byte = 2,
 			opcode = 1,
 			memory_block = 1
 		};
