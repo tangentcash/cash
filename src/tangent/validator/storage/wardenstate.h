@@ -43,7 +43,6 @@ namespace tangent
 			expects_lr<unordered_map<string, warden::wallet_link>> get_links_by_addresses(const unordered_set<string>& addresses);
 			ledger::storage_index_ptr& get_storage();
 			uint32_t get_queries() const;
-			bool query_used() const;
 
 		private:
 			static std::string_view get_cache_location(warden::cache_policy policy);

@@ -42,8 +42,7 @@ namespace tangent
 			write_byte = 32,
 			erase_byte = 2,
 			read_byte = 1,
-			query_byte = 8,
-			bulk_query_byte = 2,
+			query_result = 8,
 			opcode = 1,
 			memory_block = 1
 		};
@@ -304,8 +303,8 @@ namespace tangent
 			transaction_context(transaction_context&&) = default;
 			transaction_context& operator=(const transaction_context& other);
 			transaction_context& operator=(transaction_context&&) = default;
+			expects_lr<void> query(state* value, bool paid_in_full);
 			expects_lr<void> load(state* value, bool paid);
-			expects_lr<void> query_load(state* value, size_t results, bool paid);
 			expects_lr<void> store(state* value, bool paid);
 			expects_lr<void> emit_witness(const algorithm::asset_id& asset, uint64_t block_number);
 			expects_lr<void> emit_event(uint32_t type, format::variables&& values, bool paid);

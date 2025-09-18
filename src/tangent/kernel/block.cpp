@@ -760,6 +760,8 @@ namespace tangent
 							gas_limit = gas_limit - item.candidate->gas_limit + replacement.candidate->gas_limit;
 							item = std::move(replacement);
 						}
+						else if (!replacement.candidate)
+							break;
 					}
 				}
 
@@ -1358,6 +1360,16 @@ namespace tangent
 			block = other.block;
 			return *this;
 		}
+		expects_lr<void> transaction_context::query(state* next, bool paid_in_full)
+		{
+			if (!next)
+				return layer_exception("state not found");
+			else if (!paid_in_full)
+				return burn_gas((size_t)gas_cost::query_result);
+
+			size_t bytes = next->as_message().data.size();
+			return burn_gas(bytes * (size_t)gas_cost::read_byte + (size_t)gas_cost::query_result);
+		}
 		expects_lr<void> transaction_context::load(state* next, bool paid)
 		{
 			if (!next)
@@ -1367,17 +1379,6 @@ namespace tangent
 
 			size_t bytes = next->as_message().data.size();
 			return burn_gas(bytes * (size_t)gas_cost::read_byte);
-		}
-		expects_lr<void> transaction_context::query_load(state* next, size_t results, bool paid)
-		{
-			if (!next)
-				return layer_exception("state not found");
-			else if (!paid)
-				return expectation::met;
-
-			gas_cost cost = results > 1 ? gas_cost::query_byte : gas_cost::bulk_query_byte;
-			size_t bytes = next->as_message().data.size();
-			return burn_gas(bytes * (size_t)gas_cost::read_byte + bytes * (size_t)cost);
 		}
 		expects_lr<void> transaction_context::store(state* next, bool paid)
 		{
@@ -1403,7 +1404,7 @@ namespace tangent
 			{
 				case state_level::uniform:
 				{
-					prev = chain.get_uniform(type, changelog, ((uniform*)next)->as_index(), get_validation_nonce()).or_else(nullptr);
+					prev = chain.get_uniform(type, changelog, ((uniform*)next)->as_index(), get_validation_nonce()).or_else(storages::state_result()).value;
 					auto status = next->transition(this, *prev);
 					if (!status)
 						return status;
@@ -1411,7 +1412,7 @@ namespace tangent
 				}
 				case state_level::multiform:
 				{
-					prev = chain.get_multiform(type, changelog, ((multiform*)next)->as_column(), ((multiform*)next)->as_row(), get_validation_nonce()).or_else(nullptr);
+					prev = chain.get_multiform(type, changelog, ((multiform*)next)->as_column(), ((multiform*)next)->as_row(), get_validation_nonce()).or_else(storages::state_result()).value;
 					auto status = next->transition(this, *prev);
 					if (!status)
 						return status;
@@ -1622,10 +1623,10 @@ namespace tangent
 			committee.reserve(results->size());
 			for (auto& result : *results)
 			{
-				auto& work = *(states::validator_production*)*result;
-				committee.emplace_back(std::move(work));
+				auto& target = *(states::validator_production*)result.ptr();
+				committee.emplace_back(std::move(target));
 
-				auto status = query_load(*result, results->size(), chain.query_used());
+				auto status = query(result.ptr(), !result.cached);
 				if (!status)
 					return status.error();
 			}
@@ -1685,17 +1686,17 @@ namespace tangent
 
 				for (auto& result : *results)
 				{
-					auto& work = *(states::validator_participation*)*result;
-					auto hash = algorithm::pubkeyhash_t(work.owner);
+					auto& target = *(states::validator_participation*)result.ptr();
+					auto hash = algorithm::pubkeyhash_t(target.owner);
 					if (exclusion.find(hash) == exclusion.end())
 					{
 						exclusion.insert(std::move(hash));
-						committee.push_back(std::move(work));
+						committee.push_back(std::move(target));
 						if (committee.size() >= target_size)
 							break;
 					}
 
-					auto status = query_load(*result, results->size(), chain.query_used());
+					auto status = query(result.ptr(), !result.cached);
 					if (!status)
 						return status.error();
 				}
@@ -2155,11 +2156,11 @@ namespace tangent
 			if (!state)
 				return layer_exception("account nonce required but not applicable (" + state.what() + ")");
 
-			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
+			auto status = ((transaction_context*)this)->load(state->ptr(), !state->cached);
 			if (!status)
 				return status.error();
 
-			return states::account_nonce(std::move(*(states::account_nonce*)**state));
+			return states::account_nonce(std::move(*state->as<states::account_nonce>()));
 		}
 		expects_lr<states::account_program> transaction_context::get_account_program(const algorithm::pubkeyhash_t& owner) const
 		{
@@ -2168,11 +2169,11 @@ namespace tangent
 			if (!state)
 				return layer_exception("account program required but not applicable (" + state.what() + ")");
 
-			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
+			auto status = ((transaction_context*)this)->load(state->ptr(), !state->cached);
 			if (!status)
 				return status.error();
 
-			auto& result = *(states::account_program*)**state;
+			auto& result = *state->as<states::account_program>();
 			if (result.hashcode.empty())
 				return layer_exception("program is detached");
 
@@ -2185,11 +2186,11 @@ namespace tangent
 			if (!state)
 				return layer_exception("account uniform required but not applicable (" + state.what() + ")");
 
-			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
+			auto status = ((transaction_context*)this)->load(state->ptr(), !state->cached);
 			if (!status)
 				return status.error();
 
-			return states::account_uniform(std::move(*(states::account_uniform*)**state));
+			return states::account_uniform(std::move(*state->as<states::account_uniform>()));
 		}
 		expects_lr<states::account_multiform> transaction_context::get_account_multiform(const algorithm::pubkeyhash_t& owner, const std::string_view& column, const std::string_view& row) const
 		{
@@ -2198,11 +2199,11 @@ namespace tangent
 			if (!state)
 				return layer_exception("account multiform required but not applicable (" + state.what() + ")");
 
-			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
+			auto status = ((transaction_context*)this)->load(state->ptr(), !state->cached);
 			if (!status)
 				return status.error();
 
-			return states::account_multiform(std::move(*(states::account_multiform*)**state));
+			return states::account_multiform(std::move(*state->as<states::account_multiform>()));
 		}
 		expects_lr<vector<uptr<states::account_multiform>>> transaction_context::get_account_multiforms_by_column(const algorithm::pubkeyhash_t& owner, const std::string_view& column, size_t offset, size_t count) const
 		{
@@ -2215,11 +2216,11 @@ namespace tangent
 			results.reserve(states->size());
 			for (auto& state : *states)
 			{
-				auto status = ((transaction_context*)this)->query_load(*state, states->size(), chain.query_used());
+				auto status = ((transaction_context*)this)->query(state.ptr(), !state.cached);
 				if (!status)
 					return status.error();
 
-				results.emplace_back((states::account_multiform*)state.reset());
+				results.emplace_back((states::account_multiform*)state.value.reset());
 			}
 			return results;
 		}
@@ -2239,11 +2240,11 @@ namespace tangent
 			results.reserve(states->size());
 			for (auto& state : *states)
 			{
-				auto status = ((transaction_context*)this)->query_load(*state, states->size(), chain.query_used());
+				auto status = ((transaction_context*)this)->query(state.ptr(), !state.cached);
 				if (!status)
 					return status.error();
 
-				results.emplace_back((states::account_multiform*)state.reset());
+				results.emplace_back((states::account_multiform*)state.value.reset());
 			}
 			return results;
 		}
@@ -2258,11 +2259,11 @@ namespace tangent
 			results.reserve(states->size());
 			for (auto& state : *states)
 			{
-				auto status = ((transaction_context*)this)->query_load(*state, states->size(), chain.query_used());
+				auto status = ((transaction_context*)this)->query(state.ptr(), !state.cached);
 				if (!status)
 					return status.error();
 
-				results.emplace_back((states::account_multiform*)state.reset());
+				results.emplace_back((states::account_multiform*)state.value.reset());
 			}
 			return results;
 		}
@@ -2282,11 +2283,11 @@ namespace tangent
 			results.reserve(states->size());
 			for (auto& state : *states)
 			{
-				auto status = ((transaction_context*)this)->query_load(*state, states->size(), chain.query_used());
+				auto status = ((transaction_context*)this)->query(state.ptr(), !state.cached);
 				if (!status)
 					return status.error();
 
-				results.emplace_back((states::account_multiform*)state.reset());
+				results.emplace_back((states::account_multiform*)state.value.reset());
 			}
 			return results;
 		}
@@ -2297,11 +2298,11 @@ namespace tangent
 			if (!state)
 				return layer_exception("account delegation required but not applicable (" + state.what() + ")");
 
-			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
+			auto status = ((transaction_context*)this)->load(state->ptr(), !state->cached);
 			if (!status)
 				return status.error();
 
-			return states::account_delegation(std::move(*(states::account_delegation*)**state));
+			return states::account_delegation(std::move(*state->as<states::account_delegation>()));
 		}
 		expects_lr<states::account_balance> transaction_context::get_account_balance(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const
 		{
@@ -2310,11 +2311,11 @@ namespace tangent
 			if (!state)
 				return layer_exception("account balance required but not found (" + state.what() + ")");
 
-			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
+			auto status = ((transaction_context*)this)->load(state->ptr(), !state->cached);
 			if (!status)
 				return status.error();
 
-			return states::account_balance(std::move(*(states::account_balance*)**state));
+			return states::account_balance(std::move(*state->as<states::account_balance>()));
 		}
 		expects_lr<states::validator_production> transaction_context::get_validator_production(const algorithm::pubkeyhash_t& owner) const
 		{
@@ -2323,11 +2324,11 @@ namespace tangent
 			if (!state)
 				return layer_exception("validator production required but not applicable (" + state.what() + ")");
 
-			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
+			auto status = ((transaction_context*)this)->load(state->ptr(), !state->cached);
 			if (!status)
 				return status.error();
 
-			return states::validator_production(std::move(*(states::validator_production*)**state));
+			return states::validator_production(std::move(*state->as<states::validator_production>()));
 		}
 		expects_lr<states::validator_participation> transaction_context::get_validator_participation(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const
 		{
@@ -2336,11 +2337,11 @@ namespace tangent
 			if (!state)
 				return layer_exception("validator participation required but not applicable (" + state.what() + ")");
 
-			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
+			auto status = ((transaction_context*)this)->load(state->ptr(), !state->cached);
 			if (!status)
 				return status.error();
 
-			return states::validator_participation(std::move(*(states::validator_participation*)**state));
+			return states::validator_participation(std::move(*state->as<states::validator_participation>()));
 		}
 		expects_lr<vector<states::validator_participation>> transaction_context::get_validator_participations(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count) const
 		{
@@ -2353,11 +2354,11 @@ namespace tangent
 			addresses.reserve(states->size());
 			for (auto& state : *states)
 			{
-				auto status = ((transaction_context*)this)->query_load(*state, states->size(), chain.query_used());
+				auto status = ((transaction_context*)this)->query(state.ptr(), !state.cached);
 				if (!status)
 					return status.error();
 
-				addresses.emplace_back(std::move(*(states::validator_participation*)*state));
+				addresses.emplace_back(std::move(*state.as<states::validator_participation>()));
 			}
 			return addresses;
 		}
@@ -2368,11 +2369,11 @@ namespace tangent
 			if (!state)
 				return layer_exception("validator attestation required but not applicable (" + state.what() + ")");
 
-			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
+			auto status = ((transaction_context*)this)->load(state->ptr(), !state->cached);
 			if (!status)
 				return status.error();
 
-			return states::validator_attestation(std::move(*(states::validator_attestation*)**state));
+			return states::validator_attestation(std::move(*state->as<states::validator_attestation>()));
 		}
 		expects_lr<vector<states::validator_attestation>> transaction_context::get_validator_attestations(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count) const
 		{
@@ -2385,11 +2386,11 @@ namespace tangent
 			addresses.reserve(states->size());
 			for (auto& state : *states)
 			{
-				auto status = ((transaction_context*)this)->query_load(*state, states->size(), chain.query_used());
+				auto status = ((transaction_context*)this)->query(state.ptr(), !state.cached);
 				if (!status)
 					return status.error();
 
-				addresses.emplace_back(std::move(*(states::validator_attestation*)*state));
+				addresses.emplace_back(std::move(*state.as<states::validator_attestation>()));
 			}
 			return addresses;
 		}
@@ -2400,11 +2401,11 @@ namespace tangent
 			if (!state)
 				return layer_exception("depository reward required but not applicable (" + state.what() + ")");
 
-			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
+			auto status = ((transaction_context*)this)->load(state->ptr(), !state->cached);
 			if (!status)
 				return status.error();
 
-			return states::depository_reward(std::move(*(states::depository_reward*)**state));
+			return states::depository_reward(std::move(*state->as<states::depository_reward>()));
 		}
 		expects_lr<states::depository_balance> transaction_context::get_depository_balance(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const
 		{
@@ -2413,11 +2414,11 @@ namespace tangent
 			if (!state)
 				return layer_exception("depository balance required but not applicable (" + state.what() + ")");
 
-			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
+			auto status = ((transaction_context*)this)->load(state->ptr(), !state->cached);
 			if (!status)
 				return status.error();
 
-			return states::depository_balance(std::move(*(states::depository_balance*)**state));
+			return states::depository_balance(std::move(*state->as<states::depository_balance>()));
 		}
 		expects_lr<states::depository_policy> transaction_context::get_depository_policy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const
 		{
@@ -2426,11 +2427,11 @@ namespace tangent
 			if (!state)
 				return layer_exception("depository policy required but not applicable (" + state.what() + ")");
 
-			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
+			auto status = ((transaction_context*)this)->load(state->ptr(), !state->cached);
 			if (!status)
 				return status.error();
 
-			return states::depository_policy(std::move(*(states::depository_policy*)**state));
+			return states::depository_policy(std::move(*state->as<states::depository_policy>()));
 		}
 		expects_lr<vector<states::depository_account>> transaction_context::get_depository_accounts(const algorithm::pubkeyhash_t& manager, size_t offset, size_t count) const
 		{
@@ -2443,11 +2444,11 @@ namespace tangent
 			addresses.reserve(states->size());
 			for (auto& state : *states)
 			{
-				auto status = ((transaction_context*)this)->query_load(*state, states->size(), chain.query_used());
+				auto status = ((transaction_context*)this)->query(state.ptr(), !state.cached);
 				if (!status)
 					return status.error();
 
-				addresses.emplace_back(std::move(*(states::depository_account*)*state));
+				addresses.emplace_back(std::move(*state.as<states::depository_account>()));
 			}
 			return addresses;
 		}
@@ -2458,11 +2459,11 @@ namespace tangent
 			if (!state)
 				return layer_exception("depository account required but not applicable (" + state.what() + ")");
 
-			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
+			auto status = ((transaction_context*)this)->load(state->ptr(), !state->cached);
 			if (!status)
 				return status.error();
 
-			return states::depository_account(std::move(*(states::depository_account*)**state));
+			return states::depository_account(std::move(*state->as<states::depository_account>()));
 		}
 		expects_lr<states::witness_program> transaction_context::get_witness_program(const std::string_view& program_hashcode) const
 		{
@@ -2471,11 +2472,11 @@ namespace tangent
 			if (!state)
 				return layer_exception("witness program required but not applicable (" + state.what() + ")");
 
-			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
+			auto status = ((transaction_context*)this)->load(state->ptr(), !state->cached);
 			if (!status)
 				return status.error();
 
-			return states::witness_program(std::move(*(states::witness_program*)**state));
+			return states::witness_program(std::move(*state->as<states::witness_program>()));
 		}
 		expects_lr<states::witness_event> transaction_context::get_witness_event(const uint256_t& parent_transaction_hash) const
 		{
@@ -2484,11 +2485,11 @@ namespace tangent
 			if (!state)
 				return layer_exception("witness event required but not applicable (" + state.what() + ")");
 
-			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
+			auto status = ((transaction_context*)this)->load(state->ptr(), !state->cached);
 			if (!status)
 				return status.error();
 
-			return states::witness_event(std::move(*(states::witness_event*)**state));
+			return states::witness_event(std::move(*state->as<states::witness_event>()));
 		}
 		expects_lr<vector<states::witness_account>> transaction_context::get_witness_accounts(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count) const
 		{
@@ -2501,11 +2502,11 @@ namespace tangent
 			addresses.reserve(states->size());
 			for (auto& state : *states)
 			{
-				auto status = ((transaction_context*)this)->query_load(*state, states->size(), chain.query_used());
+				auto status = ((transaction_context*)this)->query(state.ptr(), !state.cached);
 				if (!status)
 					return status.error();
 
-				addresses.emplace_back(std::move(*(states::witness_account*)*state));
+				addresses.emplace_back(std::move(*state.as<states::witness_account>()));
 			}
 			return addresses;
 		}
@@ -2521,11 +2522,11 @@ namespace tangent
 			addresses.reserve(states->size());
 			for (auto& state : *states)
 			{
-				auto status = ((transaction_context*)this)->query_load(*state, states->size(), chain.query_used());
+				auto status = ((transaction_context*)this)->query(state.ptr(), !state.cached);
 				if (!status)
 					return status.error();
 
-				addresses.emplace_back(std::move(*(states::witness_account*)*state));
+				addresses.emplace_back(std::move(*state.as<states::witness_account>()));
 			}
 			return addresses;
 		}
@@ -2536,11 +2537,11 @@ namespace tangent
 			if (!state)
 				return layer_exception("witness account required but not applicable (" + state.what() + ")");
 
-			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
+			auto status = ((transaction_context*)this)->load(state->ptr(), !state->cached);
 			if (!status)
 				return status.error();
 
-			return states::witness_account(std::move(*(states::witness_account*)**state));
+			return states::witness_account(std::move(*state->as<states::witness_account>()));
 		}
 		expects_lr<states::witness_account> transaction_context::get_witness_account(const algorithm::asset_id& asset, const std::string_view& address, size_t offset) const
 		{
@@ -2551,11 +2552,12 @@ namespace tangent
 			else if (states->empty())
 				return layer_exception("witness account required but not applicable (empty list)");
 
-			auto status = ((transaction_context*)this)->query_load(*states->front(), 1, chain.query_used());
+			auto& state = states->front();
+			auto status = ((transaction_context*)this)->query(state.ptr(), !state.cached);
 			if (!status)
 				return status.error();
 
-			return states::witness_account(std::move(*(states::witness_account*)*states->front()));
+			return states::witness_account(std::move(*state.as<states::witness_account>()));
 		}
 		expects_lr<states::witness_account> transaction_context::get_witness_account_tagged(const algorithm::asset_id& asset, const std::string_view& address, size_t offset) const
 		{
@@ -2571,11 +2573,11 @@ namespace tangent
 			if (!state)
 				return layer_exception("witness transaction required but not applicable (" + state.what() + ")");
 
-			auto status = ((transaction_context*)this)->load(**state, chain.query_used());
+			auto status = ((transaction_context*)this)->load(state->ptr(), !state->cached);
 			if (!status)
 				return status.error();
 
-			return states::witness_transaction(std::move(*(states::witness_transaction*)**state));
+			return states::witness_transaction(std::move(*state->as<states::witness_transaction>()));
 		}
 		expects_lr<ledger::block_transaction> transaction_context::get_block_transaction_instance(const uint256_t& transaction_hash) const
 		{
@@ -3105,6 +3107,9 @@ namespace tangent
 		}
 		evaluation_context::include_decision evaluation_context::decide_on_inclusion(const transaction_info& item, const uint256_t& current_gas_limit, const uint256_t& max_gas_limit) const
 		{
+			if (!item.candidate)
+				return include_decision::not_executable;
+
 			if (item.candidate->is_recoverable() && item.owner.empty())
 				return include_decision::not_executable;
 

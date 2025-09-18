@@ -1001,10 +1001,6 @@ namespace tangent
 		{
 			return local_storage.uses();
 		}
-		bool mempoolstate::query_used() const
-		{
-			return local_storage.in_use();
-		}
 		double mempoolstate::fee_percentile(fee_priority priority)
 		{
 			switch (priority)

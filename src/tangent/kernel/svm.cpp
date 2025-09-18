@@ -1453,14 +1453,14 @@ namespace tangent
 			if (!link)
 				return layer_exception(stringify::text("illegal subcall to %s program on function \"%.*s\": illegal operation", svm_abi::address(target).to_string().data(), (int)function_decl.size(), function_decl.data()));
 
+			auto program = context->get_witness_program(link->hashcode);
+			if (!program)
+				return layer_exception(stringify::text("illegal subcall to %s program on function \"%.*s\": %s", svm_abi::address(target).to_string().data(), (int)function_decl.size(), function_decl.data(), program.error().what()));
+
 			auto* host = ledger::svm_container::get();
 			auto compiler = host->allocate();
 			if (!host->precompile(*compiler, link->hashcode))
 			{
-				auto program = context->get_witness_program(link->hashcode);
-				if (!program)
-					return layer_exception(stringify::text("illegal subcall to %s program on function \"%.*s\": %s", svm_abi::address(target).to_string().data(), (int)function_decl.size(), function_decl.data(), program.error().what()));
-
 				auto code = program->as_code();
 				if (!code)
 					return layer_exception(stringify::text("illegal subcall to %s program on function \"%.*s\": %s", svm_abi::address(target).to_string().data(), (int)function_decl.size(), function_decl.data(), code.error().what()));
@@ -1623,39 +1623,38 @@ namespace tangent
 		}
 		void svm_program::dispatch_coroutine(immediate_context* coroutine, vector<svm_stackframe>& frames)
 		{
-			svm_stackframe current_frame; size_t current_depth = coroutine->get_callstack_size();
-			if (!coroutine->get_call_state_registers(0, nullptr, &current_frame.call, &current_frame.pointer, nullptr, nullptr))
-				return;
-
-			size_t latest_depth = frames.size();
-			if (latest_depth < current_depth)
+			size_t next_depth = coroutine->get_callstack_size();
+			bool function_change = frames.size() != next_depth;
+			if (function_change)
 			{
-				auto latest_frame = current_frame;
-				latest_frame.byte_code = current_frame.call.get_byte_code(&latest_frame.byte_code_size);
-				latest_frame.pointer = 0;
-				frames.push_back(std::move(latest_frame));
+				frames.resize(next_depth);
+				for (size_t i = 0; i < next_depth; i++)
+				{
+					auto& frame = frames[frames.size() - i - 1];
+					if (coroutine->get_call_state_registers(i, nullptr, &frame.call, &frame.pointer, nullptr, nullptr))
+						frame.byte_code = frame.call.get_byte_code(&frame.byte_code_size);
+				}
 			}
-			else if (latest_depth > current_depth)
-				frames.pop_back();
-
-			if (frames.empty() || !frames.back().byte_code)
+			if (frames.empty())
 				return;
 
-			auto& last_frame = frames.back();
+			uint32_t next_pointer; auto& prev = frames.back();
+			if (!prev.byte_code || !coroutine->get_call_state_registers(0, nullptr, nullptr, &next_pointer, nullptr, nullptr))
+				return;
+
 			auto* vm = coroutine->get_vm();
-			bool step = last_frame.call.get_function() != current_frame.call.get_function();
-			size_t start = step ? 0 : std::min<size_t>(last_frame.byte_code_size, current_frame.pointer > last_frame.pointer ? last_frame.pointer : current_frame.pointer);
-			size_t count = step ? current_frame.pointer : (current_frame.pointer > last_frame.pointer ? current_frame.pointer - last_frame.pointer : last_frame.pointer - current_frame.pointer);
-			size_t end = std::min<size_t>(last_frame.byte_code_size, start + count);
+			size_t start = function_change ? 0 : std::min<size_t>(prev.byte_code_size, next_pointer > prev.pointer ? prev.pointer : next_pointer);
+			size_t count = function_change ? next_pointer : (next_pointer > prev.pointer ? next_pointer - prev.pointer : prev.pointer - next_pointer);
+			size_t end = std::min<size_t>(prev.byte_code_size, start + count);
 			while (start < end)
 			{
-				auto* pointer = (uint8_t*)(last_frame.byte_code + start);
+				auto* pointer = (uint8_t*)(prev.byte_code + start);
 				auto opcode = virtual_machine::get_byte_code_info(*pointer);
 				start += opcode.size;
-				if (!dispatch_instruction(vm, coroutine, last_frame.byte_code, start, opcode))
+				if (!dispatch_instruction(vm, coroutine, prev.byte_code, start, opcode))
 					return;
 			}
-			last_frame.pointer = current_frame.pointer;
+			prev.pointer = next_pointer;
 		}
 		bool svm_program::dispatch_instruction(virtual_machine* vm, immediate_context* coroutine, uint32_t* program_data, size_t program_counter, byte_code_label& opcode)
 		{

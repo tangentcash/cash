@@ -195,12 +195,12 @@ namespace tangent
 				}
 				case data_type::hashcode:
 				{
+					auto program = context->get_witness_program(storage);
+					if (!program)
+						return layer_exception("program is not stored");
+
 					if (!container->precompile(*compiler, storage))
 					{
-						auto program = context->get_witness_program(storage);
-						if (!program)
-							return layer_exception("program is not stored");
-
 						auto code = program->as_code();
 						if (!code)
 							return code.error();
@@ -354,15 +354,15 @@ namespace tangent
 			if (!index)
 				return layer_exception("program is not assigned");
 
-			auto* container = ledger::svm_container::get();
 			auto& hashcode = index->hashcode;
+			auto program = context->get_witness_program(hashcode);
+			if (!program)
+				return layer_exception("program is not stored");
+
+			auto* container = ledger::svm_container::get();
 			auto compiler = container->allocate();
 			if (!container->precompile(*compiler, hashcode))
 			{
-				auto program = context->get_witness_program(hashcode);
-				if (!program)
-					return layer_exception("program is not stored");
-
 				auto code = program->as_code();
 				if (!code)
 					return code.error();

@@ -4,7 +4,7 @@ extern "C"
 #include "../internal/sha2.h"
 #include "../internal/sha3.h"
 }
-#define SCRIPT_QUERY_PREFETCH ((uint32_t)gas_cost::query_byte / (uint32_t)gas_cost::bulk_query_byte)
+#define SCRIPT_QUERY_PREFETCH 16
 #define SCRIPT_TAG_ARRAY 19192
 #define SCRIPT_TYPENAME_UINT128 "uint128"
 #define SCRIPT_TYPENAME_UINT256 "uint256"
@@ -948,7 +948,7 @@ namespace tangent
 				if (cache)
 					return;
 
-				cache = gas_allocate<scache>(sizeof(scache));
+				cache = memory::allocate<scache>(sizeof(scache));
 				if (!cache)
 					return;
 
@@ -3594,7 +3594,7 @@ namespace tangent
 						}
 						else if (result_type_id & (int)vitex::scripting::type_id::mask_seqnbr_t)
 						{
-							inout.set_return_dword((uint32_t)vitex::compute::math<int32_t>::strong_lerp(*(int32_t*)left_value, *(int32_t*)right_value, *(int32_t*)delta_value));
+							inout.set_return_qword((uint32_t)vitex::compute::math<int32_t>::strong_lerp(*(int32_t*)left_value, *(int32_t*)right_value, *(int32_t*)delta_value));
 							break;
 						}
 						return exception::throw_ptr(exception::pointer(exception::category::execution(), "template type must be arithmetic"));

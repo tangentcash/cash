@@ -112,6 +112,46 @@ namespace tangent
 			string key_of_blocks(uint32_t type, uint64_t column_location, uint64_t row_location);
 		};
 
+		struct state_result
+		{
+			uptr<ledger::state> value;
+			bool cached;
+
+			state_result() : cached(true)
+			{
+			}
+			state_result(uptr<ledger::state>&& new_value, bool new_cached) : value(std::move(new_value)), cached(new_cached)
+			{
+			}
+			state_result(const state_result&) = delete;
+			state_result(state_result&& other) noexcept : value(std::move(other.value)), cached(other.cached)
+			{
+			}
+			state_result& operator= (const state_result&) = delete;
+			state_result& operator= (state_result&& other) noexcept
+			{
+				if (this == &other)
+					return *this;
+
+				value = std::move(other.value);
+				cached = other.cached;
+				return *this;
+			}
+			explicit operator bool() const
+			{
+				return !!value;
+			}
+			template <typename t>
+			t* as()
+			{
+				return (t*)*value;
+			}
+			ledger::state* ptr()
+			{
+				return *value;
+			}
+		};
+
 		struct result_filter
 		{
 			position_condition condition = position_condition::equal;
@@ -247,12 +287,12 @@ namespace tangent
 			expects_lr<uptr<ledger::transaction>> get_transaction_by_hash(const uint256_t& transaction_hash);
 			expects_lr<ledger::block_transaction> get_block_transaction_by_hash(const uint256_t& transaction_hash);
 			expects_lr<ledger::receipt> get_receipt_by_transaction_hash(const uint256_t& transaction_hash);
-			expects_lr<uptr<ledger::state>> get_uniform(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& index, uint64_t block_number);
-			expects_lr<uptr<ledger::state>> get_multiform(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& column, const std::string_view& row, uint64_t block_number);
-			expects_lr<vector<uptr<ledger::state>>> get_multiforms_by_column(uint32_t type, ledger::block_changelog* changelog, const std::string_view& column, uint64_t block_number, size_t offset, size_t count);
-			expects_lr<vector<uptr<ledger::state>>> get_multiforms_by_column_filter(uint32_t type, ledger::block_changelog* changelog, const std::string_view& column, const result_filter& filter, uint64_t block_number, const result_window& window);
-			expects_lr<vector<uptr<ledger::state>>> get_multiforms_by_row(uint32_t type, ledger::block_changelog* changelog, const std::string_view& row, uint64_t block_number, size_t offset, size_t count);
-			expects_lr<vector<uptr<ledger::state>>> get_multiforms_by_row_filter(uint32_t type, ledger::block_changelog* changelog, const std::string_view& row, const result_filter& filter, uint64_t block_number, const result_window& window);
+			expects_lr<state_result> get_uniform(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& index, uint64_t block_number);
+			expects_lr<state_result> get_multiform(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& column, const std::string_view& row, uint64_t block_number);
+			expects_lr<vector<state_result>> get_multiforms_by_column(uint32_t type, ledger::block_changelog* changelog, const std::string_view& column, uint64_t block_number, size_t offset, size_t count);
+			expects_lr<vector<state_result>> get_multiforms_by_column_filter(uint32_t type, ledger::block_changelog* changelog, const std::string_view& column, const result_filter& filter, uint64_t block_number, const result_window& window);
+			expects_lr<vector<state_result>> get_multiforms_by_row(uint32_t type, ledger::block_changelog* changelog, const std::string_view& row, uint64_t block_number, size_t offset, size_t count);
+			expects_lr<vector<state_result>> get_multiforms_by_row_filter(uint32_t type, ledger::block_changelog* changelog, const std::string_view& row, const result_filter& filter, uint64_t block_number, const result_window& window);
 			expects_lr<size_t> get_multiforms_count_by_column(uint32_t type, ledger::block_changelog* changelog, const std::string_view& column, uint64_t block_number);
 			expects_lr<size_t> get_multiforms_count_by_column_filter(uint32_t type, ledger::block_changelog* changelog, const std::string_view& column, const result_filter& filter, uint64_t block_number);
 			expects_lr<size_t> get_multiforms_count_by_row(uint32_t type, ledger::block_changelog* changelog, const std::string_view& row, uint64_t block_number);
@@ -276,7 +316,6 @@ namespace tangent
 			ledger::storage_util::multi_storage_index_ptr get_multi_storage();
 			void clear_indexer_cache();
 			uint32_t get_queries() const;
-			bool query_used() const;
 
 		private:
 			static bool make_schema(sqlite::connection* connection, const std::string_view& name);

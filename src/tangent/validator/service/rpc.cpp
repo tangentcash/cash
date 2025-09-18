@@ -1705,7 +1705,7 @@ namespace tangent
 			auto receipt = ledger::receipt();
 			receipt.transaction_hash = transaction.as_hash();
 			receipt.generation_time = protocol::now().time.now();
-			receipt.block_number = block.number + 1;
+			receipt.block_number = block.number;
 			receipt.from = from;
 
 			environment.validation.context = ledger::transaction_context(&environment, &block, &environment.validation.changelog, &transaction, std::move(receipt));
@@ -1873,7 +1873,7 @@ namespace tangent
 			if (!uniform)
 				return server_response().error(error_codes::not_found, "uniform not found");
 
-			return server_response().success((*uniform)->as_schema());
+			return server_response().success(uniform->value->as_schema());
 		}
 		server_response server_node::chainstate_get_multiform(http::connection* base, format::variables&& args)
 		{
@@ -1886,7 +1886,7 @@ namespace tangent
 			if (!multiform)
 				return server_response().error(error_codes::not_found, "multiform not found");
 
-			return server_response().success((*multiform)->as_schema());
+			return server_response().success(multiform->value->as_schema());
 		}
 		server_response server_node::chainstate_get_multiforms_by_column(http::connection* base, format::variables&& args)
 		{
@@ -1905,7 +1905,7 @@ namespace tangent
 
 			uptr<schema> data = var::set::array();
 			for (auto& item : *list)
-				data->push(item->as_schema().reset());
+				data->push(item.value->as_schema().reset());
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_multiforms_by_column_filter(http::connection* base, format::variables&& args)
@@ -1926,7 +1926,7 @@ namespace tangent
 
 			uptr<schema> data = var::set::array();
 			for (auto& item : *list)
-				data->push(item->as_schema().reset());
+				data->push(item.value->as_schema().reset());
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_multiforms_by_row(http::connection* base, format::variables&& args)
@@ -1946,7 +1946,7 @@ namespace tangent
 
 			uptr<schema> data = var::set::array();
 			for (auto& item : *list)
-				data->push(item->as_schema().reset());
+				data->push(item.value->as_schema().reset());
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_multiforms_by_row_filter(http::connection* base, format::variables&& args)
@@ -1967,7 +1967,7 @@ namespace tangent
 
 			uptr<schema> data = var::set::array();
 			for (auto& item : *list)
-				data->push(item->as_schema().reset());
+				data->push(item.value->as_schema().reset());
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_multiforms_count_by_column(http::connection* base, format::variables&& args)
@@ -2032,7 +2032,7 @@ namespace tangent
 
 			auto chain = storages::chainstate();
 			auto state = chain.get_uniform(states::account_nonce::as_instance_type(), nullptr, states::account_nonce::as_instance_index(owner), 0);
-			auto* value = (states::account_nonce*)(state ? **state : nullptr);
+			auto* value = (states::account_nonce*)(state ? state->ptr() : nullptr);
 			return server_response().success(algorithm::encoding::serialize_uint256(value ? value->nonce : 1));
 		}
 		server_response server_node::chainstate_get_account_program(http::connection* base, format::variables&& args)
@@ -2043,7 +2043,7 @@ namespace tangent
 
 			auto chain = storages::chainstate();
 			auto state = chain.get_uniform(states::account_program::as_instance_type(), nullptr, states::account_program::as_instance_index(owner), 0);
-			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
+			return server_response().success(state ? state->value->as_schema().reset() : var::set::null());
 		}
 		server_response server_node::chainstate_get_account_uniform(http::connection* base, format::variables&& args)
 		{
@@ -2053,7 +2053,7 @@ namespace tangent
 
 			auto chain = storages::chainstate();
 			auto state = chain.get_uniform(states::account_uniform::as_instance_type(), nullptr, states::account_uniform::as_instance_index(owner, args[1].as_string()), 0);
-			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
+			return server_response().success(state ? state->value->as_schema().reset() : var::set::null());
 		}
 		server_response server_node::chainstate_get_account_multiform(http::connection* base, format::variables&& args)
 		{
@@ -2063,7 +2063,7 @@ namespace tangent
 
 			auto chain = storages::chainstate();
 			auto state = chain.get_multiform(states::account_multiform::as_instance_type(), nullptr, states::account_multiform::as_instance_column(owner, args[1].as_string()), states::account_multiform::as_instance_row(owner, args[2].as_string()), 0);
-			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
+			return server_response().success(state ? state->value->as_schema().reset() : var::set::null());
 		}
 		server_response server_node::chainstate_get_account_multiforms(http::connection* base, format::variables&& args)
 		{
@@ -2082,7 +2082,7 @@ namespace tangent
 
 			uptr<schema> data = var::set::array();
 			for (auto& item : *list)
-				data->push(item->as_schema().reset());
+				data->push(item.value->as_schema().reset());
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_account_delegation(http::connection* base, format::variables&& args)
@@ -2093,7 +2093,7 @@ namespace tangent
 
 			auto chain = storages::chainstate();
 			auto state = chain.get_uniform(states::account_delegation::as_instance_type(), nullptr, states::account_delegation::as_instance_index(owner), 0);
-			auto* value = (states::account_delegation*)(state ? **state : nullptr);
+			auto* value = (states::account_delegation*)(state ? state->ptr() : nullptr);
 			auto result = value ? value->as_schema().reset() : var::set::null();
 			if (value != nullptr)
 			{
@@ -2113,7 +2113,7 @@ namespace tangent
 			auto chain = storages::chainstate();
 			auto asset = algorithm::asset::id_of_handle(args[1].as_string());
 			auto state = chain.get_multiform(states::account_balance::as_instance_type(), nullptr, states::account_balance::as_instance_column(owner), states::account_balance::as_instance_row(asset), 0);
-			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
+			return server_response().success(state ? state->value->as_schema().reset() : var::set::null());
 		}
 		server_response server_node::chainstate_get_account_balances(http::connection* base, format::variables&& args)
 		{
@@ -2132,7 +2132,7 @@ namespace tangent
 
 			uptr<schema> data = var::set::array();
 			for (auto& item : *list)
-				data->push(item->as_schema().reset());
+				data->push(item.value->as_schema().reset());
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_validator_production(http::connection* base, format::variables&& args)
@@ -2143,7 +2143,7 @@ namespace tangent
 
 			auto chain = storages::chainstate();
 			auto state = chain.get_multiform(states::validator_production::as_instance_type(), nullptr, states::validator_production::as_instance_column(owner), states::validator_production::as_instance_row(), 0);
-			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
+			return server_response().success(state ? state->value->as_schema().reset() : var::set::null());
 		}
 		server_response server_node::chainstate_get_best_validator_producers(http::connection* base, format::variables&& args)
 		{
@@ -2160,7 +2160,7 @@ namespace tangent
 
 			uptr<schema> data = var::set::array();
 			for (auto& item : *list)
-				data->push(item->as_schema().reset());
+				data->push(item.value->as_schema().reset());
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_validator_participation(http::connection* base, format::variables&& args)
@@ -2172,7 +2172,7 @@ namespace tangent
 
 			auto chain = storages::chainstate();
 			auto state = chain.get_multiform(states::validator_participation::as_instance_type(), nullptr, states::validator_participation::as_instance_column(owner), states::validator_participation::as_instance_row(asset), 0);
-			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
+			return server_response().success(state ? state->value->as_schema().reset() : var::set::null());
 		}
 		server_response server_node::chainstate_get_validator_participations(http::connection* base, format::variables&& args)
 		{
@@ -2191,7 +2191,7 @@ namespace tangent
 
 			uptr<schema> data = var::set::array();
 			for (auto& item : *list)
-				data->push(item->as_schema().reset());
+				data->push(item.value->as_schema().reset());
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_best_validator_participations(http::connection* base, format::variables&& args)
@@ -2210,7 +2210,7 @@ namespace tangent
 
 			uptr<schema> data = var::set::array();
 			for (auto& item : *list)
-				data->push(item->as_schema().reset());
+				data->push(item.value->as_schema().reset());
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_validator_attestation(http::connection* base, format::variables&& args)
@@ -2222,7 +2222,7 @@ namespace tangent
 
 			auto chain = storages::chainstate();
 			auto state = chain.get_multiform(states::validator_attestation::as_instance_type(), nullptr, states::validator_attestation::as_instance_column(owner), states::validator_attestation::as_instance_row(asset), 0);
-			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
+			return server_response().success(state ? state->value->as_schema().reset() : var::set::null());
 		}
 		server_response server_node::chainstate_get_validator_attestations(http::connection* base, format::variables&& args)
 		{
@@ -2241,7 +2241,7 @@ namespace tangent
 
 			uptr<schema> data = var::set::array();
 			for (auto& item : *list)
-				data->push(item->as_schema().reset());
+				data->push(item.value->as_schema().reset());
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_best_validator_attestations(http::connection* base, format::variables&& args)
@@ -2260,7 +2260,7 @@ namespace tangent
 
 			uptr<schema> data = var::set::array();
 			for (auto& item : *list)
-				data->push(item->as_schema().reset());
+				data->push(item.value->as_schema().reset());
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_depository_reward(http::connection* base, format::variables&& args)
@@ -2272,7 +2272,7 @@ namespace tangent
 			auto chain = storages::chainstate();
 			auto asset = algorithm::asset::id_of_handle(args[1].as_string());
 			auto state = chain.get_multiform(states::depository_reward::as_instance_type(), nullptr, states::depository_reward::as_instance_column(owner), states::depository_reward::as_instance_row(asset), 0);
-			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
+			return server_response().success(state ? state->value->as_schema().reset() : var::set::null());
 		}
 		server_response server_node::chainstate_get_depository_rewards(http::connection* base, format::variables&& args)
 		{
@@ -2291,7 +2291,7 @@ namespace tangent
 
 			uptr<schema> data = var::set::array();
 			for (auto& item : *list)
-				data->push(item->as_schema().reset());
+				data->push(item.value->as_schema().reset());
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_best_depository_rewards(http::connection* base, format::variables&& args)
@@ -2309,7 +2309,7 @@ namespace tangent
 
 			uptr<schema> data = var::set::array();
 			for (auto& item : *list)
-				data->push(item->as_schema().reset());
+				data->push(item.value->as_schema().reset());
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_best_depository_rewards_for_selection(http::connection* base, format::variables&& args)
@@ -2331,14 +2331,14 @@ namespace tangent
 			uptr<schema> data = var::set::array();
 			for (auto& item : *list)
 			{
-				auto* reward_state = (states::depository_reward*)*item;
+				auto* reward_state = (states::depository_reward*)item.ptr();
 				auto attestation_state = chain.get_multiform(states::validator_attestation::as_instance_type(), nullptr, states::validator_attestation::as_instance_column(reward_state->owner), attestation_stride, 0);
 				auto policy_state = chain.get_multiform(states::depository_policy::as_instance_type(), nullptr, states::depository_policy::as_instance_column(reward_state->owner), policy_stride, 0);
 				auto balance_state = chain.get_multiform(states::depository_balance::as_instance_type(), nullptr, states::depository_balance::as_instance_column(reward_state->owner), balance_stride, 0);
 				auto* next = data->push(var::set::object());
-				next->set("attestation", attestation_state ? (*attestation_state)->as_schema().reset() : var::set::null());
-				next->set("balance", balance_state ? (*balance_state)->as_schema().reset() : var::set::null());
-				next->set("policy", policy_state ? (*policy_state)->as_schema().reset() : var::set::null());
+				next->set("attestation", attestation_state ? attestation_state->value->as_schema().reset() : var::set::null());
+				next->set("balance", balance_state ? balance_state->value->as_schema().reset() : var::set::null());
+				next->set("policy", policy_state ? policy_state->value->as_schema().reset() : var::set::null());
 				next->set("reward", reward_state->as_schema().reset());
 			}
 			return server_response().success(std::move(data));
@@ -2352,7 +2352,7 @@ namespace tangent
 			auto chain = storages::chainstate();
 			auto asset = algorithm::asset::id_of_handle(args[1].as_string());
 			auto state = chain.get_multiform(states::depository_policy::as_instance_type(), nullptr, states::depository_policy::as_instance_column(owner), states::depository_policy::as_instance_row(asset), 0);
-			auto* value = (states::depository_policy*)(state ? **state : nullptr);
+			auto* value = (states::depository_policy*)(state ? state->ptr() : nullptr);
 			return server_response().success(value ? value->as_schema().reset() : nullptr);
 		}
 		server_response server_node::chainstate_get_depository_account(http::connection* base, format::variables&& args)
@@ -2368,7 +2368,7 @@ namespace tangent
 			auto chain = storages::chainstate();
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
 			auto state = chain.get_multiform(states::depository_account::as_instance_type(), nullptr, states::depository_account::as_instance_column(proposer), states::depository_account::as_instance_row(asset, owner), 0);
-			auto* value = (states::depository_account*)(state ? **state : nullptr);
+			auto* value = (states::depository_account*)(state ? state->ptr() : nullptr);
 			return server_response().success(value ? value->as_schema().reset() : nullptr);
 		}
 		server_response server_node::chainstate_get_depository_accounts(http::connection* base, format::variables&& args)
@@ -2389,7 +2389,7 @@ namespace tangent
 
 			uptr<schema> data = var::set::array();
 			for (auto& item : *list)
-				data->push(item->as_schema().reset());
+				data->push(item.value->as_schema().reset());
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_depository_balance(http::connection* base, format::variables&& args)
@@ -2401,7 +2401,7 @@ namespace tangent
 			auto chain = storages::chainstate();
 			auto asset = algorithm::asset::id_of_handle(args[1].as_string());
 			auto state = chain.get_multiform(states::depository_balance::as_instance_type(), nullptr, states::depository_balance::as_instance_column(owner), states::depository_balance::as_instance_row(asset), 0);
-			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
+			return server_response().success(state ? state->value->as_schema().reset() : var::set::null());
 		}
 		server_response server_node::chainstate_get_depository_balances(http::connection* base, format::variables&& args)
 		{
@@ -2420,7 +2420,7 @@ namespace tangent
 
 			uptr<schema> data = var::set::array();
 			for (auto& item : *list)
-				data->push(item->as_schema().reset());
+				data->push(item.value->as_schema().reset());
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_best_depository_balances(http::connection* base, format::variables&& args)
@@ -2438,7 +2438,7 @@ namespace tangent
 
 			uptr<schema> data = var::set::array();
 			for (auto& item : *list)
-				data->push(item->as_schema().reset());
+				data->push(item.value->as_schema().reset());
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_best_depository_balances_for_selection(http::connection* base, format::variables&& args)
@@ -2460,15 +2460,15 @@ namespace tangent
 			uptr<schema> data = var::set::array();
 			for (auto& item : *list)
 			{
-				auto* balance_state = (states::depository_balance*)*item;
+				auto* balance_state = (states::depository_balance*)item.ptr();
 				auto attestation_state = chain.get_multiform(states::validator_attestation::as_instance_type(), nullptr, states::validator_attestation::as_instance_column(balance_state->owner), attestation_stride, 0);
 				auto policy_state = chain.get_multiform(states::depository_policy::as_instance_type(), nullptr, states::depository_policy::as_instance_column(balance_state->owner), policy_stride, 0);
 				auto reward_state = chain.get_multiform(states::depository_reward::as_instance_type(), nullptr, states::depository_reward::as_instance_column(balance_state->owner), reward_stride, 0);
 				auto* next = data->push(var::set::object());
-				next->set("attestation", attestation_state ? (*attestation_state)->as_schema().reset() : var::set::null());
+				next->set("attestation", attestation_state ? attestation_state->value->as_schema().reset() : var::set::null());
 				next->set("balance", balance_state->as_schema().reset());
-				next->set("policy", policy_state ? (*policy_state)->as_schema().reset() : var::set::null());
-				next->set("reward", reward_state ? (*reward_state)->as_schema().reset() : var::set::null());
+				next->set("policy", policy_state ? policy_state->value->as_schema().reset() : var::set::null());
+				next->set("reward", reward_state ? reward_state->value->as_schema().reset() : var::set::null());
 			}
 			return server_response().success(std::move(data));
 		}
@@ -2487,7 +2487,7 @@ namespace tangent
 
 			uptr<schema> data = var::set::array();
 			for (auto& item : *list)
-				data->push(item->as_schema().reset());
+				data->push(item.value->as_schema().reset());
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_best_depository_policies_for_selection(http::connection* base, format::variables&& args)
@@ -2509,15 +2509,15 @@ namespace tangent
 			uptr<schema> data = var::set::array();
 			for (auto& item : *list)
 			{
-				auto* policy_state = (states::depository_policy*)*item;
+				auto* policy_state = (states::depository_policy*)item.ptr();
 				auto attestation_state = chain.get_multiform(states::validator_attestation::as_instance_type(), nullptr, states::validator_attestation::as_instance_column(policy_state->owner), attestation_stride, 0);
 				auto balance_state = chain.get_multiform(states::depository_balance::as_instance_type(), nullptr, states::depository_balance::as_instance_column(policy_state->owner), balance_stride, 0);
 				auto reward_state = chain.get_multiform(states::depository_reward::as_instance_type(), nullptr, states::depository_reward::as_instance_column(policy_state->owner), reward_stride, 0);
 				auto* next = data->push(var::set::object());
-				next->set("attestation", attestation_state ? (*attestation_state)->as_schema().reset() : var::set::null());
-				next->set("balance", balance_state ? (*balance_state)->as_schema().reset() : var::set::null());
+				next->set("attestation", attestation_state ? attestation_state->value->as_schema().reset() : var::set::null());
+				next->set("balance", balance_state ? balance_state->value->as_schema().reset() : var::set::null());
 				next->set("policy", policy_state->as_schema().reset());
-				next->set("reward", reward_state ? (*reward_state)->as_schema().reset() : var::set::null());
+				next->set("reward", reward_state ? reward_state->value->as_schema().reset() : var::set::null());
 			}
 			return server_response().success(std::move(data));
 		}
@@ -2528,8 +2528,8 @@ namespace tangent
 			if (!state)
 				return server_response().success(var::set::null());
 
-			auto code = ((states::witness_program*)(**state))->as_code();
-			auto* data = (*state)->as_schema().reset();
+			auto code = ((states::witness_program*)(state->ptr()))->as_code();
+			auto* data = state->value->as_schema().reset();
 			data->set("storage", code ? var::string(*code) : var::null());
 			return server_response().success(data);
 		}
@@ -2537,7 +2537,7 @@ namespace tangent
 		{
 			auto chain = storages::chainstate();
 			auto state = chain.get_uniform(states::witness_event::as_instance_type(), nullptr, states::witness_event::as_instance_index(args[0].as_uint256()), 0);
-			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
+			return server_response().success(state ? state->value->as_schema().reset() : var::set::null());
 		}
 		server_response server_node::chainstate_get_witness_account(http::connection* base, format::variables&& args)
 		{
@@ -2548,7 +2548,7 @@ namespace tangent
 			auto asset = algorithm::asset::id_of_handle(args[1].as_string());
 			auto chain = storages::chainstate();
 			auto state = chain.get_multiform(states::witness_account::as_instance_type(), nullptr, states::witness_account::as_instance_column(owner), states::witness_account::as_instance_row(asset, args[2].as_string()), 0);
-			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
+			return server_response().success(state ? state->value->as_schema().reset() : var::set::null());
 		}
 		server_response server_node::chainstate_get_witness_accounts(http::connection* base, format::variables&& args)
 		{
@@ -2567,7 +2567,7 @@ namespace tangent
 
 			uptr<schema> data = var::set::array();
 			for (auto& item : *list)
-				data->push(item->as_schema().reset());
+				data->push(item.value->as_schema().reset());
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_witness_accounts_by_purpose(http::connection* base, format::variables&& args)
@@ -2599,7 +2599,7 @@ namespace tangent
 
 			uptr<schema> data = var::set::array();
 			for (auto& item : *list)
-				data->push(item->as_schema().reset());
+				data->push(item.value->as_schema().reset());
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_witness_transaction(http::connection* base, format::variables&& args)
@@ -2607,7 +2607,7 @@ namespace tangent
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
 			auto chain = storages::chainstate();
 			auto state = chain.get_uniform(states::witness_transaction::as_instance_type(), nullptr, states::witness_transaction::as_instance_index(asset, args[1].as_string()), 0);
-			return server_response().success(state ? (*state)->as_schema().reset() : var::set::null());
+			return server_response().success(state ? state->value->as_schema().reset() : var::set::null());
 		}
 		server_response server_node::mempoolstate_add_node(http::connection* base, format::variables&& args)
 		{
@@ -2826,7 +2826,7 @@ namespace tangent
 			auto mempool = storages::mempoolstate();
 			auto chain = storages::chainstate();
 			auto state = chain.get_uniform(states::account_nonce::as_instance_type(), nullptr, states::account_nonce::as_instance_index(owner), 0);
-			auto* value = (states::account_nonce*)(state ? **state : nullptr);
+			auto* value = (states::account_nonce*)(state ? state->ptr() : nullptr);
 			auto lowest = mempool.get_lowest_transaction_nonce(owner);
 			auto highest = mempool.get_highest_transaction_nonce(owner);
 			if (!lowest)

@@ -97,7 +97,6 @@ namespace tangent
 			expects_lr<vector<uint256_t>> get_transaction_hashset(size_t offset, size_t count);
 			ledger::storage_index_ptr& get_storage();
 			uint32_t get_queries() const;
-			bool query_used() const;
 
 		public:
 			static double fee_percentile(fee_priority priority);

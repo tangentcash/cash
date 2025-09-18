@@ -2010,7 +2010,7 @@ namespace tangent
 				auto evaluation = environment.evaluate_block([&]() -> uptr<ledger::transaction>
 				{
 					auto candidate = mempool.get_transactions(offset++, 1);
-					auto* transaction = candidate ? candidate->front().reset() : nullptr;
+					auto* transaction = candidate && !candidate->empty() ? candidate->front().reset() : nullptr;
 					if (protocol::now().user.consensus.logging)
 						VI_INFO("replacing mempool block transaction (txns: %" PRIu64 ")", ++replacements);
 					return transaction;

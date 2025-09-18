@@ -1079,7 +1079,7 @@ namespace tangent
 
 			for (auto& [type, writer] : uniform_writers)
 			{
-				vector<uptr<ledger::state>> state_cache(concurrency);
+				vector<state_result> state_cache(concurrency);
 				for (auto& task : parallel::for_each(writer.blobs.begin(), writer.blobs.end(), ELEMENTS_FEW, [&](uniform_blob& item)
 				{
 					item.index = item.context->as_index();
@@ -1090,7 +1090,7 @@ namespace tangent
 
 			for (auto& [type, writer] : multiform_writers)
 			{
-				vector<uptr<ledger::state>> state_cache(concurrency);
+				vector<state_result> state_cache(concurrency);
 				for (auto& task : parallel::for_each(writer.blobs.begin(), writer.blobs.end(), ELEMENTS_FEW, [&](multiform_blob& item)
 				{
 					item.column = item.context->as_column();
@@ -2436,17 +2436,17 @@ namespace tangent
 
 			return value;
 		}
-		expects_lr<uptr<ledger::state>> chainstate::get_uniform(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& index, uint64_t block_number)
+		expects_lr<state_result> chainstate::get_uniform(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& index, uint64_t block_number)
 		{
 			if (changelog != nullptr)
 			{
 				auto candidate = changelog->outgoing.find(type, index);
 				if (candidate)
-					return std::move(*candidate);
+					return state_result(std::move(*candidate), true);
 
 				candidate = changelog->incoming.find(type, index);
 				if (candidate)
-					return std::move(*candidate);
+					return state_result(std::move(*candidate), true);
 			}
 
 			auto location = resolve_uniform_location(type, index, block_number > 0 ? 0 : (uint8_t)resolver::find_exact_match);
@@ -2460,7 +2460,7 @@ namespace tangent
 					"SELECT block_number FROM uniforms WHERE index_number = ?" :
 					"SELECT block_number, hidden FROM snapshots WHERE index_number = ? AND block_number < ? ORDER BY block_number DESC LIMIT 1");
 				if (!find_state)
-					return expects_lr<uptr<ledger::state>>(layer_exception(std::move(find_state.error().message())));
+					return expects_lr<state_result>(layer_exception(std::move(find_state.error().message())));
 
 				uniform_storage.ptr()->bind_int64(*find_state, 0, location->index.or_else(0));
 				if (block_number > 0)
@@ -2471,13 +2471,13 @@ namespace tangent
 				{
 					if (changelog != nullptr)
 						((ledger::block_changelog*)changelog)->incoming.erase(type, index);
-					return expects_lr<uptr<ledger::state>>(layer_exception(ledger::storage_util::error_of(cursor)));
+					return expects_lr<state_result>(layer_exception(ledger::storage_util::error_of(cursor)));
 				}
 				else if (cursor->empty())
 				{
 					if (changelog != nullptr)
 						((ledger::block_changelog*)changelog)->incoming.erase(type, index);
-					return expects_lr<uptr<ledger::state>>(layer_exception("uniform state not found"));
+					return expects_lr<state_result>(layer_exception("uniform state not found"));
 				}
 
 				auto cache = uniform_cache::get();
@@ -2491,24 +2491,24 @@ namespace tangent
 			{
 				if (changelog != nullptr)
 					((ledger::block_changelog*)changelog)->incoming.erase(type, index);
-				return expects_lr<uptr<ledger::state>>(layer_exception("uniform state deserialization error"));
+				return expects_lr<state_result>(layer_exception("uniform state deserialization error"));
 			}
 
 			if (changelog != nullptr)
 				((ledger::block_changelog*)changelog)->incoming.push(*value, location->block->hidden);
-			return value;
+			return state_result(std::move(value), false);
 		}
-		expects_lr<uptr<ledger::state>> chainstate::get_multiform(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& column, const std::string_view& row, uint64_t block_number)
+		expects_lr<state_result> chainstate::get_multiform(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& column, const std::string_view& row, uint64_t block_number)
 		{
 			if (changelog != nullptr)
 			{
 				auto candidate = changelog->outgoing.find(type, column, row);
 				if (candidate)
-					return std::move(*candidate);
+					return state_result(std::move(*candidate), true);
 
 				candidate = changelog->incoming.find(type, column, row);
 				if (candidate)
-					return std::move(*candidate);
+					return state_result(std::move(*candidate), true);
 			}
 
 			auto location = resolve_multiform_location(type, column, row, block_number > 0 ? 0 : (uint8_t)resolver::find_exact_match);
@@ -2522,7 +2522,7 @@ namespace tangent
 					"SELECT block_number FROM multiforms WHERE column_number = ? AND row_number = ?" :
 					"SELECT block_number, hidden FROM snapshots WHERE column_number = ? AND row_number = ? AND block_number < ? ORDER BY block_number DESC LIMIT 1");
 				if (!find_state)
-					return expects_lr<uptr<ledger::state>>(layer_exception(std::move(find_state.error().message())));
+					return expects_lr<state_result>(layer_exception(std::move(find_state.error().message())));
 
 				auto* multiform_storage_ptr = multiform_storage.ptr();
 				multiform_storage_ptr->bind_int64(*find_state, 0, location->column.or_else(0));
@@ -2535,13 +2535,13 @@ namespace tangent
 				{
 					if (changelog != nullptr)
 						((ledger::block_changelog*)changelog)->incoming.erase(type, column, row);
-					return expects_lr<uptr<ledger::state>>(layer_exception(ledger::storage_util::error_of(cursor)));
+					return expects_lr<state_result>(layer_exception(ledger::storage_util::error_of(cursor)));
 				}
 				else if (cursor->empty())
 				{
 					if (changelog != nullptr)
 						((ledger::block_changelog*)changelog)->incoming.erase(type, column, row);
-					return expects_lr<uptr<ledger::state>>(layer_exception("multiform state not found"));
+					return expects_lr<state_result>(layer_exception("multiform state not found"));
 				}
 
 				auto cache = multiform_cache::get();
@@ -2555,14 +2555,14 @@ namespace tangent
 			{
 				if (changelog != nullptr)
 					((ledger::block_changelog*)changelog)->incoming.erase(type, column, row);
-				return expects_lr<uptr<ledger::state>>(layer_exception("multiform state deserialization error"));
+				return expects_lr<state_result>(layer_exception("multiform state deserialization error"));
 			}
 
 			if (changelog != nullptr)
 				((ledger::block_changelog*)changelog)->incoming.push(*value, location->block->hidden);
-			return value;
+			return state_result(std::move(value), false);
 		}
-		expects_lr<vector<uptr<ledger::state>>> chainstate::get_multiforms_by_column(uint32_t type, ledger::block_changelog* changelog, const std::string_view& column, uint64_t block_number, size_t offset, size_t count)
+		expects_lr<vector<state_result>> chainstate::get_multiforms_by_column(uint32_t type, ledger::block_changelog* changelog, const std::string_view& column, uint64_t block_number, size_t offset, size_t count)
 		{
 			auto temporary = resolve_temporary_state(type, changelog, column, optional::none, block_number);
 			if (!temporary)
@@ -2570,7 +2570,7 @@ namespace tangent
 
 			auto location = resolve_multiform_location(type, column, optional::none, temporary->in_use ? (uint8_t)resolver::disable_cache : 0);
 			if (!location)
-				return expects_lr<vector<uptr<ledger::state>>>(vector<uptr<ledger::state>>());
+				return expects_lr<vector<state_result>>(vector<state_result>());
 
 			schema_list map;
 			map.push_back(var::set::integer(location->column.or_else(0)));
@@ -2583,10 +2583,10 @@ namespace tangent
 				"SELECT (SELECT row_hash FROM rows WHERE rows.row_number = multiforms.row_number) AS row_hash, block_number FROM multiforms WHERE column_number = ? ORDER BY row_number LIMIT ? OFFSET ?" :
 				"SELECT * FROM (SELECT (SELECT row_hash FROM rows WHERE rows.row_number = snapshots.row_number) AS row_hash, hidden, MAX(block_number) AS block_number FROM snapshots WHERE column_number = ? AND block_number < ? GROUP BY row_number ORDER BY row_number) WHERE hidden = FALSE LIMIT ? OFFSET ?", &map);
 			if (!cursor || cursor->error())
-				return expects_lr<vector<uptr<ledger::state>>>(layer_exception(ledger::storage_util::error_of(cursor)));
+				return expects_lr<vector<state_result>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			auto& blob_storage = get_blob_storage();
-			vector<uptr<ledger::state>> values;
+			vector<state_result> values;
 			auto& response = cursor->first();
 			size_t size = response.size();
 			for (size_t i = 0; i < size; i++)
@@ -2598,14 +2598,14 @@ namespace tangent
 					auto candidate = changelog->outgoing.find(type, column, row);
 					if (candidate)
 					{
-						values.push_back(std::move(*candidate));
+						values.push_back(state_result(std::move(*candidate), true));
 						continue;
 					}
 
 					candidate = changelog->incoming.find(type, column, row);
 					if (candidate)
 					{
-						values.push_back(std::move(*candidate));
+						values.push_back(state_result(std::move(*candidate), true));
 						continue;
 					}
 				}
@@ -2621,12 +2621,12 @@ namespace tangent
 				}
 				else if (changelog != nullptr)
 					((ledger::block_changelog*)changelog)->incoming.push(*next_state, false);
-				values.push_back(std::move(next_state));
+				values.push_back(state_result(std::move(next_state), false));
 			}
 
 			return values;
 		}
-		expects_lr<vector<uptr<ledger::state>>> chainstate::get_multiforms_by_column_filter(uint32_t type, ledger::block_changelog* changelog, const std::string_view& column, const result_filter& filter, uint64_t block_number, const result_window& window)
+		expects_lr<vector<state_result>> chainstate::get_multiforms_by_column_filter(uint32_t type, ledger::block_changelog* changelog, const std::string_view& column, const result_filter& filter, uint64_t block_number, const result_window& window)
 		{
 			auto temporary = resolve_temporary_state(type, changelog, column, optional::none, block_number);
 			if (!temporary)
@@ -2634,7 +2634,7 @@ namespace tangent
 
 			auto location = resolve_multiform_location(type, column, optional::none, temporary->in_use ? (uint8_t)resolver::disable_cache : 0);
 			if (!location)
-				return expects_lr<vector<uptr<ledger::state>>>(vector<uptr<ledger::state>>());
+				return expects_lr<vector<state_result>>(vector<state_result>());
 
 			schema_list map; string pattern;
 			if (window.type() == result_range_window::instance_type())
@@ -2674,10 +2674,10 @@ namespace tangent
 
 			auto cursor = temporary->storage->emplace_query(__func__, pattern, &map);
 			if (!cursor || cursor->error())
-				return expects_lr<vector<uptr<ledger::state>>>(layer_exception(ledger::storage_util::error_of(cursor)));
+				return expects_lr<vector<state_result>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			auto& blob_storage = get_blob_storage();
-			vector<uptr<ledger::state>> values;
+			vector<state_result> values;
 			auto& response = cursor->first();
 			size_t size = response.size();
 			for (size_t i = 0; i < size; i++)
@@ -2689,14 +2689,14 @@ namespace tangent
 					auto candidate = changelog->outgoing.find(type, column, row);
 					if (candidate)
 					{
-						values.push_back(std::move(*candidate));
+						values.push_back(state_result(std::move(*candidate), true));
 						continue;
 					}
 
 					candidate = changelog->incoming.find(type, column, row);
 					if (candidate)
 					{
-						values.push_back(std::move(*candidate));
+						values.push_back(state_result(std::move(*candidate), true));
 						continue;
 					}
 				}
@@ -2712,12 +2712,12 @@ namespace tangent
 				}
 				else if (changelog != nullptr)
 					((ledger::block_changelog*)changelog)->incoming.push(*next_state, false);
-				values.push_back(std::move(next_state));
+				values.push_back(state_result(std::move(next_state), false));
 			}
 
 			return values;
 		}
-		expects_lr<vector<uptr<ledger::state>>> chainstate::get_multiforms_by_row(uint32_t type, ledger::block_changelog* changelog, const std::string_view& row, uint64_t block_number, size_t offset, size_t count)
+		expects_lr<vector<state_result>> chainstate::get_multiforms_by_row(uint32_t type, ledger::block_changelog* changelog, const std::string_view& row, uint64_t block_number, size_t offset, size_t count)
 		{
 			auto temporary = resolve_temporary_state(type, changelog, optional::none, row, block_number);
 			if (!temporary)
@@ -2725,7 +2725,7 @@ namespace tangent
 
 			auto location = resolve_multiform_location(type, optional::none, row, temporary->in_use ? (uint8_t)resolver::disable_cache : 0);
 			if (!location)
-				return expects_lr<vector<uptr<ledger::state>>>(vector<uptr<ledger::state>>());
+				return expects_lr<vector<state_result>>(vector<state_result>());
 
 			schema_list map;
 			map.push_back(var::set::integer(location->row.or_else(0)));
@@ -2738,10 +2738,10 @@ namespace tangent
 				"SELECT (SELECT column_hash FROM columns WHERE columns.column_number = multiforms.column_number) AS column_hash, block_number FROM multiforms WHERE row_number = ? ORDER BY column_number LIMIT ? OFFSET ?" :
 				"SELECT * FROM (SELECT (SELECT column_hash FROM columns WHERE columns.column_number = snapshots.column_number) AS column_hash, hidden, MAX(block_number) AS block_number FROM snapshots WHERE row_number = ? AND block_number < ? GROUP BY column_number ORDER BY column_number) WHERE hidden = FALSE LIMIT ? OFFSET ?", &map);
 			if (!cursor || cursor->error())
-				return expects_lr<vector<uptr<ledger::state>>>(layer_exception(ledger::storage_util::error_of(cursor)));
+				return expects_lr<vector<state_result>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			auto& blob_storage = get_blob_storage();
-			vector<uptr<ledger::state>> values;
+			vector<state_result> values;
 			auto& response = cursor->first();
 			size_t size = response.size();
 			for (size_t i = 0; i < size; i++)
@@ -2753,14 +2753,14 @@ namespace tangent
 					auto candidate = changelog->outgoing.find(type, column, row);
 					if (candidate)
 					{
-						values.push_back(std::move(*candidate));
+						values.push_back(state_result(std::move(*candidate), true));
 						continue;
 					}
 
 					candidate = changelog->incoming.find(type, column, row);
 					if (candidate)
 					{
-						values.push_back(std::move(*candidate));
+						values.push_back(state_result(std::move(*candidate), true));
 						continue;
 					}
 				}
@@ -2776,12 +2776,12 @@ namespace tangent
 				}
 				else if (changelog != nullptr)
 					((ledger::block_changelog*)changelog)->incoming.push(*next_state, false);
-				values.push_back(std::move(next_state));
+				values.push_back(state_result(std::move(next_state), false));
 			}
 
 			return values;
 		}
-		expects_lr<vector<uptr<ledger::state>>> chainstate::get_multiforms_by_row_filter(uint32_t type, ledger::block_changelog* changelog, const std::string_view& row, const result_filter& filter, uint64_t block_number, const result_window& window)
+		expects_lr<vector<state_result>> chainstate::get_multiforms_by_row_filter(uint32_t type, ledger::block_changelog* changelog, const std::string_view& row, const result_filter& filter, uint64_t block_number, const result_window& window)
 		{
 			auto temporary = resolve_temporary_state(type, changelog, optional::none, row, block_number);
 			if (!temporary)
@@ -2789,7 +2789,7 @@ namespace tangent
 
 			auto location = resolve_multiform_location(type, optional::none, row, temporary->in_use ? (uint8_t)resolver::disable_cache : 0);
 			if (!location)
-				return expects_lr<vector<uptr<ledger::state>>>(vector<uptr<ledger::state>>());
+				return expects_lr<vector<state_result>>(vector<state_result>());
 
 			schema_list map; string pattern;
 			if (window.type() == result_range_window::instance_type())
@@ -2829,10 +2829,10 @@ namespace tangent
 
 			auto cursor = temporary->storage->emplace_query(__func__, pattern, &map);
 			if (!cursor || cursor->error())
-				return expects_lr<vector<uptr<ledger::state>>>(layer_exception(ledger::storage_util::error_of(cursor)));
+				return expects_lr<vector<state_result>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			auto& blob_storage = get_blob_storage();
-			vector<uptr<ledger::state>> values;
+			vector<state_result> values;
 			auto& response = cursor->first();
 			size_t size = response.size();
 			for (size_t i = 0; i < size; i++)
@@ -2844,14 +2844,14 @@ namespace tangent
 					auto candidate = changelog->outgoing.find(type, column, row);
 					if (candidate)
 					{
-						values.push_back(std::move(*candidate));
+						values.push_back(state_result(std::move(*candidate), true));
 						continue;
 					}
 
 					candidate = changelog->incoming.find(type, column, row);
 					if (candidate)
 					{
-						values.push_back(std::move(*candidate));
+						values.push_back(state_result(std::move(*candidate), true));
 						continue;
 					}
 				}
@@ -2867,7 +2867,7 @@ namespace tangent
 				}
 				else if (changelog != nullptr)
 					((ledger::block_changelog*)changelog)->incoming.push(*next_state, false);
-				values.push_back(std::move(next_state));
+				values.push_back(state_result(std::move(next_state), false));
 			}
 
 			return values;
@@ -3239,25 +3239,6 @@ namespace tangent
 			for (auto& [type, multiform_storage] : multiform_local_storage)
 				queries += multiform_storage.uses();
 			return queries;
-		}
-		bool chainstate::query_used() const
-		{
-			if (blob_local_storage.in_use() || block_local_storage.in_use() || account_local_storage.in_use() || tx_local_storage.in_use() || party_local_storage.in_use() || alias_local_storage.in_use())
-				return true;
-
-			for (auto& [type, uniform_storage] : uniform_local_storage)
-			{
-				if (uniform_storage.in_use())
-					return true;
-			}
-
-			for (auto& [type, multiform_storage] : multiform_local_storage)
-			{
-				if (multiform_storage.in_use())
-					return true;
-			}
-
-			return false;
 		}
 		bool chainstate::make_schema(sqlite::connection* connection, const std::string_view& name)
 		{

@@ -557,10 +557,6 @@ namespace tangent
 		{
 			return local_storage.uses();
 		}
-		bool wardenstate::query_used() const
-		{
-			return local_storage.in_use();
-		}
 		bool wardenstate::make_schema(sqlite::connection* connection)
 		{
 			string command = VI_STRINGIFY(
