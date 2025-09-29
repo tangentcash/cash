@@ -642,9 +642,40 @@ namespace tangent
 				switch (param->value.get_type())
 				{
 					case var_type::object:
-					case var_type::array:
+					{
 						args.push_back(format::variable(schema::to_json(param)));
 						break;
+					}
+					case var_type::array:
+					{
+						if (param->size() == 2)
+						{
+							auto* type_ref = param->get(0);
+							auto* value_ref = param->get(1);
+							if (type_ref != nullptr && type_ref->value.is(var_type::string) && value_ref != nullptr && value_ref->value.is(var_type::string))
+							{
+								auto type = param->get_var(0).get_blob();
+								auto value = param->get_var(1).get_blob();
+								if (type == "$uint128")
+								{
+									args.push_back(format::variable(format::util::is_hex_encoding(value) ? algorithm::encoding::decode_0xhex128(value) : uint128_t(value, 10)));
+									break;
+								}
+								else if (type == "$uint256")
+								{
+									args.push_back(format::variable(format::util::is_hex_encoding(value) ? algorithm::encoding::decode_0xhex256(value) : uint256_t(value, 10)));
+									break;
+								}
+								else if (type == "$asset256")
+								{
+									args.push_back(format::variable(algorithm::asset::id_of_handle(value)));
+									break;
+								}
+							}
+						}
+						args.push_back(format::variable(schema::to_json(param)));
+						break;
+					}
 					case var_type::string:
 					case var_type::binary:
 						args.push_back(format::variable(param->value.get_blob()));
@@ -873,6 +904,12 @@ namespace tangent
 		server_response server_node::utility_help(http::connection* base, format::variables&& args)
 		{
 			uptr<schema> data = var::set::object();
+			auto* params = data->set("converters", var::set::object());
+			params->set("uint128", var::string("[\"$uint128\", \"<integer>\"] -> <uint128>"));
+			params->set("uint256", var::string("[\"$uint256\", \"<integer>\"] -> <uint256>"));
+			params->set("asset", var::string("[\"$asset256\", \"<chain>|<chain:token:checksum>\"] -> <uint256>"));
+
+			auto* functions = data->set("functions", var::set::object());
 			for (auto& method : methods)
 			{
 				string inline_decl;
@@ -908,9 +945,9 @@ namespace tangent
 				else
 					inline_decl += "null";
 
-				auto* domain = data->get(method.second.domain);
+				auto* domain = functions->get(method.second.domain);
 				if (!domain)
-					domain = data->set(method.second.domain, var::set::array());
+					domain = functions->set(method.second.domain, var::set::array());
 
 				auto* description = domain->push(var::set::object());
 				description->set("function", var::string(method.first));
