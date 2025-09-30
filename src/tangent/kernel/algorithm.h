@@ -167,6 +167,11 @@ namespace tangent
 			static void derive_secret_key(const uint256_t& entropy, seckey_t& secret_key);
 			static bool derive_public_key(const seckey_t& secret_key, pubkey_t& public_key);
 			static void derive_public_key_hash(const pubkey_t& public_key, pubkeyhash_t& public_key_hash);
+			static bool scalar_add_secret_key(seckey_t& secret_key, const seckey_t& scalar);
+			static bool scalar_mul_secret_key(seckey_t& secret_key, const seckey_t& scalar);
+			static bool scalar_add_public_key(pubkey_t& public_key, const seckey_t& scalar);
+			static bool scalar_mul_public_key(pubkey_t& public_key, const seckey_t& scalar);
+			static bool point_add_public_key(pubkey_t& public_key, const pubkey_t& point);
 			static option<string> public_encrypt(const pubkey_t& public_key, const std::string_view& plaintext, const uint256_t& entropy);
 			static option<string> private_decrypt(const seckey_t& secret_key, const std::string_view& ciphertext);
 			static bool decode_secret_key(const std::string_view& value, seckey_t& secret_key);

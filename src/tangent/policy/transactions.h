@@ -286,15 +286,21 @@ namespace tangent
 			static std::string_view as_instance_typename();
 		};
 
-		struct depository_regrouping final : ledger::transaction
+		struct depository_migration final : ledger::transaction
 		{
-			struct participant
+			struct secret_share
 			{
-				algorithm::asset_id asset = 0;
+				algorithm::asset_id asset;
 				algorithm::pubkeyhash_t manager;
 				algorithm::pubkeyhash_t owner;
 
-				uint256_t hash() const
+				secret_share() : asset(0)
+				{
+				}
+				secret_share(const algorithm::asset_id& new_asset, const algorithm::pubkeyhash_t& new_manager, const algorithm::pubkeyhash_t& new_owner) : asset(new_asset), manager(new_manager), owner(new_owner)
+				{
+				}
+				uint256_t as_hash() const
 				{
 					format::wo_stream message;
 					message.write_integer(asset);
@@ -304,14 +310,14 @@ namespace tangent
 				}
 			};
 
-			ordered_map<uint256_t, participant> participants;
+			ordered_map<uint256_t, secret_share> shares;
 
 			expects_lr<void> validate(uint64_t block_number) const override;
 			expects_lr<void> execute(ledger::transaction_context* context) const override;
 			expects_promise_rt<void> dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const override;
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
-			void migrate(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner);
+			void add_share(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner);
 			bool is_dispatchable() const override;
 			algorithm::pubkeyhash_t get_new_manager(const ledger::receipt& receipt) const;
 			uptr<schema> as_schema() const override;
@@ -321,47 +327,10 @@ namespace tangent
 			static std::string_view as_instance_typename();
 		};
 
-		struct depository_regrouping_preparation final : ledger::consensus_transaction
+		struct depository_migration_finalization final : ledger::consensus_transaction
 		{
-			algorithm::pubkey_t manager_public_key;
-			uint256_t depository_regrouping_hash = 0;
-
-			expects_lr<void> validate(uint64_t block_number) const override;
-			expects_lr<void> execute(ledger::transaction_context* context) const override;
-			expects_promise_rt<void> dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const override;
-			bool store_body(format::wo_stream* stream) const override;
-			bool load_body(format::ro_stream& stream) override;
-			bool is_dispatchable() const override;
-			uptr<schema> as_schema() const override;
-			uint32_t as_type() const override;
-			std::string_view as_typename() const override;
-			static uint32_t as_instance_type();
-			static std::string_view as_instance_typename();
-		};
-
-		struct depository_regrouping_commitment final : ledger::consensus_transaction
-		{
-			ordered_map<uint256_t, string> encrypted_shares;
-			uint256_t depository_regrouping_preparation_hash = 0;
-
-			expects_lr<void> validate(uint64_t block_number) const override;
-			expects_lr<void> execute(ledger::transaction_context* context) const override;
-			expects_promise_rt<void> dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const override;
-			expects_lr<void> transfer(const uint256_t& account_hash, const uint256_t& share, const algorithm::pubkey_t& new_manager_public_key, const algorithm::seckey_t& old_manager_secret_key);
-			bool store_body(format::wo_stream* stream) const override;
-			bool load_body(format::ro_stream& stream) override;
-			bool is_dispatchable() const override;
-			uptr<schema> as_schema() const override;
-			uint32_t as_type() const override;
-			std::string_view as_typename() const override;
-			static uint32_t as_instance_type();
-			static std::string_view as_instance_typename();
-		};
-
-		struct depository_regrouping_finalization final : ledger::consensus_transaction
-		{
-			uint256_t depository_regrouping_commitment_hash = 0;
-			bool successful = true;
+			algorithm::hashsig_t confirmation_signature;
+			uint256_t depository_migration_hash = 0;
 
 			expects_lr<void> validate(uint64_t block_number) const override;
 			expects_lr<void> execute(ledger::transaction_context* context) const override;

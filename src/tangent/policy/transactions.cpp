@@ -2918,43 +2918,43 @@ namespace tangent
 			return "depository_adjustment";
 		}
 
-		expects_lr<void> depository_regrouping::validate(uint64_t block_number) const
+		expects_lr<void> depository_migration::validate(uint64_t block_number) const
 		{
-			if (participants.empty())
-				return layer_exception("no participants found");
+			if (shares.empty())
+				return layer_exception("no shares found");
 
-			for (auto& [hash, account] : participants)
+			for (auto& [hash, share] : shares)
 			{
-				if (!algorithm::asset::is_valid(account.asset, true))
-					return layer_exception("invalid account asset");
+				if (!algorithm::asset::is_valid(share.asset, true))
+					return layer_exception("invalid share asset");
 
-				if (account.manager.empty())
-					return layer_exception("invalid account manager");
+				if (share.manager.empty())
+					return layer_exception("invalid share manager");
 
-				if (account.owner.empty())
-					return layer_exception("invalid account owner");
+				if (share.owner.empty())
+					return layer_exception("invalid share owner");
 
-				if (hash != account.hash())
-					return layer_exception("invalid account hash");
+				if (hash != share.as_hash())
+					return layer_exception("invalid share hash");
 			}
 
 			return ledger::transaction::validate(block_number);
 		}
-		expects_lr<void> depository_regrouping::execute(ledger::transaction_context* context) const
+		expects_lr<void> depository_migration::execute(ledger::transaction_context* context) const
 		{
 			auto validation = transaction::execute(context);
 			if (!validation)
 				return validation.error();
 
 			ordered_set<algorithm::pubkeyhash_t> exclusion;
-			auto migrating_manager = algorithm::pubkeyhash_t(context->receipt.from);
-			for (auto& [hash, account] : participants)
+			auto old_manager = algorithm::pubkeyhash_t(context->receipt.from);
+			for (auto& [hash, share] : shares)
 			{
-				auto target = context->get_depository_account(account.asset, account.manager, account.owner);
+				auto target = context->get_depository_account(share.asset, share.manager, share.owner);
 				if (!target)
 					return target.error();
-				else if (target->group.find(migrating_manager) == target->group.end())
-					return layer_exception("regroup of other group member is forbidden");
+				else if (target->group.find(old_manager) == target->group.end())
+					return layer_exception("migration of other group member is forbidden");
 
 				exclusion.insert(target->group.begin(), target->group.end());
 			}
@@ -2963,85 +2963,137 @@ namespace tangent
 			if (!committee)
 				return committee.error();
 
-			auto& work = committee->front();
-			auto event = context->emit_event<depository_regrouping>({ format::variable(work.owner.view()) });
+			auto& new_manager = committee->front();
+			auto event = context->emit_event<depository_migration>({ format::variable(new_manager.owner.view()) });
 			if (!event)
 				return event;
 
 			return expectation::met;
 		}
-		expects_promise_rt<void> depository_regrouping::dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const
+		expects_promise_rt<void> depository_migration::dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const
 		{
 			if (context->get_witness_event(context->receipt.transaction_hash))
 				return expects_promise_rt<void>(expectation::met);
 
-			auto new_manager = get_new_manager(context->receipt);
-			if (!dispatcher->is_running_on(new_manager.data))
+			auto old_manager = context->receipt.from;
+			if (!dispatcher->is_running_on(old_manager.data))
 				return expects_promise_rt<void>(expectation::met);
 
-			auto* transaction = memory::init<depository_regrouping_preparation>();
-			transaction->asset = asset;
-			transaction->depository_regrouping_hash = context->receipt.transaction_hash;
+			auto new_manager = get_new_manager(context->receipt);
+			if (new_manager.empty())
+				return expects_promise_rt<void>(expectation::met);
 
-			algorithm::seckey_t child_secret_key;
-			algorithm::signing::derive_secret_key_from_parent(dispatcher->get_wallet()->secret_key, transaction->depository_regrouping_hash, child_secret_key);
-			algorithm::signing::derive_public_key(child_secret_key, transaction->manager_public_key);
-			dispatcher->emit_transaction(transaction);
-			return expects_promise_rt<void>(expectation::met);
+			return coasync<expects_rt<void>>([this, context, dispatcher, old_manager, new_manager]() -> expects_promise_rt<void>
+			{
+				auto* chain = oracle::server_node::get()->get_chainparams(asset);
+				if (!chain)
+					coreturn remote_exception("invalid operation");
+
+				auto session = coawait(dispatcher->aggregate_validators(context->receipt.transaction_hash, { new_manager }));
+				if (!session)
+					coreturn session.error();
+
+				auto tweaked_public_key = dispatcher->get_public_key(new_manager);
+				if (tweaked_public_key.empty())
+					coreturn remote_exception::retry();
+
+				algorithm::seckey_t tweak;
+				algorithm::signing::derive_secret_key(context->receipt.transaction_hash, tweak);
+				if (!algorithm::signing::scalar_add_public_key(tweaked_public_key, tweak))
+					coreturn remote_exception("invalid tweaked public key");
+
+				auto state = ledger::dispatch_context::secret_share_state();
+				for (auto& [hash, share] : shares)
+				{
+					uint256_t scalar;
+					auto status = dispatcher->recover_secret_share(share.asset, share.manager, share.owner, scalar);
+					if (!status)
+						coreturn remote_exception(std::move(status.error().message()));
+
+					format::wo_stream entropy;
+					entropy.write_integer(context->receipt.transaction_hash);
+					entropy.write_integer(hash);
+
+					uint8_t scalar_data[32];
+					scalar.encode(scalar_data);
+
+					auto encrypted_share = algorithm::signing::public_encrypt(tweaked_public_key, std::string_view((char*)scalar_data, sizeof(scalar_data)), entropy.hash());
+					if (!encrypted_share)
+						coreturn remote_exception("share encryption error");
+
+					state.encrypted_shares[hash] = std::move(*encrypted_share);
+				}
+
+				auto result = coawait(dispatcher->aggregate_secret_share_state(context, state, new_manager));
+				if (!result && (result.error().is_retry() || result.error().is_shutdown()))
+					coreturn remote_exception::retry();
+				else if (!result)
+					coreturn result.error();
+
+				auto confirmation_public_key_hash = algorithm::pubkeyhash_t();
+				auto confirmation_hash = state.as_confirmation_hash();
+				if (!algorithm::signing::recover_hash(confirmation_hash, confirmation_public_key_hash, state.confirmation_signature) || !confirmation_public_key_hash.equals(new_manager))
+					coreturn remote_exception("invalid confirmation signature");
+
+				auto* transaction = memory::init<depository_migration_finalization>();
+				transaction->asset = asset;
+				transaction->depository_migration_hash = context->receipt.transaction_hash;
+				transaction->confirmation_signature = state.confirmation_signature;
+				dispatcher->emit_transaction(transaction);
+				coreturn expects_promise_rt<void>(expectation::met);
+			});
 		}
-		bool depository_regrouping::store_body(format::wo_stream* stream) const
+		bool depository_migration::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_integer((uint16_t)participants.size());
-			for (auto& [hash, account] : participants)
+			stream->write_integer((uint16_t)shares.size());
+			for (auto& [hash, share] : shares)
 			{
-				stream->write_integer(account.asset);
-				stream->write_string(algorithm::pubkeyhash_t(account.manager).optimized_view());
-				stream->write_string(algorithm::pubkeyhash_t(account.owner).optimized_view());
+				stream->write_integer(share.asset);
+				stream->write_string(share.manager.optimized_view());
+				stream->write_string(share.owner.optimized_view());
 			}
 			return true;
 		}
-		bool depository_regrouping::load_body(format::ro_stream& stream)
+		bool depository_migration::load_body(format::ro_stream& stream)
 		{
-			uint16_t participants_size;
-			if (!stream.read_integer(stream.read_type(), &participants_size))
+			uint16_t shares_size;
+			if (!stream.read_integer(stream.read_type(), &shares_size))
 				return false;
 
-			for (uint16_t i = 0; i < participants_size; i++)
+			string intermediate;
+			for (uint16_t i = 0; i < shares_size; i++)
 			{
-				participant account;
-				if (!stream.read_integer(stream.read_type(), &account.asset))
+				secret_share share;
+				if (!stream.read_integer(stream.read_type(), &share.asset))
 					return false;
 
-				string manager_assembly;
-				if (!stream.read_string(stream.read_type(), &manager_assembly) || !algorithm::encoding::decode_bytes(manager_assembly, account.manager.data, sizeof(account.manager)))
+				if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, share.manager.data, sizeof(share.manager.data)))
 					return false;
 
-				string owner_assembly;
-				if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, account.owner.data, sizeof(account.owner)))
+				if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, share.owner.data, sizeof(share.owner.data)))
 					return false;
 
-				participants[account.hash()] = std::move(account);
+				auto hash = share.as_hash();
+				shares[hash] = std::move(share);
 			}
 
 			return true;
 		}
-		void depository_regrouping::migrate(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner)
+		void depository_migration::add_share(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner)
 		{
-			participant account;
-			account.asset = asset;
-			account.manager = manager;
-			account.owner = owner;
-			participants[account.hash()] = std::move(account);
+			auto share = secret_share(asset, manager, owner);
+			auto hash = share.as_hash();
+			shares[hash] = std::move(share);
 		}
-		bool depository_regrouping::is_dispatchable() const
+		bool depository_migration::is_dispatchable() const
 		{
 			return true;
 		}
-		algorithm::pubkeyhash_t depository_regrouping::get_new_manager(const ledger::receipt& receipt) const
+		algorithm::pubkeyhash_t depository_migration::get_new_manager(const ledger::receipt& receipt) const
 		{
 			algorithm::pubkeyhash_t result;
-			auto* event = receipt.find_event<depository_regrouping>();
+			auto* event = receipt.find_event<depository_migration>();
 			if (event != nullptr)
 			{
 				if (!event->empty() && event->front().as_string().size() == sizeof(algorithm::pubkeyhash_t))
@@ -3049,431 +3101,141 @@ namespace tangent
 			}
 			return result;
 		}
-		uptr<schema> depository_regrouping::as_schema() const
+		uptr<schema> depository_migration::as_schema() const
 		{
 			schema* data = ledger::transaction::as_schema().reset();
-			auto* participants_data = data->set("participants", var::set::array());
-			for (auto& [hash, account] : participants)
+			auto* shares_data = data->set("shares", var::set::array());
+			for (auto& [hash, share] : shares)
 			{
-				auto* account_data = participants_data->push(var::set::object());
-				account_data->set("asset", algorithm::asset::serialize(account.asset));
-				account_data->set("manager", algorithm::signing::serialize_address(account.manager));
-				account_data->set("owner", algorithm::signing::serialize_address(account.owner));
+				auto* share_data = shares_data->push(var::set::object());
+				share_data->set("asset", algorithm::asset::serialize(share.asset));
+				share_data->set("manager", algorithm::signing::serialize_address(share.manager));
+				share_data->set("owner", algorithm::signing::serialize_address(share.owner));
 			}
 			return data;
 		}
-		uint32_t depository_regrouping::as_type() const
+		uint32_t depository_migration::as_type() const
 		{
 			return as_instance_type();
 		}
-		std::string_view depository_regrouping::as_typename() const
+		std::string_view depository_migration::as_typename() const
 		{
 			return as_instance_typename();
 		}
-		uint32_t depository_regrouping::as_instance_type()
+		uint32_t depository_migration::as_instance_type()
 		{
 			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
 			return hash;
 		}
-		std::string_view depository_regrouping::as_instance_typename()
+		std::string_view depository_migration::as_instance_typename()
 		{
-			return "depository_regrouping";
+			return "depository_migration";
 		}
 
-		expects_lr<void> depository_regrouping_preparation::validate(uint64_t block_number) const
+		expects_lr<void> depository_migration_finalization::validate(uint64_t block_number) const
 		{
-			if (!depository_regrouping_hash)
-				return layer_exception("invalid regroup transaction");
+			if (!depository_migration_hash)
+				return layer_exception("invalid depository migration transaction");
 
-			if (manager_public_key.empty() || !algorithm::signing::verify_public_key(manager_public_key))
-				return layer_exception("invalid manager public key");
+			if (confirmation_signature.empty())
+				return layer_exception("invalid confirmation signature");
 
 			return ledger::consensus_transaction::validate(block_number);
 		}
-		expects_lr<void> depository_regrouping_preparation::execute(ledger::transaction_context* context) const
+		expects_lr<void> depository_migration_finalization::execute(ledger::transaction_context* context) const
 		{
 			auto validation = consensus_transaction::execute(context);
 			if (!validation)
 				return validation.error();
 
-			auto event = context->apply_witness_event(depository_regrouping_hash, context->receipt.transaction_hash);
+			auto event = context->apply_witness_event(depository_migration_hash, context->receipt.transaction_hash);
 			if (!event)
 				return event.error();
 
-			return expectation::met;
-		}
-		expects_promise_rt<void> depository_regrouping_preparation::dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const
-		{
-			if (context->get_witness_event(context->receipt.transaction_hash))
-				return expects_promise_rt<void>(expectation::met);
+			auto migration = context->get_block_transaction<depository_migration>(depository_migration_hash);
+			if (!migration)
+				return migration.error();
 
-			auto setup = context->get_block_transaction<depository_regrouping>(depository_regrouping_hash);
-			if (!setup)
-				return expects_promise_rt<void>(remote_exception(std::move(setup.error().message())));
-			else if (!dispatcher->is_running_on(setup->receipt.from))
-				return expects_promise_rt<void>(expectation::met);
+			auto* migration_transaction = (depository_migration*)*migration->transaction;
+			if (migration->receipt.from != context->receipt.from)
+				return layer_exception("invalid migration transaction");
 
-			uptr<depository_regrouping_commitment> transaction = memory::init<depository_regrouping_commitment>();
-			transaction->asset = asset;
-			transaction->depository_regrouping_preparation_hash = context->receipt.transaction_hash;
+			auto state = ledger::dispatch_context::secret_share_state();
+			state.confirmation_signature = confirmation_signature;
+			for (auto& [hash, share] : migration_transaction->shares)
+				state.encrypted_shares[hash] = string();
 
-			auto* setup_transaction = (depository_regrouping*)*setup->transaction;
-			auto old_manager = dispatcher->get_wallet();
-			for (auto& [hash, account] : setup_transaction->participants)
+			auto new_manager = migration_transaction->get_new_manager(migration->receipt);
+			auto confirmation_public_key_hash = algorithm::pubkeyhash_t();
+			auto confirmation_hash = state.as_confirmation_hash();
+			if (!algorithm::signing::recover_hash(confirmation_hash, confirmation_public_key_hash, state.confirmation_signature) || !confirmation_public_key_hash.equals(new_manager))
+				return layer_exception("invalid confirmation signature");
+
+			auto old_manager = algorithm::pubkeyhash_t(migration->receipt.from);
+			for (auto& [hash, share] : migration_transaction->shares)
 			{
-				auto share = dispatcher->recover_group_share(account.asset, account.manager, account.owner);
-				if (!share)
-					return expects_promise_rt<void>(remote_exception(std::move(share.error().message())));
-
-				auto status = transaction->transfer(hash, *share, manager_public_key, old_manager->secret_key);
-				if (!status)
-					return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
-			}
-
-			dispatcher->emit_transaction(transaction.reset());
-			return expects_promise_rt<void>(expectation::met);
-		}
-		bool depository_regrouping_preparation::store_body(format::wo_stream* stream) const
-		{
-			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_integer(depository_regrouping_hash);
-			stream->write_string(algorithm::pubkey_t(manager_public_key).optimized_view());
-			return true;
-		}
-		bool depository_regrouping_preparation::load_body(format::ro_stream& stream)
-		{
-			if (!stream.read_integer(stream.read_type(), &depository_regrouping_hash))
-				return false;
-
-			string manager_public_key_assembly;
-			if (!stream.read_string(stream.read_type(), &manager_public_key_assembly) || !algorithm::encoding::decode_bytes(manager_public_key_assembly, manager_public_key.data, sizeof(manager_public_key)))
-				return false;
-
-			return true;
-		}
-		bool depository_regrouping_preparation::is_dispatchable() const
-		{
-			return true;
-		}
-		uptr<schema> depository_regrouping_preparation::as_schema() const
-		{
-			schema* data = ledger::consensus_transaction::as_schema().reset();
-			data->set("depository_regrouping_hash", var::string(algorithm::encoding::encode_0xhex256(depository_regrouping_hash)));
-			data->set("manager_public_key", var::string(format::util::encode_0xhex(manager_public_key.optimized_view())));
-			return data;
-		}
-		uint32_t depository_regrouping_preparation::as_type() const
-		{
-			return as_instance_type();
-		}
-		std::string_view depository_regrouping_preparation::as_typename() const
-		{
-			return as_instance_typename();
-		}
-		uint32_t depository_regrouping_preparation::as_instance_type()
-		{
-			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
-			return hash;
-		}
-		std::string_view depository_regrouping_preparation::as_instance_typename()
-		{
-			return "depository_regrouping_preparation";
-		}
-
-		expects_lr<void> depository_regrouping_commitment::validate(uint64_t block_number) const
-		{
-			if (!depository_regrouping_preparation_hash)
-				return layer_exception("invalid depository regroup transaction");
-
-			if (encrypted_shares.empty())
-				return layer_exception("no participants found");
-
-			for (auto& [hash, encrypted_share] : encrypted_shares)
-			{
-				if (!hash || encrypted_share.empty())
-					return layer_exception("invalid share");
-			}
-
-			return ledger::consensus_transaction::validate(block_number);
-		}
-		expects_lr<void> depository_regrouping_commitment::execute(ledger::transaction_context* context) const
-		{
-			auto validation = consensus_transaction::execute(context);
-			if (!validation)
-				return validation.error();
-
-			auto preparation = context->get_block_transaction<depository_regrouping_preparation>(depository_regrouping_preparation_hash);
-			if (!preparation)
-				return preparation.error();
-
-			auto* preparation_transaction = (depository_regrouping_preparation*)*preparation->transaction;
-			auto setup = context->get_block_transaction<depository_regrouping>(preparation_transaction->depository_regrouping_hash);
-			if (!setup)
-				return setup.error();
-			else if (setup->receipt.from != context->receipt.from)
-				return layer_exception("invalid setup transaction");
-
-			auto event = context->apply_witness_event(depository_regrouping_preparation_hash, context->receipt.transaction_hash);
-			if (!event)
-				return event.error();
-
-			auto* setup_transaction = (depository_regrouping*)*setup->transaction;
-			if (setup_transaction->participants.size() != encrypted_shares.size())
-				return layer_exception("invalid participants size");
-
-			auto new_manager = setup_transaction->get_new_manager(setup->receipt);
-			if (!new_manager.equals(preparation->receipt.from))
-				return layer_exception("invalid preparation transaction");
-
-			return expectation::met;
-		}
-		expects_promise_rt<void> depository_regrouping_commitment::dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const
-		{
-			if (context->get_witness_event(context->receipt.transaction_hash))
-				return expects_promise_rt<void>(expectation::met);
-
-			auto preparation = context->get_block_transaction<depository_regrouping_preparation>(depository_regrouping_preparation_hash);
-			if (!preparation)
-				return expects_promise_rt<void>(remote_exception(std::move(preparation.error().message())));
-
-			if (!dispatcher->is_running_on(preparation->receipt.from))
-				return expects_promise_rt<void>(expectation::met);
-
-			auto* preparation_transaction = (depository_regrouping_preparation*)*preparation->transaction;
-			auto setup = context->get_block_transaction<depository_regrouping>(preparation_transaction->depository_regrouping_hash);
-			if (!setup)
-				return expects_promise_rt<void>(remote_exception(std::move(setup.error().message())));
-
-			algorithm::seckey_t child_secret_key;
-			algorithm::signing::derive_secret_key_from_parent(dispatcher->get_wallet()->secret_key, preparation_transaction->depository_regrouping_hash, child_secret_key);
-
-			bool exchange_successful = true;
-			auto* setup_transaction = (depository_regrouping*)*setup->transaction;
-			for (auto& [hash, encrypted_share] : encrypted_shares)
-			{
-				auto it = setup_transaction->participants.find(hash);
-				if (it != setup_transaction->participants.end())
-				{
-					auto decrypted_share = algorithm::signing::private_decrypt(child_secret_key, encrypted_share);
-					if (decrypted_share && decrypted_share->size() == sizeof(uint256_t))
-					{
-						uint256_t share;
-						share.decode((uint8_t*)decrypted_share->data());
-
-						auto& account = it->second;
-						if (dispatcher->apply_group_share(account.asset, account.manager, account.owner, share))
-							continue;
-					}
-				}
-				exchange_successful = false;
-			}
-
-			auto* transaction = memory::init<depository_regrouping_finalization>();
-			transaction->asset = asset;
-			transaction->depository_regrouping_commitment_hash = context->receipt.transaction_hash;
-			transaction->successful = exchange_successful;
-			dispatcher->emit_transaction(transaction);
-			return expects_promise_rt<void>(expectation::met);
-		}
-		expects_lr<void> depository_regrouping_commitment::transfer(const uint256_t& account_hash, const uint256_t& share, const algorithm::pubkey_t& new_manager_public_key, const algorithm::seckey_t& old_manager_secret_key)
-		{
-			format::wo_stream entropy;
-			entropy.write_integer(depository_regrouping_preparation_hash);
-			entropy.write_integer(algorithm::hashing::hash256i(old_manager_secret_key.view()));
-
-			uint8_t share_data[32];
-			share.encode(share_data);
-			auto encrypted_share = algorithm::signing::public_encrypt(new_manager_public_key, std::string_view((char*)share_data, sizeof(share_data)), entropy.hash());
-			if (!encrypted_share)
-				return layer_exception("failed to encrypt a share");
-
-			encrypted_shares[account_hash] = std::move(*encrypted_share);
-			return expectation::met;
-		}
-		bool depository_regrouping_commitment::store_body(format::wo_stream* stream) const
-		{
-			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_integer(depository_regrouping_preparation_hash);
-			stream->write_integer((uint16_t)encrypted_shares.size());
-			for (auto& [hash, encrypted_share] : encrypted_shares)
-			{
-				stream->write_integer(hash);
-				stream->write_string(encrypted_share);
-			}
-			return true;
-		}
-		bool depository_regrouping_commitment::load_body(format::ro_stream& stream)
-		{
-			if (!stream.read_integer(stream.read_type(), &depository_regrouping_preparation_hash))
-				return false;
-
-			uint16_t encrypted_shares_size;
-			if (!stream.read_integer(stream.read_type(), &encrypted_shares_size))
-				return false;
-
-			for (uint16_t i = 0; i < encrypted_shares_size; i++)
-			{
-				uint256_t hash;
-				if (!stream.read_integer(stream.read_type(), &hash))
-					return false;
-
-				string encrypted_share;
-				if (!stream.read_string(stream.read_type(), &encrypted_share))
-					return false;
-
-				encrypted_shares[hash] = std::move(encrypted_share);
-			}
-
-			return true;
-		}
-		bool depository_regrouping_commitment::is_dispatchable() const
-		{
-			return true;
-		}
-		uptr<schema> depository_regrouping_commitment::as_schema() const
-		{
-			schema* data = ledger::consensus_transaction::as_schema().reset();
-			data->set("depository_regrouping_preparation_hash", var::string(algorithm::encoding::encode_0xhex256(depository_regrouping_preparation_hash)));
-			auto* encrypted_shares_data = data->set("encrypted_shares", var::set::array());
-			for (auto& [hash, encrypted_share] : encrypted_shares)
-			{
-				auto* encrypted_share_data = encrypted_shares_data->push(var::set::object());
-				encrypted_share_data->set("account_hash", var::string(algorithm::encoding::encode_0xhex256(hash)));
-				encrypted_share_data->set("encrypted_share", var::string(format::util::encode_0xhex(encrypted_share)));
-			}
-			return data;
-		}
-		uint32_t depository_regrouping_commitment::as_type() const
-		{
-			return as_instance_type();
-		}
-		std::string_view depository_regrouping_commitment::as_typename() const
-		{
-			return as_instance_typename();
-		}
-		uint32_t depository_regrouping_commitment::as_instance_type()
-		{
-			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
-			return hash;
-		}
-		std::string_view depository_regrouping_commitment::as_instance_typename()
-		{
-			return "depository_regrouping_commitment";
-		}
-
-		expects_lr<void> depository_regrouping_finalization::validate(uint64_t block_number) const
-		{
-			if (!depository_regrouping_commitment_hash)
-				return layer_exception("invalid depository regroup transaction");
-
-			return ledger::consensus_transaction::validate(block_number);
-		}
-		expects_lr<void> depository_regrouping_finalization::execute(ledger::transaction_context* context) const
-		{
-			auto validation = consensus_transaction::execute(context);
-			if (!validation)
-				return validation.error();
-
-			auto event = context->apply_witness_event(depository_regrouping_commitment_hash, context->receipt.transaction_hash);
-			if (!event)
-				return event.error();
-
-			if (!successful)
-				return expectation::met;
-
-			auto commitment = context->get_block_transaction<depository_regrouping_commitment>(depository_regrouping_commitment_hash);
-			if (!commitment)
-				return commitment.error();
-
-			auto* commitment_transaction = (depository_regrouping_commitment*)*commitment->transaction;
-			auto preparation = context->get_block_transaction<depository_regrouping_preparation>(commitment_transaction->depository_regrouping_preparation_hash);
-			if (!preparation)
-				return preparation.error();
-			else if (preparation->receipt.from != context->receipt.from)
-				return layer_exception("invalid preparation transaction");
-
-			auto* preparation_transaction = (depository_regrouping_preparation*)*preparation->transaction;
-			auto setup = context->get_block_transaction<depository_regrouping>(preparation_transaction->depository_regrouping_hash);
-			if (!setup)
-				return setup.error();
-
-			auto* setup_transaction = (depository_regrouping*)*setup->transaction;
-			if (setup_transaction->participants.size() != commitment_transaction->encrypted_shares.size())
-				return layer_exception("invalid participants size");
-
-			auto new_manager = setup_transaction->get_new_manager(setup->receipt);
-			if (!new_manager.equals(preparation->receipt.from))
-				return layer_exception("invalid preparation transaction");
-
-			auto old_manager = algorithm::pubkeyhash_t(setup->receipt.from);
-			for (auto& [hash, encrypted_share] : commitment_transaction->encrypted_shares)
-			{
-				auto it = setup_transaction->participants.find(hash);
-				if (it == setup_transaction->participants.end())
-					return layer_exception("invalid account hash");
-
-				auto& account = it->second;
-				auto target = context->get_depository_account(account.asset, account.manager, account.owner);
+				auto target = context->get_depository_account(share.asset, share.manager, share.owner);
 				if (!target)
 					return target.error();
 
-				auto status = context->apply_validator_participation(account.asset, old_manager.data, ledger::transaction_context::stake_type::lock, -1, { });
+				auto status = context->apply_validator_participation(share.asset, old_manager.data, ledger::transaction_context::stake_type::lock, -1, { });
 				if (!status)
 					return status.error();
 
-				status = context->apply_validator_participation(account.asset, new_manager.data, ledger::transaction_context::stake_type::lock, 1, { });
+				status = context->apply_validator_participation(share.asset, new_manager.data, ledger::transaction_context::stake_type::lock, 1, { });
 				if (!status)
 					return status.error();
 
 				target->group.erase(old_manager);
 				target->group.insert(new_manager);
-				target = context->apply_depository_account(account.asset, account.manager, account.owner, target->public_key, std::move(target->group));
+				target = context->apply_depository_account(share.asset, share.manager, share.owner, target->public_key, std::move(target->group));
 				if (!target)
 					return target.error();
 			}
 
 			return expectation::met;
 		}
-		bool depository_regrouping_finalization::store_body(format::wo_stream* stream) const
+		bool depository_migration_finalization::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_integer(depository_regrouping_commitment_hash);
-			stream->write_boolean(successful);
+			stream->write_integer(depository_migration_hash);
+			stream->write_string(confirmation_signature.optimized_view());
 			return true;
 		}
-		bool depository_regrouping_finalization::load_body(format::ro_stream& stream)
+		bool depository_migration_finalization::load_body(format::ro_stream& stream)
 		{
-			if (!stream.read_integer(stream.read_type(), &depository_regrouping_commitment_hash))
+			if (!stream.read_integer(stream.read_type(), &depository_migration_hash))
 				return false;
 
-			if (!stream.read_boolean(stream.read_type(), &successful))
+			string intermediate;
+			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, confirmation_signature.data, sizeof(confirmation_signature.data)))
 				return false;
 
 			return true;
 		}
-		uptr<schema> depository_regrouping_finalization::as_schema() const
+		uptr<schema> depository_migration_finalization::as_schema() const
 		{
 			schema* data = ledger::consensus_transaction::as_schema().reset();
-			data->set("depository_regrouping_commitment_hash", var::string(algorithm::encoding::encode_0xhex256(depository_regrouping_commitment_hash)));
-			data->set("successful", var::boolean(successful));
+			data->set("depository_migration_hash", var::string(algorithm::encoding::encode_0xhex256(depository_migration_hash)));
+			data->set("confirmation_signature", confirmation_signature.empty() ? var::null() : var::string(format::util::encode_0xhex(confirmation_signature.view())));
 			return data;
 		}
-		uint32_t depository_regrouping_finalization::as_type() const
+		uint32_t depository_migration_finalization::as_type() const
 		{
 			return as_instance_type();
 		}
-		std::string_view depository_regrouping_finalization::as_typename() const
+		std::string_view depository_migration_finalization::as_typename() const
 		{
 			return as_instance_typename();
 		}
-		uint32_t depository_regrouping_finalization::as_instance_type()
+		uint32_t depository_migration_finalization::as_instance_type()
 		{
 			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
 			return hash;
 		}
-		std::string_view depository_regrouping_finalization::as_instance_typename()
+		std::string_view depository_migration_finalization::as_instance_typename()
 		{
-			return "depository_regrouping_finalization";
+			return "depository_migration_finalization";
 		}
 
 		ledger::transaction* resolver::from_stream(format::ro_stream& stream)
@@ -3509,14 +3271,10 @@ namespace tangent
 				return memory::init<depository_transaction>();
 			else if (hash == depository_adjustment::as_instance_type())
 				return memory::init<depository_adjustment>();
-			else if (hash == depository_regrouping::as_instance_type())
-				return memory::init<depository_regrouping>();
-			else if (hash == depository_regrouping_preparation::as_instance_type())
-				return memory::init<depository_regrouping_preparation>();
-			else if (hash == depository_regrouping_commitment::as_instance_type())
-				return memory::init<depository_regrouping_commitment>();
-			else if (hash == depository_regrouping_finalization::as_instance_type())
-				return memory::init<depository_regrouping_finalization>();
+			else if (hash == depository_migration::as_instance_type())
+				return memory::init<depository_migration>();
+			else if (hash == depository_migration_finalization::as_instance_type())
+				return memory::init<depository_migration_finalization>();
 			return nullptr;
 		}
 		ledger::transaction* resolver::from_copy(const ledger::transaction* base)
@@ -3544,14 +3302,10 @@ namespace tangent
 				return memory::init<depository_transaction>(*(const depository_transaction*)base);
 			else if (hash == depository_adjustment::as_instance_type())
 				return memory::init<depository_adjustment>(*(const depository_adjustment*)base);
-			else if (hash == depository_regrouping::as_instance_type())
-				return memory::init<depository_regrouping>(*(const depository_regrouping*)base);
-			else if (hash == depository_regrouping_preparation::as_instance_type())
-				return memory::init<depository_regrouping_preparation>(*(const depository_regrouping_preparation*)base);
-			else if (hash == depository_regrouping_commitment::as_instance_type())
-				return memory::init<depository_regrouping_commitment>(*(const depository_regrouping_commitment*)base);
-			else if (hash == depository_regrouping_finalization::as_instance_type())
-				return memory::init<depository_regrouping_finalization>(*(const depository_regrouping_finalization*)base);
+			else if (hash == depository_migration::as_instance_type())
+				return memory::init<depository_migration>(*(const depository_migration*)base);
+			else if (hash == depository_migration_finalization::as_instance_type())
+				return memory::init<depository_migration_finalization>(*(const depository_migration_finalization*)base);
 			return nullptr;
 		}
 		expects_promise_rt<warden::prepared_transaction> resolver::prepare_transaction(const algorithm::asset_id& asset, const warden::wallet_link& from_link, const vector<warden::value_transfer>& to, option<warden::computed_fee>&& fee)

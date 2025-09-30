@@ -1111,6 +1111,37 @@ namespace tangent
 
 			return format::variables();
 		}
+		expects_lr<format::variables> server_node::query_secret_share_state_aggregation(uref<relay>&& state, const exchange& event)
+		{
+			if (event.args.size() != 3)
+				return layer_exception("invalid arguments");
+
+			auto block_number = event.args[0].as_uint64();
+			auto proof_hash = event.args[1].as_uint256();
+			auto chainstate = storages::chainstate();
+			if (chainstate.get_latest_block_number().or_else(1) < block_number)
+				return format::variables({ });
+
+			auto context = ledger::transaction_context();
+			auto proof_transaction = context.get_block_transaction<transactions::depository_migration>(proof_hash);
+			if (!proof_transaction)
+				return layer_exception("state proof not found");
+
+			auto reader = format::ro_stream(event.args[2].as_string());
+			auto aggregator = ledger::dispatch_context::secret_share_state();
+			if (!aggregator.load_message(reader))
+				return layer_exception("state machine not valid");
+
+			auto dispatcher = dispatch_context(this);
+			context.transaction = *proof_transaction->transaction;
+			context.receipt = std::move(proof_transaction->receipt);
+
+			auto aggregation = local_dispatch_context::aggregate_secret_share_state(&dispatcher, &context, aggregator);
+			if (!aggregation)
+				return layer_exception(std::move(aggregation.error().message()));
+
+			return format::variables({ format::variable(aggregator.as_message().data) });
+		}
 		expects_lr<format::variables> server_node::query_public_state_aggregation(uref<relay>&& state, const exchange& event)
 		{
 			if (event.args.size() != 3)
@@ -2712,10 +2743,22 @@ namespace tangent
 			server = other.server;
 			return *this;
 		}
-		const ledger::wallet* dispatch_context::get_wallet() const
+		algorithm::pubkey_t dispatch_context::get_public_key(const algorithm::pubkeyhash_t& validator) const
+		{
+			auto target = server->find_by_account(validator);
+			if (!target)
+				return algorithm::pubkey_t();
+
+			auto* descriptor = target->as_descriptor();
+			if (!descriptor)
+				return algorithm::pubkey_t();
+
+			return descriptor->second.public_key;
+		}
+		const ledger::wallet& dispatch_context::get_runner_wallet() const
 		{
 			auto& [node, wallet] = server->descriptor;
-			return &wallet;
+			return wallet;
 		}
 		expects_promise_rt<void> dispatch_context::aggregate_validators(const uint256_t& transaction_hash, const ordered_set<algorithm::pubkeyhash_t>& validators)
 		{
@@ -2731,9 +2774,33 @@ namespace tangent
 				return expectation::met;
 			});
 		}
-		expects_promise_rt<void> dispatch_context::aggregate_public_state(const ledger::transaction_context* context, public_state& state, const algorithm::pubkeyhash_t& validator)
+		expects_promise_rt<void> dispatch_context::aggregate_secret_share_state(const ledger::transaction_context* context, secret_share_state& state, const algorithm::pubkeyhash_t& validator)
 		{
 			auto* depository_account = (transactions::depository_account*)context->transaction;
+			if (is_running_on(validator.data))
+				return local_dispatch_context::aggregate_secret_share_state(this, context, state);
+
+			auto node = server->find_by_account(validator);
+			if (!node)
+				return expects_promise_rt<void>(remote_exception::retry());
+
+			auto args = format::variables({ format::variable(context->receipt.block_number), format::variable(context->receipt.transaction_hash), format::variable(state.as_message().data) });
+			return server->query(std::move(node), METHOD_CALL(&server_node::query_secret_share_state_aggregation), std::move(args), protocol::now().user.consensus.response_timeout).then<expects_rt<void>>([&state](expects_rt<exchange>&& event) -> expects_rt<void>
+			{
+				if ((event && event->args.empty()) || (!event && (event.error().is_retry() || event.error().is_shutdown())))
+					return remote_exception::retry();
+				else if (!event)
+					return event.error();
+
+				auto message = format::ro_stream(event->args.front().as_string());
+				if (!state.load_message(message))
+					return remote_exception("group secret share remote computation error");
+
+				return expectation::met;
+			});
+		}
+		expects_promise_rt<void> dispatch_context::aggregate_public_state(const ledger::transaction_context* context, public_state& state, const algorithm::pubkeyhash_t& validator)
+		{
 			if (is_running_on(validator.data))
 				return local_dispatch_context::aggregate_public_state(this, context, state);
 
@@ -2758,7 +2825,6 @@ namespace tangent
 		}
 		expects_promise_rt<void> dispatch_context::aggregate_signature_state(const ledger::transaction_context* context, signature_state& state, const algorithm::pubkeyhash_t& validator)
 		{
-			auto* depository_withdrawal = (transactions::depository_withdrawal*)context->transaction;
 			if (is_running_on(validator.data))
 				return local_dispatch_context::aggregate_signature_state(this, context, state);
 
@@ -2804,9 +2870,14 @@ namespace tangent
 			validator = validators.find(other.validator->first);
 			return *this;
 		}
-		const ledger::wallet* local_dispatch_context::get_wallet() const
+		algorithm::pubkey_t local_dispatch_context::get_public_key(const algorithm::pubkeyhash_t& validator) const
 		{
-			return &validator->second;
+			auto it = validators.find(validator);
+			return it != validators.end() ? it->second.public_key : algorithm::pubkey_t();
+		}
+		const ledger::wallet& local_dispatch_context::get_runner_wallet() const
+		{
+			return validator->second;
 		}
 		void local_dispatch_context::set_running_validator(const algorithm::pubkeyhash_t& owner)
 		{
@@ -2818,13 +2889,72 @@ namespace tangent
 		{
 			return expects_promise_rt<void>(expectation::met);
 		}
-		expects_promise_rt<void> local_dispatch_context::aggregate_public_state(const ledger::transaction_context* context, public_state& state, const algorithm::pubkeyhash_t& validator)
+		expects_promise_rt<void> local_dispatch_context::aggregate_secret_share_state(const ledger::transaction_context* context, secret_share_state& state, const algorithm::pubkeyhash_t& validator)
 		{
-			auto wallet = validators.find(validator);
-			if (wallet == validators.end())
+			auto next = validators.find(validator);
+			if (next == validators.end())
 				return expects_promise_rt<void>(remote_exception::retry());
 
-			return expects_promise_rt<void>(aggregate_public_state(this, context, state));
+			auto prev = this->validator;
+			this->validator = next;
+			auto result = aggregate_secret_share_state(this, context, state);
+			this->validator = prev;
+			return expects_promise_rt<void>(std::move(result));
+		}
+		expects_rt<void> local_dispatch_context::aggregate_secret_share_state(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, secret_share_state& state)
+		{
+			auto* depository_migration = (transactions::depository_migration*)context->transaction;
+			if (!depository_migration)
+				return remote_exception("invalid transaction");
+
+			if (state.encrypted_shares.size() != depository_migration->shares.size())
+				return remote_exception("invalid encrypted shares count");
+
+			auto& runner_wallet = dispatcher->get_runner_wallet();
+			algorithm::seckey_t tweak, tweaked_secret_key = runner_wallet.secret_key;
+			algorithm::signing::derive_secret_key(context->receipt.transaction_hash, tweak);
+			if (!algorithm::signing::scalar_add_secret_key(tweaked_secret_key, tweak))
+				return remote_exception("invalid tweaked secret key");
+
+			for (auto& [hash, encrypted_share] : state.encrypted_shares)
+			{
+				auto share_target = depository_migration->shares.find(hash);
+				if (encrypted_share.empty() || share_target == depository_migration->shares.end())
+					return remote_exception("invalid encrypted share");
+
+				auto decrypted_share = algorithm::signing::private_decrypt(tweaked_secret_key, encrypted_share);
+				if (!decrypted_share || decrypted_share->size() != sizeof(uint256_t))
+					return remote_exception("invalid decrypted share");
+
+				uint256_t scalar;
+				scalar.decode((uint8_t*)decrypted_share->data());
+				encrypted_share.clear();
+				if (!scalar)
+					return remote_exception("invalid share");
+
+				auto& share = share_target->second;
+				auto status = dispatcher->apply_secret_share(share.asset, share.manager, share.owner, scalar);
+				if (!status)
+					return remote_exception(std::move(status.error().message()));
+			}
+
+			auto confirmation_hash = state.as_confirmation_hash();
+			if (!algorithm::signing::sign(confirmation_hash, dispatcher->get_runner_wallet().secret_key, state.confirmation_signature))
+				return remote_exception("confirmation proving error");
+
+			return expectation::met;
+		}
+		expects_promise_rt<void> local_dispatch_context::aggregate_public_state(const ledger::transaction_context* context, public_state& state, const algorithm::pubkeyhash_t& validator)
+		{
+			auto next = validators.find(validator);
+			if (next == validators.end())
+				return expects_promise_rt<void>(remote_exception::retry());
+
+			auto prev = this->validator;
+			this->validator = next;
+			auto result = aggregate_public_state(this, context, state);
+			this->validator = prev;
+			return expects_promise_rt<void>(std::move(result));
 		}
 		expects_rt<void> local_dispatch_context::aggregate_public_state(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, public_state& state)
 		{
@@ -2836,11 +2966,12 @@ namespace tangent
 			if (!chain)
 				return remote_exception("invalid operation");
 
-			auto share = dispatcher->recover_group_share(depository_account->asset, depository_account->manager, context->receipt.from);
-			if (!share)
-				return remote_exception(std::move(share.error().message()));
+			uint256_t scalar;
+			auto status = dispatcher->recover_secret_share(depository_account->asset, depository_account->manager, context->receipt.from, scalar);
+			if (!status)
+				return remote_exception(std::move(status.error().message()));
 
-			auto keypair = algorithm::composition::derive_keypair(chain->composition, *share);
+			auto keypair = algorithm::composition::derive_keypair(chain->composition, scalar);
 			if (!keypair)
 				return remote_exception(std::move(keypair.error().message()));
 
@@ -2852,11 +2983,15 @@ namespace tangent
 		}
 		expects_promise_rt<void> local_dispatch_context::aggregate_signature_state(const ledger::transaction_context* context, signature_state& state, const algorithm::pubkeyhash_t& validator)
 		{
-			auto wallet = validators.find(validator);
-			if (wallet == validators.end())
+			auto next = validators.find(validator);
+			if (next == validators.end())
 				return expects_promise_rt<void>(remote_exception::retry());
 
-			return expects_promise_rt<void>(aggregate_signature_state(this, context, state));
+			auto prev = this->validator;
+			this->validator = next;
+			auto result = aggregate_signature_state(this, context, state);
+			this->validator = prev;
+			return expects_promise_rt<void>(std::move(result));
 		}
 		expects_rt<void> local_dispatch_context::aggregate_signature_state(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, signature_state& state)
 		{
@@ -2880,11 +3015,12 @@ namespace tangent
 			if (!account)
 				return expectation::met;
 
-			auto share = dispatcher->recover_group_share(account->asset, account->manager, account->owner);
-			if (!share)
-				return remote_exception(std::move(share.error().message()));
+			uint256_t scalar;
+			auto status = dispatcher->recover_secret_share(account->asset, account->manager, account->owner, scalar);
+			if (!status)
+				return remote_exception(std::move(status.error().message()));
 
-			auto keypair = algorithm::composition::derive_keypair(input->alg, *share);
+			auto keypair = algorithm::composition::derive_keypair(input->alg, scalar);
 			if (!keypair)
 				return remote_exception(std::move(keypair.error().message()));
 

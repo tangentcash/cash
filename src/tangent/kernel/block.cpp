@@ -2777,7 +2777,52 @@ namespace tangent
 			candidate = reference->candidate.reset();
 			return *this;
 		}
-		
+
+		bool dispatch_context::secret_share_state::load_message(format::ro_stream& stream)
+		{
+			string intermediate;
+			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, confirmation_signature.data, sizeof(confirmation_signature.data)))
+				return false;
+
+			uint16_t encrypted_shares_size;
+			if (!stream.read_integer(stream.read_type(), &encrypted_shares_size))
+				return false;
+
+			for (uint16_t i = 0; i < encrypted_shares_size; i++)
+			{
+				uint256_t hash;
+				if (!stream.read_integer(stream.read_type(), &hash))
+					return false;
+
+				string encrypted_share;
+				if (!stream.read_string(stream.read_type(), &encrypted_share))
+					return false;
+
+				encrypted_shares[hash] = std::move(encrypted_share);
+			}
+
+			return true;
+		}
+		format::wo_stream dispatch_context::secret_share_state::as_message() const
+		{
+			format::wo_stream message;
+			message.write_string(confirmation_signature.optimized_view());
+			message.write_integer((uint16_t)encrypted_shares.size());
+			for (auto& [hash, encrypted_share] : encrypted_shares)
+			{
+				message.write_integer(hash);
+				message.write_string(encrypted_share);
+			}
+			return message;
+		}
+		uint256_t dispatch_context::secret_share_state::as_confirmation_hash() const
+		{
+			format::wo_stream message;
+			for (auto& [hash, encrypted_share] : encrypted_shares)
+				message.write_integer(hash);
+			return message.hash();
+		}
+
 		bool dispatch_context::public_state::load_message(format::ro_stream& stream)
 		{
 			auto state = algorithm::composition::load_public_state(stream);
@@ -2879,20 +2924,25 @@ namespace tangent
 			}
 			return *this;
 		}
-		expects_lr<uint256_t> dispatch_context::apply_group_share(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& owner, const uint256_t& share)
+		expects_lr<void> dispatch_context::apply_secret_share(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner, const uint256_t& scalar)
 		{
 			auto mempool = storages::mempoolstate();
-			auto status = mempool.apply_group_account(asset, validator, owner, share);
+			auto status = mempool.apply_group_account(asset, manager, owner, scalar);
 			if (!status)
 				return status.error();
 
-			return share;
+			return expectation::met;
 		}
-		expects_lr<uint256_t> dispatch_context::recover_group_share(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& owner) const
+		expects_lr<void> dispatch_context::recover_secret_share(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner, uint256_t& scalar) const
 		{
-			auto* wallet = get_wallet();
+			auto& runner_wallet = get_runner_wallet();
 			auto mempool = storages::mempoolstate();
-			return mempool.get_or_apply_group_account_share(asset, validator, owner, algorithm::hashing::hash256i(wallet->secret_key.view()));
+			auto result = mempool.get_or_apply_group_account_share(asset, manager, owner, algorithm::hashing::hash256i(runner_wallet.secret_key.view()));
+			if (!result)
+				return result.error();
+
+			scalar = *result;
+			return expectation::met;
 		}
 		expects_lr<void> dispatch_context::checkpoint()
 		{
@@ -2986,7 +3036,8 @@ namespace tangent
 		}
 		bool dispatch_context::is_running_on(const algorithm::pubkeyhash_t& validator) const
 		{
-			return get_wallet()->public_key_hash == validator;
+			auto& runner_wallet = get_runner_wallet();
+			return runner_wallet.public_key_hash == validator;
 		}
 		vector<uptr<transaction>>& dispatch_context::get_sendable_transactions()
 		{

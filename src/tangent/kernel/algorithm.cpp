@@ -636,6 +636,59 @@ namespace tangent
 		{
 			hashing::hash160(public_key.data, sizeof(pubkey_t), public_key_hash.data);
 		}
+		bool signing::scalar_add_secret_key(seckey_t& secret_key, const seckey_t& scalar)
+		{
+			secp256k1_context* context = algorithm::signing::get_context();
+			return secp256k1_ec_seckey_tweak_add(context, secret_key.data, scalar.data) == 1;
+		}
+		bool signing::scalar_mul_secret_key(seckey_t& secret_key, const seckey_t& scalar)
+		{
+			secp256k1_context* context = algorithm::signing::get_context();
+			return secp256k1_ec_seckey_tweak_mul(context, secret_key.data, scalar.data) == 1;
+		}
+		bool signing::scalar_add_public_key(pubkey_t& public_key, const seckey_t& scalar)
+		{
+			secp256k1_context* context = algorithm::signing::get_context();
+			secp256k1_pubkey result_public_key;
+			if (secp256k1_ec_pubkey_parse(context, &result_public_key, public_key.data, sizeof(public_key.data)) != 1)
+				return false;
+
+			if (secp256k1_ec_pubkey_tweak_add(context, &result_public_key, scalar.data) != 1)
+				return false;
+
+			size_t key_size = sizeof(public_key.data);
+			return secp256k1_ec_pubkey_serialize(context, public_key.data, &key_size, &result_public_key, SECP256K1_EC_COMPRESSED) == 1;
+		}
+		bool signing::scalar_mul_public_key(pubkey_t& public_key, const seckey_t& scalar)
+		{
+			secp256k1_context* context = algorithm::signing::get_context();
+			secp256k1_pubkey result_public_key;
+			if (secp256k1_ec_pubkey_parse(context, &result_public_key, public_key.data, sizeof(public_key.data)) != 1)
+				return false;
+
+			if (secp256k1_ec_pubkey_tweak_mul(context, &result_public_key, scalar.data) != 1)
+				return false;
+
+			size_t key_size = sizeof(public_key.data);
+			return secp256k1_ec_pubkey_serialize(context, public_key.data, &key_size, &result_public_key, SECP256K1_EC_COMPRESSED) == 1;
+		}
+		bool signing::point_add_public_key(pubkey_t& public_key, const pubkey_t& point)
+		{
+			secp256k1_context* context = algorithm::signing::get_context();
+			secp256k1_pubkey result_public_key, other_public_key;
+			if (secp256k1_ec_pubkey_parse(context, &result_public_key, public_key.data, sizeof(public_key.data)) != 1)
+				return false;
+
+			if (secp256k1_ec_pubkey_parse(context, &other_public_key, point.data, sizeof(point.data)) != 1)
+				return false;
+
+			secp256k1_pubkey* public_keys[2] = { &result_public_key, &other_public_key };
+			if (secp256k1_ec_pubkey_combine(context, &result_public_key, public_keys, 2) != 1)
+				return false;
+
+			size_t key_size = sizeof(public_key.data);
+			return secp256k1_ec_pubkey_serialize(context, public_key.data, &key_size, &result_public_key, SECP256K1_EC_COMPRESSED) == 1;
+		}
 		option<string> signing::public_encrypt(const pubkey_t& public_key, const std::string_view& plaintext, const uint256_t& entropy)
 		{
 			secp256k1_pubkey recipient_public_key;

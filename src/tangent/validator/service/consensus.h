@@ -245,6 +245,7 @@ namespace tangent
 			expects_lr<format::variables> query_block(uref<relay>&& state, const exchange& event);
 			expects_lr<format::variables> query_mempool_transaction_hashes(uref<relay>&& state, const exchange& event);
 			expects_lr<format::variables> query_transaction(uref<relay>&& state, const exchange& event);
+			expects_lr<format::variables> query_secret_share_state_aggregation(uref<relay>&& state, const exchange& event);
 			expects_lr<format::variables> query_public_state_aggregation(uref<relay>&& state, const exchange& event);
 			expects_lr<format::variables> query_signature_state_aggreation(uref<relay>&& state, const exchange& event);
 			expects_lr<void> dispatch_transaction_logs(const algorithm::asset_id& asset, const warden::chain_supervisor_options& options, warden::transaction_logs&& logs);
@@ -327,9 +328,11 @@ namespace tangent
 			dispatch_context& operator=(const dispatch_context& other) noexcept;
 			dispatch_context& operator=(dispatch_context&&) noexcept = default;
 			expects_promise_rt<void> aggregate_validators(const uint256_t& transaction_hash, const ordered_set<algorithm::pubkeyhash_t>& validators) override;
+			expects_promise_rt<void> aggregate_secret_share_state(const ledger::transaction_context* context, secret_share_state& state, const algorithm::pubkeyhash_t& validator) override;
 			expects_promise_rt<void> aggregate_public_state(const ledger::transaction_context* context, public_state& state, const algorithm::pubkeyhash_t& validator) override;
 			expects_promise_rt<void> aggregate_signature_state(const ledger::transaction_context* context, signature_state& state, const algorithm::pubkeyhash_t& validator) override;
-			const ledger::wallet* get_wallet() const override;
+			algorithm::pubkey_t get_public_key(const algorithm::pubkeyhash_t& validator) const override;
+			const ledger::wallet& get_runner_wallet() const override;
 		};
 
 		class local_dispatch_context final : public ledger::dispatch_context
@@ -346,11 +349,14 @@ namespace tangent
 			local_dispatch_context& operator=(local_dispatch_context&&) noexcept = default;
 			void set_running_validator(const algorithm::pubkeyhash_t& owner);
 			expects_promise_rt<void> aggregate_validators(const uint256_t& transaction_hash, const ordered_set<algorithm::pubkeyhash_t>& validators) override;
+			expects_promise_rt<void> aggregate_secret_share_state(const ledger::transaction_context* context, secret_share_state& state, const algorithm::pubkeyhash_t& validator) override;
 			expects_promise_rt<void> aggregate_public_state(const ledger::transaction_context* context, public_state& state, const algorithm::pubkeyhash_t& validator) override;
 			expects_promise_rt<void> aggregate_signature_state(const ledger::transaction_context* context, signature_state& state, const algorithm::pubkeyhash_t& validator) override;
-			const ledger::wallet* get_wallet() const override;
+			algorithm::pubkey_t get_public_key(const algorithm::pubkeyhash_t& validator) const override;
+			const ledger::wallet& get_runner_wallet() const override;
 
 		public:
+			static expects_rt<void> aggregate_secret_share_state(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, secret_share_state& state);
 			static expects_rt<void> aggregate_public_state(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, public_state& state);
 			static expects_rt<void> aggregate_signature_state(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, signature_state& state);
 		};

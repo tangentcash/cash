@@ -404,6 +404,16 @@ namespace tangent
 
 		struct dispatch_context
 		{
+			struct secret_share_state
+			{
+				ordered_map<uint256_t, string> encrypted_shares;
+				algorithm::hashsig_t confirmation_signature;
+
+				bool load_message(format::ro_stream& stream);
+				format::wo_stream as_message() const;
+				uint256_t as_confirmation_hash() const;
+			};
+
 			struct public_state
 			{
 				uptr<algorithm::composition::public_state> aggregator;
@@ -433,9 +443,10 @@ namespace tangent
 			dispatch_context(dispatch_context&&) noexcept = default;
 			dispatch_context& operator=(const dispatch_context& other) noexcept;
 			dispatch_context& operator=(dispatch_context&&) noexcept = default;
-			virtual expects_lr<uint256_t> apply_group_share(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& owner, const uint256_t& share);
-			virtual expects_lr<uint256_t> recover_group_share(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& owner) const;
+			virtual expects_lr<void> apply_secret_share(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner, const uint256_t& scalar);
+			virtual expects_lr<void> recover_secret_share(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner, uint256_t& scalar) const;
 			virtual expects_promise_rt<void> aggregate_validators(const uint256_t& transaction_hash, const ordered_set<algorithm::pubkeyhash_t>& validators) = 0;
+			virtual expects_promise_rt<void> aggregate_secret_share_state(const transaction_context* context, secret_share_state& state, const algorithm::pubkeyhash_t& validator) = 0;
 			virtual expects_promise_rt<void> aggregate_public_state(const transaction_context* context, public_state& state, const algorithm::pubkeyhash_t& validator) = 0;
 			virtual expects_promise_rt<void> aggregate_signature_state(const transaction_context* context, signature_state& state, const algorithm::pubkeyhash_t& validator) = 0;
 			virtual expects_lr<void> checkpoint();
@@ -450,7 +461,8 @@ namespace tangent
 			virtual vector<uptr<transaction>>& get_sendable_transactions();
 			virtual format::ro_stream pull_cache(const transaction_context* context);
 			virtual void push_cache(const transaction_context* context, const format::wo_stream& message) const;
-			virtual const wallet* get_wallet() const = 0;
+			virtual algorithm::pubkey_t get_public_key(const algorithm::pubkeyhash_t& validator) const = 0;
+			virtual const wallet& get_runner_wallet() const = 0;
 		};
 
 		struct evaluation_context

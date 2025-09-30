@@ -676,28 +676,44 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> mempoolstate::apply_group_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner, const uint256_t& share)
+		expects_lr<void> mempoolstate::apply_group_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner, const uint256_t& scalar)
 		{
-			uint8_t share_data[32];
-			share.encode(share_data);
-
 			uint8_t asset_data[32];
 			asset.encode(asset_data);
-
-			auto encrypted_share = protocol::now().box.encrypt(std::string_view((char*)share_data, sizeof(share_data)));
-			if (!encrypted_share)
-				return encrypted_share.error();
 
 			schema_list map;
 			map.push_back(var::set::binary(asset_data, sizeof(asset_data)));
 			map.push_back(var::set::binary(owner.view()));
 			map.push_back(var::set::binary(manager.view()));
-			map.push_back(var::set::binary(*encrypted_share));
 
-			auto cursor = get_storage().emplace_query(__func__, "INSERT OR REPLACE INTO groups (asset, owner, manager, share) VALUES (?, ?, ?, ?);", &map);
+			auto cursor = get_storage().emplace_query(__func__, "SELECT scalar FROM groups WHERE asset = ? AND owner = ? AND manager = ?", &map);
+			if (cursor && !cursor->error_or_empty())
+			{
+				auto encrypted_scalar = (*cursor)["scalar"].get().get_blob();
+				auto decrypted_scalar = protocol::now().box.decrypt(encrypted_scalar);
+				if (decrypted_scalar && decrypted_scalar->size() == sizeof(uint256_t))
+				{
+					uint256_t duplicate_scalar = 0;
+					duplicate_scalar.decode((uint8_t*)decrypted_scalar->data());
+					if (duplicate_scalar != scalar)
+						return layer_exception("scalar must be zeroed before replacement with different scalar");
+
+					return expectation::met;
+				}
+			}
+
+			uint8_t scalar_data[32];
+			scalar.encode(scalar_data);
+
+			auto encrypted_scalar = protocol::now().box.encrypt(std::string_view((char*)scalar_data, sizeof(scalar_data)));
+			if (!encrypted_scalar)
+				return encrypted_scalar.error();
+
+			map.push_back(var::set::binary(*encrypted_scalar));
+			cursor = get_storage().emplace_query(__func__, "INSERT OR REPLACE INTO groups (asset, owner, manager, scalar) VALUES (?, ?, ?, ?)", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
-
+			
 			return expectation::met;
 		}
 		expects_lr<uint256_t> mempoolstate::get_or_apply_group_account_share(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner, const uint256_t& entropy)
@@ -710,32 +726,32 @@ namespace tangent
 			map.push_back(var::set::binary(owner.view()));
 			map.push_back(var::set::binary(manager.view()));
 
-			auto cursor = get_storage().emplace_query(__func__, "SELECT share FROM groups WHERE asset = ? AND owner = ? AND manager = ?", &map);
+			auto cursor = get_storage().emplace_query(__func__, "SELECT scalar FROM groups WHERE asset = ? AND owner = ? AND manager = ?", &map);
 			if (cursor && !cursor->error_or_empty())
 			{
-				auto encrypted_share = (*cursor)["share"].get().get_blob();
-				auto decrypted_share = protocol::now().box.decrypt(encrypted_share);
-				if (!decrypted_share)
-					return decrypted_share.error();
-				else if (decrypted_share->size() != 32)
-					return expects_lr<uint256_t>(layer_exception("bad share"));
+				auto encrypted_scalar = (*cursor)["scalar"].get().get_blob();
+				auto decrypted_scalar = protocol::now().box.decrypt(encrypted_scalar);
+				if (!decrypted_scalar)
+					return decrypted_scalar.error();
+				else if (decrypted_scalar->size() != sizeof(uint256_t))
+					return expects_lr<uint256_t>(layer_exception("bad scalar"));
 
-				uint256_t share = 0;
-				share.decode((uint8_t*)decrypted_share->data());
-				return share;
+				uint256_t scalar = 0;
+				scalar.decode((uint8_t*)decrypted_scalar->data());
+				return scalar;
 			}
 			else
 			{
-				format::wo_stream share;
-				share.write_integer(asset);
-				share.write_string(algorithm::pubkeyhash_t(owner).optimized_view());
-				share.write_string(algorithm::pubkeyhash_t(manager).optimized_view());
-				share.write_integer(entropy);
-				auto result = apply_group_account(asset, manager, owner, share.hash());
+				format::wo_stream scalar;
+				scalar.write_integer(asset);
+				scalar.write_string(algorithm::pubkeyhash_t(owner).optimized_view());
+				scalar.write_string(algorithm::pubkeyhash_t(manager).optimized_view());
+				scalar.write_integer(entropy);
+				auto result = apply_group_account(asset, manager, owner, scalar.hash());
 				if (!result)
 					return result.error();
 
-				return share.hash();
+				return scalar.hash();
 			}
 		}
 		expects_lr<vector<states::depository_account>> mempoolstate::get_group_accounts(const algorithm::pubkeyhash_t& manager, size_t offset, size_t count)
@@ -1047,7 +1063,7 @@ namespace tangent
 				asset BLOB(32) NOT NULL,
 				owner BLOB(20) NOT NULL,
 				manager BLOB(20) NOT NULL,
-				share BLOB NOT NULL,
+				scalar BLOB NOT NULL,
 				PRIMARY KEY (asset, owner, manager)
 			) WITHOUT ROWID;
 			CREATE INDEX IF NOT EXISTS groups_manager ON groups (manager);
