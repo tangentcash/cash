@@ -1636,7 +1636,7 @@ namespace tangent
 
 			return committee;
 		}
-		expects_lr<vector<states::validator_participation>> transaction_context::calculate_participants(const algorithm::asset_id& asset, ordered_set<algorithm::pubkeyhash_t>& exclusion, size_t target_size)
+		expects_lr<vector<states::validator_participation>> transaction_context::calculate_participants(const algorithm::asset_id& asset, ordered_set<algorithm::pubkeyhash_t>& exclusion, size_t target_size, const decimal& threshold)
 		{
 			auto random = calculate_random(1);
 			if (!random)
@@ -1644,7 +1644,7 @@ namespace tangent
 
 			auto nonce = get_validation_nonce();
 			auto chain = storages::chainstate();
-			auto filter = storages::result_filter::greater(0, -1);
+			auto filter = storages::result_filter::greater_equal(threshold.is_zero_or_nan() ? uint256_t(1) : states::validator_participation::to_rank(threshold), -1);
 			auto pool = chain.get_multiforms_count_by_row_filter(states::validator_participation::as_instance_type(), changelog, states::validator_participation::as_instance_row(asset), filter, nonce).or_else(0);
 			if (pool < target_size)
 				return layer_exception("committee threshold not met");
@@ -2033,9 +2033,10 @@ namespace tangent
 
 			return new_state;
 		}
-		expects_lr<states::depository_policy> transaction_context::apply_depository_policy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, uint8_t security_level, bool accepts_account_requests, bool accepts_withdrawal_requests, ordered_set<algorithm::asset_id>&& whitelist)
+		expects_lr<states::depository_policy> transaction_context::apply_depository_policy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, uint8_t security_level, const decimal& participation_threshold, bool accepts_account_requests, bool accepts_withdrawal_requests, ordered_set<algorithm::asset_id>&& whitelist)
 		{
 			auto new_state = get_depository_policy(asset, owner).or_else(states::depository_policy(owner, asset, block));
+			new_state.participation_threshold = participation_threshold;
 			new_state.security_level = security_level;
 			new_state.accepts_account_requests = accepts_account_requests;
 			new_state.accepts_withdrawal_requests = accepts_withdrawal_requests;

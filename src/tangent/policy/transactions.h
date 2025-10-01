@@ -268,6 +268,7 @@ namespace tangent
 			ordered_map<string, string> whitelist;
 			decimal incoming_fee = decimal::zero();
 			decimal outgoing_fee = decimal::zero();
+			decimal participation_threshold = decimal::zero();
 			uint8_t security_level = 0;
 			bool accepts_account_requests = true;
 			bool accepts_withdrawal_requests = true;
@@ -277,7 +278,7 @@ namespace tangent
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
 			void set_reward(const decimal& new_incoming_fee, const decimal& new_outgoing_fee);
-			void set_security(uint8_t new_security_level, bool new_accepts_account_requests, bool new_accepts_withdrawal_requests);
+			void set_security(uint8_t new_security_level, const decimal& new_participation_threshold, bool new_accepts_account_requests, bool new_accepts_withdrawal_requests);
 			void permanently_whitelist_token(const std::string_view& contract_address, const std::string_view& symbol);
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;

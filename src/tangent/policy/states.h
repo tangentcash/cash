@@ -194,6 +194,7 @@ namespace tangent
 			static std::string_view as_instance_typename();
 			static string as_instance_column(const algorithm::pubkeyhash_t& owner);
 			static string as_instance_row(const algorithm::asset_id& asset);
+			static uint256_t to_rank(const decimal& threshold);
 		};
 
 		struct validator_attestation final : ledger::multiform
@@ -280,6 +281,7 @@ namespace tangent
 		{
 			algorithm::pubkeyhash_t owner;
 			algorithm::asset_id asset;
+			decimal participation_threshold = decimal::zero();
 			ordered_set<algorithm::asset_id> whitelist;
 			uint256_t queue_transaction_hash = 0;
 			uint64_t accounts_under_management = 0;

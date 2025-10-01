@@ -1293,7 +1293,7 @@ namespace tangent
 			}
 
 			ordered_set<algorithm::pubkeyhash_t> exclusion;
-			auto committee = context->calculate_participants(asset, exclusion, depository_policy->security_level);
+			auto committee = context->calculate_participants(asset, exclusion, depository_policy->security_level, depository_policy->participation_threshold);
 			if (!committee)
 				return committee.error();
 
@@ -2742,6 +2742,9 @@ namespace tangent
 			if (outgoing_fee.is_nan() || outgoing_fee.is_negative())
 				return layer_exception("invalid outgoing fee");
 
+			if (participation_threshold.is_nan() || participation_threshold.is_negative())
+				return layer_exception("invalid participation threshold");
+
 			if (security_level > 0 && security_level < protocol::now().policy.participation_min_per_account)
 				return layer_exception("invalid security level");
 
@@ -2801,9 +2804,9 @@ namespace tangent
 				}
 			}
 
-			if ((security_level > 0 && security_level != depository.security_level) || depository.accepts_account_requests != accepts_account_requests || depository.accepts_withdrawal_requests != accepts_withdrawal_requests)
+			if ((security_level > 0 && security_level != depository.security_level) || depository.participation_threshold != participation_threshold || depository.accepts_account_requests != accepts_account_requests || depository.accepts_withdrawal_requests != accepts_withdrawal_requests)
 			{
-				auto policy = context->apply_depository_policy(asset, context->receipt.from, security_level, accepts_account_requests, accepts_withdrawal_requests, std::move(allowances));
+				auto policy = context->apply_depository_policy(asset, context->receipt.from, security_level, participation_threshold, accepts_account_requests, accepts_withdrawal_requests, std::move(allowances));
 				if (!policy)
 					return policy.error();
 			}
@@ -2815,6 +2818,7 @@ namespace tangent
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_decimal(incoming_fee);
 			stream->write_decimal(outgoing_fee);
+			stream->write_decimal(participation_threshold);
 			stream->write_integer(security_level);
 			stream->write_boolean(accepts_account_requests);
 			stream->write_boolean(accepts_withdrawal_requests);
@@ -2832,6 +2836,9 @@ namespace tangent
 				return false;
 
 			if (!stream.read_decimal(stream.read_type(), &outgoing_fee))
+				return false;
+
+			if (!stream.read_decimal(stream.read_type(), &participation_threshold))
 				return false;
 
 			if (!stream.read_integer(stream.read_type(), &security_level))
@@ -2867,8 +2874,9 @@ namespace tangent
 			incoming_fee = new_incoming_fee;
 			outgoing_fee = new_outgoing_fee;
 		}
-		void depository_adjustment::set_security(uint8_t new_security_level, bool new_accepts_account_requests, bool new_accepts_withdrawal_requests)
+		void depository_adjustment::set_security(uint8_t new_security_level, const decimal& new_participation_threshold, bool new_accepts_account_requests, bool new_accepts_withdrawal_requests)
 		{
+			participation_threshold = new_participation_threshold;
 			security_level = new_security_level;
 			accepts_account_requests = new_accepts_account_requests;
 			accepts_withdrawal_requests = new_accepts_withdrawal_requests;
@@ -2882,6 +2890,7 @@ namespace tangent
 			schema* data = ledger::transaction::as_schema().reset();
 			data->set("incoming_fee", var::decimal(incoming_fee));
 			data->set("outgoing_fee", var::decimal(outgoing_fee));
+			data->set("participation_threshold", var::decimal(participation_threshold));
 			data->set("security_level", var::integer(security_level));
 			data->set("accepts_account_requests", var::boolean(accepts_account_requests));
 			data->set("accepts_withdrawal_requests", var::boolean(accepts_withdrawal_requests));
@@ -2948,6 +2957,7 @@ namespace tangent
 
 			ordered_set<algorithm::pubkeyhash_t> exclusion;
 			auto old_manager = algorithm::pubkeyhash_t(context->receipt.from);
+			auto new_threshold = decimal::zero();
 			for (auto& [hash, share] : shares)
 			{
 				auto target = context->get_depository_account(share.asset, share.manager, share.owner);
@@ -2956,10 +2966,15 @@ namespace tangent
 				else if (target->group.find(old_manager) == target->group.end())
 					return layer_exception("migration of other group member is forbidden");
 
+				auto depository_policy = context->get_depository_policy(asset, share.manager);
+				if (!depository_policy)
+					return depository_policy.error();
+
+				new_threshold = math0::max(new_threshold, depository_policy->participation_threshold);
 				exclusion.insert(target->group.begin(), target->group.end());
 			}
 
-			auto committee = context->calculate_participants(asset, exclusion, 1);
+			auto committee = context->calculate_participants(asset, exclusion, 1, new_threshold);
 			if (!committee)
 				return committee.error();
 

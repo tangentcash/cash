@@ -874,9 +874,8 @@ namespace tangent
 			if (!is_active())
 				return 0;
 
-			auto value = get_ranked_stake();
-			value *= (uint64_t)std::pow<uint64_t>(10, protocol::now().message.decimal_precision);
-			return uint256_t(value.truncate(0).to_string(), 10) + 1;
+			auto it = stakes.find(asset);
+			return to_rank(it == stakes.end() ? decimal::zero() : it->second);
 		}
 		uint32_t validator_participation::as_instance_type()
 		{
@@ -898,6 +897,12 @@ namespace tangent
 			format::wo_stream message;
 			validator_participation(algorithm::pubkeyhash_t(), asset, nullptr).store_row(&message);
 			return message.data;
+		}
+		uint256_t validator_participation::to_rank(const decimal& threshold)
+		{
+			auto value = threshold;
+			value *= (uint64_t)std::pow<uint64_t>(10, protocol::now().message.decimal_precision);
+			return uint256_t(value.truncate(0).to_string(), 10) + 1;
 		}
 
 		validator_attestation::validator_attestation(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::multiform(new_block_number, new_block_nonce), owner(new_owner), asset(algorithm::asset::base_id_of(new_asset))
@@ -1412,6 +1417,7 @@ namespace tangent
 			stream->write_integer(queue_transaction_hash);
 			stream->write_integer(accounts_under_management);
 			stream->write_integer(security_level);
+			stream->write_decimal(participation_threshold);
 			stream->write_boolean(accepts_account_requests);
 			stream->write_boolean(accepts_withdrawal_requests);
 			stream->write_integer((uint16_t)whitelist.size());
@@ -1428,6 +1434,9 @@ namespace tangent
 				return false;
 
 			if (!stream.read_integer(stream.read_type(), &security_level))
+				return false;
+
+			if (!stream.read_decimal(stream.read_type(), &participation_threshold))
 				return false;
 
 			if (!stream.read_boolean(stream.read_type(), &accepts_account_requests))
@@ -1465,6 +1474,7 @@ namespace tangent
 			data->set("owner", algorithm::signing::serialize_address(owner));
 			data->set("asset", algorithm::asset::serialize(asset));
 			data->set("queue_transaction_hash", queue_transaction_hash > 0 ? var::string(algorithm::encoding::encode_0xhex256(queue_transaction_hash)) : var::null());
+			data->set("participation_threshold", var::decimal(participation_threshold));
 			data->set("accounts_under_management", var::integer(accounts_under_management));
 			data->set("security_level", var::integer(security_level));
 			data->set("accepts_account_requests", var::boolean(accepts_account_requests));
