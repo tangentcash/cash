@@ -510,7 +510,7 @@ namespace tangent
 		}
 		variable variable::from(const std::string_view& any)
 		{
-			if (stringify::has_integer(any))
+			if (stringify::has_integer(any) && any.find('-') == std::string_view::npos)
 				return variable(uint256_t(any, 10));
 			else if (stringify::has_number(any))
 				return variable(decimal(any));

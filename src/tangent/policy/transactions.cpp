@@ -512,25 +512,12 @@ namespace tangent
 
 				for (auto& transaction : group.second)
 				{
-					if (!transaction || transaction->as_type() == as_type())
+					if (!transaction || transaction->as_type() == as_type() || transaction->get_type() != ledger::transaction_level::functional)
 						return layer_exception("invalid sub-transaction");
 
 					auto* reference = (ledger::transaction*)*transaction;
-					if (transaction->asset != group.first || transaction->conservative || !transaction->gas_price.is_nan() || !transaction->gas_limit)
+					if (transaction->asset != group.first || !transaction->gas_price.is_nan() || transaction->gas_limit > 0)
 						return layer_exception("invalid sub-transaction data");
-
-					uint64_t transaction_nonce = transaction->nonce;
-					uint8_t transaction_code = transaction->signature.data[0];
-					uint256_t transaction_hash = transaction->as_hash();
-					reference->gas_price = decimal::zero();
-					reference->nonce = 1;
-					reference->signature.data[0] = 0xFF;
-					auto validation = transaction->validate(block_number);
-					reference->signature.data[0] = transaction_code;
-					reference->nonce = transaction_nonce;
-					reference->gas_price = decimal::nan();
-					if (!validation)
-						return layer_exception("sub-transaction " + algorithm::encoding::encode_0xhex256(transaction_hash) + " validation failed: " + validation.error().message());
 				}
 			}
 
@@ -560,9 +547,12 @@ namespace tangent
 				return a.first->nonce > 0 && b.first->nonce > 0 && a.first->nonce != b.first->nonce ? a.first->nonce < b.first->nonce : a.second < b.second;
 			});
 
+			auto internal_receipt = ledger::receipt();
+			internal_receipt.generation_time = context->receipt.generation_time;
 			for (auto& [transaction, index] : queue)
 			{
 				bool internal_transaction = transaction->signature.empty();
+				uint256_t transaction_hash = transaction->as_hash();
 				uint64_t transaction_nonce = transaction->nonce;
 				uint8_t transaction_code = transaction->signature.data[0];
 				uint8_t execution_flags = (uint8_t)ledger::transaction_context::execution_mode::pedantic;
@@ -574,24 +564,27 @@ namespace tangent
 					owner = context->receipt.from;
 				}
 				else if (!transaction->recover_hash(owner) || owner.empty())
-					return layer_exception("sub-transaction " + algorithm::encoding::encode_0xhex256(transaction->as_hash()) + " validation failed: invalid signature");
+					return layer_exception("sub-transaction " + algorithm::encoding::encode_0xhex256(transaction_hash) + " validation failed: invalid signature");
 
 				transaction->gas_price = decimal::zero();
-				auto execution = ledger::transaction_context::execute_tx(context->environment, (ledger::block*)context->block, context->changelog, transaction, transaction->as_hash(), owner, transaction->as_message().data.size(), execution_flags);
+				transaction->gas_limit = gas_limit - context->receipt.relative_gas_use;
+				auto execution = ledger::transaction_context::execute_tx(context->environment, (ledger::block*)context->block, context->changelog, transaction, transaction_hash, owner, 0, execution_flags, internal_receipt);
 				transaction->signature.data[0] = transaction_code;
 				transaction->nonce = transaction_nonce;
+				transaction->gas_limit = 0;
 				transaction->gas_price = decimal::nan();
 				if (!execution)
-					return layer_exception("sub-transaction " + algorithm::encoding::encode_0xhex256(transaction->as_hash()) + " execution failed: " + execution.error().message());
+					return layer_exception("sub-transaction " + algorithm::encoding::encode_0xhex256(transaction_hash) + " execution failed: " + execution.error().message());
 
 				relative_gas_use += execution->receipt.relative_gas_use;
 				auto report = context->emit_event<rollup>({ format::variable(execution->receipt.transaction_hash), format::variable(index), format::variable(execution->receipt.relative_gas_use), format::variable(execution->receipt.relative_gas_paid) });
 				if (!report)
-					return layer_exception("sub-transaction " + algorithm::encoding::encode_0xhex256(transaction->as_hash()) + " event merge failed: " + report.error().message());
+					return layer_exception("sub-transaction " + algorithm::encoding::encode_0xhex256(transaction_hash) + " merge failed: " + report.error().message());
 
-				context->receipt.events.reserve(context->receipt.events.size() + execution->receipt.events.size());
-				for (auto& event : execution->receipt.events)
-					context->receipt.events.push_back(std::move(event));
+				size_t prev_size = internal_receipt.events.size();
+				internal_receipt.events = std::move(execution->receipt.events);
+				if (internal_receipt.events.size() > prev_size)
+					context->receipt.events.insert(context->receipt.events.end(), internal_receipt.events.begin() + prev_size, internal_receipt.events.end());
 			}
 
 			context->block->gas_limit = absolute_gas_limit;
@@ -636,14 +629,13 @@ namespace tangent
 			stream->write_integer((uint16_t)transactions.size());
 			for (auto& group : transactions)
 			{
-				stream->write_integer(group.first == asset ? uint256_t(0) : group.first);
+				stream->write_integer(group.first);
 				stream->write_integer((uint32_t)group.second.size());
 				for (auto& transaction : group.second)
 				{
 					bool internal_transaction = transaction->signature.empty();
 					stream->write_boolean(internal_transaction);
 					stream->write_integer(transaction->as_type());
-					stream->write_integer(transaction->gas_limit);
 					if (!internal_transaction)
 					{
 						stream->write_integer(transaction->nonce);
@@ -674,7 +666,6 @@ namespace tangent
 				if (!stream.read_integer(stream.read_type(), &transactions_count))
 					return false;
 
-				group_asset = group_asset ? group_asset : asset;
 				auto& group = transactions[group_asset];
 				group.reserve(transactions_count);
 				for (uint32_t j = 0; j < transactions_count; j++)
@@ -688,7 +679,7 @@ namespace tangent
 						return false;
 
 					uptr<ledger::transaction> next = resolver::from_type(type);
-					if (!next || !stream.read_integer(stream.read_type(), &next->gas_limit))
+					if (!next)
 						return false;
 
 					if (!internal_transaction)
@@ -756,29 +747,14 @@ namespace tangent
 		bool rollup::import_internal_transaction(ledger::transaction& transaction, const algorithm::seckey_t& secret_key)
 		{
 			transaction.nonce = 0;
-			normalize_transaction(transaction, asset);
-			if (!transaction.gas_limit)
-			{
-				bool successful = transaction.sign(secret_key, transaction.nonce, decimal::zero());
-				normalize_transaction(transaction, asset);
-				if (!successful)
-					return false;
-			}
-
 			transaction.signature.clear();
+			normalize_transaction(transaction, asset);
 			return import_transaction(transaction);
 		}
 		bool rollup::import_external_transaction(ledger::transaction& transaction, const algorithm::seckey_t& secret_key, uint64_t nonce)
 		{
 			transaction.nonce = nonce > 0 ? nonce : transaction.nonce;
 			normalize_transaction(transaction, asset);
-			if (!transaction.gas_limit)
-			{
-				bool successful = transaction.sign(secret_key, transaction.nonce, decimal::zero());
-				normalize_transaction(transaction, asset);
-				if (!successful)
-					return false;
-			}
 			if (!transaction.sign(secret_key))
 				return false;
 
@@ -919,10 +895,10 @@ namespace tangent
 		}
 		void rollup::normalize_transaction(ledger::transaction& transaction, const algorithm::asset_id& asset)
 		{
+			transaction.gas_price = decimal::nan();
+			transaction.gas_limit = 0;
 			if (!transaction.asset)
 				transaction.asset = asset;
-			transaction.gas_price = decimal::nan();
-			transaction.conservative = false;
 		}
 
 		expects_lr<void> validator_adjustment::validate(uint64_t block_number) const

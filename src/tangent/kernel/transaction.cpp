@@ -29,9 +29,6 @@ namespace tangent
 			if (signature.empty())
 				return layer_exception("invalid signature");
 
-			if (conservative && get_type() != transaction_level::functional && gas_price.is_zero())
-				return layer_exception("only free functional transaction can be conservative");
-
 			return expectation::met;
 		}
 		expects_lr<void> transaction::execute(transaction_context* context) const
@@ -53,7 +50,6 @@ namespace tangent
 			stream->write_decimal(gas_price);
 			stream->write_integer(gas_limit);
 			stream->write_integer(nonce);
-			stream->write_boolean(conservative);
 			return store_body(stream);
 		}
 		bool transaction::load_payload(format::ro_stream& stream)
@@ -68,9 +64,6 @@ namespace tangent
 				return false;
 
 			if (!stream.read_integer(stream.read_type(), &nonce))
-				return false;
-
-			if (!stream.read_boolean(stream.read_type(), &conservative))
 				return false;
 
 			return load_body(stream);
@@ -234,7 +227,6 @@ namespace tangent
 			if (!stream.read_string(stream.read_type(), &manager_assembly) || !algorithm::encoding::decode_bytes(manager_assembly, manager.data, sizeof(manager.data)))
 				return false;
 
-			conservative = false;
 			return load_body(stream);
 		}
 		void delegation_transaction::set_manager(const algorithm::pubkeyhash_t& new_manager)
@@ -283,7 +275,6 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &nonce))
 				return false;
 
-			conservative = false;
 			return load_body(stream);
 		}
 		transaction_level consensus_transaction::get_type() const
@@ -301,9 +292,6 @@ namespace tangent
 
 			if (nonce != 0)
 				return layer_exception("invalid nonce (neq: 0)");
-
-			if (conservative)
-				return layer_exception("transaction should not be conservative");
 
 			if (!gas_limit)
 				return layer_exception("gas limit requirement not met (min: 1)");
@@ -507,13 +495,11 @@ namespace tangent
 				branch.signatures = std::move(signatures);
 			}
 
-			conservative = false;
 			return load_body(stream);
 		}
 		bool attestation_transaction::sign(const algorithm::seckey_t& secret_key)
 		{
 			nonce = 0;
-			conservative = false;
 			memset(signature.data, 0, sizeof(signature.data));
 			if (output_hashes.size() > 1)
 				return false;

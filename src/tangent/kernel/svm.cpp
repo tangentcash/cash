@@ -8,7 +8,7 @@
 #define SCRIPT_TYPENAME_STRING "string"
 #define SCRIPT_TYPENAME_UINT128 "uint128"
 #define SCRIPT_TYPENAME_UINT256 "uint256"
-#define SCRIPT_TYPENAME_DECIMAL "float768"
+#define SCRIPT_TYPENAME_DECIMAL "real320"
 #define SCRIPT_TYPENAME_ARRAY "array"
 #define SCRIPT_TYPENAME_RWPTR "rwptr"
 #define SCRIPT_TYPENAME_RPTR "rptr"
@@ -657,7 +657,7 @@ namespace tangent
 
 			auto array_repr = vm->set_template_class<svm_abi::array_repr>("array<class t>", "array<t>", true);
 			auto string_repr = vm->set_struct_address("string", sizeof(svm_abi::string_repr), (size_t)object_behaviours::value | bridge::type_traits_of<svm_abi::string_repr>());
-			auto decimal_repr = vm->set_struct_trivial<decimal>("float768");
+			auto decimal_repr = vm->set_struct_trivial<decimal>("real320");
 			auto uint128_repr = vm->set_struct_trivial<uint128_t>("uint128", (size_t)object_behaviours::app_class_allints);
 			auto uint256_repr = vm->set_struct_trivial<uint256_t>("uint256", (size_t)object_behaviours::app_class_allints);
 			array_repr->set_template_callback(&svm_abi::array_repr::template_callback);
@@ -751,8 +751,9 @@ namespace tangent
 			string_repr->set_method("uint64 u64(int = 10)", &svm_abi::string_repr::from_string<uint64_t>);
 			string_repr->set_method("uint128 u128(int = 10)", &svm_abi::string_repr::from_string_uint128);
 			string_repr->set_method("uint256 u256(int = 10)", &svm_abi::string_repr::from_string_uint256);
-			string_repr->set_method("float768 f768(int = 10)", &svm_abi::string_repr::from_string_decimal);
+			string_repr->set_method("real320 r320(int = 10)", &svm_abi::string_repr::from_string_decimal);
 			decimal_repr->set_constructor_extern<decimal*>("void f()", &svm_abi::decimal_repr::custom_constructor);
+			decimal_repr->set_constructor_extern<decimal*, bool>("void f(bool)", &svm_abi::decimal_repr::custom_constructor_bool);
 			decimal_repr->set_constructor_extern<decimal*, int8_t>("void f(int8)", &svm_abi::decimal_repr::custom_constructor_arithmetic<int8_t>);
 			decimal_repr->set_constructor_extern<decimal*, uint8_t>("void f(uint8)", &svm_abi::decimal_repr::custom_constructor_arithmetic<uint8_t>);
 			decimal_repr->set_constructor_extern<decimal*, int16_t>("void f(int16)", &svm_abi::decimal_repr::custom_constructor_arithmetic<int16_t>);
@@ -762,7 +763,7 @@ namespace tangent
 			decimal_repr->set_constructor_extern<decimal*, int64_t>("void f(int64)", &svm_abi::decimal_repr::custom_constructor_arithmetic<int64_t>);
 			decimal_repr->set_constructor_extern<decimal*, uint64_t>("void f(uint64)", &svm_abi::decimal_repr::custom_constructor_arithmetic<uint64_t>);
 			decimal_repr->set_constructor_extern<decimal*, const svm_abi::string_repr&>("void f(const string&in)", &svm_abi::decimal_repr::custom_constructor_string);
-			decimal_repr->set_constructor_extern<decimal*, const decimal&>("void f(const float768&in)", &svm_abi::decimal_repr::custom_constructor_copy);
+			decimal_repr->set_constructor_extern<decimal*, const decimal&>("void f(const real320&in)", &svm_abi::decimal_repr::custom_constructor_copy);
 			decimal_repr->set_method_extern("bool opImplConv() const", &svm_abi::decimal_repr::is_not_zero_or_nan);
 			decimal_repr->set_method("bool is_nan() const", &decimal::is_nan);
 			decimal_repr->set_method("bool is_zero() const", &decimal::is_zero);
@@ -785,25 +786,25 @@ namespace tangent
 			decimal_repr->set_method("uint32 decimal_size() const", &decimal::decimal_size);
 			decimal_repr->set_method("uint32 integer_size() const", &decimal::integer_size);
 			decimal_repr->set_method("uint32 size() const", &decimal::size);
-			decimal_repr->set_operator_extern(operators::neg_t, (uint32_t)position::constant, "float768", "", &svm_abi::decimal_repr::negate);
-			decimal_repr->set_operator_extern(operators::mul_assign_t, (uint32_t)position::left, "float768&", "const float768&in", &svm_abi::decimal_repr::mul_eq);
-			decimal_repr->set_operator_extern(operators::div_assign_t, (uint32_t)position::left, "float768&", "const float768&in", &svm_abi::decimal_repr::div_eq);
-			decimal_repr->set_operator_extern(operators::add_assign_t, (uint32_t)position::left, "float768&", "const float768&in", &svm_abi::decimal_repr::add_eq);
-			decimal_repr->set_operator_extern(operators::sub_assign_t, (uint32_t)position::left, "float768&", "const float768&in", &svm_abi::decimal_repr::sub_eq);
-			decimal_repr->set_operator_extern(operators::pre_inc_t, (uint32_t)position::left, "float768&", "", &svm_abi::decimal_repr::fpp);
-			decimal_repr->set_operator_extern(operators::pre_dec_t, (uint32_t)position::left, "float768&", "", &svm_abi::decimal_repr::fmm);
-			decimal_repr->set_operator_extern(operators::post_inc_t, (uint32_t)position::left, "float768&", "", &svm_abi::decimal_repr::pp);
-			decimal_repr->set_operator_extern(operators::post_dec_t, (uint32_t)position::left, "float768&", "", &svm_abi::decimal_repr::mm);
-			decimal_repr->set_operator_extern(operators::equals_t, (uint32_t)position::constant, "bool", "const float768&in", &svm_abi::decimal_repr::eq);
-			decimal_repr->set_operator_extern(operators::cmp_t, (uint32_t)position::constant, "int", "const float768&in", &svm_abi::decimal_repr::cmp);
-			decimal_repr->set_operator_extern(operators::add_t, (uint32_t)position::constant, "float768", "const float768&in", &svm_abi::decimal_repr::add);
-			decimal_repr->set_operator_extern(operators::sub_t, (uint32_t)position::constant, "float768", "const float768&in", &svm_abi::decimal_repr::sub);
-			decimal_repr->set_operator_extern(operators::mul_t, (uint32_t)position::constant, "float768", "const float768&in", &svm_abi::decimal_repr::mul);
-			decimal_repr->set_operator_extern(operators::div_t, (uint32_t)position::constant, "float768", "const float768&in", &svm_abi::decimal_repr::div);
-			decimal_repr->set_operator_extern(operators::mod_t, (uint32_t)position::constant, "float768", "const float768&in", &svm_abi::decimal_repr::per);
-			decimal_repr->set_method_static("float768 nan()", &decimal::nan);
-			decimal_repr->set_method_static("float768 zero()", &decimal::zero);
-			decimal_repr->set_method_static("float768 from(const string&in, uint8)", &svm_abi::decimal_repr::from);
+			decimal_repr->set_operator_extern(operators::neg_t, (uint32_t)position::constant, "real320", "", &svm_abi::decimal_repr::negate);
+			decimal_repr->set_operator_extern(operators::mul_assign_t, (uint32_t)position::left, "real320&", "const real320&in", &svm_abi::decimal_repr::mul_eq);
+			decimal_repr->set_operator_extern(operators::div_assign_t, (uint32_t)position::left, "real320&", "const real320&in", &svm_abi::decimal_repr::div_eq);
+			decimal_repr->set_operator_extern(operators::add_assign_t, (uint32_t)position::left, "real320&", "const real320&in", &svm_abi::decimal_repr::add_eq);
+			decimal_repr->set_operator_extern(operators::sub_assign_t, (uint32_t)position::left, "real320&", "const real320&in", &svm_abi::decimal_repr::sub_eq);
+			decimal_repr->set_operator_extern(operators::pre_inc_t, (uint32_t)position::left, "real320&", "", &svm_abi::decimal_repr::fpp);
+			decimal_repr->set_operator_extern(operators::pre_dec_t, (uint32_t)position::left, "real320&", "", &svm_abi::decimal_repr::fmm);
+			decimal_repr->set_operator_extern(operators::post_inc_t, (uint32_t)position::left, "real320&", "", &svm_abi::decimal_repr::pp);
+			decimal_repr->set_operator_extern(operators::post_dec_t, (uint32_t)position::left, "real320&", "", &svm_abi::decimal_repr::mm);
+			decimal_repr->set_operator_extern(operators::equals_t, (uint32_t)position::constant, "bool", "const real320&in", &svm_abi::decimal_repr::eq);
+			decimal_repr->set_operator_extern(operators::cmp_t, (uint32_t)position::constant, "int", "const real320&in", &svm_abi::decimal_repr::cmp);
+			decimal_repr->set_operator_extern(operators::add_t, (uint32_t)position::constant, "real320", "const real320&in", &svm_abi::decimal_repr::add);
+			decimal_repr->set_operator_extern(operators::sub_t, (uint32_t)position::constant, "real320", "const real320&in", &svm_abi::decimal_repr::sub);
+			decimal_repr->set_operator_extern(operators::mul_t, (uint32_t)position::constant, "real320", "const real320&in", &svm_abi::decimal_repr::mul);
+			decimal_repr->set_operator_extern(operators::div_t, (uint32_t)position::constant, "real320", "const real320&in", &svm_abi::decimal_repr::div);
+			decimal_repr->set_operator_extern(operators::mod_t, (uint32_t)position::constant, "real320", "const real320&in", &svm_abi::decimal_repr::per);
+			decimal_repr->set_method_static("real320 nan()", &decimal::nan);
+			decimal_repr->set_method_static("real320 zero()", &decimal::zero);
+			decimal_repr->set_method_static("real320 from(const string&in, uint8)", &svm_abi::decimal_repr::from);
 			uint128_repr->set_constructor_extern("void f()", &svm_abi::uint128_repr::default_construct);
 			uint128_repr->set_constructor_extern("void f(const string&in)", &svm_abi::uint128_repr::construct_string);
 			uint128_repr->set_constructor<uint128_t, int16_t>("void f(int16)");
@@ -823,7 +824,7 @@ namespace tangent
 			uint128_repr->set_method_extern("uint32 u32() const", &svm_abi::uint128_repr::to_uint32);
 			uint128_repr->set_method_extern("uint64 u64() const", &svm_abi::uint128_repr::to_uint64);
 			uint128_repr->set_method_extern("uint256 u256() const", &svm_abi::uint128_repr::to_uint256);
-			uint128_repr->set_method("float768 f768() const", &uint128_t::to_decimal);
+			uint128_repr->set_method("real320 r320() const", &uint128_t::to_decimal);
 			uint128_repr->set_method<uint128_t, const uint64_t&>("const uint64& low() const", &uint128_t::low);
 			uint128_repr->set_method<uint128_t, const uint64_t&>("const uint64& high() const", &uint128_t::high);
 			uint128_repr->set_method("uint8 bits() const", &uint128_t::bits);
@@ -864,7 +865,7 @@ namespace tangent
 			uint256_repr->set_method_extern("uint32 u32() const", &svm_abi::uint256_repr::to_uint32);
 			uint256_repr->set_method_extern("uint64 u64() const", &svm_abi::uint256_repr::to_uint64);
 			uint256_repr->set_method_extern("uint128 u128() const", &svm_abi::uint256_repr::to_uint128);
-			uint256_repr->set_method("float768 f768() const", &uint256_t::to_decimal);
+			uint256_repr->set_method("real320 r320() const", &uint256_t::to_decimal);
 			uint256_repr->set_method<uint256_t, const uint128_t&>("const uint128& low() const", &uint256_t::low);
 			uint256_repr->set_method<uint256_t, const uint128_t&>("const uint128& high() const", &uint256_t::high);
 			uint256_repr->set_method("uint16 bits() const", &uint256_t::bits);
@@ -904,8 +905,8 @@ namespace tangent
 			address->set_constructor<svm_abi::address, const uint256_t&>("void f(const uint256&in)");
 			address->set_method("uint256 u256() const", &svm_abi::address::to_public_key_hash);
 			address->set_method("bool empty() const", &svm_abi::address::empty);
-			address->set_method("void pay(const uint256&in, const float768&in) const", &svm_abi::address::pay);
-			address->set_method("float768 balance_of(const uint256&in) const", &svm_abi::address::balance_of);
+			address->set_method("void pay(const uint256&in, const real320&in) const", &svm_abi::address::pay);
+			address->set_method("real320 balance_of(const uint256&in) const", &svm_abi::address::balance_of);
 			address->set_method_extern("t call<t>(const string&in, const ?&in ...) const", &svm_abi::address::call, convention::generic_call);
 			address->set_operator_extern(operators::equals_t, (uint32_t)position::constant, "bool", "const address&in", &svm_abi::address::equals);
 
@@ -920,25 +921,29 @@ namespace tangent
 			abi->set_method("void wu8(bool)", &svm_abi::abi::wboolean);
 			abi->set_method("void wu160(const address&in)", &svm_abi::abi::wuint160);
 			abi->set_method("void wu256(const uint256&in)", &svm_abi::abi::wuint256);
-			abi->set_method("void wf768(const float768&in)", &svm_abi::abi::wdecimal);
+			abi->set_method("void wr320(const real320&in)", &svm_abi::abi::wdecimal);
 			abi->set_method("bool rstr(string&out)", &svm_abi::abi::rstr);
 			abi->set_method("bool ru8(bool&out)", &svm_abi::abi::rboolean);
 			abi->set_method("bool ru160(address&out)", &svm_abi::abi::ruint160);
 			abi->set_method("bool ru256(uint256&out)", &svm_abi::abi::ruint256);
-			abi->set_method("bool rf768(float768&out)", &svm_abi::abi::rdecimal);
+			abi->set_method("bool rr320(real320&out)", &svm_abi::abi::rdecimal);
 			abi->set_method("string data()", &svm_abi::abi::data);
 
 			vm->begin_namespace("log");
+			vm->set_function("usize height()", &svm_abi::log::height);
+			vm->set_function("usize index()", &svm_abi::log::index);
 			vm->set_function("bool emit(const ?&in)", &svm_abi::log::emit);
+			vm->set_function("bool into(usize, ?&out)", &svm_abi::log::into);
+			vm->set_function("t get<t>(usize)", &svm_abi::log::get, convention::generic_call);
 			vm->end_namespace();
 
 			vm->begin_namespace("sv");
 			vm->set_function("void set(const ?&in, const ?&in)", &svm_abi::sv::set);
-			vm->set_function("void set_if(const ?&in, const ?&in, bool)", &svm_abi::sv::set_if);
+			vm->set_function("void set(const ?&in, const ?&in, bool)", &svm_abi::sv::set_if);
 			vm->set_function("void erase(const ?&in)", &svm_abi::sv::erase);
 			vm->set_function("bool has(const ?&in)", &svm_abi::sv::has);
-			vm->set_function("bool at(const ?&in, ?&out)", &svm_abi::sv::at);
-			vm->set_function("t as<t>(const ?&in)", &svm_abi::sv::get, convention::generic_call);
+			vm->set_function("bool into(const ?&in, ?&out)", &svm_abi::sv::into);
+			vm->set_function("t get<t>(const ?&in)", &svm_abi::sv::get, convention::generic_call);
 			vm->end_namespace();
 
 			vm->begin_namespace("qsv");
@@ -959,37 +964,41 @@ namespace tangent
 			qsv_filter->set_property("uint256 value", &svm_abi::filter::value);
 			auto qsv_xc = vm->set_struct_trivial<svm_abi::xc>("xc");
 			qsv_xc->set_constructor<svm_abi::xc>("void f()");
-			qsv_xc->set_method("bool at(usize, ?&out) const", &svm_abi::xc::at);
-			qsv_xc->set_method("bool at(usize, ?&out, ?&out) const", &svm_abi::xc::at_row);
-			qsv_xc->set_method("bool at(usize, ?&out, ?&out, uint256&out) const", &svm_abi::xc::at_row_ranked);
+			qsv_xc->set_method("bool next()", &svm_abi::xc::reset);
+			qsv_xc->set_method("bool next(?&out) const", &svm_abi::xc::next);
+			qsv_xc->set_method("bool next(?&out, ?&out) const", &svm_abi::xc::next_row);
+			qsv_xc->set_method("bool next(?&out, ?&out, uint256&out) const", &svm_abi::xc::next_row_ranked);
 			auto qsv_xfc = vm->set_struct_trivial<svm_abi::xfc>("xfc");
 			qsv_xfc->set_constructor<svm_abi::xfc>("void f()");
-			qsv_xfc->set_method("bool at(usize, ?&out) const", &svm_abi::xfc::at);
-			qsv_xfc->set_method("bool at(usize, ?&out, ?&out) const", &svm_abi::xfc::at_row);
-			qsv_xfc->set_method("bool at(usize, ?&out, ?&out, uint256&out) const", &svm_abi::xfc::at_row_ranked);
+			qsv_xfc->set_method("bool next()", &svm_abi::xfc::reset);
+			qsv_xfc->set_method("bool next(?&out) const", &svm_abi::xfc::next);
+			qsv_xfc->set_method("bool next(?&out, ?&out) const", &svm_abi::xfc::next_row);
+			qsv_xfc->set_method("bool next(?&out, ?&out, uint256&out) const", &svm_abi::xfc::next_row_ranked);
 			auto qsv_yc = vm->set_struct_trivial<svm_abi::yc>("yc");
 			qsv_yc->set_constructor<svm_abi::yc>("void f()");
-			qsv_yc->set_method("bool at(usize, ?&out) const", &svm_abi::yc::at);
-			qsv_yc->set_method("bool at(usize, ?&out, ?&out) const", &svm_abi::yc::at_column);
-			qsv_yc->set_method("bool at(usize, ?&out, ?&out, uint256&out) const", &svm_abi::yc::at_column_ranked);
+			qsv_yc->set_method("bool next()", &svm_abi::yc::reset);
+			qsv_yc->set_method("bool next(?&out) const", &svm_abi::yc::next);
+			qsv_yc->set_method("bool next(?&out, ?&out) const", &svm_abi::yc::next_column);
+			qsv_yc->set_method("bool next(?&out, ?&out, uint256&out) const", &svm_abi::yc::next_column_ranked);
 			auto qsv_yfc = vm->set_struct_trivial<svm_abi::yfc>("yfc");
 			qsv_yfc->set_constructor<svm_abi::yfc>("void f()");
-			qsv_yfc->set_method("bool at(usize, ?&out) const", &svm_abi::yfc::at);
-			qsv_yfc->set_method("bool at(usize, ?&out, ?&out) const", &svm_abi::yfc::at_column);
-			qsv_yfc->set_method("bool at(usize, ?&out, ?&out, uint256&out) const", &svm_abi::yfc::at_column_ranked);
+			qsv_yfc->set_method("bool next()", &svm_abi::yfc::reset);
+			qsv_yfc->set_method("bool next(?&out) const", &svm_abi::yfc::next);
+			qsv_yfc->set_method("bool next(?&out, ?&out) const", &svm_abi::yfc::next_column);
+			qsv_yfc->set_method("bool next(?&out, ?&out, uint256&out) const", &svm_abi::yfc::next_column_ranked);
 			vm->set_function("void set(const ?&in, const ?&in, const ?&in)", &svm_abi::qsv::set);
 			vm->set_function("void set(const ?&in, const ?&in, const ?&in, const uint256&in)", &svm_abi::qsv::set_ranked);
-			vm->set_function("void set_if(const ?&in, const ?&in, const ?&in, bool)", &svm_abi::qsv::set_if);
-			vm->set_function("void set_if(const ?&in, const ?&in, const ?&in, const uint256&in, bool)", &svm_abi::qsv::set_if_ranked);
+			vm->set_function("void set(const ?&in, const ?&in, const ?&in, bool)", &svm_abi::qsv::set_if);
+			vm->set_function("void set(const ?&in, const ?&in, const ?&in, const uint256&in, bool)", &svm_abi::qsv::set_if_ranked);
 			vm->set_function("void erase(const ?&in, const ?&in)", &svm_abi::qsv::erase);
 			vm->set_function("bool has(const ?&in, const ?&in)", &svm_abi::qsv::has);
-			vm->set_function("bool at(const ?&in, const ?&in, ?&out)", &svm_abi::qsv::at);
-			vm->set_function("bool at(const ?&in, const ?&in, ?&out, uint256&out)", &svm_abi::qsv::at_ranked);
-			vm->set_function("t as<t>(const ?&in, const ?&in)", &svm_abi::qsv::get, convention::generic_call);
-			vm->set_function("xc query_x(const ?&in, usize = 1)", &svm_abi::xc::from);
-			vm->set_function("xfc query_x(const ?&in, const filter&in, usize = 1)", &svm_abi::xfc::from);
-			vm->set_function("yc query_y(const ?&in, usize = 1)", &svm_abi::yc::from);
-			vm->set_function("yfc query_y(const ?&in, const filter&in, usize = 1)", &svm_abi::yfc::from);
+			vm->set_function("bool into(const ?&in, const ?&in, ?&out)", &svm_abi::qsv::into);
+			vm->set_function("bool into(const ?&in, const ?&in, ?&out, uint256&out)", &svm_abi::qsv::into_ranked);
+			vm->set_function("t get<t>(const ?&in, const ?&in)", &svm_abi::qsv::get, convention::generic_call);
+			vm->set_function("xc x(const ?&in, usize = 0)", &svm_abi::xc::from);
+			vm->set_function("xfc x(const ?&in, const filter&in, usize = 0)", &svm_abi::xfc::from);
+			vm->set_function("yc y(const ?&in, usize = 0)", &svm_abi::yc::from);
+			vm->set_function("yfc y(const ?&in, const filter&in, usize = 0)", &svm_abi::yfc::from);
 			vm->set_function("filter gt(const uint256&in, order)", &svm_abi::filter::greater);
 			vm->set_function("filter gte(const uint256&in, order)", &svm_abi::filter::greater_equal);
 			vm->set_function("filter eq(const uint256&in, order)", &svm_abi::filter::equal);
@@ -1015,11 +1024,11 @@ namespace tangent
 			vm->set_function("bool paid()", &svm_abi::tx::paid);
 			vm->set_function("address from()", &svm_abi::tx::from);
 			vm->set_function("address to()", &svm_abi::tx::to);
-			vm->set_function("float768 value()", &svm_abi::tx::value);
+			vm->set_function("real320 value()", &svm_abi::tx::value);
 			vm->set_function("string blockchain()", &svm_abi::tx::blockchain);
 			vm->set_function("string token()", &svm_abi::tx::token);
 			vm->set_function("string contract()", &svm_abi::tx::contract);
-			vm->set_function("float768 gas_price()", &svm_abi::tx::gas_price);
+			vm->set_function("real320 gas_price()", &svm_abi::tx::gas_price);
 			vm->set_function("uint256 gas_use()", &svm_abi::tx::gas_use);
 			vm->set_function("uint256 gas_left()", &svm_abi::tx::gas_left);
 			vm->set_function("uint256 gas_limit()", &svm_abi::tx::gas_limit);
@@ -1027,8 +1036,8 @@ namespace tangent
 			vm->end_namespace();
 
 			vm->begin_namespace("currency");
-			vm->set_function("uint256 from(const float768&in)", &svm_abi::currency::from_decimal);
-			vm->set_function("float768 f768(const uint256&in)", &svm_abi::currency::to_decimal);
+			vm->set_function("uint256 from(const real320&in)", &svm_abi::currency::from_decimal);
+			vm->set_function("real320 r320(const uint256&in)", &svm_abi::currency::to_decimal);
 			vm->set_function("uint256 id_of(const string&in, const string&in = string(), const string&in = string())", &svm_abi::currency::id_of);
 			vm->set_function("string blockchain_of(const uint256&in)", &svm_abi::currency::blockchain_of);
 			vm->set_function("string token_of(const uint256&in)", &svm_abi::currency::token_of);
@@ -1065,8 +1074,10 @@ namespace tangent
 			vm->set_function("t max_value<t>()", &svm_abi::math::max_value, convention::generic_call);
 			vm->set_function("t min<t>(const t&in, const t&in)", &svm_abi::math::min, convention::generic_call);
 			vm->set_function("t max<t>(const t&in, const t&in)", &svm_abi::math::max, convention::generic_call);
-			vm->set_function("t pow<t>(const t&in, const t&in)", &svm_abi::math::pow, convention::generic_call);
+			vm->set_function("t clamp<t>(const t&in, const t&in, const t&in)", &svm_abi::math::clamp, convention::generic_call);
 			vm->set_function("t lerp<t>(const t&in, const t&in, const t&in)", &svm_abi::math::lerp, convention::generic_call);
+			vm->set_function("t pow<t>(const t&in, const t&in)", &svm_abi::math::pow, convention::generic_call);
+			vm->set_function("t sqrt<t>(const t&in)", &svm_abi::math::sqrt, convention::generic_call);
 			vm->end_namespace();
 
 			vm->set_function("void require(bool, const string&in = string())", &svm_abi::assertion::require);
@@ -1086,7 +1097,7 @@ namespace tangent
 			vm->set_function("string from(uint64, int = 10)", &svm_abi::string_repr::to_string<uint64_t>);
 			vm->set_function("string from(const uint128&in, int = 10)", &svm_abi::string_repr::to_string_uint128);
 			vm->set_function("string from(const uint256&in, int = 10)", &svm_abi::string_repr::to_string_uint256);
-			vm->set_function("string from(const float768&in)", &svm_abi::string_repr::to_string_decimal);
+			vm->set_function("string from(const real320&in)", &svm_abi::string_repr::to_string_decimal);
 			vm->set_function("string from(const address&in)", &svm_abi::string_repr::to_string_address);
 			vm->set_property("const usize npos", &svm_abi::string_repr::npos);
 			vm->end_namespace();

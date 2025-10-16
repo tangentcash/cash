@@ -264,7 +264,7 @@ namespace tangent
             uint64_t participation_std_per_account = 4;
             uint64_t participation_max_per_account = 16;
             uint64_t attestation_max_per_transaction = 32;
-            uint64_t consensus_proof_time = 6000;
+            uint64_t consensus_proof_time = 5000;
             uint64_t consensus_adjustment_time = 60000;
             uint64_t consensus_penalty_point_time = 600000;
             uint64_t transaction_throughput = 200;

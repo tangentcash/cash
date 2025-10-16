@@ -1,4 +1,5 @@
 #include "svm_abi.h"
+#include <gmp.h>
 extern "C"
 {
 #include "../internal/sha2.h"
@@ -8,10 +9,10 @@ extern "C"
 #define SCRIPT_TAG_ARRAY 19192
 #define SCRIPT_TYPENAME_UINT128 "uint128"
 #define SCRIPT_TYPENAME_UINT256 "uint256"
-#define SCRIPT_TYPENAME_DECIMAL "float768"
+#define SCRIPT_TYPENAME_DECIMAL "real320"
 #define SCRIPT_TYPENAME_ARRAY "array"
 #define SCRIPT_TYPENAME_STRING "string"
-
+#include <iostream>
 using namespace vitex::scripting;
 
 namespace tangent
@@ -20,6 +21,367 @@ namespace tangent
 	{
 		namespace svm_abi
 		{
+			static string mpf_to_string(const mpf_t target)
+			{
+				char buffer[1024]; string result; mp_exp_t exp;
+				char* str = mpf_get_str(buffer, &exp, 10, sizeof(buffer) - 2, target);
+				if (str != nullptr)
+				{
+					size_t negative = str[0] == '-' ? 1 : 0, len = strlen(str);
+					result.assign(std::string_view(str, len));
+					if (exp > 0)
+					{
+						len -= negative;
+						if (exp >= len)
+						{
+							result.resize(exp + negative);
+							memset(result.data() + negative + len, '0', exp - len);
+						}
+						else
+							result.insert(exp + negative, ".");
+					}
+					else if (exp < 0)
+					{
+						result.insert(negative, "0.");
+						result.insert(negative + 2, (size_t)(-exp), '0');
+					}
+					else
+						result.insert(negative, "0.");
+				}
+				if (!result.empty() && result.back() == '.')
+					result.pop_back();
+				return result;
+			}
+
+			struct mpz_value
+			{
+				mpz_t target = { };
+				mpz_t field = { };
+
+				mpz_value()
+				{
+					mpz_init(target);
+					mpz_init_set_ui(field, 1);
+				}
+				mpz_value(int type_id, void* value)
+				{
+					switch (type_id)
+					{
+						case (int)type_id::int8_t:
+							mpz_init_set_si(target, *(int8_t*)value);
+							mpz_init_set_ui(field, std::numeric_limits<uint8_t>::max());
+							break;
+						case (int)type_id::bool_t:
+						case (int)type_id::uint8_t:
+							mpz_init_set_ui(target, *(uint8_t*)value);
+							mpz_init_set_ui(field, std::numeric_limits<uint8_t>::max());
+							break;
+						case (int)type_id::int16_t:
+							mpz_init_set_si(target, *(int16_t*)value);
+							mpz_init_set_ui(field, std::numeric_limits<uint16_t>::max());
+							break;
+						case (int)type_id::uint16_t:
+							mpz_init_set_ui(target, *(uint16_t*)value);
+							mpz_init_set_ui(field, std::numeric_limits<uint16_t>::max());
+							break;
+						case (int)type_id::int32_t:
+							mpz_init_set_si(target, *(int32_t*)value);
+							mpz_init_set_ui(field, std::numeric_limits<uint32_t>::max());
+							break;
+						case (int)type_id::uint32_t:
+							mpz_init_set_ui(target, *(uint32_t*)value);
+							mpz_init_set_ui(field, std::numeric_limits<uint32_t>::max());
+							break;
+						case (int)type_id::int64_t:
+							mpz_init_set_si(target, *(int64_t*)value);
+							mpz_init_set_ui(field, std::numeric_limits<uint64_t>::max());
+							break;
+						case (int)type_id::uint64_t:
+							mpz_init_set_ui(target, *(uint64_t*)value);
+							mpz_init_set_ui(field, std::numeric_limits<uint64_t>::max());
+							break;
+						default:
+						{
+							auto type = svm_container::get()->get_vm()->get_type_info_by_id(type_id);
+							auto name = type.is_valid() ? type.get_name() : std::string_view();
+							value = type_id & (int)vitex::scripting::type_id::handle_t ? *(void**)value : value;
+							if (name == SCRIPT_TYPENAME_UINT128)
+							{
+								uint8_t buffer[sizeof(uint128_t)];
+								(*(uint128_t*)value).encode(buffer);
+								mpz_init(target);
+								mpz_import(target, sizeof(buffer), 1, 1, 1, 0, buffer);
+								mpz_init_set_ui(field, 2);
+								mpz_mul_ui(field, field, sizeof(uint128_t));
+								mpz_sub_ui(field, field, 1);
+								break;
+							}
+							else if (name == SCRIPT_TYPENAME_UINT256)
+							{
+								uint8_t buffer[sizeof(uint256_t)];
+								(*(uint256_t*)value).encode(buffer);
+								mpz_init(target);
+								mpz_import(target, sizeof(buffer), 1, 1, 1, 0, buffer);
+								mpz_init_set_ui(field, 2);
+								mpz_mul_ui(field, field, sizeof(uint256_t));
+								mpz_sub_ui(field, field, 1);
+								break;
+							}
+							else if (type_id & (int)vitex::scripting::type_id::mask_seqnbr_t)
+							{
+								mpz_init_set_ui(target, *(int32_t*)value);
+								mpz_init_set_ui(field, std::numeric_limits<uint32_t>::max());
+								break;
+							}
+
+							mpz_init(target);
+							mpz_init_set_ui(field, 1);
+							break;
+						}
+					}
+				}
+				mpz_value(const mpz_value& other)
+				{
+					mpz_init_set(target, other.target);
+					mpz_init_set(field, other.field);
+				}
+				mpz_value(mpz_value&& other) noexcept
+				{
+					mpz_init(target);
+					mpz_init(field);
+					mpz_swap(target, other.target);
+					mpz_swap(field, other.field);
+				}
+				~mpz_value()
+				{
+					mpz_clear(target);
+					mpz_clear(field);
+				}
+				mpz_value& operator=(const mpz_value& other)
+				{
+					if (this == &other)
+						return *this;
+
+					mpz_set(target, other.target);
+					mpz_init_set(field, other.field);
+					return *this;
+				}
+				mpz_value& operator=(mpz_value&& other) noexcept
+				{
+					if (this == &other)
+						return *this;
+
+					mpz_swap(target, other.target);
+					mpz_swap(field, other.field);
+					return *this;
+				}
+				bool into(generic_context& inout)
+				{
+					int type_id = inout.get_return_addressable_type_id();
+					mpz_mod(target, target, field);
+					switch (type_id)
+					{
+						case (int)type_id::int8_t:
+							inout.set_return_byte((uint8_t)mpz_get_si(target));
+							return true;
+						case (int)type_id::bool_t:
+						case (int)type_id::uint8_t:
+							inout.set_return_byte((uint8_t)mpz_get_ui(target));
+							return true;
+						case (int)type_id::int16_t:
+							inout.set_return_word((uint16_t)mpz_get_si(target));
+							return true;
+						case (int)type_id::uint16_t:
+							inout.set_return_word((uint16_t)mpz_get_ui(target));
+							return true;
+						case (int)type_id::int32_t:
+							inout.set_return_dword((uint32_t)mpz_get_si(target));
+							return true;
+						case (int)type_id::uint32_t:
+							inout.set_return_dword((uint32_t)mpz_get_ui(target));
+							return true;
+						case (int)type_id::int64_t:
+							inout.set_return_qword((uint64_t)mpz_get_si(target));
+							return true;
+						case (int)type_id::uint64_t:
+							inout.set_return_qword((uint64_t)mpz_get_ui(target));
+							return true;
+						default:
+						{
+							auto type = svm_container::get()->get_vm()->get_type_info_by_id(type_id);
+							auto name = type.is_valid() ? type.get_name() : std::string_view();
+							if (name == SCRIPT_TYPENAME_UINT128)
+							{
+								size_t size = 0;
+								char* data = (char*)mpz_export(nullptr, &size, 1, 1, 1, 0, target);
+								uint8_t buffer[sizeof(uint128_t)] = { 0 };
+								memcpy((char*)buffer + (sizeof(buffer) - size), data, size);
+								free(data);
+
+								uint128_t result;
+								result.decode(buffer);
+								new (inout.get_address_of_return_location()) uint128_t(result);
+								return true;
+							}
+							else if (name == SCRIPT_TYPENAME_UINT256)
+							{
+								size_t size = 0;
+								char* data = (char*)mpz_export(nullptr, &size, 1, 1, 1, 0, target);
+								uint8_t buffer[sizeof(uint256_t)] = { 0 };
+								memcpy((char*)buffer + (sizeof(buffer) - size), data, size);
+								free(data);
+
+								uint256_t result;
+								result.decode(buffer);
+								new (inout.get_address_of_return_location()) uint256_t(result);
+								return true;
+							}
+							else if (type_id & (int)vitex::scripting::type_id::mask_seqnbr_t)
+							{
+								inout.set_return_dword((uint32_t)mpz_get_si(target));
+								return true;
+							}
+							return false;
+						}
+					}
+				}
+			};
+
+			struct mpf_value
+			{
+				mpf_t target = { };
+
+				mpf_value()
+				{
+					mpf_init(target);
+					mpf_set_prec(target, 8);
+				}
+				mpf_value(int type_id, void* value)
+				{
+					switch (type_id)
+					{
+						case (int)type_id::float_t:
+							mpf_init_set_d(target, (double)*(float*)value);
+							mpf_set_prec(target, 32);
+							break;
+						case (int)type_id::double_t:
+							mpf_init_set_d(target, *(double*)value);
+							mpf_set_prec(target, 64);
+							break;
+						default:
+						{
+							auto type = svm_container::get()->get_vm()->get_type_info_by_id(type_id);
+							auto name = type.is_valid() ? type.get_name() : std::string_view();
+							value = type_id & (int)vitex::scripting::type_id::handle_t ? *(void**)value : value;
+							if (name == SCRIPT_TYPENAME_DECIMAL)
+							{
+								auto str = (*(decimal*)value).to_string();
+								mpf_init(target);
+								mpf_set_prec(target, decimal_repr::target_bits());
+								mpf_set_str(target, str.c_str(), 10);
+								break;
+							}
+
+							mpf_init(target);
+							mpf_set_prec(target, 8);
+							break;
+						}
+					}
+				}
+				mpf_value(const mpf_value& other)
+				{
+					mpf_init_set(target, other.target);
+				}
+				mpf_value(mpf_value&& other) noexcept
+				{
+					mpf_init(target);
+					mpf_swap(target, other.target);
+				}
+				~mpf_value()
+				{
+					mpf_clear(target);
+				}
+				mpf_value& operator=(const mpf_value& other)
+				{
+					if (this == &other)
+						return *this;
+
+					mpf_set(target, other.target);
+					return *this;
+				}
+				mpf_value& operator=(mpf_value&& other) noexcept
+				{
+					if (this == &other)
+						return *this;
+
+					mpf_swap(target, other.target);
+					return *this;
+				}
+				bool into(generic_context& inout)
+				{
+					int type_id = inout.get_return_addressable_type_id();
+					switch (type_id)
+					{
+						case (int)type_id::float_t:
+							inout.set_return_float((float)mpf_get_d(target));
+							return true;
+						case (int)type_id::double_t:
+							inout.set_return_double((double)mpf_get_d(target));
+							return true;
+						default:
+						{
+							auto type = svm_container::get()->get_vm()->get_type_info_by_id(type_id);
+							auto name = type.is_valid() ? type.get_name() : std::string_view();
+							if (name == SCRIPT_TYPENAME_DECIMAL)
+							{
+								decimal result = decimal(mpf_to_string(target));
+								decimal_repr::truncate_or_throw(result, true);
+								new (inout.get_address_of_return_location()) decimal(std::move(result));
+								return true;
+							}
+							return false;
+						}
+					}
+				}
+				size_t bits()
+				{
+					char buffer[1024]; mp_exp_t exp;
+					mpf_get_str(buffer, &exp, 10, sizeof(buffer) - 2, target);
+					return decimal_repr::estimate_bits((uint32_t)strlen(buffer));
+				}
+				static bool requires_floating_point(int type_id)
+				{
+					switch (type_id)
+					{
+						case (int)type_id::float_t:
+						case (int)type_id::double_t:
+							return true;
+						default:
+						{
+							auto type = svm_container::get()->get_vm()->get_type_info_by_id(type_id);
+							auto name = type.is_valid() ? type.get_name() : std::string_view();
+							return name == SCRIPT_TYPENAME_DECIMAL;
+						}
+					}
+				}
+			};
+
+			static void mpf_value_to_mpz_value(const mpf_value& input, mpz_value& output)
+			{
+				auto str = mpf_to_string(input.target);
+				mpz_set_str(output.target, str.c_str(), 10);
+			}
+			static void mpz_value_to_mpf_value(const mpz_value& input, mpf_value& output)
+			{
+				char* str = mpz_get_str(nullptr, 10, input.target);
+				if (str != nullptr)
+				{
+					mpf_set_prec(output.target, (mp_bitcnt_t)mpz_sizeinbase(input.field, 2));
+					mpf_set_str(output.target, str, 10);
+					free(str);
+				}
+			}
+
 			exception::pointer::pointer() : context(nullptr)
 			{
 			}
@@ -1681,6 +2043,11 @@ namespace tangent
 				return (uint32_t)(std::ceil(page / capacity) * capacity);
 			}
 
+			void decimal_repr::custom_constructor_bool(decimal* base, bool value)
+			{
+				new(base) decimal(value ? "1" : "0");
+				truncate_or_throw(*base, true);
+			}
 			void decimal_repr::custom_constructor_string(decimal* base, const string_repr& value)
 			{
 				new(base) decimal(value.view());
@@ -1693,7 +2060,7 @@ namespace tangent
 			}
 			void decimal_repr::custom_constructor(decimal* base)
 			{
-				new(base) decimal();
+				new(base) decimal(decimal::zero());
 				truncate_or_throw(*base, true);
 			}
 			bool decimal_repr::is_not_zero_or_nan(decimal& base)
@@ -1703,19 +2070,17 @@ namespace tangent
 			bool decimal_repr::truncate_or_throw(decimal& base, bool require_decimal_precision)
 			{
 				auto* vm = virtual_machine::get();
-				if (vm != nullptr)
-				{
-					auto& message = protocol::now().message;
-					if (require_decimal_precision || base.decimal_size() > message.decimal_precision)
-						base.truncate(message.decimal_precision);
+				if (!vm)
+					return true;
 
-					if (base.integer_size() > message.integer_precision)
-					{
-						exception::throw_ptr(exception::pointer(exception::category::memory(), "real number is overflowing significant places limit"));
-						return false;
-					}
-				}
-				return true;
+				auto& message = protocol::now().message;
+				if (require_decimal_precision || base.decimal_size() > message.decimal_precision)
+					base.truncate(message.decimal_precision);
+
+				bool throws = base.integer_size() > message.integer_precision || base.decimal_size() > message.decimal_precision;
+				if (throws)
+					exception::throw_ptr(exception::pointer(exception::category::memory(), "fixed point overflow"));
+				return !throws;
 			}
 			uint128_t decimal_repr::to_uint128(decimal& base)
 			{
@@ -1829,6 +2194,17 @@ namespace tangent
 				decimal result = decimal::from(data.view(), base);
 				truncate_or_throw(result, false);
 				return result;
+			}
+			uint32_t decimal_repr::estimate_bits(uint32_t digits)
+			{
+				static double log10 = log2(10);
+				auto bits = (uint32_t)ceil(log10 * (double)digits);
+				return bits + bits % 2;
+			}
+			uint32_t decimal_repr::target_bits()
+			{
+				auto& message = protocol::now().message;
+				return estimate_bits(message.integer_precision + message.decimal_precision);
 			}
 
 			void uint128_repr::default_construct(uint128_t* base)
@@ -2287,15 +2663,19 @@ namespace tangent
 				return { ledger::filter_comparator::less_equal, order, value };
 			}
 
-			bool xc::at(uint32_t offset, void* object_value, int object_type_id)
+			void xc::reset()
 			{
-				return at_row_ranked(offset, object_value, object_type_id, nullptr, (int)type_id::void_t, nullptr);
+				offset = 0;
 			}
-			bool xc::at_row(uint32_t offset, void* object_value, int object_type_id, void* row_value, int row_type_id)
+			bool xc::next(void* object_value, int object_type_id)
 			{
-				return at_row_ranked(offset, object_value, object_type_id, row_value, row_type_id, nullptr);
+				return next_row_ranked(object_value, object_type_id, nullptr, (int)type_id::void_t, nullptr);
 			}
-			bool xc::at_row_ranked(uint32_t offset, void* object_value, int object_type_id, void* row_value, int row_type_id, uint256_t* filter_value)
+			bool xc::next_row(void* object_value, int object_type_id, void* row_value, int row_type_id)
+			{
+				return next_row_ranked(object_value, object_type_id, row_value, row_type_id, nullptr);
+			}
+			bool xc::next_row_ranked(void* object_value, int object_type_id, void* row_value, int row_type_id, uint256_t* filter_value)
 			{
 				auto* program = svm_program::fetch_immutable_or_throw();
 				if (!program)
@@ -2335,6 +2715,7 @@ namespace tangent
 				if (filter_value != nullptr)
 					*filter_value = it->second->filter;
 
+				++offset;
 				return true;
 			}
 			xc xc::from(const void* column_value, int column_type_id, uint32_t count)
@@ -2344,6 +2725,7 @@ namespace tangent
 					return xc();
 
 				xc result;
+				result.offset = 0;
 				result.count = count > 0 ? count : SCRIPT_QUERY_PREFETCH;
 
 				auto status = svm_marshalling::store(&result.column, column_value, column_type_id);
@@ -2353,15 +2735,19 @@ namespace tangent
 				return result;
 			}
 
-			bool xfc::at(uint32_t offset, void* object_value, int object_type_id)
+			void xfc::reset()
 			{
-				return at_row_ranked(offset, object_value, object_type_id, nullptr, (int)type_id::void_t, nullptr);
+				offset = 0;
 			}
-			bool xfc::at_row(uint32_t offset, void* object_value, int object_type_id, void* row_value, int row_type_id)
+			bool xfc::next(void* object_value, int object_type_id)
 			{
-				return at_row_ranked(offset, object_value, object_type_id, row_value, row_type_id, nullptr);
+				return next_row_ranked(object_value, object_type_id, nullptr, (int)type_id::void_t, nullptr);
 			}
-			bool xfc::at_row_ranked(uint32_t offset, void* object_value, int object_type_id, void* row_value, int row_type_id, uint256_t* filter_value)
+			bool xfc::next_row(void* object_value, int object_type_id, void* row_value, int row_type_id)
+			{
+				return next_row_ranked(object_value, object_type_id, row_value, row_type_id, nullptr);
+			}
+			bool xfc::next_row_ranked(void* object_value, int object_type_id, void* row_value, int row_type_id, uint256_t* filter_value)
 			{
 				auto* program = svm_program::fetch_immutable_or_throw();
 				if (!program)
@@ -2401,6 +2787,7 @@ namespace tangent
 				if (filter_value != nullptr)
 					*filter_value = it->second->filter;
 
+				++offset;
 				return true;
 			}
 			xfc xfc::from(const void* column_value, int column_type_id, const filter& query, uint32_t count)
@@ -2411,6 +2798,7 @@ namespace tangent
 
 				xfc result;
 				result.query = query;
+				result.offset = 0;
 				result.count = count > 0 ? count : SCRIPT_QUERY_PREFETCH;
 
 				auto status = svm_marshalling::store(&result.column, column_value, column_type_id);
@@ -2420,15 +2808,19 @@ namespace tangent
 				return result;
 			}
 
-			bool yc::at(uint32_t offset, void* object_value, int object_type_id)
+			void yc::reset()
 			{
-				return at_column_ranked(offset, object_value, object_type_id, nullptr, (int)type_id::void_t, nullptr);
+				offset = 0;
 			}
-			bool yc::at_column(uint32_t offset, void* object_value, int object_type_id, void* column_value, int column_type_id)
+			bool yc::next(void* object_value, int object_type_id)
 			{
-				return at_column_ranked(offset, object_value, object_type_id, column_value, column_type_id, nullptr);
+				return next_column_ranked(object_value, object_type_id, nullptr, (int)type_id::void_t, nullptr);
 			}
-			bool yc::at_column_ranked(uint32_t offset, void* object_value, int object_type_id, void* column_value, int column_type_id, uint256_t* filter_value)
+			bool yc::next_column(void* object_value, int object_type_id, void* column_value, int column_type_id)
+			{
+				return next_column_ranked(object_value, object_type_id, column_value, column_type_id, nullptr);
+			}
+			bool yc::next_column_ranked(void* object_value, int object_type_id, void* column_value, int column_type_id, uint256_t* filter_value)
 			{
 				auto* program = svm_program::fetch_immutable_or_throw();
 				if (!program)
@@ -2468,6 +2860,7 @@ namespace tangent
 				if (filter_value != nullptr)
 					*filter_value = it->second->filter;
 
+				++offset;
 				return true;
 			}
 			yc yc::from(const void* row_value, int row_type_id, uint32_t count)
@@ -2477,6 +2870,7 @@ namespace tangent
 					return yc();
 
 				yc result;
+				result.offset = 0;
 				result.count = count > 0 ? count : SCRIPT_QUERY_PREFETCH;
 
 				auto status = svm_marshalling::store(&result.row, row_value, row_type_id);
@@ -2486,15 +2880,19 @@ namespace tangent
 				return result;
 			}
 
-			bool yfc::at(uint32_t offset, void* object_value, int object_type_id)
+			void yfc::reset()
 			{
-				return at_column_ranked(offset, object_value, object_type_id, nullptr, (int)type_id::void_t, nullptr);
+				offset = 0;
 			}
-			bool yfc::at_column(uint32_t offset, void* object_value, int object_type_id, void* column_value, int column_type_id)
+			bool yfc::next(void* object_value, int object_type_id)
 			{
-				return at_column_ranked(offset, object_value, object_type_id, column_value, column_type_id, nullptr);
+				return next_column_ranked(object_value, object_type_id, nullptr, (int)type_id::void_t, nullptr);
 			}
-			bool yfc::at_column_ranked(uint32_t offset, void* object_value, int object_type_id, void* column_value, int column_type_id, uint256_t* filter_value)
+			bool yfc::next_column(void* object_value, int object_type_id, void* column_value, int column_type_id)
+			{
+				return next_column_ranked(object_value, object_type_id, column_value, column_type_id, nullptr);
+			}
+			bool yfc::next_column_ranked(void* object_value, int object_type_id, void* column_value, int column_type_id, uint256_t* filter_value)
 			{
 				auto* program = svm_program::fetch_immutable_or_throw();
 				if (!program)
@@ -2534,6 +2932,7 @@ namespace tangent
 				if (filter_value != nullptr)
 					*filter_value = it->second->filter;
 
+				++offset;
 				return true;
 			}
 			yfc yfc::from(const void* row_value, int row_type_id, const filter& query, uint32_t count)
@@ -2544,6 +2943,7 @@ namespace tangent
 
 				yfc result;
 				result.query = query;
+				result.offset = 0;
 				result.count = count > 0 ? count : SCRIPT_QUERY_PREFETCH;
 
 				auto status = svm_marshalling::store(&result.row, row_value, row_type_id);
@@ -2553,10 +2953,57 @@ namespace tangent
 				return result;
 			}
 
+			uint32_t log::height()
+			{
+				auto* program = svm_program::fetch_immutable_or_throw();
+				return program ? program->context->receipt.events.size() : 0;
+			}
+			uint32_t log::index()
+			{
+				auto* program = svm_program::fetch_immutable_or_throw();
+				return program && !program->context->receipt.events.empty() ? program->context->receipt.events.size() - 1 : 0;
+			}
 			bool log::emit(const void* object_value, int object_type_id)
 			{
 				auto* program = svm_program::fetch_mutable_or_throw();
 				return program ? program->emit_event(object_value, object_type_id) : false;
+			}
+			bool log::into(uint32_t event_index, void* object_value, int object_type_id)
+			{
+				auto* program = svm_program::fetch_immutable_or_throw();
+				if (!program || event_index >= program->context->receipt.events.size())
+					return false;
+
+				format::wo_stream writer;
+				auto& event = program->context->receipt.events[event_index];
+				if (!format::variables_util::serialize_flat_into(event.second, &writer))
+					return false;
+
+				format::ro_stream reader = writer.ro();
+				return !!svm_marshalling::load(reader, object_value, object_type_id);
+			}
+			void log::get(asIScriptGeneric* generic)
+			{
+				auto* program = svm_program::fetch_immutable_or_throw();
+				if (!program)
+					return;
+
+				generic_context inout = generic_context(generic);
+				uint32_t event_index = inout.get_arg_dword(0);
+				void* object_value = inout.get_address_of_return_location();
+				int object_type_id = inout.get_return_addressable_type_id();
+				if (event_index >= program->context->receipt.events.size())
+					return exception::throw_ptr(exception::pointer(exception::category::argument(), stringify::text("event matching index %i not found", (int)event_index)));
+
+				format::wo_stream writer;
+				auto& event = program->context->receipt.events[event_index];
+				if (!format::variables_util::serialize_flat_into(event.second, &writer))
+					return exception::throw_ptr(svm_abi::exception::pointer(svm_abi::exception::category::argument(), "event value conversion error"));
+
+				format::ro_stream reader = writer.ro();
+				auto status = svm_marshalling::load(reader, object_value, object_type_id);
+				if (!status)
+					return exception::throw_ptr(exception::pointer(exception::category::storage(), "event value corrupted"));
 			}
 
 			void sv::store(const void* index_value, int index_type_id, const void* object_value, int object_type_id)
@@ -2651,7 +3098,7 @@ namespace tangent
 				auto data = program->context->get_account_uniform(program->callable().data, index.data);
 				return data && !data->data.empty();
 			}
-			bool sv::at(const void* index_value, int index_type_id, void* object_value, int object_type_id)
+			bool sv::into(const void* index_value, int index_type_id, void* object_value, int object_type_id)
 			{
 				return load(index_value, index_type_id, object_value, object_type_id, false);
 			}
@@ -2772,13 +3219,13 @@ namespace tangent
 			{
 				return set_if_ranked(column_value, column_type_id, row_value, row_type_id, object_value, object_type_id, 0, condition);
 			}
-			bool qsv::at_ranked(const void* column_value, int column_type_id, const void* row_value, int row_type_id, void* object_value, int object_type_id, uint256_t* filter_value)
+			bool qsv::into_ranked(const void* column_value, int column_type_id, const void* row_value, int row_type_id, void* object_value, int object_type_id, uint256_t* filter_value)
 			{
 				return load(column_value, column_type_id, row_value, row_type_id, object_value, object_type_id, filter_value, false);
 			}
-			bool qsv::at(const void* column_value, int column_type_id, const void* row_value, int row_type_id, void* object_value, int object_type_id)
+			bool qsv::into(const void* column_value, int column_type_id, const void* row_value, int row_type_id, void* object_value, int object_type_id)
 			{
-				return at_ranked(column_value, column_type_id, row_value, row_type_id, object_value, object_type_id, nullptr);
+				return into_ranked(column_value, column_type_id, row_value, row_type_id, object_value, object_type_id, nullptr);
 			}
 			bool qsv::has(const void* column_value, int column_type_id, const void* row_value, int row_type_id)
 			{
@@ -3112,8 +3559,8 @@ namespace tangent
 			void math::min_value(asIScriptGeneric* generic)
 			{
 				generic_context inout = generic_context(generic);
-				int result_type_id = inout.get_return_addressable_type_id();
-				switch (result_type_id)
+				int type_id = inout.get_return_addressable_type_id();
+				switch (type_id)
 				{
 					case (int)type_id::int8_t:
 						inout.set_return_byte((uint8_t)std::numeric_limits<int8_t>::min());
@@ -3148,7 +3595,7 @@ namespace tangent
 						break;
 					default:
 					{
-						auto type = svm_container::get()->get_vm()->get_type_info_by_id(result_type_id);
+						auto type = svm_container::get()->get_vm()->get_type_info_by_id(type_id);
 						auto name = type.is_valid() ? type.get_name() : std::string_view();
 						if (name == SCRIPT_TYPENAME_UINT128)
 						{
@@ -3177,7 +3624,7 @@ namespace tangent
 							new (inout.get_address_of_return_location()) decimal(result);
 							break;
 						}
-						else if (result_type_id & (int)vitex::scripting::type_id::mask_seqnbr_t)
+						else if (type_id & (int)vitex::scripting::type_id::mask_seqnbr_t)
 						{
 							inout.set_return_dword((uint32_t)std::numeric_limits<int32_t>::min());
 							break;
@@ -3189,8 +3636,8 @@ namespace tangent
 			void math::max_value(asIScriptGeneric* generic)
 			{
 				generic_context inout = generic_context(generic);
-				int result_type_id = inout.get_return_addressable_type_id();
-				switch (result_type_id)
+				int type_id = inout.get_return_addressable_type_id();
+				switch (type_id)
 				{
 					case (int)type_id::int8_t:
 						inout.set_return_byte((uint8_t)std::numeric_limits<int8_t>::max());
@@ -3225,7 +3672,7 @@ namespace tangent
 						break;
 					default:
 					{
-						auto type = svm_container::get()->get_vm()->get_type_info_by_id(result_type_id);
+						auto type = svm_container::get()->get_vm()->get_type_info_by_id(type_id);
 						auto name = type.is_valid() ? type.get_name() : std::string_view();
 						if (name == SCRIPT_TYPENAME_UINT128)
 						{
@@ -3253,7 +3700,7 @@ namespace tangent
 							new (inout.get_address_of_return_location()) decimal(result);
 							break;
 						}
-						else if (result_type_id & (int)vitex::scripting::type_id::mask_seqnbr_t)
+						else if (type_id & (int)vitex::scripting::type_id::mask_seqnbr_t)
 						{
 							inout.set_return_dword((uint32_t)std::numeric_limits<int32_t>::max());
 							break;
@@ -3265,340 +3712,150 @@ namespace tangent
 			void math::min(asIScriptGeneric* generic)
 			{
 				generic_context inout = generic_context(generic);
-				int left_type_id = inout.get_arg_type_id(0);
-				int right_type_id = inout.get_arg_type_id(1);
-				int result_type_id = inout.get_return_addressable_type_id();
-				if (left_type_id != right_type_id || left_type_id != result_type_id)
-					return exception::throw_ptr(exception::pointer(exception::category::execution(), "template type mismatch"));
-
-				void* left_value = inout.get_arg_address(0);
-				void* right_value = inout.get_arg_address(1);
-				switch (result_type_id)
+				int type_id = inout.get_return_addressable_type_id();
+				if (mpf_value::requires_floating_point(type_id))
 				{
-					case (int)type_id::int8_t:
-						inout.set_return_byte((uint8_t)std::min<int8_t>(*(int8_t*)left_value, *(int8_t*)right_value));
-						break;
-					case (int)type_id::bool_t:
-					case (int)type_id::uint8_t:
-						inout.set_return_byte(std::min<uint8_t>(*(uint8_t*)left_value, *(uint8_t*)right_value));
-						break;
-					case (int)type_id::int16_t:
-						inout.set_return_word((uint16_t)std::min<int16_t>(*(int16_t*)left_value, *(int16_t*)right_value));
-						break;
-					case (int)type_id::uint16_t:
-						inout.set_return_word(std::min<uint16_t>(*(uint16_t*)left_value, *(uint16_t*)right_value));
-						break;
-					case (int)type_id::int32_t:
-						inout.set_return_dword((uint32_t)std::min<int32_t>(*(int32_t*)left_value, *(int32_t*)right_value));
-						break;
-					case (int)type_id::uint32_t:
-						inout.set_return_dword(std::min<uint32_t>(*(uint32_t*)left_value, *(uint32_t*)right_value));
-						break;
-					case (int)type_id::int64_t:
-						inout.set_return_qword((uint64_t)std::min<int64_t>(*(int64_t*)left_value, *(int64_t*)right_value));
-						break;
-					case (int)type_id::uint64_t:
-						inout.set_return_qword(std::min<uint64_t>(*(uint64_t*)left_value, *(uint64_t*)right_value));
-						break;
-					case (int)type_id::float_t:
-						inout.set_return_float(std::min<float>(*(float*)left_value, *(float*)right_value));
-						break;
-					case (int)type_id::double_t:
-						inout.set_return_double(std::min<double>(*(double*)left_value, *(double*)right_value));
-						break;
-					default:
-					{
-						auto type = svm_container::get()->get_vm()->get_type_info_by_id(result_type_id);
-						auto name = type.is_valid() ? type.get_name() : std::string_view();
-						left_value = left_type_id & (int)vitex::scripting::type_id::handle_t ? *(void**)left_value : left_value;
-						right_value = right_type_id & (int)vitex::scripting::type_id::handle_t ? *(void**)right_value : right_value;
-						if (name == SCRIPT_TYPENAME_UINT128)
-						{
-							new (inout.get_address_of_return_location()) uint128_t(std::min<uint128_t>(*(uint128_t*)left_value, *(uint128_t*)right_value));
-							break;
-						}
-						else if (name == SCRIPT_TYPENAME_UINT256)
-						{
-							new (inout.get_address_of_return_location()) uint256_t(std::min<uint256_t>(*(uint256_t*)left_value, *(uint256_t*)right_value));
-							break;
-						}
-						else if (name == SCRIPT_TYPENAME_DECIMAL)
-						{
-							new (inout.get_address_of_return_location()) decimal(std::min<decimal>(*(decimal*)left_value, *(decimal*)right_value));
-							break;
-						}
-						else if (result_type_id & (int)vitex::scripting::type_id::mask_seqnbr_t)
-						{
-							inout.set_return_dword((uint32_t)std::min<int32_t>(*(int32_t*)left_value, *(int32_t*)right_value));
-							break;
-						}
-						return exception::throw_ptr(exception::pointer(exception::category::execution(), "template type must be arithmetic"));
-					}
+					mpf_value left = mpf_value(inout.get_arg_type_id(0), inout.get_arg_address(0));
+					mpf_value right = mpf_value(inout.get_arg_type_id(1), inout.get_arg_address(1));
+					auto& lowest = mpf_cmp(left.target, right.target) < 0 ? left : right;
+					if (!lowest.into(inout))
+						return exception::throw_ptr(exception::pointer(exception::category::execution(), "template type must be fixed point"));
+				}
+				else
+				{
+					mpz_value left = mpz_value(inout.get_arg_type_id(0), inout.get_arg_address(0));
+					mpz_value right = mpz_value(inout.get_arg_type_id(1), inout.get_arg_address(1));
+					auto& lowest = mpz_cmp(left.target, right.target) < 0 ? left : right;
+					if (!lowest.into(inout))
+						return exception::throw_ptr(exception::pointer(exception::category::execution(), "template type must be integer"));
 				}
 			}
 			void math::max(asIScriptGeneric* generic)
 			{
 				generic_context inout = generic_context(generic);
-				int left_type_id = inout.get_arg_type_id(0);
-				int right_type_id = inout.get_arg_type_id(1);
-				int result_type_id = inout.get_return_addressable_type_id();
-				if (left_type_id != right_type_id || left_type_id != result_type_id)
-					return exception::throw_ptr(exception::pointer(exception::category::execution(), "template type mismatch"));
-
-				void* left_value = inout.get_arg_address(0);
-				void* right_value = inout.get_arg_address(1);
-				switch (result_type_id)
+				int type_id = inout.get_return_addressable_type_id();
+				if (mpf_value::requires_floating_point(type_id))
 				{
-					case (int)type_id::int8_t:
-						inout.set_return_byte((uint8_t)std::max<int8_t>(*(int8_t*)left_value, *(int8_t*)right_value));
-						break;
-					case (int)type_id::bool_t:
-					case (int)type_id::uint8_t:
-						inout.set_return_byte(std::max<uint8_t>(*(uint8_t*)left_value, *(uint8_t*)right_value));
-						break;
-					case (int)type_id::int16_t:
-						inout.set_return_word((uint16_t)std::max<int16_t>(*(int16_t*)left_value, *(int16_t*)right_value));
-						break;
-					case (int)type_id::uint16_t:
-						inout.set_return_word(std::max<uint16_t>(*(uint16_t*)left_value, *(uint16_t*)right_value));
-						break;
-					case (int)type_id::int32_t:
-						inout.set_return_dword((uint32_t)std::max<int32_t>(*(int32_t*)left_value, *(int32_t*)right_value));
-						break;
-					case (int)type_id::uint32_t:
-						inout.set_return_dword(std::max<uint32_t>(*(uint32_t*)left_value, *(uint32_t*)right_value));
-						break;
-					case (int)type_id::int64_t:
-						inout.set_return_qword((uint64_t)std::max<int64_t>(*(int64_t*)left_value, *(int64_t*)right_value));
-						break;
-					case (int)type_id::uint64_t:
-						inout.set_return_qword(std::max<uint64_t>(*(uint64_t*)left_value, *(uint64_t*)right_value));
-						break;
-					case (int)type_id::float_t:
-						inout.set_return_float(std::max<float>(*(float*)left_value, *(float*)right_value));
-						break;
-					case (int)type_id::double_t:
-						inout.set_return_double(std::max<double>(*(double*)left_value, *(double*)right_value));
-						break;
-					default:
-					{
-						auto type = svm_container::get()->get_vm()->get_type_info_by_id(result_type_id);
-						auto name = type.is_valid() ? type.get_name() : std::string_view();
-						left_value = left_type_id & (int)vitex::scripting::type_id::handle_t ? *(void**)left_value : left_value;
-						right_value = right_type_id & (int)vitex::scripting::type_id::handle_t ? *(void**)right_value : right_value;
-						if (name == SCRIPT_TYPENAME_UINT128)
-						{
-							new (inout.get_address_of_return_location()) uint128_t(std::max<uint128_t>(*(uint128_t*)left_value, *(uint128_t*)right_value));
-							break;
-						}
-						else if (name == SCRIPT_TYPENAME_UINT256)
-						{
-							new (inout.get_address_of_return_location()) uint256_t(std::max<uint256_t>(*(uint256_t*)left_value, *(uint256_t*)right_value));
-							break;
-						}
-						else if (name == SCRIPT_TYPENAME_DECIMAL)
-						{
-							decimal* ptr = (decimal*)inout.get_address_of_return_location();
-							new (inout.get_address_of_return_location()) decimal(std::max<decimal>(*(decimal*)left_value, *(decimal*)right_value));
-							break;
-						}
-						else if (result_type_id & (int)vitex::scripting::type_id::mask_seqnbr_t)
-						{
-							inout.set_return_dword((uint32_t)std::max<int32_t>(*(int32_t*)left_value, *(int32_t*)right_value));
-							break;
-						}
-						return exception::throw_ptr(exception::pointer(exception::category::execution(), "template type must be arithmetic"));
-					}
+					mpf_value left = mpf_value(inout.get_arg_type_id(0), inout.get_arg_address(0));
+					mpf_value right = mpf_value(inout.get_arg_type_id(1), inout.get_arg_address(1));
+					auto& highest = mpf_cmp(left.target, right.target) > 0 ? left : right;
+					if (!highest.into(inout))
+						return exception::throw_ptr(exception::pointer(exception::category::execution(), "template type must be fixed point"));
+				}
+				else
+				{
+					mpz_value left = mpz_value(inout.get_arg_type_id(0), inout.get_arg_address(0));
+					mpz_value right = mpz_value(inout.get_arg_type_id(1), inout.get_arg_address(1));
+					auto& highest = mpz_cmp(left.target, right.target) > 0 ? left : right;
+					if (!highest.into(inout))
+						return exception::throw_ptr(exception::pointer(exception::category::execution(), "template type must be integer"));
 				}
 			}
-			void math::pow(asIScriptGeneric* generic)
+			void math::clamp(asIScriptGeneric* generic)
 			{
 				generic_context inout = generic_context(generic);
-				int left_type_id = inout.get_arg_type_id(0);
-				int right_type_id = inout.get_arg_type_id(1);
-				int result_type_id = inout.get_return_addressable_type_id();
-				if (left_type_id != right_type_id || left_type_id != result_type_id)
-					return exception::throw_ptr(exception::pointer(exception::category::execution(), "template type mismatch"));
-
-				void* left_value = inout.get_arg_address(0);
-				void* right_value = inout.get_arg_address(1);
-				switch (result_type_id)
+				int type_id = inout.get_return_addressable_type_id();
+				if (mpf_value::requires_floating_point(type_id))
 				{
-					case (int)type_id::int8_t:
-						inout.set_return_byte((uint8_t)std::pow((double)*(int8_t*)left_value, (double)*(int8_t*)right_value));
-						break;
-					case (int)type_id::bool_t:
-					case (int)type_id::uint8_t:
-						inout.set_return_byte((uint8_t)std::pow((double)*(uint8_t*)left_value, (double)*(uint8_t*)right_value));
-						break;
-					case (int)type_id::int16_t:
-						inout.set_return_word((uint16_t)std::pow((double)*(int16_t*)left_value, (double)*(int16_t*)right_value));
-						break;
-					case (int)type_id::uint16_t:
-						inout.set_return_word((uint16_t)std::pow((double)*(uint16_t*)left_value, (double)*(uint16_t*)right_value));
-						break;
-					case (int)type_id::int32_t:
-						inout.set_return_dword((uint32_t)std::pow((double)*(int32_t*)left_value, (double)*(int32_t*)right_value));
-						break;
-					case (int)type_id::uint32_t:
-						inout.set_return_dword((uint32_t)std::pow((double)*(uint32_t*)left_value, (double)*(uint32_t*)right_value));
-						break;
-					case (int)type_id::int64_t:
-						inout.set_return_qword((uint64_t)std::pow((double)*(int64_t*)left_value, (double)*(int64_t*)right_value));
-						break;
-					case (int)type_id::uint64_t:
-						inout.set_return_qword((uint64_t)std::pow((double)*(uint64_t*)left_value, (double)*(uint64_t*)right_value));
-						break;
-					case (int)type_id::float_t:
-						inout.set_return_float(std::pow(*(float*)left_value, *(float*)right_value));
-						break;
-					case (int)type_id::double_t:
-						inout.set_return_double(std::pow(*(double*)left_value, *(double*)right_value));
-						break;
-					default:
-					{
-						auto type = svm_container::get()->get_vm()->get_type_info_by_id(result_type_id);
-						auto name = type.is_valid() ? type.get_name() : std::string_view();
-						left_value = left_type_id & (int)vitex::scripting::type_id::handle_t ? *(void**)left_value : left_value;
-						right_value = right_type_id & (int)vitex::scripting::type_id::handle_t ? *(void**)right_value : right_value;
-						if (name == SCRIPT_TYPENAME_UINT128)
-						{
-							uint128_t result = uint128_t(1);
-							uint128_t exponent = *(uint128_t*)right_value;
-							uint128_t base = *(uint128_t*)left_value;
-							while (exponent > 0)
-							{
-								if (exponent & 1)
-									result *= base;
-								base *= base;
-								exponent >>= 1;
-							}
-							new (inout.get_address_of_return_location()) uint128_t(result);
-							break;
-						}
-						else if (name == SCRIPT_TYPENAME_UINT256)
-						{
-							uint256_t result = uint256_t(1);
-							uint256_t exponent = *(uint256_t*)right_value;
-							uint256_t base = *(uint256_t*)left_value;
-							while (exponent > 0)
-							{
-								if (exponent & 1)
-									result *= base;
-								base *= base;
-								exponent >>= 1;
-							}
-							new (inout.get_address_of_return_location()) uint256_t(result);
-							break;
-						}
-						else if (name == SCRIPT_TYPENAME_DECIMAL)
-						{
-							decimal result = decimal(1);
-							int64_t exponent = ((decimal*)right_value)->to_int64();
-							decimal base = *(decimal*)left_value;
-							bool invertion = exponent < 0;
-
-							exponent = invertion ? -exponent : exponent;
-							while (exponent > 0)
-							{
-								if ((exponent & 1) && !decimal_repr::truncate_or_throw(result *= base, false))
-									break;
-
-								if (!decimal_repr::truncate_or_throw(base *= base, false))
-									break;
-
-								exponent >>= 1;
-							}
-
-							if (invertion)
-								result = decimal(1.0) / result;
-
-							new (inout.get_address_of_return_location()) decimal(std::move(result));
-							break;
-						}
-						else if (result_type_id & (int)vitex::scripting::type_id::mask_seqnbr_t)
-						{
-							inout.set_return_dword((uint32_t)std::pow((double)*(int32_t*)left_value, (double)*(int32_t*)right_value));
-							break;
-						}
-						return exception::throw_ptr(exception::pointer(exception::category::execution(), "template type must be arithmetic and trivial"));
-					}
+					mpf_value value = mpf_value(inout.get_arg_type_id(0), inout.get_arg_address(0));
+					mpf_value left = mpf_value(inout.get_arg_type_id(1), inout.get_arg_address(1));
+					mpf_value right = mpf_value(inout.get_arg_type_id(2), inout.get_arg_address(2));
+					auto& clamped = mpf_cmp(value.target, left.target) < 0 ? left : (mpf_cmp(value.target, right.target) > 0 ? right : value);
+					if (!clamped.into(inout))
+						return exception::throw_ptr(exception::pointer(exception::category::execution(), "template type must be fixed point"));
+				}
+				else
+				{
+					mpz_value value = mpz_value(inout.get_arg_type_id(0), inout.get_arg_address(0));
+					mpz_value left = mpz_value(inout.get_arg_type_id(1), inout.get_arg_address(1));
+					mpz_value right = mpz_value(inout.get_arg_type_id(2), inout.get_arg_address(2));
+					auto& clamped = mpz_cmp(value.target, left.target) < 0 ? left : (mpz_cmp(value.target, right.target) > 0 ? right : value);
+					if (!clamped.into(inout))
+						return exception::throw_ptr(exception::pointer(exception::category::execution(), "template type must be integer"));
 				}
 			}
 			void math::lerp(asIScriptGeneric* generic)
 			{
 				generic_context inout = generic_context(generic);
-				int left_type_id = inout.get_arg_type_id(0);
-				int right_type_id = inout.get_arg_type_id(1);
-				int delta_type_id = inout.get_arg_type_id(2);
-				int result_type_id = inout.get_return_addressable_type_id();
-				if (left_type_id != right_type_id || left_type_id != result_type_id || left_type_id != delta_type_id)
-					return exception::throw_ptr(exception::pointer(exception::category::execution(), "template type mismatch"));
-
-				void* left_value = inout.get_arg_address(0);
-				void* right_value = inout.get_arg_address(1);
-				void* delta_value = inout.get_arg_address(2);
-				switch (result_type_id)
+				int type_id = inout.get_return_addressable_type_id();
+				if (mpf_value::requires_floating_point(type_id))
 				{
-					case (int)type_id::int8_t:
-						inout.set_return_byte((uint8_t)vitex::compute::math<int8_t>::strong_lerp(*(int8_t*)left_value, *(int8_t*)right_value, *(int8_t*)delta_value));
-						break;
-					case (int)type_id::bool_t:
-					case (int)type_id::uint8_t:
-						inout.set_return_byte(vitex::compute::math<uint8_t>::strong_lerp(*(uint8_t*)left_value, *(uint8_t*)right_value, *(int8_t*)delta_value));
-						break;
-					case (int)type_id::int16_t:
-						inout.set_return_word((uint16_t)vitex::compute::math<int16_t>::strong_lerp(*(int16_t*)left_value, *(int16_t*)right_value, *(int16_t*)delta_value));
-						break;
-					case (int)type_id::uint16_t:
-						inout.set_return_word(vitex::compute::math<uint16_t>::strong_lerp(*(uint16_t*)left_value, *(uint16_t*)right_value, *(uint16_t*)delta_value));
-						break;
-					case (int)type_id::int32_t:
-						inout.set_return_dword((uint32_t)vitex::compute::math<int32_t>::strong_lerp(*(int32_t*)left_value, *(int32_t*)right_value, *(int32_t*)delta_value));
-						break;
-					case (int)type_id::uint32_t:
-						inout.set_return_dword(vitex::compute::math<uint32_t>::strong_lerp(*(uint32_t*)left_value, *(uint32_t*)right_value, *(uint32_t*)delta_value));
-						break;
-					case (int)type_id::int64_t:
-						inout.set_return_qword((uint64_t)vitex::compute::math<int64_t>::strong_lerp(*(int64_t*)left_value, *(int64_t*)right_value, *(int64_t*)delta_value));
-						break;
-					case (int)type_id::uint64_t:
-						inout.set_return_qword(vitex::compute::math<uint64_t>::strong_lerp(*(uint64_t*)left_value, *(uint64_t*)right_value, *(uint64_t*)delta_value));
-						break;
-					case (int)type_id::float_t:
-						inout.set_return_float(vitex::compute::math<float>::strong_lerp(*(float*)left_value, *(float*)right_value, *(double*)delta_value));
-						break;
-					case (int)type_id::double_t:
-						inout.set_return_double(vitex::compute::math<double>::strong_lerp(*(double*)left_value, *(double*)right_value, *(double*)delta_value));
-						break;
-					default:
-					{
-						auto type = svm_container::get()->get_vm()->get_type_info_by_id(result_type_id);
-						auto name = type.is_valid() ? type.get_name() : std::string_view();
-						left_value = left_type_id & (int)vitex::scripting::type_id::handle_t ? *(void**)left_value : left_value;
-						right_value = right_type_id & (int)vitex::scripting::type_id::handle_t ? *(void**)right_value : right_value;
-						if (name == SCRIPT_TYPENAME_UINT128)
-						{
-							new (inout.get_address_of_return_location()) uint128_t(vitex::compute::math<uint128_t>::strong_lerp(*(uint128_t*)left_value, *(uint128_t*)right_value, *(uint128_t*)delta_value));
-							break;
-						}
-						else if (name == SCRIPT_TYPENAME_UINT256)
-						{
-							new (inout.get_address_of_return_location()) uint256_t(vitex::compute::math<uint256_t>::strong_lerp(*(uint256_t*)left_value, *(uint256_t*)right_value, *(uint256_t*)delta_value));
-							break;
-						}
-						else if (name == SCRIPT_TYPENAME_DECIMAL)
-						{
-							new (inout.get_address_of_return_location()) decimal(vitex::compute::math<decimal>::strong_lerp(*(decimal*)left_value, *(decimal*)right_value, *(decimal*)delta_value));
-							break;
-						}
-						else if (result_type_id & (int)vitex::scripting::type_id::mask_seqnbr_t)
-						{
-							inout.set_return_qword((uint32_t)vitex::compute::math<int32_t>::strong_lerp(*(int32_t*)left_value, *(int32_t*)right_value, *(int32_t*)delta_value));
-							break;
-						}
-						return exception::throw_ptr(exception::pointer(exception::category::execution(), "template type must be arithmetic"));
-					}
+					mpf_value left = mpf_value(inout.get_arg_type_id(0), inout.get_arg_address(0));
+					mpf_value right = mpf_value(inout.get_arg_type_id(1), inout.get_arg_address(1));
+					mpf_value time = mpf_value(inout.get_arg_type_id(2), inout.get_arg_address(2));
+					mpf_value result = left;
+					mpf_set_ui(result.target, 1);
+					mpf_sub(result.target, result.target, time.target);
+					mpf_mul(result.target, result.target, left.target);
+					mpf_mul(time.target, time.target, right.target);
+					mpf_add(result.target, result.target, time.target);
+					if (!result.into(inout))
+						return exception::throw_ptr(exception::pointer(exception::category::execution(), "template type must be fixed point"));
+				}
+				else
+				{
+					mpz_value left = mpz_value(inout.get_arg_type_id(0), inout.get_arg_address(0));
+					mpz_value right = mpz_value(inout.get_arg_type_id(1), inout.get_arg_address(1));
+					mpz_value time = mpz_value(inout.get_arg_type_id(2), inout.get_arg_address(2));
+					mpz_value result = left;
+					mpz_set_ui(result.target, 1);
+					mpz_sub(result.target, result.target, time.target);
+					mpz_mul(result.target, result.target, left.target);
+					mpz_mod(result.target, result.target, result.field);
+					mpz_mul(time.target, time.target, right.target);
+					mpz_mod(time.target, time.target, time.field);
+					mpz_add(result.target, result.target, time.target);
+					if (!result.into(inout))
+						return exception::throw_ptr(exception::pointer(exception::category::execution(), "template type must be integer"));
+				}
+			}
+			void math::pow(asIScriptGeneric* generic)
+			{
+				generic_context inout = generic_context(generic);
+				int type_id = inout.get_return_addressable_type_id();
+				if (mpf_value::requires_floating_point(type_id))
+				{
+					mpf_value value = mpf_value(inout.get_arg_type_id(0), inout.get_arg_address(0));
+					mpf_value count = mpf_value(inout.get_arg_type_id(1), inout.get_arg_address(1));
+					auto exponent = mpf_get_ui(count.target);
+					if (exponent > 0 && uint128_t(value.bits()) * uint128_t(exponent) > uint128_t(mpf_get_prec(value.target)))
+						return exception::throw_ptr(exception::pointer(exception::category::execution(), "fixed point overflow"));
+
+					mpf_value result = value;
+					mpf_pow_ui(result.target, value.target, exponent);
+					if (!result.into(inout))
+						return exception::throw_ptr(exception::pointer(exception::category::execution(), "template type must be fixed point"));
+				}
+				else
+				{
+					mpz_value value = mpz_value(inout.get_arg_type_id(0), inout.get_arg_address(0));
+					mpz_value count = mpz_value(inout.get_arg_type_id(1), inout.get_arg_address(1));
+					mpz_value result = value;
+					mpz_powm(result.target, value.target, count.target, value.field);
+					if (!result.into(inout))
+						return exception::throw_ptr(exception::pointer(exception::category::execution(), "template type must be integer"));
+				}
+			}
+			void math::sqrt(asIScriptGeneric* generic)
+			{
+				generic_context inout = generic_context(generic);
+				int type_id = inout.get_return_addressable_type_id();
+				if (mpf_value::requires_floating_point(type_id))
+				{
+					mpf_value value = mpf_value(inout.get_arg_type_id(0), inout.get_arg_address(0));
+					mpf_sqrt(value.target, value.target);
+					if (!value.into(inout))
+						return exception::throw_ptr(exception::pointer(exception::category::execution(), "template type must be fixed point"));
+				}
+				else
+				{
+					mpz_value value = mpz_value(inout.get_arg_type_id(0), inout.get_arg_address(0));
+					mpf_value pf_value;
+					mpz_value_to_mpf_value(value, pf_value);
+					mpf_sqrt(pf_value.target, pf_value.target);
+					mpf_value_to_mpz_value(pf_value, value);
+					if (!value.into(inout))
+						return exception::throw_ptr(exception::pointer(exception::category::execution(), "template type must be integer"));
 				}
 			}
 

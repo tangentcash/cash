@@ -32,7 +32,6 @@ namespace tangent
 			decimal gas_price;
 			uint256_t gas_limit = 0;
 			uint64_t nonce = 0;
-			bool conservative = false;
 
 			virtual expects_lr<void> validate(uint64_t block_number) const;
 			virtual expects_lr<void> execute(transaction_context* context) const;

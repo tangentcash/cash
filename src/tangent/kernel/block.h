@@ -44,7 +44,8 @@ namespace tangent
 			read_byte = 1,
 			query_result = 8,
 			opcode = 1,
-			memory_block = 1
+			memory_block = 1,
+			program_data = 16
 		};
 
 		struct block_transaction final : messages::uniform
@@ -398,7 +399,7 @@ namespace tangent
 		public:
 			static expects_lr<uint256_t> calculate_tx_gas(const ledger::transaction* transaction);
 			static expects_lr<void> validate_tx(const ledger::transaction* new_transaction, const uint256_t& new_transaction_hash, algorithm::pubkeyhash_t& owner);
-			static expects_lr<transaction_context> execute_tx(const ledger::evaluation_context* new_environment, ledger::block* new_block, block_changelog* changelog, const ledger::transaction* new_transaction, const uint256_t& new_transaction_hash, const algorithm::pubkeyhash_t& owner, size_t transaction_size, uint8_t execution_flags);
+			static expects_lr<transaction_context> execute_tx(const ledger::evaluation_context* new_environment, ledger::block* new_block, block_changelog* changelog, const ledger::transaction* new_transaction, const uint256_t& new_transaction_hash, const algorithm::pubkeyhash_t& owner, size_t transaction_size, uint8_t execution_flags, option<ledger::receipt>&& from_receipt = optional::none);
 			static expects_promise_rt<void> dispatch_tx(dispatch_context* dispatcher, ledger::block_transaction* transaction);
 		};
 

@@ -8,6 +8,35 @@ namespace tangent
 {
 	namespace ledger
 	{
+		template<typename t>
+		static t integer_sqrt(t n)
+		{
+			if (n == 0)
+				return 0;
+
+			uint16_t count = 0; t temp = n;
+			const uint16_t bits = sizeof(t) * 8;
+			for (int i = 0; i < bits; ++i)
+			{
+				if ((temp & (static_cast<t>(1) << (bits - 1))) != 0)
+					break;
+				temp <<= 1;
+				count++;
+			}
+
+			t x = t(1) << (sizeof(t) * 8 - 1 - count) / 2;
+			while (true)
+			{
+				t x_new = (x + n / x) / 2;
+				if (x_new >= x)
+					break;
+				x = x_new;
+			}
+
+			while (x * x > n) x--;
+			while ((x + 1) * (x + 1) <= n) x++;
+			return x;
+		}
 		static storages::position_condition to_position_condition(const filter_comparator comparator)
 		{
 			return (storages::position_condition)comparator;
@@ -735,7 +764,7 @@ namespace tangent
 			{
 			retry_replacement_transaction:
 				auto* candidate_transaction = *item.candidate;
-				auto execution = transaction_context::execute_tx(environment, this, &changelog, candidate_transaction, item.hash, item.owner, item.size, item.candidate->conservative ? 0 : (uint8_t)transaction_context::execution_mode::pedantic);
+				auto execution = transaction_context::execute_tx(environment, this, &changelog, candidate_transaction, item.hash, item.owner, item.size, item.candidate->is_consensus() ? (uint8_t)transaction_context::execution_mode::pedantic : 0);
 				if (execution)
 				{
 					auto& blob = transactions.emplace_back();
@@ -752,7 +781,7 @@ namespace tangent
 				{
 					environment->outgoing.push_back(item.hash);
 					executionlog.append(stringify::text("\n  in transaction %s execution error: %s", algorithm::encoding::encode_0xhex256(item.hash).c_str(), execution.error().what()));
-					while (candidate_transaction == *item.candidate && replace_transaction && !item.candidate->conservative)
+					while (candidate_transaction == *item.candidate && replace_transaction)
 					{
 						auto replacement = environment->precompute_transaction_element(replace_transaction());
 						if (environment->decide_on_inclusion(replacement, gas_limit - item.candidate->gas_limit, block_header::get_gas_limit()) == evaluation_context::include_decision::include_in_block)
@@ -2473,9 +2502,13 @@ namespace tangent
 			if (!state)
 				return layer_exception("witness program required but not applicable (" + state.what() + ")");
 
-			auto status = ((transaction_context*)this)->load(state->ptr(), !state->cached);
-			if (!status)
-				return status.error();
+			if (!state->cached)
+			{
+				uint64_t optimized_program_size = integer_sqrt<uint64_t>((uint64_t)state->ptr()->as_message().data.size());
+				auto status = ((transaction_context*)this)->burn_gas(optimized_program_size * (size_t)gas_cost::program_data);
+				if (!status)
+					return status.error();
+			}
 
 			return states::witness_program(std::move(*state->as<states::witness_program>()));
 		}
@@ -2634,16 +2667,13 @@ namespace tangent
 			auto* reference = (ledger::transaction*)transaction;
 			auto initial_checksum = transaction->checksum;
 			auto initial_gas_limit = transaction->gas_limit;
-			auto initial_conservative = transaction->conservative;
 			auto revert_transaction = [&]()
 			{
 				reference->checksum = initial_checksum;
 				reference->gas_limit = initial_gas_limit;
-				reference->conservative = initial_conservative;
 			};
 			reference->checksum = 0;
 			reference->gas_limit = block::get_gas_limit();
-			reference->conservative = false;
 
 			ledger::block temp_block;
 			temp_block.number = std::numeric_limits<int64_t>::max() - 1;
@@ -2660,7 +2690,7 @@ namespace tangent
 
 			ledger::block_changelog temp_changelog;
 			size_t transaction_size = transaction->as_message().data.size();
-			auto execution = transaction_context::execute_tx(&temp_environment, &temp_block, &temp_changelog, transaction, transaction->as_hash(), owner, transaction_size, (transaction->conservative ? 0 : (uint8_t)execution_mode::pedantic) | (uint8_t)execution_mode::evaluation);
+			auto execution = transaction_context::execute_tx(&temp_environment, &temp_block, &temp_changelog, transaction, transaction->as_hash(), owner, transaction_size, (transaction->is_consensus() ? (uint8_t)execution_mode::pedantic : 0) | (uint8_t)execution_mode::evaluation);
 			if (!execution)
 			{
 				revert_transaction();
@@ -2682,12 +2712,15 @@ namespace tangent
 			auto chain = storages::chainstate();
 			return new_transaction->validate(chain.get_latest_block_number().or_else(1));
 		}
-		expects_lr<transaction_context> transaction_context::execute_tx(const ledger::evaluation_context* new_environment, ledger::block* new_block, block_changelog* changelog, const ledger::transaction* new_transaction, const uint256_t& new_transaction_hash, const algorithm::pubkeyhash_t& owner, size_t transaction_size, uint8_t execution_flags)
+		expects_lr<transaction_context> transaction_context::execute_tx(const ledger::evaluation_context* new_environment, ledger::block* new_block, block_changelog* changelog, const ledger::transaction* new_transaction, const uint256_t& new_transaction_hash, const algorithm::pubkeyhash_t& owner, size_t transaction_size, uint8_t execution_flags, option<ledger::receipt>&& from_receipt)
 		{
 			VI_ASSERT(new_environment && new_block && new_transaction, "block, env, transaction should be set");
 			ledger::receipt new_receipt;
+			if (from_receipt)
+				new_receipt = std::move(*from_receipt);
+			else
+				new_receipt.generation_time = protocol::now().time.now();
 			new_receipt.transaction_hash = new_transaction_hash;
-			new_receipt.generation_time = protocol::now().time.now();
 			new_receipt.absolute_gas_use = new_block->gas_use;
 			new_receipt.block_number = new_block->number;
 			new_receipt.from = owner;

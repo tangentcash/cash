@@ -350,6 +350,7 @@ namespace tangent
 
 			struct decimal_repr
 			{
+				static void custom_constructor_bool(decimal* base, bool value);
 				static void custom_constructor_string(decimal* base, const string_repr& value);
 				static void custom_constructor_copy(decimal* base, const decimal& value);
 				static void custom_constructor(decimal* base);
@@ -377,6 +378,8 @@ namespace tangent
 				static decimal per(const decimal& left, const decimal& right);
 				static decimal from(const string_repr& data, uint8_t base);
 				static decimal zero();
+				static uint32_t estimate_bits(uint32_t digits);
+				static uint32_t target_bits();
 				template <typename t>
 				static void custom_constructor_arithmetic(decimal* base, t value)
 				{
@@ -509,11 +512,13 @@ namespace tangent
 			struct xc
 			{
 				format::wo_stream column;
+				uint32_t offset;
 				uint32_t count;
 
-				bool at(uint32_t offset, void* object_value, int object_type_id);
-				bool at_row(uint32_t offset, void* object_value, int object_type_id, void* row_value, int row_type_id);
-				bool at_row_ranked(uint32_t offset, void* object_value, int object_type_id, void* row_value, int row_type_id, uint256_t* filter_value);
+				void reset();
+				bool next(void* object_value, int object_type_id);
+				bool next_row(void* object_value, int object_type_id, void* row_value, int row_type_id);
+				bool next_row_ranked(void* object_value, int object_type_id, void* row_value, int row_type_id, uint256_t* filter_value);
 				static xc from(const void* column_value, int column_type_id, uint32_t count);
 			};
 
@@ -521,22 +526,26 @@ namespace tangent
 			{
 				filter query;
 				format::wo_stream column;
+				uint32_t offset;
 				uint32_t count;
 
-				bool at(uint32_t offset, void* object_value, int object_type_id);
-				bool at_row(uint32_t offset, void* object_value, int object_type_id, void* row_value, int row_type_id);
-				bool at_row_ranked(uint32_t offset, void* object_value, int object_type_id, void* row_value, int row_type_id, uint256_t* filter_value);
+				void reset();
+				bool next(void* object_value, int object_type_id);
+				bool next_row(void* object_value, int object_type_id, void* row_value, int row_type_id);
+				bool next_row_ranked(void* object_value, int object_type_id, void* row_value, int row_type_id, uint256_t* filter_value);
 				static xfc from(const void* column_value, int column_type_id, const filter& query, uint32_t count);
 			};
 
 			struct yc
 			{
 				format::wo_stream row;
+				uint32_t offset;
 				uint32_t count;
 
-				bool at(uint32_t offset, void* object_value, int object_type_id);
-				bool at_column(uint32_t offset, void* object_value, int object_type_id, void* column_value, int column_type_id);
-				bool at_column_ranked(uint32_t offset, void* object_value, int object_type_id, void* column_value, int column_type_id, uint256_t* filter_value);
+				void reset();
+				bool next(void* object_value, int object_type_id);
+				bool next_column(void* object_value, int object_type_id, void* column_value, int column_type_id);
+				bool next_column_ranked(void* object_value, int object_type_id, void* column_value, int column_type_id, uint256_t* filter_value);
 				static yc from(const void* row_value, int row_type_id, uint32_t count);
 			};
 
@@ -544,11 +553,13 @@ namespace tangent
 			{
 				filter query;
 				format::wo_stream row;
+				uint32_t offset;
 				uint32_t count;
 
-				bool at(uint32_t offset, void* object_value, int object_type_id);
-				bool at_column(uint32_t offset, void* object_value, int object_type_id, void* column_value, int column_type_id);
-				bool at_column_ranked(uint32_t offset, void* object_value, int object_type_id, void* column_value, int column_type_id, uint256_t* filter_value);
+				void reset();
+				bool next(void* object_value, int object_type_id);
+				bool next_column(void* object_value, int object_type_id, void* column_value, int column_type_id);
+				bool next_column_ranked(void* object_value, int object_type_id, void* column_value, int column_type_id, uint256_t* filter_value);
 				static yfc from(const void* row_value, int row_type_id, const filter& query, uint32_t count);
 			};
 
@@ -560,7 +571,7 @@ namespace tangent
 				static void erase(const void* index_value, int index_type_id);
 				static void set_if(const void* index_value, int index_type_id, void* object_value, int object_type_id, bool condition);
 				static bool has(const void* index_value, int index_type_id);
-				static bool at(const void* index_value, int index_type_id, void* object_value, int object_type_id);
+				static bool into(const void* index_value, int index_type_id, void* object_value, int object_type_id);
 				static void get(asIScriptGeneric* generic);
 			};
 
@@ -573,15 +584,19 @@ namespace tangent
 				static void erase(const void* column_value, int column_type_id, const void* row_value, int row_type_id);
 				static void set_if_ranked(const void* column_value, int column_type_id, const void* row_value, int row_type_id, void* object_value, int object_type_id, const uint256_t& filter_value, bool condition);
 				static void set_if(const void* column_value, int column_type_id, const void* row_value, int row_type_id, void* object_value, int object_type_id, bool condition);
-				static bool at_ranked(const void* column_value, int column_type_id, const void* row_value, int row_type_id, void* object_value, int object_type_id, uint256_t* filter_value);
-				static bool at(const void* column_value, int column_type_id, const void* row_value, int row_type_id, void* object_value, int object_type_id);
+				static bool into_ranked(const void* column_value, int column_type_id, const void* row_value, int row_type_id, void* object_value, int object_type_id, uint256_t* filter_value);
+				static bool into(const void* column_value, int column_type_id, const void* row_value, int row_type_id, void* object_value, int object_type_id);
 				static bool has(const void* column_value, int column_type_id, const void* row_value, int row_type_id);
 				static void get(asIScriptGeneric* generic);
 			};
 
 			struct log
 			{
+				static uint32_t height();
+				static uint32_t index();
 				static bool emit(const void* object_value, int object_type_id);
+				static bool into(uint32_t event_index, void* object_value, int object_type_id);
+				static void get(asIScriptGeneric* generic);
 			};
 
 			struct block
@@ -658,8 +673,10 @@ namespace tangent
 				static void max_value(asIScriptGeneric* generic);
 				static void min(asIScriptGeneric* generic);
 				static void max(asIScriptGeneric* generic);
-				static void pow(asIScriptGeneric* generic);
+				static void clamp(asIScriptGeneric* generic);
 				static void lerp(asIScriptGeneric* generic);
+				static void pow(asIScriptGeneric* generic);
+				static void sqrt(asIScriptGeneric* generic);
 			};
 
 			struct assertion

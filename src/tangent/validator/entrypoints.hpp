@@ -40,6 +40,7 @@ namespace tangent
 				string path;
 				string log;
 				uint8_t trap = 0;
+				bool instructions = false;
 			} program;
 			struct
 			{
@@ -128,6 +129,7 @@ namespace tangent
 			expects_lr<void> call_transaction(ledger::svm_call mutability, const function& entrypoint, const format::variables& args)
 			{
 				VI_ASSERT(svmc.contextual, "transaction should be assigned");
+				svmc.returning.destroy();
 				svmc.events.clear();
 				svmc.instructions.clear();
 				auto execution = execute(mutability, entrypoint, args, [this](void* address, int type_id) -> expects_lr<void>
@@ -300,6 +302,7 @@ namespace tangent
 				auto* vm = svmc.compiler->get_vm();
 				if (attach_debugger_context)
 				{
+					static bool has_any = false;
 					debugger_context* debugger = new debugger_context();
 					debugger->add_to_string_callback("string", [](string& indent, int depth, void* object, int type_id)
 					{
@@ -322,10 +325,10 @@ namespace tangent
 
 						return source.to_string() + " (uint256)";
 					});
-					debugger->add_to_string_callback("float768", [](string& indent, int depth, void* object, int type_id)
+					debugger->add_to_string_callback("real320", [](string& indent, int depth, void* object, int type_id)
 					{
 						decimal& source = *(decimal*)object;
-						return source.to_string() + " (float768)";
+						return source.to_string() + " (real320)";
 					});
 					debugger->add_to_string_callback("array", [debugger](string& indent, int depth, void* object, int type_id)
 					{
@@ -379,7 +382,11 @@ namespace tangent
 						bindings::any* source = (bindings::any*)object;
 						return debugger->to_string(indent, depth - 1, source->get_address_of_object(), source->get_type_id());
 					});
-					bindings::registry::import_any(vm);
+					if (!has_any)
+					{
+						bindings::registry::import_any(vm);
+						has_any = true;
+					}
 					debugger->set_interrupt_callback([](bool is_interrupted) { console::get()->write_line(is_interrupted ? "program execution interrupted" : "resuming program execution"); });
 					vm->set_debugger(debugger);
 					interrupter(true);
@@ -414,7 +421,7 @@ namespace tangent
 			}
 			bool dispatch_instruction(virtual_machine* vm, immediate_context* coroutine, uint32_t* program_data, size_t program_counter, byte_code_label& opcode) override
 			{
-				if (vm->get_debugger() != nullptr)
+				if (program.instructions)
 				{
 					string_stream stream;
 					debugger_context::byte_code_label_to_text(stream, vm, program_data, program_counter, false, true);
@@ -452,6 +459,7 @@ namespace tangent
 				program.path.clear();
 				program.log.clear();
 				program.trap = 0;
+				program.instructions = false;
 				svmc.compiler = container->allocate();
 				svmc.environment = ledger::evaluation_context();
 				svmc.contextual = uptr<transactions::call>();
@@ -725,17 +733,13 @@ namespace tangent
 					if (!result)
 						return err(result.what());
 
-					if (context.svmc.returning)
-					{
-						terminal->jwrite_line(*context.svmc.returning);
-						return true;
-					}
-
 					bool success = context.svmc.environment.validation.context.receipt.successful;
 					terminal->write_color(std_color::white, success ? std_color::dark_green : std_color::red);
 					terminal->fwrite("%s in %" PRIu64 " ms", success ? "OK finalize transaction" : "ERR revert transaction", (uint64_t)(date_time().milliseconds() - time));
 					terminal->clear_color();
-					terminal->write("\n\n");
+					terminal->write("\n");
+					if (context.svmc.returning)
+						terminal->jwrite_line(*context.svmc.returning);
 					return success;
 				}
 				else if (method == "debug")
@@ -754,17 +758,13 @@ namespace tangent
 					if (!result)
 						return err(result.what());
 
-					if (context.svmc.returning)
-					{
-						terminal->jwrite_line(*context.svmc.returning);
-						return true;
-					}
-
 					bool success = context.svmc.environment.validation.context.receipt.successful;
 					terminal->write_color(std_color::white, success ? std_color::dark_green : std_color::red);
 					terminal->fwrite("%s in %" PRIu64 " ms", success ? "OK finalize transaction" : "ERR revert transaction", (uint64_t)(date_time().milliseconds() - time));
 					terminal->clear_color();
-					terminal->write("\n\n");
+					terminal->write("\n");
+					if (context.svmc.returning)
+						terminal->jwrite_line(*context.svmc.returning);
 					return success;
 				}
 				else if (method == "result")
@@ -796,9 +796,42 @@ namespace tangent
 				}
 				else if (method == "asm")
 				{
+					if (args.size() > 1)
+					{
+						context.program.instructions = args[1] == "on";
+						return ok(context.program.instructions ? "enable asm tracer" : "disable asm tracer");
+					}
+
 					for (auto& instruction : context.svmc.instructions)
 						ok(instruction);
-					ok(stringify::text("%i instructions; %s gas units", (int)context.svmc.instructions.size(), context.svmc.environment.validation.context.receipt.relative_gas_use.to_string().c_str()));
+
+					return ok(stringify::text("%i instructions; %s gas units", (int)context.svmc.instructions.size(), context.svmc.environment.validation.context.receipt.relative_gas_use.to_string().c_str()));
+				}
+				else if (method == "abi")
+				{
+					if (context.svmc.compiler)
+					{
+						auto program = context.svmc.compiler->get_module();
+						if (program.is_valid())
+						{
+							for (size_t i = 0; i < program.get_function_count(); i++)
+							{
+								int type_id;
+								auto function = program.get_function_by_index(i);
+								if (function.get_arg(0, &type_id))
+								{
+									auto type = program.get_vm()->get_type_info_by_id(type_id);
+									auto name = type.is_valid() ? type.get_name() : std::string_view();
+									if (name == "rwptr" || name == "rptr")
+									{
+										auto decl = function.get_decl();
+										if (!decl.empty())
+											ok(stringify::text("%.*s;", (int)decl.size(), decl.data()));
+									}
+								}
+							}
+						}
+					}
 					return true;
 				}
 				else if (method == "reset")
@@ -1001,7 +1034,8 @@ namespace tangent
 						"result                                                   -- get call result log\n"
 						"log                                                      -- get call event log\n"
 						"changelog                                                -- get call state changes log\n"
-						"asm                                                      -- get call svm asm instruction listing (applicable for \"debug\" calls)\n"
+						"asm [on|off?]                                            -- get/set svm asm instruction listing\n"
+						"abi                                                      -- get program abi listing\n"
 						"reset                                                    -- reset contract state\n"
 						"trap [off|err|all]                                       -- enable command interpreter if execp has finished (all) or failed (err)\n"
 						"clear                                                    -- clear console output\n"
