@@ -2681,16 +2681,9 @@ namespace tangent
 			ledger::evaluation_context temp_environment;
 			memset(temp_environment.validator.public_key_hash.data, 1, sizeof(algorithm::pubkeyhash_t));
 
-			auto validation = transaction->validate(temp_block.number);
-			if (!validation)
-			{
-				revert_transaction();
-				return validation.error();
-			}
-
 			ledger::block_changelog temp_changelog;
 			size_t transaction_size = transaction->as_message().data.size();
-			auto execution = transaction_context::execute_tx(&temp_environment, &temp_block, &temp_changelog, transaction, transaction->as_hash(), owner, transaction_size, (transaction->is_consensus() ? (uint8_t)execution_mode::pedantic : 0) | (uint8_t)execution_mode::evaluation);
+			auto execution = transaction_context::execute_tx(&temp_environment, &temp_block, &temp_changelog, transaction, transaction->as_hash(), owner, transaction_size, (uint8_t)execution_mode::pedantic | (uint8_t)execution_mode::evaluation);
 			if (!execution)
 			{
 				revert_transaction();

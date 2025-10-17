@@ -592,10 +592,8 @@ namespace tangent
 
 			struct log
 			{
-				static uint32_t height();
-				static uint32_t index();
 				static bool emit(const void* object_value, int object_type_id);
-				static bool into(uint32_t event_index, void* object_value, int object_type_id);
+				static bool into(int32_t event_index, void* object_value, int object_type_id);
 				static void get(asIScriptGeneric* generic);
 			};
 

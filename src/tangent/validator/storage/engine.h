@@ -36,7 +36,7 @@ namespace tangent
 
 		public:
 			storage_index_ptr();
-			storage_index_ptr(uref<sqlite::connection>&& new_connection);
+			storage_index_ptr(uref<sqlite::connection>&& new_connection, bool in_transaction = false);
 			storage_index_ptr(const storage_index_ptr& other);
 			storage_index_ptr(storage_index_ptr&& other) noexcept;
 			~storage_index_ptr();

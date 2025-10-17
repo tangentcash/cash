@@ -155,7 +155,7 @@ namespace tangent
 		storage_index_ptr::storage_index_ptr() : invocations(0), transaction(false)
 		{
 		}
-		storage_index_ptr::storage_index_ptr(uref<sqlite::connection>&& new_connection) : connection(std::move(new_connection)), invocations(0), transaction(false)
+		storage_index_ptr::storage_index_ptr(uref<sqlite::connection>&& new_connection, bool in_transaction) : connection(std::move(new_connection)), invocations(0), transaction(in_transaction)
 		{
 			VI_PANIC(connection, "index connection required");
 		}

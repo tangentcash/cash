@@ -21,6 +21,10 @@ namespace tangent
 	{
 		namespace svm_abi
 		{
+			static std::string_view type_name_of(int type_id)
+			{
+				return svm_container::get()->get_vm()->get_type_info_by_id(type_id).get_name();
+			}
 			static string mpf_to_string(const mpf_t target)
 			{
 				char buffer[1024]; string result; mp_exp_t exp;
@@ -628,8 +632,13 @@ namespace tangent
 			{
 				if (&other != this && other.get_array_object_type() == get_array_object_type())
 				{
-					resize(other.buffer->num_elements);
-					copy_buffer(buffer, other.buffer);
+					if (other.buffer != nullptr)
+					{
+						resize(other.buffer->num_elements);
+						copy_buffer(buffer, other.buffer);
+					}
+					else
+						clear();
 				}
 
 				return *this;
@@ -661,19 +670,19 @@ namespace tangent
 			}
 			uint32_t array_repr::size() const
 			{
-				return buffer->num_elements;
+				return buffer ? buffer->num_elements : 0;
 			}
 			uint32_t array_repr::capacity() const
 			{
-				return buffer->max_elements;
+				return buffer ? buffer->max_elements : 0;
 			}
 			bool array_repr::empty() const
 			{
-				return buffer->num_elements == 0;
+				return buffer ? buffer->num_elements == 0 : true;
 			}
 			void array_repr::reserve(uint32_t max_elements)
 			{
-				if (max_elements <= buffer->max_elements)
+				if (max_elements <= (buffer ? buffer->max_elements : 0))
 					return;
 
 				if (!check_max_size(max_elements))
@@ -683,18 +692,27 @@ namespace tangent
 				if (!new_buffer)
 					return;
 
-				new_buffer->num_elements = buffer->num_elements;
-				new_buffer->max_elements = max_elements;
-				memcpy(new_buffer->data, buffer->data, (size_t)buffer->num_elements * (size_t)element_size);
-				memory::deallocate(buffer);
-				buffer = new_buffer;
+				if (buffer != nullptr)
+				{
+					new_buffer->num_elements = buffer->num_elements;
+					new_buffer->max_elements = max_elements;
+					memcpy(new_buffer->data, buffer->data, (size_t)buffer->num_elements * (size_t)element_size);
+					memory::deallocate(buffer);
+					buffer = new_buffer;
+				}
+				else
+				{
+					new_buffer->num_elements = 0;
+					new_buffer->max_elements = max_elements;
+					buffer = new_buffer;
+				}
 			}
 			void array_repr::resize(uint32_t num_elements)
 			{
 				if (!check_max_size(num_elements))
 					return;
 
-				resize((int64_t)num_elements - (int64_t)buffer->num_elements, (uint32_t)-1);
+				resize((int64_t)num_elements - (int64_t)(buffer ? buffer->num_elements : 0), (uint32_t)-1);
 			}
 			void array_repr::remove_range(uint32_t start, uint32_t count)
 			{
@@ -702,7 +720,7 @@ namespace tangent
 					return;
 
 				if (buffer == 0 || start > buffer->num_elements)
-					return exception::throw_ptr(exception::pointer(exception::category::argument(), "out of bounds"));
+					return exception::throw_ptr(exception::pointer(exception::category::argument(), stringify::text("range [%i; %i) is out of bounds (size: %i)", start, start + count, buffer ? buffer->num_elements : 0)));
 
 				if (start + count > buffer->num_elements)
 					count = buffer->num_elements - start;
@@ -729,50 +747,56 @@ namespace tangent
 			}
 			void array_repr::resize(int64_t delta, uint32_t where)
 			{
+				uint32_t buffer_size = buffer ? buffer->num_elements : 0;
 				if (delta < 0)
 				{
-					if (-delta > (int64_t)buffer->num_elements)
-						delta = -(int64_t)buffer->num_elements;
+					if (-delta > (int64_t)buffer_size)
+						delta = -(int64_t)buffer_size;
 
-					if (where > buffer->num_elements + delta)
-						where = buffer->num_elements + delta;
+					if (where > buffer_size + delta)
+						where = buffer_size + delta;
 				}
 				else if (delta > 0)
 				{
-					if (!check_max_size(buffer->num_elements + delta))
+					if (!check_max_size(buffer_size + delta))
 						return;
 
-					if (where > buffer->num_elements)
-						where = buffer->num_elements;
+					if (where > buffer_size)
+						where = buffer_size;
 				}
 
 				if (delta == 0)
 					return;
 
-				if (buffer->max_elements < buffer->num_elements + delta)
+				if (buffer_size < buffer_size + delta)
 				{
-					size_t count = (size_t)buffer->num_elements + (size_t)delta, size = (size_t)element_size;
+					size_t count = (size_t)buffer_size + (size_t)delta, size = (size_t)element_size;
 					sbuffer* new_buffer = gas_allocate<sbuffer>(sizeof(sbuffer) - 1 + size * count);
 					if (!new_buffer)
 						return;
 
-					new_buffer->num_elements = buffer->num_elements + delta;
+					new_buffer->num_elements = buffer_size + delta;
 					new_buffer->max_elements = new_buffer->num_elements;
-					memcpy(new_buffer->data, buffer->data, (size_t)where * (size_t)element_size);
-					if (where < buffer->num_elements)
-						memcpy(new_buffer->data + (where + delta) * (size_t)element_size, buffer->data + where * (size_t)element_size, (size_t)(buffer->num_elements - where) * (size_t)element_size);
-
+					if (buffer != nullptr)
+					{
+						memcpy(new_buffer->data, buffer->data, (size_t)where * (size_t)element_size);
+						if (where < buffer->num_elements)
+							memcpy(new_buffer->data + (where + delta) * (size_t)element_size, buffer->data + where * (size_t)element_size, (size_t)(buffer->num_elements - where) * (size_t)element_size);
+					}
 					create(new_buffer, where, where + delta);
 					memory::deallocate(buffer);
 					buffer = new_buffer;
 				}
 				else if (delta < 0)
 				{
-					destroy(buffer, where, where - delta);
-					memmove(buffer->data + where * (size_t)element_size, buffer->data + (where - delta) * (size_t)element_size, (size_t)(buffer->num_elements - (where - delta)) * (size_t)element_size);
-					buffer->num_elements += delta;
+					if (buffer != nullptr)
+					{
+						destroy(buffer, where, where - delta);
+						memmove(buffer->data + where * (size_t)element_size, buffer->data + (where - delta) * (size_t)element_size, (size_t)(buffer->num_elements - (where - delta)) * (size_t)element_size);
+						buffer->num_elements += delta;
+					}
 				}
-				else
+				else if (buffer != nullptr)
 				{
 					memmove(buffer->data + (where + delta) * (size_t)element_size, buffer->data + where * (size_t)element_size, (size_t)(buffer->num_elements - where) * (size_t)element_size);
 					create(buffer, where, where + delta);
@@ -788,7 +812,7 @@ namespace tangent
 				if (num_elements <= max_size)
 					return true;
 
-				exception::throw_ptr(exception::pointer(exception::category::memory(), "illegal allocation"));
+				exception::throw_ptr(exception::pointer(exception::category::memory(), stringify::text("size %i is illegal (max_size: %i)", num_elements, max_size)));
 				return false;
 			}
 			asITypeInfo* array_repr::get_array_object_type() const
@@ -805,19 +829,19 @@ namespace tangent
 			}
 			void array_repr::insert_at(uint32_t index, void* value)
 			{
-				if (index > buffer->num_elements)
-					return exception::throw_ptr(exception::pointer(exception::category::argument(), "out of bounds"));
+				if (index > (buffer ? buffer->num_elements : 0))
+					return exception::throw_ptr(exception::pointer(exception::category::argument(), stringify::text("range [%i; %i) is out of bounds (size: %i)", index, index + 1, buffer ? buffer->num_elements : 0)));
 
 				resize(1, index);
 				set_value(index, value);
 			}
 			void array_repr::insert_at(uint32_t index, const array_repr& array)
 			{
-				if (index > buffer->num_elements)
-					return exception::throw_ptr(exception::pointer(exception::category::argument(), "out of bounds"));
+				if (index > (buffer ? buffer->num_elements : 0))
+					return exception::throw_ptr(exception::pointer(exception::category::argument(), stringify::text("range [%i; %i) is out of bounds (size: %i)", index, index + 1, buffer ? buffer->num_elements : 0)));
 
 				if (obj_type.get_type_info() != array.obj_type.get_type_info())
-					return exception::throw_ptr(exception::pointer(exception::category::argument(), "template type mismatch"));
+					return exception::throw_ptr(exception::pointer(exception::category::argument(), stringify::text("array types (%s, %s) are incompatible", obj_type.get_name().data(), array.obj_type.get_name().data())));
 
 				uint32_t new_size = array.size();
 				resize((int)new_size, index);
@@ -847,12 +871,12 @@ namespace tangent
 			}
 			void array_repr::insert_last(void* value)
 			{
-				insert_at(buffer->num_elements, value);
+				insert_at(buffer ? buffer->num_elements : 0, value);
 			}
 			void array_repr::remove_at(uint32_t index)
 			{
-				if (index >= buffer->num_elements)
-					return exception::throw_ptr(exception::pointer(exception::category::argument(), "out of bounds"));
+				if (index >= (buffer ? buffer->num_elements : 0))
+					return exception::throw_ptr(exception::pointer(exception::category::argument(), stringify::text("range [%i; %i) is out of bounds (size: %i)", index, index + 1, buffer ? buffer->num_elements : 0)));
 				resize(-1, index);
 			}
 			void array_repr::remove_last()
@@ -863,7 +887,7 @@ namespace tangent
 			{
 				if (buffer == 0 || index >= buffer->num_elements)
 				{
-					exception::throw_ptr(exception::pointer(exception::category::argument(), "out of bounds"));
+					exception::throw_ptr(exception::pointer(exception::category::argument(), stringify::text("range [%i; %i) is out of bounds (size: %i)", index, index + 1, buffer ? buffer->num_elements : 0)));
 					return nullptr;
 				}
 				else if ((sub_type_id & (uint32_t)type_id::mask_object_t) && !(sub_type_id & (uint32_t)type_id::handle_t))
@@ -879,7 +903,7 @@ namespace tangent
 			{
 				if (empty())
 				{
-					exception::throw_ptr(exception::pointer(exception::category::argument(), "out of bounds"));
+					exception::throw_ptr(exception::pointer(exception::category::argument(), stringify::text("range [0; 1) is out of bounds (size: %i)", buffer ? buffer->num_elements : 0)));
 					return nullptr;
 				}
 
@@ -889,7 +913,7 @@ namespace tangent
 			{
 				if (empty())
 				{
-					exception::throw_ptr(exception::pointer(exception::category::argument(), "out of bounds"));
+					exception::throw_ptr(exception::pointer(exception::category::argument(), stringify::text("range [0; 1) is out of bounds (size: %i)", buffer ? buffer->num_elements : 0)));
 					return nullptr;
 				}
 
@@ -899,7 +923,7 @@ namespace tangent
 			{
 				if (empty())
 				{
-					exception::throw_ptr(exception::pointer(exception::category::argument(), "out of bounds"));
+					exception::throw_ptr(exception::pointer(exception::category::argument(), stringify::text("range [-1; -2) is out of bounds (size: %i)", buffer ? buffer->num_elements : 0)));
 					return nullptr;
 				}
 
@@ -909,7 +933,7 @@ namespace tangent
 			{
 				if (empty())
 				{
-					exception::throw_ptr(exception::pointer(exception::category::argument(), "out of bounds"));
+					exception::throw_ptr(exception::pointer(exception::category::argument(), stringify::text("range [-1; -2) is out of bounds (size: %i)", buffer ? buffer->num_elements : 0)));
 					return nullptr;
 				}
 
@@ -917,7 +941,7 @@ namespace tangent
 			}
 			void* array_repr::get_buffer()
 			{
-				return buffer->data;
+				return buffer ? buffer->data : nullptr;
 			}
 			void array_repr::create_buffer(sbuffer** buffer_ptr, uint32_t num_elements)
 			{
@@ -1184,7 +1208,7 @@ namespace tangent
 			}
 			void* array_repr::get_array_item_pointer(uint32_t index)
 			{
-				return buffer->data + index * element_size;
+				return buffer ? buffer->data + index * element_size : nullptr;
 			}
 			void* array_repr::get_data_pointer(void* buffer_ptr)
 			{
@@ -1196,7 +1220,7 @@ namespace tangent
 			void array_repr::swap(uint32_t index1, uint32_t index2)
 			{
 				if (index1 >= size() || index2 >= size())
-					return exception::throw_ptr(exception::pointer(exception::category::argument(), "out of bounds"));
+					return exception::throw_ptr(exception::pointer(exception::category::argument(), stringify::text("range [%i; %i) is out of bounds (size: %i)", index1, index2, buffer->num_elements)));
 
 				unsigned char swap[16];
 				copy(swap, get_array_item_pointer(index1));
@@ -1392,6 +1416,9 @@ namespace tangent
 			{
 				if (sub_type_id & (uint32_t)type_id::mask_object_t)
 				{
+					if (!buffer)
+						return;
+
 					void** data = (void**)buffer->data;
 					virtual_machine* vm = virtual_machine::get(engine);
 					auto sub_type = vm->get_type_info_by_id(sub_type_id);
@@ -1418,7 +1445,7 @@ namespace tangent
 			{
 				array_repr* result = new array_repr(length, info);
 				if (!result)
-					exception::throw_ptr(exception::pointer(exception::category::memory(), "out of memory"));
+					exception::throw_ptr(exception::pointer(exception::category::memory(), stringify::text("size %i is illegal (out of memory)", length)));
 
 				return result;
 			}
@@ -1426,7 +1453,7 @@ namespace tangent
 			{
 				array_repr* result = new array_repr(length, default_value, info);
 				if (!result)
-					exception::throw_ptr(exception::pointer(exception::category::memory(), "out of memory"));
+					exception::throw_ptr(exception::pointer(exception::category::memory(), stringify::text("size %i is illegal (out of memory)", length)));
 
 				return result;
 			}
@@ -1548,9 +1575,9 @@ namespace tangent
 				if (context != nullptr)
 				{
 					if (cache && cache->comparator_return_code == (int)virtual_error::multiple_functions)
-						exception::throw_ptr(exception::pointer(exception::category::argument(), "template type has multiple opCmp implementations"));
+						exception::throw_ptr(exception::pointer(exception::category::argument(), "too many opCmp implementations for find function"));
 					else
-						exception::throw_ptr(exception::pointer(exception::category::argument(), "template type has no opCmp implementation"));
+						exception::throw_ptr(exception::pointer(exception::category::argument(), "no opCmp implementation for find function"));
 				}
 				*output = nullptr;
 				return false;
@@ -1574,9 +1601,9 @@ namespace tangent
 				if (context != nullptr)
 				{
 					if (cache && cache->comparator_return_code == (int)virtual_error::multiple_functions)
-						exception::throw_ptr(exception::pointer(exception::category::argument(), "template type has multiple opCmp implementations"));
+						exception::throw_ptr(exception::pointer(exception::category::argument(), "too many opCmp implementations for find function"));
 					else
-						exception::throw_ptr(exception::pointer(exception::category::argument(), "template type has no opCmp implementation"));
+						exception::throw_ptr(exception::pointer(exception::category::argument(), "no opCmp implementation for find function"));
 				}
 				*output = nullptr;
 				return false;
@@ -1721,7 +1748,7 @@ namespace tangent
 			{
 				if (index >= size())
 				{
-					exception::throw_ptr(exception::pointer(exception::category::argument(), "out of bounds"));
+					exception::throw_ptr(exception::pointer(exception::category::argument(), stringify::text("range [%i; %i) is out of bounds (size: %i)", index, index + 1, size())));
 					return nullptr;
 				}
 
@@ -1731,7 +1758,7 @@ namespace tangent
 			{
 				if (empty())
 				{
-					exception::throw_ptr(exception::pointer(exception::category::argument(), "out of bounds"));
+					exception::throw_ptr(exception::pointer(exception::category::argument(), stringify::text("range [0; 1) is out of bounds (size: %i)", size())));
 					return nullptr;
 				}
 
@@ -1741,7 +1768,7 @@ namespace tangent
 			{
 				if (empty())
 				{
-					exception::throw_ptr(exception::pointer(exception::category::argument(), "out of bounds"));
+					exception::throw_ptr(exception::pointer(exception::category::argument(), stringify::text("range [-1; -2) is out of bounds (size: %i)", size())));
 					return nullptr;
 				}
 
@@ -1774,7 +1801,7 @@ namespace tangent
 			void string_repr::pop_front()
 			{
 				if (empty())
-					return exception::throw_ptr(exception::pointer(exception::category::argument(), "out of bounds"));
+					return exception::throw_ptr(exception::pointer(exception::category::argument(), stringify::text("range [0; 1) is out of bounds (size: %i)", size())));
 
 				char* buffer = data();
 				uint32_t buffer_size = size() - 1;
@@ -1788,7 +1815,7 @@ namespace tangent
 			void string_repr::pop_back()
 			{
 				if (empty())
-					return exception::throw_ptr(exception::pointer(exception::category::argument(), "out of bounds"));
+					return exception::throw_ptr(exception::pointer(exception::category::argument(), stringify::text("range [-1; -2) is out of bounds (size: %i)", size())));
 
 				resize_buffer(size() - 1);
 			}
@@ -2079,7 +2106,7 @@ namespace tangent
 
 				bool throws = base.integer_size() > message.integer_precision || base.decimal_size() > message.decimal_precision;
 				if (throws)
-					exception::throw_ptr(exception::pointer(exception::category::memory(), "fixed point overflow"));
+					exception::throw_ptr(exception::pointer(exception::category::memory(), stringify::text("fixed point overflow of number \"%s\" (sp: %i, fp: %i)", base.to_string().c_str(), base.integer_size(), base.decimal_size())));
 				return !throws;
 			}
 			uint128_t decimal_repr::to_uint128(decimal& base)
@@ -2517,12 +2544,12 @@ namespace tangent
 					int input_type_id = inout.get_arg_type_id(i);
 					auto serialization = svm_marshalling::store(&stream, input_value, input_type_id);
 					if (!serialization)
-						return exception::throw_ptr(exception::pointer(exception::category::execution(), stringify::text("illegal subcall to %s program on function \"%.*s\": %s (argument %i)", object->to_string().data(), (int)function.size(), function.data(), serialization.error().what(), (int)i - 1)));
+						return exception::throw_ptr(exception::pointer(exception::category::execution(), stringify::text("call to %s::%.*s: %s (argument: %i)", object->to_string().data(), (int)function.size(), function.data(), serialization.error().what(), (int)i - 1)));
 				}
 
 				auto reader = stream.ro(); format::variables function_args;
 				if (!reader.data.empty() && !format::variables_util::deserialize_flat_from(reader, &function_args))
-					return exception::throw_ptr(exception::pointer(exception::category::execution(), stringify::text("illegal subcall to %s program on function \"%.*s\": argument serialization error", object->to_string().data(), (int)function.size(), function.data())));
+					return exception::throw_ptr(exception::pointer(exception::category::execution(), stringify::text("call to %s::%.*s: argument pack builder failed", object->to_string().data(), (int)function.size(), function.data())));
 
 				auto* program = svm_program::fetch_mutable();
 				if (program != nullptr)
@@ -2953,30 +2980,26 @@ namespace tangent
 				return result;
 			}
 
-			uint32_t log::height()
-			{
-				auto* program = svm_program::fetch_immutable_or_throw();
-				return program ? program->context->receipt.events.size() : 0;
-			}
-			uint32_t log::index()
-			{
-				auto* program = svm_program::fetch_immutable_or_throw();
-				return program && !program->context->receipt.events.empty() ? program->context->receipt.events.size() - 1 : 0;
-			}
 			bool log::emit(const void* object_value, int object_type_id)
 			{
 				auto* program = svm_program::fetch_mutable_or_throw();
 				return program ? program->emit_event(object_value, object_type_id) : false;
 			}
-			bool log::into(uint32_t event_index, void* object_value, int object_type_id)
+			bool log::into(int32_t event_index, void* object_value, int object_type_id)
 			{
 				auto* program = svm_program::fetch_immutable_or_throw();
-				if (!program || event_index >= program->context->receipt.events.size())
+				if (!program)
+					return false;
+
+				auto type = svm_container::get()->get_vm()->get_type_info_by_id(object_type_id);
+				auto name = type.is_valid() ? type.get_name() : std::string_view("?");
+				auto id = algorithm::hashing::hash32d(name);
+				auto* event = event_index < 0 ? program->context->receipt.reverse_find_event(id, (size_t)(-event_index)) : program->context->receipt.find_event(id, (size_t)event_index);
+				if (!event)
 					return false;
 
 				format::wo_stream writer;
-				auto& event = program->context->receipt.events[event_index];
-				if (!format::variables_util::serialize_flat_into(event.second, &writer))
+				if (!format::variables_util::serialize_flat_into(*event, &writer))
 					return false;
 
 				format::ro_stream reader = writer.ro();
@@ -2989,21 +3012,24 @@ namespace tangent
 					return;
 
 				generic_context inout = generic_context(generic);
-				uint32_t event_index = inout.get_arg_dword(0);
+				int32_t event_index = inout.get_arg_dword(0);
 				void* object_value = inout.get_address_of_return_location();
 				int object_type_id = inout.get_return_addressable_type_id();
-				if (event_index >= program->context->receipt.events.size())
-					return exception::throw_ptr(exception::pointer(exception::category::argument(), stringify::text("event matching index %i not found", (int)event_index)));
+				auto type = svm_container::get()->get_vm()->get_type_info_by_id(object_type_id);
+				auto name = type.is_valid() ? type.get_name() : std::string_view("?");
+				auto id = algorithm::hashing::hash32d(name);
+				auto* event = event_index < 0 ? program->context->receipt.reverse_find_event(id, (size_t)(-event_index-1)) : program->context->receipt.find_event(id, (size_t)event_index);
+				if (!event)
+					return exception::throw_ptr(exception::pointer(exception::category::argument(), stringify::text("event %.*s[%i] not found", (int)name.size(), name.data(), event_index)));
 
 				format::wo_stream writer;
-				auto& event = program->context->receipt.events[event_index];
-				if (!format::variables_util::serialize_flat_into(event.second, &writer))
-					return exception::throw_ptr(svm_abi::exception::pointer(svm_abi::exception::category::argument(), "event value conversion error"));
+				if (!format::variables_util::serialize_flat_into(*event, &writer))
+					return exception::throw_ptr(exception::pointer(exception::category::argument(), stringify::text("event %.*s[%i] store failed", (int)name.size(), name.data(), event_index)));
 
 				format::ro_stream reader = writer.ro();
 				auto status = svm_marshalling::load(reader, object_value, object_type_id);
 				if (!status)
-					return exception::throw_ptr(exception::pointer(exception::category::storage(), "event value corrupted"));
+					return exception::throw_ptr(exception::pointer(exception::category::argument(), stringify::text("event %.*s[%i] load failed", (int)name.size(), name.data(), event_index)));
 			}
 
 			void sv::store(const void* index_value, int index_type_id, const void* object_value, int object_type_id)
@@ -3048,10 +3074,10 @@ namespace tangent
 				}
 
 				auto data = program->context->get_account_uniform(program->callable().data, index.data);
-				if (!data || data->data.empty())
+				if (!data)
 				{
 					if (throw_on_error)
-						exception::throw_ptr(exception::pointer(exception::category::storage(), "program variable missing"));
+						exception::throw_ptr(exception::pointer(exception::category::storage(), std::string_view(data.error().message())));
 					return false;
 				}
 
@@ -3060,7 +3086,7 @@ namespace tangent
 				if (!status)
 				{
 					if (throw_on_error)
-						exception::throw_ptr(exception::pointer(exception::category::storage(), "program variable corrupted"));
+						exception::throw_ptr(exception::pointer(exception::category::storage(), std::string_view(status.error().message())));
 					return false;
 				}
 
@@ -3175,10 +3201,10 @@ namespace tangent
 				}
 
 				auto data = program->context->get_account_multiform(program->callable().data, column.data, row.data);
-				if (!data || data->data.empty())
+				if (!data)
 				{
 					if (throw_on_error)
-						exception::throw_ptr(exception::pointer(exception::category::storage(), "program variable missing"));
+						exception::throw_ptr(exception::pointer(exception::category::storage(), std::string_view(data.error().message())));
 					return false;
 				}
 
@@ -3187,7 +3213,7 @@ namespace tangent
 				if (!status)
 				{
 					if (throw_on_error)
-						exception::throw_ptr(exception::pointer(exception::category::storage(), "program variable corrupted"));
+						exception::throw_ptr(exception::pointer(exception::category::storage(), std::string_view(status.error().message())));
 					return false;
 				}
 
@@ -3400,7 +3426,7 @@ namespace tangent
 
 				if (value.integer_size() > protocol::now().message.integer_precision || value.decimal_size() > protocol::now().message.decimal_precision)
 				{
-					exception::throw_ptr(exception::pointer(exception::category::argument(), string_repr(value.to_string() + " as uint256 - decimal precision too high")));
+					exception::throw_ptr(exception::pointer(exception::category::argument(), string_repr(value.to_string() + " as uint256 - fixed point overflow")));
 					return 0;
 				}
 
@@ -3818,8 +3844,13 @@ namespace tangent
 					mpf_value value = mpf_value(inout.get_arg_type_id(0), inout.get_arg_address(0));
 					mpf_value count = mpf_value(inout.get_arg_type_id(1), inout.get_arg_address(1));
 					auto exponent = mpf_get_ui(count.target);
-					if (exponent > 0 && uint128_t(value.bits()) * uint128_t(exponent) > uint128_t(mpf_get_prec(value.target)))
-						return exception::throw_ptr(exception::pointer(exception::category::execution(), "fixed point overflow"));
+					if (exponent > 0)
+					{
+						auto bits_required = uint128_t(value.bits()) * uint128_t(exponent);
+						auto bits_limit = uint128_t(mpf_get_prec(value.target));
+						if (bits_required > bits_limit)
+							return exception::throw_ptr(exception::pointer(exception::category::execution(), stringify::text("fixed point overflow (bits_required: %s, bits_limit: %s)", bits_required.to_string().c_str(), bits_limit.to_string().c_str())));
+					}
 
 					mpf_value result = value;
 					mpf_pow_ui(result.target, value.target, exponent);

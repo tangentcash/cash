@@ -291,7 +291,7 @@ namespace tangent
 					{
 						void* address = vm->create_object(type);
 						if (!address)
-							return layer_exception(stringify::text("allocation failed for %s type", name.data()));
+							return layer_exception(stringify::text("%s has no default constructor", name.data()));
 
 						*(void**)value = address;
 						value = address;
@@ -442,7 +442,7 @@ namespace tangent
 					{
 						void* address = vm->create_object(type);
 						if (!address)
-							return layer_exception(stringify::text("allocation failed for %s type", name.data()));
+							return layer_exception(stringify::text("%s has no default constructor", name.data()));
 
 						*(void**)value = address;
 						value = address;
@@ -930,11 +930,9 @@ namespace tangent
 			abi->set_method("string data()", &svm_abi::abi::data);
 
 			vm->begin_namespace("log");
-			vm->set_function("usize height()", &svm_abi::log::height);
-			vm->set_function("usize index()", &svm_abi::log::index);
 			vm->set_function("bool emit(const ?&in)", &svm_abi::log::emit);
-			vm->set_function("bool into(usize, ?&out)", &svm_abi::log::into);
-			vm->set_function("t get<t>(usize)", &svm_abi::log::get, convention::generic_call);
+			vm->set_function("bool into(int32, ?&out)", &svm_abi::log::into);
+			vm->set_function("t get<t>(int32)", &svm_abi::log::get, convention::generic_call);
 			vm->end_namespace();
 
 			vm->begin_namespace("sv");
@@ -1690,16 +1688,16 @@ namespace tangent
 				return false;
 			}
 
+			auto type = svm_container::get()->get_vm()->get_type_info_by_id(object_type_id);
+			auto name = type.is_valid() ? type.get_name() : std::string_view("?");
 			auto reader = stream.ro();
 			format::variables returns;
 			if (!format::variables_util::deserialize_flat_from(reader, &returns))
 			{
-				svm_abi::exception::throw_ptr(svm_abi::exception::pointer(svm_abi::exception::category::argument(), "emit value conversion error"));
+				svm_abi::exception::throw_ptr(svm_abi::exception::pointer(svm_abi::exception::category::argument(), stringify::text("event %.*s load failed", (int)name.size(), name.data())));
 				return false;
 			}
 
-			auto type = svm_container::get()->get_vm()->get_type_info_by_id(object_type_id);
-			auto name = type.is_valid() ? type.get_name() : std::string_view("?");
 			auto data = context->emit_event(algorithm::hashing::hash32d(name), std::move(returns), true);
 			if (!data)
 			{
@@ -1779,7 +1777,7 @@ namespace tangent
 		{
 			auto* result = fetch_mutable(coroutine);
 			if (!result)
-				svm_abi::exception::throw_ptr_at(coroutine, svm_abi::exception::pointer(svm_abi::exception::category::requirement(), "contract is required to be mutable"));
+				svm_abi::exception::throw_ptr_at(coroutine, svm_abi::exception::pointer(svm_abi::exception::category::requirement(), "non-read-only instruction called from read-only program"));
 
 			return result;
 		}
@@ -1787,7 +1785,7 @@ namespace tangent
 		{
 			auto* result = fetch_immutable(coroutine);
 			if (!result)
-				svm_abi::exception::throw_ptr_at(coroutine, svm_abi::exception::pointer(svm_abi::exception::category::requirement(), "contract is required to be immutable"));
+				svm_abi::exception::throw_ptr_at(coroutine, svm_abi::exception::pointer(svm_abi::exception::category::requirement(), "real-only instruction called from write-only program"));
 
 			return result;
 		}

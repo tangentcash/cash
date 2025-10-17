@@ -3098,7 +3098,7 @@ namespace tangent
 			expects_lr<void> result = expectation::met;
 			for (auto& topic : changelog->temporary_state.topics)
 			{
-				auto storage = ledger::storage_index_ptr((sqlite::connection*)topic.second);
+				auto storage = ledger::storage_index_ptr((sqlite::connection*)topic.second, true);
 				auto status = storage.tx_rollback(__func__);
 				if (!status)
 					result = layer_exception(ledger::storage_util::error_of(status));
