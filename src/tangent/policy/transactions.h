@@ -189,7 +189,7 @@ namespace tangent
 			void set_manager(const algorithm::pubkeyhash_t& new_from_manager, const algorithm::pubkeyhash_t& new_to_manager = algorithm::pubkeyhash_t());
 			bool is_dispatchable() const override;
 			decimal get_token_value(const ledger::transaction_context* context) const;
-			decimal get_fee_value(const ledger::transaction_context* context, const algorithm::pubkeyhash_t& from) const;
+			decimal get_fee_value(const ledger::transaction_context* context) const;
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
@@ -224,7 +224,7 @@ namespace tangent
 		{
 			struct depository_transfer
 			{
-				decimal balance = decimal::zero();
+				decimal supply = decimal::zero();
 				decimal incoming_fee = decimal::zero();
 				decimal outgoing_fee = decimal::zero();
 			};
@@ -241,10 +241,17 @@ namespace tangent
 				decimal reserve = decimal::zero();
 			};
 
+			struct weight_transfer
+			{
+				decimal accountable = decimal::zero();
+				decimal unaccountable = decimal::zero();
+			};
+
 			struct transition
 			{
 				ordered_map<algorithm::pubkeyhash_t, depository_transfer_batch> depositories;
 				ordered_map<algorithm::pubkeyhash_t, ordered_map<algorithm::asset_id, balance_transfer>> transfers;
+				ordered_map<algorithm::asset_id, weight_transfer> weights;
 			};
 
 			expects_lr<void> validate(uint64_t block_number) const override;
@@ -252,7 +259,6 @@ namespace tangent
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
 			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const override;
-			void set_pending_witness(uint64_t block_id, const std::string_view& transaction_id, const vector<warden::value_transfer>& inputs, const vector<warden::value_transfer>& outputs);
 			void set_finalized_witness(uint64_t block_id, const std::string_view& transaction_id, const vector<warden::value_transfer>& inputs, const vector<warden::value_transfer>& outputs);
 			void set_computed_witness(const warden::computed_transaction& witness);
 			option<warden::computed_transaction> get_assertion(const ledger::transaction_context* context) const;
@@ -350,7 +356,7 @@ namespace tangent
 			static ledger::transaction* from_stream(format::ro_stream& stream);
 			static ledger::transaction* from_type(uint32_t hash);
 			static ledger::transaction* from_copy(const ledger::transaction* base);
-			static expects_promise_rt<warden::prepared_transaction> prepare_transaction(const algorithm::asset_id& asset, const warden::wallet_link& from_link, const vector<warden::value_transfer>& to, option<warden::computed_fee>&& fee = optional::none);
+			static expects_promise_rt<warden::prepared_transaction> prepare_transaction(const algorithm::asset_id& asset, const warden::wallet_link& from_link, const vector<warden::value_transfer>& to, const decimal& max_fee);
 			static expects_promise_rt<warden::finalized_transaction> finalize_and_broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, warden::prepared_transaction&& prepared, ledger::dispatch_context* dispatcher);
 		};
 	}

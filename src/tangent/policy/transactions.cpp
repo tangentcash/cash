@@ -1683,8 +1683,8 @@ namespace tangent
 			}
 
 			auto fee_asset = algorithm::asset::base_id_of(asset);
-			auto fee_value = get_fee_value(context, algorithm::pubkeyhash_t());
-			if (fee_asset != asset && fee_value.is_positive())
+			auto fee_value = get_fee_value(context);
+			if (fee_asset != asset)
 			{
 				auto balance_requirement = context->verify_transfer_balance(fee_asset, fee_value);
 				if (!balance_requirement)
@@ -1694,6 +1694,8 @@ namespace tangent
 				if (!depository || depository->get_balance(fee_asset) < fee_value)
 					return layer_exception(algorithm::asset::handle_of(fee_asset) + " balance is insufficient to cover base withdrawal value (value: " + fee_value.to_string() + ")");
 			}
+			else
+				token_value += fee_value;
 
 			auto balance_requirement = context->verify_transfer_balance(asset, token_value);
 			if (!balance_requirement)
@@ -1756,15 +1758,12 @@ namespace tangent
 					dispatcher->emit_transaction(transaction);
 					return expects_promise_rt<void>(std::move(error));
 				}
-
 				transfers.push_back(warden::value_transfer(asset, account->addresses.begin()->second, get_token_value(context)));
 			}
 			else
 			{
-				auto fee_asset = algorithm::asset::base_id_of(asset);
-				auto fee_value = get_fee_value(context, algorithm::pubkeyhash_t());
 				for (auto& item : to)
-					transfers.push_back(warden::value_transfer(asset, item.first, decimal(fee_asset == asset ? item.second - fee_value : item.second)));
+					transfers.push_back(warden::value_transfer(asset, item.first, decimal(item.second)));
 			}
 
 			return coasync<expects_rt<void>>([this, context, dispatcher, transfers = std::move(transfers)]() mutable -> expects_promise_rt<void>
@@ -1784,7 +1783,7 @@ namespace tangent
 				auto state = ledger::dispatch_context::signature_state();
 				if (chain->requires_transaction_expiration || !state.load_message_if_preferred(cache))
 				{
-					auto message = coawait(resolver::prepare_transaction(algorithm::asset::base_id_of(asset), warden::wallet_link::from_owner(from_manager), transfers));
+					auto message = coawait(resolver::prepare_transaction(algorithm::asset::base_id_of(asset), warden::wallet_link::from_owner(from_manager), transfers, get_fee_value(context)));
 					if (!message)
 						coreturn message.error().is_retry() || message.error().is_shutdown() ? expects_rt<void>(std::move(message.error())) : cancel(std::move(message.error()));
 					else if (message->inputs.size() > std::numeric_limits<uint8_t>::max())
@@ -1806,14 +1805,14 @@ namespace tangent
 
 					auto session = coawait(dispatcher->aggregate_validators(context->receipt.transaction_hash, account->group));
 					if (!session)
-						coreturn session.error();
+						coreturn session.error().is_retry() || session.error().is_shutdown() ? expects_rt<void>(std::move(session.error())) : cancel(std::move(session.error()));
 
 					auto chosen = account->group.begin();
 					auto unavailable = ordered_set<algorithm::pubkeyhash_t>();
 					std::advance(chosen, (size_t)(algorithm::hashing::hash256i(input->message.data(), input->message.size()) % uint256_t(account->group.size())));
 					if (!state.aggregator)
 					{
-						auto aggregator = algorithm::composition::make_signature_state(chain->composition, input->public_key, input->message.data(), input->message.size(), (uint16_t)account->group.size());
+						auto aggregator = algorithm::composition::make_signature_state(input->alg, input->public_key, input->message.data(), input->message.size(), (uint16_t)account->group.size());
 						if (!aggregator)
 							coreturn cancel(remote_exception(std::move(aggregator.error().message())));
 
@@ -1969,12 +1968,8 @@ namespace tangent
 			}
 			return value;
 		}
-		decimal depository_withdrawal::get_fee_value(const ledger::transaction_context* context, const algorithm::pubkeyhash_t& from) const
+		decimal depository_withdrawal::get_fee_value(const ledger::transaction_context* context) const
 		{
-			auto& from_target = from.empty() ? context->receipt.from : from;
-			if (!to_manager.empty() || from_target == from_manager)
-				return decimal::zero();
-
 			auto reward = context->get_depository_reward(algorithm::asset::base_id_of(asset), from_manager);
 			if (!reward)
 				return decimal::zero();
@@ -2049,6 +2044,7 @@ namespace tangent
 				}
 			}
 
+			auto fee_value = decimal::zero();
 			auto input_value = unordered_map<algorithm::asset_id, decimal>();
 			auto output_value = unordered_map<algorithm::asset_id, decimal>();
 			for (auto& input : prepared.inputs)
@@ -2071,16 +2067,23 @@ namespace tangent
 					token_value = token_value.is_nan() ? token.value : (token_value + token.value);
 				}
 			}
+			for (auto& input : input_value)
+			{
+				if (input.first == base_asset)
+					fee_value += input.second;
+			}
 			for (auto& output : output_value)
 			{
 				auto input = input_value.find(output.first);
 				if (input == input_value.end() || input->second < output.second)
 					return layer_exception("prepared transaction inout not valid");
+
+				if (output.first == base_asset)
+					fee_value -= output.second;
 			}
 
-			auto target_output = output_value.find(transaction->asset);
-			if (target_output == output_value.end())
-				return layer_exception("prepared transaction inout not valid");
+			if (fee_value.is_negative() || fee_value > transaction->get_fee_value(context))
+				return layer_exception("invalid fee");
 
 			auto server = oracle::server_node::get();
 			auto presented_output_addresses = unordered_set<string>();
@@ -2101,20 +2104,15 @@ namespace tangent
 				if (!status)
 					return status.error();
 
-				target_output->second -= transfer.second;
+				auto& value = output_value[transaction->asset];
+				value = value.is_nan() ? transfer.second : (value + transfer.second);
 				if (presented_output_addresses.find(required_address) == presented_output_addresses.end())
 					return layer_exception("prepared transaction inout not valid");
 			}
 
-			if (target_output->second.is_negative())
+			for (auto& output : output_value)
 			{
-				algorithm::pubkeyhash_t from;
-				if (!transaction->recover_hash(from))
-					return layer_exception("failed to recover withdrawal sender");
-
-				auto base_fee_value = transaction->asset == base_asset ? transaction->get_fee_value(context, from) : decimal::zero();
-				target_output->second += base_fee_value;
-				if (target_output->second.is_negative())
+				if (output.second.is_negative())
 					return layer_exception("prepared transaction inout not valid");
 			}
 
@@ -2208,15 +2206,17 @@ namespace tangent
 			if (revert_withdrawal_side_effects)
 			{
 				auto fee_asset = algorithm::asset::base_id_of(asset);
+				auto fee_value = parent_transaction->get_fee_value(context);
+				auto token_value = parent_transaction->get_token_value(context);
 				if (fee_asset != asset)
 				{
-					auto fee_value = parent_transaction->get_fee_value(context, algorithm::pubkeyhash_t());
 					auto fee_transfer = context->apply_transfer(asset, parent->receipt.from, decimal::zero(), -fee_value);
 					if (!fee_transfer)
 						return fee_transfer.error();
 				}
+				else
+					token_value += fee_value;
 
-				auto token_value = parent_transaction->get_token_value(context);
 				auto token_transfer = context->apply_transfer(asset, parent->receipt.from, decimal::zero(), -token_value);
 				if (!token_transfer)
 					return token_transfer.error();
@@ -2311,8 +2311,8 @@ namespace tangent
 			if (!assertion || !assertion->is_valid())
 				return layer_exception("invalid assertion");
 
-			if (!assertion->is_mature(asset))
-				return layer_exception("transaction is not mature enough");
+			if (!assertion->block_id)
+				return layer_exception("transaction has no block reference");
 
 			auto chain = oracle::server_node::get()->get_chainparams(asset);
 			if (!chain)
@@ -2346,6 +2346,10 @@ namespace tangent
 			if (!assertion)
 				return layer_exception("invalid assertion");
 
+			const evaluation_branch* best_branch = get_best_branch(context, nullptr);
+			if (!best_branch)
+				return layer_exception("invalid branch");
+
 			auto collision = context->get_witness_transaction(asset, assertion->transaction_id);
 			if (collision)
 				return layer_exception("assertion " + assertion->transaction_id + " finalized");
@@ -2359,100 +2363,156 @@ namespace tangent
 			for (auto& input : assertion->inputs)
 			{
 				auto source = context->get_witness_account(asset, input.link.address, 0);
-				if (!source)
-					continue;
-
-				if (source->is_depository_account())
+				if (source && source->is_depository_account())
 				{
 					auto from_depository = algorithm::pubkeyhash_t(source->manager);
 					auto& depository = operations.depositories[from_depository];
 					if (input.value.is_positive())
-						depository.transfers[input.get_asset(asset)].balance -= input.value;
+					{
+						auto input_asset = input.get_asset(asset);
+						depository.transfers[input_asset].supply -= input.value;
+						operations.weights[input_asset].accountable -= input.value;
+					}
 					for (auto& token : input.tokens)
-						depository.transfers[token.get_asset(asset)].balance -= token.value;
+					{
+						auto input_asset = token.get_asset(asset);
+						depository.transfers[input_asset].supply -= token.value;
+						operations.weights[input_asset].accountable -= token.value;
+					}
 
 					auto account = context->get_depository_account(asset, from_depository.data, source->owner);
 					if (account)
 						depository.participants.insert(account->group.begin(), account->group.end());
 					depositories.insert(from_depository);
 				}
-				else if (source->is_routing_account())
+				else if (source && source->is_routing_account())
+				{
 					routers.insert(algorithm::pubkeyhash_t(source->owner));
+					if (input.value.is_positive())
+						operations.weights[input.get_asset(asset)].accountable -= input.value;
+					for (auto& token : input.tokens)
+						operations.weights[token.get_asset(asset)].accountable -= token.value;
+				}
+				else
+				{
+					if (input.value.is_positive())
+						operations.weights[input.get_asset(asset)].unaccountable -= input.value;
+					for (auto& token : input.tokens)
+						operations.weights[token.get_asset(asset)].unaccountable -= token.value;
+				}
 			}
 
 			for (auto& output : assertion->outputs)
 			{
 				auto source = context->get_witness_account(asset, output.link.address, 0);
-				if (!source)
-					continue;
-
-				if (source->is_depository_account())
+				if (source && source->is_depository_account())
 				{
 					auto to_depository = algorithm::pubkeyhash_t(source->manager);
 					auto& depository = operations.depositories[to_depository];
 					auto amounts = ordered_map<algorithm::asset_id, decimal>();
 					if (output.value.is_positive())
-						amounts[output.get_asset(asset)] = output.value;
+					{
+						auto output_asset = output.get_asset(asset);
+						amounts[output_asset] = output.value;
+						operations.weights[output_asset].accountable += output.value;
+					}
 					for (auto& token : output.tokens)
-						amounts[token.get_asset(asset)] = token.value;
+					{
+						auto output_asset = token.get_asset(asset);
+						amounts[output_asset] = token.value;
+						operations.weights[output_asset].accountable += token.value;
+					}
+
+					auto account = context->get_depository_account(asset, to_depository.data, source->owner);
+					if (account)
+						depository.participants.insert(account->group.begin(), account->group.end());
 
 					auto to_account = routers.empty() ? algorithm::pubkeyhash_t(source->owner) : *routers.begin();
 					for (auto& [token_asset, token_value] : amounts)
 					{
-						auto& target_depository = depository.transfers[token_asset];
-						target_depository.balance += token_value;
-						if (!token_value.is_positive() || !depositories.empty())
-							continue;
-
-						auto& balance = operations.transfers[to_account][token_asset];
-						balance.supply += token_value;
-						if (to_depository.equals(to_account.data))
-							continue;
-
-						auto reward = context->get_depository_reward(token_asset, to_depository.data);
-						if (reward && reward->incoming_fee.is_positive())
+						auto& transfer = depository.transfers[token_asset];
+						transfer.supply += token_value;
+						if (token_value.is_positive() && depositories.empty())
 						{
-							balance.supply -= reward->incoming_fee;
-							target_depository.incoming_fee += reward->incoming_fee;
+							auto& balance = operations.transfers[to_account][token_asset];
+							balance.supply += token_value;
+							if (!to_depository.equals(to_account.data))
+							{
+								auto reward = context->get_depository_reward(token_asset, to_depository.data);
+								if (reward && reward->incoming_fee.is_positive())
+								{
+									balance.supply -= reward->incoming_fee;
+									transfer.incoming_fee += reward->incoming_fee;
+								}
+							}
 						}
 					}
 				}
-				else if (source->is_routing_account())
+				else if (source && source->is_routing_account())
 				{
 					auto from_account = routers.empty() ? algorithm::pubkeyhash_t(source->owner) : *routers.begin();
 					auto& from_transfers = operations.transfers[from_account];
 					auto amounts = ordered_map<algorithm::asset_id, decimal>();
 					if (output.value.is_positive())
-						amounts[output.get_asset(asset)] = output.value;
+					{
+						auto output_asset = output.get_asset(asset);
+						amounts[output_asset] = output.value;
+						operations.weights[output_asset].accountable += output.value;
+					}
 					for (auto& token : output.tokens)
-						amounts[token.get_asset(asset)] = token.value;
+					{
+						auto output_asset = token.get_asset(asset);
+						amounts[output_asset] = token.value;
+						operations.weights[output_asset].accountable += token.value;
+					}
 
 					for (auto& [token_asset, token_value] : amounts)
 					{
 						auto& balance = from_transfers[token_asset];
 						balance.supply -= token_value;
 						balance.reserve -= token_value;
-						if (!token_value.is_positive() || depositories.empty())
-							continue;
-
-						auto from_depository = *depositories.begin();
-						auto reward = context->get_depository_reward(asset, from_depository.data);
-						if (reward && reward->outgoing_fee.is_positive())
+						if (token_value.is_positive())
 						{
-							auto& base_balance = from_transfers[asset];
-							base_balance.supply -= reward->outgoing_fee;
-							base_balance.reserve -= reward->outgoing_fee;
-							operations.depositories[from_depository].transfers[asset].outgoing_fee += reward->outgoing_fee;
+							auto divider = decimal(depositories.size()).truncate(protocol::now().message.decimal_precision);
+							for (auto from_depository = depositories.begin(); from_depository != depositories.end(); from_depository++)
+							{
+								auto reward = context->get_depository_reward(asset, from_depository->data);
+								auto outgoing_fee = reward ? reward->outgoing_fee / divider : decimal::zero();
+								if (outgoing_fee.is_positive())
+								{
+									auto& base_transfer = operations.depositories[*from_depository].transfers[asset];
+									auto& base_balance = from_transfers[asset];
+									base_balance.supply -= outgoing_fee;
+									base_balance.reserve -= outgoing_fee;
+									base_transfer.outgoing_fee += outgoing_fee;
+								}
+							}
 						}
 					}
+				}
+				else
+				{
+					if (output.value.is_positive())
+						operations.weights[output.get_asset(asset)].unaccountable += output.value;
+					for (auto& token : output.tokens)
+						operations.weights[token.get_asset(asset)].unaccountable += token.value;
 				}
 			}
 
 			if (operations.transfers.empty() && operations.depositories.empty())
 				return layer_exception("invalid transaction");
 
+			for (auto& [asset, weight] : operations.weights)
+			{
+				bool check = !weight.accountable.is_zero() || !weight.unaccountable.is_zero();
+				if (check)
+					check = check;
+
+				decimal fee = weight.accountable + weight.unaccountable;
+				weight.accountable = math0::abs(std::min(decimal::zero(), weight.accountable - std::min(decimal::zero(), fee)));
+			}
+
 			ordered_set<algorithm::pubkeyhash_t> failing_attesters;
-			const evaluation_branch* best_branch = get_best_branch(context, nullptr);
 			for (auto& branch : output_hashes)
 			{
 				if (best_branch == &branch.second)
@@ -2482,6 +2542,7 @@ namespace tangent
 						auto balance = context->get_account_balance(transfer_asset, owner.data);
 						auto supply = (balance ? balance->supply : decimal::zero()) + supply_delta;
 						auto reserve = (balance ? balance->reserve : decimal::zero()) + reserve_delta;
+						operations.weights[transfer_asset].accountable += std::min(decimal::zero(), std::min(supply, reserve));
 						if (supply.is_negative())
 							supply_delta = (balance ? -balance->supply : decimal::zero());
 						if (reserve.is_negative())
@@ -2501,58 +2562,45 @@ namespace tangent
 			{
 				for (auto& [transfer_asset, transfer] : batch.transfers)
 				{
-					if (transfer.balance.is_negative())
+					auto& penalty = operations.weights[transfer_asset].accountable;
+					auto consume_penalty = [&penalty](const decimal& delta) -> decimal
+					{
+						auto adjustment = std::max(decimal::zero(), penalty - delta);
+						auto result = std::max(decimal::zero(), delta - penalty);
+						penalty = adjustment;
+						return result;
+					};
+					penalty = math0::abs(penalty);
+					if (transfer.supply.is_negative())
 					{
 						auto balance = context->get_depository_balance(transfer_asset, owner.data);
-						auto supply = (balance ? balance->get_balance(transfer_asset) : decimal::zero()) + transfer.balance;
-						if (supply.is_negative())
-							transfer.balance = (balance ? -balance->get_balance(transfer_asset) : decimal::zero());
+						auto supply = balance ? -balance->get_balance(transfer_asset) : decimal::zero();
+						if (supply > transfer.supply)
+						{
+							consume_penalty(transfer.supply - supply);
+							transfer.supply = supply;
+						}
 					}
 
-					auto depository = context->apply_depository_balance(transfer_asset, owner.data, { { transfer_asset, transfer.balance } });
+					auto depository = context->apply_depository_balance(transfer_asset, owner.data, { { transfer_asset, transfer.supply } });
 					if (!depository)
 						return depository.error();
 
-					if (transfer.incoming_fee.is_positive())
+					auto total_fee = consume_penalty(transfer.incoming_fee + transfer.outgoing_fee);
+					auto attestation_cut = best_branch->signatures.empty() ? decimal::zero() : decimal(protocol::now().policy.attestation_fee_rate);
+					auto participation_cut = batch.participants.empty() ? decimal::zero() : decimal(protocol::now().policy.participation_fee_rate);
+					auto depository_fee = total_fee * (1 - attestation_cut - participation_cut);
+					auto attestation_fee = !best_branch->signatures.empty() ? total_fee * attestation_cut / decimal(best_branch->signatures.size()).truncate(protocol::now().message.decimal_precision) : decimal::zero();
+					auto participation_fee = !batch.participants.empty() ? total_fee * participation_cut / decimal(batch.participants.size()).truncate(protocol::now().message.decimal_precision) : decimal::zero();
+					if (attestation_fee.is_positive())
 					{
-						auto depository_fee = transfer.incoming_fee * (1.0 - protocol::now().policy.attestation_fee_rate);
-						if (depository_fee.is_positive())
-						{
-							auto attestation = context->apply_validator_attestation(transfer_asset, owner.data, ledger::transaction_context::stake_type::reward, { { transfer_asset, depository_fee } });
-							if (!attestation)
-								return attestation.error();
-						}
-
-						if (!best_branch)
-							best_branch = get_best_branch(context, nullptr);
-
-						auto attestation_fee = transfer.incoming_fee * protocol::now().policy.attestation_fee_rate;
-						if (attestation_fee.is_positive() && !best_branch->signatures.empty())
-						{
-							attestation_fee /= decimal(best_branch->signatures.size()).truncate(protocol::now().message.decimal_precision);
-							if (attestation_fee.is_positive())
-							{
-								for (size_t i = 0; i < best_branch->signatures.size(); i++)
-								{
-									algorithm::pubkeyhash_t target;
-									if (!recover_hash(target, best_branch->message.hash(), i))
-										return layer_exception("invalid attestation signature");
-
-									auto attestation = context->apply_validator_attestation(transfer_asset, target, ledger::transaction_context::stake_type::reward, { { transfer_asset, depository_fee } });
-									if (!attestation)
-										return attestation.error();
-								}
-							}
-						}
-
-						ordered_map<algorithm::asset_id, decimal> attestation_compensation;
 						for (auto& attester : failing_attesters)
 						{
 							auto prev_attestation = context->get_validator_attestation(transfer_asset, attester.data);
 							if (!prev_attestation)
 								continue;
 
-							auto next_attestation = context->apply_validator_attestation(transfer_asset, attester.data, ledger::transaction_context::stake_type::lock, { { transfer_asset, -transfer.incoming_fee } });
+							auto next_attestation = context->apply_validator_attestation(transfer_asset, attester.data, ledger::transaction_context::stake_type::lock, { { transfer_asset, -attestation_fee } });
 							if (!next_attestation)
 								return next_attestation.error();
 
@@ -2562,45 +2610,38 @@ namespace tangent
 							next_value = next_value.is_nan() ? decimal::zero() : next_value;
 
 							auto compensation_adjustment = std::max(decimal::zero(), prev_value - next_value);
-							if (!compensation_adjustment.is_positive())
-								continue;
-
-							auto& compensation = attestation_compensation[transfer_asset];
-							compensation = std::max(decimal::zero(), prev_value - next_value);
+							if (compensation_adjustment.is_positive())
+								depository_fee += consume_penalty(std::max(decimal::zero(), prev_value - next_value));
 						}
 
-						if (!attestation_compensation.empty())
+						for (size_t i = 0; i < best_branch->signatures.size(); i++)
 						{
-							auto attestation = context->apply_validator_attestation(transfer_asset, owner.data, ledger::transaction_context::stake_type::reward, attestation_compensation);
+							algorithm::pubkeyhash_t target;
+							if (!recover_hash(target, best_branch->message.hash(), i))
+								return layer_exception("invalid attestation signature");
+
+							auto attestation = context->apply_validator_attestation(transfer_asset, target, ledger::transaction_context::stake_type::reward_or_penalty, { { transfer_asset, attestation_fee } });
 							if (!attestation)
 								return attestation.error();
 						}
 					}
 
-					if (transfer.outgoing_fee.is_positive())
+					if (penalty.is_positive() || participation_fee.is_positive())
 					{
-						auto depository_fee = transfer.outgoing_fee * (1.0 - protocol::now().policy.participation_fee_rate);
-						if (depository_fee.is_positive())
+						auto individual_penalty = -penalty / decimal(batch.participants.size()).truncate(protocol::now().message.decimal_precision);
+						for (auto& participant : batch.participants)
 						{
-							auto attestation = context->apply_validator_attestation(transfer_asset, owner.data, ledger::transaction_context::stake_type::reward, { { transfer_asset, depository_fee } });
-							if (!attestation)
-								return attestation.error();
+							auto participation = context->apply_validator_participation(transfer_asset, participant.data, ledger::transaction_context::stake_type::reward_or_penalty, 0, { { transfer_asset, individual_penalty.is_negative() ? individual_penalty : participation_fee } });
+							if (!participation)
+								return participation.error();
 						}
+					}
 
-						auto participation_fee = transfer.outgoing_fee * protocol::now().policy.attestation_fee_rate;
-						if (participation_fee.is_positive() && !batch.participants.empty())
-						{
-							participation_fee /= decimal(batch.participants.size()).truncate(protocol::now().message.decimal_precision);
-							if (participation_fee.is_positive())
-							{
-								for (auto& participant : batch.participants)
-								{
-									auto participation = context->apply_validator_participation(transfer_asset, participant.data, ledger::transaction_context::stake_type::reward, 0, { { transfer_asset, participation_fee } });
-									if (!participation)
-										return participation.error();
-								}
-							}
-						}
+					if (depository_fee.is_positive())
+					{
+						auto attestation = context->apply_validator_attestation(transfer_asset, owner.data, ledger::transaction_context::stake_type::reward_or_penalty, { { transfer_asset, depository_fee } });
+						if (!attestation)
+							return attestation.error();
 					}
 				}
 			}
@@ -2609,7 +2650,7 @@ namespace tangent
 			if (!witness)
 				return witness.error();
 
-			return context->emit_witness(asset, std::max(assertion->block_id.execution, assertion->block_id.finalization));
+			return context->emit_witness(asset, assertion->block_id);
 		}
 		bool depository_transaction::store_body(format::wo_stream* stream) const
 		{
@@ -2633,26 +2674,12 @@ namespace tangent
 			}
 			return true;
 		}
-		void depository_transaction::set_pending_witness(uint64_t block_id, const std::string_view& transaction_id, const vector<warden::value_transfer>& inputs, const vector<warden::value_transfer>& outputs)
-		{
-			warden::computed_transaction witness;
-			witness.transaction_id = transaction_id;
-			witness.block_id.execution = block_id;
-			witness.inputs.reserve(inputs.size());
-			witness.outputs.reserve(outputs.size());
-			for (auto& input : inputs)
-				witness.inputs.push_back(warden::coin_utxo(warden::wallet_link::from_address(input.address), { { input.asset, input.value } }));
-			for (auto& output : outputs)
-				witness.outputs.push_back(warden::coin_utxo(warden::wallet_link::from_address(output.address), { { output.asset, output.value } }));
-			set_computed_witness(witness);
-		}
 		void depository_transaction::set_finalized_witness(uint64_t block_id, const std::string_view& transaction_id, const vector<warden::value_transfer>& inputs, const vector<warden::value_transfer>& outputs)
 		{
 			auto* chain = oracle::server_node::get()->get_chainparams(asset);
 			warden::computed_transaction witness;
 			witness.transaction_id = transaction_id;
-			witness.block_id.execution = block_id;
-			witness.block_id.finalization = block_id;
+			witness.block_id = block_id;
 			witness.inputs.reserve(inputs.size());
 			witness.outputs.reserve(outputs.size());
 			for (auto& input : inputs)
@@ -2663,14 +2690,7 @@ namespace tangent
 		}
 		void depository_transaction::set_computed_witness(const warden::computed_transaction& witness)
 		{
-			auto copy = witness;
-			if (copy.block_id.finalization > 0)
-			{
-				auto* chain = oracle::server_node::get()->get_chainparams(asset);
-				if (chain != nullptr)
-					copy.block_id.finalization = copy.block_id.execution + chain->sync_latency;
-			}
-			set_statement(algorithm::hashing::hash256i(copy.transaction_id), copy.as_message());
+			set_statement(algorithm::hashing::hash256i(witness.transaction_id), witness.as_message());
 		}
 		option<warden::computed_transaction> depository_transaction::get_assertion(const ledger::transaction_context* context) const
 		{
@@ -3299,11 +3319,11 @@ namespace tangent
 				return memory::init<depository_migration_finalization>(*(const depository_migration_finalization*)base);
 			return nullptr;
 		}
-		expects_promise_rt<warden::prepared_transaction> resolver::prepare_transaction(const algorithm::asset_id& asset, const warden::wallet_link& from_link, const vector<warden::value_transfer>& to, option<warden::computed_fee>&& fee)
+		expects_promise_rt<warden::prepared_transaction> resolver::prepare_transaction(const algorithm::asset_id& asset, const warden::wallet_link& from_link, const vector<warden::value_transfer>& to, const decimal& max_fee)
 		{
 			auto* server = oracle::server_node::get();
 			if (!protocol::now().is(network_type::regtest) || server->has_support(asset))
-				return server->prepare_transaction(asset, from_link, to, std::move(fee));
+				return server->prepare_transaction(asset, from_link, to, max_fee);
 
 			auto chain = server->get_chainparams(asset);
 			if (!chain)
@@ -3350,13 +3370,15 @@ namespace tangent
 				if (!finalization)
 					return expects_promise_rt<warden::finalized_transaction>(remote_exception(std::move(finalization.error().message())));
 
-				auto finalized = std::move(*finalization);
-				return server->broadcast_transaction(asset, external_id, finalized).then<expects_rt<warden::finalized_transaction>>([finalized](expects_rt<void>&& status) mutable -> expects_rt<warden::finalized_transaction>
+				auto finalized = memory::init<warden::finalized_transaction>(std::move(*finalization));
+				return server->broadcast_transaction(asset, external_id, *finalized).then<expects_rt<warden::finalized_transaction>>([finalized](expects_rt<void>&& status) mutable -> expects_rt<warden::finalized_transaction>
 				{
+					auto result = std::move(*finalized);
+					memory::deinit(finalized);
 					if (!status)
 						return expects_rt<warden::finalized_transaction>(status.error());
 
-					return expects_rt<warden::finalized_transaction>(std::move(finalized));
+					return expects_rt<warden::finalized_transaction>(std::move(result));
 				});
 			}
 
@@ -3366,13 +3388,10 @@ namespace tangent
 			regtest_finalized.calldata = regtest_finalized.as_message().encode();
 			if (dispatcher != nullptr)
 			{
-				auto regtest_computed = regtest_finalized.as_computed();
-				regtest_computed.block_id.finalization = regtest_computed.block_id.execution;
-
 				auto* transaction = memory::init<depository_transaction>();
 				transaction->asset = asset;
 				transaction->set_gas(decimal::zero(), 0);
-				transaction->set_computed_witness(regtest_computed);
+				transaction->set_computed_witness(regtest_finalized.as_computed());
 				dispatcher->emit_transaction(transaction);
 			}
 			return expects_promise_rt<warden::finalized_transaction>(std::move(regtest_finalized));

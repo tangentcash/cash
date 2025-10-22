@@ -187,10 +187,10 @@ void btc_pubkey_get_taproot_pubkey(const btc_pubkey* pubkey, const uint256 leaf_
     uint256 tweak_hash;
     btc_key_get_taproot_tweak(pubkey, leaf_hash, tweak_hash);
 
-    uint256 xonly_pubkey;
-    memcpy(xonly_pubkey, pubkey->pubkey + 1, sizeof(xonly_pubkey));
-    btc_xonly_public_key_tweak_add(xonly_pubkey, tweak_hash);
-    memcpy(hash256, xonly_pubkey, sizeof(xonly_pubkey));
+    uint8_t tweaked_pubkey[33];
+    memcpy(tweaked_pubkey, pubkey->pubkey, sizeof(tweaked_pubkey));
+    btc_ecc_public_key_tweak_add(tweaked_pubkey, tweak_hash);
+    memcpy(hash256, tweaked_pubkey + 1, sizeof(tweaked_pubkey) - 1);
 }
 
 btc_bool btc_pubkey_get_hex(const btc_pubkey* pubkey, char* str, size_t* strsize)

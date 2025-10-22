@@ -44,7 +44,7 @@ namespace tangent
 			virtual bool recover_aliases(const transaction_context* context, const receipt& receipt, ordered_set<uint256_t>& aliases) const;
 			virtual bool sign(const algorithm::seckey_t& secret_key) override;
 			virtual bool sign(const algorithm::seckey_t& secret_key, uint64_t new_nonce);
-			virtual bool sign(const algorithm::seckey_t& secret_key, uint64_t new_nonce, const decimal& price);
+			virtual expects_lr<void> sign(const algorithm::seckey_t& secret_key, uint64_t new_nonce, const decimal& price);
 			virtual expects_lr<void> set_optimal_gas(const decimal& price);
 			virtual void set_gas(const decimal& price, const uint256_t& limit);
 			virtual void set_asset(const std::string_view& blockchain, const std::string_view& token = std::string_view(), const std::string_view& contract_address = std::string_view());
@@ -98,7 +98,7 @@ namespace tangent
 			virtual bool load_payload(format::ro_stream& stream) override;
 			virtual bool sign(const algorithm::seckey_t& secret_key) override;
 			virtual bool sign(const algorithm::seckey_t& secret_key, uint64_t new_nonce) override;
-			virtual bool sign(const algorithm::seckey_t& secret_key, uint64_t new_nonce, const decimal& price) override;
+			virtual expects_lr<void> sign(const algorithm::seckey_t& secret_key, uint64_t new_nonce, const decimal& price) override;
 			virtual bool verify(const algorithm::pubkey_t& public_key) const override;
 			virtual bool verify(const algorithm::pubkey_t& public_key, const uint256_t& output_hash, size_t index) const;
 			virtual bool recover(algorithm::pubkey_t& public_key) const override;

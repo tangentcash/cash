@@ -214,6 +214,7 @@ namespace tangent
 			{
 				std::atomic<bool> waiting = false;
 				std::atomic<bool> dirty = false;
+				std::atomic<uint64_t> dispatcher_time = 0;
 			} mempool;
 
 		private:
@@ -267,6 +268,7 @@ namespace tangent
 			bool run_mempool_vacuum();
 			bool run_block_production();
 			bool run_block_dispatcher(const ledger::block_header& tip);
+			bool run_block_dispatch_retrial();
 			void startup();
 			void shutdown();
 			void clear_pending_permit(const uint256_t& permit_hash);

@@ -27,8 +27,8 @@ namespace tangent
 			expects_lr<warden::coin_utxo> get_stxo(const std::string_view& transaction_id, uint64_t index);
 			expects_lr<warden::coin_utxo> get_utxo(const std::string_view& transaction_id, uint64_t index);
 			expects_lr<vector<warden::coin_utxo>> get_utxos(const warden::wallet_link& link, size_t offset, size_t count);
-			expects_lr<void> add_computed_transaction(const warden::computed_transaction& value);
-			expects_lr<void> add_finalized_transaction(const warden::computed_transaction& value, const uint256_t& external_id);
+			expects_lr<void> add_incoming_transaction(const warden::computed_transaction& value, bool finalized);
+			expects_lr<void> add_outgoing_transaction(const warden::computed_transaction& value, const uint256_t& external_id);
 			expects_lr<warden::computed_transaction> get_computed_transaction(const std::string_view& transaction_id, const uint256_t& external_id);
 			expects_lr<vector<warden::computed_transaction>> finalize_computed_transactions(uint64_t block_height, uint64_t block_latency);
 			expects_lr<void> set_property(const std::string_view& key, uptr<schema>&& value);

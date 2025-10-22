@@ -599,7 +599,6 @@ namespace tangent
 
 			auto* prev = (validator_production*)prev_state;
 			active = active || (!prev && gas > 0);
-
 			for (auto& [asset, stake] : stakes)
 			{
 				if (!algorithm::asset::is_valid(asset))
@@ -607,13 +606,6 @@ namespace tangent
 
 				if (stake.is_nan() || stake.is_negative())
 					return layer_exception("invalid stake");
-
-				if (prev != nullptr)
-				{
-					auto prev_stake = prev->stakes.find(asset);
-					if (prev_stake != prev->stakes.end() && prev_stake->second > stake)
-						return layer_exception("next stake is lower than previous stake");
-				}
 			}
 
 			return expectation::met;
@@ -743,17 +735,7 @@ namespace tangent
 			if (owner.empty())
 				return layer_exception("invalid state owner");
 
-			auto* prev = (validator_participation*)prev_state;
-			if (prev)
-			{
-				for (auto& [token_asset, stake] : stakes)
-				{
-					auto prev_stake = prev->stakes.find(token_asset);
-					if (prev_stake != prev->stakes.end() && prev_stake->second > stake)
-						return layer_exception("next stake is lower than previous stake");
-				}
-			}
-			else if (!algorithm::asset::is_valid(asset, true))
+			if (!algorithm::asset::is_valid(asset, true))
 				return layer_exception("invalid asset");
 
 			auto blockchain = algorithm::asset::blockchain_of(asset);
@@ -916,17 +898,7 @@ namespace tangent
 			if (owner.empty())
 				return layer_exception("invalid state owner");
 
-			auto* prev = (validator_attestation*)prev_state;
-			if (prev)
-			{
-				for (auto& [token_asset, stake] : stakes)
-				{
-					auto prev_stake = prev->stakes.find(token_asset);
-					if (prev_stake != prev->stakes.end() && prev_stake->second > stake)
-						return layer_exception("next stake is lower than previous stake");
-				}
-			}
-			else if (!algorithm::asset::is_valid(asset, true))
+			if (!algorithm::asset::is_valid(asset, true))
 				return layer_exception("invalid asset");
 
 			auto blockchain = algorithm::asset::blockchain_of(asset);
@@ -1219,7 +1191,7 @@ namespace tangent
 					return layer_exception("invalid asset");
 
 				if (!balance.is_positive() && !balance.is_zero())
-					return layer_exception("ran out of balance value");	
+					return layer_exception("ran out of balance value");
 			}
 
 			return expectation::met;
@@ -1268,17 +1240,18 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &balances_size))
 				return false;
 
+			balances.clear();
 			for (uint16_t i = 0; i < balances_size; i++)
 			{
 				algorithm::asset_id asset;
 				if (!stream.read_integer(stream.read_type(), &asset))
 					return false;
 
-				decimal balance;
-				if (!stream.read_decimal(stream.read_type(), &balance))
+				decimal supply;
+				if (!stream.read_decimal(stream.read_type(), &supply))
 					return false;
 
-				balances[asset] = std::move(balance);
+				balances[asset] = std::move(supply);
 			}
 
 			return true;

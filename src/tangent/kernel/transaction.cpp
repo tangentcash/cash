@@ -85,18 +85,23 @@ namespace tangent
 			nonce = new_nonce;
 			return sign(secret_key);
 		}
-		bool transaction::sign(const algorithm::seckey_t& secret_key, uint64_t new_nonce, const decimal& price)
+		expects_lr<void> transaction::sign(const algorithm::seckey_t& secret_key, uint64_t new_nonce, const decimal& price)
 		{
 			set_gas(price, block::get_gas_limit());
 			if (!sign(secret_key, new_nonce))
-				return false;
+				return layer_exception("authentification failed");
 
 			auto optimal_gas = ledger::transaction_context::calculate_tx_gas(this);
-			if (!optimal_gas || gas_limit == *optimal_gas)
-				return true;
+			if (!optimal_gas)
+				return optimal_gas.error();
+			else if (gas_limit == *optimal_gas)
+				return expectation::met;
 
 			gas_limit = *optimal_gas;
-			return sign(secret_key);
+			if (!sign(secret_key))
+				return layer_exception("re-authentification failed");
+
+			return expectation::met;
 		}
 		expects_lr<void> transaction::set_optimal_gas(const decimal& price)
 		{
@@ -516,18 +521,23 @@ namespace tangent
 		{
 			return sign(secret_key);
 		}
-		bool attestation_transaction::sign(const algorithm::seckey_t& secret_key, uint64_t new_nonce, const decimal& price)
+		expects_lr<void> attestation_transaction::sign(const algorithm::seckey_t& secret_key, uint64_t new_nonce, const decimal& price)
 		{
 			set_gas(price, block::get_gas_limit());
 			if (!sign(secret_key, new_nonce))
-				return false;
+				return layer_exception("authentification failed");
 
 			auto optimal_gas = ledger::transaction_context::calculate_tx_gas(this);
-			if (!optimal_gas || gas_limit == *optimal_gas)
-				return true;
+			if (!optimal_gas)
+				return optimal_gas.error();
+			else if (gas_limit == *optimal_gas)
+				return expectation::met;
 
 			gas_limit = *optimal_gas;
-			return sign(secret_key);
+			if (!sign(secret_key))
+				return layer_exception("re-authentification failed");
+
+			return expectation::met;
 		}
 		bool attestation_transaction::verify(const algorithm::pubkey_t& public_key) const
 		{

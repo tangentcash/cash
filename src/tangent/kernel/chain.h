@@ -279,7 +279,7 @@ namespace tangent
             double participation_stake_threshold = 0.20;
             double participation_fee_rate = 0.30;
             double attestation_consensus_threshold = 0.66;
-            double attestation_fee_rate = 0.30;
+            double attestation_fee_rate = 0.15;
             double depository_reward_max_increase = 0.05;
             double consensus_difficulty_max_increase = 2.00;
             double consensus_difficulty_max_decrease = 0.80;

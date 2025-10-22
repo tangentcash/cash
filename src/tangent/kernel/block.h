@@ -282,7 +282,7 @@ namespace tangent
 			enum class stake_type : uint8_t
 			{
 				lock,
-				reward,
+				reward_or_penalty,
 				unlock
 			};
 

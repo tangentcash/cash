@@ -11,6 +11,7 @@
 #include "../internal/libbitcoin/utils.h"
 #include "../internal/libbitcoin/serialize.h"
 #undef min
+#undef max
 extern "C"
 {
 #include "../../internal/segwit_addr.h"
@@ -22,6 +23,15 @@ namespace tangent
 	{
 		namespace backends
 		{
+			template <typename t>
+			static t median_of(const vector<t>& vec)
+			{
+				size_t size = vec.size();
+				if (size % 2 == 1)
+					return vec[size / 2];
+
+				return (vec[size / 2 - 1] + vec[size / 2]) / t(2.0);
+			}
 			static bool cash_address_from_legacy_hash(const btc_chainparams_* chain, const uint8_t* address_hash, size_t address_hash_size, char* out_address, size_t out_address_size)
 			{
 				uint8_t type = (base58_prefix_check(chain->b58prefix_pubkey_address, address_hash) ? 0 : 1);
@@ -382,20 +392,29 @@ namespace tangent
 				if (!block_height)
 					coreturn expects_rt<computed_fee>(std::move(block_height.error()));
 
-				schema_list map;
-				map.emplace_back(var::set::integer(*block_height));
-				map.emplace_back(var::set::null());
+				vector<decimal> fee_rates; vector<size_t> tx_sizes;
+				auto precision = std::max<uint64_t>(1, get_chainparams().sync_latency);
+				for (uint64_t i = 0; i < precision; i++)
+				{
+					schema_list map;
+					map.emplace_back(var::set::integer(*block_height));
+					map.emplace_back(var::set::null());
 
-				auto block_stats = coawait(execute_rpc(nd_call::get_block_stats(), std::move(map), cache_policy::no_cache_no_throttling));
-				if (!block_stats)
-					coreturn expects_rt<computed_fee>(std::move(block_stats.error()));
+					auto block_stats = coawait(execute_rpc(nd_call::get_block_stats(), std::move(map), cache_policy::no_cache_no_throttling));
+					if (!block_stats)
+						coreturn expects_rt<computed_fee>(std::move(block_stats.error()));
 
-				decimal fee_rate = block_stats->get_var("avgfeerate").get_decimal();
-				size_t tx_size = (size_t)block_stats->get_var("avgtxsize").get_integer();
+					fee_rates.push_back(block_stats->get_var("avgfeerate").get_decimal());
+					tx_sizes.push_back((size_t)block_stats->get_var("avgtxsize").get_integer());
+				}
+				std::sort(fee_rates.begin(), fee_rates.end());
+				std::sort(tx_sizes.begin(), tx_sizes.end());
 
-				const size_t expected_max_tx_size = 1000;
-				tx_size = std::min<size_t>(expected_max_tx_size, (size_t)(std::ceil((double)tx_size / 100.0) * 100.0));
-				coreturn expects_rt<computed_fee>(computed_fee::fee_per_byte(fee_rate / netdata.divisibility, tx_size));
+				size_t expected_max_tx_size = 1000;
+				size_t median_tx_size = tx_sizes.empty() ? expected_max_tx_size / 10 : std::max(expected_max_tx_size / 10, median_of(tx_sizes));
+				decimal median_fee_rate = fee_rates.empty() ? decimal(1) : std::max(decimal(1), median_of(fee_rates));
+				median_tx_size = std::min<size_t>(expected_max_tx_size, (size_t)(std::ceil((double)median_tx_size / 100.0) * 100.0));
+				coreturn expects_rt<computed_fee>(computed_fee::fee_per_byte(median_fee_rate / netdata.divisibility, median_tx_size));
 			}
 			expects_promise_rt<void> bitcoin::broadcast_transaction(const finalized_transaction& finalized)
 			{
@@ -479,13 +498,10 @@ namespace tangent
 							memcpy(&pubkey.pubkey, signing_public_key->data(), signing_public_key->size());
 							pubkey.compressed = signing_public_key->size() == BTC_ECKEY_COMPRESSED_LENGTH;
 
-							compositions::secp256k1_public_state::point_t public_key;
-							btc_pubkey_get_taproot_pubkey(&pubkey, nullptr, public_key.data + 1);
-							public_key.data[0] = pubkey.pubkey[0];
-
 							compositions::secp256k1_secret_state::scalar_t tweak;
 							btc_key_get_taproot_tweak(&pubkey, nullptr, tweak.data);
 
+							auto public_key = algorithm::composition::to_cstorage<algorithm::composition::cpubkey_t>(*signing_public_key);
 							auto xonly_public_key_and_tweak = compositions::secp256k1_schnorr_signature_state::to_tweaked_public_key(public_key, tweak);
 							if (!xonly_public_key_and_tweak)
 								coreturn expects_rt<prepared_transaction>(remote_exception(std::move(xonly_public_key_and_tweak.error().message())));
@@ -743,26 +759,27 @@ namespace tangent
 			{
 				auto* chain = get_chain();
 				auto* options = oracle::server_node::get()->get_specifications(native_asset);
-				bool is_taproot_public_key = false;
 				size_t types = (size_t)get_address_type() | resolve_address_types(options);
 				address_map addresses;
 				btc_pubkey public_key;
 				btc_pubkey_init(&public_key);
+
+				bool is_taproot_public_key = false;
 				if (from_public_key.size() != BTC_ECKEY_COMPRESSED_LENGTH && from_public_key.size() != BTC_ECKEY_UNCOMPRESSED_LENGTH)
 				{
 					auto key = decode_public_key(from_public_key);
 					if (!key || (key->size() != BTC_ECKEY_COMPRESSED_LENGTH && key->size() != BTC_ECKEY_UNCOMPRESSED_LENGTH && key->size() != BTC_ECKEY_PKEY_LENGTH))
 						return layer_exception("not a valid hex public key");
 
-					memcpy(public_key.pubkey, key->data(), std::min(key->size(), sizeof(public_key.pubkey)));
 					is_taproot_public_key = (key->size() == BTC_ECKEY_PKEY_LENGTH);
+					memcpy(public_key.pubkey + (size_t)is_taproot_public_key, key->data(), std::min(key->size(), sizeof(public_key.pubkey) - (size_t)is_taproot_public_key));
 				}
 				else
 				{
-					memcpy(public_key.pubkey, from_public_key.data(), std::min(from_public_key.size(), sizeof(public_key.pubkey)));
 					is_taproot_public_key = (from_public_key.size() == BTC_ECKEY_PKEY_LENGTH);
+					memcpy(public_key.pubkey + (size_t)is_taproot_public_key, from_public_key.data(), std::min(from_public_key.size(), sizeof(public_key.pubkey) - (size_t)is_taproot_public_key));
 				}
-				public_key.compressed = btc_pubkey_get_length(public_key.pubkey[0]) == BTC_ECKEY_COMPRESSED_LENGTH;
+				public_key.compressed = is_taproot_public_key || btc_pubkey_get_length(public_key.pubkey[0]) == BTC_ECKEY_COMPRESSED_LENGTH;
 
 				char encoded_address[256];
 				if (!is_taproot_public_key)
@@ -799,7 +816,7 @@ namespace tangent
 							addresses[(uint8_t)addresses.size() + 1] = encoded_address;
 					}
 				}
-				else if ((types & (size_t)address_format::pay2_taproot) && segwit_addr_encode(encoded_address, chain->bech32_hrp, 1, public_key.pubkey, sizeof(::uint256)) != 0)
+				else if ((types & (size_t)address_format::pay2_taproot) && btc_pubkey_getaddr_p2tr(&public_key, chain, encoded_address))
 					addresses[(uint8_t)addresses.size() + 1] = encoded_address;
 
 				return addresses;

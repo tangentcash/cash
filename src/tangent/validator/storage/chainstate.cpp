@@ -705,7 +705,7 @@ namespace tangent
 					schema_list map;
 					map.push_back(var::set::string(*sqlite::utils::inline_array(std::move(hashes))));
 
-					auto cursor = get_tx_storage().emplace_query(__func__, "UPDATE transactions SET dispatch_queue = NULL WHERE transaction_hash IN ($?)", &map);
+					auto cursor = get_tx_storage().emplace_query(__func__, "UPDATE transactions SET dispatch_queue = NULL, dispatch_time = NULL WHERE transaction_hash IN ($?)", &map);
 					if (!cursor || cursor->error())
 						return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 				}
@@ -722,10 +722,10 @@ namespace tangent
 				}
 
 				schema_list map;
-				map.push_back(var::set::integer(std::max<uint64_t>(1, (1000 * protocol::now().user.storage.transaction_dispatch_repeat_interval / protocol::now().policy.consensus_proof_time))));
+				map.push_back(var::set::integer(protocol::now().time.now_cpu() + 1000 * protocol::now().user.storage.transaction_dispatch_repeat_interval));
 				map.push_back(var::set::string(*sqlite::utils::inline_array(std::move(hashes))));
 
-				auto cursor = get_tx_storage().emplace_query(__func__, "UPDATE transactions SET dispatch_queue = dispatch_queue + ? WHERE transaction_hash IN ($?)", &map);
+				auto cursor = get_tx_storage().emplace_query(__func__, "UPDATE transactions SET dispatch_time = ? WHERE transaction_hash IN ($?)", &map);
 				if (!cursor || cursor->error())
 					return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 			}
@@ -2321,10 +2321,11 @@ namespace tangent
 		{
 			schema_list map;
 			map.push_back(var::set::integer(block_number));
+			map.push_back(var::set::integer(protocol::now().time.now_cpu()));
 			map.push_back(var::set::integer(count));
 			map.push_back(var::set::integer(offset));
 
-			auto cursor = get_tx_storage().emplace_query(__func__, "SELECT transaction_hash FROM transactions WHERE dispatch_queue IS NOT NULL AND dispatch_queue <= ? ORDER BY block_nonce LIMIT ? OFFSET ?", &map);
+			auto cursor = get_tx_storage().emplace_query(__func__, "SELECT transaction_hash FROM transactions WHERE dispatch_queue <= ? AND (dispatch_time IS NULL OR dispatch_time <= ?) ORDER BY block_nonce LIMIT ? OFFSET ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<ledger::block_transaction>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -3280,6 +3281,7 @@ namespace tangent
 					transaction_number BIGINT NOT NULL,
 					transaction_hash BLOB(32) NOT NULL,
 					dispatch_queue BIGINT DEFAULT NULL,
+					dispatch_time BIGINT DEFAULT NULL,
 					block_number BIGINT NOT NULL,
 					block_nonce BIGINT NOT NULL,
 					PRIMARY KEY(transaction_hash)

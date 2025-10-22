@@ -278,7 +278,7 @@ namespace tangent
 				{
 					auto computed = coawait(implementation->link_transaction(logs.block_height, logs.block_hash, item));
 					if (computed)
-						logs.transactions.push_back(std::move(*computed));
+						logs.pending.push_back(std::move(*computed));
 				}
 			}
 
@@ -293,26 +293,19 @@ namespace tangent
 			auto* utxo_implementation = warden::relay_backend_utxo::from_relay(implementation);
 			auto* server = server_node::get();
 			unordered_set<string> transaction_ids;
-			for (auto& new_transaction : logs.transactions)
+			for (auto& new_transaction : logs.pending)
 			{
-				new_transaction.block_id.execution = logs.block_height;
+				new_transaction.block_id = logs.block_height;
 				server->normalize_transaction_id(asset, &new_transaction.transaction_id);
-				state.add_computed_transaction(new_transaction);
+				state.add_incoming_transaction(new_transaction, false);
 				transaction_ids.insert(algorithm::asset::handle_of(asset) + ":" + new_transaction.transaction_id);
 				if (utxo_implementation != nullptr)
 					utxo_implementation->update_utxo(new_transaction);
 			}
 
 			auto approvals = state.finalize_computed_transactions(logs.block_height, implementation->get_chainparams().sync_latency);
-			if (approvals && !approvals->empty())
-			{
-				logs.transactions.reserve(logs.transactions.size() + approvals->size());
-				for (auto& new_transaction : *approvals)
-				{
-					if (transaction_ids.find(algorithm::asset::handle_of(asset) + ":" + new_transaction.transaction_id) == transaction_ids.end())
-						logs.transactions.push_back(std::move(new_transaction));
-				}
-			}
+			if (approvals)
+				logs.finalized = std::move(*approvals);
 
 			coreturn expects_rt<warden::transaction_logs>(std::move(logs));
 		}
@@ -409,15 +402,14 @@ namespace tangent
 			auto* server = server_node::get();
 			auto new_transaction = finalized.as_computed();
 			server->normalize_transaction_id(asset, &new_transaction.transaction_id);
-			new_transaction.block_id.execution = 0;
-			new_transaction.block_id.finalization = 0;
+			new_transaction.block_id = 0;
 			{
 				storages::wardenstate state = storages::wardenstate(asset);
 				auto duplicate_transaction = state.get_computed_transaction(new_transaction.transaction_id, external_id);
 				if (duplicate_transaction)
 					coreturn expects_rt<void>(expectation::met);
 
-				auto status = state.add_finalized_transaction(new_transaction, external_id);
+				auto status = state.add_outgoing_transaction(new_transaction, external_id);
 				if (!status)
 					coreturn expects_rt<void>(remote_exception(std::move(status.error().message())));
 			}
@@ -432,7 +424,7 @@ namespace tangent
 
 			coreturn result;
 		}
-		expects_promise_rt<warden::prepared_transaction> server_node::prepare_transaction(const algorithm::asset_id& asset, const warden::wallet_link& from_link, const vector<warden::value_transfer>& to, option<warden::computed_fee>&& fee)
+		expects_promise_rt<warden::prepared_transaction> server_node::prepare_transaction(const algorithm::asset_id& asset, const warden::wallet_link& from_link, const vector<warden::value_transfer>& to, const decimal& max_fee)
 		{
 			if (!algorithm::asset::is_valid(asset))
 				coreturn expects_rt<warden::prepared_transaction>(remote_exception("asset not found"));
@@ -455,9 +447,6 @@ namespace tangent
 					coreturn expects_rt<warden::prepared_transaction>(remote_exception("receiver asset not valid"));
 			}
 
-			if (fee && !fee->is_valid())
-				coreturn expects_rt<warden::prepared_transaction>(remote_exception("fee not valid"));
-
 			auto normalized_from_link = normalize_link(asset, from_link);
 			if (!normalized_from_link)
 				coreturn expects_rt<warden::prepared_transaction>(remote_exception(std::move(normalized_from_link.error().message())));
@@ -466,19 +455,16 @@ namespace tangent
 				coreturn expects_rt<warden::prepared_transaction>(remote_exception("only one receiver allowed"));
 
 			warden::computed_fee normalized_fee = warden::computed_fee();
-			if (!fee)
-			{
-				auto estimated_fee = coawait(estimate_fee(asset, normalized_from_link->address, normalized_to));
-				if (!estimated_fee)
-					coreturn expects_rt<warden::prepared_transaction>(std::move(estimated_fee.error()));
-				normalized_fee = normalize_value(implementation, *estimated_fee);
-			}
-			else
-				normalized_fee = normalize_value(implementation, *fee);
+			auto estimated_fee = coawait(estimate_fee(asset, normalized_from_link->address, normalized_to));
+			if (!estimated_fee)
+				coreturn expects_rt<warden::prepared_transaction>(std::move(estimated_fee.error()));
 
+			normalized_fee = normalize_value(implementation, *estimated_fee);
 			decimal fee_value = normalized_fee.get_max_fee();
 			if (!fee_value.is_positive())
 				coreturn expects_rt<warden::prepared_transaction>(remote_exception(stringify::text("fee not valid: %s", fee_value.to_string().c_str())));
+			else if (max_fee.is_positive() && fee_value > max_fee)
+				coreturn expects_rt<warden::prepared_transaction>(remote_exception(stringify::text("fee is higher than limit: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
 
 			coreturn coawait(implementation->prepare_transaction(*normalized_from_link, normalized_to, normalized_fee));
 		}
@@ -1231,7 +1217,7 @@ namespace tangent
 						listener->is_dead = true;
 					coreturn_void;
 				}
-				else if (info->transactions.empty())
+				else if (info->finalized.empty() && info->pending.empty())
 				{
 					if (!info->block_hash.empty())
 					{
@@ -1255,18 +1241,19 @@ namespace tangent
 					info->block_hash.c_str(),
 					(int)info->block_height,
 					listener->options.get_checkpoint_percentage(),
-					(int)info->transactions.size());
+					(int)info->pending.size() + (int)info->finalized.size());
 
 				if (protocol::now().user.oracle.logging)
 				{
-					for (auto& tx : info->transactions)
+					for (auto& tx : info->pending)
+						VI_INFO("%s transaction %s accepted (block: %" PRIu64 ", status: pending)", algorithm::asset::name_of(listener->asset).c_str(), tx.transaction_id.c_str(), tx.block_id);
+
+					for (auto& tx : info->finalized)
 					{
-						auto chain = get_chain(listener->asset);
 						string transfer_logs = stringify::text(
-							"%s transaction %s linked (block: %" PRIu64 ", status: %s)\n",
+							"%s transaction %s accepted (block: %" PRIu64 ", status: finalized)\n",
 							algorithm::asset::name_of(listener->asset).c_str(),
-							tx.transaction_id.c_str(), tx.block_id,
-							tx.is_mature(listener->asset) ? "mature" : "maturing");
+							tx.transaction_id.c_str(), tx.block_id);
 						for (auto& input : tx.inputs)
 						{
 							transfer_logs += stringify::text("  %s spends %s %s\n", input.link.as_name().c_str(), input.value.to_string().c_str(), algorithm::asset::name_of(listener->asset).c_str());
@@ -1283,7 +1270,7 @@ namespace tangent
 							transfer_logs.erase(transfer_logs.end() - 1);
 
 						VI_INFO("%s", transfer_logs.c_str());
-					}
+					};
 				}
 
 				for (auto& item : callbacks)

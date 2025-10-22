@@ -135,20 +135,15 @@ namespace tangent
 
 		struct computed_transaction : messages::uniform
 		{
-			struct
-			{
-				uint64_t execution = 0;
-				uint64_t finalization = 0;
-			} block_id;
 			vector<coin_utxo> inputs;
 			vector<coin_utxo> outputs;
 			string transaction_id;
+			uint64_t block_id;
 
 			computed_transaction() = default;
 			bool store_payload(format::wo_stream* stream) const override;
 			bool load_payload(format::ro_stream& stream) override;
 			bool is_valid() const;
-			bool is_mature(const algorithm::asset_id& asset) const;
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
@@ -218,7 +213,8 @@ namespace tangent
 
 		struct transaction_logs
 		{
-			vector<computed_transaction> transactions;
+			vector<computed_transaction> pending;
+			vector<computed_transaction> finalized;
 			uint64_t block_height = (uint64_t)-1;
 			string block_hash;
 		};

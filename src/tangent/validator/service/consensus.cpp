@@ -9,6 +9,7 @@
 #define METHOD_CALL(x) tangent::consensus::callable::descriptor(#x, typeid(x).hash_code())
 #define TASK_TOPOLOGY_OPTIMIZATION "topology_optimization"
 #define TASK_MEMPOOL_VACUUM "mempool_vacuum"
+#define TASK_BLOCK_DISPATCH_RETRIAL "block_dispatch_retrial"
 #define TASK_BLOCK_PRODUCTION "block_production"
 #define TASK_BLOCK_DISPATCHER "block_dispatcher"
 
@@ -749,16 +750,17 @@ namespace tangent
 			else
 				candidate_tx->set_optimal_gas(decimal::zero());
 
-			if (!candidate_tx->sign(wallet.secret_key, account_nonce ? *account_nonce : 0, decimal::zero()))
+			auto status = candidate_tx->sign(wallet.secret_key, account_nonce ? *account_nonce : 0, decimal::zero());
+			if (!status)
 			{
 				auto purpose = candidate_tx->as_typename();
 				if (protocol::now().user.consensus.logging)
-					VI_ERR("transaction %s %.*s error: authentification error", algorithm::encoding::encode_0xhex256(candidate_tx->as_hash()).c_str(), (int)purpose.size(), purpose.data());
+					VI_ERR("transaction %s %.*s error: %s", algorithm::encoding::encode_0xhex256(candidate_tx->as_hash()).c_str(), (int)purpose.size(), purpose.data(), status.what().c_str());
 
-				return layer_exception("authentification error");
+				return status;
 			}
 
-			auto status = accept_transaction(uref(from), std::move(candidate_tx), true);
+			status = accept_transaction(uref(from), std::move(candidate_tx), false);
 			if (!status)
 				return status;
 
@@ -1212,16 +1214,17 @@ namespace tangent
 		expects_lr<void> server_node::dispatch_transaction_logs(const algorithm::asset_id& asset, const warden::chain_supervisor_options& options, warden::transaction_logs&& logs)
 		{
 			auto context = ledger::transaction_context();
-			for (auto& receipt : logs.transactions)
+			for (auto& receipt : logs.finalized)
 			{
 				auto collision = context.get_witness_transaction(asset, receipt.transaction_id);
 				if (!collision)
 				{
-					auto transaction = uptr<transactions::depository_transaction>(memory::init<transactions::depository_transaction>());
+					auto* transaction = memory::init<transactions::depository_transaction>();
+					transaction->asset = asset;
 					transaction->set_computed_witness(receipt);
-					accept_unsigned_transaction(nullptr, std::move(*transaction), nullptr);
+					accept_unsigned_transaction(nullptr, transaction, nullptr);
 					if (protocol::now().user.consensus.logging)
-						VI_INFO("%s warden transaction %s accepted (status: %s)", algorithm::asset::name_of(asset).c_str(), receipt.transaction_id.c_str(), receipt.is_mature(asset) ? "finalized" : "pending");
+						VI_INFO("%s warden transaction %s accepted", algorithm::asset::name_of(asset).c_str(), receipt.transaction_id.c_str());
 				}
 			}
 			return expectation::met;
@@ -1411,14 +1414,17 @@ namespace tangent
 			if (!permit_hash || accounts.empty())
 				return expects_promise_rt<unordered_map<algorithm::pubkeyhash_t, uref<relay>>>(remote_exception("invalid arguments"));
 
+			size_t reduction = 0;
 			unordered_map<algorithm::pubkeyhash_t, uref<relay>> early_results;
 			for (auto& account : accounts)
 			{
 				auto target = find_by_account(account);
 				if (target)
 					early_results[account] = std::move(target);
+				else if (account.equals(descriptor.second.public_key_hash))
+					++reduction;
 			}
-			if (early_results.size() == accounts.size())
+			if (early_results.size() == accounts.size() - reduction)
 				return expects_promise_rt<unordered_map<algorithm::pubkeyhash_t, uref<relay>>>(std::move(early_results));
 
 			return coasync<expects_rt<unordered_map<algorithm::pubkeyhash_t, uref<relay>>>>([this, permit_hash, accounts = std::move(accounts)]() mutable -> expects_promise_rt<unordered_map<algorithm::pubkeyhash_t, uref<relay>>>
@@ -2034,9 +2040,6 @@ namespace tangent
 				if (is_active() && environment.incoming.empty())
 					return environment.cleanup().report("mempool cleanup failed");
 
-				if (protocol::now().user.consensus.logging)
-					VI_INFO("evaluating mempool block (txns: %" PRIu64 ", position: %" PRIu64 ")", (uint64_t)environment.incoming.size(), position);
-
 				uint64_t replacements = 0;
 				auto evaluation = environment.evaluate_block([&]() -> uptr<ledger::transaction>
 				{
@@ -2050,16 +2053,17 @@ namespace tangent
 					return evaluation.report("mempool block evaluation failed");
 
 				if (protocol::now().user.consensus.logging)
-					VI_INFO("solving mempool block (duration: < ~%" PRIu64 " sec.)", current_node_solution_time / 1000 + 1);
+					VI_INFO("solving evaluated mempool block (txns: %" PRIu64 ", position: %" PRIu64 ", duration: < ~%" PRIu64 " sec.)", (uint64_t)environment.incoming.size(), position, current_node_solution_time / 1000 + 1);
 
 				auto solution = environment.solve_evaluated_block(evaluation->block);
 				if (!solution)
 					return solution.report("mempool block solution failed");
 
-				if (evaluation->block.number > chain.get_latest_block_number().or_else(0))
+				tip = chain.get_latest_block_header();
+				if (!tip || evaluation->block.number > tip->number || (evaluation->block.number == tip->number && evaluation->block.priority < tip->priority))
 				{
 					if (protocol::now().user.consensus.logging)
-						VI_INFO("proposing mempool block (number: %" PRIu64", hash: %s)", evaluation->block.number, algorithm::encoding::encode_0xhex256(evaluation->block.as_hash()).c_str());
+						VI_INFO("proposing solved mempool block (number: %" PRIu64", hash: %s)", evaluation->block.number, algorithm::encoding::encode_0xhex256(evaluation->block.as_hash()).c_str());
 
 					accept_block(nullptr, std::move(*evaluation), 0);
 				}
@@ -2070,6 +2074,10 @@ namespace tangent
 		bool server_node::run_block_dispatcher(const ledger::block_header& tip)
 		{
 			if (is_syncing())
+				return false;
+
+			mempool.dispatcher_time = protocol::now().time.now_cpu();
+			if (!tip.number)
 				return false;
 
 			return control_sys.async_task_if_none(TASK_BLOCK_DISPATCHER, [this, tip]() -> promise<void>
@@ -2090,6 +2098,15 @@ namespace tangent
 				dispatcher.checkpoint().report("dispatcher checkpoint error");
 				run_block_production();
 			});
+		}
+		bool server_node::run_block_dispatch_retrial()
+		{
+			if (protocol::now().time.now_cpu() - mempool.dispatcher_time <= protocol::now().user.storage.transaction_dispatch_repeat_interval)
+				return false;
+
+			auto chain = storages::chainstate();
+			auto tip = chain.get_latest_block_header().or_else(ledger::block_header());
+			return run_block_dispatcher(tip);
 		}
 		void server_node::startup()
 		{
@@ -2146,15 +2163,12 @@ namespace tangent
 			bind_query(METHOD_CALL(&server_node::query_public_state_aggregation), std::bind(&server_node::query_public_state_aggregation, this, std::placeholders::_2, std::placeholders::_3));
 			bind_query(METHOD_CALL(&server_node::query_signature_state_aggreation), std::bind(&server_node::query_signature_state_aggreation, this, std::placeholders::_2, std::placeholders::_3));
 
-			auto chain = storages::chainstate();
-			auto tip = chain.get_latest_block_header();
-			if (tip)
-				run_block_dispatcher(*tip);
-
 			control_sys.interval_if_none(TASK_TOPOLOGY_OPTIMIZATION "_runner", protocol::now().user.consensus.topology_timeout, std::bind(&server_node::run_topology_optimization, this));
 			control_sys.interval_if_none(TASK_MEMPOOL_VACUUM "_runner", protocol::now().user.storage.transaction_timeout * 1000, std::bind(&server_node::run_mempool_vacuum, this));
+			control_sys.interval_if_none(TASK_BLOCK_DISPATCH_RETRIAL "_runner", protocol::now().user.storage.transaction_dispatch_repeat_interval * 1000, std::bind(&server_node::run_block_dispatch_retrial, this));
 			run_topology_optimization();
 			run_mempool_vacuum();
+			run_block_dispatch_retrial();
 		}
 		void server_node::shutdown()
 		{
@@ -2769,8 +2783,7 @@ namespace tangent
 			{
 				if (!results)
 					return results.error();
-				else if (results->empty())
-					return remote_exception("node aggregation failed");
+
 				return expectation::met;
 			});
 		}

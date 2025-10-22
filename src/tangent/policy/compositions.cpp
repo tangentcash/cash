@@ -464,9 +464,6 @@ namespace tangent
 		expects_lr<void> secp256k1_signature_state::setup(const algorithm::composition::cpubkey_t& new_public_key, const uint8_t* new_message, size_t new_message_size, uint16_t new_participants)
 		{
 			VI_ASSERT(new_message != nullptr, "message should be set");
-			if (new_public_key.size() != sizeof(secp256k1_public_state::point_t))
-				return layer_exception("invalid public key size");
-
 			if (new_message_size != sizeof(message_hash))
 				sha256_Raw(new_message, new_message_size, message_hash);
 			else
@@ -483,9 +480,22 @@ namespace tangent
 			if (additions > 1 || multiplications > 1)
 				key_bits = 1024;
 
+			if (new_public_key.size() != sizeof(secp256k1_public_state::point_t))
+			{
+				auto* context = algorithm::signing::get_context();
+				secp256k1_pubkey uncompressed_public_key;
+				if (secp256k1_ec_pubkey_parse(context, &uncompressed_public_key, new_public_key.data(), new_public_key.size()) != 1)
+					return layer_exception("invalid public key");
+
+				size_t key_size = sizeof(public_key.data);
+				if (secp256k1_ec_pubkey_serialize(context, public_key.data, &key_size, &uncompressed_public_key, SECP256K1_EC_COMPRESSED) != 1)
+					return layer_exception("invalid public key");
+			}
+			else
+				public_key = std::string_view((char*)new_public_key.data(), new_public_key.size());
+
 			indices.clear();
 			group_key.clear();
-			public_key = std::string_view((char*)new_public_key.data(), new_public_key.size());
 			r_steps = multiplications;
 			i_steps = additions;
 			s_steps = multiplications;

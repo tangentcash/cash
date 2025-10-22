@@ -1,4 +1,4 @@
-# Multi-party Computation of ECDSAs
+# Multi-party Computation of Elliptic Curve DSAs
 
 This section explores the intricate process of multi-party computation (MPC) for Elliptic Curve Digital Signature Algorithms (ECDSAs), with a focus on three prominent elliptic curves: secp256k1, secp256k1-schnorr, and ed25519.
 

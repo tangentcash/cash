@@ -1939,10 +1939,10 @@ namespace tangent
 				}
 
 				auto delta = change.is_positive() ? change : std::max((value.is_nan() ? decimal::zero() : -value), stake);
-				value = value.is_nan() ? change : (value + change);
+				value = value.is_nan() ? delta : (value + delta);
 				if (!delta.is_zero_or_nan())
 				{
-					auto transfer = apply_transfer(asset, owner, type == stake_type::reward ? delta : decimal::zero(), delta);
+					auto transfer = apply_transfer(asset, owner, type == stake_type::reward_or_penalty ? delta : decimal::zero(), delta);
 					if (!transfer)
 						return transfer.error();
 				}
@@ -1978,10 +1978,10 @@ namespace tangent
 				}
 
 				auto delta = change.is_positive() ? change : std::max((value.is_nan() ? decimal::zero() : -value), stake);
-				value = value.is_nan() ? change : (value + change);
+				value = value.is_nan() ? delta : (value + delta);
 				if (!delta.is_zero_or_nan())
 				{
-					auto transfer = apply_transfer(asset, owner, type == stake_type::reward ? delta : decimal::zero(), delta);
+					auto transfer = apply_transfer(asset, owner, type == stake_type::reward_or_penalty ? delta : decimal::zero(), delta);
 					if (!transfer)
 						return transfer.error();
 				}

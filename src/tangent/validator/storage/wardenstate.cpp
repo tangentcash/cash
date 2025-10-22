@@ -181,7 +181,7 @@ namespace tangent
 
 			return values;
 		}
-		expects_lr<void> wardenstate::add_computed_transaction(const warden::computed_transaction& value)
+		expects_lr<void> wardenstate::add_incoming_transaction(const warden::computed_transaction& value, bool finalized)
 		{
 			format::wo_stream message;
 			if (!value.store(&message))
@@ -189,8 +189,8 @@ namespace tangent
 
 			schema_list map;
 			map.push_back(var::set::string(value.transaction_id));
-			map.push_back(var::set::integer(value.block_id.execution));
-			map.push_back(var::set::boolean(value.is_mature(asset)));
+			map.push_back(var::set::integer(value.block_id));
+			map.push_back(var::set::boolean(finalized));
 			map.push_back(var::set::binary(message.data));
 
 			auto cursor = get_storage().emplace_query(__func__, "INSERT INTO transactions (transaction_id, block_id, finalized, message) VALUES (?, ?, ?, ?) ON CONFLICT (transaction_id) DO UPDATE SET external_id = (CASE WHEN external_id IS NOT NULL THEN external_id ELSE EXCLUDED.external_id END), block_id = EXCLUDED.block_id, finalized = EXCLUDED.finalized, message = EXCLUDED.message", &map);
@@ -199,7 +199,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> wardenstate::add_finalized_transaction(const warden::computed_transaction& value, const uint256_t& external_id)
+		expects_lr<void> wardenstate::add_outgoing_transaction(const warden::computed_transaction& value, const uint256_t& external_id)
 		{
 			format::wo_stream message;
 			if (!value.store(&message))
@@ -211,7 +211,7 @@ namespace tangent
 			schema_list map;
 			map.push_back(external_id > 0 ? var::set::binary(hash, sizeof(hash)) : var::set::null());
 			map.push_back(var::set::string(value.transaction_id));
-			map.push_back(var::set::integer(value.block_id.execution));
+			map.push_back(var::set::integer(value.block_id));
 			map.push_back(var::set::boolean(false));
 			map.push_back(var::set::binary(message.data));
 
@@ -266,24 +266,8 @@ namespace tangent
 				warden::computed_transaction value;
 				auto blob = response[i]["message"].get().get_blob();
 				auto message = format::ro_stream(blob);
-				if (!value.load(message))
-					continue;
-
-				if (value.block_id.execution > 0)
-				{
-					if (block_height >= value.block_id.execution)
-					{
-						value.block_id.finalization = block_height;
-						if (value.is_mature(asset) && add_computed_transaction(value))
-							values.emplace_back(std::move(value));
-					}
-				}
-				else
-				{
-					value.block_id.execution = block_height;
-					value.block_id.finalization = 0;
-					add_computed_transaction(value);
-				}
+				if (value.load(message) && value.block_id > 0 && add_incoming_transaction(value, true))
+					values.emplace_back(std::move(value));
 			}
 
 			return expects_lr<vector<warden::computed_transaction>>(std::move(values));
