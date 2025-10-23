@@ -359,6 +359,7 @@ namespace tangent
 			expects_lr<states::validator_attestation> get_validator_attestation(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const;
 			expects_lr<vector<states::validator_attestation>> get_validator_attestations(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count) const;
 			expects_lr<states::depository_reward> get_depository_reward(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const;
+			expects_lr<states::depository_reward> get_depository_reward_median(const algorithm::asset_id& asset) const;
 			expects_lr<states::depository_balance> get_depository_balance(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const;
 			expects_lr<states::depository_policy> get_depository_policy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const;
 			expects_lr<vector<states::depository_account>> get_depository_accounts(const algorithm::pubkeyhash_t& manager, size_t offset, size_t count) const;

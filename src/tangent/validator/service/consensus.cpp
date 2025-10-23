@@ -1197,7 +1197,7 @@ namespace tangent
 				return layer_exception("state machine not valid");
 
 			auto* proof_transaction_ptr = (transactions::depository_withdrawal*)*proof_transaction->transaction;
-			auto validation = transactions::depository_withdrawal::validate_prepared_transaction(&context, proof_transaction_ptr, **aggregator.message);
+			auto validation = transactions::depository_withdrawal_routing::validate_possible_proof(&context, proof_transaction_ptr, **aggregator.message);
 			if (!validation)
 				return layer_exception("group validation error");
 
@@ -3012,7 +3012,7 @@ namespace tangent
 			if (!depository_withdrawal)
 				return remote_exception("invalid transaction");
 
-			auto validation = transactions::depository_withdrawal::validate_prepared_transaction(context, depository_withdrawal, **state.message);
+			auto validation = transactions::depository_withdrawal_routing::validate_possible_proof(context, depository_withdrawal, **state.message);
 			if (!validation)
 				return remote_exception(std::move(validation.error().message()));
 

@@ -440,7 +440,7 @@ namespace tangent
 
 				coreturn expects_rt<void>(remote_exception(std::move(error_message)));
 			}
-			expects_promise_rt<prepared_transaction> ripple::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee)
+			expects_promise_rt<prepared_transaction> ripple::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee, bool inclusive_fee)
 			{
 				auto account_info = coawait(get_account_info(from_link.address));
 				if (!account_info)
@@ -461,10 +461,12 @@ namespace tangent
 						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (account_token_info ? account_token_info->balance : decimal(0.0)).to_string().c_str(), total_value.to_string().c_str())));
 					total_value = fee_value;
 				}
+				else if (inclusive_fee)
+					total_value -= fee_value;
 				else
 					total_value += fee_value;
 
-				if (account_info->balance < total_value)
+				if (account_info->balance < total_value || total_value.is_negative())
 					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", account_info->balance.to_string().c_str(), total_value.to_string().c_str())));
 
 				auto [output_address, output_tag] = address_util::decode_tag_address(output.address);
@@ -497,7 +499,7 @@ namespace tangent
 				if (contract_address)
 					result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, message.data(), message.size(), { { output.asset, output.value }, { native_asset, fee_value } });
 				else
-					result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, message.data(), message.size(), { { native_asset, output.value + fee_value } });
+					result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, message.data(), message.size(), { { native_asset, inclusive_fee ? output.value : (output.value + fee_value) } });
 				result.requires_account_output(output.address, { { output.asset, output.value } });
 				result.requires_abi(format::variable(contract_address.or_else(string())));
 				result.requires_abi(format::variable(buffer.sequence));

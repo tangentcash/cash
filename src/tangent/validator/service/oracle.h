@@ -58,7 +58,7 @@ namespace tangent
 			expects_promise_rt<warden::computed_fee> estimate_fee(const algorithm::asset_id& asset, const std::string_view& from_address, const vector<warden::value_transfer>& to, const warden::fee_supervisor_options& options = warden::fee_supervisor_options());
 			expects_promise_rt<decimal> calculate_balance(const algorithm::asset_id& asset, const warden::wallet_link& link);
 			expects_promise_rt<void> broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, const warden::finalized_transaction& finalized);
-			expects_promise_rt<warden::prepared_transaction> prepare_transaction(const algorithm::asset_id& asset, const warden::wallet_link& from_link, const vector<warden::value_transfer>& to, const decimal& max_fee);
+			expects_promise_rt<warden::prepared_transaction> prepare_transaction(const algorithm::asset_id& asset, const warden::wallet_link& from_link, const vector<warden::value_transfer>& to, const decimal& max_fee, bool inclusive_fee);
 			expects_lr<warden::finalized_transaction> finalize_transaction(const algorithm::asset_id& asset, warden::prepared_transaction&& prepared);
 			expects_lr<computed_wallet> compute_wallet(const algorithm::asset_id& asset, const uint256_t& seed);
 			expects_lr<secret_box> encode_secret_key(const algorithm::asset_id& asset, const secret_box& secret_key);

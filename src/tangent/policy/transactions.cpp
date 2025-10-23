@@ -987,8 +987,17 @@ namespace tangent
 					if (type == ledger::transaction_context::stake_type::lock)
 						continue;
 
-					if (depository && balance && depository->is_whitelisted(token_asset) && balance->get_balance(token_asset).is_positive())
-						return layer_exception(algorithm::asset::handle_of(token_asset) + " depository has custodial balance");
+					if (!depository || !balance || !depository->is_whitelisted(token_asset))
+						continue;
+
+					if (algorithm::asset::is_valid(token_asset, true))
+					{
+						auto reward = context->get_depository_reward_median(token_asset).or_else(states::depository_reward(context->receipt.from, token_asset, nullptr));
+						if (balance->get_balance(token_asset) > reward.outgoing_fee)
+							return layer_exception(algorithm::asset::handle_of(token_asset) + " depository has non-dust custodial balance (max: " + reward.outgoing_fee.to_string() + ")");
+					}
+					else if (balance->get_balance(token_asset).is_positive())
+						return layer_exception(algorithm::asset::handle_of(token_asset) + " depository has custodial token balance");
 				}
 
 				auto status = context->apply_validator_attestation(asset, context->receipt.from, type, stakes);
@@ -1745,45 +1754,39 @@ namespace tangent
 			if (depository_policy && depository_policy->queue_transaction_hash != context->receipt.transaction_hash)
 				return expects_promise_rt<void>(remote_exception::retry());
 
-			vector<warden::value_transfer> transfers;
-			if (!to_manager.empty())
-			{
-				auto account = find_receiving_account(context, asset, from_manager, to_manager);
-				if (!account)
-				{
-					auto error = remote_exception(std::move(account.error().message()));
-					auto* transaction = memory::init<depository_withdrawal_finalization>();
-					transaction->asset = asset;
-					transaction->set_failure_witness(error.what(), context->receipt.transaction_hash);
-					dispatcher->emit_transaction(transaction);
-					return expects_promise_rt<void>(std::move(error));
-				}
-				transfers.push_back(warden::value_transfer(asset, account->addresses.begin()->second, get_token_value(context)));
-			}
-			else
-			{
-				for (auto& item : to)
-					transfers.push_back(warden::value_transfer(asset, item.first, decimal(item.second)));
-			}
-
-			return coasync<expects_rt<void>>([this, context, dispatcher, transfers = std::move(transfers)]() mutable -> expects_promise_rt<void>
+			return coasync<expects_rt<void>>([this, context, dispatcher]() mutable -> expects_promise_rt<void>
 			{
 				auto* server = oracle::server_node::get();
 				auto* chain = server->get_chainparams(asset);
 				auto cancel = [this, context, dispatcher](remote_exception&& error) -> expects_rt<void>
 				{
-					auto* transaction = memory::init<depository_withdrawal_finalization>();
+					auto* transaction = memory::init<depository_withdrawal_routing>();
 					transaction->asset = asset;
-					transaction->set_failure_witness(error.what(), context->receipt.transaction_hash);
+					transaction->set_proof(context->receipt.transaction_hash, layer_exception(std::move(error.message())));
 					dispatcher->emit_transaction(transaction);
 					return expects_rt<void>(std::move(error));
 				};
+
+				vector<warden::value_transfer> transfers;
+				if (!to_manager.empty())
+				{
+					auto account = find_receiving_account(context, asset, from_manager, to_manager);
+					if (!account)
+						coreturn cancel(remote_exception(std::move(account.error().message())));
+
+					transfers.push_back(warden::value_transfer(asset, account->addresses.begin()->second, get_token_value(context)));
+				}
+				else
+				{
+					for (auto& item : to)
+						transfers.push_back(warden::value_transfer(asset, item.first, decimal(item.second)));
+				}
 
 				auto cache = dispatcher->pull_cache(context);
 				auto state = ledger::dispatch_context::signature_state();
 				if (chain->requires_transaction_expiration || !state.load_message_if_preferred(cache))
 				{
-					auto message = coawait(resolver::prepare_transaction(algorithm::asset::base_id_of(asset), warden::wallet_link::from_owner(from_manager), transfers, get_fee_value(context)));
+					auto message = coawait(resolver::prepare_transaction(algorithm::asset::base_id_of(asset), warden::wallet_link::from_owner(from_manager), transfers, to_manager.empty() ? get_fee_value(context) : decimal::nan(), to_manager.empty()));
 					if (!message)
 						coreturn message.error().is_retry() || message.error().is_shutdown() ? expects_rt<void>(std::move(message.error())) : cancel(std::move(message.error()));
 					else if (message->inputs.size() > std::numeric_limits<uint8_t>::max())
@@ -1863,18 +1866,13 @@ namespace tangent
 					state.aggregator.destroy();
 				}
 
-				auto finalization = coawait(resolver::finalize_and_broadcast_transaction(algorithm::asset::base_id_of(asset), context->receipt.transaction_hash, std::move(**state.message), dispatcher));
-				if (!finalization && (finalization.error().is_retry() || finalization.error().is_shutdown()))
-				{
-					dispatcher->push_cache(context, state.as_message());
-					coreturn remote_exception::retry();
-				}
-				else if (!finalization)
-					coreturn cancel(std::move(finalization.error()));
+				auto finalization = resolver::finalize_transaction(algorithm::asset::base_id_of(asset), std::move(**state.message));
+				if (!finalization)
+					coreturn cancel(remote_exception(std::move(finalization.error().message())));
 
-				auto* transaction = memory::init<depository_withdrawal_finalization>();
+				auto* transaction = memory::init<depository_withdrawal_routing>();
 				transaction->asset = asset;
-				transaction->set_success_witness(finalization->hashdata, finalization->calldata, context->receipt.transaction_hash);
+				transaction->set_proof(context->receipt.transaction_hash, std::move(*finalization));
 				dispatcher->emit_transaction(transaction);
 				coreturn expectation::met;
 			});
@@ -2011,121 +2009,31 @@ namespace tangent
 		{
 			return "depository_withdrawal";
 		}
-		expects_lr<void> depository_withdrawal::validate_prepared_transaction(const ledger::transaction_context* context, const depository_withdrawal* transaction, const warden::prepared_transaction& prepared)
+		expects_lr<void> depository_withdrawal::approve_or_revert(ledger::transaction_context* context, const ledger::block_transaction& transaction, bool approval)
 		{
-			if (prepared.as_status() == warden::prepared_transaction::status::invalid)
-				return layer_exception("invalid prepared transaction");
+			auto* base_transaction = (depository_withdrawal*)*transaction.transaction;
+			auto finalization = context->apply_depository_policy_queue(base_transaction->asset, base_transaction->from_manager, 0);
+			if (!finalization)
+				return finalization.error();
 
-			auto blockchain = algorithm::asset::blockchain_of(transaction->asset);
-			auto base_asset = algorithm::asset::base_id_of(transaction->asset);
-			for (auto& input : prepared.inputs)
+			if (approval || base_transaction->to_manager.empty())
+				return expectation::met;
+
+			auto fee_asset = algorithm::asset::base_id_of(base_transaction->asset);
+			auto fee_value = base_transaction->get_fee_value(context);
+			auto token_value = base_transaction->get_token_value(context);
+			if (fee_asset != base_transaction->asset)
 			{
-				auto input_asset = input.utxo.get_asset(base_asset);
-				if (!algorithm::asset::is_valid(input_asset) || algorithm::asset::blockchain_of(input_asset) != blockchain)
-					return layer_exception("prepared input asset not valid");
-
-				for (auto& input_token : input.utxo.tokens)
-				{
-					if (!algorithm::asset::is_valid(input_token.get_asset(base_asset)))
-						return layer_exception("invalid input token asset");
-				}
+				auto fee_transfer = context->apply_transfer(base_transaction->asset, transaction.receipt.from, decimal::zero(), -fee_value);
+				if (!fee_transfer)
+					return fee_transfer.error();
 			}
+			else
+				token_value += fee_value;
 
-			for (auto& output : prepared.outputs)
-			{
-				auto output_asset = output.get_asset(base_asset);
-				if (!algorithm::asset::is_valid(output_asset) || algorithm::asset::blockchain_of(output_asset) != blockchain)
-					return layer_exception("invalid output asset");
-
-				for (auto& output_token : output.tokens)
-				{
-					if (!algorithm::asset::is_valid(output_token.get_asset(base_asset)))
-						return layer_exception("invalid output token asset");
-				}
-			}
-
-			auto fee_value = decimal::zero();
-			auto input_value = unordered_map<algorithm::asset_id, decimal>();
-			auto output_value = unordered_map<algorithm::asset_id, decimal>();
-			for (auto& input : prepared.inputs)
-			{
-				auto& value = input_value[input.utxo.get_asset(base_asset)];
-				value = value.is_nan() ? input.utxo.value : (value + input.utxo.value);
-				for (auto& token : input.utxo.tokens)
-				{
-					auto& token_value = input_value[token.get_asset(base_asset)];
-					token_value = token_value.is_nan() ? token.value : (token_value + token.value);
-				}
-			}
-			for (auto& output : prepared.outputs)
-			{
-				auto& value = output_value[output.get_asset(base_asset)];
-				value = value.is_nan() ? output.value : (value + output.value);
-				for (auto& token : output.tokens)
-				{
-					auto& token_value = output_value[token.get_asset(base_asset)];
-					token_value = token_value.is_nan() ? token.value : (token_value + token.value);
-				}
-			}
-			for (auto& input : input_value)
-			{
-				if (input.first == base_asset)
-					fee_value += input.second;
-			}
-			for (auto& output : output_value)
-			{
-				auto input = input_value.find(output.first);
-				if (input == input_value.end() || input->second < output.second)
-					return layer_exception("prepared transaction inout not valid");
-
-				if (output.first == base_asset)
-					fee_value -= output.second;
-			}
-
-			if (fee_value.is_negative() || fee_value > transaction->get_fee_value(context))
-				return layer_exception("invalid fee");
-
-			auto server = oracle::server_node::get();
-			auto presented_output_addresses = unordered_set<string>();
-			for (auto& output : prepared.outputs)
-			{
-				auto presented_address = output.link.address;
-				auto status = server->normalize_address(base_asset, &presented_address);
-				if (!status)
-					return status.error();
-
-				presented_output_addresses.insert(presented_address);
-			}
-
-			for (auto& transfer : transaction->to)
-			{
-				auto required_address = transfer.first;
-				auto status = server->normalize_address(base_asset, &required_address);
-				if (!status)
-					return status.error();
-
-				auto& value = output_value[transaction->asset];
-				value = value.is_nan() ? transfer.second : (value + transfer.second);
-				if (presented_output_addresses.find(required_address) == presented_output_addresses.end())
-					return layer_exception("prepared transaction inout not valid");
-			}
-
-			for (auto& output : output_value)
-			{
-				if (output.second.is_negative())
-					return layer_exception("prepared transaction inout not valid");
-			}
-
-			for (auto& input : prepared.inputs)
-			{
-				auto witness = context->get_witness_account_tagged(base_asset, input.utxo.link.address, 0);
-				if (!witness || !witness->is_depository_account())
-					return layer_exception("input refers to an address that does not exist or is not depository address");
-
-				auto account = context->get_depository_account(base_asset, witness->manager, witness->owner);
-				if (!account)
-					return layer_exception("input refers to an account that does not have a linked depository");
-			}
+			auto token_transfer = context->apply_transfer(base_transaction->asset, transaction.receipt.from, decimal::zero(), -token_value);
+			if (!token_transfer)
+				return token_transfer.error();
 
 			return expectation::met;
 		}
@@ -2167,20 +2075,14 @@ namespace tangent
 			return layer_exception("receiving depository account (to) not found");
 		}
 
-		expects_lr<void> depository_withdrawal_finalization::validate(uint64_t block_number) const
+		expects_lr<void> depository_withdrawal_routing::validate(uint64_t block_number) const
 		{
 			if (!depository_withdrawal_hash)
 				return layer_exception("depository withdrawal hash not valid");
 
-			if (error_message.empty() && (transaction_id.empty() || native_data.empty()))
-				return layer_exception("invalid transaction success data");
-
-			if (!error_message.empty() && (!transaction_id.empty() || !native_data.empty()))
-				return layer_exception("invalid transaction error data");
-
 			return ledger::consensus_transaction::validate(block_number);
 		}
-		expects_lr<void> depository_withdrawal_finalization::execute(ledger::transaction_context* context) const
+		expects_lr<void> depository_withdrawal_routing::execute(ledger::transaction_context* context) const
 		{
 			auto validation = consensus_transaction::execute(context);
 			if (!validation)
@@ -2198,58 +2100,81 @@ namespace tangent
 			if (!event)
 				return event.error();
 
-			auto finalization = context->apply_depository_policy_queue(asset, parent_transaction->from_manager, 0);
-			if (!finalization)
-				return finalization.error();
+			auto continue_to_finalization = proof ? validate_finalized_proof(context, parent_transaction, *proof) : proof.error();
+			if (continue_to_finalization)
+				return expectation::met;
 
-			bool revert_withdrawal_side_effects = (transaction_id.empty() || !error_message.empty()) && parent_transaction->to_manager.empty();
-			if (revert_withdrawal_side_effects)
-			{
-				auto fee_asset = algorithm::asset::base_id_of(asset);
-				auto fee_value = parent_transaction->get_fee_value(context);
-				auto token_value = parent_transaction->get_token_value(context);
-				if (fee_asset != asset)
-				{
-					auto fee_transfer = context->apply_transfer(asset, parent->receipt.from, decimal::zero(), -fee_value);
-					if (!fee_transfer)
-						return fee_transfer.error();
-				}
-				else
-					token_value += fee_value;
-
-				auto token_transfer = context->apply_transfer(asset, parent->receipt.from, decimal::zero(), -token_value);
-				if (!token_transfer)
-					return token_transfer.error();
-			}
-
-			return expectation::met;
+			context->emit_event<depository_withdrawal_routing>({ format::variable(continue_to_finalization.error().message()) });
+			return depository_withdrawal::approve_or_revert(context, *parent, false);
 		}
-		bool depository_withdrawal_finalization::store_body(format::wo_stream* stream) const
+		expects_promise_rt<void> depository_withdrawal_routing::dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const
+		{
+			if (!proof || context->receipt.find_event<depository_withdrawal_routing>() != nullptr)
+				return expects_promise_rt<void>(expectation::met);
+
+			if (context->get_witness_event(context->receipt.transaction_hash))
+				return expects_promise_rt<void>(expectation::met);
+
+			auto parent = context->get_block_transaction<depository_withdrawal>(depository_withdrawal_hash);
+			if (!parent)
+				return expects_promise_rt<void>(expectation::met);
+
+			auto* parent_transaction = (depository_withdrawal*)*parent->transaction;
+			if (!dispatcher->is_running_on(parent_transaction->from_manager))
+				return expects_promise_rt<void>(expectation::met);
+
+			return coasync<expects_rt<void>>([this, context, dispatcher]() mutable -> expects_promise_rt<void>
+			{
+				auto broadcast = coawait(resolver::broadcast_transaction(algorithm::asset::base_id_of(asset), depository_withdrawal_hash, warden::finalized_transaction(*proof), dispatcher));
+				if (!broadcast && (broadcast.error().is_retry() || broadcast.error().is_shutdown()))
+					coreturn remote_exception::retry();
+
+				auto* transaction = memory::init<depository_withdrawal_finalization>();
+				transaction->asset = asset;
+				transaction->depository_withdrawal_routing_hash = context->receipt.transaction_hash;
+				transaction->status = broadcast ? string() : ("ERR: " + broadcast.what());
+				dispatcher->emit_transaction(transaction);
+				coreturn expectation::met;
+			});
+		}
+		bool depository_withdrawal_routing::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer(depository_withdrawal_hash);
-			stream->write_string(transaction_id);
-			stream->write_string(native_data);
-			stream->write_string(error_message);
+			stream->write_boolean(!!proof);
+			if (proof)
+				proof->store_payload(stream);
+			else
+				stream->write_string(proof.what());
 			return true;
 		}
-		bool depository_withdrawal_finalization::load_body(format::ro_stream& stream)
+		bool depository_withdrawal_routing::load_body(format::ro_stream& stream)
 		{
 			if (!stream.read_integer(stream.read_type(), &depository_withdrawal_hash))
 				return false;
 
-			if (!stream.read_string(stream.read_type(), &transaction_id))
+			bool has_proof;
+			if (!stream.read_boolean(stream.read_type(), &has_proof))
 				return false;
 
-			if (!stream.read_string(stream.read_type(), &native_data))
-				return false;
+			if (has_proof)
+			{
+				proof = expects_lr<warden::finalized_transaction>(warden::finalized_transaction());
+				if (!proof->load_payload(stream))
+					return false;
+			}
+			else
+			{
+				string error_message;
+				if (!stream.read_string(stream.read_type(), &error_message))
+					return false;
 
-			if (!stream.read_string(stream.read_type(), &error_message))
-				return false;
+				proof = layer_exception(std::move(error_message));
+			}
 
 			return true;
 		}
-		bool depository_withdrawal_finalization::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
+		bool depository_withdrawal_routing::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
 		{
 			auto parent = context->get_block_transaction_instance(depository_withdrawal_hash);
 			if (!parent)
@@ -2258,30 +2183,286 @@ namespace tangent
 			parties.insert(algorithm::pubkeyhash_t(parent->receipt.from));
 			return true;
 		}
-		void depository_withdrawal_finalization::set_success_witness(const std::string_view& new_transaction_id, const std::string_view& new_native_data, const uint256_t& new_depository_withdrawal_hash)
+		void depository_withdrawal_routing::set_proof(const uint256_t& new_depository_withdrawal_hash, expects_lr<warden::finalized_transaction>&& new_proof)
 		{
 			depository_withdrawal_hash = new_depository_withdrawal_hash;
-			transaction_id = new_transaction_id;
-			native_data = new_native_data;
-			error_message.clear();
+			proof = std::move(new_proof);
 		}
-		void depository_withdrawal_finalization::set_failure_witness(const std::string_view& new_error_message, const uint256_t& new_depository_withdrawal_hash)
+		bool depository_withdrawal_routing::is_dispatchable() const
 		{
-			depository_withdrawal_hash = new_depository_withdrawal_hash;
-			transaction_id.clear();
-			native_data.clear();
-			error_message = new_error_message;
+			return true;
+		}
+		uptr<schema> depository_withdrawal_routing::as_schema() const
+		{
+			schema* data = ledger::consensus_transaction::as_schema().reset();
+			data->set("depository_withdrawal_hash", var::string(algorithm::encoding::encode_0xhex256(depository_withdrawal_hash)));
+			if (proof)
+			{
+				data->set("prepared", proof->prepared.as_schema().reset());
+				data->set("calldata", var::string(proof->calldata));
+				data->set("hashdata", var::string(proof->hashdata));
+				data->set("locktime", algorithm::encoding::serialize_uint256(proof->locktime));
+			}
+			else
+				data->set("error", var::string(proof.what()));
+			return data;
+		}
+		uint32_t depository_withdrawal_routing::as_type() const
+		{
+			return as_instance_type();
+		}
+		std::string_view depository_withdrawal_routing::as_typename() const
+		{
+			return as_instance_typename();
+		}
+		uint32_t depository_withdrawal_routing::as_instance_type()
+		{
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
+		}
+		std::string_view depository_withdrawal_routing::as_instance_typename()
+		{
+			return "depository_withdrawal_routing";
+		}
+		expects_lr<void> depository_withdrawal_routing::validate_possible_proof(const ledger::transaction_context* context, const depository_withdrawal* transaction, const warden::prepared_transaction& prepared)
+		{
+			if (prepared.as_status() == warden::prepared_transaction::status::invalid)
+				return layer_exception("invalid prepared transaction");
+
+			auto server = oracle::server_node::get();
+			auto base_asset = algorithm::asset::base_id_of(transaction->asset);
+			auto required_output_witness = ordered_map<string, states::witness_account>();
+			auto required_output_value = ordered_map<algorithm::asset_id, decimal>();
+			for (auto& [output_address, output_value] : transaction->to)
+			{
+				auto normalized_address = output_address;
+				auto status = server->normalize_address(transaction->asset, &normalized_address);
+				if (!status)
+					return status.error();
+
+				if (required_output_witness.find(normalized_address) == required_output_witness.end())
+				{
+					auto witness = context->get_witness_account_tagged(base_asset, normalized_address, 0);
+					if (!witness)
+						return layer_exception("transaction requires paying to unknown address");
+
+					required_output_witness.insert(std::make_pair(std::move(normalized_address), std::move(*witness)));
+				}
+
+				auto& value = required_output_value[transaction->asset];
+				value = value.is_nan() ? output_value : (value + output_value);
+			}
+			if (!transaction->to_manager.empty())
+			{
+				if (!transaction->to.empty())
+					return layer_exception("migration/withdrawal confusion");
+
+				auto witness = depository_withdrawal::find_receiving_account(context, transaction->asset, transaction->from_manager, transaction->to_manager);
+				if (!witness)
+					return layer_exception("prepared transaction not possible");
+
+				auto account = context->get_depository_account(base_asset, witness->manager, witness->owner);
+				if (!account)
+					return layer_exception("transaction output refers to a non-depository account");
+
+				required_output_value[transaction->asset] = transaction->get_token_value(context);
+				for (auto& [type, normalized_address] : witness->addresses)
+				{
+					auto status = server->normalize_address(base_asset, &normalized_address);
+					if (!status)
+						return status.error();
+
+					required_output_witness.insert(std::make_pair(std::move(normalized_address), std::move(*witness)));
+				}
+			}
+
+			auto inout_witness = ordered_map<string, states::witness_account>();
+			auto input_value = ordered_map<algorithm::asset_id, decimal>();
+			auto output_value = ordered_map<algorithm::asset_id, decimal>();
+			auto change_value = ordered_map<algorithm::asset_id, decimal>();
+			for (auto& input : prepared.inputs)
+			{
+				auto normalized_address = input.utxo.link.address;
+				auto status = server->normalize_address(base_asset, &normalized_address);
+				if (!status)
+					return status.error();
+
+				auto it = inout_witness.find(normalized_address);
+				if (it == inout_witness.end())
+				{
+					auto witness = context->get_witness_account_tagged(base_asset, normalized_address, 0);
+					if (!witness)
+						return layer_exception("witness transaction input spends from unknown address");
+
+					auto account = context->get_depository_account(base_asset, witness->manager, witness->owner);
+					if (!account)
+						return layer_exception("witness transaction input refers to a non-depository account");
+
+					inout_witness.insert(std::make_pair(normalized_address, std::move(*witness)));
+					it = inout_witness.find(normalized_address);
+				}
+
+				if (!it->second.is_depository_account() || !it->second.manager.equals(transaction->from_manager))
+					return layer_exception("witness transaction input spends from unrelated address");
+
+				auto& value = input_value[input.utxo.get_asset(base_asset)];
+				value = value.is_nan() ? input.utxo.value : (value + input.utxo.value);
+				for (auto& token : input.utxo.tokens)
+				{
+					auto& token_value = input_value[token.get_asset(base_asset)];
+					token_value = token_value.is_nan() ? token.value : (token_value + token.value);
+				}
+			}
+			for (auto& output : prepared.outputs)
+			{
+				auto normalized_address = output.link.address;
+				auto status = server->normalize_address(base_asset, &normalized_address);
+				if (!status)
+					return status.error();
+
+				auto it = inout_witness.find(normalized_address);
+				if (it == inout_witness.end())
+				{
+					auto witness = context->get_witness_account_tagged(base_asset, normalized_address, 0);
+					if (!witness)
+						return layer_exception("witness transaction output pays to unknown address");
+
+					inout_witness.insert(std::make_pair(normalized_address, std::move(*witness)));
+					it = inout_witness.find(normalized_address);
+				}
+
+				auto change_output = required_output_witness.find(normalized_address);
+				if (change_output == required_output_witness.end())
+				{
+					if (!it->second.is_depository_account())
+						return layer_exception("witness transaction output receives change into unrelated address");
+
+					auto account = context->get_depository_account(base_asset, it->second.manager, it->second.owner);
+					if (!account)
+						return layer_exception("witness transaction output refers to a non-depository account as change");
+				}
+
+				auto output_asset = output.get_asset(base_asset);
+				auto& value = change_output == required_output_witness.end() ? change_value[output_asset] : output_value[output_asset];
+				value = value.is_nan() ? output.value : (value + output.value);
+				for (auto& token : output.tokens)
+				{
+					auto& token_value = output_value[token.get_asset(base_asset)];
+					token_value = token_value.is_nan() ? token.value : (token_value + token.value);
+				}
+			}
+
+			if (output_value.size() < required_output_value.size())
+				return layer_exception("witness transaction doesn't have required amount of outputs");
+
+			auto& input_base_value = input_value[base_asset];
+			auto& output_base_value = output_value[base_asset];
+			auto& change_base_value = change_value[base_asset];
+			auto fee_value = (input_base_value.is_nan() ? decimal::zero() : input_base_value) - ((output_base_value.is_nan() ? decimal::zero() : output_base_value) + (change_base_value.is_nan() ? decimal::zero() : change_base_value));
+			auto max_fee_value = transaction->get_fee_value(context);
+			if (fee_value.is_negative())
+				return layer_exception("witness transaction output pays more that possible");
+			else if (fee_value > max_fee_value)
+				return layer_exception("witness transaction fee overflow (max: " + max_fee_value.to_string() + ")");
+
+			for (auto& [output_asset, actual_output_value] : output_value)
+			{
+				auto it = required_output_value.find(output_asset);
+				if (it != required_output_value.end())
+				{
+					if (output_asset != base_asset && actual_output_value != it->second)
+						return layer_exception("witness transaction output pays unexpected token value");
+					else if (output_asset == base_asset && actual_output_value < it->second - max_fee_value || actual_output_value > it->second + max_fee_value)
+						return layer_exception("witness transaction output pays unexpected native value");
+				}
+				else if (output_asset == base_asset && actual_output_value > max_fee_value)
+					return layer_exception("witness transaction output pays unexpected native value");
+				else if (output_asset != base_asset)
+					return layer_exception("witness transaction output pays unexpected token value");
+			}
+
+			return expectation::met;
+		}
+		expects_lr<void> depository_withdrawal_routing::validate_finalized_proof(const ledger::transaction_context* context, const depository_withdrawal* transaction, const warden::finalized_transaction& finalized)
+		{
+			auto validation = validate_possible_proof(context, transaction, finalized.prepared);
+			if (!validation)
+				return validation;
+
+			if (finalized.calldata.empty())
+				return layer_exception("invalid finalized calldata");
+			else if (finalized.hashdata.empty())
+				return layer_exception("invalid finalized hashdata");
+
+			auto finalization = resolver::finalize_transaction(transaction->asset, warden::prepared_transaction(finalized.prepared));
+			if (!finalization)
+				return finalization.error();
+
+			return expectation::met;
+		}
+
+		expects_lr<void> depository_withdrawal_finalization::validate(uint64_t block_number) const
+		{
+			if (!depository_withdrawal_routing_hash)
+				return layer_exception("depository withdrawal confirmation hash not valid");
+
+			return ledger::consensus_transaction::validate(block_number);
+		}
+		expects_lr<void> depository_withdrawal_finalization::execute(ledger::transaction_context* context) const
+		{
+			auto validation = consensus_transaction::execute(context);
+			if (!validation)
+				return validation.error();
+
+			auto parent = context->get_block_transaction<depository_withdrawal_routing>(depository_withdrawal_routing_hash);
+			if (!parent)
+				return layer_exception("parent transaction not found");
+
+			auto* parent_transaction = (depository_withdrawal_routing*)*parent->transaction;
+			if (parent->receipt.from != context->receipt.from)
+				return layer_exception("parent transaction not valid");
+
+			auto top = context->get_block_transaction<depository_withdrawal>(parent_transaction->depository_withdrawal_hash);
+			if (!top)
+				return layer_exception("top transaction not found");
+
+			auto event = context->apply_witness_event(depository_withdrawal_routing_hash, context->receipt.transaction_hash);
+			if (!event)
+				return event.error();
+
+			return depository_withdrawal::approve_or_revert(context, *top, status.empty());
+		}
+		bool depository_withdrawal_finalization::store_body(format::wo_stream* stream) const
+		{
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_integer(depository_withdrawal_routing_hash);
+			stream->write_string(status);
+			return true;
+		}
+		bool depository_withdrawal_finalization::load_body(format::ro_stream& stream)
+		{
+			if (!stream.read_integer(stream.read_type(), &depository_withdrawal_routing_hash))
+				return false;
+
+			if (!stream.read_string(stream.read_type(), &status))
+				return false;
+
+			return true;
+		}
+		bool depository_withdrawal_finalization::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
+		{
+			auto parent = context->get_block_transaction_instance(depository_withdrawal_routing_hash);
+			if (!parent)
+				return false;
+
+			parties.insert(algorithm::pubkeyhash_t(parent->receipt.from));
+			return true;
 		}
 		uptr<schema> depository_withdrawal_finalization::as_schema() const
 		{
 			schema* data = ledger::consensus_transaction::as_schema().reset();
-			data->set("depository_withdrawal_hash", var::string(algorithm::encoding::encode_0xhex256(depository_withdrawal_hash)));
-			if (!transaction_id.empty())
-				data->set("transaction_id", var::string(transaction_id));
-			if (!native_data.empty())
-				data->set("native_data", var::string(native_data));
-			if (!error_message.empty())
-				data->set("error_message", var::string(error_message));
+			data->set("depository_withdrawal_routing_hash", var::string(algorithm::encoding::encode_0xhex256(depository_withdrawal_routing_hash)));
+			data->set("status", status.empty() ? var::null() : var::string(status));
 			return data;
 		}
 		uint32_t depository_withdrawal_finalization::as_type() const
@@ -2794,8 +2975,14 @@ namespace tangent
 					depository.whitelist.insert(allowances.begin(), allowances.end());
 					for (auto& [token_asset, token_value] : balance->balances)
 					{
-						if (depository.is_whitelisted(token_asset) && token_value.is_positive())
-							return layer_exception("depository should not contain custodial funds before disabling withdrawals");
+						if (algorithm::asset::is_valid(token_asset, true))
+						{
+							auto reward = context->get_depository_reward_median(token_asset).or_else(states::depository_reward(context->receipt.from, token_asset, nullptr));
+							if (token_value > reward.outgoing_fee)
+								return layer_exception(algorithm::asset::handle_of(token_asset) + " depository has non-dust custodial balance (max: " + reward.outgoing_fee.to_string() + ")");
+						}
+						else if (token_value.is_positive())
+							return layer_exception(algorithm::asset::handle_of(token_asset) + " depository has custodial token balance");
 					}
 				}
 			}
@@ -3276,6 +3463,8 @@ namespace tangent
 				return memory::init<depository_account_finalization>();
 			else if (hash == depository_withdrawal::as_instance_type())
 				return memory::init<depository_withdrawal>();
+			else if (hash == depository_withdrawal_routing::as_instance_type())
+				return memory::init<depository_withdrawal_routing>();
 			else if (hash == depository_withdrawal_finalization::as_instance_type())
 				return memory::init<depository_withdrawal_finalization>();
 			else if (hash == depository_transaction::as_instance_type())
@@ -3307,6 +3496,8 @@ namespace tangent
 				return memory::init<depository_account_finalization>(*(const depository_account_finalization*)base);
 			else if (hash == depository_withdrawal::as_instance_type())
 				return memory::init<depository_withdrawal>(*(const depository_withdrawal*)base);
+			else if (hash == depository_withdrawal_routing::as_instance_type())
+				return memory::init<depository_withdrawal_routing>(*(const depository_withdrawal_routing*)base);
 			else if (hash == depository_withdrawal_finalization::as_instance_type())
 				return memory::init<depository_withdrawal_finalization>(*(const depository_withdrawal_finalization*)base);
 			else if (hash == depository_transaction::as_instance_type())
@@ -3319,11 +3510,11 @@ namespace tangent
 				return memory::init<depository_migration_finalization>(*(const depository_migration_finalization*)base);
 			return nullptr;
 		}
-		expects_promise_rt<warden::prepared_transaction> resolver::prepare_transaction(const algorithm::asset_id& asset, const warden::wallet_link& from_link, const vector<warden::value_transfer>& to, const decimal& max_fee)
+		expects_promise_rt<warden::prepared_transaction> resolver::prepare_transaction(const algorithm::asset_id& asset, const warden::wallet_link& from_link, const vector<warden::value_transfer>& to, const decimal& max_fee, bool inclusive_fee)
 		{
 			auto* server = oracle::server_node::get();
 			if (!protocol::now().is(network_type::regtest) || server->has_support(asset))
-				return server->prepare_transaction(asset, from_link, to, max_fee);
+				return server->prepare_transaction(asset, from_link, to, max_fee, inclusive_fee);
 
 			auto chain = server->get_chainparams(asset);
 			if (!chain)
@@ -3361,40 +3552,43 @@ namespace tangent
 
 			return expects_promise_rt<warden::prepared_transaction>(std::move(regtest_prepared));
 		}
-		expects_promise_rt<warden::finalized_transaction> resolver::finalize_and_broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, warden::prepared_transaction&& prepared, ledger::dispatch_context* dispatcher)
+		expects_lr<warden::finalized_transaction> resolver::finalize_transaction(const algorithm::asset_id& asset, warden::prepared_transaction&& prepared)
+		{
+			auto* server = oracle::server_node::get();
+			if (!protocol::now().is(network_type::regtest) || server->has_support(asset))
+				return server->finalize_transaction(asset, std::move(prepared));
+
+			auto transaction_id = algorithm::encoding::encode_0xhex256(prepared.as_hash());
+			auto block_id = algorithm::hashing::hash256i(transaction_id) % std::numeric_limits<uint32_t>::max();
+			auto regtest_finalized = warden::finalized_transaction(std::move(prepared), string(), std::move(transaction_id), block_id);
+			regtest_finalized.calldata = regtest_finalized.as_message().encode();
+			return expects_lr<warden::finalized_transaction>(std::move(regtest_finalized));
+		}
+		expects_promise_rt<void> resolver::broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, warden::finalized_transaction&& finalized, ledger::dispatch_context* dispatcher)
 		{
 			auto* server = oracle::server_node::get();
 			if (!protocol::now().is(network_type::regtest) || server->has_support(asset))
 			{
-				auto finalization = server->finalize_transaction(asset, std::move(prepared));
-				if (!finalization)
-					return expects_promise_rt<warden::finalized_transaction>(remote_exception(std::move(finalization.error().message())));
-
-				auto finalized = memory::init<warden::finalized_transaction>(std::move(*finalization));
-				return server->broadcast_transaction(asset, external_id, *finalized).then<expects_rt<warden::finalized_transaction>>([finalized](expects_rt<void>&& status) mutable -> expects_rt<warden::finalized_transaction>
+				auto preserved = memory::init<warden::finalized_transaction>(std::move(finalized));
+				return server->broadcast_transaction(asset, external_id, *preserved).then<expects_rt<void>>([preserved](expects_rt<void>&& status) mutable -> expects_rt<void>
 				{
-					auto result = std::move(*finalized);
-					memory::deinit(finalized);
+					memory::deinit(preserved);
 					if (!status)
-						return expects_rt<warden::finalized_transaction>(status.error());
+						return expects_rt<void>(std::move(status.error()));
 
-					return expects_rt<warden::finalized_transaction>(std::move(result));
+					return expects_rt<void>(expectation::met);
 				});
 			}
 
-			auto transaction_id = algorithm::encoding::encode_0xhex256(algorithm::hashing::hash256i(external_id.to_string()));
-			auto block_id = algorithm::hashing::hash256i(transaction_id) % std::numeric_limits<uint32_t>::max();
-			auto regtest_finalized = warden::finalized_transaction(std::move(prepared), string(), std::move(transaction_id), block_id);
-			regtest_finalized.calldata = regtest_finalized.as_message().encode();
 			if (dispatcher != nullptr)
 			{
 				auto* transaction = memory::init<depository_transaction>();
 				transaction->asset = asset;
 				transaction->set_gas(decimal::zero(), 0);
-				transaction->set_computed_witness(regtest_finalized.as_computed());
+				transaction->set_computed_witness(finalized.as_computed());
 				dispatcher->emit_transaction(transaction);
 			}
-			return expects_promise_rt<warden::finalized_transaction>(std::move(regtest_finalized));
+			return expects_promise_rt<void>(expectation::met);
 		}
 	}
 }

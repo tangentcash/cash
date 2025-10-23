@@ -588,18 +588,22 @@ namespace tangent
 					return false;
 
 				string public_key_assembly;
-				if (!stream.read_string(stream.read_type(), &public_key_assembly) || !algorithm::encoding::decode_bytes(public_key_assembly, next.public_key.data(), next.public_key.size()))
+				if (!stream.read_string(stream.read_type(), &public_key_assembly))
 					return false;
 
 				string signature_assembly;
-				if (!stream.read_string(stream.read_type(), &signature_assembly) || !algorithm::encoding::decode_bytes(signature_assembly, next.signature.data(), next.signature.size()))
+				if (!stream.read_string(stream.read_type(), &signature_assembly))
 					return false;
 
 				string message_assembly;
 				if (!stream.read_string(stream.read_type(), &message_assembly))
 					return false;
 
+				next.public_key.resize(public_key_assembly.size());
 				next.message.resize(message_assembly.size());
+				next.signature.resize(signature_assembly.size());
+				memcpy(next.public_key.data(), public_key_assembly.data(), public_key_assembly.size());
+				memcpy(next.signature.data(), signature_assembly.data(), signature_assembly.size());
 				memcpy(next.message.data(), message_assembly.data(), message_assembly.size());
 				if (!next.utxo.load_payload(stream))
 					return false;

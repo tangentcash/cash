@@ -477,7 +477,7 @@ namespace tangent
 
 				coreturn expects_rt<void>(expectation::met);
 			}
-			expects_promise_rt<prepared_transaction> monero::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee)
+			expects_promise_rt<prepared_transaction> monero::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee, bool inclusive_fee)
 			{
 				coreturn expects_rt<prepared_transaction>(remote_exception("not implemented"));
 			}

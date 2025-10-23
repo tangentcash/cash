@@ -411,7 +411,7 @@ namespace tangent
 				memory::release(*status);
 				coreturn expects_rt<void>(expectation::met);
 			}
-			expects_promise_rt<prepared_transaction> solana::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee)
+			expects_promise_rt<prepared_transaction> solana::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee, bool inclusive_fee)
 			{
 				auto native_balance = coawait(get_balance(from_link.address));
 				if (!native_balance)
@@ -441,10 +441,12 @@ namespace tangent
 					from_token = std::move(*from_token_balance);
 					to_token = std::move(*to_token_balance);
 				}
+				else if (inclusive_fee)
+					total_value -= fee_value;
 				else
 					total_value += fee_value;
 
-				if (*native_balance < total_value)
+				if (*native_balance < total_value || total_value.is_negative())
 					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", native_balance->to_string().c_str(), total_value.to_string().c_str())));
 
 				sol_transaction transaction;
@@ -469,7 +471,7 @@ namespace tangent
 				if (contract_address)
 					result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, message_buffer.data(), message_buffer.size(), { { output.asset, output.value }, { native_asset, fee_value } });
 				else
-					result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, message_buffer.data(), message_buffer.size(), { { native_asset, output.value + fee_value } });
+					result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, message_buffer.data(), message_buffer.size(), { { native_asset, inclusive_fee ? output.value : (output.value + fee_value) } });
 				result.requires_account_output(output.address, { { output.asset, output.value } });
 				result.requires_abi(format::variable(from_token ? from_token->divisibility : netdata.divisibility));
 				result.requires_abi(format::variable(transaction.token_program_address));

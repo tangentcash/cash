@@ -730,7 +730,7 @@ namespace tangent
 				memory::release(*hex_data);
 				coreturn expects_rt<void>(expectation::met);
 			}
-			expects_promise_rt<prepared_transaction> ethereum::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee)
+			expects_promise_rt<prepared_transaction> ethereum::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee, bool inclusive_fee)
 			{
 				auto chain_id = coawait(get_chain_id());
 				if (!chain_id)
@@ -748,11 +748,13 @@ namespace tangent
 				}
 				else if (!algorithm::asset::token_of(output.asset).empty())
 					coreturn expects_rt<prepared_transaction>(remote_exception("invalid sending token"));
+				else if (inclusive_fee)
+					total_value -= fee_value;
 				else
 					total_value += fee_value;
 
 				auto balance = coawait(calculate_balance(output.asset, from_link));
-				if (!balance || *balance < total_value)
+				if (!balance || *balance < total_value || total_value.is_negative())
 					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (balance ? *balance : decimal(0.0)).to_string().c_str(), total_value.to_string().c_str())));
 
 				auto nonce = coawait(get_transactions_count(from_link.address));
@@ -793,7 +795,7 @@ namespace tangent
 				if (contract_address)
 					result.requires_account_input(algorithm::composition::type::secp256k1, wallet_link(from_link), *public_key, (uint8_t*)hash.data(), hash.size(), { { output.asset, output.value }, { native_asset, fee_value } });
 				else
-					result.requires_account_input(algorithm::composition::type::secp256k1, wallet_link(from_link), *public_key, (uint8_t*)hash.data(), hash.size(), { { native_asset, output.value + fee_value } });
+					result.requires_account_input(algorithm::composition::type::secp256k1, wallet_link(from_link), *public_key, (uint8_t*)hash.data(), hash.size(), { { native_asset, inclusive_fee ? output.value : (output.value + fee_value) } });
 				result.requires_account_output(output.address, { { output.asset, output.value } });
 				result.requires_abi(format::variable(!!legacy.eip_155));
 				result.requires_abi(format::variable(contract_address.or_else(string())));

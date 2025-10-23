@@ -182,6 +182,9 @@ namespace tangent
 			if (method.empty())
 				coreturn expects_rt<schema*>(remote_exception("method not found"));
 
+			if (!has_node(asset))
+				coreturn expects_rt<schema*>(remote_exception("chain not active"));
+
 			auto* implementation = get_chain(asset);
 			if (!implementation)
 				coreturn expects_rt<schema*>(remote_exception("chain not found"));
@@ -193,6 +196,9 @@ namespace tangent
 			if (!algorithm::asset::is_valid(asset))
 				coreturn expects_rt<uint64_t>(remote_exception("asset not found"));
 
+			if (!has_node(asset))
+				coreturn expects_rt<uint64_t>(remote_exception("chain not active"));
+
 			auto* implementation = get_chain(asset);
 			if (!implementation)
 				coreturn expects_rt<uint64_t>(remote_exception("chain not found"));
@@ -203,6 +209,9 @@ namespace tangent
 		{
 			if (!algorithm::asset::is_valid(asset))
 				coreturn expects_rt<schema*>(remote_exception("asset not found"));
+
+			if (!has_node(asset))
+				coreturn expects_rt<schema*>(remote_exception("chain not active"));
 
 			auto* implementation = get_chain(asset);
 			if (!implementation)
@@ -217,6 +226,9 @@ namespace tangent
 
 			if (!options)
 				coreturn expects_rt<warden::transaction_logs>(remote_exception("options not found"));
+
+			if (!has_node(asset))
+				coreturn expects_rt<warden::transaction_logs>(remote_exception("chain not active"));
 
 			auto* implementation = get_chain(asset);
 			if (!implementation)
@@ -317,6 +329,9 @@ namespace tangent
 			if (!block_height)
 				coreturn expects_rt<warden::computed_transaction>(remote_exception("txs not found"));
 
+			if (!has_node(asset))
+				coreturn expects_rt<warden::computed_transaction>(remote_exception("chain not active"));
+
 			auto* implementation = get_chain(asset);
 			if (!implementation)
 				coreturn expects_rt<warden::computed_transaction>(remote_exception("chain not found"));
@@ -330,6 +345,9 @@ namespace tangent
 
 			if (stringify::is_empty_or_whitespace(from_address))
 				coreturn expects_rt<warden::computed_fee>(remote_exception("from address not found"));
+
+			if (!has_node(asset))
+				coreturn expects_rt<warden::computed_fee>(remote_exception("chain not active"));
 
 			auto* implementation = get_chain(asset);
 			if (!implementation)
@@ -381,6 +399,9 @@ namespace tangent
 			if (!normalized_link)
 				coreturn expects_rt<decimal>(remote_exception(std::move(normalized_link.error().message())));
 
+			if (!has_node(asset))
+				coreturn expects_rt<decimal>(remote_exception("chain not active"));
+
 			auto* implementation = get_chain(asset);
 			if (!implementation)
 				coreturn expects_rt<decimal>(remote_exception("chain not found"));
@@ -394,6 +415,9 @@ namespace tangent
 
 			if (!finalized.is_valid())
 				coreturn expects_rt<void>(remote_exception("transaction is not valid"));
+
+			if (!has_node(asset))
+				coreturn expects_rt<void>(remote_exception("chain not active"));
 
 			auto* implementation = get_chain(asset);
 			if (!implementation)
@@ -424,10 +448,13 @@ namespace tangent
 
 			coreturn result;
 		}
-		expects_promise_rt<warden::prepared_transaction> server_node::prepare_transaction(const algorithm::asset_id& asset, const warden::wallet_link& from_link, const vector<warden::value_transfer>& to, const decimal& max_fee)
+		expects_promise_rt<warden::prepared_transaction> server_node::prepare_transaction(const algorithm::asset_id& asset, const warden::wallet_link& from_link, const vector<warden::value_transfer>& to, const decimal& max_fee, bool inclusive_fee)
 		{
 			if (!algorithm::asset::is_valid(asset))
 				coreturn expects_rt<warden::prepared_transaction>(remote_exception("asset not found"));
+
+			if (!has_node(asset))
+				coreturn expects_rt<warden::prepared_transaction>(remote_exception("chain not active"));
 
 			auto* implementation = get_chain(asset);
 			if (!implementation)
@@ -466,7 +493,7 @@ namespace tangent
 			else if (max_fee.is_positive() && fee_value > max_fee)
 				coreturn expects_rt<warden::prepared_transaction>(remote_exception(stringify::text("fee is higher than limit: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
 
-			coreturn coawait(implementation->prepare_transaction(*normalized_from_link, normalized_to, normalized_fee));
+			coreturn coawait(implementation->prepare_transaction(*normalized_from_link, normalized_to, normalized_fee, inclusive_fee));
 		}
 		expects_lr<warden::finalized_transaction> server_node::finalize_transaction(const algorithm::asset_id& asset, warden::prepared_transaction&& prepared)
 		{
@@ -481,26 +508,30 @@ namespace tangent
 			if (!implementation)
 				return layer_exception("chain not found");
 
+			auto blockchain = algorithm::asset::blockchain_of(asset);
+			auto base_asset = algorithm::asset::base_id_of(asset);
 			for (auto& input : prepared.inputs)
 			{
-				if (!algorithm::asset::is_valid(input.utxo.get_asset(asset)))
-					return layer_exception("invalid input asset");
+				auto input_asset = input.utxo.get_asset(base_asset);
+				if (!algorithm::asset::is_valid(input_asset) || algorithm::asset::blockchain_of(input_asset) != blockchain)
+					return layer_exception("input asset not valid");
 
 				for (auto& input_token : input.utxo.tokens)
 				{
-					if (!algorithm::asset::is_valid(input_token.get_asset(asset)))
+					if (!algorithm::asset::is_valid(input_token.get_asset(base_asset)))
 						return layer_exception("invalid input token asset");
 				}
 			}
 
 			for (auto& output : prepared.outputs)
 			{
-				if (!algorithm::asset::is_valid(output.get_asset(asset)))
+				auto output_asset = output.get_asset(base_asset);
+				if (!algorithm::asset::is_valid(output_asset) || algorithm::asset::blockchain_of(output_asset) != blockchain)
 					return layer_exception("invalid output asset");
 
 				for (auto& output_token : output.tokens)
 				{
-					if (!algorithm::asset::is_valid(output_token.get_asset(asset)))
+					if (!algorithm::asset::is_valid(output_token.get_asset(base_asset)))
 						return layer_exception("invalid output token asset");
 				}
 			}

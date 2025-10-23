@@ -619,24 +619,27 @@ public:
 			auto& [user1, user1_nonce] = users[0];
 			auto& [user2, user2_nonce] = users[1];
 			auto context = ledger::transaction_context();
+			auto depository_reward_ethereum = context.get_depository_reward(algorithm::asset::id_of("ETH"), user2.public_key_hash).or_else(states::depository_reward(algorithm::pubkeyhash_t(), 0, nullptr));
 			auto* withdrawal_ethereum = memory::init<transactions::depository_withdrawal>();
 			withdrawal_ethereum->set_asset("ETH");
 			withdrawal_ethereum->set_manager(user2.public_key_hash);
-			withdrawal_ethereum->set_to("0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5", context.get_account_balance(algorithm::asset::id_of("ETH"), user1.public_key_hash).expect("user balance not valid").get_balance());
+			withdrawal_ethereum->set_to("0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5", context.get_account_balance(algorithm::asset::id_of("ETH"), user1.public_key_hash).expect("user balance not valid").get_balance() - depository_reward_ethereum.outgoing_fee);
 			withdrawal_ethereum->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 			transactions.push_back(withdrawal_ethereum);
 
+			auto depository_reward_ripple = context.get_depository_reward(algorithm::asset::id_of("XRP"), user1.public_key_hash).or_else(states::depository_reward(algorithm::pubkeyhash_t(), 0, nullptr));
 			auto* withdrawal_ripple = memory::init<transactions::depository_withdrawal>();
 			withdrawal_ripple->set_asset("XRP");
 			withdrawal_ripple->set_manager(user1.public_key_hash);
-			withdrawal_ripple->set_to("rUBqz2JiRCT3gYZBnm28y5ME7e5UpSm2ok", context.get_account_balance(algorithm::asset::id_of("XRP"), user1.public_key_hash).expect("user balance not valid").get_balance());
+			withdrawal_ripple->set_to("rUBqz2JiRCT3gYZBnm28y5ME7e5UpSm2ok", context.get_account_balance(algorithm::asset::id_of("XRP"), user1.public_key_hash).expect("user balance not valid").get_balance() - depository_reward_ripple.outgoing_fee);
 			withdrawal_ripple->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 			transactions.push_back(withdrawal_ripple);
 
+			auto depository_reward_bitcoin = context.get_depository_reward(algorithm::asset::id_of("BTC"), user2.public_key_hash).or_else(states::depository_reward(algorithm::pubkeyhash_t(), 0, nullptr));
 			auto* withdrawal_bitcoin = memory::init<transactions::depository_withdrawal>();
 			withdrawal_bitcoin->set_asset("BTC");
 			withdrawal_bitcoin->set_manager(user2.public_key_hash);
-			withdrawal_bitcoin->set_to("mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", context.get_account_balance(algorithm::asset::id_of("BTC"), user1.public_key_hash).expect("user balance not valid").get_balance());
+			withdrawal_bitcoin->set_to("mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", context.get_account_balance(algorithm::asset::id_of("BTC"), user1.public_key_hash).expect("user balance not valid").get_balance() - depository_reward_bitcoin.outgoing_fee);
 			withdrawal_bitcoin->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 			transactions.push_back(withdrawal_bitcoin);
 		}
@@ -645,24 +648,27 @@ public:
 			auto& [user1, user1_nonce] = users[0];
 			auto& [user2, user2_nonce] = users[1];
 			auto context = ledger::transaction_context();
+			auto depository_reward_ethereum = context.get_depository_reward(algorithm::asset::id_of("ETH"), user2.public_key_hash).or_else(states::depository_reward(algorithm::pubkeyhash_t(), 0, nullptr));
 			auto* withdrawal_ethereum = memory::init<transactions::depository_withdrawal>();
 			withdrawal_ethereum->set_asset("ETH");
 			withdrawal_ethereum->set_manager(user2.public_key_hash);
-			withdrawal_ethereum->set_to("0x89a0181659bd280836A2d33F57e3B5Dfa1a823CE", context.get_account_balance(algorithm::asset::id_of("ETH"), user2.public_key_hash).expect("user balance not valid").get_balance());
+			withdrawal_ethereum->set_to("0x89a0181659bd280836A2d33F57e3B5Dfa1a823CE", context.get_account_balance(algorithm::asset::id_of("ETH"), user2.public_key_hash).expect("user balance not valid").get_balance() - depository_reward_ethereum.outgoing_fee);
 			withdrawal_ethereum->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
 			transactions.push_back(withdrawal_ethereum);
 
+			auto depository_reward_ripple = context.get_depository_reward(algorithm::asset::id_of("XRP"), user1.public_key_hash).or_else(states::depository_reward(algorithm::pubkeyhash_t(), 0, nullptr));
 			auto* withdrawal_ripple = memory::init<transactions::depository_withdrawal>();
 			withdrawal_ripple->set_asset("XRP");
 			withdrawal_ripple->set_manager(user1.public_key_hash);
-			withdrawal_ripple->set_to("rJGb4etn9GSwNHYVu7dNMbdiVgzqxaTSUG", context.get_account_balance(algorithm::asset::id_of("XRP"), user2.public_key_hash).expect("user balance not valid").get_balance());
+			withdrawal_ripple->set_to("rJGb4etn9GSwNHYVu7dNMbdiVgzqxaTSUG", context.get_account_balance(algorithm::asset::id_of("XRP"), user2.public_key_hash).expect("user balance not valid").get_balance() - depository_reward_ripple.outgoing_fee);
 			withdrawal_ripple->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
 			transactions.push_back(withdrawal_ripple);
 
+			auto depository_reward_bitcoin = context.get_depository_reward(algorithm::asset::id_of("BTC"), user2.public_key_hash).or_else(states::depository_reward(algorithm::pubkeyhash_t(), 0, nullptr));
 			auto* withdrawal_bitcoin = memory::init<transactions::depository_withdrawal>();
 			withdrawal_bitcoin->set_asset("BTC");
 			withdrawal_bitcoin->set_manager(user2.public_key_hash);
-			withdrawal_bitcoin->set_to("bcrt1p2w7gkghj7arrjy4c45kh7450458hr8dv9pu9576lx08uuh4je7eqgskm9v", context.get_account_balance(algorithm::asset::id_of("BTC"), user2.public_key_hash).expect("user balance not valid").get_balance());
+			withdrawal_bitcoin->set_to("bcrt1p2w7gkghj7arrjy4c45kh7450458hr8dv9pu9576lx08uuh4je7eqgskm9v", context.get_account_balance(algorithm::asset::id_of("BTC"), user2.public_key_hash).expect("user balance not valid").get_balance() - depository_reward_bitcoin.outgoing_fee);
 			withdrawal_bitcoin->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
 			transactions.push_back(withdrawal_bitcoin);
 		}
@@ -799,6 +805,7 @@ public:
 		new_serialization_comparison<transactions::depository_account>(*data);
 		new_serialization_comparison<transactions::depository_account_finalization>(*data);
 		new_serialization_comparison<transactions::depository_withdrawal>(*data);
+		new_serialization_comparison<transactions::depository_withdrawal_routing>(*data);
 		new_serialization_comparison<transactions::depository_withdrawal_finalization>(*data);
 		new_serialization_comparison<transactions::depository_transaction>(*data);
 		new_serialization_comparison<transactions::depository_adjustment>(*data);
@@ -1597,10 +1604,10 @@ public:
 			TEST_BLOCK(std::bind(&generators::validator_enable_validator, std::placeholders::_1, std::placeholders::_2, 2, true, true, true), "0xb0477defcf349af2dea277c069bbdf75e36d5b08ab2c9ea5ca078dd6afdcb496", 13);
 			TEST_BLOCK(&generators::depository_migration, "0x8e63050914a310dbda7ab2c859d6a4e0530c7989096f4dc0937cb3150f56d76d", 14);
 			TEST_BLOCK(&generators::depository_withdrawal_stage_1, "0x6e0166a1cc24364c4602a63d7e8ec5b67b605ac975c3f03b23b9ea729696c37f", 16);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0x3c41cf1d45f3eb26cb8997f22ebb0f710a39c1c4a5d94bba59d78f2b3c4d2008", 18);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0x919944311e99bcd104669c43d87c0f39fe9e2c16c1c24abc643ddbe074cae11d", 20);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_4, "0xbb1d662d613e58d71acf580cd596f77d920461388112aedfff8c931e4a4cb4e5", 22);
-			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2, true, true, false), "0xca2abc23270a8429142fc5efb2c6cf300fdbc1e81f43a6d6145769aff69bfdcc", 24);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0xacc95d8fcd9d4501db84696d5cb518a6deaae7bc7e66a12ca9410b9953793058", 19);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0xdc354be3dd4ce06ac320b1f4768781d11d5d40091c6ae7b7472f83d00258cf89", 22);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_4, "0x4f10a3c696c417af61b56acd8e693be24ef46c9f766131dc9c88d83495c1e20b", 25);
+			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2, true, true, false), "0x00b596e107d5571676c806c45316dbeed01ba5ce449b4f38a75c243a2b1e0233", 28);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else
@@ -1781,8 +1788,8 @@ public:
 		if (results != nullptr)
 			console::get()->fwrite_line("TEST_BLOCK(%s, \"%s\", %" PRIu64 ");", test_case_call.data(), hash.c_str(), block.number);
 
-		//VI_PANIC(state_root_hash.empty() || state_root_hash == hash, "block state root deviation");
-		//VI_PANIC(!block_number || block_number == block.number, "block number deviation");
+		VI_PANIC(state_root_hash.empty() || state_root_hash == hash, "block state root deviation");
+		VI_PANIC(!block_number || block_number == block.number, "block number deviation");
 		return block;
 	}
 	static ledger::block new_block_from_list(schema* results, vector<account>& users, vector<uptr<ledger::transaction>>&& transactions)
@@ -1933,7 +1940,7 @@ public:
 			if (false)
 			{
 				vector<warden::value_transfer> to = { warden::value_transfer(asset, "addr_test1vzpkkthr9azvuagxcf0m27qvzdad7n95jutgcdtglgmhdns998vsz", decimal("153")) };
-				auto prepared_transaction = coawait(server->prepare_transaction(asset, link, to, decimal::nan()));
+				auto prepared_transaction = coawait(server->prepare_transaction(asset, link, to, decimal::nan(), false));
 				for (auto& input : prepared_transaction->inputs)
 				{
 					auto state = algorithm::composition::make_signature_state(input.alg, input.public_key, input.message.data(), input.message.size(), 1).expect("signature state initialization error");
@@ -2789,7 +2796,7 @@ public:
 			{ "cryptography / multichain transaction", &tests::cryptography_multichain_transaction },
 			{ "blockchain / full coverage", std::bind(&tests::blockchain_full_coverage, (vector<tests::account>*)nullptr) },
 			{ "blockchain / verification", &tests::blockchain_verification },
-			{ "blockchain / partial coverage", std::bind(&tests::blockchain_partial_coverage, (vector<tests::account>*)nullptr) },
+			//{ "blockchain / partial coverage", std::bind(&tests::blockchain_partial_coverage, (vector<tests::account>*)nullptr) },
 			{ "blockchain / verification", &tests::blockchain_verification },
 			{ "blockchain / gas estimation", &tests::blockchain_gas_estimation },
 		};

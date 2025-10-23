@@ -434,13 +434,19 @@ namespace tangent
 				memory::release(*hex_data);
 				coreturn expects_rt<void>(expectation::met);
 			}
-			expects_promise_rt<prepared_transaction> bitcoin::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee)
+			expects_promise_rt<prepared_transaction> bitcoin::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee, bool inclusive_fee)
 			{
 				auto applied_fee = calculate_transaction_fee_from_fee_estimate(from_link, to, fee);
 				decimal fee_value = applied_fee ? applied_fee->get_max_fee() : fee.get_max_fee();
+				decimal fee_value_per_output = inclusive_fee && !to.empty() ? fee_value / decimal(to.size()).truncate(protocol::now().message.decimal_precision) : decimal::zero();
 				decimal total_value = fee_value;
 				for (auto& item : to)
-					total_value += item.value;
+				{
+					decimal value = item.value - fee_value_per_output;
+					total_value += value;
+					if (value.is_negative())
+						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", value.to_string().c_str(), fee_value_per_output.to_string().c_str())));
+				}
 
 				auto possible_inputs = calculate_utxo(from_link, balance_query(total_value, { }));
 				decimal input_value = possible_inputs ? get_utxo_value(*possible_inputs, optional::none) : 0.0;
@@ -452,7 +458,7 @@ namespace tangent
 				for (auto& item : to)
 				{
 					auto link = find_linked_addresses({ item.address });
-					result.requires_output(coin_utxo(link ? std::move(link->begin()->second) : wallet_link::from_address(item.address), string(), (uint32_t)result.outputs.size(), decimal(item.value)));
+					result.requires_output(coin_utxo(link ? std::move(link->begin()->second) : wallet_link::from_address(item.address), string(), (uint32_t)result.outputs.size(), item.value - fee_value_per_output));
 				}
 				if (input_value > total_value)
 					result.requires_output(coin_utxo(wallet_link(possible_inputs->front().link), string(), (uint32_t)result.outputs.size(), decimal(input_value - total_value)));

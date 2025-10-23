@@ -283,7 +283,7 @@ namespace tangent
 
 				coreturn expects_rt<void>(expectation::met);
 			}
-			expects_promise_rt<prepared_transaction> tron::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee)
+			expects_promise_rt<prepared_transaction> tron::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee, bool inclusive_fee)
 			{
 				auto chain_id = coawait(get_chain_id());
 				if (!chain_id)
@@ -299,11 +299,13 @@ namespace tangent
 					if (!balance || *balance < fee_value)
 						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (balance ? *balance : decimal(0.0)).to_string().c_str(), fee_value.to_string().c_str())));
 				}
+				else if (inclusive_fee)
+					total_value -= fee_value;
 				else
 					total_value += fee_value;
 
 				auto balance = coawait(calculate_balance(native_asset, from_link));
-				if (!balance || *balance < total_value)
+				if (!balance || *balance < total_value || total_value.is_negative())
 					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (balance ? *balance : decimal(0.0)).to_string().c_str(), total_value.to_string().c_str())));
 
 				auto block_header = coawait(get_block_header_for_tx());
@@ -331,7 +333,7 @@ namespace tangent
 				if (contract_address)
 					result.requires_account_input(algorithm::composition::type::secp256k1, wallet_link(from_link), *public_key, (uint8_t*)transaction.raw_transaction_id.data(), transaction.raw_transaction_id.size(), { { output.asset, output.value }, { native_asset, fee_value } });
 				else
-					result.requires_account_input(algorithm::composition::type::secp256k1, wallet_link(from_link), *public_key, (uint8_t*)transaction.raw_transaction_id.data(), transaction.raw_transaction_id.size(), { { native_asset, output.value + fee_value } });
+					result.requires_account_input(algorithm::composition::type::secp256k1, wallet_link(from_link), *public_key, (uint8_t*)transaction.raw_transaction_id.data(), transaction.raw_transaction_id.size(), { { native_asset, inclusive_fee ? output.value : (output.value + fee_value) } });
 				result.requires_account_output(output.address, { { output.asset, output.value } });
 				result.requires_abi(format::variable(contract_address.or_else(string())));
 				result.requires_abi(format::variable(block_header->ref_block_bytes));

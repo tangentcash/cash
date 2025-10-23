@@ -2437,6 +2437,22 @@ namespace tangent
 
 			return states::depository_reward(std::move(*state->as<states::depository_reward>()));
 		}
+		expects_lr<states::depository_reward> transaction_context::get_depository_reward_median(const algorithm::asset_id& asset) const
+		{
+			auto chain = storages::chainstate();
+			auto filter = storages::result_filter::greater(0, -1);
+			auto median = chain.get_multiforms_count_by_row_filter(states::depository_reward::as_instance_type(), changelog, states::depository_reward::as_instance_row(asset), filter, get_validation_nonce()).or_else(0) / 2;
+			auto states = chain.get_multiforms_by_row_filter(states::depository_reward::as_instance_type(), changelog, states::depository_reward::as_instance_row(asset), filter, get_validation_nonce(), storages::result_range_window(median, 1));
+			if (!states || states->empty())
+				return layer_exception("depository reward required but not applicable (" + (states ? string("state not found") : states.what()) + ")");
+
+			auto& state = states->front();
+			auto status = ((transaction_context*)this)->load(state.ptr(), !state.cached);
+			if (!status)
+				return status.error();
+
+			return states::depository_reward(std::move(*state.as<states::depository_reward>()));
+		}
 		expects_lr<states::depository_balance> transaction_context::get_depository_balance(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const
 		{
 			auto chain = storages::chainstate();

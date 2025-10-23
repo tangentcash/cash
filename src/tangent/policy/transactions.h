@@ -195,24 +195,42 @@ namespace tangent
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
-			static expects_lr<void> validate_prepared_transaction(const ledger::transaction_context* context, const depository_withdrawal* transaction, const warden::prepared_transaction& prepared);
+			static expects_lr<void> approve_or_revert(ledger::transaction_context* context, const ledger::block_transaction& transaction, bool approval);
 			static expects_lr<states::witness_account> find_receiving_account(const ledger::transaction_context* context, const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& from_manager, const algorithm::pubkeyhash_t& to_manager);
+		};
+
+		struct depository_withdrawal_routing final : ledger::consensus_transaction
+		{
+			uint256_t depository_withdrawal_hash = 0;
+			expects_lr<warden::finalized_transaction> proof = layer_exception();
+
+			expects_lr<void> validate(uint64_t block_number) const override;
+			expects_lr<void> execute(ledger::transaction_context* context) const override;
+			expects_promise_rt<void> dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const override;
+			bool store_body(format::wo_stream* stream) const override;
+			bool load_body(format::ro_stream& stream) override;
+			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const override;
+			void set_proof(const uint256_t& new_depository_withdrawal_hash, expects_lr<warden::finalized_transaction>&& new_proof);
+			bool is_dispatchable() const override;
+			uptr<schema> as_schema() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
+			static expects_lr<void> validate_possible_proof(const ledger::transaction_context* context, const depository_withdrawal* transaction, const warden::prepared_transaction& prepared);
+			static expects_lr<void> validate_finalized_proof(const ledger::transaction_context* context, const depository_withdrawal* transaction, const warden::finalized_transaction& finalized);
 		};
 
 		struct depository_withdrawal_finalization final : ledger::consensus_transaction
 		{
-			uint256_t depository_withdrawal_hash = 0;
-			string transaction_id;
-			string native_data;
-			string error_message;
+			uint256_t depository_withdrawal_routing_hash = 0;
+			string status;
 
 			expects_lr<void> validate(uint64_t block_number) const override;
 			expects_lr<void> execute(ledger::transaction_context* context) const override;
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
 			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const override;
-			void set_success_witness(const std::string_view& new_transaction_id, const std::string_view& new_native_data, const uint256_t& new_depository_withdrawal_hash);
-			void set_failure_witness(const std::string_view& new_error_message, const uint256_t& new_depository_withdrawal_hash);
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
@@ -356,8 +374,9 @@ namespace tangent
 			static ledger::transaction* from_stream(format::ro_stream& stream);
 			static ledger::transaction* from_type(uint32_t hash);
 			static ledger::transaction* from_copy(const ledger::transaction* base);
-			static expects_promise_rt<warden::prepared_transaction> prepare_transaction(const algorithm::asset_id& asset, const warden::wallet_link& from_link, const vector<warden::value_transfer>& to, const decimal& max_fee);
-			static expects_promise_rt<warden::finalized_transaction> finalize_and_broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, warden::prepared_transaction&& prepared, ledger::dispatch_context* dispatcher);
+			static expects_promise_rt<warden::prepared_transaction> prepare_transaction(const algorithm::asset_id& asset, const warden::wallet_link& from_link, const vector<warden::value_transfer>& to, const decimal& max_fee, bool inclusive_fee);
+			static expects_lr<warden::finalized_transaction> finalize_transaction(const algorithm::asset_id& asset, warden::prepared_transaction&& prepared);
+			static expects_promise_rt<void> broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, warden::finalized_transaction&& finalized, ledger::dispatch_context* dispatcher);
 		};
 	}
 }
