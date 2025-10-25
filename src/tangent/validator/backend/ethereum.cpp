@@ -16,7 +16,7 @@ extern "C"
 
 namespace tangent
 {
-	namespace warden
+	namespace oracle
 	{
 		namespace backends
 		{
@@ -620,10 +620,13 @@ namespace tangent
 				auto gas_price_estimate = coawait(execute_rpc(nd_call::gas_price(), { }, cache_policy::no_cache_no_throttling));
 				if (!gas_price_estimate)
 					coreturn expects_rt<computed_fee>(std::move(gas_price_estimate.error()));
+					
+				uint256_t vgas_price = hex_to_uint256(gas_price_estimate->value.get_blob());
+				memory::release(*gas_price_estimate);
 
 				auto& output = to.front();
 				uptr<schema> params = var::set::object();
-				params->set("gasPrice", var::string(gas_price_estimate->value.get_blob()));
+				params->set("gasPrice", var::string(uint256_to_hex(vgas_price)));
 				params->set("from", var::string(decode_non_eth_address(from_address)));
 
 				auto contract_address = oracle::server_node::get()->get_contract_address(output.asset);
@@ -662,15 +665,12 @@ namespace tangent
 				auto gas_limit_estimate = uptr<schema>(coawait(execute_rpc(nd_call::estimate_gas(), std::move(map), cache_policy::no_cache_no_throttling)));
 				if (!gas_limit_estimate)
 				{
-					decimal gas_price = to_eth(hex_to_uint256(gas_price_estimate->value.get_blob()), netdata.divisibility);
-					memory::release(*gas_price_estimate);
+					decimal gas_price = to_eth(vgas_price, netdata.divisibility);
 					coreturn expects_rt<computed_fee>(computed_fee::fee_per_gas_priority(gas_base_price, gas_price, default_gas_limit));
 				}
 
-				uint256_t vgas_price = hex_to_uint256(gas_price_estimate->value.get_blob());
 				uint256_t vgas_limit = hex_to_uint256(gas_limit_estimate->value.get_blob());
 				decimal gas_price = to_eth(vgas_price, netdata.divisibility);
-				memory::release(*gas_price_estimate);
 				coreturn expects_rt<computed_fee>(computed_fee::fee_per_gas_priority(gas_base_price, gas_price, vgas_limit > 0 ? vgas_limit : uint256_t(default_gas_limit)));
 			}
 			expects_promise_rt<decimal> ethereum::calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link)
@@ -788,7 +788,6 @@ namespace tangent
 				if (!public_key)
 					coreturn expects_rt<prepared_transaction>(remote_exception(std::move(public_key.error().message())));
 
-				legacy.eip_155 = 0;
 				auto type = legacy.eip_155 ? evm_transaction::evm_type::eip_155 : evm_transaction::evm_type::eip_1559;
 				auto hash = transaction.hash(transaction.serialize(type));
 				prepared_transaction result;
@@ -807,7 +806,7 @@ namespace tangent
 				result.requires_abi(format::variable(transaction.gas_limit));
 				coreturn expects_rt<prepared_transaction>(std::move(result));
 			}
-			expects_lr<finalized_transaction> ethereum::finalize_transaction(warden::prepared_transaction&& prepared)
+			expects_lr<finalized_transaction> ethereum::finalize_transaction(oracle::prepared_transaction&& prepared)
 			{
 				if (prepared.abi.size() != 8)
 					return layer_exception("invalid prepared abi");

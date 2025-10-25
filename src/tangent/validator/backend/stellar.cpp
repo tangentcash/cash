@@ -14,7 +14,7 @@ extern "C"
 
 namespace tangent
 {
-	namespace warden
+	namespace oracle
 	{
 		namespace backends
 		{
@@ -660,7 +660,7 @@ namespace tangent
 				}
 				coreturn expects_rt<prepared_transaction>(std::move(result));
 			}
-			expects_lr<finalized_transaction> stellar::finalize_transaction(warden::prepared_transaction&& prepared)
+			expects_lr<finalized_transaction> stellar::finalize_transaction(oracle::prepared_transaction&& prepared)
 			{
 				if (prepared.abi.size() < 3)
 					return layer_exception("invalid prepared abi");
@@ -785,14 +785,14 @@ namespace tangent
 			{
 				auto result = encode_public_key(public_key_hash.substr(0, 32));
 				if (result)
-					result = warden::address_util::encode_tag_address(*result, public_key_hash.substr(32));
+					result = oracle::address_util::encode_tag_address(*result, public_key_hash.substr(32));
 				return result;
 			}
 			expects_lr<string> stellar::decode_address(const std::string_view& address)
 			{
-				auto [base_address, tag] = warden::address_util::decode_tag_address(address);
+				auto [base_address, tag] = oracle::address_util::decode_tag_address(address);
 				auto result = decode_public_key(base_address);
-				if (result)
+				if (result && !tag.empty())
 					result->append(tag);
 				return result;
 			}

@@ -13,7 +13,7 @@ extern "C"
 
 namespace tangent
 {
-	namespace warden
+	namespace oracle
 	{
 		namespace backends
 		{
@@ -507,7 +507,7 @@ namespace tangent
 				result.requires_abi(format::variable(buffer.fee));
 				coreturn expects_rt<prepared_transaction>(std::move(result));
 			}
-			expects_lr<finalized_transaction> ripple::finalize_transaction(warden::prepared_transaction&& prepared)
+			expects_lr<finalized_transaction> ripple::finalize_transaction(oracle::prepared_transaction&& prepared)
 			{
 				if (prepared.abi.size() != 4)
 					return layer_exception("invalid prepared abi");
@@ -601,11 +601,11 @@ namespace tangent
 				size_t intermediate_size = sizeof(intermediate);
 				uint8_t versions = 0x0;
 				xb58check_enc(intermediate, &intermediate_size, &versions, sizeof(versions), public_key_hash.data(), 20);
-				return warden::address_util::encode_tag_address(std::string_view(intermediate, intermediate_size - 1), public_key_hash.substr(20));
+				return oracle::address_util::encode_tag_address(std::string_view(intermediate, intermediate_size - 1), public_key_hash.substr(20));
 			}
 			expects_lr<string> ripple::decode_address(const std::string_view& address)
 			{
-				auto [base_address, tag] = warden::address_util::decode_tag_address(address);
+				auto [base_address, tag] = oracle::address_util::decode_tag_address(address);
 				uint8_t intermediate[128];
 				size_t intermediate_size = sizeof(intermediate);
 				if (!xb58check_dec(base_address.c_str(), intermediate, &intermediate_size))

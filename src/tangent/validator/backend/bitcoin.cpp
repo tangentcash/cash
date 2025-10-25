@@ -19,7 +19,7 @@ extern "C"
 
 namespace tangent
 {
-	namespace warden
+	namespace oracle
 	{
 		namespace backends
 		{
@@ -526,7 +526,7 @@ namespace tangent
 
 				coreturn expects_rt<prepared_transaction>(std::move(result));
 			}
-			expects_lr<finalized_transaction> bitcoin::finalize_transaction(warden::prepared_transaction&& prepared)
+			expects_lr<finalized_transaction> bitcoin::finalize_transaction(oracle::prepared_transaction&& prepared)
 			{
 				btc_tx_context context;
 				for (auto& output : prepared.outputs)

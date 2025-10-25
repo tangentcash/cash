@@ -1,11 +1,11 @@
-#include "wardenstate.h"
+#include "oraclestate.h"
 #undef NULL
 
 namespace tangent
 {
 	namespace storages
 	{
-		struct wardenstate_schema_ptr
+		struct oraclestate_schema_ptr
 		{
 			algorithm::asset_id asset = 0;
 			sqlite::connection* connection = nullptr;
@@ -22,53 +22,53 @@ namespace tangent
 				return codec::base64_url_decode(data);
 			return string(data);
 		}
-		static std::string_view load_link_field(warden::wallet_link::search_term term)
+		static std::string_view load_link_field(oracle::wallet_link::search_term term)
 		{
 			switch (term)
 			{
-				case warden::wallet_link::search_term::owner:
+				case oracle::wallet_link::search_term::owner:
 					return "owner";
-				case warden::wallet_link::search_term::public_key:
+				case oracle::wallet_link::search_term::public_key:
 					return "typeless_public_key";
-				case warden::wallet_link::search_term::address:
+				case oracle::wallet_link::search_term::address:
 					return "typeless_address";
 				default:
 					return "";
 			}
 		}
-		static schema* load_link_value(warden::wallet_link::search_term term, const warden::wallet_link& link)
+		static schema* load_link_value(oracle::wallet_link::search_term term, const oracle::wallet_link& link)
 		{
 			switch (term)
 			{
-				case warden::wallet_link::search_term::owner:
+				case oracle::wallet_link::search_term::owner:
 					return var::set::binary(link.owner.view());
-				case warden::wallet_link::search_term::public_key:
+				case oracle::wallet_link::search_term::public_key:
 					return var::set::binary(to_typeless(link.public_key));
-				case warden::wallet_link::search_term::address:
+				case oracle::wallet_link::search_term::address:
 					return var::set::binary(to_typeless(link.address));
 				default:
 					return nullptr;
 			}
 		}
 
-		static thread_local wardenstate* parent_wardenstate = nullptr;
-		wardenstate::wardenstate(const algorithm::asset_id& new_asset) noexcept : asset(new_asset)
+		static thread_local oraclestate* parent_oraclestate = nullptr;
+		oraclestate::oraclestate(const algorithm::asset_id& new_asset) noexcept : asset(new_asset)
 		{
 #ifndef NDEBUG
 			local_id = std::this_thread::get_id();
 #endif
-			if (!parent_wardenstate)
-				parent_wardenstate = this;
+			if (!parent_oraclestate)
+				parent_oraclestate = this;
 		}
-		wardenstate::~wardenstate() noexcept
+		oraclestate::~oraclestate() noexcept
 		{
 #ifndef NDEBUG
 			VI_ASSERT(local_id == std::this_thread::get_id(), "mempoolstate thread must not change");
 #endif
-			if (parent_wardenstate == this)
-				parent_wardenstate = nullptr;
+			if (parent_oraclestate == this)
+				parent_oraclestate = nullptr;
 		}
-		expects_lr<void> wardenstate::add_utxo(const warden::coin_utxo& value)
+		expects_lr<void> oraclestate::add_utxo(const oracle::coin_utxo& value)
 		{
 			format::wo_stream message;
 			if (!value.store(&message))
@@ -92,7 +92,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> wardenstate::remove_utxo(const std::string_view& transaction_id, uint64_t index)
+		expects_lr<void> oraclestate::remove_utxo(const std::string_view& transaction_id, uint64_t index)
 		{
 			format::wo_stream transaction_id_index;
 			transaction_id_index.write_string(transaction_id);
@@ -107,7 +107,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<warden::coin_utxo> wardenstate::get_stxo(const std::string_view& transaction_id, uint64_t index)
+		expects_lr<oracle::coin_utxo> oraclestate::get_stxo(const std::string_view& transaction_id, uint64_t index)
 		{
 			format::wo_stream transaction_id_index;
 			transaction_id_index.write_string(transaction_id);
@@ -118,17 +118,17 @@ namespace tangent
 
 			auto cursor = get_storage().emplace_query(__func__, "SELECT message FROM coins WHERE transaction_id_index = ?", &map);
 			if (!cursor || cursor->error_or_empty())
-				return expects_lr<warden::coin_utxo>(layer_exception(ledger::storage_util::error_of(cursor)));
+				return expects_lr<oracle::coin_utxo>(layer_exception(ledger::storage_util::error_of(cursor)));
 
-			warden::coin_utxo value;
+			oracle::coin_utxo value;
 			auto blob = (*cursor)["message"].get().get_blob();
 			auto message = format::ro_stream(blob);
 			if (!value.load(message))
-				return expects_lr<warden::coin_utxo>(layer_exception("utxo deserialization error"));
+				return expects_lr<oracle::coin_utxo>(layer_exception("utxo deserialization error"));
 
 			return value;
 		}
-		expects_lr<warden::coin_utxo> wardenstate::get_utxo(const std::string_view& transaction_id, uint64_t index)
+		expects_lr<oracle::coin_utxo> oraclestate::get_utxo(const std::string_view& transaction_id, uint64_t index)
 		{
 			format::wo_stream transaction_id_index;
 			transaction_id_index.write_string(transaction_id);
@@ -139,20 +139,20 @@ namespace tangent
 
 			auto cursor = get_storage().emplace_query(__func__, "SELECT message FROM coins WHERE transaction_id_index = ? AND spent = FALSE", &map);
 			if (!cursor || cursor->error_or_empty())
-				return expects_lr<warden::coin_utxo>(layer_exception(ledger::storage_util::error_of(cursor)));
+				return expects_lr<oracle::coin_utxo>(layer_exception(ledger::storage_util::error_of(cursor)));
 
-			warden::coin_utxo value;
+			oracle::coin_utxo value;
 			auto blob = (*cursor)["message"].get().get_blob();
 			auto message = format::ro_stream(blob);
 			if (!value.load(message))
-				return expects_lr<warden::coin_utxo>(layer_exception("utxo deserialization error"));
+				return expects_lr<oracle::coin_utxo>(layer_exception("utxo deserialization error"));
 
 			return value;
 		}
-		expects_lr<vector<warden::coin_utxo>> wardenstate::get_utxos(const warden::wallet_link& link, size_t offset, size_t count)
+		expects_lr<vector<oracle::coin_utxo>> oraclestate::get_utxos(const oracle::wallet_link& link, size_t offset, size_t count)
 		{
 			if (!link.has_any())
-				return expects_lr<vector<warden::coin_utxo>>(layer_exception("invalid link"));
+				return expects_lr<vector<oracle::coin_utxo>>(layer_exception("invalid link"));
 
 			auto term = link.as_search_wide();
 			schema_list map;
@@ -163,16 +163,16 @@ namespace tangent
 
 			auto cursor = get_storage().emplace_query(__func__, "SELECT message FROM coins WHERE spent = FALSE AND $? = ? LIMIT ? OFFSET ?", &map);
 			if (!cursor || cursor->error())
-				return expects_lr<vector<warden::coin_utxo>>(layer_exception(ledger::storage_util::error_of(cursor)));
+				return expects_lr<vector<oracle::coin_utxo>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			auto& response = cursor->first();
 			size_t size = response.size();
-			vector<warden::coin_utxo> values;
+			vector<oracle::coin_utxo> values;
 			values.reserve(size);
 
 			for (size_t i = 0; i < size; i++)
 			{
-				warden::coin_utxo value;
+				oracle::coin_utxo value;
 				auto blob = response[i]["message"].get().get_blob();
 				auto message = format::ro_stream(blob);
 				if (value.load(message))
@@ -181,7 +181,7 @@ namespace tangent
 
 			return values;
 		}
-		expects_lr<void> wardenstate::add_incoming_transaction(const warden::computed_transaction& value, bool finalized)
+		expects_lr<void> oraclestate::add_incoming_transaction(const oracle::computed_transaction& value, bool finalized)
 		{
 			format::wo_stream message;
 			if (!value.store(&message))
@@ -199,7 +199,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> wardenstate::add_outgoing_transaction(const warden::computed_transaction& value, const uint256_t& external_id)
+		expects_lr<void> oraclestate::add_outgoing_transaction(const oracle::computed_transaction& value, const uint256_t& external_id)
 		{
 			format::wo_stream message;
 			if (!value.store(&message))
@@ -221,7 +221,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<warden::computed_transaction> wardenstate::get_computed_transaction(const std::string_view& transaction_id, const uint256_t& external_id)
+		expects_lr<oracle::computed_transaction> oraclestate::get_computed_transaction(const std::string_view& transaction_id, const uint256_t& external_id)
 		{
 			uint8_t hash[32];
 			external_id.encode(hash);
@@ -232,47 +232,47 @@ namespace tangent
 
 			auto cursor = get_storage().emplace_query(__func__, "SELECT message FROM transactions WHERE transaction_id = ? OR external_id = ?", &map);
 			if (!cursor || cursor->error_or_empty())
-				return expects_lr<warden::computed_transaction>(layer_exception(ledger::storage_util::error_of(cursor)));
+				return expects_lr<oracle::computed_transaction>(layer_exception(ledger::storage_util::error_of(cursor)));
 
-			warden::computed_transaction value;
+			oracle::computed_transaction value;
 			auto blob = (*cursor)["message"].get().get_blob();
 			auto message = format::ro_stream(blob);
 			if (!value.load(message))
-				return expects_lr<warden::computed_transaction>(layer_exception("witness transaction deserialization error"));
+				return expects_lr<oracle::computed_transaction>(layer_exception("witness transaction deserialization error"));
 
 			return value;
 		}
-		expects_lr<vector<warden::computed_transaction>> wardenstate::finalize_computed_transactions(uint64_t block_height, uint64_t block_latency)
+		expects_lr<vector<oracle::computed_transaction>> oraclestate::finalize_computed_transactions(uint64_t block_height, uint64_t block_latency)
 		{
 			if (!block_height || !block_latency)
-				return expects_lr<vector<warden::computed_transaction>>(layer_exception("invalid block height or block latency"));
+				return expects_lr<vector<oracle::computed_transaction>>(layer_exception("invalid block height or block latency"));
 			else if (block_height <= block_latency)
-				return expects_lr<vector<warden::computed_transaction>>(vector<warden::computed_transaction>());
+				return expects_lr<vector<oracle::computed_transaction>>(vector<oracle::computed_transaction>());
 
 			schema_list map;
 			map.push_back(var::set::integer(block_height - block_latency));
 
 			auto cursor = get_storage().emplace_query(__func__, "SELECT message FROM transactions WHERE block_id <= ? AND finalized = FALSE", &map);
 			if (!cursor || cursor->error())
-				return expects_lr<vector<warden::computed_transaction>>(layer_exception(ledger::storage_util::error_of(cursor)));
+				return expects_lr<vector<oracle::computed_transaction>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			auto& response = cursor->first();
 			size_t size = response.size();
-			vector<warden::computed_transaction> values;
+			vector<oracle::computed_transaction> values;
 			values.reserve(size);
 
 			for (size_t i = 0; i < size; i++)
 			{
-				warden::computed_transaction value;
+				oracle::computed_transaction value;
 				auto blob = response[i]["message"].get().get_blob();
 				auto message = format::ro_stream(blob);
 				if (value.load(message) && value.block_id > 0 && add_incoming_transaction(value, true))
 					values.emplace_back(std::move(value));
 			}
 
-			return expects_lr<vector<warden::computed_transaction>>(std::move(values));
+			return expects_lr<vector<oracle::computed_transaction>>(std::move(values));
 		}
-		expects_lr<void> wardenstate::set_property(const std::string_view& key, uptr<schema>&& value)
+		expects_lr<void> oraclestate::set_property(const std::string_view& key, uptr<schema>&& value)
 		{
 			schema_list map;
 			map.push_back(var::set::string(algorithm::asset::blockchain_of(asset) + ":" + string(key)));
@@ -297,7 +297,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<schema*> wardenstate::get_property(const std::string_view& key)
+		expects_lr<schema*> oraclestate::get_property(const std::string_view& key)
 		{
 			schema_list map;
 			map.push_back(var::set::string(algorithm::asset::blockchain_of(asset) + ":" + string(key)));
@@ -318,7 +318,7 @@ namespace tangent
 
 			return *value;
 		}
-		expects_lr<void> wardenstate::set_cache(warden::cache_policy policy, const std::string_view& key, uptr<schema>&& value)
+		expects_lr<void> oraclestate::set_cache(oracle::cache_policy policy, const std::string_view& key, uptr<schema>&& value)
 		{
 			schema_list map;
 			map.push_back(var::set::binary(format::util::is_hex_encoding(key) ? codec::hex_decode(key) : string(key)));
@@ -342,7 +342,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<schema*> wardenstate::get_cache(warden::cache_policy policy, const std::string_view& key)
+		expects_lr<schema*> oraclestate::get_cache(oracle::cache_policy policy, const std::string_view& key)
 		{
 			schema_list map;
 			map.push_back(var::set::binary(format::util::is_hex_encoding(key) ? codec::hex_decode(key) : string(key)));
@@ -363,7 +363,7 @@ namespace tangent
 
 			return *value;
 		}
-		expects_lr<void> wardenstate::set_link(const warden::wallet_link& value)
+		expects_lr<void> oraclestate::set_link(const oracle::wallet_link& value)
 		{
 			schema_list map;
 			map.push_back(var::set::binary(value.owner.view()));
@@ -378,7 +378,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> wardenstate::clear_link(const warden::wallet_link& value)
+		expects_lr<void> oraclestate::clear_link(const oracle::wallet_link& value)
 		{
 			auto term = value.as_search_wide();
 			schema_list map;
@@ -391,23 +391,23 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<warden::wallet_link> wardenstate::get_link(const std::string_view& address)
+		expects_lr<oracle::wallet_link> oraclestate::get_link(const std::string_view& address)
 		{
 			schema_list map;
 			map.push_back(var::set::binary(to_typeless(address)));
 
 			auto cursor = get_storage().emplace_query(__func__, "SELECT * FROM links WHERE typeless_address = ?", &map);
 			if (!cursor || cursor->error_or_empty())
-				return expects_lr<warden::wallet_link>(layer_exception(ledger::storage_util::error_of(cursor)));
+				return expects_lr<oracle::wallet_link>(layer_exception(ledger::storage_util::error_of(cursor)));
 
-			warden::wallet_link value;
+			oracle::wallet_link value;
 			auto owner = (*cursor)["owner"].get().get_blob();
 			value.owner = algorithm::pubkeyhash_t(owner);
 			value.public_key = (*cursor)["public_key"].get().get_blob();
 			value.address = (*cursor)["address"].get().get_blob();
 			return value;
 		}
-		expects_lr<unordered_map<string, warden::wallet_link>> wardenstate::get_links_by_public_keys(const unordered_set<string>& public_keys)
+		expects_lr<unordered_map<string, oracle::wallet_link>> oraclestate::get_links_by_public_keys(const unordered_set<string>& public_keys)
 		{
 			uptr<schema> public_key_list = var::set::array();
 			public_key_list->reserve(public_keys.size());
@@ -417,24 +417,24 @@ namespace tangent
 					public_key_list->push(var::binary(to_typeless(item)));
 			}
 			if (public_key_list->empty())
-				return expects_lr<unordered_map<string, warden::wallet_link>>(layer_exception("no public keys"));
+				return expects_lr<unordered_map<string, oracle::wallet_link>>(layer_exception("no public keys"));
 
 			schema_list map;
 			map.push_back(var::set::string(*sqlite::utils::inline_array(std::move(public_key_list))));
 
 			auto cursor = get_storage().emplace_query(__func__, "SELECT * FROM links WHERE typeless_public_key IN ($?)", &map);
 			if (!cursor || cursor->error())
-				return expects_lr<unordered_map<string, warden::wallet_link>>(layer_exception(ledger::storage_util::error_of(cursor)));
+				return expects_lr<unordered_map<string, oracle::wallet_link>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			auto& response = cursor->first();
 			size_t size = response.size();
-			unordered_map<string, warden::wallet_link> values;
+			unordered_map<string, oracle::wallet_link> values;
 			values.reserve(size);
 
 			for (size_t i = 0; i < size; i++)
 			{
 				auto row = response[i];
-				warden::wallet_link value;
+				oracle::wallet_link value;
 				auto owner = row["owner"].get().get_blob();
 				value.owner = algorithm::pubkeyhash_t(owner);
 				value.public_key = row["public_key"].get().get_blob();
@@ -444,7 +444,7 @@ namespace tangent
 
 			return values;
 		}
-		expects_lr<unordered_map<string, warden::wallet_link>> wardenstate::get_links_by_addresses(const unordered_set<string>& addresses)
+		expects_lr<unordered_map<string, oracle::wallet_link>> oraclestate::get_links_by_addresses(const unordered_set<string>& addresses)
 		{
 			uptr<schema> address_list = var::set::array();
 			address_list->reserve(addresses.size());
@@ -454,24 +454,24 @@ namespace tangent
 					address_list->push(var::binary(to_typeless(item)));
 			}
 			if (address_list->empty())
-				return expects_lr<unordered_map<string, warden::wallet_link>>(layer_exception("no addresses"));
+				return expects_lr<unordered_map<string, oracle::wallet_link>>(layer_exception("no addresses"));
 
 			schema_list map;
 			map.push_back(var::set::string(*sqlite::utils::inline_array(std::move(address_list))));
 
 			auto cursor = get_storage().emplace_query(__func__, "SELECT * FROM links WHERE typeless_address IN ($?)", &map);
 			if (!cursor || cursor->error())
-				return expects_lr<unordered_map<string, warden::wallet_link>>(layer_exception(ledger::storage_util::error_of(cursor)));
+				return expects_lr<unordered_map<string, oracle::wallet_link>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			auto& response = cursor->first();
 			size_t size = response.size();
-			unordered_map<string, warden::wallet_link> values;
+			unordered_map<string, oracle::wallet_link> values;
 			values.reserve(size);
 
 			for (size_t i = 0; i < size; i++)
 			{
 				auto row = response[i];
-				warden::wallet_link value;
+				oracle::wallet_link value;
 				auto owner = row["owner"].get().get_blob();
 				value.owner = algorithm::pubkeyhash_t(owner);
 				value.public_key = row["public_key"].get().get_blob();
@@ -481,7 +481,7 @@ namespace tangent
 
 			return values;
 		}
-		expects_lr<unordered_map<string, warden::wallet_link>> wardenstate::get_links_by_owner(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count)
+		expects_lr<unordered_map<string, oracle::wallet_link>> oraclestate::get_links_by_owner(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count)
 		{
 			schema_list map;
 			if (!owner.empty())
@@ -491,17 +491,17 @@ namespace tangent
 
 			auto cursor = get_storage().emplace_query(__func__, !owner.empty() ? "SELECT * FROM links WHERE owner = ? LIMIT ? OFFSET ?" : "SELECT * FROM links LIMIT ? OFFSET ?", &map);
 			if (!cursor || cursor->error())
-				return expects_lr<unordered_map<string, warden::wallet_link>>(layer_exception(ledger::storage_util::error_of(cursor)));
+				return expects_lr<unordered_map<string, oracle::wallet_link>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			auto& response = cursor->first();
 			size_t size = response.size();
-			unordered_map<string, warden::wallet_link> values;
+			unordered_map<string, oracle::wallet_link> values;
 			values.reserve(size);
 
 			for (size_t i = 0; i < size; i++)
 			{
 				auto row = response[i];
-				warden::wallet_link value;
+				oracle::wallet_link value;
 				auto owner = row["owner"].get().get_blob();
 				value.owner = algorithm::pubkeyhash_t(owner);
 				value.public_key = row["public_key"].get().get_blob();
@@ -511,37 +511,37 @@ namespace tangent
 
 			return values;
 		}
-		ledger::storage_index_ptr& wardenstate::get_storage()
+		ledger::storage_index_ptr& oraclestate::get_storage()
 		{
 			if (!local_storage.may_use())
 			{
-				if (!parent_wardenstate->local_storage.may_use() || parent_wardenstate->asset != asset)
+				if (!parent_oraclestate->local_storage.may_use() || parent_oraclestate->asset != asset)
 				{
 					string blockchain = algorithm::asset::blockchain_of(asset);
-					parent_wardenstate->local_storage = ledger::storage_index_ptr(ledger::storage_util::index_storage_of("wardenstate." + stringify::to_lower(blockchain) + "data", &wardenstate::make_schema));
+					parent_oraclestate->local_storage = ledger::storage_index_ptr(ledger::storage_util::index_storage_of("oraclestate." + stringify::to_lower(blockchain) + "data", &oraclestate::make_schema));
 				}
-				local_storage = parent_wardenstate->local_storage;
+				local_storage = parent_oraclestate->local_storage;
 			}
 			return local_storage;
 		}
-		std::string_view wardenstate::get_cache_location(warden::cache_policy policy)
+		std::string_view oraclestate::get_cache_location(oracle::cache_policy policy)
 		{
 			switch (policy)
 			{
-				case warden::cache_policy::lifetime_cache:
+				case oracle::cache_policy::lifetime_cache:
 					return "cache0";
-				case warden::cache_policy::temporary_cache:
+				case oracle::cache_policy::temporary_cache:
 				default:
 					return "cache1";
-				case warden::cache_policy::blob_cache:
+				case oracle::cache_policy::blob_cache:
 					return "cache2";
 			}
 		}
-		uint32_t wardenstate::get_queries() const
+		uint32_t oraclestate::get_queries() const
 		{
 			return local_storage.uses();
 		}
-		bool wardenstate::make_schema(sqlite::connection* connection)
+		bool oraclestate::make_schema(sqlite::connection* connection)
 		{
 			string command = VI_STRINGIFY(
 			CREATE TABLE IF NOT EXISTS coins
@@ -614,7 +614,7 @@ namespace tangent
 			stringify::replace(command, "max_cache2_capacity", to_string(protocol::now().user.oracle.cache2_size));
 
 			auto cursor = connection->query(command);
-			cursor.report("wardenstate configuration failed");
+			cursor.report("oraclestate configuration failed");
 			return (cursor && !cursor->error());
 		}
 	}

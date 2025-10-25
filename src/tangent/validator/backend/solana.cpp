@@ -13,7 +13,7 @@ extern "C"
 
 namespace tangent
 {
-	namespace warden
+	namespace oracle
 	{
 		namespace backends
 		{
@@ -480,7 +480,7 @@ namespace tangent
 				result.requires_abi(format::variable(transaction.recent_block_hash));
 				coreturn expects_rt<prepared_transaction>(std::move(result));
 			}
-			expects_lr<finalized_transaction> solana::finalize_transaction(warden::prepared_transaction&& prepared)
+			expects_lr<finalized_transaction> solana::finalize_transaction(oracle::prepared_transaction&& prepared)
 			{
 				if (prepared.abi.size() != 5)
 					return layer_exception("invalid prepared abi");

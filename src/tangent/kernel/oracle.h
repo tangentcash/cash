@@ -1,11 +1,11 @@
-#ifndef TAN_WARDEN_H
-#define TAN_WARDEN_H
+#ifndef TAN_ORACLE_H
+#define TAN_ORACLE_H
 #include "../policy/messages.h"
 #include "../layer/control.h"
 
 namespace tangent
 {
-	namespace warden
+	namespace oracle
 	{
 		enum
 		{
@@ -327,6 +327,7 @@ namespace tangent
 			task_id enqueue_activity(const promise<bool>& future, task_id timer_id);
 			void dequeue_activity(task_id timer_id);
 			void allow_activities();
+			void trigger_activities();
 			void cancel_activities();
 			bool has_distinct_url(const std::string_view& type) const;
 			bool is_activity_allowed() const;

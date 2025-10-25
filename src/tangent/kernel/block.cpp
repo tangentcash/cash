@@ -2613,7 +2613,7 @@ namespace tangent
 		{
 			auto result = get_witness_account(asset, address, offset);
 			if (!result)
-				result = get_witness_account(asset, warden::address_util::encode_tag_address(address, "0"), offset);
+				result = get_witness_account(asset, oracle::address_util::encode_tag_address(address, "0"), offset);
 			return result;
 		}
 		expects_lr<states::witness_transaction> transaction_context::get_witness_transaction(const algorithm::asset_id& asset, const std::string_view& transaction_id) const
@@ -2906,7 +2906,7 @@ namespace tangent
 			if (!state || (aggregator && *state && !(*state)->prefer_over(**aggregator)))
 				return false;
 
-			warden::prepared_transaction possible_message;
+			oracle::prepared_transaction possible_message;
 			if (!possible_message.load(stream))
 				return false;
 
@@ -2926,7 +2926,7 @@ namespace tangent
 
 			aggregator = std::move(**state);
 			participants = std::move(possible_participants);
-			message = memory::init<warden::prepared_transaction>(std::move(possible_message));
+			message = memory::init<oracle::prepared_transaction>(std::move(possible_message));
 			return true;
 		}
 		format::wo_stream dispatch_context::signature_state::as_message() const
@@ -3090,14 +3090,14 @@ namespace tangent
 		{
 			auto* server = oracle::server_node::get();
 			auto location = stringify::text("dispatch_cache_%s", algorithm::encoding::encode_0xhex256(context->receipt.transaction_hash).c_str());
-			auto cache = server->load_cache(context->transaction->asset, warden::cache_policy::lifetime_cache, location);
-			server->store_cache(context->transaction->asset, warden::cache_policy::lifetime_cache, location, nullptr);
+			auto cache = server->load_cache(context->transaction->asset, oracle::cache_policy::lifetime_cache, location);
+			server->store_cache(context->transaction->asset, oracle::cache_policy::lifetime_cache, location, nullptr);
 			return format::ro_stream(cache ? cache->value.get_string() : std::string_view());
 		}
 		void dispatch_context::push_cache(const transaction_context* context, const format::wo_stream& message) const
 		{
 			auto location = stringify::text("dispatch_cache_%s", algorithm::encoding::encode_0xhex256(context->receipt.transaction_hash).c_str());
-			oracle::server_node::get()->store_cache(context->transaction->asset, warden::cache_policy::lifetime_cache, location, var::set::string(message.data));
+			oracle::server_node::get()->store_cache(context->transaction->asset, oracle::cache_policy::lifetime_cache, location, var::set::string(message.data));
 		}
 
 		option<uint64_t> evaluation_context::configure_priority_from_validator(const algorithm::pubkeyhash_t& public_key_hash, const algorithm::seckey_t& secret_key, option<const block_header*>&& parent_block)

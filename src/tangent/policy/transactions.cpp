@@ -1177,8 +1177,8 @@ namespace tangent
 			if (!validation)
 				return validation.error();
 
-			auto* chain = oracle::server_node::get()->get_chainparams(asset);
-			if (!chain)
+			auto* params = oracle::server_node::get()->get_chainparams(asset);
+			if (!params)
 				return layer_exception("invalid operation");
 
 			auto attestation_requirement = context->verify_validator_attestation(asset, manager);
@@ -1217,62 +1217,65 @@ namespace tangent
 				return expectation::met;
 			}
 
-			switch (chain->routing)
+			switch (params->routing)
 			{
-				case warden::routing_policy::account:
+				case oracle::routing_policy::account:
 				{
 					if (!depository_policy->accounts_under_management)
+					{
+						if (context->receipt.from != manager)
+							return layer_exception("depository account for manager required");
 						break;
-
-					if (!routing_address_application)
-						return layer_exception("too many accounts for a depository");
+					}
+					else if (!routing_address_application)
+						return layer_exception("routing address required");
 
 					return expectation::met;
 				}
-				case warden::routing_policy::memo:
+				case oracle::routing_policy::memo:
 				{
-					size_t offset = 0, count = 64;
-					while (depository_policy->accounts_under_management > 0)
+					if (!depository_policy->accounts_under_management)
 					{
-						auto candidates = context->get_witness_accounts_by_purpose(manager, states::witness_account::account_type::depository, offset, count);
-						if (!candidates)
-							return candidates.error();
-
-						auto candidate = std::find_if(candidates->begin(), candidates->end(), [this](const states::witness_account& v) { return v.asset == asset && v.manager == manager; });
-						if (candidate != candidates->end())
-						{
-							uint64_t address_index = depository_policy->accounts_under_management + 1;
-							for (auto& address : candidate->addresses)
-								address.second = warden::address_util::encode_tag_address(address.second, to_string(address_index));
-
-							auto depository_policy_status = context->apply_depository_policy_account(asset, manager, 1);
-							if (!depository_policy_status)
-								return depository_policy_status.error();
-
-							auto depository_account_status = context->apply_depository_account(asset, context->receipt.from, manager, algorithm::composition::cpubkey_t(), { });
-							if (!depository_account_status)
-								return depository_account_status.error();
-
-							auto witness_account_status = context->apply_witness_depository_account(asset, context->receipt.from, manager, candidate->addresses);
-							if (!witness_account_status)
-								return witness_account_status.error();
-
-							return expectation::met;
-						}
-
-						offset += candidates->size();
-						if (candidates->size() < count)
-							break;
+						if (context->receipt.from != manager)
+							return layer_exception("depository account for manager required");
+						break;
 					}
-					break;
+
+					auto manager_account = context->get_depository_account(asset, manager, manager);
+					if (!manager_account || manager_account->public_key.empty() || manager_account->group.empty() || manager_account->owner != manager || manager_account->manager != manager)
+						return layer_exception("depository account for manager required");
+
+					auto* chain = oracle::server_node::get()->get_chain(asset);
+					if (!chain)
+						return layer_exception("invalid operation");
+
+					auto encoded_public_key = chain->encode_public_key(std::string_view((char*)manager_account->public_key.data(), manager_account->public_key.size()));
+					if (!encoded_public_key)
+						return encoded_public_key.error();
+
+					auto addresses = chain->to_addresses(*encoded_public_key);
+					if (!addresses)
+						return addresses.error();
+
+					for (auto& address : *addresses)
+						address.second = oracle::address_util::encode_tag_address(address.second, to_string(depository_policy->accounts_under_management));
+					
+					auto depository_policy_status = context->apply_depository_policy_account(asset, manager, 1);
+					if (!depository_policy_status)
+						return depository_policy_status.error();
+
+					auto depository_account_status = context->apply_depository_account(asset, context->receipt.from, manager, algorithm::composition::cpubkey_t(), { });
+					if (!depository_account_status)
+						return depository_account_status.error();
+
+					auto witness_account_status = context->apply_witness_depository_account(asset, context->receipt.from, manager, *addresses);
+					if (!witness_account_status)
+						return witness_account_status.error();
+
+					return expectation::met;
 				}
-				case warden::routing_policy::utxo:
-				{
-					auto duplicate = context->get_depository_account(asset, manager, context->receipt.from);
-					if (duplicate)
-						return layer_exception("depository account already exists");
+				case oracle::routing_policy::utxo:
 					break;
-				}
 				default:
 					return layer_exception("invalid operation");
 			}
@@ -1461,17 +1464,17 @@ namespace tangent
 
 			switch (params->routing)
 			{
-				case warden::routing_policy::account:
+				case oracle::routing_policy::account:
+				case oracle::routing_policy::memo:
 				{
 					if (depository_policy->accounts_under_management > 0)
 						return layer_exception("too many accounts for a depository");
-					break;
-				}
-				case warden::routing_policy::memo:
-				{
-					uint64_t address_index = depository_policy->accounts_under_management + 1;
+
+					if (params->routing == oracle::routing_policy::account)
+						break;
+
 					for (auto& address : *addresses)
-						address.second = warden::address_util::encode_tag_address(address.second, to_string(address_index));
+						address.second = oracle::address_util::encode_tag_address(address.second, to_string(depository_policy->accounts_under_management));
 					break;
 				}
 				default:
@@ -1528,15 +1531,15 @@ namespace tangent
 			auto* setup_transaction = (depository_account*)*setup->transaction;
 			for (auto& address : addresses)
 			{
-				auto [base_address, tag] = warden::address_util::decode_tag_address(address);
+				auto [base_address, tag] = oracle::address_util::decode_tag_address(address);
 				if (base_address != address)
 				{
-					auto status = server->enable_link(asset, warden::wallet_link(setup_transaction->manager, *encoded_public_key, base_address));
+					auto status = server->enable_link(asset, oracle::wallet_link(setup_transaction->manager, *encoded_public_key, base_address));
 					if (!status)
 						return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
 				}
 
-				auto status = server->enable_link(asset, warden::wallet_link(setup_transaction->manager, *encoded_public_key, address));
+				auto status = server->enable_link(asset, oracle::wallet_link(setup_transaction->manager, *encoded_public_key, address));
 				if (!status)
 					return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
 			}
@@ -1767,32 +1770,32 @@ namespace tangent
 					return expects_rt<void>(std::move(error));
 				};
 
-				vector<warden::value_transfer> transfers;
+				vector<oracle::value_transfer> transfers;
 				if (!to_manager.empty())
 				{
 					auto account = find_receiving_account(context, asset, from_manager, to_manager);
 					if (!account)
 						coreturn cancel(remote_exception(std::move(account.error().message())));
 
-					transfers.push_back(warden::value_transfer(asset, account->addresses.begin()->second, get_token_value(context)));
+					transfers.push_back(oracle::value_transfer(asset, account->addresses.begin()->second, get_token_value(context)));
 				}
 				else
 				{
 					for (auto& item : to)
-						transfers.push_back(warden::value_transfer(asset, item.first, decimal(item.second)));
+						transfers.push_back(oracle::value_transfer(asset, item.first, decimal(item.second)));
 				}
 
 				auto cache = dispatcher->pull_cache(context);
 				auto state = ledger::dispatch_context::signature_state();
 				if (chain->requires_transaction_expiration || !state.load_message_if_preferred(cache))
 				{
-					auto message = coawait(resolver::prepare_transaction(algorithm::asset::base_id_of(asset), warden::wallet_link::from_owner(from_manager), transfers, to_manager.empty() ? get_fee_value(context) : decimal::nan(), to_manager.empty()));
+					auto message = coawait(resolver::prepare_transaction(algorithm::asset::base_id_of(asset), oracle::wallet_link::from_owner(from_manager), transfers, to_manager.empty() ? get_fee_value(context) : decimal::nan(), to_manager.empty()));
 					if (!message)
 						coreturn message.error().is_retry() || message.error().is_shutdown() ? expects_rt<void>(std::move(message.error())) : cancel(std::move(message.error()));
 					else if (message->inputs.size() > std::numeric_limits<uint8_t>::max())
 						coreturn cancel(remote_exception("too many prepared inputs"));
 
-					state.message = memory::init<warden::prepared_transaction>(std::move(*message));
+					state.message = memory::init<oracle::prepared_transaction>(std::move(*message));
 				}
 
 				auto* input = state.message->next_input_for_aggregation();
@@ -2125,7 +2128,7 @@ namespace tangent
 
 			return coasync<expects_rt<void>>([this, context, dispatcher]() mutable -> expects_promise_rt<void>
 			{
-				auto broadcast = coawait(resolver::broadcast_transaction(algorithm::asset::base_id_of(asset), depository_withdrawal_hash, warden::finalized_transaction(*proof), dispatcher));
+				auto broadcast = coawait(resolver::broadcast_transaction(algorithm::asset::base_id_of(asset), depository_withdrawal_hash, oracle::finalized_transaction(*proof), dispatcher));
 				if (!broadcast && (broadcast.error().is_retry() || broadcast.error().is_shutdown()))
 					coreturn remote_exception::retry();
 
@@ -2159,7 +2162,7 @@ namespace tangent
 
 			if (has_proof)
 			{
-				proof = expects_lr<warden::finalized_transaction>(warden::finalized_transaction());
+				proof = expects_lr<oracle::finalized_transaction>(oracle::finalized_transaction());
 				if (!proof->load_payload(stream))
 					return false;
 			}
@@ -2183,7 +2186,7 @@ namespace tangent
 			parties.insert(algorithm::pubkeyhash_t(parent->receipt.from));
 			return true;
 		}
-		void depository_withdrawal_routing::set_proof(const uint256_t& new_depository_withdrawal_hash, expects_lr<warden::finalized_transaction>&& new_proof)
+		void depository_withdrawal_routing::set_proof(const uint256_t& new_depository_withdrawal_hash, expects_lr<oracle::finalized_transaction>&& new_proof)
 		{
 			depository_withdrawal_hash = new_depository_withdrawal_hash;
 			proof = std::move(new_proof);
@@ -2224,9 +2227,9 @@ namespace tangent
 		{
 			return "depository_withdrawal_routing";
 		}
-		expects_lr<void> depository_withdrawal_routing::validate_possible_proof(const ledger::transaction_context* context, const depository_withdrawal* transaction, const warden::prepared_transaction& prepared)
+		expects_lr<void> depository_withdrawal_routing::validate_possible_proof(const ledger::transaction_context* context, const depository_withdrawal* transaction, const oracle::prepared_transaction& prepared)
 		{
-			if (prepared.as_status() == warden::prepared_transaction::status::invalid)
+			if (prepared.as_status() == oracle::prepared_transaction::status::invalid)
 				return layer_exception("invalid prepared transaction");
 
 			auto server = oracle::server_node::get();
@@ -2383,7 +2386,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> depository_withdrawal_routing::validate_finalized_proof(const ledger::transaction_context* context, const depository_withdrawal* transaction, const warden::finalized_transaction& finalized)
+		expects_lr<void> depository_withdrawal_routing::validate_finalized_proof(const ledger::transaction_context* context, const depository_withdrawal* transaction, const oracle::finalized_transaction& finalized)
 		{
 			auto validation = validate_possible_proof(context, transaction, finalized.prepared);
 			if (!validation)
@@ -2394,7 +2397,7 @@ namespace tangent
 			else if (finalized.hashdata.empty())
 				return layer_exception("invalid finalized hashdata");
 
-			auto finalization = resolver::finalize_transaction(transaction->asset, warden::prepared_transaction(finalized.prepared));
+			auto finalization = resolver::finalize_transaction(transaction->asset, oracle::prepared_transaction(finalized.prepared));
 			if (!finalization)
 				return finalization.error();
 
@@ -2763,9 +2766,12 @@ namespace tangent
 						}
 					}
 
-					auto depository = context->apply_depository_balance(transfer_asset, owner.data, { { transfer_asset, transfer.supply } });
-					if (!depository)
-						return depository.error();
+					if (!transfer.supply.is_zero())
+					{
+						auto depository = context->apply_depository_balance(transfer_asset, owner.data, { { transfer_asset, transfer.supply } });
+						if (!depository)
+							return depository.error();
+					}
 
 					auto total_fee = consume_penalty(transfer.incoming_fee + transfer.outgoing_fee);
 					auto attestation_cut = best_branch->signatures.empty() ? decimal::zero() : decimal(protocol::now().policy.attestation_fee_rate);
@@ -2855,32 +2861,32 @@ namespace tangent
 			}
 			return true;
 		}
-		void depository_transaction::set_finalized_witness(uint64_t block_id, const std::string_view& transaction_id, const vector<warden::value_transfer>& inputs, const vector<warden::value_transfer>& outputs)
+		void depository_transaction::set_finalized_witness(uint64_t block_id, const std::string_view& transaction_id, const vector<oracle::value_transfer>& inputs, const vector<oracle::value_transfer>& outputs)
 		{
 			auto* chain = oracle::server_node::get()->get_chainparams(asset);
-			warden::computed_transaction witness;
+			oracle::computed_transaction witness;
 			witness.transaction_id = transaction_id;
 			witness.block_id = block_id;
 			witness.inputs.reserve(inputs.size());
 			witness.outputs.reserve(outputs.size());
 			for (auto& input : inputs)
-				witness.inputs.push_back(warden::coin_utxo(warden::wallet_link::from_address(input.address), { { input.asset, input.value } }));
+				witness.inputs.push_back(oracle::coin_utxo(oracle::wallet_link::from_address(input.address), { { input.asset, input.value } }));
 			for (auto& output : outputs)
-				witness.outputs.push_back(warden::coin_utxo(warden::wallet_link::from_address(output.address), { { output.asset, output.value } }));
+				witness.outputs.push_back(oracle::coin_utxo(oracle::wallet_link::from_address(output.address), { { output.asset, output.value } }));
 			set_computed_witness(witness);
 		}
-		void depository_transaction::set_computed_witness(const warden::computed_transaction& witness)
+		void depository_transaction::set_computed_witness(const oracle::computed_transaction& witness)
 		{
 			set_statement(algorithm::hashing::hash256i(witness.transaction_id), witness.as_message());
 		}
-		option<warden::computed_transaction> depository_transaction::get_assertion(const ledger::transaction_context* context) const
+		option<oracle::computed_transaction> depository_transaction::get_assertion(const ledger::transaction_context* context) const
 		{
 			auto* best_branch = get_best_branch(context, nullptr);
 			if (!best_branch)
 				return optional::none;
 
 			auto message = best_branch->message.ro();
-			warden::computed_transaction assertion;
+			oracle::computed_transaction assertion;
 			if (!assertion.load(message))
 				return optional::none;
 
@@ -2931,7 +2937,7 @@ namespace tangent
 			if (!whitelist.empty())
 			{
 				auto* chain = oracle::server_node::get()->get_chainparams(asset);
-				if (chain->tokenization != warden::token_policy::program)
+				if (chain->tokenization != oracle::token_policy::program)
 					return layer_exception("whitelist not applicable for asset's token policy");
 
 				for (auto& [contract_address, symbol] : whitelist)
@@ -3510,7 +3516,7 @@ namespace tangent
 				return memory::init<depository_migration_finalization>(*(const depository_migration_finalization*)base);
 			return nullptr;
 		}
-		expects_promise_rt<warden::prepared_transaction> resolver::prepare_transaction(const algorithm::asset_id& asset, const warden::wallet_link& from_link, const vector<warden::value_transfer>& to, const decimal& max_fee, bool inclusive_fee)
+		expects_promise_rt<oracle::prepared_transaction> resolver::prepare_transaction(const algorithm::asset_id& asset, const oracle::wallet_link& from_link, const vector<oracle::value_transfer>& to, const decimal& max_fee, bool inclusive_fee)
 		{
 			auto* server = oracle::server_node::get();
 			if (!protocol::now().is(network_type::regtest) || server->has_support(asset))
@@ -3518,19 +3524,19 @@ namespace tangent
 
 			auto chain = server->get_chainparams(asset);
 			if (!chain)
-				return expects_promise_rt<warden::prepared_transaction>(remote_exception("invalid operation"));
+				return expects_promise_rt<oracle::prepared_transaction>(remote_exception("invalid operation"));
 
 			auto from = server->normalize_link(asset, from_link);
 			if (!from)
-				return expects_promise_rt<warden::prepared_transaction>(remote_exception(std::move(from.error().message())));
+				return expects_promise_rt<oracle::prepared_transaction>(remote_exception(std::move(from.error().message())));
 
 			auto message = format::wo_stream();
 			if (!from->store_payload(&message))
-				return expects_promise_rt<warden::prepared_transaction>(remote_exception("serialization error"));
+				return expects_promise_rt<oracle::prepared_transaction>(remote_exception("serialization error"));
 
 			auto public_key = server->to_composite_public_key(asset, from->public_key);
 			if (!public_key)
-				return expects_promise_rt<warden::prepared_transaction>(remote_exception(std::move(public_key.error().message())));
+				return expects_promise_rt<oracle::prepared_transaction>(remote_exception(std::move(public_key.error().message())));
 
 			auto transfers = unordered_map<algorithm::asset_id, decimal>();
 			for (auto& transfer : to)
@@ -3545,14 +3551,14 @@ namespace tangent
 			uint8_t message_hash[32];
 			message.hash().encode(message_hash);
 
-			warden::prepared_transaction regtest_prepared;
+			oracle::prepared_transaction regtest_prepared;
 			regtest_prepared.requires_account_input(chain->composition, std::move(*from), *public_key, message_hash, sizeof(message_hash), std::move(transfers));
 			for (auto& transfer : to)
 				regtest_prepared.requires_account_output(transfer.address, { { transfer.asset, transfer.value } });
 
-			return expects_promise_rt<warden::prepared_transaction>(std::move(regtest_prepared));
+			return expects_promise_rt<oracle::prepared_transaction>(std::move(regtest_prepared));
 		}
-		expects_lr<warden::finalized_transaction> resolver::finalize_transaction(const algorithm::asset_id& asset, warden::prepared_transaction&& prepared)
+		expects_lr<oracle::finalized_transaction> resolver::finalize_transaction(const algorithm::asset_id& asset, oracle::prepared_transaction&& prepared)
 		{
 			auto* server = oracle::server_node::get();
 			if (!protocol::now().is(network_type::regtest) || server->has_support(asset))
@@ -3560,16 +3566,16 @@ namespace tangent
 
 			auto transaction_id = algorithm::encoding::encode_0xhex256(prepared.as_hash());
 			auto block_id = algorithm::hashing::hash256i(transaction_id) % std::numeric_limits<uint32_t>::max();
-			auto regtest_finalized = warden::finalized_transaction(std::move(prepared), string(), std::move(transaction_id), block_id);
+			auto regtest_finalized = oracle::finalized_transaction(std::move(prepared), string(), std::move(transaction_id), block_id);
 			regtest_finalized.calldata = regtest_finalized.as_message().encode();
-			return expects_lr<warden::finalized_transaction>(std::move(regtest_finalized));
+			return expects_lr<oracle::finalized_transaction>(std::move(regtest_finalized));
 		}
-		expects_promise_rt<void> resolver::broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, warden::finalized_transaction&& finalized, ledger::dispatch_context* dispatcher)
+		expects_promise_rt<void> resolver::broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, oracle::finalized_transaction&& finalized, ledger::dispatch_context* dispatcher)
 		{
 			auto* server = oracle::server_node::get();
 			if (!protocol::now().is(network_type::regtest) || server->has_support(asset))
 			{
-				auto preserved = memory::init<warden::finalized_transaction>(std::move(finalized));
+				auto preserved = memory::init<oracle::finalized_transaction>(std::move(finalized));
 				return server->broadcast_transaction(asset, external_id, *preserved).then<expects_rt<void>>([preserved](expects_rt<void>&& status) mutable -> expects_rt<void>
 				{
 					memory::deinit(preserved);

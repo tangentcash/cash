@@ -5,7 +5,7 @@
 
 namespace tangent
 {
-	namespace warden
+	namespace oracle
 	{
 		struct prepared_transaction;
 	}
@@ -429,7 +429,7 @@ namespace tangent
 			{
 				uptr<algorithm::composition::signature_state> aggregator;
 				ordered_set<algorithm::pubkeyhash_t> participants;
-				uptr<warden::prepared_transaction> message;
+				uptr<oracle::prepared_transaction> message;
 
 				bool load_message_if_preferred(format::ro_stream& stream);
 				format::wo_stream as_message() const;

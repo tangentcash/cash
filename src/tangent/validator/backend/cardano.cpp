@@ -10,7 +10,7 @@ extern "C"
 
 namespace tangent
 {
-	namespace warden
+	namespace oracle
 	{
 		namespace backends
 		{
@@ -480,7 +480,7 @@ namespace tangent
 					coreturn expects_rt<prepared_transaction>(remote_exception("tx serialization error"));
 				}
 			}
-			expects_lr<finalized_transaction> cardano::finalize_transaction(warden::prepared_transaction&& prepared)
+			expects_lr<finalized_transaction> cardano::finalize_transaction(oracle::prepared_transaction&& prepared)
 			{
 				if (prepared.abi.size() != 1)
 					return layer_exception("invalid prepared abi");

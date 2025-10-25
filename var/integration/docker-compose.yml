@@ -1,0 +1,249 @@
+services:
+  cardano:
+    image: cardanofoundation/cardano-rosetta:2.5.0-preview
+    container_name: cardano-regtest
+    ports:
+      - "8001:8080"
+    command: [
+      "--network",
+      "regtest"
+    ]
+    shm_size: 2g
+    restart: unless-stopped
+  bitcoin:
+    image: ruimarinho/bitcoin-core:latest
+    container_name: bitcoin-regtest
+    ports:
+      - "8002:8332"
+    command: [
+      "-printtoconsole",
+      "-server",
+      "-regtest=1",
+      "-txindex",
+      "-rpcbind=0.0.0.0",
+      "-rpcallowip=0.0.0.0/0",
+      "-rpcuser=admin",
+      "-rpcpassword=pass",
+      "-rpcport=8332"
+    ]
+    restart: unless-stopped
+  bitcoin-cash:
+    image: uphold/bitcoin-cash-node:latest
+    container_name: bitcoin-cash-regtest
+    ports:
+      - "8003:8332"
+    command: [
+      "-printtoconsole",
+      "-server",
+      "-regtest=1",
+      "-txindex",
+      "-rpcbind=0.0.0.0",
+      "-rpcallowip=0.0.0.0/0",
+      "-rpcuser=admin",
+      "-rpcpassword=pass",
+      "-rpcport=8332"
+    ]
+    restart: unless-stopped
+  bitcoin-gold:
+    image: uphold/bitcoin-gold:latest
+    container_name: bitcoin-gold-regtest
+    ports:
+      - "8004:8332"
+    command: [
+      "-printtoconsole",
+      "-server",
+      "-regtest=1",
+      "-txindex",
+      "-rpcbind=0.0.0.0",
+      "-rpcallowip=0.0.0.0/0",
+      "-rpcuser=admin",
+      "-rpcpassword=pass",
+      "-rpcport=8332"
+    ]
+    restart: unless-stopped
+  bitcoin-sv:
+    image: bitcoinsv/bitcoin-sv:latest
+    container_name: bitcoin-sv-regtest
+    ports:
+      - "8005:8332"
+    command: [
+      "-printtoconsole",
+      "-server",
+      "-regtest=1",
+      "-txindex",
+      "-rpcbind=0.0.0.0",
+      "-rpcallowip=0.0.0.0/0",
+      "-rpcuser=admin",
+      "-rpcpassword=pass",
+      "-rpcport=8332"
+    ]
+    restart: unless-stopped
+  dash:
+    image: uphold/dash-core:latest
+    container_name: dash-regtest
+    ports:
+      - "8006:8332"
+    command: [
+      "-printtoconsole",
+      "-server",
+      "-regtest=1",
+      "-txindex",
+      "-rpcbind=0.0.0.0",
+      "-rpcallowip=0.0.0.0/0",
+      "-rpcuser=admin",
+      "-rpcpassword=pass",
+      "-rpcport=8332"
+    ]
+    restart: unless-stopped
+  digibyte:
+    image: kleverio/digibyte:latest
+    container_name: digibyte-regtest
+    ports:
+      - "8007:8332"
+    command: [
+      "-printtoconsole",
+      "-server",
+      "-regtest=1",
+      "-txindex",
+      "-rpcbind=0.0.0.0",
+      "-rpcallowip=0.0.0.0/0",
+      "-rpcuser=admin",
+      "-rpcpassword=pass",
+      "-rpcport=8332"
+    ]
+    restart: unless-stopped
+  dogecoin:
+    image: um1st/dogecoind:latest
+    container_name: dogecoin-regtest
+    ports:
+      - "8008:8332"
+    command: [
+      "-printtoconsole",
+      "-server",
+      "-regtest=1",
+      "-txindex",
+      "-rpcbind=0.0.0.0",
+      "-rpcallowip=0.0.0.0/0",
+      "-rpcuser=admin",
+      "-rpcpassword=pass",
+      "-rpcport=8332"
+    ]
+    restart: unless-stopped
+  litecoin:
+    image: uphold/bitcoin-abc:latest
+    container_name: litecoin-regtest
+    ports:
+      - "8009:8332"
+    command: [
+      "-printtoconsole",
+      "-server",
+      "-regtest=1",
+      "-txindex",
+      "-rpcbind=0.0.0.0",
+      "-rpcallowip=0.0.0.0/0",
+      "-rpcuser=admin",
+      "-rpcpassword=pass",
+      "-rpcport=8332"
+    ]
+    restart: unless-stopped
+  ecash:
+    image: uphold/bitcoin-abc
+    container_name: ecash-abc-regtest
+    ports:
+      - "8010:8332"
+    command: [
+      "-printtoconsole",
+      "-server",
+      "-regtest=1",
+      "-txindex",
+      "-rpcbind=0.0.0.0",
+      "-rpcallowip=0.0.0.0/0",
+      "-rpcuser=admin",
+      "-rpcpassword=pass",
+      "-rpcport=8332"
+    ]
+    restart: unless-stopped
+  zcash:
+    image: electriccoinco/zcashd:latest
+    container_name: zcash-regtest
+    ports:
+      - "8011:8332"
+    command: [
+      "-printtoconsole",
+      "-server",
+      "-regtest=1",
+      "-txindex",
+      "-rpcbind=0.0.0.0",
+      "-rpcallowip=0.0.0.0/0",
+      "-rpcuser=admin",
+      "-rpcpassword=pass",
+      "-rpcport=8332"
+    ]
+    restart: unless-stopped
+  ethereum:
+    image: ethereum/client-go:latest
+    container_name: ethereum-regtest
+    ports:
+      - "8012:8545"
+    command: --dev --dev.period 0 --http --http.addr 0.0.0.0 --http.port 8545 --http.api admin,debug,miner,eth,net,web3,personal --ws --ws.addr 0.0.0.0 --ws.port 8546 --ws.api admin,debug,miner,eth,net,web3,personal --mine
+    restart: unless-stopped
+# arbitrum:
+# avalanche:
+# base:
+# blast:
+# bnb-chain:
+# celo:
+# ethereum-classic:
+# gnosis:
+# linea:
+# polygon-matic:
+# optimism:
+# sonic:
+# zksync:
+  solana:
+    image: tchambard/solana-test-validator:latest
+    container_name: solana-regtest
+    ports:
+      - "8026:8899"
+    command: |
+      sh -c "solana-test-validator --ledger ~/.config/solana/.ledger -r --bind-address 0.0.0.0 --rpc-port 8899 && light-test-validator-docker"
+    restart: unless-stopped
+  tron:
+    image: tronbox/tre
+    container_name: tron-regtest
+    ports:
+      - "8027:8545"
+      - "8028:18190"
+    restart: unless-stopped
+  ripple:
+    image: ulamlabs/ripple-testnet:latest
+    container_name: ripple-regtest
+    ports:
+      - "8029:5005"
+    restart: unless-stopped
+  stellar:
+    image: stellar/quickstart:testing
+    container_name: stellar-regtest
+    ports:
+      - "8030:8000"
+    command: [
+      "--local",
+      "--enable-soroban-rpc"
+    ]
+    restart: unless-stopped
+  monero:
+    image: ghcr.io/sethforprivacy/simple-monerod:latest
+    container_name: monero-regtest
+    ports:
+      - "8031:18081"
+    command: [
+      "--confirm-external-bind",
+      "--rpc-bind-ip=0.0.0.0",
+      "--rpc-restricted-bind-ip=0.0.0.0",
+      "--rpc-restricted-bind-port=18089",
+      "--keep-fakechain",
+      "--regtest",
+      "--offline",
+      "--fixed-difficulty=1"
+    ]
+    restart: unless-stopped

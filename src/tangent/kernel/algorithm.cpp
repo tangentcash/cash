@@ -1154,7 +1154,7 @@ namespace tangent
 			if (is_token_empty != is_checksum_empty || (require_no_token && !is_token_empty))
 				return false;
 
-			return is_token_empty || chain->get_chainparams().tokenization != warden::token_policy::none;
+			return is_token_empty || chain->get_chainparams().tokenization != oracle::token_policy::none;
 		}
 		bool asset::is_safe_to_use(const asset_id& value)
 		{
@@ -1166,7 +1166,7 @@ namespace tangent
 			if (stringify::is_empty_or_whitespace(token))
 				return true;
 
-			return chain->get_chainparams().tokenization != warden::token_policy::program;
+			return chain->get_chainparams().tokenization != oracle::token_policy::program;
 		}
 		uint64_t asset::expiry_of(const asset_id& value)
 		{

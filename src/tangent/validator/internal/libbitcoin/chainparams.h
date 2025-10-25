@@ -97,66 +97,6 @@ extern const btc_chainparams eth_chainparams_main;
 extern const btc_chainparams eth_chainparams_test;
 extern const btc_chainparams eth_chainparams_regtest;
 
-/* ethereum classic */
-extern const btc_chainparams etc_chainparams_main;
-extern const btc_chainparams etc_chainparams_test;
-extern const btc_chainparams etc_chainparams_regtest;
-
-/* fantom */
-extern const btc_chainparams ftm_chainparams_main;
-extern const btc_chainparams ftm_chainparams_test;
-extern const btc_chainparams ftm_chainparams_regtest;
-
-/* fuseio */
-extern const btc_chainparams fuse_chainparams_main;
-extern const btc_chainparams fuse_chainparams_test;
-extern const btc_chainparams fuse_chainparams_regtest;
-
-/* moonbeam */
-extern const btc_chainparams glmr_chainparams_main;
-extern const btc_chainparams glmr_chainparams_test;
-extern const btc_chainparams glmr_chainparams_regtest;
-
-/* optimism */
-extern const btc_chainparams op_chainparams_main;
-extern const btc_chainparams op_chainparams_test;
-extern const btc_chainparams op_chainparams_regtest;
-
-/* rootstock infrastructure framework */
-extern const btc_chainparams rif_chainparams_main;
-extern const btc_chainparams rif_chainparams_test;
-extern const btc_chainparams rif_chainparams_regtest;
-
-/* avalanche */
-extern const btc_chainparams avax_chainparams_main;
-extern const btc_chainparams avax_chainparams_test;
-extern const btc_chainparams avax_chainparams_regtest;
-
-/* arbitrum */
-extern const btc_chainparams arb_chainparams_main;
-extern const btc_chainparams arb_chainparams_test;
-extern const btc_chainparams arb_chainparams_regtest;
-
-/* tron */
-extern const btc_chainparams trx_chainparams_main;
-extern const btc_chainparams trx_chainparams_test;
-extern const btc_chainparams trx_chainparams_regtest;
-
-/* harmony one */
-extern const btc_chainparams one_chainparams_main;
-extern const btc_chainparams one_chainparams_test;
-extern const btc_chainparams one_chainparams_regtest;
-
-/* celo */
-extern const btc_chainparams celo_chainparams_main;
-extern const btc_chainparams celo_chainparams_test;
-extern const btc_chainparams celo_chainparams_regtest;
-
-/* polygon matic */
-extern const btc_chainparams matic_chainparams_main;
-extern const btc_chainparams matic_chainparams_test;
-extern const btc_chainparams matic_chainparams_regtest;
-
 /* ripple xrp */
 extern const btc_chainparams xrp_chainparams_main;
 extern const btc_chainparams xrp_chainparams_test;
@@ -171,11 +111,6 @@ extern const btc_chainparams xlm_chainparams_regtest;
 extern const btc_chainparams sol_chainparams_main;
 extern const btc_chainparams sol_chainparams_test;
 extern const btc_chainparams sol_chainparams_regtest;
-
-/* binance smart chain */
-extern const btc_chainparams bsc_chainparams_main;
-extern const btc_chainparams bsc_chainparams_test;
-extern const btc_chainparams bsc_chainparams_regtest;
 
 LIBBTC_END_DECL
 

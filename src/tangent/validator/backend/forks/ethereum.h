@@ -1,108 +1,106 @@
-#ifndef TAN_WARDEN_FORKS_ETHEREUM_H
-#define TAN_WARDEN_FORKS_ETHEREUM_H
+#ifndef TAN_ORACLE_FORKS_ETHEREUM_H
+#define TAN_ORACLE_FORKS_ETHEREUM_H
 #include "../ethereum.h"
 
 namespace tangent
 {
-    namespace warden
+    namespace oracle
     {
         namespace backends
         {
-            class arbitrum : public ethereum
+            namespace forks
             {
-            public:
-                arbitrum(const algorithm::asset_id& new_asset) noexcept;
-                virtual ~arbitrum() override = default;
-                virtual const btc_chainparams_* get_chain() override;
-            };
+                class arbitrum : public ethereum
+                {
+                public:
+                    arbitrum(const algorithm::asset_id& new_asset) noexcept;
+                    virtual ~arbitrum() override = default;
+                };
 
-            class avalanche : public ethereum
-            {
-            public:
-                avalanche(const algorithm::asset_id& new_asset) noexcept;
-                virtual ~avalanche() override = default;
-                virtual const btc_chainparams_* get_chain() override;
-            };
+                class avalanche : public ethereum
+                {
+                public:
+                    avalanche(const algorithm::asset_id& new_asset) noexcept;
+                    virtual ~avalanche() override = default;
+                };
 
-            class celo : public ethereum
-            {
-            public:
-                celo(const algorithm::asset_id& new_asset) noexcept;
-                virtual ~celo() override = default;
-                virtual const btc_chainparams_* get_chain() override;
-            };
+                class base : public ethereum
+                {
+                public:
+                    base(const algorithm::asset_id& new_asset) noexcept;
+                    virtual ~base() override = default;
+                };
 
-            class ethereum_classic : public ethereum
-            {
-            public:
-                ethereum_classic(const algorithm::asset_id& new_asset) noexcept;
-                virtual ~ethereum_classic() override = default;
-                virtual const btc_chainparams_* get_chain() override;
-            };
+                class blast : public ethereum
+                {
+                public:
+                    blast(const algorithm::asset_id& new_asset) noexcept;
+                    virtual ~blast() override = default;
+                };
 
-            class fantom : public ethereum
-            {
-            public:
-                fantom(const algorithm::asset_id& new_asset) noexcept;
-                virtual ~fantom() override = default;
-                virtual const btc_chainparams_* get_chain() override;
-            };
+                class bnb : public ethereum
+                {
+                public:
+                    bnb(const algorithm::asset_id& new_asset) noexcept;
+                    virtual ~bnb() override = default;
+                };
 
-            class fuse : public ethereum
-            {
-            public:
-                fuse(const algorithm::asset_id& new_asset) noexcept;
-                virtual ~fuse() override = default;
-                virtual const btc_chainparams_* get_chain() override;
-            };
+                class celo : public ethereum
+                {
+                public:
+                    celo(const algorithm::asset_id& new_asset) noexcept;
+                    virtual ~celo() override = default;
+                };
 
-            class harmony : public ethereum
-            {
-            public:
-                harmony(const algorithm::asset_id& new_asset) noexcept;
-                virtual ~harmony() override = default;
-                virtual const btc_chainparams_* get_chain() override;
-            };
+                class ethereum_classic : public ethereum
+                {
+                public:
+                    ethereum_classic(const algorithm::asset_id& new_asset) noexcept;
+                    virtual ~ethereum_classic() override = default;
+                };
 
-            class moonbeam : public ethereum
-            {
-            public:
-                moonbeam(const algorithm::asset_id& new_asset) noexcept;
-                virtual ~moonbeam() override = default;
-                virtual const btc_chainparams_* get_chain() override;
-            };
+                class gnosis : public ethereum
+                {
+                public:
+                    gnosis(const algorithm::asset_id& new_asset) noexcept;
+                    virtual ~gnosis() override = default;
+                };
 
-            class optimism : public ethereum
-            {
-            public:
-                optimism(const algorithm::asset_id& new_asset) noexcept;
-                virtual ~optimism() override = default;
-                virtual const btc_chainparams_* get_chain() override;
-            };
+                class linea : public ethereum
+                {
+                public:
+                    linea(const algorithm::asset_id& new_asset) noexcept;
+                    virtual ~linea() override = default;
+                };
 
-            class polygon : public ethereum
-            {
-            public:
-                polygon(const algorithm::asset_id& new_asset) noexcept;
-                virtual ~polygon() override = default;
-                virtual const btc_chainparams_* get_chain() override;
-            };
+                class polygon : public ethereum
+                {
+                public:
+                    polygon(const algorithm::asset_id& new_asset) noexcept;
+                    virtual ~polygon() override = default;
+                };
 
-            class rootstock : public ethereum
-            {
-            public:
-                rootstock(const algorithm::asset_id& new_asset) noexcept;
-                virtual ~rootstock() override = default;
-                virtual const btc_chainparams_* get_chain() override;
-            };
+                class optimism : public ethereum
+                {
+                public:
+                    optimism(const algorithm::asset_id& new_asset) noexcept;
+                    virtual ~optimism() override = default;
+                };
 
-            class binance_smart_chain : public ethereum
-            {
-            public:
-                binance_smart_chain(const algorithm::asset_id& new_asset) noexcept;
-                virtual ~binance_smart_chain() override = default;
-                virtual const btc_chainparams_* get_chain() override;
-            };
+                class sonic : public ethereum
+                {
+                public:
+                    sonic(const algorithm::asset_id& new_asset) noexcept;
+                    virtual ~sonic() override = default;
+                };
+
+                class zksync : public ethereum
+                {
+                public:
+                    zksync(const algorithm::asset_id& new_asset) noexcept;
+                    virtual ~zksync() override = default;
+                };
+            }
         }
     }
 }

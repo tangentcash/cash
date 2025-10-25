@@ -1,10 +1,10 @@
-#include "warden.h"
+#include "oracle.h"
 #include "../validator/service/oracle.h"
 #include <sstream>
 
 namespace tangent
 {
-	namespace warden
+	namespace oracle
 	{
 		wallet_link::wallet_link(const algorithm::pubkeyhash_t& new_owner, const std::string_view& new_public_key, const std::string_view& new_address) : owner(new_owner), address(new_address), public_key(new_public_key)
 		{
@@ -115,7 +115,7 @@ namespace tangent
 		}
 		std::string_view wallet_link::as_instance_typename()
 		{
-			return "warden_wallet_link";
+			return "oracle_wallet_link";
 		}
 		wallet_link wallet_link::from_owner(const algorithm::pubkeyhash_t& new_owner)
 		{
@@ -371,7 +371,7 @@ namespace tangent
 		}
 		std::string_view coin_utxo::as_instance_typename()
 		{
-			return "warden_coin_utxo";
+			return "oracle_coin_utxo";
 		}
 
 		bool computed_transaction::store_payload(format::wo_stream* stream) const
@@ -505,7 +505,7 @@ namespace tangent
 		}
 		std::string_view computed_transaction::as_instance_typename()
 		{
-			return "warden_computed_transaction";
+			return "oracle_computed_transaction";
 		}
 
 		prepared_transaction& prepared_transaction::requires_input(algorithm::composition::type new_alg, const algorithm::composition::cpubkey_t& new_public_key, uint8_t* new_message, size_t new_message_size, coin_utxo&& input)
@@ -733,7 +733,7 @@ namespace tangent
 		}
 		std::string_view prepared_transaction::as_instance_typename()
 		{
-			return "warden_prepared_transaction";
+			return "oracle_prepared_transaction";
 		}
 
 		finalized_transaction::finalized_transaction(prepared_transaction&& new_prepared, string&& new_calldata, string&& new_hashdata, uint64_t new_locktime) : prepared(std::move(new_prepared)), calldata(std::move(new_calldata)), hashdata(std::move(new_hashdata)), locktime(new_locktime)
@@ -806,7 +806,7 @@ namespace tangent
 		}
 		std::string_view finalized_transaction::as_instance_typename()
 		{
-			return "warden_finalized_transaction";
+			return "oracle_finalized_transaction";
 		}
 
 		decimal computed_fee::get_max_fee() const
@@ -1213,6 +1213,17 @@ namespace tangent
 		{
 			allowed = true;
 		}
+		void server_relay::trigger_activities()
+		{
+			umutex<std::recursive_mutex> unique(mutex);
+			for (auto& task : tasks)
+			{
+				schedule::get()->clear_timeout(task.second);
+				if (task.first.is_pending())
+					task.first.set(true);
+			}
+			tasks.clear();
+		}
 		void server_relay::cancel_activities()
 		{
 			umutex<std::recursive_mutex> unique(mutex);
@@ -1288,7 +1299,7 @@ namespace tangent
 		{
 			string_stream message;
 			string method = reporter.method;
-			message << "warden::" << reporter.type << "::" << stringify::to_lower(method) << " error: ";
+			message << "oracle::" << reporter.type << "::" << stringify::to_lower(method) << " error: ";
 			if (error_message.empty())
 				message << "no response";
 			else
@@ -1674,16 +1685,16 @@ namespace tangent
 
 		string address_util::encode_tag_address(const std::string_view& address, const std::string_view& destination_tag)
 		{
-			auto split = address.find(':');
+			auto split = address.rfind('#');
 			size_t address_size = split == string::npos ? address.size() : split;
 			if (destination_tag.empty())
 				return string(address.substr(0, address_size));
 
-			return stringify::text("%.*s:%.*s", (int)address_size, address.data(), (int)destination_tag.size(), destination_tag.data());
+			return stringify::text("%.*s#%.*s", (int)address_size, address.data(), (int)destination_tag.size(), destination_tag.data());
 		}
 		std::pair<string, string> address_util::decode_tag_address(const std::string_view& address_destination_tag)
 		{
-			auto split = address_destination_tag.find(':');
+			auto split = address_destination_tag.rfind('#');
 			if (split == string::npos || split + 1 >= address_destination_tag.size())
 				return std::make_pair(string(address_destination_tag), string());
 

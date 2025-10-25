@@ -1211,7 +1211,7 @@ namespace tangent
 
 			return format::variables({ format::variable(aggregator.as_message().data) });
 		}
-		expects_lr<void> server_node::dispatch_transaction_logs(const algorithm::asset_id& asset, const warden::chain_supervisor_options& options, warden::transaction_logs&& logs)
+		expects_lr<void> server_node::dispatch_transaction_logs(const algorithm::asset_id& asset, const oracle::chain_supervisor_options& options, oracle::transaction_logs&& logs)
 		{
 			auto context = ledger::transaction_context();
 			for (auto& receipt : logs.finalized)
@@ -1224,7 +1224,7 @@ namespace tangent
 					transaction->set_computed_witness(receipt);
 					accept_unsigned_transaction(nullptr, transaction, nullptr);
 					if (protocol::now().user.consensus.logging)
-						VI_INFO("%s warden transaction %s accepted", algorithm::asset::name_of(asset).c_str(), receipt.transaction_id.c_str());
+						VI_INFO("%s oracle transaction %s accepted", algorithm::asset::name_of(asset).c_str(), receipt.transaction_id.c_str());
 				}
 			}
 			return expectation::met;

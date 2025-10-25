@@ -1,6 +1,6 @@
-#ifndef TAN_WARDEN_BITCOIN_H
-#define TAN_WARDEN_BITCOIN_H
-#include "../../kernel/warden.h"
+#ifndef TAN_ORACLE_BITCOIN_H
+#define TAN_ORACLE_BITCOIN_H
+#include "../../kernel/oracle.h"
 
 struct btc_tx_;
 struct btc_chainparams_;
@@ -8,7 +8,7 @@ struct cstring;
 
 namespace tangent
 {
-	namespace warden
+	namespace oracle
 	{
 		namespace backends
 		{

@@ -416,7 +416,7 @@ namespace tangent
 			bind(0 | access_type::r, "mempoolstate", "getmempoolattestationtransactions", 3, 4, "uint256 hash, uint64 offset, uint64 count, uint8? unrolling", "uint256[] | txn[]", "get mempool attestation transactions", std::bind(&server_node::mempoolstate_get_attestation_transactions, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getmempoolattestation", 1, 1, "uint256 hash", "{ branch: uint256, threshold: double, progress: double, committee: uint64, reached: boolean }", "get mempool attestation transaction consensus state", std::bind(&server_node::mempoolstate_get_attestation, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "validatorstate", "getnode", 1, 1, "string uri_address", "validator", "get a node by ip address", std::bind(&server_node::validatorstate_get_node, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "validatorstate", "getblockchains", 0, 0, "", "warden::asset_info[]", "get supported blockchains", std::bind(&server_node::validatorstate_get_blockchains, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "validatorstate", "getblockchains", 0, 0, "", "oracle::asset_info[]", "get supported blockchains", std::bind(&server_node::validatorstate_get_blockchains, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "validatorstate", "status", 0, 0, "", "validator::status", "get validator status", std::bind(&server_node::validatorstate_status, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::r, "mempoolstate", "submittransaction", 1, 2, "string message_hex, bool? validate", "uint256", "try to accept and relay a mempool transaction from raw data and possibly validate over latest chainstate", std::bind(&server_node::mempoolstate_submit_transaction, this, std::placeholders::_1, std::placeholders::_2, nullptr));
 			bind(access_type::w | access_type::a, "mempoolstate", "rejecttransaction", 1, 1, "uint256 hash", "void", "remove mempool transaction by hash", std::bind(&server_node::mempoolstate_reject_transaction, this, std::placeholders::_1, std::placeholders::_2));
@@ -3205,13 +3205,13 @@ namespace tangent
 				}
 				switch (asset.second.tokenization)
 				{
-					case tangent::warden::token_policy::none:
+					case tangent::oracle::token_policy::none:
 						next->set("token_policy", var::string("none"));
 						break;
-					case tangent::warden::token_policy::native:
+					case tangent::oracle::token_policy::native:
 						next->set("token_policy", var::string("native"));
 						break;
-					case tangent::warden::token_policy::program:
+					case tangent::oracle::token_policy::program:
 						next->set("token_policy", var::string("program"));
 						break;
 					default:
@@ -3220,13 +3220,13 @@ namespace tangent
 				}
 				switch (asset.second.routing)
 				{
-					case tangent::warden::routing_policy::account:
+					case tangent::oracle::routing_policy::account:
 						next->set("routing_policy", var::string("account"));
 						break;
-					case tangent::warden::routing_policy::memo:
+					case tangent::oracle::routing_policy::memo:
 						next->set("routing_policy", var::string("memo"));
 						break;
-					case tangent::warden::routing_policy::utxo:
+					case tangent::oracle::routing_policy::utxo:
 						next->set("routing_policy", var::string("utxo"));
 						break;
 					default:

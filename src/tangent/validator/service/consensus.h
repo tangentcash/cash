@@ -2,7 +2,7 @@
 #define TAN_LAYER_CONSENSUS_H
 #include "../../kernel/block.h"
 #include "../../kernel/wallet.h"
-#include "../../kernel/warden.h"
+#include "../../kernel/oracle.h"
 
 namespace tangent
 {
@@ -249,7 +249,7 @@ namespace tangent
 			expects_lr<format::variables> query_secret_share_state_aggregation(uref<relay>&& state, const exchange& event);
 			expects_lr<format::variables> query_public_state_aggregation(uref<relay>&& state, const exchange& event);
 			expects_lr<format::variables> query_signature_state_aggreation(uref<relay>&& state, const exchange& event);
-			expects_lr<void> dispatch_transaction_logs(const algorithm::asset_id& asset, const warden::chain_supervisor_options& options, warden::transaction_logs&& logs);
+			expects_lr<void> dispatch_transaction_logs(const algorithm::asset_id& asset, const oracle::chain_supervisor_options& options, oracle::transaction_logs&& logs);
 			expects_lr<socket_address> find_node_from_mempool();
 			expects_promise_rt<socket_address> find_node_from_discovery();
 			expects_promise_rt<uref<relay>> connect_to_physical_node(const socket_address& address, option<algorithm::pubkeyhash_t>&& required_account = optional::none);
