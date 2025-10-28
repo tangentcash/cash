@@ -345,6 +345,35 @@ const btc_chainparams eth_chainparams_regtest = {
 	0x0488ADE4
 };
 
+/* tron */
+const btc_chainparams trx_chainparams_main = {
+	"0x",
+	"",
+	0x4100,
+	0x0500,
+	0x80,
+	0x0488B21E,
+	0x0488ADE4
+};
+const btc_chainparams trx_chainparams_test = {
+	"0x",
+	"",
+	0x4100,
+	0x0500,
+	0xEF,
+	0x0488B21E,
+	0x0488ADE4
+};
+const btc_chainparams trx_chainparams_regtest = {
+	"0x",
+	"",
+	0x4100,
+	0x0500,
+	0xEF,
+	0x0488B21E,
+	0x0488ADE4
+};
+
 /* ripple xrp */
 const btc_chainparams xrp_chainparams_main = {
 	"",

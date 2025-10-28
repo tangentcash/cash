@@ -1,6 +1,6 @@
 #include "transactions.h"
 #include "../kernel/block.h"
-#include "../kernel/svm.h"
+#include "../kernel/cell.h"
 #include "../validator/service/oracle.h"
 
 namespace tangent
@@ -160,23 +160,20 @@ namespace tangent
 			auto account = get_account();
 			auto storage = std::string_view(data).substr(1);
 			auto type = get_data_type().or_else(data_type::hashcode);
-			auto* container = ledger::svm_container::get();
-			auto compiler = container->allocate();
+			auto* factory = cell::factory::get();
+			auto pmodule = cell::cmodule(nullptr);
 			switch (type)
 			{
 				case data_type::program:
 				{
-					auto code = container->unpack(storage);
+					auto code = factory->unpack(storage);
 					if (!code)
 						return code.error();
 
-					auto hashcode = container->hashcode(*code);
-					if (!container->precompile(*compiler, hashcode))
-					{
-						auto compilation = container->compile(*compiler, hashcode, format::util::encode_0xhex(hashcode), *code);
-						if (!compilation)
-							return compilation.error();
-					}
+					auto hashcode = factory->hashcode(*code);
+					auto result = factory->compile_module(hashcode, [&]() mutable { return std::move(code); });
+					if (!result)
+						return result.error();
 
 					auto collision = context->get_witness_program(hashcode);
 					if (!collision)
@@ -191,6 +188,8 @@ namespace tangent
 					auto status = context->apply_account_program(account.data, hashcode);
 					if (!status)
 						return status.error();
+
+					pmodule = std::move(*result);
 					break;
 				}
 				case data_type::hashcode:
@@ -199,28 +198,23 @@ namespace tangent
 					if (!program)
 						return layer_exception("program is not stored");
 
-					if (!container->precompile(*compiler, storage))
-					{
-						auto code = program->as_code();
-						if (!code)
-							return code.error();
-
-						auto compilation = container->compile(*compiler, storage, format::util::encode_0xhex(storage), *code);
-						if (!compilation)
-							return compilation.error();
-					}
+					auto result = factory->compile_module(format::util::encode_0xhex(storage), [&]() { return program->as_code(); });
+					if (!result)
+						return result.error();
 
 					auto status = context->apply_account_program(account.data, storage);
 					if (!status)
 						return status.error();
+
+					pmodule = std::move(*result);
 					break;
 				}
 				default:
 					return layer_exception("invalid data type");
 			}
 
-			auto script = ledger::svm_program(context);
-			return script.construct(*compiler, args);
+			auto script = cell::program(context, pmodule->get_module());
+			return script.execute(cell::ccall::upgrade_call, script.upgrade_function(), args, nullptr);
 		}
 		bool upgrade::store_body(format::wo_stream* stream) const
 		{
@@ -261,7 +255,7 @@ namespace tangent
 			args = std::move(new_args);
 			data.clear();
 			data.assign(1, (char)data_type::program);
-			data.append(ledger::svm_container::get()->pack(new_data).or_else(string()));
+			data.append(cell::factory::get()->pack(new_data).or_else(string()));
 		}
 		void upgrade::from_hashcode(const std::string_view& new_data, format::variables&& new_args)
 		{
@@ -350,6 +344,15 @@ namespace tangent
 			if (!validation)
 				return validation.error();
 
+			return subexecute(context, [this, context](asIScriptModule* module_ptr)
+			{
+				auto script = cell::program(context, module_ptr);
+				return script.execute(cell::ccall::paying_call, function, args, nullptr);
+			});
+		}
+		expects_lr<void> call::subexecute(ledger::transaction_context* context, std::function<expects_lr<void>(asIScriptModule*)>&& executor) const
+		{
+			VI_ASSERT(executor, "executor should be set");
 			auto index = context->get_account_program(callable);
 			if (!index)
 				return layer_exception("program is not assigned");
@@ -359,18 +362,9 @@ namespace tangent
 			if (!program)
 				return layer_exception("program is not stored");
 
-			auto* container = ledger::svm_container::get();
-			auto compiler = container->allocate();
-			if (!container->precompile(*compiler, hashcode))
-			{
-				auto code = program->as_code();
-				if (!code)
-					return code.error();
-
-				auto compilation = container->compile(*compiler, hashcode, format::util::encode_0xhex(hashcode), *code);
-				if (!compilation)
-					return compilation.error();
-			}
+			auto pmodule = cell::factory::get()->compile_module(format::util::encode_0xhex(hashcode), [&]() { return program->as_code(); });
+			if (!pmodule)
+				return pmodule.error();
 
 			if (value.is_positive())
 			{
@@ -382,8 +376,7 @@ namespace tangent
 					return payment.error();
 			}
 
-			auto script = ledger::svm_program(context);
-			return script.mutable_call(*compiler, function, args);
+			return executor(pmodule->ref.get_module());
 		}
 		bool call::store_body(format::wo_stream* stream) const
 		{

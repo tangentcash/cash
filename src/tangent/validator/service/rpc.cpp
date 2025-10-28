@@ -1,7 +1,7 @@
 #include "rpc.h"
 #include "consensus.h"
 #include "oracle.h"
-#include "../../kernel/svm.h"
+#include "../../kernel/cell.h"
 #include "../../policy/transactions.h"
 #include "../storage/mempoolstate.h"
 #include "../storage/chainstate.h"
@@ -1698,37 +1698,9 @@ namespace tangent
 			if (!index)
 				return server_response().error(error_codes::bad_params, "to account has no program hash");
 
-			auto* container = ledger::svm_container::get();
-			auto& hashcode = index->hashcode;
-			auto compiler = container->allocate();
-			if (!container->precompile(*compiler, hashcode))
-			{
-				auto program = environment.validation.context.get_witness_program(hashcode);
-				if (!program)
-					return server_response().error(error_codes::bad_params, "to account has no program storage");
-
-				auto code = program->as_code();
-				if (!code)
-					return server_response().error(error_codes::bad_params, code.error().message());
-
-				auto compilation = container->compile(*compiler, hashcode, format::util::encode_0xhex(hashcode), *code);
-				if (!compilation)
-					return server_response().error(error_codes::bad_params, compilation.error().message());
-			}
-
-			auto function = args[4].as_string();
-			auto module = compiler->get_module();
-			auto entrypoint = module.get_function_by_decl(function);
-			if (!entrypoint.is_valid())
-				entrypoint = module.get_function_by_name(function);
-			if (!entrypoint.is_valid())
-				return server_response().error(error_codes::bad_params, "to account has no such function");
-
-			transactions::call transaction;
+			auto transaction = transactions::call();
 			transaction.asset = algorithm::asset::id_of_handle(args[0].as_string());
-			transaction.signature.data[0] = 0xFF;
-			transaction.nonce = std::max<size_t>(1, environment.validation.context.get_account_nonce(from).or_else(states::account_nonce(algorithm::pubkeyhash_t(), nullptr)).nonce);
-			transaction.program_call(to, args[3].as_decimal(), function, std::move(function_args));
+			transaction.program_call(to, algorithm::hashing::hash32d(index->hashcode), args[4].as_string(), std::move(function_args));
 			transaction.set_gas(decimal::zero(), ledger::block::get_gas_limit());
 
 			auto chain = storages::chainstate();
@@ -1750,17 +1722,20 @@ namespace tangent
 			memset(environment.validator.secret_key.data, 0xFF, sizeof(algorithm::seckey_t));
 
 			auto returning = uptr<schema>();
-			auto script = ledger::svm_program(&environment.validation.context);
-			auto execution = script.execute(ledger::svm_call::immutable_call, entrypoint, transaction.args, [&](void* address, int type_id) -> expects_lr<void>
+			auto execution = transaction.subexecute(&environment.validation.context, [&](asIScriptModule* module_ptr)
 			{
-				returning = var::set::object();
-				auto serialization = ledger::svm_marshalling::store(*returning, address, type_id);
-				if (!serialization)
+				auto script = cell::program(&environment.validation.context, module_ptr);
+				return script.execute(cell::ccall::const_call, transaction.function, transaction.args, [&](void* address, int type_id) -> expects_lr<void>
 				{
-					returning.destroy();
-					return layer_exception("return value error: " + serialization.error().message());
-				}
-				return expectation::met;
+					returning = var::set::object();
+					auto serialization = cell::marshall::store(*returning, address, type_id);
+					if (!serialization)
+					{
+						returning.destroy();
+						return layer_exception("return value error: " + serialization.error().message());
+					}
+					return expectation::met;
+				});
 			});
 			if (!execution)
 				return server_response().error(error_codes::bad_params, execution.error().message());
@@ -1771,7 +1746,7 @@ namespace tangent
 				environment.validation.context.emit_event(0, { format::variable(execution.what()) }, false);
 
 			auto data = environment.validation.context.receipt.as_schema();
-			data->set("to", algorithm::signing::serialize_address(script.callable()));
+			data->set("to", algorithm::signing::serialize_address(to));
 			data->set("result", returning ? returning->copy() : var::set::null());
 			return server_response().success(std::move(data));
 		}

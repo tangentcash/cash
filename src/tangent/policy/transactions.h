@@ -64,6 +64,7 @@ namespace tangent
 
 			expects_lr<void> validate(uint64_t block_number) const override;
 			expects_lr<void> execute(ledger::transaction_context* context) const override;
+			expects_lr<void> subexecute(ledger::transaction_context* context, std::function<expects_lr<void>(asIScriptModule*)>&& executor) const;
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
 			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const override;

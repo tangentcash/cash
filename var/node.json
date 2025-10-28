@@ -81,14 +81,15 @@
         "timeout": 10000
     },
     "storage": {
-        "directory": "./",
+        "path": "./",
+        "module_cache_path": null,
         "optimization": "speed",
         "checkpoint_size": 64,
         "transaction_dispatch_repeat_interval": 600,
         "transaction_timeout": 86400,
         "mempool_transaction_limit": 10000000,
         "location_cache_size": 500000,
-        "svm_cache_size": 8192,
+        "module_cache_size": 8192,
         "blob_cache_size": 134217728,
         "index_page_size": 65536,
         "index_cache_size": -2000,

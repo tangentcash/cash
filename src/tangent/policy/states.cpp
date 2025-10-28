@@ -1,6 +1,6 @@
 #include "states.h"
 #include "../kernel/block.h"
-#include "../kernel/svm.h"
+#include "../kernel/cell.h"
 #include "../validator/service/oracle.h"
 
 namespace tangent
@@ -1701,7 +1701,7 @@ namespace tangent
 		}
 		expects_lr<string> witness_program::as_code() const
 		{
-			return ledger::svm_container::get()->unpack(storage);
+			return cell::factory::get()->unpack(storage);
 		}
 		uint32_t witness_program::as_instance_type()
 		{
@@ -1720,7 +1720,7 @@ namespace tangent
 		}
 		string witness_program::as_instance_packed_hashcode(const std::string_view& storage)
 		{
-			auto code = ledger::svm_container::get()->unpack(storage);
+			auto code = cell::factory::get()->unpack(storage);
 			if (!code)
 				return string();
 
@@ -1728,7 +1728,7 @@ namespace tangent
 		}
 		string witness_program::as_instance_unpacked_hashcode(const std::string_view& storage)
 		{
-			return ledger::svm_container::get()->hashcode(storage);
+			return cell::factory::get()->hashcode(storage);
 		}
 
 		witness_event::witness_event(const uint256_t& new_parent_transaction_hash, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::uniform(new_block_number, new_block_nonce), parent_transaction_hash(new_parent_transaction_hash)

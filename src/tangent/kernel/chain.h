@@ -205,14 +205,15 @@ namespace tangent
             } tcp;
             struct
             {
-                string directory;
+                string path;
+                string module_cache_path;
                 storage_optimization optimization = storage_optimization::speed;
                 uint64_t transaction_dispatch_repeat_interval = 600;
                 uint64_t transaction_timeout = 86400;
                 uint64_t mempool_transaction_limit = 10000000;
                 uint64_t checkpoint_size = 64;
                 uint64_t location_cache_size = 500000;
-                uint64_t svm_cache_size = 8192;
+                uint64_t module_cache_size = 8192;
                 uint64_t blob_cache_size = 134217728;
                 uint64_t index_page_size = 65536;
                 int64_t index_cache_size = -2000;

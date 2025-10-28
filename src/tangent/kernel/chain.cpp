@@ -1,5 +1,5 @@
 #include "chain.h"
-#include "svm.h"
+#include "cell.h"
 #include "../validator/storage/chainstate.h"
 #include "../validator/storage/mempoolstate.h"
 #include "../validator/service/oracle.h"
@@ -118,7 +118,7 @@ namespace tangent
 #ifdef TAN_ROCKSDB
 		umutex<std::mutex> unique(mutex);
 		if (target_path.empty())
-			resolve(protocol::now().user.network, protocol::now().user.storage.directory);
+			resolve(protocol::now().user.network, protocol::now().user.storage.path);
 
 		string address = stringify::text("%s%.*sdb", target_path.c_str(), (int)location.size(), location.data());
 		auto it = blobs.find(address);
@@ -155,7 +155,7 @@ namespace tangent
 	{
 		umutex<std::mutex> unique(mutex);
 		if (target_path.empty())
-			resolve(protocol::now().user.network, protocol::now().user.storage.directory);
+			resolve(protocol::now().user.network, protocol::now().user.storage.path);
 
 		uref<sqlite::connection> result;
 		string address = stringify::text("file:///%s%.*s.db", target_path.c_str(), (int)location.size(), location.data());
@@ -251,35 +251,35 @@ namespace tangent
 		if (!target_path.empty())
 			return target_path;
 
-		auto module_directory = os::directory::get_module();
-		if (!module_directory->empty() && module_directory->back() != '/' && module_directory->back() != '\\')
-			*module_directory += VI_SPLITTER;
+		auto module_path = os::directory::get_module();
+		if (!module_path->empty() && module_path->back() != '/' && module_path->back() != '\\')
+			*module_path += VI_SPLITTER;
 
-		auto absolute_directory = os::path::resolve(path, *module_directory, true);
-		string base_directory = absolute_directory ? *absolute_directory : *module_directory + string(path);
-		if (!base_directory.empty() && base_directory.back() != '/' && base_directory.back() != '\\')
-			base_directory += VI_SPLITTER;
+		auto absolute_path = os::path::resolve(path, *module_path, true);
+		string base_path = absolute_path ? *absolute_path : *module_path + string(path);
+		if (!base_path.empty() && base_path.back() != '/' && base_path.back() != '\\')
+			base_path += VI_SPLITTER;
 
 		switch (type)
 		{
 			case network_type::regtest:
-				base_directory += "regtest";
+				base_path += "regtest";
 				break;
 			case network_type::testnet:
-				base_directory += "testnet";
+				base_path += "testnet";
 				break;
 			case network_type::mainnet:
-				base_directory += "mainnet";
+				base_path += "mainnet";
 				break;
 			default:
 				VI_PANIC(false, "invalid network type");
 				break;
 		}
 
-		base_directory += VI_SPLITTER;
-		auto target_directory = os::path::resolve(base_directory);
-		VI_PANIC(target_directory && os::directory::patch(*target_directory), "invalid storage path: %s", base_directory.c_str());
-		target_path = std::move(*target_directory);
+		base_path += VI_SPLITTER;
+		auto resolved_path = os::path::resolve(base_path);
+		VI_PANIC(resolved_path && os::directory::patch(*resolved_path), "invalid storage path: %s", base_path.c_str());
+		target_path = std::move(*resolved_path);
 		if (!target_path.empty() && target_path.back() != '/' && target_path.back() != '\\')
 			target_path += VI_SPLITTER;
 		return target_path;
@@ -646,9 +646,13 @@ namespace tangent
 			if (value != nullptr && value->value.is(var_type::integer))
 				user.tcp.timeout = value->value.get_integer();
 
-			value = config->fetch("storage.directory");
+			value = config->fetch("storage.path");
 			if (value != nullptr && value->value.is(var_type::string))
-				user.storage.directory = value->value.get_blob();
+				user.storage.path = value->value.get_blob();
+
+			value = config->fetch("storage.module_cache_path");
+			if (value != nullptr && value->value.is(var_type::string))
+				user.storage.module_cache_path = value->value.get_blob();
 
 			value = config->fetch("storage.optimization");
 			if (value != nullptr && value->value.is(var_type::string))
@@ -680,9 +684,9 @@ namespace tangent
 			if (value != nullptr && value->value.is(var_type::integer))
 				user.storage.location_cache_size = value->value.get_integer();
 
-			value = config->fetch("storage.svm_cache_size");
+			value = config->fetch("storage.module_cache_size");
 			if (value != nullptr && value->value.is(var_type::integer))
-				user.storage.svm_cache_size = value->value.get_integer();
+				user.storage.module_cache_size = value->value.get_integer();
 
 			value = config->fetch("storage.blob_cache_size");
 			if (value != nullptr && value->value.is(var_type::integer))
@@ -758,16 +762,27 @@ namespace tangent
 		if (user.keystate.empty())
 			user.keystate = "./keystate.sk";
 
-		if (user.storage.directory.empty())
+		if (user.storage.path.empty())
 		{
 #ifdef VI_MICROSOFT
-			user.storage.directory = "./";
+			user.storage.path = "./";
 #else
-			user.storage.directory = "/var/lib/tangentcash/";
+			user.storage.path = "/var/lib/tangentcash/";
 #endif
 		}
 
-		auto database_path = database.resolve(user.network, user.storage.directory);
+		auto database_path = database.resolve(user.network, user.storage.path);
+		user.storage.path = database_path;
+		if (!user.storage.module_cache_path.empty())
+		{
+			auto module_base = database_path + user.storage.module_cache_path;
+			auto module_path = os::path::resolve(os::path::resolve(module_base, *library, true).or_else(user.logs.info_path)).or_else(user.logs.info_path);
+			stringify::eval_envs(module_path, os::path::get_directory(module_path.c_str()), vitex::network::utils::get_host_ip_addresses());
+			os::directory::patch(os::path::get_directory(module_path.c_str()));
+			if (!module_path.empty() && (module_path.back() == '/' || module_path.back() == '\\'))
+				module_path.pop_back();
+		}
+
 		if (!user.logs.info_path.empty())
 		{
 			auto log_base = database_path + user.logs.info_path;
@@ -819,7 +834,7 @@ namespace tangent
 		instance = this;
 		if (config)
 		{
-			auto keystate_path = os::path::resolve(user.keystate, user.storage.directory, true).or_else(user.keystate);
+			auto keystate_path = os::path::resolve(user.keystate, user.storage.path, true).or_else(user.keystate);
 			auto keystate_file = os::file::read_as_string(keystate_path);
 			if (!keystate_file)
 			{
@@ -897,7 +912,7 @@ namespace tangent
 		storages::uniform_cache::cleanup_instance();
 		storages::multiform_cache::cleanup_instance();
 		oracle::server_node::cleanup_instance();
-		ledger::svm_container::cleanup_instance();
+		cell::factory::cleanup_instance();
 		algorithm::signing::deinitialize();
 		error_handling::set_callback(nullptr);
 		if (instance == this)

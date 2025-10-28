@@ -5,7 +5,7 @@
 #include "service/oracle.h"
 #include "service/rpc.h"
 #include "storage/chainstate.h"
-#include "../kernel/svm_abi.h"
+#include "../kernel/cell.h"
 #include "../policy/transactions.h"
 #include <vitex/bindings.h>
 #include <sstream>
@@ -17,7 +17,7 @@ namespace tangent
 	{
 		using namespace vitex::scripting;
 
-		enum class svm_assembler
+		enum class cell_asm
 		{
 			code,
 			abi,
@@ -25,7 +25,7 @@ namespace tangent
 			tx_call
 		};
 
-		struct svm_context : ledger::svm_program
+		struct cell_context : cell::program
 		{
 			struct
 			{
@@ -45,16 +45,16 @@ namespace tangent
 			struct
 			{
 				ledger::evaluation_context environment;
-				ledger::svm_compiler compiler;
 				uptr<transactions::call> contextual;
 				uptr<schema> returning;
 				uptr<schema> log;
 				unordered_map<size_t, uptr<schema>> events;
 				vector<string> instructions;
+				cell::cmodule pmodule;
 				ledger::block block;
-			} svmc;
+			} tracer;
 
-			svm_context() : svm_program(nullptr)
+			cell_context() : cell::program(nullptr, nullptr)
 			{
 				preprocessor::desc compiler_features;
 				compiler_features.conditions = true;
@@ -62,83 +62,54 @@ namespace tangent
 				compiler_features.includes = true;
 				compiler_features.pragmas = false;
 
-				auto* container = ledger::svm_container::get();
-				auto* vm = container->get_vm();
+				auto* vm = cell::factory::get()->get_vm();
 				vm->set_ts_imports(true);
 				vm->set_ts_imports_concat_mode(true);
 				vm->set_preserve_source_code(true);
 				vm->set_compiler_features(compiler_features);
-				svmc.compiler = container->allocate();
-				context = &svmc.environment.validation.context;
+				context = &tracer.environment.validation.context;
 			}
-			~svm_context() = default;
+			~cell_context() = default;
 			expects_lr<void> assign_transaction(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& from, const algorithm::pubkeyhash_t& to, const decimal& value, const std::string_view& function_decl, const format::variables& args)
 			{
 				uptr<transactions::call> transaction = memory::init<transactions::call>();
 				transaction->asset = asset;
 				transaction->signature.data[0] = 0xFF;
-				transaction->nonce = std::max<size_t>(1, svmc.environment.validation.context.get_account_nonce(from).or_else(states::account_nonce(algorithm::pubkeyhash_t(), nullptr)).nonce);
+				transaction->nonce = std::max<size_t>(1, tracer.environment.validation.context.get_account_nonce(from).or_else(states::account_nonce(algorithm::pubkeyhash_t(), nullptr)).nonce);
 				transaction->program_call(to, value, function_decl, format::variables(args));
 				transaction->set_gas(decimal::zero(), ledger::block::get_gas_limit());
 
 				auto chain = storages::chainstate();
 				auto tip = chain.get_latest_block_header();
 				if (tip)
-					svmc.environment.tip = std::move(*tip);
+					tracer.environment.tip = std::move(*tip);
 
 				ledger::receipt receipt;
-				svmc.block.set_parent_block(svmc.environment.tip.address());
+				tracer.block.set_parent_block(tracer.environment.tip.address());
 				receipt.transaction_hash = transaction->as_hash();
 				receipt.generation_time = protocol::now().time.now();
-				receipt.block_number = svmc.block.number + 1;
+				receipt.block_number = tracer.block.number + 1;
 				receipt.from = from;
 
-				svmc.contextual = std::move(transaction);
-				svmc.environment.validation.context = ledger::transaction_context(&svmc.environment, &svmc.block, &svmc.environment.validation.changelog, *svmc.contextual, std::move(receipt));
-				memset(svmc.environment.validator.public_key_hash.data, 0xFF, sizeof(algorithm::pubkeyhash_t));
-				memset(svmc.environment.validator.secret_key.data, 0xFF, sizeof(algorithm::seckey_t));
+				tracer.contextual = std::move(transaction);
+				tracer.environment.validation.context = ledger::transaction_context(&tracer.environment, &tracer.block, &tracer.environment.validation.changelog, *tracer.contextual, std::move(receipt));
+				memset(tracer.environment.validator.public_key_hash.data, 0xFF, sizeof(algorithm::pubkeyhash_t));
+				memset(tracer.environment.validator.secret_key.data, 0xFF, sizeof(algorithm::seckey_t));
 				return expectation::met;
 			}
-			expects_lr<ledger::svm_compiler> compile_transaction()
+			expects_lr<void> call_transaction(cell::ccall mutability, const function& entrypoint, const format::variables& args)
 			{
-				VI_ASSERT(svmc.contextual, "transaction should be assigned");
-				auto index = svmc.environment.validation.context.get_account_program(callable());
-				if (!index)
-					return layer_exception("program not assigned to address");
-
-				auto* container = ledger::svm_container::get();
-				auto& hashcode = index->hashcode;
-				auto result = container->allocate();
-				if (container->precompile(*result, hashcode))
-					return expects_lr<ledger::svm_compiler>(std::move(result));
-
-				auto program = svmc.environment.validation.context.get_witness_program(hashcode);
-				if (!program)
-					return layer_exception("program not stored to address");
-
-				auto code = program->as_code();
-				if (!code)
-					return code.error();
-
-				auto compilation = container->compile(*result, hashcode, format::util::encode_0xhex(hashcode), *code);
-				if (!compilation)
-					return compilation.error();
-
-				return expects_lr<ledger::svm_compiler>(std::move(result));
-			}
-			expects_lr<void> call_transaction(ledger::svm_call mutability, const function& entrypoint, const format::variables& args)
-			{
-				VI_ASSERT(svmc.contextual, "transaction should be assigned");
-				svmc.returning.destroy();
-				svmc.events.clear();
-				svmc.instructions.clear();
+				VI_ASSERT(tracer.contextual, "transaction should be assigned");
+				tracer.returning.destroy();
+				tracer.events.clear();
+				tracer.instructions.clear();
 				auto execution = execute(mutability, entrypoint, args, [this](void* address, int type_id) -> expects_lr<void>
 				{
-					svmc.returning = var::set::object();
-					auto serialization = ledger::svm_marshalling::store(*svmc.returning, address, type_id);
+					tracer.returning = var::set::object();
+					auto serialization = cell::marshall::store(*tracer.returning, address, type_id);
 					if (!serialization)
 					{
-						svmc.returning.destroy();
+						tracer.returning.destroy();
 						return layer_exception("return value error: " + serialization.error().message());
 					}
 
@@ -149,13 +120,13 @@ namespace tangent
 				if (!context->receipt.successful)
 					context->emit_event(0, { format::variable(execution.what()) }, false);
 
-				svmc.log = var::set::array();
+				tracer.log = var::set::array();
 				for (auto& [event, args] : context->receipt.events)
 				{
-					auto target = svmc.events.find(svmc.log->size());
-					auto* next = svmc.log->push(var::set::object());
+					auto target = tracer.events.find(tracer.log->size());
+					auto* next = tracer.log->push(var::set::object());
 					next->set("type", var::integer(event));
-					if (target == svmc.events.end())
+					if (target == tracer.events.end())
 					{
 						uptr<ledger::state> temp = states::resolver::from_type(event);
 						next->set(temp ? temp->as_typename() : "__internal__", serialize_event_args(args));
@@ -175,14 +146,14 @@ namespace tangent
 				if (!file)
 					return layer_exception(file.what());
 
-				auto* container = ledger::svm_container::get();
-				auto* vm = container->get_vm();
+				auto* factory = cell::factory::get();
+				auto* vm = factory->get_vm();
 				vm->set_compiler_error_callback([this](const std::string_view& message) { program.log.append(message).append("\r\n"); });
 				vm->clear_cache();
 				program.log.clear();
 
 				auto hash = algorithm::hashing::hash512((uint8_t*)file->data(), file->size());
-				auto result = container->compile(*svmc.compiler, hash, new_path, *file);
+				auto result = factory->compile_module(new_path, [&]() mutable { return expects_lr<string>(std::move(*file)); });
 				vm->set_compiler_error_callback(nullptr);
 				if (!program.log.empty())
 					return layer_exception(string(program.log));
@@ -190,12 +161,14 @@ namespace tangent
 					return result.error();
 
 				program.path = new_path;
+				tracer.pmodule = std::move(*result);
+				module = tracer.pmodule->get_module();
 				return expectation::met;
 			}
-			expects_lr<void> assemble(svm_assembler type, const std::string_view& new_path, format::variables&& function_args)
+			expects_lr<void> assemble(cell_asm type, const std::string_view& new_path, format::variables&& function_args)
 			{
-				auto* container = ledger::svm_container::get();
-				auto* vm = container->get_vm();
+				auto* factory = cell::factory::get();
+				auto* vm = factory->get_vm();
 				if (vm->get_script_sections().empty())
 					return layer_exception("source code not found");
 
@@ -210,7 +183,7 @@ namespace tangent
 				if (!data.empty())
 					data.erase(data.size() - 2, 2);
 
-				if (type == svm_assembler::tx_upgrade)
+				if (type == cell_asm::tx_upgrade)
 				{
 					auto transaction = transactions::upgrade();
 					transaction.from_program(data, std::move(function_args));
@@ -218,7 +191,7 @@ namespace tangent
 					auto message = transaction.as_message();
 					data = std::move(message.data);
 				}
-				else if (type == svm_assembler::tx_call)
+				else if (type == cell_asm::tx_call)
 				{
 					if (function_args.empty())
 						return layer_exception("first argument of argument pack must be a function decl/name");
@@ -232,9 +205,9 @@ namespace tangent
 					auto message = transaction.as_message();
 					data = std::move(message.data);
 				}
-				else if (type == svm_assembler::abi)
+				else if (type == cell_asm::abi)
 				{
-					auto result = container->pack(data);
+					auto result = factory->pack(data);
 					if (!result)
 						return result.error();
 
@@ -261,9 +234,9 @@ namespace tangent
 				if (!state.payable)
 					return layer_exception("payable asset not valid");
 
-				auto entrypoint = svmc.compiler->get_module().get_function_by_decl(function);
+				auto entrypoint = module.get_function_by_decl(function);
 				if (!entrypoint.is_valid())
-					entrypoint = svmc.compiler->get_module().get_function_by_name(function);
+					entrypoint = module.get_function_by_name(function);
 				if (!entrypoint.is_valid())
 					return layer_exception("illegal call to function: null function");
 
@@ -271,7 +244,7 @@ namespace tangent
 				if (!assignment)
 					return assignment.error();
 
-				auto read_only = mutability_of(entrypoint) == ledger::svm_call::immutable_call;
+				auto read_only = mutability_of(entrypoint) == cell::ccall::const_call;
 				if (!read_only)
 				{
 					for (auto& [account, balances] : state.balances)
@@ -299,7 +272,7 @@ namespace tangent
 					}
 				}
 
-				auto* vm = svmc.compiler->get_vm();
+				auto* vm = module.get_vm();
 				if (attach_debugger_context)
 				{
 					static bool has_any = false;
@@ -332,7 +305,7 @@ namespace tangent
 					});
 					debugger->add_to_string_callback("array", [debugger](string& indent, int depth, void* object, int type_id)
 					{
-						auto* source = (ledger::svm_abi::array_repr*)object;
+						auto* source = (cell::array_repr*)object;
 						int base_type_id = source->get_element_type_id();
 						uint32_t size = source->size();
 						string_stream stream;
@@ -369,12 +342,12 @@ namespace tangent
 					});
 					debugger->add_to_string_callback("address", [](string& indent, int depth, void* object, int type_id)
 					{
-						auto& source = *(ledger::svm_abi::address*)object;
+						auto& source = *(cell::address_repr*)object;
 						return string(source.to_string().view()) + " (address)";
 					});
 					debugger->add_to_string_callback("abi", [](string& indent, int depth, void* object, int type_id)
 					{
-						auto& source = *(ledger::svm_abi::abi*)object;
+						auto& source = *(cell::abi_repr*)object;
 						return source.output.encode() + " (abi)";
 					});
 					debugger->add_to_string_callback("any", [debugger](string& indent, int depth, void* object, int type_id)
@@ -392,7 +365,7 @@ namespace tangent
 					interrupter(true);
 				}
 
-				auto execution = call_transaction(ledger::svm_call::system_call, entrypoint, args);
+				auto execution = call_transaction(cell::ccall::upgrade_call, entrypoint, args);
 				if (attach_debugger_context)
 				{
 					interrupter(false);
@@ -402,9 +375,20 @@ namespace tangent
 				if (!execution)
 					return execution.error();
 
-				svmc.environment.validation.changelog.commit();
+				tracer.environment.validation.changelog.commit();
 				state.balances.clear();
 				return expectation::met;
+			}
+			void dispatch_event(int event_type_id, const void* object_value, int object_type_id) override
+			{
+				if (!context->receipt.events.empty())
+				{
+					auto data = uptr<schema>(var::set::object());
+					auto type = cell::factory::get()->get_vm()->get_type_info_by_id(event_type_id);
+					data->key = type.is_valid() ? type.get_name() : std::string_view("__pod__");
+					if (cell::marshall::store(*data, object_value, object_type_id))
+						tracer.events[context->receipt.events.size() - 1] = std::move(data);
+				}
 			}
 			void dispatch_exception(immediate_context* coroutine) override
 			{
@@ -412,62 +396,54 @@ namespace tangent
 				if (vm->has_debugger())
 					vm->get_debugger()->exception_callback(coroutine->get_context());
 			}
-			void dispatch_coroutine(immediate_context* coroutine, vector<ledger::svm_stackframe>& frames) override
+			void dispatch_coroutine(immediate_context* coroutine, vector<cell::stackframe>& frames) override
 			{
 				auto* vm = coroutine->get_vm();
 				if (vm->has_debugger())
 					vm->get_debugger()->line_callback(coroutine->get_context());
-				return svm_program::dispatch_coroutine(coroutine, frames);
+				return cell::program::dispatch_coroutine(coroutine, frames);
 			}
 			bool dispatch_instruction(virtual_machine* vm, immediate_context* coroutine, uint32_t* program_data, size_t program_counter, byte_code_label& opcode) override
 			{
 				if (program.instructions)
 				{
-					string_stream stream;
-					debugger_context::byte_code_label_to_text(stream, vm, program_data, program_counter, false, true);
+					auto gas = cell::factory::get()->opcode_cost(opcode.code);
+					if (gas > 0)
+					{
+						string_stream stream;
+						debugger_context::byte_code_label_to_text(stream, vm, program_data, program_counter, false, true);
 
-					string instruction = stream.str();
-					stringify::trim(instruction);
+						string instruction = stream.str();
+						stringify::trim(instruction);
 
-					auto gas = ledger::svm_stackframe::gas_cost_of(opcode);
-					instruction.append(instruction.find('%') != std::string::npos ? ", %gas:" : " %gas:");
-					instruction.append(to_string(gas));
-					svmc.instructions.push_back(std::move(instruction));
+						instruction.append(instruction.find('%') != std::string::npos ? ", %r8b:" : " %r8b:");
+						instruction.append(to_string(gas));
+						tracer.instructions.push_back(std::move(instruction));
+					}
 				}
-				return svm_program::dispatch_instruction(vm, coroutine, program_data, program_counter, opcode);
-			}
-			bool emit_event(const void* object_value, int object_type_id) override
-			{
-				if (!ledger::svm_program::emit_event(object_value, object_type_id) || context->receipt.events.empty())
-					return false;
-
-				auto data = uptr<schema>(var::set::object());
-				data->key = ledger::svm_container::get()->get_vm()->get_type_info_by_id(object_type_id).get_name();
-				if (ledger::svm_marshalling::store(*data, object_value, object_type_id))
-					svmc.events[context->receipt.events.size() - 1] = std::move(data);
-
-				return true;
+				return cell::program::dispatch_instruction(vm, coroutine, program_data, program_counter, opcode);
 			}
 			void reset()
 			{
-				auto* container = ledger::svm_container::get();
+				auto* container = cell::factory::get();
 				state.balances.clear();
 				state.from = algorithm::pubkeyhash_t();
 				state.to = algorithm::pubkeyhash_t();
 				state.payable = 0;
 				state.pay = decimal::zero();
+				module = nullptr;
 				program.path.clear();
 				program.log.clear();
 				program.trap = 0;
 				program.instructions = false;
-				svmc.compiler = container->allocate();
-				svmc.environment = ledger::evaluation_context();
-				svmc.contextual = uptr<transactions::call>();
-				svmc.returning = uptr<schema>();
-				svmc.log = uptr<schema>();
-				svmc.events.clear();
-				svmc.instructions.clear();
-				svmc.block = ledger::block();
+				tracer.environment = ledger::evaluation_context();
+				tracer.contextual = uptr<transactions::call>();
+				tracer.returning = uptr<schema>();
+				tracer.log = uptr<schema>();
+				tracer.events.clear();
+				tracer.instructions.clear();
+				tracer.pmodule.destroy();
+				tracer.block = ledger::block();
 			}
 			bool bound() const
 			{
@@ -492,7 +468,7 @@ namespace tangent
 			{
 				os::process::bind_signal(signal_code::SIG_INT, bind ? [](int)
 				{
-					auto* vm = ledger::svm_container::get()->get_vm();
+					auto* vm = cell::factory::get()->get_vm();
 					if (vm->get_debugger() && vm->get_debugger()->interrupt())
 						interrupter(true);
 					else
@@ -501,10 +477,10 @@ namespace tangent
 			}
 		};
 
-		int svm(const inline_args& environment)
+		int cell(const inline_args& environment)
 		{
 			auto params = protocol(environment);
-			auto context = svm_context();
+			auto context = cell_context();
 			auto* terminal = console::get();
 			auto directory = *os::directory::get_working();
 			error_handling::set_flag(log_option::dated, false);
@@ -655,22 +631,22 @@ namespace tangent
 					if (!path)
 						return err(path.what());
 
-					svm_assembler svm_type;
+					cell_asm asm_type;
 					if (type == "upgrade")
-						svm_type = svm_assembler::tx_upgrade;
+						asm_type = cell_asm::tx_upgrade;
 					else if (type == "call")
-						svm_type = svm_assembler::tx_call;
+						asm_type = cell_asm::tx_call;
 					else if (type == "abi")
-						svm_type = svm_assembler::abi;
+						asm_type = cell_asm::abi;
 					else if (true || type == "code")
-						svm_type = svm_assembler::code;
+						asm_type = cell_asm::code;
 
 					format::variables function_args;
 					function_args.reserve(args.size() - 3);
 					for (size_t i = 3; i < args.size(); i++)
 						function_args.push_back(format::variable::from(args[i]));
 
-					auto result = context.assemble(svm_type, *path, std::move(function_args));
+					auto result = context.assemble(asm_type, *path, std::move(function_args));
 					if (!result)
 						return err(result.what());
 
@@ -733,13 +709,13 @@ namespace tangent
 					if (!result)
 						return err(result.what());
 
-					bool success = context.svmc.environment.validation.context.receipt.successful;
+					bool success = context.tracer.environment.validation.context.receipt.successful;
 					terminal->write_color(std_color::white, success ? std_color::dark_green : std_color::red);
 					terminal->fwrite("%s in %" PRIu64 " ms", success ? "OK finalize transaction" : "ERR revert transaction", (uint64_t)(date_time().milliseconds() - time));
 					terminal->clear_color();
 					terminal->write("\n");
-					if (context.svmc.returning)
-						terminal->jwrite_line(*context.svmc.returning);
+					if (context.tracer.returning)
+						terminal->jwrite_line(*context.tracer.returning);
 					return success;
 				}
 				else if (method == "debug")
@@ -758,25 +734,25 @@ namespace tangent
 					if (!result)
 						return err(result.what());
 
-					bool success = context.svmc.environment.validation.context.receipt.successful;
+					bool success = context.tracer.environment.validation.context.receipt.successful;
 					terminal->write_color(std_color::white, success ? std_color::dark_green : std_color::red);
 					terminal->fwrite("%s in %" PRIu64 " ms", success ? "OK finalize transaction" : "ERR revert transaction", (uint64_t)(date_time().milliseconds() - time));
 					terminal->clear_color();
 					terminal->write("\n");
-					if (context.svmc.returning)
-						terminal->jwrite_line(*context.svmc.returning);
+					if (context.tracer.returning)
+						terminal->jwrite_line(*context.tracer.returning);
 					return success;
 				}
 				else if (method == "result")
 				{
-					if (context.svmc.returning)
-						terminal->jwrite_line(*context.svmc.returning);
+					if (context.tracer.returning)
+						terminal->jwrite_line(*context.tracer.returning);
 					return true;
 				}
 				else if (method == "log")
 				{
-					if (context.svmc.log)
-						terminal->jwrite_line(*context.svmc.log);
+					if (context.tracer.log)
+						terminal->jwrite_line(*context.tracer.log);
 					return true;
 				}
 				else if (method == "changelog")
@@ -784,7 +760,7 @@ namespace tangent
 					uptr<schema> changelog = var::set::object();
 					auto* erase = changelog->set("erase", var::set::object());
 					auto* upsert = changelog->set("upsert", var::set::object());
-					for (auto& [index, change] : context.svmc.environment.validation.changelog.outgoing.finalized)
+					for (auto& [index, change] : context.tracer.environment.validation.changelog.outgoing.finalized)
 					{
 						if (change.erase)
 							erase->set(format::util::encode_0xhex(index), change.state->as_schema().reset());
@@ -802,32 +778,28 @@ namespace tangent
 						return ok(context.program.instructions ? "enable asm tracer" : "disable asm tracer");
 					}
 
-					for (auto& instruction : context.svmc.instructions)
+					for (auto& instruction : context.tracer.instructions)
 						ok(instruction);
 
-					return ok(stringify::text("%i instructions; %s gas units", (int)context.svmc.instructions.size(), context.svmc.environment.validation.context.receipt.relative_gas_use.to_string().c_str()));
+					return ok(stringify::text("%i instructions; %s gas units", (int)context.tracer.instructions.size(), context.tracer.environment.validation.context.receipt.relative_gas_use.to_string().c_str()));
 				}
 				else if (method == "abi")
 				{
-					if (context.svmc.compiler)
+					if (context.module.is_valid())
 					{
-						auto program = context.svmc.compiler->get_module();
-						if (program.is_valid())
+						for (size_t i = 0; i < context.module.get_function_count(); i++)
 						{
-							for (size_t i = 0; i < program.get_function_count(); i++)
+							int type_id;
+							auto function = context.module.get_function_by_index(i);
+							if (function.get_arg(0, &type_id))
 							{
-								int type_id;
-								auto function = program.get_function_by_index(i);
-								if (function.get_arg(0, &type_id))
+								auto type = context.module.get_vm()->get_type_info_by_id(type_id);
+								auto name = type.is_valid() ? type.get_name() : std::string_view();
+								if (name == "rwptr" || name == "rptr")
 								{
-									auto type = program.get_vm()->get_type_info_by_id(type_id);
-									auto name = type.is_valid() ? type.get_name() : std::string_view();
-									if (name == "rwptr" || name == "rptr")
-									{
-										auto decl = function.get_decl();
-										if (!decl.empty())
-											ok(stringify::text("%.*s;", (int)decl.size(), decl.data()));
-									}
+									auto decl = function.get_decl();
+									if (!decl.empty())
+										ok(stringify::text("%.*s;", (int)decl.size(), decl.data()));
 								}
 							}
 						}
@@ -850,8 +822,12 @@ namespace tangent
 							trap = 1;
 						else if (args[1] == "all")
 							trap = 2;
+						else if (args[1] == "now")
+							trap = 3;
 						if (trap == 255)
 							return err("trap type not found");
+						else if (trap == 3)
+							return false;
 
 						context.program.trap = trap;
 					}
@@ -995,12 +971,12 @@ namespace tangent
 				else if (method == "help")
 				{
 					ok(
-						"------------ state-tree virtual machine (svm) -------------\n"
+						"---------- Contract Execution Logic Layer (CELL) -----------\n"
 						"This tool may be used to debug the smart contracts before\n"
-						"deployment. SVM here does not require non-zero balance\n"
+						"deployment. CELL here does not require non-zero balance\n"
 						"to send assets to smart contracts. Everything is virtual\n"
 						"and will not be written to current chain state. However,\n"
-						"SVM will use current chain state (if any) as a base to\n"
+						"CELL will use current chain state (if any) as a base to\n"
 						"execute smart contracts on top of. You may fund one or\n"
 						"more accounts before running smart contract code as well\n"
 						"as pay to smart contract without funding before hand. The\n"
@@ -1016,7 +992,7 @@ namespace tangent
 						"until all of them are successfully finalized. Because state\n"
 						"is built upon current chain state, it is possible to test\n"
 						"the smart contracts virtually on the mainnet blockchain\n"
-						"--------- svm compiler and debugger functionality ---------\n"
+						"--------- CELL compiler and debugger functionality ---------\n"
 						"from [address?|?]                                        -- get/set caller address (if ? then random)\n"
 						"to [address?|?]                                          -- get/set contract address (if ? then random)\n"
 						"payable [blockchain?] [token?] [contract_address?]       -- get/set caller address paying asset\n"
@@ -1034,16 +1010,16 @@ namespace tangent
 						"result                                                   -- get call result log\n"
 						"log                                                      -- get call event log\n"
 						"changelog                                                -- get call state changes log\n"
-						"asm [on|off?]                                            -- get/set svm asm instruction listing\n"
+						"asm [on|off?]                                            -- get/set cell asm instruction listing\n"
 						"abi                                                      -- get program abi listing\n"
 						"reset                                                    -- reset contract state\n"
-						"trap [off|err|all]                                       -- enable command interpreter if execp has finished (all) or failed (err)\n"
+						"trap [off|err|all|now]                                   -- enable command interpreter if execp has finished (all) or failed (err)\n"
 						"clear                                                    -- clear console output\n"
-						"---------------- environment functionality ----------------\n"
+						"---------------- Environment functionality -----------------\n"
 						"execp [path]                                             -- run predefined execution plan (json file of format: [[\"method\", value_or_object_or_array_args?...], ...])\n"
 						"help                                                     -- show this message\n"
 						"\n"
-						"********* node configuration arguments applicable *********");
+						"********* Node configuration arguments applicable **********");
 					return true;
 				}
 				return command_execute(args, directory);
@@ -1052,7 +1028,9 @@ namespace tangent
 			if (environment.params.size() <= 1 + (params.custom() ? 1 : 0))
 			{
 			interpreter:
+				os::process::bind_signal(signal_code::SIG_INT, [](int) { });
 				ok("type \"help\" for more information.");
+
 				string command;
 				while (true)
 				{

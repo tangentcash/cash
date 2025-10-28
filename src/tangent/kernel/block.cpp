@@ -1507,7 +1507,11 @@ namespace tangent
 			if (!transaction)
 				return expectation::met;
 
+			uint256_t prev_relative_gas_use = receipt.relative_gas_use;
 			receipt.relative_gas_use += value;
+			if (value > transaction->gas_limit || prev_relative_gas_use > receipt.relative_gas_use)
+				receipt.relative_gas_use = uint256_t::max();
+
 			if (receipt.relative_gas_use <= transaction->gas_limit)
 				return expectation::met;
 

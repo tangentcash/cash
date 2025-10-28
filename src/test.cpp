@@ -190,22 +190,25 @@ public:
 				uint256 value = 0;
 			}
 
-			token_storage construct(instrset::rwptr@, const address & in admin, const uint256 & in value)
-			{
-				token_storage token;
-				token.deployer = tx::from();
-				token.contract = tx::to();
-				token.account = admin;
-				token.name = "Test Token";
-				token.symbol = "TT";
-				token.decimals = 2;
-				token.supply = value;
+			varying<token_storage> token;
+			mapping<address, uint256> balances;
 
-				sv::set(uint8(0), token);
-				sv::set(token.account, value, value > 0);
-				return token;
+			token_storage construct(instrset::rwptr@, const address&in admin, const uint256&in value)
+			{
+				token_storage new_token;
+				new_token.deployer = tx::from();
+				new_token.contract = tx::to();
+				new_token.account = admin;
+				new_token.name = "Test Token";
+				new_token.symbol = "TT";
+				new_token.decimals = 2;
+				new_token.supply = value;
+				token = new_token;
+
+				balances.insert_if(value > 0, token.ref.account, value);
+				return token.ref;
 			}
-			token_transfer transfer(instrset::rwptr@, const address & in to, const uint256 & in value)
+			token_transfer transfer(instrset::rwptr@, const address&in to, const uint256&in value)
 			{
 				address from = tx::from();
 				uint256 input = balance_of(null, from);
@@ -213,8 +216,8 @@ public:
 				uint256 from_delta = input - value, to_delta = output + value;
 				require(from_delta <= input, string::from(from) + ": illegal operation - insufficient balance");
 				require(to_delta >= output, string::from(to) + ": illegal operation - balance overflow");
-				sv::set(from, from_delta, from_delta > 0);
-				sv::set(to, to_delta, to_delta > 0);
+				balances.insert_if(from_delta > 0, from, from_delta);
+				balances.insert_if(to_delta > 0, to, to_delta);
 
 				token_transfer event;
 				event.from = from;
@@ -222,57 +225,56 @@ public:
 				event.value = value;
 				return event;
 			}
-			uint256 mint(instrset::rwptr@, const uint256 & in value)
+			uint256 mint(instrset::rwptr@, const uint256&in value)
 			{
-				token_storage token = info(null);
-				require(token.account == tx::from(), "illegal operation - operation not permitted");
-
-				uint256 output = balance_of(null, token.account);
-				uint256 supply_delta = token.supply + value;
+				require(token.ref.account == tx::from(), "illegal operation - operation not permitted");
+				uint256 output = balance_of(null, token.ref.account);
+				uint256 supply_delta = token.ref.supply + value;
 				uint256 to_delta = output + value;
-				require(supply_delta >= token.supply, string::from(tx::to()) + ": illegal operation - token supply overflow");
-				require(to_delta >= output, string::from(token.account) + ": illegal operation - balance overflow");
+				require(supply_delta >= token.ref.supply, string::from(tx::to()) + ": illegal operation - token supply overflow");
+				require(to_delta >= output, string::from(token.ref.account) + ": illegal operation - balance overflow");
 
-				token.supply = supply_delta;
-				sv::set(uint8(0), token);
-				sv::set(token.account, to_delta, to_delta > 0);
+				token_storage new_token = token.ref;
+				new_token.supply = supply_delta;
+				token = new_token;
+
+				balances.insert_if(to_delta > 0, token.ref.account, to_delta);
 				return to_delta;
 			}
-			uint256 burn(instrset::rwptr@, const uint256 & in value)
+			uint256 burn(instrset::rwptr@, const uint256&in value)
 			{
-				token_storage token = info(null);
-				require(token.account == tx::from(), "illegal operation - operation not permitted");
-
-				uint256 output = balance_of(null, token.account);
-				uint256 supply_delta = token.supply - value;
+				require(token.ref.account == tx::from(), "illegal operation - operation not permitted");
+				uint256 output = balance_of(null, token.ref.account);
+				uint256 supply_delta = token.ref.supply - value;
 				uint256 to_delta = output - value;
-				require(supply_delta <= token.supply, "token supply will underflow (" + string::from(token.supply) + " < " + string::from(value) + ")");
+				require(supply_delta <= token.ref.supply, "token supply will underflow (" + string::from(token.ref.supply) + " < " + string::from(value) + ")");
 				require(to_delta <= output, "account balance will underflow (" + string::from(output) + " < " + string::from(value) + ")");
 
-				token.supply = supply_delta;
-				sv::set(uint8(0), token);
-				sv::set(token.account, to_delta, to_delta > 0);
+				token_storage new_token = token.ref;
+				new_token.supply = supply_delta;
+				token = new_token;
+
+				balances.insert_if(to_delta > 0, token.ref.account, to_delta);
 				return to_delta;
 			}
-			uint256 balance_of(instrset::rptr@, const address & in account)
+			uint256 balance_of(instrset::rptr@, const address&in account)
 			{
-				uint256 output = 0;
-				sv::into(account, output);
-				return output;
+				return balances.has(account) ? balances[account] : 0;
 			}
 			token_storage info(instrset::rptr@)
 			{
-				return sv::get<token_storage>(uint8(0));
+				return token.ref;
 			}));
 			std::string_view bridge_program = VI_STRINGIFY((
-			void construct(instrset::rwptr@, const address&in token_account)
+			varying<address> token_account;
+
+			void construct(instrset::rwptr@, const address&in new_token_account)
 			{
-				sv::set(uint8(0), token_account);
+				token_account = new_token_account;
 			}
 			uint256 balance_of_test_token(instrset::rptr@)
 			{
-				address token_account = sv::get<address>(uint8(0));
-				return token_account.call<uint256>("uint256 balance_of(instrset::rptr@, const address&in)", tx::from());
+				return token_account.ref.call<uint256>("uint256 balance_of(instrset::rptr@, const address&in)", tx::from());
 			}));
 
 			auto* upgrade_ethereum1 = memory::init<transactions::upgrade>();
@@ -1595,16 +1597,16 @@ public:
 			TEST_BLOCK(&generators::account_transfer_stage_1, "0xb1710cd050936c8b9d08cec1caa011d35a35f0b4398b09296b91b2aa18dcd3ea", 9);
 			TEST_BLOCK(&generators::account_transfer_stage_2, "0xef5b82631b4cfe548748b2df3bd2e230514bc5dd1b2ea5c7e4cf9123f5fc19c3", 10);
 			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), users[2].wallet.get_address(), 0.05), "0xc4408ffdaf51b06b187609677cb777d8c739644ce1d4c6edf3600f4eb9036b13", 11);
-			TEST_BLOCK(std::bind(&generators::account_upgrade, std::placeholders::_1, std::placeholders::_2, &contracts), "0x4c1afb774bd7fabe0133c90f2153f7e2e00a4f600a24894465f28e6fac5d29e6", 12);
-			TEST_BLOCK(std::bind(&generators::account_call, std::placeholders::_1, std::placeholders::_2, &contracts), "0x254ee406eaeded208672c520aa9cac8f4f76acbb85e37080b3f8cc8d37d7bb69", 13);
-			TEST_BLOCK(&generators::account_transaction_rollup, "0x9baa1c7bd8dffee49f515451557e7e45e2bc58efc219740a8be195b31a1d02cf", 14);
-			TEST_BLOCK(std::bind(&generators::validator_enable_validator, std::placeholders::_1, std::placeholders::_2, 2, false, false, true), "0x160206cf79d200c87ddc6b1ceb660bc3dddc0ffdaffcabdb44add60155746ccf", 15);
-			TEST_BLOCK(&generators::depository_migration, "0x19c971b77dda632e9876ecd323a926b94cc8865612b014c68f69e2642216a56b", 16);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_1, "0x531ea50786f798a03734e1f1341728beddf2c95f874258a6dd2c0f4582d0d919", 18);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0xd6fdad31eb7c9724dbf19346e64aa98d657fe6c03d5a4e0fb056c42c87920bb8", 21);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0x7485be859a8fde653608c031040bfa2d463f3f58693d7db76267b43a1df92c65", 24);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_4, "0x52825c783517d671945f2501950b542956c9bb32f5bd22f175279b2e8d4881ed", 27);
-			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2, false, true, false), "0x2f38355afd9a3c03213fab3506f8dd09b48afd12a9bc810e27705ac773de11d1", 30);
+			TEST_BLOCK(std::bind(&generators::account_upgrade, std::placeholders::_1, std::placeholders::_2, &contracts), "0x42df3eef645cb00df20aca20cbed72cb7c9691f7869a24f3c257ae3e06f8b166", 12);
+			TEST_BLOCK(std::bind(&generators::account_call, std::placeholders::_1, std::placeholders::_2, &contracts), "0xae38d7124c624162182290bb09eab2cdfba040603f46804b5a3842482ce746f8", 13);
+			TEST_BLOCK(&generators::account_transaction_rollup, "0xd7d854b1daa6f604f7d91f4a471147f3336962770e0a38ef40e78ae2e739ba51", 14);
+			TEST_BLOCK(std::bind(&generators::validator_enable_validator, std::placeholders::_1, std::placeholders::_2, 2, false, false, true), "0x74086548e85f678eec0c479edf0c2bae28a86c4fba4723187fdde73d244bbfa4", 15);
+			TEST_BLOCK(&generators::depository_migration, "0x120fe00dded3de423edeb46ba860c4c40c4cbffbb71eb5994cc2723f944a4da1", 16);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_1, "0xfe3572c4b2803481a5bee47bc35508151d0f64cf7f59780fad91149cd82f0ff6", 18);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0x1d449e71990021929001e2211f55a5e904bafe762eb728f7621921e5020a298c", 21);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0xc51b4ab94e61552bc6d048e733ac6b4830888a152c5cfbf0cea01fc9c782e735", 24);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_4, "0xe022ff23bb24e1e608680ed72e1463710d024643d5fcf09da24a0e5bc7daac2d", 27);
+			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2, false, true, false), "0x6bb855754db3e26cbd2d9ea72283ab8b1772b8006b576042154c53fa6d216c33", 30);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else
@@ -2979,12 +2981,12 @@ int main(int argc, char* argv[])
 		exit_code = runners::regression(args);
 	else if (test == "integration")
 		exit_code = runners::integration(args);
-	else if (test == "svm")
-		exit_code = entrypoints::svm(args);
+	else if (test == "cell")
+		exit_code = entrypoints::cell(args);
 	else if (test == "node")
 		exit_code = entrypoints::node(args);
 
-	VI_PANIC(exit_code != bad_entrypoint_exit_code, "must provide a \"test\" flag (string in [consensus, explorer, benchmark, regression, integration] or in [svm, node])");
+	VI_PANIC(exit_code != bad_entrypoint_exit_code, "must provide a \"test\" flag (string in [consensus, explorer, benchmark, regression, integration] or in [cell, node])");
 	if (os::process::has_debugger())
 	{
 		auto* term = console::get();

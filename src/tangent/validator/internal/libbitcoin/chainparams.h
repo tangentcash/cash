@@ -97,6 +97,11 @@ extern const btc_chainparams eth_chainparams_main;
 extern const btc_chainparams eth_chainparams_test;
 extern const btc_chainparams eth_chainparams_regtest;
 
+/* tron */
+extern const btc_chainparams trx_chainparams_main;
+extern const btc_chainparams trx_chainparams_test;
+extern const btc_chainparams trx_chainparams_regtest;
+
 /* ripple xrp */
 extern const btc_chainparams xrp_chainparams_main;
 extern const btc_chainparams xrp_chainparams_test;

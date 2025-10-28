@@ -43,7 +43,6 @@ namespace tangent
 			erase_byte = 2,
 			read_byte = 1,
 			query_result = 8,
-			opcode = 1,
 			memory_block = 1,
 			program_data = 16
 		};
