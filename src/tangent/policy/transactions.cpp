@@ -171,7 +171,7 @@ namespace tangent
 						return code.error();
 
 					auto hashcode = factory->hashcode(*code);
-					auto result = factory->compile_module(hashcode, [&]() mutable { return std::move(code); });
+					auto result = factory->compile_module(format::util::encode_0xhex(hashcode), [&]() mutable { return std::move(code); });
 					if (!result)
 						return result.error();
 
@@ -1758,7 +1758,7 @@ namespace tangent
 				{
 					auto* transaction = memory::init<depository_withdrawal_routing>();
 					transaction->asset = asset;
-					transaction->set_proof(context->receipt.transaction_hash, layer_exception(std::move(error.message())));
+					transaction->set_proof(context->receipt.transaction_hash, layer_exception(std::move(remote_exception(error).message())));
 					dispatcher->emit_transaction(transaction);
 					return expects_rt<void>(std::move(error));
 				};
@@ -2012,7 +2012,7 @@ namespace tangent
 			if (!finalization)
 				return finalization.error();
 
-			if (approval || base_transaction->to_manager.empty())
+			if (approval || !base_transaction->to_manager.empty())
 				return expectation::met;
 
 			auto fee_asset = algorithm::asset::base_id_of(base_transaction->asset);
@@ -2020,7 +2020,7 @@ namespace tangent
 			auto token_value = base_transaction->get_token_value(context);
 			if (fee_asset != base_transaction->asset)
 			{
-				auto fee_transfer = context->apply_transfer(base_transaction->asset, transaction.receipt.from, decimal::zero(), -fee_value);
+				auto fee_transfer = context->apply_transfer(fee_asset, transaction.receipt.from, decimal::zero(), -fee_value);
 				if (!fee_transfer)
 					return fee_transfer.error();
 			}
@@ -2268,7 +2268,7 @@ namespace tangent
 					if (!status)
 						return status.error();
 
-					required_output_witness.insert(std::make_pair(std::move(normalized_address), std::move(*witness)));
+					required_output_witness.insert(std::make_pair(std::move(normalized_address), *witness));
 				}
 			}
 

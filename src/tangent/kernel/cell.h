@@ -762,8 +762,8 @@ namespace tangent
 			string hashcode(const std::string_view& unpacked_code);
 			expects_lr<string> pack(const std::string_view& unpacked_code);
 			expects_lr<string> unpack(const std::string_view& packed_code);
+			int8_t opcode_type(uint8_t opcode);
 			virtual_machine* get_vm();
-			int8_t opcode_cost(uint8_t opcode);
 
 		private:
 			void initialize_opcode_table();
@@ -771,14 +771,6 @@ namespace tangent
 			static const void* to_string_constant(void* context, const char* buffer, size_t buffer_size);
 			static int from_string_constant(void* context, const void* object, char* buffer, size_t* buffer_size);
 			static int free_string_constant(void* context, const void* object);
-		};
-
-		struct stackframe
-		{
-			function call = nullptr;
-			size_t byte_code_size = 0;
-			uint32_t* byte_code = nullptr;
-			uint32_t pointer = 0;
 		};
 
 		struct program
@@ -798,8 +790,7 @@ namespace tangent
 			virtual expects_lr<vector<std::function<void(immediate_context*)>>> dispatch_arguments(ccall* mutability, const function& entrypoint, const format::variables& args) const;
 			virtual void dispatch_event(int event_type_id, const void* object_value, int object_type_id);
 			virtual void dispatch_exception(immediate_context* coroutine);
-			virtual void dispatch_coroutine(immediate_context* coroutine, vector<stackframe>& frames);
-			virtual bool dispatch_instruction(virtual_machine* vm, immediate_context* coroutine, uint32_t* program_data, size_t program_counter, byte_code_label& opcode);
+			virtual void dispatch_coroutine(immediate_context* coroutine, uint64_t* depth);
             virtual ccall mutability_of(const function& entrypoint) const;
 			virtual algorithm::pubkeyhash_t callable() const;
 			virtual decimal payable() const;

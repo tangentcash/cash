@@ -75,4 +75,7 @@ endif()
 
 add_subdirectory(${VI_DIRECTORY} vitex)
 target_link_libraries(tangentcash PRIVATE vitex)
+target_include_directories(tangentcash PRIVATE
+    ${VI_DIRECTORY}/deps/angelscript/sdk/angelscript/include
+    ${VI_DIRECTORY}/deps/angelscript/sdk/angelscript/source)
 include(deps/externals.cmake)

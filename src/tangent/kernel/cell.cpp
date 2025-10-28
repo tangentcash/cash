@@ -4327,7 +4327,7 @@ namespace tangent
 		void contract::throw_ptr_at(immediate_context* context, const exception_repr& data)
 		{
 			if (context != nullptr)
-				context->set_exception(data.to_exception_string());
+				context->set_exception(data.to_exception_string(), false);
 		}
 		void contract::throw_ptr(const exception_repr& data)
 		{
@@ -4336,7 +4336,7 @@ namespace tangent
 		void contract::rethrow_at(immediate_context* context)
 		{
 			if (context != nullptr)
-				context->set_exception(context->get_exception_string());
+				context->set_exception(context->get_exception_string(), false);
 		}
 		void contract::rethrow()
 		{
@@ -4963,7 +4963,6 @@ namespace tangent
 			auto uint128_type = vm->set_struct_trivial<uint128_t>("uint128", (size_t)object_behaviours::app_class_allints);
 			auto uint256_type = vm->set_struct_trivial<uint256_t>("uint256", (size_t)object_behaviours::app_class_allints);
 			auto real320_type = vm->set_struct_trivial<decimal>("real320");
-			auto exception_type = vm->set_struct_trivial<exception_repr>("exception");
 			auto address_type = vm->set_struct_trivial<address_repr>("address");
 			auto abi_type = vm->set_struct_trivial<abi_repr>("abi");
 			auto varying_type = vm->set_template_class_address("varying<class t>", "varying<t>", sizeof(varying_repr), (size_t)object_behaviours::pattern | (size_t)object_behaviours::value | bridge::type_traits_of<varying_repr>());
@@ -5195,13 +5194,6 @@ namespace tangent
 			real320_type->set_method_static("real320 nan()", &decimal::nan);
 			real320_type->set_method_static("real320 zero()", &decimal::zero);
 			real320_type->set_method_static("real320 from(const string&in, uint8)", &real320_repr::from);
-			exception_type->set_constructor<exception_repr>("void f()");
-			exception_type->set_constructor<exception_repr, const string_repr&, const string_repr&>("void f(const string&in, const string&in)");
-			exception_type->set_constructor<exception_repr, const exception_repr&>("void f(const exception&in)");
-			exception_type->set_method("string type() const", &exception_repr::get_type);
-			exception_type->set_method("string text() const", &exception_repr::get_text);
-			exception_type->set_method("string what() const", &exception_repr::get_what);
-			exception_type->set_method("bool empty() const", &exception_repr::empty);
 			address_type->set_constructor<address_repr>("void f()");
 			address_type->set_constructor<address_repr, const string_repr&>("void f(const string&in)");
 			address_type->set_constructor<address_repr, const uint256_t&>("void f(const uint256&in)");
@@ -5382,12 +5374,6 @@ namespace tangent
 			vm->set_function("t sqrt<t>(const t&in)", &contract::math_sqrt, convention::generic_call);
 			vm->end_namespace();
 
-			vm->begin_namespace("exception");
-			vm->set_function("void throw(const exception&in)", &contract::throw_ptr);
-			vm->set_function("void rethrow()", &contract::rethrow);
-			vm->set_function("exception unwrap()", &contract::get_exception);
-			vm->end_namespace();
-
 			vm->set_function("void require(bool, const string&in = string())", &contract::require);
 			vm->set_default_array_type("array<t>");
 			vm->begin_namespace("array");
@@ -5469,16 +5455,6 @@ namespace tangent
 			vm->set_keyword_restriction("auto@", true);
 			vm->set_keyword_restriction("float", true);
 			vm->set_keyword_restriction("double", true);
-			vm->set_code_generator("throw-syntax", [](preprocessor*, const std::string_view& path, string& code) -> expects_vm<void>
-			{
-				return parser::replace_inline_preconditions("throw", code, [](const std::string_view& expression) -> expects_vm<string>
-				{
-					string result = "exception::throw(";
-					result.append(expression);
-					result.append(1, ')');
-					return result;
-				});
-			});
 			vm->set_cache_callback([](byte_code_info* info)
 			{
 				string path = stringify::text("%s%c%s.casm", protocol::now().user.storage.module_cache_path.c_str(), VI_SPLITTER, info->name.c_str());
@@ -5529,7 +5505,7 @@ namespace tangent
 				auto type = virtual_machine::get_byte_code_info(opcode);
 				bool illegal = illegal_opcodes.find(type.name) != illegal_opcodes.end();
 				bool internal = internal_opcodes.find(type.name) != internal_opcodes.end();
-				opcodes[opcode] = internal ? 0 : (illegal ? -1 : type.size);
+				opcodes[opcode] = illegal ? -1 : (internal ? 0 : 1);
 				name_to_opcode[type.name] = opcode;
 			}
 		}
@@ -5705,13 +5681,13 @@ namespace tangent
 
 			return *unpacked_code;
 		}
+		int8_t factory::opcode_type(uint8_t opcode)
+		{
+			return opcodes[opcode];
+		}
 		virtual_machine* factory::get_vm()
 		{
 			return *vm;
-		}
-		int8_t factory::opcode_cost(uint8_t opcode)
-		{
-			return opcodes[opcode];
 		}
 		expects_lr<void> factory::validate_bytecode(const function& compiled_function)
 		{
@@ -5863,9 +5839,9 @@ namespace tangent
 			};
 			if (caller != coroutine)
 			{
-				vector<stackframe> frames;
+				uint64_t depth = 0;
+				coroutine->set_line_callback(std::bind(&program::dispatch_coroutine, this, std::placeholders::_1, &depth));
 				coroutine->set_exception_callback(std::bind(&program::dispatch_exception, this, std::placeholders::_1));
-				coroutine->set_line_callback(std::bind(&program::dispatch_coroutine, this, std::placeholders::_1, frames));
 				auto status = factory::get()->reset_properties(module, coroutine);
 				if (status)
 					execution = coroutine->execute_inline_call(entrypoint, [&binders](immediate_context* coroutine) { for (auto& bind : *binders) bind(coroutine); });
@@ -5874,7 +5850,7 @@ namespace tangent
 			else
 				execution = coroutine->execute_subcall(entrypoint, [&binders](immediate_context* coroutine) { for (auto& bind : *binders) bind(coroutine); }, resolve);
 
-			auto exception = contract::get_exception_at(coroutine);
+			auto exception = coroutine->get_state() == execution::aborted ? exception_repr(exception_repr::category::execution(), "ran out of gas") : contract::get_exception_at(coroutine);
 			coroutine->set_user_data(prev_mutable_program, SCRIPT_TAG_MUTABLE_PROGRAM);
 			coroutine->set_user_data(prev_immutable_program, SCRIPT_TAG_IMMUTABLE_PROGRAM);
 			if (!execution || (execution && *execution != execution::finished) || !exception.empty())
@@ -6057,57 +6033,15 @@ namespace tangent
 		void program::dispatch_exception(immediate_context* coroutine)
 		{
 		}
-		void program::dispatch_coroutine(immediate_context* coroutine, vector<stackframe>& frames)
+		void program::dispatch_coroutine(immediate_context* coroutine, uint64_t* depth)
 		{
-			size_t next_depth = coroutine->get_callstack_size();
-			bool function_change = frames.size() != next_depth;
-			if (function_change)
+			uint64_t batch = (*depth)++;
+			if (batch == 0 || batch % (uint64_t)ledger::gas_cost::program_block == 0)
 			{
-				frames.resize(next_depth);
-				for (size_t i = 0; i < next_depth; i++)
-				{
-					auto& frame = frames[frames.size() - i - 1];
-					if (coroutine->get_call_state_registers(i, nullptr, &frame.call, &frame.pointer, nullptr, nullptr))
-						frame.byte_code = frame.call.get_byte_code(&frame.byte_code_size);
-				}
+				auto status = context->burn_gas((uint64_t)ledger::gas_cost::instruction_block * (uint64_t)ledger::gas_cost::program_block);
+				if (!status)
+					coroutine->abort();
 			}
-			if (frames.empty())
-				return;
-
-			uint32_t next_pointer; auto& prev = frames.back();
-			if (!prev.byte_code || !coroutine->get_call_state_registers(0, nullptr, nullptr, &next_pointer, nullptr, nullptr))
-				return;
-
-			auto* vm = coroutine->get_vm();
-			size_t start = function_change ? 0 : std::min<size_t>(prev.byte_code_size, next_pointer > prev.pointer ? prev.pointer : next_pointer);
-			size_t count = function_change ? next_pointer : (next_pointer > prev.pointer ? next_pointer - prev.pointer : prev.pointer - next_pointer);
-			size_t end = std::min<size_t>(prev.byte_code_size, start + count);
-			while (start < end)
-			{
-				auto* pointer = (uint8_t*)(prev.byte_code + start);
-				auto opcode = virtual_machine::get_byte_code_info(*pointer);
-				if (!dispatch_instruction(vm, coroutine, prev.byte_code, start, opcode))
-					return;
-
-				start += opcode.size;
-			}
-			prev.pointer = next_pointer;
-		}
-		bool program::dispatch_instruction(virtual_machine* vm, immediate_context* coroutine, uint32_t* program_data, size_t program_counter, byte_code_label& opcode)
-		{
-			auto cost = factory::get()->opcode_cost(opcode.code);
-			if (cost == 0)
-				return true;
-
-			auto status = context->burn_gas(cost > 0 ? uint256_t((uint8_t)cost) : uint256_t::max());
-			if (status)
-				return true;
-
-			coroutine = coroutine ? coroutine : immediate_context::get();
-			if (coroutine != nullptr)
-				coroutine->set_exception(exception_repr(exception_repr::category::execution(), status.error().message()).to_exception_string(), false);
-
-			return false;
 		}
 		ccall program::mutability_of(const function& entrypoint) const
 		{

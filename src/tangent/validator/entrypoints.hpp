@@ -49,7 +49,6 @@ namespace tangent
 				uptr<schema> returning;
 				uptr<schema> log;
 				unordered_map<size_t, uptr<schema>> events;
-				vector<string> instructions;
 				cell::cmodule pmodule;
 				ledger::block block;
 			} tracer;
@@ -102,7 +101,6 @@ namespace tangent
 				VI_ASSERT(tracer.contextual, "transaction should be assigned");
 				tracer.returning.destroy();
 				tracer.events.clear();
-				tracer.instructions.clear();
 				auto execution = execute(mutability, entrypoint, args, [this](void* address, int type_id) -> expects_lr<void>
 				{
 					tracer.returning = var::set::object();
@@ -396,33 +394,6 @@ namespace tangent
 				if (vm->has_debugger())
 					vm->get_debugger()->exception_callback(coroutine->get_context());
 			}
-			void dispatch_coroutine(immediate_context* coroutine, vector<cell::stackframe>& frames) override
-			{
-				auto* vm = coroutine->get_vm();
-				if (vm->has_debugger())
-					vm->get_debugger()->line_callback(coroutine->get_context());
-				return cell::program::dispatch_coroutine(coroutine, frames);
-			}
-			bool dispatch_instruction(virtual_machine* vm, immediate_context* coroutine, uint32_t* program_data, size_t program_counter, byte_code_label& opcode) override
-			{
-				if (program.instructions)
-				{
-					auto gas = cell::factory::get()->opcode_cost(opcode.code);
-					if (gas > 0)
-					{
-						string_stream stream;
-						debugger_context::byte_code_label_to_text(stream, vm, program_data, program_counter, false, true);
-
-						string instruction = stream.str();
-						stringify::trim(instruction);
-
-						instruction.append(instruction.find('%') != std::string::npos ? ", %r8b:" : " %r8b:");
-						instruction.append(to_string(gas));
-						tracer.instructions.push_back(std::move(instruction));
-					}
-				}
-				return cell::program::dispatch_instruction(vm, coroutine, program_data, program_counter, opcode);
-			}
 			void reset()
 			{
 				auto* container = cell::factory::get();
@@ -441,7 +412,6 @@ namespace tangent
 				tracer.returning = uptr<schema>();
 				tracer.log = uptr<schema>();
 				tracer.events.clear();
-				tracer.instructions.clear();
 				tracer.pmodule.destroy();
 				tracer.block = ledger::block();
 			}
@@ -770,18 +740,10 @@ namespace tangent
 					terminal->jwrite_line(*changelog);
 					return true;
 				}
-				else if (method == "asm")
+				else if (method == "receipt")
 				{
-					if (args.size() > 1)
-					{
-						context.program.instructions = args[1] == "on";
-						return ok(context.program.instructions ? "enable asm tracer" : "disable asm tracer");
-					}
-
-					for (auto& instruction : context.tracer.instructions)
-						ok(instruction);
-
-					return ok(stringify::text("%i instructions; %s gas units", (int)context.tracer.instructions.size(), context.tracer.environment.validation.context.receipt.relative_gas_use.to_string().c_str()));
+					terminal->jwrite_line(*context.context->receipt.as_schema());
+					return true;
 				}
 				else if (method == "abi")
 				{
@@ -1010,7 +972,7 @@ namespace tangent
 						"result                                                   -- get call result log\n"
 						"log                                                      -- get call event log\n"
 						"changelog                                                -- get call state changes log\n"
-						"asm [on|off?]                                            -- get/set cell asm instruction listing\n"
+						"receipt                                                  -- get call receipt\n"
 						"abi                                                      -- get program abi listing\n"
 						"reset                                                    -- reset contract state\n"
 						"trap [off|err|all|now]                                   -- enable command interpreter if execp has finished (all) or failed (err)\n"

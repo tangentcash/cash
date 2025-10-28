@@ -660,7 +660,7 @@ namespace tangent
 
 			if (stringify::is_empty_or_whitespace(address))
 				return expects_lr<string>(layer_exception("address not found"));
-
+			
 			auto* implementation = get_chain(asset);
 			if (!implementation)
 				return expects_lr<string>(layer_exception("chain not found"));

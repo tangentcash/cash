@@ -44,6 +44,8 @@ namespace tangent
 			read_byte = 1,
 			query_result = 8,
 			memory_block = 1,
+			instruction_block = 3,
+			program_block = 128,
 			program_data = 16
 		};
 

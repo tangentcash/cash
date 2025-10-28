@@ -168,7 +168,7 @@ public:
 			multi_asset_rollup->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 			transactions.push_back(multi_asset_rollup);
 		}
-		static void account_upgrade(vector<uptr<ledger::transaction>>& transactions, vector<account>& users, vector<algorithm::pubkeyhash_t>* contracts)
+		static void account_upgrade_stage_1(vector<uptr<ledger::transaction>>& transactions, vector<account>& users, vector<algorithm::pubkeyhash_t>* contracts)
 		{
 			auto& [user1, user1_nonce] = users[0];
 			std::string_view token_program = VI_STRINGIFY((
@@ -193,14 +193,14 @@ public:
 			varying<token_storage> token;
 			mapping<address, uint256> balances;
 
-			token_storage construct(instrset::rwptr@, const address&in admin, const uint256&in value)
+			token_storage construct(instrset::rwptr@, const string&in symbol, const string&in name, const address&in admin, const uint256&in value)
 			{
 				token_storage new_token;
 				new_token.deployer = tx::from();
 				new_token.contract = tx::to();
 				new_token.account = admin;
-				new_token.name = "Test Token";
-				new_token.symbol = "TT";
+				new_token.name = name;
+				new_token.symbol = symbol;
 				new_token.decimals = 2;
 				new_token.supply = value;
 				token = new_token;
@@ -279,15 +279,33 @@ public:
 
 			auto* upgrade_ethereum1 = memory::init<transactions::upgrade>();
 			upgrade_ethereum1->set_asset("ETH");
-			upgrade_ethereum1->from_program(token_program.substr(1, token_program.size() - 2), { format::variable(user1.get_address()), format::variable(1000000u) });
+			upgrade_ethereum1->from_program(token_program.substr(1, token_program.size() - 2), { format::variable("TT0"), format::variable("Test Token 0"), format::variable(user1.get_address()), format::variable(1000000u) });
 			upgrade_ethereum1->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 			transactions.push_back(upgrade_ethereum1);
 			contracts->push_back(upgrade_ethereum1->get_account());
 
 			auto* upgrade_ethereum2 = memory::init<transactions::upgrade>();
 			upgrade_ethereum2->set_asset("ETH");
-			upgrade_ethereum2->from_program(bridge_program.substr(1, bridge_program.size() - 2), { format::variable(contracts->at(0).view()) });
+			upgrade_ethereum2->from_program(bridge_program.substr(1, bridge_program.size() - 2), { format::variable(contracts->back().view()) });
 			upgrade_ethereum2->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
+			transactions.push_back(upgrade_ethereum2);
+			contracts->push_back(upgrade_ethereum2->get_account());
+		}
+		static void account_upgrade_stage_2(vector<uptr<ledger::transaction>>& transactions, vector<account>& users, vector<algorithm::pubkeyhash_t>* contracts)
+		{
+			auto context = ledger::transaction_context();
+			auto& [user2, user2_nonce] = users[1];
+			auto* upgrade_ethereum1 = memory::init<transactions::upgrade>();
+			upgrade_ethereum1->set_asset("ETH");
+			upgrade_ethereum1->from_hashcode(context.get_account_program(contracts->at(0))->hashcode, { format::variable("TT1"), format::variable("Test Token 1"), format::variable(user2.get_address()), format::variable(1000000u) });
+			upgrade_ethereum1->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
+			transactions.push_back(upgrade_ethereum1);
+			contracts->push_back(upgrade_ethereum1->get_account());
+
+			auto* upgrade_ethereum2 = memory::init<transactions::upgrade>();
+			upgrade_ethereum2->set_asset("ETH");
+			upgrade_ethereum2->from_hashcode(context.get_account_program(contracts->at(1))->hashcode, { format::variable(contracts->back().view()) });
+			upgrade_ethereum2->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
 			transactions.push_back(upgrade_ethereum2);
 			contracts->push_back(upgrade_ethereum2->get_account());
 		}
@@ -307,11 +325,29 @@ public:
 			call_ethereum2->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 			transactions.push_back(call_ethereum2);
 
-			auto* call_bitcoin = memory::init<transactions::call>();
-			call_bitcoin->set_asset("BTC");
-			call_bitcoin->program_call(contracts->at(1), decimal::zero(), "balance_of_test_token", { });
-			call_bitcoin->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
-			transactions.push_back(call_bitcoin);
+			auto* call_ethereum3 = memory::init<transactions::call>();
+			call_ethereum3->set_asset("ETH");
+			call_ethereum3->program_call(contracts->at(2), decimal::zero(), "transfer", { format::variable(user1.public_key_hash.view()), format::variable(250000u) });
+			call_ethereum3->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
+			transactions.push_back(call_ethereum3);
+
+			auto* call_ethereum4 = memory::init<transactions::call>();
+			call_ethereum4->set_asset("ETH");
+			call_ethereum4->program_call(contracts->at(2), decimal::zero(), "info", { });
+			call_ethereum4->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
+			transactions.push_back(call_ethereum4);
+
+			auto* call_bitcoin1 = memory::init<transactions::call>();
+			call_bitcoin1->set_asset("BTC");
+			call_bitcoin1->program_call(contracts->at(1), decimal::zero(), "balance_of_test_token", { });
+			call_bitcoin1->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
+			transactions.push_back(call_bitcoin1);
+
+			auto* call_bitcoin2 = memory::init<transactions::call>();
+			call_bitcoin2->set_asset("BTC");
+			call_bitcoin2->program_call(contracts->at(3), decimal::zero(), "balance_of_test_token", { });
+			call_bitcoin2->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
+			transactions.push_back(call_bitcoin2);
 		}
 		static void validator_registration_full(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
 		{
@@ -1597,16 +1633,17 @@ public:
 			TEST_BLOCK(&generators::account_transfer_stage_1, "0xb1710cd050936c8b9d08cec1caa011d35a35f0b4398b09296b91b2aa18dcd3ea", 9);
 			TEST_BLOCK(&generators::account_transfer_stage_2, "0xef5b82631b4cfe548748b2df3bd2e230514bc5dd1b2ea5c7e4cf9123f5fc19c3", 10);
 			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), users[2].wallet.get_address(), 0.05), "0xc4408ffdaf51b06b187609677cb777d8c739644ce1d4c6edf3600f4eb9036b13", 11);
-			TEST_BLOCK(std::bind(&generators::account_upgrade, std::placeholders::_1, std::placeholders::_2, &contracts), "0x42df3eef645cb00df20aca20cbed72cb7c9691f7869a24f3c257ae3e06f8b166", 12);
-			TEST_BLOCK(std::bind(&generators::account_call, std::placeholders::_1, std::placeholders::_2, &contracts), "0xae38d7124c624162182290bb09eab2cdfba040603f46804b5a3842482ce746f8", 13);
-			TEST_BLOCK(&generators::account_transaction_rollup, "0xd7d854b1daa6f604f7d91f4a471147f3336962770e0a38ef40e78ae2e739ba51", 14);
-			TEST_BLOCK(std::bind(&generators::validator_enable_validator, std::placeholders::_1, std::placeholders::_2, 2, false, false, true), "0x74086548e85f678eec0c479edf0c2bae28a86c4fba4723187fdde73d244bbfa4", 15);
-			TEST_BLOCK(&generators::depository_migration, "0x120fe00dded3de423edeb46ba860c4c40c4cbffbb71eb5994cc2723f944a4da1", 16);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_1, "0xfe3572c4b2803481a5bee47bc35508151d0f64cf7f59780fad91149cd82f0ff6", 18);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0x1d449e71990021929001e2211f55a5e904bafe762eb728f7621921e5020a298c", 21);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0xc51b4ab94e61552bc6d048e733ac6b4830888a152c5cfbf0cea01fc9c782e735", 24);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_4, "0xe022ff23bb24e1e608680ed72e1463710d024643d5fcf09da24a0e5bc7daac2d", 27);
-			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2, false, true, false), "0x6bb855754db3e26cbd2d9ea72283ab8b1772b8006b576042154c53fa6d216c33", 30);
+			TEST_BLOCK(std::bind(&generators::account_upgrade_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0x8e588308341bb952105bcc63336c7c5d1ac5019c0724a92d3279cb8900aad040", 12);
+			TEST_BLOCK(std::bind(&generators::account_upgrade_stage_2, std::placeholders::_1, std::placeholders::_2, &contracts), "0xeb8c7f45b2d872912a4538531a51eb1a8659d9ace308f84e73d41bca6d4aedf9", 13);
+			TEST_BLOCK(std::bind(&generators::account_call, std::placeholders::_1, std::placeholders::_2, &contracts), "0x04b09b5151b87ed6c7b951cb90a9d6ae0884cad2fb7fd827085438cbd4c2e59b", 14);
+			TEST_BLOCK(&generators::account_transaction_rollup, "0xad111c6d2bb683cff33272dbbc5841723850b6e15b5cd5f49d871d2c2a89a9ee", 15);
+			TEST_BLOCK(std::bind(&generators::validator_enable_validator, std::placeholders::_1, std::placeholders::_2, 2, false, false, true), "0x23fe71ae5d4a320050363d52b4736b9cd90b38f990ce6919362f6859941edfb8", 16);
+			TEST_BLOCK(&generators::depository_migration, "0xdeabb8c6b6361d7014a796b01b36fc4ba297cae32156e879ca6ade1f8480cce1", 17);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_1, "0x28268d0a54ac430563633caa43f9b383dfe8b03151e089236cefc5719b651c73", 19);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0x3cf9f9616a1ea52b186c225d2b2db77666ea2e18dba986bb2430c23e290c9f2c", 22);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0xfffab96f8dcbce65c105150534d7518491774892e31b4b64f59ff13eb4e23107", 25);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_4, "0x8cc970b8c621c656462d1cce22d7a8be6ba04502a75be45b4543760391481b0a", 28);
+			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2, false, true, false), "0x1550f2135b052ec37a2ef7ca0279ca14f1d9fbb87f0e13793c22906265f8eb6e", 31);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else

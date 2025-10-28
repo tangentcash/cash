@@ -1700,7 +1700,7 @@ namespace tangent
 
 			auto transaction = transactions::call();
 			transaction.asset = algorithm::asset::id_of_handle(args[0].as_string());
-			transaction.program_call(to, algorithm::hashing::hash32d(index->hashcode), args[4].as_string(), std::move(function_args));
+			transaction.program_call(to, decimal::zero(), args[4].as_string(), std::move(function_args));
 			transaction.set_gas(decimal::zero(), ledger::block::get_gas_limit());
 
 			auto chain = storages::chainstate();

@@ -772,7 +772,6 @@ namespace tangent
 		}
 
 		auto database_path = database.resolve(user.network, user.storage.path);
-		user.storage.path = database_path;
 		if (!user.storage.module_cache_path.empty())
 		{
 			auto module_base = database_path + user.storage.module_cache_path;
