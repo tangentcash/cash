@@ -271,7 +271,7 @@ namespace tangent
             uint64_t consensus_penalty_point_time = 600000;
             uint64_t commitment_throughput = 20;
             uint64_t transaction_throughput = 200;
-            uint64_t transaction_gas = 50000;
+            uint64_t transaction_gas = 25000;
             uint64_t wesolowski_ops = 2048;
             uint32_t delegations_max_per_account = 6;
             uint32_t delegations_zeroing_time = 64000;

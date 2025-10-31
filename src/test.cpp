@@ -2727,8 +2727,8 @@ public:
 		auto* queue = schedule::get();
 		queue->start(schedule::desc());
 
-		const size_t block_count = 10;
-		const size_t transaction_count = (size_t)ledger::block::get_transaction_limit();
+		const size_t block_count = 2000;
+		const uint256_t transaction_gas_limit = (size_t)ledger::block::get_transaction_gas_limit();
 		const decimal starting_account_balance = decimal(500).truncate(12);
 		auto checkpoint = [&](vector<uptr<ledger::transaction>>&& transactions, vector<tests::account>& users)
 		{
@@ -2762,6 +2762,9 @@ public:
 		gas_transaction.set_asset("BTC");
 		gas_transaction.set_to(gas_wallet.public_key_hash, 0.1);
 		gas_transaction.sign(user1.secret_key, user1_nonce, decimal::zero()).expect("pre-validation failed");
+
+		size_t transaction_count = (size_t)(transaction_gas_limit / gas_transaction.gas_limit);
+		transaction_count = std::min(transaction_count, transaction_count - 10);
 
 		auto entropy = from_string<uint8_t>(args.get("test-entropy")).expect("must provide a \"test-entropy\" flag (number in [1, 2, 3])");
 		if (entropy == 1)
@@ -2829,12 +2832,12 @@ public:
 			vector<tests::account> senders;
 			senders.reserve(sender_count);
 			for (size_t i = 0; i < sender_count; i++)
-				senders.emplace_back(tests::account(ledger::wallet::from_seed(stringify::text("00001%i", (int)i)), 1));
+				senders.emplace_back(tests::account(ledger::wallet::from_seed(stringify::text("00001%i", (int)i)), 0));
 
 			vector<tests::account> receivers;
 			receivers.reserve(receiver_count);
 			for (size_t i = 0; i < receiver_count; i++)
-				receivers.emplace_back(tests::account(ledger::wallet::from_seed(stringify::text("00002%i", (int)i)), 1));
+				receivers.emplace_back(tests::account(ledger::wallet::from_seed(stringify::text("00002%i", (int)i)), 0));
 
 			auto* transfer = memory::init<transactions::transfer>();
 			transfer->set_asset("BTC");
@@ -2896,7 +2899,7 @@ public:
 			vector<tests::account> senders;
 			senders.reserve(sender_count);
 			for (size_t i = 0; i < sender_count; i++)
-				senders.emplace_back(tests::account({ ledger::wallet::from_seed(stringify::text("00001%i", (int)i)), 1 }));
+				senders.emplace_back(tests::account({ ledger::wallet::from_seed(stringify::text("00001%i", (int)i)), 0 }));
 
 			auto* transfer = memory::init<transactions::transfer>();
 			transfer->set_asset("BTC");
@@ -2971,7 +2974,7 @@ public:
 			{ "cryptography / multichain transaction", &tests::cryptography_multichain_transaction },
 			{ "blockchain / full coverage", std::bind(&tests::blockchain_full_coverage, (vector<tests::account>*)nullptr) },
 			{ "blockchain / verification", &tests::blockchain_verification },
-			//{ "blockchain / partial coverage", std::bind(&tests::blockchain_partial_coverage, (vector<tests::account>*)nullptr) },
+			{ "blockchain / partial coverage", std::bind(&tests::blockchain_partial_coverage, (vector<tests::account>*)nullptr) },
 			{ "blockchain / verification", &tests::blockchain_verification },
 			{ "blockchain / gas estimation", &tests::blockchain_gas_estimation },
 		};
