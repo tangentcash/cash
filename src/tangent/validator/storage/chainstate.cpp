@@ -1678,7 +1678,7 @@ namespace tangent
 			if (!b)
 				return decimal::zero();
 
-			return *b / a->truncate(protocol::now().message.decimal_precision);
+			return algorithm::arithmetic::divide(*b, *a);
 		}
 		expects_lr<ledger::block> chainstate::get_block_by_number(uint64_t block_number, size_t chunk, uint32_t details)
 		{

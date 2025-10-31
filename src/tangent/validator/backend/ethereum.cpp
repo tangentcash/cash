@@ -309,7 +309,7 @@ namespace tangent
 				netdata.routing = routing_policy::account;
 				netdata.tokenization = token_policy::program;
 				netdata.sync_latency = 80;
-				netdata.divisibility = decimal("1000000000000000000").truncate(protocol::now().message.decimal_precision);
+				netdata.divisibility = algorithm::arithmetic::fixed("1000000000000000000");
 				netdata.supports_bulk_transfer = false;
 				netdata.requires_transaction_expiration = false;
 			}
@@ -403,11 +403,7 @@ namespace tangent
 				if (!decimals)
 					coreturn expects_rt<decimal>(std::move(decimals.error()));
 
-				uint64_t divisibility = 1;
-				uint64_t value = std::min<uint64_t>((uint64_t)hex_to_uint256(decimals->value.get_blob()), protocol::now().message.decimal_precision);
-				for (uint64_t i = 0; i < value; i++)
-					divisibility *= 10;
-				coreturn expects_rt<decimal>(decimal(divisibility));
+				coreturn expects_rt<decimal>(algorithm::arithmetic::range((uint64_t)hex_to_uint256(decimals->value.get_blob())));
 			}
 			expects_promise_rt<uint64_t> ethereum::get_latest_block_height()
 			{
@@ -730,7 +726,7 @@ namespace tangent
 				memory::release(*hex_data);
 				coreturn expects_rt<void>(expectation::met);
 			}
-			expects_promise_rt<prepared_transaction> ethereum::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee, bool inclusive_fee)
+			expects_promise_rt<prepared_transaction> ethereum::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee)
 			{
 				auto chain_id = coawait(get_chain_id());
 				if (!chain_id)
@@ -739,7 +735,6 @@ namespace tangent
 				auto& output = to.front();
 				auto contract_address = oracle::server_node::get()->get_contract_address(output.asset);
 				decimal fee_value = fee.get_max_fee();
-				decimal total_value = output.value;
 				if (contract_address)
 				{
 					auto balance = coawait(calculate_balance(output.asset, from_link));
@@ -748,14 +743,12 @@ namespace tangent
 				}
 				else if (!algorithm::asset::token_of(output.asset).empty())
 					coreturn expects_rt<prepared_transaction>(remote_exception("invalid sending token"));
-				else if (inclusive_fee)
-					total_value -= fee_value;
-				else
-					total_value += fee_value;
+				else if (output.value < fee_value)
+					coreturn expects_rt<prepared_transaction>(remote_exception("fee is more than output value"));
 
 				auto balance = coawait(calculate_balance(output.asset, from_link));
-				if (!balance || *balance < total_value || total_value.is_negative())
-					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (balance ? *balance : decimal(0.0)).to_string().c_str(), total_value.to_string().c_str())));
+				if (!balance || *balance < output.value || output.value.is_negative())
+					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (balance ? *balance : decimal(0.0)).to_string().c_str(), output.value.to_string().c_str())));
 
 				auto nonce = coawait(get_transactions_count(from_link.address));
 				if (!nonce)
@@ -781,7 +774,7 @@ namespace tangent
 				else
 				{
 					transaction.address = decode_non_eth_address(output.address);
-					transaction.value = from_eth(output.value, divisibility);
+					transaction.value = from_eth(output.value - fee_value, divisibility);
 				}
 
 				auto public_key = to_composite_public_key(from_link.public_key);
@@ -794,7 +787,7 @@ namespace tangent
 				if (contract_address)
 					result.requires_account_input(algorithm::composition::type::secp256k1, wallet_link(from_link), *public_key, (uint8_t*)hash.data(), hash.size(), { { output.asset, output.value }, { native_asset, fee_value } });
 				else
-					result.requires_account_input(algorithm::composition::type::secp256k1, wallet_link(from_link), *public_key, (uint8_t*)hash.data(), hash.size(), { { native_asset, inclusive_fee ? output.value : (output.value + fee_value) } });
+					result.requires_account_input(algorithm::composition::type::secp256k1, wallet_link(from_link), *public_key, (uint8_t*)hash.data(), hash.size(), { { native_asset, output.value } });
 				result.requires_account_output(output.address, { { output.asset, output.value } });
 				result.requires_abi(format::variable(!!legacy.eip_155));
 				result.requires_abi(format::variable(contract_address.or_else(string())));
@@ -837,8 +830,9 @@ namespace tangent
 				}
 				else
 				{
+					auto fee_value = computed_fee::fee_per_gas_priority(to_eth(transaction.gas_base_price, divisibility), to_eth(transaction.gas_price, divisibility), transaction.gas_limit).get_max_fee();
 					transaction.address = decode_non_eth_address(output.link.address);
-					transaction.value = from_eth(output.value, divisibility);
+					transaction.value = from_eth(output.value - fee_value, divisibility);
 				}
 
 				auto hash = transaction.hash(transaction.serialize(type));
@@ -1076,7 +1070,7 @@ namespace tangent
 			}
 			decimal ethereum::to_eth(const uint256_t& value, const decimal& divisibility)
 			{
-				return value.to_decimal() / decimal(divisibility).truncate(protocol::now().message.decimal_precision);
+				return algorithm::arithmetic::divide(value.to_decimal(), divisibility);
 			}
 			decimal ethereum::get_divisibility_gwei()
 			{

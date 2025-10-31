@@ -411,10 +411,8 @@ namespace tangent
 			bind(0 | access_type::r, "mempoolstate", "getmempooltransactionbyhash", 1, 1, "uint256 hash", "txn", "get mempool transaction by hash", std::bind(&server_node::mempoolstate_get_transaction_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getrawmempooltransactionbyhash", 1, 1, "uint256 hash", "string", "get raw mempool transaction by hash", std::bind(&server_node::mempoolstate_get_raw_transaction_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getnextaccountnonce", 1, 1, "string owner_address", "{ min: uint64, max: uint64 }", "get account nonce for next transaction by owner", std::bind(&server_node::mempoolstate_get_next_account_nonce, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "mempoolstate", "getmempooltransactions", 2, 3, "uint64 offset, uint64 count, uint8? unrolling", "uint256[] | txn[]", "get mempool transactions", std::bind(&server_node::mempoolstate_get_transactions, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "mempoolstate", "getmempooltransactions", 3, 4, "bool commitment, uint64 offset, uint64 count, uint8? unrolling", "uint256[] | txn[]", "get mempool transactions", std::bind(&server_node::mempoolstate_get_transactions, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getmempooltransactionsbyowner", 3, 5, "const string address, uint64 offset, uint64 count, uint8? direction = 1, uint8? unrolling", "uint256[] | txn[]", "get mempool transactions by signing address", std::bind(&server_node::mempoolstate_get_transactions_by_owner, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "mempoolstate", "getmempoolattestationtransactions", 3, 4, "uint256 hash, uint64 offset, uint64 count, uint8? unrolling", "uint256[] | txn[]", "get mempool attestation transactions", std::bind(&server_node::mempoolstate_get_attestation_transactions, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "mempoolstate", "getmempoolattestation", 1, 1, "uint256 hash", "{ branch: uint256, threshold: double, progress: double, committee: uint64, reached: boolean }", "get mempool attestation transaction consensus state", std::bind(&server_node::mempoolstate_get_attestation, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "validatorstate", "getnode", 1, 1, "string uri_address", "validator", "get a node by ip address", std::bind(&server_node::validatorstate_get_node, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "validatorstate", "getblockchains", 0, 0, "", "oracle::asset_info[]", "get supported blockchains", std::bind(&server_node::validatorstate_get_blockchains, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "validatorstate", "status", 0, 0, "", "validator::status", "get validator status", std::bind(&server_node::validatorstate_status, this, std::placeholders::_1, std::placeholders::_2));
@@ -1701,7 +1699,7 @@ namespace tangent
 			auto transaction = transactions::call();
 			transaction.asset = algorithm::asset::id_of_handle(args[0].as_string());
 			transaction.program_call(to, decimal::zero(), args[4].as_string(), std::move(function_args));
-			transaction.set_gas(decimal::zero(), ledger::block::get_gas_limit());
+			transaction.set_gas(decimal::zero(), ledger::block::get_transaction_gas_limit());
 
 			auto chain = storages::chainstate();
 			auto tip = chain.get_latest_block_header();
@@ -1713,7 +1711,6 @@ namespace tangent
 
 			auto receipt = ledger::receipt();
 			receipt.transaction_hash = transaction.as_hash();
-			receipt.generation_time = protocol::now().time.now();
 			receipt.block_number = block.number;
 			receipt.from = from;
 
@@ -1741,7 +1738,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, execution.error().message());
 
 			environment.validation.context.receipt.successful = !!execution;
-			environment.validation.context.receipt.finalization_time = protocol::now().time.now();
+			environment.validation.context.receipt.block_time = protocol::now().time.now();
 			if (!environment.validation.context.receipt.successful)
 				environment.validation.context.emit_event(0, { format::variable(execution.what()) }, false);
 
@@ -2857,16 +2854,17 @@ namespace tangent
 		}
 		server_response server_node::mempoolstate_get_transactions(http::connection* base, format::variables&& args)
 		{
-			uint64_t offset = args[0].as_uint64(), count = args[1].as_uint64();
+			bool commitment = args[0].as_boolean();
+			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
 			if (!count || count > protocol::now().user.rpc.page_size)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
-			uint8_t unrolling = args.size() > 2 ? args[2].as_uint8() : 0;
+			uint8_t unrolling = args.size() > 3 ? args[3].as_uint8() : 0;
 			auto mempool = storages::mempoolstate();
 			if (unrolling == 0)
 			{
 				uptr<schema> data = var::set::array();
-				auto list = mempool.get_transactions(offset, count);
+				auto list = mempool.get_transactions(commitment, offset, count);
 				if (!list)
 					return server_response().error(error_codes::not_found, "transactions not found");
 
@@ -2877,7 +2875,7 @@ namespace tangent
 			else
 			{
 				uptr<schema> data = var::set::array();
-				auto list = mempool.get_transactions(offset, count);
+				auto list = mempool.get_transactions(commitment, offset, count);
 				if (!list)
 					return server_response().error(error_codes::not_found, "transactions not found");
 
@@ -2921,61 +2919,6 @@ namespace tangent
 					data->push(item->as_schema().reset());
 				return server_response().success(std::move(data));
 			}
-		}
-		server_response server_node::mempoolstate_get_attestation_transactions(http::connection* base, format::variables&& args)
-		{
-			uint256_t hash = args[0].as_uint256();
-			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
-			if (!count || count > protocol::now().user.rpc.page_size)
-				return server_response().error(error_codes::bad_params, "count not valid");
-
-			uint8_t unrolling = args.size() > 3 ? args[3].as_uint8() : 0;
-			auto mempool = storages::mempoolstate();
-			if (unrolling == 0)
-			{
-				uptr<schema> data = var::set::array();
-				auto list = mempool.get_transactions_by_group(hash, offset, count);
-				if (!list)
-					return server_response().error(error_codes::not_found, "transactions not found");
-
-				for (auto& item : *list)
-					data->push(var::set::string(algorithm::encoding::encode_0xhex256(item->as_hash())));
-				return server_response().success(std::move(data));
-			}
-			else
-			{
-				uptr<schema> data = var::set::array();
-				auto list = mempool.get_transactions_by_group(hash, offset, count);
-				if (!list)
-					return server_response().error(error_codes::not_found, "transactions not found");
-
-				for (auto& item : *list)
-					data->push(item->as_schema().reset());
-				return server_response().success(std::move(data));
-			}
-		}
-		server_response server_node::mempoolstate_get_attestation(http::connection* base, format::variables&& args)
-		{
-			uint256_t hash = args[0].as_uint256();
-			auto mempool = storages::mempoolstate();
-			auto reference = mempool.get_transaction_by_hash(hash);
-			if (!reference)
-				return server_response().error(error_codes::not_found, "transaction not found");
-
-			auto& transaction = *reference;
-			if (transaction->get_type() != ledger::transaction_level::attestation)
-				return server_response().error(error_codes::not_found, "transaction consensus is not applicable");
-
-			auto context = ledger::transaction_context();
-			auto* aggregation = (ledger::attestation_transaction*)*transaction;
-			auto branch = aggregation->get_best_branch(&context, nullptr);
-			if (!branch)
-				return server_response().error(error_codes::not_found, "transaction consensus is not computable");
-
-			auto result = var::set::object();
-			result->set("branch", var::string(algorithm::encoding::encode_0xhex256(branch->message.hash())));
-			result->set("signatures", var::number(branch->signatures.size()));
-			return server_response().success(result);
 		}
 		server_response server_node::validatorstate_prune(http::connection* base, format::variables&& args)
 		{

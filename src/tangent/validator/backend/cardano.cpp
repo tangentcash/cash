@@ -33,7 +33,7 @@ namespace tangent
 				netdata.routing = routing_policy::utxo;
 				netdata.tokenization = token_policy::native;
 				netdata.sync_latency = 30;
-				netdata.divisibility = decimal(1000000).truncate(protocol::now().message.decimal_precision);
+				netdata.divisibility = algorithm::arithmetic::fixed(1000000);
 				netdata.supports_bulk_transfer = true;
 				netdata.requires_transaction_expiration = false;
 			}
@@ -163,7 +163,7 @@ namespace tangent
 										auto token_asset = algorithm::asset::id_of(blockchain, symbol, contract_address);
 										uint8_t decimals = (uint8_t)item->fetch_var("currency.decimals").get_integer();
 										decimal divisibility = decimals > 0 ? decimal("1" + string(decimals, '0')) : decimal(1);
-										decimal token_value = math0::abs(item->get_var("value").get_decimal()) / divisibility.truncate(protocol::now().message.decimal_precision);
+										decimal token_value = algorithm::arithmetic::divide(math0::abs(item->get_var("value").get_decimal()), divisibility);
 										new_output.apply_token_value(contract_address, symbol, token_value, decimals);
 										oracle::server_node::get()->enable_contract_address(token_asset, contract_address);
 									}
@@ -200,7 +200,7 @@ namespace tangent
 										auto token_asset = algorithm::asset::id_of(blockchain, symbol, contract_address);
 										uint8_t decimals = (uint8_t)item->fetch_var("currency.decimals").get_integer();
 										decimal divisibility = decimals > 0 ? decimal("1" + string(decimals, '0')) : decimal(1);
-										decimal token_value = math0::abs(item->get_var("value").get_decimal()) / divisibility.truncate(protocol::now().message.decimal_precision);
+										decimal token_value = algorithm::arithmetic::divide(math0::abs(item->get_var("value").get_decimal()), divisibility);
 										new_input.apply_token_value(contract_address, symbol, token_value, decimals);
 										oracle::server_node::get()->enable_contract_address(token_asset, contract_address);
 									}
@@ -336,7 +336,7 @@ namespace tangent
 				memory::release(*tx_hash);
 				coreturn expects_rt<void>(expectation::met);
 			}
-			expects_promise_rt<prepared_transaction> cardano::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee, bool inclusive_fee)
+			expects_promise_rt<prepared_transaction> cardano::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee)
 			{
 				auto block_slot = coawait(get_latest_block_slot());
 				if (!block_slot)
@@ -344,7 +344,7 @@ namespace tangent
 
 				option<computed_fee> actual_fee = optional::none;
 				decimal fee_value = actual_fee ? actual_fee->get_max_fee() : fee.get_max_fee();
-				decimal fee_value_per_output = inclusive_fee && !to.empty() ? fee_value / decimal(to.size()).truncate(protocol::now().message.decimal_precision) : decimal::zero();
+				decimal fee_value_per_output = algorithm::arithmetic::divide(fee_value, to.size());
 			retry_with_actual_fee:
 				prepared_transaction result;
 				result.requires_abi(format::variable(to_lovelace(fee_value)));

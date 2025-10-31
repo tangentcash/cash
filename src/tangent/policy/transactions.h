@@ -134,8 +134,9 @@ namespace tangent
 			static std::string_view as_instance_typename();
 		};
 
-		struct depository_account final : ledger::delegation_transaction
+		struct depository_account final : ledger::commitment
 		{
+			algorithm::pubkeyhash_t manager;
 			string routing_address;
 
 			expects_lr<void> validate(uint64_t block_number) const override;
@@ -146,14 +147,16 @@ namespace tangent
 			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const override;
 			bool is_dispatchable() const override;
 			void set_routing_address(const std::string_view& new_address);
+			void set_manager(const algorithm::pubkeyhash_t& new_manager);
 			ordered_set<algorithm::pubkeyhash_t> get_group(const ledger::receipt& receipt) const;
+			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
 		};
 
-		struct depository_account_finalization final : ledger::consensus_transaction
+		struct depository_account_finalization final : ledger::commitment
 		{
 			algorithm::composition::cpubkey_t public_key;
 			uint256_t depository_account_hash = 0;
@@ -196,23 +199,20 @@ namespace tangent
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
-			static expects_lr<void> approve_or_revert(ledger::transaction_context* context, const ledger::block_transaction& transaction, bool approval);
 			static expects_lr<states::witness_account> find_receiving_account(const ledger::transaction_context* context, const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& from_manager, const algorithm::pubkeyhash_t& to_manager);
 		};
 
-		struct depository_withdrawal_routing final : ledger::consensus_transaction
+		struct depository_withdrawal_finalization final : ledger::commitment
 		{
 			uint256_t depository_withdrawal_hash = 0;
 			expects_lr<oracle::finalized_transaction> proof = layer_exception();
 
 			expects_lr<void> validate(uint64_t block_number) const override;
 			expects_lr<void> execute(ledger::transaction_context* context) const override;
-			expects_promise_rt<void> dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const override;
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
 			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const override;
 			void set_proof(const uint256_t& new_depository_withdrawal_hash, expects_lr<oracle::finalized_transaction>&& new_proof);
-			bool is_dispatchable() const override;
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
@@ -222,25 +222,14 @@ namespace tangent
 			static expects_lr<void> validate_finalized_proof(const ledger::transaction_context* context, const depository_withdrawal* transaction, const oracle::finalized_transaction& finalized);
 		};
 
-		struct depository_withdrawal_finalization final : ledger::consensus_transaction
+		struct depository_attestation final : ledger::commitment
 		{
-			uint256_t depository_withdrawal_routing_hash = 0;
-			string status;
+			struct branch_commitment
+			{
+				uint256_t input_hash = 0;
+				uint256_t output_hash = 0;
+			};
 
-			expects_lr<void> validate(uint64_t block_number) const override;
-			expects_lr<void> execute(ledger::transaction_context* context) const override;
-			bool store_body(format::wo_stream* stream) const override;
-			bool load_body(format::ro_stream& stream) override;
-			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const override;
-			uptr<schema> as_schema() const override;
-			uint32_t as_type() const override;
-			std::string_view as_typename() const override;
-			static uint32_t as_instance_type();
-			static std::string_view as_instance_typename();
-		};
-
-		struct depository_transaction final : ledger::attestation_transaction
-		{
 			struct depository_transfer
 			{
 				decimal supply = decimal::zero();
@@ -273,14 +262,20 @@ namespace tangent
 				ordered_map<algorithm::asset_id, weight_transfer> weights;
 			};
 
+			expects<oracle::computed_transaction, branch_commitment> proof_or_commitment = branch_commitment();
+
 			expects_lr<void> validate(uint64_t block_number) const override;
 			expects_lr<void> execute(ledger::transaction_context* context) const override;
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
+			bool sign(const algorithm::seckey_t& secret_key) override;
+			bool sign(const algorithm::seckey_t& secret_key, uint64_t new_nonce) override;
+			expects_lr<void> sign(const algorithm::seckey_t& secret_key, uint64_t new_nonce, const decimal& price) override;
 			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const override;
-			void set_finalized_witness(uint64_t block_id, const std::string_view& transaction_id, const vector<oracle::value_transfer>& inputs, const vector<oracle::value_transfer>& outputs);
-			void set_computed_witness(const oracle::computed_transaction& witness);
-			option<oracle::computed_transaction> get_assertion(const ledger::transaction_context* context) const;
+			void set_finalized_proof(uint64_t block_id, const std::string_view& transaction_id, const vector<oracle::value_transfer>& inputs, const vector<oracle::value_transfer>& outputs);
+			void set_computed_proof(oracle::computed_transaction&& new_proof);
+			void set_commitment(const oracle::computed_transaction& new_proof);
+			void assign_proof_or_commitment_automatically(const algorithm::seckey_t& secret_key);
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
@@ -290,7 +285,6 @@ namespace tangent
 
 		struct depository_adjustment final : ledger::transaction
 		{
-			ordered_map<string, string> whitelist;
 			decimal incoming_fee = decimal::zero();
 			decimal outgoing_fee = decimal::zero();
 			decimal participation_threshold = decimal::zero();
@@ -304,7 +298,6 @@ namespace tangent
 			bool load_body(format::ro_stream& stream) override;
 			void set_reward(const decimal& new_incoming_fee, const decimal& new_outgoing_fee);
 			void set_security(uint8_t new_security_level, const decimal& new_participation_threshold, bool new_accepts_account_requests, bool new_accepts_withdrawal_requests);
-			void permanently_whitelist_token(const std::string_view& contract_address, const std::string_view& symbol);
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
@@ -353,7 +346,7 @@ namespace tangent
 			static std::string_view as_instance_typename();
 		};
 
-		struct depository_migration_finalization final : ledger::consensus_transaction
+		struct depository_migration_finalization final : ledger::commitment
 		{
 			algorithm::hashsig_t confirmation_signature;
 			uint256_t depository_migration_hash = 0;
@@ -375,7 +368,7 @@ namespace tangent
 			static ledger::transaction* from_stream(format::ro_stream& stream);
 			static ledger::transaction* from_type(uint32_t hash);
 			static ledger::transaction* from_copy(const ledger::transaction* base);
-			static expects_promise_rt<oracle::prepared_transaction> prepare_transaction(const algorithm::asset_id& asset, const oracle::wallet_link& from_link, const vector<oracle::value_transfer>& to, const decimal& max_fee, bool inclusive_fee);
+			static expects_promise_rt<oracle::prepared_transaction> prepare_transaction(const algorithm::asset_id& asset, const oracle::wallet_link& from_link, const vector<oracle::value_transfer>& to, const decimal& max_fee);
 			static expects_lr<oracle::finalized_transaction> finalize_transaction(const algorithm::asset_id& asset, oracle::prepared_transaction&& prepared);
 			static expects_promise_rt<void> broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, oracle::finalized_transaction&& finalized, ledger::dispatch_context* dispatcher);
 		};

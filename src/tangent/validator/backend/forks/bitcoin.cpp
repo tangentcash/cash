@@ -57,7 +57,7 @@ namespace tangent
 				}
 				bitcoin_gold::address_format bitcoin_gold::get_address_type()
 				{
-					return (address_format)((size_t)address_format::pay2_public_key_hash | (size_t)address_format::pay2_witness_public_key_hash);
+					return (address_format)((size_t)address_format::pay2_script_hash | (size_t)address_format::pay2_public_key_hash | (size_t)address_format::pay2_witness_public_key_hash);
 				}
 
 				bitcoin_sv::bitcoin_sv(const algorithm::asset_id& new_asset) noexcept : bitcoin(new_asset)

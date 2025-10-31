@@ -282,7 +282,6 @@ namespace tangent
 			algorithm::pubkeyhash_t owner;
 			algorithm::asset_id asset;
 			decimal participation_threshold = decimal::zero();
-			ordered_set<algorithm::asset_id> whitelist;
 			uint256_t queue_transaction_hash = 0;
 			uint64_t accounts_under_management = 0;
 			uint8_t security_level = (uint8_t)protocol::now().policy.participation_std_per_account;
@@ -298,7 +297,6 @@ namespace tangent
 			bool load_row(format::ro_stream& stream) override;
 			bool store_data(format::wo_stream* stream) const override;
 			bool load_data(format::ro_stream& stream) override;
-			bool is_whitelisted(const algorithm::asset_id& asset) const;
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
@@ -419,6 +417,29 @@ namespace tangent
 			static string as_instance_row(const algorithm::asset_id& asset, const std::string_view& address);
 		};
 
+		struct witness_attestation final : ledger::uniform
+		{
+			ordered_map<uint256_t, ordered_set<algorithm::pubkeyhash_t>> branches;
+			uint256_t attestation_hash;
+			algorithm::asset_id asset;
+			bool finalized;
+
+			witness_attestation(const algorithm::asset_id& new_asset, const uint256_t& new_attestation_hash, uint64_t new_block_number, uint64_t new_block_nonce);
+			witness_attestation(const algorithm::asset_id& new_asset, const uint256_t& new_attestation_hash, const ledger::block_header* new_block_header);
+			expects_lr<void> transition(const ledger::transaction_context* context, const ledger::state* prev_state) override;
+			bool store_index(format::wo_stream* stream) const override;
+			bool load_index(format::ro_stream& stream) override;
+			bool store_data(format::wo_stream* stream) const override;
+			bool load_data(format::ro_stream& stream) override;
+			bool is_permanent() const override;
+			uptr<schema> as_schema() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
+			static string as_instance_index(const algorithm::asset_id& asset, const uint256_t& attestation_hash);
+		};
+
 		struct witness_transaction final : ledger::uniform
 		{
 			algorithm::asset_id asset;
@@ -448,7 +469,7 @@ namespace tangent
 			static ledger::state* from_copy(const ledger::state* base);
 			static void value_copy(uint32_t hash, const ledger::state* from, ledger::state* to);
 			static bool will_delete(const ledger::state* base, uptr<ledger::state>& cache);
-			static std::array<uint32_t, 7> get_uniform_types();
+			static std::array<uint32_t, 8> get_uniform_types();
 			static std::array<uint32_t, 10> get_multiform_types();
 		};
 	}

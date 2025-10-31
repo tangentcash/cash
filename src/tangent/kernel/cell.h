@@ -828,7 +828,7 @@ namespace vitex
 		template <>
 		struct key_hasher<tangent::cell::string_repr>
 		{
-			typedef float argument_type;
+			typedef int argument_type;
 			typedef size_t result_type;
 			using is_transparent = void;
 

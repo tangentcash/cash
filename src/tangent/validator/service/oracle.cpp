@@ -267,6 +267,8 @@ namespace tangent
 				if (!latest_block_height)
 					coreturn expects_rt<transaction_logs>(std::move(latest_block_height.error()));
 				options->set_checkpoint_to_block(*latest_block_height);
+				if (is_dry_run && !*latest_block_height)
+					is_dry_run = false;
 			}
 
 			if (!options->has_next_block_height())
@@ -428,7 +430,7 @@ namespace tangent
 			new_transaction.block_id = 0;
 			{
 				storages::oraclestate state = storages::oraclestate(asset);
-				auto duplicate_transaction = state.get_computed_transaction(new_transaction.transaction_id, external_id);
+				auto duplicate_transaction = state.get_computed_transaction(new_transaction.transaction_id, external_id, algorithm::hashing::hash256i(new_transaction.transaction_id));
 				if (duplicate_transaction)
 					coreturn expects_rt<void>(expectation::met);
 
@@ -447,7 +449,7 @@ namespace tangent
 
 			coreturn result;
 		}
-		expects_promise_rt<prepared_transaction> server_node::prepare_transaction(const algorithm::asset_id& asset, const wallet_link& from_link, const vector<value_transfer>& to, const decimal& max_fee, bool inclusive_fee)
+		expects_promise_rt<prepared_transaction> server_node::prepare_transaction(const algorithm::asset_id& asset, const wallet_link& from_link, const vector<value_transfer>& to, const decimal& max_fee)
 		{
 			if (!algorithm::asset::is_valid(asset))
 				coreturn expects_rt<prepared_transaction>(remote_exception("asset not found"));
@@ -492,7 +494,7 @@ namespace tangent
 			else if (max_fee.is_positive() && fee_value > max_fee)
 				coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee is higher than limit: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
 
-			coreturn coawait(implementation->prepare_transaction(*normalized_from_link, normalized_to, normalized_fee, inclusive_fee));
+			coreturn coawait(implementation->prepare_transaction(*normalized_from_link, normalized_to, normalized_fee));
 		}
 		expects_lr<finalized_transaction> server_node::finalize_transaction(const algorithm::asset_id& asset, prepared_transaction&& prepared)
 		{
@@ -536,6 +538,14 @@ namespace tangent
 			}
 
 			return implementation->finalize_transaction(std::move(prepared));
+		}
+		expects_lr<computed_transaction> server_node::get_computed_transaction(const algorithm::asset_id& asset, const std::string_view& transaction_id, const uint256_t& external_id, const uint256_t& optimized_id)
+		{
+			if (!algorithm::asset::is_valid(asset))
+				return layer_exception("asset not found");
+
+			storages::oraclestate state = storages::oraclestate(asset);
+			return state.get_computed_transaction(transaction_id, external_id, optimized_id);
 		}
 		expects_lr<computed_wallet> server_node::compute_wallet(const algorithm::asset_id& asset, const uint256_t& seed)
 		{

@@ -181,8 +181,8 @@ namespace tangent
 
 				uint64_t end_time = protocol::now().time.now();
 				uint64_t delta_time = end_time - start_time;
-				double delta_target = (double)delta_time - (double)target_time;
-				if (std::abs(delta_target) / target_time < 0.05)
+				int64_t delta_target = std::abs((int64_t)delta_time - (int64_t)target_time);
+				if (algorithm::arithmetic::divide(delta_time, target_time) < 0.05)
 				{
 					if (!target_nonce--)
 						break;
@@ -209,12 +209,12 @@ namespace tangent
 			auto& policy = protocol::now().policy;
 			prev_time = std::max(policy.consensus_proof_time / 4, std::min(policy.consensus_proof_time * 4, prev_time));
 
-			int64_t time_delta = (int64_t)policy.consensus_proof_time - (int64_t)prev_time;
-			if (std::abs((double)time_delta) / (double)policy.consensus_proof_time < 0.05)
+			int64_t time_delta = std::abs((int64_t)policy.consensus_proof_time - (int64_t)prev_time);
+			if (algorithm::arithmetic::divide(time_delta, policy.consensus_proof_time) < 0.05)
 				goto leave_as_is;
 
 			parameters new_alg = prev_alg;
-			decimal adjustment = decimal(time_delta).truncate(protocol::now().message.decimal_precision) / prev_time;
+			decimal adjustment = arithmetic::divide(time_delta, prev_time);
 			if (adjustment > policy.consensus_difficulty_max_increase)
 				adjustment = policy.consensus_difficulty_max_increase;
 			else if (adjustment < policy.consensus_difficulty_max_decrease)
@@ -225,11 +225,11 @@ namespace tangent
 			new_alg.ops = std::max(new_alg.ops + ops_change >= new_alg.ops ? new_alg.ops + ops_change : std::numeric_limits<uint64_t>::max(), default_alg.ops);
 			return new_alg;
 		}
-		wesolowski::parameters wesolowski::scale(const parameters& alg, double multiplier)
+		wesolowski::parameters wesolowski::scale(const parameters& alg, const decimal& multiplier)
 		{
 			parameters new_alg = alg;
-			if (multiplier > 1.0)
-				new_alg.ops = std::max((decimal(new_alg.ops) * decimal(multiplier)).to_uint64(), std::max(new_alg.ops, protocol::now().policy.wesolowski_ops));
+			if (multiplier > 1)
+				new_alg.ops = std::max((decimal(new_alg.ops) * multiplier).to_uint64(), std::max(new_alg.ops, protocol::now().policy.wesolowski_ops));
 			return new_alg;
 		}
 		string wesolowski::evaluate(const parameters& alg, const std::string_view& message)
@@ -362,16 +362,20 @@ namespace tangent
 		{
 			return index - index % adjustment_interval();
 		}
-		double wesolowski::adjustment_scaling(uint64_t index)
+		decimal wesolowski::adjustment_scaling(uint64_t index)
 		{
 			if (index == 0)
-				return 1.0;
+				return 1;
 
 			bool outside_priority = index >= protocol::now().policy.production_max_per_block;
 			if (outside_priority)
 				return protocol::now().policy.consensus_difficulty_bump_outside_priority;
 
-			return mathd::pow(protocol::now().policy.consensus_difficulty_bump_per_priority, index);
+			auto scale = decimal(protocol::now().policy.consensus_difficulty_bump_per_priority);
+			auto result = scale;
+			while (index--)
+				result *= scale;
+			return result;
 		}
 		schema* wesolowski::serialize(const parameters& alg, const std::string_view& signature)
 		{
@@ -1031,12 +1035,44 @@ namespace tangent
 		}
 		uint64_t hashing::erd64(const uint256_t& entropy, uint64_t order)
 		{
-			const double lamda = 9.0;
-			const double exponent = std::exp(-lamda);
-			const double base = (double)(uint64_t)(entropy % std::numeric_limits<uint32_t>::max()) / (double)std::numeric_limits<uint32_t>::max();
-			const double factor = std::min(1.0, std::max(0.0, -std::log(1.0 - (1.0 - exponent) * base) / lamda));
-			const uint64_t index = (uint64_t)(factor * (double)order) % order;
-			return index;
+			if (order < 2)
+				return 0;
+
+			uint32_t upper = static_cast<uint32_t>(order);
+			uint32_t lower = upper - upper / (upper <= 20 ? 5 : 20), result;
+			uint32_t seed = (uint32_t)(entropy % std::numeric_limits<uint32_t>::max());
+			mpf_t weight;
+			if (order <= 5)
+			{
+				lower = 0;
+				goto uniform_distribution;
+			}
+
+			mpf_init_set_ui(weight, (order - 1) / 2);
+			mpf_mul_ui(weight, weight, 8 * order);
+			mpf_mul_ui(weight, weight, (uint32_t)(seed % std::numeric_limits<uint32_t>::max()));
+			mpf_div_ui(weight, weight, std::numeric_limits<uint32_t>::max());
+			mpf_add_ui(weight, weight, 1);
+			mpf_sqrt(weight, weight);
+			mpf_sub_ui(weight, weight, 1);
+			mpf_div_ui(weight, weight, 2 * upper);
+			mpf_neg(weight, weight);
+			mpf_add_ui(weight, weight, 1);
+			mpf_pow_ui(weight, weight, 3);
+			mpf_mul_ui(weight, weight, upper);
+			mpf_floor(weight, weight);
+			result = mpf_get_ui(weight);
+			mpf_clear(weight);
+
+			if (result >= lower)
+			{
+			uniform_distribution:
+				result = lower + (seed % (upper - lower));
+			}
+			else if (result >= upper)
+				result = upper;
+
+			return static_cast<uint64_t>(result);
 		}
 
 		asset_id asset::id_of_handle(const std::string_view& handle)

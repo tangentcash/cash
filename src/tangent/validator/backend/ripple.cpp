@@ -192,7 +192,7 @@ namespace tangent
 				netdata.routing = routing_policy::memo;
 				netdata.tokenization = token_policy::none;
 				netdata.sync_latency = 0;
-				netdata.divisibility = decimal(1000000).truncate(protocol::now().message.decimal_precision);
+				netdata.divisibility = algorithm::arithmetic::fixed(1000000);
 				netdata.supports_bulk_transfer = false;
 				netdata.requires_transaction_expiration = true;
 			}
@@ -440,7 +440,7 @@ namespace tangent
 
 				coreturn expects_rt<void>(remote_exception(std::move(error_message)));
 			}
-			expects_promise_rt<prepared_transaction> ripple::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee, bool inclusive_fee)
+			expects_promise_rt<prepared_transaction> ripple::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee)
 			{
 				auto account_info = coawait(get_account_info(from_link.address));
 				if (!account_info)
@@ -452,22 +452,18 @@ namespace tangent
 
 				auto& output = to.front();
 				auto contract_address = oracle::server_node::get()->get_contract_address(output.asset);
-				decimal total_value = output.value;
 				decimal fee_value = fee.get_max_fee();
 				if (contract_address)
 				{
 					auto account_token_info = coawait(get_account_token_info(output.asset, *contract_address));
-					if (!account_token_info || account_token_info->balance < total_value)
-						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (account_token_info ? account_token_info->balance : decimal(0.0)).to_string().c_str(), total_value.to_string().c_str())));
-					total_value = fee_value;
+					if (!account_token_info || account_token_info->balance < output.value)
+						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (account_token_info ? account_token_info->balance : decimal(0.0)).to_string().c_str(), output.value.to_string().c_str())));
 				}
-				else if (inclusive_fee)
-					total_value -= fee_value;
-				else
-					total_value += fee_value;
+				else if (output.value < fee_value)
+					coreturn expects_rt<prepared_transaction>(remote_exception("fee is more than output value"));
 
-				if (account_info->balance < total_value || total_value.is_negative())
-					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", account_info->balance.to_string().c_str(), total_value.to_string().c_str())));
+				if (account_info->balance < output.value || output.value.is_negative())
+					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", account_info->balance.to_string().c_str(), output.value.to_string().c_str())));
 
 				auto [output_address, output_tag] = address_util::decode_tag_address(output.address);
 				transaction_buffer buffer;
@@ -487,7 +483,7 @@ namespace tangent
 					buffer.amount.issuer = *contract_address;
 				}
 				else
-					buffer.amount.base_value = (uint64_t)to_drop(output.value);
+					buffer.amount.base_value = (uint64_t)(to_drop(output.value) - buffer.fee);
 
 				auto signing_public_key = decode_public_key(from_link.public_key);
 				if (!signing_public_key)
@@ -499,7 +495,7 @@ namespace tangent
 				if (contract_address)
 					result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, message.data(), message.size(), { { output.asset, output.value }, { native_asset, fee_value } });
 				else
-					result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, message.data(), message.size(), { { native_asset, inclusive_fee ? output.value : (output.value + fee_value) } });
+					result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, message.data(), message.size(), { { native_asset, output.value } });
 				result.requires_account_output(output.address, { { output.asset, output.value } });
 				result.requires_abi(format::variable(contract_address.or_else(string())));
 				result.requires_abi(format::variable(buffer.sequence));
@@ -538,7 +534,7 @@ namespace tangent
 					buffer.amount.issuer = contract_address;
 				}
 				else
-					buffer.amount.base_value = (uint64_t)to_drop(output.value);
+					buffer.amount.base_value = (uint64_t)(to_drop(output.value) - buffer.fee);
 
 				auto message = tx_serialize(&buffer, true);
 				if (input.message.size() != message.size() || memcmp(input.message.data(), message.data(), message.size()) != 0)

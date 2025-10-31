@@ -199,7 +199,7 @@ namespace tangent
 				netdata.routing = routing_policy::utxo;
 				netdata.tokenization = token_policy::none;
 				netdata.sync_latency = 6;
-				netdata.divisibility = decimal(100000000).truncate(protocol::now().message.decimal_precision);
+				netdata.divisibility = algorithm::arithmetic::fixed(100000000);
 				netdata.supports_bulk_transfer = true;
 				netdata.requires_transaction_expiration = false;
 			}
@@ -411,8 +411,8 @@ namespace tangent
 				std::sort(tx_sizes.begin(), tx_sizes.end());
 
 				size_t expected_max_tx_size = 1000;
-				size_t median_tx_size = tx_sizes.empty() ? expected_max_tx_size / 10 : std::max(expected_max_tx_size / 10, median_of(tx_sizes));
-				decimal median_fee_rate = fee_rates.empty() ? decimal(1) : std::max(decimal(1), median_of(fee_rates));
+				size_t median_tx_size = tx_sizes.empty() ? expected_max_tx_size : std::max(expected_max_tx_size / 10, median_of(tx_sizes));
+				decimal median_fee_rate = std::max(decimal(1), fee_rates.empty() ? decimal(1) : median_of(fee_rates));
 				median_tx_size = std::min<size_t>(expected_max_tx_size, (size_t)(std::ceil((double)median_tx_size / 100.0) * 100.0));
 				coreturn expects_rt<computed_fee>(computed_fee::fee_per_byte(median_fee_rate / netdata.divisibility, median_tx_size));
 			}
@@ -434,11 +434,11 @@ namespace tangent
 				memory::release(*hex_data);
 				coreturn expects_rt<void>(expectation::met);
 			}
-			expects_promise_rt<prepared_transaction> bitcoin::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee, bool inclusive_fee)
+			expects_promise_rt<prepared_transaction> bitcoin::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee)
 			{
 				auto applied_fee = calculate_transaction_fee_from_fee_estimate(from_link, to, fee);
-				decimal fee_value = applied_fee ? applied_fee->get_max_fee() : fee.get_max_fee();
-				decimal fee_value_per_output = inclusive_fee && !to.empty() ? fee_value / decimal(to.size()).truncate(protocol::now().message.decimal_precision) : decimal::zero();
+				decimal fee_value = std::max(applied_fee ? applied_fee->get_max_fee() : fee.get_max_fee(), get_min_relay_fee().get_max_fee());
+				decimal fee_value_per_output = algorithm::arithmetic::divide(fee_value, to.size());
 				decimal total_value = fee_value;
 				for (auto& item : to)
 				{
@@ -1375,6 +1375,10 @@ namespace tangent
 				}
 
 				goto try_public_key;
+			}
+			computed_fee bitcoin::get_min_relay_fee()
+			{
+				return computed_fee::fee_per_byte(decimal(1) / netdata.divisibility, 1000);
 			}
 			const btc_chainparams_* bitcoin::get_chain()
 			{

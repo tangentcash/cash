@@ -66,7 +66,7 @@ namespace tangent
 				netdata.routing = routing_policy::account;
 				netdata.tokenization = token_policy::native;
 				netdata.sync_latency = 30;
-				netdata.divisibility = decimal(1000000000).truncate(protocol::now().message.decimal_precision);
+				netdata.divisibility = algorithm::arithmetic::fixed(1000000000);
 				netdata.supports_bulk_transfer = false;
 				netdata.requires_transaction_expiration = true;
 			}
@@ -262,15 +262,10 @@ namespace tangent
 						if (!value.is_positive())
 							continue;
 
-						uint64_t subdivisions = 1;
-						uint64_t decimals = std::min<uint64_t>(balance->fetch_var("uiTokenAmount.decimals").get_integer(), protocol::now().message.decimal_precision);
-						for (uint64_t i = 0; i < decimals; i++)
-							subdivisions *= 10;
-
 						string mint = balance->get_var("mint").get_blob();
 						string owner = balance->get_var("owner").get_blob();
 						auto& change = prev_token_state[mint][owner];
-						value /= decimal(subdivisions).truncate(protocol::now().message.decimal_precision);
+						value = algorithm::arithmetic::divide(value, algorithm::arithmetic::range(balance->fetch_var("uiTokenAmount.decimals").get_integer()));
 						change = change.is_nan() ? value : (change + value);
 					}
 				}
@@ -284,15 +279,10 @@ namespace tangent
 						if (value.is_nan() || value.is_negative())
 							continue;
 
-						uint64_t subdivisions = 1;
-						uint64_t decimals = std::min<uint64_t>(balance->fetch_var("uiTokenAmount.decimals").get_integer(), protocol::now().message.decimal_precision);
-						for (uint64_t i = 0; i < decimals; i++)
-							subdivisions *= 10;
-
 						string mint = balance->get_var("mint").get_blob();
 						string owner = balance->get_var("owner").get_blob();
 						auto& change = next_token_state[mint][owner];
-						value /= decimal(subdivisions).truncate(protocol::now().message.decimal_precision);
+						value = algorithm::arithmetic::divide(value, algorithm::arithmetic::range(balance->fetch_var("uiTokenAmount.decimals").get_integer()));
 						change = change.is_nan() ? value : (value + change);
 					}
 				}
@@ -379,9 +369,7 @@ namespace tangent
 					if (!balance)
 						coreturn expects_rt<decimal>(std::move(balance.error()));
 
-					decimal value = balance->get_var("value").get_decimal().truncate(protocol::now().message.decimal_precision);
-					value /= netdata.divisibility;
-
+					decimal value = algorithm::arithmetic::divide(balance->get_var("value").get_decimal(), netdata.divisibility);
 					memory::release(*balance);
 					coreturn expects_rt<decimal>(to_value(value));
 				}
@@ -411,7 +399,7 @@ namespace tangent
 				memory::release(*status);
 				coreturn expects_rt<void>(expectation::met);
 			}
-			expects_promise_rt<prepared_transaction> solana::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee, bool inclusive_fee)
+			expects_promise_rt<prepared_transaction> solana::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee)
 			{
 				auto native_balance = coawait(get_balance(from_link.address));
 				if (!native_balance)
@@ -425,29 +413,25 @@ namespace tangent
 				auto contract_address = oracle::server_node::get()->get_contract_address(output.asset);
 				option<token_account> from_token = optional::none;
 				option<token_account> to_token = optional::none;
-				decimal total_value = output.value;
 				decimal fee_value = fee.get_max_fee();
 				if (contract_address)
 				{
 					auto from_token_balance = coawait(get_token_balance(*contract_address, from_link.address));
-					if (!from_token_balance || from_token_balance->balance < total_value)
-						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (from_token_balance ? from_token_balance->balance : decimal(0.0)).to_string().c_str(), total_value.to_string().c_str())));
+					if (!from_token_balance || from_token_balance->balance < output.value)
+						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (from_token_balance ? from_token_balance->balance : decimal(0.0)).to_string().c_str(), output.value.to_string().c_str())));
 
 					auto to_token_balance = coawait(get_token_balance(*contract_address, output.address));
 					if (!to_token_balance)
 						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("account %s does not have associated token account (create token account before sending)", output.address.c_str())));
 
-					total_value = fee_value;
 					from_token = std::move(*from_token_balance);
 					to_token = std::move(*to_token_balance);
 				}
-				else if (inclusive_fee)
-					total_value -= fee_value;
-				else
-					total_value += fee_value;
+				else if (output.value < fee_value)
+					coreturn expects_rt<prepared_transaction>(remote_exception("fee is more than output value"));
 
-				if (*native_balance < total_value || total_value.is_negative())
-					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", native_balance->to_string().c_str(), total_value.to_string().c_str())));
+				if (*native_balance < output.value || output.value.is_negative())
+					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", native_balance->to_string().c_str(), output.value.to_string().c_str())));
 
 				sol_transaction transaction;
 				transaction.token_program_address = from_token ? from_token->program_id : string();
@@ -456,7 +440,7 @@ namespace tangent
 				transaction.from_address = from_link.address;
 				transaction.to_address = output.address;
 				transaction.recent_block_hash = *recent_block_hash;
-				transaction.value = (output.value * (from_token ? from_token->divisibility : netdata.divisibility)).to_uint64();
+				transaction.value = (from_token ? (output.value * from_token->divisibility) : ((output.value - fee_value) * netdata.divisibility)).to_uint64();
 
 				vector<uint8_t> message_buffer = tx_message_serialize(&transaction);
 				if (message_buffer.empty())
@@ -471,7 +455,7 @@ namespace tangent
 				if (contract_address)
 					result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, message_buffer.data(), message_buffer.size(), { { output.asset, output.value }, { native_asset, fee_value } });
 				else
-					result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, message_buffer.data(), message_buffer.size(), { { native_asset, inclusive_fee ? output.value : (output.value + fee_value) } });
+					result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, message_buffer.data(), message_buffer.size(), { { native_asset, output.value } });
 				result.requires_account_output(output.address, { { output.asset, output.value } });
 				result.requires_abi(format::variable(from_token ? from_token->divisibility : netdata.divisibility));
 				result.requires_abi(format::variable(transaction.token_program_address));
@@ -642,14 +626,10 @@ namespace tangent
 					coreturn expects_rt<token_account>(remote_exception("invalid account"));
 				}
 
-				uint64_t subdivisions = 1;
-				uint64_t decimals = std::min<uint64_t>(info->get_var("decimals").get_integer(), protocol::now().message.decimal_precision);
-				for (uint64_t i = 0; i < decimals; i++)
-					subdivisions *= 10;
-
 				string program_id = balance->fetch_var("value.0.account.owner").get_blob();
 				string account = balance->fetch_var("value.0.pubkey").get_blob();
 				decimal value = info->get_var("amount").get_decimal();
+				decimal divisibility = algorithm::arithmetic::range(info->get_var("decimals").get_integer());
 				memory::release(*balance);
 				if (value.is_nan())
 					coreturn expects_rt<token_account>(remote_exception("invalid account"));
@@ -657,7 +637,7 @@ namespace tangent
 				token_account result;
 				result.program_id = std::move(program_id);
 				result.account = std::move(account);
-				result.divisibility = decimal(subdivisions).truncate(protocol::now().message.decimal_precision);
+				result.divisibility = std::move(divisibility);
 				result.balance = value / result.divisibility;
 				coreturn expects_rt<token_account>(std::move(result));
 			}

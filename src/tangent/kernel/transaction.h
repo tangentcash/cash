@@ -18,14 +18,6 @@ namespace tangent
 			multiform
 		};
 
-		enum class transaction_level
-		{
-			functional,
-			delegation,
-			consensus,
-			attestation,
-		};
-
 		struct transaction : messages::authentic
 		{
 			algorithm::asset_id asset = 0;
@@ -48,72 +40,20 @@ namespace tangent
 			virtual expects_lr<void> set_optimal_gas(const decimal& price);
 			virtual void set_gas(const decimal& price, const uint256_t& limit);
 			virtual void set_asset(const std::string_view& blockchain, const std::string_view& token = std::string_view(), const std::string_view& contract_address = std::string_view());
-			virtual bool is_payable() const;
-			virtual bool is_consensus() const;
+			virtual bool is_commitment() const;
 			virtual bool is_dispatchable() const;
-			virtual bool is_recoverable() const;
-			virtual transaction_level get_type() const;
 			virtual uptr<schema> as_schema() const override;
 			virtual uint32_t as_type() const override = 0;
 			virtual std::string_view as_typename() const override = 0;
 		};
 
-		struct delegation_transaction : transaction
+		struct commitment : transaction
 		{
-			algorithm::pubkeyhash_t manager;
-
-			virtual expects_lr<void> validate(uint64_t block_number) const override;
+			commitment();
 			virtual expects_lr<void> execute(transaction_context* context) const override;
 			virtual bool store_payload(format::wo_stream* stream) const override;
 			virtual bool load_payload(format::ro_stream& stream) override;
-			virtual void set_manager(const algorithm::pubkeyhash_t& new_manager);
-			virtual bool is_delegation() const;
-			virtual uptr<schema> as_schema() const override;
-			transaction_level get_type() const override;
-		};
-
-		struct consensus_transaction : transaction
-		{
-			virtual expects_lr<void> execute(transaction_context* context) const override;
-			virtual bool store_payload(format::wo_stream* stream) const override;
-			virtual bool load_payload(format::ro_stream& stream) override;
-			transaction_level get_type() const override;
-		};
-
-		struct attestation_transaction : transaction
-		{
-			struct evaluation_branch
-			{
-				ordered_set<algorithm::hashsig_t> signatures;
-				format::wo_stream message;
-			};
-
-			ordered_map<uint256_t, evaluation_branch> output_hashes;
-			uint256_t input_hash = 0;
-
-			virtual expects_lr<void> validate(uint64_t block_number) const override;
-			virtual expects_lr<void> execute(transaction_context* context) const override;
-			virtual bool merge(const transaction_context* context, const attestation_transaction& other);
-			virtual bool store_payload(format::wo_stream* stream) const override;
-			virtual bool load_payload(format::ro_stream& stream) override;
-			virtual bool sign(const algorithm::seckey_t& secret_key) override;
-			virtual bool sign(const algorithm::seckey_t& secret_key, uint64_t new_nonce) override;
-			virtual expects_lr<void> sign(const algorithm::seckey_t& secret_key, uint64_t new_nonce, const decimal& price) override;
-			virtual bool verify(const algorithm::pubkey_t& public_key) const override;
-			virtual bool verify(const algorithm::pubkey_t& public_key, const uint256_t& output_hash, size_t index) const;
-			virtual bool recover(algorithm::pubkey_t& public_key) const override;
-			virtual bool recover(algorithm::pubkey_t& public_key, const uint256_t& output_hash, size_t index) const;
-			virtual bool recover_hash(algorithm::pubkeyhash_t& public_key_hash) const override;
-			virtual bool recover_hash(algorithm::pubkeyhash_t& public_key_hash, const uint256_t& output_hash, size_t index) const;
-			virtual expects_lr<void> set_optimal_gas(const decimal& price) override;
-			virtual void set_statement(const uint256_t& new_input_hash, const format::wo_stream& output_message);
-			virtual void set_best_branch(const uint256_t& output_hash);
-			virtual const evaluation_branch* get_best_branch(const transaction_context* context, ordered_map<algorithm::asset_id, size_t>* aggregators) const;
-			virtual uint256_t get_branch_image(const uint256_t& output_hash) const;
-			virtual uint256_t as_group_hash() const;
-			virtual uptr<schema> as_schema() const override;
-			virtual format::wo_stream as_signable() const override;
-			transaction_level get_type() const override;
+			virtual bool is_commitment() const override;
 		};
 
 		struct receipt final : messages::uniform
@@ -123,9 +63,7 @@ namespace tangent
 			uint256_t transaction_hash = 0;
 			uint256_t absolute_gas_use = 0;
 			uint256_t relative_gas_use = 0;
-			uint256_t relative_gas_paid = 0;
-			uint64_t generation_time = 0;
-			uint64_t finalization_time = 0;
+			uint64_t block_time = 0;
 			uint64_t block_number = 0;
 			bool successful = false;
 

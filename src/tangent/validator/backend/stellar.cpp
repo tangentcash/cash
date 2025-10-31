@@ -272,7 +272,7 @@ namespace tangent
 				netdata.routing = routing_policy::memo;
 				netdata.tokenization = token_policy::native;
 				netdata.sync_latency = 0;
-				netdata.divisibility = decimal(10000000).truncate(protocol::now().message.decimal_precision);
+				netdata.divisibility = algorithm::arithmetic::fixed(10000000);
 				netdata.supports_bulk_transfer = true;
 				netdata.requires_transaction_expiration = false;
 			}
@@ -513,7 +513,7 @@ namespace tangent
 				memory::release(*hex_data);
 				coreturn expects_rt<void>(expectation::met);
 			}
-			expects_promise_rt<prepared_transaction> stellar::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee, bool inclusive_fee)
+			expects_promise_rt<prepared_transaction> stellar::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee)
 			{
 				auto account_info = coawait(get_account_info(from_link.address));
 				if (!account_info)
@@ -540,6 +540,7 @@ namespace tangent
 				if (memo.size() > 28 || (!memo.empty() && !memo_id))
 					coreturn expects_rt<prepared_transaction>(remote_exception("input memo invalid"));
 
+				size_t paid_outputs_size = 0;
 				unordered_set<string> new_accounts;
 				unordered_map<algorithm::asset_id, decimal> inputs;
 				vector<StellarCreateAccountOp> accounts;
@@ -561,6 +562,7 @@ namespace tangent
 					if (!*has_account)
 					{
 						StellarCreateAccountOp account = tx_create_account_prepared(item.address, from_link.address, (uint64_t)to_stroop(item.value), !!contract_address);
+						paid_outputs_size += account.has_starting_balance ? 1 : 0;
 						accounts.push_back(account);
 						new_accounts.insert(item.address);
 						if (account.has_starting_balance)
@@ -580,55 +582,39 @@ namespace tangent
 						payments.push_back(tx_create_payment_prepared(item.address, from_link.address, tx_create_token_asset_prepared(token->second.info.code, token->second.info.issuer, token_type), (uint64_t)to_stroop(item.value)));
 					}
 					else
+					{
 						payments.push_back(tx_create_payment_prepared(item.address, from_link.address, tx_create_native_asset_prepared(), (uint64_t)to_stroop(item.value)));
+						++paid_outputs_size;
+					}
 				}
 
 				auto passphrase = get_network_passphrase();
 				StellarSignTx transaction = tx_create_transaction(from_link.address, passphrase, account_info->sequence + 1, memo_id.or_else(0), !memo.empty(), accounts.size(), payments.size(), get_base_stroop_fee());
-				if (inclusive_fee)
+				decimal fee_value_per_output = paid_outputs_size > 0 ? algorithm::arithmetic::divide(from_stroop(transaction.fee), paid_outputs_size) : decimal::zero();
+				for (auto& account : accounts)
 				{
-					size_t outputs_size = 0;
-					for (auto& account : accounts)
-						outputs_size += account.starting_balance > 0 ? 1 : 0;
-					for (auto& payment : payments)
-						outputs_size += payment.asset.type == (uint32_t)stellar::asset_type::ASSET_TYPE_NATIVE ? 1 : 0;
+					if (!paid_outputs_size || !account.has_starting_balance)
+						continue;
 
-					decimal fee_value_per_output = outputs_size > 0 ? from_stroop(transaction.fee) / decimal(outputs_size).truncate(protocol::now().message.decimal_precision) : decimal::zero();
-					for (auto& account : accounts)
-					{
-						if (account.starting_balance <= 0)
-							continue;
+					auto new_value = from_stroop((uint64_t)account.starting_balance) - fee_value_per_output;
+					if (new_value.is_negative())
+						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s", new_value.to_string().c_str())));
 
-						auto new_value = from_stroop((uint64_t)account.starting_balance) - fee_value_per_output;
-						if (new_value.is_negative())
-							coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s", new_value.to_string().c_str())));
-
-						account.starting_balance = (uint64_t)to_stroop(new_value);
-					}
-					for (auto& payment : payments)
-					{
-						if (payment.asset.type != (uint32_t)stellar::asset_type::ASSET_TYPE_NATIVE)
-							continue;
-
-						auto new_value = from_stroop((uint64_t)payment.amount) - fee_value_per_output;
-						if (new_value.is_negative())
-							coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s", new_value.to_string().c_str())));
-
-						payment.amount = (uint64_t)to_stroop(new_value);
-					}
-
-					if (outputs_size > 0)
-						transaction = tx_create_transaction(from_link.address, passphrase, account_info->sequence + 1, memo_id.or_else(0), !memo.empty(), accounts.size(), payments.size(), get_base_stroop_fee());
-					else if (inputs.find(native_asset) != inputs.end())
-						inputs[native_asset] += from_stroop(transaction.fee);
-					else
-						inputs[native_asset] = from_stroop(transaction.fee);
+					account.starting_balance = (uint64_t)to_stroop(new_value);
 				}
-				else if (inputs.find(native_asset) != inputs.end())
-					inputs[native_asset] += from_stroop(transaction.fee);
-				else
-					inputs[native_asset] = from_stroop(transaction.fee);
+				for (auto& payment : payments)
+				{
+					if (!paid_outputs_size || payment.asset.type != (uint32_t)stellar::asset_type::ASSET_TYPE_NATIVE)
+						continue;
 
+					auto new_value = from_stroop((uint64_t)payment.amount) - fee_value_per_output;
+					if (new_value.is_negative())
+						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s", new_value.to_string().c_str())));
+
+					payment.amount = (uint64_t)to_stroop(new_value);
+				}
+
+				transaction = tx_create_transaction(from_link.address, passphrase, account_info->sequence + 1, memo_id.or_else(0), !memo.empty(), accounts.size(), payments.size(), get_base_stroop_fee());
 				for (auto& [token_asset, send_value] : inputs)
 				{
 					auto total_value = token_asset == native_asset ? inputs[native_asset] : inputs[token_asset];

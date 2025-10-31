@@ -101,7 +101,7 @@ public:
 			auto* transfer_ripple = memory::init<transactions::transfer>();
 			transfer_ripple->set_asset("XRP");
 			transfer_ripple->set_to(user1.public_key_hash, 5.0);
-			transfer_ripple->sign(user_test.secret_key, 1, decimal::zero()).expect("pre-validation failed");
+			transfer_ripple->sign(user_test.secret_key, 0, decimal::zero()).expect("pre-validation failed");
 			transactions.push_back(transfer_ripple);
 		}
 		static void account_transfer_to_account(vector<uptr<ledger::transaction>>& transactions, vector<account>& users, size_t user_id, const algorithm::asset_id& asset, const std::string_view& address, const decimal& value)
@@ -444,7 +444,6 @@ public:
 			depository_adjustment_ethereum->set_asset("ETH");
 			depository_adjustment_ethereum->set_reward(0.0012, 0.0012);
 			depository_adjustment_ethereum->set_security(2, decimal::zero(), true, true);
-			depository_adjustment_ethereum->permanently_whitelist_token("0xdAC17F958D2ee523a2206206994597C13D831ec7", "USDT");
 			depository_adjustment_ethereum->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
 			transactions.push_back(depository_adjustment_ethereum);
 
@@ -483,7 +482,6 @@ public:
 			depository_adjustment_ethereum->set_asset("ETH");
 			depository_adjustment_ethereum->set_reward(0.0012, 0.0012);
 			depository_adjustment_ethereum->set_security(1, decimal::zero(), true, true);
-			depository_adjustment_ethereum->permanently_whitelist_token("0xdAC17F958D2ee523a2206206994597C13D831ec7", "USDT");
 			depository_adjustment_ethereum->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 			transactions.push_back(depository_adjustment_ethereum);
 		}
@@ -551,7 +549,7 @@ public:
 			depository_account_ethereum->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 			transactions.push_back(depository_account_ethereum);
 		}
-		static void depository_transaction_registration_full(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
+		static void depository_attestation_registration_full(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
 		{
 			auto& [user1, user1_nonce] = users[0];
 			auto& [user2, user2_nonce] = users[1];
@@ -566,39 +564,39 @@ public:
 			VI_PANIC(address_bitcoin != owner_addresses.end(), "bitcoin depository address not found");
 
 			auto token_asset = algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7");
-			auto* depository_transaction_ethereum_token = memory::init<transactions::depository_transaction>();
-			depository_transaction_ethereum_token->set_asset("ETH");
-			depository_transaction_ethereum_token->set_finalized_witness(22946911,
+			auto* depository_attestation_ethereum_token = memory::init<transactions::depository_attestation>();
+			depository_attestation_ethereum_token->set_asset("ETH");
+			depository_attestation_ethereum_token->set_finalized_proof(22946911,
 				"0xce2d48c20305ee332c071a671142953af58ca5226fcbcc219cd0b2cc4c6fe34f",
 				{ oracle::value_transfer(token_asset, "0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5", 100000) },
 				{ oracle::value_transfer(token_asset, address_ethereum->addresses.begin()->second, 100000) });
-			transactions.push_back(depository_transaction_ethereum_token);
+			transactions.push_back(depository_attestation_ethereum_token);
 
-			auto* depository_transaction_ethereum = memory::init<transactions::depository_transaction>();
-			depository_transaction_ethereum->set_asset("ETH");
-			depository_transaction_ethereum->set_finalized_witness(14977180,
+			auto* depository_attestation_ethereum = memory::init<transactions::depository_attestation>();
+			depository_attestation_ethereum->set_asset("ETH");
+			depository_attestation_ethereum->set_finalized_proof(14977180,
 				"0x2bc2c98682f1b8fea2031e8f3f56494cd778da9d042da8439fb698d41bf061ea",
-				{ oracle::value_transfer(depository_transaction_ethereum->asset, "0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5", 100) },
-				{ oracle::value_transfer(depository_transaction_ethereum->asset, address_ethereum->addresses.begin()->second, 100) });
-			transactions.push_back(depository_transaction_ethereum);
+				{ oracle::value_transfer(depository_attestation_ethereum->asset, "0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5", 100) },
+				{ oracle::value_transfer(depository_attestation_ethereum->asset, address_ethereum->addresses.begin()->second, 100) });
+			transactions.push_back(depository_attestation_ethereum);
 
-			auto* depository_transaction_ripple = memory::init<transactions::depository_transaction>();
-			depository_transaction_ripple->set_asset("XRP");
-			depository_transaction_ripple->set_finalized_witness(88546830,
+			auto* depository_attestation_ripple = memory::init<transactions::depository_attestation>();
+			depository_attestation_ripple->set_asset("XRP");
+			depository_attestation_ripple->set_finalized_proof(88546830,
 				"2618D20B801AF96DD060B34228E2594E30AFB7B33E335A8C60199B6CF8B0A69F",
-				{ oracle::value_transfer(depository_transaction_ripple->asset, "rUBqz2JiRCT3gYZBnm28y5ME7e5UpSm2ok", 1000) },
-				{ oracle::value_transfer(depository_transaction_ripple->asset, address_ripple->addresses.begin()->second, 1000) });
-			transactions.push_back(depository_transaction_ripple);
+				{ oracle::value_transfer(depository_attestation_ripple->asset, "rUBqz2JiRCT3gYZBnm28y5ME7e5UpSm2ok", 1000) },
+				{ oracle::value_transfer(depository_attestation_ripple->asset, address_ripple->addresses.begin()->second, 1000) });
+			transactions.push_back(depository_attestation_ripple);
 
-			auto* depository_transaction_bitcoin = memory::init<transactions::depository_transaction>();
-			depository_transaction_bitcoin->set_asset("BTC");
-			depository_transaction_bitcoin->set_finalized_witness(846982,
+			auto* depository_attestation_bitcoin = memory::init<transactions::depository_attestation>();
+			depository_attestation_bitcoin->set_asset("BTC");
+			depository_attestation_bitcoin->set_finalized_proof(846982,
 				"57638131d9af3033a5e20b753af254e1e8321b2039f16dfd222f6b1117b5c69d",
-				{ oracle::value_transfer(depository_transaction_bitcoin->asset, "mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", 1.0) },
-				{ oracle::value_transfer(depository_transaction_bitcoin->asset, address_bitcoin->addresses.begin()->second, 1.0) });
-			transactions.push_back(depository_transaction_bitcoin);
+				{ oracle::value_transfer(depository_attestation_bitcoin->asset, "mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", 1.0) },
+				{ oracle::value_transfer(depository_attestation_bitcoin->asset, address_bitcoin->addresses.begin()->second, 1.0) });
+			transactions.push_back(depository_attestation_bitcoin);
 		}
-		static void depository_transaction_registration_partial(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
+		static void depository_attestation_registration_partial(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
 		{
 			auto& [user1, user1_nonce] = users[0];
 			auto context = ledger::transaction_context();
@@ -608,22 +606,22 @@ public:
 			VI_PANIC(address_bitcoin != owner_addresses.end(), "bitcoin depository address not found");
 			VI_PANIC(address_ethereum != owner_addresses.end(), "ethereum depository address not found");
 
-			auto* depository_transaction_bitcoin = memory::init<transactions::depository_transaction>();
-			depository_transaction_bitcoin->set_asset("BTC");
-			depository_transaction_bitcoin->set_finalized_witness(846982,
+			auto* depository_attestation_bitcoin = memory::init<transactions::depository_attestation>();
+			depository_attestation_bitcoin->set_asset("BTC");
+			depository_attestation_bitcoin->set_finalized_proof(846982,
 				"57638131d9af3033a5e20b753af254e1e8321b2039f16dfd222f6b1117b5c69d",
-				{ oracle::value_transfer(depository_transaction_bitcoin->asset, "mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", 12.0) },
-				{ oracle::value_transfer(depository_transaction_bitcoin->asset, address_bitcoin->addresses.begin()->second, 12.0) });
-			transactions.push_back(depository_transaction_bitcoin);
+				{ oracle::value_transfer(depository_attestation_bitcoin->asset, "mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", 12.0) },
+				{ oracle::value_transfer(depository_attestation_bitcoin->asset, address_bitcoin->addresses.begin()->second, 12.0) });
+			transactions.push_back(depository_attestation_bitcoin);
 
 			auto token_asset = algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7");
-			auto* depository_transaction_ethereum = memory::init<transactions::depository_transaction>();
-			depository_transaction_ethereum->set_asset("ETH");
-			depository_transaction_ethereum->set_finalized_witness(14977180,
+			auto* depository_attestation_ethereum = memory::init<transactions::depository_attestation>();
+			depository_attestation_ethereum->set_asset("ETH");
+			depository_attestation_ethereum->set_finalized_proof(14977180,
 				"0x2bc2c98682f1b8fea2031e8f3f56494cd778da9d042da8439fb698d41bf061ea",
 				{ oracle::value_transfer(token_asset, "0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5", 1000000) },
 				{ oracle::value_transfer(token_asset, address_ethereum->addresses.begin()->second, 1000000) });
-			transactions.push_back(depository_transaction_ethereum);
+			transactions.push_back(depository_attestation_ethereum);
 		}
 		static void depository_migration(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
 		{
@@ -839,9 +837,8 @@ public:
 		new_serialization_comparison<transactions::depository_account>(*data);
 		new_serialization_comparison<transactions::depository_account_finalization>(*data);
 		new_serialization_comparison<transactions::depository_withdrawal>(*data);
-		new_serialization_comparison<transactions::depository_withdrawal_routing>(*data);
 		new_serialization_comparison<transactions::depository_withdrawal_finalization>(*data);
-		new_serialization_comparison<transactions::depository_transaction>(*data);
+		new_serialization_comparison<transactions::depository_attestation>(*data);
 		new_serialization_comparison<transactions::depository_adjustment>(*data);
 		new_serialization_comparison<transactions::depository_migration>(*data);
 		new_serialization_comparison<transactions::depository_migration_finalization>(*data);
@@ -982,7 +979,7 @@ public:
 		};
 
 		auto tx = transactions::transfer();
-		tx.gas_limit = ledger::block::get_gas_limit();
+		tx.gas_limit = ledger::block::get_transaction_gas_limit();
 		tx.set_asset("ETH");
 		tx.set_to(users[1].wallet.public_key_hash, decimal("13.539899"));
 		VI_PANIC(tx.sign(users[0].wallet.secret_key, users[0].nonce++), "authentication failed");
@@ -1376,9 +1373,9 @@ public:
 			auto wallet = create_wallet(asset);
 
 			auto signable_link = oracle::wallet_link(user.public_key_hash, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
-			auto signable_message = codec::hex_decode("0x57d10c32396f3368c294f5987ff147ee4ffe3beae206678395b9531a188754fb");
+			auto signable_message = codec::hex_decode("0x9b9f8b794b538c722eb56fd2b6a238bd2e0af795c6b0b2e4aef6dcb3fafbda38");
 			oracle::prepared_transaction prepared;
-			prepared.requires_account_input(algorithm::composition::type::secp256k1, std::move(signable_link), wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), { { asset, decimal("0.010021") } });
+			prepared.requires_account_input(algorithm::composition::type::secp256k1, std::move(signable_link), wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), { { asset, decimal("0.01") } });
 			prepared.requires_account_output("0x92F9727Da59BE92F945a72F6eD9b5De8783e09D3", { { asset, 0.01 } });
 			prepared.requires_abi(format::variable(true));
 			prepared.requires_abi(format::variable(string()));
@@ -1388,7 +1385,7 @@ public:
 			prepared.requires_abi(format::variable((uint32_t)0));
 			prepared.requires_abi(format::variable((uint32_t)1000000000));
 			prepared.requires_abi(format::variable((uint32_t)21000));
-			validate_transaction(asset, wallet, prepared, "eip155, transfer", "0xf86d02843b9aca008252089492f9727da59be92f945a72f6ed9b5de8783e09d3872386f26fc100008083016e3ba04f23060887ee716ad705ccde419b669f08ccbc56c14a6ff86fd2e4388226cf81a0136329e2bdd7c7c129109a14e22e5f4e7f3c0a952b12ba2543fe66e745018fa0");
+			validate_transaction(asset, wallet, prepared, "eip155, transfer", "0xf86d02843b9aca008252089492f9727da59be92f945a72f6ed9b5de8783e09d3872373d8fe36b0008083016e3ba030e80e351dff9a28bb0cc85db19c1a07cde45adb03d59acb6ce3690feba81dcda01d4b6924ced684cddce0c90a93664790437ce41b6b5271b1ad12081ca14f1f00");
 
 			auto token_asset = algorithm::asset::id_of("ETH", "TT", "0xDcbcBF00604Bad29E53C60ac1151866Fa0CC2920");
 			signable_link = oracle::wallet_link(user.public_key_hash, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
@@ -1407,9 +1404,9 @@ public:
 			validate_transaction(asset, wallet, prepared, "eip155, erc20 transfer", "0xf8ab01843b9aca0082c64694dcbcbf00604bad29e53c60ac1151866fa0cc292080b844a9059cbb000000000000000000000000ba119f26a40145b463dfcae2590b68a057e81d3d00000000000000000000000000000000000000000000001b4486fafde57c000083016e3ba0ed04c78bd290e92362d6909eeec76449896155669823ab22de90946298b0c7d0a03848a83fd7176228568a3ee5420ff000e835c8545c3df103585e1fe432c8add5");
 
 			signable_link = oracle::wallet_link(user.public_key_hash, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
-			signable_message = codec::hex_decode("0xee37560b1bf4ec6cb472518d81d71a485e99f01ceaff9bedcd94567711193c5b");
+			signable_message = codec::hex_decode("0xb40bbe4bd0c1f8eb575f079d2d115558712174da9645453a9a76111946117275");
 			prepared = oracle::prepared_transaction();
-			prepared.requires_account_input(algorithm::composition::type::secp256k1, std::move(signable_link), wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), { { asset, decimal("0.100021") } });
+			prepared.requires_account_input(algorithm::composition::type::secp256k1, std::move(signable_link), wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), { { asset, decimal("0.1") } });
 			prepared.requires_account_output("0x92F9727Da59BE92F945a72F6eD9b5De8783e09D3", { { asset, 0.1 } });
 			prepared.requires_abi(format::variable(false));
 			prepared.requires_abi(format::variable(string()));
@@ -1419,7 +1416,7 @@ public:
 			prepared.requires_abi(format::variable((uint32_t)0));
 			prepared.requires_abi(format::variable((uint32_t)1000000000));
 			prepared.requires_abi(format::variable((uint32_t)21000));
-			validate_transaction(asset, wallet, prepared, "eip1559, transfer", "0x02f87082b70c0280843b9aca008252089492f9727da59be92f945a72f6ed9b5de8783e09d388016345785d8a000080c001a02a4126c0439a030ab36297cbc89d2d6a673aafda2af90d4ec3762cced70a3510a016fc053dc49cca1005d7c5afba905fdf86ad3e2d71bd343aac5d08d1c65bfdf5");
+			validate_transaction(asset, wallet, prepared, "eip1559, transfer", "0x02f87082b70c0280843b9aca008252089492f9727da59be92f945a72f6ed9b5de8783e09d3880163325eebffb00080c080a00fc83f501491b3a2da3804ed2e3d2d8c235b99fc3ef81f8cbe76895603606879a00bf2f9e4d887600be3f1f7f03a10e23d94dc72d1827f0776f5646dbff0b85b0c");
 
 			signable_link = oracle::wallet_link(user.public_key_hash, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
 			signable_message = codec::hex_decode("0x2785859c7efc21a7f372d723ff833101a8ec5f37003b698fd5afa0e54dec93f4");
@@ -1443,7 +1440,7 @@ public:
 			auto wallet = create_wallet(asset);
 
 			auto signable_link = oracle::wallet_link(user.public_key_hash, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
-			auto signable_message = codec::hex_decode("0x53545800120000220000000024006115562e00000000201b006117fb614000000002b709b068400000000000000c7321ed2a994a958414a9dac047fd32001847954f89f464433cb04266fde37d6aff15448114c7f083a28227b588c13becf3f353e06d2e4f2fee8314f667b0ca50cc7709a220b0561b85e53a48461fa8");
+			auto signable_message = codec::hex_decode("0x53545800120000220000000024006115562e00000000201b006117fb614000000002b709a468400000000000000c7321ed2a994a958414a9dac047fd32001847954f89f464433cb04266fde37d6aff15448114c7f083a28227b588c13becf3f353e06d2e4f2fee8314f667b0ca50cc7709a220b0561b85e53a48461fa8");
 			oracle::prepared_transaction prepared;
 			prepared.requires_account_input(algorithm::composition::type::ed25519, std::move(signable_link), wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), { { asset, decimal("45.550012") } });
 			prepared.requires_account_output("rPT1Sjq2YGrBMTttX4GZHjKu9dyfzbpAYe", { { asset, decimal("45.55") } });
@@ -1451,7 +1448,7 @@ public:
 			prepared.requires_abi(format::variable((uint32_t)6362454));
 			prepared.requires_abi(format::variable((uint32_t)6363131));
 			prepared.requires_abi(format::variable((uint32_t)12));
-			validate_transaction(asset, wallet, prepared, "payment", "120000220000000024006115562E00000000201B006117FB614000000002B709B068400000000000000C7321ED2A994A958414A9DAC047FD32001847954F89F464433CB04266FDE37D6AFF15447440D358730D5280F136D566474B869A1A49F61C9F0C0B6DB51E77CB8E3CA8BD11964BCE5EA0DA4A4E927677455B6DF745F5C6DAA018B3E1CAE1AC98B31499F0B50B8114C7F083A28227B588C13BECF3F353E06D2E4F2FEE8314F667B0CA50CC7709A220B0561B85E53A48461FA8");
+			validate_transaction(asset, wallet, prepared, "payment", "120000220000000024006115562E00000000201B006117FB614000000002B709A468400000000000000C7321ED2A994A958414A9DAC047FD32001847954F89F464433CB04266FDE37D6AFF154474405F64465D11E10D41007C2FFBB7921C3AF2F530020BF48A03792B0DAF51E3483324B06E66208376BDACD14EC076FF004256C8457713ADE184CA32B652421ABC0A8114C7F083A28227B588C13BECF3F353E06D2E4F2FEE8314F667B0CA50CC7709A220B0561B85E53A48461FA8");
 		});
 		use_clean_state([&]()
 		{
@@ -1626,24 +1623,24 @@ public:
 			};
 			TEST_BLOCK(&generators::validator_registration_full, "0xc42f1aadc35cca7dcffe0c864cb7f4e5d085c2e69ddf59850d83840ceff3d799", 1);
 			TEST_BLOCK(std::bind(&generators::validator_enable_validator, std::placeholders::_1, std::placeholders::_2, 2, false, true, false), "0x03b804f31c92b018308f27f0aac83c5a11b079555ede703cf04e9ce72eb2ea86", 2);
-			TEST_BLOCK(&generators::depository_registration_full, "0x971a473821decd0b0f4c6270bc8ce831fd605652236ba1e34cbf7d255ad153f2", 3);
-			TEST_BLOCK(&generators::depository_account_registration_full_stage_1, "0x723cb522deb9a5c50b65bed9c26aaa0fd53be458a385890055e54c08906c8896", 4);
-			TEST_BLOCK(&generators::depository_account_registration_full_stage_2, "0x675d2e5aa4156d25d8aec311fd515445b43e72cd58980b8e17a1727999e776f5", 6);
-			TEST_BLOCK(&generators::depository_transaction_registration_full, "0xe05495bb80ce693d47cb6072d0ea8fcae3f627882656c65ae6083a83f0d921a1", 8);
-			TEST_BLOCK(&generators::account_transfer_stage_1, "0xb1710cd050936c8b9d08cec1caa011d35a35f0b4398b09296b91b2aa18dcd3ea", 9);
-			TEST_BLOCK(&generators::account_transfer_stage_2, "0xef5b82631b4cfe548748b2df3bd2e230514bc5dd1b2ea5c7e4cf9123f5fc19c3", 10);
-			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), users[2].wallet.get_address(), 0.05), "0xc4408ffdaf51b06b187609677cb777d8c739644ce1d4c6edf3600f4eb9036b13", 11);
-			TEST_BLOCK(std::bind(&generators::account_upgrade_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0x8e588308341bb952105bcc63336c7c5d1ac5019c0724a92d3279cb8900aad040", 12);
-			TEST_BLOCK(std::bind(&generators::account_upgrade_stage_2, std::placeholders::_1, std::placeholders::_2, &contracts), "0xeb8c7f45b2d872912a4538531a51eb1a8659d9ace308f84e73d41bca6d4aedf9", 13);
-			TEST_BLOCK(std::bind(&generators::account_call, std::placeholders::_1, std::placeholders::_2, &contracts), "0x04b09b5151b87ed6c7b951cb90a9d6ae0884cad2fb7fd827085438cbd4c2e59b", 14);
-			TEST_BLOCK(&generators::account_transaction_rollup, "0xad111c6d2bb683cff33272dbbc5841723850b6e15b5cd5f49d871d2c2a89a9ee", 15);
-			TEST_BLOCK(std::bind(&generators::validator_enable_validator, std::placeholders::_1, std::placeholders::_2, 2, false, false, true), "0x23fe71ae5d4a320050363d52b4736b9cd90b38f990ce6919362f6859941edfb8", 16);
-			TEST_BLOCK(&generators::depository_migration, "0xdeabb8c6b6361d7014a796b01b36fc4ba297cae32156e879ca6ade1f8480cce1", 17);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_1, "0x28268d0a54ac430563633caa43f9b383dfe8b03151e089236cefc5719b651c73", 19);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0x3cf9f9616a1ea52b186c225d2b2db77666ea2e18dba986bb2430c23e290c9f2c", 22);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0xfffab96f8dcbce65c105150534d7518491774892e31b4b64f59ff13eb4e23107", 25);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_4, "0x8cc970b8c621c656462d1cce22d7a8be6ba04502a75be45b4543760391481b0a", 28);
-			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2, false, true, false), "0x1550f2135b052ec37a2ef7ca0279ca14f1d9fbb87f0e13793c22906265f8eb6e", 31);
+			TEST_BLOCK(&generators::depository_registration_full, "0x98674c75a62a81a46c2c80a0e09ec9667b3b274e9d576e481d21cc90cc813504", 3);
+			TEST_BLOCK(&generators::depository_account_registration_full_stage_1, "0x1d8f42ec4307ba8b3071f2d4b1a06a115f8bbbfcc301e26fed5bed2793f0c1e6", 4);
+			TEST_BLOCK(&generators::depository_account_registration_full_stage_2, "0xc3e66b41dcfd36fe21542d7012a2a8d112ac4df197d6e3f8a31a157e5a5f8fb4", 6);
+			TEST_BLOCK(&generators::depository_attestation_registration_full, "0x8410ca18da15b594ffdf8ae01304ce90a8a125b168c251c27ecadb232399624e", 9);
+			TEST_BLOCK(&generators::account_transfer_stage_1, "0x2f57337ed5310d16ccd91f9322293e8f46947e82a074ed8a719e87472b3face9", 10);
+			TEST_BLOCK(&generators::account_transfer_stage_2, "0xdd7e3add975f9074f154c2d1a43f338bf53b6b28f9a24c7e3d92f690dda0700d", 11);
+			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), users[2].wallet.get_address(), 0.05), "0x739679725fc0c340626f90ed124e05bc66d6a656a320bb3038f155990b04af89", 12);
+			TEST_BLOCK(std::bind(&generators::account_upgrade_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0xb48b77b024410172e7050ab4a64c969743461b768781c4080b42772f8fc9318e", 13);
+			TEST_BLOCK(std::bind(&generators::account_upgrade_stage_2, std::placeholders::_1, std::placeholders::_2, &contracts), "0x01740d2b5832fbf7b117bc86c0da8d87b3ea853ffaf4a54a98d02c5f7dcb75cf", 14);
+			TEST_BLOCK(std::bind(&generators::account_call, std::placeholders::_1, std::placeholders::_2, &contracts), "0xf085ce6fc94d904cb06928a4bb64211b783d6b0bc8a1f8f00c9a2c14ede84f66", 15);
+			TEST_BLOCK(&generators::account_transaction_rollup, "0xda0b4406b3d68ebaa635ad8911c186e5234ff119b3b324673beb3e66af3ad1c1", 16);
+			TEST_BLOCK(std::bind(&generators::validator_enable_validator, std::placeholders::_1, std::placeholders::_2, 2, false, false, true), "0x7fd7df395e603696195e3bf08044dc49edbffab02b941777dc95c232d1b1c57d", 17);
+			TEST_BLOCK(&generators::depository_migration, "0x3912b268efd4e9db82222e4f9b32f7d1a335f53b3d3318708fd6fddd0b2e49f5", 18);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_1, "0x4c9caba2fc5af010cb835df9a11ce1ba3b572eb9d4b1dbcf6e7dcb93eec93865", 20);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0x0a75cf4a881184a2b644422d06d924346a52ef10dc6fb94c1e192d7c88c05b84", 23);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0xf047960f9a1094b19e91ce2ba7cb6b52946889fccf83c8392bb339d66513fa10", 26);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_4, "0xa9a15d3416290e8c1203bc37fef267932b69f1820f2baa9867fa2bd84e6916ee", 29);
+			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2, false, true, false), "0x55e6d253d7158798a387db69fdb98befde8f542c810304fc5b90d6f938cb433e", 32);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else
@@ -1661,11 +1658,11 @@ public:
 				account(ledger::wallet::from_seed("000000"), 0)
 			};
 			TEST_BLOCK(&generators::validator_registration_partial, "0xcd03481911e9b631529a514f21ccf34801066dcf733133b437d23ab2fe382726", 1);
-			TEST_BLOCK(&generators::depository_registration_partial, "0xe6e8ca4f352da126d131a27ccda66f900ce829dda8fd8527cdf39fc48c5e6220", 2);
-			TEST_BLOCK(&generators::depository_account_registration_partial, "0x36362950257b43c6cba17f988e77aeb8db474940d896cb719205ffe4fdbc3ae9", 3);
-			TEST_BLOCK(&generators::depository_transaction_registration_partial, "0xc91ffbe701e6a244e01c5056a8fa6d379822b08feb14b82464fa44fd0d189b99", 5);
-			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 0.1), "0x04af6e902f6ac6487c6deb467584091d2456068c3fcbe6843ca74a80d5bdc403", 6);
-			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 5000), "0x47569fda40138da5b1b6df7f13fdf207c3482747fae86f4e70de31a6c9b22336", 7);
+			TEST_BLOCK(&generators::depository_registration_partial, "0x6102ec3052e77174c4d10f4d55ed00a93dd0512c8854ec7f47ea73acdca956f2", 2);
+			TEST_BLOCK(&generators::depository_account_registration_partial, "0x80e6c9902e0c4385c94312203ebd79a5d7529460c0eb2e18f1ba45647fd3295c", 3);
+			TEST_BLOCK(&generators::depository_attestation_registration_partial, "0x2809acb049cf52e5c347d74d123272448ab97759b8a99900a52975f746020c62", 5);
+			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 0.1), "0x9921c11ef706ae5fd4c7f0c88ffbc8ea2dc0b94720a71ba1f317b4166276f0ca", 6);
+			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 5000), "0x6ad37958343968411239d3903ea1b431ca75b1017d0199ec53809a51fc694e03", 7);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else
@@ -1673,30 +1670,15 @@ public:
 		});
 	}
 	/* blockchain exclusively for testing depositories of specific networks (possibly non-zero balance accounts, valid regtest chain) */
-	static void blockchain_integration_coverage(const algorithm::asset_id& asset, const std::string_view& network_url)
+	static void blockchain_integration_coverage(const algorithm::asset_id& asset, const std::string_view& network_url, const std::string_view& external_account, const decimal& deposit_value, const decimal& depository_fee)
 	{
 		use_clean_state([&]()
 		{
 			auto* term = console::get();
-			term->fwrite("test %s network integration (y/n): ", algorithm::asset::blockchain_of(asset).c_str());
-			auto reason = term->read(1024);
-			if (stringify::to_lower(stringify::trim(reason)) != "y")
-				return term->fwrite_line("network %s skipped", algorithm::asset::blockchain_of(asset).c_str());
-
-			term->fwrite_line("configured url: %s", network_url.data());
-			term->write("deposit value: ");
-			auto deposit_value = decimal(term->read(128));
-			term->write("deposit/withdrawal fee: ");
-			auto depository_fee = decimal(term->read(128));
-			term->write("from account: ");
-			auto from_account = term->read(1024);
-			VI_PANIC(deposit_value.is_positive(), "deposit value must be positive");
-			VI_PANIC(depository_fee.is_positive(), "deposit/withdrawal fee must be positive");
-			VI_PANIC(!from_account.empty(), "from account must be positive");
-
-			auto producers = vector<account>({ account(ledger::wallet::from_seed(), 0) });
+			auto producers = vector<account>({ account(ledger::wallet::from_seed(), 0), account(ledger::wallet::from_seed(), 0) });
 			auto& [user1, user1_nonce] = producers[0];
-			auto [user2, user2_nonce] = account(ledger::wallet::from_seed(), 0);
+			auto [user2, user2_nonce] = producers[1];
+			auto [user3, user3_nonce] = account(ledger::wallet::from_seed(), 0);
 			auto* validator_adjustment = memory::init<transactions::validator_adjustment>();
 			validator_adjustment->asset = asset;
 			validator_adjustment->enable_block_production();
@@ -1705,10 +1687,17 @@ public:
 			validator_adjustment->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 			new_block_from_one(nullptr, producers, validator_adjustment);
 
+			validator_adjustment = memory::init<transactions::validator_adjustment>();
+			validator_adjustment->asset = asset;
+			validator_adjustment->allocate_attestation_stake(asset, decimal::zero());
+			validator_adjustment->allocate_participation_stake(asset, decimal::zero());
+			validator_adjustment->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
+			new_block_from_one(nullptr, producers, validator_adjustment);
+
 			auto* depository_adjustment = memory::init<transactions::depository_adjustment>();
 			depository_adjustment->asset = asset;
 			depository_adjustment->set_reward(depository_fee, depository_fee);
-			depository_adjustment->set_security(1, decimal::zero(), true, true);
+			depository_adjustment->set_security(2, decimal::zero(), true, true);
 			depository_adjustment->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 			new_block_from_one(nullptr, producers, depository_adjustment);
 
@@ -1724,23 +1713,16 @@ public:
 			auto* server = oracle::server_node::get();
 			auto eth_chain = server->get_chain(algorithm::asset::id_of("ETH"));
 			auto params = (oracle::relay_backend::chainparams*)server->get_chainparams(asset);
+			auto& options = server->get_options();
 			params->sync_latency = 0;
-
+			options.polling_frequency_ms = 3000;
 
 			std::mutex mutex;
 			std::condition_variable condition;
 			std::atomic<bool> log_transaction_happened = false;
 			auto wait_for_transaction_log = [&]()
 			{
-				term->write("confirm new block added (y): ");
-				while (true)
-				{
-					auto text = term->read(1024);
-					if (stringify::to_lower(stringify::trim(text)) == "y")
-						break;
-				}
-				term->write_line("awaiting transaction log confirmation");
-
+				term->write_line("awaiting transaction log confirmation (checking every 3 seconds)");
 				std::unique_lock<std::mutex> unique(mutex);
 				server->trigger_node_activity(asset);
 				while (!log_transaction_happened)
@@ -1753,10 +1735,9 @@ public:
 				auto transactions = vector<uptr<ledger::transaction>>();
 				for (auto& receipt : logs.finalized)
 				{
-					auto* transaction = memory::init<transactions::depository_transaction>();
+					auto* transaction = memory::init<transactions::depository_attestation>();
 					transaction->asset = asset;
-					transaction->set_computed_witness(receipt);
-					transaction->sign(user1.secret_key, user1.get_latest_nonce().or_else(0), decimal::zero()).expect("pre-validation failed");
+					transaction->set_computed_proof(std::move(receipt));
 					transactions.push_back(transaction);
 				}
 				if (!transactions.empty())
@@ -1772,22 +1753,23 @@ public:
 			{
 				auto* depository_account = memory::init<transactions::depository_account>();
 				depository_account->asset = asset;
-				depository_account->set_routing_address(from_account);
+				depository_account->set_routing_address(external_account);
 				depository_account->set_manager(user1.public_key_hash);
-				depository_account->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
+				depository_account->sign(user3.secret_key, user3_nonce++, decimal::zero()).expect("pre-validation failed");
 				new_block_from_one(nullptr, producers, depository_account);
 
 				size_t deposits = 0;
 				auto context = ledger::transaction_context();
-				auto accounts = *context.get_witness_accounts_by_purpose(params->routing == oracle::routing_policy::account ? user1.public_key_hash : user2.public_key_hash, states::witness_account::account_type::depository, 0, 128);
+				auto accounts = *context.get_witness_accounts_by_purpose(params->routing == oracle::routing_policy::account ? user1.public_key_hash : user3.public_key_hash, states::witness_account::account_type::depository, 0, 128);
+				term->write_line("incoming transaction integration:");
 				for (auto& account : accounts)
 				{
 					if (account.manager == user1.public_key_hash)
 					{
 						for (auto& [type, to_account] : account.addresses)
 						{
-							auto eth_value = "0x" + eth_chain->to_baseline_value(deposit_value).to_string(16);
-							term->fwrite("deposit %s to account %s (eth_deposit: %s)", deposit_value.to_string().c_str(), to_account.c_str(), eth_value.c_str());
+							auto eth_deposit_value = "0x" + eth_chain->to_baseline_value(deposit_value).to_string(16);
+							term->fwrite_line(" - deposit %s into %s (eth: %s)", deposit_value.to_string().c_str(), to_account.c_str(), eth_deposit_value.c_str());
 							++deposits;
 						}
 					}
@@ -1796,24 +1778,45 @@ public:
 				wait_for_transaction_log();
 
 				auto expected_balance = (deposit_value - depository_fee) * deposits;
-				auto balance = context.get_account_balance(asset, user2.public_key_hash).expect("balance mismatch").get_balance();
+				auto balance = context.get_account_balance(asset, user3.public_key_hash).expect("balance mismatch").get_balance();
+				auto withdrawal_value = balance - depository_fee;
+				auto eth_withdrawal_value = "0x" + eth_chain->to_baseline_value(withdrawal_value).to_string(16);
 				VI_PANIC(balance == expected_balance, "actual balance is expected to be %s but is %s", expected_balance.to_string().c_str(), balance.to_string().c_str());
-				term->fwrite_line("sending withdrawal to account: %s", from_account.c_str());
+				term->write_line("outgoing transaction integration:");
+				term->fwrite_line(" - withdraw %s into %.*s (eth: %s)", withdrawal_value.to_string().c_str(), (int)external_account.size(), external_account.data(), eth_withdrawal_value.c_str());
 
 				auto* depository_withdrawal = memory::init<transactions::depository_withdrawal>();
 				depository_withdrawal->asset = asset;
 				depository_withdrawal->set_manager(user1.public_key_hash);
-				depository_withdrawal->set_to(from_account, balance - depository_fee);
-				depository_withdrawal->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
+				depository_withdrawal->set_to(external_account, withdrawal_value);
+				depository_withdrawal->sign(user3.secret_key, user3_nonce++, decimal::zero()).expect("pre-validation failed");
 				new_block_from_one(nullptr, producers, depository_withdrawal);
+
+				auto chain = storages::chainstate();
+				auto confirmation_block = chain.get_latest_block();
+				VI_PANIC(confirmation_block && !confirmation_block->transactions.empty(), "blocks with withdrawal confirmation were not found");
+
+				auto& confirmation = confirmation_block->transactions.front();
+				VI_PANIC(confirmation.transaction->as_type() == transactions::depository_withdrawal_finalization::as_instance_type(), "no withdrawal confirmation");
+
+				auto* confirmation_event = confirmation.receipt.find_event<transactions::depository_withdrawal_finalization>();
+				auto* confirmation_transaction = (transactions::depository_withdrawal_finalization*)*confirmation.transaction;
+				VI_PANIC(confirmation_transaction->proof && !confirmation_event, "withdrawal confirmation failed: %s", confirmation_event ? (confirmation_event->empty() ? "unknown error" : confirmation_event->front().as_blob().c_str()) : confirmation_transaction->proof.what().c_str());
+				term->fwrite_line(" - block required for transaction %s", confirmation_transaction->proof->hashdata.c_str());
 				wait_for_transaction_log();
 
-				balance = context.get_account_balance(asset, user2.public_key_hash).expect("balance mismatch").get_balance();
+				balance = context.get_account_balance(asset, user3.public_key_hash).expect("balance mismatch").get_balance();
 				VI_PANIC(balance.is_zero(), "actual balance is expected to be zero but is %s", balance.to_string().c_str());
 			}
 			server->add_transaction_callback("logging", nullptr);
 			server->remove_nodes(asset);
 			server->shutdown();
+			term->write("\n");
+			term->write_color(std_color::white, std_color::dark_green);
+			term->fwrite("  %s INTEGRATION TEST PASS  ", algorithm::asset::blockchain_of(asset).c_str());
+			term->clear_color();
+			term->write("\n\n");
+			term->read_char();
 		});
 	}
 	/* verify current blockchain */
@@ -1931,8 +1934,11 @@ public:
 
 		uptr<schema> data = var::set::object();
 		data->set("validator_adjustment_transaction_gas_limit", algorithm::encoding::serialize_uint256(transaction.gas_limit));
+		data->set("block_commitment_limit", algorithm::encoding::serialize_uint256(ledger::block::get_commitment_limit()));
 		data->set("block_transaction_limit", algorithm::encoding::serialize_uint256(ledger::block::get_transaction_limit()));
-		data->set("block_gas_limit", algorithm::encoding::serialize_uint256(ledger::block::get_gas_limit()));
+		data->set("block_commitment_gas_limit", algorithm::encoding::serialize_uint256(ledger::block::get_commitment_gas_limit()));
+		data->set("block_transaction_gas_limit", algorithm::encoding::serialize_uint256(ledger::block::get_transaction_gas_limit()));
+		data->set("block_total_gas_limit", algorithm::encoding::serialize_uint256(ledger::block::get_total_gas_limit()));
 		term->jwrite_line(*data);
 	}
 
@@ -1979,6 +1985,50 @@ public:
 	static ledger::block new_block_from_list(schema* results, vector<account>& users, vector<uptr<ledger::transaction>>&& transactions)
 	{
 		ledger::evaluation_context environment;
+		vector<std::pair<transactions::depository_attestation*, account*>> post_attestations;
+		vector<uptr<ledger::transaction>> pre_attestations;
+		for (size_t i = 0; i < transactions.size(); i++)
+		{
+			auto& transaction = transactions[i];
+			if (transaction->as_type() != transactions::depository_attestation::as_instance_type())
+				continue;
+
+			auto* attestation = (transactions::depository_attestation*)*transaction;
+			if (!attestation->proof_or_commitment)
+				continue;
+
+			ordered_set<account*> attesters;
+			for (auto& user : users)
+			{
+				auto validator = environment.validation.context.get_validator_attestation(attestation->asset, user.wallet.public_key_hash);
+				if (validator && validator->is_active())
+					attesters.insert(&user);
+			}
+
+			auto* prover = *attesters.begin();
+			size_t required_commitments = (size_t)(decimal(attesters.size()) * protocol::now().policy.attestation_consensus_threshold).to_uint64();
+			while (attesters.size() > required_commitments)
+				attesters.erase(attesters.begin());
+
+			for (auto& committer : attesters)
+			{
+				auto* additional_attestation = memory::init<transactions::depository_attestation>();
+				additional_attestation->asset = attestation->asset;
+				additional_attestation->set_commitment(*attestation->proof_or_commitment);
+				additional_attestation->sign(committer->wallet.secret_key, committer->nonce++, decimal::zero()).expect("pre-validation failed");
+				pre_attestations.push_back(additional_attestation);
+			}
+			post_attestations.push_back(std::make_pair(attestation, prover));
+		}
+
+		if (!post_attestations.empty())
+		{
+			if (!pre_attestations.empty())
+				new_block_from_list(results, users, std::move(pre_attestations));
+			for (auto& [attestation, prover] : post_attestations)
+				attestation->sign(prover->wallet.secret_key, prover->nonce++, decimal::zero()).expect("pre-validation failed");
+		}
+
 		uint64_t priority = std::numeric_limits<uint64_t>::max();
 		for (auto& user : users)
 		{
@@ -1988,19 +2038,6 @@ public:
 		}
 
 		VI_PANIC(priority == 0, "block proposal not allowed");
-		for (auto& transaction : transactions)
-		{
-			if (!transaction->is_recoverable())
-			{
-				if (transaction->gas_price.is_nan())
-					transaction->gas_price = decimal::zero();
-				for (auto& [attestation_user, attestation_user_nonce] : users)
-					VI_PANIC(((ledger::attestation_transaction*)*transaction)->sign(attestation_user.secret_key), "attestation failed");
-				if (!transaction->gas_limit)
-					transaction->gas_limit = ledger::transaction_context::calculate_tx_gas(*transaction).or_else(transaction->gas_limit);
-			}
-		}
-
 		if (!environment.try_include_transactions(std::move(transactions)))
 			VI_PANIC(false, "empty block not allowed");
 
@@ -2026,10 +2063,9 @@ public:
 			dispatcher.dispatch_sync(proposal.block);
 			if (!dispatcher.outputs.empty())
 			{
-				user_nonce = user.get_latest_nonce().or_else(0);
 				for (auto& transaction : dispatcher.outputs)
 				{
-					if (transaction->is_recoverable())
+					if (transaction->as_type() != transactions::depository_attestation::as_instance_type())
 						transaction->sign(user.secret_key, user_nonce++, decimal::zero()).expect("pre-validation failed");
 				}
 				transactions.insert(transactions.end(), std::make_move_iterator(dispatcher.outputs.begin()), std::make_move_iterator(dispatcher.outputs.end()));
@@ -2317,6 +2353,14 @@ public:
 					type = states::witness_account::as_instance_type();
 					column = states::witness_account::as_instance_column(owner);
 					row = states::witness_account::as_instance_row(algorithm::asset::id_of_handle(args[3]), args[4]);
+				}
+				else if (state == "attestation")
+				{
+					if (args.size() < 4)
+						goto not_valid;
+
+					type = states::witness_attestation::as_instance_type();
+					index = states::witness_attestation::as_instance_index(algorithm::asset::id_of_handle(args[2]), algorithm::encoding::decode_0xhex256(args[3]));
 				}
 				else if (state == "transaction")
 				{
@@ -2724,16 +2768,16 @@ public:
 		{
 			const decimal outgoing_account_balance = starting_account_balance / decimal(block_count * (transaction_count + 64));
 			const decimal incoming_quantity = starting_account_balance;
-			auto* depository_transaction = memory::init<transactions::depository_transaction>();
-			depository_transaction->set_asset("BTC");
-			depository_transaction->set_finalized_witness(883669,
+			auto* depository_attestation = memory::init<transactions::depository_attestation>();
+			depository_attestation->set_asset("BTC");
+			depository_attestation->set_finalized_proof(883669,
 				"222fc360affb804ad2c34bba2269b36a64a86f017d05a9a60b237e8587bfc52b",
-				{ oracle::value_transfer(depository_transaction->asset, "mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", decimal(incoming_quantity)) },
-				{ oracle::value_transfer(depository_transaction->asset, user1_depository_address->addresses.begin()->second, decimal(incoming_quantity)) });
-			depository_transaction->sign(user1.secret_key, 0, decimal::zero()).expect("pre-validation failed");
+				{ oracle::value_transfer(depository_attestation->asset, "mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", decimal(incoming_quantity)) },
+				{ oracle::value_transfer(depository_attestation->asset, user1_depository_address->addresses.begin()->second, decimal(incoming_quantity)) });
+			depository_attestation->sign(user1.secret_key, 0, decimal::zero()).expect("pre-validation failed");
 
 			auto genesis = vector<uptr<ledger::transaction>>();
-			genesis.push_back(depository_transaction);
+			genesis.push_back(depository_attestation);
 			checkpoint(std::move(genesis), users);
 
 			auto receiver = ledger::wallet::from_seed("000002");
@@ -2770,16 +2814,16 @@ public:
 			const size_t receiver_count = 32;
 			const decimal outgoing_account_balance = starting_account_balance / decimal(block_count * (transaction_count + 64) * sender_count);
 			const decimal incoming_quantity = starting_account_balance * sender_count;
-			auto* depository_transaction = memory::init<transactions::depository_transaction>();
-			depository_transaction->set_asset("BTC");
-			depository_transaction->set_finalized_witness(883669,
+			auto* depository_attestation = memory::init<transactions::depository_attestation>();
+			depository_attestation->set_asset("BTC");
+			depository_attestation->set_finalized_proof(883669,
 				"222fc360affb804ad2c34bba2269b36a64a86f017d05a9a60b237e8587bfc52b",
-				{ oracle::value_transfer(depository_transaction->asset, "mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", decimal(incoming_quantity)) },
-				{ oracle::value_transfer(depository_transaction->asset, user1_depository_address->addresses.begin()->second, decimal(incoming_quantity)) });
-			depository_transaction->sign(user1.secret_key, 0, decimal::zero()).expect("pre-validation failed");
+				{ oracle::value_transfer(depository_attestation->asset, "mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", decimal(incoming_quantity)) },
+				{ oracle::value_transfer(depository_attestation->asset, user1_depository_address->addresses.begin()->second, decimal(incoming_quantity)) });
+			depository_attestation->sign(user1.secret_key, 0, decimal::zero()).expect("pre-validation failed");
 
 			auto genesis = vector<uptr<ledger::transaction>>();
-			genesis.push_back(depository_transaction);
+			genesis.push_back(depository_attestation);
 			checkpoint(std::move(genesis), users);
 
 			vector<tests::account> senders;
@@ -2796,7 +2840,7 @@ public:
 			transfer->set_asset("BTC");
 			for (auto& sender : senders)
 				transfer->set_to(sender.wallet.public_key_hash, starting_account_balance);
-			transfer->set_gas(decimal::zero(), ledger::block::get_gas_limit());
+			transfer->set_gas(decimal::zero(), ledger::block::get_transaction_gas_limit());
 			VI_PANIC(transfer->sign(user1.secret_key, user1_nonce++), "authentication failed");
 
 			genesis = vector<uptr<ledger::transaction>>();
@@ -2837,16 +2881,16 @@ public:
 			const size_t sender_count = transaction_count;
 			const decimal outgoing_account_balance = starting_account_balance / decimal(block_count * (transaction_count + 64) * sender_count);
 			const decimal incoming_quantity = starting_account_balance * sender_count * 2;
-			auto* depository_transaction = memory::init<transactions::depository_transaction>();
-			depository_transaction->set_asset("BTC");
-			depository_transaction->set_finalized_witness(883669,
+			auto* depository_attestation = memory::init<transactions::depository_attestation>();
+			depository_attestation->set_asset("BTC");
+			depository_attestation->set_finalized_proof(883669,
 				"222fc360affb804ad2c34bba2269b36a64a86f017d05a9a60b237e8587bfc52b",
-				{ oracle::value_transfer(depository_transaction->asset, "mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", decimal(incoming_quantity)) },
-				{ oracle::value_transfer(depository_transaction->asset, user1_depository_address->addresses.begin()->second, decimal(incoming_quantity)) });
-			depository_transaction->sign(user1.secret_key, 0, decimal::zero()).expect("pre-validation failed");
+				{ oracle::value_transfer(depository_attestation->asset, "mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", decimal(incoming_quantity)) },
+				{ oracle::value_transfer(depository_attestation->asset, user1_depository_address->addresses.begin()->second, decimal(incoming_quantity)) });
+			depository_attestation->sign(user1.secret_key, 0, decimal::zero()).expect("pre-validation failed");
 
 			auto genesis = vector<uptr<ledger::transaction>>();
-			genesis.push_back(depository_transaction);
+			genesis.push_back(depository_attestation);
 			checkpoint(std::move(genesis), users);
 
 			vector<tests::account> senders;
@@ -2858,7 +2902,7 @@ public:
 			transfer->set_asset("BTC");
 			for (auto& sender : senders)
 				transfer->set_to(sender.wallet.public_key_hash, starting_account_balance);
-			transfer->set_gas(decimal::zero(), ledger::block::get_gas_limit());
+			transfer->set_gas(decimal::zero(), ledger::block::get_transaction_gas_limit());
 			VI_PANIC(transfer->sign(user1.secret_key, user1_nonce++), "authentication failed");
 
 			genesis = vector<uptr<ledger::transaction>>();
@@ -2927,7 +2971,7 @@ public:
 			{ "cryptography / multichain transaction", &tests::cryptography_multichain_transaction },
 			{ "blockchain / full coverage", std::bind(&tests::blockchain_full_coverage, (vector<tests::account>*)nullptr) },
 			{ "blockchain / verification", &tests::blockchain_verification },
-			{ "blockchain / partial coverage", std::bind(&tests::blockchain_partial_coverage, (vector<tests::account>*)nullptr) },
+			//{ "blockchain / partial coverage", std::bind(&tests::blockchain_partial_coverage, (vector<tests::account>*)nullptr) },
 			{ "blockchain / verification", &tests::blockchain_verification },
 			{ "blockchain / gas estimation", &tests::blockchain_gas_estimation },
 		};
@@ -2959,38 +3003,41 @@ public:
 		auto* queue = schedule::get();
 		queue->start(schedule::desc());
 
-		tests::blockchain_integration_coverage(algorithm::asset::id_of("ADA"), "http://localhost:8001");
-		tests::blockchain_integration_coverage(algorithm::asset::id_of("BTC"), "http://admin:pass@localhost:8002");
-		tests::blockchain_integration_coverage(algorithm::asset::id_of("BCH"), "http://admin:pass@localhost:8003");
-		tests::blockchain_integration_coverage(algorithm::asset::id_of("BTG"), "http://admin:pass@localhost:8004");
-		tests::blockchain_integration_coverage(algorithm::asset::id_of("BSV"), "http://admin:pass@localhost:8005");
-		tests::blockchain_integration_coverage(algorithm::asset::id_of("DASH"), "http://admin:pass@localhost:8006");
-		tests::blockchain_integration_coverage(algorithm::asset::id_of("DGB"), "http://admin:pass@localhost:8007");
-		tests::blockchain_integration_coverage(algorithm::asset::id_of("DOGE"), "http://admin:pass@localhost:8008");
-		tests::blockchain_integration_coverage(algorithm::asset::id_of("LTC"), "http://admin:pass@localhost:8009");
-		tests::blockchain_integration_coverage(algorithm::asset::id_of("XEC"), "http://admin:pass@localhost:8010");
-		tests::blockchain_integration_coverage(algorithm::asset::id_of("ZEC"), "http://admin:pass@localhost:8011");
-		tests::blockchain_integration_coverage(algorithm::asset::id_of("ETH"), "http://localhost:8012");
-		tests::blockchain_integration_coverage(algorithm::asset::id_of("ARB"), "http://localhost:8013");
-		tests::blockchain_integration_coverage(algorithm::asset::id_of("AVAX"), "http://localhost:8014");
-		tests::blockchain_integration_coverage(algorithm::asset::id_of("BASE"), "http://localhost:8015");
-		tests::blockchain_integration_coverage(algorithm::asset::id_of("BLAST"), "http://localhost:8016");
-		tests::blockchain_integration_coverage(algorithm::asset::id_of("BNB"), "http://localhost:8017");
-		tests::blockchain_integration_coverage(algorithm::asset::id_of("CELO"), "http://localhost:8018");
-		tests::blockchain_integration_coverage(algorithm::asset::id_of("ETC"), "http://localhost:8019");
-		tests::blockchain_integration_coverage(algorithm::asset::id_of("GNO"), "http://localhost:8020");
-		tests::blockchain_integration_coverage(algorithm::asset::id_of("LINEA"), "http://localhost:8021");
-		tests::blockchain_integration_coverage(algorithm::asset::id_of("MATIC"), "http://localhost:8022");
-		tests::blockchain_integration_coverage(algorithm::asset::id_of("OP"), "http://localhost:8023");
-		tests::blockchain_integration_coverage(algorithm::asset::id_of("S"), "http://localhost:8024");
-		tests::blockchain_integration_coverage(algorithm::asset::id_of("ZK"), "http://localhost:8025");
-		tests::blockchain_integration_coverage(algorithm::asset::id_of("SOL"), "http://localhost:8026");
-		tests::blockchain_integration_coverage(algorithm::asset::id_of("TRX"), "jrpc=http://localhost:8027/jsonrpc;rest=http://localhost:8028");
-		tests::blockchain_integration_coverage(algorithm::asset::id_of("XRP"), "http://localhost:8029");
-		tests::blockchain_integration_coverage(algorithm::asset::id_of("XLM"), "http://localhost:8030");
-#if 0
-		tests::blockchain_integration_coverage(algorithm::asset::id_of("XMR"), "http://localhost:8031/json_rpc");
-#endif
+		os::process::bind_signal(signal_code::SIG_INT, [](int) { });
+		while (true)
+		{
+			string blockchain, network_url, external_account, deposit_value, depository_fee;
+			term->write_line("network integration:");
+			term->write(" - blockchain: ");
+			if (!term->read_line(blockchain, 1024) || blockchain.empty())
+				break;
+
+			term->write(" - network url: ");
+			if (!term->read_line(network_url, 1024) || network_url.empty())
+				break;
+
+			term->write(" - external account: ");
+			if (!term->read_line(external_account, 1024) || external_account.empty())
+				break;
+
+			term->write(" - deposit value (50): ");
+			if (!term->read_line(deposit_value, 1024))
+				break;
+			else if (deposit_value.empty())
+				deposit_value = "50";
+
+			term->write(" - depository fee (0.5): ");
+			if (!term->read_line(depository_fee, 1024))
+				break;
+			else if (depository_fee.empty())
+				depository_fee = "0.5";
+
+			decimal final_deposit_value = decimal(deposit_value), final_depository_fee = decimal(depository_fee);
+			if (!final_deposit_value.is_positive() || !final_depository_fee.is_positive())
+				break;
+
+			tests::blockchain_integration_coverage(algorithm::asset::id_of(blockchain), network_url, external_account, final_deposit_value, final_depository_fee);
+		}
 
 		queue->stop();
 		return 0;

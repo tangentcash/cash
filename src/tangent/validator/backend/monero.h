@@ -65,7 +65,7 @@ namespace tangent
 				virtual expects_promise_rt<computed_transaction> link_transaction(uint64_t block_height, const std::string_view& block_hash, schema* transaction_data) override;
 				virtual expects_promise_rt<computed_fee> estimate_fee(const std::string_view& from_address, const vector<value_transfer>& to, const fee_supervisor_options& options) override;
 				virtual expects_promise_rt<void> broadcast_transaction(const finalized_transaction& finalized) override;
-				virtual expects_promise_rt<prepared_transaction> prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee, bool inclusive_fee) override;
+				virtual expects_promise_rt<prepared_transaction> prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee) override;
 				virtual expects_lr<finalized_transaction> finalize_transaction(oracle::prepared_transaction&& prepared) override;
 				virtual expects_lr<secret_box> encode_secret_key(const secret_box& secret_key) override;
 				virtual expects_lr<secret_box> decode_secret_key(const secret_box& secret_key) override;

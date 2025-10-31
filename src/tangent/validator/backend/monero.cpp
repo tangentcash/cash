@@ -87,7 +87,7 @@ namespace tangent
 				netdata.routing = routing_policy::utxo;
 				netdata.tokenization = token_policy::none;
 				netdata.sync_latency = 10;
-				netdata.divisibility = decimal(1000000000000).truncate(protocol::now().message.decimal_precision);
+				netdata.divisibility = algorithm::arithmetic::fixed(1000000000000);
 				netdata.supports_bulk_transfer = true;
 				netdata.requires_transaction_expiration = false;
 			}
@@ -477,7 +477,7 @@ namespace tangent
 
 				coreturn expects_rt<void>(expectation::met);
 			}
-			expects_promise_rt<prepared_transaction> monero::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee, bool inclusive_fee)
+			expects_promise_rt<prepared_transaction> monero::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee)
 			{
 				coreturn expects_rt<prepared_transaction>(remote_exception("not implemented"));
 			}

@@ -76,7 +76,7 @@ namespace tangent
 				transaction->signature.data[0] = 0xFF;
 				transaction->nonce = std::max<size_t>(1, tracer.environment.validation.context.get_account_nonce(from).or_else(states::account_nonce(algorithm::pubkeyhash_t(), nullptr)).nonce);
 				transaction->program_call(to, value, function_decl, format::variables(args));
-				transaction->set_gas(decimal::zero(), ledger::block::get_gas_limit());
+				transaction->set_gas(decimal::zero(), ledger::block::get_transaction_gas_limit());
 
 				auto chain = storages::chainstate();
 				auto tip = chain.get_latest_block_header();
@@ -86,7 +86,6 @@ namespace tangent
 				ledger::receipt receipt;
 				tracer.block.set_parent_block(tracer.environment.tip.address());
 				receipt.transaction_hash = transaction->as_hash();
-				receipt.generation_time = protocol::now().time.now();
 				receipt.block_number = tracer.block.number + 1;
 				receipt.from = from;
 
@@ -114,7 +113,7 @@ namespace tangent
 					return expectation::met;
 				});
 				context->receipt.successful = !!execution;
-				context->receipt.finalization_time = protocol::now().time.now();
+				context->receipt.block_time = protocol::now().time.now();
 				if (!context->receipt.successful)
 					context->emit_event(0, { format::variable(execution.what()) }, false);
 

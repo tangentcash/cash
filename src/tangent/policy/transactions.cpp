@@ -505,7 +505,7 @@ namespace tangent
 
 				for (auto& transaction : group.second)
 				{
-					if (!transaction || transaction->as_type() == as_type() || transaction->get_type() != ledger::transaction_level::functional)
+					if (!transaction || transaction->as_type() == as_type() || transaction->is_commitment())
 						return layer_exception("invalid sub-transaction");
 
 					auto* reference = (ledger::transaction*)*transaction;
@@ -541,7 +541,6 @@ namespace tangent
 			});
 
 			auto internal_receipt = ledger::receipt();
-			internal_receipt.generation_time = context->receipt.generation_time;
 			for (auto& [transaction, index] : queue)
 			{
 				bool internal_transaction = transaction->signature.empty();
@@ -570,7 +569,7 @@ namespace tangent
 					return layer_exception("sub-transaction " + algorithm::encoding::encode_0xhex256(transaction_hash) + " execution failed: " + execution.error().message());
 
 				relative_gas_use += execution->receipt.relative_gas_use;
-				auto report = context->emit_event<rollup>({ format::variable(execution->receipt.transaction_hash), format::variable(index), format::variable(execution->receipt.relative_gas_use), format::variable(execution->receipt.relative_gas_paid) });
+				auto report = context->emit_event<rollup>({ format::variable(execution->receipt.transaction_hash), format::variable(index), format::variable(execution->receipt.relative_gas_use) });
 				if (!report)
 					return layer_exception("sub-transaction " + algorithm::encoding::encode_0xhex256(transaction_hash) + " merge failed: " + report.error().message());
 
@@ -799,7 +798,6 @@ namespace tangent
 				return layer_exception("sub-transaction not valid");
 
 			transaction.receipt.relative_gas_use = 0;
-			transaction.receipt.relative_gas_paid = 0;
 			transaction.receipt.transaction_hash = transaction.transaction->as_hash();
 			if (!transaction.transaction->recover_hash(transaction.receipt.from))
 				return layer_exception("sub-transaction not valid");
@@ -809,7 +807,7 @@ namespace tangent
 			for (auto& event : receipt.events)
 			{
 				++offset;
-				if (event.first != rollup::as_instance_type() || event.second.size() != 3)
+				if (event.first != rollup::as_instance_type() || event.second.size() != 2)
 					continue;
 
 				uint256_t candidate_hash = event.second[0].as_uint256();
@@ -817,7 +815,6 @@ namespace tangent
 				{
 					begin = offset - 1;
 					transaction.receipt.relative_gas_use = event.second[1].as_uint256();
-					transaction.receipt.relative_gas_paid = event.second[2].as_uint256();
 					continue;
 				}
 				else if (begin != std::string::npos)
@@ -977,10 +974,7 @@ namespace tangent
 						return layer_exception("token stake action mismatch");
 
 					stakes[token_asset] = token_stake;
-					if (type == ledger::transaction_context::stake_type::lock)
-						continue;
-
-					if (!depository || !balance || !depository->is_whitelisted(token_asset))
+					if (type == ledger::transaction_context::stake_type::lock || !depository || !balance)
 						continue;
 
 					if (algorithm::asset::is_valid(token_asset, true))
@@ -1162,13 +1156,24 @@ namespace tangent
 			if (!algorithm::asset::token_of(asset).empty())
 				return layer_exception("invalid asset");
 
-			return ledger::delegation_transaction::validate(block_number);
+			if (manager.empty())
+				return layer_exception("invalid manager");
+
+			return ledger::commitment::validate(block_number);
 		}
 		expects_lr<void> depository_account::execute(ledger::transaction_context* context) const
 		{
-			auto validation = delegation_transaction::execute(context);
+			auto validation = commitment::execute(context);
 			if (!validation)
 				return validation.error();
+
+			auto delegation_requirement = context->verify_account_delegation(manager);
+			if (!delegation_requirement)
+				return delegation_requirement;
+
+			auto delegation = context->apply_account_delegation(manager, 1);
+			if (!delegation)
+				return delegation.error();
 
 			auto* params = oracle::server_node::get()->get_chainparams(asset);
 			if (!params)
@@ -1352,11 +1357,16 @@ namespace tangent
 		bool depository_account::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_string(manager.optimized_view());
 			stream->write_string(routing_address);
 			return true;
 		}
 		bool depository_account::load_body(format::ro_stream& stream)
 		{
+			string manager_assembly;
+			if (!stream.read_string(stream.read_type(), &manager_assembly) || !algorithm::encoding::decode_bytes(manager_assembly, manager.data, sizeof(manager.data)))
+				return false;
+
 			if (!stream.read_string(stream.read_type(), &routing_address))
 				return false;
 
@@ -1377,6 +1387,10 @@ namespace tangent
 		{
 			routing_address = new_address;
 		}
+		void depository_account::set_manager(const algorithm::pubkeyhash_t& new_manager)
+		{
+			manager = new_manager;
+		}
 		ordered_set<algorithm::pubkeyhash_t> depository_account::get_group(const ledger::receipt& receipt) const
 		{
 			ordered_set<algorithm::pubkeyhash_t> result;
@@ -1386,6 +1400,13 @@ namespace tangent
 					result.insert(algorithm::pubkeyhash_t(event->front().as_blob()));
 			}
 			return result;
+		}
+		uptr<schema> depository_account::as_schema() const
+		{
+			schema* data = ledger::commitment::as_schema().reset();
+			data->set("manager", algorithm::signing::serialize_address(manager));
+			data->set("routing_address", var::string(routing_address));
+			return data;
 		}
 		uint32_t depository_account::as_type() const
 		{
@@ -1416,11 +1437,11 @@ namespace tangent
 			if (public_key.empty())
 				return layer_exception("invalid public key");
 
-			return ledger::consensus_transaction::validate(block_number);
+			return ledger::commitment::validate(block_number);
 		}
 		expects_lr<void> depository_account_finalization::execute(ledger::transaction_context* context) const
 		{
-			auto validation = consensus_transaction::execute(context);
+			auto validation = commitment::execute(context);
 			if (!validation)
 				return validation.error();
 
@@ -1581,9 +1602,7 @@ namespace tangent
 		}
 		uptr<schema> depository_account_finalization::as_schema() const
 		{
-			size_t index = 0;
-			auto params = oracle::server_node::get()->get_chainparams(asset);
-			schema* data = ledger::consensus_transaction::as_schema().reset();
+			schema* data = ledger::commitment::as_schema().reset();
 			data->set("depository_account_hash", depository_account_hash > 0 ? var::string(algorithm::encoding::encode_0xhex256(depository_account_hash)) : var::null());
 			data->set("public_key", var::string(format::util::encode_0xhex(std::string_view((char*)public_key.data(), public_key.size()))));
 			return data;
@@ -1658,8 +1677,6 @@ namespace tangent
 				return depository_policy.error();
 			else if (!depository_policy->accepts_withdrawal_requests)
 				return layer_exception("depository forbids withdrawal requests");
-			else if (!depository_policy->is_whitelisted(asset))
-				return layer_exception("depository forbids withdrawal requests for " + algorithm::asset::name_of(asset) + " (not whitelisted)");
 			else if (only_if_not_in_queue && depository_policy->queue_transaction_hash > 0)
 				return layer_exception("depository is in use - withdrawal will be queued");
 
@@ -1756,7 +1773,7 @@ namespace tangent
 				auto* chain = server->get_chainparams(asset);
 				auto cancel = [this, context, dispatcher](remote_exception&& error) -> expects_rt<void>
 				{
-					auto* transaction = memory::init<depository_withdrawal_routing>();
+					auto* transaction = memory::init<depository_withdrawal_finalization>();
 					transaction->asset = asset;
 					transaction->set_proof(context->receipt.transaction_hash, layer_exception(std::move(remote_exception(error).message())));
 					dispatcher->emit_transaction(transaction);
@@ -1782,7 +1799,7 @@ namespace tangent
 				auto state = ledger::dispatch_context::signature_state();
 				if (chain->requires_transaction_expiration || !state.load_message_if_preferred(cache))
 				{
-					auto message = coawait(resolver::prepare_transaction(algorithm::asset::base_id_of(asset), oracle::wallet_link::from_owner(from_manager), transfers, to_manager.empty() ? get_fee_value(context) : decimal::nan(), to_manager.empty()));
+					auto message = coawait(resolver::prepare_transaction(algorithm::asset::base_id_of(asset), oracle::wallet_link::from_owner(from_manager), transfers, get_fee_value(context)));
 					if (!message)
 						coreturn message.error().is_retry() || message.error().is_shutdown() ? expects_rt<void>(std::move(message.error())) : cancel(std::move(message.error()));
 					else if (message->inputs.size() > std::numeric_limits<uint8_t>::max())
@@ -1866,7 +1883,13 @@ namespace tangent
 				if (!finalization)
 					coreturn cancel(remote_exception(std::move(finalization.error().message())));
 
-				auto* transaction = memory::init<depository_withdrawal_routing>();
+				auto broadcast = coawait(resolver::broadcast_transaction(algorithm::asset::base_id_of(asset), context->receipt.transaction_hash, oracle::finalized_transaction(*finalization), dispatcher));
+				if (!broadcast && (broadcast.error().is_retry() || broadcast.error().is_shutdown()))
+					coreturn remote_exception::retry();
+				else if (!broadcast)
+					coreturn cancel(std::move(broadcast.error()));
+
+				auto* transaction = memory::init<depository_withdrawal_finalization>();
 				transaction->asset = asset;
 				transaction->set_proof(context->receipt.transaction_hash, std::move(*finalization));
 				dispatcher->emit_transaction(transaction);
@@ -2005,34 +2028,6 @@ namespace tangent
 		{
 			return "depository_withdrawal";
 		}
-		expects_lr<void> depository_withdrawal::approve_or_revert(ledger::transaction_context* context, const ledger::block_transaction& transaction, bool approval)
-		{
-			auto* base_transaction = (depository_withdrawal*)*transaction.transaction;
-			auto finalization = context->apply_depository_policy_queue(base_transaction->asset, base_transaction->from_manager, 0);
-			if (!finalization)
-				return finalization.error();
-
-			if (approval || !base_transaction->to_manager.empty())
-				return expectation::met;
-
-			auto fee_asset = algorithm::asset::base_id_of(base_transaction->asset);
-			auto fee_value = base_transaction->get_fee_value(context);
-			auto token_value = base_transaction->get_token_value(context);
-			if (fee_asset != base_transaction->asset)
-			{
-				auto fee_transfer = context->apply_transfer(fee_asset, transaction.receipt.from, decimal::zero(), -fee_value);
-				if (!fee_transfer)
-					return fee_transfer.error();
-			}
-			else
-				token_value += fee_value;
-
-			auto token_transfer = context->apply_transfer(base_transaction->asset, transaction.receipt.from, decimal::zero(), -token_value);
-			if (!token_transfer)
-				return token_transfer.error();
-
-			return expectation::met;
-		}
 		expects_lr<states::witness_account> depository_withdrawal::find_receiving_account(const ledger::transaction_context* context, const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& from_manager, const algorithm::pubkeyhash_t& to_manager)
 		{
 			auto base_asset = algorithm::asset::base_id_of(asset);
@@ -2071,16 +2066,16 @@ namespace tangent
 			return layer_exception("receiving depository account (to) not found");
 		}
 
-		expects_lr<void> depository_withdrawal_routing::validate(uint64_t block_number) const
+		expects_lr<void> depository_withdrawal_finalization::validate(uint64_t block_number) const
 		{
 			if (!depository_withdrawal_hash)
 				return layer_exception("depository withdrawal hash not valid");
 
-			return ledger::consensus_transaction::validate(block_number);
+			return ledger::commitment::validate(block_number);
 		}
-		expects_lr<void> depository_withdrawal_routing::execute(ledger::transaction_context* context) const
+		expects_lr<void> depository_withdrawal_finalization::execute(ledger::transaction_context* context) const
 		{
-			auto validation = consensus_transaction::execute(context);
+			auto validation = commitment::execute(context);
 			if (!validation)
 				return validation.error();
 
@@ -2096,44 +2091,38 @@ namespace tangent
 			if (!event)
 				return event.error();
 
-			auto continue_to_finalization = proof ? validate_finalized_proof(context, parent_transaction, *proof) : proof.error();
-			if (continue_to_finalization)
+			auto finalization = context->apply_depository_policy_queue(parent_transaction->asset, parent_transaction->from_manager, 0);
+			if (!finalization)
+				return finalization.error();
+
+			auto confirmation = proof ? validate_finalized_proof(context, parent_transaction, *proof) : proof.error();
+			if (confirmation)
+				return expectation::met;
+			else if (proof)
+				return confirmation.error();
+
+			if (!parent_transaction->to_manager.empty())
 				return expectation::met;
 
-			context->emit_event<depository_withdrawal_routing>({ format::variable(continue_to_finalization.error().message()) });
-			return depository_withdrawal::approve_or_revert(context, *parent, false);
-		}
-		expects_promise_rt<void> depository_withdrawal_routing::dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const
-		{
-			if (!proof || context->receipt.find_event<depository_withdrawal_routing>() != nullptr)
-				return expects_promise_rt<void>(expectation::met);
-
-			if (context->get_witness_event(context->receipt.transaction_hash))
-				return expects_promise_rt<void>(expectation::met);
-
-			auto parent = context->get_block_transaction<depository_withdrawal>(depository_withdrawal_hash);
-			if (!parent)
-				return expects_promise_rt<void>(expectation::met);
-
-			auto* parent_transaction = (depository_withdrawal*)*parent->transaction;
-			if (!dispatcher->is_running_on(parent_transaction->from_manager))
-				return expects_promise_rt<void>(expectation::met);
-
-			return coasync<expects_rt<void>>([this, context, dispatcher]() mutable -> expects_promise_rt<void>
+			auto fee_asset = algorithm::asset::base_id_of(parent_transaction->asset);
+			auto fee_value = parent_transaction->get_fee_value(context);
+			auto token_value = parent_transaction->get_token_value(context);
+			if (fee_asset != parent_transaction->asset)
 			{
-				auto broadcast = coawait(resolver::broadcast_transaction(algorithm::asset::base_id_of(asset), depository_withdrawal_hash, oracle::finalized_transaction(*proof), dispatcher));
-				if (!broadcast && (broadcast.error().is_retry() || broadcast.error().is_shutdown()))
-					coreturn remote_exception::retry();
+				auto fee_transfer = context->apply_transfer(fee_asset, parent->receipt.from, decimal::zero(), -fee_value);
+				if (!fee_transfer)
+					return fee_transfer.error();
+			}
+			else
+				token_value += fee_value;
 
-				auto* transaction = memory::init<depository_withdrawal_finalization>();
-				transaction->asset = asset;
-				transaction->depository_withdrawal_routing_hash = context->receipt.transaction_hash;
-				transaction->status = broadcast ? string() : ("ERR: " + broadcast.what());
-				dispatcher->emit_transaction(transaction);
-				coreturn expectation::met;
-			});
+			auto token_transfer = context->apply_transfer(parent_transaction->asset, parent->receipt.from, decimal::zero(), -token_value);
+			if (!token_transfer)
+				return token_transfer.error();
+
+			return expectation::met;
 		}
-		bool depository_withdrawal_routing::store_body(format::wo_stream* stream) const
+		bool depository_withdrawal_finalization::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer(depository_withdrawal_hash);
@@ -2144,7 +2133,7 @@ namespace tangent
 				stream->write_string(proof.what());
 			return true;
 		}
-		bool depository_withdrawal_routing::load_body(format::ro_stream& stream)
+		bool depository_withdrawal_finalization::load_body(format::ro_stream& stream)
 		{
 			if (!stream.read_integer(stream.read_type(), &depository_withdrawal_hash))
 				return false;
@@ -2170,7 +2159,7 @@ namespace tangent
 
 			return true;
 		}
-		bool depository_withdrawal_routing::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
+		bool depository_withdrawal_finalization::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
 		{
 			auto parent = context->get_block_transaction_instance(depository_withdrawal_hash);
 			if (!parent)
@@ -2179,18 +2168,14 @@ namespace tangent
 			parties.insert(algorithm::pubkeyhash_t(parent->receipt.from));
 			return true;
 		}
-		void depository_withdrawal_routing::set_proof(const uint256_t& new_depository_withdrawal_hash, expects_lr<oracle::finalized_transaction>&& new_proof)
+		void depository_withdrawal_finalization::set_proof(const uint256_t& new_depository_withdrawal_hash, expects_lr<oracle::finalized_transaction>&& new_proof)
 		{
 			depository_withdrawal_hash = new_depository_withdrawal_hash;
 			proof = std::move(new_proof);
 		}
-		bool depository_withdrawal_routing::is_dispatchable() const
+		uptr<schema> depository_withdrawal_finalization::as_schema() const
 		{
-			return true;
-		}
-		uptr<schema> depository_withdrawal_routing::as_schema() const
-		{
-			schema* data = ledger::consensus_transaction::as_schema().reset();
+			schema* data = ledger::commitment::as_schema().reset();
 			data->set("depository_withdrawal_hash", var::string(algorithm::encoding::encode_0xhex256(depository_withdrawal_hash)));
 			if (proof)
 			{
@@ -2203,24 +2188,24 @@ namespace tangent
 				data->set("error", var::string(proof.what()));
 			return data;
 		}
-		uint32_t depository_withdrawal_routing::as_type() const
+		uint32_t depository_withdrawal_finalization::as_type() const
 		{
 			return as_instance_type();
 		}
-		std::string_view depository_withdrawal_routing::as_typename() const
+		std::string_view depository_withdrawal_finalization::as_typename() const
 		{
 			return as_instance_typename();
 		}
-		uint32_t depository_withdrawal_routing::as_instance_type()
+		uint32_t depository_withdrawal_finalization::as_instance_type()
 		{
 			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
 			return hash;
 		}
-		std::string_view depository_withdrawal_routing::as_instance_typename()
+		std::string_view depository_withdrawal_finalization::as_instance_typename()
 		{
-			return "depository_withdrawal_routing";
+			return "depository_withdrawal_finalization";
 		}
-		expects_lr<void> depository_withdrawal_routing::validate_possible_proof(const ledger::transaction_context* context, const depository_withdrawal* transaction, const oracle::prepared_transaction& prepared)
+		expects_lr<void> depository_withdrawal_finalization::validate_possible_proof(const ledger::transaction_context* context, const depository_withdrawal* transaction, const oracle::prepared_transaction& prepared)
 		{
 			if (prepared.as_status() == oracle::prepared_transaction::status::invalid)
 				return layer_exception("invalid prepared transaction");
@@ -2261,7 +2246,7 @@ namespace tangent
 				if (!account)
 					return layer_exception("transaction output refers to a non-depository account");
 
-				required_output_value[transaction->asset] = transaction->get_token_value(context);
+				required_output_value[transaction->asset] = decimal::nan();
 				for (auto& [type, normalized_address] : witness->addresses)
 				{
 					auto status = server->normalize_address(base_asset, &normalized_address);
@@ -2366,10 +2351,13 @@ namespace tangent
 				auto it = required_output_value.find(output_asset);
 				if (it != required_output_value.end())
 				{
-					if (output_asset != base_asset && actual_output_value != it->second)
-						return layer_exception("witness transaction output pays unexpected token value");
-					else if (output_asset == base_asset && actual_output_value < it->second - max_fee_value || actual_output_value > it->second + max_fee_value)
-						return layer_exception("witness transaction output pays unexpected native value");
+					if (!it->second.is_nan())
+					{
+						if (output_asset != base_asset && actual_output_value != it->second)
+							return layer_exception("witness transaction output pays unexpected token value");
+						else if (output_asset == base_asset && actual_output_value < it->second - max_fee_value || actual_output_value > it->second + max_fee_value)
+							return layer_exception("witness transaction output pays unexpected native value");
+					}
 				}
 				else if (output_asset == base_asset && actual_output_value > max_fee_value)
 					return layer_exception("witness transaction output pays unexpected native value");
@@ -2379,7 +2367,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> depository_withdrawal_routing::validate_finalized_proof(const ledger::transaction_context* context, const depository_withdrawal* transaction, const oracle::finalized_transaction& finalized)
+		expects_lr<void> depository_withdrawal_finalization::validate_finalized_proof(const ledger::transaction_context* context, const depository_withdrawal* transaction, const oracle::finalized_transaction& finalized)
 		{
 			auto validation = validate_possible_proof(context, transaction, finalized.prepared);
 			if (!validation)
@@ -2397,450 +2385,433 @@ namespace tangent
 			return expectation::met;
 		}
 
-		expects_lr<void> depository_withdrawal_finalization::validate(uint64_t block_number) const
-		{
-			if (!depository_withdrawal_routing_hash)
-				return layer_exception("depository withdrawal confirmation hash not valid");
-
-			return ledger::consensus_transaction::validate(block_number);
-		}
-		expects_lr<void> depository_withdrawal_finalization::execute(ledger::transaction_context* context) const
-		{
-			auto validation = consensus_transaction::execute(context);
-			if (!validation)
-				return validation.error();
-
-			auto parent = context->get_block_transaction<depository_withdrawal_routing>(depository_withdrawal_routing_hash);
-			if (!parent)
-				return layer_exception("parent transaction not found");
-
-			auto* parent_transaction = (depository_withdrawal_routing*)*parent->transaction;
-			if (parent->receipt.from != context->receipt.from)
-				return layer_exception("parent transaction not valid");
-
-			auto top = context->get_block_transaction<depository_withdrawal>(parent_transaction->depository_withdrawal_hash);
-			if (!top)
-				return layer_exception("top transaction not found");
-
-			auto event = context->apply_witness_event(depository_withdrawal_routing_hash, context->receipt.transaction_hash);
-			if (!event)
-				return event.error();
-
-			return depository_withdrawal::approve_or_revert(context, *top, status.empty());
-		}
-		bool depository_withdrawal_finalization::store_body(format::wo_stream* stream) const
-		{
-			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_integer(depository_withdrawal_routing_hash);
-			stream->write_string(status);
-			return true;
-		}
-		bool depository_withdrawal_finalization::load_body(format::ro_stream& stream)
-		{
-			if (!stream.read_integer(stream.read_type(), &depository_withdrawal_routing_hash))
-				return false;
-
-			if (!stream.read_string(stream.read_type(), &status))
-				return false;
-
-			return true;
-		}
-		bool depository_withdrawal_finalization::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
-		{
-			auto parent = context->get_block_transaction_instance(depository_withdrawal_routing_hash);
-			if (!parent)
-				return false;
-
-			parties.insert(algorithm::pubkeyhash_t(parent->receipt.from));
-			return true;
-		}
-		uptr<schema> depository_withdrawal_finalization::as_schema() const
-		{
-			schema* data = ledger::consensus_transaction::as_schema().reset();
-			data->set("depository_withdrawal_routing_hash", var::string(algorithm::encoding::encode_0xhex256(depository_withdrawal_routing_hash)));
-			data->set("status", status.empty() ? var::null() : var::string(status));
-			return data;
-		}
-		uint32_t depository_withdrawal_finalization::as_type() const
-		{
-			return as_instance_type();
-		}
-		std::string_view depository_withdrawal_finalization::as_typename() const
-		{
-			return as_instance_typename();
-		}
-		uint32_t depository_withdrawal_finalization::as_instance_type()
-		{
-			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
-			return hash;
-		}
-		std::string_view depository_withdrawal_finalization::as_instance_typename()
-		{
-			return "depository_withdrawal_finalization";
-		}
-
-		expects_lr<void> depository_transaction::validate(uint64_t block_number) const
+		expects_lr<void> depository_attestation::validate(uint64_t block_number) const
 		{
 			if (!algorithm::asset::token_of(asset).empty())
 				return layer_exception("invalid asset");
 
-			auto assertion = get_assertion(nullptr);
-			if (!assertion || !assertion->is_valid())
-				return layer_exception("invalid assertion");
-
-			if (!assertion->block_id)
-				return layer_exception("transaction has no block reference");
-
-			auto chain = oracle::server_node::get()->get_chainparams(asset);
-			if (!chain)
-				return layer_exception("invalid operation");
-
-			auto blockchain = algorithm::asset::blockchain_of(asset);
-			if (!assertion->is_valid())
-				return layer_exception("invalid assertion data");
-
-			for (auto& input : assertion->inputs)
+			if (proof_or_commitment)
 			{
-				if (input.is_account() && algorithm::asset::blockchain_of(input.get_asset(asset)) != blockchain)
-					return layer_exception("assertion input asset not valid");
-			}
+				auto& proof = *proof_or_commitment;
+				if (!proof.is_valid())
+					return layer_exception("invalid proof");
 
-			for (auto& output : assertion->outputs)
+				if (!proof.block_id)
+					return layer_exception("transaction has no block reference");
+
+				auto chain = oracle::server_node::get()->get_chainparams(asset);
+				if (!chain)
+					return layer_exception("invalid operation");
+
+				auto blockchain = algorithm::asset::blockchain_of(asset);
+				if (!proof.is_valid())
+					return layer_exception("invalid proof data");
+
+				for (auto& input : proof.inputs)
+				{
+					if (input.is_account() && algorithm::asset::blockchain_of(input.get_asset(asset)) != blockchain)
+						return layer_exception("proof input asset not valid");
+				}
+
+				for (auto& output : proof.outputs)
+				{
+					if (output.is_account() && algorithm::asset::blockchain_of(output.get_asset(asset)) != blockchain)
+						return layer_exception("proof output asset not valid");
+				}
+			}
+			else
 			{
-				if (output.is_account() && algorithm::asset::blockchain_of(output.get_asset(asset)) != blockchain)
-					return layer_exception("assertion output asset not valid");
-			}
+				auto& commitment = proof_or_commitment.error();
+				if (!commitment.input_hash)
+					return layer_exception("invalid input hash");
 
-			return ledger::attestation_transaction::validate(block_number);
+				if (!commitment.output_hash)
+					return layer_exception("invalid output hash");
+			}
+			return ledger::commitment::validate(block_number);
 		}
-		expects_lr<void> depository_transaction::execute(ledger::transaction_context* context) const
+		expects_lr<void> depository_attestation::execute(ledger::transaction_context* context) const
 		{
-			auto validation = attestation_transaction::execute(context);
+			auto validation = commitment::execute(context);
 			if (!validation)
 				return validation.error();
 
-			auto assertion = get_assertion(context);
-			if (!assertion)
-				return layer_exception("invalid assertion");
+			auto attestation_requirement = context->verify_validator_attestation(asset, context->receipt.from);
+			if (!attestation_requirement)
+				return attestation_requirement;
 
-			const evaluation_branch* best_branch = get_best_branch(context, nullptr);
-			if (!best_branch)
-				return layer_exception("invalid branch");
-
-			auto collision = context->get_witness_transaction(asset, assertion->transaction_id);
-			if (collision)
-				return layer_exception("assertion " + assertion->transaction_id + " finalized");
-
-			auto* chain = oracle::server_node::get()->get_chainparams(asset);
-			if (!chain)
-				return layer_exception("invalid chain");
-
-			transition operations;
-			ordered_set<algorithm::pubkeyhash_t> depositories, routers;
-			for (auto& input : assertion->inputs)
+			if (proof_or_commitment)
 			{
-				auto source = context->get_witness_account(asset, input.link.address, 0);
-				if (source && source->is_depository_account())
-				{
-					auto from_depository = algorithm::pubkeyhash_t(source->manager);
-					auto& depository = operations.depositories[from_depository];
-					if (input.value.is_positive())
-					{
-						auto input_asset = input.get_asset(asset);
-						depository.transfers[input_asset].supply -= input.value;
-						operations.weights[input_asset].accountable -= input.value;
-					}
-					for (auto& token : input.tokens)
-					{
-						auto input_asset = token.get_asset(asset);
-						depository.transfers[input_asset].supply -= token.value;
-						operations.weights[input_asset].accountable -= token.value;
-					}
+				auto& proof = *proof_or_commitment;
+				auto best_branch_hash = proof.as_hash();
+				auto attestation_hash = algorithm::hashing::hash256i(proof.transaction_id);
+				auto attestation = context->get_witness_attestation(asset, attestation_hash).or_else(states::witness_attestation(asset, attestation_hash, context->block));
+				attestation.branches[best_branch_hash].insert(context->receipt.from);
 
-					auto account = context->get_depository_account(asset, from_depository.data, source->owner);
-					if (account)
-						depository.participants.insert(account->group.begin(), account->group.end());
-					depositories.insert(from_depository);
+				auto computed_best_branch_hash = context->verify_witness_attestation(attestation);
+				if (!computed_best_branch_hash)
+					return computed_best_branch_hash.error();
+				else if (*computed_best_branch_hash != best_branch_hash)
+					return layer_exception("proof does not match the commitment");
+
+				auto collision = context->get_witness_transaction(asset, proof.transaction_id);
+				if (collision)
+					return layer_exception("proof " + proof.transaction_id + " finalized");
+
+				auto* chain = oracle::server_node::get()->get_chainparams(asset);
+				if (!chain)
+					return layer_exception("invalid chain");
+
+				transition operations;
+				ordered_set<algorithm::pubkeyhash_t> depositories, routers;
+				auto rebalance_weights = [&](const oracle::coin_utxo& inout, bool accountable, int8_t sign)
+				{
+					if (inout.value.is_positive())
+					{
+						if (accountable)
+							operations.weights[inout.get_asset(asset)].accountable += sign >= 0 ? inout.value : -inout.value;
+						else
+							operations.weights[inout.get_asset(asset)].unaccountable += sign >= 0 ? inout.value : -inout.value;
+					}
+					for (auto& token : inout.tokens)
+					{
+						if (accountable)
+							operations.weights[token.get_asset(asset)].accountable += sign >= 0 ? token.value : -token.value;
+						else
+							operations.weights[token.get_asset(asset)].unaccountable += sign >= 0 ? token.value : -token.value;
+					}
+				};
+				for (auto& input : proof.inputs)
+				{
+					auto source = context->get_witness_account(asset, input.link.address, 0);
+					if (source && source->is_depository_account())
+					{
+						auto from_depository = algorithm::pubkeyhash_t(source->manager);
+						auto& depository = operations.depositories[from_depository];
+						rebalance_weights(input, true, -1);
+						if (input.value.is_positive())
+							depository.transfers[input.get_asset(asset)].supply -= input.value;
+						for (auto& token : input.tokens)
+							depository.transfers[token.get_asset(asset)].supply -= token.value;
+
+						auto account = context->get_depository_account(asset, from_depository.data, source->owner);
+						if (account)
+							depository.participants.insert(account->group.begin(), account->group.end());
+						depositories.insert(from_depository);
+					}
+					else
+					{
+						rebalance_weights(input, !depositories.empty(), -1);
+						if (source && source->is_routing_account())
+							routers.insert(algorithm::pubkeyhash_t(source->owner));
+					}
 				}
-				else if (source && source->is_routing_account())
-				{
-					routers.insert(algorithm::pubkeyhash_t(source->owner));
-					if (input.value.is_positive())
-						operations.weights[input.get_asset(asset)].accountable -= input.value;
-					for (auto& token : input.tokens)
-						operations.weights[token.get_asset(asset)].accountable -= token.value;
-				}
-				else
-				{
-					if (input.value.is_positive())
-						operations.weights[input.get_asset(asset)].unaccountable -= input.value;
-					for (auto& token : input.tokens)
-						operations.weights[token.get_asset(asset)].unaccountable -= token.value;
-				}
-			}
 
-			for (auto& output : assertion->outputs)
-			{
-				auto source = context->get_witness_account(asset, output.link.address, 0);
-				if (source && source->is_depository_account())
+				if (!depositories.empty())
 				{
-					auto to_depository = algorithm::pubkeyhash_t(source->manager);
-					auto& depository = operations.depositories[to_depository];
-					auto amounts = ordered_map<algorithm::asset_id, decimal>();
-					if (output.value.is_positive())
+					for (auto& [asset, weight] : operations.weights)
 					{
-						auto output_asset = output.get_asset(asset);
-						amounts[output_asset] = output.value;
-						operations.weights[output_asset].accountable += output.value;
+						weight.accountable += weight.unaccountable;
+						weight.unaccountable = decimal::zero();
 					}
-					for (auto& token : output.tokens)
-					{
-						auto output_asset = token.get_asset(asset);
-						amounts[output_asset] = token.value;
-						operations.weights[output_asset].accountable += token.value;
-					}
+				}
 
-					auto account = context->get_depository_account(asset, to_depository.data, source->owner);
-					if (account)
-						depository.participants.insert(account->group.begin(), account->group.end());
-
-					auto to_account = routers.empty() ? algorithm::pubkeyhash_t(source->owner) : *routers.begin();
-					for (auto& [token_asset, token_value] : amounts)
+				for (auto& output : proof.outputs)
+				{
+					auto source = context->get_witness_account(asset, output.link.address, 0);
+					if (source && source->is_depository_account())
 					{
-						auto& transfer = depository.transfers[token_asset];
-						transfer.supply += token_value;
-						if (token_value.is_positive() && depositories.empty())
+						auto to_depository = algorithm::pubkeyhash_t(source->manager);
+						auto& depository = operations.depositories[to_depository];
+						auto amounts = ordered_map<algorithm::asset_id, decimal>();
+						rebalance_weights(output, true, 1);
+						if (output.value.is_positive())
+							amounts[output.get_asset(asset)] = output.value;
+						for (auto& token : output.tokens)
+							amounts[token.get_asset(asset)] = token.value;
+
+						auto account = context->get_depository_account(asset, to_depository.data, source->owner);
+						if (account)
+							depository.participants.insert(account->group.begin(), account->group.end());
+
+						auto to_account = routers.empty() ? algorithm::pubkeyhash_t(source->owner) : *routers.begin();
+						for (auto& [token_asset, token_value] : amounts)
 						{
-							auto& balance = operations.transfers[to_account][token_asset];
-							balance.supply += token_value;
-							if (!to_depository.equals(to_account.data))
+							auto& transfer = depository.transfers[token_asset];
+							transfer.supply += token_value;
+							if (token_value.is_positive() && depositories.empty())
 							{
-								auto reward = context->get_depository_reward(token_asset, to_depository.data);
-								if (reward && reward->incoming_fee.is_positive())
+								auto& balance = operations.transfers[to_account][token_asset];
+								balance.supply += token_value;
+								if (!to_depository.equals(to_account.data))
 								{
-									balance.supply -= reward->incoming_fee;
-									transfer.incoming_fee += reward->incoming_fee;
+									auto reward = context->get_depository_reward(token_asset, to_depository.data);
+									if (reward && reward->incoming_fee.is_positive())
+									{
+										balance.supply -= reward->incoming_fee;
+										transfer.incoming_fee += reward->incoming_fee;
+									}
+								}
+							}
+						}
+					}
+					else
+					{
+						rebalance_weights(output, !depositories.empty(), 1);
+						if (!source || !source->is_routing_account())
+							continue;
+
+						auto from_account = routers.empty() ? algorithm::pubkeyhash_t(source->owner) : *routers.begin();
+						auto& from_transfers = operations.transfers[from_account];
+						auto amounts = ordered_map<algorithm::asset_id, decimal>();
+						if (output.value.is_positive())
+							amounts[output.get_asset(asset)] = output.value;
+						for (auto& token : output.tokens)
+							amounts[token.get_asset(asset)] = token.value;
+
+						for (auto& [token_asset, token_value] : amounts)
+						{
+							auto& balance = from_transfers[token_asset];
+							balance.supply -= token_value;
+							balance.reserve -= token_value;
+							if (token_value.is_positive())
+							{
+								for (auto from_depository = depositories.begin(); from_depository != depositories.end(); from_depository++)
+								{
+									auto reward = context->get_depository_reward(asset, from_depository->data);
+									auto outgoing_fee = reward ? algorithm::arithmetic::divide(reward->outgoing_fee, depositories.size()) : decimal::zero();
+									if (outgoing_fee.is_positive())
+									{
+										auto& base_transfer = operations.depositories[*from_depository].transfers[asset];
+										auto& base_balance = from_transfers[asset];
+										base_balance.supply -= outgoing_fee;
+										base_balance.reserve -= outgoing_fee;
+										base_transfer.outgoing_fee += outgoing_fee;
+									}
 								}
 							}
 						}
 					}
 				}
-				else if (source && source->is_routing_account())
-				{
-					auto from_account = routers.empty() ? algorithm::pubkeyhash_t(source->owner) : *routers.begin();
-					auto& from_transfers = operations.transfers[from_account];
-					auto amounts = ordered_map<algorithm::asset_id, decimal>();
-					if (output.value.is_positive())
-					{
-						auto output_asset = output.get_asset(asset);
-						amounts[output_asset] = output.value;
-						operations.weights[output_asset].accountable += output.value;
-					}
-					for (auto& token : output.tokens)
-					{
-						auto output_asset = token.get_asset(asset);
-						amounts[output_asset] = token.value;
-						operations.weights[output_asset].accountable += token.value;
-					}
 
-					for (auto& [token_asset, token_value] : amounts)
+				if (operations.transfers.empty() && operations.depositories.empty())
+					return layer_exception("invalid transaction");
+
+				for (auto& [asset, weight] : operations.weights)
+				{
+					decimal fee = weight.accountable + weight.unaccountable;
+					weight.accountable = math0::abs(std::min(decimal::zero(), weight.accountable - std::min(decimal::zero(), fee)));
+				}
+
+				auto failing_attesters = ordered_set<algorithm::pubkeyhash_t>();
+				auto& succeeding_attesters = attestation.branches[best_branch_hash];
+				succeeding_attesters.insert(context->receipt.from);
+				for (auto& [branch_hash, attesters] : attestation.branches)
+				{
+					if (branch_hash != best_branch_hash)
+						failing_attesters.insert(attesters.begin(), attesters.end());
+				}
+
+				for (auto& [owner, transfers] : operations.transfers)
+				{
+					for (auto& [transfer_asset, transfer] : transfers)
 					{
-						auto& balance = from_transfers[token_asset];
-						balance.supply -= token_value;
-						balance.reserve -= token_value;
-						if (token_value.is_positive())
+						if (transfer.supply.is_zero_or_nan() && transfer.reserve.is_zero_or_nan())
+							continue;
+
+						auto supply_delta = transfer.supply.is_nan() ? decimal::zero() : transfer.supply;
+						auto reserve_delta = transfer.reserve.is_nan() ? decimal::zero() : transfer.reserve;
+						if (supply_delta.is_negative() || reserve_delta.is_negative())
 						{
-							auto divider = decimal(depositories.size()).truncate(protocol::now().message.decimal_precision);
-							for (auto from_depository = depositories.begin(); from_depository != depositories.end(); from_depository++)
+							auto balance = context->get_account_balance(transfer_asset, owner.data);
+							auto supply = (balance ? balance->supply : decimal::zero()) + supply_delta;
+							auto reserve = (balance ? balance->reserve : decimal::zero()) + reserve_delta;
+							operations.weights[transfer_asset].accountable += std::min(decimal::zero(), std::min(supply, reserve));
+							if (supply.is_negative())
+								supply_delta = (balance ? -balance->supply : decimal::zero());
+							if (reserve.is_negative())
+								reserve_delta = (balance ? -balance->reserve : decimal::zero());
+						}
+
+						if (!supply_delta.is_zero() || !reserve_delta.is_zero())
+						{
+							auto delta_transfer = context->apply_transfer(transfer_asset, owner.data, supply_delta, reserve_delta);
+							if (!delta_transfer)
+								return delta_transfer.error();
+						}
+					}
+				}
+
+				for (auto& [owner, batch] : operations.depositories)
+				{
+					for (auto& [transfer_asset, transfer] : batch.transfers)
+					{
+						auto& penalty = operations.weights[transfer_asset].accountable;
+						auto consume_penalty = [&penalty](const decimal& delta) -> decimal
+						{
+							auto adjustment = std::max(decimal::zero(), penalty - delta);
+							auto result = std::max(decimal::zero(), delta - penalty);
+							penalty = adjustment;
+							return result;
+						};
+						penalty = math0::abs(penalty);
+						if (transfer.supply.is_negative())
+						{
+							auto balance = context->get_depository_balance(transfer_asset, owner.data);
+							auto supply = balance ? -balance->get_balance(transfer_asset) : decimal::zero();
+							if (supply > transfer.supply)
 							{
-								auto reward = context->get_depository_reward(asset, from_depository->data);
-								auto outgoing_fee = reward ? reward->outgoing_fee / divider : decimal::zero();
-								if (outgoing_fee.is_positive())
-								{
-									auto& base_transfer = operations.depositories[*from_depository].transfers[asset];
-									auto& base_balance = from_transfers[asset];
-									base_balance.supply -= outgoing_fee;
-									base_balance.reserve -= outgoing_fee;
-									base_transfer.outgoing_fee += outgoing_fee;
-								}
+								consume_penalty(transfer.supply - supply);
+								transfer.supply = supply;
 							}
 						}
-					}
-				}
-				else
-				{
-					if (output.value.is_positive())
-						operations.weights[output.get_asset(asset)].unaccountable += output.value;
-					for (auto& token : output.tokens)
-						operations.weights[token.get_asset(asset)].unaccountable += token.value;
-				}
-			}
 
-			if (operations.transfers.empty() && operations.depositories.empty())
-				return layer_exception("invalid transaction");
-
-			for (auto& [asset, weight] : operations.weights)
-			{
-				bool check = !weight.accountable.is_zero() || !weight.unaccountable.is_zero();
-				if (check)
-					check = check;
-
-				decimal fee = weight.accountable + weight.unaccountable;
-				weight.accountable = math0::abs(std::min(decimal::zero(), weight.accountable - std::min(decimal::zero(), fee)));
-			}
-
-			ordered_set<algorithm::pubkeyhash_t> failing_attesters;
-			for (auto& branch : output_hashes)
-			{
-				if (best_branch == &branch.second)
-					continue;
-
-				for (auto& signature : branch.second.signatures)
-				{
-					algorithm::pubkeyhash_t attester;
-					if (!algorithm::signing::recover_hash(get_branch_image(branch.first), attester, signature))
-						return layer_exception("invalid attestation signature");
-
-					failing_attesters.insert(attester);
-				}
-			}
-
-			for (auto& [owner, transfers] : operations.transfers)
-			{
-				for (auto& [transfer_asset, transfer] : transfers)
-				{
-					if (transfer.supply.is_zero_or_nan() && transfer.reserve.is_zero_or_nan())
-						continue;
-
-					auto supply_delta = transfer.supply.is_nan() ? decimal::zero() : transfer.supply;
-					auto reserve_delta = transfer.reserve.is_nan() ? decimal::zero() : transfer.reserve;
-					if (supply_delta.is_negative() || reserve_delta.is_negative())
-					{
-						auto balance = context->get_account_balance(transfer_asset, owner.data);
-						auto supply = (balance ? balance->supply : decimal::zero()) + supply_delta;
-						auto reserve = (balance ? balance->reserve : decimal::zero()) + reserve_delta;
-						operations.weights[transfer_asset].accountable += std::min(decimal::zero(), std::min(supply, reserve));
-						if (supply.is_negative())
-							supply_delta = (balance ? -balance->supply : decimal::zero());
-						if (reserve.is_negative())
-							reserve_delta = (balance ? -balance->reserve : decimal::zero());
-					}
-
-					if (!supply_delta.is_zero() || !reserve_delta.is_zero())
-					{
-						auto delta_transfer = context->apply_transfer(transfer_asset, owner.data, supply_delta, reserve_delta);
-						if (!delta_transfer)
-							return delta_transfer.error();
-					}
-				}
-			}
-
-			for (auto& [owner, batch] : operations.depositories)
-			{
-				for (auto& [transfer_asset, transfer] : batch.transfers)
-				{
-					auto& penalty = operations.weights[transfer_asset].accountable;
-					auto consume_penalty = [&penalty](const decimal& delta) -> decimal
-					{
-						auto adjustment = std::max(decimal::zero(), penalty - delta);
-						auto result = std::max(decimal::zero(), delta - penalty);
-						penalty = adjustment;
-						return result;
-					};
-					penalty = math0::abs(penalty);
-					if (transfer.supply.is_negative())
-					{
-						auto balance = context->get_depository_balance(transfer_asset, owner.data);
-						auto supply = balance ? -balance->get_balance(transfer_asset) : decimal::zero();
-						if (supply > transfer.supply)
+						if (!transfer.supply.is_zero())
 						{
-							consume_penalty(transfer.supply - supply);
-							transfer.supply = supply;
-						}
-					}
-
-					if (!transfer.supply.is_zero())
-					{
-						auto depository = context->apply_depository_balance(transfer_asset, owner.data, { { transfer_asset, transfer.supply } });
-						if (!depository)
-							return depository.error();
-					}
-
-					auto total_fee = consume_penalty(transfer.incoming_fee + transfer.outgoing_fee);
-					auto attestation_cut = best_branch->signatures.empty() ? decimal::zero() : decimal(protocol::now().policy.attestation_fee_rate);
-					auto participation_cut = batch.participants.empty() ? decimal::zero() : decimal(protocol::now().policy.participation_fee_rate);
-					auto depository_fee = total_fee * (1 - attestation_cut - participation_cut);
-					auto attestation_fee = !best_branch->signatures.empty() ? total_fee * attestation_cut / decimal(best_branch->signatures.size()).truncate(protocol::now().message.decimal_precision) : decimal::zero();
-					auto participation_fee = !batch.participants.empty() ? total_fee * participation_cut / decimal(batch.participants.size()).truncate(protocol::now().message.decimal_precision) : decimal::zero();
-					if (attestation_fee.is_positive())
-					{
-						for (auto& attester : failing_attesters)
-						{
-							auto prev_attestation = context->get_validator_attestation(transfer_asset, attester.data);
-							if (!prev_attestation)
-								continue;
-
-							auto next_attestation = context->apply_validator_attestation(transfer_asset, attester.data, ledger::transaction_context::stake_type::lock, { { transfer_asset, -attestation_fee } });
-							if (!next_attestation)
-								return next_attestation.error();
-
-							auto& prev_value = prev_attestation->stakes[transfer_asset];
-							auto& next_value = next_attestation->stakes[transfer_asset];
-							prev_value = prev_value.is_nan() ? decimal::zero() : prev_value;
-							next_value = next_value.is_nan() ? decimal::zero() : next_value;
-
-							auto compensation_adjustment = std::max(decimal::zero(), prev_value - next_value);
-							if (compensation_adjustment.is_positive())
-								depository_fee += consume_penalty(std::max(decimal::zero(), prev_value - next_value));
+							auto depository = context->apply_depository_balance(transfer_asset, owner.data, { { transfer_asset, transfer.supply } });
+							if (!depository)
+								return depository.error();
 						}
 
-						for (size_t i = 0; i < best_branch->signatures.size(); i++)
+						auto total_fee = consume_penalty(transfer.incoming_fee + transfer.outgoing_fee);
+						auto attestation_cut = succeeding_attesters.empty() ? decimal::zero() : decimal(protocol::now().policy.attestation_fee_rate);
+						auto participation_cut = batch.participants.empty() ? decimal::zero() : decimal(protocol::now().policy.participation_fee_rate);
+						auto depository_fee = total_fee * (1 - attestation_cut - participation_cut);
+						auto attestation_fee = !succeeding_attesters.empty() ? algorithm::arithmetic::divide(total_fee * attestation_cut, succeeding_attesters.size()) : decimal::zero();
+						auto participation_fee = !batch.participants.empty() ? algorithm::arithmetic::divide(total_fee * participation_cut, batch.participants.size()) : decimal::zero();
+						if (attestation_fee.is_positive())
 						{
-							algorithm::pubkeyhash_t target;
-							if (!recover_hash(target, best_branch->message.hash(), i))
-								return layer_exception("invalid attestation signature");
+							for (auto& failing_attester : failing_attesters)
+							{
+								auto prev_attestation = context->get_validator_attestation(transfer_asset, failing_attester.data);
+								if (!prev_attestation)
+									continue;
 
-							auto attestation = context->apply_validator_attestation(transfer_asset, target, ledger::transaction_context::stake_type::reward_or_penalty, { { transfer_asset, attestation_fee } });
+								auto next_attestation = context->apply_validator_attestation(transfer_asset, failing_attester.data, ledger::transaction_context::stake_type::lock, { { transfer_asset, -attestation_fee } });
+								if (!next_attestation)
+									return next_attestation.error();
+
+								auto& prev_value = prev_attestation->stakes[transfer_asset];
+								auto& next_value = next_attestation->stakes[transfer_asset];
+								prev_value = prev_value.is_nan() ? decimal::zero() : prev_value;
+								next_value = next_value.is_nan() ? decimal::zero() : next_value;
+
+								auto compensation_adjustment = std::max(decimal::zero(), prev_value - next_value);
+								if (compensation_adjustment.is_positive())
+									depository_fee += consume_penalty(std::max(decimal::zero(), prev_value - next_value));
+							}
+
+							for (auto& succeeding_attester : succeeding_attesters)
+							{
+								auto attestation = context->apply_validator_attestation(transfer_asset, succeeding_attester, ledger::transaction_context::stake_type::reward_or_penalty, { { transfer_asset, attestation_fee } });
+								if (!attestation)
+									return attestation.error();
+							}
+						}
+
+						if (penalty.is_positive() || participation_fee.is_positive())
+						{
+							auto individual_penalty = -algorithm::arithmetic::divide(penalty, batch.participants.size());
+							for (auto& participant : batch.participants)
+							{
+								auto participation = context->apply_validator_participation(transfer_asset, participant.data, ledger::transaction_context::stake_type::reward_or_penalty, 0, { { transfer_asset, individual_penalty.is_negative() ? individual_penalty : participation_fee } });
+								if (!participation)
+									return participation.error();
+							}
+						}
+
+						if (depository_fee.is_positive())
+						{
+							auto attestation = context->apply_validator_attestation(transfer_asset, owner.data, ledger::transaction_context::stake_type::reward_or_penalty, { { transfer_asset, depository_fee } });
 							if (!attestation)
 								return attestation.error();
 						}
 					}
-
-					if (penalty.is_positive() || participation_fee.is_positive())
-					{
-						auto individual_penalty = -penalty / decimal(batch.participants.size()).truncate(protocol::now().message.decimal_precision);
-						for (auto& participant : batch.participants)
-						{
-							auto participation = context->apply_validator_participation(transfer_asset, participant.data, ledger::transaction_context::stake_type::reward_or_penalty, 0, { { transfer_asset, individual_penalty.is_negative() ? individual_penalty : participation_fee } });
-							if (!participation)
-								return participation.error();
-						}
-					}
-
-					if (depository_fee.is_positive())
-					{
-						auto attestation = context->apply_validator_attestation(transfer_asset, owner.data, ledger::transaction_context::stake_type::reward_or_penalty, { { transfer_asset, depository_fee } });
-						if (!attestation)
-							return attestation.error();
-					}
 				}
+
+				auto confirmation = context->apply_witness_attestation(asset, attestation_hash, best_branch_hash, context->receipt.from, true);
+				if (!confirmation)
+					return confirmation.error();
+
+				auto finalization = context->apply_witness_transaction(asset, proof.transaction_id);
+				if (!finalization)
+					return finalization.error();
+
+				return context->emit_witness(asset, proof.block_id);
+			}
+			else
+			{
+				auto& commitment = proof_or_commitment.error();
+				auto attestation = context->get_witness_attestation(asset, commitment.input_hash);
+				if (attestation && context->try_commit_to_witness_attestation(*attestation, commitment.output_hash, context->receipt.from))
+					return layer_exception(stringify::text("further commitment attestations are dismissed (%s)", attestation->finalized ? "fully finalized" : "requires proof"));
+
+				attestation = context->apply_witness_attestation(asset, commitment.input_hash, commitment.output_hash, context->receipt.from, false);
+				if (!attestation)
+					return attestation.error();
+
+				return expectation::met;
+			}
+		}
+		bool depository_attestation::store_body(format::wo_stream* stream) const
+		{
+			stream->write_boolean(!!proof_or_commitment);
+			if (proof_or_commitment)
+			{
+				if (!proof_or_commitment->store_payload(stream))
+					return false;
+			}
+			else
+			{
+				stream->write_integer(proof_or_commitment.error().input_hash);
+				stream->write_integer(proof_or_commitment.error().output_hash);
+			}
+			return true;
+		}
+		bool depository_attestation::load_body(format::ro_stream& stream)
+		{
+			bool is_proof;
+			if (!stream.read_boolean(stream.read_type(), &is_proof))
+				return false;
+
+			if (is_proof)
+			{
+				oracle::computed_transaction proof;
+				if (!proof.load_payload(stream))
+					return false;
+
+				proof_or_commitment = std::move(proof);
+			}
+			else
+			{
+				branch_commitment commitment;
+				if (!stream.read_integer(stream.read_type(), &commitment.input_hash))
+					return false;
+
+				if (!stream.read_integer(stream.read_type(), &commitment.output_hash))
+					return false;
+
+				proof_or_commitment = std::move(commitment);
 			}
 
-			auto witness = context->apply_witness_transaction(asset, assertion->transaction_id);
-			if (!witness)
-				return witness.error();
-
-			return context->emit_witness(asset, assertion->block_id);
-		}
-		bool depository_transaction::store_body(format::wo_stream* stream) const
-		{
 			return true;
 		}
-		bool depository_transaction::load_body(format::ro_stream& stream)
+		bool depository_attestation::sign(const algorithm::seckey_t& secret_key)
 		{
-			return true;
+			assign_proof_or_commitment_automatically(secret_key);
+			return ledger::commitment::sign(secret_key);
 		}
-		bool depository_transaction::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
+		bool depository_attestation::sign(const algorithm::seckey_t& secret_key, uint64_t new_nonce)
+		{
+			assign_proof_or_commitment_automatically(secret_key);
+			return ledger::commitment::sign(secret_key, new_nonce);
+		}
+		expects_lr<void> depository_attestation::sign(const algorithm::seckey_t& secret_key, uint64_t new_nonce, const decimal& price)
+		{
+			assign_proof_or_commitment_automatically(secret_key);
+			return ledger::commitment::sign(secret_key, new_nonce, price);
+		}
+		bool depository_attestation::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
 		{
 			for (auto& event : receipt.find_events<states::account_balance>())
 			{
@@ -2854,7 +2825,7 @@ namespace tangent
 			}
 			return true;
 		}
-		void depository_transaction::set_finalized_witness(uint64_t block_id, const std::string_view& transaction_id, const vector<oracle::value_transfer>& inputs, const vector<oracle::value_transfer>& outputs)
+		void depository_attestation::set_finalized_proof(uint64_t block_id, const std::string_view& transaction_id, const vector<oracle::value_transfer>& inputs, const vector<oracle::value_transfer>& outputs)
 		{
 			auto* chain = oracle::server_node::get()->get_chainparams(asset);
 			oracle::computed_transaction witness;
@@ -2866,48 +2837,73 @@ namespace tangent
 				witness.inputs.push_back(oracle::coin_utxo(oracle::wallet_link::from_address(input.address), { { input.asset, input.value } }));
 			for (auto& output : outputs)
 				witness.outputs.push_back(oracle::coin_utxo(oracle::wallet_link::from_address(output.address), { { output.asset, output.value } }));
-			set_computed_witness(witness);
+			set_computed_proof(std::move(witness));
 		}
-		void depository_transaction::set_computed_witness(const oracle::computed_transaction& witness)
+		void depository_attestation::set_computed_proof(oracle::computed_transaction&& new_proof)
 		{
-			set_statement(algorithm::hashing::hash256i(witness.transaction_id), witness.as_message());
+			proof_or_commitment = std::move(new_proof);
 		}
-		option<oracle::computed_transaction> depository_transaction::get_assertion(const ledger::transaction_context* context) const
+		void depository_attestation::set_commitment(const oracle::computed_transaction& new_proof)
 		{
-			auto* best_branch = get_best_branch(context, nullptr);
-			if (!best_branch)
-				return optional::none;
+			branch_commitment commitment;
+			commitment.input_hash = algorithm::hashing::hash256i(new_proof.transaction_id);
+			commitment.output_hash = new_proof.as_hash();
+			proof_or_commitment = std::move(commitment);
+		}
+		void depository_attestation::assign_proof_or_commitment_automatically(const algorithm::seckey_t& secret_key)
+		{
+			if (!proof_or_commitment)
+				return;
 
-			auto message = best_branch->message.ro();
-			oracle::computed_transaction assertion;
-			if (!assertion.load(message))
-				return optional::none;
+			algorithm::pubkey_t public_key;
+			if (!algorithm::signing::derive_public_key(secret_key, public_key))
+				return;
 
-			return assertion;
+			algorithm::pubkeyhash_t public_key_hash;
+			algorithm::signing::derive_public_key_hash(public_key, public_key_hash);
+			auto input_hash = algorithm::hashing::hash256i(proof_or_commitment->transaction_id);
+			auto output_hash = proof_or_commitment->as_hash();
+			auto context = ledger::transaction_context();
+			auto witness = context.get_witness_attestation(asset, input_hash);
+			if (witness && !context.try_commit_to_witness_attestation(*witness, output_hash, public_key_hash))
+				return;
+			else if (!witness && context.calculate_attesters_size(asset).or_else(0) <= 1)
+				return;
+
+			branch_commitment commitment;
+			commitment.input_hash = input_hash;
+			commitment.output_hash = output_hash;
+			proof_or_commitment = std::move(commitment);
 		}
-		uptr<schema> depository_transaction::as_schema() const
+		uptr<schema> depository_attestation::as_schema() const
 		{
-			auto assertion = get_assertion(nullptr);
-			schema* data = ledger::attestation_transaction::as_schema().reset();
-			data->set("assertion", assertion ? assertion->as_schema().reset() : var::set::null());
+			schema* data = ledger::commitment::as_schema().reset();
+			if (!proof_or_commitment)
+			{
+				auto* commitment_data = data->set("commitment", var::set::object());
+				commitment_data->set("input_hash", var::string(algorithm::encoding::encode_0xhex256(proof_or_commitment.error().input_hash)));
+				commitment_data->set("output_hash", var::string(algorithm::encoding::encode_0xhex256(proof_or_commitment.error().output_hash)));
+			}
+			else
+				data->set("proof", proof_or_commitment->as_schema().reset());
 			return data;
 		}
-		uint32_t depository_transaction::as_type() const
+		uint32_t depository_attestation::as_type() const
 		{
 			return as_instance_type();
 		}
-		std::string_view depository_transaction::as_typename() const
+		std::string_view depository_attestation::as_typename() const
 		{
 			return as_instance_typename();
 		}
-		uint32_t depository_transaction::as_instance_type()
+		uint32_t depository_attestation::as_instance_type()
 		{
 			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
 			return hash;
 		}
-		std::string_view depository_transaction::as_instance_typename()
+		std::string_view depository_attestation::as_instance_typename()
 		{
-			return "depository_transaction";
+			return "depository_attestation";
 		}
 
 		expects_lr<void> depository_adjustment::validate(uint64_t block_number) const
@@ -2927,23 +2923,6 @@ namespace tangent
 			if (security_level > 0 && security_level > protocol::now().policy.participation_max_per_account)
 				return layer_exception("invalid security level");
 
-			if (!whitelist.empty())
-			{
-				auto* chain = oracle::server_node::get()->get_chainparams(asset);
-				if (chain->tokenization != oracle::token_policy::program)
-					return layer_exception("whitelist not applicable for asset's token policy");
-
-				for (auto& [contract_address, symbol] : whitelist)
-				{
-					if (contract_address.empty() || symbol.empty())
-						return layer_exception("invalid whitelist token");
-
-					auto raw_contract_address = oracle::server_node::get()->decode_address(asset, contract_address);
-					if (!raw_contract_address)
-						return raw_contract_address.error();
-				}
-			}
-
 			return ledger::transaction::validate(block_number);
 		}
 		expects_lr<void> depository_adjustment::execute(ledger::transaction_context* context) const
@@ -2960,18 +2939,12 @@ namespace tangent
 			if (!reward)
 				return reward.error();
 
-			auto blockchain = algorithm::asset::blockchain_of(asset);
-			auto allowances = ordered_set<algorithm::asset_id>();
-			for (auto& [contract_address, symbol] : whitelist)
-				allowances.insert(algorithm::asset::id_of(blockchain, symbol, contract_address));
-
 			auto depository = context->get_depository_policy(asset, context->receipt.from).or_else(states::depository_policy(context->receipt.from, asset, nullptr));
 			if (depository.accepts_withdrawal_requests != accepts_withdrawal_requests && !accepts_withdrawal_requests)
 			{
 				auto balance = context->get_depository_balance(asset, context->receipt.from);
 				if (balance)
 				{
-					depository.whitelist.insert(allowances.begin(), allowances.end());
 					for (auto& [token_asset, token_value] : balance->balances)
 					{
 						if (algorithm::asset::is_valid(token_asset, true))
@@ -2988,7 +2961,7 @@ namespace tangent
 
 			if ((security_level > 0 && security_level != depository.security_level) || depository.participation_threshold != participation_threshold || depository.accepts_account_requests != accepts_account_requests || depository.accepts_withdrawal_requests != accepts_withdrawal_requests)
 			{
-				auto policy = context->apply_depository_policy(asset, context->receipt.from, security_level, participation_threshold, accepts_account_requests, accepts_withdrawal_requests, std::move(allowances));
+				auto policy = context->apply_depository_policy(asset, context->receipt.from, security_level, participation_threshold, accepts_account_requests, accepts_withdrawal_requests);
 				if (!policy)
 					return policy.error();
 			}
@@ -3004,12 +2977,6 @@ namespace tangent
 			stream->write_integer(security_level);
 			stream->write_boolean(accepts_account_requests);
 			stream->write_boolean(accepts_withdrawal_requests);
-			stream->write_integer((uint16_t)whitelist.size());
-			for (auto& [contract_address, symbol] : whitelist)
-			{
-				stream->write_string(contract_address);
-				stream->write_string(symbol);
-			}
 			return true;
 		}
 		bool depository_adjustment::load_body(format::ro_stream& stream)
@@ -3032,23 +2999,6 @@ namespace tangent
 			if (!stream.read_boolean(stream.read_type(), &accepts_withdrawal_requests))
 				return false;
 
-			uint16_t whitelist_size;
-			if (!stream.read_integer(stream.read_type(), &whitelist_size))
-				return false;
-
-			whitelist.clear();
-			for (uint16_t i = 0; i < whitelist_size; i++)
-			{
-				string contract_address, symbol;
-				if (!stream.read_string(stream.read_type(), &contract_address))
-					return false;
-
-				if (!stream.read_string(stream.read_type(), &symbol))
-					return false;
-
-				whitelist[contract_address] = std::move(symbol);
-			}
-
 			return true;
 		}
 		void depository_adjustment::set_reward(const decimal& new_incoming_fee, const decimal& new_outgoing_fee)
@@ -3063,10 +3013,6 @@ namespace tangent
 			accepts_account_requests = new_accepts_account_requests;
 			accepts_withdrawal_requests = new_accepts_withdrawal_requests;
 		}
-		void depository_adjustment::permanently_whitelist_token(const std::string_view& contract_address, const std::string_view& symbol)
-		{
-			whitelist[string(contract_address)] = symbol;
-		}
 		uptr<schema> depository_adjustment::as_schema() const
 		{
 			schema* data = ledger::transaction::as_schema().reset();
@@ -3076,19 +3022,6 @@ namespace tangent
 			data->set("security_level", var::integer(security_level));
 			data->set("accepts_account_requests", var::boolean(accepts_account_requests));
 			data->set("accepts_withdrawal_requests", var::boolean(accepts_withdrawal_requests));
-
-			auto* whitelist_data = data->set("whitelist", var::set::array());
-			if (!whitelist.empty())
-			{
-				auto blockchain = algorithm::asset::blockchain_of(asset);
-				for (auto& [contract_address, symbol] : whitelist)
-				{
-					auto* whitelist_item = whitelist_data->push(var::set::object());
-					whitelist_item->set("asset", algorithm::asset::serialize(algorithm::asset::id_of(blockchain, symbol, contract_address)));
-					whitelist_item->set("contract_address", var::string(contract_address));
-				}
-			}
-
 			return data;
 		}
 		uint32_t depository_adjustment::as_type() const
@@ -3337,11 +3270,11 @@ namespace tangent
 			if (confirmation_signature.empty())
 				return layer_exception("invalid confirmation signature");
 
-			return ledger::consensus_transaction::validate(block_number);
+			return ledger::commitment::validate(block_number);
 		}
 		expects_lr<void> depository_migration_finalization::execute(ledger::transaction_context* context) const
 		{
-			auto validation = consensus_transaction::execute(context);
+			auto validation = commitment::execute(context);
 			if (!validation)
 				return validation.error();
 
@@ -3412,7 +3345,7 @@ namespace tangent
 		}
 		uptr<schema> depository_migration_finalization::as_schema() const
 		{
-			schema* data = ledger::consensus_transaction::as_schema().reset();
+			schema* data = ledger::commitment::as_schema().reset();
 			data->set("depository_migration_hash", var::string(algorithm::encoding::encode_0xhex256(depository_migration_hash)));
 			data->set("confirmation_signature", confirmation_signature.empty() ? var::null() : var::string(format::util::encode_0xhex(confirmation_signature.view())));
 			return data;
@@ -3462,12 +3395,10 @@ namespace tangent
 				return memory::init<depository_account_finalization>();
 			else if (hash == depository_withdrawal::as_instance_type())
 				return memory::init<depository_withdrawal>();
-			else if (hash == depository_withdrawal_routing::as_instance_type())
-				return memory::init<depository_withdrawal_routing>();
 			else if (hash == depository_withdrawal_finalization::as_instance_type())
 				return memory::init<depository_withdrawal_finalization>();
-			else if (hash == depository_transaction::as_instance_type())
-				return memory::init<depository_transaction>();
+			else if (hash == depository_attestation::as_instance_type())
+				return memory::init<depository_attestation>();
 			else if (hash == depository_adjustment::as_instance_type())
 				return memory::init<depository_adjustment>();
 			else if (hash == depository_migration::as_instance_type())
@@ -3495,12 +3426,10 @@ namespace tangent
 				return memory::init<depository_account_finalization>(*(const depository_account_finalization*)base);
 			else if (hash == depository_withdrawal::as_instance_type())
 				return memory::init<depository_withdrawal>(*(const depository_withdrawal*)base);
-			else if (hash == depository_withdrawal_routing::as_instance_type())
-				return memory::init<depository_withdrawal_routing>(*(const depository_withdrawal_routing*)base);
 			else if (hash == depository_withdrawal_finalization::as_instance_type())
 				return memory::init<depository_withdrawal_finalization>(*(const depository_withdrawal_finalization*)base);
-			else if (hash == depository_transaction::as_instance_type())
-				return memory::init<depository_transaction>(*(const depository_transaction*)base);
+			else if (hash == depository_attestation::as_instance_type())
+				return memory::init<depository_attestation>(*(const depository_attestation*)base);
 			else if (hash == depository_adjustment::as_instance_type())
 				return memory::init<depository_adjustment>(*(const depository_adjustment*)base);
 			else if (hash == depository_migration::as_instance_type())
@@ -3509,11 +3438,11 @@ namespace tangent
 				return memory::init<depository_migration_finalization>(*(const depository_migration_finalization*)base);
 			return nullptr;
 		}
-		expects_promise_rt<oracle::prepared_transaction> resolver::prepare_transaction(const algorithm::asset_id& asset, const oracle::wallet_link& from_link, const vector<oracle::value_transfer>& to, const decimal& max_fee, bool inclusive_fee)
+		expects_promise_rt<oracle::prepared_transaction> resolver::prepare_transaction(const algorithm::asset_id& asset, const oracle::wallet_link& from_link, const vector<oracle::value_transfer>& to, const decimal& max_fee)
 		{
 			auto* server = oracle::server_node::get();
 			if (!protocol::now().is(network_type::regtest) || server->has_support(asset))
-				return server->prepare_transaction(asset, from_link, to, max_fee, inclusive_fee);
+				return server->prepare_transaction(asset, from_link, to, max_fee);
 
 			auto chain = server->get_chainparams(asset);
 			if (!chain)
@@ -3581,10 +3510,10 @@ namespace tangent
 
 			if (dispatcher != nullptr)
 			{
-				auto* transaction = memory::init<depository_transaction>();
+				auto* transaction = memory::init<depository_attestation>();
 				transaction->asset = asset;
 				transaction->set_gas(decimal::zero(), 0);
-				transaction->set_computed_witness(finalized.as_computed());
+				transaction->set_computed_proof(finalized.as_computed());
 				dispatcher->emit_transaction(transaction);
 			}
 			return expects_promise_rt<void>(expectation::met);

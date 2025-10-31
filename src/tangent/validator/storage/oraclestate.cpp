@@ -187,13 +187,17 @@ namespace tangent
 			if (!value.store(&message))
 				return expects_lr<void>(layer_exception("witness transaction serialization error"));
 
+			uint8_t optimized_hash[32];
+			algorithm::hashing::hash256i(value.transaction_id).encode(optimized_hash);
+
 			schema_list map;
+			map.push_back(var::set::binary(optimized_hash, sizeof(optimized_hash)));
 			map.push_back(var::set::string(value.transaction_id));
 			map.push_back(var::set::integer(value.block_id));
 			map.push_back(var::set::boolean(finalized));
 			map.push_back(var::set::binary(message.data));
 
-			auto cursor = get_storage().emplace_query(__func__, "INSERT INTO transactions (transaction_id, block_id, finalized, message) VALUES (?, ?, ?, ?) ON CONFLICT (transaction_id) DO UPDATE SET external_id = (CASE WHEN external_id IS NOT NULL THEN external_id ELSE EXCLUDED.external_id END), block_id = EXCLUDED.block_id, finalized = EXCLUDED.finalized, message = EXCLUDED.message", &map);
+			auto cursor = get_storage().emplace_query(__func__, "INSERT INTO transactions (optimized_id, transaction_id, block_id, finalized, message) VALUES (?, ?, ?, ?, ?) ON CONFLICT (transaction_id) DO UPDATE SET external_id = (CASE WHEN external_id IS NOT NULL THEN external_id ELSE EXCLUDED.external_id END), block_id = EXCLUDED.block_id, finalized = EXCLUDED.finalized, message = EXCLUDED.message", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -205,32 +209,40 @@ namespace tangent
 			if (!value.store(&message))
 				return expects_lr<void>(layer_exception("witness transaction serialization error"));
 
-			uint8_t hash[32];
-			external_id.encode(hash);
+			uint8_t external_hash[32];
+			external_id.encode(external_hash);
+
+			uint8_t optimized_hash[32];
+			algorithm::hashing::hash256i(value.transaction_id).encode(optimized_hash);
 
 			schema_list map;
-			map.push_back(external_id > 0 ? var::set::binary(hash, sizeof(hash)) : var::set::null());
+			map.push_back(external_id > 0 ? var::set::binary(external_hash, sizeof(external_hash)) : var::set::null());
+			map.push_back(var::set::binary(optimized_hash, sizeof(optimized_hash)));
 			map.push_back(var::set::string(value.transaction_id));
 			map.push_back(var::set::integer(value.block_id));
 			map.push_back(var::set::boolean(false));
 			map.push_back(var::set::binary(message.data));
 
-			auto cursor = get_storage().emplace_query(__func__, "INSERT INTO transactions (external_id, transaction_id, block_id, finalized, message) VALUES (?, ?, ?, ?, ?) ON CONFLICT (transaction_id) DO UPDATE SET external_id = (CASE WHEN external_id IS NOT NULL THEN external_id ELSE EXCLUDED.external_id END), block_id = EXCLUDED.block_id, finalized = EXCLUDED.finalized, message = EXCLUDED.message", &map);
+			auto cursor = get_storage().emplace_query(__func__, "INSERT INTO transactions (external_id, optimized_id, transaction_id, block_id, finalized, message) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (transaction_id) DO UPDATE SET external_id = (CASE WHEN external_id IS NOT NULL THEN external_id ELSE EXCLUDED.external_id END), block_id = EXCLUDED.block_id, finalized = EXCLUDED.finalized, message = EXCLUDED.message", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			return expectation::met;
 		}
-		expects_lr<oracle::computed_transaction> oraclestate::get_computed_transaction(const std::string_view& transaction_id, const uint256_t& external_id)
+		expects_lr<oracle::computed_transaction> oraclestate::get_computed_transaction(const std::string_view& transaction_id, const uint256_t& external_id, const uint256_t& optimized_id)
 		{
-			uint8_t hash[32];
-			external_id.encode(hash);
+			uint8_t optimized_hash[32];
+			optimized_id.encode(optimized_hash);
+
+			uint8_t external_hash[32];
+			external_id.encode(external_hash);
 
 			schema_list map;
-			map.push_back(var::set::string(transaction_id));
-			map.push_back(external_id > 0 ? var::set::binary(hash, sizeof(hash)) : var::set::null());
+			map.push_back(transaction_id.empty() ? var::set::null() : var::set::string(transaction_id));
+			map.push_back(external_id > 0 ? var::set::binary(external_hash, sizeof(external_hash)) : var::set::null());
+			map.push_back(optimized_id > 0 ? var::set::binary(optimized_hash, sizeof(optimized_hash)) : var::set::null());
 
-			auto cursor = get_storage().emplace_query(__func__, "SELECT message FROM transactions WHERE transaction_id = ? OR external_id = ?", &map);
+			auto cursor = get_storage().emplace_query(__func__, "SELECT message FROM transactions WHERE transaction_id = ? OR external_id = ? OR optimized_id = ?", &map);
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<oracle::computed_transaction>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -244,7 +256,7 @@ namespace tangent
 		}
 		expects_lr<vector<oracle::computed_transaction>> oraclestate::finalize_computed_transactions(uint64_t block_height, uint64_t block_latency)
 		{
-			if (!block_height || !block_latency)
+			if (!block_height)
 				return expects_lr<vector<oracle::computed_transaction>>(layer_exception("invalid block height or block latency"));
 			else if (block_height <= block_latency)
 				return expects_lr<vector<oracle::computed_transaction>>(vector<oracle::computed_transaction>());
@@ -560,6 +572,7 @@ namespace tangent
 			CREATE TABLE IF NOT EXISTS transactions
 			(
 				transaction_id TEXT NOT NULL,
+				optimized_id BLOB DEFAULT NULL,
 				external_id BLOB DEFAULT NULL,
 				block_id BIGINT NOT NULL,
 				finalized BOOLEAN NOT NULL,

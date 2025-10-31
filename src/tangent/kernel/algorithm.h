@@ -124,13 +124,13 @@ namespace tangent
 			static distribution random(const parameters& alg, const std::string_view& seed);
 			static parameters calibrate(uint64_t confidence, uint64_t target_time = protocol::now().policy.consensus_proof_time);
 			static parameters adjust(const parameters& prev_alg, uint64_t prev_time, uint64_t target_index);
-			static parameters scale(const parameters& alg, double multiplier);
+			static parameters scale(const parameters& alg, const decimal& multiplier);
 			static string evaluate(const parameters& alg, const std::string_view& message);
 			static bool verify(const parameters& alg, const std::string_view& message, const std::string_view& proof);
 			static int8_t compare(const std::string_view& proof1, const std::string_view& proof2);
 			static uint64_t adjustment_interval();
 			static uint64_t adjustment_index(uint64_t index);
-			static double adjustment_scaling(uint64_t index);
+			static decimal adjustment_scaling(uint64_t index);
 			static schema* serialize(const parameters& alg, const std::string_view& proof);
 		};
 
@@ -215,6 +215,47 @@ namespace tangent
 			static uint256_t hash256i(const uint8_t* buffer, size_t size);
 			static uint256_t hash256i(const std::string_view& data);
 			static uint64_t erd64(const uint256_t& seed, uint64_t order);
+		};
+
+		class arithmetic
+		{
+		public:
+			template <typename t>
+			inline static decimal fixed(const t& value)
+			{
+				return decimal(value).truncate(protocol::now().message.decimal_precision);
+			}
+			inline static decimal&& fixed(decimal&& value)
+			{
+				return std::move(value.truncate(protocol::now().message.decimal_precision));
+			}
+			inline static uint256_t fixed256(const decimal& value)
+			{
+				auto copy = value * decimal(std::pow<uint64_t>(10, protocol::now().message.decimal_precision));
+				return uint256_t(copy.truncate(0).to_string(), 10);
+			}
+			template <typename t>
+			inline static decimal range(const t& value)
+			{
+				uint256_t divisibility = 1;
+				uint256_t decimals = std::min<uint256_t>(value, protocol::now().message.decimal_precision);
+				for (uint256_t i = 0; i < decimals; i++)
+					divisibility *= 10;
+				return fixed(divisibility.to_string());
+			}
+			template <typename a, typename b>
+			inline static decimal divide(const a& a_value, const b& b_value)
+			{
+				return a_value / fixed<b>(b_value);
+			}
+			inline static decimal ceil(const decimal& value)
+			{
+				decimal copy = value;
+				copy.truncate(0);
+				if (!copy.is_nan() && copy != value)
+					++copy;
+				return copy;
+			}
 		};
 
 		class asset
@@ -360,7 +401,7 @@ namespace vitex
 		template <>
 		struct key_hasher<tangent::algorithm::hashsig_t>
 		{
-			typedef float argument_type;
+			typedef int argument_type;
 			typedef size_t result_type;
 			using is_transparent = void;
 
@@ -373,7 +414,7 @@ namespace vitex
 		template <>
 		struct key_hasher<tangent::algorithm::seckey_t>
 		{
-			typedef float argument_type;
+			typedef int argument_type;
 			typedef size_t result_type;
 			using is_transparent = void;
 
@@ -386,7 +427,7 @@ namespace vitex
 		template <>
 		struct key_hasher<tangent::algorithm::pubkey_t>
 		{
-			typedef float argument_type;
+			typedef int argument_type;
 			typedef size_t result_type;
 			using is_transparent = void;
 
@@ -399,7 +440,7 @@ namespace vitex
 		template <>
 		struct key_hasher<tangent::algorithm::pubkeyhash_t>
 		{
-			typedef float argument_type;
+			typedef int argument_type;
 			typedef size_t result_type;
 			using is_transparent = void;
 

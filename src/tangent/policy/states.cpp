@@ -560,9 +560,7 @@ namespace tangent
 		}
 		uint256_t account_balance::as_rank() const
 		{
-			auto value = get_balance();
-			value *= (uint64_t)std::pow<uint64_t>(10, protocol::now().message.decimal_precision);
-			return uint256_t(value.truncate(0).to_string(), 10);
+			return algorithm::arithmetic::fixed256(get_balance());
 		}
 		uint32_t account_balance::as_instance_type()
 		{
@@ -882,9 +880,7 @@ namespace tangent
 		}
 		uint256_t validator_participation::to_rank(const decimal& threshold)
 		{
-			auto value = threshold;
-			value *= (uint64_t)std::pow<uint64_t>(10, protocol::now().message.decimal_precision);
-			return uint256_t(value.truncate(0).to_string(), 10) + 1;
+			return algorithm::arithmetic::fixed256(threshold) + 1;
 		}
 
 		validator_attestation::validator_attestation(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::multiform(new_block_number, new_block_nonce), owner(new_owner), asset(algorithm::asset::base_id_of(new_asset))
@@ -1011,9 +1007,7 @@ namespace tangent
 			if (!is_active())
 				return 0;
 
-			auto value = get_ranked_stake();
-			value *= (uint64_t)std::pow<uint64_t>(10, protocol::now().message.decimal_precision);
-			return uint256_t(value.truncate(0).to_string(), 10) + 1;
+			return algorithm::arithmetic::fixed256(get_ranked_stake()) + 1;
 		}
 		uint32_t validator_attestation::as_instance_type()
 		{
@@ -1064,10 +1058,10 @@ namespace tangent
 			}
 
 			decimal threshold = 1.0 - protocol::now().policy.depository_reward_max_increase;
-			if (incoming_fee.is_positive() && prev->incoming_fee / decimal(incoming_fee).truncate(protocol::now().message.decimal_precision) < threshold)
+			if (incoming_fee.is_positive() && algorithm::arithmetic::divide(prev->incoming_fee, incoming_fee) < threshold)
 				return layer_exception("incoming fee increase overflows step threshold");
 
-			if (outgoing_fee.is_positive() && prev->outgoing_fee / decimal(outgoing_fee).truncate(protocol::now().message.decimal_precision) < threshold)
+			if (outgoing_fee.is_positive() && algorithm::arithmetic::divide(prev->outgoing_fee, outgoing_fee) < threshold)
 				return layer_exception("outgoing fee increase overflows step threshold");
 
 			return expectation::met;
@@ -1135,9 +1129,7 @@ namespace tangent
 		}
 		uint256_t depository_reward::as_rank() const
 		{
-			auto value = incoming_fee + outgoing_fee;
-			value *= (uint64_t)std::pow<uint64_t>(10, protocol::now().message.decimal_precision);
-			return uint256_t(value.truncate(0).to_string(), 10);
+			return algorithm::arithmetic::fixed256(incoming_fee + outgoing_fee);
 		}
 		uint32_t depository_reward::as_instance_type()
 		{
@@ -1289,9 +1281,7 @@ namespace tangent
 		}
 		uint256_t depository_balance::as_rank() const
 		{
-			auto value = get_ranked_balance();
-			value *= (uint64_t)std::pow<uint64_t>(10, protocol::now().message.decimal_precision);
-			return uint256_t(value.truncate(0).to_string(), 10);
+			return algorithm::arithmetic::fixed256(get_ranked_balance());
 		}
 		uint32_t depository_balance::as_instance_type()
 		{
@@ -1346,15 +1336,6 @@ namespace tangent
 			if (accepts_account_requests && !accepts_withdrawal_requests)
 				return layer_exception("withdrawal requests must be accepted if account creation requests are accepted");
 
-			auto blockchain = algorithm::asset::blockchain_of(asset);
-			for (auto& token_asset : whitelist)
-			{
-				if (blockchain != algorithm::asset::blockchain_of(token_asset) || algorithm::asset::is_safe_to_use(token_asset))
-					return layer_exception(algorithm::asset::name_of(token_asset) + " is natively whitelisted");
-			}
-			if (prev != nullptr)
-				whitelist.insert(prev->whitelist.begin(), prev->whitelist.end());
-
 			return expectation::met;
 		}
 		bool depository_policy::store_column(format::wo_stream* stream) const
@@ -1393,9 +1374,6 @@ namespace tangent
 			stream->write_decimal(participation_threshold);
 			stream->write_boolean(accepts_account_requests);
 			stream->write_boolean(accepts_withdrawal_requests);
-			stream->write_integer((uint16_t)whitelist.size());
-			for (auto& token_asset : whitelist)
-				stream->write_integer(token_asset);
 			return true;
 		}
 		bool depository_policy::load_data(format::ro_stream& stream)
@@ -1418,28 +1396,7 @@ namespace tangent
 			if (!stream.read_boolean(stream.read_type(), &accepts_withdrawal_requests))
 				return false;
 
-			uint16_t whitelist_size;
-			if (!stream.read_integer(stream.read_type(), &whitelist_size))
-				return false;
-
-			whitelist.clear();
-			for (uint16_t i = 0; i < whitelist_size; i++)
-			{
-				algorithm::asset_id token_asset;
-				if (!stream.read_integer(stream.read_type(), &token_asset))
-					return false;
-
-				whitelist.insert(token_asset);
-			}
-
 			return true;
-		}
-		bool depository_policy::is_whitelisted(const algorithm::asset_id& token_asset) const
-		{
-			if (algorithm::asset::blockchain_of(asset) != algorithm::asset::blockchain_of(token_asset))
-				return false;
-
-			return algorithm::asset::is_safe_to_use(token_asset) || whitelist.contains(token_asset);
 		}
 		uptr<schema> depository_policy::as_schema() const
 		{
@@ -1452,9 +1409,6 @@ namespace tangent
 			data->set("security_level", var::integer(security_level));
 			data->set("accepts_account_requests", var::boolean(accepts_account_requests));
 			data->set("accepts_withdrawal_requests", var::boolean(accepts_withdrawal_requests));
-			auto* whitelist_data = data->set("whitelist", var::set::array());
-			for (auto& token_asset : whitelist)
-				whitelist_data->push(algorithm::asset::serialize(token_asset));
 			return data;
 		}
 		uint32_t depository_policy::as_type() const
@@ -1999,6 +1953,149 @@ namespace tangent
 			return message.data;
 		}
 
+		witness_attestation::witness_attestation(const algorithm::asset_id& new_asset, const uint256_t& new_attestation_hash, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::uniform(new_block_number, new_block_nonce), asset(algorithm::asset::base_id_of(new_asset)), attestation_hash(new_attestation_hash), finalized(false)
+		{
+		}
+		witness_attestation::witness_attestation(const algorithm::asset_id& new_asset, const uint256_t& new_attestation_hash, const ledger::block_header* new_block_header) : ledger::uniform(new_block_header), asset(algorithm::asset::base_id_of(new_asset)), attestation_hash(new_attestation_hash), finalized(false)
+		{
+		}
+		expects_lr<void> witness_attestation::transition(const ledger::transaction_context* context, const ledger::state* prev_state)
+		{
+			auto* prev = (witness_attestation*)prev_state;
+			if (prev != nullptr)
+			{
+				if (prev->attestation_hash != attestation_hash)
+					return layer_exception("invalid attestation hash");
+
+				if (prev->finalized)
+					return layer_exception("attestation is finalized");
+			}
+			else if (!algorithm::asset::is_valid(asset, true))
+				return layer_exception("invalid asset");
+
+			if (!attestation_hash)
+				return layer_exception("invalid attestation hash");
+
+			for (auto& [branch_hash, attesters] : branches)
+			{
+				if (!branch_hash)
+					return layer_exception("invalid branch hash");
+
+				if (attesters.empty())
+					return layer_exception("must have at least one transaction hash");
+
+				for (auto& attester : attesters)
+				{
+					if (attester.empty())
+						return layer_exception("invalid branch transaction hash");
+				}
+			}
+
+			return expectation::met;
+		}
+		bool witness_attestation::store_index(format::wo_stream* stream) const
+		{
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_integer(asset);
+			stream->write_integer(attestation_hash);
+			return true;
+		}
+		bool witness_attestation::load_index(format::ro_stream& stream)
+		{
+			if (!stream.read_integer(stream.read_type(), &asset))
+				return false;
+
+			if (!stream.read_integer(stream.read_type(), &attestation_hash))
+				return false;
+
+			return true;
+		}
+		bool witness_attestation::store_data(format::wo_stream* stream) const
+		{
+			stream->write_integer((uint16_t)branches.size());
+			for (auto& [branch_hash, attesters] : branches)
+			{
+				stream->write_integer(branch_hash);
+				stream->write_integer((uint16_t)attesters.size());
+				for (auto& attester : attesters)
+					stream->write_string(attester.optimized_view());
+			}
+
+			return true;
+		}
+		bool witness_attestation::load_data(format::ro_stream& stream)
+		{
+			uint16_t branches_size;
+			if (!stream.read_integer(stream.read_type(), &branches_size))
+				return false;
+
+			branches.clear();
+			for (uint16_t i = 0; i < branches_size; i++)
+			{
+				uint256_t branch_hash;
+				if (!stream.read_integer(stream.read_type(), &branch_hash))
+					return false;
+
+				uint16_t transaction_hashes_size;
+				if (!stream.read_integer(stream.read_type(), &transaction_hashes_size))
+					return false;
+
+				ordered_set<algorithm::pubkeyhash_t> attesters;
+				for (uint16_t i = 0; i < transaction_hashes_size; i++)
+				{
+					string attester_assembly; algorithm::pubkeyhash_t attester;
+					if (!stream.read_string(stream.read_type(), &attester_assembly) || !algorithm::encoding::decode_bytes(attester_assembly, attester.data, sizeof(attester.data)))
+						return false;
+
+					attesters.insert(attester);
+				}
+				branches[branch_hash] = std::move(attesters);
+			}
+
+			return true;
+		}
+		bool witness_attestation::is_permanent() const
+		{
+			return true;
+		}
+		uptr<schema> witness_attestation::as_schema() const
+		{
+			schema* data = ledger::uniform::as_schema().reset();
+			data->set("asset", algorithm::asset::serialize(asset));
+			data->set("attestation_hash", var::string(algorithm::encoding::encode_0xhex256(attestation_hash)));
+			auto* branches_data = data->set("branches", var::set::object());
+			for (auto& [branch_hash, attesters] : branches)
+			{
+				auto* transaction_hashes_data = branches_data->set(algorithm::encoding::encode_0xhex256(branch_hash), var::set::array());
+				for (auto& attester : attesters)
+					transaction_hashes_data->push(algorithm::signing::serialize_address(attester));
+			}
+			return data;
+		}
+		uint32_t witness_attestation::as_type() const
+		{
+			return as_instance_type();
+		}
+		std::string_view witness_attestation::as_typename() const
+		{
+			return as_instance_typename();
+		}
+		uint32_t witness_attestation::as_instance_type()
+		{
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
+		}
+		std::string_view witness_attestation::as_instance_typename()
+		{
+			return "witness_attestation";
+		}
+		string witness_attestation::as_instance_index(const algorithm::asset_id& asset, const uint256_t& attestation_hash)
+		{
+			format::wo_stream message;
+			witness_attestation(asset, attestation_hash, nullptr).store_index(&message);
+			return message.data;
+		}
+
 		witness_transaction::witness_transaction(const algorithm::asset_id& new_asset, const std::string_view& new_transaction_id, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::uniform(new_block_number, new_block_nonce), asset(algorithm::asset::base_id_of(new_asset)), transaction_id(new_transaction_id)
 		{
 		}
@@ -2119,6 +2216,8 @@ namespace tangent
 				return memory::init<witness_event>(0, nullptr);
 			else if (hash == witness_account::as_instance_type())
 				return memory::init<witness_account>(algorithm::pubkeyhash_t(), 0, address_map(), nullptr);
+			else if (hash == witness_attestation::as_instance_type())
+				return memory::init<witness_attestation>(0, 0, nullptr);
 			else if (hash == witness_transaction::as_instance_type())
 				return memory::init<witness_transaction>(0, std::string_view(), nullptr);
 			return nullptr;
@@ -2167,6 +2266,8 @@ namespace tangent
 				*(witness_event*)to = from ? witness_event(*(const witness_event*)from) : witness_event(0, nullptr);
 			else if (hash == witness_account::as_instance_type())
 				*(witness_account*)to = from ? witness_account(*(const witness_account*)from) : witness_account(algorithm::pubkeyhash_t(), 0, address_map(), nullptr);
+			else if (hash == witness_attestation::as_instance_type())
+				*(witness_attestation*)to = from ? witness_attestation(*(const witness_attestation*)from) : witness_attestation(0, 0, nullptr);
 			else if (hash == witness_transaction::as_instance_type())
 				*(witness_transaction*)to = from ? witness_transaction(*(const witness_transaction*)from) : witness_transaction(0, std::string_view(), nullptr);
 		}
@@ -2231,7 +2332,7 @@ namespace tangent
 					return true;
 			}
 		}
-		std::array<uint32_t, 7> resolver::get_uniform_types()
+		std::array<uint32_t, 8> resolver::get_uniform_types()
 		{
 			return
 			{
@@ -2241,7 +2342,8 @@ namespace tangent
 				account_delegation::as_instance_type(),
 				witness_program::as_instance_type(),
 				witness_event::as_instance_type(),
-				witness_transaction::as_instance_type(),
+				witness_attestation::as_instance_type(),
+				witness_transaction::as_instance_type()
 			};
 		}
 		std::array<uint32_t, 10> resolver::get_multiform_types()

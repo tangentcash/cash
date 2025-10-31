@@ -210,6 +210,7 @@ namespace tangent
                 storage_optimization optimization = storage_optimization::speed;
                 uint64_t transaction_dispatch_repeat_interval = 600;
                 uint64_t transaction_timeout = 86400;
+                uint64_t commitment_timeout = 14400;
                 uint64_t mempool_transaction_limit = 10000000;
                 uint64_t checkpoint_size = 64;
                 uint64_t location_cache_size = 500000;
@@ -268,24 +269,22 @@ namespace tangent
             uint64_t consensus_proof_time = 5000;
             uint64_t consensus_adjustment_time = 60000;
             uint64_t consensus_penalty_point_time = 600000;
+            uint64_t commitment_throughput = 20;
             uint64_t transaction_throughput = 200;
             uint64_t transaction_gas = 50000;
-            uint64_t parallel_delegation_limit = 32;
-            uint64_t parallel_consensus_limit = 128;
-            uint64_t parallel_attestation_limit = 256;
             uint64_t wesolowski_ops = 2048;
             uint32_t delegations_max_per_account = 6;
             uint32_t delegations_zeroing_time = 64000;
             uint16_t wesolowski_bits = 2048;
-            double participation_stake_threshold = 0.20;
-            double participation_fee_rate = 0.30;
-            double attestation_consensus_threshold = 0.66;
-            double attestation_fee_rate = 0.15;
-            double depository_reward_max_increase = 0.05;
-            double consensus_difficulty_max_increase = 2.00;
-            double consensus_difficulty_max_decrease = 0.80;
-            double consensus_difficulty_bump_per_priority = 1.3625;
-            double consensus_difficulty_bump_outside_priority = 90.0;
+            decimal participation_stake_threshold = std::string_view("0.20");
+            decimal participation_fee_rate = std::string_view("0.30");
+            decimal attestation_consensus_threshold = std::string_view("0.66");
+            decimal attestation_fee_rate = std::string_view("0.15");
+            decimal depository_reward_max_increase = std::string_view("0.05");
+            decimal consensus_difficulty_max_increase = std::string_view("2.00");
+            decimal consensus_difficulty_max_decrease = std::string_view("0.80");
+            decimal consensus_difficulty_bump_per_priority = std::string_view("1.3625");
+            decimal consensus_difficulty_bump_outside_priority = std::string_view("90.0");
         } policy;
 
     private:

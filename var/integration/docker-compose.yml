@@ -41,7 +41,8 @@ services:
       "-rpcallowip=0.0.0.0/0",
       "-rpcuser=admin",
       "-rpcpassword=pass",
-      "-rpcport=8332"
+      "-rpcport=8332",
+      "-expire=0"
     ]
     restart: unless-stopped
   bitcoin-gold:
@@ -62,21 +63,21 @@ services:
     ]
     restart: unless-stopped
   bitcoin-sv:
-    image: bitcoinsv/bitcoin-sv:latest
+    image: bitcoinsv/bitcoin-sv:1.0.7
     container_name: bitcoin-sv-regtest
     ports:
       - "8005:8332"
-    command: [
-      "-printtoconsole",
-      "-server",
-      "-regtest=1",
-      "-txindex",
-      "-rpcbind=0.0.0.0",
-      "-rpcallowip=0.0.0.0/0",
-      "-rpcuser=admin",
-      "-rpcpassword=pass",
-      "-rpcport=8332"
-    ]
+    command: |
+      bitcoind
+      -regtest=1
+      -rpcuser=regtestuser
+      -rpcpassword=regtestpass
+      -rpcallowip=0.0.0.0/0
+      -server=1
+      -daemon=1
+      -txindex=1
+      -zmqpubrawblock=tcp://0.0.0.0:28332
+      -zmqpubrawtx=tcp://0.0.0.0:28333
     restart: unless-stopped
   dash:
     image: uphold/dash-core:latest
@@ -187,19 +188,6 @@ services:
       - "8012:8545"
     command: --dev --dev.period 0 --http --http.addr 0.0.0.0 --http.port 8545 --http.api admin,debug,miner,eth,net,web3,personal --ws --ws.addr 0.0.0.0 --ws.port 8546 --ws.api admin,debug,miner,eth,net,web3,personal --mine
     restart: unless-stopped
-# arbitrum:
-# avalanche:
-# base:
-# blast:
-# bnb-chain:
-# celo:
-# ethereum-classic:
-# gnosis:
-# linea:
-# polygon-matic:
-# optimism:
-# sonic:
-# zksync:
   solana:
     image: tchambard/solana-test-validator:latest
     container_name: solana-regtest

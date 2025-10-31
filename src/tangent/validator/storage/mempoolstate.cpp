@@ -479,7 +479,7 @@ namespace tangent
 			if (!b)
 				return decimal::zero();
 
-			return *b / a->truncate(protocol::now().message.decimal_precision);
+			return algorithm::arithmetic::divide(*b, *a);
 		}
 		expects_lr<void> mempoolstate::add_transaction(ledger::transaction& value, bool resurrection)
 		{
@@ -488,132 +488,39 @@ namespace tangent
 				return expects_lr<void>(layer_exception("transaction serialization error"));
 
 			algorithm::pubkeyhash_t owner;
-			if (value.is_recoverable() && !value.recover_hash(owner))
+			if (!value.recover_hash(owner))
 				return expects_lr<void>(layer_exception("transaction owner recovery error"));
 
-			uint256_t group = 0;
 			decimal quality = decimal::nan();
-			auto type = resurrection ? ledger::transaction_level::functional : value.get_type();
-			auto queue = [this, &value]() -> decimal
+			if (!value.is_commitment())
 			{
 				auto median_gas_price = get_gas_price(value.asset, fee_percentile(fee_priority::medium));
 				decimal delta_gas = median_gas_price && median_gas_price->is_positive() ? value.gas_price / *median_gas_price : 1.0;
-				decimal max_gas = delta_gas.is_positive() ? value.gas_price * value.gas_limit.to_decimal() / delta_gas.truncate(protocol::now().message.decimal_precision) : decimal::zero();
+				decimal max_gas = delta_gas.is_positive() ? algorithm::arithmetic::divide(value.gas_price * value.gas_limit.to_decimal(), delta_gas) : decimal::zero();
 				decimal multiplier = 2 << 20;
-				return max_gas * multiplier;
-			};
-			switch (type)
-			{
-				case ledger::transaction_level::functional:
-				{
-					quality = queue();
-					break;
-				}
-				case ledger::transaction_level::delegation:
-				{
-					auto bandwidth = get_bandwidth_by_owner(owner, type);
-					if (!bandwidth->congested || bandwidth->nonce >= value.nonce)
-						break;
-					else if (!value.gas_price.is_positive())
-						return expects_lr<void>(layer_exception(stringify::text("wait for finalization of or replace previous delegation transaction (queue: %" PRIu64 ", nonce: %" PRIu64 ")", (uint64_t)bandwidth->count, bandwidth->nonce)));
-
-					quality = queue();
-					break;
-				}
-				case ledger::transaction_level::consensus:
-				{
-					auto bandwidth = get_bandwidth_by_owner(owner, type);
-					if (!bandwidth->congested || bandwidth->nonce >= value.nonce)
-						break;
-					else if (!value.gas_price.is_positive())
-						return expects_lr<void>(layer_exception(stringify::text("wait for finalization of or replace previous consensus transaction (queue: %" PRIu64 ", nonce: %" PRIu64 ")", (uint64_t)bandwidth->count, bandwidth->nonce)));
-
-					quality = queue();
-					break;
-				}
-				case ledger::transaction_level::attestation:
-				{
-					size_t offset = 0, count = 64;
-					auto context = ledger::transaction_context();
-					auto* attestation = ((ledger::attestation_transaction*)&value);
-					while (true)
-					{
-						auto transactions = get_transactions_by_group(group, offset, count);
-						if (!transactions || transactions->empty())
-							break;
-
-						for (auto& item : *transactions)
-						{
-							if (item->get_type() == ledger::transaction_level::attestation)
-								attestation->merge(&context, *(ledger::attestation_transaction*)*item);
-						}
-
-						offset += transactions->size();
-						if (transactions->size() != count)
-							break;
-					}
-
-					group = attestation->as_group_hash();
-					if (offset > 0)
-						break;
-
-					auto optimal_gas_limit = ledger::transaction_context::calculate_tx_gas(attestation);
-					if (optimal_gas_limit && *optimal_gas_limit > attestation->gas_limit)
-						attestation->gas_limit = *optimal_gas_limit;
-
-					quality = queue();
-					break;
-				}
-				default:
-					break;
-			}
-
-			if (group > 0)
-			{
-				auto status = remove_transactions_by_group(group);
-				if (!status)
-					return status.error();
+				quality = max_gas * multiplier;
 			}
 
 			uint8_t hash[32];
 			value.as_hash().encode(hash);
-
-			uint8_t group_hash[32];
-			group.encode(group_hash);
 
 			uint8_t asset[32];
 			value.asset.encode(asset);
 
 			schema_list map;
 			map.push_back(var::set::binary(hash, sizeof(hash)));
-			map.push_back(group > 0 ? var::set::binary(group_hash, sizeof(group_hash)) : var::set::null());
 			map.push_back(var::set::binary(owner.view()));
 			map.push_back(var::set::binary(asset, sizeof(asset)));
 			map.push_back(var::set::integer(value.nonce));
 			map.push_back(quality.is_nan() ? var::set::null() : var::set::integer(quality.to_uint64()));
-			map.push_back(var::set::integer((int64_t)type));
-			map.push_back(var::set::integer(time(nullptr)));
+			map.push_back(var::set::integer(time(nullptr) + (value.is_commitment() ? protocol::now().user.storage.commitment_timeout : protocol::now().user.storage.transaction_timeout)));
 			map.push_back(var::set::string(value.gas_price.to_string()));
 			map.push_back(var::set::binary(message.data));
 			map.push_back(var::set::binary(owner.view()));
 
 			auto cursor = get_storage().emplace_query(__func__,
-				"INSERT OR REPLACE INTO transactions (hash, group_hash, owner, asset, nonce, quality, type, time, price, message) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
+				"INSERT OR REPLACE INTO transactions (hash, owner, asset, nonce, quality, time, price, message) VALUES (?, ?, ?, ?, ?, ?, ?, ?);"
 				"WITH epochs AS (SELECT rowid, ROW_NUMBER() OVER (ORDER BY nonce) AS epoch FROM transactions WHERE owner = ?) UPDATE transactions SET epoch = epochs.epoch FROM epochs WHERE transactions.rowid = epochs.rowid", &map);
-			if (!cursor || cursor->error())
-				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
-
-			return expectation::met;
-		}
-		expects_lr<void> mempoolstate::remove_transactions_by_group(const uint256_t& group_hash)
-		{
-			uint8_t hash[32];
-			group_hash.encode(hash);
-
-			schema_list map;
-			map.push_back(var::set::binary(hash, sizeof(hash)));
-
-			auto cursor = get_storage().emplace_query(__func__, "DELETE FROM transactions WHERE group_hash = ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -668,7 +575,7 @@ namespace tangent
 		expects_lr<void> mempoolstate::expire_transactions()
 		{
 			schema_list map;
-			map.push_back(var::set::integer(time(nullptr) - protocol::now().user.storage.transaction_timeout));
+			map.push_back(var::set::integer(time(nullptr)));
 
 			auto cursor = get_storage().emplace_query(__func__, "DELETE FROM transactions WHERE time < ?", &map);
 			if (!cursor || cursor->error())
@@ -785,39 +692,6 @@ namespace tangent
 			}
 			return result;
 		}
-		expects_lr<account_bandwidth> mempoolstate::get_bandwidth_by_owner(const algorithm::pubkeyhash_t& owner, ledger::transaction_level type)
-		{
-			schema_list map;
-			map.push_back(var::set::binary(owner.view()));
-			map.push_back(var::set::integer((int64_t)type));
-
-			auto cursor = get_storage().emplace_query(__func__, "SELECT COUNT(1) AS counter, max(nonce) AS nonce FROM transactions WHERE owner = ? AND type = ?", &map);
-			if (!cursor || cursor->error())
-				return expects_lr<account_bandwidth>(layer_exception(ledger::storage_util::error_of(cursor)));
-
-			account_bandwidth result;
-			result.count = cursor->empty() ? 0 : (size_t)(*cursor)["counter"].get().get_integer();
-			result.nonce = cursor->empty() ? 1 : (size_t)(*cursor)["nonce"].get().get_integer();
-			switch (type)
-			{
-				case tangent::ledger::transaction_level::functional:
-					result.congested = false;
-					break;
-				case tangent::ledger::transaction_level::delegation:
-					result.congested = protocol::now().policy.parallel_delegation_limit > 0 && result.count >= protocol::now().policy.parallel_delegation_limit;
-					break;
-				case tangent::ledger::transaction_level::consensus:
-					result.congested = protocol::now().policy.parallel_consensus_limit > 0 && result.count >= protocol::now().policy.parallel_consensus_limit;
-					break;
-				case tangent::ledger::transaction_level::attestation:
-					result.congested = protocol::now().policy.parallel_attestation_limit > 0 && result.count >= protocol::now().policy.parallel_attestation_limit;
-					break;
-				default:
-					result.congested = true;
-					break;
-			}
-			return result;
-		}
 		expects_lr<bool> mempoolstate::has_transaction(const uint256_t& transaction_hash)
 		{
 			uint8_t hash[32];
@@ -877,13 +751,13 @@ namespace tangent
 			finalize_checksum(**value, (*cursor)["hash"].get());
 			return value;
 		}
-		expects_lr<vector<uptr<ledger::transaction>>> mempoolstate::get_transactions(size_t offset, size_t count)
+		expects_lr<vector<uptr<ledger::transaction>>> mempoolstate::get_transactions(bool commitment, size_t offset, size_t count)
 		{
 			schema_list map;
 			map.push_back(var::set::integer(count));
 			map.push_back(var::set::integer(offset));
 
-			auto cursor = get_storage().emplace_query(__func__, "SELECT message FROM transactions ORDER BY epoch ASC, quality DESC NULLS FIRST LIMIT ? OFFSET ?", &map);
+			auto cursor = get_storage().emplace_query(__func__, stringify::text("SELECT message FROM transactions WHERE quality IS %s ORDER BY epoch ASC, quality DESC NULLS LAST LIMIT ? OFFSET ?", commitment ? "NULL" : "NOT NULL"), &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<uptr<ledger::transaction>>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -916,40 +790,6 @@ namespace tangent
 			map.push_back(var::set::integer(offset));
 
 			auto cursor = get_storage().emplace_query(__func__, "SELECT message FROM transactions WHERE owner = ? ORDER BY nonce $? LIMIT ? OFFSET ?", &map);
-			if (!cursor || cursor->error())
-				return expects_lr<vector<uptr<ledger::transaction>>>(layer_exception(ledger::storage_util::error_of(cursor)));
-
-			auto& response = cursor->first();
-			size_t size = response.size();
-			vector<uptr<ledger::transaction>> values;
-			values.reserve(size);
-
-			for (size_t i = 0; i < size; i++)
-			{
-				auto row = response[i];
-				auto blob = row["message"].get().get_blob();
-				auto message = format::ro_stream(blob);
-				uptr<ledger::transaction> value = transactions::resolver::from_stream(message);
-				if (value && value->load(message))
-				{
-					finalize_checksum(**value, row["hash"].get());
-					values.emplace_back(std::move(value));
-				}
-			}
-
-			return values;
-		}
-		expects_lr<vector<uptr<ledger::transaction>>> mempoolstate::get_transactions_by_group(const uint256_t& group_hash, size_t offset, size_t count)
-		{
-			uint8_t hash[32];
-			group_hash.encode(hash);
-
-			schema_list map;
-			map.push_back(var::set::binary(hash, sizeof(hash)));
-			map.push_back(var::set::integer(count));
-			map.push_back(var::set::integer(offset));
-
-			auto cursor = get_storage().emplace_query(__func__, "SELECT message FROM transactions WHERE group_hash = ? ORDER BY group_hash ASC LIMIT ? OFFSET ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<uptr<ledger::transaction>>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -1070,24 +910,21 @@ namespace tangent
 			CREATE TABLE IF NOT EXISTS transactions
 			(
 				hash BLOB(32) NOT NULL,
-				group_hash BLOB(32) DEFAULT NULL,
 				owner BLOB(20) NOT NULL,
 				asset BLOB(32) NOT NULL,
 				nonce BIGINT NOT NULL,
 				epoch INTEGER DEFAULT 0,
 				quality INTEGER DEFAULT NULL,
-				type INTEGER NOT NULL,
 				time INTEGER NOT NULL,
 				price TEXT NOT NULL,
 				message BLOB NOT NULL,
 				PRIMARY KEY (hash)
 			);
-			CREATE INDEX IF NOT EXISTS transactions_group_hash ON transactions (group_hash);
 			CREATE INDEX IF NOT EXISTS transactions_owner_nonce ON transactions (owner, nonce);
-			CREATE INDEX IF NOT EXISTS transactions_asset_preference ON transactions (asset ASC, quality DESC);
-			CREATE INDEX IF NOT EXISTS transactions_epoch_preference ON transactions (epoch ASC, quality DESC);
+			CREATE INDEX IF NOT EXISTS transactions_asset_quality ON transactions (asset ASC, quality DESC);
+			CREATE INDEX IF NOT EXISTS transactions_epoch_quality ON transactions (epoch ASC, quality DESC);
 			CREATE TRIGGER IF NOT EXISTS transactions_capacity BEFORE INSERT ON transactions BEGIN
-				DELETE FROM transactions WHERE hash = (SELECT hash FROM transactions ORDER BY epoch DESC, quality ASC NULLS LAST) AND (SELECT COUNT(1) FROM transactions) >= max_mempool_size;
+				DELETE FROM transactions WHERE hash = (SELECT hash FROM transactions ORDER BY epoch DESC, quality ASC NULLS FIRST) AND (SELECT COUNT(1) FROM transactions) >= max_mempool_size;
 			END;);
 			stringify::replace(command, "max_mempool_size", to_string(protocol::now().user.storage.mempool_transaction_limit));
 

@@ -18,7 +18,7 @@ namespace tangent
 		struct block_evaluation;
 		struct evaluation_context;
 
-		typedef std::function<uptr<transaction>()> replace_transaction_callback;
+		typedef std::function<uptr<transaction>(bool commitment)> replace_transaction_callback;
 
 		enum class filter_comparator
 		{
@@ -187,7 +187,7 @@ namespace tangent
 			virtual uint64_t get_slot_length() const;
 			virtual uint64_t get_proof_duration() const;
 			virtual uint64_t get_proof_accounted_duration() const;
-			virtual double get_proof_difficulty_multiplier() const;
+			virtual decimal get_proof_difficulty_multiplier() const;
 			virtual algorithm::wesolowski::parameters get_proof_slot_target(const block_header* parent_block) const;
 			virtual uint256_t as_hash(bool renew = false) const override;
 			virtual uptr<schema> as_schema() const override;
@@ -197,8 +197,11 @@ namespace tangent
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
+			static uint64_t get_commitment_limit();
 			static uint64_t get_transaction_limit();
-			static uint256_t get_gas_limit();
+			static uint256_t get_commitment_gas_limit();
+			static uint256_t get_transaction_gas_limit();
+			static uint256_t get_total_gas_limit();
 			static uint256_t get_gas_work(const uint128_t& difficulty, const uint256_t& gas_use, const uint256_t& gas_limit, uint64_t priority);
 		};
 
@@ -317,6 +320,8 @@ namespace tangent
 			expects_lr<void> verify_gas_transfer_balance() const;
 			expects_lr<void> verify_transfer_balance(const algorithm::asset_id& asset, const decimal& value) const;
 			expects_lr<void> verify_validator_attestation(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const;
+			expects_lr<void> try_commit_to_witness_attestation(const states::witness_attestation& witness, const uint256_t& output_hash, const algorithm::pubkeyhash_t& attester) const;
+			expects_lr<uint256_t> verify_witness_attestation(const states::witness_attestation& witness, option<size_t> cached_attesters_size = optional::none) const;
 			expects_lr<algorithm::wesolowski::distribution> calculate_random(const uint256_t& seed);
 			expects_lr<size_t> calculate_attesters_size(const algorithm::asset_id& asset) const;
 			expects_lr<vector<states::validator_production>> calculate_producers(size_t target_size);
@@ -336,13 +341,14 @@ namespace tangent
 			expects_lr<states::depository_balance> apply_depository_balance(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const ordered_map<algorithm::asset_id, decimal>& balances);
 			expects_lr<states::depository_policy> apply_depository_policy_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, uint64_t new_accounts);
 			expects_lr<states::depository_policy> apply_depository_policy_queue(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const uint256_t& transaction_hash);
-			expects_lr<states::depository_policy> apply_depository_policy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, uint8_t security_level, const decimal& participation_threshold, bool accepts_account_requests, bool accepts_withdrawal_requests, ordered_set<algorithm::asset_id>&& whitelist);
+			expects_lr<states::depository_policy> apply_depository_policy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, uint8_t security_level, const decimal& participation_threshold, bool accepts_account_requests, bool accepts_withdrawal_requests);
 			expects_lr<states::depository_account> apply_depository_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const algorithm::pubkeyhash_t& manager, const algorithm::composition::cpubkey_t& public_key, ordered_set<algorithm::pubkeyhash_t>&& group);
 			expects_lr<states::witness_program> apply_witness_program(const std::string_view& packed_program_code);
 			expects_lr<states::witness_event> apply_witness_event(const uint256_t& parent_transaction_hash, const uint256_t& child_transaction_hash);
 			expects_lr<states::witness_account> apply_witness_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const address_map& addresses);
 			expects_lr<states::witness_account> apply_witness_routing_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const address_map& addresses);
 			expects_lr<states::witness_account> apply_witness_depository_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const algorithm::pubkeyhash_t& manager, const address_map& addresses, bool active = true);
+			expects_lr<states::witness_attestation> apply_witness_attestation(const algorithm::asset_id& asset, const uint256_t& input_hash, const uint256_t& output_hash, const algorithm::pubkeyhash_t& attester, bool finalized);
 			expects_lr<states::witness_transaction> apply_witness_transaction(const algorithm::asset_id& asset, const std::string_view& transaction_id);
 			expects_lr<states::account_nonce> get_account_nonce(const algorithm::pubkeyhash_t& owner) const;
 			expects_lr<states::account_program> get_account_program(const algorithm::pubkeyhash_t& owner) const;
@@ -372,6 +378,7 @@ namespace tangent
 			expects_lr<states::witness_account> get_witness_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const std::string_view& address) const;
 			expects_lr<states::witness_account> get_witness_account(const algorithm::asset_id& asset, const std::string_view& address, size_t offset) const;
 			expects_lr<states::witness_account> get_witness_account_tagged(const algorithm::asset_id& asset, const std::string_view& address, size_t offset) const;
+			expects_lr<states::witness_attestation> get_witness_attestation(const algorithm::asset_id& asset, const uint256_t& input_hash) const;
 			expects_lr<states::witness_transaction> get_witness_transaction(const algorithm::asset_id& asset, const std::string_view& transaction_id) const;
 			expects_lr<ledger::block_transaction> get_block_transaction_instance(const uint256_t& transaction_hash) const;
 			uint64_t get_validation_nonce() const;
@@ -494,7 +501,8 @@ namespace tangent
 			struct validation_info
 			{
 				transaction_context context;
-				uint256_t current_gas_limit = 0;
+				uint256_t commitment_gas_limit = 0;
+				uint256_t transaction_gas_limit = 0;
 				block_changelog changelog;
 				bool tip = false;
 			} validation;
@@ -505,7 +513,6 @@ namespace tangent
 			} validator;
 			option<block_header> tip = optional::none;
 			ordered_map<algorithm::pubkeyhash_t, uint64_t> nonces;
-			ordered_map<algorithm::asset_id, size_t> attesters;
 			vector<states::validator_production> producers;
 			vector<transaction_info> incoming;
 			vector<uint256_t> outgoing;
@@ -519,6 +526,7 @@ namespace tangent
 			expects_lr<void> solve_evaluated_block(block& candidate);
 			expects_lr<void> verify_solved_block(const block& candidate, const block_state* state);
 			expects_lr<void> cleanup();
+			bool can_accept_more_transactions();
 			static transaction_info precompute_transaction_element(uptr<transaction>&& candidate);
 			static void precompute_transaction_list(vector<transaction_info>& candidates);
 		};

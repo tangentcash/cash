@@ -740,15 +740,7 @@ namespace tangent
 		expects_lr<void> server_node::accept_unsigned_transaction(uref<relay>&& from, uptr<ledger::transaction>&& candidate_tx, uint64_t* account_nonce, uint256_t* output_hash)
 		{
 			auto& [node, wallet] = descriptor;
-			auto mempool = storages::mempoolstate();
-			auto bandwidth = mempool.get_bandwidth_by_owner(wallet.public_key_hash, candidate_tx->get_type());
-			if (bandwidth->congested)
-			{
-				auto price = mempool.get_gas_price(candidate_tx->asset, 0.10);
-				candidate_tx->set_optimal_gas(price.or_else(decimal::zero()));
-			}
-			else
-				candidate_tx->set_optimal_gas(decimal::zero());
+			candidate_tx->set_optimal_gas(decimal::zero());
 
 			auto status = candidate_tx->sign(wallet.secret_key, account_nonce ? *account_nonce : 0, decimal::zero());
 			if (!status)
@@ -785,7 +777,7 @@ namespace tangent
 			}
 
 			algorithm::pubkeyhash_t owner;
-			if (candidate_tx->is_recoverable() && !candidate_tx->recover_hash(owner))
+			if (!candidate_tx->recover_hash(owner))
 			{
 				if (protocol::now().user.consensus.logging)
 					VI_WARN("transaction %s %.*s validation failed: invalid signature", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data());
@@ -802,7 +794,7 @@ namespace tangent
 			}
 
 			auto& [node, wallet] = descriptor;
-			bool event = candidate_tx->is_consensus() && wallet.public_key_hash == owner;
+			bool event = candidate_tx->is_commitment() && wallet.public_key_hash == owner;
 			if (event || validate_execution)
 			{
 				ledger::block temp_block;
@@ -1197,7 +1189,7 @@ namespace tangent
 				return layer_exception("state machine not valid");
 
 			auto* proof_transaction_ptr = (transactions::depository_withdrawal*)*proof_transaction->transaction;
-			auto validation = transactions::depository_withdrawal_routing::validate_possible_proof(&context, proof_transaction_ptr, **aggregator.message);
+			auto validation = transactions::depository_withdrawal_finalization::validate_possible_proof(&context, proof_transaction_ptr, **aggregator.message);
 			if (!validation)
 				return layer_exception("group validation error");
 
@@ -1219,9 +1211,9 @@ namespace tangent
 				auto collision = context.get_witness_transaction(asset, receipt.transaction_id);
 				if (!collision)
 				{
-					auto* transaction = memory::init<transactions::depository_transaction>();
+					auto* transaction = memory::init<transactions::depository_attestation>();
 					transaction->asset = asset;
-					transaction->set_computed_witness(receipt);
+					transaction->set_computed_proof(std::move(receipt));
 					accept_unsigned_transaction(nullptr, transaction, nullptr);
 					if (protocol::now().user.consensus.logging)
 						VI_INFO("%s oracle transaction %s accepted", algorithm::asset::name_of(asset).c_str(), receipt.transaction_id.c_str());
@@ -2027,23 +2019,25 @@ namespace tangent
 					}
 				}
 
-				size_t offset = 0, count = 512;
+				size_t offset[2] = { 0, 0 }, count = 512;
+				bool accepting[2] = { true, true };
 				auto mempool = storages::mempoolstate();
-				while (is_active())
+				while (is_active() && (accepting[0] || accepting[1]) && environment.can_accept_more_transactions())
 				{
-					auto candidates = mempool.get_transactions(offset, count);
-					offset += candidates ? environment.try_include_transactions(std::move(*candidates)) : 0;
-					if (count != (candidates ? candidates->size() : 0))
-						break;
+					auto transactions = accepting[0] ? mempool.get_transactions(false, offset[0], count) : expects_lr<vector<uptr<ledger::transaction>>>(layer_exception());
+					auto commitments = accepting[1] ? mempool.get_transactions(true, offset[1], count) : expects_lr<vector<uptr<ledger::transaction>>>(layer_exception());
+					offset[0] += transactions ? environment.try_include_transactions(std::move(*transactions)) : 0;
+					offset[1] += commitments ? environment.try_include_transactions(std::move(*commitments)) : 0;
+					accepting[0] = count == (transactions ? transactions->size() : 0);
+					accepting[1] = count == (commitments ? commitments->size() : 0);
 				}
-				
 				if (is_active() && environment.incoming.empty())
 					return environment.cleanup().report("mempool cleanup failed");
 
 				uint64_t replacements = 0;
-				auto evaluation = environment.evaluate_block([&]() -> uptr<ledger::transaction>
+				auto evaluation = environment.evaluate_block([&](bool commitment) -> uptr<ledger::transaction>
 				{
-					auto candidate = mempool.get_transactions(offset++, 1);
+					auto candidate = mempool.get_transactions(commitment, offset[commitment ? 1 : 0]++, 1);
 					auto* transaction = candidate && !candidate->empty() ? candidate->front().reset() : nullptr;
 					if (protocol::now().user.consensus.logging)
 						VI_INFO("replacing mempool block transaction (txns: %" PRIu64 ")", ++replacements);
@@ -3012,7 +3006,7 @@ namespace tangent
 			if (!depository_withdrawal)
 				return remote_exception("invalid transaction");
 
-			auto validation = transactions::depository_withdrawal_routing::validate_possible_proof(context, depository_withdrawal, **state.message);
+			auto validation = transactions::depository_withdrawal_finalization::validate_possible_proof(context, depository_withdrawal, **state.message);
 			if (!validation)
 				return remote_exception(std::move(validation.error().message()));
 

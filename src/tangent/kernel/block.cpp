@@ -624,9 +624,9 @@ namespace tangent
 		}
 		uint64_t block_header::get_proof_accounted_duration() const
 		{
-			return priority > 0 ? (uint64_t)((double)get_proof_duration() / get_proof_difficulty_multiplier()) : get_proof_duration();
+			return priority > 0 ? (decimal(get_proof_duration()) / get_proof_difficulty_multiplier()).to_uint64() : get_proof_duration();
 		}
-		double block_header::get_proof_difficulty_multiplier() const
+		decimal block_header::get_proof_difficulty_multiplier() const
 		{
 			return algorithm::wesolowski::adjustment_scaling(priority);
 		}
@@ -657,7 +657,7 @@ namespace tangent
 			data->set("gas_use", algorithm::encoding::serialize_uint256(gas_use));
 			data->set("gas_limit", algorithm::encoding::serialize_uint256(gas_limit));
 			data->set("difficulty", algorithm::encoding::serialize_uint256(target.difficulty()));
-			data->set("difficulty_multiplier", var::number(get_proof_difficulty_multiplier()));
+			data->set("difficulty_multiplier", var::decimal(get_proof_difficulty_multiplier()));
 			data->set("slot_duration", algorithm::encoding::serialize_uint256(slot_duration));
 			data->set("slot_duration_average", algorithm::encoding::serialize_uint256(get_slot_proof_duration_average()));
 			data->set("slot_length", algorithm::encoding::serialize_uint256(get_slot_length()));
@@ -720,14 +720,29 @@ namespace tangent
 		{
 			return "block";
 		}
-		uint64_t block_header::get_transaction_limit()
+		uint64_t block_header::get_commitment_limit()
 		{
-			static uint64_t limit = (uint64_t)std::ceil((double)protocol::now().policy.consensus_proof_time * (double)protocol::now().policy.transaction_throughput / 1000.0);
+			static uint64_t limit = algorithm::arithmetic::ceil(algorithm::arithmetic::divide(protocol::now().policy.consensus_proof_time * protocol::now().policy.commitment_throughput, 1000)).to_uint64();
 			return limit;
 		}
-		uint256_t block_header::get_gas_limit()
+		uint64_t block_header::get_transaction_limit()
+		{
+			static uint64_t limit = algorithm::arithmetic::ceil(algorithm::arithmetic::divide(protocol::now().policy.consensus_proof_time * protocol::now().policy.transaction_throughput, 1000)).to_uint64();
+			return limit;
+		}
+		uint256_t block_header::get_commitment_gas_limit()
+		{
+			static uint256_t limit = protocol::now().policy.transaction_gas * get_commitment_limit();
+			return limit;
+		}
+		uint256_t block_header::get_transaction_gas_limit()
 		{
 			static uint256_t limit = protocol::now().policy.transaction_gas * get_transaction_limit();
+			return limit;
+		}
+		uint256_t block_header::get_total_gas_limit()
+		{
+			static uint256_t limit = get_commitment_gas_limit() + get_transaction_gas_limit();
 			return limit;
 		}
 		uint256_t block_header::get_gas_work(const uint128_t& difficulty, const uint256_t& gas_use, const uint256_t& gas_limit, uint64_t priority)
@@ -758,40 +773,51 @@ namespace tangent
 			priority = (uint64_t)(position == environment->producers.end() ? protocol::now().policy.production_max_per_block : std::distance(environment->producers.begin(), position));
 			target = algorithm::wesolowski::scale(get_proof_slot_target(parent_block), get_proof_difficulty_multiplier());
 
+			auto commitment_gas_limit = uint256_t(0);
+			auto transaction_gas_limit = uint256_t(0);
+			for (auto& item : environment->incoming)
+			{
+				auto& current_gas_limit = item.candidate->is_commitment() ? commitment_gas_limit : transaction_gas_limit;
+				current_gas_limit += item.candidate->gas_limit;
+			}
+
 			auto executionlog = string();
 			auto changelog = block_changelog();
 			for (auto& item : environment->incoming)
 			{
 			retry_replacement_transaction:
 				auto* candidate_transaction = *item.candidate;
-				auto execution = transaction_context::execute_tx(environment, this, &changelog, candidate_transaction, item.hash, item.owner, item.size, item.candidate->is_consensus() ? (uint8_t)transaction_context::execution_mode::pedantic : 0);
-				if (execution)
-				{
-					auto& blob = transactions.emplace_back();
-					blob.transaction = std::move(item.candidate);
-					blob.receipt = std::move(execution->receipt);
-					if (blob.receipt.relative_gas_paid > 0)
-					{
-						auto& fee = fees[blob.transaction->asset];
-						fee = (fee.is_nan() ? decimal::zero() : fee) + blob.transaction->gas_price * blob.receipt.relative_gas_paid.to_decimal();
-					}
-					changelog.outgoing.commit();
-				}
-				else
+				auto execution = transaction_context::execute_tx(environment, this, &changelog, candidate_transaction, item.hash, item.owner, item.size, item.candidate->is_commitment() ? (uint8_t)transaction_context::execution_mode::pedantic : 0);
+				if (!execution)
 				{
 					environment->outgoing.push_back(item.hash);
 					executionlog.append(stringify::text("\n  in transaction %s execution error: %s", algorithm::encoding::encode_0xhex256(item.hash).c_str(), execution.error().what()));
 					while (candidate_transaction == *item.candidate && replace_transaction)
 					{
-						auto replacement = environment->precompute_transaction_element(replace_transaction());
-						if (environment->decide_on_inclusion(replacement, gas_limit - item.candidate->gas_limit, block_header::get_gas_limit()) == evaluation_context::include_decision::include_in_block)
+						auto& current_gas_limit = item.candidate->is_commitment() ? commitment_gas_limit : transaction_gas_limit;
+						auto max_gas_limit = item.candidate->is_commitment() ? block_header::get_commitment_gas_limit() : block_header::get_transaction_gas_limit();
+						auto replacement = environment->precompute_transaction_element(replace_transaction(item.candidate->is_commitment()));
+						if (environment->decide_on_inclusion(replacement, current_gas_limit - item.candidate->gas_limit, max_gas_limit) == evaluation_context::include_decision::include_in_block)
 						{
-							gas_limit = gas_limit - item.candidate->gas_limit + replacement.candidate->gas_limit;
+							current_gas_limit = current_gas_limit - item.candidate->gas_limit + replacement.candidate->gas_limit;
+							gas_limit = commitment_gas_limit + transaction_gas_limit;
 							item = std::move(replacement);
 						}
 						else if (!replacement.candidate)
 							break;
 					}
+				}
+				else
+				{
+					auto& blob = transactions.emplace_back();
+					blob.transaction = std::move(item.candidate);
+					blob.receipt = std::move(execution->receipt);
+					if (blob.receipt.relative_gas_use > 0 && blob.transaction->gas_price.is_positive())
+					{
+						auto& fee = fees[blob.transaction->asset];
+						fee = (fee.is_nan() ? decimal::zero() : fee) + blob.transaction->gas_price * blob.receipt.relative_gas_use.to_decimal();
+					}
+					changelog.outgoing.commit();
 				}
 
 				changelog.clear_temporary_state();
@@ -873,8 +899,7 @@ namespace tangent
 				if (transaction.receipt.from != child.second->owner != 0)
 					return layer_exception("transaction " + algorithm::encoding::encode_0xhex256(transaction.receipt.transaction_hash) + " public key recovery failed");
 
-				transaction.receipt.generation_time = child.first->receipt.generation_time;
-				transaction.receipt.finalization_time = child.first->receipt.finalization_time;
+				transaction.receipt.block_time = child.first->receipt.block_time;
 				transaction.receipt.checksum = 0;
 			}
 
@@ -1588,6 +1613,65 @@ namespace tangent
 
 			return expectation::met;
 		}
+		expects_lr<void> transaction_context::try_commit_to_witness_attestation(const states::witness_attestation& witness, const uint256_t& output_hash, const algorithm::pubkeyhash_t& attester) const
+		{
+			bool may_commit = false;
+			if (!witness.finalized)
+			{
+				size_t attesters_size = calculate_attesters_size(witness.asset).or_else(0);
+				if (!verify_witness_attestation(witness, attesters_size))
+				{
+					auto copy = witness;
+					copy.branches[output_hash].insert(attester);
+					may_commit = !verify_witness_attestation(copy, attesters_size);
+				}
+			}
+			if (!may_commit)
+				return layer_exception("witness attestation requires proof instead of commitment");
+
+			return expectation::met;
+		}
+		expects_lr<uint256_t> transaction_context::verify_witness_attestation(const states::witness_attestation& witness, option<size_t> cached_attesters_size) const
+		{
+			if (witness.finalized)
+			{
+				if (witness.branches.size() != 1)
+					return layer_exception("invalid attestation state");
+
+				return witness.branches.begin()->first;
+			}
+
+			size_t required_attestations = cached_attesters_size ? *cached_attesters_size : calculate_attesters_size(witness.asset).or_else(0);
+			decimal best_branch_stake = -1;
+			uint256_t best_branch_hash = 0;
+			auto& params = protocol::now();
+			for (auto& [branch_hash, attesters] : witness.branches)
+			{
+				size_t required_branch_attestations = std::min<size_t>(required_attestations, params.policy.attestation_max_per_transaction);
+				decimal current_branch_threshold = required_branch_attestations > 0 ? algorithm::arithmetic::divide(attesters.size(), required_branch_attestations) : decimal::zero();
+				if (current_branch_threshold < params.policy.attestation_consensus_threshold || attesters.empty())
+					continue;
+
+				decimal branch_stake = decimal::zero();
+				for (auto& attester : attesters)
+				{
+					auto attestation = get_validator_attestation(witness.asset, attester);
+					if (attestation)
+						branch_stake += attestation->get_ranked_stake();
+				}
+
+				if (branch_stake > best_branch_stake)
+				{
+					best_branch_hash = branch_hash;
+					best_branch_stake = branch_stake;
+				}
+			}
+
+			if (!best_branch_hash)
+				return layer_exception("attestation is out of consensus (to be finalized)");
+
+			return best_branch_hash;
+		}
 		expects_lr<algorithm::wesolowski::distribution> transaction_context::calculate_random(const uint256_t& seed)
 		{
 			if (!block)
@@ -1682,7 +1766,7 @@ namespace tangent
 			if (pool < target_size)
 				return layer_exception("committee threshold not met");
 
-			size_t median_pool = (size_t)std::ceil((double)pool * protocol::now().policy.participation_stake_threshold);
+			size_t median_pool = (size_t)algorithm::arithmetic::ceil(decimal(pool) * decimal(protocol::now().policy.participation_stake_threshold)).to_uint64();
 			if (median_pool <= target_size + exclusion.size())
 				median_pool = pool;
 
@@ -2066,14 +2150,13 @@ namespace tangent
 
 			return new_state;
 		}
-		expects_lr<states::depository_policy> transaction_context::apply_depository_policy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, uint8_t security_level, const decimal& participation_threshold, bool accepts_account_requests, bool accepts_withdrawal_requests, ordered_set<algorithm::asset_id>&& whitelist)
+		expects_lr<states::depository_policy> transaction_context::apply_depository_policy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, uint8_t security_level, const decimal& participation_threshold, bool accepts_account_requests, bool accepts_withdrawal_requests)
 		{
 			auto new_state = get_depository_policy(asset, owner).or_else(states::depository_policy(owner, asset, block));
 			new_state.participation_threshold = participation_threshold;
 			new_state.security_level = security_level;
 			new_state.accepts_account_requests = accepts_account_requests;
 			new_state.accepts_withdrawal_requests = accepts_withdrawal_requests;
-			new_state.whitelist = std::move(whitelist);
 
 			auto status = store(&new_state, true);
 			if (!status)
@@ -2165,6 +2248,18 @@ namespace tangent
 				if (!status)
 					return status.error();
 			}
+			return new_state;
+		}
+		expects_lr<states::witness_attestation> transaction_context::apply_witness_attestation(const algorithm::asset_id& asset, const uint256_t& input_hash, const uint256_t& output_hash, const algorithm::pubkeyhash_t& attester, bool finalized)
+		{
+			states::witness_attestation new_state = finalized ? states::witness_attestation(asset, input_hash, block) : get_witness_attestation(asset, input_hash).or_else(states::witness_attestation(asset, input_hash, block));
+			new_state.branches[output_hash].insert(attester);
+			new_state.finalized = finalized;
+
+			auto status = store(&new_state, true);
+			if (!status)
+				return status.error();
+
 			return new_state;
 		}
 		expects_lr<states::witness_transaction> transaction_context::apply_witness_transaction(const algorithm::asset_id& asset, const std::string_view& transaction_id)
@@ -2620,6 +2715,19 @@ namespace tangent
 				result = get_witness_account(asset, oracle::address_util::encode_tag_address(address, "0"), offset);
 			return result;
 		}
+		expects_lr<states::witness_attestation> transaction_context::get_witness_attestation(const algorithm::asset_id& asset, const uint256_t& input_hash) const
+		{
+			auto chain = storages::chainstate();
+			auto state = chain.get_uniform(states::witness_attestation::as_instance_type(), changelog, states::witness_attestation::as_instance_index(asset, input_hash), get_validation_nonce());
+			if (!state)
+				return layer_exception("witness attestation required but not applicable (" + state.what() + ")");
+
+			auto status = ((transaction_context*)this)->load(state->ptr(), !state->cached);
+			if (!status)
+				return status.error();
+
+			return states::witness_attestation(std::move(*state->as<states::witness_attestation>()));
+		}
 		expects_lr<states::witness_transaction> transaction_context::get_witness_transaction(const algorithm::asset_id& asset, const std::string_view& transaction_id) const
 		{
 			auto chain = storages::chainstate();
@@ -2681,7 +2789,7 @@ namespace tangent
 		{
 			VI_ASSERT(transaction != nullptr, "transaction should be set");
 			algorithm::pubkeyhash_t owner;
-			if (transaction->is_recoverable() && !transaction->recover_hash(owner))
+			if (!transaction->recover_hash(owner))
 				return layer_exception("invalid signature");
 
 			auto* reference = (ledger::transaction*)transaction;
@@ -2693,7 +2801,7 @@ namespace tangent
 				reference->gas_limit = initial_gas_limit;
 			};
 			reference->checksum = 0;
-			reference->gas_limit = block::get_gas_limit();
+			reference->gas_limit = transaction->is_commitment() ? block::get_commitment_gas_limit() : block::get_transaction_gas_limit();
 
 			ledger::block temp_block;
 			temp_block.number = std::numeric_limits<int64_t>::max() - 1;
@@ -2719,7 +2827,7 @@ namespace tangent
 		{
 			VI_ASSERT(new_transaction, "transaction should be set");
 			owner.clear();
-			if (new_transaction->is_recoverable() && !algorithm::signing::recover_hash(new_transaction_hash, owner, new_transaction->signature))
+			if (!algorithm::signing::recover_hash(new_transaction_hash, owner, new_transaction->signature))
 				return layer_exception("invalid signature");
 
 			auto chain = storages::chainstate();
@@ -2728,11 +2836,7 @@ namespace tangent
 		expects_lr<transaction_context> transaction_context::execute_tx(const ledger::evaluation_context* new_environment, ledger::block* new_block, block_changelog* changelog, const ledger::transaction* new_transaction, const uint256_t& new_transaction_hash, const algorithm::pubkeyhash_t& owner, size_t transaction_size, uint8_t execution_flags, option<ledger::receipt>&& from_receipt)
 		{
 			VI_ASSERT(new_environment && new_block && new_transaction, "block, env, transaction should be set");
-			ledger::receipt new_receipt;
-			if (from_receipt)
-				new_receipt = std::move(*from_receipt);
-			else
-				new_receipt.generation_time = protocol::now().time.now();
+			auto new_receipt = from_receipt ? std::move(*from_receipt) : ledger::receipt();
 			new_receipt.transaction_hash = new_transaction_hash;
 			new_receipt.absolute_gas_use = new_block->gas_use;
 			new_receipt.block_number = new_block->number;
@@ -2767,10 +2871,9 @@ namespace tangent
 					return change.error();
 			}
 
-			context.receipt.relative_gas_paid = context.receipt.from != context.environment->validator.public_key_hash && context.transaction->gas_price.is_positive() ? context.receipt.relative_gas_use : uint256_t(0);
-			if (context.receipt.relative_gas_paid > 0)
+			if (context.receipt.relative_gas_use > 0 && context.transaction->gas_price.is_positive())
 			{
-				auto fee = context.apply_fee_transfer(context.transaction->asset, context.receipt.from, context.transaction->gas_price * context.receipt.relative_gas_paid.to_decimal());
+				auto fee = context.apply_fee_transfer(context.transaction->asset, context.receipt.from, context.transaction->gas_price * context.receipt.relative_gas_use.to_decimal());
 				if (!fee)
 					return fee.error();
 			}
@@ -2786,7 +2889,7 @@ namespace tangent
 			context.execution_flags = 0;
 			context.block->gas_use += context.receipt.relative_gas_use;
 			context.block->gas_limit += context.transaction->gas_limit;
-			context.receipt.finalization_time = protocol::now().time.now();
+			context.receipt.block_time = protocol::now().time.now();
 			return expects_lr<transaction_context>(std::move(context));
 		}
 		expects_promise_rt<void> transaction_context::dispatch_tx(dispatch_context* dispatcher, ledger::block_transaction* transaction)
@@ -2794,7 +2897,7 @@ namespace tangent
 			VI_ASSERT(transaction != nullptr, "transaction should be set");
 			VI_ASSERT(dispatcher != nullptr, "dispatcher should be set");
 			auto gas_limit = transaction->transaction->gas_limit;
-			transaction->transaction->gas_limit = block::get_gas_limit();
+			transaction->transaction->gas_limit = block::get_total_gas_limit();
 
 			auto* context = memory::init<ledger::transaction_context>();
 			context->transaction = *transaction->transaction;
@@ -3132,10 +3235,10 @@ namespace tangent
 			validator.secret_key = secret_key;
 			validation.changelog.clear();
 			validation.context = ledger::transaction_context(this, tip.address(), &validation.changelog, nullptr, receipt());
-			validation.current_gas_limit = 0;
+			validation.commitment_gas_limit = 0;
+			validation.transaction_gas_limit = 0;
 			precomputed = 0;
 			producers.clear();
-			attesters.clear();
 			incoming.clear();
 			outgoing.clear();
 
@@ -3178,22 +3281,28 @@ namespace tangent
 			precompute_transaction_list(subqueue);
 
 			auto prev_incoming_size = incoming.size();
-			auto max_gas_limit = block_header::get_gas_limit();
-			auto current_gas_limit = uint256_t(0);
+			auto max_commitment_gas_limit = block_header::get_commitment_gas_limit();
+			auto max_transaction_gas_limit = block_header::get_transaction_gas_limit();
 			for (auto& item : subqueue)
 			{
-				auto decision = decide_on_inclusion(item, validation.current_gas_limit, max_gas_limit);
+				auto& max_gas_limit = item.candidate->is_commitment() ? max_commitment_gas_limit : max_transaction_gas_limit;
+				auto& current_gas_limit = item.candidate->is_commitment() ? validation.commitment_gas_limit : validation.transaction_gas_limit;
+				auto decision = decide_on_inclusion(item, current_gas_limit, max_gas_limit);
 				if (decision == include_decision::include_in_block)
 				{
 					auto& nonce = nonces[algorithm::pubkeyhash_t(item.owner)];
-					nonce = std::max(item.candidate->nonce + 1, nonce);
-					validation.current_gas_limit += item.candidate->gas_limit;
+					nonce = std::max(item.candidate->nonce, nonce);
+					current_gas_limit += item.candidate->gas_limit;
 					incoming.emplace_back(std::move(item));
 					++precomputed;
 				}
 				else if (decision == include_decision::not_executable)
 					outgoing.push_back(item.hash);
 			}
+			if (validation.commitment_gas_limit >= max_commitment_gas_limit - max_commitment_gas_limit / 100)
+				validation.commitment_gas_limit = max_commitment_gas_limit;
+			if (validation.transaction_gas_limit >= max_transaction_gas_limit - max_transaction_gas_limit / 100)
+				validation.transaction_gas_limit = max_transaction_gas_limit;
 			return prev_incoming_size - incoming.size();
 		}
 		evaluation_context::transaction_info& evaluation_context::force_include_transaction(uptr<transaction>&& candidate)
@@ -3205,40 +3314,24 @@ namespace tangent
 		}
 		evaluation_context::include_decision evaluation_context::decide_on_inclusion(const transaction_info& item, const uint256_t& current_gas_limit, const uint256_t& max_gas_limit) const
 		{
-			if (!item.candidate)
-				return include_decision::not_executable;
-
-			if (item.candidate->is_recoverable() && item.owner.empty())
+			if (!item.candidate || item.owner.empty())
 				return include_decision::not_executable;
 
 			uint256_t new_gas_limit = current_gas_limit + item.candidate->gas_limit;
 			if (new_gas_limit < current_gas_limit || new_gas_limit > max_gas_limit)
 				return include_decision::not_includable;
 
-			switch (item.candidate->get_type())
+			auto map_nonce = nonces.find(algorithm::pubkeyhash_t(item.owner));
+			if (map_nonce == nonces.end())
 			{
-				case transaction_level::attestation:
-				{
-					auto* candidate = ((attestation_transaction*)*item.candidate);
-					auto* branch = candidate->get_best_branch(&validation.context, &((evaluation_context*)this)->attesters);
-					if (!branch)
-						return include_decision::not_includable;
-
-					candidate->set_best_branch(branch->message.hash());
-					return include_decision::include_in_block;
-				}
-				default:
-				{
-					auto existing_nonce = nonces.find(algorithm::pubkeyhash_t(item.owner));
-					auto account_nonce = validation.context.get_account_nonce(item.owner);
-					uint64_t nonce_target = (existing_nonce != nonces.end() ? existing_nonce->second : (account_nonce ? account_nonce->nonce : 0));
-					uint64_t nonce_delta = (nonce_target > item.candidate->nonce ? nonce_target - item.candidate->nonce : 0);
-					if (nonce_delta > 0)
-						return include_decision::not_includable;
-
-					return include_decision::include_in_block;
-				}
+				auto initial_nonce = validation.context.get_account_nonce(item.owner).or_else(states::account_nonce(algorithm::pubkeyhash_t(), nullptr)).nonce;
+				if (item.candidate->nonce != initial_nonce)
+					return include_decision::not_includable;
 			}
+			else if (item.candidate->nonce != map_nonce->second + 1)
+				return include_decision::not_includable;
+
+			return include_decision::include_in_block;
 		}
 		expects_lr<block_evaluation> evaluation_context::evaluate_block(const replace_transaction_callback& callback)
 		{
@@ -3285,6 +3378,10 @@ namespace tangent
 			auto mempool = storages::mempoolstate();
 			return mempool.remove_transactions(outgoing);
 		}
+		bool evaluation_context::can_accept_more_transactions()
+		{
+			return validation.commitment_gas_limit + validation.transaction_gas_limit < block_header::get_total_gas_limit();
+		}
 		evaluation_context::transaction_info evaluation_context::precompute_transaction_element(uptr<transaction>&& candidate)
 		{
 			evaluation_context::transaction_info result;
@@ -3308,6 +3405,7 @@ namespace tangent
 				item.size = item.candidate->as_message().data.size();
 				item.candidate->recover_hash(item.owner);
 			}));
+			VI_SORT(candidates.begin(), candidates.end(), [](const transaction_info& a, const transaction_info& b) { return a.candidate->nonce < b.candidate->nonce; });
 		}
 	}
 }

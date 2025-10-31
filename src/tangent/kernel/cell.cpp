@@ -277,12 +277,8 @@ namespace tangent
 				switch (type_id)
 				{
 					case (int)type_id::float_t:
-						mpf_init_set_d(target, (double)*(float*)value);
-						mpf_set_prec(target, 32);
-						break;
 					case (int)type_id::double_t:
-						mpf_init_set_d(target, *(double*)value);
-						mpf_set_prec(target, 64);
+						contract::throw_ptr(exception_repr(exception_repr::category::argument(), "floating point value not permitted"));
 						break;
 					default:
 					{
@@ -336,28 +332,17 @@ namespace tangent
 			bool into(generic_context& inout)
 			{
 				int type_id = inout.get_return_addressable_type_id();
-				switch (type_id)
+				auto type = factory::get()->get_vm()->get_type_info_by_id(type_id);
+				auto name = type.is_valid() ? type.get_name() : std::string_view();
+				if (name == SCRIPT_TYPE_REAL320)
 				{
-					case (int)type_id::float_t:
-						inout.set_return_float((float)mpf_get_d(target));
-						return true;
-					case (int)type_id::double_t:
-						inout.set_return_double((double)mpf_get_d(target));
-						return true;
-					default:
-					{
-						auto type = factory::get()->get_vm()->get_type_info_by_id(type_id);
-						auto name = type.is_valid() ? type.get_name() : std::string_view();
-						if (name == SCRIPT_TYPE_REAL320)
-						{
-							decimal result = decimal(mpf_to_string(target));
-							real320_repr::truncate_or_throw(result, true);
-							new (inout.get_address_of_return_location()) decimal(std::move(result));
-							return true;
-						}
-						return false;
-					}
+					decimal result = decimal(mpf_to_string(target));
+					real320_repr::truncate_or_throw(result, true);
+					new (inout.get_address_of_return_location()) decimal(std::move(result));
+					return true;
 				}
+
+				return false;
 			}
 			size_t bits()
 			{
@@ -365,20 +350,11 @@ namespace tangent
 				mpf_get_str(buffer, &exp, 10, sizeof(buffer) - 2, target);
 				return real320_repr::estimate_bits((uint32_t)strlen(buffer));
 			}
-			static bool requires_floating_point(int type_id)
+			static bool requires_fixed_point(int type_id)
 			{
-				switch (type_id)
-				{
-					case (int)type_id::float_t:
-					case (int)type_id::double_t:
-						return true;
-					default:
-					{
-						auto type = factory::get()->get_vm()->get_type_info_by_id(type_id);
-						auto name = type.is_valid() ? type.get_name() : std::string_view();
-						return name == SCRIPT_TYPE_REAL320;
-					}
-				}
+				auto type = factory::get()->get_vm()->get_type_info_by_id(type_id);
+				auto name = type.is_valid() ? type.get_name() : std::string_view();
+				return name == SCRIPT_TYPE_REAL320;
 			}
 		};
 
@@ -626,14 +602,16 @@ namespace tangent
 				if (swap)
 					obj_type.get_vm()->release_object(swap, obj_type.get_sub_type());
 			}
+			else if (sub_type_id == (uint32_t)type_id::float_t || sub_type_id == (uint32_t)type_id::double_t)
+				contract::throw_ptr(exception_repr(exception_repr::category::argument(), "floating point value not permitted"));
 			else if (sub_type_id == (uint32_t)type_id::bool_t || sub_type_id == (uint32_t)type_id::int8_t || sub_type_id == (uint32_t)type_id::uint8_t)
 				*(char*)ptr = *(char*)value;
 			else if (sub_type_id == (uint32_t)type_id::int16_t || sub_type_id == (uint32_t)type_id::uint16_t)
 				*(short*)ptr = *(short*)value;
-			else if (sub_type_id == (uint32_t)type_id::int32_t || sub_type_id == (uint32_t)type_id::uint32_t || sub_type_id == (uint32_t)type_id::float_t || sub_type_id > (uint32_t)type_id::double_t)
+			else if (sub_type_id == (uint32_t)type_id::int32_t || sub_type_id == (uint32_t)type_id::uint32_t || sub_type_id > (uint32_t)type_id::double_t)
 				*(int*)ptr = *(int*)value;
-			else if (sub_type_id == (uint32_t)type_id::int64_t || sub_type_id == (uint32_t)type_id::uint64_t || sub_type_id == (uint32_t)type_id::double_t)
-				*(double*)ptr = *(double*)value;
+			else if (sub_type_id == (uint32_t)type_id::int64_t || sub_type_id == (uint32_t)type_id::uint64_t)
+				*(int64_t*)ptr = *(int64_t*)value;
 		}
 		uint32_t array_repr::size() const
 		{
@@ -1072,8 +1050,10 @@ namespace tangent
 				case (uint32_t)type_id::uint16_t: return COMPARE(unsigned short);
 				case (uint32_t)type_id::int32_t: return COMPARE(signed int);
 				case (uint32_t)type_id::uint32_t: return COMPARE(uint32_t);
-				case (uint32_t)type_id::float_t: return COMPARE(float);
-				case (uint32_t)type_id::double_t: return COMPARE(double);
+				case (uint32_t)type_id::float_t:
+				case (uint32_t)type_id::double_t:
+					contract::throw_ptr(exception_repr(exception_repr::category::argument(), "floating point value not permitted"));
+					return false;
 				default: return COMPARE(signed int);
 #undef COMPARE
 			}
@@ -1125,8 +1105,10 @@ namespace tangent
 				case (uint32_t)type_id::uint16_t: return COMPARE(unsigned short);
 				case (uint32_t)type_id::int32_t: return COMPARE(signed int);
 				case (uint32_t)type_id::uint32_t: return COMPARE(uint32_t);
-				case (uint32_t)type_id::float_t: return COMPARE(float);
-				case (uint32_t)type_id::double_t: return COMPARE(double);
+				case (uint32_t)type_id::float_t:
+				case (uint32_t)type_id::double_t:
+					contract::throw_ptr(exception_repr(exception_repr::category::argument(), "floating point value not permitted"));
+					return false;
 				default: return COMPARE(signed int);
 #undef COMPARE
 			}
@@ -1442,7 +1424,7 @@ namespace tangent
 		{
 			vitex::scripting::type_info info(info_context);
 			int type_id = info.get_sub_type_id();
-			if (type_id == (uint32_t)type_id::void_t)
+			if (type_id == (uint32_t)type_id::void_t || type_id == (uint32_t)type_id::float_t || type_id == (uint32_t)type_id::double_t)
 				return false;
 
 			if ((type_id & (uint32_t)type_id::mask_object_t) && !(type_id & (uint32_t)type_id::handle_t))
@@ -2033,8 +2015,8 @@ namespace tangent
 		}
 		uint32_t string_repr::buffer_capacity_of(size_t required_size)
 		{
-			double capacity = (double)stack_capacity, page = (double)required_size;
-			return (uint32_t)(std::ceil(page / capacity) * capacity);
+			uint32_t pages_needed = ((uint32_t)required_size + stack_capacity - 1) / stack_capacity;
+			return pages_needed * stack_capacity;
 		}
 
 		void real320_repr::custom_constructor_bool(decimal* base, bool value)
@@ -2191,9 +2173,11 @@ namespace tangent
 		}
 		uint32_t real320_repr::estimate_bits(uint32_t digits)
 		{
-			static double log10 = log2(10);
-			auto bits = (uint32_t)ceil(log10 * (double)digits);
-			return bits + bits % 2;
+			const uint64_t LOG2_10_NUMERATOR = 3321928095ULL;
+			const uint64_t LOG2_10_DENOMINATOR = 1000000000ULL;
+			uint64_t numerator = LOG2_10_NUMERATOR * digits;
+			uint64_t bits = (numerator + LOG2_10_DENOMINATOR - 1) / LOG2_10_DENOMINATOR;
+			return (uint32_t)(bits + (bits % 2));
 		}
 		uint32_t real320_repr::target_bits()
 		{
@@ -2694,6 +2678,9 @@ namespace tangent
 		bool storage_repr::template_callback(const vitex::scripting::type_info& input_type, int input_type_id)
 		{
 			auto vm = input_type.get_vm();
+			if (input_type_id == (uint32_t)type_id::void_t || input_type_id == (uint32_t)type_id::float_t || input_type_id == (uint32_t)type_id::double_t)
+				return false;
+
 			if ((input_type_id & ~(uint32_t)type_id::mask_seqnbr_t) && !(input_type_id & (uint32_t)type_id::handle_t))
 			{
 				size_t flags = input_type.flags();
@@ -4044,11 +4031,8 @@ namespace tangent
 					inout.set_return_qword(std::numeric_limits<uint64_t>::min());
 					break;
 				case (int)type_id::float_t:
-					inout.set_return_float(std::numeric_limits<float>::min());
-					break;
 				case (int)type_id::double_t:
-					inout.set_return_double(std::numeric_limits<double>::min());
-					break;
+					return contract::throw_ptr(exception_repr(exception_repr::category::argument(), "floating point value not permitted"));
 				default:
 				{
 					auto type = factory::get()->get_vm()->get_type_info_by_id(type_id);
@@ -4121,11 +4105,8 @@ namespace tangent
 					inout.set_return_qword(std::numeric_limits<uint64_t>::max());
 					break;
 				case (int)type_id::float_t:
-					inout.set_return_float(std::numeric_limits<float>::max());
-					break;
 				case (int)type_id::double_t:
-					inout.set_return_double(std::numeric_limits<double>::max());
-					break;
+					return contract::throw_ptr(exception_repr(exception_repr::category::argument(), "floating point value not permitted"));
 				default:
 				{
 					auto type = factory::get()->get_vm()->get_type_info_by_id(type_id);
@@ -4169,7 +4150,7 @@ namespace tangent
 		{
 			generic_context inout = generic_context(generic);
 			int type_id = inout.get_return_addressable_type_id();
-			if (mpf_value::requires_floating_point(type_id))
+			if (mpf_value::requires_fixed_point(type_id))
 			{
 				mpf_value left = mpf_value(inout.get_arg_type_id(0), inout.get_arg_address(0));
 				mpf_value right = mpf_value(inout.get_arg_type_id(1), inout.get_arg_address(1));
@@ -4190,7 +4171,7 @@ namespace tangent
 		{
 			generic_context inout = generic_context(generic);
 			int type_id = inout.get_return_addressable_type_id();
-			if (mpf_value::requires_floating_point(type_id))
+			if (mpf_value::requires_fixed_point(type_id))
 			{
 				mpf_value left = mpf_value(inout.get_arg_type_id(0), inout.get_arg_address(0));
 				mpf_value right = mpf_value(inout.get_arg_type_id(1), inout.get_arg_address(1));
@@ -4211,7 +4192,7 @@ namespace tangent
 		{
 			generic_context inout = generic_context(generic);
 			int type_id = inout.get_return_addressable_type_id();
-			if (mpf_value::requires_floating_point(type_id))
+			if (mpf_value::requires_fixed_point(type_id))
 			{
 				mpf_value value = mpf_value(inout.get_arg_type_id(0), inout.get_arg_address(0));
 				mpf_value left = mpf_value(inout.get_arg_type_id(1), inout.get_arg_address(1));
@@ -4234,7 +4215,7 @@ namespace tangent
 		{
 			generic_context inout = generic_context(generic);
 			int type_id = inout.get_return_addressable_type_id();
-			if (mpf_value::requires_floating_point(type_id))
+			if (mpf_value::requires_fixed_point(type_id))
 			{
 				mpf_value left = mpf_value(inout.get_arg_type_id(0), inout.get_arg_address(0));
 				mpf_value right = mpf_value(inout.get_arg_type_id(1), inout.get_arg_address(1));
@@ -4269,7 +4250,7 @@ namespace tangent
 		{
 			generic_context inout = generic_context(generic);
 			int type_id = inout.get_return_addressable_type_id();
-			if (mpf_value::requires_floating_point(type_id))
+			if (mpf_value::requires_fixed_point(type_id))
 			{
 				mpf_value value = mpf_value(inout.get_arg_type_id(0), inout.get_arg_address(0));
 				mpf_value count = mpf_value(inout.get_arg_type_id(1), inout.get_arg_address(1));
@@ -4301,7 +4282,7 @@ namespace tangent
 		{
 			generic_context inout = generic_context(generic);
 			int type_id = inout.get_return_addressable_type_id();
-			if (mpf_value::requires_floating_point(type_id))
+			if (mpf_value::requires_fixed_point(type_id))
 			{
 				mpf_value value = mpf_value(inout.get_arg_type_id(0), inout.get_arg_address(0));
 				mpf_sqrt(value.target, value.target);
@@ -4388,11 +4369,8 @@ namespace tangent
 					stream->write_integer(*(uint64_t*)value);
 					return expectation::met;
 				case (int)type_id::float_t:
-					stream->write_decimal(decimal(*(float*)value));
-					return expectation::met;
 				case (int)type_id::double_t:
-					stream->write_decimal(decimal(*(double*)value));
-					return expectation::met;
+					return layer_exception("floating point value not permitted");
 				default:
 				{
 					auto type = factory::get()->get_vm()->get_type_info_by_id(value_type_id);
@@ -4499,11 +4477,8 @@ namespace tangent
 					stream->value = var::integer(*(uint64_t*)value);
 					return expectation::met;
 				case (int)type_id::float_t:
-					stream->value = var::number(*(float*)value);
-					return expectation::met;
 				case (int)type_id::double_t:
-					stream->value = var::number(*(double*)value);
-					return expectation::met;
+					return layer_exception("floating point value not permitted");
 				default:
 				{
 					auto type = factory::get()->get_vm()->get_type_info_by_id(value_type_id);
@@ -4611,23 +4586,8 @@ namespace tangent
 						return layer_exception("load failed for uint64 type");
 					return expectation::met;
 				case (int)type_id::float_t:
-				{
-					decimal wrapper;
-					if (!stream.read_decimal_or_integer(stream.read_type(), &wrapper))
-						return layer_exception("load failed for float type");
-
-					*(float*)value = wrapper.to_float();
-					return expectation::met;
-				}
 				case (int)type_id::double_t:
-				{
-					decimal wrapper;
-					if (!stream.read_decimal_or_integer(stream.read_type(), &wrapper))
-						return layer_exception("load failed for double type");
-
-					*(double*)value = wrapper.to_double();
-					return expectation::met;
-				}
+					return layer_exception("floating point value not permitted");
 				default:
 				{
 					bool managing = false;
@@ -4774,11 +4734,8 @@ namespace tangent
 					*(uint64_t*)value = (uint64_t)stream->value.get_integer();
 					return expectation::met;
 				case (int)type_id::float_t:
-					*(float*)value = (float)stream->value.get_number();
-					return expectation::met;
 				case (int)type_id::double_t:
-					*(double*)value = (double)stream->value.get_number();
-					return expectation::met;
+					return layer_exception("floating point value not permitted");
 				default:
 				{
 					bool managing = false;
@@ -5890,7 +5847,6 @@ namespace tangent
 
 			ledger::receipt receipt;
 			receipt.transaction_hash = transaction.as_hash();
-			receipt.generation_time = context->receipt.generation_time;
 			receipt.absolute_gas_use = context->block->gas_use;
 			receipt.block_number = context->block->number;
 			receipt.from = callable();
@@ -5974,11 +5930,8 @@ namespace tangent
 							frames.emplace_back([i, index, &args](immediate_context* coroutine) { coroutine->set_arg64(i, (uint64_t)args[index].as_uint64()); });
 							break;
 						case (int)type_id::float_t:
-							frames.emplace_back([i, index, &args](immediate_context* coroutine) { coroutine->set_arg_float(i, (float)args[index].as_float()); });
-							break;
 						case (int)type_id::double_t:
-							frames.emplace_back([i, index, &args](immediate_context* coroutine) { coroutine->set_arg_double(i, (double)args[index].as_double()); });
-							break;
+							return layer_exception("floating point value not permitted");
 						default:
 						{
 							void* address = nullptr;

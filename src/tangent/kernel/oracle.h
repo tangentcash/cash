@@ -381,7 +381,7 @@ namespace tangent
 			virtual expects_promise_rt<computed_fee> estimate_fee(const std::string_view& from_address, const vector<value_transfer>& to, const fee_supervisor_options& options) = 0;
 			virtual expects_promise_rt<decimal> calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link) = 0;
 			virtual expects_promise_rt<void> broadcast_transaction(const finalized_transaction& finalized) = 0;
-			virtual expects_promise_rt<prepared_transaction> prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee, bool inclusive_fee) = 0;
+			virtual expects_promise_rt<prepared_transaction> prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee) = 0;
 			virtual expects_lr<finalized_transaction> finalize_transaction(prepared_transaction&& prepared) = 0;
 			virtual expects_lr<secret_box> encode_secret_key(const secret_box& secret_key) = 0;
 			virtual expects_lr<secret_box> decode_secret_key(const secret_box& secret_key) = 0;

@@ -672,6 +672,10 @@ namespace tangent
 			if (value != nullptr && value->value.is(var_type::integer))
 				user.storage.transaction_dispatch_repeat_interval = value->value.get_integer();
 
+			value = config->fetch("storage.commitment_timeout");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.storage.commitment_timeout = value->value.get_integer();
+
 			value = config->fetch("storage.transaction_timeout");
 			if (value != nullptr && value->value.is(var_type::integer))
 				user.storage.transaction_timeout = value->value.get_integer();
@@ -858,6 +862,7 @@ namespace tangent
 				account.public_key_version = 0xC;
 				account.address_version = 0x6;
 				policy.consensus_proof_time = 120;
+				policy.commitment_throughput = 1000;
 				policy.transaction_throughput = 10000;
 				policy.participation_min_per_account = 1;
 				policy.participation_std_per_account = 2;

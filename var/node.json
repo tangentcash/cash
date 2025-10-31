@@ -87,6 +87,7 @@
         "checkpoint_size": 64,
         "transaction_dispatch_repeat_interval": 600,
         "transaction_timeout": 86400,
+        "commitment_timeout": 14400,
         "mempool_transaction_limit": 10000000,
         "location_cache_size": 500000,
         "module_cache_size": 8192,
