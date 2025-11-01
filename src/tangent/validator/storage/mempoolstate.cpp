@@ -757,7 +757,9 @@ namespace tangent
 			map.push_back(var::set::integer(count));
 			map.push_back(var::set::integer(offset));
 
-			auto cursor = get_storage().emplace_query(__func__, stringify::text("SELECT message FROM transactions WHERE quality IS %s ORDER BY epoch ASC, quality DESC NULLS LAST LIMIT ? OFFSET ?", commitment ? "NULL" : "NOT NULL"), &map);
+			auto cursor = get_storage().emplace_query(__func__, commitment ?
+				"SELECT message FROM transactions WHERE quality IS NULL ORDER BY epoch ASC, time ASC NULLS LAST LIMIT ? OFFSET ?" :
+				"SELECT message FROM transactions WHERE quality IS NOT NULL ORDER BY epoch ASC, quality DESC NULLS LAST LIMIT ? OFFSET ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<uptr<ledger::transaction>>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -923,6 +925,7 @@ namespace tangent
 			CREATE INDEX IF NOT EXISTS transactions_owner_nonce ON transactions (owner, nonce);
 			CREATE INDEX IF NOT EXISTS transactions_asset_quality ON transactions (asset ASC, quality DESC);
 			CREATE INDEX IF NOT EXISTS transactions_epoch_quality ON transactions (epoch ASC, quality DESC);
+			CREATE INDEX IF NOT EXISTS transactions_epoch_time ON transactions(epoch ASC, time ASC);
 			CREATE TRIGGER IF NOT EXISTS transactions_capacity BEFORE INSERT ON transactions BEGIN
 				DELETE FROM transactions WHERE hash = (SELECT hash FROM transactions ORDER BY epoch DESC, quality ASC NULLS FIRST) AND (SELECT COUNT(1) FROM transactions) >= max_mempool_size;
 			END;);

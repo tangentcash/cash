@@ -198,7 +198,7 @@ namespace tangent
 			server_response mempoolstate_get_addresses(http::connection* base, format::variables&& args);
 			server_response mempoolstate_get_gas_price(http::connection* base, format::variables&& args);
 			server_response mempoolstate_get_asset_price(http::connection* base, format::variables&& args);
-			server_response mempoolstate_get_optimal_transaction_gas(http::connection* base, format::variables&& args);
+			server_response mempoolstate_simulate_transaction(http::connection* base, format::variables&& args);
 			server_response mempoolstate_submit_transaction(http::connection* base, format::variables&& args, ledger::transaction* prebuilt);
 			server_response mempoolstate_reject_transaction(http::connection* base, format::variables&& args);
 			server_response mempoolstate_get_transaction_by_hash(http::connection* base, format::variables&& args);

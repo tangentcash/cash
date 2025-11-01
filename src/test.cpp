@@ -1637,10 +1637,10 @@ public:
 			TEST_BLOCK(std::bind(&generators::validator_enable_validator, std::placeholders::_1, std::placeholders::_2, 2, false, false, true), "0x7fd7df395e603696195e3bf08044dc49edbffab02b941777dc95c232d1b1c57d", 17);
 			TEST_BLOCK(&generators::depository_migration, "0x3912b268efd4e9db82222e4f9b32f7d1a335f53b3d3318708fd6fddd0b2e49f5", 18);
 			TEST_BLOCK(&generators::depository_withdrawal_stage_1, "0x4c9caba2fc5af010cb835df9a11ce1ba3b572eb9d4b1dbcf6e7dcb93eec93865", 20);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0x0a75cf4a881184a2b644422d06d924346a52ef10dc6fb94c1e192d7c88c05b84", 23);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0xf047960f9a1094b19e91ce2ba7cb6b52946889fccf83c8392bb339d66513fa10", 26);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_4, "0xa9a15d3416290e8c1203bc37fef267932b69f1820f2baa9867fa2bd84e6916ee", 29);
-			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2, false, true, false), "0x55e6d253d7158798a387db69fdb98befde8f542c810304fc5b90d6f938cb433e", 32);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0xc827c174b3118d9efaf3e2906b0fe25f8e34c5912840002bf428f2b0aa328088", 23);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0x29a09ee44a989345eed92d0043061ae3d97ba58da6cd34aa732688621b3d7477", 26);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_4, "0x87fa449c1a2dfa95da20d62036fc0e51210a85502f97d79375a7ce8b882c1f9b", 29);
+			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2, false, true, false), "0x3cff1a8fbb333a36088ff5d69a6faeb86b1a79ef853b41abc427b27c7cce713b", 32);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else

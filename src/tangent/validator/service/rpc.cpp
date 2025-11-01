@@ -407,7 +407,7 @@ namespace tangent
 			bind(0 | access_type::r, "mempoolstate", "getaddresses", 2, 3, "uint64 offset, uint64 count, string? services = 'consensus' | 'discovery' | 'oracle' | 'rpc' | 'rpc_public_access' | 'rpc_web_sockets' | 'production' | 'participation' | 'attestation'", "string[]", "get best node ip addresses with optional comma separated list of services", std::bind(&server_node::mempoolstate_get_addresses, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getgasprice", 1, 3, "string asset, double? percentile = 0.5, bool? mempool_only", "decimal", "get gas price from percentile of pending transactions", std::bind(&server_node::mempoolstate_get_gas_price, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getassetprice", 2, 3, "string asset_from, string asset_to, double? percentile = 0.5", "decimal", "get gas asset from percentile of pending transactions", std::bind(&server_node::mempoolstate_get_asset_price, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "mempoolstate", "getoptimaltransactiongas", 1, 1, "string message_hex", "uint256", "execute transaction with block gas limit and return ceil of spent gas", std::bind(&server_node::mempoolstate_get_optimal_transaction_gas, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "mempoolstate", "simulatetransaction", 1, 1, "string message_hex", "uint256", "execute transaction with block gas limit and return the receipt", std::bind(&server_node::mempoolstate_simulate_transaction, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getmempooltransactionbyhash", 1, 1, "uint256 hash", "txn", "get mempool transaction by hash", std::bind(&server_node::mempoolstate_get_transaction_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getrawmempooltransactionbyhash", 1, 1, "uint256 hash", "string", "get raw mempool transaction by hash", std::bind(&server_node::mempoolstate_get_raw_transaction_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getnextaccountnonce", 1, 1, "string owner_address", "{ min: uint64, max: uint64 }", "get account nonce for next transaction by owner", std::bind(&server_node::mempoolstate_get_next_account_nonce, this, std::placeholders::_1, std::placeholders::_2));
@@ -2760,7 +2760,7 @@ namespace tangent
 
 			return server_response().success(var::set::decimal(*price));
 		}
-		server_response server_node::mempoolstate_get_optimal_transaction_gas(http::connection* base, format::variables&& args)
+		server_response server_node::mempoolstate_simulate_transaction(http::connection* base, format::variables&& args)
 		{
 			auto data = format::util::decode_stream(args[0].as_string());
 			auto message = format::ro_stream(data);
@@ -2768,11 +2768,12 @@ namespace tangent
 			if (!candidate_tx || !candidate_tx->load(message))
 				return server_response().error(error_codes::bad_params, "invalid message");
 
-			auto gas_limit = ledger::transaction_context::calculate_tx_gas(*candidate_tx);
+			auto receipt = ledger::receipt();
+			auto gas_limit = ledger::transaction_context::calculate_tx_gas(*candidate_tx, &receipt);
 			if (!gas_limit)
 				return server_response().error(error_codes::bad_params, gas_limit.error().message());
 
-			return server_response().success(algorithm::encoding::serialize_uint256(*gas_limit));
+			return server_response().success(receipt.as_schema());
 		}
 		server_response server_node::mempoolstate_submit_transaction(http::connection* base, format::variables&& args, ledger::transaction* prebuilt)
 		{

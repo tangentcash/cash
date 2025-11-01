@@ -2698,7 +2698,7 @@ namespace tangent
 
 								auto compensation_adjustment = std::max(decimal::zero(), prev_value - next_value);
 								if (compensation_adjustment.is_positive())
-									depository_fee += consume_penalty(std::max(decimal::zero(), prev_value - next_value));
+									depository_fee += consume_penalty(compensation_adjustment);
 							}
 
 							for (auto& succeeding_attester : succeeding_attesters)

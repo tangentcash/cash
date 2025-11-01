@@ -1615,10 +1615,27 @@ namespace tangent
 		}
 		expects_lr<void> transaction_context::try_commit_to_witness_attestation(const states::witness_attestation& witness, const uint256_t& output_hash, const algorithm::pubkeyhash_t& attester) const
 		{
+			auto attestation = get_validator_attestation(witness.asset, attester);
+			if (!attestation || !attestation->is_active())
+				return layer_exception("validator attestation is inactive");
+
+			size_t attesters_size = calculate_attesters_size(witness.asset).or_else(0);
+			if (attesters_size / 2 > 0)
+			{
+				auto chain = storages::chainstate();
+				auto window = storages::result_range_window(attesters_size / (attesters_size >= 10 ? 10 : 2), 1);
+				auto median = chain.get_multiforms_by_row_filter(states::validator_attestation::as_instance_type(), changelog, states::validator_attestation::as_instance_row(attestation->asset), storages::result_filter::greater(0, 1), get_validation_nonce(), window);
+				if (median)
+				{
+					auto& target = *(states::validator_attestation*)median->front().ptr();
+					if (attestation->get_ranked_stake() < target.get_ranked_stake())
+						return layer_exception("validator attestation not enough ranked stake (< bottom 10%)");
+				}
+			}
+
 			bool may_commit = false;
 			if (!witness.finalized)
 			{
-				size_t attesters_size = calculate_attesters_size(witness.asset).or_else(0);
 				if (!verify_witness_attestation(witness, attesters_size))
 				{
 					auto copy = witness;
@@ -2785,7 +2802,7 @@ namespace tangent
 
 			return transaction->gas_price * get_gas_use().to_decimal();
 		}
-		expects_lr<uint256_t> transaction_context::calculate_tx_gas(const ledger::transaction* transaction)
+		expects_lr<uint256_t> transaction_context::calculate_tx_gas(const ledger::transaction* transaction, ledger::receipt* out_receipt)
 		{
 			VI_ASSERT(transaction != nullptr, "transaction should be set");
 			algorithm::pubkeyhash_t owner;
@@ -2818,10 +2835,12 @@ namespace tangent
 				return execution.error();
 			}
 
+			auto gas = execution->receipt.relative_gas_use - (execution->receipt.relative_gas_use % 1000) + 1000;
+			execution->receipt.relative_gas_use = gas;
+			if (out_receipt != nullptr)
+				*out_receipt = std::move(execution->receipt);
 			revert_transaction();
-			auto gas = execution->receipt.relative_gas_use;
-			gas -= gas % 1000;
-			return gas + 1000;
+			return gas;
 		}
 		expects_lr<void> transaction_context::validate_tx(const ledger::transaction* new_transaction, const uint256_t& new_transaction_hash, algorithm::pubkeyhash_t& owner)
 		{

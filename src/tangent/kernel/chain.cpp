@@ -862,7 +862,7 @@ namespace tangent
 				account.public_key_version = 0xC;
 				account.address_version = 0x6;
 				policy.consensus_proof_time = 120;
-				policy.commitment_throughput = 1000;
+				policy.commitment_throughput = 500;
 				policy.transaction_throughput = 10000;
 				policy.participation_min_per_account = 1;
 				policy.participation_std_per_account = 2;
