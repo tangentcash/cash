@@ -171,7 +171,65 @@ namespace tangent
 		}
 		expects_promise_system<http::response_frame> server_node::internal_call(const std::string_view& location, const std::string_view& method, const http::fetch_frame& options)
 		{
-			return http::fetch(location, method, options);
+			if (!control_sys.is_active())
+				return expects_promise_system<http::response_frame>(system_exception("http fetch: shutdown", std::make_error_condition(std::errc::network_down)));
+
+			vitex::network::location origin(location);
+			if (origin.protocol != "http" && origin.protocol != "https")
+				return expects_promise_system<http::response_frame>(system_exception("http fetch: invalid protocol", std::make_error_condition(std::errc::address_family_not_supported)));
+
+			http::request_frame request;
+			request.cookies = options.cookies;
+			request.headers = options.headers;
+			request.content = options.content;
+			request.location.assign(origin.path);
+			request.set_method(method);
+			if (!origin.username.empty() || !origin.password.empty())
+				request.set_header("Authorization", http::permissions::authorize(origin.username, origin.password));
+
+			for (auto& item : origin.query)
+				request.query += item.first + "=" + item.second + "&";
+			if (!request.query.empty())
+				request.query.pop_back();
+
+			size_t max_size = options.max_size;
+			uint64_t timeout = options.timeout;
+			bool secure = origin.protocol == "https";
+			string hostname = origin.hostname;
+			string port = origin.port > 0 ? to_string(origin.port) : string(secure ? "443" : "80");
+			int32_t verify_peers = (secure ? (options.verify_peers >= 0 ? options.verify_peers : PEER_NOT_VERIFIED) : PEER_NOT_SECURE);
+			http::client* client = new http::client(timeout);
+			add_activity_request(client);
+			return dns::get()->lookup_deferred(hostname, port, dns_type::connect, socket_protocol::TCP, socket_type::stream).then<expects_promise_system<http::response_frame>>([this, client, max_size, timeout, verify_peers, request = std::move(request), origin = std::move(origin)](expects_system<socket_address>&& address) mutable -> expects_promise_system<http::response_frame>
+			{
+				if (!address)
+				{
+					remove_activity_request(client);
+					return expects_promise_system<http::response_frame>(address.error());
+				}
+
+				return client->connect_async(*address, verify_peers).then<expects_promise_system<void>>([client, max_size, request = std::move(request)](expects_system<void>&& status) mutable -> expects_promise_system<void>
+				{
+					if (!status)
+						return expects_promise_system<void>(status);
+
+					return client->send_fetch(std::move(request), max_size);
+				}).then<expects_promise_system<http::response_frame>>([this, client](expects_system<void>&& status) -> expects_promise_system<http::response_frame>
+				{
+					if (!status)
+					{
+						remove_activity_request(client);
+						return expects_promise_system<http::response_frame>(status.error());
+					}
+
+					auto response = std::move(*client->get_response());
+					return client->disconnect().then<expects_system<http::response_frame>>([this, client, response = std::move(response)](expects_system<void>&&) mutable -> expects_system<http::response_frame>
+					{
+						remove_activity_request(client);
+						return std::move(response);
+					});
+				});
+			});
 		}
 		expects_promise_rt<schema*> server_node::execute_rpc(const algorithm::asset_id& asset, const std::string_view& method, schema_list&& args, cache_policy cache)
 		{
@@ -1211,6 +1269,31 @@ namespace tangent
 			umutex<std::recursive_mutex> unique(control_sys.sync);
 			chains.erase(algorithm::asset::blockchain_of(asset));
 		}
+		void server_node::add_activity_listener(transaction_listener* listener)
+		{
+			umutex<std::mutex> unique(activity.mutex);
+			++activity.listeners[listener];
+		}
+		void server_node::remove_activity_listener(transaction_listener* listener)
+		{
+			umutex<std::mutex> unique(activity.mutex);
+			auto& index = activity.listeners[listener];
+			if (index == 1)
+				activity.listeners.erase(listener);
+			else
+				--index;
+		}
+		void server_node::add_activity_request(http::client* client)
+		{
+			umutex<std::mutex> unique(activity.mutex);
+			activity.requests.insert(client);
+		}
+		void server_node::remove_activity_request(http::client* client)
+		{
+			umutex<std::mutex> unique(activity.mutex);
+			activity.requests.erase(client);
+			client->release();
+		}
 		void server_node::add_transaction_callback(const std::string_view& name, transaction_callback&& callback)
 		{
 			umutex<std::recursive_mutex> unique(control_sys.sync);
@@ -1258,6 +1341,7 @@ namespace tangent
 				listener->options.state.latest_time_awaited = 0;
 			}
 
+			add_activity_listener(listener);
 			coasync<void>([this, listener]() -> promise<void>
 			{
 				auto info = coawait(link_transactions(listener->asset, &listener->options));
@@ -1349,7 +1433,7 @@ namespace tangent
 
 				call_transaction_listener(listener);
 				coreturn_void;
-			}, true);
+			}, true).when(std::bind(&server_node::remove_activity_listener, this, listener));
 			return true;
 		}
 		void server_node::startup()
@@ -1398,12 +1482,34 @@ namespace tangent
 
 			if (protocol::now().user.oracle.logging)
 				VI_INFO("oracle node shutdown");
-
-			umutex<std::recursive_mutex> unique(control_sys.sync);
-			for (auto& nodes : nodes)
 			{
-				for (auto& node : nodes.second)
-					node->cancel_activities();
+				umutex<std::recursive_mutex> unique(control_sys.sync);
+				for (auto& nodes : nodes)
+				{
+					for (auto& node : nodes.second)
+						node->cancel_activities();
+				}
+			}
+			{
+				umutex<std::mutex> unique(activity.mutex);
+				auto yield = [&]()
+				{
+					unique.unlock();
+					std::this_thread::sleep_for(std::chrono::microseconds(100));
+					unique.lock();
+				};
+				while (!activity.requests.empty())
+				{
+					for (auto& request : activity.requests)
+					{
+						auto* stream = request->get_stream();
+						if (stream != nullptr)
+							stream->shutdown(true);
+					}
+					yield();
+				}
+				while (!activity.listeners.empty())
+					yield();
 			}
 		}
 		bool server_node::is_active()

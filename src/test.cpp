@@ -1670,14 +1670,16 @@ public:
 		});
 	}
 	/* blockchain exclusively for testing depositories of specific networks (possibly non-zero balance accounts, valid regtest chain) */
-	static void blockchain_integration_coverage(const algorithm::asset_id& asset, const std::string_view& network_url, const std::string_view& external_account, const decimal& deposit_value, const decimal& depository_fee)
+	static void blockchain_integration_coverage(const algorithm::asset_id& asset, const std::string_view& network_url, std::function<string()>&& new_account, std::function<void(const std::string_view&)>&& new_block, std::function<void(const std::string_view&, const std::string_view&, const decimal&)>&& new_transaction)
 	{
 		use_clean_state([&]()
 		{
 			auto* term = console::get();
+			auto deposit_value = decimal(50);
+			auto depository_fee = decimal(0.5);
 			auto producers = vector<account>({ account(ledger::wallet::from_seed(), 0), account(ledger::wallet::from_seed(), 0) });
 			auto& [user1, user1_nonce] = producers[0];
-			auto [user2, user2_nonce] = producers[1];
+			auto& [user2, user2_nonce] = producers[1];
 			auto [user3, user3_nonce] = account(ledger::wallet::from_seed(), 0);
 			auto* validator_adjustment = memory::init<transactions::validator_adjustment>();
 			validator_adjustment->asset = asset;
@@ -1711,7 +1713,6 @@ public:
 			config.user.oracle.server = true;
 
 			auto* server = oracle::server_node::get();
-			auto eth_chain = server->get_chain(algorithm::asset::id_of("ETH"));
 			auto params = (oracle::relay_backend::chainparams*)server->get_chainparams(asset);
 			auto& options = server->get_options();
 			params->sync_latency = 0;
@@ -1719,15 +1720,15 @@ public:
 
 			std::mutex mutex;
 			std::condition_variable condition;
-			std::atomic<bool> log_transaction_happened = false;
-			auto wait_for_transaction_log = [&]()
+			std::atomic<bool> transaction_happened = false;
+			auto receive_transaction = [&]()
 			{
 				term->write_line("awaiting transaction log confirmation (checking every 3 seconds)");
 				std::unique_lock<std::mutex> unique(mutex);
 				server->trigger_node_activity(asset);
-				while (!log_transaction_happened)
-					condition.wait_for(unique, std::chrono::milliseconds(1000), [&]() { return log_transaction_happened.load(); });
-				log_transaction_happened = false;
+				while (!transaction_happened)
+					condition.wait_for(unique, std::chrono::milliseconds(1000), [&]() { return transaction_happened.load(); });
+				transaction_happened = false;
 			};
 			server->add_node(asset, network_url, 0);
 			server->add_transaction_callback("logging", [&](const algorithm::asset_id& asset, const oracle::chain_supervisor_options& options, oracle::transaction_logs&& logs) -> expects_lr<void>
@@ -1744,16 +1745,21 @@ public:
 				{
 					new_block_from_list(nullptr, producers, std::move(transactions));
 					std::unique_lock<std::mutex> unique(mutex);
-					log_transaction_happened = true;
+					transaction_happened = true;
 					condition.notify_one();
 				}
 				return expectation::met;
 			});
+			server->scan_from_block_height(asset, 1);
 			server->startup();
 			{
+				term->write_line("incoming transaction integration:");
+				term->fwrite_line(" - account required");
+
+				auto from_account = new_account();
 				auto* depository_account = memory::init<transactions::depository_account>();
 				depository_account->asset = asset;
-				depository_account->set_routing_address(external_account);
+				depository_account->set_routing_address(from_account);
 				depository_account->set_manager(user1.public_key_hash);
 				depository_account->sign(user3.secret_key, user3_nonce++, decimal::zero()).expect("pre-validation failed");
 				new_block_from_one(nullptr, producers, depository_account);
@@ -1761,34 +1767,35 @@ public:
 				size_t deposits = 0;
 				auto context = ledger::transaction_context();
 				auto accounts = *context.get_witness_accounts_by_purpose(params->routing == oracle::routing_policy::account ? user1.public_key_hash : user3.public_key_hash, states::witness_account::account_type::depository, 0, 128);
-				term->write_line("incoming transaction integration:");
+				term->fwrite_line(" - block reward required for account %s", from_account.c_str());
+				new_block(from_account);
 				for (auto& account : accounts)
 				{
 					if (account.manager == user1.public_key_hash)
 					{
 						for (auto& [type, to_account] : account.addresses)
 						{
-							auto eth_deposit_value = "0x" + eth_chain->to_baseline_value(deposit_value).to_string(16);
-							term->fwrite_line(" - deposit %s into %s (eth: %s)", deposit_value.to_string().c_str(), to_account.c_str(), eth_deposit_value.c_str());
+							term->fwrite_line(" - deposit %s into %s", deposit_value.to_string().c_str(), to_account.c_str(), deposit_value);
+							new_transaction(from_account, to_account, deposit_value);
 							++deposits;
 						}
 					}
 				}
 				VI_PANIC(deposits > 0, "deposit address generation failed");
-				wait_for_transaction_log();
+				new_block(from_account);
+				receive_transaction();
 
 				auto expected_balance = (deposit_value - depository_fee) * deposits;
 				auto balance = context.get_account_balance(asset, user3.public_key_hash).expect("balance mismatch").get_balance();
 				auto withdrawal_value = balance - depository_fee;
-				auto eth_withdrawal_value = "0x" + eth_chain->to_baseline_value(withdrawal_value).to_string(16);
 				VI_PANIC(balance == expected_balance, "actual balance is expected to be %s but is %s", expected_balance.to_string().c_str(), balance.to_string().c_str());
 				term->write_line("outgoing transaction integration:");
-				term->fwrite_line(" - withdraw %s into %.*s (eth: %s)", withdrawal_value.to_string().c_str(), (int)external_account.size(), external_account.data(), eth_withdrawal_value.c_str());
+				term->fwrite_line(" - withdraw %s into %.*s", withdrawal_value.to_string().c_str(), (int)from_account.size(), from_account.data());
 
 				auto* depository_withdrawal = memory::init<transactions::depository_withdrawal>();
 				depository_withdrawal->asset = asset;
 				depository_withdrawal->set_manager(user1.public_key_hash);
-				depository_withdrawal->set_to(external_account, withdrawal_value);
+				depository_withdrawal->set_to(from_account, withdrawal_value);
 				depository_withdrawal->sign(user3.secret_key, user3_nonce++, decimal::zero()).expect("pre-validation failed");
 				new_block_from_one(nullptr, producers, depository_withdrawal);
 
@@ -1803,20 +1810,14 @@ public:
 				auto* confirmation_transaction = (transactions::depository_withdrawal_finalization*)*confirmation.transaction;
 				VI_PANIC(confirmation_transaction->proof && !confirmation_event, "withdrawal confirmation failed: %s", confirmation_event ? (confirmation_event->empty() ? "unknown error" : confirmation_event->front().as_blob().c_str()) : confirmation_transaction->proof.what().c_str());
 				term->fwrite_line(" - block required for transaction %s", confirmation_transaction->proof->hashdata.c_str());
-				wait_for_transaction_log();
+				new_block(from_account);
+				receive_transaction();
 
 				balance = context.get_account_balance(asset, user3.public_key_hash).expect("balance mismatch").get_balance();
 				VI_PANIC(balance.is_zero(), "actual balance is expected to be zero but is %s", balance.to_string().c_str());
 			}
 			server->add_transaction_callback("logging", nullptr);
-			server->remove_nodes(asset);
 			server->shutdown();
-			term->write("\n");
-			term->write_color(std_color::white, std_color::dark_green);
-			term->fwrite("  %s INTEGRATION TEST PASS  ", algorithm::asset::blockchain_of(asset).c_str());
-			term->clear_color();
-			term->write("\n\n");
-			term->read_char();
 		});
 	}
 	/* verify current blockchain */
@@ -2727,7 +2728,7 @@ public:
 		auto* queue = schedule::get();
 		queue->start(schedule::desc());
 
-		const size_t block_count = 2000;
+		const size_t block_count = 250;
 		const uint256_t transaction_gas_limit = (size_t)ledger::block::get_transaction_gas_limit();
 		const decimal starting_account_balance = decimal(500).truncate(12);
 		auto checkpoint = [&](vector<uptr<ledger::transaction>>&& transactions, vector<tests::account>& users)
@@ -3006,40 +3007,52 @@ public:
 		auto* queue = schedule::get();
 		queue->start(schedule::desc());
 
-		os::process::bind_signal(signal_code::SIG_INT, [](int) { });
-		while (true)
+		auto path = os::path::resolve(args.get("test-file"), *os::directory::get_working(), true).expect("must provide a \"test-file\" with command list");
+		auto list = uptr(*schema::from_json(*os::file::read_as_string(path)));
+		auto execute = [&](const std::string_view& url, const std::string_view& request_content, const std::string_view& path) -> string
 		{
-			string blockchain, network_url, external_account, deposit_value, depository_fee;
-			term->write_line("network integration:");
-			term->write(" - blockchain: ");
-			if (!term->read_line(blockchain, 1024) || blockchain.empty())
-				break;
+			auto escaped_request_content = string(request_content);
+			auto response_content = string();
+			stringify::replace(escaped_request_content, "\"", "\\\"");
 
-			term->write(" - network url: ");
-			if (!term->read_line(network_url, 1024) || network_url.empty())
-				break;
+			auto command = stringify::text("curl -X POST -H \"Content-Type: application/json\" -d \"%s\" -s %.*s", escaped_request_content.c_str(), (int)url.size(), url.data());
+			term->fwrite_line("> %s", command.c_str());
 
-			term->write(" - external account: ");
-			if (!term->read_line(external_account, 1024) || external_account.empty())
-				break;
+			std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+			os::process::execute(command, file_mode::read_only, [&response_content](const std::string_view& buffer)
+			{
+				response_content.append(buffer);
+				return true;
+			}).expect("command failed");
+			auto response = uptr(schema::from_json(response_content).expect("parsing failed"));
+			return path.empty() ? response->value.get_blob() : response->fetch_var(path).get_blob();
+		};
+		for (auto& node : list->get_childs())
+		{
+			auto& blockchain = node->key;
+			if (blockchain.empty() || blockchain.front() == '#')
+				continue;
 
-			term->write(" - deposit value (50): ");
-			if (!term->read_line(deposit_value, 1024))
-				break;
-			else if (deposit_value.empty())
-				deposit_value = "50";
-
-			term->write(" - depository fee (0.5): ");
-			if (!term->read_line(depository_fee, 1024))
-				break;
-			else if (depository_fee.empty())
-				depository_fee = "0.5";
-
-			decimal final_deposit_value = decimal(deposit_value), final_depository_fee = decimal(depository_fee);
-			if (!final_deposit_value.is_positive() || !final_depository_fee.is_positive())
-				break;
-
-			tests::blockchain_integration_coverage(algorithm::asset::id_of(blockchain), network_url, external_account, final_deposit_value, final_depository_fee);
+			auto url = node->get_var("url").get_blob();
+			tests::blockchain_integration_coverage(algorithm::asset::id_of(blockchain), url, [&]()
+			{
+				return execute(url, schema::to_json(node->fetch("account.0")), node->fetch_var("account.1").get_blob());
+			}, [&](const std::string_view& from_account)
+			{
+				auto content = schema::to_json(node->get("block"));
+				stringify::replace(content, "$from", from_account);
+				execute(url, content, std::string_view());
+			}, [&](const std::string_view& from_account, const std::string_view& to_account, const decimal& value)
+			{
+				auto eth_chain = oracle::server_node::get()->get_chain(algorithm::asset::id_of("ETH"));
+				auto eth_value = "0x" + eth_chain->to_baseline_value(value).to_string(16);
+				auto content = schema::to_json(node->get("transaction"));
+				stringify::replace(content, "$from", from_account);
+				stringify::replace(content, "$to", to_account);
+				stringify::replace(content, "$value", value.to_string());
+				stringify::replace(content, "$eth_value", value.to_string());
+				execute(url, content, std::string_view());
+			});
 		}
 
 		queue->stop();

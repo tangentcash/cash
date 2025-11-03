@@ -35,6 +35,14 @@ namespace tangent
 		class server_node : public singleton<server_node>
 		{
 		protected:
+			struct
+			{
+				unordered_map<transaction_listener*, size_t> listeners;
+				unordered_set<http::client*> requests;
+				std::mutex mutex;
+			} activity;
+
+		protected:
 			unordered_set<string> connections;
 			unordered_map<string, invocation_callback> registrations;
 			unordered_map<string, transaction_callback> callbacks;
@@ -129,6 +137,10 @@ namespace tangent
 			}
 
 		private:
+			void add_activity_listener(transaction_listener* listener);
+			void remove_activity_listener(transaction_listener* listener);
+			void add_activity_request(http::client* client);
+			void remove_activity_request(http::client* client);
 			void add_node_instance(const algorithm::asset_id& asset, server_relay* instance);
 			void add_chain_instance(const algorithm::asset_id& asset, relay_backend* instance);
 			bool call_transaction_listener(transaction_listener* listener);

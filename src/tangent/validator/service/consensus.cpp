@@ -2383,6 +2383,10 @@ namespace tangent
 				}
 			}
 
+			size_t notifications = notify_all_except(uref(from), METHOD_CALL(&server_node::notify_of_possibly_new_block_hash), { format::variable(candidate_hash), format::variable(candidate.block.number) });
+			if (notifications > 0 && protocol::now().user.consensus.logging)
+				VI_INFO("block %s broadcasted to %i nodes (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)notifications, candidate.block.number);
+
 			/*
 				<+> - <+> - <+> - <+> - <+> - <+> = possible extension
 											\
@@ -2391,10 +2395,6 @@ namespace tangent
 			umutex<std::recursive_mutex> unique(sync.block);
 			if (!accept_block_candidate(candidate, candidate_hash, fork_tip))
 				return false;
-
-			size_t notifications = notify_all_except(uref(from), METHOD_CALL(&server_node::notify_of_possibly_new_block_hash), { format::variable(candidate_hash), format::variable(candidate.block.number) });
-			if (notifications > 0 && protocol::now().user.consensus.logging)
-				VI_INFO("block %s broadcasted to %i nodes (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)notifications, candidate.block.number);
 
 			if (fork_tip != candidate_hash)
 				accept_pending_fork(uref(from), fork_head::replace, fork_tip, std::move(fork_tip_block));

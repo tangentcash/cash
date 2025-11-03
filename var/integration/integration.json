@@ -1,0 +1,14 @@
+{
+    "BTC": {
+        "url": "http://admin:pass@localhost:8002",
+        "account": [
+            [
+                { "jsonrpc": "2.0", "method": "createwallet", "params": ["main"] },
+                { "jsonrpc": "2.0", "method": "getnewaddress", "params": ["main"] }
+            ],
+            "1.result"
+        ],
+        "block": { "jsonrpc": "2.0", "method": "generatetoaddress", "params": [110, "$from"] },
+        "transaction": { "jsonrpc": "2.0", "method": "sendtoaddress", "params": ["$to", "$value", "", "", false, true, null, "unset", false, 2] }
+    }
+}

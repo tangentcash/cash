@@ -365,8 +365,8 @@ namespace tangent
 				return layer_exception("invalid priority");
 
 			uint128_t difficulty = target.difficulty();
-			auto required_target = algorithm::wesolowski::scale(get_proof_slot_target(parent_block), get_proof_difficulty_multiplier());
-			if (proof.empty() || difficulty != required_target.difficulty())
+			auto required_difficulty = number <= 1 || parent_block ? algorithm::wesolowski::scale(get_proof_slot_target(parent_block), get_proof_difficulty_multiplier()).difficulty() : difficulty;
+			if (proof.empty() || difficulty != required_difficulty)
 				return layer_exception("invalid wesolowski target");
 
 			uint256_t gas_work = get_gas_work(difficulty, gas_use, gas_limit, priority);
