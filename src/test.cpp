@@ -1775,7 +1775,7 @@ public:
 					{
 						for (auto& [type, to_account] : account.addresses)
 						{
-							term->fwrite_line(" - deposit %s into %s", deposit_value.to_string().c_str(), to_account.c_str(), deposit_value);
+							term->fwrite_line(" - deposit %s into %s", deposit_value.to_string().c_str(), to_account.c_str());
 							new_transaction(from_account, to_account, deposit_value);
 							++deposits;
 						}
