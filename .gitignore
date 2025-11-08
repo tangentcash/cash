@@ -1,5 +1,5 @@
 .idea/
 .git/
 bin/
-*.pb.h
-*.pb.cc
+var/integration/utils/node_modules
+var/integration/utils/yarn.lock

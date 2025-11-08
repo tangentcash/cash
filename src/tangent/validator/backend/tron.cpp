@@ -193,9 +193,13 @@ namespace tangent
 				while (ref_block_bytes.size() < 4)
 					ref_block_bytes.insert(ref_block_bytes.begin(), '0');
 
+				auto ref_block_hash = block_data->get_var("blockID").get_blob();
+				if (ref_block_hash.size() < 32)
+					coreturn expects_rt<tron::trx_tx_block_header_info>(remote_exception("invalid ref block hash"));
+
 				trx_tx_block_header_info info;
 				info.ref_block_bytes = ref_block_bytes.substr(ref_block_bytes.size() - 4);
-				info.ref_block_hash = block_data->get_var("blockID").get_blob().substr(16, 16);
+				info.ref_block_hash = ref_block_hash.substr(16, 16);
 				info.timestamp = block_data->fetch_var("block_header.raw_data.timestamp").get_integer();
 				info.expiration = info.timestamp + 60 * 1000;
 				memory::release(*block_data);
@@ -250,13 +254,6 @@ namespace tangent
 				memory::release(*confirmed_balance);
 				coreturn expects_rt<decimal>(std::move(balance));
 			}
-			expects_promise_rt<computed_fee> tron::estimate_fee(const std::string_view& from_address, const vector<value_transfer>& to, const fee_supervisor_options& options)
-			{
-				auto fee = coawait(ethereum::estimate_fee(from_address, to, options));
-				if (fee)
-					fee->gas.gas_limit *= 4;
-				coreturn fee;
-			}
 			expects_promise_rt<void> tron::broadcast_transaction(const finalized_transaction& finalized)
 			{
 				auto native_data = codec::decompress(codec::hex_decode(finalized.calldata));
@@ -283,15 +280,25 @@ namespace tangent
 
 				coreturn expects_rt<void>(expectation::met);
 			}
-			expects_promise_rt<prepared_transaction> tron::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee)
+			expects_promise_rt<prepared_transaction> tron::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const decimal& max_fee)
 			{
 				auto chain_id = coawait(get_chain_id());
 				if (!chain_id)
 					coreturn expects_rt<prepared_transaction>(std::move(chain_id.error()));
 
+				auto fee = coawait(estimate_transaction_fee(from_link, to));
+				if (!fee)
+					coreturn expects_rt<prepared_transaction>(std::move(fee.error()));
+
 				auto& output = to.front();
 				auto contract_address = oracle::server_node::get()->get_contract_address(output.asset);
-				decimal fee_value = fee.get_max_fee();
+				if (contract_address)
+					fee->gas.gas_limit *= 4;
+
+				decimal fee_value = fee->get_max_fee();
+				if (fee_value > max_fee)
+					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
+
 				if (contract_address)
 				{
 					auto balance = coawait(calculate_balance(output.asset, from_link));

@@ -430,18 +430,6 @@ namespace tangent
 
 				coreturn expects_rt<computed_transaction>(std::move(result));
 			}
-			expects_promise_rt<computed_fee> monero::estimate_fee(const std::string_view& from_address, const vector<value_transfer>& to, const fee_supervisor_options& options)
-			{
-				schema_args args;
-				args["grace_blocks"] = var::set::integer(10);
-
-				auto fee = coawait(execute_rpc3(nd_call::get_fee_estimate(), std::move(args), cache_policy::no_cache_no_throttling, nd_call::json_rpc()));
-				if (!fee)
-					coreturn expects_rt<computed_fee>(fee.error());
-
-				uint64_t fee_rate = fee->get_var("fee").get_integer();
-				coreturn expects_rt<computed_fee>(computed_fee::fee_per_kilobyte(fee_rate / netdata.divisibility));
-			}
 			expects_promise_rt<void> monero::broadcast_transaction(const finalized_transaction& finalized)
 			{
 				schema* args = var::set::object();
@@ -477,8 +465,20 @@ namespace tangent
 
 				coreturn expects_rt<void>(expectation::met);
 			}
-			expects_promise_rt<prepared_transaction> monero::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee)
+			expects_promise_rt<prepared_transaction> monero::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const decimal& max_fee)
 			{
+				schema_args args;
+				args["grace_blocks"] = var::set::integer(10);
+
+				auto fee_estimate = coawait(execute_rpc3(nd_call::get_fee_estimate(), std::move(args), cache_policy::no_cache_no_throttling, nd_call::json_rpc()));
+				if (!fee_estimate)
+					coreturn expects_rt<prepared_transaction>(fee_estimate.error());
+
+				auto fee = computed_fee::fee_per_kilobyte(fee_estimate->get_var("fee").get_integer() / netdata.divisibility);
+				decimal fee_value = fee.get_max_fee();
+				if (fee_value > max_fee)
+					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
+
 				coreturn expects_rt<prepared_transaction>(remote_exception("not implemented"));
 			}
 			expects_lr<finalized_transaction> monero::finalize_transaction(prepared_transaction&& prepared)

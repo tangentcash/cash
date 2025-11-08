@@ -47,6 +47,13 @@ int segwit_addr_encode(
     size_t prog_len
 );
 
+int z_addr_encode(
+    char* output,
+    const char* hrp,
+    const uint8_t* prog,
+    size_t prog_len
+);
+
 /** Decode a SegWit address
  *
  *  Out: ver:      Pointer to an int that will be updated to contain the witness
@@ -62,6 +69,13 @@ int segwit_addr_encode(
  */
 int segwit_addr_decode(
     int* ver,
+    uint8_t* prog,
+    size_t* prog_len,
+    const char* hrp,
+    const char* addr
+);
+
+int z_addr_decode(
     uint8_t* prog,
     size_t* prog_len,
     const char* hrp,

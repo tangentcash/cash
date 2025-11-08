@@ -361,6 +361,9 @@ namespace tangent
 			if (!transaction_count)
 				return layer_exception("invalid transaction count");
 
+			if (!generation_time || generation_time > evaluation_time)
+				return layer_exception("invalid time");
+
 			if (priority > protocol::now().policy.production_max_per_block)
 				return layer_exception("invalid priority");
 
@@ -377,7 +380,7 @@ namespace tangent
 			if (!recover_hash(public_key_hash))
 				return layer_exception("producer proof verification failed");
 
-			if (!verify_proof())
+			if (!verify_proof(public_key_hash))
 				return layer_exception("wesolowski proof verification failed");
 
 			if (!parent_block && number > 1)
@@ -396,6 +399,9 @@ namespace tangent
 				if (!expiry_number || number > expiry_number)
 					return layer_exception("invalid witness " + algorithm::asset::handle_of(witness.first));
 			}
+
+			if (parent_block != nullptr && parent_hash != parent_block->as_hash())
+				return layer_exception("invalid parent hash");
 
 			return expectation::met;
 		}
@@ -523,9 +529,9 @@ namespace tangent
 		{
 			return algorithm::signing::sign(block_header::as_signable().hash(), secret_key, signature);
 		}
-		bool block_header::solve(const algorithm::seckey_t& secret_key)
+		bool block_header::solve(const algorithm::pubkeyhash_t& public_key_hash)
 		{
-			proof = algorithm::wesolowski::evaluate(target, as_solution().data);
+			proof = algorithm::wesolowski::evaluate(target, as_solution(public_key_hash).data);
 			evaluation_time = protocol::now().time.now();
 			return !proof.empty();
 		}
@@ -541,9 +547,9 @@ namespace tangent
 		{
 			return algorithm::signing::recover_hash(block_header::as_signable().hash(), public_key_hash, signature);
 		}
-		bool block_header::verify_proof() const
+		bool block_header::verify_proof(const algorithm::pubkeyhash_t& public_key_hash) const
 		{
-			return algorithm::wesolowski::verify(target, as_solution().data, proof);
+			return algorithm::wesolowski::verify(target, as_solution(public_key_hash).data, proof);
 		}
 		void block_header::set_parent_block(const block_header* parent_block)
 		{
@@ -686,10 +692,10 @@ namespace tangent
 				message.clear();
 			return message;
 		}
-		format::wo_stream block_header::as_solution() const
+		format::wo_stream block_header::as_solution(const algorithm::pubkeyhash_t& public_key_hash) const
 		{
 			format::wo_stream message;
-			message.write_integer(as_type());
+			message.write_string(public_key_hash.optimized_view());
 			if (!block_header::store_payload_proof(&message))
 				message.clear();
 			return message;
@@ -3373,7 +3379,7 @@ namespace tangent
 		}
 		expects_lr<void> evaluation_context::solve_evaluated_block(block& candidate)
 		{
-			if (!candidate.solve(validator.secret_key))
+			if (!candidate.solve(validator.public_key_hash))
 				return layer_exception("block proof evaluation failed");
 
 			if (!candidate.sign(validator.secret_key))

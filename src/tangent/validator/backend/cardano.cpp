@@ -275,47 +275,6 @@ namespace tangent
 
 				coreturn expects_rt<computed_transaction>(std::move(tx));
 			}
-			expects_promise_rt<computed_fee> cardano::estimate_fee(const std::string_view& from_address, const vector<value_transfer>& to, const fee_supervisor_options& options)
-			{
-				auto block_height = coawait(get_latest_block_height());
-				if (!block_height)
-					coreturn expects_rt<computed_fee>(std::move(block_height.error()));
-
-				if (!tx_analytics.block_height || *block_height < tx_analytics.block_height || *block_height - tx_analytics.block_height > get_tx_fee_block_delta())
-				{
-					size_t offset = 0, count = 0;
-					size_t max_count = std::min<size_t>(*block_height - tx_analytics.block_height, get_tx_fee_blocks());
-					tx_analytics.block_height = *block_height;
-					while (count < max_count)
-					{
-						auto transactions = uptr<schema>(coawait(get_block_transactions(*block_height - (offset++), nullptr)));
-						if (!transactions || transactions->empty())
-							continue;
-
-						++count;
-						for (auto& tx_data : transactions->get_childs())
-						{
-							tx_analytics.total_size += (size_t)tx_data->fetch_var("metadata.size").get_integer();
-							tx_analytics.transactions++;
-						}
-					}
-
-					if (!tx_analytics.transactions)
-						tx_analytics.transactions = 1;
-
-					size_t bottom = tx_analytics.transactions * get_tx_fee_base_size();
-					if (tx_analytics.total_size < bottom)
-						tx_analytics.total_size = bottom;
-				}
-
-				decimal fee_rate_fixed = get_min_protocol_fee_fixed();
-				decimal fee_rate_per_byte = get_min_protocol_fee_per_byte();
-				size_t tx_size = (size_t)((double)tx_analytics.total_size / (double)tx_analytics.transactions);
-
-				const uint64_t expected_max_tx_size = 1000;
-				tx_size = std::min<size_t>(expected_max_tx_size, (size_t)(std::ceil((double)tx_size / 100.0) * 100.0));
-				coreturn expects_rt<computed_fee>(computed_fee::flat_fee(fee_rate_fixed * decimal(tx_size) + fee_rate_per_byte));
-			}
 			expects_promise_rt<void> cardano::broadcast_transaction(const finalized_transaction& finalized)
 			{
 				Cardano::Utils::CborSerialize rosetta_transaction;
@@ -336,16 +295,20 @@ namespace tangent
 				memory::release(*tx_hash);
 				coreturn expects_rt<void>(expectation::met);
 			}
-			expects_promise_rt<prepared_transaction> cardano::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee)
+			expects_promise_rt<prepared_transaction> cardano::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const decimal& max_fee)
 			{
 				auto block_slot = coawait(get_latest_block_slot());
 				if (!block_slot)
 					coreturn expects_rt<prepared_transaction>(remote_exception("latest block slot not found"));
 
-				option<computed_fee> actual_fee = optional::none;
-				decimal fee_value = actual_fee ? actual_fee->get_max_fee() : fee.get_max_fee();
+				option<computed_fee> fee = optional::none;
+			retry_with_fee:
+				decimal fee_value = fee ? fee->get_max_fee() : decimal::zero();
+				auto str = fee_value.to_string();
+				if (fee && fee_value > max_fee)
+					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
+
 				decimal fee_value_per_output = algorithm::arithmetic::divide(fee_value, to.size());
-			retry_with_actual_fee:
 				prepared_transaction result;
 				result.requires_abi(format::variable(to_lovelace(fee_value)));
 
@@ -449,12 +412,12 @@ namespace tangent
 
 					std::vector<::Cardano::Transaction::Digest> digests;
 					auto& raw_tx_data = builder.build(&digests);
-					if (!actual_fee)
+					if (!fee)
 					{
 						decimal lovelace_fee = builder.getFeeTransacion_PostBuild(0);
-						actual_fee = computed_fee::flat_fee(lovelace_fee / netdata.divisibility);
-						fee_value = actual_fee->get_max_fee();
-						goto retry_with_actual_fee;
+						fee = computed_fee::flat_fee(lovelace_fee / netdata.divisibility);
+						fee_value = fee->get_max_fee();
+						goto retry_with_fee;
 					}
 
 					for (size_t i = 0; i < digests.size(); i++)

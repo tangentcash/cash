@@ -45,7 +45,6 @@ namespace tangent
 			query_result = 8,
 			memory_block = 1,
 			instruction_block = 3,
-			program_block = 128,
 			program_data = 16
 		};
 
@@ -174,11 +173,11 @@ namespace tangent
 			virtual bool store_payload(format::wo_stream* stream) const override;
 			virtual bool load_payload(format::ro_stream& stream) override;
 			virtual bool sign(const algorithm::seckey_t& secret_key) override;
-			virtual bool solve(const algorithm::seckey_t& secret_key);
+			virtual bool solve(const algorithm::pubkeyhash_t& public_key_hash);
 			virtual bool verify(const algorithm::pubkey_t& public_key) const override;
 			virtual bool recover(algorithm::pubkey_t& public_key) const override;
 			virtual bool recover_hash(algorithm::pubkeyhash_t& public_key_hash) const override;
-			virtual bool verify_proof() const;
+			virtual bool verify_proof(const algorithm::pubkeyhash_t& public_key_hash) const;
 			virtual void set_parent_block(const block_header* parent_block);
 			virtual void set_witness_requirement(const algorithm::asset_id& asset, uint64_t block_number);
 			virtual uint64_t get_witness_requirement(const algorithm::asset_id& asset) const;
@@ -192,7 +191,7 @@ namespace tangent
 			virtual uint256_t as_hash(bool renew = false) const override;
 			virtual uptr<schema> as_schema() const override;
 			virtual format::wo_stream as_signable() const override;
-			virtual format::wo_stream as_solution() const;
+			virtual format::wo_stream as_solution(const algorithm::pubkeyhash_t& public_key_hash) const;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();

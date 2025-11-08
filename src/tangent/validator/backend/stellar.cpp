@@ -424,23 +424,20 @@ namespace tangent
 				if (!discovery || discovery->empty())
 					coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
-				auto to_tag = to;
-				auto memo = coawait(get_transaction_memo(tx_hash));
-				if (memo && !memo->empty())
-				{
-					to_tag = address_util::encode_tag_address(to, *memo);
-					discovery = find_linked_addresses({ from, to, to_tag });
-					if (!discovery || discovery->empty())
-						coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
-				}
-
 				computed_transaction tx;
 				tx.transaction_id = tx_hash;
 
 				auto total_value = base_value + fee_value;
 				auto target_from_link = discovery->find(from);
 				auto target_to_link = discovery->find(to);
-				auto target_to_tag_link = discovery->find(to_tag);
+				auto to_link = target_to_link != discovery->end() ? target_to_link->second : wallet_link::from_address(to);
+				if (target_to_link != discovery->end())
+				{
+					auto memo = coawait(get_transaction_memo(tx_hash));
+					if (memo && !memo->empty())
+						to_link.address = address_util::encode_tag_address(to, *memo);
+				}
+
 				unordered_map<algorithm::asset_id, decimal> inputs;
 				unordered_map<algorithm::asset_id, decimal> outputs;
 				if (total_value.is_positive())
@@ -456,25 +453,8 @@ namespace tangent
 				if (!inputs.empty())
 					tx.inputs.push_back(coin_utxo(target_from_link != discovery->end() ? target_from_link->second : wallet_link::from_address(from), std::move(inputs)));
 				if (!outputs.empty())
-					tx.inputs.push_back(coin_utxo(target_to_tag_link != discovery->end() ? target_to_tag_link->second : (target_to_link != discovery->end() ? target_to_link->second : wallet_link::from_address(to)), std::move(outputs)));
+					tx.outputs.push_back(coin_utxo(std::move(to_link), std::move(outputs)));
 				coreturn expects_rt<computed_transaction>(std::move(tx));
-			}
-			expects_promise_rt<computed_fee> stellar::estimate_fee(const std::string_view& from_address, const vector<value_transfer>& to, const fee_supervisor_options& options)
-			{
-				if (algorithm::asset::token_of(to.front().asset).empty())
-					coreturn expects_rt<computed_fee>(computed_fee::flat_fee(from_stroop(get_base_stroop_fee() * to.size())));
-
-				uint64_t fee = get_base_stroop_fee() * to.size();
-				for (auto& item : to)
-				{
-					auto status = coawait(is_account_exists(item.address));
-					if (!status)
-						coreturn expects_rt<computed_fee>(status.error());
-					else if (!*status)
-						fee += get_base_stroop_fee();
-				}
-
-				coreturn expects_rt<computed_fee>(computed_fee::flat_fee(from_stroop(fee)));
 			}
 			expects_promise_rt<decimal> stellar::calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link)
 			{
@@ -513,7 +493,7 @@ namespace tangent
 				memory::release(*hex_data);
 				coreturn expects_rt<void>(expectation::met);
 			}
-			expects_promise_rt<prepared_transaction> stellar::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee)
+			expects_promise_rt<prepared_transaction> stellar::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const decimal& max_fee)
 			{
 				auto account_info = coawait(get_account_info(from_link.address));
 				if (!account_info)
@@ -590,7 +570,11 @@ namespace tangent
 
 				auto passphrase = get_network_passphrase();
 				StellarSignTx transaction = tx_create_transaction(from_link.address, passphrase, account_info->sequence + 1, memo_id.or_else(0), !memo.empty(), accounts.size(), payments.size(), get_base_stroop_fee());
-				decimal fee_value_per_output = paid_outputs_size > 0 ? algorithm::arithmetic::divide(from_stroop(transaction.fee), paid_outputs_size) : decimal::zero();
+				decimal fee_value = from_stroop(transaction.fee);
+				if (fee_value > max_fee)
+					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
+
+				decimal fee_value_per_output = paid_outputs_size > 0 ? algorithm::arithmetic::divide(fee_value, paid_outputs_size) : decimal::zero();
 				for (auto& account : accounts)
 				{
 					if (!paid_outputs_size || !account.has_starting_balance)
@@ -632,7 +616,7 @@ namespace tangent
 				prepared_transaction result;
 				result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, raw_data.data(), raw_data.size(), unordered_map<algorithm::asset_id, decimal>(inputs));
 				for (auto& item : to)
-					result.requires_account_output(item.address, { { item.asset, item.value } });
+					result.requires_account_output(item.address, { { item.asset, item.value - fee_value_per_output } });
 				result.requires_abi(format::variable(transaction.sequence_number));
 				result.requires_abi(format::variable((uint32_t)accounts.size()));
 				result.requires_abi(format::variable((uint32_t)payments.size()));

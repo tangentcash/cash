@@ -21,8 +21,50 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
-
 #include "segwit_addr.h"
+#include "blake2b.h"
+#define F4JUMBLE_G_PREFIX "UA_F4Jumble_G"
+#define F4JUMBLE_H_PREFIX "UA_F4Jumble_H"
+
+static void f4jumbleXor(char* buffer, size_t buffer_size, const char* mask, size_t mask_size)
+{
+    for (size_t i = 0; i < buffer_size; i++)
+        buffer[i] ^= mask[i % mask_size];
+}
+
+static void f4jumbleG(uint8_t i, char* left, size_t left_size, char* right, size_t right_size)
+{
+    uint8_t zero = 0;
+    size_t prefix_size = sizeof(F4JUMBLE_G_PREFIX) - 1;
+    uint8_t personal[sizeof(F4JUMBLE_G_PREFIX) - 1 + sizeof(uint8_t) * 3];
+    memcpy(personal, F4JUMBLE_G_PREFIX, prefix_size);
+    memcpy(personal + prefix_size + 0, &i, sizeof(uint8_t));
+
+    size_t size = (right_size + BLAKE2B_OUTBYTES - 1) / BLAKE2B_OUTBYTES;
+    for (size_t j = 0; j < size; j++)
+    {
+        uint8_t mask[64], i1 = j & 0xFF, i2 = (uint8_t)(j >> 8);
+        memcpy(personal + prefix_size + 1, &i1, sizeof(uint8_t));
+        memcpy(personal + prefix_size + 2, &i2, sizeof(uint8_t));
+        blake2b_Personal(left, (uint32_t)left_size, personal, sizeof(personal), mask, sizeof(mask));
+        f4jumbleXor(right + j * BLAKE2B_OUTBYTES, right_size < BLAKE2B_OUTBYTES ? right_size : BLAKE2B_OUTBYTES, mask, sizeof(mask));
+    }
+}
+
+static void f4jumbleH(uint8_t i, char* left, size_t left_size, char* right, size_t right_size)
+{
+    uint8_t zero = 0;
+    size_t prefix_size = sizeof(F4JUMBLE_H_PREFIX) - 1;
+    uint8_t personal[sizeof(F4JUMBLE_H_PREFIX) - 1 + sizeof(uint8_t) * 3];
+    memcpy(personal, F4JUMBLE_H_PREFIX, prefix_size);
+    memcpy(personal + prefix_size + 0, &i, sizeof(uint8_t));
+    memcpy(personal + prefix_size + 1, &zero, sizeof(uint8_t));
+    memcpy(personal + prefix_size + 2, &zero, sizeof(uint8_t));
+
+    uint8_t mask[512];
+    blake2b_Personal(right, (uint32_t)right_size, personal, sizeof(personal), mask, left_size < sizeof(mask) ? left_size : sizeof(mask));
+    f4jumbleXor(left, left_size, mask, sizeof(mask));
+}
 
 static uint32_t bech32_polymod_step(uint32_t pre)
 {
@@ -71,7 +113,7 @@ int bech32_encode(char* output, const char* hrp, const uint8_t* data, size_t dat
         chk = bech32_polymod_step(chk) ^ (ch >> 5);
         ++i;
     }
-    if (i + 7 + data_len > 90) return 0;
+    if (i + 7 + data_len > 384) return 0;
     chk = bech32_polymod_step(chk);
     while (*hrp != 0)
     {
@@ -224,6 +266,31 @@ int segwit_addr_encode(char* output, const char* hrp, int witver, const uint8_t*
     return bech32_encode(output, hrp, data, datalen, enc);
 }
 
+int z_addr_encode(char* output, const char* hrp, const uint8_t* witprog, size_t witprog_len)
+{
+    uint8_t hrp_raw[16] = { 0 };
+    size_t hrp_len = strnlen(hrp, sizeof(hrp_raw));
+    memcpy(hrp_raw, hrp, hrp_len);
+    memset(hrp_raw + hrp_len, 0, sizeof(hrp_raw) - hrp_len);
+
+    uint8_t data[256] = { 0 };
+    size_t data_len = witprog_len + sizeof(hrp_raw);
+    memcpy(data, witprog, witprog_len);
+    memcpy(data + witprog_len, hrp_raw, sizeof(hrp_raw));
+
+    size_t length = data_len / 2;
+    size_t left_length = length < BLAKE2B_OUTBYTES ? length : BLAKE2B_OUTBYTES;
+    size_t right_length = data_len - left_length;
+    f4jumbleG(0, data, left_length, data + left_length, right_length);
+    f4jumbleH(0, data, left_length, data + left_length, right_length);
+    f4jumbleG(1, data, left_length, data + left_length, right_length);
+    f4jumbleH(1, data, left_length, data + left_length, right_length);
+
+    uint8_t bech_data[256] = { 0 }; size_t bech_len = 0;
+    convert_bits(bech_data, &bech_len, 5, data, data_len, 8, 1);
+    return bech32_encode(output, hrp, bech_data, bech_len, BECH32_ENCODING_BECH32M);
+}
+
 int segwit_addr_decode(int* witver, uint8_t* witdata, size_t* witdata_len, const char* hrp, const char* addr)
 {
     uint8_t data[84] = { 0 };
@@ -242,5 +309,33 @@ int segwit_addr_decode(int* witver, uint8_t* witdata, size_t* witdata_len, const
     if (*witdata_len < 2 || *witdata_len > 40) return 0;
     if (data[0] == 0 && *witdata_len != 20 && *witdata_len != 32) return 0;
     *witver = data[0];
+    return 1;
+}
+
+int z_addr_decode(uint8_t* witdata, size_t* witdata_len, const char* hrp, const char* addr)
+{
+    uint8_t data[384] = { 0 };
+    uint8_t hrp_raw[16] = { 0 };
+    char hrp_actual[84] = { 0 };
+    size_t data_len = 0;
+    if (strlen(addr) > 256) return 0;
+    bech32_encoding enc = bech32_decode(hrp_actual, data, &data_len, addr);
+    if (enc != BECH32_ENCODING_BECH32M) return 0;
+    if (strncmp(hrp, hrp_actual, 84) != 0) return 0;
+    *witdata_len = 0;
+    if (!convert_bits(witdata, witdata_len, 8, data, data_len, 5, 0)) return 0;
+    if (*witdata_len < 32 + sizeof(hrp_raw)) return 0;
+    size_t hrp_len = strnlen(hrp, sizeof(hrp_raw));
+    size_t length = *witdata_len / 2;
+    size_t left_length = length < BLAKE2B_OUTBYTES ? length : BLAKE2B_OUTBYTES;
+    size_t right_length = *witdata_len - left_length;
+    f4jumbleH(1, witdata, left_length, witdata + left_length, right_length);
+    f4jumbleG(1, witdata, left_length, witdata + left_length, right_length);
+    f4jumbleH(0, witdata, left_length, witdata + left_length, right_length);
+    f4jumbleG(0, witdata, left_length, witdata + left_length, right_length);
+    memcpy(hrp_raw, hrp, hrp_len);
+    memset(hrp_raw + hrp_len, 0, sizeof(hrp_raw) - hrp_len);
+    if (memcmp(witdata + (*witdata_len - sizeof(hrp_raw)), hrp_raw, sizeof(hrp_raw)) != 0) return 0;
+    *witdata_len -= sizeof(hrp_raw);
     return 1;
 }

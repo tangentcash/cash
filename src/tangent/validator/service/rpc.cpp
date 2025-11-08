@@ -3245,7 +3245,6 @@ namespace tangent
 				oracle->set("block_relay_multiplier", var::integer(protocol::now().user.oracle.block_replay_multiplier));
 				oracle->set("relaying_timeout", var::integer(protocol::now().user.oracle.relaying_timeout));
 				oracle->set("relaying_retry_timeout", var::integer(protocol::now().user.oracle.relaying_retry_timeout));
-				oracle->set("fee_estimation_seconds", var::integer(protocol::now().user.oracle.fee_estimation_seconds));
 				auto array = oracle->set("nodes", var::set::array());
 				for (auto& asset : oracle::server_node::get()->get_assets())
 					array->push(algorithm::asset::serialize(asset));

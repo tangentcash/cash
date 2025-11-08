@@ -179,7 +179,6 @@ namespace tangent
                 uint64_t relaying_retry_timeout = 300;
                 uint32_t cache1_size = 32768;
                 uint32_t cache2_size = 131072;
-                uint64_t fee_estimation_seconds = 600;
                 bool server = false;
                 bool logging = true;
             } oracle;

@@ -36,6 +36,7 @@ namespace tangent
 					virtual ~bitcoin_sv() override = default;
 					virtual const btc_chainparams_* get_chain() override;
 					virtual address_format get_address_type() override;
+					virtual uint32_t get_sig_hash_type() override;
 				};
 
 				class dash : public bitcoin
@@ -89,6 +90,7 @@ namespace tangent
 				public:
 					zcash(const algorithm::asset_id& new_asset) noexcept;
 					virtual ~zcash() override = default;
+					virtual expects_promise_rt<computed_fee> estimate_transaction_fee(const wallet_link& from_link, const vector<value_transfer>& to) override;
 					virtual const btc_chainparams_* get_chain() override;
 					virtual address_format get_address_type() override;
 				};

@@ -200,7 +200,7 @@ bool b58dec(void* bin, size_t* binszp, const char* b58, size_t b58size) {
 
 int base58_encode_check(const uint8_t *data, int datalen,
                         HasherType hasher_type, char *str, int strsize) {
-  if (datalen > 128) {
+  if (datalen > 256) {
     return 0;
   }
   uint8_t buf[VAL_LARGE_SIZE + 32];
@@ -216,7 +216,7 @@ int base58_encode_check(const uint8_t *data, int datalen,
 
 int base58_decode_check(const char *str, HasherType hasher_type, uint8_t *data,
                         int datalen) {
-  if (datalen > 128) {
+  if (datalen > 512) {
     return 0;
   }
   uint8_t d[VAL_SMALL_SIZE + 4];

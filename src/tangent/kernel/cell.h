@@ -790,7 +790,7 @@ namespace tangent
 			virtual expects_lr<vector<std::function<void(immediate_context*)>>> dispatch_arguments(ccall* mutability, const function& entrypoint, const format::variables& args) const;
 			virtual void dispatch_event(int event_type_id, const void* object_value, int object_type_id);
 			virtual void dispatch_exception(immediate_context* coroutine);
-			virtual void dispatch_coroutine(immediate_context* coroutine, uint64_t* depth);
+			virtual void dispatch_coroutine(immediate_context* coroutine);
             virtual ccall mutability_of(const function& entrypoint) const;
 			virtual algorithm::pubkeyhash_t callable() const;
 			virtual decimal payable() const;

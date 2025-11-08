@@ -313,12 +313,12 @@ namespace tangent
 				netdata.supports_bulk_transfer = false;
 				netdata.requires_transaction_expiration = false;
 			}
-			expects_promise_rt<schema*> ethereum::get_transaction_receipt(const std::string_view& transaction_id)
+			expects_promise_rt<schema*> ethereum::get_transaction_receipt(const std::string_view& transaction_id, bool cached)
 			{
 				schema_list map;
 				map.emplace_back(var::set::string(format::util::assign_0xhex(transaction_id)));
 
-				auto tx_data = coawait(execute_rpc(nd_call::get_transaction_receipt(), std::move(map), cache_policy::blob_cache));
+				auto tx_data = coawait(execute_rpc(nd_call::get_transaction_receipt(), std::move(map), cached ? cache_policy::no_cache_no_throttling : cache_policy::blob_cache));
 				if (tx_data && (tx_data->value.is(var_type::null) || tx_data->value.is(var_type::undefined)))
 					coreturn remote_exception("receipt not found");
 
@@ -509,7 +509,7 @@ namespace tangent
 					auto* logs = transaction_data->get("logs");
 					if (!logs)
 					{
-						auto tx_receipt = coawait(get_transaction_receipt(transaction_data->get_var("hash").get_blob()));
+						auto tx_receipt = coawait(get_transaction_receipt(transaction_data->get_var("hash").get_blob(), true));
 						if (tx_receipt)
 						{
 							logs = tx_receipt->get("logs");
@@ -568,7 +568,7 @@ namespace tangent
 					coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
 				schema* tx_receipt_cache = transaction_data->get("receipt");
-				schema* tx_receipt = tx_receipt_cache ? tx_receipt_cache : coawait(get_transaction_receipt(tx_hash)).or_else(nullptr);
+				schema* tx_receipt = tx_receipt_cache ? tx_receipt_cache : coawait(get_transaction_receipt(tx_hash, true)).or_else(nullptr);
 				bool is_reverted = tx_receipt && tx_receipt->value.is_object() ? hex_to_uint256(tx_receipt->get_var("status").get_blob()) < 1 : true;
 				if (is_reverted)
 					coreturn expects_rt<computed_transaction>(remote_exception("tx reverted"));
@@ -589,7 +589,7 @@ namespace tangent
 
 				coreturn expects_rt<computed_transaction>(std::move(result));
 			}
-			expects_promise_rt<computed_fee> ethereum::estimate_fee(const std::string_view& from_address, const vector<value_transfer>& to, const fee_supervisor_options& options)
+			expects_promise_rt<computed_fee> ethereum::estimate_transaction_fee(const wallet_link& from_link, const vector<value_transfer>& to)
 			{
 				uint256_t vgas_base_price = 0;
 				if (!legacy.eip_155)
@@ -623,7 +623,7 @@ namespace tangent
 				auto& output = to.front();
 				uptr<schema> params = var::set::object();
 				params->set("gasPrice", var::string(uint256_to_hex(vgas_price)));
-				params->set("from", var::string(decode_non_eth_address(from_address)));
+				params->set("from", var::string(decode_non_eth_address(from_link.address)));
 
 				auto contract_address = oracle::server_node::get()->get_contract_address(output.asset);
 				decimal divisibility = netdata.divisibility;
@@ -709,7 +709,7 @@ namespace tangent
 			}
 			expects_promise_rt<void> ethereum::broadcast_transaction(const finalized_transaction& finalized)
 			{
-				auto duplicate = coawait(get_transaction_receipt(format::util::assign_0xhex(finalized.hashdata)));
+				auto duplicate = coawait(get_transaction_receipt(format::util::assign_0xhex(finalized.hashdata), false));
 				if (duplicate)
 				{
 					memory::release(*duplicate);
@@ -726,15 +726,22 @@ namespace tangent
 				memory::release(*hex_data);
 				coreturn expects_rt<void>(expectation::met);
 			}
-			expects_promise_rt<prepared_transaction> ethereum::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee)
+			expects_promise_rt<prepared_transaction> ethereum::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const decimal& max_fee)
 			{
 				auto chain_id = coawait(get_chain_id());
 				if (!chain_id)
 					coreturn expects_rt<prepared_transaction>(std::move(chain_id.error()));
 
+				auto fee = coawait(estimate_transaction_fee(from_link, to));
+				if (!fee)
+					coreturn expects_rt<prepared_transaction>(std::move(fee.error()));
+
+				decimal fee_value = fee->get_max_fee();
+				if (fee_value > max_fee)
+					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
+
 				auto& output = to.front();
 				auto contract_address = oracle::server_node::get()->get_contract_address(output.asset);
-				decimal fee_value = fee.get_max_fee();
 				if (contract_address)
 				{
 					auto balance = coawait(calculate_balance(output.asset, from_link));
@@ -757,9 +764,9 @@ namespace tangent
 				evm_transaction transaction;
 				transaction.nonce = *nonce;
 				transaction.chain_id = *chain_id;
-				transaction.gas_base_price = from_eth(fee.gas.gas_base_price, netdata.divisibility);
-				transaction.gas_price = from_eth(fee.gas.gas_price, netdata.divisibility);
-				transaction.gas_limit = fee.gas.gas_limit;
+				transaction.gas_base_price = from_eth(fee->gas.gas_base_price, netdata.divisibility);
+				transaction.gas_price = from_eth(fee->gas.gas_price, netdata.divisibility);
+				transaction.gas_limit = fee->gas.gas_limit;
 
 				decimal divisibility = netdata.divisibility;
 				if (contract_address)

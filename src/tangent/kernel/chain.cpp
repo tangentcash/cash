@@ -578,10 +578,6 @@ namespace tangent
 			if (value != nullptr && value->value.is(var_type::integer))
 				user.oracle.cache2_size = (uint32_t)value->value.get_integer();
 
-			value = config->fetch("oracle.fee_estimation_seconds");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.oracle.fee_estimation_seconds = value->value.get_integer();
-
 			value = config->fetch("oracle.server");
 			if (value != nullptr && value->value.is(var_type::boolean))
 				user.oracle.server = value->value.get_boolean();

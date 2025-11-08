@@ -231,7 +231,7 @@ const btc_chainparams bsv_chainparams_regtest = {
 
 /* zcash */
 const btc_chainparams zec_chainparams_main = {
-	"",
+	"u",
 	"",
 	0x1CB8,
 	0x1CBD,
@@ -240,7 +240,7 @@ const btc_chainparams zec_chainparams_main = {
 	0x0488ADE4,
 };
 const btc_chainparams zec_chainparams_test = {
-	"",
+	"utest",
 	"",
 	0x1D25,
 	0x1CBA,
@@ -249,7 +249,7 @@ const btc_chainparams zec_chainparams_test = {
 	0x04358394,
 };
 const btc_chainparams zec_chainparams_regtest = {
-	"",
+	"uregtest",
 	"",
 	0x1D25,
 	0x1CBA,

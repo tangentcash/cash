@@ -30,7 +30,7 @@ namespace tangent
 				}
 				bitcoin_cash::address_format bitcoin_cash::get_address_type()
 				{
-					return (address_format)((size_t)address_format::pay2_cashaddr_public_key_hash);
+					return (address_format)((size_t)address_format::pay2_cash_public_key_hash);
 				}
 				uint32_t bitcoin_cash::get_sig_hash_type()
 				{
@@ -62,6 +62,8 @@ namespace tangent
 
 				bitcoin_sv::bitcoin_sv(const algorithm::asset_id& new_asset) noexcept : bitcoin(new_asset)
 				{
+					legacy.get_block_stats = 1;
+					legacy.enormous_block_size = 1;
 				}
 				const btc_chainparams_* bitcoin_sv::get_chain()
 				{
@@ -81,6 +83,10 @@ namespace tangent
 				bitcoin_sv::address_format bitcoin_sv::get_address_type()
 				{
 					return (address_format)((size_t)address_format::pay2_public_key_hash);
+				}
+				uint32_t bitcoin_sv::get_sig_hash_type()
+				{
+					return SIGHASH_ALL | SIGHASH_FORKID;
 				}
 
 				dash::dash(const algorithm::asset_id& new_asset) noexcept : bitcoin(new_asset)
@@ -131,6 +137,7 @@ namespace tangent
 
 				dogecoin::dogecoin(const algorithm::asset_id& new_asset) noexcept : bitcoin(new_asset)
 				{
+					legacy.get_block_stats = 1;
 				}
 				const btc_chainparams_* dogecoin::get_chain()
 				{
@@ -154,6 +161,7 @@ namespace tangent
 
 				ecash::ecash(const algorithm::asset_id& new_asset) noexcept : bitcoin(new_asset)
 				{
+					netdata.divisibility = algorithm::arithmetic::fixed(100);
 				}
 				const btc_chainparams_* ecash::get_chain()
 				{
@@ -172,7 +180,7 @@ namespace tangent
 				}
 				dogecoin::address_format ecash::get_address_type()
 				{
-					return (address_format)((size_t)address_format::pay2_cashaddr_public_key_hash);
+					return (address_format)((size_t)address_format::pay2_cash_public_key_hash);
 				}
 				uint32_t ecash::get_sig_hash_type()
 				{
@@ -205,6 +213,20 @@ namespace tangent
 				zcash::zcash(const algorithm::asset_id& new_asset) noexcept : bitcoin(new_asset)
 				{
 				}
+				expects_promise_rt<computed_fee> zcash::estimate_transaction_fee(const wallet_link& from_link, const vector<value_transfer>& to)
+				{
+					decimal sending_value = decimal::zero();
+					for (auto& destination : to)
+						sending_value += destination.value;
+
+					auto inputs = calculate_utxo(from_link, balance_query(sending_value, { }));
+					decimal input_value = inputs ? get_utxo_value(*inputs, optional::none) : 0.0;
+					if (!inputs || inputs->empty())
+						return expects_promise_rt<computed_fee>(remote_exception(stringify::text("insufficient funds: %s < %s", input_value.to_string().c_str(), sending_value.to_string().c_str())));
+
+					decimal satoshi = decimal(5000 * std::max<size_t>(2, std::max(inputs->size(), 1 + to.size())));
+					return expects_promise_rt<computed_fee>(computed_fee::flat_fee(satoshi / netdata.divisibility));
+				}
 				const btc_chainparams_* zcash::get_chain()
 				{
 					switch (protocol::now().user.network)
@@ -222,7 +244,7 @@ namespace tangent
 				}
 				zcash::address_format zcash::get_address_type()
 				{
-					return (address_format)((size_t)address_format::pay2_public_key_hash);
+					return (address_format)((size_t)address_format::pay2_public_key_hash | (size_t)address_format::pay2_unified_public_key_hash);
 				}
 			}
 		}

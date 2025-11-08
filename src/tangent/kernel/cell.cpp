@@ -5796,8 +5796,7 @@ namespace tangent
 			};
 			if (caller != coroutine)
 			{
-				uint64_t depth = 0;
-				coroutine->set_line_callback(std::bind(&program::dispatch_coroutine, this, std::placeholders::_1, &depth));
+				coroutine->set_line_callback(std::bind(&program::dispatch_coroutine, this, std::placeholders::_1));
 				coroutine->set_exception_callback(std::bind(&program::dispatch_exception, this, std::placeholders::_1));
 				auto status = factory::get()->reset_properties(module, coroutine);
 				if (status)
@@ -5986,15 +5985,11 @@ namespace tangent
 		void program::dispatch_exception(immediate_context* coroutine)
 		{
 		}
-		void program::dispatch_coroutine(immediate_context* coroutine, uint64_t* depth)
+		void program::dispatch_coroutine(immediate_context* coroutine)
 		{
-			uint64_t batch = (*depth)++;
-			if (batch == 0 || batch % (uint64_t)ledger::gas_cost::program_block == 0)
-			{
-				auto status = context->burn_gas((uint64_t)ledger::gas_cost::instruction_block * (uint64_t)ledger::gas_cost::program_block);
-				if (!status)
-					coroutine->abort();
-			}
+			auto status = context->burn_gas((uint64_t)ledger::gas_cost::instruction_block);
+			if (!status)
+				coroutine->abort();
 		}
 		ccall program::mutability_of(const function& entrypoint) const
 		{

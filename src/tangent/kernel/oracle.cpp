@@ -1094,6 +1094,7 @@ namespace tangent
 			setup.max_size = 16 * 1024 * 1024;
 			setup.verify_peers = (uint32_t)protocol::now().user.tcp.tls_trusted_peers;
 			setup.timeout = protocol::now().user.oracle.relaying_timeout;
+			setup.set_header("User-Agent", "oracle.tangent.cash");
 
 			uint64_t retry_responses = 0;
 			uint64_t retry_timeout = protocol::now().user.oracle.relaying_retry_timeout;
@@ -1120,7 +1121,7 @@ namespace tangent
 
 			uptr<schema> result;
 			auto content_type = response->get_header("Content-Type");
-			if (content_type == "application/json")
+			if (stringify::starts_with(content_type, "application/json") || stringify::starts_with(content_type, "application/hal+json"))
 			{
 				auto data = response->content.get_json();
 				if (!data)
@@ -1128,7 +1129,7 @@ namespace tangent
 
 				result = *data;
 			}
-			else if (content_type == "application/octet-stream")
+			else if (stringify::starts_with(content_type, "application/octet-stream"))
 				result = var::set::binary(response->content.get_text());
 			else
 				result = var::set::string(response->content.get_text());
@@ -1686,7 +1687,7 @@ namespace tangent
 		{
 			auto split = address.rfind('#');
 			size_t address_size = split == string::npos ? address.size() : split;
-			if (destination_tag.empty())
+			if (destination_tag.empty() || destination_tag == "0")
 				return string(address.substr(0, address_size));
 
 			return stringify::text("%.*s#%.*s", (int)address_size, address.data(), (int)destination_tag.size(), destination_tag.data());

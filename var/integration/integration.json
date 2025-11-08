@@ -1,14 +1,167 @@
 {
-    "BTC": {
+    "#ADA": {
+        "url": "http://localhost:8001",
+        "deposit_value": "10000",
+        "block_number": 4094410,
+        "account": "addr_test1vzpwq95z3xyum8vqndgdd9mdnmafh3djcxnc6jemlgdmswcve6tkw",
+        "block": "#prompt",
+        "transaction": "#prompt"
+    },
+    "#BTC": {
         "url": "http://admin:pass@localhost:8002",
         "account": [
-            [
-                { "jsonrpc": "2.0", "method": "createwallet", "params": ["main"] },
-                { "jsonrpc": "2.0", "method": "getnewaddress", "params": ["main"] }
-            ],
+            {
+                "createwallet": ["main"],
+                "getnewaddress": ["main"]
+            },
             "1.result"
         ],
-        "block": { "jsonrpc": "2.0", "method": "generatetoaddress", "params": [110, "$from"] },
-        "transaction": { "jsonrpc": "2.0", "method": "sendtoaddress", "params": ["$to", "$value", "", "", false, true, null, "unset", false, 2] }
+        "block": { "generatetoaddress": [110, "$from"] },
+        "transaction": { "sendtoaddress": ["$to", "$value", "", "", false, true, null, "unset", false, 2] }
+    },
+    "#BCH": {
+        "url": "http://admin:pass@localhost:8003",
+        "account": [
+            { "getnewaddress": [""] },
+            "result"
+        ],
+        "block": { "generatetoaddress": [110, "$from"] },
+        "transaction": { "sendtoaddress": ["$to", "$value"] }
+    },
+    "#BTG": {
+        "url": "http://admin:pass@localhost:8004",
+        "account": [
+            { "getnewaddress": [""] },
+            "result"
+        ],
+        "block": { "generatetoaddress": [110, "$from"] },
+        "transaction": { "sendtoaddress": ["$to", "$value"] }
+    },
+    "#BSV": {
+        "url": "http://admin:pass@localhost:8005",
+        "account": [
+            {
+                "createwallet": ["main"],
+                "getnewaddress": ["main"]
+            },
+            "result"
+        ],
+        "block": { "generatetoaddress": [110, "$from"] },
+        "transaction": { "sendtoaddress": ["$to", "$value"] }
+    },
+    "#DASH": {
+        "url": "http://admin:pass@localhost:8006",
+        "account": [
+            {
+                "createwallet": ["main"],
+                "getnewaddress": ["main"]
+            },
+            "1.result"
+        ],
+        "block": { "generatetoaddress": [110, "$from"] },
+        "transaction": { "sendtoaddress": ["$to", "$value"] }
+    },
+    "#DGB": {
+        "url": "http://admin:pass@localhost:8007",
+        "account": [
+            {
+                "createwallet": ["main"],
+                "getnewaddress": ["main"]
+            },
+            "1.result"
+        ],
+        "block": { "generatetoaddress": [130, "$from"] },
+        "confirmation_block": { "generatetoaddress": [1, "$from"] },
+        "transaction": { "sendtoaddress": ["$to", "$value", "", "", false, true, null, "unset", false, 30000] }
+    },
+    "#DOGE": {
+        "url": "http://admin:pass@localhost:8008",
+        "account": [
+            { "getnewaddress": [""] },
+            "result"
+        ],
+        "block": { "generatetoaddress": [110, "$from"] },
+        "transaction": { "sendtoaddress": ["$to", "$value"] }
+    },
+    "#LTC": {
+        "url": "http://admin:pass@localhost:8009",
+        "account": [
+            {
+                "createwallet": ["main"],
+                "getnewaddress": ["main"]
+            },
+            "1.result"
+        ],
+        "block": { "generatetoaddress": [110, "$from"] },
+        "transaction": { "sendtoaddress": ["$to", "$value", "", "", false, true, null, "unset", false] }
+    },
+    "#XEC": {
+        "url": "http://admin:pass@localhost:8010",
+        "deposit_value": 5000,
+        "depository_fee": 50,
+        "account": [
+            {
+                "createwallet": ["main"],
+                "getnewaddress": ["main"]
+            },
+            "1.result"
+        ],
+        "block": { "generatetoaddress": [110, "$from"] },
+        "transaction": { "sendtoaddress": ["$to", "$value"] }
+    },
+    "#ZEC": {
+        "url": "http://admin:pass@localhost:8011",
+        "deposit_value": 5,
+        "depository_fee": 0.05,
+        "account": [
+            {
+                "z_getnewaccount": [],
+                "z_getaddressforaccount": [0]
+            },
+            "1.result.address"
+        ],
+        "block": { "generate": [110] },
+        "transaction": { "sendtoaddress": ["$to", "$value"] }
+    },
+    "#ETH": {
+        "url": "http://localhost:8012",
+        "block_number": 0,
+        "account": [
+            { "eth_accounts": [] },
+            "result.0"
+        ],
+        "transaction": {
+            "eth_sendTransaction": [{
+                "from": "$from",
+                "to": "$to",
+                "value": "$eth_value"
+            }]
+        }
+    },
+    "#SOL": {
+        "url": "http://localhost:8026",
+        "account": "5sjfqNMYafDzecpMTo96NDSWTpkurnAHRUNcQJy3G2M3",
+        "transaction": "#prompt"
+    },
+    "#TRX": {
+        "url": {
+            "jrpc": "http://localhost:8027/jsonrpc",
+            "rest": "http://localhost:8028"
+        },
+        "depository_fee": "4",
+        "account": "TBAkVy5KWhTzXRn7d6L3epmi3mAjURaBBm",
+        "transaction": "#prompt"
+    },
+    "#XRP": {
+        "url": "https://s.altnet.rippletest.net:51234",
+        "block_number": 0,
+        "account": "rDRcrUWyiM7EfgC5T8mCF9WMiRs4rRMq7J",
+        "transaction": "#prompt"
+    },
+    "#XLM": {
+        "url": "https://horizon-testnet.stellar.org",
+        "block_number": 0,
+        "account": "GDGVUEDZARJU5X2NU7GMFGGRSZUQ5H35WVJVVM6YKBQFT6NJF7ZZMNLR",
+        "transaction": "#prompt"
     }
 }

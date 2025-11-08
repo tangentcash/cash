@@ -83,7 +83,7 @@ namespace tangent
 					if (*out_prefix_size > 1)
 						data.insert(data.begin(), 0);
 					base58_prefix_dump(chain->b58prefix_pubkey_address, &data[0]);
-					*out_type = bitcoin::address_format::pay2_cashaddr_public_key_hash;
+					*out_type = bitcoin::address_format::pay2_cash_public_key_hash;
 				}
 				else if (type == 1)
 				{
@@ -91,7 +91,7 @@ namespace tangent
 					if (*out_prefix_size > 1)
 						data.insert(data.begin(), 0);
 					base58_prefix_dump(chain->b58prefix_script_address, &data[0]);
-					*out_type = bitcoin::address_format::pay2_cashaddr_script_hash;
+					*out_type = bitcoin::address_format::pay2_cash_script_hash;
 				}
 				else
 					*out_type = bitcoin::address_format::unknown;
@@ -121,6 +121,24 @@ namespace tangent
 					return false;
 
 				return cash_address_from_legacy_hash(chain, script_hash, sizeof(uint160) + script_hash_offset, address_out, address_out_size);
+			}
+			static bool zcash_get_p2pkh(const uint8_t* data, size_t data_size, uint160 public_key_hash)
+			{
+				for (size_t i = 0; i < data_size; i++)
+				{
+					uint8_t type = data[i];
+					if (i + 1 >= data_size || type > 0x03)
+						return false;
+
+					uint8_t length = data[i + 1];
+					if (type == 0x00 && length == sizeof(uint160))
+					{
+						memcpy(public_key_hash, data + i + 2, length);
+						return true;
+					}
+					i += length + 1;
+				}
+				return false;
 			}
 			static size_t resolve_address_types(schema* options)
 			{
@@ -226,11 +244,12 @@ namespace tangent
 				if (!block_id)
 					coreturn block_id;
 
-				schema_list block_map;
-				block_map.emplace_back(var::set::string(block_id->value.get_blob()));
-				block_map.emplace_back(legacy.get_block ? var::set::boolean(true) : var::set::integer(2));
 				if (block_hash != nullptr)
 					*block_hash = block_id->value.get_blob();
+
+				schema_list block_map;
+				block_map.emplace_back(var::set::string(block_id->value.get_blob()));
+				block_map.emplace_back(legacy.get_block ? var::set::boolean(true) : var::set::integer(legacy.enormous_block_size ? 1 : 2));
 
 				auto block_data = coawait(execute_rpc(nd_call::get_block(), std::move(block_map), cache_policy::temporary_cache));
 				if (!block_data)
@@ -263,6 +282,17 @@ namespace tangent
 			}
 			expects_promise_rt<computed_transaction> bitcoin::link_transaction(uint64_t block_height, const std::string_view& block_hash, schema* transaction_data)
 			{
+				uptr<schema> transaction_data_postload;
+				if (!transaction_data->value.is_object())
+				{
+					auto transaction_data_result = coawait(get_transaction(transaction_data->value.get_blob()));
+					if (!transaction_data_result)
+						coreturn expects_rt<computed_transaction>(std::move(transaction_data_result.error()));
+
+					transaction_data_postload = *transaction_data_result;
+					transaction_data = *transaction_data_postload;
+				}
+
 				unordered_set<string> addresses;
 				schema* tx_inputs = transaction_data->get("vin");
 				if (tx_inputs != nullptr)
@@ -386,36 +416,6 @@ namespace tangent
 
 				coreturn expects_rt<computed_transaction>(std::move(tx));
 			}
-			expects_promise_rt<computed_fee> bitcoin::estimate_fee(const std::string_view& from_address, const vector<value_transfer>& to, const fee_supervisor_options& options)
-			{
-				auto block_height = coawait(get_latest_block_height());
-				if (!block_height)
-					coreturn expects_rt<computed_fee>(std::move(block_height.error()));
-
-				vector<decimal> fee_rates; vector<size_t> tx_sizes;
-				auto precision = std::max<uint64_t>(1, get_chainparams().sync_latency);
-				for (uint64_t i = 0; i < precision; i++)
-				{
-					schema_list map;
-					map.emplace_back(var::set::integer(*block_height));
-					map.emplace_back(var::set::null());
-
-					auto block_stats = coawait(execute_rpc(nd_call::get_block_stats(), std::move(map), cache_policy::no_cache_no_throttling));
-					if (!block_stats)
-						coreturn expects_rt<computed_fee>(std::move(block_stats.error()));
-
-					fee_rates.push_back(block_stats->get_var("avgfeerate").get_decimal());
-					tx_sizes.push_back((size_t)block_stats->get_var("avgtxsize").get_integer());
-				}
-				std::sort(fee_rates.begin(), fee_rates.end());
-				std::sort(tx_sizes.begin(), tx_sizes.end());
-
-				size_t expected_max_tx_size = 1000;
-				size_t median_tx_size = tx_sizes.empty() ? expected_max_tx_size : std::max(expected_max_tx_size / 10, median_of(tx_sizes));
-				decimal median_fee_rate = std::max(decimal(1), fee_rates.empty() ? decimal(1) : median_of(fee_rates));
-				median_tx_size = std::min<size_t>(expected_max_tx_size, (size_t)(std::ceil((double)median_tx_size / 100.0) * 100.0));
-				coreturn expects_rt<computed_fee>(computed_fee::fee_per_byte(median_fee_rate / netdata.divisibility, median_tx_size));
-			}
 			expects_promise_rt<void> bitcoin::broadcast_transaction(const finalized_transaction& finalized)
 			{
 				schema_list map;
@@ -434,10 +434,197 @@ namespace tangent
 				memory::release(*hex_data);
 				coreturn expects_rt<void>(expectation::met);
 			}
-			expects_promise_rt<prepared_transaction> bitcoin::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee)
+			expects_promise_rt<computed_fee> bitcoin::estimate_transaction_fee(const wallet_link& from_link, const vector<value_transfer>& to)
 			{
-				auto applied_fee = calculate_transaction_fee_from_fee_estimate(from_link, to, fee);
-				decimal fee_value = std::max(applied_fee ? applied_fee->get_max_fee() : fee.get_max_fee(), get_min_relay_fee().get_max_fee());
+				decimal sending_value = decimal::zero();
+				for (auto& destination : to)
+					sending_value += destination.value;
+
+				auto inputs = calculate_utxo(from_link, balance_query(sending_value, { }));
+				decimal input_value = inputs ? get_utxo_value(*inputs, optional::none) : 0.0;
+				if (!inputs || inputs->empty())
+					coreturn remote_exception(stringify::text("insufficient funds: %s < %s", input_value.to_string().c_str(), sending_value.to_string().c_str()));
+
+				vector<string> outputs = { inputs->front().link.address };
+				outputs.reserve(to.size() + 1);
+				for (auto& item : to)
+					outputs.push_back(item.address);
+
+				bool has_witness = false;
+				double virtual_size = 10;
+				for (auto& input : *inputs)
+				{
+					switch (parse_address(input.link.address))
+					{
+						case address_format::pay2_public_key:
+							virtual_size += 152;
+							break;
+						case address_format::pay2_public_key_hash:
+						case address_format::pay2_cash_public_key_hash:
+						case address_format::pay2_unified_public_key_hash:
+							virtual_size += 148;
+							break;
+						case address_format::pay2_script_hash:
+						case address_format::pay2_cash_script_hash:
+							virtual_size = 153;
+							break;
+						case address_format::pay2_witness_public_key_hash:
+						case address_format::pay2_witness_script_hash:
+							virtual_size += 67.75;
+							has_witness = true;
+							break;
+						case address_format::pay2_taproot:
+						case address_format::pay2_tapscript:
+							virtual_size += 57.25;
+							has_witness = true;
+							break;
+						default:
+							coreturn remote_exception("invalid input address");
+					}
+				}
+
+				for (auto& output : outputs)
+				{
+					switch (parse_address(output))
+					{
+						case address_format::pay2_public_key:
+							virtual_size += 48;
+							break;
+						case address_format::pay2_public_key_hash:
+						case address_format::pay2_cash_public_key_hash:
+						case address_format::pay2_unified_public_key_hash:
+							virtual_size += 32;
+							break;
+						case address_format::pay2_script_hash:
+						case address_format::pay2_cash_script_hash:
+							virtual_size = 32;
+							break;
+						case address_format::pay2_witness_public_key_hash:
+							virtual_size += 31;
+							break;
+						case address_format::pay2_witness_script_hash:
+							virtual_size += 32;
+							break;
+						case address_format::pay2_taproot:
+						case address_format::pay2_tapscript:
+							virtual_size += 43;
+							break;
+						default:
+							coreturn remote_exception("invalid input address");
+					}
+				}
+
+				if (has_witness)
+					virtual_size += 0.5 + (double)inputs->size() / 4.0;
+
+				auto block_height = coawait(get_latest_block_height());
+				if (!block_height)
+					coreturn expects_rt<computed_fee>(std::move(block_height.error()));
+
+				vector<decimal> fee_rates;
+				auto precision = std::max<uint64_t>(1, get_chainparams().sync_latency);
+				for (uint64_t i = 0; i < precision; i++)
+				{
+					uint64_t prev_block_height = *block_height - i;
+					if (!prev_block_height || prev_block_height > *block_height)
+						break;
+
+					if (legacy.get_block_stats == 1)
+					{
+						auto transactions = uptr(coawait(get_block_transactions(prev_block_height, nullptr)).or_else(nullptr));
+						if (transactions)
+						{
+							for (auto& transaction : transactions->get_childs())
+							{
+								auto* transaction_data = transaction;
+								uptr<schema> transaction_data_postload;
+								if (!transaction_data->value.is_object())
+								{
+									auto transaction_data_result = coawait(get_transaction(transaction_data->value.get_blob()));
+									if (!transaction_data_result)
+										continue;
+
+									transaction_data_postload = *transaction_data_result;
+									transaction_data = *transaction_data_postload;
+								}
+
+								decimal fee = decimal::zero();
+								schema* tx_inputs = transaction_data->get("vin");
+								schema* tx_outputs = transaction_data->get("vout");
+								if (tx_inputs != nullptr)
+								{
+									for (auto& input : tx_inputs->get_childs())
+									{
+										if (!input->has("coinbase") && input->has("txid") && input->has("vout"))
+										{
+											auto output = coawait(get_transaction_output(input->get_var("txid").get_blob(), input->get_var("vout").get_integer()));
+											if (output)
+												fee += output->value;
+										}
+										else
+											fee = decimal::nan();
+									}
+									if (fee.is_nan())
+										continue;
+								}
+								if (tx_outputs != nullptr)
+								{
+									for (auto& output : tx_outputs->get_childs())
+										fee -= output->get_var("value").get_decimal();
+								}
+								if (fee.is_zero() || fee.is_positive())
+									fee_rates.push_back(std::move(fee));
+							}
+						}
+					}
+					else
+					{
+					retry:
+						schema_list map;
+						if (legacy.get_block_stats)
+						{
+							schema_list hash_map;
+							hash_map.emplace_back(var::set::integer(prev_block_height));
+
+							auto block_id = coawait(execute_rpc(nd_call::get_block_hash(), std::move(hash_map), cache_policy::blob_cache));
+							if (!block_id)
+								continue;
+
+							map.emplace_back(*block_id);
+						}
+						else
+							map.emplace_back(var::set::integer(prev_block_height));
+						map.emplace_back(var::set::null());
+
+						auto block_stats = coawait(execute_rpc(nd_call::get_block_stats(), std::move(map), cache_policy::no_cache_no_throttling));
+						if (block_stats)
+						{
+							auto fee = block_stats->get_var("avgfeerate").get_decimal();
+							if (fee.is_zero() || fee.is_positive())
+								fee_rates.push_back(std::move(fee));
+						}
+						else if (!legacy.get_block_stats)
+						{
+							legacy.get_block_stats = 2;
+							goto retry;
+						}
+					}
+				}
+				std::sort(fee_rates.begin(), fee_rates.end());
+
+				decimal median_fee_rate = std::max(decimal(1), fee_rates.empty() ? decimal(1) : median_of(fee_rates));
+				coreturn expects_rt<computed_fee>(computed_fee::fee_per_byte(median_fee_rate / netdata.divisibility, (size_t)std::ceil(virtual_size)));
+			}
+			expects_promise_rt<prepared_transaction> bitcoin::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const decimal& max_fee)
+			{
+				auto fee = coawait(estimate_transaction_fee(from_link, to));
+				if (!fee)
+					coreturn expects_rt<prepared_transaction>(std::move(fee.error()));
+
+				decimal fee_value = std::max(fee->get_max_fee(), get_min_relay_fee().get_max_fee());
+				if (fee_value > max_fee)
+					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
+
 				decimal fee_value_per_output = algorithm::arithmetic::divide(fee_value, to.size());
 				decimal total_value = fee_value;
 				for (auto& item : to)
@@ -681,8 +868,8 @@ namespace tangent
 					}
 					case 0x8:
 					{
-						if (!(types & (size_t)address_format::pay2_cashaddr_script_hash))
-							return layer_exception("p2cash address not supported");
+						if (!(types & (size_t)address_format::pay2_cash_script_hash))
+							return layer_exception("p2csh address not supported");
 
 						uint8_t hash[sizeof(uint160) + B58_PREFIX_MAX_SIZE];
 						size_t offset = base58_prefix_dump(chain->b58prefix_script_address, hash);
@@ -694,8 +881,8 @@ namespace tangent
 					}
 					case 0x7:
 					{
-						if (!(types & (size_t)address_format::pay2_cashaddr_public_key_hash))
-							return layer_exception("p2capkh address not supported");
+						if (!(types & (size_t)address_format::pay2_cash_public_key_hash))
+							return layer_exception("p2cpkh address not supported");
 
 						uint8_t hash[sizeof(uint160) + B58_PREFIX_MAX_SIZE];
 						size_t offset = base58_prefix_dump(chain->b58prefix_pubkey_address, hash);
@@ -703,6 +890,15 @@ namespace tangent
 
 						char encoded_address[128];
 						cash_address_from_legacy_hash(chain, hash, sizeof(uint160) + offset, encoded_address, sizeof(encoded_address));
+						return string(encoded_address, strnlen(encoded_address, sizeof(encoded_address)));
+					}
+					case 0x6:
+					{
+						if (!(types & (size_t)address_format::pay2_unified_public_key_hash))
+							return layer_exception("p2upkh address not supported");
+
+						char encoded_address[384];
+						z_addr_encode(encoded_address, chain->bech32_hrp, (uint8_t*)data.data(), data.size());
 						return string(encoded_address, strnlen(encoded_address, sizeof(encoded_address)));
 					}
 					default:
@@ -736,11 +932,14 @@ namespace tangent
 					case address_format::pay2_taproot:
 						data[0] = 0x9;
 						break;
-					case address_format::pay2_cashaddr_script_hash:
+					case address_format::pay2_cash_script_hash:
 						data[0] = 0x8;
 						break;
-					case address_format::pay2_cashaddr_public_key_hash:
+					case address_format::pay2_cash_public_key_hash:
 						data[0] = 0x7;
+						break;
+					case address_format::pay2_unified_public_key_hash:
+						data[0] = 0x6;
 						break;
 					default:
 						return layer_exception("invalid address");
@@ -795,10 +994,10 @@ namespace tangent
 						if (types & (size_t)address_format::pay2_public_key && btc_pubkey_getaddr_p2pk(&public_key, chain, encoded_address))
 							addresses[(uint8_t)addresses.size() + 1] = encoded_address;
 
-						if ((types & (size_t)address_format::pay2_script_hash || types & (size_t)address_format::pay2_cashaddr_script_hash) && btc_pubkey_getaddr_p2sh_p2wpkh(&public_key, chain, encoded_address))
+						if ((types & (size_t)address_format::pay2_script_hash || types & (size_t)address_format::pay2_cash_script_hash) && btc_pubkey_getaddr_p2sh_p2wpkh(&public_key, chain, encoded_address))
 							addresses[(uint8_t)addresses.size() + 1] = encoded_address;
 
-						if ((types & (size_t)address_format::pay2_public_key_hash || types & (size_t)address_format::pay2_cashaddr_public_key_hash) && btc_pubkey_getaddr_p2pkh(&public_key, chain, encoded_address))
+						if ((types & (size_t)address_format::pay2_public_key_hash || types & (size_t)address_format::pay2_cash_public_key_hash) && btc_pubkey_getaddr_p2pkh(&public_key, chain, encoded_address))
 							addresses[(uint8_t)addresses.size() + 1] = encoded_address;
 
 						if ((types & (size_t)address_format::pay2_taproot) && btc_pubkey_getaddr_p2tr(&public_key, chain, encoded_address))
@@ -815,10 +1014,10 @@ namespace tangent
 						if (types & (size_t)address_format::pay2_public_key && btc_pubkey_getaddr_p2pk(&public_key, chain, encoded_address))
 							addresses[(uint8_t)addresses.size() + 1] = encoded_address;
 
-						if ((types & (size_t)address_format::pay2_script_hash || types & (size_t)address_format::pay2_cashaddr_script_hash) && bitcoin_cash_public_key_get_address_p2sh(&public_key, chain, encoded_address, sizeof(encoded_address)))
+						if ((types & (size_t)address_format::pay2_script_hash || types & (size_t)address_format::pay2_cash_script_hash) && bitcoin_cash_public_key_get_address_p2sh(&public_key, chain, encoded_address, sizeof(encoded_address)))
 							addresses[(uint8_t)addresses.size() + 1] = encoded_address;
 
-						if ((types & (size_t)address_format::pay2_public_key_hash || types & (size_t)address_format::pay2_cashaddr_public_key_hash) && bitcoin_cash_public_key_get_address_p2pkh(&public_key, chain, encoded_address, sizeof(encoded_address)))
+						if ((types & (size_t)address_format::pay2_public_key_hash || types & (size_t)address_format::pay2_cash_public_key_hash) && bitcoin_cash_public_key_get_address_p2pkh(&public_key, chain, encoded_address, sizeof(encoded_address)))
 							addresses[(uint8_t)addresses.size() + 1] = encoded_address;
 					}
 				}
@@ -830,94 +1029,6 @@ namespace tangent
 			const bitcoin::chainparams& bitcoin::get_chainparams() const
 			{
 				return netdata;
-			}
-			expects_lr<computed_fee> bitcoin::calculate_transaction_fee_from_fee_estimate(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& estimate)
-			{
-				if (estimate.is_flat_fee())
-					return expects_lr<computed_fee>(estimate);
-
-				decimal baseline_fee = estimate.get_max_fee();
-				decimal sending_value = baseline_fee;
-				for (auto& destination : to)
-					sending_value += destination.value;
-
-				auto inputs = calculate_utxo(from_link, balance_query(sending_value, { }));
-				decimal input_value = inputs ? get_utxo_value(*inputs, optional::none) : 0.0;
-				if (!inputs || inputs->empty())
-					return layer_exception(stringify::text("insufficient funds: %s < %s", input_value.to_string().c_str(), sending_value.to_string().c_str()));
-
-				vector<string> outputs = { inputs->front().link.address };
-				outputs.reserve(to.size() + 1);
-				for (auto& item : to)
-					outputs.push_back(item.address);
-
-				bool has_witness = false;
-				double virtual_size = 10;
-				for (auto& input : *inputs)
-				{
-					switch (parse_address(input.link.address))
-					{
-						case address_format::pay2_public_key:
-							virtual_size += 152;
-							break;
-						case address_format::pay2_public_key_hash:
-						case address_format::pay2_cashaddr_public_key_hash:
-							virtual_size += 148;
-							break;
-						case address_format::pay2_script_hash:
-						case address_format::pay2_cashaddr_script_hash:
-							virtual_size = 153;
-							break;
-						case address_format::pay2_witness_public_key_hash:
-						case address_format::pay2_witness_script_hash:
-							virtual_size += 67.75;
-							has_witness = true;
-							break;
-						case address_format::pay2_taproot:
-						case address_format::pay2_tapscript:
-							virtual_size += 57.25;
-							has_witness = true;
-							break;
-						default:
-							return layer_exception("invalid input address");
-					}
-				}
-
-				for (auto& output : outputs)
-				{
-					switch (parse_address(output))
-					{
-						case address_format::pay2_public_key:
-							virtual_size += 48;
-							break;
-						case address_format::pay2_public_key_hash:
-						case address_format::pay2_cashaddr_public_key_hash:
-							virtual_size += 32;
-							break;
-						case address_format::pay2_script_hash:
-						case address_format::pay2_cashaddr_script_hash:
-							virtual_size = 32;
-							break;
-						case address_format::pay2_witness_public_key_hash:
-							virtual_size += 31;
-							break;
-						case address_format::pay2_witness_script_hash:
-							virtual_size += 32;
-							break;
-						case address_format::pay2_taproot:
-						case address_format::pay2_tapscript:
-							virtual_size += 43;
-							break;
-						default:
-							return layer_exception("invalid input address");
-					}
-				}
-
-				if (has_witness)
-					virtual_size += 0.5 + (double)inputs->size() / 4.0;
-
-				virtual_size = std::ceil(virtual_size);
-				return expects_lr<computed_fee>(computed_fee::fee_per_byte(to_value(estimate.fee.fee_rate), (size_t)virtual_size));
 			}
 			expects_lr<string> bitcoin::prepare_transaction_input(btc_tx_context& context, const coin_utxo& output, size_t index)
 			{
@@ -1010,7 +1121,7 @@ namespace tangent
 						break;
 					}
 					case address_format::pay2_public_key_hash:
-					case address_format::pay2_cashaddr_public_key_hash:
+					case address_format::pay2_cash_public_key_hash:
 					{
 						program.script = cstr_new_sz(256);
 						if (btc_script_build_p2pkh(program.script, data))
@@ -1020,8 +1131,20 @@ namespace tangent
 						}
 						break;
 					}
+					case address_format::pay2_unified_public_key_hash:
+					{
+						uint160 public_key_hash;
+						zcash_get_p2pkh(data, data_size, public_key_hash);
+						program.script = cstr_new_sz(256);
+						if (btc_script_build_p2pkh(program.script, public_key_hash))
+						{
+							program.stack = cstr_new_cstr(program.script);
+							script_type = BTC_TX_PUBKEYHASH;
+						}
+						break;
+					}
 					case address_format::pay2_script_hash:
-					case address_format::pay2_cashaddr_script_hash:
+					case address_format::pay2_cash_script_hash:
 					{
 						uint8_t public_key_hash[sizeof(uint160) + B58_PREFIX_MAX_SIZE];
 						btc_pubkey_get_hash160(&public_key, public_key_hash);
@@ -1121,11 +1244,18 @@ namespace tangent
 						script_exists = btc_tx_add_p2pk_out(context.state, (uint64_t)to_baseline_value(value), program, program_size);
 						break;
 					case address_format::pay2_public_key_hash:
-					case address_format::pay2_cashaddr_public_key_hash:
+					case address_format::pay2_cash_public_key_hash:
 						script_exists = btc_tx_add_p2pkh_hash160_out(context.state, (uint64_t)to_baseline_value(value), program);
 						break;
+					case address_format::pay2_unified_public_key_hash:
+					{
+						uint160 public_key_hash;
+						zcash_get_p2pkh(program, program_size, public_key_hash);
+						script_exists = btc_tx_add_p2pkh_hash160_out(context.state, (uint64_t)to_baseline_value(value), program);
+						break;
+					}
 					case address_format::pay2_script_hash:
-					case address_format::pay2_cashaddr_script_hash:
+					case address_format::pay2_cash_script_hash:
 						script_exists = btc_tx_add_p2sh_hash160_out(context.state, (uint64_t)to_baseline_value(value), program);
 						break;
 					case address_format::pay2_witness_script_hash:
@@ -1147,12 +1277,8 @@ namespace tangent
 
 				return expectation::met;
 			}
-			expects_promise_rt<coin_utxo> bitcoin::get_transaction_output(const std::string_view& transaction_id, uint64_t index)
+			expects_promise_rt<schema*> bitcoin::get_transaction(const std::string_view& transaction_id)
 			{
-				auto output = get_utxo(transaction_id, index);
-				if (output)
-					coreturn expects_rt<coin_utxo>(std::move(*output));
-
 				schema_list transaction_map;
 				transaction_map.emplace_back(var::set::string(format::util::clear_0xhex(transaction_id)));
 				transaction_map.emplace_back(legacy.get_raw_transaction ? var::set::boolean(true) : var::set::integer(2));
@@ -1165,12 +1291,21 @@ namespace tangent
 					legacy_transaction_map.emplace_back(var::set::boolean(true));
 
 					tx_data = coawait(execute_rpc(nd_call::get_raw_transaction(), std::move(legacy_transaction_map), cache_policy::blob_cache));
-					if (!tx_data)
-						coreturn expects_rt<coin_utxo>(std::move(tx_data.error()));
-					else
+					if (tx_data)
 						legacy.get_raw_transaction = 1;
 				}
+				if (!*tx_data)
+					coreturn expects_rt<schema*>(remote_exception("tx not found"));
 
+				coreturn tx_data;
+			}
+			expects_promise_rt<coin_utxo> bitcoin::get_transaction_output(const std::string_view& transaction_id, uint64_t index)
+			{
+				auto output = get_utxo(transaction_id, index);
+				if (output)
+					coreturn expects_rt<coin_utxo>(std::move(*output));
+
+				auto tx_data = coawait(get_transaction(transaction_id));
 				if (!tx_data->has("vout"))
 				{
 					memory::release(*tx_data);
@@ -1278,6 +1413,7 @@ namespace tangent
 				if (address.empty())
 					return address_format::unknown;
 
+				auto address_data = string(address);
 				uint8_t data[256]; size_t data_size = sizeof(data);
 				if (chain->bech32_cashaddr[0] != '\0')
 				{
@@ -1294,8 +1430,8 @@ namespace tangent
 				}
 				if (chain->bech32_hrp[0] == '\0' || stringify::starts_with(address, chain->bech32_hrp))
 				{
-					int32_t witness_version = 0;
-					if (segwit_addr_decode(&witness_version, data, &data_size, chain->bech32_hrp, string(address).c_str()))
+					int32_t witness_version = 0; char hrp_actual[84] = { 0 };
+					if (segwit_addr_decode(&witness_version, data, &data_size, chain->bech32_hrp, address_data.c_str()))
 					{
 						if (data_out && data_size_out)
 						{
@@ -1313,10 +1449,45 @@ namespace tangent
 						else if (data_size == 20)
 							return address_format::pay2_witness_public_key_hash;
 					}
+					else if (z_addr_decode(data, &data_size, chain->bech32_hrp, address_data.c_str()))
+					{
+						uint8_t prev_type = 0; bool valid = true, p2pkh = false;
+						for (size_t i = 0; i < data_size; i++)
+						{
+							uint8_t type = data[i];
+							if (i + 1 >= data_size || type > 0x03 || type < prev_type)
+							{
+							invalid_zaddr:
+								valid = false;
+								break;
+							}
+							else if (type == 0)
+								p2pkh = true;
+
+							uint8_t length = data[i + 1];
+							prev_type = type;
+							if (type <= 0x01 && (length != sizeof(uint160) || i + length >= data_size))
+								goto invalid_zaddr;
+							else if (type >= 0x02 && (length != 43 || i + length >= data_size))
+								goto invalid_zaddr;
+
+							i += length + 1;
+						}
+
+						if (valid && p2pkh)
+						{
+							if (data_out && data_size_out)
+							{
+								*data_size_out = data_size;
+								memcpy(data_out, data, *data_size_out);
+							}
+							return address_format::pay2_unified_public_key_hash;
+						}
+					}
 				}
 
 				data_size = sizeof(uint8_t) * address.size() * 2;
-				int new_size = btc_base58_decode_check(string(address).c_str(), data, data_size);
+				int new_size = btc_base58_decode_check(address_data.c_str(), data, data_size);
 				if (!new_size)
 				{
 				try_public_key:

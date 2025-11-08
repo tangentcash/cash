@@ -25,9 +25,10 @@ namespace tangent
 					pay2_witness_public_key_hash = (1 << 4),
 					pay2_tapscript = (1 << 5),
 					pay2_taproot = (1 << 6),
-					pay2_cashaddr_script_hash = (1 << 7),
-					pay2_cashaddr_public_key_hash = (1 << 8),
-					all = (pay2_public_key | pay2_public_key_hash | pay2_script_hash | pay2_witness_public_key_hash | pay2_witness_public_key_hash | pay2_witness_script_hash | pay2_taproot | pay2_tapscript | pay2_cashaddr_public_key_hash | pay2_cashaddr_script_hash)
+					pay2_cash_script_hash = (1 << 7),
+					pay2_cash_public_key_hash = (1 << 8),
+					pay2_unified_public_key_hash = (1 << 9),
+					all = (pay2_public_key | pay2_public_key_hash | pay2_script_hash | pay2_witness_public_key_hash | pay2_witness_public_key_hash | pay2_witness_script_hash | pay2_taproot | pay2_tapscript | pay2_cash_public_key_hash | pay2_cash_script_hash | pay2_unified_public_key_hash)
 				};
 
 				struct btc_tx_context
@@ -67,6 +68,8 @@ namespace tangent
 				{
 					uint8_t get_raw_transaction = 0;
 					uint8_t get_block = 0;
+					uint8_t get_block_stats = 0;
+					uint8_t enormous_block_size = 0;
 				} legacy;
 				chainparams netdata;
 
@@ -75,11 +78,12 @@ namespace tangent
 				virtual ~bitcoin() override;
 				virtual expects_promise_rt<uint64_t> get_latest_block_height() override;
 				virtual expects_promise_rt<schema*> get_block_transactions(uint64_t block_height, string* block_hash) override;
+				virtual expects_promise_rt<schema*> get_transaction(const std::string_view& tx_id);
 				virtual expects_promise_rt<coin_utxo> get_transaction_output(const std::string_view& tx_id, uint64_t index) override;
 				virtual expects_promise_rt<computed_transaction> link_transaction(uint64_t block_height, const std::string_view& block_hash, schema* transaction_data) override;
-				virtual expects_promise_rt<computed_fee> estimate_fee(const std::string_view& from_address, const vector<value_transfer>& to, const fee_supervisor_options& options) override;
 				virtual expects_promise_rt<void> broadcast_transaction(const finalized_transaction& finalized) override;
-				virtual expects_promise_rt<prepared_transaction> prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee) override;
+				virtual expects_promise_rt<computed_fee> estimate_transaction_fee(const wallet_link& from_link, const vector<value_transfer>& to);
+				virtual expects_promise_rt<prepared_transaction> prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const decimal& max_fee) override;
 				virtual expects_lr<finalized_transaction> finalize_transaction(prepared_transaction&& prepared) override;
 				virtual expects_lr<secret_box> encode_secret_key(const secret_box& secret_key) override;
 				virtual expects_lr<secret_box> decode_secret_key(const secret_box& secret_key) override;
@@ -91,7 +95,6 @@ namespace tangent
 				virtual expects_lr<string> decode_transaction_id(const std::string_view& transaction_id) override;
 				virtual expects_lr<address_map> to_addresses(const std::string_view& public_key) override;
 				virtual const chainparams& get_chainparams() const override;
-				virtual expects_lr<computed_fee> calculate_transaction_fee_from_fee_estimate(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& estimate);
 				virtual expects_lr<string> prepare_transaction_input(btc_tx_context& context, const coin_utxo& output, size_t index);
 				virtual expects_lr<void> finalize_transaction_input(btc_tx_context& context, const prepared_transaction::signable_coin_utxo& output, size_t index);
 				virtual expects_lr<void> add_transaction_input(btc_tx_context& context, const coin_utxo& output, const std::string_view& public_key);

@@ -186,7 +186,8 @@ namespace tangent
 						else if (value.is_nan())
 							continue;
 
-						auto& native_input = inputs[from][native_asset], native_output = outputs[to][native_asset];
+						auto& native_input = inputs[from][native_asset];
+						auto& native_output = outputs[to][native_asset];
 						native_input = (native_input.is_nan() ? value : (native_input + value)) + fee_value;
 						native_output = native_output.is_nan() ? value : (native_output + value);
 						fee_included = true;
@@ -201,7 +202,8 @@ namespace tangent
 						else if (value.is_nan())
 							continue;
 
-						auto& native_input = inputs[from][native_asset], native_output = outputs[to][native_asset];
+						auto& native_input = inputs[from][native_asset];
+						auto& native_output = outputs[to][native_asset];
 						native_input = (native_input.is_nan() ? value : (native_input + value)) + fee_value;
 						native_output = native_output.is_nan() ? value : (native_output + value);
 						fee_included = true;
@@ -216,7 +218,8 @@ namespace tangent
 						else if (value.is_nan())
 							continue;
 
-						auto& native_input = inputs[from][native_asset], native_output = outputs[to][native_asset];
+						auto& native_input = inputs[from][native_asset];
+						auto& native_output = outputs[to][native_asset];
 						native_input = (native_input.is_nan() ? value : (native_input + value)) + fee_value;
 						native_output = native_output.is_nan() ? value : (native_output + value);
 						fee_included = true;
@@ -231,7 +234,8 @@ namespace tangent
 						else if (value.is_nan())
 							continue;
 
-						auto& native_input = inputs[from][native_asset], native_output = outputs[to][native_asset];
+						auto& native_input = inputs[from][native_asset];
+						auto& native_output = outputs[to][native_asset];
 						native_input = (native_input.is_nan() ? value : (native_input + value)) + fee_value;
 						native_output = native_output.is_nan() ? value : (native_output + value);
 						fee_included = true;
@@ -246,7 +250,8 @@ namespace tangent
 						else if (value.is_nan())
 							continue;
 
-						auto& native_input = inputs[from][native_asset], native_output = outputs[to][native_asset];
+						auto& native_input = inputs[from][native_asset];
+						auto& native_output = outputs[to][native_asset];
 						native_input = (native_input.is_nan() ? value : (native_input + value)) + fee_value;
 						native_output = native_output.is_nan() ? value : (native_output + value);
 						fee_included = true;
@@ -349,14 +354,6 @@ namespace tangent
 
 				coreturn expects_rt<computed_transaction>(std::move(tx));
 			}
-			expects_promise_rt<computed_fee> solana::estimate_fee(const std::string_view& from_address, const vector<value_transfer>& to, const fee_supervisor_options& options)
-			{
-				decimal fee = 5000;
-				if (!algorithm::asset::token_of(to.front().asset).empty())
-					fee += fee * 2;
-				fee /= netdata.divisibility;
-				coreturn expects_rt<computed_fee>(computed_fee::flat_fee(fee));
-			}
 			expects_promise_rt<decimal> solana::calculate_balance(const algorithm::asset_id& asset, const wallet_link& link)
 			{
 				if (algorithm::asset::token_of(asset).empty())
@@ -399,7 +396,7 @@ namespace tangent
 				memory::release(*status);
 				coreturn expects_rt<void>(expectation::met);
 			}
-			expects_promise_rt<prepared_transaction> solana::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee)
+			expects_promise_rt<prepared_transaction> solana::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const decimal& max_fee)
 			{
 				auto native_balance = coawait(get_balance(from_link.address));
 				if (!native_balance)
@@ -409,11 +406,19 @@ namespace tangent
 				if (!recent_block_hash)
 					coreturn expects_rt<prepared_transaction>(std::move(recent_block_hash.error()));
 
+				uint64_t fee_constant = 5000;
+				if (!algorithm::asset::token_of(to.front().asset).empty())
+					fee_constant += fee_constant * 2;
+
+				auto fee = computed_fee::flat_fee(fee_constant / netdata.divisibility);
+				decimal fee_value = fee.get_max_fee();
+				if (fee_value > max_fee)
+					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
+
 				auto& output = to.front();
 				auto contract_address = oracle::server_node::get()->get_contract_address(output.asset);
 				option<token_account> from_token = optional::none;
 				option<token_account> to_token = optional::none;
-				decimal fee_value = fee.get_max_fee();
 				if (contract_address)
 				{
 					auto from_token_balance = coawait(get_token_balance(*contract_address, from_link.address));
@@ -462,11 +467,12 @@ namespace tangent
 				result.requires_abi(format::variable(transaction.from_token_address));
 				result.requires_abi(format::variable(transaction.to_token_address));
 				result.requires_abi(format::variable(transaction.recent_block_hash));
+				result.requires_abi(format::variable(fee_value));
 				coreturn expects_rt<prepared_transaction>(std::move(result));
 			}
 			expects_lr<finalized_transaction> solana::finalize_transaction(oracle::prepared_transaction&& prepared)
 			{
-				if (prepared.abi.size() != 5)
+				if (prepared.abi.size() != 6)
 					return layer_exception("invalid prepared abi");
 
 				auto& input = prepared.inputs.front();
@@ -479,7 +485,7 @@ namespace tangent
 				transaction.from_address = input.utxo.link.address;
 				transaction.to_address = output.link.address;
 				transaction.recent_block_hash = prepared.abi[4].as_blob();
-				transaction.value = ((output.tokens.empty() ? output.value : output.tokens.front().value) * divisibility).to_uint64();
+				transaction.value = ((output.tokens.empty() ? output.value - prepared.abi[5].as_decimal() : output.tokens.front().value) * divisibility).to_uint64();
 
 				vector<uint8_t> message_buffer = tx_message_serialize(&transaction);
 				if (input.message.size() != message_buffer.size() || memcmp(input.message.data(), message_buffer.data(), message_buffer.size()))

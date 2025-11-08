@@ -347,8 +347,7 @@ namespace tangent
 					base_value = from_drop(uint256_t(amount->value.get_blob()));
 
 				auto destination_tag = transaction_data->get_var("DestinationTag").get_blob();
-				auto to_tag = address_util::encode_tag_address(to, destination_tag);
-				auto discovery = find_linked_addresses({ from, to, to_tag });
+				auto discovery = find_linked_addresses({ from, to });
 				if (!discovery || discovery->empty())
 					coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
@@ -358,7 +357,10 @@ namespace tangent
 				auto total_value = base_value + fee_value;
 				auto target_from_link = discovery->find(from);
 				auto target_to_link = discovery->find(to);
-				auto target_to_tag_link = discovery->find(to_tag);
+				auto to_link = target_to_link != discovery->end() ? target_to_link->second : wallet_link::from_address(to);
+				if (target_to_link != discovery->end())
+					to_link.address = address_util::encode_tag_address(to, destination_tag);
+
 				unordered_map<algorithm::asset_id, decimal> inputs;
 				unordered_map<algorithm::asset_id, decimal> outputs;
 				if (total_value.is_positive())
@@ -374,29 +376,8 @@ namespace tangent
 				if (!inputs.empty())
 					tx.inputs.push_back(coin_utxo(target_from_link != discovery->end() ? target_from_link->second : wallet_link::from_address(from), std::move(inputs)));
 				if (!outputs.empty())
-					tx.inputs.push_back(coin_utxo(target_to_tag_link != discovery->end() ? target_to_tag_link->second : (target_to_link != discovery->end() ? target_to_link->second : wallet_link::from_address(to)), std::move(outputs)));
+					tx.outputs.push_back(coin_utxo(std::move(to_link), std::move(outputs)));
 				coreturn expects_rt<computed_transaction>(std::move(tx));
-			}
-			expects_promise_rt<computed_fee> ripple::estimate_fee(const std::string_view& from_address, const vector<value_transfer>& to, const fee_supervisor_options& options)
-			{
-				schema_list map;
-				map.emplace_back(var::set::object());
-
-				auto server_info = coawait(execute_rpc(nd_call::server_info(), std::move(map), cache_policy::no_cache));
-				if (!server_info)
-					coreturn expects_rt<computed_fee>(std::move(server_info.error()));
-
-				decimal base_constant_fee = server_info->fetch_var("info.validated_ledger.base_fee_xrp").get_decimal();
-				if (!base_constant_fee.is_positive())
-					base_constant_fee = get_base_fee_xrp();
-
-				decimal load_factor = server_info->fetch_var("info.load_factor").get_decimal();
-				if (!load_factor.is_positive())
-					load_factor = 1.0;
-
-				decimal fee_cushion = 1.2;
-				memory::release(*server_info);
-				coreturn expects_rt<computed_fee>(computed_fee::flat_fee(base_constant_fee * load_factor * fee_cushion));
 			}
 			expects_promise_rt<decimal> ripple::calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link)
 			{
@@ -440,7 +421,7 @@ namespace tangent
 
 				coreturn expects_rt<void>(remote_exception(std::move(error_message)));
 			}
-			expects_promise_rt<prepared_transaction> ripple::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee)
+			expects_promise_rt<prepared_transaction> ripple::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const decimal& max_fee)
 			{
 				auto account_info = coawait(get_account_info(from_link.address));
 				if (!account_info)
@@ -450,9 +431,30 @@ namespace tangent
 				if (!ledger_info)
 					coreturn expects_rt<prepared_transaction>(std::move(ledger_info.error()));
 
+				schema_list map;
+				map.emplace_back(var::set::object());
+
+				auto server_info = coawait(execute_rpc(nd_call::server_info(), std::move(map), cache_policy::no_cache));
+				if (!server_info)
+					coreturn expects_rt<prepared_transaction>(std::move(server_info.error()));
+
+				decimal fee_cushion = 1.2;
+				decimal base_constant_fee = server_info->fetch_var("info.validated_ledger.base_fee_xrp").get_decimal();
+				if (!base_constant_fee.is_positive())
+					base_constant_fee = get_base_fee_xrp();
+
+				decimal load_factor = server_info->fetch_var("info.load_factor").get_decimal();
+				if (!load_factor.is_positive())
+					load_factor = 1.0;
+
+				auto fee = computed_fee::flat_fee(base_constant_fee * load_factor * fee_cushion);
+				decimal fee_value = fee.get_max_fee();
+				memory::release(*server_info);
+				if (fee_value > max_fee)
+					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
+
 				auto& output = to.front();
 				auto contract_address = oracle::server_node::get()->get_contract_address(output.asset);
-				decimal fee_value = fee.get_max_fee();
 				if (contract_address)
 				{
 					auto account_token_info = coawait(get_account_token_info(output.asset, *contract_address));

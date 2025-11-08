@@ -1491,7 +1491,7 @@ public:
 			auto wallet = create_wallet(asset);
 
 			auto signable_link = oracle::wallet_link(user.public_key_hash, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
-			auto signable_message = codec::hex_decode("0x80010001032a994a958414a9dac047fd32001847954f89f464433cb04266fde37d6aff15440963cbfdea28293c02cd965c46e7a6f26bc5f26da4fa00dda8c8ade49f96dcad0000000000000000000000000000000000000000000000000000000000000000b83691e4405ab95ed6264b5942eb150deb64c9d0688940be0f6548da25de783c01020200010c02000000807a77230100000000");
+			auto signable_message = codec::hex_decode("0x80010001032a994a958414a9dac047fd32001847954f89f464433cb04266fde37d6aff15440963cbfdea28293c02cd965c46e7a6f26bc5f26da4fa00dda8c8ade49f96dcad0000000000000000000000000000000000000000000000000000000000000000b83691e4405ab95ed6264b5942eb150deb64c9d0688940be0f6548da25de783c01020200010c02000000f86677230100000000");
 			oracle::prepared_transaction prepared;
 			prepared.requires_account_input(algorithm::composition::type::ed25519, std::move(signable_link), wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), { { asset, decimal("4.890005") } });
 			prepared.requires_account_output("devwuNsNYACyiEYxRNqMNseBpNnGfnd4ZwNHL7sphqv", { { asset, decimal("4.89") } });
@@ -1500,7 +1500,8 @@ public:
 			prepared.requires_abi(format::variable(string()));
 			prepared.requires_abi(format::variable(string()));
 			prepared.requires_abi(format::variable(string("DQ6H97iaf92qFZAWFSu57x74i47L4MJL5vjfun8pMrCj")));
-			validate_transaction(asset, wallet, prepared, "transfer", "2mXpPxxdMg1J2wZ7EdNGpvMXrZ4THjKD8zAfgAtC2TN1VCUQWNg81QjJmr9hgTL8bu9DNNcc8LXM1U2ycp9J79tgUsyTu9hikqjHLbohWoLhvw7WztUvENarynygknqvGBB1jnYnQWhTvrYjbyBwhd4WQuVUhhiokKyfw6vq9ZJgbToU8anhgYGGgtBjpL3pzpAJVUoFF8A55LwLcsWUh7wcuvUfX22bBpKYbhBE3G4TwCv9Fi9xHsRrm4qfVm9eFQXCaoBVUdKtLuAJW5cRvUmBvp3zBZnzWfF8ebUb");
+			prepared.requires_abi(format::variable(decimal("0.000005")));
+			validate_transaction(asset, wallet, prepared, "transfer", "29pzeBNzkH9kVYkdLFazEy6gfZ9NgqNNx1McqnL2bmruWJtQukd1fxm6s4EcmAPbsk7grZBpQes8rSAPPxuqjesqZJHEhW3ohBfxjwwRRbq8DT5VkUqYBVvNv4cMYHvB1tv9zC26unsLpTPis8joMxrnvwbqSoA7LrqAV3V7snqh7W7rVLMwYz9eydbRxS8uPBBSwNyk9jsZcQXdPDcccuJq9M3QMUw6sXzD2FQ69FuMDuMZqDNwBbqhzDz9uorRnHFhYmM2pvQsqVY7cuyYWqXCVXaWLuCWuLygvzLw");
 
 			auto token_asset = algorithm::asset::id_of("SOL", "9YaGkvrR1fjXSAm7LTcQYXZiZfub2EuWvVxBmRSHcwHZ", "9YaGkvrR1fjXSAm7LTcQYXZiZfub2EuWvVxBmRSHcwHZ");
 			signable_link = oracle::wallet_link(user.public_key_hash, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
@@ -1513,6 +1514,7 @@ public:
 			prepared.requires_abi(format::variable(string("5YRGqmfQGcAii8szURA3ZztXfpre1ZnajJcS63GJi4yK")));
 			prepared.requires_abi(format::variable(string("FEL6m5CE2P3JTW1ceo48VerTUSWDte6eXzgrcmcftvyQ")));
 			prepared.requires_abi(format::variable(string("77EWfi8yvGJNRsC9BRHepMtBJ2RDEDAkZNWAT4YJNMYU")));
+			prepared.requires_abi(format::variable(decimal("0.000015")));
 			validate_transaction(asset, wallet, prepared, "spl transfer", "2T9rSsJqTD5Ln5iN8E1RGsvHQP59e1oVY2vwWw47WM4xEMuLEnL7w8kzhUdxpCbayLgtqurRJjDCFndHomYaFcNqktTTaj6n6AmonEBLpoXGVrWkWXyBW3w5JvdRQcAwk93ZKbbswzCkFp2wndJfHdsMQ2JokWMbcpp7Jqkp9AvbxM6GzyA6xstN6MpThXXESEUWwZqjVyXccVkes26pviERpfbAc3A7xXBhNibnXXJ9WFwdG3NBrF5ZraFutB7DXoTTKgPSJSFVvhh1bREkinja6j9PR5FzDJ5mXicfkn2x2iekCy4xDrX13ZyNmDo8gzQ34XwjW38J5y93D");
 		});
 		use_clean_state([&]()
@@ -1625,22 +1627,22 @@ public:
 			TEST_BLOCK(std::bind(&generators::validator_enable_validator, std::placeholders::_1, std::placeholders::_2, 2, false, true, false), "0x03b804f31c92b018308f27f0aac83c5a11b079555ede703cf04e9ce72eb2ea86", 2);
 			TEST_BLOCK(&generators::depository_registration_full, "0x98674c75a62a81a46c2c80a0e09ec9667b3b274e9d576e481d21cc90cc813504", 3);
 			TEST_BLOCK(&generators::depository_account_registration_full_stage_1, "0x1d8f42ec4307ba8b3071f2d4b1a06a115f8bbbfcc301e26fed5bed2793f0c1e6", 4);
-			TEST_BLOCK(&generators::depository_account_registration_full_stage_2, "0xc3e66b41dcfd36fe21542d7012a2a8d112ac4df197d6e3f8a31a157e5a5f8fb4", 6);
-			TEST_BLOCK(&generators::depository_attestation_registration_full, "0x8410ca18da15b594ffdf8ae01304ce90a8a125b168c251c27ecadb232399624e", 9);
-			TEST_BLOCK(&generators::account_transfer_stage_1, "0x2f57337ed5310d16ccd91f9322293e8f46947e82a074ed8a719e87472b3face9", 10);
-			TEST_BLOCK(&generators::account_transfer_stage_2, "0xdd7e3add975f9074f154c2d1a43f338bf53b6b28f9a24c7e3d92f690dda0700d", 11);
-			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), users[2].wallet.get_address(), 0.05), "0x739679725fc0c340626f90ed124e05bc66d6a656a320bb3038f155990b04af89", 12);
-			TEST_BLOCK(std::bind(&generators::account_upgrade_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0xb48b77b024410172e7050ab4a64c969743461b768781c4080b42772f8fc9318e", 13);
-			TEST_BLOCK(std::bind(&generators::account_upgrade_stage_2, std::placeholders::_1, std::placeholders::_2, &contracts), "0x01740d2b5832fbf7b117bc86c0da8d87b3ea853ffaf4a54a98d02c5f7dcb75cf", 14);
-			TEST_BLOCK(std::bind(&generators::account_call, std::placeholders::_1, std::placeholders::_2, &contracts), "0xf085ce6fc94d904cb06928a4bb64211b783d6b0bc8a1f8f00c9a2c14ede84f66", 15);
-			TEST_BLOCK(&generators::account_transaction_rollup, "0xda0b4406b3d68ebaa635ad8911c186e5234ff119b3b324673beb3e66af3ad1c1", 16);
-			TEST_BLOCK(std::bind(&generators::validator_enable_validator, std::placeholders::_1, std::placeholders::_2, 2, false, false, true), "0x7fd7df395e603696195e3bf08044dc49edbffab02b941777dc95c232d1b1c57d", 17);
-			TEST_BLOCK(&generators::depository_migration, "0x3912b268efd4e9db82222e4f9b32f7d1a335f53b3d3318708fd6fddd0b2e49f5", 18);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_1, "0x4c9caba2fc5af010cb835df9a11ce1ba3b572eb9d4b1dbcf6e7dcb93eec93865", 20);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0xc827c174b3118d9efaf3e2906b0fe25f8e34c5912840002bf428f2b0aa328088", 23);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0x29a09ee44a989345eed92d0043061ae3d97ba58da6cd34aa732688621b3d7477", 26);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_4, "0x87fa449c1a2dfa95da20d62036fc0e51210a85502f97d79375a7ce8b882c1f9b", 29);
-			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2, false, true, false), "0x3cff1a8fbb333a36088ff5d69a6faeb86b1a79ef853b41abc427b27c7cce713b", 32);
+			TEST_BLOCK(&generators::depository_account_registration_full_stage_2, "0x1db04b87cb11a6b9a18809ede39aa087d0d9ad28d8d3b7df3406851c87a67e60", 6);
+			TEST_BLOCK(&generators::depository_attestation_registration_full, "0xf301166fdafc509549dbfa28a097db753273b088e597c43ac252e0c40bb8bc59", 9);
+			TEST_BLOCK(&generators::account_transfer_stage_1, "0x0d9309dd544d68a0d82e0dd7b961be7e84826692f326b3c8e21b1052088c63a0", 10);
+			TEST_BLOCK(&generators::account_transfer_stage_2, "0x23939db91cf148dde0e45c777d67a1d044b70f0e277f6c5bb4887b2f25f6c45d", 11);
+			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), users[2].wallet.get_address(), 0.05), "0x07825b5d65d288657d5ec8724da247efb0b7b8826f8dd9355f174faf88ed95f7", 12);
+			TEST_BLOCK(std::bind(&generators::account_upgrade_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0x8d30d266ebaea6ce5424564c71e6707dc0a562c14c843c7fa2f2db1d86013cb7", 13);
+			TEST_BLOCK(std::bind(&generators::account_upgrade_stage_2, std::placeholders::_1, std::placeholders::_2, &contracts), "0x28981198d4cdda4fcd00f66303684beccc38cd978011d9809cd4d9a197ca133a", 14);
+			TEST_BLOCK(std::bind(&generators::account_call, std::placeholders::_1, std::placeholders::_2, &contracts), "0x86cd4e2e27c6e5520ee44e3e898f725f66a2ed5585e6c72606a273562e0f8f07", 15);
+			TEST_BLOCK(&generators::account_transaction_rollup, "0xb0fb1f72280ab6f4fbf61ae814b76d4ff7f619dab33df9bed11dc5ae22cb0986", 16);
+			TEST_BLOCK(std::bind(&generators::validator_enable_validator, std::placeholders::_1, std::placeholders::_2, 2, false, false, true), "0x306e8af2d3564758e7fedf95636ad33b83b4d5fbb48ddbe8ce149c9492f5de18", 17);
+			TEST_BLOCK(&generators::depository_migration, "0x3e50a5584d639ff19050cb5949c049b9ac98747602dcc25da6c2ee1569249f9c", 18);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_1, "0x3ce971467904499cab6531340dd080316a37511d4bcb4cbcb125547f855d6e41", 20);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0x0f57d0d94dd10ee8091e0ec1fec32680d669b489990b362430228e442a9f140d", 23);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0xf939c7b603493166a37a144586b7d15c1c8201a490930f506af7a16e1e5021e9", 26);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_4, "0x907aebeee93efa6da255557e26eb118ab1fb0fcd5c9e46314cd4403f253182db", 29);
+			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2, false, true, false), "0x4d8640781af19c66e550c51fe7b638ac2df26ce01299441af26a4100efa43d02", 32);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else
@@ -1670,17 +1672,15 @@ public:
 		});
 	}
 	/* blockchain exclusively for testing depositories of specific networks (possibly non-zero balance accounts, valid regtest chain) */
-	static void blockchain_integration_coverage(const algorithm::asset_id& asset, const std::string_view& network_url, std::function<string()>&& new_account, std::function<void(const std::string_view&)>&& new_block, std::function<void(const std::string_view&, const std::string_view&, const decimal&)>&& new_transaction)
+	static void blockchain_integration_coverage(const algorithm::asset_id& asset, const unordered_map<string, string>& urls, uint64_t block_number, const decimal& deposit_value, const decimal& depository_fee, std::function<string()>&& new_account, std::function<void(const std::string_view&, bool)>&& new_block, std::function<void(const std::string_view&, const std::string_view&, const decimal&)>&& new_transaction)
 	{
 		use_clean_state([&]()
 		{
 			auto* term = console::get();
-			auto deposit_value = decimal(50);
-			auto depository_fee = decimal(0.5);
-			auto producers = vector<account>({ account(ledger::wallet::from_seed(), 0), account(ledger::wallet::from_seed(), 0) });
+			auto producers = vector<account>({ account(ledger::wallet::from_seed("000001"), 0), account(ledger::wallet::from_seed("000002"), 0) });
 			auto& [user1, user1_nonce] = producers[0];
 			auto& [user2, user2_nonce] = producers[1];
-			auto [user3, user3_nonce] = account(ledger::wallet::from_seed(), 0);
+			auto [user3, user3_nonce] = account(ledger::wallet::from_seed("000003"), 0);
 			auto* validator_adjustment = memory::init<transactions::validator_adjustment>();
 			validator_adjustment->asset = asset;
 			validator_adjustment->enable_block_production();
@@ -1720,17 +1720,26 @@ public:
 
 			std::mutex mutex;
 			std::condition_variable condition;
-			std::atomic<bool> transaction_happened = false;
+			std::atomic<int> transaction_status = 0;
 			auto receive_transaction = [&]()
 			{
-				term->write_line("awaiting transaction log confirmation (checking every 3 seconds)");
+				auto time = date_time().milliseconds();
+				term->write_line("awaiting transaction log confirmation (checking every 3 seconds for 60 seconds)");
 				std::unique_lock<std::mutex> unique(mutex);
 				server->trigger_node_activity(asset);
-				while (!transaction_happened)
-					condition.wait_for(unique, std::chrono::milliseconds(1000), [&]() { return transaction_happened.load(); });
-				transaction_happened = false;
+				while (transaction_status != 1)
+				{
+					condition.wait_for(unique, std::chrono::milliseconds(1000), [&]() { return transaction_status != 0; });
+					if (transaction_status == -1)
+					{
+						time = date_time().milliseconds();
+						transaction_status = 0;
+					}
+					VI_PANIC(date_time().milliseconds() - time <= 60000, "transaction log activity stalled for more than 60 seconds");
+				}
+				transaction_status = 0;
 			};
-			server->add_node(asset, network_url, 0);
+			server->add_multi_node(asset, unordered_map<string, string>(urls), 0);
 			server->add_transaction_callback("logging", [&](const algorithm::asset_id& asset, const oracle::chain_supervisor_options& options, oracle::transaction_logs&& logs) -> expects_lr<void>
 			{
 				auto transactions = vector<uptr<ledger::transaction>>();
@@ -1741,81 +1750,80 @@ public:
 					transaction->set_computed_proof(std::move(receipt));
 					transactions.push_back(transaction);
 				}
-				if (!transactions.empty())
-				{
+
+				bool log_acquired = !transactions.empty();
+				if (log_acquired)
 					new_block_from_list(nullptr, producers, std::move(transactions));
-					std::unique_lock<std::mutex> unique(mutex);
-					transaction_happened = true;
-					condition.notify_one();
-				}
+
+				std::unique_lock<std::mutex> unique(mutex);
+				transaction_status = log_acquired ? 1 : (transaction_status.load() <= 0 ? -1 : 1);
+				condition.notify_one();
 				return expectation::met;
 			});
-			server->scan_from_block_height(asset, 1);
-			server->startup();
+			server->scan_from_block_height(asset, block_number);
+			term->write_line("incoming transaction integration:");
+			term->fwrite_line(" - account required");
+
+			auto from_account = new_account();
+			depository_account = memory::init<transactions::depository_account>();
+			depository_account->asset = asset;
+			depository_account->set_routing_address(from_account);
+			depository_account->set_manager(user1.public_key_hash);
+			depository_account->sign(user3.secret_key, user3_nonce++, decimal::zero()).expect("pre-validation failed");
+			new_block_from_one(nullptr, producers, depository_account);
+
+			size_t deposits = 0;
+			auto context = ledger::transaction_context();
+			auto accounts = *context.get_witness_accounts_by_purpose(params->routing == oracle::routing_policy::account ? user1.public_key_hash : user3.public_key_hash, states::witness_account::account_type::depository, 0, 128);
+			term->fwrite_line(" - block reward required for account %s", from_account.c_str());
+			new_block(from_account, false);
+			for (auto& account : accounts)
 			{
-				term->write_line("incoming transaction integration:");
-				term->fwrite_line(" - account required");
-
-				auto from_account = new_account();
-				auto* depository_account = memory::init<transactions::depository_account>();
-				depository_account->asset = asset;
-				depository_account->set_routing_address(from_account);
-				depository_account->set_manager(user1.public_key_hash);
-				depository_account->sign(user3.secret_key, user3_nonce++, decimal::zero()).expect("pre-validation failed");
-				new_block_from_one(nullptr, producers, depository_account);
-
-				size_t deposits = 0;
-				auto context = ledger::transaction_context();
-				auto accounts = *context.get_witness_accounts_by_purpose(params->routing == oracle::routing_policy::account ? user1.public_key_hash : user3.public_key_hash, states::witness_account::account_type::depository, 0, 128);
-				term->fwrite_line(" - block reward required for account %s", from_account.c_str());
-				new_block(from_account);
-				for (auto& account : accounts)
+				if (account.manager == user1.public_key_hash)
 				{
-					if (account.manager == user1.public_key_hash)
+					for (auto& [type, to_account] : account.addresses)
 					{
-						for (auto& [type, to_account] : account.addresses)
-						{
-							term->fwrite_line(" - deposit %s into %s", deposit_value.to_string().c_str(), to_account.c_str());
-							new_transaction(from_account, to_account, deposit_value);
-							++deposits;
-						}
+						term->fwrite_line(" - deposit %s into %s", deposit_value.to_string().c_str(), to_account.c_str());
+						new_transaction(from_account, to_account, deposit_value);
+						++deposits;
 					}
 				}
-				VI_PANIC(deposits > 0, "deposit address generation failed");
-				new_block(from_account);
-				receive_transaction();
-
-				auto expected_balance = (deposit_value - depository_fee) * deposits;
-				auto balance = context.get_account_balance(asset, user3.public_key_hash).expect("balance mismatch").get_balance();
-				auto withdrawal_value = balance - depository_fee;
-				VI_PANIC(balance == expected_balance, "actual balance is expected to be %s but is %s", expected_balance.to_string().c_str(), balance.to_string().c_str());
-				term->write_line("outgoing transaction integration:");
-				term->fwrite_line(" - withdraw %s into %.*s", withdrawal_value.to_string().c_str(), (int)from_account.size(), from_account.data());
-
-				auto* depository_withdrawal = memory::init<transactions::depository_withdrawal>();
-				depository_withdrawal->asset = asset;
-				depository_withdrawal->set_manager(user1.public_key_hash);
-				depository_withdrawal->set_to(from_account, withdrawal_value);
-				depository_withdrawal->sign(user3.secret_key, user3_nonce++, decimal::zero()).expect("pre-validation failed");
-				new_block_from_one(nullptr, producers, depository_withdrawal);
-
-				auto chain = storages::chainstate();
-				auto confirmation_block = chain.get_latest_block();
-				VI_PANIC(confirmation_block && !confirmation_block->transactions.empty(), "blocks with withdrawal confirmation were not found");
-
-				auto& confirmation = confirmation_block->transactions.front();
-				VI_PANIC(confirmation.transaction->as_type() == transactions::depository_withdrawal_finalization::as_instance_type(), "no withdrawal confirmation");
-
-				auto* confirmation_event = confirmation.receipt.find_event<transactions::depository_withdrawal_finalization>();
-				auto* confirmation_transaction = (transactions::depository_withdrawal_finalization*)*confirmation.transaction;
-				VI_PANIC(confirmation_transaction->proof && !confirmation_event, "withdrawal confirmation failed: %s", confirmation_event ? (confirmation_event->empty() ? "unknown error" : confirmation_event->front().as_blob().c_str()) : confirmation_transaction->proof.what().c_str());
-				term->fwrite_line(" - block required for transaction %s", confirmation_transaction->proof->hashdata.c_str());
-				new_block(from_account);
-				receive_transaction();
-
-				balance = context.get_account_balance(asset, user3.public_key_hash).expect("balance mismatch").get_balance();
-				VI_PANIC(balance.is_zero(), "actual balance is expected to be zero but is %s", balance.to_string().c_str());
 			}
+			VI_PANIC(deposits > 0, "deposit address generation failed");
+			new_block(from_account, true);
+			server->startup();
+			receive_transaction();
+
+			auto expected_balance = (deposit_value - depository_fee) * deposits;
+			auto balance = context.get_account_balance(asset, user3.public_key_hash).expect("balance mismatch").get_balance();
+			auto withdrawal_value = balance - depository_fee;
+			VI_PANIC(balance == expected_balance, "actual balance is expected to be %s but is %s", expected_balance.to_string().c_str(), balance.to_string().c_str());
+			term->write_line("outgoing transaction integration:");
+			term->fwrite_line(" - withdraw %s into %.*s", withdrawal_value.to_string().c_str(), (int)from_account.size(), from_account.data());
+
+			auto* depository_withdrawal = memory::init<transactions::depository_withdrawal>();
+			depository_withdrawal->asset = asset;
+			depository_withdrawal->set_manager(user1.public_key_hash);
+			depository_withdrawal->set_to(from_account, withdrawal_value);
+			depository_withdrawal->sign(user3.secret_key, user3_nonce++, decimal::zero()).expect("pre-validation failed");
+			new_block_from_one(nullptr, producers, depository_withdrawal);
+
+			auto chain = storages::chainstate();
+			auto confirmation_block = chain.get_latest_block();
+			VI_PANIC(confirmation_block && !confirmation_block->transactions.empty(), "blocks with withdrawal confirmation were not found");
+
+			auto& confirmation = confirmation_block->transactions.front();
+			VI_PANIC(confirmation.transaction->as_type() == transactions::depository_withdrawal_finalization::as_instance_type(), "no withdrawal confirmation");
+
+			auto* confirmation_event = confirmation.receipt.find_event<transactions::depository_withdrawal_finalization>();
+			auto* confirmation_transaction = (transactions::depository_withdrawal_finalization*)*confirmation.transaction;
+			VI_PANIC(confirmation_transaction->proof && !confirmation_event, "withdrawal confirmation failed: %s", confirmation_event ? (confirmation_event->empty() ? "unknown error" : confirmation_event->front().as_blob().c_str()) : confirmation_transaction->proof.what().c_str());
+			term->fwrite_line(" - block required for transaction %s", confirmation_transaction->proof->hashdata.c_str());
+			new_block(from_account, true);
+			receive_transaction();
+
+			balance = context.get_account_balance(asset, user3.public_key_hash).or_else(states::account_balance(user3.public_key_hash, asset, nullptr)).get_balance();
+			VI_PANIC(balance.is_zero(), "actual balance is expected to be zero but is %s", balance.to_string().c_str());
 			server->add_transaction_callback("logging", nullptr);
 			server->shutdown();
 		});
@@ -3009,21 +3017,50 @@ public:
 
 		auto path = os::path::resolve(args.get("test-file"), *os::directory::get_working(), true).expect("must provide a \"test-file\" with command list");
 		auto list = uptr(*schema::from_json(*os::file::read_as_string(path)));
-		auto execute = [&](const std::string_view& url, const std::string_view& request_content, const std::string_view& path) -> string
+		auto execute = [&](const std::string_view& url, schema* requests, const std::string_view& path, std::function<void(string&)>&& replacer) -> string
 		{
-			auto escaped_request_content = string(request_content);
-			auto response_content = string();
+			if (!requests || requests->empty())
+				return string();
+
+			uptr<schema> request = requests->size() > 1 ? var::set::array() : var::set::object();
+			if (requests->size() > 1)
+			{
+				size_t id = 0;
+				for (auto& subrequest : requests->get_childs())
+				{
+					auto* data = request->push(var::set::object());
+					data->set("jsonrpc", var::string("2.0"));
+					data->set("method", var::string(subrequest->key));
+					data->set("params", subrequest->copy());
+					data->set("id", var::integer(id++));
+				}
+			}
+			else
+			{
+				auto* subrequest = requests->get_childs().front();
+				request->set("jsonrpc", var::string("2.0"));
+				request->set("method", var::string(subrequest->key));
+				request->set("params", subrequest->copy());
+				request->set("id", var::integer(1));
+			}
+
+			auto escaped_request_content = schema::to_json(*request);
+			if (replacer)
+				replacer(escaped_request_content);
 			stringify::replace(escaped_request_content, "\"", "\\\"");
 
+			auto response_content = string();
 			auto command = stringify::text("curl -X POST -H \"Content-Type: application/json\" -d \"%s\" -s %.*s", escaped_request_content.c_str(), (int)url.size(), url.data());
 			term->fwrite_line("> %s", command.c_str());
 
 			std::this_thread::sleep_for(std::chrono::milliseconds(3000));
-			os::process::execute(command, file_mode::read_only, [&response_content](const std::string_view& buffer)
+			int exit_code = os::process::execute(command, file_mode::read_only, [&response_content](const std::string_view& buffer)
 			{
 				response_content.append(buffer);
 				return true;
 			}).expect("command failed");
+			VI_PANIC(exit_code == 0, "command exit code is non-zero");
+
 			auto response = uptr(schema::from_json(response_content).expect("parsing failed"));
 			return path.empty() ? response->value.get_blob() : response->fetch_var(path).get_blob();
 		};
@@ -3033,25 +3070,72 @@ public:
 			if (blockchain.empty() || blockchain.front() == '#')
 				continue;
 
-			auto url = node->get_var("url").get_blob();
-			tests::blockchain_integration_coverage(algorithm::asset::id_of(blockchain), url, [&]()
+			auto deposit_value = node->get_var("deposit_value").get_decimal();
+			auto depository_fee = node->get_var("depository_fee").get_decimal();
+			if (!deposit_value.is_positive())
+				deposit_value = 50;
+			if (!depository_fee.is_positive())
+				depository_fee = 0.5;
+
+			unordered_map<string, string> urls;
+			auto url_bindings = node->get("url");
+			if (url_bindings != nullptr && !url_bindings->value.is(var_type::string))
 			{
-				return execute(url, schema::to_json(node->fetch("account.0")), node->fetch_var("account.1").get_blob());
-			}, [&](const std::string_view& from_account)
+				for (auto& protocol : url_bindings->get_childs())
+					urls[protocol->key] = protocol->value.get_blob();
+			}
+			else if (url_bindings != nullptr)
+				urls["auto"] = url_bindings->value.get_blob();
+
+			auto auto_url = urls.find("auto"), jrpc_url = urls.find("jrpc");
+			auto url = auto_url == urls.end() ? (jrpc_url == urls.end() ? string() : jrpc_url->second) : auto_url->second;
+			auto block_number = node->has("block_number") ? node->get_var("block_number").get_integer() : 1;
+			tests::blockchain_integration_coverage(algorithm::asset::id_of(blockchain), urls, block_number, deposit_value, depository_fee, [&]()
 			{
-				auto content = schema::to_json(node->get("block"));
-				stringify::replace(content, "$from", from_account);
-				execute(url, content, std::string_view());
+				auto* account = node->get("account");
+				if (!account || !account->value.is(var_type::string))
+					return execute(url, node->fetch("account.0"), node->fetch_var("account.1").get_blob(), nullptr);
+
+				return account->value.get_blob();
+			}, [&](const std::string_view& from_account, bool confirmation)
+			{
+				auto* reward_block = node->get("block");
+				auto* confirmation_block = node->get("confirmation_block");
+				auto* block = confirmation ? (confirmation_block ? confirmation_block : reward_block) : reward_block;
+				if (!block || !block->value.is(var_type::string) || block->value.get_blob() != "#prompt")
+				{
+					execute(url, block, std::string_view(), [&](string& content)
+					{
+						stringify::replace(content, "$from", from_account);
+					});
+				}
+				else if (confirmation)
+				{
+					term->fwrite_line("block with required transactions exists? (press enter if so)");
+					term->read(128);
+				}
 			}, [&](const std::string_view& from_account, const std::string_view& to_account, const decimal& value)
 			{
+				auto* transaction = node->get("transaction");
 				auto eth_chain = oracle::server_node::get()->get_chain(algorithm::asset::id_of("ETH"));
 				auto eth_value = "0x" + eth_chain->to_baseline_value(value).to_string(16);
-				auto content = schema::to_json(node->get("transaction"));
-				stringify::replace(content, "$from", from_account);
-				stringify::replace(content, "$to", to_account);
-				stringify::replace(content, "$value", value.to_string());
-				stringify::replace(content, "$eth_value", value.to_string());
-				execute(url, content, std::string_view());
+				if (!transaction || !transaction->value.is(var_type::string) || transaction->value.get_blob() != "#prompt")
+				{
+					execute(url, transaction, std::string_view(), [&](string& content)
+					{
+						stringify::replace(content, "$from", from_account);
+						stringify::replace(content, "$to", to_account);
+						stringify::replace(content, "$value", value.to_string());
+						stringify::replace(content, "$eth_value", eth_value);
+					});
+				}
+				else
+				{
+					term->fwrite_line(
+						"transaction with required params exists? (press enter if so)\n"
+						" - account %.*s sends %s (%s) to account %.*s", (int)from_account.size(), from_account.data(), value.to_string().c_str(), eth_value.c_str(), (int)to_account.size(), to_account.data());
+					term->read(128);
+				}
 			});
 		}
 

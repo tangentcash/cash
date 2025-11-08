@@ -397,58 +397,6 @@ namespace tangent
 
 			coreturn coawait(implementation->link_transaction(block_height, block_hash, transaction_data));
 		}
-		expects_promise_rt<computed_fee> server_node::estimate_fee(const algorithm::asset_id& asset, const std::string_view& from_address, const vector<value_transfer>& to, const fee_supervisor_options& options)
-		{
-			if (!algorithm::asset::is_valid(asset) || !options.max_blocks || !options.max_transactions)
-				coreturn expects_rt<computed_fee>(remote_exception("asset not found"));
-
-			if (stringify::is_empty_or_whitespace(from_address))
-				coreturn expects_rt<computed_fee>(remote_exception("from address not found"));
-
-			if (!has_node(asset))
-				coreturn expects_rt<computed_fee>(remote_exception("chain not active"));
-
-			auto* implementation = get_chain(asset);
-			if (!implementation)
-				coreturn expects_rt<computed_fee>(remote_exception("chain not found"));
-
-			auto normalized_to = normalize_value(implementation, to);
-			if (normalized_to.empty())
-				coreturn expects_rt<computed_fee>(remote_exception("to address not found"));
-
-			auto blockchain = algorithm::asset::blockchain_of(asset);
-			for (auto& next : normalized_to)
-			{
-				if (!next.is_valid())
-					coreturn expects_rt<computed_fee>(remote_exception("receiver address not valid"));
-
-				if (algorithm::asset::blockchain_of(next.asset) != blockchain)
-					coreturn expects_rt<computed_fee>(remote_exception("receiver asset not valid"));
-
-				if (!algorithm::asset::token_of(next.asset).empty() && implementation->get_chainparams().tokenization != token_policy::none)
-					coreturn expects_rt<computed_fee>(remote_exception("receiver asset not valid"));
-			}
-
-			if (!implementation->get_chainparams().supports_bulk_transfer && normalized_to.size() > 1)
-				coreturn expects_rt<computed_fee>(remote_exception("only one receiver allowed"));
-
-			int64_t time = ::time(nullptr);
-			string fee_key = stringify::text("%s:%i", algorithm::asset::blockchain_of(asset).c_str(), normalized_to.size());
-			{
-				umutex<std::recursive_mutex> unique(control_sys.sync);
-				auto it = fees.find(fee_key);
-				if (it != fees.end() && it->second.second >= time)
-					coreturn expects_rt<computed_fee>(it->second.first);
-			}
-
-			auto estimate = coawait(implementation->estimate_fee(from_address, normalized_to, options));
-			if (!estimate)
-				coreturn expects_rt<computed_fee>(std::move(estimate.error()));
-
-			umutex<std::recursive_mutex> unique(control_sys.sync);
-			fees[fee_key] = std::make_pair(*estimate, time + (int64_t)protocol::now().user.oracle.fee_estimation_seconds);
-			coreturn estimate;
-		}
 		expects_promise_rt<decimal> server_node::calculate_balance(const algorithm::asset_id& asset, const wallet_link& link)
 		{
 			if (!algorithm::asset::is_valid(asset))
@@ -540,19 +488,8 @@ namespace tangent
 			if (!implementation->get_chainparams().supports_bulk_transfer && normalized_to.size() > 1)
 				coreturn expects_rt<prepared_transaction>(remote_exception("only one receiver allowed"));
 
-			computed_fee normalized_fee = computed_fee();
-			auto estimated_fee = coawait(estimate_fee(asset, normalized_from_link->address, normalized_to));
-			if (!estimated_fee)
-				coreturn expects_rt<prepared_transaction>(std::move(estimated_fee.error()));
-
-			normalized_fee = normalize_value(implementation, *estimated_fee);
-			decimal fee_value = normalized_fee.get_max_fee();
-			if (!fee_value.is_positive())
-				coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee not valid: %s", fee_value.to_string().c_str())));
-			else if (max_fee.is_positive() && fee_value > max_fee)
-				coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee is higher than limit: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
-
-			coreturn coawait(implementation->prepare_transaction(*normalized_from_link, normalized_to, normalized_fee));
+			auto normalized_max_fee = normalize_value(implementation, max_fee);
+			coreturn coawait(implementation->prepare_transaction(*normalized_from_link, normalized_to, normalized_max_fee));
 		}
 		expects_lr<finalized_transaction> server_node::finalize_transaction(const algorithm::asset_id& asset, prepared_transaction&& prepared)
 		{

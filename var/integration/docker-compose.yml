@@ -1,14 +1,78 @@
 services:
   cardano:
-    image: cardanofoundation/cardano-rosetta:2.5.0-preview
+    #prompt transaction: DEPOSIT https://docs.cardano.org/cardano-testnets/tools/faucet
+    image: cardanofoundation/cardano-rosetta-java:latest
     container_name: cardano-regtest
     ports:
-      - "8001:8080"
-    command: [
-      "--network",
-      "regtest"
-    ]
-    shm_size: 2g
+      - "8001:8082"
+    environment:
+      - API_SPRING_PROFILES_ACTIVE=online
+      - LOG=ERROR
+      - NETWORK=preprod
+      - PROTOCOL_MAGIC=1
+      - SYNC=true
+      - VERIFICATION=true
+      - MITHRIL_SYNC=true
+      - SNAPSHOT_DIGEST=latest
+      - AGGREGATOR_ENDPOINT=
+      - GENESIS_VERIFICATION_KEY=
+      - ANCILLARY_VERIFICATION_KEY=
+      - DB_NAME=rosetta-java
+      - DB_USER=rosetta_db_admin
+      - DB_SECRET=weakpwd#123_d
+      - DB_HOST=localhost
+      - DB_PORT=5432
+      - CARDANO_NODE_HOST=localhost
+      - CARDANO_NODE_PORT=3001
+      - CARDANO_NODE_VERSION=10.5.1
+      - CARDANO_NODE_SUBMIT_HOST=localhost
+      - NODE_SUBMIT_API_PORT=8090
+      - CARDANO_NODE_SOCKET_PATH=/node/node.socket
+      - API_PORT=8082
+      - ROSETTA_VERSION=1.4.13
+      - TOPOLOGY_FILEPATH=/config/topology.json
+      - GENESIS_SHELLEY_PATH=/config/shelley-genesis.json
+      - GENESIS_BYRON_PATH=/config/byron-genesis.json
+      - GENESIS_ALONZO_PATH=/config/alonzo-genesis.json
+      - GENESIS_CONWAY_PATH=/config/conway-genesis.json
+      - PRINT_EXCEPTION=true
+      - YACI_SPRING_PROFILES=postgres,n2c-socket
+      - REMOVE_SPENT_UTXOS=true
+      - REMOVE_SPENT_UTXOS_LAST_BLOCKS_GRACE_COUNT=129600
+      - BLOCK_TRANSACTION_API_TIMEOUT_SECS=5
+      - REMOVE_SPENT_UTXOS_BATCH_SIZE=3000
+      - MEMPOOL_ENABLED=false
+      - INITIAL_BALANCE_CALCULATION_BLOCK=0
+      - YACI_HTTP_BASE_URL=http://localhost:9095/api/v1
+      - YACI_INDEXER_PORT=9095
+      - HTTP_CONNECT_TIMEOUT_SECONDS=5
+      - HTTP_REQUEST_TIMEOUT_SECONDS=15
+      - API_DB_SHOW_SQL=false
+      - API_DB_POOL_MAX_LIFETIME_MS=2000000
+      - API_DB_POOL_CONNECTION_TIMEOUT_MS=100000
+      - API_DB_KEEP_ALIVE_MS=60000
+      - API_DB_LEAK_CONNECTIONS_WARNING_MS=60000
+      - API_DB_MONITOR_PERFORMANCE=false
+      - SYNC_GRACE_SLOTS_COUNT=100
+      - API_DB_POOL_MIN_COUNT=12
+      - API_DB_POOL_MAX_COUNT=12
+      - DB_POSTGRES_MAX_CONNECTIONS=120
+      - DB_POSTGRES_SHARED_BUFFERS=1GB
+      - DB_POSTGRES_EFFECTIVE_CACHE_SIZE=2GB
+      - DB_POSTGRES_WORK_MEM=16MB
+      - DB_POSTGRES_MAINTENANCE_WORK_MEM=128MB
+      - DB_POSTGRES_WAL_BUFFERS=16MB
+      - DB_POSTGRES_CHECKPOINT_COMPLETION_TARGET=0.7
+      - DB_POSTGRES_RANDOM_PAGE_COST=3.0
+      - DB_POSTGRES_EFFECTIVE_IO_CONCURRENCY=1
+      - DB_POSTGRES_PARALLEL_TUPLE_COST=0.1
+      - DB_POSTGRES_PARALLEL_SETUP_COST=1000
+      - DB_POSTGRES_MAX_PARALLEL_WORKERS_PER_GATHER=2
+      - DB_POSTGRES_MAX_PARALLEL_WORKERS=4
+      - DB_POSTGRES_SEQ_PAGE_COST=1.0
+      - DB_POSTGRES_JIT=off
+      - DB_POSTGRES_BGWRITER_LRU_MAXPAGES=50
+      - DB_POSTGRES_BGWRITER_DELAY=500ms
     restart: unless-stopped
   bitcoin:
     image: ruimarinho/bitcoin-core:latest
@@ -63,22 +127,28 @@ services:
     ]
     restart: unless-stopped
   bitcoin-sv:
-    image: bitcoinsv/bitcoin-sv:1.0.7
+    image: bitcoinsv/bitcoin-sv:latest
     container_name: bitcoin-sv-regtest
     ports:
       - "8005:8332"
     command: |
       bitcoind
+      -printtoconsole
+      -server
       -regtest=1
-      -rpcuser=regtestuser
-      -rpcpassword=regtestpass
+      -txindex
+      -rpcbind=0.0.0.0
       -rpcallowip=0.0.0.0/0
-      -server=1
-      -daemon=1
-      -txindex=1
-      -zmqpubrawblock=tcp://0.0.0.0:28332
-      -zmqpubrawtx=tcp://0.0.0.0:28333
+      -rpcuser=admin
+      -rpcpassword=pass
+      -rpcport=8332
+      -excessiveblocksize=2000000
+      -maxstackmemoryusageconsensus=100000000
+      -minminingtxfee=0
+      -maxmempool=500
     restart: unless-stopped
+    mem_limit: 4g
+    cpus: 2
   dash:
     image: uphold/dash-core:latest
     container_name: dash-regtest
@@ -110,7 +180,10 @@ services:
       "-rpcallowip=0.0.0.0/0",
       "-rpcuser=admin",
       "-rpcpassword=pass",
-      "-rpcport=8332"
+      "-rpcport=8332",
+      "-dandelion=0",
+      "-maxtxfee=10",
+      "-walletrbf=1"
     ]
     restart: unless-stopped
   dogecoin:
@@ -131,7 +204,7 @@ services:
     ]
     restart: unless-stopped
   litecoin:
-    image: uphold/bitcoin-abc:latest
+    image: uphold/litecoin-core:latest
     container_name: litecoin-regtest
     ports:
       - "8009:8332"
@@ -148,21 +221,21 @@ services:
     ]
     restart: unless-stopped
   ecash:
-    image: uphold/bitcoin-abc
-    container_name: ecash-abc-regtest
+    image: bitcoinabc/bitcoin-abc:latest
+    container_name: ecash-regtest
     ports:
       - "8010:8332"
-    command: [
-      "-printtoconsole",
-      "-server",
-      "-regtest=1",
-      "-txindex",
-      "-rpcbind=0.0.0.0",
-      "-rpcallowip=0.0.0.0/0",
-      "-rpcuser=admin",
-      "-rpcpassword=pass",
-      "-rpcport=8332"
-    ]
+    command: |
+      bitcoind
+      -printtoconsole
+      -server
+      -regtest=1
+      -txindex
+      -rpcbind=0.0.0.0
+      -rpcallowip=0.0.0.0/0
+      -rpcuser=admin
+      -rpcpassword=pass
+      -rpcport=8332
     restart: unless-stopped
   zcash:
     image: electriccoinco/zcashd:latest
@@ -178,7 +251,8 @@ services:
       "-rpcallowip=0.0.0.0/0",
       "-rpcuser=admin",
       "-rpcpassword=pass",
-      "-rpcport=8332"
+      "-rpcport=8332",
+      "-i-am-aware-zcashd-will-be-replaced-by-zebrad-and-zallet-in-2025=1"
     ]
     restart: unless-stopped
   ethereum:
@@ -189,6 +263,7 @@ services:
     command: --dev --dev.period 0 --http --http.addr 0.0.0.0 --http.port 8545 --http.api admin,debug,miner,eth,net,web3,personal --ws --ws.addr 0.0.0.0 --ws.port 8546 --ws.api admin,debug,miner,eth,net,web3,personal --mine
     restart: unless-stopped
   solana:
+    #prompt transaction: RUN docker exec solana-regtest solana transfer D94sR5vDWoXPgt6siEaLxRucgs2sjYk9Wb82oTNRJ5Kk 50 --allow-unfunded-recipient
     image: tchambard/solana-test-validator:latest
     container_name: solana-regtest
     ports:
@@ -197,33 +272,25 @@ services:
       sh -c "solana-test-validator --ledger ~/.config/solana/.ledger -r --bind-address 0.0.0.0 --rpc-port 8899 && light-test-validator-docker"
     restart: unless-stopped
   tron:
+    #prompt transaction: RUN yarn && node utils/tron.js
     image: tronbox/tre
     container_name: tron-regtest
     ports:
       - "8027:8545"
       - "8028:18190"
+      - "8029:9090"
+    environment:
+      - seed=ushwe63hgeWUS
     restart: unless-stopped
-  ripple:
-    image: ulamlabs/ripple-testnet:latest
-    container_name: ripple-regtest
-    ports:
-      - "8029:5005"
-    restart: unless-stopped
-  stellar:
-    image: stellar/quickstart:testing
-    container_name: stellar-regtest
-    ports:
-      - "8030:8000"
-    command: [
-      "--local",
-      "--enable-soroban-rpc"
-    ]
-    restart: unless-stopped
+  #ripple:
+    #prompt transaction: RUN yarn && node utils/ripple.js
+  #stallar:
+    #prompt transaction: RUN yarn && node utils/stellar.js
   monero:
     image: ghcr.io/sethforprivacy/simple-monerod:latest
     container_name: monero-regtest
     ports:
-      - "8031:18081"
+      - "8032:18081"
     command: [
       "--confirm-external-bind",
       "--rpc-bind-ip=0.0.0.0",

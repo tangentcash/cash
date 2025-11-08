@@ -31,9 +31,8 @@ namespace tangent
 				tron(const algorithm::asset_id& new_asset) noexcept;
 				virtual ~tron() override = default;
 				virtual expects_promise_rt<void> broadcast_transaction(const finalized_transaction& finalized) override;
-				virtual expects_promise_rt<computed_fee> estimate_fee(const std::string_view& from_address, const vector<value_transfer>& to, const fee_supervisor_options& options) override;
 				virtual expects_promise_rt<decimal> calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link) override;
-				virtual expects_promise_rt<prepared_transaction> prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const computed_fee& fee) override;
+				virtual expects_promise_rt<prepared_transaction> prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const decimal& max_fee) override;
 				virtual expects_lr<finalized_transaction> finalize_transaction(oracle::prepared_transaction&& prepared) override;
 				virtual expects_lr<void> verify_node_compatibility(server_relay* node) override;
 				virtual const btc_chainparams_* get_chain() override;

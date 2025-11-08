@@ -46,7 +46,6 @@ namespace tangent
 			unordered_set<string> connections;
 			unordered_map<string, invocation_callback> registrations;
 			unordered_map<string, transaction_callback> callbacks;
-			unordered_map<string, std::pair<computed_fee, int64_t>> fees;
 			unordered_map<string, vector<uptr<server_relay>>> nodes;
 			unordered_map<string, uptr<relay_backend>> chains;
 			unordered_map<string, uptr<schema>> specifications;
@@ -63,7 +62,6 @@ namespace tangent
 			expects_promise_rt<schema*> get_block_transactions(const algorithm::asset_id& asset, uint64_t block_height, string* block_hash);
 			expects_promise_rt<transaction_logs> link_transactions(const algorithm::asset_id& asset, chain_supervisor_options* options);
 			expects_promise_rt<computed_transaction> link_transaction(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, schema* transaction_data);
-			expects_promise_rt<computed_fee> estimate_fee(const algorithm::asset_id& asset, const std::string_view& from_address, const vector<value_transfer>& to, const fee_supervisor_options& options = fee_supervisor_options());
 			expects_promise_rt<decimal> calculate_balance(const algorithm::asset_id& asset, const wallet_link& link);
 			expects_promise_rt<void> broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, const finalized_transaction& finalized);
 			expects_promise_rt<prepared_transaction> prepare_transaction(const algorithm::asset_id& asset, const wallet_link& from_link, const vector<value_transfer>& to, const decimal& max_fee);

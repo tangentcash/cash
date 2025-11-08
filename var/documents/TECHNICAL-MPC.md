@@ -44,8 +44,8 @@ let key_bits = Math.ceil(Math.max(min_bits, Math.min(max_bits, 1 + additions + s
 - **k₁₋ₙ**: Participant nonce scalar array of n elements (scheme-specific nonce generation)
 - **k₁₋ᵤ**: Participant nonce scalar array of u elements
 - **d₁₋ₙ**: Participant private key scalar array of n elements
-- **eₚ**: Paillier encryption function (operations on the result of eₚ are homomorphic)
-- **dₚ**: Paillier decryption function (operations on the result of dₚ are classic)
+- **eₚ**: Paillier encryption function (homomorphic operations on the result of eₚ are non-modulo based)
+- **dₚ**: Paillier decryption function (operations on the result of dₚ are following standard modulo reduction)
 
 ## secp256k1-schnorr
 ```markdown

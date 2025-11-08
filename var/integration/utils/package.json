@@ -1,0 +1,8 @@
+{
+  "dependencies": {
+    "cross-fetch": "^4.1.0",
+    "stellar-sdk": "^10.0.1",
+    "tronweb": "^6.0.2",
+    "xrpl": "^4.4.2"
+  }
+}
