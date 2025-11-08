@@ -193,7 +193,7 @@ public:
 			varying<token_storage> token;
 			mapping<address, uint256> balances;
 
-			token_storage construct(instrset::rwptr@, const string&in symbol, const string&in name, const address&in admin, const uint256&in value)
+			token_storage construct(pmut@, const string&in symbol, const string&in name, const address&in admin, const uint256&in value)
 			{
 				token_storage new_token;
 				new_token.deployer = tx::from();
@@ -208,7 +208,7 @@ public:
 				balances.insert_if(value > 0, token.ref.account, value);
 				return token.ref;
 			}
-			token_transfer transfer(instrset::rwptr@, const address&in to, const uint256&in value)
+			token_transfer transfer(pmut@, const address&in to, const uint256&in value)
 			{
 				address from = tx::from();
 				uint256 input = balance_of(null, from);
@@ -225,7 +225,7 @@ public:
 				event.value = value;
 				return event;
 			}
-			uint256 mint(instrset::rwptr@, const uint256&in value)
+			uint256 mint(pmut@, const uint256&in value)
 			{
 				require(token.ref.account == tx::from(), "illegal operation - operation not permitted");
 				uint256 output = balance_of(null, token.ref.account);
@@ -241,7 +241,7 @@ public:
 				balances.insert_if(to_delta > 0, token.ref.account, to_delta);
 				return to_delta;
 			}
-			uint256 burn(instrset::rwptr@, const uint256&in value)
+			uint256 burn(pmut@, const uint256&in value)
 			{
 				require(token.ref.account == tx::from(), "illegal operation - operation not permitted");
 				uint256 output = balance_of(null, token.ref.account);
@@ -257,24 +257,24 @@ public:
 				balances.insert_if(to_delta > 0, token.ref.account, to_delta);
 				return to_delta;
 			}
-			uint256 balance_of(instrset::rptr@, const address&in account)
+			uint256 balance_of(pconst@, const address&in account)
 			{
 				return balances.has(account) ? balances[account] : 0;
 			}
-			token_storage info(instrset::rptr@)
+			token_storage info(pconst@)
 			{
 				return token.ref;
 			}));
 			std::string_view bridge_program = VI_STRINGIFY((
 			varying<address> token_account;
 
-			void construct(instrset::rwptr@, const address&in new_token_account)
+			void construct(pmut@, const address&in new_token_account)
 			{
 				token_account = new_token_account;
 			}
-			uint256 balance_of_test_token(instrset::rptr@)
+			uint256 balance_of_test_token(pconst@)
 			{
-				return token_account.ref.call<uint256>("uint256 balance_of(instrset::rptr@, const address&in)", tx::from());
+				return token_account.ref.call<uint256>("uint256 balance_of(pconst@, const address&in)", tx::from());
 			}));
 
 			auto* upgrade_ethereum1 = memory::init<transactions::upgrade>();
@@ -1632,17 +1632,17 @@ public:
 			TEST_BLOCK(&generators::account_transfer_stage_1, "0x0d9309dd544d68a0d82e0dd7b961be7e84826692f326b3c8e21b1052088c63a0", 10);
 			TEST_BLOCK(&generators::account_transfer_stage_2, "0x23939db91cf148dde0e45c777d67a1d044b70f0e277f6c5bb4887b2f25f6c45d", 11);
 			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), users[2].wallet.get_address(), 0.05), "0x07825b5d65d288657d5ec8724da247efb0b7b8826f8dd9355f174faf88ed95f7", 12);
-			TEST_BLOCK(std::bind(&generators::account_upgrade_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0x8d30d266ebaea6ce5424564c71e6707dc0a562c14c843c7fa2f2db1d86013cb7", 13);
-			TEST_BLOCK(std::bind(&generators::account_upgrade_stage_2, std::placeholders::_1, std::placeholders::_2, &contracts), "0x28981198d4cdda4fcd00f66303684beccc38cd978011d9809cd4d9a197ca133a", 14);
-			TEST_BLOCK(std::bind(&generators::account_call, std::placeholders::_1, std::placeholders::_2, &contracts), "0x86cd4e2e27c6e5520ee44e3e898f725f66a2ed5585e6c72606a273562e0f8f07", 15);
-			TEST_BLOCK(&generators::account_transaction_rollup, "0xb0fb1f72280ab6f4fbf61ae814b76d4ff7f619dab33df9bed11dc5ae22cb0986", 16);
-			TEST_BLOCK(std::bind(&generators::validator_enable_validator, std::placeholders::_1, std::placeholders::_2, 2, false, false, true), "0x306e8af2d3564758e7fedf95636ad33b83b4d5fbb48ddbe8ce149c9492f5de18", 17);
-			TEST_BLOCK(&generators::depository_migration, "0x3e50a5584d639ff19050cb5949c049b9ac98747602dcc25da6c2ee1569249f9c", 18);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_1, "0x3ce971467904499cab6531340dd080316a37511d4bcb4cbcb125547f855d6e41", 20);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0x0f57d0d94dd10ee8091e0ec1fec32680d669b489990b362430228e442a9f140d", 23);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0xf939c7b603493166a37a144586b7d15c1c8201a490930f506af7a16e1e5021e9", 26);
-			TEST_BLOCK(&generators::depository_withdrawal_stage_4, "0x907aebeee93efa6da255557e26eb118ab1fb0fcd5c9e46314cd4403f253182db", 29);
-			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2, false, true, false), "0x4d8640781af19c66e550c51fe7b638ac2df26ce01299441af26a4100efa43d02", 32);
+			TEST_BLOCK(std::bind(&generators::account_upgrade_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0xd3ed9f8b7fa3c4c99c80d121b0e54b06d335cbd4605d3d0c8d92a9c97f6ea507", 13);
+			TEST_BLOCK(std::bind(&generators::account_upgrade_stage_2, std::placeholders::_1, std::placeholders::_2, &contracts), "0x85a9f64df53f2844401c02753b1153fa909ce03302e82e7df6ce6394fb9a546a", 14);
+			TEST_BLOCK(std::bind(&generators::account_call, std::placeholders::_1, std::placeholders::_2, &contracts), "0x77bf4fde05317fcee946ae68b8aada51d52ff15fcd619a480ba01984da866654", 15);
+			TEST_BLOCK(&generators::account_transaction_rollup, "0x1afc48d025c58f25de596b3dfc591aa4984aa767f3efdfe102bf931ed98dc407", 16);
+			TEST_BLOCK(std::bind(&generators::validator_enable_validator, std::placeholders::_1, std::placeholders::_2, 2, false, false, true), "0x3074bf062846e4cbb87394b152c1873ede84e121e716007bb9f0ed75a18fc6a3", 17);
+			TEST_BLOCK(&generators::depository_migration, "0xdbc300a4a716908279c7231dbbb5b0db72962d22aedd45f9b53ed1fc4cead0a8", 18);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_1, "0x73258bf7b4bbfc4281af2ba124c5908d7446b98b7acd066ac48d7c203edf37fb", 20);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_2, "0x851947ae0d7508c0f2eab7926828350966d5c66af4ab2eb6219a1cfc0d63d26b", 23);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_3, "0x4573cea57198052e9faa6f2bc03daba671a4d924aa7490b2aabc935168c623a9", 26);
+			TEST_BLOCK(&generators::depository_withdrawal_stage_4, "0xb58eac414734f22d029a745bcc28f05d63770000f4487e9b44f417f9a6ee96f8", 29);
+			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2, false, true, false), "0xe93dc16ef59101406391d1b3c6090c6ec9b5bc15e1b5d67c0041b0b451e5d4c9", 32);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else

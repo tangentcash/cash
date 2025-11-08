@@ -43,9 +43,10 @@ namespace tangent
 			erase_byte = 2,
 			read_byte = 1,
 			query_result = 8,
-			memory_block = 1,
-			instruction_block = 3,
-			program_data = 16
+			program_byte = 16,
+			program_memory = 1,
+			program_iop = 3,
+			program_mop = 16,
 		};
 
 		struct block_transaction final : messages::uniform

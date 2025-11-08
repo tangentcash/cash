@@ -801,14 +801,15 @@ namespace tangent
 			static const program* fetch_immutable(immediate_context* coroutine = immediate_context::get());
 			static program* fetch_mutable_or_throw(immediate_context* coroutine = immediate_context::get());
 			static const program* fetch_immutable_or_throw(immediate_context* coroutine = immediate_context::get());
+			static bool request_gas_mop(size_t difficulty);
 			template <typename t>
-			static inline t* gas_allocate(size_t size)
+			static inline t* request_gas_memory(size_t size)
 			{
 				auto* program = program::fetch_immutable();
 				if (program != nullptr)
 				{
 					size_t paid_blocks = std::max(size / sizeof(uint128_t), sizeof(uint128_t));
-					size_t paid_gas = (size_t)ledger::gas_cost::memory_block * paid_blocks;
+					size_t paid_gas = (size_t)ledger::gas_cost::program_memory * paid_blocks;
 					if (paid_gas > 0 && !program->context->burn_gas(paid_gas))
 					{
 						contract::throw_ptr(exception_repr(exception_repr::category::memory(), std::string_view("ran out of gas")));

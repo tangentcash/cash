@@ -21,9 +21,8 @@ extern "C"
 #define SCRIPT_TYPE_VARYING "varying"
 #define SCRIPT_TYPE_MAPPING "mapping"
 #define SCRIPT_TYPE_RANGING "ranging"
-#define SCRIPT_TYPE_RWPTR "rwptr"
-#define SCRIPT_TYPE_RPTR "rptr"
-#define SCRIPT_NAMESPACE_INSTRSET "instrset"
+#define SCRIPT_TYPE_PMUT "pmut"
+#define SCRIPT_TYPE_PCONST "pconst"
 #define SCRIPT_FUNCTION_CONSTRUCT "construct"
 #define SCRIPT_VM "cell"
 
@@ -633,7 +632,7 @@ namespace tangent
 			if (!check_max_size(max_elements))
 				return;
 
-			sbuffer* new_buffer = program::gas_allocate<sbuffer>(sizeof(sbuffer) - 1 + (size_t)element_size * (size_t)max_elements);
+			sbuffer* new_buffer = program::request_gas_memory<sbuffer>(sizeof(sbuffer) - 1 + (size_t)element_size * (size_t)max_elements);
 			if (!new_buffer)
 				return;
 
@@ -677,7 +676,7 @@ namespace tangent
 		void array_repr::remove_if(void* value, uint32_t start_at)
 		{
 			scache* cache; uint32_t count = size();
-			if (!is_eligible_for_find(&cache) || !count)
+			if (!is_eligible_for_find(&cache) || !count || !program::request_gas_mop(0))
 				return;
 
 			immediate_context* context = immediate_context::get();
@@ -716,7 +715,7 @@ namespace tangent
 			if (buffer_size < buffer_size + delta)
 			{
 				size_t count = (size_t)buffer_size + (size_t)delta, size = (size_t)element_size;
-				sbuffer* new_buffer = program::gas_allocate<sbuffer>(sizeof(sbuffer) - 1 + size * count);
+				sbuffer* new_buffer = program::request_gas_memory<sbuffer>(sizeof(sbuffer) - 1 + size * count);
 				if (!new_buffer)
 					return;
 
@@ -890,7 +889,7 @@ namespace tangent
 		}
 		void array_repr::create_buffer(sbuffer** buffer_ptr, uint32_t num_elements)
 		{
-			*buffer_ptr = program::gas_allocate<sbuffer>(sizeof(sbuffer) - 1 + (size_t)element_size * (size_t)num_elements);
+			*buffer_ptr = program::request_gas_memory<sbuffer>(sizeof(sbuffer) - 1 + (size_t)element_size * (size_t)num_elements);
 			if (!*buffer_ptr)
 				return;
 
@@ -948,7 +947,7 @@ namespace tangent
 		void array_repr::reverse()
 		{
 			uint32_t length = size();
-			if (length >= 2)
+			if (length >= 2 && program::request_gas_mop(1))
 			{
 				unsigned char temp[16];
 				for (uint32_t i = 0; i < length / 2; i++)
@@ -1116,6 +1115,9 @@ namespace tangent
 		uint32_t array_repr::find_by_ref(void* value, uint32_t start_at) const
 		{
 			uint32_t length = size();
+			if (!length || !program::request_gas_mop(0))
+				return string_repr::npos;
+
 			if (sub_type_id & (uint32_t)type_id::handle_t)
 			{
 				value = *(void**)value;
@@ -1139,7 +1141,7 @@ namespace tangent
 		uint32_t array_repr::find(void* value, uint32_t start_at) const
 		{
 			scache* cache; uint32_t count = size();
-			if (!is_eligible_for_find(&cache) || !count)
+			if (!is_eligible_for_find(&cache) || !count || !program::request_gas_mop(0))
 				return string_repr::npos;
 
 			immediate_context* context = immediate_context::get();
@@ -1179,7 +1181,7 @@ namespace tangent
 		void array_repr::sort(asIScriptFunction* callback)
 		{
 			scache* cache; uint32_t count = size();
-			if (!is_eligible_for_sort(&cache) || count < 2)
+			if (!is_eligible_for_sort(&cache) || count < 2 || !program::request_gas_mop(4))
 				return;
 
 			unsigned char swap[16];
@@ -1827,7 +1829,7 @@ namespace tangent
 		}
 		string_repr& string_repr::reverse()
 		{
-			if (empty())
+			if (empty() || !program::request_gas_mop(1))
 				return *this;
 
 			char* buffer = data();
@@ -1852,31 +1854,49 @@ namespace tangent
 		}
 		uint32_t string_repr::rfind_offset(const string_repr& other, uint32_t offset) const
 		{
+			if (!program::request_gas_mop(0))
+				return npos;
+
 			size_t result = view().rfind(other.view(), offset == npos ? std::string_view::npos : (size_t)offset);
 			return result == std::string_view::npos ? npos : (uint32_t)result;
 		}
 		uint32_t string_repr::rfind_char_offset(uint8_t other, uint32_t offset) const
 		{
+			if (!program::request_gas_mop(0))
+				return npos;
+
 			size_t result = view().rfind(other, offset == npos ? std::string_view::npos : (size_t)offset);
 			return result == std::string_view::npos ? npos : (uint32_t)result;
 		}
 		uint32_t string_repr::find(const string_repr& other, uint32_t offset) const
 		{
+			if (!program::request_gas_mop(0))
+				return npos;
+
 			size_t result = view().find(other.view(), offset == npos ? std::string_view::npos : (size_t)offset);
 			return result == std::string_view::npos ? npos : (uint32_t)result;
 		}
 		uint32_t string_repr::find_char(uint8_t other, uint32_t offset) const
 		{
+			if (!program::request_gas_mop(0))
+				return npos;
+
 			size_t result = view().find(other, offset == npos ? std::string_view::npos : (size_t)offset);
 			return result == std::string_view::npos ? npos : (uint32_t)result;
 		}
 		uint32_t string_repr::find_first_of(const string_repr& other, uint32_t offset) const
 		{
+			if (!program::request_gas_mop(0))
+				return npos;
+
 			size_t result = view().find_first_of(other.view(), offset == npos ? std::string_view::npos : (size_t)offset);
 			return result == std::string_view::npos ? npos : (uint32_t)result;
 		}
 		uint32_t string_repr::find_first_not_of(const string_repr& other, uint32_t offset) const
 		{
+			if (!program::request_gas_mop(0))
+				return npos;
+
 			size_t result = view().find_first_not_of(other.view(), offset == npos ? std::string_view::npos : (size_t)offset);
 			return result == std::string_view::npos ? npos : (uint32_t)result;
 		}
@@ -1890,16 +1910,25 @@ namespace tangent
 		}
 		uint32_t string_repr::find_last_of_offset(const string_repr& other, uint32_t offset) const
 		{
+			if (!program::request_gas_mop(0))
+				return npos;
+
 			size_t result = view().find_last_of(other.view(), offset == npos ? std::string_view::npos : (size_t)offset);
 			return result == std::string_view::npos ? npos : (uint32_t)result;
 		}
 		uint32_t string_repr::find_last_not_of_offset(const string_repr& other, uint32_t offset) const
 		{
+			if (!program::request_gas_mop(0))
+				return npos;
+
 			size_t result = view().find_last_not_of(other.view(), offset == npos ? std::string_view::npos : (size_t)offset);
 			return result == std::string_view::npos ? npos : (uint32_t)result;
 		}
 		array_repr* string_repr::split(const string_repr& delimiter) const
 		{
+			if (!program::request_gas_mop(2))
+				return nullptr;
+
 			virtual_machine* vm = virtual_machine::get();
 			asITypeInfo* array_type = vm->get_type_info_by_decl(SCRIPT_TYPE_ARRAY "<" SCRIPT_TYPE_STRING ">@").get_type_info();
 			array_repr* array = array_repr::create(array_type);
@@ -1953,7 +1982,7 @@ namespace tangent
 			if (heap_buffer)
 			{
 				heap.capacity = required_capacity;
-				char* copy = program::gas_allocate<char>(heap.capacity + 1);
+				char* copy = program::request_gas_memory<char>(heap.capacity + 1);
 				memset(copy, 0, heap.capacity + 1);
 				memcpy(copy, heap.data, heap.size);
 				memory::deallocate(heap.data);
@@ -1967,7 +1996,7 @@ namespace tangent
 
 				heap.size = size;
 				heap.capacity = required_capacity;
-				heap.data = program::gas_allocate<char>(heap.capacity + 1);
+				heap.data = program::request_gas_memory<char>(heap.capacity + 1);
 				memset(heap.data, 0, heap.capacity + 1);
 				memcpy(heap.data, copy, stack_capacity);
 				heap_buffer = true;
@@ -3903,7 +3932,7 @@ namespace tangent
 		}
 		address_repr contract::alg_erecover160(const uint256_t& hash, const string_repr& signature)
 		{
-			if (signature.size() != sizeof(algorithm::hashsig_t))
+			if (signature.size() != sizeof(algorithm::hashsig_t) || !program::request_gas_mop(10))
 				return address_repr();
 
 			algorithm::pubkeyhash_t public_key_hash;
@@ -3914,7 +3943,7 @@ namespace tangent
 		}
 		string_repr contract::alg_erecover264(const uint256_t& hash, const string_repr& signature)
 		{
-			if (signature.size() != sizeof(algorithm::hashsig_t))
+			if (signature.size() != sizeof(algorithm::hashsig_t) || !program::request_gas_mop(10))
 				return string_repr();
 
 			algorithm::pubkey_t public_key;
@@ -3925,6 +3954,9 @@ namespace tangent
 		}
 		string_repr contract::alg_crc32(const string_repr& data)
 		{
+			if (!program::request_gas_mop(1))
+				return string_repr();
+
 			uint8_t buffer[32];
 			uint256_t value = algorithm::hashing::hash32d(data.view());
 			value.encode(buffer);
@@ -3932,18 +3964,30 @@ namespace tangent
 		}
 		string_repr contract::alg_ripemd160(const string_repr& data)
 		{
+			if (!program::request_gas_mop(1))
+				return string_repr();
+
 			return string_repr(algorithm::hashing::hash160((uint8_t*)data.data(), data.size()));
 		}
 		uint256_t contract::alg_blake2b256(const string_repr& data)
 		{
+			if (!program::request_gas_mop(2))
+				return uint256_t((uint8_t)0);
+
 			return algorithm::hashing::hash256i((uint8_t*)data.data(), data.size());
 		}
 		string_repr contract::alg_blake2b256s(const string_repr& data)
 		{
+			if (!program::request_gas_mop(2))
+				return string_repr();
+
 			return string_repr(algorithm::hashing::hash256((uint8_t*)data.data(), data.size()));
 		}
 		uint256_t contract::alg_keccak256(const string_repr& data)
 		{
+			if (!program::request_gas_mop(2))
+				return uint256_t((uint8_t)0);
+
 			uint256_t value;
 			uint8_t buffer[SHA3_256_DIGEST_LENGTH];
 			sha256_Raw((uint8_t*)data.data(), data.size(), buffer);
@@ -3952,18 +3996,27 @@ namespace tangent
 		}
 		string_repr contract::alg_keccak256s(const string_repr& data)
 		{
+			if (!program::request_gas_mop(2))
+				return string_repr();
+
 			uint8_t buffer[SHA3_256_DIGEST_LENGTH];
 			sha256_Raw((uint8_t*)data.data(), data.size(), buffer);
 			return string_repr(std::string_view((char*)buffer, sizeof(buffer)));
 		}
 		string_repr contract::alg_keccak512(const string_repr& data)
 		{
+			if (!program::request_gas_mop(3))
+				return string_repr();
+
 			uint8_t buffer[SHA3_512_DIGEST_LENGTH];
 			keccak_512((uint8_t*)data.data(), data.size(), buffer);
 			return string_repr(std::string_view((char*)buffer, sizeof(buffer)));
 		}
 		uint256_t contract::alg_sha256(const string_repr& data)
 		{
+			if (!program::request_gas_mop(2))
+				return uint256_t((uint8_t)0);
+
 			uint256_t value;
 			uint8_t buffer[SHA3_256_DIGEST_LENGTH];
 			keccak_256((uint8_t*)data.data(), data.size(), buffer);
@@ -3972,16 +4025,25 @@ namespace tangent
 		}
 		string_repr contract::alg_sha256s(const string_repr& data)
 		{
+			if (!program::request_gas_mop(2))
+				return string_repr();
+
 			uint8_t buffer[SHA3_256_DIGEST_LENGTH];
 			keccak_256((uint8_t*)data.data(), data.size(), buffer);
 			return string_repr(std::string_view((char*)buffer, sizeof(buffer)));
 		}
 		string_repr contract::alg_sha512(const string_repr& data)
 		{
+			if (!program::request_gas_mop(4))
+				return string_repr();
+
 			return string_repr(algorithm::hashing::hash512((uint8_t*)data.data(), data.size()));
 		}
 		uint256_t contract::alg_prandom()
 		{
+			if (!program::request_gas_mop(6))
+				return uint256_t((uint8_t)0);
+
 			auto* p = program::fetch_mutable_or_throw();
 			if (!p)
 				return uint256_t((uint8_t)0);
@@ -4248,6 +4310,9 @@ namespace tangent
 		}
 		void contract::math_pow(asIScriptGeneric* generic)
 		{
+			if (!program::request_gas_mop(0))
+				return;
+
 			generic_context inout = generic_context(generic);
 			int type_id = inout.get_return_addressable_type_id();
 			if (mpf_value::requires_fixed_point(type_id))
@@ -4280,6 +4345,9 @@ namespace tangent
 		}
 		void contract::math_sqrt(asIScriptGeneric* generic)
 		{
+			if (!program::request_gas_mop(0))
+				return;
+
 			generic_context inout = generic_context(generic);
 			int type_id = inout.get_return_addressable_type_id();
 			if (mpf_value::requires_fixed_point(type_id))
@@ -4915,6 +4983,8 @@ namespace tangent
 			vm->set_type_def("usize", "uint32");
 			initialize_opcode_table();
 
+			auto pmut = vm->set_interface_class<program>("pmut");
+			auto pconst = vm->set_interface_class<program>("pconst");
 			auto array_type = vm->set_template_class<array_repr>("array<class t>", "array<t>", true);
 			auto string_type = vm->set_struct_address("string", sizeof(string_repr), (size_t)object_behaviours::value | bridge::type_traits_of<string_repr>());
 			auto uint128_type = vm->set_struct_trivial<uint128_t>("uint128", (size_t)object_behaviours::app_class_allints);
@@ -5227,11 +5297,6 @@ namespace tangent
 			ranging_slice_type->set_method("ranging_slice& asc()", &ranging_slice_repr::order_asc);
 			ranging_slice_type->set_method("ranging_slice& desc()", &ranging_slice_repr::order_desc);
 
-			vm->begin_namespace("instrset");
-			auto instrset_rwptr = vm->set_interface_class<program>("rwptr");
-			auto instrset_rptr = vm->set_interface_class<program>("rptr");
-			vm->end_namespace();
-
 			vm->begin_namespace("log");
 			vm->set_function("void emit(const ?&in)", &contract::log_emit);
 			vm->set_function("void event(const ?&in, const ?&in)", &contract::log_event);
@@ -5409,24 +5474,23 @@ namespace tangent
 			vm->set_cache(!protocol::now().user.storage.module_cache_path.empty());
 			vm->set_ts_imports(false);
 			vm->set_keyword_restriction("auto", true);
+			vm->set_keyword_restriction("auto&", true);
 			vm->set_keyword_restriction("auto@", true);
 			vm->set_keyword_restriction("float", true);
 			vm->set_keyword_restriction("double", true);
 			vm->set_cache_callback([](byte_code_info* info)
 			{
-				string path = stringify::text("%s%c%s.casm", protocol::now().user.storage.module_cache_path.c_str(), VI_SPLITTER, info->name.c_str());
+				auto path = stringify::text("%s%c%s.casm", protocol::now().user.storage.module_cache_path.c_str(), VI_SPLITTER, info->name.c_str());
 				if (info->valid)
 					return !!os::file::write(path, info->data.data(), info->data.size());
 
-				size_t size = 0;
-				auto data = os::file::read_all(path, &size).or_else(nullptr);
-				if (!data)
-					return false;
-
-				info->data.resize(size);
-				memcpy(info->data.data(), data, size);
-				memory::deallocate(data);
-				return true;
+				auto target = uptr<stream>(os::file::open(path, file_mode::binary_read_only));
+				return target && !!target->read_all([&info](uint8_t* buffer, size_t size)
+				{
+					size_t prev_size = info->data.size();
+					info->data.resize(prev_size + size);
+					memcpy(info->data.data() + prev_size, buffer, size);
+				});
 			});
 		}
 		factory::~factory() noexcept
@@ -5957,20 +6021,20 @@ namespace tangent
 				}
 				else
 				{
-					if (!type.is_valid() || type.get_namespace() != SCRIPT_NAMESPACE_INSTRSET)
+					if (!type.is_valid())
 						return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound to any instruction set", entrypoint.get_decl().data(), (int)i));
 
-					if (type.get_name() == SCRIPT_TYPE_RWPTR)
+					if (type.get_name() == SCRIPT_TYPE_PMUT)
 					{
 						if (*mutability != ccall::upgrade_call && *mutability != ccall::paying_call)
-							return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound to required instruction set (" SCRIPT_TYPE_RWPTR ")", entrypoint.get_decl().data(), (int)i));
+							return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound to required instruction set (" SCRIPT_TYPE_PMUT ")", entrypoint.get_decl().data(), (int)i));
 
 						*mutability = ccall::paying_call;
 					}
-					else if (type.get_name() != "rptr")
+					else if (type.get_name() != SCRIPT_TYPE_PCONST)
 					{
 						auto name = type.get_name();
-						return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound to required instruction set (" SCRIPT_TYPE_RWPTR " or " SCRIPT_TYPE_RPTR ") - \"%s\" type", entrypoint.get_decl().data(), (int)i, name.data()));
+						return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound to required instruction set (" SCRIPT_TYPE_PMUT " or " SCRIPT_TYPE_PCONST ") - \"%s\" type", entrypoint.get_decl().data(), (int)i, name.data()));
 					}
 					else
 						*mutability = ccall::const_call;
@@ -5987,7 +6051,7 @@ namespace tangent
 		}
 		void program::dispatch_coroutine(immediate_context* coroutine)
 		{
-			auto status = context->burn_gas((uint64_t)ledger::gas_cost::instruction_block);
+			auto status = context->burn_gas((uint64_t)ledger::gas_cost::program_iop);
 			if (!status)
 				coroutine->abort();
 		}
@@ -5999,7 +6063,7 @@ namespace tangent
 				auto* vm = entrypoint.get_vm();
 				auto type = vm->get_type_info_by_id(type_id);
 				auto name = type.get_name();
-				if (name == SCRIPT_TYPE_RWPTR)
+				if (name == SCRIPT_TYPE_PMUT)
 					return ccall::paying_call;
 			}
 			return ccall::const_call;
@@ -6076,6 +6140,16 @@ namespace tangent
 				contract::throw_ptr_at(coroutine, exception_repr(exception_repr::category::requirement(), "real-only instruction called from write-only program"));
 
 			return result;
+		}
+		bool program::request_gas_mop(size_t difficulty)
+		{
+			auto* program = program::fetch_immutable();
+			if (program && !program->context->burn_gas((size_t)ledger::gas_cost::program_mop * (1 + difficulty)))
+			{
+				contract::throw_ptr(exception_repr(exception_repr::category::execution(), std::string_view("ran out of gas")));
+				return false;
+			}
+			return true;
 		}
 	}
 }

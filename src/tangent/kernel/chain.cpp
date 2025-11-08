@@ -778,20 +778,20 @@ namespace tangent
 		auto database_path = database.resolve(user.network, user.storage.path);
 		if (!user.storage.module_cache_path.empty())
 		{
-			auto module_base = database_path + user.storage.module_cache_path;
-			auto module_path = os::path::resolve(os::path::resolve(module_base, *library, true).or_else(user.logs.info_path)).or_else(user.logs.info_path);
-			stringify::eval_envs(module_path, os::path::get_directory(module_path.c_str()), vitex::network::utils::get_host_ip_addresses());
-			os::directory::patch(os::path::get_directory(module_path.c_str()));
+			auto module_path = os::path::resolve(user.storage.module_cache_path, user.storage.path, true).or_else(user.storage.module_cache_path);
+			stringify::eval_envs(module_path, os::path::get_directory(module_path), vitex::network::utils::get_host_ip_addresses());
+			os::directory::patch(module_path);
 			if (!module_path.empty() && (module_path.back() == '/' || module_path.back() == '\\'))
 				module_path.pop_back();
+			user.storage.module_cache_path = std::move(module_path);
 		}
 
 		if (!user.logs.info_path.empty())
 		{
 			auto log_base = database_path + user.logs.info_path;
 			auto log_path = os::path::resolve(os::path::resolve(log_base, *library, true).or_else(user.logs.info_path)).or_else(user.logs.info_path);
-			stringify::eval_envs(log_path, os::path::get_directory(log_path.c_str()), vitex::network::utils::get_host_ip_addresses());
-			os::directory::patch(os::path::get_directory(log_path.c_str()));
+			stringify::eval_envs(log_path, os::path::get_directory(log_path), vitex::network::utils::get_host_ip_addresses());
+			os::directory::patch(os::path::get_directory(log_path));
 			if (!log_path.empty())
 				logs.info.resource = os::file::open_archive(log_path, user.logs.archive_size).or_else(nullptr);
 		}
@@ -800,8 +800,8 @@ namespace tangent
 		{
 			auto log_base = database_path + user.logs.error_path;
 			auto log_path = os::path::resolve(os::path::resolve(log_base, *library, true).or_else(user.logs.error_path)).or_else(user.logs.error_path);
-			stringify::eval_envs(log_path, os::path::get_directory(log_path.c_str()), vitex::network::utils::get_host_ip_addresses());
-			os::directory::patch(os::path::get_directory(log_path.c_str()));
+			stringify::eval_envs(log_path, os::path::get_directory(log_path), vitex::network::utils::get_host_ip_addresses());
+			os::directory::patch(os::path::get_directory(log_path));
 			if (!log_path.empty())
 				logs.error.resource = os::file::open_archive(log_path, user.logs.archive_size).or_else(nullptr);
 		}
@@ -810,8 +810,8 @@ namespace tangent
 		{
 			auto log_base = database_path + user.logs.query_path;
 			auto log_path = os::path::resolve(os::path::resolve(log_base, *library, true).or_else(user.logs.query_path)).or_else(user.logs.query_path);
-			stringify::eval_envs(log_path, os::path::get_directory(log_path.c_str()), vitex::network::utils::get_host_ip_addresses());
-			os::directory::patch(os::path::get_directory(log_path.c_str()));
+			stringify::eval_envs(log_path, os::path::get_directory(log_path), vitex::network::utils::get_host_ip_addresses());
+			os::directory::patch(os::path::get_directory(log_path));
 			if (!log_path.empty())
 			{
 				logs.query.resource = os::file::open_archive(log_path, user.logs.archive_size).or_else(nullptr);

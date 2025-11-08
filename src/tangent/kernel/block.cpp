@@ -2649,7 +2649,7 @@ namespace tangent
 			if (!state->cached)
 			{
 				uint64_t optimized_program_size = integer_sqrt<uint64_t>((uint64_t)state->ptr()->as_message().data.size());
-				auto status = ((transaction_context*)this)->burn_gas(optimized_program_size * (size_t)gas_cost::program_data);
+				auto status = ((transaction_context*)this)->burn_gas(optimized_program_size * (size_t)gas_cost::program_byte);
 				if (!status)
 					return status.error();
 			}
