@@ -338,18 +338,18 @@ namespace tangent
 					native_input = (native_input.is_nan() ? fee_value : (native_input + fee_value));
 				}
 
-				tx.inputs.reserve(inputs.size());
 				for (auto& [address, values] : inputs)
 				{
 					auto target_link = discovery->find(address);
-					tx.inputs.push_back(coin_utxo(target_link != discovery->end() ? target_link->second : wallet_link::from_address(address), std::move(values)));
+					auto input = coin_utxo(target_link != discovery->end() ? target_link->second : wallet_link::from_address(address), std::move(values));
+					tx.inputs[input.as_hash()] = std::move(input);
 				}
 
-				tx.outputs.reserve(outputs.size());
 				for (auto& [address, values] : outputs)
 				{
 					auto target_link = discovery->find(address);
-					tx.outputs.push_back(coin_utxo(target_link != discovery->end() ? target_link->second : wallet_link::from_address(address), std::move(values)));
+					auto output = coin_utxo(target_link != discovery->end() ? target_link->second : wallet_link::from_address(address), std::move(values));
+					tx.outputs[output.as_hash()] = std::move(output);
 				}
 
 				coreturn expects_rt<computed_transaction>(std::move(tx));
@@ -475,8 +475,8 @@ namespace tangent
 				if (prepared.abi.size() != 6)
 					return layer_exception("invalid prepared abi");
 
-				auto& input = prepared.inputs.front();
-				auto& output = prepared.outputs.front();
+				auto& input = prepared.inputs.begin()->second;
+				auto& output = prepared.outputs.begin()->second;
 				auto divisibility = prepared.abi[0].as_decimal();
 				sol_transaction transaction;
 				transaction.token_program_address = prepared.abi[1].as_blob();
@@ -485,7 +485,7 @@ namespace tangent
 				transaction.from_address = input.utxo.link.address;
 				transaction.to_address = output.link.address;
 				transaction.recent_block_hash = prepared.abi[4].as_blob();
-				transaction.value = ((output.tokens.empty() ? output.value - prepared.abi[5].as_decimal() : output.tokens.front().value) * divisibility).to_uint64();
+				transaction.value = ((output.tokens.empty() ? output.value - prepared.abi[5].as_decimal() : output.tokens.begin()->second.value) * divisibility).to_uint64();
 
 				vector<uint8_t> message_buffer = tx_message_serialize(&transaction);
 				if (input.message.size() != message_buffer.size() || memcmp(input.message.data(), message_buffer.data(), message_buffer.size()))

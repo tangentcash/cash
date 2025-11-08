@@ -506,26 +506,26 @@ namespace tangent
 
 			auto blockchain = algorithm::asset::blockchain_of(asset);
 			auto base_asset = algorithm::asset::base_id_of(asset);
-			for (auto& input : prepared.inputs)
+			for (auto& [hash, input] : prepared.inputs)
 			{
 				auto input_asset = input.utxo.get_asset(base_asset);
 				if (!algorithm::asset::is_valid(input_asset) || algorithm::asset::blockchain_of(input_asset) != blockchain)
 					return layer_exception("input asset not valid");
 
-				for (auto& input_token : input.utxo.tokens)
+				for (auto& [input_token_hash, input_token] : input.utxo.tokens)
 				{
 					if (!algorithm::asset::is_valid(input_token.get_asset(base_asset)))
 						return layer_exception("invalid input token asset");
 				}
 			}
 
-			for (auto& output : prepared.outputs)
+			for (auto& [hash, output] : prepared.outputs)
 			{
 				auto output_asset = output.get_asset(base_asset);
 				if (!algorithm::asset::is_valid(output_asset) || algorithm::asset::blockchain_of(output_asset) != blockchain)
 					return layer_exception("invalid output asset");
 
-				for (auto& output_token : output.tokens)
+				for (auto& [output_token_hash, output_token] : output.tokens)
 				{
 					if (!algorithm::asset::is_valid(output_token.get_asset(base_asset)))
 						return layer_exception("invalid output token asset");
@@ -1346,16 +1346,16 @@ namespace tangent
 							"%s transaction %s accepted (block: %" PRIu64 ", status: finalized)\n",
 							algorithm::asset::name_of(listener->asset).c_str(),
 							tx.transaction_id.c_str(), tx.block_id);
-						for (auto& input : tx.inputs)
+						for (auto& [hash, input] : tx.inputs)
 						{
 							transfer_logs += stringify::text("  %s spends %s %s\n", input.link.as_name().c_str(), input.value.to_string().c_str(), algorithm::asset::name_of(listener->asset).c_str());
-							for (auto& token : input.tokens)
+							for (auto& [token_hash, token] : input.tokens)
 								transfer_logs += stringify::text("    with %s %s\n", token.value.to_string().c_str(), algorithm::asset::name_of(token.get_asset(listener->asset)).c_str());
 						}
-						for (auto& output : tx.outputs)
+						for (auto& [hash, output] : tx.outputs)
 						{
 							transfer_logs += stringify::text("  %s receives %s %s\n", output.link.as_name().c_str(), output.value.to_string().c_str(), algorithm::asset::name_of(listener->asset).c_str());
-							for (auto& token : output.tokens)
+							for (auto& [token_hash, token] : output.tokens)
 								transfer_logs += stringify::text("    with %s %s\n", token.value.to_string().c_str(), algorithm::asset::name_of(token.get_asset(listener->asset)).c_str());
 						}
 						if (transfer_logs.back() == '\n')

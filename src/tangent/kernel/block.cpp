@@ -1298,6 +1298,12 @@ namespace tangent
 			mutation.is_fork = mutation.old_tip_block_number > 0 && mutation.old_tip_block_number >= mutation.new_tip_block_number;
 			if (mutation.is_fork)
 			{
+				if (protocol::now().user.storage.prevent_reorganization && chain.get_checkpoint_block_number().or_else(0) > mutation.new_tip_block_number - 1)
+				{
+					storage_util::multi_tx_rollback(__func__, std::move(global_state)).report("global state rollback failed");
+					return layer_exception(stringify::text("checkpoint requires chain reorganization (depth: %" PRIu64 " blocks)", mutation.old_tip_block_number - mutation.new_tip_block_number));
+				}
+
 				if (keep_reverted_transactions)
 				{
 					uint64_t revert_number = mutation.old_tip_block_number;

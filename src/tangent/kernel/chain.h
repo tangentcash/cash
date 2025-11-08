@@ -211,7 +211,7 @@ namespace tangent
                 uint64_t transaction_timeout = 86400;
                 uint64_t commitment_timeout = 14400;
                 uint64_t mempool_transaction_limit = 10000000;
-                uint64_t checkpoint_size = 64;
+                uint64_t checkpoint_size = 100;
                 uint64_t location_cache_size = 500000;
                 uint64_t module_cache_size = 8192;
                 uint64_t blob_cache_size = 134217728;
@@ -223,6 +223,7 @@ namespace tangent
                 bool prune_aggressively = false;
                 bool transaction_to_account_index = true;
                 bool transaction_to_rollup_index = true;
+                bool prevent_reorganization = true;
                 bool logging = false;
             } storage;
             struct

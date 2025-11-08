@@ -573,18 +573,18 @@ namespace tangent
 				if (is_reverted)
 					coreturn expects_rt<computed_transaction>(remote_exception("tx reverted"));
 
-				result.inputs.reserve(inputs.size());
 				for (auto& [address, values] : inputs)
 				{
 					auto target_link = discovery->find(address);
-					result.inputs.push_back(coin_utxo(target_link != discovery->end() ? target_link->second : wallet_link::from_address(address), std::move(values)));
+					auto input = coin_utxo(target_link != discovery->end() ? target_link->second : wallet_link::from_address(address), std::move(values));
+					result.inputs[input.as_hash()] = std::move(input);
 				}
 
-				result.outputs.reserve(outputs.size());
 				for (auto& [address, values] : outputs)
 				{
 					auto target_link = discovery->find(address);
-					result.outputs.push_back(coin_utxo(target_link != discovery->end() ? target_link->second : wallet_link::from_address(address), std::move(values)));
+					auto output = coin_utxo(target_link != discovery->end() ? target_link->second : wallet_link::from_address(address), std::move(values));
+					result.outputs[output.as_hash()] = std::move(output);
 				}
 
 				coreturn expects_rt<computed_transaction>(std::move(result));
@@ -811,8 +811,8 @@ namespace tangent
 				if (prepared.abi.size() != 8)
 					return layer_exception("invalid prepared abi");
 
-				auto& input = prepared.inputs.front();
-				auto& output = prepared.outputs.front();
+				auto& input = prepared.inputs.begin()->second;
+				auto& output = prepared.outputs.begin()->second;
 				auto output_asset = output.get_asset(native_asset);
 				auto type = prepared.abi[0].as_boolean() ? evm_transaction::evm_type::eip_155 : evm_transaction::evm_type::eip_1559;
 				auto contract_address = prepared.abi[1].as_string();
@@ -831,7 +831,7 @@ namespace tangent
 					if (output.tokens.empty())
 						return layer_exception("invalid output");
 
-					auto& output_token = output.tokens.front();
+					auto& output_token = output.tokens.begin()->second;
 					transaction.address = decode_non_eth_address(contract_address);
 					transaction.abi_data = sc_call::transfer(output.link.address, from_eth(output_token.value, divisibility));
 				}

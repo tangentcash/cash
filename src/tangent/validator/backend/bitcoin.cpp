@@ -349,14 +349,13 @@ namespace tangent
 				bool is_coinbase = false;
 				if (tx_inputs != nullptr)
 				{
-					tx.inputs.reserve(tx_inputs->get_childs().size());
 					for (auto& input : tx_inputs->get_childs())
 					{
 						if (!input->has("coinbase"))
 						{
 							auto output = coawait(get_transaction_output(input->get_var("txid").get_blob(), input->get_var("vout").get_integer()));
 							if (output)
-								tx.inputs.push_back(std::move(*output));
+								tx.inputs[output->as_hash()] = std::move(*output);
 						}
 						else
 							is_coinbase = true;
@@ -367,7 +366,6 @@ namespace tangent
 				{
 					size_t output_index = 0;
 					unordered_set<size_t> resets;
-					tx.outputs.resize(tx_outputs->get_childs().size());
 					for (auto& output : tx_outputs->get_childs())
 					{
 						coin_utxo new_output;
@@ -398,7 +396,7 @@ namespace tangent
 
 					for (auto it = tx.outputs.begin(); it != tx.outputs.end();)
 					{
-						if (it->value.is_nan())
+						if (it->second.value.is_nan())
 							it = tx.outputs.erase(it);
 						else
 							++it;
@@ -409,9 +407,9 @@ namespace tangent
 				{
 					coin_utxo new_input;
 					new_input.transaction_id = tx.transaction_id + "!";
-					new_input.value = tx.outputs.front().value;
+					new_input.value = tx.outputs.begin()->second.value;
 					new_input.index = (uint32_t)tx.inputs.size();
-					tx.inputs.push_back(std::move(new_input));
+					tx.inputs[new_input.as_hash()] = std::move(new_input);
 				}
 
 				coreturn expects_rt<computed_transaction>(std::move(tx));
@@ -641,7 +639,6 @@ namespace tangent
 					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", input_value.to_string().c_str(), total_value.to_string().c_str())));
 
 				prepared_transaction result;
-				result.outputs.reserve(to.size() + 1);
 				for (auto& item : to)
 				{
 					auto link = find_linked_addresses({ item.address });
@@ -651,7 +648,7 @@ namespace tangent
 					result.requires_output(coin_utxo(wallet_link(possible_inputs->front().link), string(), (uint32_t)result.outputs.size(), decimal(input_value - total_value)));
 
 				btc_tx_context context;
-				for (auto& output : result.outputs)
+				for (auto& [hash, output] : result.outputs)
 				{
 					auto status = add_transaction_output(context, output.link.address, output.value);
 					if (!status)
@@ -716,14 +713,14 @@ namespace tangent
 			expects_lr<finalized_transaction> bitcoin::finalize_transaction(oracle::prepared_transaction&& prepared)
 			{
 				btc_tx_context context;
-				for (auto& output : prepared.outputs)
+				for (auto& [hash, output] : prepared.outputs)
 				{
 					auto status = add_transaction_output(context, output.link.address, output.value);
 					if (!status)
 						return status.error();
 				}
 
-				for (auto& input : prepared.inputs)
+				for (auto& [hash, input] : prepared.inputs)
 				{
 					auto link = find_linked_addresses({ input.utxo.link.address });
 					if (!link)
@@ -735,7 +732,7 @@ namespace tangent
 				}
 
 				size_t index = 0;
-				for (auto& input : prepared.inputs)
+				for (auto& [input_hash, input] : prepared.inputs)
 				{
 					auto hash = prepare_transaction_input(context, input.utxo, index);
 					if (!hash)

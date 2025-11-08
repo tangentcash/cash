@@ -724,6 +724,10 @@ namespace tangent
 			if (value != nullptr && value->value.is(var_type::boolean))
 				user.storage.transaction_to_rollup_index = value->value.get_boolean();
 
+			value = config->fetch("storage.prevent_reorganization");
+			if (value != nullptr && value->value.is(var_type::boolean))
+				user.storage.prevent_reorganization = value->value.get_boolean();
+
 			value = config->fetch("storage.logging");
 			if (value != nullptr && value->value.is(var_type::boolean))
 				user.storage.logging = value->value.get_boolean();

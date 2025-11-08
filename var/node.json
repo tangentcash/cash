@@ -100,6 +100,7 @@
         "prune_aggressively": false,
         "transaction_to_account_index": true,
         "transaction_to_rollup_index": true,
+        "prevent_reorganization": true,
         "logging": false
     },
     "logs": {

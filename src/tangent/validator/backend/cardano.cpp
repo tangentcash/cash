@@ -171,7 +171,7 @@ namespace tangent
 							}
 						}
 
-						tx.outputs.push_back(std::move(new_output));
+						tx.outputs[new_output.as_hash()] = std::move(new_output);
 					}
 					else if (type == "input")
 					{
@@ -208,26 +208,26 @@ namespace tangent
 							}
 						}
 
-						tx.inputs.push_back(std::move(new_input));
+						tx.inputs[new_input.as_hash()] = std::move(new_input);
 					}
 				}
 
 				unordered_map<algorithm::asset_id, decimal> balance;
-				for (auto& input : tx.inputs)
+				for (auto& [hash, input] : tx.inputs)
 				{
 					auto& value = balance[native_asset];
 					value = value.is_nan() ? input.value : (value + input.value);
-					for (auto& token : input.tokens)
+					for (auto& [token_hash, token] : input.tokens)
 					{
 						value = balance[token.get_asset(native_asset)];
 						value = value.is_nan() ? token.value : (value + token.value);
 					}
 				}
-				for (auto& output : tx.outputs)
+				for (auto& [hash, output] : tx.outputs)
 				{
 					auto& value = balance[native_asset];
 					value = value.is_nan() ? -output.value : (value - output.value);
-					for (auto& token : output.tokens)
+					for (auto& [token_hash, token] : output.tokens)
 					{
 						value = balance[token.get_asset(native_asset)];
 						value = value.is_nan() ? -token.value : (value - token.value);
@@ -248,10 +248,10 @@ namespace tangent
 					is_coinbase = true;
 					if (asset != native_asset)
 					{
-						for (auto& output : tx.outputs)
+						for (auto& [hash, output] : tx.outputs)
 						{
 							coin_utxo::token_utxo* token_utxo = nullptr;
-							for (auto& token : output.tokens)
+							for (auto& [token_hash, token] : output.tokens)
 							{
 								if (token.get_asset(native_asset) == asset)
 								{
@@ -271,7 +271,7 @@ namespace tangent
 				}
 
 				if (is_coinbase)
-					tx.inputs.push_back(std::move(new_input));
+					tx.inputs[new_input.as_hash()] = std::move(new_input);
 
 				coreturn expects_rt<computed_transaction>(std::move(tx));
 			}
@@ -343,7 +343,7 @@ namespace tangent
 				unordered_map<algorithm::asset_id, coin_utxo::token_utxo> change_tokens;
 				for (auto& item : *possible_inputs)
 				{
-					for (auto& token : item.tokens)
+					for (auto& [token_hash, token] : item.tokens)
 					{
 						auto token_asset = token.get_asset(native_asset);
 						auto& next = change_tokens[token_asset];
@@ -354,7 +354,6 @@ namespace tangent
 					}
 				}
 
-				result.outputs.reserve(to.size() + 1);
 				for (auto& item : to)
 				{
 					auto link = find_linked_addresses({ item.address });
@@ -402,10 +401,10 @@ namespace tangent
 						builder.Body.TransactionInput.addInput(copy<std::string>(input.transaction_id), input.index);
 						builder.addExtendedSigningKey(dummy_private_key);
 					}
-					for (auto& output : result.outputs)
+					for (auto& [hash, output] : result.outputs)
 					{
 						builder.Body.TransactionOutput.addOutput(copy<std::string>(output.link.address), (uint64_t)to_lovelace(output.value));
-						for (auto& token : output.tokens)
+						for (auto& [token_hash, token] : output.tokens)
 							builder.Body.TransactionOutput.addAsset(copy<std::string>(token.contract_address), copy<std::string>(token.symbol), (uint64_t)uint256_t((token.value * token.get_divisibility()).truncate(0).to_string()));
 					}
 					builder.Body.addFee((uint64_t)to_lovelace(fee_value));
@@ -453,15 +452,15 @@ namespace tangent
 				{
 					::Cardano::Transaction verifier = ::Cardano::Transaction();
 					uint8_t dummy_private_key[XSK_LENGTH] = { 0 };
-					for (auto& input : prepared.inputs)
+					for (auto& [hash, input] : prepared.inputs)
 					{
 						verifier.Body.TransactionInput.addInput(copy<std::string>(input.utxo.transaction_id), input.utxo.index);
 						verifier.addExtendedSigningKey(dummy_private_key);
 					}
-					for (auto& output : prepared.outputs)
+					for (auto& [hash, output] : prepared.outputs)
 					{
 						verifier.Body.TransactionOutput.addOutput(copy<std::string>(output.link.address), (uint64_t)to_lovelace(output.value));
-						for (auto& token : output.tokens)
+						for (auto& [token_hash, token] : output.tokens)
 							verifier.Body.TransactionOutput.addAsset(copy<std::string>(token.contract_address), copy<std::string>(token.symbol), (uint64_t)uint256_t((token.value * token.get_divisibility()).truncate(0).to_string()));
 					}
 					verifier.Body.addFee(fee_value);
@@ -469,16 +468,16 @@ namespace tangent
 					std::vector<::Cardano::Transaction::Digest> digests;
 					verifier.build(&digests);
 
-					for (size_t i = 0; i < digests.size(); i++)
+					size_t input_index = 0;
+					for (auto& [hash, input] : prepared.inputs)
 					{
-						auto& digest = digests[i];
-						auto& input = prepared.inputs[i];
+						auto& digest = digests[input_index++];
 						if (input.message.size() != sizeof(digest.Hash) || memcmp(input.message.data(), digest.Hash, sizeof(digest.Hash)) != 0)
 							return layer_exception("invalid input message");
 					}
 
 					::Cardano::Transaction builder = ::Cardano::Transaction();
-					for (auto& input : prepared.inputs)
+					for (auto& [hash, input] : prepared.inputs)
 					{
 						auto raw_public_key = decode_public_key(input.utxo.link.public_key);
 						if (!raw_public_key)
@@ -489,10 +488,10 @@ namespace tangent
 						builder.Body.TransactionInput.addInput(copy<std::string>(input.utxo.transaction_id), input.utxo.index);
 						builder.addExtendedVerifyingKey((uint8_t*)raw_public_key->data(), signature);
 					}
-					for (auto& output : prepared.outputs)
+					for (auto& [hash, output] : prepared.outputs)
 					{
 						builder.Body.TransactionOutput.addOutput(copy<std::string>(output.link.address), (uint64_t)to_lovelace(output.value));
-						for (auto& token : output.tokens)
+						for (auto& [token_hash, token] : output.tokens)
 							builder.Body.TransactionOutput.addAsset(copy<std::string>(token.contract_address), copy<std::string>(token.symbol), (uint64_t)uint256_t((token.value * token.get_divisibility()).truncate(0).to_string()));
 					}
 					builder.Body.addFee(fee_value);

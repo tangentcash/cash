@@ -2261,7 +2261,7 @@ namespace tangent
 			auto input_value = ordered_map<algorithm::asset_id, decimal>();
 			auto output_value = ordered_map<algorithm::asset_id, decimal>();
 			auto change_value = ordered_map<algorithm::asset_id, decimal>();
-			for (auto& input : prepared.inputs)
+			for (auto& [hash, input] : prepared.inputs)
 			{
 				auto normalized_address = input.utxo.link.address;
 				auto status = server->normalize_address(base_asset, &normalized_address);
@@ -2288,13 +2288,13 @@ namespace tangent
 
 				auto& value = input_value[input.utxo.get_asset(base_asset)];
 				value = value.is_nan() ? input.utxo.value : (value + input.utxo.value);
-				for (auto& token : input.utxo.tokens)
+				for (auto& [token_hash, token] : input.utxo.tokens)
 				{
 					auto& token_value = input_value[token.get_asset(base_asset)];
 					token_value = token_value.is_nan() ? token.value : (token_value + token.value);
 				}
 			}
-			for (auto& output : prepared.outputs)
+			for (auto& [hash, output] : prepared.outputs)
 			{
 				auto normalized_address = output.link.address;
 				auto status = server->normalize_address(base_asset, &normalized_address);
@@ -2326,7 +2326,7 @@ namespace tangent
 				auto output_asset = output.get_asset(base_asset);
 				auto& value = change_output == required_output_witness.end() ? change_value[output_asset] : output_value[output_asset];
 				value = value.is_nan() ? output.value : (value + output.value);
-				for (auto& token : output.tokens)
+				for (auto& [token_hash, token] : output.tokens)
 				{
 					auto& token_value = output_value[token.get_asset(base_asset)];
 					token_value = token_value.is_nan() ? token.value : (token_value + token.value);
@@ -2407,13 +2407,13 @@ namespace tangent
 				if (!proof.is_valid())
 					return layer_exception("invalid proof data");
 
-				for (auto& input : proof.inputs)
+				for (auto& [hash, input] : proof.inputs)
 				{
 					if (input.is_account() && algorithm::asset::blockchain_of(input.get_asset(asset)) != blockchain)
 						return layer_exception("proof input asset not valid");
 				}
 
-				for (auto& output : proof.outputs)
+				for (auto& [hash, output] : proof.outputs)
 				{
 					if (output.is_account() && algorithm::asset::blockchain_of(output.get_asset(asset)) != blockchain)
 						return layer_exception("proof output asset not valid");
@@ -2473,7 +2473,7 @@ namespace tangent
 						else
 							operations.weights[inout.get_asset(asset)].unaccountable += sign >= 0 ? inout.value : -inout.value;
 					}
-					for (auto& token : inout.tokens)
+					for (auto& [hash, token] : inout.tokens)
 					{
 						if (accountable)
 							operations.weights[token.get_asset(asset)].accountable += sign >= 0 ? token.value : -token.value;
@@ -2481,7 +2481,7 @@ namespace tangent
 							operations.weights[token.get_asset(asset)].unaccountable += sign >= 0 ? token.value : -token.value;
 					}
 				};
-				for (auto& input : proof.inputs)
+				for (auto& [hash, input] : proof.inputs)
 				{
 					auto source = context->get_witness_account(asset, input.link.address, 0);
 					if (source && source->is_depository_account())
@@ -2491,7 +2491,7 @@ namespace tangent
 						rebalance_weights(input, true, -1);
 						if (input.value.is_positive())
 							depository.transfers[input.get_asset(asset)].supply -= input.value;
-						for (auto& token : input.tokens)
+						for (auto& [token_hash, token] : input.tokens)
 							depository.transfers[token.get_asset(asset)].supply -= token.value;
 
 						auto account = context->get_depository_account(asset, from_depository.data, source->owner);
@@ -2516,7 +2516,7 @@ namespace tangent
 					}
 				}
 
-				for (auto& output : proof.outputs)
+				for (auto& [hash, output] : proof.outputs)
 				{
 					auto source = context->get_witness_account(asset, output.link.address, 0);
 					if (source && source->is_depository_account())
@@ -2527,7 +2527,7 @@ namespace tangent
 						rebalance_weights(output, true, 1);
 						if (output.value.is_positive())
 							amounts[output.get_asset(asset)] = output.value;
-						for (auto& token : output.tokens)
+						for (auto& [token_hash, token] : output.tokens)
 							amounts[token.get_asset(asset)] = token.value;
 
 						auto account = context->get_depository_account(asset, to_depository.data, source->owner);
@@ -2566,7 +2566,7 @@ namespace tangent
 						auto amounts = ordered_map<algorithm::asset_id, decimal>();
 						if (output.value.is_positive())
 							amounts[output.get_asset(asset)] = output.value;
-						for (auto& token : output.tokens)
+						for (auto& [token_hash, token] : output.tokens)
 							amounts[token.get_asset(asset)] = token.value;
 
 						for (auto& [token_asset, token_value] : amounts)
@@ -2831,12 +2831,16 @@ namespace tangent
 			oracle::computed_transaction witness;
 			witness.transaction_id = transaction_id;
 			witness.block_id = block_id;
-			witness.inputs.reserve(inputs.size());
-			witness.outputs.reserve(outputs.size());
 			for (auto& input : inputs)
-				witness.inputs.push_back(oracle::coin_utxo(oracle::wallet_link::from_address(input.address), { { input.asset, input.value } }));
+			{
+				auto utxo = oracle::coin_utxo(oracle::wallet_link::from_address(input.address), { { input.asset, input.value } });
+				witness.inputs[utxo.as_hash()] = std::move(utxo);
+			}
 			for (auto& output : outputs)
-				witness.outputs.push_back(oracle::coin_utxo(oracle::wallet_link::from_address(output.address), { { output.asset, output.value } }));
+			{
+				auto utxo = oracle::coin_utxo(oracle::wallet_link::from_address(output.address), { { output.asset, output.value } });
+				witness.outputs[utxo.as_hash()] = std::move(utxo);
+			}
 			set_computed_proof(std::move(witness));
 		}
 		void depository_attestation::set_computed_proof(oracle::computed_transaction&& new_proof)

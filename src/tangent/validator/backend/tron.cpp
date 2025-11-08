@@ -358,14 +358,14 @@ namespace tangent
 				block_header.expiration = (int64_t)prepared.abi[3].as_uint64();
 				block_header.timestamp = (int64_t)prepared.abi[4].as_uint64();
 
-				auto& input = prepared.inputs.front();
-				auto& output = prepared.outputs.front();
+				auto& input = prepared.inputs.begin()->second;
+				auto& output = prepared.outputs.begin()->second;
 				auto divisibility = prepared.abi[5].as_decimal();
 				auto contract_address = prepared.abi[0].as_blob();
 				auto eth_contract_address = contract_address.empty() ? string() : decode_non_eth_address_pf(contract_address);
 				auto eth_from_address = decode_non_eth_address_pf(input.utxo.link.address);
 				auto eth_to_address = decode_non_eth_address_pf(output.link.address);
-				auto eth_value = from_eth(output.tokens.empty() ? output.value : output.tokens.front().value, divisibility);
+				auto eth_value = from_eth(output.tokens.empty() ? output.value : output.tokens.begin()->second.value, divisibility);
 				auto transaction = tx_serialize(block_header, eth_contract_address, eth_from_address, eth_to_address, eth_value);
 				if (input.message.size() != transaction.raw_transaction_id.size() || memcmp(input.message.data(), transaction.raw_transaction_id.data(), transaction.raw_transaction_id.size()))
 					return layer_exception("invalid input message");

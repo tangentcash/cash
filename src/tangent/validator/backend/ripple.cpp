@@ -374,9 +374,15 @@ namespace tangent
 					outputs[token_asset] = token_value;
 				}
 				if (!inputs.empty())
-					tx.inputs.push_back(coin_utxo(target_from_link != discovery->end() ? target_from_link->second : wallet_link::from_address(from), std::move(inputs)));
+				{
+					auto input = coin_utxo(target_from_link != discovery->end() ? target_from_link->second : wallet_link::from_address(from), std::move(inputs));
+					tx.inputs[input.as_hash()] = std::move(input);
+				}
 				if (!outputs.empty())
-					tx.outputs.push_back(coin_utxo(std::move(to_link), std::move(outputs)));
+				{
+					auto output = coin_utxo(std::move(to_link), std::move(outputs));
+					tx.outputs[output.as_hash()] = std::move(output);
+				}
 				coreturn expects_rt<computed_transaction>(std::move(tx));
 			}
 			expects_promise_rt<decimal> ripple::calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link)
@@ -510,8 +516,8 @@ namespace tangent
 				if (prepared.abi.size() != 4)
 					return layer_exception("invalid prepared abi");
 
-				auto& input = prepared.inputs.front();
-				auto& output = prepared.outputs.front();
+				auto& input = prepared.inputs.begin()->second;
+				auto& output = prepared.outputs.begin()->second;
 				auto [output_address, output_tag] = address_util::decode_tag_address(output.link.address);
 				auto contract_address = prepared.abi[0].as_string();
 				transaction_buffer buffer;
@@ -530,7 +536,7 @@ namespace tangent
 					if (output.tokens.empty())
 						return layer_exception("invalid output");
 
-					auto& output_token = output.tokens.front();
+					auto& output_token = output.tokens.begin()->second;
 					buffer.amount.token_value = output_token.value;
 					buffer.amount.asset = algorithm::asset::token_of(output_token.get_asset(native_asset));
 					buffer.amount.issuer = contract_address;

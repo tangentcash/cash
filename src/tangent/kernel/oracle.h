@@ -107,9 +107,10 @@ namespace tangent
 				algorithm::asset_id get_asset(const algorithm::asset_id& base_asset) const;
 				bool is_account() const;
 				bool is_valid() const;
+				uint256_t as_hash() const;
 			};
 
-			vector<token_utxo> tokens;
+			ordered_map<uint256_t, token_utxo> tokens;
 			wallet_link link;
 			string transaction_id;
 			decimal value;
@@ -135,8 +136,8 @@ namespace tangent
 
 		struct computed_transaction : messages::uniform
 		{
-			vector<coin_utxo> inputs;
-			vector<coin_utxo> outputs;
+			ordered_map<uint256_t, coin_utxo> inputs;
+			ordered_map<uint256_t, coin_utxo> outputs;
 			string transaction_id;
 			uint64_t block_id;
 
@@ -167,10 +168,12 @@ namespace tangent
 				algorithm::composition::type alg = algorithm::composition::type::unknown;
 				vector<uint8_t> message;
 				coin_utxo utxo;
+
+				uint256_t as_hash() const;
 			};
 
-			vector<signable_coin_utxo> inputs;
-			vector<coin_utxo> outputs;
+			ordered_map<uint256_t, signable_coin_utxo> inputs;
+			ordered_map<uint256_t, coin_utxo> outputs;
 			format::variables abi;
 
 			prepared_transaction() = default;

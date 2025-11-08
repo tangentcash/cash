@@ -451,9 +451,15 @@ namespace tangent
 					outputs[token_asset] = token_value;
 				}
 				if (!inputs.empty())
-					tx.inputs.push_back(coin_utxo(target_from_link != discovery->end() ? target_from_link->second : wallet_link::from_address(from), std::move(inputs)));
+				{
+					auto input = coin_utxo(target_from_link != discovery->end() ? target_from_link->second : wallet_link::from_address(from), std::move(inputs));
+					tx.inputs[input.as_hash()] = std::move(input);
+				}
 				if (!outputs.empty())
-					tx.outputs.push_back(coin_utxo(std::move(to_link), std::move(outputs)));
+				{
+					auto output = coin_utxo(std::move(to_link), std::move(outputs));
+					tx.outputs[output.as_hash()] = std::move(output);
+				}
 				coreturn expects_rt<computed_transaction>(std::move(tx));
 			}
 			expects_promise_rt<decimal> stellar::calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link)
@@ -635,14 +641,14 @@ namespace tangent
 				if (prepared.abi.size() < 3)
 					return layer_exception("invalid prepared abi");
 
-				auto& input = prepared.inputs.front();
+				auto& input = prepared.inputs.begin()->second;
 				auto& params = get_params();
 				uint8_t decoded_public_key[256]; size_t decoded_public_key_size = sizeof(decoded_public_key);
 				if (!decode_key(params.ed25519_public_key, input.utxo.link.public_key, decoded_public_key, &decoded_public_key_size))
 					return layer_exception("input public key invalid");
 
 				string memo;
-				for (auto& item : prepared.outputs)
+				for (auto& [hash, item] : prepared.outputs)
 				{
 					auto [address, tag] = address_util::decode_tag_address(item.link.address);
 					if (tag.empty())
@@ -662,7 +668,7 @@ namespace tangent
 				size_t abi_pointer = 3;
 				vector<StellarCreateAccountOp> accounts;
 				vector<StellarPaymentOp> payments;
-				for (auto& item : prepared.outputs)
+				for (auto& [hash, item] : prepared.outputs)
 				{
 					auto create_account_ptr = prepared.load_abi(&abi_pointer);
 					auto token_code_ptr = prepared.load_abi(&abi_pointer);
@@ -671,8 +677,8 @@ namespace tangent
 					if (!create_account_ptr || !token_code_ptr || !token_issuer_ptr || !token_type_ptr)
 						return layer_exception("invalid prepared abi");
 
-					auto& value = item.tokens.empty() ? item.value : item.tokens.front().value;
-					auto asset = item.tokens.empty() ? item.get_asset(native_asset) : item.tokens.front().get_asset(native_asset);
+					auto& value = item.tokens.empty() ? item.value : item.tokens.begin()->second.value;
+					auto asset = item.tokens.empty() ? item.get_asset(native_asset) : item.tokens.begin()->second.get_asset(native_asset);
 					auto contract_address = oracle::server_node::get()->get_contract_address(asset);
 					if (create_account_ptr->as_boolean())
 					{

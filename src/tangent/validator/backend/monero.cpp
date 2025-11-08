@@ -240,7 +240,7 @@ namespace tangent
 							auto& key_offset = input.key_offsets[info.key_offset_indices[i]];
 							auto utxo = get_utxo(to_string(key_offset, 16), 0);
 							if (utxo)
-								result.inputs.push_back(std::move(*utxo));
+								result.inputs[utxo->as_hash()] = std::move(*utxo);
 						}
 					}
 					else
@@ -347,7 +347,7 @@ namespace tangent
 								new_output.link = link.second;
 								new_output.value = value;
 								new_output.index = (uint64_t)i;
-								result.outputs.push_back(std::move(new_output));
+								result.outputs[new_output.as_hash()] = std::move(new_output);
 							}
 						}
 
@@ -383,7 +383,7 @@ namespace tangent
 					new_output.link = links->begin()->second;
 					new_output.value = from_baseline_value(output.amount);
 					new_output.index = (uint64_t)output_index;
-					result.outputs.push_back(std::move(new_output));
+					result.outputs[new_output.as_hash()] = std::move(new_output);
 				}
 
 				if (result.inputs.empty() && result.outputs.empty())
@@ -395,7 +395,7 @@ namespace tangent
 					if (!indices)
 						coreturn expects_rt<computed_transaction>(indices.error());
 
-					for (auto& output : result.outputs)
+					for (auto& [hash, output] : result.outputs)
 					{
 						if (output.index < indices->size())
 						{
@@ -405,27 +405,33 @@ namespace tangent
 						else
 							output.index = std::numeric_limits<uint64_t>::max();
 					}
-					result.outputs.erase(std::remove_if(result.outputs.begin(), result.outputs.end(), [](coin_utxo& item) { return item.index == std::numeric_limits<uint64_t>::max(); }), result.outputs.end());
+					for (auto it = result.outputs.begin(); it != result.outputs.end();)
+					{
+						if (it->second.index == std::numeric_limits<uint64_t>::max())
+							it = result.outputs.erase(it);
+						else
+							++it;
+					}
 				}
 
 				decimal sending_value = decimal::zero();
 				decimal receiving_value = decimal::zero();
-				for (auto& input : result.inputs)
+				for (auto& [hash, input] : result.inputs)
 					sending_value += input.value;
-				for (auto& output : result.outputs)
+				for (auto& [hash, output] : result.outputs)
 					receiving_value += output.value;
 
 				if (sending_value < receiving_value)
 				{
 					coin_utxo new_input;
 					new_input.value = receiving_value - sending_value;
-					result.inputs.push_back(std::move(new_input));
+					result.inputs[new_input.as_hash()] = std::move(new_input);
 				}
 				else if (sending_value > receiving_value)
 				{
 					coin_utxo new_output;
 					new_output.value = sending_value - receiving_value;
-					result.outputs.push_back(std::move(new_output));
+					result.outputs[new_output.as_hash()] = std::move(new_output);
 				}
 
 				coreturn expects_rt<computed_transaction>(std::move(result));

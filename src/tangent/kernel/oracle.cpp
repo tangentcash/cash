@@ -169,6 +169,15 @@ namespace tangent
 
 			return !contract_address.empty() && !symbol.empty() && !value.is_negative() && !value.is_nan();
 		}
+		uint256_t coin_utxo::token_utxo::as_hash() const
+		{
+			format::wo_stream message;
+			message.write_string_raw(contract_address);
+			message.write_string_raw(symbol);
+			message.write_decimal(value);
+			message.write_integer(decimals);
+			return message.hash();
+		}
 
 		coin_utxo::coin_utxo(wallet_link&& new_link, unordered_map<algorithm::asset_id, decimal>&& new_values) : link(std::move(new_link)), index(std::numeric_limits<uint32_t>::max())
 		{
@@ -196,7 +205,7 @@ namespace tangent
 		{
 			if (!contract_address.empty())
 			{
-				for (auto& item : tokens)
+				for (auto& [hash, item] : tokens)
 				{
 					if (item.contract_address == contract_address)
 					{
@@ -207,7 +216,9 @@ namespace tangent
 						return;
 					}
 				}
-				tokens.push_back(token_utxo(contract_address, symbol, new_value, decimals));
+
+				auto next = token_utxo(contract_address, symbol, new_value, decimals);
+				tokens[next.as_hash()] = std::move(next);
 			}
 			else if (value.is_nan())
 				value = new_value;
@@ -219,7 +230,7 @@ namespace tangent
 			if (contract_address.empty())
 				return value;
 
-			for (auto& item : tokens)
+			for (auto& [hash, item] : tokens)
 			{
 				if (item.contract_address == contract_address)
 					return item.value;
@@ -237,7 +248,7 @@ namespace tangent
 			stream->write_integer(index);
 			stream->write_decimal(value);
 			stream->write_integer((uint32_t)tokens.size());
-			for (auto& item : tokens)
+			for (auto& [hash, item] : tokens)
 			{
 				stream->write_string_raw(item.contract_address);
 				stream->write_string(item.symbol);
@@ -264,7 +275,6 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &size))
 				return false;
 
-			tokens.reserve(size);
 			for (uint32_t i = 0; i < size; i++)
 			{
 				token_utxo token;
@@ -280,7 +290,7 @@ namespace tangent
 				if (!stream.read_integer(stream.read_type(), &token.decimals))
 					return false;
 
-				tokens.emplace_back(std::move(token));
+				tokens[token.as_hash()] = std::move(token);
 			}
 
 			return true;
@@ -291,7 +301,7 @@ namespace tangent
 		}
 		bool coin_utxo::is_valid_input() const
 		{
-			for (auto& token : tokens)
+			for (auto& [hash, token] : tokens)
 			{
 				if (!token.is_valid())
 					return false;
@@ -310,7 +320,7 @@ namespace tangent
 			if (is_account() && !algorithm::asset::id_of_handle(transaction_id))
 				return false;
 
-			for (auto& token : tokens)
+			for (auto& [hash, token] : tokens)
 			{
 				if (!token.is_valid())
 					return false;
@@ -337,7 +347,7 @@ namespace tangent
 			data->set("value", var::decimal(value));
 			data->set("type", var::string(is_account() ? "account" : "utxo"));
 			auto* tokens_data = data->set("tokens", var::set::array());
-			for (auto& item : tokens)
+			for (auto& [hash, item] : tokens)
 			{
 				auto* token_data = tokens_data->push(var::set::object());
 				if (!item.is_account())
@@ -379,14 +389,14 @@ namespace tangent
 			stream->write_integer(block_id);
 			stream->write_string_raw(transaction_id);
 			stream->write_integer((uint32_t)inputs.size());
-			for (auto& item : inputs)
+			for (auto& [hash, item] : inputs)
 			{
 				if (!item.store_payload(stream))
 					return false;
 			}
 
 			stream->write_integer((uint32_t)outputs.size());
-			for (auto& item : outputs)
+			for (auto& [hash, item] : outputs)
 			{
 				if (!item.store_payload(stream))
 					return false;
@@ -407,14 +417,13 @@ namespace tangent
 				return false;
 
 			inputs.clear();
-			inputs.reserve(inputs_size);
 			for (size_t i = 0; i < inputs_size; i++)
 			{
 				coin_utxo next;
 				if (!next.load_payload(stream))
 					return false;
 
-				inputs.emplace_back(std::move(next));
+				inputs[next.as_hash()] = std::move(next);
 			}
 
 			uint32_t outputs_size;
@@ -422,14 +431,13 @@ namespace tangent
 				return false;
 
 			outputs.clear();
-			outputs.reserve(outputs_size);
 			for (size_t i = 0; i < outputs_size; i++)
 			{
 				coin_utxo next;
 				if (!next.load_payload(stream))
 					return false;
 
-				outputs.emplace_back(std::move(next));
+				outputs[next.as_hash()] = std::move(next);
 			}
 
 			return true;
@@ -440,28 +448,28 @@ namespace tangent
 				return false;
 
 			unordered_map<algorithm::asset_id, decimal> balance;
-			for (auto& input : inputs)
+			for (auto& [hash, input] : inputs)
 			{
 				if (!input.is_valid_output())
 					return false;
 
 				auto& balance_value = balance[0];
 				balance_value = balance_value.is_nan() ? -input.value : (balance_value - input.value);
-				for (auto& token : input.tokens)
+				for (auto& [token_hash, token] : input.tokens)
 				{
 					balance_value = balance[algorithm::asset::id_of("_", token.symbol, token.contract_address)];
 					balance_value = balance_value.is_nan() ? -input.value : (balance_value - input.value);
 				}
 			}
 
-			for (auto& output : outputs)
+			for (auto& [hash, output] : outputs)
 			{
 				if (!output.is_valid_output())
 					return false;
 
 				auto& balance_value = balance[0];
 				balance_value = balance_value.is_nan() ? output.value : (balance_value + output.value);
-				for (auto& token : output.tokens)
+				for (auto& [token_hash, token] : output.tokens)
 				{
 					balance_value = balance[algorithm::asset::id_of("_", token.symbol, token.contract_address)];
 					balance_value = balance_value.is_nan() ? output.value : (balance_value + output.value);
@@ -482,10 +490,10 @@ namespace tangent
 			data->set("transaction_id", var::string(transaction_id));
 			data->set("block_id", algorithm::encoding::serialize_uint256(block_id));
 			schema* input_data = data->set("inputs", var::array());
-			for (auto& input : inputs)
+			for (auto& [hash, input] : inputs)
 				input_data->push(input.as_schema().reset());
 			schema* output_data = data->set("outputs", var::array());
-			for (auto& output : outputs)
+			for (auto& [hash, output] : outputs)
 				output_data->push(output.as_schema().reset());
 			return data;
 		}
@@ -507,6 +515,16 @@ namespace tangent
 			return "oracle_computed_transaction";
 		}
 
+		uint256_t prepared_transaction::signable_coin_utxo::as_hash() const
+		{
+			format::wo_stream result;
+			result.write_integer((uint8_t)alg);
+			result.write_string_raw(std::string_view((char*)public_key.data(), public_key.size()));
+			result.write_string_raw(std::string_view((char*)signature.data(), signature.size()));
+			utxo.store_payload(&result);
+			return result.hash();
+		}
+
 		prepared_transaction& prepared_transaction::requires_input(algorithm::composition::type new_alg, const algorithm::composition::cpubkey_t& new_public_key, uint8_t* new_message, size_t new_message_size, coin_utxo&& input)
 		{
 			VI_ASSERT(new_message != nullptr, "message should be set");
@@ -516,7 +534,7 @@ namespace tangent
 			item.public_key = new_public_key;
 			item.message.resize(new_message_size);
 			memcpy(item.message.data(), new_message, new_message_size);
-			inputs.push_back(std::move(item));
+			inputs[item.as_hash()] = std::move(item);
 			return *this;
 		}
 		prepared_transaction& prepared_transaction::requires_account_input(algorithm::composition::type new_alg, wallet_link&& signer, const algorithm::composition::cpubkey_t& new_public_key, uint8_t* new_message, size_t new_message_size, unordered_map<algorithm::asset_id, decimal>&& input)
@@ -526,15 +544,16 @@ namespace tangent
 		}
 		prepared_transaction& prepared_transaction::requires_output(coin_utxo&& output)
 		{
-			outputs.push_back(std::move(output));
-			for (size_t i = 0; i < outputs.size(); i++)
-				outputs[i].index = (outputs[i].index == std::numeric_limits<uint32_t>::max() ? std::numeric_limits<uint32_t>::max() : (uint32_t)i);
+			uint32_t index = 0;
+			outputs[output.as_hash()] = std::move(output);
+			for (auto& [hash, output] : outputs)
+				output.index = (output.index == std::numeric_limits<uint32_t>::max() ? std::numeric_limits<uint32_t>::max() : index++);
 			return *this;
 		}
 		prepared_transaction& prepared_transaction::requires_account_output(const std::string_view& to_address, unordered_map<algorithm::asset_id, decimal>&& output)
 		{
 			coin_utxo item = coin_utxo(wallet_link::from_address(to_address), std::move(output));
-			outputs.push_back(std::move(item));
+			outputs[item.as_hash()] = std::move(item);
 			return *this;
 		}
 		prepared_transaction& prepared_transaction::requires_abi(format::variable&& value)
@@ -553,7 +572,7 @@ namespace tangent
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer((uint32_t)inputs.size());
-			for (auto& item : inputs)
+			for (auto& [hash, item] : inputs)
 			{
 				stream->write_integer((uint8_t)item.alg);
 				stream->write_string(std::string_view((char*)item.public_key.data(), item.public_key.size()));
@@ -564,7 +583,7 @@ namespace tangent
 			}
 
 			stream->write_integer((uint32_t)outputs.size());
-			for (auto& item : outputs)
+			for (auto& [hash, item] : outputs)
 			{
 				if (!item.store_payload(stream))
 					return false;
@@ -579,7 +598,6 @@ namespace tangent
 				return false;
 
 			inputs.clear();
-			inputs.reserve(inputs_size);
 			for (size_t i = 0; i < inputs_size; i++)
 			{
 				signable_coin_utxo next;
@@ -607,7 +625,7 @@ namespace tangent
 				if (!next.utxo.load_payload(stream))
 					return false;
 
-				inputs.emplace_back(std::move(next));
+				inputs[next.as_hash()] = std::move(next);
 			}
 
 			uint32_t outputs_size;
@@ -615,14 +633,13 @@ namespace tangent
 				return false;
 
 			outputs.clear();
-			outputs.reserve(outputs_size);
 			for (size_t i = 0; i < outputs_size; i++)
 			{
 				coin_utxo next;
 				if (!next.load_payload(stream))
 					return false;
 
-				outputs.emplace_back(std::move(next));
+				outputs[next.as_hash()] = std::move(next);
 			}
 
 			abi.clear();
@@ -630,7 +647,7 @@ namespace tangent
 		}
 		prepared_transaction::signable_coin_utxo* prepared_transaction::next_input_for_aggregation()
 		{
-			for (auto& item : inputs)
+			for (auto& [hash, item] : inputs)
 			{
 				if (item.signature.empty())
 					return &item;
@@ -642,19 +659,19 @@ namespace tangent
 			if (inputs.empty() || outputs.empty())
 				return status::invalid;
 
-			for (auto& item : inputs)
+			for (auto& [hash, item] : inputs)
 			{
 				if (item.alg == algorithm::composition::type::unknown || item.public_key.empty() || item.message.empty() || !item.utxo.is_valid_input())
 					return status::invalid;
 			}
 
-			for (auto& item : outputs)
+			for (auto& [hash, item] : outputs)
 			{
 				if (!item.is_valid_output())
 					return status::invalid;
 			}
 
-			for (auto& item : inputs)
+			for (auto& [hash, item] : inputs)
 			{
 				if (item.signature.empty())
 					return status::requires_signature;
@@ -683,7 +700,7 @@ namespace tangent
 
 			schema* data = var::set::object();
 			schema* input_data = data->set("inputs", var::array());
-			for (auto& input : inputs)
+			for (auto& [hash, input] : inputs)
 			{
 				auto* signer = input_data->push(var::set::object());
 				signer->set("utxo", input.utxo.as_schema().reset());
@@ -711,7 +728,7 @@ namespace tangent
 				signer->set("finalized", var::boolean(!input.signature.empty()));
 			}
 			schema* output_data = data->set("outputs", var::array());
-			for (auto& output : outputs)
+			for (auto& [hash, output] : outputs)
 				output_data->push(output.as_schema().reset());
 			data->set("abi", format::variables_util::serialize(abi));
 			data->set("status", var::string(status));
@@ -775,9 +792,8 @@ namespace tangent
 			computed.transaction_id = hashdata;
 			computed.block_id = locktime;
 			computed.outputs = prepared.outputs;
-			computed.inputs.reserve(prepared.inputs.size());
-			for (auto& input : prepared.inputs)
-				computed.inputs.push_back(input.utxo);
+			for (auto& [hash, input] : prepared.inputs)
+				computed.inputs[input.utxo.as_hash()] = input.utxo;
 			return computed;
 		}
 		uptr<schema> finalized_transaction::as_schema() const
@@ -1532,7 +1548,7 @@ namespace tangent
 					if (query)
 					{
 						current_value += output.value;
-						for (auto& token : output.tokens)
+						for (auto& [hash, token] : output.tokens)
 						{
 							auto current_token_value = query->min_token_values.find(token.get_asset(native_asset));
 							if (current_token_value != query->min_token_values.end())
@@ -1560,13 +1576,13 @@ namespace tangent
 		}
 		expects_lr<void> relay_backend_utxo::update_utxo(const prepared_transaction& prepared)
 		{
-			for (auto& output : prepared.inputs)
+			for (auto& [hash, output] : prepared.inputs)
 			{
 				if (!output.utxo.is_account())
 					remove_utxo(output.utxo.transaction_id, output.utxo.index);
 			}
 
-			for (auto& input : prepared.outputs)
+			for (auto& [hash, input] : prepared.outputs)
 			{
 				if (!input.is_account() && input.link.has_all())
 					add_utxo(input);
@@ -1576,13 +1592,13 @@ namespace tangent
 		}
 		expects_lr<void> relay_backend_utxo::update_utxo(const computed_transaction& computed)
 		{
-			for (auto& output : computed.inputs)
+			for (auto& [hash, output] : computed.inputs)
 			{
 				if (!output.is_account())
 					remove_utxo(output.transaction_id, output.index);
 			}
 
-			for (auto& input : computed.outputs)
+			for (auto& [hash, input] : computed.outputs)
 			{
 				if (!input.is_account() && input.link.has_all())
 					add_utxo(input);
@@ -1617,7 +1633,7 @@ namespace tangent
 
 			coin_utxo copy = output;
 			copy.link = std::move(*link);
-			for (auto& item : copy.tokens)
+			for (auto& [hash, item]: copy.tokens)
 			{
 				public_key_hash = implementation->decode_address(item.contract_address);
 				if (public_key_hash)
@@ -1664,7 +1680,7 @@ namespace tangent
 				{
 					auto* server = oracle::server_node::get();
 					auto* implementation = server->get_chain(native_asset);
-					for (auto& token : item.tokens)
+					for (auto& [hash, token] : item.tokens)
 					{
 						if (token.contract_address == *address)
 							value += token.value;

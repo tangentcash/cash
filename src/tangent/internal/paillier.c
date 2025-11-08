@@ -44,7 +44,7 @@ void mpz_random_prime(mpz_t prime, mp_bitcnt_t len)
 	char* seed = (char*)malloc(sizeof(char) * seed_size);
 	do
 	{
-		random_buffer(seed, seed_size);
+		random_buffer((uint8_t*)seed, seed_size);
 		mpz_import(random_num, seed_size, 1, sizeof(seed[0]), 0, 0, seed);
 		mpz_setbit(random_num, len - 1);
 		mpz_nextprime(prime, random_num);
@@ -61,7 +61,7 @@ void mpz_derive_prime(mpz_t prime, mp_bitcnt_t len, gmp_randstate_t random)
 	char* seed = (char*)malloc(sizeof(char) * seed_size);
 	do
 	{
-		random_buffer(seed, seed_size);
+		random_buffer((uint8_t*)seed, seed_size);
 		mpz_urandomb(random_num, random, len);
 		mpz_setbit(random_num, len - 1);
 		mpz_nextprime(prime, random_num);

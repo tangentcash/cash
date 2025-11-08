@@ -1246,7 +1246,7 @@ public:
 		};
 		auto validate_transaction = [&](const algorithm::asset_id& asset, const oracle::computed_wallet& wallet, oracle::prepared_transaction& prepared, const std::string_view& environment, const std::string_view& expected_calldata)
 		{
-			for (auto& input : prepared.inputs)
+			for (auto& [hash, input] : prepared.inputs)
 			{
 				auto state = algorithm::composition::make_signature_state(input.alg, input.public_key, input.message.data(), input.message.size(), 1).expect("signature state initialization error");
 				while (state->next_phase() != algorithm::composition::phase::finalized)
@@ -1274,20 +1274,20 @@ public:
 			auto wallet = create_wallet(asset);
 			server->add_specifications(asset, nullptr);
 
-			auto input_p2pkh_hash = codec::hex_decode("0x57e30b41a6d984cdb763145f32ad9678a9b2bfd0267e12d5d0474e97f7d077d0");
+			auto input_p2pkh_hash = codec::hex_decode("0x105856f83328b1b01d13f6fa7abd58e41ce027a97d0cb6ac4588e3360c5f2e25");
 			oracle::coin_utxo input_p2pkh;
 			input_p2pkh.link = oracle::wallet_link(user.public_key_hash, wallet.encoded_public_key, wallet.encoded_addresses[3]);
 			input_p2pkh.transaction_id = "382940bfc9a1fe1f09a3fb8e1fda1b25b90dc2019ff5973b1d9d616e15b29840";
 			input_p2pkh.index = 1;
 			input_p2pkh.value = 0.1;
 
-			auto input_p2sh_hash = codec::hex_decode("0xc4e23865424498b4d90c57dda4bea4718e1e6ed669cc00796afd864ac6de3606");
+			auto input_p2sh_hash = codec::hex_decode("0x6089d1c9ec7a0b7acbc202d742411c792b2e2bebb8a7723c848098ce2e131acb");
 			oracle::coin_utxo input_p2sh;
 			input_p2sh.link = oracle::wallet_link(user.public_key_hash, wallet.encoded_public_key, wallet.encoded_addresses[2]);
 			input_p2sh.transaction_id = "3d7c1f8e03a73821517d2f0220fe3ecf82c2f55b94b724e5d5298c87070802a0";
 			input_p2sh.value = 0.1;
 
-			auto input_p2wpkh_hash_1 = codec::hex_decode("0xe79739ac82960be8bedb5175203bd65880b0c45c5c0286d54b5bc6eb4bac3898");
+			auto input_p2wpkh_hash_1 = codec::hex_decode("0xcfc22518f29e8fae5d89be6ba5106a601ab32e83290e21c3ec7591f5a3bdf9db");
 			oracle::coin_utxo input_p2wpkh_1;
 			input_p2wpkh_1.link = oracle::wallet_link(user.public_key_hash, wallet.encoded_public_key, wallet.encoded_addresses[6]);
 			input_p2wpkh_1.transaction_id = "5594c04289179bff0f434e5349fafbaa4d43da403b9dc7a637f5afe035b99729";
@@ -1296,26 +1296,26 @@ public:
 			auto input_p2tr_public_key = compositions::secp256k1_public_state::point_t(wallet.public_key);
 			auto input_p2tr_tweak = compositions::secp256k1_secret_state::scalar_t(codec::hex_decode("0x04c32a8b5fae170a7a0d28332a663b96f43d24ed4c9db30dfdd9d9d053d3d3e6"));
 			auto input_p2tr_tweaked_public_key = compositions::secp256k1_schnorr_signature_state::to_tweaked_public_key(input_p2tr_public_key, input_p2tr_tweak).expect("failed to tweak a public key");
-			auto input_p2tr_hash = codec::hex_decode("0x50cc324f902032625ba70fdfee889032a7ff4de1c7732dc3982b72c1ba2df8b5");
+			auto input_p2tr_hash = codec::hex_decode("0xb4e9006bcd2adfb5e831c49bac44f1ca7b12d0955ed7f704d65f08762a5ed41f");
 			oracle::coin_utxo input_p2tr;
 			input_p2tr.link = oracle::wallet_link(user.public_key_hash, wallet.encoded_public_key, wallet.encoded_addresses[4]);
 			input_p2tr.transaction_id = "988fcb7035c0f51688ddcfaf92ec8fdd0e9bda8b53aa3403bf096611147fb325";
 			input_p2tr.value = 0.1;
 
-			auto input_p2wpkh_hash_2 = codec::hex_decode("0x16a41f749d25f7ebae96aabd62207c2189ac3623b2ddee4560213a3563f81042");
+			auto input_p2wpkh_hash_2 = codec::hex_decode("0xb6cc56611f88061d124236b0d51d549af74f13e3f33d8a82427f8b645cd4f1b4");
 			oracle::coin_utxo input_p2wpkh_2;
 			input_p2wpkh_2.link = oracle::wallet_link(user.public_key_hash, wallet.encoded_public_key, wallet.encoded_addresses[6]);
 			input_p2wpkh_2.transaction_id = "9b7a67a6a46f48f896c1de89d479d9d1f5b284809065671ff931c800e1041530";
 			input_p2wpkh_2.value = 0.1;
 
-			auto input_p2wsh_hash = codec::hex_decode("0x40cfd352d152929ada057d28c0e18f781a8b9ddb24df1b6381b0738c8f0ccbb9");
+			auto input_p2wsh_hash = codec::hex_decode("0xa3d3e503c4dbe0f68697355639e49486707a3fa285fd513921037313d8ee68b2");
 			oracle::coin_utxo input_p2wsh;
 			input_p2wsh.link = oracle::wallet_link(user.public_key_hash, wallet.encoded_public_key, wallet.encoded_addresses[5]);
 			input_p2wsh.transaction_id = "ccc7949d20241f04362c42e20125c83096a617b906e1d8123d1b8b08740c6025";
 			input_p2wsh.index = 1;
 			input_p2wsh.value = decimal("0.1001");
 
-			auto input_p2pk_hash = codec::hex_decode("0xe665fd68a288da956f73810db79647a59dbbd6dafb0891f97364a0dfff520b2e");
+			auto input_p2pk_hash = codec::hex_decode("0x14e751bc85992d4fc45f19e43132cff6a03be474f57269e81e155d5e3e637feb");
 			oracle::coin_utxo input_p2pk;
 			input_p2pk.link = oracle::wallet_link(user.public_key_hash, wallet.encoded_public_key, wallet.encoded_addresses[1]);
 			input_p2pk.transaction_id = "f0b0d2386cd578677df2380361410008d260fc827282904e54bdcb9e1d8cf62f";
@@ -1341,7 +1341,7 @@ public:
 			prepared.requires_input(algorithm::composition::type::secp256k1, wallet.public_key, (uint8_t*)input_p2pk_hash.data(), input_p2pk_hash.size(), std::move(input_p2pk));
 			prepared.requires_output(std::move(output_p2wpkh));
 			prepared.requires_output(std::move(output_p2pkh));
-			validate_transaction(asset, wallet, prepared, "p2pk, p2pkh, p2sh, p2wpkh, p2wsh, p2tr", "010000000001074098b2156e619d1d3b97f59f01c20db9251bda1f8efba3091ffea1c9bf402938010000006a47304402204e33cc4508a8a3b80718856850d6d44c258cd8cb0085471feeee870c0174eedd02201749240ef5961c36956209ab4c4928adfa68555dacefa684383f8f88680897a5012102986445ccfd323143f392b66b8cfc056df90ebdc110573e3395ee670d5043f23affffffffa0020807878c29d5e524b7945bf5c282cf3efe20022f7d512138a7038e1f7c3d000000001716001418e254169de2c06bbe881f971b312084bf7d7e1cffffffff2997b935e0aff537a6c79d3b40da434daafbfa49534e430fff9b178942c094550000000000ffffffff25b37f14116609bf0334aa538bda9b0edd8fec92afcfdd8816f5c03570cb8f980000000000ffffffff301504e100c831f91f6765908084b2f5d1d979d489dec196f8486fa4a6677a9b0000000000ffffffff25600c74088b1b3d12d8e106b917a69630c82501e2422c36041f24209d94c7cc0100000000ffffffff2ff68c1d9ecbbd544e90827282fc60d2080041610338f27d6778d56c38d2b0f00000000049483045022100a91590f6154e6116afa393a4c71cb337b8a9bd1a83dc2305bc5718dcde9c1b45022001a60381a18b6b224c71193817a1d76b78d00334bbd651ec3e17e7fe7673a06401ffffffff0240d2df03000000001600142fe07053c38596c34f561a2565b752272c90e66430244c00000000001976a91418e254169de2c06bbe881f971b312084bf7d7e1c88ac0002483045022100b51bf896785af284690485b6b9fff90ee000032b7c135ec4a3b2cf1ee6ae9b5202203fa9aabd0ea22482e5f955fa0eb8e696d50fe2999793857f13be39ddc1871a89012102986445ccfd323143f392b66b8cfc056df90ebdc110573e3395ee670d5043f23a02483045022100b5ffeb7bb826eb7f743f32e7026d20cba8403a46de21ba3cc92bbcf228e8de6e02202fa447539d338f884ece7c4c181b8b590a846f3f9469721304ed0cbc407ee672012102986445ccfd323143f392b66b8cfc056df90ebdc110573e3395ee670d5043f23a014026371d3a2baaf32f56cc0e8bb0f940d243facb694ee877b34540100c5498a2ef6698effdc811e516e62ba20f187ebdc25e30208b787eac053875292088c09a56024730440220381691df2e8d7c5afdd7f71287351ec3a551a2d7a0b1afdaaa3afe42112ca0c90220408dc12aa8351c3a6808019db1b05afa4ca0798578582c259190cdcf756685b7012102986445ccfd323143f392b66b8cfc056df90ebdc110573e3395ee670d5043f23a03483045022100aefdc4da0db0934e6ba5bcd9b6f624c995c432420e237047be28aa4656eea5c0022054fd1563c3538bbec6132b8d8eb21ea49df81f059d50b1f01f3cb0fc18981715012102986445ccfd323143f392b66b8cfc056df90ebdc110573e3395ee670d5043f23a1976a91418e254169de2c06bbe881f971b312084bf7d7e1c88ac0000000000");
+			validate_transaction(asset, wallet, prepared, "p2pk, p2pkh, p2sh, p2wpkh, p2wsh, p2tr", "01000000000107a0020807878c29d5e524b7945bf5c282cf3efe20022f7d512138a7038e1f7c3d000000001716001418e254169de2c06bbe881f971b312084bf7d7e1cffffffff2997b935e0aff537a6c79d3b40da434daafbfa49534e430fff9b178942c094550000000000ffffffff2ff68c1d9ecbbd544e90827282fc60d2080041610338f27d6778d56c38d2b0f00000000048473044022006e08910eee074f512ca9602200fa5b6ebc8d3dd86700bd4eda65af5487c30f9022045eb869da1bd7dbe5ed40bfc1006205547d4d40198c9c51a95d4dd712d85908a01ffffffff301504e100c831f91f6765908084b2f5d1d979d489dec196f8486fa4a6677a9b0000000000ffffffff4098b2156e619d1d3b97f59f01c20db9251bda1f8efba3091ffea1c9bf402938010000006a473044022030a1dcb6bbb01968377b09b9959cd319e30c0276b48ade2d0a87242aa9e8838702207b50e0d718446db2eba3feda1fd50abf6f2eb7523fc67ebe1499eeaa7a231d12012102986445ccfd323143f392b66b8cfc056df90ebdc110573e3395ee670d5043f23affffffff25b37f14116609bf0334aa538bda9b0edd8fec92afcfdd8816f5c03570cb8f980000000000ffffffff25600c74088b1b3d12d8e106b917a69630c82501e2422c36041f24209d94c7cc0100000000ffffffff0240d2df03000000001600142fe07053c38596c34f561a2565b752272c90e66430244c00000000001976a91418e254169de2c06bbe881f971b312084bf7d7e1c88ac02483045022100ecd97a76ccc6401ff0db2b90e3dd16906e473f481fe1c380b254616b331a9ff10220347375196a8f89e41e0266d4d9356e64f3be6994ef11f913b83e9992468f6e11012102986445ccfd323143f392b66b8cfc056df90ebdc110573e3395ee670d5043f23a02473044022014bb97e4110c7c40a9bb30da482c103ac86deb3e57710ab2e6c51dd999a4e5d90220529b07ec96ad1461ecba45f978910c51233c0e4879046a841246e9070b0f29fe012102986445ccfd323143f392b66b8cfc056df90ebdc110573e3395ee670d5043f23a0002483045022100d25f0da21b7661d72732824afd476d70731e18aa689b5d15b77bc10a56282e3c02206cff880ba13f24c356568e3cd5f07fb98c1b2645ede04f296a00fe578c58836a012102986445ccfd323143f392b66b8cfc056df90ebdc110573e3395ee670d5043f23a000140eb8524868757a60c19b9bdc84572690c8bee7f56474622ec1358204dea7afc1544b271a731a0fb3526ff796802efe4242823d6948750b72a2a63454f2ccd9c09034730440220696af5b75cf7b24334181b2104d72c225c80d72b93e4335732dcea155feea090022010fcf6140bb1375bbca544ff7437cb4fee8f72820fc15417c8b4198eec526627012102986445ccfd323143f392b66b8cfc056df90ebdc110573e3395ee670d5043f23a1976a91418e254169de2c06bbe881f971b312084bf7d7e1c88ac00000000");
 		});
 		use_clean_state([&]()
 		{
@@ -1523,7 +1523,7 @@ public:
 			auto state = storages::oraclestate(asset);
 			auto wallet = create_wallet(asset);
 
-			auto input_hash = codec::hex_decode("0x14b33fbdd10c0931057b2c66e56b08cf01523480769153e3433050c571dc23e6");
+			auto input_hash = codec::hex_decode("0x69d9a988250c144c3c1560e6c475131f6b9baae7bc5bcb138c1114699e069100");
 			oracle::coin_utxo input;
 			input.link = oracle::wallet_link(user.public_key_hash, wallet.encoded_public_key, wallet.encoded_addresses[1]);
 			input.transaction_id = "f887787271fa3538f574bb0a95f1178377dd70a98813657764241fdf4e0ca7b7";
@@ -1545,11 +1545,11 @@ public:
 			prepared.requires_output(std::move(output_1));
 			prepared.requires_output(std::move(output_2));
 			prepared.requires_abi(format::variable((uint64_t)166161));
-			validate_transaction(asset, wallet, prepared, "p2pkh", "84a30081825820f887787271fa3538f574bb0a95f1178377dd70a98813657764241fdf4e0ca7b7010182a200581d6033c378cee41b2e15ac848f7f6f1d2f78155ab12d93b713de898d855f011a7d2b7500a200581d6042a00dfc0e9577dd74673d4b90b1e4a00e8a7fe0778dd134d268a95f011b00000001d4d2074d021a00028911a100818258202a994a958414a9dac047fd32001847954f89f464433cb04266fde37d6aff15445840e28a2e306c97c2c3871d64c5830ac0ae2a8e575a699130075c55b67ab3029a5c83712d9e86b71dce110141bf4c8039f388c0e79eccb10c2b4f0a9e3abe08ce0df5f6");
+			validate_transaction(asset, wallet, prepared, "p2pkh", "84a30081825820f887787271fa3538f574bb0a95f1178377dd70a98813657764241fdf4e0ca7b7010182a200581d6042a00dfc0e9577dd74673d4b90b1e4a00e8a7fe0778dd134d268a95f011b00000001d4d2074da200581d6033c378cee41b2e15ac848f7f6f1d2f78155ab12d93b713de898d855f011a7d2b7500021a00028911a100818258202a994a958414a9dac047fd32001847954f89f464433cb04266fde37d6aff154458405e7c72121acb73d839eaa6c2c3ad357516a65637156e1332c7946a32cfef54e4c869c3911a39235a0985949295a00e45b263830b1e118c3f31a3d8234ec17e02f5f6");
 
 			auto token_contract = "bd976e131cfc3956b806967b06530e48c20ed5498b46a5eb836b61c2";
 			auto token_symbol = "tMILKv2";
-			input_hash = codec::hex_decode("0x66bb498dd4f2840ef018b8392c58fd198f334474b5c9b96d7412b1b4cee39b0b");
+			input_hash = codec::hex_decode("0x68c975563c06ff9e678aff382666353f7a12da5c476e31d3919be079e5a8e72f");
 			input = oracle::coin_utxo();
 			input.link = oracle::wallet_link(user.public_key_hash, wallet.encoded_public_key, wallet.encoded_addresses[1]);
 			input.transaction_id = "0f7cad6020aaf0c462cfb6cba2b5f4102910b7bf7101ed609eb887188b19ad6f";
@@ -1574,7 +1574,7 @@ public:
 			prepared.requires_output(std::move(output_1));
 			prepared.requires_output(std::move(output_2));
 			prepared.requires_abi(format::variable((uint64_t)170121));
-			validate_transaction(asset, wallet, prepared, "p2pkh asset", "84a300818258200f7cad6020aaf0c462cfb6cba2b5f4102910b7bf7101ed609eb887188b19ad6f010182a200581d60836b2ee32f44ce7506c25fb5780c137adf4cb497168c3568fa3776ce01821a00194160a1581cbd976e131cfc3956b806967b06530e48c20ed5498b46a5eb836b61c2a147744d494c4b763219ffcba200581d6042a00dfc0e9577dd74673d4b90b1e4a00e8a7fe0778dd134d268a95f01821b000000025067fdf1a1581cbd976e131cfc3956b806967b06530e48c20ed5498b46a5eb836b61c2a147744d494c4b76321a3b99b95e021a00029889a100818258202a994a958414a9dac047fd32001847954f89f464433cb04266fde37d6aff154458404a594cc96cd2aec42c68556ca1c90b06da654230fae3247e14e50d6896598352a6bbe24a45fc825bcae90161c2cad02faf343fdc8354e89ae676b27c8f646304f5f6");
+			validate_transaction(asset, wallet, prepared, "p2pkh asset", "84a300818258200f7cad6020aaf0c462cfb6cba2b5f4102910b7bf7101ed609eb887188b19ad6f010182a200581d6042a00dfc0e9577dd74673d4b90b1e4a00e8a7fe0778dd134d268a95f01821b000000025067fdf1a1581cbd976e131cfc3956b806967b06530e48c20ed5498b46a5eb836b61c2a147744d494c4b76321a3b99b95ea200581d60836b2ee32f44ce7506c25fb5780c137adf4cb497168c3568fa3776ce01821a00194160a1581cbd976e131cfc3956b806967b06530e48c20ed5498b46a5eb836b61c2a147744d494c4b763219ffcb021a00029889a100818258202a994a958414a9dac047fd32001847954f89f464433cb04266fde37d6aff1544584079cdcb447d48b52e706458833d38d5a249ebdb4fe1a809ac09241d223ec7a46857224b909a650fc6ef17e98dc77c8e03dd7c203be8aa185b5017c49cc4d9d201f5f6");
 		});
 		use_clean_state([&]()
 		{
