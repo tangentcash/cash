@@ -146,7 +146,6 @@ namespace tangent
 		{
 			algorithm::pubkeyhash_t owner;
 			ordered_map<algorithm::asset_id, decimal> stakes;
-			uint256_t gas = 0;
 			bool active = false;
 
 			validator_production(const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number, uint64_t new_block_nonce);
@@ -158,6 +157,7 @@ namespace tangent
 			bool load_row(format::ro_stream& stream) override;
 			bool store_data(format::wo_stream* stream) const override;
 			bool load_data(format::ro_stream& stream) override;
+			decimal get_ranked_stake() const;
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
@@ -166,6 +166,7 @@ namespace tangent
 			static std::string_view as_instance_typename();
 			static string as_instance_column(const algorithm::pubkeyhash_t& owner);
 			static string as_instance_row();
+			static uint256_t to_rank(const decimal& threshold);
 		};
 
 		struct validator_participation final : ledger::multiform
@@ -194,7 +195,6 @@ namespace tangent
 			static std::string_view as_instance_typename();
 			static string as_instance_column(const algorithm::pubkeyhash_t& owner);
 			static string as_instance_row(const algorithm::asset_id& asset);
-			static uint256_t to_rank(const decimal& threshold);
 		};
 
 		struct validator_attestation final : ledger::multiform

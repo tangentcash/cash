@@ -290,7 +290,7 @@ namespace tangent
 					debugger->add_to_string_callback("uint256", [](string& indent, int depth, void* object, int type_id)
 					{
 						uint256_t& source = *(uint256_t*)object;
-						if (algorithm::asset::is_valid(source))
+						if (algorithm::asset::is_any(source))
 							return source.to_string() + " (uint256; " + algorithm::asset::name_of(source) + " as asset)";
 
 						return source.to_string() + " (uint256)";
@@ -507,7 +507,7 @@ namespace tangent
 					if (args.size() > 1)
 					{
 						auto asset = algorithm::asset::id_of(stringify::to_upper(args[1]), args.size() > 2 ? stringify::to_upper(args[2]) : std::string_view(), args.size() > 3 ? args[3] : std::string_view());
-						if (!asset || !algorithm::asset::is_valid(asset))
+						if (!algorithm::asset::is_any(asset))
 							return err("not a valid asset");
 						context.state.payable = asset;
 					}

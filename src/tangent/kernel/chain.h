@@ -261,6 +261,7 @@ namespace tangent
         } account;
         struct protocol_policy_config
         {
+            string token = "TAN";
             uint64_t production_max_per_block = 12;
             uint64_t participation_min_per_account = 2;
             uint64_t participation_std_per_account = 4;
@@ -268,7 +269,6 @@ namespace tangent
             uint64_t attestation_max_per_transaction = 32;
             uint64_t consensus_proof_time = 6000;
             uint64_t consensus_adjustment_time = 60000;
-            uint64_t consensus_penalty_point_time = 600000;
             uint64_t commitment_throughput = 10;
             uint64_t transaction_throughput = 200;
             uint64_t transaction_gas = 30000;
@@ -276,6 +276,8 @@ namespace tangent
             uint32_t delegations_max_per_account = 6;
             uint32_t delegations_zeroing_time = 25000;
             uint16_t wesolowski_bits = 2048;
+            decimal production_reward_value = std::string_view("1.25");
+            decimal production_penalty_rate = std::string_view("0.10");
             decimal participation_stake_threshold = std::string_view("0.20");
             decimal participation_fee_rate = std::string_view("0.30");
             decimal attestation_consensus_threshold = std::string_view("0.66");

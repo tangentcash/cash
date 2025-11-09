@@ -3860,6 +3860,10 @@ namespace tangent
 			auto* p = program::fetch_immutable_or_throw();
 			return p ? p->context->transaction->asset : uint256_t((uint8_t)0);
 		}
+		uint256_t contract::coin_native()
+		{
+			return algorithm::asset::native();
+		}
 		uint256_t contract::coin_from_decimal(const decimal& value)
 		{
 			if (value.is_nan())
@@ -5358,6 +5362,7 @@ namespace tangent
 			vm->end_namespace();
 
 			vm->begin_namespace("coin");
+			vm->set_function("uint256 native()", &contract::coin_native);
 			vm->set_function("uint256 from(const real320&in)", &contract::coin_from_decimal);
 			vm->set_function("real320 r320(const uint256&in)", &contract::coin_to_decimal);
 			vm->set_function("uint256 id_of(const string&in, const string&in = string(), const string&in = string())", &contract::coin_id_of);

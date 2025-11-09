@@ -233,7 +233,7 @@ namespace tangent
 		}
 		expects_promise_rt<schema*> server_node::execute_rpc(const algorithm::asset_id& asset, const std::string_view& method, schema_list&& args, cache_policy cache)
 		{
-			if (!algorithm::asset::is_valid(asset))
+			if (!algorithm::asset::is_aux(asset))
 				coreturn expects_rt<schema*>(remote_exception("asset not found"));
 
 			if (method.empty())
@@ -250,7 +250,7 @@ namespace tangent
 		}
 		expects_promise_rt<uint64_t> server_node::get_latest_block_height(const algorithm::asset_id& asset)
 		{
-			if (!algorithm::asset::is_valid(asset))
+			if (!algorithm::asset::is_aux(asset))
 				coreturn expects_rt<uint64_t>(remote_exception("asset not found"));
 
 			if (!has_node(asset))
@@ -264,7 +264,7 @@ namespace tangent
 		}
 		expects_promise_rt<schema*> server_node::get_block_transactions(const algorithm::asset_id& asset, uint64_t block_height, string* block_hash)
 		{
-			if (!algorithm::asset::is_valid(asset))
+			if (!algorithm::asset::is_aux(asset))
 				coreturn expects_rt<schema*>(remote_exception("asset not found"));
 
 			if (!has_node(asset))
@@ -278,7 +278,7 @@ namespace tangent
 		}
 		expects_promise_rt<transaction_logs> server_node::link_transactions(const algorithm::asset_id& asset, chain_supervisor_options* options)
 		{
-			if (!algorithm::asset::is_valid(asset))
+			if (!algorithm::asset::is_aux(asset))
 				coreturn expects_rt<transaction_logs>(remote_exception("asset not found"));
 
 			if (!options)
@@ -382,7 +382,7 @@ namespace tangent
 		}
 		expects_promise_rt<computed_transaction> server_node::link_transaction(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, schema* transaction_data)
 		{
-			if (!algorithm::asset::is_valid(asset))
+			if (!algorithm::asset::is_aux(asset))
 				coreturn expects_rt<computed_transaction>(remote_exception("asset not found"));
 
 			if (!block_height)
@@ -399,7 +399,7 @@ namespace tangent
 		}
 		expects_promise_rt<decimal> server_node::calculate_balance(const algorithm::asset_id& asset, const wallet_link& link)
 		{
-			if (!algorithm::asset::is_valid(asset))
+			if (!algorithm::asset::is_aux(asset))
 				coreturn expects_rt<decimal>(remote_exception("asset not found"));
 
 			auto normalized_link = normalize_link(asset, link);
@@ -417,7 +417,7 @@ namespace tangent
 		}
 		expects_promise_rt<void> server_node::broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, const finalized_transaction& finalized)
 		{
-			if (!algorithm::asset::is_valid(asset))
+			if (!algorithm::asset::is_aux(asset))
 				coreturn expects_rt<void>(remote_exception("asset not found"));
 
 			if (!finalized.is_valid())
@@ -457,7 +457,7 @@ namespace tangent
 		}
 		expects_promise_rt<prepared_transaction> server_node::prepare_transaction(const algorithm::asset_id& asset, const wallet_link& from_link, const vector<value_transfer>& to, const decimal& max_fee)
 		{
-			if (!algorithm::asset::is_valid(asset))
+			if (!algorithm::asset::is_aux(asset))
 				coreturn expects_rt<prepared_transaction>(remote_exception("asset not found"));
 
 			if (!has_node(asset))
@@ -477,7 +477,7 @@ namespace tangent
 				if (!next.is_valid())
 					coreturn expects_rt<prepared_transaction>(remote_exception("receiver address not valid"));
 
-				if (!algorithm::asset::is_valid(next.asset) || algorithm::asset::blockchain_of(next.asset) != blockchain)
+				if (!algorithm::asset::is_aux(next.asset) || algorithm::asset::blockchain_of(next.asset) != blockchain)
 					coreturn expects_rt<prepared_transaction>(remote_exception("receiver asset not valid"));
 			}
 
@@ -493,7 +493,7 @@ namespace tangent
 		}
 		expects_lr<finalized_transaction> server_node::finalize_transaction(const algorithm::asset_id& asset, prepared_transaction&& prepared)
 		{
-			if (!algorithm::asset::is_valid(asset))
+			if (!algorithm::asset::is_aux(asset))
 				return layer_exception("asset not found");
 
 			auto status = prepared.as_status();
@@ -509,12 +509,12 @@ namespace tangent
 			for (auto& [hash, input] : prepared.inputs)
 			{
 				auto input_asset = input.utxo.get_asset(base_asset);
-				if (!algorithm::asset::is_valid(input_asset) || algorithm::asset::blockchain_of(input_asset) != blockchain)
+				if (!algorithm::asset::is_aux(input_asset) || algorithm::asset::blockchain_of(input_asset) != blockchain)
 					return layer_exception("input asset not valid");
 
 				for (auto& [input_token_hash, input_token] : input.utxo.tokens)
 				{
-					if (!algorithm::asset::is_valid(input_token.get_asset(base_asset)))
+					if (!algorithm::asset::is_aux(input_token.get_asset(base_asset)))
 						return layer_exception("invalid input token asset");
 				}
 			}
@@ -522,12 +522,12 @@ namespace tangent
 			for (auto& [hash, output] : prepared.outputs)
 			{
 				auto output_asset = output.get_asset(base_asset);
-				if (!algorithm::asset::is_valid(output_asset) || algorithm::asset::blockchain_of(output_asset) != blockchain)
+				if (!algorithm::asset::is_aux(output_asset) || algorithm::asset::blockchain_of(output_asset) != blockchain)
 					return layer_exception("invalid output asset");
 
 				for (auto& [output_token_hash, output_token] : output.tokens)
 				{
-					if (!algorithm::asset::is_valid(output_token.get_asset(base_asset)))
+					if (!algorithm::asset::is_aux(output_token.get_asset(base_asset)))
 						return layer_exception("invalid output token asset");
 				}
 			}
@@ -536,7 +536,7 @@ namespace tangent
 		}
 		expects_lr<computed_transaction> server_node::get_computed_transaction(const algorithm::asset_id& asset, const std::string_view& transaction_id, const uint256_t& external_id, const uint256_t& optimized_id)
 		{
-			if (!algorithm::asset::is_valid(asset))
+			if (!algorithm::asset::is_aux(asset))
 				return layer_exception("asset not found");
 
 			storages::oraclestate state = storages::oraclestate(asset);
@@ -544,7 +544,7 @@ namespace tangent
 		}
 		expects_lr<computed_wallet> server_node::compute_wallet(const algorithm::asset_id& asset, const uint256_t& seed)
 		{
-			if (!algorithm::asset::is_valid(asset))
+			if (!algorithm::asset::is_aux(asset))
 				return expects_lr<computed_wallet>(layer_exception("asset not found"));
 
 			auto* implementation = get_chain(asset);
@@ -590,7 +590,7 @@ namespace tangent
 		}
 		expects_lr<secret_box> server_node::encode_secret_key(const algorithm::asset_id& asset, const secret_box& secret_key)
 		{
-			if (!algorithm::asset::is_valid(asset))
+			if (!algorithm::asset::is_aux(asset))
 				return expects_lr<secret_box>(layer_exception("asset not found"));
 
 			if (secret_key.empty())
@@ -604,7 +604,7 @@ namespace tangent
 		}
 		expects_lr<secret_box> server_node::decode_secret_key(const algorithm::asset_id& asset, const secret_box& secret_key)
 		{
-			if (!algorithm::asset::is_valid(asset))
+			if (!algorithm::asset::is_aux(asset))
 				return expects_lr<secret_box>(layer_exception("asset not found"));
 
 			if (secret_key.empty())
@@ -618,7 +618,7 @@ namespace tangent
 		}
 		expects_lr<string> server_node::encode_public_key(const algorithm::asset_id& asset, const std::string_view& public_key)
 		{
-			if (!algorithm::asset::is_valid(asset))
+			if (!algorithm::asset::is_aux(asset))
 				return expects_lr<string>(layer_exception("asset not found"));
 
 			if (public_key.empty())
@@ -632,7 +632,7 @@ namespace tangent
 		}
 		expects_lr<string> server_node::decode_public_key(const algorithm::asset_id& asset, const std::string_view& public_key)
 		{
-			if (!algorithm::asset::is_valid(asset))
+			if (!algorithm::asset::is_aux(asset))
 				return expects_lr<string>(layer_exception("asset not found"));
 
 			if (stringify::is_empty_or_whitespace(public_key))
@@ -646,7 +646,7 @@ namespace tangent
 		}
 		expects_lr<string> server_node::encode_address(const algorithm::asset_id& asset, const std::string_view& public_key_hash)
 		{
-			if (!algorithm::asset::is_valid(asset))
+			if (!algorithm::asset::is_aux(asset))
 				return expects_lr<string>(layer_exception("asset not found"));
 
 			if (public_key_hash.empty())
@@ -660,7 +660,7 @@ namespace tangent
 		}
 		expects_lr<string> server_node::decode_address(const algorithm::asset_id& asset, const std::string_view& address)
 		{
-			if (!algorithm::asset::is_valid(asset))
+			if (!algorithm::asset::is_aux(asset))
 				return expects_lr<string>(layer_exception("asset not found"));
 
 			if (stringify::is_empty_or_whitespace(address))
@@ -674,7 +674,7 @@ namespace tangent
 		}
 		expects_lr<string> server_node::encode_transaction_id(const algorithm::asset_id& asset, const std::string_view& transaction_id)
 		{
-			if (!algorithm::asset::is_valid(asset))
+			if (!algorithm::asset::is_aux(asset))
 				return expects_lr<string>(layer_exception("asset not found"));
 
 			if (transaction_id.empty())
@@ -688,7 +688,7 @@ namespace tangent
 		}
 		expects_lr<string> server_node::decode_transaction_id(const algorithm::asset_id& asset, const std::string_view& transaction_id)
 		{
-			if (!algorithm::asset::is_valid(asset))
+			if (!algorithm::asset::is_aux(asset))
 				return expects_lr<string>(layer_exception("asset not found"));
 
 			if (stringify::is_empty_or_whitespace(transaction_id))
@@ -758,7 +758,7 @@ namespace tangent
 		}
 		expects_lr<algorithm::composition::cpubkey_t> server_node::to_composite_public_key(const algorithm::asset_id& asset, const std::string_view& public_key)
 		{
-			if (!algorithm::asset::is_valid(asset))
+			if (!algorithm::asset::is_aux(asset))
 				return expects_lr<algorithm::composition::cpubkey_t>(layer_exception("asset not found"));
 
 			if (public_key.empty())
@@ -772,7 +772,7 @@ namespace tangent
 		}
 		expects_lr<address_map> server_node::to_addresses(const algorithm::asset_id& asset, const std::string_view& public_key)
 		{
-			if (!algorithm::asset::is_valid(asset))
+			if (!algorithm::asset::is_aux(asset))
 				return expects_lr<address_map>(layer_exception("asset not found"));
 
 			if (public_key.empty())
@@ -786,7 +786,7 @@ namespace tangent
 		}
 		expects_lr<void> server_node::scan_from_block_height(const algorithm::asset_id& asset, uint64_t block_height)
 		{
-			if (!algorithm::asset::is_valid(asset))
+			if (!algorithm::asset::is_aux(asset))
 				return expects_lr<void>(layer_exception("asset not found"));
 
 			storages::oraclestate state = storages::oraclestate(asset);
@@ -806,7 +806,7 @@ namespace tangent
 		}
 		expects_lr<void> server_node::enable_contract_address(const algorithm::asset_id& asset, const std::string_view& contract_address)
 		{
-			if (!algorithm::asset::is_valid(asset))
+			if (!algorithm::asset::is_aux(asset))
 				return expects_lr<void>(layer_exception("asset not found"));
 
 			if (contract_address.empty())
@@ -836,7 +836,7 @@ namespace tangent
 		}
 		expects_lr<void> server_node::enable_link(const algorithm::asset_id& asset, const wallet_link& link)
 		{
-			if (!algorithm::asset::is_valid(asset))
+			if (!algorithm::asset::is_aux(asset))
 				return expects_lr<void>(layer_exception("asset not found"));
 
 			if (!link.has_all())
@@ -876,7 +876,7 @@ namespace tangent
 		}
 		expects_lr<void> server_node::disable_link(const algorithm::asset_id& asset, const wallet_link& link)
 		{
-			if (!algorithm::asset::is_valid(asset))
+			if (!algorithm::asset::is_aux(asset))
 				return expects_lr<void>(layer_exception("asset not found"));
 
 			if (!link.has_all())
@@ -925,7 +925,7 @@ namespace tangent
 		}
 		expects_lr<uint64_t> server_node::get_latest_known_block_height(const algorithm::asset_id& asset)
 		{
-			if (!algorithm::asset::is_valid(asset))
+			if (!algorithm::asset::is_aux(asset))
 				return expects_lr<uint64_t>(layer_exception("asset not found"));
 
 			uint64_t block_height = 0;
@@ -1003,7 +1003,7 @@ namespace tangent
 		}
 		option<string> server_node::get_contract_address(const algorithm::asset_id& asset)
 		{
-			if (!algorithm::asset::is_valid(asset))
+			if (!algorithm::asset::is_aux(asset))
 				return optional::none;
 
 			auto blockchain = algorithm::asset::blockchain_of(asset);

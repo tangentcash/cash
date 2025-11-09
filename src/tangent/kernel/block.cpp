@@ -603,8 +603,8 @@ namespace tangent
 			if (gas_use != other.gas_use)
 				return gas_use > other.gas_use ? 1 : -1;
 
-			uint256_t mutations_a = uint256_t(transaction_count) * uint256_t(state_count);
-			uint256_t mutations_b = uint256_t(other.transaction_count) * uint256_t(other.state_count);
+			uint256_t mutations_a = uint256_t(transaction_count + 1) * uint256_t(state_count + 1);
+			uint256_t mutations_b = uint256_t(other.transaction_count + 1) * uint256_t(other.state_count + 1);
 			if (mutations_a != mutations_b)
 				return mutations_a > mutations_b ? 1 : -1;
 
@@ -774,9 +774,10 @@ namespace tangent
 				return layer_exception("empty block is not valid");
 
 			block_header::set_parent_block(parent_block);
+			auto& policy = protocol::now().policy;
 			auto position = std::find_if(environment->producers.begin(), environment->producers.end(), [&environment](const states::validator_production& a) { return a.owner == environment->validator.public_key_hash; });
 			auto fees = ordered_map<algorithm::asset_id, decimal>();
-			priority = (uint64_t)(position == environment->producers.end() ? protocol::now().policy.production_max_per_block : std::distance(environment->producers.begin(), position));
+			priority = (uint64_t)(position == environment->producers.end() ? policy.production_max_per_block : std::distance(environment->producers.begin(), position));
 			target = algorithm::wesolowski::scale(get_proof_slot_target(parent_block), get_proof_difficulty_multiplier());
 
 			auto commitment_gas_limit = uint256_t(0);
@@ -818,7 +819,7 @@ namespace tangent
 					auto& blob = transactions.emplace_back();
 					blob.transaction = std::move(item.candidate);
 					blob.receipt = std::move(execution->receipt);
-					if (blob.receipt.relative_gas_use > 0 && blob.transaction->gas_price.is_positive())
+					if (blob.receipt.relative_gas_use > 0 && blob.transaction->asset != algorithm::asset::native() && blob.transaction->gas_price.is_positive())
 					{
 						auto& fee = fees[blob.transaction->asset];
 						fee = (fee.is_nan() ? decimal::zero() : fee) + blob.transaction->gas_price * blob.receipt.relative_gas_use.to_decimal();
@@ -833,7 +834,7 @@ namespace tangent
 
 			if (transactions.empty())
 			{
-				executionlog.append("\n  block does not have any valid transactions");
+				executionlog.append("\n  block must have some transactions");
 				return layer_exception(std::move(stringify::trim(executionlog)));
 			}
 
@@ -842,21 +843,16 @@ namespace tangent
 			for (size_t i = 0; i < participants; i++)
 			{
 				auto& participant = environment->producers[i];
-				bool winner_participant = (i == priority);
-				if (winner_participant)
+				auto work = expects_lr<states::validator_production>(layer_exception());
+				if (i == priority)
 				{
-					auto gas_reward = std::max<uint256_t>(gas_use / (protocol::now().policy.production_max_per_block - i), (uint64_t)gas_cost::write_tx_byte);
-					auto work = context.apply_validator_production(participant.owner, transaction_context::production_type::mint_gas, gas_reward, fees);
-					if (!work)
-						return work.error();
+					fees[algorithm::asset::native()] = policy.production_reward_value;
+					work = context.apply_validator_production(participant.owner, transaction_context::production_type::mint, fees);
 				}
 				else
-				{
-					auto gas_penalty = gas_use * (protocol::now().policy.production_max_per_block - i);
-					auto work = context.apply_validator_production(participant.owner, transaction_context::production_type::burn_gas_and_deactivate, gas_penalty, { });
-					if (!work)
-						return work.error();
-				}
+					work = context.apply_validator_production(participant.owner, transaction_context::production_type::burn_and_deactivate, { { algorithm::asset::native(), -policy.production_penalty_rate } });
+				if (!work)
+					return work.error();
 			}
 
 			changelog.outgoing.commit();
@@ -1508,7 +1504,7 @@ namespace tangent
 		}
 		expects_lr<void> transaction_context::emit_witness(const algorithm::asset_id& asset, uint64_t block_number)
 		{
-			if (!asset || !block_number)
+			if (!algorithm::asset::is_aux(asset) || !block_number)
 				return layer_exception("invalid witness");
 
 			auto& current_number = witnesses[algorithm::asset::base_id_of(asset)];
@@ -1778,7 +1774,7 @@ namespace tangent
 			}
 
 			if (committee.size() >= target_size)
-				std::sort(committee.begin(), committee.end(), [](const states::validator_production& a, const states::validator_production& b) { return a.gas > b.gas; });
+				std::sort(committee.begin(), committee.end(), [](const states::validator_production& a, const states::validator_production& b) { return a.get_ranked_stake() > b.get_ranked_stake(); });
 
 			return committee;
 		}
@@ -1790,7 +1786,7 @@ namespace tangent
 
 			auto nonce = get_validation_nonce();
 			auto chain = storages::chainstate();
-			auto filter = storages::result_filter::greater_equal(threshold.is_zero_or_nan() ? uint256_t(1) : states::validator_participation::to_rank(threshold), -1);
+			auto filter = storages::result_filter::greater_equal(threshold.is_zero_or_nan() ? uint256_t(1) : states::validator_production::to_rank(threshold), -1);
 			auto pool = chain.get_multiforms_count_by_row_filter(states::validator_participation::as_instance_type(), changelog, states::validator_participation::as_instance_row(asset), filter, nonce).or_else(0);
 			if (pool < target_size)
 				return layer_exception("committee threshold not met");
@@ -1972,26 +1968,30 @@ namespace tangent
 
 			return new_state1;
 		}
-		expects_lr<states::validator_production> transaction_context::apply_validator_production(const algorithm::pubkeyhash_t& owner, production_type action, const uint256_t& gas, const ordered_map<algorithm::asset_id, decimal>& stakes)
+		expects_lr<states::validator_production> transaction_context::apply_validator_production(const algorithm::pubkeyhash_t& owner, production_type action, const ordered_map<algorithm::asset_id, decimal>& stakes)
 		{
 			switch (action)
 			{
-				case production_type::burn_gas:
-				case production_type::burn_gas_and_deactivate:
+				case production_type::burn:
+				case production_type::burn_and_deactivate:
 				{
-					if (!stakes.empty())
+					auto it = stakes.find(algorithm::asset::native());
+					if (!(stakes.empty() || (stakes.size() == 1 && it != stakes.end() && it->second.is_negative())))
 						return layer_exception("unstaking is either all or none");
 
 					auto new_state = get_validator_production(owner).or_else(states::validator_production(owner, block));
-					auto new_gas = new_state.gas - gas;
-					new_state.gas = new_gas > new_state.gas ? uint256_t(0) : new_gas;
-					new_state.active = action == production_type::burn_gas_and_deactivate ? false : new_state.active;
-					if (action == production_type::burn_gas_and_deactivate && !new_state.stakes.empty())
+					new_state.active = action == production_type::burn_and_deactivate ? false : new_state.active;
+					if (action == production_type::burn_and_deactivate && !new_state.stakes.empty())
 					{
-						new_state.gas /= 2;
-						if (!new_state.gas)
-							return layer_exception("not enough gas to perform unstaking");
+						if (it != stakes.end())
+						{
+							auto stake = new_state.get_ranked_stake();
+							auto transfer = apply_transfer(it->first, owner, stake * it->second, -stake);
+							if (!transfer)
+								return transfer.error();
 
+							new_state.stakes.erase(it->first);
+						}
 						for (auto& [asset, stake] : new_state.stakes)
 						{
 							if (stake.is_positive())
@@ -2010,13 +2010,11 @@ namespace tangent
 
 					return new_state;
 				}
-				case production_type::mint_gas:
-				case production_type::mint_gas_and_activate:
+				case production_type::mint:
+				case production_type::mint_and_activate:
 				{
 					auto new_state = get_validator_production(owner).or_else(states::validator_production(owner, block));
-					auto new_gas = new_state.gas + gas;
-					new_state.gas = new_gas < new_state.gas ? uint256_t(0) : new_gas;
-					new_state.active = (action == production_type::mint_gas_and_activate) || new_state.active;
+					new_state.active = (action == production_type::mint_and_activate) || new_state.active;
 
 					for (auto& [asset, stake] : stakes)
 					{

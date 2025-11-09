@@ -668,6 +668,7 @@ namespace tangent
 			static uint256_t tx_gas_left();
 			static uint256_t tx_gas_limit();
 			static uint256_t tx_asset();
+			static uint256_t coin_native();
 			static uint256_t coin_from_decimal(const decimal& value);
 			static decimal coin_to_decimal(const uint256_t& value);
 			static uint256_t coin_id_of(const string_repr& blockchain, const string_repr& token, const string_repr& contract_address);

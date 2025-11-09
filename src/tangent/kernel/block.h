@@ -277,10 +277,10 @@ namespace tangent
 
 			enum class production_type : uint8_t
 			{
-				burn_gas,
-				burn_gas_and_deactivate,
-				mint_gas,
-				mint_gas_and_activate
+				burn,
+				burn_and_deactivate,
+				mint,
+				mint_and_activate
 			};
 
 			enum class stake_type : uint8_t
@@ -334,7 +334,7 @@ namespace tangent
 			expects_lr<states::account_balance> apply_transfer(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const decimal& supply, const decimal& reserve);
 			expects_lr<states::account_balance> apply_fee_transfer(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const decimal& value);
 			expects_lr<states::account_balance> apply_payment(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& from, const algorithm::pubkeyhash_t& to, const decimal& value);
-			expects_lr<states::validator_production> apply_validator_production(const algorithm::pubkeyhash_t& owner, production_type action, const uint256_t& gas, const ordered_map<algorithm::asset_id, decimal>& stakes);
+			expects_lr<states::validator_production> apply_validator_production(const algorithm::pubkeyhash_t& owner, production_type action, const ordered_map<algorithm::asset_id, decimal>& stakes);
 			expects_lr<states::validator_participation> apply_validator_participation(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, stake_type type, int64_t participations, const ordered_map<algorithm::asset_id, decimal>& stakes);
 			expects_lr<states::validator_attestation> apply_validator_attestation(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, stake_type type, const ordered_map<algorithm::asset_id, decimal>& stakes);
 			expects_lr<states::depository_reward> apply_depository_reward(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const decimal& incoming_fee, const decimal& outgoing_fee);

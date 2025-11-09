@@ -920,8 +920,8 @@ namespace tangent
 
 			if (production)
 			{
-				auto type = *production ? ledger::transaction_context::production_type::mint_gas_and_activate : ledger::transaction_context::production_type::burn_gas_and_deactivate;
-				auto status = context->apply_validator_production(context->receipt.from, type, 0, { });
+				auto type = *production ? ledger::transaction_context::production_type::mint_and_activate : ledger::transaction_context::production_type::burn_and_deactivate;
+				auto status = context->apply_validator_production(context->receipt.from, type, { });
 				if (!status)
 					return status.error();
 			}
@@ -977,7 +977,7 @@ namespace tangent
 					if (type == ledger::transaction_context::stake_type::lock || !depository || !balance)
 						continue;
 
-					if (algorithm::asset::is_valid(token_asset, true))
+					if (algorithm::asset::is_aux(token_asset, true))
 					{
 						auto reward = context->get_depository_reward_median(token_asset).or_else(states::depository_reward(context->receipt.from, token_asset, nullptr));
 						if (balance->get_balance(token_asset) > reward.outgoing_fee)
@@ -1634,7 +1634,7 @@ namespace tangent
 			if (!chain)
 				return layer_exception("invalid operation");
 
-			if (!algorithm::asset::is_valid(asset))
+			if (!algorithm::asset::is_aux(asset))
 				return layer_exception("not a valid withdrawal asset");
 
 			if (to_manager.empty())
@@ -2951,7 +2951,7 @@ namespace tangent
 				{
 					for (auto& [token_asset, token_value] : balance->balances)
 					{
-						if (algorithm::asset::is_valid(token_asset, true))
+						if (algorithm::asset::is_aux(token_asset, true))
 						{
 							auto reward = context->get_depository_reward_median(token_asset).or_else(states::depository_reward(context->receipt.from, token_asset, nullptr));
 							if (token_value > reward.outgoing_fee)
@@ -3053,7 +3053,7 @@ namespace tangent
 
 			for (auto& [hash, share] : shares)
 			{
-				if (!algorithm::asset::is_valid(share.asset, true))
+				if (!algorithm::asset::is_aux(share.asset, true))
 					return layer_exception("invalid share asset");
 
 				if (share.manager.empty())
