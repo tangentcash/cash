@@ -816,6 +816,37 @@ namespace tangent
 
 			return broadcast_transaction(uref(from), std::move(candidate_tx), owner);
 		}
+		expects_lr<void> server_node::accept_attestation(uref<relay>&& from, const uint256_t& attestation_hash)
+		{
+			auto mempool = storages::mempoolstate();
+			auto batch = mempool.get_attestation(attestation_hash);
+			if (!batch)
+				return batch.error();
+			else if (batch->proofs.empty())
+				return layer_exception("proof required");
+
+			auto context = ledger::transaction_context();
+			auto collision = context.get_witness_transaction(batch->asset, batch->proofs.begin()->second.transaction_id);
+			if (collision)
+				return expectation::met;
+
+			uint256_t best_commitment_hash = 0;
+			ordered_map<uint256_t, ordered_set<algorithm::pubkeyhash_t>> attesters;
+			auto verification = transactions::bridge_attestation::verify_proof_commitment(&context, batch->asset, batch->commitments, best_commitment_hash, attesters);
+			if (!verification)
+				return verification;
+
+			auto it = batch->proofs.find(best_commitment_hash);
+			if (it == batch->proofs.end())
+				return layer_exception("proof required");
+
+			auto* transaction = memory::init<transactions::bridge_attestation>();
+			transaction->asset = batch->asset;
+			transaction->set_computed_proof(std::move(it->second), std::move(batch->commitments));
+			accept_unsigned_transaction(nullptr, transaction, nullptr);
+			mempool.remove_attestation(attestation_hash);
+			return expectation::met;
+		}
 		expects_lr<void> server_node::broadcast_transaction(uref<relay>&& from, uptr<ledger::transaction>&& candidate_tx, const algorithm::pubkeyhash_t& owner)
 		{
 			auto purpose = candidate_tx->as_typename();
@@ -896,6 +927,43 @@ namespace tangent
 						accept_transaction(std::move(state), std::move(candidate));
 				}
 			});
+			return expectation::met;
+		}
+		expects_lr<void> server_node::notify_of_possibly_new_attestation(uref<relay>&& state, const exchange& event)
+		{
+			if (event.args.size() != 3)
+				return layer_exception("invalid arguments");
+
+			algorithm::asset_id asset = event.args[0].as_uint256();
+			format::ro_stream proof_message = format::ro_stream(event.args[1].as_string());
+			oracle::computed_transaction proof;
+			if (!proof.load(proof_message))
+				return layer_exception("invalid proof");
+
+			uint256_t commitment_hash = proof.as_hash();
+			algorithm::pubkeyhash_t attester;
+			algorithm::hashsig_t commitment = algorithm::hashsig_t(event.args[2].as_string());
+			if (!algorithm::signing::recover_hash(commitment_hash, attester, commitment))
+				return layer_exception("invalid commitment");
+
+			auto context = ledger::transaction_context();
+			auto validation = context.verify_validator_attestation(asset, attester);
+			if (!validation)
+				return validation;
+
+			auto mempool = storages::mempoolstate();
+			auto status = mempool.add_attestation(asset, proof, commitment);
+			if (!status)
+				return status;
+
+			auto finalization = accept_attestation(uref(state), proof.as_attestation_hash());
+			if (finalization)
+				return expectation::met;
+
+			size_t notifications = notify_all_except(std::move(state), METHOD_CALL(&server_node::notify_of_possibly_new_attestation), format::variables(event.args));
+			if (notifications > 0 && protocol::now().user.consensus.logging)
+				VI_INFO("attestation %s broadcasted to %i nodes", algorithm::encoding::encode_0xhex256(commitment_hash).c_str(), (int)notifications);
+
 			return expectation::met;
 		}
 		expects_lr<void> server_node::reverse_connect_to_node_by_accounts(uref<relay>&& state, const exchange& event)
@@ -1117,7 +1185,7 @@ namespace tangent
 				return format::variables({ });
 
 			auto context = ledger::transaction_context();
-			auto proof_transaction = context.get_block_transaction<transactions::depository_migration>(proof_hash);
+			auto proof_transaction = context.get_block_transaction<transactions::bridge_migration>(proof_hash);
 			if (!proof_transaction)
 				return layer_exception("state proof not found");
 
@@ -1148,7 +1216,7 @@ namespace tangent
 				return format::variables({ });
 
 			auto context = ledger::transaction_context();
-			auto proof_transaction = context.get_block_transaction<transactions::depository_account>(proof_hash);
+			auto proof_transaction = context.get_block_transaction<transactions::bridge_account>(proof_hash);
 			if (!proof_transaction)
 				return layer_exception("state proof not found");
 
@@ -1179,7 +1247,7 @@ namespace tangent
 				return format::variables({ });
 
 			auto context = ledger::transaction_context();
-			auto proof_transaction = context.get_block_transaction<transactions::depository_withdrawal>(proof_hash);
+			auto proof_transaction = context.get_block_transaction<transactions::bridge_withdrawal>(proof_hash);
 			if (!proof_transaction)
 				return layer_exception("state proof not found");
 
@@ -1188,8 +1256,8 @@ namespace tangent
 			if (!aggregator.load_message_if_preferred(reader))
 				return layer_exception("state machine not valid");
 
-			auto* proof_transaction_ptr = (transactions::depository_withdrawal*)*proof_transaction->transaction;
-			auto validation = transactions::depository_withdrawal_finalization::validate_possible_proof(&context, proof_transaction_ptr, **aggregator.message);
+			auto* proof_transaction_ptr = (transactions::bridge_withdrawal*)*proof_transaction->transaction;
+			auto validation = transactions::bridge_withdrawal_finalization::validate_possible_proof(&context, proof_transaction_ptr, **aggregator.message);
 			if (!validation)
 				return layer_exception("group validation error");
 
@@ -1205,19 +1273,26 @@ namespace tangent
 		}
 		expects_lr<void> server_node::dispatch_transaction_logs(const algorithm::asset_id& asset, const oracle::chain_supervisor_options& options, oracle::transaction_logs&& logs)
 		{
-			auto context = ledger::transaction_context();
+			auto& [node, wallet] = descriptor;
 			for (auto& receipt : logs.finalized)
 			{
-				auto collision = context.get_witness_transaction(asset, receipt.transaction_id);
-				if (!collision)
-				{
-					auto* transaction = memory::init<transactions::depository_attestation>();
-					transaction->asset = asset;
-					transaction->set_computed_proof(std::move(receipt));
-					accept_unsigned_transaction(nullptr, transaction, nullptr);
-					if (protocol::now().user.consensus.logging)
-						VI_INFO("%s oracle transaction %s accepted", algorithm::asset::name_of(asset).c_str(), receipt.transaction_id.c_str());
-				}
+				algorithm::hashsig_t commitment_signature; uint256_t commitment_hash;
+				if (!transactions::bridge_attestation::commit_to_proof(receipt, wallet.secret_key, commitment_hash, commitment_signature))
+					continue;
+
+				auto mempool = storages::mempoolstate();
+				auto status = mempool.add_attestation(asset, receipt, commitment_signature);
+				if (!status)
+					continue;
+
+				auto finalization = accept_attestation(nullptr, receipt.as_attestation_hash());
+				if (finalization)
+					continue;
+
+				auto proof_message = receipt.as_message();
+				size_t notifications = notify_all(METHOD_CALL(&server_node::notify_of_possibly_new_attestation), { format::variable(proof_message.data), format::variable(commitment_signature.view()) });
+				if (notifications > 0 && protocol::now().user.consensus.logging)
+					VI_INFO("attestation %s broadcasted to %i nodes", algorithm::encoding::encode_0xhex256(commitment_hash).c_str(), (int)notifications);
 			}
 			return expectation::met;
 		}
@@ -2148,6 +2223,7 @@ namespace tangent
 
 			bind_event(METHOD_CALL(&server_node::notify_of_possibly_new_block_hash), std::bind(&server_node::notify_of_possibly_new_block_hash, this, std::placeholders::_2, std::placeholders::_3));
 			bind_event(METHOD_CALL(&server_node::notify_of_possibly_new_transaction_hash), std::bind(&server_node::notify_of_possibly_new_transaction_hash, this, std::placeholders::_2, std::placeholders::_3));
+			bind_event(METHOD_CALL(&server_node::notify_of_possibly_new_attestation), std::bind(&server_node::notify_of_possibly_new_attestation, this, std::placeholders::_2, std::placeholders::_3));
 			bind_query(METHOD_CALL(&server_node::query_handshake), std::bind(&server_node::query_handshake, this, std::placeholders::_2, std::placeholders::_3, false));
 			bind_query(METHOD_CALL(&server_node::query_state), std::bind(&server_node::query_state, this, std::placeholders::_2, std::placeholders::_3, false));
 			bind_query(METHOD_CALL(&server_node::query_block_headers), std::bind(&server_node::query_block_headers, this, std::placeholders::_2, std::placeholders::_3));
@@ -2783,7 +2859,7 @@ namespace tangent
 		}
 		expects_promise_rt<void> dispatch_context::aggregate_secret_share_state(const ledger::transaction_context* context, secret_share_state& state, const algorithm::pubkeyhash_t& validator)
 		{
-			auto* depository_account = (transactions::depository_account*)context->transaction;
+			auto* bridge_account = (transactions::bridge_account*)context->transaction;
 			if (is_running_on(validator.data))
 				return local_dispatch_context::aggregate_secret_share_state(this, context, state);
 
@@ -2910,11 +2986,11 @@ namespace tangent
 		}
 		expects_rt<void> local_dispatch_context::aggregate_secret_share_state(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, secret_share_state& state)
 		{
-			auto* depository_migration = (transactions::depository_migration*)context->transaction;
-			if (!depository_migration)
+			auto* bridge_migration = (transactions::bridge_migration*)context->transaction;
+			if (!bridge_migration)
 				return remote_exception("invalid transaction");
 
-			if (state.encrypted_shares.size() != depository_migration->shares.size())
+			if (state.encrypted_shares.size() != bridge_migration->shares.size())
 				return remote_exception("invalid encrypted shares count");
 
 			auto& runner_wallet = dispatcher->get_runner_wallet();
@@ -2925,8 +3001,8 @@ namespace tangent
 
 			for (auto& [hash, encrypted_share] : state.encrypted_shares)
 			{
-				auto share_target = depository_migration->shares.find(hash);
-				if (encrypted_share.empty() || share_target == depository_migration->shares.end())
+				auto share_target = bridge_migration->shares.find(hash);
+				if (encrypted_share.empty() || share_target == bridge_migration->shares.end())
 					return remote_exception("invalid encrypted share");
 
 				auto decrypted_share = algorithm::signing::private_decrypt(tweaked_secret_key, encrypted_share);
@@ -2965,16 +3041,16 @@ namespace tangent
 		}
 		expects_rt<void> local_dispatch_context::aggregate_public_state(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, public_state& state)
 		{
-			auto* depository_account = (transactions::depository_account*)context->transaction;
-			if (!depository_account)
+			auto* bridge_account = (transactions::bridge_account*)context->transaction;
+			if (!bridge_account)
 				return remote_exception("invalid transaction");
 
-			auto* chain = oracle::server_node::get()->get_chainparams(depository_account->asset);
+			auto* chain = oracle::server_node::get()->get_chainparams(bridge_account->asset);
 			if (!chain)
 				return remote_exception("invalid operation");
 
 			uint256_t scalar;
-			auto status = dispatcher->recover_secret_share(depository_account->asset, depository_account->manager, context->receipt.from, scalar);
+			auto status = dispatcher->recover_secret_share(bridge_account->asset, bridge_account->manager, context->receipt.from, scalar);
 			if (!status)
 				return remote_exception(std::move(status.error().message()));
 
@@ -3002,11 +3078,11 @@ namespace tangent
 		}
 		expects_rt<void> local_dispatch_context::aggregate_signature_state(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, signature_state& state)
 		{
-			auto* depository_withdrawal = (transactions::depository_withdrawal*)context->transaction;
-			if (!depository_withdrawal)
+			auto* bridge_withdrawal = (transactions::bridge_withdrawal*)context->transaction;
+			if (!bridge_withdrawal)
 				return remote_exception("invalid transaction");
 
-			auto validation = transactions::depository_withdrawal_finalization::validate_possible_proof(context, depository_withdrawal, **state.message);
+			auto validation = transactions::bridge_withdrawal_finalization::validate_possible_proof(context, bridge_withdrawal, **state.message);
 			if (!validation)
 				return remote_exception(std::move(validation.error().message()));
 
@@ -3014,11 +3090,11 @@ namespace tangent
 			if (!input)
 				return remote_exception("invalid operation");
 
-			auto witness = context->get_witness_account_tagged(depository_withdrawal->asset, input->utxo.link.address, 0);
+			auto witness = context->get_witness_account_tagged(bridge_withdrawal->asset, input->utxo.link.address, 0);
 			if (!witness)
 				return remote_exception(std::move(witness.error().message()));
 
-			auto account = context->get_depository_account(depository_withdrawal->asset, witness->manager, witness->owner);
+			auto account = context->get_bridge_account(bridge_withdrawal->asset, witness->manager, witness->owner);
 			if (!account)
 				return expectation::met;
 

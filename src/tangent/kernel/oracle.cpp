@@ -484,6 +484,10 @@ namespace tangent
 
 			return true;
 		}
+		uint256_t computed_transaction::as_attestation_hash() const
+		{
+			return algorithm::hashing::hash256i(transaction_id);
+		}
 		uptr<schema> computed_transaction::as_schema() const
 		{
 			schema* data = var::set::object();

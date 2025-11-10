@@ -147,34 +147,34 @@ namespace tangent
 				return multiform_location(states::validator_attestation::as_instance_type(), states::validator_attestation::as_instance_row(algorithm::asset::id_of_handle(row.as_string())), states::validator_attestation::as_instance_column(owner));
 			}
 
-			if (type == states::depository_reward::as_instance_typename())
+			if (type == states::bridge_reward::as_instance_typename())
 			{
 				algorithm::pubkeyhash_t owner;
 				if (column.type_of() != format::viewable::invalid && !algorithm::signing::decode_address(column.as_string(), owner))
 					return layer_exception("invalid address");
 
-				return multiform_location(states::depository_reward::as_instance_type(), states::depository_reward::as_instance_row(algorithm::asset::id_of_handle(row.as_string())), states::depository_reward::as_instance_column(owner));
+				return multiform_location(states::bridge_reward::as_instance_type(), states::bridge_reward::as_instance_row(algorithm::asset::id_of_handle(row.as_string())), states::bridge_reward::as_instance_column(owner));
 			}
 
-			if (type == states::depository_balance::as_instance_typename())
+			if (type == states::bridge_balance::as_instance_typename())
 			{
 				algorithm::pubkeyhash_t owner;
 				if (column.type_of() != format::viewable::invalid && !algorithm::signing::decode_address(column.as_string(), owner))
 					return layer_exception("invalid address");
 
-				return multiform_location(states::depository_balance::as_instance_type(), states::depository_balance::as_instance_row(algorithm::asset::id_of_handle(row.as_string())), states::depository_balance::as_instance_column(owner));
+				return multiform_location(states::bridge_balance::as_instance_type(), states::bridge_balance::as_instance_row(algorithm::asset::id_of_handle(row.as_string())), states::bridge_balance::as_instance_column(owner));
 			}
 
-			if (type == states::depository_policy::as_instance_typename())
+			if (type == states::bridge_policy::as_instance_typename())
 			{
 				algorithm::pubkeyhash_t owner;
 				if (column.type_of() != format::viewable::invalid && !algorithm::signing::decode_address(column.as_string(), owner))
 					return layer_exception("invalid address");
 
-				return multiform_location(states::depository_policy::as_instance_type(), states::depository_policy::as_instance_row(algorithm::asset::id_of_handle(row.as_string())), states::depository_policy::as_instance_column(owner));
+				return multiform_location(states::bridge_policy::as_instance_type(), states::bridge_policy::as_instance_row(algorithm::asset::id_of_handle(row.as_string())), states::bridge_policy::as_instance_column(owner));
 			}
 
-			if (type == states::depository_account::as_instance_typename())
+			if (type == states::bridge_account::as_instance_typename())
 			{
 				auto data = row.type_of() != format::viewable::invalid ? row.as_schema() : uptr(var::set::object());
 				if (!data)
@@ -190,7 +190,7 @@ namespace tangent
 				if (!algorithm::signing::decode_address(owner_address, owner))
 					return layer_exception("invalid address");
 
-				return multiform_location(states::depository_account::as_instance_type(), states::depository_account::as_instance_row(algorithm::asset::id_of_handle(id), owner), states::depository_account::as_instance_column(manager));
+				return multiform_location(states::bridge_account::as_instance_type(), states::bridge_account::as_instance_row(algorithm::asset::id_of_handle(id), owner), states::bridge_account::as_instance_column(manager));
 			}
 
 			if (type == states::witness_account::as_instance_typename())
@@ -203,7 +203,7 @@ namespace tangent
 				if (column.type_of() != format::viewable::invalid && !algorithm::signing::decode_address(column.as_string(), owner))
 					return layer_exception("invalid address");
 
-				return multiform_location(states::depository_account::as_instance_type(), states::witness_account::as_instance_row(algorithm::asset::id_of_handle(data->get_var("asset").get_blob()), data->get_var("address").get_blob()), states::witness_account::as_instance_column(owner));
+				return multiform_location(states::bridge_account::as_instance_type(), states::witness_account::as_instance_row(algorithm::asset::id_of_handle(data->get_var("asset").get_blob()), data->get_var("address").get_blob()), states::witness_account::as_instance_column(owner));
 			}
 
 			return layer_exception("invalid multiform type");
@@ -382,24 +382,24 @@ namespace tangent
 			bind(0 | access_type::r, "chainstate", "getvalidatorattestation", 2, 2, "string asset, string address", "multiform", "get validator attestation by address and asset", std::bind(&server_node::chainstate_get_validator_attestation, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getvalidatorattestations", 3, 3, "string address, uint64 offset, uint64 count", "multiform[]", "get validator attestations by address", std::bind(&server_node::chainstate_get_validator_attestations, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getbestvalidatorattestation", 3, 3, "string asset, uint256 commitment, uint64 offset, uint64 count", "multiform[]", "get best validator attestations (zero commitment = offline, non-zero commitment = online threshold)", std::bind(&server_node::chainstate_get_best_validator_attestations, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getdepositoryreward", 2, 2, "string address, string asset", "multiform", "get depository reward by address and asset", std::bind(&server_node::chainstate_get_depository_reward, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getdepositoryrewards", 3, 3, "string address, uint64 offset, uint64 count", "multiform[]", "get depository rewards by address", std::bind(&server_node::chainstate_get_depository_rewards, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getbestdepositoryrewards", 3, 3, "string asset, uint64 offset, uint64 count", "multiform[]", "get accounts with best rewards", std::bind(&server_node::chainstate_get_best_depository_rewards, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getbestdepositoryrewardsforselection", 3, 3, "string asset, uint64 offset, uint64 count", "{ depository: multiform?, reward: multiform }[]", "get accounts with best rewards with additional manager info", std::bind(&server_node::chainstate_get_best_depository_rewards_for_selection, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getdepositorypolicy", 2, 2, "string address, string asset", "uint64", "get depository policy by address and asset", std::bind(&server_node::chainstate_get_depository_policy, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getdepositoryaccount", 3, 3, "string asset, string manager_address, string owner_address", "multiform", "get depository account by manager and owner addresses and asset", std::bind(&server_node::chainstate_get_depository_account, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getdepositoryaccounts", 3, 3, "string manager_address", "multiform[]", "get depository accounts by manager", std::bind(&server_node::chainstate_get_depository_accounts, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getdepositorybalance", 2, 2, "string address, string asset", "multiform", "get depository balance by address and asset", std::bind(&server_node::chainstate_get_depository_balance, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getdepositorybalances", 3, 3, "string address, uint64 offset, uint64 count", "multiform[]", "get depository balances by address", std::bind(&server_node::chainstate_get_depository_balances, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getbestdepositorybalances", 3, 3, "string asset, uint64 offset, uint64 count", "multiform[]", "get accounts with best depository balance", std::bind(&server_node::chainstate_get_best_depository_balances, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getbestdepositorybalancesforselection", 3, 3, "string asset, uint64 offset, uint64 count", "{ depository: multiform, reward: multiform? }[]", "get accounts with best depository balance with additional manager info", std::bind(&server_node::chainstate_get_best_depository_balances_for_selection, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getbestdepositorypolicies", 3, 3, "string asset, uint64 offset, uint64 count", "multiform[]", "get accounts with best depository security", std::bind(&server_node::chainstate_get_best_depository_policies, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getbestdepositorypoliciesforselection", 3, 3, "string asset, uint64 offset, uint64 count", "{ depository: multiform, reward: multiform? }[]", "get accounts with best depository security with additional manager info", std::bind(&server_node::chainstate_get_best_depository_policies_for_selection, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getbridgereward", 2, 2, "string address, string asset", "multiform", "get bridge reward by address and asset", std::bind(&server_node::chainstate_get_bridge_reward, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getbridgerewards", 3, 3, "string address, uint64 offset, uint64 count", "multiform[]", "get bridge rewards by address", std::bind(&server_node::chainstate_get_bridge_rewards, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getbestbridgerewards", 3, 3, "string asset, uint64 offset, uint64 count", "multiform[]", "get accounts with best rewards", std::bind(&server_node::chainstate_get_best_bridge_rewards, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getbestbridgerewardsforselection", 3, 3, "string asset, uint64 offset, uint64 count", "{ bridge: multiform?, reward: multiform }[]", "get accounts with best rewards with additional manager info", std::bind(&server_node::chainstate_get_best_bridge_rewards_for_selection, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getbridgepolicy", 2, 2, "string address, string asset", "uint64", "get bridge policy by address and asset", std::bind(&server_node::chainstate_get_bridge_policy, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getbridgeaccount", 3, 3, "string asset, string manager_address, string owner_address", "multiform", "get bridge account by manager and owner addresses and asset", std::bind(&server_node::chainstate_get_bridge_account, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getbridgeaccounts", 3, 3, "string manager_address", "multiform[]", "get bridge accounts by manager", std::bind(&server_node::chainstate_get_bridge_accounts, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getbridgebalance", 2, 2, "string address, string asset", "multiform", "get bridge balance by address and asset", std::bind(&server_node::chainstate_get_bridge_balance, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getbridgebalances", 3, 3, "string address, uint64 offset, uint64 count", "multiform[]", "get bridge balances by address", std::bind(&server_node::chainstate_get_bridge_balances, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getbestbridgebalances", 3, 3, "string asset, uint64 offset, uint64 count", "multiform[]", "get accounts with best bridge balance", std::bind(&server_node::chainstate_get_best_bridge_balances, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getbestbridgebalancesforselection", 3, 3, "string asset, uint64 offset, uint64 count", "{ bridge: multiform, reward: multiform? }[]", "get accounts with best bridge balance with additional manager info", std::bind(&server_node::chainstate_get_best_bridge_balances_for_selection, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getbestbridgepolicies", 3, 3, "string asset, uint64 offset, uint64 count", "multiform[]", "get accounts with best bridge security", std::bind(&server_node::chainstate_get_best_bridge_policies, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getbestbridgepoliciesforselection", 3, 3, "string asset, uint64 offset, uint64 count", "{ bridge: multiform, reward: multiform? }[]", "get accounts with best bridge security with additional manager info", std::bind(&server_node::chainstate_get_best_bridge_policies_for_selection, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getwitnessprogram", 1, 1, "string hashcode", "uniform", "get witness program by hashcode (512bit number)", std::bind(&server_node::chainstate_get_witness_program, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getwitnessevent", 1, 1, "uint256 transaction_hash", "uniform", "get witness event by transaction hash", std::bind(&server_node::chainstate_get_witness_event, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getwitnessaccount", 3, 3, "string address, string asset, string wallet_address", "multiform", "get witness address by owner address, asset, wallet address", std::bind(&server_node::chainstate_get_witness_account, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getwitnessaccounts", 3, 3, "string address, uint64 offset, uint64 count", "multiform[]", "get witness addresses by owner address", std::bind(&server_node::chainstate_get_witness_accounts, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getwitnessaccountsbypurpose", 4, 4, "string address, string purpose = 'witness' | 'router' | 'custodian' | 'depository', uint64 offset, uint64 count", "multiform[]", "get witness addresses by owner address", std::bind(&server_node::chainstate_get_witness_accounts_by_purpose, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getwitnessaccountsbypurpose", 4, 4, "string address, string purpose = 'witness' | 'router' | 'custodian' | 'bridge', uint64 offset, uint64 count", "multiform[]", "get witness addresses by owner address", std::bind(&server_node::chainstate_get_witness_accounts_by_purpose, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getwitnesstransaction", 2, 2, "string asset, string transaction_id", "uniform", "get witness transaction by asset and transaction id", std::bind(&server_node::chainstate_get_witness_transaction, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getclosestnode", 0, 1, "uint64? offset", "validator", "get closest node info", std::bind(&server_node::mempoolstate_get_closest_node, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getclosestnodecount", 0, 0, "", "uint64", "get closest node count", std::bind(&server_node::mempoolstate_get_closest_node_counter, this, std::placeholders::_1, std::placeholders::_2));
@@ -2272,7 +2272,7 @@ namespace tangent
 				data->push(item.value->as_schema().reset());
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::chainstate_get_depository_reward(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_bridge_reward(http::connection* base, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -2280,10 +2280,10 @@ namespace tangent
 
 			auto chain = storages::chainstate();
 			auto asset = algorithm::asset::id_of_handle(args[1].as_string());
-			auto state = chain.get_multiform(states::depository_reward::as_instance_type(), nullptr, states::depository_reward::as_instance_column(owner), states::depository_reward::as_instance_row(asset), 0);
+			auto state = chain.get_multiform(states::bridge_reward::as_instance_type(), nullptr, states::bridge_reward::as_instance_column(owner), states::bridge_reward::as_instance_row(asset), 0);
 			return server_response().success(state ? state->value->as_schema().reset() : var::set::null());
 		}
-		server_response server_node::chainstate_get_depository_rewards(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_bridge_rewards(http::connection* base, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -2294,7 +2294,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto chain = storages::chainstate();
-			auto list = chain.get_multiforms_by_column(states::depository_reward::as_instance_type(), nullptr, states::depository_reward::as_instance_column(owner), 0, offset, count);
+			auto list = chain.get_multiforms_by_column(states::bridge_reward::as_instance_type(), nullptr, states::bridge_reward::as_instance_column(owner), 0, offset, count);
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
@@ -2303,7 +2303,7 @@ namespace tangent
 				data->push(item.value->as_schema().reset());
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::chainstate_get_best_depository_rewards(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_best_bridge_rewards(http::connection* base, format::variables&& args)
 		{
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
@@ -2312,7 +2312,7 @@ namespace tangent
 
 			auto filter = storages::result_filter::greater_equal(0, 1);
 			auto chain = storages::chainstate();
-			auto list = chain.get_multiforms_by_row_filter(states::depository_reward::as_instance_type(), nullptr, states::depository_reward::as_instance_row(asset), filter, 0, storages::result_range_window(offset, count));
+			auto list = chain.get_multiforms_by_row_filter(states::bridge_reward::as_instance_type(), nullptr, states::bridge_reward::as_instance_row(asset), filter, 0, storages::result_range_window(offset, count));
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
@@ -2321,7 +2321,7 @@ namespace tangent
 				data->push(item.value->as_schema().reset());
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::chainstate_get_best_depository_rewards_for_selection(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_best_bridge_rewards_for_selection(http::connection* base, format::variables&& args)
 		{
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
@@ -2330,20 +2330,20 @@ namespace tangent
 
 			auto filter = storages::result_filter::greater_equal(0, 1);
 			auto chain = storages::chainstate();
-			auto list = chain.get_multiforms_by_row_filter(states::depository_reward::as_instance_type(), nullptr, states::depository_reward::as_instance_row(asset), filter, 0, storages::result_range_window(offset, count));
+			auto list = chain.get_multiforms_by_row_filter(states::bridge_reward::as_instance_type(), nullptr, states::bridge_reward::as_instance_row(asset), filter, 0, storages::result_range_window(offset, count));
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
 			auto attestation_stride = states::validator_attestation::as_instance_row(asset);
-			auto policy_stride = states::depository_policy::as_instance_row(asset);
-			auto balance_stride = states::depository_balance::as_instance_row(asset);
+			auto policy_stride = states::bridge_policy::as_instance_row(asset);
+			auto balance_stride = states::bridge_balance::as_instance_row(asset);
 			uptr<schema> data = var::set::array();
 			for (auto& item : *list)
 			{
-				auto* reward_state = (states::depository_reward*)item.ptr();
+				auto* reward_state = (states::bridge_reward*)item.ptr();
 				auto attestation_state = chain.get_multiform(states::validator_attestation::as_instance_type(), nullptr, states::validator_attestation::as_instance_column(reward_state->owner), attestation_stride, 0);
-				auto policy_state = chain.get_multiform(states::depository_policy::as_instance_type(), nullptr, states::depository_policy::as_instance_column(reward_state->owner), policy_stride, 0);
-				auto balance_state = chain.get_multiform(states::depository_balance::as_instance_type(), nullptr, states::depository_balance::as_instance_column(reward_state->owner), balance_stride, 0);
+				auto policy_state = chain.get_multiform(states::bridge_policy::as_instance_type(), nullptr, states::bridge_policy::as_instance_column(reward_state->owner), policy_stride, 0);
+				auto balance_state = chain.get_multiform(states::bridge_balance::as_instance_type(), nullptr, states::bridge_balance::as_instance_column(reward_state->owner), balance_stride, 0);
 				auto* next = data->push(var::set::object());
 				next->set("attestation", attestation_state ? attestation_state->value->as_schema().reset() : var::set::null());
 				next->set("balance", balance_state ? balance_state->value->as_schema().reset() : var::set::null());
@@ -2352,7 +2352,7 @@ namespace tangent
 			}
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::chainstate_get_depository_policy(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_bridge_policy(http::connection* base, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -2360,11 +2360,11 @@ namespace tangent
 
 			auto chain = storages::chainstate();
 			auto asset = algorithm::asset::id_of_handle(args[1].as_string());
-			auto state = chain.get_multiform(states::depository_policy::as_instance_type(), nullptr, states::depository_policy::as_instance_column(owner), states::depository_policy::as_instance_row(asset), 0);
-			auto* value = (states::depository_policy*)(state ? state->ptr() : nullptr);
+			auto state = chain.get_multiform(states::bridge_policy::as_instance_type(), nullptr, states::bridge_policy::as_instance_column(owner), states::bridge_policy::as_instance_row(asset), 0);
+			auto* value = (states::bridge_policy*)(state ? state->ptr() : nullptr);
 			return server_response().success(value ? value->as_schema().reset() : nullptr);
 		}
-		server_response server_node::chainstate_get_depository_account(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_bridge_account(http::connection* base, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t proposer;
 			if (!algorithm::signing::decode_address(args[1].as_string(), proposer))
@@ -2376,11 +2376,11 @@ namespace tangent
 
 			auto chain = storages::chainstate();
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
-			auto state = chain.get_multiform(states::depository_account::as_instance_type(), nullptr, states::depository_account::as_instance_column(proposer), states::depository_account::as_instance_row(asset, owner), 0);
-			auto* value = (states::depository_account*)(state ? state->ptr() : nullptr);
+			auto state = chain.get_multiform(states::bridge_account::as_instance_type(), nullptr, states::bridge_account::as_instance_column(proposer), states::bridge_account::as_instance_row(asset, owner), 0);
+			auto* value = (states::bridge_account*)(state ? state->ptr() : nullptr);
 			return server_response().success(value ? value->as_schema().reset() : nullptr);
 		}
-		server_response server_node::chainstate_get_depository_accounts(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_bridge_accounts(http::connection* base, format::variables&& args)
 		{
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
 			if (!count || count > protocol::now().user.rpc.page_size)
@@ -2392,7 +2392,7 @@ namespace tangent
 
 			auto filter = storages::result_filter::greater_equal(0, -1);
 			auto chain = storages::chainstate();
-			auto list = chain.get_multiforms_by_column_filter(states::depository_account::as_instance_type(), nullptr, states::depository_account::as_instance_column(proposer), filter, 0, storages::result_range_window(offset, count));
+			auto list = chain.get_multiforms_by_column_filter(states::bridge_account::as_instance_type(), nullptr, states::bridge_account::as_instance_column(proposer), filter, 0, storages::result_range_window(offset, count));
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
@@ -2401,7 +2401,7 @@ namespace tangent
 				data->push(item.value->as_schema().reset());
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::chainstate_get_depository_balance(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_bridge_balance(http::connection* base, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -2409,10 +2409,10 @@ namespace tangent
 
 			auto chain = storages::chainstate();
 			auto asset = algorithm::asset::id_of_handle(args[1].as_string());
-			auto state = chain.get_multiform(states::depository_balance::as_instance_type(), nullptr, states::depository_balance::as_instance_column(owner), states::depository_balance::as_instance_row(asset), 0);
+			auto state = chain.get_multiform(states::bridge_balance::as_instance_type(), nullptr, states::bridge_balance::as_instance_column(owner), states::bridge_balance::as_instance_row(asset), 0);
 			return server_response().success(state ? state->value->as_schema().reset() : var::set::null());
 		}
-		server_response server_node::chainstate_get_depository_balances(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_bridge_balances(http::connection* base, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -2423,7 +2423,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto chain = storages::chainstate();
-			auto list = chain.get_multiforms_by_column(states::depository_balance::as_instance_type(), nullptr, states::depository_balance::as_instance_column(owner), 0, offset, count);
+			auto list = chain.get_multiforms_by_column(states::bridge_balance::as_instance_type(), nullptr, states::bridge_balance::as_instance_column(owner), 0, offset, count);
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
@@ -2432,7 +2432,7 @@ namespace tangent
 				data->push(item.value->as_schema().reset());
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::chainstate_get_best_depository_balances(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_best_bridge_balances(http::connection* base, format::variables&& args)
 		{
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
@@ -2441,7 +2441,7 @@ namespace tangent
 
 			auto filter = storages::result_filter::greater_equal(0, -1);
 			auto chain = storages::chainstate();
-			auto list = chain.get_multiforms_by_row_filter(states::depository_balance::as_instance_type(), nullptr, states::depository_balance::as_instance_row(asset), filter, 0, storages::result_range_window(offset, count));
+			auto list = chain.get_multiforms_by_row_filter(states::bridge_balance::as_instance_type(), nullptr, states::bridge_balance::as_instance_row(asset), filter, 0, storages::result_range_window(offset, count));
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
@@ -2450,7 +2450,7 @@ namespace tangent
 				data->push(item.value->as_schema().reset());
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::chainstate_get_best_depository_balances_for_selection(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_best_bridge_balances_for_selection(http::connection* base, format::variables&& args)
 		{
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
@@ -2459,20 +2459,20 @@ namespace tangent
 
 			auto filter = storages::result_filter::greater_equal(0, -1);
 			auto chain = storages::chainstate();
-			auto list = chain.get_multiforms_by_row_filter(states::depository_balance::as_instance_type(), nullptr, states::depository_balance::as_instance_row(asset), filter, 0, storages::result_range_window(offset, count));
+			auto list = chain.get_multiforms_by_row_filter(states::bridge_balance::as_instance_type(), nullptr, states::bridge_balance::as_instance_row(asset), filter, 0, storages::result_range_window(offset, count));
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
 			auto attestation_stride = states::validator_attestation::as_instance_row(asset);
-			auto policy_stride = states::depository_policy::as_instance_row(asset);
-			auto reward_stride = states::depository_reward::as_instance_row(asset);
+			auto policy_stride = states::bridge_policy::as_instance_row(asset);
+			auto reward_stride = states::bridge_reward::as_instance_row(asset);
 			uptr<schema> data = var::set::array();
 			for (auto& item : *list)
 			{
-				auto* balance_state = (states::depository_balance*)item.ptr();
+				auto* balance_state = (states::bridge_balance*)item.ptr();
 				auto attestation_state = chain.get_multiform(states::validator_attestation::as_instance_type(), nullptr, states::validator_attestation::as_instance_column(balance_state->owner), attestation_stride, 0);
-				auto policy_state = chain.get_multiform(states::depository_policy::as_instance_type(), nullptr, states::depository_policy::as_instance_column(balance_state->owner), policy_stride, 0);
-				auto reward_state = chain.get_multiform(states::depository_reward::as_instance_type(), nullptr, states::depository_reward::as_instance_column(balance_state->owner), reward_stride, 0);
+				auto policy_state = chain.get_multiform(states::bridge_policy::as_instance_type(), nullptr, states::bridge_policy::as_instance_column(balance_state->owner), policy_stride, 0);
+				auto reward_state = chain.get_multiform(states::bridge_reward::as_instance_type(), nullptr, states::bridge_reward::as_instance_column(balance_state->owner), reward_stride, 0);
 				auto* next = data->push(var::set::object());
 				next->set("attestation", attestation_state ? attestation_state->value->as_schema().reset() : var::set::null());
 				next->set("balance", balance_state->as_schema().reset());
@@ -2481,7 +2481,7 @@ namespace tangent
 			}
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::chainstate_get_best_depository_policies(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_best_bridge_policies(http::connection* base, format::variables&& args)
 		{
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
@@ -2490,7 +2490,7 @@ namespace tangent
 
 			auto filter = storages::result_filter::greater(0, -1);
 			auto chain = storages::chainstate();
-			auto list = chain.get_multiforms_by_row_filter(states::depository_policy::as_instance_type(), nullptr, states::depository_policy::as_instance_row(asset), filter, 0, storages::result_range_window(offset, count));
+			auto list = chain.get_multiforms_by_row_filter(states::bridge_policy::as_instance_type(), nullptr, states::bridge_policy::as_instance_row(asset), filter, 0, storages::result_range_window(offset, count));
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
@@ -2499,7 +2499,7 @@ namespace tangent
 				data->push(item.value->as_schema().reset());
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::chainstate_get_best_depository_policies_for_selection(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_best_bridge_policies_for_selection(http::connection* base, format::variables&& args)
 		{
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
@@ -2508,20 +2508,20 @@ namespace tangent
 
 			auto filter = storages::result_filter::greater(0, -1);
 			auto chain = storages::chainstate();
-			auto list = chain.get_multiforms_by_row_filter(states::depository_policy::as_instance_type(), nullptr, states::depository_policy::as_instance_row(asset), filter, 0, storages::result_range_window(offset, count));
+			auto list = chain.get_multiforms_by_row_filter(states::bridge_policy::as_instance_type(), nullptr, states::bridge_policy::as_instance_row(asset), filter, 0, storages::result_range_window(offset, count));
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
 			auto attestation_stride = states::validator_attestation::as_instance_row(asset);
-			auto balance_stride = states::depository_balance::as_instance_row(asset);
-			auto reward_stride = states::depository_reward::as_instance_row(asset);
+			auto balance_stride = states::bridge_balance::as_instance_row(asset);
+			auto reward_stride = states::bridge_reward::as_instance_row(asset);
 			uptr<schema> data = var::set::array();
 			for (auto& item : *list)
 			{
-				auto* policy_state = (states::depository_policy*)item.ptr();
+				auto* policy_state = (states::bridge_policy*)item.ptr();
 				auto attestation_state = chain.get_multiform(states::validator_attestation::as_instance_type(), nullptr, states::validator_attestation::as_instance_column(policy_state->owner), attestation_stride, 0);
-				auto balance_state = chain.get_multiform(states::depository_balance::as_instance_type(), nullptr, states::depository_balance::as_instance_column(policy_state->owner), balance_stride, 0);
-				auto reward_state = chain.get_multiform(states::depository_reward::as_instance_type(), nullptr, states::depository_reward::as_instance_column(policy_state->owner), reward_stride, 0);
+				auto balance_state = chain.get_multiform(states::bridge_balance::as_instance_type(), nullptr, states::bridge_balance::as_instance_column(policy_state->owner), balance_stride, 0);
+				auto reward_state = chain.get_multiform(states::bridge_reward::as_instance_type(), nullptr, states::bridge_reward::as_instance_column(policy_state->owner), reward_stride, 0);
 				auto* next = data->push(var::set::object());
 				next->set("attestation", attestation_state ? attestation_state->value->as_schema().reset() : var::set::null());
 				next->set("balance", balance_state ? balance_state->value->as_schema().reset() : var::set::null());
@@ -2591,8 +2591,8 @@ namespace tangent
 				purpose = (int64_t)states::witness_account::account_type::witness;
 			else if (type == "routing")
 				purpose = (int64_t)states::witness_account::account_type::routing;
-			else if (type == "depository")
-				purpose = (int64_t)states::witness_account::account_type::depository;
+			else if (type == "bridge")
+				purpose = (int64_t)states::witness_account::account_type::bridge;
 			if (purpose == std::numeric_limits<int64_t>::max())
 				return server_response().error(error_codes::bad_params, "address purpose not valid");
 

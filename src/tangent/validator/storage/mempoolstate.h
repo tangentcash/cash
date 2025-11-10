@@ -2,6 +2,7 @@
 #define TAN_STORAGE_MEMPOOLSTATE_H
 #include "engine.h"
 #include "../../kernel/block.h"
+#include "../../kernel/oracle.h"
 
 namespace tangent
 {
@@ -35,6 +36,13 @@ namespace tangent
 			production = (1 << 6),
 			participation = (1 << 7),
 			attestation = (1 << 8)
+		};
+
+		struct attestation_tree
+		{
+			ordered_map<uint256_t, ordered_set<algorithm::hashsig_t>> commitments;
+			ordered_map<uint256_t, oracle::computed_transaction> proofs;
+			algorithm::asset_id asset;
 		};
 
 		struct mempoolstate
@@ -71,13 +79,17 @@ namespace tangent
 			expects_lr<bool> has_cooldown_on_node(const socket_address& address);
 			expects_lr<decimal> get_gas_price(const algorithm::asset_id& asset, double priority_percentile);
 			expects_lr<decimal> get_asset_price(const algorithm::asset_id& price_of, const algorithm::asset_id& relative_to, double priority_percentile = 0.5);
-			expects_lr<void> add_transaction(ledger::transaction& value, bool resurrection);
+			expects_lr<void> add_attestation(const algorithm::asset_id& asset, const oracle::computed_transaction& value, const algorithm::hashsig_t& signature);
+			expects_lr<uint256_t> pull_attestation_hash(size_t required_signatures);
+			expects_lr<attestation_tree> get_attestation(const uint256_t& attestation_hash);
+			expects_lr<void> remove_attestation(const uint256_t& attestation_hash);
+			expects_lr<void> add_transaction(const ledger::transaction& value, bool resurrection);
 			expects_lr<void> remove_transactions(const vector<uint256_t>& transaction_hashes);
 			expects_lr<void> remove_transactions(const unordered_set<uint256_t>& transaction_hashes);
 			expects_lr<void> expire_transactions();
 			expects_lr<void> apply_group_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner, const uint256_t& scalar);
 			expects_lr<uint256_t> get_or_apply_group_account_share(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner, const uint256_t& entropy);
-			expects_lr<vector<states::depository_account>> get_group_accounts(const algorithm::pubkeyhash_t& manager, size_t offset, size_t count);
+			expects_lr<vector<states::bridge_account>> get_group_accounts(const algorithm::pubkeyhash_t& manager, size_t offset, size_t count);
 			expects_lr<bool> has_transaction(const uint256_t& transaction_hash);
 			expects_lr<uint64_t> get_lowest_transaction_nonce(const algorithm::pubkeyhash_t& owner);
 			expects_lr<uint64_t> get_highest_transaction_nonce(const algorithm::pubkeyhash_t& owner);

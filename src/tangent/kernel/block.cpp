@@ -1621,82 +1621,6 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> transaction_context::try_commit_to_witness_attestation(const states::witness_attestation& witness, const uint256_t& output_hash, const algorithm::pubkeyhash_t& attester) const
-		{
-			auto attestation = get_validator_attestation(witness.asset, attester);
-			if (!attestation || !attestation->is_active())
-				return layer_exception("validator attestation is inactive");
-
-			size_t attesters_size = calculate_attesters_size(witness.asset).or_else(0);
-			if (attesters_size / 2 > 0)
-			{
-				auto chain = storages::chainstate();
-				auto window = storages::result_range_window(attesters_size / (attesters_size >= 10 ? 10 : 2), 1);
-				auto median = chain.get_multiforms_by_row_filter(states::validator_attestation::as_instance_type(), changelog, states::validator_attestation::as_instance_row(attestation->asset), storages::result_filter::greater(0, 1), get_validation_nonce(), window);
-				if (median)
-				{
-					auto& target = *(states::validator_attestation*)median->front().ptr();
-					if (attestation->get_ranked_stake() < target.get_ranked_stake())
-						return layer_exception("validator attestation not enough ranked stake (< bottom 10%)");
-				}
-			}
-
-			bool may_commit = false;
-			if (!witness.finalized)
-			{
-				if (!verify_witness_attestation(witness, attesters_size))
-				{
-					auto copy = witness;
-					copy.branches[output_hash].insert(attester);
-					may_commit = !verify_witness_attestation(copy, attesters_size);
-				}
-			}
-			if (!may_commit)
-				return layer_exception("witness attestation requires proof instead of commitment");
-
-			return expectation::met;
-		}
-		expects_lr<uint256_t> transaction_context::verify_witness_attestation(const states::witness_attestation& witness, option<size_t> cached_attesters_size) const
-		{
-			if (witness.finalized)
-			{
-				if (witness.branches.size() != 1)
-					return layer_exception("invalid attestation state");
-
-				return witness.branches.begin()->first;
-			}
-
-			size_t required_attestations = cached_attesters_size ? *cached_attesters_size : calculate_attesters_size(witness.asset).or_else(0);
-			decimal best_branch_stake = -1;
-			uint256_t best_branch_hash = 0;
-			auto& params = protocol::now();
-			for (auto& [branch_hash, attesters] : witness.branches)
-			{
-				size_t required_branch_attestations = std::min<size_t>(required_attestations, params.policy.attestation_max_per_transaction);
-				decimal current_branch_threshold = required_branch_attestations > 0 ? algorithm::arithmetic::divide(attesters.size(), required_branch_attestations) : decimal::zero();
-				if (current_branch_threshold < params.policy.attestation_consensus_threshold || attesters.empty())
-					continue;
-
-				decimal branch_stake = decimal::zero();
-				for (auto& attester : attesters)
-				{
-					auto attestation = get_validator_attestation(witness.asset, attester);
-					if (attestation)
-						branch_stake += attestation->get_ranked_stake();
-				}
-
-				if (branch_stake > best_branch_stake)
-				{
-					best_branch_hash = branch_hash;
-					best_branch_stake = branch_stake;
-				}
-			}
-
-			if (!best_branch_hash)
-				return layer_exception("attestation is out of consensus (to be finalized)");
-
-			return best_branch_hash;
-		}
 		expects_lr<algorithm::wesolowski::distribution> transaction_context::calculate_random(const uint256_t& seed)
 		{
 			if (!block)
@@ -2117,9 +2041,9 @@ namespace tangent
 
 			return new_state;
 		}
-		expects_lr<states::depository_reward> transaction_context::apply_depository_reward(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const decimal& incoming_fee, const decimal& outgoing_fee)
+		expects_lr<states::bridge_reward> transaction_context::apply_bridge_reward(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const decimal& incoming_fee, const decimal& outgoing_fee)
 		{
-			states::depository_reward new_state = states::depository_reward(owner, asset, block);
+			states::bridge_reward new_state = states::bridge_reward(owner, asset, block);
 			new_state.incoming_fee = incoming_fee;
 			new_state.outgoing_fee = outgoing_fee;
 
@@ -2129,9 +2053,9 @@ namespace tangent
 
 			return new_state;
 		}
-		expects_lr<states::depository_balance> transaction_context::apply_depository_balance(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const ordered_map<algorithm::asset_id, decimal>& balances)
+		expects_lr<states::bridge_balance> transaction_context::apply_bridge_balance(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const ordered_map<algorithm::asset_id, decimal>& balances)
 		{
-			states::depository_balance new_state = states::depository_balance(owner, asset, block);
+			states::bridge_balance new_state = states::bridge_balance(owner, asset, block);
 			new_state.balances = balances;
 
 			auto status = store(&new_state, true);
@@ -2140,46 +2064,46 @@ namespace tangent
 
 			for (auto& [token_asset, balance] : balances)
 			{
-				status = emit_event<states::depository_balance>({ format::variable(token_asset), format::variable(owner.view()), format::variable(balance) });
+				status = emit_event<states::bridge_balance>({ format::variable(token_asset), format::variable(owner.view()), format::variable(balance) });
 				if (!status)
 					return status.error();
 			}
 
 			return new_state;
 		}
-		expects_lr<states::depository_policy> transaction_context::apply_depository_policy_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, uint64_t new_accounts)
+		expects_lr<states::bridge_policy> transaction_context::apply_bridge_policy_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, uint64_t new_accounts)
 		{
-			auto new_state = get_depository_policy(asset, owner).or_else(states::depository_policy(owner, asset, block));
+			auto new_state = get_bridge_policy(asset, owner).or_else(states::bridge_policy(owner, asset, block));
 			new_state.accounts_under_management += new_accounts;
 
 			auto status = store(&new_state, true);
 			if (!status)
 				return status.error();
 
-			status = emit_event<states::depository_policy>({ format::variable(asset), format::variable(owner.view()), format::variable((uint8_t)0), format::variable(new_accounts) });
+			status = emit_event<states::bridge_policy>({ format::variable(asset), format::variable(owner.view()), format::variable((uint8_t)0), format::variable(new_accounts) });
 			if (!status)
 				return status.error();
 
 			return new_state;
 		}
-		expects_lr<states::depository_policy> transaction_context::apply_depository_policy_queue(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const uint256_t& transaction_hash)
+		expects_lr<states::bridge_policy> transaction_context::apply_bridge_policy_queue(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const uint256_t& transaction_hash)
 		{
-			auto new_state = get_depository_policy(asset, owner).or_else(states::depository_policy(owner, asset, block));
+			auto new_state = get_bridge_policy(asset, owner).or_else(states::bridge_policy(owner, asset, block));
 			new_state.queue_transaction_hash = transaction_hash;
 
 			auto status = store(&new_state, true);
 			if (!status)
 				return status.error();
 
-			status = emit_event<states::depository_policy>({ format::variable(asset), format::variable(owner.view()), format::variable((uint8_t)1), format::variable(transaction_hash) });
+			status = emit_event<states::bridge_policy>({ format::variable(asset), format::variable(owner.view()), format::variable((uint8_t)1), format::variable(transaction_hash) });
 			if (!status)
 				return status.error();
 
 			return new_state;
 		}
-		expects_lr<states::depository_policy> transaction_context::apply_depository_policy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, uint8_t security_level, const decimal& participation_threshold, bool accepts_account_requests, bool accepts_withdrawal_requests)
+		expects_lr<states::bridge_policy> transaction_context::apply_bridge_policy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, uint8_t security_level, const decimal& participation_threshold, bool accepts_account_requests, bool accepts_withdrawal_requests)
 		{
-			auto new_state = get_depository_policy(asset, owner).or_else(states::depository_policy(owner, asset, block));
+			auto new_state = get_bridge_policy(asset, owner).or_else(states::bridge_policy(owner, asset, block));
 			new_state.participation_threshold = participation_threshold;
 			new_state.security_level = security_level;
 			new_state.accepts_account_requests = accepts_account_requests;
@@ -2189,15 +2113,15 @@ namespace tangent
 			if (!status)
 				return status.error();
 
-			status = emit_event<states::depository_policy>({ format::variable(asset), format::variable(owner.view()), format::variable((uint8_t)2), format::variable(security_level), format::variable(accepts_account_requests), format::variable(accepts_withdrawal_requests) });
+			status = emit_event<states::bridge_policy>({ format::variable(asset), format::variable(owner.view()), format::variable((uint8_t)2), format::variable(security_level), format::variable(accepts_account_requests), format::variable(accepts_withdrawal_requests) });
 			if (!status)
 				return status.error();
 
 			return new_state;
 		}
-		expects_lr<states::depository_account> transaction_context::apply_depository_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const algorithm::pubkeyhash_t& manager, const algorithm::composition::cpubkey_t& public_key, ordered_set<algorithm::pubkeyhash_t>&& group)
+		expects_lr<states::bridge_account> transaction_context::apply_bridge_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const algorithm::pubkeyhash_t& manager, const algorithm::composition::cpubkey_t& public_key, ordered_set<algorithm::pubkeyhash_t>&& group)
 		{
-			states::depository_account new_state = states::depository_account(manager, asset, owner, block);
+			states::bridge_account new_state = states::bridge_account(manager, asset, owner, block);
 			new_state.set_group(public_key, std::move(group));
 			new_state.asset = asset;
 
@@ -2231,13 +2155,13 @@ namespace tangent
 		}
 		expects_lr<states::witness_account> transaction_context::apply_witness_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const address_map& addresses)
 		{
-			return apply_witness_depository_account(asset, owner, algorithm::pubkeyhash_t(), addresses, false);
+			return apply_witness_bridge_account(asset, owner, algorithm::pubkeyhash_t(), addresses, false);
 		}
 		expects_lr<states::witness_account> transaction_context::apply_witness_routing_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const address_map& addresses)
 		{
-			return apply_witness_depository_account(asset, owner, algorithm::pubkeyhash_t(), addresses, true);
+			return apply_witness_bridge_account(asset, owner, algorithm::pubkeyhash_t(), addresses, true);
 		}
-		expects_lr<states::witness_account> transaction_context::apply_witness_depository_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const algorithm::pubkeyhash_t& manager, const address_map& addresses, bool active)
+		expects_lr<states::witness_account> transaction_context::apply_witness_bridge_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const algorithm::pubkeyhash_t& manager, const address_map& addresses, bool active)
 		{
 			if (addresses.empty())
 				return layer_exception("invalid operation");
@@ -2275,18 +2199,6 @@ namespace tangent
 				if (!status)
 					return status.error();
 			}
-			return new_state;
-		}
-		expects_lr<states::witness_attestation> transaction_context::apply_witness_attestation(const algorithm::asset_id& asset, const uint256_t& input_hash, const uint256_t& output_hash, const algorithm::pubkeyhash_t& attester, bool finalized)
-		{
-			states::witness_attestation new_state = finalized ? states::witness_attestation(asset, input_hash, block) : get_witness_attestation(asset, input_hash).or_else(states::witness_attestation(asset, input_hash, block));
-			new_state.branches[output_hash].insert(attester);
-			new_state.finalized = finalized;
-
-			auto status = store(&new_state, true);
-			if (!status)
-				return status.error();
-
 			return new_state;
 		}
 		expects_lr<states::witness_transaction> transaction_context::apply_witness_transaction(const algorithm::asset_id& asset, const std::string_view& transaction_id)
@@ -2550,69 +2462,69 @@ namespace tangent
 			}
 			return addresses;
 		}
-		expects_lr<states::depository_reward> transaction_context::get_depository_reward(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const
+		expects_lr<states::bridge_reward> transaction_context::get_bridge_reward(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const
 		{
 			auto chain = storages::chainstate();
-			auto state = chain.get_multiform(states::depository_reward::as_instance_type(), changelog, states::depository_reward::as_instance_column(owner), states::depository_reward::as_instance_row(asset), get_validation_nonce());
+			auto state = chain.get_multiform(states::bridge_reward::as_instance_type(), changelog, states::bridge_reward::as_instance_column(owner), states::bridge_reward::as_instance_row(asset), get_validation_nonce());
 			if (!state)
-				return layer_exception("depository reward required but not applicable (" + state.what() + ")");
+				return layer_exception("bridge reward required but not applicable (" + state.what() + ")");
 
 			auto status = ((transaction_context*)this)->load(state->ptr(), !state->cached);
 			if (!status)
 				return status.error();
 
-			return states::depository_reward(std::move(*state->as<states::depository_reward>()));
+			return states::bridge_reward(std::move(*state->as<states::bridge_reward>()));
 		}
-		expects_lr<states::depository_reward> transaction_context::get_depository_reward_median(const algorithm::asset_id& asset) const
+		expects_lr<states::bridge_reward> transaction_context::get_bridge_reward_median(const algorithm::asset_id& asset) const
 		{
 			auto chain = storages::chainstate();
 			auto filter = storages::result_filter::greater(0, -1);
-			auto median = chain.get_multiforms_count_by_row_filter(states::depository_reward::as_instance_type(), changelog, states::depository_reward::as_instance_row(asset), filter, get_validation_nonce()).or_else(0) / 2;
-			auto states = chain.get_multiforms_by_row_filter(states::depository_reward::as_instance_type(), changelog, states::depository_reward::as_instance_row(asset), filter, get_validation_nonce(), storages::result_range_window(median, 1));
+			auto median = chain.get_multiforms_count_by_row_filter(states::bridge_reward::as_instance_type(), changelog, states::bridge_reward::as_instance_row(asset), filter, get_validation_nonce()).or_else(0) / 2;
+			auto states = chain.get_multiforms_by_row_filter(states::bridge_reward::as_instance_type(), changelog, states::bridge_reward::as_instance_row(asset), filter, get_validation_nonce(), storages::result_range_window(median, 1));
 			if (!states || states->empty())
-				return layer_exception("depository reward required but not applicable (" + (states ? string("state not found") : states.what()) + ")");
+				return layer_exception("bridge reward required but not applicable (" + (states ? string("state not found") : states.what()) + ")");
 
 			auto& state = states->front();
 			auto status = ((transaction_context*)this)->load(state.ptr(), !state.cached);
 			if (!status)
 				return status.error();
 
-			return states::depository_reward(std::move(*state.as<states::depository_reward>()));
+			return states::bridge_reward(std::move(*state.as<states::bridge_reward>()));
 		}
-		expects_lr<states::depository_balance> transaction_context::get_depository_balance(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const
+		expects_lr<states::bridge_balance> transaction_context::get_bridge_balance(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const
 		{
 			auto chain = storages::chainstate();
-			auto state = chain.get_multiform(states::depository_balance::as_instance_type(), changelog, states::depository_balance::as_instance_column(owner), states::depository_balance::as_instance_row(asset), get_validation_nonce());
+			auto state = chain.get_multiform(states::bridge_balance::as_instance_type(), changelog, states::bridge_balance::as_instance_column(owner), states::bridge_balance::as_instance_row(asset), get_validation_nonce());
 			if (!state)
-				return layer_exception("depository balance required but not applicable (" + state.what() + ")");
+				return layer_exception("bridge balance required but not applicable (" + state.what() + ")");
 
 			auto status = ((transaction_context*)this)->load(state->ptr(), !state->cached);
 			if (!status)
 				return status.error();
 
-			return states::depository_balance(std::move(*state->as<states::depository_balance>()));
+			return states::bridge_balance(std::move(*state->as<states::bridge_balance>()));
 		}
-		expects_lr<states::depository_policy> transaction_context::get_depository_policy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const
+		expects_lr<states::bridge_policy> transaction_context::get_bridge_policy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const
 		{
 			auto chain = storages::chainstate();
-			auto state = chain.get_multiform(states::depository_policy::as_instance_type(), changelog, states::depository_policy::as_instance_column(owner), states::depository_policy::as_instance_row(asset), get_validation_nonce());
+			auto state = chain.get_multiform(states::bridge_policy::as_instance_type(), changelog, states::bridge_policy::as_instance_column(owner), states::bridge_policy::as_instance_row(asset), get_validation_nonce());
 			if (!state)
-				return layer_exception("depository policy required but not applicable (" + state.what() + ")");
+				return layer_exception("bridge policy required but not applicable (" + state.what() + ")");
 
 			auto status = ((transaction_context*)this)->load(state->ptr(), !state->cached);
 			if (!status)
 				return status.error();
 
-			return states::depository_policy(std::move(*state->as<states::depository_policy>()));
+			return states::bridge_policy(std::move(*state->as<states::bridge_policy>()));
 		}
-		expects_lr<vector<states::depository_account>> transaction_context::get_depository_accounts(const algorithm::pubkeyhash_t& manager, size_t offset, size_t count) const
+		expects_lr<vector<states::bridge_account>> transaction_context::get_bridge_accounts(const algorithm::pubkeyhash_t& manager, size_t offset, size_t count) const
 		{
 			auto chain = storages::chainstate();
-			auto states = chain.get_multiforms_by_column(states::depository_account::as_instance_type(), changelog, states::depository_account::as_instance_column(manager), get_validation_nonce(), offset, count);
+			auto states = chain.get_multiforms_by_column(states::bridge_account::as_instance_type(), changelog, states::bridge_account::as_instance_column(manager), get_validation_nonce(), offset, count);
 			if (!states)
-				return layer_exception("depository account(s) required but not applicable (" + states.what() + ")");
+				return layer_exception("bridge account(s) required but not applicable (" + states.what() + ")");
 
-			vector<states::depository_account> addresses;
+			vector<states::bridge_account> addresses;
 			addresses.reserve(states->size());
 			for (auto& state : *states)
 			{
@@ -2620,22 +2532,22 @@ namespace tangent
 				if (!status)
 					return status.error();
 
-				addresses.emplace_back(std::move(*state.as<states::depository_account>()));
+				addresses.emplace_back(std::move(*state.as<states::bridge_account>()));
 			}
 			return addresses;
 		}
-		expects_lr<states::depository_account> transaction_context::get_depository_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner) const
+		expects_lr<states::bridge_account> transaction_context::get_bridge_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner) const
 		{
 			auto chain = storages::chainstate();
-			auto state = chain.get_multiform(states::depository_account::as_instance_type(), changelog, states::depository_account::as_instance_column(manager), states::depository_account::as_instance_row(asset, owner), get_validation_nonce());
+			auto state = chain.get_multiform(states::bridge_account::as_instance_type(), changelog, states::bridge_account::as_instance_column(manager), states::bridge_account::as_instance_row(asset, owner), get_validation_nonce());
 			if (!state)
-				return layer_exception("depository account required but not applicable (" + state.what() + ")");
+				return layer_exception("bridge account required but not applicable (" + state.what() + ")");
 
 			auto status = ((transaction_context*)this)->load(state->ptr(), !state->cached);
 			if (!status)
 				return status.error();
 
-			return states::depository_account(std::move(*state->as<states::depository_account>()));
+			return states::bridge_account(std::move(*state->as<states::bridge_account>()));
 		}
 		expects_lr<states::witness_program> transaction_context::get_witness_program(const std::string_view& program_hashcode) const
 		{
@@ -2741,19 +2653,6 @@ namespace tangent
 			if (!result)
 				result = get_witness_account(asset, oracle::address_util::encode_tag_address(address, "0"), offset);
 			return result;
-		}
-		expects_lr<states::witness_attestation> transaction_context::get_witness_attestation(const algorithm::asset_id& asset, const uint256_t& input_hash) const
-		{
-			auto chain = storages::chainstate();
-			auto state = chain.get_uniform(states::witness_attestation::as_instance_type(), changelog, states::witness_attestation::as_instance_index(asset, input_hash), get_validation_nonce());
-			if (!state)
-				return layer_exception("witness attestation required but not applicable (" + state.what() + ")");
-
-			auto status = ((transaction_context*)this)->load(state->ptr(), !state->cached);
-			if (!status)
-				return status.error();
-
-			return states::witness_attestation(std::move(*state->as<states::witness_attestation>()));
 		}
 		expects_lr<states::witness_transaction> transaction_context::get_witness_transaction(const algorithm::asset_id& asset, const std::string_view& transaction_id) const
 		{

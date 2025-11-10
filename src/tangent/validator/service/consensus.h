@@ -236,9 +236,11 @@ namespace tangent
 			expects_lr<void> accept_local_wallet(option<ledger::wallet>&& wallet);
 			expects_lr<void> accept_unsigned_transaction(uref<relay>&& from, uptr<ledger::transaction>&& candidate_tx, uint64_t* account_nonce, uint256_t* output_hash = nullptr);
 			expects_lr<void> accept_transaction(uref<relay>&& from, uptr<ledger::transaction>&& candidate_tx, bool validate_execution = false);
+			expects_lr<void> accept_attestation(uref<relay>&& from, const uint256_t& attestation_hash);
 			expects_lr<void> broadcast_transaction(uref<relay>&& from, uptr<ledger::transaction>&& candidate_tx, const algorithm::pubkeyhash_t& owner);
 			expects_lr<void> notify_of_possibly_new_block_hash(uref<relay>&& state, const exchange& event);
 			expects_lr<void> notify_of_possibly_new_transaction_hash(uref<relay>&& state, const exchange& event);
+			expects_lr<void> notify_of_possibly_new_attestation(uref<relay>&& state, const exchange& event);
 			expects_lr<void> reverse_connect_to_node_by_accounts(uref<relay>&& state, const exchange& event);
 			expects_lr<format::variables> query_handshake(uref<relay>&& state, const exchange& event, bool is_acknowledgement);
 			expects_lr<format::variables> query_state(uref<relay>&& state, const exchange& event, bool is_acknowledgement);
@@ -269,6 +271,7 @@ namespace tangent
 			bool run_block_production();
 			bool run_block_dispatcher(const ledger::block_header& tip);
 			bool run_block_dispatch_retrial();
+			bool run_attestation_dispatcher(const uint256_t& attestation_hash);
 			void startup();
 			void shutdown();
 			void clear_pending_permit(const uint256_t& permit_hash);

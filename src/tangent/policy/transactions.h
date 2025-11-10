@@ -134,7 +134,7 @@ namespace tangent
 			static std::string_view as_instance_typename();
 		};
 
-		struct depository_account final : ledger::commitment
+		struct bridge_account final : ledger::commitment
 		{
 			algorithm::pubkeyhash_t manager;
 			string routing_address;
@@ -156,15 +156,15 @@ namespace tangent
 			static std::string_view as_instance_typename();
 		};
 
-		struct depository_account_finalization final : ledger::commitment
+		struct bridge_account_finalization final : ledger::commitment
 		{
 			algorithm::composition::cpubkey_t public_key;
-			uint256_t depository_account_hash = 0;
+			uint256_t bridge_account_hash = 0;
 
 			expects_lr<void> validate(uint64_t block_number) const override;
 			expects_lr<void> execute(ledger::transaction_context* context) const override;
 			expects_promise_rt<void> dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const override;
-			void set_witness(const uint256_t& new_depository_account_hash, const algorithm::composition::cpubkey_t& new_public_key);
+			void set_witness(const uint256_t& new_bridge_account_hash, const algorithm::composition::cpubkey_t& new_public_key);
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
 			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const override;
@@ -176,7 +176,7 @@ namespace tangent
 			static std::string_view as_instance_typename();
 		};
 
-		struct depository_withdrawal final : ledger::transaction
+		struct bridge_withdrawal final : ledger::transaction
 		{
 			vector<std::pair<string, decimal>> to;
 			algorithm::pubkeyhash_t from_manager;
@@ -202,9 +202,9 @@ namespace tangent
 			static expects_lr<states::witness_account> find_receiving_account(const ledger::transaction_context* context, const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& from_manager, const algorithm::pubkeyhash_t& to_manager);
 		};
 
-		struct depository_withdrawal_finalization final : ledger::commitment
+		struct bridge_withdrawal_finalization final : ledger::commitment
 		{
-			uint256_t depository_withdrawal_hash = 0;
+			uint256_t bridge_withdrawal_hash = 0;
 			expects_lr<oracle::finalized_transaction> proof = layer_exception();
 
 			expects_lr<void> validate(uint64_t block_number) const override;
@@ -212,35 +212,29 @@ namespace tangent
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
 			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const override;
-			void set_proof(const uint256_t& new_depository_withdrawal_hash, expects_lr<oracle::finalized_transaction>&& new_proof);
+			void set_proof(const uint256_t& new_bridge_withdrawal_hash, expects_lr<oracle::finalized_transaction>&& new_proof);
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
-			static expects_lr<void> validate_possible_proof(const ledger::transaction_context* context, const depository_withdrawal* transaction, const oracle::prepared_transaction& prepared);
-			static expects_lr<void> validate_finalized_proof(const ledger::transaction_context* context, const depository_withdrawal* transaction, const oracle::finalized_transaction& finalized);
+			static expects_lr<void> validate_possible_proof(const ledger::transaction_context* context, const bridge_withdrawal* transaction, const oracle::prepared_transaction& prepared);
+			static expects_lr<void> validate_finalized_proof(const ledger::transaction_context* context, const bridge_withdrawal* transaction, const oracle::finalized_transaction& finalized);
 		};
 
-		struct depository_attestation final : ledger::commitment
+		struct bridge_attestation final : ledger::commitment
 		{
-			struct branch_commitment
-			{
-				uint256_t input_hash = 0;
-				uint256_t output_hash = 0;
-			};
-
-			struct depository_transfer
+			struct bridge_transfer
 			{
 				decimal supply = decimal::zero();
 				decimal incoming_fee = decimal::zero();
 				decimal outgoing_fee = decimal::zero();
 			};
 
-			struct depository_transfer_batch
+			struct bridge_transfer_batch
 			{
 				ordered_set<algorithm::pubkeyhash_t> participants;
-				ordered_map<algorithm::asset_id, depository_transfer> transfers;
+				ordered_map<algorithm::asset_id, bridge_transfer> transfers;
 			};
 
 			struct balance_transfer
@@ -257,33 +251,32 @@ namespace tangent
 
 			struct transition
 			{
-				ordered_map<algorithm::pubkeyhash_t, depository_transfer_batch> depositories;
+				ordered_map<algorithm::pubkeyhash_t, bridge_transfer_batch> bridges;
 				ordered_map<algorithm::pubkeyhash_t, ordered_map<algorithm::asset_id, balance_transfer>> transfers;
 				ordered_map<algorithm::asset_id, weight_transfer> weights;
 			};
 
-			expects<oracle::computed_transaction, branch_commitment> proof_or_commitment = branch_commitment();
+			ordered_map<uint256_t, ordered_set<algorithm::hashsig_t>> commitments;
+			oracle::computed_transaction proof;
 
 			expects_lr<void> validate(uint64_t block_number) const override;
 			expects_lr<void> execute(ledger::transaction_context* context) const override;
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
-			bool sign(const algorithm::seckey_t& secret_key) override;
-			bool sign(const algorithm::seckey_t& secret_key, uint64_t new_nonce) override;
-			expects_lr<void> sign(const algorithm::seckey_t& secret_key, uint64_t new_nonce, const decimal& price) override;
 			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const override;
 			void set_finalized_proof(uint64_t block_id, const std::string_view& transaction_id, const vector<oracle::value_transfer>& inputs, const vector<oracle::value_transfer>& outputs);
-			void set_computed_proof(oracle::computed_transaction&& new_proof);
-			void set_commitment(const oracle::computed_transaction& new_proof);
-			void assign_proof_or_commitment_automatically(const algorithm::seckey_t& secret_key);
+			void set_computed_proof(oracle::computed_transaction&& new_proof, ordered_map<uint256_t, ordered_set<algorithm::hashsig_t>>&& new_commitments);
+			bool add_commitment(const algorithm::seckey_t& secret_key);
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
+			static expects_lr<void> verify_proof_commitment(const ledger::transaction_context* context, const algorithm::asset_id& asset, const ordered_map<uint256_t, ordered_set<algorithm::hashsig_t>>& commitments, uint256_t& best_commitment_hash, ordered_map<uint256_t, ordered_set<algorithm::pubkeyhash_t>>& attesters);
+			static bool commit_to_proof(const oracle::computed_transaction& new_proof, const algorithm::seckey_t& secret_key, uint256_t& commitment_hash, algorithm::hashsig_t& commitment_signature);
 		};
 
-		struct depository_adjustment final : ledger::transaction
+		struct bridge_adjustment final : ledger::transaction
 		{
 			decimal incoming_fee = decimal::zero();
 			decimal outgoing_fee = decimal::zero();
@@ -305,7 +298,7 @@ namespace tangent
 			static std::string_view as_instance_typename();
 		};
 
-		struct depository_migration final : ledger::transaction
+		struct bridge_migration final : ledger::transaction
 		{
 			struct secret_share
 			{
@@ -346,10 +339,10 @@ namespace tangent
 			static std::string_view as_instance_typename();
 		};
 
-		struct depository_migration_finalization final : ledger::commitment
+		struct bridge_migration_finalization final : ledger::commitment
 		{
 			algorithm::hashsig_t confirmation_signature;
-			uint256_t depository_migration_hash = 0;
+			uint256_t bridge_migration_hash = 0;
 
 			expects_lr<void> validate(uint64_t block_number) const override;
 			expects_lr<void> execute(ledger::transaction_context* context) const override;

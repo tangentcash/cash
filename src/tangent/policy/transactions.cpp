@@ -957,11 +957,11 @@ namespace tangent
 					continue;
 
 				auto type = stake.is_nan() || stake.is_negative() ? ledger::transaction_context::stake_type::unlock : ledger::transaction_context::stake_type::lock;
-				auto depository = context->get_depository_policy(asset, context->receipt.from);
-				if (type == ledger::transaction_context::stake_type::unlock && depository && (depository->accepts_account_requests || depository->accepts_withdrawal_requests))
-					return layer_exception(algorithm::asset::handle_of(asset) + " depository is still active");
+				auto bridge = context->get_bridge_policy(asset, context->receipt.from);
+				if (type == ledger::transaction_context::stake_type::unlock && bridge && (bridge->accepts_account_requests || bridge->accepts_withdrawal_requests))
+					return layer_exception(algorithm::asset::handle_of(asset) + " bridge is still active");
 
-				auto balance = context->get_depository_balance(asset, context->receipt.from);
+				auto balance = context->get_bridge_balance(asset, context->receipt.from);
 				auto blockchain = algorithm::asset::blockchain_of(asset);
 				ordered_map<algorithm::asset_id, decimal> stakes;
 				for (auto& [token_asset, token_stake] : attestation_stakes)
@@ -974,17 +974,17 @@ namespace tangent
 						return layer_exception("token stake action mismatch");
 
 					stakes[token_asset] = token_stake;
-					if (type == ledger::transaction_context::stake_type::lock || !depository || !balance)
+					if (type == ledger::transaction_context::stake_type::lock || !bridge || !balance)
 						continue;
 
 					if (algorithm::asset::is_aux(token_asset, true))
 					{
-						auto reward = context->get_depository_reward_median(token_asset).or_else(states::depository_reward(context->receipt.from, token_asset, nullptr));
+						auto reward = context->get_bridge_reward_median(token_asset).or_else(states::bridge_reward(context->receipt.from, token_asset, nullptr));
 						if (balance->get_balance(token_asset) > reward.outgoing_fee)
-							return layer_exception(algorithm::asset::handle_of(token_asset) + " depository has non-dust custodial balance (max: " + reward.outgoing_fee.to_string() + ")");
+							return layer_exception(algorithm::asset::handle_of(token_asset) + " bridge has non-dust custodial balance (max: " + reward.outgoing_fee.to_string() + ")");
 					}
 					else if (balance->get_balance(token_asset).is_positive())
-						return layer_exception(algorithm::asset::handle_of(token_asset) + " depository has custodial token balance");
+						return layer_exception(algorithm::asset::handle_of(token_asset) + " bridge has custodial token balance");
 				}
 
 				auto status = context->apply_validator_attestation(asset, context->receipt.from, type, stakes);
@@ -1151,7 +1151,7 @@ namespace tangent
 			return "validator_adjustment";
 		}
 
-		expects_lr<void> depository_account::validate(uint64_t block_number) const
+		expects_lr<void> bridge_account::validate(uint64_t block_number) const
 		{
 			if (!algorithm::asset::token_of(asset).empty())
 				return layer_exception("invalid asset");
@@ -1161,7 +1161,7 @@ namespace tangent
 
 			return ledger::commitment::validate(block_number);
 		}
-		expects_lr<void> depository_account::execute(ledger::transaction_context* context) const
+		expects_lr<void> bridge_account::execute(ledger::transaction_context* context) const
 		{
 			auto validation = commitment::execute(context);
 			if (!validation)
@@ -1183,11 +1183,11 @@ namespace tangent
 			if (!attestation_requirement)
 				return attestation_requirement.error();
 
-			auto depository_policy = context->get_depository_policy(asset, manager);
-			if (!depository_policy)
-				return depository_policy.error();
-			else if (!depository_policy->accepts_account_requests)
-				return layer_exception("depository forbids account requests");
+			auto bridge_policy = context->get_bridge_policy(asset, manager);
+			if (!bridge_policy)
+				return bridge_policy.error();
+			else if (!bridge_policy->accepts_account_requests)
+				return layer_exception("bridge forbids account requests");
 
 			bool routing_address_application = false;
 			if (!routing_address.empty())
@@ -1206,11 +1206,11 @@ namespace tangent
 				}
 			}
 
-			auto duplicate = context->get_depository_account(asset, manager, context->receipt.from);
+			auto duplicate = context->get_bridge_account(asset, manager, context->receipt.from);
 			if (duplicate)
 			{
 				if (!routing_address_application)
-					return layer_exception("depository account already exists");
+					return layer_exception("bridge account already exists");
 
 				return expectation::met;
 			}
@@ -1219,10 +1219,10 @@ namespace tangent
 			{
 				case oracle::routing_policy::account:
 				{
-					if (!depository_policy->accounts_under_management)
+					if (!bridge_policy->accounts_under_management)
 					{
 						if (context->receipt.from != manager)
-							return layer_exception("depository account for manager required");
+							return layer_exception("bridge account for manager required");
 						break;
 					}
 					else if (!routing_address_application)
@@ -1232,16 +1232,16 @@ namespace tangent
 				}
 				case oracle::routing_policy::memo:
 				{
-					if (!depository_policy->accounts_under_management)
+					if (!bridge_policy->accounts_under_management)
 					{
 						if (context->receipt.from != manager)
-							return layer_exception("depository account for manager required");
+							return layer_exception("bridge account for manager required");
 						break;
 					}
 
-					auto manager_account = context->get_depository_account(asset, manager, manager);
+					auto manager_account = context->get_bridge_account(asset, manager, manager);
 					if (!manager_account || manager_account->public_key.empty() || manager_account->group.empty() || manager_account->owner != manager || manager_account->manager != manager)
-						return layer_exception("depository account for manager required");
+						return layer_exception("bridge account for manager required");
 
 					auto* chain = oracle::server_node::get()->get_chain(asset);
 					if (!chain)
@@ -1256,17 +1256,17 @@ namespace tangent
 						return addresses.error();
 
 					for (auto& address : *addresses)
-						address.second = oracle::address_util::encode_tag_address(address.second, to_string(depository_policy->accounts_under_management));
+						address.second = oracle::address_util::encode_tag_address(address.second, to_string(bridge_policy->accounts_under_management));
 					
-					auto depository_policy_status = context->apply_depository_policy_account(asset, manager, 1);
-					if (!depository_policy_status)
-						return depository_policy_status.error();
+					auto bridge_policy_status = context->apply_bridge_policy_account(asset, manager, 1);
+					if (!bridge_policy_status)
+						return bridge_policy_status.error();
 
-					auto depository_account_status = context->apply_depository_account(asset, context->receipt.from, manager, algorithm::composition::cpubkey_t(), { });
-					if (!depository_account_status)
-						return depository_account_status.error();
+					auto bridge_account_status = context->apply_bridge_account(asset, context->receipt.from, manager, algorithm::composition::cpubkey_t(), { });
+					if (!bridge_account_status)
+						return bridge_account_status.error();
 
-					auto witness_account_status = context->apply_witness_depository_account(asset, context->receipt.from, manager, *addresses);
+					auto witness_account_status = context->apply_witness_bridge_account(asset, context->receipt.from, manager, *addresses);
 					if (!witness_account_status)
 						return witness_account_status.error();
 
@@ -1279,25 +1279,25 @@ namespace tangent
 			}
 
 			ordered_set<algorithm::pubkeyhash_t> exclusion;
-			auto committee = context->calculate_participants(asset, exclusion, depository_policy->security_level, depository_policy->participation_threshold);
+			auto committee = context->calculate_participants(asset, exclusion, bridge_policy->security_level, bridge_policy->participation_threshold);
 			if (!committee)
 				return committee.error();
 
 			for (auto& work : *committee)
 			{
-				auto event = context->emit_event<depository_account>({ format::variable(work.owner.view()) });
+				auto event = context->emit_event<bridge_account>({ format::variable(work.owner.view()) });
 				if (!event)
 					return event;
 			}
 
 			return expectation::met;
 		}
-		expects_promise_rt<void> depository_account::dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const
+		expects_promise_rt<void> bridge_account::dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const
 		{
 			if (!dispatcher->is_running_on(manager))
 				return expects_promise_rt<void>(expectation::met);
 
-			auto* event = context->receipt.find_event<depository_account>();
+			auto* event = context->receipt.find_event<bridge_account>();
 			if (!event || context->get_witness_event(context->receipt.transaction_hash))
 				return expects_promise_rt<void>(expectation::met);
 
@@ -1347,21 +1347,21 @@ namespace tangent
 				if (!status)
 					coreturn remote_exception(std::move(status.error().message()));
 
-				auto* transaction = memory::init<depository_account_finalization>();
+				auto* transaction = memory::init<bridge_account_finalization>();
 				transaction->asset = asset;
 				transaction->set_witness(context->receipt.transaction_hash, aggregated_public_key);
 				dispatcher->emit_transaction(transaction);
 				coreturn expectation::met;
 			});
 		}
-		bool depository_account::store_body(format::wo_stream* stream) const
+		bool bridge_account::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_string(manager.optimized_view());
 			stream->write_string(routing_address);
 			return true;
 		}
-		bool depository_account::load_body(format::ro_stream& stream)
+		bool bridge_account::load_body(format::ro_stream& stream)
 		{
 			string manager_assembly;
 			if (!stream.read_string(stream.read_type(), &manager_assembly) || !algorithm::encoding::decode_bytes(manager_assembly, manager.data, sizeof(manager.data)))
@@ -1372,97 +1372,97 @@ namespace tangent
 
 			return true;
 		}
-		bool depository_account::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
+		bool bridge_account::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
 		{
 			auto group = get_group(receipt);
 			parties.insert(algorithm::pubkeyhash_t(manager));
 			parties.insert(group.begin(), group.end());
 			return true;
 		}
-		bool depository_account::is_dispatchable() const
+		bool bridge_account::is_dispatchable() const
 		{
 			return true;
 		}
-		void depository_account::set_routing_address(const std::string_view& new_address)
+		void bridge_account::set_routing_address(const std::string_view& new_address)
 		{
 			routing_address = new_address;
 		}
-		void depository_account::set_manager(const algorithm::pubkeyhash_t& new_manager)
+		void bridge_account::set_manager(const algorithm::pubkeyhash_t& new_manager)
 		{
 			manager = new_manager;
 		}
-		ordered_set<algorithm::pubkeyhash_t> depository_account::get_group(const ledger::receipt& receipt) const
+		ordered_set<algorithm::pubkeyhash_t> bridge_account::get_group(const ledger::receipt& receipt) const
 		{
 			ordered_set<algorithm::pubkeyhash_t> result;
-			for (auto& event : receipt.find_events<depository_account>())
+			for (auto& event : receipt.find_events<bridge_account>())
 			{
 				if (!event->empty() && event->front().as_string().size() == sizeof(algorithm::pubkeyhash_t))
 					result.insert(algorithm::pubkeyhash_t(event->front().as_blob()));
 			}
 			return result;
 		}
-		uptr<schema> depository_account::as_schema() const
+		uptr<schema> bridge_account::as_schema() const
 		{
 			schema* data = ledger::commitment::as_schema().reset();
 			data->set("manager", algorithm::signing::serialize_address(manager));
 			data->set("routing_address", var::string(routing_address));
 			return data;
 		}
-		uint32_t depository_account::as_type() const
+		uint32_t bridge_account::as_type() const
 		{
 			return as_instance_type();
 		}
-		std::string_view depository_account::as_typename() const
+		std::string_view bridge_account::as_typename() const
 		{
 			return as_instance_typename();
 		}
-		uint32_t depository_account::as_instance_type()
+		uint32_t bridge_account::as_instance_type()
 		{
 			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
 			return hash;
 		}
-		std::string_view depository_account::as_instance_typename()
+		std::string_view bridge_account::as_instance_typename()
 		{
-			return "depository_account";
+			return "bridge_account";
 		}
 
-		expects_lr<void> depository_account_finalization::validate(uint64_t block_number) const
+		expects_lr<void> bridge_account_finalization::validate(uint64_t block_number) const
 		{
 			if (!algorithm::asset::token_of(asset).empty())
 				return layer_exception("invalid asset");
 
-			if (!depository_account_hash)
-				return layer_exception("invalid depository account hash");
+			if (!bridge_account_hash)
+				return layer_exception("invalid bridge account hash");
 
 			if (public_key.empty())
 				return layer_exception("invalid public key");
 
 			return ledger::commitment::validate(block_number);
 		}
-		expects_lr<void> depository_account_finalization::execute(ledger::transaction_context* context) const
+		expects_lr<void> bridge_account_finalization::execute(ledger::transaction_context* context) const
 		{
 			auto validation = commitment::execute(context);
 			if (!validation)
 				return validation.error();
 
-			auto event = context->apply_witness_event(depository_account_hash, context->receipt.transaction_hash);
+			auto event = context->apply_witness_event(bridge_account_hash, context->receipt.transaction_hash);
 			if (!event)
 				return event.error();
 
-			auto setup = context->get_block_transaction<depository_account>(depository_account_hash);
+			auto setup = context->get_block_transaction<bridge_account>(bridge_account_hash);
 			if (!setup)
 				return setup.error();
 
-			auto* setup_transaction = (depository_account*)*setup->transaction;
+			auto* setup_transaction = (bridge_account*)*setup->transaction;
 			auto* server = oracle::server_node::get();
 			auto* chain = server->get_chain(asset);
 			auto* params = server->get_chainparams(asset);
 			if (!chain || !params)
 				return layer_exception("invalid operation");
 
-			auto duplicate = context->get_depository_account(asset, setup_transaction->manager, setup->receipt.from);
+			auto duplicate = context->get_bridge_account(asset, setup_transaction->manager, setup->receipt.from);
 			if (duplicate)
-				return layer_exception("depository account already exists");
+				return layer_exception("bridge account already exists");
 
 			auto encoded_public_key = chain->encode_public_key(std::string_view((char*)public_key.data(), public_key.size()));
 			if (!encoded_public_key)
@@ -1472,32 +1472,32 @@ namespace tangent
 			if (!addresses)
 				return addresses.error();
 
-			auto depository_policy = context->get_depository_policy(asset, setup_transaction->manager);
-			if (!depository_policy)
-				return depository_policy.error();
+			auto bridge_policy = context->get_bridge_policy(asset, setup_transaction->manager);
+			if (!bridge_policy)
+				return bridge_policy.error();
 
 			switch (params->routing)
 			{
 				case oracle::routing_policy::account:
 				case oracle::routing_policy::memo:
 				{
-					if (depository_policy->accounts_under_management > 0)
-						return layer_exception("too many accounts for a depository");
+					if (bridge_policy->accounts_under_management > 0)
+						return layer_exception("too many accounts for a bridge");
 
 					if (params->routing == oracle::routing_policy::account)
 						break;
 
 					for (auto& address : *addresses)
-						address.second = oracle::address_util::encode_tag_address(address.second, to_string(depository_policy->accounts_under_management));
+						address.second = oracle::address_util::encode_tag_address(address.second, to_string(bridge_policy->accounts_under_management));
 					break;
 				}
 				default:
 					break;
 			}
 
-			auto depository_policy_status = context->apply_depository_policy_account(asset, setup_transaction->manager, 1);
-			if (!depository_policy_status)
-				return depository_policy_status.error();
+			auto bridge_policy_status = context->apply_bridge_policy_account(asset, setup_transaction->manager, 1);
+			if (!bridge_policy_status)
+				return bridge_policy_status.error();
 
 			auto group = setup_transaction->get_group(setup->receipt);
 			for (auto& participant : group)
@@ -1507,19 +1507,19 @@ namespace tangent
 					return status.error();
 			}
 
-			auto depository_account_status = context->apply_depository_account(asset, setup->receipt.from, setup_transaction->manager, public_key, std::move(group));
-			if (!depository_account_status)
-				return depository_account_status.error();
+			auto bridge_account_status = context->apply_bridge_account(asset, setup->receipt.from, setup_transaction->manager, public_key, std::move(group));
+			if (!bridge_account_status)
+				return bridge_account_status.error();
 
-			auto witness_account_status = context->apply_witness_depository_account(asset, setup->receipt.from, setup_transaction->manager, *addresses);
+			auto witness_account_status = context->apply_witness_bridge_account(asset, setup->receipt.from, setup_transaction->manager, *addresses);
 			if (!witness_account_status)
 				return witness_account_status.error();
 
 			return expectation::met;
 		}
-		expects_promise_rt<void> depository_account_finalization::dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const
+		expects_promise_rt<void> bridge_account_finalization::dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const
 		{
-			auto setup = context->get_block_transaction<depository_account>(depository_account_hash);
+			auto setup = context->get_block_transaction<bridge_account>(bridge_account_hash);
 			if (!setup)
 				return expects_promise_rt<void>(remote_exception(std::move(setup.error().message())));
 
@@ -1542,7 +1542,7 @@ namespace tangent
 			if (!encoded_public_key)
 				return expects_promise_rt<void>(remote_exception(std::move(encoded_public_key.error().message())));
 
-			auto* setup_transaction = (depository_account*)*setup->transaction;
+			auto* setup_transaction = (bridge_account*)*setup->transaction;
 			for (auto& address : addresses)
 			{
 				auto [base_address, tag] = oracle::address_util::decode_tag_address(address);
@@ -1560,72 +1560,72 @@ namespace tangent
 
 			return expects_promise_rt<void>(expectation::met);
 		}
-		void depository_account_finalization::set_witness(const uint256_t& new_depository_account_hash, const algorithm::composition::cpubkey_t& new_public_key)
+		void bridge_account_finalization::set_witness(const uint256_t& new_bridge_account_hash, const algorithm::composition::cpubkey_t& new_public_key)
 		{
-			depository_account_hash = new_depository_account_hash;
+			bridge_account_hash = new_bridge_account_hash;
 			public_key = new_public_key;
 		}
-		bool depository_account_finalization::store_body(format::wo_stream* stream) const
+		bool bridge_account_finalization::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_string(std::string_view((char*)public_key.data(), public_key.size()));
-			stream->write_integer(depository_account_hash);
+			stream->write_integer(bridge_account_hash);
 			return true;
 		}
-		bool depository_account_finalization::load_body(format::ro_stream& stream)
+		bool bridge_account_finalization::load_body(format::ro_stream& stream)
 		{
 			string public_key_assembly;
 			if (!stream.read_string(stream.read_type(), &public_key_assembly))
 				return false;
 
-			if (!stream.read_integer(stream.read_type(), &depository_account_hash))
+			if (!stream.read_integer(stream.read_type(), &bridge_account_hash))
 				return false;
 
 			public_key.resize(public_key_assembly.size());
 			memcpy(public_key.data(), public_key_assembly.data(), public_key_assembly.size());
 			return true;
 		}
-		bool depository_account_finalization::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
+		bool bridge_account_finalization::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
 		{
-			auto setup = context->get_block_transaction<depository_account>(depository_account_hash);
+			auto setup = context->get_block_transaction<bridge_account>(bridge_account_hash);
 			if (!setup)
 				return false;
 
-			auto* setup_transaction = (depository_account*)*setup->transaction;
+			auto* setup_transaction = (bridge_account*)*setup->transaction;
 			parties.insert(algorithm::pubkeyhash_t(setup_transaction->manager));
 			parties.insert(algorithm::pubkeyhash_t(setup->receipt.from));
 			return true;
 		}
-		bool depository_account_finalization::is_dispatchable() const
+		bool bridge_account_finalization::is_dispatchable() const
 		{
 			return true;
 		}
-		uptr<schema> depository_account_finalization::as_schema() const
+		uptr<schema> bridge_account_finalization::as_schema() const
 		{
 			schema* data = ledger::commitment::as_schema().reset();
-			data->set("depository_account_hash", depository_account_hash > 0 ? var::string(algorithm::encoding::encode_0xhex256(depository_account_hash)) : var::null());
+			data->set("bridge_account_hash", bridge_account_hash > 0 ? var::string(algorithm::encoding::encode_0xhex256(bridge_account_hash)) : var::null());
 			data->set("public_key", var::string(format::util::encode_0xhex(std::string_view((char*)public_key.data(), public_key.size()))));
 			return data;
 		}
-		uint32_t depository_account_finalization::as_type() const
+		uint32_t bridge_account_finalization::as_type() const
 		{
 			return as_instance_type();
 		}
-		std::string_view depository_account_finalization::as_typename() const
+		std::string_view bridge_account_finalization::as_typename() const
 		{
 			return as_instance_typename();
 		}
-		uint32_t depository_account_finalization::as_instance_type()
+		uint32_t bridge_account_finalization::as_instance_type()
 		{
 			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
 			return hash;
 		}
-		std::string_view depository_account_finalization::as_instance_typename()
+		std::string_view bridge_account_finalization::as_instance_typename()
 		{
-			return "depository_account_finalization";
+			return "bridge_account_finalization";
 		}
 
-		expects_lr<void> depository_withdrawal::validate(uint64_t block_number) const
+		expects_lr<void> bridge_withdrawal::validate(uint64_t block_number) const
 		{
 			if (from_manager == to_manager)
 				return layer_exception("invalid from/to manager");
@@ -1662,7 +1662,7 @@ namespace tangent
 
 			return ledger::transaction::validate(block_number);
 		}
-		expects_lr<void> depository_withdrawal::execute(ledger::transaction_context* context) const
+		expects_lr<void> bridge_withdrawal::execute(ledger::transaction_context* context) const
 		{
 			auto validation = transaction::execute(context);
 			if (!validation)
@@ -1672,13 +1672,13 @@ namespace tangent
 			if (!attestation_requirement)
 				return attestation_requirement.error();
 
-			auto depository_policy = context->get_depository_policy(asset, from_manager);
-			if (!depository_policy)
-				return depository_policy.error();
-			else if (!depository_policy->accepts_withdrawal_requests)
-				return layer_exception("depository forbids withdrawal requests");
-			else if (only_if_not_in_queue && depository_policy->queue_transaction_hash > 0)
-				return layer_exception("depository is in use - withdrawal will be queued");
+			auto bridge_policy = context->get_bridge_policy(asset, from_manager);
+			if (!bridge_policy)
+				return bridge_policy.error();
+			else if (!bridge_policy->accepts_withdrawal_requests)
+				return layer_exception("bridge forbids withdrawal requests");
+			else if (only_if_not_in_queue && bridge_policy->queue_transaction_hash > 0)
+				return layer_exception("bridge is in use - withdrawal will be queued");
 
 			auto token_value = get_token_value(context);
 			if (!token_value.is_positive())
@@ -1697,7 +1697,7 @@ namespace tangent
 				if (!account)
 					return account.error();
 
-				auto registration = context->apply_depository_policy_queue(asset, from_manager, context->receipt.transaction_hash);
+				auto registration = context->apply_bridge_policy_queue(asset, from_manager, context->receipt.transaction_hash);
 				if (!registration)
 					return registration.error();
 
@@ -1712,8 +1712,8 @@ namespace tangent
 				if (!balance_requirement)
 					return balance_requirement.error();
 
-				auto depository = context->get_depository_balance(fee_asset, from_manager);
-				if (!depository || depository->get_balance(fee_asset) < fee_value)
+				auto bridge = context->get_bridge_balance(fee_asset, from_manager);
+				if (!bridge || bridge->get_balance(fee_asset) < fee_value)
 					return layer_exception(algorithm::asset::handle_of(fee_asset) + " balance is insufficient to cover base withdrawal value (value: " + fee_value.to_string() + ")");
 			}
 			else
@@ -1723,8 +1723,8 @@ namespace tangent
 			if (!balance_requirement)
 				return balance_requirement;
 
-			auto depository = context->get_depository_balance(asset, from_manager);
-			if (!depository || depository->get_balance(asset) < token_value)
+			auto bridge = context->get_bridge_balance(asset, from_manager);
+			if (!bridge || bridge->get_balance(asset) < token_value)
 				return layer_exception(algorithm::asset::handle_of(asset) + " balance is insufficient to cover token withdrawal value (value: " + token_value.to_string() + ")");
 
 			for (auto& item : to)
@@ -1749,13 +1749,13 @@ namespace tangent
 			if (!token_transfer)
 				return token_transfer.error();
 
-			auto registration = context->apply_depository_policy_queue(asset, from_manager, context->receipt.transaction_hash);
+			auto registration = context->apply_bridge_policy_queue(asset, from_manager, context->receipt.transaction_hash);
 			if (!registration)
 				return registration.error();
 
 			return expectation::met;
 		}
-		expects_promise_rt<void> depository_withdrawal::dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const
+		expects_promise_rt<void> bridge_withdrawal::dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const
 		{
 			if (!dispatcher->is_running_on(from_manager))
 				return expects_promise_rt<void>(expectation::met);
@@ -1763,8 +1763,8 @@ namespace tangent
 			if (context->get_witness_event(context->receipt.transaction_hash))
 				return expects_promise_rt<void>(expectation::met);
 
-			auto depository_policy = context->get_depository_policy(asset, from_manager);
-			if (depository_policy && depository_policy->queue_transaction_hash != context->receipt.transaction_hash)
+			auto bridge_policy = context->get_bridge_policy(asset, from_manager);
+			if (bridge_policy && bridge_policy->queue_transaction_hash != context->receipt.transaction_hash)
 				return expects_promise_rt<void>(remote_exception::retry());
 
 			return coasync<expects_rt<void>>([this, context, dispatcher]() mutable -> expects_promise_rt<void>
@@ -1773,7 +1773,7 @@ namespace tangent
 				auto* chain = server->get_chainparams(asset);
 				auto cancel = [this, context, dispatcher](remote_exception&& error) -> expects_rt<void>
 				{
-					auto* transaction = memory::init<depository_withdrawal_finalization>();
+					auto* transaction = memory::init<bridge_withdrawal_finalization>();
 					transaction->asset = asset;
 					transaction->set_proof(context->receipt.transaction_hash, layer_exception(std::move(remote_exception(error).message())));
 					dispatcher->emit_transaction(transaction);
@@ -1815,7 +1815,7 @@ namespace tangent
 					if (!witness)
 						coreturn cancel(remote_exception(std::move(witness.error().message())));
 
-					auto account = context->get_depository_account(asset, witness->manager, witness->owner);
+					auto account = context->get_bridge_account(asset, witness->manager, witness->owner);
 					if (!account)
 						coreturn cancel(remote_exception(std::move(account.error().message())));
 
@@ -1889,14 +1889,14 @@ namespace tangent
 				else if (!broadcast)
 					coreturn cancel(std::move(broadcast.error()));
 
-				auto* transaction = memory::init<depository_withdrawal_finalization>();
+				auto* transaction = memory::init<bridge_withdrawal_finalization>();
 				transaction->asset = asset;
 				transaction->set_proof(context->receipt.transaction_hash, std::move(*finalization));
 				dispatcher->emit_transaction(transaction);
 				coreturn expectation::met;
 			});
 		}
-		bool depository_withdrawal::store_body(format::wo_stream* stream) const
+		bool bridge_withdrawal::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_boolean(only_if_not_in_queue);
@@ -1910,7 +1910,7 @@ namespace tangent
 			}
 			return true;
 		}
-		bool depository_withdrawal::load_body(format::ro_stream& stream)
+		bool bridge_withdrawal::load_body(format::ro_stream& stream)
 		{
 			if (!stream.read_boolean(stream.read_type(), &only_if_not_in_queue))
 				return false;
@@ -1942,13 +1942,13 @@ namespace tangent
 
 			return true;
 		}
-		bool depository_withdrawal::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
+		bool bridge_withdrawal::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
 		{
 			parties.insert(algorithm::pubkeyhash_t(from_manager));
 			parties.insert(algorithm::pubkeyhash_t(to_manager));
 			return true;
 		}
-		void depository_withdrawal::set_to(const std::string_view& address, const decimal& value)
+		void bridge_withdrawal::set_to(const std::string_view& address, const decimal& value)
 		{
 			for (auto& item : to)
 			{
@@ -1960,23 +1960,23 @@ namespace tangent
 			}
 			to.push_back(std::make_pair(string(address), decimal(value)));
 		}
-		void depository_withdrawal::set_manager(const algorithm::pubkeyhash_t& new_from_manager, const algorithm::pubkeyhash_t& new_to_manager)
+		void bridge_withdrawal::set_manager(const algorithm::pubkeyhash_t& new_from_manager, const algorithm::pubkeyhash_t& new_to_manager)
 		{
 			from_manager = new_from_manager;
 			to_manager = new_to_manager;
 		}
-		bool depository_withdrawal::is_dispatchable() const
+		bool bridge_withdrawal::is_dispatchable() const
 		{
 			return true;
 		}
-		decimal depository_withdrawal::get_token_value(const ledger::transaction_context* context) const
+		decimal bridge_withdrawal::get_token_value(const ledger::transaction_context* context) const
 		{
 			decimal value = 0.0;
 			if (!to_manager.empty())
 			{
-				auto depository = context->get_depository_balance(asset, from_manager);
-				if (depository)
-					value += depository->get_balance(asset);
+				auto bridge = context->get_bridge_balance(asset, from_manager);
+				if (bridge)
+					value += bridge->get_balance(asset);
 			}
 			else
 			{
@@ -1985,15 +1985,15 @@ namespace tangent
 			}
 			return value;
 		}
-		decimal depository_withdrawal::get_fee_value(const ledger::transaction_context* context) const
+		decimal bridge_withdrawal::get_fee_value(const ledger::transaction_context* context) const
 		{
-			auto reward = context->get_depository_reward(algorithm::asset::base_id_of(asset), from_manager);
+			auto reward = context->get_bridge_reward(algorithm::asset::base_id_of(asset), from_manager);
 			if (!reward)
 				return decimal::zero();
 
 			return reward->outgoing_fee * to.size();
 		}
-		uptr<schema> depository_withdrawal::as_schema() const
+		uptr<schema> bridge_withdrawal::as_schema() const
 		{
 			schema* data = ledger::transaction::as_schema().reset();
 			data->set("from_manager", algorithm::signing::serialize_address(from_manager));
@@ -2011,30 +2011,30 @@ namespace tangent
 			}
 			return data;
 		}
-		uint32_t depository_withdrawal::as_type() const
+		uint32_t bridge_withdrawal::as_type() const
 		{
 			return as_instance_type();
 		}
-		std::string_view depository_withdrawal::as_typename() const
+		std::string_view bridge_withdrawal::as_typename() const
 		{
 			return as_instance_typename();
 		}
-		uint32_t depository_withdrawal::as_instance_type()
+		uint32_t bridge_withdrawal::as_instance_type()
 		{
 			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
 			return hash;
 		}
-		std::string_view depository_withdrawal::as_instance_typename()
+		std::string_view bridge_withdrawal::as_instance_typename()
 		{
-			return "depository_withdrawal";
+			return "bridge_withdrawal";
 		}
-		expects_lr<states::witness_account> depository_withdrawal::find_receiving_account(const ledger::transaction_context* context, const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& from_manager, const algorithm::pubkeyhash_t& to_manager)
+		expects_lr<states::witness_account> bridge_withdrawal::find_receiving_account(const ledger::transaction_context* context, const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& from_manager, const algorithm::pubkeyhash_t& to_manager)
 		{
 			auto base_asset = algorithm::asset::base_id_of(asset);
 			size_t offset = 0, count = 8;
 			while (true)
 			{
-				auto candidates = context->get_witness_accounts_by_purpose(to_manager, states::witness_account::account_type::depository, offset, count);
+				auto candidates = context->get_witness_accounts_by_purpose(to_manager, states::witness_account::account_type::bridge, offset, count);
 				if (!candidates)
 					return candidates.error();
 
@@ -2050,7 +2050,7 @@ namespace tangent
 			offset = 0;
 			while (true)
 			{
-				auto candidates = context->get_witness_accounts_by_purpose(from_manager, states::witness_account::account_type::depository, offset, count);
+				auto candidates = context->get_witness_accounts_by_purpose(from_manager, states::witness_account::account_type::bridge, offset, count);
 				if (!candidates)
 					return candidates.error();
 
@@ -2063,35 +2063,35 @@ namespace tangent
 					break;
 			}
 
-			return layer_exception("receiving depository account (to) not found");
+			return layer_exception("receiving bridge account (to) not found");
 		}
 
-		expects_lr<void> depository_withdrawal_finalization::validate(uint64_t block_number) const
+		expects_lr<void> bridge_withdrawal_finalization::validate(uint64_t block_number) const
 		{
-			if (!depository_withdrawal_hash)
-				return layer_exception("depository withdrawal hash not valid");
+			if (!bridge_withdrawal_hash)
+				return layer_exception("bridge withdrawal hash not valid");
 
 			return ledger::commitment::validate(block_number);
 		}
-		expects_lr<void> depository_withdrawal_finalization::execute(ledger::transaction_context* context) const
+		expects_lr<void> bridge_withdrawal_finalization::execute(ledger::transaction_context* context) const
 		{
 			auto validation = commitment::execute(context);
 			if (!validation)
 				return validation.error();
 
-			auto parent = context->get_block_transaction<depository_withdrawal>(depository_withdrawal_hash);
+			auto parent = context->get_block_transaction<bridge_withdrawal>(bridge_withdrawal_hash);
 			if (!parent)
 				return layer_exception("parent transaction not found");
 
-			auto* parent_transaction = (depository_withdrawal*)*parent->transaction;
+			auto* parent_transaction = (bridge_withdrawal*)*parent->transaction;
 			if (parent_transaction->from_manager != context->receipt.from)
 				return layer_exception("parent transaction not valid");
 
-			auto event = context->apply_witness_event(depository_withdrawal_hash, context->receipt.transaction_hash);
+			auto event = context->apply_witness_event(bridge_withdrawal_hash, context->receipt.transaction_hash);
 			if (!event)
 				return event.error();
 
-			auto finalization = context->apply_depository_policy_queue(parent_transaction->asset, parent_transaction->from_manager, 0);
+			auto finalization = context->apply_bridge_policy_queue(parent_transaction->asset, parent_transaction->from_manager, 0);
 			if (!finalization)
 				return finalization.error();
 
@@ -2122,10 +2122,10 @@ namespace tangent
 
 			return expectation::met;
 		}
-		bool depository_withdrawal_finalization::store_body(format::wo_stream* stream) const
+		bool bridge_withdrawal_finalization::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_integer(depository_withdrawal_hash);
+			stream->write_integer(bridge_withdrawal_hash);
 			stream->write_boolean(!!proof);
 			if (proof)
 				proof->store_payload(stream);
@@ -2133,9 +2133,9 @@ namespace tangent
 				stream->write_string(proof.what());
 			return true;
 		}
-		bool depository_withdrawal_finalization::load_body(format::ro_stream& stream)
+		bool bridge_withdrawal_finalization::load_body(format::ro_stream& stream)
 		{
-			if (!stream.read_integer(stream.read_type(), &depository_withdrawal_hash))
+			if (!stream.read_integer(stream.read_type(), &bridge_withdrawal_hash))
 				return false;
 
 			bool has_proof;
@@ -2159,24 +2159,24 @@ namespace tangent
 
 			return true;
 		}
-		bool depository_withdrawal_finalization::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
+		bool bridge_withdrawal_finalization::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
 		{
-			auto parent = context->get_block_transaction_instance(depository_withdrawal_hash);
+			auto parent = context->get_block_transaction_instance(bridge_withdrawal_hash);
 			if (!parent)
 				return false;
 
 			parties.insert(algorithm::pubkeyhash_t(parent->receipt.from));
 			return true;
 		}
-		void depository_withdrawal_finalization::set_proof(const uint256_t& new_depository_withdrawal_hash, expects_lr<oracle::finalized_transaction>&& new_proof)
+		void bridge_withdrawal_finalization::set_proof(const uint256_t& new_bridge_withdrawal_hash, expects_lr<oracle::finalized_transaction>&& new_proof)
 		{
-			depository_withdrawal_hash = new_depository_withdrawal_hash;
+			bridge_withdrawal_hash = new_bridge_withdrawal_hash;
 			proof = std::move(new_proof);
 		}
-		uptr<schema> depository_withdrawal_finalization::as_schema() const
+		uptr<schema> bridge_withdrawal_finalization::as_schema() const
 		{
 			schema* data = ledger::commitment::as_schema().reset();
-			data->set("depository_withdrawal_hash", var::string(algorithm::encoding::encode_0xhex256(depository_withdrawal_hash)));
+			data->set("bridge_withdrawal_hash", var::string(algorithm::encoding::encode_0xhex256(bridge_withdrawal_hash)));
 			if (proof)
 			{
 				data->set("prepared", proof->prepared.as_schema().reset());
@@ -2188,24 +2188,24 @@ namespace tangent
 				data->set("error", var::string(proof.what()));
 			return data;
 		}
-		uint32_t depository_withdrawal_finalization::as_type() const
+		uint32_t bridge_withdrawal_finalization::as_type() const
 		{
 			return as_instance_type();
 		}
-		std::string_view depository_withdrawal_finalization::as_typename() const
+		std::string_view bridge_withdrawal_finalization::as_typename() const
 		{
 			return as_instance_typename();
 		}
-		uint32_t depository_withdrawal_finalization::as_instance_type()
+		uint32_t bridge_withdrawal_finalization::as_instance_type()
 		{
 			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
 			return hash;
 		}
-		std::string_view depository_withdrawal_finalization::as_instance_typename()
+		std::string_view bridge_withdrawal_finalization::as_instance_typename()
 		{
-			return "depository_withdrawal_finalization";
+			return "bridge_withdrawal_finalization";
 		}
-		expects_lr<void> depository_withdrawal_finalization::validate_possible_proof(const ledger::transaction_context* context, const depository_withdrawal* transaction, const oracle::prepared_transaction& prepared)
+		expects_lr<void> bridge_withdrawal_finalization::validate_possible_proof(const ledger::transaction_context* context, const bridge_withdrawal* transaction, const oracle::prepared_transaction& prepared)
 		{
 			if (prepared.as_status() == oracle::prepared_transaction::status::invalid)
 				return layer_exception("invalid prepared transaction");
@@ -2238,13 +2238,13 @@ namespace tangent
 				if (!transaction->to.empty())
 					return layer_exception("migration/withdrawal confusion");
 
-				auto witness = depository_withdrawal::find_receiving_account(context, transaction->asset, transaction->from_manager, transaction->to_manager);
+				auto witness = bridge_withdrawal::find_receiving_account(context, transaction->asset, transaction->from_manager, transaction->to_manager);
 				if (!witness)
 					return layer_exception("prepared transaction not possible");
 
-				auto account = context->get_depository_account(base_asset, witness->manager, witness->owner);
+				auto account = context->get_bridge_account(base_asset, witness->manager, witness->owner);
 				if (!account)
-					return layer_exception("transaction output refers to a non-depository account");
+					return layer_exception("transaction output refers to a non-bridge account");
 
 				required_output_value[transaction->asset] = decimal::nan();
 				for (auto& [type, normalized_address] : witness->addresses)
@@ -2275,15 +2275,15 @@ namespace tangent
 					if (!witness)
 						return layer_exception("witness transaction input spends from unknown address");
 
-					auto account = context->get_depository_account(base_asset, witness->manager, witness->owner);
+					auto account = context->get_bridge_account(base_asset, witness->manager, witness->owner);
 					if (!account)
-						return layer_exception("witness transaction input refers to a non-depository account");
+						return layer_exception("witness transaction input refers to a non-bridge account");
 
 					inout_witness.insert(std::make_pair(normalized_address, std::move(*witness)));
 					it = inout_witness.find(normalized_address);
 				}
 
-				if (!it->second.is_depository_account() || !it->second.manager.equals(transaction->from_manager))
+				if (!it->second.is_bridge_account() || !it->second.manager.equals(transaction->from_manager))
 					return layer_exception("witness transaction input spends from unrelated address");
 
 				auto& value = input_value[input.utxo.get_asset(base_asset)];
@@ -2315,12 +2315,12 @@ namespace tangent
 				auto change_output = required_output_witness.find(normalized_address);
 				if (change_output == required_output_witness.end())
 				{
-					if (!it->second.is_depository_account())
+					if (!it->second.is_bridge_account())
 						return layer_exception("witness transaction output receives change into unrelated address");
 
-					auto account = context->get_depository_account(base_asset, it->second.manager, it->second.owner);
+					auto account = context->get_bridge_account(base_asset, it->second.manager, it->second.owner);
 					if (!account)
-						return layer_exception("witness transaction output refers to a non-depository account as change");
+						return layer_exception("witness transaction output refers to a non-bridge account as change");
 				}
 
 				auto output_asset = output.get_asset(base_asset);
@@ -2367,7 +2367,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> depository_withdrawal_finalization::validate_finalized_proof(const ledger::transaction_context* context, const depository_withdrawal* transaction, const oracle::finalized_transaction& finalized)
+		expects_lr<void> bridge_withdrawal_finalization::validate_finalized_proof(const ledger::transaction_context* context, const bridge_withdrawal* transaction, const oracle::finalized_transaction& finalized)
 		{
 			auto validation = validate_possible_proof(context, transaction, finalized.prepared);
 			if (!validation)
@@ -2385,447 +2385,414 @@ namespace tangent
 			return expectation::met;
 		}
 
-		expects_lr<void> depository_attestation::validate(uint64_t block_number) const
+		expects_lr<void> bridge_attestation::validate(uint64_t block_number) const
 		{
 			if (!algorithm::asset::token_of(asset).empty())
 				return layer_exception("invalid asset");
 
-			if (proof_or_commitment)
+			if (!proof.is_valid())
+				return layer_exception("invalid proof");
+
+			if (!proof.block_id)
+				return layer_exception("transaction has no block reference");
+
+			auto chain = oracle::server_node::get()->get_chainparams(asset);
+			if (!chain)
+				return layer_exception("invalid operation");
+
+			auto blockchain = algorithm::asset::blockchain_of(asset);
+			if (!proof.is_valid())
+				return layer_exception("invalid proof data");
+
+			for (auto& [hash, input] : proof.inputs)
 			{
-				auto& proof = *proof_or_commitment;
-				if (!proof.is_valid())
-					return layer_exception("invalid proof");
+				if (input.is_account() && algorithm::asset::blockchain_of(input.get_asset(asset)) != blockchain)
+					return layer_exception("proof input asset not valid");
+			}
 
-				if (!proof.block_id)
-					return layer_exception("transaction has no block reference");
+			for (auto& [hash, output] : proof.outputs)
+			{
+				if (output.is_account() && algorithm::asset::blockchain_of(output.get_asset(asset)) != blockchain)
+					return layer_exception("proof output asset not valid");
+			}
 
-				auto chain = oracle::server_node::get()->get_chainparams(asset);
-				if (!chain)
-					return layer_exception("invalid operation");
+			ordered_set<algorithm::pubkeyhash_t> attesters;
+			for (auto& [commitment_hash, signatures] : commitments)
+			{
+				if (!commitment_hash)
+					return layer_exception("invalid commitment hash");
 
-				auto blockchain = algorithm::asset::blockchain_of(asset);
-				if (!proof.is_valid())
-					return layer_exception("invalid proof data");
-
-				for (auto& [hash, input] : proof.inputs)
+				for (auto& signature : signatures)
 				{
-					if (input.is_account() && algorithm::asset::blockchain_of(input.get_asset(asset)) != blockchain)
-						return layer_exception("proof input asset not valid");
-				}
+					algorithm::pubkeyhash_t attester;
+					if (!algorithm::signing::recover_hash(commitment_hash, attester, signature))
+						return layer_exception("invalid commitment signature");
+					else if (attesters.find(attester) != attesters.end())
+						return layer_exception("duplicate commitment attester");
 
-				for (auto& [hash, output] : proof.outputs)
-				{
-					if (output.is_account() && algorithm::asset::blockchain_of(output.get_asset(asset)) != blockchain)
-						return layer_exception("proof output asset not valid");
+					attesters.insert(attester);
 				}
 			}
-			else
-			{
-				auto& commitment = proof_or_commitment.error();
-				if (!commitment.input_hash)
-					return layer_exception("invalid input hash");
 
-				if (!commitment.output_hash)
-					return layer_exception("invalid output hash");
-			}
 			return ledger::commitment::validate(block_number);
 		}
-		expects_lr<void> depository_attestation::execute(ledger::transaction_context* context) const
+		expects_lr<void> bridge_attestation::execute(ledger::transaction_context* context) const
 		{
 			auto validation = commitment::execute(context);
 			if (!validation)
 				return validation.error();
 
-			auto attestation_requirement = context->verify_validator_attestation(asset, context->receipt.from);
-			if (!attestation_requirement)
-				return attestation_requirement;
+			auto* chain = oracle::server_node::get()->get_chainparams(asset);
+			if (!chain)
+				return layer_exception("invalid chain");
 
-			if (proof_or_commitment)
+			auto collision = context->get_witness_transaction(asset, proof.transaction_id);
+			if (collision)
+				return layer_exception("proof " + proof.transaction_id + " finalized");
+
+			uint256_t best_commitment_hash = 0;
+			ordered_map<uint256_t, ordered_set<algorithm::pubkeyhash_t>> attesters;
+			auto verification = verify_proof_commitment(context, asset, commitments, best_commitment_hash, attesters);
+			if (!verification)
+				return verification;
+			else if (best_commitment_hash != proof.as_hash())
+				return layer_exception("provided proof is not the chosen one");
+
+			transition operations;
+			ordered_set<algorithm::pubkeyhash_t> bridges, routers;
+			auto rebalance_weights = [&](const oracle::coin_utxo& inout, bool accountable, int8_t sign)
 			{
-				auto& proof = *proof_or_commitment;
-				auto best_branch_hash = proof.as_hash();
-				auto attestation_hash = algorithm::hashing::hash256i(proof.transaction_id);
-				auto attestation = context->get_witness_attestation(asset, attestation_hash).or_else(states::witness_attestation(asset, attestation_hash, context->block));
-				attestation.branches[best_branch_hash].insert(context->receipt.from);
-
-				auto computed_best_branch_hash = context->verify_witness_attestation(attestation);
-				if (!computed_best_branch_hash)
-					return computed_best_branch_hash.error();
-				else if (*computed_best_branch_hash != best_branch_hash)
-					return layer_exception("proof does not match the commitment");
-
-				auto collision = context->get_witness_transaction(asset, proof.transaction_id);
-				if (collision)
-					return layer_exception("proof " + proof.transaction_id + " finalized");
-
-				auto* chain = oracle::server_node::get()->get_chainparams(asset);
-				if (!chain)
-					return layer_exception("invalid chain");
-
-				transition operations;
-				ordered_set<algorithm::pubkeyhash_t> depositories, routers;
-				auto rebalance_weights = [&](const oracle::coin_utxo& inout, bool accountable, int8_t sign)
+				if (inout.value.is_positive())
 				{
-					if (inout.value.is_positive())
-					{
-						if (accountable)
-							operations.weights[inout.get_asset(asset)].accountable += sign >= 0 ? inout.value : -inout.value;
-						else
-							operations.weights[inout.get_asset(asset)].unaccountable += sign >= 0 ? inout.value : -inout.value;
-					}
-					for (auto& [hash, token] : inout.tokens)
-					{
-						if (accountable)
-							operations.weights[token.get_asset(asset)].accountable += sign >= 0 ? token.value : -token.value;
-						else
-							operations.weights[token.get_asset(asset)].unaccountable += sign >= 0 ? token.value : -token.value;
-					}
-				};
-				for (auto& [hash, input] : proof.inputs)
-				{
-					auto source = context->get_witness_account(asset, input.link.address, 0);
-					if (source && source->is_depository_account())
-					{
-						auto from_depository = algorithm::pubkeyhash_t(source->manager);
-						auto& depository = operations.depositories[from_depository];
-						rebalance_weights(input, true, -1);
-						if (input.value.is_positive())
-							depository.transfers[input.get_asset(asset)].supply -= input.value;
-						for (auto& [token_hash, token] : input.tokens)
-							depository.transfers[token.get_asset(asset)].supply -= token.value;
-
-						auto account = context->get_depository_account(asset, from_depository.data, source->owner);
-						if (account)
-							depository.participants.insert(account->group.begin(), account->group.end());
-						depositories.insert(from_depository);
-					}
+					if (accountable)
+						operations.weights[inout.get_asset(asset)].accountable += sign >= 0 ? inout.value : -inout.value;
 					else
-					{
-						rebalance_weights(input, !depositories.empty(), -1);
-						if (source && source->is_routing_account())
-							routers.insert(algorithm::pubkeyhash_t(source->owner));
-					}
+						operations.weights[inout.get_asset(asset)].unaccountable += sign >= 0 ? inout.value : -inout.value;
 				}
-
-				if (!depositories.empty())
+				for (auto& [hash, token] : inout.tokens)
 				{
-					for (auto& [asset, weight] : operations.weights)
-					{
-						weight.accountable += weight.unaccountable;
-						weight.unaccountable = decimal::zero();
-					}
-				}
-
-				for (auto& [hash, output] : proof.outputs)
-				{
-					auto source = context->get_witness_account(asset, output.link.address, 0);
-					if (source && source->is_depository_account())
-					{
-						auto to_depository = algorithm::pubkeyhash_t(source->manager);
-						auto& depository = operations.depositories[to_depository];
-						auto amounts = ordered_map<algorithm::asset_id, decimal>();
-						rebalance_weights(output, true, 1);
-						if (output.value.is_positive())
-							amounts[output.get_asset(asset)] = output.value;
-						for (auto& [token_hash, token] : output.tokens)
-							amounts[token.get_asset(asset)] = token.value;
-
-						auto account = context->get_depository_account(asset, to_depository.data, source->owner);
-						if (account)
-							depository.participants.insert(account->group.begin(), account->group.end());
-
-						auto to_account = routers.empty() ? algorithm::pubkeyhash_t(source->owner) : *routers.begin();
-						for (auto& [token_asset, token_value] : amounts)
-						{
-							auto& transfer = depository.transfers[token_asset];
-							transfer.supply += token_value;
-							if (token_value.is_positive() && depositories.empty())
-							{
-								auto& balance = operations.transfers[to_account][token_asset];
-								balance.supply += token_value;
-								if (!to_depository.equals(to_account.data))
-								{
-									auto reward = context->get_depository_reward(token_asset, to_depository.data);
-									if (reward && reward->incoming_fee.is_positive())
-									{
-										balance.supply -= reward->incoming_fee;
-										transfer.incoming_fee += reward->incoming_fee;
-									}
-								}
-							}
-						}
-					}
+					if (accountable)
+						operations.weights[token.get_asset(asset)].accountable += sign >= 0 ? token.value : -token.value;
 					else
-					{
-						rebalance_weights(output, !depositories.empty(), 1);
-						if (!source || !source->is_routing_account())
-							continue;
-
-						auto from_account = routers.empty() ? algorithm::pubkeyhash_t(source->owner) : *routers.begin();
-						auto& from_transfers = operations.transfers[from_account];
-						auto amounts = ordered_map<algorithm::asset_id, decimal>();
-						if (output.value.is_positive())
-							amounts[output.get_asset(asset)] = output.value;
-						for (auto& [token_hash, token] : output.tokens)
-							amounts[token.get_asset(asset)] = token.value;
-
-						for (auto& [token_asset, token_value] : amounts)
-						{
-							auto& balance = from_transfers[token_asset];
-							balance.supply -= token_value;
-							balance.reserve -= token_value;
-							if (token_value.is_positive())
-							{
-								for (auto from_depository = depositories.begin(); from_depository != depositories.end(); from_depository++)
-								{
-									auto reward = context->get_depository_reward(asset, from_depository->data);
-									auto outgoing_fee = reward ? algorithm::arithmetic::divide(reward->outgoing_fee, depositories.size()) : decimal::zero();
-									if (outgoing_fee.is_positive())
-									{
-										auto& base_transfer = operations.depositories[*from_depository].transfers[asset];
-										auto& base_balance = from_transfers[asset];
-										base_balance.supply -= outgoing_fee;
-										base_balance.reserve -= outgoing_fee;
-										base_transfer.outgoing_fee += outgoing_fee;
-									}
-								}
-							}
-						}
-					}
+						operations.weights[token.get_asset(asset)].unaccountable += sign >= 0 ? token.value : -token.value;
 				}
+			};
+			for (auto& [hash, input] : proof.inputs)
+			{
+				auto source = context->get_witness_account(asset, input.link.address, 0);
+				if (source && source->is_bridge_account())
+				{
+					auto from_bridge = algorithm::pubkeyhash_t(source->manager);
+					auto& bridge = operations.bridges[from_bridge];
+					rebalance_weights(input, true, -1);
+					if (input.value.is_positive())
+						bridge.transfers[input.get_asset(asset)].supply -= input.value;
+					for (auto& [token_hash, token] : input.tokens)
+						bridge.transfers[token.get_asset(asset)].supply -= token.value;
 
-				if (operations.transfers.empty() && operations.depositories.empty())
-					return layer_exception("invalid transaction");
+					auto account = context->get_bridge_account(asset, from_bridge.data, source->owner);
+					if (account)
+						bridge.participants.insert(account->group.begin(), account->group.end());
+					bridges.insert(from_bridge);
+				}
+				else
+				{
+					rebalance_weights(input, !bridges.empty(), -1);
+					if (source && source->is_routing_account())
+						routers.insert(algorithm::pubkeyhash_t(source->owner));
+				}
+			}
 
+			if (!bridges.empty())
+			{
 				for (auto& [asset, weight] : operations.weights)
 				{
-					decimal fee = weight.accountable + weight.unaccountable;
-					weight.accountable = math0::abs(std::min(decimal::zero(), weight.accountable - std::min(decimal::zero(), fee)));
+					weight.accountable += weight.unaccountable;
+					weight.unaccountable = decimal::zero();
 				}
+			}
 
-				auto failing_attesters = ordered_set<algorithm::pubkeyhash_t>();
-				auto& succeeding_attesters = attestation.branches[best_branch_hash];
-				succeeding_attesters.insert(context->receipt.from);
-				for (auto& [branch_hash, attesters] : attestation.branches)
+			for (auto& [hash, output] : proof.outputs)
+			{
+				auto source = context->get_witness_account(asset, output.link.address, 0);
+				if (source && source->is_bridge_account())
 				{
-					if (branch_hash != best_branch_hash)
-						failing_attesters.insert(attesters.begin(), attesters.end());
-				}
+					auto to_bridge = algorithm::pubkeyhash_t(source->manager);
+					auto& bridge = operations.bridges[to_bridge];
+					auto amounts = ordered_map<algorithm::asset_id, decimal>();
+					rebalance_weights(output, true, 1);
+					if (output.value.is_positive())
+						amounts[output.get_asset(asset)] = output.value;
+					for (auto& [token_hash, token] : output.tokens)
+						amounts[token.get_asset(asset)] = token.value;
 
-				for (auto& [owner, transfers] : operations.transfers)
-				{
-					for (auto& [transfer_asset, transfer] : transfers)
+					auto account = context->get_bridge_account(asset, to_bridge.data, source->owner);
+					if (account)
+						bridge.participants.insert(account->group.begin(), account->group.end());
+
+					auto to_account = routers.empty() ? algorithm::pubkeyhash_t(source->owner) : *routers.begin();
+					for (auto& [token_asset, token_value] : amounts)
 					{
-						if (transfer.supply.is_zero_or_nan() && transfer.reserve.is_zero_or_nan())
-							continue;
-
-						auto supply_delta = transfer.supply.is_nan() ? decimal::zero() : transfer.supply;
-						auto reserve_delta = transfer.reserve.is_nan() ? decimal::zero() : transfer.reserve;
-						if (supply_delta.is_negative() || reserve_delta.is_negative())
+						auto& transfer = bridge.transfers[token_asset];
+						transfer.supply += token_value;
+						if (token_value.is_positive() && bridges.empty())
 						{
-							auto balance = context->get_account_balance(transfer_asset, owner.data);
-							auto supply = (balance ? balance->supply : decimal::zero()) + supply_delta;
-							auto reserve = (balance ? balance->reserve : decimal::zero()) + reserve_delta;
-							operations.weights[transfer_asset].accountable += std::min(decimal::zero(), std::min(supply, reserve));
-							if (supply.is_negative())
-								supply_delta = (balance ? -balance->supply : decimal::zero());
-							if (reserve.is_negative())
-								reserve_delta = (balance ? -balance->reserve : decimal::zero());
-						}
-
-						if (!supply_delta.is_zero() || !reserve_delta.is_zero())
-						{
-							auto delta_transfer = context->apply_transfer(transfer_asset, owner.data, supply_delta, reserve_delta);
-							if (!delta_transfer)
-								return delta_transfer.error();
+							auto& balance = operations.transfers[to_account][token_asset];
+							balance.supply += token_value;
+							if (!to_bridge.equals(to_account.data))
+							{
+								auto reward = context->get_bridge_reward(token_asset, to_bridge.data);
+								if (reward && reward->incoming_fee.is_positive())
+								{
+									balance.supply -= reward->incoming_fee;
+									transfer.incoming_fee += reward->incoming_fee;
+								}
+							}
 						}
 					}
 				}
-
-				for (auto& [owner, batch] : operations.depositories)
+				else
 				{
-					for (auto& [transfer_asset, transfer] : batch.transfers)
+					rebalance_weights(output, !bridges.empty(), 1);
+					if (!source || !source->is_routing_account())
+						continue;
+
+					auto from_account = routers.empty() ? algorithm::pubkeyhash_t(source->owner) : *routers.begin();
+					auto& from_transfers = operations.transfers[from_account];
+					auto amounts = ordered_map<algorithm::asset_id, decimal>();
+					if (output.value.is_positive())
+						amounts[output.get_asset(asset)] = output.value;
+					for (auto& [token_hash, token] : output.tokens)
+						amounts[token.get_asset(asset)] = token.value;
+
+					for (auto& [token_asset, token_value] : amounts)
 					{
-						auto& penalty = operations.weights[transfer_asset].accountable;
-						auto consume_penalty = [&penalty](const decimal& delta) -> decimal
+						auto& balance = from_transfers[token_asset];
+						balance.supply -= token_value;
+						balance.reserve -= token_value;
+						if (token_value.is_positive())
 						{
-							auto adjustment = std::max(decimal::zero(), penalty - delta);
-							auto result = std::max(decimal::zero(), delta - penalty);
-							penalty = adjustment;
-							return result;
-						};
-						penalty = math0::abs(penalty);
-						if (transfer.supply.is_negative())
-						{
-							auto balance = context->get_depository_balance(transfer_asset, owner.data);
-							auto supply = balance ? -balance->get_balance(transfer_asset) : decimal::zero();
-							if (supply > transfer.supply)
+							for (auto from_bridge = bridges.begin(); from_bridge != bridges.end(); from_bridge++)
 							{
-								consume_penalty(transfer.supply - supply);
-								transfer.supply = supply;
+								auto reward = context->get_bridge_reward(asset, from_bridge->data);
+								auto outgoing_fee = reward ? algorithm::arithmetic::divide(reward->outgoing_fee, bridges.size()) : decimal::zero();
+								if (outgoing_fee.is_positive())
+								{
+									auto& base_transfer = operations.bridges[*from_bridge].transfers[asset];
+									auto& base_balance = from_transfers[asset];
+									base_balance.supply -= outgoing_fee;
+									base_balance.reserve -= outgoing_fee;
+									base_transfer.outgoing_fee += outgoing_fee;
+								}
 							}
 						}
+					}
+				}
+			}
 
-						if (!transfer.supply.is_zero())
+			if (operations.transfers.empty() && operations.bridges.empty())
+				return layer_exception("invalid transaction");
+
+			for (auto& [asset, weight] : operations.weights)
+			{
+				decimal fee = weight.accountable + weight.unaccountable;
+				weight.accountable = math0::abs(std::min(decimal::zero(), weight.accountable - std::min(decimal::zero(), fee)));
+			}
+
+			auto& succeeding_attesters = attesters[best_commitment_hash];
+			auto failing_attesters = ordered_set<algorithm::pubkeyhash_t>();
+			for (auto& [commitment_hash, group] : attesters)
+			{
+				if (commitment_hash != best_commitment_hash)
+					failing_attesters.insert(group.begin(), group.end());
+			}
+
+			for (auto& [owner, transfers] : operations.transfers)
+			{
+				for (auto& [transfer_asset, transfer] : transfers)
+				{
+					if (transfer.supply.is_zero_or_nan() && transfer.reserve.is_zero_or_nan())
+						continue;
+
+					auto supply_delta = transfer.supply.is_nan() ? decimal::zero() : transfer.supply;
+					auto reserve_delta = transfer.reserve.is_nan() ? decimal::zero() : transfer.reserve;
+					if (supply_delta.is_negative() || reserve_delta.is_negative())
+					{
+						auto balance = context->get_account_balance(transfer_asset, owner.data);
+						auto supply = (balance ? balance->supply : decimal::zero()) + supply_delta;
+						auto reserve = (balance ? balance->reserve : decimal::zero()) + reserve_delta;
+						operations.weights[transfer_asset].accountable += std::min(decimal::zero(), std::min(supply, reserve));
+						if (supply.is_negative())
+							supply_delta = (balance ? -balance->supply : decimal::zero());
+						if (reserve.is_negative())
+							reserve_delta = (balance ? -balance->reserve : decimal::zero());
+					}
+
+					if (!supply_delta.is_zero() || !reserve_delta.is_zero())
+					{
+						auto delta_transfer = context->apply_transfer(transfer_asset, owner.data, supply_delta, reserve_delta);
+						if (!delta_transfer)
+							return delta_transfer.error();
+					}
+				}
+			}
+
+			for (auto& [owner, batch] : operations.bridges)
+			{
+				for (auto& [transfer_asset, transfer] : batch.transfers)
+				{
+					auto& penalty = operations.weights[transfer_asset].accountable;
+					auto consume_penalty = [&penalty](const decimal& delta) -> decimal
+					{
+						auto adjustment = std::max(decimal::zero(), penalty - delta);
+						auto result = std::max(decimal::zero(), delta - penalty);
+						penalty = adjustment;
+						return result;
+					};
+					penalty = math0::abs(penalty);
+					if (transfer.supply.is_negative())
+					{
+						auto balance = context->get_bridge_balance(transfer_asset, owner.data);
+						auto supply = balance ? -balance->get_balance(transfer_asset) : decimal::zero();
+						if (supply > transfer.supply)
 						{
-							auto depository = context->apply_depository_balance(transfer_asset, owner.data, { { transfer_asset, transfer.supply } });
-							if (!depository)
-								return depository.error();
+							consume_penalty(transfer.supply - supply);
+							transfer.supply = supply;
+						}
+					}
+
+					if (!transfer.supply.is_zero())
+					{
+						auto bridge = context->apply_bridge_balance(transfer_asset, owner.data, { { transfer_asset, transfer.supply } });
+						if (!bridge)
+							return bridge.error();
+					}
+
+					auto total_fee = consume_penalty(transfer.incoming_fee + transfer.outgoing_fee);
+					auto attestation_cut = succeeding_attesters.empty() ? decimal::zero() : decimal(protocol::now().policy.attestation_fee_rate);
+					auto participation_cut = batch.participants.empty() ? decimal::zero() : decimal(protocol::now().policy.participation_fee_rate);
+					auto bridge_fee = total_fee * (1 - attestation_cut - participation_cut);
+					auto attestation_fee = !succeeding_attesters.empty() ? algorithm::arithmetic::divide(total_fee * attestation_cut, succeeding_attesters.size()) : decimal::zero();
+					auto participation_fee = !batch.participants.empty() ? algorithm::arithmetic::divide(total_fee * participation_cut, batch.participants.size()) : decimal::zero();
+					if (attestation_fee.is_positive())
+					{
+						for (auto& failing_attester : failing_attesters)
+						{
+							auto prev_attestation = context->get_validator_attestation(transfer_asset, failing_attester.data);
+							if (!prev_attestation)
+								continue;
+
+							auto next_attestation = context->apply_validator_attestation(transfer_asset, failing_attester.data, ledger::transaction_context::stake_type::lock, { { transfer_asset, -attestation_fee } });
+							if (!next_attestation)
+								return next_attestation.error();
+
+							auto& prev_value = prev_attestation->stakes[transfer_asset];
+							auto& next_value = next_attestation->stakes[transfer_asset];
+							prev_value = prev_value.is_nan() ? decimal::zero() : prev_value;
+							next_value = next_value.is_nan() ? decimal::zero() : next_value;
+
+							auto compensation_adjustment = std::max(decimal::zero(), prev_value - next_value);
+							if (compensation_adjustment.is_positive())
+								bridge_fee += consume_penalty(compensation_adjustment);
 						}
 
-						auto total_fee = consume_penalty(transfer.incoming_fee + transfer.outgoing_fee);
-						auto attestation_cut = succeeding_attesters.empty() ? decimal::zero() : decimal(protocol::now().policy.attestation_fee_rate);
-						auto participation_cut = batch.participants.empty() ? decimal::zero() : decimal(protocol::now().policy.participation_fee_rate);
-						auto depository_fee = total_fee * (1 - attestation_cut - participation_cut);
-						auto attestation_fee = !succeeding_attesters.empty() ? algorithm::arithmetic::divide(total_fee * attestation_cut, succeeding_attesters.size()) : decimal::zero();
-						auto participation_fee = !batch.participants.empty() ? algorithm::arithmetic::divide(total_fee * participation_cut, batch.participants.size()) : decimal::zero();
-						if (attestation_fee.is_positive())
+						for (auto& succeeding_attester : succeeding_attesters)
 						{
-							for (auto& failing_attester : failing_attesters)
-							{
-								auto prev_attestation = context->get_validator_attestation(transfer_asset, failing_attester.data);
-								if (!prev_attestation)
-									continue;
-
-								auto next_attestation = context->apply_validator_attestation(transfer_asset, failing_attester.data, ledger::transaction_context::stake_type::lock, { { transfer_asset, -attestation_fee } });
-								if (!next_attestation)
-									return next_attestation.error();
-
-								auto& prev_value = prev_attestation->stakes[transfer_asset];
-								auto& next_value = next_attestation->stakes[transfer_asset];
-								prev_value = prev_value.is_nan() ? decimal::zero() : prev_value;
-								next_value = next_value.is_nan() ? decimal::zero() : next_value;
-
-								auto compensation_adjustment = std::max(decimal::zero(), prev_value - next_value);
-								if (compensation_adjustment.is_positive())
-									depository_fee += consume_penalty(compensation_adjustment);
-							}
-
-							for (auto& succeeding_attester : succeeding_attesters)
-							{
-								auto attestation = context->apply_validator_attestation(transfer_asset, succeeding_attester, ledger::transaction_context::stake_type::reward_or_penalty, { { transfer_asset, attestation_fee } });
-								if (!attestation)
-									return attestation.error();
-							}
-						}
-
-						if (penalty.is_positive() || participation_fee.is_positive())
-						{
-							auto individual_penalty = -algorithm::arithmetic::divide(penalty, batch.participants.size());
-							for (auto& participant : batch.participants)
-							{
-								auto participation = context->apply_validator_participation(transfer_asset, participant.data, ledger::transaction_context::stake_type::reward_or_penalty, 0, { { transfer_asset, individual_penalty.is_negative() ? individual_penalty : participation_fee } });
-								if (!participation)
-									return participation.error();
-							}
-						}
-
-						if (depository_fee.is_positive())
-						{
-							auto attestation = context->apply_validator_attestation(transfer_asset, owner.data, ledger::transaction_context::stake_type::reward_or_penalty, { { transfer_asset, depository_fee } });
+							auto attestation = context->apply_validator_attestation(transfer_asset, succeeding_attester, ledger::transaction_context::stake_type::reward_or_penalty, { { transfer_asset, attestation_fee } });
 							if (!attestation)
 								return attestation.error();
 						}
 					}
+
+					if (penalty.is_positive() || participation_fee.is_positive())
+					{
+						auto individual_penalty = -algorithm::arithmetic::divide(penalty, batch.participants.size());
+						for (auto& participant : batch.participants)
+						{
+							auto participation = context->apply_validator_participation(transfer_asset, participant.data, ledger::transaction_context::stake_type::reward_or_penalty, 0, { { transfer_asset, individual_penalty.is_negative() ? individual_penalty : participation_fee } });
+							if (!participation)
+								return participation.error();
+						}
+					}
+
+					if (bridge_fee.is_positive())
+					{
+						auto attestation = context->apply_validator_attestation(transfer_asset, owner.data, ledger::transaction_context::stake_type::reward_or_penalty, { { transfer_asset, bridge_fee } });
+						if (!attestation)
+							return attestation.error();
+					}
 				}
-
-				auto confirmation = context->apply_witness_attestation(asset, attestation_hash, best_branch_hash, context->receipt.from, true);
-				if (!confirmation)
-					return confirmation.error();
-
-				auto finalization = context->apply_witness_transaction(asset, proof.transaction_id);
-				if (!finalization)
-					return finalization.error();
-
-				return context->emit_witness(asset, proof.block_id);
 			}
-			else
-			{
-				auto& commitment = proof_or_commitment.error();
-				auto attestation = context->get_witness_attestation(asset, commitment.input_hash);
-				if (attestation && context->try_commit_to_witness_attestation(*attestation, commitment.output_hash, context->receipt.from))
-					return layer_exception(stringify::text("further commitment attestations are dismissed (%s)", attestation->finalized ? "fully finalized" : "requires proof"));
 
-				attestation = context->apply_witness_attestation(asset, commitment.input_hash, commitment.output_hash, context->receipt.from, false);
-				if (!attestation)
-					return attestation.error();
+			auto finalization = context->apply_witness_transaction(asset, proof.transaction_id);
+			if (!finalization)
+				return finalization.error();
 
-				return expectation::met;
-			}
+			return context->emit_witness(asset, proof.block_id);
 		}
-		bool depository_attestation::store_body(format::wo_stream* stream) const
+		bool bridge_attestation::store_body(format::wo_stream* stream) const
 		{
-			stream->write_boolean(!!proof_or_commitment);
-			if (proof_or_commitment)
-			{
-				if (!proof_or_commitment->store_payload(stream))
-					return false;
-			}
-			else
-			{
-				stream->write_integer(proof_or_commitment.error().input_hash);
-				stream->write_integer(proof_or_commitment.error().output_hash);
-			}
-			return true;
-		}
-		bool depository_attestation::load_body(format::ro_stream& stream)
-		{
-			bool is_proof;
-			if (!stream.read_boolean(stream.read_type(), &is_proof))
+			if (!proof.store_payload(stream))
 				return false;
 
-			if (is_proof)
+			stream->write_integer((uint16_t)commitments.size());
+			for (auto& [commitment_hash, signatures] : commitments)
 			{
-				oracle::computed_transaction proof;
-				if (!proof.load_payload(stream))
-					return false;
-
-				proof_or_commitment = std::move(proof);
+				stream->write_integer(commitment_hash);
+				stream->write_integer((uint16_t)signatures.size());
+				for (auto& signature : signatures)
+					stream->write_string(signature.optimized_view());
 			}
-			else
+			return true;
+		}
+		bool bridge_attestation::load_body(format::ro_stream& stream)
+		{
+			if (!proof.load_payload(stream))
+				return false;
+
+			uint16_t commitments_size;
+			if (!stream.read_integer(stream.read_type(), &commitments_size))
+				return false;
+
+			commitments.clear();
+			for (uint16_t i = 0; i < commitments_size; i++)
 			{
-				branch_commitment commitment;
-				if (!stream.read_integer(stream.read_type(), &commitment.input_hash))
+				uint256_t commitment_hash;
+				if (!stream.read_integer(stream.read_type(), &commitment_hash))
 					return false;
 
-				if (!stream.read_integer(stream.read_type(), &commitment.output_hash))
+				uint16_t signatures_size;
+				if (!stream.read_integer(stream.read_type(), &signatures_size))
 					return false;
 
-				proof_or_commitment = std::move(commitment);
+				auto& signatures = commitments[commitment_hash];
+				for (uint16_t j = 0; j < signatures_size; j++)
+				{
+					algorithm::hashsig_t commitment; string signature_assembly;
+					if (!stream.read_string(stream.read_type(), &signature_assembly) || !algorithm::encoding::decode_bytes(signature_assembly, commitment.data, sizeof(commitment.data)))
+						return false;
+
+					signatures.insert(commitment);
+				}
 			}
 
 			return true;
 		}
-		bool depository_attestation::sign(const algorithm::seckey_t& secret_key)
-		{
-			assign_proof_or_commitment_automatically(secret_key);
-			return ledger::commitment::sign(secret_key);
-		}
-		bool depository_attestation::sign(const algorithm::seckey_t& secret_key, uint64_t new_nonce)
-		{
-			assign_proof_or_commitment_automatically(secret_key);
-			return ledger::commitment::sign(secret_key, new_nonce);
-		}
-		expects_lr<void> depository_attestation::sign(const algorithm::seckey_t& secret_key, uint64_t new_nonce, const decimal& price)
-		{
-			assign_proof_or_commitment_automatically(secret_key);
-			return ledger::commitment::sign(secret_key, new_nonce, price);
-		}
-		bool depository_attestation::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
+		bool bridge_attestation::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
 		{
 			for (auto& event : receipt.find_events<states::account_balance>())
 			{
 				if (event->size() >= 2 && event->at(1).as_string().size() == sizeof(algorithm::pubkeyhash_t))
 					parties.insert(algorithm::pubkeyhash_t(event->at(1).as_blob()));
 			}
-			for (auto& event : receipt.find_events<states::depository_balance>())
+			for (auto& event : receipt.find_events<states::bridge_balance>())
 			{
 				if (event->size() >= 2 && event->at(1).as_string().size() == sizeof(algorithm::pubkeyhash_t))
 					parties.insert(algorithm::pubkeyhash_t(event->at(1).as_blob()));
 			}
 			return true;
 		}
-		void depository_attestation::set_finalized_proof(uint64_t block_id, const std::string_view& transaction_id, const vector<oracle::value_transfer>& inputs, const vector<oracle::value_transfer>& outputs)
+		void bridge_attestation::set_finalized_proof(uint64_t block_id, const std::string_view& transaction_id, const vector<oracle::value_transfer>& inputs, const vector<oracle::value_transfer>& outputs)
 		{
 			auto* chain = oracle::server_node::get()->get_chainparams(asset);
 			oracle::computed_transaction witness;
@@ -2841,76 +2808,114 @@ namespace tangent
 				auto utxo = oracle::coin_utxo(oracle::wallet_link::from_address(output.address), { { output.asset, output.value } });
 				witness.outputs[utxo.as_hash()] = std::move(utxo);
 			}
-			set_computed_proof(std::move(witness));
+			set_computed_proof(std::move(witness), { });
 		}
-		void depository_attestation::set_computed_proof(oracle::computed_transaction&& new_proof)
+		void bridge_attestation::set_computed_proof(oracle::computed_transaction&& new_proof, ordered_map<uint256_t, ordered_set<algorithm::hashsig_t>>&& new_commitments)
 		{
-			proof_or_commitment = std::move(new_proof);
+			proof = std::move(new_proof);
+			commitments = std::move(new_commitments);
 		}
-		void depository_attestation::set_commitment(const oracle::computed_transaction& new_proof)
+		bool bridge_attestation::add_commitment(const algorithm::seckey_t& secret_key)
 		{
-			branch_commitment commitment;
-			commitment.input_hash = algorithm::hashing::hash256i(new_proof.transaction_id);
-			commitment.output_hash = new_proof.as_hash();
-			proof_or_commitment = std::move(commitment);
+			uint256_t commitment_hash;
+			algorithm::hashsig_t commitment_signature;
+			if (!commit_to_proof(proof, secret_key, commitment_hash, commitment_signature))
+				return false;
+
+			commitments[commitment_hash].insert(commitment_signature);
+			return true;
 		}
-		void depository_attestation::assign_proof_or_commitment_automatically(const algorithm::seckey_t& secret_key)
-		{
-			if (!proof_or_commitment)
-				return;
-
-			algorithm::pubkey_t public_key;
-			if (!algorithm::signing::derive_public_key(secret_key, public_key))
-				return;
-
-			algorithm::pubkeyhash_t public_key_hash;
-			algorithm::signing::derive_public_key_hash(public_key, public_key_hash);
-			auto input_hash = algorithm::hashing::hash256i(proof_or_commitment->transaction_id);
-			auto output_hash = proof_or_commitment->as_hash();
-			auto context = ledger::transaction_context();
-			auto witness = context.get_witness_attestation(asset, input_hash);
-			if (witness && !context.try_commit_to_witness_attestation(*witness, output_hash, public_key_hash))
-				return;
-			else if (!witness && context.calculate_attesters_size(asset).or_else(0) <= 1)
-				return;
-
-			branch_commitment commitment;
-			commitment.input_hash = input_hash;
-			commitment.output_hash = output_hash;
-			proof_or_commitment = std::move(commitment);
-		}
-		uptr<schema> depository_attestation::as_schema() const
+		uptr<schema> bridge_attestation::as_schema() const
 		{
 			schema* data = ledger::commitment::as_schema().reset();
-			if (!proof_or_commitment)
+			schema* commitments_data = data->set("commitments", var::set::object());
+			for (auto& [commitment_hash, signatures] : commitments)
 			{
-				auto* commitment_data = data->set("commitment", var::set::object());
-				commitment_data->set("input_hash", var::string(algorithm::encoding::encode_0xhex256(proof_or_commitment.error().input_hash)));
-				commitment_data->set("output_hash", var::string(algorithm::encoding::encode_0xhex256(proof_or_commitment.error().output_hash)));
+				auto signatures_data = commitments_data->set(algorithm::encoding::encode_0xhex256(commitment_hash), var::set::array());
+				for (auto& signature : signatures)
+					signatures_data->push(signature.empty() ? var::null() : var::string(format::util::encode_0xhex(signature.view())));
 			}
-			else
-				data->set("proof", proof_or_commitment->as_schema().reset());
+			data->set("proof", proof.as_schema().reset());
 			return data;
 		}
-		uint32_t depository_attestation::as_type() const
+		uint32_t bridge_attestation::as_type() const
 		{
 			return as_instance_type();
 		}
-		std::string_view depository_attestation::as_typename() const
+		std::string_view bridge_attestation::as_typename() const
 		{
 			return as_instance_typename();
 		}
-		uint32_t depository_attestation::as_instance_type()
+		uint32_t bridge_attestation::as_instance_type()
 		{
 			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
 			return hash;
 		}
-		std::string_view depository_attestation::as_instance_typename()
+		std::string_view bridge_attestation::as_instance_typename()
 		{
-			return "depository_attestation";
+			return "bridge_attestation";
+		}
+		expects_lr<void> bridge_attestation::verify_proof_commitment(const ledger::transaction_context* context, const algorithm::asset_id& asset, const ordered_map<uint256_t, ordered_set<algorithm::hashsig_t>>& commitments, uint256_t& best_commitment_hash, ordered_map<uint256_t, ordered_set<algorithm::pubkeyhash_t>>& attesters)
+		{
+			ordered_set<algorithm::pubkeyhash_t> duplicates;
+			best_commitment_hash = 0;
+			attesters.clear();
+
+			for (auto& [commitment_hash, signatures] : commitments)
+			{
+				if (!commitment_hash)
+					return layer_exception("invalid commitment hash");
+
+				for (auto& signature : signatures)
+				{
+					algorithm::pubkeyhash_t attester;
+					if (!algorithm::signing::recover_hash(commitment_hash, attester, signature))
+						return layer_exception("invalid commitment signature");
+					else if (duplicates.find(attester) != duplicates.end())
+						return layer_exception("duplicate commitment attester");
+
+					attesters[commitment_hash].insert(attester);
+					duplicates.insert(attester);
+				}
+			}
+
+			auto& params = protocol::now();
+			size_t required_commitments = context->calculate_attesters_size(asset).or_else(0);
+			decimal best_commitment_stake = -1;
+			for (auto& [commitment_hash, signatures] : commitments)
+			{
+				size_t required_commitment_attestations = std::min<size_t>(required_commitments, params.policy.attestation_max_per_transaction);
+				decimal current_commitment_threshold = required_commitment_attestations > 0 ? algorithm::arithmetic::divide(signatures.size(), required_commitment_attestations) : decimal::zero();
+				if (current_commitment_threshold < params.policy.attestation_consensus_threshold || signatures.empty())
+					continue;
+
+				decimal commitment_stake = decimal::zero();
+				for (auto& attester : attesters[commitment_hash])
+				{
+					auto attestation = context->get_validator_attestation(asset, attester);
+					if (attestation)
+						commitment_stake += attestation->get_ranked_stake();
+				}
+
+				if (commitment_stake > best_commitment_stake)
+				{
+					best_commitment_hash = commitment_hash;
+					best_commitment_stake = commitment_stake;
+				}
+			}
+
+			if (!best_commitment_hash)
+				return layer_exception("proof requires more attestations");
+
+			return expectation::met;
+		}
+		bool bridge_attestation::commit_to_proof(const oracle::computed_transaction& new_proof, const algorithm::seckey_t& secret_key, uint256_t& commitment_hash, algorithm::hashsig_t& signature)
+		{
+			commitment_hash = new_proof.as_hash();
+			return algorithm::signing::sign(commitment_hash, secret_key, signature);
 		}
 
-		expects_lr<void> depository_adjustment::validate(uint64_t block_number) const
+		expects_lr<void> bridge_adjustment::validate(uint64_t block_number) const
 		{
 			if (incoming_fee.is_nan() || incoming_fee.is_negative())
 				return layer_exception("invalid incoming fee");
@@ -2929,7 +2934,7 @@ namespace tangent
 
 			return ledger::transaction::validate(block_number);
 		}
-		expects_lr<void> depository_adjustment::execute(ledger::transaction_context* context) const
+		expects_lr<void> bridge_adjustment::execute(ledger::transaction_context* context) const
 		{
 			auto validation = transaction::execute(context);
 			if (!validation)
@@ -2939,40 +2944,40 @@ namespace tangent
 			if (!attestation_requirement)
 				return attestation_requirement;
 
-			auto reward = context->apply_depository_reward(algorithm::asset::base_id_of(asset), context->receipt.from, incoming_fee, outgoing_fee);
+			auto reward = context->apply_bridge_reward(algorithm::asset::base_id_of(asset), context->receipt.from, incoming_fee, outgoing_fee);
 			if (!reward)
 				return reward.error();
 
-			auto depository = context->get_depository_policy(asset, context->receipt.from).or_else(states::depository_policy(context->receipt.from, asset, nullptr));
-			if (depository.accepts_withdrawal_requests != accepts_withdrawal_requests && !accepts_withdrawal_requests)
+			auto bridge = context->get_bridge_policy(asset, context->receipt.from).or_else(states::bridge_policy(context->receipt.from, asset, nullptr));
+			if (bridge.accepts_withdrawal_requests != accepts_withdrawal_requests && !accepts_withdrawal_requests)
 			{
-				auto balance = context->get_depository_balance(asset, context->receipt.from);
+				auto balance = context->get_bridge_balance(asset, context->receipt.from);
 				if (balance)
 				{
 					for (auto& [token_asset, token_value] : balance->balances)
 					{
 						if (algorithm::asset::is_aux(token_asset, true))
 						{
-							auto reward = context->get_depository_reward_median(token_asset).or_else(states::depository_reward(context->receipt.from, token_asset, nullptr));
+							auto reward = context->get_bridge_reward_median(token_asset).or_else(states::bridge_reward(context->receipt.from, token_asset, nullptr));
 							if (token_value > reward.outgoing_fee)
-								return layer_exception(algorithm::asset::handle_of(token_asset) + " depository has non-dust custodial balance (max: " + reward.outgoing_fee.to_string() + ")");
+								return layer_exception(algorithm::asset::handle_of(token_asset) + " bridge has non-dust custodial balance (max: " + reward.outgoing_fee.to_string() + ")");
 						}
 						else if (token_value.is_positive())
-							return layer_exception(algorithm::asset::handle_of(token_asset) + " depository has custodial token balance");
+							return layer_exception(algorithm::asset::handle_of(token_asset) + " bridge has custodial token balance");
 					}
 				}
 			}
 
-			if ((security_level > 0 && security_level != depository.security_level) || depository.participation_threshold != participation_threshold || depository.accepts_account_requests != accepts_account_requests || depository.accepts_withdrawal_requests != accepts_withdrawal_requests)
+			if ((security_level > 0 && security_level != bridge.security_level) || bridge.participation_threshold != participation_threshold || bridge.accepts_account_requests != accepts_account_requests || bridge.accepts_withdrawal_requests != accepts_withdrawal_requests)
 			{
-				auto policy = context->apply_depository_policy(asset, context->receipt.from, security_level, participation_threshold, accepts_account_requests, accepts_withdrawal_requests);
+				auto policy = context->apply_bridge_policy(asset, context->receipt.from, security_level, participation_threshold, accepts_account_requests, accepts_withdrawal_requests);
 				if (!policy)
 					return policy.error();
 			}
 
 			return expectation::met;
 		}
-		bool depository_adjustment::store_body(format::wo_stream* stream) const
+		bool bridge_adjustment::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_decimal(incoming_fee);
@@ -2983,7 +2988,7 @@ namespace tangent
 			stream->write_boolean(accepts_withdrawal_requests);
 			return true;
 		}
-		bool depository_adjustment::load_body(format::ro_stream& stream)
+		bool bridge_adjustment::load_body(format::ro_stream& stream)
 		{
 			if (!stream.read_decimal(stream.read_type(), &incoming_fee))
 				return false;
@@ -3005,19 +3010,19 @@ namespace tangent
 
 			return true;
 		}
-		void depository_adjustment::set_reward(const decimal& new_incoming_fee, const decimal& new_outgoing_fee)
+		void bridge_adjustment::set_reward(const decimal& new_incoming_fee, const decimal& new_outgoing_fee)
 		{
 			incoming_fee = new_incoming_fee;
 			outgoing_fee = new_outgoing_fee;
 		}
-		void depository_adjustment::set_security(uint8_t new_security_level, const decimal& new_participation_threshold, bool new_accepts_account_requests, bool new_accepts_withdrawal_requests)
+		void bridge_adjustment::set_security(uint8_t new_security_level, const decimal& new_participation_threshold, bool new_accepts_account_requests, bool new_accepts_withdrawal_requests)
 		{
 			participation_threshold = new_participation_threshold;
 			security_level = new_security_level;
 			accepts_account_requests = new_accepts_account_requests;
 			accepts_withdrawal_requests = new_accepts_withdrawal_requests;
 		}
-		uptr<schema> depository_adjustment::as_schema() const
+		uptr<schema> bridge_adjustment::as_schema() const
 		{
 			schema* data = ledger::transaction::as_schema().reset();
 			data->set("incoming_fee", var::decimal(incoming_fee));
@@ -3028,25 +3033,25 @@ namespace tangent
 			data->set("accepts_withdrawal_requests", var::boolean(accepts_withdrawal_requests));
 			return data;
 		}
-		uint32_t depository_adjustment::as_type() const
+		uint32_t bridge_adjustment::as_type() const
 		{
 			return as_instance_type();
 		}
-		std::string_view depository_adjustment::as_typename() const
+		std::string_view bridge_adjustment::as_typename() const
 		{
 			return as_instance_typename();
 		}
-		uint32_t depository_adjustment::as_instance_type()
+		uint32_t bridge_adjustment::as_instance_type()
 		{
 			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
 			return hash;
 		}
-		std::string_view depository_adjustment::as_instance_typename()
+		std::string_view bridge_adjustment::as_instance_typename()
 		{
-			return "depository_adjustment";
+			return "bridge_adjustment";
 		}
 
-		expects_lr<void> depository_migration::validate(uint64_t block_number) const
+		expects_lr<void> bridge_migration::validate(uint64_t block_number) const
 		{
 			if (shares.empty())
 				return layer_exception("no shares found");
@@ -3068,7 +3073,7 @@ namespace tangent
 
 			return ledger::transaction::validate(block_number);
 		}
-		expects_lr<void> depository_migration::execute(ledger::transaction_context* context) const
+		expects_lr<void> bridge_migration::execute(ledger::transaction_context* context) const
 		{
 			auto validation = transaction::execute(context);
 			if (!validation)
@@ -3079,17 +3084,17 @@ namespace tangent
 			auto new_threshold = decimal::zero();
 			for (auto& [hash, share] : shares)
 			{
-				auto target = context->get_depository_account(share.asset, share.manager, share.owner);
+				auto target = context->get_bridge_account(share.asset, share.manager, share.owner);
 				if (!target)
 					return target.error();
 				else if (target->group.find(old_manager) == target->group.end())
 					return layer_exception("migration of other group member is forbidden");
 
-				auto depository_policy = context->get_depository_policy(asset, share.manager);
-				if (!depository_policy)
-					return depository_policy.error();
+				auto bridge_policy = context->get_bridge_policy(asset, share.manager);
+				if (!bridge_policy)
+					return bridge_policy.error();
 
-				new_threshold = math0::max(new_threshold, depository_policy->participation_threshold);
+				new_threshold = math0::max(new_threshold, bridge_policy->participation_threshold);
 				exclusion.insert(target->group.begin(), target->group.end());
 			}
 
@@ -3098,13 +3103,13 @@ namespace tangent
 				return committee.error();
 
 			auto& new_manager = committee->front();
-			auto event = context->emit_event<depository_migration>({ format::variable(new_manager.owner.view()) });
+			auto event = context->emit_event<bridge_migration>({ format::variable(new_manager.owner.view()) });
 			if (!event)
 				return event;
 
 			return expectation::met;
 		}
-		expects_promise_rt<void> depository_migration::dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const
+		expects_promise_rt<void> bridge_migration::dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const
 		{
 			if (context->get_witness_event(context->receipt.transaction_hash))
 				return expects_promise_rt<void>(expectation::met);
@@ -3169,15 +3174,15 @@ namespace tangent
 				if (!algorithm::signing::recover_hash(confirmation_hash, confirmation_public_key_hash, state.confirmation_signature) || !confirmation_public_key_hash.equals(new_manager))
 					coreturn remote_exception("invalid confirmation signature");
 
-				auto* transaction = memory::init<depository_migration_finalization>();
+				auto* transaction = memory::init<bridge_migration_finalization>();
 				transaction->asset = asset;
-				transaction->depository_migration_hash = context->receipt.transaction_hash;
+				transaction->bridge_migration_hash = context->receipt.transaction_hash;
 				transaction->confirmation_signature = state.confirmation_signature;
 				dispatcher->emit_transaction(transaction);
 				coreturn expects_promise_rt<void>(expectation::met);
 			});
 		}
-		bool depository_migration::store_body(format::wo_stream* stream) const
+		bool bridge_migration::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer((uint16_t)shares.size());
@@ -3189,7 +3194,7 @@ namespace tangent
 			}
 			return true;
 		}
-		bool depository_migration::load_body(format::ro_stream& stream)
+		bool bridge_migration::load_body(format::ro_stream& stream)
 		{
 			uint16_t shares_size;
 			if (!stream.read_integer(stream.read_type(), &shares_size))
@@ -3214,20 +3219,20 @@ namespace tangent
 
 			return true;
 		}
-		void depository_migration::add_share(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner)
+		void bridge_migration::add_share(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner)
 		{
 			auto share = secret_share(asset, manager, owner);
 			auto hash = share.as_hash();
 			shares[hash] = std::move(share);
 		}
-		bool depository_migration::is_dispatchable() const
+		bool bridge_migration::is_dispatchable() const
 		{
 			return true;
 		}
-		algorithm::pubkeyhash_t depository_migration::get_new_manager(const ledger::receipt& receipt) const
+		algorithm::pubkeyhash_t bridge_migration::get_new_manager(const ledger::receipt& receipt) const
 		{
 			algorithm::pubkeyhash_t result;
-			auto* event = receipt.find_event<depository_migration>();
+			auto* event = receipt.find_event<bridge_migration>();
 			if (event != nullptr)
 			{
 				if (!event->empty() && event->front().as_string().size() == sizeof(algorithm::pubkeyhash_t))
@@ -3235,7 +3240,7 @@ namespace tangent
 			}
 			return result;
 		}
-		uptr<schema> depository_migration::as_schema() const
+		uptr<schema> bridge_migration::as_schema() const
 		{
 			schema* data = ledger::transaction::as_schema().reset();
 			auto* shares_data = data->set("shares", var::set::array());
@@ -3248,49 +3253,49 @@ namespace tangent
 			}
 			return data;
 		}
-		uint32_t depository_migration::as_type() const
+		uint32_t bridge_migration::as_type() const
 		{
 			return as_instance_type();
 		}
-		std::string_view depository_migration::as_typename() const
+		std::string_view bridge_migration::as_typename() const
 		{
 			return as_instance_typename();
 		}
-		uint32_t depository_migration::as_instance_type()
+		uint32_t bridge_migration::as_instance_type()
 		{
 			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
 			return hash;
 		}
-		std::string_view depository_migration::as_instance_typename()
+		std::string_view bridge_migration::as_instance_typename()
 		{
-			return "depository_migration";
+			return "bridge_migration";
 		}
 
-		expects_lr<void> depository_migration_finalization::validate(uint64_t block_number) const
+		expects_lr<void> bridge_migration_finalization::validate(uint64_t block_number) const
 		{
-			if (!depository_migration_hash)
-				return layer_exception("invalid depository migration transaction");
+			if (!bridge_migration_hash)
+				return layer_exception("invalid bridge migration transaction");
 
 			if (confirmation_signature.empty())
 				return layer_exception("invalid confirmation signature");
 
 			return ledger::commitment::validate(block_number);
 		}
-		expects_lr<void> depository_migration_finalization::execute(ledger::transaction_context* context) const
+		expects_lr<void> bridge_migration_finalization::execute(ledger::transaction_context* context) const
 		{
 			auto validation = commitment::execute(context);
 			if (!validation)
 				return validation.error();
 
-			auto event = context->apply_witness_event(depository_migration_hash, context->receipt.transaction_hash);
+			auto event = context->apply_witness_event(bridge_migration_hash, context->receipt.transaction_hash);
 			if (!event)
 				return event.error();
 
-			auto migration = context->get_block_transaction<depository_migration>(depository_migration_hash);
+			auto migration = context->get_block_transaction<bridge_migration>(bridge_migration_hash);
 			if (!migration)
 				return migration.error();
 
-			auto* migration_transaction = (depository_migration*)*migration->transaction;
+			auto* migration_transaction = (bridge_migration*)*migration->transaction;
 			if (migration->receipt.from != context->receipt.from)
 				return layer_exception("invalid migration transaction");
 
@@ -3308,7 +3313,7 @@ namespace tangent
 			auto old_manager = algorithm::pubkeyhash_t(migration->receipt.from);
 			for (auto& [hash, share] : migration_transaction->shares)
 			{
-				auto target = context->get_depository_account(share.asset, share.manager, share.owner);
+				auto target = context->get_bridge_account(share.asset, share.manager, share.owner);
 				if (!target)
 					return target.error();
 
@@ -3322,23 +3327,23 @@ namespace tangent
 
 				target->group.erase(old_manager);
 				target->group.insert(new_manager);
-				target = context->apply_depository_account(share.asset, share.manager, share.owner, target->public_key, std::move(target->group));
+				target = context->apply_bridge_account(share.asset, share.manager, share.owner, target->public_key, std::move(target->group));
 				if (!target)
 					return target.error();
 			}
 
 			return expectation::met;
 		}
-		bool depository_migration_finalization::store_body(format::wo_stream* stream) const
+		bool bridge_migration_finalization::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_integer(depository_migration_hash);
+			stream->write_integer(bridge_migration_hash);
 			stream->write_string(confirmation_signature.optimized_view());
 			return true;
 		}
-		bool depository_migration_finalization::load_body(format::ro_stream& stream)
+		bool bridge_migration_finalization::load_body(format::ro_stream& stream)
 		{
-			if (!stream.read_integer(stream.read_type(), &depository_migration_hash))
+			if (!stream.read_integer(stream.read_type(), &bridge_migration_hash))
 				return false;
 
 			string intermediate;
@@ -3347,29 +3352,29 @@ namespace tangent
 
 			return true;
 		}
-		uptr<schema> depository_migration_finalization::as_schema() const
+		uptr<schema> bridge_migration_finalization::as_schema() const
 		{
 			schema* data = ledger::commitment::as_schema().reset();
-			data->set("depository_migration_hash", var::string(algorithm::encoding::encode_0xhex256(depository_migration_hash)));
+			data->set("bridge_migration_hash", var::string(algorithm::encoding::encode_0xhex256(bridge_migration_hash)));
 			data->set("confirmation_signature", confirmation_signature.empty() ? var::null() : var::string(format::util::encode_0xhex(confirmation_signature.view())));
 			return data;
 		}
-		uint32_t depository_migration_finalization::as_type() const
+		uint32_t bridge_migration_finalization::as_type() const
 		{
 			return as_instance_type();
 		}
-		std::string_view depository_migration_finalization::as_typename() const
+		std::string_view bridge_migration_finalization::as_typename() const
 		{
 			return as_instance_typename();
 		}
-		uint32_t depository_migration_finalization::as_instance_type()
+		uint32_t bridge_migration_finalization::as_instance_type()
 		{
 			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
 			return hash;
 		}
-		std::string_view depository_migration_finalization::as_instance_typename()
+		std::string_view bridge_migration_finalization::as_instance_typename()
 		{
-			return "depository_migration_finalization";
+			return "bridge_migration_finalization";
 		}
 
 		ledger::transaction* resolver::from_stream(format::ro_stream& stream)
@@ -3393,22 +3398,22 @@ namespace tangent
 				return memory::init<rollup>();
 			else if (hash == validator_adjustment::as_instance_type())
 				return memory::init<validator_adjustment>();
-			else if (hash == depository_account::as_instance_type())
-				return memory::init<depository_account>();
-			else if (hash == depository_account_finalization::as_instance_type())
-				return memory::init<depository_account_finalization>();
-			else if (hash == depository_withdrawal::as_instance_type())
-				return memory::init<depository_withdrawal>();
-			else if (hash == depository_withdrawal_finalization::as_instance_type())
-				return memory::init<depository_withdrawal_finalization>();
-			else if (hash == depository_attestation::as_instance_type())
-				return memory::init<depository_attestation>();
-			else if (hash == depository_adjustment::as_instance_type())
-				return memory::init<depository_adjustment>();
-			else if (hash == depository_migration::as_instance_type())
-				return memory::init<depository_migration>();
-			else if (hash == depository_migration_finalization::as_instance_type())
-				return memory::init<depository_migration_finalization>();
+			else if (hash == bridge_account::as_instance_type())
+				return memory::init<bridge_account>();
+			else if (hash == bridge_account_finalization::as_instance_type())
+				return memory::init<bridge_account_finalization>();
+			else if (hash == bridge_withdrawal::as_instance_type())
+				return memory::init<bridge_withdrawal>();
+			else if (hash == bridge_withdrawal_finalization::as_instance_type())
+				return memory::init<bridge_withdrawal_finalization>();
+			else if (hash == bridge_attestation::as_instance_type())
+				return memory::init<bridge_attestation>();
+			else if (hash == bridge_adjustment::as_instance_type())
+				return memory::init<bridge_adjustment>();
+			else if (hash == bridge_migration::as_instance_type())
+				return memory::init<bridge_migration>();
+			else if (hash == bridge_migration_finalization::as_instance_type())
+				return memory::init<bridge_migration_finalization>();
 			return nullptr;
 		}
 		ledger::transaction* resolver::from_copy(const ledger::transaction* base)
@@ -3424,22 +3429,22 @@ namespace tangent
 				return memory::init<rollup>(*(const rollup*)base);
 			else if (hash == validator_adjustment::as_instance_type())
 				return memory::init<validator_adjustment>(*(const validator_adjustment*)base);
-			else if (hash == depository_account::as_instance_type())
-				return memory::init<depository_account>(*(const depository_account*)base);
-			else if (hash == depository_account_finalization::as_instance_type())
-				return memory::init<depository_account_finalization>(*(const depository_account_finalization*)base);
-			else if (hash == depository_withdrawal::as_instance_type())
-				return memory::init<depository_withdrawal>(*(const depository_withdrawal*)base);
-			else if (hash == depository_withdrawal_finalization::as_instance_type())
-				return memory::init<depository_withdrawal_finalization>(*(const depository_withdrawal_finalization*)base);
-			else if (hash == depository_attestation::as_instance_type())
-				return memory::init<depository_attestation>(*(const depository_attestation*)base);
-			else if (hash == depository_adjustment::as_instance_type())
-				return memory::init<depository_adjustment>(*(const depository_adjustment*)base);
-			else if (hash == depository_migration::as_instance_type())
-				return memory::init<depository_migration>(*(const depository_migration*)base);
-			else if (hash == depository_migration_finalization::as_instance_type())
-				return memory::init<depository_migration_finalization>(*(const depository_migration_finalization*)base);
+			else if (hash == bridge_account::as_instance_type())
+				return memory::init<bridge_account>(*(const bridge_account*)base);
+			else if (hash == bridge_account_finalization::as_instance_type())
+				return memory::init<bridge_account_finalization>(*(const bridge_account_finalization*)base);
+			else if (hash == bridge_withdrawal::as_instance_type())
+				return memory::init<bridge_withdrawal>(*(const bridge_withdrawal*)base);
+			else if (hash == bridge_withdrawal_finalization::as_instance_type())
+				return memory::init<bridge_withdrawal_finalization>(*(const bridge_withdrawal_finalization*)base);
+			else if (hash == bridge_attestation::as_instance_type())
+				return memory::init<bridge_attestation>(*(const bridge_attestation*)base);
+			else if (hash == bridge_adjustment::as_instance_type())
+				return memory::init<bridge_adjustment>(*(const bridge_adjustment*)base);
+			else if (hash == bridge_migration::as_instance_type())
+				return memory::init<bridge_migration>(*(const bridge_migration*)base);
+			else if (hash == bridge_migration_finalization::as_instance_type())
+				return memory::init<bridge_migration_finalization>(*(const bridge_migration_finalization*)base);
 			return nullptr;
 		}
 		expects_promise_rt<oracle::prepared_transaction> resolver::prepare_transaction(const algorithm::asset_id& asset, const oracle::wallet_link& from_link, const vector<oracle::value_transfer>& to, const decimal& max_fee)
@@ -3514,10 +3519,10 @@ namespace tangent
 
 			if (dispatcher != nullptr)
 			{
-				auto* transaction = memory::init<depository_attestation>();
+				auto* transaction = memory::init<bridge_attestation>();
 				transaction->asset = asset;
 				transaction->set_gas(decimal::zero(), 0);
-				transaction->set_computed_proof(finalized.as_computed());
+				transaction->set_computed_proof(finalized.as_computed(), { });
 				dispatcher->emit_transaction(transaction);
 			}
 			return expects_promise_rt<void>(expectation::met);

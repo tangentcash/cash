@@ -282,7 +282,7 @@ namespace tangent
             decimal participation_fee_rate = std::string_view("0.30");
             decimal attestation_consensus_threshold = std::string_view("0.66");
             decimal attestation_fee_rate = std::string_view("0.15");
-            decimal depository_reward_max_increase = std::string_view("0.05");
+            decimal bridge_reward_max_increase = std::string_view("0.05");
             decimal consensus_difficulty_max_increase = std::string_view("2.00");
             decimal consensus_difficulty_max_decrease = std::string_view("0.80");
             decimal consensus_difficulty_bump_per_priority = std::string_view("1.3625");

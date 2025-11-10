@@ -481,7 +481,111 @@ namespace tangent
 
 			return algorithm::arithmetic::divide(*b, *a);
 		}
-		expects_lr<void> mempoolstate::add_transaction(ledger::transaction& value, bool resurrection)
+		expects_lr<void> mempoolstate::add_attestation(const algorithm::asset_id& asset, const oracle::computed_transaction& value, const algorithm::hashsig_t& signature)
+		{
+			format::wo_stream message;
+			if (!value.store(&message))
+				return expects_lr<void>(layer_exception("transaction serialization error"));
+
+			uint8_t asset_hash[32], hash[32], commitment[32];
+			asset.encode(asset_hash);
+			value.as_attestation_hash().encode(hash);
+			value.as_hash().encode(commitment);
+
+			schema_list map;
+			map.push_back(var::set::binary(hash, sizeof(hash)));
+			map.push_back(var::set::binary(commitment, sizeof(commitment)));
+			map.push_back(var::set::binary(asset_hash, sizeof(asset_hash)));
+			map.push_back(var::set::binary(message.data));
+			map.push_back(var::set::binary(hash, sizeof(hash)));
+			map.push_back(var::set::binary(commitment, sizeof(commitment)));
+			map.push_back(var::set::binary(signature.view()));
+
+			auto cursor = get_storage().emplace_query(__func__,
+				"INSERT OR REPLACE INTO proofs (hash, commitment, asset, message) VALUES (?, ?, ?);"
+				"INSERT OR REPLACE INTO commitments (hash, commitment, signature) VALUES (?, ?, ?)", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+			return expectation::met;
+		}
+		expects_lr<uint256_t> mempoolstate::pull_attestation_hash(size_t required_signatures)
+		{
+			schema_list map;
+			map.push_back(var::set::integer(required_signatures));
+
+			auto cursor = get_storage().emplace_query(__func__, "SELECT hash FROM (SELECT hash, COUNT(*) OVER (PARTITION BY hash, commitment) AS signatures FROM commitments) counts WHERE signatures >= ? LIMIT 1", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<uint256_t>(layer_exception(ledger::storage_util::error_of(cursor)));
+			else if (cursor->empty())
+				return expects_lr<uint256_t>(layer_exception("attestation not found"));
+
+			auto hash = (*cursor)["hash"].get().get_blob();
+			uint256_t attestation_hash;
+			attestation_hash.decode_compact((uint8_t*)hash.data(), hash.size());
+			return expects_lr<uint256_t>(std::move(attestation_hash));
+		}
+		expects_lr<attestation_tree> mempoolstate::get_attestation(const uint256_t& attestation_hash)
+		{
+			uint8_t hash[32];
+			attestation_hash.encode(hash);
+
+			schema_list map;
+			map.push_back(var::set::binary(hash, sizeof(hash)));
+			map.push_back(var::set::binary(hash, sizeof(hash)));
+
+			auto cursor = get_storage().emplace_query(__func__,
+				"SELECT commitment, signature FROM commitments WHERE hash = ?;"
+				"SELECT commitment, asset, message FROM proofs WHERE hash = ?", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<attestation_tree>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+			attestation_tree result;
+			for (auto row : cursor->first())
+			{
+				auto commitment = row["commitment"].get().get_blob();
+				uint256_t commitment_hash;
+				commitment_hash.decode_compact((uint8_t*)commitment.data(), commitment.size());
+				result.commitments[commitment_hash].insert(algorithm::hashsig_t(row["signature"].get().get_blob()));
+			}
+
+			for (auto row : cursor->last())
+			{
+				auto message = row["message"].get().get_blob();
+				format::ro_stream proof_message = format::ro_stream(message);
+				oracle::computed_transaction proof;
+				if (proof.load(proof_message))
+				{
+					auto asset_hash = row["asset"].get().get_blob();
+					auto commitment = row["commitment"].get().get_blob();
+					uint256_t asset, commitment_hash;
+					asset.decode_compact((uint8_t*)asset_hash.data(), asset_hash.size());
+					commitment_hash.decode_compact((uint8_t*)commitment.data(), commitment.size());
+					result.proofs[commitment_hash] = std::move(proof);
+					result.asset = asset;
+				}
+			}
+
+			return expects_lr<attestation_tree>(std::move(result));
+		}
+		expects_lr<void> mempoolstate::remove_attestation(const uint256_t& attestation_hash)
+		{
+			uint8_t hash[32];
+			attestation_hash.encode(hash);
+
+			schema_list map;
+			map.push_back(var::set::binary(hash, sizeof(hash)));
+			map.push_back(var::set::binary(hash, sizeof(hash)));
+
+			auto cursor = get_storage().emplace_query(__func__,
+				"DELETE FROM proofs WHERE hash = ?;"
+				"DELETE FROM commitments WHERE hash = ?", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+			return expectation::met;
+		}
+		expects_lr<void> mempoolstate::add_transaction(const ledger::transaction& value, bool resurrection)
 		{
 			format::wo_stream message;
 			if (!value.store(&message))
@@ -661,7 +765,7 @@ namespace tangent
 				return scalar.hash();
 			}
 		}
-		expects_lr<vector<states::depository_account>> mempoolstate::get_group_accounts(const algorithm::pubkeyhash_t& manager, size_t offset, size_t count)
+		expects_lr<vector<states::bridge_account>> mempoolstate::get_group_accounts(const algorithm::pubkeyhash_t& manager, size_t offset, size_t count)
 		{
 			schema_list map;
 			if (!manager.empty())
@@ -671,10 +775,10 @@ namespace tangent
 
 			auto cursor = get_storage().emplace_query(__func__, !manager.empty() ? "SELECT asset, owner FROM groups WHERE manager = ? LIMIT ? OFFSET ?" : "SELECT asset, manager, owner FROM groups LIMIT ? OFFSET ?", &map);
 			if (!cursor || cursor->error())
-				return expects_lr<vector<states::depository_account>>(layer_exception(ledger::storage_util::error_of(cursor)));
+				return expects_lr<vector<states::bridge_account>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			auto context = ledger::transaction_context();
-			vector<states::depository_account> result;
+			vector<states::bridge_account> result;
 			for (auto row : cursor->first())
 			{
 				auto asset_data = row["asset"].get().get_blob();
@@ -686,7 +790,7 @@ namespace tangent
 
 				auto owner = algorithm::pubkeyhash_t(row["owner"].get().get_blob());
 				auto submanager = algorithm::pubkeyhash_t(row["manager"].get().get_blob());
-				auto account = context.get_depository_account(asset, !manager.empty()  ? manager : submanager.data, owner.data);
+				auto account = context.get_bridge_account(asset, !manager.empty()  ? manager : submanager.data, owner.data);
 				if (account)
 					result.push_back(std::move(*account));
 			}
@@ -909,6 +1013,34 @@ namespace tangent
 				PRIMARY KEY (asset, owner, manager)
 			) WITHOUT ROWID;
 			CREATE INDEX IF NOT EXISTS groups_manager ON groups (manager);
+			CREATE TABLE IF NOT EXISTS proofs
+			(
+				hash BLOB(32) NOT NULL,
+				commitment BLOB(32) NOT NULL,
+				asset BLOB(32) NOT NULL,
+				message BLOB NOT NULL,
+				PRIMARY KEY (hash, commitment)
+			);
+			CREATE TABLE IF NOT EXISTS commitments
+			(
+				hash BLOB(32) NOT NULL,
+				commitment BLOB(32) NOT NULL,
+				signature BLOB(65) NOT NULL,
+				PRIMARY KEY (hash, commitment, signature)
+			);
+			CREATE TABLE IF NOT EXISTS transactions
+			(
+				hash BLOB(32) NOT NULL,
+				owner BLOB(20) NOT NULL,
+				asset BLOB(32) NOT NULL,
+				nonce BIGINT NOT NULL,
+				epoch INTEGER DEFAULT 0,
+				quality INTEGER DEFAULT NULL,
+				time INTEGER NOT NULL,
+				price TEXT NOT NULL,
+				message BLOB NOT NULL,
+				PRIMARY KEY (hash)
+			);
 			CREATE TABLE IF NOT EXISTS transactions
 			(
 				hash BLOB(32) NOT NULL,
