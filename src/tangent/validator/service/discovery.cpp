@@ -88,6 +88,7 @@ namespace tangent
 			http::query query;
 			query.decode("application/x-www-form-urlencoded", base->request.query);
 
+			auto* port_argument = query.get("port");
 			auto* consensus_argument = query.get("consensus");
 			auto* discovery_argument = query.get("discovery");
 			auto* oracle_argument = query.get("oracle");
@@ -103,7 +104,7 @@ namespace tangent
 			if (!count || count > protocol::now().user.discovery.cursor_size)
 			{
 				if (protocol::now().user.discovery.logging)
-					VI_WARN("peer %s discovery failed: bad arguments (time: %" PRId64 " ms, args: %s)", base->get_peer_ip_address().or_else("[bad_address]").c_str(), date_time().milliseconds() - base->info.start, base->request.query.c_str());
+					VI_WARN("peer %s discovery failed: bad arguments (time: %" PRId64 " ms, args: %s)", base->get_peer_ip_address().or_else("[bad_address]").c_str(), date_time().milliseconds() - base->info.start, base->request.query.empty() ? "none" : base->request.query.c_str());
 
 				return base->abort(400, "Bad page size. count must not exceed %" PRIu64 " elements.", protocol::now().user.discovery.cursor_size);
 			}
@@ -128,22 +129,46 @@ namespace tangent
 			if (attestation_argument != nullptr && attestation_argument->value.get_boolean())
 				services |= (uint32_t)storages::node_services::attestation;
 
-			auto mempool = storages::mempoolstate();
-			auto nodes = mempool.get_random_nodes_with(count, services);
-			if (!nodes || nodes->empty())
+			storages::node_ports port = storages::node_ports::consensus;
+			if (port_argument != nullptr)
 			{
-				if (protocol::now().user.discovery.logging)
-					VI_INFO("peer %s discovery: no nodes returned (time: %" PRId64 " ms, args: %s)", base->get_peer_ip_address().or_else("[bad_address]").c_str(), date_time().milliseconds() - base->info.start, base->request.query.c_str());
-
-				return base->abort(404, "No nodes found.");
+				auto value = port_argument->value.get_blob();
+				if (value == "discovery")
+					port = storages::node_ports::discovery;
+				else if (value == "rpc")
+					port = storages::node_ports::rpc;
 			}
 
+			auto mempool = storages::mempoolstate();
+			auto nodes = mempool.get_random_nodes_with(count, services, port).or_else(vector<storages::node_location_pair>());
 			if (protocol::now().user.discovery.logging)
-				VI_INFO("peer %s discovery: %i nodes returned (time: %" PRId64 " ms, args: %s)", base->get_peer_ip_address().or_else("[bad_address]").c_str(), (int)nodes->size(), date_time().milliseconds() - base->info.start, base->request.query.c_str());
+				VI_INFO("peer %s discovery: %i nodes returned (time: %" PRId64 " ms, args: %s)", base->get_peer_ip_address().or_else("[bad_address]").c_str(), (int)nodes.size(), date_time().milliseconds() - base->info.start, base->request.query.empty() ? "none" : base->request.query.c_str());
 
 			uptr<schema> data = var::set::array();
-			for (auto& [account, address] : *nodes)
+			for (auto& [account, address] : nodes)
 				data->push(var::string(system_endpoint::to_uri(address)));
+
+			auto node = mempool.get_local_node();
+			if (node && (storages::mempoolstate::services_of(node->first) & services) > 0)
+			{
+				switch (port)
+				{
+					case storages::node_ports::consensus:
+						if (protocol::now().user.consensus.server)
+							data->push(var::string("tcp://selfhost:" + to_string(node->first.ports.consensus)));
+						break;
+					case storages::node_ports::discovery:
+						if (protocol::now().user.discovery.server)
+							data->push(var::string("tcp://selfhost:" + to_string(node->first.ports.discovery)));
+						break;
+					case storages::node_ports::rpc:
+						if (protocol::now().user.rpc.server)
+							data->push(var::string("tcp://selfhost:" + to_string(node->first.ports.rpc)));
+						break;
+					default:
+						break;
+				}
+			}
 
 			base->response.set_header("Content-Type", "application/json");
 			base->response.content.assign(schema::to_json(*data));

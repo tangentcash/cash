@@ -25,6 +25,13 @@ namespace tangent
 			may_finalize
 		};
 
+		enum class node_ports : uint16_t
+		{
+			consensus = (1 << 0),
+			discovery = (1 << 1),
+			rpc = (1 << 2),
+		};
+
 		enum class node_services : uint16_t
 		{
 			consensus = (1 << 0),
@@ -72,7 +79,7 @@ namespace tangent
 			expects_lr<node_pair> get_node(const socket_address& address);
 			expects_lr<node_pair> get_node(const algorithm::pubkeyhash_t& account);
 			expects_lr<vector<node_location_pair>> get_neighbor_nodes_with(size_t offset, size_t count, uint32_t services = 0);
-			expects_lr<vector<node_location_pair>> get_random_nodes_with(size_t count, uint32_t services = 0);
+			expects_lr<vector<node_location_pair>> get_random_nodes_with(size_t count, uint32_t services = 0, node_ports port = node_ports::consensus);
 			expects_lr<socket_address> sample_unknown_node();
 			expects_lr<size_t> get_unknown_nodes_count();
 			expects_lr<size_t> get_nodes_count();
@@ -102,6 +109,7 @@ namespace tangent
 
 		public:
 			static double fee_percentile(fee_priority priority);
+			static uint32_t services_of(const ledger::node& node);
 
 		private:
 			static bool make_schema(sqlite::connection* connection);

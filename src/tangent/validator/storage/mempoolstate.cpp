@@ -101,26 +101,6 @@ namespace tangent
 				return encrypted_wallet_message.error();
 
 			auto address_message = address_to_message(node.address);
-			uint32_t services = 0;
-			if (node.services.has_consensus)
-				services |= (uint32_t)node_services::consensus;
-			if (node.services.has_discovery)
-				services |= (uint32_t)node_services::discovery;
-			if (node.services.has_oracle)
-				services |= (uint32_t)node_services::oracle;
-			if (node.services.has_rpc)
-				services |= (uint32_t)node_services::rpc;
-			if (node.services.has_rpc_public_access)
-				services |= (uint32_t)node_services::rpc_public_access;
-			if (node.services.has_rpc_web_sockets)
-				services |= (uint32_t)node_services::rpc_web_sockets;
-			if (node.services.has_production)
-				services |= (uint32_t)node_services::production;
-			if (node.services.has_participation)
-				services |= (uint32_t)node_services::participation;
-			if (node.services.has_attestation)
-				services |= (uint32_t)node_services::attestation;
-
 			schema_list map;
 			map.push_back(var::set::binary(address_message));
 			map.push_back(var::set::binary(address_message));
@@ -128,7 +108,7 @@ namespace tangent
 			map.push_back(var::set::binary(address_message));
 			map.push_back(var::set::binary(wallet.public_key_hash.view()));
 			map.push_back(wallet.has_secret_key() ? var::set::null() : var::set::integer(node.get_preference()));
-			map.push_back(var::set::integer(services));
+			map.push_back(var::set::integer(services_of(node)));
 			map.push_back(var::set::binary(node_message.data));
 			map.push_back(var::set::binary(*encrypted_wallet_message));
 
@@ -378,25 +358,39 @@ namespace tangent
 			}
 			return expects_lr<vector<node_location_pair>>(std::move(results));
 		}
-		expects_lr<vector<node_location_pair>> mempoolstate::get_random_nodes_with(size_t count, uint32_t services)
+		expects_lr<vector<node_location_pair>> mempoolstate::get_random_nodes_with(size_t count, uint32_t services, node_ports port)
 		{
 			schema_list map;
 			if (services > 0)
 				map.push_back(var::set::integer(services));
 			map.push_back(var::set::integer(count));
 
-			auto cursor = get_storage().emplace_query(__func__, stringify::text("SELECT account, address FROM nodes WHERE quality IS NOT NULL %s ORDER BY random() LIMIT ?", services > 0 ? "AND services & ? > 0" : ""), &map);
+			auto cursor = get_storage().emplace_query(__func__, stringify::text("SELECT account, node_message FROM nodes WHERE quality IS NOT NULL %s ORDER BY random() LIMIT ?", services > 0 ? "AND services & ? > 0" : ""), &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<node_location_pair>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			vector<node_location_pair> results;
 			for (auto row : cursor->first())
 			{
-				auto address = message_to_address(row["address"].get().get_blob());
-				if (address)
+				ledger::node node;
+				auto node_blob = row["node_message"].get().get_blob();
+				auto node_message = format::ro_stream(node_blob);
+				if (node.load(node_message))
 				{
 					auto account = algorithm::pubkeyhash_t(row["account"].get().get_blob());
-					results.push_back(std::make_pair(account, *address));
+					auto address = node.address.get_ip_address().or_else("[bad_address]");
+					switch (port)
+					{
+						case node_ports::consensus:
+							results.push_back(std::make_pair(account, socket_address(address, node.ports.consensus)));
+							break;
+						case node_ports::discovery:
+							results.push_back(std::make_pair(account, socket_address(address, node.ports.discovery)));
+							break;
+						case node_ports::rpc:
+							results.push_back(std::make_pair(account, socket_address(address, node.ports.rpc)));
+							break;
+					}
 				}
 			}
 			return expects_lr<vector<node_location_pair>>(std::move(results));
@@ -978,6 +972,29 @@ namespace tangent
 				default:
 					return 1.00;
 			}
+		}
+		uint32_t mempoolstate::services_of(const ledger::node& node)
+		{
+			uint32_t services = 0;
+			if (node.services.has_consensus)
+				services |= (uint32_t)node_services::consensus;
+			if (node.services.has_discovery)
+				services |= (uint32_t)node_services::discovery;
+			if (node.services.has_oracle)
+				services |= (uint32_t)node_services::oracle;
+			if (node.services.has_rpc)
+				services |= (uint32_t)node_services::rpc;
+			if (node.services.has_rpc_public_access)
+				services |= (uint32_t)node_services::rpc_public_access;
+			if (node.services.has_rpc_web_sockets)
+				services |= (uint32_t)node_services::rpc_web_sockets;
+			if (node.services.has_production)
+				services |= (uint32_t)node_services::production;
+			if (node.services.has_participation)
+				services |= (uint32_t)node_services::participation;
+			if (node.services.has_attestation)
+				services |= (uint32_t)node_services::attestation;
+			return services;
 		}
 		bool mempoolstate::make_schema(sqlite::connection* connection)
 		{
