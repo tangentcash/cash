@@ -186,13 +186,12 @@ namespace tangent
             {
                 string address = "0.0.0.0";
                 uint16_t port = 18419;
-                string admin_username;
-                string admin_password;
-                string user_username;
-                string user_password;
+                string username;
+                string password;
                 uint64_t cursor_size = 512;
                 uint64_t page_size = 64;
                 bool web_sockets = false;
+                bool isolated = true;
                 bool server = false;
                 bool logging = true;
             } rpc;

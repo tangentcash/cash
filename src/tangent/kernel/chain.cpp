@@ -594,21 +594,13 @@ namespace tangent
 			if (value != nullptr && value->value.is(var_type::integer))
 				user.rpc.port = value->value.get_integer();
 
-			value = config->fetch("rpc.admin_username");
+			value = config->fetch("rpc.useranme");
 			if (value != nullptr && value->value.is(var_type::string))
-				user.rpc.admin_username = value->value.get_blob();
+				user.rpc.username = value->value.get_blob();
 
-			value = config->fetch("rpc.admin_password");
+			value = config->fetch("rpc.password");
 			if (value != nullptr && value->value.is(var_type::string))
-				user.rpc.admin_password = value->value.get_blob();
-
-			value = config->fetch("rpc.user_useranme");
-			if (value != nullptr && value->value.is(var_type::string))
-				user.rpc.user_username = value->value.get_blob();
-
-			value = config->fetch("rpc.user_password");
-			if (value != nullptr && value->value.is(var_type::string))
-				user.rpc.user_password = value->value.get_blob();
+				user.rpc.password = value->value.get_blob();
 
 			value = config->fetch("rpc.cursor_size");
 			if (value != nullptr && value->value.is(var_type::integer))
@@ -621,6 +613,10 @@ namespace tangent
 			value = config->fetch("rpc.websockets");
 			if (value != nullptr && value->value.is(var_type::boolean))
 				user.rpc.web_sockets = value->value.get_boolean();
+
+			value = config->fetch("rpc.isolated");
+			if (value != nullptr && value->value.is(var_type::boolean))
+				user.rpc.isolated = value->value.get_boolean();
 
 			value = config->fetch("rpc.server");
 			if (value != nullptr && value->value.is(var_type::boolean))

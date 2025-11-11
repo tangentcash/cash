@@ -729,7 +729,7 @@ namespace tangent
 			node.services.has_discovery = protocol::now().user.discovery.server;
 			node.services.has_oracle = protocol::now().user.oracle.server;
 			node.services.has_rpc = protocol::now().user.rpc.server;
-			node.services.has_rpc_public_access = protocol::now().user.rpc.user_username.empty();
+			node.services.has_rpc_public_access = protocol::now().user.rpc.username.empty();
 			node.services.has_rpc_web_sockets = protocol::now().user.rpc.web_sockets;
 
 			auto result = apply_node(mempool, descriptor);

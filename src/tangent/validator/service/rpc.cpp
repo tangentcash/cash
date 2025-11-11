@@ -288,13 +288,11 @@ namespace tangent
 			if (!protocol::now().user.rpc.server)
 				return;
 
-			admin_token = has_admin_authorization() ? codec::base64_encode(protocol::now().user.rpc.admin_username + ":" + protocol::now().user.rpc.admin_password) : string();
-			user_token = has_user_authorization() ? codec::base64_encode(protocol::now().user.rpc.user_username + ":" + protocol::now().user.rpc.user_password) : string();
-
+			auth_token = protocol::now().user.rpc.username.empty() ? string() : codec::base64_encode(protocol::now().user.rpc.username + ":" + protocol::now().user.rpc.password);
 			http::map_router* router = new http::map_router();
 			router->listen(protocol::now().user.rpc.address, to_string(protocol::now().user.rpc.port)).expect("listener binding error");
 			router->post("/", std::bind(&server_node::http_request, this, std::placeholders::_1));
-			router->base->callbacks.authorize = (admin_token.empty() && user_token.empty()) ? http::authorize_callback(nullptr) : std::bind(&server_node::authorize, this, std::placeholders::_1, std::placeholders::_2);
+			router->base->callbacks.authorize = auth_token.empty() ? http::authorize_callback(nullptr) : std::bind(&server_node::authorize, this, std::placeholders::_1, std::placeholders::_2);
 			router->base->callbacks.headers = std::bind(&server_node::headers, this, std::placeholders::_1, std::placeholders::_2);
 			router->base->callbacks.options = std::bind(&server_node::options, this, std::placeholders::_1);
 			router->base->auth.type = "Basic";
@@ -454,27 +452,13 @@ namespace tangent
 			item.function = std::move(function);
 			methods[string(method)] = std::move(item);
 		}
-		bool server_node::has_admin_authorization()
-		{
-			return !protocol::now().user.rpc.admin_username.empty();
-		}
-		bool server_node::has_user_authorization()
-		{
-			return !protocol::now().user.rpc.user_username.empty();
-		}
 		bool server_node::is_active()
 		{
 			return node->get_state() == server_state::working;
 		}
 		bool server_node::authorize(http::connection* base, http::credentials* credentials)
 		{
-			if (has_admin_authorization() && credentials->token == admin_token)
-				return true;
-
-			if (has_user_authorization() && credentials->token == user_token)
-				return true;
-
-			return false;
+			return credentials->token == auth_token;
 		}
 		bool server_node::headers(http::connection* client, string& content)
 		{
@@ -609,14 +593,9 @@ namespace tangent
 				goto next_request;
 			}
 
-			if (has_admin_authorization() && context->second.access_types & (uint32_t)access_type::a && base->request.user.token != admin_token)
+			if (protocol::now().user.rpc.isolated && context->second.access_types & (uint32_t)access_type::a)
 			{
-				form_response(base, request, responses, server_response().error(error_codes::bad_method, "admin level access required"));
-				goto next_request;
-			}
-			else if (has_user_authorization() && base->request.user.token != user_token && base->request.user.token != admin_token)
-			{
-				form_response(base, request, responses, server_response().error(error_codes::bad_method, "user level access required"));
+				form_response(base, request, responses, server_response().error(error_codes::bad_method, "access to admin level functionality requires trusted environment"));
 				goto next_request;
 			}
 
@@ -3254,11 +3233,11 @@ namespace tangent
 			{
 				auto* rpc = data->set("rpc", var::set::object());
 				rpc->set("port", var::integer(protocol::now().user.rpc.port));
-				rpc->set("admin_restriction", var::boolean(!protocol::now().user.rpc.admin_username.empty()));
-				rpc->set("user_restriction", var::boolean(!protocol::now().user.rpc.user_username.empty()));
 				rpc->set("cursor_size", var::integer(protocol::now().user.rpc.cursor_size));
 				rpc->set("page_size", var::integer(protocol::now().user.rpc.page_size));
 				rpc->set("websockets", var::boolean(protocol::now().user.rpc.web_sockets));
+				rpc->set("isolated", var::boolean(protocol::now().user.rpc.isolated));
+				rpc->set("restricted", var::boolean(!protocol::now().user.rpc.username.empty()));
 			}
 
 			auto* tcp = data->set("tcp", var::set::object());

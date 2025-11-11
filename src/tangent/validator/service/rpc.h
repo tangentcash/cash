@@ -85,8 +85,7 @@ namespace tangent
 			system_control control_sys;
 			consensus::server_node* consensus_service;
 			uptr<http::server> node;
-			string admin_token;
-			string user_token;
+			string auth_token;
 
 		public:
 			server_node(consensus::server_node* new_consensus_service) noexcept;
@@ -94,8 +93,6 @@ namespace tangent
 			void startup();
 			void shutdown();
 			void bind(uint32_t access_types, const std::string_view& domain, const std::string_view& method, size_t min_params, size_t max_params, const std::string_view& args, const std::string_view& returns, const std::string_view& description, server_function&& function);
-			bool has_admin_authorization();
-			bool has_user_authorization();
 			bool is_active();
 			service_control::service_node get_entrypoint();
 

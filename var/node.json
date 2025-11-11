@@ -23,13 +23,12 @@
     "rpc": {
         "address": "0.0.0.0",
         "port": 18419,
-        "admin_username": null,
-        "admin_password": null,
-        "user_username": null,
-        "user_password": null,
+        "username": null,
+        "password": null,
         "cursor_size": 512,
         "page_size": 64,
         "websockets": false,
+        "isolated": true,
         "server": false,
         "logging": true
     },
