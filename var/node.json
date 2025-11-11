@@ -3,7 +3,7 @@
     "keystate": "./keystate.sk",
     "known_nodes": [],
     "bootstrap_nodes": [
-        "https://discovery.tangent.cash"
+        "https://tangent.cash:18420"
     ],
     "consensus": {
         "address": "0.0.0.0",
@@ -18,6 +18,19 @@
         "response_timeout": 48000,
         "cursor_size": 2048,
         "server": true,
+        "logging": true
+    },
+    "rpc": {
+        "address": "0.0.0.0",
+        "port": 18419,
+        "admin_username": null,
+        "admin_password": null,
+        "user_username": null,
+        "user_password": null,
+        "cursor_size": 512,
+        "page_size": 64,
+        "websockets": false,
+        "server": false,
         "logging": true
     },
     "discovery": {
@@ -61,19 +74,6 @@
                 }
             }
         }
-    },
-    "rpc": {
-        "address": "0.0.0.0",
-        "port": 18419,
-        "admin_username": null,
-        "admin_password": null,
-        "user_username": null,
-        "user_password": null,
-        "cursor_size": 512,
-        "page_size": 64,
-        "websockets": false,
-        "server": false,
-        "logging": true
     },
     "tcp": {
         "tls_trusted_peers": 100,
