@@ -4,10 +4,16 @@
 
 namespace tangent
 {
-	system_endpoint::system_endpoint(const std::string_view& uri) : scheme(uri), secure(false)
+	system_endpoint::system_endpoint(const std::string_view& uri, const std::string_view& parent_uri) : scheme(uri), secure(false)
 	{
 		if (scheme.hostname.empty())
 			return;
+
+		if (!parent_uri.empty() && scheme.hostname == "selfhost")
+		{
+			auto parent_scheme = location(parent_uri);
+			scheme.hostname = parent_scheme.hostname;
+		}
 
 		socket_address primary_candidate = socket_address(scheme.hostname, scheme.port > 0 ? scheme.port : protocol::now().user.consensus.port);
 		if (!primary_candidate.is_valid())

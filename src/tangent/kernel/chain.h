@@ -272,6 +272,7 @@ namespace tangent
             uint64_t transaction_throughput = 200;
             uint64_t transaction_gas = 30000;
             uint64_t wesolowski_ops = 2048;
+            uint64_t genesis_round_length = 14400;
             uint32_t delegations_max_per_account = 6;
             uint32_t delegations_zeroing_time = 25000;
             uint16_t wesolowski_bits = 2048;

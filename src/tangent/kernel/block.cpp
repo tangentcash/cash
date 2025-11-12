@@ -358,14 +358,14 @@ namespace tangent
 			if (!transaction_root || !receipt_root || !state_root)
 				return layer_exception("invalid transaction/receipt/state merkle tree root");
 
-			if (!transaction_count)
-				return layer_exception("invalid transaction count");
-
 			if (!generation_time || generation_time > evaluation_time)
 				return layer_exception("invalid time");
 
 			if (priority > protocol::now().policy.production_max_per_block)
 				return layer_exception("invalid priority");
+
+			if (!transaction_count && !is_genesis_round(number))
+				return layer_exception("non genesis round block must have transactions");
 
 			uint128_t difficulty = target.difficulty();
 			auto required_difficulty = number <= 1 || parent_block ? algorithm::wesolowski::scale(get_proof_slot_target(parent_block), get_proof_difficulty_multiplier()).difficulty() : difficulty;
@@ -763,6 +763,11 @@ namespace tangent
 			uint256_t work = (multiplier * gas_use) / gas_limit;
 			return work - (work % alignment) + alignment;
 		}
+		bool block_header::is_genesis_round(const uint64_t block_number)
+		{
+			uint64_t ending_block_number = protocol::now().policy.genesis_round_length;
+			return ending_block_number > 0 && block_number <= ending_block_number;
+		}
 
 		block::block(const block_header& other) : block_header(other)
 		{
@@ -770,8 +775,9 @@ namespace tangent
 		expects_lr<block_state> block::evaluate(const block_header* parent_block, evaluation_context* environment, const replace_transaction_callback& replace_transaction)
 		{
 			VI_ASSERT(environment != nullptr, "evaluation context should be set");
-			if (environment->incoming.empty())
-				return layer_exception("empty block is not valid");
+			bool genesis = is_genesis_round(number);
+			if (!genesis && environment->incoming.empty())
+				return layer_exception("block must include transactions");
 
 			block_header::set_parent_block(parent_block);
 			auto& policy = protocol::now().policy;
@@ -832,9 +838,9 @@ namespace tangent
 					goto retry_replacement_transaction;
 			}
 
-			if (transactions.empty())
+			if (!genesis && transactions.empty())
 			{
-				executionlog.append("\n  block must have some transactions");
+				executionlog.append("\n  block must include transactions");
 				return layer_exception(std::move(stringify::trim(executionlog)));
 			}
 
@@ -855,6 +861,9 @@ namespace tangent
 					return work.error();
 			}
 
+			size_t block_cost = (size_t)gas_cost::write_byte * 1024;
+			gas_limit += block_cost;
+			gas_use += block_cost;
 			changelog.outgoing.commit();
 			recalculate(parent_block, &changelog.outgoing);
 			return expects_lr<block_state>(std::move(changelog.outgoing));
@@ -930,7 +939,7 @@ namespace tangent
 		}
 		expects_lr<void> block::verify_integrity(const block_header* parent_block, const block_state* state) const
 		{
-			if (transactions.empty() || transaction_count != (uint32_t)transactions.size())
+			if (transaction_count != (uint32_t)transactions.size())
 				return layer_exception("invalid transactions count");
 			else if (!state_count && (state != nullptr && state_count != (uint32_t)state->finalized.size()))
 				return layer_exception("invalid states count");

@@ -397,13 +397,16 @@ namespace tangent
 		}
 		expects_lr<socket_address> mempoolstate::sample_unknown_node()
 		{
+			schema_list map;
+			map.push_back(var::set::integer(protocol::now().time.now_cpu()));
+
 			auto& storage = get_storage();
-			auto cursor = storage.query(__func__, "SELECT address FROM addresses ORDER BY random() LIMIT 1");
+			auto cursor = storage.emplace_query(__func__, "SELECT addresses.address FROM addresses LEFT JOIN cooldowns ON cooldowns.address = addresses.address WHERE cooldowns.expiration IS NULL OR cooldowns.expiration <= ? ORDER BY random() LIMIT 1", &map);
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<socket_address>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			auto message = (*cursor)["address"].get().get_blob();
-			schema_list map;
+			map.clear();
 			map.push_back(var::set::binary(message));
 
 			cursor = storage.emplace_query(__func__, "DELETE FROM addresses WHERE address = ?", &map);

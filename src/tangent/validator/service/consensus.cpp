@@ -1350,8 +1350,11 @@ namespace tangent
 
 				for (auto& bootstrap_url : lists)
 				{
+					http::fetch_frame options;
+					options.verify_peers = 0;
+
 					size_t results = std::numeric_limits<size_t>::max();
-					auto response = coawait(http::fetch(bootstrap_url));
+					auto response = coawait(http::fetch(bootstrap_url, "GET", options));
 					if (response)
 					{
 						auto addresses = uptr<schema>(response->content.get_json());
@@ -1360,7 +1363,7 @@ namespace tangent
 							auto mempool = storages::mempoolstate(); results = 0;
 							for (auto* address : addresses->get_childs())
 							{
-								auto endpoint = system_endpoint(address->value.get_blob());
+								auto endpoint = system_endpoint(address->value.get_blob(), bootstrap_url);
 								if (endpoint.is_valid() && !routing_util::is_address_reserved(endpoint.address) && mempool.apply_unknown_node(endpoint.address))
 									++results;
 							}
@@ -2037,7 +2040,13 @@ namespace tangent
 				{
 					candidate_address = coawait(find_node_from_discovery());
 					if (candidate_address)
-						coawait(connect_to_physical_node(*candidate_address));
+					{
+						if (!coawait(connect_to_physical_node(*candidate_address)))
+						{
+							auto mempool = storages::mempoolstate();
+							mempool.apply_cooldown_node(*candidate_address, 60000);
+						}
+					}
 				}
 				coreturn_void;
 			});
@@ -2106,7 +2115,7 @@ namespace tangent
 					accepting[0] = count == (transactions ? transactions->size() : 0);
 					accepting[1] = count == (commitments ? commitments->size() : 0);
 				}
-				if (is_active() && environment.incoming.empty())
+				if (!is_active() || (environment.incoming.empty() && !ledger::block_header::is_genesis_round(tip ? tip->number + 1 : 1)))
 					return environment.cleanup().report("mempool cleanup failed");
 
 				uint64_t replacements = 0;
@@ -2129,7 +2138,7 @@ namespace tangent
 					return solution.report("mempool block solution failed");
 
 				tip = chain.get_latest_block_header();
-				if (!tip || evaluation->block.number > tip->number || (evaluation->block.number == tip->number && evaluation->block.priority < tip->priority))
+				if (!tip || evaluation->block.number > tip->number || (evaluation->block.number == tip->number && evaluation->block.priority < tip->priority) || (evaluation->block.transactions.empty() && !ledger::block_header::is_genesis_round(evaluation->block.number)))
 				{
 					if (protocol::now().user.consensus.logging)
 						VI_INFO("proposing solved mempool block (number: %" PRIu64", hash: %s)", evaluation->block.number, algorithm::encoding::encode_0xhex256(evaluation->block.as_hash()).c_str());

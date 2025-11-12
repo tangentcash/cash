@@ -12,7 +12,7 @@ namespace tangent
 		socket_address address;
 		bool secure;
 
-		system_endpoint(const std::string_view& uri);
+		system_endpoint(const std::string_view& uri, const std::string_view& parent_uri = std::string_view());
 		bool is_valid() const;
 		static string to_uri(const socket_address& address, const std::string_view& protocol = "tcp");
 	};

@@ -857,12 +857,13 @@ namespace tangent
 				account.secret_key_version = 0xD;
 				account.public_key_version = 0xC;
 				account.address_version = 0x6;
-				policy.consensus_proof_time = 120;
-				policy.commitment_throughput = 500;
-				policy.transaction_throughput = 10000;
 				policy.participation_min_per_account = 1;
 				policy.participation_std_per_account = 2;
 				policy.delegations_max_per_account = std::numeric_limits<uint32_t>::max();
+				policy.genesis_round_length = 0;
+				policy.consensus_proof_time = 120;
+				policy.commitment_throughput = 500;
+				policy.transaction_throughput = 10000;
 				policy.wesolowski_bits = 512;
 				policy.wesolowski_ops = 8192;
 				break;
