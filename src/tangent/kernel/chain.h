@@ -160,7 +160,7 @@ namespace tangent
                 uint32_t inventory_size = 65536;
                 uint32_t topology_timeout = 120000;
                 uint64_t response_timeout = 48000;
-                bool may_propose = false;
+                bool may_propose = true;
                 bool server = true;
                 bool logging = true;
             } consensus;
