@@ -3,7 +3,7 @@
     "keystate": "./keystate.sk",
     "known_nodes": [],
     "bootstrap_nodes": [
-        "https://p2p.tangent.cash:18420"
+        "https://p2p.tangent.cash:18420?consensus=1"
     ],
     "consensus": {
         "address": "0.0.0.0",
