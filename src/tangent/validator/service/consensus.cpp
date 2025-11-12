@@ -2581,6 +2581,8 @@ namespace tangent
 			node.services.has_production = production && production->active;
 			node.services.has_participation = false;
 			node.services.has_attestation = false;
+			if (!node.services.has_production)
+				node.services.has_production = context.calculate_producers_size().or_else(0) == 0;
 
 			size_t count = 64;
 			size_t offset = 0;

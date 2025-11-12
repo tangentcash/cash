@@ -1647,6 +1647,14 @@ namespace tangent
 			auto filter = storages::result_filter::greater(0, -1);
 			return chain.get_multiforms_count_by_row_filter(states::validator_attestation::as_instance_type(), changelog, states::validator_attestation::as_instance_row(asset), filter, nonce);
 		}
+		expects_lr<size_t> transaction_context::calculate_producers_size() const
+		{
+			auto nonce = get_validation_nonce();
+			auto chain = storages::chainstate();
+			auto filter = storages::result_filter::greater(0, -1);
+			auto window = storages::result_index_window();
+			return chain.get_multiforms_count_by_row_filter(states::validator_production::as_instance_type(), changelog, states::validator_production::as_instance_row(), filter, nonce).or_else(0);
+		}
 		expects_lr<vector<states::validator_production>> transaction_context::calculate_producers(size_t target_size)
 		{
 			auto random = calculate_random(0);
