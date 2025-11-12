@@ -17,7 +17,7 @@
         "topology_timeout": 120000,
         "response_timeout": 48000,
         "cursor_size": 2048,
-        "may_propose": false,
+        "may_propose": true,
         "server": true,
         "logging": true
     },
