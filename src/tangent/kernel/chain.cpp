@@ -526,6 +526,10 @@ namespace tangent
 			if (value != nullptr && value->value.is(var_type::integer))
 				user.consensus.cursor_size = value->value.get_integer();
 
+			value = config->fetch("consensus.may_propose");
+			if (value != nullptr && value->value.is(var_type::boolean))
+				user.consensus.may_propose = value->value.get_boolean();
+
 			value = config->fetch("consensus.server");
 			if (value != nullptr && value->value.is(var_type::boolean))
 				user.consensus.server = value->value.get_boolean();
