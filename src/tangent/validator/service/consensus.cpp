@@ -2073,7 +2073,7 @@ namespace tangent
 				auto tip = chain.get_latest_block_header();
 				auto priority = environment.configure_priority_from_validator(wallet.public_key_hash, wallet.secret_key, tip.address());
 				auto position = priority.or_else(protocol::now().policy.production_max_per_block);
-				auto baseline_solution_time = tip->get_slot_proof_duration_average();
+				auto baseline_solution_time = tip ? tip->get_slot_proof_duration_average() : 0;
 				auto current_node_solution_time = (uint64_t)((double)baseline_solution_time * algorithm::wesolowski::adjustment_scaling(position));
 				if (position > 0 && tip)
 				{
@@ -2239,6 +2239,7 @@ namespace tangent
 			run_topology_optimization();
 			run_mempool_vacuum();
 			run_block_dispatch_retrial();
+			run_block_production();
 		}
 		void server_node::shutdown()
 		{

@@ -2089,14 +2089,17 @@ public:
 	static int consensus(inline_args& args)
 	{
 		auto& params = protocol::now();
-		uint32_t test_account = from_string<uint32_t>(args.get("test-account")).expect("must provide a \"test-account\" flag (number)");
-		ledger::wallet wallet = ledger::wallet::from_seed(stringify::text("00000%i", test_account - 1));
-		ledger::node node;
-		node.address = socket_address(params.user.consensus.address, params.user.consensus.port);
+		auto test_account = from_string<uint32_t>(args.get("test-account"));
+		if (test_account)
+		{
+			ledger::wallet wallet = ledger::wallet::from_seed(stringify::text("00000%i", *test_account - 1));
+			ledger::node node;
+			node.address = socket_address(params.user.consensus.address, params.user.consensus.port);
 
-		auto mempool = storages::mempoolstate();
-		mempool.apply_node(std::make_pair(node, wallet));
-		VI_INFO("test using account baseline: %s", wallet.get_address().c_str());
+			auto mempool = storages::mempoolstate();
+			mempool.apply_node(std::make_pair(node, wallet));
+			VI_INFO("test using account baseline: %s", wallet.get_address().c_str());
+		}
 
 		consensus::server_node consensus_service;
 		discovery::server_node discovery_service;
