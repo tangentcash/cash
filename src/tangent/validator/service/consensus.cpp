@@ -2586,12 +2586,12 @@ namespace tangent
 		void server_node::fill_node_services()
 		{
 			auto& [node, wallet] = descriptor;
+			auto context = ledger::transaction_context();
 			node.services.has_production = false;
 			node.services.has_participation = false;
 			node.services.has_attestation = false;
 			if (protocol::now().user.consensus.may_propose)
 			{
-				auto context = ledger::transaction_context();
 				auto production = context.get_validator_production(wallet.public_key_hash);
 				node.services.has_production = production && production->active;
 				if (!node.services.has_production)
