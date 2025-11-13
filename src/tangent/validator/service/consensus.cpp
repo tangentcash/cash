@@ -299,7 +299,7 @@ namespace tangent
 			auto* queue = schedule::get();
 			auto& query = queries[session];
 			auto& result = query.result;
-			if (timeout_ms > 0)
+			if (timeout_ms > 0 && false)
 			{
 				query.timeout = queue->set_timeout(timeout_ms, [this, session, result]() mutable
 				{
