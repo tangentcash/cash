@@ -210,7 +210,7 @@ namespace tangent
 			prev_time = std::max(policy.consensus_proof_time / 4, std::min(policy.consensus_proof_time * 4, prev_time));
 
 			int64_t time_delta = std::abs((int64_t)policy.consensus_proof_time - (int64_t)prev_time);
-			if (algorithm::arithmetic::divide(time_delta, policy.consensus_proof_time) < 0.05)
+			if (algorithm::arithmetic::divide(time_delta, policy.consensus_proof_time) < 0.1)
 				goto leave_as_is;
 
 			parameters new_alg = prev_alg;

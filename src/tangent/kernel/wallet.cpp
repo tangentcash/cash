@@ -275,8 +275,10 @@ namespace tangent
 			stream->write_integer(ports.rpc);
 			stream->write_boolean(services.has_consensus);
 			stream->write_boolean(services.has_discovery);
+			stream->write_boolean(services.has_discovery_external_access);
 			stream->write_boolean(services.has_oracle);
 			stream->write_boolean(services.has_rpc);
+			stream->write_boolean(services.has_rpc_external_access);
 			stream->write_boolean(services.has_rpc_public_access);
 			stream->write_boolean(services.has_rpc_web_sockets);
 			stream->write_boolean(services.has_production);
@@ -321,10 +323,16 @@ namespace tangent
 			if (!stream.read_boolean(stream.read_type(), &services.has_discovery))
 				return false;
 
+			if (!stream.read_boolean(stream.read_type(), &services.has_discovery_external_access))
+				return false;
+
 			if (!stream.read_boolean(stream.read_type(), &services.has_oracle))
 				return false;
 
 			if (!stream.read_boolean(stream.read_type(), &services.has_rpc))
+				return false;
+
+			if (!stream.read_boolean(stream.read_type(), &services.has_rpc_external_access))
 				return false;
 
 			if (!stream.read_boolean(stream.read_type(), &services.has_rpc_public_access))
@@ -381,8 +389,10 @@ namespace tangent
 			auto* services_data = data->set("services");
 			services_data->set("consensus", var::boolean(services.has_consensus));
 			services_data->set("discovery", var::boolean(services.has_discovery));
+			services_data->set("discovery_external_access", var::boolean(services.has_discovery_external_access));
 			services_data->set("oracle", var::boolean(services.has_oracle));
 			services_data->set("rpc", var::boolean(services.has_rpc));
+			services_data->set("rpc_external_access", var::boolean(services.has_rpc_external_access));
 			services_data->set("rpc_public_access", var::boolean(services.has_rpc_public_access));
 			services_data->set("rpc_web_sockets", var::boolean(services.has_rpc_web_sockets));
 			services_data->set("production", var::boolean(services.has_production));

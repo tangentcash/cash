@@ -36,13 +36,15 @@ namespace tangent
 		{
 			consensus = (1 << 0),
 			discovery = (1 << 1),
-			oracle = (1 << 2),
-			rpc = (1 << 3),
-			rpc_public_access = (1 << 4),
-			rpc_web_sockets = (1 << 5),
-			production = (1 << 6),
-			participation = (1 << 7),
-			attestation = (1 << 8)
+			discovery_external_access = (1 << 2),
+			oracle = (1 << 3),
+			rpc = (1 << 4),
+			rpc_external_access = (1 << 5),
+			rpc_public_access = (1 << 6),
+			rpc_web_sockets = (1 << 7),
+			production = (1 << 8),
+			participation = (1 << 9),
+			attestation = (1 << 10)
 		};
 
 		struct attestation_tree

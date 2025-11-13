@@ -169,6 +169,7 @@ namespace tangent
                 string address = "0.0.0.0";
                 uint16_t port = 18420;
                 uint64_t cursor_size = 512;
+                bool external = false;
                 bool server = false;
                 bool logging = true;
             } discovery;
@@ -193,6 +194,7 @@ namespace tangent
                 uint64_t page_size = 64;
                 bool web_sockets = false;
                 bool isolated = true;
+                bool external = false;
                 bool server = false;
                 bool logging = true;
             } rpc;

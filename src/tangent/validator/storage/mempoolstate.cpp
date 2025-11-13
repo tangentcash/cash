@@ -983,10 +983,14 @@ namespace tangent
 				services |= (uint32_t)node_services::consensus;
 			if (node.services.has_discovery)
 				services |= (uint32_t)node_services::discovery;
+			if (node.services.has_discovery_external_access)
+				services |= (uint32_t)node_services::discovery_external_access;
 			if (node.services.has_oracle)
 				services |= (uint32_t)node_services::oracle;
 			if (node.services.has_rpc)
 				services |= (uint32_t)node_services::rpc;
+			if (node.services.has_rpc_external_access)
+				services |= (uint32_t)node_services::rpc_external_access;
 			if (node.services.has_rpc_public_access)
 				services |= (uint32_t)node_services::rpc_public_access;
 			if (node.services.has_rpc_web_sockets)

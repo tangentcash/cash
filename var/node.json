@@ -29,6 +29,7 @@
         "cursor_size": 512,
         "page_size": 64,
         "websockets": false,
+        "external": false,
         "isolated": true,
         "server": false,
         "logging": true
@@ -37,6 +38,7 @@
         "address": "0.0.0.0",
         "port": 18420,
         "cursor_size": 512,
+        "external": false,
         "server": false,
         "logging": true
     },

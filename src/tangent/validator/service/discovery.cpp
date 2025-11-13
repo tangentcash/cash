@@ -91,8 +91,10 @@ namespace tangent
 			auto* port_argument = query.get("port");
 			auto* consensus_argument = query.get("consensus");
 			auto* discovery_argument = query.get("discovery");
+			auto* discovery_external_access_argument = query.get("discovery_external_access");
 			auto* oracle_argument = query.get("oracle");
 			auto* rpc_argument = query.get("rpc");
+			auto* rpc_external_access_argument = query.get("rpc_external_access");
 			auto* rpc_public_access_argument = query.get("rpc_public_access");
 			auto* rpc_web_sockets_argument = query.get("rpc_web_sockets");
 			auto* production_argument = query.get("production");
@@ -114,10 +116,14 @@ namespace tangent
 				services |= (uint32_t)storages::node_services::consensus;
 			if (discovery_argument != nullptr && discovery_argument->value.get_boolean())
 				services |= (uint32_t)storages::node_services::discovery;
+			if (discovery_external_access_argument != nullptr && discovery_external_access_argument->value.get_boolean())
+				services |= (uint32_t)storages::node_services::discovery_external_access;
 			if (oracle_argument != nullptr && oracle_argument->value.get_boolean())
 				services |= (uint32_t)storages::node_services::oracle;
 			if (rpc_argument != nullptr && rpc_argument->value.get_boolean())
 				services |= (uint32_t)storages::node_services::rpc;
+			if (rpc_external_access_argument != nullptr && rpc_external_access_argument->value.get_boolean())
+				services |= (uint32_t)storages::node_services::rpc_external_access;
 			if (rpc_public_access_argument != nullptr && rpc_public_access_argument->value.get_boolean())
 				services |= (uint32_t)storages::node_services::rpc_public_access;
 			if (rpc_web_sockets_argument != nullptr && rpc_web_sockets_argument->value.get_boolean())

@@ -183,7 +183,6 @@ namespace tangent
 			struct fork_header
 			{
 				ledger::block_header header;
-				task_id timeout = INVALID_TASK_ID;
 				uref<relay> state;
 			};
 
@@ -258,8 +257,7 @@ namespace tangent
 			expects_promise_rt<unordered_map<algorithm::pubkeyhash_t, uref<relay>>> connect_to_logical_nodes_with_permit(const uint256_t& permit_hash, unordered_set<algorithm::pubkeyhash_t>&& accounts);
 			expects_promise_rt<vector<uref<relay>>> accept_permit_for_accounts(const uint256_t& permit_hash, unordered_set<algorithm::pubkeyhash_t>&& accounts);
 			expects_promise_rt<void> synchronize_mempool_with(uref<relay>&& state);
-			expects_promise_rt<void> find_pivot_and_replace_branch(uref<relay>&& state, const uint256_t& fork_hash, uint64_t branch_number);
-			expects_promise_rt<void> replace_branch_pivot(uref<relay>&& state, const uint256_t& fork_hash, const uint256_t& block_hash, uint64_t block_number);
+			expects_promise_rt<void> verify_and_accept_fork(std::pair<uint256_t, fork_header>&& fork);
 			expects_promise_rt<exchange> query(uref<relay>&& state, const callable::descriptor& method, format::variables&& args, uint64_t timeout_ms);
 			expects_lr<void> notify(uref<relay>&& state, const callable::descriptor& method, format::variables&& args);
 			size_t notify_all(const callable::descriptor& method, format::variables&& args);
@@ -268,6 +266,7 @@ namespace tangent
 			void bind_query(const callable::descriptor& method, query_callback&& on_query_callback);
 			bool run_topology_optimization();
 			bool run_mempool_vacuum();
+			bool run_fork_resolution();
 			bool run_block_production();
 			bool run_block_dispatcher(const ledger::block_header& tip);
 			bool run_block_dispatch_retrial();
@@ -290,6 +289,7 @@ namespace tangent
 			std::recursive_mutex& get_mutex();
 			const unordered_map<void*, uref<relay>>& get_nodes() const;
 			dispatch_context get_dispatcher() const;
+			option<std::pair<uint256_t, fork_header>> get_best_fork_header();
 
 		private:
 			expects_system<void> on_unlisten() override;

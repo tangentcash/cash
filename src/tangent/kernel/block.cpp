@@ -766,7 +766,7 @@ namespace tangent
 		bool block_header::is_genesis_round(const uint64_t block_number)
 		{
 			uint64_t ending_block_number = protocol::now().policy.genesis_round_length;
-			return ending_block_number > 0 && block_number <= ending_block_number;
+			return ending_block_number > 0 && block_number > 1 && block_number <= ending_block_number;
 		}
 
 		block::block(const block_header& other) : block_header(other)
@@ -775,16 +775,15 @@ namespace tangent
 		expects_lr<block_state> block::evaluate(const block_header* parent_block, evaluation_context* environment, const replace_transaction_callback& replace_transaction)
 		{
 			VI_ASSERT(environment != nullptr, "evaluation context should be set");
-			bool genesis = is_genesis_round(number);
-			if (!genesis && environment->incoming.empty())
-				return layer_exception("block must include transactions");
-
 			block_header::set_parent_block(parent_block);
 			auto& policy = protocol::now().policy;
 			auto position = std::find_if(environment->producers.begin(), environment->producers.end(), [&environment](const states::validator_production& a) { return a.owner == environment->validator.public_key_hash; });
 			auto fees = ordered_map<algorithm::asset_id, decimal>();
+			bool genesis = is_genesis_round(number);
 			priority = (uint64_t)(position == environment->producers.end() ? policy.production_max_per_block : std::distance(environment->producers.begin(), position));
 			target = algorithm::wesolowski::scale(get_proof_slot_target(parent_block), get_proof_difficulty_multiplier());
+			if (!genesis && environment->incoming.empty())
+				return layer_exception("block must include transactions");
 
 			auto commitment_gas_limit = uint256_t(0);
 			auto transaction_gas_limit = uint256_t(0);

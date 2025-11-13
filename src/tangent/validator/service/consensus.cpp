@@ -9,6 +9,7 @@
 #define METHOD_CALL(x) tangent::consensus::callable::descriptor(#x, typeid(x).hash_code())
 #define TASK_TOPOLOGY_OPTIMIZATION "topology_optimization"
 #define TASK_MEMPOOL_VACUUM "mempool_vacuum"
+#define TASK_FORK_RESOLUTION "fork_resolution"
 #define TASK_BLOCK_DISPATCH_RETRIAL "block_dispatch_retrial"
 #define TASK_BLOCK_PRODUCTION "block_production"
 #define TASK_BLOCK_DISPATCHER "block_dispatcher"
@@ -298,13 +299,16 @@ namespace tangent
 			auto* queue = schedule::get();
 			auto& query = queries[session];
 			auto& result = query.result;
-			query.timeout = queue->set_timeout(timeout_ms, [this, session, result]() mutable
+			if (timeout_ms > 0 && false)
 			{
-				umutex<std::recursive_mutex> unique(mutex);
-				queries.erase(session);
-				if (result.is_pending())
-					result.set(remote_exception::retry());
-			});
+				query.timeout = queue->set_timeout(timeout_ms, [this, session, result]() mutable
+				{
+					umutex<std::recursive_mutex> unique(mutex);
+					queries.erase(session);
+					if (result.is_pending())
+						result.set(remote_exception::retry());
+				});
+			}
 			outgoing_messages.push(std::move(message));
 			return result;
 		}
@@ -669,6 +673,7 @@ namespace tangent
 			if (!pending_nodes.empty())
 				goto retry;
 
+			unique.unlock();
 			control_sys.deactivate();
 			return expectation::met;
 		}
@@ -727,8 +732,10 @@ namespace tangent
 			node.ports.rpc = protocol::now().user.rpc.port;
 			node.services.has_consensus = protocol::now().user.consensus.server;
 			node.services.has_discovery = protocol::now().user.discovery.server;
+			node.services.has_discovery_external_access = protocol::now().user.discovery.external;
 			node.services.has_oracle = protocol::now().user.oracle.server;
 			node.services.has_rpc = protocol::now().user.rpc.server;
+			node.services.has_rpc_external_access = protocol::now().user.rpc.external;
 			node.services.has_rpc_public_access = protocol::now().user.rpc.username.empty();
 			node.services.has_rpc_web_sockets = protocol::now().user.rpc.web_sockets;
 
@@ -1602,25 +1609,25 @@ namespace tangent
 				coreturn expectation::met;
 			});
 		}
-		expects_promise_rt<void> server_node::find_pivot_and_replace_branch(uref<relay>&& state, const uint256_t& fork_hash, uint64_t branch_number)
+		expects_promise_rt<void> server_node::verify_and_accept_fork(std::pair<uint256_t, fork_header>&& fork)
 		{
-			return coasync<expects_rt<void>>([this, state, fork_hash, branch_number]() -> expects_promise_rt<void>
+			return coasync<expects_rt<void>>([this, fork = std::move(fork)]() mutable -> expects_promise_rt<void>
 			{
-				uint64_t current_branch_number = branch_number;
-				while (true)
+				auto& [new_tip_fork_hash, new_tip] = fork;
+				auto new_tip_hash = uint256_t(0);
+				auto new_tip_number = new_tip.header.number;
+				auto old_tip_number = storages::chainstate().get_latest_block_number().or_else(0);
+				while (old_tip_number > 0)
 				{
-					auto result = coawait(query(uref(state), METHOD_CALL(&server_node::query_block_headers), { format::variable(current_branch_number) }, protocol::now().user.tcp.timeout));
+					auto result = coawait(query(uref(new_tip.state), METHOD_CALL(&server_node::query_block_headers), { format::variable(new_tip_number) }, protocol::now().user.tcp.timeout));
 					if (!result)
 						coreturn result.error();
 					else if (result->args.empty())
 						break;
 
-					current_branch_number = result->args.front().as_uint64();
-					if (!current_branch_number)
+					new_tip_number = result->args.front().as_uint64();
+					if (!new_tip_number || result->args.size() < 2)
 						coreturn remote_exception("invalid branch");
-
-					if (result->args.size() < 2)
-						coreturn expectation::met;
 
 					format::ro_stream block_message = format::ro_stream(result->args[1].as_string());
 					ledger::block_header child_header;
@@ -1632,10 +1639,11 @@ namespace tangent
 					{
 						uint256_t branch_hash = child_header.as_hash(true);
 						auto collision = storages::chainstate().get_block_header_by_hash(branch_hash);
-						if (collision || --current_branch_number < 1)
+						if (collision || --new_tip_number < 1)
 						{
-							auto copy = uref(state);
-							coreturn coawait(replace_branch_pivot(std::move(copy), fork_hash, branch_hash, 0));
+							new_tip_hash = branch_hash;
+							old_tip_number = 0;
+							break;
 						}
 						else if (i < result->args.size())
 						{
@@ -1645,6 +1653,7 @@ namespace tangent
 								coreturn remote_exception("invalid block header");
 						}
 
+						parent_header.checksum = 0;
 						auto verification = child_header.verify_validity(parent_header.number > 0 ? &parent_header : nullptr);
 						if (!verification)
 							coreturn remote_exception("invalid block header: " + verification.error().message());
@@ -1652,18 +1661,11 @@ namespace tangent
 						child_header = parent_header;
 					}
 				}
-				coreturn expectation::met;
-			});
-		}
-		expects_promise_rt<void> server_node::replace_branch_pivot(uref<relay>&& state, const uint256_t& fork_hash, const uint256_t& block_hash, uint64_t block_number)
-		{
-			return coasync<expects_rt<void>>([this, state, fork_hash, block_hash, block_number]() -> expects_promise_rt<void>
-			{
-				uint256_t target_hash = block_hash;
-				uint64_t target_number = block_number;
-				while (true)
+
+				new_tip_number = new_tip_hash > 0 ? 0 : 1;
+				while (new_tip_number > 0 || new_tip_hash > 0)
 				{
-					auto result = coawait(query(uref(state), METHOD_CALL(&server_node::query_block), { format::variable(target_hash), format::variable(target_number) }, protocol::now().user.tcp.timeout));
+					auto result = coawait(query(uref(new_tip.state), METHOD_CALL(&server_node::query_block), { format::variable(new_tip_hash), format::variable(new_tip_number) }, protocol::now().user.tcp.timeout));
 					if (!result)
 						coreturn result.error();
 					else if (result->args.empty())
@@ -1672,19 +1674,14 @@ namespace tangent
 					ledger::block_evaluation tip;
 					format::ro_stream block_message = format::ro_stream(result->args.front().as_string());
 					if (!tip.block.load(block_message))
-					{
-						clear_pending_fork(*state);
 						coreturn remote_exception("fork block rejected");
-					}
 
-					target_hash = 0;
-					target_number = tip.block.number + 1;
-					if (!accept_block(uref(state), std::move(tip), fork_hash))
-					{
-						clear_pending_fork(*state);
+					new_tip_hash = 0;
+					new_tip_number = tip.block.number + 1;
+					if (!accept_block(uref(new_tip.state), std::move(tip), new_tip_fork_hash))
 						coreturn remote_exception("fork block rejected");
-					}
 				}
+
 				coreturn expectation::met;
 			});
 		}
@@ -2063,6 +2060,29 @@ namespace tangent
 				}
 			});
 		}
+		bool server_node::run_fork_resolution()
+		{
+			return control_sys.async_task_if_none(TASK_FORK_RESOLUTION, [this]() -> promise<void>
+			{
+				auto best_fork = get_best_fork_header();
+				if (!best_fork)
+					coreturn_void;
+			retry:
+				auto state = uref(best_fork->second.state);
+				auto status = coawait(verify_and_accept_fork(std::move(*best_fork)));
+				if (!status && protocol::now().user.consensus.logging)
+					VI_WARN("chain fork from node %s rejected: %s", state->peer_address().c_str(), status.what().c_str());
+					
+				clear_pending_fork(*state);
+				auto new_best_fork = get_best_fork_header();
+				if (new_best_fork && best_fork->second.header < new_best_fork->second.header)
+				{
+					best_fork = std::move(new_best_fork);
+					goto retry;
+				}
+				coreturn_void;
+			});
+		}
 		bool server_node::run_block_production()
 		{
 			auto& [node, wallet] = descriptor;
@@ -2138,7 +2158,7 @@ namespace tangent
 					return solution.report("mempool block solution failed");
 
 				tip = chain.get_latest_block_header();
-				if (!tip || evaluation->block.number > tip->number || (evaluation->block.number == tip->number && evaluation->block.priority < tip->priority) || (evaluation->block.transactions.empty() && !ledger::block_header::is_genesis_round(evaluation->block.number)))
+				if (is_active() && (!tip || evaluation->block.number > tip->number || (evaluation->block.number == tip->number && evaluation->block.priority < tip->priority) || (evaluation->block.transactions.empty() && !ledger::block_header::is_genesis_round(evaluation->block.number))))
 				{
 					if (protocol::now().user.consensus.logging)
 						VI_INFO("proposing solved mempool block (number: %" PRIu64", hash: %s)", evaluation->block.number, algorithm::encoding::encode_0xhex256(evaluation->block.as_hash()).c_str());
@@ -2294,20 +2314,13 @@ namespace tangent
 				for (auto it = forks.cbegin(); it != forks.cend();)
 				{
 					if (state == *it->second.state)
-					{
-						queue->clear_timeout(it->second.timeout);
 						it = forks.erase(it);
-					}
 					else
 						++it;
 				}
 			}
 			else
-			{
-				for (auto& fork : forks)
-					queue->clear_timeout(fork.second.timeout);
 				forks.clear();
-			}
 		}
 		void server_node::accept_pending_fork(uref<relay>&& state, fork_head head, const uint256_t& candidate_hash, ledger::block_header&& candidate_block)
 		{
@@ -2319,10 +2332,8 @@ namespace tangent
 
 			umutex<std::recursive_mutex> unique(sync.block);
 			auto& fork = forks[candidate_hash];
-			schedule::get()->clear_timeout(fork.timeout);
 			fork.header = candidate_block;
 			fork.state = state;
-			fork.timeout = schedule::get()->set_timeout(protocol::now().user.consensus.response_timeout, std::bind(&server_node::clear_pending_fork, this, *state));
 			mempool.dirty = true;
 		}
 		bool server_node::accept_block(uref<relay>&& from, ledger::block_evaluation&& candidate, const uint256_t& fork_tip)
@@ -2400,6 +2411,12 @@ namespace tangent
 				}
 
 				umutex<std::recursive_mutex> unique(sync.block);
+				for (auto& fork_candidate_tip : forks)
+				{
+					if (*fork_candidate_tip.second.state == *from)
+						return false;
+				}
+
 				bool has_better_tip = forks.empty();
 				for (auto& fork_candidate_tip : forks)
 				{
@@ -2438,11 +2455,7 @@ namespace tangent
 				*/
 				accept_pending_fork(uref(from), fork_head::append, candidate_hash, ledger::block_header(candidate.block));
 				unique.unlock();
-				if (tip_block)
-					find_pivot_and_replace_branch(uref(from), candidate_hash, tip_block->number);
-				else
-					replace_branch_pivot(uref(from), candidate_hash, 0, 1);
-				
+				run_fork_resolution();
 				if (protocol::now().user.consensus.logging)
 					VI_INFO("block %s new best branch found (height: %" PRIu64 ", distance: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), candidate.block.number, std::abs((int64_t)(tip_block ? tip_block->number : 0) - (int64_t)candidate.block.number));
 				return true;
@@ -2469,10 +2482,6 @@ namespace tangent
 				}
 			}
 
-			size_t notifications = notify_all_except(uref(from), METHOD_CALL(&server_node::notify_of_possibly_new_block_hash), { format::variable(candidate_hash), format::variable(candidate.block.number) });
-			if (notifications > 0 && protocol::now().user.consensus.logging)
-				VI_INFO("block %s broadcasted to %i nodes (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)notifications, candidate.block.number);
-
 			/*
 				<+> - <+> - <+> - <+> - <+> - <+> = possible extension
 											\
@@ -2493,6 +2502,10 @@ namespace tangent
 				mempool.dirty = false;
 				synchronize_mempool_with(uref(from));
 			}
+
+			size_t notifications = notify_all_except(uref(from), METHOD_CALL(&server_node::notify_of_possibly_new_block_hash), { format::variable(candidate_hash), format::variable(candidate.block.number) });
+			if (notifications > 0 && protocol::now().user.consensus.logging)
+				VI_INFO("block %s broadcasted to %i nodes (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)notifications, candidate.block.number);
 
 			return true;
 		}
@@ -2664,6 +2677,20 @@ namespace tangent
 		const unordered_map<void*, uref<relay>>& server_node::get_nodes() const
 		{
 			return nodes;
+		}
+		option<std::pair<uint256_t, server_node::fork_header>> server_node::get_best_fork_header()
+		{
+			umutex<std::recursive_mutex> unique(sync.block);
+			option<std::pair<uint256_t, server_node::fork_header>> best_fork = optional::none;
+			if (!is_active())
+				return best_fork;
+
+			for (auto& fork_candidate_tip : forks)
+			{
+				if (!best_fork || best_fork->second.header < fork_candidate_tip.second.header)
+					best_fork = std::make_pair(fork_candidate_tip.first, fork_candidate_tip.second);
+			}
+			return best_fork;
 		}
 		dispatch_context server_node::get_dispatcher() const
 		{

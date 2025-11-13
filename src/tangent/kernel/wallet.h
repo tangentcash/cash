@@ -68,8 +68,10 @@ namespace tangent
 			{
 				bool has_consensus = false;
 				bool has_discovery = false;
+				bool has_discovery_external_access = false;
 				bool has_oracle = false;
 				bool has_rpc = false;
+				bool has_rpc_external_access = false;
 				bool has_rpc_public_access = false;
 				bool has_rpc_web_sockets = false;
 				bool has_production = false;

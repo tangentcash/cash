@@ -554,6 +554,10 @@ namespace tangent
 			if (value != nullptr && value->value.is(var_type::integer))
 				user.discovery.cursor_size = value->value.get_integer();
 
+			value = config->fetch("discovery.external");
+			if (value != nullptr && value->value.is(var_type::boolean))
+				user.discovery.external = value->value.get_boolean();
+
 			value = config->fetch("discovery.server");
 			if (value != nullptr && value->value.is(var_type::boolean))
 				user.discovery.server = value->value.get_boolean();
@@ -621,6 +625,10 @@ namespace tangent
 			value = config->fetch("rpc.isolated");
 			if (value != nullptr && value->value.is(var_type::boolean))
 				user.rpc.isolated = value->value.get_boolean();
+
+			value = config->fetch("rpc.external");
+			if (value != nullptr && value->value.is(var_type::boolean))
+				user.rpc.external = value->value.get_boolean();
 
 			value = config->fetch("rpc.server");
 			if (value != nullptr && value->value.is(var_type::boolean))
