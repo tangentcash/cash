@@ -1472,6 +1472,8 @@ namespace tangent
 				uint64_t latency_time = peer_time > system_time ? peer_time - system_time : system_time - peer_time;
 				uint64_t varying_peer_time = peer_time + (peer_latency + latency_time) / 2;
 				protocol.time.adjust(peer_descriptor->first.address, (int64_t)system_time - (int64_t)varying_peer_time);
+				if (!is_syncing())
+					coawait(synchronize_mempool_with(uref(state)));
 
 				coreturn expects_rt<uref<relay>>(std::move(state));
 			}).then<expects_rt<uref<relay>>>([address](expects_rt<uref<relay>>&& result) -> expects_rt<uref<relay>>
@@ -1584,7 +1586,7 @@ namespace tangent
 						for (size_t i = 1; i < result->args.size(); i++)
 						{
 							auto transaction_hash = result->args[i].as_uint256();
-							if (!mempool.has_transaction(transaction_hash) && !chain.get_transaction_by_hash(transaction_hash))
+							if (!mempool.has_transaction(transaction_hash).or_else(false) && !chain.get_transaction_by_hash(transaction_hash))
 								transaction_hashes.insert(transaction_hash);
 						}
 					}
