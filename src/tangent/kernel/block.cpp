@@ -766,7 +766,7 @@ namespace tangent
 		bool block_header::is_genesis_round(const uint64_t block_number)
 		{
 			uint64_t ending_block_number = protocol::now().policy.genesis_round_length;
-			return ending_block_number > 0 && block_number > 1 && block_number <= ending_block_number;
+			return ending_block_number > 0 && block_number <= ending_block_number;
 		}
 
 		block::block(const block_header& other) : block_header(other)
