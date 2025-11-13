@@ -361,11 +361,10 @@ namespace tangent
 		expects_lr<vector<node_location_pair>> mempoolstate::get_random_nodes_with(size_t count, uint32_t services, node_ports port)
 		{
 			schema_list map;
-			if (services > 0)
-				map.push_back(var::set::integer(services));
+			map.push_back(var::set::integer(services));
 			map.push_back(var::set::integer(count));
 
-			auto cursor = get_storage().emplace_query(__func__, stringify::text("SELECT account, node_message FROM nodes WHERE quality IS NOT NULL %s ORDER BY random() LIMIT ?", services > 0 ? "AND services & ? > 0" : ""), &map);
+			auto cursor = get_storage().emplace_query(__func__, "SELECT account, address FROM nodes WHERE quality IS NOT NULL AND (services & ?) == ? ORDER BY random() LIMIT ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<node_location_pair>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
