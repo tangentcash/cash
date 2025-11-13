@@ -778,7 +778,6 @@ namespace tangent
 			block_header::set_parent_block(parent_block);
 			auto& policy = protocol::now().policy;
 			auto position = std::find_if(environment->producers.begin(), environment->producers.end(), [&environment](const states::validator_production& a) { return a.owner == environment->validator.public_key_hash; });
-			auto fees = ordered_map<algorithm::asset_id, decimal>();
 			bool genesis = is_genesis_round(number);
 			priority = (uint64_t)(position == environment->producers.end() ? policy.production_max_per_block : std::distance(environment->producers.begin(), position));
 			target = algorithm::wesolowski::scale(get_proof_slot_target(parent_block), get_proof_difficulty_multiplier());
@@ -793,8 +792,11 @@ namespace tangent
 				current_gas_limit += item.candidate->gas_limit;
 			}
 
+			auto fees = ordered_map<algorithm::asset_id, decimal>({ { algorithm::asset::native(), policy.production_reward_value } });
 			auto executionlog = string();
 			auto changelog = block_changelog();
+			auto context = transaction_context(environment, this, &changelog, nullptr, { });
+			auto activation = context.get_validator_production(environment->validator.public_key_hash).or_else(states::validator_production(algorithm::pubkeyhash_t(), nullptr)).active;
 			for (auto& item : environment->incoming)
 			{
 			retry_replacement_transaction:
@@ -843,19 +845,20 @@ namespace tangent
 				return layer_exception(std::move(stringify::trim(executionlog)));
 			}
 
-			auto context = transaction_context(environment, this, &changelog, nullptr, { });
-			auto participants = (size_t)(priority + 1);
-			for (size_t i = 0; i < participants; i++)
+			bool reactivation = context.get_validator_production(environment->validator.public_key_hash).or_else(states::validator_production(algorithm::pubkeyhash_t(), nullptr)).active;
+			if (!activation && !reactivation)
 			{
-				auto& participant = environment->producers[i];
-				auto work = expects_lr<states::validator_production>(layer_exception());
-				if (i == priority)
-				{
-					fees[algorithm::asset::native()] = policy.production_reward_value;
-					work = context.apply_validator_production(participant.owner, transaction_context::production_type::mint, fees);
-				}
-				else
-					work = context.apply_validator_production(participant.owner, transaction_context::production_type::burn_and_deactivate, { { algorithm::asset::native(), -policy.production_penalty_rate } });
+				executionlog.append("\n  producer must active themselves");
+				return layer_exception(std::move(stringify::trim(executionlog)));
+			}
+
+			auto work = context.apply_validator_production(environment->validator.public_key_hash, reactivation ? transaction_context::production_type::mint_and_activate : transaction_context::production_type::mint, fees);
+			if (!work)
+				return work.error();
+
+			for (size_t i = 0; i < (size_t)priority; i++)
+			{
+				auto work = context.apply_validator_production(environment->producers[i].owner, transaction_context::production_type::burn_and_deactivate, { { algorithm::asset::native(), -policy.production_penalty_rate } });
 				if (!work)
 					return work.error();
 			}

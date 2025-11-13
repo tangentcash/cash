@@ -595,8 +595,6 @@ namespace tangent
 			if (owner.empty())
 				return layer_exception("invalid state owner");
 
-			auto* prev = (validator_production*)prev_state;
-			active = active || (!prev && get_ranked_stake().is_positive());
 			for (auto& [asset, stake] : stakes)
 			{
 				if (!algorithm::asset::is_any(asset))
