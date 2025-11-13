@@ -347,7 +347,7 @@ namespace tangent
 			bind(0 | access_type::r, "txnstate", "gettransactionbyhash", 1, 2, "uint256 hash, uint8? unrolling = 0", "txn | block::txn", "get transaction by hash", std::bind(&server_node::txnstate_get_transaction_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "txnstate", "getrawtransactionbyhash", 1, 1, "uint256 hash", "string", "get raw transaction by hash", std::bind(&server_node::txnstate_get_raw_transaction_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "txnstate", "getreceiptbytransactionhash", 1, 1, "uint256 hash", "receipt", "get receipt by transaction hash", std::bind(&server_node::txnstate_get_receipt_by_transaction_hash, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "call", 5, 32, "string asset, string from_address, string to_address, decimal value, string function, ...", "program_trace", "execute of immutable function of program assigned to to_address", std::bind(&server_node::chainstate_call, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "calltransaction", 5, 32, "string asset, string from_address, string to_address, decimal value, string function, ...", "program_trace", "execute of immutable function of program assigned to to_address", std::bind(&server_node::chainstate_call_transaction, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getblockstatebyhash", 1, 2, "uint256 hash, uint8? unrolling = 0", "uint256[] | (uniform|multiform)[]", "get block state by hash", std::bind(&server_node::chainstate_get_block_state_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getblockstatebynumber", 1, 2, "uint64 number, uint8? unrolling = 0", "uint256[] | (uniform|multiform)[]", "get block state by number", std::bind(&server_node::chainstate_get_block_state_by_number, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getblockgaspricebyhash", 2, 3, "uint256 hash, string asset, double? percentile = 0.5", "decimal", "get gas price from percentile of block transactions by hash", std::bind(&server_node::chainstate_get_block_gas_price_by_hash, this, std::placeholders::_1, std::placeholders::_2));
@@ -1655,7 +1655,7 @@ namespace tangent
 
 			return server_response().success(receipt->as_schema());
 		}
-		server_response server_node::chainstate_call(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_call_transaction(http::connection* base, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t from;
 			if (!algorithm::signing::decode_address(args[1].as_string(), from))
@@ -1687,6 +1687,7 @@ namespace tangent
 
 			auto block = ledger::block();
 			block.set_parent_block(environment.tip.address());
+			block.number = 0;
 
 			auto receipt = ledger::receipt();
 			receipt.transaction_hash = transaction.as_hash();
@@ -2512,7 +2513,7 @@ namespace tangent
 		server_response server_node::chainstate_get_witness_program(http::connection* base, format::variables&& args)
 		{
 			auto chain = storages::chainstate();
-			auto state = chain.get_uniform(states::witness_program::as_instance_type(), nullptr, states::witness_program::as_instance_index(args[0].as_string()), 0);
+			auto state = chain.get_uniform(states::witness_program::as_instance_type(), nullptr, states::witness_program::as_instance_index(format::util::decode_0xhex(args[0].as_string())), 0);
 			if (!state)
 				return server_response().success(var::set::null());
 
@@ -3206,7 +3207,8 @@ namespace tangent
 				auto* consensus = data->set("consensus", var::set::object());
 				consensus->set("port", var::integer(protocol::now().user.consensus.port));
 				consensus->set("time_offset", var::integer(protocol::now().user.consensus.time_offset));
-				consensus->set("cursor_size", var::integer(protocol::now().user.consensus.cursor_size));
+				consensus->set("hashes_per_query", var::integer(protocol::now().user.consensus.hashes_per_query));
+				consensus->set("headers_per_query", var::integer(protocol::now().user.consensus.headers_per_query));
 				consensus->set("max_inbound_connection", var::integer(protocol::now().user.consensus.max_inbound_connections));
 				consensus->set("max_outbound_connection", var::integer(protocol::now().user.consensus.max_outbound_connections));
 			}

@@ -299,7 +299,7 @@ namespace tangent
 			auto* queue = schedule::get();
 			auto& query = queries[session];
 			auto& result = query.result;
-			if (timeout_ms > 0 && false)
+			if (timeout_ms > 0)
 			{
 				query.timeout = queue->set_timeout(timeout_ms, [this, session, result]() mutable
 				{
@@ -1099,7 +1099,7 @@ namespace tangent
 			if (!branch_number)
 				return layer_exception("invalid branch");
 
-			const uint64_t blocks_count = protocol::now().user.consensus.cursor_size;
+			const uint64_t blocks_count = protocol::now().user.consensus.headers_per_query;
 			const uint64_t pivot_number = branch_number > blocks_count ? branch_number - blocks_count : 1;
 			auto chain = storages::chainstate();
 			auto headers = chain.get_block_headers(pivot_number, blocks_count);
@@ -1145,7 +1145,7 @@ namespace tangent
 				return layer_exception("invalid arguments");
 
 			uint64_t cursor = event.args.front().as_uint64();
-			const uint64_t transactions_count = protocol::now().user.consensus.cursor_size;
+			const uint64_t transactions_count = protocol::now().user.consensus.hashes_per_query;
 			auto mempool = storages::mempoolstate();
 			auto hashes = mempool.get_transaction_hashset(cursor, transactions_count);
 			if (!hashes || hashes->empty())
@@ -1603,7 +1603,7 @@ namespace tangent
 							accept_transaction(uref(state), std::move(candidate));
 					}
 
-					const uint64_t transactions_count = protocol::now().user.consensus.cursor_size;
+					const uint64_t transactions_count = protocol::now().user.consensus.hashes_per_query;
 					cursor = result->args.front().as_uint64();
 					if (result->args.size() < transactions_count)
 						break;
@@ -1733,7 +1733,7 @@ namespace tangent
 			};
 
 			auto mempool = storages::mempoolstate();
-			auto nodes = mempool.get_random_nodes_with(protocol::now().user.consensus.cursor_size).or_else(vector<storages::node_location_pair>());
+			auto nodes = mempool.get_random_nodes_with(protocol::now().user.consensus.hashes_per_query).or_else(vector<storages::node_location_pair>());
 			args.reserve(2 + nodes.size());
 			for (auto& [account, address] : nodes)
 			{
@@ -2249,7 +2249,10 @@ namespace tangent
 						VI_ERR("pre-configured node \"%s\" error: url not valid", node.c_str());
 				}
 				else
+				{
+					mempool.clear_node(endpoint.address);
 					mempool.apply_unknown_node(endpoint.address);
+				}
 			}
 
 			bind_event(METHOD_CALL(&server_node::notify_of_possibly_new_block_hash), std::bind(&server_node::notify_of_possibly_new_block_hash, this, std::placeholders::_2, std::placeholders::_3));
@@ -2270,7 +2273,6 @@ namespace tangent
 			run_topology_optimization();
 			run_mempool_vacuum();
 			run_block_dispatch_retrial();
-			run_block_production();
 		}
 		void server_node::shutdown()
 		{

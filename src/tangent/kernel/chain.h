@@ -153,7 +153,8 @@ namespace tangent
                 string address = "0.0.0.0";
                 uint16_t port = 18418;
                 uint64_t time_offset = 300000;
-                uint64_t cursor_size = 2048;
+                uint64_t hashes_per_query = 2048;
+                uint64_t headers_per_query = 256;
                 uint32_t max_inbound_connections = 24;
                 uint32_t max_outbound_connections = 8;
                 uint64_t inventory_timeout = 300000;
@@ -287,7 +288,7 @@ namespace tangent
             decimal attestation_fee_rate = std::string_view("0.15");
             decimal bridge_reward_max_increase = std::string_view("0.05");
             decimal consensus_difficulty_max_increase = std::string_view("2.00");
-            decimal consensus_difficulty_max_decrease = std::string_view("0.80");
+            decimal consensus_difficulty_max_decrease = std::string_view("0.50");
             decimal consensus_difficulty_bump_per_priority = std::string_view("1.3625");
             decimal consensus_difficulty_bump_outside_priority = std::string_view("90.0");
         } policy;

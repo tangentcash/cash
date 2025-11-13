@@ -206,25 +206,32 @@ namespace tangent
 				return (prev_alg.difficulty() < default_alg.difficulty() ? default_alg : prev_alg);
 			}
 
+			auto next_alg = prev_alg;
+			next_alg.bits = default_alg.bits;
+
 			auto& policy = protocol::now().policy;
 			prev_time = std::max(policy.consensus_proof_time / 4, std::min(policy.consensus_proof_time * 4, prev_time));
+			if (policy.consensus_proof_time >= prev_time)
+			{
+				uint64_t time_delta = policy.consensus_proof_time - prev_time;
+				if (algorithm::arithmetic::divide(time_delta, policy.consensus_proof_time) < 0.1)
+					goto leave_as_is;
 
-			int64_t time_delta = std::abs((int64_t)policy.consensus_proof_time - (int64_t)prev_time);
-			if (algorithm::arithmetic::divide(time_delta, policy.consensus_proof_time) < 0.1)
-				goto leave_as_is;
+				decimal adjustment = std::min(policy.consensus_difficulty_max_increase, 1 + arithmetic::divide(time_delta, prev_time));
+				next_alg.ops = (decimal(next_alg.ops) * adjustment).to_uint64();
+				if (next_alg.ops < prev_alg.ops)
+					next_alg.ops = std::numeric_limits<uint64_t>::max();
+			}
+			else
+			{
+				uint64_t time_delta = prev_time - policy.consensus_proof_time;
+				if (algorithm::arithmetic::divide(time_delta, policy.consensus_proof_time) < 0.1)
+					goto leave_as_is;
 
-			parameters new_alg = prev_alg;
-			decimal adjustment = arithmetic::divide(time_delta, prev_time);
-			bool inversion = policy.consensus_proof_time < prev_time && adjustment.is_positive();
-			if (adjustment > policy.consensus_difficulty_max_increase)
-				adjustment = policy.consensus_difficulty_max_increase;
-			else if (adjustment < policy.consensus_difficulty_max_decrease)
-				adjustment = policy.consensus_difficulty_max_decrease;
-
-			uint64_t ops_change = (inversion ? (decimal(new_alg.ops) / adjustment) : (decimal(new_alg.ops) * adjustment)).to_uint64();
-			new_alg.bits = default_alg.bits;
-			new_alg.ops = std::max(new_alg.ops + ops_change >= new_alg.ops ? new_alg.ops + ops_change : std::numeric_limits<uint64_t>::max(), default_alg.ops);
-			return new_alg;
+				decimal adjustment = std::max(policy.consensus_difficulty_max_decrease, 1 - arithmetic::divide(time_delta, prev_time));
+				next_alg.ops = (decimal(next_alg.ops) * adjustment).to_uint64();
+			}
+			return next_alg;
 		}
 		wesolowski::parameters wesolowski::scale(const parameters& alg, const decimal& multiplier)
 		{

@@ -522,9 +522,13 @@ namespace tangent
 			if (value != nullptr && value->value.is(var_type::integer))
 				user.consensus.response_timeout = value->value.get_integer();
 
-			value = config->fetch("consensus.cursor_size");
+			value = config->fetch("consensus.hashes_per_query");
 			if (value != nullptr && value->value.is(var_type::integer))
-				user.consensus.cursor_size = value->value.get_integer();
+				user.consensus.hashes_per_query = value->value.get_integer();
+
+			value = config->fetch("consensus.headers_per_query");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.consensus.headers_per_query = value->value.get_integer();
 
 			value = config->fetch("consensus.may_propose");
 			if (value != nullptr && value->value.is(var_type::boolean))
