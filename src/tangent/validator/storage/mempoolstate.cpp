@@ -338,11 +338,14 @@ namespace tangent
 		{
 			schema_list map;
 			if (services > 0)
+			{
 				map.push_back(var::set::integer(services));
+				map.push_back(var::set::integer(services));
+			}
 			map.push_back(var::set::integer(count));
 			map.push_back(var::set::integer(offset));
 
-			auto cursor = get_storage().emplace_query(__func__, stringify::text("SELECT account, address FROM nodes WHERE quality IS NOT NULL %s ORDER BY quality DESC LIMIT ? OFFSET ?", services > 0 ? "AND services & ? > 0" : ""), &map);
+			auto cursor = get_storage().emplace_query(__func__, stringify::text("SELECT account, address FROM nodes WHERE quality IS NOT NULL %s ORDER BY quality DESC LIMIT ? OFFSET ?", services > 0 ? "AND services & ? == ?" : ""), &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<node_location_pair>>(layer_exception(ledger::storage_util::error_of(cursor)));
 

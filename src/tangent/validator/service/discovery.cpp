@@ -155,7 +155,7 @@ namespace tangent
 				data->push(var::string(system_endpoint::to_uri(address)));
 
 			auto node = mempool.get_local_node();
-			if (node && (storages::mempoolstate::services_of(node->first) & services) > 0)
+			if (node && (storages::mempoolstate::services_of(node->first) & services) == services)
 			{
 				switch (port)
 				{

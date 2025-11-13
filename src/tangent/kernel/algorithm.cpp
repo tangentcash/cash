@@ -215,12 +215,13 @@ namespace tangent
 
 			parameters new_alg = prev_alg;
 			decimal adjustment = arithmetic::divide(time_delta, prev_time);
+			bool inversion = policy.consensus_proof_time < prev_time && adjustment.is_positive();
 			if (adjustment > policy.consensus_difficulty_max_increase)
 				adjustment = policy.consensus_difficulty_max_increase;
 			else if (adjustment < policy.consensus_difficulty_max_decrease)
 				adjustment = policy.consensus_difficulty_max_decrease;
 
-			uint64_t ops_change = (decimal(new_alg.ops) * adjustment).to_uint64();
+			uint64_t ops_change = (inversion ? (decimal(new_alg.ops) / adjustment) : (decimal(new_alg.ops) * adjustment)).to_uint64();
 			new_alg.bits = default_alg.bits;
 			new_alg.ops = std::max(new_alg.ops + ops_change >= new_alg.ops ? new_alg.ops + ops_change : std::numeric_limits<uint64_t>::max(), default_alg.ops);
 			return new_alg;
