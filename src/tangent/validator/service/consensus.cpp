@@ -122,39 +122,39 @@ namespace tangent
 			uint8_t magic_buffer[sizeof(magic)];
 			memcpy(magic_buffer, &magic, sizeof(magic));
 
+			const size_t max_body_size = protocol::now().message.max_body_size;
 			const size_t header_size = sizeof(uint32_t) * 3;
-			const size_t message_size = 32 * header_size + protocol::now().message.max_body_size;
+			const size_t message_size = 32 * header_size + max_body_size;
 			if (message_buffer.size() > message_size)
 				message_buffer.erase(0, message_buffer.size() - message_size);
 
-			while (true)
+			size_t magic_index = message_buffer.find(std::string_view((char*)magic_buffer, sizeof(magic_buffer)));
+			if (magic_index == std::string::npos)
+				return false;
+
+			message_buffer.erase(0, magic_index);
+			if (message_buffer.size() < header_size)
+				return false;
+
+			uint32_t size, checksum;
+			memcpy(&size, message_buffer.data() + sizeof(uint32_t) * 1, sizeof(uint32_t));
+			memcpy(&checksum, message_buffer.data() + sizeof(uint32_t) * 2, sizeof(uint32_t));
+			size = os::hw::to_endianness(os::hw::endian::little, size);
+			checksum = os::hw::to_endianness(os::hw::endian::little, checksum);
+			if (size > max_body_size)
 			{
-				size_t magic_index = message_buffer.find(std::string_view((char*)magic_buffer, sizeof(magic_buffer)));
-				if (magic_index == std::string::npos)
-					return false;
-				
-				std::string_view message = std::string_view(message_buffer).substr(magic_index);
-				if (message.size() < header_size)
-					return false;
-
-				uint32_t size, checksum;
-				memcpy(&size, message.data() + sizeof(uint32_t) * 1, sizeof(uint32_t));
-				memcpy(&checksum, message.data() + sizeof(uint32_t) * 2, sizeof(uint32_t));
-				size = os::hw::to_endianness(os::hw::endian::little, size);
-				checksum = os::hw::to_endianness(os::hw::endian::little, checksum);
-
-				bool skip = size > protocol::now().message.max_body_size;
-				auto body = std::string_view(message).substr(header_size, (size_t)size);
-				if (!skip && body.size() < size)
-					return false;
-
-				format::ro_stream stream = format::ro_stream(body);
-				bool satisfiable = !skip && algorithm::hashing::hash32d(body) == checksum && load_payload(stream);
-				message_buffer.erase(0, magic_index + header_size + body.size());
-				if (satisfiable)
-					return true;
+				message_buffer.resize(header_size);
+				return false;
 			}
-			return false;
+
+			auto body = std::string_view(message_buffer).substr(header_size, (size_t)size);
+			if (body.size() < size)
+				return false;
+
+			format::ro_stream stream = format::ro_stream(body);
+			bool satisfiable = algorithm::hashing::hash32d(body) == checksum && load_payload(stream);
+			message_buffer.erase(0, magic_index + header_size + body.size());
+			return satisfiable;
 		}
 		bool exchange::load_partial_exchange(string& message, const uint8_t* buffer, size_t size)
 		{
@@ -299,7 +299,7 @@ namespace tangent
 			auto* queue = schedule::get();
 			auto& query = queries[session];
 			auto& result = query.result;
-			if (timeout_ms > 0 && false)
+			if (timeout_ms > 0)
 			{
 				query.timeout = queue->set_timeout(timeout_ms, [this, session, result]() mutable
 				{
@@ -673,6 +673,9 @@ namespace tangent
 			if (!pending_nodes.empty())
 				goto retry;
 
+			for (auto& node : nodes)
+				node.second->cancel_queries();
+
 			unique.unlock();
 			control_sys.deactivate();
 			return expectation::met;
@@ -732,12 +735,9 @@ namespace tangent
 			node.ports.rpc = protocol::now().user.rpc.port;
 			node.services.has_consensus = protocol::now().user.consensus.server;
 			node.services.has_discovery = protocol::now().user.discovery.server;
-			node.services.has_discovery_external_access = protocol::now().user.discovery.external;
 			node.services.has_oracle = protocol::now().user.oracle.server;
-			node.services.has_rpc = protocol::now().user.rpc.server;
-			node.services.has_rpc_external_access = protocol::now().user.rpc.external;
-			node.services.has_rpc_public_access = protocol::now().user.rpc.username.empty();
-			node.services.has_rpc_web_sockets = protocol::now().user.rpc.web_sockets;
+			node.services.has_rpc = protocol::now().user.rpc.server && protocol::now().user.rpc.username.empty();
+			node.services.has_rpc_web_sockets = node.services.has_rpc && protocol::now().user.rpc.web_sockets;
 
 			auto result = apply_node(mempool, descriptor);
 			if (result)
@@ -1029,12 +1029,17 @@ namespace tangent
 			auto mempool = storages::mempoolstate();
 			uint64_t peer_latency = peer_time > system_time ? peer_time - system_time : system_time - peer_time;
 			peer_node.availability.latency = peer_latency;
+			peer_node.availability.reachable = is_acknowledgement;
 			peer_node.address = socket_address(state->peer_address(), peer_node.address.get_ip_port().or_else(protocol::now().user.consensus.port));
 			if (!peer_node.is_valid() || peer_wallet.public_key_hash.empty() || peer_wallet.public_key_hash.equals(descriptor.second.public_key_hash))
 			{
 				mempool.clear_node(peer_descriptor.first.address);
 				return layer_exception("invalid node");
 			}
+
+			auto prev_descriptor = mempool.get_node(peer_node.address);
+			if (prev_descriptor)
+				peer_node.availability.reachable = peer_node.availability.reachable || peer_node.availability.reachable;
 
 			apply_node(mempool, peer_descriptor).report("mempool peer node save failed");
 			state->initialize(std::move(peer_descriptor));
@@ -1631,18 +1636,28 @@ namespace tangent
 					if (!new_tip_number || result->args.size() < 2)
 						coreturn remote_exception("invalid branch");
 
+					if (protocol::now().user.consensus.logging)
+					{
+						uint64_t blocks_count = (uint64_t)(result->args.size() - 1);
+						VI_INFO("block %s chain fork: resolution in range: [%" PRIu64 "; %" PRIu64 "]", algorithm::encoding::encode_0xhex256(new_tip_fork_hash).c_str(), new_tip_number - (blocks_count > new_tip_number ? 1 : blocks_count), new_tip_number);
+					}
+
 					format::ro_stream block_message = format::ro_stream(result->args[1].as_string());
 					ledger::block_header child_header;
 					if (!child_header.load(block_message))
 						coreturn remote_exception("invalid block header");
 
 					ledger::block_header parent_header;
-					for (size_t i = 2; i < result->args.size() + 1; i++)
+					size_t block_range = result->args.size() + 1;
+					for (size_t i = 2; i < block_range; i++)
 					{
 						uint256_t branch_hash = child_header.as_hash(true);
 						auto collision = storages::chainstate().get_block_header_by_hash(branch_hash);
 						if (collision || --new_tip_number < 1)
 						{
+							if (protocol::now().user.consensus.logging)
+								VI_INFO("block %s chain fork: collision detected (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(branch_hash).c_str(), child_header.number);
+
 							new_tip_hash = branch_hash;
 							old_tip_number = 0;
 							break;
@@ -1838,7 +1853,7 @@ namespace tangent
 			}
 			else
 			{
-				uint8_t buffer[1024];
+				uint8_t buffer[BLOB_SIZE];
 				size_t max_buffer_size = sizeof(buffer);
 				uint64_t next_pull_time = 0;
 				while (state->bandwidth.check(max_buffer_size, next_pull_time))
@@ -2070,11 +2085,12 @@ namespace tangent
 				if (!best_fork)
 					coreturn_void;
 			retry:
+				auto candidate_hash = best_fork->first;
 				auto state = uref(best_fork->second.state);
 				auto status = coawait(verify_and_accept_fork(std::move(*best_fork)));
 				if (!status && protocol::now().user.consensus.logging)
-					VI_WARN("chain fork from node %s rejected: %s", state->peer_address().c_str(), status.what().c_str());
-					
+					VI_WARN("block %s chain fork rejected: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), status.what().c_str());
+
 				clear_pending_fork(*state);
 				auto new_best_fork = get_best_fork_header();
 				if (new_best_fork && best_fork->second.header < new_best_fork->second.header)
@@ -2082,6 +2098,7 @@ namespace tangent
 					best_fork = std::move(new_best_fork);
 					goto retry;
 				}
+				run_block_production();
 				coreturn_void;
 			});
 		}
@@ -2347,17 +2364,13 @@ namespace tangent
 			if (!verification)
 			{
 				if (protocol::now().user.consensus.logging)
-					VI_WARN("block %s branch averted: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), verification.error().what());
+					VI_WARN("block %s rejected: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), verification.error().what());
 				return false;
 			}
 
 			auto chain = storages::chainstate();
 			if (chain.get_block_header_by_hash(candidate_hash))
-			{
-				if (protocol::now().user.consensus.logging)
-					VI_INFO("block %s branch confirmed", algorithm::encoding::encode_0xhex256(candidate_hash).c_str());
 				return true;
-			}
 
 			bool fork_branch = fork_tip > 0;
 			auto fork_tip_block = ledger::block_header();
@@ -2368,7 +2381,7 @@ namespace tangent
 				if (it == forks.end())
 				{
 					if (protocol::now().user.consensus.logging)
-						VI_WARN("block %s branch averted: fork reverted", algorithm::encoding::encode_0xhex256(candidate_hash).c_str());
+						VI_WARN("block %s rejected: orphan fork", algorithm::encoding::encode_0xhex256(candidate_hash).c_str());
 					return false;
 				}
 				fork_tip_block = it->second.header;
@@ -2391,7 +2404,7 @@ namespace tangent
 												<+> = ignore (smaller branch)
 				*/
 				if (protocol::now().user.consensus.logging)
-					VI_WARN("block %s branch averted: not preferred %s (length: %" PRIi64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), branch_length < 0 ? "branch" : "difficulty", branch_length);
+					VI_WARN("block %s rejected: inferior fork %s (length: %" PRIi64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), branch_length < 0 ? "branch" : "work", branch_length);
 				return false;
 			}
 			else if (branch_length == 0 && tip_block && tip_hash != candidate_hash && candidate.block < *tip_block)
@@ -2402,7 +2415,7 @@ namespace tangent
 					<+> - <+> - <+> - <+> - <+> - <+> - <+>
 				*/
 				if (protocol::now().user.consensus.logging)
-					VI_WARN("block %s branch averted: not preferred difficulty", algorithm::encoding::encode_0xhex256(candidate_hash).c_str());
+					VI_WARN("block %s rejected: inferior fork difficulty", algorithm::encoding::encode_0xhex256(candidate_hash).c_str());
 				return false;
 			}
 			else if (!parent_block && candidate.block.number > 1)
@@ -2410,7 +2423,7 @@ namespace tangent
 				if (!from)
 				{
 					if (protocol::now().user.consensus.logging)
-						VI_WARN("block %s branch averted: not preferred candidate", algorithm::encoding::encode_0xhex256(candidate_hash).c_str());
+						VI_WARN("block %s rejected: unexpected orphan", algorithm::encoding::encode_0xhex256(candidate_hash).c_str());
 					return false;
 				}
 
@@ -2442,10 +2455,8 @@ namespace tangent
 					*/
 					if (protocol::now().user.consensus.logging)
 					{
-						if (forks.find(candidate_hash) != forks.end())
-							VI_INFO("block %s new best branch confirmed", algorithm::encoding::encode_0xhex256(candidate_hash).c_str());
-						else
-							VI_WARN("block %s branch averted: not preferred orphan branch", algorithm::encoding::encode_0xhex256(candidate_hash).c_str());
+						if (forks.find(candidate_hash) == forks.end())
+							VI_WARN("block %s rejected: inferior fork orphan", algorithm::encoding::encode_0xhex256(candidate_hash).c_str());
 					}
 					return false;
 				}
@@ -2461,7 +2472,7 @@ namespace tangent
 				unique.unlock();
 				run_fork_resolution();
 				if (protocol::now().user.consensus.logging)
-					VI_INFO("block %s new best branch found (height: %" PRIu64 ", distance: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), candidate.block.number, std::abs((int64_t)(tip_block ? tip_block->number : 0) - (int64_t)candidate.block.number));
+					VI_INFO("block %s chain fork: new possible best found (height: %" PRIu64 ", distance: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), candidate.block.number, std::abs((int64_t)(tip_block ? tip_block->number : 0) - (int64_t)candidate.block.number));
 				return true;
 			}
 
@@ -2471,7 +2482,7 @@ namespace tangent
 				if (!validation)
 				{
 					if (protocol::now().user.consensus.logging)
-						VI_WARN("block %s branch averted: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), validation.error().what());
+						VI_WARN("block %s rejected: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), validation.error().what());
 					return false;
 				}
 			}
@@ -2481,7 +2492,7 @@ namespace tangent
 				if (!integrity)
 				{
 					if (protocol::now().user.consensus.logging)
-						VI_WARN("block %s branch averted: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), integrity.error().what());
+						VI_WARN("block %s rejected: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), integrity.error().what());
 					return false;
 				}
 			}

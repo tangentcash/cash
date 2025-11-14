@@ -270,16 +270,14 @@ namespace tangent
 			stream->write_integer(availability.timestamp);
 			stream->write_integer(availability.calls);
 			stream->write_integer(availability.errors);
+			stream->write_boolean(availability.reachable);
 			stream->write_integer(ports.consensus);
 			stream->write_integer(ports.discovery);
 			stream->write_integer(ports.rpc);
 			stream->write_boolean(services.has_consensus);
 			stream->write_boolean(services.has_discovery);
-			stream->write_boolean(services.has_discovery_external_access);
 			stream->write_boolean(services.has_oracle);
 			stream->write_boolean(services.has_rpc);
-			stream->write_boolean(services.has_rpc_external_access);
-			stream->write_boolean(services.has_rpc_public_access);
 			stream->write_boolean(services.has_rpc_web_sockets);
 			stream->write_boolean(services.has_production);
 			stream->write_boolean(services.has_participation);
@@ -308,6 +306,9 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &availability.errors))
 				return false;
 
+			if (!stream.read_boolean(stream.read_type(), &availability.reachable))
+				return false;
+
 			if (!stream.read_integer(stream.read_type(), &ports.consensus))
 				return false;
 
@@ -323,19 +324,10 @@ namespace tangent
 			if (!stream.read_boolean(stream.read_type(), &services.has_discovery))
 				return false;
 
-			if (!stream.read_boolean(stream.read_type(), &services.has_discovery_external_access))
-				return false;
-
 			if (!stream.read_boolean(stream.read_type(), &services.has_oracle))
 				return false;
 
 			if (!stream.read_boolean(stream.read_type(), &services.has_rpc))
-				return false;
-
-			if (!stream.read_boolean(stream.read_type(), &services.has_rpc_external_access))
-				return false;
-
-			if (!stream.read_boolean(stream.read_type(), &services.has_rpc_public_access))
 				return false;
 
 			if (!stream.read_boolean(stream.read_type(), &services.has_rpc_web_sockets))
@@ -380,6 +372,7 @@ namespace tangent
 			availability_data->set("timestamp", algorithm::encoding::serialize_uint256(availability.timestamp));
 			availability_data->set("calls", algorithm::encoding::serialize_uint256(availability.calls));
 			availability_data->set("errors", algorithm::encoding::serialize_uint256(availability.errors));
+			availability_data->set("reachable", var::boolean(availability.reachable));
 
 			auto* ports_data = data->set("ports");
 			ports_data->set("consensus", var::integer(ports.consensus));
@@ -389,11 +382,8 @@ namespace tangent
 			auto* services_data = data->set("services");
 			services_data->set("consensus", var::boolean(services.has_consensus));
 			services_data->set("discovery", var::boolean(services.has_discovery));
-			services_data->set("discovery_external_access", var::boolean(services.has_discovery_external_access));
 			services_data->set("oracle", var::boolean(services.has_oracle));
 			services_data->set("rpc", var::boolean(services.has_rpc));
-			services_data->set("rpc_external_access", var::boolean(services.has_rpc_external_access));
-			services_data->set("rpc_public_access", var::boolean(services.has_rpc_public_access));
 			services_data->set("rpc_web_sockets", var::boolean(services.has_rpc_web_sockets));
 			services_data->set("production", var::boolean(services.has_production));
 			services_data->set("participation", var::boolean(services.has_participation));

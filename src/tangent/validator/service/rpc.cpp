@@ -2682,8 +2682,6 @@ namespace tangent
 						services |= (uint32_t)storages::node_services::oracle;
 					else if (service == "rpc")
 						services |= (uint32_t)storages::node_services::rpc;
-					else if (service == "rpc_public_access")
-						services |= (uint32_t)storages::node_services::rpc_public_access;
 					else if (service == "rpc_web_sockets")
 						services |= (uint32_t)storages::node_services::rpc_web_sockets;
 					else if (service == "production")

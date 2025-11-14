@@ -113,9 +113,11 @@ namespace tangent
 			map.push_back(var::set::binary(*encrypted_wallet_message));
 
 			auto cursor = get_storage().emplace_query(__func__,
-				"DELETE FROM cooldowns WHERE address = ?;"
+				stringify::text(
+				"%s;"
 				"DELETE FROM nodes WHERE address = ? OR account = ?;"
-				"INSERT OR REPLACE INTO nodes (address, account, quality, services, node_message, wallet_message) VALUES (?, ?, ?, ?, ?, ?)", &map);
+				"INSERT OR REPLACE INTO nodes (address, account, quality, services, node_message, wallet_message) VALUES (?, ?, ?, ?, ?, ?)",
+				node.availability.reachable ? "DELETE FROM cooldowns WHERE address = ?" : "INSERT OR REPLACE INTO cooldowns (address, expiration) VALUES (?, 0x7FFFFFFFFFFFFFFF)"), &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -982,16 +984,10 @@ namespace tangent
 				services |= (uint32_t)node_services::consensus;
 			if (node.services.has_discovery)
 				services |= (uint32_t)node_services::discovery;
-			if (node.services.has_discovery_external_access)
-				services |= (uint32_t)node_services::discovery_external_access;
 			if (node.services.has_oracle)
 				services |= (uint32_t)node_services::oracle;
 			if (node.services.has_rpc)
 				services |= (uint32_t)node_services::rpc;
-			if (node.services.has_rpc_external_access)
-				services |= (uint32_t)node_services::rpc_external_access;
-			if (node.services.has_rpc_public_access)
-				services |= (uint32_t)node_services::rpc_public_access;
 			if (node.services.has_rpc_web_sockets)
 				services |= (uint32_t)node_services::rpc_web_sockets;
 			if (node.services.has_production)
