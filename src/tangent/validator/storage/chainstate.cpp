@@ -54,7 +54,6 @@ namespace tangent
 			string column;
 			string row;
 			uint8_t rank[32];
-			size_t rank_size;
 			const ledger::multiform* context;
 			const ledger::block_state::state_change* change;
 		};
@@ -460,9 +459,9 @@ namespace tangent
 
 		string result_filter::as_value() const
 		{
-			uint8_t data[32]; size_t data_size;
-			value.encode_compact(data, &data_size);
-			return string((char*)data, data_size);
+			uint8_t data[sizeof(value)];
+			value.encode(data);
+			return string((char*)data, sizeof(data));
 		}
 		std::string_view result_filter::as_condition() const
 		{
@@ -1096,7 +1095,7 @@ namespace tangent
 					item.column = item.context->as_column();
 					item.row = item.context->as_row();
 					item.context->store_optimized(&item.message);
-					item.context->as_rank().encode_compact(item.rank, &item.rank_size);
+					item.context->as_rank().encode(item.rank);
 				}))
 					queue.emplace_back(std::move(task));
 			}
@@ -1237,7 +1236,7 @@ namespace tangent
 							storage_ptr->bind_int64(statement, 0, column_number);
 							storage_ptr->bind_int64(statement, 1, row_number);
 							storage_ptr->bind_int64(statement, 2, evaluation.block.number);
-							storage_ptr->bind_blob(statement, 3, std::string_view((char*)item.rank, item.rank_size));
+							storage_ptr->bind_blob(statement, 3, std::string_view((char*)item.rank, sizeof(item.rank)));
 						}
 
 						cursor = writer.storage->prepared_query(__func__, statement);
@@ -1248,7 +1247,7 @@ namespace tangent
 						storage_ptr->bind_int64(statement, 0, column_number);
 						storage_ptr->bind_int64(statement, 1, row_number);
 						storage_ptr->bind_int64(statement, 2, evaluation.block.number);
-						storage_ptr->bind_blob(statement, 3, std::string_view((char*)item.rank, item.rank_size));
+						storage_ptr->bind_blob(statement, 3, std::string_view((char*)item.rank, sizeof(item.rank)));
 						storage_ptr->bind_boolean(statement, 4, item.change->erase);
 
 						cursor = writer.storage->prepared_query(__func__, statement);
@@ -2985,7 +2984,7 @@ namespace tangent
 			writer.blobs.erase(std::remove_if(writer.blobs.begin(), writer.blobs.end(), [&](const multiform_blob& value)
 			{
 				auto it = changelog->temporary_state.effects.find(value.message.data);
-				return it != changelog->temporary_state.effects.end() && it->second == std::string_view((char*)value.rank, value.rank_size);
+				return it != changelog->temporary_state.effects.end() && it->second == std::string_view((char*)value.rank, sizeof(value.rank));
 			}), writer.blobs.end());
 			result.in_use = temporary;
 			if (writer.blobs.empty())
@@ -3049,12 +3048,12 @@ namespace tangent
 				uint64_t row_number = cursor->first().front().get_column(0).get().get_integer();
 				if (block_number > 0)
 				{
-					item.context->as_rank().encode_compact(item.rank, &item.rank_size);
+					item.context->as_rank().encode(item.rank);
 					statement = writer.commit_snapshot_data;
 					storage_ptr->bind_int64(statement, 0, column_number);
 					storage_ptr->bind_int64(statement, 1, row_number);
 					storage_ptr->bind_int64(statement, 2, 0);
-					storage_ptr->bind_blob(statement, 3, std::string_view((char*)item.rank, item.rank_size));
+					storage_ptr->bind_blob(statement, 3, std::string_view((char*)item.rank, sizeof(item.rank)));
 					storage_ptr->bind_boolean(statement, 4, item.change->erase);
 				}
 				else if (item.change->erase)
@@ -3065,12 +3064,12 @@ namespace tangent
 				}
 				else
 				{
-					item.context->as_rank().encode_compact(item.rank, &item.rank_size);
+					item.context->as_rank().encode(item.rank);
 					statement = writer.commit_multiform_data;
 					storage_ptr->bind_int64(statement, 0, column_number);
 					storage_ptr->bind_int64(statement, 1, row_number);
 					storage_ptr->bind_int64(statement, 2, 0);
-					storage_ptr->bind_blob(statement, 3, std::string_view((char*)item.rank, item.rank_size));
+					storage_ptr->bind_blob(statement, 3, std::string_view((char*)item.rank, sizeof(item.rank)));
 				}
 
 				cursor = multiform_storage.prepared_query(__func__, statement);
@@ -3085,7 +3084,7 @@ namespace tangent
 			multiform_storage.set_uses(uses);
 			changelog->temporary_state.topics[type] = storage_ptr;
 			for (auto& item : writer.blobs)
-				changelog->temporary_state.effects[item.message.data] = string((char*)item.rank, item.rank_size);
+				changelog->temporary_state.effects[item.message.data] = string((char*)item.rank, sizeof(item.rank));
 
 			return result;
 		}
