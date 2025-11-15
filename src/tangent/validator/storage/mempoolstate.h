@@ -109,6 +109,7 @@ namespace tangent
 		public:
 			static double fee_percentile(fee_priority priority);
 			static uint32_t services_of(const ledger::node& node);
+			static uint64_t transaction_limit();
 
 		private:
 			static bool make_schema(sqlite::connection* connection);

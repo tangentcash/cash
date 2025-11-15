@@ -522,6 +522,14 @@ namespace tangent
 			if (value != nullptr && value->value.is(var_type::integer))
 				user.consensus.response_timeout = value->value.get_integer();
 
+			value = config->fetch("consensus.aggregation_attempts");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.consensus.aggregation_attempts = value->value.get_integer();
+
+			value = config->fetch("consensus.aggregation_cooldown");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.consensus.aggregation_cooldown = value->value.get_integer();
+
 			value = config->fetch("consensus.hashes_per_query");
 			if (value != nullptr && value->value.is(var_type::integer))
 				user.consensus.hashes_per_query = value->value.get_integer();
@@ -679,10 +687,6 @@ namespace tangent
 			value = config->fetch("storage.transaction_timeout");
 			if (value != nullptr && value->value.is(var_type::integer))
 				user.storage.transaction_timeout = value->value.get_integer();
-
-			value = config->fetch("storage.mempool_transaction_limit");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.storage.mempool_transaction_limit = value->value.get_integer();
 
 			value = config->fetch("storage.location_cache_size");
 			if (value != nullptr && value->value.is(var_type::integer))
@@ -873,7 +877,6 @@ namespace tangent
 				policy.commitment_throughput = 500;
 				policy.transaction_throughput = 10000;
 				policy.wesolowski_bits = 512;
-				policy.wesolowski_ops = 8192;
 				break;
 			case tangent::network_type::testnet:
 				message.packet_magic = 0xf815c95c;

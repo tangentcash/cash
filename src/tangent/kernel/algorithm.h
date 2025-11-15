@@ -344,14 +344,14 @@ namespace tangent
 		public:
 			static expects_lr<keypair> derive_keypair(type alg, const uint256_t& seed);
 			static expects_lr<uptr<secret_state>> make_secret_state(type alg);
-			static expects_lr<uptr<secret_state>> load_secret_state(format::ro_stream& stream);
+			static expects_lr<uptr<secret_state>> load_secret_state(format::ro_stream& stream, type* alg = nullptr);
 			static expects_lr<void> store_secret_state(type alg, const secret_state* state, format::wo_stream* stream);
 			static expects_lr<uptr<public_state>> make_public_state(type alg);
-			static expects_lr<uptr<public_state>> load_public_state(format::ro_stream& stream);
+			static expects_lr<uptr<public_state>> load_public_state(format::ro_stream& stream, type* alg = nullptr);
 			static expects_lr<void> store_public_state(type alg, const public_state* state, format::wo_stream* stream);
 			static expects_lr<uptr<signature_state>> make_signature_state(type alg);
 			static expects_lr<uptr<signature_state>> make_signature_state(type alg, const cpubkey_t& public_key, const uint8_t* message, size_t message_size, uint16_t participants);
-			static expects_lr<uptr<signature_state>> load_signature_state(format::ro_stream& stream);
+			static expects_lr<uptr<signature_state>> load_signature_state(format::ro_stream& stream, type* alg = nullptr);
 			static expects_lr<void> store_signature_state(type alg, const signature_state* state, format::wo_stream* stream);
 
 		public:

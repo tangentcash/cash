@@ -998,6 +998,13 @@ namespace tangent
 				services |= (uint32_t)node_services::attestation;
 			return services;
 		}
+		uint64_t mempoolstate::transaction_limit()
+		{
+			auto& params = protocol::now();
+			auto transactions = ledger::block_header::get_transaction_limit() * (params.user.storage.transaction_timeout * 1000 / params.policy.consensus_proof_time);
+			auto commitments = ledger::block_header::get_commitment_limit() * (params.user.storage.commitment_timeout * 1000 / params.policy.consensus_proof_time);
+			return transactions + commitments;
+		}
 		bool mempoolstate::make_schema(sqlite::connection* connection)
 		{
 			string command = VI_STRINGIFY(
@@ -1080,7 +1087,7 @@ namespace tangent
 			CREATE TRIGGER IF NOT EXISTS transactions_capacity BEFORE INSERT ON transactions BEGIN
 				DELETE FROM transactions WHERE hash = (SELECT hash FROM transactions ORDER BY epoch DESC, quality ASC NULLS FIRST) AND (SELECT COUNT(1) FROM transactions) >= max_mempool_size;
 			END;);
-			stringify::replace(command, "max_mempool_size", to_string(protocol::now().user.storage.mempool_transaction_limit));
+			stringify::replace(command, "max_mempool_size", to_string(transaction_limit()));
 
 			auto cursor = connection->query(command);
 			cursor.report("mempoolstate configuration failed");

@@ -426,6 +426,7 @@ namespace tangent
 			{
 				uptr<algorithm::composition::public_state> aggregator;
 				ordered_set<algorithm::pubkeyhash_t> participants;
+				algorithm::composition::type alg;
 
 				bool load_message(format::ro_stream& stream);
 				format::wo_stream as_message() const;
@@ -436,6 +437,7 @@ namespace tangent
 				uptr<algorithm::composition::signature_state> aggregator;
 				ordered_set<algorithm::pubkeyhash_t> participants;
 				uptr<oracle::prepared_transaction> message;
+				algorithm::composition::type alg;
 
 				bool load_message_if_preferred(format::ro_stream& stream);
 				format::wo_stream as_message() const;

@@ -161,6 +161,8 @@ namespace tangent
                 uint32_t inventory_size = 65536;
                 uint32_t topology_timeout = 120000;
                 uint64_t response_timeout = 48000;
+                uint64_t aggregation_attempts = 6;
+                uint64_t aggregation_cooldown = 2000;
                 bool may_propose = true;
                 bool server = true;
                 bool logging = true;
@@ -208,10 +210,9 @@ namespace tangent
                 string path;
                 string module_cache_path;
                 storage_optimization optimization = storage_optimization::speed;
-                uint64_t transaction_dispatch_repeat_interval = 600;
-                uint64_t transaction_timeout = 86400;
-                uint64_t commitment_timeout = 14400;
-                uint64_t mempool_transaction_limit = 10000000;
+                uint64_t transaction_dispatch_repeat_interval = 120;
+                uint64_t transaction_timeout = 14400;
+                uint64_t commitment_timeout = 7200;
                 uint64_t checkpoint_size = 100;
                 uint64_t location_cache_size = 500000;
                 uint64_t module_cache_size = 8192;

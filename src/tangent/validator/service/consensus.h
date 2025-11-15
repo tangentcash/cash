@@ -188,7 +188,7 @@ namespace tangent
 
 			struct connection_permit
 			{
-				unordered_set<algorithm::pubkeyhash_t> accounts;
+				ordered_set<algorithm::pubkeyhash_t> accounts;
 				vector<uref<relay>> results;
 				expects_promise_rt<vector<uref<relay>>> task;
 				task_id timeout = INVALID_TASK_ID;
@@ -240,7 +240,7 @@ namespace tangent
 			expects_lr<void> notify_of_possibly_new_block_hash(uref<relay>&& state, const exchange& event);
 			expects_lr<void> notify_of_possibly_new_transaction_hash(uref<relay>&& state, const exchange& event);
 			expects_lr<void> notify_of_possibly_new_attestation(uref<relay>&& state, const exchange& event);
-			expects_lr<void> reverse_connect_to_node_by_accounts(uref<relay>&& state, const exchange& event);
+			expects_lr<void> notify_of_reverse_connection_requirement(uref<relay>&& state, const exchange& event);
 			expects_lr<format::variables> query_handshake(uref<relay>&& state, const exchange& event, bool is_acknowledgement);
 			expects_lr<format::variables> query_state(uref<relay>&& state, const exchange& event, bool is_acknowledgement);
 			expects_lr<format::variables> query_block_headers(uref<relay>&& state, const exchange& event);
@@ -249,15 +249,14 @@ namespace tangent
 			expects_lr<format::variables> query_transaction(uref<relay>&& state, const exchange& event);
 			expects_lr<format::variables> query_secret_share_state_aggregation(uref<relay>&& state, const exchange& event);
 			expects_lr<format::variables> query_public_state_aggregation(uref<relay>&& state, const exchange& event);
-			expects_lr<format::variables> query_signature_state_aggreation(uref<relay>&& state, const exchange& event);
+			expects_lr<format::variables> query_signature_state_aggregation(uref<relay>&& state, const exchange& event);
 			expects_lr<void> dispatch_transaction_logs(const algorithm::asset_id& asset, const oracle::chain_supervisor_options& options, oracle::transaction_logs&& logs);
 			expects_lr<socket_address> find_node_from_mempool();
 			expects_promise_rt<socket_address> find_node_from_discovery();
 			expects_promise_rt<uref<relay>> connect_to_physical_node(const socket_address& address, option<algorithm::pubkeyhash_t>&& required_account = optional::none);
 			expects_promise_rt<unordered_map<algorithm::pubkeyhash_t, uref<relay>>> connect_to_logical_nodes_with_permit(const uint256_t& permit_hash, unordered_set<algorithm::pubkeyhash_t>&& accounts);
-			expects_promise_rt<vector<uref<relay>>> accept_permit_for_accounts(const uint256_t& permit_hash, unordered_set<algorithm::pubkeyhash_t>&& accounts);
 			expects_promise_rt<void> synchronize_mempool_with(uref<relay>&& state);
-			expects_promise_rt<void> verify_and_accept_fork(std::pair<uint256_t, fork_header>&& fork);
+			expects_promise_rt<void> resolve_and_verify_fork(std::pair<uint256_t, fork_header>&& fork);
 			expects_promise_rt<exchange> query(uref<relay>&& state, const callable::descriptor& method, format::variables&& args, uint64_t timeout_ms);
 			expects_lr<void> notify(uref<relay>&& state, const callable::descriptor& method, format::variables&& args);
 			size_t notify_all(const callable::descriptor& method, format::variables&& args);

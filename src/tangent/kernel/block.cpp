@@ -848,7 +848,7 @@ namespace tangent
 			bool reactivation = context.get_validator_production(environment->validator.public_key_hash).or_else(states::validator_production(algorithm::pubkeyhash_t(), nullptr)).active;
 			if (!activation && !reactivation)
 			{
-				executionlog.append("\n  producer must active themselves");
+				executionlog.append("\n  producer must activate themselves");
 				return layer_exception(std::move(stringify::trim(executionlog)));
 			}
 
@@ -2922,7 +2922,7 @@ namespace tangent
 
 		bool dispatch_context::public_state::load_message(format::ro_stream& stream)
 		{
-			auto state = algorithm::composition::load_public_state(stream);
+			auto state = algorithm::composition::load_public_state(stream, &alg);
 			if (!state)
 				return false;
 
@@ -2940,14 +2940,14 @@ namespace tangent
 				possible_participants.insert(item);
 			}
 
-			aggregator = std::move(**state);
+			aggregator = std::move(*state);
 			participants = std::move(possible_participants);
 			return true;
 		}
 		format::wo_stream dispatch_context::public_state::as_message() const
 		{
 			format::wo_stream result;
-			aggregator->store(&result);
+			algorithm::composition::store_public_state(alg, *aggregator, &result);
 			result.write_integer((uint16_t)participants.size());
 			for (auto& participant : participants)
 				result.write_string(participant.optimized_view());
@@ -2956,7 +2956,7 @@ namespace tangent
 
 		bool dispatch_context::signature_state::load_message_if_preferred(format::ro_stream& stream)
 		{
-			auto state = algorithm::composition::load_signature_state(stream);
+			auto state = algorithm::composition::load_signature_state(stream, &alg);
 			if (!state || (aggregator && *state && !(*state)->prefer_over(**aggregator)))
 				return false;
 
@@ -2978,7 +2978,7 @@ namespace tangent
 				possible_participants.insert(item);
 			}
 
-			aggregator = std::move(**state);
+			aggregator = std::move(*state);
 			participants = std::move(possible_participants);
 			message = memory::init<oracle::prepared_transaction>(std::move(possible_message));
 			return true;
@@ -2987,7 +2987,7 @@ namespace tangent
 		{
 			VI_ASSERT(message, "message should be set");
 			format::wo_stream result;
-			aggregator->store(&result);
+			algorithm::composition::store_signature_state(alg, *aggregator, &result);
 			message->store(&result);
 			result.write_integer((uint16_t)participants.size());
 			for (auto& participant : participants)

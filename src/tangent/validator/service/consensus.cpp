@@ -38,7 +38,7 @@ namespace tangent
 			message.write_integer(time);
 			return message.hash();
 		}
-		static uint256_t discovery_proof(const socket_address& address, const unordered_set<algorithm::pubkeyhash_t>& accounts)
+		static uint256_t discovery_proof(const socket_address& address, const ordered_set<algorithm::pubkeyhash_t>& accounts)
 		{
 			format::wo_stream message;
 			message.write_string(address.get_ip_address().or_else(string()));
@@ -69,6 +69,15 @@ namespace tangent
 				return layer_exception("invalid response body");
 
 			return expects_lr<format::variables>(std::move(result));
+		}
+		static promise<bool> aggregative_sleep(uint64_t& attempt)
+		{
+			if (++attempt > protocol::now().user.consensus.aggregation_attempts)
+				return promise<bool>(false);
+
+			promise<bool> sleep;
+			schedule::get()->set_timeout(attempt * protocol::now().user.consensus.aggregation_cooldown, [sleep]() mutable { sleep.set(true); });
+			return sleep;
 		}
 
 		bool exchange::store_payload(format::wo_stream* stream) const
@@ -973,7 +982,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> server_node::reverse_connect_to_node_by_accounts(uref<relay>&& state, const exchange& event)
+		expects_lr<void> server_node::notify_of_reverse_connection_requirement(uref<relay>&& state, const exchange& event)
 		{
 			if (event.args.size() < 3 || event.args.size() > 2 + protocol::now().policy.participation_max_per_account)
 				return layer_exception("invalid arguments");
@@ -986,9 +995,9 @@ namespace tangent
 			if (!address || routing_util::is_address_reserved(*address))
 				return layer_exception("invalid address");
 
+			auto context = ledger::transaction_context();
 			size_t accounts_size = event.args.size() - 2;
-			unordered_set<algorithm::pubkeyhash_t> accounts;
-			accounts.reserve(accounts_size);
+			ordered_set<algorithm::pubkeyhash_t> accounts;
 			for (size_t i = 2; i < event.args.size(); i++)
 			{
 				auto account = algorithm::pubkeyhash_t(event.args[i].as_string());
@@ -997,7 +1006,7 @@ namespace tangent
 
 				accounts.insert(account);
 			}
-			if (accounts.size() != accounts_size)
+			if (accounts.size() != accounts_size || accounts.empty())
 				return layer_exception("invalid accounts");
 
 			algorithm::pubkeyhash_t account;
@@ -1006,8 +1015,15 @@ namespace tangent
 
 			if (accounts.find(descriptor.second.public_key_hash) != accounts.end())
 				connect_to_physical_node(*address, account);
-			if (accounts.size() > 1)
-				notify_all_except(std::move(state), METHOD_CALL(&server_node::reverse_connect_to_node_by_accounts), format::variables(event.args));
+
+			size_t notifications = notify_all_except(std::move(state), METHOD_CALL(&server_node::notify_of_reverse_connection_requirement), format::variables(event.args));
+			if (notifications > 0 && protocol::now().user.consensus.logging)
+			{
+				string address;
+				algorithm::signing::encode_address(account, address);
+				VI_INFO("permit from %s broadcasted to %i nodes", address.c_str(), (int)notifications);
+			}
+
 			return expectation::met;
 		}
 		expects_lr<format::variables> server_node::query_handshake(uref<relay>&& state, const exchange& event, bool is_acknowledgement)
@@ -1039,17 +1055,18 @@ namespace tangent
 
 			auto prev_descriptor = mempool.get_node(peer_node.address);
 			if (prev_descriptor)
-				peer_node.availability.reachable = peer_node.availability.reachable || peer_node.availability.reachable;
+				peer_node.availability.reachable = peer_node.availability.reachable || prev_descriptor->first.availability.reachable;
 
 			apply_node(mempool, peer_descriptor).report("mempool peer node save failed");
 			state->initialize(std::move(peer_descriptor));
-			if (is_acknowledgement)
-				return format::variables();
 
 			umutex<std::recursive_mutex> unique(exclusive);
-			if (active.size() > protocol::now().user.consensus.max_inbound_connections && !spend_permit_on(uref(state)))
+			if (!spend_permit_on(uref(state)) && active.size() > protocol::now().user.consensus.max_inbound_connections)
 				return layer_exception("not permitted to pass connections limit");
+
 			unique.unlock();
+			if (is_acknowledgement)
+				return format::variables();
 
 			auto& [node, wallet] = descriptor;
 			if (!algorithm::signing::sign(handshake_proof(node, system_time), wallet.secret_key, peer_signature))
@@ -1247,7 +1264,7 @@ namespace tangent
 
 			return format::variables({ format::variable(aggregator.as_message().data) });
 		}
-		expects_lr<format::variables> server_node::query_signature_state_aggreation(uref<relay>&& state, const exchange& event)
+		expects_lr<format::variables> server_node::query_signature_state_aggregation(uref<relay>&& state, const exchange& event)
 		{
 			if (event.args.size() != 3)
 				return layer_exception("invalid arguments");
@@ -1511,35 +1528,74 @@ namespace tangent
 			if (early_results.size() == accounts.size() - reduction)
 				return expects_promise_rt<unordered_map<algorithm::pubkeyhash_t, uref<relay>>>(std::move(early_results));
 
-			return coasync<expects_rt<unordered_map<algorithm::pubkeyhash_t, uref<relay>>>>([this, permit_hash, accounts = std::move(accounts)]() mutable -> expects_promise_rt<unordered_map<algorithm::pubkeyhash_t, uref<relay>>>
+			return coasync<expects_rt<unordered_map<algorithm::pubkeyhash_t, uref<relay>>>>([this, permit_hash, accounts = std::move(accounts), early_results = std::move(early_results)]() mutable -> expects_promise_rt<unordered_map<algorithm::pubkeyhash_t, uref<relay>>>
 			{
-				unordered_map<algorithm::pubkeyhash_t, expects_promise_rt<uref<relay>>> intermediate_results;
-				unordered_set<algorithm::pubkeyhash_t> permitted_accounts;
+				unordered_map<algorithm::pubkeyhash_t, expects_promise_rt<uref<relay>>> directly_connected_accounts;
+				ordered_set<algorithm::pubkeyhash_t> indirectly_connected_accounts;
 				{
 					auto mempool = storages::mempoolstate();
 					for (auto& account : accounts)
 					{
-						auto target = mempool.get_node(account);
-						if (target)
-							intermediate_results[account] = connect_to_physical_node(target->first.address, account);
+						auto it = early_results.find(account);
+						if (it == early_results.end())
+						{
+							auto target = mempool.get_node(account);
+							if (target && target->first.availability.reachable)
+								directly_connected_accounts[account] = connect_to_physical_node(target->first.address, account);
+							else
+								indirectly_connected_accounts.insert(account);
+						}
 						else
-							permitted_accounts.insert(account);
+							directly_connected_accounts[account] = expects_promise_rt<uref<relay>>(std::move(it->second));
 					}
 				}
 
 				unordered_map<algorithm::pubkeyhash_t, uref<relay>> results;
-				for (auto& [account, intermediate_result] : intermediate_results)
+				for (auto& [account, directly_connected_account] : directly_connected_accounts)
 				{
-					auto result = coawait(std::move(intermediate_result));
+					auto result = coawait(std::move(directly_connected_account));
 					if (result)
 						results[account] = std::move(*result);
 					else
-						permitted_accounts.insert(account);
+						indirectly_connected_accounts.insert(account);
 				}
 
-				if (!permitted_accounts.empty())
+				if (!indirectly_connected_accounts.empty())
 				{
-					auto permitted_results = coawait(accept_permit_for_accounts(permit_hash, std::move(permitted_accounts)));
+					auto& [node, wallet] = descriptor;
+					auto connections = expects_promise_rt<vector<uref<relay>>>(remote_exception::retry());
+					auto address = socket_address_to_text_address(node.address);
+					if (address)
+					{
+						algorithm::hashsig_t signature;
+						if (algorithm::signing::sign(discovery_proof(node.address, indirectly_connected_accounts), wallet.secret_key, signature))
+						{
+							umutex<std::recursive_mutex> unique(exclusive);
+							auto it = permits.find(permit_hash);
+							if (it == permits.end())
+							{
+								auto& permit = permits[permit_hash];
+								permit.accounts = std::move(indirectly_connected_accounts);
+
+								format::variables args;
+								args.reserve(permit.accounts.size() + 2);
+								args.push_back(format::variable(signature.optimized_view()));
+								args.push_back(format::variable(*address));
+								for (auto& account : permit.accounts)
+									args.push_back(format::variable(account.optimized_view()));
+
+								size_t notifications = notify_all(METHOD_CALL(&server_node::notify_of_reverse_connection_requirement), std::move(args));
+								if (notifications)
+									permit.timeout = schedule::get()->set_timeout(protocol::now().user.tcp.timeout, std::bind(&server_node::clear_pending_permit, this, permit_hash));
+								else
+									permits.erase(permit_hash);
+
+								connections = expects_promise_rt<vector<uref<relay>>>(permit.task);
+							}
+						}
+					}
+
+					auto permitted_results = coawait(std::move(connections));
 					if (permitted_results)
 					{
 						for (auto& permitted_result : *permitted_results)
@@ -1553,23 +1609,6 @@ namespace tangent
 
 				coreturn expects_promise_rt<unordered_map<algorithm::pubkeyhash_t, uref<relay>>>(std::move(results));
 			});
-		}
-		expects_promise_rt<vector<uref<relay>>> server_node::accept_permit_for_accounts(const uint256_t& permit_hash, unordered_set<algorithm::pubkeyhash_t>&& accounts)
-		{
-			if (!permit_hash || accounts.empty())
-				return expects_promise_rt<vector<uref<relay>>>(remote_exception("invalid arguments"));
-			else if (!is_active())
-				return expects_promise_rt<vector<uref<relay>>>(remote_exception::shutdown());
-
-			umutex<std::recursive_mutex> unique(exclusive);
-			auto it = permits.find(permit_hash);
-			if (it != permits.end())
-				return expects_promise_rt<vector<uref<relay>>>(remote_exception("permit already accepted"));
-
-			auto& permit = permits[permit_hash];
-			permit.accounts = std::move(accounts);
-			permit.timeout = schedule::get()->set_timeout(protocol::now().user.tcp.timeout, std::bind(&server_node::clear_pending_permit, this, permit_hash));
-			return expects_promise_rt<vector<uref<relay>>>(permit.task);
 		}
 		expects_promise_rt<void> server_node::synchronize_mempool_with(uref<relay>&& state)
 		{
@@ -1616,7 +1655,7 @@ namespace tangent
 				coreturn expectation::met;
 			});
 		}
-		expects_promise_rt<void> server_node::verify_and_accept_fork(std::pair<uint256_t, fork_header>&& fork)
+		expects_promise_rt<void> server_node::resolve_and_verify_fork(std::pair<uint256_t, fork_header>&& fork)
 		{
 			return coasync<expects_rt<void>>([this, fork = std::move(fork)]() mutable -> expects_promise_rt<void>
 			{
@@ -2062,6 +2101,8 @@ namespace tangent
 						}
 					}
 				}
+
+				run_block_dispatch_retrial();
 				coreturn_void;
 			});
 		}
@@ -2087,7 +2128,7 @@ namespace tangent
 			retry:
 				auto candidate_hash = best_fork->first;
 				auto state = uref(best_fork->second.state);
-				auto status = coawait(verify_and_accept_fork(std::move(*best_fork)));
+				auto status = coawait(resolve_and_verify_fork(std::move(*best_fork)));
 				if (!status && protocol::now().user.consensus.logging)
 					VI_WARN("block %s chain fork rejected: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), status.what().c_str());
 
@@ -2275,6 +2316,7 @@ namespace tangent
 			bind_event(METHOD_CALL(&server_node::notify_of_possibly_new_block_hash), std::bind(&server_node::notify_of_possibly_new_block_hash, this, std::placeholders::_2, std::placeholders::_3));
 			bind_event(METHOD_CALL(&server_node::notify_of_possibly_new_transaction_hash), std::bind(&server_node::notify_of_possibly_new_transaction_hash, this, std::placeholders::_2, std::placeholders::_3));
 			bind_event(METHOD_CALL(&server_node::notify_of_possibly_new_attestation), std::bind(&server_node::notify_of_possibly_new_attestation, this, std::placeholders::_2, std::placeholders::_3));
+			bind_event(METHOD_CALL(&server_node::notify_of_reverse_connection_requirement), std::bind(&server_node::notify_of_reverse_connection_requirement, this, std::placeholders::_2, std::placeholders::_3));
 			bind_query(METHOD_CALL(&server_node::query_handshake), std::bind(&server_node::query_handshake, this, std::placeholders::_2, std::placeholders::_3, false));
 			bind_query(METHOD_CALL(&server_node::query_state), std::bind(&server_node::query_state, this, std::placeholders::_2, std::placeholders::_3, false));
 			bind_query(METHOD_CALL(&server_node::query_block_headers), std::bind(&server_node::query_block_headers, this, std::placeholders::_2, std::placeholders::_3));
@@ -2282,14 +2324,13 @@ namespace tangent
 			bind_query(METHOD_CALL(&server_node::query_mempool_transaction_hashes), std::bind(&server_node::query_mempool_transaction_hashes, this, std::placeholders::_2, std::placeholders::_3));
 			bind_query(METHOD_CALL(&server_node::query_transaction), std::bind(&server_node::query_transaction, this, std::placeholders::_2, std::placeholders::_3));
 			bind_query(METHOD_CALL(&server_node::query_public_state_aggregation), std::bind(&server_node::query_public_state_aggregation, this, std::placeholders::_2, std::placeholders::_3));
-			bind_query(METHOD_CALL(&server_node::query_signature_state_aggreation), std::bind(&server_node::query_signature_state_aggreation, this, std::placeholders::_2, std::placeholders::_3));
+			bind_query(METHOD_CALL(&server_node::query_signature_state_aggregation), std::bind(&server_node::query_signature_state_aggregation, this, std::placeholders::_2, std::placeholders::_3));
 
-			control_sys.interval_if_none(TASK_TOPOLOGY_OPTIMIZATION "_runner", protocol::now().user.consensus.topology_timeout, std::bind(&server_node::run_topology_optimization, this));
 			control_sys.interval_if_none(TASK_MEMPOOL_VACUUM "_runner", protocol::now().user.storage.transaction_timeout * 1000, std::bind(&server_node::run_mempool_vacuum, this));
+			control_sys.interval_if_none(TASK_TOPOLOGY_OPTIMIZATION "_runner", protocol::now().user.consensus.topology_timeout, std::bind(&server_node::run_topology_optimization, this));
 			control_sys.interval_if_none(TASK_BLOCK_DISPATCH_RETRIAL "_runner", protocol::now().user.storage.transaction_dispatch_repeat_interval * 1000, std::bind(&server_node::run_block_dispatch_retrial, this));
 			run_topology_optimization();
 			run_mempool_vacuum();
-			run_block_dispatch_retrial();
 		}
 		void server_node::shutdown()
 		{
@@ -2592,16 +2633,15 @@ namespace tangent
 				if (target == permit.accounts.end())
 					continue;
 
-				queue->clear_timeout(permit.timeout);
-				permit.timeout = queue->set_timeout(protocol::now().user.tcp.timeout, std::bind(&server_node::clear_pending_permit, this, handle));
+				permit_spent = true;
 				permit.accounts.erase(target);
 				permit.results.push_back(state);
-				permit_spent = true;
 				if (permit.accounts.empty())
 				{
 					clear_pending_permit(handle);
 					break;
 				}
+				permit.timeout = queue->set_timeout(protocol::now().user.tcp.timeout, std::bind(&server_node::clear_pending_permit, this, handle));
 			}
 			if (permit_spent)
 			{
@@ -2907,6 +2947,7 @@ namespace tangent
 			unordered_set<algorithm::pubkeyhash_t> required_accounts;
 			required_accounts.reserve(validators.size());
 			required_accounts.insert(validators.begin(), validators.end());
+
 			return server->connect_to_logical_nodes_with_permit(transaction_hash, std::move(required_accounts)).then<expects_rt<void>>([](expects_rt<unordered_map<algorithm::pubkeyhash_t, uref<relay>>>&& results) -> expects_rt<void>
 			{
 				if (!results)
@@ -2925,19 +2966,26 @@ namespace tangent
 			if (!node)
 				return expects_promise_rt<void>(remote_exception::retry());
 
-			auto args = format::variables({ format::variable(context->receipt.block_number), format::variable(context->receipt.transaction_hash), format::variable(state.as_message().data) });
-			return server->query(std::move(node), METHOD_CALL(&server_node::query_secret_share_state_aggregation), std::move(args), protocol::now().user.consensus.response_timeout).then<expects_rt<void>>([&state](expects_rt<exchange>&& event) -> expects_rt<void>
+			return coasync<expects_rt<void>>([this, context, &state, node]() mutable -> expects_promise_rt<void>
 			{
-				if ((event && event->args.empty()) || (!event && (event.error().is_retry() || event.error().is_shutdown())))
-					return remote_exception::retry();
+				uint64_t attempt = 0;
+			retry:
+				auto args = format::variables({ format::variable(context->receipt.block_number), format::variable(context->receipt.transaction_hash), format::variable(state.as_message().data) });
+				auto event = coawait(server->query(std::move(node), METHOD_CALL(&server_node::query_secret_share_state_aggregation), std::move(args), protocol::now().user.consensus.response_timeout));
+				if (event && event->args.empty())
+				{
+					if (coawait(aggregative_sleep(attempt)))
+						goto retry;
+					coreturn remote_exception::retry();
+				}
 				else if (!event)
-					return event.error();
+					coreturn event.error().is_retry() || event.error().is_shutdown() ? remote_exception::retry() : event.error();
 
 				auto message = format::ro_stream(event->args.front().as_string());
 				if (!state.load_message(message))
-					return remote_exception("group secret share remote computation error");
+					coreturn remote_exception("group secret share remote computation error");
 
-				return expectation::met;
+				coreturn expectation::met;
 			});
 		}
 		expects_promise_rt<void> dispatch_context::aggregate_public_state(const ledger::transaction_context* context, public_state& state, const algorithm::pubkeyhash_t& validator)
@@ -2949,19 +2997,26 @@ namespace tangent
 			if (!node)
 				return expects_promise_rt<void>(remote_exception::retry());
 
-			auto args = format::variables({ format::variable(context->receipt.block_number), format::variable(context->receipt.transaction_hash), format::variable(state.as_message().data) });
-			return server->query(std::move(node), METHOD_CALL(&server_node::query_public_state_aggregation), std::move(args), protocol::now().user.consensus.response_timeout).then<expects_rt<void>>([&state](expects_rt<exchange>&& event) -> expects_rt<void>
+			return coasync<expects_rt<void>>([this, context, &state, node]() mutable -> expects_promise_rt<void>
 			{
-				if ((event && event->args.empty()) || (!event && (event.error().is_retry() || event.error().is_shutdown())))
-					return remote_exception::retry();
+				uint64_t attempt = 0;
+			retry:
+				auto args = format::variables({ format::variable(context->receipt.block_number), format::variable(context->receipt.transaction_hash), format::variable(state.as_message().data) });
+				auto event = coawait(server->query(std::move(node), METHOD_CALL(&server_node::query_public_state_aggregation), std::move(args), protocol::now().user.consensus.response_timeout));
+				if (event && event->args.empty())
+				{
+					if (coawait(aggregative_sleep(attempt)))
+						goto retry;
+					coreturn remote_exception::retry();
+				}
 				else if (!event)
-					return event.error();
+					coreturn event.error().is_retry() || event.error().is_shutdown() ? remote_exception::retry() : event.error();
 
 				auto message = format::ro_stream(event->args.front().as_string());
 				if (!state.load_message(message))
-					return remote_exception("group public key remote computation error");
+					coreturn remote_exception("group public key remote computation error");
 
-				return expectation::met;
+				coreturn expectation::met;
 			});
 		}
 		expects_promise_rt<void> dispatch_context::aggregate_signature_state(const ledger::transaction_context* context, signature_state& state, const algorithm::pubkeyhash_t& validator)
@@ -2973,19 +3028,26 @@ namespace tangent
 			if (!node)
 				return expects_promise_rt<void>(remote_exception::retry());
 
-			auto args = format::variables({ format::variable(context->receipt.block_number), format::variable(context->receipt.transaction_hash), format::variable(state.as_message().data) });
-			return server->query(std::move(node), METHOD_CALL(&server_node::query_signature_state_aggreation), std::move(args), protocol::now().user.consensus.response_timeout).then<expects_rt<void>>([&state](expects_rt<exchange>&& event) -> expects_rt<void>
+			return coasync<expects_rt<void>>([this, context, &state, node]() mutable -> expects_promise_rt<void>
 			{
-				if ((event && event->args.empty()) || (!event && (event.error().is_retry() || event.error().is_shutdown())))
-					return remote_exception::retry();
+				uint64_t attempt = 0;
+			retry:
+				auto args = format::variables({ format::variable(context->receipt.block_number), format::variable(context->receipt.transaction_hash), format::variable(state.as_message().data) });
+				auto event = coawait(server->query(std::move(node), METHOD_CALL(&server_node::query_signature_state_aggregation), std::move(args), protocol::now().user.consensus.response_timeout));
+				if (event && event->args.empty())
+				{
+					if (coawait(aggregative_sleep(attempt)))
+						goto retry;
+					coreturn remote_exception::retry();
+				}
 				else if (!event)
-					return event.error();
+					coreturn event.error().is_retry() || event.error().is_shutdown() ? remote_exception::retry() : event.error();
 
 				auto message = format::ro_stream(event->args.front().as_string());
 				if (!state.load_message_if_preferred(message))
-					return remote_exception("group signature remote computation error");
+					coreturn remote_exception("group signature remote computation error");
 
-				return expectation::met;
+				coreturn expectation::met;
 			});
 		}
 

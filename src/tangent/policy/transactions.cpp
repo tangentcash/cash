@@ -1317,6 +1317,7 @@ namespace tangent
 
 					state.aggregator = std::move(*aggregator);
 					state.participants = get_group(context->receipt);
+					state.alg = chain->composition;
 				}
 
 				auto session = coawait(dispatcher->aggregate_validators(context->receipt.transaction_hash, state.participants));
@@ -1833,6 +1834,7 @@ namespace tangent
 							coreturn cancel(remote_exception(std::move(aggregator.error().message())));
 
 						state.aggregator = std::move(*aggregator);
+						state.alg = input->alg;
 					}
 
 					while (true)

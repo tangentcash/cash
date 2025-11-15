@@ -1310,7 +1310,7 @@ namespace tangent
 					return layer_exception("invalid type");
 			}
 		}
-		expects_lr<uptr<composition::secret_state>> composition::load_secret_state(format::ro_stream& stream)
+		expects_lr<uptr<composition::secret_state>> composition::load_secret_state(format::ro_stream& stream, type* out_alg)
 		{
 			type alg;
 			if (!stream.read_integer(stream.read_type(), (uint8_t*)&alg))
@@ -1323,6 +1323,9 @@ namespace tangent
 			auto& state_ptr = *state;
 			if (!state_ptr->load(stream))
 				return layer_exception("state load error");
+
+			if (out_alg != nullptr)
+				*out_alg = alg;
 
 			return expects_lr<uptr<composition::secret_state>>(std::move(state_ptr));
 		}
@@ -1350,7 +1353,7 @@ namespace tangent
 					return layer_exception("invalid type");
 			}
 		}
-		expects_lr<uptr<composition::public_state>> composition::load_public_state(format::ro_stream& stream)
+		expects_lr<uptr<composition::public_state>> composition::load_public_state(format::ro_stream& stream, type* out_alg)
 		{
 			type alg;
 			if (!stream.read_integer(stream.read_type(), (uint8_t*)&alg))
@@ -1363,6 +1366,9 @@ namespace tangent
 			auto& state_ptr = *state;
 			if (!state_ptr->load(stream))
 				return layer_exception("state load error");
+
+			if (out_alg != nullptr)
+				*out_alg = alg;
 
 			return expects_lr<uptr<composition::public_state>>(std::move(state_ptr));
 		}
@@ -1405,7 +1411,7 @@ namespace tangent
 
 			return expects_lr<uptr<composition::signature_state>>(std::move(state_ptr));
 		}
-		expects_lr<uptr<composition::signature_state>> composition::load_signature_state(format::ro_stream& stream)
+		expects_lr<uptr<composition::signature_state>> composition::load_signature_state(format::ro_stream& stream, type* out_alg)
 		{
 			type alg;
 			if (!stream.read_integer(stream.read_type(), (uint8_t*)&alg))
@@ -1418,6 +1424,9 @@ namespace tangent
 			auto& state_ptr = *state;
 			if (!state_ptr->load(stream))
 				return layer_exception("state load error");
+
+			if (out_alg != nullptr)
+				*out_alg = alg;
 
 			return expects_lr<uptr<composition::signature_state>>(std::move(state_ptr));
 		}
