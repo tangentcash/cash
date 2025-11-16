@@ -88,7 +88,7 @@
         "module_cache_path": null,
         "optimization": "speed",
         "checkpoint_size": 64,
-        "transaction_dispatch_repeat_interval": 120,
+        "transaction_dispatch_repeat_interval": 300,
         "transaction_timeout": 14400,
         "commitment_timeout": 7200,
         "location_cache_size": 500000,

@@ -187,6 +187,7 @@ namespace tangent
 			server_response chainstate_get_witness_accounts(http::connection* base, format::variables&& args);
 			server_response chainstate_get_witness_accounts_by_purpose(http::connection* base, format::variables&& args);
 			server_response chainstate_get_witness_transaction(http::connection* base, format::variables&& args);
+			server_response chainstate_get_asset_holders(http::connection* base, format::variables&& args);
 			server_response mempoolstate_add_node(http::connection* base, format::variables&& args);
 			server_response mempoolstate_clear_node(http::connection* base, format::variables&& args);
 			server_response mempoolstate_get_closest_node(http::connection* base, format::variables&& args);

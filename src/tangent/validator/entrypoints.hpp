@@ -425,11 +425,7 @@ namespace tangent
 				{
 					auto data = item.as_string();
 					if (data.size() == sizeof(algorithm::pubkeyhash_t) && !format::variables_util::is_ascii_encoding(data))
-					{
-						string address;
-						algorithm::signing::encode_address((uint8_t*)data.data(), address);
-						item = format::variable(address);
-					}
+						item = format::variable(algorithm::signing::encode_address((uint8_t*)data.data()));
 				}
 				return format::variables_util::serialize(copy);
 			}
@@ -478,9 +474,7 @@ namespace tangent
 					if (context.state.from.empty())
 						return ok("null");
 
-					string address;
-					algorithm::signing::encode_address(context.state.from, address);
-					return ok(address);
+					return ok(algorithm::signing::encode_address(context.state.from));
 				}
 				else if (method == "to")
 				{
@@ -498,9 +492,7 @@ namespace tangent
 					if (context.state.to.empty())
 						return ok("null");
 
-					string address;
-					algorithm::signing::encode_address(context.state.to, address);
-					return ok(address);
+					return ok(algorithm::signing::encode_address(context.state.to));
 				}
 				else if (method == "payable")
 				{

@@ -6,7 +6,6 @@
 #include <array>
 #define BLOCK_RATE_NORMAL ELEMENTS_MANY
 #define BLOCK_DATA_CONSENSUS (uint32_t)storages::block_details::transactions | (uint32_t)storages::block_details::block_transactions
-#define METHOD_CALL(x) tangent::consensus::callable::descriptor(#x, typeid(x).hash_code())
 #define TASK_TOPOLOGY_OPTIMIZATION "topology_optimization"
 #define TASK_MEMPOOL_VACUUM "mempool_vacuum"
 #define TASK_FORK_RESOLUTION "fork_resolution"
@@ -47,28 +46,90 @@ namespace tangent
 				message.write_typeless(account.view());
 			return message.hash();
 		}
-		static format::variables pack_query_result(const expects_lr<format::variables>& result)
+		static format::variables pack_query_result(const expects_rt<format::variables>& result)
 		{
 			if (!result)
+			{
+				if (result.error().is_retry())
+					return format::variables({ format::variable((uint8_t)0x1F) });
+				else if (result.error().is_shutdown())
+					return format::variables({ format::variable((uint8_t)0x2F) });
+
 				return format::variables({ format::variable(true), format::variable(result.what()) });
+			}
 
 			format::wo_stream message;
 			format::variables_util::serialize_flat_into(*result, &message);
 			return format::variables({ format::variable(false), format::variable(message.data) });
 		}
-		static expects_lr<format::variables> unpack_query_result(const format::variables& packed_result)
+		static expects_rt<format::variables> unpack_query_result(const format::variables& packed_result)
 		{
-			if (packed_result.size() != 2)
-				return layer_exception("invalid response type");
-			else if (packed_result.front().as_boolean())
-				return layer_exception(packed_result.back().as_blob());
+			if (packed_result.empty())
+				return remote_exception("invalid response type");
+			
+			auto& type = packed_result.front();
+			if (type.is_integer())
+			{
+				auto type_id = packed_result.size() == 1 ? type.as_uint8() : 0;
+				if (type_id == 0x1F)
+					return remote_exception::retry();
+				else if (type_id == 0x2F)
+					return remote_exception::shutdown();
+
+				return remote_exception("invalid response type");
+			}
+			else if (packed_result.size() != 2)
+				return remote_exception("invalid response type");
+			else if (type.as_boolean())
+				return remote_exception(packed_result.back().as_blob());
 
 			format::variables result;
 			format::ro_stream message = format::ro_stream(packed_result.back().as_string());
 			if (!format::variables_util::deserialize_flat_from(message, &result))
-				return layer_exception("invalid response body");
+				return remote_exception("invalid response body");
 
-			return expects_lr<format::variables>(std::move(result));
+			return expects_rt<format::variables>(std::move(result));
+		}
+		static expects_rt<format::variables> pack_private_result(const format::variables& result, const algorithm::pubkey_t& public_key)
+		{
+			format::wo_stream message;
+			format::variables_util::serialize_flat_into(result, &message);
+
+			uint256_t entropy;
+			memcpy(&entropy, crypto::random_bytes(sizeof(entropy))->data(), sizeof(entropy));
+
+			auto encrypted_message = algorithm::signing::public_encrypt(public_key, message.data, entropy);
+			if (!encrypted_message)
+				return remote_exception("private result encryption failed");
+
+			return format::variables({ format::variable(*encrypted_message) });
+		}
+		static expects_rt<format::variables> pack_private_result(const format::variables& result, const relay* state)
+		{
+			if (!state)
+				return remote_exception("relay must be set to decrypt private result");
+
+			auto* descriptor = state->as_descriptor();
+			if (!descriptor || descriptor->second.public_key.empty())
+				return remote_exception("relay must have a public key to decrypt private result");
+
+			return pack_private_result(result, descriptor->second.public_key);
+		}
+		static expects_rt<format::variables> unpack_private_result(const format::variables& packed_result, const algorithm::seckey_t& secret_key)
+		{
+			if (packed_result.size() != 1)
+				return remote_exception("invalid encrypted private result");
+
+			auto decrypted_message = algorithm::signing::private_decrypt(secret_key, packed_result.front().as_string());
+			if (!decrypted_message)
+				return remote_exception("private result decryption failed");
+
+			format::variables result;
+			format::ro_stream message = format::ro_stream(*decrypted_message);
+			if (!format::variables_util::deserialize_flat_from(message, &result))
+				return remote_exception("invalid private result");
+
+			return expects_rt<format::variables>(std::move(result));
 		}
 		static promise<bool> aggregative_sleep(uint64_t& attempt)
 		{
@@ -84,8 +145,8 @@ namespace tangent
 		{
 			VI_ASSERT(stream != nullptr, "result should be set");
 			stream->write_integer(time);
-			stream->write_integer(method);
 			stream->write_integer(session);
+			stream->write_integer(descriptor);
 			stream->write_integer((uint8_t)type);
 			return format::variables_util::serialize_merge_into(args, stream);
 		}
@@ -94,10 +155,10 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &time))
 				return false;
 
-			if (!stream.read_integer(stream.read_type(), &method))
+			if (!stream.read_integer(stream.read_type(), &session))
 				return false;
 
-			if (!stream.read_integer(stream.read_type(), &session))
+			if (!stream.read_integer(stream.read_type(), &descriptor))
 				return false;
 
 			if (!stream.read_integer(stream.read_type(), (uint8_t*)&type))
@@ -191,9 +252,9 @@ namespace tangent
 		uptr<schema> exchange::as_schema() const
 		{
 			schema* data = var::set::object();
-			data->set("method", var::integer(method));
-			data->set("send_time", var::integer(time));
+			data->set("descriptor", var::integer(descriptor));
 			data->set("session", session > 0 ? var::integer(session) : var::null());
+			data->set("time", var::integer(time));
 			data->set("type", var::string(type == side::query ? "query" : "event"));
 			data->set("args", format::variables_util::serialize(args));
 			return data;
@@ -274,7 +335,7 @@ namespace tangent
 			bytes_used_in_window += bytes;
 		}
 
-		relay::relay(node_type new_type, void* new_instance) : type(new_type), instance(new_instance), counter(0), bandwidth(1000 * 1000 * protocol::now().user.tcp.mbps_per_socket), deferred_pull(INVALID_TASK_ID)
+		relay::relay(node_type new_type, void* new_instance) : type(new_type), instance(new_instance), counter(0), aborted(false), bandwidth(1000 * 1000 * protocol::now().user.tcp.mbps_per_socket), deferred_pull(INVALID_TASK_ID)
 		{
 			VI_ASSERT(instance != nullptr, "instance should be set");
 			switch (type)
@@ -294,11 +355,11 @@ namespace tangent
 		{
 			invalidate();
 		}
-		expects_promise_rt<exchange> relay::push_query(const std::string_view& method, format::variables&& args, uint64_t timeout_ms)
+		expects_promise_rt<exchange> relay::push_query(const callable::descriptor& descriptor, format::variables&& args, uint64_t timeout_ms)
 		{
 			exchange message;
+			message.descriptor = descriptor.id;
 			message.type = exchange::side::query;
-			message.method = algorithm::hashing::hash32d(method);
 			message.args = std::move(args);
 
 			umutex<std::recursive_mutex> unique(mutex);
@@ -321,11 +382,11 @@ namespace tangent
 			outgoing_messages.push(std::move(message));
 			return result;
 		}
-		bool relay::push_event(const std::string_view& method, format::variables&& args)
+		bool relay::push_event(const callable::descriptor& descriptor, format::variables&& args)
 		{
 			exchange message;
+			message.descriptor = descriptor.id;
 			message.type = exchange::side::event;
-			message.method = algorithm::hashing::hash32d(method);
 			message.args = std::move(args);
 			if (!inventory.insert(message.as_hash()))
 				return false;
@@ -337,8 +398,8 @@ namespace tangent
 		void relay::push_event(uint32_t session, format::variables&& args)
 		{
 			exchange message;
+			message.descriptor = 0;
 			message.type = exchange::side::event;
-			message.method = 0;
 			message.session = session;
 			message.args = std::move(args);
 
@@ -400,7 +461,7 @@ namespace tangent
 		void relay::resolve_query(exchange&& packed_result)
 		{
 			auto unpacked_result = unpack_query_result(packed_result.args);
-			report_call(unpacked_result ? 1 : -1, packed_result.calculate_latency());
+			report_call(unpacked_result ? 1 : (unpacked_result.error().is_retry() ? 0 : -1), packed_result.calculate_latency());
 
 			umutex<std::recursive_mutex> unique(mutex);
 			auto it = queries.find(packed_result.session);
@@ -415,7 +476,7 @@ namespace tangent
 						it->second.result.set(std::move(packed_result));
 					}
 					else
-						it->second.result.set(remote_exception(std::move(unpacked_result.error().message())));
+						it->second.result.set(std::move(unpacked_result.error()));
 				}
 				queries.erase(it);
 			}
@@ -444,6 +505,7 @@ namespace tangent
 			auto* socket = as_socket();
 			if (socket != nullptr)
 				socket->shutdown(true);
+			aborted = true;
 		}
 		void relay::initialize(relay_descriptor&& new_descriptor)
 		{
@@ -476,6 +538,9 @@ namespace tangent
 		}
 		bool relay::partially_valid() const
 		{
+			if (aborted)
+				return false;
+
 			switch (type)
 			{
 				case node_type::inbound:
@@ -576,14 +641,23 @@ namespace tangent
 		}
 		inbound_node* relay::as_inbound_node()
 		{
+			if (aborted)
+				return nullptr;
+
 			return type == node_type::inbound ? (inbound_node*)instance : nullptr;
 		}
 		outbound_node* relay::as_outbound_node()
 		{
+			if (aborted)
+				return nullptr;
+
 			return type == node_type::outbound ? (outbound_node*)instance : nullptr;
 		}
 		vitex::network::socket* relay::as_socket()
 		{
+			if (aborted)
+				return nullptr;
+
 			switch (type)
 			{
 				case node_type::inbound:
@@ -642,6 +716,59 @@ namespace tangent
 				net.stream->bind(socket_address(protocol::now().user.consensus.address, 0));
 		}
 
+		callable::descriptor descriptors::notify_of_block_hash()
+		{
+			return callable::descriptor(__func__, 10);
+		}
+		callable::descriptor descriptors::notify_of_transaction_hash()
+		{
+			return callable::descriptor(__func__, 11);
+		}
+		callable::descriptor descriptors::notify_of_attestation()
+		{
+			return callable::descriptor(__func__, 12);
+		}
+		callable::descriptor descriptors::notify_of_aggregation()
+		{
+			return callable::descriptor(__func__, 13);
+		}
+		callable::descriptor descriptors::query_handshake()
+		{
+			return callable::descriptor(__func__, 14);
+		}
+		callable::descriptor descriptors::query_state()
+		{
+			return callable::descriptor(__func__, 15);
+		}
+		callable::descriptor descriptors::query_headers()
+		{
+			return callable::descriptor(__func__, 16);
+		}
+		callable::descriptor descriptors::query_block()
+		{
+			return callable::descriptor(__func__, 17);
+		}
+		callable::descriptor descriptors::query_mempool()
+		{
+			return callable::descriptor(__func__, 18);
+		}
+		callable::descriptor descriptors::query_transaction()
+		{
+			return callable::descriptor(__func__, 19);
+		}
+		callable::descriptor descriptors::aggregate_secret_share_state()
+		{
+			return callable::descriptor(__func__, 20);
+		}
+		callable::descriptor descriptors::aggregate_public_state()
+		{
+			return callable::descriptor(__func__, 21);
+		}
+		callable::descriptor descriptors::aggregate_signature_state()
+		{
+			return callable::descriptor(__func__, 22);
+		}
+
 		server_node::server_node() noexcept : socket_server(), control_sys("consensus-node")
 		{
 		}
@@ -652,15 +779,15 @@ namespace tangent
 				auto node_id = codec::hex_encode(std::string_view((char*)this, sizeof(this)));
 				oracle::server_node::get()->add_transaction_callback(node_id, nullptr);
 			}
-			clear_pending_permit(0);
+			clear_pending_meeting(0);
 			clear_pending_fork(nullptr);
 		}
 		expects_system<void> server_node::on_unlisten()
 		{
 			control_sys.deactivate(false);
-			umutex<std::recursive_mutex> unique(exclusive);
-			clear_pending_permit(0);
+			clear_pending_meeting(0);
 			clear_pending_fork(nullptr);
+			umutex<std::recursive_mutex> unique(exclusive);
 		retry:
 			{
 				vector<uptr<vitex::network::socket>> current_sockets;
@@ -723,7 +850,7 @@ namespace tangent
 		}
 		expects_lr<void> server_node::accept_local_wallet(option<ledger::wallet>&& overriding_wallet)
 		{
-			umutex<std::recursive_mutex> unique(exclusive);
+			umutex<std::recursive_mutex> unique(sync.account);
 			auto& [node, wallet] = descriptor;
 			auto mempool = storages::mempoolstate();
 			auto local_node = mempool.get_local_node();
@@ -750,7 +877,7 @@ namespace tangent
 
 			auto result = apply_node(mempool, descriptor);
 			if (result)
-				VI_INFO("consensus local node account: %s", wallet.get_address().c_str());
+				VI_INFO("local account %s accepted", wallet.get_address().c_str());
 			return result;
 		}
 		expects_lr<void> server_node::accept_unsigned_transaction(uref<relay>&& from, uptr<ledger::transaction>&& candidate_tx, uint64_t* account_nonce, uint256_t* output_hash)
@@ -882,17 +1009,17 @@ namespace tangent
 			if (events.accept_transaction)
 				events.accept_transaction(candidate_hash, *candidate_tx, owner);
 
-			size_t notifications = notify_all_except(uref(from), METHOD_CALL(&server_node::notify_of_possibly_new_transaction_hash), { format::variable(candidate_hash) });
+			size_t notifications = notify_all_except(uref(from), descriptors::notify_of_transaction_hash(), { format::variable(candidate_hash) });
 			if (notifications > 0 && protocol::now().user.consensus.logging)
 				VI_INFO("transaction %s %.*s broadcasted to %i nodes", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), (int)notifications);
 
 			run_block_production();
 			return expectation::met;
 		}
-		expects_lr<void> server_node::notify_of_possibly_new_block_hash(uref<relay>&& state, const exchange& event)
+		expects_rt<void> server_node::notify_of_block_hash(uref<relay>&& state, const exchange& event)
 		{
 			if (event.args.size() != 2)
-				return layer_exception("invalid arguments");
+				return remote_exception("invalid arguments");
 
 			uint256_t block_hash = event.args[0].as_uint256();
 			uint256_t block_number = event.args[1].as_uint64();
@@ -904,7 +1031,7 @@ namespace tangent
 			if (target && (!block_number || block_number == target->number) && (!block_hash || block_hash == target->as_hash()))
 				return expectation::met;
 
-			query(uref(state), METHOD_CALL(&server_node::query_block), { format::variable(block_hash), format::variable(block_number) }, protocol::now().user.tcp.timeout).then([this, state](expects_rt<exchange>&& event) mutable
+			query(uref(state), descriptors::query_block(), { format::variable(block_hash), format::variable(block_number) }, protocol::now().user.tcp.timeout).then([this, state](expects_rt<exchange>&& event) mutable
 			{
 				if (event && !event->args.empty())
 				{
@@ -916,14 +1043,14 @@ namespace tangent
 			});
 			return expectation::met;
 		}
-		expects_lr<void> server_node::notify_of_possibly_new_transaction_hash(uref<relay>&& state, const exchange& event)
+		expects_rt<void> server_node::notify_of_transaction_hash(uref<relay>&& state, const exchange& event)
 		{
 			if (event.args.size() != 1)
-				return layer_exception("invalid arguments");
+				return remote_exception("invalid arguments");
 
 			uint256_t transaction_hash = event.args.front().as_uint256();
 			if (!transaction_hash)
-				return layer_exception("invalid hash");
+				return remote_exception("invalid hash");
 
 			auto mempool = storages::mempoolstate();
 			if (mempool.get_transaction_by_hash(transaction_hash))
@@ -933,7 +1060,7 @@ namespace tangent
 			if (chain.get_transaction_by_hash(transaction_hash))
 				return expectation::met;
 
-			query(uref(state), METHOD_CALL(&server_node::query_transaction), { format::variable(transaction_hash) }, protocol::now().user.tcp.timeout).then([this, state](expects_rt<exchange>&& event) mutable
+			query(uref(state), descriptors::query_transaction(), { format::variable(transaction_hash) }, protocol::now().user.tcp.timeout).then([this, state](expects_rt<exchange>&& event) mutable
 			{
 				if (event && !event->args.empty())
 				{
@@ -945,55 +1072,55 @@ namespace tangent
 			});
 			return expectation::met;
 		}
-		expects_lr<void> server_node::notify_of_possibly_new_attestation(uref<relay>&& state, const exchange& event)
+		expects_rt<void> server_node::notify_of_attestation(uref<relay>&& state, const exchange& event)
 		{
 			if (event.args.size() != 3)
-				return layer_exception("invalid arguments");
+				return remote_exception("invalid arguments");
 
 			algorithm::asset_id asset = event.args[0].as_uint256();
 			format::ro_stream proof_message = format::ro_stream(event.args[1].as_string());
 			oracle::computed_transaction proof;
 			if (!proof.load(proof_message))
-				return layer_exception("invalid proof");
+				return remote_exception("invalid proof");
 
 			uint256_t commitment_hash = proof.as_hash();
 			algorithm::pubkeyhash_t attester;
 			algorithm::hashsig_t commitment = algorithm::hashsig_t(event.args[2].as_string());
 			if (!algorithm::signing::recover_hash(commitment_hash, attester, commitment))
-				return layer_exception("invalid commitment");
+				return remote_exception("invalid commitment");
 
 			auto context = ledger::transaction_context();
 			auto validation = context.verify_validator_attestation(asset, attester);
 			if (!validation)
-				return validation;
+				return remote_exception(std::move(validation.error().message()));
 
 			auto mempool = storages::mempoolstate();
 			auto status = mempool.add_attestation(asset, proof, commitment);
 			if (!status)
-				return status;
+				return remote_exception(std::move(status.error().message()));
 
 			auto finalization = accept_attestation(uref(state), proof.as_attestation_hash());
 			if (finalization)
 				return expectation::met;
 
-			size_t notifications = notify_all_except(std::move(state), METHOD_CALL(&server_node::notify_of_possibly_new_attestation), format::variables(event.args));
+			size_t notifications = notify_all_except(std::move(state), descriptors::notify_of_attestation(), format::variables(event.args));
 			if (notifications > 0 && protocol::now().user.consensus.logging)
 				VI_INFO("attestation %s broadcasted to %i nodes", algorithm::encoding::encode_0xhex256(commitment_hash).c_str(), (int)notifications);
 
 			return expectation::met;
 		}
-		expects_lr<void> server_node::notify_of_reverse_connection_requirement(uref<relay>&& state, const exchange& event)
+		expects_rt<void> server_node::notify_of_aggregation(uref<relay>&& state, const exchange& event)
 		{
 			if (event.args.size() < 3 || event.args.size() > 2 + protocol::now().policy.participation_max_per_account)
-				return layer_exception("invalid arguments");
+				return remote_exception("invalid arguments");
 
 			auto signature = algorithm::hashsig_t(event.args[0].as_string());
 			if (signature.empty())
-				return layer_exception("invalid signature");
+				return remote_exception("invalid signature");
 
 			auto address = text_address_to_socket_address(event.args[1].as_string());
 			if (!address || routing_util::is_address_reserved(*address))
-				return layer_exception("invalid address");
+				return remote_exception("invalid address");
 
 			auto context = ledger::transaction_context();
 			size_t accounts_size = event.args.size() - 2;
@@ -1002,34 +1129,30 @@ namespace tangent
 			{
 				auto account = algorithm::pubkeyhash_t(event.args[i].as_string());
 				if (account.empty())
-					return layer_exception("invalid account");
+					return remote_exception("invalid account");
 
 				accounts.insert(account);
 			}
 			if (accounts.size() != accounts_size || accounts.empty())
-				return layer_exception("invalid accounts");
+				return remote_exception("invalid accounts");
 
 			algorithm::pubkeyhash_t account;
 			if (!algorithm::signing::recover_hash(discovery_proof(*address, accounts), account, signature))
-				return layer_exception("invalid signature");
+				return remote_exception("invalid signature");
 
 			if (accounts.find(descriptor.second.public_key_hash) != accounts.end())
 				connect_to_physical_node(*address, account);
 
-			size_t notifications = notify_all_except(std::move(state), METHOD_CALL(&server_node::notify_of_reverse_connection_requirement), format::variables(event.args));
+			size_t notifications = notify_all_except(std::move(state), descriptors::notify_of_aggregation(), format::variables(event.args));
 			if (notifications > 0 && protocol::now().user.consensus.logging)
-			{
-				string address;
-				algorithm::signing::encode_address(account, address);
-				VI_INFO("permit from %s broadcasted to %i nodes", address.c_str(), (int)notifications);
-			}
+				VI_INFO("aggregation from %s broadcasted to %i nodes", algorithm::signing::encode_address(account).c_str(), (int)notifications);
 
 			return expectation::met;
 		}
-		expects_lr<format::variables> server_node::query_handshake(uref<relay>&& state, const exchange& event, bool is_acknowledgement)
+		expects_rt<format::variables> server_node::query_handshake(uref<relay>&& state, const exchange& event, bool is_acknowledgement)
 		{
 			if (event.args.size() != (is_acknowledgement ? 4 : 3))
-				return layer_exception("invalid arguments");
+				return remote_exception("invalid arguments");
 
 			relay_descriptor peer_descriptor;
 			auto& [peer_node, peer_wallet] = peer_descriptor;
@@ -1038,19 +1161,20 @@ namespace tangent
 			uint64_t peer_time = event.args[1].as_uint64();
 			algorithm::hashsig_t peer_signature = algorithm::hashsig_t(event.args[2].as_string());
 			if (!peer_node.load(peer_message))
-				return layer_exception("invalid message");
-			else if (!algorithm::signing::recover_hash(handshake_proof(peer_node, peer_time), peer_wallet.public_key_hash, peer_signature))
-				return layer_exception("invalid signature");
-
+				return remote_exception("invalid message");
+			else if (!algorithm::signing::recover(handshake_proof(peer_node, peer_time), peer_wallet.public_key, peer_signature))
+				return remote_exception("invalid signature");
+			
 			auto mempool = storages::mempoolstate();
 			uint64_t peer_latency = peer_time > system_time ? peer_time - system_time : system_time - peer_time;
 			peer_node.availability.latency = peer_latency;
 			peer_node.availability.reachable = is_acknowledgement;
 			peer_node.address = socket_address(state->peer_address(), peer_node.address.get_ip_port().or_else(protocol::now().user.consensus.port));
+			algorithm::signing::derive_public_key_hash(peer_wallet.public_key, peer_wallet.public_key_hash);
 			if (!peer_node.is_valid() || peer_wallet.public_key_hash.empty() || peer_wallet.public_key_hash.equals(descriptor.second.public_key_hash))
 			{
 				mempool.clear_node(peer_descriptor.first.address);
-				return layer_exception("invalid node");
+				return remote_exception("invalid node");
 			}
 
 			auto prev_descriptor = mempool.get_node(peer_node.address);
@@ -1059,25 +1183,19 @@ namespace tangent
 
 			apply_node(mempool, peer_descriptor).report("mempool peer node save failed");
 			state->initialize(std::move(peer_descriptor));
-
-			umutex<std::recursive_mutex> unique(exclusive);
-			if (!spend_permit_on(uref(state)) && active.size() > protocol::now().user.consensus.max_inbound_connections)
-				return layer_exception("not permitted to pass connections limit");
-
-			unique.unlock();
 			if (is_acknowledgement)
 				return format::variables();
 
 			auto& [node, wallet] = descriptor;
 			if (!algorithm::signing::sign(handshake_proof(node, system_time), wallet.secret_key, peer_signature))
-				return layer_exception("proof generation error");
+				return remote_exception("proof generation error");
 
 			return format::variables({ format::variable(node.as_message().data), format::variable(system_time), format::variable(peer_signature.optimized_view()), format::variable(peer_latency) });
 		}
-		expects_lr<format::variables> server_node::query_state(uref<relay>&& state, const exchange& event, bool is_acknowledgement)
+		expects_rt<format::variables> server_node::query_state(uref<relay>&& state, const exchange& event, bool is_acknowledgement)
 		{
 			if (event.args.size() < 3)
-				return layer_exception("invalid arguments");
+				return remote_exception("invalid arguments");
 
 			auto mempool = storages::mempoolstate();
 			auto address = text_address_to_socket_address(event.args[0].as_string());
@@ -1092,7 +1210,7 @@ namespace tangent
 			block_handle.args.push_back(event.args[1]);
 			block_handle.args.push_back(event.args[2]);
 
-			auto status = notify_of_possibly_new_block_hash(uref(state), std::move(block_handle));
+			auto status = notify_of_block_hash(uref(state), std::move(block_handle));
 			if (!status)
 				return status.error();
 
@@ -1107,19 +1225,27 @@ namespace tangent
 			if (new_nodes > 0)
 				run_topology_optimization();
 
+			bool accepted = accept_meeting_committee_node(uref(state));
 			if (is_acknowledgement)
 				return format::variables();
 
+			if (!accepted)
+			{
+				umutex<std::recursive_mutex> unique(exclusive);
+				if (active.size() > protocol::now().user.consensus.max_inbound_connections)
+					return remote_exception("not permitted to pass connections limit");
+			}
+
 			return build_state_exchange(std::move(state));
 		}
-		expects_lr<format::variables> server_node::query_block_headers(uref<relay>&& state, const exchange& event)
+		expects_rt<format::variables> server_node::query_headers(uref<relay>&& state, const exchange& event)
 		{
 			if (event.args.size() != 1)
-				return layer_exception("invalid arguments");
+				return remote_exception("invalid arguments");
 
 			uint64_t branch_number = event.args.front().as_uint64();
 			if (!branch_number)
-				return layer_exception("invalid branch");
+				return remote_exception("invalid branch");
 
 			const uint64_t blocks_count = protocol::now().user.consensus.headers_per_query;
 			const uint64_t pivot_number = branch_number > blocks_count ? branch_number - blocks_count : 1;
@@ -1134,12 +1260,12 @@ namespace tangent
 			for (auto& item : *headers)
 				result.push_back(format::variable(item.as_message().data));
 
-			return expects_lr<format::variables>(std::move(result));
+			return expects_rt<format::variables>(std::move(result));
 		}
-		expects_lr<format::variables> server_node::query_block(uref<relay>&& state, const exchange& event)
+		expects_rt<format::variables> server_node::query_block(uref<relay>&& state, const exchange& event)
 		{
 			if (event.args.size() != 2)
-				return layer_exception("invalid arguments");
+				return remote_exception("invalid arguments");
 
 			uint256_t block_hash = event.args[0].as_uint256();
 			if (block_hash > 0)
@@ -1161,10 +1287,10 @@ namespace tangent
 
 			return format::variables();
 		}
-		expects_lr<format::variables> server_node::query_mempool_transaction_hashes(uref<relay>&& state, const exchange& event)
+		expects_rt<format::variables> server_node::query_mempool(uref<relay>&& state, const exchange& event)
 		{
 			if (event.args.size() != 1)
-				return layer_exception("invalid arguments");
+				return remote_exception("invalid arguments");
 
 			uint64_t cursor = event.args.front().as_uint64();
 			const uint64_t transactions_count = protocol::now().user.consensus.hashes_per_query;
@@ -1179,16 +1305,16 @@ namespace tangent
 			for (auto& item : *hashes)
 				result.push_back(format::variable(item));
 
-			return expects_lr<format::variables>(std::move(result));
+			return expects_rt<format::variables>(std::move(result));
 		}
-		expects_lr<format::variables> server_node::query_transaction(uref<relay>&& state, const exchange& event)
+		expects_rt<format::variables> server_node::query_transaction(uref<relay>&& state, const exchange& event)
 		{
 			if (event.args.size() != 1)
-				return layer_exception("invalid arguments");
+				return remote_exception("invalid arguments");
 
 			uint256_t transaction_hash = event.args.front().as_uint256();
 			if (!transaction_hash)
-				return layer_exception("invalid hash");
+				return remote_exception("invalid hash");
 
 			auto mempool = storages::mempoolstate();
 			auto transaction = mempool.get_transaction_by_hash(transaction_hash);
@@ -1202,26 +1328,29 @@ namespace tangent
 
 			return format::variables();
 		}
-		expects_lr<format::variables> server_node::query_secret_share_state_aggregation(uref<relay>&& state, const exchange& event)
+		expects_rt<format::variables> server_node::aggregate_secret_share_state(uref<relay>&& state, const exchange& event)
 		{
-			if (event.args.size() != 3)
-				return layer_exception("invalid arguments");
+			auto packed = unpack_private_result(event.args, descriptor.second.secret_key);
+			if (!packed)
+				return packed;
+			else if (packed->size() != 3)
+				return remote_exception("invalid arguments");
 
-			auto block_number = event.args[0].as_uint64();
-			auto proof_hash = event.args[1].as_uint256();
+			auto block_number = packed->at(0).as_uint64();
+			auto proof_hash = packed->at(1).as_uint256();
 			auto chainstate = storages::chainstate();
 			if (chainstate.get_latest_block_number().or_else(1) < block_number)
-				return format::variables({ });
+				return remote_exception::retry();
 
 			auto context = ledger::transaction_context();
 			auto proof_transaction = context.get_block_transaction<transactions::bridge_migration>(proof_hash);
 			if (!proof_transaction)
-				return layer_exception("state proof not found");
+				return remote_exception("state proof not found");
 
-			auto reader = format::ro_stream(event.args[2].as_string());
+			auto reader = format::ro_stream(packed->at(2).as_string());
 			auto aggregator = ledger::dispatch_context::secret_share_state();
 			if (!aggregator.load_message(reader))
-				return layer_exception("state machine not valid");
+				return remote_exception("state machine not valid");
 
 			auto dispatcher = dispatch_context(this);
 			context.transaction = *proof_transaction->transaction;
@@ -1229,76 +1358,95 @@ namespace tangent
 
 			auto aggregation = local_dispatch_context::aggregate_secret_share_state(&dispatcher, &context, aggregator);
 			if (!aggregation)
-				return layer_exception(std::move(aggregation.error().message()));
+				return remote_exception(std::move(aggregation.error().message()));
 
-			return format::variables({ format::variable(aggregator.as_message().data) });
+			return pack_private_result({ format::variable(aggregator.confirmation_signature.optimized_view()) }, *state);
 		}
-		expects_lr<format::variables> server_node::query_public_state_aggregation(uref<relay>&& state, const exchange& event)
+		expects_rt<format::variables> server_node::aggregate_public_state(uref<relay>&& state, const exchange& event)
 		{
-			if (event.args.size() != 3)
-				return layer_exception("invalid arguments");
+			auto packed = unpack_private_result(event.args, descriptor.second.secret_key);
+			if (!packed)
+				return packed;
+			else if (packed->size() != 3)
+				return remote_exception("invalid arguments");
 
-			auto block_number = event.args[0].as_uint64();
-			auto proof_hash = event.args[1].as_uint256();
+			auto block_number = packed->at(0).as_uint64();
+			auto proof_hash = packed->at(1).as_uint256();
 			auto chainstate = storages::chainstate();
 			if (chainstate.get_latest_block_number().or_else(1) < block_number)
-				return format::variables({ });
+				return remote_exception::retry();
 
 			auto context = ledger::transaction_context();
 			auto proof_transaction = context.get_block_transaction<transactions::bridge_account>(proof_hash);
 			if (!proof_transaction)
-				return layer_exception("state proof not found");
+				return remote_exception("state proof not found");
 
-			auto reader = format::ro_stream(event.args[2].as_string());
-			auto aggregator = ledger::dispatch_context::public_state();
-			if (!aggregator.load_message(reader))
-				return layer_exception("state machine not valid");
+			auto reader = format::ro_stream(packed->at(2).as_string());
+			auto aggregator = algorithm::composition::load_public_state(reader);
+			if (!aggregator)
+				return remote_exception("in state machine not valid");
 
 			auto dispatcher = dispatch_context(this);
 			context.transaction = *proof_transaction->transaction;
 			context.receipt = std::move(proof_transaction->receipt);
 
-			auto aggregation = local_dispatch_context::aggregate_public_state(&dispatcher, &context, aggregator);
+			auto aggregation = local_dispatch_context::aggregate_public_state(&dispatcher, &context, **aggregator);
 			if (!aggregation)
-				return layer_exception(std::move(aggregation.error().message()));
+				return remote_exception(std::move(aggregation.error().message()));
 
-			return format::variables({ format::variable(aggregator.as_message().data) });
+			format::wo_stream writer;
+			if (!(*aggregator)->store(&writer))
+				return remote_exception("out state machine not valid");
+
+			return pack_private_result({ format::variable(writer.data) }, *state);
 		}
-		expects_lr<format::variables> server_node::query_signature_state_aggregation(uref<relay>&& state, const exchange& event)
+		expects_rt<format::variables> server_node::aggregate_signature_state(uref<relay>&& state, const exchange& event)
 		{
-			if (event.args.size() != 3)
-				return layer_exception("invalid arguments");
+			auto packed = unpack_private_result(event.args, descriptor.second.secret_key);
+			if (!packed)
+				return packed;
+			else if (packed->size() != 4)
+				return remote_exception("invalid arguments");
 
 			auto chainstate = storages::chainstate();
-			auto block_number = event.args[9].as_uint64();
-			auto proof_hash = event.args[1].as_uint256();
+			auto block_number = packed->at(0).as_uint64();
+			auto proof_hash = packed->at(1).as_uint256();
 			if (chainstate.get_latest_block_number().or_else(1) < block_number)
-				return format::variables({ });
+				return remote_exception::retry();
 
 			auto context = ledger::transaction_context();
 			auto proof_transaction = context.get_block_transaction<transactions::bridge_withdrawal>(proof_hash);
 			if (!proof_transaction)
-				return layer_exception("state proof not found");
+				return remote_exception("state proof not found");
 
-			auto reader = format::ro_stream(event.args[2].as_string());
-			auto aggregator = ledger::dispatch_context::signature_state();
-			if (!aggregator.load_message_if_preferred(reader))
-				return layer_exception("state machine not valid");
+			auto reader = format::ro_stream(packed->at(2).as_string());
+			auto message = oracle::prepared_transaction();
+			if (!message.load(reader))
+				return remote_exception("in state message not valid");
+
+			reader = format::ro_stream(packed->at(3).as_string());
+			auto aggregator = algorithm::composition::load_signature_state(reader);
+			if (!aggregator)
+				return remote_exception("in state machine not valid");
 
 			auto* proof_transaction_ptr = (transactions::bridge_withdrawal*)*proof_transaction->transaction;
-			auto validation = transactions::bridge_withdrawal_finalization::validate_possible_proof(&context, proof_transaction_ptr, **aggregator.message);
+			auto validation = transactions::bridge_withdrawal_finalization::validate_possible_proof(&context, proof_transaction_ptr, message);
 			if (!validation)
-				return layer_exception("group validation error");
+				return remote_exception("group validation error");
 
 			auto dispatcher = dispatch_context(this);
 			context.transaction = *proof_transaction->transaction;
 			context.receipt = std::move(proof_transaction->receipt);
 
-			auto aggregation = local_dispatch_context::aggregate_signature_state(&dispatcher, &context, aggregator);
+			auto aggregation = local_dispatch_context::aggregate_signature_state(&dispatcher, &context, message, **aggregator);
 			if (!aggregation)
-				return layer_exception(std::move(aggregation.error().message()));
+				return remote_exception(std::move(aggregation.error().message()));
 
-			return format::variables({ format::variable(aggregator.as_message().data) });
+			format::wo_stream writer;
+			if (!(*aggregator)->store(&writer))
+				return remote_exception("out state machine not valid");
+
+			return pack_private_result({ format::variable(writer.data) }, *state);
 		}
 		expects_lr<void> server_node::dispatch_transaction_logs(const algorithm::asset_id& asset, const oracle::chain_supervisor_options& options, oracle::transaction_logs&& logs)
 		{
@@ -1319,7 +1467,7 @@ namespace tangent
 					continue;
 
 				auto proof_message = receipt.as_message();
-				size_t notifications = notify_all(METHOD_CALL(&server_node::notify_of_possibly_new_attestation), { format::variable(proof_message.data), format::variable(commitment_signature.view()) });
+				size_t notifications = notify_all(descriptors::notify_of_attestation(), { format::variable(proof_message.data), format::variable(commitment_signature.view()) });
 				if (notifications > 0 && protocol::now().user.consensus.logging)
 					VI_INFO("attestation %s broadcasted to %i nodes", algorithm::encoding::encode_0xhex256(commitment_hash).c_str(), (int)notifications);
 			}
@@ -1372,18 +1520,15 @@ namespace tangent
 			return coasync<expects_rt<socket_address>>([this]() -> expects_promise_rt<socket_address>
 			{
 				umutex<std::recursive_mutex> unique(exclusive);
-				auto random = std::default_random_engine();
 				auto lists = vector<string>(protocol::now().user.bootstrap_nodes.begin(), protocol::now().user.bootstrap_nodes.end());
-				std::shuffle(std::begin(lists), std::end(lists), random);
 				unique.unlock();
 
+				auto random = std::default_random_engine();
+				std::shuffle(std::begin(lists), std::end(lists), random);
 				for (auto& bootstrap_url : lists)
 				{
-					http::fetch_frame options;
-					options.verify_peers = 0;
-
 					size_t results = std::numeric_limits<size_t>::max();
-					auto response = coawait(http::fetch(bootstrap_url, "GET", options));
+					auto response = coawait(http::fetch(bootstrap_url));
 					if (response)
 					{
 						auto addresses = uptr<schema>(response->content.get_json());
@@ -1423,19 +1568,11 @@ namespace tangent
 			if (routing_util::is_address_reserved(address))
 				return expects_promise_rt<uref<relay>>(remote_exception("address is reserved"));
 
-			auto ip_address = address.get_ip_address();
-			if (!ip_address)
-				return expects_promise_rt<uref<relay>>(remote_exception("not a valid address"));
+			auto duplicate = find_by_address(address);
+			if (duplicate)
+				return expects_promise_rt<uref<relay>>(std::move(duplicate));
 			else if (has_address(address))
 				return expects_promise_rt<uref<relay>>(remote_exception("possible loopback"));
-
-			auto& peer = protocol::now().user.consensus;
-			umutex<std::recursive_mutex> unique(exclusive);
-			for (auto& node : nodes)
-			{
-				if (node.second->peer_address() == *ip_address)
-					return expects_promise_rt<uref<relay>>(uref(node.second));
-			}
 
 			return coasync<expects_rt<uref<relay>>>([this, address, required_account = std::move(required_account)]() mutable -> expects_promise_rt<uref<relay>>
 			{
@@ -1458,16 +1595,14 @@ namespace tangent
 				uref<relay> state = new relay(node_type::outbound, candidate.reset());
 				append_node(uref(state));
 
-				auto method = METHOD_CALL(&server_node::query_handshake);
-				auto handshake = state->push_query(method.name, { format::variable(node.as_message().data), format::variable(system_time), format::variable(signature.optimized_view()) }, protocol::now().user.tcp.timeout);
-				push_messages(uref(state));
-				pull_messages(uref(state));
-
 				auto abort = [&](remote_exception&& exception) -> remote_exception&&
 				{
 					state->abort();
 					return std::move(exception);
 				};
+				auto handshake = query(uref(state), descriptors::query_handshake(), { format::variable(node.as_message().data), format::variable(system_time), format::variable(signature.optimized_view()) }, protocol::now().user.tcp.timeout, true);
+				pull_messages(uref(state));
+		
 				auto result = coawait(std::move(handshake));
 				if (!result)
 					coreturn abort(std::move(result.error()));
@@ -1480,7 +1615,7 @@ namespace tangent
 				if (!peer_descriptor || (required_account && !peer_descriptor->second.public_key_hash.equals(*required_account)))
 					coreturn abort(remote_exception("invalid descriptor"));
 				
-				auto subresult = coawait(query(uref(state), METHOD_CALL(&server_node::query_state), build_state_exchange(uref(state)), protocol::now().user.tcp.timeout));
+				auto subresult = coawait(query(uref(state), descriptors::query_state(), build_state_exchange(uref(state)), protocol::now().user.tcp.timeout));
 				if (!subresult)
 					coreturn abort(remote_exception(std::move(subresult.error().message())));
 
@@ -1494,9 +1629,7 @@ namespace tangent
 				uint64_t latency_time = peer_time > system_time ? peer_time - system_time : system_time - peer_time;
 				uint64_t varying_peer_time = peer_time + (peer_latency + latency_time) / 2;
 				protocol.time.adjust(peer_descriptor->first.address, (int64_t)system_time - (int64_t)varying_peer_time);
-				if (!is_syncing())
-					coawait(synchronize_mempool_with(uref(state)));
-
+				synchronize_mempool_with(uref(state));
 				coreturn expects_rt<uref<relay>>(std::move(state));
 			}).then<expects_rt<uref<relay>>>([address](expects_rt<uref<relay>>&& result) -> expects_rt<uref<relay>>
 			{
@@ -1510,9 +1643,9 @@ namespace tangent
 				return result;
 			});
 		}
-		expects_promise_rt<unordered_map<algorithm::pubkeyhash_t, uref<relay>>> server_node::connect_to_logical_nodes_with_permit(const uint256_t& permit_hash, unordered_set<algorithm::pubkeyhash_t>&& accounts)
+		expects_promise_rt<unordered_map<algorithm::pubkeyhash_t, uref<relay>>> server_node::connect_to_meeting_committee(const uint256_t& committee_meeting_hash, unordered_set<algorithm::pubkeyhash_t>&& accounts)
 		{
-			if (!permit_hash || accounts.empty())
+			if (!committee_meeting_hash || accounts.empty())
 				return expects_promise_rt<unordered_map<algorithm::pubkeyhash_t, uref<relay>>>(remote_exception("invalid arguments"));
 
 			size_t reduction = 0;
@@ -1528,7 +1661,7 @@ namespace tangent
 			if (early_results.size() == accounts.size() - reduction)
 				return expects_promise_rt<unordered_map<algorithm::pubkeyhash_t, uref<relay>>>(std::move(early_results));
 
-			return coasync<expects_rt<unordered_map<algorithm::pubkeyhash_t, uref<relay>>>>([this, permit_hash, accounts = std::move(accounts), early_results = std::move(early_results)]() mutable -> expects_promise_rt<unordered_map<algorithm::pubkeyhash_t, uref<relay>>>
+			return coasync<expects_rt<unordered_map<algorithm::pubkeyhash_t, uref<relay>>>>([this, committee_meeting_hash, accounts = std::move(accounts), early_results = std::move(early_results)]() mutable -> expects_promise_rt<unordered_map<algorithm::pubkeyhash_t, uref<relay>>>
 			{
 				unordered_map<algorithm::pubkeyhash_t, expects_promise_rt<uref<relay>>> directly_connected_accounts;
 				ordered_set<algorithm::pubkeyhash_t> indirectly_connected_accounts;
@@ -1570,39 +1703,39 @@ namespace tangent
 						algorithm::hashsig_t signature;
 						if (algorithm::signing::sign(discovery_proof(node.address, indirectly_connected_accounts), wallet.secret_key, signature))
 						{
-							umutex<std::recursive_mutex> unique(exclusive);
-							auto it = permits.find(permit_hash);
-							if (it == permits.end())
+							umutex<std::recursive_mutex> unique(sync.meeting);
+							auto it = meetings.find(committee_meeting_hash);
+							if (it == meetings.end())
 							{
-								auto& permit = permits[permit_hash];
-								permit.accounts = std::move(indirectly_connected_accounts);
+								auto& meeting = meetings[committee_meeting_hash];
+								meeting.accounts = std::move(indirectly_connected_accounts);
 
 								format::variables args;
-								args.reserve(permit.accounts.size() + 2);
+								args.reserve(meeting.accounts.size() + 2);
 								args.push_back(format::variable(signature.optimized_view()));
 								args.push_back(format::variable(*address));
-								for (auto& account : permit.accounts)
+								for (auto& account : meeting.accounts)
 									args.push_back(format::variable(account.optimized_view()));
 
-								size_t notifications = notify_all(METHOD_CALL(&server_node::notify_of_reverse_connection_requirement), std::move(args));
+								size_t notifications = notify_all(descriptors::notify_of_aggregation(), std::move(args));
 								if (notifications)
-									permit.timeout = schedule::get()->set_timeout(protocol::now().user.tcp.timeout, std::bind(&server_node::clear_pending_permit, this, permit_hash));
+									meeting.timeout = schedule::get()->set_timeout(protocol::now().user.tcp.timeout, std::bind(&server_node::clear_pending_meeting, this, committee_meeting_hash));
 								else
-									permits.erase(permit_hash);
+									meetings.erase(committee_meeting_hash);
 
-								connections = expects_promise_rt<vector<uref<relay>>>(permit.task);
+								connections = expects_promise_rt<vector<uref<relay>>>(meeting.task);
 							}
 						}
 					}
 
-					auto permitted_results = coawait(std::move(connections));
-					if (permitted_results)
+					auto meeting_results = coawait(std::move(connections));
+					if (meeting_results)
 					{
-						for (auto& permitted_result : *permitted_results)
+						for (auto& meeting_result : *meeting_results)
 						{
-							auto* peer_descriptor = permitted_result->as_descriptor();
+							auto* peer_descriptor = meeting_result->as_descriptor();
 							if (peer_descriptor != nullptr)
-								results[peer_descriptor->second.public_key_hash] = std::move(permitted_result);
+								results[peer_descriptor->second.public_key_hash] = std::move(meeting_result);
 						}
 					}
 				}
@@ -1617,7 +1750,7 @@ namespace tangent
 				uint64_t cursor = 0;
 				while (true)
 				{
-					auto result = coawait(query(uref(state), METHOD_CALL(&server_node::query_mempool_transaction_hashes), { format::variable(cursor) }, protocol::now().user.tcp.timeout));
+					auto result = coawait(query(uref(state), descriptors::query_mempool(), { format::variable(cursor) }, protocol::now().user.tcp.timeout));
 					if (!result)
 						coreturn result.error();
 					else if (result->args.size() < 2)
@@ -1637,7 +1770,7 @@ namespace tangent
 
 					for (auto& transaction_hash : transaction_hashes)
 					{
-						auto subresult = coawait(query(uref(state), METHOD_CALL(&server_node::query_transaction), { format::variable(transaction_hash) }, protocol::now().user.tcp.timeout));
+						auto subresult = coawait(query(uref(state), descriptors::query_transaction(), { format::variable(transaction_hash) }, protocol::now().user.tcp.timeout));
 						if (!subresult || subresult->args.empty())
 							continue;
 
@@ -1653,7 +1786,7 @@ namespace tangent
 						break;
 				}
 				coreturn expectation::met;
-			});
+			}, true);
 		}
 		expects_promise_rt<void> server_node::resolve_and_verify_fork(std::pair<uint256_t, fork_header>&& fork)
 		{
@@ -1665,7 +1798,7 @@ namespace tangent
 				auto old_tip_number = storages::chainstate().get_latest_block_number().or_else(0);
 				while (old_tip_number > 0)
 				{
-					auto result = coawait(query(uref(new_tip.state), METHOD_CALL(&server_node::query_block_headers), { format::variable(new_tip_number) }, protocol::now().user.tcp.timeout));
+					auto result = coawait(query(uref(new_tip.state), descriptors::query_headers(), { format::variable(new_tip_number) }, protocol::now().user.tcp.timeout));
 					if (!result)
 						coreturn result.error();
 					else if (result->args.empty())
@@ -1721,7 +1854,7 @@ namespace tangent
 				new_tip_number = new_tip_hash > 0 ? 0 : 1;
 				while (new_tip_number > 0 || new_tip_hash > 0)
 				{
-					auto result = coawait(query(uref(new_tip.state), METHOD_CALL(&server_node::query_block), { format::variable(new_tip_hash), format::variable(new_tip_number) }, protocol::now().user.tcp.timeout));
+					auto result = coawait(query(uref(new_tip.state), descriptors::query_block(), { format::variable(new_tip_hash), format::variable(new_tip_number) }, protocol::now().user.tcp.timeout));
 					if (!result)
 						coreturn result.error();
 					else if (result->args.empty())
@@ -1741,36 +1874,49 @@ namespace tangent
 				coreturn expectation::met;
 			});
 		}
-		expects_promise_rt<exchange> server_node::query(uref<relay>&& state, const callable::descriptor& method, format::variables&& args, uint64_t timeout_ms)
+		expects_promise_rt<exchange> server_node::query(uref<relay>&& state, const callable::descriptor& descriptor, format::variables&& args, uint64_t timeout_ms, bool force_call)
 		{
-			if (!state->fully_valid())
+			if (!force_call && !state->fully_valid())
 				return expects_promise_rt<exchange>(remote_exception("node is not in valid state (offline/unauthorized)"));
 
-			auto result = state->push_query(method.name, std::move(args), timeout_ms);
+			if (protocol::now().user.consensus.logging)
+				VI_DEBUG("node %s query \"%.*s\" out: %s (%s %s)", state->peer_address().c_str(), (int)descriptor.name.size(), descriptor.name.data(), args.empty() ? "OK" : stringify::text("[%i values]", (int)args.size()).c_str(), routing_util::node_type_of(*state).data(), state->peer_service().c_str());
+
+			auto result = state->push_query(descriptor, std::move(args), timeout_ms);
 			push_messages(uref(state));
 			return result;
 		}
-		expects_lr<void> server_node::notify(uref<relay>&& state, const callable::descriptor& method, format::variables&& args)
+		expects_lr<void> server_node::notify(uref<relay>&& state, const callable::descriptor& descriptor, format::variables&& args)
 		{
 			if (!state->fully_valid())
 				return layer_exception("node is not in valid state (offline/unauthorized)");
 
-			if (!state->push_event(method.name, std::move(args)))
+			if (protocol::now().user.consensus.logging)
+				VI_DEBUG("node %s notify \"%.*s\" out: %s (%s %s)", state->peer_address().c_str(), (int)descriptor.name.size(), descriptor.name.data(), args.empty() ? "OK" : stringify::text("[%i values]", (int)args.size()).c_str(), routing_util::node_type_of(*state).data(), state->peer_service().c_str());
+
+			if (!state->push_event(descriptor, std::move(args)))
 				return layer_exception("duplicate notification");
 
 			push_messages(uref(state));
 			return expectation::met;
 		}
-		size_t server_node::notify_all(const callable::descriptor& method, format::variables&& args)
+		size_t server_node::notify_all(const callable::descriptor& descriptor, format::variables&& args)
 		{
-			return notify_all_except(nullptr, method, std::move(args));
+			return notify_all_except(nullptr, descriptor, std::move(args));
 		}
-		size_t server_node::notify_all_except(uref<relay>&& exception, const callable::descriptor& method, format::variables&& args)
+		size_t server_node::notify_all_except(uref<relay>&& exception, const callable::descriptor& descriptor, format::variables&& args)
 		{
+			auto receivers = vector<uref<relay>>();
+			{
+				umutex<std::recursive_mutex> unique(exclusive);
+				receivers.reserve(nodes.size());
+				for (auto& node : nodes)
+					receivers.push_back(node.second);
+			}
+
 			size_t events = 0;
-			umutex<std::recursive_mutex> unique(exclusive);
-			for (auto& node : nodes)
-				events += *exception != *node.second ? notify(uref(node.second), method, format::variables(args)) ? 1 : 0 : 0;
+			for (auto& node : receivers)
+				events += *exception != *node ? notify(uref(node), descriptor, format::variables(args)) ? 1 : 0 : 0;
 			return events;
 		}
 		format::variables server_node::build_state_exchange(uref<relay>&& state)
@@ -1797,16 +1943,16 @@ namespace tangent
 			}
 			return args;
 		}
-		void server_node::bind_event(const callable::descriptor& method, event_callback&& on_event_callback)
+		void server_node::bind_event(const callable::descriptor& descriptor, event_callback&& on_event_callback)
 		{
-			auto& callable = callables[algorithm::hashing::hash32d(method.name)];
-			callable.name = method.name;
+			auto& callable = callables[descriptor.id];
+			callable.name = descriptor.name;
 			callable.event = std::move(on_event_callback);
 		}
-		void server_node::bind_query(const callable::descriptor& method, query_callback&& on_query_callback)
+		void server_node::bind_query(const callable::descriptor& descriptor, query_callback&& on_query_callback)
 		{
-			auto& callable = callables[algorithm::hashing::hash32d(method.name)];
-			callable.name = method.name;
+			auto& callable = callables[descriptor.id];
+			callable.name = descriptor.name;
 			callable.query = std::move(on_query_callback);
 		}
 		void server_node::pull_messages(uref<relay>&& state)
@@ -1821,14 +1967,14 @@ namespace tangent
 				exchange message;
 				state->incoming_message_into(&message);
 
-				bool query_response = message.type == exchange::side::event && message.method == 0 && message.session > 0;
+				bool query_response = message.type == exchange::side::event && message.descriptor == 0 && message.session > 0;
 				if (query_response)
 				{
 					state->resolve_query(std::move(message));
 					goto retry;
 				}
 
-				auto it = callables.find(message.method);
+				auto it = callables.find(message.descriptor);
 				if (it == callables.end())
 				{
 				abort:
@@ -1856,37 +2002,40 @@ namespace tangent
 
 				return cospawn([this, &target, state, message = std::move(message)]() mutable
 				{
-					auto result = expects_lr<format::variables>(layer_exception());
+					auto result = expects_rt<format::variables>(remote_exception::shutdown());
 					if (message.type == exchange::side::query)
 					{
-						result = target.query(this, uref(state), std::move(message));
+						result = target.query(this, uref(state), message);
 						state->push_event(message.session, pack_query_result(result));
 						push_messages(uref(state));
 					}
 					else
 					{
 						auto status = target.event(this, uref(state), message);
-						result = status ? expects_lr<format::variables>(format::variables()) : expects_lr<format::variables>(std::move(status.error()));
+						result = status ? expects_rt<format::variables>(format::variables()) : expects_rt<format::variables>(std::move(status.error()));
 					}
 
 					auto* descriptor = state->as_descriptor();
 					if (descriptor != nullptr)
 					{
 						auto mempool = storages::mempoolstate();
-						mempool.apply_node_quality(descriptor->first.address, result ? 1 : -1, message.calculate_latency(), protocol::now().user.consensus.topology_timeout);
+						mempool.apply_node_quality(descriptor->first.address, result ? 1 : (result.error().is_retry() ? 0 : -1), message.calculate_latency(), protocol::now().user.consensus.topology_timeout);
 					}
 
-					if (result)
+					if (!result)
 					{
 						if (protocol::now().user.consensus.logging)
-							VI_INFO("node %s %s \"%.*s\" result: %s (%s %s)", state->peer_address().c_str(), message.type == exchange::side::query ? "call" : "event", (int)target.name.size(), target.name.data(), result->empty() ? "OK" : stringify::text("[%i values]", (int)result->size()).c_str(), routing_util::node_type_of(*state).data(), state->peer_service().c_str());
-						pull_messages(std::move(state));
+							VI_WARN("node %s %s \"%.*s\" error%s: %s (%s %s)", state->peer_address().c_str(), message.type == exchange::side::query ? "query" : "event", (int)target.name.size(), target.name.data(), message.type == exchange::side::query ? " out" : "", result.what().c_str(), routing_util::node_type_of(*state).data(), state->peer_service().c_str());
+						if (!result.error().is_retry())
+							abort_node(std::move(state));
+						else
+							pull_messages(std::move(state));
 					}
 					else
 					{
 						if (protocol::now().user.consensus.logging)
-							VI_WARN("node %s %s \"%.*s\" error: %s (%s %s)", state->peer_address().c_str(), message.type == exchange::side::query ? "call" : "event", (int)target.name.size(), target.name.data(), result.what().c_str(), routing_util::node_type_of(*state).data(), state->peer_service().c_str());
-						abort_node(std::move(state));
+							VI_DEBUG("node %s %s \"%.*s\" result%s: %s (%s %s)", state->peer_address().c_str(), message.type == exchange::side::query ? "query" : "event", (int)target.name.size(), target.name.data(), message.type == exchange::side::query ? " out" : "", result->empty() ? "OK" : stringify::text("[%i values]", (int)result->size()).c_str(), routing_util::node_type_of(*state).data(), state->peer_service().c_str());
+						pull_messages(std::move(state));
 					}
 				});
 			}
@@ -1966,7 +2115,10 @@ namespace tangent
 			{
 				auto* descriptor = node.second->as_descriptor();
 				if (descriptor != nullptr && descriptor->second.public_key_hash.equals(account))
+				{
+					unique.unlock();
 					return abort_node(uref(node.second));
+				}
 			}
 		}
 		void server_node::append_node(uref<relay>&& state)
@@ -1999,9 +2151,9 @@ namespace tangent
 				return;
 
 			uref<relay> state = std::move(it->second);
-			clear_pending_fork(*state);
 			nodes.erase(it);
 			unique.unlock();
+			clear_pending_fork(*state);
 			run_topology_optimization();
 		}
 		void server_node::append_pending_node(outbound_node* base)
@@ -2024,7 +2176,6 @@ namespace tangent
 			if (state)
 				return pull_messages(uref(state));
 
-			umutex<std::recursive_mutex> unique(exclusive);
 			auto duplicate = find_by_address(node->address);
 			if (!duplicate)
 			{
@@ -2042,26 +2193,27 @@ namespace tangent
 		{
 			return control_sys.async_task_if_none(TASK_TOPOLOGY_OPTIMIZATION, [this]() -> promise<void>
 			{
-				umutex<std::recursive_mutex> unique(exclusive);
-				unordered_set<algorithm::pubkeyhash_t> current_nodes;
 				algorithm::pubkeyhash_t worst_account;
-				uint64_t worst_preference = std::numeric_limits<uint64_t>::max();
-				current_nodes.reserve(nodes.size());
-				for (auto& node : nodes)
+				unordered_set<algorithm::pubkeyhash_t> current_nodes;
 				{
-					auto* descriptor = node.second->as_descriptor();
-					if (descriptor != nullptr && node.second->as_outbound_node() != nullptr)
+					uint64_t worst_preference = std::numeric_limits<uint64_t>::max();
+					umutex<std::recursive_mutex> unique(exclusive);
+					current_nodes.reserve(nodes.size());
+					for (auto& node : nodes)
 					{
-						uint64_t preference = descriptor->first.get_preference();
-						current_nodes.insert(descriptor->second.public_key_hash);
-						if (worst_preference > preference)
+						auto* descriptor = node.second->as_descriptor();
+						if (descriptor != nullptr && node.second->as_outbound_node() != nullptr)
 						{
-							worst_account = descriptor->second.public_key_hash;
-							worst_preference = preference;
+							uint64_t preference = descriptor->first.get_preference();
+							current_nodes.insert(descriptor->second.public_key_hash);
+							if (worst_preference > preference)
+							{
+								worst_account = descriptor->second.public_key_hash;
+								worst_preference = preference;
+							}
 						}
 					}
 				}
-				unique.unlock();
 
 				bool try_unknown_nodes;
 				auto may_connect_to_node = [this]() { return is_active() && size_of(node_type::inbound) < protocol::now().user.consensus.max_outbound_connections; };
@@ -2088,19 +2240,30 @@ namespace tangent
 						coawait(connect_to_physical_node(address));
 				}
 
+				unordered_set<uint256_t> passed_candidates;
 				expects_rt<socket_address> candidate_address = socket_address();
 				while (candidate_address && may_connect_to_node())
 				{
 					candidate_address = coawait(find_node_from_discovery());
-					if (candidate_address)
+					if (!candidate_address)
+						break;
+
+					auto ip_value = candidate_address->get_ip_value().or_else(0);
+					auto ip_port = candidate_address->get_ip_port().or_else(0);
+					auto ip_address = uint256_t(ip_value, ip_port);
+					bool duplicate = passed_candidates.find(ip_address) != passed_candidates.end();
+					if (duplicate || !coawait(connect_to_physical_node(*candidate_address)))
 					{
-						if (!coawait(connect_to_physical_node(*candidate_address)))
-						{
-							auto mempool = storages::mempoolstate();
-							mempool.apply_cooldown_node(*candidate_address, 60000);
-						}
+						auto mempool = storages::mempoolstate();
+						mempool.apply_cooldown_node(*candidate_address, 60000);
 					}
+					passed_candidates.insert(ip_address);
 				}
+
+				size_t inputs = passed_candidates.size() + replacement_nodes.size();
+				size_t outputs = replacement_nodes.size() + (try_unknown_nodes ? 1 : 0);
+				if ((inputs > 0 || outputs > 0) && protocol::now().user.consensus.logging)
+					VI_INFO("network topology optimization: OK (connections: +%i / -%i)", (int)inputs, (int)outputs);
 
 				run_block_dispatch_retrial();
 				coreturn_void;
@@ -2114,7 +2277,17 @@ namespace tangent
 				if (node.services.has_production && !is_syncing())
 				{
 					auto mempool = storages::mempoolstate();
-					mempool.expire_transactions().report("mempool transaction expiration failed");
+					auto expirations = mempool.expire_transactions();
+					if (protocol::now().user.consensus.logging)
+					{
+						if (expirations)
+						{
+							if (*expirations > 0)
+								VI_INFO("mempool vacuum: OK (transactions: %i)", (int)*expirations);
+						}
+						else
+							VI_ERR("mempool vacuum failed: ", expirations.what().c_str());
+					}
 				}
 			});
 		}
@@ -2139,6 +2312,7 @@ namespace tangent
 					best_fork = std::move(new_best_fork);
 					goto retry;
 				}
+
 				run_block_production();
 				coreturn_void;
 			});
@@ -2198,35 +2372,28 @@ namespace tangent
 				if (!is_active() || (environment.incoming.empty() && !ledger::block_header::is_genesis_round(tip ? tip->number + 1 : 1)))
 					return environment.cleanup().report("mempool cleanup failed");
 
-				uint64_t replacements = 0;
 				auto evaluation = environment.evaluate_block([&](bool commitment) -> uptr<ledger::transaction>
 				{
 					auto candidate = mempool.get_transactions(commitment, offset[commitment ? 1 : 0]++, 1);
-					auto* transaction = candidate && !candidate->empty() ? candidate->front().reset() : nullptr;
-					if (protocol::now().user.consensus.logging)
-						VI_INFO("replacing mempool block transaction (txns: %" PRIu64 ")", ++replacements);
-					return transaction;
+					return candidate && !candidate->empty() ? candidate->front().reset() : nullptr;
 				});		
 				if (!evaluation)
-					return evaluation.report("mempool block evaluation failed");
-
-				if (protocol::now().user.consensus.logging)
-					VI_INFO("solving evaluated mempool block (txns: %" PRIu64 ", position: %" PRIu64 ", duration: < ~%" PRIu64 " sec.)", (uint64_t)environment.incoming.size(), position, current_node_solution_time / 1000 + 1);
+					return evaluation.report("block evaluation failed");
 
 				auto solution = environment.solve_evaluated_block(evaluation->block);
 				if (!solution)
-					return solution.report("mempool block solution failed");
+					return solution.report("block solution failed");
 
 				tip = chain.get_latest_block_header();
 				if (is_active() && (!tip || evaluation->block.number > tip->number || (evaluation->block.number == tip->number && evaluation->block.priority < tip->priority) || (evaluation->block.transactions.empty() && !ledger::block_header::is_genesis_round(evaluation->block.number))))
 				{
 					if (protocol::now().user.consensus.logging)
-						VI_INFO("proposing solved mempool block (number: %" PRIu64", hash: %s)", evaluation->block.number, algorithm::encoding::encode_0xhex256(evaluation->block.as_hash()).c_str());
+						VI_INFO("block %s proposed (number: %" PRIu64", txns: %" PRIu64 ", leader: %" PRIu64 ", work: < ~%" PRIu64 " sec.)", algorithm::encoding::encode_0xhex256(evaluation->block.as_hash()).c_str(), evaluation->block.number, (uint64_t)environment.incoming.size(), position + 1, current_node_solution_time / 1000 + 1);
 
 					accept_block(nullptr, std::move(*evaluation), 0);
 				}
 				else if (protocol::now().user.consensus.logging)
-					VI_WARN("mempool block is solved but dismissed (number: %" PRIu64", hash: %s)", evaluation->block.number, algorithm::encoding::encode_0xhex256(evaluation->block.as_hash()).c_str());			
+					VI_WARN("block %s dismissed (number: %" PRIu64", txns: %" PRIu64 ", leader: %" PRIu64 ", work: < ~%" PRIu64 " sec. wasted)", algorithm::encoding::encode_0xhex256(evaluation->block.as_hash()).c_str(), evaluation->block.number, (uint64_t)environment.incoming.size(), position + 1, current_node_solution_time / 1000 + 1);
 			});
 		}
 		bool server_node::run_block_dispatcher(const ledger::block_header& tip)
@@ -2253,7 +2420,17 @@ namespace tangent
 						accept_unsigned_transaction(nullptr, std::move(transaction), &account_nonce);
 				}
 
-				dispatcher.checkpoint().report("dispatcher checkpoint error");
+				auto status = dispatcher.checkpoint();
+				if (protocol::now().user.consensus.logging)
+				{
+					if (status)
+					{
+						if (!dispatcher.inputs.empty())
+							VI_INFO("block dispatch: OK (height: %" PRIu64", txns: %" PRIu64 ", delayed: %" PRIu64 ", failed: %" PRIu64 ")", tip.number, dispatcher.inputs.size(), dispatcher.repeaters.size(), dispatcher.errors.size());
+					}
+					else
+						VI_ERR("block dispatch failed: %s (height: %" PRIu64 ")", status.what().c_str(), tip.number);
+				}
 				run_block_production();
 			});
 		}
@@ -2313,18 +2490,19 @@ namespace tangent
 				}
 			}
 
-			bind_event(METHOD_CALL(&server_node::notify_of_possibly_new_block_hash), std::bind(&server_node::notify_of_possibly_new_block_hash, this, std::placeholders::_2, std::placeholders::_3));
-			bind_event(METHOD_CALL(&server_node::notify_of_possibly_new_transaction_hash), std::bind(&server_node::notify_of_possibly_new_transaction_hash, this, std::placeholders::_2, std::placeholders::_3));
-			bind_event(METHOD_CALL(&server_node::notify_of_possibly_new_attestation), std::bind(&server_node::notify_of_possibly_new_attestation, this, std::placeholders::_2, std::placeholders::_3));
-			bind_event(METHOD_CALL(&server_node::notify_of_reverse_connection_requirement), std::bind(&server_node::notify_of_reverse_connection_requirement, this, std::placeholders::_2, std::placeholders::_3));
-			bind_query(METHOD_CALL(&server_node::query_handshake), std::bind(&server_node::query_handshake, this, std::placeholders::_2, std::placeholders::_3, false));
-			bind_query(METHOD_CALL(&server_node::query_state), std::bind(&server_node::query_state, this, std::placeholders::_2, std::placeholders::_3, false));
-			bind_query(METHOD_CALL(&server_node::query_block_headers), std::bind(&server_node::query_block_headers, this, std::placeholders::_2, std::placeholders::_3));
-			bind_query(METHOD_CALL(&server_node::query_block), std::bind(&server_node::query_block, this, std::placeholders::_2, std::placeholders::_3));
-			bind_query(METHOD_CALL(&server_node::query_mempool_transaction_hashes), std::bind(&server_node::query_mempool_transaction_hashes, this, std::placeholders::_2, std::placeholders::_3));
-			bind_query(METHOD_CALL(&server_node::query_transaction), std::bind(&server_node::query_transaction, this, std::placeholders::_2, std::placeholders::_3));
-			bind_query(METHOD_CALL(&server_node::query_public_state_aggregation), std::bind(&server_node::query_public_state_aggregation, this, std::placeholders::_2, std::placeholders::_3));
-			bind_query(METHOD_CALL(&server_node::query_signature_state_aggregation), std::bind(&server_node::query_signature_state_aggregation, this, std::placeholders::_2, std::placeholders::_3));
+			bind_event(descriptors::notify_of_block_hash(), std::bind(&server_node::notify_of_block_hash, this, std::placeholders::_2, std::placeholders::_3));
+			bind_event(descriptors::notify_of_transaction_hash(), std::bind(&server_node::notify_of_transaction_hash, this, std::placeholders::_2, std::placeholders::_3));
+			bind_event(descriptors::notify_of_attestation(), std::bind(&server_node::notify_of_attestation, this, std::placeholders::_2, std::placeholders::_3));
+			bind_event(descriptors::notify_of_aggregation(), std::bind(&server_node::notify_of_aggregation, this, std::placeholders::_2, std::placeholders::_3));
+			bind_query(descriptors::query_handshake(), std::bind(&server_node::query_handshake, this, std::placeholders::_2, std::placeholders::_3, false));
+			bind_query(descriptors::query_state(), std::bind(&server_node::query_state, this, std::placeholders::_2, std::placeholders::_3, false));
+			bind_query(descriptors::query_headers(), std::bind(&server_node::query_headers, this, std::placeholders::_2, std::placeholders::_3));
+			bind_query(descriptors::query_block(), std::bind(&server_node::query_block, this, std::placeholders::_2, std::placeholders::_3));
+			bind_query(descriptors::query_mempool(), std::bind(&server_node::query_mempool, this, std::placeholders::_2, std::placeholders::_3));
+			bind_query(descriptors::query_transaction(), std::bind(&server_node::query_transaction, this, std::placeholders::_2, std::placeholders::_3));
+			bind_query(descriptors::aggregate_secret_share_state(), std::bind(&server_node::aggregate_secret_share_state, this, std::placeholders::_2, std::placeholders::_3));
+			bind_query(descriptors::aggregate_public_state(), std::bind(&server_node::aggregate_public_state, this, std::placeholders::_2, std::placeholders::_3));
+			bind_query(descriptors::aggregate_signature_state(), std::bind(&server_node::aggregate_signature_state, this, std::placeholders::_2, std::placeholders::_3));
 
 			control_sys.interval_if_none(TASK_MEMPOOL_VACUUM "_runner", protocol::now().user.storage.transaction_timeout * 1000, std::bind(&server_node::run_mempool_vacuum, this));
 			control_sys.interval_if_none(TASK_TOPOLOGY_OPTIMIZATION "_runner", protocol::now().user.consensus.topology_timeout, std::bind(&server_node::run_topology_optimization, this));
@@ -2343,28 +2521,28 @@ namespace tangent
 			if (is_active())
 				unlisten(false);
 		}
-		void server_node::clear_pending_permit(const uint256_t& permit_hash)
+		void server_node::clear_pending_meeting(const uint256_t& committee_meeting_hash)
 		{
 			auto* queue = schedule::get();
-			umutex<std::recursive_mutex> unique(exclusive);
-			if (permit_hash > 0)
+			umutex<std::recursive_mutex> unique(sync.meeting);
+			if (committee_meeting_hash > 0)
 			{
-				auto it = permits.find(permit_hash);
-				if (it != permits.end())
+				auto it = meetings.find(committee_meeting_hash);
+				if (it != meetings.end())
 				{
 					queue->clear_timeout(it->second.timeout);
 					it->second.task.set(std::move(it->second.results));
-					permits.erase(it);
+					meetings.erase(it);
 				}
 			}
 			else
 			{
-				for (auto& [handle, permit] : permits)
+				for (auto& [handle, meeting] : meetings)
 				{
-					permit.task.set(std::move(permit.results));
-					queue->clear_timeout(permit.timeout);
+					meeting.task.set(std::move(meeting.results));
+					queue->clear_timeout(meeting.timeout);
 				}
-				permits.clear();
+				meetings.clear();
 			}
 		}
 		void server_node::clear_pending_fork(relay* state)
@@ -2559,7 +2737,7 @@ namespace tangent
 				synchronize_mempool_with(uref(from));
 			}
 
-			size_t notifications = notify_all_except(uref(from), METHOD_CALL(&server_node::notify_of_possibly_new_block_hash), { format::variable(candidate_hash), format::variable(candidate.block.number) });
+			size_t notifications = notify_all_except(uref(from), descriptors::notify_of_block_hash(), { format::variable(candidate_hash), format::variable(candidate.block.number) });
 			if (notifications > 0 && protocol::now().user.consensus.logging)
 				VI_INFO("block %s broadcasted to %i nodes (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)notifications, candidate.block.number);
 
@@ -2620,36 +2798,36 @@ namespace tangent
 			}
 			return true;
 		}
-		bool server_node::spend_permit_on(uref<relay>&& state)
+		bool server_node::accept_meeting_committee_node(uref<relay>&& state)
 		{
-			size_t permits_spent = 0;
-			bool permit_spent = false;
+			size_t meetings_accepted = 0;
+			bool meeting_acepted = false;
 			auto* queue = schedule::get();
-			umutex<std::recursive_mutex> unique(exclusive);
-		spend_another_permit:
-			for (auto& [handle, permit] : permits)
+			umutex<std::recursive_mutex> unique(sync.meeting);
+		accept_another_meeting:
+			for (auto& [handle, meeting] : meetings)
 			{
-				auto target = permit.accounts.find(state->as_descriptor()->second.public_key_hash);
-				if (target == permit.accounts.end())
+				auto target = meeting.accounts.find(state->as_descriptor()->second.public_key_hash);
+				if (target == meeting.accounts.end())
 					continue;
 
-				permit_spent = true;
-				permit.accounts.erase(target);
-				permit.results.push_back(state);
-				if (permit.accounts.empty())
+				meeting_acepted = true;
+				meeting.accounts.erase(target);
+				meeting.results.push_back(state);
+				if (meeting.accounts.empty())
 				{
-					clear_pending_permit(handle);
+					clear_pending_meeting(handle);
 					break;
 				}
-				permit.timeout = queue->set_timeout(protocol::now().user.tcp.timeout, std::bind(&server_node::clear_pending_permit, this, handle));
+				meeting.timeout = queue->set_timeout(protocol::now().user.tcp.timeout, std::bind(&server_node::clear_pending_meeting, this, handle));
 			}
-			if (permit_spent)
+			if (meeting_acepted)
 			{
-				++permits_spent;
-				permit_spent = false;
-				goto spend_another_permit;
+				++meetings_accepted;
+				meeting_acepted = false;
+				goto accept_another_meeting;
 			}
-			return permits_spent > 0;
+			return meetings_accepted > 0;
 		}
 		void server_node::fill_node_services()
 		{
@@ -2944,111 +3122,202 @@ namespace tangent
 		}
 		expects_promise_rt<void> dispatch_context::aggregate_validators(const uint256_t& transaction_hash, const ordered_set<algorithm::pubkeyhash_t>& validators)
 		{
-			unordered_set<algorithm::pubkeyhash_t> required_accounts;
-			required_accounts.reserve(validators.size());
-			required_accounts.insert(validators.begin(), validators.end());
+			if (protocol::now().user.consensus.logging)
+				VI_INFO("committee meeting: connect to %i validators (proof: %s)", (int)validators.size(), algorithm::encoding::encode_0xhex256(transaction_hash).c_str());
 
-			return server->connect_to_logical_nodes_with_permit(transaction_hash, std::move(required_accounts)).then<expects_rt<void>>([](expects_rt<unordered_map<algorithm::pubkeyhash_t, uref<relay>>>&& results) -> expects_rt<void>
+			return coasync<expects_rt<void>>([this, transaction_hash, &validators]() mutable -> expects_promise_rt<void>
 			{
-				if (!results)
-					return results.error();
+				unordered_set<algorithm::pubkeyhash_t> required_accounts;
+				required_accounts.reserve(validators.size());
+				required_accounts.insert(validators.begin(), validators.end());
 
-				return expectation::met;
+				auto result = coawait(server->connect_to_meeting_committee(transaction_hash, std::move(required_accounts)));
+				if (!result)
+				{
+					if (protocol::now().user.consensus.logging)
+						VI_ERR("committee meeting failed: %s (proof: %s)", result.what().c_str(), algorithm::encoding::encode_0xhex256(transaction_hash).c_str());
+
+					coreturn result.error();
+				}
+				else if (protocol::now().user.consensus.logging)
+					VI_INFO("committee meeting: %i validators connected (proof: %s)", (int)result->size(), algorithm::encoding::encode_0xhex256(transaction_hash).c_str());
+
+				coreturn expectation::met;
 			});
 		}
 		expects_promise_rt<void> dispatch_context::aggregate_secret_share_state(const ledger::transaction_context* context, secret_share_state& state, const algorithm::pubkeyhash_t& validator)
 		{
-			auto* bridge_account = (transactions::bridge_account*)context->transaction;
-			if (is_running_on(validator.data))
-				return local_dispatch_context::aggregate_secret_share_state(this, context, state);
+			if (protocol::now().user.consensus.logging)
+				VI_INFO("secret share state aggregation: inquiry to %s", algorithm::signing::encode_address(validator).c_str());
 
-			auto node = server->find_by_account(validator);
-			if (!node)
-				return expects_promise_rt<void>(remote_exception::retry());
-
-			return coasync<expects_rt<void>>([this, context, &state, node]() mutable -> expects_promise_rt<void>
+			return coasync<expects_rt<void>>([this, context, &state, &validator]() mutable -> expects_promise_rt<void>
 			{
-				uint64_t attempt = 0;
-			retry:
-				auto args = format::variables({ format::variable(context->receipt.block_number), format::variable(context->receipt.transaction_hash), format::variable(state.as_message().data) });
-				auto event = coawait(server->query(std::move(node), METHOD_CALL(&server_node::query_secret_share_state_aggregation), std::move(args), protocol::now().user.consensus.response_timeout));
-				if (event && event->args.empty())
+				auto result = coawait(aggregate_secret_share_state_internal(context, state, validator));
+				if (!result)
 				{
-					if (coawait(aggregative_sleep(attempt)))
-						goto retry;
-					coreturn remote_exception::retry();
-				}
-				else if (!event)
-					coreturn event.error().is_retry() || event.error().is_shutdown() ? remote_exception::retry() : event.error();
+					if (protocol::now().user.consensus.logging)
+						VI_INFO("secret share state aggregation failed: %s (participant: %s)", result.what().c_str(), algorithm::signing::encode_address(validator).c_str());
 
-				auto message = format::ro_stream(event->args.front().as_string());
-				if (!state.load_message(message))
-					coreturn remote_exception("group secret share remote computation error");
+					coreturn result.error();
+				}
+				else if (protocol::now().user.consensus.logging)
+					VI_INFO("secret share state aggregation: OK (participant: %s)", algorithm::signing::encode_address(validator).c_str());
 
 				coreturn expectation::met;
 			});
 		}
 		expects_promise_rt<void> dispatch_context::aggregate_public_state(const ledger::transaction_context* context, public_state& state, const algorithm::pubkeyhash_t& validator)
 		{
-			if (is_running_on(validator.data))
-				return local_dispatch_context::aggregate_public_state(this, context, state);
+			if (protocol::now().user.consensus.logging)
+				VI_INFO("public state aggregation: inquiry to %s", algorithm::signing::encode_address(validator).c_str());
 
-			auto node = server->find_by_account(validator);
-			if (!node)
-				return expects_promise_rt<void>(remote_exception::retry());
-
-			return coasync<expects_rt<void>>([this, context, &state, node]() mutable -> expects_promise_rt<void>
+			return coasync<expects_rt<void>>([this, context, &state, &validator]() mutable -> expects_promise_rt<void>
 			{
-				uint64_t attempt = 0;
-			retry:
-				auto args = format::variables({ format::variable(context->receipt.block_number), format::variable(context->receipt.transaction_hash), format::variable(state.as_message().data) });
-				auto event = coawait(server->query(std::move(node), METHOD_CALL(&server_node::query_public_state_aggregation), std::move(args), protocol::now().user.consensus.response_timeout));
-				if (event && event->args.empty())
+				auto result = coawait(aggregate_public_state_internal(context, state, validator));
+				if (!result)
 				{
-					if (coawait(aggregative_sleep(attempt)))
-						goto retry;
-					coreturn remote_exception::retry();
-				}
-				else if (!event)
-					coreturn event.error().is_retry() || event.error().is_shutdown() ? remote_exception::retry() : event.error();
+					if (protocol::now().user.consensus.logging)
+						VI_INFO("public state aggregation failed: %s (participant: %s)", result.what().c_str(), algorithm::signing::encode_address(validator).c_str());
 
-				auto message = format::ro_stream(event->args.front().as_string());
-				if (!state.load_message(message))
-					coreturn remote_exception("group public key remote computation error");
+					coreturn result.error();
+				}
+				else if (protocol::now().user.consensus.logging)
+					VI_INFO("public state aggregation: OK (participant: %s)", algorithm::signing::encode_address(validator).c_str());
 
 				coreturn expectation::met;
 			});
 		}
 		expects_promise_rt<void> dispatch_context::aggregate_signature_state(const ledger::transaction_context* context, signature_state& state, const algorithm::pubkeyhash_t& validator)
 		{
-			if (is_running_on(validator.data))
-				return local_dispatch_context::aggregate_signature_state(this, context, state);
+			if (protocol::now().user.consensus.logging)
+				VI_INFO("signature state aggregation: inquiry to %s", algorithm::signing::encode_address(validator).c_str());
 
-			auto node = server->find_by_account(validator);
-			if (!node)
-				return expects_promise_rt<void>(remote_exception::retry());
-
-			return coasync<expects_rt<void>>([this, context, &state, node]() mutable -> expects_promise_rt<void>
+			return coasync<expects_rt<void>>([this, context, &state, &validator]() mutable -> expects_promise_rt<void>
 			{
-				uint64_t attempt = 0;
-			retry:
-				auto args = format::variables({ format::variable(context->receipt.block_number), format::variable(context->receipt.transaction_hash), format::variable(state.as_message().data) });
-				auto event = coawait(server->query(std::move(node), METHOD_CALL(&server_node::query_signature_state_aggregation), std::move(args), protocol::now().user.consensus.response_timeout));
-				if (event && event->args.empty())
+				auto result = coawait(aggregate_signature_state_internal(context, state, validator));
+				if (!result)
 				{
-					if (coawait(aggregative_sleep(attempt)))
-						goto retry;
-					coreturn remote_exception::retry();
-				}
-				else if (!event)
-					coreturn event.error().is_retry() || event.error().is_shutdown() ? remote_exception::retry() : event.error();
+					if (protocol::now().user.consensus.logging)
+						VI_INFO("signature state aggregation failed: %s (participant: %s)", result.what().c_str(), algorithm::signing::encode_address(validator).c_str());
 
-				auto message = format::ro_stream(event->args.front().as_string());
-				if (!state.load_message_if_preferred(message))
-					coreturn remote_exception("group signature remote computation error");
+					coreturn result.error();
+				}
+				else if (protocol::now().user.consensus.logging)
+					VI_INFO("signature state aggregation: OK (participant: %s)", algorithm::signing::encode_address(validator).c_str());
 
 				coreturn expectation::met;
 			});
+		}
+		expects_promise_rt<void> dispatch_context::aggregate_secret_share_state_internal(const ledger::transaction_context* context, secret_share_state& state, const algorithm::pubkeyhash_t& validator)
+		{
+			auto* bridge_account = (transactions::bridge_account*)context->transaction;
+			if (is_running_on(validator.data))
+				coreturn local_dispatch_context::aggregate_secret_share_state(this, context, state);
+
+			auto node = server->find_by_account(validator);
+			if (!node)
+				coreturn remote_exception::retry();
+
+			uint64_t attempt = 0;
+			auto args = pack_private_result({ format::variable(context->receipt.block_number), format::variable(context->receipt.transaction_hash), format::variable(state.as_message().data) }, *node);
+			if (!args)
+				coreturn remote_exception(std::move(args.error().message()));
+		retry:
+			auto event = coawait(server->query(uref(node), descriptors::aggregate_secret_share_state(), format::variables(*args), protocol::now().user.consensus.response_timeout));
+			if (!event)
+			{
+				bool is_retry = event.error().is_retry() || event.error().is_shutdown();
+				if (is_retry && coawait(aggregative_sleep(attempt)))
+					goto retry;
+
+				coreturn is_retry ? remote_exception::retry() : event.error();
+			}
+
+			args = unpack_private_result(event->args, server->descriptor.second.secret_key);
+			if (!args)
+				coreturn remote_exception(std::move(args.error().message()));
+
+			state.confirmation_signature = algorithm::hashsig_t(args->front().as_string());
+			if (state.confirmation_signature.empty())
+				coreturn remote_exception("group secret share confirmation failed");
+
+			coreturn expectation::met;
+		}
+		expects_promise_rt<void> dispatch_context::aggregate_public_state_internal(const ledger::transaction_context* context, public_state& state, const algorithm::pubkeyhash_t& validator)
+		{
+			if (is_running_on(validator.data))
+				coreturn local_dispatch_context::aggregate_public_state(this, context, *state.aggregator);
+
+			auto node = server->find_by_account(validator);
+			if (!node)
+				coreturn remote_exception::retry();
+
+			format::wo_stream writer;
+			if (!algorithm::composition::store_public_state(state.alg, *state.aggregator, &writer))
+				coreturn remote_exception("out state machine not valid");
+
+			uint64_t attempt = 0;
+			auto args = pack_private_result({ format::variable(context->receipt.block_number), format::variable(context->receipt.transaction_hash), format::variable(writer.data) }, *node);
+			if (!args)
+				coreturn remote_exception(std::move(args.error().message()));
+		retry:
+			auto event = coawait(server->query(uref(node), descriptors::aggregate_public_state(), format::variables(*args), protocol::now().user.consensus.response_timeout));
+			if (!event)
+			{
+				bool is_retry = event.error().is_retry() || event.error().is_shutdown();
+				if (is_retry && coawait(aggregative_sleep(attempt)))
+					goto retry;
+
+				coreturn is_retry ? remote_exception::retry() : event.error();
+			}
+
+			args = unpack_private_result(event->args, server->descriptor.second.secret_key);
+			if (!args)
+				coreturn remote_exception(std::move(args.error().message()));
+
+			auto message = format::ro_stream(args->front().as_string());
+			if (!state.aggregator->load(message))
+				coreturn remote_exception("group public key remote computation failed");
+
+			coreturn expectation::met;
+		}
+		expects_promise_rt<void> dispatch_context::aggregate_signature_state_internal(const ledger::transaction_context* context, signature_state& state, const algorithm::pubkeyhash_t& validator)
+		{
+			if (is_running_on(validator.data))
+				coreturn local_dispatch_context::aggregate_signature_state(this, context, **state.message, *state.aggregator);
+
+			auto node = server->find_by_account(validator);
+			if (!node)
+				coreturn remote_exception::retry();
+
+			format::wo_stream writer;
+			if (!algorithm::composition::store_signature_state(state.alg, *state.aggregator, &writer))
+				coreturn remote_exception("out state machine not valid");
+
+			uint64_t attempt = 0;
+			auto args = pack_private_result({ format::variable(context->receipt.block_number), format::variable(context->receipt.transaction_hash), format::variable(state.message->as_message().data), format::variable(writer.data) }, *node);
+			if (!args)
+				coreturn remote_exception(std::move(args.error().message()));
+		retry:
+			auto event = coawait(server->query(uref(node), descriptors::aggregate_signature_state(), format::variables(*args), protocol::now().user.consensus.response_timeout));
+			if (!event)
+			{
+				bool is_retry = event.error().is_retry() || event.error().is_shutdown();
+				if (is_retry && coawait(aggregative_sleep(attempt)))
+					goto retry;
+
+				coreturn is_retry ? remote_exception::retry() : event.error();
+			}
+
+			args = unpack_private_result(event->args, server->descriptor.second.secret_key);
+			if (!args)
+				coreturn remote_exception(std::move(args.error().message()));
+
+			auto message = format::ro_stream(args->front().as_string());
+			if (!state.load_message_if_preferred(message))
+				coreturn remote_exception("group signature remote computation error");
+
+			coreturn expectation::met;
 		}
 
 		local_dispatch_context::local_dispatch_context(const vector<ledger::wallet>& new_validators)
@@ -3155,11 +3424,11 @@ namespace tangent
 
 			auto prev = this->validator;
 			this->validator = next;
-			auto result = aggregate_public_state(this, context, state);
+			auto result = aggregate_public_state(this, context, *state.aggregator);
 			this->validator = prev;
 			return expects_promise_rt<void>(std::move(result));
 		}
-		expects_rt<void> local_dispatch_context::aggregate_public_state(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, public_state& state)
+		expects_rt<void> local_dispatch_context::aggregate_public_state(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, algorithm::composition::public_state* aggregator)
 		{
 			auto* bridge_account = (transactions::bridge_account*)context->transaction;
 			if (!bridge_account)
@@ -3178,7 +3447,7 @@ namespace tangent
 			if (!keypair)
 				return remote_exception(std::move(keypair.error().message()));
 
-			auto derivation = state.aggregator->derive_from_key(keypair->secret_key);
+			auto derivation = aggregator->derive_from_key(keypair->secret_key);
 			if (!derivation)
 				return remote_exception(std::move(derivation.error().message()));
 
@@ -3192,21 +3461,21 @@ namespace tangent
 
 			auto prev = this->validator;
 			this->validator = next;
-			auto result = aggregate_signature_state(this, context, state);
+			auto result = aggregate_signature_state(this, context, **state.message, *state.aggregator);
 			this->validator = prev;
 			return expects_promise_rt<void>(std::move(result));
 		}
-		expects_rt<void> local_dispatch_context::aggregate_signature_state(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, signature_state& state)
+		expects_rt<void> local_dispatch_context::aggregate_signature_state(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, oracle::prepared_transaction& message, algorithm::composition::signature_state* aggregator)
 		{
 			auto* bridge_withdrawal = (transactions::bridge_withdrawal*)context->transaction;
 			if (!bridge_withdrawal)
 				return remote_exception("invalid transaction");
 
-			auto validation = transactions::bridge_withdrawal_finalization::validate_possible_proof(context, bridge_withdrawal, **state.message);
+			auto validation = transactions::bridge_withdrawal_finalization::validate_possible_proof(context, bridge_withdrawal, message);
 			if (!validation)
 				return remote_exception(std::move(validation.error().message()));
 
-			auto* input = state.message->next_input_for_aggregation();
+			auto* input = message.next_input_for_aggregation();
 			if (!input)
 				return remote_exception("invalid operation");
 
@@ -3227,7 +3496,7 @@ namespace tangent
 			if (!keypair)
 				return remote_exception(std::move(keypair.error().message()));
 
-			auto accumulation = state.aggregator->aggregate(keypair->secret_key);
+			auto accumulation = aggregator->aggregate(keypair->secret_key);
 			if (!accumulation)
 				return remote_exception(std::move(accumulation.error().message()));
 

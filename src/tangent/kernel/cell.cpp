@@ -2490,9 +2490,7 @@ namespace tangent
 		}
 		string_repr address_repr::to_string() const
 		{
-			string address;
-			algorithm::signing::encode_address(hash, address);
-			return string_repr(std::string_view(address));
+			return string_repr(algorithm::signing::encode_address(hash));
 		}
 		uint256_t address_repr::to_public_key_hash() const
 		{

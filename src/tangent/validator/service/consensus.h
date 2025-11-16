@@ -18,8 +18,8 @@ namespace tangent
 		class server_node;
 		class dispatch_context;
 
-		typedef std::function<expects_lr<void>(server_node*, uref<relay>&&, const struct exchange&)> event_callback;
-		typedef std::function<expects_lr<format::variables>(server_node*, uref<relay>&&, const struct exchange&)> query_callback;
+		typedef std::function<expects_rt<void>(server_node*, uref<relay>&&, const struct exchange&)> event_callback;
+		typedef std::function<expects_rt<format::variables>(server_node*, uref<relay>&&, const struct exchange&)> query_callback;
 		typedef std::pair<ledger::node, ledger::wallet> relay_descriptor;
 		typedef socket_connection inbound_node;
 
@@ -34,10 +34,10 @@ namespace tangent
 			struct descriptor
 			{
 				std::string_view name;
-				size_t checksum;
+				uint8_t id;
 
 				descriptor() = default;
-				descriptor(const std::string_view& new_name, size_t new_checksum) : name(new_name), checksum(new_checksum)
+				descriptor(const std::string_view& new_name, uint8_t new_id) : name(new_name), id(new_id)
 				{
 				}
 			};
@@ -57,8 +57,8 @@ namespace tangent
 
 			format::variables args;
 			uint64_t time = protocol::now().time.now_cpu();
-			uint32_t method = 0;
 			uint32_t session = 0;
+			uint8_t descriptor = 0;
 			side type;
 
 			bool store_payload(format::wo_stream* stream) const override;
@@ -94,6 +94,23 @@ namespace tangent
 			void spend(size_t bytes);
 		};
 
+		struct descriptors
+		{
+			static callable::descriptor notify_of_block_hash();
+			static callable::descriptor notify_of_transaction_hash();
+			static callable::descriptor notify_of_attestation();
+			static callable::descriptor notify_of_aggregation();
+			static callable::descriptor query_handshake();
+			static callable::descriptor query_state();
+			static callable::descriptor query_headers();
+			static callable::descriptor query_block();
+			static callable::descriptor query_mempool();
+			static callable::descriptor query_transaction();
+			static callable::descriptor aggregate_secret_share_state();
+			static callable::descriptor aggregate_public_state();
+			static callable::descriptor aggregate_signature_state();
+		};
+
 		class relay : public reference<relay>
 		{
 		private:
@@ -117,6 +134,7 @@ namespace tangent
 			node_type type;
 			void* instance;
 			uint32_t counter;
+			std::atomic<bool> aborted;
 
 		public:
 			pacemaker bandwidth;
@@ -125,8 +143,8 @@ namespace tangent
 		public:
 			relay(node_type new_type, void* new_instance);
 			~relay();
-			expects_promise_rt<exchange> push_query(const std::string_view& method, format::variables&& args, uint64_t timeout_ms);
-			bool push_event(const std::string_view& method, format::variables&& args);
+			expects_promise_rt<exchange> push_query(const callable::descriptor& descriptor, format::variables&& args, uint64_t timeout_ms);
+			bool push_event(const callable::descriptor& descriptor, format::variables&& args);
 			void push_event(uint32_t session, format::variables&& args);
 			bool incoming_message_into(exchange* message);
 			bool pull_incoming_message(const uint8_t* buffer, size_t size);
@@ -171,8 +189,6 @@ namespace tangent
 
 		class server_node final : public socket_server
 		{
-			friend class methods;
-
 		public:
 			enum class fork_head
 			{
@@ -186,7 +202,7 @@ namespace tangent
 				uref<relay> state;
 			};
 
-			struct connection_permit
+			struct committee_meeting
 			{
 				ordered_set<algorithm::pubkeyhash_t> accounts;
 				vector<uref<relay>> results;
@@ -199,6 +215,7 @@ namespace tangent
 			{
 				std::recursive_mutex account;
 				std::recursive_mutex block;
+				std::recursive_mutex meeting;
 				std::mutex inventory;
 			} sync;
 
@@ -217,8 +234,8 @@ namespace tangent
 			} mempool;
 
 		private:
-			unordered_map<uint256_t, connection_permit> permits;
-			unordered_map<uint32_t, callable> callables;
+			unordered_map<uint256_t, committee_meeting> meetings;
+			unordered_map<uint8_t, callable> callables;
 			unordered_map<void*, uref<relay>> nodes;
 			unordered_set<outbound_node*> pending_nodes;
 			forwarder inventory;
@@ -237,32 +254,32 @@ namespace tangent
 			expects_lr<void> accept_transaction(uref<relay>&& from, uptr<ledger::transaction>&& candidate_tx, bool validate_execution = false);
 			expects_lr<void> accept_attestation(uref<relay>&& from, const uint256_t& attestation_hash);
 			expects_lr<void> broadcast_transaction(uref<relay>&& from, uptr<ledger::transaction>&& candidate_tx, const algorithm::pubkeyhash_t& owner);
-			expects_lr<void> notify_of_possibly_new_block_hash(uref<relay>&& state, const exchange& event);
-			expects_lr<void> notify_of_possibly_new_transaction_hash(uref<relay>&& state, const exchange& event);
-			expects_lr<void> notify_of_possibly_new_attestation(uref<relay>&& state, const exchange& event);
-			expects_lr<void> notify_of_reverse_connection_requirement(uref<relay>&& state, const exchange& event);
-			expects_lr<format::variables> query_handshake(uref<relay>&& state, const exchange& event, bool is_acknowledgement);
-			expects_lr<format::variables> query_state(uref<relay>&& state, const exchange& event, bool is_acknowledgement);
-			expects_lr<format::variables> query_block_headers(uref<relay>&& state, const exchange& event);
-			expects_lr<format::variables> query_block(uref<relay>&& state, const exchange& event);
-			expects_lr<format::variables> query_mempool_transaction_hashes(uref<relay>&& state, const exchange& event);
-			expects_lr<format::variables> query_transaction(uref<relay>&& state, const exchange& event);
-			expects_lr<format::variables> query_secret_share_state_aggregation(uref<relay>&& state, const exchange& event);
-			expects_lr<format::variables> query_public_state_aggregation(uref<relay>&& state, const exchange& event);
-			expects_lr<format::variables> query_signature_state_aggregation(uref<relay>&& state, const exchange& event);
+			expects_rt<void> notify_of_block_hash(uref<relay>&& state, const exchange& event);
+			expects_rt<void> notify_of_transaction_hash(uref<relay>&& state, const exchange& event);
+			expects_rt<void> notify_of_attestation(uref<relay>&& state, const exchange& event);
+			expects_rt<void> notify_of_aggregation(uref<relay>&& state, const exchange& event);
+			expects_rt<format::variables> query_handshake(uref<relay>&& state, const exchange& event, bool is_acknowledgement);
+			expects_rt<format::variables> query_state(uref<relay>&& state, const exchange& event, bool is_acknowledgement);
+			expects_rt<format::variables> query_headers(uref<relay>&& state, const exchange& event);
+			expects_rt<format::variables> query_block(uref<relay>&& state, const exchange& event);
+			expects_rt<format::variables> query_mempool(uref<relay>&& state, const exchange& event);
+			expects_rt<format::variables> query_transaction(uref<relay>&& state, const exchange& event);
+			expects_rt<format::variables> aggregate_secret_share_state(uref<relay>&& state, const exchange& event);
+			expects_rt<format::variables> aggregate_public_state(uref<relay>&& state, const exchange& event);
+			expects_rt<format::variables> aggregate_signature_state(uref<relay>&& state, const exchange& event);
 			expects_lr<void> dispatch_transaction_logs(const algorithm::asset_id& asset, const oracle::chain_supervisor_options& options, oracle::transaction_logs&& logs);
 			expects_lr<socket_address> find_node_from_mempool();
 			expects_promise_rt<socket_address> find_node_from_discovery();
 			expects_promise_rt<uref<relay>> connect_to_physical_node(const socket_address& address, option<algorithm::pubkeyhash_t>&& required_account = optional::none);
-			expects_promise_rt<unordered_map<algorithm::pubkeyhash_t, uref<relay>>> connect_to_logical_nodes_with_permit(const uint256_t& permit_hash, unordered_set<algorithm::pubkeyhash_t>&& accounts);
+			expects_promise_rt<unordered_map<algorithm::pubkeyhash_t, uref<relay>>> connect_to_meeting_committee(const uint256_t& committee_meeting_hash, unordered_set<algorithm::pubkeyhash_t>&& accounts);
 			expects_promise_rt<void> synchronize_mempool_with(uref<relay>&& state);
 			expects_promise_rt<void> resolve_and_verify_fork(std::pair<uint256_t, fork_header>&& fork);
-			expects_promise_rt<exchange> query(uref<relay>&& state, const callable::descriptor& method, format::variables&& args, uint64_t timeout_ms);
-			expects_lr<void> notify(uref<relay>&& state, const callable::descriptor& method, format::variables&& args);
-			size_t notify_all(const callable::descriptor& method, format::variables&& args);
-			size_t notify_all_except(uref<relay>&& exception, const callable::descriptor& method, format::variables&& args);
-			void bind_event(const callable::descriptor& method, event_callback&& on_event_callback);
-			void bind_query(const callable::descriptor& method, query_callback&& on_query_callback);
+			expects_promise_rt<exchange> query(uref<relay>&& state, const callable::descriptor& descriptor, format::variables&& args, uint64_t timeout_ms, bool force_call = false);
+			expects_lr<void> notify(uref<relay>&& state, const callable::descriptor& descriptor, format::variables&& args);
+			size_t notify_all(const callable::descriptor& descriptor, format::variables&& args);
+			size_t notify_all_except(uref<relay>&& exception, const callable::descriptor& descriptor, format::variables&& args);
+			void bind_event(const callable::descriptor& descriptor, event_callback&& on_event_callback);
+			void bind_query(const callable::descriptor& descriptor, query_callback&& on_query_callback);
 			bool run_topology_optimization();
 			bool run_mempool_vacuum();
 			bool run_fork_resolution();
@@ -272,7 +289,7 @@ namespace tangent
 			bool run_attestation_dispatcher(const uint256_t& attestation_hash);
 			void startup();
 			void shutdown();
-			void clear_pending_permit(const uint256_t& permit_hash);
+			void clear_pending_meeting(const uint256_t& committee_meeting_hash);
 			void clear_pending_fork(relay* state);
 			void accept_pending_fork(uref<relay>&& state, fork_head head, const uint256_t& candidate_hash, ledger::block_header&& candidate_block);
 			bool accept_block(uref<relay>&& from, ledger::block_evaluation&& candidate, const uint256_t& fork_tip);
@@ -299,7 +316,7 @@ namespace tangent
 			void fill_node_services();
 			bool accept_block_candidate(const ledger::block_evaluation& candidate, const uint256_t& candidate_hash, const uint256_t& fork_tip);
 			bool accept_proposal_transaction(const ledger::block& checkpoint_block, const ledger::block_transaction& transaction);
-			bool spend_permit_on(uref<relay>&& state);
+			bool accept_meeting_committee_node(uref<relay>&& state);
 			void pull_messages(uref<relay>&& state);
 			void push_messages(uref<relay>&& state);
 			void abort_node(uref<relay>&& state);
@@ -337,6 +354,11 @@ namespace tangent
 			expects_promise_rt<void> aggregate_signature_state(const ledger::transaction_context* context, signature_state& state, const algorithm::pubkeyhash_t& validator) override;
 			algorithm::pubkey_t get_public_key(const algorithm::pubkeyhash_t& validator) const override;
 			const ledger::wallet& get_runner_wallet() const override;
+
+		private:
+			expects_promise_rt<void> aggregate_secret_share_state_internal(const ledger::transaction_context* context, secret_share_state& state, const algorithm::pubkeyhash_t& validator);
+			expects_promise_rt<void> aggregate_public_state_internal(const ledger::transaction_context* context, public_state& state, const algorithm::pubkeyhash_t& validator);
+			expects_promise_rt<void> aggregate_signature_state_internal(const ledger::transaction_context* context, signature_state& state, const algorithm::pubkeyhash_t& validator);
 		};
 
 		class local_dispatch_context final : public ledger::dispatch_context
@@ -361,8 +383,8 @@ namespace tangent
 
 		public:
 			static expects_rt<void> aggregate_secret_share_state(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, secret_share_state& state);
-			static expects_rt<void> aggregate_public_state(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, public_state& state);
-			static expects_rt<void> aggregate_signature_state(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, signature_state& state);
+			static expects_rt<void> aggregate_public_state(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, algorithm::composition::public_state* aggregator);
+			static expects_rt<void> aggregate_signature_state(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, oracle::prepared_transaction& message, algorithm::composition::signature_state* aggregator);
 		};
 	}
 }

@@ -399,6 +399,7 @@ namespace tangent
 			bind(0 | access_type::r, "chainstate", "getwitnessaccounts", 3, 3, "string address, uint64 offset, uint64 count", "multiform[]", "get witness addresses by owner address", std::bind(&server_node::chainstate_get_witness_accounts, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getwitnessaccountsbypurpose", 4, 4, "string address, string purpose = 'witness' | 'router' | 'custodian' | 'bridge', uint64 offset, uint64 count", "multiform[]", "get witness addresses by owner address", std::bind(&server_node::chainstate_get_witness_accounts_by_purpose, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getwitnesstransaction", 2, 2, "string asset, string transaction_id", "uniform", "get witness transaction by asset and transaction id", std::bind(&server_node::chainstate_get_witness_transaction, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getassetholders", 2, 2, "string asset, uint256 rank", "uint64", "get amount of asset holders with rank (balance value) greater or equal some value", std::bind(&server_node::chainstate_get_asset_holders, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getclosestnode", 0, 1, "uint64? offset", "validator", "get closest node info", std::bind(&server_node::mempoolstate_get_closest_node, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getclosestnodecount", 0, 0, "", "uint64", "get closest node count", std::bind(&server_node::mempoolstate_get_closest_node_counter, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getnode", 1, 1, "string uri_address", "validator", "get associated node info by ip address", std::bind(&server_node::mempoolstate_get_node, this, std::placeholders::_1, std::placeholders::_2));
@@ -836,11 +837,7 @@ namespace tangent
 		{
 			auto owner = format::util::decode_0xhex(args[0].as_string());
 			if (owner.size() == sizeof(algorithm::pubkeyhash_t))
-			{
-				string address;
-				algorithm::signing::encode_address((uint8_t*)owner.data(), address);
-				return server_response().success(var::set::string(address));
-			}
+				return server_response().success(var::set::string(algorithm::signing::encode_address((uint8_t*)owner.data())));
 
 			return server_response().error(error_codes::bad_params, "raw address not valid");
 		}
@@ -2597,6 +2594,13 @@ namespace tangent
 			auto chain = storages::chainstate();
 			auto state = chain.get_uniform(states::witness_transaction::as_instance_type(), nullptr, states::witness_transaction::as_instance_index(asset, args[1].as_string()), 0);
 			return server_response().success(state ? state->value->as_schema().reset() : var::set::null());
+		}
+		server_response server_node::chainstate_get_asset_holders(http::connection* base, format::variables&& args)
+		{
+			auto chain = storages::chainstate();
+			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
+			auto count = chain.get_multiforms_count_by_row_filter(states::account_balance::as_instance_type(), nullptr, states::account_balance::as_instance_row(asset), storages::result_filter::greater_equal(args[1].as_uint256(), -1), 0);
+			return server_response().success(var::set::integer(count.or_else(0)));
 		}
 		server_response server_node::mempoolstate_add_node(http::connection* base, format::variables&& args)
 		{

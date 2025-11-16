@@ -674,16 +674,16 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> mempoolstate::expire_transactions()
+		expects_lr<size_t> mempoolstate::expire_transactions()
 		{
 			schema_list map;
 			map.push_back(var::set::integer(time(nullptr)));
 
 			auto cursor = get_storage().emplace_query(__func__, "DELETE FROM transactions WHERE time < ?", &map);
 			if (!cursor || cursor->error())
-				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
+				return expects_lr<size_t>(layer_exception(ledger::storage_util::error_of(cursor)));
 
-			return expectation::met;
+			return cursor->affected_rows();
 		}
 		expects_lr<void> mempoolstate::apply_group_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner, const uint256_t& scalar)
 		{

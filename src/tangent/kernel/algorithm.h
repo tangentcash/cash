@@ -180,6 +180,7 @@ namespace tangent
 			static bool encode_public_key(const pubkey_t& public_key, string& value);
 			static bool decode_address(const std::string_view& address, pubkeyhash_t& public_key_hash);
 			static bool encode_address(const pubkeyhash_t& public_key_hash, string& address);
+			static string encode_address(const pubkeyhash_t& public_key_hash);
 			static schema* serialize_secret_key(const seckey_t& secret_key);
 			static schema* serialize_public_key(const pubkey_t& public_key);
 			static schema* serialize_address(const pubkeyhash_t& public_key_hash);

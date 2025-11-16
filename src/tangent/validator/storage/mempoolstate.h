@@ -92,7 +92,7 @@ namespace tangent
 			expects_lr<void> add_transaction(const ledger::transaction& value, bool resurrection);
 			expects_lr<void> remove_transactions(const vector<uint256_t>& transaction_hashes);
 			expects_lr<void> remove_transactions(const unordered_set<uint256_t>& transaction_hashes);
-			expects_lr<void> expire_transactions();
+			expects_lr<size_t> expire_transactions();
 			expects_lr<void> apply_group_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner, const uint256_t& scalar);
 			expects_lr<uint256_t> get_or_apply_group_account_share(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner, const uint256_t& entropy);
 			expects_lr<vector<states::bridge_account>> get_group_accounts(const algorithm::pubkeyhash_t& manager, size_t offset, size_t count);

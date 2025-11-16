@@ -870,6 +870,13 @@ namespace tangent
 			memcpy(address.data(), encoded, size);
 			return true;
 		}
+		string signing::encode_address(const pubkeyhash_t& public_key_hash)
+		{
+			string address;
+			if (!encode_address(public_key_hash, address))
+				address.clear();
+			return address;
+		}
 		schema* signing::serialize_secret_key(const seckey_t& secret_key)
 		{
 			if (secret_key.empty())

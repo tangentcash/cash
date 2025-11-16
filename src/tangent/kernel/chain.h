@@ -210,7 +210,7 @@ namespace tangent
                 string path;
                 string module_cache_path;
                 storage_optimization optimization = storage_optimization::speed;
-                uint64_t transaction_dispatch_repeat_interval = 120;
+                uint64_t transaction_dispatch_repeat_interval = 300;
                 uint64_t transaction_timeout = 14400;
                 uint64_t commitment_timeout = 7200;
                 uint64_t checkpoint_size = 100;

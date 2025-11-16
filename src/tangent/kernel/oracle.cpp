@@ -80,11 +80,7 @@ namespace tangent
 				return public_key;
 
 			if (has_owner())
-			{
-				string owner_address;
-				algorithm::signing::encode_address(owner, owner_address);
-				return owner_address;
-			}
+				return algorithm::signing::encode_address(owner);
 
 			return "(confidential)";
 		}
