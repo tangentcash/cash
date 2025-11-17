@@ -507,12 +507,12 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<uint256_t> mempoolstate::pull_attestation_hash(size_t required_signatures)
+		expects_lr<uint256_t> mempoolstate::pull_best_attestation_hash(size_t offset)
 		{
 			schema_list map;
-			map.push_back(var::set::integer(required_signatures));
+			map.push_back(var::set::integer(offset));
 
-			auto cursor = get_storage().emplace_query(__func__, "SELECT hash FROM (SELECT hash, COUNT(*) OVER (PARTITION BY hash, commitment) AS signatures FROM commitments) counts WHERE signatures >= ? LIMIT 1", &map);
+			auto cursor = get_storage().emplace_query(__func__, "SELECT hash FROM (SELECT hash, COUNT(*) OVER (PARTITION BY hash, commitment) AS signatures FROM commitments) counts ORDER BY signatures DESC LIMIT 1 OFFSET ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<uint256_t>(layer_exception(ledger::storage_util::error_of(cursor)));
 			else if (cursor->empty())

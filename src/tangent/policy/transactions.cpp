@@ -896,6 +896,9 @@ namespace tangent
 			if (!production && participation_stakes.empty() && attestation_stakes.empty())
 				return layer_exception("invalid validator change");
 
+			if (production && production->is_negative())
+				return layer_exception("production must not be negative");
+
 			for (auto& [asset, stake] : participation_stakes)
 			{
 				uint64_t expiry_number = algorithm::asset::expiry_of(asset);
@@ -920,10 +923,22 @@ namespace tangent
 
 			if (production)
 			{
-				auto type = *production ? ledger::transaction_context::production_type::mint_and_activate : ledger::transaction_context::production_type::burn_and_deactivate;
-				auto status = context->apply_validator_production(context->receipt.from, type, { });
-				if (!status)
-					return status.error();
+				if (production->is_zero() || production->is_positive())
+				{
+					auto burn = context->apply_transfer(asset, context->receipt.from, -(*production), decimal::zero());
+					if (!burn)
+						return burn.error();
+
+					auto status = context->apply_validator_production(context->receipt.from, ledger::transaction_context::production_type::mint_and_activate, { { algorithm::asset::native(), *production } });
+					if (!status)
+						return status.error();
+				}
+				else
+				{
+					auto status = context->apply_validator_production(context->receipt.from, ledger::transaction_context::production_type::burn_and_deactivate, { });
+					if (!status)
+						return status.error();
+				}
 			}
 
 			for (auto& [asset, stake] : participation_stakes)
@@ -997,7 +1012,10 @@ namespace tangent
 		bool validator_adjustment::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_integer((uint8_t)(production ? (*production ? 1 : 0) : 2));
+			stream->write_boolean(!!production);
+			if (production)
+				stream->write_decimal(*production);
+
 			stream->write_integer((uint8_t)participation_stakes.size());
 			for (auto& [asset, stake] : participation_stakes)
 			{
@@ -1014,14 +1032,16 @@ namespace tangent
 		}
 		bool validator_adjustment::load_body(format::ro_stream& stream)
 		{
-			uint8_t production_status;
-			if (!stream.read_integer(stream.read_type(), &production_status))
+			bool has_production;
+			if (!stream.read_boolean(stream.read_type(), &has_production))
 				return false;
 
-			if (production_status == 0)
-				production = false;
-			else if (production_status == 1)
-				production = true;
+			if (has_production)
+			{
+				production = decimal::nan();
+				if (!stream.read_decimal(stream.read_type(), production.address()))
+					return false;
+			}
 			else
 				production = optional::none;
 
@@ -1063,15 +1083,15 @@ namespace tangent
 
 			return true;
 		}
-		void validator_adjustment::enable_block_production()
+		void validator_adjustment::allocate_production_stake(const decimal& value)
 		{
-			production = true;
+			production = value;
 		}
-		void validator_adjustment::disable_block_production()
+		void validator_adjustment::disable_production()
 		{
-			production = false;
+			production = decimal::nan();
 		}
-		void validator_adjustment::standby_on_block_production()
+		void validator_adjustment::standby_on_production()
 		{
 			production = optional::none;
 		}
@@ -1114,7 +1134,8 @@ namespace tangent
 		uptr<schema> validator_adjustment::as_schema() const
 		{
 			schema* data = ledger::transaction::as_schema().reset();
-			data->set("block_production", var::integer(production ? (*production ? 1 : 0) : -1));
+			if (production)
+				data->set("block_production", production->is_zero() || production->is_positive() ? var::decimal(*production) : var::boolean(false));
 
 			auto* participation_stakes_data = data->set("participation_stakes", var::set::array());
 			for (auto& [asset, stake] : participation_stakes)
@@ -2857,12 +2878,13 @@ namespace tangent
 		{
 			return "bridge_attestation";
 		}
-		expects_lr<void> bridge_attestation::verify_proof_commitment(const ledger::transaction_context* context, const algorithm::asset_id& asset, const ordered_map<uint256_t, ordered_set<algorithm::hashsig_t>>& commitments, uint256_t& best_commitment_hash, ordered_map<uint256_t, ordered_set<algorithm::pubkeyhash_t>>& attesters)
+		expects_lr<void> bridge_attestation::verify_proof_commitment(ledger::transaction_context* context, const algorithm::asset_id& asset, const ordered_map<uint256_t, ordered_set<algorithm::hashsig_t>>& commitments, uint256_t& best_commitment_hash, ordered_map<uint256_t, ordered_set<algorithm::pubkeyhash_t>>& attesters)
 		{
 			ordered_set<algorithm::pubkeyhash_t> duplicates;
 			best_commitment_hash = 0;
 			attesters.clear();
 
+			decimal best_commitment_stake = -1;
 			for (auto& [commitment_hash, signatures] : commitments)
 			{
 				if (!commitment_hash)
@@ -2879,17 +2901,6 @@ namespace tangent
 					attesters[commitment_hash].insert(attester);
 					duplicates.insert(attester);
 				}
-			}
-
-			auto& params = protocol::now();
-			size_t required_commitments = context->calculate_attesters_size(asset).or_else(0);
-			decimal best_commitment_stake = -1;
-			for (auto& [commitment_hash, signatures] : commitments)
-			{
-				size_t required_commitment_attestations = std::min<size_t>(required_commitments, params.policy.attestation_max_per_transaction);
-				decimal current_commitment_threshold = required_commitment_attestations > 0 ? algorithm::arithmetic::divide(signatures.size(), required_commitment_attestations) : decimal::zero();
-				if (current_commitment_threshold < params.policy.attestation_consensus_threshold || signatures.empty())
-					continue;
 
 				decimal commitment_stake = decimal::zero();
 				for (auto& attester : attesters[commitment_hash])
@@ -2906,8 +2917,20 @@ namespace tangent
 				}
 			}
 
-			if (!best_commitment_hash)
+			if (!best_commitment_hash || best_commitment_stake.is_negative())
 				return layer_exception("proof requires more attestations");
+
+			auto& params = protocol::now();
+			auto best_attesters = context->calculate_attesters(asset, params.policy.attestation_max_per_transaction);
+			if (!best_attesters)
+				return best_attesters.error();
+
+			decimal global_commitment_stake = decimal::zero();
+			for (auto& attester : *best_attesters)
+				global_commitment_stake += attester.get_ranked_stake();
+
+			if (best_commitment_stake < global_commitment_stake * params.policy.attestation_consensus_threshold)
+				return layer_exception("proof requires better attestations");
 
 			return expectation::met;
 		}

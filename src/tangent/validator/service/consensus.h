@@ -216,6 +216,7 @@ namespace tangent
 				std::recursive_mutex account;
 				std::recursive_mutex block;
 				std::recursive_mutex meeting;
+				std::recursive_mutex attestation;
 				std::mutex inventory;
 			} sync;
 
@@ -253,6 +254,7 @@ namespace tangent
 			expects_lr<void> accept_unsigned_transaction(uref<relay>&& from, uptr<ledger::transaction>&& candidate_tx, uint64_t* account_nonce, uint256_t* output_hash = nullptr);
 			expects_lr<void> accept_transaction(uref<relay>&& from, uptr<ledger::transaction>&& candidate_tx, bool validate_execution = false);
 			expects_lr<void> accept_attestation(uref<relay>&& from, const uint256_t& attestation_hash);
+			expects_lr<void> accept_committed_attestation(uref<relay>&& from, const algorithm::asset_id& asset, const oracle::computed_transaction& proof, const algorithm::hashsig_t& signature);
 			expects_lr<void> broadcast_transaction(uref<relay>&& from, uptr<ledger::transaction>&& candidate_tx, const algorithm::pubkeyhash_t& owner);
 			expects_rt<void> notify_of_block_hash(uref<relay>&& state, const exchange& event);
 			expects_rt<void> notify_of_transaction_hash(uref<relay>&& state, const exchange& event);
@@ -283,10 +285,10 @@ namespace tangent
 			bool run_topology_optimization();
 			bool run_mempool_vacuum();
 			bool run_fork_resolution();
+			bool run_attestation_resolution();
 			bool run_block_production();
 			bool run_block_dispatcher(const ledger::block_header& tip);
 			bool run_block_dispatch_retrial();
-			bool run_attestation_dispatcher(const uint256_t& attestation_hash);
 			void startup();
 			void shutdown();
 			void clear_pending_meeting(const uint256_t& committee_meeting_hash);

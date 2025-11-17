@@ -9,6 +9,7 @@
 #define TASK_TOPOLOGY_OPTIMIZATION "topology_optimization"
 #define TASK_MEMPOOL_VACUUM "mempool_vacuum"
 #define TASK_FORK_RESOLUTION "fork_resolution"
+#define TASK_ATTESTATION_RESOLUTION "attestation_resolution"
 #define TASK_BLOCK_DISPATCH_RETRIAL "block_dispatch_retrial"
 #define TASK_BLOCK_PRODUCTION "block_production"
 #define TASK_BLOCK_DISPATCHER "block_dispatcher"
@@ -961,6 +962,7 @@ namespace tangent
 		}
 		expects_lr<void> server_node::accept_attestation(uref<relay>&& from, const uint256_t& attestation_hash)
 		{
+			umutex<std::recursive_mutex> unique(sync.attestation);
 			auto mempool = storages::mempoolstate();
 			auto batch = mempool.get_attestation(attestation_hash);
 			if (!batch)
@@ -971,7 +973,10 @@ namespace tangent
 			auto context = ledger::transaction_context();
 			auto collision = context.get_witness_transaction(batch->asset, batch->proofs.begin()->second.transaction_id);
 			if (collision)
+			{
+				mempool.remove_attestation(attestation_hash);
 				return expectation::met;
+			}
 
 			uint256_t best_commitment_hash = 0;
 			ordered_map<uint256_t, ordered_set<algorithm::pubkeyhash_t>> attesters;
@@ -989,6 +994,16 @@ namespace tangent
 			accept_unsigned_transaction(nullptr, transaction, nullptr);
 			mempool.remove_attestation(attestation_hash);
 			return expectation::met;
+		}
+		expects_lr<void> server_node::accept_committed_attestation(uref<relay>&& from, const algorithm::asset_id& asset, const oracle::computed_transaction& proof, const algorithm::hashsig_t& signature)
+		{
+			umutex<std::recursive_mutex> unique(sync.attestation);
+			auto mempool = storages::mempoolstate();
+			auto status = mempool.add_attestation(asset, proof, signature);
+			if (!status)
+				return status.error();
+
+			return accept_attestation(nullptr, proof.as_attestation_hash());
 		}
 		expects_lr<void> server_node::broadcast_transaction(uref<relay>&& from, uptr<ledger::transaction>&& candidate_tx, const algorithm::pubkeyhash_t& owner)
 		{
@@ -1085,8 +1100,8 @@ namespace tangent
 
 			uint256_t commitment_hash = proof.as_hash();
 			algorithm::pubkeyhash_t attester;
-			algorithm::hashsig_t commitment = algorithm::hashsig_t(event.args[2].as_string());
-			if (!algorithm::signing::recover_hash(commitment_hash, attester, commitment))
+			algorithm::hashsig_t commitment_signature = algorithm::hashsig_t(event.args[2].as_string());
+			if (!algorithm::signing::recover_hash(commitment_hash, attester, commitment_signature))
 				return remote_exception("invalid commitment");
 
 			auto context = ledger::transaction_context();
@@ -1094,12 +1109,7 @@ namespace tangent
 			if (!validation)
 				return remote_exception(std::move(validation.error().message()));
 
-			auto mempool = storages::mempoolstate();
-			auto status = mempool.add_attestation(asset, proof, commitment);
-			if (!status)
-				return remote_exception(std::move(status.error().message()));
-
-			auto finalization = accept_attestation(uref(state), proof.as_attestation_hash());
+			auto finalization = accept_committed_attestation(uref(state), asset, proof, commitment_signature);
 			if (finalization)
 				return expectation::met;
 
@@ -1457,12 +1467,7 @@ namespace tangent
 				if (!transactions::bridge_attestation::commit_to_proof(receipt, wallet.secret_key, commitment_hash, commitment_signature))
 					continue;
 
-				auto mempool = storages::mempoolstate();
-				auto status = mempool.add_attestation(asset, receipt, commitment_signature);
-				if (!status)
-					continue;
-
-				auto finalization = accept_attestation(nullptr, receipt.as_attestation_hash());
+				auto finalization = accept_committed_attestation(nullptr, asset, receipt, commitment_signature);
 				if (finalization)
 					continue;
 
@@ -2317,6 +2322,28 @@ namespace tangent
 				coreturn_void;
 			});
 		}
+		bool server_node::run_attestation_resolution()
+		{
+			return control_sys.task_if_none(TASK_ATTESTATION_RESOLUTION, [this](system_task&& task)
+			{
+				size_t offset = 0, resolutions = 0;
+				auto mempool = storages::mempoolstate();
+			retry:
+				auto attestation_hash = mempool.pull_best_attestation_hash(offset);
+				if (attestation_hash)
+				{
+					auto status = accept_attestation(nullptr, *attestation_hash);
+					if (!status && protocol::now().user.consensus.logging)
+						VI_INFO("attestation %s resolution delayed: ", algorithm::encoding::encode_0xhex256(*attestation_hash).c_str(), status.what().c_str());
+					else if (!status)
+						++offset;
+					++resolutions;
+					goto retry;
+				}
+				if (resolutions > 0 && protocol::now().user.consensus.logging)
+					VI_INFO("attestation resolution: %i proposals", (int)resolutions);
+			});
+		}
 		bool server_node::run_block_production()
 		{
 			auto& [node, wallet] = descriptor;
@@ -2506,6 +2533,7 @@ namespace tangent
 
 			control_sys.interval_if_none(TASK_MEMPOOL_VACUUM "_runner", protocol::now().user.storage.transaction_timeout * 1000, std::bind(&server_node::run_mempool_vacuum, this));
 			control_sys.interval_if_none(TASK_TOPOLOGY_OPTIMIZATION "_runner", protocol::now().user.consensus.topology_timeout, std::bind(&server_node::run_topology_optimization, this));
+			control_sys.interval_if_none(TASK_ATTESTATION_RESOLUTION "_runner", protocol::now().user.consensus.attestation_timeout, std::bind(&server_node::run_attestation_resolution, this));
 			control_sys.interval_if_none(TASK_BLOCK_DISPATCH_RETRIAL "_runner", protocol::now().user.storage.transaction_dispatch_repeat_interval * 1000, std::bind(&server_node::run_block_dispatch_retrial, this));
 			run_topology_optimization();
 			run_mempool_vacuum();

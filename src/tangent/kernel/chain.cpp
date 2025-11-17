@@ -518,6 +518,10 @@ namespace tangent
 			if (value != nullptr && value->value.is(var_type::integer))
 				user.consensus.topology_timeout = (uint32_t)value->value.get_integer();
 
+			value = config->fetch("consensus.attestation_timeout");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.consensus.attestation_timeout = (uint32_t)value->value.get_integer();
+			
 			value = config->fetch("consensus.response_timeout");
 			if (value != nullptr && value->value.is(var_type::integer))
 				user.consensus.response_timeout = value->value.get_integer();

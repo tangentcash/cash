@@ -15,6 +15,7 @@
         "inventory_timeout": 300000,
         "inventory_size": 65536,
         "topology_timeout": 120000,
+        "attestation_timeout": 600000,
         "response_timeout": 48000,
         "aggregation_cooldown": 2000,
         "aggregation_attempts": 6,

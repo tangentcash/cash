@@ -160,6 +160,7 @@ namespace tangent
                 uint64_t inventory_timeout = 300000;
                 uint32_t inventory_size = 65536;
                 uint32_t topology_timeout = 120000;
+                uint32_t attestation_timeout = 600000;
                 uint64_t response_timeout = 48000;
                 uint64_t aggregation_attempts = 6;
                 uint64_t aggregation_cooldown = 2000;
@@ -283,7 +284,7 @@ namespace tangent
             decimal production_penalty_rate = std::string_view("0.10");
             decimal participation_stake_threshold = std::string_view("0.20");
             decimal participation_fee_rate = std::string_view("0.30");
-            decimal attestation_consensus_threshold = std::string_view("0.66");
+            decimal attestation_consensus_threshold = std::string_view("0.80");
             decimal attestation_fee_rate = std::string_view("0.15");
             decimal bridge_reward_max_increase = std::string_view("0.05");
             decimal consensus_difficulty_max_increase = std::string_view("2.00");

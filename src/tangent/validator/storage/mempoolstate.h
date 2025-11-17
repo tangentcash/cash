@@ -86,7 +86,7 @@ namespace tangent
 			expects_lr<decimal> get_gas_price(const algorithm::asset_id& asset, double priority_percentile);
 			expects_lr<decimal> get_asset_price(const algorithm::asset_id& price_of, const algorithm::asset_id& relative_to, double priority_percentile = 0.5);
 			expects_lr<void> add_attestation(const algorithm::asset_id& asset, const oracle::computed_transaction& value, const algorithm::hashsig_t& signature);
-			expects_lr<uint256_t> pull_attestation_hash(size_t required_signatures);
+			expects_lr<uint256_t> pull_best_attestation_hash(size_t offset);
 			expects_lr<attestation_tree> get_attestation(const uint256_t& attestation_hash);
 			expects_lr<void> remove_attestation(const uint256_t& attestation_hash);
 			expects_lr<void> add_transaction(const ledger::transaction& value, bool resurrection);

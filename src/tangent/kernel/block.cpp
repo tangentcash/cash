@@ -1719,7 +1719,31 @@ namespace tangent
 			if (committee.size() >= target_size)
 				std::sort(committee.begin(), committee.end(), [](const states::validator_production& a, const states::validator_production& b) { return a.get_ranked_stake() > b.get_ranked_stake(); });
 
-			return committee;
+			return expects_lr<vector<states::validator_production>>(std::move(committee));
+		}
+		expects_lr<vector<states::validator_attestation>> transaction_context::calculate_attesters(const algorithm::asset_id& asset, size_t target_size)
+		{
+			auto nonce = get_validation_nonce();
+			auto chain = storages::chainstate();
+			auto filter = storages::result_filter::greater(0, -1);
+			auto window = storages::result_range_window(0, target_size);
+			auto results = chain.get_multiforms_by_row_filter(states::validator_attestation::as_instance_type(), changelog, states::validator_attestation::as_instance_row(asset), filter, nonce, window);
+			if (!results)
+				return layer_exception("committee threshold not met");
+
+			vector<states::validator_attestation> committee;
+			committee.reserve(results->size());
+			for (auto& result : *results)
+			{
+				auto& target = *(states::validator_attestation*)result.ptr();
+				committee.emplace_back(std::move(target));
+
+				auto status = query(result.ptr(), !result.cached);
+				if (!status)
+					return status.error();
+			}
+
+			return expects_lr<vector<states::validator_attestation>>(std::move(committee));
 		}
 		expects_lr<vector<states::validator_participation>> transaction_context::calculate_participants(const algorithm::asset_id& asset, ordered_set<algorithm::pubkeyhash_t>& exclusion, size_t target_size, const decimal& threshold)
 		{
@@ -1793,7 +1817,7 @@ namespace tangent
 			if (committee.size() < target_size)
 				return layer_exception("committee threshold not met");
 
-			return committee;
+			return expects_lr<vector<states::validator_participation>>(std::move(committee));
 		}
 		expects_lr<states::account_nonce> transaction_context::apply_account_nonce(const algorithm::pubkeyhash_t& owner, uint64_t nonce)
 		{

@@ -325,6 +325,7 @@ namespace tangent
 			expects_lr<size_t> calculate_attesters_size(const algorithm::asset_id& asset) const;
 			expects_lr<size_t> calculate_producers_size() const;
 			expects_lr<vector<states::validator_production>> calculate_producers(size_t target_size);
+			expects_lr<vector<states::validator_attestation>> calculate_attesters(const algorithm::asset_id& asset, size_t target_size);
 			expects_lr<vector<states::validator_participation>> calculate_participants(const algorithm::asset_id& asset, ordered_set<algorithm::pubkeyhash_t>& exclusion, size_t target_size, const decimal& threshold);
 			expects_lr<states::account_nonce> apply_account_nonce(const algorithm::pubkeyhash_t& owner, uint64_t nonce);
 			expects_lr<states::account_program> apply_account_program(const algorithm::pubkeyhash_t& owner, const std::string_view& program_hashcode);

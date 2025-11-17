@@ -110,15 +110,15 @@ namespace tangent
 		{
 			ordered_map<algorithm::asset_id, decimal> participation_stakes;
 			ordered_map<algorithm::asset_id, decimal> attestation_stakes;
-			option<bool> production = optional::none;
+			option<decimal> production = optional::none;
 
 			expects_lr<void> validate(uint64_t block_number) const override;
 			expects_lr<void> execute(ledger::transaction_context* context) const override;
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
-			void enable_block_production();
-			void disable_block_production();
-			void standby_on_block_production();
+			void allocate_production_stake(const decimal& value);
+			void disable_production();
+			void standby_on_production();
 			void allocate_participation_stake(const algorithm::asset_id& asset, const decimal& value);
 			void deallocate_participation_stake(const algorithm::asset_id& asset, const decimal& value);
 			void disable_participation(const algorithm::asset_id& asset);
@@ -272,7 +272,7 @@ namespace tangent
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
-			static expects_lr<void> verify_proof_commitment(const ledger::transaction_context* context, const algorithm::asset_id& asset, const ordered_map<uint256_t, ordered_set<algorithm::hashsig_t>>& commitments, uint256_t& best_commitment_hash, ordered_map<uint256_t, ordered_set<algorithm::pubkeyhash_t>>& attesters);
+			static expects_lr<void> verify_proof_commitment(ledger::transaction_context* context, const algorithm::asset_id& asset, const ordered_map<uint256_t, ordered_set<algorithm::hashsig_t>>& commitments, uint256_t& best_commitment_hash, ordered_map<uint256_t, ordered_set<algorithm::pubkeyhash_t>>& attesters);
 			static bool commit_to_proof(const oracle::computed_transaction& new_proof, const algorithm::seckey_t& secret_key, uint256_t& commitment_hash, algorithm::hashsig_t& commitment_signature);
 		};
 
