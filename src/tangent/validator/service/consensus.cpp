@@ -1532,11 +1532,8 @@ namespace tangent
 				std::shuffle(std::begin(lists), std::end(lists), random);
 				for (auto& bootstrap_url : lists)
 				{
-					http::fetch_frame options;
-					options.verify_peers = PEER_NOT_VERIFIED;
-
 					size_t results = std::numeric_limits<size_t>::max();
-					auto response = coawait(http::fetch(bootstrap_url, "GET", options));
+					auto response = coawait(http::fetch(bootstrap_url));
 					if (response)
 					{
 						auto addresses = uptr<schema>(response->content.get_json());
