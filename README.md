@@ -49,7 +49,7 @@ In case of a network halt due to the unavailability of the entire committee, any
 
 ## Building
 There are several ways to build this project that are explained here:
-* [Build with locally](var/documents/BUILD-MANUAL.md)
+* [Build locally](var/documents/BUILD-MANUAL.md)
 * [Build with Docker](var/documents/BUILD-DOCKER.md)
 
 ### Configuration
