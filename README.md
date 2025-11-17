@@ -1,7 +1,7 @@
 <br/>
 <div align="center">
     <br />
-    <img src="https://github.com/tangentcash/cash/blob/main/var/images/icon.png?raw=true" alt="Vitex Logo" width="100" />
+    <img src="https://github.com/tangentcash/cash/blob/main/var/images/icon.png?raw=true" alt="Tangent Protocol Logo" width="100" />
     <h3>Tangent Protocol / Cash Node</h3>
 </div>
 
