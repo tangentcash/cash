@@ -2884,6 +2884,7 @@ namespace tangent
 			best_commitment_hash = 0;
 			attesters.clear();
 
+			size_t best_commitment_size = 0;
 			decimal best_commitment_stake = -1;
 			for (auto& [commitment_hash, signatures] : commitments)
 			{
@@ -2902,22 +2903,27 @@ namespace tangent
 					duplicates.insert(attester);
 				}
 
+				size_t commitment_size = 0;
 				decimal commitment_stake = decimal::zero();
 				for (auto& attester : attesters[commitment_hash])
 				{
 					auto attestation = context->get_validator_attestation(asset, attester);
 					if (attestation)
+					{
 						commitment_stake += attestation->get_ranked_stake();
+						++best_commitment_size;
+					}
 				}
 
 				if (commitment_stake > best_commitment_stake)
 				{
 					best_commitment_hash = commitment_hash;
 					best_commitment_stake = commitment_stake;
+					best_commitment_size = commitment_size;
 				}
 			}
 
-			if (!best_commitment_hash || best_commitment_stake.is_negative())
+			if (!best_commitment_hash || !best_commitment_size || best_commitment_stake.is_negative())
 				return layer_exception("proof requires more attestations");
 
 			auto& params = protocol::now();
@@ -2925,9 +2931,19 @@ namespace tangent
 			if (!best_attesters)
 				return best_attesters.error();
 
+			size_t global_commitment_size = 0;
 			decimal global_commitment_stake = decimal::zero();
 			for (auto& attester : *best_attesters)
-				global_commitment_stake += attester.get_ranked_stake();
+			{
+				auto attester_stake = attester.get_ranked_stake();
+				global_commitment_stake += attester_stake;
+				if (attester_stake.is_positive())
+					++global_commitment_size;
+			}
+
+			global_commitment_size = std::min(global_commitment_size, params.policy.attestation_max_per_transaction);
+			if (global_commitment_size > 0 && decimal(best_commitment_stake) < decimal(global_commitment_size) * params.policy.attestation_consensus_threshold)
+				return layer_exception("proof requires more attestations");
 
 			if (best_commitment_stake < global_commitment_stake * params.policy.attestation_consensus_threshold)
 				return layer_exception("proof requires better attestations");
