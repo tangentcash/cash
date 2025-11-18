@@ -214,7 +214,7 @@ namespace tangent
 			checksum = os::hw::to_endianness(os::hw::endian::little, checksum);
 			if (size > max_body_size)
 			{
-				message_buffer.resize(header_size);
+				message_buffer.erase(0, sizeof(magic_buffer));
 				return false;
 			}
 
@@ -223,9 +223,9 @@ namespace tangent
 				return false;
 
 			format::ro_stream stream = format::ro_stream(body);
-			bool satisfiable = algorithm::hashing::hash32d(body) == checksum && load_payload(stream);
-			message_buffer.erase(0, magic_index + header_size + body.size());
-			return satisfiable;
+			bool acceptable = algorithm::hashing::hash32d(body) == checksum && load_payload(stream);
+			message_buffer.erase(0, header_size + size);
+			return acceptable;
 		}
 		bool exchange::load_partial_exchange(string& message, const uint8_t* buffer, size_t size)
 		{
@@ -234,6 +234,17 @@ namespace tangent
 				size_t offset = message.size();
 				message.resize(offset + size);
 				memcpy(message.data() + offset, buffer, size);
+
+				uint32_t magic = os::hw::to_endianness(os::hw::endian::little, protocol::now().message.packet_magic);
+				uint8_t magic_buffer[sizeof(magic)];
+				memcpy(magic_buffer, &magic, sizeof(magic));
+				size_t magic_index = std::string_view((char*)buffer, size).find(std::string_view((char*)magic_buffer, sizeof(magic_buffer)));
+				if (magic_index != std::string::npos)
+				{
+					static size_t x = 0;
+					if (++x == 6)
+						magic_index = magic_index;
+				}
 			}
 			return load_exchange(message);
 		}
@@ -1753,7 +1764,7 @@ namespace tangent
 			return coasync<expects_rt<void>>([this, state]() -> expects_promise_rt<void>
 			{
 				uint64_t cursor = 0;
-				while (true)
+				while (is_active())
 				{
 					auto result = coawait(query(uref(state), descriptors::query_mempool(), { format::variable(cursor) }, protocol::now().user.tcp.timeout));
 					if (!result)
@@ -1801,7 +1812,8 @@ namespace tangent
 				auto new_tip_hash = uint256_t(0);
 				auto new_tip_number = new_tip.header.number;
 				auto old_tip_number = storages::chainstate().get_latest_block_number().or_else(0);
-				while (old_tip_number > 0)
+				std::mutex batch_mutex;
+				while (is_active() && old_tip_number > 0)
 				{
 					auto result = coawait(query(uref(new_tip.state), descriptors::query_headers(), { format::variable(new_tip_number) }, protocol::now().user.tcp.timeout));
 					if (!result)
@@ -1816,48 +1828,63 @@ namespace tangent
 					if (protocol::now().user.consensus.logging)
 					{
 						uint64_t blocks_count = (uint64_t)(result->args.size() - 1);
-						VI_INFO("block %s chain fork: resolution in range: [%" PRIu64 "; %" PRIu64 "]", algorithm::encoding::encode_0xhex256(new_tip_fork_hash).c_str(), new_tip_number - (blocks_count > new_tip_number ? 1 : blocks_count), new_tip_number);
+						VI_INFO("block %s chain fork: verifying headers (range: [%" PRIu64 "; %" PRIu64 "])", algorithm::encoding::encode_0xhex256(new_tip_fork_hash).c_str(), new_tip_number - (blocks_count > new_tip_number ? 1 : blocks_count), new_tip_number);
 					}
 
-					format::ro_stream block_message = format::ro_stream(result->args[1].as_string());
-					ledger::block_header child_header;
-					if (!child_header.load(block_message))
-						coreturn remote_exception("invalid block header");
-
-					ledger::block_header parent_header;
-					size_t block_range = result->args.size() + 1;
-					for (size_t i = 2; i < block_range; i++)
+					option<remote_exception> error = optional::none;
+					uint256_t best_new_tip_hash = 0;
+					uint64_t best_new_tip_number = 0;
+					size_t batch_size = 16, batch_offset = 1;
+					size_t block_count = result->args.size() - batch_offset;
+					size_t batch_groups = std::max<size_t>(1, block_count / batch_size);
+					auto tasks = parallel::for_loop(batch_groups, 99999999, [&](size_t batch_index)
 					{
-						uint256_t branch_hash = child_header.as_hash(true);
-						auto collision = storages::chainstate().get_block_header_by_hash(branch_hash);
-						if (collision || --new_tip_number < 1)
+						ledger::block_header parent_header, child_header;
+						size_t begin = batch_offset + batch_index * batch_size;
+						size_t end = batch_offset + (batch_index + 1) * batch_size + (batch_index == batch_groups - 1 ? block_count % batch_size : 0);
+						for (size_t i = begin; i < end; i++)
 						{
-							if (protocol::now().user.consensus.logging)
-								VI_INFO("block %s chain fork: collision detected (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(branch_hash).c_str(), child_header.number);
+							auto message = format::ro_stream(result->args[i].as_string());
+							auto verification = child_header.load(message) ? child_header.verify_validity(parent_header.number > 0 ? &parent_header : nullptr) : expects_lr<void>(layer_exception("bad message"));
+							if (!verification)
+							{
+								umutex<std::mutex> unique(batch_mutex);
+								error = remote_exception(stringify::text("invalid block header (height: %" PRIu64 "): %s", child_header.number, verification.error().what()));
+								break;
+							}
 
-							new_tip_hash = branch_hash;
-							old_tip_number = 0;
-							break;
+							uint256_t branch_hash = child_header.as_hash(true);
+							auto collision = storages::chainstate().get_block_header_by_hash(branch_hash);
+							if (collision || child_header.number <= 1)
+							{
+								umutex<std::mutex> unique(batch_mutex);
+								if (!best_new_tip_number || best_new_tip_number < child_header.number)
+								{
+									best_new_tip_number = child_header.number;
+									best_new_tip_hash = branch_hash;
+								}
+							}
+
+							parent_header = child_header;
+							parent_header.checksum = 0;
 						}
-						else if (i < result->args.size())
-						{
-							block_message.clear();
-							block_message.data = result->args[i].as_string();
-							if (!parent_header.load(block_message))
-								coreturn remote_exception("invalid block header");
-						}
+					});
 
-						parent_header.checksum = 0;
-						auto verification = child_header.verify_validity(parent_header.number > 0 ? &parent_header : nullptr);
-						if (!verification)
-							coreturn remote_exception("invalid block header: " + verification.error().message());
+					for (auto& task : tasks)
+						coawait(std::move(task));
 
-						child_header = parent_header;
+					if (best_new_tip_number > 0 && best_new_tip_hash > 0)
+					{
+						if (protocol::now().user.consensus.logging)
+							VI_INFO("block %s chain fork: collision detected (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(best_new_tip_hash).c_str(), best_new_tip_number);
+
+						new_tip_hash = best_new_tip_hash;
+						old_tip_number = 0;
 					}
 				}
 
 				new_tip_number = new_tip_hash > 0 ? 0 : 1;
-				while (new_tip_number > 0 || new_tip_hash > 0)
+				while (is_active() && (new_tip_number > 0 || new_tip_hash > 0))
 				{
 					auto result = coawait(query(uref(new_tip.state), descriptors::query_block(), { format::variable(new_tip_hash), format::variable(new_tip_number) }, protocol::now().user.tcp.timeout));
 					if (!result)
@@ -2090,7 +2117,6 @@ namespace tangent
 			ref->add_ref();
 			stream->write_queued(state->outgoing_buffer(), state->outgoing_size(), [this, stream, ref](socket_poll event)
 			{
-				size_t size = ref->outgoing_size();
 				ref->end_outgoing_message();
 				if (packet::is_done(event))
 					push_messages(uref(ref));
@@ -2182,17 +2208,12 @@ namespace tangent
 				return pull_messages(uref(state));
 
 			auto duplicate = find_by_address(node->address);
-			if (!duplicate)
-			{
-				state = new relay(node_type::inbound, node);
-				append_node(uref(state));
-				pull_messages(uref(state));
-			}
-			else
-			{
-				node->abort();
-				finalize(node);
-			}
+			if (duplicate)
+				abort_node(std::move(duplicate));
+
+			state = new relay(node_type::inbound, node);
+			append_node(uref(state));
+			pull_messages(uref(state));
 		}
 		bool server_node::run_topology_optimization()
 		{
