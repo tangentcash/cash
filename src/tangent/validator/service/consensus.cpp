@@ -2115,6 +2115,7 @@ namespace tangent
 
 			auto* ref = *state;
 			ref->add_ref();
+			printf("sending %i bytes\n", (int)state->outgoing_size());
 			stream->write_queued(state->outgoing_buffer(), state->outgoing_size(), [this, stream, ref](socket_poll event)
 			{
 				ref->end_outgoing_message();
