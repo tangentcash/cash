@@ -1042,6 +1042,12 @@ namespace tangent
 			{
 				{ "ADA", chain<backends::cardano>(this) },
 				{ "BTC", chain<backends::bitcoin>(this) },
+				{ "ETH", chain<backends::ethereum>(this) },
+				{ "SOL", chain<backends::solana>(this) },
+				{ "TRX", chain<backends::tron>(this) },
+				{ "XRP", chain<backends::ripple>(this) },
+				{ "XLM", chain<backends::stellar>(this) },
+#if 0
 				{ "BCH", chain<backends::forks::bitcoin_cash>(this) },
 				{ "BTG", chain<backends::forks::bitcoin_gold>(this) },
 				{ "BSV", chain<backends::forks::bitcoin_sv>(this) },
@@ -1051,7 +1057,6 @@ namespace tangent
 				{ "LTC", chain<backends::forks::litecoin>(this) },
 				{ "XEC", chain<backends::forks::ecash>(this) },
 				{ "ZEC", chain<backends::forks::zcash>(this) },
-				{ "ETH", chain<backends::ethereum>(this) },
 				{ "ARB", chain<backends::forks::arbitrum>(this) },
 				{ "AVAX", chain<backends::forks::avalanche>(this) },
 				{ "BASE", chain<backends::forks::base>(this) },
@@ -1065,11 +1070,6 @@ namespace tangent
 				{ "OP", chain<backends::forks::optimism>(this) },
 				{ "S", chain<backends::forks::sonic>(this) },
 				{ "ZK", chain<backends::forks::zksync>(this) },
-				{ "SOL", chain<backends::solana>(this) },
-				{ "TRX", chain<backends::tron>(this) },
-				{ "XRP", chain<backends::ripple>(this) },
-				{ "XLM", chain<backends::stellar>(this) },
-#if 0
 				{ "XMR", chain<backends::monero>(this) },
 #endif
 			};
