@@ -1973,7 +1973,7 @@ namespace tangent
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer(asset);
-			stream->write_string(transaction_id);
+			stream->write_string_raw(transaction_id);
 			return true;
 		}
 		bool witness_transaction::load_index(format::ro_stream& stream)

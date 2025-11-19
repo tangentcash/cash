@@ -925,9 +925,13 @@ namespace tangent
 			{
 				if (production->is_zero() || production->is_positive())
 				{
-					auto burn = context->apply_transfer(asset, context->receipt.from, -(*production), decimal::zero());
-					if (!burn)
-						return burn.error();
+					auto stake_allocation = -(*production);
+					if (stake_allocation.is_negative())
+					{
+						auto burn = context->apply_transfer(asset, context->receipt.from, stake_allocation, decimal::zero());
+						if (!burn)
+							return burn.error();
+					}
 
 					auto status = context->apply_validator_production(context->receipt.from, ledger::transaction_context::production_type::mint_and_activate, { { algorithm::asset::native(), *production } });
 					if (!status)
@@ -1282,10 +1286,6 @@ namespace tangent
 					auto bridge_policy_status = context->apply_bridge_policy_account(asset, manager, 1);
 					if (!bridge_policy_status)
 						return bridge_policy_status.error();
-
-					auto bridge_account_status = context->apply_bridge_account(asset, context->receipt.from, manager, algorithm::composition::cpubkey_t(), { });
-					if (!bridge_account_status)
-						return bridge_account_status.error();
 
 					auto witness_account_status = context->apply_witness_bridge_account(asset, context->receipt.from, manager, *addresses);
 					if (!witness_account_status)

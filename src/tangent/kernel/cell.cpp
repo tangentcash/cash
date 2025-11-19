@@ -3772,7 +3772,7 @@ namespace tangent
 		uint128_t contract::block_difficulty()
 		{
 			auto* p = program::fetch_immutable_or_throw();
-			return p ? p->context->block->target.difficulty() : uint128_t((uint8_t)0);
+			return p ? algorithm::wesolowski::kdifficulty(p->context->block->difficulty) : uint128_t((uint8_t)0);
 		}
 		uint64_t contract::block_time()
 		{

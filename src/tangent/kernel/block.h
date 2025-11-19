@@ -143,7 +143,6 @@ namespace tangent
 		struct block_header : messages::authentic
 		{
 			algorithm::wesolowski::digest proof;
-			algorithm::wesolowski::parameters target;
 			ordered_map<algorithm::asset_id, uint64_t> witnesses;
 			uint256_t parent_hash = 0;
 			uint256_t transaction_root = 0;
@@ -153,6 +152,7 @@ namespace tangent
 			uint256_t gas_limit = 0;
 			uint256_t absolute_work = 0;
 			uint256_t slot_duration = 0;
+			uint64_t difficulty = 0;
 			uint64_t generation_time = 0;
 			uint64_t evaluation_time = 0;
 			uint64_t priority = 0;
@@ -188,7 +188,7 @@ namespace tangent
 			virtual uint64_t get_proof_duration() const;
 			virtual uint64_t get_proof_accounted_duration() const;
 			virtual decimal get_proof_difficulty_multiplier() const;
-			virtual algorithm::wesolowski::parameters get_proof_slot_target(const block_header* parent_block) const;
+			virtual uint64_t get_proof_slot_target(const block_header* parent_block) const;
 			virtual uint256_t as_hash(bool renew = false) const override;
 			virtual uptr<schema> as_schema() const override;
 			virtual format::wo_stream as_signable() const override;
@@ -202,7 +202,7 @@ namespace tangent
 			static uint256_t get_commitment_gas_limit();
 			static uint256_t get_transaction_gas_limit();
 			static uint256_t get_total_gas_limit();
-			static uint256_t get_gas_work(const uint128_t& difficulty, const uint256_t& gas_use, const uint256_t& gas_limit, uint64_t priority);
+			static uint256_t get_gas_work(const uint256_t& gas_use, const uint256_t& gas_limit, uint64_t priority);
 			static bool is_genesis_round(const uint64_t block_number);
 		};
 

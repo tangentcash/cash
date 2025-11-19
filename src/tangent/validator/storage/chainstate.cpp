@@ -2496,6 +2496,9 @@ namespace tangent
 
 			if (changelog != nullptr)
 				((ledger::block_changelog*)changelog)->incoming.push(*value, location->block->hidden);
+			if (location->block->hidden)
+				return expects_lr<state_result>(layer_exception("uniform state not found"));
+
 			return state_result(std::move(value), false);
 		}
 		expects_lr<state_result> chainstate::get_multiform(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& column, const std::string_view& row, uint64_t block_number)
@@ -2560,6 +2563,9 @@ namespace tangent
 
 			if (changelog != nullptr)
 				((ledger::block_changelog*)changelog)->incoming.push(*value, location->block->hidden);
+			if (location->block->hidden)
+				return expects_lr<state_result>(layer_exception("uniform state not found"));
+
 			return state_result(std::move(value), false);
 		}
 		expects_lr<vector<state_result>> chainstate::get_multiforms_by_column(uint32_t type, ledger::block_changelog* changelog, const std::string_view& column, uint64_t block_number, size_t offset, size_t count)

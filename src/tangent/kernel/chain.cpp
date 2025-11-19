@@ -880,7 +880,6 @@ namespace tangent
 				policy.consensus_proof_time = 120;
 				policy.commitment_throughput = 500;
 				policy.transaction_throughput = 10000;
-				policy.wesolowski_bits = 512;
 				break;
 			case tangent::network_type::testnet:
 				message.packet_magic = 0xf815c95c;

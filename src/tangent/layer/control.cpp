@@ -435,7 +435,7 @@ namespace tangent
 		if (protocol::now().user.logs.control_logging)
 			VI_INFO("service launch (services: %i)", (int)services.size());
 
-		multiplexer::get()->rescale(1000, 256);
+		multiplexer::get()->rescale(300, 256);
 		for (auto& service : services)
 			service.startup();
 

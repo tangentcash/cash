@@ -274,7 +274,7 @@ namespace tangent
 			bytes_used_in_window += bytes;
 		}
 
-		relay::relay(node_type new_type, void* new_instance) : type(new_type), instance(new_instance), counter(0), aborted(false), bandwidth(1000 * 1000 * protocol::now().user.tcp.mbps_per_socket), deferred_pull(INVALID_TASK_ID)
+		relay::relay(node_type new_type, void* new_instance) : aborted(false), type(new_type), instance(new_instance), counter(0), bandwidth(1000 * 1000 * protocol::now().user.tcp.mbps_per_socket), deferred_pull(INVALID_TASK_ID)
 		{
 			VI_ASSERT(instance != nullptr, "instance should be set");
 			switch (type)
@@ -381,7 +381,7 @@ namespace tangent
 
 				message_header header;
 				header.magic = os::hw::to_endianness(os::hw::endian::little, protocol::now().message.packet_magic);
-				header.length = os::hw::to_endianness(os::hw::endian::little, (uint32_t)body.data.size());
+				header.length = os::hw::to_endianness(os::hw::endian::little, (uint32_t)std::min(body.data.size(), max_size));
 				header.checksum = os::hw::to_endianness(os::hw::endian::little, algorithm::hashing::hash32d(std::string_view(body.data).substr(0, max_size)));
 
 				umutex<std::recursive_mutex> unique(mutex);
@@ -1543,10 +1543,9 @@ namespace tangent
 					state->abort();
 					return std::move(exception);
 				};
-				auto handshake = query(uref(state), descriptors::query_handshake(), { format::variable(node.as_message().data), format::variable(system_time), format::variable(signature.optimized_view()) }, protocol::now().user.tcp.timeout, true);
 				cospawn([this, state]() mutable { pull_messages(std::move(state)); });
-		
-				auto result = coawait(std::move(handshake));
+
+				auto result = coawait(query(uref(state), descriptors::query_handshake(), { format::variable(node.as_message().data), format::variable(system_time), format::variable(signature.optimized_view()) }, protocol::now().user.tcp.timeout, true));
 				if (!result)
 					coreturn abort(std::move(result.error()));
 
@@ -1740,7 +1739,7 @@ namespace tangent
 				auto new_tip_number = new_tip.header.number;
 				auto old_tip_number = storages::chainstate().get_latest_block_number().or_else(0);
 				std::mutex batch_mutex;
-				while (is_active() && old_tip_number > 0)
+				while (is_active() && old_tip_number > 0 && new_tip_number > 0)
 				{
 					auto result = coawait(query(uref(new_tip.state), descriptors::query_headers(), { format::variable(new_tip_number) }, protocol::now().user.tcp.timeout));
 					if (!result)
@@ -1764,7 +1763,7 @@ namespace tangent
 					size_t batch_size = 16, batch_offset = 1;
 					size_t block_count = result->args.size() - batch_offset;
 					size_t batch_groups = std::max<size_t>(1, block_count / batch_size);
-					auto tasks = parallel::for_loop(batch_groups, 99999999, [&](size_t batch_index)
+					for (auto& task : parallel::for_loop(batch_groups, 1, [&](size_t batch_index)
 					{
 						ledger::block_header parent_header, child_header;
 						size_t begin = batch_offset + batch_index * batch_size;
@@ -1796,11 +1795,10 @@ namespace tangent
 							parent_header = child_header;
 							parent_header.checksum = 0;
 						}
-					});
-
-					for (auto& task : tasks)
+					}))
 						coawait(std::move(task));
 
+					new_tip_number = new_tip_number > block_count ? new_tip_number - block_count : 0;
 					if (best_new_tip_number > 0 && best_new_tip_hash > 0)
 					{
 						if (protocol::now().user.consensus.logging)
@@ -1943,98 +1941,101 @@ namespace tangent
 					return;
 				}
 
-				umutex<std::recursive_mutex> unique(state->mutex);
 				state->push_incoming(buffer, *size);
 				state->bandwidth.spend(*size);
-				if (state->incoming_size() < sizeof(message_header))
-					continue;
-
-				message_header header;
-				memcpy(&header, state->incoming_buffer(), sizeof(message_header));
-				header.magic = os::hw::to_endianness(os::hw::endian::little, header.magic);
-				header.length = os::hw::to_endianness(os::hw::endian::little, header.length);
-				header.checksum = os::hw::to_endianness(os::hw::endian::little, header.checksum);
-				if (header.magic != protocol::now().message.packet_magic || header.length > protocol::now().message.max_body_size)
+				while (state->incoming_size() >= sizeof(message_header))
 				{
-				abort:
+					umutex<std::recursive_mutex> unique(state->mutex);
+					message_header header;
+					memcpy(&header, state->incoming_buffer(), sizeof(message_header));
+					header.magic = os::hw::to_endianness(os::hw::endian::little, header.magic);
+					header.length = os::hw::to_endianness(os::hw::endian::little, header.length);
+					header.checksum = os::hw::to_endianness(os::hw::endian::little, header.checksum);
+					if (state->incoming_size() > sizeof(message_header) + header.length)
+						header.checksum = header.checksum;
+
+					if (header.magic != protocol::now().message.packet_magic || header.length > protocol::now().message.max_body_size)
+					{
+					abort:
+						auto* descriptor = state->as_descriptor();
+						if (descriptor != nullptr)
+						{
+							auto mempool = storages::mempoolstate();
+							mempool.apply_node_quality(descriptor->first.address, -1, message_latency, protocol::now().user.consensus.topology_timeout);
+						}
+						abort_node(std::move(state));
+						return;
+					}
+					else if (state->incoming_size() < sizeof(message_header) + header.length)
+						break;
+
+					exchange message;
+					auto body = format::ro_stream(std::string_view((char*)state->incoming_buffer() + sizeof(message_header), header.length));
+					bool valid = header.checksum == algorithm::hashing::hash32d(body.data) && message.load_payload(body);
+					state->erase_incoming(sizeof(message_header) + body.data.size());
+					unique.unlock();
+					if (!valid)
+						goto abort;
+
+					message_latency = message.calculate_latency();
+					if (protocol::now().user.consensus.logging)
+						VI_TRACE("node %s message in: %s", state->peer_address().c_str(), schema::to_json(*message.as_schema()).substr(0, 2048).c_str());
+
+					if (message.type == exchange::side::event && message.descriptor == 0 && message.session > 0)
+					{
+						state->resolve_query(std::move(message));
+						continue;
+					}
+
+					auto it = callables.find(message.descriptor);
+					if (it == callables.end())
+						goto abort;
+
+					auto& target = it->second;
+					if ((message.type == exchange::side::event && !target.event) || (message.type == exchange::side::query && (!target.query || !message.session)) || (message.type != exchange::side::query && message.type != exchange::side::event))
+						goto abort;
+
+					if (message.type == exchange::side::query)
+					{
+						auto result = target.query(this, uref(state), message);
+						if (!result && !result.error().is_retry())
+						{
+							if (protocol::now().user.consensus.logging)
+								VI_WARN("node %s query \"%.*s\" error out: %s (%s %s)", state->peer_address().c_str(), (int)target.name.size(), target.name.data(), result.what().c_str(), routing_util::node_type_of(*state).data(), state->peer_service().c_str());
+							goto abort;
+						}
+
+						state->push_event(message.session, pack_query_result(result));
+						push_messages(uref(state));
+						if (protocol::now().user.consensus.logging)
+							VI_DEBUG("node %s %s \"%.*s\" result%s: %s (%s %s)", state->peer_address().c_str(), message.type == exchange::side::query ? "query" : "event", (int)target.name.size(), target.name.data(), message.type == exchange::side::query ? " out" : "", result->empty() ? "OK" : stringify::text("[%i values]", (int)result->size()).c_str(), routing_util::node_type_of(*state).data(), state->peer_service().c_str());
+					}
+					else if (message.type == exchange::side::event)
+					{
+						uint256_t hash = message.as_hash();
+						umutex<std::mutex> unique(sync.inventory);
+						if (!inventory.insert(hash) || !state->get_inventory().insert(hash))
+							continue;
+
+						auto result = target.event(this, uref(state), message);
+						if (!result && !result.error().is_retry())
+						{
+							if (protocol::now().user.consensus.logging)
+								VI_WARN("node %s event \"%.*s\" error: %s (%s %s)", state->peer_address().c_str(), (int)target.name.size(), target.name.data(), result.what().c_str(), routing_util::node_type_of(*state).data(), state->peer_service().c_str());
+							goto abort;
+						}
+
+						if (protocol::now().user.consensus.logging)
+							VI_DEBUG("node %s %s \"%.*s\" result%s: OK (%s %s)", state->peer_address().c_str(), message.type == exchange::side::query ? "query" : "event", (int)target.name.size(), target.name.data(), message.type == exchange::side::query ? " out" : "", routing_util::node_type_of(*state).data(), state->peer_service().c_str());
+
+					}
+
 					auto* descriptor = state->as_descriptor();
 					if (descriptor != nullptr)
 					{
 						auto mempool = storages::mempoolstate();
-						mempool.apply_node_quality(descriptor->first.address, -1, message_latency, protocol::now().user.consensus.topology_timeout);
+						mempool.apply_node_quality(descriptor->first.address, 1, message_latency, protocol::now().user.consensus.topology_timeout);
 					}
-					abort_node(std::move(state));
-					return;
-				}
-				else if (state->incoming_size() < header.length)
-					continue;
-
-				exchange message;
-				auto body = format::ro_stream(std::string_view((char*)state->incoming_buffer() + sizeof(message_header), state->incoming_size() - sizeof(message_header)));
-				bool valid = header.checksum == algorithm::hashing::hash32d(body.data) && message.load_payload(body);
-				state->erase_incoming(sizeof(message_header) + body.data.size());
-				unique.unlock();
-				if (!valid)
-					continue;
-
-				message_latency = message.calculate_latency();
-				if (protocol::now().user.consensus.logging)
-					VI_TRACE("node %s message in: %s", state->peer_address().c_str(), schema::to_json(*message.as_schema()).substr(0, 2048).c_str());
-
-				if (message.type == exchange::side::event && message.descriptor == 0 && message.session > 0)
-				{
-					state->resolve_query(std::move(message));
-					continue;
-				}
-
-				auto it = callables.find(message.descriptor);
-				if (it == callables.end())
-					goto abort;
-
-				auto& target = it->second;
-				if ((message.type == exchange::side::event && !target.event) || (message.type == exchange::side::query && (!target.query || !message.session)) || (message.type != exchange::side::query && message.type != exchange::side::event))
-					goto abort;
-
-				if (message.type == exchange::side::query)
-				{
-					auto result = target.query(this, uref(state), message);
-					if (!result && !result.error().is_retry())
-					{
-						if (protocol::now().user.consensus.logging)
-							VI_WARN("node %s query \"%.*s\" error out: %s (%s %s)", state->peer_address().c_str(), (int)target.name.size(), target.name.data(), result.what().c_str(), routing_util::node_type_of(*state).data(), state->peer_service().c_str());
-						goto abort;
-					}
-
-					state->push_event(message.session, pack_query_result(result));
-					push_messages(uref(state));
-					if (protocol::now().user.consensus.logging)
-						VI_DEBUG("node %s %s \"%.*s\" result%s: %s (%s %s)", state->peer_address().c_str(), message.type == exchange::side::query ? "query" : "event", (int)target.name.size(), target.name.data(), message.type == exchange::side::query ? " out" : "", result->empty() ? "OK" : stringify::text("[%i values]", (int)result->size()).c_str(), routing_util::node_type_of(*state).data(), state->peer_service().c_str());
-				}
-				else if (message.type == exchange::side::event)
-				{
-					uint256_t hash = message.as_hash();
-					umutex<std::mutex> unique(sync.inventory);
-					if (!inventory.insert(hash) || !state->get_inventory().insert(hash))
-						continue;
-
-					auto result = target.event(this, uref(state), message);
-					if (!result && !result.error().is_retry())
-					{
-						if (protocol::now().user.consensus.logging)
-							VI_WARN("node %s event \"%.*s\" error: %s (%s %s)", state->peer_address().c_str(), (int)target.name.size(), target.name.data(), result.what().c_str(), routing_util::node_type_of(*state).data(), state->peer_service().c_str());
-						goto abort;
-					}
-
-					if (protocol::now().user.consensus.logging)
-						VI_DEBUG("node %s %s \"%.*s\" result%s: OK (%s %s)", state->peer_address().c_str(), message.type == exchange::side::query ? "query" : "event", (int)target.name.size(), target.name.data(), message.type == exchange::side::query ? " out" : "", routing_util::node_type_of(*state).data(), state->peer_service().c_str());
-
-				}
-
-				auto* descriptor = state->as_descriptor();
-				if (descriptor != nullptr)
-				{
-					auto mempool = storages::mempoolstate();
-					mempool.apply_node_quality(descriptor->first.address, 1, message_latency, protocol::now().user.consensus.topology_timeout);
 				}
 			}
 
@@ -2143,13 +2144,19 @@ namespace tangent
 			if (!state)
 			{
 				auto duplicate = find_by_address(node->address);
-				if (duplicate)
-					abort_node(std::move(duplicate));
-
-				state = new relay(node_type::inbound, node);
-				append_node(uref(state));
+				if (!duplicate)
+				{
+					state = new relay(node_type::inbound, node);
+					append_node(uref(state));
+				}
+				else
+				{
+					node->abort();
+					finalize(node);
+				}
 			}
-			pull_messages(uref(state));
+			if (state)
+				pull_messages(std::move(state));
 		}
 		bool server_node::run_topology_optimization()
 		{
@@ -2410,7 +2417,7 @@ namespace tangent
 					if (status)
 					{
 						if (!dispatcher.inputs.empty())
-							VI_INFO("block dispatch: OK (height: %" PRIu64", txns: %" PRIu64 ", delayed: %" PRIu64 ", failed: %" PRIu64 ")", tip.number, dispatcher.inputs.size(), dispatcher.repeaters.size(), dispatcher.errors.size());
+							VI_INFO("block dispatch: OK (height: %" PRIu64", txns: %" PRIu64 ", delayed: %" PRIu64 ", dropped: %" PRIu64 ")", tip.number, dispatcher.inputs.size(), dispatcher.repeaters.size(), dispatcher.errors.size());
 					}
 					else
 						VI_ERR("block dispatch failed: %s (height: %" PRIu64 ")", status.what().c_str(), tip.number);
@@ -2564,14 +2571,6 @@ namespace tangent
 		bool server_node::accept_block(uref<relay>&& from, ledger::block_evaluation&& candidate, const uint256_t& fork_tip)
 		{
 			uint256_t candidate_hash = candidate.block.as_hash();
-			auto verification = from ? candidate.block.verify_validity(nullptr) : environment.verify_solved_block(candidate.block, &candidate.state);
-			if (!verification)
-			{
-				if (protocol::now().user.consensus.logging)
-					VI_WARN("block %s rejected: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), verification.error().what());
-				return false;
-			}
-
 			auto chain = storages::chainstate();
 			if (chain.get_block_header_by_hash(candidate_hash))
 				return true;
@@ -2624,10 +2623,11 @@ namespace tangent
 			}
 			else if (!parent_block && candidate.block.number > 1)
 			{
-				if (!from)
+				auto verification = from ? candidate.block.verify_validity(parent_block.address()) : expects_lr<void>(layer_exception("unexpected orphan"));
+				if (!verification)
 				{
 					if (protocol::now().user.consensus.logging)
-						VI_WARN("block %s rejected: unexpected orphan", algorithm::encoding::encode_0xhex256(candidate_hash).c_str());
+						VI_WARN("block %s rejected: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), verification.error().what());
 					return false;
 				}
 
@@ -2692,7 +2692,7 @@ namespace tangent
 			}
 			else
 			{
-				auto integrity = candidate.block.verify_integrity(parent_block.address(), &candidate.state);
+				auto integrity = environment.verify_solved_block(candidate.block, &candidate.state);
 				if (!integrity)
 				{
 					if (protocol::now().user.consensus.logging)

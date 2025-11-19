@@ -367,12 +367,11 @@ namespace tangent
 			if (!transaction_count && !is_genesis_round(number))
 				return layer_exception("non genesis round block must have transactions");
 
-			uint128_t difficulty = target.difficulty();
-			auto required_difficulty = number <= 1 || parent_block ? algorithm::wesolowski::scale(get_proof_slot_target(parent_block), get_proof_difficulty_multiplier()).difficulty() : difficulty;
+			auto required_difficulty = number <= 1 || parent_block ? algorithm::wesolowski::scale(get_proof_slot_target(parent_block), get_proof_difficulty_multiplier()) : difficulty;
 			if (proof.empty() || difficulty != required_difficulty)
 				return layer_exception("invalid wesolowski target");
 
-			uint256_t gas_work = get_gas_work(difficulty, gas_use, gas_limit, priority);
+			uint256_t gas_work = get_gas_work(gas_use, gas_limit, priority);
 			if (!gas_limit || gas_use > gas_limit || absolute_work < gas_work)
 				return layer_exception("invalid gas work");
 
@@ -416,8 +415,7 @@ namespace tangent
 			stream->write_integer(gas_limit);
 			stream->write_integer(absolute_work);
 			stream->write_integer(slot_duration);
-			stream->write_integer(target.bits);
-			stream->write_integer(target.ops);
+			stream->write_integer(difficulty);
 			stream->write_integer(generation_time);
 			stream->write_integer(priority);
 			stream->write_integer(number);
@@ -458,10 +456,7 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &slot_duration))
 				return false;
 
-			if (!stream.read_integer(stream.read_type(), &target.bits))
-				return false;
-
-			if (!stream.read_integer(stream.read_type(), &target.ops))
+			if (!stream.read_integer(stream.read_type(), &difficulty))
 				return false;
 
 			if (!stream.read_integer(stream.read_type(), &generation_time))
@@ -531,7 +526,7 @@ namespace tangent
 		}
 		bool block_header::solve(const algorithm::pubkeyhash_t& public_key_hash)
 		{
-			proof = algorithm::wesolowski::evaluate(target, as_solution(public_key_hash).data);
+			proof = algorithm::wesolowski::evaluate(difficulty, as_solution(public_key_hash).data);
 			evaluation_time = protocol::now().time.now();
 			return !proof.empty();
 		}
@@ -549,7 +544,7 @@ namespace tangent
 		}
 		bool block_header::verify_proof(const algorithm::pubkeyhash_t& public_key_hash) const
 		{
-			return algorithm::wesolowski::verify(target, as_solution(public_key_hash).data, proof);
+			return algorithm::wesolowski::verify(difficulty, as_solution(public_key_hash).data, proof);
 		}
 		void block_header::set_parent_block(const block_header* parent_block)
 		{
@@ -591,10 +586,8 @@ namespace tangent
 			if (absolute_work != other.absolute_work)
 				return absolute_work > other.absolute_work ? 1 : -1;
 
-			uint128_t difficulty_a = target.difficulty();
-			uint128_t difficulty_b = other.target.difficulty();
-			if (difficulty_a != difficulty_b)
-				return difficulty_a > difficulty_b ? 1 : -1;
+			if (difficulty != other.difficulty)
+				return difficulty > other.difficulty ? 1 : -1;
 
 			int8_t security = algorithm::wesolowski::compare(proof, other.proof);
 			if (security != 0)
@@ -636,12 +629,12 @@ namespace tangent
 		{
 			return algorithm::wesolowski::adjustment_scaling(priority);
 		}
-		algorithm::wesolowski::parameters block_header::get_proof_slot_target(const block_header* parent_block) const
+		uint64_t block_header::get_proof_slot_target(const block_header* parent_block) const
 		{
 			auto prev_duration = parent_block ? parent_block->get_slot_proof_duration_average() : 0;
-			auto prev_target = parent_block ? parent_block->target : algorithm::wesolowski::parameters::from_policy();
+			auto prev_target = parent_block ? parent_block->difficulty : protocol::now().policy.wesolowski_difficulty;
 			if (parent_block && parent_block->priority > 0)
-				prev_target = algorithm::wesolowski::scale(target, 1.0 / parent_block->get_proof_difficulty_multiplier());
+				prev_target = algorithm::wesolowski::scale(difficulty, 1.0 / parent_block->get_proof_difficulty_multiplier());
 
 			return algorithm::wesolowski::adjust(prev_target, prev_duration, number);
 		}
@@ -651,7 +644,6 @@ namespace tangent
 			recover_hash(producer);
 
 			schema* data = var::set::object();
-			data->set("proof", proof.empty() ? var::null() : var::string(format::util::encode_0xhex(proof)));
 			data->set("signature", signature.empty() ? var::null() : var::string(format::util::encode_0xhex(signature.optimized_view())));
 			data->set("producer", algorithm::signing::serialize_address(producer));
 			data->set("hash", var::string(algorithm::encoding::encode_0xhex256(as_hash())));
@@ -662,8 +654,6 @@ namespace tangent
 			data->set("absolute_work", algorithm::encoding::serialize_uint256(absolute_work));
 			data->set("gas_use", algorithm::encoding::serialize_uint256(gas_use));
 			data->set("gas_limit", algorithm::encoding::serialize_uint256(gas_limit));
-			data->set("difficulty", algorithm::encoding::serialize_uint256(target.difficulty()));
-			data->set("difficulty_multiplier", var::decimal(get_proof_difficulty_multiplier()));
 			data->set("slot_duration", algorithm::encoding::serialize_uint256(slot_duration));
 			data->set("slot_duration_average", algorithm::encoding::serialize_uint256(get_slot_proof_duration_average()));
 			data->set("slot_length", algorithm::encoding::serialize_uint256(get_slot_length()));
@@ -675,6 +665,13 @@ namespace tangent
 			data->set("mutation_count", algorithm::encoding::serialize_uint256(mutation_count));
 			data->set("transaction_count", algorithm::encoding::serialize_uint256(transaction_count));
 			data->set("state_count", algorithm::encoding::serialize_uint256(state_count));
+			auto* pow_data = data->set("pow");
+			pow_data->set("proof", proof.empty() ? var::null() : var::string(format::util::encode_0xhex(proof)));
+			pow_data->set("mdifficulty", var::decimal(get_proof_difficulty_multiplier()));
+			pow_data->set("kdifficulty", algorithm::encoding::serialize_uint256(algorithm::wesolowski::kdifficulty(difficulty)));
+			pow_data->set("difficulty", var::integer(difficulty));
+			pow_data->set("security", var::integer(protocol::now().policy.wesolowski_security));
+			pow_data->set("size", var::integer(proof.size()));
 			auto* witnesses_data = data->set("witnesses", var::set::array());
 			for (auto& item : witnesses)
 			{
@@ -751,7 +748,7 @@ namespace tangent
 			static uint256_t limit = get_commitment_gas_limit() + get_transaction_gas_limit();
 			return limit;
 		}
-		uint256_t block_header::get_gas_work(const uint128_t& difficulty, const uint256_t& gas_use, const uint256_t& gas_limit, uint64_t priority)
+		uint256_t block_header::get_gas_work(const uint256_t& gas_use, const uint256_t& gas_limit, uint64_t priority)
 		{
 			if (!gas_limit)
 				return 0;
@@ -780,7 +777,7 @@ namespace tangent
 			auto position = std::find_if(environment->producers.begin(), environment->producers.end(), [&environment](const states::validator_production& a) { return a.owner == environment->validator.public_key_hash; });
 			bool genesis = is_genesis_round(number);
 			priority = (uint64_t)(position == environment->producers.end() ? policy.production_max_per_block : std::distance(environment->producers.begin(), position));
-			target = algorithm::wesolowski::scale(get_proof_slot_target(parent_block), get_proof_difficulty_multiplier());
+			difficulty = algorithm::wesolowski::scale(get_proof_slot_target(parent_block), get_proof_difficulty_multiplier());
 			if (!genesis && environment->incoming.empty())
 				return layer_exception("block must include transactions");
 
@@ -926,13 +923,9 @@ namespace tangent
 			if (input.as_message().data != output.as_message().data)
 				return layer_exception("resulting block deviates from pre-computed block");
 
-			auto validity = result.block.verify_validity(parent_block);
-			if (!validity)
-				return validity;
-
-			auto integrity = result.block.verify_integrity(parent_block, &result.state);
-			if (!integrity)
-				return integrity;
+			auto verification = environment.verify_solved_block(result.block, &result.state);
+			if (!verification)
+				return verification;
 
 			if (evaluated_result != nullptr)
 				*evaluated_result = std::move(result);
@@ -1076,7 +1069,7 @@ namespace tangent
 			}
 
 			uint256_t cumulative = get_slot_length() > 1 ? 1 : 0;
-			absolute_work = (parent_block ? parent_block->absolute_work : uint256_t(0)) + get_gas_work(target.difficulty(), gas_use, gas_limit, priority);
+			absolute_work = (parent_block ? parent_block->absolute_work : uint256_t(0)) + get_gas_work(gas_use, gas_limit, priority);
 			slot_duration = (parent_block ? parent_block->slot_duration + parent_block->get_proof_accounted_duration() : uint256_t(0)) * cumulative;
 			transaction_count = (uint32_t)transactions.size();
 		}
@@ -1495,6 +1488,7 @@ namespace tangent
 					return layer_exception("invalid state level");
 			}
 
+			bool prev_exists = !!prev;
 			if (!prev)
 				prev = states::resolver::from_type(type);
 
@@ -1503,6 +1497,8 @@ namespace tangent
 			{
 				next->block_nonce = 0;
 				next->checksum = 0;
+				if (!prev_exists)
+					return expectation::met;
 			}
 
 			states::resolver::value_copy(type, next, *prev);
@@ -1640,7 +1636,7 @@ namespace tangent
 			format::wo_stream message;
 			message.write_typeless(block->number);
 			message.write_typeless(block->priority);
-			message.write_typeless(block->target.difficulty());
+			message.write_typeless(block->difficulty);
 			message.write_typeless(block->mutation_count);
 			message.write_typeless(receipt.transaction_hash);
 			message.write_typeless(receipt.relative_gas_use);
@@ -2254,7 +2250,7 @@ namespace tangent
 			if (!status)
 				return status.error();
 
-			status = emit_event<states::witness_transaction>({ format::variable(asset), format::variable(transaction_id) });
+			status = emit_event<states::witness_transaction>({ format::variable(asset), format::variable(new_state.as_hash()) });
 			if (!status)
 				return status.error();
 

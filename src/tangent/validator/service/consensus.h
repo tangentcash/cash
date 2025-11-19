@@ -121,6 +121,7 @@ namespace tangent
 			unordered_map<uint32_t, query_exchange> queries;
 			single_queue<exchange> outgoing_messages;
 			uptr<relay_descriptor> descriptor;
+			std::atomic<bool> aborted;
 			forwarder inventory;
 			string incoming_data;
 			string outgoing_data;
@@ -129,7 +130,6 @@ namespace tangent
 			node_type type;
 			void* instance;
 			uint32_t counter;
-			std::atomic<bool> aborted;
 
 		public:
 			std::recursive_mutex mutex;

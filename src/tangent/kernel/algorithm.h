@@ -98,18 +98,10 @@ namespace tangent
 		class wesolowski
 		{
 		public:
+			friend struct mpz;
 			typedef string digest;
 
 		public:
-			struct parameters
-			{
-				uint16_t bits = 512;
-				uint64_t ops = 256;
-
-				uint128_t difficulty() const;
-				static parameters from_policy();
-			};
-
 			struct distribution
 			{
 				string signature;
@@ -121,17 +113,21 @@ namespace tangent
 			};
 
 		public:
-			static distribution random(const parameters& alg, const std::string_view& seed);
-			static parameters calibrate(uint64_t confidence, uint64_t target_time = protocol::now().policy.consensus_proof_time);
-			static parameters adjust(const parameters& prev_alg, uint64_t prev_time, uint64_t target_index);
-			static parameters scale(const parameters& alg, const decimal& multiplier);
-			static string evaluate(const parameters& alg, const std::string_view& message);
-			static bool verify(const parameters& alg, const std::string_view& message, const std::string_view& proof);
+			static distribution random(uint64_t difficulty, const std::string_view& seed);
+			static uint64_t calibrate(uint64_t confidence, uint64_t target_time = protocol::now().policy.consensus_proof_time);
+			static uint64_t adjust(uint64_t prev_difficulty, uint64_t prev_time, uint64_t target_index);
+			static uint64_t scale(uint64_t difficulty, const decimal& multiplier);
+			static string evaluate(uint64_t difficulty, const std::string_view& message);
+			static bool verify(uint64_t difficulty, const std::string_view& message, const std::string_view& proof);
 			static int8_t compare(const std::string_view& proof1, const std::string_view& proof2);
 			static uint64_t adjustment_interval();
 			static uint64_t adjustment_index(uint64_t index);
 			static decimal adjustment_scaling(uint64_t index);
-			static schema* serialize(const parameters& alg, const std::string_view& proof);
+			static schema* serialize(uint64_t difficulty, const std::string_view& proof, const decimal& scaling = decimal::nan());
+			static uint128_t kdifficulty(uint64_t difficulty);
+
+		private:
+			static bool evaluate_or_proof(uint64_t difficulty, const std::string_view& message, const std::string_view& proof_in, string* proof_out);
 		};
 
 		class segwit
