@@ -1047,7 +1047,7 @@ namespace tangent
 				{ "TRX", chain<backends::tron>(this) },
 				{ "XRP", chain<backends::ripple>(this) },
 				{ "XLM", chain<backends::stellar>(this) },
-#if 0
+#ifndef NDEBUG
 				{ "BCH", chain<backends::forks::bitcoin_cash>(this) },
 				{ "BTG", chain<backends::forks::bitcoin_gold>(this) },
 				{ "BSV", chain<backends::forks::bitcoin_sv>(this) },

@@ -245,8 +245,8 @@ namespace tangent
         } user;
         struct protocol_messaging_config
         {
+            uint64_t packet_magic = 0x73d308e9;
             uint32_t protocol_version = 0x10;
-            uint32_t packet_magic = 0x73d308e9;
             uint32_t max_message_size = 0xffffff;
             uint32_t max_body_size = 1024 * 1024 * 32;
             uint32_t decimal_precision = 18;

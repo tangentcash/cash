@@ -63,9 +63,6 @@ namespace tangent
 
 			bool store_payload(format::wo_stream* stream) const override;
 			bool load_payload(format::ro_stream& stream) override;
-			bool store_exchange(string* result);
-			bool load_exchange(string& message);
-			bool load_partial_exchange(string& message, const uint8_t* buffer, size_t size);
 			uint64_t calculate_latency();
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
@@ -121,12 +118,10 @@ namespace tangent
 			};
 
 		private:
-			std::recursive_mutex mutex;
 			unordered_map<uint32_t, query_exchange> queries;
-			single_queue<exchange> incoming_messages;
 			single_queue<exchange> outgoing_messages;
-			forwarder inventory;
 			uptr<relay_descriptor> descriptor;
+			forwarder inventory;
 			string incoming_data;
 			string outgoing_data;
 			string address;
@@ -137,6 +132,7 @@ namespace tangent
 			std::atomic<bool> aborted;
 
 		public:
+			std::recursive_mutex mutex;
 			pacemaker bandwidth;
 			task_id deferred_pull;
 
@@ -146,10 +142,11 @@ namespace tangent
 			expects_promise_rt<exchange> push_query(const callable::descriptor& descriptor, format::variables&& args, uint64_t timeout_ms);
 			bool push_event(const callable::descriptor& descriptor, format::variables&& args);
 			void push_event(uint32_t session, format::variables&& args);
-			bool incoming_message_into(exchange* message);
-			bool pull_incoming_message(const uint8_t* buffer, size_t size);
-			bool begin_outgoing_message();
-			void end_outgoing_message();
+			void push_incoming(const uint8_t* buffer, size_t size);
+			void push_outgoing(exchange&& message);
+			void erase_incoming(size_t starting_bytes_to_erase);
+			bool prepare_outgoing();
+			void clear_outgoing();
 			void report_call(int8_t call_result, uint64_t call_latency);
 			void resolve_query(exchange&& result);
 			void cancel_queries();
@@ -160,9 +157,8 @@ namespace tangent
 			bool fully_valid() const;
 			const string& peer_address();
 			const string& peer_service();
-			const single_queue<exchange>& get_incoming_messages() const;
-			const single_queue<exchange>& get_outgoing_messages() const;
 			forwarder& get_inventory();
+			const uint8_t* incoming_buffer();
 			const uint8_t* outgoing_buffer();
 			node_type type_of();
 			size_t incoming_size();

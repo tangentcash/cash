@@ -18,6 +18,13 @@ namespace tangent
 {
 	namespace consensus
 	{
+		struct message_header
+		{
+			uint32_t magic;
+			uint32_t checksum;
+			uint32_t length;
+		};
+
 		static option<socket_address> text_address_to_socket_address(const std::string_view& value)
 		{
 			auto ip_address = value.substr(0, value.find(':'));
@@ -168,86 +175,6 @@ namespace tangent
 			args.clear();
 			return format::variables_util::deserialize_merge_from(stream, &args);
 		}
-		bool exchange::store_exchange(string* result)
-		{
-			VI_ASSERT(result != nullptr, "result should be set");
-			format::wo_stream stream;
-			if (!store_payload(&stream))
-				return false;
-
-			uint32_t net_magic = os::hw::to_endianness(os::hw::endian::little, protocol::now().message.packet_magic);
-			uint32_t net_size = os::hw::to_endianness(os::hw::endian::little, (uint32_t)stream.data.size());
-			uint32_t net_checksum = os::hw::to_endianness(os::hw::endian::little, algorithm::hashing::hash32d(stream.data));
-
-			size_t offset = result->size();
-			result->resize(offset + sizeof(uint32_t) * 3 + stream.data.size());
-			memcpy(result->data() + offset + sizeof(uint32_t) * 0, &net_magic, sizeof(uint32_t));
-			memcpy(result->data() + offset + sizeof(uint32_t) * 1, &net_size, sizeof(uint32_t));
-			memcpy(result->data() + offset + sizeof(uint32_t) * 2, &net_checksum, sizeof(uint32_t));
-			memcpy(result->data() + offset + sizeof(uint32_t) * 3, stream.data.data(), stream.data.size());
-			return true;
-		}
-		bool exchange::load_exchange(string& message_buffer)
-		{
-			uint32_t magic = os::hw::to_endianness(os::hw::endian::little, protocol::now().message.packet_magic);
-			uint8_t magic_buffer[sizeof(magic)];
-			memcpy(magic_buffer, &magic, sizeof(magic));
-
-			const size_t max_body_size = protocol::now().message.max_body_size;
-			const size_t header_size = sizeof(uint32_t) * 3;
-			const size_t message_size = 32 * header_size + max_body_size;
-			if (message_buffer.size() > message_size)
-				message_buffer.erase(0, message_buffer.size() - message_size);
-
-			size_t magic_index = message_buffer.find(std::string_view((char*)magic_buffer, sizeof(magic_buffer)));
-			if (magic_index == std::string::npos)
-				return false;
-
-			message_buffer.erase(0, magic_index);
-			if (message_buffer.size() < header_size)
-				return false;
-
-			uint32_t size, checksum;
-			memcpy(&size, message_buffer.data() + sizeof(uint32_t) * 1, sizeof(uint32_t));
-			memcpy(&checksum, message_buffer.data() + sizeof(uint32_t) * 2, sizeof(uint32_t));
-			size = os::hw::to_endianness(os::hw::endian::little, size);
-			checksum = os::hw::to_endianness(os::hw::endian::little, checksum);
-			if (size > max_body_size)
-			{
-				message_buffer.erase(0, sizeof(magic_buffer));
-				return false;
-			}
-
-			auto body = std::string_view(message_buffer).substr(header_size, (size_t)size);
-			if (body.size() < size)
-				return false;
-
-			format::ro_stream stream = format::ro_stream(body);
-			bool acceptable = algorithm::hashing::hash32d(body) == checksum && load_payload(stream);
-			message_buffer.erase(0, header_size + size);
-			return acceptable;
-		}
-		bool exchange::load_partial_exchange(string& message, const uint8_t* buffer, size_t size)
-		{
-			if (buffer != nullptr && size > 0)
-			{
-				size_t offset = message.size();
-				message.resize(offset + size);
-				memcpy(message.data() + offset, buffer, size);
-
-				uint32_t magic = os::hw::to_endianness(os::hw::endian::little, protocol::now().message.packet_magic);
-				uint8_t magic_buffer[sizeof(magic)];
-				memcpy(magic_buffer, &magic, sizeof(magic));
-				size_t magic_index = std::string_view((char*)buffer, size).find(std::string_view((char*)magic_buffer, sizeof(magic_buffer)));
-				if (magic_index != std::string::npos)
-				{
-					static size_t x = 0;
-					if (++x == 6)
-						magic_index = magic_index;
-				}
-			}
-			return load_exchange(message);
-		}
 		uint64_t exchange::calculate_latency()
 		{
 			auto time_now = protocol::now().time.now_cpu();
@@ -375,7 +302,7 @@ namespace tangent
 			message.args = std::move(args);
 
 			umutex<std::recursive_mutex> unique(mutex);
-			do { message.session = ++counter; } while (queries.find(message.session) != queries.end());
+			do { message.session = ++counter; } while (!message.session || queries.find(message.session) != queries.end());
 
 			auto session = message.session;
 			auto* queue = schedule::get();
@@ -391,7 +318,7 @@ namespace tangent
 						result.set(remote_exception::retry());
 				});
 			}
-			outgoing_messages.push(std::move(message));
+			push_outgoing(std::move(message));
 			return result;
 		}
 		bool relay::push_event(const callable::descriptor& descriptor, format::variables&& args)
@@ -403,8 +330,7 @@ namespace tangent
 			if (!inventory.insert(message.as_hash()))
 				return false;
 
-			umutex<std::recursive_mutex> unique(mutex);
-			outgoing_messages.push(std::move(message));
+			push_outgoing(std::move(message));
 			return true;
 		}
 		void relay::push_event(uint32_t session, format::variables&& args)
@@ -414,50 +340,59 @@ namespace tangent
 			message.type = exchange::side::event;
 			message.session = session;
 			message.args = std::move(args);
+			push_outgoing(std::move(message));
+		}
+		void relay::push_incoming(const uint8_t* buffer, size_t size)
+		{
+			if (!buffer || !size)
+				return;
+
+			umutex<std::recursive_mutex> unique(mutex);
+			size_t offset = incoming_data.size();
+			incoming_data.resize(std::min(offset + size, sizeof(uint32_t) + protocol::now().message.max_body_size));
+			memcpy(incoming_data.data() + offset, buffer, std::min(incoming_data.size() - offset, size));
+		}
+		void relay::push_outgoing(exchange&& message)
+		{
+			if (protocol::now().user.consensus.logging)
+				VI_TRACE("node %s message out: %s", peer_address().c_str(), schema::to_json(*message.as_schema()).substr(0, 2048).c_str());
 
 			umutex<std::recursive_mutex> unique(mutex);
 			outgoing_messages.push(std::move(message));
 		}
-		bool relay::incoming_message_into(exchange* message)
+		void relay::erase_incoming(size_t starting_bytes_to_erase)
 		{
-			VI_ASSERT(message != nullptr, "incoming message should be set");
 			umutex<std::recursive_mutex> unique(mutex);
-			if (incoming_messages.empty())
+			incoming_data.erase(0, std::min(incoming_data.size(), starting_bytes_to_erase));
+		}
+		bool relay::prepare_outgoing()
+		{
+			umutex<std::recursive_mutex> unique(mutex);
+			if (!outgoing_data.empty() || outgoing_messages.empty())
 				return false;
 
-			*message = std::move(incoming_messages.front());
-			incoming_messages.pop();
+			size_t max_size = protocol::now().message.max_body_size;
+			while (!outgoing_messages.empty())
+			{
+				auto& message = outgoing_messages.front();
+				auto body = format::wo_stream();
+				message.store_payload(&body);
+				outgoing_messages.pop();
+
+				message_header header;
+				header.magic = os::hw::to_endianness(os::hw::endian::little, protocol::now().message.packet_magic);
+				header.length = os::hw::to_endianness(os::hw::endian::little, (uint32_t)body.data.size());
+				header.checksum = os::hw::to_endianness(os::hw::endian::little, algorithm::hashing::hash32d(std::string_view(body.data).substr(0, max_size)));
+
+				umutex<std::recursive_mutex> unique(mutex);
+				size_t offset = outgoing_data.size();
+				outgoing_data.resize(offset + sizeof(header) + body.data.size());
+				memcpy(outgoing_data.data() + offset, &header, sizeof(header));
+				memcpy(outgoing_data.data() + offset + sizeof(header), body.data.data(), body.data.size());
+			}
 			return true;
 		}
-		bool relay::pull_incoming_message(const uint8_t* buffer, size_t size)
-		{
-			exchange message;
-			umutex<std::recursive_mutex> unique(mutex);
-			if (!message.load_partial_exchange(incoming_data, buffer, size))
-				return !incoming_messages.empty();
-
-			incoming_messages.emplace(std::move(message));
-			return true;
-		}
-		bool relay::begin_outgoing_message()
-		{
-			umutex<std::recursive_mutex> unique(mutex);
-			if (!outgoing_data.empty())
-				return false;
-		retry:
-			if (outgoing_messages.empty())
-				return false;
-
-			auto& message = outgoing_messages.front();
-			bool relayable = message.store_exchange(&outgoing_data) && !outgoing_data.empty();
-			outgoing_messages.pop();
-			if (relayable)
-				return true;
-
-			outgoing_data.clear();
-			goto retry;
-		}
-		void relay::end_outgoing_message()
+		void relay::clear_outgoing()
 		{
 			umutex<std::recursive_mutex> unique(mutex);
 			outgoing_data.clear();
@@ -541,8 +476,8 @@ namespace tangent
 			abort();
 
 			umutex<std::recursive_mutex> unique(mutex);
-			auto* inbound = as_inbound_node();
-			auto* outbound = as_outbound_node();
+			auto* inbound = type == node_type::inbound ? (inbound_node*)instance : nullptr;
+			auto* outbound = type == node_type::outbound ? (outbound_node*)instance : nullptr;
 			memory::release(inbound);
 			memory::release(outbound);
 			instance = nullptr;
@@ -623,17 +558,13 @@ namespace tangent
 			service = to_string(*result);
 			return service;
 		}
-		const single_queue<exchange>& relay::get_incoming_messages() const
-		{
-			return incoming_messages;
-		}
-		const single_queue<exchange>& relay::get_outgoing_messages() const
-		{
-			return outgoing_messages;
-		}
 		forwarder& relay::get_inventory()
 		{
 			return inventory;
+		}
+		const uint8_t* relay::incoming_buffer()
+		{
+			return (const uint8_t*)incoming_data.data();
 		}
 		const uint8_t* relay::outgoing_buffer()
 		{
@@ -705,12 +636,8 @@ namespace tangent
 					data->set("type", var::string("unknown"));
 					break;
 			}
-			auto* incoming = data->set("incoming", var::object());
-			incoming->set("queue", algorithm::encoding::serialize_uint256(incoming_messages.size()));
-			incoming->set("bytes", algorithm::encoding::serialize_uint256(incoming_data.size()));
-			auto* outgoing = data->set("outgoing", var::object());
-			outgoing->set("queue", algorithm::encoding::serialize_uint256(outgoing_messages.size()));
-			outgoing->set("bytes", algorithm::encoding::serialize_uint256(outgoing_data.size()));
+			data->set("incoming_bytes", algorithm::encoding::serialize_uint256(incoming_data.size()));
+			data->set("outgoing_bytes", algorithm::encoding::serialize_uint256(outgoing_data.size()));
 			return data;
 		}
 		relay_descriptor* relay::as_descriptor() const
@@ -1617,7 +1544,7 @@ namespace tangent
 					return std::move(exception);
 				};
 				auto handshake = query(uref(state), descriptors::query_handshake(), { format::variable(node.as_message().data), format::variable(system_time), format::variable(signature.optimized_view()) }, protocol::now().user.tcp.timeout, true);
-				pull_messages(uref(state));
+				cospawn([this, state]() mutable { pull_messages(std::move(state)); });
 		
 				auto result = coawait(std::move(handshake));
 				if (!result)
@@ -1630,7 +1557,7 @@ namespace tangent
 				auto* peer_descriptor = state->as_descriptor();
 				if (!peer_descriptor || (required_account && !peer_descriptor->second.public_key_hash.equals(*required_account)))
 					coreturn abort(remote_exception("invalid descriptor"));
-				
+
 				auto subresult = coawait(query(uref(state), descriptors::query_state(), build_state_exchange(uref(state)), protocol::now().user.tcp.timeout));
 				if (!subresult)
 					coreturn abort(remote_exception(std::move(subresult.error().message())));
@@ -1842,6 +1769,7 @@ namespace tangent
 						ledger::block_header parent_header, child_header;
 						size_t begin = batch_offset + batch_index * batch_size;
 						size_t end = batch_offset + (batch_index + 1) * batch_size + (batch_index == batch_groups - 1 ? block_count % batch_size : 0);
+						auto chain = storages::chainstate();
 						for (size_t i = begin; i < end; i++)
 						{
 							auto message = format::ro_stream(result->args[i].as_string());
@@ -1854,7 +1782,7 @@ namespace tangent
 							}
 
 							uint256_t branch_hash = child_header.as_hash(true);
-							auto collision = storages::chainstate().get_block_header_by_hash(branch_hash);
+							auto collision = chain.get_block_header_by_hash(branch_hash);
 							if (collision || child_header.number <= 1)
 							{
 								umutex<std::mutex> unique(batch_mutex);
@@ -1993,136 +1921,143 @@ namespace tangent
 			auto* stream = state->as_socket();
 			if (!stream)
 				return;
-		retry:
-			if (state->pull_incoming_message(nullptr, 0))
-			{
-				exchange message;
-				state->incoming_message_into(&message);
 
-				bool query_response = message.type == exchange::side::event && message.descriptor == 0 && message.session > 0;
-				if (query_response)
+			uint8_t buffer[CHUNK_SIZE];
+			size_t max_buffer_size = sizeof(buffer);
+			uint64_t next_pull_time = 0, message_latency = 100;
+			while (state->bandwidth.check(max_buffer_size, next_pull_time))
+			{
+				auto size = stream->read(buffer, std::min(max_buffer_size, sizeof(buffer)));
+				if (!size)
 				{
-					state->resolve_query(std::move(message));
-					goto retry;
+					if (size.error() != std::errc::operation_would_block)
+						return abort_node(std::move(state));
+
+					multiplexer::get()->when_readable(stream, [this, state](socket_poll event) mutable
+					{
+						if (packet::is_done(event))
+							pull_messages(std::move(state));
+						else if (packet::is_error(event))
+							abort_node(std::move(state));
+					});
+					return;
 				}
 
-				auto it = callables.find(message.descriptor);
-				if (it == callables.end())
+				umutex<std::recursive_mutex> unique(state->mutex);
+				state->push_incoming(buffer, *size);
+				state->bandwidth.spend(*size);
+				if (state->incoming_size() < sizeof(message_header))
+					continue;
+
+				message_header header;
+				memcpy(&header, state->incoming_buffer(), sizeof(message_header));
+				header.magic = os::hw::to_endianness(os::hw::endian::little, header.magic);
+				header.length = os::hw::to_endianness(os::hw::endian::little, header.length);
+				header.checksum = os::hw::to_endianness(os::hw::endian::little, header.checksum);
+				if (header.magic != protocol::now().message.packet_magic || header.length > protocol::now().message.max_body_size)
 				{
 				abort:
 					auto* descriptor = state->as_descriptor();
 					if (descriptor != nullptr)
 					{
 						auto mempool = storages::mempoolstate();
-						mempool.apply_node_quality(descriptor->first.address, -1, message.calculate_latency(), protocol::now().user.consensus.topology_timeout);
+						mempool.apply_node_quality(descriptor->first.address, -1, message_latency, protocol::now().user.consensus.topology_timeout);
 					}
-
-					return abort_node(uref(state));
+					abort_node(std::move(state));
+					return;
 				}
+				else if (state->incoming_size() < header.length)
+					continue;
+
+				exchange message;
+				auto body = format::ro_stream(std::string_view((char*)state->incoming_buffer() + sizeof(message_header), state->incoming_size() - sizeof(message_header)));
+				bool valid = header.checksum == algorithm::hashing::hash32d(body.data) && message.load_payload(body);
+				state->erase_incoming(sizeof(message_header) + body.data.size());
+				unique.unlock();
+				if (!valid)
+					continue;
+
+				message_latency = message.calculate_latency();
+				if (protocol::now().user.consensus.logging)
+					VI_TRACE("node %s message in: %s", state->peer_address().c_str(), schema::to_json(*message.as_schema()).substr(0, 2048).c_str());
+
+				if (message.type == exchange::side::event && message.descriptor == 0 && message.session > 0)
+				{
+					state->resolve_query(std::move(message));
+					continue;
+				}
+
+				auto it = callables.find(message.descriptor);
+				if (it == callables.end())
+					goto abort;
 
 				auto& target = it->second;
 				if ((message.type == exchange::side::event && !target.event) || (message.type == exchange::side::query && (!target.query || !message.session)) || (message.type != exchange::side::query && message.type != exchange::side::event))
 					goto abort;
-				
-				if (message.type == exchange::side::event)
+
+				if (message.type == exchange::side::query)
+				{
+					auto result = target.query(this, uref(state), message);
+					if (!result && !result.error().is_retry())
+					{
+						if (protocol::now().user.consensus.logging)
+							VI_WARN("node %s query \"%.*s\" error out: %s (%s %s)", state->peer_address().c_str(), (int)target.name.size(), target.name.data(), result.what().c_str(), routing_util::node_type_of(*state).data(), state->peer_service().c_str());
+						goto abort;
+					}
+
+					state->push_event(message.session, pack_query_result(result));
+					push_messages(uref(state));
+					if (protocol::now().user.consensus.logging)
+						VI_DEBUG("node %s %s \"%.*s\" result%s: %s (%s %s)", state->peer_address().c_str(), message.type == exchange::side::query ? "query" : "event", (int)target.name.size(), target.name.data(), message.type == exchange::side::query ? " out" : "", result->empty() ? "OK" : stringify::text("[%i values]", (int)result->size()).c_str(), routing_util::node_type_of(*state).data(), state->peer_service().c_str());
+				}
+				else if (message.type == exchange::side::event)
 				{
 					uint256_t hash = message.as_hash();
 					umutex<std::mutex> unique(sync.inventory);
 					if (!inventory.insert(hash) || !state->get_inventory().insert(hash))
-						goto retry;
+						continue;
+
+					auto result = target.event(this, uref(state), message);
+					if (!result && !result.error().is_retry())
+					{
+						if (protocol::now().user.consensus.logging)
+							VI_WARN("node %s event \"%.*s\" error: %s (%s %s)", state->peer_address().c_str(), (int)target.name.size(), target.name.data(), result.what().c_str(), routing_util::node_type_of(*state).data(), state->peer_service().c_str());
+						goto abort;
+					}
+
+					if (protocol::now().user.consensus.logging)
+						VI_DEBUG("node %s %s \"%.*s\" result%s: OK (%s %s)", state->peer_address().c_str(), message.type == exchange::side::query ? "query" : "event", (int)target.name.size(), target.name.data(), message.type == exchange::side::query ? " out" : "", routing_util::node_type_of(*state).data(), state->peer_service().c_str());
+
 				}
 
-				return cospawn([this, &target, state, message = std::move(message)]() mutable
+				auto* descriptor = state->as_descriptor();
+				if (descriptor != nullptr)
 				{
-					auto result = expects_rt<format::variables>(remote_exception::shutdown());
-					if (message.type == exchange::side::query)
-					{
-						result = target.query(this, uref(state), message);
-						state->push_event(message.session, pack_query_result(result));
-						push_messages(uref(state));
-					}
-					else
-					{
-						auto status = target.event(this, uref(state), message);
-						result = status ? expects_rt<format::variables>(format::variables()) : expects_rt<format::variables>(std::move(status.error()));
-					}
-
-					auto* descriptor = state->as_descriptor();
-					if (descriptor != nullptr)
-					{
-						auto mempool = storages::mempoolstate();
-						mempool.apply_node_quality(descriptor->first.address, result ? 1 : (result.error().is_retry() ? 0 : -1), message.calculate_latency(), protocol::now().user.consensus.topology_timeout);
-					}
-
-					if (!result)
-					{
-						if (protocol::now().user.consensus.logging)
-							VI_WARN("node %s %s \"%.*s\" error%s: %s (%s %s)", state->peer_address().c_str(), message.type == exchange::side::query ? "query" : "event", (int)target.name.size(), target.name.data(), message.type == exchange::side::query ? " out" : "", result.what().c_str(), routing_util::node_type_of(*state).data(), state->peer_service().c_str());
-						if (!result.error().is_retry())
-							abort_node(std::move(state));
-						else
-							pull_messages(std::move(state));
-					}
-					else
-					{
-						if (protocol::now().user.consensus.logging)
-							VI_DEBUG("node %s %s \"%.*s\" result%s: %s (%s %s)", state->peer_address().c_str(), message.type == exchange::side::query ? "query" : "event", (int)target.name.size(), target.name.data(), message.type == exchange::side::query ? " out" : "", result->empty() ? "OK" : stringify::text("[%i values]", (int)result->size()).c_str(), routing_util::node_type_of(*state).data(), state->peer_service().c_str());
-						pull_messages(std::move(state));
-					}
-				});
+					auto mempool = storages::mempoolstate();
+					mempool.apply_node_quality(descriptor->first.address, 1, message_latency, protocol::now().user.consensus.topology_timeout);
+				}
 			}
-			else
+
+			state->deferred_pull = schedule::get()->set_timeout(next_pull_time, [this, state]() mutable
 			{
-				uint8_t buffer[BLOB_SIZE];
-				size_t max_buffer_size = sizeof(buffer);
-				uint64_t next_pull_time = 0;
-				while (state->bandwidth.check(max_buffer_size, next_pull_time))
-				{
-					auto size = stream->read(buffer, std::min(max_buffer_size, sizeof(buffer)));
-					if (!size)
-					{
-						if (size.error() != std::errc::operation_would_block)
-							return abort_node(std::move(state));
-
-						multiplexer::get()->when_readable(stream, [this, state](socket_poll event) mutable
-						{
-							if (packet::is_done(event))
-								pull_messages(std::move(state));
-							else if (packet::is_error(event))
-								abort_node(std::move(state));
-						});
-						return;
-					}
-
-					state->bandwidth.spend(*size);
-					if (state->pull_incoming_message(buffer, *size))
-						goto retry;
-				}
-
-				state->deferred_pull = schedule::get()->set_timeout(next_pull_time, [this, state]() mutable
-				{
-					state->deferred_pull = INVALID_TASK_ID;
-					pull_messages(std::move(state));
-				});
-			}
+				state->deferred_pull = INVALID_TASK_ID;
+				pull_messages(std::move(state));
+			});
 		}
 		void server_node::push_messages(uref<relay>&& state)
 		{
 			VI_ASSERT(state, "state and abort callback should be set");
 			auto* stream = state->as_socket();
-			if (!stream || !state->begin_outgoing_message())
+			if (!stream || !state->prepare_outgoing())
 				return;
 
-			auto* ref = *state;
-			ref->add_ref();
-			printf("sending %i bytes\n", (int)state->outgoing_size());
-			stream->write_queued(state->outgoing_buffer(), state->outgoing_size(), [this, stream, ref](socket_poll event)
+			stream->write_queued(state->outgoing_buffer(), state->outgoing_size(), [this, stream, state](socket_poll event) mutable
 			{
-				ref->end_outgoing_message();
+				state->clear_outgoing();
 				if (packet::is_done(event))
-					push_messages(uref(ref));
+					cospawn([this, state = std::move(state)]() mutable { push_messages(std::move(state)); });
 				else if (packet::is_error(event))
-					abort_node(uref(ref));
+					abort_node(std::move(state));
 			}, false);
 		}
 		void server_node::abort_node(uref<relay>&& state)
@@ -2205,15 +2140,15 @@ namespace tangent
 				return;
 
 			auto state = find_node_by_instance(node);
-			if (state)
-				return pull_messages(uref(state));
+			if (!state)
+			{
+				auto duplicate = find_by_address(node->address);
+				if (duplicate)
+					abort_node(std::move(duplicate));
 
-			auto duplicate = find_by_address(node->address);
-			if (duplicate)
-				abort_node(std::move(duplicate));
-
-			state = new relay(node_type::inbound, node);
-			append_node(uref(state));
+				state = new relay(node_type::inbound, node);
+				append_node(uref(state));
+			}
 			pull_messages(uref(state));
 		}
 		bool server_node::run_topology_optimization()

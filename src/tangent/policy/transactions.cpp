@@ -2911,7 +2911,7 @@ namespace tangent
 					if (attestation)
 					{
 						commitment_stake += attestation->get_ranked_stake();
-						++best_commitment_size;
+						++commitment_size;
 					}
 				}
 
@@ -2942,7 +2942,7 @@ namespace tangent
 			}
 
 			global_commitment_size = std::min(global_commitment_size, params.policy.attestation_max_per_transaction);
-			if (global_commitment_size > 0 && decimal(best_commitment_stake) < decimal(global_commitment_size) * params.policy.attestation_consensus_threshold)
+			if (global_commitment_size > 0 && decimal(best_commitment_size) < decimal(global_commitment_size) * params.policy.attestation_consensus_threshold)
 				return layer_exception("proof requires more attestations");
 
 			if (best_commitment_stake < global_commitment_stake * params.policy.attestation_consensus_threshold)
