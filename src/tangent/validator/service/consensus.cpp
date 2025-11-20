@@ -655,57 +655,61 @@ namespace tangent
 				net.stream->bind(socket_address(protocol::now().user.consensus.address, 0));
 		}
 
+		callable::descriptor descriptors::notify_of_health_check()
+		{
+			return callable::descriptor(__func__, 1);
+		}
 		callable::descriptor descriptors::notify_of_block_hash()
 		{
-			return callable::descriptor(__func__, 10);
+			return callable::descriptor(__func__, 2);
 		}
 		callable::descriptor descriptors::notify_of_transaction_hash()
 		{
-			return callable::descriptor(__func__, 11);
+			return callable::descriptor(__func__, 3);
 		}
 		callable::descriptor descriptors::notify_of_attestation()
 		{
-			return callable::descriptor(__func__, 12);
+			return callable::descriptor(__func__, 4);
 		}
 		callable::descriptor descriptors::notify_of_aggregation()
 		{
-			return callable::descriptor(__func__, 13);
+			return callable::descriptor(__func__, 5);
 		}
 		callable::descriptor descriptors::query_handshake()
 		{
-			return callable::descriptor(__func__, 14);
+			return callable::descriptor(__func__, 6);
 		}
 		callable::descriptor descriptors::query_state()
 		{
-			return callable::descriptor(__func__, 15);
+			return callable::descriptor(__func__, 7);
 		}
 		callable::descriptor descriptors::query_headers()
 		{
-			return callable::descriptor(__func__, 16);
+			return callable::descriptor(__func__, 8);
 		}
 		callable::descriptor descriptors::query_block()
 		{
-			return callable::descriptor(__func__, 17);
+			return callable::descriptor(__func__, 9);
 		}
 		callable::descriptor descriptors::query_mempool()
 		{
-			return callable::descriptor(__func__, 18);
+			return callable::descriptor(__func__, 10);
 		}
 		callable::descriptor descriptors::query_transaction()
 		{
-			return callable::descriptor(__func__, 19);
+			return callable::descriptor(__func__, 11);
 		}
 		callable::descriptor descriptors::aggregate_secret_share_state()
 		{
-			return callable::descriptor(__func__, 20);
+			return callable::descriptor(__func__, 12);
 		}
 		callable::descriptor descriptors::aggregate_public_state()
 		{
-			return callable::descriptor(__func__, 21);
+			return callable::descriptor(__func__, 13);
 		}
 		callable::descriptor descriptors::aggregate_signature_state()
 		{
-			return callable::descriptor(__func__, 22);
+			return callable::descriptor(__func__, 14);
 		}
 
 		server_node::server_node() noexcept : socket_server(), control_sys("consensus-node")
@@ -967,6 +971,13 @@ namespace tangent
 				VI_INFO("transaction %s %.*s broadcasted to %i nodes", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), (int)notifications);
 
 			run_block_production();
+			return expectation::met;
+		}
+		expects_rt<void> server_node::notify_of_health_check(uref<relay>&& state, const exchange& event)
+		{
+			if (!event.args.empty())
+				return remote_exception("invalid arguments");
+
 			return expectation::met;
 		}
 		expects_rt<void> server_node::notify_of_block_hash(uref<relay>&& state, const exchange& event)
@@ -2162,6 +2173,19 @@ namespace tangent
 		{
 			return control_sys.async_task_if_none(TASK_TOPOLOGY_OPTIMIZATION, [this]() -> promise<void>
 			{
+				auto receivers = vector<uref<relay>>();
+				{
+					umutex<std::recursive_mutex> unique(exclusive);
+					receivers.reserve(nodes.size());
+					for (auto& node : nodes)
+					{
+						if (node.second->type_of() == node_type::inbound)
+							receivers.push_back(node.second);
+					}
+				}
+				for (auto& node : receivers)
+					notify(uref(node), descriptors::notify_of_health_check(), { });
+
 				algorithm::pubkeyhash_t worst_account;
 				unordered_set<algorithm::pubkeyhash_t> current_nodes;
 				{
@@ -2481,6 +2505,7 @@ namespace tangent
 				}
 			}
 
+			bind_event(descriptors::notify_of_health_check(), std::bind(&server_node::notify_of_health_check, this, std::placeholders::_2, std::placeholders::_3));
 			bind_event(descriptors::notify_of_block_hash(), std::bind(&server_node::notify_of_block_hash, this, std::placeholders::_2, std::placeholders::_3));
 			bind_event(descriptors::notify_of_transaction_hash(), std::bind(&server_node::notify_of_transaction_hash, this, std::placeholders::_2, std::placeholders::_3));
 			bind_event(descriptors::notify_of_attestation(), std::bind(&server_node::notify_of_attestation, this, std::placeholders::_2, std::placeholders::_3));

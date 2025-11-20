@@ -159,7 +159,7 @@ namespace tangent
 				uint32_t max_outbound_connections = 8;
 				uint64_t inventory_timeout = 300000;
 				uint32_t inventory_size = 65536;
-				uint32_t topology_timeout = 120000;
+				uint32_t topology_timeout = 180000;
 				uint32_t attestation_timeout = 600000;
 				uint64_t response_timeout = 48000;
 				uint64_t aggregation_attempts = 6;

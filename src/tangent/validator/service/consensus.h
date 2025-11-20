@@ -93,6 +93,7 @@ namespace tangent
 
 		struct descriptors
 		{
+			static callable::descriptor notify_of_health_check();
 			static callable::descriptor notify_of_block_hash();
 			static callable::descriptor notify_of_transaction_hash();
 			static callable::descriptor notify_of_attestation();
@@ -252,6 +253,7 @@ namespace tangent
 			expects_lr<void> accept_attestation(uref<relay>&& from, const uint256_t& attestation_hash);
 			expects_lr<void> accept_committed_attestation(uref<relay>&& from, const algorithm::asset_id& asset, const oracle::computed_transaction& proof, const algorithm::hashsig_t& signature);
 			expects_lr<void> broadcast_transaction(uref<relay>&& from, uptr<ledger::transaction>&& candidate_tx, const algorithm::pubkeyhash_t& owner);
+			expects_rt<void> notify_of_health_check(uref<relay>&& state, const exchange& event);
 			expects_rt<void> notify_of_block_hash(uref<relay>&& state, const exchange& event);
 			expects_rt<void> notify_of_transaction_hash(uref<relay>&& state, const exchange& event);
 			expects_rt<void> notify_of_attestation(uref<relay>&& state, const exchange& event);
