@@ -432,7 +432,7 @@ namespace tangent
 		console::get()->attach();
 
 		auto overriding_account = string();
-		auto config = uptr<schema>(path.empty() ? (schema*)nullptr : schema::from_json(os::file::read_as_string(path).or_else(string())));
+		auto config = uptr<schema>(path.empty() ? (schema*)nullptr : *schema::from_json(*os::file::read_as_string(path)));
 		if (!environment.args.empty())
 		{
 			if (!config)
