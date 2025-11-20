@@ -724,7 +724,7 @@ namespace tangent
 				}
 
 				schema_list map;
-				map.push_back(var::set::integer(protocol::now().time.now_cpu() + 1000 * protocol::now().user.storage.transaction_dispatch_repeat_interval));
+				map.push_back(var::set::integer(protocol::now().time.now_cpu() + protocol::now().user.storage.transaction_dispatch_repeat_interval));
 				map.push_back(var::set::string(*sqlite::utils::inline_array(std::move(hashes))));
 
 				auto cursor = get_tx_storage().emplace_query(__func__, "UPDATE transactions SET dispatch_time = ? WHERE transaction_hash IN ($?)", &map);

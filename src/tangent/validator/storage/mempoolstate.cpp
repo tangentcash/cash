@@ -1001,8 +1001,8 @@ namespace tangent
 		uint64_t mempoolstate::transaction_limit()
 		{
 			auto& params = protocol::now();
-			auto transactions = ledger::block_header::get_transaction_limit() * (params.user.storage.transaction_timeout * 1000 / params.policy.consensus_proof_time);
-			auto commitments = ledger::block_header::get_commitment_limit() * (params.user.storage.commitment_timeout * 1000 / params.policy.consensus_proof_time);
+			auto transactions = ledger::block_header::get_transaction_limit() * (params.user.storage.transaction_timeout / params.policy.consensus_proof_time);
+			auto commitments = ledger::block_header::get_commitment_limit() * (params.user.storage.commitment_timeout / params.policy.consensus_proof_time);
 			return transactions + commitments;
 		}
 		bool mempoolstate::make_schema(sqlite::connection* connection)

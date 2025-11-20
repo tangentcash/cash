@@ -211,9 +211,9 @@ namespace tangent
 				string path;
 				string module_cache_path;
 				storage_optimization optimization = storage_optimization::speed;
-				uint64_t transaction_dispatch_repeat_interval = 300;
-				uint64_t transaction_timeout = 14400;
-				uint64_t commitment_timeout = 7200;
+				uint64_t transaction_dispatch_repeat_interval = 300000;
+				uint64_t transaction_timeout = 14400000;
+				uint64_t commitment_timeout = 7200000;
 				uint64_t checkpoint_size = 100;
 				uint64_t location_cache_size = 500000;
 				uint64_t module_cache_size = 8192;
@@ -235,7 +235,7 @@ namespace tangent
 				string error_path;
 				string query_path;
 				uint64_t archive_size = 8 * 1024 * 1024;
-				uint64_t archive_repack_interval = 1800;
+				uint64_t archive_repack_interval = 1800000;
 				bool control_logging = false;
 			} logs;
 			unordered_set<string> known_nodes;

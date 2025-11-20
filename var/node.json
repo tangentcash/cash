@@ -14,7 +14,7 @@
         "max_outbound_connections": 8,
         "inventory_timeout": 300000,
         "inventory_size": 65536,
-        "topology_timeout": 120000,
+        "topology_timeout": 180000,
         "attestation_timeout": 600000,
         "response_timeout": 48000,
         "aggregation_cooldown": 2000,
@@ -50,8 +50,6 @@
         "relaying_retry_timeout": 300,
         "cache1_size": 32768,
         "cache2_size": 131072,
-        "fee_estimation_seconds": 600,
-        "withdrawal_time": 300000,
         "server": false,
         "logging": true,
         "strategy": {
@@ -89,9 +87,9 @@
         "module_cache_path": null,
         "optimization": "speed",
         "checkpoint_size": 64,
-        "transaction_dispatch_repeat_interval": 300,
-        "transaction_timeout": 14400,
-        "commitment_timeout": 7200,
+        "transaction_dispatch_repeat_interval": 300000,
+        "transaction_timeout": 14400000,
+        "commitment_timeout": 7200000,
         "location_cache_size": 500000,
         "module_cache_size": 8192,
         "blob_cache_size": 134217728,
@@ -111,7 +109,7 @@
         "error": null,
         "query": null,
         "archive_size": 8388608,
-        "archive_repack_interval": 1800,
+        "archive_repack_interval": 1800000,
         "control_logging": false
     }
 }

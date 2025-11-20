@@ -403,7 +403,7 @@ namespace tangent
 		if (message.back() != '\r' && message.back() != '\n')
 			resource->write((uint8_t*)"\n", 1);
 
-		if (!protocol::bound() || time - repack_time < (int64_t)protocol::now().user.logs.archive_repack_interval)
+		if (!protocol::bound() || time - repack_time < (int64_t)protocol::now().user.logs.archive_repack_interval / 1000)
 			return;
 
 		auto state = os::file::get_properties(resource->virtual_name());
