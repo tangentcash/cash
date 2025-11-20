@@ -1674,9 +1674,9 @@ namespace tangent
 			auto window = storages::result_index_window();
 			auto pool = chain.get_multiforms_count_by_row_filter(states::validator_production::as_instance_type(), changelog, states::validator_production::as_instance_row(), filter, nonce).or_else(0);
 			auto size = std::min(target_size, pool);
-			auto indices = ordered_set<uint64_t>();
 			if (pool > target_size)
 			{
+				auto indices = ordered_set<uint64_t>();
 				while (indices.size() < size)
 				{
 					uint64_t index = algorithm::hashing::erd64(random->derive(), size);
@@ -1689,10 +1689,12 @@ namespace tangent
 			}
 			else
 			{
-				for (uint64_t index = 0; index < (uint64_t)size; index++)
+				window.indices.resize(size, std::numeric_limits<uint64_t>::max());
+				for (size_t index = 0; index < size; index++)
 				{
-					window.indices.push_back(index);
-					indices.insert(index);
+					size_t position;
+					do { position = (size_t)(random->derive() % window.indices.size()); } while (window.indices[position] != std::numeric_limits<uint64_t>::max());
+					window.indices[position] = (uint64_t)index;
 				}
 			}
 
@@ -1711,9 +1713,6 @@ namespace tangent
 				if (!status)
 					return status.error();
 			}
-
-			if (committee.size() >= target_size)
-				std::sort(committee.begin(), committee.end(), [](const states::validator_production& a, const states::validator_production& b) { return a.get_ranked_stake() > b.get_ranked_stake(); });
 
 			return expects_lr<vector<states::validator_production>>(std::move(committee));
 		}
